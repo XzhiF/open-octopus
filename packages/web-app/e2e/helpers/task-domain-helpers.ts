@@ -315,6 +315,9 @@ export async function createTask(
     task_type?: "coding" | "generic"
     skill_groups?: string[]
     preset?: { org?: string; projects?: string[] }
+    // 契约修复 (v4 直建): server now honors these on POST.
+    task_spec?: Record<string, unknown>
+    project_ids?: string[]
   },
 ): Promise<TaskDTO> {
   const ctx = await apiContext()
@@ -327,6 +330,8 @@ export async function createTask(
         ...(input.task_type ? { task_type: input.task_type } : {}),
         ...(input.skill_groups ? { skill_groups: input.skill_groups } : {}),
         ...(input.preset ? { preset: input.preset } : {}),
+        ...(input.task_spec ? { task_spec: input.task_spec } : {}),
+        ...(input.project_ids ? { project_ids: input.project_ids } : {}),
       },
       headers: { "Content-Type": "application/json" },
     })

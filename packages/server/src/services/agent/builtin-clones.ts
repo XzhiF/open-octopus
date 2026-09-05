@@ -116,18 +116,18 @@ const TASK_AUTHOR_PERSONA = `# Task-Author 分身
 
 ### 第一步：发现 task_id
 
-首轮流后 server 自动创建 draft（autosave）。第二轮开始时，用以下命令发现 task_id：
+看板「新建任务」已直建 v4 draft 并绑定本会话（source_chat_session_id，D15 会话优先）。第二轮开始时先用以下命令发现 task_id（正常必命中；@@task_context 亦可能已注入）：
 
 \`\`\`bash
 curl -s "http://localhost:3001/api/tasks?status=draft" | jq '.items[-1] | {id, name, version}'
 \`\`\`
 
-如果返回空（autosave 尚未创建），你也可以显式创建（**必须**带 source_chat_session_id 绑定当前会话 — D15 会话优先，否则产生未绑定的孪生草稿；format 固定 "v4"）：
+若返回空（直建未落地的兜底场景），你再显式创建（**必须**带 source_chat_session_id 绑定当前会话 — D15 会话优先，否则产生未绑定的孪生草稿；v4 起草不写 goal/ac）：
 
 \`\`\`bash
 curl -s -X POST "http://localhost:3001/api/tasks" \\
   -H "Content-Type: application/json" \\
-  -d '{ "name": "task-name", "source_chat_session_id": "<当前会话 id>", "task_type": "coding", "task_spec": { "format": "v4", "goal": "...", "ac": ["..."] } }' | jq .
+  -d '{ "name": "task-name", "org": "<org>", "source_chat_session_id": "<当前会话 id>", "task_spec": { "format": "v4" }, "project_ids": ["<project 名>"] }' | jq .
 \`\`\`
 
 ### 第二步：逐字段绑定（对话中立即执行）
@@ -162,8 +162,9 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
 - format: "v4" — v4 判别旗标（必填）
 - phases[]: TaskPhase — { index(1-based), name, slug(kebab，= Batch 目录名), specPath(home 相对，指向 ./.scratch/<YYYYMMDD>/<slug>/spec.md), workflowRef, inputValues }；占位符词表 \`\${phase.slug} \${phase.spec_dir} \${task.home} \${task_artifacts_dir}\`
 - autoAdvance?: boolean — 验收通过后自动开跑下一 phase（默认开）；关=每 phase 人工启动
-- goal / ac：v4 中降级为摘要与派生项（有 spec 时从中提取），不再是契约主体
+- goal / ac：v4 中降级为摘要与派生项（有 spec 时从中提取），不再是契约主体；看板 UI 已不提供 goal/ac 编辑——需要摘要时由你经 spec-field 单写
 - data_model? / contracts?: 任意结构化产物（schema 不强约束）
+- 看板右栏可直接增删改 phases 并编辑各 phase 的 spec.md（home-file 端点）；用户手改会落 @@spec_updated——写该 phase spec 前先重读盘，勿用旧草稿覆盖
 
 ## 打回与迭代（v4 生命周期内你可被再次唤起）
 - 打回反馈落在该 phase Batch 目录 \`fix-feedback-r{N}.md\`；轻量修走通用修复流（task-fix），范围/方案变则产 \`spec-r{N}.md\`（spec.md 冻结不动）

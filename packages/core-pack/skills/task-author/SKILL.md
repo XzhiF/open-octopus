@@ -108,7 +108,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 `POST /api/tasks/$TASK_ID/spec-field` 的 `field=phases` **整体替换** phases 数组——改任何一个 phase 前先 `Read spec.json` 取当前全量，改后整数组回写，丢元素=丢 phase。乐观锁照旧：409 → 重取 version 重试。
 
-> 过渡说明：`field=phases` 的 spec-field 路由由票 07 AC5 落地。若 server 尚未支持该 field（400 `invalid field`），改用 §3 的整-spec `PUT`（携带完整 `task_spec`，含 format/phases/autoAdvance）——两通道写入后的 spec.json 快照与 SSE 联动完全等价。
+> 契约注记：向**无 `format` 旗标的壳**（autosave 先建的 draft）写 `phases` 时，server 会自动补 `format:"v4"` 并尽力补建 task home（含 context.md）——v3→v4 升级只能经 flag 缺失时的这一途或 §3 整-spec PUT；反方向（去旗标）被创建锁禁止。
 
 ### spec.json 快照（首选本地读，协议不变）
 
@@ -192,7 +192,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks" \
         "task_spec": { "format": "v4" },
         "project_ids": ["<project 名>"], "skills": [], "resources": [], "authoring_resources": [] }' | jq .
 ```
-- 返回 tasks 行 `status: "draft"`；goal/ac **不再必填**（v4 无它们也能 parse）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
+- 返回 tasks 行 `status: "draft"`，`task_spec` **原样落地**（`format:"v4"` 旗标不再被丢弃——server 现已兑现本配方）；goal/ac **不再必填**（v4 无它们也能 parse）。带 `format:"v4"` 即建 home + `spec.json` 快照（`spec.format==="v4"` 本地可读）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
 - 创建期的 projects 是领域阅读的路由键；后来加/减 project 由用户在看板改，你经 `@@context_updated` 重读 context.md。
 
 ### 2. 对话中绑字段（update_task_spec_field）★联动核心
@@ -226,7 +226,7 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
   -H "Content-Type: application/json" -H "If-Match: $VERSION" \
   -d '{ "task_spec": { "format": "v4", "decisions": ["…"], "autoAdvance": true, "phases": [ /* 全量 */ ] } }' | jq .
 ```
-> 增量绑字段优先 §2；PUT 用于过渡期写 `phases`（票 07 AC5 前）与写 `autoAdvance`（spec-field 无此键；缺省=默认开，仅显式 `false` 让每个 phase 停在人工 gate）。缺 If-Match → 428；冲突 → 409。
+> 增量绑字段优先 §2（`phases` 走 spec-field 整数组替换）；PUT 主要用于写 `autoAdvance`（spec-field 无此键；缺省=默认开，仅显式 `false` 让每个 phase 停在人工 gate）与多字段一次性整-spec 保存。缺 If-Match → 428；冲突 → 409。v4 创建锁：PUT 不得去 `format` 旗标、省略 `phases` 时 server 保留现值。
 
 ### 4. 入队（confirm gate）——**用户**点 [入队] 才触发
 
@@ -247,6 +247,19 @@ curl -s "http://localhost:$PORT/api/tasks/$TASK_ID" | jq .    # 详情（v4 含 
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/abort" | jq .   # → aborted + ws 清理（产物已 collect 的在 home）
 ```
 > 验收/打回（`POST /:id/acceptance`）、触发（`POST /:id/trigger`）、归档重试（`POST /:id/archive/retry`）是**人的看板动作**，不是你的——你只负责把任务推到可入队状态。
+
+### 6. 批次文件读写（home-file — 主要服务看板 UI 的 phase spec 审阅/编辑）
+
+```bash
+# 读某 phase 的 spec.md（`.scratch/**.md`，相对 task home）
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/home-file?path=.scratch/20260903/scaffold-1/spec.md" | jq -r .content
+# 写/覆写（父目录自动建；用于看板「创建骨架」；agent 常态直接以 cwd=home 用 Write/Bash 落 .scratch/）
+curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
+  -H "Content-Type: application/json" \
+  -d '{ "path": ".scratch/20260903/scaffold-1/spec.md", "content": "# Phase 1\n" }' | jq .
+```
+- 守卫：路径必须 `.scratch/` 前缀 + `.md` 后缀、home 相对不逃逸（否则 403）；缺文件读 → 404；任务非可编辑窗口写 → 409；`content ≤ 512_000` 字符。**不写 tasks.version**（文件非行）。
+- **用户经看板 UI 手改 spec.md 会落 `@@spec_updated` 通知**，你下一轮感知——写该 phase spec 前先重读盘（勿拿旧草稿覆盖用户手改）。
 
 ## 拆分确认 gate 与 per-phase 工作流绑定
 
@@ -314,7 +327,8 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 
 | HTTP | 含义 | 处理 |
 |------|------|------|
-| 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）| 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
-| 404 | task 不存在 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1） |
-| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`） | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值） |
+| 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）/ home-file content 超限 | 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
+| 403 | home-file 路径不合规（非 `.scratch/**.md`、绝对路径、逃逸）| 见 §6，路径改 home 相对且落 `.scratch/` |
+| 404 | task 不存在 / home-file 读缺文件 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1）；spec.md 缺=还没产出 |
+| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值） |
 | 428 | PUT 缺 If-Match | 补 `If-Match: <version>` |

@@ -160,7 +160,7 @@ test.afterAll(async () => {
 
 // ── AC1: 新建 coding 任务全程无技能组/preset 控件 ───────────────────
 
-test("AC1 coding template picker renders no skill-group checkboxes and no preset section", async ({ page }) => {
+test("AC1 template picker is v4-only: no type cards, no skill groups, codebase section restored", async ({ page }) => {
   test.skip(!serverAvailable, "server not available")
   await page.goto("/tasks")
   await page.waitForLoadState("domcontentloaded")
@@ -168,15 +168,13 @@ test("AC1 coding template picker renders no skill-group checkboxes and no preset
   const dialog = page.getByRole("dialog")
   await expect(dialog).toBeVisible()
 
-  // coding 为默认类型：直通 task-author，无任何勾选/预选控件。
+  // v4-only（契约修复改版）：coding/generic 类型卡与 skill 组勾选整体退役；
+  // codebase 段（org+projects 预选）恢复 —— 创建期落 project_ids。
   await expect(dialog.locator("[data-template-picker]")).toBeVisible()
   await expect(dialog.locator("[data-skill-group]")).toHaveCount(0)
   await expect(dialog.getByText("Skill 组")).toHaveCount(0)
-  await expect(dialog.getByText(/codebase/)).toHaveCount(0)
-
-  // generic 保留现状：勾选段回来（组内容取决于注册表，只断言段存在）。
-  await dialog.getByRole("button", { name: /通用任务/ }).click()
-  await expect(dialog.locator("[data-skill-groups-section]")).toBeVisible()
+  await expect(dialog.getByRole("button", { name: /通用任务/ })).toHaveCount(0)
+  await expect(dialog.getByText(/codebase/)).toBeVisible()
 
   await page.screenshot({ path: screenshotPath("T11-AC1-coding-direct.png") })
 })
@@ -223,7 +221,8 @@ test("AC3 phase timeline shows one row per phase; v3 legacy card shows single ro
   const dialog = page.getByRole("dialog")
   await expect(dialog.locator("[data-testid='phase-timeline']")).toBeVisible()
   await expect(dialog.locator("[data-testid^='phase-row-']")).toHaveCount(3)
-  await expect(dialog.getByText("票11阶段1")).toBeVisible()
+  // 限定到时间线行（概要卡的 Phase 计划列表也含 phase 名 — v4-only 改版）。
+  await expect(dialog.getByTestId("phase-row-1").getByText("票11阶段1")).toBeVisible()
   await expect(dialog.getByText("未开始")).toHaveCount(3)
   await page.screenshot({ path: screenshotPath("T11-AC3-timeline-3phases.png") })
   await page.keyboard.press("Escape")

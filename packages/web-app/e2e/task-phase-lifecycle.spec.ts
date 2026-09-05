@@ -286,6 +286,8 @@ function writeArchiveInputs(): void {
 }
 function bindReposToIndex(repoA: { clone: string }, repoB: { clone: string }): void {
   reposIndexBefore = fs.existsSync(REPOS_INDEX) ? fs.readFileSync(REPOS_INDEX, "utf-8") : ""
+  // repos/ 目录可能被上一轮 cleanup 删掉（首次跑也不存在）→ 写前建父目录。
+  fs.mkdirSync(path.dirname(REPOS_INDEX), { recursive: true })
   fs.writeFileSync(
     REPOS_INDEX,
     `${reposIndexBefore}\n### ${PROJ_A}\n- local: ${repoA.clone} ✓ cloned\n\n### ${PROJ_B}\n- local: ${repoB.clone} ✓ cloned\n`,
@@ -344,7 +346,7 @@ async function sweep(): Promise<void> {
       }
     } finally { db.close() }
   })
-  inTry("restore repos index", () => fs.writeFileSync(REPOS_INDEX, reposIndexBefore))
+  inTry("restore repos index", () => { fs.mkdirSync(path.dirname(REPOS_INDEX), { recursive: true }); fs.writeFileSync(REPOS_INDEX, reposIndexBefore) })
   inTry("rm git fixture", () => fs.rmSync(FIX_ROOT, { recursive: true, force: true }))
   inTry("rm task home", () => { if (taskId) fs.rmSync(HOME_DIR(), { recursive: true, force: true }) })
   // 孤儿登记：账本 trigger 挡 DELETE（票 11 先例）—— 只计数入报告。

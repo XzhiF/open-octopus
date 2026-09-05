@@ -1,18 +1,18 @@
 // packages/web-app/components/tasks/task-modal.tsx
 //
 // TaskModal — the unified task modal for the first-class `tasks` domain
-// (v2-D1, SG14 — reads `Task`, NOT `SchedulerJob`). One modal, five modes:
-// authoring (draft) / simple-execution / composite / done / terminal. The
-// authoring spec↔agent linkage (SpecPanel) lives in spec-panel.tsx; the
-// composite DAG / events panel (ticket 11 will replace the drill-down viewer)
-// is minimally type-adapted here to read `Task` + `TaskDetail.children`.
+// (v2-D1, SG14 — reads `Task`, NOT `SchedulerJob`). One modal, modes:
+// authoring-template ([+新建] 模板页) / authoring-workspace (draft 对话创作) /
+// simple-execution / composite / done / terminal. v4-only UI 改版后旧的
+// SpecPanel-based AuthoringMode 与其 re-export 已删除；创作走
+// AuthoringWorkspace（task-author 对话 + v4 产出面板）。
 //
 // router.push retarget (SG15): child drill-down →
 // `/tasks/:taskId/children/:scheduleId` (was `/scheduler/jobs/:id`).
 
 "use client"
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import {
   Dialog, DialogContent, DialogHeader, DialogDescription,
 } from "@/components/ui/dialog"
@@ -23,11 +23,11 @@ import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
-import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2 } from "lucide-react"
+import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
-  listTasks, getTask, readyTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
+  getTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
 import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
@@ -36,19 +36,12 @@ import { useRouter } from "next/navigation"
 import { computeAggregateStatus } from "@/lib/composite-status"
 import { CompositeDag } from "@/components/tasks/composite-dag"
 import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/composite-events-panel"
-import { SpecPanel, ResourcePicker } from "./spec-panel"
-import { useAgentChat } from "@/hooks/useAgentChat"
-import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
 import { EditableTitle } from "./editable-title"
 import { TaskRunDetailView } from "./execution-summary"
 import { createTask } from "@/lib/tasks-api"
-
-// Re-export the authoring pieces so callers can import everything from the
-// modal entrypoint (the SpecPanel test imports from here).
-export { SpecPanel, ResourcePicker }
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -65,9 +58,8 @@ interface TaskModalProps {
 }
 
 type ModalMode =
-  | "authoring"
-  | "authoring-v3-template"
-  | "authoring-v3-workspace"
+  | "authoring-template"
+  | "authoring-workspace"
   | "simple-execution"
   | "composite"
   | "done"
@@ -89,16 +81,13 @@ function isComposite(task: Task | null): boolean {
 }
 
 function resolveMode(task: Task | null): ModalMode {
-  if (task === null) return "authoring-v3-template"
+  if (task === null) return "authoring-template"
   if (task.status === "draft") {
-    // bugfix 2026-08-19: ALL drafts open the v3 AuthoringWorkspace. Legacy/v2
-    // drafts (no task_type — created before the two-phase flow) previously
-    // fell back to the old SpecPanel-based AuthoringMode, which users read as
-    // "the pre-iteration UI". The workspace degrades gracefully for them
-    // (task_type ?? "generic", skill_groups ?? [], lazy chat session on first
-    // send). AuthoringMode below is now unreachable dead-weight kept only so
-    // the SpecPanel-based unit tests keep their import surface.
-    return "authoring-v3-workspace"
+    // ALL drafts open the AuthoringWorkspace (chat + v4 产出面板)。v4-only UI
+    // 后不再有旧的 SpecPanel-based AuthoringMode（已随契约修复退役）；万一遇到
+    // 历史非 v4 draft（清库后理论不存在），workspace 降级显示、入队由 server
+    // 409 兜底。
+    return "authoring-workspace"
   }
   if (task.status === "ready" || task.status === "running") {
     return isComposite(task) ? "composite" : "simple-execution"
@@ -190,18 +179,15 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             onMutated={onMutated}
           />
           <div className="flex-1 min-h-0 overflow-hidden">
-            {mode === "authoring-v3-template" && (
+            {mode === "authoring-template" && (
               <TemplatePickerMode
                 onDraftResolved={onDraftResolved ?? (() => {})}
                 onMutated={onMutated}
                 onClose={() => onOpenChange(false)}
               />
             )}
-            {mode === "authoring-v3-workspace" && task && (
+            {mode === "authoring-workspace" && task && (
               <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
-            )}
-            {mode === "authoring" && (
-              <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
             )}
             {mode === "simple-execution" && task && (
               <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
@@ -246,14 +232,14 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
   const status = task?.status ?? "draft"
   const isDraft = status === "draft"
   const subtitle =
-    mode === "authoring"
-      ? "Authoring · spec 左 / 对话 右"
-      : mode === "composite"
-        ? "复合任务"
-        : mode === "done"
-          ? "结果"
-          : mode === "terminal"
-            ? "终态"
+    mode === "composite"
+      ? "复合任务"
+      : mode === "done"
+        ? "结果"
+        : mode === "terminal"
+          ? "终态"
+          : mode === "authoring-template" || mode === "authoring-workspace"
+            ? "创作"
             : "执行"
   return (
     <DialogHeader className="px-5 py-3 border-b border-border flex-row items-center justify-between space-y-0">
@@ -291,15 +277,16 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
   )
 }
 
-// ── v3 Authoring: template picker → AuthoringWorkspace (two-phase) ────
+// ── Authoring: template picker → AuthoringWorkspace (v4 two-phase) ────
 
-/** Phase 1 of the v3 two-phase flow (ticket 09, D15). Renders the
- *  TemplatePicker; on 开始编写, runs the D15 create sequence:
+/** Phase 1 of the v4 flow (D15 会话优先 + 契约修复直建). Renders the
+ *  TemplatePicker; on 开始编写, runs the create sequence:
  *    1. POST /api/clones/task-author/sessions  (session FIRST — autosave/
  *       spec-field/SSE all resolve via source_chat_session_id)
- *    2. POST /api/tasks {source_chat_session_id, task_type, skill_groups,
- *       preset{org,projects}} → creates the draft + home + materializes the
- *       plugin dir.
+ *    2. POST /api/tasks {source_chat_session_id, task_spec:{format:"v4"},
+ *       project_ids} → 直建 v4 draft + home + spec.json 快照（flag 即刻生效，
+ *       不再产生 v3 壳、不再等对话中 PUT 翻面）。无 task_type/skill_groups —
+ *       matt 技能族随 clone 自动就位（票 09/K15）。
  *  On success, `onDraftResolved(task)` adopts the draft so the parent
  *  re-renders with task set → resolveMode routes to AuthoringWorkspace. */
 function TemplatePickerMode({
@@ -311,22 +298,17 @@ function TemplatePickerMode({
 }) {
   const [busy, setBusy] = useState(false)
 
-  const handleCreate = async (value: {
-    task_type: "coding" | "generic"
-    skill_groups: string[]
-    preset: { org?: string; projects: string[] }
-  }) => {
+  const handleCreate = async (value: { org?: string; projects: string[] }) => {
     setBusy(true)
     try {
       // D15 step 1: create the chat session FIRST.
       const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
-      // D15 step 2: POST the task with the session id + v3 fields.
+      // D15 step 2 + 契约修复: POST 直建 v4（spec 旗标即刻落地）。
       const task = await createTask({
-        org: value.preset.org ?? "default",
+        org: value.org ?? "default",
         source_chat_session_id: session.id,
-        task_type: value.task_type,
-        skill_groups: value.skill_groups,
-        preset: value.preset,
+        task_spec: { format: "v4" },
+        project_ids: value.projects,
       })
       // Adopt the draft → parent re-renders → AuthoringWorkspace (phase 2).
       onDraftResolved(task)
@@ -346,164 +328,9 @@ function TemplatePickerMode({
 }
 
 // ── Authoring: spec LEFT / clone chat RIGHT ──────────────────────────
-
-function AuthoringMode({
-  task, onMutated, onDraftResolved, onClose,
-}: {
-  task: Task | null
-  onMutated: () => void
-  onDraftResolved?: (task: Task) => void
-  onClose: () => void
-}) {
-  const initialSessionId = task?.source_chat_session_id ?? null
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId)
-  const pendingMessageRef = useRef<string | null>(null)
-
-  // Sync activeSessionId when task's source_chat_session_id is set (draft resolved).
-  useEffect(() => {
-    if (task?.source_chat_session_id && task.source_chat_session_id !== activeSessionId) {
-      setActiveSessionId(task.source_chat_session_id)
-    }
-  }, [task?.source_chat_session_id, activeSessionId])
-
-  // API overrides: route through the task-author clone endpoints (05/07 pattern).
-  const apiOverrides = useMemo(() => ({
-    getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
-      agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
-    chatStream: (id: string, msg: string) =>
-      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg),
-    stopChat: (id: string) =>
-      agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
-  }), [])
-
-  const chat = useAgentChat(activeSessionId, { api: apiOverrides })
-
-  const loadedSessionIdsRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    if (!activeSessionId) return
-    if (loadedSessionIdsRef.current.has(activeSessionId)) return
-    loadedSessionIdsRef.current.add(activeSessionId)
-    if (pendingMessageRef.current) return // skip load for new sessions with pending msg
-    chat.loadMessages()
-  }, [activeSessionId, chat])
-
-  const createSession = useCallback(async (): Promise<string | null> => {
-    try {
-      const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
-      setActiveSessionId(session.id)
-      return session.id
-    } catch {
-      return null
-    }
-  }, [])
-
-  // New-task flow: after a turn, look up the draft the autosave seam (04)
-  // created server-side (linked via source_chat_session_id). Best-effort —
-  // the page's 10s polling + task_status SSE will also surface it.
-  const resolveDraft = useCallback(async (sid: string) => {
-    if (!sid || task) return
-    try {
-      const data = await listTasks({ status: "draft" })
-      const draft = data.items
-        .filter((t) => t.source_chat_session_id === sid && t.status === "draft")
-        .sort((a, b) => (b.created_at > a.created_at ? 1 : -1))[0]
-      if (draft) onDraftResolved?.(draft)
-    } catch {
-      // refetch will happen via onMutated elsewhere
-    }
-  }, [task, onDraftResolved])
-
-  const handleSend = useCallback((message: string) => {
-    if (activeSessionId) {
-      chat.sendMessage(message)
-      void resolveDraft(activeSessionId)
-    } else {
-      pendingMessageRef.current = message
-      void createSession()
-    }
-  }, [activeSessionId, chat, createSession, resolveDraft])
-
-  useEffect(() => {
-    if (activeSessionId && pendingMessageRef.current) {
-      const msg = pendingMessageRef.current
-      pendingMessageRef.current = null
-      requestAnimationFrame(() => {
-        chat.sendMessage(msg)
-        void resolveDraft(activeSessionId)
-      })
-    }
-  }, [activeSessionId, chat, resolveDraft])
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 h-full min-h-0">
-      <div className="flex flex-col min-h-0 border-r border-border overflow-y-auto">
-        <SpecPanel task={task} onMutated={onMutated} />
-      </div>
-      <div className="flex flex-col min-h-0">
-        <ChatArea
-          messages={chat.messages}
-          streaming={chat.streaming}
-          streamContent={chat.streamContent}
-          streamThinking={chat.streamThinking}
-          streamTimeline={chat.streamTimeline}
-          isThinking={chat.isThinking}
-          toolCalls={chat.toolCalls}
-          pendingConfirm={chat.pendingConfirm}
-          error={chat.error}
-          statusMessage={chat.statusMessage}
-          onSend={handleSend}
-          onStop={chat.stopGenerate}
-          onConfirm={chat.handleConfirm}
-          hasSession={!!activeSessionId}
-          currentCloneName={TASK_AUTHOR_CLONE}
-          hideEmptyState
-        />
-      </div>
-      <AuthoringFooter task={task} onEnqueue={onMutated} onClose={onClose} />
-    </div>
-  )
-}
-
-function AuthoringFooter({
-  task, onEnqueue, onClose,
-}: {
-  task: Task | null
-  onEnqueue: () => Promise<void> | void
-  onClose: () => void
-}) {
-  const [busy, setBusy] = useState(false)
-  const canEnqueue = !!task && task.status === "draft"
-
-  const handleEnqueue = async () => {
-    if (!task) return
-    setBusy(true)
-    try {
-      // [入队] = draft→ready (confirm gate, v1 D13) + dispatch seam (server
-      // creates the schedules envelope: simple=1 primary; composite=1 coordinator).
-      await readyTask(task.id)
-      toast.success("已入队，等待手动触发")
-      onEnqueue()
-      onClose()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "入队失败")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="col-span-full flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
-      <span className="mr-auto text-xs text-muted-foreground">
-        {task ? "确认 spec 后入队执行（[保存草稿] 在 spec 面板）" : "先与 task-author 对话生成 spec"}
-      </span>
-      <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-      <Button size="sm" onClick={handleEnqueue} disabled={!canEnqueue || busy} data-task-enqueue>
-        {busy ? <Spinner className="size-4" /> : <Send className="size-4" />}
-        入队
-      </Button>
-    </div>
-  )
-}
+// (旧 AuthoringMode/AuthoringFooter — SpecPanel 左 + 自带旁路入队清单的 v2 面 —
+//  自 bugfix 2026-08-19 起对全部 draft 不可达；v4-only UI 改版随契约修复删除。
+//  创作一律走 AuthoringWorkspace：task-author 对话 + v4 产出面板。)
 
 // ── Simple execution: full info body + trigger/abort footer ─────────
 

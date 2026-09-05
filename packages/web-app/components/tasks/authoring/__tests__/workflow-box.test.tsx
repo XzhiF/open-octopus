@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { WorkflowBox } from "../workflow-box"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
-import { updateTask, getTask, getWorkflowRefView, WorkflowRefViewError } from "@/lib/tasks-api"
+import { updateTask, getTask } from "@/lib/tasks-api"
 import {
   listBuiltInWorkflows,
   getBuiltInWorkflowDetail,
@@ -22,19 +22,22 @@ if (!globalThis.ResizeObserver) {
 
 // Mock the API modules
 vi.mock("@/lib/tasks-api", () => {
-  class WorkflowRefViewError extends Error {
+  class TaskApiError extends Error {
     status: number
     constructor(message: string, status: number) {
       super(message)
-      this.name = "WorkflowRefViewError"
+      this.name = "TaskApiError"
       this.status = status
     }
   }
   return {
     updateTask: vi.fn().mockResolvedValue({ id: "test-task", version: 2 }),
     getTask: vi.fn(),
-    getWorkflowRefView: vi.fn().mockResolvedValue({ ref: null, content: null, source: null }),
-    WorkflowRefViewError,
+    // PhaseSpecDialog（home-file 审阅/编辑面）依赖 — 本文件只测列表，弹窗
+    // 自身的用例在 phase-spec-dialog.test.tsx。
+    getHomeFile: vi.fn().mockRejectedValue(new TaskApiError("not found", 404)),
+    putHomeFile: vi.fn().mockResolvedValue({ path: "", bytes: 0 }),
+    TaskApiError,
   }
 })
 
@@ -95,8 +98,8 @@ function makePhase(i: number, overrides: Partial<TaskPhase> = {}): TaskPhase {
   } as TaskPhase
 }
 
-function v4Task(phases: TaskPhase[]): Task {
-  return makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec })
+function v4Task(phases: TaskPhase[], status: Task["status"] = "draft"): Task {
+  return makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec, status })
 }
 
 const TASK_DEV: BuiltInWorkflowSummary = {
@@ -134,171 +137,9 @@ function inputEl(name: string): HTMLInputElement | null {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(getWorkflowRefView).mockResolvedValue({ ref: null, content: null, source: null })
 })
 
-describe("WorkflowBox — v3 单卡（票 12 重写：built-in 目录 / preset 退役）", () => {
-  it("renders 未绑定 when no workflow_ref", () => {
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    expect(screen.getByText("未绑定")).toBeTruthy()
-    expect(screen.getByText("绑定工作流")).toBeTruthy()
-  })
-
-  it("renders workflow_ref badge + 更换工作流 when bound", () => {
-    render(<WorkflowBox task={makeTask({ workflow_ref: "built-in/test-flow" })} onMutated={() => {}} />)
-    expect(q('[data-workflow-ref-badge]')!.textContent).toBe("built-in/test-flow")
-    expect(screen.getByText("更换工作流")).toBeTruthy()
-  })
-
-  it("renders input value chips when input_values present (bound)", () => {
-    render(
-      <WorkflowBox
-        task={makeTask({
-          workflow_ref: "built-in/task-dev",
-          task_spec: { input_values: { idea: "hello world" } },
-        })}
-        onMutated={() => {}}
-      />,
-    )
-    expect(screen.getByText(/idea:/)).toBeTruthy()
-  })
-
-  it("has data-workflow-box attribute", () => {
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    expect(q("[data-workflow-box]")).toBeTruthy()
-  })
-
-  it("S6: preset recommendation section is retired — no data-preset-item and no listWorkflowPresets import", async () => {
-    const user = userEvent.setup()
-    mockCatalog()
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    expect(q("[data-preset-item]")).toBeNull()
-    expect(screen.queryByText("推荐")).toBeNull()
-  })
-
-  it("S2/AC4: dialog open fetches the built-in list EXACTLY once; rapid selections + search do not refetch", async () => {
-    const user = userEvent.setup()
-    mockCatalog()
-    const { rerender } = render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    expect(listBuiltInWorkflows).toHaveBeenCalledTimes(1)
-
-    // 快速点选 3 个工作流 — 列表不清不闪（items 恒在），零次重取
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
-    expect(listBuiltInWorkflows).toHaveBeenCalledTimes(1)
-
-    // 搜索过滤同样零重取
-    await user.type(q("[data-binding-search]")!, "fix")
-    expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
-    expect(q('[data-workflow-item="built-in/task-dev"]')).toBeNull()
-    expect(listBuiltInWorkflows).toHaveBeenCalledTimes(1)
-
-    // task prop 更新（10s 轮询换引用）不触发重取 —— 旧版 skill_groups 引用不稳的病根
-    rerender(<WorkflowBox task={makeTask({ version: 2 })} onMutated={() => {}} />)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy())
-    expect(listBuiltInWorkflows).toHaveBeenCalledTimes(1)
-  })
-
-  it("inputs form renders from the catalog summary (default shown, untouched default not persisted)", async () => {
-    const user = userEvent.setup()
-    mockCatalog()
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-
-    await waitFor(() => expect(inputEl("max_turns")).toBeTruthy())
-    expect(inputEl("max_turns")!.value).toBe("200") // YAML default shown
-    expect(inputEl("idea")!.value).toBe("")
-
-    await user.type(inputEl("idea")!, "hello")
-    await user.click(q("[data-bind-save-button]")!)
-    await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
-
-    const [id, input] = vi.mocked(updateTask).mock.calls[0]
-    expect(id).toBe("test-task")
-    expect(input.workflow_ref).toBe("built-in/task-dev")
-    // 未触碰的 default 不落库；编辑值落库
-    expect((input.task_spec as TaskSpec).input_values).toEqual({ idea: "hello" })
-  })
-
-  it("S5: save re-fetches the task version (not the open-time snapshot) and PUTs with it", async () => {
-    const user = userEvent.setup()
-    mockCatalog()
-    // 开窗快照 version=1；重取后 server 已是 9
-    render(<WorkflowBox task={makeTask({ version: 1 })} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
-    await user.type(inputEl("feedback_path")!, "batch/fix.md")
-    await user.click(q("[data-bind-save-button]")!)
-    await waitFor(() => expect(getTask).toHaveBeenCalledWith("test-task"))
-    await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
-    const [, , version] = vi.mocked(updateTask).mock.calls[0]
-    expect(version).toBe(9) // fresh version, NOT the snapshot 1
-  })
-
-  it("manual switch between workflows clears previously filled values", async () => {
-    const user = userEvent.setup()
-    mockCatalog()
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    await user.type(inputEl("idea")!, "typed")
-    await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
-    await waitFor(() => {
-      expect(inputEl("idea")).toBeNull()
-      expect(inputEl("feedback_path")!.value).toBe("")
-    })
-  })
-
-  it("save failure surfaces a toast (no silent swallow)", async () => {
-    const { toast } = await import("sonner")
-    const user = userEvent.setup()
-    mockCatalog()
-    vi.mocked(updateTask).mockRejectedValueOnce(new Error("Task version conflict (stale write)"))
-    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
-    await user.click(screen.getByRole("button", { name: "绑定工作流" }))
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    await user.type(inputEl("idea")!, "x")
-    await user.click(q("[data-bind-save-button]")!)
-    await waitFor(() =>
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("绑定失败: Task version conflict (stale write)"),
-    )
-  })
-
-  it("click-to-view still opens the YAML viewer for the bound ref", async () => {
-    const user = userEvent.setup()
-    vi.mocked(getWorkflowRefView).mockResolvedValue({
-      ref: "built-in/task-dev", content: "name: task-dev\nnodes:\n  - id: develop\n", source: "builtin",
-    })
-    render(<WorkflowBox task={makeTask({ workflow_ref: "built-in/task-dev" })} onMutated={() => {}} />)
-    await user.click(q("[data-workflow-view-button]")!)
-    await waitFor(() => expect(q("[data-workflow-content]")).toBeTruthy())
-    expect(getWorkflowRefView).toHaveBeenCalledWith("test-task")
-  })
-
-  it("viewer dialog shows degraded hint when the bound ref is no longer resolvable (400)", async () => {
-    const user = userEvent.setup()
-    vi.mocked(getWorkflowRefView).mockRejectedValue(
-      new WorkflowRefViewError("workflow not resolvable: 'built-in/gone'", 400),
-    )
-    render(<WorkflowBox task={makeTask({ workflow_ref: "built-in/gone" })} onMutated={() => {}} />)
-    await user.click(q("[data-workflow-view-button]")!)
-    await waitFor(() => expect(q("[data-workflow-degraded]")).toBeTruthy())
-    expect(q("[data-workflow-degraded]")!.textContent).toContain("绑定的工作流已不存在")
-  })
-})
-
-describe("WorkflowBox — v4 per-phase 绑定卡列表（票 12 D）", () => {
+describe("WorkflowBox — v4 PhaseListEditor 渲染（票 12 D + 契约修复改版）", () => {
   it("renders one card per phase with its workflow_ref / 未绑定 marker", () => {
     render(
       <WorkflowBox
@@ -316,9 +157,75 @@ describe("WorkflowBox — v4 per-phase 绑定卡列表（票 12 D）", () => {
     expect(q('[data-phase-unbound="2"]')).toBeTruthy()
   })
 
-  it("empty phases → 拆分确认 empty state", () => {
+  it("empty phases → empty state + 仅 draft 的添加表单在场", async () => {
+    mockCatalog()
     render(<WorkflowBox task={v4Task([])} onMutated={() => {}} />)
     expect(q("[data-phase-bind-empty]")).toBeTruthy()
+    await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
+  })
+
+  it("ready 任务：只读 + 换绑定仍在，但无添加表单/删除/移动（结构编辑窗关闭）", async () => {
+    mockCatalog()
+    render(<WorkflowBox task={v4Task([makePhase(1), makePhase(2)], "ready")} onMutated={() => {}} />)
+    await waitFor(() => expect(q('[data-phase-bind-button="1"]')).toBeTruthy())
+    expect(q("[data-phase-add-form]")).toBeNull()
+    expect(q('[data-phase-delete-button="1"]')).toBeNull()
+    expect(q('[data-phase-move-up="2"]')).toBeNull()
+    // 换绑定仍可用
+    expect(q('[data-phase-bind-button="1"]')).toBeTruthy()
+  })
+})
+
+describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）", () => {
+  it("S2/AC4: dialog open fetches the built-in list EXACTLY once; selections + search do not refetch", async () => {
+    const user = userEvent.setup()
+    mockCatalog()
+    // AddPhaseRow（draft 常驻）挂载时自取一次目录做 workflow 下拉 — AC-20 的
+    // 「开窗恰一次」以开窗时刻为基线计增量。
+    const baseCount = vi.mocked(listBuiltInWorkflows).mock.calls.length
+    const { rerender } = render(<WorkflowBox task={v4Task([makePhase(1, { workflowRef: "" as TaskPhase["workflowRef"] })])} onMutated={() => {}} />)
+    await waitFor(() => expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(baseCount + 1))
+    await user.click(q('[data-phase-bind-button="1"]')!)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
+    const opened = vi.mocked(listBuiltInWorkflows).mock.calls.length
+    expect(opened - baseCount).toBe(2) // 一次=AddPhaseRow 挂载取下拉数据，一次=开窗目录
+
+    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
+    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
+    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
+
+    await user.type(q("[data-binding-search]")!, "fix")
+    expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
+    expect(q('[data-workflow-item="built-in/task-dev"]')).toBeNull()
+    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
+
+    rerender(<WorkflowBox task={v4Task([makePhase(1)], "draft")} onMutated={() => {}} />)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy())
+    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
+  })
+
+  it("inputs form renders from the catalog summary (default shown, untouched default not persisted)", async () => {
+    const user = userEvent.setup()
+    mockCatalog()
+    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    await user.click(q('[data-phase-bind-button="1"]')!)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
+    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+
+    await waitFor(() => expect(inputEl("max_turns")).toBeTruthy())
+    expect(inputEl("max_turns")!.value).toBe("200") // YAML default shown
+    expect(inputEl("idea")!.value).toBe("")
+
+    await user.type(inputEl("idea")!, "hello")
+    await user.click(q("[data-bind-save-button]")!)
+    await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
+
+    const [, input] = vi.mocked(updateTask).mock.calls[0]
+    const sent = (input.task_spec as TaskSpec).phases!
+    expect(sent[0].inputValues).toEqual({ idea: "hello" }) // 未触碰 default 不落库
+    expect(input.workflow_ref).toBeUndefined() // v4 不碰任务级 workflow_ref
   })
 
   it("phase binding writes the WHOLE phases array via PUT (target replaced, others verbatim)", async () => {
@@ -345,7 +252,6 @@ describe("WorkflowBox — v4 per-phase 绑定卡列表（票 12 D）", () => {
     expect(sent[1].inputValues).toEqual({
       feedback_path: "./.scratch/20260903/slug-1/fix-feedback-r1.md",
     })
-    // v4 写回不碰任务级 workflow_ref
     expect(input.workflow_ref).toBeUndefined()
   })
 
@@ -355,7 +261,6 @@ describe("WorkflowBox — v4 per-phase 绑定卡列表（票 12 D）", () => {
     mockCatalog()
     render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
     await user.click(q('[data-phase-bind-button="1"]')!)
-    // selectedRef 预填 → 输入表单直接可见，无需再点列表项
     await waitFor(() => expect(inputEl("idea")).toBeTruthy())
     expect(inputEl("idea")!.value).toBe("keep me")
   })
@@ -382,4 +287,151 @@ describe("WorkflowBox — v4 per-phase 绑定卡列表（票 12 D）", () => {
     expect(sent).toHaveLength(2) // fresh array wins — 新 phase2 不被旧快照覆盖
     expect(sent[1].index).toBe(2)
   })
+
+  it("save failure surfaces a toast (no silent swallow)", async () => {
+    const { toast } = await import("sonner")
+    const user = userEvent.setup()
+    mockCatalog()
+    vi.mocked(updateTask).mockRejectedValueOnce(new Error("Task version conflict (stale write)"))
+    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    await user.click(q('[data-phase-bind-button="1"]')!)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
+    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    await user.type(inputEl("idea")!, "x")
+    await user.click(q("[data-bind-save-button]")!)
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("绑定失败: Task version conflict (stale write)"),
+    )
+  })
 })
+
+describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 draft，整数组 PUT + 重取 version）", () => {
+  it("add phase: name+auto-slug+目录首个 workflow → PUT 追加并位次重排，specPath 走 ./.scratch/<date>/<slug>/spec.md 约定", async () => {
+    const user = userEvent.setup()
+    const phases = [makePhase(1)]
+    mockCatalog()
+    vi.mocked(getTask).mockResolvedValue(
+      makeTask({ version: 5, task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
+    )
+    render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
+
+    await user.type(q("[data-phase-add-name]")!, "验收收尾")
+    fireEventChange(q("[data-phase-add-slug]")!, "wrap-up")
+    fireEventClick(q("[data-phase-add-submit]")!)
+
+    await waitFor(() => expect(updateTask).toHaveBeenCalledOnce())
+    const [id, input, version] = vi.mocked(updateTask).mock.calls[0]
+    expect(id).toBe("test-task")
+    expect(version).toBe(5) // S5 重取
+    const sent = (input.task_spec as TaskSpec).phases!
+    expect(sent).toHaveLength(2)
+    expect(sent[1].name).toBe("验收收尾")
+    expect(sent[1].slug).toBe("wrap-up")
+    expect(sent[1].workflowRef).toBe("built-in/task-dev") // 目录默认（matt-dev-pipeline 不在 mock 目录 → 首项）
+    expect(sent[1].inputValues).toEqual({})
+    expect(sent[1].specPath).toMatch(/^\.\/\.scratch\/\d{8}\/wrap-up\/spec\.md$/)
+    expect(sent.map((p) => p.index)).toEqual([1, 2])
+  })
+
+  it("add phase: slug 重名 → 报错不写回", async () => {
+    const user = userEvent.setup()
+    const phases = [makePhase(1)]
+    mockCatalog()
+    vi.mocked(getTask).mockResolvedValue(
+      makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
+    )
+    render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
+    await user.type(q("[data-phase-add-name]")!, "dup")
+    fireEventChange(q("[data-phase-add-slug]")!, "slug-1")
+    fireEventClick(q("[data-phase-add-submit]")!)
+    await waitFor(() => expect(q('[data-phase-bind-card="1"]')).toBeTruthy())
+    // 重名检查发生在 fresh 数组上：没有 updateTask 调用（或调用失败被 toast）
+    expect(vi.mocked(updateTask)).not.toHaveBeenCalled()
+  })
+
+  it("move down: phase1↔2 位次交换 + index 重排 + fresh version PUT", async () => {
+    const phases = [makePhase(1), makePhase(2)]
+    mockCatalog()
+    vi.mocked(getTask).mockResolvedValue(
+      makeTask({ version: 3, task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
+    )
+    render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    fireEventClick(q('[data-phase-move-down="1"]')!)
+    await waitFor(() => expect(updateTask).toHaveBeenCalledOnce())
+    const [, input, version] = vi.mocked(updateTask).mock.calls[0]
+    expect(version).toBe(3)
+    const sent = (input.task_spec as TaskSpec).phases!
+    expect(sent.map((p) => p.slug)).toEqual(["slug-2", "slug-1"])
+    expect(sent.map((p) => p.index)).toEqual([1, 2]) // renumber 按位次
+  })
+
+  it("delete: 确认弹窗 → 过滤 + 重排", async () => {
+    const phases = [makePhase(1), makePhase(2)]
+    mockCatalog()
+    vi.mocked(getTask).mockResolvedValue(
+      makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
+    )
+    render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    expect(q('[data-phase-delete-button="1"]')).toBeTruthy()
+
+    fireEventClick(q('[data-phase-delete-button="2"]')!)
+    // AlertDialog 二次确认
+    const confirm = await waitFor(() => screen.getByText("确认删除"))
+    fireEventClick(confirm)
+    await waitFor(() => expect(updateTask).toHaveBeenCalledOnce())
+    const [, input] = vi.mocked(updateTask).mock.calls[0]
+    const sent = (input.task_spec as TaskSpec).phases!
+    expect(sent).toHaveLength(1)
+    expect(sent[0].slug).toBe("slug-1")
+  })
+
+  it("单 phase 行 delete 禁用（schema phases≥1 底线）", async () => {
+    mockCatalog()
+    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    await waitFor(() => expect(q('[data-phase-delete-button="1"]')).toBeTruthy())
+    expect((q('[data-phase-delete-button="1"]') as unknown as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it("inline edit name/slug/specPath → fresh 基底上替换目标行、其余 verbatim", async () => {
+    const phases = [makePhase(1), makePhase(2)]
+    mockCatalog()
+    vi.mocked(getTask).mockResolvedValue(
+      makeTask({ version: 8, task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
+    )
+    render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    fireEventClick(q('[data-phase-edit-button="1"]')!)
+    await waitFor(() => expect(q('[data-phase-name-input="1"]')).toBeTruthy())
+    fireEventChange(q('[data-phase-name-input="1"]')!, "改名后的 Phase1")
+    fireEventChange(q('[data-phase-slug-input="1"]')!, "renamed-1")
+    fireEventChange(q('[data-phase-specpath-input="1"]')!, "./.scratch/20260904/renamed-1/spec.md")
+    fireEventClick(q('[data-phase-edit-save="1"]')!)
+
+    await waitFor(() => expect(updateTask).toHaveBeenCalledOnce())
+    const [, input, version] = vi.mocked(updateTask).mock.calls[0]
+    expect(version).toBe(8)
+    const sent = (input.task_spec as TaskSpec).phases!
+    expect(sent[0]).toMatchObject({
+      index: 1, name: "改名后的 Phase1", slug: "renamed-1",
+      specPath: "./.scratch/20260904/renamed-1/spec.md",
+    })
+    expect(sent[1]).toEqual(phases[1]) // phase2 verbatim
+  })
+
+  it("每行有 spec.md 审阅入口（open PhaseSpecDialog）", async () => {
+    mockCatalog()
+    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    expect(q('[data-phase-spec-button="1"]')).toBeTruthy()
+  })
+})
+
+// 轻量事件助手（避免 userEvent.type 对受控 React input 的逐字符开销）。
+function fireEventChange(el: Element | null, value: string) {
+  if (!el) throw new Error("missing element for change")
+  fireEvent.change(el, { target: { value } })
+}
+function fireEventClick(el: Element | null) {
+  if (!el) throw new Error("missing element for click")
+  fireEvent.click(el)
+}

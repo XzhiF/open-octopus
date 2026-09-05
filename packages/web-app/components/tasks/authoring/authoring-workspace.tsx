@@ -1,22 +1,15 @@
 // packages/web-app/components/tasks/authoring/authoring-workspace.tsx
 //
-// The v3 two-phase-flow authoring page (ticket 09, US3/US6/US14/D11/D12).
-// Rendered inside TaskModal when a v3 draft (task.task_spec.task_type set)
-// is open. Layout (interaction ref: prototype VariantL authoring phase,
-// app/tasks/prototype/page.tsx:3153 — code rewritten):
+// The v4 authoring page (契约修复改版；原 ticket 09 v3 两面收敛为 v4 单面).
+// Rendered inside TaskModal for every draft. Layout:
 //
-//   ┌─ top bar: type badge + 🔒 skill-group badges + codebase popup ──┐
-//   ├─ LEFT (chat): command bar (aggregated /commands) + ChatArea      │
-//   ├─ RIGHT (output viewer): GoalAcCard + enqueue checklist           │
-//   └─ footer: 入队 button (disabled until confirmed; 409 → missing)   ─┘
+//   ┌─ top bar: type badge + codebase popup + 入队执行 ─────────────────┐
+//   ├─ LEFT (chat): assist-trigger bar (MoA) + ChatArea (task-author)    │
+//   ├─ RIGHT (output viewer): PhaseListEditor + OutputViewer + 入队清单  │
+//   └─ 入队清单四行 = server gateV4Phases 同源镜像 + autoAdvance 开关    ─┘
 //
-// D11: the right panel is the OUTPUT VIEWER — no skill-group info there
-// (the command bar above chat already exposes the groups' /commands). Skill
-// groups are LOCKED post-creation (ADR-0012): the top bar shows badges only,
-// no dropdown to change them.
-//
-// The chat half reuses the v2 AuthoringMode's useAgentChat + ChatArea +
-// task-author-clone wiring (task.source_chat_session_id is the bound session).
+// goal/ac 双确认与 GoalAcCard 已随 v4-only UI 退役（server v3 路径保留兜
+// 历史行）；chat 半区复用 task-author clone 会话（task.source_chat_session_id）。
 
 "use client"
 
@@ -41,7 +34,6 @@ import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
-import { GoalAcCard } from "./goal-ac-card"
 import { OutputViewer } from "./output-viewer"
 import { WorkflowBox } from "./workflow-box"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
@@ -56,7 +48,9 @@ export interface AuthoringWorkspaceProps {
 
 export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorkspaceProps) {
   const spec = task.task_spec
-  const taskType = spec.task_type ?? "generic"
+  // v4-only UI (契约修复改版): format 旗标是唯一判别器（看板直建即带；历史无
+  // 旗标 draft 只做降级展示 — 清单不绿、入队由 server 兜底，不专门建分支）。
+  const isV4 = spec.format === "v4"
   const skillGroups = spec.skill_groups ?? []
 
   // ── P2 (review): live spec-field feedback for the v4 right panel ────
@@ -299,18 +293,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     }
   }, [task.id, task.version, presetProjects, onMutated])
 
-  // ── Enqueue gate (AC6/D18): derive from server-side task_spec truth ─
-  // task-phase-redesign 票 12 (K13): v4 = format flag 三处分叉之一（gate/物化/UI）。
+  // ── Enqueue gate (契约修复改版): derive from server-side task_spec truth ─
   // v4 任务的 gate 完全换轨：goal/ac/双确认退役，改判「phases 完备 ∧ 逐 phase
   // spec ∧ 逐 phase 绑定 ∧ inputs 齐」四行（server gateV4Phases 同源，票 04）。
-  const isV4 = spec.format === "v4"
-  const goalConfirmed = !!spec.goal_confirmed
-  const acConfirmed = spec.ac_confirmed ?? []
-  const acItems = spec.ac ?? []
-  const allAcConfirmed = acItems.length > 0 && acItems.every((a) => acConfirmed.includes(a))
-  const goalFilled = !!spec.goal && spec.goal.trim().length > 0
-  const acFilled = acItems.length >= 1
-
+  // isV4 判定在组件顶部（v4-only UI 唯一分叉）。
   // 前端预检与 server gate 同源（消灭「点了才 409」断链）：
   //   ① phases≥1；② 每 phase specPath 非空；③ 每 phase workflowRef 非空；
   //   ④ required inputs 被非空值或 ${...} 占位符覆盖（用 built-in 目录的
@@ -346,9 +332,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown }
   }, [v4Phases, catalog])
 
-  const canEnqueue = isV4
-    ? v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs
-    : goalFilled && acFilled && goalConfirmed && allAcConfirmed
+  // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行四行天然不绿，不崩即可）
+  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
@@ -460,7 +445,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     }
   }
 
-  const typeBadge = taskType === "coding" ? "🛠 开发任务" : "📄 通用任务"
+  const typeBadge = isV4 ? "🛠 开发任务" : "📝 草稿"
 
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-0" data-authoring-workspace>
@@ -472,11 +457,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             <Lock className="size-2.5 mr-0.5" aria-label="锁定" /> {g}
           </Badge>
         ))}
-        {taskType === "coding" && (
-          <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
-            <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
-          </Button>
-        )}
+        {/* codebase 预设恒呈现（v4-only UI：所有任务都有项目语境；非空即锁） */}
+        <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
+          <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
+        </Button>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground">右侧 = 产出 · 有问题对话里让 agent 改</span>
           <Button
@@ -569,93 +553,60 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
         {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
         <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
-          {/* K13: goal/ac 卡 v4 退役（task_spec 顶层 goal/ac 不再是 v4 gate 项），v3 保留 */}
-          {!isV4 && <GoalAcCard task={task} onMutated={onMutated} />}
-
+          {/* PhaseListEditor/绑定卡内部按 v4 format 分叉（goal/ac 卡已随 v4-only UI 退役） */}
           <WorkflowBox task={task} onMutated={onMutated} />
 
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
-          {/* enqueue checklist — v4 = 四行 phase 契约（server gateV4Phases 同源）；
-              v3 = goal/ac/workflow 现状。状态只显；按钮在顶栏。 */}
-          {isV4 ? (
-            <div className="shrink-0 rounded-lg border bg-background px-3 py-2.5 space-y-1" data-enqueue-checklist data-testid="enqueue-checklist-v4">
-              <div className="text-[11px] font-medium mb-0.5">入队清单（v4 phase 契约）</div>
-              {(
-                [
-                  { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
-                  { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: "逐 phase spec（批次目录 spec.md）" },
-                  { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
-                  { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
-                ] as const
-              ).map((row) => {
-                const failed = row.hits.length > 0
-                const good = row.ok && !failed
-                return (
-                  <div key={row.id} className="text-[11px]" data-checklist-v4={row.id} data-testid={`checklist-v4-${row.id}`}>
-                    <span className={good ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500"}>
-                      {good ? "✅" : failed ? "✗" : "⏳"}
-                    </span>{" "}
-                    {row.label}
-                    {failed && (
-                      <ul className="ml-4 list-disc text-[10px] text-red-500">
-                        {row.hits.map((h) => <li key={h}>{h}</li>)}
-                      </ul>
-                    )}
-                  </div>
-                )
-              })}
-              {v4Rows.inputsUnknown && (
-                <p className="text-[10px] text-muted-foreground">
-                  存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
-                </p>
-              )}
-              <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>
-                <label className="flex items-center gap-1.5 cursor-pointer select-none" data-autoadvance-toggle-label>
-                  <input
-                    type="checkbox"
-                    checked={autoOn}
-                    onChange={() => void handleToggleAutoAdvance()}
-                    data-autoadvance-switch data-testid="autoadvance-switch"
-                  />
-                  验收通过后自动开跑下一 Phase（auto_advance）
-                </label>
-                {autoBusy && <Spinner className="size-3" />}
-              </div>
-              {!canEnqueue ? (
-                <p className="text-[10px] text-muted-foreground">四行未齐不可入队 —— 对话里让 agent 补，或在绑定卡逐 phase 配置。</p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="shrink-0 rounded-lg border bg-background px-3 py-2.5" data-enqueue-checklist>
-              <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                <span className="flex items-center gap-1">
-                  <span className={goalConfirmed ? "text-emerald-600" : "text-amber-500"}>
-                    {goalConfirmed ? "✅" : "⏳"}
-                  </span> goal
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className={allAcConfirmed ? "text-emerald-600" : "text-amber-500"}>
-                    {allAcConfirmed ? "✅" : "⏳"}
-                  </span> ac ×{acItems.length}
-                </span>
-                {/* task-workflow-presets (T6): workflow_ref status line */}
-                <span className="flex items-center gap-1" data-checklist-workflow>
-                  <span className={!!task.workflow_ref ? "text-emerald-600" : "text-amber-500"}>
-                    {!!task.workflow_ref ? "✅" : "⏳"}
-                  </span> workflow
-                </span>
-              </div>
-              {gateMissing && gateMissing.length > 0 ? (
-                <div className="mt-1.5 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-[10px] text-red-600" data-gate-missing>
-                  服务端门禁缺失：{gateMissing.join(", ")}
+          {/* enqueue checklist — v4 四行 phase 契约（server gateV4Phases 同源）；
+              非 v4 历史行同样渲染（四行不绿）。状态只显；按钮在顶栏。 */}
+          <div className="shrink-0 rounded-lg border bg-background px-3 py-2.5 space-y-1" data-enqueue-checklist data-testid="enqueue-checklist-v4">
+            <div className="text-[11px] font-medium mb-0.5">入队清单（v4 phase 契约）</div>
+            {(
+              [
+                { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
+                { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: "逐 phase spec（批次目录 spec.md）" },
+                { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
+                { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
+              ] as const
+            ).map((row) => {
+              const failed = row.hits.length > 0
+              const good = row.ok && !failed
+              return (
+                <div key={row.id} className="text-[11px]" data-checklist-v4={row.id} data-testid={`checklist-v4-${row.id}`}>
+                  <span className={good ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500"}>
+                    {good ? "✅" : failed ? "✗" : "⏳"}
+                  </span>{" "}
+                  {row.label}
+                  {failed && (
+                    <ul className="ml-4 list-disc text-[10px] text-red-500">
+                      {row.hits.map((h) => <li key={h}>{h}</li>)}
+                    </ul>
+                  )}
                 </div>
-              ) : null}
-              {!canEnqueue ? (
-                <p className="mt-1.5 text-[10px] text-muted-foreground">请先确认 goal + 全部 ac（顶部「入队执行」按钮）</p>
-              ) : null}
+              )
+            })}
+            {v4Rows.inputsUnknown && (
+              <p className="text-[10px] text-muted-foreground">
+                存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
+              </p>
+            )}
+            <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>
+              <label className="flex items-center gap-1.5 cursor-pointer select-none" data-autoadvance-toggle-label>
+                <input
+                  type="checkbox"
+                  checked={autoOn}
+                  onChange={() => void handleToggleAutoAdvance()}
+                  data-autoadvance-switch data-testid="autoadvance-switch"
+                />
+                验收通过后自动开跑下一 Phase（auto_advance）
+              </label>
+              {autoBusy && <Spinner className="size-3" />}
             </div>
-          )}
+            {!canEnqueue ? (
+              <p className="text-[10px] text-muted-foreground">四行未齐不可入队 —— 对话里让 agent 补，或在右栏 phase 编辑器逐行配置。</p>
+            ) : null}
+          </div>
         </div>
       </div>
 

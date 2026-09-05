@@ -41,6 +41,9 @@ const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
 const CONTEXT_FILENAME = "context.md"
 const SPEC_FILENAME = "spec.json"
+// 契约修复 (v4 batch area): the ONLY subtree of the task home the UI home-file
+// endpoint reads/writes — v4 phase spec.md live here (`.scratch/<date>/<slug>/`).
+const BATCH_AREA_PREFIX = ".scratch"
 
 /** A project reference with name and optional filesystem path. When `path` is
  *  resolved the agent knows where the codebase lives on disk; when unresolved
@@ -704,6 +707,91 @@ export class TaskHomeService {
     }
     const content = fs.readFileSync(resolved, "utf-8")
     return { path: requestedPath, content }
+  }
+
+  // ── Home-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ─────────
+  //
+  // The kanban's PhaseListEditor needs to VIEW and EDIT a phase's spec.md
+  // (`./.scratch/<YYYYMMDD>/<slug>/spec.md`, home-relative — the SKILL batch
+  // convention). readArtifactContent can't serve it: relative paths there
+  // resolve against artifacts/, so a `.scratch/...` path would `..`-escape → 403.
+  // These two methods share its guard idiom (null bytes / resolve+relative
+  // no-escape / ArtifactAccessError FORBIDDEN|NOT_FOUND) but base at the home
+  // root, narrowed to the batch area only:
+  //   • first segment must be `.scratch`  — context.md/spec.json already have
+  //     GET /:id/context, artifacts/ has its own endpoint, skills/ + .claude/
+  //     are system-managed. Nothing legitimately editable lives elsewhere.
+  //   • `.md` suffix (read AND write)     — spec.md/brief.md/issues/*.md are
+  //     all markdown; no executables land through this door.
+  //   • absolute paths rejected outright  — gateV4 accepts absolute specPaths
+  //     (agent direct-writes), but the UI editor only serves home-relative.
+  // Write creates parents (mkdir -p) so a UI-added phase row can seed its spec
+  // skeleton before enqueue; overwrite-style, idempotent (no version column
+  // involved — file content is not the task row).
+
+  /** Guard shared by readHomeFile/writeHomeFile. Returns the resolved absolute
+   *  path, or throws ArtifactAccessError (FORBIDDEN) on any rule violation. */
+  private resolveHomeFile(taskId: string, requestedPath: string): string {
+    if (requestedPath.includes("\0")) {
+      throw new ArtifactAccessError(
+        "home-file path must not contain null bytes",
+        "FORBIDDEN",
+      )
+    }
+    if (path.isAbsolute(requestedPath)) {
+      throw new ArtifactAccessError(
+        `absolute paths are not served by home-file (relative to the task home only): ${requestedPath}`,
+        "FORBIDDEN",
+      )
+    }
+    const home = this.homePath(taskId)
+    const resolved = path.resolve(home, requestedPath)
+    const rel = path.relative(home, resolved)
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new ArtifactAccessError(
+        `path escapes the task home: ${requestedPath}`,
+        "FORBIDDEN",
+      )
+    }
+    // rel uses platform separators; normalize for the segment/suffix checks.
+    const posixRel = rel.split(path.sep).join("/")
+    if (!posixRel.startsWith(`${BATCH_AREA_PREFIX}/`)) {
+      throw new ArtifactAccessError(
+        `path not whitelisted: ${requestedPath} (only ${BATCH_AREA_PREFIX}/** is editable here)`,
+        "FORBIDDEN",
+      )
+    }
+    if (!posixRel.toLowerCase().endsWith(".md")) {
+      throw new ArtifactAccessError(
+        `path not whitelisted: ${requestedPath} (only .md files are editable here)`,
+        "FORBIDDEN",
+      )
+    }
+    return resolved
+  }
+
+  /** Read a `.scratch/**.md` file relative to the task home. NOT_FOUND (404)
+   *  when the whitelisted path is missing — the UI maps that to its "create
+   *  skeleton" empty state. */
+  readHomeFile(taskId: string, requestedPath: string): { path: string; content: string } {
+    const resolved = this.resolveHomeFile(taskId, requestedPath)
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new ArtifactAccessError(
+        `batch file not found: ${requestedPath}`,
+        "NOT_FOUND",
+      )
+    }
+    const content = fs.readFileSync(resolved, "utf-8")
+    return { path: requestedPath, content }
+  }
+
+  /** Write (create or overwrite) a `.scratch/**.md` file under the task home,
+   *  creating parent dirs on the way. Returns the byte count written. */
+  writeHomeFile(taskId: string, requestedPath: string, content: string): { path: string; bytes: number } {
+    const resolved = this.resolveHomeFile(taskId, requestedPath)
+    fs.mkdirSync(path.dirname(resolved), { recursive: true })
+    fs.writeFileSync(resolved, content, "utf-8")
+    return { path: requestedPath, bytes: Buffer.byteLength(content, "utf-8") }
   }
 
   /** Delete the whole task home. Junctions/symlinks inside the tree (the

@@ -103,6 +103,15 @@ const acceptanceBodySchema = z
     }
   })
 
+// 契约修复 (v4 batch spec 编辑面): PUT /:id/home-file body. `content` caps at
+// 512_000 chars (a spec.md/brief.md量级 — generous but bounded; the file guard in
+// the service additionally whitelists `.scratch/**.md`). ZodError → 400 via
+// classifyError.
+const homeFileBodySchema = z.object({
+  path: z.string().min(1),
+  content: z.string().max(512_000),
+})
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -157,6 +166,11 @@ export function createTasksRoutes(
   // POST / — create a draft task. 04 (D13/D15): the two-phase-flow template page
   // sends source_chat_session_id (created first, D15) + task_type + skill_groups[]
   // + preset{org,projects}. Legacy callers (no task_type) take the v2 path.
+  // 契约修复 (v4 直建): the body may also carry task_spec (RAW — service-owned
+  // validation, same SW-BP9 discipline as PUT) + top-level project_ids/skills/
+  // resources/authoring_resources. `{task_spec:{format:"v4"}, project_ids:[...]}`
+  // now creates a v4 draft (with home + snapshot) in one call — this is the
+  // POST recipe task-author's SKILL §1 / persona have been advertising.
   router.post("/", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
@@ -193,6 +207,12 @@ export function createTasksRoutes(
           )
         }
       }
+      // 契约修复: v4 create-time fields (route idioms mirror PUT :313-317).
+      if (body.task_spec !== undefined) input.task_spec = body.task_spec
+      if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
+      if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
+      if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
+      if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)
       const task = service.createTask(input)
       return c.json(task, 201)
     } catch (err: unknown) {
@@ -284,6 +304,41 @@ export function createTasksRoutes(
         specContent = fs.readFileSync(specPath, "utf-8")
       }
       return c.json({ content, path: ctxPath, artifactsDir, homePath, specContent, specPath })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Home batch-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ────
+  // GET /:id/home-file?path=<rel> — read a `.scratch/**.md` under the task home
+  // (the per-phase spec.md). PUT /:id/home-file {path, content} — write/overwrite
+  // (creates parents, so a UI-added phase row can seed a spec skeleton). Guards
+  // (`.scratch` prefix / `.md` suffix / no-escape / no absolute / task-exists→404 /
+  // edit-window→409) live in the service+home service; a body over 512_000 chars
+  // → 400 via homeFileBodySchema. Errors classify through the shared
+  // ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
+  router.get("/:id/home-file", (c) => {
+    const requestedPath = c.req.query("path")
+    if (!requestedPath || !requestedPath.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    try {
+      const result = service.readHomeFile(c.req.param("id"), requestedPath)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.put("/:id/home-file", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = homeFileBodySchema.parse(body)
+      const result = service.writeHomeFile(c.req.param("id"), parsed.path, parsed.content)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

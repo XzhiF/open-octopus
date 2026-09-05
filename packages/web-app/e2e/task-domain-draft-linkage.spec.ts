@@ -21,6 +21,8 @@
 // test (07) directly verifies the prompt content.
 
 import { test, expect } from "@playwright/test"
+import fs from "fs"
+import path from "path"
 import {
   SERVER_URL,
   TASK_E2E_ORG,
@@ -42,6 +44,7 @@ import {
   readTaskRow,
   readSessionScopeId,
   assertTaskMatchesDb,
+  taskHomePath,
   waitFor,
   type SseSubscriber,
 } from "./helpers/task-domain-helpers"
@@ -157,7 +160,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
 
   // ── AC2: spec-field SSE → SpecPanel reflects (goal/ac/projects/skills) ──
 
-  test("agent spec-field tool → spec_field_update SSE + SpecPanel reflects all fields", async ({ page }) => {
+  test("agent spec-field tool → spec_field_update SSE + spec.json 快照反映所有字段", async ({ page }) => {
     test.skip(!serverAvailable, "Server not available")
     test.skip(createdTaskIds.length === 0, "No task from autosave")
     const taskId = createdTaskIds[0]!
@@ -186,13 +189,28 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
       { timeoutMs: 10_000, message: "spec_field_update SSE not received for goal" },
     )
 
-    // UI assert (R6): the draft modal's GoalAcCard reflects the SSE update.
-    // (2026-08-19 bugfix: ALL drafts open the v3 AuthoringWorkspace — the
+    // UI-adjacent assert (R6): the goal write propagates to the home's
+    // spec.json snapshot (server rewrites it on every spec-field write — the
+    // surface the authoring agent reads). v4-only UI removed the GoalAcCard
+    // reflection; the snapshot + SSE + DB trio preserves the same chain check.
+    // (2026-08-19 bugfix context: ALL drafts open the AuthoringWorkspace — the
     // legacy SpecPanel #task-goal textarea is no longer the draft UI.)
-    const goalCard = dialog.locator("[data-goal-ac-card]")
-    await expect(goalCard, "GoalAcCard should reflect SSE goal update").toContainText(goalText, {
-      timeout: 10_000,
-    })
+    const home = taskHomePath(taskId)
+    await expect
+      .poll(
+        () => {
+          if (!home) return null
+          const snapPath = path.join(home, "spec.json")
+          if (!fs.existsSync(snapPath)) return null
+          try {
+            return (JSON.parse(fs.readFileSync(snapPath, "utf-8")).spec as { goal?: string } | undefined)?.goal ?? null
+          } catch {
+            return null
+          }
+        },
+        { message: "spec.json snapshot did not reflect goal", timeout: 10_000 },
+      )
+      .toBe(goalText)
 
     // Agent binds ac (acceptance criteria)
     const acItems = ["Resource loaded into prompt", "SpecPanel reflects fields", "Draft saved with reverse notice"]
@@ -234,7 +252,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
     expect(JSON.parse(dbRow!.project_ids), "DB project_ids should match").toEqual(projects)
 
     await page.screenshot({ path: screenshotPath("C-02-spec-panel-linked.png"), fullPage: true })
-    log("SpecPanel reflected all 4 spec-field SSE updates (goal/ac/skills/projects)")
+    log("spec.json snapshot + SSE reflected all 4 spec-field updates (goal/ac/skills/projects)")
   })
 
   // ── AC3: authoring_resources prompt-inject (SKILL.md loaded) ──────

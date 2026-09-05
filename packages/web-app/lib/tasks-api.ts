@@ -158,6 +158,19 @@ export interface CreateTaskInput {
    *  workflow.requires, not the preset). preset.org OVERRIDES the top-level
    *  org (the template page is the source of the authoring context). */
   preset?: { org?: string; projects?: string[] }
+  // ── task-phase-redesign 契约修复（POST 直建 v4）──
+  /** RAW initial task_spec — the server validates (taskSpecSchema, ZodError →
+   *  400). `{format:"v4"}` creates a v4 draft directly (home + spec.json
+   *  snapshot carry the flag; no task_type → no v3 shell). This is the body
+   *  the [新建任务] sequence sends; mirrors server CreateTaskInput. Partial —
+   *  the output TaskSpec type requires defaulted keys; on input you only send
+   *  what you mean (the server parses + fills defaults). */
+  task_spec?: Partial<TaskSpec>
+  /** Top-level project ids (wins over preset.projects; both → project_ids col). */
+  project_ids?: string[]
+  skills?: string[]
+  resources?: ResourceRef[]
+  authoring_resources?: ResourceRef[]
 }
 
 export interface UpdateTaskInput {
@@ -534,6 +547,42 @@ export async function getTaskContext(taskId: string): Promise<{
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+// ============ Home batch-file read/write (契约修复: v4 phase spec.md) ============
+
+/** GET /api/tasks/:id/home-file?path= — read a `.scratch/**.md` under the task
+ *  home (per-phase spec). 404 (file missing) / 403 (path off-whitelist) throw
+ *  {@link TaskApiError} carrying the status: the PhaseSpecDialog maps 404 →
+ *  "create skeleton" empty state, 403 → read-only path display. */
+export async function getHomeFile(taskId: string, relPath: string): Promise<ArtifactContent> {
+  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relPath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** PUT /api/tasks/:id/home-file — write/overwrite a `.scratch/**.md` (parents
+ *  created; the UI's skeleton flow). No If-Match: the file is not the task row
+ *  (no version involved server-side either). 400 body / 403 guard / 404 unknown
+ *  task / 409 non-editable status → TaskApiError with the status. */
+export async function putHomeFile(
+  taskId: string,
+  relPath: string,
+  content: string,
+): Promise<{ path: string; bytes: number }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/home-file`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: relPath, content }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }

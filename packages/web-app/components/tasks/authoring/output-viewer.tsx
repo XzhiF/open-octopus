@@ -412,6 +412,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
                         output={r!.output}
                         existingAc={acItems}
                         existingDecisions={existingDecisions}
+                        v4={task.task_spec.format === "v4"}
                         onAdopted={() => onAdopted()}
                       />
                     </div>
