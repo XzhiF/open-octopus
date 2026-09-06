@@ -1,10 +1,14 @@
 // packages/web-app/components/tasks/authoring/workflow-box.tsx
 //
 // PhaseListEditor（契约修复改版，原票 12 PhaseBindingList 升级）：v4 draft 右栏
-// 的 phase 结构化编辑面。数据源 GET /api/workflows/built-in（票 10 缓存端点）；
-// 一切 phases 变更走 PUT task_spec.phases 整数组 + If-Match（S5 纪律：写回前
-// getTask 重取 version；409 不自动重试 — 拿旧数组盖回 agent 的并发意图是危险
-// 的，提示用户重试即可）。
+// 的 phase 结构化编辑面。一切 phases 变更走 PUT task_spec.phases 整数组 +
+// If-Match（S5 纪律：写回前 getTask 重取 version；409 不自动重试 — 拿旧数组
+// 盖回 agent 的并发意图是危险的，提示用户重试即可）。
+//
+// 绑定目录改版（2026-09-06）：可绑工作流 = workflow-presets.yaml 绑定目录
+// （GET /api/workflow-presets，与 task-author agent 同源）——不再枚举
+// built-in 域；GET /api/workflows/built-in 仅作输入定义镜像（required/默认值
+// 渲染 + 入队预检），不作可选项列表。选中目录项即以条目 inputs 骨架预填。
 //
 // 能力（v4-only UI，generic/任务级 v3 单卡已随 goal/ac 旧路径退役）：
 //   • 增删 phase、改 name/slug/specPath、上移/下移 —— 仅 draft 态开放。
@@ -14,10 +18,10 @@
 //     ready 后退化为只读 + 换绑定；跨轮传播走 task-author 对话（agent 车道）。
 //   • 逐行「spec.md」→ PhaseSpecDialog（home-file GET/PUT，契约修复新端点）。
 //   • taskPhaseSchema.workflowRef 非空（shared min(1)）→ 新 phase 表单必须带
-//     workflow 初选；inputValues 留空 {}，行上「绑定工作流」补 required 值。
+//     workflow 初选；新建即以目录骨架带 inputValues（「绑定工作流」可改）。
 //
-// 写回链保留票 12 的修复：S2 取数 effect 只依赖 [open]；AC-20 开窗期间 list
-// fetch 计数=1；S5 保存前重取 version。
+// 写回链保留票 12 的修复：S2 取数 effect 只依赖 [open]；AC-20 开窗期间
+// catalog/defs 各恰一次 fetch；S5 保存前重取 version。
 
 "use client"
 
@@ -44,7 +48,9 @@ import { getTask, updateTask } from "@/lib/tasks-api"
 import {
   getBuiltInWorkflowDetail,
   listBuiltInWorkflows,
+  listWorkflowPresets,
   type BuiltInWorkflowSummary,
+  type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import { PhaseSpecDialog } from "./phase-spec-dialog"
 
@@ -54,7 +60,7 @@ export interface WorkflowBoxProps {
 }
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
-const DEFAULT_NEW_WORKFLOW = "built-in/matt-dev-pipeline"
+const DEFAULT_NEW_WORKFLOW = "built-in/matt-spec-dev"
 
 export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
   return <PhaseListEditor task={task} onMutated={onMutated} />
@@ -156,7 +162,12 @@ function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
       await withPhases(task, (base) => base.filter((p) => p.index !== index))
     })
 
-  const handleAdd = (row: { name: string; slug: string; workflowRef: string }) =>
+  const handleAdd = (row: {
+    name: string
+    slug: string
+    workflowRef: string
+    inputValues: Record<string, string>
+  }) =>
     void guard(`Phase ${row.name} 已添加`, async () => {
       await withPhases(task, (base) => {
         if (base.some((p) => p.slug === row.slug)) {
@@ -171,7 +182,8 @@ function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
             slug: row.slug,
             specPath: defaultSpecPath(row.slug),
             workflowRef: row.workflowRef as TaskPhase["workflowRef"],
-            inputValues: {},
+            // 目录骨架预填（占位符由 server materialize 解析）
+            inputValues: { ...row.inputValues },
           },
         ]
       })
@@ -449,23 +461,24 @@ function AddPhaseRow({
   busy, onAdd,
 }: {
   busy: boolean
-  onAdd: (row: { name: string; slug: string; workflowRef: string }) => void
+  onAdd: (row: { name: string; slug: string; workflowRef: string; inputValues: Record<string, string> }) => void
 }) {
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
   const [workflowRef, setWorkflowRef] = useState(DEFAULT_NEW_WORKFLOW)
-  const [catalog, setCatalog] = useState<BuiltInWorkflowSummary[]>([])
+  const [catalog, setCatalog] = useState<WorkflowPreset[]>([])
   const fetchedRef = useRef(false)
 
-  // 目录一次拉取（票 10 缓存端点）；失败退化为「只有默认推荐项」的自由文本 ref。
+  // 绑定目录一次拉取（catalog 即全部可选项）；失败退化为「只有默认推荐项」的
+  // 自由文本 ref。
   useEffect(() => {
     if (fetchedRef.current) return
     fetchedRef.current = true
-    listBuiltInWorkflows()
-      .then((list) => {
-        if (list.length > 0) setCatalog(list)
-        if (!list.some((w) => w.ref === DEFAULT_NEW_WORKFLOW) && list[0]) {
-          setWorkflowRef(list[0].ref)
+    listWorkflowPresets()
+      .then(({ presets }) => {
+        if (presets.length > 0) setCatalog(presets)
+        if (!presets.some((w) => w.workflow === DEFAULT_NEW_WORKFLOW) && presets[0]) {
+          setWorkflowRef(presets[0].workflow)
         }
       })
       .catch(() => setCatalog([]))
@@ -485,7 +498,12 @@ function AddPhaseRow({
 
   const handleAdd = () => {
     if (!valid || busy) return
-    onAdd({ name: name.trim(), slug: effectiveSlug, workflowRef })
+    onAdd({
+      name: name.trim(),
+      slug: effectiveSlug,
+      workflowRef,
+      inputValues: { ...catalog.find((w) => w.workflow === workflowRef)?.inputs },
+    })
     setName("")
     setSlug("")
     setSlugTouched(false)
@@ -521,7 +539,7 @@ function AddPhaseRow({
           onChange={(e) => setWorkflowRef(e.target.value)}
           data-phase-add-workflow
         >
-          {(catalog.length > 0 ? catalog.map((w) => w.ref) : [workflowRef]).map((ref) => (
+          {(catalog.length > 0 ? catalog.map((w) => w.workflow) : [workflowRef]).map((ref) => (
             <option key={ref} value={ref}>{ref}</option>
           ))}
         </select>
@@ -530,7 +548,7 @@ function AddPhaseRow({
         </Button>
       </div>
       <p className="text-[9px] text-muted-foreground">
-        新 phase 的必填 inputs 请随后点「绑定工作流」补（或留占位符由 server 解析）。
+        新 phase 以绑定目录骨架预填 inputs（占位符由 server 解析）；随后可在「绑定工作流」弹窗调整。
       </p>
     </div>
   )
@@ -555,8 +573,11 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
   const initialRef = phase?.workflowRef ?? ""
   const initialInputs = phase?.inputValues ?? {}
 
-  // ── 目录（S2 修：effect 只依赖 [open]） ──
-  const [catalog, setCatalog] = useState<BuiltInWorkflowSummary[]>([])
+  // ── 绑定目录 + 输入定义镜像（S2 修：effect 只依赖 [open]） ──
+  // presets = 可选项（workflow-presets.yaml）；defs = built-in 工作流的
+  // inputs 定义镜像（required/默认值渲染），**不**作可选项列表出现。
+  const [presets, setPresets] = useState<WorkflowPreset[]>([])
+  const [defs, setDefs] = useState<BuiltInWorkflowSummary[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   // StrictMode dev 下 setup→cleanup→setup 会双跑；ref 守卫保证「每次开窗恰
   // 一次 fetch」（AC4 网络计数），关窗复位。
@@ -570,33 +591,40 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
     if (fetchedRef.current) return
     fetchedRef.current = true
     setCatalogLoading(true)
-    // AC-20：每次开窗恰一次 list fetch（票 10 缓存端点，热路径零 parse）。
-    // 无 cancelled 清理：StrictMode 双跑下若首次 fetch 被判死，ref 守卫会让
-    // 第二次跳过 → 列表永远为空。setState-after-unmount 在 React 18 是 no-op。
-    listBuiltInWorkflows()
-      .then((list) => setCatalog(list))
-      .catch(() => setCatalog([]))
+    // AC-20：每次开窗恰一次 catalog fetch + 一次 defs fetch（票 10 缓存端点，
+    // 热路径零 parse）。无 cancelled 清理：StrictMode 双跑下若首次 fetch 被判死，
+    // ref 守卫会让第二次跳过 → 列表永远为空。setState-after-unmount 在 React 18 是 no-op。
+    Promise.all([listWorkflowPresets(), listBuiltInWorkflows()])
+      .then(([cat, wfDefs]) => {
+        setPresets(cat.presets)
+        setDefs(wfDefs)
+      })
+      .catch(() => {
+        setPresets([])
+        setDefs([])
+      })
       .finally(() => setCatalogLoading(false))
   }, [open])
 
   const [search, setSearch] = useState("")
-  const filteredWorkflows = useMemo(() => {
-    if (!search.trim()) return catalog
+  const filteredPresets = useMemo(() => {
+    if (!search.trim()) return presets
     const q = search.toLowerCase()
-    return catalog.filter(
-      (w) => w.ref.toLowerCase().includes(q) || w.name.toLowerCase().includes(q),
+    return presets.filter(
+      (w) => w.workflow.toLowerCase().includes(q) || w.name.toLowerCase().includes(q),
     )
-  }, [catalog, search])
+  }, [presets, search])
 
-  // ── 选中 + inputs 表单（inputs 直接吃 summary，无 detail fetch） ──
+  // ── 选中 + inputs 表单（定义来自 defs，初值来自目录骨架） ──
   const [selectedRef, setSelectedRef] = useState<string | null>(initialRef || null)
   const [formInputs, setFormInputs] = useState<Record<string, string>>({ ...initialInputs })
 
   const handleSelectWorkflow = useCallback((ref: string) => {
     setSelectedRef(ref)
-    // goal-task-dev T06 (N) 语义保持：手工换选清空旧值（不跨选择泄漏）。
-    setFormInputs({})
-  }, [])
+    // 目录骨架预填（goal-task-dev T06 (N) 语义演进：换选不再清空，而是换上
+    // 新条目自己的骨架 —— 不跨条目泄漏）。
+    setFormInputs({ ...(presets.find((w) => w.workflow === ref)?.inputs ?? {}) })
+  }, [presets])
 
   useEffect(() => {
     if (!open) {
@@ -611,11 +639,15 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on open only
   }, [open])
 
-  const selectedEntry = useMemo(
-    () => catalog.find((w) => w.ref === selectedRef) ?? null,
-    [catalog, selectedRef],
+  const selectedPreset = useMemo(
+    () => presets.find((w) => w.workflow === selectedRef) ?? null,
+    [presets, selectedRef],
   )
-  const inputDefs: InputDefs = selectedEntry?.inputs ?? {}
+  const selectedDef = useMemo(
+    () => defs.find((w) => w.ref === selectedRef) ?? null,
+    [defs, selectedRef],
+  )
+  const inputDefs: InputDefs = selectedDef?.inputs ?? {}
 
   // YAML 预览 = 可选深读（默认折叠，展开时才 fetch，展开结果缓存）。
   const [yaml, setYaml] = useState<string | null>(null)
@@ -681,7 +713,7 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
         <DialogHeader>
           <DialogTitle className="text-base">绑定工作流 — Phase {phaseIndex}</DialogTitle>
           <DialogDescription className="text-xs">
-            <>选择内置工作流并配置输入。支持 {"${phase.slug}"} / {"${phase.spec_dir}"} / {"${task.home}"} / {"${task_artifacts_dir}"} 占位符。</>
+            <>可选项来自绑定目录（workflow-presets.yaml）。支持 {"${phase.slug}"} / {"${phase.spec_dir}"} / {"${phase.batch_rel}"} / {"${task.home}"} / {"${task_artifacts_dir}"} 占位符。</>
           </DialogDescription>
         </DialogHeader>
 
@@ -700,30 +732,35 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
             </div>
 
             <ScrollArea className="flex-1 min-h-0" data-binding-list-scroll>
-              {catalogLoading && catalog.length === 0 ? (
+              {catalogLoading && presets.length === 0 ? (
                 <div className="flex items-center justify-center py-8">
                   <Spinner className="size-4" />
                 </div>
               ) : (
                 <div className="space-y-1">
                   <div className="text-[10px] text-muted-foreground px-1 mb-1">
-                    {search ? `搜索结果 (${filteredWorkflows.length})` : `全部内置 (${filteredWorkflows.length})`}
+                    {search ? `搜索结果 (${filteredPresets.length})` : `绑定目录 (${filteredPresets.length})`}
                   </div>
-                  {filteredWorkflows.map((w) => (
+                  {filteredPresets.map((w) => (
                     <button
-                      key={w.ref}
+                      key={w.workflow}
                       className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-accent transition-colors ${
-                        selectedRef === w.ref ? "bg-accent" : ""
+                        selectedRef === w.workflow ? "bg-accent" : ""
                       }`}
-                      onClick={() => handleSelectWorkflow(w.ref)}
-                      data-workflow-item={w.ref}
+                      onClick={() => handleSelectWorkflow(w.workflow)}
+                      data-workflow-item={w.workflow}
                     >
                       <div className="font-medium">{w.name}</div>
-                      <div className="text-[10px] text-muted-foreground">{w.ref}</div>
+                      <div className="text-[10px] text-muted-foreground">{w.workflow}</div>
+                      {w.desc && (
+                        <div className="text-[9px] text-muted-foreground line-clamp-2">{w.desc}</div>
+                      )}
                     </button>
                   ))}
-                  {filteredWorkflows.length === 0 && (
-                    <div className="px-2 py-4 text-[11px] text-muted-foreground">无匹配工作流</div>
+                  {filteredPresets.length === 0 && (
+                    <div className="px-2 py-4 text-[11px] text-muted-foreground">
+                      绑定目录为空——编辑 task-author 的 workflow-presets.yaml 放行工作流
+                    </div>
                   )}
                 </div>
               )}
@@ -732,36 +769,52 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
 
           {/* 右：详情（inputs 来自目录 summary）+ 折叠 YAML 预览 */}
           <div className="flex flex-col min-h-0 flex-1 border-l pl-3">
-            {selectedEntry ? (
+            {selectedRef ? (
               <ScrollArea className="flex-1 min-h-0">
                 <div className="space-y-3">
                   <div>
-                    <div className="text-sm font-medium">{selectedEntry.name}</div>
-                    <div className="text-[10px] text-muted-foreground">{selectedEntry.ref}</div>
+                    <div className="text-sm font-medium">{selectedPreset?.name ?? selectedDef?.name ?? selectedRef}</div>
+                    <div className="text-[10px] text-muted-foreground">{selectedRef}</div>
+                    {selectedPreset?.desc && (
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{selectedPreset.desc}</div>
+                    )}
                   </div>
 
-                  {Object.keys(inputDefs).length > 0 && (
-                    <div className="space-y-2">
-                      <div className="text-[10px] font-medium">输入</div>
-                      {Object.entries(inputDefs).map(([name, def]) => (
-                        <div key={name} className="space-y-0.5">
-                          <Label className="text-[10px] flex items-center gap-1">
-                            {name}
-                            {def.required && <span className="text-red-500">*</span>}
-                          </Label>
-                          <Input
-                            className="h-6 text-xs"
-                            placeholder={def.description || (def.required ? "必填" : "可选")}
-                            value={formInputs[name] ?? def.default ?? ""}
-                            onChange={(e) =>
-                              setFormInputs((prev) => ({ ...prev, [name]: e.target.value }))
-                            }
-                            data-input-field={name}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {(() => {
+                    // 字段三源并集：YAML 定义（required/描述）∪ 目录骨架 ∪ 该
+                    // phase 现值 —— task-home 自建流没有定义镜像也可编可见。
+                    const names = Array.from(new Set([
+                      ...Object.keys(inputDefs),
+                      ...Object.keys(selectedPreset?.inputs ?? {}),
+                      ...Object.keys(formInputs),
+                    ]))
+                    if (names.length === 0) return null
+                    return (
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-medium">输入</div>
+                        {names.map((name) => {
+                          const def = inputDefs[name]
+                          return (
+                            <div key={name} className="space-y-0.5">
+                              <Label className="text-[10px] flex items-center gap-1">
+                                {name}
+                                {def?.required && <span className="text-red-500">*</span>}
+                              </Label>
+                              <Input
+                                className="h-6 text-xs font-mono"
+                                placeholder={def?.description || (def?.required ? "必填" : "可选")}
+                                value={formInputs[name] ?? def?.default ?? ""}
+                                onChange={(e) =>
+                                  setFormInputs((prev) => ({ ...prev, [name]: e.target.value }))
+                                }
+                                data-input-field={name}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
 
                   <details
                     className="text-[10px]"

@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流目录浏览绑定（v4 默认 built-in/matt-spec-dev 直读批次 spec 执行）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
-version: 3.2.0
+version: 3.3.0
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -16,7 +16,7 @@ version: 3.2.0
 
 - **入口契约（你产出）**：task home = `manifest（manifest.json）+ phases[]`。每个 **Phase = 1 份 spec 产物（Batch 目录：`spec.md` + `issues/`）+ 1 个 workflow 绑定（workflowRef + inputValues）+ ≥1 个 round**（K1）。phase↔slug 恒 1:1。
 - **生成端自由**：Batch 产物用内置 matt 技能族（grilling/wayfinder 等）对话产出，格式是 matt 惯例的 markdown——平台不解释 spec 内容，只核对文件存在。
-- **执行端自由**：每 phase 绑任意可解析工作流（built-in 目录浏览或你自建），执行侧 agent 以 seed 进 workspace 的 Batch 目录为唯一输入。
+- **执行端自由**：每 phase 从**绑定目录**（workflow-presets.yaml，看板与你的共同可选项源）挑流绑定；目录没有的自建流，validate+simulate 过闸后登记进目录即成为可选项。执行侧 agent 以 seed 进 workspace 的 Batch 目录为唯一输入。
 - **出口契约**：round 终态 → 人工验收（通过/打回/中止）；打回产 `fix-feedback-rN.md`，修复走 task-fix 通用流或 round-2 spec；末 phase 通过 → 归档归并回各 project。
 - 你**不**执行工作流、**不**自行入队、**不**代替用户点验收/打回——你产 phases + 协助绑定 + 交还决策。
 
@@ -27,7 +27,7 @@ version: 3.2.0
 ② 需求澄清+拆 phase  grilling/wayfinder 对话 → 拆分草案（phase 序表：名字/范围/票归属/预算）
 ③ 拆分确认 gate      多 phase 时枚举拆分表请用户确认 —— 批准前不做任何绑定
 ④ 逐 phase 产 spec   每 phase 用 matt 族产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
-⑤ 逐 phase 绑定      GET /api/workflows/built-in 目录浏览 → 推荐+input_values 表单 → 用户确认 → spec-field field=phases
+⑤ 逐 phase 绑定      绑定目录 GET /api/workflow-presets → 推荐+骨架预填 input_values → 用户确认 → spec-field field=phases
 ⑥ 交付              自查 v4 gate 四项齐备 → 把 TASK_ID 给用户，等用户 [入队]
 ```
 
@@ -102,8 +102,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
   "name": "Token 计量",               // 业务里程碑名，≤100 字，命名权在用户——别自己拍脑袋定死
   "slug": "token-metering-2",        // Batch 目录名（含 phase 序号后缀，同 task 内唯一）
   "specPath": "./.scratch/20260903/token-metering-2/spec.md",  // 相对 task home
-  "workflowRef": "built-in/matt-dev-pipeline",                 // 见「目录浏览绑定」章；task-home 自建则用文件名
-  "inputValues": { "idea": "实现 spec 所述 Token 计量闭环" }    // 值可含 v4 占位符
+  "workflowRef": "built-in/matt-spec-dev",                     // 见「绑定目录」章；task-home 自建则用文件名（先登记进目录）
+  "inputValues": { "batch_dir": "${phase.batch_rel}" }         // 值可含 v4 占位符；目录骨架即此形状
 }
 ```
 
@@ -299,24 +299,26 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
 
 批准后才进入逐 phase 产 spec（matt 族章）与绑定。用户改需求 → 回到这张卡重来，phases 整体 PUT 覆盖。
 
-### 目录浏览 → 逐 phase 绑定（preset/技能组过滤已退役，目录即数据源）
+### 绑定目录 → 逐 phase 绑定（catalog 即唯一可选项，built-in 域枚举已退役）
+
+绑定目录 = task-author clone 的 `workflow-presets.yaml`（看板绑定表单与你的推荐同源）：
 
 ```bash
-# ① 清单（含每个流的 required inputs → 你的表单骨架）
-curl -s "http://localhost:$PORT/api/workflows/built-in" | jq '.[] | {ref, name, group, inputs: ((.inputs // {}) | keys)}'
-# ② 详情（全文 YAML：读它的节点/描述判断适配度）
-curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Ftask-fix" | jq -r '.content' | head -40
+# ① 目录（name/desc/workflow + inputs 骨架——你的表单初值）
+curl -s "http://localhost:$PORT/api/workflow-presets" | jq '.presets[] | {name, workflow, inputs: (.inputs | keys)}'
+# ② 深读某条 YAML（判断适配度/required 定义；浏览域端点仍在，但只是查看器）
+curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Fmatt-spec-dev" | jq -r '.content' | head -40
 ```
 
 **绑定纪律**：
-1. 按 phase 交付物推荐 **1-3 候选 + 一句理由**（为什么适合这个里程碑）。**v4 默认推荐 `built-in/matt-spec-dev`**——它就是为你的 Batch 产物造的：直读 `spec.md + issues/` 票 DAG 执行 → CR → ship，零澄清；`task-dev`/`superpowers-task-dev` 是 goal/ac 时代的 v3 遗留，`matt-dev-pipeline`/`xzf-dev` 从 idea 起会**重新澄清再生成 spec**（与你已冻结的 spec 打架），仅当用户明确要「从 idea 现场澄清」才选。
-2. **每个 phase 单独绑**——不同里程碑可以用不同流（如 UI phase 绑带 vision 验证的流）。等用户逐个确认，不代拿决定。
-3. input_values 表单：对目录返回的每个 `required: true` 输入给值——**绑 matt-spec-dev 时 `batch_dir` 恒填 `"${phase.batch_rel}"`**（ws 同构位）；其余占位符能用就用（`${phase.slug}` 交付命名），字面量也行；逐 required 项核对非空，否则 gate 报 `phase:<i>:input:<name>`。
+1. 只在**目录内**推荐。缺省视角：`spec-dev → built-in/matt-spec-dev` 就是为你的 Batch 产物造的（直读 `spec.md + issues/` 票 DAG 执行 → CR → ship，零澄清）。v3 遗留流（task-dev/superpowers/xzf/matt-dev-pipeline）**不在目录里**——用户明确要「从 idea 现场澄清」等例外场景，引导其把该流加进目录（一行）而不是绕过目录绑。
+2. **每个 phase 单独绑**——不同里程碑可以绑目录里不同的流。等用户逐个确认，不代拿决定。
+3. input_values：以条目骨架为初值（matt-spec-dev 的 `batch_dir` 骨架恒 `${phase.batch_rel}`，别改字面量——它解析的是 seed 后 ws 同构位）；再对该流 YAML 的每个 `required: true` 输入逐条核对非空（含占位符），否则 gate 报 `phase:<i>:input:<name>`。管理键（`task_artifacts_dir`/`prev_handoff_paths`/`feedback`）由 server 派发时注入，**不要手填进目录或绑定值**。
 4. 写回 = §2 的 `field=phases`（整数组，含新 workflowRef/inputValues）。可多次往返，每次 SpecPanel 实时刷新。
 
-### 自建工作流（目录无合适项时）
+### 自建工作流（绑定目录无合适项时）
 
-写 `{home}/workflows/my-flow.yaml` → **validate + simulate 双硬门槛** → `workflowRef = "my-flow.yaml"`（task-home 解析）：
+写 `{home}/workflows/my-flow.yaml` → **validate + simulate 双硬门槛** → `workflowRef = "my-flow.yaml"`（task-home 解析）→ **登记进绑定目录**（task-author clone 的 `workflow-presets.yaml` 加一行：name/desc/workflow/inputs 骨架），看板绑定表单与你此后都看得见它：
 
 ```bash
 octopus workflow validate   workflows/my-flow.yaml

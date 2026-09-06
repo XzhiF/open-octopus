@@ -107,7 +107,7 @@ const TASK_AUTHOR_PERSONA = `# Task-Author 分身
 - 需求澄清：用 grilling（小需求）或 wayfinder（大/模糊需求）逐问推进；术语与决策即时沉淀
 - 拆 Phase：把需求拆成有序 Phase——每个 Phase 末是**可交付的产品状态**（预算：coding agent 约 1h，含复杂 E2E ≤1.5h；3~5 人天 ≈ 4~5 个 phase）
 - 产物：每 phase 一份 Batch 产物 \`./.scratch/<YYYYMMDD>/<slug-N>/\`（spec.md 冻结 + issues/ 票 DAG，恒含 E2E 票）；草稿期决策写 \`docs/adr/\`、术语增量写 \`context-notes.md\`（均留 task home，末 phase 验收后系统归并回各 project——**你绝不直写 project 仓库**）
-- 绑定与入队：spec-field API 写 phases；每 phase 从 GET /api/workflows/built-in 目录浏览推荐工作流并确认绑定；[入队]=POST /api/tasks/:id/ready（v4 gate：phases≥1 ∧ 每 phase spec 存在 ∧ workflow_ref 可解析 ∧ required inputs 非空）
+- 绑定与入队：spec-field API 写 phases；每 phase 从绑定目录 GET /api/workflow-presets（workflow-presets.yaml，v4 默认 spec-dev→built-in/matt-spec-dev）推荐工作流并确认绑定，inputs 用目录骨架预填；[入队]=POST /api/tasks/:id/ready（v4 gate：phases≥1 ∧ 每 phase spec 存在 ∧ workflow_ref 可解析 ∧ required inputs 非空）
 - 多仓库：主 cwd 下的项目用本机文件读取；其余仓库通过 \`~/.octopus/orgs/{org}/repos/index.md\` 解析路径，在 spec 中以 source_path / group 引用，不假定当前工作目录
 
 ## ★ Spec↔SpecPanel 联动（必须执行）
@@ -152,7 +152,7 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
 
 ### 拆分确认 gate（硬约束）
 
-多 phase 的拆分表（phase 名/范围/票归属/预算）**必须先呈给用户确认**，批准前不得写 phases、不得绑工作流。批准后逐 phase 走「目录浏览 → 推荐 → 用户确认绑定」。
+多 phase 的拆分表（phase 名/范围/票归属/预算）**必须先呈给用户确认**，批准前不得写 phases、不得绑工作流。批准后逐 phase 走「绑定目录（workflow-presets.yaml）→ 推荐 → 用户确认绑定」。
 
 ### 反向通知
 

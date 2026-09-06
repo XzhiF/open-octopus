@@ -1,27 +1,23 @@
 // packages/web-app/lib/workflow-presets-api.ts
 //
-// task-workflow-presets (T6): client for GET /api/workflow-presets and the
-// existing built-in workflow detail endpoint.
+// task-workflow-presets (T6) → binding-catalog redesign (2026-09-06):
+// client for GET /api/workflow-presets (the BINDING CATALOG — what the
+// phase-binding form offers) plus the built-in workflow endpoints used for
+// input-definition mirroring and YAML preview.
 
 import { getServerUrl } from "@/lib/server-config"
 
-/** A single workflow preset from the catalog. */
+/** A single binding-catalog entry (workflow-presets.yaml). */
 export interface WorkflowPreset {
   name: string
-  skills_group: string[]
+  desc?: string
   workflow: string
   inputs: Record<string, string>
 }
 
-/** GET /api/workflow-presets?skills_group=a,b — filtered preset list. */
-export async function listWorkflowPresets(
-  skillsGroup?: string[],
-): Promise<{ presets: WorkflowPreset[] }> {
-  const url = new URL(`${getServerUrl()}/api/workflow-presets`)
-  if (skillsGroup?.length) {
-    url.searchParams.set("skills_group", skillsGroup.join(","))
-  }
-  const res = await fetch(url.toString())
+/** GET /api/workflow-presets — the binding catalog verbatim. */
+export async function listWorkflowPresets(): Promise<{ presets: WorkflowPreset[] }> {
+  const res = await fetch(`${getServerUrl()}/api/workflow-presets`)
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`)
   }

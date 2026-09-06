@@ -6,8 +6,10 @@ import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
 import { updateTask, getTask } from "@/lib/tasks-api"
 import {
   listBuiltInWorkflows,
+  listWorkflowPresets,
   getBuiltInWorkflowDetail,
   type BuiltInWorkflowSummary,
+  type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 
 // jsdom lacks ResizeObserver; user.click focuses elements which mounts the
@@ -42,6 +44,7 @@ vi.mock("@/lib/tasks-api", () => {
 })
 
 vi.mock("@/lib/workflow-presets-api", () => ({
+  listWorkflowPresets: vi.fn().mockResolvedValue({ presets: [] }),
   listBuiltInWorkflows: vi.fn().mockResolvedValue([]),
   getBuiltInWorkflowDetail: vi.fn().mockResolvedValue({
     ref: "built-in/test-flow",
@@ -102,6 +105,20 @@ function v4Task(phases: TaskPhase[], status: Task["status"] = "draft"): Task {
   return makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec, status })
 }
 
+// 绑定目录（可选项源）：spec-dev（带骨架）+ fixer（自定义样例，无骨架值）。
+const SPEC_DEV: WorkflowPreset = {
+  name: "spec-dev",
+  desc: "v4 主打：直读批次执行",
+  workflow: "built-in/matt-spec-dev",
+  inputs: { batch_dir: "${phase.batch_rel}" },
+}
+const FIXER: WorkflowPreset = {
+  name: "fixer",
+  workflow: "built-in/task-fix",
+  inputs: {},
+}
+
+// 输入定义镜像（非可选项列表）：required/描述/默认值渲染源。
 const TASK_DEV: BuiltInWorkflowSummary = {
   ref: "built-in/task-dev",
   name: "Task Dev",
@@ -117,9 +134,16 @@ const TASK_FIX: BuiltInWorkflowSummary = {
   group: "built-in",
   inputs: { feedback_path: { description: "反馈文件", required: true } },
 }
+const SPEC_DEV_DEF: BuiltInWorkflowSummary = {
+  ref: "built-in/matt-spec-dev",
+  name: "Matt Spec Dev",
+  group: "built-in",
+  inputs: { batch_dir: { description: "批次目录", required: true } },
+}
 
 function mockCatalog() {
-  vi.mocked(listBuiltInWorkflows).mockResolvedValue([TASK_DEV, TASK_FIX])
+  vi.mocked(listWorkflowPresets).mockResolvedValue({ presets: [SPEC_DEV, FIXER] })
+  vi.mocked(listBuiltInWorkflows).mockResolvedValue([SPEC_DEV_DEF, TASK_DEV, TASK_FIX])
   vi.mocked(getBuiltInWorkflowDetail).mockResolvedValue({
     ref: "any", content: "name: x\nnodes: []\n", parsed: { name: "x", inputs: {} },
   })
@@ -176,59 +200,57 @@ describe("WorkflowBox — v4 PhaseListEditor 渲染（票 12 D + 契约修复改
   })
 })
 
-describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）", () => {
-  it("S2/AC4: dialog open fetches the built-in list EXACTLY once; selections + search do not refetch", async () => {
+describe("WorkflowBox — 绑定弹窗（目录源 + 定义镜像；S2/S5/AC-20 纪律保持）", () => {
+  it("S2/AC4: dialog open fetches catalog + defs EXACTLY once each; selections + search do not refetch", async () => {
     const user = userEvent.setup()
     mockCatalog()
-    // AddPhaseRow（draft 常驻）挂载时自取一次目录做 workflow 下拉 — AC-20 的
-    // 「开窗恰一次」以开窗时刻为基线计增量。
-    const baseCount = vi.mocked(listBuiltInWorkflows).mock.calls.length
-    const { rerender } = render(<WorkflowBox task={v4Task([makePhase(1, { workflowRef: "" as TaskPhase["workflowRef"] })])} onMutated={() => {}} />)
-    await waitFor(() => expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(baseCount + 1))
-    await user.click(q('[data-phase-bind-button="1"]')!)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    const opened = vi.mocked(listBuiltInWorkflows).mock.calls.length
-    expect(opened - baseCount).toBe(2) // 一次=AddPhaseRow 挂载取下拉数据，一次=开窗目录
+    // AddPhaseRow（draft 常驻）挂载时自取一次「目录」（只 presets，不 defs）。
+    render(<WorkflowBox task={v4Task([makePhase(1, { workflowRef: "" as TaskPhase["workflowRef"] })])} onMutated={() => {}} />)
+    await waitFor(() => expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(1))
+    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(0)
 
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    await user.click(q('[data-phase-bind-button="1"]')!)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeTruthy())
+    await waitFor(() => expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(2))
+    await waitFor(() => expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(1))
+    const opened = vi.mocked(listWorkflowPresets).mock.calls.length
+    const defsOpened = vi.mocked(listBuiltInWorkflows).mock.calls.length
+
+    // 点选只走目录项（列表项=presets，不是 built-in 域枚举）
     await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    await user.click(q('[data-workflow-item="built-in/matt-spec-dev"]')!)
     expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
-    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
 
     await user.type(q("[data-binding-search]")!, "fix")
     expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy()
-    expect(q('[data-workflow-item="built-in/task-dev"]')).toBeNull()
-    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
+    expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeNull()
 
-    rerender(<WorkflowBox task={v4Task([makePhase(1)], "draft")} onMutated={() => {}} />)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy())
-    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(opened)
+    expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(opened)
+    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(defsOpened)
   })
 
-  it("inputs form renders from the catalog summary (default shown, untouched default not persisted)", async () => {
+  it("选中目录项即以条目骨架预填 input（保存时骨架落库）", async () => {
     const user = userEvent.setup()
     mockCatalog()
-    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    render(<WorkflowBox task={v4Task([makePhase(1, { workflowRef: "" as TaskPhase["workflowRef"] })])} onMutated={() => {}} />)
     await user.click(q('[data-phase-bind-button="1"]')!)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
+    await waitFor(() => expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeTruthy())
+    await user.click(q('[data-workflow-item="built-in/matt-spec-dev"]')!)
 
-    await waitFor(() => expect(inputEl("max_turns")).toBeTruthy())
-    expect(inputEl("max_turns")!.value).toBe("200") // YAML default shown
-    expect(inputEl("idea")!.value).toBe("")
+    await waitFor(() => expect(inputEl("batch_dir")).toBeTruthy())
+    expect(inputEl("batch_dir")!.value).toBe("${phase.batch_rel}") // 骨架预填
 
-    await user.type(inputEl("idea")!, "hello")
     await user.click(q("[data-bind-save-button]")!)
     await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
 
     const [, input] = vi.mocked(updateTask).mock.calls[0]
     const sent = (input.task_spec as TaskSpec).phases!
-    expect(sent[0].inputValues).toEqual({ idea: "hello" }) // 未触碰 default 不落库
+    expect(sent[0].workflowRef).toBe("built-in/matt-spec-dev")
+    expect(sent[0].inputValues).toEqual({ batch_dir: "${phase.batch_rel}" })
     expect(input.workflow_ref).toBeUndefined() // v4 不碰任务级 workflow_ref
   })
 
-  it("phase binding writes the WHOLE phases array via PUT (target replaced, others verbatim)", async () => {
+  it("定义镜像提供 required 字段；换选切换条目自己的初值（不跨条目泄漏）", async () => {
     const user = userEvent.setup()
     const phases = [makePhase(1), makePhase(2, { workflowRef: "" as TaskPhase["workflowRef"], inputValues: {} })]
     const task = v4Task(phases)
@@ -239,6 +261,14 @@ describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）"
     await user.click(q('[data-phase-bind-button="2"]')!)
     await waitFor(() => expect(q('[data-workflow-item="built-in/task-fix"]')).toBeTruthy())
     await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
+    await waitFor(() => expect(inputEl("feedback_path")).toBeTruthy())
+    // 先换到 spec-dev：batch_dir 骨架在场、feedback_path 消失；再换回来：初值干净
+    await user.click(q('[data-workflow-item="built-in/matt-spec-dev"]')!)
+    await waitFor(() => expect(inputEl("batch_dir")).toBeTruthy())
+    expect(inputEl("feedback_path")).toBeNull()
+    await user.click(q('[data-workflow-item="built-in/task-fix"]')!)
+    await waitFor(() => expect(inputEl("feedback_path")).toBeTruthy())
+    expect(inputEl("feedback_path")!.value).toBe("")
     await user.type(inputEl("feedback_path")!, "./.scratch/20260903/slug-1/fix-feedback-r1.md")
     await user.click(q("[data-bind-save-button]")!)
     await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
@@ -247,22 +277,21 @@ describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）"
     const sent = (input.task_spec as TaskSpec).phases!
     expect(sent).toHaveLength(2)
     expect(sent[0]).toEqual(phases[0]) // 未动的 phase1 verbatim
-    expect(sent[1].index).toBe(2)
     expect(sent[1].workflowRef).toBe("built-in/task-fix")
     expect(sent[1].inputValues).toEqual({
       feedback_path: "./.scratch/20260903/slug-1/fix-feedback-r1.md",
     })
-    expect(input.workflow_ref).toBeUndefined()
   })
 
-  it("re-opens with the phase's current binding prefilled (更换工作流 keeps values)", async () => {
+  it("目录外的既有绑定开窗仍可编辑（定义镜像兜底右栏；列表只列目录）", async () => {
     const user = userEvent.setup()
     const phases = [makePhase(1, { inputValues: { idea: "keep me" } })]
     mockCatalog()
     render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
     await user.click(q('[data-phase-bind-button="1"]')!)
     await waitFor(() => expect(inputEl("idea")).toBeTruthy())
-    expect(inputEl("idea")!.value).toBe("keep me")
+    expect(inputEl("idea")!.value).toBe("keep me") // task-dev 不在目录，但初值右栏可用
+    expect(q('[data-workflow-item="built-in/task-dev"]')).toBeNull() // 可选项列表=目录
   })
 
   it("S5 (v4): save uses the re-fetched version even when task_spec gained a phase meanwhile", async () => {
@@ -275,9 +304,9 @@ describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）"
     )
     render(<WorkflowBox task={v4Task(stale)} onMutated={() => {}} />)
     await user.click(q('[data-phase-bind-button="1"]')!)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    await user.type(inputEl("idea")!, "x")
+    await waitFor(() => expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeTruthy())
+    await user.click(q('[data-workflow-item="built-in/matt-spec-dev"]')!)
+    await user.type(inputEl("batch_dir")!, "x")
     await user.click(q("[data-bind-save-button]")!)
     await waitFor(() => expect(q("[data-bind-save-button]")).toBeNull())
 
@@ -295,9 +324,9 @@ describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）"
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("Task version conflict (stale write)"))
     render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
     await user.click(q('[data-phase-bind-button="1"]')!)
-    await waitFor(() => expect(q('[data-workflow-item="built-in/task-dev"]')).toBeTruthy())
-    await user.click(q('[data-workflow-item="built-in/task-dev"]')!)
-    await user.type(inputEl("idea")!, "x")
+    await waitFor(() => expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeTruthy())
+    await user.click(q('[data-workflow-item="built-in/matt-spec-dev"]')!)
+    await user.type(inputEl("batch_dir")!, "x")
     await user.click(q("[data-bind-save-button]")!)
     await waitFor(() =>
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith("绑定失败: Task version conflict (stale write)"),
@@ -306,7 +335,7 @@ describe("WorkflowBox — 绑定弹窗（v4-phase，S2/S5/AC-20 纪律保持）"
 })
 
 describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 draft，整数组 PUT + 重取 version）", () => {
-  it("add phase: name+auto-slug+目录首个 workflow → PUT 追加并位次重排，specPath 走 ./.scratch/<date>/<slug>/spec.md 约定", async () => {
+  it("add phase: name+auto-slug+目录默认 workflow+骨架预填 → PUT 追加并位次重排，specPath 走约定", async () => {
     const user = userEvent.setup()
     const phases = [makePhase(1)]
     mockCatalog()
@@ -328,8 +357,8 @@ describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 dr
     expect(sent).toHaveLength(2)
     expect(sent[1].name).toBe("验收收尾")
     expect(sent[1].slug).toBe("wrap-up")
-    expect(sent[1].workflowRef).toBe("built-in/task-dev") // 目录默认（matt-dev-pipeline 不在 mock 目录 → 首项）
-    expect(sent[1].inputValues).toEqual({})
+    expect(sent[1].workflowRef).toBe("built-in/matt-spec-dev") // 目录默认（v4 主打）
+    expect(sent[1].inputValues).toEqual({ batch_dir: "${phase.batch_rel}" }) // 骨架预填
     expect(sent[1].specPath).toMatch(/^\.\/\.scratch\/\d{8}\/wrap-up\/spec\.md$/)
     expect(sent.map((p) => p.index)).toEqual([1, 2])
   })

@@ -44,6 +44,7 @@ import {
   DEFAULT_WORKFLOW_PRESETS_YAML,
   PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML,
   PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML,
+  PREV_DEFAULT_V2_WORKFLOW_PRESETS_YAML,
   PRESETS_VERSION,
 } from '../workflow-presets-seed'
 
@@ -160,6 +161,25 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
 
       expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+
+  it('refreshes an untouched v2 seed to the v3 binding catalog', () => {
+    // binding-catalog redesign (2026-09-06): v2 (skills_group shape) joins the
+    // PREV baselines — an untouched v2 install must land on the new catalog
+    // (spec-dev → built-in/matt-spec-dev), not keep offering retired flows.
+    seedExistingFile(PREV_DEFAULT_V2_WORKFLOW_PRESETS_YAML)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+      expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
+      expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
+      expect(DEFAULT_WORKFLOW_PRESETS_YAML).toContain('built-in/matt-spec-dev')
+      expect(DEFAULT_WORKFLOW_PRESETS_YAML).toContain('batch_dir')
     } finally {
       logSpy.mockRestore()
     }

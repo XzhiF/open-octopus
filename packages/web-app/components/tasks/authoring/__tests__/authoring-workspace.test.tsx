@@ -21,12 +21,14 @@ vi.mock("@/lib/tasks-api", () => ({
   },
 }))
 
-// 票 12: v4 预检/绑定卡数据源 = built-in 目录（缓存端点）
+// 票 12: v4 预检数据源 = built-in 目录（缓存端点，输入定义镜像）；
+// 绑定目录改版: WorkflowBox 可选项 = listWorkflowPresets（绑定目录）
 vi.mock("@/lib/workflow-presets-api", () => ({
   listBuiltInWorkflows: vi.fn().mockResolvedValue([
     { ref: "built-in/task-dev", name: "Task Dev", group: "built-in",
       inputs: { idea: { description: "想法", required: true } } },
   ]),
+  listWorkflowPresets: vi.fn().mockResolvedValue({ presets: [] }),
   getBuiltInWorkflowDetail: vi.fn().mockResolvedValue({ ref: "x", content: "", parsed: { name: "x" } }),
 }))
 

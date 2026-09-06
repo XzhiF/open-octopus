@@ -4,7 +4,7 @@ import path from "path"
 import os from "os"
 import { WorkflowPresetsService } from "../workflow-presets-service"
 
-describe("WorkflowPresetsService", () => {
+describe("WorkflowPresetsService (binding catalog, verbatim)", () => {
   let tmpDir: string
   let service: WorkflowPresetsService
 
@@ -29,65 +29,38 @@ describe("WorkflowPresetsService", () => {
     expect(result.presets).toEqual([])
   })
 
-  it("returns all presets when no skills_group filter", () => {
+  it("returns the catalog verbatim (no filtering — catalog == everything bindable)", () => {
     writeCatalog(`
 presets:
-  - name: general-dev
-    skills_group: []
-    workflow: built-in/matt-dev-pipeline
+  - name: spec-dev
+    desc: v4 主打
+    workflow: built-in/matt-spec-dev
     inputs:
-      idea: "\${goal}"
-  - name: xzf-dev
-    skills_group: [octo-xzf-implementer]
-    workflow: built-in/xzf-dev
-    inputs:
-      idea: "\${goal}"
+      batch_dir: "\${phase.batch_rel}"
+  - name: custom-flow
+    workflow: my-flow.yaml
+    inputs: {}
 `)
     service = new WorkflowPresetsService(tmpDir)
     const result = service.list()
     expect(result.presets).toHaveLength(2)
-    expect(result.presets[0].name).toBe("general-dev")
-    expect(result.presets[1].name).toBe("xzf-dev")
+    expect(result.presets[0].name).toBe("spec-dev")
+    expect(result.presets[0].desc).toBe("v4 主打")
+    expect(result.presets[0].inputs).toEqual({ batch_dir: "${phase.batch_rel}" })
+    expect(result.presets[1].workflow).toBe("my-flow.yaml")
   })
 
-  it("filters by skills_group: matching + general fallback", () => {
+  it("pre-v3 files carrying retired skills_group keys still parse (keys stripped)", () => {
     writeCatalog(`
 presets:
   - name: general-dev
     skills_group: []
-    workflow: built-in/matt-dev-pipeline
-  - name: xzf-dev
-    skills_group: [octo-xzf-implementer]
-    workflow: built-in/xzf-dev
-  - name: other-dev
-    skills_group: [other-skill]
-    workflow: built-in/other-flow
+    workflow: built-in/task-dev
 `)
     service = new WorkflowPresetsService(tmpDir)
-    const result = service.list(["octo-xzf-implementer"])
-    expect(result.presets).toHaveLength(2)
-    const names = result.presets.map(p => p.name)
-    expect(names).toContain("general-dev") // general fallback
-    expect(names).toContain("xzf-dev")     // matching
-    expect(names).not.toContain("other-dev") // non-matching
-  })
-
-  it("filters by multiple skills_groups: union + general", () => {
-    writeCatalog(`
-presets:
-  - name: general-dev
-    skills_group: []
-    workflow: built-in/matt-dev-pipeline
-  - name: xzf-dev
-    skills_group: [octo-xzf-implementer]
-    workflow: built-in/xzf-dev
-  - name: other-dev
-    skills_group: [other-skill]
-    workflow: built-in/other-flow
-`)
-    service = new WorkflowPresetsService(tmpDir)
-    const result = service.list(["octo-xzf-implementer", "other-skill"])
-    expect(result.presets).toHaveLength(3) // all 3 match
+    const result = service.list()
+    expect(result.presets).toHaveLength(1)
+    expect("skills_group" in result.presets[0]).toBe(false)
   })
 
   it("returns empty presets for malformed YAML", () => {
