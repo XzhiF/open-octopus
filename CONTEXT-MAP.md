@@ -105,11 +105,15 @@
 | **HOW-handoff** | task-author 对话收尾步骤 — 入队前枚举可复用工作流 → 推荐 + 用户确认 → 复用 or 自建（validate + 模拟器必过）→ 绑定 workflow_ref。ADR-0013。 | core-pack |
 | **workflow 解析集 (Resolution Set)** | 任务 workflow_ref 的有效来源集合 = 已安装内置工作流 ∨ task home `workflows/`。全局 `~/.octopus/workflows/` 明确排除。绑定预检 / ready-gate / 查看器三处共用。ADR-0013。 | server |
 | **Task Home workflows/** | `~/.octopus/tasks/{task-id}/workflows/` — 自建工作流落位目录；dispatch 时经 `input_values.task_workflows_dir` 注入、拷进执行 ws `workflows/`（S2a 拷贝，非引擎直查）。ADR-0013。 | server |
-| **Phase（阶段）** | coding task 的第一级推进单元，大于 ticket——一个 Phase = 一份独立 spec（本次范围 + 票 + 验收方式）+ 一个 workflow_ref 绑定（各 phase 可同可不同）+ 一次以上执行。时间预算 ≈1h/phase（含复杂 E2E ≤1.5h），phase 间以人工验收衔接直至完整需求完成。 | server, shared, web-app, core-pack |
+| **Phase（阶段）** | coding task 的第一级推进单元与**叙事单元**——**一个 phase = 一个完整用户故事**，叠加在 MVP 之上：phase1 = MVP 薄切片（切穿需求最高风险段），其后每 phase = 一个讲得完的故事 + 一份独立 spec（故事+票+验收方式）+ 一个 workflow_ref 绑定 + ≥1 次执行。下界 = 功能票 ≥3（E2E 票不计；摊得起一次人工 gate；MVP 豁免）；上界 = 成果内聚、一次坐得下验收，**phase 层不设时间硬顶**——≤1h 是 Ticket 层容量纪律，借给 phase 是「phase≈issue」的历史根因。phase 间以人工验收衔接直至完整需求完成。ADR-0020。 | server, shared, web-app, core-pack |
+| **叙事分层（Phase ≠ User Story ≠ Ticket）** | 三层各司一职：Phase = 交付/叙事单元（一个完整用户故事，一 phase 一道 gate）；User Story = phase spec 内的穷尽清单条目（一条故事可拆多票）；Ticket = 实现单元（垂直切片，≤1h、装进一个 context window）。时间预算只在票层有效；词层混用即粒度失控的根源。 | core-pack, shared |
 | **Round（轮次）** | Phase 内的一次执行尝试——round 1 = phase spec 的正式执行；验收打回 → 经 task chat 反馈产生新 round（跑通用修复工作流，或先产 round-2 spec 再执行）。每 round 一条独立执行记录，共享同一 workspace/分支。 | server, web-app |
 | **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
 | **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
 | **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、CONTEXT.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
+| **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |
+| **handoff.md** | 批次目录 spec 家族成员：ship 每轮末产/覆写的**面向下游执行会话**精选交接短页（头块 + Protected Decisions / Confirmed Interfaces / Gap Targets 三段，一屏内引用不复制）；与 round-report.md（面向验收人全量轮报）受众不同。ADR-0019。 | core-pack |
+| **prev_handoff_paths** | 内置注入键（非占位符）：全部已 accepted 前序 phase 的 handoff.md home 绝对路径（存在性过滤、换行连接），accepted→下 phase / 手动推进时 server 注入 materialized input_values；与 feedback/task_artifacts_dir 注入同族。ADR-0019。 | server |
 
 ## Anti-Patterns（禁止）
 
@@ -156,3 +160,6 @@ core-pack ← (纯数据资源)
 - [0015-pricing-single-table-no-default.md](docs/adr/0015-pricing-single-table-no-default.md) — 单一价表（USD/MTok）、无 default 兜底、未定价=NULL、models.yaml 补价通道
 - [0016-usage-ledger-single-truth.md](docs/adr/0016-usage-ledger-single-truth.md) — 总量唯一账本（ntu）、三态费用、公式单源（写 9→1 / 读 41→1 / web 14→0）
 - [0017-presentation-formatter-single-source.md](docs/adr/0017-presentation-formatter-single-source.md) — 展示层格式化器单源（五函数收 113 处 toFixed、拆秒/毫秒同名雷、fmt-ok 豁免）
+- [0018-ws-authoritative-spec-and-reject-routing.md](docs/adr/0018-ws-authoritative-spec-and-reject-routing.md) — ws 权威 spec 环 + spec 家族文件名约定 + 打回二分路由（K16 不破）
+- [0019-phase-handoff-channel.md](docs/adr/0019-phase-handoff-channel.md) — phase 衔接信道：ship 产 handoff.md + accepted 时自动注入 prev_handoff_paths
+- [0020-phase-story-granularity.md](docs/adr/0020-phase-story-granularity.md) — 拆 Phase 故事判据：phase = 完整用户故事叠加 MVP，票 ≥3 下限，时间锚降回票层

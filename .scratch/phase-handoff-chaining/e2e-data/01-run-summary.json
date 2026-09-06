@@ -1,0 +1,60 @@
+{
+  "run": "ho-1788630617400",
+  "ymd": "20260906",
+  "results": [
+    {
+      "ac": "PRE-awaiting",
+      "pass": true,
+      "detail": "GET /api/tasks → derived.phaseViews[0] = {\"status\":\"awaiting_review\",\"awaitingRound\":1}"
+    },
+    {
+      "ac": "AC3",
+      "pass": true,
+      "detail": "LIST 返回含 .scratch/20260906/e2e-td-ho-p1-ho-1788630617400/handoff.md (bytes=652) — fs↔API 一致"
+    },
+    {
+      "ac": "AC1",
+      "pass": true,
+      "detail": "next_action=dispatched dispatch.p2r1 | chain 注入键 ===phase1 handoff 绝对路径 | existsSync=true | 字节一致=true"
+    },
+    {
+      "ac": "AC1-ledger",
+      "pass": true,
+      "detail": "task_phase_acceptances(task) rows=[{\"phase_index\":1,\"round_index\":1,\"decision\":\"accepted\"}]"
+    },
+    {
+      "ac": "AC1-runtime",
+      "pass": true,
+      "detail": "执行侧(经 seed→start→collect 环)收到 prev_handoff_paths=\"C:\\\\Users\\\\EDY\\\\.octopus\\\\tasks\\\\96182fc0-a41d-46c8-b220-a16c1984e028\\\\.scratch\\\\20260906\\\\e2e-td-ho-p1-ho-1788630617400\\\\handoff.md\"；phase2 同 ws 复用=true"
+    },
+    {
+      "ac": "AC1-persisted",
+      "pass": true,
+      "detail": "终态后 chain[0].input_values.prev_handoff_paths=\"C:\\\\Users\\\\EDY\\\\.octopus\\\\tasks\\\\96182fc0-a41d-46c8-b220-a16c1984e028\\\\.scratch\\\\20260906\\\\e2e-td-ho-p1-ho-1788630617400\\\\handoff.md\""
+    },
+    {
+      "ac": "AC4-prelist-neg",
+      "pass": true,
+      "detail": "反例批次 LIST=[\".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/exec-report.md\",\".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/issues/01-one.md\",\".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/spec.md\"]（无 handoff.md，对照组成立）"
+    },
+    {
+      "ac": "AC4",
+      "pass": true,
+      "detail": "accept HTTP=200（不 500）next_action=dispatched，chain[0].input_values 含 prev_handoff_paths 键=false（期望 false，静默降级）"
+    },
+    {
+      "ac": "AC4-runtime",
+      "pass": true,
+      "detail": "无 handoff 时 phase2 仍正常跑完(completed)，运行时值未含任何 phase1 路径（值=\"$inputs.prev_handoff_paths\"）"
+    },
+    {
+      "ac": "AC5",
+      "pass": true,
+      "detail": "rows/dirs 全清=true，清理报错=[]，health 200→200（task_phase_acceptances 账本行按 append-only 惯例保留）"
+    }
+  ],
+  "health": {
+    "start": 200,
+    "end": 200
+  }
+}

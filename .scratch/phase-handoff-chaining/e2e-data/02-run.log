@@ -1,0 +1,6 @@
+(node:25288) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[ac-ui] fixture task 2373426d-5795-4867-9ee8-462db7e85c1d (p1r1 completed → awaiting_review)
+[ac-ui] FAIL AC2-HARNESS — 脚本异常: locator.waitFor: Timeout 25000ms exceeded.
+[ac-ui] PASS AC2-cleanup — rows 清除=true，problems=[]
+[ac-ui] DONE 1/2 PASS

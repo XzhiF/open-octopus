@@ -1,0 +1,7 @@
+[
+  {
+    "phase_index": 1,
+    "round_index": 1,
+    "decision": "accepted"
+  }
+]

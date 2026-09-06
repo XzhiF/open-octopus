@@ -1,0 +1,11 @@
+{
+  "phase2_exec": {
+    "id": "ce23435b-4b5a-47c4-b0b5-370d57699477",
+    "status": "completed",
+    "same_ws": true
+  },
+  "runtime_file": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\.scratch\\20260906\\e2e-td-ho-p2-ho-1788630617400\\runtime-prev-handoff.txt",
+  "runtime_exists": true,
+  "runtime_value": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\.scratch\\20260906\\e2e-td-ho-p1-ho-1788630617400\\handoff.md",
+  "equals_injected_path": true
+}

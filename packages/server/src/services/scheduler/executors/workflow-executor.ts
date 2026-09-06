@@ -390,7 +390,8 @@ export class WorkflowExecutor implements Executor {
     // the SAME relative position before the root execution starts (the
     // copyTaskWorkflowsToWs precedent — same-ws reuse re-seeds every round, so
     // home edits made between rounds take effect on the next seed, K16).
-    // home OVERWRITES ws same-names (spec 权威在 home). Non-fatal: a transient
+    // home OVERWRITES ws same-names (home = last collected final state, or the
+    // draft baseline for round 1 — ADR-0018). Non-fatal: a transient
     // fs error must not burn the dispatch slot — the wf surfaces missing inputs
     // itself. resolvePhaseRound is computed HERE (not at step 11b) so the seed
     // knows which batch dir to mirror; the same values are reused for tagging.

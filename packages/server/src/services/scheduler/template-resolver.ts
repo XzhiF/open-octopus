@@ -15,6 +15,11 @@
 // so v3 callers behave exactly as before:
 //   ${phase.slug}           → the phase's path-safe slug (batch dir name, K10)
 //   ${phase.spec_dir}       → dirname of the phase's resolved spec file (home-relative → absolute)
+//   ${phase.batch_rel}      → home-RELATIVE posix batch dir (`.scratch/<date>/<slug>`) —
+//                             the ws-isomorphic position (seed copies the batch dir there,
+//                             K10); spec-consuming execution flows (matt-spec-dev) bind to
+//                             THIS, not the absolute home path (${phase.spec_dir} stays for
+//                             home-side writers like task-fix)
 //   ${task.home}            → the task home dir (TaskHomeService.homePath)
 //   ${task_artifacts_dir}   → the task artifacts dir (same value as the managed
 //                             input_values key of the same name)
@@ -37,6 +42,10 @@ import type { InputValues } from "@octopus/shared"
 export interface PlaceholderContext {
   phaseSlug?: string
   phaseSpecDir?: string
+  /** Home-relative posix batch dir (`.scratch/<date>/<slug>`) — the ws-isomorphic
+   *  path spec-consuming flows execute against. Absent (specDir outside the home
+   *  / absolute specPath) → placeholder resolves "" + key reported unresolved. */
+  phaseBatchRel?: string
   taskHome?: string
   taskArtifactsDir?: string
 }
@@ -58,6 +67,7 @@ function buildPlaceholderMap(
   if (ctx) {
     map["phase.slug"] = ctx.phaseSlug ?? ""
     map["phase.spec_dir"] = ctx.phaseSpecDir ?? ""
+    map["phase.batch_rel"] = ctx.phaseBatchRel ?? ""
     map["task.home"] = ctx.taskHome ?? ""
     map["task_artifacts_dir"] = ctx.taskArtifactsDir ?? ""
   }

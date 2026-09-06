@@ -326,7 +326,16 @@ export class WorkspaceService {
     const now = new Date().toISOString()
 
     // Resolve workspace path: ~/.octopus/{org}/workspaces/{name}
-    const wsDir = path.join(os.homedir(), ".octopus", "orgs", input.org, "workspaces", input.name)
+    // Windows-safe dir (task-ws-name 冒号缺陷修复 2026-09-05): the DISPLAY name
+    // (`task:{标题}-MMDD-HHmmss`) legally contains `:` for DB/UI purposes, but
+    // it was also used verbatim as the directory name → `mkdir 'task:foo'`
+    // throws ENOENT on Windows and killed every v4 first-trigger. The directory
+    // is now the filesystem-sanitized form; `workspaces.name` / config.json
+    // keep the display name (downstream all consume the row's `path`, and
+    // /importable reconstructs paths from actual dir entries — both stay
+    // consistent).
+    const dirName = input.name.replace(/[/\\:*?"<>|]/g, "")
+    const wsDir = path.join(os.homedir(), ".octopus", "orgs", input.org, "workspaces", dirName)
     // task-phase-redesign (ticket 05, K12 / 票03暗雷#3): the old behavior was
     // `rmSync(wsDir, recursive)` + rebuild. With the v4 model a workspace is no
     // longer disposable — it is the ONE bound task home (tasks.workspace_id)

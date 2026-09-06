@@ -108,7 +108,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   // Falls back to ~/ prefix until the fetch resolves.
   const [artifactsDir, setArtifactsDir] = useState(`~/.octopus/tasks/${taskId}/artifacts`)
   const [contextFilePath, setContextFilePath] = useState("")
-  const [specFilePath, setSpecFilePath] = useState("")
+  const [manifestFilePath, setManifestFilePath] = useState("")
 
   // Fetch absolute paths + context content on mount / taskId change.
   useEffect(() => {
@@ -118,11 +118,11 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         if (cancelled) return
         setArtifactsDir(res.artifactsDir)
         setContextFilePath(res.path)
-        // `?? null`: a server running pre-spec.json code omits specContent
+        // `?? null`: a server running pre-rename code omits manifestContent
         // (undefined) — treat it the same as an explicit null.
-        setSpecFilePath(res.specPath ?? "")
+        setManifestFilePath(res.manifestPath ?? "")
         if (res.content !== null) setContextContent(res.content)
-        if (res.specContent != null) setSpecContent(res.specContent)
+        if (res.manifestContent != null) setManifestContent(res.manifestContent)
       })
       .catch(() => { /* non-fatal — keep ~/ fallback */ })
     return () => { cancelled = true }
@@ -151,25 +151,25 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
     }
   }, [taskId, contextContent, contextLoading])
 
-  // ── Spec viewer (spec.json) ─────────────────────────────────────────
-  const [showSpec, setShowSpec] = useState(false)
-  const [specContent, setSpecContent] = useState<string | null>(null)
-  const [specLoading, setSpecLoading] = useState(false)
+  // ── Spec viewer (manifest.json) ─────────────────────────────────────
+  const [showManifest, setShowManifest] = useState(false)
+  const [manifestContent, setManifestContent] = useState<string | null>(null)
+  const [manifestLoading, setManifestLoading] = useState(false)
 
-  const openSpecViewer = useCallback(async () => {
-    setShowSpec(true)
-    // spec.json is rewritten on every spec-field save — always re-fetch on
+  const openManifestViewer = useCallback(async () => {
+    setShowManifest(true)
+    // manifest.json is rewritten on every spec-field save — always re-fetch on
     // open so the dialog shows the current snapshot, not a stale mount-time one.
-    setSpecLoading(true)
+    setManifestLoading(true)
     try {
       const result = await getTaskContext(taskId)
-      // `?? null`: a server running pre-spec.json code omits specContent.
-      setSpecContent(result.specContent ?? null)
-      setSpecFilePath(result.specPath ?? "")
+      // `?? null`: a server running pre-rename code omits manifestContent.
+      setManifestContent(result.manifestContent ?? null)
+      setManifestFilePath(result.manifestPath ?? "")
     } catch {
-      setSpecContent(null)
+      setManifestContent(null)
     } finally {
-      setSpecLoading(false)
+      setManifestLoading(false)
     }
   }, [taskId])
 
@@ -274,7 +274,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       <div className="rounded-lg border bg-background" data-artifacts-section>
         <div className="px-3 py-2 border-b flex items-center justify-between">
           <span className="text-xs font-medium flex items-center gap-1">
-            <FileText className="size-3" /> 产物 ({artifacts.length})
+            <FileText className="size-3" /> 执行产物 ({artifacts.length})
           </span>
           <span className="text-[10px] text-muted-foreground">点击查看完整内容</span>
         </div>
@@ -303,16 +303,16 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           </div>
           <Eye className="size-3.5 text-muted-foreground shrink-0" />
         </button>
-        {/* Spec.json viewer row — shows the structured goal/ac snapshot on click */}
+        {/* Manifest.json viewer row — shows the structured task_spec snapshot on click */}
         <button
           className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 text-left border-b transition-colors"
-          onClick={openSpecViewer}
-          data-spec-viewer-row
+          onClick={openManifestViewer}
+          data-manifest-viewer-row
         >
           <FileText className="size-3.5 shrink-0 text-amber-500" />
           <div className="flex-1 min-w-0">
-            <div className="text-xs truncate">任务规格 (spec.json)</div>
-            <div className="text-[9px] text-muted-foreground">goal · ac · 确认状态 — 结构化规格快照</div>
+            <div className="text-xs truncate">规格快照 (manifest.json)</div>
+            <div className="text-[9px] text-muted-foreground">agent 读的规格账本 · 核对/调试</div>
           </div>
           <Eye className="size-3.5 text-muted-foreground shrink-0" />
         </button>
@@ -324,7 +324,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           <div className="px-3 py-2 text-[11px] text-red-600">{artifactsError}</div>
         ) : artifacts.length === 0 ? (
           <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
-            ⏳ 尚无产物——agent 编写后产物会在此登记（artifacts.json）
+            ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
+            起草期的 spec 与票在上方「草稿批次」区看（agent 落盘即现，不必等 phases 写回）。
           </div>
         ) : (
           <div className="divide-y">
@@ -412,6 +413,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
                         output={r!.output}
                         existingAc={acItems}
                         existingDecisions={existingDecisions}
+                        v4={task.task_spec.format === "v4"}
                         onAdopted={() => onAdopted()}
                       />
                     </div>
@@ -428,7 +430,9 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         <div className="rounded-lg border border-purple-400/30 bg-background p-3" data-decision-memo>
           <div className="text-xs font-medium mb-1.5 flex items-center gap-1">
             <Lightbulb className="size-3 text-purple-500" /> 决策备忘
-            <span className="text-[9px] text-muted-foreground font-normal">来自 MoA · 供方案决策</span>
+            <span className="text-[9px] text-muted-foreground font-normal">
+              {task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}
+            </span>
           </div>
           <ul className="text-[11px] space-y-1 text-muted-foreground">
             {decisions.map((d, i) => <li key={i}>• {d}</li>)}
@@ -486,44 +490,46 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         </DialogContent>
       </Dialog>
 
-      {/* ── Spec viewer dialog (spec.json) ── */}
-      <Dialog open={showSpec} onOpenChange={(o) => { if (!o) setShowSpec(false) }}>
+      {/* ── Manifest viewer dialog (manifest.json) ── */}
+      <Dialog open={showManifest} onOpenChange={(o) => { if (!o) setShowManifest(false) }}>
         <DialogContent
           className="sm:max-w-[640px] h-[75vh] max-h-[75vh] p-0 gap-0 flex flex-col"
           showCloseButton
-          data-spec-viewer-dialog
+          data-manifest-viewer-dialog
         >
           <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
             <DialogTitle className="text-sm flex items-center gap-2">
               <FileText className="size-3.5 text-amber-500" />
-              任务规格 (spec.json)
+              规格快照 (manifest.json)
             </DialogTitle>
             <DialogDescription className="font-mono text-[10px] truncate">
-              {specFilePath || "加载中…"}
+              {manifestFilePath || "加载中…"}
             </DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="flex-1 min-h-0" data-spec-content-scroll>
-            {specLoading ? (
+          <ScrollArea className="flex-1 min-h-0" data-manifest-content-scroll>
+            {manifestLoading ? (
               <div className="flex items-center justify-center p-8 text-xs text-muted-foreground gap-2">
-                <Spinner className="size-4" /> 读取规格…
+                <Spinner className="size-4" /> 读取清单…
               </div>
-            ) : specContent ? (
-              <pre className="p-4 text-[11px] leading-relaxed whitespace-pre-wrap font-mono break-words" data-spec-content>
-                {specContent}
+            ) : manifestContent ? (
+              <pre className="p-4 text-[11px] leading-relaxed whitespace-pre-wrap font-mono break-words" data-manifest-content>
+                {manifestContent}
               </pre>
             ) : (
               <div className="p-6 text-xs text-muted-foreground text-center">
-                spec.json 尚未生成——首次保存规格后自动创建
+                manifest.json 尚未生成——首次保存规格后自动创建
               </div>
             )}
           </ScrollArea>
 
-          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
-            此文件是 task_spec 的结构化本地快照，每次规格保存后由 server 重写
+          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0 space-y-0.5">
+            <div>此文件是 task_spec 的结构化本地快照（format / phases / decisions），每次规格保存后由 server 重写；规格正文见各 phase 的 spec.md</div>
+            <div className="text-muted-foreground/70">你在「Phase 计划 / 草稿批次 / 决策备忘」各区看到的内容即此文件的渲染 —— 此窗用于核对 agent 读到的账本与你看到的界面是否一致。</div>
           </div>
         </DialogContent>
       </Dialog>
     </div>
   )
 }
+

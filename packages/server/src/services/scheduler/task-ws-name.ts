@@ -5,8 +5,10 @@
 // 按 chatbot 会话同款规则从 spec.goal 生成智能标题（clone/index.ts:625 的
 // slice(0,20)+去换行 口径）。
 //
-// ⚠ 唯一性 token：workspaces.name 直接用作目录名（workspace.ts createFromSpec:
-// `~/.octopus/orgs/{org}/workspaces/{name}`）。task-phase-redesign（票 05，K12）：
+// ⚠ 展示名 ≠ 目录名（2026-09-05 冒号缺陷修复）：workspaces.name 保留 `task:{标题}`
+// 展示口径，但 `:` 在 Windows 目录名非法（v4 首建 mkdir ENOENT 根因）。
+// createFromSpec（workspace.ts）落盘时单独 sanitize 目录名；本函数只管拼展示名。
+// task-phase-redesign（票 05，K12）：
 // v4 任务一 task 一 ws —— 本函数只在**首建**路径被调用（tasks.workspace_id 为空
 // 时 execute() 才取名建 ws），后续 phase/round 复用既有 ws、不再拼名；同名目录
 // 现为显式报错（旧 rmSync 覆写已移除）。`-MMDD-HHmmss` 尾缀保留 —— 其职责从
@@ -44,6 +46,6 @@ export function taskWorkspaceName(
   const p = (n: number) => String(n).padStart(2, "0")
   const ts = `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
   const core = opts?.subName ? `${title}·${opts.subName}` : title
-  // name 即目录名 —— 剥掉文件系统保留字符。
+  // 展示名保留 `task:` 前缀；标题内核剥掉文件系统保留字符（目录 sanitize 见 workspace.ts）。
   return `task:${core.replace(/[/\\:*?"<>|]/g, "")}-${ts}`
 }

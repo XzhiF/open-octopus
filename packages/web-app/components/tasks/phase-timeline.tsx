@@ -156,9 +156,12 @@ export function PhaseTimeline({ derived, budgetMs, now }: PhaseTimelineProps) {
                 <span className="ml-auto flex items-center gap-1 shrink-0">
                   {p.rounds.map((r) => {
                     const over = roundOverBudget(r, t, budget)
+                    // ADR-0018: show the ACTUALLY-RAN workflow (fix rounds run
+                    // task-fix while the phase binding stays the dev flow).
+                    const ran = (r.exec.workflow_ref ?? p.workflowRef).replace(/^built-in\//, "")
                     const title = over
-                      ? `R${r.roundIndex} 已跑超预算（${Math.round(budget / 60000)} 分钟，advisory）`
-                      : `R${r.roundIndex} · ${r.state}${r.decision ? ` · ${r.decision}` : ""}`
+                      ? `R${r.roundIndex}（${ran}）已跑超预算（${Math.round(budget / 60000)} 分钟，advisory）`
+                      : `R${r.roundIndex} · ${ran}${r.state}${r.decision ? ` · ${r.decision}` : ""}`
                     return (
                       <span
                         key={r.roundIndex}

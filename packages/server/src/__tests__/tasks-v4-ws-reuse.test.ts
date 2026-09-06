@@ -176,6 +176,7 @@ describe("ticket 05 — v4 workspace reuse + dispatchPhaseRound", () => {
   let db: Database.Database
   let fakeHome: string
   let realHome: string | undefined
+  let realUserProfile: string | undefined
   let workspaceService: WorkspaceService
   let executor: WorkflowExecutor
   let sse: SSEService
@@ -186,8 +187,14 @@ describe("ticket 05 — v4 workspace reuse + dispatchPhaseRound", () => {
     execSeq = 0
     vi.clearAllMocks()
     realHome = process.env.HOME
+    realUserProfile = process.env.USERPROFILE
     fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-wr-home-"))
+    // Fake BOTH env vars: os.homedir() reads $HOME on POSIX but %USERPROFILE%
+    // on Windows — without the latter the REAL user home was used here, the
+    // root cause of the Windows baseline-red (colon ENOENT + same-second name
+    // collisions against the real workspaces dir).
     process.env.HOME = fakeHome
+    process.env.USERPROFILE = fakeHome
     sse = new SSEService()
     workspaceService = new WorkspaceService(new WorkspaceDAO(db))
     executor = new WorkflowExecutor(
@@ -204,6 +211,8 @@ describe("ticket 05 — v4 workspace reuse + dispatchPhaseRound", () => {
   afterEach(() => {
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
+    if (realUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = realUserProfile
     fs.rmSync(fakeHome, { recursive: true, force: true })
     db.close()
   })
@@ -454,7 +463,9 @@ describe("ticket 05 — v4 workspace reuse + dispatchPhaseRound", () => {
 
     it("skips a task-bound ws while the task is not done; deletes it once done; unbound ws always deleted", () => {
       const taskId = insertV4Task(db, "awaiting_review")
-      seedSchedulerWs("ws-bound", "task:bound-ws")
+      // NOTE: name doubles as the dir name here (test seeds the fs directly) —
+      // no `:` (illegal on Windows); the retention logic keys off the DB row.
+      seedSchedulerWs("ws-bound", "task-bound-ws")
       seedSchedulerWs("ws-free", "taskpool-free-ws")
       db.prepare("UPDATE tasks SET workspace_id = 'ws-bound' WHERE id = ?").run(taskId)
       seedEnvelope(db, taskId, v4EnvelopeConfig())

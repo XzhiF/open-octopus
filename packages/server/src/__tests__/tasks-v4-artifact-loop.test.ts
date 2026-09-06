@@ -9,7 +9,8 @@
 //        （dispatchPhaseRound）前改 home spec → ws 反映新内容（home 覆盖 ws 同名）。
 //   AC2: 执行侧改 issues Status（终态回调后）home 同名文件更新 + 新报告回流，
 //        且 SSE task_artifacts_update 在 taskpool 事件流可收到。
-//   AC3: 写权纪律 — 执行侧乱改 ws spec.md，collect 不回流覆盖 home（home 权威）。
+//   AC3: 写权纪律（ADR-0018 反转）— 批次目录 ws 权威：执行侧在 ws 更新 spec.md，
+//        collect 回流覆盖 home（home=终态镜像；未改动轮 re-collect 仍为 no-op）。
 //   AC4: ws 目录被 rm -rf 后 home 产物完整（防丢兜底）。
 //   底线: v3 envelope（无 format/phases）execute() 不 seed 不 collect。
 //
@@ -189,6 +190,7 @@ function lastOnComplete(): (status?: string) => void {
 
 let fakeHome: string
 let realHome: string | undefined
+let realUserProfile: string | undefined
 
 describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
   let db: Database.Database
@@ -204,8 +206,13 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     seq = 0
     vi.clearAllMocks()
     realHome = process.env.HOME
+    realUserProfile = process.env.USERPROFILE
     fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-al-home-"))
+    // Fake BOTH: os.homedir() reads $HOME on POSIX but %USERPROFILE% on Windows —
+    // without the latter the REAL user home was used on Windows (root cause of the
+    // baseline-red: colon-mkdir ENOENT + cross-test same-second name collisions).
     process.env.HOME = fakeHome
+    process.env.USERPROFILE = fakeHome
     sse = new SSEService()
     artifactsEvents = []
     sse.subscribe("taskpool", (e) => {
@@ -226,6 +233,8 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
   afterEach(() => {
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
+    if (realUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = realUserProfile
     fs.rmSync(fakeHome, { recursive: true, force: true })
     db.close()
   })
@@ -282,8 +291,9 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     const { wsPath } = boundWs(db, taskId)
 
     // Simulated execution side: edit the issues status, add a report, and
-    // MANGLE spec.md (AC3 bait). Bump mtimes explicitly (+5s) so the ws>home
-    // rule is deterministic regardless of clock granularity.
+    // REVIEW/UPDATE spec.md in the ws (AC3 — ws is the final spec authority,
+    // ADR-0018). Bump mtimes explicitly (+5s) so the ws>home rule is
+    // deterministic regardless of clock granularity.
     const wsBatch = path.join(wsPath, ".scratch", DATE, "p1")
     const edited = path.join(wsBatch, "issues/01-x.md")
     fs.writeFileSync(edited, "Status: done\n")
@@ -291,15 +301,16 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     fs.utimesSync(edited, st.atime, new Date(st.mtimeMs + 5000))
     const report = path.join(wsBatch, "report-r1.md")
     fs.writeFileSync(report, "# round 1 report\n")
-    fs.writeFileSync(path.join(wsBatch, "spec.md"), "GARBLED BY EXECUTION\n")
+    fs.writeFileSync(path.join(wsBatch, "spec.md"), "REVISED BY EXECUTION\n")
 
     // Engine terminal → the onComplete registered by execute() finalizes.
     lastOnComplete()("completed")
 
     expect(fs.readFileSync(path.join(p1, "issues/01-x.md"), "utf-8")).toBe("Status: done\n")
     expect(fs.readFileSync(path.join(p1, "report-r1.md"), "utf-8")).toBe("# round 1 report\n")
-    // AC3: spec*.md is home 权威 — the mangling never flows back.
-    expect(fs.readFileSync(path.join(p1, "spec.md"), "utf-8")).toBe("# spec p1\n")
+    // AC3 (ADR-0018): spec*.md is ws 权威 — the execution-side revision flows
+    // back and home's copy becomes the final state.
+    expect(fs.readFileSync(path.join(p1, "spec.md"), "utf-8")).toBe("REVISED BY EXECUTION\n")
     // SSE 上行可收 (taskpool 订阅).
     expect(artifactsEvents.some((d) => d.task_id === taskId)).toBe(true)
     void scheduleId; void schedExecId
@@ -327,17 +338,17 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p2 v1\n")
     expect(fs.readFileSync(path.join(wsBatch, "issues/02-y.md"), "utf-8")).toBe("Status: needs-info\n")
 
-    // Execution side: update issues + tamper spec.md in the ws copy.
+    // Execution side: update issues + revise spec.md in the ws copy.
     const edited = path.join(wsBatch, "issues/02-y.md")
     fs.writeFileSync(edited, "Status: done\n")
     const st = fs.statSync(edited)
     fs.utimesSync(edited, st.atime, new Date(st.mtimeMs + 5000))
-    fs.writeFileSync(path.join(wsBatch, "spec.md"), "GARBLED\n")
+    fs.writeFileSync(path.join(wsBatch, "spec.md"), "REVISED IN WS\n")
 
     // Terminal → finalizePhaseRoundExecution collects.
     lastOnComplete()("completed")
     expect(fs.readFileSync(path.join(p2, "issues/02-y.md"), "utf-8")).toBe("Status: done\n")
-    expect(fs.readFileSync(path.join(p2, "spec.md"), "utf-8")).toBe("# spec p2 v1\n") // AC3
+    expect(fs.readFileSync(path.join(p2, "spec.md"), "utf-8")).toBe("REVISED IN WS\n") // AC3 (ADR-0018 ws 权威)
     expect(artifactsEvents.some((d) => d.task_id === taskId)).toBe(true) // AC2
 
     // ── round 2: home spec edited between rounds → next seed 覆盖 ws 同名 ──

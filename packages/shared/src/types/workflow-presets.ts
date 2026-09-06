@@ -1,35 +1,37 @@
 // packages/shared/src/types/workflow-presets.ts
 //
-// task-workflow-presets (T1): preset catalog schemas.
+// task-workflow-presets (T1) → binding-catalog redesign (2026-09-06):
+// workflow-presets.yaml is the BINDING CATALOG — the single source of which
+// workflows the v4 phase-binding form offers and what input skeleton each
+// carries. Same file feeds the task-author agent's binding recommendations.
+// The old skills_group filtering and the whole built-in-domain browse are
+// retired; to offer a workflow, list it here (ref resolvability is still the
+// enqueue gate's job, not this file's).
 //
-// A "preset" maps a skill group to a recommended workflow + input skeleton.
 // The catalog lives at ~/.octopus/agent/built-in/task-author/workflow-presets.yaml
-// (agent behavior asset, co-located with the persona.md). Server reads it to
-// serve GET /api/workflow-presets; agent reads it for HOW-handoff recommendations.
+// (agent behavior asset, co-located with persona.md).
 //
-// Shape: each preset = name + skills_group[] + workflow ref + inputs skeleton.
-// skills_group: [] = general fallback (matches any task's skill groups).
-// inputs values may contain ${goal} / ${ac} placeholders — resolved at
-// materialization time by the server (materializeTaskSpecToConfig).
+// inputs values may contain ${phase.*} / ${task.home} / ${task_artifacts_dir}
+// placeholders — resolved at materialization time by the server.
 
 import { z } from "zod"
 
 /** Task workflow input values: key→non-empty string, values may contain
- *  `${goal}` / `${ac}` templates resolved at materialization. A named type so
+ *  `${...}` templates resolved at materialization. A named type so
  *  the invariant travels with the name across server + web-app seams. */
 export type InputValues = Record<string, string>
 
-/** A single workflow preset: maps skill groups to a recommended workflow + input
- *  skeleton. `skills_group: []` is the general fallback — matches any task. */
+/** A single catalog entry: a bindable workflow + the input skeleton the
+ *  binding form pre-fills. desc is the one-line shown in the picker. */
 export const workflowPresetSchema = z.object({
   name: z.string().min(1),
-  skills_group: z.array(z.string()).default([]),
+  desc: z.string().optional(),
   workflow: z.string().min(1),
   inputs: z.record(z.string(), z.string()).default({}),
 })
 export type WorkflowPreset = z.infer<typeof workflowPresetSchema>
 
-/** The preset catalog: a YAML file containing an array of presets. */
+/** The binding catalog: a YAML file containing an array of presets. */
 export const workflowPresetsCatalogSchema = z.object({
   presets: z.array(workflowPresetSchema).default([]),
 })

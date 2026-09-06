@@ -105,6 +105,57 @@ function makeDetail(derived: TaskDerivedView): TaskDetail {
   } as unknown as TaskDetail
 }
 
+// phase-handoff-chaining 票 04 — p2 待验收、p1 已 accepted 的三 phase 派生视图
+// （提示行 N=2 场景）+ 末 phase 待验收（无下一站，不显示）场景。
+const round = (execId: string, phaseIndex: number, roundIndex: number, decision: "accepted" | null) => ({
+  roundIndex,
+  exec: { id: execId, status: "completed", phase_index: phaseIndex, round_index: roundIndex, created_at: "2026-09-03T00:00:00Z" },
+  state: "succeeded" as const,
+  decision,
+})
+
+const P2_AWAITING_P1_ACCEPTED: TaskDerivedView = {
+  taskStatus: "awaiting_review",
+  isV4: true,
+  phaseViews: [
+    {
+      index: 1, name: "脚手架", slug: "scaffold-1", workflowRef: "task-dev",
+      status: "accepted",
+      rounds: [round("exec-1", 1, 1, "accepted")],
+      currentRound: 1, acceptedRound: 1, awaitingRound: null,
+    },
+    {
+      index: 2, name: "观测", slug: "metering-2", workflowRef: "task-dev",
+      status: "awaiting_review",
+      rounds: [round("exec-2", 2, 1, null)],
+      currentRound: 1, acceptedRound: null, awaitingRound: 1,
+    },
+    {
+      index: 3, name: "收尾", slug: "wrap-3", workflowRef: "task-dev",
+      status: "pending", rounds: [], currentRound: null, acceptedRound: null, awaitingRound: null,
+    },
+  ],
+}
+
+const LAST_PHASE_AWAITING: TaskDerivedView = {
+  taskStatus: "awaiting_review",
+  isV4: true,
+  phaseViews: [
+    {
+      index: 1, name: "脚手架", slug: "scaffold-1", workflowRef: "task-dev",
+      status: "accepted",
+      rounds: [round("exec-1", 1, 1, "accepted")],
+      currentRound: 1, acceptedRound: 1, awaitingRound: null,
+    },
+    {
+      index: 2, name: "观测", slug: "metering-2", workflowRef: "task-dev",
+      status: "awaiting_review",
+      rounds: [round("exec-2", 2, 1, null)],
+      currentRound: 1, acceptedRound: null, awaitingRound: 1,
+    },
+  ],
+}
+
 const AGG = {
   totalCalls: 30,
   toolCalls: 5,
@@ -129,6 +180,13 @@ beforeEach(() => {
 
 function renderModal() {
   const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+  return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+}
+
+/** 票 04：指定派生视图开窗（覆盖 beforeEach 的默认 mockGetTask 返回值）。 */
+function renderModalWith(derived: TaskDerivedView) {
+  mockGetTask.mockResolvedValue(makeDetail(derived))
+  const task = makeDetail(derived) as unknown as Task
   return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
 }
 
@@ -170,8 +228,8 @@ describe("AcceptanceModal — AC1 三栏证据面", () => {
   })
 })
 
-describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
-  it("反馈为空时打回确认 disabled；提交走票 07 契约 body", async () => {
+describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
+  it("反馈为空时打回确认 disabled；缺省路由=修订重跑；选轻量修复后 body 带 next_flow=fix", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     const confirm = screen.getByTestId("reject-confirm") as HTMLButtonElement
@@ -180,6 +238,9 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(true)
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "路由没接上" } })
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
+    // 路由二选一默认 = 修订重跑
+    expect((document.querySelector('[data-reject-flow="rerun"] input') as HTMLInputElement).checked).toBe(true)
+    expect((document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement).checked).toBe(false)
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
@@ -187,11 +248,25 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上",
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上", next_flow: "rerun",
+    }))
+
+    // 切到轻量修复再打一枪 → body 换轨
+    mockPostAcceptance.mockClear()
+    fireEvent.click(screen.getByTestId("acceptance-reject"))
+    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "错别字" } })
+    fireEvent.click(document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement)
+    mockPostAcceptance.mockResolvedValueOnce({
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "dispatched",
+      dispatch: { schedule_id: "sch-1", execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+    })
+    fireEvent.click(screen.getByTestId("reject-confirm"))
+    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "错别字", next_flow: "fix",
     }))
   })
 
-  it("提交成功后显示 D13① agent 形态推荐占位卡（disabled）+ D14 影响清单空态", async () => {
+  it("提交成功后显示路由回显卡（活的，非 disabled 占位）+ D14 影响清单空态", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
@@ -200,9 +275,9 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
       dispatch: { schedule_id: "sch-1", execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
-    expect(await screen.findByTestId("agent-recommend-card")).toBeTruthy()
-    expect(document.querySelector('[data-recommend-option="fix-flow"] input')).toBeDisabled()
-    expect(document.querySelector('[data-recommend-option="spec-r2"] input')).toBeDisabled()
+    const card = await screen.findByTestId("agent-recommend-card")
+    expect(card.textContent).toContain("修订重跑")
+    expect(card.querySelector("input[disabled]")).toBeNull() // D13① disabled 假卡已兑现为回显
     expect(screen.getByTestId("impact-list-empty")).toBeTruthy()
   })
 
@@ -222,6 +297,40 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
     // 第二次点通过 → 成功走 awaiting_manual_trigger（autoAdvance=false 语义提示）
     fireEvent.click(screen.getByTestId("acceptance-approve"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe("AcceptanceModal — 票 04 前序交接提示行（phase-handoff-chaining K6）", () => {
+  it("AC1: 双 phase、phase1 待验收 → 确认按钮上方显示提示行 N=1；打回面板展开即隐藏、取消恢复", async () => {
+    renderModal()
+    const hint = await screen.findByTestId("handoff-hint")
+    expect(hint.textContent).toBe(
+      "本 phase 的 handoff.md 连同已 accepted 共 1 个前序交接，将自动进入下一 phase 执行会话",
+    )
+    // 位置 = 确认（验收通过）按钮上方、动作区之内
+    const approve = screen.getByTestId("acceptance-approve")
+    expect(hint.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    // rejected 态（打回面板展开）→ 不显示
+    fireEvent.click(screen.getByTestId("acceptance-reject"))
+    expect(screen.queryByTestId("handoff-hint")).toBeNull()
+    // 收起面板 → 恢复
+    fireEvent.click(screen.getByRole("button", { name: "取消" }))
+    expect(screen.getByTestId("handoff-hint")).toBeTruthy()
+  })
+
+  it("AC2: phase2 待验收、phase1 已 accepted → N=2", async () => {
+    renderModalWith(P2_AWAITING_P1_ACCEPTED)
+    const hint = await screen.findByTestId("handoff-hint")
+    expect(hint.textContent).toContain("共 2 个前序交接")
+  })
+
+  it("AC2: 末 phase 待验收（无下一站）→ 不显示提示行", async () => {
+    renderModalWith(LAST_PHASE_AWAITING)
+    expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
+    // 末 phase 的确认按钮 = 归档语义（守卫：awaiting 确实解析到了最后一栏）
+    expect(screen.getByTestId("acceptance-approve").textContent).toContain("进入归档")
+    expect(screen.queryByTestId("handoff-hint")).toBeNull()
   })
 })
 

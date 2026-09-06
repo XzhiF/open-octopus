@@ -1,0 +1,256 @@
+# matt-spec-dev.test.yaml — 模拟器场景（验证入口：octopus workflow simulate matt-spec-dev.yaml）
+# 场景 1-3 = ADR-0018 三条路径：首跑直执行 / 打回反馈轮先就地再审 spec / 批次目录断链 fail-fast。
+# 场景 4-5 = phase-handoff-chaining（ADR-0019）：spec-resolve 真执行（real_execution）
+#   探测 prev_handoff_paths 存在子集 / 无输入回归。
+scenarios:
+  # =============================================================
+  # Scenario 1: 首跑（round 1，无反馈）— spec-resolve 定位底本 → 跳过
+  #   spec-review → 票 DAG → gate → review → verify → ship
+  # =============================================================
+  - name: "first round — spec executed directly, no spec-review"
+    inputs:
+      batch_dir: ".scratch/20260905/llm-event-bus-1"
+      task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
+    mocks:
+      spec-resolve:
+        output: "PRECHECK OK: spec=.scratch/20260905/llm-event-bus-1/spec.md tickets=3 feedback=false branch=octopus-task-abc"
+        update_vars:
+          batch_ok: "true"
+          batch_reason: ""
+          spec_file: ".scratch/20260905/llm-event-bus-1/spec.md"
+          has_feedback: "false"
+          latest_feedback: ""
+          branch: "octopus-task-abc"
+          ticket_count: "3"
+      ticket-dag:
+        output: "3 tickets executed: 01 done, 02 done, 03-e2e done"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "passed"}}'
+        update_vars:
+          review_status: "passed"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/57"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/57"
+    assertions:
+      status: "completed"
+      vars:
+        batch_ok: "true"
+        has_feedback: "false"
+        build_status: "passed"
+        review_status: "passed"
+        pr_url: "https://github.com/XzhiF/octopus/pull/57"
+      node_trace:
+        executed:
+          - spec-resolve
+          - ticket-dag
+          - integration-gate
+          - code-review
+          - integration-verify
+          - ship-pr
+        skipped:
+          - fail-fast
+          - spec-review
+
+  # =============================================================
+  # Scenario 2: 打回反馈轮 — fix-feedback-r1.md 在场 → spec-review 先就地
+  #   更新 ws spec.md（终态），再走执行链（ws 权威 — collect 回流 home）
+  # =============================================================
+  - name: "rework round — feedback present, spec reviewed in ws before execution"
+    inputs:
+      batch_dir: ".scratch/20260905/llm-event-bus-1"
+      task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
+    mocks:
+      spec-resolve:
+        output: "PRECHECK OK: spec=.scratch/20260905/llm-event-bus-1/spec.md tickets=3 feedback=true branch=octopus-task-abc"
+        update_vars:
+          batch_ok: "true"
+          batch_reason: ""
+          spec_file: ".scratch/20260905/llm-event-bus-1/spec.md"
+          has_feedback: "true"
+          latest_feedback: ".scratch/20260905/llm-event-bus-1/fix-feedback-r1.md"
+          branch: "octopus-task-abc"
+          ticket_count: "3"
+      spec-review:
+        output: |
+          反馈 #1（事件缺 caller_type 字段）→ 规格补充：spec.md Key Decisions 新增 D-NEW-r2 行 + 票 01 范围扩列。
+          反馈 #2（价格表口径）→ 实现缺陷：spec 不变，票 02 Verification 加交叉断言。
+          已在 ws 就地更新 spec.md，修订点记入 round-report.md「Spec 修订」节。
+        update_vars:
+          spec_reviewed: "true"
+      ticket-dag:
+        output: "3 tickets re-executed against revised spec"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "has_notes"}}'
+        update_vars:
+          review_status: "has_notes"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/57"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/57"
+    assertions:
+      status: "completed"
+      vars:
+        has_feedback: "true"
+        spec_reviewed: "true"
+        build_status: "passed"
+      node_trace:
+        executed:
+          - spec-resolve
+          - spec-review
+          - ticket-dag
+          - ship-pr
+        skipped:
+          - fail-fast
+
+  # =============================================================
+  # Scenario 3: 反例 — 批次目录未 seed（绑定/链路断）
+  #   spec-resolve 分流 → fail-fast 触发 → 工作流 failed，ticket-dag 绝不执行
+  # =============================================================
+  - name: "precheck fail — batch dir missing (seed broken)"
+    inputs:
+      batch_dir: ".scratch/20260905/ghost-phase-9"
+      task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
+    mocks:
+      spec-resolve:
+        output: 'PRECHECK FAILED: batch dir not found in workspace: .scratch/20260905/ghost-phase-9 (seed 下行未落盘?)'
+        update_vars:
+          batch_ok: "false"
+          batch_reason: "batch dir not found in workspace: .scratch/20260905/ghost-phase-9 (seed 下行未落盘?)"
+      fail-fast:
+        status: "failed"
+        error: "matt-spec-dev cannot run: batch dir not found"
+    assertions:
+      status: "failed"
+      vars:
+        batch_ok: "false"
+      node_trace:
+        executed:
+          - spec-resolve
+          - fail-fast
+        skipped:
+          - spec-review
+          - ticket-dag
+          - integration-gate
+          - code-review
+          - integration-verify
+          - ship-pr
+
+  # =============================================================
+  # Scenario 4: 前序交接探测（AC3 — phase-handoff-chaining）— spec-resolve
+  #   **真执行**（real_execution），fixture 批次 = .scratch/phase-handoff-chaining/sim/batch
+  #   （spec.md + issues/ 在场）。prev_handoff_paths 混合：真实相对路径 + ghost +
+  #   Windows 式反斜杠虚构路径 → vars.prev_handoffs 只含存在者（换行 JSON-safe）、
+  #   count=1，缺失静默过滤不 fail。
+  # =============================================================
+  - name: "prev-handoff probe — real spec-resolve filters missing paths silently"
+    real_execution:
+      - spec-resolve
+    inputs:
+      batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+      prev_handoff_paths: |-
+        .scratch/phase-handoff-chaining/sim/prev-phase/ghost-handoff.md
+        .scratch/phase-handoff-chaining/sim/prev-phase/handoff.md
+        C:\Users\ghost\.octopus\tasks\t-ghost\specs\prev\handoff.md
+        .scratch/phase-handoff-chaining/sim/prev-phase2/handoff.md
+    mocks:
+      ticket-dag:
+        output: "1 ticket executed: 01 done"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "passed"}}'
+        update_vars:
+          review_status: "passed"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/58"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/58"
+    assertions:
+      status: "completed"
+      vars:
+        batch_ok: "true"
+        spec_file: ".scratch/phase-handoff-chaining/sim/batch/spec.md"
+        has_feedback: "false"
+        # 存在子集保序（第 2/4 行），ghost 与 Windows 式反斜杠虚构路径静默过滤；
+        # 多条经 JSON \n 转义换行连接
+        prev_handoffs: |-
+          .scratch/phase-handoff-chaining/sim/prev-phase/handoff.md
+          .scratch/phase-handoff-chaining/sim/prev-phase2/handoff.md
+        prev_handoff_count: "2"
+      node_trace:
+        executed:
+          - spec-resolve
+          - ticket-dag
+          - ship-pr
+        skipped:
+          - fail-fast
+          - spec-review
+
+  # =============================================================
+  # Scenario 5: 回归（AC4）— 无 prev_handoff_paths 输入（首 phase/v3 式绑定）时
+  #   spec-resolve 真执行行为与改前一致：precheck 照常 OK，prev_* 停在初始值
+  #   （"" / "0"），不 fail、不引入路由变化。
+  # =============================================================
+  - name: "no prev input — spec-resolve behaves exactly as before (regression)"
+    real_execution:
+      - spec-resolve
+    inputs:
+      batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+    mocks:
+      ticket-dag:
+        output: "1 ticket executed: 01 done"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "passed"}}'
+        update_vars:
+          review_status: "passed"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/59"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/59"
+    assertions:
+      status: "completed"
+      vars:
+        batch_ok: "true"
+        spec_file: ".scratch/phase-handoff-chaining/sim/batch/spec.md"
+        has_feedback: "false"
+        prev_handoffs: ""
+        prev_handoff_count: "0"
+      node_trace:
+        executed:
+          - spec-resolve
+          - ticket-dag
+          - ship-pr
+        skipped:
+          - fail-fast
+          - spec-review

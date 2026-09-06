@@ -1,0 +1,262 @@
+[server] Built-in clones initialized: 6 registered, 0 dirs created
+[server] Scheduler seed: system:daily-archive task created
+[yjs] 0 active workspaces (lazy init on first access)
+Octopus Server running on http://0.0.0.0:3555 (LAN: http://172.29.100.4:3555) (PID: 4868)
+WebSocket ready on ws://0.0.0.0:3555
+Log file: C:\Users\EDY\.octopus\logs\server-main.log
+[server] Host PIDs: 17576, 21528 (from C:\Users\EDY\.octopus\host-pids.json)
+[scheduler] Started with 1 active cron jobs (workflow + agent)
+<-- GET /api/actuator/health
+--> GET /api/actuator/health [32m200[0m 4ms
+<-- GET /api/actuator/health
+--> GET /api/actuator/health [32m200[0m 1ms
+<-- POST /api/tasks
+--> POST /api/tasks [32m201[0m 3ms
+<-- PUT /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7
+--> PUT /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7 [32m200[0m 2ms
+<-- POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/ready
+--> POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/ready [32m200[0m 3ms
+<-- POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/trigger
+[sse] emit event=task_status listeners=0
+[sse] emit event=task_trigger listeners=0
+[sse] emit event=schedule_status listeners=0
+[WorkspaceScaffold] copied skill: octo-dev-copilot
+[WorkspaceScaffold] copied skill: octo-workflow-dev
+[WorkspaceScaffold] copied skill: octo-resource-manager
+[WorkspaceScaffold] copied skill: octo-source-analyzer
+[WorkspaceScaffold] copied agent: devil-advocate.md
+[WorkspaceScaffold] copied agent: architecture-explorer.md
+[WorkspaceScaffold] copied agent: vision-analyzer.md
+[WorkflowExecutor] seeded 3 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630421736-0906-014702/.scratch\20260906\e2e-td-ho-p1-ho-1788630421736 (phase 1 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=schedule_triggered listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+--> POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/trigger [32m200[0m 183ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630421736-0906-014702\projects\e2e-td-ho-ho-1788630421736
+[ExecutionDAO] deleteAgentEventsByNode: cad92c27-47ac-4e1d-a02e-bf555aba0255-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: cad92c27-47ac-4e1d-a02e-bf555aba0255-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[WorkflowExecutor] collected 5 artifact file(s) from ws back to home (task 54817f06-0fcd-42f2-b76c-53c683a504f7, phase 1 round 1)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[ExecutionLifecycle] retireStaleRules failed: TypeError: this.db.prepare is not a function
+    at KnowledgeEffectivenessDAO.stmt (C:\xzf\ai\open-octopus\packages\server\dist\index.js:1059:23)
+    at KnowledgeEffectivenessDAO.listStale (C:\xzf\ai\open-octopus\packages\server\dist\index.js:5449:21)
+    at retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:6615:39)
+    at KnowledgeService.retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:13988:16)
+    at _ExecutionLifecycle.start (C:\xzf\ai\open-octopus\packages\server\dist\index.js:25887:57)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- GET /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7
+--> GET /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7 [32m200[0m 2ms
+<-- GET /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630421736&list=1
+--> GET /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630421736&list=1 [32m200[0m 1ms
+<-- POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/acceptance
+[sse] emit event=phase_status_update listeners=0
+[TasksService] seeded 2 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630421736-0906-014702/.scratch\20260906\e2e-td-ho-p2-ho-1788630421736 (phase 2 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+[sse] emit event=phase_status_update listeners=0
+--> POST /api/tasks/54817f06-0fcd-42f2-b76c-53c683a504f7/acceptance [32m200[0m 80ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630421736-0906-014702\projects\e2e-td-ho-ho-1788630421736
+[ExecutionDAO] deleteAgentEventsByNode: 5ad11bf5-ccfd-4b97-b635-4039492117c6-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: 5ad11bf5-ccfd-4b97-b635-4039492117c6-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[TasksService] collected 4 artifact file(s) from ws back to home (task 54817f06-0fcd-42f2-b76c-53c683a504f7, phase 2)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- GET /api/actuator/health
+--> GET /api/actuator/health [32m200[0m 2ms
+<-- GET /api/actuator/health
+--> GET /api/actuator/health [32m200[0m 2ms
+<-- POST /api/tasks
+--> POST /api/tasks [32m201[0m 2ms
+<-- PUT /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028
+--> PUT /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028 [32m200[0m 1ms
+<-- POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/ready
+--> POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/ready [32m200[0m 2ms
+<-- POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/trigger
+[sse] emit event=task_status listeners=0
+[sse] emit event=task_trigger listeners=0
+[sse] emit event=schedule_status listeners=0
+[WorkspaceScaffold] copied skill: octo-dev-copilot
+[WorkspaceScaffold] copied skill: octo-workflow-dev
+[WorkspaceScaffold] copied skill: octo-resource-manager
+[WorkspaceScaffold] copied skill: octo-source-analyzer
+[WorkspaceScaffold] copied agent: devil-advocate.md
+[WorkspaceScaffold] copied agent: architecture-explorer.md
+[WorkspaceScaffold] copied agent: vision-analyzer.md
+[WorkflowExecutor] seeded 3 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400-0906-015017/.scratch\20260906\e2e-td-ho-p1-ho-1788630617400 (phase 1 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=schedule_triggered listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+--> POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/trigger [32m200[0m 185ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400-0906-015017\projects\e2e-td-ho-ho-1788630617400
+[ExecutionDAO] deleteAgentEventsByNode: 9c21ebc7-1c6d-47c8-9c88-0745f56c3fe9-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: 9c21ebc7-1c6d-47c8-9c88-0745f56c3fe9-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[WorkflowExecutor] collected 5 artifact file(s) from ws back to home (task 96182fc0-a41d-46c8-b220-a16c1984e028, phase 1 round 1)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[ExecutionLifecycle] retireStaleRules failed: TypeError: this.db.prepare is not a function
+    at KnowledgeEffectivenessDAO.stmt (C:\xzf\ai\open-octopus\packages\server\dist\index.js:1059:23)
+    at KnowledgeEffectivenessDAO.listStale (C:\xzf\ai\open-octopus\packages\server\dist\index.js:5449:21)
+    at retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:6615:39)
+    at KnowledgeService.retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:13988:16)
+    at _ExecutionLifecycle.start (C:\xzf\ai\open-octopus\packages\server\dist\index.js:25887:57)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- GET /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028
+--> GET /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028 [32m200[0m 1ms
+<-- GET /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630617400&list=1
+--> GET /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630617400&list=1 [32m200[0m 1ms
+<-- POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/acceptance
+[sse] emit event=phase_status_update listeners=0
+[TasksService] seeded 2 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400-0906-015017/.scratch\20260906\e2e-td-ho-p2-ho-1788630617400 (phase 2 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+[sse] emit event=phase_status_update listeners=0
+--> POST /api/tasks/96182fc0-a41d-46c8-b220-a16c1984e028/acceptance [32m200[0m 60ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400-0906-015017\projects\e2e-td-ho-ho-1788630617400
+[ExecutionDAO] deleteAgentEventsByNode: ce23435b-4b5a-47c4-b0b5-370d57699477-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: ce23435b-4b5a-47c4-b0b5-370d57699477-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[TasksService] collected 4 artifact file(s) from ws back to home (task 96182fc0-a41d-46c8-b220-a16c1984e028, phase 2)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- POST /api/tasks
+--> POST /api/tasks [32m201[0m 4ms
+<-- PUT /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270
+--> PUT /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270 [32m200[0m 1ms
+<-- POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/ready
+--> POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/ready [32m200[0m 1ms
+<-- POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/trigger
+[sse] emit event=task_status listeners=0
+[sse] emit event=task_trigger listeners=0
+[sse] emit event=schedule_status listeners=0
+[WorkspaceScaffold] copied skill: octo-dev-copilot
+[WorkspaceScaffold] copied skill: octo-workflow-dev
+[WorkspaceScaffold] copied skill: octo-resource-manager
+[WorkspaceScaffold] copied skill: octo-source-analyzer
+[WorkspaceScaffold] copied agent: devil-advocate.md
+[WorkspaceScaffold] copied agent: architecture-explorer.md
+[WorkspaceScaffold] copied agent: vision-analyzer.md
+[WorkflowExecutor] seeded 2 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_NOHANDOFF_ho-1788630617400-0906-015024/.scratch\20260906\e2e-td-ho-p1-ho-1788630617400 (phase 1 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=schedule_triggered listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+--> POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/trigger [32m200[0m 155ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_NOHANDOFF_ho-1788630617400-0906-015024\projects\e2e-td-ho-ho-1788630617400
+[ExecutionDAO] deleteAgentEventsByNode: bb47f41d-b6af-4d06-8203-3defb1d8a233-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: bb47f41d-b6af-4d06-8203-3defb1d8a233-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[WorkflowExecutor] collected 2 artifact file(s) from ws back to home (task b2ee598a-5b2c-4539-b071-2cd04c37f270, phase 1 round 1)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[ExecutionLifecycle] retireStaleRules failed: TypeError: this.db.prepare is not a function
+    at KnowledgeEffectivenessDAO.stmt (C:\xzf\ai\open-octopus\packages\server\dist\index.js:1059:23)
+    at KnowledgeEffectivenessDAO.listStale (C:\xzf\ai\open-octopus\packages\server\dist\index.js:5449:21)
+    at retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:6615:39)
+    at KnowledgeService.retireStaleRules (C:\xzf\ai\open-octopus\packages\server\dist\index.js:13988:16)
+    at _ExecutionLifecycle.start (C:\xzf\ai\open-octopus\packages\server\dist\index.js:25887:57)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- GET /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630617400&list=1
+--> GET /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/home-file?path=.scratch%2F20260906%2Fe2e-td-ho-p1-ho-1788630617400&list=1 [32m200[0m 1ms
+<-- POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/acceptance
+[sse] emit event=phase_status_update listeners=0
+[TasksService] seeded 2 artifact file(s) into ws C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_NOHANDOFF_ho-1788630617400-0906-015024/.scratch\20260906\e2e-td-ho-p2-ho-1788630617400 (phase 2 round 1)
+[sse] emit event=execution_created listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=execution_status listeners=0
+[model-alias] Loaded config from C:\Users\EDY\.octopus\models.yaml
+[EngineFactory] VersionResolver fallback (empty): this.db.prepare is not a function
+[sse] emit event=phase_status_update listeners=0
+--> POST /api/tasks/b2ee598a-5b2c-4539-b071-2cd04c37f270/acceptance [32m200[0m 66ms
+[git-ops] branch "main" is checked out by another worktree; keeping current branch in C:\Users\EDY\.octopus\orgs\E2E_TD_org\workspaces\taskE2E_TD_PHASEHANDOFF_NOHANDOFF_ho-1788630617400-0906-015024\projects\e2e-td-ho-ho-1788630617400
+[ExecutionDAO] deleteAgentEventsByNode: 9343162f-c875-4ae7-b788-7eefaad8fa42-__engine_init__
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[knowledge-precompute] org=E2E_TD_org workflow=e2e-td-ho pref=true rules=0 (no active rules)
+[ExecutionDAO] deleteAgentEventsByNode: 9343162f-c875-4ae7-b788-7eefaad8fa42-probe
+[ExecutionDAO] deleteAgentEventsByNode: deleted 0 events
+[sse] emit event=node_start listeners=0
+[sse] emit event=node_end listeners=0
+[sse] emit event=schedule_status listeners=0
+[sse] emit event=phase_status_update listeners=0
+[TasksService] collected 2 artifact file(s) from ws back to home (task b2ee598a-5b2c-4539-b071-2cd04c37f270, phase 2)
+[sse] emit event=task_artifacts_update listeners=0
+[sse] emit event=execution_status listeners=0
+[sse] emit event=complete listeners=0
+[sse] emit event=execution_metrics listeners=0
+[sse] emit event=execution_metrics listeners=0
+<-- GET /api/actuator/health
+--> GET /api/actuator/health [32m200[0m 1ms

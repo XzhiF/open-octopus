@@ -143,7 +143,7 @@ describe("TaskHomeService", () => {
       expect(fs.existsSync(path.join(home, ".claude", "rules", "task-context.md"))).toBe(true)
       expect(fs.existsSync(path.join(home, "context.md"))).toBe(true)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json", "workflows"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "manifest.json", "skills", "workflows"])
     })
 
     it("createHome writes task-context.md with path constraints only", () => {
@@ -243,12 +243,12 @@ describe("TaskHomeService", () => {
       expect(ruleAfter).toBe(ruleBefore)
     })
 
-    // ── 06: spec.json — structured goal/ac snapshot the task-author agent reads ──
+    // ── 06: manifest.json — structured task_spec snapshot the task-author agent reads ──
 
-    it("createHome writes a baseline spec.json; writeSpecFile refreshes it with real data", () => {
+    it("createHome writes a baseline manifest.json; writeManifestFile refreshes it with real data", () => {
       const id = "t-spec"
       svc.createHome(id)
-      const p = path.join(svc.homePath(id), "spec.json")
+      const p = path.join(svc.homePath(id), "manifest.json")
       expect(fs.existsSync(p)).toBe(true)
 
       const first = JSON.parse(fs.readFileSync(p, "utf-8")) as {
@@ -262,7 +262,8 @@ describe("TaskHomeService", () => {
       expect(first.spec).toEqual({})
 
       // A spec-field save refreshes the snapshot with the current task_spec.
-      svc.writeSpecFile(id, {
+      // No format flag → faithful mirror (v3 tasks keep goal/ac keys).
+      svc.writeManifestFile(id, {
         version: 7,
         spec: { goal: "g", ac: ["a1", "a2"], goal_confirmed: true, ac_confirmed: ["a1", "a2"] },
         updated_at: "2026-08-21T00:00:00Z",
@@ -280,15 +281,65 @@ describe("TaskHomeService", () => {
       expect(second.updated_at).toBe("2026-08-21T00:00:00Z")
     })
 
-    it("writeSpecFile is a silent no-op when the home doesn't exist (legacy/v2 task)", () => {
+    it("v4 snapshots drop v3-only schema-default keys (goal/ac/confirmed/…) — write-side filter only", () => {
+      const id = "t-v4-filter"
+      svc.createHome(id)
+      svc.writeManifestFile(id, {
+        version: 3,
+        spec: {
+          format: "v4",
+          goal: "",
+          ac: [],
+          goal_confirmed: false,
+          ac_confirmed: [],
+          subunits: [],
+          integration_goal: "",
+          input_values: {},
+          workflow_ref: "",
+          task_type: "coding",
+          decisions: ["keep me"],
+          phases: [{ index: 1, name: "p1", slug: "p1-1", specPath: "./x/spec.md", workflowRef: "built-in/matt-spec-dev", inputValues: {} }],
+        },
+        updated_at: "2026-09-05T00:00:00Z",
+        format: "v4",
+      })
+      const snap = JSON.parse(fs.readFileSync(path.join(svc.homePath(id), "manifest.json"), "utf-8")) as {
+        spec: Record<string, unknown>
+      }
+      for (const k of ["goal", "ac", "goal_confirmed", "ac_confirmed", "subunits", "integration_goal", "input_values", "workflow_ref", "task_type"]) {
+        expect(snap.spec).not.toHaveProperty(k)
+      }
+      expect(snap.spec.format).toBe("v4")
+      expect(snap.spec.decisions).toEqual(["keep me"])
+      expect(Array.isArray(snap.spec.phases)).toBe(true)
+    })
+
+    it("lazy migration: refreshing the snapshot removes the legacy spec.json + rewrites the rules pointer", () => {
+      const id = "t-migrate"
+      const home = svc.homePath(id)
+      svc.createHome(id)
+      // Simulate a pre-rename home: legacy snapshot on disk.
+      const legacy = path.join(home, "spec.json")
+      fs.writeFileSync(legacy, JSON.stringify({ task_id: id, version: 2, spec: {}, updated_at: "x" }), "utf-8")
+
+      svc.writeManifestFile(id, { version: 3, spec: { format: "v4" }, updated_at: "y", format: "v4" })
+
+      expect(fs.existsSync(path.join(home, "manifest.json"))).toBe(true)
+      expect(fs.existsSync(legacy)).toBe(false)
+      const rules = fs.readFileSync(path.join(home, ".claude", "rules", "task-context.md"), "utf-8")
+      expect(rules).toContain("manifest.json")
+      expect(rules).not.toContain("spec.json")
+    })
+
+    it("writeManifestFile is a silent no-op when the home doesn't exist (legacy/v2 task)", () => {
       const warnBefore = warnSpy.mock.calls.length
-      svc.writeSpecFile("t-ghost", { version: 1, spec: {}, updated_at: "x" })
+      svc.writeManifestFile("t-ghost", { version: 1, spec: {}, updated_at: "x" })
       expect(fs.existsSync(svc.homePath("t-ghost"))).toBe(false)
       // No warning either — a missing home is an expected case, not an error.
       expect(warnSpy.mock.calls.length).toBe(warnBefore)
     })
 
-    it("rules file (task-context.md) points the agent to spec.json", () => {
+    it("rules file (task-context.md) points the agent to manifest.json", () => {
       const id = "t-rules"
       svc.createHome(id)
       const content = fs.readFileSync(
@@ -296,15 +347,17 @@ describe("TaskHomeService", () => {
         "utf-8",
       )
       // The rules file is SDK-loaded (alwaysApply) — this is the deterministic
-      // way the agent learns about spec.json on its first turn.
-      expect(content).toContain("spec.json")
+      // way the agent learns about manifest.json on its first turn.
+      expect(content).toContain("manifest.json")
+      expect(content).not.toContain("spec.json")
     })
 
-    it("context.md points to spec.json", () => {
+    it("context.md points to manifest.json", () => {
       const id = "t-ctx"
       svc.createHome(id)
       const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
-      expect(ctx).toContain("spec.json")
+      expect(ctx).toContain("manifest.json")
+      expect(ctx).not.toContain("spec.json")
     })
 
     it("createHome is idempotent (calling twice leaves one home)", () => {
@@ -313,7 +366,7 @@ describe("TaskHomeService", () => {
       svc.createHome(id)
       const home = svc.homePath(id)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json", "workflows"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "manifest.json", "skills", "workflows"])
     })
 
     it("ensureRulesFile backfills rules for existing homes without .claude/", () => {
@@ -347,6 +400,25 @@ describe("TaskHomeService", () => {
       // Should not throw, should not create anything
       svc.ensureRulesFile("t-nonexistent")
       expect(fs.existsSync(svc.homePath("t-nonexistent"))).toBe(false)
+    })
+
+    it("ensureRulesFile self-heals stale pre-rename rules (spec.json pointer) + renames the legacy snapshot", () => {
+      const id = "t-5"
+      const home = svc.homePath(id)
+      svc.createHome(id)
+      const rulePath = path.join(home, ".claude", "rules", "task-context.md")
+      // Simulate a pre-rename home: stale pointer in rules + spec.json on disk.
+      const stale = fs.readFileSync(rulePath, "utf-8").replace(/manifest\.json/g, "spec.json")
+      fs.writeFileSync(rulePath, stale, "utf-8")
+      fs.writeFileSync(path.join(home, "manifest.json"), JSON.stringify({ task_id: id, version: 9, spec: {}, updated_at: "x" }), "utf-8")
+
+      svc.ensureRulesFile(id)
+
+      const healed = fs.readFileSync(rulePath, "utf-8")
+      expect(healed).toContain("manifest.json")
+      expect(healed).not.toContain("spec.json")
+      // snapshot survived the rename under the new name
+      expect(fs.existsSync(path.join(home, "manifest.json"))).toBe(true)
     })
   })
 

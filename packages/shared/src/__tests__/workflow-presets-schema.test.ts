@@ -4,26 +4,26 @@ import {
   workflowPresetsCatalogSchema,
 } from "../types/workflow-presets"
 
-describe("workflowPresetSchema", () => {
+describe("workflowPresetSchema (binding-catalog shape)", () => {
   it("parses a valid preset with all fields", () => {
     const result = workflowPresetSchema.parse({
-      name: "basic-dev",
-      skills_group: ["octo-backend"],
-      workflow: "built-in/basic-dev-flow",
-      inputs: { requirement: "${goal}" },
+      name: "spec-dev",
+      desc: "v4 主打：直读批次执行",
+      workflow: "built-in/matt-spec-dev",
+      inputs: { batch_dir: "${phase.batch_rel}" },
     })
-    expect(result.name).toBe("basic-dev")
-    expect(result.skills_group).toEqual(["octo-backend"])
-    expect(result.workflow).toBe("built-in/basic-dev-flow")
-    expect(result.inputs).toEqual({ requirement: "${goal}" })
+    expect(result.name).toBe("spec-dev")
+    expect(result.desc).toBe("v4 主打：直读批次执行")
+    expect(result.workflow).toBe("built-in/matt-spec-dev")
+    expect(result.inputs).toEqual({ batch_dir: "${phase.batch_rel}" })
   })
 
-  it("defaults skills_group to [] when omitted", () => {
+  it("desc is optional", () => {
     const result = workflowPresetSchema.parse({
       name: "general",
       workflow: "built-in/flow",
     })
-    expect(result.skills_group).toEqual([])
+    expect(result.desc).toBeUndefined()
   })
 
   it("defaults inputs to {} when omitted", () => {
@@ -32,6 +32,17 @@ describe("workflowPresetSchema", () => {
       workflow: "built-in/flow",
     })
     expect(result.inputs).toEqual({})
+  })
+
+  it("retired skills_group keys are ignored (pre-v3 hand-edited files still parse)", () => {
+    const result = workflowPresetSchema.parse({
+      name: "general-dev",
+      skills_group: [],
+      workflow: "built-in/task-dev",
+      inputs: { goal: "${goal}" },
+    })
+    expect(result.workflow).toBe("built-in/task-dev")
+    expect("skills_group" in result).toBe(false)
   })
 
   it("fails when name is missing", () => {
@@ -57,15 +68,6 @@ describe("workflowPresetSchema", () => {
       workflowPresetSchema.parse({ name: "test", workflow: "" }),
     ).toThrow()
   })
-
-  it("accepts empty skills_group array", () => {
-    const result = workflowPresetSchema.parse({
-      name: "general",
-      skills_group: [],
-      workflow: "built-in/flow",
-    })
-    expect(result.skills_group).toEqual([])
-  })
 })
 
 describe("workflowPresetsCatalogSchema", () => {
@@ -73,12 +75,12 @@ describe("workflowPresetsCatalogSchema", () => {
     const result = workflowPresetsCatalogSchema.parse({
       presets: [
         { name: "a", workflow: "built-in/a" },
-        { name: "b", skills_group: ["x"], workflow: "built-in/b", inputs: { k: "${goal}" } },
+        { name: "b", desc: "d", workflow: "built-in/b", inputs: { k: "${phase.slug}" } },
       ],
     })
     expect(result.presets).toHaveLength(2)
-    expect(result.presets[0].skills_group).toEqual([])
-    expect(result.presets[1].inputs).toEqual({ k: "${goal}" })
+    expect(result.presets[0].inputs).toEqual({})
+    expect(result.presets[1].inputs).toEqual({ k: "${phase.slug}" })
   })
 
   it("defaults presets to [] when omitted", () => {
@@ -86,7 +88,7 @@ describe("workflowPresetsCatalogSchema", () => {
     expect(result.presets).toEqual([])
   })
 
-  it("defaults presets to [] for empty object", () => {
+  it("parses an empty catalog", () => {
     const result = workflowPresetsCatalogSchema.parse({ presets: [] })
     expect(result.presets).toEqual([])
   })

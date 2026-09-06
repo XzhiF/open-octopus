@@ -40,7 +40,31 @@ const WORKFLOWS_DIR = "workflows"
 const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
 const CONTEXT_FILENAME = "context.md"
-const SPEC_FILENAME = "spec.json"
+// The home manifest: a structured snapshot of task_spec (format / phases 绑定 /
+// decisions / …) — metadata, NOT a spec document. Renamed from spec.json
+// (2026-09): the old name collided with the per-phase `spec.md` authority it
+// merely points at. LEGACY_SPEC_FILENAME drives the lazy migration (§writeManifestFile).
+const MANIFEST_FILENAME = "manifest.json"
+const LEGACY_SPEC_FILENAME = "spec.json"
+export { MANIFEST_FILENAME, LEGACY_SPEC_FILENAME }
+// v3-only task_spec keys. The shared schema defaults them into EVERY task_spec
+// (scheduler-job.ts — `ac_confirmed: []` etc.), which polluted v4 snapshots with
+// dead v3 vocabulary. Filtered on the manifest WRITE side only — the DB row and
+// the v3 read paths keep them untouched.
+export const V3_ONLY_SPEC_KEYS: readonly string[] = [
+  "goal",
+  "ac",
+  "goal_confirmed",
+  "ac_confirmed",
+  "subunits",
+  "integration_goal",
+  "input_values",
+  "workflow_ref",
+  "task_type",
+]
+// 契约修复 (v4 batch area): the ONLY subtree of the task home the UI home-file
+// endpoint reads/writes — v4 phase spec.md live here (`.scratch/<date>/<slug>/`).
+const BATCH_AREA_PREFIX = ".scratch"
 
 /** A project reference with name and optional filesystem path. When `path` is
  *  resolved the agent knows where the codebase lives on disk; when unresolved
@@ -48,6 +72,17 @@ const SPEC_FILENAME = "spec.json"
 export interface ProjectRef {
   name: string
   path?: string
+}
+
+/** One batch directory under the task home's `.scratch/` (draft-artifact-
+ *  visibility #53: the disk-direct scan that decouples drafting-surface
+ *  visibility from task_spec.phases[]). `dir` and every `files[].path` are
+ *  home-relative posix — directly usable as readHomeFile arguments. */
+export interface BatchTreeEntry {
+  dir: string
+  slug: string
+  files: Array<{ path: string; mtime: string; bytes: number }>
+  latest_mtime: string
 }
 
 /** Matt-convention files probed per selected project when context.md is
@@ -166,7 +201,7 @@ export class TaskHomeService {
   }
 
   /** Create the home skeleton: `tasks/{id}/` + `skills/` + `artifacts/` +
-   *  `.claude/rules/task-context.md` + `context.md` + `spec.json`. Idempotent
+   *  `.claude/rules/task-context.md` + `context.md` + `manifest.json`. Idempotent
    *  (mkdir recursive). Returns the home path.
    *
    *  Design split (prompt-cache friendly):
@@ -175,10 +210,12 @@ export class TaskHomeService {
    *      References `context.md` for dynamic state.
    *    - context.md = **dynamic state** (org, projects, skill groups):
    *      Read by the agent on demand. Rewritten when state changes.
-   *    - spec.json = **structured goal/ac snapshot**: the task-author agent
-   *      reads it for the current goal/ac/confirmations instead of curling the
-   *      API. Written with an empty baseline at creation; `writeSpecFile`
-   *      refreshes it whenever the task_spec changes.
+   *    - manifest.json = **structured task_spec snapshot** (format / phases
+   *      绑定 / decisions / …): the task-author agent reads it for the current
+   *      spec state instead of curling the API. Written with an empty baseline
+   *      at creation; `writeManifestFile` refreshes it whenever the task_spec
+   *      changes. (Metadata index — NOT a spec document; the phase specs live
+   *      under `.scratch/…` and manifest's phases[].specPath points at them.)
    *    - System prompt = **no dynamic context** — only static persona + skill
    *      content. Prompt cache stays stable across turns. */
   createHome(taskId: string, opts: { org?: string; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
@@ -192,7 +229,7 @@ export class TaskHomeService {
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
     this.writeTaskContextRule(taskId)
     this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)
-    this.writeSpecFile(taskId, { version: 1, spec: {}, updated_at: new Date().toISOString() })
+    this.writeManifestFile(taskId, { version: 1, spec: {}, updated_at: new Date().toISOString() })
     return home
   }
 
@@ -238,9 +275,9 @@ export class TaskHomeService {
         lines.push(`- locked skill groups: ${skillGroups.join(', ')}`)
       }
       lines.push('')
-      // 06: point the agent at the structured goal/ac snapshot (spec.json) —
-      // the file it should read for goal/ac instead of curling the API.
-      lines.push('- 当前 goal/ac/确认状态快照见同目录 `spec.json`（每次 spec-field 保存后由 server 重写，权威）')
+      // 06 (renamed): point the agent at the structured task_spec snapshot
+      // (manifest.json) — the file it should read instead of curling the API.
+      lines.push('- 当前规格快照（format / phases / decisions）见同目录 `manifest.json`（每次 spec-field 保存后由 server 重写，权威）')
       lines.push('')
       lines.push('> 此文件由系统维护。当"codebase"变更时自动更新。')
       fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
@@ -253,41 +290,77 @@ export class TaskHomeService {
     }
   }
 
-  /** Write (or refresh) `{home}/spec.json` — a structured snapshot of the
-   *  current task_spec (goal, ac, confirmations, decisions, …). The
-   *  task-author agent reads this file for goal/ac instead of curling the REST
-   *  API (deterministic — it may miss the skill's API instructions on an early
+  /** Write (or refresh) `{home}/manifest.json` — a structured snapshot of the
+   *  current task_spec (format, phases 绑定, decisions, …). The task-author
+   *  agent reads this file for the spec state instead of curling the REST API
+   *  (deterministic — it may miss the skill's API instructions on an early
    *  turn, but the rules file always points it here). Rewritten on every
-   *  spec-field update / PUT / creation (see TasksService.writeSpecSnapshot).
+   *  spec-field update / PUT / creation (see TasksService.writeManifestSnapshot).
+   *
+   *  v4 filtering: when `format === "v4"`, v3-only schema-default keys
+   *  ({@link V3_ONLY_SPEC_KEYS}) are stripped — they're DB-compat noise, not
+   *  v4 vocabulary. The DB row itself is never touched.
+   *
+   *  Lazy migration (rename from spec.json): if a legacy `{home}/spec.json`
+   *  is present it's removed after the new write, and the static rules file
+   *  (which used to point at the old name) is refreshed — both best-effort.
    *
    *  No home dir → silent no-op (legacy/v2 tasks have no home; the agent falls
    *  back to the API). Best-effort: a failed write must not break the
    *  spec-field path. */
-  writeSpecFile(
+  writeManifestFile(
     taskId: string,
-    payload: { version: number; spec: Record<string, unknown>; updated_at: string },
+    payload: { version: number; spec: Record<string, unknown>; updated_at: string; format?: string },
   ): void {
     const home = this.homePath(taskId)
     if (!fs.existsSync(home)) return
     try {
+      let spec = payload.spec
+      if (payload.format === "v4") {
+        spec = { ...spec }
+        for (const k of V3_ONLY_SPEC_KEYS) delete spec[k]
+        // #53 K3: resources/authoring_resources are LIVE v4 fields (agent
+        // spec-field-writable; dispatch merges resources into workflow.requires)
+        // — only their empty-array noise is dropped from the snapshot. Non-empty
+        // values stay (the agent's ledger must not lose real entries). DB row
+        // untouched, same write-side-only rule as V3_ONLY_SPEC_KEYS.
+        for (const k of ["resources", "authoring_resources"] as const) {
+          const v = (spec as Record<string, unknown>)[k]
+          if (Array.isArray(v) && v.length === 0) delete spec[k]
+        }
+      }
       fs.writeFileSync(
-        path.join(home, SPEC_FILENAME),
+        path.join(home, MANIFEST_FILENAME),
         JSON.stringify(
           {
             task_id: taskId,
             version: payload.version,
             updated_at: payload.updated_at,
-            spec: payload.spec,
+            spec,
           },
           null,
           2,
         ),
         'utf-8',
       )
+      // Lazy rename migration: drop the legacy spec.json + refresh the static
+      // rules pointer (deterministic from the home path — no dynamic state
+      // needed, so an unconditional rewrite is always safe). context.md is
+      // refreshed by the chat route every turn (routes/clone writeContextFile),
+      // so it self-heals without help from here.
+      const legacy = path.join(home, LEGACY_SPEC_FILENAME)
+      if (fs.existsSync(legacy)) {
+        try {
+          fs.rmSync(legacy)
+          this.writeTaskContextRule(taskId)
+        } catch {
+          // non-fatal — stale pointer heals via ensureRulesFile's marker check
+        }
+      }
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[task-home] writeSpecFile for ${taskId} failed (non-fatal):`,
+        `[task-home] writeManifestFile for ${taskId} failed (non-fatal):`,
         err instanceof Error ? err.message : String(err),
       )
     }
@@ -347,7 +420,7 @@ export class TaskHomeService {
         '## 工作上下文',
         '',
         '- 当前工作上下文（org、项目、技能组）见 `context.md`',
-        '- 当前 goal/ac/确认状态快照见 `spec.json`（每次 spec-field 保存后由 server 重写；权威本地快照，不必 curl API）',
+        '- 当前规格快照（format / phases / decisions）见 `manifest.json`（每次 spec-field 保存后由 server 重写；权威本地快照，不必 curl API）',
         '- 当收到 `@@context_updated` 通知时，请重新读取 `context.md` 获取最新值',
       ].join('\n')
       fs.writeFileSync(rulePath, content, 'utf-8')
@@ -360,17 +433,36 @@ export class TaskHomeService {
     }
   }
 
-  /** Ensure the `.claude/rules/task-context.md` file exists. No-op if the
-   *  file is already present (idempotent — the content is deterministic from
-   *  the home path). Called from the chat route so that existing task homes
-   *  (created before the rules feature) get backfilled on the first chat
-   *  turn. One stat call per turn; the write only happens once. */
+  /** Ensure `.claude/rules/task-context.md` is present AND current. Backfills
+   *  when missing; self-heals when stale (pre-rename homes still point the
+   *  agent at spec.json — one content scan per chat turn, cheap). Also runs
+   *  the lazy spec.json→manifest.json rename so an old home's snapshot survives
+   *  under the new name even before its first snapshot write. Called from the
+   *  chat route (per-turn backfill for homes predating the rules feature). */
   ensureRulesFile(taskId: string): void {
     const home = this.homePath(taskId)
     if (!fs.existsSync(home)) return
     const rulePath = path.join(home, RULES_DIR, RULES_FILENAME)
-    if (fs.existsSync(rulePath)) return
+    if (fs.existsSync(rulePath)) {
+      let stale = false
+      try {
+        stale = fs.readFileSync(rulePath, "utf-8").includes(LEGACY_SPEC_FILENAME)
+      } catch {
+        stale = false
+      }
+      if (!stale) return
+    }
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
+    // Rename-migration BEFORE the rewrite: preserve the snapshot content.
+    try {
+      const legacy = path.join(home, LEGACY_SPEC_FILENAME)
+      const manifest = path.join(home, MANIFEST_FILENAME)
+      if (fs.existsSync(legacy) && !fs.existsSync(manifest)) {
+        fs.renameSync(legacy, manifest)
+      }
+    } catch {
+      // non-fatal — GET /context's read fallback still serves the legacy file
+    }
     this.writeTaskContextRule(taskId)
   }
 
@@ -704,6 +796,253 @@ export class TaskHomeService {
     }
     const content = fs.readFileSync(resolved, "utf-8")
     return { path: requestedPath, content }
+  }
+
+  // ── Home-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ─────────
+  //
+  // The kanban's PhaseListEditor needs to VIEW and EDIT a phase's spec.md
+  // (`./.scratch/<YYYYMMDD>/<slug>/spec.md`, home-relative — the SKILL batch
+  // convention). readArtifactContent can't serve it: relative paths there
+  // resolve against artifacts/, so a `.scratch/...` path would `..`-escape → 403.
+  // These two methods share its guard idiom (null bytes / resolve+relative
+  // no-escape / ArtifactAccessError FORBIDDEN|NOT_FOUND) but base at the home
+  // root, narrowed to the batch area only:
+  //   • first segment must be `.scratch`  — context.md/manifest.json already have
+  //     GET /:id/context, artifacts/ has its own endpoint, skills/ + .claude/
+  //     are system-managed. Nothing legitimately editable lives elsewhere.
+  //   • `.md` suffix (read AND write)     — spec.md/brief.md/issues/*.md are
+  //     all markdown; no executables land through this door.
+  //   • absolute paths rejected outright  — gateV4 accepts absolute specPaths
+  //     (agent direct-writes), but the UI editor only serves home-relative.
+  // Write creates parents (mkdir -p) so a UI-added phase row can seed its spec
+  // skeleton before enqueue; overwrite-style, idempotent (no version column
+  // involved — file content is not the task row).
+
+  /** Guard shared by readHomeFile/writeHomeFile/listHomeDir. `mode:"file"`
+   *  additionally requires the `.md` suffix; `mode:"dir"` (batch file listing,
+   *  ADR-0018 spec-family visibility) drops the suffix rule but keeps every
+   *  other rule identical (`.scratch/` prefix / no-escape / no absolute /
+   *  no null bytes). Returns the resolved absolute path, or throws
+   *  ArtifactAccessError (FORBIDDEN) on any rule violation. */
+  private resolveHomePath(taskId: string, requestedPath: string, mode: "file" | "dir"): string {
+    if (requestedPath.includes("\0")) {
+      throw new ArtifactAccessError(
+        "home-file path must not contain null bytes",
+        "FORBIDDEN",
+      )
+    }
+    if (path.isAbsolute(requestedPath)) {
+      throw new ArtifactAccessError(
+        `absolute paths are not served by home-file (relative to the task home only): ${requestedPath}`,
+        "FORBIDDEN",
+      )
+    }
+    const home = this.homePath(taskId)
+    const resolved = path.resolve(home, requestedPath)
+    const rel = path.relative(home, resolved)
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new ArtifactAccessError(
+        `path escapes the task home: ${requestedPath}`,
+        "FORBIDDEN",
+      )
+    }
+    // rel uses platform separators; normalize for the segment/suffix checks.
+    const posixRel = rel.split(path.sep).join("/")
+    if (!posixRel.startsWith(`${BATCH_AREA_PREFIX}/`)) {
+      throw new ArtifactAccessError(
+        `path not whitelisted: ${requestedPath} (only ${BATCH_AREA_PREFIX}/** is editable here)`,
+        "FORBIDDEN",
+      )
+    }
+    if (mode === "file" && !posixRel.toLowerCase().endsWith(".md")) {
+      throw new ArtifactAccessError(
+        `path not whitelisted: ${requestedPath} (only .md files are editable here)`,
+        "FORBIDDEN",
+      )
+    }
+    return resolved
+  }
+
+  /** List the `.md` files under a `.scratch/` directory of the task home
+   *  (ADR-0018 batch-file visibility: spec.md / spec-rN.md / fix-feedback-rN /
+   *  fix-report-rN / issues/*.md). Depth ≤2 below the given dir, cap 200,
+   *  paths home-relative posix (directly usable as readHomeFile arguments).
+   *  NOT_FOUND when the dir is missing (UI renders the empty state). */
+  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+    const home = this.homePath(taskId)
+    const dirAbs = this.resolveHomePath(taskId, requestedDir, "dir")
+    if (!fs.existsSync(dirAbs) || !fs.statSync(dirAbs).isDirectory()) {
+      throw new ArtifactAccessError(`batch dir not found: ${requestedDir}`, "NOT_FOUND")
+    }
+    const out: Array<{ path: string; mtime: string; bytes: number }> = []
+    const walk = (dir: string, depth: number): void => {
+      if (out.length >= 200 || depth > 2) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const ent of entries) {
+        if (out.length >= 200) return
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) {
+          walk(full, depth + 1)
+          continue
+        }
+        if (!ent.isFile() || !ent.name.toLowerCase().endsWith(".md")) continue
+        try {
+          const st = fs.statSync(full)
+          out.push({
+            path: path.relative(home, full).split(path.sep).join("/"),
+            mtime: st.mtime.toISOString(),
+            bytes: st.size,
+          })
+        } catch {
+          // raced away — skip
+        }
+      }
+    }
+    walk(dirAbs, 0)
+    out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    return out
+  }
+
+  /** Scan `{home}/.scratch/` and return every batch directory (draft-artifact-
+   *  visibility #53 — the disk source behind 「落盘即现」, decoupled from
+   *  task_spec.phases[]). A batch dir = a directory that directly contains at
+   *  least one `.md`:
+   *    • convention layout `.scratch/<date>/<slug>/spec.md` — the date layer has
+   *      no direct .md, so its children each form a batch;
+   *    • flat layout `.scratch/<slug>/spec.md` — the child itself is the batch.
+   *  Per batch, `.md` files are collected recursively to depth ≤2 (spec family +
+   *  `issues/*.md`; anything deeper is not chased), global cap 300 files for the
+   *  whole response. Newest-mtime-first (fresh writes land on top). Missing
+   *  `.scratch/` or missing home → `[]` — an empty tree is the NORMAL drafting
+   *  state, not an error (unknown tasks are 404'd by the service layer before
+   *  this runs). No caller-supplied path anywhere: the scan roots from the home
+   *  layout alone, so this method has no escape surface (compare resolveHomePath's
+   *  whitelist, which guards user input — there is none here). */
+  batchTree(taskId: string): BatchTreeEntry[] {
+    const home = this.homePath(taskId)
+    const root = path.join(home, BATCH_AREA_PREFIX)
+    const out: BatchTreeEntry[] = []
+    let budget = 300
+
+    const childDirs = (dirAbs: string): string[] => {
+      try {
+        return fs
+          .readdirSync(dirAbs, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+      } catch {
+        return []
+      }
+    }
+
+    const hasDirectMd = (dirAbs: string): boolean => {
+      try {
+        return fs
+          .readdirSync(dirAbs, { withFileTypes: true })
+          .some((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"))
+      } catch {
+        return false
+      }
+    }
+
+    /** Collect one candidate batch dir; null when the walk finds no .md. */
+    const collect = (dirAbs: string): BatchTreeEntry | null => {
+      const files: Array<{ path: string; mtime: string; bytes: number }> = []
+      let latest = ""
+      const walk = (d: string, depth: number): void => {
+        if (depth > 2 || budget <= 0) return
+        let entries: fs.Dirent[]
+        try {
+          entries = fs.readdirSync(d, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const ent of entries) {
+          if (budget <= 0) return
+          const full = path.join(d, ent.name)
+          if (ent.isDirectory()) {
+            walk(full, depth + 1)
+            continue
+          }
+          if (!ent.isFile() || !ent.name.toLowerCase().endsWith(".md")) continue
+          try {
+            const st = fs.statSync(full)
+            const iso = st.mtime.toISOString()
+            files.push({
+              path: path.relative(home, full).split(path.sep).join("/"),
+              mtime: iso,
+              bytes: st.size,
+            })
+            budget--
+            if (iso > latest) latest = iso
+          } catch {
+            // raced away — skip
+          }
+        }
+      }
+      walk(dirAbs, 0)
+      if (files.length === 0) return null
+      return {
+        dir: path.relative(home, dirAbs).split(path.sep).join("/"),
+        slug: path.basename(dirAbs),
+        files,
+        latest_mtime: latest,
+      }
+    }
+
+    if (fs.existsSync(root) && fs.statSync(root).isDirectory()) {
+      for (const c1 of childDirs(root)) {
+        if (budget <= 0) break
+        const abs1 = path.join(root, c1)
+        if (hasDirectMd(abs1)) {
+          // flat layout: the child is itself a batch
+          const entry = collect(abs1)
+          if (entry) out.push(entry)
+          continue
+        }
+        // convention layout: c1 is a date layer — its children are candidates
+        for (const c2 of childDirs(abs1)) {
+          if (budget <= 0) break
+          const abs2 = path.join(abs1, c2)
+          if (!hasDirectMd(abs2)) continue
+          const entry = collect(abs2)
+          if (entry) out.push(entry)
+        }
+      }
+    }
+    out.sort((a, b) =>
+      a.latest_mtime === b.latest_mtime ? 0 : a.latest_mtime < b.latest_mtime ? 1 : -1,
+    )
+    return out
+  }
+
+  /** Read a `.scratch/**.md` file relative to the task home. NOT_FOUND (404)
+   *  when the whitelisted path is missing — the UI maps that to its "create
+   *  skeleton" empty state. */
+  readHomeFile(taskId: string, requestedPath: string): { path: string; content: string } {
+    const resolved = this.resolveHomePath(taskId, requestedPath, "file")
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new ArtifactAccessError(
+        `batch file not found: ${requestedPath}`,
+        "NOT_FOUND",
+      )
+    }
+    const content = fs.readFileSync(resolved, "utf-8")
+    return { path: requestedPath, content }
+  }
+
+  /** Write (create or overwrite) a `.scratch/**.md` file under the task home,
+   *  creating parent dirs on the way. Returns the byte count written. */
+  writeHomeFile(taskId: string, requestedPath: string, content: string): { path: string; bytes: number } {
+    const resolved = this.resolveHomePath(taskId, requestedPath, "file")
+    fs.mkdirSync(path.dirname(resolved), { recursive: true })
+    fs.writeFileSync(resolved, content, "utf-8")
+    return { path: requestedPath, bytes: Buffer.byteLength(content, "utf-8") }
   }
 
   /** Delete the whole task home. Junctions/symlinks inside the tree (the

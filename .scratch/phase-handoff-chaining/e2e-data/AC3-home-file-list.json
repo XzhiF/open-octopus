@@ -1,0 +1,26 @@
+{
+  "request": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400&list=1",
+  "status": 200,
+  "files": [
+    {
+      "path": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/exec-report.md",
+      "mtime": "2026-09-05T17:50:18.205Z",
+      "bytes": 26
+    },
+    {
+      "path": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/handoff.md",
+      "mtime": "2026-09-05T17:50:17.801Z",
+      "bytes": 652
+    },
+    {
+      "path": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/issues/01-one.md",
+      "mtime": "2026-09-05T17:50:17.800Z",
+      "bytes": 32
+    },
+    {
+      "path": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/spec.md",
+      "mtime": "2026-09-05T17:50:17.800Z",
+      "bytes": 61
+    }
+  ]
+}

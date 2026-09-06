@@ -16,6 +16,7 @@ const REPO_NAME = "demo-repo"
 
 let git: WorkspaceGit
 let realHome: string | undefined
+let realUserProfile: string | undefined
 let fakeHome: string
 let repoDir: string
 let wsDir: string
@@ -39,8 +40,11 @@ function initSourceRepo(): string {
 
 beforeEach(() => {
   realHome = process.env.HOME
+  realUserProfile = process.env.USERPROFILE
   fakeHome = mkdtempSync(join(tmpdir(), "ws-git-home-"))
+  // Fake both: os.homedir() reads $HOME on POSIX, %USERPROFILE% on Windows.
   process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome
 
   repoDir = initSourceRepo()
   writeIndex(
@@ -57,6 +61,8 @@ beforeEach(() => {
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME
   else process.env.HOME = realHome
+  if (realUserProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = realUserProfile
   for (const d of [fakeHome, repoDir, wsDir]) {
     if (d && existsSync(d)) rmSync(d, { recursive: true, force: true })
   }

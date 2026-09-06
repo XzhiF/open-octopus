@@ -564,9 +564,9 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     expect(putRes.status).toBe(200)
   })
 
-  // ── 06: spec.json — structured goal/ac snapshot the agent reads ──────
+  // ── 06: manifest.json — structured task_spec snapshot the agent reads ──
 
-  it("06: POST create writes spec.json; a spec-field goal save refreshes it", async () => {
+  it("06: POST create writes manifest.json; a spec-field goal save refreshes it", async () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -575,7 +575,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     expect(res.status).toBe(201)
     const task = await json<{ id: string }>(res)
 
-    const specPath = path.join(taskHome.homePath(task.id), "spec.json")
+    const specPath = path.join(taskHome.homePath(task.id), "manifest.json")
     expect(fs.existsSync(specPath)).toBe(true)
     const initial = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
       task_id: string
@@ -601,8 +601,8 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     expect(refreshed.spec.goal).toBe("E2E_TD 给服务加健康检查")
   })
 
-  it("06: PUT task_spec writes spec.json; legacy/v2 task (no home) is a silent no-op", async () => {
-    // v3 task: home exists → spec.json updated on PUT.
+  it("06: PUT task_spec writes manifest.json; legacy/v2 task (no home) is a silent no-op", async () => {
+    // v3 task: home exists → manifest.json updated on PUT.
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -615,7 +615,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       body: JSON.stringify({ task_spec: { goal: "E2E_TD PUT goal", ac: ["a1"] } }),
     })
     expect(putRes.status).toBe(200)
-    const specPath = path.join(taskHome.homePath(task.id), "spec.json")
+    const specPath = path.join(taskHome.homePath(task.id), "manifest.json")
     const snap = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
       spec: { goal: string; ac: string[] }
     }
@@ -637,4 +637,10 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     })
     expect(v2Put.status).toBe(200)
   })
+
+  // GET /:id/context's manifestContent serving + pre-rename spec.json read
+  // fallback is covered at the fs level (task-home-service.test migration
+  // cases) and end-to-end (e2e task-phase-acceptance AC3) — the route builds
+  // its own TaskHomeService on the REAL homedir, so a unit app.request here
+  // can't see the temp-injected homes.
 })

@@ -13,8 +13,9 @@
 // postAcceptance（409=他处已决/态变 → 重拉 derived 刷新盘面；400=表单缺陷）。
 //
 // v4.1 接缝（票 12 Exploration 登记）：
-//   ① D13① agent round 形态推荐：本轮无 server 推荐端点 → 打回提交后渲染
-//      disabled 占位卡（修复流 / round-2 spec 单选 + 说明）。
+//   ① D13① 打回二分路由（ADR-0018 已落地）：rejected 面板内人选「修订重跑」
+//      （缺省，重跑绑定流 — matt-spec-dev 绑定即流内就地再审 spec）或
+//      「轻量修复」（server override built-in/task-fix + 合成输入即时派发）。
 //   ② D14 影响清单：server 无 spec-r2 impact API → ImpactApprovalList 渲染 +
 //      批准写回逻辑就绪（updateSpecField phases 整数组），数据源为空态。
 //   ③ collect 落 home/.scratch 但不登记 artifacts.json → 中列对批次文件是
@@ -81,11 +82,13 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
   const [agg, setAgg] = useState<LLMCallAggregates | null>(null)
   const [aggLoading, setAggLoading] = useState(false)
 
-  // 打回子块（右列展开）+ 提交后的 D13①/D14 接缝卡。
+  // 打回子块（右列展开）+ 提交后的路由回显/D14 接缝卡。
   const [rejectOpen, setRejectOpen] = useState(false)
   const [feedback, setFeedback] = useState("")
+  // ADR-0018 打回二分路由：rerun=修订重跑（缺省，重跑绑定流）；fix=轻量修复(task-fix)。
+  const [nextFlow, setNextFlow] = useState<"rerun" | "fix">("rerun")
   const [busy, setBusy] = useState<"accept" | "reject" | "abort" | null>(null)
-  const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string } | null>(null)
+  const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string; flow: "rerun" | "fix" } | null>(null)
 
   const refetchDetail = useCallback(() => {
     if (!taskId) return
@@ -103,6 +106,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     setDetail(null)
     setRejectOpen(false)
     setFeedback("")
+    setNextFlow("rerun")
     setRejectedSeam(null)
     refetchDetail()
     refetchArtifacts()
@@ -179,6 +183,30 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     return hit.length > 0 ? hit : artifacts
   }, [artifacts, awaitingPhase, rejectedSeam])
 
+  // ── 前序交接提示行（phase-handoff-chaining 票 04 / spec K6） ──────────
+  // decision=accepted 语境（确认按钮上方）∧ 存在下一 phase → 一行提示：
+  // 本 phase handoff.md 连同已 accepted 前序，accepted 时由 server 作
+  // prev_handoff_paths 自动注入下一 phase 执行会话。数据源 = phaseViews
+  // 既有派生态（acceptedRound!==null ⇔ status="accepted"，无新 API）。
+  // N = 已 accepted 前序数 + 1（含本 phase）；末 phase（无下一站）不显示；
+  // 打回面板展开（rejected 态）不显示。
+  // ⚠️ 口径注记（review S1）：N 是**账本数**（acceptedRound!==null），不过 fs
+  // 存在性；server 注入侧（tasks-service collectPrevHandoffPaths）另按
+  // handoff.md isFile 过滤——ship 崩溃轮（R2）实际注入数可能比 N 少 1。
+  // 两口径有意分工：账本=人的决策真相，fs=机器注入真相；漂移在 SKILL/ADR-0019 有注记。
+  const hasNextPhase = useMemo(() => {
+    if (!awaitingPhase) return false
+    const pos = phaseViews.findIndex((p) => p.index === awaitingPhase.index)
+    return pos >= 0 && pos + 1 < phaseViews.length
+  }, [awaitingPhase, phaseViews])
+
+  const handoffCount = useMemo(() => {
+    if (!awaitingPhase) return 0
+    return phaseViews.filter(
+      (p) => p.index < awaitingPhase.index && p.acceptedRound !== null,
+    ).length + 1
+  }, [awaitingPhase, phaseViews])
+
   // ── 动作 ──────────────────────────────────────────────────────────
 
   const handleAccept = useCallback(async () => {
@@ -226,18 +254,22 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
         round_index: awaitingPhase.awaitingRound,
         decision: "rejected",
         feedback: trimmed,
+        next_flow: nextFlow, // ADR-0018 二分路由（round 级，只作用下一轮）
       })
       setRejectedSeam({
         phaseIndex: awaitingPhase.index,
         roundIndex: awaitingPhase.awaitingRound,
         feedback: trimmed,
+        flow: nextFlow,
       })
       setRejectOpen(false)
       setFeedback("")
       onMutated()
-      // server 已写 fix-feedback-rN.md + 开修复轮（票 07 AC3）。
+      // server 已写 fix-feedback-rN.md + 按所选路由即时开轮（票 07 AC3 / ADR-0018）。
       const dispatched = result.next_action === "dispatched"
-        ? `修复 Round ${result.dispatch?.round_index ?? "?"} 已在同一 worktree/分支开跑`
+        ? nextFlow === "fix"
+          ? `轻量修复 Round ${result.dispatch?.round_index ?? "?"} 已按 task-fix 开跑`
+          : `修订重跑 Round ${result.dispatch?.round_index ?? "?"} 已按绑定流开跑（流内先再审 spec）`
         : "反馈已落账（fix-feedback-rN.md）"
       toast.success(`Phase ${awaitingPhase.index} Round ${awaitingPhase.awaitingRound} 已打回 — ${dispatched}`)
       setDetail(result.task)
@@ -251,7 +283,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     } finally {
       setBusy(null)
     }
-  }, [task, awaitingPhase, feedback, busy, onMutated, refetchDetail])
+  }, [task, awaitingPhase, feedback, nextFlow, busy, onMutated, refetchDetail])
 
   const handleAbort = useCallback(async () => {
     if (!task || busy) return
@@ -398,6 +430,11 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
 
               {awaitingPhase ? (
                 <>
+                  {hasNextPhase && !rejectOpen && (
+                    <p className="text-[10px] text-muted-foreground" data-handoff-hint data-testid="handoff-hint">
+                      {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
+                    </p>
+                  )}
                   <Button
                     className="w-full"
                     size="sm"
@@ -433,6 +470,33 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                         className="text-xs"
                         data-reject-feedback data-testid="reject-feedback"
                       />
+                      {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
+                          信封 phases[] 绑定冻结不破） */}
+                      <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
+                        <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">下一轮路由</div>
+                        <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
+                          <input
+                            type="radio" name="reject-flow" className="mt-0.5"
+                            checked={nextFlow === "rerun"}
+                            onChange={() => setNextFlow("rerun")}
+                          />
+                          <span>
+                            <b>修订重跑</b>（重跑绑定流 · 默认）
+                            <span className="block text-[10px] text-muted-foreground">绑定 matt-spec-dev 时流内先按反馈就地审查更新 spec，再整轮重执行</span>
+                          </span>
+                        </label>
+                        <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="fix">
+                          <input
+                            type="radio" name="reject-flow" className="mt-0.5"
+                            checked={nextFlow === "fix"}
+                            onChange={() => setNextFlow("fix")}
+                          />
+                          <span>
+                            <b>轻量修复</b>（task-fix）
+                            <span className="block text-[10px] text-muted-foreground">按反馈定点修 + fix-report，不重跑整个里程碑；规格级问题请改选修订重跑</span>
+                          </span>
+                        </label>
+                      </div>
                       <div className="flex justify-end gap-2">
                         <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setRejectOpen(false)}>
                           取消
@@ -445,7 +509,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                           data-reject-confirm data-testid="reject-confirm"
                         >
                           {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
-                          打回确认（开 Round {awaitingPhase.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"}）
+                          打回确认（开 Round {awaitingPhase.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"} · {nextFlow === "fix" ? "轻量修复" : "修订重跑"}）
                         </Button>
                       </div>
                     </div>
@@ -477,26 +541,20 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                 </p>
               )}
 
-              {/* ── 打回提交后：D13① agent 形态推荐占位卡（disabled 接缝） ── */}
+              {/* ── 打回提交后：本轮路由回显（ADR-0018，D13① 接缝已兑现） ── */}
               {rejectedSeam && (
-                <div className="rounded-md border border-border bg-muted/30 p-2.5 space-y-1.5" data-agent-recommend-card data-testid="agent-recommend-card">
+                <div className="rounded-md border border-border bg-muted/30 p-2.5 space-y-1" data-agent-recommend-card data-testid="agent-recommend-card">
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold">
-                    <Bot className="size-3.5" /> Agent Round 形态推荐
-                    <span className="text-[9px] font-normal px-1 rounded bg-muted text-muted-foreground">v4.1</span>
+                    <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 下一轮路由：
+                    {rejectedSeam.flow === "fix" ? "轻量修复（task-fix）" : "修订重跑（绑定流先再审 spec）"}
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    已打回 Round {rejectedSeam.roundIndex}（反馈 {rejectedSeam.feedback.length} 字已落
-                    fix-feedback-r{rejectedSeam.roundIndex}.md）。agent 判严重度推荐以下形态 = server 端点未上线，
-                    当前修复轮默认走通用修复流。
+                    反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md。
+                    {rejectedSeam.flow === "fix"
+                      ? " task-fix 定点修复后会产 fix-report-rN.md 回批次目录。"
+                      : " 执行侧在 workspace 里就地维护 spec 终态，collect 回流 task home（round-report 含 Spec 修订节）。"}
+                    路由仅作用本轮 — phase 绑定不变。
                   </p>
-                  <label className="flex items-start gap-1.5 text-[11px] opacity-60 cursor-not-allowed" data-recommend-option="fix-flow">
-                    <input type="radio" name="agent-round-form" disabled className="mt-0.5" />
-                    <span><b>通用修复流</b>（task-fix：读批次目录 + 反馈 → 定点修 → fix-report-rN.md）</span>
-                  </label>
-                  <label className="flex items-start gap-1.5 text-[11px] opacity-60 cursor-not-allowed" data-recommend-option="spec-r2">
-                    <input type="radio" name="agent-round-form" disabled className="mt-0.5" />
-                    <span><b>round-2 spec</b>（范围/方案变更 → 产 spec-r2.md 再执行原 Phase 工作流）</span>
-                  </label>
                 </div>
               )}
 

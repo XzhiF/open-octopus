@@ -1,0 +1,56 @@
+{
+  "execRow": [
+    {
+      "id": "9aa7cc0a-a4bd-4042-ab69-bfb729e52944",
+      "workspace_id": "e4a7aa53-dadb-4157-b7a1-843effc40637",
+      "parent_id": "0",
+      "child_index": 0,
+      "workflow_ref": "e2e-td-claim",
+      "workflow_name": "e2e-td-claim",
+      "status": "failed",
+      "gate_status": "closed",
+      "rollback": "none",
+      "rollback_on_error": 0,
+      "input_values": "{\"batch_dir\":\".scratch/20260906/e2e-td-claim-claim-1788629948432\",\"task_artifacts_dir\":\"C:\\\\Users\\\\EDY\\\\.octopus\\\\tasks\\\\5c9c1285-81a5-440d-9582-dada1594bac5\\\\artifacts\",\"task_workflows_dir\":\"C:\\\\Users\\\\EDY\\\\.octopus\\\\tasks\\\\5c9c1285-81a5-440d-9582-dada1594bac5\\\\workflows\"}",
+      "var_pool": "{\"schedule.id\":\"598af8b3-e97b-41e2-8609-9b285145e3a3\",\"schedule.name\":\"task-5c9c1285-81a5-440d-9582-dada1594bac5-primary\",\"schedule.triggered_at\":\"2026-09-05T17:39:08.906Z\",\"schedule.cron_expression\":\"\",\"schedule.timezone\":\"UTC\",\"execution.trigger_type\":\"scheduled\"}",
+      "progress": 0,
+      "triggered_by": "scheduler",
+      "node_type": "normal",
+      "branch": "main",
+      "start_commit_id": null,
+      "end_commit_id": "{\"e2e-td-claimproj-claim-1788629948432\":\"f44e51db16f284cdb25438473b80cc4c01bc2a8d\"}",
+      "name": "e2e-td-claim",
+      "instance_id": null,
+      "global_session_id": null,
+      "retry_count": 0,
+      "pending_hooks": "[]",
+      "approval_metadata": null,
+      "interaction_metadata": null,
+      "resume_attempts": 0,
+      "pipeline_config": "{}",
+      "chain_retry_count": 0,
+      "preset_inputs": null,
+      "harness_status": null,
+      "harness_summary": null,
+      "budget_snapshot": null,
+      "started_at": "2026-09-05T17:39:08.907Z",
+      "completed_at": "2026-09-05T17:39:09.018Z",
+      "duration": null,
+      "org": "E2E_TD_org",
+      "created_at": "2026-09-05T17:39:08.906Z",
+      "updated_at": "2026-09-05T17:39:09.018Z",
+      "phase_index": 1,
+      "round_index": 1
+    }
+  ],
+  "nodeRows": [
+    {
+      "node_id": "stub",
+      "node_type": "bash",
+      "status": "failed",
+      "exit_code": null,
+      "error": "Git command failed in C:\\Users\\EDY\\.octopus\\orgs\\E2E_TD_org\\workspaces\\taskE2E_TD_PHASEHANDOFF_claim-1788629948432-0906-013908\\projects\\e2e-td-claimproj-claim-1788629948432: git checkout main, reason: Command failed: git checkout main\nfatal: 'main' is already used by worktree at 'C:/xzf/ai/open-octopus/.scratch/phase-handoff-chaining/e2e-data/claim-1788629948432/e2e-td-claimproj-claim-1788629948432'\n",
+      "outputs": null
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "run": "ui-1788630440620",
+  "results": [
+    {
+      "ac": "AC2-derived-pre",
+      "pass": true,
+      "detail": "GET /api/tasks/:id derived.phaseViews[0] = awaiting_review(1)（服务端态确认，UI 面另行）"
+    },
+    {
+      "ac": "AC2-visible",
+      "pass": true,
+      "detail": "提示行文本=「本 phase 的 handoff.md 连同已 accepted 共 1 个前序交接，将自动进入下一 phase 执行会话」 → C:\\xzf\\ai\\open-octopus\\.scratch\\phase-handoff-chaining\\e2e-screenshots\\AC2-handoff-hint-n1.png.png"
+    },
+    {
+      "ac": "AC2-reject-hidden",
+      "pass": true,
+      "detail": "reject 面板展开后 [data-handoff-hint] count=0 → C:\\xzf\\ai\\open-octopus\\.scratch\\phase-handoff-chaining\\e2e-screenshots\\AC2-handoff-hint-reject-hidden.png.png"
+    },
+    {
+      "ac": "AC2-console",
+      "pass": true,
+      "detail": "console errors=0"
+    },
+    {
+      "ac": "AC2-cleanup",
+      "pass": true,
+      "detail": "rows 清除=true，problems=[]"
+    }
+  ],
+  "web": "http://localhost:3000"
+}

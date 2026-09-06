@@ -1,16 +1,13 @@
 // packages/server/src/services/workflow-presets-service.ts
 //
-// task-workflow-presets (T3): reads the workflow-presets.yaml catalog from the
-// task-author clone directory and serves filtered preset lists.
+// task-workflow-presets (T3) → binding-catalog redesign (2026-09-06): reads
+// the workflow-presets.yaml BINDING CATALOG from the task-author clone
+// directory and serves it verbatim (the skills_group query is retired —
+// catalog == everything the binding form offers).
 //
 // The catalog lives at: {baseDir}/agent/built-in/task-author/workflow-presets.yaml
 // Production: ~/.octopus/agent/built-in/task-author/workflow-presets.yaml
 // Tests: inject a temp dir via constructor.
-//
-// Filter logic (GET /api/workflow-presets?skills_group=a,b):
-//   - No param → all presets
-//   - With param → presets where skills_group intersects the query + general
-//     fallback (empty skills_group matches any query)
 //
 // Error handling: missing file → empty; malformed YAML → empty + warn (never crash).
 
@@ -34,9 +31,10 @@ export class WorkflowPresetsService {
     this.baseDir = baseDir ?? path.join(os.homedir(), ".octopus")
   }
 
-  /** List presets, optionally filtered by skills_group. Returns the catalog
-   *  shape `{ presets: [...] }`. Missing/malformed file → empty presets. */
-  list(skillsGroup?: string[]): WorkflowPresetsCatalog {
+  /** The binding catalog as authored, `{ presets: [...] }` shape. Missing or
+   *  malformed file → empty presets (never a throw — the binding form degrades
+   *  to an empty catalog, the enqueue gate is unaffected). */
+  list(): WorkflowPresetsCatalog {
     const catalogPath = path.join(this.baseDir, CATALOG_RELATIVE_PATH)
     if (!fs.existsSync(catalogPath)) {
       return { presets: [] }
@@ -73,19 +71,6 @@ export class WorkflowPresetsService {
       return { presets: [] }
     }
 
-    if (!skillsGroup || skillsGroup.length === 0) {
-      return result.data
-    }
-
-    // Filter: presets whose skills_group intersects the query + general fallback
-    const querySet = new Set(skillsGroup)
-    const filtered = result.data.presets.filter((preset) => {
-      // General fallback: empty skills_group always matches
-      if (preset.skills_group.length === 0) return true
-      // Intersection: at least one skill group matches the query
-      return preset.skills_group.some((sg) => querySet.has(sg))
-    })
-
-    return { presets: filtered }
+    return result.data
   }
 }

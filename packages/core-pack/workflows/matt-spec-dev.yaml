@@ -1,0 +1,451 @@
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# matt-spec-dev — 规格直执行流（ADR-0018 规格直执行 + ws 权威 spec 环）
+#
+# 与 matt-dev-pipeline 的分工：那条流从 idea 出发（swarm 研究 + interaction
+# 澄清 + 现场生成 spec）；本流**只消费已冻结的 Batch 目录**（task-author 起草、
+# 用户拆分确认过），零澄清、零 spec 再生成：
+#   spec-resolve (bash — 确定性核对 + spec 定位 + 反馈/前序交接探测，不烧 agent token)
+#     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
+#     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
+#                  → ticket-dag  (dynamic_sub_workflow — issues/ DAG 并发实现)
+#                  → integration-gate ┐
+#                     code-review     ├→ integration-verify → ship-pr (Git PR)
+#                  ┘
+#
+# spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧** —— 打回反馈指向
+# 规格本身问题时，本流的 spec-review 段在 ws 里就地更新 spec.md（决策表行/编号
+# 稳定纪律不变），终态由 server collect 回流 home（home=终态镜像 + 下轮 seed 源）。
+# spec-rN.md 仅属起草窗口；本流取「最大 spec-rN.md，否则 spec.md」为底本。
+#
+# 人 gate = 看板验收（K6）：本流内部零 approval/interaction 节点。
+# ============================================================
+
+name: matt-spec-dev
+description: |
+  规格直执行流：读 phase Batch 目录（spec.md + issues/，seed 下行后的 ws 同构位）
+  直接执行 —— 票 DAG 实现 → 集成门禁 → Code Review → ship 出 PR；打回轮先就地
+  审查更新 spec 再执行。零需求澄清、零 spec 再生成。
+version: 1.0.0
+
+# --- 全局配置 ---
+engine: claude
+model: pro-max
+timeout: 10800 # 全局 3h — 完整里程碑轮（含 E2E 票），显著大于 task-fix
+execution_mode: serial
+
+# --- 输入（phase input_values 绑定；${phase.batch_rel} 词表 materialize 时解析）---
+inputs:
+  batch_dir:
+    description: "ws 相对批次目录（${phase.batch_rel} 解析值，`.scratch/<date>/<slug>` — seed 后内含 spec*.md + issues/ + fix-feedback-rN.md）"
+    required: true
+  task_artifacts_dir:
+    description: "任务产物目录 — 看板 dispatch 管理键自动注入，绑定表单无需手填"
+    required: false
+  prev_handoff_paths:
+    description: "已 accepted 前序 phase 的 handoff.md 绝对路径（换行连接，home 位）— 看板 accept→下一 phase 开轮时自动注入（内置键，非占位符），绑定表单无需手填；spec-resolve 探测存在性后写 vars.prev_handoffs / prev_handoff_count，缺失路径静默跳过"
+    required: false
+
+# --- 变量（spec-resolve 写，下游读；串行链上的路由真相）---
+variables:
+  batch_ok: ""
+  batch_reason: ""
+  spec_file: ""
+  has_feedback: "false"
+  latest_feedback: ""
+  branch: ""
+  build_status: ""
+  review_status: ""
+  verify_status: ""
+  pr_url: ""
+  prev_handoffs: ""
+  prev_handoff_count: "0"
+
+# --- 资源依赖（DAG 票节点 + review/ship 用到的 skill 子集）---
+requires:
+  skills:
+    - mattpocock-skills/implement
+    - mattpocock-skills/tdd
+    - mattpocock-skills/code-review
+    - mattpocock-skills/diagnosing-bugs
+    - mattpocock-skills/handoff
+
+# --- 通知 ---
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  xzf_hermes:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+# --- 钩子 ---
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: error
+        title: "❌ matt-spec-dev — 工作流失败"
+        body: "📁 $inputs.batch_dir\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🚀 matt-spec-dev — 轮次完成"
+        body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 build: $vars.build_status | review: $vars.review_status"
+
+  on_node_success:
+    - id: notify-spec-review
+      type: notify
+      nodes: [spec-review]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "📝 spec 已就地修订"
+        body: "📁 $inputs.batch_dir | 反馈: $vars.latest_feedback"
+
+    - id: notify-dag
+      type: notify
+      nodes: [ticket-dag]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "⚡ 票 DAG 执行完成"
+        body: "📁 $inputs.batch_dir"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship-pr]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🚀 Ship 完成"
+        body: "🌿 $vars.branch | PR: $vars.pr_url"
+
+# ============================================================
+# Nodes
+# ============================================================
+
+nodes:
+  # ------------------------------------------------------------
+  # Stage 0: 前置核对（确定性 bash — 输入不全当场分流，不启动 agent）
+  # ------------------------------------------------------------
+
+  - id: spec-resolve
+    type: bash
+    timeout: 120
+    bash: |
+      BATCH="$inputs.batch_dir"
+      REASON=""
+
+      if [ ! -d "$BATCH" ]; then
+        REASON="batch dir not found in workspace: $BATCH (seed 下行未落盘?)"
+      fi
+
+      # 本轮底本 ← 最大 r 号的 spec-rN.md（起草窗口并存的最新修订）；无 rN 则 spec.md
+      SPEC=""
+      if [ -z "$REASON" ]; then
+        LATEST=$(ls "$BATCH"/spec-r*.md 2>/dev/null | sed -E 's/.*-r([0-9]+)\.md$/\1/' | sort -n | tail -1)
+        if [ -n "$LATEST" ]; then
+          SPEC="$BATCH/spec-r$LATEST.md"
+        elif [ -f "$BATCH/spec.md" ]; then
+          SPEC="$BATCH/spec.md"
+        else
+          REASON="no spec.md / spec-rN.md under: $BATCH"
+        fi
+      fi
+
+      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-*）
+      if [ -z "$REASON" ]; then
+        TICKETS=$(ls "$BATCH"/issues/*.md 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$TICKETS" = "0" ]; then
+          REASON="issues/ empty under: $BATCH (nothing to execute)"
+        fi
+      fi
+
+      # 未消化反馈探测：存在 fix-feedback-rN.md → 本轮先过 spec-review 再审段
+      FB=""; HAS_FB="false"
+      if [ -z "$REASON" ]; then
+        FB=$(ls "$BATCH"/fix-feedback-r*.md 2>/dev/null | sed -E 's/.*-r([0-9]+)\.md$/\1/' | sort -n | tail -1)
+        if [ -n "$FB" ]; then HAS_FB="true"; FB="$BATCH/fix-feedback-r$FB.md"; fi
+      fi
+
+      # 前序交接探测（phase-handoff-chaining K3）：prev_handoff_paths = 看板 accept→
+      # 下一 phase 开轮注入的内置键（home 绝对路径，换行连接）。未注入时
+      # substituteVars 原样留下字面量 → 单引号赋值 + 字面量比对判空（双引号会被
+      # bash 展开掉 "$inputs" 前缀，判空失真）。反斜杠→正斜杠归一：Windows 注入值
+      # 为 C:\ 形路径，归一后 [ -f ] 可测且 vars_update JSON 值无裸反斜杠（JSON-safe）。
+      # 缺失路径静默跳过不 fail（R2）。
+      PREV_JSON=""; PREV_COUNT=0
+      # substituteVars 对「未解析引用」**原样保留**整段字面量。哨兵用 '$inputs' 裸词
+      # 拼接构造（裸词 $inputs 不匹配 inputs.* 分支 → 不被替换），否则比较两侧会
+      # 同时被替换成实值、判空失真。
+      PH_RAW='$inputs.prev_handoff_paths'
+      PH_UNRESOLVED='$inputs'".prev_handoff_paths"
+      if [ "$PH_RAW" = "$PH_UNRESOLVED" ]; then PH_RAW=""; fi
+      while IFS= read -r PH_LINE; do
+        PH_LINE=$(printf '%s' "$PH_LINE" | tr -d '\r' | tr '\\' '/')
+        [ -z "$PH_LINE" ] && continue
+        if [ -f "$PH_LINE" ]; then
+          if [ "$PREV_COUNT" -gt 0 ]; then PREV_JSON="$PREV_JSON\\n"; fi
+          PREV_JSON="$PREV_JSON$PH_LINE"
+          PREV_COUNT=$((PREV_COUNT+1))
+        fi
+      done <<< "$PH_RAW"
+
+      # 分支名：worktree 在 projects/ 下（ws 根不是 git repo）
+      BR=""
+      REPO=$(ls -d projects/*/ 2>/dev/null | head -1)
+      if [ -n "$REPO" ]; then
+        BR=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      fi
+
+      if [ -n "$REASON" ]; then
+        echo "PRECHECK FAILED: $REASON"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$PREV_JSON" "$PREV_COUNT"
+        exit 0
+      fi
+
+      if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
+      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS feedback=$HAS_FB branch=$BR"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+
+  - id: fail-fast
+    type: bash
+    depends_on: [spec-resolve]
+    execute_when: '$vars.batch_ok != "true"'
+    bash: |
+      echo "matt-spec-dev cannot run: $vars.batch_reason"
+      echo "→ 检查 phase.specPath 绑定与 seed 是否落盘（批次目录应已镜像到 ws 的 $inputs.batch_dir）"
+      exit 1
+
+  # ------------------------------------------------------------
+  # Stage 0.5: spec 就地再审（仅打回反馈轮 — ADR-0018 ws 权威段）
+  # ------------------------------------------------------------
+
+  - id: spec-review
+    type: agent
+    depends_on: [spec-resolve]
+    execute_when: '$vars.has_feedback == "true"'
+    timeout: 1800
+    prompt: |
+      ═══ Spec 就地再审（ws 权威 — ADR-0018）═══
+      本 round 因验收打回而重跑。反馈与批次目录都在 ws 侧，你是 spec 的最终维护者。
+
+      ═══ 读取 ═══
+      - 反馈（逐条）: $vars.latest_feedback
+      - spec 底本: $vars.spec_file
+      - 票: $inputs.batch_dir/issues/
+      - 前序交接（若列出的先读；空则本 phase 无前序）: $vars.prev_handoffs
+        —— 就地修订 spec 时不得回退其 Protected Decisions，接口引用优先复用其
+        Confirmed Interfaces 指向的现物。
+
+      ═══ 执行纪律 ═══
+      1. 逐条判断反馈性质：实现缺陷（spec 不变，票不变）/ 规格错误（spec 需改）/
+         范围补充（spec + 票都要改）。
+      2. 规格有误或需补充 → **就地更新 $inputs.batch_dir/spec.md**（ws 内，终态）：
+         - Key Decisions 表：行与编号保持稳定，改判行在 Conclusion 追加
+           `NEW-r<本轮>` 标记 — 不删旧行、不重排编号。
+         - User Stories / Verification 随之修订。
+         - 若底本是 spec-rN.md（起草窗口遗留），把其内容并入 spec.md 后一切以
+           spec.md 为准（spec-rN.md 留作历史，不再更新）。
+      3. 票的增删改**原位增量**（不重写整目录）：新票顺延编号，末张保持
+         `NN-e2e-*` 验收票；被反馈作废的票标 Status: skip（不物理删）。
+      4. 修订点记入 $inputs.batch_dir/round-report.md 的「## Spec 修订」节
+         （反馈条目 → 是否改 spec → 改了什么），供验收人对照。
+      5. 只动本批次目录，不碰 projects/ 代码（实现是 Stage 1 的事）。
+
+      最后输出 vars_update: {"vars_update": {"spec_reviewed": "true"}}
+
+  # ------------------------------------------------------------
+  # Stage 1: 票 DAG 执行（dynamic_sub_workflow — LLM 规划，引擎并发）
+  # ------------------------------------------------------------
+
+  - id: ticket-dag
+    type: dynamic_sub_workflow
+    depends_on: [spec-review]
+    workflow: ticket-dag
+    on_error: continue
+    prompt: |
+      你是 DAG 规划器。读取 issues 目录中的所有 ticket，构建执行 DAG。
+
+      Issues 目录: $inputs.batch_dir/issues/
+      Spec 文件: $vars.spec_file（spec-review 跑过时以 $inputs.batch_dir/spec.md 为准）
+
+      ═══ 步骤 ═══
+      1. 列出 issues/ 中所有 .md 文件
+      2. 读取每个文件，提取:
+         - Ticket ID（文件名前缀数字，如 01）
+         - Ticket Title
+         - "Blocked by" 字段（依赖关系）
+         - "Status" 字段（跳过 status: done 或 skip 的）
+         - "Verification Method" 字段（票节点必须执行它）
+      3. 构建依赖图
+      4. 为每个待执行的 ticket 创建一个 agent 节点:
+
+      普通票节点格式:
+      ```json
+      {
+        "id": "ticket-NN",
+        "type": "agent",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求\n2. 探索类似代码（找 analog，grep 跨包）\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "skills": ["implement", "tdd"],
+        "depends_on": ["ticket-XX"]
+      }
+      ```
+
+      E2E 票（文件名 NN-e2e-* 的末张验收票）改用:
+      ```json
+      {
+        "id": "ticket-NN",
+        "type": "agent",
+        "prompt": "你是 E2E 验证者，执行票 <spec 文件> 定义的最终验收。\n使用 matt-e2e-test-methodology 方法论 + e2e-harness 库:\n1. 读 spec 的 Verification Strategy / AC 表 + 票的 Verification Method\n2. 需要真实服务时自行启动 dev server（端口冲突用 --isolated）\n3. API/浏览器/DB 三方交叉验证（反假跑: 真实服务、断言业务值、≥2 种证据、\n   E2E_TD_ 前缀数据、测后清理）\n4. 证据写 $inputs.batch_dir/e2e-data/（截图 e2e-screenshots/，脚本 e2e-scripts/）\n5. 失败项: Quick Fix 一轮 → 修不动则 diagnosing-bugs 深挖 → 仍失败如实标 Status 并写原因\n6. 票文件原位回写 Status + 结果摘要\n\n不要伪造通过。输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "skills": ["matt-e2e-test-methodology", "diagnosing-bugs", "e2e-harness"],
+        "depends_on": ["ticket-XX"]
+      }
+      ```
+
+      ═══ 约束 ═══
+      - 所有节点必须是 type: "agent"
+      - 不允许循环依赖
+      - 无依赖的 ticket 并行执行
+      - depends_on 引用 ticket ID（如 "ticket-01"）
+      - 已完成（done/skip）的 ticket 不创建节点
+
+  # ------------------------------------------------------------
+  # Stage 1.5: 集成门禁（DAG 后统一 build + test）
+  # ------------------------------------------------------------
+
+  - id: integration-gate
+    type: agent
+    depends_on: [ticket-dag]
+    prompt: |
+      ═══ Integration Gate ═══
+      你是集成门禁。确保项目能 build + test 通过。
+
+      ═══ 步骤 ═══
+      1. 先探索 workspace 结构，找到 monorepo 根目录（通常 projects/ 下的 git repo）
+      2. 在正确目录执行 pnpm build
+      3. 如果 build 失败，分析错误并尝试修复（最多 2 轮）
+      4. build 通过后，执行 pnpm test
+      5. 如果 test 失败，分析失败原因并尝试修复（最多 2 轮）
+
+      ═══ 输出 ═══
+      最后输出 vars_update JSON:
+      成功: {"vars_update": {"build_status": "passed"}}
+      失败: {"vars_update": {"build_status": "failed"}}
+
+  # ------------------------------------------------------------
+  # Stage 2: Code Review（裁判 ≠ 球员；对照 spec.md 现态）
+  # ------------------------------------------------------------
+
+  - id: code-review
+    type: agent
+    depends_on: [integration-gate]
+    prompt: |
+      使用 code-review skill 独立审查所有代码变更。
+      主 agent 从没看过实现过程，天然独立 → 直接审查。
+
+      ═══ 审查范围 ═══
+      Branch: $vars.branch（在 projects/ 下的代码仓里对比 origin/main...HEAD）
+      Spec: $inputs.batch_dir/spec.md（spec-review 跑过时它已是修订终态）
+
+      ═══ 三轴审查 ═══
+      1. Standards: 编码规范 + code smells
+      2. Spec: diff 对照 spec — 遗漏需求 / 范围蔓延 / 实现偏差
+      3. Completeness: diff 对照同类实现 — 遗漏文件 / 数据流断链
+
+      ═══ 严重度分类 ═══
+      - 🔴 Must fix: 直接 Edit 修复 → pnpm test 验证
+      - 🟡 Should fix: 直接 Edit 修复 → pnpm test 验证
+      - 🔵 Note: 记入报告，不修复
+
+      ═══ 修复纪律 ═══
+      - 主 Agent 直接 Edit 修复（不要重新 spawn 实现者）
+      - 修复后 pnpm test 验证
+      - 最多 2 轮 review-fix 循环
+      - 🔴 持续 2 轮 → 记入报告，继续（不阻断 — 人 gate = 看板验收）
+
+      ═══ 输出 ═══
+      写入: $inputs.batch_dir/code-review.md
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"review_status": "passed|has_notes|has_fixes"}}
+
+  # ------------------------------------------------------------
+  # Stage 2.5: 集成验证（review 修复后复验）
+  # ------------------------------------------------------------
+
+  - id: integration-verify
+    type: agent
+    depends_on: [code-review]
+    prompt: |
+      ═══ Post-Review Integration Verify ═══
+      Code review 可能修改了代码。重新验证 build + test。
+
+      1. 找到 monorepo 根目录（workspace projects/ 下）
+      2. 执行 pnpm build && pnpm test
+      3. 如果失败，分析并修复（最多 1 轮）
+      4. 输出 vars_update: {"vars_update": {"verify_status": "passed|failed"}}
+
+  # ------------------------------------------------------------
+  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接）
+  # ------------------------------------------------------------
+
+  - id: ship-pr
+    type: agent
+    depends_on: [integration-verify]
+    timeout: 1800
+    tools: [Read, Bash, Grep, Glob]
+    prompt: |
+      完成 Ship 交付: Round Report + Git PR。
+      使用 handoff skill 方法论记录本轮交接。
+
+      ═══ 上下文 ═══
+      Batch 目录（ws 根下，与 task home 同构）: $inputs.batch_dir
+      代码仓: projects/ 下的 git repo（worktree，分支 $vars.branch）
+      前序交接（有则先读，其 Gap Targets 未闭环项须承接或显式关闭；空则本 phase 无前序）: $vars.prev_handoffs
+
+      ═══ 执行 ═══
+      1. 生成/补全 $inputs.batch_dir/round-report.md（spec-review 已写「Spec 修订」节的，
+         在其后追加，不覆盖）:
+         - 票执行摘要（NN → status，对照 issues/ 现态）
+         - Code Review 结论（findings/fixed/noted，对照 code-review.md）
+         - E2E 证据索引（e2e-data/ 关键文件 + 结果）
+         - Changed Files（在代码仓内 git diff --stat origin/main...HEAD）
+         - Remaining Issues（如实，含 build_status=failed 时的失败详情）
+
+      2. 在代码仓内 commit + push:
+         git add -A && git commit -m "feat(<batch slug>): spec-dev round" && git push origin $vars.branch
+
+      3. 创建或更新 PR（代码仓内）:
+         - gh pr list --head $vars.branch --state open
+         - 已有 → gh pr edit（保留 MANUAL 区块）
+         - 无 → gh pr create
+
+      4. 产/覆写 $inputs.batch_dir/handoff.md — 面向下游 phase 执行会话的精选交接短页
+         （每轮整页重写、禁止追加 — 头块轮次 rN 即最新终态）:
+         - 头块：phase 名与 batch slug · 终态轮次 rN（当前轮号 — 从批内
+           fix-feedback-rN.md / round-report.md 现态判定，首跑 = r1）· PR 链接 · 批次路径
+         - `## Protected Decisions` — 本 phase 定死、下游不得回退的决策（对照 spec.md
+           Key Decisions 表）
+         - `## Confirmed Interfaces` — 下游可直接复用的接口/表/组件/命令，给路径不给描述
+         - `## Gap Targets` — 如实遗留：skip 票、noted 风险、未竟事项（含承接的前序 Gap 去向）
+         纪律：一屏内精选短页；细节引用 round-report.md 不复制；只写 ws（collect 管回流 home）。
+
+      ═══ 纪律 ═══
+      - 只 commit 代码仓变更；批次目录（ws 根 .scratch/ 下）不进代码仓 git。
+      - 终态由看板 collect 回流 home — 你只管写 ws。
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"pr_url": "<PR URL>"}}
