@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
-version: 3.3.0
+version: 3.4.0
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -24,9 +24,9 @@ version: 3.3.0
 
 ```
 ① 领域阅读          Read context.md → 各 project 绝对路径 + 惯例 probe（缺则降级标注）
-② 需求澄清+拆 phase  grilling/wayfinder 对话 → 拆分草案（phase 序表：名字/范围/票归属/预算）
-③ 拆分确认 gate      多 phase 时枚举拆分表请用户确认 —— 批准前不做任何绑定
-④ 逐 phase 产 spec   每 phase 用 matt 族产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
+② 需求澄清+拆 phase  列故事 + 结构 grilling（≤15 轮，fog-or-ticket）→ 拆分草案（phase 序表：故事/验收物/功能票数/依赖前序 + 卡头风险行）
+③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准前不做任何绑定
+④ 逐 phase 产 spec   拆卡批准后，每 phase 走 matt 族内容轮产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
 ⑤ 逐 phase 绑定      绑定目录 GET /api/workflow-presets → 推荐+骨架预填 input_values → 用户确认 → spec-field field=phases
 ⑥ 交付              自查 v4 gate 四项齐备 → 把 TASK_ID 给用户，等用户 [入队]
 ```
@@ -161,13 +161,16 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ## 拆 Phase 方法论
 
-> 拆分的对象是**产品里程碑**，不是技术分层。「DB 层 phase」「前端 phase」是反面教材；「用户能改昵称并刷新可见」是合格 phase。
+> **phase 集 = 故事集**：每个 phase = 一个**完整用户故事**，叠加在 MVP 之上。拆的对象是产品叙事，不是技术分层，也不是时间块——「DB 层 phase」「前端 phase」是反面教材，「1h 小块」（票层容量借位给 phase，历史根因，ADR-0020）同样是反面教材。deliverable 判据（phase 末可运行、可被人一屏验收、写得出「验收时我看什么」）是**必要条件**——验收主题讲的得是一个故事，不是功能清单。
 
-1. **deliverable 判据**：每个 phase 以「可交付产品状态」收尾——phase 末可运行、可被人一屏验收（e2e 票或明确验证命令）。写不出「验收时我看什么」的 phase 不成立。
-2. **预算**：单 phase = coding agent **≤1h**（含 E2E 时 **≤1.5h**）。经验换算：3~5 人天需求 ≈ 4~5 个 phase。超预算 → 继续拆；拆不动 → 说明范围本身要砍，问用户。运行期超 1.5h 仅出 ⏳ advisory 徽标（D18），不自动中断——所以预算是**拆分期**的硬纪律。
-3. **依赖排序 + 验收锚点**：phase i 的交付物是 phase i+1 的输入；在拆分表里显式写「phase i+1 依赖 i 的什么」。无相互依赖的 phase 也应保持**可独立验收**的顺序叙事。**不抄前序（起草纪律）**：后继 phase 的 spec 正文不人工转述 phase i 已定的接口/决策细节——写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」，细节交给运行时前序 handoff.md 自动进本 phase 首轮（见「phase 衔接信道」节）；拆分表「依赖前序」列自此有真实信道支撑，抄写式转述是退役写法。
-4. **Key Decisions 纪律（K8，跨 phase 传播的机械锚点）**：每个 phase 的 spec.md 必含 `## Key Decisions` 表（`| # | Decision | Conclusion | Reason |`）。rN 修订（spec-rN.md）必须**保持表行与编号稳定**：改行内结论、不删行不改号；新增行标 `NEW-rN`。决策传播比对的是**表格行 diff**而非散文——编号一乱，影响清单就失效。
-5. **数量**：单 phase 完全合法（小需求别硬拆）；>7 个 phase 说明需求该再澄清一轮。
+1. **拆分生成器——先列故事，再定 phase**：第一步回答「这个需求能讲出哪几个完整故事？」→ **phase 1 = MVP 薄切片**（tracer bullet：最薄但端到端贯穿，且**切穿需求最高风险段**——MVP 不是挑最简易功能做）→ 其后每 phase = 在已验收态上叠加一个完整故事，验收叙事天然连续：「上次这样 → 现在这样」。拆相对话与拆分卡都按此顺序成物。
+2. **下界——摊得起一次人工 gate**：一次看板验收 = 人的注意力一整次。一个故事摊不出**功能票 ≥3**（E2E 票不计入）就是太小 → 合进邻故事；**MVP 豁免下限**（薄而穿正是它的正确形态）。整需求列不出 ≥2 个达界故事 → 单 phase 完全合法，小需求别硬拆。
+3. **上界——一次讲得完，phase 层不设时间硬顶**：上界由叙事钉——交付物内聚成一个故事、一次坐得下验收。讲不成一个故事的 phase → 合；故事大到一次验不完 → 故事本身不成立，拆故事或问用户砍范围，**不是把它掰成几个时间块小 phase**。运行期超时仅出 ⏳ advisory 徽标（D18），不自动中断——防线全在拆分期判据。
+4. **时间预算降到票层**：**≤1h/票**（E2E 票可放宽至 1.5h）是票粒度纪律（装进一个 context window）；phase 内票按 DAG 并行。phase ≠ 大票——票层容量尺不构成 phase 层判据，任何「按小时数拆 phase」都是把两层混谈。
+5. **两段式对话预算——拆相轮只谈结构**：拆相对话（工作总览②）= **结构 grilling**，10~15 轮封顶，问题对象只有故事边界/验收物/依赖/票量/范围剪裁；**禁下钻 phase 内部**——表结构、API 字段、组件切分留给拆卡批准后、逐 phase 的④内容轮。fog-or-ticket 选型：此刻能精确成问的才在拆相轮问，只能感到形状的留给对应 phase 轮。15 轮收敛不了或故事列出 >7 个 = 上面一层出问题的信号 → 转 map 化拆分（wayfinder）或需求再澄清，不在本层继续拆细。
+6. **写全 + 不画雾（含依赖排序与前提引用）**：phase i 的交付物是 phase i+1 的输入，拆分卡「依赖前序」列显式写 phase i+1 依赖 i 的**什么**；无相互依赖的 phase 也保持可独立验收的顺序叙事。入队前所有 phase（含后段）的 spec **全部写全**，但后段 spec **不画雾**：故事/范围/验收物（不依赖前序处）写实，依赖前序的接口细节**一律不抄不猜**——写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」；凡以自己的前提为前序决策处，写「见 phase i KD#n」行引用，散文转述是退役写法。**毕业** = 前序 accepted 后、本 phase 开轮前，matt-spec-dev 的 spec-review 段自动对位前序 handoff.md（不回退 Protected Decisions／Confirmed Interfaces 直接复用现物／Gap Targets 承接或显式关闭），对位修订即本 phase 执行版（经 collect 回流 home）——起草侧不预写执行细节，也不另发明一轮「毕业重写」。
+7. **Key Decisions 纪律（K8，跨 phase 传播的机械锚点 + 唯一预告账本）**：每个 phase 的 spec.md 必含 `## Key Decisions` 表（`| # | Decision | Conclusion | Reason |`）。rN 修订（spec-rN.md）必须**保持表行与编号稳定**：改行内结论、不删行不改号；新增行标 `NEW-rN`。决策传播比对的是**表格行 diff**而非散文——编号一乱，影响清单就失效。K8 表同时是**对下游的唯一预告账本**：各 phase 的 Key Decisions 草稿态 = 候选 Protected Decisions，ship 的 handoff.md 是其运行态精选——一本账两态，不另立第三账（拆分卡不加「传给下游」列、spec 不加 For Downstream 节）。切账分界：本 task 生命周期内可逆的决策只进 K8 表；**满足三判据（难以逆转／无上下文会惊讶／真实权衡的结果）且活过本 task** 的进 `docs/adr/`。
+8. **非故事工作的安放**：spike／「技术铺路」**不立 phase**——纯调研结论无产品验收物，纯重构单列会重新合法化水平切分。最高风险前置进 phase1=MVP 选题（见 1）；大重构/依赖升级并入首个需要它的故事 phase，作 prefactor 票（票内先行先合）；拆相期该答而答不了的判断题（如「动不动计费模型」）立 `<artifacts.dir>/decisions/` 决策票，拆卡批准前解掉。
 
 ## matt 技能族产物协议
 
@@ -175,7 +178,7 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 
 ### 逐 phase 产出协议
 
-1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
+1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
 2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
 3. 产物齐全标准（= v4 gate 的「spec 文件存在」检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（matt-verified-tickets 规则，含末张 E2E 票）。
 4. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
@@ -288,16 +291,18 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
 
 ### 拆分确认卡（多 phase 时是硬 gate：批准前不得绑定）
 
-拆 phase 草案完成后，先给这张表，**等用户明确批准**（改名/换序/合并拆分一轮都行）：
+拆分卡是拆相对话的**综合物**——出卡时不再新起问题。先给这张卡，**等用户明确批准**（一表批问；改名/换序/合并拆分一轮都行）：
 
 ```markdown
-| # | Phase 名 | slug | 交付物（phase 末验收什么） | 票数 | 预算 | 依赖前序 |
-|---|---------|------|--------------------------|------|------|---------|
-| 1 | 骨架与只读查询 | scaffold-1 | GET /tokens 可查任意账号额度 | 4 | ~1h | — |
-| 2 | Token 计量     | token-metering-2 | 消耗实时入库 + e2e | 5 | ~1.5h | 1 的模型 |
+> 最高风险：<本需求最不确定的一段> → phase1（MVP）切穿路径：<最薄的端到端一刀如何把它打穿>
+
+| # | Phase 名（故事） | slug | 验收物（可执行的「验收时我看什么」） | 功能票 | 依赖前序（引用） |
+|---|---------|------|-----------------------------------|--------|------------------|
+| 1 | MVP：用户端到端查到自己额度 | token-view-1 | :3000 输入账号名 → 额度页现值，API↔DB 双向一致断言 | 3 | — |
+| 2 | 消耗实时计量与展示 | metering-2 | 对话一次消耗 → 额度页增量与计费明细逐条对上 | 4 | 依赖 phase 1 的 Confirmed Interfaces（决策项见 phase 1 KD） |
 ```
 
-批准后才进入逐 phase 产 spec（matt 族章）与绑定。用户改需求 → 回到这张卡重来，phases 整体 PUT 覆盖。
+「功能票」列只数功能票（E2E 票不计，MVP 行可 <3）；「验收物」列按六问简版填（验收级别/数据态/范围面/测试数据/断言/前置）——填不满或讲不成一个完整故事的行 = 该 phase 不成立，回拆相轮。批准后才进入逐 phase 产 spec（matt 族章）与绑定。用户改需求 → 回到这张卡重来，phases 整体 PUT 覆盖。
 
 ### 绑定目录 → 逐 phase 绑定（catalog 即唯一可选项，built-in 域枚举已退役）
 
@@ -346,7 +351,7 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 - **增量绑定**：对话中澄清出一个 phase/字段立即 spec-field 写回（SpecPanel 实时刷新），不等整 spec。
 - **多仓库不假定 cwd**：project 路径只信 context.md / repos index，读不到就自查，查不到才问。
 - **WHAT/HOW 协作**：你产 phases（WHAT + 绑定建议），执行 HOW 归工作流；绑定前必让用户确认候选。
-- **预算自觉**：报拆分表时逐 phase 标预算估算；超过 1.5h 的 phase 在你嘴里就不该存在——先拆。
+- **判据自觉**：报拆分卡时逐 phase 带验收物与功能票数；讲不成一个完整用户故事、或非 MVP 故事功能票 <3 的 phase，在你嘴里就不该存在——先合，或问用户砍范围。不给 phase 估时定顶（时间预算 ≤1h 是票层纪律）。
 
 ## 错误码
 

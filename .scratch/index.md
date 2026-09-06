@@ -53,3 +53,4 @@
 | 49 | task-phase-redesign | 2026-09-03 | feat/task-phase-redesign | done (pipeline PASS: 13 impl+1 E2E tickets, 8 gate rounds 回归∅, review 3-axis 15 findings 2 cycles, 主故事 e2e 真跑 4连绿; E2E 独立揪出 root-guard 掩盖洞; ws-delete FK 预存洞→另案) |
 | 50 | spec-driven-workflow | 2026-09-05 | octopus-feat-v4-direct-create-ui | in-progress (manifest 更名+ws 权威 collect+matt-spec-dev+打回二分路由, ADR-0018; 01-05 done, 06 回归收口中) |
 | 51 | phase-handoff-chaining | 2026-09-05 | octopus-feat-v4-direct-create-ui | done (pipeline PASS: 4+1 票, review 0🔴/4🟡 1 cycle, E2E AC1-5 PASS+AC6 真LLM SKIP(用户口径), 计划外修复 git-ops worktree 正则基线 43→42; ADR-0019) |
+| 52 | phase-splitting-methodology | 2026-09-06 | octopus-feat-v4-direct-create-ui | in-progress (拆 Phase 方法论换锚：phase=完整故事/MVP 首 slice/功能票≥3 sanity/时间锚降票层，两段预算+不画雾+前提引用；grilling 七叉收敛 10 KD，walk-through 10 断点全收；5 票 2 stage；ADR-0020；票05=dogfood 首航+AC6 补票 run·择时) |
