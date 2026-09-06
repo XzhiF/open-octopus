@@ -25,7 +25,7 @@ version: 3.4.0
 ```
 ① 领域阅读          Read context.md → 各 project 绝对路径 + 惯例 probe（缺则降级标注）
 ② 需求澄清+拆 phase  列故事 + 结构 grilling（≤15 轮，fog-or-ticket）→ 拆分草案（phase 序表：故事/验收物/功能票数/依赖前序 + 卡头风险行）
-③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准前不做任何绑定
+③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准后先 spec-field 写 phases 骨架，再产 spec，批准前不写 phases、不绑工作流
 ④ 逐 phase 产 spec   拆卡批准后，每 phase 走 matt 族内容轮产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
 ⑤ 逐 phase 绑定      绑定目录 GET /api/workflow-presets → 推荐+骨架预填 input_values → 用户确认 → spec-field field=phases
 ⑥ 交付              自查 v4 gate 四项齐备 → 把 TASK_ID 给用户，等用户 [入队]
@@ -221,13 +221,17 @@ curl -s -X POST "http://localhost:$PORT/api/tasks" \
 
 ### 2. 对话中绑字段（update_task_spec_field）★联动核心
 
+> ⚠️ **中文写回必走文件，禁内联 `-d`**：本机 `curl` 若是 mingw/Windows 原生二进制，命令行内联的中文会经 ANSI 码页转成 GBK 字节、server 按 UTF-8 解成乱码存库。凡 `value` 含非 ASCII（phase 名、decisions、idea）——**先用 Write 工具把 JSON body 写成 home 内的纯 ASCII 路径文件**（Write 落盘天然 UTF-8 干净），再 `curl --data-binary @文件`。纯 ASCII 的 body（如只写 projects 英文 id）可直接内联。
+
 ```bash
+# 步骤一：用 Write 工具落 body 文件（非 bash！内容按 UTF-8 写，例 ./.tmp/spec-field.json）：
+#   { "field": "phases", "value": [ { "index": 1, "name": "MVP：用户端到端查到自己额度",
+#         "slug": "token-view-1", "specPath": "./.scratch/20260906/token-view-1/spec.md",
+#         "workflowRef": "built-in/matt-spec-dev", "inputValues": { "batch_dir": "${phase.batch_rel}" } } ] }
+# 步骤二：curl 只引用文件路径（argv 全 ASCII，不过码页）：
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
   -H "Content-Type: application/json" \
-  -d '{ "field": "phases", "value": [ { "index": 1, "name": "骨架与只读查询", "slug": "scaffold-1",
-        "specPath": "./.scratch/20260903/scaffold-1/spec.md",
-        "workflowRef": "built-in/matt-dev-pipeline",
-        "inputValues": { "idea": "按 ./.scratch/20260903/scaffold-1/spec.md 交付" } } ] }' | jq .
+  --data-binary @./.tmp/spec-field.json | jq .
 ```
 
 | field | value 形态 | v4 备注 |
@@ -289,7 +293,7 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
 
 ## 拆分确认 gate 与 per-phase 工作流绑定
 
-### 拆分确认卡（多 phase 时是硬 gate：批准前不得绑定）
+### 拆分确认卡（多 phase 时是硬 gate：批准前不得写 phases、不得绑定）
 
 拆分卡是拆相对话的**综合物**——出卡时不再新起问题。先给这张卡，**等用户明确批准**（一表批问；改名/换序/合并拆分一轮都行）：
 
@@ -302,7 +306,9 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
 | 2 | 消耗实时计量与展示 | metering-2 | 对话一次消耗 → 额度页增量与计费明细逐条对上 | 4 | 依赖 phase 1 的 Confirmed Interfaces（决策项见 phase 1 KD） |
 ```
 
-「功能票」列只数功能票（E2E 票不计，MVP 行可 <3）；「验收物」列按六问简版填（验收级别/数据态/范围面/测试数据/断言/前置）——填不满或讲不成一个完整故事的行 = 该 phase 不成立，回拆相轮。批准后才进入逐 phase 产 spec（matt 族章）与绑定。用户改需求 → 回到这张卡重来，phases 整体 PUT 覆盖。
+「功能票」列只数功能票（E2E 票不计，MVP 行可 <3）；「验收物」列按六问简版填（验收级别/数据态/范围面/测试数据/断言/前置）——填不满或讲不成一个完整故事的行 = 该 phase 不成立，回拆相轮。
+
+**批准后的时序（别把「写 phases」拖到绑定之后——SpecPanel 的 phase 列靠 phases[] 渲染，不写就等于产物隐身）**：① 用户点头 → **立即** spec-field 写 `phases[]` 骨架（`index/name/slug/specPath` 先填，`workflowRef` 留占位、`inputValues` 可空）——这一步**不是绑定**，是把里程碑结构登记进 SpecPanel；② 逐 phase 走 matt 族产 spec.md + issues/（写进各 specPath）；③ 逐 phase 绑定确认（补 `workflowRef`+`inputValues`，见下章）。三者的「批准」各自独立：卡批准=批结构，绑定批准=批某 phase 用哪条流。用户改需求 → 回到这张卡重来，phases 整体 PUT 覆盖。
 
 ### 绑定目录 → 逐 phase 绑定（catalog 即唯一可选项，built-in 域枚举已退役）
 

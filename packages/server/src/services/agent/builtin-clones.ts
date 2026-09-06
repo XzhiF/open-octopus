@@ -132,15 +132,18 @@ curl -s -X POST "http://localhost:3001/api/tasks" \\
 
 ### 第二步：逐字段绑定（对话中立即执行）
 
-每当从对话中澄清出一个字段，**立即**调用 spec-field API 绑定：
+每当从对话中澄清出一个字段，**立即**调用 spec-field API 绑定。
+
+> ⚠️ **中文写回禁内联 \`-d\`**：Windows 原生 curl 会把命令行内联中文经 ANSI 码页转成 GBK，server 按 UTF-8 解 → 存库乱码。凡 value 含非 ASCII（phase 名/decisions/idea 等），**先用 Write 工具把 JSON body 写成 home 内的 ASCII 路径文件**（如 \`./.tmp/spec-field.json\`，Write 落盘天然 UTF-8 干净），再 \`curl --data-binary @该文件\`。纯 ASCII 的 body（如只列英文 project id）才可内联。
 
 \`\`\`bash
-# phases（核心）：拆分确认后整数组 PUT；字段 camelCase
+# phases（核心）：批准拆分卡后立即写骨架（workflowRef 先占位，绑定环节再补），整数组 PUT
+# 先 Write 工具落 ./.tmp/spec-field.json：{"field":"phases","value":[{"index":1,"name":"MVP：用户端到端查到自己额度","slug":"token-view-1","specPath":"./.scratch/20260906/token-view-1/spec.md","workflowRef":"built-in/matt-spec-dev","inputValues":{"batch_dir":"\${phase.batch_rel}"}}]}
 curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
   -H "Content-Type: application/json" \\
-  -d '{ "field": "phases", "value": [ { "index": 1, "name": "MVP：用户端到端查到自己额度", "slug": "token-view-1", "specPath": "./.scratch/20260903/token-view-1/spec.md", "workflowRef": "built-in/matt-spec-dev", "inputValues": { "batch_dir": "\${phase.batch_rel}" } } ] }'
+  --data-binary @./.tmp/spec-field.json
 
-# projects (项目列表)
+# projects（纯 ASCII，可内联）
 curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
   -H "Content-Type: application/json" \\
   -d '{ "field": "projects", "value": ["open-octopus", "web-app"] }'
@@ -152,7 +155,7 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
 
 ### 拆分确认 gate（硬约束）
 
-多 phase 的拆分卡（故事名/验收物/功能票数/依赖前序引用，卡头一行「最高风险 → phase1（MVP）切穿路径」）**必须先呈给用户确认**，批准前不得写 phases、不得绑工作流。批准后逐 phase 走「绑定目录（workflow-presets.yaml）→ 推荐 → 用户确认绑定」。
+多 phase 的拆分卡（故事名/验收物/功能票数/依赖前序引用，卡头一行「最高风险 → phase1（MVP）切穿路径」）**必须先呈给用户确认**。时序：用户批准 → **立即** spec-field 写 phases 骨架（index/name/slug/specPath 先登记进 SpecPanel，此步非绑定）→ 逐 phase 产 spec → 逐 phase 走「绑定目录（workflow-presets.yaml）→ 推荐 → 用户确认绑定」补 workflowRef/inputValues。批准卡前不得写 phases、不得绑工作流。
 
 ### 反向通知
 

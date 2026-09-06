@@ -274,7 +274,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       <div className="rounded-lg border bg-background" data-artifacts-section>
         <div className="px-3 py-2 border-b flex items-center justify-between">
           <span className="text-xs font-medium flex items-center gap-1">
-            <FileText className="size-3" /> 产物 ({artifacts.length})
+            <FileText className="size-3" /> 执行产物 ({artifacts.length})
           </span>
           <span className="text-[10px] text-muted-foreground">点击查看完整内容</span>
         </div>
@@ -324,7 +324,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           <div className="px-3 py-2 text-[11px] text-red-600">{artifactsError}</div>
         ) : artifacts.length === 0 ? (
           <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
-            ⏳ 尚无产物——agent 编写后产物会在此登记（artifacts.json）
+            ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
+            起草期的 phase spec 与票在下方「Phase 绑定」列查看（批准拆分卡并写回 phases 后自动出现）。
           </div>
         ) : (
           <div className="divide-y">
@@ -429,7 +430,9 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         <div className="rounded-lg border border-purple-400/30 bg-background p-3" data-decision-memo>
           <div className="text-xs font-medium mb-1.5 flex items-center gap-1">
             <Lightbulb className="size-3 text-purple-500" /> 决策备忘
-            <span className="text-[9px] text-muted-foreground font-normal">来自 MoA · 供方案决策</span>
+            <span className="text-[9px] text-muted-foreground font-normal">
+              {task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}
+            </span>
           </div>
           <ul className="text-[11px] space-y-1 text-muted-foreground">
             {decisions.map((d, i) => <li key={i}>• {d}</li>)}

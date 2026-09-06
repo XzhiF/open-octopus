@@ -7,7 +7,23 @@
 04（且需用户届时发令 + 投喂需求——Missing Trigger 防线：本票 status 保持 ready-for-agent 直至用户授权）
 
 ## Status
-ready-for-agent
+in-progress (判据面 AC1/AC2 PASS·真 LLM 首航成功；执行面 AC3 待用户续会话补写 phases 后走 ready/派发)
+
+## Verification Result（2026-09-06 真机首航实录）
+用户自建真 v4 任务「全局 token 计费」(`6c0db77d`)，task-author 会话真跑（provider session `348ab0b9`，真 LLM）。
+
+**判据面 PASS（方法论首航成功）**：
+- ✅ AC1 拆分卡四特征全中——卡头「最高风险=计费正确性 → phase1 MVP 切穿路径」、phase 名全是故事（「MVP：配好价格一次调用端到端算对钱」「一次调用都不会漏：聊天侧全路径记账」）、功能票列在（5/5/4）、无预算列、验收物可执行级。
+- ✅ AC2 两段式预算被忠实执行——拆相轮 Q3/Q4 结构 grilling → 出卡 → 批准后才进 Q5/Q6 内容轮；无提前下钻。
+- ✅ 批次产物全齐且干净：`.scratch/20260906/{billing-core-1,billing-coverage-2,billing-report-3}/` = 3 spec + 16 功能票 + 3 E2E 票，`file` 验为 UTF-8，spec.md 含 MVP 切穿最高风险段的 Problem Statement（Write 工具落盘不经 curl，故无乱码）。
+
+**工程面揪出 4 根因（判据无责，均已修）**：
+- RC1a UI 硬编码「来自 MoA」→ 按 format 条件渲染（v4=「拆相对话的全局决策·供验收参考」）。
+- RC1b **P0 编码 bug**：mingw curl（`/mingw64/bin/curl`）内联 `-d '{中文}'` 经 Windows ANSI 936 码页转 GBK、server 按 UTF-8 解存成 `U+FFFD`——本会话同路径复现坐实。**修法**：SKILL/persona 全部 curl 配方改「Write body 到 ASCII 路径文件 → `--data-binary @file`」。**已把被乱码毁的 5 条 decisions 从 JSONL 原样恢复回写（version 7）**。
+- RC2 agent **0 次写 phases**（全 session 仅 projects+decisions 两次 spec-field）→ 根因「批准前不做任何绑定」被读成「不写 phases」。SKILL/persona 明确「拆卡批准 → 立即写 phases 骨架，绑定只补 workflowRef/inputValues」。
+- RC3 SpecPanel 产物区只读 artifacts.json（执行期产物），v4 起草产物落 .scratch 看不见 → 产物区改名「执行产物」+ 空态指向 Phase 绑定列；真正可见面（WorkflowBox 按 phases[] 渲染）随 RC2 修复自动亮。
+
+**未竟（转后续）**：AC3（ready gate + 首 phase 真机派发 + handoff 回流）未跑——因 RC2 致 phases[] 空、用户转向问询会话止于此。用户在新 persona/SKILL 下续该会话补写 phases 后可继续；本轮判据面结论已足够支撑方法论定稿。
 
 ## Acceptance Criteria
 - [ ] AC0 版本探针：commit 后 rebuild+重启 :3001；盘上 persona.md 实文含「完整用户故事」；落位 SKILL version=3.4.0
