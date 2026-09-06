@@ -346,6 +346,20 @@ export function createTasksRoutes(
     }
   })
 
+  // GET /:id/batch-tree — draft-artifact visibility (#53): disk-direct scan of
+  // the `.scratch/` batch dirs (落盘即现, decoupled from phases[]). No path param
+  // (the scan roots from the home layout — no escape surface). Empty `.scratch/`
+  // → `{ batches: [] }` 200; only an unknown task 404s.
+  router.get("/:id/batch-tree", (c) => {
+    try {
+      const batches = service.batchTree(c.req.param("id"))
+      return c.json({ batches })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   router.put("/:id/home-file", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)

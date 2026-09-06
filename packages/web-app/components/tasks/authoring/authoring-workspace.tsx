@@ -36,6 +36,8 @@ import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { OutputViewer } from "./output-viewer"
 import { WorkflowBox } from "./workflow-box"
+import { DraftBatches } from "./draft-batches"
+import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
@@ -185,6 +187,15 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
       agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
   }), [])
   const chat = useAgentChat(activeSessionId, { api: apiOverrides })
+
+  // ── #53 batch-tree（磁盘直扫）单一状态源 ──────────────────────────
+  // 「草稿批次」区 + Phase 行内展开 + 入队清单磁盘判定 三处吃同一份数据；
+  // R1 实时 = chat tool 事件（agent Write/Edit 命中 .scratch）+ 空闲兜底。
+  const batchTree = useBatchTree(task.id, {
+    toolCalls: chat.toolCalls,
+    streaming: chat.streaming,
+    versionKey: task.version,
+  })
   const loadedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!activeSessionId) return
@@ -314,10 +325,19 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   }, [isV4])
 
   const v4Phases = spec.phases ?? []
+  // #53 K5：磁盘树可用（已加载/无错）且 specPath 在扫描域 → 「磁盘真在」判定
+  // （消灭字符串假绿）；扫描域外或树不可用 → 退化现字符串判定，端点故障不冻结面板。
+  const specTreeReady = !batchTree.loading && !batchTree.error
   const v4Rows = useMemo(() => {
     const phases = v4Phases
     const rowPhases = phases.length >= 1
-    const rowSpec = phases.length >= 1 && phases.every((p) => (p.specPath ?? "").trim().length > 0)
+    const specOnDisk = (p: (typeof phases)[number]) => {
+      if (specTreeReady && isRelativeScratchSpec(p.specPath)) {
+        return findSpecEntry(batchTree.batches, p.specPath) !== null
+      }
+      return (p.specPath ?? "").trim().length > 0
+    }
+    const rowSpec = phases.length >= 1 && phases.every(specOnDisk)
     const rowBind = phases.length >= 1 && phases.every((p) => (p.workflowRef ?? "").trim().length > 0)
     let inputsUnknown = false
     const rowInputs = phases.length >= 1 && phases.every((p) => {
@@ -329,8 +349,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         return v.length > 0 || v.includes("${")
       })
     })
-    return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown }
-  }, [v4Phases, catalog])
+    return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown, specTreeReady }
+  }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady])
 
   // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行四行天然不绿，不崩即可）
   const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs
@@ -457,6 +477,20 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             <Lock className="size-2.5 mr-0.5" aria-label="锁定" /> {g}
           </Badge>
         ))}
+        {/* #53 K3：resources/authoring_resources 是 agent spec-field 可写的活字段，
+            非空时给最小展示面（hover 列名）——manifest 影子字段的人话归宿之一。 */}
+        {(spec.resources?.length ?? 0) > 0 && (
+          <Badge variant="outline" className="text-[10px]" data-task-resources
+            title={spec.resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
+            📦 resources · {spec.resources!.length}
+          </Badge>
+        )}
+        {(spec.authoring_resources?.length ?? 0) > 0 && (
+          <Badge variant="outline" className="text-[10px]" data-task-authoring-resources
+            title={spec.authoring_resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
+            🧪 authoring · {spec.authoring_resources!.length}
+          </Badge>
+        )}
         {/* codebase 预设恒呈现（v4-only UI：所有任务都有项目语境；非空即锁） */}
         <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
           <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
@@ -554,7 +588,18 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
         <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
           {/* PhaseListEditor/绑定卡内部按 v4 format 分叉（goal/ac 卡已随 v4-only UI 退役） */}
-          <WorkflowBox task={task} onMutated={onMutated} />
+          <WorkflowBox task={task} onMutated={onMutated} batchTree={batchTree} />
+
+          {/* #53 草稿批次区（磁盘直扫，仅 v4）——落盘即现，绕开 phases[] 门控 */}
+          {isV4 && (
+            <DraftBatches
+              task={task}
+              phases={v4Phases}
+              isDraft={task.status === "draft"}
+              tree={batchTree}
+              onMutated={onMutated}
+            />
+          )}
 
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
@@ -565,7 +610,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             {(
               [
                 { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
-                { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: "逐 phase spec（批次目录 spec.md）" },
+                { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: v4Rows.specTreeReady ? "逐 phase spec（磁盘已核）" : "逐 phase spec（批次目录 spec.md）" },
                 { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
                 { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
               ] as const

@@ -621,6 +621,31 @@ export async function listHomeDir(taskId: string, relDir: string): Promise<HomeF
   return data.files
 }
 
+// ============ Batch-tree (draft-artifact-visibility #53: 磁盘直扫) ============
+
+/** One `.scratch/` batch dir (server-side disk scan — decoupled from
+ *  task_spec.phases[]: files land here the moment the agent writes them).
+ *  `dir` / `files[].path` are home-relative posix, usable as getHomeFile args. */
+export interface BatchTreeEntry {
+  dir: string
+  slug: string
+  files: HomeFileListingEntry[]
+  latest_mtime: string
+}
+
+/** GET /api/tasks/:id/batch-tree — all batch dirs under the home's `.scratch/`,
+ *  newest-mtime first, cap 300 files. Empty `.scratch/` → `[]` (200, the normal
+ *  drafting state); only an unknown task throws TaskApiError(404). */
+export async function getBatchTree(taskId: string): Promise<BatchTreeEntry[]> {
+  const res = await fetch(buildUrl(`/${taskId}/batch-tree`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  const data = (await res.json()) as { batches: BatchTreeEntry[] }
+  return data.batches
+}
+
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
 
 /** Error thrown by {@link getWorkflowRefView} when the bound ref can no longer

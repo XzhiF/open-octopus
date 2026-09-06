@@ -47,7 +47,7 @@ export function isUiEditableSpecPath(specPath: string): boolean {
 }
 
 /** home 相对 posix 化（与 server listHomeDir 的 path 输出同格式）。 */
-function normalizeRel(p: string): string {
+export function normalizeRel(p: string): string {
   return p.replace(/\\/g, "/").replace(/^\.\//, "")
 }
 
@@ -102,6 +102,9 @@ export function specSkeleton(phase: TaskPhase): string {
 export interface PhaseSpecDialogProps {
   task: Task
   phase: TaskPhase
+  /** #53：开窗后直接定位到该批次文件（票/报告 chips 用），批次清单仍以
+   *  phase.specPath 的 dirname 为准 —— 点开一张票仍能看到并切到 spec.md。 */
+  initialActivePath?: string
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -113,12 +116,13 @@ type State =
   | { kind: "unsupported" }      // specPath 出白名单（客户端预判，不发请求）
   | { kind: "error"; message: string }
 
-export function PhaseSpecDialog({ task, phase, open, onOpenChange }: PhaseSpecDialogProps) {
+export function PhaseSpecDialog({ task, phase, initialActivePath, open, onOpenChange }: PhaseSpecDialogProps) {
   const specRel = normalizeRel(phase.specPath)
+  const initialRel = initialActivePath ? normalizeRel(initialActivePath) : specRel
   const editable = isUiEditableSpecPath(phase.specPath)
   const batchDir = batchDirOf(phase.specPath)
-  // 当前查看/编辑的批次文件（默认 specPath；点清单切换 —— ADR-0018 可见性）。
-  const [activeRel, setActiveRel] = useState(specRel)
+  // 当前查看/编辑的批次文件（默认 specPath 或 #53 定位文件；点清单切换 —— ADR-0018 可见性）。
+  const [activeRel, setActiveRel] = useState(initialRel)
   const [state, setState] = useState<State>({ kind: "loading" })
   const [draft, setDraft] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -127,7 +131,7 @@ export function PhaseSpecDialog({ task, phase, open, onOpenChange }: PhaseSpecDi
   // 开窗复位 + 批次清单拉取（缺目录/越权静默空态，不打扰编辑主流程）。
   useEffect(() => {
     if (!open) return
-    setActiveRel(specRel)
+    setActiveRel(initialRel)
     if (!editable) {
       setState({ kind: "unsupported" })
       setFiles(null)
@@ -139,7 +143,7 @@ export function PhaseSpecDialog({ task, phase, open, onOpenChange }: PhaseSpecDi
       .catch(() => { if (!cancelled) setFiles(null) })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-anchor on open/phase
-  }, [open, specRel, task.id, editable, batchDir])
+  }, [open, specRel, initialRel, task.id, editable, batchDir])
 
   // 加载当前选中文件。
   useEffect(() => {

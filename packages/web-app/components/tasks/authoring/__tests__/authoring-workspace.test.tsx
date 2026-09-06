@@ -9,17 +9,34 @@ vi.mock("@/lib/skill-groups-api", () => ({
   listSkillGroups: vi.fn(),
 }))
 
-vi.mock("@/lib/tasks-api", () => ({
-  readyTask: vi.fn(),
-  updateSpecField: vi.fn(),
-  updateTask: vi.fn(),
-  getTask: vi.fn(),
-  getTaskContext: vi.fn().mockResolvedValue({ artifactsDir: "", path: "", content: null }),
-  TaskReadyGateError: class TaskReadyGateError extends Error {
-    missing: string[]
-    constructor(m: string, missing: string[]) { super(m); this.name = "TaskReadyGateError"; this.missing = missing }
-  },
-}))
+vi.mock("@/lib/tasks-api", () => {
+  class TaskApiError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = "TaskApiError"
+      this.status = status
+    }
+  }
+  return {
+    readyTask: vi.fn(),
+    updateSpecField: vi.fn(),
+    updateTask: vi.fn(),
+    getTask: vi.fn(),
+    getTaskContext: vi.fn().mockResolvedValue({ artifactsDir: "", path: "", content: null }),
+    // #53 batch-tree：默认 reject → 磁盘判定不可用 → 入队清单走字符串退化判定
+    // （既有全绿用例语义原样保持；磁盘判定行为由专测用例覆写此 mock）。
+    getBatchTree: vi.fn().mockRejectedValue(new TaskApiError("offline", 500)),
+    getHomeFile: vi.fn().mockRejectedValue(new TaskApiError("not found", 404)),
+    putHomeFile: vi.fn().mockResolvedValue({ path: "", bytes: 0 }),
+    listHomeDir: vi.fn().mockResolvedValue([]),
+    TaskApiError,
+    TaskReadyGateError: class TaskReadyGateError extends Error {
+      missing: string[]
+      constructor(m: string, missing: string[]) { super(m); this.name = "TaskReadyGateError"; this.missing = missing }
+    },
+  }
+})
 
 // 票 12: v4 预检数据源 = built-in 目录（缓存端点，输入定义镜像）；
 // 绑定目录改版: WorkflowBox 可选项 = listWorkflowPresets（绑定目录）
@@ -85,7 +102,7 @@ vi.mock("@/components/scheduler/project-selector", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }))
 
 import { listSkillGroups } from "@/lib/skill-groups-api"
-import { readyTask } from "@/lib/tasks-api"
+import { readyTask, getBatchTree, TaskApiError } from "@/lib/tasks-api"
 import { AuthoringWorkspace } from "../authoring-workspace"
 
 const mockListSkillGroups = vi.mocked(listSkillGroups)
@@ -133,6 +150,8 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
 beforeEach(() => {
   vi.clearAllMocks()
   mockListSkillGroups.mockResolvedValue({ groups: GROUPS })
+  // #53：每用例重申 batch-tree 默认（reject → 字符串退化判定），防实现泄漏
+  vi.mocked(getBatchTree).mockRejectedValue(new TaskApiError("offline", 500))
 })
 
 afterEach(() => {
@@ -241,9 +260,11 @@ describe("AuthoringWorkspace — enqueue gate (v4-only UI)", () => {
     await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
     // goal/ac 面全退役（即便双确认已齐也不绿 — v4-only 清单只吃 phases）
     expect(screen.queryByTestId("goal-ac-card")).toBeNull()
+    // #53 AC4：草稿批次区仅 v4 渲染，legacy 行整区不出现
+    expect(document.querySelector("[data-draft-batches]")).toBeNull()
     expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
-    // type badge 降级文案
-    expect(screen.getByText(/草稿/)).toBeDefined()
+    // type badge 降级文案（#53 起右栏空态也含「草稿批次」字样 → 收紧为全文匹配）
+    expect(screen.getByText("📝 草稿")).toBeDefined()
   })
 
   it("v4 enqueue 409 走 TaskReadyGateError → gateMissing 反解（见票 12 C 组用例）", async () => {
@@ -479,5 +500,98 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     expect(id).toBe("v4-auto")
     expect(version).toBe(7) // S5：重取的 version，非 prop 快照
     expect(input.task_spec?.autoAdvance).toBe(false)
+  })
+})
+
+// ── #53 入队清单磁盘判定（K5：spec 行 = 磁盘真在，消灭字符串假绿）──────────
+describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
+  const treeWith = (dirs: string[]) =>
+    dirs.map((slug) => ({
+      dir: `.scratch/20260903/${slug}`,
+      slug,
+      files: [{ path: `.scratch/20260903/${slug}/spec.md`, mtime: "2026-09-03T00:00:00.000Z", bytes: 10 }],
+      latest_mtime: "2026-09-03T00:00:00.000Z",
+    }))
+
+  it("tree 全命中 → spec 行 ✅「磁盘已核」，四行齐可入队", async () => {
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]))
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-disk-ok", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    await waitFor(() =>
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✅"),
+    )
+    expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("磁盘已核")
+    const btn = document.querySelector('[data-testid="task-enqueue"]') as HTMLButtonElement
+    await waitFor(() => expect(btn.disabled).toBe(false))
+  })
+
+  it("specPath 非空但磁盘无文件（假绿场景）→ spec 行 ⏳ + 入队禁用", async () => {
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1"])) // 只落盘 phase1
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-disk-miss", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    // phase2 未落盘 → 行不绿（⏳），入队钮禁用（假绿消灭）
+    await waitFor(() => {
+      const specRow = list.querySelector('[data-checklist-v4="spec"]')!
+      expect(specRow.textContent).toContain("⏳")
+      expect(specRow.textContent).not.toContain("✅")
+    })
+    const btn = document.querySelector('[data-testid="task-enqueue"]') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+  })
+
+  it("tree 请求失败 → 退化字符串判定（现状行为回归保护）", async () => {
+    // beforeEach 默认已 reject
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-disk-err", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    await waitFor(() =>
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✅"),
+    )
+    expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).not.toContain("磁盘已核")
+  })
+})
+
+// ── #53 K3：resources/authoring_resources 非空时的顶栏展示面 ──────────────
+describe("AuthoringWorkspace — resources 顶栏 chips (#53 K3)", () => {
+  it("v4 非空 resources/authoring_resources → 各显一个小 chip（hover 列名）；空则不显", async () => {
+    const task = makeV4Task("v4-res", [], {
+      resources: [{ type: "skill", name: "tdd" }],
+      authoring_resources: [{ type: "agent", name: "researcher" }],
+    })
+    render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
+    await waitFor(() => expect(document.querySelector("[data-task-resources]")).toBeTruthy())
+    expect(document.querySelector("[data-task-authoring-resources]")).toBeTruthy()
+    expect(document.querySelector("[data-task-resources]")!.getAttribute("title")).toContain("skill:tdd")
+  })
+
+  it("空数组（默认态）→ 两个 chip 都不渲染", async () => {
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-nores", [{ index: 1, name: "P", slug: "s", specPath: "./x.md", workflowRef: "built-in/task-dev", inputValues: { idea: "i" } }])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    // 渲染完成锚 = 入队清单在场（ensure 首帧后），再断言 chips 缺席
+    await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
+    expect(document.querySelector("[data-task-resources]")).toBeNull()
+    expect(document.querySelector("[data-task-authoring-resources]")).toBeNull()
   })
 })

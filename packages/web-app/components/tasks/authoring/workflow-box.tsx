@@ -40,11 +40,11 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
-  Link2, Search, ChevronRight, Plus, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
+  Link2, Search, ChevronRight, ChevronDown, Plus, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
-import { getTask, updateTask } from "@/lib/tasks-api"
+import { getTask, updateTask, getHomeFile } from "@/lib/tasks-api"
 import {
   getBuiltInWorkflowDetail,
   listBuiltInWorkflows,
@@ -52,18 +52,31 @@ import {
   type BuiltInWorkflowSummary,
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
-import { PhaseSpecDialog } from "./phase-spec-dialog"
+import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
+import {
+  findBatchFor,
+  findSpecEntry,
+  isRelativeScratchSpec,
+  summarizeSpec,
+  type BatchTreeState,
+} from "./use-batch-tree"
+import {
+  DEFAULT_NEW_WORKFLOW,
+  SLUG_RE,
+  defaultSpecPath,
+  withPhases,
+} from "./phases-mutation"
 
 export interface WorkflowBoxProps {
   task: Task
   onMutated: () => void
+  /** #53：磁盘直扫树（行内展开的 spec 灯/票清单数据源）。缺省时展开区退化到
+   *  只显契约信息——旧调用点（测试/历史面）不因缺 prop 而红。 */
+  batchTree?: BatchTreeState
 }
 
-const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
-const DEFAULT_NEW_WORKFLOW = "built-in/matt-spec-dev"
-
-export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
-  return <PhaseListEditor task={task} onMutated={onMutated} />
+export function WorkflowBox({ task, onMutated, batchTree }: WorkflowBoxProps) {
+  return <PhaseListEditor task={task} onMutated={onMutated} batchTree={batchTree} />
 }
 
 /** Classify an input value's placeholder SHAPE for the chip label — pure
@@ -87,42 +100,13 @@ function InputChips({ values }: { values: Record<string, string> }) {
   )
 }
 
-/** index = 数组位次 +1 重排（SKILL 契约「index=数组序」；仅 draft 期发生，
- *  ready 后结构编辑关闭，位次不再漂移）。 */
-function renumber(phases: TaskPhase[]): TaskPhase[] {
-  return phases.map((p, i) => (p.index === i + 1 ? p : { ...p, index: i + 1 }))
-}
-
-/** 默认 specPath：home 相对批次约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md */
-function defaultSpecPath(slug: string): string {
-  const d = new Date()
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
-  return `./.scratch/${ymd}/${slug}/spec.md`
-}
-
-/** S5 写回样板：重取 fresh → 在 fresh.phases 上做 transform → 整数组 PUT +
- *  If-Match。fresh.phases 缺失（异常态）回退开窗快照。 */
-async function withPhases(
-  task: Task,
-  transform: (base: TaskPhase[]) => TaskPhase[],
-): Promise<void> {
-  const fresh = await getTask(task.id)
-  const base = fresh.task_spec.phases ?? task.task_spec.phases ?? []
-  const next = renumber(transform(base))
-  await updateTask(
-    task.id,
-    { task_spec: { ...fresh.task_spec, phases: next } as TaskSpec },
-    fresh.version,
-  )
-}
-
 // ── PhaseListEditor（v4 唯一面） ─────────────────────────────────────
 
-function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
+function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
   const phases = task.task_spec.phases ?? []
   const isDraft = task.status === "draft"
   const [openPhaseIdx, setOpenPhaseIdx] = useState<number | null>(null)
-  const [specPhase, setSpecPhase] = useState<TaskPhase | null>(null)
+  const [specTarget, setSpecTarget] = useState<{ phase: TaskPhase; activeRel?: string } | null>(null)
   const [deletingIdx, setDeletingIdx] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -199,7 +183,7 @@ function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
 
       {phases.length === 0 ? (
         <p className="text-[11px] text-muted-foreground" data-phase-bind-empty>
-          尚无 phase —— 对话里让 agent 拆分，或用下方「添加 Phase」手动建骨架。
+          尚无 phase —— 对话里让 agent 拆分（拆分产物会先在下方「草稿批次」区出现），或用「添加 Phase」手动建骨架。
         </p>
       ) : (
         phases.map((p, i) => (
@@ -215,9 +199,10 @@ function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
             onMove={handleMove}
             onRequestDelete={setDeletingIdx}
             onOpenBind={setOpenPhaseIdx}
-            onOpenSpec={setSpecPhase}
+            onOpenSpec={(p, activeRel) => setSpecTarget({ phase: p, activeRel })}
             onEdited={onMutated}
             busyGate={guard}
+            batchTree={batchTree}
           />
         ))
       )}
@@ -240,12 +225,13 @@ function PhaseListEditor({ task, onMutated }: WorkflowBoxProps) {
         />
       )}
 
-      {specPhase && (
+      {specTarget && (
         <PhaseSpecDialog
           task={task}
-          phase={specPhase}
+          phase={specTarget.phase}
+          initialActivePath={specTarget.activeRel}
           open
-          onOpenChange={(o) => { if (!o) setSpecPhase(null) }}
+          onOpenChange={(o) => { if (!o) setSpecTarget(null) }}
         />
       )}
 
@@ -287,19 +273,47 @@ interface PhaseRowProps {
   onMove: (index: number, dir: -1 | 1) => void
   onRequestDelete: (index: number) => void
   onOpenBind: (index: number) => void
-  onOpenSpec: (phase: TaskPhase) => void
+  onOpenSpec: (phase: TaskPhase, activeRel?: string) => void
   onEdited: () => void
   busyGate: (label: string, fn: () => Promise<void>) => Promise<void>
+  batchTree?: BatchTreeState
 }
+
+const fmtBytes = (n: number): string =>
+  n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}K` : `${(n / 1024 / 1024).toFixed(1)}M`
+const fmtTime = (iso: string): string => (iso ? iso.slice(5, 16).replace("T", " ") : "")
+const baseName = (p: string): string => normalizeRel(p).split("/").pop() ?? p
 
 function PhaseRow({
   task, phase, editable, busy, first, last, canDelete,
-  onMove, onRequestDelete, onOpenBind, onOpenSpec, onEdited, busyGate,
+  onMove, onRequestDelete, onOpenBind, onOpenSpec, onEdited, busyGate, batchTree,
 }: PhaseRowProps) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(phase.name)
   const [slug, setSlug] = useState(phase.slug)
   const [specPath, setSpecPath] = useState(phase.specPath)
+  // #53 行内展开：契约行不变，展开区吃磁盘树（PP2 的「点小图标弹窗」降级为深读）。
+  const [expanded, setExpanded] = useState(false)
+  const [summary, setSummary] = useState<{ kdRows: number; excerpt: string } | undefined>(undefined)
+
+  const batches = batchTree?.batches ?? []
+  const diskKnown = !!batchTree && !batchTree.loading && !batchTree.error
+  const specEntry = expanded ? findSpecEntry(batches, phase.specPath) : null
+  const batch = expanded ? findBatchFor(batches, phase.specPath) : null
+  const ticketFiles = useMemo(
+    () => (batch?.files ?? []).filter((f) => normalizeRel(f.path).includes("/issues/")),
+    [batch],
+  )
+
+  // 展开后懒取 spec 正文摘要（一次；失败=空摘要，灯与票清单不受影响）。
+  useEffect(() => {
+    if (!expanded || summary !== undefined || !specEntry) return
+    let cancelled = false
+    getHomeFile(task.id, normalizeRel(phase.specPath))
+      .then((r) => { if (!cancelled) setSummary(summarizeSpec(r.content)) })
+      .catch(() => { if (!cancelled) setSummary({ kdRows: 0, excerpt: "" }) })
+    return () => { cancelled = true }
+  }, [expanded, summary, specEntry, task.id, phase.specPath])
 
   // 退出编辑态/外部刷新（SSE onMutated）→ 回到服务端事实
   useEffect(() => {
@@ -398,6 +412,17 @@ function PhaseRow({
             <Button
               variant="ghost"
               size="sm"
+              className="h-6 text-[10px] px-1.5"
+              title="展开：spec 磁盘状态 + 票清单 + 摘要（不必开弹窗）"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              data-phase-expand-toggle={phase.index}
+            >
+              {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               className="h-6 text-[10px] flex-1 justify-start"
               onClick={() => onOpenBind(phase.index)}
               data-phase-bind-button={phase.index}
@@ -449,6 +474,80 @@ function PhaseRow({
               </>
             )}
           </div>
+
+          {expanded && (
+            <div
+              className="mt-1 rounded-md border bg-background px-2.5 py-2 space-y-1.5"
+              data-phase-expand-panel={phase.index}
+            >
+              {/* spec 磁盘灯（K5 判定源=tree；扫描未就绪/域外路径不臆断，中性表达） */}
+              {specEntry ? (
+                <div className="flex items-center gap-1.5 text-[10px]" data-phase-spec-disk={phase.index}>
+                  <span className="text-emerald-600">spec.md ✓</span>
+                  <span className="font-mono text-muted-foreground">
+                    {fmtBytes(specEntry.bytes)} · {fmtTime(specEntry.mtime)}
+                  </span>
+                  <button
+                    className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                    onClick={() => onOpenSpec(phase)}
+                    data-phase-open-editor={phase.index}                  >
+                    打开编辑器
+                  </button>
+                </div>
+              ) : !diskKnown ? (
+                <div className="text-[10px] text-muted-foreground" data-phase-spec-unknown={phase.index}>
+                  spec.md · 磁盘状态未知（扫描未就绪，可在「草稿批次」区 [↻] 刷新）
+                </div>
+              ) : isRelativeScratchSpec(phase.specPath) ? (
+                <div className="text-[10px] text-amber-600" data-phase-spec-missing={phase.index}>
+                  spec.md ✗ 磁盘未落盘 —— 该 phase 已登记但批次目录里还没有 spec.md
+                </div>
+              ) : phase.specPath ? (
+                <div className="text-[10px] text-muted-foreground font-mono truncate" data-phase-spec-abs={phase.index}>
+                  路径不在 `.scratch` 扫描域（绝对路径直写）：{baseName(phase.specPath)}
+                </div>
+              ) : (
+                <div className="text-[10px] text-muted-foreground" data-phase-spec-nopath={phase.index}>
+                  尚未设定 spec 路径
+                </div>
+              )}
+
+              {/* 摘要（懒取，失败静默） */}
+              {summary && (summary.kdRows > 0 || summary.excerpt) && (
+                <div className="text-[10px] text-muted-foreground" data-phase-summary={phase.index}>
+                  {summary.kdRows > 0 && <span className="mr-1.5">Key Decisions {summary.kdRows} 条</span>}
+                  {summary.excerpt && <span className="line-clamp-2">{summary.excerpt}</span>}
+                </div>
+              )}
+
+              {/* 票清单 chips（点击 = 复用弹窗打开该票） */}
+              {batch ? (
+                ticketFiles.length > 0 ? (
+                  <div className="flex flex-wrap gap-1" data-phase-tickets={phase.index}>
+                    {ticketFiles.map((f) => (
+                      <button
+                        key={f.path}
+                        onClick={() => onOpenSpec(phase, normalizeRel(f.path))}
+                        className="text-[9px] px-1.5 py-0.5 rounded border border-border hover:bg-muted/50 font-mono"
+                        title={f.path}
+                        data-phase-ticket={f.path}
+                      >
+                        {baseName(f.path)}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-muted-foreground/70" data-phase-tickets-empty={phase.index}>
+                    issues/ 尚无票
+                  </div>
+                )
+              ) : diskKnown ? (
+                <div className="text-[10px] text-muted-foreground/70" data-phase-batch-missing={phase.index}>
+                  未找到该 phase 的批次目录（落盘后自动出现）
+                </div>
+              ) : null}
+            </div>
+          )}
         </>
       )}
     </div>

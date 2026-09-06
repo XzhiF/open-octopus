@@ -70,6 +70,7 @@ import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 import { getExecutionService } from "../execution-service-registry"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
+import type { BatchTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
@@ -789,6 +790,17 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.listHomeDir(taskId, requestedDir)
+  }
+
+  /** GET /api/tasks/:id/batch-tree — draft-artifact visibility (#53): disk-direct
+   *  scan of `.scratch/` batch dirs, decoupled from phases[] ("落盘即现").
+   *  Read-only, no edit-window gate (mirrors listHomeDir). Unknown task → 404
+   *  BEFORE any fs action (no stray homes); missing `.scratch/` → `[]` — an
+   *  empty tree is the normal drafting state, deliberately NOT a 404. */
+  batchTree(taskId: string): BatchTreeEntry[] {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.batchTree(taskId)
   }
 
   /** PUT /api/tasks/:id/home-file — 契约修复 (v4 batch spec 编辑/骨架). Editable

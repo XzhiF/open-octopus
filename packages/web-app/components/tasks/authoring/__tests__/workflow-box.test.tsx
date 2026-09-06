@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { WorkflowBox } from "../workflow-box"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
-import { updateTask, getTask } from "@/lib/tasks-api"
+import { updateTask, getTask, listHomeDir, getHomeFile } from "@/lib/tasks-api"
 import {
   listBuiltInWorkflows,
   listWorkflowPresets,
@@ -36,9 +36,11 @@ vi.mock("@/lib/tasks-api", () => {
     updateTask: vi.fn().mockResolvedValue({ id: "test-task", version: 2 }),
     getTask: vi.fn(),
     // PhaseSpecDialog（home-file 审阅/编辑面）依赖 — 本文件只测列表，弹窗
-    // 自身的用例在 phase-spec-dialog.test.tsx。
+    // 自身的用例在 phase-spec-dialog.test.tsx。#53：batch-tree/列目录喂行内展开。
     getHomeFile: vi.fn().mockRejectedValue(new TaskApiError("not found", 404)),
     putHomeFile: vi.fn().mockResolvedValue({ path: "", bytes: 0 }),
+    listHomeDir: vi.fn().mockResolvedValue([]),
+    getBatchTree: vi.fn().mockResolvedValue([]),
     TaskApiError,
   }
 })
@@ -464,3 +466,76 @@ function fireEventClick(el: Element | null) {
   if (!el) throw new Error("missing element for click")
   fireEvent.click(el)
 }
+
+// ── #53 行内展开：spec 磁盘灯 + 票 chips + 摘要（弹窗降级为深读）──────────
+describe("WorkflowBox — Phase 行内展开 (#53)", () => {
+  const mkTree = (over: { loading?: boolean; error?: string | null } = {}) => ({
+    batches: [{
+      dir: ".scratch/20260903/slug-1",
+      slug: "slug-1",
+      files: [
+        { path: ".scratch/20260903/slug-1/spec.md", mtime: "2026-09-03T10:00:00.000Z", bytes: 2400 },
+        { path: ".scratch/20260903/slug-1/issues/01-func.md", mtime: "2026-09-03T10:00:00.000Z", bytes: 10 },
+        { path: ".scratch/20260903/slug-1/issues/07-e2e.md", mtime: "2026-09-03T10:00:00.000Z", bytes: 10 },
+      ],
+      latest_mtime: "2026-09-03T10:00:00.000Z",
+    }],
+    loading: over.loading ?? false,
+    error: over.error ?? null,
+    refresh: vi.fn(),
+  })
+
+  it("▾ 展开：spec ✓ 灯（size·mtime）+ 票 chips + KD 摘要；未命中批次 → ✗ 灯", async () => {
+    mockCatalog()
+    vi.mocked(getHomeFile).mockResolvedValueOnce({
+      path: "x",
+      content: "# P1\n\n第一段正文。\n\n| # | Decision | Conclusion | Reason |\n|---|---|---|---|\n| 1 | A | a | r |\n",
+    } as never)
+    render(
+      <WorkflowBox
+        task={v4Task([makePhase(1), makePhase(2)])}
+        onMutated={() => {}}
+        batchTree={mkTree() as never}
+      />,
+    )
+    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    await waitFor(() => expect(q('[data-phase-spec-disk="1"]')).toBeTruthy())
+    expect(q('[data-phase-spec-disk="1"]')!.textContent).toContain("spec.md ✓")
+    expect(q('[data-phase-spec-disk="1"]')!.textContent).toContain("2.3K")
+    expect(q('[data-phase-summary="1"]')!.textContent).toContain("Key Decisions 1 条")
+    expect(q('[data-phase-tickets="1"]')!.querySelectorAll("button")).toHaveLength(2)
+
+    // phase2 无对应批次文件 → ✗ 未落盘灯
+    fireEventClick(q('[data-phase-expand-toggle="2"]')!)
+    await waitFor(() => expect(q('[data-phase-spec-missing="2"]')).toBeTruthy())
+    expect(q('[data-phase-batch-missing="2"]')).toBeTruthy()
+  })
+
+  it("点票 chip → 复用 PhaseSpecDialog 开在该票（列目录打到批次 dir）", async () => {
+    mockCatalog()
+    render(
+      <WorkflowBox
+        task={v4Task([makePhase(1)])}
+        onMutated={() => {}}
+        batchTree={mkTree() as never}
+      />,
+    )
+    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    await waitFor(() => expect(q('[data-phase-ticket=".scratch/20260903/slug-1/issues/07-e2e.md"]')).toBeTruthy())
+    fireEventClick(q('[data-phase-ticket=".scratch/20260903/slug-1/issues/07-e2e.md"]')!)
+    // 弹窗以 phase 规范 specPath 定批次域（列整批），被点票经 initialActivePath 定位
+    await waitFor(() =>
+      expect(listHomeDir).toHaveBeenCalledWith("test-task", ".scratch/20260903/slug-1"),
+    )
+    expect(getHomeFile).toHaveBeenCalledWith("test-task", ".scratch/20260903/slug-1/issues/07-e2e.md")
+  })
+
+  it("无 batchTree prop（旧调用面）→ 展开可用且磁盘态中性「未知」，不产假 ✗", async () => {
+    mockCatalog()
+    render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
+    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    await waitFor(() => expect(q('[data-phase-spec-unknown="1"]')).toBeTruthy())
+    expect(q('[data-phase-spec-missing="1"]')).toBeNull()
+    expect(q('[data-phase-batch-missing="1"]')).toBeNull()
+  })
+})

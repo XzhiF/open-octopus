@@ -74,6 +74,17 @@ export interface ProjectRef {
   path?: string
 }
 
+/** One batch directory under the task home's `.scratch/` (draft-artifact-
+ *  visibility #53: the disk-direct scan that decouples drafting-surface
+ *  visibility from task_spec.phases[]). `dir` and every `files[].path` are
+ *  home-relative posix — directly usable as readHomeFile arguments. */
+export interface BatchTreeEntry {
+  dir: string
+  slug: string
+  files: Array<{ path: string; mtime: string; bytes: number }>
+  latest_mtime: string
+}
+
 /** Matt-convention files probed per selected project when context.md is
  *  written (task-phase-redesign ticket 09, AC3; decisions/06 §2/§4). The
  *  server does a cheap existence check so the agent's domain-reading step
@@ -308,6 +319,15 @@ export class TaskHomeService {
       if (payload.format === "v4") {
         spec = { ...spec }
         for (const k of V3_ONLY_SPEC_KEYS) delete spec[k]
+        // #53 K3: resources/authoring_resources are LIVE v4 fields (agent
+        // spec-field-writable; dispatch merges resources into workflow.requires)
+        // — only their empty-array noise is dropped from the snapshot. Non-empty
+        // values stay (the agent's ledger must not lose real entries). DB row
+        // untouched, same write-side-only rule as V3_ONLY_SPEC_KEYS.
+        for (const k of ["resources", "authoring_resources"] as const) {
+          const v = (spec as Record<string, unknown>)[k]
+          if (Array.isArray(v) && v.length === 0) delete spec[k]
+        }
       }
       fs.writeFileSync(
         path.join(home, MANIFEST_FILENAME),
@@ -885,6 +905,119 @@ export class TaskHomeService {
     }
     walk(dirAbs, 0)
     out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    return out
+  }
+
+  /** Scan `{home}/.scratch/` and return every batch directory (draft-artifact-
+   *  visibility #53 — the disk source behind 「落盘即现」, decoupled from
+   *  task_spec.phases[]). A batch dir = a directory that directly contains at
+   *  least one `.md`:
+   *    • convention layout `.scratch/<date>/<slug>/spec.md` — the date layer has
+   *      no direct .md, so its children each form a batch;
+   *    • flat layout `.scratch/<slug>/spec.md` — the child itself is the batch.
+   *  Per batch, `.md` files are collected recursively to depth ≤2 (spec family +
+   *  `issues/*.md`; anything deeper is not chased), global cap 300 files for the
+   *  whole response. Newest-mtime-first (fresh writes land on top). Missing
+   *  `.scratch/` or missing home → `[]` — an empty tree is the NORMAL drafting
+   *  state, not an error (unknown tasks are 404'd by the service layer before
+   *  this runs). No caller-supplied path anywhere: the scan roots from the home
+   *  layout alone, so this method has no escape surface (compare resolveHomePath's
+   *  whitelist, which guards user input — there is none here). */
+  batchTree(taskId: string): BatchTreeEntry[] {
+    const home = this.homePath(taskId)
+    const root = path.join(home, BATCH_AREA_PREFIX)
+    const out: BatchTreeEntry[] = []
+    let budget = 300
+
+    const childDirs = (dirAbs: string): string[] => {
+      try {
+        return fs
+          .readdirSync(dirAbs, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+      } catch {
+        return []
+      }
+    }
+
+    const hasDirectMd = (dirAbs: string): boolean => {
+      try {
+        return fs
+          .readdirSync(dirAbs, { withFileTypes: true })
+          .some((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"))
+      } catch {
+        return false
+      }
+    }
+
+    /** Collect one candidate batch dir; null when the walk finds no .md. */
+    const collect = (dirAbs: string): BatchTreeEntry | null => {
+      const files: Array<{ path: string; mtime: string; bytes: number }> = []
+      let latest = ""
+      const walk = (d: string, depth: number): void => {
+        if (depth > 2 || budget <= 0) return
+        let entries: fs.Dirent[]
+        try {
+          entries = fs.readdirSync(d, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const ent of entries) {
+          if (budget <= 0) return
+          const full = path.join(d, ent.name)
+          if (ent.isDirectory()) {
+            walk(full, depth + 1)
+            continue
+          }
+          if (!ent.isFile() || !ent.name.toLowerCase().endsWith(".md")) continue
+          try {
+            const st = fs.statSync(full)
+            const iso = st.mtime.toISOString()
+            files.push({
+              path: path.relative(home, full).split(path.sep).join("/"),
+              mtime: iso,
+              bytes: st.size,
+            })
+            budget--
+            if (iso > latest) latest = iso
+          } catch {
+            // raced away — skip
+          }
+        }
+      }
+      walk(dirAbs, 0)
+      if (files.length === 0) return null
+      return {
+        dir: path.relative(home, dirAbs).split(path.sep).join("/"),
+        slug: path.basename(dirAbs),
+        files,
+        latest_mtime: latest,
+      }
+    }
+
+    if (fs.existsSync(root) && fs.statSync(root).isDirectory()) {
+      for (const c1 of childDirs(root)) {
+        if (budget <= 0) break
+        const abs1 = path.join(root, c1)
+        if (hasDirectMd(abs1)) {
+          // flat layout: the child is itself a batch
+          const entry = collect(abs1)
+          if (entry) out.push(entry)
+          continue
+        }
+        // convention layout: c1 is a date layer — its children are candidates
+        for (const c2 of childDirs(abs1)) {
+          if (budget <= 0) break
+          const abs2 = path.join(abs1, c2)
+          if (!hasDirectMd(abs2)) continue
+          const entry = collect(abs2)
+          if (entry) out.push(entry)
+        }
+      }
+    }
+    out.sort((a, b) =>
+      a.latest_mtime === b.latest_mtime ? 0 : a.latest_mtime < b.latest_mtime ? 1 : -1,
+    )
     return out
   }
 

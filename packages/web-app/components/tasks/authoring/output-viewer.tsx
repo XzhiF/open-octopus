@@ -311,8 +311,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         >
           <FileText className="size-3.5 shrink-0 text-amber-500" />
           <div className="flex-1 min-w-0">
-            <div className="text-xs truncate">任务清单 (manifest.json)</div>
-            <div className="text-[9px] text-muted-foreground">phases 绑定 · 决策备忘 — 任务元数据快照</div>
+            <div className="text-xs truncate">规格快照 (manifest.json)</div>
+            <div className="text-[9px] text-muted-foreground">agent 读的规格账本 · 核对/调试</div>
           </div>
           <Eye className="size-3.5 text-muted-foreground shrink-0" />
         </button>
@@ -325,7 +325,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         ) : artifacts.length === 0 ? (
           <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
             ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
-            起草期的 phase spec 与票在下方「Phase 绑定」列查看（批准拆分卡并写回 phases 后自动出现）。
+            起草期的 spec 与票在上方「草稿批次」区看（agent 落盘即现，不必等 phases 写回）。
           </div>
         ) : (
           <div className="divide-y">
@@ -500,7 +500,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
             <DialogTitle className="text-sm flex items-center gap-2">
               <FileText className="size-3.5 text-amber-500" />
-              任务清单 (manifest.json)
+              规格快照 (manifest.json)
             </DialogTitle>
             <DialogDescription className="font-mono text-[10px] truncate">
               {manifestFilePath || "加载中…"}
@@ -523,11 +523,13 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
             )}
           </ScrollArea>
 
-          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
-            此文件是 task_spec 的结构化本地快照（format / phases / decisions），每次规格保存后由 server 重写；规格正文见各 phase 的 spec.md
+          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0 space-y-0.5">
+            <div>此文件是 task_spec 的结构化本地快照（format / phases / decisions），每次规格保存后由 server 重写；规格正文见各 phase 的 spec.md</div>
+            <div className="text-muted-foreground/70">你在「Phase 计划 / 草稿批次 / 决策备忘」各区看到的内容即此文件的渲染 —— 此窗用于核对 agent 读到的账本与你看到的界面是否一致。</div>
           </div>
         </DialogContent>
       </Dialog>
     </div>
   )
 }
+
