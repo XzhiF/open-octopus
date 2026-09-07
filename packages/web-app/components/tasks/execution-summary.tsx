@@ -38,6 +38,8 @@ import type { ArtifactIndexEntry, Task } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 import { WorkflowViewerDialog } from "./authoring/workflow-viewer-dialog"
 import { PhaseTimeline } from "./phase-timeline"
+import { DraftBatches } from "./authoring/draft-batches"
+import { useBatchTree } from "./authoring/use-batch-tree"
 
 export const RUN_STATUS_LABEL: Record<string, string> = {
   draft: "待触发", queued: "已排队", claimed: "领取中", running: "执行中",
@@ -573,6 +575,11 @@ export function TaskRunDetailView({ task }: { task: Task }) {
   }, [task.id, refetch])
 
   const children = detail?.children ?? []
+  // spec/tickets 可见性补齐：draft 面板的「草稿批次」区（DraftBatches，磁盘
+  // 直扫 /batch-tree）此前只挂在 AuthoringWorkspace —— 入队后弹窗里看不到
+  // phase 的 spec.md/issues/，验收时无从对照。执行态以 isDraft=false 只读
+  // 复用同区；刷新沿 detail.version 轮询（home 环：collect 回流会 bump）。
+  const batchTree = useBatchTree(task.id, { versionKey: detail?.version })
   const execIds = children.flatMap(c => c.execution_ref?.execution_id ? [c.execution_ref.execution_id] : [])
   const { aggMap, loaded } = useRunsAggregates(execIds, isLive)
   const totalAgg = useMemo(() => mergeAggregates(Object.values(aggMap)), [aggMap])
@@ -585,6 +592,15 @@ export function TaskRunDetailView({ task }: { task: Task }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start max-w-[1400px] mx-auto">
         <div className="space-y-4 min-w-0">
           <TaskOverviewCard task={task} />
+          {task.task_spec?.format === "v4" && (task.task_spec.phases?.length ?? 0) > 0 && (
+            <DraftBatches
+              task={task}
+              phases={task.task_spec.phases ?? []}
+              isDraft={false}
+              tree={batchTree}
+              onMutated={refetch}
+            />
+          )}
           <TaskAiUsageCard agg={totalAgg} loading={execIds.length > 0 && !loaded} runCount={execIds.length} />
         </div>
         <div className="space-y-4 min-w-0">
