@@ -2675,6 +2675,12 @@ export class TasksService {
       return
     }
     // claimed / running — full G4 cleanup.
+    // Capture the in-flight execution links BEFORE the mutations below
+    // (SchedulerService.abortJob discipline): the UPDATE flips the row out of
+    // ('triggered','running'), and the cancel lookup queries exactly that set
+    // — capturing afterwards found nothing and the engine ran on until stopped
+    // by hand (2026-09-08 live regression, task b6b721cb round).
+    const execLinks = this.scheduleDAO.findActiveExecutionLinks(child.id)
     this.scheduleDAO.transaction(() => {
       this.scheduleDAO.updateSchedule(child.id, {
         status: "aborted",
@@ -2697,36 +2703,36 @@ export class TasksService {
         err instanceof Error ? err.message : String(err),
       )
     }
-    // Best-effort: cancel the running workflow execution. Dynamic import to
-    // avoid a static dependency cycle with execution-service-registry (mirrors
-    // SchedulerService.abortJob). A missing/gone workspace must NOT block the
-    // abort — the DB state above is already terminal.
-    this.cancelRunningExecution(child.id).catch((err: unknown) => {
-      console.error(
-        `[TasksService] abortChildSchedule: cancel execution failed for ${child.id} (non-fatal):`,
-        err instanceof Error ? err.message : String(err),
-      )
-    })
+    // Best-effort: cancel the running workflow executions. A missing/gone
+    // workspace must NOT block the abort — the DB state above is already
+    // terminal. Static getExecutionService: the cycle-freedom is verified
+    // (see import site) and the dynamic form defeated vi.mock (ticket 05).
+    if (execLinks.length > 0) {
+      this.cancelExecutionLinks(execLinks, child.id).catch((err: unknown) => {
+        console.error(
+          `[TasksService] abortChildSchedule: cancel execution failed for ${child.id} (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      })
+    }
   }
 
-  private async cancelRunningExecution(scheduleId: string): Promise<void> {
-    const exec = this.scheduleDAO.findActiveExecutions(scheduleId)[0]
-    if (!exec) return
-    const runDAO = this.scheduleDAO // same db handle; use a minimal lookup
-    const row = (
-      runDAO.getDb().prepare(
-        "SELECT execution_id, workspace_id FROM schedule_executions WHERE id = ?",
-      ).get(exec.id) as { execution_id: string | null; workspace_id: string | null } | undefined
-    )
-    if (!row?.execution_id || !row?.workspace_id) return
-    try {
-      const { getExecutionService } = await import("../execution-service-registry")
-      const registry = getExecutionService(row.workspace_id)
-      if (registry) {
-        await registry.service.cancel(row.execution_id)
+  private async cancelExecutionLinks(
+    links: { execution_id: string; workspace_id: string }[],
+    scheduleId: string,
+  ): Promise<void> {
+    for (const l of links) {
+      try {
+        const registry = getExecutionService(l.workspace_id)
+        if (registry) {
+          await registry.service.cancel(l.execution_id)
+        }
+      } catch (err: unknown) {
+        console.error(
+          `[TasksService] cancelExecutionLinks: exec ${l.execution_id} of schedule ${scheduleId} not cancelled (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
       }
-    } catch {
-      // non-fatal — DB state is already terminal
     }
   }
 

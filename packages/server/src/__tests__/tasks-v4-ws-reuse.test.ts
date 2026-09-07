@@ -55,6 +55,7 @@ const stubService = {
     return { id }
   }),
   start: vi.fn(async () => {}),
+  cancel: vi.fn(async () => {}),
   registerExternalCallbacks: vi.fn(),
   clearExternalCallbacks: vi.fn(),
 }
@@ -518,6 +519,28 @@ describe("ticket 05 — v4 workspace reuse + dispatchPhaseRound", () => {
       expect(res.workspaceId).toBe(boundWsId)
       expect(wsCount(db)).toBe(1)
       expect(fs.readFileSync(marker, "utf-8")).toBe("round scene")
+    })
+
+    // Regression (2026-09-08): abortChildSchedule marked schedule_executions
+    // rows 'failed' BEFORE the cancel lookup — and the lookup queries exactly
+    // ('triggered','running') — so the engine execution was never cancelled
+    // and kept burning tokens until stopped by hand. Capture must happen
+    // BEFORE the mutation (SchedulerService.abortJob's documented discipline).
+    it("abortTask cancels the IN-FLIGHT engine execution, not just the DB rows", async () => {
+      const { service, taskId, scheduleId } = await firstPhaseCompleted()
+      await service.dispatchPhaseRound(taskId, 2, 1) // round 2 claimed + running
+      const active = db.prepare(
+        "SELECT execution_id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered','running')",
+      ).get(scheduleId) as { execution_id: string | null }
+      expect(active.execution_id).toBeTruthy()
+      const executionId = active.execution_id!
+      stubService.cancel.mockClear()
+
+      await service.abortTask(taskId)
+      // fire-and-forget cancel chain — flush the microtask/timer hops
+      await new Promise((r) => setTimeout(r, 20))
+
+      expect(stubService.cancel).toHaveBeenCalledWith(executionId)
     })
   })
 })

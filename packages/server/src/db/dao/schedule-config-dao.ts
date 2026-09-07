@@ -252,6 +252,18 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all(scheduleId) as { id: string }[]
   }
 
+  /** Execution + workspace links of the schedule's ACTIVE runs. Callers that
+   *  are about to flip schedule_executions rows out of ('triggered','running')
+   *  (abort/cleanup) MUST capture with this BEFORE the mutation — a later
+   *  findActiveExecutions would return nothing and the engine cancel would be
+   *  silently skipped (2026-09-08 task-abort regression; mirrors the capture
+   *  discipline documented in SchedulerService.abortJob). */
+  findActiveExecutionLinks(scheduleId: string): { execution_id: string; workspace_id: string }[] {
+    return this.stmt(
+      "SELECT execution_id, workspace_id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running') AND execution_id IS NOT NULL AND workspace_id IS NOT NULL"
+    ).all(scheduleId) as { execution_id: string; workspace_id: string }[]
+  }
+
   deleteByWorkspace(workspaceId: string): Database.RunResult {
     return this.stmt("DELETE FROM schedules WHERE workspace_id = ?").run(workspaceId)
   }
