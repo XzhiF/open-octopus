@@ -123,6 +123,10 @@ export class AgentSessionDAO extends BaseDAO {
     )
   }
 
+  findMessageById(id: string): MessageRow | null {
+    return (this.stmt("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow) ?? null
+  }
+
   updateMessage(id: string, fields: Partial<MessageRow>): Database.RunResult {
     const sets: string[] = []
     const vals: unknown[] = []
@@ -317,6 +321,24 @@ export class AgentSessionDAO extends BaseDAO {
       row.id, row.session_id, row.role, row.type,
       row.content, row.metadata, row.created_at,
     )
+  }
+
+  /** Whether the session has an unfinished streaming assistant partial
+   *  (metadata JSON written by the clone chat route with streaming:true).
+   *  LIKE substring is acceptable here: the flag key is only ever written by
+   *  that route's own JSON.stringify of a controlled object shape. */
+  hasStreamingMessage(sessionId: string): boolean {
+    const row = this.stmt(
+      `SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE '%"streaming":true%' LIMIT 1`,
+    ).get(sessionId)
+    return row !== undefined
+  }
+
+  /** All streaming partial rows across sessions (server-startup orphan sweep). */
+  findStreamingMessages(): Array<{ id: string; metadata: string }> {
+    return this.stmt(
+      `SELECT id, metadata FROM messages WHERE metadata LIKE '%"streaming":true%'`,
+    ).all() as Array<{ id: string; metadata: string }>
   }
 
   /** Find sessions by clone_name */

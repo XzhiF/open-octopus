@@ -40,10 +40,12 @@ import {
 import {
   registerActiveStream,
   unregisterActiveStream,
+  isStreamActive,
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 import { getMemoryService } from '../../services/agent/memory-service'
 import { autosaveTaskDraft } from './autosave'
+import { finalizePartialMeta } from './stream-partials'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
 import { TaskHomeService } from '../../services/tasks/task-home-service'
@@ -61,6 +63,10 @@ export interface CloneSessionRouteDeps {
    * turn-end for cloneName === 'task-author' sessions.
    */
   taskDAO?: TaskDAO
+  /** Throttle for persisting the in-progress assistant partial during a
+   *  chat turn (see "关闭不丢失" stream-resume). Default 1000ms; tests
+   *  inject 0 to flush every chunk. */
+  partialFlushMs?: number
 }
 
 // ── File route constants removed — file ops now in clone-files.ts ──
@@ -109,6 +115,7 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   const { sessionDAO, taskDAO } = deps
+  const partialFlushMs = deps.partialFlushMs ?? 1000
   const app = new Hono()
 
   // ══════════════════════════════════════════════════════════════════
@@ -281,6 +288,26 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     })
   })
 
+  // ── Session running state ────────────────────────────────────────
+  // "关闭不丢失" stream-resume: client reconnect probe. `running` reads the
+  // in-memory activeStreams registry (the turn's handler keeps generating
+  // even when the SSE consumer is gone — closing a dialog ≠ stopping).
+  // `partial` reports whether a streaming assistant row exists in the DB —
+  // it lets the frontend finalize leftover partials after a server restart
+  // (running=false but the row was never finalized).
+  app.get('/:name/sessions/:id/running', (c) => {
+    const cloneName = c.req.param('name')
+    const sessionId = c.req.param('id')
+    const session = sessionDAO.findById(sessionId)
+    if (!session || session.is_deleted || session.clone_name !== cloneName) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+    }
+    return c.json({
+      running: isStreamActive(sessionId),
+      partial: sessionDAO.hasStreamingMessage(sessionId),
+    })
+  })
+
   // ── Chat SSE streaming ──────────────────────────────────────────
   app.post('/:name/sessions/:id/chat', async (c) => {
     const cloneName = c.req.param('name')
@@ -313,6 +340,21 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const cloneDef = resolveCloneDefFromFs(cloneName)
     if (!cloneDef) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${cloneName}" not found` } }, 404)
+    }
+
+    // "关闭不丢失" stream-resume — concurrency guard. A previous turn may
+    // still be generating (e.g. the user closed the dialog and resent after
+    // the reopen looked stuck). A second concurrent runtime.chat would
+    // resume the SAME provider_session_id and race. Reject the send BEFORE
+    // the user message is stored, so a bounced message can't split the
+    // transcript. The frontend turns this 409 into resume-polling.
+    if (isStreamActive(sessionId)) {
+      return c.json({
+        error: {
+          code: 'STREAM_IN_PROGRESS',
+          message: '该会话上一轮回复仍在生成中，请稍候或先停止',
+        },
+      }, 409)
     }
 
     // Store user message
@@ -467,6 +509,14 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       const abortStream = () => { aborted = true }
       const streamId = registerActiveStream(sessionId, abortStream)
 
+      // "关闭不丢失" stream-resume — the assistant row id is generated up
+      // front so the in-stream partial writes and the turn-end finalization
+      // target the SAME row (and the done event's message_id matches what a
+      // resuming client already fetched via polling — no duplicate bubble).
+      const assistantMsgId = crypto.randomUUID()
+      let partialRowId: string | null = null
+      let lastFlushAt = 0
+
       try {
         let fullContent = ''
         let fullThinking = ''
@@ -483,8 +533,51 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
+        // "关闭不丢失" stream-resume — incremental partial persistence.
+        // Lazily inserts the assistant row on the first content (throttled
+        // rewrites of the SAME row after that), flagged `streaming: true` in
+        // metadata. A reopened dialog (or a fresh page) polls the session
+        // messages and sees the reply growing in near-real-time even though
+        // nobody is holding the SSE connection. Tool-call statuses are kept
+        // as-is here (a live 'start' should keep spinning in the UI); the
+        // fail-normalization happens at finalization. Non-fatal: a DB hiccup
+        // must never kill the turn.
+        const maybeFlushPartial = () => {
+          try {
+            if (Date.now() - lastFlushAt < partialFlushMs) return
+            if (!fullContent && !fullThinking && toolCalls.length === 0) return
+            lastFlushAt = Date.now()
+            const metadata = JSON.stringify({
+              thinking: fullThinking || undefined,
+              tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+              timeline: timeline.length > 0 ? timeline : undefined,
+              streaming: true,
+            })
+            if (!partialRowId) {
+              sessionDAO.insertCloneMessage({
+                id: assistantMsgId, session_id: sessionId, role: 'assistant',
+                type: 'text', content: fullContent, metadata,
+                created_at: new Date().toISOString(),
+              })
+              partialRowId = assistantMsgId
+            } else {
+              sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
+            }
+          } catch (err: unknown) {
+            console.error(
+              '[clone-route] partial flush failed (non-fatal):',
+              err instanceof Error ? err.message : String(err),
+            )
+          }
+        }
+
         for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model, subagents)) {
-          if (aborted || (stream as any)._aborted) break
+          // ONLY the explicit stop endpoint may interrupt the turn.
+          // Deliberately NOT checking stream.aborted here: hono's node
+          // server sets it when the CLIENT disconnects (closing the dialog),
+          // and by design that must not kill generation — the turn runs to
+          // completion and persists (disconnect ≠ stop). Do not "fix" this.
+          if (aborted) break
 
           switch (chunk.type) {
             case 'text_delta': {
@@ -545,6 +638,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }
+          maybeFlushPartial()
         }
 
         // 05 — the provider has now received the system-prompt append
@@ -596,7 +690,6 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         // delta) were silently lost on restart.
         const hasAnyContent = fullContent || toolCalls.length > 0 || fullThinking
         if (hasAnyContent) {
-          const assistantMsgId = crypto.randomUUID()
           const assistantNow = new Date().toISOString()
 
           const metadata = JSON.stringify({
@@ -612,12 +705,20 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               : undefined,
             timeline: timeline.length > 0 ? timeline : undefined,
             interrupted: aborted || undefined,
+            // Absence of `streaming` = finalized row (the partial flush loop
+            // always writes it; this turn-end rewrite drops it).
           })
 
-          sessionDAO.insertCloneMessage({
-            id: assistantMsgId, session_id: sessionId, role: 'assistant',
-            type: 'text', content: fullContent, metadata, created_at: assistantNow,
-          })
+          if (partialRowId) {
+            // "关闭不丢失": finalize the row the partial-flush loop already
+            // wrote — same id, so resume-polling clients merge it in place.
+            sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
+          } else {
+            sessionDAO.insertCloneMessage({
+              id: assistantMsgId, session_id: sessionId, role: 'assistant',
+              type: 'text', content: fullContent, metadata, created_at: assistantNow,
+            })
+          }
           sessionDAO.updateLastMessageAt(sessionId, assistantNow)
 
           // Update provider_session_id for future resume
@@ -664,6 +765,16 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
+        // "关闭不丢失": the turn died mid-stream — finalize any partial row
+        // so it doesn't linger with streaming:true (a resuming client polls
+        // until running=false; a leftover row would look stuck forever).
+        if (partialRowId) {
+          try {
+            const row = sessionDAO.findMessageById(assistantMsgId)
+            const meta = row?.metadata ? finalizePartialMeta(row.metadata) : null
+            if (meta) sessionDAO.updateMessage(assistantMsgId, { metadata: meta })
+          } catch { /* non-fatal — startup sweep is the backstop */ }
+        }
         await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
       } finally {
         unregisterActiveStream(sessionId, streamId)

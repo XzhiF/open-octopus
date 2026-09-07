@@ -19,6 +19,7 @@ import {
   listCloneSessions,
   createCloneSession,
   getCloneSession,
+  getCloneSessionRunning,
   cloneChatStream,
   stopCloneChat,
 } from '@/lib/agent/api'
@@ -52,6 +53,9 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     getSession: (id, query) => getCloneSession(cloneName, id, query),
     chatStream: (id, message) => cloneChatStream(cloneName, id, message),
     stopChat: (id) => stopCloneChat(cloneName, id),
+    // 关闭不丢失 (stream-resume): re-entering this view while a turn is still
+    // generating tails it via polling instead of showing a dead transcript.
+    checkRunning: (id) => getCloneSessionRunning(cloneName, id),
   }
 
   const handleTitleUpdate = useCallback((sessionId: string, title: string) => {

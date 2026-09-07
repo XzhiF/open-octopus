@@ -35,6 +35,7 @@ function parseMessageMetadata(msg: any): AgentMessage {
       tool_calls: meta.tool_calls ?? normalized.tool_calls,
       timeline: meta.timeline ?? normalized.timeline,
       interrupted: meta.interrupted ?? normalized.interrupted,
+      streaming: meta.streaming ?? normalized.streaming,
     }
   } catch {
     return normalized
@@ -276,6 +277,16 @@ export function getCloneSession(cloneName: string, sessionId: string, query?: { 
   })
 }
 
+/** Probe whether a clone session has an in-flight server-side turn
+ *  (stream-resume: reopening a dialog after close asks this, then polls
+ *  messages while `running` is true). `partial` = a streaming assistant row
+ *  exists in the DB (survives server restarts; running does not). */
+export function getCloneSessionRunning(cloneName: string, sessionId: string) {
+  return cloneRequest<{ running: boolean; partial: boolean }>(
+    `/${cloneName}/sessions/${sessionId}/running`,
+  )
+}
+
 export function cloneChatStream(
   cloneName: string,
   sessionId: string,
@@ -302,7 +313,19 @@ export function cloneChatStream(
       try {
         const response = await streamPromise
         if (!response.ok || !response.body) {
-          ctrl.error(new Error(`SSE connection failed: ${response.status}`))
+          // Surface the server's structured error (e.g. 409 STREAM_IN_PROGRESS
+          // from the concurrency guard) — without this the code is lost and
+          // the client can't tell a bounced send from a transport failure.
+          let code: string | undefined
+          let message = `SSE connection failed: ${response.status}`
+          if (!response.ok) {
+            try {
+              const errBody = await response.json()
+              if (errBody?.error?.code) code = errBody.error.code
+              if (errBody?.error?.message) message = errBody.error.message
+            } catch { /* non-JSON error body — keep generic message */ }
+          }
+          ctrl.error(Object.assign(new Error(message), { code, status: response.status }))
           return
         }
         const reader = response.body.getReader()

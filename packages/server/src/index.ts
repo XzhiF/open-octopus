@@ -49,6 +49,7 @@ import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
+import { finalizeOrphanStreamPartials } from "./routes/clone/stream-partials"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
 import { createVersionRoutes, createMainAgentVersionRoutes } from "./routes/agent/version-routes"
 import cronRoutes from "./routes/cron"
@@ -230,6 +231,13 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
+
+  // "关闭不丢失" stream-resume: sweep orphan streaming partials left by a
+  // crash/restart mid-turn (finalize them as interrupted). Runs before any
+  // route can register a stream, so every streaming row found is an orphan.
+  try { finalizeOrphanStreamPartials(daos.agentSession) } catch (err) {
+    console.error('[startup] orphan stream-partial sweep failed (non-fatal):', err)
+  }
 
   // Initialize agent version service
   initAgentVersionService(daos.agentVersion)

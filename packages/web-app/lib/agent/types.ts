@@ -77,6 +77,9 @@ export interface AgentMessage {
   /** True when the user interrupted (stopped) this response mid-stream.
    *  The message contains whatever the agent produced before the abort. */
   interrupted?: boolean
+  /** True on an assistant row the server is still growing (clone chat
+   *  stream-resume partial). Set from metadata; absence = finalized. */
+  streaming?: boolean
 }
 
 // ===== Memory =====

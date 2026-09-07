@@ -185,6 +185,11 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
       }),
     stopChat: (id: string) =>
       agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
+    // 关闭不丢失 (stream-resume): reopening this dialog while the previous
+    // turn is still generating enters resume mode — the hook polls the
+    // growing assistant partial until the turn finalizes.
+    checkRunning: (id: string) =>
+      agentApi.getCloneSessionRunning(TASK_AUTHOR_CLONE, id),
   }), [])
   const chat = useAgentChat(activeSessionId, { api: apiOverrides })
 
@@ -553,6 +558,18 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
               it the message list grows unbounded and never scrolls ("chat
               内容多了不能上下拖动"). v2 AuthoringMode had the flex parent. */}
           <div className="flex-1 min-h-0 flex flex-col">
+            {/* 关闭不丢失 (stream-resume): the previous turn is still
+                generating server-side — the partial below grows via polling,
+                sending stays disabled until it finalizes. */}
+            {chat.resumeStreaming && (
+              <div
+                data-resume-banner=""
+                className="m-3 mb-0 flex shrink-0 items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400"
+              >
+                <Spinner className="size-3" />
+                AI 回复生成中 —— 关闭弹窗不会中断，点「停止」才会中断
+              </div>
+            )}
             <ChatArea
               messages={chat.messages}
               streaming={chat.streaming}

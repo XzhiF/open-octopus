@@ -31,6 +31,12 @@ export interface UseAgentChatApiOverride {
   chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
+  /** Probe whether the session has an in-flight server-side turn (clone chat
+   *  stream-resume). When present, the hook auto-resumes on mount: reopening
+   *  a dialog that was closed mid-generation shows the growing reply (via
+   *  message polling) instead of a dead transcript. Absent (main agent
+   *  ChatTab) → behavior is byte-identical to before. */
+  checkRunning?: (id: string) => Promise<{ running: boolean; partial: boolean }>
 }
 
 export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate?: (sessionId: string, title: string) => void; api?: UseAgentChatApiOverride }) {
@@ -77,6 +83,15 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const streamingRef = useRef(false)
   // Track the session that initiated the current stream to prevent cross-session contamination
   const streamingSessionRef = useRef<string | null>(null)
+  // ── Resume-polling state (clone chat stream-resume, "关闭不丢失") ──
+  // This hook instance does NOT own the SSE stream — it is tailing a
+  // server-side turn that outlived a dialog close (the client aborted the
+  // connection, but disconnect ≠ stop on the server). resumeStreaming is
+  // exposed for UIs that want a distinct banner; streaming=true is reused so
+  // the existing send-guard/input-disable applies automatically.
+  const [resumeStreaming, setResumeStreaming] = useState(false)
+  const resumePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resumeModeRef = useRef(false)
   // Ref-based callback for title updates (avoids recreating sendMessage on every render)
   const onTitleUpdateRef = useRef(options?.onTitleUpdate)
   onTitleUpdateRef.current = options?.onTitleUpdate
@@ -90,6 +105,10 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       disconnect()
       streamingRef.current = false
       streamingSessionRef.current = null
+      // Resume-poll is ref-based so the cleanup can clear it without taking
+      // stopResumePolling in the dep array (TDZ-safe; runs only on unmount).
+      if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
+      resumeModeRef.current = false
     }
   }, [disconnect])
 
@@ -102,6 +121,10 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       setStreaming(false)
       streamingRef.current = false
       streamingSessionRef.current = null
+      // Leaving a session mid-resume → its poll belongs to the past now.
+      if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
+      resumeModeRef.current = false
+      setResumeStreaming(false)
     }
     // Restore contextUsage for the new session (or null if no cached value).
     if (sessionId) {
@@ -124,6 +147,70 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       setError('Failed to load messages')
     }
   }, [sessionId])
+
+  const stopResumePolling = useCallback(() => {
+    if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
+    resumeModeRef.current = false
+    setResumeStreaming(false)
+  }, [])
+
+  // "关闭不丢失" stream-resume — tail a server-side turn this instance holds
+  // no SSE connection for. The clone chat route persists a growing assistant
+  // partial (metadata.streaming) every ~1s, so polling the messages endpoint
+  // at 1.5s shows the reply advancing near-real-time; when the probe reports
+  // running=false, one last poll brings the finalized row and we exit.
+  // Declared BEFORE sendMessage so the 409 branch can reference it.
+  const startResumePolling = useCallback((sid: string) => {
+    if (resumePollRef.current) return // already tailing
+    const checkRunningFn = apiOverrideRef.current?.checkRunning
+    if (!checkRunningFn) return
+
+    resumeModeRef.current = true
+    setResumeStreaming(true)
+    streamingSessionRef.current = sid
+    streamingRef.current = true
+    setStreaming(true) // reuses the send-guard: input disabled + stop button
+
+    const tick = async () => {
+      try {
+        await loadMessages()
+        const r = await checkRunningFn(sid)
+        if (!r.running) {
+          // The route finalizes the row BEFORE unregistering the stream, so
+          // running=false guarantees the finalized content is on this fetch.
+          await loadMessages()
+          stopResumePolling()
+          setStreaming(false)
+          streamingRef.current = false
+          streamingSessionRef.current = null
+          setStreamContent('')
+          setStreamThinking('')
+          setIsThinking(false)
+          setToolCalls([])
+          setStreamTimeline([])
+          timelineRef.current = []
+          setStatusMessage('')
+        }
+      } catch {
+        // Transient network hiccup — keep polling; the server turn is alive.
+      }
+    }
+    void tick()
+    resumePollRef.current = setInterval(tick, 1500)
+  }, [loadMessages, stopResumePolling])
+
+  // On (re)mount / session switch: if a turn is still generating server-side
+  // and this instance doesn't own the live stream, resume automatically.
+  useEffect(() => {
+    if (!sessionId) return
+    if (!apiOverrideRef.current?.checkRunning) return
+    if (streamingSessionRef.current === sessionId) return // our own live SSE stream
+    let alive = true
+    apiOverrideRef.current.checkRunning(sessionId)
+      .then((r) => { if (alive && r.running) startResumePolling(sessionId) })
+      .catch(() => { /* server offline — the normal error path covers it */ })
+    return () => { alive = false }
+  }, [sessionId, startResumePolling])
 
   const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
     if (!sessionId || !message.trim()) return
@@ -321,6 +408,14 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         }
       },
       onError: (data) => {
+        // 409 from the server concurrency guard — the previous turn is still
+        // generating (typical: user closed the dialog mid-stream, reopened,
+        // and resent). Don't surface an error: drop the (never-persisted)
+        // optimistic send and tail the live turn instead.
+        if (data.code === 'STREAM_IN_PROGRESS' && apiOverrideRef.current?.checkRunning) {
+          startResumePolling(sessionId)
+          return
+        }
         setError(data.message)
         setStreaming(false)
         streamingRef.current = false
@@ -329,7 +424,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
 
     connect(source, handlers)
-  }, [sessionId, connect, setContextUsage])
+  }, [sessionId, connect, setContextUsage, startResumePolling])
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
@@ -343,6 +438,12 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       // Server-side abort failed (network error, 500, etc.) — that's OK,
       // we still disconnect locally and save the partial message.
     }
+
+    // Resume mode: no local SSE stream and no in-memory partial — the server
+    // owns the turn (its route persists the interrupted row on abort). The
+    // running poll brings the finalized row back and exits on its own; keep
+    // streaming=true so input stays disabled until then.
+    if (resumeModeRef.current) return
 
     disconnect()
     setStreaming(false)
@@ -416,6 +517,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   return {
     messages,
     streaming,
+    /** True while tailing a server-side turn after a dialog close
+     *  (stream-resume). `streaming` is also true in this mode. */
+    resumeStreaming,
     streamContent,
     streamThinking,
     streamTimeline,

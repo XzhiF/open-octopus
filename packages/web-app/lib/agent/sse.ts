@@ -112,8 +112,12 @@ export function useSSEConnection() {
           }
         }
       } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
-          handlers.onError?.({ code: 'STREAM_ERROR', message: (err as Error).message })
+        const e = err as Error & { code?: string }
+        if (e.name !== 'AbortError') {
+          // Pass through the server's structured code when the transport
+          // layer attached one (e.g. STREAM_IN_PROGRESS from the 409 guard) —
+          // callers branch on it (resume-polling instead of a dead error).
+          handlers.onError?.({ code: e.code ?? 'STREAM_ERROR', message: e.message })
         }
       } finally {
         connectionRef.current = null
