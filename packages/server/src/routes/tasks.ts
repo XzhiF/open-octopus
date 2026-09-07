@@ -523,6 +523,18 @@ export function createTasksRoutes(
     }
   })
 
+  // POST /:id/reopen — the enqueue undo (ready→draft): reaps the not-yet-
+  // started envelope and unlocks structural editing. Claimed/running ⇒ 409.
+  router.post("/:id/reopen", (c) => {
+    try {
+      const task = service.reopenTask(c.req.param("id"))
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // POST /:id/trigger — v39 manual/time trigger: arms the parked (draft) root
   // envelope draft→queued with scheduled_at = at ?? now. Body: { at?: ISO8601 }
   // (absent = 立即触发; future = 单次定时; past = 尽快). Same-task mutex is

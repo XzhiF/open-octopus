@@ -23,11 +23,11 @@ import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
-import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2 } from "lucide-react"
+import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
-  getTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
+  getTask, abortTask, deleteTask, reopenTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
 import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
@@ -336,7 +336,12 @@ function TemplatePickerMode({
 
 function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutated: () => void; onClose: () => void }) {
   const [aborting, setAborting] = useState(false)
-  const canAbort = task.status === "running"
+  const [reopening, setReopening] = useState(false)
+  // server abortTask accepts ready/running — the button used to grey out on
+  // ready (canAbort=running only), strapping a not-yet-started task shut with
+  // no exit at all. Same source of truth as the server guard now.
+  const canAbort = task.status === "running" || task.status === "ready"
+  const canReopen = task.status === "ready"
 
   const handleAbort = async () => {
     setAborting(true)
@@ -352,12 +357,32 @@ function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutat
     }
   }
 
+  const handleReopen = async () => {
+    setReopening(true)
+    try {
+      await reopenTask(task.id)
+      toast.success("已退回草稿 — 回到创作面板继续修改，改完可重新入队")
+      onMutated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "退回草稿失败")
+    } finally {
+      setReopening(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0" data-task-simple-execution>
       <div className="flex-1 min-h-0">
         <TaskRunDetailView task={task} />
       </div>
       <div className="shrink-0 flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
+        {canReopen && (
+          <Button variant="ghost" size="sm" onClick={handleReopen} disabled={reopening} data-task-reopen>
+            {reopening ? <Spinner className="size-4" /> : <Undo2 className="size-4" />}
+            退回草稿
+          </Button>
+        )}
         <TriggerActions task={task} onMutated={onMutated} />
         <Button variant="destructive" size="sm" onClick={handleAbort} disabled={!canAbort || aborting} data-task-abort>
           {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}

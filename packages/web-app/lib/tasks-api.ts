@@ -335,6 +335,13 @@ export async function abortTask(id: string): Promise<Task> {
   return handleResponse<Task>(res)
 }
 
+/** POST /api/tasks/:id/reopen — 入队撤回 (ready→draft)：回收未开跑的信封
+ *  schedule，任务回到 draft 重新可编辑。已领取/执行 ⇒ 409（改用中止）。 */
+export async function reopenTask(id: string): Promise<Task> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/reopen`, { method: "POST" })
+  return handleResponse<Task>(res)
+}
+
 /** POST /api/tasks/:id/trigger — v39 人工触发. Arms the parked (draft) root
  *  envelope: draft→queued with scheduled_at = at ?? now. `at` absent = 立即触发;
  *  future ISO = 单次定时触发. Rejections (not ready / already armed / running /

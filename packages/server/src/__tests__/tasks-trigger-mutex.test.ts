@@ -260,6 +260,56 @@ describe("v39: manual/time trigger + same-task mutex", () => {
     expect(() => service.cancelTaskTrigger(id)).toThrow(TaskStatusConflictError)
   })
 
+  // ── 5b. reopen (ready → draft, 入队撤回) ─────────────────────────
+  it("reopenTask reaps the parked envelope and returns the task to draft (re-enqueue clean)", () => {
+    const events: string[] = []
+    sse.subscribe("taskpool", (e) => { if (e.event === TASK_STATUS_EVENT) events.push((e.data as { status: string }).status) })
+    const id = makeTaskRow(db)
+    service.readyTask(id)
+    const envelopeId = (db.prepare("SELECT id FROM schedules WHERE origin_id=? AND origin_role='primary'").get(id) as { id: string }).id
+
+    const dto = service.reopenTask(id)
+    expect(dto.status).toBe("draft")
+    expect(taskRow(db, id).status).toBe("draft")
+    // envelope gone (soft-delete; findSchedulesByOrigin filters deleted rows)
+    expect(new ScheduleConfigDAO(db).findSchedulesByOrigin("task", id)).toHaveLength(0)
+    expect(db.prepare("SELECT deleted_at FROM schedules WHERE id=?").get(envelopeId)).toBeTruthy()
+    // readyTask itself emits no TASK_STATUS_EVENT (envelope + row flip only);
+    // reopen does emit — the board needs it to move the card back live.
+    expect(events).toEqual(["draft"])
+
+    // re-enqueue materializes exactly one fresh envelope (no duplicate leak)
+    service.readyTask(id)
+    const roots = new ScheduleConfigDAO(db).findSchedulesByOrigin("task", id)
+    expect(roots).toHaveLength(1)
+    expect(roots[0].status).toBe("draft")
+  })
+
+  it("reopen of a claimed/running envelope → 409 (abort is the exit)", () => {
+    const id = makeTaskRow(db)
+    service.readyTask(id)
+    service.triggerTask(id, new Date(Date.now() + 300_000).toISOString())
+    db.prepare("UPDATE schedules SET status='claimed', claimed_at=? WHERE origin_id=? AND origin_role='primary'")
+      .run(new Date().toISOString(), id)
+    // task mirror lagged (mirrors the mutex test's technique) — the envelope
+    // guard must catch what the task-level guard misses.
+    db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(id)
+    expect(() => service.reopenTask(id)).toThrow(/无法退回草稿/)
+    // envelope untouched on refusal
+    const root = db.prepare("SELECT deleted_at, status FROM schedules WHERE origin_id=? AND origin_role='primary'").get(id) as { deleted_at: string | null; status: string }
+    expect(root.status).toBe("claimed")
+    expect(root.deleted_at).toBeNull()
+  })
+
+  it("reopen of a non-ready task → 409 (draft/draft-envelope untouched)", () => {
+    const id = makeTaskRow(db)
+    expect(() => service.reopenTask(id)).toThrow(/only ready→draft/)
+    // and a future-armed (queued, unclaimed) task: status is running (mirror) → still refused
+    service.readyTask(id)
+    db.prepare("UPDATE tasks SET status='running' WHERE id=?").run(id)
+    expect(() => service.reopenTask(id)).toThrow(TaskStatusConflictError)
+  })
+
   // ── 6+7. routes ───────────────────────────────────────────────────
   describe("routes", () => {
     let app: Hono
@@ -312,6 +362,16 @@ describe("v39: manual/time trigger + same-task mutex", () => {
       expect(res.status).toBe(200)
       const dto = await res.json()
       expect(dto.status).toBe("ready")
+    })
+
+    it("POST /:id/reopen — ready→draft via API; draft task → 409", async () => {
+      const id = makeTaskRow(db)
+      service.readyTask(id)
+      const res = await app.request(`/api/tasks/${id}/reopen`, { method: "POST" })
+      expect(res.status).toBe(200)
+      expect((await res.json()).status).toBe("draft")
+      const again = await app.request(`/api/tasks/${id}/reopen`, { method: "POST" })
+      expect(again.status).toBe(409)
     })
 
     it("GET /api/tasks carries schedule_status + scheduled_at (root enrichment)", async () => {

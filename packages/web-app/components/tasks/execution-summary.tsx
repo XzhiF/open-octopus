@@ -142,17 +142,31 @@ export function TaskOverviewCard({ task }: { task: Task }) {
         </div>
       )}
       <div className="pt-1 space-y-1.5 border-t border-border/40">
-        <div className="flex items-baseline justify-between gap-3 text-sm">
-          <span className="text-muted-foreground shrink-0">绑定工作流</span>
-          <span className="flex items-center gap-2 min-w-0">
-            <code className="text-xs truncate max-w-[240px]">{task.workflow_ref ?? "—"}</code>
-            {task.workflow_ref && (
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setWfOpen(true)}>
-                查看
-              </Button>
-            )}
-          </span>
-        </div>
+        {isV4 ? (
+          // v4 绑定按 Phase 存（phases[].workflowRef）；任务级 workflow_ref 恒
+          // null，旧代码显成「绑定工作流 —」= 看着没绑却进了待执行。逐 Phase 列真值。
+          <div className="space-y-1" data-v4-workflow-refs>
+            <span className="text-muted-foreground text-sm">绑定工作流（按 Phase）</span>
+            {phases.map((p) => (
+              <div key={p.index} className="flex items-baseline justify-between gap-3 text-xs" data-v4-workflow-ref={p.index}>
+                <span className="text-muted-foreground shrink-0">Phase {p.index} · {p.name}</span>
+                <code className="text-xs truncate max-w-[240px]">{p.workflowRef || "未绑定"}</code>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="text-muted-foreground shrink-0">绑定工作流</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <code className="text-xs truncate max-w-[240px]">{task.workflow_ref ?? "—"}</code>
+              {task.workflow_ref && (
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setWfOpen(true)}>
+                  查看
+                </Button>
+              )}
+            </span>
+          </div>
+        )}
         <InfoRow label="创建" value={fmtTime(task.created_at)} />
         {task.completed_at && <InfoRow label="完成" value={fmtTime(task.completed_at)} />}
       </div>

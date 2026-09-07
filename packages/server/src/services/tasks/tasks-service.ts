@@ -1571,6 +1571,63 @@ export class TasksService {
     return toDTO(row)
   }
 
+  // ── Reopen (ready → draft) ───────────────────────────────────────────────
+
+  /** POST /api/tasks/:id/reopen — the enqueue undo. A ready task whose run has
+   *  NOT started (root envelope still parked 'draft' or armed-queued but
+   *  unclaimed) goes back to 'draft': the envelope schedules are reaped
+   *  (readyTask materializes a fresh one on every enqueue, so keeping the old
+   *  row would leak a duplicate), and the task becomes structurally editable
+   *  again (AuthoringWorkspace unlocks at draft — K16 freeze lifted, nothing
+   *  ran yet). Claimed/running envelopes ⇒ 409 (use abort). Rounds/ledger are
+   *  untouched — they only exist once a round dispatched, which requires
+   *  trigger + claim, both excluded by the guard above.
+   *
+   *  Status write follows the abortTask/cancelTaskTrigger pattern (system
+   *  event, direct UPDATE, no version bump) so spec-field optimistic
+   *  concurrency for the authoring agent is unaffected. Synchronous DAO calls =
+   *  atomic w.r.t. the scheduler poller on the event loop. */
+  reopenTask(id: string): TaskDTO {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    if (existing.status !== "ready") {
+      throw new TaskStatusConflictError(
+        `Cannot reopen a task in status '${existing.status}' (only ready→draft)`,
+      )
+    }
+
+    const roots = this.scheduleDAO
+      .findSchedulesByOrigin("task", id)
+      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
+    if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
+      throw new TaskStatusConflictError(
+        "任务已进入排队领取/执行，无法退回草稿 — 请改用中止",
+      )
+    }
+    // Non-root children exist only after a round dispatched (post-trigger);
+    // a ready+unclaimed task has none by construction, but reap whatever IS
+    // there so a reopen never leaves orphan schedules behind.
+    const all = this.scheduleDAO.findSchedulesByOrigin("task", id)
+    for (const s of all) this.scheduleDAO.softDelete(s.id)
+
+    const nowIso = new Date().toISOString()
+    const flipped = this.taskDAO
+      .getDb()
+      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND status = 'ready' AND deleted_at IS NULL")
+      .run("draft", nowIso, id)
+    if (flipped.changes === 0) {
+      throw new TaskStatusConflictError("任务状态已变化，请刷新后重试")
+    }
+
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: id, status: "draft", origin_type: "task", action: "reopened" },
+    })
+
+    const row = this.taskDAO.getById(id)!
+    return toDTO(row)
+  }
+
   // ── Trigger (v39 — manual / one-shot time trigger of a parked envelope) ────
 
   /** POST /api/tasks/:id/trigger — arms the parked (draft) root envelope:
