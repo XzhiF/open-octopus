@@ -231,6 +231,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   })
 
   // ── List clone sessions ──────────────────────────────────────────
+  // Task-owned sessions (tasks.source_chat_session_id) are EXCLUDED: a task
+  // draft's chat belongs to the task modal (which fetches the session by id),
+  // not the clone chatbot. Without this filter, opening e.g. task-author
+  // auto-loads the newest unrelated task's conversation (CloneDetailView
+  // selects items[0]) — users mistook it for "the current draft's chat".
   app.get('/:name/sessions', (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
     const cloneName = c.req.param('name')
@@ -238,8 +243,15 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const cursor = c.req.query('cursor')
 
     const result = sessionDAO.findByClone(cloneName, { org, limit, cursor })
+    let items = result.items
+    if (taskDAO && items.length > 0) {
+      const linked = new Set(
+        taskDAO.getLinksBySourceChatSessions(items.map((s) => s.id)).map((l) => l.session_id),
+      )
+      if (linked.size > 0) items = items.filter((s) => !linked.has(s.id))
+    }
     return c.json({
-      sessions: result.items,
+      sessions: items,
       has_more: result.has_more,
       next_cursor: result.next_cursor,
     })

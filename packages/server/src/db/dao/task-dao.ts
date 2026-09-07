@@ -71,6 +71,21 @@ export class TaskDAO extends BaseDAO {
     ).get(sessionId) as TaskRow | undefined) ?? null
   }
 
+  /** Batch variant of getBySourceChatSession — returns (session_id, task_id,
+   *  name, status) for every task row bound to any of the given sessions.
+   *  Deleted tasks are EXCLUDED (a discarded draft's session returns to the
+   *  clone's own chat pool). Used by GET /api/clones/:name/sessions to hide
+   *  task-owned sessions from the clone chatbot (the task modal fetches them
+   *  by id directly). */
+  getLinksBySourceChatSessions(sessionIds: string[]): { session_id: string; task_id: string; name: string; status: string }[] {
+    if (sessionIds.length === 0) return []
+    const placeholders = sessionIds.map(() => "?").join(", ")
+    return this.stmt(
+      `SELECT source_chat_session_id AS session_id, id AS task_id, name, status
+       FROM tasks WHERE source_chat_session_id IN (${placeholders}) AND deleted_at IS NULL`,
+    ).all(...sessionIds) as { session_id: string; task_id: string; name: string; status: string }[]
+  }
+
   /**
    * Optimistic-concurrency update: bumps `version` and applies `fields`.
    * Rejects stale writers — returns changes=0 when the row's version doesn't
