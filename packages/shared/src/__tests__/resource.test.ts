@@ -1202,3 +1202,103 @@ describe("new activation error codes", () => {
     expect(err.status).toBe(409)
   })
 })
+
+// ── registerBuiltins: phantom-install regression (task enqueue 409) ────
+
+describe("registerBuiltins", () => {
+  let tmpDir: string
+  let corePackDir: string
+
+  beforeEach(() => {
+    tmpDir = createTempDir()
+    corePackDir = createTempDir()
+    const skillDir = path.join(corePackDir, "skills", "phantom-skill")
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# Phantom", "utf-8")
+  })
+
+  afterEach(() => {
+    cleanupDir(tmpDir)
+    cleanupDir(corePackDir)
+  })
+
+  it("materializes files BEFORE claiming installed:true", () => {
+    const manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+    const result = manager.registerBuiltins()
+    expect(result.registered).toBeGreaterThanOrEqual(1)
+
+    const entry = manager.get("skill", "phantom-skill")
+    expect(entry?.installed).toBe(true)
+    expect(entry?.sourceHash).toBeTruthy()
+    expect(fs.existsSync(path.join(entry!.installPath, "SKILL.md"))).toBe(true)
+  })
+
+  it("self-heals legacy phantom rows (installed:true, dir missing)", () => {
+    // Simulate the legacy bug: registry row without copied files.
+    const registry = new RegistryStore(tmpDir)
+    const installPath = path.join(tmpDir, "installed", "skills", "built-in", "phantom-skill")
+    registry.upsert(makeEntry({
+      name: "phantom-skill",
+      type: "skill",
+      installPath,
+      installed: true,
+    }))
+    expect(fs.existsSync(installPath)).toBe(false)
+
+    const manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+    manager.registerBuiltins()
+
+    expect(fs.existsSync(path.join(installPath, "SKILL.md"))).toBe(true)
+    expect(manager.get("skill", "phantom-skill")?.sourceHash).toBeTruthy()
+  })
+
+  it("install() re-materializes a phantom instead of throwing ALREADY_INSTALLED", async () => {
+    const registry = new RegistryStore(tmpDir)
+    registry.upsert(makeEntry({
+      name: "phantom-skill",
+      type: "skill",
+      installPath: path.join(tmpDir, "installed", "skills", "built-in", "phantom-skill"),
+      installed: true,
+    }))
+
+    const manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+    const result = await manager.install({ ref: "builtin:phantom-skill", caller: "cli" })
+    expect(result.status).toBe("installed")
+    expect(fs.existsSync(path.join(manager.get("skill", "phantom-skill")!.installPath, "SKILL.md"))).toBe(true)
+  })
+
+  it("is idempotent: healthy rows are skipped, not re-copied", async () => {
+    const manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+    await manager.install({ ref: "builtin:phantom-skill", caller: "cli" })
+    const before = manager.get("skill", "phantom-skill")!
+
+    const result = manager.registerBuiltins()
+    expect(result.registered).toBe(0)
+
+    const after = manager.get("skill", "phantom-skill")!
+    expect(after.installedAt).toBe(before.installedAt)
+    expect(fs.existsSync(path.join(after.installPath, "SKILL.md"))).toBe(true)
+  })
+
+  it("leaves non-builtin phantoms untouched (files unrecoverable here)", () => {
+    const registry = new RegistryStore(tmpDir)
+    const installPath = path.join(tmpDir, "installed", "skills", "my-org", "phantom-skill")
+    registry.upsert(makeEntry({
+      name: "phantom-skill",
+      type: "skill",
+      source: "git",
+      ref: "git:my-org/phantom-skill",
+      group: "my-org",
+      installPath,
+      installed: true,
+    }))
+
+    const manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+    manager.registerBuiltins()
+
+    // Row survives as-is (a builtin copy would silently switch its source).
+    const row = manager.get("skill", "phantom-skill")!
+    expect(row.source).toBe("git")
+    expect(fs.existsSync(installPath)).toBe(false)
+  })
+})

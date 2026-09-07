@@ -106,9 +106,13 @@ export class ResourceManager extends EventEmitter {
       throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
     }
 
-    // Check if already installed
+    // Check if already installed. A registry row whose installPath is missing
+    // on disk is a phantom (see registerBuiltins history) — consumers read
+    // files, not the row, so treat it as not-installed and let the install
+    // proceed to re-materialize it. Without this, uninstall-the-phantom-first
+    // is the only escape and the API deadlocks on ALREADY_INSTALLED.
     const existing = this.registry.get(type, name)
-    if (existing?.installed) {
+    if (existing?.installed && fs.existsSync(existing.installPath)) {
       throw new ResourceError("RESOURCE_ALREADY_EXISTS", `Resource ${type}/${name} is already installed`)
     }
 
@@ -999,6 +1003,13 @@ export class ResourceManager extends EventEmitter {
    * Register all core-pack builtin resources into the registry.
    * Resources are registered as installed with group "built-in".
    * Already-registered entries are skipped (idempotent).
+   *
+   * The registry row IS the installed state for disk-reading consumers
+   * (BuiltInWorkflowService, the task workflow-ref resolver, the v4 enqueue
+   * gate) — so files must be materialized BEFORE claiming installed:true.
+   * The original version only wrote the row, creating phantom entries whose
+   * refs resolve nowhere (ALREADY_INSTALLED on reinstall + gate 409
+   * workflow-ref on enqueue). Existing phantom rows are self-healed here.
    */
   registerBuiltins(): { registered: number; skipped: number } {
     const catalog = this.builtin.list()
@@ -1006,13 +1017,35 @@ export class ResourceManager extends EventEmitter {
     let skipped = 0
 
     for (const entry of catalog) {
+      const installPath = this.getInstallPath(entry.type, entry.name, "built-in")
       const existing = this.registry.get(entry.type, entry.name)
       if (existing) {
+        // Self-heal legacy phantoms: installed:true but the directory was
+        // never written. Only for builtin rows (local/git sources may have
+        // been intentionally cleaned; their files are unrecoverable here).
+        if (
+          existing.installed &&
+          existing.source === "builtin" &&
+          !fs.existsSync(existing.installPath)
+        ) {
+          try {
+            this.builtin.install(entry.name, entry.type, installPath)
+            this.registry.upsert({ ...existing, installPath, sourceHash: generateFileHash(installPath) })
+          } catch {
+            // Source vanished since catalog scan — leave the row untouched.
+          }
+        }
         skipped++
         continue
       }
 
-      const installPath = this.getInstallPath(entry.type, entry.name, "built-in")
+      let hash = ""
+      try {
+        hash = this.builtin.install(entry.name, entry.type, installPath).hash
+      } catch {
+        continue // copy failed → do NOT claim installed
+      }
+
       const registryEntry: ResourceEntry = {
         name: entry.name,
         type: entry.type,
@@ -1025,6 +1058,7 @@ export class ResourceManager extends EventEmitter {
         installedAt: new Date().toISOString(),
         installPath,
         dependsOn: [],
+        sourceHash: hash,
         activated: false,
       }
       this.registry.upsert(registryEntry)
