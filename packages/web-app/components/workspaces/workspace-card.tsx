@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Workspace, WorkspaceStatus } from "@/lib/types"
+import { formatRelativeTime } from "@/lib/format"
 import {
   FolderKanban,
   GitBranch,
@@ -36,23 +37,6 @@ const statusConfig: Record<
   active: { label: "活跃", variant: "default" },
   inactive: { label: "未激活", variant: "secondary" },
   error: { label: "异常", variant: "destructive" },
-}
-
-function formatRelativeTime(dateString: string | null | undefined): string {
-  if (!dateString) return "未知"
-  const date = new Date(dateString)
-  if (isNaN(date.getTime())) return "未知"
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMins / 60)
-  const diffDays = Math.floor(diffHours / 24)
-
-  if (diffMins < 1) return "刚刚"
-  if (diffMins < 60) return `${diffMins} 分钟前`
-  if (diffHours < 24) return `${diffHours} 小时前`
-  if (diffDays < 7) return `${diffDays} 天前`
-  return date.toLocaleDateString("zh-CN")
 }
 
 export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }: WorkspaceCardProps) {

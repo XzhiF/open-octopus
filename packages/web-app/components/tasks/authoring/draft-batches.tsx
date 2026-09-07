@@ -26,6 +26,7 @@ import type { Task, TaskPhase } from "@octopus/shared"
 import type { BatchTreeEntry, HomeFileListingEntry } from "@/lib/tasks-api"
 import { getHomeFile, TaskApiError } from "@/lib/tasks-api"
 import { PhaseSpecDialog, specFileClass, batchDirOf, normalizeRel } from "./phase-spec-dialog"
+import { SectionCard } from "./section-card"
 import { DEFAULT_NEW_WORKFLOW, withPhases } from "./phases-mutation"
 import { isRelativeScratchSpec, type BatchTreeState } from "./use-batch-tree"
 
@@ -137,12 +138,14 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
   }
 
   return (
-    <div className="shrink-0 rounded-lg border bg-background" data-draft-batches>
-      {/* 区头 */}
-      <div className="px-3 py-2 border-b flex items-center gap-1.5">
-        <Layers className="size-3 text-muted-foreground" />
-        <span className="text-xs font-medium">草稿批次 ({batches.length})</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">磁盘直扫 · 落盘即现</span>
+    <SectionCard
+      icon={<Layers className="size-3.5 text-muted-foreground" />}
+      title="草稿批次"
+      count={batches.length}
+      hint="磁盘直扫 · 落盘即现"
+      storageKey="authoring-batches"
+      data-draft-batches
+      action={
         <button
           onClick={refresh}
           className="p-0.5 rounded hover:bg-muted transition-colors"
@@ -151,8 +154,10 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
         >
           <RefreshCw className="size-3 text-muted-foreground" />
         </button>
-      </div>
-
+      }
+    >
+      {/* 全出血（-mx/-my 抵消卡体 px-3 py-2）：路径条/警示/列表保持边到边形态 */}
+      <div className="-mx-3 -my-2">
       {/* 落点路径行（抄执行产物区 artifactsDir idiom） */}
       <div className="px-3 py-1 border-b flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono bg-muted/30">
         <FolderOpen className="size-2.5 shrink-0" />
@@ -246,6 +251,7 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
           })}
         </div>
       )}
+      </div>
 
       {dialogBatch && (
         <PhaseSpecDialog
@@ -256,7 +262,7 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
           onOpenChange={(o) => { if (!o) setDialogBatch(null) }}
         />
       )}
-    </div>
+    </SectionCard>
   )
 }
 

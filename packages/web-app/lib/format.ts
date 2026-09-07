@@ -1,7 +1,7 @@
 /**
  * Web 展示层格式化器 — 全站唯一来源（C4 / ADR-0017）
  *
- * 只服务五个量纲家族：货币 / Token / 时长 / 百分比 / 字节。
+ * 只服务六个量纲家族：货币 / Token / 时长 / 百分比 / 字节 / 相对时间。
  * 规范：
  * - null / undefined / NaN 一律渲染 "—"，不渲染假 0（C2/C3 三态语义的展示端）
  * - 货币消费 C3 的 LedgerCost 三态：formatCost(usd, complete)
@@ -66,4 +66,25 @@ export function formatBytes(n: number | null | undefined): string {
     i++
   }
   return i === 0 ? `${Math.round(v)} B` : `${v.toFixed(1)} ${units[i]}`
+}
+
+/**
+ * 相对时间（看板卡片/工作空间卡同源）：刚刚 / N 分钟前 / N 小时前 / N 天前，
+ * ≥7 天回退 zh-CN 日期；null / 非法 → "未知"。
+ */
+export function formatRelativeTime(dateString: string | null | undefined): string {
+  if (!dateString) return "未知"
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) return "未知"
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffMins < 1) return "刚刚"
+  if (diffMins < 60) return `${diffMins} 分钟前`
+  if (diffHours < 24) return `${diffHours} 小时前`
+  if (diffDays < 7) return `${diffDays} 天前`
+  return date.toLocaleDateString("zh-CN")
 }

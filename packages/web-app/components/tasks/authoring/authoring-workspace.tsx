@@ -20,7 +20,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Settings2, Lock, Brain } from "lucide-react"
+import { Send, Settings2, Lock, Brain, ClipboardCheck } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
@@ -37,6 +37,7 @@ import * as agentApi from "@/lib/agent/api"
 import { OutputViewer } from "./output-viewer"
 import { WorkflowBox } from "./workflow-box"
 import { DraftBatches } from "./draft-batches"
+import { SectionCard } from "./section-card"
 import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
@@ -501,7 +502,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
           <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
         </Button>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">右侧 = 产出 · 有问题对话里让 agent 改</span>
           <Button
             size="sm"
             className="h-6 text-[10px]"
@@ -603,7 +603,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         />
 
         {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
-        <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
+        <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-2.5" data-output-viewer>
           {/* PhaseListEditor/绑定卡内部按 v4 format 分叉（goal/ac 卡已随 v4-only UI 退役） */}
           <WorkflowBox task={task} onMutated={onMutated} batchTree={batchTree} />
 
@@ -622,53 +622,67 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
           {/* enqueue checklist — v4 四行 phase 契约（server gateV4Phases 同源）；
               非 v4 历史行同样渲染（四行不绿）。状态只显；按钮在顶栏。 */}
-          <div className="shrink-0 rounded-lg border bg-background px-3 py-2.5 space-y-1" data-enqueue-checklist data-testid="enqueue-checklist-v4">
-            <div className="text-[11px] font-medium mb-0.5">入队清单（v4 phase 契约）</div>
-            {(
-              [
-                { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
-                { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: v4Rows.specTreeReady ? "逐 phase spec（磁盘已核）" : "逐 phase spec（批次目录 spec.md）" },
-                { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
-                { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
-              ] as const
-            ).map((row) => {
-              const failed = row.hits.length > 0
-              const good = row.ok && !failed
-              return (
-                <div key={row.id} className="text-[11px]" data-checklist-v4={row.id} data-testid={`checklist-v4-${row.id}`}>
-                  <span className={good ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500"}>
-                    {good ? "✅" : failed ? "✗" : "⏳"}
-                  </span>{" "}
-                  {row.label}
-                  {failed && (
-                    <ul className="ml-4 list-disc text-[10px] text-red-500">
-                      {row.hits.map((h) => <li key={h}>{h}</li>)}
-                    </ul>
-                  )}
-                </div>
-              )
-            })}
-            {v4Rows.inputsUnknown && (
-              <p className="text-[10px] text-muted-foreground">
-                存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
-              </p>
-            )}
-            <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>
-              <label className="flex items-center gap-1.5 cursor-pointer select-none" data-autoadvance-toggle-label>
-                <input
-                  type="checkbox"
-                  checked={autoOn}
-                  onChange={() => void handleToggleAutoAdvance()}
-                  data-autoadvance-switch data-testid="autoadvance-switch"
-                />
-                验收通过后自动开跑下一 Phase（auto_advance）
-              </label>
-              {autoBusy && <Spinner className="size-3" />}
+          <SectionCard
+            icon={<ClipboardCheck className="size-3.5 text-muted-foreground" />}
+            title="入队清单"
+            count={`${[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs].filter(Boolean).length}/4`}
+            hint="v4 phase 契约"
+            storageKey="authoring-enqueue"
+          >
+            <div className="space-y-1" data-enqueue-checklist data-testid="enqueue-checklist-v4">
+              {(
+                [
+                  { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
+                  { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: v4Rows.specTreeReady ? "逐 phase spec（磁盘已核）" : "逐 phase spec（批次目录 spec.md）" },
+                  { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
+                  { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
+                ] as const
+              ).map((row) => {
+                const failed = row.hits.length > 0
+                const good = row.ok && !failed
+                return (
+                  <div
+                    key={row.id}
+                    className="grid grid-cols-[1.1rem_1fr] items-baseline gap-x-1 text-[11px]"
+                    data-checklist-v4={row.id}
+                    data-testid={`checklist-v4-${row.id}`}
+                  >
+                    <span className={good ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500"}>
+                      {good ? "✅" : failed ? "✗" : "⏳"}
+                    </span>
+                    <span>
+                      {row.label}
+                      {failed && (
+                        <ul className="ml-4 list-disc text-[10px] text-red-500">
+                          {row.hits.map((h) => <li key={h}>{h}</li>)}
+                        </ul>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
+              {v4Rows.inputsUnknown && (
+                <p className="text-[10px] text-muted-foreground">
+                  存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
+                </p>
+              )}
+              <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none" data-autoadvance-toggle-label>
+                  <input
+                    type="checkbox"
+                    checked={autoOn}
+                    onChange={() => void handleToggleAutoAdvance()}
+                    data-autoadvance-switch data-testid="autoadvance-switch"
+                  />
+                  验收通过后自动开跑下一 Phase（auto_advance）
+                </label>
+                {autoBusy && <Spinner className="size-3" />}
+              </div>
+              {!canEnqueue ? (
+                <p className="text-[10px] text-muted-foreground">四行未齐不可入队 —— 对话里让 agent 补，或在右栏 phase 编辑器逐行配置。</p>
+              ) : null}
             </div>
-            {!canEnqueue ? (
-              <p className="text-[10px] text-muted-foreground">四行未齐不可入队 —— 对话里让 agent 补，或在右栏 phase 编辑器逐行配置。</p>
-            ) : null}
-          </div>
+          </SectionCard>
         </div>
       </div>
 

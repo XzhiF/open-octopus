@@ -7,6 +7,7 @@ import {
   COLUMN_STATUSES,
   groupTasksByStatus,
   tasksForColumn,
+  sortByCreatedDesc,
   effectiveStatusOf,
   computePhaseBadge,
   phaseBudgetMs,
@@ -271,5 +272,36 @@ describe("overBudgetRoundOf", () => {
   it("v3 / missing derived → null", () => {
     expect(overBudgetRoundOf(undefined, now, 1000)).toBeNull()
     expect(overBudgetRoundOf({ taskStatus: "running", isV4: false, phaseViews: [] }, now, 1000)).toBeNull()
+  })
+})
+
+// ── sortByCreatedDesc (看板列内序：新→旧) ────────────────────────────
+
+describe("sortByCreatedDesc", () => {
+  it("sorts newest created_at first", () => {
+    const a = makeTask({ id: "a", created_at: "2026-08-01T00:00:00Z" })
+    const b = makeTask({ id: "b", created_at: "2026-08-03T00:00:00Z" })
+    const c = makeTask({ id: "c", created_at: "2026-08-02T00:00:00Z" })
+    expect(sortByCreatedDesc([a, b, c]).map((t) => t.id)).toEqual(["b", "c", "a"])
+  })
+
+  it("ties on created_at break by updated_at DESC, then id DESC-stable", () => {
+    const a = makeTask({ id: "a", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" })
+    const b = makeTask({ id: "b", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" })
+    const c = makeTask({ id: "c", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" })
+    expect(sortByCreatedDesc([a, b, c]).map((t) => t.id)).toEqual(["b", "c", "a"])
+  })
+
+  it("does not mutate the input array", () => {
+    const a = makeTask({ id: "a", created_at: "2026-08-01T00:00:00Z" })
+    const b = makeTask({ id: "b", created_at: "2026-08-02T00:00:00Z" })
+    const input = [a, b]
+    const out = sortByCreatedDesc(input)
+    expect(input.map((t) => t.id)).toEqual(["a", "b"])
+    expect(out).not.toBe(input)
+  })
+
+  it("empty input → empty output", () => {
+    expect(sortByCreatedDesc([])).toEqual([])
   })
 })

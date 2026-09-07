@@ -53,6 +53,7 @@ import {
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
+import { SectionCard } from "./section-card"
 import {
   findBatchFor,
   findSpecEntry,
@@ -174,13 +175,15 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
     })
 
   return (
-    <div className="rounded-lg border bg-background px-3 py-2.5 space-y-2" data-workflow-box data-phase-binding-list>
-      <div className="flex items-center gap-2">
-        <Link2 className="size-3.5 text-muted-foreground shrink-0" />
-        <span className="text-xs font-medium">Phase 计划</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{phases.length} 个 phase</span>
-      </div>
-
+    <SectionCard
+      icon={<Link2 className="size-3.5 text-muted-foreground shrink-0" />}
+      title="Phase 计划"
+      count={phases.length}
+      storageKey="authoring-phases"
+      data-workflow-box
+      data-phase-binding-list
+    >
+      <div className="space-y-2">
       {phases.length === 0 ? (
         <p className="text-[11px] text-muted-foreground" data-phase-bind-empty>
           尚无 phase —— 对话里让 agent 拆分（拆分产物会先在下方「草稿批次」区出现），或用「添加 Phase」手动建骨架。
@@ -256,7 +259,8 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+      </div>
+    </SectionCard>
   )
 }
 
@@ -408,11 +412,12 @@ function PhaseRow({
             )}
           </div>
           <InputChips values={phase.inputValues ?? {}} />
-          <div className="flex items-center gap-1">
+          {/* 按钮带：展开 + 绑定为常用动作居左；深读/结构动作收进右侧图标组 */}
+          <div className="flex items-center gap-1.5">
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-[10px] px-1.5"
+              className="size-6 p-0 text-muted-foreground hover:text-foreground"
               title="展开：spec 磁盘状态 + 票清单 + 摘要（不必开弹窗）"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
@@ -423,56 +428,58 @@ function PhaseRow({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-[10px] flex-1 justify-start"
+              className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
               onClick={() => onOpenBind(phase.index)}
               data-phase-bind-button={phase.index}
             >
               {phase.workflowRef ? "更换工作流" : "绑定工作流"}
-              <ChevronRight className="size-3 ml-auto" />
+              <ChevronRight className="size-3" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-[10px] px-1.5"
-              title={`编辑 spec.md：${phase.specPath}`}
-              onClick={() => onOpenSpec(phase)}
-              data-phase-spec-button={phase.index}
-            >
-              <FileText className="size-3" />
-            </Button>
-            {editable && (
-              <>
-                <Button
-                  variant="ghost" size="sm" className="h-6 text-[10px] px-1.5" title="编辑名称/slug/spec 路径"
-                  onClick={() => setEditing(true)}
-                  data-phase-edit-button={phase.index}
-                >
-                  <Pencil className="size-3" />
-                </Button>
-                <Button
-                  variant="ghost" size="sm" className="h-6 text-[10px] px-1" title="上移" disabled={first || busy}
-                  onClick={() => onMove(phase.index, -1)}
-                  data-phase-move-up={phase.index}
-                >
-                  <ArrowUp className="size-3" />
-                </Button>
-                <Button
-                  variant="ghost" size="sm" className="h-6 text-[10px] px-1" title="下移" disabled={last || busy}
-                  onClick={() => onMove(phase.index, 1)}
-                  data-phase-move-down={phase.index}
-                >
-                  <ArrowDown className="size-3" />
-                </Button>
-                <Button
-                  variant="ghost" size="sm" className="h-6 text-[10px] px-1.5 text-red-500 hover:text-red-600"
-                  title={canDelete ? "删除 phase" : "至少保留一个 phase"} disabled={!canDelete || busy}
-                  onClick={() => onRequestDelete(phase.index)}
-                  data-phase-delete-button={phase.index}
-                >
-                  <Trash2 className="size-3" />
-                </Button>
-              </>
-            )}
+            <div className="ml-auto flex items-center divide-x divide-border/60 rounded-md border border-border/60">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="size-6 p-0 text-muted-foreground hover:text-foreground"
+                title={`编辑 spec.md：${phase.specPath}`}
+                onClick={() => onOpenSpec(phase)}
+                data-phase-spec-button={phase.index}
+              >
+                <FileText className="size-3" />
+              </Button>
+              {editable && (
+                <>
+                  <Button
+                    variant="ghost" size="sm" className="size-6 p-0 text-muted-foreground hover:text-foreground" title="编辑名称/slug/spec 路径"
+                    onClick={() => setEditing(true)}
+                    data-phase-edit-button={phase.index}
+                  >
+                    <Pencil className="size-3" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm" className="size-6 p-0 text-muted-foreground hover:text-foreground" title="上移" disabled={first || busy}
+                    onClick={() => onMove(phase.index, -1)}
+                    data-phase-move-up={phase.index}
+                  >
+                    <ArrowUp className="size-3" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm" className="size-6 p-0 text-muted-foreground hover:text-foreground" title="下移" disabled={last || busy}
+                    onClick={() => onMove(phase.index, 1)}
+                    data-phase-move-down={phase.index}
+                  >
+                    <ArrowDown className="size-3" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm" className="size-6 p-0 text-red-500 hover:text-red-600"
+                    title={canDelete ? "删除 phase" : "至少保留一个 phase"} disabled={!canDelete || busy}
+                    onClick={() => onRequestDelete(phase.index)}
+                    data-phase-delete-button={phase.index}
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
 
           {expanded && (

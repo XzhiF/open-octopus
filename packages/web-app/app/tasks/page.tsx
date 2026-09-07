@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
-import { RefreshCw, Plus, Trash2 } from "lucide-react"
+import { RefreshCw, Plus, Trash2, Inbox } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -12,9 +12,11 @@ import type { Task } from "@octopus/shared"
 import { listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError, type TaskDerivedView } from "@/lib/tasks-api"
 import { toast } from "sonner"
 import {
-  groupTasksByStatus, tasksForColumn, effectiveStatusOf,
+  groupTasksByStatus, tasksForColumn, effectiveStatusOf, sortByCreatedDesc,
   computePhaseBadge, overBudgetRoundOf, phaseBudgetMs, TASK_COLUMNS,
+  type TaskBoardColumnId,
 } from "@/lib/task-board"
+import { formatRelativeTime } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
@@ -26,6 +28,15 @@ import {
 } from "@octopus/shared"
 
 const REFRESH_INTERVAL_MS = 10_000
+
+/** 列头 accent 圆点（看板泳道身份色；仅装饰，不参与任何测试选择器）。 */
+const COLUMN_ACCENT: Record<TaskBoardColumnId, string> = {
+  draft: "bg-zinc-400",
+  ready: "bg-sky-500",
+  running: "bg-blue-500 animate-pulse",
+  awaiting_review: "bg-amber-500",
+  done: "bg-emerald-500",
+}
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([])
@@ -238,19 +249,21 @@ export default function TasksPage() {
   // 票 11 (K3): v4 列归属用 **derived.taskStatus 优先**（持久 done/failed 镜像
   // 会把待验收任务错归「完成」列 — 票 07 活体交互 #1），再按八桶分组、五列
   // 展平渲染（archiving→执行中, failed/aborted→完成(终态)）。
+  // sortByCreatedDesc 在装桶前过一次：groupTasksByStatus 按迭代序 push，
+  // 每列因此天然「新→旧」（用户要求列内从新到旧）。
   const displayTasks = tasks.map((t) => {
     const eff = effectiveStatusOf(t, derivedMap[t.id])
     return eff === t.status ? t : { ...t, status: eff }
   })
-  const grouped = groupTasksByStatus(displayTasks)
+  const grouped = groupTasksByStatus(sortByCreatedDesc(displayTasks))
   const budgetMs = phaseBudgetMs()
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <div className="flex flex-col h-full min-w-0">
-        <header className="flex items-center gap-3 px-6 py-4 border-b border-border">
-          <h1 className="text-2xl font-bold tracking-tight">任务看板</h1>
-          <span className="text-sm text-muted-foreground">{tasks.length} 个任务</span>
+        <header className="flex items-center gap-3 px-6 py-3 border-b border-border">
+          <h1 className="text-lg font-semibold tracking-tight">任务看板</h1>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{tasks.length} 个任务</span>
           <div className="ml-auto flex gap-2">
             <Button variant="outline" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
@@ -268,8 +281,10 @@ export default function TasksPage() {
             {error}
           </div>
         ) : (
-          <div className="flex-1 overflow-auto p-4">
-            <div className="flex gap-3 min-h-full" style={{ minWidth: "max-content" }}>
+          <div className="flex-1 min-h-0 overflow-auto p-4">
+            {/* 泳道等分占满：min-w-[1240px] 保 5 道最低可读宽（窄屏出横向滚动），
+                各列 flex-1 basis-0 均分 —— 宽屏不再留右侧死空间。 */}
+            <div className="flex h-full min-w-[1240px] gap-3">
               {TASK_COLUMNS.map((col) => {
                 const colTasks = tasksForColumn(grouped, col.id)
                 return (
@@ -277,13 +292,14 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex flex-col gap-2 w-[220px] shrink-0 rounded-md ${col.id === "awaiting_review" ? "bg-amber-500/5 ring-1 ring-inset ring-amber-500/30" : "bg-muted/30"}`}
+                  className={`flex min-w-0 flex-1 basis-0 flex-col gap-2 rounded-lg ${col.id === "awaiting_review" ? "bg-amber-500/5 ring-1 ring-inset ring-amber-500/30" : "bg-muted/30"}`}
                 >
-                  <header className="flex items-center justify-between px-3 py-2 border-b border-border">
-                    <h2 className={`text-sm font-semibold ${col.id === "awaiting_review" ? "text-amber-600 dark:text-amber-400" : ""}`}>{col.label}</h2>
-                    <span className="text-xs text-muted-foreground">{colTasks.length}</span>
+                  <header className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs font-semibold">
+                    <span className={`size-2 shrink-0 rounded-full ${COLUMN_ACCENT[col.id]}`} aria-hidden />
+                    <span className={col.id === "awaiting_review" ? "text-amber-600 dark:text-amber-400" : ""}>{col.label}</span>
+                    <span className="ml-auto rounded-full bg-background px-1.5 py-px text-[10px] tabular-nums text-muted-foreground ring-1 ring-border">{colTasks.length}</span>
                   </header>
-                  <div className="flex flex-col gap-2 flex-1 p-2 overflow-auto">
+                  <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
                     {colTasks.map((task) => (
                       <TaskCard
                         key={task.id}
@@ -301,9 +317,10 @@ export default function TasksPage() {
                     {colTasks.length === 0 && (
                       <div
                         data-empty-column={col.id}
-                        className="text-xs text-muted-foreground text-center py-6 border border-dashed rounded-md"
+                        className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 text-[11px] text-muted-foreground/50"
                       >
-                        空
+                        <Inbox className="size-4" aria-hidden />
+                        暂无任务
                       </div>
                     )}
                   </div>
@@ -474,12 +491,26 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
                 : "排队等待执行"}
             </span>
           )}
+          {/* 完成列折叠了 done/failed/aborted 三终态 — 用彩色 chip 自证真实终态
+              （替代原英文 status 行；data-task-card-status 语义迁移到此）。 */}
+          {(task.status === "failed" || task.status === "aborted") && (
+            <span
+              data-task-card-status
+              className={`text-[10px] px-1 py-0.5 rounded ${
+                task.status === "failed"
+                  ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                  : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400"
+              }`}
+            >
+              {task.status === "failed" ? "失败" : "已中止"}
+            </span>
+          )}
           {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal */}
           {isAwaitingReview && (
             <button
               data-task-accept-btn
               onClick={(e) => { e.stopPropagation(); onAcceptRequest(task) }}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-amber-500 text-white hover:bg-amber-600 transition-colors"
               title="打开验收三栏（执行摘要 | 产物核对 | 动作区）"
             >
               验收
@@ -491,7 +522,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-trigger-btn
               onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
               title="人工触发（立即或定时）"
             >
               触发
@@ -503,7 +534,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-advance-btn={advancePhaseOf(derived) ?? ""}
               onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task) }}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               title={`启动 Phase ${advancePhaseOf(derived)}（上一 Phase 已通过验收，autoAdvance 关闭）`}
             >
               启动下一 Phase
@@ -514,7 +545,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-archive-retry-btn
               onClick={(e) => { e.stopPropagation(); onArchiveRetryRequest(task) }}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-orange-500 text-white hover:bg-orange-600 transition-colors"
               title="重试归档（project 粒度幂等续跑）"
             >
               重试归档
@@ -532,16 +563,10 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           )}
         </div>
       </div>
-      <dl className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
-        <div className="flex justify-between">
-          <dt>状态</dt>
-          <dd data-task-card-status className={isAwaitingReview ? "text-amber-600 dark:text-amber-400" : undefined}>{task.status}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>创建</dt>
-          <dd>{new Date(task.created_at).toLocaleString()}</dd>
-        </div>
-      </dl>
+      {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行只给时间语境 */}
+      <div className="mt-2 text-[10px] text-muted-foreground" title={new Date(task.created_at).toLocaleString()}>
+        创建 {formatRelativeTime(task.created_at)}
+      </div>
     </article>
   )
 }

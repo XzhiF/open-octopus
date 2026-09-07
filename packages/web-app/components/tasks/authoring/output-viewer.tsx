@@ -37,6 +37,7 @@ import {
 import { ArtifactViewerDialog } from "./artifact-viewer-dialog"
 import { WorkflowLogDialog } from "./workflow-log-dialog"
 import { MoaAdoptionPanel } from "./moa-adoption-panel"
+import { SectionCard } from "./section-card"
 
 export interface OutputViewerProps {
   task: Task
@@ -269,99 +270,99 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   // shrink-0: keep natural height in the panel's flex column so the panel
   // scrolls instead of squashing this section (see goal-ac-card).
   return (
-    <div className="shrink-0 space-y-3" data-output-viewer-sections>
+    <div className="space-y-2.5" data-output-viewer-sections>
       {/* ── Artifacts (AC1/AC2) ── */}
-      <div className="rounded-lg border bg-background" data-artifacts-section>
-        <div className="px-3 py-2 border-b flex items-center justify-between">
-          <span className="text-xs font-medium flex items-center gap-1">
-            <FileText className="size-3" /> 执行产物 ({artifacts.length})
-          </span>
-          <span className="text-[10px] text-muted-foreground">点击查看完整内容</span>
+      <SectionCard
+        icon={<FileText className="size-3.5 text-muted-foreground" />}
+        title="执行产物"
+        count={artifacts.length}
+        hint="点击查看完整内容"
+        storageKey="authoring-artifacts"
+        data-artifacts-section
+      >
+        {/* 全出血：路径条 / 元文件行 / 列表保持边到边形态 */}
+        <div className="-mx-3 -my-2">
+          {/* Artifacts dir path display — helps users locate where skill outputs land */}
+          <div className="px-3 py-1 border-b flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono bg-muted/30">
+            <FolderOpen className="size-2.5 shrink-0" />
+            <span className="truncate" title={artifactsDir}>{artifactsDir}</span>
+            <button
+              onClick={() => { copyToClipboard(artifactsDir) }}
+              className="shrink-0 ml-auto p-0.5 rounded hover:bg-muted transition-colors"
+              title="复制路径"
+            >
+              <Copy className="size-2.5" />
+            </button>
+          </div>
+          {/* 元文件行：context.md / manifest.json 并排两枚窄按钮（低频深读入口，
+              data-*-viewer-row + 「规格快照」文本是 e2e 钉点，勿改）。 */}
+          <div className="px-3 py-1.5 border-b flex gap-1.5">
+            <button
+              className="flex-1 h-7 min-w-0 rounded-md border bg-muted/20 flex items-center gap-1.5 px-2 text-[10px] hover:bg-muted/50 transition-colors"
+              onClick={openContextViewer}
+              title="工作上下文：org · 项目路径 · 技能组 — agent 感知的工作语境"
+              data-context-viewer-row
+            >
+              <Settings2 className="size-3 shrink-0 text-purple-500" />
+              <span className="truncate">工作上下文</span>
+            </button>
+            <button
+              className="flex-1 h-7 min-w-0 rounded-md border bg-muted/20 flex items-center gap-1.5 px-2 text-[10px] hover:bg-muted/50 transition-colors"
+              onClick={openManifestViewer}
+              title="规格快照：agent 读的规格账本 · 核对/调试"
+              data-manifest-viewer-row
+            >
+              <FileText className="size-3 shrink-0 text-amber-500" />
+              <span className="truncate">规格快照</span>
+            </button>
+          </div>
+          {artifactsLoading ? (
+            <div className="px-3 py-3 text-[11px] text-muted-foreground flex items-center gap-2">
+              <Spinner className="size-3" /> 加载产物索引…
+            </div>
+          ) : artifactsError ? (
+            <div className="px-3 py-2 text-[11px] text-red-600">{artifactsError}</div>
+          ) : artifacts.length === 0 ? (
+            <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
+              ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
+              起草期的 spec 与票在上方「草稿批次」区看（agent 落盘即现，不必等 phases 写回）。
+            </div>
+          ) : (
+            <div className="divide-y">
+              {artifacts.map((a, i) => (
+                <button
+                  key={i}
+                  className="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-muted/50 text-left"
+                  onClick={() => setViewing(a)}
+                  data-artifact-row={i}
+                >
+                  <span className="text-base shrink-0">{artifactIcon(a.path)}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs truncate">{a.title || a.path}</div>
+                    <div className="text-[9px] text-muted-foreground font-mono truncate">{a.path}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-[9px] text-muted-foreground">{a.updated_at.slice(0, 16).replace("T", " ")}</div>
+                    <div className="text-[9px] text-muted-foreground">by {a.by}</div>
+                  </div>
+                  <Eye className="size-3.5 text-muted-foreground shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        {/* Artifacts dir path display — helps users locate where skill outputs land */}
-        <div className="px-3 py-1 border-b flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono bg-muted/30">
-          <FolderOpen className="size-2.5 shrink-0" />
-          <span className="truncate" title={artifactsDir}>{artifactsDir}</span>
-          <button
-            onClick={() => { copyToClipboard(artifactsDir) }}
-            className="shrink-0 ml-auto p-0.5 rounded hover:bg-muted transition-colors"
-            title="复制路径"
-          >
-            <Copy className="size-2.5" />
-          </button>
-        </div>
-        {/* Context.md viewer row — shows agent's workspace context on click */}
-        <button
-          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 text-left border-b transition-colors"
-          onClick={openContextViewer}
-          data-context-viewer-row
-        >
-          <Settings2 className="size-3.5 shrink-0 text-purple-500" />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs truncate">工作上下文 (context.md)</div>
-            <div className="text-[9px] text-muted-foreground">org · 项目路径 · 技能组 — agent 感知的工作语境</div>
-          </div>
-          <Eye className="size-3.5 text-muted-foreground shrink-0" />
-        </button>
-        {/* Manifest.json viewer row — shows the structured task_spec snapshot on click */}
-        <button
-          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 text-left border-b transition-colors"
-          onClick={openManifestViewer}
-          data-manifest-viewer-row
-        >
-          <FileText className="size-3.5 shrink-0 text-amber-500" />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs truncate">规格快照 (manifest.json)</div>
-            <div className="text-[9px] text-muted-foreground">agent 读的规格账本 · 核对/调试</div>
-          </div>
-          <Eye className="size-3.5 text-muted-foreground shrink-0" />
-        </button>
-        {artifactsLoading ? (
-          <div className="px-3 py-3 text-[11px] text-muted-foreground flex items-center gap-2">
-            <Spinner className="size-3" /> 加载产物索引…
-          </div>
-        ) : artifactsError ? (
-          <div className="px-3 py-2 text-[11px] text-red-600">{artifactsError}</div>
-        ) : artifacts.length === 0 ? (
-          <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
-            ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
-            起草期的 spec 与票在上方「草稿批次」区看（agent 落盘即现，不必等 phases 写回）。
-          </div>
-        ) : (
-          <div className="divide-y">
-            {artifacts.map((a, i) => (
-              <button
-                key={i}
-                className="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-muted/50 text-left"
-                onClick={() => setViewing(a)}
-                data-artifact-row={i}
-              >
-                <span className="text-base shrink-0">{artifactIcon(a.path)}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs truncate">{a.title || a.path}</div>
-                  <div className="text-[9px] text-muted-foreground font-mono truncate">{a.path}</div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-[9px] text-muted-foreground">{a.updated_at.slice(0, 16).replace("T", " ")}</div>
-                  <div className="text-[9px] text-muted-foreground">by {a.by}</div>
-                </div>
-                <Eye className="size-3.5 text-muted-foreground shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      </SectionCard>
 
       {/* ── Assist-workflow run records (AC3/AC4/AC5/AC6) ── */}
       {runIds.length > 0 && (
-        <div className="rounded-lg border bg-background" data-workflow-runs-section>
-          <div className="px-3 py-2 border-b flex items-center justify-between">
-            <span className="text-xs font-medium flex items-center gap-1">
-              <Brain className="size-3" /> 工作流运行记录
-            </span>
-            <span className="text-[10px] text-muted-foreground">点击查看过程日志</span>
-          </div>
-          <div className="divide-y">
+        <SectionCard
+          icon={<Brain className="size-3.5 text-muted-foreground" />}
+          title="工作流运行记录"
+          hint="点击查看过程日志"
+          storageKey="authoring-runs"
+          data-workflow-runs-section
+        >
+          <div className="-mx-3 -my-2 divide-y">
             {runIds.map((rid) => {
               const r = runs[rid]
               const badge = r ? runBadge(r.status) : { label: "拉取中", className: "text-[9px] bg-muted text-muted-foreground" }
@@ -422,22 +423,24 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
               )
             })}
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* ── Decision memo (D10 — adopted suggestions) ── */}
       {decisions.length > 0 && (
-        <div className="rounded-lg border border-purple-400/30 bg-background p-3" data-decision-memo>
-          <div className="text-xs font-medium mb-1.5 flex items-center gap-1">
-            <Lightbulb className="size-3 text-purple-500" /> 决策备忘
-            <span className="text-[9px] text-muted-foreground font-normal">
-              {task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}
-            </span>
-          </div>
+        <SectionCard
+          icon={<Lightbulb className="size-3.5 text-purple-500" />}
+          title="决策备忘"
+          count={decisions.length}
+          hint={task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}
+          storageKey="authoring-memo"
+          className="border-purple-400/30"
+          data-decision-memo
+        >
           <ul className="text-[11px] space-y-1 text-muted-foreground">
             {decisions.map((d, i) => <li key={i}>• {d}</li>)}
           </ul>
-        </div>
+        </SectionCard>
       )}
 
       {/* ── Dialogs ── */}

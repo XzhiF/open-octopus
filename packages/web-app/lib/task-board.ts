@@ -77,6 +77,22 @@ export const COLUMN_STATUSES: Record<TaskBoardColumnId, readonly TaskStatus[]> =
 
 export type TasksByStatus = Record<TaskBoardStatus, Task[]>
 
+/** 看板列内序：创建时间新→旧（用户要求「从上到下从新到旧」）。纯函数、
+ *  返回新数组（与 groupTasksByStatus 同纪律 — 不 mutate 入参）；同刻创建
+ *  以 updated_at DESC 破平，再同以 id 稳定兜底。装桶按迭代序 push，故在
+ *  groupTasksByStatus 之前过一次本函数，每列天然继承新→旧。 */
+export function sortByCreatedDesc(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    const ca = Date.parse(a.created_at)
+    const cb = Date.parse(b.created_at)
+    if (ca !== cb) return cb - ca
+    const ua = Date.parse(a.updated_at)
+    const ub = Date.parse(b.updated_at)
+    if (ua !== ub) return ub - ua
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0
+  })
+}
+
 /** Group tasks into the 8 lifecycle buckets (raw persisted status). Tasks whose
  *  status is not a known column (defensive against future enum additions /
  *  legacy rows) are dropped rather than crashing the kanban. Does NOT mutate
