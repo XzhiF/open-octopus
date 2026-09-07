@@ -15,8 +15,9 @@
 //     unlinks them as links rather than following into the target (SW-BP14).
 //   - POSIX: directory symlink via `fs.symlinkSync(target, path, "dir")`.
 //   - Failure → copy the directory recursively as a degraded fallback
-//     (`fs.cpSync(target, linkPath, { recursive: true })`). The skill is still
-//     discoverable; only staleness on re-install is the trade-off.
+//     (`copyDirSync` from @octopus/shared — NOT fs.cpSync, which aborts the
+//     process on non-ASCII dest paths under Node v24/Windows). The skill is
+//     still discoverable; only staleness on re-install is the trade-off.
 //
 // "default" group (AC3, D17): an empty marker — selecting it means "use only the
 // built-in spec-field flow + shared skills (already exposed via plugin #1,
@@ -35,7 +36,7 @@
 
 import fs from "fs"
 import path from "path"
-import type { ResourceManager } from "@octopus/shared"
+import { copyDirSync, type ResourceManager } from "@octopus/shared"
 
 /** The built-in "default" group — an empty marker, not materialized (D17). */
 export const DEFAULT_SKILL_GROUP = "default"
@@ -136,8 +137,10 @@ export class PluginMaterializer {
       const linkMsg = linkErr instanceof Error ? linkErr.message : String(linkErr)
       // Fallback: copy the directory recursively. The skill is still
       // discoverable; staleness on re-install is the accepted trade-off.
+      // copyDirSync (not fs.cpSync) — cpSync fastfails the process on
+      // non-ASCII dest paths under Node v24/Windows (2026-09-07).
       try {
-        fs.cpSync(target, linkPath, { recursive: true })
+        copyDirSync(target, linkPath)
         return { group, skill, method: "copy", reason: `link failed: ${linkMsg}` }
       } catch (copyErr) {
         const copyMsg = copyErr instanceof Error ? copyErr.message : String(copyErr)

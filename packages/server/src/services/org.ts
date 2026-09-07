@@ -3,6 +3,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { load as parseYaml } from "js-yaml"
+import { copyDirSync } from "@octopus/shared"
 import { OrgDAO } from "../db/dao"
 import type { OrgRow } from "../db/types"
 
@@ -51,8 +52,11 @@ export function migrateOrgDirs(): number {
       console.log(`[orgs] Migrated ${entry.name} → orgs/${entry.name}`)
     } catch {
       // renameSync may fail across drives — fallback to copy + remove
+      // copyDirSync (not fs.cpSync): cpSync aborts the process on non-ASCII
+      // dest under Node v24/Windows, and an org dir name may be non-ASCII.
+      // Bonus: a throw here leaves the source intact (no rmSync of user data).
       try {
-        fs.cpSync(oldDir, newDir, { recursive: true })
+        copyDirSync(oldDir, newDir)
         fs.rmSync(oldDir, { recursive: true, force: true })
         migrated++
         console.log(`[orgs] Migrated (copy) ${entry.name} → orgs/${entry.name}`)

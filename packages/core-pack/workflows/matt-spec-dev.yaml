@@ -304,12 +304,12 @@ nodes:
       }
       ```
 
-      E2E 票（文件名 NN-e2e-* 的末张验收票）改用:
+      E2E 票（文件名 NN-e2e-* 的末张验收票）改用（**双模式：先读票上「类型」声明选路**）:
       ```json
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是 E2E 验证者，执行票 <spec 文件> 定义的最终验收。\n使用 matt-e2e-test-methodology 方法论 + e2e-harness 库:\n1. 读 spec 的 Verification Strategy / AC 表 + 票的 Verification Method\n2. 需要真实服务时自行启动 dev server（端口冲突用 --isolated）\n3. API/浏览器/DB 三方交叉验证（反假跑: 真实服务、断言业务值、≥2 种证据、\n   E2E_TD_ 前缀数据、测后清理）\n4. 证据写 $inputs.batch_dir/e2e-data/（截图 e2e-screenshots/，脚本 e2e-scripts/）\n5. 失败项: Quick Fix 一轮 → 修不动则 diagnosing-bugs 深挖 → 仍失败如实标 Status 并写原因\n6. 票文件原位回写 Status + 结果摘要\n\n不要伪造通过。输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是 E2E 验证者，执行票 <spec 文件> 定义的最终验收。\n使用 matt-e2e-test-methodology 方法论 + e2e-harness 库:\n0. 模式分流（以票的「类型」声明为准；票未声明则按 spec 验收面判定）：\n   - 「browser 走查」→ Playwright 真起浏览器 + 截图/vision 证据\n   - 「API 级走查（不开浏览器）」→ 真实服务 curl + sqlite 直查 + 手算交叉，\n     **禁起浏览器、跳截图步骤**（无 UI 的 phase 此为默认，不为不存在的页面烧成本）\n1. 读 spec 的 Verification Strategy / AC 表 + 票的 Verification Method\n2. 需要真实服务时自行启动 dev server（端口冲突用 --isolated）\n3. 反假跑纪律（两模式通用）: 真实服务、断言业务值、≥2 种证据、\n   E2E_TD_ 前缀数据、测后清理恢复\n4. 证据写 $inputs.batch_dir/e2e-data/（截图 e2e-screenshots/，脚本 e2e-scripts/；API 级模式写响应体/SQL 原样输出/手算记录）\n5. 失败项: Quick Fix 一轮 → 修不动则 diagnosing-bugs 深挖 → 仍失败如实标 Status 并写原因\n6. 票文件原位回写 Status + 结果摘要\n\n不要伪造通过。输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["matt-e2e-test-methodology", "diagnosing-bugs", "e2e-harness"],
         "depends_on": ["ticket-XX"]
       }

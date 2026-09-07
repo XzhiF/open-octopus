@@ -5,7 +5,7 @@
 //
 import fs from 'fs'
 import path from 'path'
-import type { CloneDef } from '@octopus/shared'
+import { copyDirSync, type CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
 import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
@@ -115,7 +115,7 @@ export class CloneInitService {
 
       try {
         fs.mkdirSync(targetRoot, { recursive: true })
-        fs.cpSync(srcDir, destDir, { recursive: true })
+        copyDirSync(srcDir, destDir)
         result.filesCreated.push(key)
       } catch (err: unknown) {
         // Non-fatal: plugin scan simply finds one less skill.

@@ -281,6 +281,49 @@ describe("ResourceProvisioner", () => {
     })
   })
 
+  describe("non-ASCII workspace path (2026-09-07 v4 dispatch crash regression)", () => {
+    // Node v24/Windows: fs.cpSync({recursive:true}) with a DEST path
+    // containing non-ASCII segments hard-aborts the whole process
+    // (0xC0000409 fastfail — no JS exception, no V8 report, no stderr
+    // stack). v4 task workspaces are named after the task title
+    // (e.g. `task全局token计费-0907-144121`), so __engine_init__
+    // provisioning hit this and killed the server mid-dispatch — the bug
+    // went undetected for months because every prior test task title was
+    // ASCII. ResourceProvisioner must stay on copyDirSync (readdir +
+    // copyFileSync recursion). Note: if cpSync ever re-enters this chain,
+    // on Windows the failure mode is NOT a red assertion — the worker
+    // process dies. Keep this test ASCII-free of skips.
+    it("provisions a skill into a workspace dir with a Chinese name segment", async () => {
+      const wsChinese = path.join(tempDir, "task我现在需要一个全局token计费的功能-0907-144121")
+      fs.mkdirSync(wsChinese, { recursive: true })
+
+      const skillSourceDir = path.join(registryDir, "skills", "octo-dev-copilot")
+      fs.mkdirSync(path.join(skillSourceDir, "references"), { recursive: true })
+      fs.writeFileSync(path.join(skillSourceDir, "SKILL.md"), "# Octo Dev Copilot")
+      fs.writeFileSync(path.join(skillSourceDir, "references", "guide.md"), "# Guide")
+
+      const manager = createMockManager(new Map([
+        ["skill:octo-dev-copilot", makeEntry({
+          name: "octo-dev-copilot",
+          type: "skill",
+          installPath: skillSourceDir,
+        })],
+      ]))
+      const provisioner = new ResourceProvisioner(manager)
+
+      const result = await provisioner.provision(
+        [{ type: "skill", name: "octo-dev-copilot" }],
+        wsChinese,
+      )
+
+      expect(result.failed).toHaveLength(0)
+      expect(result.provisioned).toBe(1)
+      const destDir = path.join(wsChinese, ".claude", "skills", "octo-dev-copilot")
+      expect(fs.readFileSync(path.join(destDir, "SKILL.md"), "utf-8")).toContain("Octo Dev Copilot")
+      expect(fs.existsSync(path.join(destDir, "references", "guide.md"))).toBe(true)
+    })
+  })
+
   describe("error handling", () => {
     it("fails when resource not found in registry", async () => {
       const manager = createMockManager(new Map())

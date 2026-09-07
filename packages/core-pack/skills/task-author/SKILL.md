@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；验证方式类型阶梯——功能票只做 unit/API/DB 层不起浏览器、browser 走查恒唯一收编于末张 NN-e2e-* 票且模式随验收面自动选（无 UI phase 天然 API 级走查，有 UI 可经 spec 纪律拍板零浏览器）；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
-version: 3.4.0
+version: 3.5.2
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -181,7 +181,8 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
 2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
 3. 产物齐全标准（= v4 gate 的「spec 文件存在」检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（matt-verified-tickets 规则，含末张 E2E 票）。
-4. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
+4. **验证方式类型阶梯（防重复烧钱，票写作硬纪律）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（此禁令无条件，不随 spec 纪律豁免）；UI 功能票的渲染/交互断言（列齐全、徽标、币种换算即时生效等）一律收编进末张 `NN-e2e-*` 票的走查步骤。**末张 `NN-e2e-*` 是全 phase 唯一许起浏览器的一张，模式随验收面自动选定**：phase 验收物含 UI/页面交互 → **browser 走查**（Playwright+截图证据）；纯后端/无 UI phase（交付物=API/DB/CLI 态）→ **API 级走查**（curl+sqlite+手算，此为天然形态，无需任何声明）——不给不存在的页面烧浏览器/vision 成本。有 UI 时若 spec「验证纪律」节按 token 预算仍拍板全流程不做浏览器，末张降 API 级走查。模式在一处定死（验收面天然决定，或 spec 拍板），各票类型行照抄，不留票级自由裁量。功能票写了 browser E2E = 与末张票双跑，多烧一整轮成本——写完自查一遍票类型。
+5. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
 
 ### 写权环（单写者、单方向——破坏它 = merge 灾难）
 

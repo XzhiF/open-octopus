@@ -27,7 +27,7 @@ The core enhancement: each ticket gets a **Verification Method** section in addi
 ```markdown
 ## Verification Method
 
-**Verification type**: [unit test / integration test / browser E2E / contract test / manual checklist]
+**Verification type**: [unit test / integration test / contract test / manual checklist]（功能票限此四类；**browser E2E 只出现在末张 `NN-e2e-*` 验收票**——见 Rule 5）
 
 **Prerequisites**:
 - [ ] [e.g., backend compiles]
@@ -53,7 +53,7 @@ Step 6: Cache verification
 Step 7: Cross-validation: API <-> DB <-> Cache
 Step 8: Cleanup
 
-### Browser E2E (if applicable)
+### Browser E2E（仅末张 `NN-e2e-*` 验收票，功能票禁写）
 
 1. Playwright script: login -> navigate -> operate -> assert -> screenshot
 
@@ -78,3 +78,4 @@ Step 8: Cleanup
 2. **Executable verification** — specific commands, specific SQL, specific assertions (not "test the API")
 3. **DAG structure** — tickets without mutual blockers can run concurrently in the same stage (consumed by `matt-dev-pipeline` Phase 1)
 4. **One session size** — each ticket's implementation + verification fits in one matt-dev-runner agent call
+5. **Verification-type ladder（browser 去重）** — 功能票的验证类型限 unit / integration(API↔DB 交叉) / contract / manual：不起 dev server 走浏览器、不做故事走查。UI 功能票的渲染与交互断言（列齐全/徽标/换算即时生效等）**收编为末张 `NN-e2e-*` 票的走查步骤**，功能票本体只验到 API 响应 + DB 直查。全 phase 真起浏览器 + 留截图证据的地方**恒唯一 = 末张验收票**（否则同一 UI 检查双跑，白烧 vision/playwright 成本）。末张票模式**随验收面自动选**：有 UI/页面交互 → browser 走查；纯后端/无 UI phase → API 级走查（curl+sqlite+手算，天然形态无需声明——不给不存在的页面烧成本）。有 UI 时若 spec 验证纪律显式拍板「全流程不做浏览器 E2E」，末张同为 API 级——但功能票禁令无条件，不随该拍板豁免。

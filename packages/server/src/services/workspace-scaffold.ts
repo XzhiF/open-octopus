@@ -148,9 +148,29 @@ export class WorkspaceScaffold {
       if (fs.existsSync(dest)) continue
       const src = path.join(corePackRoot, skillName)
       if (fs.existsSync(path.join(src, "SKILL.md"))) {
-        fs.cpSync(src, dest, { recursive: true })
+        this.copyDirSafe(src, dest)
         console.log(`[WorkspaceScaffold] copied skill: ${skillName}`)
       }
+    }
+  }
+
+  /**
+   * Recursive copy WITHOUT fs.cpSync. Node v24 on Windows hard-aborts the
+   * process (0xC0000409 fastfail, no JS error, no V8 report) inside cpSync
+   * when the DESTINATION path contains non-ASCII segments — e.g. a task
+   * workspace dir named `task:{中文标题}-MMDD-HHmmss`. Repro: cpSync(asciiSrc,
+   * 'C:\\…\\task我现在需要…\\x', {recursive:true}) kills node silently.
+   * mkdirSync/writeFileSync/copyFileSync all handle the same paths fine, so we
+   * do the recursion by hand with those primitives (2026-09-07 v4 dispatch
+   * crash investigation).
+   */
+  private copyDirSafe(src: string, dest: string): void {
+    fs.mkdirSync(dest, { recursive: true })
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      const s = path.join(src, entry.name)
+      const d = path.join(dest, entry.name)
+      if (entry.isDirectory()) this.copyDirSafe(s, d)
+      else if (entry.isFile()) fs.copyFileSync(s, d)
     }
   }
 

@@ -1,4 +1,5 @@
 import type { ResourceManager } from './resource-manager'
+import { copyDirSync } from './fs-utils'
 import fs from 'fs'
 import path from 'path'
 
@@ -96,7 +97,12 @@ export class ResourceProvisioner {
           throw new Error(`Skill directory not found: ${sourcePath}`)
         }
 
-        fs.cpSync(sourcePath, destPath, { recursive: true })
+        // copyDirSync (readdir + copyFileSync recursion) — NOT fs.cpSync:
+        // Node v24/Windows fastfails the whole process (0xC0000409, no JS
+        // error) when cpSync dest contains non-ASCII segments, e.g. a task
+        // workspace dir named after a Chinese task title (2026-09-07 v4
+        // dispatch crash).
+        copyDirSync(sourcePath, destPath)
         break
       }
     }
