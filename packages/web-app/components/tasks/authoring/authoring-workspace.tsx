@@ -355,20 +355,28 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         return v.length > 0 || v.includes("${")
       })
     })
-    return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown, specTreeReady }
+    return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown, specTreeReady, rowRepos: true }
   }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady])
 
-  // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行四行天然不绿，不崩即可）
+  // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行五行天然不绿，不崩即可）
+  // repos 行不并入 canEnqueue —— 本地无 fs 无从验证，恒乐观 ✅；✗ 只由服务端
+  // 409 missing 回填（与 inputs 行的「服务端权威」同模式），按钮不禁点。
   const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
   // v4 gate 409 missing 反解（票 04 契约 `phase:<i>:<why>`：no-phases /
-  // spec-missing / workflow-ref / input:<key>）→ 回填四行清单 ✗ + 人话。
-  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs", string[]>>(() => {
-    const hits: Record<"phases" | "spec" | "bind" | "inputs", string[]> = { phases: [], spec: [], bind: [], inputs: [] }
+  // spec-missing / workflow-ref / input:<key>；仓库预检契约 `project:<name>`
+  // 2026-09-08）→ 回填五行清单 ✗ + 人话。
+  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]>>(() => {
+    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [] }
     for (const key of gateMissing ?? []) {
+      // 项目仓库预检键（服务端权威：repos/index.md 解析）—— 先拦前缀再走 catch-all。
+      if (key.startsWith("project:")) {
+        hits.repos.push(`仓库不可解析：${key.slice("project:".length)}（repos/index.md local 路径缺失/失效）`)
+        continue
+      }
       const m = /^phase:(\d+):(.+)$/.exec(key)
       if (!m) { hits.phases.push(key); continue }
       const i = Number(m[1])
@@ -620,12 +628,12 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
-          {/* enqueue checklist — v4 四行 phase 契约（server gateV4Phases 同源）；
-              非 v4 历史行同样渲染（四行不绿）。状态只显；按钮在顶栏。 */}
+          {/* enqueue checklist — v4 五行 phase 契约（server gateV4Phases +
+              项目仓库预检同源）；非 v4 历史行同样渲染（五行不绿）。状态只显；按钮在顶栏。 */}
           <SectionCard
             icon={<ClipboardCheck className="size-3.5 text-muted-foreground" />}
             title="入队清单"
-            count={`${[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs].filter(Boolean).length}/4`}
+            count={`${[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRepos].filter(Boolean).length}/5`}
             hint="v4 phase 契约"
             storageKey="authoring-enqueue"
           >
@@ -636,6 +644,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                   { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: v4Rows.specTreeReady ? "逐 phase spec（磁盘已核）" : "逐 phase spec（批次目录 spec.md）" },
                   { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
                   { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
+                  { id: "repos", ok: v4Rows.rowRepos, hits: gateHits.repos, label: "项目仓库（可解析）" },
                 ] as const
               ).map((row) => {
                 const failed = row.hits.length > 0
@@ -663,7 +672,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
               })}
               {v4Rows.inputsUnknown && (
                 <p className="text-[10px] text-muted-foreground">
-                  存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
+                  存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威（项目仓库可解析性同理，入队预检核实）。
                 </p>
               )}
               <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>

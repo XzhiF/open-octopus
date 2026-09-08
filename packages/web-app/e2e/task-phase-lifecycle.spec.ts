@@ -6,7 +6,7 @@
 // 零 mock、零 skip；agent 执行节点用 bash-stub 工作流模拟 —— 票 14 stub 原则，
 // 活体 LLM 不在 E2E 域）：
 //   新建 coding 任务（API 直造 v4 fixture，票 11/12 同法）→ 拆分/绑定经 UI 反映
-//   → [入队]（v4 gate 四行清单，真点击）→ 触发 phase1（真点击，真调度 claim →
+//   → [入队]（v4 gate 五行清单，真点击）→ 触发 phase1（真点击，真调度 claim →
 //   ws 首建 + git worktree + seed 下行 + bash 执行）→ 终态 collect 上行 + SSE →
 //   待验收三栏（真弹窗）→ 打回带反馈（真 POST：账本 rejected + fix-feedback-r1.md
 //   + round2 同 worktree 开跑 + seed 反映 home 新 spec）→ 通过（auto_advance →
@@ -381,7 +381,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
   })
 
   // ── S1 新建 + v4 fixture 直造 + UI 反映 + [入队] 真点击 ──────────────
-  test("S1 新建 coding 任务（v4 拆分/绑定 fixture）→ 入队清单四行齐 → 真点击入队 → 信封落库", async ({ page }) => {
+  test("S1 新建 coding 任务（v4 拆分/绑定 fixture）→ 入队清单五行齐 → 真点击入队 → 信封落库", async ({ page }) => {
     // git fixtures + repos index
     const repoA = makeFixtureRepo(`${RUN}-projA`, { context: true })
     const repoB = makeFixtureRepo(`${RUN}-projB`, { context: false })
@@ -417,7 +417,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     })
     taskVersion = put.version
 
-    // UI 反映：draft 卡 → 弹窗 → 四行清单 + phase 绑定清单
+    // UI 反映：draft 卡 → 弹窗 → 五行清单 + phase 绑定清单
     await page.goto("/tasks")
     const card = page.locator(`[data-task-column="draft"] [data-task-id="${taskId}"]`)
     await expect(card).toBeVisible({ timeout: 20_000 })
@@ -425,7 +425,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     const modal = page.getByRole("dialog")
     const checklist = modal.locator('[data-testid="enqueue-checklist-v4"]')
     await expect(checklist).toBeVisible({ timeout: 15_000 })
-    for (const row of ["phases", "spec", "bind", "inputs"]) {
+    for (const row of ["phases", "spec", "bind", "inputs", "repos"]) {
       await expect(checklist.locator(`[data-checklist-v4="${row}"]`)).toContainText("✅", { timeout: 15_000 })
     }
     await expect(modal.locator("[data-phase-binding-list]")).toBeVisible({ timeout: 15_000 })

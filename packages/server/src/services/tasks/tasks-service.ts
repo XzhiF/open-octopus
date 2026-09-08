@@ -59,6 +59,8 @@ import type { SSEService } from "../sse"
 // matrix (K3 派生不存, 唯一真相).
 import { deriveTaskView, type TaskView, type TaskPhaseView, type DeriveExecutionInput } from "./derive-task-view"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
+// trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
+import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from "../scheduler/ws-launch"
 import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
 // Cycle-free: execution-service-registry's closure (execution/workspace/workflow/
@@ -1455,6 +1457,22 @@ export class TasksService {
     let v4Phases: TaskV4PhaseConfig[] | undefined
     if (taskSpec.format === "v4") {
       const { missing, phases } = this.gateV4Phases(id, taskSpec)
+      // B1 项目仓库预检（入列前确定, 2026-09-08）：每个选中项目必须能经
+      // repos/index.md 解析到本地 clone —— 这是 trigger 预建 worktree 的
+      // 前置条件；解析不动的项目在入队时就以 `project:<name>` 挡住（清单
+      // 第 5 行 ✗），而不是等触发执行/runner claim 才炸。project_ids 为空
+      // → vacuous 通过（composite 子单元各自带项目在 dispatch 校验）。
+      const gateProjects = parseJSON<string[]>(existing.project_ids, [])
+      if (gateProjects.length > 0) {
+        const git = new WorkspaceGit()
+        for (const name of gateProjects) {
+          try {
+            git.resolveRepoPath(existing.org ?? "", name)
+          } catch {
+            missing.push(`project:${name}`)
+          }
+        }
+      }
       if (missing.length > 0) {
         throw new TaskReadyGateError(
           `Task not ready: missing ${missing.join(", ")}`,
@@ -1691,19 +1709,7 @@ export class TasksService {
       )
     }
 
-    const roots = this.scheduleDAO
-      .findSchedulesByOrigin("task", id)
-      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
-    const parked = roots.find((r) => r.status === "draft")
-    if (!parked) {
-      if (roots.some((r) => r.status === "queued")) {
-        throw new TaskStatusConflictError("任务已触发，处于排队状态")
-      }
-      if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
-        throw new TaskStatusConflictError("任务正在执行中")
-      }
-      throw new TaskStatusConflictError("未找到已入队的执行计划，请重新入队")
-    }
+    const parked = this.locateParkedEnvelope(id)
 
     const now = new Date()
     const nowIso = now.toISOString()
@@ -1736,6 +1742,134 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)!
     return toDTO(row)
+  }
+
+  /** 定位本任务停放(draft)的根信封；找不到时按排队/执行中/缺信封分别 409
+   *  （triggerTask 与 triggerTaskWithPrebuild 共用，错误文案逐字保留）。 */
+  private locateParkedEnvelope(id: string): ScheduleRow {
+    const roots = this.scheduleDAO
+      .findSchedulesByOrigin("task", id)
+      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
+    const parked = roots.find((r) => r.status === "draft")
+    if (!parked) {
+      if (roots.some((r) => r.status === "queued")) {
+        throw new TaskStatusConflictError("任务已触发，处于排队状态")
+      }
+      if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
+        throw new TaskStatusConflictError("任务正在执行中")
+      }
+      throw new TaskStatusConflictError("未找到已入队的执行计划，请重新入队")
+    }
+    return parked
+  }
+
+  /** POST /:id/trigger 的生产入口（trigger-prebuild 2026-09-08, 特性B）：
+   *  「触发执行」**当场**把 workspace + git worktree 建出来 —— 建不出来直接
+   *  409 弹回（任务保持 ready、信封保持停放、不排队不唤醒），建得出才走
+   *  triggerTask 的 draft→queued 翻转。executor 稍后 claim 时命中
+   *  tasks.workspace_id 绑定走复用路径（同名同支由 ws-launch 共享纯函数保证）。
+   *
+   *  同步版 triggerTask 保持原语义（无预建）—— tasks-trigger-mutex 等既有
+   *  同步调用测试零改动；生产路由只走本方法。 */
+  async triggerTaskWithPrebuild(id: string, at?: string): Promise<TaskDTO> {
+    const existing = this.taskDAO.getById(id)
+    if (existing) {
+      // 预建前置：镜像同步在途时先等（worktree 必从最新 main 切 + 避开 fetch
+      // 期 index.lock 竞态）。仅 v4 且 ready 态才值得等；wait 超时放行。
+      let parkedForPrebuild: ScheduleRow | undefined
+      if (this.workspaceService && existing.status === "ready") {
+        try {
+          parkedForPrebuild = this.locateParkedEnvelope(id)
+        } catch {
+          parkedForPrebuild = undefined // 排队/执行中等错误交给 triggerTask 原样抛
+        }
+        if (parkedForPrebuild && this.prebuildIsV4Simple(parkedForPrebuild)) {
+          await this.repoSyncService?.waitUntilIdle(id, 45_000)
+        }
+        if (parkedForPrebuild) this.prebuildTaskWorkspace(existing, parkedForPrebuild)
+      }
+    }
+    return this.triggerTask(id, at)
+  }
+
+  /** 预建适用性：信封 config 是 v4 且非 composite 且带真实项目（composite 的
+   *  coordinator-ws 无项目是 by-design（spec D4），executor 复用判定也排除它）。 */
+  private prebuildIsV4Simple(parked: ScheduleRow): boolean {
+    const config = parseJSON<{
+      format?: string
+      workflow_chain?: Array<{ workflow_ref?: string }>
+      workspace_spec?: { projects?: Array<{ name?: string }> }
+    }>(parked.config, {})
+    if (config.format !== "v4") return false
+    if (isCompositeWorkflowConfig(config)) return false
+    const projects = (config.workspace_spec?.projects ?? []).filter((p) => p.name && p.name !== "default")
+    return projects.length > 0
+  }
+
+  /** 同步预建 workspace+worktree（幂等：已绑定存活 → 只做 worktree 自愈）。
+   *  任何失败 → TaskStatusConflictError（路由 409）；不翻信封、不动 status。
+   *  createFromSpec 自带 worktree 失败目录回滚（B0），失败不留半建孤儿。 */
+  private prebuildTaskWorkspace(existing: TaskRow, parked: ScheduleRow): void {
+    const ws = this.workspaceService
+    if (!ws) return
+    const config = parseJSON<{
+      format?: string
+      workflow_chain?: Array<{ workflow_ref: string; input_values: Record<string, string> }>
+      workspace_spec?: {
+        org?: string
+        branch_prefix: string
+        projects: Array<{ name: string; source_path: string; group?: string }>
+      }
+    }>(parked.config, {})
+    if (!this.prebuildIsV4Simple(parked)) return
+
+    // 已绑定且 ws 行活着 → 自愈后直接返回（重触发幂等，绝不 rebuild 活 ws）。
+    if (existing.workspace_id) {
+      const bound = ws.getById(existing.workspace_id)
+      if (bound) {
+        try {
+          ws.ensureWorktreesForReuse(bound)
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err)
+          throw new TaskStatusConflictError(`预建工作区失败（任务保持已入队，未排队）: ${message}`)
+        }
+        return
+      }
+      // 绑定悬挂（ws 被带外删除）→ 落到下方重建（executor 同款语义）。
+    }
+
+    const spec = config.workspace_spec ?? { branch_prefix: "", projects: [] }
+    const projects = spec.projects.filter((p) => p.name && p.name !== "default")
+    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
+      scheduleId: parked.id,
+      // scheduler-service.ts:1555 同款派生：task 信封恒 requirement。
+      triggerSource: (parked.origin_type ?? "cron") === "cron" ? "cron" : "requirement",
+      config,
+      taskRow: existing,
+    })
+    try {
+      const created = ws.createFromSpec({
+        org: spec.org ?? existing.org,
+        name: workspaceName,
+        projects,
+        branch_prefix: branchPrefix,
+        branch_suffix: branchSuffix,
+        source: "scheduler",
+        source_schedule_id: parked.id,
+        workflow_chain: config.workflow_chain ?? [],
+      })
+      // 绑定写回（无 version bump —— executor :298-303 同款系统事件纪律）。
+      this.taskDAO
+        .getDb()
+        .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+        .run(created.id, new Date().toISOString(), existing.id)
+      console.log(
+        `[TasksService] trigger prebuild: workspace ${created.id} (${workspaceName}) bound to task ${existing.id} — ${projects.length} worktree(s) ready`,
+      )
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      throw new TaskStatusConflictError(`预建工作区失败（任务保持已入队，未排队）: ${message}`)
+    }
   }
 
   /** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started

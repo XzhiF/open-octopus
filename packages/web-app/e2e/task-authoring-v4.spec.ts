@@ -6,7 +6,7 @@
 //   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + manifest.json 快照带旗标
 //   ④ 右栏「添加 Phase」手动建行（workflow 走内置目录初选）→ 整数组 PUT 落库
 //   ⑤ 行上 spec.md → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
-//   ⑥ 入队清单四行随写入实时变绿（phases/spec/bind 三行 ✅）
+//   ⑥ 入队清单五行随写入实时变绿（phases/spec/bind 三行 ✅；repos 行服务端权威恒乐观）
 //   ⑦ DELETE 清草稿 + home。
 //
 // Fixture 纪律同 task-phase-* 系（R1/R3：UI 动作走浏览器、断言回 API+DB+fs；

@@ -415,7 +415,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       />,
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
-    for (const row of ["phases", "spec", "bind", "inputs"]) {
+    for (const row of ["phases", "spec", "bind", "inputs", "repos"]) {
       expect(list.querySelector(`[data-checklist-v4="${row}"]`)).toBeTruthy()
     }
     // goal/ac 卡退役（v3 保留 — 见上组用例）
@@ -484,6 +484,49 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("Phase 2：批次目录中 spec 文件缺失")
       expect(list.querySelector('[data-checklist-v4="inputs"]')!.textContent).toContain("必填输入 idea")
     })
+  })
+
+  it("gate 409 `project:<name>` 反解 → repos 行 ✗ + 人话，不误伤其它行", async () => {
+    // 仓库预检（B1 服务端）回填：本地无从验证 → 恒乐观 ✅，✗ 只来自 409。
+    mockReadyTask.mockRejectedValueOnce(
+      new (await import("@/lib/tasks-api")).TaskReadyGateError(
+        "Task not ready: missing project:demo-repo",
+        ["project:demo-repo"],
+      ),
+    )
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-repos", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
+    const btn = screen.getByTestId("task-enqueue") as HTMLButtonElement
+    await waitFor(() => expect(btn.disabled).toBe(false))
+    fireEvent.click(btn)
+    await waitFor(() => {
+      const list = screen.getByTestId("enqueue-checklist-v4")
+      const repos = list.querySelector('[data-checklist-v4="repos"]')!
+      expect(repos.textContent).toContain("✗")
+      expect(repos.textContent).toContain("仓库不可解析：demo-repo")
+      // 其它行不被 project: 键污染（catch-all 之前拦截）
+      expect(list.querySelector('[data-checklist-v4="phases"]')!.textContent).toContain("✅")
+    })
+  })
+
+  it("v4 无 project_ids：repos 行恒 ✅ 且不禁点（服务端权威，✗ 只由 409 回填）", async () => {
+    render(
+      <AuthoringWorkspace
+        task={{ ...makeV4Task("v4-norepo", [COMPLETE_PHASE_1, COMPLETE_PHASE_2]), project_ids: [] } as never}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
+    expect(list.querySelector('[data-checklist-v4="repos"]')!.textContent).toContain("✅")
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false)
   })
 
   it("AC5: autoAdvance 开关可见可切 — 切换走重取 version 的 PUT", async () => {

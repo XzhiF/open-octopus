@@ -548,7 +548,9 @@ export function createTasksRoutes(
       at = parsed.data
     }
     try {
-      const task = service.triggerTask(c.req.param("id"), at)
+      // trigger-prebuild (2026-09-08): 生产入口走异步包装 —— 当场同步建
+      // workspace+worktree（失败 409 弹回，不排队），再走 triggerTask 翻转。
+      const task = await service.triggerTaskWithPrebuild(c.req.param("id"), at)
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
