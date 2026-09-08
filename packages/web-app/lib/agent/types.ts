@@ -277,6 +277,7 @@ export interface ContextUsageData {
 export type AgentSSEEvent =
   | { event: 'text_delta'; data: { content: string } }
   | { event: 'tool_call'; data: { id: string; name: string; input: unknown; status: 'pending' | 'success' | 'fail'; result?: unknown } }
+  | { event: 'ask_user_question'; data: { tool_call_id: string; questions: unknown } }
   | { event: 'status'; data: { phase: string; message: string } }
   | { event: 'confirm'; data: { event_id: string; type: 'dangerous_command' | 'evolution_major'; operation: string; detail: string } }
   | { event: 'context_usage'; data: ContextUsageData }

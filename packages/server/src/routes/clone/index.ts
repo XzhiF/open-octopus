@@ -644,6 +644,12 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
             }
+            case 'ask_user_question':
+              // 显式问题标记（PreToolUse hook 捕获，interactionSession deny 后
+              // 模型不再收到答案）。前端以此兜底补全 AskUserQuestion toolCall 的
+              // input（content_block 事件顺序异常时）并保证会话行可恢复渲染。
+              await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              break
             case 'tool_result': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
               if (tc) { tc.result = chunk.content; tc.isError = chunk.isError; tc.status = chunk.isError ? 'fail' : 'result' }

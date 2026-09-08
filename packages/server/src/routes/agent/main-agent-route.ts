@@ -370,6 +370,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
             }
+            case 'ask_user_question':
+              // 与 clone chat 同构（2026-09-09）：interactionSession deny 后的
+              // 显式问题标记，前端 ChatArea 兜底补全 AskUserQuestion toolCall。
+              await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              break
             case 'tool_result': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
               if (tc) { tc.result = chunk.content; tc.isError = chunk.isError; tc.status = chunk.isError ? 'fail' : 'result' }

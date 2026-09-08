@@ -418,6 +418,12 @@ export class CloneRuntime {
       model: modelOverride ?? this.cloneDef.config.model,
       agents: subagents,
       plugins: this.getPlugins(taskHomePath),
+      // AskUserQuestion 交互接管（2026-09-09）：不传则 canUseTool 直接 allow，
+      // SDK 在 headless 下把工具「执行」成 input 原样回显 —— 模型把自己的问题
+      // 当成用户答案，同一轮继续输出，Web 端的 QuestionCard 永远等不到回答。
+      // deny 文案指示模型结束回合等待下一条 user 消息（ChatArea 的
+      // QuestionCard 答完即以 user 消息续流，provider resume 接续会话）。
+      interactionSession: true,
       // Path guard: for task-author sessions, block Write/Edit outside the
       // task home directory. This is a HARD enforcement — the agent CANNOT
       // write to the project codebase or other locations. Rules file is

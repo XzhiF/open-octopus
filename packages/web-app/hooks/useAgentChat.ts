@@ -359,6 +359,33 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
           setStreamTimeline(timelineRef.current)
         }
       },
+      onAskUserQuestion: (data) => {
+        // AskUserQuestion 显式标记（interactionSession 拦截后 server 发出）：
+        // 保证 toolCalls 里有带 questions input 的记录 —— content_block 事件
+        // 缺失/乱序时的唯一兜底。id 命中既有记录则只补 input，不重复建条目。
+        const id = data.tool_call_id
+        const prev = toolCallsRef.current
+        const idx = prev.findIndex((tc) => tc.id === id)
+        let next: ToolCallRecord[]
+        let newId: string | null = null
+        if (idx >= 0) {
+          if (prev[idx].input) return
+          next = [...prev]
+          next[idx] = { ...prev[idx], input: data.questions }
+        } else {
+          newId = id
+          next = [...prev, {
+            id, name: 'AskUserQuestion', input: data.questions,
+            status: 'start', started_at: Date.now(),
+          }]
+        }
+        toolCallsRef.current = next
+        setToolCalls(next)
+        if (newId) {
+          timelineRef.current = [...timelineRef.current, { kind: 'tool', id: newId }]
+          setStreamTimeline(timelineRef.current)
+        }
+      },
       onStatus: (data) => {
         setStatusMessage(data.message)
       },

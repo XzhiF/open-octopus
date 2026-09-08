@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { Send, Square, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
@@ -88,6 +88,7 @@ export function ChatArea({
   const [slashOpen, setSlashOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const unansweredAsk = useMemo(() => findUnansweredAsk(messages), [messages])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -267,6 +268,20 @@ export function ChatArea({
             {/* Streaming indicator — only when no thinking and no content yet */}
             {streaming && !streamContent && !streamThinking && (
               <StreamingIndicator />
+            )}
+
+            {/* AskUserQuestion 回合后卡片（2026-09-09）：流式期间的 QuestionCard
+                disabled 且 done 即随 timeline 卸载 —— 回合结束（provider 以
+                deny 让模型停下等回答）后这里是唯一可点入口。答案走 onSend
+                成为下一条 user 消息，clone 会话 resume 续流；用户一旦发言，
+                findUnansweredAsk 反向扫描先见 user → 卡片自动消失。
+                也覆盖重开弹窗/刷新后的恢复：持久化行 metadata.tool_calls。 */}
+            {!streaming && unansweredAsk && (
+              <QuestionCard
+                key={unansweredAsk.key}
+                message={{ toolInput: unansweredAsk.input } as ChatMessage}
+                onAnswer={(content) => onSend(content)}
+              />
             )}
 
             {/* Confirm cards */}
@@ -472,3 +487,26 @@ function AutoFollowPre({ text }: { text: string }) {
   )
 }
 
+
+/** AskUserQuestion 恢复判据（纯函数，单测覆盖）：从尾部反向找「未回答的
+ *  问题」—— 遇 user 消息即停（用户已作答 = 问题被消费）。input 缺失时回退
+ *  result 自带的 {questions}（interactionSession 上线前的旧回显行同样能恢复
+ *  成可点卡片）；解析不出非空 questions 数组 → 视为无问题。 */
+export function findUnansweredAsk(
+  messages: AgentMessage[],
+): { key: string; input: unknown } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'user') return null
+    if (m.role !== 'assistant' || !m.tool_calls?.length) continue
+    const ask = m.tool_calls.find((tc) => tc.name === 'AskUserQuestion')
+    if (!ask) continue
+    let raw: unknown = ask.input ?? ask.result
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw) } catch { raw = null }
+    }
+    const qs = (raw as { questions?: unknown } | null)?.questions
+    return Array.isArray(qs) && qs.length > 0 ? { key: `${m.id}:${ask.id}`, input: raw } : null
+  }
+  return null
+}

@@ -10,6 +10,8 @@ export interface SSEHandlers {
   onThinking?: (content: string) => void
   onThinkingDone?: () => void
   onToolCall?: (data: Extract<AgentSSEEvent, { event: 'tool_call' }>['data']) => void
+  /** AskUserQuestion 显式标记（server interactionSession 拦截后发出）。 */
+  onAskUserQuestion?: (data: Extract<AgentSSEEvent, { event: 'ask_user_question' }>['data']) => void
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
   onContextUsage?: (data: import('@/lib/agent/types').ContextUsageData) => void
@@ -90,6 +92,9 @@ export function useSSEConnection() {
                   break
                 case 'tool_call':
                   handlers.onToolCall?.(data)
+                  break
+                case 'ask_user_question':
+                  handlers.onAskUserQuestion?.(data)
                   break
                 case 'status':
                   handlers.onStatus?.(data)
