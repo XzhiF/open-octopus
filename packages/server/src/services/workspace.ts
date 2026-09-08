@@ -7,7 +7,7 @@ import type { WorkspaceRow } from "../db/types"
 import { logError } from "../file-logger"
 import { getArchiveService } from "./archive/archive-service"
 import { WorkspaceScaffold, DEFAULT_PIPELINE_YAML } from "./workspace-scaffold"
-import { WorkspaceGit } from "./workspace-git"
+import { WorkspaceGit, type SpecWorktreeEntry } from "./workspace-git"
 
 /**
  * Pipeline Guide — detailed reference for pipeline.yaml configuration.
@@ -391,7 +391,29 @@ export class WorkspaceService {
     // Write base CLAUDE.md
     this.scaffold.writeBaseClaudeMd(wsDir, input.name)
 
-    // DB INSERT with source tracking
+    // Initialize worktrees from ProjectSpec — BEFORE the DB row exists, and with
+    // a best-effort directory rollback (trigger-prebuild 2026-09-08). The old
+    // order (insert → worktrees) let a mid-loop initWorktreesFromSpec throw
+    // leave a half-built workspace: live DB row + scaffold dir but NO worktrees
+    // — exactly the "workspace 里 projects 没建 worktree" user symptom. Now a
+    // throw means: nothing was persisted, the dir is gone, the caller (trigger
+    // 409 / executor error_summary) sees a clean failure.
+    // Empty source_path is resolved from repos/index.md via resolveRepoPath;
+    // resolution failures THROW (G3 fix: no silent skip).
+    try {
+      this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.org)
+    } catch (err: unknown) {
+      try {
+        fs.rmSync(wsDir, { recursive: true, force: true })
+      } catch {
+        // rm 自身失败（占用/权限）→ 目录残留但无 DB 行；下次触发时间戳不同名
+        // 不撞 refuse-overwrite，stale worktree 注册由 worktree prune 回收。
+        console.error(`[WorkspaceService] worktree rollback failed for ${wsDir} (dir may linger, non-fatal):`, err instanceof Error ? err.message : String(err))
+      }
+      throw err
+    }
+
+    // DB INSERT with source tracking (after worktrees — see rollback note above)
     this.dao.insert({
       id, name: input.name, org: input.org,
       description: null,
@@ -400,13 +422,56 @@ export class WorkspaceService {
       created_at: now, updated_at: now,
     })
 
-    // Initialize worktrees from ProjectSpec. Empty source_path is resolved from
-    // repos/index.md via WorkspaceGit.resolveRepoPath; resolution failures throw
-    // and propagate to the workflow-executor catch → schedule_executions.error_summary
-    // (G3 fix: no silent skip).
-    this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.org)
-
     return this.getById(id)!
+  }
+
+  /**
+   * 复用已绑定 workspace 时的 worktree 自愈（trigger-prebuild 2026-09-08）。
+   *
+   * v4 任务一 task 一 ws（K4）：trigger 预建 / executor 复用都会跳过
+   * createFromSpec —— 若 worktree 目录被带外删除（手动 rm、磁盘清理、
+   * 半建事故前的旧数据），复用路径过去会静默带着空 projects/ 起跑。本方法
+   * 逐 config.repos 项 `worktreeAlive` 校验，缺失项按**原分支**经
+   * initWorktreeOne 重建（branch 已存在于主仓 → checkout 回退路径），并回写
+   * 元数据。user-workspace（initWorktreesSync 产物，无 branch 字段）项跳过 —
+   * 它们不在 v4 复用路径上。throw 语义与 createFromSpec 一致（loud，交调用方
+   * 的 catch 归入 error_summary / 409）。
+   */
+  ensureWorktreesForReuse(ws: WorkspaceRow): { rebuilt: string[] } {
+    const configPath = path.join(ws.path, "config.json")
+    let entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { repos?: unknown }
+      entries = Array.isArray(raw.repos) ? raw.repos as typeof entries : []
+    } catch {
+      return { rebuilt: [] } // 坏 config.json：无从核对，留给既有失败通道
+    }
+
+    const resolved: SpecWorktreeEntry[] = []
+    const rebuilt: string[] = []
+    for (const e of entries) {
+      if (!e.branch || !e.worktree_path) {
+        continue // user-ws 形态（无 branch）— v4 复用路径不触碰
+      }
+      if (this.git.worktreeAlive(e.worktree_path)) {
+        resolved.push({ name: e.name, main_path: e.main_path ?? "", worktree_path: e.worktree_path, branch: e.branch })
+        continue
+      }
+      const fresh = this.git.initWorktreeOne(
+        ws.path,
+        { name: e.name, source_path: e.main_path ?? "", group: e.group },
+        e.branch,
+        ws.org,
+      )
+      rebuilt.push(e.name)
+      resolved.push(fresh)
+      console.log(`[WorkspaceService] worktree self-healed for reused ws ${ws.id}: ${e.name} → ${fresh.worktree_path}`)
+    }
+
+    if (rebuilt.length > 0) {
+      this.git.writeSpecWorktreeMeta(ws.path, resolved, ws.name)
+    }
+    return { rebuilt }
   }
 
   list(org?: string, source?: 'user' | 'scheduler' | 'all'): WorkspaceRow[] {

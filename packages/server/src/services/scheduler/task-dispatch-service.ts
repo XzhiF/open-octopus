@@ -32,6 +32,8 @@ import type { WorkspaceService } from "../workspace"
 import type { SSEService } from "../sse"
 import { getExecutionService } from "../execution-service-registry"
 import { taskWorkspaceName } from "./task-ws-name"
+// trigger-prebuild (2026-09-08): 两份逐字相同的 formatBranchSuffix 副本合一到 ws-launch。
+import { formatBranchSuffix } from "./ws-launch"
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? "3",
@@ -380,13 +382,3 @@ export class TaskDispatchService implements TaskDispatchPort {
   }
 }
 
-function formatBranchSuffix(date: Date): string {
-  const y = date.getFullYear()
-  const mo = String(date.getMonth() + 1).padStart(2, "0")
-  const d = String(date.getDate()).padStart(2, "0")
-  const h = String(date.getHours()).padStart(2, "0")
-  const mi = String(date.getMinutes()).padStart(2, "0")
-  const s = String(date.getSeconds()).padStart(2, "0")
-  const rand = Math.random().toString(36).substring(2, 6)
-  return `${y}${mo}${d}${h}${mi}${s}-${rand}`
-}

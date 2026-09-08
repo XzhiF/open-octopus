@@ -14,12 +14,13 @@ import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from '../../
 import { TaskHomeService } from '../../tasks/task-home-service'
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview } from '../../tasks/task-artifact-sync'
 // Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
-// workflow ref + the composite threshold as the single source of truth. The
-// executor's isCompositeTask below is the POST-materialization config-shape
-// detector (a different layer — it sees the materialized WorkflowConfig, not
-// the original TaskSpec); it shares the seam's constant so the two never drift.
-import { COMPOSITION_WF_REF } from '../orchestration-strategy'
-import { taskWorkspaceName } from '../task-ws-name'
+// workflow ref + the composite threshold as the single source of truth (via
+// ws-launch's isCompositeWorkflowConfig). The executor's isCompositeTask below
+// is the POST-materialization config-shape detector (a different layer — it
+// sees the materialized WorkflowConfig, not the original TaskSpec).
+// trigger-prebuild (2026-09-08): 命名块与 composite 判定收敛到 ws-launch —
+// triggerTask 预建与 executor 首建共用，同名同支是复用命中的前提。
+import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from '../ws-launch'
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
@@ -218,9 +219,9 @@ export class WorkflowExecutor implements Executor {
     // the original TaskSpec. The two share COMPOSITION_WF_REF so they never drift.
     const isComposite = this.isCompositeTask(config)
 
-    // 5. Generate branch suffix (timestamp + random to avoid collisions)
-    const branchSuffix = formatBranchSuffix(new Date())
-
+    // 5. Branch suffix + ws naming — verbatim 抽入 ws-launch 共享纯函数
+    // (trigger-prebuild 2026-09-08): triggerTask 的「同步预建」与这里的首建
+    // 必须产出同名同支（预建→executor 复用命中），两份命名逻辑合一防漂移。
     // ponytail: requirement-type schedules use a deterministic taskpool-{schedule_id}-{ts}
     // name so failed drafts can be traced back to their schedule; cron jobs keep the
     // AI-supplied branch_prefix from workspace_spec.
@@ -228,13 +229,15 @@ export class WorkflowExecutor implements Executor {
     // (用户改过的 name，或默认名时从 goal 生成的 chatbot 同款智能标题)；查不到
     // 任务/取不到标题时回退旧 taskpool 命名。branch_prefix 不变（git 分支追溯）。
     const isRequirement = job.trigger_source === 'requirement'
-    const branchPrefix = isRequirement ? `taskpool-${schedule.id}` : config.workspace_spec.branch_prefix
     const taskRow = schedule.origin_type === 'task' && schedule.origin_id && this.taskDAO
       ? this.taskDAO.getById(schedule.origin_id)
       : null
-    const taskWsName = taskRow ? taskWorkspaceName({ name: taskRow.name, task_spec: taskRow.task_spec }) : null
-    const workspaceName = taskWsName
-      ?? (isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`)
+    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
+      scheduleId: schedule.id,
+      triggerSource: job.trigger_source,
+      config,
+      taskRow,
+    })
 
     // 6. Create a new workspace from spec — or REUSE the task's bound one.
     //
@@ -262,6 +265,24 @@ export class WorkflowExecutor implements Executor {
     let workspace
     if (reusedWorkspace) {
       workspace = reusedWorkspace
+      // worktree 自愈 (trigger-prebuild 2026-09-08): bound ws 行活着不代表
+      // projects/ 下的 worktree 还在（带外 rm / 半建时代旧数据）。缺失项按原
+      // 分支重建（ensureWorktreesForReuse → initWorktreeOne）；重建失败 = 本次
+      // 执行失败（与 createFromSpec 失败同款归口），下次触发/复用再自愈。
+      try {
+        this.workspaceService.ensureWorktreesForReuse(reusedWorkspace)
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[WorkflowExecutor] worktree self-heal failed for reused workspace`, { scheduleId: schedule.id, workspaceId: reusedWorkspace.id, error: message })
+        this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Worktree self-heal failed: ${message}`)
+        return {
+          success: false,
+          exitCode: 1,
+          errorMessage: message,
+          durationMs: Date.now() - startTime,
+          status: 'failure',
+        }
+      }
     } else {
       try {
         workspace = this.workspaceService.createFromSpec({
@@ -846,12 +867,7 @@ export class WorkflowExecutor implements Executor {
    *  layers never drift. A future variant (subunit-level retry / conditional
    *  DAG) swaps the strategy at the dispatch seam WITHOUT touching this executor. */
   private isCompositeTask(config: WorkflowConfig): boolean {
-    if ((config.task_spec?.subunits?.length ?? 0) >= 2) return true
-    const ref = config.workflow_chain[0]?.workflow_ref
-    if (typeof ref === 'string') {
-      return ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`)
-    }
-    return false
+    return isCompositeWorkflowConfig(config)
   }
 
   /** Parse a schedule row's config and test for composite shape. Used in
@@ -1224,17 +1240,6 @@ export class WorkflowExecutor implements Executor {
       // Ignore invalid cron
     }
   }
-}
-
-function formatBranchSuffix(date: Date): string {
-  const y = date.getFullYear()
-  const mo = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const h = String(date.getHours()).padStart(2, '0')
-  const mi = String(date.getMinutes()).padStart(2, '0')
-  const s = String(date.getSeconds()).padStart(2, '0')
-  const rand = Math.random().toString(36).substring(2, 6)
-  return `${y}${mo}${d}${h}${mi}${s}-${rand}`
 }
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {

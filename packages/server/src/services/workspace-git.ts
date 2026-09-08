@@ -13,6 +13,15 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+/** scheduler-path worktree 落成的元数据条目（config.json.repos 的形状；
+ *  archiving-service.resolveWorktree 按 main_path/worktree_path/branch 读取）。 */
+export interface SpecWorktreeEntry {
+  name: string
+  main_path: string
+  worktree_path: string
+  branch: string
+}
+
 export class WorkspaceGit {
   /**
    * Resolve a repo's local filesystem path from `~/.octopus/orgs/{org}/repos/index.md`.
@@ -155,64 +164,95 @@ export class WorkspaceGit {
     wsName: string,
     org: string,
   ): void {
+    const branchName = `${branchPrefix}-${branchSuffix}`
+    const entries = projects.map((proj) => this.initWorktreeOne(workspacePath, proj, branchName, org))
+    if (entries.length > 0) this.writeSpecWorktreeMeta(workspacePath, entries, wsName)
+  }
+
+  /** 单项目 worktree 建立（trigger-prebuild 2026-09-08 抽出）：
+   *  resolve → prune → worktree add --detach → checkout -b <branch>（已存在则
+   *  checkout 回退）。throw 语义与循环体时代逐字一致（G3 loud-fail）。
+   *  复用同一函数给 ensureWorktreesForReuse 自愈重建（source 直接来自
+   *  config.repos.main_path，explicit source_path 分支跳过 index.md 解析）。 */
+  initWorktreeOne(
+    workspacePath: string,
+    proj: { name: string; source_path?: string; group?: string },
+    branchName: string,
+    org: string,
+  ): SpecWorktreeEntry {
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const projectsDir = path.join(workspacePath, "projects")
-    const entries: { name: string; main_path: string; worktree_path: string; branch: string }[] = []
-    const branchName = `${branchPrefix}-${branchSuffix}`
 
-    for (const proj of projects) {
-      // Explicit source_path wins; empty → repos/index.md lookup by name (+group).
-      const rawSource = proj.source_path ?? ""
-      const sourcePath = rawSource.trim() !== ""
-        ? rawSource.replace(/^~/, os.homedir())
-        : this.resolveRepoPath(org, proj.name, proj.group ?? "")
+    // Explicit source_path wins; empty → repos/index.md lookup by name (+group).
+    const rawSource = proj.source_path ?? ""
+    const sourcePath = rawSource.trim() !== ""
+      ? rawSource.replace(/^~/, os.homedir())
+      : this.resolveRepoPath(org, proj.name, proj.group ?? "")
 
-      const wtDir = path.join(projectsDir, proj.name)
+    const wtDir = path.join(projectsDir, proj.name)
 
-      if (!fs.existsSync(sourcePath) || !fs.existsSync(path.join(sourcePath, ".git"))) {
-        throw new Error(`source path unreachable for '${proj.name}': ${sourcePath}`)
-      }
-
-      spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
-      if (fs.existsSync(wtDir)) fs.rmSync(wtDir, { recursive: true, force: true })
-
-      const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
-        cwd: sourcePath, timeout: 60000,
-      })
-      if (result.status !== 0) {
-        throw new Error(`worktree add failed for '${proj.name}': ${result.stderr.toString().trim()}`)
-      }
-
-      const coResult = spawnSync("git", ["checkout", "-b", branchName], { cwd: wtDir, timeout: 30000 })
-      if (coResult.status !== 0) {
-        const switchResult = spawnSync("git", ["checkout", branchName], { cwd: wtDir, timeout: 30000 })
-        if (switchResult.status !== 0) {
-          throw new Error(`branch checkout failed for '${proj.name}': ${switchResult.stderr.toString().trim()}`)
-        }
-      }
-
-      entries.push({ name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName })
+    if (!fs.existsSync(sourcePath) || !fs.existsSync(path.join(sourcePath, ".git"))) {
+      throw new Error(`source path unreachable for '${proj.name}': ${sourcePath}`)
     }
 
-    if (entries.length > 0) {
-      const configPath = path.join(workspacePath, "config.json")
-      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-      config.repos = entries.map(e => ({
-        name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
-      }))
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
+    if (fs.existsSync(wtDir)) fs.rmSync(wtDir, { recursive: true, force: true })
 
-      const claudeLines = [
-        `# 工作空间: ${wsName}`, "",
-        "## 涉及项目 (git worktree)", "",
-      ]
-      for (const e of entries) {
-        claudeLines.push(`- **${e.name}**: \`${e.worktree_path}\` [${e.branch}]`)
-        claudeLines.push(`  - 主仓库: \`${e.main_path}\``)
-      }
-      claudeLines.push("", "## 说明", "- 此工作空间由调度器自动创建")
-      fs.writeFileSync(path.join(workspacePath, "CLAUDE.md"), claudeLines.join("\n"), "utf-8")
+    const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
+      cwd: sourcePath, timeout: 60000,
+    })
+    if (result.status !== 0) {
+      throw new Error(`worktree add failed for '${proj.name}': ${result.stderr.toString().trim()}`)
     }
+
+    const coResult = spawnSync("git", ["checkout", "-b", branchName], { cwd: wtDir, timeout: 30000 })
+    if (coResult.status !== 0) {
+      const switchResult = spawnSync("git", ["checkout", branchName], { cwd: wtDir, timeout: 30000 })
+      if (switchResult.status !== 0) {
+        throw new Error(`branch checkout failed for '${proj.name}': ${switchResult.stderr.toString().trim()}`)
+      }
+    }
+
+    return { name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName }
+  }
+
+  /** worktree 目录是否仍是活的 git worktree（自愈检测用，trigger-prebuild
+   *  2026-09-08）。`-C` 参而非 cwd — 目录不存在时干净返回非 0，不会 ENOENT。 */
+  worktreeAlive(worktreePath: string): boolean {
+    const { spawnSync } = require("child_process") as typeof import("child_process")
+    try {
+      const r = spawnSync("git", ["-C", worktreePath, "rev-parse", "--git-dir"], { timeout: 10000 })
+      return r.status === 0
+    } catch {
+      return false
+    }
+  }
+
+  /** worktree 落成后的元数据写出：config.json.repos + CLAUDE.md（与循环体时代
+   *  逐字一致 — config.repos 是 archiving-service resolveWorktree 的读取面）。 */
+  writeSpecWorktreeMeta(
+    workspacePath: string,
+    entries: SpecWorktreeEntry[],
+    wsName: string,
+  ): void {
+    if (entries.length === 0) return
+    const configPath = path.join(workspacePath, "config.json")
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+    config.repos = entries.map(e => ({
+      name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+    }))
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+
+    const claudeLines = [
+      `# 工作空间: ${wsName}`, "",
+      "## 涉及项目 (git worktree)", "",
+    ]
+    for (const e of entries) {
+      claudeLines.push(`- **${e.name}**: \`${e.worktree_path}\` [${e.branch}]`)
+      claudeLines.push(`  - 主仓库: \`${e.main_path}\``)
+    }
+    claudeLines.push("", "## 说明", "- 此工作空间由调度器自动创建")
+    fs.writeFileSync(path.join(workspacePath, "CLAUDE.md"), claudeLines.join("\n"), "utf-8")
   }
 
   private writeProjectConfig(
