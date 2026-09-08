@@ -29,13 +29,54 @@ import {
 
 const REFRESH_INTERVAL_MS = 10_000
 
-/** 列头 accent 圆点（看板泳道身份色；仅装饰，不参与任何测试选择器）。 */
-const COLUMN_ACCENT: Record<TaskBoardColumnId, string> = {
-  draft: "bg-zinc-400",
-  ready: "bg-sky-500",
-  running: "bg-blue-500 animate-pulse",
-  awaiting_review: "bg-amber-500",
-  done: "bg-emerald-500",
+/** 看板状态色彩体系（Linear/Notion 泳道惯例：一状态一色相，泳道轻染 +
+ *  列头着色 + 卡片左侧 accent bar）。全部为静态 class 字面量（Tailwind JIT）。 */
+const COLUMN_THEME: Record<TaskBoardColumnId, {
+  lane: string; label: string; dot: string; pill: string
+}> = {
+  draft: {
+    lane: "bg-zinc-500/[0.04]",
+    label: "text-zinc-600 dark:text-zinc-400",
+    dot: "bg-zinc-400",
+    pill: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+  },
+  ready: {
+    lane: "bg-sky-500/[0.05]",
+    label: "text-sky-700 dark:text-sky-400",
+    dot: "bg-sky-500",
+    pill: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  },
+  running: {
+    lane: "bg-blue-500/[0.05]",
+    label: "text-blue-700 dark:text-blue-400",
+    dot: "bg-blue-500 animate-pulse",
+    pill: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+  },
+  awaiting_review: {
+    lane: "bg-amber-500/[0.06] ring-1 ring-inset ring-amber-500/30",
+    label: "text-amber-700 dark:text-amber-400",
+    dot: "bg-amber-500",
+    pill: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  },
+  done: {
+    lane: "bg-emerald-500/[0.04]",
+    label: "text-emerald-700 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+    pill: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  },
+}
+
+/** 卡片 accent：按（有效）状态取色 — 左色条 + 同色微染底；archiving 留橙、
+ *  failed 红 / aborted 灰 在完成列里靠色条自证终态。 */
+const CARD_THEME: Record<Task["status"], string> = {
+  draft: "border-l-zinc-400/80 bg-zinc-500/[0.03]",
+  ready: "border-l-sky-500/90 bg-sky-500/[0.04]",
+  running: "border-l-blue-500 bg-blue-500/[0.05]",
+  archiving: "border-l-orange-500 bg-orange-500/[0.05]",
+  awaiting_review: "border-l-amber-500 bg-amber-500/[0.07] ring-1 ring-inset ring-amber-500/25",
+  done: "border-l-emerald-500/80 bg-emerald-500/[0.04] opacity-95",
+  failed: "border-l-red-500/90 bg-red-500/[0.04] opacity-95",
+  aborted: "border-l-zinc-500/80 bg-zinc-500/[0.05] opacity-95",
 }
 
 export default function TasksPage() {
@@ -287,17 +328,18 @@ export default function TasksPage() {
             <div className="flex h-full min-w-[1240px] gap-3">
               {TASK_COLUMNS.map((col) => {
                 const colTasks = tasksForColumn(grouped, col.id)
+                const theme = COLUMN_THEME[col.id]
                 return (
                 <section
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-1 basis-0 flex-col gap-2 rounded-lg ${col.id === "awaiting_review" ? "bg-amber-500/5 ring-1 ring-inset ring-amber-500/30" : "bg-muted/30"}`}
+                  className={`flex min-w-0 flex-1 basis-0 flex-col gap-2 rounded-lg ${theme.lane}`}
                 >
-                  <header className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs font-semibold">
-                    <span className={`size-2 shrink-0 rounded-full ${COLUMN_ACCENT[col.id]}`} aria-hidden />
-                    <span className={col.id === "awaiting_review" ? "text-amber-600 dark:text-amber-400" : ""}>{col.label}</span>
-                    <span className="ml-auto rounded-full bg-background px-1.5 py-px text-[10px] tabular-nums text-muted-foreground ring-1 ring-border">{colTasks.length}</span>
+                  <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2 text-xs font-semibold">
+                    <span className={`size-2 shrink-0 rounded-full ${theme.dot}`} aria-hidden />
+                    <span className={theme.label}>{col.label}</span>
+                    <span className={`ml-auto rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums ${theme.pill}`}>{colTasks.length}</span>
                   </header>
                   <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
                     {colTasks.map((task) => (
@@ -440,10 +482,8 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
-      className={`group rounded-md border p-3 text-sm shadow-sm cursor-pointer hover:shadow transition-all relative ${
-        isAwaitingReview
-          ? "border-amber-400/60 bg-amber-500/5 hover:border-amber-400"
-          : "border-border bg-card hover:border-primary/40"
+      className={`group relative cursor-pointer rounded-md border border-border border-l-[3px] p-3 text-sm shadow-sm transition-all hover:-translate-y-px hover:shadow-md active:translate-y-0 ${
+        CARD_THEME[task.status] ?? "bg-card"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
