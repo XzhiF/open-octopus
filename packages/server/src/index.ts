@@ -652,6 +652,15 @@ if (shouldServe) {
       }
     }
 
+    // keep-alive 竞态加固（2026-09-09「Failed to fetch」修复）：Node 默认
+    // keepAliveTimeout=5s 短于浏览器（Chrome ~60s）的空闲连接保留窗 —— 服务端先
+    // FIN 关掉池内连接、浏览器恰把新请求派到这条连接时拿到 RST，fetch 直接
+    // reject "Failed to fetch"（SpecPanel 的 batch-tree 风暴最先中招）。令
+    // 服务端空闲窗大于浏览器侧（70s），永不出现「先关的一方」竞态。
+    // headersTimeout 必须 > keepAliveTimeout（Node 校验）。
+    server.keepAliveTimeout = 70_000
+    server.headersTimeout = 75_000
+
     server.listen(port, "0.0.0.0", () => {
       const localIP = (() => {
         for (const ifaces of Object.values(os.networkInterfaces())) {

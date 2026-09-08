@@ -9,7 +9,8 @@
 //      重拉一次（连写 N 张票合并为 1 个 GET）；
 //   ④ chat.streaming true→false（轮次空闲兜底：Bash 重定向等侦测不到的写方）。
 // server 侧不加 fs watcher（spec K2）；[↻] 手刷走 refresh()。
-// 失败语义：error 置文案 + 保留旧 batches（面板其余区不受冻）。
+// 失败语义（2026-09-09 加固）：首败 500ms 静默重试一次（连接层抖动自愈），
+// 两连败才置 error 文案 + 保留旧 batches（面板其余区不受冻）。
 
 "use client"
 
@@ -28,6 +29,8 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"])
 const DONE_STATUSES = new Set(["success", "result"])
 /** R1 debounce: merge burst writes (spec + N tickets in one turn) into one GET. */
 export const R1_DEBOUNCE_MS = 800
+/** doFetch 失败后的静默重试间隔（连接层瞬时抖动的唯一缓冲带）。 */
+export const RETRY_DELAY_MS = 500
 
 /** R1 predicate (pure, unit-tested): is this tool call a file WRITE landing in
  *  `.scratch/`? Input shape is the SDK tool input verbatim (unknown type) —
@@ -83,11 +86,22 @@ export function useBatchTree(taskId: string, opts: UseBatchTreeOptions = {}): Ba
     const seq = ++seqRef.current
     setLoading(true)
     try {
-      const list = await getBatchTree(taskId)
+      let list: BatchTreeEntry[]
+      try {
+        list = await getBatchTree(taskId)
+      } catch {
+        // 连接层瞬时失败（keep-alive 竞态 RST / server 重启窗口 / 浏览器连接池
+        // 排队被掐）— 500ms 后静默重试一次；陈旧请求/卸载直接弃棒。
+        if (!mountedRef.current || seq !== seqRef.current) return
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS))
+        if (!mountedRef.current || seq !== seqRef.current) return
+        list = await getBatchTree(taskId)
+      }
       if (!mountedRef.current || seq !== seqRef.current) return
       setBatches(list)
       setError(null)
     } catch (err: unknown) {
+      // 两次都失败才显错（错误文案保留原样 — 面板提示语义不变）。
       if (!mountedRef.current || seq !== seqRef.current) return
       setError(err instanceof Error ? err.message : "批次目录加载失败")
     } finally {
@@ -156,6 +170,8 @@ export function useBatchTree(taskId: string, opts: UseBatchTreeOptions = {}): Ba
   // ⑤ task_artifacts_update (既有通道): home-file PUT (UI「创建骨架」/手改保存)
   // 与执行期 seed/collect 都会发——文件不是 task 行、不 bump version，这是
   // UI 自身写盘路径唯一能拿到的服务端信号。过滤本任务。
+  // 2026-09-09：改走 scheduleRefresh（与 R1 共用同一 debounce 槽）—— 连续
+  // artifacts 事件不再各发一次立即 GET，写风暴集中打 batch-tree 的形态消失。
   useEffect(() => {
     const unsub = subscribeSSE(
       `${getServerUrl()}/api/tasks/events`,
@@ -164,14 +180,14 @@ export function useBatchTree(taskId: string, opts: UseBatchTreeOptions = {}): Ba
         try {
           const payload = JSON.parse(e.data) as { task_id?: string }
           if (payload.task_id !== taskId) return
-          refresh()
+          scheduleRefresh()
         } catch {
           // malformed payload — ignore (defensive)
         }
       },
     )
     return () => unsub()
-  }, [taskId, refresh])
+  }, [taskId, scheduleRefresh])
 
   return { batches, loading, error, refresh }
 }

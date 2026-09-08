@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import {
   useBatchTree, isScratchWrite, findSpecEntry, findBatchFor, summarizeSpec,
-  R1_DEBOUNCE_MS,
+  R1_DEBOUNCE_MS, RETRY_DELAY_MS,
 } from "../use-batch-tree"
 import { getBatchTree, type BatchTreeEntry } from "@/lib/tasks-api"
 import type { ToolCallRecord } from "@/lib/agent/types"
@@ -53,6 +53,18 @@ describe("isScratchWrite — R1 判据 (AC1)", () => {
     expect(isScratchWrite("Write", {})).toBe(false)
   })
 })
+
+/** 重试链推进：先排空微任务让 catch 落地并注册 500ms sleep 定时器，
+ *  再推进定时器，最后再排空（resolve→setBatches→finally 多轮微任务）。 */
+async function flushRetry(ms: number) {
+  await act(async () => {
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+  })
+  vi.advanceTimersByTime(ms)
+  await act(async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve()
+  })
+}
 
 describe("useBatchTree — 触发四路 (AC2)", () => {
   it("① mount 恰一次；taskId 切换重拉", async () => {
@@ -126,13 +138,25 @@ describe("useBatchTree — 触发四路 (AC2)", () => {
     expect(getBatchTree).toHaveBeenCalledTimes(2)
   })
 
-  it("拉取失败 → error 置文案、batches 保留旧值、loading 落地", async () => {
-    vi.mocked(getBatchTree).mockRejectedValueOnce(new Error("network down"))
+  it("首败重试一次即成功 → 不显错（连接层抖动自愈，2026-09-09）", async () => {
+    vi.mocked(getBatchTree)
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockResolvedValueOnce([])
     const { result } = renderHook(() => useBatchTree("t1"))
-    await flush()
+    await flushRetry(RETRY_DELAY_MS + 100)
+    expect(result.current.error).toBeNull()
+    expect(result.current.loading).toBe(false)
+    expect(getBatchTree).toHaveBeenCalledTimes(2) // mount 首击 + 500ms 重试
+  })
+
+  it("拉取两连败 → error 置文案、batches 保留旧值、loading 落地", async () => {
+    vi.mocked(getBatchTree).mockRejectedValue(new Error("network down"))
+    const { result } = renderHook(() => useBatchTree("t1"))
+    await flushRetry(RETRY_DELAY_MS + 100)
     expect(result.current.error).toBe("network down")
     expect(result.current.loading).toBe(false)
     expect(result.current.batches).toEqual([])
+    expect(getBatchTree).toHaveBeenCalledTimes(2) // 首击 + 恰一次重试
   })
 
   it("refresh() 手刷立即拉且吞掉在飞 debounce", async () => {
