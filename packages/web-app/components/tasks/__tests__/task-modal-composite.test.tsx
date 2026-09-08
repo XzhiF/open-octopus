@@ -52,7 +52,7 @@ vi.mock("@/components/tasks/composite-dag", () => ({
 
 // Mock sonner toast.
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }))
 
 // Mock server-config.
@@ -333,6 +333,38 @@ describe("CompositeMode", () => {
     expect(subscribeSpy.mock.calls.length).toBe(subsAfterMount)
     // And no unsubscribe happened either.
     expect(unsubSpies.every((s) => s.mock.calls.length === 0)).toBe(true)
+  })
+
+  it("project_sync SSE → task-filtered toast chain (loading → success / error)", async () => {
+    // repo-sync (2026-09-08, 特性A)：syncing 挂 loading、ok 原地替换 success、
+    // failed error（代码可能过期）；非本任务事件不弹。
+    const { toast } = await import("sonner")
+    mockGetTask.mockResolvedValue(makeDetail())
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+    await waitFor(() => { expect(screen.getByTestId("composite-dag")).toBeDefined() })
+
+    await act(async () => {
+      dispatchSSE("project_sync", { task_id: "parent-1", project: "demo", status: "syncing" })
+    })
+    expect(toast.loading).toHaveBeenCalledWith(expect.stringContaining("demo"), { id: "repo-sync-parent-1" })
+
+    await act(async () => {
+      dispatchSSE("project_sync", { task_id: "parent-1", project: "demo", status: "ok", branch: "main", commit: "c0ffee00" })
+    })
+    expect(toast.success).toHaveBeenCalledWith("仓库已同步：demo main@c0ffee00", { id: "repo-sync-parent-1" })
+
+    await act(async () => {
+      dispatchSSE("project_sync", { task_id: "parent-1", project: "demo", status: "failed", error: "network down" })
+    })
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("代码可能过期"), { id: "repo-sync-parent-1" })
+
+    // 别的任务 → 不再追加调用
+    const n = (toast.error as ReturnType<typeof vi.fn>).mock.calls.length
+    await act(async () => {
+      dispatchSSE("project_sync", { task_id: "someone-else", project: "x", status: "ok" })
+    })
+    expect((toast.error as ReturnType<typeof vi.fn>).mock.calls.length).toBe(n)
+    expect((toast.success as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
   })
 
   it("clicking a child card navigates to /tasks/:taskId/children/:scheduleId (SG15)", async () => {

@@ -49,6 +49,9 @@ import { finalizePartialMeta } from './stream-partials'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
 import { TaskHomeService } from '../../services/tasks/task-home-service'
+// repo-sync (2026-09-08, 特性A chat 门): 类型注入 — gate 在缺省时整体跳过
+// （既有 clone 测试零改动）。
+import type { RepoSyncService } from '../../services/tasks/repo-sync-service'
 import { getResourceRegistry } from '../../services/resource-registry'
 import type { ResourceRef } from '@octopus/shared'
 
@@ -67,6 +70,10 @@ export interface CloneSessionRouteDeps {
    *  chat turn (see "关闭不丢失" stream-resume). Default 1000ms; tests
    *  inject 0 to flush every chunk. */
   partialFlushMs?: number
+  /** repo-sync (2026-09-08): task-author chat 新鲜度门 —— 每轮开工前等待该任务
+   *  项目的镜像同步完成（有界，超时放行），并把新鲜度标注写进 context.md。
+   *  Optional: absent ⇒ the gate is skipped entirely (v3/legacy untouched). */
+  repoSyncService?: RepoSyncService
 }
 
 // ── File route constants removed — file ops now in clone-files.ts ──
@@ -114,7 +121,7 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
-  const { sessionDAO, taskDAO } = deps
+  const { sessionDAO, taskDAO, repoSyncService } = deps
   const partialFlushMs = deps.partialFlushMs ?? 1000
   const app = new Hono()
 
@@ -480,7 +487,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       try {
         const ctxRow = taskDAO.getById(noticeTaskId)
         const ctxSpec = ctxRow?.task_spec
-          ? JSON.parse(ctxRow.task_spec) as { skill_groups?: string[] }
+          ? JSON.parse(ctxRow.task_spec) as { skill_groups?: string[]; format?: string }
           : null
         const groups = ctxSpec && Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
         const projectNames: string[] = ctxRow?.project_ids
@@ -490,11 +497,26 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         // request header which defaults to "default" when the frontend
         // doesn't send X-Octopus-Org.
         const taskOrg = ctxRow?.org ?? org
+
+        // ── repo-sync chat 门 (2026-09-08, 特性A) ──────────────────────
+        // v4 且有项目：① 无快照（含 server 重启后状态机清空）→ 后台补触发同步；
+        // ② 有界等待在途同步（45s，超时放行不抛 —— 慢 fetch 不卡死对话）；
+        // ③ 新鲜度标注随本轮 context.md 落盘 —— agent 的「已 pull 到最新
+        // main/master 才开始分析」由此成立（读 context.md 项目行）。
+        let syncNotes: Record<string, string> | undefined
+        if (repoSyncService && ctxSpec?.format === "v4" && projectNames.length > 0) {
+          if (!repoSyncService.hasSnapshot(noticeTaskId)) {
+            repoSyncService.syncProjectsForTask(noticeTaskId, taskOrg, projectNames)
+          }
+          await repoSyncService.waitUntilIdle(noticeTaskId, 45_000)
+          syncNotes = repoSyncService.freshnessNotes(noticeTaskId, projectNames)
+        }
+
         // Resolve project names → filesystem paths so the agent knows where
         // each codebase lives on disk (not just the name).
         const projectRefs: ProjectRef[] = resolveProjectRefs(taskOrg, projectNames)
         const homeService = new TaskHomeService()
-        homeService.writeContextFile(noticeTaskId, taskOrg, projectRefs, groups)
+        homeService.writeContextFile(noticeTaskId, taskOrg, projectRefs, groups, syncNotes)
       } catch (err: unknown) {
         // Non-fatal — the stale context.md stays; agent misses the update.
         console.error(

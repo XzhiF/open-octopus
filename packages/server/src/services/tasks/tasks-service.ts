@@ -81,6 +81,10 @@ import { PluginMaterializer } from "./plugin-materializer"
 export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
 import { WorkspaceGit } from "../workspace-git"
+// repo-sync / trigger-prebuild (2026-09-08): 类型注入（构造器尾参），运行时实例
+// 由 index.ts 装配 — type-only import 避免 services 图新增环。
+import type { RepoSyncService } from "./repo-sync-service"
+import type { WorkspaceService } from "../workspace"
 import { BuiltInWorkflowService } from "../builtin-workflow"
 // task-workflow-handoff (ADR-0013): shared resolver for bind/ready/view.
 import { resolveWorkflowRef, isWorkflowRefResolvable } from "./workflow-ref-resolver"
@@ -442,6 +446,14 @@ export class TasksService {
    *  (SW-BP15 discipline: tail-appended params only). */
   private acceptanceDAO: AcceptanceDAO
 
+  /** repo-sync (2026-09-08): v4 draft 创建/项目变更时把选中项目主 clone 强制
+   *  对齐 origin 默认分支的进程内状态机（A3 触发点 + B2 trigger 预建前的
+   *  waitUntilIdle）。未注入 = 特性关（22 个既有测试构造零改动）。 */
+  private repoSyncService: RepoSyncService | null
+  /** trigger-prebuild (2026-09-08): 「触发执行」当场同步建 workspace+worktree
+   *  （失败 409 弹回）。未注入 = 预建关，executor 首建兜底仍在（行为同日以前）。 */
+  private workspaceService: WorkspaceService | null
+
   /** v39: late-bound hook to SchedulerEngine.wake() (engine is constructed
    *  AFTER this service in index.ts — setter injection, same precedent as
    *  schedulerService.setCallbacks). Called by triggerTask for sub-second
@@ -477,6 +489,10 @@ export class TasksService {
     // undisturbed. When omitted, the resolver's built-in branch is null (only
     // task-home branch checked). index.ts passes the real BuiltInWorkflowService.
     builtInWorkflowService?: BuiltInWorkflowService | null,
+    // repo-sync / trigger-prebuild (2026-09-08): 两个尾参，SW-BP15 纪律 —— 缺省
+    // null 即特性关，既有 caller 一字不动。
+    repoSyncService?: RepoSyncService | null,
+    workspaceService?: WorkspaceService | null,
   ) {
     this.db = db
     this.taskDAO = new TaskDAO(db)
@@ -488,6 +504,8 @@ export class TasksService {
     this.pluginMaterializer = pluginMaterializer ?? null
     this.builtInWorkflowService = builtInWorkflowService ?? null
     this.acceptanceDAO = new AcceptanceDAO(db)
+    this.repoSyncService = repoSyncService ?? null
+    this.workspaceService = workspaceService ?? null
   }
 
   /** Build the resolver deps for a given taskId (ADR-0013). Shared by the
@@ -630,6 +648,13 @@ export class TasksService {
       // chat turn or a subsequent updateTask).
       const projectRefs = this.resolveProjectRefs(org, projectIds)
       const home = this.taskHomeService.createHome(id, { org, projects: projectRefs, skillGroups: groups })
+      // repo-sync (2026-09-08, 特性A): v4 draft 创建即异步把选中项目的主 clone
+      // 强制对齐 origin/<main|master> 最新（镜像语义，fire-and-forget — 绝不影响
+      // 本次 HTTP 返回）。用户不变量：agent 分析读的就是这些路径，创建后它们必须
+      // 尽快变新；完成/失败经 project_sync SSE 反馈（task-modal toast）。
+      if (isV4 && projectIds.length > 0) {
+        this.repoSyncService?.syncProjectsForTask(id, org, projectIds)
+      }
       if (groups.length > 0) {
         try {
           this.resolveMaterializer().materializeGroups(home, groups)
@@ -1050,14 +1075,20 @@ export class TasksService {
         const row = this.taskDAO.getById(id)
         if (row) {
           const ctxSpec = row.task_spec
-            ? JSON.parse(row.task_spec) as { skill_groups?: string[] }
+            ? JSON.parse(row.task_spec) as { skill_groups?: string[]; format?: string }
             : null
           const groups = ctxSpec?.skill_groups ?? []
           const projectIds: string[] = row.project_ids
             ? JSON.parse(row.project_ids) as string[]
             : []
+          // repo-sync (2026-09-08, 特性A): 首次 PUT 锁定 project_ids 也触发镜像
+          // 同步（TemplatePicker 之外的选择路径），仅 v4。
+          if (ctxSpec?.format === "v4" && changedFields.includes("project_ids") && projectIds.length > 0) {
+            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+          }
           const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups)
+          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+            this.repoSyncService?.freshnessNotes(id, projectIds))
           // Add context_updated to the notice so the agent knows to re-read
           const existing = getSpecNotice(id) ?? ''
           setSpecNotice(id, `${existing}\n@@context_updated: ${contextFields.join(", ")} — 请重新读取 context.md`.trim())
@@ -1218,6 +1249,10 @@ export class TasksService {
             projects: backfillRefs,
             skillGroups: [],
           })
+          // repo-sync: 无家壳补建时项目已存在 → 同步一并补触发（与 createTask 同语义）。
+          if (backfillProjects.length > 0) {
+            this.repoSyncService?.syncProjectsForTask(id, updated.org, backfillProjects)
+          }
         }
       } catch (err: unknown) {
         console.error(
@@ -1235,14 +1270,20 @@ export class TasksService {
         const row = this.taskDAO.getById(id)
         if (row) {
           const ctxSpec = row.task_spec
-            ? JSON.parse(row.task_spec) as { skill_groups?: string[] }
+            ? JSON.parse(row.task_spec) as { skill_groups?: string[]; format?: string }
             : null
           const groups = ctxSpec?.skill_groups ?? []
           const projectIds: string[] = row.project_ids
             ? JSON.parse(row.project_ids) as string[]
             : []
+          // repo-sync (2026-09-08, 特性A): agent/用户经 spec-field 写 projects →
+          // v4 触发镜像同步；本轮写 context.md 时顺带注入已有新鲜度快照。
+          if (input.field === "projects" && ctxSpec?.format === "v4" && projectIds.length > 0) {
+            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+          }
           const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups)
+          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+            this.repoSyncService?.freshnessNotes(id, projectIds))
           if (input.source === "user") {
             const existing = getSpecNotice(id) ?? ''
             setSpecNotice(id, `${existing}\n@@context_updated: ${input.field} — 请重新读取 context.md`.trim())
@@ -2649,6 +2690,9 @@ export class TasksService {
       event: TASK_STATUS_EVENT,
       data: { task_id: id, status: "aborted" },
     })
+
+    // repo-sync 内存回收（2026-09-08）：任务中止后快照/watcher 不再有消费者。
+    this.repoSyncService?.forget(id)
 
     const row = this.taskDAO.getById(id)!
     return toDTO(row)

@@ -122,6 +122,24 @@ export const taskStatusSsePayloadSchema = z.object({
 })
 export type TaskStatusSsePayload = z.infer<typeof taskStatusSsePayloadSchema>
 
+// ── project_sync SSE payload (repo-sync 2026-09-08) ──────────────────
+/** Emitted on the "taskpool" channel as the task's selected repos are force
+ *  synced to origin/<default> (draft 创建异步 pull). One event per project per
+ *  status transition; the task modal turns it into a toast (syncing = loading,
+ *  ok = success, failed = warning with the stale-code hint). */
+export const PROJECT_SYNC_EVENT = "project_sync" as const
+
+export const projectSyncSsePayloadSchema = z.object({
+  task_id: z.string().min(1),
+  project: z.string().min(1),
+  status: z.enum(["syncing", "ok", "failed"]),
+  branch: z.string().optional(),
+  commit: z.string().optional(),
+  error: z.string().optional(),
+  at: z.string(),
+})
+export type ProjectSyncSsePayload = z.infer<typeof projectSyncSsePayloadSchema>
+
 // ── task_trigger SSE payload (v39 — manual/time trigger) ──────────────
 /** Emitted on the "taskpool" channel when a parked (draft) task schedule is
  *  explicitly triggered (immediately or at a future point), or when a pending

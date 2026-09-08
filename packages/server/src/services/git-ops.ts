@@ -202,6 +202,43 @@ export class GitOps {
     await runGit(projectPath, ["merge", `origin/${branch}`, "--no-edit"])
     return this.getHeadCommit(projectPath)
   }
+
+  /**
+   * 镜像同步（draft repo-sync 2026-09-08）：把 repos 主 clone 强制对齐到
+   * origin/<默认分支> 最新。与 pullLatest 的区别是**语义级**的：主 clone 按
+   * 一次性镜像对待（用户授权决策）——
+   *   fetch origin → 默认分支探测（symbolic-ref origin/HEAD，回退 main/master）
+   *   → checkout -f <br> → clean -fd → reset --hard origin/<br>
+   * 镜像上的任何本地改动/未跟踪文件**全部丢弃**（这正是「repos 永远干净且在
+   * main/master」不变量的执行机制）；绝不作用 workspaces 的 worktree 目录。
+   * fetch 超时放宽 120s（GIT_TIMEOUT_MS=30s 对远端仓库太小）。
+   * @returns branch = 同步到的默认分支名；commit = 新 HEAD 短 8 位
+   * @throws origin 无 main/master 可对齐、网络/命令失败
+   */
+  async syncToDefaultBranch(repoPath: string): Promise<{ branch: string; commit: string }> {
+    await runGit(repoPath, ["fetch", "origin"], 120_000)
+
+    let branch = ""
+    try {
+      const { stdout } = await runGit(repoPath, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+      branch = stdout.replace("refs/remotes/origin/", "")
+    } catch {
+      // origin/HEAD 符号引用缺失（老 clone / --single-branch）→ 定点探测 main/master
+      for (const cand of ["main", "master"]) {
+        const probe = await runGit(repoPath, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${cand}`]).catch(() => null)
+        if (probe && probe.stdout) { branch = cand; break }
+      }
+      if (!branch) {
+        throw new Error(`无法确定 origin 默认分支（origin/main、origin/master 均不存在）: ${repoPath}`)
+      }
+    }
+
+    await runGit(repoPath, ["checkout", "-f", branch])
+    await this.cleanForce(repoPath)
+    await this.resetHard(repoPath, `origin/${branch}`)
+    const head = await this.getHeadCommit(repoPath)
+    return { branch, commit: head.slice(0, 8) }
+  }
 }
 
 export const gitOps = new GitOps()

@@ -57,6 +57,7 @@ import { createInteractionRoutes } from "./routes/interaction"
 import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
 import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
+import { RepoSyncService } from "./services/tasks/repo-sync-service"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
@@ -200,6 +201,9 @@ if (db) {
 }
 const sse = new SSEService()
 let observability: ObservabilityService | undefined
+// repo-sync (2026-09-08, 特性A): 项目镜像同步状态机 —— createTask 触发同步、
+// task-author chat 新鲜度门、trigger 预建前等待都吃这一个实例（进程内，无 DB）。
+const repoSyncService = new RepoSyncService({ sse })
 
 // ── Services (created once at startup with pre-built DAOs) ──────────
 let workspaceService: WorkspaceService | undefined
@@ -462,6 +466,8 @@ app.route("/api/clones", createCloneSessionRoutes({
   // 04: task-author autosave seam (v2-D6) — fires at turn-end for
   // cloneName === 'task-author'. Optional dep; no-op when absent.
   taskDAO: d.task,
+  // repo-sync chat 门 (2026-09-08): v4 task-author 每轮开工前等待项目镜像同步。
+  repoSyncService,
 }))
 
 // Clone file tree and operations API
@@ -729,6 +735,9 @@ if (shouldServe) {
       const builtInWorkflowService = new BuiltInWorkflowService(resourceRegistry.get())
       const tasksService = new TasksService(
         db, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
+        // repo-sync + trigger-prebuild (2026-09-08): 尾参装配 —— 镜像同步状态机
+        // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
+        repoSyncService, workspaceService,
       )
       const assistService = new AssistWorkflowService(db, sse)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))

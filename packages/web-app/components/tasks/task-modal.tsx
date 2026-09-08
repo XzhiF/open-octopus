@@ -26,6 +26,7 @@ import {
 import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
+import { PROJECT_SYNC_EVENT } from "@octopus/shared"
 import {
   getTask, abortTask, deleteTask, reopenTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
@@ -539,11 +540,36 @@ export function CompositeMode({
       }
     }
 
+    // repo-sync 反馈 (2026-09-08, 特性A)：创建 draft 后项目主 clone 异步对齐
+    // origin 最新 —— syncing 挂一条按 task 去重的 loading，ok/failed 原地收掉
+    // （同 toast id 替换，不会堆叠）。failed 不静默：代码可能过期必须可见。
+    const onProjectSync = (e: MessageEvent) => {
+      try {
+        const p = JSON.parse(e.data) as {
+          task_id: string; project: string; status: "syncing" | "ok" | "failed"
+          branch?: string; commit?: string; error?: string
+        }
+        if (p.task_id !== task.id) return
+        const toastId = `repo-sync-${task.id}`
+        if (p.status === "syncing") {
+          toast.loading(`仓库同步中：${p.project} → origin 最新`, { id: toastId })
+        } else if (p.status === "ok") {
+          toast.success(`仓库已同步：${p.project} ${p.branch}@${p.commit}`, { id: toastId })
+        } else {
+          toast.error(`仓库同步失败：${p.project} — ${p.error ?? "未知错误"}（代码可能过期）`, { id: toastId })
+        }
+      } catch {
+        // Malformed event payload — ignore.
+      }
+    }
+
     const unsubTaskStatus = subscribeSSE(eventsUrl, "task_status", onTaskStatus)
     const unsubScheduleStatus = subscribeSSE(eventsUrl, "schedule_status", onScheduleStatus)
+    const unsubProjectSync = subscribeSSE(eventsUrl, PROJECT_SYNC_EVENT, onProjectSync)
     return () => {
       unsubTaskStatus()
       unsubScheduleStatus()
+      unsubProjectSync()
     }
   }, [task.id, fetchDetail])
 

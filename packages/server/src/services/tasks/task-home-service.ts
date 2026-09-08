@@ -237,8 +237,18 @@ export class TaskHomeService {
    *  dynamic workspace state: org, locked projects (with filesystem paths),
    *  locked skill groups. The agent reads this file on demand (triggered by
    *  @@context_updated notice) instead of receiving the state in the system
-   *  prompt. This keeps the system prompt stable for prompt caching. */
-  writeContextFile(taskId: string, org?: string, projects?: ProjectRef[], skillGroups?: string[]): void {
+   *  prompt. This keeps the system prompt stable for prompt caching.
+   *
+   *  `syncNotes`（repo-sync 2026-09-08）：project 名 → 仓库新鲜度标注（来自
+   *  RepoSyncService.freshnessNotes）。有标注时在 path 行下多写一行，agent 的
+   *  「先确认已 pull 到最新 main/master 再分析」即读这行成立。 */
+  writeContextFile(
+    taskId: string,
+    org?: string,
+    projects?: ProjectRef[],
+    skillGroups?: string[],
+    syncNotes?: Record<string, string>,
+  ): void {
     const home = this.homePath(taskId)
     const filePath = path.join(home, CONTEXT_FILENAME)
     try {
@@ -255,6 +265,8 @@ export class TaskHomeService {
           } else {
             lines.push(`- project: ${p.name}  (路径未解析)`)
           }
+          const note = syncNotes?.[p.name]
+          if (note) lines.push(`  - 仓库新鲜度: ${note}`)
         }
         lines.push('')
         // Probe guidance (US2 / decisions/06 §4): which conventions, how to
