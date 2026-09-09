@@ -1,12 +1,19 @@
 // packages/server/src/__tests__/tasks-routes.test.ts
 //
-// 03 — tasks service + /api/tasks routes integration (AC1-AC4, SG2).
+// 03 — tasks service + /api/tasks routes integration (AC1/AC2/AC4).
 //
 // Verifies:
 //   AC1: /api/tasks CRUD + spec-field + ready + abort endpoints work
-//   AC2: dispatch seam ready→建 schedules envelope (simple=1 primary; composite=1 coordinator)
-//   AC3: ScheduleStatusListener: mock schedule transition → tasks.status mirror + task_status SSE
-//   AC4: abort → aborted + child schedules cleaned
+//   AC2 (票03 改写): ready 是**纯状态动作** —— 过闸 + draft→ready，不建任何
+//        schedules 信封行（simple/composite 都一样；composite 的子单元是运行时
+//        的 executions 行，见 ADR-0021 §11，不是入队时的协调者行）。
+//   AC4 (票03 改写): abort → 该任务的实例行被停 + tasks.status=aborted + SSE，
+//        且不碰 schedule 表。
+//
+// AC3（TaskScheduleStatusListener 把 schedules.status 镜像到 tasks.status）随
+// 监听器一起退役：任务状态推进现在是内置 task-lifecycle job 自己的职责，
+// 那半边由 services/tasks/__tests__/task-lifecycle.test.ts（launch→running、
+// 终态→done/failed、reconcile resync）钉住。
 //
 // Anti-fake-run: real better-sqlite3 DB + applySchema (R1/R3/R4/R5), Hono app
 // request (R3 API↔DB), data prefix E2E_TD_ (R7), assert response+SQL (R4).
@@ -15,16 +22,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
-import { ScheduleConfigDAO, ScheduleRunDAO, AgentSessionDAO, TaskDAO } from "../db/dao"
+import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
-import { TaskScheduleStatusListener } from "../services/scheduler/schedule-status-listener"
-import {
-  TASK_STATUS_EVENT,
-  SPEC_FIELD_UPDATE_EVENT,
-  type ScheduleStatus,
-} from "@octopus/shared"
+import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-td-03"
 
@@ -91,17 +93,40 @@ function readTaskStatus(db: Database.Database, id: string) {
     { status: string; version: number; completed_at: string | null }
 }
 
-function readSchedulesByOrigin(db: Database.Database, taskId: string) {
-  return db
-    .prepare(
-      "SELECT id, status, origin_type, origin_role FROM schedules WHERE origin_type = 'task' AND origin_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
-    )
-    .all(taskId) as Array<{
-    id: string
-    status: string
-    origin_type: string
-    origin_role: string | null
-  }>
+/** 票03 boundary: a task must never touch the scheduler\'s tables. */
+function scheduleTableCounts(db: Database.Database) {
+  const one = (t: string) => (db.prepare(`SELECT COUNT(*) c FROM ${t}`).get() as { c: number }).c
+  return {
+    schedules: one("schedules"),
+    executions: one("schedule_executions"),
+    workspaces: one("schedule_workspaces"),
+  }
+}
+
+/** Seed the task\'s current instance the way the job would have armed it. */
+function seedInstanceRow(
+  db: Database.Database,
+  taskId: string,
+  status: string,
+  opts: { id?: string; workspaceId?: string } = {},
+): string {
+  const id = opts.id ?? `e2e-td-exec-${Math.random().toString(36).slice(2, 8)}`
+  const wsId = opts.workspaceId ?? `e2e-td-ws-${Math.random().toString(36).slice(2, 8)}`
+  if (opts.workspaceId ?? true) {
+    const exists = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(wsId)
+    if (!exists) {
+      db.prepare(
+        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+      ).run(wsId, `ws-${taskId}`, ORG, `/tmp/e2e-td-${wsId}`, taskId)
+    }
+  }
+  db.prepare(
+    `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status,
+       org, created_at, updated_at, task_id)
+     VALUES (?, ?, '0', 'built-in/flow', 'flow', ?, ?, datetime('now'), datetime('now'), ?)`,
+  ).run(id, wsId, status, ORG, taskId)
+  return id
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -115,7 +140,6 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   let taskEvents: TaskStatusEvent[]
   let specEvents: SpecFieldEvent[]
   let taskDAO: TaskDAO
-  let scheduleDAO: ScheduleConfigDAO
 
   beforeAll(() => {
     db = newDb()
@@ -124,7 +148,6 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     taskEvents = collector.taskEvents
     specEvents = collector.specEvents
     taskDAO = new TaskDAO(db)
-    scheduleDAO = new ScheduleConfigDAO(db)
     const service = new TasksService(db, sse, new AgentSessionDAO(db))
     app = new Hono()
     app.route("/api/tasks", createTasksRoutes(service, sse))
@@ -166,13 +189,25 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(data.items.every((t) => t.org === ORG)).toBe(true)
   })
 
-  it("GET /api/tasks/:id returns task detail with children[]", async () => {
+  it("GET /api/tasks/:id returns task detail with executions[] (children[] is gone)", async () => {
     const id = insertTask(db, { name: "E2E_TD_detail" })
+    seedInstanceRow(db, id, "completed")
     const res = await app.request(`/api/tasks/${id}`)
     expect(res.status).toBe(200)
-    const detail = await json<{ id: string; children: unknown[] }>(res)
+    const detail = await json<{
+      id: string
+      children?: unknown
+      executions: Array<{ status: string }>
+      execution: { status: string } | null
+      derived: { isV4: boolean }
+    }>(res)
     expect(detail.id).toBe(id)
-    expect(Array.isArray(detail.children)).toBe(true)
+    // 运行历史直连 executions.task_id —— 不再经信封 + schedule_executions 两跳。
+    expect(detail.children).toBeUndefined()
+    expect(detail.executions).toHaveLength(1)
+    expect(detail.executions[0].status).toBe("completed")
+    expect(detail.execution).toMatchObject({ status: "completed" })
+    expect(detail.derived.isV4).toBe(false)
   })
 
   it("PUT /api/tasks/:id updates with If-Match (save draft) + bumps version", async () => {
@@ -266,9 +301,9 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(JSON.parse(row.project_ids)).toEqual(["proj-A", "proj-B"])
   })
 
-  // ── AC2: dispatch seam (ready → schedules envelope) ─────────────────
+  // ── AC2 (票03): ready 是纯状态动作 ──────────────────────────────────
 
-  it("POST /:id/ready (simple) → draft→ready + 1 schedule (origin_type=task, role=primary, status=queued)", async () => {
+  it("POST /:id/ready (simple) → draft→ready 且三张 schedule 表零行", async () => {
     const id = insertTask(db, {
       name: "E2E_TD_ready_simple",
       task_spec: JSON.stringify({ goal: "simple task", ac: ["ac1"] }),
@@ -278,19 +313,19 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(res.status).toBe(200)
     const task = await json<{ status: string }>(res)
     expect(task.status).toBe("ready")
-    // DB assert: tasks.status=ready (R3/R4)
     expect(readTaskStatus(db, id).status).toBe("ready")
-    // DB assert: 1 schedule envelope created (R2/R3)
-    const schedules = readSchedulesByOrigin(db, id)
-    expect(schedules.length).toBe(1)
-    expect(schedules[0].origin_type).toBe("task")
-    expect(schedules[0].origin_role).toBe("primary")
-    // v39: enqueue PARKS the envelope (draft) — a manual POST /:id/trigger
-    // arms it to 'queued'; the runner never auto-claims a ready task.
-    expect(schedules[0].status).toBe("draft")
+    // v39 的「停放信封」不存在了：入队既不建 schedules 行，也就没有 draft 停放态、
+    // 没有 orphan 可漏、没有 status='queued' 的领取入口。
+    expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
+    // 「何时跑」是任务自己的列，入队不写游标（等人工触发或 setCronTrigger）。
+    const trig = db.prepare("SELECT trigger_mode, next_fire_at FROM tasks WHERE id = ?").get(id) as {
+      trigger_mode: string
+      next_fire_at: string | null
+    }
+    expect(trig).toEqual({ trigger_mode: "manual", next_fire_at: null })
   })
 
-  it("POST /:id/ready (composite, 2+ subunits) → 1 coordinator schedule (role=coordinator)", async () => {
+  it("POST /:id/ready (composite, 2+ subunits) → 同样零信封（子单元是运行时执行行）", async () => {
     const id = insertTask(db, {
       name: "E2E_TD_ready_composite",
       task_spec: JSON.stringify({
@@ -327,12 +362,11 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(200)
-    // DB assert: 1 coordinator schedule (subunit schedules are runtime-created by task_dispatch)
-    const schedules = readSchedulesByOrigin(db, id)
-    expect(schedules.length).toBe(1)
-    expect(schedules[0].origin_role).toBe("coordinator")
-    // v39: composite envelope is parked too (trigger arms it; see above).
-    expect(schedules[0].status).toBe("draft")
+    // 旧版这里断言「1 个 coordinator 信封行」——composite 的协调者是**一轮执行**
+    // （executions 行，chain[0]=composition wf），子单元是它的 child 行（§11），
+    // 都发生在领取之后，入队一行都不写。
+    expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
+    expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE task_id=?").get(id)).toEqual({ c: 0 })
   })
 
   it("POST /:id/ready rejects non-draft with 409", async () => {
@@ -341,43 +375,34 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(res.status).toBe(409)
   })
 
-  // ── AC4: abort ───────────────────────────────────────────────────────
+  // ── AC4 (票03): abort ────────────────────────────────────────────────
 
-  it("POST /:id/abort (running) → aborted + child schedules cleaned + task_status SSE", async () => {
+  it("POST /:id/abort (running) → 实例行 aborted + tasks.status=aborted + SSE，不碰 schedule 表", async () => {
     const id = insertTask(db, { name: "E2E_TD_abort", status: "running" })
-    // Seed a child schedule (origin_type=task, claimed — in-flight)
-    const childSchedId = `e2e-td-sched-${Math.random().toString(36).slice(2, 8)}`
-    const now = new Date().toISOString()
-    scheduleDAO.insertSchedule({
-      id: childSchedId,
-      org: ORG,
-      name: `E2E_TD_child-${childSchedId}`,
-      cron_expression: null,
-      timezone: "UTC",
-      job_type: "workflow",
-      config: "{}",
-      status: "claimed",
-      origin_type: "task",
-      origin_id: id,
-      origin_role: "primary",
-      claimed_at: now,
-      created_at: now,
-      updated_at: now,
-    } as any)
+    // 该任务的活实例（票03：一次运行就是一行 executions，parent_id='0' 即根）。
+    const execId = seedInstanceRow(db, id, "running")
     const res = await app.request(`/api/tasks/${id}/abort`, { method: "POST" })
     expect(res.status).toBe(200)
     const task = await json<{ status: string }>(res)
     expect(task.status).toBe("aborted")
-    // DB assert: task aborted (R3/R4)
     expect(readTaskStatus(db, id).status).toBe("aborted")
-    // DB assert: child schedule aborted (G4 ws cleanup — status=aborted, claimed_at cleared)
-    const childRow = db
-      .prepare("SELECT status, claimed_at FROM schedules WHERE id = ?")
-      .get(childSchedId) as { status: string; claimed_at: string | null }
-    expect(childRow.status).toBe("aborted")
-    expect(childRow.claimed_at).toBeNull()
-    // SSE assert: task_status aborted (R3)
+    // 闩锁自己松开：行进入终态即不再占这个任务的槽位。
+    expect(
+      db.prepare("SELECT status FROM executions WHERE id = ?").get(execId),
+    ).toEqual({ status: "aborted" })
+    // 「所有子作业」不再是遍历 origin_id 找信封 —— 中止一个任务只停它自己的实例。
+    expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
     expect(taskEvents).toContainEqual({ task_id: id, status: "aborted" })
+  })
+
+  it("POST /:id/abort — 排队中(pending)的实例被 retire，不是被 engine cancel", async () => {
+    const id = insertTask(db, { name: "E2E_TD_abort_queued", status: "ready" })
+    const execId = seedInstanceRow(db, id, "pending")
+    const res = await app.request(`/api/tasks/${id}/abort`, { method: "POST" })
+    expect(res.status).toBe(200)
+    expect(
+      db.prepare("SELECT status FROM executions WHERE id = ?").get(execId),
+    ).toEqual({ status: "aborted" })
   })
 
   it("POST /:id/abort rejects non-running/non-ready with 409", async () => {
@@ -386,191 +411,20 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(res.status).toBe(409)
   })
 
-  // ── AC3: ScheduleStatusListener — mock schedule transition → tasks.status mirror + SSE ─
+  // ── Delete (票03 §5): 软删任务，级联清信封那一步随信封一起消失 ──────────
+  //
+  // 旧版这里有「DELETE cascade-reaps child schedules (origin_type=task)」——它守的是
+  // R-INT「origin_id 无 FK，应用层是唯一防线」。票03 之后任务没有私有定义行可漏，
+  // 该回归问题不再成立（orphan-reaper.ts 同批删除），所以只保留「运行历史随任务
+  // 软删而留存」这条新事实。
 
-  it("listener: schedule queued → tasks.status running (mirror + task_status SSE)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    // Seed a task in 'ready' (pre-dispatch) + a task-origin schedule
-    const taskId = "e2e-td-listen-1"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen1", status: "ready" })
-    // Simulate the scheduler claiming the schedule: listener.onScheduleTransition(queued)
-    listener.onScheduleTransition({
-      schedule_id: "sched-X",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "queued" as ScheduleStatus,
-    })
-    // DB assert: task flipped to running (mirror; no version bump)
-    const row = readTaskStatus(listenerDb, taskId)
-    expect(row.status).toBe("running")
-    expect(row.version).toBe(1) // no version bump
-    // SSE assert
-    expect(lEvents).toContainEqual({
-      task_id: taskId,
-      status: "running",
-      schedule_id: "sched-X",
-      origin_type: "task",
-    })
-    listenerDb.close()
-  })
-
-  it("listener: schedule claimed → tasks running (idempotent — already running, no double SSE)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-2"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen2", status: "running" })
-    // claimed → running (same) — idempotent fast-path
-    listener.onScheduleTransition({
-      schedule_id: "sched-Y",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "claimed" as ScheduleStatus,
-    })
-    expect(readTaskStatus(listenerDb, taskId).status).toBe("running")
-    // No SSE emitted (idempotent)
-    expect(lEvents.filter((e) => e.task_id === taskId)).toHaveLength(0)
-    listenerDb.close()
-  })
-
-  it("listener: schedule done → tasks done (terminal, completed_at set)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-3"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen3", status: "running" })
-    listener.onScheduleTransition({
-      schedule_id: "sched-Z",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "done" as ScheduleStatus,
-    })
-    const row = readTaskStatus(listenerDb, taskId)
-    expect(row.status).toBe("done")
-    expect(row.completed_at).not.toBeNull()
-    expect(lEvents).toContainEqual({
-      task_id: taskId,
-      status: "done",
-      schedule_id: "sched-Z",
-      origin_type: "task",
-    })
-    listenerDb.close()
-  })
-
-  it("listener: schedule failed → tasks failed (terminal, completed_at set)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-4"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen4", status: "running" })
-    listener.onScheduleTransition({
-      schedule_id: "sched-F",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "failed" as ScheduleStatus,
-      error_summary: "boom",
-    })
-    expect(readTaskStatus(listenerDb, taskId).status).toBe("failed")
-    expect(lEvents.find((e) => e.task_id === taskId && e.status === "failed")).toBeTruthy()
-    listenerDb.close()
-  })
-
-  it("listener: schedule aborted → tasks aborted (terminal)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-5"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen5", status: "running" })
-    listener.onScheduleTransition({
-      schedule_id: "sched-A",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "aborted" as ScheduleStatus,
-    })
-    expect(readTaskStatus(listenerDb, taskId).status).toBe("aborted")
-    expect(lEvents.find((e) => e.task_id === taskId && e.status === "aborted")).toBeTruthy()
-    listenerDb.close()
-  })
-
-  it("listener: no-op for origin_type != 'task' (cron schedules don't touch tasks)", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-cron"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen_cron", status: "ready" })
-    listener.onScheduleTransition({
-      schedule_id: "cron-sched",
-      origin_type: "cron",
-      origin_id: taskId, // would corrupt if the filter failed
-      status: "done" as ScheduleStatus,
-    })
-    // No mirror — task stays ready
-    expect(readTaskStatus(listenerDb, taskId).status).toBe("ready")
-    expect(lEvents).toHaveLength(0)
-    listenerDb.close()
-  })
-
-  it("listener: running transition (claimed→running during exec) → tasks running", () => {
-    const listenerDb = newDb()
-    const lTaskDAO = new TaskDAO(listenerDb)
-    const lSchedDAO = new ScheduleConfigDAO(listenerDb)
-    const { sse: lSse, taskEvents: lEvents } = makeSSECollector()
-    const listener = new TaskScheduleStatusListener(lTaskDAO, lSchedDAO, lSse)
-    const taskId = "e2e-td-listen-run"
-    insertTask(listenerDb, { id: taskId, name: "E2E_TD_listen_run", status: "running" })
-    listener.onScheduleTransition({
-      schedule_id: "sched-R",
-      origin_type: "task",
-      origin_id: taskId,
-      status: "running" as ScheduleStatus,
-    })
-    expect(readTaskStatus(listenerDb, taskId).status).toBe("running")
-    // Idempotent — already running, no SSE
-    expect(lEvents).toHaveLength(0)
-    listenerDb.close()
-  })
-
-  // ── R-INT: cascade-reap on delete ────────────────────────────────────
-
-  it("DELETE /:id cascade-reaps child schedules (origin_type=task)", async () => {
+  it("DELETE /:id 软删任务；它的运行历史留在 executions（没有信封可级联清）", async () => {
     const id = insertTask(db, { name: "E2E_TD_reap", status: "ready" })
-    // Seed 2 child schedules
-    const now = new Date().toISOString()
-    for (let i = 0; i < 2; i++) {
-      scheduleDAO.insertSchedule({
-        id: `e2e-td-reap-${id}-${i}`,
-        org: ORG,
-        name: `E2E_TD_reap_${i}`,
-        cron_expression: null,
-        timezone: "UTC",
-        job_type: "workflow",
-        config: "{}",
-        status: "queued",
-        origin_type: "task",
-        origin_id: id,
-        origin_role: i === 0 ? "primary" : "subunit",
-        created_at: now,
-        updated_at: now,
-      } as any)
-    }
+    const execId = seedInstanceRow(db, id, "completed")
     const res = await app.request(`/api/tasks/${id}`, { method: "DELETE" })
     expect(res.status).toBe(200)
-    // DB assert: child schedules soft-deleted (R-INT cascade-reap)
-    const remaining = readSchedulesByOrigin(db, id)
-    expect(remaining).toHaveLength(0)
+    expect(taskDAO.getById(id)).toBeNull()
+    expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE id = ?").get(execId)).toEqual({ c: 1 })
+    expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
   })
 })

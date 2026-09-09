@@ -9,7 +9,10 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
 import type { Task } from "@octopus/shared"
-import { listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError, type TaskDerivedView } from "@/lib/tasks-api"
+import {
+  listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError,
+  type TaskDerivedView, type TaskView,
+} from "@/lib/tasks-api"
 import { toast } from "sonner"
 import {
   groupTasksByStatus, tasksForColumn, effectiveStatusOf, sortByCreatedDesc,
@@ -85,11 +88,11 @@ const CARD_THEME: Record<Task["status"], string> = {
 }
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [tasks, setTasks] = useState<TaskView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // null task = new-task authoring ([+新建]); a Task = card click.
-  const [modalTask, setModalTask] = useState<Task | null>(null)
+  const [modalTask, setModalTask] = useState<TaskView | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
   // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
@@ -180,6 +183,20 @@ export default function TasksPage() {
     return () => unsub()
   }, [fetchTasks])
 
+  // 票03 (ADR-0021) task_execution: the task's own instance changed (armed=pending
+  // behind the cap, launched→running, terminal, 被闸抑制). This is what the 「已排队」
+  // badge and the 执行中/排队中 split now read, and a pending arm no longer mirrors as
+  // task_status(running) — so without this subscription the badge would only move on
+  // the 10s poll.
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      "task_execution",
+      () => { void fetchTasks() },
+    )
+    return () => unsub()
+  }, [fetchTasks])
+
   // 票 11/⑦: phase_status_update (task-phase-redesign, 票 07 验收链路 emit) —
   // re-derive nudge：列归属/角标以 GET /:id 的 derived 为准（K3 派生不存），
   // 收到即整盘刷新（含 derivedMap 补拉）。常量从 shared 导入。
@@ -194,7 +211,7 @@ export default function TasksPage() {
 
   // Keep the open modal's task in sync with the latest fetched row (version/
   // status) — same pattern as the v1 SchedulerJob sync, now against Task.
-  const tasksRef = useRef<Task[]>(tasks)
+  const tasksRef = useRef<TaskView[]>(tasks)
   useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => {
     if (!modalOpen || !modalTask) return
@@ -203,12 +220,14 @@ export default function TasksPage() {
   }, [tasks, modalOpen, modalTask])
 
   const openNew = () => { setModalTask(null); setModalOpen(true) }
-  const openCard = (task: Task) => { setModalTask(task); setModalOpen(true) }
+  const openCard = (task: TaskView) => { setModalTask(task); setModalOpen(true) }
   const close = () => { setModalOpen(false); setModalTask(null) }
 
-  // Deep link: /tasks?task=<id> (emitted by the scheduler table's 任务 origin
-  // badge). Opens that task's modal once the fetched board contains it; the
-  // ref guard means a manual close is not re-opened by the next 10s poll.
+  // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that
+  // used to emit it is gone with the origin_* columns — the URL itself stays, it is
+  // the board's own shareable handle on a task). Opens that task's modal once the
+  // fetched board contains it; the ref guard means a manual close is not re-opened
+  // by the next 10s poll.
   const searchParams = useSearchParams()
   const deepLinkAppliedRef = useRef(false)
   useEffect(() => {
@@ -287,7 +306,7 @@ export default function TasksPage() {
   // New-task flow: the task-author clone + autosave seam (04) create a draft
   // (linked via source_chat_session_id); adopt it so [入队] enables without
   // closing the modal.
-  const handleDraftResolved = useCallback((draft: Task) => {
+  const handleDraftResolved = useCallback((draft: TaskView) => {
     setModalTask(draft)
     void fetchTasks()
   }, [fetchTasks])
@@ -433,7 +452,7 @@ export default function TasksPage() {
 }
 
 interface TaskCardProps {
-  task: Task
+  task: TaskView
   /** v4 派生视图（GET /:id.derived）；undefined = v3/旧 server/未补拉 → 不渲染角标。 */
   derived?: TaskDerivedView
   /** ⏳ 超预算阈值 ms（phaseBudgetMs()）。 */
@@ -472,11 +491,10 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
   const badge = computePhaseBadge(derived)
   // ⏳ 超预算（advisory, K2/US17）：仅在跑轮 now-created_at > budgetMs。
   const overBudget = overBudgetRoundOf(derived, Date.now(), budgetMs)
-  // v39: task mirrored 'running' but its root schedule is still 'queued' =
-  // armed one-shot not yet due (v39 manual/time trigger; claimed/running are
-  // NOT flagged here — the kanban badge only covers the waiting window).
-  const isQueuedRun =
-    task.status === "running" && task.schedule_status === "queued" && !!task.scheduled_at
+  // 票03 (ADR-0021): 排队不再读私有信封（schedule_status/scheduled_at 已随列删除）——
+  // 两个真相都在任务自己身上：execution.status='pending' = 实例已武装、在共享并发闸
+  // 后等位；next_fire_at = 唯一的到期游标（once 到点前 = 何时触发，领取后 retire）。
+  const isQueuedRun = task.execution?.status === "pending" || !!task.next_fire_at
   return (
     <article
       data-task-card
@@ -529,10 +547,12 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <span
               data-task-queued-badge
               className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-pop-ink"
-              title={`定时触发：${new Date(task.scheduled_at!).toLocaleString()}`}
+              title={task.next_fire_at
+                ? `定时触发：${new Date(task.next_fire_at).toLocaleString()}`
+                : "已武装，等待并发空位（全局上限内排队）"}
             >
-              {new Date(task.scheduled_at!).getTime() > Date.now()
-                ? `已排队 · ${new Date(task.scheduled_at!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 触发`
+              {task.next_fire_at && new Date(task.next_fire_at).getTime() > Date.now()
+                ? `已排队 · ${new Date(task.next_fire_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 触发`
                 : "排队等待执行"}
             </span>
           )}
@@ -562,8 +582,10 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             </button>
           )}
           {/* v4 advance-window 卡改显「启动下一 Phase」（下方按钮）——触发只对
-              首 phase（信封 parked）成立，信封已消费的 parked 卡走 advance。 */}
-          {isReady && advancePhaseOf(derived) === null && (
+              首 phase 成立，已被消费的 parked 卡走 advance。
+              票03: 已排队（武装实例 / 未来到期游标）时不再给「触发」——同一任务一个
+              实例，再点只会吃一个 409。 */}
+          {isReady && !isQueuedRun && advancePhaseOf(derived) === null && (
             <button
               data-task-trigger-btn
               onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}

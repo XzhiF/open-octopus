@@ -5,9 +5,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 
 export interface CompositeEvent {
-  schedule_id: string
+  /** The run this event belongs to — the task's own execution id (or the task id for
+   *  a task_status row). 票03: this used to be a schedule id off the envelope. */
+  run_id: string
   status: string
-  /** Human label for the schedule (parent / child subunit name). */
+  /** Human label for the run (parent / child subunit name). */
   label: string
   /** ISO timestamp of when the event was received by the client. */
   at: string
@@ -18,22 +20,33 @@ export interface CompositeEventsPanelProps {
 }
 
 const STATUS_TONE: Record<string, string> = {
-  queued: "text-pop-cyan",
-  claimed: "text-pop-amber",
+  // executions 词表 (票03: 任务运行行)
+  pending: "text-pop-amber",
   running: "text-pop-cyan",
-  done: "text-pop-green",
+  completed: "text-pop-green",
+  completed_with_failures: "text-pop-amber",
+  cancelled: "text-pop-dim",
+  rejected: "text-pop-dim",
   failed: "text-pop-red",
   aborted: "text-pop-dim",
+  // 旧 schedule 词表
+  queued: "text-pop-cyan",
+  claimed: "text-pop-amber",
+  done: "text-pop-green",
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  queued: "待执行", claimed: "已认领", running: "执行中",
-  done: "完成", failed: "失败", aborted: "已中止",
+  pending: "已排队", running: "执行中", completed: "成功",
+  completed_with_failures: "完成(有失败)", cancelled: "已取消", rejected: "已驳回",
+  failed: "失败", aborted: "已中止", skipped: "已跳过",
+  paused: "已暂停", pending_approval: "待审批", pending_resume: "待续跑",
+  queued: "待执行", claimed: "已认领", done: "完成",
   draft: "草稿", rollback: "回滚",
 }
 
-/** Right-side real-time SSE events panel. Renders a rolling log of schedule_status
- *  events (parent + each child) received since the modal opened. */
+/** Right-side real-time SSE events panel. Renders a rolling log of the task's own
+ *  `task_execution` events (each run: armed/launched/terminal) + its `task_status`
+ *  rows, received since the modal opened. */
 export function CompositeEventsPanel({ events }: CompositeEventsPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -53,7 +66,7 @@ export function CompositeEventsPanel({ events }: CompositeEventsPanelProps) {
     >
       <div className="shrink-0 px-3 py-2 border-b border-border">
         <h3 className="text-xs font-semibold text-muted-foreground">实时事件</h3>
-        <p className="text-[10px] text-muted-foreground">SSE schedule_status · 父 + 各子</p>
+        <p className="text-[10px] text-muted-foreground">SSE task_execution · 本任务各运行</p>
       </div>
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-2 space-y-1">
@@ -64,7 +77,7 @@ export function CompositeEventsPanel({ events }: CompositeEventsPanelProps) {
           ) : (
             events.map((e, i) => (
               <div
-                key={`${e.schedule_id}-${i}`}
+                key={`${e.run_id}-${i}`}
                 className="rounded border border-border bg-card/50 px-2 py-1.5 text-xs"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -75,7 +88,7 @@ export function CompositeEventsPanel({ events }: CompositeEventsPanelProps) {
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">
                   {new Date(e.at).toLocaleTimeString()}
-                  <span className="ml-1.5 font-mono opacity-60">{e.schedule_id.slice(0, 8)}</span>
+                  <span className="ml-1.5 font-mono opacity-60">{e.run_id.slice(0, 8)}</span>
                 </div>
               </div>
             ))

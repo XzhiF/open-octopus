@@ -3,15 +3,14 @@
 // 任务看板弹窗的执行信息主体 (2026-08-29 空白弹窗优化)。ready/running/done/
 // failed/aborted 五种弹窗模式此前各只有两三行占位（90vh 大弹窗几乎全空）；
 // 这里按三个信息区把真实数据填满：
-//   TaskOverviewCard — spec 概要（goal / ac / skills / projects / 绑定工作流可看全文）
-//   ChildrenRunList  — 每条子 schedule 的最新运行：触发时间/耗时/错误摘要/
-//                      按需展开 agent 输出，以及 → workspace 执行详情的深链
-//   ArtifactsCard    — task home artifacts.json（listArtifacts + ArtifactViewerDialog）
+//   TaskOverviewCard   — spec 概要（goal / ac / skills / projects / 绑定工作流可看全文）
+//   ExecutionsRunList  — 任务自己的每一条运行（票03: executions 行，非子 schedule）：
+//                        状态/开始/耗时 + → workspace 执行详情的深链
+//   ArtifactsCard      — task home artifacts.json（listArtifacts + ArtifactViewerDialog）
 //
-// 数据来源：GET /api/tasks/:id（children + execution_ref 摘要，运行中 5s 轮询 +
-// task_status SSE 即时刷新）；agent_output 走 GET /api/scheduler/jobs/:sid/
-// executions/:eid（按需，避免详情响应过大）。
-// 深链目标：/workspaces/{ws}?tab=detail&execId={exec}（workspace 页已有的
+// 数据来源：GET /api/tasks/:id（executions[] = 该任务全部根执行，新→旧；derived =
+// v4 phase 视图。运行中 5s 轮询 + task_status SSE 即时刷新）。
+// 深链目标：/workspaces/{ws}?tab=detail&execId={execution.id}（workspace 页已有的
 // 自动打开执行详情面板逻辑）。
 
 "use client"
@@ -19,15 +18,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  Boxes, Bot, CheckCircle2, ChevronDown, ChevronRight, Clock, ExternalLink,
+  Boxes, Bot, CheckCircle2, Clock, ExternalLink,
   FileText, ListChecks, Target, Workflow,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { mergeLedgerParts } from "@octopus/shared"
-import { getTask, listArtifacts, type TaskChild, type TaskDetail } from "@/lib/tasks-api"
-import { getExecution } from "@/lib/scheduler-api"
+import { getTask, listArtifacts, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
@@ -41,22 +39,29 @@ import { PhaseTimeline } from "./phase-timeline"
 import { DraftBatches } from "./authoring/draft-batches"
 import { useBatchTree } from "./authoring/use-batch-tree"
 
+// executions-row statuses (票03: a task's runs ARE executions rows — the schedule
+// statuses these keys used to carry are the job pump's own run-state now).
+// 'pending' = armed and waiting behind the shared concurrency cap = 已排队.
 export const RUN_STATUS_LABEL: Record<string, string> = {
-  draft: "待触发", queued: "已排队", claimed: "领取中", running: "执行中",
-  completed: "成功", success: "成功", done: "已完成",
-  failed: "失败", aborted: "已中止", skipped: "已跳过", triggered: "已触发",
-  pending: "等待中",
+  pending: "已排队", running: "执行中", paused: "已暂停",
+  pending_approval: "待审批", pending_resume: "待续跑",
+  completed: "成功", completed_with_failures: "完成(有失败)",
+  cancelled: "已取消", rejected: "已驳回",
+  failed: "失败", aborted: "已中止", skipped: "已跳过",
+  // 旧 schedule 词表（v3 历史行为只读，不再有新写入）
+  draft: "待触发", queued: "已排队", claimed: "领取中",
+  success: "成功", done: "已完成", triggered: "已触发",
 }
 
 const RUN_DOT: Record<string, string> = {
-  queued: "bg-pop-cyan", claimed: "bg-pop-amber", running: "bg-pop-cyan animate-pulse",
-  triggered: "bg-pop-cyan", completed: "bg-pop-green", success: "bg-pop-green",
-  done: "bg-pop-green", failed: "bg-pop-red", aborted: "bg-pop-dim",
-  skipped: "bg-pop-dim", pending: "bg-muted-foreground",
-}
-
-const ROLE_LABEL: Record<string, string> = {
-  primary: "主执行", coordinator: "协调器", subunit: "子单元", auxiliary: "辅助",
+  pending: "bg-pop-amber", running: "bg-pop-cyan animate-pulse",
+  paused: "bg-pop-amber", pending_approval: "bg-pop-amber", pending_resume: "bg-pop-amber",
+  completed: "bg-pop-green", completed_with_failures: "bg-pop-amber",
+  success: "bg-pop-green", done: "bg-pop-green",
+  failed: "bg-pop-red", cancelled: "bg-pop-dim", rejected: "bg-pop-dim",
+  aborted: "bg-pop-dim", skipped: "bg-pop-dim",
+  // 旧 schedule 词表
+  queued: "bg-pop-cyan", claimed: "bg-pop-amber", triggered: "bg-pop-cyan",
 }
 
 // ── 通用小区块 ──────────────────────────────────────────────────────
@@ -182,116 +187,73 @@ export function TaskOverviewCard({ task }: { task: Task }) {
   )
 }
 
-// ── 子 schedule 运行记录 ────────────────────────────────────────────
+// ── 任务运行记录 (票03: 一次运行 = executions 一行) ─────────────────
 
-/** execution_ref 的 workspace/execution 优先（每次运行的精确目标），回退到
- *  schedule 行上的 workspace_id（无执行 id 时只到 workspace 页）。 */
-function deepLinkTarget(child: TaskChild): { url: string; exact: boolean } | null {
-  const ws = child.execution_ref?.workspace_id ?? child.workspace_id
-  if (!ws) return null
-  const exec = child.execution_ref?.execution_id ?? null
-  return exec
-    ? { url: `/workspaces/${ws}?tab=detail&execId=${exec}`, exact: true }
-    : { url: `/workspaces/${ws}`, exact: false }
+/** 深链目标：徽章自带 (workspace_id, id) —— 旧契约里 execution_ref 的那一跳没了。 */
+function deepLinkTarget(exec: TaskExecutionBadge): string | null {
+  return exec.workspace_id
+    ? `/workspaces/${exec.workspace_id}?tab=detail&execId=${exec.id}`
+    : null
 }
 
-function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: LLMCallAggregates | null }) {
+/** 行标题。旧的 child.name 是信封行名（task-{id}-primary / 子单元名），运行行没有
+ *  这个名字；v4 的 phase/round 直接落在执行行上，所以「第几轮」成了最贴近原来语义
+ *  的标签，其次工作流名。（子单元行的可见性 = 票05 follow-up。） */
+function execLabel(exec: TaskExecutionBadge): string {
+  if (exec.phase_index != null) {
+    return exec.round_index != null
+      ? `Phase ${exec.phase_index} · Round ${exec.round_index}`
+      : `Phase ${exec.phase_index}`
+  }
+  return exec.workflow_ref || `执行 ${exec.id.slice(0, 8)}`
+}
+
+/** 还没跑完的状态 —— 驱动「实时耗时」的每秒一跳。pending = 武装后在并发闸后排队。 */
+const LIVE_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
+
+function ExecRunRow({ exec, now, agg }: { exec: TaskExecutionBadge; now: number; agg: LLMCallAggregates | null }) {
   const router = useRouter()
-  const ref = child.execution_ref ?? null
-  const [expanded, setExpanded] = useState(false)
-  const [output, setOutput] = useState<{ state: "idle" | "loading" | "done" | "error"; text: string }>({ state: "idle", text: "" })
+  const link = deepLinkTarget(exec)
+  const startedMs = exec.started_at ? Date.parse(exec.started_at) : Date.parse(exec.created_at)
 
-  const isRunning = child.status === "running" || child.status === "claimed" || child.status === "queued"
-  const link = deepLinkTarget(child)
-
-  const loadOutput = useCallback(async () => {
-    if (!ref) return
-    if (output.state === "done" || output.state === "loading") return
-    setOutput({ state: "loading", text: "" })
-    try {
-      const exec = await getExecution(child.schedule_id, ref.id)
-      const parts: string[] = []
-      if (exec.model_used) parts.push(`模型: ${exec.model_used}`)
-      if (exec.token_usage) parts.push(`tokens: ↑${exec.token_usage.inputTokens} ↓${exec.token_usage.outputTokens}`) // C1 规范字段名（基线改名残留顺手修）
-      if (exec.agent_output) parts.push("", exec.agent_output)
-      setOutput({ state: "done", text: parts.join("\n") || "（该次运行没有记录输出）" })
-    } catch (err: unknown) {
-      setOutput({ state: "error", text: err instanceof Error ? err.message : "加载失败" })
-    }
-  }, [ref, output.state, child.schedule_id])
-
-  // 耗时：终态用 duration_ms；运行中用 now - triggered_at 现算（now 由上层 1s tick 驱动）
+  // 耗时：徽章没有 duration_ms，自己算 —— 终态 completed_at-started_at；
+  // 在跑 now-started_at（now 由上层 1s tick 驱动）。
   let durationText: string | null = null
-  if (ref) {
-    if (ref.duration_ms != null) durationText = formatDuration(ref.duration_ms)
-    else if (ref.completed_at) durationText = formatDuration(new Date(ref.completed_at).getTime() - new Date(ref.triggered_at).getTime())
-    else if (isRunning) durationText = formatDuration(Math.max(0, now - new Date(ref.triggered_at).getTime()))
+  if (!Number.isNaN(startedMs)) {
+    if (exec.completed_at) durationText = formatDuration(Math.max(0, Date.parse(exec.completed_at) - startedMs))
+    else if (LIVE_STATUSES.has(exec.status)) durationText = formatDuration(Math.max(0, now - startedMs))
   }
 
   return (
-    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5" data-run-child={child.schedule_id}>
+    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5" data-run-child={exec.id}>
       <div className="flex items-center gap-2">
-        <span className={`size-2 rounded-full shrink-0 ${RUN_DOT[child.status] ?? "bg-muted-foreground"}`} />
-        <span className="text-sm font-medium truncate">{child.name}</span>
-        {child.origin_role && ROLE_LABEL[child.origin_role] && (
-          <span className="text-[10px] px-1 rounded bg-muted shrink-0">{ROLE_LABEL[child.origin_role]}</span>
-        )}
-        <span className="ml-auto text-xs text-muted-foreground shrink-0">{RUN_STATUS_LABEL[child.status] ?? child.status}</span>
+        <span className={`size-2 rounded-full shrink-0 ${RUN_DOT[exec.status] ?? "bg-muted-foreground"}`} />
+        <span className="text-sm font-medium truncate">{execLabel(exec)}</span>
+        <span className="ml-auto text-xs text-muted-foreground shrink-0">{RUN_STATUS_LABEL[exec.status] ?? exec.status}</span>
       </div>
 
-      {ref ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span><Clock className="size-3 inline mr-1" />{fmtTime(ref.triggered_at)}</span>
-          {durationText && <span>耗时 {durationText}</span>}
-          {child.scheduled_at && <span>计划 {fmtTime(child.scheduled_at)}</span>}
-          {agg && agg.totalCalls > 0 && (
-            <span className="tabular-nums" title="该次运行的 LLM 调用（llm_calls 于节点结束落库，中止的半截运行可能缺数据）">
-              <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)} · {formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}
-            </span>
-          )}
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground">尚未开始运行{child.scheduled_at ? ` · 计划 ${fmtTime(child.scheduled_at)}` : ""}</div>
-      )}
-
-      {ref?.error_summary && (
-        <p className="text-xs text-pop-red break-words whitespace-pre-wrap">{ref.error_summary}</p>
-      )}
-
-      <div className="flex items-center gap-2 pt-0.5">
-        {ref && (
-          <Button
-            variant="ghost" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => {
-              const next = !expanded
-              setExpanded(next)
-              if (next) void loadOutput()
-            }}
-          >
-            {expanded ? <ChevronDown className="size-3 mr-1" /> : <ChevronRight className="size-3 mr-1" />}
-            {ref.status === "running" ? "实时输出" : "运行输出"}
-          </Button>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span><Clock className="size-3 inline mr-1" />{fmtTime(exec.started_at ?? exec.created_at)}</span>
+        {durationText && <span>耗时 {durationText}</span>}
+        {agg && agg.totalCalls > 0 && (
+          <span className="tabular-nums" title="该次运行的 LLM 调用（llm_calls 于节点结束落库，中止的半截运行可能缺数据）">
+            <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)} · {formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}
+          </span>
         )}
-        {link && (
+      </div>
+
+      {link && (
+        <div className="flex items-center gap-2 pt-0.5">
           <Button
             variant="ghost" size="sm"
             className="h-6 px-2 text-xs ml-auto"
-            title={link.exact ? "跳转到该次执行的流程图（实时）" : "跳转到任务工作区"}
-            onClick={() => router.push(link.url)}
-            data-run-deeplink={link.exact ? "execution" : "workspace"}
+            title="跳转到该次执行的流程图（实时）"
+            onClick={() => router.push(link)}
+            data-run-deeplink="execution"
           >
             <ExternalLink className="size-3 mr-1" />
-            {link.exact ? "查看执行详情" : "查看工作区"}
+            查看执行详情
           </Button>
-        )}
-      </div>
-
-      {expanded && (
-        <div className="rounded bg-muted/60 p-2 text-[11px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
-          {output.state === "loading" && <span className="inline-flex items-center gap-1.5"><Spinner className="size-3" /> 加载中…</span>}
-          {output.state === "done" && output.text}
-          {output.state === "error" && <span className="text-pop-red">{output.text}</span>}
-          {output.state === "idle" && "…"}
         </div>
       )}
     </div>
@@ -417,19 +379,19 @@ export function TaskAiUsageCard({ agg, loading, runCount }: {
   )
 }
 
-/** ChildrenRunList —— 子 schedule 运行记录列表。
+/** ExecutionsRunList —— 任务的运行记录（票03: GET /:id 的 executions[]，新→旧）。
  *  AI 用量数据（aggMap/isLive）由 TaskRunDetailView 顶层统一拉取后注入：
  *  同一份请求喂给行内「N 次调用」与顶部任务卡，避免重复打接口。
  *  不传时（独立使用）行内退化为不显示用量，功能不受影响。 */
-export function ChildrenRunList({
-  children,
+export function ExecutionsRunList({
+  executions,
   aggMap,
 }: {
-  children?: TaskChild[]
+  executions?: TaskExecutionBadge[]
   aggMap?: Record<string, LLMCallAggregates>
 }) {
-  const kids = children ?? []
-  const anyRunning = kids.some(c => c.status === "running" || c.status === "claimed")
+  const runs = executions ?? []
+  const anyRunning = runs.some(e => LIVE_STATUSES.has(e.status))
   // 运行中每秒一跳，驱动「实时耗时」显示（数据刷新由上层 5s 轮询负责）。
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -442,18 +404,18 @@ export function ChildrenRunList({
     <SectionCard
       icon={<Workflow className="size-4" />}
       title="执行记录"
-      right={<span className="text-xs text-muted-foreground">{kids.length} 条</span>}
+      right={<span className="text-xs text-muted-foreground">{runs.length} 条</span>}
     >
-      {kids.length === 0 ? (
+      {runs.length === 0 ? (
         <p className="text-xs text-muted-foreground py-1">任务尚未派发执行 —— 入队并触发后，这里会出现运行记录与实时进度入口。</p>
       ) : (
         <div className="space-y-2">
-          {kids.map(c => (
-            <ChildRunRow
-              key={c.schedule_id}
-              child={c}
+          {runs.map(e => (
+            <ExecRunRow
+              key={e.id}
+              exec={e}
               now={now}
-              agg={c.execution_ref?.execution_id ? aggMap?.[c.execution_ref.execution_id] ?? null : null}
+              agg={aggMap?.[e.id] ?? null}
             />
           ))}
         </div>
@@ -516,8 +478,8 @@ export function ArtifactsCard({ taskId }: { taskId: string }) {
 
 // ── 组合视图（弹窗主体）─────────────────────────────────────────────
 
-/** 五态弹窗共用的信息主体：拉 TaskDetail（children + execution_ref + derived
- *  v4 视图），运行中 5s 轮询 + task_status / phase_status_update SSE 即时刷新；
+/** 五态弹窗共用的信息主体：拉 TaskDetail（executions[] 运行历史 + derived v4 视图），
+ *  运行中 5s 轮询 + task_status / task_execution / phase_status_update SSE 即时刷新；
  *  done/failed/aborted 各附产物区。票 11：顶部插 PhaseTimeline（v4 每 phase 一
  *  行；v3 legacy 单行；旧 server 无 derived 字段 → 组件内静默）。 */
 export function TaskRunDetailView({ task }: { task: Task }) {
@@ -536,7 +498,7 @@ export function TaskRunDetailView({ task }: { task: Task }) {
     refetch()
   }, [refetch])
 
-  // 轮询兜底（ready/running：children 状态、运行时长变化）；终态不再轮询。
+  // 轮询兜底（ready/running：运行行状态、运行时长变化）；终态不再轮询。
   useEffect(() => {
     if (!isLive) return
     const id = setInterval(refetch, 5000)
@@ -548,6 +510,24 @@ export function TaskRunDetailView({ task }: { task: Task }) {
     const unsub = subscribeSSE(
       `${getServerUrl()}/api/tasks/events`,
       TASK_STATUS_EVENT,
+      (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data) as { task_id?: string }
+          if (payload.task_id === task.id) refetch()
+        } catch { /* malformed — ignore */ }
+      },
+    )
+    return unsub
+  }, [task.id, refetch])
+
+  // 票03 (ADR-0021) task_execution SSE：任务自己的实例状态变化（arm→pending、
+  // 领取→running、终态、被闸抑制…）由内置 task-lifecycle job 发在 taskpool 上。
+  // 排队中的 pending 行不再镜像成 task_status（那正是「排队看着像在执行」的旧 bug），
+  // 所以运行记录的即时刷新挂在这个事件上，权威态仍是 GET /:id。
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      "task_execution",
       (e: MessageEvent) => {
         try {
           const payload = JSON.parse(e.data) as { task_id?: string }
@@ -574,13 +554,13 @@ export function TaskRunDetailView({ task }: { task: Task }) {
     return unsub
   }, [task.id, refetch])
 
-  const children = detail?.children ?? []
+  const runs = detail?.executions ?? []
   // spec/tickets 可见性补齐：draft 面板的「草稿批次」区（DraftBatches，磁盘
   // 直扫 /batch-tree）此前只挂在 AuthoringWorkspace —— 入队后弹窗里看不到
   // phase 的 spec.md/issues/，验收时无从对照。执行态以 isDraft=false 只读
   // 复用同区；刷新沿 detail.version 轮询（home 环：collect 回流会 bump）。
   const batchTree = useBatchTree(task.id, { versionKey: detail?.version })
-  const execIds = children.flatMap(c => c.execution_ref?.execution_id ? [c.execution_ref.execution_id] : [])
+  const execIds = runs.map(r => r.id)
   const { aggMap, loaded } = useRunsAggregates(execIds, isLive)
   const totalAgg = useMemo(() => mergeAggregates(Object.values(aggMap)), [aggMap])
 
@@ -604,7 +584,7 @@ export function TaskRunDetailView({ task }: { task: Task }) {
           <TaskAiUsageCard agg={totalAgg} loading={execIds.length > 0 && !loaded} runCount={execIds.length} />
         </div>
         <div className="space-y-4 min-w-0">
-          <ChildrenRunList children={detail?.children} aggMap={aggMap} />
+          <ExecutionsRunList executions={detail?.executions} aggMap={aggMap} />
           <ArtifactsCard taskId={task.id} />
         </div>
       </div>

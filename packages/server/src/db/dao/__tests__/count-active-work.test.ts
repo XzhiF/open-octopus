@@ -77,8 +77,18 @@ describe("countActiveWork — spans both kinds of in-flight work", () => {
     addSchedule("sch-wf", "workflow")
     addFire("f1", "sch-wf", "triggered")
     addExec("e1", "running", "task-1")
-    addExec("e2", "pending", "task-2")
-    expect(dao.countActiveWork()).toBe(3)
+    expect(dao.countActiveWork()).toBe(2)
+  })
+
+  it("an ARMED (pending) launch holds no slot — that is the queue, not the work", () => {
+    // The other axis, ux_exec_task_active, DOES count pending (identity). Conflating the
+    // two makes the gate self-blocking: three armed tasks would read as "cap reached" and
+    // freeze every launch behind rows that are waiting for this meter to free up.
+    addExec("e-p1", "pending", "task-p1")
+    addExec("e-p2", "pending", "task-p2")
+    expect(dao.countActiveWork()).toBe(0)
+    addExec("e-run", "running", "task-run")
+    expect(dao.countActiveWork()).toBe(1)
   })
 
   it("ignores finished work on both sides", () => {
@@ -119,18 +129,25 @@ describe("countActiveWork — spans both kinds of in-flight work", () => {
     expect(dao.countActiveWork()).toBe(1)
   })
 
-  it("excludes only the ROOT of a task — a composite's children don't add slots", () => {
+  it("counts a composite's running CHILDREN — each holds a workspace and an engine", () => {
+    // Before v41 a child was its own schedule row, so the meter counted it; counting only
+    // roots would have silently raised a composite task's real concurrency. The LATCH is
+    // the roots-only one (a composite may run several children of one task at once) —
+    // this axis is compute slots, so it is not.
     addExec("root", "running", "task-c")
     addExec("kid1", "running", "task-c", "root")
     addExec("kid2", "pending", "task-c", "root")
-    expect(dao.countActiveWork()).toBe(1)
+    expect(dao.countActiveWork()).toBe(2)
   })
 
   it("treats every alive status as work, including approval and interaction parks", () => {
-    for (const alive of ["pending", "running", "paused", "pending_approval", "pending_resume"]) {
+    // Every status that is neither terminal nor queued counts — fail-closed, so a status
+    // added later still holds a slot. 'pending' is the single deliberate subtraction (the
+    // armed queue), see the test above.
+    for (const alive of ["running", "paused", "pending_approval", "pending_resume"]) {
       addExec(`e-${alive}`, alive, `task-${alive}`)
     }
-    expect(dao.countActiveWork()).toBe(5)
+    expect(dao.countActiveWork()).toBe(4)
   })
 
   it("honors both exclusions, since a caller is always itself in flight", () => {

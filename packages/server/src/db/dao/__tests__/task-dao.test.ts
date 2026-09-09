@@ -56,12 +56,12 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
   }
 }
 
-describe("02-db-schema: tasks table + schedules origin migration", () => {
+describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
   describe("schema", () => {
-    it("schema version is 41 (v41 = task-scheduler-decouple, ADR-0021)", () => {
+    it("schema version is 42 (v42 = ADR-0021 票03, schedules stops carrying tasks)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(41)
-      expect(SCHEMA_VERSION).toBe(41)
+      expect(v).toBe(42)
+      expect(SCHEMA_VERSION).toBe(42)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {
@@ -81,26 +81,51 @@ describe("02-db-schema: tasks table + schedules origin migration", () => {
       expect(cols).not.toContain("claimed_at")
     })
 
-    it("schedules ADDS origin_type/origin_id/origin_role/assoc_meta (trigger_source/source_chat_session_id DROPPED by v38b / ticket 06 SG1b)", () => {
+    it("schedules has NO task-shaped columns left (v42: a schedule is a job definition)", () => {
       const cols = colNames("schedules")
-      // v38 ADDITIVE origin cols present
-      for (const c of ["origin_type", "origin_id", "origin_role", "assoc_meta"]) {
-        expect(cols).toContain(c)
+      // Every one of these existed to bind a definition to a task, or to park an
+      // envelope's run state. None of them may come back without a reason: the task's
+      // WHEN is tasks.trigger_*, its runs are executions with task_id.
+      for (const gone of ["origin_type", "origin_id", "origin_role", "assoc_meta", "scheduled_at"]) {
+        expect(cols).not.toContain(gone)
       }
-      // v38b: task-pool hack cols removed — 承重 sites migrated to origin_type
-      expect(cols).not.toContain("trigger_source")
-      expect(cols).not.toContain("source_chat_session_id")
+      // The pump's own run-state for its cron/agent jobs survives.
+      for (const kept of ["status", "claimed_at", "next_trigger_at", "enabled", "job_type", "config"]) {
+        expect(cols).toContain(kept)
+      }
     })
 
-    it("schedules.origin_type defaults to 'cron' for legacy cron rows", () => {
-      // Insert a minimal cron schedule without specifying origin_type
-      const now = new Date().toISOString()
-      db.prepare(`
-        INSERT INTO schedules (id, org, name, cron_expression, timezone, created_at, updated_at, config)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run("sched-cron-1", "xzf", "nightly", "0 0 * * *", "Asia/Shanghai", now, now, "{}")
-      const row = db.prepare("SELECT origin_type FROM schedules WHERE id = ?").get("sched-cron-1") as { origin_type: string }
-      expect(row.origin_type).toBe("cron")
+    it("an existing v41 DB loses the task columns on the next applySchema (no wipe needed)", () => {
+      // Dev-stage rule says a wipe is acceptable; the migration exists so a wipe is not
+      // REQUIRED — and because DROP COLUMN fails on an indexed column, this also pins
+      // that the two indexes are removed first (a silent catch-and-skip would leave the
+      // columns in place and every reader of ScheduleRow typing a field that is not there).
+      const legacy = new Database(":memory:")
+      applySchema(legacy)
+      legacy.exec(`
+        ALTER TABLE schedules ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'cron';
+        ALTER TABLE schedules ADD COLUMN origin_id TEXT;
+        ALTER TABLE schedules ADD COLUMN origin_role TEXT;
+        ALTER TABLE schedules ADD COLUMN assoc_meta TEXT;
+        ALTER TABLE schedules ADD COLUMN scheduled_at TEXT;
+        CREATE INDEX idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL;
+        CREATE INDEX idx_schedules_due ON schedules(scheduled_at) WHERE deleted_at IS NULL AND status = 'queued';
+      `)
+      legacy.exec(`
+        INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config,
+                               created_at, updated_at, origin_type, origin_id)
+        VALUES ('old-1', 'xzf', 'keepme', '0 0 * * *', 'UTC', 1, 'workflow', '{}',
+                datetime('now'), datetime('now'), 'cron', NULL);
+      `)
+      applySchema(legacy)
+
+      const cols = (legacy.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
+      for (const gone of ["origin_type", "origin_id", "origin_role", "assoc_meta", "scheduled_at"]) {
+        expect(cols).not.toContain(gone)
+      }
+      // The migration must not damage the rows it did not target.
+      expect((legacy.prepare("SELECT name FROM schedules WHERE id='old-1'").get() as { name: string }).name).toBe("keepme")
+      legacy.close()
     })
 
     it("tasks.status CHECK permits the 6 lifecycle states", () => {
@@ -247,55 +272,33 @@ describe("02-db-schema: tasks table + schedules origin migration", () => {
     })
   })
 
-  describe("ScheduleConfigDAO origin cols", () => {
-    it("insertSchedule writes origin_type/origin_id/origin_role/assoc_meta", () => {
+  describe("ScheduleConfigDAO — a definition row, and nothing else", () => {
+    it("insertSchedule writes a job definition without any task back-reference", () => {
       const now = new Date().toISOString()
       const result = schedDao.insertSchedule({
-        id: "sched-origin-1", org: "xzf", name: "E2E_TD_origin",
-        cron_expression: null, timezone: "Asia/Shanghai",
-        origin_type: "task", origin_id: "task-parent-1", origin_role: "primary",
-        assoc_meta: JSON.stringify({ enqueued_by: "dispatch-seam" }),
+        id: "sched-def-1", org: "xzf", name: "E2E_TD_def",
+        cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
         config: JSON.stringify({ schema_version: "3.0", type: "workflow" }),
-        status: "queued", created_at: now, updated_at: now,
+        created_at: now, updated_at: now,
       } as any)
       expect(result.changes).toBe(1)
-
-      const got = schedDao.findById("sched-origin-1")!
-      expect(got.origin_type).toBe("task")
-      expect(got.origin_id).toBe("task-parent-1")
-      expect(got.origin_role).toBe("primary")
-      expect(JSON.parse(got.assoc_meta!)).toEqual({ enqueued_by: "dispatch-seam" })
+      const got = schedDao.findById("sched-def-1")!
+      expect(got.name).toBe("E2E_TD_def")
+      // The columns are gone from the row type too — asserting the SHAPE here is what
+      // keeps a future caller from quietly reintroducing one through `as any`.
+      expect(Object.keys(got)).not.toContain("origin_type")
+      expect(Object.keys(got)).not.toContain("origin_id")
     })
 
-    it("findSchedulesByOrigin returns child schedules for a task, ordered by created_at ASC", () => {
-      const now = new Date().toISOString()
-      // primary child
-      schedDao.insertSchedule({
-        id: "c1", org: "xzf", name: "E2E_TD_c1", cron_expression: null, timezone: "Asia/Shanghai",
-        origin_type: "task", origin_id: "task-P", origin_role: "primary",
-        config: "{}", status: "queued", created_at: now, updated_at: now,
-      } as any)
-      // subunit child (created slightly later)
-      schedDao.insertSchedule({
-        id: "c2", org: "xzf", name: "E2E_TD_c2", cron_expression: null, timezone: "Asia/Shanghai",
-        origin_type: "task", origin_id: "task-P", origin_role: "subunit",
-        config: "{}", status: "queued", created_at: now, updated_at: now,
-      } as any)
-      // unrelated cron + different task
-      schedDao.insertSchedule({
-        id: "c3", org: "xzf", name: "E2E_TD_c3", cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
-        config: "{}", created_at: now, updated_at: now,
-      } as any)
-      schedDao.insertSchedule({
-        id: "c4", org: "xzf", name: "E2E_TD_c4", cron_expression: null, timezone: "Asia/Shanghai",
-        origin_type: "task", origin_id: "task-OTHER", origin_role: "primary",
-        config: "{}", status: "queued", created_at: now, updated_at: now,
-      } as any)
-
-      const children = schedDao.findSchedulesByOrigin("task", "task-P")
-      expect(children.map(s => s.id)).toEqual(["c1", "c2"])
-      expect(children.every(s => s.origin_type === "task")).toBe(true)
-      expect(children.every(s => s.origin_id === "task-P")).toBe(true)
+    it("the task-walking finders are gone from the DAO", () => {
+      // These four existed solely to answer 「这个任务的内在哪」 from the scheduler side.
+      for (const gone of [
+        "findSchedulesByOrigin", "findRootSchedulesByTaskIds",
+        "findQueuedSchedules", "claimParkedTaskSchedule", "cancelTriggeredTaskSchedule",
+        "findFailedChildSchedules",
+      ]) {
+        expect(typeof (schedDao as any)[gone]).not.toBe("function")
+      }
     })
   })
 })

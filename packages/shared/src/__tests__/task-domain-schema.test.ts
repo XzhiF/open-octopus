@@ -33,7 +33,7 @@ import {
   TASK_STATUS_EVENT,
   UPDATE_TASK_SPEC_FIELD_TOOL_NAME,
 } from "../types/task"
-import type { TaskDispatchPort, ScheduleHandle, OriginRole } from "../types/task-dispatch-port"
+import type { TaskDispatchPort, ChildHandle, OriginRole } from "../types/task-dispatch-port"
 
 // Independent sources of truth (spec literals — not derived from the code).
 // task-phase-redesign v4 (ticket 07): 'awaiting_review' + 'archiving' join the
@@ -277,69 +277,42 @@ describe("AC2 — resource refs + spec/config extensions", () => {
   })
 })
 
-// ── AC3: TaskDispatchPort +origin_role param ────────────────────────
-describe("AC3 — TaskDispatchPort origin_role param", () => {
-  it("OriginRole is primary | coordinator | subunit (type-level)", () => {
+// ── AC3: TaskDispatchPort — a child RUN, not a child schedule (ADR-0021 票03/票04) ──
+describe("AC3 — TaskDispatchPort dispatchChild / ChildHandle", () => {
+  it("OriginRole survives as documentation, but is no longer a port parameter", () => {
     const roles: OriginRole[] = [...EXPECTED_ORIGIN_ROLES]
-    for (const r of EXPECTED_ORIGIN_ROLES) {
-      expect(roles).toContain(r)
-    }
+    for (const r of EXPECTED_ORIGIN_ROLES) expect(roles).toContain(r)
   })
 
-  it("dispatchChildSchedule accepts origin_role as a required param (type-level)", () => {
-    // Conforming impl MUST accept origin_role. If origin_role is removed from
-    // the interface, this assignment fails tsc.
+  it("dispatchChild takes ONLY the subunit and returns a ChildHandle", () => {
+    // Type-level: a conforming implementation must satisfy the interface. The old
+    // version of this test asserted the OPPOSITE direction — that omitting
+    // origin_role would fail to compile — because a child schedule row needed a role
+    // written into schedules.origin_role. A child execution row carries parent_id and
+    // child_index instead, so the role parameter has nothing to feed.
     const impl: TaskDispatchPort = {
-      async dispatchChildSchedule(subunit, origin_role) {
+      async dispatchChild(subunit) {
         expect(subunit.name).toBeDefined()
-        expect(origin_role).toBeDefined()
-        return { schedule_id: "sch-1", workspace_id: "ws-1" }
+        return { child_id: "run-1", workspace_id: "ws-1" }
       },
       async resumeOnCompletion(handle, output) {
-        expect(handle.schedule_id).toBeDefined()
+        expect(handle.child_id).toBeDefined()
         expect(output).toBeTypeOf("object")
       },
     }
-    expect(impl.dispatchChildSchedule).toBeTypeOf("function")
+    expect(impl.dispatchChild).toBeTypeOf("function")
   })
 
-  it("dispatchChildSchedule can be invoked with origin_role", async () => {
+  it("ChildHandle carries child_id (the executions row), never schedule_id", async () => {
     const impl: TaskDispatchPort = {
-      async dispatchChildSchedule(_subunit, origin_role) {
-        return { schedule_id: `sch-${origin_role}`, workspace_id: "ws-1" }
+      async dispatchChild() {
+        return { child_id: "run-1", workspace_id: "ws-1" }
       },
       async resumeOnCompletion() {},
     }
-    const handle = await impl.dispatchChildSchedule(
-      {
-        name: "be",
-        workspace_spec: { org: "o", branch_prefix: "b", projects: [] },
-        workflow_ref: "x",
-        input_values: {},
-        skills: [],
-        resources: [],
-      },
-      "subunit",
-    )
-    expect(handle.schedule_id).toBe("sch-subunit")
-  })
-
-  it("v1-style impl (ignoring origin_role) still satisfies the interface (backward-compat)", () => {
-    // TS permits impls that accept fewer params than the interface declares.
-    const v1Impl: TaskDispatchPort = {
-      async dispatchChildSchedule(subunit) {
-        return { schedule_id: "sch-legacy", workspace_id: "ws-1" }
-      },
-      async resumeOnCompletion(handle) {
-        expect(handle.schedule_id).toBeDefined()
-      },
-    }
-    expect(v1Impl.dispatchChildSchedule).toBeTypeOf("function")
-  })
-
-  it("ScheduleHandle still carries schedule_id", () => {
-    const handle: ScheduleHandle = { schedule_id: "sch-1" }
-    expect(handle.schedule_id).toBe("sch-1")
+    const handle = await impl.dispatchChild({ name: "s1", workflow_ref: "wf", input_values: {}, workspace_spec: { org: "o", branch_prefix: "b", projects: [] } } as never)
+    expect(handle.child_id).toBe("run-1")
+    expect("schedule_id" in handle).toBe(false)
   })
 })
 

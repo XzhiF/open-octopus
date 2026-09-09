@@ -67,6 +67,20 @@ export function registerCodeJobHandler(name: string, handler: CodeJobHandler): v
   registry.set(name, handler)
 }
 
+/**
+ * Replace whatever is bound to `name`.
+ *
+ * Only for the built-in seed path, which runs on every boot: `registerCodeJobHandler`
+ * deliberately rejects two different functions claiming one name (that is a wiring bug),
+ * but a built-in job's handler is normally a fresh closure over the current composition
+ * (e.g. `taskLifecycleHandlerFor(service)`), so re-registering the same NAME with a
+ * different function is expected here and must not throw — otherwise a hot reload or a
+ * second seed in one process would take the scheduler down over a job that is fine.
+ */
+export function rebindCodeJobHandler(name: string, handler: CodeJobHandler): void {
+  registry.set(name, handler)
+}
+
 export function resolveCodeJobHandler(name: string): CodeJobHandler {
   const handler = registry.get(name)
   if (!handler) throw new UnknownCodeJobHandlerError(name, listCodeJobHandlers())

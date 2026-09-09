@@ -55,10 +55,12 @@ describe("DB Schema", () => {
     // + schema v39: idx_schedules_due = 94
     // + schema v40: idx_task_phase_acceptances_task_phase = 95
     // + schema v41 (ADR-0021): idx_tasks_due + idx_exec_task + idx_ws_task
-    //   + idx_exec_task_pending = 99.
+    //   + idx_exec_pending_claimable = 99
+    // + schema v42 (ADR-0021 票03): − idx_schedules_origin − idx_schedules_due = 97.
+    //   Both existed for the task envelope (origin lookup / queued due-time FIFO).
     //   (The single-instance latch is ux_exec_task_active — outside this idx_%
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
-    expect(rows.length).toBe(99)
+    expect(rows.length).toBe(97)
   })
 
   it("workspaces table has correct columns", () => {

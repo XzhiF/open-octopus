@@ -7,10 +7,10 @@ import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
 import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
-import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
+import type { SchedulerJob, WorkflowConfig, WorkflowChainItem } from "@octopus/shared"
 import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
-import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from '../../../db/dao'
+import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
 import { TaskHomeService } from '../../tasks/task-home-service'
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview } from '../../tasks/task-artifact-sync'
 // Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
@@ -21,36 +21,13 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 // trigger-prebuild (2026-09-08): 命名块与 composite 判定收敛到 ws-launch —
 // triggerTask 预建与 executor 首建共用，同名同支是复用命中的前提。
 import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from '../ws-launch'
+// ADR-0013 S2a: the home→ws workflow copy helper now lives in the task domain (票03) —
+// one implementation, shared with the task-lifecycle job that replaced this path.
+import { copyTaskWorkflowsToWs } from '../../tasks/task-artifact-sync'
 // ADR-0021: the cap number and its meter are single-source (this file used to parse
 // OCTOPUS_SCHEDULER_MAX_PARALLEL into a local copy of the constant).
 import { MAX_PARALLEL_WORKSPACES } from '../concurrency'
 
-/** task-workflow-handoff (ADR-0013, S2a): copy YAML files from the task home's
- *  `workflows/` directory into the execution workspace's `workflows/` dir. The
- *  engine's existing `{ws}/workflows/` resolver finds them on create. Empty
- *  source dir is a no-op (no YAML to copy → nothing copied). Missing source
- *  dir is also a no-op (legacy tasks may lack the dir). */
-export function copyTaskWorkflowsToWs(taskWorkflowsDir: string, wsPath: string): void {
-  if (!fs.existsSync(taskWorkflowsDir)) return
-  const wsWorkflowsDir = path.join(wsPath, "workflows")
-  // Ensure ws workflows/ exists (createFromSpec already creates it, but this
-  // is defensive — a test or a non-standard scaffold may skip it).
-  fs.mkdirSync(wsWorkflowsDir, { recursive: true })
-  const entries = fs.readdirSync(taskWorkflowsDir)
-  for (const entry of entries) {
-    if (!entry.endsWith(".yaml") && !entry.endsWith(".yml")) continue
-    const src = path.join(taskWorkflowsDir, entry)
-    // Defensive: skip non-files (subdirs, symlinks to dirs) — we only copy YAML files.
-    try {
-      const stat = fs.statSync(src)
-      if (!stat.isFile()) continue
-    } catch {
-      continue
-    }
-    const dst = path.join(wsWorkflowsDir, entry)
-    fs.copyFileSync(src, dst)
-  }
-}
 
 /**
  * Ticket 04 (composite dispatch): the workflow_ref of the composition-task template
@@ -102,7 +79,6 @@ export class WorkflowExecutor implements Executor {
   private configDAO: ScheduleConfigDAO
   private runDAO: ScheduleRunDAO
   private execDAO: ExecutionDAO
-  private taskDAO: TaskDAO | null
 
   constructor(
     private sse: SSEService,
@@ -110,23 +86,11 @@ export class WorkflowExecutor implements Executor {
     runDAO: ScheduleRunDAO,
     execDAO: ExecutionDAO,
     workspaceService: WorkspaceService,
-    // 03 (SG2): optional ScheduleStatusListener. When injected, the 3
-    // schedule_status emit sites (running, done/failed-finalStatus, failed)
-    // also mirror onto tasks.status + emit task_status SSE. The listener
-    // self-filters by origin_type='task'. Optional so existing 5-arg call
-    // sites keep compiling.
-    private scheduleStatusListener?: ScheduleStatusListener,
-    // task-ws-name (2026-08-29): optional TaskDAO — when present, task-origin
-    // schedules create their workspace as `task:{任务标题}` instead of the raw
-    // taskpool-{scheduleId} name. Optional (trailing) so existing call sites
-    // keep compiling; without it the old naming stands.
-    taskDAO?: TaskDAO,
   ) {
     this.workspaceService = workspaceService
     this.configDAO = configDAO
     this.runDAO = runDAO
     this.execDAO = execDAO
-    this.taskDAO = taskDAO ?? null
   }
 
   getType(): string {
@@ -197,163 +161,65 @@ export class WorkflowExecutor implements Executor {
     // Ticket 04 (composite dispatch) + Ticket 08 (ADR-0009): the isComposite
     // decision bifurcates execute() into two dispatch paths:
     //
-    //   simple (isComposite=false, subunits.length<2) → SIMPLE-DIRECT-DISPATCH:
-    //     1 real workspace (projects=config.workspace_spec.projects) runs the
-    //     task's own workflow_ref directly. NO coordinator-ws. This is the
-    //     ADR-0009 N+1→1 win — simple tasks no longer pay for an orchestration-
-    //     only workspace they don't need.
-    //
-    //   composite (isComposite=true, subunits.length>=2) → COORDINATOR-DISPATCH:
-    //     1 coordinator-ws (projects=[], orchestration only — spec D4) runs
-    //     composition-task.yaml, whose Loop× task_dispatch nodes fan out N
-    //     child schedules + workspaces (TaskDispatchService, ADR-0008). The
-    //     parent-aggregation check at completion propagates 'failed' if any
-    //     child failed.
-    //
-    // The PRE-materialization decision (DefaultOrchestrationStrategy.planDispatch
-    // in orchestration-strategy.ts) is the single source of truth for the
-    // threshold + composition ref. This POST-materialization detector
-    // (isCompositeTask) reconstructs the decision from the config shape —
-    // necessary because the executor sees the materialized WorkflowConfig, not
-    // the original TaskSpec. The two share COMPOSITION_WF_REF so they never drift.
-    const isComposite = this.isCompositeTask(config)
-
+    // 4b. ADR-0021 票03: the composite/coordinator branch lived here because a composite
+    // TASK was materialized into a schedule row. Tasks are no longer schedules, so this
+    // executor runs only what the job definition says: config.workflow_chain[0] on a
+    // freshly built workspace. Composite fan-out is the task domain's business (and 票04
+    // moves it onto child executions).
     // 5. Branch suffix + ws naming — verbatim 抽入 ws-launch 共享纯函数
     // (trigger-prebuild 2026-09-08): triggerTask 的「同步预建」与这里的首建
     // 必须产出同名同支（预建→executor 复用命中），两份命名逻辑合一防漂移。
-    // ponytail: requirement-type schedules use a deterministic taskpool-{schedule_id}-{ts}
-    // name so failed drafts can be traced back to their schedule; cron jobs keep the
-    // AI-supplied branch_prefix from workspace_spec.
+    // 票03 (ADR-0021): the requirement/task branch of this naming is gone — a task is no
+    // longer a schedule, so this executor only ever builds a cron job's workspace and the
+    // name always comes from the job's own workspace_spec.branch_prefix. The deterministic
+    // taskpool-{id}-{ts} form for task launches moved with them to the task-lifecycle job.
     // task-ws-name (2026-08-29): task-origin schedules display `task:{任务标题}`
     // (用户改过的 name，或默认名时从 goal 生成的 chatbot 同款智能标题)；查不到
     // 任务/取不到标题时回退旧 taskpool 命名。branch_prefix 不变（git 分支追溯）。
-    const isRequirement = job.trigger_source === 'requirement'
-    const taskRow = schedule.origin_type === 'task' && schedule.origin_id && this.taskDAO
-      ? this.taskDAO.getById(schedule.origin_id)
-      : null
     const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
-      scheduleId: schedule.id,
-      triggerSource: job.trigger_source,
+      instanceKey: schedule.id,
+      naming: 'cron',
       config,
-      taskRow,
+      taskRow: null,
     })
 
-    // 6. Create a new workspace from spec — or REUSE the task's bound one.
-    //
-    // task-phase-redesign (ticket 05, K4/K5/K12, 票03清单#1): the v4 envelope
-    // (config.format === 'v4', written by ticket 04's materialize) runs ALL
-    // phases/rounds in the ONE workspace bound at tasks.workspace_id (schema
-    // v40). Binding exists + ws row alive → skip createFromSpec entirely (the
-    // worktrees, the taskpool-{scheduleId} branch and the round evidence on
-    // disk survive — ④ "phase/round 不换支" falls out for free). No binding
-    // (or the ws was deleted out of band) → first build, then write the binding
-    // back as a version-free system UPDATE (abortTask precedent — a dispatch
-    // event must not 409 the spec-field tool's optimistic concurrency).
-    // v3 / generic / composite envelopes never set workspace_id ⇒ every branch
-    // below is inert for them (byte-identical pre-v4 behavior, regression floor).
-    const v4Envelope = config as WorkflowConfig & {
-      format?: string
-      phases?: Array<{ index: number; workflowRef: string; specDir?: string }>
-    }
-    const isV4 = v4Envelope.format === 'v4' && !isComposite
-    const boundWorkspaceId = isV4 && taskRow ? (taskRow.workspace_id ?? null) : null
-    const reusedWorkspace = boundWorkspaceId
-      ? this.workspaceService.getById(boundWorkspaceId)
-      : undefined
-
+    // 6. Create the workspace from the job's own spec. There is no reuse path any more:
+    // binding a workspace to something and reusing it across runs was a task concept
+    // (v4's one-ws-per-task), and it is the task-lifecycle job's to do now.
     let workspace
-    if (reusedWorkspace) {
-      workspace = reusedWorkspace
-      // worktree 自愈 (trigger-prebuild 2026-09-08): bound ws 行活着不代表
-      // projects/ 下的 worktree 还在（带外 rm / 半建时代旧数据）。缺失项按原
-      // 分支重建（ensureWorktreesForReuse → initWorktreeOne）；重建失败 = 本次
-      // 执行失败（与 createFromSpec 失败同款归口），下次触发/复用再自愈。
-      try {
-        this.workspaceService.ensureWorktreesForReuse(reusedWorkspace)
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.error(`[WorkflowExecutor] worktree self-heal failed for reused workspace`, { scheduleId: schedule.id, workspaceId: reusedWorkspace.id, error: message })
-        this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Worktree self-heal failed: ${message}`)
-        return {
-          success: false,
-          exitCode: 1,
-          errorMessage: message,
-          durationMs: Date.now() - startTime,
-          status: 'failure',
-        }
-      }
-    } else {
-      try {
-        workspace = this.workspaceService.createFromSpec({
-          org: config.workspace_spec.org,
-          name: workspaceName,
-          // Ticket 04: coordinator-ws has NO projects (orchestration only — spec D4).
-          // initWorktreesFromSpec iterates `for (const proj of projects)` so an empty
-          // array is a no-op (no worktrees, no throw) — the coordinator only runs the
-          // composition wf and never touches git. Simple tasks pass the real projects.
-          projects: isComposite ? [] : config.workspace_spec.projects,
-          branch_prefix: branchPrefix,
-          branch_suffix: branchSuffix,
-          source: 'scheduler',
-          source_schedule_id: schedule.id,
-          workflow_chain: config.workflow_chain,
-        })
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.error(`[WorkflowExecutor] workspace creation failed`, { scheduleId: schedule.id, error: message })
-
-        this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
-
-        return {
-          success: false,
-          exitCode: 1,
-          errorMessage: message,
-          durationMs: Date.now() - startTime,
-          status: 'failure',
-        }
-      }
-      // First-build write-back (v4 only). Re-binding over a stale/dangling
-      // workspace_id is intended: the old ws row is gone (getById missed it),
-      // the task must point at the live one.
-      if (isV4 && taskRow && taskRow.workspace_id !== workspace.id && this.taskDAO) {
-        try {
-          this.taskDAO
-            .getDb()
-            .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
-            .run(workspace.id, new Date().toISOString(), taskRow.id)
-        } catch (err: unknown) {
-          // Non-fatal: the run proceeds unbound (next dispatch first-builds
-          // again). Logged loudly — a silent binding failure would re-introduce
-          // the multi-ws-per-task drift this ticket exists to kill.
-          console.error(
-            `[WorkflowExecutor] task workspace binding write-back failed for task ${taskRow.id} (non-fatal):`,
-            err instanceof Error ? err.message : String(err),
-          )
-        }
+    try {
+      workspace = this.workspaceService.createFromSpec({
+        org: config.workspace_spec.org,
+        name: workspaceName,
+        projects: config.workspace_spec.projects,
+        branch_prefix: branchPrefix,
+        branch_suffix: branchSuffix,
+        source: 'scheduler',
+        source_schedule_id: schedule.id,
+        workflow_chain: config.workflow_chain,
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[WorkflowExecutor] workspace creation failed`, { scheduleId: schedule.id, error: message })
+      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
+      return {
+        success: false,
+        exitCode: 1,
+        errorMessage: message,
+        durationMs: Date.now() - startTime,
+        status: 'failure',
       }
     }
 
-    // 7. Record schedule_workspace association
-    // (reuse path records the ws's ESTABLISHED branch suffix — the last one
-    // written for this envelope, per-task constant by K5 — not the freshly
-    // generated one, which no git operation ever used).
-    let assocBranchSuffix = branchSuffix
-    if (reusedWorkspace) {
-      const last = this.configDAO
-        .getDb()
-        .prepare(
-          "SELECT branch_suffix FROM schedule_workspaces WHERE schedule_id = ? AND branch_suffix IS NOT NULL AND branch_suffix != '' ORDER BY started_at DESC LIMIT 1",
-        )
-        .get(schedule.id) as { branch_suffix: string } | undefined
-      if (last?.branch_suffix) assocBranchSuffix = last.branch_suffix
-    }
+    // 7. Record the association (the suffix this run established — there is no reuse
+    // path left to look an older one up through).
     const schedWsId = randomUUID()
     this.configDAO.insertScheduleWorkspace({
       id: schedWsId,
       schedule_id: schedule.id,
       workspace_id: workspace.id,
       status: 'running',
-      branch_suffix: assocBranchSuffix,
+      branch_suffix: branchSuffix,
       started_at: new Date().toISOString(),
     })
 
@@ -405,38 +271,9 @@ export class WorkflowExecutor implements Executor {
       console.error(`[WorkflowExecutor] task_workflows copy failed (non-fatal): ${message}`)
     }
 
-    // task-phase-redesign (ticket 06, K9/K16): v4 seed 下行 — copy the phase's
-    // batch dir {home}/.scratch/<date>/<slug>/ into the execution workspace at
-    // the SAME relative position before the root execution starts (the
-    // copyTaskWorkflowsToWs precedent — same-ws reuse re-seeds every round, so
-    // home edits made between rounds take effect on the next seed, K16).
-    // home OVERWRITES ws same-names (home = last collected final state, or the
-    // draft baseline for round 1 — ADR-0018). Non-fatal: a transient
-    // fs error must not burn the dispatch slot — the wf surfaces missing inputs
-    // itself. resolvePhaseRound is computed HERE (not at step 11b) so the seed
-    // knows which batch dir to mirror; the same values are reused for tagging.
-    const v4PhaseRound = isV4
-      ? this.resolvePhaseRound(v4Envelope, firstStep, workspace.id)
-      : null
-    if (v4PhaseRound?.phase?.specDir && taskRow) {
-      try {
-        const homeDir = new TaskHomeService().homePath(taskRow.id)
-        const rel = batchRelPath(homeDir, v4PhaseRound.phase.specDir)
-        if (rel) {
-          const seeded = seedPhaseToWorkspace(v4PhaseRound.phase.specDir, registry.wsPath, rel)
-          if (seeded > 0) {
-            console.log(
-              `[WorkflowExecutor] seeded ${seeded} artifact file(s) into ws ${registry.wsPath}/${rel} (phase ${v4PhaseRound.phaseIndex} round ${v4PhaseRound.roundIndex})`,
-            )
-          }
-        }
-      } catch (err: unknown) {
-        console.error(
-          `[WorkflowExecutor] v4 artifact seed failed (non-fatal):`,
-          err instanceof Error ? err.message : String(err),
-        )
-      }
-    }
+    // 票03: the v4 seed 下行 (mirroring a phase's batch dir into the ws) moved to the
+    // task-lifecycle job with the rest of the task launch machinery — a cron job has no
+    // phase and no task home to mirror.
 
     const now = new Date()
 
@@ -454,17 +291,10 @@ export class WorkflowExecutor implements Executor {
       execution = registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
-        // task-phase-redesign (K4/K5): v4 crash-recovery re-claim runs on the
-        // BOUND ws which already holds the first round's root execution; a v4
-        // round is an independent root, so the v1 "one root per ws" invariant
-        // must be opted out. v3/composite (isV4 false) is byte-identical.
-        allow_existing_root: isV4,
-        // Ticket 04: composite tasks feed subunits/subunit_count/goal/integration_prompt
-        // to the composition wf as input_values (G9/G10). ExecutionService.create accepts
-        // Record<string, unknown> (not string-only at runtime), so the subunits array is
-        // passed as a real object — the composition Loop consumes $iteration.subunit from
-        // it downstream. Simple tasks pass the chain step's string input_values unchanged.
-        input_values: isComposite ? this.buildCompositeInputValues(config, schedule.id) : firstStep.input_values,
+        // ADR-0021: one root per workspace, the v1 invariant, holds again — the only
+        // thing that used to opt out of it was a v4 task reusing one ws per task, and a
+        // cron job builds a fresh ws on every fire.
+        input_values: firstStep.input_values,
         initial_var_pool: scheduleVars,
       })
     } catch (err: unknown) {
@@ -483,28 +313,9 @@ export class WorkflowExecutor implements Executor {
     // 11. Link schedule_execution to root execution
     this.runDAO.updateExecutionLinkId(executionId, execution.id)
 
-    // 11b. task-phase-redesign (ticket 05, K4): Round = this executions row +
-    // phase_index/round_index columns. deriveTaskView (票 03) and the acceptance
-    // ledger (票 07) consume the tagged rows verbatim. First execution of a fresh
-    // v4 envelope is (1,1) by construction; a re-claimed envelope whose chain[0]
-    // was rewritten by dispatchPhaseRound carries the authoritative
-    // `_phase_index`/`_round_index` management keys (same precedent as
-    // task_artifacts_dir — underscore-prefixed internal keys survive into the
-    // var pool harmlessly and make crash recovery re-tag identically).
-    if (isV4) {
-      try {
-        const { phaseIndex, roundIndex } = v4PhaseRound!
-        this.execDAO.updateExecution(execution.id, {
-          phase_index: phaseIndex,
-          round_index: roundIndex,
-        })
-      } catch (err: unknown) {
-        console.error(
-          `[WorkflowExecutor] phase/round tagging failed for execution ${execution.id} (non-fatal):`,
-          err instanceof Error ? err.message : String(err),
-        )
-      }
-    }
+    // 11b. removed (票03): phase/round tagging belonged to the v4 envelope path; task
+    // rounds are tagged at insert by the task-lifecycle job, which is the only writer of
+    // task-bound execution rows.
 
     // 12. Register chain completion callback
     const triggeredAt = now.getTime()
@@ -519,36 +330,16 @@ export class WorkflowExecutor implements Executor {
           notifyOnFailure: schedule.notify_on_failure === 1,
           schedule,
           maxRetain: config.max_retain,
-          isRequirement,
           engineFinalStatus,
         })
       }) as any,
     }, execution.id)
 
-    // 13. Set status to 'running' — schedule_executions row + schedules row.
-    // schedules.status='running' feeds the kanban "running" column. Previously this
-    // was never written, so a task sat in "claimed" the whole time it executed and
-    // the "running" column stayed empty (type also lacked 'running'/'done').
-    // Cron schedules keep using enabled/disabled, so only requirement-type advances.
+    // 13. In-flight marker. There is no schedules.status any more (票03 dropped the
+    // run-state columns): a fire in flight is a live schedule_executions row, which is
+    // what countActiveWork and the parallel policy already read. The kanban's per-task
+    // status is now written by the task-lifecycle job, not mirrored off a schedule.
     this.runDAO.markExecutionRunning(executionId)
-    if (isRequirement) {
-      this.configDAO.updateSchedule(schedule.id, { status: 'running' })
-      this.sse.emit('taskpool', {
-        event: 'schedule_status',
-        data: { schedule_id: schedule.id, status: 'running' },
-      })
-      // 03 (SG2): mirror onto tasks.status. Ungated by isRequirement for the
-      // listener call — the listener self-filters by origin_type='task', so
-      // cron schedules are a no-op. Fires for task-origin schedules once 06
-      // migrates the isRequirement gate to origin_type (the SSE emit above
-      // stays gated until then).
-      this.scheduleStatusListener?.onScheduleTransition({
-        schedule_id: schedule.id,
-        origin_type: (schedule.origin_type ?? "cron") as OriginType,
-        origin_id: schedule.origin_id ?? "",
-        status: "running",
-      })
-    }
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
     try {
@@ -613,7 +404,6 @@ export class WorkflowExecutor implements Executor {
     notifyOnFailure: boolean
     schedule: ScheduleRow
     maxRetain: number
-    isRequirement: boolean
     /** Engine's terminal status, threaded from onComplete (engine.ts:431 fires
      *  inside run(), BEFORE ExecutionLifecycle persists the final status —
      *  a pure DB read here observes a stale 'running' and misfinalizes a
@@ -664,43 +454,11 @@ export class WorkflowExecutor implements Executor {
       // Chain fully complete → finalize schedule_execution + schedule + workspace
       this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
 
-      // Issue 2 fix: requirement schedules track lifecycle in the `status` column
-      // (draft/queued/claimed/running/done). Cron uses enabled/disabled.
-      if (opts.isRequirement) {
-        // Ticket 04 (composite parent aggregation): when a composite task's
-        // composition wf completes, propagate 'failed' if any child schedule
-        // dispatched by its task_dispatch nodes failed. The composition wf itself
-        // completes successfully even on partial results (TaskDispatchExecutor
-        // resumes with empty output on child failure), so without this check a
-        // composite parent would wrongly show 'done' while a subunit failed.
-        // Child schedules carry the parent_task_dispatch marker (03) pointing at
-        // this composition wf execution; findFailedChildSchedules reads it via
-        // json_extract. Simple tasks have no children → stays 'done'.
-        let finalStatus: 'done' | 'failed' = 'done'
-        if (this.isCompositeSchedule(opts.schedule)) {
-          const failedChildren = this.configDAO.findFailedChildSchedules(opts.executionId)
-          if (failedChildren.length > 0) {
-            finalStatus = 'failed'
-          }
-        }
-        this.configDAO.updateSchedule(opts.scheduleId, {
-          status: finalStatus,
-          claimed_at: null,
-        })
-        this.sse.emit('taskpool', {
-          event: 'schedule_status',
-          data: { schedule_id: opts.scheduleId, status: finalStatus },
-        })
-        // 03 (SG2): mirror done/failed onto tasks.status. Listener self-filters
-        // by origin_type='task'; opts.schedule carries the origin cols (added
-        // schema v38 — present on every row, null on legacy cron rows).
-        this.scheduleStatusListener?.onScheduleTransition({
-          schedule_id: opts.scheduleId,
-          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
-          origin_id: opts.schedule.origin_id ?? "",
-          status: finalStatus,
-        })
-      }
+      // 票03: the requirement branch is gone — flipping a schedule's done/failed status,
+      // aggregating composite child failures out of child schedules, and mirroring onto
+      // tasks.status all existed because a schedule row stood in for a task run. A job
+      // fire's terminal state is the schedule_executions row written just above; whose
+      // task (if any) a run served is no longer this file's business.
 
       // Update schedule_workspace
       this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
@@ -722,30 +480,9 @@ export class WorkflowExecutor implements Executor {
         error: errorSummary,
       })
 
-      // G2 (ticket 05): mirror the done path's schedule-level writer. Without
-      // this, a failed requirement task stays stuck in 'running' → checkStaleClaimed
-      // rolls it back to 'queued' → re-dispatch → fail again (infinite loop at
-      // scheduler-engine.ts:413). 'failed' is terminal: findStaleClaimed filters
-      // status IN ('claimed','running'), so it skips failed/aborted. Cron keeps
-      // using enabled/disabled + consecutive_failures, so this is requirement-only.
-      if (opts.isRequirement) {
-        this.configDAO.updateSchedule(opts.scheduleId, {
-          status: 'failed',
-          claimed_at: null,
-        })
-        this.sse.emit('taskpool', {
-          event: 'schedule_status',
-          data: { schedule_id: opts.scheduleId, status: 'failed' },
-        })
-        // 03 (SG2): mirror failed onto tasks.status.
-        this.scheduleStatusListener?.onScheduleTransition({
-          schedule_id: opts.scheduleId,
-          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
-          origin_id: opts.schedule.origin_id ?? "",
-          status: "failed",
-          error_summary: errorSummary,
-        })
-      }
+      // 票03: same on the failure path. There is no schedules.status to unstick, so the
+      // loop this block existed to break ('running' → stale sweep → 'queued' → re-dispatch
+      // → fail again) has no states left to occur in.
 
       if (opts.notifyOnFailure) {
         this.notificationService
@@ -787,176 +524,24 @@ export class WorkflowExecutor implements Executor {
     // execution side changed in the batch dir back into the task home and emit
     // task_artifacts_update. Gated on the phase/round TAG (④/K4), so v3,
     // generic and composite chains (never tagged) byte-for-byte skip this.
-    this.maybeCollectV4Artifacts(opts.schedule, opts.executionId)
-
+    // 票03: v4 collect 上行 moved into the task-lifecycle job — it needs the task home,
+    // the phase binding and the artifact index, none of which a cron job has.
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
   }
 
-  /**
-   * ticket 06 collect 上行 (execute-path terminal — the dispatchPhaseRound path
-   * has its own mirror in TasksService.finalizePhaseRoundExecution). Reads the
-   * phase/round tag off the terminal executions row (non-tagged ⇒ v3/generic/
-   * composite ⇒ no-op, the 底线), locates the phase's home batch dir via the
-   * envelope's materialized specDir (票04), mirrors it back from
-   * `{ws}/{relBatchPath}` and emits TASK_ARTIFACTS_UPDATE_EVENT(taskId) when
-   * anything actually flowed (the OutputViewer re-GETs home artifacts).
-   * Non-fatal by contract: an fs/registry hiccup must never break finalization
-   * — the next round's terminal transition retries (mtime rule is idempotent).
-   */
-  private maybeCollectV4Artifacts(schedule: ScheduleRow, executionId: string): void {
-    try {
-      if (schedule.origin_type !== 'task' || !schedule.origin_id) return
-      const exec = this.execDAO.findById(executionId)
-      if (!exec || exec.phase_index == null) return
-      // P3 (review): terminal = the round awaits its human decision — emit
-      // regardless of whether collect moves any file (K3: the board's 待验收
-      // column is driven by human-decision state, not file flow).
-      emitPhaseAwaitingReview(
-        (c, p) => this.sse.emit(c, p),
-        schedule.origin_id,
-        exec.phase_index,
-        exec.round_index ?? 1,
-      )
-      const specDir = resolvePhaseSpecDir(schedule.config, exec.phase_index)
-      if (!specDir) return
-      const homeDir = new TaskHomeService().homePath(schedule.origin_id)
-      const rel = batchRelPath(homeDir, specDir)
-      if (!rel) return
-      const registry = getExecutionService(exec.workspace_id)
-      if (!registry) return
-      const collected = collectFromWorkspace(path.join(registry.wsPath, rel), specDir)
-      if (collected.length === 0) return
-      console.log(
-        `[WorkflowExecutor] collected ${collected.length} artifact file(s) from ws back to home (task ${schedule.origin_id}, phase ${exec.phase_index} round ${exec.round_index})`,
-      )
-      this.sse.emit('taskpool', {
-        event: TASK_ARTIFACTS_UPDATE_EVENT,
-        data: { task_id: schedule.origin_id },
-      })
-    } catch (err: unknown) {
-      console.error(
-        `[WorkflowExecutor] v4 artifact collect failed (non-fatal):`,
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-  }
-
-  // ── Ticket 04: composite dispatch helpers ────────────────────────────
-
-  /** True if `config` describes a composite task: task_spec.subunits present
-   *  with length >= 2, OR the first chain step's workflow_ref is the
-   *  composition-task template (G9). Drives the coordinator-ws dispatch path
-   *  (no projects + composition wf + subunits as input_values) and the parent-
-   *  aggregation failed-child check at completion.
-   *
-   *  SG9 (ticket 06): the threshold is now subunits.length >= 2 (was
-   *  `!!subunits?.length` / N>=1). A 1-subunit task is NOT composite — it takes
-   *  the simple workflow_chain path (skips coordinator-ws, ADR-0009 N+1→1
-   *  optimization). The composition-task template detection (workflow_ref ===
-   *  COMPOSITION_WF_REF) still treats an explicitly-composition config as
-   *  composite regardless of subunit count (defensive — a config that literally
-   *  asks for the composition wf is composite by construction).
-   *
-   *  Ticket 08 (ADR-0009): this is the POST-materialization detector (sees
-   *  the materialized WorkflowConfig). The PRE-materialization decision lives
-   *  in {@link DefaultOrchestrationStrategy.planDispatch} (orchestration-strategy.ts),
-   *  which is the single source of truth for the threshold + composition ref.
-   *  This detector shares {@link COMPOSITION_WF_REF} with the seam so the two
-   *  layers never drift. A future variant (subunit-level retry / conditional
-   *  DAG) swaps the strategy at the dispatch seam WITHOUT touching this executor. */
-  private isCompositeTask(config: WorkflowConfig): boolean {
-    return isCompositeWorkflowConfig(config)
-  }
-
-  /** Parse a schedule row's config and test for composite shape. Used in
-   *  handleChainComplete where we only have the ScheduleRow, not the parsed
-   *  WorkflowConfig. A parse failure is treated as non-composite (defensive — the
-   *  dispatch path already validated the config at execute() time). */
-  private isCompositeSchedule(schedule: ScheduleRow): boolean {
-    try {
-      const config = JSON.parse(schedule.config) as WorkflowConfig
-      return this.isCompositeTask(config)
-    } catch {
-      return false
-    }
-  }
-
-  /** Build the input_values the composition wf receives (G9/G10): the subunits array
-   *  (real objects — the composition Loop exposes $iteration.subunit from it),
-   *  subunit_count (drives the Loop break_when), goal (moa topic), and
-   *  integration_prompt (moa aggregator prompt). These mirror composition-task.yaml's
-   *  `variables` block, overridden by the actual task_spec at materialization.
-   *
-   *  Ticket 08 (AC2): PRESERVES task_artifacts_dir from
-   *  config.workflow_chain[0].input_values (injected by materializeTaskSpecToConfig).
-   *  Without this, the key would be DROPPED — buildCompositeInputValues completely
-   *  replaces firstStep.input_values at execute() time (the "chain input_values
-   *  replacement drops injected keys" hazard SW-BP7 warns about). When absent
-   *  (legacy configs without the key), it's omitted — backward compat (AC4).
-   *
-   *  SG5 (ticket 06): materializeTaskSpecToConfig now DROPS task_spec from the
-   *  config (it lives in the tasks table, v2-D1). So config.task_spec is absent on
-   *  the new dispatch-seam path. Fall back to reading task_spec from the tasks
-   *  table via S2 origin lookup (origin_type='task', origin_id=task.id). The
-   *  legacy/test path that seeds config WITH task_spec still works (first branch). */
-  private buildCompositeInputValues(config: WorkflowConfig, scheduleId?: string): Record<string, unknown> {
-    // Ticket 08 (AC2): read task_artifacts_dir from the config's workflow_chain[0]
-    // (injected by materializeTaskSpecToConfig). Preserved in both branches below.
-    const chainInputValues = config.workflow_chain[0]?.input_values as Record<string, unknown> | undefined
-    const taskArtifactsDir = chainInputValues?.task_artifacts_dir
-    const artifactsEntry = taskArtifactsDir ? { task_artifacts_dir: taskArtifactsDir } : {}
-
-    // Legacy/test path: config carries task_spec (composite-dispatch.test.ts seeds this).
-    if (config.task_spec) {
-      const subunits = config.task_spec.subunits ?? []
-      return {
-        subunits,
-        subunit_count: subunits.length,
-        goal: config.task_spec.goal ?? '',
-        integration_prompt: config.task_spec.integration_goal?.prompt ?? '',
-        ...artifactsEntry,
-      }
-    }
-    // SG5 new path: task_spec dropped from config — read from the tasks table via
-    // origin lookup. The schedule's origin_id IS the parent task id (S2).
-    const taskSpec = this.resolveTaskSpecFromOrigin(scheduleId)
-    const subunits = taskSpec?.subunits ?? []
-    return {
-      subunits,
-      subunit_count: subunits.length,
-      goal: taskSpec?.goal ?? '',
-      integration_prompt: taskSpec?.integration_goal?.prompt ?? '',
-      ...artifactsEntry,
-    }
-  }
-
-  /** SG5: resolve the parent task's task_spec from the tasks table via S2 origin
-   *  lookup. The schedule's origin_id points at the parent task id. Returns null
-   *  if the lookup fails (defensive — buildCompositeInputValues falls back to
-   *  empty subunits, which the composition wf handles as a no-op Loop). */
-  private resolveTaskSpecFromOrigin(scheduleId?: string): TaskSpec | null {
-    if (!scheduleId) return null
-    try {
-      const row = this.configDAO
-        .getDb()
-        .prepare(
-          `SELECT t.task_spec AS task_spec
-           FROM schedules s
-           JOIN tasks t ON t.id = s.origin_id AND t.deleted_at IS NULL
-           WHERE s.id = ? AND s.origin_type = 'task'`,
-        )
-        .get(scheduleId) as { task_spec: string | null } | undefined
-      if (!row?.task_spec) return null
-      return JSON.parse(row.task_spec) as TaskSpec
-    } catch (err: unknown) {
-      console.error(
-        `[WorkflowExecutor] resolveTaskSpecFromOrigin failed for ${scheduleId} (non-fatal — composition wf gets empty subunits):`,
-        err instanceof Error ? err.message : String(err),
-      )
-      return null
-    }
-  }
+  // ── Composite helpers: removed with 票03 (ADR-0021) ─────────────────────
+  //
+  // isCompositeTask / isCompositeSchedule / buildCompositeInputValues /
+  // resolveTaskSpecFromOrigin existed to run a composite TASK out of a schedule row:
+  // detecting the coordinator by workflow_ref, reading subunits back out of the tasks
+  // table through schedules.origin_id, and synthesizing the composition workflow's
+  // inputs. None of that is a scheduler's business — the materialization now lives in
+  // services/tasks/task-materialize.ts, next to the job that consumes it.
+  //
+  // What stays below is the generic half: a `task_dispatch` node inside ANY workflow
+  // fans out child work and resumes on its completion. 票04 replaces those child
+  // schedule rows with child executions.
 
   // ── G1 task_dispatch parent-resume ─────────────────────────────────
 
@@ -1036,48 +621,11 @@ export class WorkflowExecutor implements Executor {
   }
 
   // ── Chain continuation helpers (#4 story-walker) ──────────────────
+  //
+  // resolvePhaseRound was removed with 票03: a task round carries its phase/round as
+  // columns on its own row from the moment the job arms it, so there is nothing left to
+  // reconstruct out of a chain stamp.
 
-  /**
-   * task-phase-redesign (ticket 05): resolve (phase_index, round_index) for a
-   * v4 root execution. Precedence:
-   *   1. `_phase_index`/`_round_index` management keys on chain[0].input_values
-   *      (stamped by dispatchPhaseRound — authoritative across crash recovery);
-   *   2. phase matched by workflow_ref against the envelope's resolved phases;
-   *   3. phase 1 (fresh envelope — ticket 04 pre-loads chain[0] = phase 1).
-   * Round without a stamp = 1 + count of this ws's executions already tagged to
-   * that phase (the freshly created row is still untagged → never self-counts).
-   *
-   * task-phase-redesign (ticket 06): also returns the matched phase object (its
-   * specDir feeds the seed hook — one lookup, seed + tagging can never drift).
-   */
-  private resolvePhaseRound(
-    envelope: { phases?: Array<{ index: number; workflowRef: string; specDir?: string }> },
-    firstStep: WorkflowChainItem,
-    workspaceId: string,
-  ): {
-    phaseIndex: number
-    roundIndex: number
-    phase?: { index: number; workflowRef: string; specDir?: string }
-  } {
-    const iv = (firstStep.input_values ?? {}) as Record<string, unknown>
-    const toInt = (v: unknown): number => {
-      const n = typeof v === 'string' || typeof v === 'number' ? Number(v) : NaN
-      return Number.isInteger(n) && n >= 1 ? n : 0
-    }
-    const phaseIndex = toInt(iv._phase_index)
-      || envelope.phases?.find((p) => p.workflowRef === firstStep.workflow_ref)?.index
-      || 1
-    const roundIndex = toInt(iv._round_index)
-      || (this.execDAO.listByWorkspace(workspaceId).filter((e) => e.phase_index === phaseIndex).length + 1)
-    return { phaseIndex, roundIndex, phase: envelope.phases?.find((p) => p.index === phaseIndex) }
-  }
-
-  /**
-   * Resolve the next workflow_chain step (if any) for the completed execution.
-   * config.json.workflow_chain holds the remaining chain (slice(1) of the full
-   * chain; the root was triggered immediately). remaining[child_index] is the
-   * next step: remaining[0] == chain[1], and the root's child_index is 0.
-   */
   private resolveNextChainStep(schedWsId: string, executionId: string): WorkflowChainItem | null {
     const wsRow = this.configDAO.findScheduleWorkspaceById(schedWsId)
     if (!wsRow) return null
@@ -1111,7 +659,6 @@ export class WorkflowExecutor implements Executor {
       notifyOnFailure: boolean
       schedule: ScheduleRow
       maxRetain: number
-      isRequirement: boolean
     },
     nextStep: WorkflowChainItem,
   ): void {
@@ -1180,7 +727,10 @@ export class WorkflowExecutor implements Executor {
         // and max_retain eviction of it would be data destruction, not hygiene.
         // Once the task is done (archived) the exemption lifts and normal
         // retention reclaims the disk.
-        if (this.isTaskWorkspaceUnarchived(row.workspace_id)) continue
+        // 票03 (ADR-0021): a task workspace is no longer reachable from a schedule at all
+        // — it is not in schedule_workspaces, it carries workspaces.task_id — so the
+        // 「never reclaim a bound task ws」 exemption is structural now, not a check one
+        // call site could forget. Data retention keeps its own task-aware guard.
         try {
           this.workspaceService.delete(row.workspace_id)
         } catch (err: unknown) {
@@ -1198,25 +748,6 @@ export class WorkflowExecutor implements Executor {
     }
   }
 
-  /** True when `workspaceId` is bound (tasks.workspace_id, schema v40) to a
-   *  live task that has NOT reached 'done'. Raw query on the shared handle
-   *  (same precedent as resolveTaskSpecFromOrigin — no TaskDAO injection
-   *  needed). A lookup failure returns true (treat as protected): silently
-   *  deleting live round evidence is the worse error, and the next retention
-   *  sweep retries. */
-  private isTaskWorkspaceUnarchived(workspaceId: string): boolean {
-    try {
-      const row = this.configDAO
-        .getDb()
-        .prepare(
-          "SELECT status FROM tasks WHERE workspace_id = ? AND deleted_at IS NULL LIMIT 1",
-        )
-        .get(workspaceId) as { status: string } | undefined
-      return !!row && row.status !== 'done'
-    } catch {
-      return true
-    }
-  }
 
   // ── Private helpers ──────────────────────────────────────────────
 

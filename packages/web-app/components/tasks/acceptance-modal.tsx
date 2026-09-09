@@ -154,25 +154,19 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     return () => { cancelled = true }
   }, [open, execId])
 
-  // 用时：children[].execution_ref 与 round.exec.id 联查（derived 无 completed_at）。
+  // 用时：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
+  // 徽章自带 started_at/completed_at，duration 自己算）。
   const durationMs: number | null = useMemo(() => {
-    if (!awaitingRound || !detail?.children) return null
-    const ref = detail.children
-      .map((c) => c.execution_ref)
-      .find((r) => r?.execution_id === awaitingRound.exec.id)
-    if (!ref) return null
-    if (ref.duration_ms != null) return ref.duration_ms
-    if (ref.completed_at) return Math.max(0, Date.parse(ref.completed_at) - Date.parse(ref.triggered_at))
-    return null
+    if (!awaitingRound) return null
+    const run = detail?.executions?.find((e) => e.id === awaitingRound.exec.id)
+    if (!run?.completed_at) return null
+    const startMs = run.started_at ? Date.parse(run.started_at) : Date.parse(run.created_at)
+    if (Number.isNaN(startMs)) return null
+    return Math.max(0, Date.parse(run.completed_at) - startMs)
   }, [awaitingRound, detail])
 
-  const errorSummary = useMemo(() => {
-    if (!awaitingRound || !detail?.children) return null
-    const ref = detail.children
-      .map((c) => c.execution_ref)
-      .find((r) => r?.execution_id === awaitingRound.exec.id)
-    return ref?.error_summary ?? null
-  }, [awaitingRound, detail])
+  // errorSummary（该轮失败原因）随 execution_ref 一起没了：TaskExecutionBadge 不带
+  // error 字段，票05 之前这里没有真数据可显 —— 空即是空，不臆造一次拉取。
 
   // 产物核对：登记产物里命中本 phase slug 的文件（K10 批次目录
   // `.scratch/<date>/<slug>/`，登记可见语义 — 接缝③）。
@@ -377,11 +371,6 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       </span>
                     </div>
                   </div>
-                  {errorSummary && (
-                    <p className="text-xs text-pop-amber break-words whitespace-pre-wrap rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2" data-acceptance-error>
-                      {errorSummary}
-                    </p>
-                  )}
                   {/* token/cost：TaskAiUsageCard 同等数据（round 口径注入） */}
                   <TaskAiUsageCard agg={agg} loading={aggLoading} runCount={execId ? 1 : 0} />
                 </>

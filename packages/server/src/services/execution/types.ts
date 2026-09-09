@@ -60,6 +60,11 @@ export interface ExecutionRow {
   pending_hooks: string
   // workflow-observability: budget snapshot (ticket 02)
   budget_snapshot: string | null
+  // task-phase-redesign (K4): v4 round coordinates on the launch row.
+  phase_index: number | null
+  round_index: number | null
+  // ADR-0021 票03: the launch row IS a task instance (NULL = cron job / ad-hoc run).
+  task_id: string | null
 }
 
 export interface NodeExecutionRow {

@@ -169,24 +169,24 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
   const mockSSE = { emit: vi.fn() } as any
   const mockWorkspaceService = { delete: vi.fn() } as any
 
-  function seedSchedule(opts: { isRequirement: boolean; status?: string }) {
+  function seedSchedule(opts: { status?: string } = {}) {
     const status = opts.status ?? 'running'
-    // SG1b (ticket 06): trigger_source DROPPED → origin_type ('task' = v1 'requirement')
-    const originType = opts.isRequirement ? 'task' : 'cron'
-    const claimedAt = opts.isRequirement ? new Date(Date.now() - 5 * 60_000).toISOString() : null
+    // 票03: no origin_type column any more (and no isRequirement branch in the
+    // executor) — a schedule row is a job definition plus its run-state.
+    const claimedAt = new Date(Date.now() - 5 * 60_000).toISOString()
     db.prepare(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, origin_type, claimed_at
+        consecutive_failures, max_retain, status, claimed_at
       ) VALUES (?, 'test', 'g2-task', NULL, 'UTC',
         1, 3600, 0, datetime('now'), datetime('now'),
-        'workflow', ?, 'skip', 1, 0, 10, ?, ?, ?)
+        'workflow', ?, 'skip', 1, 0, 10, ?, ?)
     `).run(
       schedId,
       JSON.stringify({ schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 'b', projects: [{ name: 'p', source_path: '', group: '' }] }, workflow_chain: [{ workflow_ref: 'wf', input_values: {} }] }),
-      status, originType, claimedAt,
+      status, claimedAt,
     )
   }
 
@@ -219,7 +219,7 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
   afterEach(() => { db.close() })
 
   // Helper: call the private chain-completion handler with a failed root execution.
-  function fireChainComplete(isRequirement: boolean) {
+  function fireChainComplete() {
     const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
     ;(executor as any).handleChainComplete({
       executionId: execId,
@@ -230,39 +230,26 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
       notifyOnFailure: false,
       schedule,
       maxRetain: 10,
-      isRequirement,
     })
   }
 
-  it('G2: requirement schedule → schedules.status="failed" + SSE (not stuck in running)', () => {
-    seedSchedule({ isRequirement: true, status: 'running' })
-    seedExecutionRow('failed')      // root execution failed
-    seedSchedExecution('running')   // schedule_execution in flight
-
-    fireChainComplete(true)
-
-    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(schedId) as { status: string; claimed_at: string | null }
-    expect(sched.status).toBe('failed')
-    expect(sched.claimed_at).toBeNull()
-
-    const se = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(schedExecId) as { status: string }
-    expect(se.status).toBe('failed')
-
-    expect(mockSSE.emit).toHaveBeenCalledWith('taskpool', {
-      event: 'schedule_status',
-      data: { schedule_id: schedId, status: 'failed' },
-    })
-  })
-
-  it('G2: cron schedule (isRequirement=false) does NOT write schedules.status (cron uses enabled/disabled)', () => {
-    seedSchedule({ isRequirement: false, status: 'queued' })
+  it('a failed fire finalizes the FIRE, and leaves the definition alone (票03)', () => {
+    // The old pair of tests here split on isRequirement: a task-shaped schedule flipped
+    // schedules.status to 'failed' (terminal, so the stale sweep would not re-queue it)
+    // while a cron schedule kept its status out of the lifecycle entirely. After 票03
+    // there is only the cron shape — and it is worth pinning that a failing fire does NOT
+    // write the definition row, because that is what keeps enabled/disabled the single
+    // source of "should this job run again".
+    seedSchedule({ status: 'queued' })
     seedExecutionRow('failed')
     seedSchedExecution('running')
 
     fireChainComplete(false)
 
     const sched = db.prepare('SELECT status FROM schedules WHERE id = ?').get(schedId) as { status: string }
-    expect(sched.status).toBe('queued')  // unchanged — cron path keeps status out of the lifecycle
+    expect(sched.status).toBe('queued')
+    const se = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(schedExecId) as { status: string }
+    expect(se.status).toBe('failed')
     const failedEmits = mockSSE.emit.mock.calls.filter((c: any[]) => c[1]?.data?.status === 'failed')
     expect(failedEmits).toHaveLength(0)
   })

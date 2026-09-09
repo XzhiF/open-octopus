@@ -272,23 +272,10 @@ export interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string
-  /** v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id were
-   *  DROPPED from schedules. The承重 sites are migrated to origin_type (S2
-   *  polymorphic origin). The shared `SchedulerJob` type still carries a
-   *  `trigger_source` field (boundary: shared off-limits) — derived from
-   *  origin_type by buildSchedulerJob/enrichJobRow, NOT read from this row. */
-  /** v38 S2 polymorphic origin (no FK on origin_id). 'cron' default for legacy rows. */
-  origin_type: string
-  /** Parent id — for tasks: the tasks.id this schedule was dispatched from. */
-  origin_id: string | null
-  /** Role within the parent origin: 'primary' | 'coordinator' | 'subunit' | 'auxiliary'. */
-  origin_role: string | null
-  /** Arbitrary JSON for the origin association (e.g. parent_task_dispatch marker). */
-  assoc_meta: string | null
   claimed_at: string | null
-  /** v39 — one-shot due time (ISO) for task-origin triggers; NULL =
-   *  cron/legacy/claim-immediately. Distinct from next_trigger_at (cron cycle). */
-  scheduled_at: string | null
+  // v42 (ADR-0021 票03): origin_type / origin_id / origin_role / assoc_meta and
+  // scheduled_at are gone with the task envelope. A schedule is a definition; whose task
+  // (if any) it served was a back-reference no job definition should carry.
 }
 
 export interface ScheduleExecutionRow {

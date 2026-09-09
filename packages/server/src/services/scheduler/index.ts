@@ -17,9 +17,9 @@ export { SchedulerEngine } from './scheduler-engine'
 // seam + ExecutionLifecycle consume this; re-exporting from the scheduler
 // barrel gives callers a single import path for the scheduler service surface.
 export { TaskDispatchService } from './task-dispatch-service'
-// SG12 (ticket 06): orphan schedule reaper — app-level integrity backstop for
-// S2's no-FK origin_id (cascades on task delete/abort; this covers the gap).
-export { reapOrphanSchedules } from './orphan-reaper'
+// 票03 (ADR-0021): the orphan-schedule reaper is deleted with the origin columns it
+// scanned. Its replacement is the built-in task-lifecycle job's reconcile pass, which
+// resolves stranded `executions` rows directly (services/tasks/task-lifecycle-service).
 // Ticket 08 (ADR-0009): orchestration-strategy seam between the tasks domain
 // and the scheduler/dispatch pipeline. The dispatch seam (routes/tasks +
 // scheduler-service materialize) consumes this to decide the schedule-envelope

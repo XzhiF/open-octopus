@@ -21,24 +21,31 @@ export type SchedulerExecutionStatus =
   | 'skipped'
   | 'missed'
 
-/** What created this schedule. 'cron' = scheduled by cron_expression; 'requirement' = draft from chat/manual input awaiting claim. */
+/**
+ * What created a schedule. **Retired by ADR-0021 票03 as a concept**: the `origin_*`
+ * columns are dropped in schema v42, so no schedule row records a creator any more, and
+ * `SchedulerJob` no longer carries either field.
+ *
+ * The vocabularies stay complete (`'task' | 'manual' | 'api' | 'requirement'` included)
+ * for one release because they are still referenced by the *task* wire types — the
+ * taskpool SSE payloads use `origin_type: 'task'` as a channel discriminator (see
+ * `taskStatusSsePayloadSchema`). Narrowing the enum would break those payloads at
+ * runtime, so the retirement happens where the values are actually consumed: 票05
+ * removes the field from the SSE contract, then these two types go away.
+ */
 export type TriggerSource = 'cron' | 'requirement'
-
-/** v2 (S2 polymorphic origin) — generalizes {@link TriggerSource}. What created
- *  a schedule, with no FK on origin_id (app-level cascade-reap + orphan reaper
- *  maintain integrity, the tradeoff for S2's uniform polymorphic association):
- *  'cron' = cron_expression-driven; 'task' = spawned by the tasks dispatch seam
- *  (origin_id = parent task id); 'agent' = spawned by an agent run; 'manual' =
- *  user-enqueued; 'api' = external API enqueue. Extensible. */
+/** @deprecated retired as a column (schema v42); see {@link TriggerSource} for the plan. */
 export const OriginTypeSchema = z.enum(["cron", "task", "agent", "manual", "api"])
+/** @deprecated see {@link OriginTypeSchema}. */
 export type OriginType = z.infer<typeof OriginTypeSchema>
 
-/** Lifecycle status of a schedule (schema v37). draft → queued → claimed → running → done.
- *  'claimed' = taken by executor before dispatch confirms; 'running' = execution in flight;
- *  'done' = chain completed (requirement-type only; cron uses enabled/disabled).
- *  'failed' = chain failed (G2, terminal — checkStaleClaimed must NOT roll back to queued);
- *  'aborted' = user-triggered abort (G4, terminal — workspace cleaned). */
-export type ScheduleStatus = 'draft' | 'queued' | 'claimed' | 'running' | 'done' | 'failed' | 'aborted'
+/** Lifecycle status of a job DEFINITION's run state (schema v37, narrowed by v42).
+ *  'queued' = registered, nothing in flight; 'claimed' = taken by the executor before
+ *  dispatch confirms; 'running' = execution in flight; 'done'/'failed' = last fire's
+ *  outcome; 'aborted' = user abort (terminal — the stale sweep must not roll it back).
+ *  'draft' is gone: it was the parked state of a task envelope, and tasks no longer have
+ *  schedule rows. */
+export type ScheduleStatus = 'queued' | 'claimed' | 'running' | 'done' | 'failed' | 'aborted'
 
 // ── Project & Workspace Spec (for scheduler-created workspaces) ─────
 
@@ -334,17 +341,11 @@ export interface SchedulerJob {
   created_at: string
   updated_at: string
   status: ScheduleStatus
-  trigger_source: TriggerSource
-  /** v38b polymorphic origin (S2). Authoritative source discriminator —
-   *  trigger_source is a lossy legacy mapping (task/manual/api/agent all
-   *  collapse to 'requirement'). Scheduler UI shows origin via this field:
-   *  'cron' = cron-driven recurring job; 'task' = dispatched by the task
-   *  board ready-gate (origin_id = parent task id, UI deep-links /tasks/:id);
-   *  'agent'/'manual'/'api' = other one-shot enqueues. Null for legacy rows. */
-  origin_type?: OriginType | null
-  origin_id?: string | null
-  source_chat_session_id: string | null
   claimed_at: string | null
+  // ADR-0021 票03: trigger_source / origin_type / origin_id / source_chat_session_id are
+  // gone. A schedule row is a job definition; it never records which task (if any) asked
+  // for it, because after v41 no task asks the scheduler for anything. The board's task
+  // read model comes from GET /api/tasks/:id/executions instead of from here.
 }
 
 export interface CreateJobInput {
@@ -358,8 +359,6 @@ export interface CreateJobInput {
   timeout_seconds?: number
   notify_on_failure?: boolean
   description?: string
-  trigger_source?: TriggerSource
-  source_chat_session_id?: string | null
 }
 
 export interface UpdateJobInput {
@@ -380,11 +379,10 @@ export interface ListJobsParams {
   status?: 'enabled' | 'disabled' | 'failed'
   job_type?: JobType
   org?: string
+  /** Scope the list to one workspace's org (the scheduler page per-workspace view). */
+  workspace_id?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'
-  /** Legacy route filter ('cron'→origin_type='cron'; 'requirement'→IN
-   *  ('task','manual','api')). Omit → no origin filter (list spans all origins). */
-  trigger_source?: TriggerSource
-  /** Precise single-origin filter (takes precedence when both given). */
-  origin?: OriginType
+  // The trigger_source / origin filters left with the columns: after v42 every row in
+  // the table is a job, so there is nothing to filter task-ness out of.
 }

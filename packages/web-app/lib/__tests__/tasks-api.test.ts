@@ -13,8 +13,11 @@ import {
   readyTask,
   abortTask,
   updateSpecField,
+  scheduleTaskTrigger,
+  unscheduleTaskTrigger,
   TaskReadyGateError,
   type TaskDetail,
+  type TaskExecutionBadge,
 } from "../tasks-api"
 
 // ── Test fixtures ────────────────────────────────────────────────────
@@ -40,11 +43,36 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
   } as Task
 }
 
+/** One root execution of the task (mirror of the server's TaskExecutionBadge) — the
+ *  run-history row that replaced `children[]` in ADR-0021 票03. */
+function makeBadge(overrides: Partial<TaskExecutionBadge> & { id: string }): TaskExecutionBadge {
+  return {
+    status: "running",
+    workflow_ref: "wf-a",
+    phase_index: null,
+    round_index: null,
+    workspace_id: "ws-1",
+    started_at: "2026-08-17T01:00:00Z",
+    completed_at: null,
+    created_at: "2026-08-17T00:59:00Z",
+    ...overrides,
+  }
+}
+
 function makeDetail(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
-  const { children, ...taskOverrides } = overrides
+  const { executions, ...taskOverrides } = overrides
   return {
     ...makeTask(taskOverrides),
-    children: children ?? [],
+    // 票03: GET /:id 的 TaskDTO 自带这组列（trigger_mode 缺省 manual、游标空 = 手动任务）。
+    trigger_mode: "manual",
+    trigger_at: null,
+    cron_expression: null,
+    cron_timezone: "Asia/Shanghai",
+    trigger_enabled: 1,
+    next_fire_at: null,
+    last_fired_at: null,
+    execution: null,
+    executions: executions ?? [],
   }
 }
 
@@ -121,12 +149,11 @@ describe("listTasks", () => {
 // ── getTask ──────────────────────────────────────────────────────────
 
 describe("getTask", () => {
-  it("GETs /api/tasks/:id and returns TaskDetail (with children)", async () => {
+  it("GETs /api/tasks/:id and returns TaskDetail (with the executions run history)", async () => {
+    // 票03: children[] (私有信封行) → executions[] (任务自己的运行行，新→旧)。
     const detail = makeDetail({
       id: "t1",
-      children: [
-        { schedule_id: "s1", name: "子1", status: "running", origin_role: "subunit", workflow_ref: "wf-a" },
-      ],
+      executions: [makeBadge({ id: "s1", status: "running", phase_index: 1, round_index: 1 })],
     })
     mockFetchOnce(detail)
 
@@ -136,10 +163,12 @@ describe("getTask", () => {
     const [url] = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0]
     expect(url).toBe("http://localhost:3001/api/tasks/t1")
     expect(result.id).toBe("t1")
-    expect(result.children).toBeDefined()
-    expect(result.children!).toHaveLength(1)
-    expect(result.children![0].schedule_id).toBe("s1")
-    expect(result.children![0].origin_role).toBe("subunit")
+    expect(result.executions).toHaveLength(1)
+    expect(result.executions[0].id).toBe("s1")
+    // 深链两半都在同一行上：/workspaces/{workspace_id}?tab=detail&execId={id}
+    expect(result.executions[0].workspace_id).toBe("ws-1")
+    expect(result.trigger_mode).toBe("manual")
+    expect(result.next_fire_at).toBeNull()
   })
 })
 
@@ -359,5 +388,54 @@ describe("type re-exports", () => {
     const t: Task = makeTask({ id: "x" })
     const s: TaskStatus = t.status
     expect(s).toBe("draft")
+  })
+})
+
+// ── 票03 周期触发 (POST /:id/trigger/schedule + /:id/trigger/unschedule) ──
+//
+// 取代被删的 POST /api/scheduler/jobs/:id/enqueue：任务的「何时跑」现在由任务自己
+// 的列承载，服务端路由 packages/server/src/routes/tasks.ts。这里只钉住请求形状
+// （body 的两种分支由 route 自己分派），响应是 TaskDTO 摘要。
+
+describe("scheduleTaskTrigger", () => {
+  it("POSTs {cron, timezone} to /api/tasks/:id/trigger/schedule and returns the summary", async () => {
+    mockFetchOnce(makeDetail({ id: "t1" }))
+
+    await scheduleTaskTrigger("t1", { cron: "0 9 * * *", timezone: "Asia/Shanghai" })
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/trigger/schedule")
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(init.body as string)).toEqual({ cron: "0 9 * * *", timezone: "Asia/Shanghai" })
+  })
+
+  it("the {enabled} form is sent verbatim (pause without forgetting the cron)", async () => {
+    mockFetchOnce(makeDetail({ id: "t1" }))
+
+    await scheduleTaskTrigger("t1", { enabled: false })
+
+    const [, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: false })
+  })
+
+  it("surfaces the server's conflict message", async () => {
+    mockFetchOnce({ error: "任务不存在" }, { ok: false, status: 404 })
+
+    await expect(scheduleTaskTrigger("nope", { cron: "* * * * *" })).rejects.toThrow("任务不存在")
+  })
+})
+
+describe("unscheduleTaskTrigger", () => {
+  it("POSTs /api/tasks/:id/trigger/unschedule (body-less) and returns the summary", async () => {
+    mockFetchOnce(makeDetail({ id: "t1" }))
+
+    const result = await unscheduleTaskTrigger("t1")
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/trigger/unschedule")
+    expect(init.method).toBe("POST")
+    expect(init.body).toBeUndefined()
+    // 回到手动：游标为空。
+    expect(result.trigger_mode).toBe("manual")
   })
 })

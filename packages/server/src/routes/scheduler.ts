@@ -10,14 +10,12 @@ import {
   SchedulerTriggerConflictError,
   SchedulerTriggerSourceMismatchError,
   SchedulerJobNotAbortableError,
-  type CreateJobInputWithSpec,
-  type UpdateJobInputWithSpec,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
-import { OriginTypeSchema, type OriginType } from '@octopus/shared'
+import { OriginTypeSchema, type OriginType, type CreateJobInput, type UpdateJobInput } from '@octopus/shared'
 import type { AgentSessionDAO } from '../db/dao'
 
 // G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
@@ -197,23 +195,10 @@ export function createSchedulerRoutes(
   // GET /jobs — list with pagination, filtering, sorting
   router.get('/jobs', rateLimitDefault, (c) => {
     try {
-      // 2026-08-29 (task-board observability, approach A): the old default
-      // `trigger_source ?? 'cron'` hid every origin_type='task' schedule the
-      // readyTask dispatch seam creates — running tasks were invisible in the
-      // 系统调度 UI while DashboardCards counted them. Now: NO origin filter by
-      // default (the table spans all origins), with an explicit ?origin=
-      // single-origin filter for focused views. ?trigger_source= stays for
-      // backward compatibility (legacy 'cron'/'requirement' coarse mapping).
-      const rawTrigger = c.req.query('trigger_source') as 'cron' | 'requirement' | undefined
-      const rawOrigin = c.req.query('origin')
-      let origin: OriginType | undefined
-      if (rawOrigin !== undefined) {
-        const parsed = OriginTypeSchema.safeParse(rawOrigin)
-        if (!parsed.success) {
-          return c.json({ error: `invalid origin: '${rawOrigin}' (expected one of: cron, task, agent, manual, api)` }, 400)
-        }
-        origin = parsed.data
-      }
+      // 票03 (ADR-0021): ?trigger_source= and ?origin= are gone with the columns. The
+      // 2026-08-29 note here explained why the list must NOT default to cron-only —
+      // because task envelopes were mixed into the same table. They no longer are, so
+      // every row listed is a job and there is nothing left to filter task-ness out of.
       const result = service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
@@ -223,8 +208,6 @@ export function createSchedulerRoutes(
         workspace_id: c.req.query('workspace_id'),
         sort: c.req.query('sort') as 'name' | 'created_at' | 'next_trigger_at' | undefined,
         order: c.req.query('order') as 'asc' | 'desc' | undefined,
-        trigger_source: rawTrigger,
-        origin,
       })
       return c.json(result)
     } catch (err: unknown) {
@@ -242,7 +225,7 @@ export function createSchedulerRoutes(
     // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
     // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
-      const job = service.createJob(body as CreateJobInputWithSpec)
+      const job = service.createJob(body as CreateJobInput)
       return c.json(job, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -277,7 +260,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.updateJob(c.req.param('id'), body as UpdateJobInputWithSpec, version)
+      const job = service.updateJob(c.req.param('id'), body as UpdateJobInput, version)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -314,17 +297,6 @@ export function createSchedulerRoutes(
     try {
       const result = service.triggerJob(c.req.param('id'))
       return c.json(result)
-    } catch (err: unknown) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status)
-    }
-  })
-
-  // POST /jobs/:id/enqueue — draft → queued (task pool 入池)
-  router.post('/jobs/:id/enqueue', rateLimitDefault, (c) => {
-    try {
-      const job = service.enqueueJob(c.req.param('id'))
-      return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

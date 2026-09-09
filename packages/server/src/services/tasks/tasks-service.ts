@@ -2,20 +2,21 @@
 //
 // TasksService — first-class `tasks` domain (v2-D1). Owns the
 // draft→ready→running→done/failed/aborted lifecycle + task_spec (WHAT) +
-// resource/skill bindings + the dispatch seam (ready → schedules envelope).
+// resource/skill bindings.
 //
-// S2 polymorphic origin: tasks has NO schedule_id. The link to schedules is
-// via `schedules WHERE origin_type='task' AND origin_id=task.id` (02's
-// findSchedulesByOrigin), maintained at the app level here (cascade-reap on
-// delete/abort). The dispatch seam creates the schedules envelope(s):
-//   simple (subunits.length < 2) → 1 schedule (origin_role='primary',
-//     status='queued', config=materializeTaskSpecToConfig). Runs the task's
-//     workflow_ref directly (skips coordinator-ws, ADR-0009).
-//   composite (subunits.length >= 2) → 1 coordinator schedule
-//     (origin_role='coordinator', status='queued', config=materialize with
-//     workflow_chain[0].workflow_ref=composition-task). The N subunit
-//     schedules (origin_role='subunit') are created at RUNTIME by
-//     TaskDispatchService.dispatchChildSchedule (pause-resume bridge), not here.
+// ADR-0021 票03: a task owns its WHEN. There is no schedule row for a task — not one
+// per task, not one per round. `tasks.trigger_*` is the due time, a run is an
+// `executions` row carrying task_id, and the built-in task-lifecycle job
+// (task-lifecycle-service.ts) is the only thing in the system that turns one into the
+// other. What remains here is authoring, the read model, and the thin verbs
+// (ready / trigger / cancel / abort / reopen / delete) that delegate launching.
+//
+// What this file used to do instead: readyTask pre-created a private `schedules` row
+// per task (the "envelope" — origin_type='task', parked status='draft') and triggering
+// meant flipping that row; its config doubled as the frozen phase binding AND the
+// "which round runs now" cursor; composite subunits were child schedules created at
+// runtime. That is the coupling this ticket removes, and why 周期触发 was structurally
+// impossible: a task could only run when its envelope said so.
 //
 // Concurrency: spec-field / PUT use TaskDAO.updateWithVersion (optimistic
 // locking, 409 on stale version → agent re-GET + retry, v2-D12). The autosave
@@ -32,8 +33,6 @@ import {
   type TaskSpecField,
   type ResourceRef,
   type SubunitSpec,
-  type ScheduleStatus,
-  type OriginType,
   type ArtifactIndexEntry,
   SPEC_FIELD_UPDATE_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
@@ -42,26 +41,29 @@ import {
   PHASE_STATUS_UPDATE_EVENT,
   type TaskPhaseStatus,
   taskSpecSchema,
+  TERMINAL_EXECUTION_STATUSES,
   validateSpecFieldValue,
   TaskSpecFieldError,
 } from "@octopus/shared"
 import {
   TaskDAO,
-  ScheduleConfigDAO,
-  ScheduleRunDAO,
   AgentSessionDAO,
   AcceptanceDAO,
 } from "../../db/dao"
-import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
+import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 // task-phase-redesign (ticket 07): the acceptance API and the GET /:id view read
 // state THROUGH ticket 03's pure derivation — never a re-implementation of its
 // matrix (K3 派生不存, 唯一真相).
 import { deriveTaskView, type TaskView, type TaskPhaseView, type DeriveExecutionInput } from "./derive-task-view"
-import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
+import {
+  buildTaskLaunchConfig,
+  resolveV4Phases,
+  type TaskV4PhaseConfig,
+} from "./task-materialize"
 // trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
-import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from "../scheduler/ws-launch"
-import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
+import { isCompositeWorkflowConfig } from "../scheduler/ws-launch"
+import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./task-lifecycle-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
 // Cycle-free: execution-service-registry's closure (execution/workspace/workflow/
 // builtin-workflow/sse/observability/dao/resource-registry) never imports
@@ -189,50 +191,43 @@ export interface TaskDTO {
   created_at: string
   updated_at: string
   completed_at: string | null
-  /** v39 board enrichment (root schedule join): parked('draft')/armed('queued')
-   *  /'claimed'/'running' root status — lets the kanban render the
-   *  「已排队 · … 触发」 badge while the task is mirrored 'running'. */
-  schedule_status?: string | null
-  /** v39 — root schedule's one-shot due time (ISO). Null = parked/immediate. */
-  scheduled_at?: string | null
+  // ── ADR-0021 票03: WHEN this task runs, from its own columns. These replaced
+  // `schedule_status` + `scheduled_at`, read off the private envelope row, which is
+  // how the kanban got its 「已排队」 badge. There is one due cursor now, so there is
+  // exactly one number to show.
+  trigger_mode: string
+  trigger_at: string | null
+  cron_expression: string | null
+  cron_timezone: string
+  trigger_enabled: number
+  next_fire_at: string | null
+  last_fired_at: string | null
+  /** The task's current instance (newest root execution): 'pending' = 排队中 (armed,
+   *  waiting behind the shared cap), 'running' = 执行中, a terminal status = the
+   *  previous run, null = never ran. Replaces the envelope status join. */
+  execution: TaskExecutionBadge | null
 }
 
-/** Task detail (GET /:id) — task + child schedules via S2 origin lookup. */
+/** Compact view of one task instance — the board's badge and GET /:id's history share it. */
+export interface TaskExecutionBadge {
+  id: string
+  status: string
+  workflow_ref: string
+  phase_index: number | null
+  round_index: number | null
+  workspace_id: string
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+/** Task detail (GET /:id) — task + its run history. */
 export interface TaskDetailDTO extends TaskDTO {
-  /** Child schedules dispatched by this task (origin_type='task',
-   *  origin_id=task.id). Ordered by created_at ASC (dispatch order:
-   *  primary/coordinator first, then subunits). Empty for a draft. */
-  children: Array<{
-    schedule_id: string
-    name: string
-    status: string
-    origin_role: string | null
-    workflow_ref: string | null
-    /** v39 — one-shot due time for this schedule row (root rows carry the
-     *  trigger; children created at runtime keep it null until due-set). */
-    scheduled_at: string | null
-    /** Task board 弹窗优化 (2026-08-29): the schedule's workspace (schedules.
-     *  workspace_id FK) — null until the runner provisions one. Together with
-     *  execution_ref.execution_id this is the deep-link pair for
-     *  /workspaces/{ws}?tab=detail&execId={exec}. */
-    workspace_id: string | null
-    /** Compact summary of the LATEST schedule_executions row (triggered_at
-     *  DESC), or null before the first run. agent_output/token_usage are NOT
-     *  inlined (can be large) — the modal fetches them on demand via
-     *  GET /api/scheduler/jobs/{schedule_id}/executions/{id}. */
-    execution_ref: {
-      id: string
-      status: string
-      execution_id: string | null
-      /** Per-run workspace (schedule_executions.workspace_id) — the precise
-       *  deep-link target while/after a run. */
-      workspace_id: string | null
-      triggered_at: string
-      completed_at: string | null
-      duration_ms: number | null
-      error_summary: string | null
-    } | null
-  }>
+  /** Every root execution of this task, newest first — the run history that replaced
+   *  children[], which listed the schedule rows standing for the same runs one
+   *  indirection further away. Empty for a draft. The deep-link pair stays
+   *  (workspace_id, id) → /workspaces/{ws}?tab=detail&execId={exec}. */
+  executions: TaskExecutionBadge[]
   /** task-phase-redesign (ticket 07, spec API table 「GET /:id 增 phases 视图」):
    *  deriveTaskView's output embedded VERBATIM (no field renaming, no re-derivation).
    *  v4: `{ taskStatus: <derived>, isV4: true, phaseViews: [...] }`; non-v4:
@@ -270,7 +265,6 @@ export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual
 /** Round identity that {@link TasksService.acceptance} actually dispatched
  *  (present iff next_action === "dispatched"). */
 export interface AcceptanceDispatch {
-  schedule_id: string
   execution_id: string
   workspace_id: string
   phase_index: number
@@ -366,6 +360,9 @@ function parseJSON<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
+/** An instance row that is over. Single source with the latch/meter (ADR-0021). */
+const TERMINAL_INSTANCES = new Set<string>(TERMINAL_EXECUTION_STATUSES)
+
 function toDTO(row: TaskRow): TaskDTO {
   return {
     id: row.id,
@@ -384,6 +381,30 @@ function toDTO(row: TaskRow): TaskDTO {
     created_at: row.created_at,
     updated_at: row.updated_at,
     completed_at: row.completed_at,
+    trigger_mode: row.trigger_mode,
+    trigger_at: row.trigger_at,
+    cron_expression: row.cron_expression,
+    cron_timezone: row.cron_timezone,
+    trigger_enabled: row.trigger_enabled,
+    next_fire_at: row.next_fire_at,
+    last_fired_at: row.last_fired_at,
+    execution: null,
+  }
+}
+
+/** The task's current instance, projected for the DTO. Kept as a pure function of the
+ *  row so list and detail cannot drift into two different badge shapes. */
+function toExecutionBadge(row: ExecutionRow): TaskExecutionBadge {
+  return {
+    id: row.id,
+    status: row.status,
+    workflow_ref: row.workflow_ref,
+    phase_index: row.phase_index ?? null,
+    round_index: row.round_index ?? null,
+    workspace_id: row.workspace_id,
+    started_at: row.started_at ?? null,
+    completed_at: row.completed_at ?? null,
+    created_at: row.created_at,
   }
 }
 
@@ -426,9 +447,11 @@ export class TasksService {
    *  same DAO-per-handle pattern as the constructor below). */
   private db: Database.Database
   private taskDAO: TaskDAO
-  private scheduleDAO: ScheduleConfigDAO
-  /** 弹窗优化: latest-run summary per child schedule (schedule_executions). */
-  private runDAO: ScheduleRunDAO
+  /** ADR-0021 票03: the ONLY way this domain starts, stops or watches a run. Built on
+   *  the same handle as everything else here (no new ctor param — SW-BP15), and it is
+   *  the task-domain half of the built-in job: the scheduler reaches the same object
+   *  through the handler registered in index.ts. */
+  private lifecycle: TaskLifecycleService
   private agentSessionDAO: AgentSessionDAO | null
   private sse: SSEService
   /** 04 — home + plugin materialization (per-task plugin dir, ADR-0010). Injected
@@ -456,13 +479,6 @@ export class TasksService {
    *  （失败 409 弹回）。未注入 = 预建关，executor 首建兜底仍在（行为同日以前）。 */
   private workspaceService: WorkspaceService | null
 
-  /** v39: late-bound hook to SchedulerEngine.wake() (engine is constructed
-   *  AFTER this service in index.ts — setter injection, same precedent as
-   *  schedulerService.setCallbacks). Called by triggerTask for sub-second
-   *  claim pickup. Optional: tests/ad-hoc callers without wiring just fall
-   *  back to the 60s auxiliary tick. */
-  private wakeScheduler?: () => void
-
   /** task-phase-redesign (ticket 07 → 票 08): late-bound archiving orchestrator.
    *  `acceptance` on the LAST phase flips the persisted status to 'archiving'
    *  and calls this hook; the orchestrator (ADR 顺延 / CONTEXT append / commit /
@@ -470,10 +486,6 @@ export class TasksService {
    *  (a failed archive leaves the task parked in 'archiving', retryable — K3/US15).
    *  Unwired (tests, ad-hoc embedders) ⇒ the status flip alone stands. */
   private archivingHook?: (taskId: string) => void | Promise<void>
-
-  setWakeScheduler(fn: () => void): void {
-    this.wakeScheduler = fn
-  }
 
   setArchivingHook(fn: (taskId: string) => void | Promise<void>): void {
     this.archivingHook = fn
@@ -498,8 +510,6 @@ export class TasksService {
   ) {
     this.db = db
     this.taskDAO = new TaskDAO(db)
-    this.scheduleDAO = new ScheduleConfigDAO(db)
-    this.runDAO = new ScheduleRunDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -508,6 +518,19 @@ export class TasksService {
     this.acceptanceDAO = new AcceptanceDAO(db)
     this.repoSyncService = repoSyncService ?? null
     this.workspaceService = workspaceService ?? null
+    this.lifecycle = new TaskLifecycleService({
+      db,
+      sse,
+      workspaceService: workspaceService ?? null,
+      builtInWorkflows: builtInWorkflowService ?? null,
+      taskHomeService: this.taskHomeService,
+    })
+  }
+
+  /** ADR-0021: the launch machinery, exposed for the acceptance route + 票04's composite
+   *  child pickup. Everything task-shaped that RUNS goes through this one object. */
+  get taskLifecycle(): TaskLifecycleService {
+    return this.lifecycle
   }
 
   /** Build the resolver deps for a given taskId (ADR-0013). Shared by the
@@ -684,40 +707,27 @@ export class TasksService {
 
   // ── Read ──────────────────────────────────────────────────────────
 
-  /** GET /api/tasks/:id — task + child schedules (S2 origin lookup). */
+  /** GET /api/tasks/:id — the task, its run history, and the derived phase view. */
   getTask(id: string): TaskDetailDTO {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    const dto = toDTO(row)
-    const children = this.scheduleDAO
-      .findSchedulesByOrigin("task", id)
-      .map((s) => ({
-        schedule_id: s.id,
-        name: s.name,
-        status: s.status,
-        origin_role: s.origin_role,
-        workflow_ref: extractWorkflowRef(s.config),
-        scheduled_at: s.scheduled_at ?? null,
-        workspace_id: s.workspace_id ?? null,
-        execution_ref: this.latestExecutionRef(s.id),
-      }))
-    const [root] = this.scheduleDAO.findRootSchedulesByTaskIds([id])
-    const enrichedDto: TaskDTO = root
-      ? { ...dto, schedule_status: root.status, scheduled_at: root.scheduled_at }
-      : dto
-    return { ...enrichedDto, children, derived: this.deriveView(row) }
+    const history = this.lifecycle.history(id)
+    const dto: TaskDTO = { ...toDTO(row), execution: history[0] ? toExecutionBadge(history[0]) : null }
+    return {
+      ...dto,
+      executions: history.map(toExecutionBadge),
+      derived: this.deriveView(row),
+    }
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
    *  needs and hand off — this service adds NO state logic of its own (K3).
    *
-   *  Round executions are scoped through the task's SCHEDULES (S2 polymorphic
-   *  origin → schedule_executions.execution_id, written by BOTH round paths:
-   *  WorkflowExecutor.execute:458 for the first trigger and
-   *  dispatchPhaseRound for advances/retries). Why not `tasks.workspace_id`:
-   *  the ws is the execution's location, not its ownership — an out-of-band ws
-   *  deletion would then blind the derivation (rounds invisible ⇒ the human
-   *  could never accept/advance again), while the ledger says otherwise. The
+   *  Round executions are scoped by executions.task_id — the row IS the run, so there
+   *  is nothing to join through (pre-票03 this walked schedules.origin_id →
+   *  schedule_executions.execution_id, and the comment there argued at length why
+   *  tasks.workspace_id was the wrong key; both objections dissolve once the launch
+   *  carries its own task id: it is neither a location nor an indirection). The
    *  phase_index IS NOT NULL filter keeps child loop/swarm executions (and all
    *  v3/generic rows) out; derive ignores anything untagged anyway. */
   private deriveView(row: TaskRow): TaskView {
@@ -726,14 +736,9 @@ export class TasksService {
       .prepare(
         `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
            FROM executions e
-          WHERE e.phase_index IS NOT NULL
-            AND e.id IN (
-              SELECT se.execution_id
-                FROM schedule_executions se
-                JOIN schedules s ON s.id = se.schedule_id
-               WHERE s.origin_type = 'task' AND s.origin_id = ?
-                 AND se.execution_id IS NOT NULL
-            )
+          WHERE e.task_id = ?
+            AND e.parent_id = '0'
+            AND e.phase_index IS NOT NULL
           ORDER BY e.created_at ASC`,
       )
       .all(row.id) as DeriveExecutionInput[]
@@ -744,24 +749,32 @@ export class TasksService {
     )
   }
 
-  /** Compact latest-run summary for a child schedule (listExecutions is
-   *  triggered_at DESC). Null when the schedule never ran (ready/parked).
-   *  Deliberately excludes agent_output/token_usage — fetch those via the
-   *  scheduler executions endpoint on demand (弹窗优化 2026-08-29). */
-  private latestExecutionRef(scheduleId: string): TaskDetailDTO["children"][number]["execution_ref"] {
-    const { data } = this.runDAO.listExecutions(scheduleId, { page: 1, limit: 1 })
-    const row: ScheduleExecutionRow | undefined = data[0]
-    if (!row) return null
-    return {
-      id: row.id,
-      status: row.status,
-      execution_id: row.execution_id ?? null,
-      workspace_id: row.workspace_id ?? null,
-      triggered_at: row.triggered_at,
-      completed_at: row.completed_at ?? null,
-      duration_ms: row.duration_ms ?? null,
-      error_summary: row.error_summary ?? null,
-    }
+  /**
+   * GET /api/tasks/:id/executions — the task's run history, newest first (票03/票05).
+   * One row per run (a v4 round, or the composite coordinator), with the (phase, round)
+   * coordinates the acceptance ledger reads and the workspace to deep-link into. This
+   * replaced children[], which listed the envelope rows standing for the same runs.
+   *
+   * `current` is the row the board's badge shows: the newest ROOT. It is not inferred
+   * from time here — the history is already ordered by the same key the latch and the
+   * badge read, so index 0 is the answer.
+   */
+  listRunHistory(id: string, limit = 50): Array<TaskExecutionBadge & { current: boolean; error: string | null }> {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    const history = this.lifecycle.history(id, limit)
+    const currentId = history.length > 0 ? history[0].id : null
+    return history.map((e) => ({
+      ...toExecutionBadge(e),
+      current: e.id === currentId,
+      // The failure reason lives in the row's var pool (the job writes it there — the
+      // executions table has no error column, and this is a read model, not a schema
+      // change). Only surfaced for terminal-failure rows so a green row never shows a
+      // stale key.
+      error: e.status === "failed" || e.status === "aborted"
+        ? (parseJSON<Record<string, unknown>>(e.var_pool, {}).error ?? null) as string | null
+        : null,
+    }))
   }
 
   /** GET /api/tasks/:id/artifacts — the artifact index (ticket 06, US7).
@@ -908,21 +921,22 @@ export class TasksService {
         ] as TaskStatus[]
       ).flatMap((st) => this.taskDAO.listByStatus(st))
     }
-    return { items: this.enrichRootSchedule(rows.map(toDTO)) }
+    return { items: this.attachInstances(rows) }
   }
 
-  /** v39 board enrichment: attach the root schedule's status + due time to
-   *  task DTOs with ONE batched query (a task has at most one live root —
-   *  readyTask is draft-only). Backward compatible: fields stay undefined when
-   *  no root row exists (draft tasks). */
-  private enrichRootSchedule(dtos: TaskDTO[]): TaskDTO[] {
+  /** Attach each task's current instance with ONE batched query (a task has at most one
+   *  LIVE root by the latch, but the newest root may well be a finished round — which is
+   *  what the card shows: 「上一轮 completed」, not an empty badge). Pre-票03 this joined
+   *  the root schedule row instead; the row it read was a stand-in for exactly this. */
+  private attachInstances(rows: TaskRow[]): TaskDTO[] {
+    const dtos = rows.map(toDTO)
     if (dtos.length === 0) return dtos
-    const roots = this.scheduleDAO.findRootSchedulesByTaskIds(dtos.map((d) => d.id))
-    if (roots.length === 0) return dtos
-    const byId = new Map(roots.map((r) => [r.origin_id, r]))
+    const byId = new Map(
+      this.lifecycle.latestInstances(rows.map((r) => r.id)).map((e) => [e.task_id as string, e]),
+    )
     return dtos.map((d) => {
-      const root = byId.get(d.id)
-      return root ? { ...d, schedule_status: root.status, scheduled_at: root.scheduled_at } : d
+      const inst = byId.get(d.id)
+      return inst ? { ...d, execution: toExecutionBadge(inst) } : d
     })
   }
 
@@ -1360,78 +1374,29 @@ export class TasksService {
     taskId: string,
     taskSpec: TaskSpec,
   ): { missing: string[]; phases: TaskV4PhaseConfig[] } {
-    const missing: string[] = []
-    const phases = taskSpec.phases ?? []
-    if (phases.length < 1) {
-      return { missing: ["phase:0:no-phases"], phases: [] }
-    }
-    const homeDir = this.taskHomeService.homePath(taskId)
-    const taskArtifactsDir = this.taskHomeService.artifactsDir(taskId)
-    const resolved: TaskV4PhaseConfig[] = []
-    phases.forEach((p, idx) => {
-      const i = idx + 1
-      // ① spec file exists (relative ⇒ under the task home)
-      const absSpec = path.isAbsolute(p.specPath) ? p.specPath : path.join(homeDir, p.specPath)
-      const specOk = fs.existsSync(absSpec) && fs.statSync(absSpec).isFile()
-      if (!specOk) missing.push(`phase:${i}:spec-missing`)
-      // ② workflow_ref resolvable (single resolve serves ③'s content too —
-      // same pattern as the v3 gate's review fix 2026-08-27)
-      const ref = (p.workflowRef ?? "").trim()
-      const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(taskId)) : null
-      if (!resolution) {
-        missing.push(`phase:${i}:workflow-ref`)
-        return
-      }
-      // ③ required inputs non-empty after v4 placeholder resolution
-      const inputDefs = parseWorkflowInputDefs(resolution.content)
-      // ${phase.batch_rel}: home-relative posix batch dir — the ws-isomorphic
-      // position seed copies the batch into (ADR-0018 spec-consuming flows bind
-      // this). Out-of-home/absolute specPath ⇒ "" → key unresolved (gate misses).
-      const batchRel = (() => {
-        const rel = batchRelPath(homeDir, path.dirname(absSpec))
-        return rel ? rel.split(path.sep).join("/") : ""
-      })()
-      const { values, unresolved } = resolveInputValues(
-        p.inputValues,
-        taskSpec.goal,
-        taskSpec.ac,
-        {
-          phaseSlug: p.slug,
-          phaseSpecDir: path.dirname(absSpec),
-          phaseBatchRel: batchRel,
-          taskHome: homeDir,
-          taskArtifactsDir,
-        },
-      )
-      for (const key of unresolved) missing.push(`phase:${i}:input:${key}`)
-      for (const def of inputDefs) {
-        if (def.required && !values[def.name]?.trim()) {
-          missing.push(`phase:${i}:input:${def.name}`)
-        }
-      }
-      if (specOk) {
-        resolved.push({
-          index: i,
-          name: p.name,
-          slug: p.slug,
-          specPath: absSpec,
-          specDir: path.dirname(absSpec),
-          workflowRef: ref,
-          inputValues: values,
-        })
-      }
+    return resolveV4Phases({
+      taskSpec,
+      homeDir: this.taskHomeService.homePath(taskId),
+      taskArtifactsDir: this.taskHomeService.artifactsDir(taskId),
+      resolveRef: (ref) => resolveWorkflowRef(ref, this.resolverDeps(taskId)),
     })
-    // Dedupe — an unresolved placeholder on a required input can hit both the
-    // `input:<key>` (unresolved) and `input:<name>` (empty-required) paths
-    // (mirrors the v3 branch).
-    return { missing: Array.from(new Set(missing)), phases: resolved }
   }
 
-  /** POST /api/tasks/:id/ready — draft→ready + dispatch seam. Creates the
-   *  schedules envelope (simple=1 primary; composite=1 coordinator). The
-   *  task_spec is materialized into the schedule's config via the exported
-   *  materializeTaskSpecToConfig (06 later drops task_spec from the output +
-   *  injects subunit_count in the body; 03 only calls it). */
+  /**
+   * POST /api/tasks/:id/ready — draft→ready, gated on the contract.
+   *
+   * 票03: this is a CHECK + a status write, nothing else. It used to also materialize a
+   * WorkflowConfig and insert a parked `schedules` row (the envelope) whose config then
+   * had to serve as the runtime definition for every later round — which is why editing
+   * a spec after enqueue did nothing, why 周期触发 was impossible, and why "重新入队"
+   * existed at all. The launch plan is materialized per launch by the task-lifecycle job
+   * instead, so the only durable effect of enqueueing is the status.
+   *
+   * The gate itself is unchanged: v4 checks the phase contract (spec file, resolvable
+   * ref, satisfied required inputs) plus the project-repo preflight; v3 checks
+   * goal/ac/confirmations and the bound workflow_ref. A miss is a 409 with the missing
+   * keys, never a half-enqueued task.
+   */
   readyTask(id: string): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -1553,76 +1518,11 @@ export class TasksService {
       }
     }
 
-    const projectIds = parseJSON<string[]>(existing.project_ids, [])
-    const skills = parseJSON<string[]>(existing.skills, [])
-    // SG7 (ticket 07): pass the task's resources column (workspace-scope) to
-    // materialize so it propagates into config.requires alongside subunit
-    // resources. The materialize body UNIONs both + dedupes.
-    const resources = parseJSON<ResourceRef[]>(existing.resources, [])
-    const subunits: SubunitSpec[] = taskSpec.subunits ?? []
-    // SG9: composite requires subunits.length >= 2 (1-subunit → simple
-    // workflow_chain). The materialize body's own threshold (06 changes it) is
-    // not relied on here — the dispatch seam decides simple vs composite.
-    const isComposite = subunits.length >= 2
-
-    // Materialize the WorkflowConfig for the schedule envelope. The exported
-    // function includes task_spec in the output (06 drops it); 03's
-    // verification checks origin_type='task' (v39: envelope is parked 'draft',
-    // not 'queued' — see insertSchedule below).
-    // Ticket 08 (D14): inject $vars.task_artifacts_dir = homePath(id)/artifacts
-    // for v3 tasks (task_type set — went through the two-phase flow → home
-    // created at task creation). v2/legacy tasks (no task_type) skip injection
-    // (AC4 backward compat — no home exists, the key is omitted not errored).
-    // task-workflow-handoff (ADR-0013): same pattern for task_workflows_dir —
-    // the WorkflowExecutor uses it post-createFromSpec to copy agent-authored
-    // workflow YAMLs from {home}/workflows/ into the execution ws workflows/.
-    // v4 tasks carry a home too (the gate resolves phase spec files against it),
-    // so the management-key injection applies to both branches.
-    const isV3 = taskSpec.task_type !== undefined || taskSpec.format === "v4"
-    const taskArtifactsDir = isV3 ? this.taskHomeService.artifactsDir(id) : undefined
-    const taskWorkflowsDir = isV3 ? this.taskHomeService.workflowsDir(id) : undefined
-    const config = materializeTaskSpecToConfig(
-      taskSpec,
-      projectIds,
-      existing.org,
-      existing.workflow_ref ?? undefined,
-      skills,
-      resources,
-      taskArtifactsDir,
-      taskWorkflowsDir,
-      // ticket 04: v4 only — per-phase gate resolution embedded into the
-      // envelope config (undefined ⇒ the v3/generic path is byte-identical).
-      v4Phases,
-    )
-    const configJson = JSON.stringify(config)
-    const now = new Date().toISOString()
-
-    const scheduleId = randomUUID()
-    // v39 MANUAL TRIGGER: the envelope is created PARKED ('draft'), not 'queued'
-    // — enqueue no longer auto-runs. checkQueuedTasks only claims 'queued' rows,
-    // and TaskScheduleStatusListener does not mirror 'draft', so the task
-    // correctly stays 'ready'. The explicit POST /:id/trigger flips it to
-    // 'queued' (+ scheduled_at due time) for immediate or one-shot timed runs.
-    this.scheduleDAO.insertSchedule({
-      id: scheduleId,
-      org: existing.org,
-      name: `task-${id}-${isComposite ? "coordinator" : "primary"}`,
-      cron_expression: null,
-      timezone: "UTC",
-      job_type: "workflow",
-      config: configJson,
-      status: "draft",
-      scheduled_at: null,
-      origin_type: "task",
-      origin_id: id,
-      origin_role: isComposite ? "coordinator" : "primary",
-      created_at: now,
-      updated_at: now,
-    })
-
-    // Flip the task to 'ready' (dispatch seam created the PARKED envelope; an
-    // explicit trigger arms it, then the runner claims + ScheduleStatusListener
-    // mirrors running).
+    // Nothing is created here. Enqueue asserts the contract and moves the status;
+    // WHEN it runs (if at all) is the task's own trigger_* columns, and the run itself
+    // is armed by the built-in job from those.
+    // Flip the task to 'ready'. Nothing else happens: an explicit trigger (or the job,
+    // for a task carrying a due cursor) is what creates a run from here on.
     const result = this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
@@ -1632,20 +1532,18 @@ export class TasksService {
 
   // ── Reopen (ready → draft) ───────────────────────────────────────────────
 
-  /** POST /api/tasks/:id/reopen — the enqueue undo. A ready task whose run has
-   *  NOT started (root envelope still parked 'draft' or armed-queued but
-   *  unclaimed) goes back to 'draft': the envelope schedules are reaped
-   *  (readyTask materializes a fresh one on every enqueue, so keeping the old
-   *  row would leak a duplicate), and the task becomes structurally editable
-   *  again (AuthoringWorkspace unlocks at draft — K16 freeze lifted, nothing
-   *  ran yet). Claimed/running envelopes ⇒ 409 (use abort). Rounds/ledger are
-   *  untouched — they only exist once a round dispatched, which requires
-   *  trigger + claim, both excluded by the guard above.
+  /** POST /api/tasks/:id/reopen — the enqueue undo. A ready task whose run has NOT
+   *  started goes back to 'draft' and becomes editable again (K16 freeze lifted).
+   *  票03: 「还没开始」 used to be read off the envelope's status ('draft'/'queued' and
+   *  not 'claimed'); now it is one fact — the task has no instance row that is armed or
+   *  running. Once a round exists, reopen is refused and abort is the way back, exactly
+   *  as before; the difference is there is no row to reap on the way out (nothing was
+   *  created), so reopen cannot leak an orphan definition — the failure mode that
+   *  needed the orphan reaper in the first place.
    *
-   *  Status write follows the abortTask/cancelTaskTrigger pattern (system
-   *  event, direct UPDATE, no version bump) so spec-field optimistic
-   *  concurrency for the authoring agent is unaffected. Synchronous DAO calls =
-   *  atomic w.r.t. the scheduler poller on the event loop. */
+   *  Status write is a system event (direct UPDATE, no version bump) so the authoring
+   *  agent's optimistic concurrency is unaffected. Synchronous = atomic w.r.t. the job's
+   *  claim loop on this event loop. */
   reopenTask(id: string): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -1655,19 +1553,13 @@ export class TasksService {
       )
     }
 
-    const roots = this.scheduleDAO
-      .findSchedulesByOrigin("task", id)
-      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
-    if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
+    const inst = this.lifecycle.currentInstance(id)
+    if (inst && !TERMINAL_INSTANCES.has(inst.status)) {
       throw new TaskStatusConflictError(
         "任务已进入排队领取/执行，无法退回草稿 — 请改用中止",
       )
     }
-    // Non-root children exist only after a round dispatched (post-trigger);
-    // a ready+unclaimed task has none by construction, but reap whatever IS
-    // there so a reopen never leaves orphan schedules behind.
-    const all = this.scheduleDAO.findSchedulesByOrigin("task", id)
-    for (const s of all) this.scheduleDAO.softDelete(s.id)
+    // A finished round leaves its row behind as history: reopen only unlocks the spec.
 
     const nowIso = new Date().toISOString()
     const flipped = this.taskDAO
@@ -1687,20 +1579,23 @@ export class TasksService {
     return toDTO(row)
   }
 
-  // ── Trigger (v39 — manual / one-shot time trigger of a parked envelope) ────
+  // ── Trigger / cancel (票03: write the task's own WHEN, then let the job run it) ──
 
-  /** POST /api/tasks/:id/trigger — arms the parked (draft) root envelope:
-   *  draft → queued with `scheduled_at = at ?? now`. `at` absent/past =
-   *  immediate (next wake/tick); future = one-shot timed run (the poller's
-   *  due-filter holds it until due).
+  /**
+   * POST /api/tasks/:id/trigger — run this task now (`at` absent/past) or arm it for
+   * `at` (one-shot). `at` in the future arms `tasks.trigger_at` and starts nothing: the
+   * built-in job picks it up on its next round, sub-second after a wake.
    *
-   *  SAME-TASK MUTEX (v39 final semantics): one task instance at a time.
-   *  Enforced structurally — a task has exactly one root envelope (readyTask
-   *  is draft-only), and trigger requires tasks.status='ready', so a queued
-   *  or running task cannot be re-armed; the guarded draft→queued flip closes
-   *  the race window. Different tasks may run concurrently (bounded by the
-   *  existing MAX_PARALLEL_WORKSPACES cap). */
-  triggerTask(id: string, at?: string): TaskDTO {
+   * SAME-TASK MUTEX: now a DB constraint instead of a convention. `armTask` inserts the
+   * instance row, and `ux_exec_task_active` refuses a second live one, so a double click,
+   * a retry, or the job and a human racing all get the same 「已有实例」 answer. The
+   * pre-票03 version of that guarantee was this method flipping a parked row and eight
+   * call sites guarding it.
+   *
+   * 预建 (trigger-prebuild 2026-09-08) is preserved and moved: the workspace is prepared
+   * synchronously here, so a task that CANNOT get a worktree 409s to the user who pressed
+   * the button instead of failing a minute later inside a cron tick. */
+  async triggerTask(id: string, at?: string): Promise<TaskDTO> {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "ready") {
@@ -1709,173 +1604,42 @@ export class TasksService {
       )
     }
 
-    const parked = this.locateParkedEnvelope(id)
-
     const now = new Date()
     const nowIso = now.toISOString()
-    const dueAt = at ?? nowIso
+    const dueAt = at ? new Date(at) : now
+    const immediate = Number.isNaN(dueAt.getTime()) || dueAt.getTime() <= now.getTime()
 
-    const flipped = this.scheduleDAO.claimParkedTaskSchedule(parked.id, dueAt)
-    if (flipped.changes === 0) {
-      throw new TaskStatusConflictError("触发状态已变化，请刷新重试")
+    if (immediate) {
+      try {
+        await this.armNow(id)
+      } catch (err: unknown) {
+        throw this.asConflict(err)
+      }
+    } else {
+      // Timed: disarm any stale cursor and arm the task's own one-shot due time. The
+      // status stays 'ready' — a scheduled task has not started, and the badge reads the
+      // due cursor, not a mirrored status.
+      this.taskDAO.armOnce(id, dueAt.toISOString())
+      this.sse.emit("taskpool", {
+        event: TASK_TRIGGER_EVENT,
+        data: { task_id: id, action: "scheduled", scheduled_at: dueAt.toISOString() },
+      })
     }
-
-    // Mirror the queued→running transition the listener would emit (we flipped
-    // the schedule directly, bypassing the engine's emit path). Status write is
-    // a system event — no version bump (abortTask pattern).
-    this.taskDAO
-      .getDb()
-      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL")
-      .run("running", nowIso, id)
-
-    this.sse.emit("taskpool", {
-      event: TASK_STATUS_EVENT,
-      data: { task_id: id, status: "running", schedule_id: parked.id, origin_type: "task" },
-    })
-    this.sse.emit("taskpool", {
-      event: TASK_TRIGGER_EVENT,
-      data: { task_id: id, action: at ? "scheduled" : "triggered", scheduled_at: at ?? null },
-    })
-
-    // Sub-second pickup — don't wait for the 60s auxiliary tick.
-    this.wakeScheduler?.()
 
     const row = this.taskDAO.getById(id)!
-    return toDTO(row)
+    return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
-  /** 定位本任务停放(draft)的根信封；找不到时按排队/执行中/缺信封分别 409
-   *  （triggerTask 与 triggerTaskWithPrebuild 共用，错误文案逐字保留）。 */
-  private locateParkedEnvelope(id: string): ScheduleRow {
-    const roots = this.scheduleDAO
-      .findSchedulesByOrigin("task", id)
-      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
-    const parked = roots.find((r) => r.status === "draft")
-    if (!parked) {
-      if (roots.some((r) => r.status === "queued")) {
-        throw new TaskStatusConflictError("任务已触发，处于排队状态")
-      }
-      if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
-        throw new TaskStatusConflictError("任务正在执行中")
-      }
-      throw new TaskStatusConflictError("未找到已入队的执行计划，请重新入队")
-    }
-    return parked
-  }
-
-  /** POST /:id/trigger 的生产入口（trigger-prebuild 2026-09-08, 特性B）：
-   *  「触发执行」**当场**把 workspace + git worktree 建出来 —— 建不出来直接
-   *  409 弹回（任务保持 ready、信封保持停放、不排队不唤醒），建得出才走
-   *  triggerTask 的 draft→queued 翻转。executor 稍后 claim 时命中
-   *  tasks.workspace_id 绑定走复用路径（同名同支由 ws-launch 共享纯函数保证）。
-   *
-   *  同步版 triggerTask 保持原语义（无预建）—— tasks-trigger-mutex 等既有
-   *  同步调用测试零改动；生产路由只走本方法。 */
+  /** The production entry point kept as a distinct name for the route (the
+   *  预建 behavior is now unconditional inside triggerTask). */
   async triggerTaskWithPrebuild(id: string, at?: string): Promise<TaskDTO> {
-    const existing = this.taskDAO.getById(id)
-    if (existing) {
-      // 预建前置：镜像同步在途时先等（worktree 必从最新 main 切 + 避开 fetch
-      // 期 index.lock 竞态）。仅 v4 且 ready 态才值得等；wait 超时放行。
-      let parkedForPrebuild: ScheduleRow | undefined
-      if (this.workspaceService && existing.status === "ready") {
-        try {
-          parkedForPrebuild = this.locateParkedEnvelope(id)
-        } catch {
-          parkedForPrebuild = undefined // 排队/执行中等错误交给 triggerTask 原样抛
-        }
-        if (parkedForPrebuild && this.prebuildIsV4Simple(parkedForPrebuild)) {
-          await this.repoSyncService?.waitUntilIdle(id, 45_000)
-        }
-        if (parkedForPrebuild) this.prebuildTaskWorkspace(existing, parkedForPrebuild)
-      }
-    }
     return this.triggerTask(id, at)
   }
 
-  /** 预建适用性：信封 config 是 v4 且非 composite 且带真实项目（composite 的
-   *  coordinator-ws 无项目是 by-design（spec D4），executor 复用判定也排除它）。 */
-  private prebuildIsV4Simple(parked: ScheduleRow): boolean {
-    const config = parseJSON<{
-      format?: string
-      workflow_chain?: Array<{ workflow_ref?: string }>
-      workspace_spec?: { projects?: Array<{ name?: string }> }
-    }>(parked.config, {})
-    if (config.format !== "v4") return false
-    if (isCompositeWorkflowConfig(config)) return false
-    const projects = (config.workspace_spec?.projects ?? []).filter((p) => p.name && p.name !== "default")
-    return projects.length > 0
-  }
-
-  /** 同步预建 workspace+worktree（幂等：已绑定存活 → 只做 worktree 自愈）。
-   *  任何失败 → TaskStatusConflictError（路由 409）；不翻信封、不动 status。
-   *  createFromSpec 自带 worktree 失败目录回滚（B0），失败不留半建孤儿。 */
-  private prebuildTaskWorkspace(existing: TaskRow, parked: ScheduleRow): void {
-    const ws = this.workspaceService
-    if (!ws) return
-    const config = parseJSON<{
-      format?: string
-      workflow_chain?: Array<{ workflow_ref: string; input_values: Record<string, string> }>
-      workspace_spec?: {
-        org?: string
-        branch_prefix: string
-        projects: Array<{ name: string; source_path: string; group?: string }>
-      }
-    }>(parked.config, {})
-    if (!this.prebuildIsV4Simple(parked)) return
-
-    // 已绑定且 ws 行活着 → 自愈后直接返回（重触发幂等，绝不 rebuild 活 ws）。
-    if (existing.workspace_id) {
-      const bound = ws.getById(existing.workspace_id)
-      if (bound) {
-        try {
-          ws.ensureWorktreesForReuse(bound)
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err)
-          throw new TaskStatusConflictError(`预建工作区失败（任务保持已入队，未排队）: ${message}`)
-        }
-        return
-      }
-      // 绑定悬挂（ws 被带外删除）→ 落到下方重建（executor 同款语义）。
-    }
-
-    const spec = config.workspace_spec ?? { branch_prefix: "", projects: [] }
-    const projects = spec.projects.filter((p) => p.name && p.name !== "default")
-    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
-      scheduleId: parked.id,
-      // scheduler-service.ts:1555 同款派生：task 信封恒 requirement。
-      triggerSource: (parked.origin_type ?? "cron") === "cron" ? "cron" : "requirement",
-      config,
-      taskRow: existing,
-    })
-    try {
-      const created = ws.createFromSpec({
-        org: spec.org ?? existing.org,
-        name: workspaceName,
-        projects,
-        branch_prefix: branchPrefix,
-        branch_suffix: branchSuffix,
-        source: "scheduler",
-        source_schedule_id: parked.id,
-        workflow_chain: config.workflow_chain ?? [],
-      })
-      // 绑定写回（无 version bump —— executor :298-303 同款系统事件纪律）。
-      this.taskDAO
-        .getDb()
-        .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
-        .run(created.id, new Date().toISOString(), existing.id)
-      console.log(
-        `[TasksService] trigger prebuild: workspace ${created.id} (${workspaceName}) bound to task ${existing.id} — ${projects.length} worktree(s) ready`,
-      )
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      throw new TaskStatusConflictError(`预建工作区失败（任务保持已入队，未排队）: ${message}`)
-    }
-  }
-
-  /** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started
-   *  one-shot (queued + unclaimed + scheduled_at in the future) back to parked
-   *  draft; the task returns to 'ready'. If the poller already claimed/due-ran
-   *  it (guarded UPDATE changes===0) → 409 conflict. */
+  /** POST /api/tasks/:id/trigger/cancel — withdraw an armed one-shot that has not
+   *  started. 票03: two things to take back, in this order — the queued instance if the
+   *  job already armed one (retired only while still 'pending'; if the engine started,
+   *  the caller must abort), then the due cursor itself. */
   cancelTaskTrigger(id: string): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -1884,89 +1648,129 @@ export class TasksService {
         `Cannot cancel trigger for a task in status '${existing.status}'`,
       )
     }
-    const root = this.scheduleDAO
-      .findSchedulesByOrigin("task", id)
-      .find(
-        (r) =>
-          (r.origin_role === "primary" || r.origin_role === "coordinator") &&
-          r.status === "queued",
-      )
-    if (!root) throw new TaskStatusConflictError("没有可取消的定时触发")
+    const hasPendingFire = existing.trigger_mode === "once" && !!existing.next_fire_at
 
-    const nowIso = new Date().toISOString()
-    const flipped = this.scheduleDAO.cancelTriggeredTaskSchedule(root.id, nowIso)
-    if (flipped.changes === 0) {
-      throw new TaskStatusConflictError("定时触发已开始执行或不存在，无法取消")
+    const inst = this.lifecycle.currentInstance(id)
+    const armedButNotStarted = !!inst && inst.status === "pending"
+    if (inst && !armedButNotStarted && !TERMINAL_INSTANCES.has(inst.status)) {
+      throw new TaskStatusConflictError("定时触发已开始执行，无法取消 — 请改用中止")
+    }
+    if (armedButNotStarted) {
+      this.lifecycle.abortTask(id)
+    } else if (!hasPendingFire && !armedButNotStarted) {
+      throw new TaskStatusConflictError("没有可取消的定时触发")
     }
 
-    // Back to parked semantics: the task is ready again (no run in flight).
+    this.taskDAO.disarmTrigger(id)
+    // Back to a plain enqueued task with no run in flight.
     this.taskDAO
       .getDb()
       .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL")
-      .run("ready", nowIso, id)
+      .run("ready", new Date().toISOString(), id)
 
-    this.sse.emit("taskpool", {
-      event: TASK_STATUS_EVENT,
-      data: { task_id: id, status: "ready", schedule_id: root.id, origin_type: "task" },
-    })
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
       data: { task_id: id, action: "cancelled", scheduled_at: null },
     })
 
     const row = this.taskDAO.getById(id)!
-    return toDTO(row)
+    return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
-  // ── Dispatch phase/round (ticket 05 — v4 一 task 一 ws / 一 task 一信封) ──
+  /**
+   * Set / clear this task's RECURRING trigger. Body of POST /:id/trigger/schedule.
+   *
+   * This is the capability the envelope made impossible: a cron expression used to have
+   * to live on a private `schedules` row (with a cron_expression there, the pump would
+   * have treated the task as one of its own jobs and the whole 入队/触发 state machine
+   * would fight it), so 周期触发 was not merely unimplemented — it had nowhere to be
+   * stored. Now it is three columns on the task and one cursor.
+   *
+   * Validation is deliberately minimal and non-destructive: an unparseable expression is
+   * refused BEFORE anything is written (no half-armed schedule), and the cursor is
+   * computed here so the job's scan never has to parse cron at all — it reads one column
+   * and compares it to the clock.
+   */
+  setCronTrigger(id: string, cron: string | null, timezone?: string): void {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    if (cron === null || cron.trim() === "") {
+      this.taskDAO.disarmTrigger(id)
+      this.sse.emit("taskpool", {
+        event: TASK_TRIGGER_EVENT,
+        data: { task_id: id, action: "unscheduled", scheduled_at: null },
+      })
+      return
+    }
+    const next = TaskLifecycleService.nextCronFireAt(cron, timezone || "Asia/Shanghai")
+    if (!next) throw new TaskStatusConflictError(`cron 表达式无法解析: ${cron}`)
+    this.taskDAO.armCron(id, cron, timezone || "Asia/Shanghai", next)
+    this.sse.emit("taskpool", {
+      event: TASK_TRIGGER_EVENT,
+      data: { task_id: id, action: "scheduled", cron, cron_timezone: timezone || "Asia/Shanghai", scheduled_at: next },
+    })
+  }
 
-  /** task-phase-redesign (ticket 05, K4/K5/K6): start ONE round execution of a
-   *  v4 task under the EXISTING envelope, on the task's BOUND workspace. The
-   *  first phase/round goes through the unchanged trigger→claim→execute path
-   *  (ticket 04 pre-loads chain[0]=phase1; WorkflowExecutor first-builds +
-   *  writes the tasks.workspace_id binding). Everything later — phase advance
-   *  (auto_advance) and 打回 retry — calls THIS method (票 07 owns the
-   *  acceptance endpoint that drives it).
+  /** Pause / resume a task's own triggers (the master switch on the card, and the
+   *  built-in job's row is a separate switch for the whole system). */
+  setTriggerEnabled(id: string, enabled: boolean): void {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    this.taskDAO.setTriggerEnabled(id, enabled)
+    this.sse.emit("taskpool", {
+      event: TASK_TRIGGER_EVENT,
+      data: { task_id: id, action: enabled ? "resumed" : "paused", scheduled_at: existing.next_fire_at },
+    })
+  }
+
+  /** A single task's list-row shape (trigger columns + current instance) — what the
+   *  trigger/schedule endpoints return so the caller re-reads one number instead of the
+   *  whole detail payload. */
+  getTaskSummary(id: string): TaskDTO {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    return this.attachInstances([row])[0]
+  }
+
+  /** Arm + launch through the job, then wake it so the claim does not wait for the cron
+   *  minute. A trigger that cannot arm (契约已破 / ws 建不出来) surfaces as the 409 the
+   *  user needs, not as a task stuck in 排队中. */
+  private async armNow(id: string): Promise<void> {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    // Mirror-safety: an in-flight repo sync must finish before a worktree is cut from
+    // main (same discipline as the pre-票03 预建 path, 45s wait then proceed).
+    if (isV4TaskSpec(existing.task_spec)) {
+      await this.repoSyncService?.waitUntilIdle(id, 45_000)
+    }
+    this.lifecycle.armAndLaunch(id, { triggeredBy: "manual" })
+  }
+
+  /** TaskLifecycleError → the conflict the route already knows how to render. The
+   *  reason codes stay distinguishable in the message; the HTTP status is 409 for all
+   *  of them because every one of them means 「现在不行」 rather than 「你请求错了」. */
+  private asConflict(err: unknown): Error {
+    if (err instanceof TaskLifecycleError) return new TaskStatusConflictError(err.message)
+    if (err instanceof TaskNotFoundError) return err
+    return new TaskStatusConflictError(err instanceof Error ? err.message : String(err))
+  }
+
+  // ── Dispatch a phase round (票03: delegate to the built-in job) ─────
+
+  /**
+   * Start ONE round of a v4 task: phase `phaseIdx`, round `roundIdx`.
    *
-   *  Shape (照 WorkflowExecutor.triggerChildStep 的同 ws 复用写法):
-   *    ① reuse the envelope (K5 — no new schedule row; it flips done/failed →
-   *       claimed with chain[0] rewritten to the target phase + `_phase_index`/
-   *       `_round_index` management-key stamps so a crash-recovery re-claim
-   *       re-tags identically); feedback (K7 打回文本) rides along as the
-   *       `feedback` input value — the fix-feedback-rN.md FILE is 票 08's seed
-   *       step, not this dispatch's;
-   *    ② insert a fresh schedule_executions slot: the partial unique index
-   *       idx_sched_execs_unique_active (schedule_id WHERE status IN
-   *       ('triggered','running')) is the structural serialization gate (K5 —
-   *       零额外并发代码). A collision ⇒ explainable TaskStatusConflictError
-   *       (AC2), never a silent queue-behind;
-   *    ③ service.create + start on the bound ws (zero git involvement ⇒ the
-   *       worktree/branch established at first build is inherited verbatim —
-   *       phase/round 不换支, 票03清单#4);
-   *    ④ tag the executions row phase_index/round_index (K4 — deriveTaskView
-   *       与验收账本按 (phase,round) 直读该打标行);
-   *    ⑤ register a terminal callback that RELEASES the active slot + flips
-   *       the envelope back to done/failed — without it no next round could
-   *       ever dispatch. Task-status derivation (awaiting_review 等) is 票 07's
-   *       deriveTaskView wiring, deliberately NOT mirrored here (K3: 派生不存).
+   * Ticket 05 built this as the exception to the rule that only the pump starts work —
+   * it rewrote the envelope's chain[0], grabbed an active `schedule_executions` slot,
+   * created an execution on the bound ws, tagged it (phase, round) and registered a
+   * terminal callback that released the slot. All five of those jobs now belong to the
+   * task-lifecycle job, which is also what starts the FIRST round, so this is a one-line
+   * delegation and 首触/后续轮 are finally the same code path (they used to differ in
+   * exactly the ways that caused bugs: crash re-claim, collect, retention exemption).
    *
-   *  Errors: unknown task → TaskNotFoundError; non-v4 spec / missing envelope /
-   *  unknown phase index / no bound ws / unavailable ws / active-slot conflict
-   *  → TaskStatusConflictError with a self-explanatory message.
-   *
-   *  Round-level routing override (ADR-0018 打回二分路由): `opts` swaps the
-   *  workflow THIS round executes (e.g. built-in/task-fix) and/or replaces the
-   *  input_values wholesale (synthesized fix-round inputs). The override lands
-   *  ONLY in the rewritten workflow_chain[0] (persisted ⇒ crash re-claim
-   *  reproduces it) — the envelope's frozen phases[] binding stays untouched
-   *  (K16): round 1 of any later re-run returns to the bound workflow.
-   *
-   *  phase-handoff-chaining (ticket 01): `opts.prevHandoffPaths` is the 阶段
-   *  衔接信道 injection — accepted→next-phase and manual-advance pass the home
-   *  absolute handoff.md paths collected by collectPrevHandoffPaths; they land
-   *  in workflow_chain[0].input_values.prev_handoff_paths (newline-joined,
-   *  persisted ⇒ re-claim reproduces). Same-phase rerun/fix never passes it ⇒
-   *  never injected (feedback/fix-feedback 信道 already covers that round). */
+   * Kept as a named method because the acceptance/advance paths and 票04's composite
+   * resume all call it, and its error contract is theirs: TaskLifecycleError → 409.
+   */
   async dispatchPhaseRound(
     taskId: string,
     phaseIdx: number,
@@ -1977,325 +1781,25 @@ export class TasksService {
       inputOverride?: Record<string, string>
       prevHandoffPaths?: string[]
     },
-  ): Promise<{ scheduleId: string; schedExecId: string; executionId: string; workspaceId: string }> {
-    const task = this.taskDAO.getById(taskId)
-    if (!task) throw new TaskNotFoundError()
-    if (!Number.isInteger(phaseIdx) || phaseIdx < 1 || !Number.isInteger(roundIdx) || roundIdx < 1) {
-      throw new TaskStatusConflictError(
-        `非法 phase/round: phase=${phaseIdx}, round=${roundIdx}（均为 ≥1 整数）`,
-      )
+  ): Promise<{ executionId: string; workspaceId: string }> {
+    const arm: ArmOptions = {
+      phaseIndex: phaseIdx,
+      roundIndex: roundIdx,
+      feedback,
+      workflowRefOverride: opts?.workflowRefOverride,
+      inputOverride: opts?.inputOverride,
+      prevHandoffPaths: opts?.prevHandoffPaths,
+      triggeredBy: "task-dispatch",
     }
-    const spec = parseJSON<{ format?: string }>(task.task_spec, {})
-    if (spec.format !== "v4") {
-      throw new TaskStatusConflictError("dispatchPhaseRound 仅适用于 v4 任务（task_spec.format==='v4'）")
-    }
-
-    const envelope = this.scheduleDAO
-      .findSchedulesByOrigin("task", taskId)
-      .find((r) => r.origin_role === "primary")
-    if (!envelope) {
-      throw new TaskStatusConflictError("未找到任务的执行信封（K5 一封套）— 请先入队并触发首 phase")
-    }
-    const config = parseJSON<Record<string, unknown>>(envelope.config, {})
-    const phases = (config.phases ?? []) as TaskV4PhaseConfig[]
-    const phase = phases.find((p) => p.index === phaseIdx)
-    if (!phase) {
-      throw new TaskStatusConflictError(`phase ${phaseIdx} 不在信封已解析的 phases[] 中（共 ${phases.length} 项）`)
-    }
-    const workspaceId = task.workspace_id
-    if (!workspaceId) {
-      throw new TaskStatusConflictError(
-        "任务 workspace 尚未创建 — 首执行请走 trigger（draft→claim→execute 负责首建 + 绑定 tasks.workspace_id）",
-      )
-    }
-
-    const now = new Date()
-    const nowIso = now.toISOString()
-
-    // ② active slot — the unique index serializes rounds structurally (K5/AC2).
-    const schedExecId = randomUUID()
     try {
-      this.runDAO.insertTriggeredExecution(
-        schedExecId, envelope.id, "manual", nowIso, "+00:00", envelope.timezone, "task-dispatch",
-      )
+      const executionId = this.lifecycle.armAndLaunch(taskId, arm)
+      // currentInstance is the row we just armed (the latch guarantees it is the newest
+      // root), so this is a read-back for the caller's deep link, not a lookup by time.
+      const inst = this.lifecycle.currentInstance(taskId)
+      return { executionId, workspaceId: inst?.workspace_id ?? "" }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      throw new TaskStatusConflictError(
-        `同一信封已有进行中的执行 — active 唯一索引拒绝并发派发（同一 task 串行，终态后再试）: ${message}`,
-      )
+      throw this.asConflict(err)
     }
-
-    // ① envelope rewrite: chain[0] := target phase (feedback + recovery stamps).
-    // All values are strings by construction (phase.inputValues is the gate's
-    // resolved Record<string,string>; feedback + stamps stringify to string) —
-    // ExecutionService.start is typed Record<string,string>.
-    // ADR-0018: inputOverride REPLACES phase.inputValues wholesale (fix-round
-    // synthesis); stamps/feedback are always appended on top.
-    const effectiveWorkflowRef = opts?.workflowRefOverride?.trim() || phase.workflowRef
-    const stepInputValues: Record<string, string> = {
-      ...(opts?.inputOverride ?? phase.inputValues),
-      ...(feedback && feedback.trim() ? { feedback } : {}),
-      // phase-handoff-chaining (ticket 01): 内置注入键 prev_handoff_paths —
-      // accepted 前序的 handoff.md home 绝对路径（换行连接；空 ⇒ 键不出现）。
-      ...(opts?.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: opts.prevHandoffPaths.join("\n") } : {}),
-      _phase_index: String(phaseIdx),
-      _round_index: String(roundIdx),
-    }
-    const nextConfig = {
-      ...config,
-      workflow_chain: [{ workflow_ref: effectiveWorkflowRef, input_values: stepInputValues }],
-    }
-    this.scheduleDAO.updateSchedule(envelope.id, {
-      config: JSON.stringify(nextConfig),
-      status: "claimed",
-      claimed_at: nowIso,
-      scheduled_at: null,
-    })
-
-    // ③ start on the BOUND ws — static getExecutionService import (see header).
-    const releaseSlotFailed = (reason: string): void => {
-      this.runDAO.markExecutionFailed(schedExecId, reason, ["triggered", "running"])
-      this.scheduleDAO.updateSchedule(envelope.id, { status: "failed", claimed_at: null })
-    }
-    let registry: ReturnType<typeof getExecutionService>
-    try {
-      registry = getExecutionService(workspaceId)
-    } catch (err: unknown) {
-      // Registry not initialized (ad-hoc/embedded callers) — same shape as an
-      // unavailable ws.
-      const message = err instanceof Error ? err.message : String(err)
-      releaseSlotFailed(`ExecutionService 不可用: ${message}`)
-      throw new TaskStatusConflictError(`ExecutionService 不可用: ${message}`)
-    }
-    if (!registry) {
-      releaseSlotFailed(`workspace ${workspaceId} 不可用（行缺失或路径失效）`)
-      throw new TaskStatusConflictError(`任务绑定的 workspace 不可用: ${workspaceId}`)
-    }
-
-    // task-phase-redesign (ticket 06, K9/K16): v4 seed 下行 — 开跑前把本 phase
-    // 批次目录 {home}/.scratch/<date>/<slug>/ 物理拷贝进 ws 同构相对位（home 覆盖
-    // ws 同名；同 copyTaskWorkflowsToWs 先例，非致命 — 瞬时 fs 错误不该烧掉
-    // dispatch slot，执行侧缺输入由 wf 自己报错）。每个 round 都 seed ⇒ 运行期
-    // 对 home spec 的编辑在下一 round 生效（K16 冻结策略）。
-    try {
-      const rel = batchRelPath(this.taskHomeService.homePath(taskId), phase.specDir)
-      if (rel) {
-        const seeded = seedPhaseToWorkspace(phase.specDir, registry.wsPath, rel)
-        if (seeded > 0) {
-          console.log(
-            `[TasksService] seeded ${seeded} artifact file(s) into ws ${registry.wsPath}/${rel} (phase ${phaseIdx} round ${roundIdx})`,
-          )
-        }
-      }
-    } catch (err: unknown) {
-      console.error(
-        `[TasksService] phase-round seed failed (non-fatal):`,
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-
-    let execution: { id: string }
-    try {
-      execution = registry.service.create(workspaceId, {
-        workflow_ref: effectiveWorkflowRef,
-        triggered_by: "scheduler",
-        input_values: stepInputValues,
-        // K4/K5: a v4 round is an independent root execution on the REUSED
-        // bound ws (round 2+ / phase 2+ all share one ws). ExecutionLifecycle's
-        // v1 "one root per ws" invariant must be opted out here — the
-        // schedule_executions active-index is the v4 serialization gate, not
-        // root uniqueness. (Found by ticket 14 E2E: the ticket-05 stub create
-        // mirrored the DB write but not this guard.)
-        allow_existing_root: true,
-        initial_var_pool: {
-          "schedule.id": envelope.id,
-          "schedule.name": envelope.name,
-          "schedule.triggered_at": nowIso,
-          "execution.trigger_type": "phase_round",
-        },
-      })
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      releaseSlotFailed(`execution create failed: ${message}`)
-      throw new TaskStatusConflictError(`round 执行创建失败: ${message}`)
-    }
-
-    this.runDAO.updateExecutionWorkspace(schedExecId, workspaceId)
-    this.runDAO.updateExecutionLinkId(schedExecId, execution.id)
-    this.runDAO.markExecutionRunning(schedExecId)
-
-    // ④ tag the executions row (K4). Raw UPDATE on the shared handle (same
-    // system-event pattern as the status writes above).
-    this.taskDAO
-      .getDb()
-      .prepare("UPDATE executions SET phase_index = ?, round_index = ?, updated_at = ? WHERE id = ?")
-      .run(phaseIdx, roundIdx, nowIso, execution.id)
-
-    // ⑤ ws association — record the ESTABLISHED branch suffix (per-task
-    // constant by K5; the dispatch never touches git, 票03清单#4).
-    const lastSuffix = this.scheduleDAO
-      .getDb()
-      .prepare(
-        "SELECT branch_suffix FROM schedule_workspaces WHERE schedule_id = ? AND branch_suffix IS NOT NULL AND branch_suffix != '' ORDER BY started_at DESC LIMIT 1",
-      )
-      .get(envelope.id) as { branch_suffix: string } | undefined
-    const schedWsId = randomUUID()
-    this.scheduleDAO.insertScheduleWorkspace({
-      id: schedWsId,
-      schedule_id: envelope.id,
-      workspace_id: workspaceId,
-      status: "running",
-      branch_suffix: lastSuffix?.branch_suffix ?? "",
-      started_at: nowIso,
-    })
-
-    // ⑥ terminal callback — releases the active slot so the NEXT round can
-    // dispatch (and the stale-claimed sweep can recover a crashed round).
-    const triggeredAt = now.getTime()
-    registry.service.registerExternalCallbacks(
-      {
-        onComplete: ((engineFinalStatus?: string) => {
-          this.finalizePhaseRoundExecution({
-            schedExecId, schedWsId, executionId: execution.id,
-            scheduleId: envelope.id, workspaceId, triggeredAt, engineFinalStatus,
-            // ticket 06: collect 上行 needs the task + phase to locate the batch dir.
-            taskId, phaseIdx,
-          })
-        }) as unknown as (finalStatus?: string) => void,
-      } as never,
-      execution.id,
-    )
-
-    registry.service.start(execution.id, stepInputValues).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(`[TasksService] dispatchPhaseRound start failed`, {
-        executionId: execution.id, scheduleId: envelope.id, error: message,
-      })
-      this.runDAO.markExecutionFailed(schedExecId, message, ["triggered", "running"])
-      registry.service.clearExternalCallbacks(execution.id)
-    })
-
-    // Board badge: the envelope re-entered in-flight (it was done/failed).
-    this.sse.emit("taskpool", {
-      event: "schedule_status",
-      data: { schedule_id: envelope.id, status: "claimed", phase_index: phaseIdx, round_index: roundIdx },
-    })
-
-    return { scheduleId: envelope.id, schedExecId, executionId: execution.id, workspaceId }
-  }
-
-  /** Mirror of WorkflowExecutor.handleChainComplete's FINALIZE subset for a
-   *  dispatchPhaseRound-started execution (the chain/parent-resume machinery
-   *  does not apply — a phase/round run is a single root execution per phase).
-   *  Status resolution follows the goal-task-dev lesson verbatim: prefer the
-   *  persisted terminal status, fall back to the engine's in-flight report. */
-  private finalizePhaseRoundExecution(opts: {
-    schedExecId: string
-    schedWsId: string
-    executionId: string
-    scheduleId: string
-    workspaceId: string
-    triggeredAt: number
-    engineFinalStatus?: string
-    taskId: string
-    phaseIdx: number
-  }): void {
-    try {
-      const FINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
-      const dbRow = this.taskDAO
-        .getDb()
-        .prepare("SELECT status, round_index FROM executions WHERE id = ?")
-        .get(opts.executionId) as { status: string; round_index: number | null } | undefined
-      const status = dbRow && FINAL_STATUSES.has(dbRow.status)
-        ? dbRow.status
-        : (opts.engineFinalStatus ?? dbRow?.status ?? "completed")
-      const ok = status === "completed"
-      const durationMs = Date.now() - opts.triggeredAt
-      const nowIso = new Date().toISOString()
-
-      // Terminal slot → the active unique index releases for the next round.
-      this.runDAO.markExecutionCompleteWithDuration(
-        opts.schedExecId, ok ? "completed" : "failed", durationMs,
-        ok ? undefined : `phase-round execution ${status}`,
-      )
-      this.scheduleDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
-        status: ok ? "completed" : "failed",
-        execution_id: opts.executionId,
-        completed_at: nowIso,
-      })
-      this.scheduleDAO.updateSchedule(opts.scheduleId, {
-        status: ok ? "done" : "failed",
-        claimed_at: null,
-      })
-      this.sse.emit("taskpool", {
-        event: "schedule_status",
-        data: { schedule_id: opts.scheduleId, status: ok ? "done" : "failed" },
-      })
-      // P3 (review): terminal on a v4 tagged round = the round awaits its
-      // human decision — fire phase_status_update BEFORE collect (the
-      // transition is about the execution, not file flow). After slot release
-      // so a racing re-dispatch can't observe awaiting_review mid-slot.
-      emitPhaseAwaitingReview(
-        (c, p) => this.sse.emit(c, p),
-        opts.taskId,
-        opts.phaseIdx,
-        dbRow?.round_index ?? 1,
-      )
-      // task-phase-redesign (ticket 06, K9) + ADR-0018: v4 collect 上行 — 回收 ws
-      // 批次目录中执行侧改过/新增的文件回 task home（批次目录全类 ws 权威，含
-      // spec.md —— 执行侧就地审查更新，home 随回流成终态镜像），有回收则 emit task_artifacts_update(taskId)。
-      // 独立 try：collect 失败只降级为「看板产物区晚一帧」，绝不吞掉上面的 slot
-      // 释放，也不能跳过下面的回调清理。
-      try {
-        this.collectPhaseRoundArtifacts(opts.taskId, opts.scheduleId, opts.phaseIdx, opts.workspaceId)
-      } catch (err: unknown) {
-        console.error(
-          `[TasksService] phase-round collect failed (non-fatal):`,
-          err instanceof Error ? err.message : String(err),
-        )
-      }
-      // Callback cleanup — non-fatal (the ws registry may be gone; the engine
-      // ignores stale callbacks after terminal anyway).
-      try {
-        getExecutionService(opts.workspaceId)?.service.clearExternalCallbacks(opts.executionId)
-      } catch { /* registry unavailable — non-fatal */ }
-    } catch (err: unknown) {
-      console.error(
-        `[TasksService] finalizePhaseRoundExecution failed for ${opts.schedExecId} (non-fatal — stale sweep backstops):`,
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-  }
-
-  /** ticket 06 collect 上行 (dispatchPhaseRound 路径的终态镜像；首触/claim 路径
-   *  的对应挂在 WorkflowExecutor.handleChainComplete — 两处都以 v4 打标为前提).
-   *  Reads the phase's materialized specDir (票04 信封) from the envelope, mirrors
-   *  `{ws}/{relBatchPath}` back into home and emits TASK_ARTIFACTS_UPDATE_EVENT
-   *  only when something actually flowed (unchanged round ⇒ no SSE noise; the
-   *  seed/collect mtime discipline makes re-collection idempotent). ws registry
-   *  gone (out-of-band deletion) ⇒ nothing to recover — home already holds the
-   *  last collected state (AC4 防丢兜底). */
-  private collectPhaseRoundArtifacts(
-    taskId: string,
-    scheduleId: string,
-    phaseIdx: number,
-    workspaceId: string,
-  ): void {
-    const specDir = resolvePhaseSpecDir(this.scheduleDAO.findById(scheduleId)?.config ?? "", phaseIdx)
-    if (!specDir) return
-    const rel = batchRelPath(this.taskHomeService.homePath(taskId), specDir)
-    if (!rel) return
-    const wsPath = getExecutionService(workspaceId)?.wsPath
-    if (!wsPath) return
-    const collected = collectFromWorkspace(path.join(wsPath, rel), specDir)
-    if (collected.length === 0) return
-    console.log(
-      `[TasksService] collected ${collected.length} artifact file(s) from ws back to home (task ${taskId}, phase ${phaseIdx})`,
-    )
-    this.sse.emit("taskpool", {
-      event: TASK_ARTIFACTS_UPDATE_EVENT,
-      data: { task_id: taskId },
-    })
   }
 
   // ── Acceptance gate (task-phase-redesign ticket 07 — K3/K6/K7) ─────
@@ -2319,15 +1823,16 @@ export class TasksService {
    *                                            dispatchPhaseRound(i, R+1) where
    *                                            R+1 = 该 phase 账本 rejected 行数 + 1
    *
-   *  Persisted-status normalization: the SG2 listener mirrors the FIRST round's
-   *  terminal transition onto tasks.status ('done'/'failed'), and dispatch
-   *  never touches it — so after acceptance we realign the row with what the
-   *  human just authorized ('running' when a round started, 'ready' when the
-   *  task parks at the manual gate). Without this a v4 task could not be
-   *  aborted after acceptance (abortTask only accepts ready/running). K3 is
-   *  NOT violated: these are the states the derivation itself reports for the
-   *  post-decision world, written at a *human decision* point — never a mirror
-   *  of a machine transition.
+   *  Persisted-status normalization (票03 rewrite): the task-lifecycle job leaves a v4
+   *  card at 'running' when a round ends (K3 — 待验收 is derived, not stored), so after
+   *  acceptance we realign the row with what the human just authorized: 'running' when a
+   *  round started, 'ready' when the task parks at the manual gate. Without this a v4
+   *  task could not be aborted after acceptance (abortTask only accepts ready/running).
+   *  K3 is NOT violated: these are the states the derivation itself reports for the
+   *  post-decision world, written at a *human decision* point — never a mirror of a
+   *  machine transition. (Pre-票03 the same realignment existed because the SG2 listener
+   *  had mirrored 'done' off the envelope's first terminal transition; that writer is
+   *  gone, and so is the leftover it created.)
    *
    *  The ledger write is intentionally NOT rolled back when the dispatch then
    *  fails (ws gone / slot busy → TaskStatusConflictError → 409): the decision
@@ -2339,6 +1844,17 @@ export class TasksService {
     const spec = parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
     if (spec.format !== "v4") {
       throw new TaskStatusConflictError("验收仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+    // An accepted decision on a task that can no longer run anything would be a ledger row
+    // nobody can execute. The phase matrix cannot catch it: deriveTaskView reads the ROUND
+    // rows, so an aborted/archiving card whose last round is unreviewed still derives
+    // 'awaiting_review'. Checked here, before the append — the append itself stays
+    // unconditional (K6: 决策是历史事实,派发失败不回滚账本,重试永远人工发起); this only
+    // rules out the states where a retry is impossible by construction.
+    if (row.status !== "ready" && row.status !== "running") {
+      throw new TaskStatusConflictError(
+        `任务当前状态 '${row.status}' 无法继续推进 phase —— 已中止/已归档的任务请重新入队`,
+      )
     }
 
     const view = this.deriveView(row)
@@ -2419,7 +1935,6 @@ export class TasksService {
           : undefined
       const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback, routing)
       dispatch = {
-        schedule_id: d.scheduleId,
         execution_id: d.executionId,
         workspace_id: d.workspaceId,
         phase_index: pv.index,
@@ -2440,7 +1955,6 @@ export class TasksService {
         const prevHandoffPaths = this.collectPrevHandoffPaths(row, nextPhaseIndex)
         const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1, undefined, { prevHandoffPaths })
         dispatch = {
-          schedule_id: d.scheduleId,
           execution_id: d.executionId,
           workspace_id: d.workspaceId,
           phase_index: nextPhaseIndex,
@@ -2630,7 +2144,6 @@ export class TasksService {
       task: this.getTask(taskId),
       next_action: "dispatched",
       dispatch: {
-        schedule_id: d.scheduleId,
         execution_id: d.executionId,
         workspace_id: d.workspaceId,
         phase_index: target.index,
@@ -2640,9 +2153,9 @@ export class TasksService {
   }
 
   /** 票 07: feedback 产物化 — `{home}/.scratch/<date>/<slug>/fix-feedback-r{N}.md`
-   *  (K7/K10). The batch dir comes from the envelope's materialized specDir
-   *  (票 04), falling back to the home-relative specPath dirname; if neither is
-   *  resolvable the write is skipped with a warning — the `feedback` input
+   *  (K7/K10). The batch dir comes from the task's own phases[] via phaseSpecDir
+   *  (票03: the envelope's materialized copy is gone, so there is one source), and if
+   *  it is unresolvable the write is skipped with a warning — the `feedback` input
    *  value still reaches the round (dispatchPhaseRound), so the failure
    *  degrades the traceability artifact, never the retry itself. */
   private writeFixFeedbackArtifact(
@@ -2682,23 +2195,20 @@ export class TasksService {
    *  (K3: 只注路径不注内容). The accepted verdict comes from the single truth
    *  (deriveTaskView via deriveView — re-derived fresh, so a caller that just
    *  appended the acceptance row sees THIS decision too, AC1: 刚 accepted 的
-   *  phase i 也是 i+1 的前序). specDirs resolve through the envelope
-   *  (resolvePhaseSpecDir — the same materialized mount seed/collect use,
-   *  票 04/06); the frozen phases[] is only ever READ (K16). Non-files
+   *  phase i 也是 i+1 的前序). specDirs come from the task's own phases[] via
+   *  phaseSpecDir — the same mount seed/collect use, and since the launch plan is
+   *  re-derived from task_spec per round (票03), the two cannot disagree about where
+   *  a phase's batch lives. Non-files
    *  (目录/断链) and duplicates (两 phase 同 specDir) are silently filtered
    *  alongside missing files (R2: 失败轮缺一角不烧派发).
    *  Result ascending by phase index; empty ⇒ caller omits the key. */
   private collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): string[] {
     const view = this.deriveView(row)
-    const envelope = this.scheduleDAO
-      .findSchedulesByOrigin("task", row.id)
-      .find((r) => r.origin_role === "primary")
-    const configJson = envelope?.config ?? ""
     const seen = new Set<string>()
     return view.phaseViews
       .filter((p) => p.index < targetPhaseIndex && p.status === "accepted")
       .sort((a, b) => a.index - b.index)
-      .map((p) => resolvePhaseSpecDir(configJson, p.index))
+      .map((p) => this.phaseSpecDir(row.id, p.index))
       .filter((d): d is string => !!d)
       .map((d) => path.join(d, "handoff.md"))
       .filter((f) => {
@@ -2713,16 +2223,11 @@ export class TasksService {
       })
   }
 
-  /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/
-   *  <slug>/`, K10): envelope specDir first (it is what seed/collect use), then
-   *  the raw task_spec's home-relative specPath dirname. */
+  /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/<slug>/`,
+   *  K10), derived from task_spec — which after 票03 is the ONLY place the binding lives
+   *  (the envelope used to be consulted first because it held a materialized copy that
+   *  seed/collect mounted; that copy is gone, so there is nothing to disagree with). */
   private phaseSpecDir(taskId: string, phaseIndex: number): string | null {
-    const env = this.scheduleDAO
-      .findSchedulesByOrigin("task", taskId)
-      .find((r) => r.origin_role === "primary")
-    const cfg = parseJSON<{ phases?: TaskV4PhaseConfig[] }>(env?.config ?? "", {})
-    const fromEnvelope = cfg.phases?.find((p) => p.index === phaseIndex)?.specDir
-    if (fromEnvelope) return fromEnvelope
     const task = this.taskDAO.getById(taskId)
     if (!task) return null
     const spec = parseJSON<TaskSpec>(task.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
@@ -2763,7 +2268,7 @@ export class TasksService {
   }
 
   /** System-event status write (no version bump — the optimistic lock tracks
-   *  spec edits, mirrors triggerTask/abortTask/TaskScheduleStatusListener).
+   *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
    *  re-derivation of an unchanged state). */
   private setPersistedTaskStatus(taskId: string, status: TaskStatus): void {
@@ -2784,15 +2289,23 @@ export class TasksService {
 
   // ── Abort (running → aborted + ws cleanup, v1 G4) ─────────────────
 
-  /** POST /api/tasks/:id/abort — running→aborted. Finds all child schedules
-   *  via S2 origin lookup, aborts each in-flight (claimed/running) schedule
-   *  (delegating to the G4 cleanup primitive — markStaleExecutionsFailed +
-   *  markScheduleWorkspacesCleanedBySchedule + best-effort execution cancel),
-   *  and writes tasks.status='aborted' directly. Emits task_status SSE.
+  /**
+   * POST /api/tasks/:id/abort — running→aborted.
    *
-   *  The schedule-level abort is best-effort: schedules already terminal
-   *  (done/failed/aborted) are skipped. Schedules in queued status are
-   *  flipped to aborted (never started, no ws to clean). */
+   * 票03: 「所有子作业」 used to mean walking findSchedulesByOrigin('task', id) and, per
+   * child, flipping schedules.status + marking schedule_workspaces cleaned + failing
+   * schedule_executions to release a borrowed UNIQUE index + cancelling execution links
+   * captured BEFORE the flips (an ordering bug that let an engine keep running after its
+   * row said otherwise — the 2026-09-08 regression this replaces). All of it was
+   * bookkeeping for a stand-in object. Now a task's runs ARE executions rows, so abort is
+   * one call: engine cancel for live rows, retirement for armed-but-not-started ones, and
+   * the latch releases itself.
+   *
+   * The bound workspace deliberately survives — it is the 打回 scene (round evidence, the
+   * worktree on one branch) and the task may be re-triggered. Nothing may delete a bound
+   * ws while the task is not 'done' (enforceRetention exempts it, K12), and 'done' never
+   * arrives via abort.
+   */
   abortTask(id: string): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -2802,16 +2315,14 @@ export class TasksService {
       )
     }
 
-    const now = new Date().toISOString()
-    // Find all child schedules via S2 origin lookup + abort each.
-    const children = this.scheduleDAO.findSchedulesByOrigin("task", id)
-    for (const child of children) {
-      this.abortChildSchedule(child, now)
+    const { cancelled, retired } = this.lifecycle.abortTask(id)
+    if (cancelled.length + retired.length === 0) {
+      // Legitimate (it parks the card) but worth a line: this is the shape of a
+      // double-click, or of aborting a task whose timed fire never armed.
+      console.log(`[TasksService] abort ${id}: 无在飞实例,仅置为 aborted`)
     }
 
-    // Write tasks.status='aborted' directly (no version bump — status change
-    // is a system event, not a spec edit; mirrors the ScheduleStatusListener
-    // pattern so the spec-field tool's optimistic concurrency is unaffected).
+    const now = new Date().toISOString()
     this.taskDAO
       .getDb()
       .prepare(
@@ -2819,7 +2330,6 @@ export class TasksService {
       )
       .run("aborted", now, now, id)
 
-    // Emit task_status SSE so the kanban moves the card to aborted instantly.
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
       data: { task_id: id, status: "aborted" },
@@ -2829,97 +2339,14 @@ export class TasksService {
     this.repoSyncService?.forget(id)
 
     const row = this.taskDAO.getById(id)!
-    return toDTO(row)
+    return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
-  /** Abort a single child schedule. claimed/running → aborted + G4 ws cleanup
-   *  (markStaleExecutionsFailed releases the unique active index;
-   *  markScheduleWorkspacesCleanedBySchedule marks in-flight ws as cleaned).
-   *  queued → aborted (never started). Terminal → skip (idempotent).
-   *
-   *  task-phase-redesign (ticket 05, 票03清单#6) — 'cleaned' semantics under ws
-   *  REUSE: the marker closes the schedule_workspaces ASSOCIATION (that run's
-   *  slot), NOT the workspace. The v4 task's ws is the round-打回 scene — it
-   *  stays bound (tasks.workspace_id is deliberately untouched here) and stays
-   *  on disk, so a later dispatchPhaseRound resumes on the same worktree/branch
-   *  with all evidence intact. Nothing may delete a bound ws while the task is
-   *  not 'done': enforceRetention exempts it (WorkflowExecutor, K12), and 'done'
-   *  never arrives via abort — the binding outlives every non-archived state. */
-  private abortChildSchedule(child: ScheduleRow, now: string): void {
-    const status = child.status as ScheduleStatus
-    if (status === "done" || status === "failed" || status === "aborted") return
-    if (status === "queued" || status === "draft") {
-      this.scheduleDAO.updateSchedule(child.id, { status: "aborted", claimed_at: null })
-      return
-    }
-    // claimed / running — full G4 cleanup.
-    // Capture the in-flight execution links BEFORE the mutations below
-    // (SchedulerService.abortJob discipline): the UPDATE flips the row out of
-    // ('triggered','running'), and the cancel lookup queries exactly that set
-    // — capturing afterwards found nothing and the engine ran on until stopped
-    // by hand (2026-09-08 live regression, task b6b721cb round).
-    const execLinks = this.scheduleDAO.findActiveExecutionLinks(child.id)
-    this.scheduleDAO.transaction(() => {
-      this.scheduleDAO.updateSchedule(child.id, {
-        status: "aborted",
-        claimed_at: null,
-      })
-      this.scheduleDAO.markScheduleWorkspacesCleanedBySchedule(child.id, now)
-    })
-    // Mark in-flight schedule_executions failed (releases the partial unique
-    // index idx_sched_execs_unique_active so the schedule can be re-dispatched).
-    try {
-      this.scheduleDAO
-        .getDb()
-        .prepare(
-          "UPDATE schedule_executions SET status = 'failed', error_summary = ?, completed_at = ? WHERE schedule_id = ? AND status IN ('triggered', 'running')",
-        )
-        .run(`Aborted by task owner at ${now}`, now, child.id)
-    } catch (err: unknown) {
-      console.error(
-        `[TasksService] abortChildSchedule: failed to mark executions failed for ${child.id} (non-fatal):`,
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-    // Best-effort: cancel the running workflow executions. A missing/gone
-    // workspace must NOT block the abort — the DB state above is already
-    // terminal. Static getExecutionService: the cycle-freedom is verified
-    // (see import site) and the dynamic form defeated vi.mock (ticket 05).
-    if (execLinks.length > 0) {
-      this.cancelExecutionLinks(execLinks, child.id).catch((err: unknown) => {
-        console.error(
-          `[TasksService] abortChildSchedule: cancel execution failed for ${child.id} (non-fatal):`,
-          err instanceof Error ? err.message : String(err),
-        )
-      })
-    }
-  }
-
-  private async cancelExecutionLinks(
-    links: { execution_id: string; workspace_id: string }[],
-    scheduleId: string,
-  ): Promise<void> {
-    for (const l of links) {
-      try {
-        const registry = getExecutionService(l.workspace_id)
-        if (registry) {
-          await registry.service.cancel(l.execution_id)
-        }
-      } catch (err: unknown) {
-        console.error(
-          `[TasksService] cancelExecutionLinks: exec ${l.execution_id} of schedule ${scheduleId} not cancelled (non-fatal):`,
-          err instanceof Error ? err.message : String(err),
-        )
-      }
-    }
-  }
-
-  // ── Delete (soft-delete + cascade-reap schedules) ──────────────────
-
-  /** DELETE /api/tasks/:id — soft-delete (discard draft/ready). Cascade-reaps
-   *  all child schedules via S2 origin lookup (R-INT: origin_id has no FK, so
-   *  app-level integrity is the only guard against orphans). Only draft/ready
-   *  tasks are discardable; a running task must be aborted first.
+  /** DELETE /api/tasks/:id — soft-delete (discard draft/ready). 票03: there is nothing
+   *  to cascade — a task's runs are executions rows (they stay as history like any other
+   *  run) and no private definition row exists to reap, which is precisely why the orphan
+   *  reaper could be deleted with this ticket. Only draft/ready tasks are discardable; a
+   *  running task must be aborted first.
    *
    *  04 (AC5/ADR-0011/SW-BP14): a DRAFT task's home dir (`~/.octopus/tasks/{id}/`)
    *  is reaped on delete (no orphan dirs). reapHome does NOT follow junctions/
@@ -2948,20 +2375,10 @@ export class TasksService {
         )
       }
     }
-    // Cascade-reap: soft-delete all child schedules (origin_type='task').
-    const children = this.scheduleDAO.findSchedulesByOrigin("task", id)
-    for (const child of children) {
-      this.scheduleDAO.softDelete(child.id)
-    }
+    // 票03: nothing to cascade — a task's runs are executions rows (they outlive it as
+    // history, like any other run) and there is no private definition row to reap. That
+    // absence is why the orphan reaper dies with this ticket.
     this.taskDAO.softDelete(id)
     return { ok: true }
   }
-}
-
-/** Extract workflow_ref from a schedule's config JSON (for the children[]
- * drill-down view). Returns null if the config is malformed or has no
- * workflow_chain (defensive — a corrupted config must not break GET /:id). */
-function extractWorkflowRef(configJson: string): string | null {
-  const config = parseJSON<{ workflow_chain?: Array<{ workflow_ref?: string }> }>(configJson, {})
-  return config.workflow_chain?.[0]?.workflow_ref ?? null
 }

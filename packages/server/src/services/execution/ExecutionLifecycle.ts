@@ -93,9 +93,6 @@ export class ExecutionLifecycle {
 
     // G1: construct this workspace's TaskDispatchPort and wire it into the engine
     // factory (so every engine built here gets the port via setTaskDispatchPort).
-    // The resume callback is bound lazily — dispatchChildSchedule only fires at
-    // engine.run() time, long after this constructor returns, so binding it here
-    // (via an arrow that calls this.resumeTaskDispatch) is safe.
     this.taskDispatchService = new TaskDispatchService({
       db,
       workspaceId,
@@ -104,9 +101,6 @@ export class ExecutionLifecycle {
       workspaceService: new WorkspaceService(new WorkspaceDAO(db)),
       sse,
     })
-    this.taskDispatchService.setResumeParentCallback(
-      (execId, nodeId, output) => this.resumeTaskDispatch(execId, nodeId, output),
-    )
     this.engineFactory.setTaskDispatchPort(this.taskDispatchService)
     this.gitOps = new GitOperations(workspacePath)
     this.stateManager = new StateFileManager(workspacePath, workspaceDbId, dao)
@@ -513,8 +507,8 @@ export class ExecutionLifecycle {
           data: {
             executionId: id,
             nodeId: taskDispatchMeta?.nodeId,
-            scheduleId: taskDispatchMeta?.scheduleHandle.schedule_id,
-            workspaceId: taskDispatchMeta?.scheduleHandle.workspace_id,
+            childId: taskDispatchMeta?.childHandle.child_id,
+            workspaceId: taskDispatchMeta?.childHandle.workspace_id,
             subunitName: taskDispatchMeta?.subunitName,
           },
         })
@@ -1342,6 +1336,18 @@ export class ExecutionLifecycle {
 
   // ==================== Skip ====================
 
+  /**
+   * Is an engine instance for this execution alive IN THIS PROCESS right now?
+   *
+   * The DB says a row is 'running'; this says whether anybody is actually running it.
+   * The built-in task-lifecycle job's reconcile pass is the only caller: after a restart
+   * (or a crash) rows outlive their engines, and the difference between 「还在跑」 and
+   * 「行还在、引擎没了」 is the difference between leaving a run alone and reaping it.
+   */
+  hasLiveEngine(executionId: string): boolean {
+    return this.enginePool.has(executionId)
+  }
+
   skip(id: string): boolean {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
@@ -1663,6 +1669,9 @@ export class ExecutionLifecycle {
       child_index?: number; node_type?: string; input_values?: Record<string, unknown>;
       triggered_by?: string; initial_var_pool?: Record<string, string>;
       allow_existing_root?: boolean;
+      // ADR-0021 票03 — task launch identity (see the facade's create for why it is
+      // written at insert rather than updated afterwards).
+      task_id?: string | null; phase_index?: number | null; round_index?: number | null;
     },
     org: string,
   ): ExecutionRow {
@@ -1671,13 +1680,15 @@ export class ExecutionLifecycle {
     const isRootRequest = !input.parent_id || input.parent_id === "0"
     const nodeType = input.node_type ?? "normal"
 
-    // task-phase-redesign (K4/K5): a v4 task binds ONE workspace for its whole
-    // life, and every round is an independent root execution under the same
-    // schedule envelope (1 round = 1 executions row + 1 schedule_executions
-    // row — NOT a chain child). The v1 "one root per ws" invariant does not
-    // hold for v4 task ws; the caller opts out explicitly. v3/generic/cron
-    // never pass the flag — their behavior is byte-identical (regression floor).
-    if (isRootRequest && !input.allow_existing_root) {
+    // task-phase-redesign (K4/K5) + ADR-0021 票03: a task binds ONE workspace for its
+    // whole life and every phase/round is an independent root execution under it, so the
+    // v1 "one root per ws" invariant does not hold for task workspaces. The serialization
+    // that replaces it is ux_exec_task_active (one live row per TASK), which is a tighter
+    // statement of what the caller actually means: "not two runs of this task", not "not
+    // two runs in this directory". A task-bound row is therefore exempt for its whole
+    // life, not just while the caller remembers to pass the flag; generic/cron launches
+    // (task_id null) keep the invariant byte-identically.
+    if (isRootRequest && !input.allow_existing_root && !input.task_id) {
       const existingRoot = this.dao.findRootExecutionId(workspaceId)
       if (existingRoot) throw new Error(`Workspace already has a root execution (${existingRoot.id}).`)
     }

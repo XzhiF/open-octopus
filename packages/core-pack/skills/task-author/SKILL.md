@@ -263,7 +263,8 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 # v4 gate 四项：phases≥1 ∧ 每 phase specPath 文件存在 ∧ 每 phase workflowRef 可解析 ∧ required inputs 非空
 # 不过 → 409 { missing: ["phase:<i>:<why>", …] }（无 goal/ac/双确认检查）
-# 过   → ready + 物化 schedules 信封（per-phase 配置内嵌，phase1 立即可触发）
+# 过   → 仅置 ready。**不产生任何 schedules 行**（ADR-0021 票03）：跑什么由系统内置
+#        的 task-lifecycle job 在每次起轮时按 task_spec.phases[] 现推，信封已退役
 ```
 
 missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing` ｜ `phase:<i>:workflow-ref` ｜ `phase:<i>:input:<name>`。

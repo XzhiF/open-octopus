@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 41
+export const SCHEMA_VERSION = 42
 
 /**
  * Apply the complete unified schema to the given database.
@@ -98,6 +98,10 @@ function handleSchemaMigrations(db: Database.Database): void {
   // schema v41 (ADR-0021): tasks.trigger_* / executions.task_id+run_id /
   // workspaces.task_id+run_id. AFTER the v40 rebuild on purpose — see the function doc.
   ensureColumnsV41(db)
+
+  // schema v42 (ADR-0021 票03): schedules stops being a task's shadow — the polymorphic
+  // origin back-reference and the envelope's due-time column come off.
+  migrateSchedulesV42DropOriginCols(db)
 }
 
 /**
@@ -221,13 +225,6 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   //      the migration runs on every applySchema and drops them idempotently.
   ensureColumn(db, 'schedules', 'status', "TEXT NOT NULL DEFAULT 'queued'")
   ensureColumn(db, 'schedules', 'claimed_at', "TEXT")
-  ensureColumn(db, 'schedules', 'origin_type', "TEXT NOT NULL DEFAULT 'cron'")
-  ensureColumn(db, 'schedules', 'origin_id', "TEXT")
-  ensureColumn(db, 'schedules', 'origin_role', "TEXT")
-  ensureColumn(db, 'schedules', 'assoc_meta', "TEXT")
-  // v39: one-shot due time for task-origin manual/time triggers. NULL =
-  // cron/legacy/claim-immediately. Additive nullable column — no rebuild.
-  ensureColumn(db, 'schedules', 'scheduled_at', "TEXT")
 
   // schema v40 (task-phase-redesign K4): executions gains the round identity
   // (phase_index/round_index, NULL = v3/generic); tasks gains its bound workspace
@@ -236,6 +233,52 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
 }
+
+/**
+ * schema v42 (ADR-0021 票03) — `schedules` loses the five columns that existed only to
+ * bind a job definition to a task:
+ *
+ *   origin_type / origin_id / origin_role  the S2 polymorphic back-reference — a schedule
+ *                                          row pointed AT a task, and every 「本任务的
+ *                                          信封在哪」 query walked it
+ *   assoc_meta                             set by exactly zero callers, ever
+ *   scheduled_at                           the envelope's one-shot due time, superseded
+ *                                          by tasks.next_fire_at in v41
+ *
+ * `status` and `claimed_at` stay: they are the pump's own run-state for cron/agent jobs
+ * (manual trigger, aborting a live fire, the stale sweep). Removing those means moving
+ * that state onto `schedule_executions`, which is a separate change with its own risk
+ * surface — and after this migration nothing task-shaped reads them.
+ *
+ * Order matters twice. The two indexes that reference these columns must go first (SQLite
+ * refuses to drop an indexed column), and this runs after ensureColumnsV41 so an existing
+ * dev DB converges without a wipe. SQLite < 3.35 has no DROP COLUMN: it logs and leaves
+ * an unread column behind, which is harmless.
+ */
+export function migrateSchedulesV42DropOriginCols(db: Database.Database): void {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'",
+  ).all()
+  if (tables.length === 0) return // fresh DB: schema.sql creates it without the cols
+
+  db.exec("DROP INDEX IF EXISTS idx_schedules_origin")
+  db.exec("DROP INDEX IF EXISTS idx_schedules_due")
+
+  const cols = db.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]
+  for (const col of ['origin_type', 'origin_id', 'origin_role', 'assoc_meta', 'scheduled_at']) {
+    if (!cols.some((c) => c.name === col)) continue // already dropped, or never added
+    try {
+      db.exec(`ALTER TABLE schedules DROP COLUMN ${col}`)
+      // eslint-disable-next-line no-console
+      console.log(`[schema] Dropped schedules.${col} (v42 / ADR-0021 票03)`)
+    } catch (err) {
+      console.warn(
+        `[schema] Failed to drop schedules.${col}: ${err instanceof Error ? err.message : String(err)} (non-fatal — no code reads it any more)`,
+      )
+    }
+  }
+}
+
 
 /**
  * schema v41 (task-scheduler-decouple / ADR-0021) — additive columns only.

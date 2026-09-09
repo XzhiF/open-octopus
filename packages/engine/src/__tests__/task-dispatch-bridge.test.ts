@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { WorkflowEngine } from "../engine"
 import { VarPool } from "@octopus/shared"
-import type { WorkflowDef, NodeDef, TaskDispatchPort, ScheduleHandle, SubunitSpec } from "@octopus/shared"
+import type { WorkflowDef, NodeDef, TaskDispatchPort, ChildHandle, SubunitSpec } from "@octopus/shared"
 
 const SUBPROCESS_TIMEOUT = 20000
 
@@ -32,9 +32,9 @@ function makeSubunit(overrides: Partial<SubunitSpec> = {}): SubunitSpec {
 }
 
 /** Stub port: dispatch resolves immediately with a fixed handle; resume is a spy. */
-function makePort(handle: ScheduleHandle): TaskDispatchPort {
+function makePort(handle: ChildHandle): TaskDispatchPort {
   return {
-    dispatchChildSchedule: vi.fn().mockResolvedValue(handle),
+    dispatchChild: vi.fn().mockResolvedValue(handle),
     resumeOnCompletion: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -70,7 +70,7 @@ const SUBUNIT_JSON = JSON.stringify(makeSubunit())
 describe("WorkflowEngine task_dispatch pause-resume bridge (G1)", () => {
   it("pauses with pending_task_dispatch and resumes via retryFrom({ taskDispatchChildOutput })", async () => {
     const wf = compositionWorkflow(SUBUNIT_JSON)
-    const handle: ScheduleHandle = { schedule_id: "sch-child-1", workspace_id: "ws-child-1" }
+    const handle: ChildHandle = { child_id: "sch-child-1", workspace_id: "ws-child-1" }
     const port = makePort(handle)
 
     const engine = new WorkflowEngine(wf, {}, process.cwd())
@@ -84,12 +84,12 @@ describe("WorkflowEngine task_dispatch pause-resume bridge (G1)", () => {
     expect(first.nodeResults["dispatch"].status).toBe("pending_task_dispatch")
     expect(first.nodeResults["dispatch"].taskDispatchMetadata).toBeDefined()
     expect(first.nodeResults["dispatch"].taskDispatchMetadata?.nodeId).toBe("dispatch")
-    expect(first.nodeResults["dispatch"].taskDispatchMetadata?.scheduleHandle.schedule_id).toBe("sch-child-1")
+    expect(first.nodeResults["dispatch"].taskDispatchMetadata?.childHandle.child_id).toBe("sch-child-1")
     // Aggregate was not executed (dispatch paused first)
     expect(first.nodeResults["aggregate"]).toBeUndefined()
 
     // Port was dispatched exactly once with the resolved subunit
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(1)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(1)
 
     // ── Resume: child schedule completed → engine.retryFrom with child output ──
     const childOutput = { result: "E2E_TP_synthesis_body" }
@@ -106,7 +106,7 @@ describe("WorkflowEngine task_dispatch pause-resume bridge (G1)", () => {
 
   it("recovers after a simulated process restart (new engine from snapshot resumes)", async () => {
     const wf = compositionWorkflow(SUBUNIT_JSON)
-    const handle: ScheduleHandle = { schedule_id: "sch-child-2" }
+    const handle: ChildHandle = { child_id: "sch-child-2" }
     const port = makePort(handle)
 
     // ── First "process": run to the pause point, then capture the persisted snapshot ──
@@ -134,9 +134,9 @@ describe("WorkflowEngine task_dispatch pause-resume bridge (G1)", () => {
     expect(resumed.nodeResults["aggregate"].outputs.last_output).toContain("E2E_TP_restarted_synth")
   }, SUBPROCESS_TIMEOUT)
 
-  it("does not re-dispatch on resume (port.dispatchChildSchedule called once total)", async () => {
+  it("does not re-dispatch on resume (port.dispatchChild called once total)", async () => {
     const wf = compositionWorkflow(SUBUNIT_JSON)
-    const handle: ScheduleHandle = { schedule_id: "sch-child-3" }
+    const handle: ChildHandle = { child_id: "sch-child-3" }
     const port = makePort(handle)
 
     const engine = new WorkflowEngine(wf, {}, process.cwd())
@@ -145,7 +145,7 @@ describe("WorkflowEngine task_dispatch pause-resume bridge (G1)", () => {
     await engine.run()
     await engine.retryFrom("dispatch", { taskDispatchChildOutput: { result: "E2E_TP_once" } })
 
-    // Resume must NOT re-invoke dispatchChildSchedule (would leak a second child schedule)
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(1)
+    // Resume must NOT re-invoke dispatchChild (would leak a second child schedule)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(1)
   }, SUBPROCESS_TIMEOUT)
 })

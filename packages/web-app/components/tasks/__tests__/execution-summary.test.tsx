@@ -1,12 +1,12 @@
 // execution-summary + 五态弹窗信息填充 回归测试 (2026-08-29 空白弹窗优化)
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import type { Task, TaskSpec } from "@octopus/shared"
+import { render, screen, fireEvent } from "@testing-library/react"
+import type { TaskSpec } from "@octopus/shared"
+import type { TaskView } from "@/lib/tasks-api"
 
-const { mockGetTask, mockListArtifacts, mockGetExecution, mockFetchLLMCalls, pushSpy } = vi.hoisted(() => ({
+const { mockGetTask, mockListArtifacts, mockFetchLLMCalls, pushSpy } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
-  mockGetExecution: vi.fn(),
   mockFetchLLMCalls: vi.fn(),
   pushSpy: vi.fn(),
 }))
@@ -17,13 +17,12 @@ vi.mock("@/lib/tasks-api", () => ({
   // task-modal.tsx 的其余导入（Abort/Ready/Delete/Create…）——测试不触发，桩即可
   abortTask: vi.fn(), readyTask: vi.fn(), deleteTask: vi.fn(), createTask: vi.fn(),
   updateTask: vi.fn(), updateSpecField: vi.fn(), listTasks: vi.fn(),
-  triggerTask: vi.fn(), cancelTaskTrigger: vi.fn(),
+  triggerTask: vi.fn(), cancelTaskTrigger: vi.fn(), scheduleTaskTrigger: vi.fn(), unscheduleTaskTrigger: vi.fn(),
   TaskReadyGateError: class extends Error {},
   ArtifactContentError: class extends Error {},
   WorkflowRefViewError: class extends Error {},
   getArtifactContent: vi.fn(), getWorkflowRefView: vi.fn(),
 }))
-vi.mock("@/lib/scheduler-api", () => ({ getExecution: mockGetExecution }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
 vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: () => () => {} }))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
@@ -49,7 +48,9 @@ const SPEC: TaskSpec = {
   skill_groups: [], decisions: [], ac_confirmed: [],
 } as unknown as TaskSpec
 
-function makeTask(status: Task["status"]): Task {
+/** GET /api/tasks/:id 的 TaskDTO（票03: trigger_* 列 + 当前实例，取代
+ *  schedule_status/scheduled_at）。缺省 = 手动任务、无到期游标、从未跑过。 */
+function makeTask(status: TaskView["status"]): TaskView {
   return {
     id: "task-1", org: "default", name: "弹窗优化任务", status,
     task_spec: SPEC, authoring_resources: [], resources: [],
@@ -57,34 +58,30 @@ function makeTask(status: Task["status"]): Task {
     workflow_ref: "wf-flow", version: 3, source_chat_session_id: null,
     deleted_at: null, created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T01:00:00Z",
     completed_at: status === "done" ? "2026-08-29T02:00:00Z" : null,
+    trigger_mode: "manual", trigger_at: null, cron_expression: null,
+    cron_timezone: "Asia/Shanghai", trigger_enabled: 1,
+    next_fire_at: null, last_fired_at: null, execution: null,
   }
 }
 
-const CHILD_RUNNING = {
-  schedule_id: "sch-1", name: "task-task-1-primary", status: "running",
-  origin_role: "primary", workflow_ref: "wf-flow", scheduled_at: null,
-  workspace_id: "ws-1",
-  execution_ref: {
-    id: "run-1", status: "running", execution_id: "exec-9", workspace_id: "ws-1",
-    triggered_at: "2026-08-29T01:00:00Z", completed_at: null, duration_ms: null,
-    error_summary: null,
-  },
+// 票03: 一次运行 = executions 一行（不再有信封行 + execution_ref 的两跳）。徽章自带
+// workspace_id + id，所以深链与耗时都由本行算；它不带 error_summary 与 agent 输出。
+const RUN_RUNNING = {
+  id: "exec-9", status: "running", workflow_ref: "wf-flow",
+  phase_index: 1, round_index: 1, workspace_id: "ws-1",
+  started_at: "2026-08-29T01:00:00Z", completed_at: null,
+  created_at: "2026-08-29T00:59:00Z",
 }
 
-const CHILD_FAILED = {
-  ...CHILD_RUNNING,
+const RUN_FAILED = {
+  ...RUN_RUNNING,
   status: "failed",
-  execution_ref: {
-    ...CHILD_RUNNING.execution_ref, status: "failed",
-    completed_at: "2026-08-29T01:10:00Z", duration_ms: 600000,
-    error_summary: "node agent-1 failed: boom",
-  },
+  completed_at: "2026-08-29T01:10:00Z",
 }
 
 beforeEach(() => {
   mockGetTask.mockReset()
   mockListArtifacts.mockReset()
-  mockGetExecution.mockReset()
   mockFetchLLMCalls.mockReset()
   pushSpy.mockReset()
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: null })
@@ -94,46 +91,48 @@ afterEach(() => { vi.restoreAllMocks() })
 
 describe("TaskRunDetailView", () => {
   it("渲染 spec 概要 + 执行记录 + 深链按钮", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("running"), children: [CHILD_RUNNING] })
+    mockGetTask.mockResolvedValue({ ...makeTask("running"), executions: [RUN_RUNNING] })
     render(<TaskRunDetailView task={makeTask("running")} />)
     // 概要区
     expect(await screen.findByText("把看板弹窗填满真实信息")).toBeTruthy()
     expect(screen.getByText("显示执行记录")).toBeTruthy()
     expect(screen.getByText("octopus")).toBeTruthy()
-    // 执行记录区
-    expect(screen.getByText("task-task-1-primary")).toBeTruthy()
+    // 执行记录区：运行行没有信封名，v4 的 phase/round 就落在行上 → 行标题即轮次
+    expect(await screen.findByText("Phase 1 · Round 1")).toBeTruthy()
     expect(screen.getByText("执行中")).toBeTruthy()
-    expect(screen.getByText("主执行")).toBeTruthy()
-    // 深链 → workspace 执行详情
+    expect(screen.getByText("wf-flow")).toBeTruthy()
+    // 深链 → workspace 执行详情（两半都在同一行：workspace_id + 执行 id）
     const link = screen.getByText("查看执行详情")
     fireEvent.click(link)
     expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9")
   })
 
   it("无 children 时给出明确的未派发提示", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("ready"), children: [] })
+    mockGetTask.mockResolvedValue({ ...makeTask("ready"), executions: [] })
     render(<TaskRunDetailView task={makeTask("ready")} />)
     expect(await screen.findByText(/任务尚未派发执行/)).toBeTruthy()
     expect(await screen.findByText("执行记录")).toBeTruthy()
   })
 
-  it("失败子运行显示错误摘要，展开输出走 scheduler-api", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("failed"), children: [CHILD_FAILED] })
-    mockGetExecution.mockResolvedValue({
-      agent_output: "final report here", model_used: "sonnet",
-      token_usage: { input: 10, output: 20 },
-    })
+  // 换的是真相来源，不是削弱断言：TaskExecutionBadge 只有
+  // {id,status,workflow_ref,phase_index,round_index,workspace_id,started_at,
+  // completed_at,created_at} —— 没有 error_summary，也没有可展开的 agent 输出
+  // （旧的 GET /api/scheduler/jobs/:sid/executions/:eid 读的是信封行的
+  // schedule_executions，任务运行不再在那张表里）。所以这里断言终态 + 由
+  // started_at/completed_at 现算的 10m 耗时 + 深链；失败原因与输出核对在深链页面。
+  // → 票05 follow-up：执行摘要需要 error/output（见报告）。
+  it("失败运行显示终态与自算耗时，深链到该次执行", async () => {
+    mockGetTask.mockResolvedValue({ ...makeTask("failed"), executions: [RUN_FAILED] })
     render(<TaskRunDetailView task={makeTask("failed")} />)
-    expect(await screen.findByText("node agent-1 failed: boom")).toBeTruthy()
-    expect(screen.getByText(/耗时/)).toBeTruthy()
-    fireEvent.click(screen.getByText("运行输出"))
-    await waitFor(() => expect(mockGetExecution).toHaveBeenCalledWith("sch-1", "run-1"))
-    expect(await screen.findByText(/final report here/)).toBeTruthy()
-    expect(screen.getByText(/模型: sonnet/)).toBeTruthy()
+    expect(await screen.findByText("失败")).toBeTruthy()
+    expect(screen.getByText(/耗时 10m/)).toBeTruthy()
+    const link = screen.getByText("查看执行详情")
+    fireEvent.click(link)
+    expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9")
   })
 
   it("AI 用量统计条：调用次数/tokens/成本/模型分布聚合", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("running"), children: [CHILD_RUNNING] })
+    mockGetTask.mockResolvedValue({ ...makeTask("running"), executions: [RUN_RUNNING] })
     mockFetchLLMCalls.mockResolvedValue({
       data: [],
       aggregates: {
@@ -157,7 +156,7 @@ describe("TaskRunDetailView", () => {
   })
 
   it("产物列表渲染并可点开查看", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("done"), children: [] })
+    mockGetTask.mockResolvedValue({ ...makeTask("done"), executions: [] })
     mockListArtifacts.mockResolvedValue([
       { path: "artifacts/report.md", by: "agent-1", title: "综合报告", external: false, updated_at: "2026-08-29T02:00:00Z" },
       { path: "/abs/pr-link.txt", by: "user", title: "", external: true, updated_at: "2026-08-29T02:10:00Z" },
@@ -171,33 +170,33 @@ describe("TaskRunDetailView", () => {
 })
 
 describe("TaskModal 五态填充", () => {
-  function renderModal(task: Task) {
+  function renderModal(task: TaskView) {
     return render(
       <TaskModal open onOpenChange={() => {}} task={task} onMutated={() => {}} />,
     )
   }
 
   it("running → 简单执行模式渲染完整信息体 + 保留中止", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("running"), children: [CHILD_RUNNING] })
+    mockGetTask.mockResolvedValue({ ...makeTask("running"), executions: [RUN_RUNNING] })
     renderModal(makeTask("running"))
     expect(await screen.findByText("执行记录")).toBeTruthy()
     expect(screen.getByText("任务概要")).toBeTruthy()
     expect(screen.getByText("中止")).toBeTruthy()
-    expect(screen.getByText("task-task-1-primary")).toBeTruthy()
+    expect(screen.getByText("Phase 1 · Round 1")).toBeTruthy()
   })
 
   it("done → 完成模式横幅 + 信息体（不再是空占位文案）", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("done"), children: [CHILD_RUNNING] })
+    mockGetTask.mockResolvedValue({ ...makeTask("done"), executions: [RUN_RUNNING] })
     renderModal(makeTask("done"))
     expect(await screen.findByText(/^任务完成/)).toBeTruthy()
     expect(screen.getByText("执行记录")).toBeTruthy()
   })
 
   it("failed/aborted → 终态横幅 + 信息体", async () => {
-    mockGetTask.mockResolvedValue({ ...makeTask("failed"), children: [CHILD_FAILED] })
+    mockGetTask.mockResolvedValue({ ...makeTask("failed"), executions: [RUN_FAILED] })
     renderModal(makeTask("failed"))
     expect(await screen.findByText("任务失败")).toBeTruthy()
     expect(screen.getByText("执行记录")).toBeTruthy()
-    expect(screen.getByText("node agent-1 failed: boom")).toBeTruthy()
+    expect(screen.getByText(/耗时 10m/)).toBeTruthy()
   })
 })

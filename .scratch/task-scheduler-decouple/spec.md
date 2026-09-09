@@ -97,8 +97,8 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 |---|---|---|
 | **01 ✅** | v41 加法:schema 加列/索引 + `ux_exec_task_active` + `TaskDAO` 触发面(`armOnce`/`armCron`/`disarmTrigger`/`setTriggerEnabled`/`findDueTriggers`/`markFired`) | 已完成。`task-trigger-dao.test.ts` 18 测试(含闩锁五存活态/终态释放/根-子区分/未知状态占槽)+ `db-schema` 金数更新。**全量红数与 HEAD 逐条一致(37)** |
 | **02 ✅** `job` 类型骨架 | `job_type='job'` 全链路打通:`codeJobConfigSchema`(只存 handler 名 + args,**代码不入库**)+ `code-job-registry.ts`(未注册即抛错并回显已注册清单)+ `CodeJobExecutor`(AbortSignal 超时、config 解析在 try 内、每条失败路径都终态写行)+ `builtin-jobs.ts` 内置 `task-lifecycle` seed(确定性主键 `builtin-<handler>`、**enabled=0**、只修 handler 指针不回滚用户改动、占位 handler 自报"未实装(票03)")+ `concurrency.ts` 把三份各自 parseInt 的 `MAX_PARALLEL_WORKSPACES` 收成单源 + `countActiveWork()` 并表计量,三处消费点全部改用 | 已完成。31 测试(code-job 11 / builtin-jobs 9 / count-active-work 13)。两条**测出来的事实**:① `idx_sched_execs_unique_active` 已保证一个作业只有一条 live fire,故 DISTINCT 计量是双保险;② `job_type='job'` 的 fire **必须排除在并发闸外**,否则内置 job 每分钟一跑永久吃掉 3 槽之一。`TERMINAL_EXECUTION_STATUSES` 单一真相源 + 金测钉住它与 `ux_exec_task_active` DDL 完全一致(SQL 不能 import 常量,这是唯一防线) |
-| **03** 一次原子翻转 | job handler 实装(due-scan → 插 pending 执行 → 领取 → 建/复用工作区 → 起引擎 → 推进/收尾,把 `WorkflowExecutor` 的任务专属逻辑整体搬进来);`readyTask` 停造信封;`trigger/cancel` 改写 `tasks.trigger_*`;任务侧 10 处 finder + 3 表写全删;`schedules` 减列;`isRequirement` 改判;门禁单测(`services/tasks/**` 禁调度字样) | `tasks-trigger-mutex`/`-prebuild`/`tasks-v4-*`/`tasks-routes`/`06-*`/`07-sse-*` 按新契约重写并通过;**并发双起用例是硬门槛**(同任务同时 advance 两次 / tick 与回调重叠) |
-| **04** composite + 验收 | 子单元 = child executions(`parent_id`/`child_index`);两条 resume 路径改读执行行;超并发排队 = pending 行留在闸后;父失败聚合、验收打回 → 新一轮新执行 | `composite-dispatch`/`tasks-v3-dispatch` 通过 + "pending 子必被领回并唤醒父"收敛测试 |
+| **03 ✅** 一次原子翻转 | 四职责 job `task-lifecycle` 实装(① due-scan 插 pending 执行 ② 闸内领取并 start ③ 引擎回调同步 finalize ④ reconcile 回收滞留);`readyTask` 停造信封;`trigger/cancel` 改写 `tasks.trigger_*` + 新增 `POST /:id/trigger/schedule`/`unschedule`;任务侧 6 处 finder + 3 表写全删(`services/tasks/**` 调度引用归零);`WorkflowExecutor` 的 isRequirement/v4 复用/phase seed-collect/composite 四块搬空;`TaskScheduleStatusListener` 与 `orphan-reaper.ts` 删除;泵的 `checkQueuedTasks` 领取循环删除(已无生产者);v42 删 `origin_type/origin_id/origin_role/assoc_meta/scheduled_at`;任务域 materializer 迁回 `services/tasks/task-materialize.ts` | 见 §12。**硬门槛已过**:`task-lifecycle.test.ts` 45 测试含双起守卫(latch + guarded claim + 重叠幂等)、跨类闸、cron 续算、对账回收 |
+| **04**(主干已被票03 吃掉)composite + 验收 | 已完成部分:子单元 = child executions(`parent_id`+`task_id`)、`TaskDispatchPort`→`dispatchChild`/`ChildHandle{child_id}`、resume 改为派生(parent_id + 父 running 节点)、超并发留 pending 由 job 领取、`parent_task_dispatch` 标记与 `setResumeParentCallback` 手工接线删除。**剩余**:父失败聚合的显式用例(子失败→coordinator done 但父任务判 failed)、"pending 子必被领回并唤醒父"的收敛专项、`origin_role` 语义在 UI 的替代展示、以及 `task-child-run.ts` 与 job 认领路径的重复 start 语义收口 | `composite-dispatch`/`tasks-v3-dispatch` 通过 + 收敛测试 |
 | **05** API/UI | `Task` DTO 去 `schedule_status`/`scheduled_at` 加 `trigger_*`;`children[]`(信封)→ 任务执行列表;新 `GET /api/tasks/:id/executions`;看板 badge 由 `trigger_at` + `deriveTaskView` 派生;系统调度页支持 `job` 类型(内置 job 可见/可暂停/可手动跑一轮)+ 去掉裸 uuid;`routes/agent/task-routes.ts` 与 `core-pack` skill 文案同步 | web 单测(`tasks-api`/`task-board`/`scheduler-table`)全绿 |
 | **06** e2e | 6 个 spec 从"查 schedules API/表"改"查任务执行列表";补端到端故事:草稿→入队(断言 `schedules` 无任务行)→定时 T+1min→自动起→转 running→abort 立停 | 6 spec 绿 + §8 手测清单 |
 
@@ -127,9 +127,22 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 
 **既有红(stash 对照确认与本次无关,票 01 前后逐条一致)**:9 文件 / 37 测试 —— `clone-file-mgmt`、`harness-integration`、`prompt-assembler`、`scheduler-routes`(2 条 G7/task-author clone session,requirement 自动建 session 路径已在 SG1b/F3 移除而测试未跟)、`archive-routes`、`repos-routes`、`config-manager`、`archive-service`、`detector-pipeline`。**后续票的绿判定基线 = 37 红不变。**
 
-## 11. 验证基线(票 01–02 实测,后续票照此判绿)
+## 11. 验证基线(票 01–03 实测,后续票照此判绿)
 
-- **server**(`packages/server` · `npx vitest run`):**37 红 / 9 文件**,与 HEAD stash 对照逐条一致。
+- **server**(`npx vitest run --root packages/server`):票03 后 **36 红 / 9 文件** = archive-routes 10 · clone-file-mgmt 10 · config-manager 4 · harness-integration 4 · prompt-assembler 3 · detector-pipeline 2 · archive-service 1 · subsystem-adapter 1 · repos-routes 1(票01/02 基线是 37 红,少的那条是 scheduler-routes 的 G7 遗留,该文件在票03 按新契约重写后全绿)。判绿口径:**这 9 个文件之外的任何红都是本次引入**;文件内红数变化需要逐条解释。
+- **engine**:**4 红 / 4 文件**,全部与本次无关且已逐条核因 —— swarm-host-agent TC-037(模型 fallback)、outputs-resolver 字面量、pr-workflows + octopus-wf-e2e-tester 两个 collection 错误(`core-pack/workflows/octopus-dev-s1-pr-flow.yaml` 文件不存在,环境缺件)。task_dispatch 三份测试(child_id/childHandle 改名后)17/17 绿。
 - **shared**:**4 红**(model-alias 1 + clone-git 3),环境红,与本次无关。
-- **web-app**:**8–9 红 / 4–5 文件**,数值本身不稳定 —— `components/tasks/__tests__/execution-summary.test.tsx > AI 用量统计条` 在 **HEAD(无本次改动)重跑时也偶发失败**(实测同机两次:9 红、8 红),属既有隔离/顺序 flake,**不是本重构引入**。判绿口径:红数 ≤9 且不出现 `tasks-v4-*`/`task-board`/`tasks-api`/`scheduler-*` 家族新红。
+- **web-app**:**9 红 / 5 文件**(app/system、harness-floating-panel ×3、knowledge-ui ×3、question-card ×2、execution-summary 的 AI 用量条),数值本身不稳定 —— `components/tasks/__tests__/execution-summary.test.tsx > AI 用量统计条` 在 **HEAD(无本次改动)重跑时也偶发失败**(实测同机两次:9 红、8 红),属既有隔离/顺序 flake,**不是本重构引入**。判绿口径:红数 ≤9 且不出现 `tasks-v4-*`/`task-board`/`tasks-api`/`scheduler-*` 家族新红。
 - **改 `packages/shared` 后必须 `pnpm --filter @octopus/shared build`**,否则 server/web 测试拿到的新导出是 `undefined`(§9 第 5 条)。
+
+
+## 12. 票 03 落地附记(实测雷,票 04–06 必守)
+
+1. **`countActiveWork()` 的三条口径必须分开记,不能"顺手统一"**:job 的 fire 不计数、任务侧根**与子**都计数、但 `pending` 不计数。第三点尤其反直觉 —— 它与 `ux_exec_task_active` 用同一张表却**故意不同**:闩锁管身份(排队中也算占着这个任务),闸管算力(排队中没占机器)。把两处"统一成一个清单"会让闸自锁(三个 armed 任务读成已满,谁都起不来)。
+2. **删掉一个循环前必须查它是否还是别的写入者。** `checkQueuedTasks` 删后 `schedules.status/claimed_at` 再无写入者,`abortJob` 守卫恒 400、`checkStaleClaimed` 恒不命中 —— 三处都不报错,只是功能静默消失。补回点在 `dispatchExecution`/`onExecutionComplete`(唯二知道一次触发开始/结束)。
+3. **删掉一个方法的所有调用者后,它自己就变成不可运行的死雷。** `wake()` 原来 `checkQueuedTasks().catch(...)`;领取循环删后唯一调用方(`tasksService.setWakeScheduler`)也删了,而把它改成 `reload().catch(...)` 会写成一个**同步函数上挂 .catch** 的 TypeError —— 因为没有任何调用者,单测与全量都抓不到。结论:改完一个入口就把它的调用方 grep 一遍,**没人调用的入口直接删**,不要留"以后可能用"的壳。
+4. **esbuild 不做类型检查,重命名参数会漏成真 bug。** `computeTaskWsLaunchParams` 的 `scheduleId/triggerSource` 改成 `instanceKey/naming` 后,`WorkflowExecutor` 仍按旧名传参:运行期 `naming` 为 undefined → 命名静默走 cron 分支,以及一处 `assocBranchSuffix` 残留直接是 ReferenceError。**改过一个函数签名就对该文件跑一次 `tsc | grep <file>`**(全库 tsc 有 700+ 历史 error,不能当门,但按文件过滤够用)。
+5. **测试里改 `process.env.HOME` 必须存还**。它在同一 worker 内泄漏给后续文件,表现为"单跑全绿、全量偶发红",是本次最难查的一类。
+6. **`Test Files N failed` 里的"2 红"多半是 collection 错误**(导入即挂),不是两个断言失败。判红先 `npx vitest run --root packages/server <file>` 单跑一次再定性,否则会去修根本不存在的断言。
+7. **批量脚本改多个文件时,每个文件都要单独写盘并 grep 复核。** 本次一次 schema.sql 的删列在"一个脚本改两文件、只在末尾写最后一个"里被静默丢弃,后续 tsc 全绿(因为没人读那些列),直到 idempotent 测试报 `no such column: origin_type` 才发现 —— DDL 改动没有编译器兜底,只有 `PRAGMA table_info` 断言有。
+8. **`DROP COLUMN` 前先 `DROP INDEX`**:SQLite 拒绝删除被索引引用的列,而失败若被 try/catch 当"非致命"咽掉,列会静默留下。v42 迁移的顺序(先 `idx_schedules_origin`/`idx_schedules_due`,再逐列 drop)由 `schema-migration.test.ts` 的 graft-旧库用例钉住。

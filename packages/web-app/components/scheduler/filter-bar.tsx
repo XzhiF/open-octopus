@@ -12,12 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import type { JobType } from "@/lib/scheduler-api"
 
 interface Filters {
   search?: string
   status?: "enabled" | "disabled" | "failed"
-  job_type?: "workflow" | "agent"
-  origin?: "cron" | "task" | "agent" | "manual" | "api"
+  /** 票03: 'job' 是第三种作业（注册好的 TS handler，如内置 系统 · 任务生命周期）；
+   *  来源筛选随 schedules.origin_type 一起没了。 */
+  job_type?: JobType
   workspace_id?: string
 }
 
@@ -59,7 +61,6 @@ export function FilterBar({
     !!filters.search ||
     !!filters.status ||
     !!filters.job_type ||
-    !!filters.origin ||
     !!filters.workspace_id
 
   const handleStatusChange = useCallback(
@@ -76,15 +77,6 @@ export function FilterBar({
       onFilterChange({
         job_type:
           value === "all" ? undefined : (value as Filters["job_type"]),
-      })
-    },
-    [onFilterChange]
-  )
-
-  const handleOriginChange = useCallback(
-    (value: string) => {
-      onFilterChange({
-        origin: value === "all" ? undefined : (value as Filters["origin"]),
       })
     },
     [onFilterChange]
@@ -142,20 +134,7 @@ export function FilterBar({
           <SelectItem value="all">全部类型</SelectItem>
           <SelectItem value="workflow">Workflow</SelectItem>
           <SelectItem value="agent">Agent</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <Select value={filters.origin ?? "all"} onValueChange={handleOriginChange}>
-        <SelectTrigger size="sm" aria-label="按来源筛选">
-          <SelectValue placeholder="全部来源" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部来源</SelectItem>
-          <SelectItem value="cron">定时</SelectItem>
-          <SelectItem value="task">任务看板</SelectItem>
-          <SelectItem value="agent">Agent</SelectItem>
-          <SelectItem value="manual">手动</SelectItem>
-          <SelectItem value="api">API</SelectItem>
+          <SelectItem value="job">Job</SelectItem>
         </SelectContent>
       </Select>
 

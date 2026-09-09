@@ -1,6 +1,11 @@
 import type { ScheduleConfigDAO } from "../../db/dao"
 import { codeJobConfigSchema, type CodeJobConfig } from "@octopus/shared"
-import { registerCodeJobHandler, type CodeJobContext, type CodeJobOutcome } from "./code-job-registry"
+import {
+  rebindCodeJobHandler,
+  type CodeJobContext,
+  type CodeJobHandler,
+  type CodeJobOutcome,
+} from "./code-job-registry"
 
 /**
  * Built-in `job`-type schedules (ADR-0021).
@@ -24,9 +29,8 @@ interface BuiltinCodeJob {
   timezone: string
   timeoutSeconds: number
   /**
-   * Seeded OFF until the handler does real work, so adding a built-in job can never
-   * change behavior before its ticket lands. A user enabling it afterwards is respected:
-   * the seed only repairs the handler pointer, never `enabled` or the cadence.
+   * Whether the row is armed at seed time. The seed only ever writes this on CREATE —
+   * pausing a built-in job from the ops page survives every later boot.
    */
   enabled: number
 }
@@ -42,8 +46,9 @@ export const BUILTIN_CODE_JOBS: readonly BuiltinCodeJob[] = [
     cronExpression: "* * * * *",
     timezone: "Asia/Shanghai",
     timeoutSeconds: 300,
-    // 票03 打开：handler 目前是占位实现，跑起来只会留一条「未实装」记录。
-    enabled: 0,
+    // 票03 起打开：handler 已实装（到点起任务 / 领取 / 对账 / 回收）。关掉这一行等于
+    // 暂停全系统的定时启动 —— 描述里写明了，运维页可见。
+    enabled: 1,
   },
 ]
 
@@ -132,10 +137,13 @@ function parseHandler(config: string | null | undefined): string | null {
  * built-in row never resolves to a missing handler; enabling it deliberately says so
  * instead of pretending to work.
  */
-export async function taskLifecycleHandler(_ctx: CodeJobContext): Promise<CodeJobOutcome> {
+/** The handler a `job` row points at until the composition root binds the real one.
+ *  Loud on purpose: a system duty that silently does nothing is worse than one that
+ *  reports it is not wired. */
+export async function unboundTaskLifecycleHandler(_ctx: CodeJobContext): Promise<CodeJobOutcome> {
   return {
-    summary: "task-lifecycle 尚未实装（票03）：本轮不做任何启动/回收",
-    metrics: { armed: 0, started: 0, reconciled: 0 },
+    summary: "task-lifecycle 未接线（composition root 未注册 handler）：本轮不做任何启动/回收",
+    metrics: { armed: 0, launched: 0, reconciled: 0 },
   }
 }
 
@@ -143,7 +151,23 @@ export async function taskLifecycleHandler(_ctx: CodeJobContext): Promise<CodeJo
  * Bind built-in handlers and seed their rows. Called once from the composition root
  * (index.ts) before `engine.start()`, so the very first tick sees a consistent pair.
  */
-export function registerAndSeedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResult {
-  registerCodeJobHandler(TASK_LIFECYCLE_HANDLER, taskLifecycleHandler)
+/**
+ * Bind built-in handlers and seed their rows.
+ *
+ * `taskLifecycle` is INJECTED rather than imported: the real body lives in the task
+ * domain (`services/tasks/task-lifecycle-service.ts`), and the scheduler must not import
+ * task code — the direction that used to be the coupling. The composition root hands the
+ * service's tick over here, which keeps the one bridge in exactly one place: a `job` row
+ * names a handler, the handler is whatever the root decided to bind.
+ *
+ * Without it the row still seeds and still fires, and reports that nothing is wired
+ * rather than pretending to work.
+ */
+export function registerAndSeedBuiltinCodeJobs(
+  dao: ScheduleConfigDAO,
+  org = "",
+  taskLifecycle?: CodeJobHandler,
+): SeedResult {
+  rebindCodeJobHandler(TASK_LIFECYCLE_HANDLER, taskLifecycle ?? unboundTaskLifecycleHandler)
   return seedBuiltinCodeJobs(dao, org)
 }

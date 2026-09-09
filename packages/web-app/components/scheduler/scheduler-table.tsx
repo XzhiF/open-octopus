@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/table"
 import { StatusBadge } from "./status-badge"
 import { JobTypeBadge } from "./job-type-badge"
-import { OriginBadge } from "./origin-badge"
 import { ToggleSwitch } from "./toggle-switch"
 import { ActionMenu } from "./action-menu"
 import { SchedulerTableSkeleton } from "./skeleton-loader"
@@ -68,7 +67,6 @@ export function SchedulerTable({
           <TableRow>
             <TableHead>任务名称</TableHead>
             <TableHead>类型</TableHead>
-            <TableHead>来源</TableHead>
             <TableHead>Cron 表达式</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>上次执行</TableHead>
@@ -79,10 +77,6 @@ export function SchedulerTable({
         </TableHeader>
         <TableBody>
           {jobs.map((job) => {
-            // Only cron-driven (and legacy null) rows are enable/disable-able —
-            // the server's toggleJob 400s on every other origin (one-shot queue
-            // rows spawned by the task board / agents / API).
-            const toggleable = !job.origin_type || job.origin_type === "cron"
             return (
             <TableRow key={job.id}>
               <TableCell>
@@ -98,9 +92,6 @@ export function SchedulerTable({
                 <JobTypeBadge type={job.job_type} />
               </TableCell>
               <TableCell>
-                <OriginBadge originType={job.origin_type} originId={job.origin_id} />
-              </TableCell>
-              <TableCell>
                 <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">
                   {job.cron_expression ?? "-"}
                 </code>
@@ -112,16 +103,19 @@ export function SchedulerTable({
                     lastExecutionStatus={job.last_execution?.status}
                     consecutiveFailures={job.consecutive_failures}
                   />
-                  {toggleable && (
-                    <ToggleSwitch
-                      jobId={job.id}
-                      enabled={job.enabled}
-                      jobName={job.name}
-                      onToggle={async () => {
-                        onToggle(job)
-                      }}
-                    />
-                  )}
+                  {/* 票03 (ADR-0021): every row of this table IS a job definition now
+                      (the origin_* columns + the task envelopes' one-shot rows left with
+                      schema v42), so toggleJob has no origin to reject on — the switch
+                      is unconditional, including for a job_type='job' row like the
+                      built-in 系统 · 任务生命周期. */}
+                  <ToggleSwitch
+                    jobId={job.id}
+                    enabled={job.enabled}
+                    jobName={job.name}
+                    onToggle={async () => {
+                      onToggle(job)
+                    }}
+                  />
                 </div>
               </TableCell>
               <TableCell className="text-muted-foreground text-xs">

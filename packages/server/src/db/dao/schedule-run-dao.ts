@@ -190,8 +190,19 @@ export class ScheduleRunDAO extends BaseDAO {
    * janitor permanently occupy one of the 3 real slots.
    *
    * Task rows use the same fail-closed predicate as `ux_exec_task_active` (NOT IN
-   * terminal), and only ROOT executions, since a composite's children are scheduled
-   * inside one parent slot.
+   * terminal) — but over EVERY task-bound row, roots and composite children alike. This
+   * axis is compute slots, and a running subunit holds a workspace and an engine exactly
+   * like a root does; the pre-v41 meter counted each child as its own schedule row, so
+   * counting only roots would silently raise the real concurrency of a composite task.
+   * The other axis, `ux_exec_task_active`, is deliberately ROOTS ONLY: a composite is
+   * allowed to run several children of one task at once.
+   *
+   * EXCEPT that `pending` is subtracted back out, and the two lists are NOT the same
+   * axis: an armed-but-not-started row holds the task's IDENTITY slot (the latch must
+   * keep counting it, or the same task gets launched twice) while holding no compute at
+   * all. Counting it here would make the gate self-blocking — three armed tasks would
+   * read as "cap reached" and freeze every other launch behind rows that are, by
+   * design, waiting for this exact meter to free up.
    */
   countActiveWork(opts?: { excludeFireId?: string; excludeTaskExecutionId?: string }): number {
     const excludeFire = opts?.excludeFireId
@@ -210,8 +221,9 @@ export class ScheduleRunDAO extends BaseDAO {
     const excludeTask = opts?.excludeTaskExecutionId
     const tasks = (this.stmt(
       `SELECT COUNT(*) AS cnt FROM executions
-       WHERE task_id IS NOT NULL AND parent_id = '0'
+       WHERE task_id IS NOT NULL
          AND status NOT IN (${TERMINAL_EXECUTION_STATUSES.map(() => "?").join(", ")})
+         AND status != 'pending'
          ${excludeTask ? "AND id != ?" : ""}`,
     ).get(
       ...TERMINAL_EXECUTION_STATUSES,

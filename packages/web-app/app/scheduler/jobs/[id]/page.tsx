@@ -145,7 +145,9 @@ export default function JobDetailPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{job.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {job.job_type === "workflow" ? "Workflow" : "Agent"} 调度任务
+            {/* JobType 三态 (票03: 'job' = 注册好的 TS handler，如内置 系统 · 任务生命周期)
+                — 旧的二元写法会把这类行说成 Agent。 */}
+            {job.job_type === "workflow" ? "Workflow" : job.job_type === "agent" ? "Agent" : "Job"} 调度任务
           </p>
         </div>
         <div className="flex items-center gap-2">

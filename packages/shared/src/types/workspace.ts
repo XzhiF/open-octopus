@@ -58,6 +58,25 @@ export const TERMINAL_EXECUTION_STATUSES: readonly string[] = [
   "completed", "completed_with_failures", "failed", "cancelled", "aborted", "skipped", "rejected",
 ]
 
+/**
+ * The statuses the FINALIZE pass must never act on (ADR-0021 票03).
+ *
+ * A `pending_approval` / `pending_resume` execution is the engine alive and waiting
+ * (approval node, interaction node), so treating it as terminal would (a) flip the task
+ * card to 完成/失败 while the run is still holdable and (b) fire the auto-advance for the
+ * next phase, arming a round that can never dispatch.
+ *
+ * NOT the same axis as the concurrency meter: a waiting run keeps holding its slot
+ * (`countActiveWork` counts everything non-terminal, paused included). That is today's
+ * behavior and this refactor does not change it — bounding "how many workspaces are open"
+ * is the cap's job, and releasing the slot on approval-wait would let a queue of
+ * half-approved tasks pile up unbounded engines. If that ever becomes the wrong trade,
+ * change the meter deliberately, not by reusing this list.
+ */
+export const WAITING_EXECUTION_STATUSES: readonly string[] = [
+  "paused", "pending_approval", "pending_resume",
+]
+
 export const GateStatusSchema = z.enum(["open", "closed", "bypassed"])
 export type GateStatus = z.infer<typeof GateStatusSchema>
 

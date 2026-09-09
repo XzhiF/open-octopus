@@ -29,8 +29,10 @@ export class TaskDAO extends BaseDAO {
         id, org, name, status, source_chat_session_id,
         task_spec, authoring_resources, resources, skills, project_ids,
         workflow_ref, version, deleted_at, created_at, updated_at, completed_at,
-        workspace_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workspace_id,
+        trigger_mode, trigger_at, cron_expression, cron_timezone,
+        trigger_enabled, next_fire_at, last_fired_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name,
       row.status ?? "draft",
@@ -47,6 +49,16 @@ export class TaskDAO extends BaseDAO {
       row.updated_at ?? now,
       row.completed_at ?? null,
       row.workspace_id ?? null,
+      // v41 (ADR-0021): a caller that hands us a full row keeps its trigger fields. Before
+      // this, insert() wrote 17 columns and the 7 new ones silently took their DDL
+      // defaults — so a restore/import path carrying an armed schedule lost the arming.
+      row.trigger_mode ?? "manual",
+      row.trigger_at ?? null,
+      row.cron_expression ?? null,
+      row.cron_timezone ?? "Asia/Shanghai",
+      row.trigger_enabled ?? 1,
+      row.next_fire_at ?? null,
+      row.last_fired_at ?? null,
     )
   }
 

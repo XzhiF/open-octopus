@@ -75,13 +75,15 @@ export const COLUMN_STATUSES: Record<TaskBoardColumnId, readonly TaskStatus[]> =
   done: ["done", "failed", "aborted"],
 }
 
-export type TasksByStatus = Record<TaskBoardStatus, Task[]>
+/** Bucket map, generic in the row type so a caller carrying the 票03 trigger columns
+ *  (TaskView) gets its own type back instead of a widened `Task[]`. */
+export type TasksByStatus<T extends Task = Task> = Record<TaskBoardStatus, T[]>
 
 /** 看板列内序：创建时间新→旧（用户要求「从上到下从新到旧」）。纯函数、
  *  返回新数组（与 groupTasksByStatus 同纪律 — 不 mutate 入参）；同刻创建
  *  以 updated_at DESC 破平，再同以 id 稳定兜底。装桶按迭代序 push，故在
  *  groupTasksByStatus 之前过一次本函数，每列天然继承新→旧。 */
-export function sortByCreatedDesc(tasks: Task[]): Task[] {
+export function sortByCreatedDesc<T extends Task>(tasks: T[]): T[] {
   return [...tasks].sort((a, b) => {
     const ca = Date.parse(a.created_at)
     const cb = Date.parse(b.created_at)
@@ -97,8 +99,8 @@ export function sortByCreatedDesc(tasks: Task[]): Task[] {
  *  status is not a known column (defensive against future enum additions /
  *  legacy rows) are dropped rather than crashing the kanban. Does NOT mutate
  *  the input array. Callers pass EFFECTIVE statuses (see `effectiveStatusOf`). */
-export function groupTasksByStatus(tasks: Task[]): TasksByStatus {
-  const grouped: TasksByStatus = {
+export function groupTasksByStatus<T extends Task>(tasks: T[]): TasksByStatus<T> {
+  const grouped: TasksByStatus<T> = {
     draft: [],
     ready: [],
     running: [],
@@ -111,14 +113,14 @@ export function groupTasksByStatus(tasks: Task[]): TasksByStatus {
   for (const task of tasks) {
     const status = task.status as string
     if (status in grouped) {
-      ;(grouped as Record<string, Task[]>)[status].push(task)
+      ;(grouped as Record<string, T[]>)[status].push(task)
     }
   }
   return grouped
 }
 
 /** Flatten the buckets belonging to one column (column render order). */
-export function tasksForColumn(grouped: TasksByStatus, column: TaskBoardColumnId): Task[] {
+export function tasksForColumn<T extends Task>(grouped: TasksByStatus<T>, column: TaskBoardColumnId): T[] {
   return COLUMN_STATUSES[column].flatMap((st) => grouped[st])
 }
 
