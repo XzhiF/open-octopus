@@ -156,7 +156,7 @@ export function CloneVersionsTab({ agentName }: CloneVersionsTabProps) {
 
       {/* Error */}
       {error && (
-        <div className="mx-4 mt-3 rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+        <div className="mx-4 mt-3 rounded-md bg-pop-pink-soft border border-pop-red/30 p-3 text-sm text-pop-red">
           {error}
           <button
             className="ml-2 underline"

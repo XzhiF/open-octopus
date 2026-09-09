@@ -62,13 +62,13 @@ export function batchDirOf(specPath: string): string {
 export function specFileClass(rel: string): { label: string; tone: string } {
   const name = normalizeRel(rel).split("/").pop() ?? rel
   const lower = name.toLowerCase()
-  if (/^spec-r\d+\.md$/.test(lower)) return { label: "修订", tone: "bg-sky-500/10 text-sky-600" }
-  if (lower === "spec.md") return { label: "spec", tone: "bg-amber-500/10 text-amber-600" }
-  if (lower.startsWith("spec")) return { label: "spec", tone: "bg-amber-500/10 text-amber-600" }
-  if (lower.startsWith("fix-feedback")) return { label: "反馈", tone: "bg-red-500/10 text-red-600" }
+  if (/^spec-r\d+\.md$/.test(lower)) return { label: "修订", tone: "bg-pop-cyan-soft text-pop-cyan" }
+  if (lower === "spec.md") return { label: "spec", tone: "bg-pop-amber-soft text-pop-amber" }
+  if (lower.startsWith("spec")) return { label: "spec", tone: "bg-pop-amber-soft text-pop-amber" }
+  if (lower.startsWith("fix-feedback")) return { label: "反馈", tone: "bg-pop-pink-soft text-pop-red" }
   if (lower.startsWith("fix-report") || lower.startsWith("round-report") || lower.startsWith("code-review"))
-    return { label: "报告", tone: "bg-emerald-500/10 text-emerald-600" }
-  if (normalizeRel(rel).includes("/issues/")) return { label: "票", tone: "bg-zinc-500/10 text-zinc-500" }
+    return { label: "报告", tone: "bg-pop-green-soft text-pop-green" }
+  if (normalizeRel(rel).includes("/issues/")) return { label: "票", tone: "bg-pop-idle text-pop-dim" }
   return { label: "其他", tone: "bg-muted text-muted-foreground" }
 }
 
@@ -227,7 +227,7 @@ export function PhaseSpecDialog({ task, phase, initialActivePath, open, onOpenCh
                   key={f.path}
                   onClick={() => setActiveRel(f.path)}
                   className={`text-[10px] px-1.5 py-0.5 rounded border font-mono flex items-center gap-1 ${
-                    active ? "border-amber-400/60 bg-amber-500/10" : "border-border hover:bg-muted/50"
+                    active ? "border-pop-amber/60 bg-pop-amber-soft" : "border-border hover:bg-muted/50"
                   }`}
                   data-spec-file={f.path}
                   title={`${f.path}${f.mtime ? ` · ${f.mtime.slice(0, 16).replace("T", " ")}` : ""}`}
@@ -257,7 +257,7 @@ export function PhaseSpecDialog({ task, phase, initialActivePath, open, onOpenCh
         )}
 
         {state.kind === "error" && (
-          <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-3 text-xs text-red-600" data-spec-error>
+          <div className="rounded-md border border-pop-red/30 bg-pop-pink-soft px-3 py-3 text-xs text-pop-red" data-spec-error>
             读取失败：{state.message}
           </div>
         )}

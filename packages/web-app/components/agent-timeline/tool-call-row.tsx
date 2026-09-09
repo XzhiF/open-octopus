@@ -21,13 +21,13 @@ export function ToolCallRow({ toolName, durationMs, isError, inputPreview, resul
   return (
     <div className={cn(
       "rounded-md border transition-colors",
-      isError ? "border-red-200 bg-red-500/5 dark:border-red-900" : "hover:bg-muted/30",
+      isError ? "border-pop-red/40 bg-pop-red/5" : "hover:bg-muted/30",
     )}>
       <button
         onClick={() => hasDetails && setExpanded(!expanded)}
         className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-sm", hasDetails && "cursor-pointer")}
       >
-        <Wrench className={cn("h-3.5 w-3.5 shrink-0", isError ? "text-red-500" : "text-amber-500")} />
+        <Wrench className={cn("h-3.5 w-3.5 shrink-0", isError ? "text-pop-red" : "text-pop-amber")} />
         <Badge variant={isError ? "destructive" : "secondary"} className="text-xs font-mono">
           {toolName}
         </Badge>
@@ -36,7 +36,7 @@ export function ToolCallRow({ toolName, durationMs, isError, inputPreview, resul
             {formatDuration(durationMs)}
           </span>
         )}
-        {isError && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}
+        {isError && <AlertCircle className="h-3.5 w-3.5 text-pop-red" />}
         {hasDetails && (
           <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", expanded && "rotate-180")} />
         )}
@@ -57,7 +57,7 @@ export function ToolCallRow({ toolName, durationMs, isError, inputPreview, resul
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Result</span>
               <pre className={cn(
                 "mt-1 whitespace-pre-wrap break-words rounded p-2 text-xs font-mono max-h-32 overflow-auto",
-                isError ? "bg-red-500/10 text-red-600 dark:text-red-400" : "bg-muted",
+                isError ? "bg-pop-red/10 text-pop-red" : "bg-muted",
               )}>
                 {resultPreview}
               </pre>

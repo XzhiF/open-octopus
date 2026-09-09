@@ -85,7 +85,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
   if (!hasQuestions && phase === "ready") {
     return (
       <div className="mb-4">
-        <div className="bg-secondary rounded-xl px-4 py-3 text-sm text-muted-foreground max-w-[90%] border-l-3 border-l-amber-400">
+        <div className="bg-secondary rounded-xl px-4 py-3 text-sm text-muted-foreground max-w-[90%] border-l-3 border-l-pop-amber">
           无法解析问题数据
         </div>
       </div>
@@ -95,9 +95,9 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
   if (!hasQuestions) {
     return (
       <div className="mb-4">
-        <div className="bg-secondary rounded-xl px-4 py-3 text-sm max-w-[90%] border-l-3 border-l-amber-400">
+        <div className="bg-secondary rounded-xl px-4 py-3 text-sm max-w-[90%] border-l-3 border-l-pop-amber">
           <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+            <Loader2 className="w-4 h-4 text-pop-amber animate-spin shrink-0" />
             <span className="font-medium">正在准备问题…</span>
           </div>
         </div>
@@ -176,9 +176,9 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
           {phase === "answered" ? (
             <CheckCircle2 className="w-4 h-4 text-pop-green shrink-0" />
           ) : phase === "preparing" ? (
-            <Loader2 className="w-4 h-4 text-amber-700 dark:text-amber-300 animate-spin shrink-0" />
+            <Loader2 className="w-4 h-4 text-pop-amber animate-spin shrink-0" />
           ) : (
-            <HelpCircle className="w-4 h-4 text-amber-700 dark:text-amber-300 shrink-0" />
+            <HelpCircle className="w-4 h-4 text-pop-amber shrink-0" />
           )}
           <span className="font-black text-sm">
             {phase === "answered"
@@ -342,7 +342,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
         )}
 
         {phase === "answered" && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-emerald-500">
+          <div className="mt-3 flex items-center gap-2 text-xs text-pop-green">
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>答案已提交</span>
           </div>

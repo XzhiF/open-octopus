@@ -40,10 +40,10 @@ export function ThinkingBlock({ message }: ThinkingBlockProps) {
           <span className="tabular-nums">{elapsed}s</span>
         )}
         {!isActive && message.thinkingDuration && (
-          <span className="text-emerald-500">耗时{message.thinkingDuration}</span>
+          <span className="text-pop-green">耗时{message.thinkingDuration}</span>
         )}
         {!isActive && !message.thinkingDuration && (
-          <span className="text-emerald-500">完成</span>
+          <span className="text-pop-green">完成</span>
         )}
         <ChevronDown
           className={`w-3 h-3 transition-transform ${expanded ? "rotate-0" : "-rotate-90"}`}

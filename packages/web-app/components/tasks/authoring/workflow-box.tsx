@@ -253,7 +253,7 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
             <AlertDialogAction
               disabled={busy}
               onClick={(e) => { e.preventDefault(); if (deletingIdx != null) handleDelete(deletingIdx) }}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-pop-red hover:bg-pop-red/90"
             >
               确认删除
             </AlertDialogAction>
@@ -367,7 +367,7 @@ function PhaseRow({
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] w-10 shrink-0">slug</Label>
             <Input
-              className={`h-6 text-xs ${slug && !SLUG_RE.test(slug) ? "border-red-500" : ""}`}
+              className={`h-6 text-xs ${slug && !SLUG_RE.test(slug) ? "border-pop-red" : ""}`}
               value={slug}
               maxLength={100}
               title="path-safe：字母/数字开头，可含 . _ -"
@@ -407,7 +407,7 @@ function PhaseRow({
                 {phase.workflowRef}
               </Badge>
             ) : (
-              <span className="text-[10px] text-amber-500 ml-auto" data-phase-unbound={phase.index}>
+              <span className="text-[10px] text-pop-amber ml-auto" data-phase-unbound={phase.index}>
                 未绑定
               </span>
             )}
@@ -471,7 +471,7 @@ function PhaseRow({
                     <ArrowDown className="size-3" />
                   </Button>
                   <Button
-                    variant="ghost" size="sm" className="size-6 p-0 text-red-500 hover:text-red-600"
+                    variant="ghost" size="sm" className="size-6 p-0 text-pop-red hover:text-pop-red/80"
                     title={canDelete ? "删除 phase" : "至少保留一个 phase"} disabled={!canDelete || busy}
                     onClick={() => onRequestDelete(phase.index)}
                     data-phase-delete-button={phase.index}
@@ -491,7 +491,7 @@ function PhaseRow({
               {/* spec 磁盘灯（K5 判定源=tree；扫描未就绪/域外路径不臆断，中性表达） */}
               {specEntry ? (
                 <div className="flex items-center gap-1.5 text-[10px]" data-phase-spec-disk={phase.index}>
-                  <span className="text-emerald-600">spec.md ✓</span>
+                  <span className="text-pop-green">spec.md ✓</span>
                   <span className="font-mono text-muted-foreground">
                     {fmtBytes(specEntry.bytes)} · {fmtTime(specEntry.mtime)}
                   </span>
@@ -507,7 +507,7 @@ function PhaseRow({
                   spec.md · 磁盘状态未知（扫描未就绪，可在「草稿批次」区 [↻] 刷新）
                 </div>
               ) : isRelativeScratchSpec(phase.specPath) ? (
-                <div className="text-[10px] text-amber-600" data-phase-spec-missing={phase.index}>
+                <div className="text-[10px] text-pop-amber" data-phase-spec-missing={phase.index}>
                   spec.md ✗ 磁盘未落盘 —— 该 phase 已登记但批次目录里还没有 spec.md
                 </div>
               ) : phase.specPath ? (
@@ -633,7 +633,7 @@ function AddPhaseRow({
           data-phase-add-name
         />
         <Input
-          className={`h-6 text-xs w-32 font-mono ${slugTouched && effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-red-500" : ""}`}
+          className={`h-6 text-xs w-32 font-mono ${slugTouched && effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-pop-red" : ""}`}
           placeholder={`slug=${suggestedSlug}`} value={effectiveSlug} maxLength={100}
           onChange={(e) => { setSlugTouched(true); setSlug(e.target.value) }}
           data-phase-add-slug
@@ -905,7 +905,7 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
                             <div key={name} className="space-y-0.5">
                               <Label className="text-[10px] flex items-center gap-1">
                                 {name}
-                                {def?.required && <span className="text-red-500">*</span>}
+                                {def?.required && <span className="text-pop-red">*</span>}
                               </Label>
                               <Input
                                 className="h-6 text-xs font-mono"

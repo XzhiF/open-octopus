@@ -128,9 +128,9 @@ export function SourceList() {
                   </TableCell>
                   <TableCell>
                     {s.trusted ? (
-                      <Badge variant="outline" className="text-green-600 text-xs">✓</Badge>
+                      <Badge variant="outline" className="text-pop-green text-xs">✓</Badge>
                     ) : (
-                      <Badge variant="outline" className="text-red-600 text-xs">✗</Badge>
+                      <Badge variant="outline" className="text-pop-red text-xs">✗</Badge>
                     )}
                   </TableCell>
                   <TableCell>

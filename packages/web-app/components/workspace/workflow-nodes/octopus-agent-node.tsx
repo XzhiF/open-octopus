@@ -74,8 +74,8 @@ export function OctopusAgentNode({ data, selected }: NodeProps<OctopusAgentNode>
             <div className="space-y-1.5">
               {/* Step progress */}
               <div className="flex items-center gap-1.5 text-xs">
-                <Activity className="h-3 w-3 text-rose-500" />
-                <span className="tabular-nums text-rose-600 font-medium">
+                <Activity className="h-3 w-3 text-pop-red" />
+                <span className="tabular-nums text-pop-red font-medium">
                   Step {heartbeat.step}
                   {heartbeat.total_steps ? ` / ${heartbeat.total_steps}` : ''}
                 </span>

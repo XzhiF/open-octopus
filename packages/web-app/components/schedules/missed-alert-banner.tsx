@@ -25,10 +25,10 @@ export function MissedAlertBanner({ schedule, wsId, onDismissed }: Props) {
   }
 
   return (
-    <Alert variant="default" className="border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30 dark:border-yellow-800">
-      <AlertTriangle className="h-4 w-4 text-yellow-600" />
-      <AlertTitle className="text-yellow-800 dark:text-yellow-200">Missed Execution</AlertTitle>
-      <AlertDescription className="flex items-center justify-between text-yellow-700 dark:text-yellow-300">
+    <Alert variant="default" className="border-pop-yellow/50 bg-pop-yellow-soft">
+      <AlertTriangle className="h-4 w-4 text-pop-amber" />
+      <AlertTitle className="text-pop-ink">Missed Execution</AlertTitle>
+      <AlertDescription className="flex items-center justify-between text-pop-ink">
         <span>
           Schedule &ldquo;{schedule.name}&rdquo; missed one or more scheduled triggers.
         </span>
@@ -36,7 +36,7 @@ export function MissedAlertBanner({ schedule, wsId, onDismissed }: Props) {
           variant="outline"
           size="sm"
           onClick={handleDismiss}
-          className="ml-4 h-7 border-yellow-400 text-yellow-800 hover:bg-yellow-100"
+          className="ml-4 h-7 border-pop-yellow/60 text-pop-ink hover:bg-pop-yellow-soft"
         >
           Dismiss
         </Button>

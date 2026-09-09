@@ -74,7 +74,7 @@ export function SourceDetail() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold">{source.name}</h2>
-            {source.trusted && <Badge variant="outline" className="text-green-600">已信任</Badge>}
+            {source.trusted && <Badge variant="outline" className="text-pop-green">已信任</Badge>}
           </div>
           <p className="mt-1 text-sm font-mono text-muted-foreground">{source.url}</p>
         </div>

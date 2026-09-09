@@ -19,15 +19,15 @@ export function StatsCards({ stats }: StatsCardsProps) {
       value: stats.activeWorkspaces,
       total: stats.totalWorkspaces,
       icon: FolderKanban,
-      color: "text-blue-500",
-      bgColor: "bg-blue-500/10",
+      color: "text-pop-cyan",
+      bgColor: "bg-pop-cyan/10",
     },
     {
       title: "运行中任务",
       value: stats.runningExecutions,
       icon: Play,
-      color: "text-amber-500",
-      bgColor: "bg-amber-500/10",
+      color: "text-pop-amber",
+      bgColor: "bg-pop-amber/10",
       pulse: stats.runningExecutions > 0,
     },
     {
@@ -41,8 +41,8 @@ export function StatsCards({ stats }: StatsCardsProps) {
       title: "总完成",
       value: stats.completedToday,
       icon: CheckCircle2,
-      color: "text-emerald-500",
-      bgColor: "bg-emerald-500/10",
+      color: "text-pop-green",
+      bgColor: "bg-pop-green/10",
     },
     {
       title: "总失败",
@@ -83,8 +83,8 @@ export function StatsCards({ stats }: StatsCardsProps) {
             {card.pulse && (
               <div className="absolute top-2 right-2">
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-pop-amber opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-pop-amber" />
                 </span>
               </div>
             )}

@@ -5,11 +5,11 @@ import { formatCost, formatDuration, formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 
 const GRADE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  A: { bg: "bg-emerald-500/10", text: "text-emerald-600", border: "border-emerald-200" },
-  B: { bg: "bg-blue-500/10", text: "text-blue-600", border: "border-blue-200" },
-  C: { bg: "bg-amber-500/10", text: "text-amber-600", border: "border-amber-200" },
-  D: { bg: "bg-orange-500/10", text: "text-orange-600", border: "border-orange-200" },
-  F: { bg: "bg-red-500/10", text: "text-red-600", border: "border-red-200" },
+  A: { bg: "bg-pop-green/10", text: "text-pop-green", border: "border-pop-green/40" },
+  B: { bg: "bg-pop-cyan/10", text: "text-pop-cyan", border: "border-pop-cyan/40" },
+  C: { bg: "bg-pop-amber/10", text: "text-pop-amber", border: "border-pop-amber/40" },
+  D: { bg: "bg-pop-yellow/10", text: "text-pop-ink", border: "border-pop-yellow/40" },
+  F: { bg: "bg-pop-red/10", text: "text-pop-red", border: "border-pop-red/40" },
 }
 
 interface WorkflowHealthCardProps {

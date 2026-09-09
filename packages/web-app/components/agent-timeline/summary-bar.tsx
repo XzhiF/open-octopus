@@ -34,14 +34,14 @@ export function SummaryBar({ turnCount, toolCallCount, totalDurationMs, totalInp
         <span className="text-muted-foreground">{formatDuration(totalDurationMs)}</span>
         <span className="text-muted-foreground">·</span>
         <span className="flex items-center gap-1 tabular-nums">
-          <ArrowUp className="h-3 w-3 text-violet-500" />{formatTokenCount(totalInputTokens)}
+          <ArrowUp className="h-3 w-3 text-pop-purple" />{formatTokenCount(totalInputTokens)}
         </span>
         <span className="flex items-center gap-1 tabular-nums">
-          <ArrowDown className="h-3 w-3 text-blue-500" />{formatTokenCount(totalOutputTokens)}
+          <ArrowDown className="h-3 w-3 text-pop-cyan" />{formatTokenCount(totalOutputTokens)}
         </span>
         <span className="text-muted-foreground">·</span>
         <span className="flex items-center gap-1 tabular-nums font-medium">
-          <Coins className="h-3 w-3 text-amber-500" />{formatCost(totalCostUsd)}
+          <Coins className="h-3 w-3 text-pop-amber" />{formatCost(totalCostUsd)}
         </span>
       </div>
 
@@ -50,7 +50,7 @@ export function SummaryBar({ turnCount, toolCallCount, totalDurationMs, totalInp
           {turnDurations.map((t, i) => (
             <div
               key={i}
-              className="flex-1 rounded-sm bg-violet-500/40 transition-all"
+              className="flex-1 rounded-sm bg-pop-purple/40 transition-all"
               style={{ height: `${Math.max((t.durationMs / maxDuration) * 100, 10)}%` }}
               title={`T${t.turnIndex}: ${formatDuration(t.durationMs)}`}
             />

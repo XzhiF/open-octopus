@@ -176,7 +176,7 @@ export function ModelConfigPage() {
         <h2 className="text-lg font-semibold">模型配置</h2>
         <div className="flex-1" />
         {isDirty && (
-          <span className="text-xs text-amber-600 flex items-center gap-1">
+          <span className="text-xs text-pop-amber flex items-center gap-1">
             <AlertTriangle className="h-3 w-3" /> 未保存
           </span>
         )}
@@ -254,7 +254,7 @@ export function ModelConfigPage() {
                     <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                   ) : result ? (
                     result.success ? (
-                      <span className="flex items-center gap-1 text-green-600 text-xs">
+                      <span className="flex items-center gap-1 text-pop-green text-xs">
                         <CheckCircle2 className="h-3 w-3" />
                         {result.latency}ms
                       </span>

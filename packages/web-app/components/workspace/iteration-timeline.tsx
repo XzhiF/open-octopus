@@ -11,9 +11,9 @@ interface IterationTimelineProps {
 }
 
 const statusConfig: Record<IterationNodeResult["status"], { label: string; className: string }> = {
-  completed: { label: "✅", className: "text-emerald-500" },
-  failed: { label: "❌", className: "text-red-400" },
-  running: { label: "🔄", className: "text-amber-400" },
+  completed: { label: "✅", className: "text-pop-green" },
+  failed: { label: "❌", className: "text-pop-red" },
+  running: { label: "🔄", className: "text-pop-amber" },
   pending: { label: "⏳", className: "text-muted-foreground" },
   skipped: { label: "⏭", className: "text-muted-foreground" },
 }
@@ -47,7 +47,7 @@ export const IterationTimeline = memo(function IterationTimeline({ nodes }: Iter
               </span>
             )}
             {node.error && (
-              <span className="text-red-400 text-[10px] truncate max-w-[120px] shrink-0" title={node.error}>
+              <span className="text-pop-red text-[10px] truncate max-w-[120px] shrink-0" title={node.error}>
                 {node.error}
               </span>
             )}

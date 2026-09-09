@@ -45,9 +45,9 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
   ready: {
     lane: "bg-pop-cyan-soft/25",
     head: "bg-pop-cyan-soft",
-    label: "text-cyan-800 dark:text-cyan-200",
+    label: "text-pop-cyan",
     dot: "bg-pop-cyan",
-    pill: "bg-pop-paper text-cyan-800 dark:text-cyan-200",
+    pill: "bg-pop-paper text-pop-cyan",
   },
   running: {
     lane: "bg-pop-purple-soft/30",
@@ -59,16 +59,16 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
   awaiting_review: {
     lane: "bg-pop-amber-soft/30",
     head: "bg-pop-amber-soft",
-    label: "text-amber-800 dark:text-amber-200",
+    label: "text-pop-amber",
     dot: "bg-pop-amber",
-    pill: "bg-pop-paper text-amber-800 dark:text-amber-200",
+    pill: "bg-pop-paper text-pop-amber",
   },
   done: {
     lane: "bg-pop-green-soft/25",
     head: "bg-pop-green-soft",
-    label: "text-green-800 dark:text-green-200",
+    label: "text-pop-green",
     dot: "bg-pop-green",
-    pill: "bg-pop-paper text-green-800 dark:text-green-200",
+    pill: "bg-pop-paper text-pop-green",
   },
 }
 
@@ -421,7 +421,7 @@ export default function TasksPage() {
                 e.preventDefault()
                 if (deletingTaskId) void handleDeleteDraft(deletingTaskId)
               }}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-pop-red hover:bg-pop-red/90"
             >
               {deleteBusy ? "删除中…" : "确认废弃"}
             </AlertDialogAction>
@@ -509,7 +509,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {task.status === "archiving" && (
             <span
               data-task-archiving-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-amber-soft text-amber-800 dark:text-amber-200"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-amber-soft text-pop-ink"
               title="末 phase 已验收，归档编排中（git 失败会停在此态可重试）"
             >
               ⚠ 归档中
@@ -519,7 +519,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {overBudget && (
             <span
               data-task-overbudget-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-amber-800 dark:text-amber-200"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-pop-ink"
               title={`Phase ${overBudget.phaseIndex} Round ${overBudget.roundIndex} 已跑超 ${Math.round(budgetMs / 60000)} 分钟（仅提示，不中断）`}
             >
               ⏳ 超预算
@@ -528,7 +528,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {isQueuedRun && (
             <span
               data-task-queued-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-amber-800 dark:text-amber-200"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-pop-ink"
               title={`定时触发：${new Date(task.scheduled_at!).toLocaleString()}`}
             >
               {new Date(task.scheduled_at!).getTime() > Date.now()

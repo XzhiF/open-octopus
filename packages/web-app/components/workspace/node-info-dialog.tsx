@@ -72,16 +72,16 @@ export function NodeInfoDialog({
             <Badge
               variant="outline"
               className={`text-xs ${
-                step.status === "completed" ? "text-emerald-600" :
-                step.status === "failed" ? "text-red-600" :
-                step.status === "running" ? "text-amber-600" :
+                step.status === "completed" ? "text-pop-green" :
+                step.status === "failed" ? "text-pop-red" :
+                step.status === "running" ? "text-pop-amber" :
                 "text-muted-foreground"
               }`}
             >
               {step.status}
             </Badge>
             {step.status === "running" && elapsedSeconds !== undefined && (
-              <span className="text-xs text-amber-600 tabular-nums">
+              <span className="text-xs text-pop-amber tabular-nums">
                 <TimerIcon className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds * 1000)}
               </span>
             )}

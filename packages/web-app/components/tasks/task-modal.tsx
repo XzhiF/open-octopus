@@ -113,12 +113,12 @@ const STATUS_LABEL: Record<string, string> = {
 
 const STATUS_TONE: Record<string, string> = {
   draft: "bg-pop-idle text-pop-dim",
-  ready: "bg-pop-cyan-soft text-cyan-800 dark:text-cyan-200",
+  ready: "bg-pop-cyan-soft text-pop-cyan",
   running: "bg-pop-purple-soft text-pop-purple",
   // K3/US8: 待验收=琥珀（等人放行，非红死）；归档中=橙（票 08 编排中）。
-  awaiting_review: "bg-pop-yellow-soft text-amber-800 dark:text-amber-200",
-  archiving: "bg-pop-amber-soft text-amber-800 dark:text-amber-200",
-  done: "bg-pop-green-soft text-green-800 dark:text-green-200",
+  awaiting_review: "bg-pop-yellow-soft text-pop-amber",
+  archiving: "bg-pop-amber-soft text-pop-amber",
+  done: "bg-pop-green-soft text-pop-green",
   failed: "bg-pop-pink-soft text-pop-red",
   aborted: "bg-pop-idle text-pop-dim",
 }
@@ -358,7 +358,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             <AlertDialogAction
               disabled={deleteBusy}
               onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-pop-red hover:bg-pop-red/90"
             >
               {deleteBusy ? "删除中…" : "确认废弃"}
             </AlertDialogAction>
@@ -401,7 +401,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10"
+            className="h-7 text-xs text-pop-red hover:text-pop-red/80 hover:bg-pop-pink-soft"
             onClick={onDeleteDraft}
             data-task-modal-delete
           >
@@ -857,19 +857,19 @@ export function CompositeMode({
 }
 
 const STATUS_DOT_COLOR: Record<string, string> = {
-  queued: "bg-blue-500",
-  claimed: "bg-amber-500",
-  running: "bg-blue-500 animate-pulse",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-  aborted: "bg-zinc-500",
+  queued: "bg-pop-cyan",
+  claimed: "bg-pop-amber",
+  running: "bg-pop-cyan animate-pulse",
+  done: "bg-pop-green",
+  failed: "bg-pop-red",
+  aborted: "bg-pop-dim",
   pending: "bg-muted-foreground",
 }
 
 function DoneMode({ task }: { task: Task }) {
   return (
     <div className="flex flex-col h-full min-h-0" data-task-done>
-      <div className="shrink-0 flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/5 px-5 py-2.5 text-sm text-emerald-600">
+      <div className="shrink-0 flex items-center gap-2 border-b border-pop-green/30 bg-pop-green-soft px-5 py-2.5 text-sm text-pop-green">
         <CheckCircle2 className="size-4" /> 任务完成{task.completed_at ? ` · ${new Date(task.completed_at).toLocaleString("zh-CN")}` : ""}
       </div>
       <div className="flex-1 min-h-0">
@@ -883,7 +883,7 @@ function TerminalMode({ task }: { task: Task }) {
   const failed = task.status === "failed"
   return (
     <div className="flex flex-col h-full min-h-0" data-task-terminal>
-      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-red-500/30 bg-red-500/5 text-red-500" : "border-zinc-500/30 bg-zinc-500/5 text-zinc-500 dark:text-zinc-400"}`}>
+      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-pop-red/30 bg-pop-pink-soft text-pop-red" : "border-pop-bd/30 bg-pop-idle text-pop-dim"}`}>
         {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
         {failed ? "任务失败" : "任务已中止"}
         <span className="ml-auto text-xs text-muted-foreground font-normal">

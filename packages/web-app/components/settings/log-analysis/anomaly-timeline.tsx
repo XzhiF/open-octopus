@@ -51,7 +51,7 @@ export function AnomalyTimeline({ durationAnomalies, consecutiveFailures, costAn
       <CardContent className="space-y-2">
         {events.map((event, i) => {
           const Icon = event.severity === "critical" ? AlertOctagon : AlertTriangle
-          const iconColor = event.severity === "critical" ? "text-destructive" : "text-amber-500"
+          const iconColor = event.severity === "critical" ? "text-destructive" : "text-pop-amber"
           return (
             <div key={i} className="flex items-center gap-3 text-sm p-2 rounded-md bg-muted/50">
               <Icon className={`h-4 w-4 shrink-0 ${iconColor}`} />

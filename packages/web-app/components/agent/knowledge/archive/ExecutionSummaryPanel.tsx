@@ -105,7 +105,7 @@ export function ExecutionSummaryPanel({ summary }: ExecutionSummaryPanelProps) {
             value={reviewBlockers.length}
             icon={AlertTriangle}
             iconClassName={
-              reviewBlockers.length > 0 ? 'text-amber-500' : 'text-muted-foreground'
+              reviewBlockers.length > 0 ? 'text-pop-amber' : 'text-muted-foreground'
             }
           />
         </div>
@@ -149,14 +149,14 @@ export function ExecutionSummaryPanel({ summary }: ExecutionSummaryPanelProps) {
         {reviewBlockers.length > 0 && (
           <div className="space-y-2">
             <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-              <AlertTriangle className="size-3.5 text-amber-500" />
+              <AlertTriangle className="size-3.5 text-pop-amber" />
               审查阻断
             </h3>
             <div className="space-y-1.5">
               {reviewBlockers.map((blocker, idx) => (
                 <div
                   key={idx}
-                  className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+                  className="rounded-md border border-pop-amber/30 bg-pop-amber/5 px-3 py-2"
                 >
                   <p className="text-sm text-foreground leading-relaxed">{blocker}</p>
                 </div>

@@ -10,28 +10,28 @@ interface ToolCardProps {
 
 const statusConfig = {
   running: {
-    border: "border-l-blue-400",
+    border: "border-l-pop-cyan",
     icon: Loader2,
-    iconClass: "text-blue-400 animate-spin",
+    iconClass: "text-pop-cyan animate-spin",
     text: "",
     textClass: "text-muted-foreground",
     bg: "bg-secondary",
   },
   done: {
-    border: "border-l-emerald-400",
+    border: "border-l-pop-green",
     icon: Wrench,
-    iconClass: "text-emerald-400",
+    iconClass: "text-pop-green",
     text: "完成",
-    textClass: "text-emerald-500",
+    textClass: "text-pop-green",
     bg: "bg-secondary",
   },
   error: {
-    border: "border-l-red-400",
+    border: "border-l-pop-red",
     icon: Wrench,
-    iconClass: "text-red-400",
+    iconClass: "text-pop-red",
     text: "失败",
-    textClass: "text-red-400",
-    bg: "bg-red-950/20",
+    textClass: "text-pop-red",
+    bg: "bg-pop-red/10",
   },
 }
 

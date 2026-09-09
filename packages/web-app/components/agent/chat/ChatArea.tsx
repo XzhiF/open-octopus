@@ -26,8 +26,8 @@ const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
   band: string; dot: string; text: string; sub: string
 }> = {
   running: { band: 'bg-pop-purple-soft text-pop-purple', dot: 'bg-pop-purple', text: '⚡ 生成中', sub: '关闭弹窗不会中断' },
-  waiting: { band: 'bg-pop-amber-soft text-amber-800 dark:text-amber-300', dot: 'bg-pop-amber', text: '❓ 等待你的输入', sub: '回答上方问题即继续' },
-  done: { band: 'bg-pop-green-soft text-green-800 dark:text-green-300', dot: 'bg-pop-green', text: '✓ 就绪', sub: '随时发送下一条' },
+  waiting: { band: 'bg-pop-amber-soft text-pop-amber', dot: 'bg-pop-amber', text: '❓ 等待你的输入', sub: '回答上方问题即继续' },
+  done: { band: 'bg-pop-green-soft text-pop-green', dot: 'bg-pop-green', text: '✓ 就绪', sub: '随时发送下一条' },
   error: { band: 'bg-pop-pink-soft text-pop-red', dot: 'bg-pop-red', text: '✕ 本轮出错', sub: '重新发送即可重试' },
 }
 

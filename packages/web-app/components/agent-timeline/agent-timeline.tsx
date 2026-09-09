@@ -165,7 +165,7 @@ export function AgentTimeline({
   return (
     <div ref={containerRef} className="flex h-full flex-col">
       {isDegraded && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-700 dark:text-amber-400">
+        <div className="flex items-center gap-2 px-3 py-2 bg-pop-amber/10 border-b border-pop-amber/20 text-xs text-pop-amber">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span>追踪数据暂时不可用。可观测性服务正在降级模式运行。</span>
         </div>

@@ -30,7 +30,7 @@ export class ChartErrorBoundary extends Component<Props, State> {
 
       return (
         <div className="flex flex-col items-center justify-center gap-2 p-6 text-center">
-          <AlertTriangle className="h-6 w-6 text-amber-500" />
+          <AlertTriangle className="h-6 w-6 text-pop-amber" />
           <p className="text-sm font-medium">图表渲染失败</p>
           <p className="text-xs text-muted-foreground">{this.state.error?.message}</p>
         </div>

@@ -12,9 +12,9 @@ import {
 } from "@/lib/scheduler-api"
 
 const STATUS_STYLES: Record<string, string> = {
-  running: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-  completed: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-  failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+  running: "bg-pop-cyan-soft text-pop-cyan",
+  completed: "bg-pop-green-soft text-pop-green",
+  failed: "bg-pop-pink-soft text-pop-red",
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -127,7 +127,7 @@ export function WorkspaceHistoryTable({ jobId, maxRetain }: Props) {
                     {ws.workspace_id ? (
                       <Link
                         href={`/workspaces/${ws.workspace_id}`}
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                        className="inline-flex items-center gap-1 text-xs text-pop-cyan hover:underline"
                       >
                         查看空间
                         <ExternalLink className="h-3 w-3" />
@@ -154,10 +154,10 @@ export function WorkspaceHistoryTable({ jobId, maxRetain }: Props) {
               .map((ws) => (
                 <div
                   key={ws.id}
-                  className="rounded border-l-2 border-red-300 bg-red-50 p-2 dark:border-red-700 dark:bg-red-950"
+                  className="rounded border-l-2 border-pop-red bg-pop-pink-soft p-2"
                 >
                   <span className="font-mono text-xs">{ws.branch_suffix}</span>
-                  <p className="mt-1 text-xs text-red-700 dark:text-red-300">
+                  <p className="mt-1 text-xs text-pop-red">
                     {ws.error}
                   </p>
                 </div>

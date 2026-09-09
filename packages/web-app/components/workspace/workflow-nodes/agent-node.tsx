@@ -41,7 +41,7 @@ export function AgentNode({ data, selected }: NodeProps<WorkflowNode>) {
         )}
         {hasGoal && (
           <p className="text-xs text-muted-foreground line-clamp-2 flex items-start gap-1.5" title={data.goal}>
-            <Target className="size-3.5 shrink-0 mt-px text-amber-500" />
+            <Target className="size-3.5 shrink-0 mt-px text-pop-amber" />
             <span className="min-w-0 line-clamp-2">{data.goal}</span>
           </p>
         )}

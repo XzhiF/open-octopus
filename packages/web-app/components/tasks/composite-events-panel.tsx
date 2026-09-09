@@ -18,12 +18,12 @@ export interface CompositeEventsPanelProps {
 }
 
 const STATUS_TONE: Record<string, string> = {
-  queued: "text-blue-500",
-  claimed: "text-amber-600",
-  running: "text-blue-500",
-  done: "text-emerald-600",
-  failed: "text-red-500",
-  aborted: "text-zinc-500",
+  queued: "text-pop-cyan",
+  claimed: "text-pop-amber",
+  running: "text-pop-cyan",
+  done: "text-pop-green",
+  failed: "text-pop-red",
+  aborted: "text-pop-dim",
 }
 
 const STATUS_LABEL: Record<string, string> = {

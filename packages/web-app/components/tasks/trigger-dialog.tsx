@@ -143,7 +143,7 @@ export function TriggerActions({ task, onMutated }: { task: Task; onMutated: () 
   if (armed) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-xs text-amber-600 dark:text-amber-400">
+        <span className="text-xs text-pop-amber">
           {future
             ? `已定时 · ${new Date(task.scheduled_at!).toLocaleString()} 触发`
             : "已到点，即将执行"}

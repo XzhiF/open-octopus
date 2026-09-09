@@ -66,15 +66,15 @@ function runBadge(status: string): { label: string; className: string } {
   const cls = "text-[9px] "
   switch (status) {
     case "running":
-      return { label: "运行中", className: cls + "bg-purple-500/15 text-purple-600 animate-pulse" }
+      return { label: "运行中", className: cls + "bg-pop-purple-soft text-pop-purple animate-pulse" }
     case "done":
     case "completed":
-      return { label: "完成", className: cls + "bg-emerald-500/15 text-emerald-600" }
+      return { label: "完成", className: cls + "bg-pop-green-soft text-pop-green" }
     case "failed":
     case "error":
-      return { label: "失败", className: cls + "bg-red-500/15 text-red-600" }
+      return { label: "失败", className: cls + "bg-pop-pink-soft text-pop-red" }
     case "aborted":
-      return { label: "中止", className: cls + "bg-zinc-500/15 text-zinc-600" }
+      return { label: "中止", className: cls + "bg-pop-idle text-pop-dim" }
     default:
       return { label: status || "未知", className: cls + "bg-muted text-muted-foreground" }
   }
@@ -304,7 +304,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
               title="工作上下文：org · 项目路径 · 技能组 — agent 感知的工作语境"
               data-context-viewer-row
             >
-              <Settings2 className="size-3 shrink-0 text-purple-500" />
+              <Settings2 className="size-3 shrink-0 text-pop-purple" />
               <span className="truncate">工作上下文</span>
             </button>
             <button
@@ -313,7 +313,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
               title="规格快照：agent 读的规格账本 · 核对/调试"
               data-manifest-viewer-row
             >
-              <FileText className="size-3 shrink-0 text-amber-500" />
+              <FileText className="size-3 shrink-0 text-pop-amber" />
               <span className="truncate">规格快照</span>
             </button>
           </div>
@@ -322,7 +322,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
               <Spinner className="size-3" /> 加载产物索引…
             </div>
           ) : artifactsError ? (
-            <div className="px-3 py-2 text-[11px] text-red-600">{artifactsError}</div>
+            <div className="px-3 py-2 text-[11px] text-pop-red">{artifactsError}</div>
           ) : artifacts.length === 0 ? (
             <div className="px-3 py-3 text-[11px] text-muted-foreground/60">
               ⏳ 尚无执行产物——此处登记运行期产物（brief/report/PR，落 artifacts/）。
@@ -391,15 +391,15 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
 
                   {/* Running card: expert indicator (AC4) */}
                   {isRunning && (
-                    <div className="px-3 pb-2 text-[11px] text-purple-600 flex items-center gap-1.5" data-run-running>
+                    <div className="px-3 pb-2 text-[11px] text-pop-purple flex items-center gap-1.5" data-run-running>
                       专家运行中 <span className="animate-pulse">●●●</span>
                     </div>
                   )}
 
                   {/* Parse-error degraded card (AC6/SW-BP10) */}
                   {parseError && r?.output_raw && (
-                    <div className="mx-3 mb-2 rounded-md border border-amber-400/40 bg-amber-500/5 p-2 text-[11px]" data-run-parse-error>
-                      <div className="flex items-center gap-1 text-amber-600 mb-1">
+                    <div className="mx-3 mb-2 rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2 text-[11px]" data-run-parse-error>
+                      <div className="flex items-center gap-1 text-pop-amber mb-1">
                         <ShieldAlert className="size-3" /> 聚合器输出解析失败（展示原文）
                       </div>
                       <pre className="whitespace-pre-wrap break-words text-muted-foreground font-mono text-[10px] max-h-40 overflow-auto">
@@ -437,7 +437,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           count={decisions.length}
           hint={task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}
           storageKey="authoring-memo"
-          className="border-purple-400/30"
+          className="border-pop-purple/30"
           data-decision-memo
         >
           <ul className="text-[11px] space-y-1 text-muted-foreground">
@@ -466,7 +466,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         >
           <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
             <DialogTitle className="text-sm flex items-center gap-2">
-              <Settings2 className="size-3.5 text-purple-500" />
+              <Settings2 className="size-3.5 text-pop-purple" />
               工作上下文 (context.md)
             </DialogTitle>
             <DialogDescription className="font-mono text-[10px] truncate">
@@ -505,7 +505,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         >
           <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
             <DialogTitle className="text-sm flex items-center gap-2">
-              <FileText className="size-3.5 text-amber-500" />
+              <FileText className="size-3.5 text-pop-amber" />
               规格快照 (manifest.json)
             </DialogTitle>
             <DialogDescription className="font-mono text-[10px] truncate">

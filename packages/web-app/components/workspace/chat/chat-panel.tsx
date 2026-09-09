@@ -34,7 +34,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
 
   if (streamEndState === 'done') {
     return (
-      <div className="px-4 py-1.5 text-xs text-emerald-500 border-t border-border/50 flex items-center gap-1.5 shrink-0">
+      <div className="px-4 py-1.5 text-xs text-pop-green border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <Check className="w-3 h-3 shrink-0" />
         <span>完成 耗时 {formatDuration(elapsed * 1000)}</span>
       </div>
@@ -43,7 +43,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
 
   if (streamEndState === 'aborted') {
     return (
-      <div className="px-4 py-1.5 text-xs text-red-400 border-t border-border/50 flex items-center gap-1.5 shrink-0">
+      <div className="px-4 py-1.5 text-xs text-pop-red border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <X className="w-3 h-3 shrink-0" />
         <span>已中断 {formatDuration(elapsed * 1000)}</span>
       </div>
@@ -52,7 +52,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
 
   return (
     <div className="px-4 py-1.5 text-xs text-muted-foreground border-t border-border/50 flex items-center gap-2 shrink-0">
-      <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse shrink-0" />
+      <div className="w-2 h-2 bg-pop-cyan rounded-full animate-pulse shrink-0" />
       <span>AI 正在工作 {formatDuration(elapsed * 1000)}</span>
     </div>
   )
@@ -242,7 +242,7 @@ export function ChatPanel({
             <button
               onClick={onAbort}
               aria-label="停止生成"
-              className="p-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors shrink-0"
+              className="p-2 bg-pop-red hover:bg-pop-red/90 text-white rounded-lg transition-colors shrink-0"
               title="停止生成"
             >
               <Square className="w-4 h-4" aria-hidden="true" />

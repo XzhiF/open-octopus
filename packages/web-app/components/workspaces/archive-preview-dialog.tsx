@@ -87,7 +87,7 @@ function GroupSelector({
           placeholder="输入组名..."
         />
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleConfirm}>
-          <span className="text-green-500 text-sm">✓</span>
+          <span className="text-pop-green text-sm">✓</span>
         </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setCreating(false); setNewName("") }}>
           <span className="text-muted-foreground text-sm">✕</span>
@@ -111,7 +111,7 @@ function GroupSelector({
         {groups.map((g) => (
           <SelectItem key={g} value={g}>{g}</SelectItem>
         ))}
-        <SelectItem value={CREATE_NEW} className="text-blue-600 font-medium">
+        <SelectItem value={CREATE_NEW} className="text-pop-cyan font-medium">
           + 新建组...
         </SelectItem>
       </SelectContent>
@@ -374,8 +374,8 @@ export function ArchivePreviewDialog({
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="space-y-6">
             {draft && draftAge && (
-              <div className="flex items-center justify-between rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm">
-                <span className="text-amber-800 dark:text-amber-200">
+              <div className="flex items-center justify-between rounded-md border border-pop-amber/30 bg-pop-amber-soft px-3 py-2 text-sm">
+                <span className="text-pop-ink">
                   已加载上次分析结果（{draftAge}）
                 </span>
                 <Button variant="outline" size="sm" onClick={handleRegenerate}>
@@ -749,9 +749,9 @@ export function ArchivePreviewDialog({
                                 <Package className="h-4 w-4" />
                                 <h4 className="font-semibold">{skill.name}</h4>
                                 {(skill as any).status === "updated" ? (
-                                  <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                  <Badge variant="default" className="text-xs bg-pop-amber">有更新</Badge>
                                 ) : (skill as any).status === "new" ? (
-                                  <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                  <Badge variant="default" className="text-xs bg-pop-green">新发现</Badge>
                                 ) : skill.auto_discovered ? (
                                   <Badge variant="default" className="text-xs">
                                     <FileText className="h-3 w-3 mr-1" />
@@ -865,9 +865,9 @@ export function ArchivePreviewDialog({
                                   <Package className="h-4 w-4" />
                                   <h4 className="font-semibold">{wf.name}</h4>
                                   {wf.status === "updated" ? (
-                                    <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                    <Badge variant="default" className="text-xs bg-pop-amber">有更新</Badge>
                                   ) : wf.status === "new" ? (
-                                    <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                    <Badge variant="default" className="text-xs bg-pop-green">新发现</Badge>
                                   ) : null}
                                 </div>
                                 <p className="text-sm text-muted-foreground mb-2">{wf.description}</p>
@@ -934,9 +934,9 @@ export function ArchivePreviewDialog({
                                   <Package className="h-4 w-4" />
                                   <h4 className="font-semibold">{agent.name}</h4>
                                   {(agent as any).status === "updated" ? (
-                                    <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                    <Badge variant="default" className="text-xs bg-pop-amber">有更新</Badge>
                                   ) : (agent as any).status === "new" ? (
-                                    <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                    <Badge variant="default" className="text-xs bg-pop-green">新发现</Badge>
                                   ) : null}
                                 </div>
                                 <p className="text-sm text-muted-foreground mb-2">{agent.description}</p>

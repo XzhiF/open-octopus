@@ -82,7 +82,7 @@ export function PublishVersionDialog({ open, onOpenChange, onSubmit }: PublishVe
               autoFocus
             />
             {version && !isValid && (
-              <p className="text-xs text-red-500">
+              <p className="text-xs text-pop-red">
                 格式: major.minor.patch[-qualifier]，如 1.0.0, 1.2.0-beta.1
               </p>
             )}
@@ -116,7 +116,7 @@ export function PublishVersionDialog({ open, onOpenChange, onSubmit }: PublishVe
           </div>
 
           {error && (
-            <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+            <div className="rounded-md bg-pop-pink-soft border border-pop-red/30 p-3 text-sm text-pop-red">
               {error}
             </div>
           )}

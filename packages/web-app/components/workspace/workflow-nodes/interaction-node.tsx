@@ -24,8 +24,8 @@ export function InteractionNode({ data, selected }: NodeProps<WorkflowNode>) {
     <StatusShell nodeType="interaction" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected}>
       <TypeShell nodeType="interaction" name={data.name} statusOverlay={data.statusOverlay}>
         <div className="flex items-center gap-1.5 mt-1">
-          <MessageCircle className="h-3.5 w-3.5 text-purple-500" />
-          <span className="text-xs text-purple-600">Interaction</span>
+          <MessageCircle className="h-3.5 w-3.5 text-pop-purple" />
+          <span className="text-xs text-pop-purple">Interaction</span>
         </div>
         {data.interaction_max_rounds && (
           <span className="text-xs text-muted-foreground mt-0.5">

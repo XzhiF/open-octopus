@@ -38,9 +38,9 @@ export function IterationGroup({
     <span key={i} className="inline-flex items-center gap-0.5 mr-1.5">
       {e.nodeId}
       {e.status === "completed"
-        ? <Check className="h-2.5 w-2.5 text-emerald-400" />
+        ? <Check className="h-2.5 w-2.5 text-pop-green" />
         : e.status === "failed"
-          ? <X className="h-2.5 w-2.5 text-red-400" />
+          ? <X className="h-2.5 w-2.5 text-pop-red" />
           : null
       }
     </span>

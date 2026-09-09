@@ -130,7 +130,7 @@ export function CloneFileContent({ cloneName, file, onSaved }: CloneFileContentP
         ) : (
           <textarea
             className={`flex-1 w-full p-4 font-mono text-sm leading-relaxed bg-transparent resize-none focus:outline-none ${
-              isJson ? 'text-yellow-500' : ''
+              isJson ? 'text-pop-amber' : ''
             } ${file.readonly ? 'opacity-60' : ''}`}
             value={content}
             onChange={(e) => setContent(e.target.value)}

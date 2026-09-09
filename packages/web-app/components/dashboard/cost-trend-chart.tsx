@@ -23,7 +23,7 @@ export function CostTrendChart({ data, days }: CostTrendChartProps) {
           {data.map((d, i) => (
             <div
               key={d.date}
-              className="flex-1 bg-blue-500/80 hover:bg-blue-500 rounded-t transition-colors relative group"
+              className="flex-1 bg-pop-cyan/80 hover:bg-pop-cyan rounded-t transition-colors relative group"
               style={{ height: `${(d.total_cost / maxCost) * 100}%`, minHeight: d.total_cost > 0 ? '4px' : '0' }}
               title={`${d.date}: ${formatCost(d.total_cost)} (${d.calls} calls)`}
             >

@@ -97,7 +97,7 @@ export function ConflictDialog({
         <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] p-4 flex flex-col">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-lg">
-              <span className="text-orange-400">&#9888;</span>
+              <span className="text-pop-amber">&#9888;</span>
               解决冲突：{filePath}
             </AlertDialogTitle>
             <AlertDialogDescription>
@@ -130,7 +130,7 @@ export function ConflictDialog({
               <AlertDialogCancel onClick={handleCancelMerge}>
                 取消
               </AlertDialogCancel>
-              <AlertDialogAction onClick={handleSaveMerge} className="bg-green-600 hover:bg-green-700">
+              <AlertDialogAction onClick={handleSaveMerge} className="bg-pop-green hover:bg-pop-green/90">
                 确定保存
               </AlertDialogAction>
             </div>
@@ -145,7 +145,7 @@ export function ConflictDialog({
       <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] p-4 flex flex-col">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2 text-lg">
-            <span className="text-yellow-500">&#9888;</span>
+            <span className="text-pop-amber">&#9888;</span>
             文件冲突：{filePath}
           </AlertDialogTitle>
           <AlertDialogDescription>
@@ -181,14 +181,14 @@ export function ConflictDialog({
             </AlertDialogCancel>
             <AlertDialogCancel
               onClick={onDiscardEdits}
-              className="border-red-300 text-red-600 hover:bg-red-50"
+              className="border-pop-red/40 text-pop-red hover:bg-pop-red/10"
             >
               外部覆盖
             </AlertDialogCancel>
             {/* Use native button instead of AlertDialogAction to prevent dialog close */}
             <button
               onClick={handleEnterMerge}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-blue-600 text-white hover:bg-blue-700 h-9 px-4 py-2 shadow"
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-pop-cyan text-white hover:bg-pop-cyan/90 h-9 px-4 py-2 shadow"
             >
               解决冲突
             </button>

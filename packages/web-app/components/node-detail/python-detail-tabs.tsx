@@ -22,7 +22,7 @@ export function PythonDetailTabs({ step, isRunning }: PythonDetailTabsProps) {
       </TabsContent>
       <TabsContent value="script" className="m-0 p-3"><div className="text-xs text-muted-foreground">脚本内容</div></TabsContent>
       <TabsContent value="traceback" className="m-0 p-3">
-        {step?.error ? <pre className="text-xs text-red-600 bg-red-50 dark:bg-red-950 rounded p-3">{step.error}</pre> : <div className="text-xs text-muted-foreground">无错误</div>}
+        {step?.error ? <pre className="text-xs text-pop-red bg-pop-red/10 rounded p-3">{step.error}</pre> : <div className="text-xs text-muted-foreground">无错误</div>}
       </TabsContent>
       <TabsContent value="history" className="m-0 p-3"><div className="text-xs text-muted-foreground">历史执行记录</div></TabsContent>
     </Tabs>

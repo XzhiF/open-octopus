@@ -164,7 +164,7 @@ export function HarnessConfigPage() {
 
         {/* Dirty indicator */}
         {isDirty && (
-          <span className="text-xs text-amber-600 flex items-center gap-1">
+          <span className="text-xs text-pop-amber flex items-center gap-1">
             <AlertTriangle className="h-3 w-3" /> 未保存
           </span>
         )}
@@ -246,7 +246,7 @@ export function HarnessConfigPage() {
       {/* Status bar */}
       <div className="flex items-center gap-2 px-4 py-2 border-t border-border text-xs text-muted-foreground bg-muted/20">
         {validationErrors.length === 0 ? (
-          <span className="flex items-center gap-1 text-green-600">
+          <span className="flex items-center gap-1 text-pop-green">
             <ShieldCheck className="h-3 w-3" /> 配置有效
           </span>
         ) : (

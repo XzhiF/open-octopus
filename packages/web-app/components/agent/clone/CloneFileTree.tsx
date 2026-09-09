@@ -293,10 +293,10 @@ function TreeNodeItem({
       )
     }
     if (node.name.endsWith('.md')) {
-      return <FileText className="h-4 w-4 text-blue-500" />
+      return <FileText className="h-4 w-4 text-pop-cyan" />
     }
     if (node.name.endsWith('.json')) {
-      return <FileJson className="h-4 w-4 text-yellow-500" />
+      return <FileJson className="h-4 w-4 text-pop-amber" />
     }
     return <File className="h-4 w-4 text-muted-foreground" />
   }

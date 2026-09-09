@@ -362,8 +362,8 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       <span
                         data-acceptance-round-state={awaitingRound.state} data-testid="acceptance-round-state"
                         className={
-                          awaitingRound.state === "succeeded" ? "text-emerald-600"
-                            : awaitingRound.state === "failed" ? "text-amber-600" // US8: 失败=待处理，不是红死
+                          awaitingRound.state === "succeeded" ? "text-pop-green"
+                            : awaitingRound.state === "failed" ? "text-pop-amber" // US8: 失败=待处理，不是红死
                               : "text-muted-foreground"
                         }
                       >
@@ -378,7 +378,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                     </div>
                   </div>
                   {errorSummary && (
-                    <p className="text-xs text-amber-600 break-words whitespace-pre-wrap rounded-md border border-amber-400/40 bg-amber-500/5 p-2" data-acceptance-error>
+                    <p className="text-xs text-pop-amber break-words whitespace-pre-wrap rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2" data-acceptance-error>
                       {errorSummary}
                     </p>
                   )}
@@ -458,8 +458,8 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                   </Button>
 
                   {rejectOpen && (
-                    <div className="rounded-md border border-amber-400/40 bg-amber-500/5 p-2.5 space-y-2" data-reject-panel>
-                      <label className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                    <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2.5 space-y-2" data-reject-panel>
+                      <label className="text-[11px] font-medium text-pop-ink">
                         打回反馈（必填 — 落 fix-feedback-r{awaitingPhase.awaitingRound}.md）
                       </label>
                       <Textarea
@@ -473,7 +473,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
                           信封 phases[] 绑定冻结不破） */}
                       <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
-                        <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">下一轮路由</div>
+                        <div className="text-[11px] font-medium text-pop-ink">下一轮路由</div>
                         <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
                           <input
                             type="radio" name="reject-flow" className="mt-0.5"
@@ -518,7 +518,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                   <div className="pt-2 border-t space-y-1.5">
                     <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
                       <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
-                      <span className={autoOn ? "text-emerald-600" : "text-amber-600"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
+                      <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
                     </div>
                     <p className="text-[10px] text-muted-foreground">开关在草稿面板（入队清单下方）</p>
                   </div>
@@ -659,7 +659,7 @@ export function ImpactApprovalList({ taskId, phases, items, onDone }: ImpactAppr
   }
 
   return (
-    <div className="rounded-md border border-purple-400/40 bg-purple-500/5 p-2.5 space-y-2" data-impact-list>
+    <div className="rounded-md border border-pop-purple/40 bg-pop-purple-soft p-2.5 space-y-2" data-impact-list>
       <div className="text-[11px] font-semibold text-muted-foreground">决策影响清单（批准即改写后续 phase）</div>
       <ul className="space-y-1.5">
         {items.map((it) => (

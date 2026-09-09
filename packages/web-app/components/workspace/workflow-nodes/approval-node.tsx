@@ -27,9 +27,9 @@ interface WorkflowNodeData {
 type WorkflowNode = Node<WorkflowNodeData>
 
 const riskColors: Record<string, { color: string }> = {
-  "read-only": { color: "text-blue-600" },
-  "write": { color: "text-amber-600" },
-  "destructive": { color: "text-red-600" },
+  "read-only": { color: "text-pop-cyan" },
+  "write": { color: "text-pop-amber" },
+  "destructive": { color: "text-pop-red" },
 }
 
 export function ApprovalNode({ data, selected }: NodeProps<WorkflowNode>) {

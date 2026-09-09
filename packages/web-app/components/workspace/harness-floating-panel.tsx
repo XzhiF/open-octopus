@@ -78,7 +78,7 @@ function CollapsedPanel({
     <div
       className={cn(
         "w-fit min-w-[170px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
-        hasActivity && "border-violet-400/60",
+        hasActivity && "border-pop-purple/60",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
       onMouseDown={handleMouseDown}
@@ -87,8 +87,8 @@ function CollapsedPanel({
     >
       <style>{`
         @keyframes harness-pulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
-          50% { box-shadow: 0 0 12px 2px rgba(139, 92, 246, 0.3); }
+          0%, 100% { box-shadow: 0 0 0 0 transparent; }
+          50% { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--pop-purple) 30%, transparent); }
         }
       `}</style>
       {/* Line 1: status */}
@@ -99,12 +99,12 @@ function CollapsedPanel({
         <span
           className={
             isBudgetExceeded
-              ? "text-red-500 font-bold"
+              ? "text-pop-red font-bold"
               : !isRunning
                 ? "text-muted-foreground"
                 : isIntervening
-                  ? "text-amber-500"
-                  : "text-emerald-500"
+                  ? "text-pop-amber"
+                  : "text-pop-green"
           }
         >
           {isBudgetExceeded ? "预算超限" : !isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
@@ -233,14 +233,14 @@ function HarnessTab({
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <span>干预 {stats.interventions}次</span>
           <span>诊断 {stats.diagnoses}次</span>
-          {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
+          {stats.blocks > 0 && <span className="text-pop-red">阻断 {stats.blocks}次</span>}
         </div>
         <div className="flex-1" />
         <button
           className={cn(
             "flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded",
             chatOpen
-              ? "bg-violet-500/20 text-violet-400"
+              ? "bg-pop-purple/20 text-pop-purple"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
           )}
           onClick={() => setChatOpen((v) => !v)}
@@ -341,22 +341,22 @@ function EventAccordionItem({
     case "harness_diagnosis": {
       const severity = event.report?.severity
       icon = severity === "critical" ? "🚨" : "⚠️"
-      colorClass = severity === "critical" ? "text-red-400" : "text-amber-400"
+      colorClass = severity === "critical" ? "text-pop-red" : "text-pop-amber"
       break
     }
     case "harness_intervention":
       icon = "🔄"
-      colorClass = "text-blue-400"
+      colorClass = "text-pop-cyan"
       break
     case "harness_delegation":
       icon = event.delegationResult?.success ? "🤖" : "🤖❌"
       colorClass = event.delegationResult?.success
-        ? event.delegationResult?.decision === "block_node" ? "text-red-400" : "text-violet-400"
+        ? event.delegationResult?.decision === "block_node" ? "text-pop-red" : "text-pop-purple"
         : "text-muted-foreground"
       break
     case "harness_blocked":
       icon = "🚨"
-      colorClass = "text-red-500"
+      colorClass = "text-pop-red"
       break
     default:
       icon = "•"
@@ -434,7 +434,7 @@ function EventAccordionItem({
               )}
               {event.delegationResult.blockReason && (
                 <DetailSection label="阻断原因">
-                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-red-400">
+                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-pop-red">
                     {event.delegationResult.blockReason}
                   </pre>
                 </DetailSection>
@@ -488,16 +488,16 @@ function EventAccordionItem({
                       {merged.map((item, i) => {
                         if (item.type === "thinking") {
                           return (
-                            <div key={i} className="text-[10px] text-purple-400/80">
-                              <span className="text-purple-400 font-medium">💭 </span>
+                            <div key={i} className="text-[10px] text-pop-purple/80">
+                              <span className="text-pop-purple font-medium">💭 </span>
                               {item.content.slice(0, 500)}
                             </div>
                           )
                         }
                         if (item.type === "tool_call") {
                           return (
-                            <div key={i} className="text-[10px] text-amber-400/80">
-                              <span className="text-amber-400 font-medium">🔧 {item.toolName}</span>
+                            <div key={i} className="text-[10px] text-pop-amber/80">
+                              <span className="text-pop-amber font-medium">🔧 {item.toolName}</span>
                               {item.toolInput != null && (
                                 <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
                                   {typeof item.toolInput === "string" ? item.toolInput.slice(0, 300) : JSON.stringify(item.toolInput, null, 2).slice(0, 300)}
@@ -508,7 +508,7 @@ function EventAccordionItem({
                         }
                         if (item.type === "tool_result") {
                           return (
-                            <div key={i} className={cn("text-[10px] ml-3", item.isError ? "text-red-400/80" : "text-green-400/80")}>
+                            <div key={i} className={cn("text-[10px] ml-3", item.isError ? "text-pop-red/80" : "text-pop-green/80")}>
                               <span className="font-medium">{item.isError ? "❌" : "✅"} </span>
                               {item.content.slice(0, 300)}
                             </div>

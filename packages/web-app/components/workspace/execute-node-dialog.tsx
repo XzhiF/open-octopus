@@ -149,7 +149,7 @@ export function ExecuteNodeDialog({
                     <div className="grid gap-2" key={key}>
                       <Label htmlFor={`input-${key}`}>
                         {def.description || key}
-                        {def.required && <span className="ml-1 text-red-500">*</span>}
+                        {def.required && <span className="ml-1 text-pop-red">*</span>}
                       </Label>
                       <AutoResizeTextarea
                         id={`input-${key}`}

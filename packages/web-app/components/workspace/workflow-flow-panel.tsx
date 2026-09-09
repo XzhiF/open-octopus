@@ -383,38 +383,38 @@ export function WorkflowFlowPanel({
             {/* Statistics */}
             <div className="flex items-center gap-1.5 text-[11px] font-medium">
               {stats.completed && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400">
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-green-soft text-pop-green">
                   <CheckCircle className="h-3 w-3" />{stats.completed}
                 </span>
               )}
               {stats.running && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-amber-soft text-pop-amber">
                   <Loader2 className="h-3 w-3 animate-spin" />{stats.running}
                 </span>
               )}
               {stats.paused && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />{stats.paused}
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-purple-soft text-pop-purple">
+                  <span className="h-1.5 w-1.5 rounded-full bg-pop-purple" />{stats.paused}
                 </span>
               )}
               {stats.pending_approval && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-amber-soft text-pop-amber">
                   <ShieldCheck className="h-3 w-3" />{stats.pending_approval}
                 </span>
               )}
               {stats.failed && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-500" />{stats.failed}
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-pink-soft text-pop-red">
+                  <span className="h-1.5 w-1.5 rounded-full bg-pop-red" />{stats.failed}
                 </span>
               )}
               {stats.pending && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />{stats.pending}
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-cyan-soft text-pop-cyan">
+                  <span className="h-1.5 w-1.5 rounded-full bg-pop-cyan" />{stats.pending}
                 </span>
               )}
               {stats.rejected && (
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />{stats.rejected}
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-pop-amber-soft text-pop-amber">
+                  <span className="h-1.5 w-1.5 rounded-full bg-pop-amber" />{stats.rejected}
                 </span>
               )}
             </div>
@@ -447,22 +447,22 @@ export function WorkflowFlowPanel({
             proOptions={{ hideAttribution: true }}
             aria-label="执行流程图"
           >
-            <Background color="#333" gap={20} size={1} />
+            <Background color="#eceaf5" gap={20} size={1} />
             <Controls showInteractive={false} />
             <MiniMap
               nodeColor={(node) => {
                 const status = (node.data as any)?.executionStatus
-                if (status === "completed") return "#10b981"
-                if (status === "completed_with_failures") return "#f59e0b"
-                if (status === "running") return "#f59e0b"
-                if (status === "failed") return "#ef4444"
-                if (status === "budget_exceeded") return "#ef4444"
-                if (status === "paused") return "#8b5cf6"
-                if (status === "pending_approval") return "#f59e0b"
-                if (status === "rejected") return "#ea580c"
-                return "#d1d5db"
+                if (status === "completed") return "#00b575"
+                if (status === "completed_with_failures") return "#ffb800"
+                if (status === "running") return "#ffb800"
+                if (status === "failed") return "#e5484d"
+                if (status === "budget_exceeded") return "#e5484d"
+                if (status === "paused") return "#5b45ff"
+                if (status === "pending_approval") return "#ffb800"
+                if (status === "rejected") return "#ffb800"
+                return "#eceaf5"
               }}
-              maskColor="rgba(0, 0, 0, 0.1)"
+              maskColor="rgba(28, 27, 34, 0.1)"
               className="!bg-background/80 !border-border"
             />
           </ReactFlow>

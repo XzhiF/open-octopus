@@ -734,7 +734,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 <p className="text-muted-foreground">未配置组织</p>
               )}
             </div>
-            <div className="rounded-md border-2 border-dashed border-pop-bd/40 bg-pop-amber-soft p-2 text-[10px] font-bold text-amber-800 dark:text-amber-200">
+            <div className="rounded-md border-2 border-dashed border-pop-bd/40 bg-pop-amber-soft p-2 text-[10px] font-bold text-pop-ink">
               {presetLocked
                 ? "🔒 语境已锁定。换语境 = 新建任务。"
                 : "选择项目后保存以锁定。保存后不可更改。"}

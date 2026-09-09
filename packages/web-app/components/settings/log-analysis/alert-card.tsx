@@ -21,17 +21,17 @@ const severityConfig = {
     badge: "destructive" as const,
   },
   warning: {
-    border: "border-l-amber-500",
-    bg: "bg-amber-500/5",
+    border: "border-l-pop-amber",
+    bg: "bg-pop-amber/5",
     icon: AlertTriangle,
-    iconColor: "text-amber-500",
+    iconColor: "text-pop-amber",
     badge: "secondary" as const,
   },
   info: {
-    border: "border-l-blue-500",
-    bg: "bg-blue-500/5",
+    border: "border-l-pop-cyan",
+    bg: "bg-pop-cyan/5",
     icon: Info,
-    iconColor: "text-blue-500",
+    iconColor: "text-pop-cyan",
     badge: "outline" as const,
   },
 }

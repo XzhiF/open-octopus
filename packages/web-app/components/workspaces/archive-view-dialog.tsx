@@ -349,8 +349,8 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                               <CardContent className="pt-4">
                                 <div className="flex items-start gap-3">
                                   {adopted ? (
-                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
-                                      <Check className="h-3 w-3 text-green-600" />
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-pop-green-soft shrink-0 mt-0.5">
+                                      <Check className="h-3 w-3 text-pop-green" />
                                     </div>
                                   ) : (
                                     <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
@@ -359,7 +359,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                     <div className="flex items-center gap-2 mb-1">
                                       <Package className="h-4 w-4" />
                                       <h4 className="font-semibold">{wf.name}</h4>
-                                      {adopted && <Badge className="text-xs bg-green-600">已安装</Badge>}
+                                      {adopted && <Badge className="text-xs bg-pop-green">已安装</Badge>}
                                     </div>
                                     <p className="text-sm text-muted-foreground">{wf.description}</p>
                                   </div>
@@ -388,8 +388,8 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                               <CardContent className="pt-4">
                                 <div className="flex items-start gap-3">
                                   {adopted ? (
-                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
-                                      <Check className="h-3 w-3 text-green-600" />
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-pop-green-soft shrink-0 mt-0.5">
+                                      <Check className="h-3 w-3 text-pop-green" />
                                     </div>
                                   ) : (
                                     <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
@@ -398,7 +398,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                     <div className="flex items-center gap-2 mb-1">
                                       <BadgeIcon className="h-4 w-4" />
                                       <h4 className="font-semibold">{agent.name}</h4>
-                                      {adopted && <Badge className="text-xs bg-green-600">已安装</Badge>}
+                                      {adopted && <Badge className="text-xs bg-pop-green">已安装</Badge>}
                                     </div>
                                     <p className="text-sm text-muted-foreground">{agent.description}</p>
                                   </div>
@@ -433,8 +433,8 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                     <CardContent className="pt-4">
                                       <div className="flex items-start gap-3">
                                         {adopted ? (
-                                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
-                                            <Check className="h-3 w-3 text-green-600" />
+                                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-pop-green-soft shrink-0 mt-0.5">
+                                            <Check className="h-3 w-3 text-pop-green" />
                                           </div>
                                         ) : (
                                           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
@@ -448,7 +448,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                             {exp.confidence != null && (
                                               <Badge variant="secondary" className="text-xs">置信度: {formatPercent(exp.confidence)}</Badge>
                                             )}
-                                            {adopted && <Badge className="text-xs bg-green-600">已采纳</Badge>}
+                                            {adopted && <Badge className="text-xs bg-pop-green">已采纳</Badge>}
                                           </div>
                                         </div>
                                       </div>
@@ -476,8 +476,8 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                             <CardContent className="pt-4">
                               <div className="flex items-start gap-3">
                                 {adopted ? (
-                                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
-                                    <Check className="h-3 w-3 text-green-600" />
+                                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-pop-green-soft shrink-0 mt-0.5">
+                                    <Check className="h-3 w-3 text-pop-green" />
                                   </div>
                                 ) : (
                                   <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
@@ -491,7 +491,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                     ) : (
                                       <Badge variant="secondary" className="text-xs">LLM 生成</Badge>
                                     )}
-                                    {adopted && <Badge className="text-xs bg-green-600">已安装</Badge>}
+                                    {adopted && <Badge className="text-xs bg-pop-green">已安装</Badge>}
                                   </div>
                                   <p className="text-sm text-muted-foreground">{skill.description}</p>
                                   {skill.reason && (

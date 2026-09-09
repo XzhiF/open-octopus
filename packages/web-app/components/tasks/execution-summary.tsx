@@ -49,10 +49,10 @@ export const RUN_STATUS_LABEL: Record<string, string> = {
 }
 
 const RUN_DOT: Record<string, string> = {
-  queued: "bg-blue-500", claimed: "bg-amber-500", running: "bg-blue-500 animate-pulse",
-  triggered: "bg-blue-500", completed: "bg-emerald-500", success: "bg-emerald-500",
-  done: "bg-emerald-500", failed: "bg-red-500", aborted: "bg-zinc-500",
-  skipped: "bg-zinc-500", pending: "bg-muted-foreground",
+  queued: "bg-pop-cyan", claimed: "bg-pop-amber", running: "bg-pop-cyan animate-pulse",
+  triggered: "bg-pop-cyan", completed: "bg-pop-green", success: "bg-pop-green",
+  done: "bg-pop-green", failed: "bg-pop-red", aborted: "bg-pop-dim",
+  skipped: "bg-pop-dim", pending: "bg-muted-foreground",
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -255,7 +255,7 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
       )}
 
       {ref?.error_summary && (
-        <p className="text-xs text-red-500 break-words whitespace-pre-wrap">{ref.error_summary}</p>
+        <p className="text-xs text-pop-red break-words whitespace-pre-wrap">{ref.error_summary}</p>
       )}
 
       <div className="flex items-center gap-2 pt-0.5">
@@ -290,7 +290,7 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
         <div className="rounded bg-muted/60 p-2 text-[11px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
           {output.state === "loading" && <span className="inline-flex items-center gap-1.5"><Spinner className="size-3" /> 加载中…</span>}
           {output.state === "done" && output.text}
-          {output.state === "error" && <span className="text-red-500">{output.text}</span>}
+          {output.state === "error" && <span className="text-pop-red">{output.text}</span>}
           {output.state === "idle" && "…"}
         </div>
       )}
@@ -609,7 +609,7 @@ export function TaskRunDetailView({ task }: { task: Task }) {
         </div>
       </div>
       {task.status === "done" && (
-        <div className="max-w-[1400px] mx-auto mt-4 flex items-center gap-2 text-sm text-emerald-600">
+        <div className="max-w-[1400px] mx-auto mt-4 flex items-center gap-2 text-sm text-pop-green">
           <CheckCircle2 className="size-4" /> 任务已完成{task.completed_at ? ` · ${fmtTime(task.completed_at)}` : ""}
         </div>
       )}
