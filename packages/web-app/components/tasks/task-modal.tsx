@@ -112,21 +112,23 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const STATUS_TONE: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  ready: "bg-blue-500/15 text-blue-500",
-  running: "bg-blue-500/15 text-blue-500",
+  draft: "bg-pop-idle text-pop-dim",
+  ready: "bg-pop-cyan-soft text-cyan-800 dark:text-cyan-200",
+  running: "bg-pop-purple-soft text-pop-purple",
   // K3/US8: 待验收=琥珀（等人放行，非红死）；归档中=橙（票 08 编排中）。
-  awaiting_review: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  archiving: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-  done: "bg-emerald-500/15 text-emerald-600",
-  failed: "bg-red-500/15 text-red-500",
-  aborted: "bg-zinc-500/15 text-zinc-500",
+  awaiting_review: "bg-pop-yellow-soft text-amber-800 dark:text-amber-200",
+  archiving: "bg-pop-amber-soft text-amber-800 dark:text-amber-200",
+  done: "bg-pop-green-soft text-green-800 dark:text-green-200",
+  failed: "bg-pop-pink-soft text-pop-red",
+  aborted: "bg-pop-idle text-pop-dim",
 }
 
 // ── TaskModal ───────────────────────────────────────────────────────
 
 export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
   const mode = resolveMode(task)
+  // 模板选择页(直建第一屏)只是单列表单 → 用紧凑弹窗;工作台/执行视图才需要宽面。
+  const isTemplate = mode === "authoring-template"
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -160,7 +162,9 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           className={
             isFullscreen
               ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
-              : "sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
+              : isTemplate
+                ? "sm:max-w-[680px] w-[92vw] max-h-[84vh] h-[80vh] p-0 gap-0 flex flex-col"
+                : "sm:max-w-[88vw] w-[88vw] max-h-[88vh] h-[88vh] p-0 gap-0 flex flex-col"
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
@@ -243,7 +247,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
             ? "创作"
             : "执行"
   return (
-    <DialogHeader className="px-5 py-3 border-b border-border flex-row items-center justify-between space-y-0">
+    <DialogHeader className="px-5 py-3 border-b-2 border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0">
       <div className="min-w-0">
         <EditableTitle task={task} onMutated={onMutated} />
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
@@ -270,7 +274,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
         >
           {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </Button>
-        <Badge variant="secondary" className={`${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
+        <Badge variant="secondary" className={`rounded-full border-2 border-pop-bd text-[10px] font-black shadow-pop-sm ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
           {STATUS_LABEL[status] ?? status}
         </Badge>
       </div>

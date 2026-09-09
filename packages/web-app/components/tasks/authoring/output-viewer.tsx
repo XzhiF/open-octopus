@@ -273,7 +273,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
     <div className="space-y-2.5" data-output-viewer-sections>
       {/* ── Artifacts (AC1/AC2) ── */}
       <SectionCard
-        icon={<FileText className="size-3.5 text-muted-foreground" />}
+        icon={<FileText className="size-3.5 text-pop-ink" />}
+        iconTint="var(--pop-amber-soft)"
         title="执行产物"
         count={artifacts.length}
         hint="点击查看完整内容"
@@ -356,7 +357,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       {/* ── Assist-workflow run records (AC3/AC4/AC5/AC6) ── */}
       {runIds.length > 0 && (
         <SectionCard
-          icon={<Brain className="size-3.5 text-muted-foreground" />}
+          icon={<Brain className="size-3.5 text-pop-ink" />}
+          iconTint="var(--pop-purple-soft)"
           title="工作流运行记录"
           hint="点击查看过程日志"
           storageKey="authoring-runs"
@@ -429,7 +431,8 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       {/* ── Decision memo (D10 — adopted suggestions) ── */}
       {decisions.length > 0 && (
         <SectionCard
-          icon={<Lightbulb className="size-3.5 text-purple-500" />}
+          icon={<Lightbulb className="size-3.5 text-pop-ink" />}
+          iconTint="var(--pop-yellow-soft)"
           title="决策备忘"
           count={decisions.length}
           hint={task.task_spec.format === "v4" ? "拆相对话的全局决策 · 供验收参考" : "来自 MoA · 供方案决策"}

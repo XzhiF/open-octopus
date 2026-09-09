@@ -33,20 +33,20 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       role={isUser ? undefined : 'log'}
       aria-live={isUser ? undefined : 'polite'}
     >
-      {/* Avatar */}
+      {/* Avatar — 🎪 糖豆头像(黑边 + 小硬影) */}
       <div className={cn(
-        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-        isUser ? 'bg-primary text-primary-foreground' : 'bg-agent-primary text-agent-primary-foreground'
+        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-pop-bd shadow-[2px_2px_0_rgba(28,27,34,.15)]',
+        isUser ? 'bg-pop-pink text-white' : 'bg-pop-purple text-white'
       )}>
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
 
-      {/* Content */}
+      {/* Content — 贴纸气泡:用户黄底/AI 白纸,厚描边 + 硬投影,尖角朝头像侧 */}
       <div className={cn(
-        'rounded-xl px-4 py-2.5 max-w-[85%] text-sm leading-relaxed',
+        'rounded-[14px] px-4 py-2.5 max-w-[85%] text-sm leading-relaxed border-2 border-pop-bd shadow-pop-sm',
         isUser
-          ? 'bg-primary text-primary-foreground'
-          : 'bg-agent-surface-raised border border-agent-divider'
+          ? 'bg-pop-yellow text-pop-ink rounded-br-[4px]'
+          : 'bg-pop-paper text-pop-ink rounded-bl-[4px]'
       )}>
         {/* Collapsible thinking + tool calls (+ chronological timeline) */}
         {hasMeta && (

@@ -29,54 +29,59 @@ import {
 
 const REFRESH_INTERVAL_MS = 10_000
 
-/** 看板状态色彩体系（Linear/Notion 泳道惯例：一状态一色相，泳道轻染 +
- *  列头着色 + 卡片左侧 accent bar）。全部为静态 class 字面量（Tailwind JIT）。 */
+/** 看板状态色彩体系 🎪 Memphis 波普贴纸版:一状态一糖果色,列头彩色吊牌 +
+ *  泳道轻染 + 卡片整面染色(歪斜/hover 浮起由 .pop-tilt 统一驱动)。
+ *  全部为静态 class 字面量（Tailwind JIT）。 */
 const COLUMN_THEME: Record<TaskBoardColumnId, {
-  lane: string; label: string; dot: string; pill: string
+  lane: string; head: string; label: string; dot: string; pill: string
 }> = {
   draft: {
-    lane: "bg-zinc-500/[0.04]",
-    label: "text-zinc-600 dark:text-zinc-400",
-    dot: "bg-zinc-400",
-    pill: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+    lane: "bg-pop-paper",
+    head: "bg-pop-idle",
+    label: "text-pop-dim",
+    dot: "bg-pop-dim",
+    pill: "bg-pop-paper text-pop-dim",
   },
   ready: {
-    lane: "bg-sky-500/[0.05]",
-    label: "text-sky-700 dark:text-sky-400",
-    dot: "bg-sky-500",
-    pill: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+    lane: "bg-pop-cyan-soft/25",
+    head: "bg-pop-cyan-soft",
+    label: "text-cyan-800 dark:text-cyan-200",
+    dot: "bg-pop-cyan",
+    pill: "bg-pop-paper text-cyan-800 dark:text-cyan-200",
   },
   running: {
-    lane: "bg-blue-500/[0.05]",
-    label: "text-blue-700 dark:text-blue-400",
-    dot: "bg-blue-500 animate-pulse",
-    pill: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+    lane: "bg-pop-purple-soft/30",
+    head: "bg-pop-purple-soft",
+    label: "text-pop-purple",
+    dot: "bg-pop-purple",
+    pill: "bg-pop-paper text-pop-purple",
   },
   awaiting_review: {
-    lane: "bg-amber-500/[0.06] ring-1 ring-inset ring-amber-500/30",
-    label: "text-amber-700 dark:text-amber-400",
-    dot: "bg-amber-500",
-    pill: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    lane: "bg-pop-amber-soft/30",
+    head: "bg-pop-amber-soft",
+    label: "text-amber-800 dark:text-amber-200",
+    dot: "bg-pop-amber",
+    pill: "bg-pop-paper text-amber-800 dark:text-amber-200",
   },
   done: {
-    lane: "bg-emerald-500/[0.04]",
-    label: "text-emerald-700 dark:text-emerald-400",
-    dot: "bg-emerald-500",
-    pill: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    lane: "bg-pop-green-soft/25",
+    head: "bg-pop-green-soft",
+    label: "text-green-800 dark:text-green-200",
+    dot: "bg-pop-green",
+    pill: "bg-pop-paper text-green-800 dark:text-green-200",
   },
 }
 
-/** 卡片 accent：按（有效）状态取色 — 左色条 + 同色微染底；archiving 留橙、
- *  failed 红 / aborted 灰 在完成列里靠色条自证终态。 */
+/** 卡片整面染色:八状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。 */
 const CARD_THEME: Record<Task["status"], string> = {
-  draft: "border-l-zinc-400/80 bg-zinc-500/[0.03]",
-  ready: "border-l-sky-500/90 bg-sky-500/[0.04]",
-  running: "border-l-blue-500 bg-blue-500/[0.05]",
-  archiving: "border-l-orange-500 bg-orange-500/[0.05]",
-  awaiting_review: "border-l-amber-500 bg-amber-500/[0.07] ring-1 ring-inset ring-amber-500/25",
-  done: "border-l-emerald-500/80 bg-emerald-500/[0.04] opacity-95",
-  failed: "border-l-red-500/90 bg-red-500/[0.04] opacity-95",
-  aborted: "border-l-zinc-500/80 bg-zinc-500/[0.05] opacity-95",
+  draft: "bg-pop-paper",
+  ready: "bg-pop-cyan-soft",
+  running: "bg-pop-purple-soft",
+  archiving: "bg-pop-amber-soft",
+  awaiting_review: "bg-pop-yellow-soft",
+  done: "bg-pop-green-soft",
+  failed: "bg-pop-pink-soft",
+  aborted: "bg-pop-idle",
 }
 
 export default function TasksPage() {
@@ -300,17 +305,17 @@ export default function TasksPage() {
   const budgetMs = phaseBudgetMs()
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
+    <div className="pop-confetti flex flex-1 min-h-0 flex-col text-pop-ink">
       <div className="flex flex-col h-full min-w-0">
-        <header className="flex items-center gap-3 px-6 py-3 border-b border-border">
-          <h1 className="text-lg font-semibold tracking-tight">任务看板</h1>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{tasks.length} 个任务</span>
+        <header className="flex items-center gap-3 px-6 py-3 border-b-[2.5px] border-pop-bd bg-pop-paper">
+          <h1 className="text-lg font-black tracking-tight">任务看板</h1>
+          <span className="rounded-full border-2 border-pop-bd bg-pop-yellow px-2 py-0.5 text-xs font-black tabular-nums shadow-pop-sm">{tasks.length} 个任务</span>
           <div className="ml-auto flex gap-2">
-            <Button variant="outline" size="sm" onClick={fetchTasks} disabled={loading}>
+            <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
               刷新
             </Button>
-            <Button size="sm" onClick={openNew} data-task-new>
+            <Button variant="pop" size="sm" onClick={openNew} data-task-new>
               <Plus className="size-4" />
               新建任务
             </Button>
@@ -334,14 +339,14 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-1 basis-0 flex-col gap-2 rounded-lg ${theme.lane}`}
+                  className={`flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-[2.5px] border-pop-bd shadow-pop-sm ${theme.lane}`}
                 >
-                  <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2 text-xs font-semibold">
-                    <span className={`size-2 shrink-0 rounded-full ${theme.dot}`} aria-hidden />
+                  <header className={`flex items-center gap-2 border-b-2 border-pop-bd px-3 py-2 text-xs font-black ${theme.head}`}>
+                    <span className={`size-2 shrink-0 rounded-[3px] border-[1.5px] border-pop-bd ${theme.dot}`} aria-hidden />
                     <span className={theme.label}>{col.label}</span>
-                    <span className={`ml-auto rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums ${theme.pill}`}>{colTasks.length}</span>
+                    <span className={`ml-auto rounded-full border-2 border-pop-bd px-1.5 py-px text-[10px] font-black tabular-nums shadow-[2px_2px_0_rgba(28,27,34,.13)] ${theme.pill}`}>{colTasks.length}</span>
                   </header>
-                  <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
+                  <div className="pop-tilt flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
                     {colTasks.map((task) => (
                       <TaskCard
                         key={task.id}
@@ -359,7 +364,7 @@ export default function TasksPage() {
                     {colTasks.length === 0 && (
                       <div
                         data-empty-column={col.id}
-                        className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 text-[11px] text-muted-foreground/50"
+                        className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-pop-bd/30 text-[11px] font-bold text-pop-dim/70"
                       >
                         <Inbox className="size-4" aria-hidden />
                         暂无任务
@@ -482,19 +487,19 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
-      className={`group relative cursor-pointer rounded-md border border-border border-l-[3px] p-3 text-sm shadow-sm transition-all hover:-translate-y-px hover:shadow-md active:translate-y-0 ${
-        CARD_THEME[task.status] ?? "bg-card"
+      className={`group relative cursor-pointer rounded-xl border-[2.5px] border-pop-bd p-3 text-sm shadow-pop-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pop-bd ${
+        CARD_THEME[task.status] ?? "bg-pop-paper"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium truncate">{task.name}</h3>
+        <h3 className="font-black truncate text-pop-ink">{task.name}</h3>
         <div className="flex items-center gap-1 shrink-0">
-          {composite ? <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">复合</span> : null}
+          {composite ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-pink-soft text-pop-pink">复合</span> : null}
           {/* 票 11: v4 phase 角标（US7） */}
           {badge && (
             <span
               data-task-phase-badge
-              className="text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 tabular-nums"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-purple-soft text-pop-purple tabular-nums"
               title={`当前 Phase ${badge.phase}/${badge.total}（第一个未通过验收的 phase）`}
             >
               {`Phase ${badge.phase}/${badge.total}${badge.round != null ? ` · Round ${badge.round}` : ""}`}
@@ -504,7 +509,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {task.status === "archiving" && (
             <span
               data-task-archiving-badge
-              className="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-600 dark:text-orange-400"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-amber-soft text-amber-800 dark:text-amber-200"
               title="末 phase 已验收，归档编排中（git 失败会停在此态可重试）"
             >
               ⚠ 归档中
@@ -514,7 +519,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {overBudget && (
             <span
               data-task-overbudget-badge
-              className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-amber-800 dark:text-amber-200"
               title={`Phase ${overBudget.phaseIndex} Round ${overBudget.roundIndex} 已跑超 ${Math.round(budgetMs / 60000)} 分钟（仅提示，不中断）`}
             >
               ⏳ 超预算
@@ -523,7 +528,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {isQueuedRun && (
             <span
               data-task-queued-badge
-              className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-amber-800 dark:text-amber-200"
               title={`定时触发：${new Date(task.scheduled_at!).toLocaleString()}`}
             >
               {new Date(task.scheduled_at!).getTime() > Date.now()
@@ -536,10 +541,10 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {(task.status === "failed" || task.status === "aborted") && (
             <span
               data-task-card-status
-              className={`text-[10px] px-1 py-0.5 rounded ${
+              className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd ${
                 task.status === "failed"
-                  ? "bg-red-500/10 text-red-600 dark:text-red-400"
-                  : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400"
+                  ? "bg-pop-pink-soft text-pop-red"
+                  : "bg-pop-idle text-pop-dim"
               }`}
             >
               {task.status === "failed" ? "失败" : "已中止"}
@@ -550,7 +555,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-accept-btn
               onClick={(e) => { e.stopPropagation(); onAcceptRequest(task) }}
-              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-yellow text-pop-ink"
               title="打开验收三栏（执行摘要 | 产物核对 | 动作区）"
             >
               验收
@@ -562,7 +567,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-trigger-btn
               onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}
-              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-purple text-white"
               title="人工触发（立即或定时）"
             >
               触发
@@ -574,7 +579,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-advance-btn={advancePhaseOf(derived) ?? ""}
               onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task) }}
-              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-cyan text-pop-ink"
               title={`启动 Phase ${advancePhaseOf(derived)}（上一 Phase 已通过验收，autoAdvance 关闭）`}
             >
               启动下一 Phase
@@ -585,7 +590,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-archive-retry-btn
               onClick={(e) => { e.stopPropagation(); onArchiveRetryRequest(task) }}
-              className="h-5 rounded-md px-1.5 text-[10px] font-medium shadow-sm bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-amber text-pop-ink"
               title="重试归档（project 粒度幂等续跑）"
             >
               重试归档
@@ -595,7 +600,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-delete-btn
               onClick={(e) => { e.stopPropagation(); onDeleteRequest(task) }}
-              className="size-5 rounded flex items-center justify-center text-muted-foreground/50 hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+              className="size-5 rounded flex items-center justify-center text-pop-dim/60 hover:text-pop-red hover:bg-pop-pink-soft opacity-0 group-hover:opacity-100 transition-all"
               title="废弃草稿"
             >
               <Trash2 className="size-3" />
@@ -604,7 +609,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
         </div>
       </div>
       {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行只给时间语境 */}
-      <div className="mt-2 text-[10px] text-muted-foreground" title={new Date(task.created_at).toLocaleString()}>
+      <div className="mt-2 text-[10px] font-semibold text-pop-dim" title={new Date(task.created_at).toLocaleString()}>
         创建 {formatRelativeTime(task.created_at)}
       </div>
     </article>

@@ -21,6 +21,16 @@ import { ReviewCard } from '../knowledge/cards/ReviewCard'
 import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
 
+/** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
+const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
+  band: string; dot: string; text: string; sub: string
+}> = {
+  running: { band: 'bg-pop-purple-soft text-pop-purple', dot: 'bg-pop-purple', text: '⚡ 生成中', sub: '关闭弹窗不会中断' },
+  waiting: { band: 'bg-pop-amber-soft text-amber-800 dark:text-amber-300', dot: 'bg-pop-amber', text: '❓ 等待你的输入', sub: '回答上方问题即继续' },
+  done: { band: 'bg-pop-green-soft text-green-800 dark:text-green-300', dot: 'bg-pop-green', text: '✓ 就绪', sub: '随时发送下一条' },
+  error: { band: 'bg-pop-pink-soft text-pop-red', dot: 'bg-pop-red', text: '✕ 本轮出错', sub: '重新发送即可重试' },
+}
+
 interface ChatAreaProps {
   messages: AgentMessage[]
   streaming: boolean
@@ -89,6 +99,15 @@ export function ChatArea({
   const [contextExpanded, setContextExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const unansweredAsk = useMemo(() => findUnansweredAsk(messages), [messages])
+
+  // 🎪 状态色带（Memphis）：running/waiting/done/error 一眼可辨 —— 从既有
+  // props 派生，无新数据链路。aborted 不单列（气泡内已有「中断」印记）。
+  const hasAssistant = useMemo(() => messages.some((m) => m.role === 'assistant'), [messages])
+  const chatState: 'running' | 'waiting' | 'done' | 'error' | 'idle' =
+    streaming ? 'running'
+      : error ? 'error'
+        : (unansweredAsk || pendingConfirm) ? 'waiting'
+          : hasAssistant ? 'done' : 'idle'
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -316,7 +335,7 @@ export function ChatArea({
 
             {/* Error */}
             {error && (
-              <div className="rounded-md bg-agent-error-light border border-agent-error/20 p-3 text-sm text-agent-error">
+              <div className="rounded-xl border-2 border-pop-bd bg-pop-pink-soft p-3 text-sm font-bold text-pop-red shadow-pop-sm">
                 {error}
               </div>
             )}
@@ -324,8 +343,27 @@ export function ChatArea({
         </div>
       )}
 
+      {/* 🎪 状态色带 — composer 上方的贴纸 pill(derived from props,无新链路) */}
+      {hasSession && chatState !== 'idle' && (
+        <div
+          data-chat-state={chatState}
+          className={cn(
+            'mx-4 mt-2 flex shrink-0 items-center gap-2 rounded-full border-2 border-pop-bd px-3 py-1 text-xs font-black shadow-pop-sm',
+            RIBBON_THEME[chatState].band,
+          )}
+        >
+          <span className={cn(
+            'size-[9px] shrink-0 rounded-[3px] border-[1.5px] border-pop-bd',
+            RIBBON_THEME[chatState].dot,
+            chatState === 'running' && 'pop-pulse',
+          )} />
+          {RIBBON_THEME[chatState].text}
+          <span className="truncate font-medium opacity-70">{RIBBON_THEME[chatState].sub}</span>
+        </div>
+      )}
+
       {/* Input area — always visible */}
-      <div className="border-t border-agent-divider bg-agent-surface-raised p-4">
+      <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-4">
         <div className="max-w-3xl mx-auto relative">
           {/* @@mention autocomplete */}
           <MentionAutocomplete
@@ -358,14 +396,17 @@ export function ChatArea({
               }}
               placeholder={streaming ? 'Agent 正在回复中...' : '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
               disabled={streaming || !!pendingConfirm}
-              className="min-h-[44px] max-h-[200px] resize-none rounded-lg border-agent-divider bg-agent-surface-inset focus-visible:ring-agent-primary"
+              className={cn(
+                'min-h-[44px] max-h-[200px] resize-none rounded-xl border-2 border-pop-bd text-pop-ink focus-visible:ring-pop-bd',
+                chatState === 'waiting' ? 'bg-pop-amber-soft' : 'bg-pop-bg',
+              )}
             />
             {streaming ? (
               <Button
                 onClick={onStop}
                 variant="outline"
                 size="icon"
-                className="shrink-0 h-10 w-10 rounded-lg border-agent-error/30 text-agent-error hover:bg-agent-error-light"
+                className="shrink-0 h-10 w-10 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft"
               >
                 <Square className="h-4 w-4" />
               </Button>
@@ -374,7 +415,7 @@ export function ChatArea({
                 onClick={handleSend}
                 disabled={!input.trim()}
                 size="icon"
-                className="shrink-0 h-10 w-10 rounded-lg bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
+                className="shrink-0 h-10 w-10 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90"
               >
                 <Send className="h-4 w-4" />
               </Button>
@@ -461,9 +502,9 @@ export function ChatArea({
  *  thinking into its collapsed "思考过程" meta. */
 function StreamingThinkingCard({ text, active }: { text: string; active: boolean }) {
   return (
-    <div className="rounded-md border border-agent-divider bg-agent-surface-raised/60 px-3 py-2">
-      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-        <span className={active ? 'animate-pulse' : undefined}>💭</span>
+    <div className="rounded-xl border-2 border-pop-bd bg-pop-purple-soft px-3 py-2 shadow-pop-sm">
+      <div className="flex items-center gap-1 text-xs font-black text-pop-purple mb-1">
+        <span className={active ? 'pop-pulse' : undefined}>💭</span>
         {active ? '思考中...' : '思考'}
       </div>
       {text && <AutoFollowPre text={text} />}

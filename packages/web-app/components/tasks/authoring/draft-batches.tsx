@@ -139,7 +139,8 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
 
   return (
     <SectionCard
-      icon={<Layers className="size-3.5 text-muted-foreground" />}
+      icon={<Layers className="size-3.5 text-pop-ink" />}
+      iconTint="var(--pop-cyan-soft)"
       title="草稿批次"
       count={batches.length}
       hint="磁盘直扫 · 落盘即现"

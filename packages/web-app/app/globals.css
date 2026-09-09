@@ -117,6 +117,66 @@
   --moa-resolve-degraded-light: oklch(0.75 0.15 70 / 0.1);
   --moa-resolve-error: oklch(0.63 0.22 25);
   --moa-resolve-error-light: oklch(0.55 0.22 25 / 0.1);
+
+  /* ── Agent semantic colors ──
+     从 styles/globals.css 迁回 —— 那份文件无人 import，agent-* 工具类一直被
+     Tailwind v4 丢弃，聊天配色全灭即此根因。 */
+  --agent-primary: oklch(0.55 0.18 260);
+  --agent-primary-hover: oklch(0.48 0.20 260);
+  --agent-primary-active: oklch(0.42 0.21 260);
+  --agent-primary-light: oklch(0.96 0.02 260);
+  --agent-primary-foreground: oklch(0.985 0 0);
+
+  --agent-accent: oklch(0.58 0.20 305);
+  --agent-accent-hover: oklch(0.52 0.22 305);
+  --agent-accent-light: oklch(0.96 0.03 305);
+
+  --agent-success: oklch(0.65 0.17 155);
+  --agent-success-light: oklch(0.96 0.03 155);
+  --agent-success-foreground: oklch(0.20 0.05 155);
+
+  --agent-warn: oklch(0.75 0.14 80);
+  --agent-warn-light: oklch(0.97 0.04 80);
+  --agent-warn-foreground: oklch(0.30 0.08 80);
+
+  --agent-error: oklch(0.58 0.20 25);
+  --agent-error-light: oklch(0.96 0.03 25);
+  --agent-error-foreground: oklch(0.25 0.08 25);
+
+  --agent-info: oklch(0.62 0.13 240);
+  --agent-info-light: oklch(0.96 0.02 240);
+  --agent-info-foreground: oklch(0.25 0.05 240);
+
+  --agent-surface: oklch(0.985 0 0);
+  --agent-surface-raised: oklch(1 0 0);
+  --agent-surface-inset: oklch(0.96 0 0);
+  --agent-divider: oklch(0.90 0 0);
+
+  /* ── Pop (Memphis 波普贴纸) tokens — 任务看板 v4 皮肤 (light) ── */
+  --pop-bg: #fffdf5;
+  --pop-paper: #ffffff;
+  --pop-ink: #1c1b22;
+  --pop-dim: #77757f;
+  --pop-bd: #211f27;
+  --pop-pink: #ff4d6d;
+  --pop-pink-soft: #ffe3e9;
+  --pop-yellow: #ffd23f;
+  --pop-yellow-soft: #fff3c4;
+  --pop-purple: #5b45ff;
+  --pop-purple-soft: #eceaff;
+  --pop-green: #00b575;
+  --pop-green-soft: #d9f5e7;
+  --pop-amber: #ffb800;
+  --pop-amber-soft: #fff0cc;
+  --pop-cyan: #22b8e0;
+  --pop-cyan-soft: #daf4fb;
+  --pop-red: #e5484d;
+  --pop-idle: #eceaf5;
+  --pop-bdw: 2.5px;
+  --pop-shadow: 5px 5px 0 rgba(28, 27, 34, 0.16);
+  --pop-shadow-sm: 3px 3px 0 rgba(28, 27, 34, 0.13);
+  --pop-shadow-lg: 8px 8px 0 rgba(28, 27, 34, 0.18);
+  --pop-dot: rgba(28, 27, 34, 0.05);
 }
 
 .dark {
@@ -221,6 +281,62 @@
   --moa-resolve-degraded-light: oklch(0.78 0.14 70 / 0.1);
   --moa-resolve-error: oklch(0.58 0.20 25);
   --moa-resolve-error-light: oklch(0.58 0.20 25 / 0.1);
+
+  /* ── Agent semantic colors (dark) ── */
+  --agent-primary: oklch(0.65 0.16 260);
+  --agent-primary-hover: oklch(0.70 0.14 260);
+  --agent-primary-active: oklch(0.75 0.12 260);
+  --agent-primary-light: oklch(0.22 0.04 260);
+
+  --agent-accent: oklch(0.68 0.18 305);
+  --agent-accent-hover: oklch(0.72 0.16 305);
+  --agent-accent-light: oklch(0.24 0.04 305);
+
+  --agent-success: oklch(0.60 0.15 155);
+  --agent-success-light: oklch(0.22 0.04 155);
+  --agent-success-foreground: oklch(0.92 0.03 155);
+
+  --agent-warn: oklch(0.72 0.12 80);
+  --agent-warn-light: oklch(0.25 0.04 80);
+  --agent-warn-foreground: oklch(0.92 0.03 80);
+
+  --agent-error: oklch(0.55 0.18 25);
+  --agent-error-light: oklch(0.22 0.04 25);
+  --agent-error-foreground: oklch(0.92 0.03 25);
+
+  --agent-info: oklch(0.58 0.11 240);
+  --agent-info-light: oklch(0.22 0.03 240);
+  --agent-info-foreground: oklch(0.92 0.03 240);
+
+  --agent-surface: oklch(0.16 0 0);
+  --agent-surface-raised: oklch(0.20 0 0);
+  --agent-surface-inset: oklch(0.13 0 0);
+  --agent-divider: oklch(0.28 0 0);
+
+  /* ── Pop tokens (dark) — 深色底 + 浅色贴纸描边 + 深调糖果 ── */
+  --pop-bg: #16141c;
+  --pop-paper: #1e1c26;
+  --pop-ink: #f2f0fa;
+  --pop-dim: #a5a2b3;
+  --pop-bd: #5d5872;
+  --pop-pink: #ff5d7a;
+  --pop-pink-soft: #3b1f2b;
+  --pop-yellow: #ffd23f;
+  --pop-yellow-soft: #3a3117;
+  --pop-purple: #8f7dff;
+  --pop-purple-soft: #2a2450;
+  --pop-green: #2ecc8f;
+  --pop-green-soft: #173726;
+  --pop-amber: #ffc233;
+  --pop-amber-soft: #3a2d12;
+  --pop-cyan: #43c6ea;
+  --pop-cyan-soft: #153742;
+  --pop-red: #ff6b6b;
+  --pop-idle: #2a2735;
+  --pop-shadow: 5px 5px 0 rgba(0, 0, 0, 0.45);
+  --pop-shadow-sm: 3px 3px 0 rgba(0, 0, 0, 0.4);
+  --pop-shadow-lg: 8px 8px 0 rgba(0, 0, 0, 0.5);
+  --pop-dot: rgba(242, 240, 250, 0.05);
 }
 
 @theme inline {
@@ -290,6 +406,32 @@
   --color-knowledge-retired: var(--knowledge-retired);
   --color-knowledge-retired-bg: var(--knowledge-retired-bg);
 
+  /* ── Agent colors ── */
+  --color-agent-primary: var(--agent-primary);
+  --color-agent-primary-hover: var(--agent-primary-hover);
+  --color-agent-primary-active: var(--agent-primary-active);
+  --color-agent-primary-light: var(--agent-primary-light);
+  --color-agent-primary-foreground: var(--agent-primary-foreground);
+  --color-agent-accent: var(--agent-accent);
+  --color-agent-accent-hover: var(--agent-accent-hover);
+  --color-agent-accent-light: var(--agent-accent-light);
+  --color-agent-success: var(--agent-success);
+  --color-agent-success-light: var(--agent-success-light);
+  --color-agent-success-foreground: var(--agent-success-foreground);
+  --color-agent-warn: var(--agent-warn);
+  --color-agent-warn-light: var(--agent-warn-light);
+  --color-agent-warn-foreground: var(--agent-warn-foreground);
+  --color-agent-error: var(--agent-error);
+  --color-agent-error-light: var(--agent-error-light);
+  --color-agent-error-foreground: var(--agent-error-foreground);
+  --color-agent-info: var(--agent-info);
+  --color-agent-info-light: var(--agent-info-light);
+  --color-agent-info-foreground: var(--agent-info-foreground);
+  --color-agent-surface: var(--agent-surface);
+  --color-agent-surface-raised: var(--agent-surface-raised);
+  --color-agent-surface-inset: var(--agent-surface-inset);
+  --color-agent-divider: var(--agent-divider);
+
   /* ── Swarm colors ── */
   --color-swarm-primary: var(--swarm-primary);
   --color-swarm-primary-hover: var(--swarm-primary-hover);
@@ -327,6 +469,33 @@
   --color-moa-resolve-degraded-light: var(--moa-resolve-degraded-light);
   --color-moa-resolve-error: var(--moa-resolve-error);
   --color-moa-resolve-error-light: var(--moa-resolve-error-light);
+
+  /* ── Pop (Memphis 波普贴纸) colors ── */
+  --color-pop-bg: var(--pop-bg);
+  --color-pop-paper: var(--pop-paper);
+  --color-pop-ink: var(--pop-ink);
+  --color-pop-dim: var(--pop-dim);
+  --color-pop-bd: var(--pop-bd);
+  --color-pop-pink: var(--pop-pink);
+  --color-pop-pink-soft: var(--pop-pink-soft);
+  --color-pop-yellow: var(--pop-yellow);
+  --color-pop-yellow-soft: var(--pop-yellow-soft);
+  --color-pop-purple: var(--pop-purple);
+  --color-pop-purple-soft: var(--pop-purple-soft);
+  --color-pop-green: var(--pop-green);
+  --color-pop-green-soft: var(--pop-green-soft);
+  --color-pop-amber: var(--pop-amber);
+  --color-pop-amber-soft: var(--pop-amber-soft);
+  --color-pop-cyan: var(--pop-cyan);
+  --color-pop-cyan-soft: var(--pop-cyan-soft);
+  --color-pop-red: var(--pop-red);
+  --color-pop-idle: var(--pop-idle);
+
+  /* pop 硬投影 / 圆角 —— 注册进 Tailwind 命名空间，得 shadow-pop-* / rounded-pop */
+  --shadow-pop: var(--pop-shadow);
+  --shadow-pop-sm: var(--pop-shadow-sm);
+  --shadow-pop-lg: var(--pop-shadow-lg);
+  --radius-pop: 14px;
 }
 
 @layer base {
@@ -335,6 +504,85 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* ─── Pop (Memphis 波普贴纸) 皮肤件 — 任务看板 / 草稿工作台 / 弹窗共用 ─────────
+ * 原则:结构件保持 shadcn 语义类不动,贴纸外形(厚黑边/硬投影/歪斜/圆点底纹)
+ * 全部收敛在这里,组件里只贴类名 + pop-* token 工具类。
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* 圆点彩纸底纹(页面级背景) */
+.pop-confetti {
+  background-color: var(--pop-bg);
+  background-image: radial-gradient(var(--pop-dot) 1.6px, transparent 1.6px);
+  background-size: 26px 26px;
+}
+
+/* 贴纸卡:厚黑边 + 硬投影 —— 与 Tailwind 类混用时以本规则为准 */
+.pop-card {
+  border: var(--pop-bdw) solid var(--pop-bd);
+  border-radius: 14px;
+  background: var(--pop-paper);
+  box-shadow: var(--pop-shadow-sm);
+}
+.pop-card-sm {
+  border: 2px solid var(--pop-bd);
+  border-radius: 12px;
+  background: var(--pop-paper);
+  box-shadow: 3px 3px 0 rgba(28, 27, 34, 0.1);
+}
+.dark .pop-card-sm {
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* 歪斜贴纸列:奇偶微歪,hover 摆正并浮起(看板卡列表 / 右栏卡列表)。
+   [data-no-tilt] 排除自带歪斜的吊牌等元素。 */
+.pop-tilt > * {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.pop-tilt > *:not([data-no-tilt]):nth-child(odd) { transform: rotate(-0.45deg); }
+.pop-tilt > *:not([data-no-tilt]):nth-child(even) { transform: rotate(0.55deg); }
+.pop-tilt > *:not([data-no-tilt]):hover {
+  transform: rotate(0deg) translate(-2px, -2px);
+  box-shadow: var(--pop-shadow);
+}
+.pop-tilt > [data-empty-column] {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 分组吊牌(SPEC/RUN/GATE)的自带微歪 */
+.pop-tilt-tag { transform: rotate(-1.2deg); }
+
+/* 按压位移(入队按钮 / 发送键) */
+.pop-press:active {
+  transform: translate(2px, 2px);
+  box-shadow: none !important;
+}
+
+/* 虚线分区带(思考卡 meta / ask 提示等) */
+.pop-dash {
+  border-top: 2px dashed rgba(33, 31, 39, 0.2);
+}
+.dark .pop-dash {
+  border-top-color: rgba(242, 240, 250, 0.18);
+}
+
+@keyframes pop-blink { 50% { opacity: 0; } }
+@keyframes pop-jump { 40% { transform: translateY(-4px); } }
+@keyframes pop-pulse { 50% { opacity: 0.3; } }
+.pop-blink { animation: pop-blink 0.9s steps(1) infinite; }
+.pop-jump { animation: pop-jump 0.9s infinite; }
+.pop-pulse { animation: pop-pulse 1.2s infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-tilt > *,
+  .pop-blink,
+  .pop-jump,
+  .pop-pulse {
+    animation: none;
+    transform: none;
   }
 }
 

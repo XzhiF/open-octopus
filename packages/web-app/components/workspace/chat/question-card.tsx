@@ -166,21 +166,21 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     <div className="mb-4">
       <div
         className={cn(
-          "bg-secondary rounded-xl px-4 py-3 text-sm max-w-[90%] border-l-3",
-          "transition-[border-color] duration-300 ease-out",
-          phase === "answered" ? "border-l-emerald-400" : "border-l-amber-400"
+          "rounded-[14px] border-[2.5px] border-pop-bd px-4 py-3 text-sm text-pop-ink max-w-[90%] shadow-pop",
+          "transition-colors duration-300 ease-out",
+          phase === "answered" ? "bg-pop-green-soft" : "bg-pop-amber-soft"
         )}
       >
         {/* Header */}
         <div className="flex items-center gap-2 mb-3">
           {phase === "answered" ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-pop-green shrink-0" />
           ) : phase === "preparing" ? (
-            <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+            <Loader2 className="w-4 h-4 text-amber-700 dark:text-amber-300 animate-spin shrink-0" />
           ) : (
-            <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <HelpCircle className="w-4 h-4 text-amber-700 dark:text-amber-300 shrink-0" />
           )}
-          <span className="font-medium text-sm">
+          <span className="font-black text-sm">
             {phase === "answered"
               ? "已回答"
               : phase === "preparing"
@@ -327,6 +327,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
         {phase === "ready" && (
           <div className="mt-4 flex items-center gap-2 animate-in fade-in duration-200">
             <Button
+              variant="pop"
               size="sm"
               onClick={handleSubmit}
               disabled={!allAnswered}

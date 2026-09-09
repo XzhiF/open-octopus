@@ -176,7 +176,8 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
 
   return (
     <SectionCard
-      icon={<Link2 className="size-3.5 text-muted-foreground shrink-0" />}
+      icon={<Link2 className="size-3.5 text-pop-ink shrink-0" />}
+      iconTint="var(--pop-purple-soft)"
       title="Phase 计划"
       count={phases.length}
       storageKey="authoring-phases"
