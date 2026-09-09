@@ -18,20 +18,10 @@ const AUXILIARY_TICK_INTERVAL = parseInt(
   process.env.OCTOPUS_SCHEDULER_TICK_MS ?? '60000',
   10,
 )
-const MAX_AGENT_CONCURRENCY = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_AGENT_CONCURRENT ?? '10',
-  10,
-)
-// AC6: mirrors workflow-executor.ts MAX_PARALLEL_WORKSPACES — kept in sync via env var
-const MAX_PARALLEL_WORKSPACES = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
-  10,
-)
-// AC11: stale claimed threshold — claimed_at older than this rolls back to queued
-const STALE_CLAIMED_THRESHOLD_MS = parseInt(
-  process.env.OCTOPUS_SCHEDULER_STALE_CLAIMED_MS ?? '600000',
-  10,
-)
+// ADR-0021: cap + agent gate + stale threshold are single-sourced in ./concurrency —
+// MAX_PARALLEL_WORKSPACES used to be parsed here AND in workflow-executor AND in
+// task-dispatch-service, held together by a comment claiming they stayed in sync.
+import { MAX_AGENT_CONCURRENCY, MAX_PARALLEL_WORKSPACES, STALE_CLAIMED_THRESHOLD_MS } from './concurrency'
 
 interface ScheduleRow {
   id: string
@@ -517,9 +507,10 @@ export class SchedulerEngine {
           continue
         }
 
-        // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
-        // stay in 'queued' status and retry on the next tick when active count drops.
-        const activeCount = this.runDAO.countDistinctActiveSchedules()
+        // AC6: don't dispatch beyond the global cap. The meter spans both kinds of
+        // in-flight work (job fires + task launches) — see countActiveWork. Remaining
+        // queued tasks stay 'queued' and retry on the next tick as slots free.
+        const activeCount = this.runDAO.countActiveWork()
         if (activeCount >= MAX_PARALLEL_WORKSPACES) break
 
         const now = new Date()

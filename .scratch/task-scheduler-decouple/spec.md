@@ -1,0 +1,135 @@
+# Spec — 任务 ⇄ 调度器所有权切开 (task-scheduler-decouple)
+
+> 决策记录:ADR-0021(2026-09-10 版)· 分支:`feat/scheduler-decouple` · 创建:2026-09-09
+> 前置:开发阶段,存量数据可直接清除,**无迁移、无兼容层**
+> 架构:调度器职责回归 `workflow`/`agent`,新增 `job` 类型;任务生命周期由一个**内置 job** 独占。**不新增任何表。**
+
+## 1. 问题
+
+任务"入队 → 触发"的真实实现:`readyTask` 给任务预先固化一条私有 `schedules` 行(内部称**信封**,`origin_type='task'`,停放 `status='draft'`),"触发"= 把这条行翻成 `queued`。`tasks` 表本身没有任何触发字段。
+
+于是 `schedules` 一表三职:作业定义 / 一次性运行实例 / 任务私有信封。后两职(v37→v39 陆续加)把代价全压在任务生命周期上:
+
+| # | 症状 | 证据 |
+|---|---|---|
+| P1 | 任务代码写三张调度表,信封 `config` 兼任"冻结 phase 绑定 + 当前第几轮游标" | `tasks-service.ts:2048`(dispatchPhaseRound 重写 `workflow_chain[0]`/`_phase_index`/`_round_index`) |
+| P2 | 定时时间无处安放,只能寄存信封 → 绑定是结构性的 | `schedules.scheduled_at`,`tasks` 无对应列 |
+| P3 | 双状态机手工镜像 + 内部实体甩给用户 | `schedule-status-listener.ts`;`tasks-service.ts:1761`「未找到已入队的执行计划,请重新入队」 |
+| P4 | 一整个生命周期维护层只为隐藏对象存在 | `locateParkedEnvelope`、reopen「不删旧行会泄漏重复」、delete/abort 级联软删、`orphan-reaper.ts` |
+| P5 | 周期触发 structurally 不可能 | task-origin 行 `cron_expression` 恒 null |
+| P6 | 概念双向污染 | `routes/scheduler.ts:203`:2026-08-29 为让运行中任务可见去掉 origin 过滤 → 信封混进系统调度列表 |
+
+根因:触发定义寄存在运行载体里,运行载体又寄存在作业定义表里。
+
+## 2. 目标与非目标
+
+**目标**
+1. 调度器只干一件事:按定义到点跑作业,类型 `workflow` / `agent` / **`job`**(TS handler)。它不认识"任务"。
+2. 任务自己持有"什么时候该跑"(`tasks.trigger_*`),"跑成什么样"是一次 `executions` 行。
+3. 全系统唯一同时认识两边的单元 = 内置 job `task-lifecycle`,它独占任务的启动 / 状态推进 / 重试 / 超时 / 并发 / 孤儿回收。
+4. 任务域代码里 `schedules` 这个词消失(门禁单测守)。
+
+**非目标**:不改引擎 7 执行器与 YAML 语义;不重做工作区"调度管理"tab 的交互(它只是继续当 `workflow`/`agent` 作业的管理面);不动 `job_type='agent'` 的执行路径;不新建表。
+
+## 3. 架构
+
+```
+调度器（不认识任务）
+  schedules            作业定义 · job_type ∈ workflow | agent | job
+    ├─ workflow/agent → 既有 WorkflowExecutor / AgentExecutor
+    └─ job            → JobTypeExecutor：按 config.handler 名查注册表，调 TS 函数
+  schedule_executions   某作业某次触发的历史（三类共用，不变）
+  scheduler-engine      泵：node-cron 注册、领取、超时、stale、失败计数 —— 逻辑不变
+
+内置 job：task-lifecycle（唯一的双边单元，代码在 services/tasks/）
+  tick  +  执行完成回调（双输入，见 §5.3）
+  ① tasks.next_fire_at 到点 → 冻结 launch payload → 插 executions(task_id, status='pending')
+  ② 并发闸内领取 pending → 建/复用工作区 → 起引擎
+  ③ 执行终态 → 推 tasks.status、派生 awaiting_review、seed/collect 产物、开下一轮
+  ④ composite 子单元 = 同 task 的 child executions（引擎既有 parent_id/child_index）
+  ⑤ 回收：死任务的在飞执行、滞留 pending、超时、连续失败退避
+```
+
+任务侧只有两类数据:`tasks`(WHAT + WHEN)与 `executions`(每次运行,`task_id` 直连)。
+
+## 4. Schema v41(票 01 已落部分 + 待落部分)
+
+**已落(纯加法,旧代码零改动)**
+
+```
+tasks       + trigger_mode 'manual'|'once'|'cron' / trigger_at / cron_expression
+            / cron_timezone / trigger_enabled / next_fire_at / last_fired_at
+            INDEX idx_tasks_due(next_fire_at) WHERE deleted_at IS NULL AND status='ready'
+                                          AND trigger_enabled=1 AND next_fire_at IS NOT NULL
+executions  + task_id     INDEX idx_exec_task(task_id, created_at DESC)
+                          INDEX idx_exec_task_pending(task_id, created_at) WHERE status='pending'
+workspaces  + task_id     INDEX idx_ws_task(task_id)
+UNIQUE  INDEX ux_exec_task_active ON executions(task_id)
+        WHERE task_id IS NOT NULL AND parent_id='0'
+          AND status NOT IN (终态)
+```
+
+**待落(票 03,与泵翻转同批)**
+
+```
+schedules   − origin_type − origin_id − origin_role − assoc_meta   （绑任务的列）
+            − status      − claimed_at − scheduled_at              （只有信封用到的运行列）
+            job_type CHECK 扩到 ('workflow','agent','job')；cron_expression 恢复 NOT NULL?
+              —— 否：`job` 与 workflow 一样可被手动触发，仍允许无 cron 的定义行
+schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原样保留
+```
+
+`ux_exec_task_active` 两条刻意的写法:
+- **只约束根执行**(`parent_id='0'`):composite 一个任务并发跑多个子单元是设计,不是漏洞;子单元级不双跑由 job 自己按 DAG 管。
+- **`NOT IN (终态)` 而非 `IN (活跃)`**:执行有五个存活状态(`pending/running/paused/pending_approval/pending_resume`,审批与交互挂起仍持有工作区),未来新增状态默认**占槽**。白名单会在有人加第六个存活状态那天静默允许双起。滞留由对账回合处理,不是放第二实例的理由。
+
+## 5. 边界与不变量
+
+1. **任务域 → 调度域:零引用**(无 import、无表名、无列名)。命令(`arm` / `取消定时` / `abort` / `advance`)由**路由层**协调:route 同时调任务侧与 `task-lifecycle` job。
+2. **冻结 payload**:启动那一刻由任务侧算好配置快照写进 `executions.input_values`/var_pool(沿用 v4 现有物化),之后任务 spec 再改不影响在飞的一轮。今天这个职责在信封 `config` 里,搬进执行行即自然归位。
+3. **状态推进 = 事件回调 + tick 对账**:引擎完成/异常时同步回调 job(等价今天 `emitScheduleStatus` + listener 的零延迟),每轮 tick 再幂等对账一次(抓崩溃/重启/漏事件)。对账与孤儿回收同源。
+4. **并发闸跨两类**:`countActiveWork()` = 在飞作业触发(`schedule_executions` active distinct `schedule_id`)+ 在飞任务根执行。三处消费点(engine 领取前、executor 复检、composite 预检)必须共用它,否则任务能绕过 cron 在守的上限。
+5. **`trigger_source='requirement'` 退休**:`WorkflowExecutor.isRequirement` 四处读点(状态推进 / done 收尾 / retention 豁免 / task-home collect)改判 `execution.task_id != null`,不再有从 `origin_type` 造词的中间层。
+
+## 6. 票序(每张结束仓库全绿)
+
+| 票 | 内容 | 绿的条件 |
+|---|---|---|
+| **01 ✅** | v41 加法:schema 加列/索引 + `ux_exec_task_active` + `TaskDAO` 触发面(`armOnce`/`armCron`/`disarmTrigger`/`setTriggerEnabled`/`findDueTriggers`/`markFired`) | 已完成。`task-trigger-dao.test.ts` 18 测试(含闩锁五存活态/终态释放/根-子区分/未知状态占槽)+ `db-schema` 金数更新。**全量红数与 HEAD 逐条一致(37)** |
+| **02 ✅** `job` 类型骨架 | `job_type='job'` 全链路打通:`codeJobConfigSchema`(只存 handler 名 + args,**代码不入库**)+ `code-job-registry.ts`(未注册即抛错并回显已注册清单)+ `CodeJobExecutor`(AbortSignal 超时、config 解析在 try 内、每条失败路径都终态写行)+ `builtin-jobs.ts` 内置 `task-lifecycle` seed(确定性主键 `builtin-<handler>`、**enabled=0**、只修 handler 指针不回滚用户改动、占位 handler 自报"未实装(票03)")+ `concurrency.ts` 把三份各自 parseInt 的 `MAX_PARALLEL_WORKSPACES` 收成单源 + `countActiveWork()` 并表计量,三处消费点全部改用 | 已完成。31 测试(code-job 11 / builtin-jobs 9 / count-active-work 13)。两条**测出来的事实**:① `idx_sched_execs_unique_active` 已保证一个作业只有一条 live fire,故 DISTINCT 计量是双保险;② `job_type='job'` 的 fire **必须排除在并发闸外**,否则内置 job 每分钟一跑永久吃掉 3 槽之一。`TERMINAL_EXECUTION_STATUSES` 单一真相源 + 金测钉住它与 `ux_exec_task_active` DDL 完全一致(SQL 不能 import 常量,这是唯一防线) |
+| **03** 一次原子翻转 | job handler 实装(due-scan → 插 pending 执行 → 领取 → 建/复用工作区 → 起引擎 → 推进/收尾,把 `WorkflowExecutor` 的任务专属逻辑整体搬进来);`readyTask` 停造信封;`trigger/cancel` 改写 `tasks.trigger_*`;任务侧 10 处 finder + 3 表写全删;`schedules` 减列;`isRequirement` 改判;门禁单测(`services/tasks/**` 禁调度字样) | `tasks-trigger-mutex`/`-prebuild`/`tasks-v4-*`/`tasks-routes`/`06-*`/`07-sse-*` 按新契约重写并通过;**并发双起用例是硬门槛**(同任务同时 advance 两次 / tick 与回调重叠) |
+| **04** composite + 验收 | 子单元 = child executions(`parent_id`/`child_index`);两条 resume 路径改读执行行;超并发排队 = pending 行留在闸后;父失败聚合、验收打回 → 新一轮新执行 | `composite-dispatch`/`tasks-v3-dispatch` 通过 + "pending 子必被领回并唤醒父"收敛测试 |
+| **05** API/UI | `Task` DTO 去 `schedule_status`/`scheduled_at` 加 `trigger_*`;`children[]`(信封)→ 任务执行列表;新 `GET /api/tasks/:id/executions`;看板 badge 由 `trigger_at` + `deriveTaskView` 派生;系统调度页支持 `job` 类型(内置 job 可见/可暂停/可手动跑一轮)+ 去掉裸 uuid;`routes/agent/task-routes.ts` 与 `core-pack` skill 文案同步 | web 单测(`tasks-api`/`task-board`/`scheduler-table`)全绿 |
+| **06** e2e | 6 个 spec 从"查 schedules API/表"改"查任务执行列表";补端到端故事:草稿→入队(断言 `schedules` 无任务行)→定时 T+1min→自动起→转 running→abort 立停 | 6 spec 绿 + §8 手测清单 |
+
+## 7. 风险
+
+1. **任务专属逻辑搬家**(最高危):`WorkflowExecutor` 里 isRequirement 分支 / v4 工作区复用 / phase seed-collect / task-home collect 搬进 job 时语义漂移 → 先把四处 `isRequirement` 读点列全并加表驱动测试,再搬;搬一步测一步,不攒批。
+2. **终态清单漂移**:闩锁是 `NOT IN (终态)`,漏列会让槽位过度保守(滞留占槽,靠对账解),错列存活态进终态则双起风险回来 → 票 03 的并发用例 + 一条"两个执行器同时领取同一 pending 行"的断言。
+3. **跨类并发闸**:`countActiveWork()` 若漏改一处消费点,上限失真(任务绕过或作业饿死)。
+4. **内置 job 被用户删/关**:seed 需可重入(每次启动幂等 upsert),且 UI 只给"暂停",不给删除。
+
+## 8. 验证
+
+`pnpm --filter @octopus/server test`(门是 vitest;`tsc --noEmit` 基线 722 error,非门)· e2e `pnpm --filter @octopus/web-app test:e2e`。
+
+手测(`pnpm dev`):① 草稿→入队后 `schedules` 表**零条任务行**、`tasks.status='ready'`;② 定时 T+1min 不点任何东西到点自动起;③ cron `* * * * *` 的 ready 任务连续两起、上一轮未结束时 UNIQUE 抑制重复;④ abort 立即停引擎、槽位释放、无滞留;⑤ 系统调度页只见作业(含内置 `task-lifecycle` 一行,可见其上次触发与耗时),任务不再以作业身份出现;⑥ 重启 server,待触发定时/周期任务照常到点,内置 job 幂等重建。
+
+## 9. 票 01 落地附记(实测踩到的四颗雷)
+
+**排期修正**:原计划"票 01 建 `cron_jobs`+`scheduler_runs` 两张新表并在同票 drop 旧三表"。方案在实现中途被 ADR-0021 的 `job` 类型设计取代 —— 两张新表与其 42 个契约测试已在 2026-09-10 删除(`executions` 本就是一次运行的天然载体)。旧三表相关列的删除与泵翻转同票(票 03),因为它们在票 02 之前仍被 engine/executor/tasks/V1 `WorkspaceScheduleService` 四方读写,先删必把仓库留在启不来的状态。
+
+1. **`migrateTasksStatusCheckV40` 用硬编码列清单重建 `tasks`** —— 在 `ensureColumnsForExistingTables` 里新加的 tasks 列会被它随后的 swap 吃掉(v40 re-entrancy 测试实测 `no such column: next_fire_at`)。票 01 已把 v41 列拆成独立 `ensureColumnsV41(db)`,在 `migrateTasksStatusCheckV40` **之后**调用。**以后往 tasks 加列一律放这个位置。**
+2. **`SQLITE_CONSTRAINT` 前缀 ≠ UNIQUE** —— 拿它判"重名/已有活跃实例"会把 NOT NULL、FK 违约静默改写成业务冲突。判据要收到 `SQLITE_CONSTRAINT_UNIQUE`。
+3. **`schema.sql` 是单脚本顺序执行** —— `tasks` 建表在 Agent Tables 分隔之后,给它的索引必须写在它后面(`idx_tasks_due` 已挪至 Tasks indexes 段)。
+4. **`tsc --noEmit` 不是本仓库的门**(HEAD 基线 722 error:`@types/better-sqlite3` 缺失引发 TS7016 连锁 + 若干联合类型收窄)。门是 `vitest`。别追类型噪声,也别拿"tsc 干净"当完工标准。
+5. **server 测试里的 `@octopus/shared` 解析到 `dist/`,不是 `src/`** —— 往 shared 加新导出后若不 `pnpm --filter @octopus/shared build`,运行时拿到 `undefined`(票 02 实测:`TERMINAL_EXECUTION_STATUSES.map` 直接炸,`codeJobConfigSchema.parse` 同样会炸)。**改 shared 必重建再测 server**。纯类型导出(`type JobType`)被擦除所以看不出来,更容易骗过本地验证。
+
+**既有红(stash 对照确认与本次无关,票 01 前后逐条一致)**:9 文件 / 37 测试 —— `clone-file-mgmt`、`harness-integration`、`prompt-assembler`、`scheduler-routes`(2 条 G7/task-author clone session,requirement 自动建 session 路径已在 SG1b/F3 移除而测试未跟)、`archive-routes`、`repos-routes`、`config-manager`、`archive-service`、`detector-pipeline`。**后续票的绿判定基线 = 37 红不变。**
+
+## 11. 验证基线(票 01–02 实测,后续票照此判绿)
+
+- **server**(`packages/server` · `npx vitest run`):**37 红 / 9 文件**,与 HEAD stash 对照逐条一致。
+- **shared**:**4 红**(model-alias 1 + clone-git 3),环境红,与本次无关。
+- **web-app**:**8–9 红 / 4–5 文件**,数值本身不稳定 —— `components/tasks/__tests__/execution-summary.test.tsx > AI 用量统计条` 在 **HEAD(无本次改动)重跑时也偶发失败**(实测同机两次:9 红、8 红),属既有隔离/顺序 flake,**不是本重构引入**。判绿口径:红数 ≤9 且不出现 `tasks-v4-*`/`task-board`/`tasks-api`/`scheduler-*` 家族新红。
+- **改 `packages/shared` 后必须 `pnpm --filter @octopus/shared build`**,否则 server/web 测试拿到的新导出是 `undefined`(§9 第 5 条)。

@@ -21,11 +21,9 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 // trigger-prebuild (2026-09-08): 命名块与 composite 判定收敛到 ws-launch —
 // triggerTask 预建与 executor 首建共用，同名同支是复用命中的前提。
 import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from '../ws-launch'
-
-const MAX_PARALLEL_WORKSPACES = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
-  10,
-)
+// ADR-0021: the cap number and its meter are single-source (this file used to parse
+// OCTOPUS_SCHEDULER_MAX_PARALLEL into a local copy of the constant).
+import { MAX_PARALLEL_WORKSPACES } from '../concurrency'
 
 /** task-workflow-handoff (ADR-0013, S2a): copy YAML files from the task home's
  *  `workflows/` directory into the execution workspace's `workflows/` dir. The
@@ -167,8 +165,9 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
-    // 3. Cross-schedule concurrency check
-    if (this.runDAO.countDistinctActiveSchedules(executionId) >= MAX_PARALLEL_WORKSPACES) {
+    // 3. Cross-schedule concurrency check — the shared meter (job fires + task launches),
+    // excluding this fire, which is itself active.
+    if (this.runDAO.countActiveWork({ excludeFireId: executionId }) >= MAX_PARALLEL_WORKSPACES) {
       this.createSkippedExecution(schedule, '全局并发上限已达')
       return {
         success: true,

@@ -1,7 +1,15 @@
 import { z } from 'zod'
 import { WorkflowRef } from '../resource/workflow-ref'
 
-export type JobType = 'workflow' | 'agent'
+/**
+ * What a scheduled job runs.
+ *   workflow — a YAML workflow chain inside a workspace (WorkflowExecutor)
+ *   agent    — one LLM prompt (AgentExecutor)
+ *   job      — a registered TypeScript handler (ADR-0021): the system's own
+ *              housekeeping, armed by cron like any other job and visible in the same
+ *              ops surface. The built-in `task-lifecycle` job is one of these.
+ */
+export type JobType = 'workflow' | 'agent' | 'job'
 export type ParallelPolicy = 'allow' | 'wait' | 'skip'
 export type SchedulerExecutionStatus =
   | 'triggered'
@@ -247,9 +255,26 @@ export const agentConfigSchema = z.object({
   retry_policy: agentRetryPolicySchema.optional(),
 })
 
+/**
+ * A `job`-type payload: a pointer at TypeScript that is already in the process.
+ *
+ * Deliberately tiny. The handler name is the whole contract — the config carries no
+ * logic, so a schedule row can never make the server execute code the deployment
+ * didn't register (an unregistered handler fails the run, it does not run anything).
+ * `args` is opaque per-handler config (timeouts, batch sizes), never a script.
+ */
+export const codeJobConfigSchema = z.object({
+  schema_version: z.literal('1.0'),
+  type: z.literal('job'),
+  handler: z.string().min(1).max(120),
+  timeout_seconds: z.number().int().min(10).max(3600).optional().default(300),
+  args: z.record(z.string(), z.unknown()).optional().default({}),
+})
+
 export const jobConfigSchema = z.discriminatedUnion('type', [
   workflowConfigSchema,
   agentConfigSchema,
+  codeJobConfigSchema,
 ])
 
 /** Accepts both v1.0 (legacy) and v2.0 workflow configs */
@@ -262,6 +287,7 @@ export const legacyJobConfigSchema = z.union([
 export const configSchemasByJobType = {
   workflow: workflowConfigSchema,
   agent: agentConfigSchema,
+  job: codeJobConfigSchema,
 } as const
 
 // ── TS types (derived from zod) ─────────────────────────────────────
@@ -276,6 +302,7 @@ export type TaskSpec = z.infer<typeof taskSpecSchema>
 export type WorkflowConfig = z.infer<typeof workflowConfigSchema>
 export type WorkflowConfigV1 = z.infer<typeof workflowConfigSchemaV1>
 export type AgentConfig = z.infer<typeof agentConfigSchema>
+export type CodeJobConfig = z.infer<typeof codeJobConfigSchema>
 export type JobConfig = z.infer<typeof jobConfigSchema>
 export type LegacyJobConfig = z.infer<typeof legacyJobConfigSchema>
 

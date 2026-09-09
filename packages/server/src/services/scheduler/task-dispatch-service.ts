@@ -34,11 +34,8 @@ import { getExecutionService } from "../execution-service-registry"
 import { taskWorkspaceName } from "./task-ws-name"
 // trigger-prebuild (2026-09-08): 两份逐字相同的 formatBranchSuffix 副本合一到 ws-launch。
 import { formatBranchSuffix } from "./ws-launch"
-
-const MAX_PARALLEL_WORKSPACES = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? "3",
-  10,
-)
+// ADR-0021: single-source cap (this file used to parse the env var into its own copy).
+import { MAX_PARALLEL_WORKSPACES } from "./concurrency"
 
 /** Parent correlation written onto the child schedule's config so resume can find
  *  the parent composition-wf execution + task_dispatch node after a process
@@ -115,7 +112,7 @@ export class TaskDispatchService implements TaskDispatchPort {
     // Not fatal: the parent composition-wf is already paused (pending_task_dispatch)
     // waiting on this handle; it stays paused until a slot frees and the queued
     // child is claimed/run (scheduler-engine, tickets 06/07).
-    if (this.runDAO.countDistinctActiveSchedules() >= MAX_PARALLEL_WORKSPACES) {
+    if (this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
       this.createChildScheduleRow(scheduleId, subunit, parentCtx, "queued", origin_role, parentTaskId)
       this.deps.sse.emit("taskpool", {
         event: "schedule_status",

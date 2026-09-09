@@ -79,6 +79,8 @@ import { WorkflowPresetsService } from "./services/workflow-presets-service"
 import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
+import { CodeJobExecutor } from "./services/scheduler/executors/code-job-executor"
+import { registerAndSeedBuiltinCodeJobs } from "./services/scheduler/builtin-jobs"
 import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
@@ -773,6 +775,16 @@ if (shouldServe) {
         executors.set('agent', new AgentExecutor(
           daos!.scheduleRun, daos!.execution, undefined,
         ))
+        // ADR-0021: third job type — a registered TypeScript handler, for the system's
+        // own periodic duties. Seeded rows must exist before start(), so the first tick
+        // never resolves a built-in job to a missing handler.
+        executors.set('job', new CodeJobExecutor(daos!.scheduleRun))
+        const seeded = registerAndSeedBuiltinCodeJobs(daos!.scheduleConfig)
+        if (seeded.created.length || seeded.repaired.length) {
+          console.log(
+            `[scheduler] built-in jobs: ${seeded.created.length} created, ${seeded.repaired.length} repaired`,
+          )
+        }
 
         const schedulerEngine = new SchedulerEngine(
           daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
