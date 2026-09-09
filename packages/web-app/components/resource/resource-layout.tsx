@@ -35,14 +35,14 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
     <>
       <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-8">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">资源管理</h1>
+          <h1 className="text-2xl font-black tracking-tight text-pop-ink">资源管理</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             管理平台 Skills、Agents、Workflows 资产
           </p>
         </div>
 
         {!isDetailPage && (
-          <div className="mb-6 flex items-center gap-1 border-b border-border" role="tablist" aria-label="资源管理标签页">
+          <div className="mb-6 flex items-end gap-1 border-b-[2.5px] border-pop-bd" role="tablist" aria-label="资源管理标签页">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -50,10 +50,10 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
                 aria-selected={activeTab === tab.id}
                 aria-controls={`tabpanel-${tab.id}`}
                 className={cn(
-                  "flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors",
+                  "flex items-center gap-2 rounded-t-lg border-b-[2.5px] px-4 py-2.5 text-sm transition-colors -mb-[2.5px]",
                   activeTab === tab.id
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
+                    ? "border-pop-bd bg-pop-yellow font-black text-pop-ink"
+                    : "border-transparent font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
                 )}
                 onClick={() => handleTabChange(tab.id)}
               >

@@ -177,6 +177,123 @@
   --pop-shadow-sm: 3px 3px 0 rgba(28, 27, 34, 0.13);
   --pop-shadow-lg: 8px 8px 0 rgba(28, 27, 34, 0.18);
   --pop-dot: rgba(28, 27, 34, 0.05);
+
+  /* ── 全站波普换底 (light):语义 token 一律指向 pop —— 所有 shadcn 组件
+     走 bg-primary/border-border/text-muted-foreground 等语义类,自动继承。 ── */
+  --background: var(--pop-bg);
+  --foreground: var(--pop-ink);
+  --card: var(--pop-paper);
+  --card-foreground: var(--pop-ink);
+  --popover: var(--pop-paper);
+  --popover-foreground: var(--pop-ink);
+  --primary: var(--pop-pink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--pop-idle);
+  --secondary-foreground: var(--pop-ink);
+  --muted: var(--pop-idle);
+  --muted-foreground: var(--pop-dim);
+  --accent: var(--pop-yellow-soft);
+  --accent-foreground: var(--pop-ink);
+  --destructive: var(--pop-red);
+  --destructive-foreground: #ffffff;
+  --border: rgba(33, 31, 39, 0.22);
+  --input: var(--pop-bd);
+  --ring: var(--pop-pink);
+  --chart-1: var(--pop-pink);
+  --chart-2: var(--pop-amber);
+  --chart-3: var(--pop-purple);
+  --chart-4: var(--pop-green);
+  --chart-5: var(--pop-cyan);
+  --sidebar: var(--pop-bg);
+  --sidebar-foreground: var(--pop-ink);
+  --sidebar-primary: var(--pop-pink);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--pop-yellow-soft);
+  --sidebar-accent-foreground: var(--pop-ink);
+  --sidebar-border: rgba(33, 31, 39, 0.22);
+  --sidebar-ring: var(--pop-pink);
+
+  /* 模块 token 同步归一(引用 pop 变量,深浅两态自动跟随) */
+  --scheduler-success: var(--pop-green);
+  --scheduler-warn: var(--pop-amber);
+  --scheduler-error: var(--pop-red);
+  --scheduler-info: var(--pop-cyan);
+  --scheduler-paused: var(--pop-dim);
+  --scheduler-primary: var(--pop-purple);
+  --scheduler-primary-hover: color-mix(in oklab, var(--pop-purple) 85%, black);
+  --scheduler-primary-active: color-mix(in oklab, var(--pop-purple) 70%, black);
+  --scheduler-primary-light: var(--pop-purple-soft);
+  --scheduler-accent: var(--pop-pink);
+  --scheduler-accent-hover: color-mix(in oklab, var(--pop-pink) 85%, black);
+  --scheduler-accent-light: var(--pop-pink-soft);
+
+  --knowledge-primary: var(--pop-cyan);
+  --knowledge-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, black);
+  --knowledge-primary-light: var(--pop-cyan-soft);
+  --knowledge-primary-foreground: var(--pop-ink);
+  --knowledge-accent: var(--pop-amber);
+  --knowledge-accent-light: var(--pop-amber-soft);
+  --knowledge-rule-bg: var(--pop-paper);
+  --knowledge-rule-border: var(--pop-bd);
+  --knowledge-retired: var(--pop-dim);
+  --knowledge-retired-bg: var(--pop-idle);
+
+  --swarm-primary: var(--pop-cyan);
+  --swarm-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, black);
+  --swarm-primary-active: color-mix(in oklab, var(--pop-cyan) 65%, black);
+  --swarm-primary-light: var(--pop-cyan-soft);
+  --swarm-primary-muted: var(--pop-cyan-soft);
+  --swarm-mode-review: var(--pop-green);
+  --swarm-mode-debate: var(--pop-purple);
+  --swarm-mode-dispatch: var(--pop-amber);
+  --swarm-mode-swarm: var(--pop-cyan);
+  --swarm-mode-moa: var(--pop-pink);
+  --swarm-expert-running: var(--pop-amber);
+  --swarm-expert-completed: var(--pop-green);
+  --swarm-expert-failed: var(--pop-red);
+  --swarm-expert-skipped: var(--pop-dim);
+  --swarm-expert-budget-exceeded: var(--pop-amber);
+  --swarm-consensus-line: var(--pop-purple);
+  --swarm-consensus-area: color-mix(in oklab, var(--pop-purple) 15%, transparent);
+  --swarm-threshold-line: var(--pop-red);
+  --swarm-consensus-dot: var(--pop-green);
+  --swarm-budget-warning: var(--pop-amber);
+  --swarm-timeout-warning: var(--pop-amber);
+  --swarm-context-overflow: var(--pop-red);
+
+  --moa-aggregator: var(--pop-amber);
+  --moa-aggregator-light: var(--pop-amber-soft);
+  --moa-aggregator-foreground: var(--pop-ink);
+  --moa-resolve-exact: var(--pop-green);
+  --moa-resolve-degraded: var(--pop-amber);
+  --moa-resolve-degraded-light: var(--pop-amber-soft);
+  --moa-resolve-error: var(--pop-red);
+  --moa-resolve-error-light: var(--pop-pink-soft);
+
+  --agent-primary: var(--pop-purple);
+  --agent-primary-hover: color-mix(in oklab, var(--pop-purple) 85%, black);
+  --agent-primary-active: color-mix(in oklab, var(--pop-purple) 70%, black);
+  --agent-primary-light: var(--pop-purple-soft);
+  --agent-primary-foreground: #ffffff;
+  --agent-accent: var(--pop-pink);
+  --agent-accent-hover: color-mix(in oklab, var(--pop-pink) 85%, black);
+  --agent-accent-light: var(--pop-pink-soft);
+  --agent-success: var(--pop-green);
+  --agent-success-light: var(--pop-green-soft);
+  --agent-success-foreground: var(--pop-ink);
+  --agent-warn: var(--pop-amber);
+  --agent-warn-light: var(--pop-amber-soft);
+  --agent-warn-foreground: var(--pop-ink);
+  --agent-error: var(--pop-red);
+  --agent-error-light: var(--pop-pink-soft);
+  --agent-error-foreground: var(--pop-ink);
+  --agent-info: var(--pop-cyan);
+  --agent-info-light: var(--pop-cyan-soft);
+  --agent-info-foreground: var(--pop-ink);
+  --agent-surface: var(--pop-bg);
+  --agent-surface-raised: var(--pop-paper);
+  --agent-surface-inset: var(--pop-idle);
+  --agent-divider: rgba(33, 31, 39, 0.22);
 }
 
 .dark {
@@ -337,6 +454,121 @@
   --pop-shadow-sm: 3px 3px 0 rgba(0, 0, 0, 0.4);
   --pop-shadow-lg: 8px 8px 0 rgba(0, 0, 0, 0.5);
   --pop-dot: rgba(242, 240, 250, 0.05);
+
+  /* ── 全站波普换底 (dark):与 light 同构,指向深色 pop 变量。 ── */
+  --background: var(--pop-bg);
+  --foreground: var(--pop-ink);
+  --card: var(--pop-paper);
+  --card-foreground: var(--pop-ink);
+  --popover: var(--pop-paper);
+  --popover-foreground: var(--pop-ink);
+  --primary: var(--pop-pink);
+  --primary-foreground: #16141c;
+  --secondary: var(--pop-idle);
+  --secondary-foreground: var(--pop-ink);
+  --muted: var(--pop-idle);
+  --muted-foreground: var(--pop-dim);
+  --accent: var(--pop-purple-soft);
+  --accent-foreground: var(--pop-ink);
+  --destructive: var(--pop-red);
+  --destructive-foreground: #16141c;
+  --border: rgba(242, 240, 250, 0.16);
+  --input: var(--pop-bd);
+  --ring: var(--pop-pink);
+  --chart-1: var(--pop-pink);
+  --chart-2: var(--pop-amber);
+  --chart-3: var(--pop-purple);
+  --chart-4: var(--pop-green);
+  --chart-5: var(--pop-cyan);
+  --sidebar: var(--pop-bg);
+  --sidebar-foreground: var(--pop-ink);
+  --sidebar-primary: var(--pop-pink);
+  --sidebar-primary-foreground: #16141c;
+  --sidebar-accent: var(--pop-purple-soft);
+  --sidebar-accent-foreground: var(--pop-ink);
+  --sidebar-border: rgba(242, 240, 250, 0.16);
+  --sidebar-ring: var(--pop-pink);
+
+  --scheduler-success: var(--pop-green);
+  --scheduler-warn: var(--pop-amber);
+  --scheduler-error: var(--pop-red);
+  --scheduler-info: var(--pop-cyan);
+  --scheduler-paused: var(--pop-dim);
+  --scheduler-primary: var(--pop-purple);
+  --scheduler-primary-hover: color-mix(in oklab, var(--pop-purple) 80%, white);
+  --scheduler-primary-active: color-mix(in oklab, var(--pop-purple) 65%, white);
+  --scheduler-primary-light: var(--pop-purple-soft);
+  --scheduler-accent: var(--pop-pink);
+  --scheduler-accent-hover: color-mix(in oklab, var(--pop-pink) 80%, white);
+  --scheduler-accent-light: var(--pop-pink-soft);
+
+  --knowledge-primary: var(--pop-cyan);
+  --knowledge-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, white);
+  --knowledge-primary-light: var(--pop-cyan-soft);
+  --knowledge-primary-foreground: var(--pop-ink);
+  --knowledge-accent: var(--pop-amber);
+  --knowledge-accent-light: var(--pop-amber-soft);
+  --knowledge-rule-bg: var(--pop-paper);
+  --knowledge-rule-border: var(--pop-bd);
+  --knowledge-retired: var(--pop-dim);
+  --knowledge-retired-bg: var(--pop-idle);
+
+  --swarm-primary: var(--pop-cyan);
+  --swarm-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, white);
+  --swarm-primary-active: color-mix(in oklab, var(--pop-cyan) 65%, white);
+  --swarm-primary-light: var(--pop-cyan-soft);
+  --swarm-primary-muted: var(--pop-cyan-soft);
+  --swarm-mode-review: var(--pop-green);
+  --swarm-mode-debate: var(--pop-purple);
+  --swarm-mode-dispatch: var(--pop-amber);
+  --swarm-mode-swarm: var(--pop-cyan);
+  --swarm-mode-moa: var(--pop-pink);
+  --swarm-expert-running: var(--pop-amber);
+  --swarm-expert-completed: var(--pop-green);
+  --swarm-expert-failed: var(--pop-red);
+  --swarm-expert-skipped: var(--pop-dim);
+  --swarm-expert-budget-exceeded: var(--pop-amber);
+  --swarm-consensus-line: var(--pop-purple);
+  --swarm-consensus-area: color-mix(in oklab, var(--pop-purple) 20%, transparent);
+  --swarm-threshold-line: var(--pop-red);
+  --swarm-consensus-dot: var(--pop-green);
+  --swarm-budget-warning: var(--pop-amber);
+  --swarm-timeout-warning: var(--pop-amber);
+  --swarm-context-overflow: var(--pop-red);
+
+  --moa-aggregator: var(--pop-amber);
+  --moa-aggregator-light: var(--pop-amber-soft);
+  --moa-aggregator-foreground: var(--pop-ink);
+  --moa-resolve-exact: var(--pop-green);
+  --moa-resolve-degraded: var(--pop-amber);
+  --moa-resolve-degraded-light: var(--pop-amber-soft);
+  --moa-resolve-error: var(--pop-red);
+  --moa-resolve-error-light: var(--pop-pink-soft);
+
+  --agent-primary: var(--pop-purple);
+  --agent-primary-hover: color-mix(in oklab, var(--pop-purple) 80%, white);
+  --agent-primary-active: color-mix(in oklab, var(--pop-purple) 65%, white);
+  --agent-primary-light: var(--pop-purple-soft);
+  --agent-primary-foreground: var(--pop-ink);
+  --agent-accent: var(--pop-pink);
+  --agent-accent-hover: color-mix(in oklab, var(--pop-pink) 80%, white);
+  --agent-accent-light: var(--pop-pink-soft);
+  --agent-success: var(--pop-green);
+  --agent-success-light: var(--pop-green-soft);
+  --agent-success-foreground: var(--pop-ink);
+  --agent-warn: var(--pop-amber);
+  --agent-warn-light: var(--pop-amber-soft);
+  --agent-warn-foreground: var(--pop-ink);
+  --agent-error: var(--pop-red);
+  --agent-error-light: var(--pop-pink-soft);
+  --agent-error-foreground: var(--pop-ink);
+  --agent-info: var(--pop-cyan);
+  --agent-info-light: var(--pop-cyan-soft);
+  --agent-info-foreground: var(--pop-ink);
+  --agent-surface: var(--pop-bg);
+  --agent-surface-raised: var(--pop-paper);
+  --agent-surface-inset: var(--pop-idle);
+  --agent-divider: rgba(242, 240, 250, 0.16);
 }
 
 @theme inline {
@@ -591,6 +823,14 @@
 }
 .hide-scrollbar {
   scrollbar-width: none;
+}
+
+/* 🎪 Sonner toast 贴纸化:厚墨边 + 硬投影 + 大圆角 */
+.toaster [data-sonner-toast] {
+  border: 2.5px solid var(--pop-bd) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--pop-shadow-sm) !important;
+  font-weight: 700;
 }
 
 @keyframes shimmer-sweep {

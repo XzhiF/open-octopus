@@ -130,12 +130,97 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
   // 模板选择页(直建第一屏)只是单列表单 → 用紧凑弹窗;工作台/执行视图才需要宽面。
   const isTemplate = mode === "authoring-template"
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // 🎪 弹窗尺寸(视口百分比):右下角把手可调,localStorage 记忆。
+  const [modalSize, setModalSize] = useState<{ w: number; h: number }>(() => {
+    const clamp = (v: number) => Math.min(97, Math.max(45, v))
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem("octopus:taskmodal:size")
+        const p = raw ? JSON.parse(raw) as { w?: unknown; h?: unknown } : null
+        if (p && Number.isFinite(p.w) && Number.isFinite(p.h)) {
+          return { w: clamp(Number(p.w)), h: clamp(Number(p.h)) }
+        }
+      } catch { /* 损坏/无痕 → 默认 */ }
+    }
+    return { w: 88, h: 93 } // 默认更高（用户要求）
+  })
+  useEffect(() => {
+    if (isFullscreen) return
+    try { window.localStorage.setItem("octopus:taskmodal:size", JSON.stringify(modalSize)) } catch { /* ignore */ }
+  }, [modalSize, isFullscreen])
+  // 🎪 拖拽移动:按住标题栏空白拖动弹窗;窗口始终 clamp 在视口内(不可移出屏幕)。
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const clampCenter = (v: number, sizePx: number, fullPx: number) => {
+    const lo = (sizePx - fullPx) / 2, hi = (fullPx - sizePx) / 2
+    return lo > hi ? 0 : Math.min(hi, Math.max(lo, v))
+  }
+  const startHeaderDrag = useCallback((e: React.PointerEvent) => {
+    if (isFullscreen) return
+    const t = e.target as HTMLElement
+    if (t.closest("button, input, textarea, select, a, [data-no-drag]")) return
+    e.preventDefault()
+    // 指针捕获:拖出浏览器窗口也不丢 move/up,松手必达(防"卡拖拽")。
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* noop */ }
+    const sx = e.clientX - dragOffset.x, sy = e.clientY - dragOffset.y
+    const W = (modalSize.w / 100) * window.innerWidth, H = (modalSize.h / 100) * window.innerHeight
+    document.body.style.cursor = "grabbing"
+    document.body.style.userSelect = "none"
+    const onMove = (ev: PointerEvent) => {
+      setDragOffset({
+        x: clampCenter(ev.clientX - sx, W, window.innerWidth),
+        y: clampCenter(ev.clientY - sy, H, window.innerHeight),
+      })
+    }
+    const onUp = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+    }
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
+  }, [isFullscreen, dragOffset, modalSize])
+  // 🎪 边/角缩放:对边锚定(被拖的边跟手),尺寸与位置都 clamp 在视口内 ——
+  // 任何方向都拖不出屏幕。模板页/全屏不给把手。
+  type DialogEdge = { t?: boolean; b?: boolean; l?: boolean; r?: boolean }
+  const startDialogResize = useCallback((e: React.PointerEvent, edge: DialogEdge) => {
+    e.preventDefault()
+    e.stopPropagation()
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* noop */ }
+    const vw = window.innerWidth, vh = window.innerHeight
+    const sx = e.clientX, sy = e.clientY
+    const sw = (modalSize.w / 100) * vw, sh = (modalSize.h / 100) * vh
+    const ox = dragOffset.x, oy = dragOffset.y
+    const minW = vw * 0.3, minH = vh * 0.35
+    document.body.style.cursor = "nwse-resize"
+    document.body.style.userSelect = "none"
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy
+      let W = sw, H = sh, X = ox, Y = oy
+      if (edge.r) { W = sw + dx; X = ox + dx / 2 }
+      else if (edge.l) { W = sw - dx; X = ox + dx / 2 }
+      if (edge.b) { H = sh + dy; Y = oy + dy / 2 }
+      else if (edge.t) { H = sh - dy; Y = oy + dy / 2 }
+      W = Math.min(vw - 8, Math.max(minW, W))
+      H = Math.min(vh - 8, Math.max(minH, H))
+      setModalSize({ w: (W / vw) * 100, h: (H / vh) * 100 })
+      setDragOffset({ x: clampCenter(X, W, vw), y: clampCenter(Y, H, vh) })
+    }
+    const onUp = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+    }
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
+  }, [modalSize, dragOffset])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
 
-  // Reset fullscreen when modal closes
+  // Reset fullscreen & drag position when modal closes
   useEffect(() => {
-    if (!open) setIsFullscreen(false)
+    if (!open) { setIsFullscreen(false); setDragOffset({ x: 0, y: 0 }) }
   }, [open])
 
   const handleDeleteDraft = useCallback(async () => {
@@ -164,7 +249,21 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
               ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
               : isTemplate
                 ? "sm:max-w-[680px] w-[92vw] max-h-[84vh] h-[80vh] p-0 gap-0 flex flex-col"
-                : "sm:max-w-[88vw] w-[88vw] max-h-[88vh] h-[88vh] p-0 gap-0 flex flex-col"
+                : "max-h-[97vh] p-0 gap-0 flex flex-col"
+          }
+          style={
+            isFullscreen || isTemplate
+              ? undefined
+              : {
+                width: `${modalSize.w}vw`,
+                maxWidth: "97vw",
+                height: `${modalSize.h}vh`,
+                // v4 的 translate-x-[-50%] 是独立 `translate` 属性,会和本行
+                // transform 叠加(双重居中)→ 必须显式清零,居中只走 transform。
+                translate: "0px 0px",
+                // 覆盖基类的 translate-[-50%] 居中定位,叠加拖拽偏移
+                transform: `translate(calc(-50% + ${dragOffset.x}px), calc(-50% + ${dragOffset.y}px))`,
+              }
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
@@ -182,6 +281,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             onToggleFullscreen={() => setIsFullscreen((f) => !f)}
             onDeleteDraft={() => setDeleteConfirmOpen(true)}
             onMutated={onMutated}
+            onHeaderPointerDown={startHeaderDrag}
           />
           <div className="flex-1 min-h-0 overflow-hidden">
             {mode === "authoring-template" && (
@@ -203,6 +303,44 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             {mode === "done" && task && <DoneMode task={task} />}
             {mode === "terminal" && task && <TerminalMode task={task} />}
           </div>
+
+          {/* 🎪 八向缩放手柄:四边 + 四角(对边锚定,拖不出视口);
+              SE 角保留唯一可见的斜纹把手。模板页固定尺寸不给把手。 */}
+          {!isFullscreen && !isTemplate && (
+            <>
+              <div data-modal-resize="n" title="拖拽调整高度"
+                onPointerDown={(e) => startDialogResize(e, { t: true })}
+                className="absolute inset-x-8 top-0 z-30 h-1.5 touch-none cursor-ns-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="s" title="拖拽调整高度"
+                onPointerDown={(e) => startDialogResize(e, { b: true })}
+                className="absolute inset-x-8 bottom-0 z-30 h-1.5 touch-none cursor-ns-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="w" title="拖拽调整宽度"
+                onPointerDown={(e) => startDialogResize(e, { l: true })}
+                className="absolute inset-y-8 left-0 z-30 w-1.5 touch-none cursor-ew-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="e" title="拖拽调整宽度"
+                onPointerDown={(e) => startDialogResize(e, { r: true })}
+                className="absolute inset-y-8 right-0 z-30 w-1.5 touch-none cursor-ew-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="nw" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { t: true, l: true })}
+                className="absolute left-0 top-0 z-40 size-4 touch-none cursor-nwse-resize" />
+              <div data-modal-resize="ne" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { t: true, r: true })}
+                className="absolute right-0 top-0 z-40 size-4 touch-none cursor-nesw-resize" />
+              <div data-modal-resize="sw" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { b: true, l: true })}
+                className="absolute bottom-0 left-0 z-40 size-4 touch-none cursor-nesw-resize" />
+              <div data-modal-resize="se" title="拖拽调整宽高" aria-label="调整弹窗宽高"
+                onPointerDown={(e) => startDialogResize(e, { b: true, r: true })}
+                className="absolute bottom-0.5 right-0.5 z-40 size-5 touch-none cursor-nwse-resize text-pop-bd/60 transition-colors hover:text-pop-pink"
+              >
+                <svg viewBox="0 0 20 20" className="size-full" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                  <path d="M5 18.5 18.5 5" />
+                  <path d="M10.5 18.5 18.5 10.5" />
+                  <path d="M15.5 18.5 18.5 15.5" />
+                </svg>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -231,8 +369,10 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
   )
 }
 
-function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft, onMutated }: {
-  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void; onMutated: () => void
+function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft, onMutated, onHeaderPointerDown }: {
+  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void; onMutated: () => void;
+  /** 🎪 按住标题栏空白拖窗;interactive 元素由守卫排除。 */
+  onHeaderPointerDown?: (e: React.PointerEvent) => void
 }) {
   const status = task?.status ?? "draft"
   const isDraft = status === "draft"
@@ -247,7 +387,11 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
             ? "创作"
             : "执行"
   return (
-    <DialogHeader className="px-5 py-3 border-b-2 border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0">
+    <DialogHeader
+      onPointerDown={onHeaderPointerDown}
+      title="按住空白处拖拽移动窗口"
+      className="px-5 py-3 border-b-2 border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
+    >
       <div className="min-w-0">
         <EditableTitle task={task} onMutated={onMutated} />
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>

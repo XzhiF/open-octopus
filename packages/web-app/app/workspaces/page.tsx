@@ -39,7 +39,7 @@ export default function WorkspacesPage() {
     <div className="container mx-auto px-4 py-6 lg:px-6" data-testid="workspaces-page">
       {/* Page Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">工作空间</h1>
+        <h1 className="text-2xl font-black tracking-tight text-pop-ink">工作空间</h1>
         <p className="text-muted-foreground">
           管理您的工作空间、项目和工作流
         </p>
@@ -50,7 +50,7 @@ export default function WorkspacesPage() {
           <p className="text-muted-foreground">加载中...</p>
         </div>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center" data-testid="workspace-list-error">
+        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-pop-bd/40 bg-pop-paper py-12 text-center shadow-pop-sm" data-testid="workspace-list-error">
           <p className="text-destructive">{error}</p>
           <button
             className="mt-4 text-sm text-primary underline"

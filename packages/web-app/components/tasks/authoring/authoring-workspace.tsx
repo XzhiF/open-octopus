@@ -87,17 +87,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   }, [task.id, onMutated])
 
   // ── Resizable panels: drag the divider to adjust chat ↔ output width ──
-  // Default split: 60% chat (left) / 40% output (right).
+  // Default split: 70% chat (left) / 30% output (right)（用户定,原 60/40）。
   const containerRef = useRef<HTMLDivElement>(null)
   const [rightWidth, setRightWidth] = useState(0)
   const draggingRef = useRef(false)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
-  // Measure container on mount and set initial 40% width.
+  // Measure container on mount and set initial 30% width.
   useEffect(() => {
     if (containerRef.current && rightWidth === 0) {
-      setRightWidth(Math.round(containerRef.current.clientWidth * 0.4))
+      setRightWidth(Math.max(240, Math.round(containerRef.current.clientWidth * 0.3)))
     }
   }, [rightWidth])
 

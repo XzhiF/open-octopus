@@ -90,10 +90,10 @@ export default function DashboardPage() {
     return (
       <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-2xl font-black tracking-tight text-pop-ink">Dashboard</h1>
           <p className="text-muted-foreground">工作流编排平台概览</p>
         </div>
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-pop-bd/40 bg-pop-paper py-12 text-center shadow-pop-sm">
           <p className="text-destructive">{error}</p>
           <button className="mt-4 text-sm text-primary underline" onClick={fetchData}>重试</button>
         </div>
@@ -119,7 +119,7 @@ export default function DashboardPage() {
     <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-2xl font-black tracking-tight text-pop-ink">Dashboard</h1>
         <p className="text-muted-foreground">
           工作流编排平台概览
         </p>
@@ -143,7 +143,7 @@ export default function DashboardPage() {
       {/* Workflow Health - Above Queue/Recent */}
       {workflows.length > 0 && (
         <div>
-          <h2 className="text-xl font-semibold mb-4">Workflow 健康度</h2>
+          <h2 className="text-xl font-black mb-4">Workflow 健康度</h2>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {workflows.map((w) => (
               <WorkflowHealthCard

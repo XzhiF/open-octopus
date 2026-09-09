@@ -134,12 +134,12 @@ function formatTimestamp(ts: string): string {
 }
 
 const ERROR_TYPE_COLORS: Record<string, string> = {
-  timeout: "bg-amber-500/10 text-amber-600 border-amber-500/30",
-  model_error: "bg-red-500/10 text-red-600 border-red-500/30",
-  script_error: "bg-orange-500/10 text-orange-600 border-orange-500/30",
-  tool_error: "bg-rose-500/10 text-rose-600 border-rose-500/30",
-  approval_rejected: "bg-purple-500/10 text-purple-600 border-purple-500/30",
-  other: "bg-gray-500/10 text-gray-600 border-gray-500/30",
+  timeout: "bg-pop-amber-soft text-pop-ink border-pop-amber/30",
+  model_error: "bg-pop-pink-soft text-pop-red border-pop-pink/30",
+  script_error: "bg-pop-amber-soft text-pop-ink border-pop-amber/30",
+  tool_error: "bg-pop-pink-soft text-pop-red border-pop-pink/30",
+  approval_rejected: "bg-pop-purple-soft text-pop-purple border-pop-purple/30",
+  other: "bg-pop-idle text-pop-dim border-pop-bd/30",
 }
 
 const PIE_COLORS = [
@@ -227,7 +227,7 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
   if (error || !data) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-sm text-muted-foreground">
-        <AlertTriangle className="h-6 w-6 text-amber-500" />
+        <AlertTriangle className="h-6 w-6 text-pop-amber" />
         <p>{error ?? "未找到数据"}</p>
       </div>
     )
@@ -325,12 +325,12 @@ function MiniBudgetCard({ budget }: { budget: ObservabilityData["budget"] }) {
         <div className="text-sm text-muted-foreground">未设预算</div>
       ) : tokensPercent !== null ? (
         <>
-          <div className={`text-sm font-semibold tabular-nums ${tokensPercent > 100 ? "text-red-500" : ""}`}>
+          <div className={`text-sm font-semibold tabular-nums ${tokensPercent > 100 ? "text-pop-red" : ""}`}>
             {formatPercent(tokensPercent / 100, 1)}
           </div>
           <div className="mt-0.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all ${tokensPercent > 100 ? "bg-red-500" : tokensPercent > 80 ? "bg-yellow-500" : "bg-emerald-500"}`}
+              className={`h-full rounded-full transition-all ${tokensPercent > 100 ? "bg-pop-red" : tokensPercent > 80 ? "bg-pop-amber" : "bg-pop-green"}`}
               style={{ width: `${Math.min(tokensPercent, 100)}%` }}
             />
           </div>
@@ -440,7 +440,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
               <span>⚡{formatTokenCount(item.cacheRead)}</span>
               <span>🗡️{formatTokenCount(item.cacheWrite)}</span>
               {item.cacheFlag && (
-                <span className="text-amber-500">⚠ {item.cacheFlag}</span>
+                <span className="text-pop-amber">⚠ {item.cacheFlag}</span>
               )}
             </div>
           </div>
@@ -455,7 +455,7 @@ function ErrorTimeline({ errors }: { errors: ObservabilityData["errors"] }) {
     <div className="space-y-2 max-h-60 overflow-y-auto">
       {errors.map((err, i) => (
         <div key={`${err.nodeId}-${err.timestamp}-${i}`} className="flex items-start gap-2 rounded border border-border/50 p-2">
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+          <AlertTriangle className="h-3.5 w-3.5 text-pop-amber shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0 space-y-0.5">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] text-muted-foreground font-mono">{formatTimestamp(err.timestamp)}</span>
@@ -464,9 +464,9 @@ function ErrorTimeline({ errors }: { errors: ObservabilityData["errors"] }) {
                 {err.errorType}
               </Badge>
               <Badge variant="secondary" className={`text-[9px] px-1 ${
-                err.finalStatus === "recovered" ? "bg-emerald-500/10 text-emerald-600"
-                  : err.finalStatus === "failed" ? "bg-red-500/10 text-red-600"
-                    : "bg-gray-500/10 text-gray-600"
+                err.finalStatus === "recovered" ? "bg-pop-green-soft text-pop-green"
+                  : err.finalStatus === "failed" ? "bg-pop-pink-soft text-pop-red"
+                    : "bg-pop-idle text-pop-dim"
               }`}>
                 {err.finalStatus}
               </Badge>
@@ -557,8 +557,8 @@ function RoundsTable({
                         </div>
                       )}
                       {node.error && (
-                        <div className="col-span-2 mt-1 rounded bg-red-500/10 border border-red-500/20 p-1.5">
-                          <span className="text-red-500 font-medium">错误: </span>
+                        <div className="col-span-2 mt-1 rounded bg-pop-pink-soft border border-pop-pink/30 p-1.5">
+                          <span className="text-pop-red font-medium">错误: </span>
                           <span className="text-muted-foreground">{node.error}</span>
                         </div>
                       )}

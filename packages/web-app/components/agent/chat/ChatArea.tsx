@@ -109,6 +109,22 @@ export function ChatArea({
         : (unansweredAsk || pendingConfirm) ? 'waiting'
           : hasAssistant ? 'done' : 'idle'
 
+  // 「✓ 就绪」只作为**回合完成的闪现**存在:running→done 亮 5s 自动收;
+  // 打开旧会话(直接以 done 进场)或不显示 —— 就绪是瞬时反馈,不是常驻横幅。
+  const prevStateRef = useRef(chatState)
+  const [doneFlash, setDoneFlash] = useState(false)
+  useEffect(() => {
+    const prev = prevStateRef.current
+    prevStateRef.current = chatState
+    if (chatState === 'done') {
+      if (prev !== 'running') return
+      setDoneFlash(true)
+      const t = setTimeout(() => setDoneFlash(false), 5000)
+      return () => clearTimeout(t)
+    }
+    setDoneFlash(false)
+  }, [chatState])
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -343,8 +359,9 @@ export function ChatArea({
         </div>
       )}
 
-      {/* 🎪 状态色带 — composer 上方的贴纸 pill(derived from props,无新链路) */}
-      {hasSession && chatState !== 'idle' && (
+      {/* 🎪 状态色带 — composer 上方的贴纸 pill(derived from props,无新链路);
+          done 态仅在回合刚完成时闪现(见 doneFlash),不再常驻。 */}
+      {hasSession && chatState !== 'idle' && !(chatState === 'done' && !doneFlash) && (
         <div
           data-chat-state={chatState}
           className={cn(

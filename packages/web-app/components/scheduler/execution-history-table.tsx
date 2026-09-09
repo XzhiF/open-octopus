@@ -124,7 +124,7 @@ function ExecutionRow({
         <tr>
           <td
             colSpan={jobType === "agent" ? 8 : 6}
-            className="bg-neutral-950/5 p-0"
+            className="bg-pop-idle p-0"
           >
             {jobType === "agent" && execution.agent_output && (
               <div className="p-4 border-b border-border">

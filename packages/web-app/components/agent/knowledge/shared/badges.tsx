@@ -12,13 +12,13 @@ import {
 // ─── SourceBadge ─────────────────────────────────────────────────────────────
 
 const SOURCE_COLORS: Record<string, { bg: string; text: string }> = {
-  workspace_archive: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300' },
-  agent_conversation: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300' },
-  clone_merge: { bg: 'bg-cyan-100 dark:bg-cyan-900/30', text: 'text-cyan-700 dark:text-cyan-300' },
-  system: { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-600 dark:text-gray-400' },
-  recurring_pitfall: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300' },
-  knowledge_pattern: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300' },
-  scheduler: { bg: 'bg-indigo-100 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-300' },
+  workspace_archive: { bg: 'bg-pop-cyan-soft', text: 'text-pop-ink' },
+  agent_conversation: { bg: 'bg-pop-purple-soft', text: 'text-pop-ink' },
+  clone_merge: { bg: 'bg-pop-cyan-soft', text: 'text-pop-ink' },
+  system: { bg: 'bg-pop-idle', text: 'text-pop-dim' },
+  recurring_pitfall: { bg: 'bg-pop-amber-soft', text: 'text-pop-ink' },
+  knowledge_pattern: { bg: 'bg-pop-green-soft', text: 'text-pop-ink' },
+  scheduler: { bg: 'bg-pop-purple-soft', text: 'text-pop-ink' },
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -38,8 +38,8 @@ interface SourceBadgeProps {
 
 export function SourceBadge({ source, className }: SourceBadgeProps) {
   const colors = SOURCE_COLORS[source] ?? {
-    bg: 'bg-gray-100 dark:bg-gray-800',
-    text: 'text-gray-600 dark:text-gray-400',
+    bg: 'bg-pop-idle',
+    text: 'text-pop-dim',
   }
   const label = SOURCE_LABELS[source] ?? source
 
@@ -61,9 +61,9 @@ export function SourceBadge({ source, className }: SourceBadgeProps) {
 // ─── ScopeBadge ──────────────────────────────────────────────────────────────
 
 const SCOPE_COLORS: Record<string, { bg: string; text: string }> = {
-  project: { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300' },
-  workflow: { bg: 'bg-sky-100 dark:bg-sky-900/30', text: 'text-sky-700 dark:text-sky-300' },
-  global: { bg: 'bg-violet-100 dark:bg-violet-900/30', text: 'text-violet-700 dark:text-violet-300' },
+  project: { bg: 'bg-pop-green-soft', text: 'text-pop-ink' },
+  workflow: { bg: 'bg-pop-cyan-soft', text: 'text-pop-ink' },
+  global: { bg: 'bg-pop-purple-soft', text: 'text-pop-ink' },
 }
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -79,8 +79,8 @@ interface ScopeBadgeProps {
 
 export function ScopeBadge({ scope, className }: ScopeBadgeProps) {
   const colors = SCOPE_COLORS[scope] ?? {
-    bg: 'bg-gray-100 dark:bg-gray-800',
-    text: 'text-gray-600 dark:text-gray-400',
+    bg: 'bg-pop-idle',
+    text: 'text-pop-dim',
   }
   const label = SCOPE_LABELS[scope] ?? scope
 
@@ -121,8 +121,8 @@ export function ConflictBadge({ conflictType, details, className }: ConflictBadg
       variant="secondary"
       className={cn(
         'border-none font-normal gap-1',
-        'bg-amber-100 dark:bg-amber-900/30',
-        'text-amber-700 dark:text-amber-300',
+        'bg-pop-amber-soft',
+        'text-pop-ink',
         className
       )}
     >

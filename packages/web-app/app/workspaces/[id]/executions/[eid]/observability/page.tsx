@@ -137,12 +137,12 @@ function formatTimestamp(ts: string): string {
 }
 
 const ERROR_TYPE_COLORS: Record<string, string> = {
-  timeout: "bg-amber-500/10 text-amber-600 border-amber-500/30",
-  model_error: "bg-red-500/10 text-red-600 border-red-500/30",
-  script_error: "bg-orange-500/10 text-orange-600 border-orange-500/30",
-  tool_error: "bg-rose-500/10 text-rose-600 border-rose-500/30",
-  approval_rejected: "bg-purple-500/10 text-purple-600 border-purple-500/30",
-  other: "bg-gray-500/10 text-gray-600 border-gray-500/30",
+  timeout: "bg-pop-amber-soft text-pop-ink border-pop-amber/30",
+  model_error: "bg-pop-pink-soft text-pop-red border-pop-pink/30",
+  script_error: "bg-pop-amber-soft text-pop-ink border-pop-amber/30",
+  tool_error: "bg-pop-pink-soft text-pop-red border-pop-pink/30",
+  approval_rejected: "bg-pop-purple-soft text-pop-purple border-pop-purple/30",
+  other: "bg-pop-idle text-pop-dim border-pop-bd/30",
 }
 
 const PIE_COLORS = [
@@ -218,7 +218,7 @@ export default function ObservabilityPage() {
     return (
       <div className="container mx-auto py-8">
         <div className="text-center space-y-4">
-          <AlertTriangle className="h-12 w-12 mx-auto text-amber-500" />
+          <AlertTriangle className="h-12 w-12 mx-auto text-pop-amber" />
           <h2 className="text-xl font-semibold">加载观测数据失败</h2>
           <p className="text-muted-foreground">{error ?? "未找到数据"}</p>
           <Button asChild variant="outline">
@@ -263,24 +263,24 @@ export default function ObservabilityPage() {
           value={formatTokenCount(totals.tokens)}
           subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`}
           icon={Coins}
-          color="text-blue-500"
-          bgColor="bg-blue-500/10"
+          color="text-pop-cyan"
+          bgColor="bg-pop-cyan-soft"
         />
         <SummaryCard
           title="总轮次"
           value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`}
           icon={Repeat}
-          color="text-emerald-500"
-          bgColor="bg-emerald-500/10"
+          color="text-pop-green"
+          bgColor="bg-pop-green-soft"
         />
         <SummaryCard
           title="总成本"
           value={formatCost(totals.cost.usd, totals.cost.complete)}
           subtitle="USD"
           icon={DollarSign}
-          color="text-amber-500"
-          bgColor="bg-amber-500/10"
+          color="text-pop-amber"
+          bgColor="bg-pop-amber-soft"
         />
         <BudgetCard budget={data.budget} />
       </div>
@@ -431,8 +431,8 @@ function BudgetCard({ budget }: { budget: ObservabilityData["budget"] }) {
               </div>
             )}
           </div>
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/10">
-            <Gauge className="h-4 w-4 text-purple-500" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pop-purple-soft">
+            <Gauge className="h-4 w-4 text-pop-purple" />
           </div>
         </div>
       </CardContent>
@@ -454,11 +454,11 @@ function BudgetProgressRow({
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className={isExceeded ? "text-red-500 font-medium" : ""}>
+        <span className={isExceeded ? "text-pop-red font-medium" : ""}>
           {formatPercent(percent / 100, 1)}
         </span>
       </div>
-      <Progress value={Math.min(percent, 100)} className={isExceeded ? "[&_[data-slot=progress-indicator]]:bg-red-500" : ""} />
+      <Progress value={Math.min(percent, 100)} className={isExceeded ? "[&_[data-slot=progress-indicator]]:bg-pop-red" : ""} />
     </div>
   )
 }
@@ -670,7 +670,7 @@ function ErrorTimeline({
           className="flex items-start gap-3 rounded-lg border p-3"
         >
           <div className="shrink-0 mt-0.5">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <AlertTriangle className="h-4 w-4 text-pop-amber" />
           </div>
           <div className="flex-1 min-w-0 space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
@@ -688,10 +688,10 @@ function ErrorTimeline({
                 variant="secondary"
                 className={`text-[10px] px-1.5 ${
                   err.finalStatus === "recovered"
-                    ? "bg-emerald-500/10 text-emerald-600"
+                    ? "bg-pop-green-soft text-pop-green"
                     : err.finalStatus === "failed"
-                      ? "bg-red-500/10 text-red-600"
-                      : "bg-gray-500/10 text-gray-600"
+                      ? "bg-pop-pink-soft text-pop-red"
+                      : "bg-pop-idle text-pop-dim"
                 }`}
               >
                 {err.finalStatus}
@@ -809,7 +809,7 @@ function NodeRow({
               <DetailItem label="重试次数" value={node.retryCount} />
             </div>
             {node.error && (
-              <div className="mt-2 text-xs text-red-500">
+              <div className="mt-2 text-xs text-pop-red">
                 错误: {node.error}
               </div>
             )}

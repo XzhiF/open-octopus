@@ -42,11 +42,11 @@ const statusLabels: Record<string, { label: string; className: string }> = {
 }
 
 const execStatusIcon: Record<string, React.ReactNode> = {
-  success: <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />,
-  failure: <XCircle className="h-3.5 w-3.5 text-red-500" />,
-  timeout: <XCircle className="h-3.5 w-3.5 text-orange-500" />,
-  running: <Clock className="h-3.5 w-3.5 text-blue-500 animate-pulse" />,
-  cancelled: <Clock className="h-3.5 w-3.5 text-gray-400" />,
+  success: <CheckCircle2 className="h-3.5 w-3.5 text-pop-green" />,
+  failure: <XCircle className="h-3.5 w-3.5 text-pop-red" />,
+  timeout: <XCircle className="h-3.5 w-3.5 text-pop-amber" />,
+  running: <Clock className="h-3.5 w-3.5 text-pop-cyan animate-pulse" />,
+  cancelled: <Clock className="h-3.5 w-3.5 text-pop-dim" />,
 }
 
 export function ScheduledJobList({ jobs, loading }: ScheduledJobListProps) {
@@ -191,10 +191,10 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
         <span className="text-muted-foreground">
           共 <strong>{summary.total}</strong> 次执行
         </span>
-        <span className="text-green-600">
+        <span className="text-pop-green">
           成功 {summary.success}
         </span>
-        <span className="text-red-600">
+        <span className="text-pop-red">
           失败 {summary.failure}
         </span>
         <span className="text-muted-foreground">
@@ -213,7 +213,7 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
               key={exec.id}
               className="flex items-center gap-3 text-xs py-1.5 px-2 rounded bg-background/50"
             >
-              {execStatusIcon[exec.status] ?? <Clock className="h-3.5 w-3.5 text-gray-400" />}
+              {execStatusIcon[exec.status] ?? <Clock className="h-3.5 w-3.5 text-pop-dim" />}
               <span className="font-mono text-muted-foreground w-32">
                 {new Date(exec.started_at).toLocaleString('zh-CN', {
                   month: 'short',
@@ -224,9 +224,9 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
               </span>
               <span className={cn(
                 'font-medium w-12',
-                exec.status === 'success' && 'text-green-600',
-                exec.status === 'failure' && 'text-red-600',
-                exec.status === 'timeout' && 'text-orange-600',
+                exec.status === 'success' && 'text-pop-green',
+                exec.status === 'failure' && 'text-pop-red',
+                exec.status === 'timeout' && 'text-pop-amber',
               )}>
                 {exec.status}
               </span>
@@ -239,7 +239,7 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
                 </span>
               )}
               {exec.error_message && (
-                <span className="text-red-500 truncate flex-1" title={exec.error_message}>
+                <span className="text-pop-red truncate flex-1" title={exec.error_message}>
                   {exec.error_message}
                 </span>
               )}

@@ -59,7 +59,7 @@ export function LogViewer({ jobId, executionId }: LogViewerProps) {
     return (
       <div className="space-y-1 p-3">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-4 w-3/4 bg-neutral-800" />
+          <Skeleton key={i} className="h-4 w-3/4 bg-pop-idle" />
         ))}
       </div>
     )
@@ -67,10 +67,10 @@ export function LogViewer({ jobId, executionId }: LogViewerProps) {
 
   return (
     <div className="p-2">
-      <pre className="overflow-x-auto rounded-md bg-neutral-900 p-3 font-mono text-xs leading-relaxed text-neutral-100">
+      <pre className="overflow-x-auto rounded-lg border-2 border-pop-bd bg-pop-ink p-3 font-mono text-xs leading-relaxed text-pop-paper">
         {lines.map((line, idx) => (
           <div key={idx} className="flex">
-            <span className="mr-3 inline-block w-8 shrink-0 text-right text-neutral-600 select-none">
+            <span className="mr-3 inline-block w-8 shrink-0 text-right text-pop-dim select-none">
               {idx + 1}
             </span>
             <span className="whitespace-pre-wrap break-all">{line}</span>
