@@ -14,6 +14,10 @@ export interface WorkspaceRow {
   updated_at: string
   source: string
   source_schedule_id: string | null
+  /** v41 (ADR-0021): direct task ownership — which task this workspace serves.
+   *  Replaces the `source_schedule_id → schedules.origin_id` reverse lookup composite
+   *  used to walk to find the parent task. */
+  task_id: string | null
   archive_status: string | null
 }
 
@@ -54,6 +58,10 @@ export interface ExecutionRow {
    *  NULL = v3/generic (non-phase execution). */
   phase_index: number | null
   round_index: number | null
+  /** v41 (ADR-0021): the board reaches an execution directly by task instead of joining
+   *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
+   *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */
+  task_id: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -389,6 +397,22 @@ export interface TaskRow {
   /** v40 (K4): bound workspace — NULL = never triggered; first trigger creates +
    *  binds, later phase rounds reuse (dispatchPhaseRound, 票 05). */
   workspace_id: string | null
+  // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
+  // Before v41 the due time lived on a private `schedules` row that readyTask
+  // pre-created and parked ('draft'); arming a task meant flipping that row, which
+  // is how task and scheduler ended up owning each other's lifecycle.
+  /** 'manual' (human presses 触发) | 'once' (one-shot at trigger_at) | 'cron' */
+  trigger_mode: string
+  /** Author input for trigger_mode='once' — the ISO time shown on the board badge. */
+  trigger_at: string | null
+  cron_expression: string | null
+  cron_timezone: string
+  /** Master switch for trigger_mode='cron' (pausing a recurring task). */
+  trigger_enabled: number
+  /** The SINGLE due cursor the scheduler's scan reads. once: = trigger_at;
+   *  cron: recomputed after each fire; NULL = nothing armed. */
+  next_fire_at: string | null
+  last_fired_at: string | null
 }
 
 // ── Task Phase Acceptances (schema v40 — task-phase-redesign K4) ────────

@@ -58,10 +58,10 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
 
 describe("02-db-schema: tasks table + schedules origin migration", () => {
   describe("schema", () => {
-    it("schema version is 40 (v40 = task-phase-redesign acceptances/columns)", () => {
+    it("schema version is 41 (v41 = task-scheduler-decouple, ADR-0021)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(40)
-      expect(SCHEMA_VERSION).toBe(40)
+      expect(v).toBe(41)
+      expect(SCHEMA_VERSION).toBe(41)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {

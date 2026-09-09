@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 40
+export const SCHEMA_VERSION = 41
 
 /**
  * Apply the complete unified schema to the given database.
@@ -94,6 +94,10 @@ function handleSchemaMigrations(db: Database.Database): void {
   // carried by the copy. Re-entrant: once the live table's DDL text contains the new
   // statuses it no-ops.
   migrateTasksStatusCheckV40(db)
+
+  // schema v41 (ADR-0021): tasks.trigger_* / executions.task_id+run_id /
+  // workspaces.task_id+run_id. AFTER the v40 rebuild on purpose — see the function doc.
+  ensureColumnsV41(db)
 }
 
 /**
@@ -231,6 +235,37 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'executions', 'phase_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
+}
+
+/**
+ * schema v41 (task-scheduler-decouple / ADR-0021) — additive columns only.
+ *
+ * MUST run AFTER migrateTasksStatusCheckV40: that migration rebuilds `tasks` from a
+ * hard-coded column list, so anything ensured before it gets eaten by the swap (the
+ * v40 re-entrancy test in acceptance-dao.test.ts is what pins this ordering).
+ *
+ *   tasks       WHEN the task wants to run is now the task's own data (before v41 the
+ *               due time lived on a private parked `schedules` row — see ADR-0021).
+ *   executions  states directly which task it serves; the board used to reach a
+ *               task's executions only by joining through schedules.
+ *   workspaces  direct task ownership (replaces the source_schedule_id→
+ *               schedules.origin_id reverse lookup composite walked).
+ *
+ * The trigger_mode CHECK is fresh-DB only (a CHECK on an existing table would need a
+ * rebuild, and dev DBs are disposable — spec §"无迁移"); code-level validation is the
+ * authority. next_fire_at is what schema.sql's idx_tasks_due indexes, hence this must
+ * run before the schema.sql exec — which applySchema does.
+ */
+function ensureColumnsV41(db: Database.Database): void {
+  ensureColumn(db, 'tasks', 'trigger_mode', "TEXT NOT NULL DEFAULT 'manual'")
+  ensureColumn(db, 'tasks', 'trigger_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'cron_expression', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'cron_timezone', "TEXT NOT NULL DEFAULT 'Asia/Shanghai'")
+  ensureColumn(db, 'tasks', 'trigger_enabled', "INTEGER NOT NULL DEFAULT 1")
+  ensureColumn(db, 'tasks', 'next_fire_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'last_fired_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'executions', 'task_id', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'workspaces', 'task_id', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

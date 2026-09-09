@@ -37,6 +37,27 @@ export const ExecutionStatusSchema = z.enum([
 ])
 export type ExecutionStatus = z.infer<typeof ExecutionStatusSchema>
 
+/**
+ * The terminal half of the execution-status split (ADR-0021 §4).
+ *
+ * Everything NOT in this list is alive — a task execution in `paused`, `pending_approval`
+ * or `pending_resume` still holds a live engine and a workspace. Two things are built
+ * from this one list and MUST agree, which is why it lives here rather than inline:
+ *
+ *   - `ux_exec_task_active` in schema.sql (「one live execution per task」)
+ *   - `ScheduleRunDAO.countActiveWork()` (the cross-type concurrency meter)
+ *
+ * The agreement is pinned by a golden test (db-schema.test.ts) comparing this array
+ * against the index's own DDL text, because SQL can't import a constant.
+ *
+ * 'aborted' is listed although ExecutionStatusSchema doesn't define it — task abort
+ * writes it directly (tasks-service), and omitting it here would make an aborted
+ * execution count as still running.
+ */
+export const TERMINAL_EXECUTION_STATUSES: readonly string[] = [
+  "completed", "completed_with_failures", "failed", "cancelled", "aborted", "skipped", "rejected",
+]
+
 export const GateStatusSchema = z.enum(["open", "closed", "bypassed"])
 export type GateStatus = z.infer<typeof GateStatusSchema>
 
