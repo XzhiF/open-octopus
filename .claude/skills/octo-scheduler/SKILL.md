@@ -37,7 +37,7 @@ version: 1.0.0
 
 ## API 端点清单
 
-### 1. 查询任务列表
+### 1. 查询作业列表
 
 ```bash
 curl -s "http://localhost:$PORT/api/scheduler/jobs?limit=20" | jq .
@@ -49,10 +49,13 @@ curl -s "http://localhost:$PORT/api/scheduler/jobs?limit=20" | jq .
 | `limit` | number | 每页条数（默认 20，最大 100） |
 | `search` | string | 按名称模糊搜索 |
 | `status` | enum | `enabled` / `disabled` / `failed` |
-| `job_type` | enum | `workflow` / `agent` |
+| `job_type` | enum | `workflow` / `agent` / `job`（`job` = 系统内置的 TS handler 作业，如 `builtin-task-lifecycle`；可暂停可手动跑一轮，不可删除） |
 | `workspace_id` | string | 按 workspace 过滤 |
 | `sort` | enum | `name` / `created_at` / `next_trigger_at` |
 | `order` | enum | `asc` / `desc` |
+
+> 这里只有**作业**。任务不在这个表里（票03 起任务的定时/触发是 `tasks.trigger_*` 自己的字段，
+> 走 `/api/tasks/:id/trigger`、`/trigger/schedule`，不要拿调度器 API 去建/找任务行）。
 
 **返回**：`{ items: SchedulerJob[], total: number, page: number, limit: number }`
 
