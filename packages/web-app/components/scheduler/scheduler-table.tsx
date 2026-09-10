@@ -17,6 +17,7 @@ import { ToggleSwitch } from "./toggle-switch"
 import { ActionMenu } from "./action-menu"
 import { SchedulerTableSkeleton } from "./skeleton-loader"
 import { isBuiltinJob, type SchedulerJob } from "@/lib/scheduler-api"
+import { formatDuration } from "@/lib/format"
 
 interface SchedulerTableProps {
   jobs: SchedulerJob[]
@@ -27,13 +28,22 @@ interface SchedulerTableProps {
   loading?: boolean
 }
 
+/** 上次触发 + 耗时（票06 手测⑤：系统调度页的内置 job 一行要能看出「上次触发与耗时」）。
+ *  数字念法走 lib/format.ts 的 formatDuration（C4 单源立法，私有副本会被
+ *  formatter-revival-gate 钉住）。duration_ms 为 null 是两种真实情况——那一轮还在跑，
+ *  或它是 skip/miss 行（根本没有引擎可计时）——此时整段不显示，而不是写「耗时 —」：
+ *  这两类行本来就没有跑过，缺一个数字不是待填的空。 */
 function formatLastExecution(job: SchedulerJob): string {
-  if (!job.last_execution) return "-"
+  const exec = job.last_execution
+  if (!exec) return "-"
   try {
-    return formatDistanceToNow(new Date(job.last_execution.triggered_at), {
+    const when = formatDistanceToNow(new Date(exec.triggered_at), {
       addSuffix: true,
       locale: zhCN,
     })
+    return typeof exec.duration_ms === "number"
+      ? `${when} · 耗时 ${formatDuration(exec.duration_ms)}`
+      : when
   } catch {
     return "-"
   }

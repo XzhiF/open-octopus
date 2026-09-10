@@ -342,6 +342,34 @@ describe('Scheduler Routes (integration)', () => {
     expect('claimed_at' in mine!).toBe(true)
   })
 
+  it('列表行的「上次触发」带耗时（票06 手测⑤：内置 job 那行要能看出跑了多久）', async () => {
+    // 走真路由而不是单测 enrichJobRow：这一列的形状是「DAO 的相关子查询 → service 映射 →
+    // wire」三段接起来的，之前正是因为本地又抄了一遍行类型，第四段子查询加了也没人发现。
+    const id = await createCronJob('t05-dur')
+    const insert = db.prepare(
+      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+         timezone_offset, timezone_iana, created_at, duration_ms)
+       VALUES (?, ?, ?, 'scheduled', ?, '+00:00', 'UTC', ?, ?)`,
+    )
+    const older = new Date(Date.now() - 3600_000).toISOString()
+    const newer = new Date().toISOString()
+    insert.run(`${id}-e1`, id, 'failed', older, older, 9000)
+    insert.run(`${id}-e2`, id, 'completed', newer, newer, 1234)
+
+    const res = await app.request('/api/scheduler/jobs')
+    const mine = (await json<{ items: Array<Record<string, unknown>> }>(res)).items.find(j => j.id === id)
+    // 取最新那条（1234），不是任一行的最大值，也不是先插的那条。completed 在 DTO 上叫
+    // success（mapExecutionStatus 的既有口径），断的是 wire，不是表里的词。
+    expect(mine!.last_execution).toMatchObject({ status: 'success', duration_ms: 1234 })
+
+    // skip 行没有引擎可计时 → 是 null，不是 0：0 会被 UI 念成「跑了 0ms」，那是假话
+    insert.run(`${id}-e3`, id, 'skipped', new Date(Date.now() + 1000).toISOString(), newer, null)
+    const after = (await json<{ items: Array<Record<string, unknown>> }>(
+      await app.request('/api/scheduler/jobs'),
+    )).items.find(j => j.id === id)
+    expect(after!.last_execution).toMatchObject({ status: 'skipped', duration_ms: null })
+  })
+
   // ── G4 (ticket 06): abort endpoint + workspace cleanup ──────────
 
   // Helper: create a cron job, then put it into the in-flight run-state a fire produces

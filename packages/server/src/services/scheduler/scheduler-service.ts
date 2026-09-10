@@ -21,6 +21,7 @@ import type {
 import { jobTypeSchema } from '@octopus/shared'
 import { usageFromLegacyJson } from '../../db/dao/usage-mapping'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
+import type { ScheduleRowWithLastExec } from '../../db/dao/schedule-config-dao'
 import { SSEService } from '../sse'
 import { BUILTIN_JOB_ID_PREFIX } from './builtin-jobs'
 
@@ -175,37 +176,11 @@ const updateJobSchema = z.object({
 
 // ── Row Types ────────────────────────────────────────────────────────
 
-interface ScheduleRow {
-  id: string
-  org: string
-  name: string
-  cron_expression: string | null
-  timezone: string
-  enabled: number
-  timeout_seconds: number
-  notify_on_failure: number
-  notify_channel: string | null
-  notify_target: string | null
-  container_execution_id: string | null
-  missed_alert_dismissed_at: string | null
-  deleted_at: string | null
-  created_at: string
-  updated_at: string
-  next_trigger_at: string | null
-  job_type: string
-  config: string
-  parallel_policy: string
-  description: string | null
-  version: number
-  consecutive_failures: number
-  max_retain: number
-  status: string
-  claimed_at: string | null
-  // Populated by correlated subqueries in listJobs/getJob (not a real column)
-  last_exec_status?: string | null
-  last_exec_triggered_at?: string | null
-  last_exec_error_summary?: string | null
-}
+/** The job row as this service sees it: the `schedules` columns plus the four
+ *  `last_exec_*` fields the correlated subqueries add. Aliased to the DAO's type instead
+ *  of re-declared — the local copy here is exactly how 票06's 耗时 went missing: the DAO
+ *  query grew a column, this interface did not, and nothing failed to say so. */
+type ScheduleRow = ScheduleRowWithLastExec
 
 interface ScheduleExecutionRow {
   id: string
@@ -953,6 +928,7 @@ export class SchedulerService {
       ? {
         status: mapExecutionStatus(row.last_exec_status),
         triggered_at: row.last_exec_triggered_at!,
+        duration_ms: row.last_exec_duration_ms ?? null,
         error_summary: row.last_exec_error_summary ?? null,
       }
       : null

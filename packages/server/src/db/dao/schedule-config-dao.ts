@@ -2,6 +2,16 @@ import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { ScheduleRow, ScheduleWorkspaceRow, SchedulerStateRow } from "../types"
 
+/** A `schedules` row plus its most recent fire, as the job list/get read model needs it.
+ *  The four `last_exec_*` fields are correlated subqueries over `schedule_executions` —
+ *  named once here so the list query and the single-get query cannot drift apart. */
+export type ScheduleRowWithLastExec = ScheduleRow & {
+  last_exec_status?: string | null
+  last_exec_triggered_at?: string | null
+  last_exec_error_summary?: string | null
+  last_exec_duration_ms?: number | null
+}
+
 /**
  * ScheduleConfigDAO — CRUD for schedule definitions and scheduler state.
  * Covers: schedules, schedule_workspaces, scheduler_state tables.
@@ -506,43 +516,40 @@ export class ScheduleConfigDAO extends BaseDAO {
 
   // ── Scheduler-service queries (global job list with last-exec subqueries) ──
 
+  /** The last-exec projection, shared by the list and the single-get query: four
+   *  correlated subqueries over the same "newest fire" row, so a column added here shows
+   *  up in both paths (and cannot be added to one only). */
+  private static readonly LAST_EXEC_SELECT = `
+        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
+        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
+        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary,
+        (SELECT duration_ms FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_duration_ms`
+
   listJobsQuery(params: {
     conditions: string[]; queryParams: unknown[];
     orderClause: string; limit: number; offset: number;
-  }): { rows: ScheduleRow[]; total: number } {
+  }): { rows: ScheduleRowWithLastExec[]; total: number } {
     const whereClause = params.conditions.join(' AND ')
     const countSql = `SELECT COUNT(*) as cnt FROM schedules s WHERE ${whereClause}`
     const total = (this.stmt(countSql).get(...params.queryParams) as { cnt: number }).cnt
 
     const querySql = `
-      SELECT s.*,
-        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
-        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
-        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary
+      SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
       FROM schedules s
       WHERE ${whereClause}
       ORDER BY ${params.orderClause}
       LIMIT ? OFFSET ?
     `
-    const rows = this.stmt(querySql).all(...params.queryParams, params.limit, params.offset) as (ScheduleRow & {
-      last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-    })[]
+    const rows = this.stmt(querySql).all(...params.queryParams, params.limit, params.offset) as ScheduleRowWithLastExec[]
     return { rows, total }
   }
 
-  getJobWithLastExec(id: string): (ScheduleRow & {
-    last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-  }) | null {
+  getJobWithLastExec(id: string): ScheduleRowWithLastExec | null {
     return (this.stmt(`
-      SELECT s.*,
-        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
-        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
-        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary
+      SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
       FROM schedules s
       WHERE s.id = ? AND s.deleted_at IS NULL
-    `).get(id) as (ScheduleRow & {
-      last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-    })) ?? null
+    `).get(id) as ScheduleRowWithLastExec | undefined) ?? null
   }
 
   // ── Agent route queries ────────────────────────────────────────────

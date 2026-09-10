@@ -136,3 +136,43 @@ describe("SchedulerTable 操作菜单 gating", () => {
     expect(screen.queryByText("编辑")).toBeNull()
   })
 })
+
+// ── 票06 手测⑤：系统调度页的内置 job 一行要能看出「上次触发与耗时」 ──────
+//
+// server 侧那半截（schedule_executions.duration_ms → DTO）由 scheduler-routes 的用例钉，
+// 这里钉的是最后一步：数字进了 wire 却没被念出来，等于没有。
+
+describe("SchedulerTable 上次触发列的耗时", () => {
+  const fired = (minutesAgo: number) =>
+    new Date(Date.now() - minutesAgo * 60_000).toISOString()
+
+  it("有 duration_ms 就一起念出来", () => {
+    renderTable([
+      makeJob({
+        id: "builtin-task-lifecycle",
+        name: "系统 · 任务生命周期",
+        job_type: "job",
+        last_execution: {
+          status: "success", triggered_at: fired(1), duration_ms: 45_200, error_summary: null,
+        },
+      }),
+    ])
+    // 念法来自 lib/format.ts 的 formatDuration（45200 → "45s"）——这里钉的是「数字进了
+    // 这一列」，具体档位由 format.ts 自己的用例管，抄一份档位断言就是造第二个真相源。
+    expect(screen.getByText(/耗时 45s/)).toBeTruthy()
+  })
+
+  it("没有耗时的行不编一个 0（skip/miss 那一轮没有引擎可计时）", () => {
+    renderTable([
+      makeJob({
+        id: "cron-1",
+        name: "夜间构建",
+        last_execution: {
+          status: "skipped", triggered_at: fired(2), duration_ms: null, error_summary: null,
+        },
+      }),
+    ])
+    expect(screen.queryByText(/耗时/)).toBeNull()
+    expect(screen.getByText(/分钟前/)).toBeTruthy()
+  })
+})

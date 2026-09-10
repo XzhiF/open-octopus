@@ -308,9 +308,15 @@ export type CodeJobConfig = z.infer<typeof codeJobConfigSchema>
 export type JobConfig = z.infer<typeof jobConfigSchema>
 export type LegacyJobConfig = z.infer<typeof legacyJobConfigSchema>
 
+/** The one fire the list row shows: the job's most recent schedule_executions row.
+ *  `duration_ms` is the fire's own wall clock (NULL while it is still running, and NULL
+ *  for the skip/miss rows that never had an engine) — 票06 手测⑤ asks for 「上次触发与
+ *  耗时」 on the built-in job's row, and the number exists on the row already; it was
+ *  simply not carried across the wire. */
 export interface SchedulerExecutionSummary {
   status: SchedulerExecutionStatus
   triggered_at: string
+  duration_ms: number | null
   error_summary: string | null
 }
 
