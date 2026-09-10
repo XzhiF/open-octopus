@@ -127,6 +127,8 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 - 等到点(不点任何东西):job 自己扫到 → 因未绑 workflow 起不来 → `refused=1` 进 fire 摘要、`last_fired_at` 写入、`next_fire_at` **继续前进**(周期不被一次失败钉死)、任务留 `ready`。
 - 再种一条该任务的 `running` 根执行 + 把游标推到 +40s → 到点日志「上一轮仍在运行,本次触发跳过」、`executions` 仍只有 1 行(**没有第二个实例**)、游标继续跳、那条 running 行没被对账误杀(未到 10 分钟窗口)。这就是手测清单③的闩锁半边。
 
+- **存量 DB 迁移(手测清单⑥的另一半)**:拿开发者本机 DB 的**副本**(v40、8 条 schedules 行含 7 条信封)跑 `applySchema` → v42:日志 `rebound 1 workspace` + `purged 7 task-envelope row(s)` + 5 列 DROP,末态 `schedules` = 1 条真作业 + `builtin-task-lifecycle`,13 条任务与 `user_version=42` 正确,server 正常启动。**这一步揪出一个真 bug**:v42 原先只 DROP COLUMN,而真机上的 7 条信封**全部 enabled=1**(3 条 status='draft',收窄后的 ScheduleStatus 已不承认该值)—— 只删列就等于在调度页留 7 个启用的幽灵作业,恰是"只见作业"的反面。现在迁移先搬走仍要用的事实(`source_schedule_id→origin_id` 移进 `workspaces.task_id`)再删行。
+
 **真机仍未覆盖**(要 provider + 真 repo,留给票06 的 e2e / 人工):② 一轮真跑起来并转 running、③ 的"连续两起"(两轮都真起)、④ abort 真停引擎后槽位被下一个排队任务立刻接走(单测已过:`finalizeLaunch` 末尾 `launchQueued(1)`)、⑤ 调度页 UI、⑥ 重启后 RecoveryManager 与内置 job 共存。
 
 ## 9. 票 01 落地附记(实测踩到的四颗雷)
