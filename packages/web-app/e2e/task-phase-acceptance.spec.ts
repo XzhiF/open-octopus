@@ -50,9 +50,7 @@ let serverAvailable = false
 let dbAvailable = true
 const created = {
   taskIds: [] as string[],
-  scheduleIds: [] as string[],
   executionIds: [] as string[],
-  seIds: [] as string[],
   workspaceIds: [] as string[],
   homeDirs: [] as string[],
 }
@@ -113,47 +111,37 @@ async function makeV4Task(
   return task.id
 }
 
-/** sqlite 直造一条 phase-round 执行链（票 11 模式；se 行带 duration/completed
- *  以喂三栏左列的「用时」）。 */
+/** sqlite 直造一条 phase-round 执行行（票03 口径：`task_id` 直连 + `parent_id='0'` =
+ *  一轮的根；信封时代那条 schedules/schedule_executions 链已随 v42 删列）。
+ *  「用时」现在由徽章自己的 started_at/completed_at 算（票05 起 modal 不再读
+ *  schedule_executions.duration_ms），所以 durationMs 落在行上的时间戳对里。 */
 async function insertPhaseRoundExec(
   taskId: string,
   opts: { phaseIndex: number; roundIndex: number; execStatus: string; createdAt: string; durationMs?: number },
 ): Promise<void> {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const wsId = `e2e-td-acc-ws-${uid}`
-  const schId = `e2e-td-acc-sch-${uid}`
   const execId = `e2e-td-acc-exec-${uid}`
-  const seId = `e2e-td-acc-se-${uid}`
   const now = NOW_ISO()
   const done = opts.execStatus === "completed" || opts.execStatus === "failed"
+  const completedAt = done
+    ? new Date(Date.parse(opts.createdAt) + (opts.durationMs ?? 0)).toISOString()
+    : null
   await dbRun(
     `INSERT INTO workspaces (id, name, org, status, path, created_at, updated_at, source)
      VALUES (?, ?, ?, 'active', ?, ?, ?, 'user')`,
     wsId, `E2E_TD_acc_ws_${uid}`, TASK_E2E_ORG, `/tmp/e2e-td-acc-${uid}`, now, now,
   )
   await dbRun(
-    `INSERT INTO schedules (id, org, name, enabled, timeout_seconds, created_at, updated_at,
-       config, status, origin_type, origin_id, origin_role, workspace_id)
-     VALUES (?, ?, ?, 1, 3600, ?, ?, '{}', 'running', 'task', ?, 'primary', ?)`,
-    schId, TASK_E2E_ORG, `E2E_TD_acc_sch_${uid}`, now, now, taskId, wsId,
-  )
-  await dbRun(
-    `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, node_type, org,
-       status, phase_index, round_index, created_at, updated_at)
-     VALUES (?, ?, 'task-dev', 'e2e-td-acc-round', 'normal', ?, ?, ?, ?, ?, ?)`,
-    execId, wsId, TASK_E2E_ORG, opts.execStatus, opts.phaseIndex, opts.roundIndex, opts.createdAt, now,
-  )
-  await dbRun(
-    `INSERT INTO schedule_executions (id, schedule_id, execution_id, status, trigger_type,
-       triggered_at, timezone_offset, timezone_iana, duration_ms, workspace_id, created_at, completed_at)
-     VALUES (?, ?, ?, ?, 'manual', ?, '+08:00', 'Asia/Shanghai', ?, ?, ?, ?)`,
-    seId, schId, execId, done ? "done" : "running", opts.createdAt,
-    opts.durationMs ?? null, wsId, now, done ? new Date(Date.parse(opts.createdAt) + (opts.durationMs ?? 0)).toISOString() : null,
+    `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+       node_type, org, task_id, status, phase_index, round_index, started_at, completed_at,
+       created_at, updated_at)
+     VALUES (?, ?, '0', 0, 'task-dev', 'e2e-td-acc-round', 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    execId, wsId, TASK_E2E_ORG, taskId, opts.execStatus, opts.phaseIndex, opts.roundIndex,
+    opts.createdAt, completedAt, opts.createdAt, now,
   )
   created.workspaceIds.push(wsId)
-  created.scheduleIds.push(schId)
   created.executionIds.push(execId)
-  created.seIds.push(seId)
 }
 
 /** 写真实 task home 产物（scan-first：文件即产物，无需登记）。 */
@@ -207,12 +195,8 @@ test.afterAll(async () => {
   if (!serverAvailable || !dbAvailable) return
   try {
     const inList = (xs: string[]) => xs.map(() => "?").join(",")
-    if (created.seIds.length)
-      await dbRun(`DELETE FROM schedule_executions WHERE id IN (${inList(created.seIds)})`, ...created.seIds)
     if (created.executionIds.length)
       await dbRun(`DELETE FROM executions WHERE id IN (${inList(created.executionIds)})`, ...created.executionIds)
-    if (created.scheduleIds.length)
-      await dbRun(`DELETE FROM schedules WHERE id IN (${inList(created.scheduleIds)})`, ...created.scheduleIds)
     if (created.workspaceIds.length)
       await dbRun(`DELETE FROM workspaces WHERE id IN (${inList(created.workspaceIds)})`, ...created.workspaceIds)
     if (created.taskIds.length)
@@ -283,8 +267,9 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   await expect(confirm).toBeDisabled()
   await page.screenshot({ path: screenshotPath("T12-AC2-reject-disabled.png") })
 
-  // —— 真实提交（不拦截）：server 写账本 + fix-feedback-r1.md；派发因 fixture
-  // 信封无物化 phases 而 409（票 07：账本保留，重试=人工动作）→ UI 报错不崩。
+  // —— 真实提交（不拦截）：server 写账本 + fix-feedback-r1.md；派发因 fixture 的 home 里
+  // 没有批次 spec 文件 → armTask 的 resolveV4Phases 门前抛「任务契约已不再满足」而 409
+  // （票 07：账本保留，重试=人工动作）→ UI 报错不崩。
   await dialog.locator("[data-reject-feedback]").fill("E2E_TD 路由没接上，请修复")
   await expect(confirm).toBeEnabled()
   await confirm.click()
@@ -336,7 +321,8 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
         task: { ...d2, status: "running", derived },
         acceptance_id: "e2e-td-acc-sim2",
         next_action: "dispatched",
-        dispatch: { schedule_id: "sim-sch", execution_id: "sim-exec2", workspace_id: "sim-ws", phase_index: 1, round_index: 2 },
+        // 票03: AcceptanceDispatch lost schedule_id — the dispatch IS an execution row.
+        dispatch: { execution_id: "sim-exec2", workspace_id: "sim-ws", phase_index: 1, round_index: 2 },
       }),
     })
   })
@@ -513,11 +499,15 @@ test("B: real accept on autoAdvance=false parks at the gate and surfaces 启动�
   await expect(readyCard.locator("[data-task-advance-btn]")).toBeVisible({ timeout: 20_000 })
   await page.screenshot({ path: screenshotPath("T12-B-advance-button.png") })
 
-  // 点击 → 真实 POST /advance（fixture 信封无物化 phases → server 409 人话
-  // toast = 网络链 + 错误面的真实证明；不起活体执行）
+  // 点击 → 真实 POST /advance（fixture 的 home 无批次 spec → 起轮在门前被拒 → server
+  // 409 人话 toast = 网络链 + 错误面的真实证明；不起活体执行）
   await readyCard.locator("[data-task-advance-btn]").click()
-  // 真实 POST /advance → server 409（fixture 信封无物化 phases）→ 人话 toast
-  await expect(page.locator("[data-sonner-toast]", { hasText: "不在信封已解析" })).toBeVisible({ timeout: 15_000 })
+  // 真实 POST /advance → server 409。票03 换了这句人话：信封时代它抱怨「不在信封已解析的
+  // phases[] 中」，现在门是 armTask 重解析任务的 v4 契约（home 里没有批次 spec.md）——
+  // 「任务契约已不再满足: missing phase:…」。断前缀 + 具体缺项，不断整句以免耦死文案。
+  const failToast = page.locator("[data-sonner-toast]", { hasText: "任务契约已不再满足" })
+  await expect(failToast).toBeVisible({ timeout: 15_000 })
+  await expect(failToast).toContainText("spec-missing")
 })
 
 // ── 票 04 (phase-handoff-chaining): 前序交接提示行可见性 ──────────────

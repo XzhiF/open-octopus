@@ -10,6 +10,7 @@ import {
   SchedulerTriggerConflictError,
   SchedulerTriggerSourceMismatchError,
   SchedulerJobNotAbortableError,
+  SchedulerBuiltinJobProtectedError,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
@@ -159,6 +160,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof SchedulerTriggerConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerSourceMismatchError) return { status: 400, message: err.message }
   if (err instanceof SchedulerJobNotAbortableError) return { status: 400, message: err.message }
+  if (err instanceof SchedulerBuiltinJobProtectedError) return { status: 400, message: err.message }
   if (err instanceof ConfigValidationError) return { status: 400, message: err.message }
 
   const msg = err instanceof Error ? err.message : String(err)

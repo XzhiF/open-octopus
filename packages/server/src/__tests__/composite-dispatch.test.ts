@@ -77,9 +77,23 @@ vi.mock("../services/execution-service-registry", () => ({
           stub.created.push({ id, workspaceId, ...input })
           return { id }
         },
-        start: async (id: string) => {
+        // Same precondition as the real engine — including the claimedLease handoff, so a
+        // launcher that claims and then starts cannot drift from production again (票05).
+        start: async (id: string, _iv?: unknown, _sync?: unknown, claimedLease?: string) => {
+          const row = stub.db!.prepare("SELECT status, started_at FROM executions WHERE id=?").get(id) as
+            { status: string; started_at: string | null } | undefined
+          if (claimedLease) {
+            if (!row || row.status !== "running" || row.started_at !== claimedLease) {
+              throw new Error("Execution is not claimed by this launcher")
+            }
+          } else if (!row || row.status !== "pending") {
+            throw new Error("Execution is not pending")
+          }
           stub.started.push(id)
-          stub.db!.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(id)
+          if (!claimedLease) {
+            stub.db!.prepare("UPDATE executions SET status='running', started_at=? WHERE id=?")
+              .run(new Date().toISOString(), id)
+          }
         },
         registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
           if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)

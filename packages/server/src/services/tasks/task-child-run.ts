@@ -149,18 +149,23 @@ export function startChildRun(
   childId: string,
   workspaceId: string,
   inputValues: Record<string, string>,
-  /** True when the caller already moved the row out of 'pending' — the built-in job's
-   *  claim loop does that (under the guarded claim that keeps two owners from both
-   *  starting it) before delegating here. Without the flag the inner claim would see
-   *  changes===0 and bail, leaving a row that says 'running' with no engine and a parent
-   *  that is never resumed (票03 复核抓到的形状). */
-  alreadyClaimed = false,
+  /** The lease token of a claim the CALLER already made (the built-in job's claim loop
+   *  moves the row out of 'pending' under the guarded claim that keeps two owners from
+   *  both starting it, then delegates here). Absent = claim it here. Without this the
+   *  inner claim would see changes===0 and bail, leaving a row that says 'running' with no
+   *  engine and a parent that is never resumed (票03 复核抓到的形状) — and the engine's
+   *  start needs the token for the same reason the root path does (票05 真机实测). */
+  claimedLease?: string,
 ): boolean {
   const execDAO = new ExecutionDAO(db)
-  if (!alreadyClaimed && execDAO.claimLaunch(childId).changes === 0) return false
+  const leaseAt = claimedLease ?? new Date().toISOString()
+  if (!claimedLease && execDAO.claimLaunch(childId, leaseAt).changes === 0) return false
   const registry = getExecutionService(workspaceId)
   if (!registry) {
-    execDAO.setLaunchStatus(childId, "failed", { completedAt: new Date().toISOString() })
+    execDAO.setLaunchStatus(childId, "failed", {
+      completedAt: new Date().toISOString(),
+      error: "子单元工作区不可用（行缺失或路径失效）",
+    })
     resumeParentFromChild(db, childId).catch((err: unknown) =>
       console.error(`[task-child-run] resume parent after unavailable ws failed:`, errMessage(err)))
     return false
@@ -177,10 +182,13 @@ export function startChildRun(
     } as never,
     childId,
   )
-  registry.service.start(childId, inputValues).catch((err: unknown) => {
+  registry.service.start(childId, inputValues, undefined, leaseAt).catch((err: unknown) => {
     const message = errMessage(err)
     console.error(`[task-child-run] child start failed for ${childId}:`, message)
-    execDAO.setLaunchStatus(childId, "failed", { completedAt: new Date().toISOString() })
+    execDAO.setLaunchStatus(childId, "failed", {
+      completedAt: new Date().toISOString(),
+      error: `子单元启动失败: ${message}`,
+    })
     registry.service.clearExternalCallbacks(childId)
     resumeParentFromChild(db, childId).catch((e: unknown) =>
       console.error(`[task-child-run] resume after start failure failed:`, errMessage(e)))

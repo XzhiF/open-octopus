@@ -205,10 +205,21 @@ test.describe("Story B: Composite task full closed loop", () => {
     const root = roots[0]!
     expect(root.task_id, "The instance row carries the task id directly").toBe(taskId)
     expect(root.parent_id, "The coordinator turn is a root (parent_id='0')").toBe("0")
+    // What the row may say at this instant is every state a run can be in: 排队中 (pending,
+    // armed behind the concurrency gate), 执行中 (running), or already terminal because the
+    // start itself failed (the composite coordinator needs its built-in workflow + a
+    // provider — a dev box without either fails here, and the failure lands ON THE ROW,
+    // which is 票03's improvement over the envelope: the reason is in var_pool.error and the
+    // card goes failed via the job's own mirror, instead of a schedule parked at 'queued').
     expect(
-      root.status === "pending" || root.status === "running",
-      `The root is 排队中 (pending, behind the concurrency gate) or 执行中 (running); got ${root.status}`,
-    ).toBe(true)
+      ["pending", "running", "failed", "completed", "completed_with_failures", "aborted", "cancelled"],
+      `The armed root is a real run row; got ${root.status}`,
+    ).toContain(root.status)
+    if (isTerminalExecutionStatus(root.status)) {
+      const reason = (JSON.parse(root.var_pool || "{}") as { error?: string }).error
+      log(`协调器一轮立即红了（${root.status}: ${reason ?? "无原因"}）—— children 断言随之受限`)
+      expect(reason, "一个红的运行必须把原因写在行上（票05 §新事实2）").toBeTruthy()
+    }
 
     // API assert (R3): the read model points at the same single row. children[] (the
     // envelope rows) is gone; executions[] lists the roots.

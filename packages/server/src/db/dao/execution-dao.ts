@@ -171,11 +171,17 @@ export class ExecutionDAO extends BaseDAO {
 
   /** Claim a specific armed row out of the queue. Guarded on status='pending' so two
    *  overlapping job rounds (wake() + auxiliary tick) can never both launch it:
-   *  changes===0 means someone else got there first. */
-  claimLaunch(id: string): Database.RunResult {
+   *  changes===0 means someone else got there first.
+   *
+   *  `leaseAt` is the started_at this claim writes, and the caller passes it to the
+   *  engine's `start(..., claimedLease)` as proof of ownership: the claim is the
+   *  serializer, and `start` needs to distinguish "the row I just claimed" from "somebody
+   *  else's live run". Callers that want the token generate it; the default keeps the DAO
+   *  usable standalone. */
+  claimLaunch(id: string, leaseAt = new Date().toISOString()): Database.RunResult {
     return this.stmt(
       "UPDATE executions SET status = 'running', started_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
-    ).run(new Date().toISOString(), new Date().toISOString(), id)
+    ).run(leaseAt, leaseAt, id)
   }
 
   /** Retire an armed-but-not-started row (abort while queued / failed arming). Guarded

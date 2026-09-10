@@ -196,10 +196,29 @@ export class ExecutionLifecycle {
 
   // ==================== Start ====================
 
-  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
+  async start(
+    id: string,
+    inputValues?: Record<string, string>,
+    syncMainBranch?: boolean,
+    claimedLease?: string,
+  ): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (exec.status !== "pending") throw Object.assign(new Error("Execution is not pending"), { status: 400 })
+    // Two ways a row arrives here. The normal one: a human or a chain starts a 'pending'
+    // row and this method performs the transition. The task one (ADR-0021 票03): the
+    // built-in task-lifecycle job already moved pending→running under a GUARDED claim —
+    // that claim is the serializer for "who starts this task", so the job cannot also be
+    // asked to satisfy a 'pending' precondition it just consumed. It hands back the lease
+    // token its claim wrote, and `started_at` matching that token is what proves the row is
+    // MINE rather than some other owner's live run (a UI 启动 that won the race left a
+    // different started_at, and is refused below).
+    if (claimedLease) {
+      if (exec.status !== "running" || exec.started_at !== claimedLease) {
+        throw Object.assign(new Error("Execution is not claimed by this launcher"), { status: 400 })
+      }
+    } else if (exec.status !== "pending") {
+      throw Object.assign(new Error("Execution is not pending"), { status: 400 })
+    }
 
     try { await this.drainPendingHooks() } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -212,7 +231,9 @@ export class ExecutionLifecycle {
     }
 
     const now = new Date().toISOString()
-    this.updateStatus(id, "running", { started_at: now })
+    // A claimed row is already 'running' with the claim's started_at — rewriting it would
+    // move the launch instant the queue and the duration math both read.
+    if (!claimedLease) this.updateStatus(id, "running", { started_at: now })
 
     if (inputValues) {
       this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
@@ -1706,6 +1727,15 @@ export class ExecutionLifecycle {
       status: "pending", input_values: inputValuesJson, var_pool: varPoolJson,
       triggered_by: input.triggered_by ?? "manual",
       node_type: nodeType, branch, org,
+      // ADR-0021 票03 — the identity the root-guard above just reasoned about must land on
+      // the row in the SAME statement. Without it the row is not a task instance: the
+      // latch (ux_exec_task_active) cannot protect it, idx_exec_pending_claimable cannot
+      // find it, so the built-in job never launches it and the task board never sees it.
+      // The unit tests missed this for a whole ticket because they stub create() and do the
+      // INSERT themselves; this is the seam that has to be tested unstubbed.
+      task_id: input.task_id ?? null,
+      phase_index: input.phase_index ?? null,
+      round_index: input.round_index ?? null,
       created_at: now, updated_at: now,
     })
 

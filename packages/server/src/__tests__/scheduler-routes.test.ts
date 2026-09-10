@@ -446,6 +446,39 @@ describe('Scheduler Routes (integration)', () => {
     const res = await app.request('/api/scheduler/jobs/nonexistent-job-id/abort', { method: 'POST' })
     expect(res.status).toBe(404)
   })
+  // ── 票05: the built-in job is protected at the API, not just in the menu ──
+  it('DELETE /jobs/builtin-* → 400,PUT 改 config → 400,但改 cron 仍可用', async () => {
+    const { seedBuiltinCodeJobs } = await import('../services/scheduler/builtin-jobs')
+    seedBuiltinCodeJobs(new ScheduleConfigDAO(db), 'test')
+    const id = 'builtin-task-lifecycle'
+
+    const del = await app.request(`/api/scheduler/jobs/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(400)
+    expect((await json<{ error: string }>(del)).error).toContain('不可删除')
+    // The row must still be there and still enabled — a refused delete changes nothing.
+    expect((await json<{ items: Array<{ id: string }> }>(
+      await app.request('/api/scheduler/jobs?job_type=job'),
+    )).items.map((j) => j.id)).toContain(id)
+
+    const ver = (await json<{ version: number }>(await app.request(`/api/scheduler/jobs/${id}`))).version
+    const badCfg = await app.request(`/api/scheduler/jobs/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'if-match': String(ver) },
+      body: JSON.stringify({ config: { schema_version: '1.0', type: 'agent', prompt: 'clobber the handler' } }),
+    })
+    expect(badCfg.status).toBe(400)
+    expect((await json<{ error: string }>(badCfg)).error).toContain('handler 指针')
+
+    // What IS the user's to tune — the cadence — still goes through.
+    const ver2 = (await json<{ version: number }>(await app.request(`/api/scheduler/jobs/${id}`))).version
+    const okCron = await app.request(`/api/scheduler/jobs/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'if-match': String(ver2) },
+      body: JSON.stringify({ cron_expression: '*/5 * * * *' }),
+    })
+    expect(okCron.status).toBe(200)
+  })
+
   // ── 票05: the list filter knows all three job types ────────────────
   it('GET /jobs?job_type=job 筛出 job 行，乱值等于不加过滤（cast 曾把 job 当不存在）', async () => {
     const created = await app.request('/api/scheduler/jobs', {

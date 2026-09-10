@@ -22,6 +22,7 @@ import { jobTypeSchema } from '@octopus/shared'
 import { usageFromLegacyJson } from '../../db/dao/usage-mapping'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
+import { BUILTIN_JOB_ID_PREFIX } from './builtin-jobs'
 
 // ── Error Classes ────────────────────────────────────────────────────
 
@@ -69,6 +70,17 @@ export class SchedulerJobNotAbortableError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'SchedulerJobNotAbortableError'
+  }
+}
+
+/** 票05: the built-in jobs are the system's own housekeeping. Deleting
+ *  `builtin-task-lifecycle` stops every 定时/周期 launch, and re-writing its config clobbers
+ *  the handler pointer the executor resolves — neither is a job edit, so both are refused
+ *  (the UI hiding the affordance is not a gate; the API answered DELETE anyway). */
+export class SchedulerBuiltinJobProtectedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SchedulerBuiltinJobProtectedError'
   }
 }
 
@@ -441,6 +453,16 @@ export class SchedulerService {
 
     const validated = updateJobSchema.parse(input)
 
+    // A built-in row's config IS its handler pointer (`{handler, args}` — the code never
+    // enters the DB). The edit form cannot express that shape, so submitting one writes an
+    // agent/workflow config over it and the next fire dies in the registry lookup. Cron /
+    // enabled / timeout / description stay editable — those are the user's to tune.
+    if (id.startsWith(BUILTIN_JOB_ID_PREFIX) && validated.config !== undefined) {
+      throw new SchedulerBuiltinJobProtectedError(
+        '内置作业的配置（handler 指针）不可修改，可改的是 cron / 开关 / 超时 / 描述',
+      )
+    }
+
     let validatedConfig: JobConfig | undefined
     if (validated.config) {
       validatedConfig = validateConfig(existing.job_type as JobType, validated.config)
@@ -542,6 +564,17 @@ export class SchedulerService {
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
+    }
+
+    // 票05: the built-in jobs are the system's own housekeeping — the task-lifecycle one
+    // IS every 定时/周期 launch. Deleting it is not "remove this job", it is "stop the
+    // scheduler's reason for existing", and the UI only ever offers 暂停 for these rows.
+    // Refused server-side, because the affordance being hidden is not a gate (the agent
+    // that wired the menu found the API still answered DELETE for it).
+    if (id.startsWith(BUILTIN_JOB_ID_PREFIX)) {
+      throw new SchedulerBuiltinJobProtectedError(
+        '内置作业不可删除，只能暂停（删除会停止全部定时/周期任务启动）',
+      )
     }
 
     this.configDAO.transaction(() => {

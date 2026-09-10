@@ -239,8 +239,10 @@ export class TaskLifecycleService {
       // Guarded flip: two overlapping rounds can both see the same queued row, and only
       // the one whose UPDATE lands gets to start it. Without this guard a wake() racing
       // the 60s tick launches a task twice — the concurrency case the whole design is
-      // gated on.
-      if (this.execDAO.claimLaunch(row.id).changes === 0) continue
+      // gated on. The token is the started_at this claim wrote; it goes to the engine's
+      // start so the launcher can prove WHICH claim it holds (see ExecutionLifecycle.start).
+      const leaseAt = new Date().toISOString()
+      if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) continue
       try {
         // A composite child needs the PARENT-resume wiring, not the task finalize — the
         // parent is what decides what a finished subunit means. Claimed here rather than
@@ -249,9 +251,9 @@ export class TaskLifecycleService {
           const iv = parseJSON<Record<string, string>>(row.input_values, {})
           // alreadyClaimed=true: this loop moved the row pending→running just above,
           // under the guarded claim that keeps two owners from both starting it.
-          if (!startChildRun(this.deps.db, row.id, row.workspace_id, iv, true)) continue
+          if (!startChildRun(this.deps.db, row.id, row.workspace_id, iv, leaseAt)) continue
         } else {
-          this.startRow(row)
+          this.startRow(row, leaseAt)
         }
         launched++
       } catch (err: unknown) {
@@ -267,8 +269,11 @@ export class TaskLifecycleService {
     return { launched, capped: false }
   }
 
-  /** Start an already-claimed row on its workspace. */
-  private startRow(row: ExecutionRow): void {
+  /** Start a row this job has already claimed. `claimedLease` is the started_at the claim
+   *  wrote — the engine needs it because its own precondition ('pending') is one the
+   *  claim consumed; without the handoff every task launch dies at "Execution is not
+   *  pending" (票05 真机实测:the stubbed create/start in the unit tests hid exactly this). */
+  private startRow(row: ExecutionRow, claimedLease?: string): void {
     const registry = getExecutionService(row.workspace_id)
     if (!registry) throw new Error(`workspace ${row.workspace_id} 不可用（行缺失或路径失效）`)
     const inputValues = parseJSON<Record<string, string>>(row.input_values, {})
@@ -287,7 +292,7 @@ export class TaskLifecycleService {
       row.id,
     )
 
-    registry.service.start(row.id, inputValues).catch((err: unknown) => {
+    registry.service.start(row.id, inputValues, undefined, claimedLease).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[task-lifecycle] start failed for execution ${row.id}:`, message)
       this.execDAO.setLaunchStatus(row.id, "failed", {
@@ -1025,6 +1030,16 @@ export class TaskLifecycleService {
       })
       registry?.service.clearExternalCallbacks(row.id)
       cancelled.push(row.id)
+    }
+    // An aborted run just freed a compute slot, so drain the queue now — same rule as
+    // finalizeLaunch (contract §1c): a task waiting behind the cap should not have to sit
+    // through another cron minute because the run that blocked it was stopped by hand.
+    if (cancelled.length > 0 || retired.length > 0) {
+      try {
+        this.launchQueued(1)
+      } catch (err: unknown) {
+        console.error(`[task-lifecycle] drain after abort failed (non-fatal):`, errMessage(err))
+      }
     }
     return { cancelled, retired }
   }

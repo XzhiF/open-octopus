@@ -52,8 +52,14 @@ export const BUILTIN_CODE_JOBS: readonly BuiltinCodeJob[] = [
   },
 ]
 
+/** Every built-in row's id starts with this — the guard in `deleteJob`/`updateJob` keys on
+ *  it, and the web's `isBuiltinJob()` mirrors the same convention. Deterministic ids are
+ *  what make the seed idempotent, so they are also what makes "is this one of ours" a
+ *  question answerable without a table of special cases. */
+export const BUILTIN_JOB_ID_PREFIX = "builtin-"
+
 export function builtinJobId(handler: string): string {
-  return `builtin-${handler}`
+  return `${BUILTIN_JOB_ID_PREFIX}${handler}`
 }
 
 export interface SeedResult {
@@ -69,6 +75,14 @@ export interface SeedResult {
  * pointer got clobbered). `enabled`, `cron_expression`, `timeout_seconds` and
  * `notify_*` are left alone — a user who paused or re-tuned a built-in job stays paused
  * across restarts.
+ *
+ * A SOFT-DELETED built-in row is repaired too (deleted_at cleared), and that is not a
+ * contradiction of the paragraph above: pausing is a user decision about running, deleting
+ * a row that the system cannot function without is a broken state. `findByIdRaw` deliberately
+ * ignores `deleted_at` while every read the pump uses filters on it — so without this, a
+ * DELETE on `builtin-task-lifecycle` (which the API happily served before 票05's guard)
+ * leaves the seed reporting "untouched" while no tick ever runs again: every 定时/周期 task
+ * silently stops launching, and the recovery is a manual DB edit.
  */
 export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResult {
   const result: SeedResult = { created: [], repaired: [], untouched: [] }
@@ -100,6 +114,18 @@ export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResul
         next_trigger_at: null,
       })
       result.created.push(id)
+      continue
+    }
+
+    if (existing.deleted_at) {
+      dao.undelete(id)
+      // Re-point the row as well: a deleted-then-revived row is also the case where a
+      // hand-edited or clobbered config is most likely, and one UPDATE is cheaper than a
+      // second opinion.
+      if (existing.job_type !== "job" || parseHandler(existing.config) !== job.handler) {
+        dao.updateSchedule(id, { job_type: "job", config: JSON.stringify(config) })
+      }
+      result.repaired.push(id)
       continue
     }
 

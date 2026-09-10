@@ -146,6 +146,15 @@ export class ScheduleConfigDAO extends BaseDAO {
     return this.stmt(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND version = ?`).run(...vals)
   }
 
+  /** Clear a soft delete. Used by the built-in job seed: a row the operator deleted
+   *  stays deleted, but a built-in whose row got soft-deleted (by API, by hand, by an
+   *  older build that lacked the guard) must come back at next boot — see the WHY in
+   *  seedBuiltinCodeJobs. */
+  undelete(id: string): Database.RunResult {
+    const now = new Date().toISOString()
+    return this.stmt("UPDATE schedules SET deleted_at = NULL, updated_at = ? WHERE id = ?").run(now, id)
+  }
+
   softDelete(id: string): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, id)

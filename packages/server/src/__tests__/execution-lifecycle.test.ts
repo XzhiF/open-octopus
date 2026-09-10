@@ -173,6 +173,78 @@ describe("ExecutionLifecycle.create", () => {
       .toThrow(/already has a root/)
   })
 
+  // ── ADR-0021 票03 — the seam the whole design rests on, tested UNSUBSTUBBED ──
+  it("writes task_id / phase_index / round_index AT INSERT (the row IS the instance)", () => {
+    // This is the one line of the refactor that no tasks-domain test could catch: those
+    // stub ExecutionService.create and do the INSERT themselves, so they pin what the
+    // stub writes, not what production writes. If these three fields are dropped here,
+    // the latch (ux_exec_task_active) cannot protect the row, idx_exec_pending_claimable
+    // cannot find it — an armed task never launches and the board shows nothing. Found by
+    // booting the built server and triggering a task (spec §8b).
+    const exec = lifecycle.create(workspaceId, {
+      workflow_ref: "test.yaml", task_id: "task-bind-1", phase_index: 2, round_index: 3,
+    }, ORG)
+    expect(exec.task_id).toBe("task-bind-1")
+    expect(exec.phase_index).toBe(2)
+    expect(exec.round_index).toBe(3)
+    // Read back from the DB rather than trusting the returned object.
+    const raw = db.prepare("SELECT task_id, phase_index, round_index FROM executions WHERE id = ?")
+      .get(exec.id) as { task_id: string; phase_index: number; round_index: number }
+    expect(raw).toEqual({ task_id: "task-bind-1", phase_index: 2, round_index: 3 })
+  })
+
+  it("a task-bound root is exempt from the one-root-per-ws invariant (and stays findable)", () => {
+    // The exemption is only safe because the row carries its task: the tighter latch
+    // replaces the invariant it waives. A second root for the SAME task must hit the
+    // UNIQUE index, and both rows must be claimable by the built-in job.
+    const first = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "task-bind-2" }, ORG)
+    expect(() => lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "task-bind-2" }, ORG))
+      .toThrow(/ux_exec_task_active|UNIQUE/i)
+    const claimable = db.prepare(
+      "SELECT id FROM executions WHERE task_id = 'task-bind-2' AND status = 'pending'",
+    ).all() as { id: string }[]
+    expect(claimable.map((r) => r.id)).toEqual([first.id])
+  })
+
+  it("a generic launch is unaffected (task columns NULL, invariant still enforced)", () => {
+    lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    const plain = db.prepare("SELECT task_id, phase_index, round_index FROM executions ORDER BY created_at DESC LIMIT 1")
+      .get() as { task_id: string | null; phase_index: number | null; round_index: number | null }
+    expect(plain).toEqual({ task_id: null, phase_index: null, round_index: null })
+  })
+
+  // ── 票05 真机实测:the claim→start handoff ──
+  it("a claimed row starts with its own lease and refuses somebody else's", async () => {
+    // The built-in task-lifecycle job claims (guarded pending→running) BEFORE it starts,
+    // because the claim — not start — is the serializer for "who runs this task". That
+    // makes the row non-'pending' at the moment start() is called, which is exactly how
+    // every real task launch died before this handoff existed ("Execution is not
+    // pending", found on a booted server, invisible to the stubbed tests).
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "task-lease" }, ORG)
+    const lease = new Date().toISOString()
+    expect(dao.claimLaunch(exec.id, lease).changes).toBe(1)
+
+    // Right lease: accepted, and the claim's started_at is NOT rewritten (the queue and the
+    // duration math read that instant).
+    const started = await lifecycle.start(exec.id, undefined, undefined, lease)
+    // The stub workflow in this harness runs to completion inside start(), so the only
+    // status assertions available here are "it did NOT bounce off the precondition" plus
+    // the lease surviving (a re-write would move started_at and with it the launch instant
+    // the queue and duration math read).
+    expect(["running", "completed"]).toContain(started.status)
+    expect(started.started_at).toBe(lease)
+
+    // Somebody else's lease (or none) is a different owner's claim → refused.
+    const other = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "task-lease-2" }, ORG)
+    const lease2 = new Date().toISOString()
+    dao.claimLaunch(other.id, lease2)
+    await expect(lifecycle.start(other.id, undefined, undefined, "2020-01-01T00:00:00.000Z"))
+      .rejects.toThrow(/not claimed by this launcher/)
+    await expect(lifecycle.start(other.id)).rejects.toThrow(/not pending/)
+    // Still the original claim — a refused start must not have touched it.
+    expect(dao.findById(other.id)!.started_at).toBe(lease2)
+  })
+
   it("stores initial_var_pool as JSON", () => {
     const exec = lifecycle.create(workspaceId, {
       workflow_ref: "test.yaml",

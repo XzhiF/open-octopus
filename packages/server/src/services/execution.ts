@@ -151,8 +151,16 @@ export class ExecutionService {
 
   // ==================== Lifecycle ====================
 
-  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
-    return this.lifecycle.start(id, inputValues, syncMainBranch)
+  async start(
+    id: string,
+    inputValues?: Record<string, string>,
+    syncMainBranch?: boolean,
+    claimedLease?: string,
+  ): Promise<ExecutionRow> {
+    // claimedLease — see ExecutionLifecycle.start: the task-lifecycle job claims the row
+    // under a guarded UPDATE and hands its lease back here instead of re-asserting
+    // 'pending', which its own claim already consumed.
+    return this.lifecycle.start(id, inputValues, syncMainBranch, claimedLease)
   }
 
   async cancel(id: string): Promise<ExecutionRow> {

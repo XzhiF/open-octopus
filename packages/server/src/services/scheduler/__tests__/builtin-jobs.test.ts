@@ -107,6 +107,28 @@ describe("seedBuiltinCodeJobs", () => {
     expect(r.timeout_seconds).toBe(60)
   })
 
+  it("a soft-deleted built-in row comes back — pausing survives, a missing row does not", () => {
+    // The seed repairs nothing else about a deleted row on purpose: every read the pump
+    // uses filters deleted_at IS NULL, so "found it, leaving it alone" is "the system's
+    // housekeeping never runs again". 票05 also refuses the DELETE at the API; this is the
+    // backstop for a row deleted by hand or by an older build.
+    const dao = new ScheduleConfigDAO(db)
+    seedBuiltinCodeJobs(dao, "xzf")
+    dao.softDelete(builtinJobId(TASK_LIFECYCLE_HANDLER))
+    expect(dao.findById(builtinJobId(TASK_LIFECYCLE_HANDLER))).toBeNull() // invisible to the pump
+
+    const result = seedBuiltinCodeJobs(dao, "xzf")
+    expect(result.repaired).toContain(builtinJobId(TASK_LIFECYCLE_HANDLER))
+    const revived = dao.findById(builtinJobId(TASK_LIFECYCLE_HANDLER))
+    expect(revived).not.toBeNull()
+    expect(revived!.job_type).toBe("job")
+    // Reviving is not re-tuning: a human's pause still wins over the seed's default.
+    dao.softDelete(builtinJobId(TASK_LIFECYCLE_HANDLER))
+    dao.updateSchedule(builtinJobId(TASK_LIFECYCLE_HANDLER), { enabled: 0 })
+    seedBuiltinCodeJobs(dao, "xzf")
+    expect(dao.findById(builtinJobId(TASK_LIFECYCLE_HANDLER))!.enabled).toBe(0)
+  })
+
   it("every built-in job's cron expression parses in its own timezone", () => {
     seedBuiltinCodeJobs(dao)
     for (const job of BUILTIN_CODE_JOBS) {

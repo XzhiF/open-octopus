@@ -33,13 +33,19 @@ ADR-0021 票05 —— 读模型与调度页面。判断标准同票03:**按此�
    **看板 badge 不带**(`undefined` vs `[]` 就是"有没有加载过 fan-out"的答案,UI 不能对列表行渲染"无子单元")。
 4. **子单元的名字在行上**:`dispatchChildRun` 现在把 `subunit.name` 写进 `executions.name`。
    取代 `schedules.origin_role='subunit'` 的就是这个字段 —— 不要再找 role。
-5. **`GET /api/scheduler/jobs?job_type=job` 可用**:`job` 行现在能经 API 创建/更新/筛选
-   (`createJobSchema` 以前本地写死 `['workflow','agent']`,票02 加了类型却没通到 API)。
-   乱值 = 不加过滤(以前是把任意字符串原样塞进 WHERE)。
+5. **`job` 类型通到 API**:`GET /api/scheduler/jobs?job_type=job` 可用,`POST/PATCH /jobs` 也接受
+   `job_type:'job'`(`createJobSchema` 以前本地写死 `['workflow','agent']` —— 票02 加了类型却没开门,
+   `job` 行只能靠 seed 存在)。列表的 `?job_type=` 由 cast 改 `pickEnum` 校验:乱值 = 不过滤
+   (cast 是把任意字符串原样塞进 WHERE)。类型枚举单源 `jobTypeSchema`。
 6. **`task_trigger_failed` 上了契约**:`{task_id, reason, trigger_mode}`(原来服务端发的是 `action`,装的却是 trigger_mode)。语义 = **到点但根本起不来**(phase spec 删了 / 没绑 workflow / 工作区建不出来),游标照样退休(否则 broken 任务每分钟撞并发闸)。它**不折进 `task_status`**:没有状态变化(任务仍 ready),它是"什么都没发生"的通知 —— 没有 UI 出口时,用户看到的就是一张永远停在「已入队」的卡,原因只在日志里。**运行中被抑制的那次触发不发此事件**(那不是失败,`task_execution` 已经在讲这一轮)。
 7. **task-lifecycle 的 job 行**:系统内置 `builtin-task-lifecycle`,`job_type:'job'`,
    seed 幂等(enabled 与 cron 由用户改,seed 只修 handler 指针)。调度页要能看见/暂停它,
-   **不能删**;它不该显示为裸 uuid。
+   **不能删**;它不该显示为裸 uuid(真机 name 已是「系统 · 任务生命周期」)。
+8. **存量 DB 迁移后 `schedules` 只剩真作业**(票06 手测⑥在开发者本机 DB 副本上实测):
+   v42 不只 DROP COLUMN,还删 `origin_type='task'` 的信封行(先删 `schedule_executions`
+   子行,并把 `source_schedule_id→origin_id` 搬进 `workspaces.task_id`)。**断言口径**:
+   迁移/启动后"没有任何一行属于某个 task",而**不是**"总数为 N" —— 内置 job + 该 org
+   既有作业数随环境变。
 
 ## 不变的东西
 

@@ -407,20 +407,30 @@ test.describe("Crash recovery + abort (G2/G4)", () => {
     const dbRow = readTaskRow(taskId)
     const rows: TaskExecutionRow[] = readTaskExecutions(taskId)
     if (dbRow!.status === "aborted") {
+      // 槽位释放的正题：没有一行还活着。行的**具体**终态取决于它死在哪一步（被中止→
+      // aborted；自己在中止前就红了→failed），旧版那句「每条 schedule 都该是 aborted」
+      // 断的其实是被中止的那条链，所以这里对活/死下硬断言，对红的原因只要求「写了」。
       const live = rows.filter((r) => !isTerminalExecutionStatus(r.status))
       expect(
         live.length,
         `No live instance may remain behind an aborted card (found: ${live.map((r) => `${r.id}=${r.status}`).join(", ")})`,
       ).toBe(0)
       for (const r of rows) {
-        expect(r.status, `Instance ${r.id} should be aborted (G4 stop ran)`).toBe("aborted")
+        expect(
+          isTerminalExecutionStatus(r.status),
+          `Instance ${r.id} is terminal (${r.status}) — the slot is free`,
+        ).toBe(true)
+        if (r.status === "aborted") {
+          const reason = (JSON.parse(r.var_pool || "{}") as { error?: string }).error
+          expect(reason, `Aborted instance ${r.id} records why it stopped`).toBeTruthy()
+        }
       }
       // K12: abort never reaps the bound workspace (it is the 打回 scene). Only checkable
       // when a real 触发 got far enough to bind one — a planted row has no bound ws.
       if (dbRow!.workspace_id) {
         expect(dbRow!.workspace_id, "The bound workspace stays bound after abort").toBeTruthy()
       }
-      log(`G4 verified: ${rows.length} instance(s) all terminal, slot released (ws=${dbRow!.workspace_id ?? "none"})`)
+      log(`G4 verified: ${rows.length} instance(s) all terminal (${rows.map((r) => r.status).join(",")}), slot released (ws=${dbRow!.workspace_id ?? "none"})`)
     } else {
       log(`G4 stop test informational (task is ${dbRow!.status}, not aborted; ${rows.length} instance row(s))`)
     }

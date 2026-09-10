@@ -55,11 +55,28 @@ vi.mock("../../execution-service-registry", () => ({
           stub.created.push({ id, ...input })
           return { id }
         },
-        start: async (id: string) => {
+        // Mirrors ExecutionLifecycle.start's precondition, INCLUDING the claimed-lease
+        // handoff (票05 真机实测:生产 start 要求 'pending',而 job 的领取已把行翻成 running,
+        // 于是每次真启动都死在 "Execution is not pending" —— 一个忽略 claimedLease 参数的
+        // stub 永远看不见这个 bug)。
+        start: async (id: string, _iv?: Record<string, string>, _sync?: boolean, claimedLease?: string) => {
+          const row = stub.db!.prepare("SELECT status, started_at FROM executions WHERE id=?").get(id) as
+            { status: string; started_at: string | null } | undefined
+          if (!row) throw new Error("Execution not found")
+          if (claimedLease) {
+            if (row.status !== "running" || row.started_at !== claimedLease) {
+              throw new Error("Execution is not claimed by this launcher")
+            }
+          } else if (row.status !== "pending") {
+            throw new Error("Execution is not pending")
+          }
           if (stub.failStart) throw new Error("provider 挂了")
           stub.started.push(id)
           stub.live.add(id)
-          stub.db!.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(id)
+          if (!claimedLease) {
+            stub.db!.prepare("UPDATE executions SET status='running', started_at=? WHERE id=?")
+              .run(new Date().toISOString(), id)
+          }
         },
         registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
           if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
@@ -828,6 +845,28 @@ describe("task-lifecycle — abort", () => {
     expect(execs.findById(execId)!.status).toBe("aborted")
     // Queue retirement must not disturb a live sibling: nothing else is running here.
     expect(new ScheduleRunDAO(db).countActiveWork()).toBe(0)
+  })
+
+  it("an abort frees the slot and the queue drains in the same breath (票05)", async () => {
+    // Contract §1c applies to a slot freed by 中止 as much as to one freed by a finished
+    // run: otherwise a hand-stopped task leaves its successor waiting up to a cron minute.
+    insertTask("g-drain-a")
+    insertTask("g-drain-b")
+    const a = svc.armAndLaunch("g-drain-a")
+    // cap is 2 here; pin the meter just below it so B arms but cannot launch yet.
+    const b = svc.armTask("g-drain-b")
+    expect(execs.findById(b)!.status).toBe("pending")
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockReturnValue(2)
+    expect(svc.launchQueued()).toEqual({ launched: 0, capped: true })
+    vi.restoreAllMocks()
+
+    svc.abortTask("g-drain-a")
+    await new Promise((r) => setImmediate(r))
+    expect(execs.findById(a)!.status).toBe("aborted")
+    expect(JSON.parse(execs.findById(a)!.var_pool).error).toBe("用户中止")
+    // The freed slot was used immediately — not on the next tick.
+    expect(stub.started).toContain(b)
+    expect(execs.findById(b)!.status).toBe("running")
   })
 
   it("aborting twice is a no-op, not an error", () => {
