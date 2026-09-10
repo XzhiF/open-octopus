@@ -67,7 +67,7 @@ Accepted（2026-09-10，取代 2026-09-09 初稿）· 实现 `.scratch/task-sche
 
 ## 票03→票05 落地时补的决定
 
-六条不在原方案里、且每条都有"不记就会被改回去"的风险：
+九条不在原方案里、且每条都有"不记就会被改回去"的风险：
 
 - **读模型的唯一真相在 `@octopus/shared/types/task.ts`**。票03 换掉数据形状时，为不阻塞前端，web 侧临时本地镜像了 trigger 列与执行 badge，并留注释说"shared 的 `Task` 还带着 schedule_status/scheduled_at"。票05 收口：`Task` 自己声明 `trigger_*` 七列 + `execution: TaskExecutionBadge`，`schedule_status`/`scheduled_at`/`ScheduleStatusListener`/`OriginType*`/`TriggerSource`/`OriginRole` 一并删除。**镜像不是省事，是两个真相**：只有把旧列从 shared 里删掉，前端才不可能再"顺手"读回信封语义。
 - **红行的原因写在行上，不新开列**。`executions` 没有 error 列（节点失败留在 `node_executions`），票03 之后每条失败写路径（对账回收、用户中止、启动失败、领取失败、composite 聚合）原先只把原因打进日志，于是卡片变红而无话可说。决定：统一并入 `var_pool.error`（与 `retireLaunch` 同键），读模型只在**终态失败行**投影成 `error_summary`，绿行不显示遗留键。新开列是更大的改动，且没有多保存任何信息。
@@ -75,4 +75,7 @@ Accepted（2026-09-10，取代 2026-09-09 初稿）· 实现 `.scratch/task-sche
 - **丢唤醒只对"引擎还活着"的父执行自愈**。子完成回调只在该子进程期内发一次，抛错即父永远停在 `pending_task_dispatch`；`recoverStuckDispatchParents` 在 reconcile 里问"这个暂停节点还欠着子执行吗"并唤醒。**父的引擎也已不在本进程时刻意不救**（没人能接收 resume，谎报恢复比不恢复糟），那条行归滞留回收。`RecoveryManager` 不覆盖此场景：它重启被中断的引擎，而暂停的父不是被中断，是在等一个已经不存在的等待者。
 - **DB 时间戳有两种方言，年龄判断必须按 UTC 解无标记串**。DAO 写 `toISOString()`（带标记），SQLite 的 `datetime('now')` 与表 DEFAULT 写的是**无标记的 UTC**，而 `Date.parse` 按本地时区读它 —— UTC+8 部署上，刚出生 1 秒的行看起来老了 8 小时，回收会在起跑后一分钟杀掉在飞实例（票04 的测试先撞见，因为它的 mock 走 SQL 时钟）。故 `dbTimeMs()` 统一：naive ⇒ UTC。这也是"测试夹具要尽量像生产"反过来成立的一次证据：夹具与生产的差异，把生产里潜伏的 bug 提前暴露成红。
 - **`job` 类型要通到 API**。票02 给 `JobType` 加了 `'job'`，但 `createJobSchema` 里仍写死 `z.enum(['workflow','agent'])` —— 类型在联合里、门却没开，内置 job 之外没有任何 `job` 行能经接口创建；同理列表路由把 `?job_type=` cast 成两个值，cast 不是校验（任意串原样进 WHERE）。票05 改为单一 `jobTypeSchema` 供三处共用，query 参数改 `pickEnum` 校验、乱值=不过滤。
+- **每一次终态写入都欠一条 `task_execution`**，中止与排队退役也不例外。票05 的 payload 里有 `reason` 却没有出口：`abortTask` 只写行不发票，看板要等下一次 10s 轮询才知道发生了什么，而轮询出来的读模型没有 `reason` 可给（只有这个事件带）。决定收成单一出口 `emitExecutionTransition(row, status, reason?)`，与「红行的原因写在行上」配对：行上有 `var_pool.error`、线上有 `reason`，两处同一句话。
+- **创建时就要求 handler 已注册**（票06 补）。`validateConfig` 只管形状（`{type:'job', handler}`），存在性没人管，于是名字打错的 `job` 行是"每分钟红一次的死行"：pump 每分钟 fire、registry 每分钟拒、`consecutive_failures` 一路涨，看上去像作业坏了，而不像创建时敲错一个字。改在名字被敲下的那一端（`assertHandlerRegistered`，create 与 update 两处共用，400 里报出注册表现有名字）。同 §13-2 的口径：**能力收口写在服务端，不写在某个表单里**。
+- **跨接缝的行类型只能有一处定义**。作业的 `duration_ms` 从没到过 wire，因为 `schedule_executions` 里一直是有的，而 DAO 的相关子查询取三列、`scheduler-service` 本地又手抄一个 `interface ScheduleRow` 声明同样三个 `last_exec_*` —— 加第四列两处都不报错、也没有测试会红（断言只看自己那三样）。收成为 DAO 导出的 `ScheduleRowWithLastExec`（service 侧只做别名）+ 一个共享的 `LAST_EXEC_SELECT` 常量，让"列表"与"单条 GET"不可能各长一半。
 

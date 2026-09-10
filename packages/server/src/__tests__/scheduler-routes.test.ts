@@ -7,6 +7,7 @@ import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { createSchedulerRoutes, resetSchedulerRateLimitersForTests } from '../routes/scheduler'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { registerCodeJobHandler } from '../services/scheduler/code-job-registry'
 
 describe('Scheduler Routes (integration)', () => {
   let db: Database.Database
@@ -29,6 +30,12 @@ describe('Scheduler Routes (integration)', () => {
     // 一起从路由里删了（POST /api/scheduler/jobs 现在只做 createJob），夹具跟着撤。
     app = new Hono()
     app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService))
+
+    // The handler registry is process-global and production boots with these names
+    // registered before the pump starts. A `job` row can no longer be created for an
+    // unregistered handler (see assertHandlerRegistered), so this fixture registers what
+    // it creates — mirroring the boot order instead of stubbing past the precondition.
+    registerCodeJobHandler('task-lifecycle', async () => {})
   })
 
   afterAll(() => {
@@ -539,6 +546,30 @@ describe('Scheduler Routes (integration)', () => {
     const all = await json<{ total: number }>(await app.request('/api/scheduler/jobs'))
     expect(unfiltered.total).toBe(all.total)
     expect(unfiltered.items.some((j) => j.job_type === 'job')).toBe(true)
+  })
+
+  it('POST /jobs 指向未注册的 handler → 400，并把可用名字报出来', async () => {
+    // 形状对、名字错的 job 行是「每分钟红一次的死行」：pump 每分钟 fire 它、registry 每分钟
+    // 拒它、consecutive_failures 一路涨，而看起来像作业坏了，不像创建时打错了一个字。
+    // 收口放在名字被敲下的那一端（§13-2：能力收口写在服务端，不写在某个表单里）。
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'e2e-job-ghost',
+        job_type: 'job',
+        cron_expression: '* * * * *',
+        org: 'test',
+        config: { schema_version: '1.0', type: 'job', handler: 'ghost-handler', args: {} },
+      }),
+    })
+    expect(res.status).toBe(400)
+    const msg = (await json<{ error: string }>(res)).error
+    expect(msg).toContain('ghost-handler')
+    expect(msg).toContain('task-lifecycle') // 报出注册表里真有的名字，打字错误当场能改
+    expect((await json<{ total: number }>(
+      await app.request('/api/scheduler/jobs?search=e2e-job-ghost'),
+    )).total).toBe(0) // 被拒的创建不留行
   })
 
 })

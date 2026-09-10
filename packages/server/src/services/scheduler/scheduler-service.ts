@@ -24,6 +24,7 @@ import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import type { ScheduleRowWithLastExec } from '../../db/dao/schedule-config-dao'
 import { SSEService } from '../sse'
 import { BUILTIN_JOB_ID_PREFIX } from './builtin-jobs'
+import { hasCodeJobHandler, listCodeJobHandlers } from './code-job-registry'
 
 // ── Error Classes ────────────────────────────────────────────────────
 
@@ -227,6 +228,21 @@ function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   try { return JSON.parse(value) as T } catch { return fallback }
 }
 
+/** A `job` row whose handler is not in the registry is dead on arrival: the pump fails it
+ *  once a minute, forever, and each of those failures reads like a broken job instead of a
+ *  name that was mistyped at creation. Refusing it where the name was typed is the same
+ *  rule as §13-2 — capability gating lives server-side, not in whichever form got there
+ *  first. Shape (`{type:'job', handler}`) is the schema's job; this is existence. */
+function assertHandlerRegistered(config: JobConfig): void {
+  if (config.type !== 'job') return
+  if (hasCodeJobHandler(config.handler)) return
+  const known = listCodeJobHandlers()
+  throw new ConfigValidationError(
+    `config.handler: 未注册的 job handler "${config.handler}"`
+    + `（当前可用：${known.length ? known.join(', ') : '无'}；handler 必须先在系统里注册，作业行只存名字）`,
+  )
+}
+
 function mapExecutionStatus(dbStatus: string): SchedulerExecutionStatus {
   if (dbStatus === 'completed') return 'success'
   if (dbStatus === 'failed') return 'failure'
@@ -344,6 +360,7 @@ export class SchedulerService {
     const validated = createJobSchema.parse(input)
 
     const validatedConfig = validateConfig(validated.job_type, validated.config)
+    assertHandlerRegistered(validatedConfig)
 
     // Derive org: explicit org param, or from workspace_spec in config, or empty
     const org = validated.org
@@ -441,6 +458,7 @@ export class SchedulerService {
     let validatedConfig: JobConfig | undefined
     if (validated.config) {
       validatedConfig = validateConfig(existing.job_type as JobType, validated.config)
+      assertHandlerRegistered(validatedConfig)
     }
 
     // Check name uniqueness if changing

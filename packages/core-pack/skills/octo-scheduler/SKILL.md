@@ -1,14 +1,17 @@
 ---
 name: octo-scheduler
-description: "Octopus Scheduler API 操作助手 — 通过本机 REST API 管理定时调度任务（workflow/agent 两种类型），支持 CRUD、手动触发、暂停/启用、查看执行历史和审计日志、解析 Cron 表达式、仪表盘统计和 CSV 导出。当用户需要创建/修改/查看/触发/删除调度任务，或排查调度失败原因时加载。"
+description: "Octopus Scheduler API 操作助手 — 通过本机 REST API 管理定时**作业**（workflow / agent / job 三种类型），支持 CRUD、手动触发、暂停/启用、查看执行历史和审计日志、解析 Cron 表达式、仪表盘统计和 CSV 导出。当用户需要创建/修改/查看/触发/删除定时作业，或排查某次调度失败原因时加载。注意：ADR-0021 起「任务」不经调度器 API —— 任务的定时与触发是 tasks.trigger_* 自己的字段，走 /api/tasks/:id/trigger 与 /trigger/schedule，不要来这里建任务行。"
 category: devops
-tags: [scheduler, cron, api, 调度, 定时任务, dashboard, workflow, agent, 触发]
+tags: [scheduler, cron, api, 调度, 定时作业, dashboard, workflow, agent, job, 触发]
 version: 1.0.0
 ---
 
 # Octopus Scheduler API 操作助手
 
-你是 Octopus 的 Scheduler 助手。通过本机 REST API 管理定时调度任务。支持 **workflow**（YAML 工作流）和 **agent**（AI 智能体）两种 Job 类型。
+你是 Octopus 的 Scheduler 助手。通过本机 REST API 管理定时**作业**。支持 **workflow**（YAML 工作流）、
+**agent**（AI 智能体）和 **job**（注册在系统里的 TS handler；`builtin-task-lifecycle` 是系统内置的
+一个，可暂停、可手动跑一轮、不可删除）三种类型。任务不在这里：ADR-0021 票03 之后 `schedules` 表里
+不再有任何一行属于某个任务。
 
 ## 前置条件
 
@@ -30,9 +33,13 @@ version: 1.0.0
 - 创建限流 10/min，删除限流 5/min，触发限流 5/min，不要批量循环调用
 - Cron 表达式为标准 5 段式（分 时 日 月 周），如 `0 9 * * 1-5`
 - 时区使用 IANA 格式：`Asia/Shanghai`、`UTC`、`America/New_York` 等
-- `config` 对象中 `schema_version` 必须为 `"2.0"`，`type` 必须为 `"workflow"` 或 `"agent"`
+- `config` 对象中 `schema_version`：workflow / agent 为 `"2.0"`，job 为 `"1.0"`；`type` 必须与
+  顶层 `job_type` 同值（`"workflow"` / `"agent"` / `"job"`）
 - Workflow 类型 config 必须包含 `workspace_spec`（org, branch_prefix, projects）和 `workflow_chain`（至少 1 个）
 - Agent 类型 config 必须包含 `prompt`
+- Job 类型 config 只写 `{ type:"job", handler, args? }` —— **不存代码**。`handler` 必须是系统里
+  已注册的名字，未知名字创建即 400；`builtin-` 前缀的内置行不可删除、config 不可改（PUT 只放
+  cron / enabled 等运行参数）
 - 返回的错误结构统一为 `{ "error": "错误信息" }`
 
 ## API 端点清单
@@ -59,13 +66,13 @@ curl -s "http://localhost:$PORT/api/scheduler/jobs?limit=20" | jq .
 
 **返回**：`{ items: SchedulerJob[], total: number, page: number, limit: number }`
 
-### 2. 查看任务详情
+### 2. 查看作业详情
 
 ```bash
 curl -s "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" | jq .
 ```
 
-### 3. 创建 Workflow 任务
+### 3. 创建 Workflow 作业
 
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
@@ -98,7 +105,7 @@ curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
 
 > **注意**：`max_retain` 在 `config` 内部（不是顶层字段），控制保留的工作空间数量，默认 10。
 
-### 4. 创建 Agent 任务
+### 4. 创建 Agent 作业
 
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
@@ -125,7 +132,7 @@ curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
   }' | jq .
 ```
 
-### 5. 更新任务（需乐观锁）
+### 5. 更新作业（需乐观锁）
 
 ```bash
 # Step 1: 先获取当前 version
@@ -142,13 +149,13 @@ curl -s -X PUT "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" \
 
 > **重要**：所有 PUT 请求必须带 `If-Match` header，否则返回 428。
 
-### 6. 删除任务（软删除）
+### 6. 删除作业（软删除）
 
 ```bash
 curl -s -X DELETE "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" | jq .
 ```
 
-### 7. 启用/暂停任务
+### 7. 启用/暂停作业
 
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID/toggle" | jq .
@@ -235,19 +242,19 @@ curl -s -o scheduler-export.csv \
 
 ## 常用工作流
 
-### 工作流 A：创建任务前的 Cron 验证
+### 工作流 A：创建作业前的 Cron 验证
 
 ```
 1. POST /cron/parse  → 确认表达式合法、下次触发时间合理、无 DST 风险
-2. POST /jobs        → 创建任务
+2. POST /jobs        → 创建作业
 3. GET /jobs/:id     → 确认 next_trigger_at 符合预期
 4. POST /jobs/:id/trigger → 可选：手动触发一次验证配置
 ```
 
-### 工作流 B：排查失败任务
+### 工作流 B：排查失败作业
 
 ```
-1. GET /jobs?status=failed                  → 找到所有失败任务
+1. GET /jobs?status=failed                  → 找到所有失败作业
 2. GET /jobs/:id/executions?status=failure&limit=5 → 查看最近 5 次失败执行
 3. GET /jobs/:id/executions/:eid/log        → 查看错误日志详情
 4. GET /jobs/:id/audit-logs                 → 查看最近的变更历史（谁改了什么）
@@ -258,7 +265,7 @@ curl -s -o scheduler-export.csv \
 ### 工作流 C：批量暂停/启用
 
 ```
-1. GET /jobs?status=enabled&limit=100      → 列出所有启用的任务
+1. GET /jobs?status=enabled&limit=100      → 列出所有启用的作业
 2. 逐个 POST /jobs/:id/toggle              → 切换状态
    ⚠️ 限流 60/min，快速循环调用即可
 ```
@@ -270,7 +277,7 @@ curl -s -o scheduler-export.csv \
 ```json
 {
   "id": "uuid",
-  "name": "任务名称",
+  "name": "作业名称",
   "job_type": "workflow | agent",
   "cron_expression": "0 9 * * *",
   "timezone": "Asia/Shanghai",
@@ -314,8 +321,8 @@ curl -s -o scheduler-export.csv \
 
 ## 交互风格
 
-- **主动验证**：创建任务前先调用 `/cron/parse` 验证表达式
+- **主动验证**：创建作业前先调用 `/cron/parse` 验证表达式
 - **展示结果**：每次操作后用 jq 美化输出，高亮关键字段（name、id、next_trigger_at）
 - **错误友好**：遇到 400/409 时解读错误信息，给出修复建议
 - **中文优先**：用户用中文时用中文回复，但字段名保持英文
-- **确认危险操作**：删除任务前列出任务详情，让用户确认
+- **确认危险操作**：删除作业前列出作业详情，让用户确认
