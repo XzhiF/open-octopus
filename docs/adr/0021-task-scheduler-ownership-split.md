@@ -3,7 +3,8 @@
 ## 状态
 
 Accepted（2026-09-10，取代 2026-09-09 初稿）· 实现 `.scratch/task-scheduler-decouple/spec.md` · 分支 `feat/scheduler-decouple`
-票01（v41 加列）+ 票02（`job` 类型骨架）+ 票03（原子翻转，v42 删列）已落地；票03 落地后的**行为契约**另见 `.scratch/task-scheduler-decouple/ticket03-contract.md`（测试重写与后续票以此为基线）。
+票01（v41 加列）+ 票02（`job` 类型骨架）+ 票03（原子翻转，v42 删列）+ 票04（composite 子单元 = child executions）+ 票05（读模型与调度页回归作业视图）已落地；票06（e2e + 手测清单）未完。
+落地后的**行为契约**分两份，测试与前端以其为基线、而非以本 ADR 反推：`ticket03-contract.md`（数据形状与任务侧新行为）、`ticket05-contract.md`（在线类型与读模型字段）。
 
 初稿提出的 `cron_jobs` + `scheduler_runs` 双新表方案**已废弃**（见「被否方案」最后一条）：本 ADR 的终态**不新增任何表**。
 
@@ -63,3 +64,15 @@ Accepted（2026-09-10，取代 2026-09-09 初稿）· 实现 `.scratch/task-sche
 - **内置 job 的 handler 由 composition root 注入**（`registerAndSeedBuiltinCodeJobs(dao, org, handler)`），注册表为此开了 `rebindCodeJobHandler`：普通注册拒绝同名换函数（那是接线 bug），但内置 job 每次启动绑的都是新闭包，拒绝会让第二次 seed 打死调度器。未注入时 handler 自报"未接线"而非静默成功。
 
 待观察：`executions.status` 的终态清单若与 `ux_exec_task_active` 的 NOT IN 清单漂移，会往"过度保守（滞留占槽）"方向失效，由对账回合兜；反之若有人把存活状态误加进终态清单，双起风险回来 —— 票 03 的并发用例是硬门槛。
+
+## 票03→票05 落地时补的决定
+
+六条不在原方案里、且每条都有"不记就会被改回去"的风险：
+
+- **读模型的唯一真相在 `@octopus/shared/types/task.ts`**。票03 换掉数据形状时，为不阻塞前端，web 侧临时本地镜像了 trigger 列与执行 badge，并留注释说"shared 的 `Task` 还带着 schedule_status/scheduled_at"。票05 收口：`Task` 自己声明 `trigger_*` 七列 + `execution: TaskExecutionBadge`，`schedule_status`/`scheduled_at`/`ScheduleStatusListener`/`OriginType*`/`TriggerSource`/`OriginRole` 一并删除。**镜像不是省事，是两个真相**：只有把旧列从 shared 里删掉，前端才不可能再"顺手"读回信封语义。
+- **红行的原因写在行上，不新开列**。`executions` 没有 error 列（节点失败留在 `node_executions`），票03 之后每条失败写路径（对账回收、用户中止、启动失败、领取失败、composite 聚合）原先只把原因打进日志，于是卡片变红而无话可说。决定：统一并入 `var_pool.error`（与 `retireLaunch` 同键），读模型只在**终态失败行**投影成 `error_summary`，绿行不显示遗留键。新开列是更大的改动，且没有多保存任何信息。
+- **子单元的标签在行上**：`executions.name = subunit.name` 取代 `schedules.origin_role='subunit'`。fan-out 的判据是 `task_id` 非空且 `parent_id != '0'`（引擎自己的链式子行不带 task_id）。detail 与 `/executions` 挂 `children[]`，看板 badge 不挂 —— `undefined`（没加载）与 `[]`（确实没有）必须是可区分的，否则列表行会渲染"无子单元"。
+- **丢唤醒只对"引擎还活着"的父执行自愈**。子完成回调只在该子进程期内发一次，抛错即父永远停在 `pending_task_dispatch`；`recoverStuckDispatchParents` 在 reconcile 里问"这个暂停节点还欠着子执行吗"并唤醒。**父的引擎也已不在本进程时刻意不救**（没人能接收 resume，谎报恢复比不恢复糟），那条行归滞留回收。`RecoveryManager` 不覆盖此场景：它重启被中断的引擎，而暂停的父不是被中断，是在等一个已经不存在的等待者。
+- **DB 时间戳有两种方言，年龄判断必须按 UTC 解无标记串**。DAO 写 `toISOString()`（带标记），SQLite 的 `datetime('now')` 与表 DEFAULT 写的是**无标记的 UTC**，而 `Date.parse` 按本地时区读它 —— UTC+8 部署上，刚出生 1 秒的行看起来老了 8 小时，回收会在起跑后一分钟杀掉在飞实例（票04 的测试先撞见，因为它的 mock 走 SQL 时钟）。故 `dbTimeMs()` 统一：naive ⇒ UTC。这也是"测试夹具要尽量像生产"反过来成立的一次证据：夹具与生产的差异，把生产里潜伏的 bug 提前暴露成红。
+- **`job` 类型要通到 API**。票02 给 `JobType` 加了 `'job'`，但 `createJobSchema` 里仍写死 `z.enum(['workflow','agent'])` —— 类型在联合里、门却没开，内置 job 之外没有任何 `job` 行能经接口创建；同理列表路由把 `?job_type=` cast 成两个值，cast 不是校验（任意串原样进 WHERE）。票05 改为单一 `jobTypeSchema` 供三处共用，query 参数改 `pickEnum` 校验、乱值=不过滤。
+
