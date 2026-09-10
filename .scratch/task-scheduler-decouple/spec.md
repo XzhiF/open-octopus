@@ -131,6 +131,27 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 
 **真机仍未覆盖**(要 provider + 真 repo,留给票06 的 e2e / 人工):② 一轮真跑起来并转 running、③ 的"连续两起"(两轮都真起)、④ abort 真停引擎后槽位被下一个排队任务立刻接走(单测已过:`finalizeLaunch` 末尾 `launchQueued(1)`)、⑤ 调度页 UI、⑥ 重启后 RecoveryManager 与内置 job 共存。
 
+### 8c. 票05/06 收尾复验(2026-09-11 第二次真机,同一跑法)
+
+跑法同 §8b(PORT=3411、临时 HOME + 临时 db、`pnpm build` 产物、全程只经 HTTP 观察)。今天新加的
+两块各自验到:
+
+- **内置 job 到点自己 fire 一次**(等一分钟,没有任何人工动作):
+  `GET /api/scheduler/jobs?job_type=job` →
+  `last_execution = {status:'success', triggered_at:…, duration_ms:3, error_summary:null}` ——
+  手测⑤ 的「上次触发与耗时」在 wire 上成立。同一台实例开机时读到的是
+  `{status:'missed', duration_ms:null}`,正好把另一半边也验了:**没有引擎可计时的那一类行是
+  null,不是被编出来的 0**,UI 据此整段不显示耗时。
+- **中止补发事件只验到 emit 这一程**:retire(排队中被中止)与 cancel 两支各发一条带 `reason`
+  的 `task_execution`、重复中止不发第二条 —— 这三条用**真 `SSEService` + `taskpool` 订阅**钉住
+  (`task-lifecycle.test.ts`),不是 stub 的 emit。HTTP SSE 出口这一程今天没再走:要拿到"排队中的
+  根执行"这个态,得 cap=0 或预构建失败,而这台无 provider / 无真 repo 的机器上硬凑出来的态断不了
+  真东西,记为未覆盖。
+- SIGTERM 优雅关停正常(HTTP closed → Database closed),临时 db 与临时 HOME 已删。
+
+相对 §8b 的未覆盖增量:⑤ 的**浏览器走查**仍未跑(数据半边今天已验,渲染半边由
+`scheduler-table.test.tsx` 9 例钉住);其余条目同 §8b(等 provider)。
+
 ## 9. 票 01 落地附记(实测踩到的四颗雷)
 
 **排期修正**:原计划"票 01 建 `cron_jobs`+`scheduler_runs` 两张新表并在同票 drop 旧三表"。方案在实现中途被 ADR-0021 的 `job` 类型设计取代 —— 两张新表与其 42 个契约测试已在 2026-09-10 删除(`executions` 本就是一次运行的天然载体)。旧三表相关列的删除与泵翻转同票(票 03),因为它们在票 02 之前仍被 engine/executor/tasks/V1 `WorkspaceScheduleService` 四方读写,先删必把仓库留在启不来的状态。
@@ -188,3 +209,14 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 5. **推论(方法)**:每票收尾除了全量 vitest,至少 `node packages/server/dist/index.js` 起一次真
    server,把「入队→触发→中止」走一遍(临时 HOME + `OCTOPUS_SCHEDULER_MAX_PARALLEL=1` 能逼出
    闸与排队)。本次 4 个 bug 中 3 个只有这条路能现形;§8b 就是这份跑法与结果记录。
+6. **同一个行类型抄两份 = 静默漂移面**。作业的 `duration_ms` 从没到过 wire(§8c 才补上):
+   `schedule_executions` 一直在写它,但 DAO 的相关子查询取三列、`scheduler-service` 本地又手抄
+   一个 `interface ScheduleRow` 声明同样三个 `last_exec_*` —— 加第四列两处都不报错、也没有测试
+   会红,因为断言只看自己那三样。**规则**:跨接缝的行类型只有一处定义(DAO 导出
+   `ScheduleRowWithLastExec`、service 侧只做别名),多列相关子查询提成共享常量,让"列表"与"单条
+   GET"不可能各长一半。
+7. **写 helper 之前先读仓库的门禁**。给这一列随手私写 `formatDurationMs` 被
+   `lib/__tests__/formatter-revival-gate.test.ts`(C4 / ADR-0017 格式化单源立法)当场钉红 ——
+   门是对的,`lib/format.ts` 里早有 `formatDuration`。这类"防复活"静态门(fmt-ok / ledger-ok 那套)
+   对新增代码是**前置条件**,不是事后的清洁工作;它的红也不该被"基线红数"吸收掉 —— 基线是
+   "红集合不变",新出现的名字就是新账。

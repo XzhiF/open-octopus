@@ -54,11 +54,29 @@ ADR-0021 票05 —— 读模型与调度页面。判断标准同票03:**按此�
 - `POST /api/tasks/:id/trigger` 的 ready-only 人工闸;`abort` 同步停引擎。
 - cron / agent 两类作业的全部既有行为。
 
-## web 侧待办(交给前端)
+## web 侧待办 —— 收账(2026-09-11)
 
-- `lib/tasks-api.ts` 删本地镜像类型,改 `import type { Task, TaskExecutionBadge, TriggerMode } from '@octopus/shared'`。
-- 看板/弹窗 badge:`error_summary` 要有出口(红行悬浮/展开显示原因);composite 卡展开显示 `children[]`(标签用 `name`)。
-- 调度页:类型筛选含 `job`;内置 job 行显示"上次触发/耗时/可暂停",无裸 uuid。
-- SSE payload 字段名跟进:`scheduled_at` → `next_fire_at`;不要在 task_status 上读 `origin_type`。
-- `task_trigger_failed` 要有出口(toast 或角标显示 `reason` 一行即可)。
-- `e2e/helpers/task-domain-helpers.ts` 等 6 个 spec 属于票06,本票不动(除非类型改名导致编译不过)。
+逐条核过实现与用例,六条全部落地,不再挂账:
+
+- ✅ `lib/tasks-api.ts` 本地镜像类型已删,类型自 `@octopus/shared` import(`Task` /
+  `TaskExecutionBadge` / `TriggerMode`)。
+- ✅ `error_summary` 有出口:`components/tasks/execution-summary.tsx` 渲染红色运行原因
+  (用例 `execution-summary.test.tsx`);composite 展开显示 `children[]`,标签用 `name`
+  (用例 `task-modal-composite.test.tsx`)。
+- ✅ 调度页:类型筛选含 `job`;内置行显示「上次触发 · 耗时」+ 可暂停、无删除、无编辑
+  (`scheduler-table.tsx` + `scheduler-table.test.tsx` 9 例,`isBuiltinJob` 是产品判据不是
+  测试私货)。**耗时这列是今天补的**:数字一直在 `schedule_executions.duration_ms` 里,但
+  `SchedulerExecutionSummary` 只有三个字段,DAO 的相关子查询与 service 里手抄的
+  `interface ScheduleRow` 各三样、谁也没加第四样 —— 已收成单一 `ScheduleRowWithLastExec`
+  (见 spec §8c)。
+- ✅ SSE 字段名:`scheduled_at` → `next_fire_at` 已跟;web 里对 `origin_type` /
+  `scheduled_at` 的引用只剩注释(解释它们为何没了),没有活代码读它们。
+- ✅ `task_trigger_failed` 有出口:`lib/task-board.ts` + `app/tasks/page.tsx` 消费
+  `reason`(用例 `task-board.test.ts`)。
+- ✅ 票06 的 e2e 迁移另账:`task-domain-{simple,composite,crash-abort}.spec.ts` 已跟上
+  五列看板与「触发真的起一轮」,新增 `task-trigger-loop.spec.ts`(见 §8b 与其提交)。
+
+**一条曾被记成"缺口"的,其实是决定**:内置 job 的 cron 在 UI 里不可编辑。`SchedulerForm`
+只能表达 workflow/agent 两类 config,给 `job_type='job'` 行开表单 = 提交时把 handler 指针
+盖成 agent 形状;所以菜单里对 job 行不渲染「编辑」,由 `scheduler-table.test.tsx` 钉住。
+要改 cadence 目前只能走 `PUT /jobs/:id`(路由允许改 cron,只拒 config)。
