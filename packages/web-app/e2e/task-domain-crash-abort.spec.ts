@@ -92,17 +92,17 @@ function dbRun(sql: string, ...params: unknown[]): void {
 }
 
 /**
- * Plant ONE armed-but-not-started instance for a task — the row-level successor of the
- * envelope's `status='queued'` schedule (票03 §数据形状: 一次运行 = 一条 executions 行,
- * `task_id` 直连, status 'pending' = 已排队). Root (`parent_id='0'`) because it is the
- * task's current instance, not a fan-out arm.
+ * Plant ONE instance row for a task — the row-level successor of the envelope's
+ * `status='queued'` schedule (票03 §数据形状: 一次运行 = 一条 executions 行, `task_id` 直连,
+ * status 'pending' = 已排队). Root (`parent_id='0'`) because it is the task's current
+ * instance, not a fan-out arm.
  *
- * Deliberately NOT done through 触发: the immediate 触发 would also START the engine, which
- * needs a working provider — and this test is about abort's two writes (retire the row,
- * mirror the card), which are provider-free. `tick()` starting a row that a cap had parked
- * is the other half of the same contract and is covered by task-trigger-loop.spec.ts.
+ * Deliberately NOT done through 触发: the immediate 触发 also STARTS the engine, which needs a
+ * working provider AND a buildable workspace — and this test is about abort's two writes
+ * (retire the row, mirror the card), which are provider-free. A real round that a cap had
+ * parked, and the same-task mutex, are covered by task-trigger-loop.spec.ts.
  */
-function plantArmedRootExecution(taskId: string, status = "pending"): { execId: string; wsId: string } {
+function plantTaskExecution(taskId: string, status = "pending"): { execId: string; wsId: string } {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const wsId = `e2e-td-ca-ws-${uid}`
   const execId = `e2e-td-ca-exec-${uid}`

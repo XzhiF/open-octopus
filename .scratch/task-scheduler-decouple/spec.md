@@ -162,3 +162,29 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 6. **`Test Files N failed` 里的"2 红"多半是 collection 错误**(导入即挂),不是两个断言失败。判红先 `npx vitest run --root packages/server <file>` 单跑一次再定性,否则会去修根本不存在的断言。
 7. **批量脚本改多个文件时,每个文件都要单独写盘并 grep 复核。** 本次一次 schema.sql 的删列在"一个脚本改两文件、只在末尾写最后一个"里被静默丢弃,后续 tsc 全绿(因为没人读那些列),直到 idempotent 测试报 `no such column: origin_type` 才发现 —— DDL 改动没有编译器兜底,只有 `PRAGMA table_info` 断言有。
 8. **`DROP COLUMN` 前先 `DROP INDEX`**:SQLite 拒绝删除被索引引用的列,而失败若被 try/catch 当"非致命"咽掉,列会静默留下。v42 迁移的顺序(先 `idx_schedules_origin`/`idx_schedules_due`,再逐列 drop)由 `schema-migration.test.ts` 的 graft-旧库用例钉住。
+
+## 13. 票05 落地附记(真机才现形的雷 —— **本项目的判绿口径有系统性盲区**)
+
+票01–04 的"全量红数 = 基线"是**必要不充分**的:本次 4 个真 bug 里 3 个在满绿的仓库里躺着。
+共同形状是 **stub 替生产回答了问题** —— 后续票与任何改动 `services/tasks/**` 的工作必守:
+
+1. **stub 不能忽略参数,否则关于该参数的 bug 不可能被看见。** 生产 `ExecutionLifecycle.start`
+   前置要求行仍为 `pending`,而票03 的 `claimLaunch`(受守卫的 pending→running,它才是
+   "谁来跑这个任务"的串行器)已经把行翻成 running —— 于是**真机上每一次任务启动**都抛
+   "Execution is not pending"。而 `task-lifecycle.test.ts` / `composite-dispatch.test.ts`
+   的 stub `start: async (id) => {...}` 只收一个参数、自己写 UPDATE,全绿。**规则**:接缝的
+   stub 必须照真实前置条件办事(状态、归属、抛错),新增交接参数时先改 stub;并且在这种
+   接缝上至少留一条**未 stub**的用例(`execution-lifecycle.test.ts` 的 lease 用例是范本)。
+2. **"UI 藏起来了"不是门。** 前端把内置 job 的删除按钮去掉后,`DELETE /jobs/builtin-*` 照样
+   成功;而 seed 用 `findByIdRaw`(不看 `deleted_at`)判断"已存在",泵的所有读又过滤
+   `deleted_at IS NULL` —— 删一次 = 永久停掉全部定时/周期启动,只能手工修库。规则:能力收口
+   写在服务端(现 `SchedulerBuiltinJobProtectedError` 拒删/拒改 config),seed 再兜一层(软删的
+   内置行复活,但 enabled/cron 不回滚用户改动)。
+3. **cast 不是校验。** 路由里 `c.req.query('job_type') as 'workflow'|'agent'` 有两重错:类型上
+   漏了 `'job'`(票02 加的第三类进不了筛选),实现上把任意字符串原样送进 WHERE。同类:
+   `createJobSchema` 本地写死 `['workflow','agent']` —— **类型进了联合不等于门开了**。
+4. **时钟方言**:`Date.parse` 把 `datetime('now')`(无标记 UTC)按本地解 → UTC+8 机器上刚出生的
+   行看起来老了 8 小时,回收会在起跑后一分钟杀在飞实例。统一 `dbTimeMs`(naive⇒UTC)。
+5. **推论(方法)**:每票收尾除了全量 vitest,至少 `node packages/server/dist/index.js` 起一次真
+   server,把「入队→触发→中止」走一遍(临时 HOME + `OCTOPUS_SCHEDULER_MAX_PARALLEL=1` 能逼出
+   闸与排队)。本次 4 个 bug 中 3 个只有这条路能现形;§8b 就是这份跑法与结果记录。
