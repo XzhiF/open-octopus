@@ -87,6 +87,7 @@ import type { TaskRow } from "../../../db/types"
 import type { TaskSpec } from "@octopus/shared"
 import { TaskLifecycleService, TaskLifecycleError } from "../task-lifecycle-service"
 import { TaskHomeService } from "../task-home-service"
+import { TASK_TRIGGER_FAILED_EVENT, taskTriggerFailedPayloadSchema } from "@octopus/shared"
 
 let db: Database.Database
 let sse: SSEService
@@ -773,8 +774,14 @@ describe("task-lifecycle — tick (what the cron cadence drives)", () => {
     expect(m.armed).toBe(0)
     expect(m.refused).toBe(1)
     expect(tasks.getById("f3")!.next_fire_at).toBeNull()
-    const failed = events.find((e) => String(e.event) === "task_trigger_failed")
-    expect((failed!.data as Record<string, unknown>).reason).toContain("phase:1:spec-missing")
+    const failed = events.find((e) => String(e.event) === TASK_TRIGGER_FAILED_EVENT)
+    const payload = failed!.data as Record<string, unknown>
+    expect(payload.reason).toContain("phase:1:spec-missing")
+    // The payload is on the shared contract now (票05): a failure the board cannot parse
+    // is a failure nobody sees, and this event has exactly one consumer-side schema.
+    expect(taskTriggerFailedPayloadSchema.safeParse(payload).success).toBe(true)
+    expect(payload.trigger_mode).toBe("once")
+    expect(payload).not.toHaveProperty("action")
   })
 
   it("a manual task with no cursor is invisible to the tick", () => {

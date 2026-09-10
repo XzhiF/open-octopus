@@ -807,7 +807,9 @@ if (shouldServe) {
         ;(global as any).__octopus_scheduler = schedulerEngine
         ;(global as any).__octopus_schedule_service = scheduleService
         const jobCount = schedulerEngine['cronJobs']?.size ?? 0
-        console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow + agent)`)
+        // Three types now, and the parenthetical used to name two — which read as "the
+        // built-in task-lifecycle row isn't one of these" to whoever debugs a boot.
+        console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow / agent / job)`)
       } else {
         // Engine not running — manual triggers and cron won't execute.
         // Surface this clearly so users don't see perpetual 'triggered' rows.

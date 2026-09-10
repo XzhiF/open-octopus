@@ -115,6 +115,20 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
 
 手测(`pnpm dev`):① 草稿→入队后 `schedules` 表**零条任务行**、`tasks.status='ready'`;② 定时 T+1min 不点任何东西到点自动起;③ cron `* * * * *` 的 ready 任务连续两起、上一轮未结束时 UNIQUE 抑制重复;④ abort 立即停引擎、槽位释放、无滞留;⑤ 系统调度页只见作业(含内置 `task-lifecycle` 一行,可见其上次触发与耗时),任务不再以作业身份出现;⑥ 重启 server,待触发定时/周期任务照常到点,内置 job 幂等重建。
 
+### 8b. 票05 真机复验(2026-09-11,构建产物 + 临时 HOME + 临时 db)
+
+跑法:`(cd packages/server && pnpm build)` 后 `OCTOPUS_DB_PATH=/tmp/... HOME=/tmp/... PORT=3477 node dist/index.js`,
+全部经 HTTP + sqlite3 观察,**不碰仓库 db**。已实测通过:
+
+- 启动即 seed:`[scheduler] built-in jobs: 1 created, 0 repaired`,db 里 `schedules` **恰好 2 行**(`system:daily-archive` agent + `builtin-task-lifecycle` job),**没有任何任务行**。
+- `POST /api/scheduler/jobs/builtin-task-lifecycle/trigger` → `trigger_type='manual'` 的 fire,`status=completed`,`agent_output` = 「排队 0 · 启动 0 · 对账 0 · 回收 0」(票05 的"内置 job 可手动跑一轮")。
+- `GET /jobs?job_type=job` → 只出内置 job 行(名字是「系统 · 任务生命周期」,不是 uuid);`?job_type=bogus` 的 total == 不带过滤的 total(`pickEnum` 生效,乱值不过滤)。
+- 建任务 → `POST /:id/ready`(**此后复查 `schedules` 仍是 2 行**)→ `POST /:id/trigger/schedule {cron:"* * * * *"}` → 200,`trigger_mode=cron`、`next_fire_at` 落到下一分钟。
+- 等到点(不点任何东西):job 自己扫到 → 因未绑 workflow 起不来 → `refused=1` 进 fire 摘要、`last_fired_at` 写入、`next_fire_at` **继续前进**(周期不被一次失败钉死)、任务留 `ready`。
+- 再种一条该任务的 `running` 根执行 + 把游标推到 +40s → 到点日志「上一轮仍在运行,本次触发跳过」、`executions` 仍只有 1 行(**没有第二个实例**)、游标继续跳、那条 running 行没被对账误杀(未到 10 分钟窗口)。这就是手测清单③的闩锁半边。
+
+**真机仍未覆盖**(要 provider + 真 repo,留给票06 的 e2e / 人工):② 一轮真跑起来并转 running、③ 的"连续两起"(两轮都真起)、④ abort 真停引擎后槽位被下一个排队任务立刻接走(单测已过:`finalizeLaunch` 末尾 `launchQueued(1)`)、⑤ 调度页 UI、⑥ 重启后 RecoveryManager 与内置 job 共存。
+
 ## 9. 票 01 落地附记(实测踩到的四颗雷)
 
 **排期修正**:原计划"票 01 建 `cron_jobs`+`scheduler_runs` 两张新表并在同票 drop 旧三表"。方案在实现中途被 ADR-0021 的 `job` 类型设计取代 —— 两张新表与其 42 个契约测试已在 2026-09-10 删除(`executions` 本就是一次运行的天然载体)。旧三表相关列的删除与泵翻转同票(票 03),因为它们在票 02 之前仍被 engine/executor/tasks/V1 `WorkspaceScheduleService` 四方读写,先删必把仓库留在启不来的状态。

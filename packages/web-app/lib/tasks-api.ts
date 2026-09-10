@@ -10,6 +10,7 @@
 import { getServerUrl } from "@/lib/server-config"
 import type {
   Task,
+  TaskExecutionBadge,
   TaskStatus,
   TaskSpecField,
   TaskSpec,
@@ -19,71 +20,39 @@ import type {
   TaskPhaseStatus,
 } from "@octopus/shared"
 
-// ── Task detail (composite view) ────────────────────────────────────
+// ── Task read-model aliases (ADR-0021 票05) ─────────────────────────
 //
-// ADR-0021 票03: a task owns no schedule row any more. WHEN it runs is a set of
-// columns on `tasks` itself (the `trigger_*` block below) and its runs ARE
-// `executions` rows — so `children[]` (envelope rows standing one indirection
-// further away from the same runs) became `executions[]`. The deep link keeps the
-// same pair of ids, now both on the run: /workspaces/{workspace_id}?tab=detail&
-// execId={execution.id}.
-
-/** Mirror of server `TaskExecutionBadge` (tasks-service.ts) — one task instance in
- *  compact form; the board's badge (`TaskTriggerFields.execution`) and the detail's
- *  run history share it. `status` is the executions-row status: 'pending' = armed and
- *  waiting behind the shared concurrency cap, 'running' = in flight, a terminal
- *  status = the previous run. NOTE: unlike the retired `execution_ref`, a badge
- *  carries NO `error_summary` and no agent output — 票05 follow-up. */
-export interface TaskExecutionBadge {
-  /** The execution's own id (the `execId` half of the deep link). */
-  id: string
-  status: string
-  workflow_ref: string
-  /** v4 tags, on the row itself (null on v3/legacy runs). 1-based, matches
-   *  TaskPhase.index. */
-  phase_index: number | null
-  round_index: number | null
-  workspace_id: string
-  started_at: string | null
-  completed_at: string | null
-  created_at: string
-}
-
-/** tasks.trigger_mode — the DB CHECK constrains it to these three (schema v41). */
-export type TaskTriggerMode = "manual" | "once" | "cron"
-
-/** The 票03 trigger columns + the task's current instance, as the server's TaskDTO
- *  sends them. They REPLACE the retired `schedule_status` / `scheduled_at` pair, which
- *  were read off the task's private envelope row (that is how the kanban got its
- *  「已排队」 badge). shared's `Task` still declares those two as optional — it is
- *  trimmed on the server-types pass, not this ticket — but the server stopped sending
- *  them, so read these instead. */
-export interface TaskTriggerFields {
-  trigger_mode: TaskTriggerMode
-  /** Author input for trigger_mode='once' — the ISO time the one-shot is due. */
-  trigger_at: string | null
-  cron_expression: string | null
-  cron_timezone: string
-  /** Master switch for a cron task: 0 = paused without forgetting the expression. */
-  trigger_enabled: number
-  /** THE due cursor, one per task. once: = trigger_at until it fires, then NULL;
-   *  cron: the next occurrence; NULL = nothing armed. */
-  next_fire_at: string | null
-  /** When the cursor last fired. */
-  last_fired_at: string | null
-  /** The task's current instance = its newest root execution; null = never ran. */
-  execution: TaskExecutionBadge | null
-}
+// The wire shape is shared's `Task`, verbatim: the trigger columns
+// (trigger_mode / trigger_at / cron_* / trigger_enabled:boolean / next_fire_at /
+// last_fired_at) and the current-instance badge (`execution: TaskExecutionBadge`)
+// are declared there, envelope mirrors `schedule_status`/`scheduled_at` included
+// in the deletion. lib/ no longer mirrors any of it — the old local copies
+// existed only while shared still carried the retired envelope columns; that
+// trim is done, and a second copy would just be drift bait (the number-vs-boolean
+// `trigger_enabled` between an old mirror and shared literally collapsed every
+// `Task & TaskTriggerFields` consumer to `never`).
+//
+// What still legitimately lives here, because the server file that produces it
+// is not importable from web:
+//   - `derived` on the detail payload (mirror of @octopus/server
+//     derive-task-view.ts — see TaskDerivedView below), and
+//   - `executions[]` on the detail payload (GET /:id run history; each badge may
+//     carry its composite fan-out in `children` — the board's list badge does
+//     NOT load children, so `children === undefined` means "not loaded", never
+//     "no subunits").
+// `TaskView` stays as the board-row name (the list/summary endpoints answer it);
+// `TaskDetail` is that plus the two fields above.
 
 /** TaskDTO — one board row (GET /api/tasks items, GET /:id, and the trigger
- *  endpoints' summary). */
-export type TaskView = Task & TaskTriggerFields
+ *  endpoints' summary). Alias of shared `Task` by design: keep the name so the
+ *  seam (what the tasks API answers) has one place to grow. */
+export type TaskView = Task
 
 /** TaskDetail = TaskView + run history + derived (v4 视图). */
 export type TaskDetail = TaskView & {
   /** Every ROOT execution of this task, newest first (empty for a draft).
-   *  Composite SUBUNIT runs are not here — they are non-root rows (parent_id = the
-   *  dispatching run) and no endpoint lists them post-票03; see report/票05. */
+   *  Composite SUBUNIT runs hang off their root's `children` (票05: detail and
+   *  /executions load the fan-out; the board badge does not). */
   executions: TaskExecutionBadge[]
   derived?: TaskDerivedView
 }
@@ -93,7 +62,8 @@ export type TaskDetail = TaskView & {
 // GET /api/tasks/:id embeds `derived` = the server's deriveTaskView output
 // VERBATIM (票 03 唯一真相；票 07 「GET /:id 增 phases 视图」). The canonical
 // types live in @octopus/server (derive-task-view.ts) — web-app cannot import
-// cross-package, so this is the mirror (same discipline as TaskExecutionBadge above).
+// cross-package, so this mirror stays (it is the only reason the local
+// detail type above extends shared instead of aliasing it).
 // 票 11 看板角标/时间线 与 票 12 验收弹窗都只读这个视图，MUST NOT re-implement
 // the derive matrix client-side.
 
@@ -802,4 +772,14 @@ export async function getAssistWorkflowRun(taskId: string, runId: string): Promi
 }
 
 // Re-export shared types so callers can import everything from one place.
-export type { Task, TaskStatus, TaskSpecField, ArtifactIndexEntry, AssistWorkflowRun, TaskPhase, TaskPhaseStatus } from "@octopus/shared"
+export type {
+  Task,
+  TaskExecutionBadge,
+  TaskStatus,
+  TaskSpecField,
+  TriggerMode,
+  ArtifactIndexEntry,
+  AssistWorkflowRun,
+  TaskPhase,
+  TaskPhaseStatus,
+} from "@octopus/shared"

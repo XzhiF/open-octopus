@@ -36,7 +36,8 @@ ADR-0021 票05 —— 读模型与调度页面。判断标准同票03:**按此�
 5. **`GET /api/scheduler/jobs?job_type=job` 可用**:`job` 行现在能经 API 创建/更新/筛选
    (`createJobSchema` 以前本地写死 `['workflow','agent']`,票02 加了类型却没通到 API)。
    乱值 = 不加过滤(以前是把任意字符串原样塞进 WHERE)。
-6. **task-lifecycle 的 job 行**:系统内置 `builtin-task-lifecycle`,`job_type:'job'`,
+6. **`task_trigger_failed` 上了契约**:`{task_id, reason, trigger_mode}`(原来服务端发的是 `action`,装的却是 trigger_mode)。语义 = **到点但根本起不来**(phase spec 删了 / 没绑 workflow / 工作区建不出来),游标照样退休(否则 broken 任务每分钟撞并发闸)。它**不折进 `task_status`**:没有状态变化(任务仍 ready),它是"什么都没发生"的通知 —— 没有 UI 出口时,用户看到的就是一张永远停在「已入队」的卡,原因只在日志里。**运行中被抑制的那次触发不发此事件**(那不是失败,`task_execution` 已经在讲这一轮)。
+7. **task-lifecycle 的 job 行**:系统内置 `builtin-task-lifecycle`,`job_type:'job'`,
    seed 幂等(enabled 与 cron 由用户改,seed 只修 handler 指针)。调度页要能看见/暂停它,
    **不能删**;它不该显示为裸 uuid。
 
@@ -53,4 +54,5 @@ ADR-0021 票05 —— 读模型与调度页面。判断标准同票03:**按此�
 - 看板/弹窗 badge:`error_summary` 要有出口(红行悬浮/展开显示原因);composite 卡展开显示 `children[]`(标签用 `name`)。
 - 调度页:类型筛选含 `job`;内置 job 行显示"上次触发/耗时/可暂停",无裸 uuid。
 - SSE payload 字段名跟进:`scheduled_at` → `next_fire_at`;不要在 task_status 上读 `origin_type`。
+- `task_trigger_failed` 要有出口(toast 或角标显示 `reason` 一行即可)。
 - `e2e/helpers/task-domain-helpers.ts` 等 6 个 spec 属于票06,本票不动(除非类型改名导致编译不过)。

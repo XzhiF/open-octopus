@@ -32,8 +32,10 @@ import {
   SPEC_FIELD_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   TASK_EXECUTION_EVENT,
+  TASK_TRIGGER_FAILED_EVENT,
   TriggerModeSchema,
   taskExecutionSsePayloadSchema,
+  taskTriggerFailedPayloadSchema,
   UPDATE_TASK_SPEC_FIELD_TOOL_NAME,
 } from "../types/task"
 import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
@@ -428,6 +430,25 @@ describe("AC4 — spec_field_update SSE + update_task_spec_field tool", () => {
     // execution_id is load-bearing (it is the whole point of the event) — not optional.
     expect(
       taskExecutionSsePayloadSchema.safeParse({ task_id: "t", status: "running" }).success,
+    ).toBe(false)
+  })
+
+  it("task_trigger_failed is on the contract, with trigger_mode (票05)", () => {
+    // The one event whose whole purpose is "nothing happened, and here is why". It lived
+    // as a bare string with an `action` field that actually held the trigger mode — an
+    // off-contract event is how a user-facing signal ends up with zero consumers.
+    expect(TASK_TRIGGER_FAILED_EVENT).toBe("task_trigger_failed")
+    const ok = taskTriggerFailedPayloadSchema.safeParse({
+      task_id: "task-1",
+      reason: "阶段 1 的 spec 文件不存在",
+      trigger_mode: "cron",
+    })
+    expect(ok.success).toBe(true)
+    expect(
+      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "", trigger_mode: "cron" }).success,
+    ).toBe(false)
+    expect(
+      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "x", trigger_mode: "queued" }).success,
     ).toBe(false)
   })
 

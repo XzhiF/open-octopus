@@ -34,12 +34,13 @@
 
 import type Database from "better-sqlite3"
 import path from "path"
-import type { TaskSpec, ResourceRef, WorkflowConfig } from "@octopus/shared"
+import type { TaskSpec, ResourceRef, WorkflowConfig, TriggerMode } from "@octopus/shared"
 import {
   TERMINAL_EXECUTION_STATUSES,
   WAITING_EXECUTION_STATUSES,
   TASK_STATUS_EVENT,
   TASK_EXECUTION_EVENT,
+  TASK_TRIGGER_FAILED_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
 } from "@octopus/shared"
 import type { TaskRow, ExecutionRow } from "../../db/types"
@@ -975,8 +976,10 @@ export class TaskLifecycleService {
     // logged + emitted, so a broken spec shows up as one clear failure instead of a
     // minute-by-minute retry storm against the concurrency gate.
     this.deps.sse.emit("taskpool", {
-      event: "task_trigger_failed",
-      data: { task_id: task.id, reason: message, action: task.trigger_mode },
+      event: TASK_TRIGGER_FAILED_EVENT,
+      // trigger_mode, not action: what the event says is "a fire of THIS kind could not
+      // happen"; the task_status/task_trigger events are the ones with an action.
+      data: { task_id: task.id, reason: message, trigger_mode: task.trigger_mode as TriggerMode },
     })
   }
 

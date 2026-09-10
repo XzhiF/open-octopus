@@ -232,6 +232,23 @@ export const taskTriggerSsePayloadSchema = z.object({
 })
 export type TaskTriggerSsePayload = z.infer<typeof taskTriggerSsePayloadSchema>
 
+/** Emitted when a DUE trigger could not be armed at all (deleted phase spec, no workflow
+ *  bound, workspace could not be built). The cursor still retires — otherwise a broken
+ *  task retries against the concurrency gate every minute — so without this event the
+ *  user's only evidence is a server log line and a card that quietly stays 已入队.
+ *
+ *  Not sent for an in-flight suppression: a skipped fire while the previous round runs is
+ *  not a failure, and `task_execution` already narrates the live round. */
+export const TASK_TRIGGER_FAILED_EVENT = "task_trigger_failed" as const
+
+export const taskTriggerFailedPayloadSchema = z.object({
+  task_id: z.string().min(1),
+  /** The arm refusal's own message — the same one-liner discipline as error_summary. */
+  reason: z.string().min(1),
+  trigger_mode: TriggerModeSchema,
+})
+export type TaskTriggerFailedSsePayload = z.infer<typeof taskTriggerFailedPayloadSchema>
+
 // ── phase_status_update SSE payload (task-phase-redesign v4, ticket 07) ──
 /** Per-phase display status vocabulary on the wire. Structurally identical to
  *  ticket 03's server-local `DerivedPhaseStatus` (derive-task-view.ts) — the
