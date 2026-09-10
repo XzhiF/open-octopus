@@ -446,4 +446,38 @@ describe('Scheduler Routes (integration)', () => {
     const res = await app.request('/api/scheduler/jobs/nonexistent-job-id/abort', { method: 'POST' })
     expect(res.status).toBe(404)
   })
+  // ── 票05: the list filter knows all three job types ────────────────
+  it('GET /jobs?job_type=job 筛出 job 行，乱值等于不加过滤（cast 曾把 job 当不存在）', async () => {
+    const created = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'e2e-job-row',
+        job_type: 'job',
+        cron_expression: '* * * * *',
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        // 票02 的形状：库里只有 handler 名 + args，代码永不入库。
+        config: { schema_version: '1.0', type: 'job', handler: 'task-lifecycle', args: {} },
+      }),
+    })
+    expect(created.status).toBe(201)
+
+    const onlyJobs = await json<{ items: Array<{ job_type: string }> }>(
+      await app.request('/api/scheduler/jobs?job_type=job'),
+    )
+    expect(onlyJobs.items.length).toBeGreaterThan(0)
+    expect(onlyJobs.items.every((j) => j.job_type === 'job')).toBe(true)
+
+    // The route used to cast the query param to 'workflow' | 'agent'. A cast is not a
+    // check: ?job_type=bogus reached the WHERE clause verbatim. Off-contract now reads
+    // as "no filter", which is also what a typo means to a human.
+    const unfiltered = await json<{ items: Array<{ job_type: string }>; total: number }>(
+      await app.request('/api/scheduler/jobs?job_type=bogus'),
+    )
+    const all = await json<{ total: number }>(await app.request('/api/scheduler/jobs'))
+    expect(unfiltered.total).toBe(all.total)
+    expect(unfiltered.items.some((j) => j.job_type === 'job')).toBe(true)
+  })
+
 })

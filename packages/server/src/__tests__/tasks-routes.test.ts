@@ -210,6 +210,75 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(detail.derived.isV4).toBe(false)
   })
 
+  // ── 票05 (ADR-0021): the run read model — fan-out labels + a red run's reason ──
+  it("detail + history project the composite fan-out and the failure reason (票05 read model)", async () => {
+    const id = insertTask(db, { name: "E2E_TD_readmodel" })
+    const rootId = seedInstanceRow(db, id, "failed")
+    // The reason a failure writer leaves on the row (var_pool.error) — setLaunchStatus /
+    // retireLaunch both write this key, which is what error_summary reads.
+    db.prepare("UPDATE executions SET var_pool = ?, name = ? WHERE id = ?")
+      .run(JSON.stringify({ error: "启动失败: worktree 不可用" }), "coordinator", rootId)
+    // Two subunit arms: child executions of the root, task-bound, each with its own ws.
+    const arm = (n: string, status: string) => {
+      const wsId = `e2e-td-child-ws-${n}`
+      db.prepare(
+        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+      ).run(wsId, `child-${n}`, ORG, `/tmp/e2e-td-${wsId}`, id)
+      db.prepare(
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+           name, status, org, created_at, updated_at, task_id)
+         VALUES (?, ?, ?, ?, 'wf/x', 'x', ?, ?, ?, datetime('now'), datetime('now'), ?)`,
+      ).run(`e2e-td-child-${n}`, wsId, rootId, Number(n), `subunit-${n}`, status, ORG, id)
+    }
+    arm("0", "completed")
+    arm("1", "failed")
+
+    const res = await app.request(`/api/tasks/${id}`)
+    const detail = await json<{
+      executions: Array<{
+        id: string; status: string; name: string | null; error_summary: string | null
+        children?: Array<{ id: string; name: string | null }>
+      }>
+      trigger_enabled: boolean
+      trigger_mode: string
+    }>(res)
+    expect(res.status).toBe(200)
+
+    const root = detail.executions.find((e) => e.id === rootId)!
+    // error_summary: the badge's one-liner, previously only on the history endpoint.
+    expect(root.error_summary).toBe("启动失败: worktree 不可用")
+    // The fan-out is nested under the round that dispatched it, labelled by `name` —
+    // 票04's row shape plus this field is what replaced schedules.origin_role='subunit'.
+    expect(root.children?.map((c) => c.name).sort()).toEqual(["subunit-0", "subunit-1"])
+    // Wire types the envelope forced into strings: the switch is a boolean, the mode an
+    // enum member, both read off the task's own columns.
+    expect(typeof detail.trigger_enabled).toBe("boolean")
+    expect(detail.trigger_mode).toBe("manual")
+
+    // The history endpoint is the SAME projection (one function feeds both), so a badge
+    // cannot show something the history tab contradicts.
+    const hist = await json<{
+      executions?: never
+      items: Array<{ id: string; current: boolean; error_summary: string | null; children?: unknown[] }>
+    }>(await app.request(`/api/tasks/${id}/executions`))
+    const histRoot = hist.items.find((e) => e.id === rootId)!
+    expect(histRoot.error_summary).toBe(root.error_summary)
+    expect(histRoot.current).toBe(true)
+    expect(histRoot.children).toHaveLength(2)
+  })
+
+  it("a green run never surfaces a stale error key (error_summary is terminal-failure only)", async () => {
+    const id = insertTask(db, { name: "E2E_TD_greenreason" })
+    const rootId = seedInstanceRow(db, id, "completed")
+    db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?")
+      .run(JSON.stringify({ error: "上一轮遗留" }), rootId)
+    const detail = await json<{ executions: Array<{ id: string; error_summary: string | null }> }>(
+      await app.request(`/api/tasks/${id}`),
+    )
+    expect(detail.executions.find((e) => e.id === rootId)!.error_summary).toBeNull()
+  })
+
   it("PUT /api/tasks/:id updates with If-Match (save draft) + bumps version", async () => {
     const id = insertTask(db, { name: "E2E_TD_put" })
     const res = await app.request(`/api/tasks/${id}`, {

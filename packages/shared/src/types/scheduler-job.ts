@@ -2,14 +2,19 @@ import { z } from 'zod'
 import { WorkflowRef } from '../resource/workflow-ref'
 
 /**
- * What a scheduled job runs.
+ * What a scheduled job runs. THE list, as a zod schema rather than a bare union, so the
+ * API's input validation (`createJobSchema`), the list route's `?job_type=` parsing and
+ * every typed consumer read one vocabulary instead of three hand-written copies — a
+ * local `['workflow','agent']` in createJobSchema is exactly what kept the `job` type
+ * (票02) unreachable through the API after the union was widened.
  *   workflow — a YAML workflow chain inside a workspace (WorkflowExecutor)
  *   agent    — one LLM prompt (AgentExecutor)
  *   job      — a registered TypeScript handler (ADR-0021): the system's own
  *              housekeeping, armed by cron like any other job and visible in the same
  *              ops surface. The built-in `task-lifecycle` job is one of these.
  */
-export type JobType = 'workflow' | 'agent' | 'job'
+export const jobTypeSchema = z.enum(['workflow', 'agent', 'job'])
+export type JobType = z.infer<typeof jobTypeSchema>
 export type ParallelPolicy = 'allow' | 'wait' | 'skip'
 export type SchedulerExecutionStatus =
   | 'triggered'
@@ -22,22 +27,12 @@ export type SchedulerExecutionStatus =
   | 'missed'
 
 /**
- * What created a schedule. **Retired by ADR-0021 票03 as a concept**: the `origin_*`
- * columns are dropped in schema v42, so no schedule row records a creator any more, and
- * `SchedulerJob` no longer carries either field.
- *
- * The vocabularies stay complete (`'task' | 'manual' | 'api' | 'requirement'` included)
- * for one release because they are still referenced by the *task* wire types — the
- * taskpool SSE payloads use `origin_type: 'task'` as a channel discriminator (see
- * `taskStatusSsePayloadSchema`). Narrowing the enum would break those payloads at
- * runtime, so the retirement happens where the values are actually consumed: 票05
- * removes the field from the SSE contract, then these two types go away.
+ * What created a schedule — **gone**. The `origin_*` columns were dropped in schema v42
+ * and the last consumer (the `origin_type: 'task'` discriminator on the taskpool SSE
+ * payloads) was removed in 票05, so the vocabulary has no referent left: a `schedules`
+ * row is a job, and a task's run is an `executions` row. `schedule_executions.trigger_type`
+ * ('scheduled' | 'manual') is a different, still-live concept — how a JOB FIRE happened.
  */
-export type TriggerSource = 'cron' | 'requirement'
-/** @deprecated retired as a column (schema v42); see {@link TriggerSource} for the plan. */
-export const OriginTypeSchema = z.enum(["cron", "task", "agent", "manual", "api"])
-/** @deprecated see {@link OriginTypeSchema}. */
-export type OriginType = z.infer<typeof OriginTypeSchema>
 
 /** Lifecycle status of a job DEFINITION's run state (schema v37, narrowed by v42).
  *  'queued' = registered, nothing in flight; 'claimed' = taken by the executor before

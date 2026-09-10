@@ -18,6 +18,7 @@ import type {
   JobConfig,
   ScheduleStatus,
 } from '@octopus/shared'
+import { jobTypeSchema } from '@octopus/shared'
 import { usageFromLegacyJson } from '../../db/dao/usage-mapping'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
@@ -115,7 +116,9 @@ const cronExpressionField = z.string().min(1).refine(
 
 const createJobSchema = z.object({
   name: z.string().min(1).max(200),
-  job_type: z.enum(['workflow', 'agent']),
+  // jobTypeSchema, not a local enum: 'job' rows must be creatable/updateable through
+  // the API too (the built-in seed is not a user-facing way to add a handler job).
+  job_type: jobTypeSchema,
   cron_expression: cronExpressionField.nullable().optional(),
   timezone: z.string().refine(
     (val) => { try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false } },

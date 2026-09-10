@@ -619,7 +619,7 @@ export class SchedulerEngine {
     return {
       id: schedule.id,
       name: schedule.name,
-      job_type: schedule.job_type as 'workflow' | 'agent',
+      job_type: schedule.job_type as import('@octopus/shared').JobType,
       cron_expression: schedule.cron_expression,
       timezone: schedule.timezone,
       enabled: schedule.enabled === 1,

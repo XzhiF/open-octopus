@@ -22,14 +22,6 @@ export interface ChildHandle {
 }
 
 /**
- * Role a dispatched child plays in a composite task's orchestration (v2-D9 / ADR-0009).
- * Kept for the audit trail (`subunit` children vs. a `coordinator` root), but it is no
- * longer a parameter of the port: the engine never passed it, and after 票03 there is no
- * `schedules.origin_role` column for an implementation to write.
- */
-export type OriginRole = "primary" | "coordinator" | "subunit"
-
-/**
  * Engine → server boundary for composite task dispatch (G1).
  *
  * The engine package only depends on `@octopus/shared` + `@octopus/providers`,

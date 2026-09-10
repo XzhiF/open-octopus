@@ -38,7 +38,12 @@ import {
   TASK_ARTIFACTS_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   TASK_TRIGGER_EVENT,
+  TASK_EXECUTION_EVENT,
   PHASE_STATUS_UPDATE_EVENT,
+  type Task,
+  type TriggerMode,
+  TriggerModeSchema,
+  type TaskExecutionBadge,
   type TaskPhaseStatus,
   taskSpecSchema,
   TERMINAL_EXECUTION_STATUSES,
@@ -174,52 +179,15 @@ export class TaskReadyGateError extends Error {
 // ── Types ────────────────────────────────────────────────────────────
 
 /** A flat task DTO for API responses (JSON columns parsed). */
-export interface TaskDTO {
-  id: string
-  org: string
-  name: string
-  status: TaskStatus
-  task_spec: TaskSpec
-  authoring_resources: ResourceRef[]
-  resources: ResourceRef[]
-  skills: string[]
-  project_ids: string[]
-  workflow_ref: string | null
-  version: number
-  source_chat_session_id: string | null
-  deleted_at: string | null
-  created_at: string
-  updated_at: string
-  completed_at: string | null
-  // ── ADR-0021 票03: WHEN this task runs, from its own columns. These replaced
-  // `schedule_status` + `scheduled_at`, read off the private envelope row, which is
-  // how the kanban got its 「已排队」 badge. There is one due cursor now, so there is
-  // exactly one number to show.
-  trigger_mode: string
-  trigger_at: string | null
-  cron_expression: string | null
-  cron_timezone: string
-  trigger_enabled: number
-  next_fire_at: string | null
-  last_fired_at: string | null
-  /** The task's current instance (newest root execution): 'pending' = 排队中 (armed,
-   *  waiting behind the shared cap), 'running' = 执行中, a terminal status = the
-   *  previous run, null = never ran. Replaces the envelope status join. */
-  execution: TaskExecutionBadge | null
-}
-
-/** Compact view of one task instance — the board's badge and GET /:id's history share it. */
-export interface TaskExecutionBadge {
-  id: string
-  status: string
-  workflow_ref: string
-  phase_index: number | null
-  round_index: number | null
-  workspace_id: string
-  started_at: string | null
-  completed_at: string | null
-  created_at: string
-}
+/**
+ * The wire shape of a task is shared's `Task` — trigger columns (`trigger_mode` /
+ * `next_fire_at` / …) and the current-instance badge (`execution`) on it. It used to be a
+ * local duplicate carrying `schedule_status` + `scheduled_at` read off the private
+ * envelope row; 票05 deletes the copy rather than maintaining two lists of the same
+ * columns, because the copy is exactly how a DTO drifts back toward the thing it was
+ * supposed to stop modelling.
+ */
+export type TaskDTO = Task
 
 /** Task detail (GET /:id) — task + its run history. */
 export interface TaskDetailDTO extends TaskDTO {
@@ -381,31 +349,69 @@ function toDTO(row: TaskRow): TaskDTO {
     created_at: row.created_at,
     updated_at: row.updated_at,
     completed_at: row.completed_at,
-    trigger_mode: row.trigger_mode,
+    // A stored value outside the enum is impossible via the API, but a hand-edited row
+    // must not crash the board — fall back to 'manual', the one mode the built-in job
+    // never scans (fail-closed: an unreadable trigger never fires a round on its own).
+    trigger_mode: TriggerModeSchema.safeParse(row.trigger_mode).success
+      ? (row.trigger_mode as TriggerMode)
+      : "manual",
     trigger_at: row.trigger_at,
     cron_expression: row.cron_expression,
     cron_timezone: row.cron_timezone,
-    trigger_enabled: row.trigger_enabled,
+    trigger_enabled: row.trigger_enabled === 1,
     next_fire_at: row.next_fire_at,
     last_fired_at: row.last_fired_at,
     execution: null,
   }
 }
 
+/** The one-line reason a run is red. Sourced from the row's var pool under `error`,
+ *  which every failure writer now fills (setLaunchStatus's error opt, retireLaunch, and
+ *  finalize lifting the engine's failed-node error) — surfaced only on a terminal-failure
+ *  row so a green run can never show a stale key. */
+function errorSummaryOf(row: ExecutionRow): string | null {
+  if (row.status !== "failed" && row.status !== "aborted" && row.status !== "completed_with_failures") {
+    return null
+  }
+  const v = parseJSON<Record<string, unknown>>(row.var_pool, {})
+  return typeof v.error === "string" && v.error.trim() ? v.error : null
+}
+
 /** The task's current instance, projected for the DTO. Kept as a pure function of the
- *  row so list and detail cannot drift into two different badge shapes. */
-function toExecutionBadge(row: ExecutionRow): TaskExecutionBadge {
+ *  row so list and detail cannot drift into two different badge shapes.
+ *
+ *  `children` is passed only by the read models that loaded the fan-out (detail / run
+ *  history) — the board's badge deliberately carries none, and `undefined` vs `[]` says
+ *  which of the two loaded, so the UI never renders "no subunits" for a list row. */
+function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExecutionBadge {
   return {
     id: row.id,
     status: row.status,
     workflow_ref: row.workflow_ref,
+    // The subunit's label (a child run's name IS which arm it is) — 票05's replacement
+    // for reading `schedules.origin_role`.
+    name: row.name ?? null,
     phase_index: row.phase_index ?? null,
     round_index: row.round_index ?? null,
     workspace_id: row.workspace_id,
     started_at: row.started_at ?? null,
     completed_at: row.completed_at ?? null,
     created_at: row.created_at,
+    error_summary: errorSummaryOf(row),
+    ...(children ? { children: children.map((c) => toExecutionBadge(c)) } : {}),
   }
+}
+
+/** Group a task's child runs under the root that dispatched them (one pass, so the read
+ *  model stays one query for the fan-out instead of one per root). */
+function groupChildren(children: ExecutionRow[]): Map<string, ExecutionRow[]> {
+  const by = new Map<string, ExecutionRow[]>()
+  for (const c of children) {
+    const list = by.get(c.parent_id)
+    if (list) list.push(c)
+    else by.set(c.parent_id, [c])
+  }
+  return by
 }
 
 /** Server-side spec-field set: the shared bindable fields (9 as of v3, +11 with
@@ -712,10 +718,12 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id)
-    const dto: TaskDTO = { ...toDTO(row), execution: history[0] ? toExecutionBadge(history[0]) : null }
+    const byParent = groupChildren(this.lifecycle.childRuns(id))
+    const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
+    const dto: TaskDTO = { ...toDTO(row), execution: history[0] ? badge(history[0]) : null }
     return {
       ...dto,
-      executions: history.map(toExecutionBadge),
+      executions: history.map(badge),
       derived: this.deriveView(row),
     }
   }
@@ -759,21 +767,18 @@ export class TasksService {
    * from time here — the history is already ordered by the same key the latch and the
    * badge read, so index 0 is the answer.
    */
-  listRunHistory(id: string, limit = 50): Array<TaskExecutionBadge & { current: boolean; error: string | null }> {
+  listRunHistory(id: string, limit = 50): Array<TaskExecutionBadge & { current: boolean }> {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id, limit)
+    const byParent = groupChildren(this.lifecycle.childRuns(id))
     const currentId = history.length > 0 ? history[0].id : null
+    // `error_summary` is on the badge now (票05): the board's badge and the history list
+    // are the same projection of the same row, and an error field that only the history
+    // endpoint had is how the board ended up showing red with nothing to say about it.
     return history.map((e) => ({
-      ...toExecutionBadge(e),
+      ...toExecutionBadge(e, byParent.get(e.id) ?? []),
       current: e.id === currentId,
-      // The failure reason lives in the row's var pool (the job writes it there — the
-      // executions table has no error column, and this is a read model, not a schema
-      // change). Only surfaced for terminal-failure rows so a green row never shows a
-      // stale key.
-      error: e.status === "failed" || e.status === "aborted"
-        ? (parseJSON<Record<string, unknown>>(e.var_pool, {}).error ?? null) as string | null
-        : null,
     }))
   }
 
@@ -1572,7 +1577,7 @@ export class TasksService {
 
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
-      data: { task_id: id, status: "draft", origin_type: "task", action: "reopened" },
+      data: { task_id: id, status: "draft" },
     })
 
     const row = this.taskDAO.getById(id)!
@@ -1622,7 +1627,7 @@ export class TasksService {
       this.taskDAO.armOnce(id, dueAt.toISOString())
       this.sse.emit("taskpool", {
         event: TASK_TRIGGER_EVENT,
-        data: { task_id: id, action: "scheduled", scheduled_at: dueAt.toISOString() },
+        data: { task_id: id, action: "scheduled", next_fire_at: dueAt.toISOString() },
       })
     }
 
@@ -1670,7 +1675,7 @@ export class TasksService {
 
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
-      data: { task_id: id, action: "cancelled", scheduled_at: null },
+      data: { task_id: id, action: "cancelled", next_fire_at: null },
     })
 
     const row = this.taskDAO.getById(id)!
@@ -1698,7 +1703,7 @@ export class TasksService {
       this.taskDAO.disarmTrigger(id)
       this.sse.emit("taskpool", {
         event: TASK_TRIGGER_EVENT,
-        data: { task_id: id, action: "unscheduled", scheduled_at: null },
+        data: { task_id: id, action: "unscheduled", next_fire_at: null },
       })
       return
     }
@@ -1707,7 +1712,7 @@ export class TasksService {
     this.taskDAO.armCron(id, cron, timezone || "Asia/Shanghai", next)
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
-      data: { task_id: id, action: "scheduled", cron, cron_timezone: timezone || "Asia/Shanghai", scheduled_at: next },
+      data: { task_id: id, action: "scheduled", next_fire_at: next },
     })
   }
 
@@ -1719,7 +1724,7 @@ export class TasksService {
     this.taskDAO.setTriggerEnabled(id, enabled)
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
-      data: { task_id: id, action: enabled ? "resumed" : "paused", scheduled_at: existing.next_fire_at },
+      data: { task_id: id, action: enabled ? "resumed" : "paused", next_fire_at: existing.next_fire_at },
     })
   }
 

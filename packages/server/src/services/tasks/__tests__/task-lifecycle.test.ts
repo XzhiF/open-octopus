@@ -568,6 +568,102 @@ describe("task-lifecycle — finalize resolves the way the executor used to", ()
 
 // ── ④ reconcile ──────────────────────────────────────────────────────
 
+// ── 票05: a red run has to say why ───────────────────────────────────
+//
+// 票03 moved the failure writes into this service, and each of them had a reason in hand
+// that it threw away (into console + the log) while the executions table has no error
+// column. The read model can only surface what a writer stored, so the storage rule is
+// pinned here: every path that ends a run red puts one line under var_pool.error, and the
+// SSE event carries the same line.
+describe("task-lifecycle — every red run carries its reason (票05)", () => {
+  const reasonOn = (execId: string): unknown =>
+    JSON.parse(execs.findById(execId)!.var_pool).error
+
+  it("a reap stores why it reaped, on the row and in the event", () => {
+    const execId = armRunning("r1")
+    age(execId, 30)
+    stub.live.delete(execId)
+    const { reaped } = svc.reconcile()
+    expect(reaped).toBe(1)
+    expect(String(reasonOn(execId))).toContain("失去引擎进程")
+    const ev = events.filter((e) => e.event === "task_execution").at(-1)
+    expect(ev?.data).toMatchObject({ execution_id: execId, status: "aborted" })
+    expect((ev?.data as Record<string, unknown>).reason).toContain("失去引擎进程")
+  })
+
+  it("a user abort says 用户中止, not nothing", () => {
+    const execId = armRunning("r2")
+    svc.abortTask("r2")
+    expect(String(reasonOn(execId))).toBe("用户中止")
+  })
+
+  it("an engine that refuses to start puts its message on the row", async () => {
+    insertTask("r3")
+    stub.failStart = true
+    const execId = svc.armTask("r3")
+    svc.launchQueued()
+    await new Promise((r) => setImmediate(r))
+    expect(execs.findById(execId)!.status).toBe("failed")
+    expect(String(reasonOn(execId))).toContain("provider 挂了")
+  })
+
+  it("a run the engine failed with no stored reason lifts the failing node's error", async () => {
+    const execId = armRunning("r4")
+    execs.insertNodeExecutionOrIgnore({
+      id: `${execId}-n1`, execution_id: execId, node_id: "build",
+      node_type: "bash", status: "failed", error: "pnpm build 退出码 1",
+      started_at: new Date().toISOString(),
+    })
+    await complete(execId, "failed")
+    expect(String(reasonOn(execId))).toBe("pnpm build 退出码 1")
+  })
+
+  it("the composite aggregation says how many arms it folded in", async () => {
+    // The coordinator's own workflow completes green even when an arm died (票04), so the
+    // only truthful line available here is the count — and it must reach the row, or the
+    // card flips red with nothing to point at.
+    const execId = armRunning("r5")
+    const wsId = execs.findById(execId)!.workspace_id
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         name, status, org, created_at, updated_at, task_id)
+       VALUES (?, ?, ?, 0, 'wf/a', 'a', 'subunit-a', 'failed', ?, datetime('now'), datetime('now'), 'r5')`,
+    ).run(`${execId}-child`, wsId, execId, ORG)
+    await complete(execId, "completed")
+    expect(execs.findById(execId)!.status).toBe("failed")
+    expect(String(reasonOn(execId))).toBe("1 个子单元执行失败")
+  })
+
+  it("finalize touches nothing on a green run — a leftover key is filtered by the read model", async () => {
+    // The writer's rule is "only a red ending writes a reason". The badge's rule is
+    // "only a terminal-failure row shows one" (errorSummaryOf, tasks-routes covers that);
+    // pinning both halves is what keeps a stale key from ever reaching a green card.
+    const execId = armRunning("r6")
+    db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?")
+      .run(JSON.stringify({ error: "上一轮遗留" }), execId)
+    await complete(execId, "completed")
+    expect(execs.findById(execId)!.status).toBe("completed")
+    expect(JSON.parse(execs.findById(execId)!.var_pool).error).toBe("上一轮遗留")
+  })
+})
+
+/** Arm + launch a task and return its live root execution (the shape a run has when it
+ *  can be ended red). */
+function armRunning(taskId: string): string {
+  insertTask(taskId)
+  const execId = svc.armAndLaunch(taskId)
+  stub.live.add(execId)
+  return execId
+}
+
+/** Backdate a row past the stale threshold (the mock writes SQLite's UTC clock, which
+ *  dbTimeMs reads as UTC — same as production's ISO writes, by construction). */
+function age(execId: string, minutes: number): void {
+  const at = new Date(Date.now() - minutes * 60_000).toISOString()
+  db.prepare("UPDATE executions SET started_at = ?, created_at = ?, updated_at = ? WHERE id = ?")
+    .run(at, at, at, execId)
+}
+
 describe("task-lifecycle — reconciliation (the orphan path, now task-side)", () => {
   function stranded(taskId: string, ageMinutes: number, status = "running") {
     insertTask(taskId)

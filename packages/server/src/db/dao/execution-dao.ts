@@ -125,16 +125,48 @@ export class ExecutionDAO extends BaseDAO {
 
   /** System-event status write for a launch row: flips pending→running on claim and
    *  running→terminal on finalize. NO version/optimistic-lock story here — the row is
-   *  owned by the job, not by an editor (same discipline as the tasks.status mirrors). */
-  setLaunchStatus(id: string, status: string, opts?: { startedAt?: string; completedAt?: string; duration?: number }): Database.RunResult {
+   *  owned by the job, not by an editor (same discipline as the tasks.status mirrors).
+   *
+   *  `error` is merged into the row's var pool under `error` rather than into its own
+   *  column: `executions` has no error column (the engine keeps node failures on
+   *  node_executions), and the read model already projects var_pool.error as the badge's
+   *  one-line reason. Every failure writer must pass it or the badge shows a red run with
+   *  nothing to say about it. */
+  setLaunchStatus(id: string, status: string, opts?: {
+    startedAt?: string; completedAt?: string; duration?: number; error?: string | null
+  }): Database.RunResult {
     const now = new Date().toISOString()
+    if (opts?.error == null) {
+      return this.stmt(
+        `UPDATE executions SET status = ?, updated_at = ?,
+           started_at = COALESCE(?, started_at),
+           completed_at = COALESCE(?, completed_at),
+           duration = COALESCE(?, duration)
+         WHERE id = ?`,
+      ).run(status, now, opts?.startedAt ?? null, opts?.completedAt ?? null, opts?.duration ?? null, id)
+    }
     return this.stmt(
       `UPDATE executions SET status = ?, updated_at = ?,
          started_at = COALESCE(?, started_at),
          completed_at = COALESCE(?, completed_at),
-         duration = COALESCE(?, duration)
+         duration = COALESCE(?, duration),
+         var_pool = json_patch(COALESCE(NULLIF(var_pool, ''), '{}'), ?)
        WHERE id = ?`,
-    ).run(status, now, opts?.startedAt ?? null, opts?.completedAt ?? null, opts?.duration ?? null, id)
+    ).run(
+      status, now, opts.startedAt ?? null, opts.completedAt ?? null, opts.duration ?? null,
+      JSON.stringify({ error: opts.error }), id,
+    )
+  }
+
+  /** Every subunit run of a task (child executions the task side armed), grouped by the
+   *  caller. `task_id IS NOT NULL AND parent_id != '0'` is the subunit predicate: engine
+   *  chain children carry parent_id too but no task_id, so they stay out of the task's
+   *  fan-out view. One query per read-model call, grouped in TS — the alternative
+   *  (findChildren per root) is N queries for a 50-row history. */
+  listTaskChildRuns(taskId: string): ExecutionRow[] {
+    return this.stmt(
+      `SELECT * FROM executions WHERE task_id = ? AND parent_id != '0' ORDER BY child_index ASC`,
+    ).all(taskId) as ExecutionRow[]
   }
 
   /** Claim a specific armed row out of the queue. Guarded on status='pending' so two

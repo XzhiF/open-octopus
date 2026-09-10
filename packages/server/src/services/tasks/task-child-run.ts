@@ -25,6 +25,7 @@
 
 import type Database from "better-sqlite3"
 import type { SubunitSpec, ChildHandle } from "@octopus/shared"
+import { TASK_EXECUTION_EVENT } from "@octopus/shared"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { ScheduleRunDAO } from "../../db/dao/schedule-run-dao"
 import { TaskDAO } from "../../db/dao/task-dao"
@@ -105,6 +106,10 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
 
   const child = registry.service.create(workspaceId, {
     workflow_ref: subunit.workflow_ref,
+    // 票05: the subunit's name IS the row now. Under the envelope the arm's identity was
+    // a schedules row tagged origin_role='subunit'; a child execution says which arm it
+    // is by holding the subunit name, which is what the badge renders.
+    name: subunit.name,
     triggered_by: "task_dispatch",
     input_values: subunit.input_values,
     // The correlation that replaced origin_role + the config marker: this row is a CHILD
@@ -116,7 +121,7 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
   })
 
   deps.sse.emit("taskpool", {
-    event: "task_execution",
+    event: TASK_EXECUTION_EVENT,
     data: {
       task_id: parentTaskId,
       execution_id: child.id,

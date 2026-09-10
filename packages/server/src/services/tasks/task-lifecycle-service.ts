@@ -39,6 +39,7 @@ import {
   TERMINAL_EXECUTION_STATUSES,
   WAITING_EXECUTION_STATUSES,
   TASK_STATUS_EVENT,
+  TASK_EXECUTION_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
 } from "@octopus/shared"
 import type { TaskRow, ExecutionRow } from "../../db/types"
@@ -255,7 +256,10 @@ export class TaskLifecycleService {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err)
         console.error(`[task-lifecycle] launch failed for execution ${row.id}:`, message)
-        this.execDAO.setLaunchStatus(row.id, "failed", { completedAt: new Date().toISOString() })
+        this.execDAO.setLaunchStatus(row.id, "failed", {
+          completedAt: new Date().toISOString(),
+          error: `领取后启动失败: ${message}`,
+        })
         this.finishTaskOutcome(row.task_id as string, "failed")
       }
     }
@@ -285,7 +289,10 @@ export class TaskLifecycleService {
     registry.service.start(row.id, inputValues).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[task-lifecycle] start failed for execution ${row.id}:`, message)
-      this.execDAO.setLaunchStatus(row.id, "failed", { completedAt: new Date().toISOString() })
+      this.execDAO.setLaunchStatus(row.id, "failed", {
+        completedAt: new Date().toISOString(),
+        error: `启动失败: ${message}`,
+      })
       registry.service.clearExternalCallbacks(row.id)
       this.finalizeLaunch(row.id, "failed")
     })
@@ -297,7 +304,7 @@ export class TaskLifecycleService {
     // decoupling: 排队中 and 执行中 are now different facts.
     this.mirrorTaskStatus(row.task_id as string, "running")
     this.deps.sse.emit("taskpool", {
-      event: "task_execution",
+      event: TASK_EXECUTION_EVENT,
       data: {
         task_id: row.task_id,
         execution_id: row.id,
@@ -489,7 +496,7 @@ export class TaskLifecycleService {
 
     const armed = this.execDAO.findById(executionId)
     this.deps.sse.emit("taskpool", {
-      event: "task_execution",
+      event: TASK_EXECUTION_EVENT,
       data: {
         task_id: taskId,
         execution_id: executionId,
@@ -620,21 +627,26 @@ export class TaskLifecycleService {
       // coordinator 自己的 workflow 即使有子失败也照样 completed —— 失败子单元会以 EMPTY
       // 输出回填 task_dispatch 节点,Loop 只管往下走。不在这里聚合,半个任务都没跑完的任务
       // 会显示「完成」。只查根(子没有子),且读子行自己的终态,重启后仍然成立。
+      let failedChildren = 0
       if (ok && !isChild) {
-        const failedChildren = this.execDAO.findChildren(executionId).filter((c) =>
+        failedChildren = this.execDAO.findChildren(executionId).filter((c) =>
           ["failed", "aborted", "cancelled", "rejected"].includes(c.status),
-        )
-        if (failedChildren.length > 0) {
+        ).length
+        if (failedChildren > 0) {
           ok = false
           status = "failed"
           console.log(
-            `[task-lifecycle] task ${taskId}: ${executionId} 聚合 ${failedChildren.length} 条失败子执行 → failed`,
+            `[task-lifecycle] task ${taskId}: ${executionId} 聚合 ${failedChildren} 条失败子执行 → failed`,
           )
         }
       }
+      // A red run carries its reason on the row (var_pool.error), which is what the
+      // badge's error_summary reads — see failureReason.
+      const errorSummary = ok ? null : this.failureReason(row, executionId, failedChildren)
       this.execDAO.setLaunchStatus(executionId, status, {
         completedAt: new Date().toISOString(),
-        duration: row.started_at ? Date.now() - Date.parse(row.started_at) : undefined,
+        duration: row.started_at ? Date.now() - dbTimeMs(row.started_at) : undefined,
+        error: errorSummary ?? undefined,
       })
 
       const spec = parseJSON<TaskSpec>(this.taskDAO.getById(taskId)?.task_spec ?? "", {} as TaskSpec)
@@ -668,13 +680,14 @@ export class TaskLifecycleService {
       this.finishTaskOutcome(taskId, ok ? "done" : "failed")
 
       this.deps.sse.emit("taskpool", {
-        event: "task_execution",
+        event: TASK_EXECUTION_EVENT,
         data: {
           task_id: taskId,
           execution_id: executionId,
           status: ok ? "completed" : status,
           phase_index: row.phase_index,
           round_index: row.round_index,
+          ...(errorSummary ? { reason: errorSummary } : {}),
         },
       })
       // A slot just freed, so drain the queue now instead of letting the next armed
@@ -776,9 +789,9 @@ export class TaskLifecycleService {
         const reason = registry
           ? `执行已失去引擎进程（崩溃或重启），超过 ${Math.round(STALE_CLAIMED_THRESHOLD_MS / 60000)} 分钟未归位`
           : "工作区已不可用（行缺失或路径失效）"
-        this.execDAO.setLaunchStatus(row.id, "aborted", { completedAt: nowIso })
+        this.execDAO.setLaunchStatus(row.id, "aborted", { completedAt: nowIso, error: reason })
         this.deps.sse.emit("taskpool", {
-          event: "task_execution",
+          event: TASK_EXECUTION_EVENT,
           data: { task_id: row.task_id, execution_id: row.id, status: "aborted", reason },
         })
         this.finishTaskOutcome(row.task_id as string, "aborted")
@@ -938,7 +951,7 @@ export class TaskLifecycleService {
       .run(next, nowIso, taskId)
     this.deps.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
-      data: { task_id: taskId, status: "ready", origin_type: "task", action: "re-armed" },
+      data: { task_id: taskId, status: "ready" },
     })
     return true
   }
@@ -1003,7 +1016,10 @@ export class TaskLifecycleService {
           console.error(`[task-lifecycle] engine cancel failed for ${row.id}:`, errMessage(err))
         }
       }
-      this.execDAO.setLaunchStatus(row.id, "aborted", { completedAt: new Date().toISOString() })
+      this.execDAO.setLaunchStatus(row.id, "aborted", {
+        completedAt: new Date().toISOString(),
+        error: "用户中止",
+      })
       registry?.service.clearExternalCallbacks(row.id)
       cancelled.push(row.id)
     }
@@ -1017,6 +1033,27 @@ export class TaskLifecycleService {
 
   history(taskId: string, limit = 50): ExecutionRow[] {
     return this.execDAO.listTaskRoots(taskId, limit)
+  }
+
+  /**
+   * One line for a red run, in preference order: the reason the job itself already wrote
+   * on the row (retire, start failure, reap), then why the 票04 aggregation turned a green
+   * coordinator red, then the engine's failed node. NULL when nothing knows — the node
+   * list is where the detail page looks, and inventing a generic string here would put
+   * words on the badge that nothing can unsay later.
+   */
+  private failureReason(row: ExecutionRow, executionId: string, failedChildren: number): string | null {
+    const stored = parseJSON<Record<string, unknown>>(row.var_pool, {}).error
+    if (typeof stored === "string" && stored.trim()) return stored
+    if (failedChildren > 0) return `${failedChildren} 个子单元执行失败`
+    return this.execDAO.findFirstNodeErrorByStatus(executionId, "failed")?.error ?? null
+  }
+
+  /** The task's subunit runs (composite fan-out), for the detail/history read model.
+   *  This is where 票05 sends the UI instead of the envelope's `origin_role='subunit'`
+   *  rows: the arms of a fan-out are child executions of the round that dispatched them. */
+  childRuns(taskId: string): ExecutionRow[] {
+    return this.execDAO.listTaskChildRuns(taskId)
   }
 
   /** The board's badge source: the newest instance of each task, one query. */
@@ -1037,7 +1074,7 @@ export class TaskLifecycleService {
     if (changed.changes === 0) return
     this.deps.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
-      data: { task_id: taskId, status, origin_type: "task" },
+      data: { task_id: taskId, status },
     })
   }
 

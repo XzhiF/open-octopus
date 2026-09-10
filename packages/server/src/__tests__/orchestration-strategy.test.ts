@@ -79,7 +79,7 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
     const strategy = new DefaultOrchestrationStrategy()
 
     // ── AC1: simple task skips coordinator-ws ──────────────────────────
-    it("simple task (0 subunits) → simple plan, primary role, NO composition wf", () => {
+    it("simple task (0 subunits) → simple plan, NO composition wf", () => {
       const plan = strategy.planDispatch({
         taskSpec: makeTaskSpec(0),
         workflowRef: "e2e-td/simple-wf",
@@ -87,7 +87,6 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
 
       expect(plan.strategy).toBe("simple")
       expect(plan.isComposite).toBe(false)
-      expect(plan.primaryOriginRole).toBe("primary")
       expect(plan.compositionWorkflowRef).toBeUndefined()
       expect(plan.subunits).toEqual([])
     })
@@ -100,21 +99,25 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
 
       expect(plan.strategy).toBe("simple")
       expect(plan.isComposite).toBe(false)
-      expect(plan.primaryOriginRole).toBe("primary")
       expect(plan.compositionWorkflowRef).toBeUndefined()
       expect(plan.subunits).toEqual([])
     })
 
     // ── AC2: composite N>=2 builds coordinator-ws + composition-task ───
-    it("composite task (2 subunits) → composite plan, coordinator role, composition-task wf", () => {
+    it("composite task (2 subunits) → composite plan + composition-task wf", () => {
       const spec = makeTaskSpec(2)
       const plan = strategy.planDispatch({ taskSpec: spec, workflowRef: "ignored-on-composite" })
 
       expect(plan.strategy).toBe("composite")
       expect(plan.isComposite).toBe(true)
-      expect(plan.primaryOriginRole).toBe("coordinator")
       expect(plan.compositionWorkflowRef).toBe(COMPOSITION_WF_REF)
       expect(plan.subunits).toHaveLength(2)
+      // 票05: the plan used to also carry `primaryOriginRole` — the value later written to
+      // schedules.origin_role. The envelope rows are gone (schema v42) and `strategy` +
+      // `isComposite` already say everything the role said; a second name for the same
+      // fact is how the two drift. Asserting absence is the point: an arm is labelled
+      // from its executions row (`name`) now, not from a plan field.
+      expect(plan).not.toHaveProperty("primaryOriginRole")
       expect(plan.subunits).toBe(spec.subunits) // same array reference (no copy needed for a pure decision)
     })
 
@@ -124,7 +127,6 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
 
       expect(plan.strategy).toBe("composite")
       expect(plan.isComposite).toBe(true)
-      expect(plan.primaryOriginRole).toBe("coordinator")
       expect(plan.compositionWorkflowRef).toBe(COMPOSITION_WF_REF)
       expect(plan.subunits.map((s) => s.name)).toEqual(["su1", "su2", "su3"])
     })
@@ -167,7 +169,6 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
           const subunits = input.taskSpec.subunits ?? []
           return {
             strategy: "composite" as const,
-            primaryOriginRole: "coordinator" as const,
             compositionWorkflowRef: COMPOSITION_WF_REF,
             subunits,
             isComposite: subunits.length >= 2,
@@ -177,7 +178,6 @@ describe("orchestration-strategy seam (ADR-0009 AC3)", () => {
 
       const plan = retryStrategy.planDispatch({ taskSpec: makeTaskSpec(2) })
       expect(plan.isComposite).toBe(true)
-      expect(plan.primaryOriginRole).toBe("coordinator")
     })
   })
 })
