@@ -218,6 +218,33 @@ function stripComments(src: string): { code: string; strings: string[] } {
 
 /** Rule b: does this string content reference one of the three schedule tables?
  *  Whole-word, so `schedule_workspaces_all` and the bare word "schedule" pass. */
+/**
+ * Rule (c) — the taskpool event vocabulary is shared's, not this domain's.
+ *
+ * 票03 shipped `task_execution` as a bare string in five emit sites and 票05 found a
+ * sixth event (`task_trigger_failed`) emitted under a literal with a field named `action`
+ * that held a trigger mode. An event name invented at an emit site has no schema, so no
+ * consumer is ever written for it — the user-visible result is "the board never heard
+ * about it". Requiring the imported constant makes the wire contract the only place a
+ * name can be born.
+ */
+const SHARED_TASKPOOL_EVENTS = [
+  "task_status",
+  "task_trigger",
+  "task_execution",
+  "task_trigger_failed",
+  "spec_field_update",
+  "task_artifacts_update",
+  "assist_run_update",
+  "phase_status_update",
+  "project_sync",
+] as const
+
+/** Literal event names in code (comments are already stripped by the caller). */
+function eventLiteralHits(strings: string[]): string[] {
+  return strings.filter((v) => (SHARED_TASKPOOL_EVENTS as readonly string[]).includes(v))
+}
+
 function sqlTableHit(text: string): string | null {
   for (const t of BANNED_TABLES) {
     if (new RegExp(`\\b${t}\\b`).test(text)) return t
@@ -261,7 +288,7 @@ describe("票03 boundary — services/tasks must not couple back to the schedule
     expect(importers.map((f) => path.basename(f)).sort()).toEqual([...RUN_DAO_ALLOW.files].sort())
   })
 
-  it("every tasks source file respects the import ban, the meter allowance and the table ban", () => {
+  it("every tasks source file respects the import ban, the meter allowance, the table ban and the event vocabulary", () => {
     const violations: string[] = []
 
     for (const file of files) {
@@ -310,6 +337,11 @@ describe("票03 boundary — services/tasks must not couple back to the schedule
         const hit = sqlTableHit(s)
         if (hit) violations.push(`${rel}: string references the "${hit}" table: ${JSON.stringify(s.slice(0, 140))}`)
       }
+
+      // (c) taskpool event names must come from @octopus/shared, never as a literal.
+      for (const hit of eventLiteralHits(strings)) {
+        violations.push(`${rel}: emits the taskpool event "${hit}" as a string literal — import ${hit.toUpperCase()}_EVENT from @octopus/shared so the event has a schema and a consumer`)
+      }
     }
 
     expect(violations, `票03 boundary violations:\n${violations.join("\n")}`).toEqual([])
@@ -322,6 +354,20 @@ describe("票03 boundary — services/tasks must not couple back to the schedule
 // SHOULDN'T: an over-eating comment stripper deletes code that holds a violation and
 // the gate goes green. So the stripper is pinned — prose removed, every code
 // character kept, including inside strings and template substitutions.
+
+describe("票05 boundary rule (c) — event literals are detected", () => {
+  it("flags a literal event name and stays quiet about the imported constant", () => {
+    // The vacuous-pass risk is the same as the table ban's: a rule that never fires is
+    // indistinguishable from a rule that is not written. So the predicate is exercised
+    // directly, on both sides.
+    expect(eventLiteralHits(["task_execution", "x"])).toEqual(["task_execution"])
+    expect(eventLiteralHits(["taskpool", "workspaces"])).toEqual([])
+    // A prose mention is NOT a literal — the stripper's output feeds this predicate, so
+    // history comments about the envelope keep their words and the gate stays about code.
+    const { strings } = stripComments('const a = 1 // task_execution was a literal in 票03\nemit({ event: "task_status" })')
+    expect(strings).toEqual(["task_status"])
+  })
+})
 
 describe("票03 boundary — the comment stripper is code-preserving", () => {
   it("blanks line and block comments", () => {
