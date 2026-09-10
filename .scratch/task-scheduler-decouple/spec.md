@@ -147,6 +147,11 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
   (`task-lifecycle.test.ts`),不是 stub 的 emit。HTTP SSE 出口这一程今天没再走:要拿到"排队中的
   根执行"这个态,得 cap=0 或预构建失败,而这台无 provider / 无真 repo 的机器上硬凑出来的态断不了
   真东西,记为未覆盖。
+- **`assertHandlerRegistered` 在真机上验过一遍**(第三台实例、PORT=3413):`POST /jobs
+  {job_type:'job', handler:'task-lifecycle'}` → 201(handler 在 boot 时已注册),把名字打成
+  `task-lifecylce` → `400 config.handler: 未注册的 job handler "task-lifecylce"(当前可用:
+  task-lifecycle;…)`,且不留行。内置 job 的 seed 走 DAO 直写,不受这道闸影响(启动日志
+  `built-in jobs: 1 created` 正常)。
 - SIGTERM 优雅关停正常(HTTP closed → Database closed),临时 db 与临时 HOME 已删。
 
 相对 §8b 的未覆盖增量:⑤ 的**浏览器走查**仍未跑(数据半边今天已验,渲染半边由
@@ -220,3 +225,8 @@ schedule_workspaces 任务用途 → workspaces.task_id 直连；作业用途原
    门是对的,`lib/format.ts` 里早有 `formatDuration`。这类"防复活"静态门(fmt-ok / ledger-ok 那套)
    对新增代码是**前置条件**,不是事后的清洁工作;它的红也不该被"基线红数"吸收掉 —— 基线是
    "红集合不变",新出现的名字就是新账。
+8. **形状校验放行、存在性不管 = 死行**。`validateConfig` 认 `{type:'job', handler:"…"}` 的
+   形状,不查这个名字在不在注册表里 —— 于是打错一个字母的 job 行每分钟红一次、
+   `consecutive_failures` 一路涨,现场看到的症状是"作业坏了",真因是"创建时敲错了"。满绿的
+   仓库永远不会自己撞上这条(没有任何用例会去 POST 一个假 handler)。补
+   `assertHandlerRegistered`(create + update,400 里报出现有名字),见 §8c 真机记录。
