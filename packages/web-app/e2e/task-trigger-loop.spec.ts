@@ -47,7 +47,6 @@ import {
   getTask,
   scheduleTaskTrigger,
   startSseSubscriber,
-  readTaskRow,
   readTaskExecutions,
   readTaskRootExecutions,
   isTerminalExecutionStatus,

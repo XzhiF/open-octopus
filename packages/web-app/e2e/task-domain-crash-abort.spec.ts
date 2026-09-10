@@ -22,8 +22,10 @@
 //     → abort → the row retires to 'aborted' + the card follows + SSE. The armed row is
 //     planted in `executions` because that IS the successor of the old queued envelope
 //     row: status='pending' means 排队中 (armed, waiting behind the concurrency gate).
-//   - The G2 test: if the task reaches 'failed' naturally, assert it stays 'failed' and
-//     holds no live row; otherwise verify terminal stability on the aborted path.
+//   - The G2 test: 触发 a round, then — if the task reaches 'failed' naturally — assert it
+//     stays 'failed' and holds no live row. When this box cannot build the workspace the
+//     触发 409s and the test skips out loud (a fabricated failed row would assert nothing
+//     about the mirror this test exists to check).
 
 import { test, expect } from "@playwright/test"
 import { DatabaseSync } from "node:sqlite"
@@ -203,7 +205,7 @@ test.describe("Crash recovery + abort (G2/G4)", () => {
 
     // The armed instance (the old test read this off the envelope: origin_role='primary',
     // status='queued'). Row-level: one root, task_id set, status 'pending' = 排队中.
-    const { execId } = plantArmedRootExecution(task.id)
+    const { execId } = plantTaskExecution(task.id)
     const armedRow = await waitFor(
       () => {
         const roots = readTaskRootExecutions(task.id)
@@ -327,8 +329,12 @@ test.describe("Crash recovery + abort (G2/G4)", () => {
         "A refused 触发 armed nothing live",
       ).toHaveLength(0)
       expect(findTaskEnvelopeScheduleRows(task.id), "A refused 触发 created no schedules row").toHaveLength(0)
-      log(`触发 refused (${trig.status}: ${String(trig.body.error).slice(0, 80)}) — G2 will be verified on the armed-row path`)
-      plantArmedRootExecution(task.id, "failed")
+      // 「failed  stays failed」 needs a round that actually got far enough to fail. With no
+      // buildable workspace the 触发 never armed one, and fabricating a failed row here would
+      // assert nothing about the mirror this test exists to check — so the terminal half
+      // skips, out loud.
+      log(`触发 refused (${trig.status}: ${String(trig.body.error).slice(0, 80)}) — G2 的终态稳定半段无法在本环境构造`)
+      test.skip(true, `触发被环境拒绝（${String(trig.body.error).slice(0, 60)}）；failed-stays-failed 需要一个真起得来的轮`)
     }
 
     // Wait for the task to reach a terminal state (done/failed/aborted). The run may

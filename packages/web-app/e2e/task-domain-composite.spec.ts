@@ -40,7 +40,6 @@ import {
   abortTask,
   deleteTask,
   triggerTask,
-  triggerTaskRaw,
   startSseSubscriber,
   readTaskRow,
   readTaskExecutions,
@@ -48,9 +47,9 @@ import {
   isTerminalExecutionStatus,
   countSchedulesInOrg,
   findTaskEnvelopeScheduleRows,
+  boardColumnFor,
   assertTaskMatchesDb,
   waitFor,
-  waitForTaskStatus,
   type TaskExecutionRow,
   type SseSubscriber,
 } from "./helpers/task-domain-helpers"
@@ -101,7 +100,18 @@ test.describe("Story B: Composite task full closed loop", () => {
 
   test.afterAll(async () => {
     sseSub?.stop()
+    // Cleanup (R7). 票06: 触发 now really starts a round, so the task can be 'running' here
+    // — deleteTask refuses that with 409 「abort it first」 (it did not used to, because
+    // enqueue alone left the card at ready). Abort first, exactly like Story A does.
     for (const taskId of createdTaskIds) {
+      try {
+        const row = readTaskRow(taskId)
+        if (row && (row.status === "running" || row.status === "ready")) {
+          await abortTask(taskId)
+        }
+      } catch (err: unknown) {
+        logError(`cleanup abort ${taskId}: ${err instanceof Error ? err.message : String(err)}`)
+      }
       try {
         await deleteTask(taskId)
       } catch (err: unknown) {
@@ -302,10 +312,14 @@ test.describe("Story B: Composite task full closed loop", () => {
     // Navigate to /tasks and open the task card
     await page.goto("/tasks")
     await page.waitForLoadState("domcontentloaded")
-    // The task is ready or running — find its column
+    // 卡片归哪一列由票11 的五列契约决定（failed/aborted 折进「完成」列，没有自己的列）。
+    // 本用例的对象是复合弹窗，不是列归属 —— 列归属由 task-phase-board AC2 断言。
     const dbRow = readTaskRow(taskId)
-    const col = page.locator(`[data-task-column="${dbRow!.status}"]`)
-    await expect(col, `Column ${dbRow!.status} should be visible`).toBeVisible({ timeout: 15_000 })
+    const col = page.locator(`[data-task-column="${boardColumnFor(dbRow!.status)}"]`)
+    await expect(
+      col,
+      `Status ${dbRow!.status} renders in the ${boardColumnFor(dbRow!.status)} column`,
+    ).toBeVisible({ timeout: 15_000 })
 
     const card = page.locator('[data-task-card]', { hasText: TASK_NAME }).first()
     await expect(card, "Task card should be visible").toBeVisible({ timeout: 10_000 })

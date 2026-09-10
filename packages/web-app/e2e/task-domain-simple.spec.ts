@@ -34,11 +34,9 @@ import {
   ensureScreenshotDir,
   screenshotPath,
   isServerAvailable,
-  createTask,
   getTask,
   updateTask,
   updateSpecField,
-  readyTask,
   abortTask,
   deleteTask,
   triggerTaskRaw,
@@ -51,6 +49,7 @@ import {
   isTerminalExecutionStatus,
   countSchedulesInOrg,
   findTaskEnvelopeScheduleRows,
+  boardColumnFor,
   readSessionScopeId,
   assertTaskMatchesDb,
   waitFor,
@@ -111,21 +110,23 @@ test.describe("Story A: Simple task full closed loop", () => {
 
   // ── AC1: /tasks kanban + [+新建] opens authoring modal ───────────────
 
-  test("kanban page renders 6 columns and [+新建] opens authoring modal", async ({ page }) => {
+  test("kanban page renders the five columns and [+新建] opens authoring modal", async ({ page }) => {
     test.skip(!serverAvailable, "Server not available")
 
     await page.goto("/tasks")
     await page.waitForLoadState("domcontentloaded")
 
-    // 6 kanban columns render (R6: real /tasks UI)
+    // Five kanban columns render (R6: real /tasks UI). 票06 校正：这里原本断「六列含
+    // failed/aborted」，那是 v39 的形状 —— 票11 的看板契约是五列，failed/aborted 折进
+    // 「完成」列（task-phase-board.spec.ts AC2 正是断 failed 列不存在）。留在六列断言上
+    // 就是两个 spec 互相打脸，且这个用例每次都会红。
     const draftCol = page.locator('[data-task-column="draft"]')
     await expect(draftCol, "Draft column should be visible").toBeVisible({ timeout: 15_000 })
 
-    // Verify all 6 columns exist
-    for (const status of ["draft", "ready", "running", "done", "failed", "aborted"]) {
+    for (const col of ["draft", "ready", "running", "awaiting_review", "done"]) {
       await expect(
-        page.locator(`[data-task-column="${status}"]`),
-        `Column ${status} should be present`,
+        page.locator(`[data-task-column="${col}"]`),
+        `Column ${col} should be present`,
       ).toBeVisible({ timeout: 10_000 })
     }
 
@@ -509,13 +510,17 @@ test.describe("Story A: Simple task full closed loop", () => {
     // Navigate to /tasks and open the task card
     await page.goto("/tasks")
     await page.waitForLoadState("domcontentloaded")
-    await page.locator('[data-task-column="done"], [data-task-column="failed"], [data-task-column="aborted"]')
-      .first().waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator('[data-task-column="done"]').waitFor({ state: "visible", timeout: 15_000 })
 
-    // The card moved to its terminal column
+    // The card moved to its terminal column. 票11 的看板是五列：done / failed / aborted 三个
+    // 持久终态同归「完成」列（卡片自己的状态行区分它们），所以这里断的是「映射后的那一列」，
+    // 不是「与 status 同名的列」—— 后者在 v39 六列时代成立，五列改版后 failed/aborted 根本没有列。
     const dbRow = readTaskRow(taskId)
-    const terminalCol = page.locator(`[data-task-column="${dbRow!.status}"]`)
-    await expect(terminalCol, `Terminal column ${dbRow!.status} should be visible`).toBeVisible()
+    const terminalCol = page.locator(`[data-task-column="${boardColumnFor(dbRow!.status)}"]`)
+    await expect(
+      terminalCol,
+      `${dbRow!.status} folds into the ${boardColumnFor(dbRow!.status)} column`,
+    ).toBeVisible()
 
     // Find + click the card
     const card = page.locator('[data-task-card]', { hasText: TASK_NAME }).first()
