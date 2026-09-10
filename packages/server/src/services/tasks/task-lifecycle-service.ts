@@ -796,10 +796,7 @@ export class TaskLifecycleService {
           ? `执行已失去引擎进程（崩溃或重启），超过 ${Math.round(STALE_CLAIMED_THRESHOLD_MS / 60000)} 分钟未归位`
           : "工作区已不可用（行缺失或路径失效）"
         this.execDAO.setLaunchStatus(row.id, "aborted", { completedAt: nowIso, error: reason })
-        this.deps.sse.emit("taskpool", {
-          event: TASK_EXECUTION_EVENT,
-          data: { task_id: row.task_id, execution_id: row.id, status: "aborted", reason },
-        })
+        this.emitExecutionTransition(row, "aborted", reason)
         this.finishTaskOutcome(row.task_id as string, "aborted")
         reaped++
         console.warn(`[task-lifecycle] reaped stranded execution ${row.id}: ${reason}`)
@@ -1011,7 +1008,11 @@ export class TaskLifecycleService {
     for (const row of this.execDAO.listTaskRoots(taskId, 5)) {
       if (isTerminal(row.status)) continue
       if (row.status === "pending") {
-        if (this.execDAO.retireLaunch(row.id, "aborted", "任务被中止（排队中）").changes > 0) retired.push(row.id)
+        const reason = "任务被中止（排队中）"
+        if (this.execDAO.retireLaunch(row.id, "aborted", reason).changes > 0) {
+          retired.push(row.id)
+          this.emitExecutionTransition(row, "aborted", reason)
+        }
         continue
       }
       const registry = this.safeRegistry(row.workspace_id)
@@ -1030,6 +1031,7 @@ export class TaskLifecycleService {
       })
       registry?.service.clearExternalCallbacks(row.id)
       cancelled.push(row.id)
+      this.emitExecutionTransition(row, "aborted", "用户中止")
     }
     // An aborted run just freed a compute slot, so drain the queue now — same rule as
     // finalizeLaunch (contract §1c): a task waiting behind the cap should not have to sit
@@ -1042,6 +1044,29 @@ export class TaskLifecycleService {
       }
     }
     return { cancelled, retired }
+  }
+
+  /** Publish a task run's status move on the wire.
+   *
+   *  Every writer of a launch row's status owes the board exactly one of these: the badge
+   *  is driven by `task_execution`, and a row that flips to `aborted`/`failed`/`completed`
+   *  in silence leaves the UI showing yesterday's state until the 10s poll catches up —
+   *  and the poll has no `reason` to show either, since only this event carries it.
+   *  `reason` is the same one-liner written into `var_pool.error` on the row, so the live
+   *  event and the fetched read model agree. */
+  private emitExecutionTransition(row: ExecutionRow, status: string, reason?: string): void {
+    if (!row.task_id) return // not a task run — nothing to announce on the task channel
+    this.deps.sse.emit("taskpool", {
+      event: TASK_EXECUTION_EVENT,
+      data: {
+        task_id: row.task_id,
+        execution_id: row.id,
+        status,
+        phase_index: row.phase_index,
+        round_index: row.round_index,
+        ...(reason ? { reason } : {}),
+      },
+    })
   }
 
   /** The one row a human is looking at: the task's current instance. */

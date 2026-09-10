@@ -613,6 +613,30 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     const execId = armRunning("r2")
     svc.abortTask("r2")
     expect(String(reasonOn(execId))).toBe("用户中止")
+    // The row is not the whole story: the board reads task_execution, so an abort that
+    // only writes the row leaves the card showing 'running' until the next poll — and
+    // the poll has no reason to show, because only this event carries one.
+    const ev = events.filter((e) => e.event === "task_execution").at(-1)
+    expect(ev?.data).toMatchObject({ task_id: "r2", execution_id: execId, status: "aborted" })
+    expect((ev?.data as Record<string, unknown>).reason).toBe("用户中止")
+  })
+
+  it("a queued abort announces the retirement too", () => {
+    // 排队中 rows never started, so there is no engine event for them from anywhere else —
+    // if this path stays silent the badge sits on 'pending' and the user has no idea their
+    // 中止 landed.
+    insertTask("r2b")
+    const execId = svc.armTask("r2b")
+    events.length = 0
+    expect(svc.abortTask("r2b").retired).toEqual([execId])
+    const ev = events.filter((e) => e.event === "task_execution")
+    expect(ev).toHaveLength(1)
+    expect((ev[0].data as Record<string, unknown>).reason).toContain("排队中")
+    // Idempotence holds on the wire as well as in the table: a second abort is terminal
+    // and emits nothing.
+    events.length = 0
+    svc.abortTask("r2b")
+    expect(events.filter((e) => e.event === "task_execution")).toHaveLength(0)
   })
 
   it("an engine that refuses to start puts its message on the row", async () => {

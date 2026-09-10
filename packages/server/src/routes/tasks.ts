@@ -427,7 +427,8 @@ export function createTasksRoutes(
     }
   })
 
-  // DELETE /:id — soft-delete (discard draft/ready) + cascade-reap schedules
+  // DELETE /:id — soft-delete. 票03: nothing cascades (a task's runs are executions rows);
+  // only a running task is refused, everything else is discardable.
   router.delete("/:id", (c) => {
     try {
       const result = service.deleteTask(c.req.param("id"))
@@ -525,7 +526,8 @@ export function createTasksRoutes(
     }
   })
 
-  // POST /:id/ready — draft→ready + dispatch seam (creates schedules envelope).
+  // POST /:id/ready — draft→ready + arm seam (writes tasks.trigger_* / arms an execution
+  // row; 票03: no schedule row is created, the built-in job starts it).
   // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
   // list so the UI can show exactly what to confirm before enqueue (US6).
   router.post("/:id/ready", (c) => {

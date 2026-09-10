@@ -2347,11 +2347,12 @@ export class TasksService {
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
-  /** DELETE /api/tasks/:id — soft-delete (discard draft/ready). 票03: there is nothing
-   *  to cascade — a task's runs are executions rows (they stay as history like any other
-   *  run) and no private definition row exists to reap, which is precisely why the orphan
-   *  reaper could be deleted with this ticket. Only draft/ready tasks are discardable; a
-   *  running task must be aborted first.
+  /** DELETE /api/tasks/:id — soft-delete. 票03: there is nothing to cascade — a task's
+   *  runs are executions rows (they stay as history like any other run) and no private
+   *  definition row exists to reap, which is precisely why the orphan reaper could be
+   *  deleted with this ticket. Everything but a RUNNING task is discardable: 'running' is
+   *  the only status that still holds a live engine and a compute slot, so it must be
+   *  aborted first; done/failed/aborted rows are pure history and delete cleanly.
    *
    *  04 (AC5/ADR-0011/SW-BP14): a DRAFT task's home dir (`~/.octopus/tasks/{id}/`)
    *  is reaped on delete (no orphan dirs). reapHome does NOT follow junctions/
