@@ -118,6 +118,24 @@ export interface TickMetrics {
 }
 
 const isTerminal = (status: string): boolean => TERMINAL_EXECUTION_STATUSES.includes(status)
+/**
+ * Parse a timestamp out of the DB. Two dialects live in these columns: the DAO writes
+ * `new Date().toISOString()` (marker-carrying), while anything that lets SQLite fill the
+ * column — `datetime('now')`, a table DEFAULT — writes UTC **without** a marker, which
+ * `Date.parse` then reads as *local* time. On a UTC+8 deployment that is 8 hours of
+ * phantom age on a row born one second ago, and the stranded-row reaper would kill live
+ * runs a tick after they start. SQLite's `datetime('now')` means UTC, so a naive string
+ * is read as UTC.
+ */
+function dbTimeMs(s: string | null | undefined): number {
+  if (!s) return NaN
+  const t = s.trim()
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(t)) {
+    return Date.parse(`${t.replace(" ", "T")}Z`)
+  }
+  return Date.parse(t)
+}
+
 const isWaiting = (status: string): boolean => WAITING_EXECUTION_STATUSES.includes(status)
 
 /** K3's subject — a v4 task's card is human-decided, so no machine outcome writes it. */
@@ -749,8 +767,11 @@ export class TaskLifecycleService {
         // designed. Only a row that already started can be orphaned.
         if (full.status === "pending") continue
 
-        const startedMs = full.started_at ? Date.parse(full.started_at) : Date.parse(full.created_at)
-        if (Number.isNaN(startedMs) || Date.parse(nowIso) - startedMs < STALE_CLAIMED_THRESHOLD_MS) continue
+        // dbTimeMs, not Date.parse: see the helper for why a naive timestamp here is
+        // 8 hours of phantom age on a UTC+8 box — enough to reap a live run one tick
+        // after it started.
+        const startedMs = dbTimeMs(full.started_at) || dbTimeMs(full.created_at)
+        if (Number.isNaN(startedMs) || dbTimeMs(nowIso) - startedMs < STALE_CLAIMED_THRESHOLD_MS) continue
 
         const reason = registry
           ? `执行已失去引擎进程（崩溃或重启），超过 ${Math.round(STALE_CLAIMED_THRESHOLD_MS / 60000)} 分钟未归位`
@@ -778,8 +799,80 @@ export class TaskLifecycleService {
       resynced++
     }
 
+    resynced += this.recoverStuckDispatchParents()
+
     return { resynced, reaped }
   }
+
+  /**
+   * A composite parent paused on `pending_task_dispatch` whose children are ALL settled
+   * is a lost wake-up: the child's completion callback fires exactly once, in the child's
+   * process-time, and if it throws — or the child was finalized through the job's own
+   * claim path and the wiring missed — the parent sits waiting for a waiter that is gone.
+   * RecoveryManager does not cover it: it restarts *interrupted* engines, and a paused
+   * parent is not interrupted, it is waiting.
+   *
+   * 票03's row shape is what makes this repairable at all: the parent→child link is a
+   * queryable `parent_id` instead of a marker buried in a schedule config, so the
+   * reconciliation pass can ask the only question that matters — "is anybody still owed
+   * to this paused node?" — and answer no. Idempotent: `resumeTaskDispatch` on a node
+   * that already moved on is a no-op.
+   *
+   * Two deliberate non-cases:
+   *   - a child still live or waiting (parked behind the cap, or itself awaiting
+   *     approval) — declaring the fan-out over mid-flight would resume the parent with
+   *     the wrong subunit's output;
+   *   - a parent whose ENGINE is also gone. Nothing can receive the resume, so pretending
+   *     otherwise would report a recovery that did not happen. That row belongs to the
+   *     strand reap above, which ends it once it is past the stale threshold.
+   */
+  private recoverStuckDispatchParents(): number {
+    let recovered = 0
+    const paused = this.taskDAO
+      .getDb()
+      .prepare(
+        `SELECT id, workspace_id FROM executions
+         WHERE task_id IS NOT NULL AND status = 'pending_task_dispatch'`,
+      )
+      .all() as Array<{ id: string; workspace_id: string }>
+    for (const parent of paused) {
+      try {
+        const children = this.execDAO.findChildren(parent.id)
+        if (children.length === 0) continue // never dispatched anything — nothing lost
+        const unsettled = children.filter((c) => !isTerminal(c.status))
+        if (unsettled.length > 0) continue
+        const node = this.execDAO.findWaitingDispatchNode(parent.id)
+        if (!node) continue
+        // Re-forward the LAST settled child's output: the composition Loop consumes one
+        // subunit per node visit, and the node that paused is waiting for exactly one.
+        const last = children[children.length - 1]
+        let output: Record<string, unknown> = {}
+        try {
+          output = JSON.parse(last.var_pool ?? "{}") as Record<string, unknown>
+        } catch {
+          output = {}
+        }
+        const registry = this.safeRegistry(parent.workspace_id)
+        // Only a parent with an engine still in THIS process can take the resume.
+        if (!registry?.service.hasLiveEngine?.(parent.id)) continue
+        // Counted on ISSUE, not on completion: the metric answers "how many stuck parents
+        // did this round touch", and the resume resolves on the microtask queue after
+        // tick() has already returned. Counting inside .then() would report 0 forever.
+        recovered++
+        console.log(
+          `[task-lifecycle] recovered lost wake-up: parent ${parent.id} node ${node.node_id} after ${children.length} settled child run(s)`,
+        )
+        void registry.service
+          .resumeTaskDispatch(parent.id, node.node_id, output)
+          .catch((err: unknown) =>
+            console.error(`[task-lifecycle] parent recovery resume failed for ${parent.id}:`, errMessage(err)))
+      } catch (err: unknown) {
+        console.error(`[task-lifecycle] dispatch-parent scan failed for ${parent.id}:`, errMessage(err))
+      }
+    }
+    return recovered
+  }
+
 
   // ── cron cursor ────────────────────────────────────────────────────
 

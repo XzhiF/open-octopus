@@ -821,6 +821,24 @@ export class ExecutionDAO extends BaseDAO {
     ).get(executionId) as NodeExecutionRow) ?? null
   }
 
+  /**
+   * The task_dispatch node a composite parent is parked on — the resume target after a
+   * child finishes. Written to accept BOTH persistences rather than guess one: the node
+   * row mirroring the engine's `pending_task_dispatch` status, or (if the engine only
+   * persisted the execution-level status) the still-'running' task_dispatch node.
+   * `started_at DESC` matches findFirstRunningNode's convention for the same reason —
+   * the most recent visit is the one that is waiting, since a Loop re-enters the node.
+   */
+  findWaitingDispatchNode(executionId: string): NodeExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM node_executions
+       WHERE execution_id = ?
+         AND (status = 'pending_task_dispatch'
+              OR (node_type = 'task_dispatch' AND status = 'running'))
+       ORDER BY started_at DESC LIMIT 1`,
+    ).get(executionId) as NodeExecutionRow) ?? null
+  }
+
   findExecutionStatus(id: string): { status: string } | null {
     return (this.stmt("SELECT status FROM executions WHERE id = ?").get(id) as { status: string }) ?? null
   }

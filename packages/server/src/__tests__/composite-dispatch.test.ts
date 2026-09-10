@@ -44,6 +44,8 @@ const stub = vi.hoisted(() => ({
   wsSpecs: [] as Array<Record<string, unknown>>,
   callbacks: new Map<string, (status?: string) => void>(),
   resumes: [] as Array<{ parentId: string; nodeId: string; output: Record<string, unknown> }>,
+  /** Executions whose engine is NOT in this process — the mock's liveness answer. */
+  dead: [] as string[],
   seq: 0,
 }))
 
@@ -83,6 +85,7 @@ vi.mock("../services/execution-service-registry", () => ({
           if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
         },
         clearExternalCallbacks: (id: string) => { stub.callbacks.delete(id) },
+        hasLiveEngine: (id: string) => !stub.dead.includes(id),
         resumeTaskDispatch: async (parentId: string, nodeId: string, output: Record<string, unknown>) => {
           stub.resumes.push({ parentId, nodeId, output })
         },
@@ -149,6 +152,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     stub.wsSpecs = []
     stub.callbacks = new Map()
     stub.resumes = []
+    stub.dead = []
     stub.seq = 0
 
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "comp-home-"))
@@ -397,5 +401,57 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
       nodeId: "dispatch-child",
       output: { result: "E2E_TP_claimed_out" },
     })
+  })
+
+  it("a parent whose child's completion callback was lost is woken by the tick (lost wake-up)", async () => {
+    // The shape a lost callback leaves behind: the child row is terminal, the parent is
+    // still 'pending_task_dispatch' with its engine alive, and the one callback that would
+    // have resumed it is never coming. RecoveryManager does not cover it — it restarts
+    // INTERRUPTED engines, and a paused parent is not interrupted, it is waiting on a
+    // waiter that no longer exists. So nothing else in the system ever tells it, and the
+    // round hangs holding a slot. What makes the question askable at all is 票03's row
+    // shape: 「这个暂停节点还欠着子执行吗」 is a parent_id query, not a config-marker scan.
+    insertCompositeTask("t-comp-5", ["a", "b"])
+    const rootId = svc.armTask("t-comp-5")
+    db.prepare("UPDATE executions SET status='pending_task_dispatch' WHERE id=?").run(rootId)
+    const coordinatorWsId = execs.findById(rootId)!.workspace_id
+    db.prepare(
+      `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at)
+       VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'pending_task_dispatch', datetime('now'))`,
+    ).run(`${rootId}-dispatch-child`, rootId)
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         org, status, var_pool, started_at, completed_at, created_at, updated_at, task_id)
+       VALUES ('child-done', ?, ?, 0, 'wf/a', 'a', ?, 'completed', '{"result":"E2E_TP_orphan"}',
+         datetime('now','-3 minutes'), datetime('now','-2 minutes'), datetime('now','-3 minutes'), datetime('now','-2 minutes'), ?)`,
+    ).run(coordinatorWsId, rootId, ORG, "t-comp-5")
+
+    const { resynced } = svc.reconcile()
+    expect(resynced).toBeGreaterThanOrEqual(1)
+    expect(stub.resumes).toContainEqual({
+      parentId: rootId,
+      nodeId: "dispatch-child",
+      output: { result: "E2E_TP_orphan" },
+    })
+
+    // The negatives that make the above mean something:
+    //   ① a child still parked behind the cap (pending) or itself waiting must NOT be
+    //      declared over, or the parent would be resumed with the wrong subunit's output
+    //      mid-fan-out;
+    //   ② a parent whose engine is ALSO gone must NOT be counted as recovered — there is
+    //      nothing to receive the resume, and the strand reap owns that row (it ends it
+    //      past the stale threshold instead of reporting a wake-up that cannot happen).
+    stub.resumes.length = 0
+    db.prepare("UPDATE executions SET status='pending' WHERE id='child-done'").run()
+    svc.reconcile()
+    expect(stub.resumes).toHaveLength(0)
+
+    db.prepare("UPDATE executions SET status='completed' WHERE id='child-done'").run()
+    stub.dead.push(rootId)
+    const after = svc.reconcile()
+    expect(stub.resumes).toHaveLength(0)
+    expect(after.resynced).toBe(0)
+    expect(after.reaped).toBe(0) // still inside the stale window — left alone, not killed early
+    expect(execs.findById(rootId)!.status).toBe("pending_task_dispatch")
   })
 })
