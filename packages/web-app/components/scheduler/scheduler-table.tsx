@@ -16,7 +16,7 @@ import { JobTypeBadge } from "./job-type-badge"
 import { ToggleSwitch } from "./toggle-switch"
 import { ActionMenu } from "./action-menu"
 import { SchedulerTableSkeleton } from "./skeleton-loader"
-import type { SchedulerJob } from "@/lib/scheduler-api"
+import { isBuiltinJob, type SchedulerJob } from "@/lib/scheduler-api"
 
 interface SchedulerTableProps {
   jobs: SchedulerJob[]
@@ -131,6 +131,8 @@ export function SchedulerTable({
                 <ActionMenu
                   jobId={job.id}
                   jobName={job.name}
+                  editable={job.job_type !== "job"}
+                  deletable={!isBuiltinJob(job)}
                   onEdit={() => onEdit(job)}
                   onDelete={() => onDelete(job)}
                   onTrigger={() => onTrigger(job)}

@@ -27,7 +27,7 @@ import {
 import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
-import { PROJECT_SYNC_EVENT } from "@octopus/shared"
+import { PROJECT_SYNC_EVENT, TASK_STATUS_EVENT, TASK_EXECUTION_EVENT } from "@octopus/shared"
 import {
   getTask, abortTask, deleteTask, reopenTask,
   type TaskDetail, type TaskExecutionBadge, type TaskView,
@@ -43,7 +43,7 @@ import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
 import { EditableTitle } from "./editable-title"
-import { TaskRunDetailView, RUN_STATUS_LABEL } from "./execution-summary"
+import { TaskRunDetailView, RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
 import { createTask } from "@/lib/tasks-api"
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -569,35 +569,43 @@ function deriveDag(spec: TaskSpec | null): { nodes: { id: string; type: "subunit
   return { nodes, edges }
 }
 
-/** Project the task's run history (票03: TaskDetail.executions = 根执行行，新→旧) onto
- *  the child axis composite-dag/composite-status consume. A run row carries no subunit
- *  NAME, so a subunit is matched back through the spec by workflow_ref. NOTE: composite
- *  fan-out children are non-root rows (parent_id = the dispatching run) and GET /:id
- *  lists roots only — their cards stay 待执行 until 票05 hands this view the child runs. */
+/** Project the task's run history onto the child axis composite-dag/composite-status
+ *  consume. 票05 (ADR-0021): the fan-out arms ARE `root.children[]` (detail/history
+ *  loads them; the board badge does not), and each arm's label is the badge's own
+ *  `name` — dispatchChildRun wrote subunit.name onto the row, replacing the retired
+ *  `schedules.origin_role='subunit'` labelling and the workflow_ref→spec match (kept
+ *  only as fallback for name-less rows). A root whose `children` is undefined never
+ *  contributes arms: undefined = the read model did not load the fan-out, which is
+ *  NOT the same fact as [] (loaded, nothing dispatched yet) — either way the axis
+ *  stays empty, the UI must not claim 「无子单元」. */
 function executionsToDagChildren(
   execs: TaskExecutionBadge[],
   spec: TaskSpec | null,
 ): { run_id: string; name: string; status: string; workflow_ref: string; subunit_name: string }[] {
   const subunitByRef = new Map((spec?.subunits ?? []).map(s => [s.workflow_ref, s.name]))
-  return execs.map((e) => {
-    const subunit = subunitByRef.get(e.workflow_ref)
+  const toChild = (e: TaskExecutionBadge) => {
+    const specMatch = subunitByRef.get(e.workflow_ref)
+    const label = e.name || specMatch || e.workflow_ref
     return {
       run_id: e.id,
-      name: subunit ?? e.workflow_ref,
+      name: label,
       status: e.status,
       workflow_ref: e.workflow_ref,
-      subunit_name: subunit ?? "",
+      subunit_name: e.name ?? specMatch ?? "",
     }
-  })
+  }
+  const arms: TaskExecutionBadge[] = []
+  for (const root of execs) arms.push(...(root.children ?? []))
+  return arms.map(toChild)
 }
 
 const RUN_DONE = new Set(["done", "completed", "success"])
 
-/** A run row's label. 票03: an execution badge carries no name (the badge used to be a
- *  schedule row named task-{id}-primary/-coordinator or the subunit name), so a fan-out
- *  child is named by matching its workflow_ref back to task_spec.subunits; anything else
- *  shows the workflow it ran. */
+/** A run row's label. 票05: an execution badge carries `name` (simple run name /
+ *  composite arm = the subunit name written at dispatch), so the row names itself;
+ *  the spec workflow_ref match and the raw ref are fallbacks for name-less rows. */
 function runLabelOf(exec: TaskExecutionBadge, spec: TaskSpec | null): string {
+  if (exec.name) return exec.name
   const subunit = (spec?.subunits ?? []).find(s => s.workflow_ref === exec.workflow_ref)?.name
   return subunit ?? exec.workflow_ref
 }
@@ -663,20 +671,33 @@ export function CompositeMode({
     const eventsUrl = `${getServerUrl()}/api/tasks/events`
     const parentLabel = "父任务"
 
-    /** A run row's label for the events panel (see runLabelOf). */
-    const runLabel = (executionId: string): string => {
+    /** A run row's label for the events panel (see runLabelOf); arms live inside
+     *  their root's `children`, so the lookup descends one level (票05). */
+    const findRun = (executionId: string): TaskExecutionBadge | null => {
       const d = detailRef.current
-      const exec = d?.executions?.find((e) => e.id === executionId)
-      return exec ? runLabelOf(exec, d?.task_spec ?? null) : executionId.slice(0, 8)
+      if (!d) return null
+      for (const e of d.executions ?? []) {
+        if (e.id === executionId) return e
+        const arm = (e.children ?? []).find((c) => c.id === executionId)
+        if (arm) return arm
+      }
+      return null
+    }
+    const runLabel = (executionId: string): string => {
+      const exec = findRun(executionId)
+      return exec ? runLabelOf(exec, detailRef.current?.task_spec ?? null) : executionId.slice(0, 8)
     }
 
-    const pushEvent = (runId: string, status: string, label?: string) => {
+    const pushEvent = (runId: string, status: string, label?: string, reason?: string) => {
       setEvents((prev) => [
         ...prev,
         {
           run_id: runId,
           status,
           label: label ?? (runId === task.id ? parentLabel : runLabel(runId)),
+          // 票05 契约 §新事实-2: reason 只在失败/回收路径出现，且红状态才露出
+          // （绿行永不显示遗留字段 —— 与 runErrorOf 同一判据）。
+          reason: RUN_ERROR_STATUSES.has(status) ? reason : undefined,
           at: new Date().toISOString(),
         },
       ])
@@ -696,14 +717,14 @@ export function CompositeMode({
     const onTaskExecution = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data) as {
-          task_id: string; execution_id: string; status: string; subunit?: string
+          task_id: string; execution_id: string; status: string; subunit?: string; reason?: string
         }
         // task_execution fires for every task on the shared taskpool channel — filter
-        // to this task so an unrelated run doesn't trigger a spurious refetch. The
-        // payload names the subunit itself, which is the only place the fan-out
-        // children's labels come from while GET /:id lists root runs only.
+        // to this task so an unrelated run doesn't trigger a spurious refetch. The arm
+        // name comes from the payload (`subunit`) or the row (`children[].name`, 票05);
+        // `reason` is the failure/reap one-liner (see pushEvent's status gate).
         if (payload.task_id !== task.id) return
-        pushEvent(payload.execution_id, payload.status, payload.subunit)
+        pushEvent(payload.execution_id, payload.status, payload.subunit, payload.reason)
         void fetchDetail(task.id)
       } catch {
         // Malformed event payload — ignore.
@@ -733,8 +754,11 @@ export function CompositeMode({
       }
     }
 
-    const unsubTaskStatus = subscribeSSE(eventsUrl, "task_status", onTaskStatus)
-    const unsubTaskExecution = subscribeSSE(eventsUrl, "task_execution", onTaskExecution)
+    // task_trigger_failed deliberately has NO subscription here: the kanban is its
+    // one outlet (see app/tasks/page.tsx). This drill-down's cursor state is
+    // already carried by task_status (the status really moves back to ready there).
+    const unsubTaskStatus = subscribeSSE(eventsUrl, TASK_STATUS_EVENT, onTaskStatus)
+    const unsubTaskExecution = subscribeSSE(eventsUrl, TASK_EXECUTION_EVENT, onTaskExecution)
     const unsubProjectSync = subscribeSSE(eventsUrl, PROJECT_SYNC_EVENT, onProjectSync)
     return () => {
       unsubTaskStatus()
@@ -754,10 +778,22 @@ export function CompositeMode({
   // 票03: a run row IS the execution and carries its own workspace_id, so the drill-down
   // is always the workspace 执行详情 deep link — the /tasks/:id/children/:sid route this
   // used to fall back to never existed (404) and nothing needs it any more.
+  // 票05: the clicked id may be a fan-out arm — it lives inside its root's `children`
+  // and links to its OWN workspace row, same as a root does.
   const handleRunClick = useCallback((executionId: string) => {
-    const run = detailRef.current?.executions?.find((e) => e.id === executionId)
-    if (!run?.workspace_id) return
-    router.push(`/workspaces/${run.workspace_id}?tab=detail&execId=${run.id}`)
+    const d = detailRef.current
+    if (!d) return
+    for (const e of d.executions ?? []) {
+      if (e.id === executionId && e.workspace_id) {
+        router.push(`/workspaces/${e.workspace_id}?tab=detail&execId=${e.id}`)
+        return
+      }
+      const arm = (e.children ?? []).find((c) => c.id === executionId)
+      if (arm?.workspace_id) {
+        router.push(`/workspaces/${arm.workspace_id}?tab=detail&execId=${arm.id}`)
+        return
+      }
+    }
   }, [router])
 
   if (loading && !detail) {
@@ -801,28 +837,58 @@ export function CompositeMode({
         <div className="p-3 space-y-2">
           <h3 className="text-xs font-semibold text-muted-foreground">执行记录</h3>
           {runs.map((r) => (
-            <button
-              key={r.id}
-              data-testid={`composite-child-${r.id}`}
-              onClick={() => handleRunClick(r.id)}
-              className="w-full text-left rounded-md border border-border bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all flex items-center gap-2"
-            >
-              <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[r.status] ?? "bg-muted-foreground"}`} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{runLabelOf(r, detail?.task_spec ?? null)}</div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <code className="text-[10px]">{r.workflow_ref}</code>
-                  <span>·</span>
-                  <span>{RUN_STATUS_LABEL[r.status] ?? r.status}</span>
-                  {r.phase_index != null && (
-                    <span className="text-[10px] px-1 rounded bg-muted">
-                      P{r.phase_index}·R{r.round_index ?? 1}
-                    </span>
+            <div key={r.id} className="space-y-1">
+              <button
+                data-testid={`composite-child-${r.id}`}
+                onClick={() => handleRunClick(r.id)}
+                className="w-full text-left rounded-md border border-border bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all flex items-center gap-2"
+              >
+                <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[r.status] ?? "bg-muted-foreground"}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{runLabelOf(r, detail?.task_spec ?? null)}</div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <code className="text-[10px]">{r.workflow_ref}</code>
+                    <span>·</span>
+                    <span>{RUN_STATUS_LABEL[r.status] ?? r.status}</span>
+                    {r.phase_index != null && (
+                      <span className="text-[10px] px-1 rounded bg-muted">
+                        P{r.phase_index}·R{r.round_index ?? 1}
+                      </span>
+                    )}
+                  </div>
+                  {runErrorOf(r) && (
+                    <div className="text-xs text-pop-red break-words" data-run-error={r.id}>{runErrorOf(r)}</div>
                   )}
                 </div>
-              </div>
-              <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
-            </button>
+                <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
+              </button>
+              {/* 票05: composite fan-out arms under their root — labelled by the badge's
+                  own `name` (the dispatch-time subunit name). `children === undefined`
+                  (read model did not load the fan-out) and `[]` both render nothing:
+                  「没加载」不是「没有」, never a 「无子单元」 claim. */}
+              {(r.children?.length ?? 0) > 0 && (
+                <div className="pl-4 space-y-1 border-l border-border/60" data-testid={`composite-arms-${r.id}`}>
+                  {(r.children ?? []).map((arm) => {
+                    const armError = runErrorOf(arm)
+                    return (
+                      <button
+                        key={arm.id}
+                        data-testid={`composite-arm-${arm.id}`}
+                        onClick={() => handleRunClick(arm.id)}
+                        className="w-full text-left rounded-md border border-border bg-card/50 px-2.5 py-1.5 hover:border-primary/40 transition-all flex items-center gap-2 text-xs"
+                      >
+                        <span className={`size-1.5 rounded-full shrink-0 ${STATUS_DOT_COLOR[arm.status] ?? "bg-muted-foreground"}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{arm.name || arm.workflow_ref || `执行 ${arm.id.slice(0, 8)}`}</div>
+                          {armError && <div className="text-pop-red break-words" data-run-error={arm.id}>{armError}</div>}
+                        </div>
+                        <span className="text-muted-foreground shrink-0">{RUN_STATUS_LABEL[arm.status] ?? arm.status}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           ))}
           {runs.length === 0 && (
             <p className="text-xs text-muted-foreground py-2">任务尚未派发执行。</p>

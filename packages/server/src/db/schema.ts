@@ -236,7 +236,7 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
 
 /**
  * schema v42 (ADR-0021 票03) — `schedules` loses the five columns that existed only to
- * bind a job definition to a task:
+ * bind a job definition to a task, **and the rows that were bound that way**:
  *
  *   origin_type / origin_id / origin_role  the S2 polymorphic back-reference — a schedule
  *                                          row pointed AT a task, and every 「本任务的
@@ -244,6 +244,12 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
  *   assoc_meta                             set by exactly zero callers, ever
  *   scheduled_at                           the envelope's one-shot due time, superseded
  *                                          by tasks.next_fire_at in v41
+ *
+ * Deleting the `origin_type='task'` rows is part of this migration, not an extra: an
+ * envelope without its columns is still a row in the jobs table, and on a real dev DB
+ * every one of them was enabled (see the body). Dev-phase DBs are disposable, so the
+ * rule is "no compat layer" — but a migration that leaves zombie rows behind is not
+ * "no compat layer", it is a broken DB.
  *
  * `status` and `claimed_at` stay: they are the pump's own run-state for cron/agent jobs
  * (manual trigger, aborting a live fire, the stale sweep). Removing those means moving
@@ -265,6 +271,45 @@ export function migrateSchedulesV42DropOriginCols(db: Database.Database): void {
   db.exec("DROP INDEX IF EXISTS idx_schedules_due")
 
   const cols = db.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]
+
+  // The envelope ROWS go with the columns. This is not a compat layer — it is deleting
+  // rows whose meaning no longer exists. Measured on a real developer DB (v40) that had
+  // never seen 票03: 7 rows with origin_type='task', **all enabled=1**, three parked at
+  // status='draft' — a value the narrowed ScheduleStatus no longer admits. Dropping the
+  // columns alone leaves those seven as enabled phantom JOBS in 系统调度, which is precisely
+  // the opposite of what 票05 promises the page to be ("只见作业").
+  //
+  // The one fact still worth keeping is which task a workspace belongs to. That used to be
+  // source_schedule_id → origin_id; it moves into workspaces.task_id (added by v41, which
+  // runs first) before the rows go, so the delete costs nothing the UI still reads.
+  if (cols.some((c) => c.name === "origin_type")) {
+    const envelopeIds = "SELECT id FROM schedules WHERE origin_type = 'task'"
+    const wsHasTask = (db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[])
+      .some((c) => c.name === "task_id")
+    // origin_id is what names the task, but a DB can legitimately lack it: v42 drops
+    // column-by-column and an old SQLite (<3.35) fails some and not others, so a later
+    // boot sees a half-migrated table. The rebind is skipped when the source column is
+    // missing — the purge below does not need it.
+    const hasOriginId = cols.some((c) => c.name === "origin_id")
+    if (wsHasTask && hasOriginId) {
+      const bound = db.prepare(
+        `UPDATE workspaces SET task_id =
+           (SELECT s.origin_id FROM schedules s WHERE s.id = workspaces.source_schedule_id)
+         WHERE task_id IS NULL AND source_schedule_id IN (${envelopeIds})`,
+      ).run()
+      if (bound.changes > 0) {
+        console.log(`[schema] v42: rebound ${bound.changes} workspace(s) to their task via workspaces.task_id`)
+      }
+    }
+    // schedule_executions has a plain FK to schedules (no cascade), so its rows must go
+    // first or the DELETE throws; schedule_workspaces cascades but is spelled out anyway.
+    db.exec(`DELETE FROM schedule_executions WHERE schedule_id IN (${envelopeIds})`)
+    db.exec(`DELETE FROM schedule_workspaces WHERE schedule_id IN (${envelopeIds})`)
+    const purged = db.prepare(`DELETE FROM schedules WHERE origin_type = 'task'`).run().changes
+    if (purged > 0) {
+      console.log(`[schema] v42: purged ${purged} task-envelope row(s) from schedules (ADR-0021 — the envelope is gone, its rows cannot stay as jobs)`)
+    }
+  }
   for (const col of ['origin_type', 'origin_id', 'origin_role', 'assoc_meta', 'scheduled_at']) {
     if (!cols.some((c) => c.name === col)) continue // already dropped, or never added
     try {

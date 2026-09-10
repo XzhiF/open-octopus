@@ -43,18 +43,23 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
   } as Task
 }
 
-/** One root execution of the task (mirror of the server's TaskExecutionBadge) — the
- *  run-history row that replaced `children[]` in ADR-0021 票03. */
+/** One root execution of the task — the SHARED `TaskExecutionBadge` (票05: the wire
+ *  shape has exactly one source; lib/tasks-api re-exports it, no local mirror). The
+ *  run-history row that replaced `children[]` in 票03, now carrying 票05's `name`
+ *  (subunit arm label) / `error_summary` (why a red run is red) / `children?`
+ *  (composite fan-out, loaded on detail/history only). */
 function makeBadge(overrides: Partial<TaskExecutionBadge> & { id: string }): TaskExecutionBadge {
   return {
     status: "running",
     workflow_ref: "wf-a",
+    name: null,
     phase_index: null,
     round_index: null,
     workspace_id: "ws-1",
     started_at: "2026-08-17T01:00:00Z",
     completed_at: null,
     created_at: "2026-08-17T00:59:00Z",
+    error_summary: null,
     ...overrides,
   }
 }
@@ -63,12 +68,13 @@ function makeDetail(overrides: Partial<TaskDetail> & { id: string }): TaskDetail
   const { executions, ...taskOverrides } = overrides
   return {
     ...makeTask(taskOverrides),
-    // 票03: GET /:id 的 TaskDTO 自带这组列（trigger_mode 缺省 manual、游标空 = 手动任务）。
+    // 票05: TaskView 就是 shared `Task`（trigger_* 全在 shared 上，web 不再镜像）；
+    // trigger_enabled 是 boolean（0/1 随镜像一起删）。缺省 = 手动任务、游标空。
     trigger_mode: "manual",
     trigger_at: null,
     cron_expression: null,
     cron_timezone: "Asia/Shanghai",
-    trigger_enabled: 1,
+    trigger_enabled: true,
     next_fire_at: null,
     last_fired_at: null,
     execution: null,
@@ -151,9 +157,15 @@ describe("listTasks", () => {
 describe("getTask", () => {
   it("GETs /api/tasks/:id and returns TaskDetail (with the executions run history)", async () => {
     // 票03: children[] (私有信封行) → executions[] (任务自己的运行行，新→旧)。
+    // 票05: detail 的徽章带 name/error_summary/children（fan-out 只在 detail/history
+    // 载入 —— 看板列表 badge 不带）。这里同时钉住这三者能原样穿过 fetch 层。
     const detail = makeDetail({
       id: "t1",
-      executions: [makeBadge({ id: "s1", status: "running", phase_index: 1, round_index: 1 })],
+      executions: [makeBadge({
+        id: "s1", status: "failed", phase_index: 1, round_index: 1,
+        name: null, error_summary: "对账回收：引擎进程已丢失",
+        children: [makeBadge({ id: "s1-a", name: "子1", status: "completed" })],
+      })],
     })
     mockFetchOnce(detail)
 
@@ -169,6 +181,11 @@ describe("getTask", () => {
     expect(result.executions[0].workspace_id).toBe("ws-1")
     expect(result.trigger_mode).toBe("manual")
     expect(result.next_fire_at).toBeNull()
+    // 票05 徽章字段（shared 唯一真相 —— 断言的是线上契约，不是本地镜像）
+    expect(result.executions[0].error_summary).toBe("对账回收：引擎进程已丢失")
+    expect(result.executions[0].children).toHaveLength(1)
+    expect(result.executions[0].children![0].name).toBe("子1")
+    expect(result.trigger_enabled).toBe(true)
   })
 })
 

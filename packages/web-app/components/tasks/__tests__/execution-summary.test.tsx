@@ -48,8 +48,8 @@ const SPEC: TaskSpec = {
   skill_groups: [], decisions: [], ac_confirmed: [],
 } as unknown as TaskSpec
 
-/** GET /api/tasks/:id 的 TaskDTO（票03: trigger_* 列 + 当前实例，取代
- *  schedule_status/scheduled_at）。缺省 = 手动任务、无到期游标、从未跑过。 */
+/** GET /api/tasks/:id 的 TaskDTO（票05: TaskView = shared `Task` 原样 —— trigger_*
+ *  全在共享契约上，trigger_enabled 是 boolean）。缺省 = 手动任务、无到期游标、从未跑过。 */
 function makeTask(status: TaskView["status"]): TaskView {
   return {
     id: "task-1", org: "default", name: "弹窗优化任务", status,
@@ -59,24 +59,28 @@ function makeTask(status: TaskView["status"]): TaskView {
     deleted_at: null, created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T01:00:00Z",
     completed_at: status === "done" ? "2026-08-29T02:00:00Z" : null,
     trigger_mode: "manual", trigger_at: null, cron_expression: null,
-    cron_timezone: "Asia/Shanghai", trigger_enabled: 1,
+    cron_timezone: "Asia/Shanghai", trigger_enabled: true,
     next_fire_at: null, last_fired_at: null, execution: null,
   }
 }
 
 // 票03: 一次运行 = executions 一行（不再有信封行 + execution_ref 的两跳）。徽章自带
-// workspace_id + id，所以深链与耗时都由本行算；它不带 error_summary 与 agent 输出。
+// workspace_id + id，所以深链与耗时都由本行算。票05 起徽章再加三字段（shared
+// TaskExecutionBadge 唯一真相）：`name`（运行/子单元臂名）、`error_summary`
+// （红行为什么红 —— 读侧按状态门控）、`children?`（composite fan-out，detail 带、
+// 看板 badge 不带）。
 const RUN_RUNNING = {
-  id: "exec-9", status: "running", workflow_ref: "wf-flow",
+  id: "exec-9", status: "running", workflow_ref: "wf-flow", name: null,
   phase_index: 1, round_index: 1, workspace_id: "ws-1",
   started_at: "2026-08-29T01:00:00Z", completed_at: null,
-  created_at: "2026-08-29T00:59:00Z",
+  created_at: "2026-08-29T00:59:00Z", error_summary: null,
 }
 
 const RUN_FAILED = {
   ...RUN_RUNNING,
   status: "failed",
   completed_at: "2026-08-29T01:10:00Z",
+  error_summary: "对账回收：引擎进程已丢失",
 }
 
 beforeEach(() => {
@@ -114,21 +118,65 @@ describe("TaskRunDetailView", () => {
     expect(await screen.findByText("执行记录")).toBeTruthy()
   })
 
-  // 换的是真相来源，不是削弱断言：TaskExecutionBadge 只有
-  // {id,status,workflow_ref,phase_index,round_index,workspace_id,started_at,
-  // completed_at,created_at} —— 没有 error_summary，也没有可展开的 agent 输出
-  // （旧的 GET /api/scheduler/jobs/:sid/executions/:eid 读的是信封行的
-  // schedule_executions，任务运行不再在那张表里）。所以这里断言终态 + 由
-  // started_at/completed_at 现算的 10m 耗时 + 深链；失败原因与输出核对在深链页面。
-  // → 票05 follow-up：执行摘要需要 error/output（见报告）。
-  it("失败运行显示终态与自算耗时，深链到该次执行", async () => {
+  // 票05 契约 §新事实-2：红行必须真显示那一行原因（error_summary 的出口=运行记录行），
+  // 且绿行即便带着遗留键也绝不显示（读侧按状态门控，不按字段有无值）。耗时仍由
+  // started_at/completed_at 现算；深链两半都在同一行上。
+  it("失败运行显示终态+一行原因+自算耗时，深链到该次执行", async () => {
     mockGetTask.mockResolvedValue({ ...makeTask("failed"), executions: [RUN_FAILED] })
     render(<TaskRunDetailView task={makeTask("failed")} />)
     expect(await screen.findByText("失败")).toBeTruthy()
+    expect(await screen.findByText("对账回收：引擎进程已丢失")).toBeTruthy()
     expect(screen.getByText(/耗时 10m/)).toBeTruthy()
     const link = screen.getByText("查看执行详情")
     fireEvent.click(link)
     expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9")
+  })
+
+  it("绿行不显示遗留的 error_summary（按状态门控，非按字段）", async () => {
+    mockGetTask.mockResolvedValue({
+      ...makeTask("done"),
+      executions: [{ ...RUN_RUNNING, status: "completed", error_summary: "上一轮遗留键" }],
+    })
+    render(<TaskRunDetailView task={makeTask("done")} />)
+    expect(await screen.findByText("成功")).toBeTruthy()
+    expect(screen.queryByText("上一轮遗留键")).toBeNull()
+  })
+
+  // 票05 契约 §新事实-3/-4：composite 的子单元臂挂在 root.children 上，标签用行上
+  // 的 name（取代 schedules.origin_role='subunit'）。children=undefined（看板 badge
+  // 从不载 fan-out）与 [] 都是「不渲染臂」—— UI 不得对未加载状态说「无子单元」。
+  it("composite 根行下按 name 列出子单元臂", async () => {
+    mockGetTask.mockResolvedValue({
+      ...makeTask("running"),
+      executions: [{
+        ...RUN_RUNNING,
+        children: [
+          { ...RUN_RUNNING, id: "arm-1", name: "后端", status: "completed", phase_index: null, round_index: null },
+          { ...RUN_RUNNING, id: "arm-2", name: "前端", status: "failed", phase_index: null, round_index: null, error_summary: "子单元执行失败" },
+        ],
+      }],
+    })
+    render(<TaskRunDetailView task={makeTask("running")} />)
+    expect(await screen.findByText("后端")).toBeTruthy()
+    expect(screen.getByText("前端")).toBeTruthy()
+    // 臂自己的红原因也露出；根行状态不受臂影响照常「执行中」
+    expect(screen.getByText("子单元执行失败")).toBeTruthy()
+    expect(screen.getByText("执行中")).toBeTruthy()
+  })
+
+  it("children 未加载(undefined)与空数组都渲染为无臂 —— 绝不说「无子单元」", async () => {
+    mockGetTask.mockResolvedValue({
+      ...makeTask("running"),
+      executions: [
+        { ...RUN_RUNNING, id: "root-a" },
+        { ...RUN_RUNNING, id: "root-b", round_index: 2, children: [] },
+      ],
+    })
+    render(<TaskRunDetailView task={makeTask("running")} />)
+    // 两条根行都渲染出来了（Phase 1 · Round 1 / Round 2），但没有任何臂容器。
+    expect(await screen.findByText("Phase 1 · Round 2")).toBeTruthy()
+    expect(screen.queryByText(/无子单元/)).toBeNull()
+    expect(document.querySelectorAll("[data-run-arms]")).toHaveLength(0)
   })
 
   it("AI 用量统计条：调用次数/tokens/成本/模型分布聚合", async () => {
@@ -146,11 +194,13 @@ describe("TaskRunDetailView", () => {
     // 任务级卡（标题 + 全部执行合计口径备注）
     expect(await screen.findByText("任务 AI 消耗")).toBeTruthy()
     expect(screen.getByText(/全部 1 次执行合计 · 不含编写期对话/)).toBeTruthy()
-    // 卡内 + 行内各一份成本（≥1 美元两位小数）
+    // 卡内 + 行内各一份成本（≥1 美元两位小数）。聚合是异步落地的（fetchLLMCalls
+    // promise → setAggMap），必须先 await 行内那份再数 —— 否则并行负载下偶发抢跑
+    // （2 处只渲染出 1 处，全量跑时红过）。
+    expect(await screen.findByText("sonnet×10")).toBeTruthy()
     // C3: 定价完整 → 无 ≈ 前缀（≈ 只属于部分定价/未定价态）
     expect(screen.getAllByText(/\$1\.23/)).toHaveLength(2)
     expect(screen.getByText(/12 次调用/)).toBeTruthy()
-    expect(screen.getByText("sonnet×10")).toBeTruthy()
     expect(screen.getByText("haiku×2")).toBeTruthy()
     expect(mockFetchLLMCalls).toHaveBeenCalledWith("exec-9")
   })

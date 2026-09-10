@@ -362,6 +362,42 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     expect(row).toEqual({ id: 'v42-job', status: 'running', claimed_at: now })
   })
 
+  it("③ 信封 ROWS 随列一起消失（真机 v40 DB 实测：7 行全部 enabled=1）", () => {
+    // Dropping only the columns turns every parked envelope into an ENABLED PHANTOM JOB in
+    // the 系统调度 list — the exact inverse of what 票05 promises that page to be. A real
+    // developer DB (v40, never booted on 票03) had 7 such rows, three of them at
+    // status='draft', a value the narrowed ScheduleStatus no longer admits.
+    db = createTestDb()
+    applySchema(db)
+    const now = new Date().toISOString()
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_type TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_id TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_role TEXT`)
+    const ins = db.prepare(`
+      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config,
+        parallel_policy, created_at, updated_at, status, origin_type, origin_id, origin_role)
+      VALUES (?, 'xzf', ?, NULL, 'UTC', 1, 'workflow', '{}', 'skip', ?, ?, ?, ?, ?, ?)`)
+    ins.run('env-1', 'task envelope (parked)', now, now, 'draft', 'task', 'task-1', 'primary')
+    ins.run('env-2', 'task envelope (aborted)', now, now, 'aborted', 'task', 'task-2', 'primary')
+    ins.run('real-cron', 'a real job', now, now, 'queued', 'cron', null, null)
+    // The two things an envelope still owns: a bound workspace and its fire history.
+    db.prepare(`INSERT INTO workspaces (id, name, org, path, source_schedule_id, created_at, updated_at)
+      VALUES ('ws-1', 'ws1', 'xzf', '/tmp/ws1', 'env-1', ?, ?)`).run(now, now)
+    db.prepare(`INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+      timezone_offset, timezone_iana, created_at)
+      VALUES ('se-1', 'env-1', 'completed', 'scheduled', ?, '+00:00', 'UTC', ?)`).run(now, now)
+
+    applySchema(db)
+
+    // origin_type is gone, so "which rows survived" is the whole assertion.
+    const left = (db.prepare("SELECT id FROM schedules ORDER BY id").all() as { id: string }[]).map(r => r.id)
+    expect(left).toEqual(['real-cron'])
+    expect(db.prepare("SELECT COUNT(*) AS n FROM schedule_executions").get()).toEqual({ n: 0 })
+    // The one fact still worth keeping moved instead of being destroyed.
+    expect((db.prepare("SELECT task_id FROM workspaces WHERE id='ws-1'").get() as { task_id: string })
+      .task_id).toBe('task-1')
+  })
+
   it("re-running applySchema over an already-migrated DB is a no-op", () => {
     db = createTestDb()
     applySchema(db)

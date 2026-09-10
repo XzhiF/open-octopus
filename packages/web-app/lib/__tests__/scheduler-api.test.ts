@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { listJobs, abortJob } from "../scheduler-api"
+import { listJobs, abortJob, isBuiltinJob } from "../scheduler-api"
 
 /** Build a minimal fetch Response double for happy-path assertions. */
 function mockJsonResponse(body: unknown, ok = true): Response {
@@ -70,3 +70,18 @@ describe("abortJob", () => {
 // ADR-0021 票03 (a job definition is registered, never parked — the 'draft' schedule
 // status went with it). The task-side confirm/trigger surface it used to serve is now
 // covered in lib/__tests__/tasks-api.test.ts (triggerTask / scheduleTaskTrigger).
+
+// ── isBuiltinJob (票05: 内置 job 的「不可删」判据) ─────────────────────
+
+describe("isBuiltinJob", () => {
+  it("recognizes the deterministic builtin- row ids the server seeds", () => {
+    // server: builtinJobId(handler) = `builtin-${handler}` (builtin-jobs.ts) —
+    // the seed key is primary-key-idempotent, so the prefix is the contract.
+    expect(isBuiltinJob({ id: "builtin-task-lifecycle" })).toBe(true)
+  })
+
+  it("user-created rows (uuid or otherwise) are deletable", () => {
+    expect(isBuiltinJob({ id: "9f2c1d34-77ab-4a01-9ef3-a1b2c3d4e5f6" })).toBe(false)
+    expect(isBuiltinJob({ id: "job-user-created" })).toBe(false)
+  })
+})

@@ -6,8 +6,9 @@
 // Fixture 策略（R1/R3：真实 server + 真实 DB 双真相）：
 //   • v4 任务经 API 直造：POST /api/tasks（legacy create，无 home）→ PUT
 //     task_spec {format:"v4", phases:[…]}（draft 可编辑 + If-Match）。
-//   • 派生态（awaiting_review / 在跑轮）经 sqlite 直造 executions+schedules
-//     链（deriveTaskView 吃 schedule_executions 归属链 — 票 07），并把
+//   • 派生态（awaiting_review / 在跑轮）经 sqlite 直造 **executions 行**：票03 起
+//     deriveTaskView 的取数口径就是 `task_id = ? AND parent_id='0'`（信封时代的
+//     schedules→schedule_executions 归属链已随 origin_* 列一起被 v42 删掉），并把
 //     tasks.status 归一到与派生一致的持久态。
 //   • 清理按创建的 id 精确 DELETE（E2E_TD_ 前缀隔离 R7）。
 //
@@ -37,9 +38,7 @@ let serverAvailable = false
 // 本 spec 创建的全部行 id（afterAll 精确清理）。
 const created = {
   taskIds: [] as string[],
-  scheduleIds: [] as string[],
   executionIds: [] as string[],
-  seIds: [] as string[],
   workspaceIds: [] as string[],
 }
 
@@ -87,17 +86,16 @@ async function makeV4Task(name: string, phaseCount: number): Promise<string> {
   return task.id
 }
 
-/** sqlite 直造 deriveTaskView 吃的执行链：workspace→schedule(origin task)→
- *  execution(phase/round 打标)→schedule_executions。返回 execution created_at。 */
+/** sqlite 直造 deriveTaskView 吃的执行行（票03 口径：`task_id` 直连 + `parent_id='0'`
+ *  = 一轮的根；信封时代那条 schedules→schedule_executions 归属链已被 v42 连列删掉）。
+ *  一次插入 = 一个 (phase, round)。 */
 async function insertPhaseRoundExec(
   taskId: string,
   opts: { phaseIndex: number; roundIndex: number; execStatus: string; createdAt: string },
 ): Promise<void> {
   const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const wsId = `e2e-td-ws-${uid}`
-  const schId = `e2e-td-sch-${uid}`
   const execId = `e2e-td-exec-${uid}`
-  const seId = `e2e-td-se-${uid}`
   const now = NOW_ISO()
   await dbRun(
     `INSERT INTO workspaces (id, name, org, status, path, created_at, updated_at, source)
@@ -105,27 +103,13 @@ async function insertPhaseRoundExec(
     wsId, `E2E_TD_ws_${uid}`, TASK_E2E_ORG, `/tmp/e2e-td-${uid}`, now, now,
   )
   await dbRun(
-    `INSERT INTO schedules (id, org, name, enabled, timeout_seconds, created_at, updated_at,
-       config, status, origin_type, origin_id, origin_role, workspace_id)
-     VALUES (?, ?, ?, 1, 3600, ?, ?, '{}', 'running', 'task', ?, 'primary', ?)`,
-    schId, TASK_E2E_ORG, `E2E_TD_sch_${uid}`, now, now, taskId, wsId,
-  )
-  await dbRun(
-    `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, node_type, org,
-       status, phase_index, round_index, created_at, updated_at)
-     VALUES (?, ?, 'task-dev', 'e2e-td-round', 'normal', ?, ?, ?, ?, ?, ?)`,
-    execId, wsId, TASK_E2E_ORG, opts.execStatus, opts.phaseIndex, opts.roundIndex, opts.createdAt, now,
-  )
-  await dbRun(
-    `INSERT INTO schedule_executions (id, schedule_id, execution_id, status, trigger_type,
-       triggered_at, timezone_offset, timezone_iana, workspace_id, created_at)
-     VALUES (?, ?, ?, 'running', 'manual', ?, '+08:00', 'Asia/Shanghai', ?, ?)`,
-    seId, schId, execId, opts.createdAt, wsId, now,
+    `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+       node_type, org, task_id, status, phase_index, round_index, created_at, updated_at)
+     VALUES (?, ?, '0', 0, 'task-dev', 'e2e-td-round', 'normal', ?, ?, ?, ?, ?, ?, ?)`,
+    execId, wsId, TASK_E2E_ORG, taskId, opts.execStatus, opts.phaseIndex, opts.roundIndex, opts.createdAt, now,
   )
   created.workspaceIds.push(wsId)
-  created.scheduleIds.push(schId)
   created.executionIds.push(execId)
-  created.seIds.push(seId)
 }
 
 test.beforeAll(async () => {
@@ -143,12 +127,8 @@ test.afterAll(async () => {
   if (!serverAvailable || !dbAvailable) return
   try {
     const inList = (xs: string[]) => xs.map(() => "?").join(",")
-    if (created.seIds.length)
-      await dbRun(`DELETE FROM schedule_executions WHERE id IN (${inList(created.seIds)})`, ...created.seIds)
     if (created.executionIds.length)
       await dbRun(`DELETE FROM executions WHERE id IN (${inList(created.executionIds)})`, ...created.executionIds)
-    if (created.scheduleIds.length)
-      await dbRun(`DELETE FROM schedules WHERE id IN (${inList(created.scheduleIds)})`, ...created.scheduleIds)
     if (created.workspaceIds.length)
       await dbRun(`DELETE FROM workspaces WHERE id IN (${inList(created.workspaceIds)})`, ...created.workspaceIds)
     if (created.taskIds.length)
@@ -187,6 +167,12 @@ test("AC2 five columns render; awaiting_review task sits in 待验收 with amber
   const taskId = await makeV4Task("E2E_TD_待验收卡", 2)
   await insertPhaseRoundExec(taskId, { phaseIndex: 1, roundIndex: 1, execStatus: "completed", createdAt: hoursAgo(1) })
   await setTaskStatus(taskId, "running") // 归一持久态（票 07 活体交互 #1 的镜像窗口）
+  // 票03 §新行为1 的反证（本 spec 的 fixture 策略本身就是证据）：派生态完全由
+  // executions 行撑起 —— 造轮全程没写一行 schedules，看板仍能归列。
+  expect(
+    findTaskEnvelopeScheduleRows(taskId),
+    "派生态不依赖任何 schedules 行（task id 在该表中不出现）",
+  ).toHaveLength(0)
 
   await page.goto("/tasks")
   await page.waitForLoadState("domcontentloaded")

@@ -82,14 +82,25 @@ export interface JobDetailDag {
 
 /** One run row in the composite drill-down (a task execution badge projected onto
  *  the DAG's child axis). `run_id` was `schedule_id` while children were envelope
- *  rows; it is now the execution id, and `subunit_name` is matched back to a
- *  subunit by workflow_ref (a badge carries no subunit label — 票05 follow-up). */
+ *  rows; it is now the execution id, and 票05 put the subunit label ON the badge
+ *  (`TaskExecutionBadge.name`, written at dispatch), so `subunit_name` reads that
+ *  first — the workflow_ref→spec match is only the name-less fallback now. */
 export interface JobDetailChild {
   run_id: string
   name: string
   status: string
   workflow_ref: string
   subunit_name: string
+}
+
+/** The built-in code-job rows (the `job`-type system duties, e.g. 系统 · 任务生命周期)
+ *  carry a DETERMINISTIC id — `builtin-<handler>` — which is the server's seed key
+ *  (packages/server/src/services/scheduler/builtin-jobs.ts, `builtinJobId`). The ops
+ *  page uses this to render them as pausable-but-not-deletable: 删掉内置 job = 停掉
+ *  全系统的任务启动，而 seed 不会复活软删的行（findByIdRaw 连 deleted 一起看）。
+ *  User-created `job` rows are NOT builtin — they keep the normal delete affordance. */
+export function isBuiltinJob(job: Pick<SchedulerJob, "id">): boolean {
+  return job.id.startsWith("builtin-")
 }
 
 /** JobDetail = SchedulerJob. Kept as a name so the callers (getJob / abortJob) do

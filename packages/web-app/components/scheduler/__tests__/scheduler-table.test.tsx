@@ -5,7 +5,8 @@
 // The 'job' member is the new one (a registered TypeScript handler; the system's
 // built-in 系统 · 任务生命周期 is one), and it must render, not be filtered out.
 import { describe, it, expect } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { SchedulerTable } from "../scheduler-table"
 import type { SchedulerJob } from "@/lib/scheduler-api"
 
@@ -86,5 +87,52 @@ describe("SchedulerTable job_type column", () => {
     const cronCell = document.querySelector("code")
     expect(cronCell?.textContent).toBe("-")
     expect(screen.queryByText("null")).toBeNull()
+  })
+})
+
+// ── 票05: 内置 job 行「可暂停、不可删」；job_type='job' 无编辑表单 ──────
+//
+// 判据不是「行藏起来了」而是菜单里没有那个动作：暂停开关照常（全系统定时启动的
+// 总闸就要能拨），删除入口对 builtin- 前缀行不渲染（删掉 = 静默停摆且 seed 不复活），
+// 编辑入口对 job 类型不渲染（SchedulerForm 只能表达 workflow/agent 两类 config，
+// 给内置行开表单 = 提交时把 handler 指针盖成 agent 形状）。
+
+async function openMenuForRow(jobName: string) {
+  const link = screen.getByRole("link", { name: `查看任务 ${jobName}` })
+  const row = link.closest("tr")!
+  await userEvent.click(row.querySelector('button[aria-label="操作菜单"]')!)
+}
+
+describe("SchedulerTable 操作菜单 gating", () => {
+  it("普通 workflow 行：编辑/手动触发/删除全在", async () => {
+    renderTable([makeJob({ id: "cron-1", name: "夜间构建", job_type: "workflow" })])
+    await openMenuForRow("夜间构建")
+    await waitFor(() => expect(screen.getByText("编辑")).toBeTruthy())
+    expect(screen.getByText("手动触发")).toBeTruthy()
+    expect(screen.getByText("删除")).toBeTruthy()
+  })
+
+  it("内置 系统 · 任务生命周期 行：可暂停/可手动触发，菜单里既无删除也无编辑", async () => {
+    renderTable([
+      makeJob({
+        id: "builtin-task-lifecycle",
+        name: "系统 · 任务生命周期",
+        job_type: "job",
+        cron_expression: "* * * * *",
+      }),
+    ])
+    // 暂停开关存在（行可见且可停 = 契约的「可暂停」）。
+    expect(document.querySelectorAll('[role="switch"]')).toHaveLength(1)
+    await openMenuForRow("系统 · 任务生命周期")
+    await waitFor(() => expect(screen.getByText("手动触发")).toBeTruthy())
+    expect(screen.queryByText("删除")).toBeNull()
+    expect(screen.queryByText("编辑")).toBeNull()
+  })
+
+  it("用户创建的 job 行（非 builtin- 前缀）：可删，但仍不可编辑", async () => {
+    renderTable([makeJob({ id: "job-7f3a", name: "自定义作业", job_type: "job" })])
+    await openMenuForRow("自定义作业")
+    await waitFor(() => expect(screen.getByText("删除")).toBeTruthy())
+    expect(screen.queryByText("编辑")).toBeNull()
   })
 })

@@ -83,7 +83,7 @@ const COMPOSITE_SPEC: TaskSpec = {
   integration_goal: { strategy: "synthesis" },
 }
 
-/** GET /:id 的 TaskDTO：票03 的 trigger_* 列 + execution 徽章。缺省 = 手动、无游标。 */
+/** GET /:id 的 TaskDTO：票05 起 = shared `Task`（trigger_* 全在共享契约上）。缺省 = 手动、无游标。 */
 function makeParentTask(overrides: Partial<TaskView> = {}): TaskView {
   return {
     id: "parent-1",
@@ -106,7 +106,7 @@ function makeParentTask(overrides: Partial<TaskView> = {}): TaskView {
     trigger_at: null,
     cron_expression: null,
     cron_timezone: "Asia/Shanghai",
-    trigger_enabled: 1,
+    trigger_enabled: true,
     next_fire_at: null,
     last_fired_at: null,
     execution: null,
@@ -114,27 +114,37 @@ function makeParentTask(overrides: Partial<TaskView> = {}): TaskView {
   } as TaskView
 }
 
-/** One run row (mirror of the server's TaskExecutionBadge). A badge carries no name,
- *  so the composite view names a run by matching workflow_ref to a spec subunit. */
+/** One run row — the SHARED TaskExecutionBadge (票05: single source, no mirror).
+ *  Composite fan-out arms arrive as `children` of their root and label themselves
+ *  via `name` (dispatchChildRun wrote subunit.name onto the row). */
 function makeRun(overrides: Partial<TaskExecutionBadge> & { id: string }): TaskExecutionBadge {
   return {
     status: "running",
     workflow_ref: "wf-a",
+    name: null,
     phase_index: null,
     round_index: null,
     workspace_id: `ws-${overrides.id}`,
     started_at: "2026-01-01T00:00:00Z",
     completed_at: null,
     created_at: "2026-01-01T00:00:00Z",
+    error_summary: null,
     ...overrides,
   }
 }
 
-const DEFAULT_RUNS = [
-  makeRun({ id: "run-1", workflow_ref: "wf-a", status: "running" }),
-  makeRun({ id: "run-2", workflow_ref: "wf-b", status: "pending" }),
-  makeRun({ id: "run-3", workflow_ref: "wf-c", status: "completed" }),
+// 票05 读模型：composite detail 的 executions = [协调器根行]，三条子单元臂挂在它的
+// children 上，臂名在行上（子1/子2/子3 = spec 里的 subunit 名，派发时写进行）。
+const ARMS: TaskExecutionBadge[] = [
+  makeRun({ id: "arm-1", workflow_ref: "wf-a", name: "子1", status: "running" }),
+  makeRun({ id: "arm-2", workflow_ref: "wf-b", name: "子2", status: "pending" }),
+  makeRun({ id: "arm-3", workflow_ref: "wf-c", name: "子3", status: "completed" }),
 ]
+const DEFAULT_ROOT = makeRun({
+  id: "run-1", workflow_ref: "task-composite", status: "running", children: ARMS,
+})
+
+const DEFAULT_RUNS = [DEFAULT_ROOT]
 
 function makeDetail(overrides: Partial<TaskView> & { executions?: TaskExecutionBadge[] } = {}): TaskView & { executions: TaskExecutionBadge[] } {
   const { executions, ...taskOverrides } = overrides
@@ -151,7 +161,7 @@ describe("CompositeMode", () => {
     unsubSpies.length = 0
   })
 
-  it("renders DAG, run cards, and integration node from TaskDetail.executions", async () => {
+  it("renders DAG, root card + named fan-out arms, and integration node from TaskDetail", async () => {
     mockGetTask.mockResolvedValue(makeDetail() as never)
 
     render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
@@ -160,29 +170,90 @@ describe("CompositeMode", () => {
       expect(screen.getByTestId("composite-dag")).toBeDefined()
     })
 
-    // Three run cards; each labelled by the subunit its workflow belongs to.
-    expect(screen.getByText("子1")).toBeDefined()
-    expect(screen.getByText("子2")).toBeDefined()
-    expect(screen.getByText("子3")).toBeDefined()
-    expect(screen.getByText("wf-a")).toBeDefined()
-    expect(screen.getByText("wf-b")).toBeDefined()
-    expect(screen.getByText("wf-c")).toBeDefined()
+    // 协调器根行 + 其 children 里的三条子单元臂（票05：臂名在行上 = badge.name）。
+    expect(screen.getByTestId("composite-child-run-1")).toBeDefined()
+    expect(screen.getByTestId("composite-arm-arm-1").textContent).toContain("子1")
+    expect(screen.getByTestId("composite-arm-arm-2").textContent).toContain("子2")
+    expect(screen.getByTestId("composite-arm-arm-3").textContent).toContain("子3")
 
     // Integration node surfaced.
     expect(screen.getByTestId("composite-integration")).toBeDefined()
 
-    // Aggregate status: a run is in flight (running / pending) → aggregate running.
+    // Aggregate status: an arm is in flight (running / pending) → aggregate running.
     expect(screen.getByTestId("composite-aggregate-status").textContent).toMatch(/running|执行中/)
   })
 
-  it("aggregate status becomes done when all runs completed + parent done", async () => {
+  // 票05 契约 §新事实-4：臂的标签来自行上的 name —— 取代 schedules.origin_role 与
+  // 「workflow_ref 反查 spec」的旧命名链。name 优先，且不必命中 spec。
+  it("arm labels come from the badge's own name, not a spec match", async () => {
+    mockGetTask.mockResolvedValue(makeDetail({
+      executions: [makeRun({
+        id: "run-1", workflow_ref: "task-composite",
+        children: [makeRun({ id: "arm-x", workflow_ref: "wf-unbound", name: "独立臂" })],
+      })],
+    }) as never)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    const arm = await screen.findByTestId("composite-arm-arm-x")
+    expect(arm.textContent).toContain("独立臂")
+  })
+
+  // children === undefined = 读模型没载 fan-out（如旧服务端），[] = 载了且没有 ——
+  // 两者都只能「不渲染臂」，不得出现「无子单元」式的空态断言。
+  it("children undefined / empty → no arm rows and no 「无子单元」 claim", async () => {
+    mockGetTask.mockResolvedValue(makeDetail({
+      executions: [makeRun({ id: "run-1", workflow_ref: "task-composite", children: [] })],
+    }) as never)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-child-run-1")).toBeDefined()
+    })
+    expect(screen.queryByText(/无子单元/)).toBeNull()
+    expect(screen.queryByTestId("composite-arms-run-1")).toBeNull()
+  })
+
+  it("red arm shows its error_summary; a green arm hides a residual one", async () => {
+    mockGetTask.mockResolvedValue(makeDetail({
+      executions: [makeRun({
+        id: "run-1", workflow_ref: "task-composite",
+        children: [
+          makeRun({ id: "arm-r", workflow_ref: "wf-a", name: "子1", status: "failed", error_summary: "子单元 1 崩了" }),
+          makeRun({ id: "arm-g", workflow_ref: "wf-b", name: "子2", status: "completed", error_summary: "遗留键" }),
+        ],
+      })],
+    }) as never)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    expect((await screen.findByTestId("composite-arm-arm-r")).textContent).toContain("子单元 1 崩了")
+    expect(screen.getByTestId("composite-arm-arm-g").textContent).not.toContain("遗留键")
+  })
+
+  it("clicking an arm deep-links the arm's OWN workspace (票05 children)", async () => {
+    mockGetTask.mockResolvedValue(makeDetail() as never)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    const arm = await screen.findByTestId("composite-arm-arm-2")
+    fireEvent.click(arm)
+
+    expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-arm-2?tab=detail&execId=arm-2")
+  })
+
+  it("aggregate status becomes done when all arms completed + parent done", async () => {
     mockGetTask.mockResolvedValue(makeDetail({
       status: "done",
-      executions: [
-        makeRun({ id: "run-1", workflow_ref: "wf-a", status: "completed" }),
-        makeRun({ id: "run-2", workflow_ref: "wf-b", status: "completed" }),
-        makeRun({ id: "run-3", workflow_ref: "wf-c", status: "completed" }),
-      ],
+      executions: [makeRun({
+        id: "run-1", workflow_ref: "task-composite", status: "completed",
+        children: [
+          makeRun({ id: "arm-1", workflow_ref: "wf-a", name: "子1", status: "completed" }),
+          makeRun({ id: "arm-2", workflow_ref: "wf-b", name: "子2", status: "completed" }),
+          makeRun({ id: "arm-3", workflow_ref: "wf-c", name: "子3", status: "completed" }),
+        ],
+      })],
     }) as never)
 
     render(<CompositeMode task={makeParentTask({ status: "done" })} onMutated={() => {}} onClose={() => {}} />)
@@ -192,13 +263,16 @@ describe("CompositeMode", () => {
     })
   })
 
-  it("aggregate status is failed if any run failed", async () => {
+  it("aggregate status is failed if any arm failed", async () => {
     mockGetTask.mockResolvedValue(makeDetail({
       status: "running",
-      executions: [
-        makeRun({ id: "run-1", workflow_ref: "wf-a", status: "failed" }),
-        makeRun({ id: "run-2", workflow_ref: "wf-b", status: "completed" }),
-      ],
+      executions: [makeRun({
+        id: "run-1", workflow_ref: "task-composite",
+        children: [
+          makeRun({ id: "arm-1", workflow_ref: "wf-a", name: "子1", status: "failed", error_summary: "3 个子单元执行失败" }),
+          makeRun({ id: "arm-2", workflow_ref: "wf-b", name: "子2", status: "completed" }),
+        ],
+      })],
     }) as never)
 
     render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
@@ -322,6 +396,39 @@ describe("CompositeMode", () => {
     await waitFor(() => {
       const panel = screen.getByTestId("composite-events-panel")
       expect(panel.textContent).toContain("子2")
+    })
+  })
+
+  // 票05 §新事实-2：task_execution 的 `reason` 是失败/回收路径专属的一行原因 ——
+  // 事件面板要显示它；绿状态的遗留 reason 绝不显示（pushEvent 按状态门控）。
+  it("task_execution carries the failure reason into the events panel; green rows drop it", async () => {
+    mockGetTask.mockResolvedValue(makeDetail() as never)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-events-panel")).toBeDefined()
+    })
+
+    await act(async () => {
+      dispatchSSE("task_execution", {
+        task_id: "parent-1", execution_id: "arm-2", status: "aborted", reason: "用户中止",
+      })
+    })
+    await waitFor(() => {
+      const panel = screen.getByTestId("composite-events-panel")
+      expect(panel.textContent).toContain("用户中止")
+    })
+
+    await act(async () => {
+      dispatchSSE("task_execution", {
+        task_id: "parent-1", execution_id: "arm-3", status: "completed", reason: "遗留键不应露出",
+      })
+    })
+    await waitFor(() => {
+      const panel = screen.getByTestId("composite-events-panel")
+      expect(panel.textContent).toContain("成功") // completed 行进来了…
+      expect(panel.textContent).not.toContain("遗留键不应露出") // …但绿行没有原因
     })
   })
 

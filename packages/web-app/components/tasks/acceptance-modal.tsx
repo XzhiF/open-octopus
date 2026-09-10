@@ -2,8 +2,8 @@
 //
 // task-phase-redesign 票 12（K14/D11/US9-12）：v4 验收三栏证据面。
 //
-//   ┌ 左：执行摘要（round 用时 / token / cost — fetchLLMCalls 聚合 + children
-//   │     execution_ref 联查；TaskAiUsageCard 同等数据）
+//   ┌ 左：执行摘要（round 用时 / 失败原因 / token / cost — fetchLLMCalls 聚合 +
+//   │     本轮 run 由 executions[] 按 id 联查；TaskAiUsageCard 同等数据）
 //   ├ 中：产物核对（本 phase 批次文件 → 既有 ArtifactViewerDialog 展开全文；
 //   │     task_artifacts_update SSE 挂窗即时刷新 — 票 06 collect 上行）
 //   └ 右：动作区（验收通过 / 打回[反馈必填] / 中止 + autoAdvance 只读态）
@@ -53,7 +53,7 @@ import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
-import { TaskAiUsageCard } from "./execution-summary"
+import { TaskAiUsageCard, runErrorOf } from "./execution-summary"
 
 // 归档重试客户端 postArchiveRetry 位于 lib/tasks-api.ts（review ①: API 层惯例
 // — 全部 client endpoint 住 tasks-api 单源；page.tsx 的「重试归档」按钮直连）。
@@ -154,19 +154,22 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     return () => { cancelled = true }
   }, [open, execId])
 
-  // 用时：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
-  // 徽章自带 started_at/completed_at，duration 自己算）。
+  // 本轮 run：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
+  // 徽章自带 started_at/completed_at，duration 自己算；票05 起徽章带 error_summary）。
+  const roundRun = useMemo(
+    () => (awaitingRound ? detail?.executions?.find((e) => e.id === awaitingRound.exec.id) ?? null : null),
+    [awaitingRound, detail],
+  )
   const durationMs: number | null = useMemo(() => {
-    if (!awaitingRound) return null
-    const run = detail?.executions?.find((e) => e.id === awaitingRound.exec.id)
-    if (!run?.completed_at) return null
-    const startMs = run.started_at ? Date.parse(run.started_at) : Date.parse(run.created_at)
+    if (!roundRun?.completed_at) return null
+    const startMs = roundRun.started_at ? Date.parse(roundRun.started_at) : Date.parse(roundRun.created_at)
     if (Number.isNaN(startMs)) return null
-    return Math.max(0, Date.parse(run.completed_at) - startMs)
-  }, [awaitingRound, detail])
+    return Math.max(0, Date.parse(roundRun.completed_at) - startMs)
+  }, [roundRun])
 
-  // errorSummary（该轮失败原因）随 execution_ref 一起没了：TaskExecutionBadge 不带
-  // error 字段，票05 之前这里没有真数据可显 —— 空即是空，不臆造一次拉取。
+  // 该轮为什么红（票05）：验收者面对 failed round 时缺的就是这一行 —— 数据源是
+  // executions[] 联查到的徽章 error_summary，按红状态门控（runErrorOf），不臆造拉取。
+  const roundError = awaitingRound?.state === "failed" && roundRun ? runErrorOf(roundRun) : null
 
   // 产物核对：登记产物里命中本 phase slug 的文件（K10 批次目录
   // `.scratch/<date>/<slug>/`，登记可见语义 — 接缝③）。
@@ -364,6 +367,16 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                         {ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state}
                       </span>
                     </div>
+                    {/* 票05: 红轮的一行原因（error_summary 出口之一 —— 验收面是它最该
+                        被看到的地方）。绿轮/无原因 → 不渲染。 */}
+                    {roundError && (
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-muted-foreground text-xs shrink-0">失败原因</span>
+                        <span className="text-pop-amber text-xs text-right break-words" data-acceptance-round-error data-testid="acceptance-round-error">
+                          {roundError}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-muted-foreground text-xs">用时</span>
                       <span className="tabular-nums" data-acceptance-duration data-testid="acceptance-duration">

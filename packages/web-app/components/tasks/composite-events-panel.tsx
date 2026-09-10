@@ -11,6 +11,10 @@ export interface CompositeEvent {
   status: string
   /** Human label for the run (parent / child subunit name). */
   label: string
+  /** Why a red run is red, one line — the `task_execution.reason` the server puts on
+   *  the failure/reap paths only (票05). The panel never sees it on a green row: the
+   *  producer gates on the run status, matching `runErrorOf` elsewhere. */
+  reason?: string
   /** ISO timestamp of when the event was received by the client. */
   at: string
 }
@@ -86,6 +90,11 @@ export function CompositeEventsPanel({ events }: CompositeEventsPanelProps) {
                     {STATUS_LABEL[e.status] ?? e.status}
                   </span>
                 </div>
+                {e.reason && (
+                  <div className="text-[10px] text-pop-red mt-0.5 break-words" data-event-reason={e.run_id}>
+                    {e.reason}
+                  </div>
+                )}
                 <div className="text-[10px] text-muted-foreground mt-0.5">
                   {new Date(e.at).toLocaleTimeString()}
                   <span className="ml-1.5 font-mono opacity-60">{e.run_id.slice(0, 8)}</span>

@@ -16,18 +16,20 @@ import {
 import { toast } from "sonner"
 import {
   groupTasksByStatus, tasksForColumn, effectiveStatusOf, sortByCreatedDesc,
-  computePhaseBadge, overBudgetRoundOf, phaseBudgetMs, TASK_COLUMNS,
+  computePhaseBadge, overBudgetRoundOf, phaseBudgetMs, parseTaskTriggerFailed,
+  TASK_COLUMNS,
   type TaskBoardColumnId,
 } from "@/lib/task-board"
 import { formatRelativeTime } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
+import { runErrorOf } from "@/components/tasks/execution-summary"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
 import { AcceptanceModal } from "@/components/tasks/acceptance-modal"
 import {
   TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT,
-  PHASE_STATUS_UPDATE_EVENT,
+  PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_TRIGGER_FAILED_EVENT,
 } from "@octopus/shared"
 
 const REFRESH_INTERVAL_MS = 10_000
@@ -143,10 +145,11 @@ export default function TasksPage() {
     return () => clearInterval(id)
   }, [fetchTasks])
 
-  // Real-time push: task_status SSE fires on every lifecycle transition
-  // (ScheduleStatusListener, SG2 — queued/claimed→running, done→done,
-  // failed→failed, aborted→aborted) + draft→ready via /ready. Refresh the
-  // kanban so cards move columns instantly.
+  // Real-time push: task_status SSE fires on every lifecycle transition of the
+  // task row itself — one writer since 票03 (the built-in task-lifecycle job + the
+  // task routes; the ScheduleStatusListener mirror went with the envelope). The
+  // payload is {task_id, status}: a task_status event is about a task, full stop.
+  // Refresh the kanban so cards move columns instantly.
   useEffect(() => {
     const unsub = subscribeSSE(
       `${getServerUrl()}/api/tasks/events`,
@@ -191,8 +194,29 @@ export default function TasksPage() {
   useEffect(() => {
     const unsub = subscribeSSE(
       `${getServerUrl()}/api/tasks/events`,
-      "task_execution",
+      TASK_EXECUTION_EVENT,
       () => { void fetchTasks() },
+    )
+    return () => unsub()
+  }, [fetchTasks])
+
+  // 票05 task_trigger_failed: 到点了但根本起不来（phase spec 被删 / 没绑 workflow /
+  // 工作区建不出来）。这不是状态迁移（任务回/停在 ready），所以没有 task_status 可折 —
+  // 而到期游标已被服务端退休，不接住的话用户只会看到一张永远「待执行」的卡，原因藏在
+  // 日志里。toast 一行 reason + 整盘刷新（游标退休本身要重读）。
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      TASK_TRIGGER_FAILED_EVENT,
+      (e: MessageEvent) => {
+        const payload = parseTaskTriggerFailed(e.data)
+        if (!payload) return
+        // 目标任务以 tasksRef 成员判定（票05 定稿）：别人的失败既不弹 toast 也不
+        // 触发刷新 —— 只有盘面认得的任务才值得重读。
+        if (!tasksRef.current.some((t) => t.id === payload.task_id)) return
+        toast.error(`定时触发失败：${payload.reason}`)
+        void fetchTasks()
+      },
     )
     return () => unsub()
   }, [fetchTasks])
@@ -495,6 +519,8 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
   // 两个真相都在任务自己身上：execution.status='pending' = 实例已武装、在共享并发闸
   // 后等位；next_fire_at = 唯一的到期游标（once 到点前 = 何时触发，领取后 retire）。
   const isQueuedRun = task.execution?.status === "pending" || !!task.next_fire_at
+  // 票05: 红行原因一行 —— 只对终态失败行成立（runErrorOf 按状态门控，绿行不显遗留键）。
+  const runError = task.execution ? runErrorOf(task.execution) : null
   return (
     <article
       data-task-card
@@ -557,10 +583,13 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             </span>
           )}
           {/* 完成列折叠了 done/failed/aborted 三终态 — 用彩色 chip 自证真实终态
-              （替代原英文 status 行；data-task-card-status 语义迁移到此）。 */}
+              （替代原英文 status 行；data-task-card-status 语义迁移到此）。
+              票05: 红行的 tooltip 给一行 error_summary（当前实例为什么红）；绿行
+              即便带遗留键也不显示（runErrorOf 按状态门控）。 */}
           {(task.status === "failed" || task.status === "aborted") && (
             <span
               data-task-card-status
+              title={runError ? `失败原因：${runError}` : undefined}
               className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd ${
                 task.status === "failed"
                   ? "bg-pop-pink-soft text-pop-red"

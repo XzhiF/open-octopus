@@ -31,7 +31,7 @@ import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatDuration, formatTokenCount, formatCost, formatPercent } from "@/lib/format"
-import { TASK_STATUS_EVENT, TASK_EXECUTION_EVENT, PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
+import { TASK_STATUS_EVENT, TASK_EXECUTION_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry, Task } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 import { WorkflowViewerDialog } from "./authoring/workflow-viewer-dialog"
@@ -62,6 +62,16 @@ const RUN_DOT: Record<string, string> = {
   aborted: "bg-pop-dim", skipped: "bg-pop-dim",
   // 旧 schedule 词表
   queued: "bg-pop-cyan", claimed: "bg-pop-amber", triggered: "bg-pop-cyan",
+}
+
+/** 红行词表 (票05 契约 §新事实-2)：error_summary 只在这些状态露出。绿行即便带着
+ *  遗留键也绝不显示 —— 读侧按状态门控，不按字段有没有值门控。 */
+export const RUN_ERROR_STATUSES = new Set(["failed", "aborted", "completed_with_failures"])
+
+/** 一行运行的失败原因（无则 null）；所有 surfaces（看板 tooltip / 运行记录 /
+ *  弹窗事件流）共用的唯一判据。 */
+export function runErrorOf(exec: Pick<TaskExecutionBadge, "status" | "error_summary">): string | null {
+  return RUN_ERROR_STATUSES.has(exec.status) ? exec.error_summary : null
 }
 
 // ── 通用小区块 ──────────────────────────────────────────────────────
@@ -196,25 +206,31 @@ function deepLinkTarget(exec: TaskExecutionBadge): string | null {
     : null
 }
 
-/** 行标题。旧的 child.name 是信封行名（task-{id}-primary / 子单元名），运行行没有
- *  这个名字；v4 的 phase/round 直接落在执行行上，所以「第几轮」成了最贴近原来语义
- *  的标签，其次工作流名。（子单元行的可见性 = 票05 follow-up。） */
+/** 行标题。v4 的 phase/round 直接落在执行行上，「第几轮」是最贴近轮次语义的标签；
+ *  其次票05 起徽章自带的 `name`（simple 运行名 / composite 子单元臂名 —— 派发时
+ *  dispatchChildRun 把 subunit.name 写进了行）；再退工作流名。 */
 function execLabel(exec: TaskExecutionBadge): string {
   if (exec.phase_index != null) {
     return exec.round_index != null
       ? `Phase ${exec.phase_index} · Round ${exec.round_index}`
       : `Phase ${exec.phase_index}`
   }
-  return exec.workflow_ref || `执行 ${exec.id.slice(0, 8)}`
+  return exec.name || exec.workflow_ref || `执行 ${exec.id.slice(0, 8)}`
 }
 
 /** 还没跑完的状态 —— 驱动「实时耗时」的每秒一跳。pending = 武装后在并发闸后排队。 */
 const LIVE_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
 
+/** 一次运行的记录行：状态点 + 标题 + 起止/耗时 + （红行）一行失败原因 +
+ *  （composite）票05 载入的子单元臂。臂只认 `exec.children`：undefined = 本表面
+ *  没加载 fan-out（看板 badge 即如此），什么都不渲染 —— 「没加载」不是「没有」，
+ *  所以这里永远不出「无子单元」空态；[]= 加载了且确实没有，同样不渲染。 */
 function ExecRunRow({ exec, now, agg }: { exec: TaskExecutionBadge; now: number; agg: LLMCallAggregates | null }) {
   const router = useRouter()
   const link = deepLinkTarget(exec)
   const startedMs = exec.started_at ? Date.parse(exec.started_at) : Date.parse(exec.created_at)
+  const error = runErrorOf(exec)
+  const arms = exec.children ?? []
 
   // 耗时：徽章没有 duration_ms，自己算 —— 终态 completed_at-started_at；
   // 在跑 now-started_at（now 由上层 1s tick 驱动）。
@@ -231,6 +247,28 @@ function ExecRunRow({ exec, now, agg }: { exec: TaskExecutionBadge; now: number;
         <span className="text-sm font-medium truncate">{execLabel(exec)}</span>
         <span className="ml-auto text-xs text-muted-foreground shrink-0">{RUN_STATUS_LABEL[exec.status] ?? exec.status}</span>
       </div>
+
+      {error && (
+        <div className="text-xs text-pop-red break-words" data-run-error={exec.id}>{error}</div>
+      )}
+
+      {arms.length > 0 && (
+        <div className="pl-3 space-y-1 border-l border-border/60" data-run-arms={exec.id}>
+          {arms.map((arm) => {
+            const armError = runErrorOf(arm)
+            return (
+              <div key={arm.id} className="text-xs" data-run-arm={arm.id}>
+                <div className="flex items-center gap-2">
+                  <span className={`size-1.5 rounded-full shrink-0 ${RUN_DOT[arm.status] ?? "bg-muted-foreground"}`} />
+                  <span className="truncate font-medium">{arm.name || arm.workflow_ref || `执行 ${arm.id.slice(0, 8)}`}</span>
+                  <span className="ml-auto text-muted-foreground shrink-0">{RUN_STATUS_LABEL[arm.status] ?? arm.status}</span>
+                </div>
+                {armError && <div className="text-pop-red break-words pl-3.5" data-run-error={arm.id}>{armError}</div>}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span><Clock className="size-3 inline mr-1" />{fmtTime(exec.started_at ?? exec.created_at)}</span>
@@ -437,7 +475,7 @@ export function ArtifactsCard({ taskId }: { taskId: string }) {
   useEffect(() => {
     refetch()
     // 产物索引更新即刷新（task-home 写入方会 emit 到 /api/tasks/events）。
-    const unsub = subscribeSSE(`${getServerUrl()}/api/tasks/events`, "task_artifacts_update", () => refetch())
+    const unsub = subscribeSSE(`${getServerUrl()}/api/tasks/events`, TASK_ARTIFACTS_UPDATE_EVENT, () => refetch())
     return unsub
   }, [refetch])
 
@@ -527,7 +565,7 @@ export function TaskRunDetailView({ task }: { task: Task }) {
   useEffect(() => {
     const unsub = subscribeSSE(
       `${getServerUrl()}/api/tasks/events`,
-      "task_execution",
+      TASK_EXECUTION_EVENT,
       (e: MessageEvent) => {
         try {
           const payload = JSON.parse(e.data) as { task_id?: string }

@@ -4,15 +4,18 @@
 // autoAdvance 开关 的浏览器 E2E（AC1-AC5）。
 //
 // Fixture 策略沿用票 11 spec（R1/R3/R7）：v4 任务经 API 直造（POST→PUT
-// task_spec），派生 round 经 sqlite 直造 executions+schedules 链；产物文件写
+// task_spec），派生 round 经 sqlite 直造 **executions 行**（票03 口径：`task_id` 直连
+// + `parent_id='0'` = 一轮的根；deriveTaskView 不再走 schedules→schedule_executions
+// 归属链，那两条列已被 v42 删除）；产物文件写
 // 进真实 task home（~/.octopus/tasks/<id>/artifacts/... — scan-first 索引）。
 //
-// 诚实边界（票 12 记录）：
+// 诚实边界（票 12 记录，票06 按 ADR-0021 契约改写原因项）：
 //   • 「提交后 round+1 真开跑」需要真实 workspace/agent 执行 —— Web E2E 不
-//     拉起活体执行。rejected 的**真实提交**在此断到 server 409（信封无 v4
-//     物化 phases → dispatch 前抛，账本行保留 — 票 07 设计）+ DB 账本核对；
-//     提交成功后的 UI（形态推荐占位卡 / 影响清单空态）用 page.route fulfill
-//     票 07 契约形状的 200 驱动（请求 body 仍真实断言）。
+//     拉起活体执行。rejected 的**真实提交**在此断到 server 409（fixture 的 home 里
+//     没有批次 spec 文件 → armTask 的 resolveV4Phases 门前抛「任务契约已不再满足」，
+//     账本行保留 — 票 07 设计；信封时代的「无物化 phases」理由随 v39 一起消失）+
+//     DB 账本核对；提交成功后的 UI（形态推荐占位卡 / 影响清单空态）用 page.route
+//     fulfill 票 07 契约形状的 200 驱动（请求 body 仍真实断言）。
 //   • AC3（影响清单批准→spec 变化+version bump）：server 无 impact API（v4.1
 //     接缝），批准→updateSpecField(phases) 写回链路由组件测试断言；e2e 断
 //     空态渲染。phases spec-field 的服务端 bump 由票 07 AC5 集成覆盖。

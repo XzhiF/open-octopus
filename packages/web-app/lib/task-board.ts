@@ -21,7 +21,7 @@
 // the Record<TaskStatus, …> exhaustiveness point that forces new states to be
 // handled, 票 07 发现的 web typecheck 红线); the column layer folds buckets.
 
-import type { Task, TaskStatus } from "@octopus/shared"
+import { taskTriggerFailedPayloadSchema, type Task, type TaskStatus, type TaskTriggerFailedSsePayload } from "@octopus/shared"
 import type { TaskDerivedView, TaskPhaseView } from "@/lib/tasks-api"
 
 /** All persisted/displayable task states (v4 K3: + awaiting_review/archiving). */
@@ -191,4 +191,26 @@ export function overBudgetRoundOf(
     }
   }
   return null
+}
+
+// ── task_trigger_failed (票05 — 「到点但起不来」) ────────────────────
+
+/** Parse one `task_trigger_failed` SSE frame. The field vocabulary is owned by
+ *  shared's `taskTriggerFailedPayloadSchema` — web must NOT redeclare it here
+ *  (this function only bridges SSE text → the shared type). Malformed / foreign
+ *  shapes (e.g. the pre-票05 `{action}` payload) parse-fail to null and the
+ *  caller ignores the frame: a notification the board cannot read must not
+ *  crash the board.
+ *
+ *  Why this is its own event instead of a fold into task_status: the trigger
+ *  failed but the task's STATUS did not move (it goes back to / stays at
+ *  ready). task_status would be lying; this event says "nothing happened, and
+ *  here is why" — without it the only trace is a server log and the card sits
+ *  at 「待执行」 forever (the fire cursor retired itself). */
+export function parseTaskTriggerFailed(data: string): TaskTriggerFailedSsePayload | null {
+  try {
+    return taskTriggerFailedPayloadSchema.parse(JSON.parse(data))
+  } catch {
+    return null
+  }
 }
