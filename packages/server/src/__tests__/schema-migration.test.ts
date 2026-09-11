@@ -298,10 +298,12 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
   }
 
-  it("pins the current version at 42", () => {
+  it("pins the current version at 42+", () => {
     db = createTestDb()
     applySchema(db)
-    expect(SCHEMA_VERSION).toBe(42)
+    // v43 (token-capture-1 票01) bumped the constant past 42; the exact value is
+    // pinned by the v43 describe below.
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42)
   })
 
   it("① fresh DB: no envelope columns, run-state columns present", () => {
@@ -404,5 +406,190 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     expect(() => applySchema(db)).not.toThrow()
     const cols = scheduleCols(db)
     for (const col of ENVELOPE_COLS) expect(cols).not.toContain(col)
+  })
+})
+
+/**
+ * schema v43 (token-capture-1 票01 / KD1+KD5) — `llm_calls` + `node_token_usages`
+ * become chat-shaped:
+ *   - node_execution_id (and llm_calls.execution_id) go NULLABLE — FK stays (NULL never
+ *     fires it); chat rounds have no node host, the NOT NULL made chat rows physically
+ *     uninsertable.
+ *   - llm_calls gains source/trace_id/span_id; node_token_usages gains session_id/trace_id.
+ * NOT NULL can't be ALTERed away, so existing DBs converge via a data-preserving rebuild.
+ *
+ * Old-shape simulation inserts with foreign_keys OFF (the migration itself only sees the
+ * two grafted tables; the rest of the schema lands via schema.sql afterwards).
+ */
+describe("Schema v43 — llm_calls/node_token_usages: nullable host + trace/source cols", () => {
+  let db: Database.Database
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  // Verbatim pre-v43 CREATE TABLEs from schema.sql (the NOT NULL shape being migrated away).
+  const OLD_LLM_CALLS_DDL = `
+    CREATE TABLE llm_calls (
+      id                    TEXT PRIMARY KEY,
+      node_execution_id     TEXT NOT NULL,
+      execution_id          TEXT NOT NULL,
+      turn_index            INTEGER NOT NULL,
+      call_index            INTEGER NOT NULL,
+      message_id            TEXT,
+      model                 TEXT,
+      stop_reason           TEXT,
+      timestamp             INTEGER NOT NULL,
+      duration_ms           INTEGER NOT NULL,
+      ttft_ms               INTEGER,
+      input_tokens          INTEGER NOT NULL DEFAULT 0,
+      output_tokens         INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd              REAL,
+      org                   TEXT,
+      workspace_id          TEXT,
+      workflow_ref          TEXT,
+      node_id               TEXT,
+      session_id            TEXT,
+      instance_id           TEXT,
+      FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+    )`
+  const OLD_NTU_DDL = `
+    CREATE TABLE node_token_usages (
+      id TEXT PRIMARY KEY,
+      node_execution_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      source TEXT DEFAULT 'node',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+    )`
+
+  function tableInfo(database: Database.Database, table: string) {
+    return database.prepare(`PRAGMA table_info(${table})`).all() as
+      { name: string; notnull: number }[]
+  }
+
+  function sums(database: Database.Database, table: string) {
+    return database.prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),-1) AS tin,
+              COALESCE(SUM(output_tokens),-1) AS tout, COALESCE(SUM(cost_usd),-1) AS cost
+       FROM ${table}`,
+    ).get()
+  }
+
+  it("fresh DB: new columns exist, host columns are nullable", () => {
+    db = createTestDb()
+    applySchema(db)
+    const lc = tableInfo(db, "llm_calls")
+    const lcNames = lc.map(c => c.name)
+    expect(lcNames).toEqual(expect.arrayContaining(["source", "trace_id", "span_id"]))
+    expect(lc.find(c => c.name === "node_execution_id")!.notnull).toBe(0)
+    expect(lc.find(c => c.name === "execution_id")!.notnull).toBe(0)
+    const ntu = tableInfo(db, "node_token_usages")
+    const ntuNames = ntu.map(c => c.name)
+    expect(ntuNames).toEqual(expect.arrayContaining(["session_id", "trace_id"]))
+    expect(ntu.find(c => c.name === "node_execution_id")!.notnull).toBe(0)
+    expect(SCHEMA_VERSION).toBe(43)
+  })
+
+  it("fresh DB: chat-shaped rows (NULL host, FK ON) insert cleanly", () => {
+    db = createTestDb()
+    applySchema(db)
+    expect(() => db.prepare(
+      `INSERT INTO llm_calls (id, turn_index, call_index, timestamp, duration_ms,
+        source, trace_id, span_id, session_id)
+       VALUES ('c1', 0, 0, 1, 1, 'chat', 't1', 's1', 'sess-1')`,
+    ).run()).not.toThrow()
+    expect(() => db.prepare(
+      `INSERT INTO node_token_usages (id, model, created_at, source, session_id, trace_id)
+       VALUES ('u1', 'claude-x', 'now', 'chat', 'sess-1', 't1')`,
+    ).run()).not.toThrow()
+    // FK declaration retained: a non-NULL host pointing nowhere must still throw.
+    expect(() => db.prepare(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index,
+        timestamp, duration_ms) VALUES ('c2', 'ghost-ne', 'ghost-ex', 0, 0, 1, 1)`,
+    ).run()).toThrow()
+  })
+
+  it("fresh DB: back-read indexes exist", () => {
+    db = createTestDb()
+    applySchema(db)
+    const idx = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name IN ('llm_calls','node_token_usages')",
+    ).all() as { name: string }[]).map(i => i.name)
+    expect(idx).toEqual(expect.arrayContaining(["idx_llm_calls_source_session", "idx_llm_calls_trace"]))
+  })
+
+  it("existing DB: rebuild preserves every row's values", () => {
+    db = createTestDb()
+    db.pragma("foreign_keys = OFF")
+    db.exec(OLD_LLM_CALLS_DDL)
+    db.exec(OLD_NTU_DDL)
+    db.prepare(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index,
+        timestamp, duration_ms, input_tokens, output_tokens, cost_usd, session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('l1', 'ne-1', 'ex-1', 0, 0, 100, 50, 10, 20, 0.5, 'sess-a')
+    db.prepare(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index,
+        timestamp, duration_ms, input_tokens, output_tokens, cost_usd)
+       VALUES ('l2', 'ne-2', 'ex-1', 1, 0, 200, 60, 30, 40, NULL)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+        cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
+       VALUES ('u1', 'ne-1', 'claude-x', 10, 20, 0.5, 3, 4, 'node', 'now')`,
+    ).run()
+    const beforeLc = sums(db, "llm_calls")
+    const beforeNtu = sums(db, "node_token_usages")
+    const KEPT_COLS = "id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, input_tokens, output_tokens, cost_usd, session_id"
+    const beforeRow = db.prepare(`SELECT ${KEPT_COLS} FROM llm_calls WHERE id='l1'`).get()
+    db.pragma("foreign_keys = ON")
+
+    applySchema(db)
+
+    // 逐值对照（count + token sum + cost sum）
+    expect(sums(db, "llm_calls")).toEqual(beforeLc)
+    expect(sums(db, "node_token_usages")).toEqual(beforeNtu)
+    // 原行逐字段不变
+    const afterRow = db.prepare(`SELECT ${KEPT_COLS} FROM llm_calls WHERE id='l1'`).get()
+    expect(afterRow).toEqual(beforeRow)
+    // 新列已挂上，NULL host 插入此后合法
+    const lc = tableInfo(db, "llm_calls")
+    expect(lc.map(c => c.name)).toEqual(expect.arrayContaining(["source", "trace_id", "span_id"]))
+    expect(lc.find(c => c.name === "node_execution_id")!.notnull).toBe(0)
+    expect(() => db.prepare(
+      `INSERT INTO llm_calls (id, turn_index, call_index, timestamp, duration_ms, source, trace_id, span_id)
+       VALUES ('c-new', 0, 0, 1, 1, 'chat', 't1', 's1')`,
+    ).run()).not.toThrow()
+  })
+
+  it("existing DB: migration is idempotent (second pass no-op, rows untouched)", () => {
+    db = createTestDb()
+    db.pragma("foreign_keys = OFF")
+    db.exec(OLD_LLM_CALLS_DDL)
+    db.exec(OLD_NTU_DDL)
+    db.prepare(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index,
+        timestamp, duration_ms, input_tokens, output_tokens) VALUES ('l1','ne-1','ex-1',0,0,1,1,10,20)`,
+    ).run()
+    db.pragma("foreign_keys = ON")
+
+    applySchema(db)
+    const snapshot = { lc: sums(db, "llm_calls"), ntu: sums(db, "node_token_usages") }
+    applySchema(db)
+    expect(sums(db, "llm_calls")).toEqual(snapshot.lc)
+    expect(sums(db, "node_token_usages")).toEqual(snapshot.ntu)
+    // 迁移函数第二遍必须整体跳过（备份/重建残渣表不得出现）
+    const strays = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_v43_%' OR name LIKE '%backup_v43%')",
+    ).all() as { name: string }[])
+    expect(strays).toEqual([])
   })
 })

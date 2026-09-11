@@ -36,21 +36,27 @@ export class TokenUsageDAO extends BaseDAO {
    * （ExecutionDAO.insertNodeTokenUsage / 本表旧 insert / HarnessDAO.insertHarnessTokenUsage）
    * 收编于此：UPSERT 累加 + source 判别 + cost 三态（未知保持 NULL，绝不焊 0）。
    * 同 id 冲突累加（engine/harness 用确定式 id 重跑累加；interaction 每轮新 uuid 不冲突）。
+   *
+   * v43 (token-capture-1 票02): nodeExecutionId 可空（chat 账本行无节点宿主，票01 已放
+   * 可空）；chat 路径带 sessionId/traceId 填票01 新列。累加语义不变 —— chat 的防重放
+   * 由确定式 id + 捕获侧存在性检查承担，不在此动刀。
    */
   recordNodeUsage(input: {
     id: string
-    nodeExecutionId: string
+    nodeExecutionId: string | null
     model: string
     usage: Pick<TokenUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>
     /** SDK/calibrate 给的价格；null/undefined = 未给，入口会查价表估算（ledgerCostUsd） */
     costUsd?: number | null
     source: NodeUsageSource
     createdAt: string
+    sessionId?: string | null
+    traceId?: string | null
   }): Database.RunResult {
     const cost = ledgerCostUsd(input.usage, input.model, input.costUsd)
     return this.stmt(`
-      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at, session_id, trace_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         input_tokens = input_tokens + excluded.input_tokens,
         output_tokens = output_tokens + excluded.output_tokens,
@@ -65,7 +71,7 @@ export class TokenUsageDAO extends BaseDAO {
       input.id, input.nodeExecutionId, input.model,
       input.usage.inputTokens, input.usage.outputTokens, cost,
       input.usage.cacheReadTokens, input.usage.cacheCreationTokens,
-      input.source, input.createdAt,
+      input.source, input.createdAt, input.sessionId ?? null, input.traceId ?? null,
     )
   }
 
@@ -202,6 +208,31 @@ export class TokenUsageDAO extends BaseDAO {
     return this.stmt("SELECT * FROM llm_calls WHERE node_execution_id = ?").all(nodeExecutionId) as LlmCallRow[]
   }
 
+  /**
+   * 票03 回读 seam（最小面）：按 session_id/trace_id 查明细，可叠加 source 词表与
+   * timestamp（epoch ms）窗口。rounds 聚合在路由侧用 shared/ledger.ts 具名口径函数
+   * 对返回行做 JS 折叠（口径单源；limit 截断后 rounds 与 calls 保持自洽）。
+   */
+  queryLlmCalls(f: {
+    sessionId?: string
+    traceId?: string
+    source?: string
+    from?: number
+    to?: number
+    limit: number
+  }): LlmCallRow[] {
+    const where: string[] = []
+    const params: unknown[] = []
+    if (f.sessionId) { where.push("session_id = ?"); params.push(f.sessionId) }
+    if (f.traceId) { where.push("trace_id = ?"); params.push(f.traceId) }
+    if (f.source) { where.push("source = ?"); params.push(f.source) }
+    if (f.from != null) { where.push("timestamp >= ?"); params.push(f.from) }
+    if (f.to != null) { where.push("timestamp <= ?"); params.push(f.to) }
+    return this.stmt(
+      `SELECT * FROM llm_calls ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY timestamp ASC, id ASC LIMIT ?`,
+    ).all(...params, f.limit) as LlmCallRow[]
+  }
+
   findLlmCallsByWorkspace(workspaceId: string, sinceTimestamp?: number): LlmCallRow[] {
     if (sinceTimestamp) {
       return this.stmt(
@@ -219,14 +250,16 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id,
+        source, trace_id, span_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
       row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
       row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
       row.cache_creation_tokens, row.cost_usd, row.org, row.workspace_id,
       row.workflow_ref, row.node_id, row.session_id, row.instance_id,
+      row.source ?? null, row.trace_id ?? null, row.span_id ?? null,
     )
   }
 
@@ -251,16 +284,20 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
+        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id,
+        source, trace_id, span_id
       ) VALUES (
         @id, @node_execution_id, @execution_id, @turn_index, @call_index,
         @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
         @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id
+        @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id,
+        @source, @trace_id, @span_id
       )
     `)
     this.transaction(() => {
-      for (const row of rows) insertStmt.run(row)
+      // better-sqlite3 要求对象含全部 named 参数；v43 新列对旧调用方（observability）
+      // 缺省 = NULL，兜底放在展开之前。
+      for (const row of rows) insertStmt.run({ source: null, trace_id: null, span_id: null, ...row })
     })
   }
 

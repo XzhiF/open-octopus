@@ -165,9 +165,11 @@ CREATE TABLE IF NOT EXISTS orgs (
 );
 
 -- 9. Node Token Usages
+-- v43 (token-capture-1 票01 / KD1): node_execution_id 可空（chat 轮次无节点宿主；FK 保留，
+-- NULL 不触约束）；+ session_id/trace_id（路径链 session→trace→明细，KD5）。
 CREATE TABLE IF NOT EXISTS node_token_usages (
   id TEXT PRIMARY KEY,
-  node_execution_id TEXT NOT NULL,
+  node_execution_id TEXT,
   model TEXT NOT NULL,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -176,6 +178,8 @@ CREATE TABLE IF NOT EXISTS node_token_usages (
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   source TEXT DEFAULT 'node',
   created_at TEXT NOT NULL,
+  session_id TEXT,
+  trace_id TEXT,
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
 );
 
@@ -201,10 +205,13 @@ CREATE TABLE IF NOT EXISTS agent_events (
 );
 
 -- 11. LLM Calls
+-- v43 (token-capture-1 票01 / KD1+KD5): node_execution_id/execution_id 可空（chat 调用
+-- 无宿主；FK 保留）；+ source/trace_id/span_id（source 词表 phase1 仅新增 'chat'，
+-- 既有行为 NULL；trace_id=一轮聊天、span_id=单次 call 的 tracker messageId）。
 CREATE TABLE IF NOT EXISTS llm_calls (
   id                    TEXT PRIMARY KEY,
-  node_execution_id     TEXT NOT NULL,
-  execution_id          TEXT NOT NULL,
+  node_execution_id     TEXT,
+  execution_id          TEXT,
   turn_index            INTEGER NOT NULL,
   call_index            INTEGER NOT NULL,
   message_id            TEXT,
@@ -224,6 +231,9 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   node_id               TEXT,
   session_id            TEXT,
   instance_id           TEXT,
+  source                TEXT,
+  trace_id              TEXT,
+  span_id               TEXT,
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
 );
 
@@ -716,6 +726,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_node ON llm_calls(node_execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_execution ON llm_calls(execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_workspace_workflow ON llm_calls(workspace_id, workflow_ref);
+-- v43 (token-capture-1 票01): 回读（按会话查 chat 明细）与 phase 3 聚类的前置索引
+CREATE INDEX IF NOT EXISTS idx_llm_calls_source_session ON llm_calls(source, session_id);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls(trace_id);
 CREATE INDEX IF NOT EXISTS idx_suggestions_workspace ON optimization_suggestions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON optimization_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_summaries_workflow ON execution_summaries(workflow_ref, workspace_id);

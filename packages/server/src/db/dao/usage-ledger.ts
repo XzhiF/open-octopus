@@ -6,7 +6,8 @@ import { estimateCost, priceFor, type TokenUsage } from '@octopus/shared'
  * TokenUsageDAO.recordNodeUsage，本模块提供其唯一的 cost 决策函数。
  */
 
-export type NodeUsageSource = 'node' | 'interaction' | 'harness'
+// 'chat'：token-capture-1 票01 / KD6 —— phase1 词表只扩这一个值，其余归 phase2。
+export type NodeUsageSource = 'node' | 'interaction' | 'harness' | 'chat'
 
 /**
  * ledger 的 cost 三态（与 shared/ledger.LedgerCost 语义一致）：

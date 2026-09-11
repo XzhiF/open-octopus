@@ -8,9 +8,13 @@
 //
 import fs from 'fs'
 import path from 'path'
+import { randomUUID } from 'crypto'
 import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
+import { getDb } from '../../db'
+import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import { captureChatRound } from './chat-usage-capture'
 import {
   getAgentDir,
   getAgentSkillsDir,
@@ -311,6 +315,10 @@ export class CloneRuntime {
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
+    // token-capture-1 票02 (KD5): trace_id = 本轮聊天的运行标识（session 内唯一）。
+    // 捕获 seam 唯一挂在本方法终局（两处 yield* 正常完成之后）；provider 抛错/
+    // 消费者中断 → 轮未终局，不落库（KD3 接受丢当前轮）。
+    const traceId = randomUUID()
 
     // First attempt: use resume if available
     try {
@@ -327,6 +335,7 @@ export class CloneRuntime {
         subagents,
       )
       yield* stream
+      this.captureChatUsage(sessionId, traceId)
       return
     } catch (err) {
       // Resume failure → retry without resume
@@ -347,6 +356,7 @@ export class CloneRuntime {
             subagents,
           )
           yield* stream
+          this.captureChatUsage(sessionId, traceId)
           return
         } catch (retryErr) {
           console.error(`[CloneRuntime] Retry without resume also failed:`,
@@ -364,6 +374,32 @@ export class CloneRuntime {
   }
 
   // ── Private Helpers ─────────────────────────────────────────────
+
+  /**
+   * token-capture-1 票02 —— 轮次末消费 provider tracker（已 calibrate 的权威值），
+   * 明细批写 + 账本行（唯一入口 recordNodeUsage，见 chat-usage-capture.ts）。
+   * 捕获永不阻断聊天：一切失败 console.error 后吞掉（丢轮 = KD3 接受面）。
+   *
+   * ponytail: KD3 轮次末批写 —— 崩溃丢当前轮；有实测丢失再升级逐条即时写。
+   */
+  private captureChatUsage(sessionId: string, traceId: string): void {
+    try {
+      const records = getProvider('claude').getLLMCalls?.() ?? []
+      if (records.length === 0) return
+      captureChatRound(new TokenUsageDAO(getDb()), {
+        sessionId,
+        org: this.org,
+        traceId,
+        records,
+      })
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[CloneRuntime] chat usage capture failed (round lost, KD3):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
 
   /**
    * Send query via provider with clone context and plugin-based skill

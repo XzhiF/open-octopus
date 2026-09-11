@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 42
+export const SCHEMA_VERSION = 43
 
 /**
  * Apply the complete unified schema to the given database.
@@ -102,6 +102,10 @@ function handleSchemaMigrations(db: Database.Database): void {
   // schema v42 (ADR-0021 票03): schedules stops being a task's shadow — the polymorphic
   // origin back-reference and the envelope's due-time column come off.
   migrateSchedulesV42DropOriginCols(db)
+
+  // schema v43 (token-capture-1 票01 / KD1): llm_calls + node_token_usages — host cols
+  // go nullable, trace/source cols land (rebuild式迁移, NOT NULL 无法 ALTER 掉).
+  migrateTokenTablesV43(db)
 }
 
 /**
@@ -685,4 +689,111 @@ function migrateTasksStatusCheckV40(db: Database.Database): void {
   }
   // eslint-disable-next-line no-console
   console.log(`[schema] Rebuilt tasks with v40 status CHECK (awaiting_review/archiving added, failed kept for v3; ${count} rows preserved)`)
+}
+
+/**
+ * schema v43 (token-capture-1 票01 / KD1+KD5) — `llm_calls` + `node_token_usages`
+ * 装得下 chat 轮次：`node_execution_id`（及 llm_calls 的 `execution_id`）放可空
+ * （chat 无节点宿主；FK 声明保留 —— NULL 不触约束），并挂追踪列：
+ *   llm_calls  + source/trace_id/span_id（既有行保持 NULL，词表 phase1 仅新增 'chat'）
+ *   ntu        + session_id/trace_id
+ *
+ * SQLite 不能 ALTER 掉 NOT NULL，所以既有库走保数据重建（v40 tasks 的形状）：建
+ * v43 形表 → 复制新旧共有列（半迁移老库也稳） → 事务内换名。两表都不是任何 FK 的
+ * 父表（grep REFERENCES llm_calls|node_token_usages 零命中），换名不悬置子 FK
+ * （v37 的坑）。foreign_keys 只在 swap 周围关掉（旧行可能指向已删节点），finally 还原。
+ *
+ * 幂等：检测 = host 列已可空且新列齐 → 跳过；fresh DB 表还不存在 → 跳过，schema.sql
+ * 直接建 v43 形。旧索引随 DROP TABLE 消失，schema.sql 的 CREATE INDEX IF NOT EXISTS
+ * （在 handleSchemaMigrations 之后执行）在重建表上复原它们 + 新增两条回读索引。
+ */
+function migrateTokenTablesV43(db: Database.Database): void {
+  // DDL 与 schema.sql 的 v43 CREATE TABLE 保持逐字同步。
+  const targets = [
+    {
+      table: "llm_calls",
+      newCols: ["source", "trace_id", "span_id"],
+      ddl: `CREATE TABLE llm_calls_v43_rebuild (
+  id                    TEXT PRIMARY KEY,
+  node_execution_id     TEXT,
+  execution_id          TEXT,
+  turn_index            INTEGER NOT NULL,
+  call_index            INTEGER NOT NULL,
+  message_id            TEXT,
+  model                 TEXT,
+  stop_reason           TEXT,
+  timestamp             INTEGER NOT NULL,
+  duration_ms           INTEGER NOT NULL,
+  ttft_ms               INTEGER,
+  input_tokens          INTEGER NOT NULL DEFAULT 0,
+  output_tokens         INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd              REAL,
+  org                   TEXT,
+  workspace_id          TEXT,
+  workflow_ref          TEXT,
+  node_id               TEXT,
+  session_id            TEXT,
+  instance_id           TEXT,
+  source                TEXT,
+  trace_id              TEXT,
+  span_id               TEXT,
+  FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+)`,
+    },
+    {
+      table: "node_token_usages",
+      newCols: ["session_id", "trace_id"],
+      ddl: `CREATE TABLE node_token_usages_v43_rebuild (
+  id TEXT PRIMARY KEY,
+  node_execution_id TEXT,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  source TEXT DEFAULT 'node',
+  created_at TEXT NOT NULL,
+  session_id TEXT,
+  trace_id TEXT,
+  FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+)`,
+    },
+  ]
+
+  const tableCols = (t: string) =>
+    db.prepare(`PRAGMA table_info(${t})`).all() as { name: string; notnull: number }[]
+
+  const pending = targets.filter((t) => {
+    const cols = tableCols(t.table)
+    if (cols.length === 0) return false // fresh DB: schema.sql creates the v43 shape
+    const host = cols.find((c) => c.name === "node_execution_id")
+    if (host && host.notnull === 1) return true
+    return t.newCols.some((nc) => !cols.some((c) => c.name === nc))
+  })
+  if (pending.length === 0) return
+
+  const rebuild = db.transaction(() => {
+    for (const t of pending) {
+      const count = (db.prepare(`SELECT COUNT(*) AS cnt FROM ${t.table}`).get() as { cnt: number }).cnt
+      db.exec(t.ddl)
+      const rebuilt = new Set(tableCols(`${t.table}_v43_rebuild`).map((c) => c.name))
+      const shared = tableCols(t.table).map((c) => c.name).filter((c) => rebuilt.has(c))
+      db.exec(`INSERT INTO ${t.table}_v43_rebuild (${shared.join(", ")}) SELECT ${shared.join(", ")} FROM ${t.table}`)
+      db.exec(`DROP TABLE ${t.table}`)
+      db.exec(`ALTER TABLE ${t.table}_v43_rebuild RENAME TO ${t.table}`)
+      // eslint-disable-next-line no-console
+      console.log(`[schema] v43: rebuilt ${t.table} (host cols nullable + trace/source cols; ${count} rows preserved)`)
+    }
+  })
+
+  const fkWasOn = db.pragma("foreign_keys", { simple: true }) as number
+  db.pragma("foreign_keys = OFF")
+  try {
+    rebuild()
+  } finally {
+    if (fkWasOn) db.pragma("foreign_keys = ON")
+  }
 }
