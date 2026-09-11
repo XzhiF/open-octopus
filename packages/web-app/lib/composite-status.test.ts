@@ -4,7 +4,7 @@ import { computeAggregateStatus } from "./composite-status"
 describe("computeAggregateStatus", () => {
   // Helper: build children with given statuses.
   const children = (statuses: string[]) =>
-    statuses.map((s) => ({ status: s, name: "x", schedule_id: "x", workflow_ref: "x", subunit_name: "x" }))
+    statuses.map((s) => ({ status: s, name: "x", run_id: "x", workflow_ref: "x", subunit_name: "x" }))
 
   it("returns failed if any child failed", () => {
     const kids = children(["done", "failed", "running"])
@@ -45,5 +45,19 @@ describe("computeAggregateStatus", () => {
   it("failed takes precedence over running", () => {
     const kids = children(["failed", "running"])
     expect(computeAggregateStatus(kids, "running")).toBe("failed")
+  })
+
+  // ── ADR-0021 票03: children are executions rows, so the vocabulary is theirs now ──
+
+  it("a pending (armed, waiting behind the cap) run keeps the composite in flight", () => {
+    expect(computeAggregateStatus(children(["pending", "completed"]), "running")).toBe("running")
+  })
+
+  it("all runs completed + parent done → done", () => {
+    expect(computeAggregateStatus(children(["completed", "completed"]), "done")).toBe("done")
+  })
+
+  it("cancelled counts as a terminal failure", () => {
+    expect(computeAggregateStatus(children(["cancelled", "completed"]), "running")).toBe("aborted")
   })
 })

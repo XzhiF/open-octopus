@@ -10,14 +10,13 @@ import {
   SchedulerTriggerConflictError,
   SchedulerTriggerSourceMismatchError,
   SchedulerJobNotAbortableError,
-  type CreateJobInputWithSpec,
-  type UpdateJobInputWithSpec,
+  SchedulerBuiltinJobProtectedError,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
-import { OriginTypeSchema, type OriginType } from '@octopus/shared'
+import { type CreateJobInput, type UpdateJobInput, type JobType, jobTypeSchema } from '@octopus/shared'
 import type { AgentSessionDAO } from '../db/dao'
 
 // G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
@@ -161,6 +160,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof SchedulerTriggerConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerSourceMismatchError) return { status: 400, message: err.message }
   if (err instanceof SchedulerJobNotAbortableError) return { status: 400, message: err.message }
+  if (err instanceof SchedulerBuiltinJobProtectedError) return { status: 400, message: err.message }
   if (err instanceof ConfigValidationError) return { status: 400, message: err.message }
 
   const msg = err instanceof Error ? err.message : String(err)
@@ -182,6 +182,24 @@ function parseIntParam(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
+/**
+ * A query param that names an enum member, validated instead of cast.
+ *
+ * The list route used to write `c.req.query('job_type') as 'workflow' | 'agent'` — a cast
+ * that was wrong twice over: it excluded 'job' (so the page could never filter to the
+ * built-in rows the 票02 job type exists to make visible), and it lied about the wire,
+ * since any string in the URL reached the DAO's WHERE clause unchanged. Off-contract
+ * values now read as "no filter", which is what a garbage query means anyway.
+ */
+function pickEnum<T extends string>(raw: string | undefined, allowed: readonly T[]): T | undefined {
+  return allowed.find((v) => v === raw)
+}
+
+const JOB_TYPES = jobTypeSchema.options
+const LIST_STATUSES = ['enabled', 'disabled', 'failed'] as const
+const LIST_SORTS = ['name', 'created_at', 'next_trigger_at'] as const
+const LIST_ORDERS = ['asc', 'desc'] as const
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createSchedulerRoutes(
@@ -197,34 +215,21 @@ export function createSchedulerRoutes(
   // GET /jobs — list with pagination, filtering, sorting
   router.get('/jobs', rateLimitDefault, (c) => {
     try {
-      // 2026-08-29 (task-board observability, approach A): the old default
-      // `trigger_source ?? 'cron'` hid every origin_type='task' schedule the
-      // readyTask dispatch seam creates — running tasks were invisible in the
-      // 系统调度 UI while DashboardCards counted them. Now: NO origin filter by
-      // default (the table spans all origins), with an explicit ?origin=
-      // single-origin filter for focused views. ?trigger_source= stays for
-      // backward compatibility (legacy 'cron'/'requirement' coarse mapping).
-      const rawTrigger = c.req.query('trigger_source') as 'cron' | 'requirement' | undefined
-      const rawOrigin = c.req.query('origin')
-      let origin: OriginType | undefined
-      if (rawOrigin !== undefined) {
-        const parsed = OriginTypeSchema.safeParse(rawOrigin)
-        if (!parsed.success) {
-          return c.json({ error: `invalid origin: '${rawOrigin}' (expected one of: cron, task, agent, manual, api)` }, 400)
-        }
-        origin = parsed.data
-      }
+      // 票03 (ADR-0021): ?trigger_source= and ?origin= are gone with the columns. The
+      // 2026-08-29 note here explained why the list must NOT default to cron-only —
+      // because task envelopes were mixed into the same table. They no longer are, so
+      // every row listed is a job and there is nothing left to filter task-ness out of.
       const result = service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
         search: c.req.query('search'),
-        status: c.req.query('status') as 'enabled' | 'disabled' | 'failed' | undefined,
-        job_type: c.req.query('job_type') as 'workflow' | 'agent' | undefined,
+        status: pickEnum(c.req.query('status'), LIST_STATUSES),
+        // 'job' is a legal filter value: the scheduler page's whole point after ADR-0021
+        // is that it lists jobs, including the built-in task-lifecycle one.
+        job_type: pickEnum<JobType>(c.req.query('job_type'), JOB_TYPES),
         workspace_id: c.req.query('workspace_id'),
-        sort: c.req.query('sort') as 'name' | 'created_at' | 'next_trigger_at' | undefined,
-        order: c.req.query('order') as 'asc' | 'desc' | undefined,
-        trigger_source: rawTrigger,
-        origin,
+        sort: pickEnum(c.req.query('sort'), LIST_SORTS),
+        order: pickEnum(c.req.query('order'), LIST_ORDERS),
       })
       return c.json(result)
     } catch (err: unknown) {
@@ -242,7 +247,7 @@ export function createSchedulerRoutes(
     // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
     // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
-      const job = service.createJob(body as CreateJobInputWithSpec)
+      const job = service.createJob(body as CreateJobInput)
       return c.json(job, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -277,7 +282,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.updateJob(c.req.param('id'), body as UpdateJobInputWithSpec, version)
+      const job = service.updateJob(c.req.param('id'), body as UpdateJobInput, version)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -314,17 +319,6 @@ export function createSchedulerRoutes(
     try {
       const result = service.triggerJob(c.req.param('id'))
       return c.json(result)
-    } catch (err: unknown) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status)
-    }
-  })
-
-  // POST /jobs/:id/enqueue — draft → queued (task pool 入池)
-  router.post('/jobs/:id/enqueue', rateLimitDefault, (c) => {
-    try {
-      const job = service.enqueueJob(c.req.param('id'))
-      return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

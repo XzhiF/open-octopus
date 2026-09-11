@@ -2,23 +2,26 @@
 //
 // Ticket 12 — Story B: composite task full closed loop (spec § Appendix B).
 //
-// Flow: 3 subunits + integration_goal=synthesis → [入队] → coordinator +
-// N child schedules (origin_role=subunit) → task_dispatch pause-resume →
-// moa aggregate → done → modal composite drill-down (N children + DAG +
-// integration + events) → SSE parent+children. Sub failure → parent
-// failed (G2).
+// Flow: 3 subunits + integration_goal=synthesis → [入队] (票03 §新行为1: creates
+// NOTHING — no schedules row, no instance) → [触发] arms one ROOT execution (the
+// composite turn) → the coordinator dispatches N CHILD executions under that root
+// (executions.parent_id = the dispatching run, executions.name = the subunit's
+// name — the pair that replaced origin_role='subunit') → task_dispatch
+// pause-resume → moa aggregate → done → modal composite drill-down (N children +
+// DAG + integration + events) → SSE parent+children. Sub failure → parent failed
+// (G2).
 //
-// Anti-fake-run: R1 (real server + composition-task.yaml + task_dispatch),
-// R2 (assert origin_role=subunit), R3 (API↔DB), R4 (response+SQL), R5
-// (write-ops verify DB), R6 (real /tasks UI + composite modal), R7
-// (E2E_TD_ prefix), R8 (no manual prerequisites).
+// Anti-fake-run: R1 (real server + composition-task workflow + task_dispatch),
+// R2 (assert the fan-out by parent_id + name — there is no origin_role any more),
+// R3 (API↔DB), R4 (response+SQL), R5 (write-ops verify DB), R6 (real /tasks UI +
+// composite modal), R7 (E2E_TD_ prefix), R8 (no manual prerequisites).
 //
 // NOTE: The composite flow depends on the real composition-task workflow +
-// TaskDispatchService pause-resume bridge + a working provider. In an
-// environment without these, the coordinator schedule stays queued and the
-// subunit schedules are never created. The spec asserts the dispatch-seam
-// contract (coordinator schedule) unconditionally, and the children/DAG
-// assertions are gated on the children appearing.
+// TaskDispatchService pause-resume bridge + a working provider. In an environment
+// without these, the armed root stays 'pending' behind the concurrency gate and
+// the child executions are never created. The spec asserts the arm contract (one
+// root row, no envelope) unconditionally, and the children/DAG assertions are
+// gated on the children appearing.
 
 import { test, expect } from "@playwright/test"
 import {
@@ -36,12 +39,18 @@ import {
   readyTask,
   abortTask,
   deleteTask,
+  triggerTask,
   startSseSubscriber,
   readTaskRow,
-  readSchedulesByOrigin,
+  readTaskExecutions,
+  readTaskRootExecutions,
+  isTerminalExecutionStatus,
+  countSchedulesInOrg,
+  findTaskEnvelopeScheduleRows,
+  boardColumnFor,
   assertTaskMatchesDb,
   waitFor,
-  waitForTaskStatus,
+  type TaskExecutionRow,
   type SseSubscriber,
 } from "./helpers/task-domain-helpers"
 
@@ -91,7 +100,18 @@ test.describe("Story B: Composite task full closed loop", () => {
 
   test.afterAll(async () => {
     sseSub?.stop()
+    // Cleanup (R7). 票06: 触发 now really starts a round, so the task can be 'running' here
+    // — deleteTask refuses that with 409 「abort it first」 (it did not used to, because
+    // enqueue alone left the card at ready). Abort first, exactly like Story A does.
     for (const taskId of createdTaskIds) {
+      try {
+        const row = readTaskRow(taskId)
+        if (row && (row.status === "running" || row.status === "ready")) {
+          await abortTask(taskId)
+        }
+      } catch (err: unknown) {
+        logError(`cleanup abort ${taskId}: ${err instanceof Error ? err.message : String(err)}`)
+      }
       try {
         await deleteTask(taskId)
       } catch (err: unknown) {
@@ -147,85 +167,140 @@ test.describe("Story B: Composite task full closed loop", () => {
     log(`Composite task created: ${task.id} (3 subunits, synthesis)`)
   })
 
-  // ── AC2: [入队] → ready + coordinator schedule (dispatch seam) ─────
+  // ── AC2: [入队] creates nothing; [触发] arms the ONE root (the turn) ─
 
-  test("[入队] → ready + dispatch seam creates coordinator schedule (origin_role=coordinator)", async () => {
+  test("[入队] → ready with zero envelope rows; [触发] arms exactly one root execution", async () => {
     test.skip(!serverAvailable, "Server not available")
     test.skip(createdTaskIds.length === 0, "No task from previous step")
     const taskId = createdTaskIds[0]!
 
-    // POST /api/tasks/:id/ready — dispatch seam (composite → coordinator)
+    const schedulesBefore = countSchedulesInOrg(TASK_E2E_ORG)
+
+    // POST /api/tasks/:id/ready — the enqueue. Under the envelope this is where a
+    // coordinator schedule (origin_role='coordinator', status='queued') appeared.
     const ready = await readyTask(taskId)
     expect(ready.status, "Task should be ready after enqueue").toBe("ready")
 
-    // DB assert (R2/R4): 1 coordinator schedule created (NOT primary —
-    // composite dispatch seam creates origin_role='coordinator')
-    const schedules = readSchedulesByOrigin(taskId)
-    expect(schedules.length, "Should create 1 coordinator schedule").toBeGreaterThanOrEqual(1)
-    const coordinator = schedules[0]!
-    expect(coordinator.origin_type, "Schedule origin_type should be 'task'").toBe("task")
-    expect(coordinator.origin_role, "Schedule origin_role should be 'coordinator' (composite)").toBe("coordinator")
-    expect(coordinator.status, "Schedule status should be 'queued'").toBe("queued")
-
-    // The subunit schedules (origin_role='subunit') are NOT created at dispatch
-    // time — they're created at RUNTIME by TaskDispatchService.dispatchChildSchedule
-    // as the coordinator composition-task workflow runs. We assert this: at
-    // dispatch time, only the coordinator exists.
-    const subunitSchedules = schedules.filter((s) => s.origin_role === "subunit")
-    // At dispatch time, 0 subunit schedules exist (they're runtime-created).
-    // This will grow as the coordinator runs. We don't assert 0 here — the
-    // coordinator may have already started by the time we read.
-
-    // API assert (R3): GET /api/tasks/:id children[] lists the coordinator
-    const detail = await getTask(taskId)
-    expect(detail.children.length, "Task detail should list the coordinator schedule").toBeGreaterThanOrEqual(1)
+    // DB assert (R2/R4, 票03 §新行为1): enqueue is a gate + a status flip. Nothing was
+    // created in the scheduler's table, and no instance was armed.
     expect(
-      detail.children.find((c) => c.origin_role === "coordinator"),
-      "Children should include the coordinator schedule",
-    ).toBeDefined()
+      findTaskEnvelopeScheduleRows(taskId),
+      "票03 §新行为1: a composite task owns no schedules row either — its id appears nowhere there",
+    ).toHaveLength(0)
+    expect(
+      countSchedulesInOrg(TASK_E2E_ORG) - schedulesBefore,
+      "票03 §新行为1: 入队后 schedules 零条任务行 (the org's schedule-row count did not move)",
+    ).toBe(0)
+    expect(readTaskExecutions(taskId), "Enqueue arms no run — 已入队 is not 排队中").toHaveLength(0)
 
-    log(`[入队] → ready; coordinator schedule ${coordinator.id} created (status=queued)`)
+    // 「何时」 now lives on the task row (the envelope's private schedule carried it):
+    // manual trigger, no due cursor.
+    const dbRow = readTaskRow(taskId)!
+    expect(dbRow.trigger_mode, "A composite task defaults to a manual trigger").toBe("manual")
+    expect(dbRow.next_fire_at, "Nothing is due until a 触发 (or an armed cursor)").toBeNull()
+
+    // 票03 §新行为2: an explicit 触发 is what arms the run. The composite card is a
+    // COORDINATOR turn, so its root is the fan-out's parent.
+    await triggerTask(taskId)
+    const roots = await waitFor<TaskExecutionRow[]>(
+      () => {
+        const rs = readTaskRootExecutions(taskId)
+        return rs.length >= 1 ? rs : null
+      },
+      { timeoutMs: 30_000, intervalMs: 500, message: "触发 armed no root execution row" },
+    )
+    // The successor of origin_role='coordinator': exactly ONE root for this task, and it
+    // is the one the API calls `execution`.
+    expect(roots, "Exactly one root (the coordinator turn) is armed").toHaveLength(1)
+    const root = roots[0]!
+    expect(root.task_id, "The instance row carries the task id directly").toBe(taskId)
+    expect(root.parent_id, "The coordinator turn is a root (parent_id='0')").toBe("0")
+    // What the row may say at this instant is every state a run can be in: 排队中 (pending,
+    // armed behind the concurrency gate), 执行中 (running), or already terminal because the
+    // start itself failed (the composite coordinator needs its built-in workflow + a
+    // provider — a dev box without either fails here, and the failure lands ON THE ROW,
+    // which is 票03's improvement over the envelope: the reason is in var_pool.error and the
+    // card goes failed via the job's own mirror, instead of a schedule parked at 'queued').
+    expect(
+      ["pending", "running", "failed", "completed", "completed_with_failures", "aborted", "cancelled"],
+      `The armed root is a real run row; got ${root.status}`,
+    ).toContain(root.status)
+    if (isTerminalExecutionStatus(root.status)) {
+      const reason = (JSON.parse(root.var_pool || "{}") as { error?: string }).error
+      log(`协调器一轮立即红了（${root.status}: ${reason ?? "无原因"}）—— children 断言随之受限`)
+      expect(reason, "一个红的运行必须把原因写在行上（票05 §新事实2）").toBeTruthy()
+    }
+
+    // API assert (R3): the read model points at the same single row. children[] (the
+    // envelope rows) is gone; executions[] lists the roots.
+    const detail = await getTask(taskId)
+    expect(detail.execution, "The current-instance badge exists once the task ran").not.toBeNull()
+    expect(detail.execution!.id, "The `execution` badge IS the armed root").toBe(root.id)
+    expect(detail.executions.map((e) => e.id), "executions[] lists exactly that root").toEqual([root.id])
+    assertTaskMatchesDb(detail)
+
+    // The subunit runs (the successor of origin_role='subunit') are NOT created at arm
+    // time — the coordinator's own workflow creates them at RUNTIME via
+    // TaskDispatchService.dispatchChild. Deliberately not asserted as zero here: the
+    // coordinator may already have started by the time we read (same discipline as before).
+    log(`[入队] → ready (0 envelope rows); 触发 armed root ${root.id} (${root.status})`)
   })
 
-  // ── AC3: wait for children (subunit) schedules from TaskDispatchService ──
+  // ── AC3: the coordinator dispatches N child executions (the fan-out) ──
 
-  test("coordinator dispatches N subunit schedules (origin_role=subunit) via task_dispatch", async () => {
+  test("coordinator dispatches N child executions (parent_id + name) via task_dispatch", async () => {
     test.skip(!serverAvailable, "Server not available")
     test.skip(createdTaskIds.length === 0, "No task from previous step")
     const taskId = createdTaskIds[0]!
 
-    // Wait for subunit schedules to appear (TaskDispatchService.dispatchChildSchedule
-    // creates them as the coordinator's composition-task workflow runs).
-    // This depends on: real composition-task.yaml + task_dispatch + provider (R1).
+    const roots = readTaskRootExecutions(taskId)
+    test.skip(roots.length === 0, "No root armed (the 触发 step did not run)")
+    const rootId = roots[0]!.id
+
+    // Wait for the fan-out: child executions of THAT root, created as the coordinator's
+    // composition workflow runs (TaskDispatchService.dispatchChild → dispatchChildRun).
+    // This depends on: real composition workflow + task_dispatch + provider (R1).
     // Timeout is generous — the coordinator must claim + run first.
-    let subunitSchedules: ReturnType<typeof readSchedulesByOrigin> = []
+    const subunitNames = makeSubunits().map((s) => s.name)
+    let arms: TaskExecutionRow[] = []
     try {
-      const result = await waitFor(
+      arms = await waitFor<TaskExecutionRow[]>(
         () => {
-          const all = readSchedulesByOrigin(taskId)
-          const subs = all.filter((s) => s.origin_role === "subunit")
+          const subs = readTaskExecutions(taskId).filter((r) => r.parent_id === rootId)
           return subs.length >= 1 ? subs : null
         },
-        { timeoutMs: 180_000, intervalMs: 3000, message: "subunit schedules did not appear (coordinator may not have run)" },
+        { timeoutMs: 180_000, intervalMs: 3000, message: "no child executions appeared (coordinator may not have run)" },
       )
-      subunitSchedules = result as ReturnType<typeof readSchedulesByOrigin>
     } catch (err: unknown) {
-      // Non-fatal — the coordinator may not have run (no provider). We still
-      // assert the dispatch seam contract (coordinator exists) passed above.
-      logError(`Subunit schedules did not appear: ${err instanceof Error ? err.message : String(err)}`)
+      // Non-fatal — the coordinator may not have run (no provider). We still assert the
+      // arm contract (one root, no envelope) that passed above.
+      logError(`Child executions did not appear: ${err instanceof Error ? err.message : String(err)}`)
       log("Skipping children assertions — coordinator did not dispatch subunits (provider may be absent)")
-      test.skip(true, "Subunit schedules not created — coordinator may not have run (provider absent)")
+      test.skip(true, "No child executions — coordinator may not have run (provider absent)")
     }
 
-    // DB assert (R2): at least 1 subunit schedule with origin_role='subunit'
-    expect(subunitSchedules.length, "Should have at least 1 subunit schedule").toBeGreaterThanOrEqual(1)
-    for (const sub of subunitSchedules) {
-      expect(sub.origin_type, "Subunit schedule origin_type should be 'task'").toBe("task")
-      expect(sub.origin_role, "Subunit schedule origin_role should be 'subunit'").toBe("subunit")
+    // DB assert (R2): each arm is a child OF THE ROOT, and the row says which subunit it
+    // is. `name` (written by dispatchChildRun) is what `origin_role='subunit'` used to
+    // say, plus the identity of which arm — so this is the stronger form, not a substitute.
+    expect(arms.length, "At least one subunit execution").toBeGreaterThanOrEqual(1)
+    for (const arm of arms) {
+      expect(arm.task_id, "A subunit run belongs to the SAME task (no child task row)").toBe(taskId)
+      expect(arm.parent_id, "The arm's parent is the dispatching root run").toBe(rootId)
+      expect(arm.name, "The arm carries its subunit name on the row").not.toBeNull()
+      expect(
+        subunitNames,
+        `The arm's name is one of the task's subunits (got "${arm.name}")`,
+      ).toContain(arm.name!)
+      // 票03 §新行为11: fan-out arms are executions rows — never schedule rows.
+      expect(
+        findTaskEnvelopeScheduleRows(taskId),
+        "A dispatched subunit must not have created a schedules row",
+      ).toHaveLength(0)
     }
 
-    log(`${subunitSchedules.length} subunit schedule(s) created by task_dispatch`)
+    log(`${arms.length} subunit execution(s) dispatched under root ${rootId}: ${arms.map((a) => a.name).join(", ")}`)
   })
+
 
   // ── AC4: modal composite drill-down (N children + DAG + events) ────
 
@@ -237,10 +312,14 @@ test.describe("Story B: Composite task full closed loop", () => {
     // Navigate to /tasks and open the task card
     await page.goto("/tasks")
     await page.waitForLoadState("domcontentloaded")
-    // The task is ready or running — find its column
+    // 卡片归哪一列由票11 的五列契约决定（failed/aborted 折进「完成」列，没有自己的列）。
+    // 本用例的对象是复合弹窗，不是列归属 —— 列归属由 task-phase-board AC2 断言。
     const dbRow = readTaskRow(taskId)
-    const col = page.locator(`[data-task-column="${dbRow!.status}"]`)
-    await expect(col, `Column ${dbRow!.status} should be visible`).toBeVisible({ timeout: 15_000 })
+    const col = page.locator(`[data-task-column="${boardColumnFor(dbRow!.status)}"]`)
+    await expect(
+      col,
+      `Status ${dbRow!.status} renders in the ${boardColumnFor(dbRow!.status)} column`,
+    ).toBeVisible({ timeout: 15_000 })
 
     const card = page.locator('[data-task-card]', { hasText: TASK_NAME }).first()
     await expect(card, "Task card should be visible").toBeVisible({ timeout: 10_000 })
@@ -289,15 +368,24 @@ test.describe("Story B: Composite task full closed loop", () => {
         "Events panel should be visible in composite mode",
       ).toBeVisible({ timeout: 10_000 })
 
-      // Child cards — at least the coordinator should be listed
+      // Fan-out arms — at least the root's children. The read model loads them on the
+      // detail (票05 §新事实3: `undefined` vs `[]` says whether the fan-out was loaded), so
+      // the DOM block below is driven off the SAME rows the DB shows, not a second source.
       const detail = await getTask(taskId)
-      if (detail.children.length > 0) {
-        for (const child of detail.children.slice(0, 3)) {
-          const childCard = dialog.locator(`[data-testid="composite-child-${child.schedule_id}"]`)
-          // Child cards may or may not be rendered depending on status —
-          // assert at least the first child's card exists if the task is running.
+      const rootBadge = detail.executions.find((e) => e.id === readTaskRootExecutions(taskId)[0]?.id)
+      if (rootBadge?.children && rootBadge.children.length > 0) {
+        for (const child of rootBadge.children.slice(0, 3)) {
+          // The arm's label is the subunit name carried on the row — there is no
+          // origin_role left to key a card off.
+          expect(
+            child.name,
+            `Fan-out arm ${child.id} carries its subunit name for the card`,
+          ).toBeTruthy()
+          const childCard = dialog.locator(`[data-testid="composite-child-${child.id}"]`)
+          // The composite drill-down is 票05's rewrite surface, so the DOM probe stays
+          // best-effort (present → asserted; absent → the data assert above already ran).
           if (await childCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await expect(childCard, `Child card ${child.schedule_id} should be visible`).toBeVisible()
+            await expect(childCard, `Child card ${child.id} should be visible`).toBeVisible()
           }
         }
       }
@@ -320,11 +408,13 @@ test.describe("Story B: Composite task full closed loop", () => {
     const taskId = createdTaskIds[0]!
 
     // The SSE subscriber should have captured task_status events for this task.
-    // At minimum, the ready→(running)→done/failed transition emits task_status.
-    // The ready transition (dispatch seam) does NOT emit task_status (only
-    // schedule transitions do, via ScheduleStatusListener). But the
-    // coordinator claiming → running SHOULD emit it (SG2).
+    // 票03 deleted the ScheduleStatusListener (the thing that used to reflect a schedule's
+    // status onto the task), so task_status now comes from the task-lifecycle job's own
+    // mirror: launch→running, a terminal run→done/failed. The run itself moves on
+    // task_execution (armed 'pending' / launched 'running'), which is the other half of
+    // the pair this spec pins.
     const parentEvents = sseSub!.taskStatusEvents.filter((e) => e.task_id === taskId)
+    const runEvents = sseSub!.taskExecutionEvents.filter((e) => e.task_id === taskId)
 
     // If the coordinator ran, there should be at least 1 task_status event.
     // If it didn't run (no provider), this assertion is informational.
@@ -334,7 +424,16 @@ test.describe("Story B: Composite task full closed loop", () => {
         statuses.some((s) => ["running", "done", "failed", "aborted"].includes(s)),
         "task_status SSE should include a running/terminal transition",
       ).toBe(true)
-      log(`SSE captured ${parentEvents.length} task_status events: ${statuses.join(", ")}`)
+      // The run channel must carry the instance's own vocabulary — 'pending' (排队中) is a
+      // state of the ROW, and never arrives on task_status (which speaks TaskStatus).
+      expect(
+        runEvents.length,
+        "task_execution SSE should have carried the instance transitions",
+      ).toBeGreaterThanOrEqual(1)
+      log(
+        `SSE captured ${parentEvents.length} task_status events: ${statuses.join(", ")}; ` +
+          `${runEvents.length} task_execution events: ${runEvents.map((e) => e.status).join(", ")}`,
+      )
     } else {
       log("No task_status SSE captured — coordinator may not have run (provider absent)")
     }
@@ -348,32 +447,40 @@ test.describe("Story B: Composite task full closed loop", () => {
     const taskId = createdTaskIds[0]!
 
     // G2: failed is a terminal state — no rollback to ready/running.
-    // This test verifies the ScheduleStatusListener maps schedule 'failed'
-    // → tasks.status='failed' when a child schedule fails.
+    // This test verifies the task-lifecycle job's own outcome write: a failed run leaves
+    // tasks.status='failed' and nothing re-arms it (票03 §1b: done/failed/aborted cannot
+    // start a new round — a re-run is a re-enqueue).
     //
     // To trigger a child failure deterministically, we would need to inject
     // a failing workflow. Since this is an E2E (not a unit test), we assert
     // the CONTRACT: if the task reaches 'failed', it stays 'failed' (no
-    // re-dispatch loop — the failed schedule is not re-queued).
+    // re-dispatch loop — no new instance is armed behind it).
     //
     // We check the current status. If it's already 'failed' (a subunit
     // failed), assert it stays failed. If not, this is informational.
     const dbRow = readTaskRow(taskId)
     if (dbRow!.status === "failed") {
-      // G2: failed is terminal — verify no re-dispatch by checking the
-      // schedules are also terminal (not re-queued).
-      const schedules = readSchedulesByOrigin(taskId)
-      for (const s of schedules) {
+      // G2: failed is terminal. Under the envelope the check was on the schedule rows and
+      // it ACCEPTED 'queued' — the successor is stricter: the same-task mutex
+      // (`ux_exec_task_active`, a partial UNIQUE over non-terminal roots) means a failed
+      // task can hold no live row at all. 'pending' (the new 'queued' = armed behind the
+      // gate) behind a failed card IS the re-dispatch loop, so it is now refused outright.
+      const rows = readTaskExecutions(taskId)
+      for (const r of rows) {
         expect(
-          ["failed", "aborted", "done"].includes(s.status) || s.status === "queued",
-          `Schedule ${s.id} should be terminal or queued (not re-dispatched)`,
+          isTerminalExecutionStatus(r.status),
+          `Instance ${r.id} (${r.status}) must be terminal — a live row behind a failed task is a re-dispatch loop`,
         ).toBe(true)
       }
       // Re-read after a short delay — status should NOT have changed back
       await new Promise((r) => setTimeout(r, 2000))
       const dbRow2 = readTaskRow(taskId)
       expect(dbRow2!.status, "Failed task should stay failed (G2: no rollback)").toBe("failed")
-      log("G2 verified: failed task stays failed (no re-dispatch loop)")
+      expect(
+        readTaskExecutions(taskId).length,
+        "No new instance was armed in the interval (the cursor is not re-armed either)",
+      ).toBe(rows.length)
+      log("G2 verified: failed task stays failed (no live row, no re-dispatch loop)")
     } else {
       // If the task didn't fail, we can trigger an abort to verify G4 (the
       // crash-abort spec covers this in detail). Here we just log.

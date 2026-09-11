@@ -12,7 +12,8 @@
 //   D. format-stamp: spec-field(phases) 写进无旗标壳 → 自动补 format:"v4" +
 //      best-effort 补建 home（否则 readyTask 两头 gate 落空走 legacy）。
 //   E. 黄金链: POST 直建 → PUT home-file 写 spec.md → spec-field(phases) →
-//      ready 200 + 信封 config.phases 形状（贯通直建与 gate 的端到端）。
+//      ready 200 且**零信封**（票03: 入队只写状态，物化改在每次 arm 现算 ——
+//      解析形状由 tasks-v4-gate.test.ts AC4 钉在启动行上）。
 // （home-file 守卫矩阵在 tasks-home-file.test.ts。）
 //
 // Anti-fake-run: real better-sqlite3 + applySchema, 真 Hono app.request, 真 tmp
@@ -336,7 +337,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
 // ── E. 黄金链 ──────────────────────────────────────────────────────
 
 describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物化", () => {
-  it("E1: 全链贯通，信封 config 带 format/phases 且 phase1 预载 chain[0]", async () => {
+  it("E1: 全链贯通 —— 直建 → 写 spec → phases → ready 过闸，且入队不产生任何信封", async () => {
     // ① POST 直建 v4（UI 形状，无 task_type）
     const created = await app.request("/api/tasks", {
       method: "POST",
@@ -375,19 +376,16 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     })
     expect(ph.status).toBe(200)
 
-    // ④ ready 过闸 → parked 信封
+    // ④ ready 过闸 = 只有状态。票03 之后入队不再物化信封（旧版这里读
+    //    schedules.config 校验 format/phases/chain[0]）；那一形状现在长在
+    //    每一轮的 executions 行上，由 tasks-v4-gate.test.ts AC4 钉住。
     const ready = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(ready.status).toBe(200)
     expect(readTaskRow(id).status).toBe("ready")
-
-    const sched = db
-      .prepare(`SELECT config FROM schedules WHERE origin_type='task' AND origin_id=? AND origin_role='primary'`)
-      .get(id) as { config: string } | undefined
-    expect(sched).toBeTruthy()
-    const config = JSON.parse(sched!.config)
-    expect(config.format).toBe("v4")
-    expect(config.phases).toHaveLength(1)
-    expect(path.isAbsolute(config.phases[0].specPath) || config.phases[0].specPath.includes("v4d")).toBe(true)
-    expect(config.workflow_chain?.[0]).toBeTruthy()
+    for (const table of ["schedules", "schedule_executions", "schedule_workspaces"]) {
+      expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
+    }
+    // 批次文件仍在 home（下一轮 seed 下行的来源）。
+    expect(fs.existsSync(path.join(taskHome.homePath(id), specRel))).toBe(true)
   })
 })

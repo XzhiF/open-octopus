@@ -18,7 +18,7 @@ import type {
   NodeDef,
   CrossExecResolver,
   TaskDispatchPort,
-  ScheduleHandle,
+  ChildHandle,
   SubunitSpec,
 } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, TaskDispatchMetadata } from "./types"
@@ -96,34 +96,34 @@ export class TaskDispatchExecutor implements NodeExecutor {
     // are unaffected (backward compat — the subunit passes through unchanged).
     const subunitToDispatch = this.applyInputMapping(subunit, logLines)
 
-    let handle: ScheduleHandle
+    let handle: ChildHandle
     try {
       // Port contract: resolves once the child schedule is CREATED (queued), not on
       // completion — so this await does not block the event loop on the child run.
-      handle = await this.config.port.dispatchChildSchedule(subunitToDispatch)
+      handle = await this.config.port.dispatchChild(subunitToDispatch)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return {
         outputs: {},
         status: "failed",
         durationMs: Date.now() - start,
-        logLines: [`task_dispatch: dispatchChildSchedule failed: ${msg}`],
-        error: `dispatchChildSchedule failed: ${msg}`,
+        logLines: [`task_dispatch: dispatchChild failed: ${msg}`],
+        error: `dispatchChild failed: ${msg}`,
       }
     }
 
-    logLines.push(`task_dispatch: dispatched child schedule ${handle.schedule_id}`)
+    logLines.push(`task_dispatch: dispatched child run ${handle.child_id}`)
 
     // Fire-and-forget: await=false → don't pause; complete immediately.
     if (this.node.await === false) {
       const outputs: Record<string, any> = {
-        schedule_id: handle.schedule_id,
+        child_id: handle.child_id,
         workspace_id: handle.workspace_id,
         subunit: subunit.name,
-        last_output: handle.schedule_id,
+        last_output: handle.child_id,
       }
       this.applyOutputMapping(
-        { schedule_id: handle.schedule_id, workspace_id: handle.workspace_id, subunit_name: subunit.name },
+        { child_id: handle.child_id, workspace_id: handle.workspace_id, subunit_name: subunit.name },
         outputs,
         logLines,
       )
@@ -137,15 +137,15 @@ export class TaskDispatchExecutor implements NodeExecutor {
 
     const metadata: TaskDispatchMetadata = {
       nodeId: this.node.id,
-      scheduleHandle: { schedule_id: handle.schedule_id, workspace_id: handle.workspace_id },
+      childHandle: { child_id: handle.child_id, workspace_id: handle.workspace_id },
       subunitName: subunit.name,
     }
 
     return {
-      outputs: { schedule_id: handle.schedule_id, subunit: subunit.name },
+      outputs: { child_id: handle.child_id, subunit: subunit.name },
       status: "pending_task_dispatch",
       durationMs: Date.now() - start,
-      logLines: [...logLines, "task_dispatch: awaiting child schedule completion"],
+      logLines: [...logLines, "task_dispatch: awaiting child run completion"],
       taskDispatchMetadata: metadata,
     }
   }

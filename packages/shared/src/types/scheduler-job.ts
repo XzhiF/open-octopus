@@ -1,7 +1,20 @@
 import { z } from 'zod'
 import { WorkflowRef } from '../resource/workflow-ref'
 
-export type JobType = 'workflow' | 'agent'
+/**
+ * What a scheduled job runs. THE list, as a zod schema rather than a bare union, so the
+ * API's input validation (`createJobSchema`), the list route's `?job_type=` parsing and
+ * every typed consumer read one vocabulary instead of three hand-written copies — a
+ * local `['workflow','agent']` in createJobSchema is exactly what kept the `job` type
+ * (票02) unreachable through the API after the union was widened.
+ *   workflow — a YAML workflow chain inside a workspace (WorkflowExecutor)
+ *   agent    — one LLM prompt (AgentExecutor)
+ *   job      — a registered TypeScript handler (ADR-0021): the system's own
+ *              housekeeping, armed by cron like any other job and visible in the same
+ *              ops surface. The built-in `task-lifecycle` job is one of these.
+ */
+export const jobTypeSchema = z.enum(['workflow', 'agent', 'job'])
+export type JobType = z.infer<typeof jobTypeSchema>
 export type ParallelPolicy = 'allow' | 'wait' | 'skip'
 export type SchedulerExecutionStatus =
   | 'triggered'
@@ -13,24 +26,21 @@ export type SchedulerExecutionStatus =
   | 'skipped'
   | 'missed'
 
-/** What created this schedule. 'cron' = scheduled by cron_expression; 'requirement' = draft from chat/manual input awaiting claim. */
-export type TriggerSource = 'cron' | 'requirement'
+/**
+ * What created a schedule — **gone**. The `origin_*` columns were dropped in schema v42
+ * and the last consumer (the `origin_type: 'task'` discriminator on the taskpool SSE
+ * payloads) was removed in 票05, so the vocabulary has no referent left: a `schedules`
+ * row is a job, and a task's run is an `executions` row. `schedule_executions.trigger_type`
+ * ('scheduled' | 'manual') is a different, still-live concept — how a JOB FIRE happened.
+ */
 
-/** v2 (S2 polymorphic origin) — generalizes {@link TriggerSource}. What created
- *  a schedule, with no FK on origin_id (app-level cascade-reap + orphan reaper
- *  maintain integrity, the tradeoff for S2's uniform polymorphic association):
- *  'cron' = cron_expression-driven; 'task' = spawned by the tasks dispatch seam
- *  (origin_id = parent task id); 'agent' = spawned by an agent run; 'manual' =
- *  user-enqueued; 'api' = external API enqueue. Extensible. */
-export const OriginTypeSchema = z.enum(["cron", "task", "agent", "manual", "api"])
-export type OriginType = z.infer<typeof OriginTypeSchema>
-
-/** Lifecycle status of a schedule (schema v37). draft → queued → claimed → running → done.
- *  'claimed' = taken by executor before dispatch confirms; 'running' = execution in flight;
- *  'done' = chain completed (requirement-type only; cron uses enabled/disabled).
- *  'failed' = chain failed (G2, terminal — checkStaleClaimed must NOT roll back to queued);
- *  'aborted' = user-triggered abort (G4, terminal — workspace cleaned). */
-export type ScheduleStatus = 'draft' | 'queued' | 'claimed' | 'running' | 'done' | 'failed' | 'aborted'
+/** Lifecycle status of a job DEFINITION's run state (schema v37, narrowed by v42).
+ *  'queued' = registered, nothing in flight; 'claimed' = taken by the executor before
+ *  dispatch confirms; 'running' = execution in flight; 'done'/'failed' = last fire's
+ *  outcome; 'aborted' = user abort (terminal — the stale sweep must not roll it back).
+ *  'draft' is gone: it was the parked state of a task envelope, and tasks no longer have
+ *  schedule rows. */
+export type ScheduleStatus = 'queued' | 'claimed' | 'running' | 'done' | 'failed' | 'aborted'
 
 // ── Project & Workspace Spec (for scheduler-created workspaces) ─────
 
@@ -247,9 +257,26 @@ export const agentConfigSchema = z.object({
   retry_policy: agentRetryPolicySchema.optional(),
 })
 
+/**
+ * A `job`-type payload: a pointer at TypeScript that is already in the process.
+ *
+ * Deliberately tiny. The handler name is the whole contract — the config carries no
+ * logic, so a schedule row can never make the server execute code the deployment
+ * didn't register (an unregistered handler fails the run, it does not run anything).
+ * `args` is opaque per-handler config (timeouts, batch sizes), never a script.
+ */
+export const codeJobConfigSchema = z.object({
+  schema_version: z.literal('1.0'),
+  type: z.literal('job'),
+  handler: z.string().min(1).max(120),
+  timeout_seconds: z.number().int().min(10).max(3600).optional().default(300),
+  args: z.record(z.string(), z.unknown()).optional().default({}),
+})
+
 export const jobConfigSchema = z.discriminatedUnion('type', [
   workflowConfigSchema,
   agentConfigSchema,
+  codeJobConfigSchema,
 ])
 
 /** Accepts both v1.0 (legacy) and v2.0 workflow configs */
@@ -262,6 +289,7 @@ export const legacyJobConfigSchema = z.union([
 export const configSchemasByJobType = {
   workflow: workflowConfigSchema,
   agent: agentConfigSchema,
+  job: codeJobConfigSchema,
 } as const
 
 // ── TS types (derived from zod) ─────────────────────────────────────
@@ -276,12 +304,19 @@ export type TaskSpec = z.infer<typeof taskSpecSchema>
 export type WorkflowConfig = z.infer<typeof workflowConfigSchema>
 export type WorkflowConfigV1 = z.infer<typeof workflowConfigSchemaV1>
 export type AgentConfig = z.infer<typeof agentConfigSchema>
+export type CodeJobConfig = z.infer<typeof codeJobConfigSchema>
 export type JobConfig = z.infer<typeof jobConfigSchema>
 export type LegacyJobConfig = z.infer<typeof legacyJobConfigSchema>
 
+/** The one fire the list row shows: the job's most recent schedule_executions row.
+ *  `duration_ms` is the fire's own wall clock (NULL while it is still running, and NULL
+ *  for the skip/miss rows that never had an engine) — 票06 手测⑤ asks for 「上次触发与
+ *  耗时」 on the built-in job's row, and the number exists on the row already; it was
+ *  simply not carried across the wire. */
 export interface SchedulerExecutionSummary {
   status: SchedulerExecutionStatus
   triggered_at: string
+  duration_ms: number | null
   error_summary: string | null
 }
 
@@ -307,17 +342,11 @@ export interface SchedulerJob {
   created_at: string
   updated_at: string
   status: ScheduleStatus
-  trigger_source: TriggerSource
-  /** v38b polymorphic origin (S2). Authoritative source discriminator —
-   *  trigger_source is a lossy legacy mapping (task/manual/api/agent all
-   *  collapse to 'requirement'). Scheduler UI shows origin via this field:
-   *  'cron' = cron-driven recurring job; 'task' = dispatched by the task
-   *  board ready-gate (origin_id = parent task id, UI deep-links /tasks/:id);
-   *  'agent'/'manual'/'api' = other one-shot enqueues. Null for legacy rows. */
-  origin_type?: OriginType | null
-  origin_id?: string | null
-  source_chat_session_id: string | null
   claimed_at: string | null
+  // ADR-0021 票03: trigger_source / origin_type / origin_id / source_chat_session_id are
+  // gone. A schedule row is a job definition; it never records which task (if any) asked
+  // for it, because after v41 no task asks the scheduler for anything. The board's task
+  // read model comes from GET /api/tasks/:id/executions instead of from here.
 }
 
 export interface CreateJobInput {
@@ -331,8 +360,6 @@ export interface CreateJobInput {
   timeout_seconds?: number
   notify_on_failure?: boolean
   description?: string
-  trigger_source?: TriggerSource
-  source_chat_session_id?: string | null
 }
 
 export interface UpdateJobInput {
@@ -353,11 +380,10 @@ export interface ListJobsParams {
   status?: 'enabled' | 'disabled' | 'failed'
   job_type?: JobType
   org?: string
+  /** Scope the list to one workspace's org (the scheduler page per-workspace view). */
+  workspace_id?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'
-  /** Legacy route filter ('cron'→origin_type='cron'; 'requirement'→IN
-   *  ('task','manual','api')). Omit → no origin filter (list spans all origins). */
-  trigger_source?: TriggerSource
-  /** Precise single-origin filter (takes precedence when both given). */
-  origin?: OriginType
+  // The trigger_source / origin filters left with the columns: after v42 every row in
+  // the table is a job, so there is nothing to filter task-ness out of.
 }

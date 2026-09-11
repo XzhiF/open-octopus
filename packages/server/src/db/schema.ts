@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 40
+export const SCHEMA_VERSION = 42
 
 /**
  * Apply the complete unified schema to the given database.
@@ -94,6 +94,14 @@ function handleSchemaMigrations(db: Database.Database): void {
   // carried by the copy. Re-entrant: once the live table's DDL text contains the new
   // statuses it no-ops.
   migrateTasksStatusCheckV40(db)
+
+  // schema v41 (ADR-0021): tasks.trigger_* / executions.task_id+run_id /
+  // workspaces.task_id+run_id. AFTER the v40 rebuild on purpose — see the function doc.
+  ensureColumnsV41(db)
+
+  // schema v42 (ADR-0021 票03): schedules stops being a task's shadow — the polymorphic
+  // origin back-reference and the envelope's due-time column come off.
+  migrateSchedulesV42DropOriginCols(db)
 }
 
 /**
@@ -217,13 +225,6 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   //      the migration runs on every applySchema and drops them idempotently.
   ensureColumn(db, 'schedules', 'status', "TEXT NOT NULL DEFAULT 'queued'")
   ensureColumn(db, 'schedules', 'claimed_at', "TEXT")
-  ensureColumn(db, 'schedules', 'origin_type', "TEXT NOT NULL DEFAULT 'cron'")
-  ensureColumn(db, 'schedules', 'origin_id', "TEXT")
-  ensureColumn(db, 'schedules', 'origin_role', "TEXT")
-  ensureColumn(db, 'schedules', 'assoc_meta', "TEXT")
-  // v39: one-shot due time for task-origin manual/time triggers. NULL =
-  // cron/legacy/claim-immediately. Additive nullable column — no rebuild.
-  ensureColumn(db, 'schedules', 'scheduled_at', "TEXT")
 
   // schema v40 (task-phase-redesign K4): executions gains the round identity
   // (phase_index/round_index, NULL = v3/generic); tasks gains its bound workspace
@@ -231,6 +232,128 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'executions', 'phase_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
+}
+
+/**
+ * schema v42 (ADR-0021 票03) — `schedules` loses the five columns that existed only to
+ * bind a job definition to a task, **and the rows that were bound that way**:
+ *
+ *   origin_type / origin_id / origin_role  the S2 polymorphic back-reference — a schedule
+ *                                          row pointed AT a task, and every 「本任务的
+ *                                          信封在哪」 query walked it
+ *   assoc_meta                             set by exactly zero callers, ever
+ *   scheduled_at                           the envelope's one-shot due time, superseded
+ *                                          by tasks.next_fire_at in v41
+ *
+ * Deleting the `origin_type='task'` rows is part of this migration, not an extra: an
+ * envelope without its columns is still a row in the jobs table, and on a real dev DB
+ * every one of them was enabled (see the body). Dev-phase DBs are disposable, so the
+ * rule is "no compat layer" — but a migration that leaves zombie rows behind is not
+ * "no compat layer", it is a broken DB.
+ *
+ * `status` and `claimed_at` stay: they are the pump's own run-state for cron/agent jobs
+ * (manual trigger, aborting a live fire, the stale sweep). Removing those means moving
+ * that state onto `schedule_executions`, which is a separate change with its own risk
+ * surface — and after this migration nothing task-shaped reads them.
+ *
+ * Order matters twice. The two indexes that reference these columns must go first (SQLite
+ * refuses to drop an indexed column), and this runs after ensureColumnsV41 so an existing
+ * dev DB converges without a wipe. SQLite < 3.35 has no DROP COLUMN: it logs and leaves
+ * an unread column behind, which is harmless.
+ */
+export function migrateSchedulesV42DropOriginCols(db: Database.Database): void {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'",
+  ).all()
+  if (tables.length === 0) return // fresh DB: schema.sql creates it without the cols
+
+  db.exec("DROP INDEX IF EXISTS idx_schedules_origin")
+  db.exec("DROP INDEX IF EXISTS idx_schedules_due")
+
+  const cols = db.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]
+
+  // The envelope ROWS go with the columns. This is not a compat layer — it is deleting
+  // rows whose meaning no longer exists. Measured on a real developer DB (v40) that had
+  // never seen 票03: 7 rows with origin_type='task', **all enabled=1**, three parked at
+  // status='draft' — a value the narrowed ScheduleStatus no longer admits. Dropping the
+  // columns alone leaves those seven as enabled phantom JOBS in 系统调度, which is precisely
+  // the opposite of what 票05 promises the page to be ("只见作业").
+  //
+  // The one fact still worth keeping is which task a workspace belongs to. That used to be
+  // source_schedule_id → origin_id; it moves into workspaces.task_id (added by v41, which
+  // runs first) before the rows go, so the delete costs nothing the UI still reads.
+  if (cols.some((c) => c.name === "origin_type")) {
+    const envelopeIds = "SELECT id FROM schedules WHERE origin_type = 'task'"
+    const wsHasTask = (db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[])
+      .some((c) => c.name === "task_id")
+    // origin_id is what names the task, but a DB can legitimately lack it: v42 drops
+    // column-by-column and an old SQLite (<3.35) fails some and not others, so a later
+    // boot sees a half-migrated table. The rebind is skipped when the source column is
+    // missing — the purge below does not need it.
+    const hasOriginId = cols.some((c) => c.name === "origin_id")
+    if (wsHasTask && hasOriginId) {
+      const bound = db.prepare(
+        `UPDATE workspaces SET task_id =
+           (SELECT s.origin_id FROM schedules s WHERE s.id = workspaces.source_schedule_id)
+         WHERE task_id IS NULL AND source_schedule_id IN (${envelopeIds})`,
+      ).run()
+      if (bound.changes > 0) {
+        console.log(`[schema] v42: rebound ${bound.changes} workspace(s) to their task via workspaces.task_id`)
+      }
+    }
+    // schedule_executions has a plain FK to schedules (no cascade), so its rows must go
+    // first or the DELETE throws; schedule_workspaces cascades but is spelled out anyway.
+    db.exec(`DELETE FROM schedule_executions WHERE schedule_id IN (${envelopeIds})`)
+    db.exec(`DELETE FROM schedule_workspaces WHERE schedule_id IN (${envelopeIds})`)
+    const purged = db.prepare(`DELETE FROM schedules WHERE origin_type = 'task'`).run().changes
+    if (purged > 0) {
+      console.log(`[schema] v42: purged ${purged} task-envelope row(s) from schedules (ADR-0021 — the envelope is gone, its rows cannot stay as jobs)`)
+    }
+  }
+  for (const col of ['origin_type', 'origin_id', 'origin_role', 'assoc_meta', 'scheduled_at']) {
+    if (!cols.some((c) => c.name === col)) continue // already dropped, or never added
+    try {
+      db.exec(`ALTER TABLE schedules DROP COLUMN ${col}`)
+      // eslint-disable-next-line no-console
+      console.log(`[schema] Dropped schedules.${col} (v42 / ADR-0021 票03)`)
+    } catch (err) {
+      console.warn(
+        `[schema] Failed to drop schedules.${col}: ${err instanceof Error ? err.message : String(err)} (non-fatal — no code reads it any more)`,
+      )
+    }
+  }
+}
+
+
+/**
+ * schema v41 (task-scheduler-decouple / ADR-0021) — additive columns only.
+ *
+ * MUST run AFTER migrateTasksStatusCheckV40: that migration rebuilds `tasks` from a
+ * hard-coded column list, so anything ensured before it gets eaten by the swap (the
+ * v40 re-entrancy test in acceptance-dao.test.ts is what pins this ordering).
+ *
+ *   tasks       WHEN the task wants to run is now the task's own data (before v41 the
+ *               due time lived on a private parked `schedules` row — see ADR-0021).
+ *   executions  states directly which task it serves; the board used to reach a
+ *               task's executions only by joining through schedules.
+ *   workspaces  direct task ownership (replaces the source_schedule_id→
+ *               schedules.origin_id reverse lookup composite walked).
+ *
+ * The trigger_mode CHECK is fresh-DB only (a CHECK on an existing table would need a
+ * rebuild, and dev DBs are disposable — spec §"无迁移"); code-level validation is the
+ * authority. next_fire_at is what schema.sql's idx_tasks_due indexes, hence this must
+ * run before the schema.sql exec — which applySchema does.
+ */
+function ensureColumnsV41(db: Database.Database): void {
+  ensureColumn(db, 'tasks', 'trigger_mode', "TEXT NOT NULL DEFAULT 'manual'")
+  ensureColumn(db, 'tasks', 'trigger_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'cron_expression', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'cron_timezone', "TEXT NOT NULL DEFAULT 'Asia/Shanghai'")
+  ensureColumn(db, 'tasks', 'trigger_enabled', "INTEGER NOT NULL DEFAULT 1")
+  ensureColumn(db, 'tasks', 'next_fire_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'last_fired_at', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'executions', 'task_id', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'workspaces', 'task_id', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

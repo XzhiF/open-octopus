@@ -1,5 +1,5 @@
 /**
- * Schema Migration Tests — Experiences V2 (schema version 35)
+ * Schema Migration Tests — Experiences V2 (schema version 35) + Schedules V42
  *
  * Tests:
  * - 7 new columns on experiences table with correct DEFAULTs
@@ -7,6 +7,8 @@
  * - 5 new indexes
  * - Backward compatibility (existing data gets DEFAULT values)
  * - Blue-green FTS migration (existing data preserved)
+ * - v42 (ADR-0021 票03): the task-envelope columns come off an existing DB, and the
+ *   pump's own run-state columns stay
  */
 import { describe, it, expect, afterEach, beforeEach } from "vitest"
 import Database from "better-sqlite3"
@@ -29,9 +31,11 @@ describe("Schema v35 — Experience Schema Migration", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.pragma("user_version") as Array<{ user_version: number }>
-    // v40 = task-phase-redesign (acceptances table + executions/tasks cols).
+    // v42 = ADR-0021 票03 (schedules stops carrying the task envelope's origin columns).
     // Was stale at 35 since v36; assert the live constant instead of a pinned old
     // number so future version bumps don't re-break this v35-focused suite.
+    // The current version itself is pinned where it is actually the subject — the
+    // v42 describe below.
     expect(rows[0].user_version).toBe(SCHEMA_VERSION)
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(35)
   })
@@ -267,5 +271,138 @@ describe("Schema v35 — Experience Schema Migration", () => {
     const colNames = cols.map(c => c.name)
     expect(colNames).toContain("scope")
     expect(colNames).toContain("node_id")
+  })
+})
+
+/**
+ * schema v42 (ADR-0021 票03) — `schedules` stops being a task's shadow.
+ *
+ * Two shapes have to converge, and only the second one is a migration:
+ *   ① a FRESH db is created without the envelope columns at all;
+ *   ② an EXISTING dev db (created before 票03, or replayed from a v38/v41 backup) still
+ *      has them, and they must go — along with the two indexes that reference them,
+ *      because SQLite refuses to DROP COLUMN on an indexed column (hence the ordering).
+ * `status` / `claimed_at` stay on purpose: they are the pump's own run-state for cron and
+ * agent jobs (manual fire, abort a live fire, the stale sweep), not task bookkeeping.
+ */
+describe("Schema v42 — schedules drops the task-envelope columns", () => {
+  let db: Database.Database
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  const ENVELOPE_COLS = ["origin_type", "origin_id", "origin_role", "assoc_meta", "scheduled_at"]
+
+  function scheduleCols(database: Database.Database): string[] {
+    return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
+  }
+
+  it("pins the current version at 42", () => {
+    db = createTestDb()
+    applySchema(db)
+    expect(SCHEMA_VERSION).toBe(42)
+  })
+
+  it("① fresh DB: no envelope columns, run-state columns present", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = scheduleCols(db)
+    for (const col of ENVELOPE_COLS) expect(cols, `schedules.${col} 应已删除`).not.toContain(col)
+    expect(cols).toEqual(expect.arrayContaining(["status", "claimed_at"]))
+  })
+
+  it("② existing DB: the columns are dropped and the run-state columns survive", () => {
+    db = createTestDb()
+    // Start from a real current DB, then graft the pre-v42 shape back on — that is what a
+    // developer's on-disk DB looks like the first time 票03 boots.
+    applySchema(db)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'cron'`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_id TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_role TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN assoc_meta TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN scheduled_at TEXT`)
+    // The two indexes that referenced them (v38/v39, verbatim from the old schema.sql) —
+    // dropping these first is the whole ordering constraint inside
+    // migrateSchedulesV42DropOriginCols: SQLite refuses to drop an indexed column.
+    db.exec(`CREATE INDEX idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL`)
+    db.exec(`CREATE INDEX idx_schedules_due ON schedules(scheduled_at) WHERE deleted_at IS NULL AND status = 'queued'`)
+    // Pre-condition: we really built the old shape.
+    expect(scheduleCols(db)).toContain("origin_type")
+
+    applySchema(db)
+
+    const cols = scheduleCols(db)
+    for (const col of ENVELOPE_COLS) expect(cols, `schedules.${col} 应被迁移删除`).not.toContain(col)
+    expect(cols).toEqual(expect.arrayContaining(["status", "claimed_at"]))
+    // The indexes that pointed at the dropped columns are gone too (a dangling index over
+    // a missing column would make every later applySchema throw).
+    const idx = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_schedules%'"
+    ).all() as { name: string }[]).map(i => i.name)
+    expect(idx).not.toContain("idx_schedules_origin")
+    expect(idx).not.toContain("idx_schedules_due")
+  })
+
+  it("② 迁移后既有作业行仍可读写（DROP COLUMN 不动数据）", () => {
+    db = createTestDb()
+    applySchema(db)
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config,
+        parallel_policy, created_at, updated_at, status, claimed_at)
+      VALUES ('v42-job', 'xzf', 'v42', '0 9 * * *', 'UTC', 1, 'workflow', '{}', 'skip', ?, ?, 'running', ?)
+    `).run(now, now, now)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'cron'`)
+
+    applySchema(db)
+
+    const row = db.prepare("SELECT id, status, claimed_at FROM schedules WHERE id = 'v42-job'").get() as
+      { id: string; status: string; claimed_at: string | null }
+    expect(row).toEqual({ id: 'v42-job', status: 'running', claimed_at: now })
+  })
+
+  it("③ 信封 ROWS 随列一起消失（真机 v40 DB 实测：7 行全部 enabled=1）", () => {
+    // Dropping only the columns turns every parked envelope into an ENABLED PHANTOM JOB in
+    // the 系统调度 list — the exact inverse of what 票05 promises that page to be. A real
+    // developer DB (v40, never booted on 票03) had 7 such rows, three of them at
+    // status='draft', a value the narrowed ScheduleStatus no longer admits.
+    db = createTestDb()
+    applySchema(db)
+    const now = new Date().toISOString()
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_type TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_id TEXT`)
+    db.exec(`ALTER TABLE schedules ADD COLUMN origin_role TEXT`)
+    const ins = db.prepare(`
+      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config,
+        parallel_policy, created_at, updated_at, status, origin_type, origin_id, origin_role)
+      VALUES (?, 'xzf', ?, NULL, 'UTC', 1, 'workflow', '{}', 'skip', ?, ?, ?, ?, ?, ?)`)
+    ins.run('env-1', 'task envelope (parked)', now, now, 'draft', 'task', 'task-1', 'primary')
+    ins.run('env-2', 'task envelope (aborted)', now, now, 'aborted', 'task', 'task-2', 'primary')
+    ins.run('real-cron', 'a real job', now, now, 'queued', 'cron', null, null)
+    // The two things an envelope still owns: a bound workspace and its fire history.
+    db.prepare(`INSERT INTO workspaces (id, name, org, path, source_schedule_id, created_at, updated_at)
+      VALUES ('ws-1', 'ws1', 'xzf', '/tmp/ws1', 'env-1', ?, ?)`).run(now, now)
+    db.prepare(`INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+      timezone_offset, timezone_iana, created_at)
+      VALUES ('se-1', 'env-1', 'completed', 'scheduled', ?, '+00:00', 'UTC', ?)`).run(now, now)
+
+    applySchema(db)
+
+    // origin_type is gone, so "which rows survived" is the whole assertion.
+    const left = (db.prepare("SELECT id FROM schedules ORDER BY id").all() as { id: string }[]).map(r => r.id)
+    expect(left).toEqual(['real-cron'])
+    expect(db.prepare("SELECT COUNT(*) AS n FROM schedule_executions").get()).toEqual({ n: 0 })
+    // The one fact still worth keeping moved instead of being destroyed.
+    expect((db.prepare("SELECT task_id FROM workspaces WHERE id='ws-1'").get() as { task_id: string })
+      .task_id).toBe('task-1')
+  })
+
+  it("re-running applySchema over an already-migrated DB is a no-op", () => {
+    db = createTestDb()
+    applySchema(db)
+    expect(() => applySchema(db)).not.toThrow()
+    const cols = scheduleCols(db)
+    for (const col of ENVELOPE_COLS) expect(cols).not.toContain(col)
   })
 })

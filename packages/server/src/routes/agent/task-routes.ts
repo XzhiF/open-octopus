@@ -22,6 +22,13 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   const app = new Hono()
 
   // Tasks — includes workflow executions + scheduler jobs
+  //
+  // 票05 (ADR-0021) note on the name: this is the agent's *work* surface (runs in flight +
+  // the jobs that start them), not the task board. Task envelopes used to appear in this
+  // list too — `scheduled` contained each task's private `schedules` row, so an agent
+  // reading it saw a task as a cron entry. After v42 there are no such rows: every row
+  // here is a real job, and the task board has its own endpoint (GET /api/tasks, whose
+  // `execution` badge is the same executions rows this list already shows).
   app.get('/tasks', (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)

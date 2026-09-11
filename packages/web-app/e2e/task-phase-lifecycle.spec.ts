@@ -45,6 +45,7 @@ import {
   updateTask,
   getTask,
   resolveDbPath,
+  TERMINAL_EXECUTION_STATUSES,
   type TaskDTO,
 } from "./helpers/task-domain-helpers"
 
@@ -78,7 +79,10 @@ let serverAvailable = false
 let taskId = ""
 let taskVersion = 0
 let boundWsId = ""
-let envelopeScheduleId = ""
+// 票06: was `envelopeScheduleId` — the v39 task↔scheduler envelope row. 票03 deleted that
+// object (schema v42 dropped origin_*/scheduled_at), so what a round now has an identity
+// for is its ROOT EXECUTION row; this holds it (first write: S2's phase-1 round).
+let rootExecutionId = ""
 let reposIndexBefore = ""
 
 interface AcceptanceResp {
@@ -87,7 +91,8 @@ interface AcceptanceResp {
     task: { status: string; derived: TaskDerived }
     next_action: string
     acceptance_id: string
-    dispatch?: { schedule_id: string; execution_id: string; workspace_id: string; phase_index: number; round_index: number }
+    // 票03: AcceptanceDispatch lost schedule_id — the dispatched round IS an execution row.
+    dispatch?: { execution_id: string; workspace_id: string; phase_index: number; round_index: number }
     error?: string
   } | null
 }
@@ -128,7 +133,10 @@ function dbGet<T>(sql: string, ...params: unknown[]): T | undefined {
 }
 
 interface ExecRow { id: string; status: string; phase_index: number | null; round_index: number | null; workspace_id: string }
-const TERM = new Set(["completed", "failed", "error", "cancelled", "completed_with_failures"])
+// 终态集合取自 helper（对齐 shared TERMINAL_EXECUTION_STATUSES，含 'aborted'）。旧版本地
+// 写了个 'error'（执行状态词表里根本没有这个值）又漏了 'aborted' —— 漏 aborted 会让
+// 「中止后的轮」被当成还活着，从而在 ux_exec_task_active 的计数里说谎。
+const TERM = new Set<string>(TERMINAL_EXECUTION_STATUSES)
 
 /** Poll a predicate until truthy or deadline. */
 async function until<T>(fn: () => T | null | Promise<T | null>, timeoutMs: number, msg: string): Promise<T> {
@@ -146,17 +154,27 @@ async function until<T>(fn: () => T | null | Promise<T | null>, timeoutMs: numbe
   throw new Error(`timeout(${timeoutMs}ms): ${msg}${lastErr ? ` last: ${lastErr}` : ""}`)
 }
 
-/** 本任务打标执行（经 schedules origin 域 — derive 同口径）。 */
+/** 本任务的轮次执行行 —— 口径即 deriveTaskView 自己的取数口径（票03：`task_id` 直连 +
+ *  `parent_id='0'` 的根 + phase_index 打标）。信封版这里要穿 schedules →
+ *  schedule_executions 两跳，v42 把那条链的列删了（origin_type/origin_id/origin_role）。 */
 function taskRoundExecs(): ExecRow[] {
   return dbAll<ExecRow>(
     `SELECT e.id, e.status, e.phase_index, e.round_index, e.workspace_id FROM executions e
-      WHERE e.phase_index IS NOT NULL AND e.id IN (
-        SELECT se.execution_id FROM schedule_executions se
-          JOIN schedules s ON s.id = se.schedule_id
-         WHERE s.origin_type='task' AND s.origin_id = ? AND se.execution_id IS NOT NULL)
+      WHERE e.task_id = ? AND e.parent_id = '0' AND e.phase_index IS NOT NULL
       ORDER BY e.created_at ASC`,
     taskId,
   )
+}
+/** 同任务互斥的数据真相：一个任务同时最多一条**非终态根**。ux_exec_task_active（partial
+ *  UNIQUE over 根执行，谓词 status NOT IN 终态）就是它的执行者 —— 旧版那是 ~10 处守卫 +
+ *  借 schedule_executions 的 UNIQUE 拼出来的约定。 */
+function liveRootCount(): number {
+  return dbAll<{ c: number }>(
+    `SELECT COUNT(*) c FROM executions WHERE task_id = ? AND parent_id = '0'
+       AND status NOT IN (${[...TERM].map(() => "?").join(",")})`,
+    taskId,
+    ...TERM,
+  )[0]?.c ?? 0
 }
 function roundTerminal(phaseIdx: number, roundIdx: number): ExecRow | undefined {
   return taskRoundExecs().find((e) => e.phase_index === phaseIdx && e.round_index === roundIdx && TERM.has(e.status))
@@ -311,10 +329,14 @@ async function sweep(): Promise<void> {
   inTry("rm ws dir", () => { if (wsRow) fs.rmSync(wsRow.path, { recursive: true, force: true }) })
   inTry("db sweep", () => {
     // 单次连接、PRAGMA foreign_keys=OFF：本 run 造的是自洽的父子行集合（tasks →
-      // schedules → schedule_* → executions → node_executions → agent_events/
-      // llm_calls → workspace），一次性按域删除即可，无需逐表凑 FK 序（executions
-      // 被 execution_summaries/interaction_messages/schedule_workspaces 多向引用，
-      // 硬凑顺序脆）。仅影响这条短生命周期连接，不碰 server 连接的 FK 语义。
+      // executions(task_id 直连) → node_executions → agent_events/llm_calls →
+      // workspace），一次性按域删除即可，无需逐表凑 FK 序（executions 被
+      // execution_summaries/interaction_messages 多向引用，硬凑顺序脆）。仅影响这条短
+      // 生命周期连接，不碰 server 连接的 FK 语义。
+      // 票06: 旧的域链是 tasks → schedules → schedule_executions/schedule_workspaces →
+      // executions，靠 schedules.origin_id 反查；v42 之后那条链不存在了，本任务的运行
+      // 就是 executions 上 task_id=本任务 的行（根 + composite 臂一并覆盖 —— 比旧版按
+      // phase_index 过滤的集合更完整，中止/回收留下的行同样会被清）。
     const db = new DatabaseSync(resolveDbPath())
     try {
       db.prepare("PRAGMA busy_timeout = 5000").run()
@@ -322,9 +344,7 @@ async function sweep(): Promise<void> {
       const run = (sql: string, ...p: unknown[]): void => { db.prepare(sql).run(...(p as never[])) }
       if (taskId) {
         const execIds = (db.prepare(
-          `SELECT e.id FROM executions e WHERE e.phase_index IS NOT NULL AND e.id IN (
-             SELECT se.execution_id FROM schedule_executions se JOIN schedules s ON s.id=se.schedule_id
-              WHERE s.origin_type='task' AND s.origin_id=? AND se.execution_id IS NOT NULL)`,
+          `SELECT e.id FROM executions e WHERE e.task_id = ?`,
         ).all(taskId) as Array<{ id: string }>).map((r) => r.id)
         for (const e of execIds) {
           run("DELETE FROM agent_events WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id=?)", e)
@@ -337,11 +357,12 @@ async function sweep(): Promise<void> {
           run(`DELETE FROM execution_summaries WHERE execution_id IN (${inList})`, ...execIds)
           run(`DELETE FROM interaction_messages WHERE execution_id IN (${inList})`, ...execIds)
         }
-        run("DELETE FROM schedule_executions WHERE schedule_id IN (SELECT id FROM schedules WHERE origin_id=?)", taskId)
-        run("DELETE FROM schedule_workspaces WHERE schedule_id IN (SELECT id FROM schedules WHERE origin_id=?)", taskId)
+        run("DELETE FROM executions WHERE task_id = ?", taskId)
         run("DELETE FROM executions WHERE workspace_id = ?", boundWsId)
         run("DELETE FROM workspaces WHERE id = ?", boundWsId)
-        run("DELETE FROM schedules WHERE origin_id = ?", taskId)
+        // 票06: no `DELETE FROM schedules WHERE origin_id=?` any more — 票03 deleted the
+        // task's envelope row, and with it the column this cleanup walked. Leaving it in
+        // would have kept failing inside inTry() forever (silently: the sweep swallows).
         run("DELETE FROM tasks WHERE id = ?", taskId)
       }
     } finally { db.close() }
@@ -381,7 +402,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
   })
 
   // ── S1 新建 + v4 fixture 直造 + UI 反映 + [入队] 真点击 ──────────────
-  test("S1 新建 coding 任务（v4 拆分/绑定 fixture）→ 入队清单五行齐 → 真点击入队 → 信封落库", async ({ page }) => {
+  test("S1 新建 coding 任务（v4 拆分/绑定 fixture）→ 入队清单五行齐 → 真点击入队 → 零信封落库", async ({ page }) => {
     // git fixtures + repos index
     const repoA = makeFixtureRepo(`${RUN}-projA`, { context: true })
     const repoB = makeFixtureRepo(`${RUN}-projB`, { context: false })
@@ -400,7 +421,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     writeStubWorkflow()
     writeArchiveInputs()
 
-    // v4 信封（拆分+绑定，spec-field(phases) 等价序列之 PUT 半程 —— 票 12 AC3 已证写回链）
+    // v4 拆分+绑定 PUT（spec-field(phases) 等价序列之 PUT 半程 —— 票 12 AC3 已证写回链）
     const put = await updateTask(taskId, taskVersion, {
       task_spec: {
         format: "v4",
@@ -444,31 +465,47 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     await page.waitForSelector(`[data-task-column="ready"] [data-task-id="${taskId}"]`, { timeout: 20_000 })
     await page.screenshot({ path: shot("s1-card-in-ready.png") })
 
-    // DB 交叉：一封套（K5）+ 信封物化 v4 phases + chain[0]=phase1
-    const envelope = await until(() => {
-      const rows = dbAll<{ id: string; origin_role: string; status: string; config: string }>(
-        "SELECT id, origin_role, status, config FROM schedules WHERE origin_type='task' AND origin_id=? AND deleted_at IS NULL", taskId,
-      )
-      return rows.length === 1 ? rows[0] : null
-    }, 15_000, "envelope schedule row")
-    envelopeScheduleId = envelope!.id
-    expect(envelope!.origin_role).toBe("primary")
-    expect(envelope!.status).toBe("draft") // v39 停放，待 trigger
-    const cfg = JSON.parse(envelope!.config) as {
-      format?: string; phases?: Array<{ index: number; workflowRef: string; specDir: string; inputValues: Record<string, string> }>
-      workflow_chain?: Array<{ workflow_ref: string }>
-      workspace_spec?: { projects?: Array<{ name: string }> }
-    }
-    expect(cfg.format).toBe("v4")
-    expect(cfg.phases?.map((p) => p.index)).toEqual([1, 2])
-    expect(cfg.phases?.[0].workflowRef).toBe("e2e-td-lc-stub")
-    expect(cfg.workflow_chain?.[0].workflow_ref).toBe("e2e-td-lc-stub")
-    expect(cfg.workspace_spec?.projects?.map((p) => p.name)).toEqual([PROJ_A, PROJ_B])
-    // API 回读：GET /:id 仍 draft→ready + phases 结构不丢
+    // DB 交叉（票03 §新行为1）：入队造不出任何行。信封时代这块断的是「一封套（K5）+
+    // 物化 v4 phases + chain[0]=phase1」，那个对象已不存在（v42 DROP 了 origin_*/
+    // scheduled_at），物化本身也没了：buildTaskLaunchConfig + resolveV4Phases 是
+    // (task_spec, home) 的纯函数，绑定不需要存储位置 —— 所以「phase 绑定有没有落到运行上」
+    // 只能在起轮那一刻从执行行上看（S2 断 workflow_ref / phase_index / round_index）。
+    const schedulesBefore = dbAll<{ c: number }>(
+      "SELECT COUNT(*) c FROM schedules WHERE org = ?", TASK_E2E_ORG,
+    )[0]!.c
+    // 「没有任何一行属于这个 task」比总数断言更硬：id / config / name / workflow_ref 全扫。
+    expect(
+      dbAll<{ id: string }>(
+        "SELECT id FROM schedules WHERE id = ? OR config LIKE ? OR name LIKE ? OR workflow_ref LIKE ?",
+        taskId, `%${taskId}%`, `%${taskId}%`, `%${taskId}%`,
+      ),
+      "task id 在 schedules 里不出现（信封没回来）",
+    ).toHaveLength(0)
+    expect(
+      dbAll<{ c: number }>("SELECT COUNT(*) c FROM schedules WHERE org = ?", TASK_E2E_ORG)[0]!.c,
+      "票03 §新行为1: 入队后该 org 的 schedules 行数一动不动",
+    ).toBe(schedulesBefore)
+    // 「已入队」不是「已排队」：既没有到期游标，也没有被武装的运行行 —— 两件事分开断。
+    const trow1 = dbGet<{ trigger_mode: string; next_fire_at: string | null; trigger_enabled: number; status: string }>(
+      "SELECT trigger_mode, next_fire_at, trigger_enabled, status FROM tasks WHERE id=?", taskId,
+    )!
+    expect(trow1.status).toBe("ready")
+    expect(trow1.trigger_mode, "入队不改「何时」—— 默认 manual").toBe("manual")
+    expect(trow1.next_fire_at, "入队不排期 —— 唯一到期游标仍为 NULL").toBeNull()
+    expect(trow1.trigger_enabled, "触发总开关默认开").toBe(1)
+    expect(
+      dbAll<{ c: number }>("SELECT COUNT(*) c FROM executions WHERE task_id = ?", taskId)[0]!.c,
+      "入队不武装任何实例",
+    ).toBe(0)
+    // API 回读：GET /:id 仍 ready + phases 结构不丢 + 读模型同意「零运行」
     const detail = await getTask(taskId)
     expect(detail.status).toBe("ready")
     expect((detail.task_spec as { format: string }).format).toBe("v4")
-    log(`S1 ok: task ${taskId} enqueued; envelope ${envelopeScheduleId}`)
+    expect(detail.executions, "执行历史为空（children[] 已随信封一起删除）").toHaveLength(0)
+    expect(detail.execution, "当前实例徽章为 null").toBeNull()
+    expect(detail.trigger_mode, "DTO 的「何时」与 tasks.* 一致").toBe(trow1.trigger_mode)
+    expect(detail.next_fire_at, "DTO 的到期游标与 tasks.next_fire_at 一致").toBe(trow1.next_fire_at)
+    log(`S1 ok: task ${taskId} enqueued; 0 envelope rows, 0 instances, cursor NULL`)
   })
 
   // ── S2 触发 phase1：真调度 → 首建 ws+worktree → seed → 执行 → collect → 待验收 ──
@@ -483,13 +520,50 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     expect((await trigResp).status()).toBe(200)
     await page.screenshot({ path: shot("s2-triggered.png") })
 
+    // 触发那一刻的数据真相（票03 §新行为2 + §数据形状）：一次运行 = 一条 executions 行，
+    // task_id 直连、parent_id='0' 是这一轮的根，phase/round 打在**列上**（旧版是改写信封
+    // config 的 chain[0]，所以「绑定有没有生效」只能读 config blob；现在它是可查询的列）。
+    const armedRoot = await until(() => {
+      const rows = taskRoundExecs()
+      return rows.length >= 1 ? rows[0] : null
+    }, 30_000, "触发后没有根执行行")
+    rootExecutionId = armedRoot.id
+    expect(armedRoot.phase_index, "phase/round 落在行上：phase 1").toBe(1)
+    expect(armedRoot.round_index, "phase/round 落在行上：round 1（首触不越轮）").toBe(1)
+    const armedRow = dbGet<{ task_id: string; parent_id: string; status: string; workflow_ref: string; var_pool: string }>(
+      "SELECT task_id, parent_id, status, workflow_ref, var_pool FROM executions WHERE id = ?", armedRoot.id,
+    )!
+    expect(armedRow.task_id, "实例经 task_id 直连任务（不再穿 schedules）").toBe(taskId)
+    expect(armedRow.parent_id, "这一轮的根是 parent_id='0'").toBe("0")
+    // 旧版这条断的是「信封 config 物化对了没有」；纯函数绑定下，它现在的可观测形式就是
+    // 运行行自己引用的工作流 —— 起错流在这里就会红。
+    expect(armedRow.workflow_ref, "行的 workflow_ref = phase1 绑定的 e2e-td-lc-stub").toContain("e2e-td-lc-stub")
+    expect(
+      ["pending", "running"],
+      `到点/触发后的行只能是 排队中(pending) 或 执行中(running)，实得 ${armedRow.status}`,
+    ).toContain(armedRow.status)
+    // 「排队中」与「执行中」是两个事实（信封时代它们是同一次翻转，那正是 bug）：
+    // 立即触发写的是**行**，不写到期游标 —— next_fire_at 仍为 NULL。
+    expect(
+      dbGet<{ next_fire_at: string | null }>("SELECT next_fire_at FROM tasks WHERE id=?", taskId)!.next_fire_at,
+      "manual 立即触发不留到期游标（游标是「何时」，行是「一次运行」）",
+    ).toBeNull()
+    expect(liveRootCount(), "同任务互斥：此刻只有一条非终态根").toBe(1)
+    expect(
+      dbAll<{ id: string }>(
+        "SELECT id FROM schedules WHERE id = ? OR config LIKE ? OR name LIKE ?",
+        taskId, `%${taskId}%`, `%${taskId}%`,
+      ),
+      "起轮同样不在 schedules 里留痕（票03 §数据形状）",
+    ).toHaveLength(0)
+
     // 真执行到终态（首建 createFromSpec + git worktree + bash stub）
     const r1 = await until(() => roundTerminal(1, 1) ?? null, 240_000, "phase1 round1 terminal")
     expect(r1.status).toBe("completed")
     boundWsId = r1.workspace_id
     log(`S2: r1 exec ${r1.id} completed on ws ${boundWsId}`)
 
-    // DB 真相：打标 (1,1)、一 task 一 ws、一信封串行、tasks.workspace_id 绑定
+    // DB 真相：打标 (1,1)、一 task 一 ws、同任务互斥（最多一条非终态根）、tasks.workspace_id 绑定
     const tagged = taskRoundExecs()
     expect(tagged.map((e) => [e.phase_index, e.round_index])).toEqual([[1, 1]])
     expect(dbAll<{ id: string }>("SELECT id FROM workspaces WHERE id=?", boundWsId).length).toBe(1)
@@ -813,7 +887,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     await page.screenshot({ path: shot("s7-final-cross-check.png") })
     // 证据落盘（R4）
     const evidence = {
-      run: RUN, taskId, wsId: boundWsId, scheduleId: envelopeScheduleId,
+      run: RUN, taskId, wsId: boundWsId, rootExecutionId,
       executions: taskRoundExecs(),
       detail,
       sseTaskEvents: sse.events.filter((e) => (e.data as { task_id?: string }).task_id === taskId).map((e) => e.event),

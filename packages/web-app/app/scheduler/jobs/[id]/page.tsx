@@ -20,6 +20,7 @@ import {
   toggleJob,
   deleteJob,
   triggerJob,
+  isBuiltinJob,
 } from "@/lib/scheduler-api"
 
 import { ConfigSummaryCard } from "@/components/scheduler/config-summary-card"
@@ -145,18 +146,26 @@ export default function JobDetailPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{job.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {job.job_type === "workflow" ? "Workflow" : "Agent"} 调度任务
+            {/* JobType 三态 (票03: 'job' = 注册好的 TS handler，如内置 系统 · 任务生命周期)
+                — 旧的二元写法会把这类行说成 Agent。 */}
+            {job.job_type === "workflow" ? "Workflow" : job.job_type === "agent" ? "Agent" : "Job"} 调度任务
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowEditForm(true)}
-          >
-            <Pencil className="size-3.5" />
-            编辑
-          </Button>
+          {/* 票05 (ADR-0021): job_type='job' 行不可编辑 —— SchedulerForm 只表达
+              workflow/agent 两类 config，对内置 handler 行开表单只会把它盖成 agent
+              形状。内置行（isBuiltinJob）删除入口不渲染：暂停可以，删掉 系统 ·
+              任务生命周期 = 静默停掉全系统任务启动，且 seed 不会复活软删行。 */}
+          {job.job_type !== "job" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowEditForm(true)}
+            >
+              <Pencil className="size-3.5" />
+              编辑
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -170,14 +179,16 @@ export default function JobDetailPage() {
             )}
             手动触发
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setShowDeleteDialog(true)}
-          >
-            <Trash2 className="size-3.5" />
-            删除
-          </Button>
+          {!isBuiltinJob(job) && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="size-3.5" />
+              删除
+            </Button>
+          )}
         </div>
       </div>
 

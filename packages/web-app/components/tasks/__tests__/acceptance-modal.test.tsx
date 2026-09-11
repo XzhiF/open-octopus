@@ -93,14 +93,13 @@ function makeDetail(derived: TaskDerivedView): TaskDetail {
     version: 4, source_chat_session_id: null, deleted_at: null,
     created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z", completed_at: null,
     derived,
-    children: [{
-      schedule_id: "sch-1", name: "env", status: "done", origin_role: "primary",
-      workflow_ref: "task-dev",
-      execution_ref: {
-        id: "se-1", status: "done", execution_id: "exec-1", workspace_id: "ws-1",
-        triggered_at: "2026-09-03T00:00:00Z", completed_at: "2026-09-03T00:42:00Z",
-        duration_ms: 2_520_000, error_summary: null,
-      },
+    // 票03: 运行历史徽章取代 children[].execution_ref —— 用时由本行的
+    // started_at/completed_at 现算（2026-09-03 00:00 → 00:42 = 42m）。
+    executions: [{
+      id: "exec-1", status: "completed", workflow_ref: "task-dev",
+      phase_index: 1, round_index: 1, workspace_id: "ws-1",
+      started_at: "2026-09-03T00:00:00Z", completed_at: "2026-09-03T00:42:00Z",
+      created_at: "2026-09-03T00:00:00Z",
     }],
   } as unknown as TaskDetail
 }
@@ -244,7 +243,7 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二�
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
-      dispatch: { schedule_id: "sch-1", execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
@@ -258,7 +257,7 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二�
     fireEvent.click(document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement)
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "dispatched",
-      dispatch: { schedule_id: "sch-1", execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+      dispatch: { execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
@@ -272,7 +271,7 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二�
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
-      dispatch: { schedule_id: "sch-1", execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     const card = await screen.findByTestId("agent-recommend-card")

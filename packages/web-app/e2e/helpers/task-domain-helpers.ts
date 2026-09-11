@@ -8,7 +8,8 @@
 //     node:sqlite is a Node.js ≥22.5 built-in; falls back to API-only when the
 //     module or DB file is unavailable so the specs still parse + list in any
 //     environment.
-//   - SSE collector for /api/tasks/events (task_status + spec_field_update)
+//   - SSE collector for /api/tasks/events (task_status + task_execution +
+//     task_trigger + spec_field_update)
 //   - Screenshot dir (E2E_ARTIFACTS_DIR, R-screenshot evidence)
 //
 // Data prefix E2E_TD_ (R7) — all task names/orgs carry this prefix so the
@@ -18,6 +19,18 @@ import { request, type APIRequestContext } from "@playwright/test"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+// ADR-0021 票05: the task read model's single type source is shared (web stopped
+// mirroring it). The e2e DTOs are aliases of it, so a renamed column breaks the specs
+// at compile time instead of silently comparing against a stale local copy. Type-only:
+// nothing here pulls the built package into the Playwright runtime.
+import type {
+  Task,
+  TaskExecutionBadge,
+  TaskExecutionSsePayload,
+  TaskTriggerSsePayload,
+  TaskTriggerFailedSsePayload,
+  TriggerMode,
+} from "@octopus/shared"
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -168,21 +181,71 @@ export interface TaskDbRow {
   created_at: string
   updated_at: string
   completed_at: string | null
+  // ── WHEN this task runs (票03 moved this off the deleted `schedules` envelope onto
+  // the task row; schema v41). These are the columns the DTO's trigger_* fields mirror.
+  trigger_mode: string
+  trigger_at: string | null
+  cron_expression: string | null
+  cron_timezone: string
+  /** SQLite has no boolean: the read model maps `=== 1` (票05 §新事实1). */
+  trigger_enabled: number
+  next_fire_at: string | null
+  last_fired_at: string | null
+  /** v41+: workspaces carry the back-pointer, so 「这个 ws 属于哪个任务」 is a column
+   *  read instead of the deleted schedules.origin_id join bridge. */
+  workspace_id: string | null
 }
 
-export interface ScheduleDbRow {
+/**
+ * One task instance, read straight off `executions` (票03: the row IS the run — there
+ * is no `schedules` envelope behind it any more, and schema v42 dropped the columns that
+ * used to say so).
+ *
+ * Shape of the domain, so a spec can tell the three things apart without a second query:
+ *   - `parent_id === '0'` → a ROOT: one v4 phase round, or one composite coordinator turn.
+ *   - `parent_id !== '0'` → a composite fan-out arm; its identity is `parent_id` (the
+ *     dispatching run) + `name` (the subunit's name, written by dispatchChildRun). This
+ *     pair is what replaced `origin_role='subunit'`.
+ *   - `status === 'pending'` → armed and queued behind the shared concurrency gate
+ *     (「排队中」); `'running'` → executing (「执行中」); a terminal status → a finished run.
+ *     The two are DIFFERENT moments now — under the envelope they were the same one, which
+ *     is exactly why 「排队中」 used to look like 「执行中」.
+ */
+export interface TaskExecutionRow {
   id: string
-  org: string
-  name: string
+  workspace_id: string
+  parent_id: string
+  child_index: number
   status: string
-  origin_type: string
-  origin_id: string | null
-  origin_role: string | null
-  config: string
-  workflow_ref: string | null
-  deleted_at: string | null
+  workflow_ref: string
+  workflow_name: string
+  /** The subunit's name on an arm (票05); NULL on a root. */
+  name: string | null
+  phase_index: number | null
+  round_index: number | null
+  task_id: string | null
+  started_at: string | null
+  completed_at: string | null
+  /** JSON blob. A failed row's `error` key is the one-line reason the badge shows. */
+  var_pool: string
   created_at: string
 }
+
+/** Execution statuses that mean "this run is over" (mirrors shared's
+ *  TERMINAL_EXECUTION_STATUSES; kept local so the specs' expectation does not move
+ *  together with the production constant it is supposed to be checking). */
+export const TERMINAL_EXECUTION_STATUSES: readonly string[] = [
+  "completed",
+  "completed_with_failures",
+  "failed",
+  "cancelled",
+  "aborted",
+  "skipped",
+  "rejected",
+]
+
+export const isTerminalExecutionStatus = (status: string): boolean =>
+  TERMINAL_EXECUTION_STATUSES.includes(status)
 
 /** Read a tasks row directly from SQLite (R3: DB-side of API↔DB cross-check). */
 export function readTaskRow(taskId: string): TaskDbRow | null {
@@ -190,7 +253,7 @@ export function readTaskRow(taskId: string): TaskDbRow | null {
   if (!db) return null
   try {
     const row = db.prepare(
-      "SELECT id, org, name, status, source_chat_session_id, task_spec, authoring_resources, resources, skills, project_ids, workflow_ref, version, deleted_at, created_at, updated_at, completed_at FROM tasks WHERE id = ?",
+      "SELECT id, org, name, status, source_chat_session_id, task_spec, authoring_resources, resources, skills, project_ids, workflow_ref, version, deleted_at, created_at, updated_at, completed_at, trigger_mode, trigger_at, cron_expression, cron_timezone, trigger_enabled, next_fire_at, last_fired_at, workspace_id FROM tasks WHERE id = ?",
     ).get(taskId)
     return (row as TaskDbRow | undefined) ?? null
   } finally {
@@ -198,18 +261,88 @@ export function readTaskRow(taskId: string): TaskDbRow | null {
   }
 }
 
-/** Read all schedules linked to a task via S2 polymorphic origin (origin_type='task'). */
-export function readSchedulesByOrigin(taskId: string): ScheduleDbRow[] {
+/**
+ * Every `executions` row that serves this task — roots and composite arms alike
+ * (ADR-0021 票03). Replaces `readSchedulesByOrigin`, which selected
+ * `schedules.origin_type/origin_id/origin_role`: schema v42 dropped those columns, so a
+ * task owns no row in the scheduler's table at all.
+ *
+ * Ordered by creation (rowid breaks same-second ties), so `[0]` is the first round;
+ * callers split roots (`parent_id === '0'`) from arms (`parent_id !== '0'`, `name` = the
+ * subunit).
+ */
+export function readTaskExecutions(taskId: string): TaskExecutionRow[] {
   const db = openTaskDb()
   if (!db) return []
   try {
     return db.prepare(
-      "SELECT id, org, name, status, origin_type, origin_id, origin_role, config, workflow_ref, deleted_at, created_at FROM schedules WHERE origin_type = 'task' AND origin_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
-    ).all(taskId) as ScheduleDbRow[]
+      "SELECT id, workspace_id, parent_id, child_index, status, workflow_ref, workflow_name, name, phase_index, round_index, task_id, started_at, completed_at, var_pool, created_at FROM executions WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
+    ).all(taskId) as TaskExecutionRow[]
   } finally {
     db.close()
   }
 }
+
+/** The task's ROOT instances only (one v4 phase round / one composite turn per row),
+ *  newest first — the same predicate + order the `execution` badge and 「执行历史」 use, so
+ *  "exactly one live root" is checkable against what the API calls the current instance. */
+export function readTaskRootExecutions(taskId: string): TaskExecutionRow[] {
+  return readTaskExecutions(taskId)
+    .filter((r) => r.parent_id === "0")
+    .reverse()
+}
+
+/** How many rows the `schedules` table holds for an org. After 票03 the ONLY rows in
+ *  this table are the scheduler's own cron/agent/built-in job definitions — a task must
+ *  never add one (contract §新行为1: 入队后 schedules 零条任务行). Callers snapshot the
+ *  count before an operation and assert the delta is 0, so an unrelated real job in the
+ *  same org cannot turn the assertion red. */
+export function countSchedulesInOrg(org: string): number {
+  const db = openTaskDb()
+  if (!db) return -1
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS c FROM schedules WHERE org = ?").get(org) as
+      | { c: number }
+      | undefined
+    return row?.c ?? 0
+  } finally {
+    db.close()
+  }
+}
+
+/** Total rows in `schedules` (org-agnostic) — the "no job row was created by 定时触发"
+ *  check (票03: a task's cron lives in tasks.cron_expression, not in a schedule row). */
+export function countAllSchedules(): number {
+  const db = openTaskDb()
+  if (!db) return -1
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS c FROM schedules").get() as
+      | { c: number }
+      | undefined
+    return row?.c ?? 0
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Rows in `schedules` that carry a task's id anywhere — as their own id, or inside
+ * `config` / `name` / `workflow_ref`. Non-empty means the v39 envelope came back: the
+ * whole point of 票03 is that nothing about a task lives in the scheduler's table.
+ */
+export function findTaskEnvelopeScheduleRows(taskId: string): Array<{ id: string; name: string; status: string }> {
+  const db = openTaskDb()
+  if (!db) return []
+  const like = `%${taskId}%`
+  try {
+    return db.prepare(
+      "SELECT id, name, status FROM schedules WHERE id = ? OR config LIKE ? OR name LIKE ? OR workflow_ref LIKE ?",
+    ).all(taskId, like, like, like) as Array<{ id: string; name: string; status: string }>
+  } finally {
+    db.close()
+  }
+}
+
 
 /** Read sessions.scope_id for a chat session (SG3: scope_id retargets to tasks.id). */
 export function readSessionScopeId(sessionId: string): string | null {
@@ -225,14 +358,22 @@ export function readSessionScopeId(sessionId: string): string | null {
   }
 }
 
+/** The trigger vocabulary the read model accepts (shared's TriggerModeSchema). Anything
+ *  else in the column is dirty data, and 票05 fail-closes it to 'manual' on the wire. */
+const TRIGGER_MODES: readonly TriggerMode[] = ["manual", "once", "cron"]
+
 /**
  * Cross-validate an API response against the DB row (R3/R4). When the DB is
- * available, asserts the API-returned status/version/name match the SQL row.
- * When the DB is unavailable, this is a no-op (the API assertion in the test
- * body already carries the signal). Returns true when the DB check ran + passed.
+ * available, asserts the API-returned status/version/name AND the whole WHEN-half —
+ * `trigger_mode` / `trigger_at` / `cron_expression` / `cron_timezone` / `trigger_enabled`
+ * / `next_fire_at` / `last_fired_at` — match the SQL row. Those seven columns are the
+ * task's own trigger state (票03 moved it off the deleted envelope row), so this is the
+ * only place the pair can be compared: the old version had nothing to check beyond the
+ * status mirror. When the DB is unavailable this is a no-op (the API assertion in the
+ * test body already carries the signal). Returns true when the DB check ran + passed.
  */
 export function assertTaskMatchesDb(
-  apiTask: { id: string; status: string; version: number; name: string },
+  apiTask: TaskDTO,
   opts?: { status?: string; version?: number; name?: string },
 ): boolean {
   const dbRow = readTaskRow(apiTask.id)
@@ -258,39 +399,58 @@ export function assertTaskMatchesDb(
       `DB name mismatch: API=${apiTask.name} expected=${expectName} DB=${dbRow.name} (task ${apiTask.id})`,
     )
   }
+  // ── the WHEN half (票03: trigger state is the task's own data) ──
+  // A stored value outside the enum is impossible via the API; a hand-edited row falls
+  // back to 'manual' on the wire (fail-closed: an unreadable trigger never fires a round).
+  const expectMode = TRIGGER_MODES.includes(apiTask.trigger_mode) ? apiTask.trigger_mode : "manual"
+  if (dbRow.trigger_mode !== expectMode) {
+    throw new Error(
+      `DB trigger_mode mismatch: API=${apiTask.trigger_mode} expected=${expectMode} DB=${dbRow.trigger_mode} (task ${apiTask.id})`,
+    )
+  }
+  for (const col of ["trigger_at", "cron_expression", "cron_timezone", "next_fire_at", "last_fired_at"] as const) {
+    if (apiTask[col] !== dbRow[col]) {
+      throw new Error(
+        `DB ${col} mismatch: API=${String(apiTask[col])} DB=${String(dbRow[col])} (task ${apiTask.id})`,
+      )
+    }
+  }
+  // SQLite stores the switch as an integer; the DTO exposes a boolean (票05 §新事实1).
+  if (apiTask.trigger_enabled !== (dbRow.trigger_enabled === 1)) {
+    throw new Error(
+      `DB trigger_enabled mismatch: API=${apiTask.trigger_enabled} DB=${dbRow.trigger_enabled} (task ${apiTask.id})`,
+    )
+  }
   return true
 }
 
+
 // ── API helpers (R3: API-side of API↔DB cross-check) ───────────────────
 
-export interface TaskDTO {
-  id: string
-  org: string
-  name: string
-  status: "draft" | "ready" | "running" | "done" | "failed" | "aborted"
+/**
+ * The wire shape of a task — shared's `Task`, with the spec blob left opaque. Every other
+ * column is shared's, so `trigger_*` / `execution` cannot drift from the server again
+ * (that drift is what 票05's 「已彻底删除的 shared 符号」 list exists to catch);
+ * `task_spec` stays `unknown` because each spec reads back the fixture it wrote (v4 phase
+ * lists, composite subunit arrays) and a typed union there turns every assertion into a
+ * cast fight.
+ */
+export interface TaskDTO extends Omit<Task, "task_spec"> {
   task_spec: unknown
-  authoring_resources: Array<{ type: string; name: string }>
-  resources: Array<{ type: string; name: string }>
-  skills: string[]
-  project_ids: string[]
-  workflow_ref: string | null
-  version: number
-  source_chat_session_id: string | null
-  deleted_at: string | null
-  created_at: string
-  updated_at: string
-  completed_at: string | null
 }
 
+/**
+ * GET /api/tasks/:id — the task + its run history. `children[]` (the envelope rows that
+ * used to stand for the same runs) is gone: `executions[]` lists the ROOT runs, newest
+ * first, each carrying its composite arms under `children`; `execution` is the badge of
+ * the newest root — the one row the board shows.
+ */
 export interface TaskDetailDTO extends TaskDTO {
-  children: Array<{
-    schedule_id: string
-    name: string
-    status: string
-    origin_role: string | null
-    workflow_ref: string | null
-  }>
+  executions: TaskExecutionBadge[]
+  /** deriveTaskView's output, embedded verbatim (server-owned; the specs cast it). */
+  derived?: unknown
 }
+
 
 interface CloneSession {
   id: string
@@ -366,7 +526,7 @@ export async function listTasks(params?: { status?: string; org?: string }): Pro
   }
 }
 
-/** GET /api/tasks/:id — detail (task + children schedules). */
+/** GET /api/tasks/:id — detail (task + `executions[]` run history + `execution` badge). */
 export async function getTask(taskId: string): Promise<TaskDetailDTO> {
   const ctx = await apiContext()
   try {
@@ -676,7 +836,11 @@ export function seedAssistRunOutput(
   }
 }
 
-/** POST /api/tasks/:id/ready — enqueue: draft→ready + dispatch seam. */
+/** POST /api/tasks/:id/ready — 入队: the confirmation gate + `status: draft→ready`, and
+ *  NOTHING else (票03 §新行为1). It creates no `schedules` row and arms no instance —
+ *  under the v39 envelope this call pre-created a parked private schedule, which is the
+ *  coupling ADR-0021 removed. A run starts from an explicit 触发 (or, for a task carrying
+ *  a due cursor, from the built-in task-lifecycle job). */
 export async function readyTask(taskId: string): Promise<TaskDTO> {
   const ctx = await apiContext()
   try {
@@ -693,7 +857,81 @@ export async function readyTask(taskId: string): Promise<TaskDTO> {
   }
 }
 
-/** POST /api/tasks/:id/abort — running→aborted + ws cleanup. */
+/**
+ * POST /api/tasks/:id/trigger — 触发 one round (票03 §新行为2).
+ *   - `at` absent / in the past → the job arms an `executions(task_id, pending)` root and
+ *     claims it inside the shared concurrency gate; the task goes 'running'.
+ *   - `at` in the future → one-shot arming only: `trigger_mode='once'` + `next_fire_at=at`,
+ *     status stays 'ready', and NO instance exists until the built-in job fires.
+ *   - a live instance already exists → 409 「已有进行中的实例」 (the same-task mutex is the
+ *     `ux_exec_task_active` partial unique index over the roots, not a code convention).
+ */
+export async function triggerTask(taskId: string, at?: string): Promise<TaskDTO> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/trigger`, {
+      data: at ? { at } : {},
+      headers: { "Content-Type": "application/json" },
+    })
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`triggerTask failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as TaskDTO
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** The raw {status, body} variant, for asserting the 409s (in-flight mutex / not-ready)
+ *  without {@link triggerTask} throwing on them. */
+export async function triggerTaskRaw(
+  taskId: string,
+  at?: string,
+): Promise<{ status: number; body: { error?: string; reason?: string } & Record<string, unknown> }> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/trigger`, {
+      data: at ? { at } : {},
+      headers: { "Content-Type": "application/json" },
+    })
+    const body = (await res.json().catch(() => ({}))) as
+      { error?: string; reason?: string } & Record<string, unknown>
+    return { status: res.status(), body }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** POST /api/tasks/:id/trigger/schedule — 周期触发 (票03 §新行为2/8). Body
+ *  `{cron, timezone?}` arms the task's OWN cron trigger: `tasks.trigger_mode='cron'` +
+ *  `cron_expression` + a computed `next_fire_at`. No `schedules` row and no scheduler job
+ *  is created — the built-in task-lifecycle job scans the cursor. */
+export async function scheduleTaskTrigger(
+  taskId: string,
+  cron: string,
+  timezone?: string,
+): Promise<TaskDTO> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/trigger/schedule`, {
+      data: { cron, ...(timezone ? { timezone } : {}) },
+      headers: { "Content-Type": "application/json" },
+    })
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`scheduleTaskTrigger failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as TaskDTO
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** POST /api/tasks/:id/abort — stops the task's own instance(s) and sets
+ *  `tasks.status='aborted'` (票03 §新行为4): a live row is engine-cancelled, an armed
+ *  'pending' row is retired, both land on `executions.status='aborted'`. It never touches
+ *  `schedules` (there is nothing there to clean), and the bound workspace survives (K12). */
 export async function abortTask(taskId: string): Promise<TaskDTO> {
   const ctx = await apiContext()
   try {
@@ -710,7 +948,8 @@ export async function abortTask(taskId: string): Promise<TaskDTO> {
   }
 }
 
-/** DELETE /api/tasks/:id — soft-delete + cascade-reap schedules. */
+/** DELETE /api/tasks/:id — soft-delete, NO cascade (票03 §新行为5): there is no envelope
+ *  row to reap; the task's runs are `executions` rows and stay as history. */
 export async function deleteTask(taskId: string): Promise<{ ok: true }> {
   const ctx = await apiContext()
   try {
@@ -724,6 +963,28 @@ export async function deleteTask(taskId: string): Promise<{ ok: true }> {
     await ctx.dispose()
   }
 }
+
+/** GET /api/tasks/:id/executions — the run history the 「执行历史」 panel reads: roots
+ *  newest first, each badge carrying `current` (the row the board shows as `execution`)
+ *  and its composite `children`. Replaced the envelope's children[]. */
+export async function listTaskExecutions(
+  taskId: string,
+  limit?: number,
+): Promise<{ items: Array<TaskExecutionBadge & { current: boolean }>; total: number }> {
+  const ctx = await apiContext()
+  try {
+    const qs = limit ? `?limit=${limit}` : ""
+    const res = await ctx.get(`${SERVER_URL}/api/tasks/${taskId}/executions${qs}`)
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`listTaskExecutions failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as { items: Array<TaskExecutionBadge & { current: boolean }>; total: number }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
 
 /** POST /api/clones/task-author/sessions — create a task-author chat session. */
 export async function createTaskAuthorSession(opts?: {
@@ -822,12 +1083,25 @@ export async function sendTaskAuthorChat(
 
 // ── SSE collector for /api/tasks/events ─────────────────────────────────
 
-export interface TaskStatusEvent {
-  task_id: string
-  status: string
-  schedule_id?: string
-  origin_type?: string
-}
+/** task_status payload — `{task_id, status}` only (票05): under the envelope this event
+ *  was the scheduler mirroring `schedules.status`, so the payload carried `schedule_id` +
+ *  `origin_type` to say which world it came from. There is one writer now (the task
+ *  routes / the built-in lifecycle job), so a task_status event is about a task. */
+export type TaskStatusEvent = { task_id: string; status: string }
+/** task_execution payload (票03 introduced the event, 票05 put it on the wire): one
+ *  instance transition the job performed — armed ('pending', queued behind the gate),
+ *  launched ('running'), finalized, reaped. This is the event that makes 「排队中」 and
+ *  「执行中」 two different observations instead of one mirrored status. */
+export type TaskExecutionEvent = TaskExecutionSsePayload
+/** task_trigger payload — the task's own due cursor moved (`scheduled` / `unscheduled` /
+ *  `cancelled` / `paused` / `resumed`). `next_fire_at` replaced the envelope's
+ *  `scheduled_at`. An immediate 触发 sends nothing here; it arms a row, which is
+ *  task_execution's job. */
+export type TaskTriggerEvent = TaskTriggerSsePayload
+/** task_trigger_failed payload (票05): a fire the pump could not arm — the refusal's own
+ *  one-liner + the trigger_mode it happened under. The 「周期不被一次失败钉死」 half of the
+ *  contract: the cursor still advances, and the reason reaches the board here. */
+export type TaskTriggerFailedEvent = TaskTriggerFailedSsePayload
 export interface SpecFieldUpdateEvent {
   task_id: string
   field: string
@@ -851,6 +1125,9 @@ export interface TaskArtifactsUpdateEvent {
  *  Call stop() to close the connection; collected events are in the arrays. */
 export interface SseSubscriber {
   taskStatusEvents: TaskStatusEvent[]
+  taskExecutionEvents: TaskExecutionEvent[]
+  taskTriggerEvents: TaskTriggerEvent[]
+  taskTriggerFailedEvents: TaskTriggerFailedEvent[]
   specFieldEvents: SpecFieldUpdateEvent[]
   assistRunEvents: AssistRunUpdateEvent[]
   taskArtifactsEvents: TaskArtifactsUpdateEvent[]
@@ -860,9 +1137,9 @@ export interface SseSubscriber {
 
 /**
  * Subscribe to /api/tasks/events on the server and collect task_status +
- * spec_field_update + assist_run_update events into the returned arrays. The
- * subscriber stays alive until stop() is called. Uses Node fetch streaming (the
- * events endpoint is an infinite loop with 30s heartbeats).
+ * task_execution + task_trigger(+failed) + spec_field_update + assist_run_update events
+ * into the returned arrays. The subscriber stays alive until stop() is called. Uses Node
+ * fetch streaming (the events endpoint is an infinite loop with 30s heartbeats).
  *
  * This verifies the SERVER emits the SSE (R3: server-side of the SSE path).
  * The UI-side assertion (SpecPanel / OutputViewer reflects the field) is done
@@ -870,12 +1147,16 @@ export interface SseSubscriber {
  */
 export async function startSseSubscriber(): Promise<SseSubscriber> {
   const taskStatusEvents: TaskStatusEvent[] = []
+  const taskExecutionEvents: TaskExecutionEvent[] = []
+  const taskTriggerEvents: TaskTriggerEvent[] = []
+  const taskTriggerFailedEvents: TaskTriggerFailedEvent[] = []
   const specFieldEvents: SpecFieldUpdateEvent[] = []
   const assistRunEvents: AssistRunUpdateEvent[] = []
   const taskArtifactsEvents: TaskArtifactsUpdateEvent[] = []
   let heartbeat = 0
 
   const controller = new AbortController()
+
   const res = await fetch(`${SERVER_URL}/api/tasks/events`, {
     headers: { Accept: "text/event-stream" },
     signal: controller.signal,
@@ -912,7 +1193,16 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
           }
           if (eventName === "task_status") {
             taskStatusEvents.push(parsed as TaskStatusEvent)
+          } else if (eventName === "task_execution") {
+            taskExecutionEvents.push(parsed as TaskExecutionEvent)
+          } else if (eventName === "task_trigger") {
+            taskTriggerEvents.push(parsed as TaskTriggerEvent)
+          } else if (eventName === "task_trigger_failed") {
+            // The pump could not arm this task's fire (gate / workspace / in-flight). Same
+            // stream, same 「go re-fetch」 effect as task_trigger.
+            taskTriggerFailedEvents.push(parsed as TaskTriggerFailedEvent)
           } else if (eventName === "spec_field_update") {
+
             specFieldEvents.push(parsed as SpecFieldUpdateEvent)
           } else if (eventName === "assist_run_update") {
             assistRunEvents.push(parsed as AssistRunUpdateEvent)
@@ -936,6 +1226,9 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
 
   return {
     taskStatusEvents,
+    taskExecutionEvents,
+    taskTriggerEvents,
+    taskTriggerFailedEvents,
     specFieldEvents,
     assistRunEvents,
     taskArtifactsEvents,
@@ -950,9 +1243,12 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
 
 // ── Wait helper ─────────────────────────────────────────────────────────
 
-/** Poll a predicate until it returns truthy or timeoutMs elapses. */
+/** Poll a predicate until it returns a non-null value or timeoutMs elapses. A predicate
+ *  that has not reached its condition yet returns null/undefined — that is the polling
+ *  protocol every spec here uses, so it is part of the signature rather than something
+ *  each caller has to fight the generic about. */
 export async function waitFor<T>(
-  predicate: () => T | Promise<T>,
+  predicate: () => T | null | undefined | Promise<T | null | undefined>,
   opts: { timeoutMs?: number; intervalMs?: number; message?: string } = {},
 ): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 15_000
@@ -973,6 +1269,52 @@ export async function waitFor<T>(
     throw new Error(`${msg}: last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
   }
   throw new Error(msg)
+}
+
+/** Poll until this task has no root execution in a live status (pending/running/…), i.e.
+ *  its slot in `ux_exec_task_active` is free again. Returns the terminal rows. */
+export async function waitForNoLiveTaskRoot(
+  taskId: string,
+  opts: { timeoutMs?: number; intervalMs?: number; message?: string } = {},
+): Promise<TaskExecutionRow[]> {
+  const rows = await waitFor(
+    () => {
+      const all = readTaskExecutions(taskId)
+      const live = all.filter((r) => r.parent_id === "0" && !isTerminalExecutionStatus(r.status))
+      return live.length === 0 ? all : null
+    },
+    {
+      timeoutMs: opts.timeoutMs ?? 60_000,
+      intervalMs: opts.intervalMs ?? 1000,
+      message: opts.message ?? `task ${taskId} still holds a live root execution`,
+    },
+  )
+  return rows as TaskExecutionRow[]
+}
+
+/**
+ * The kanban column a persisted status is shown in. 票11's board is FIVE columns
+ * (`draft / ready / running / awaiting_review / done`): `archiving` folds into 执行中 and
+ * the v3 terminal states `failed` / `aborted` fold into 完成 — a card that is failed has NO
+ * `[data-task-column="failed"]` to look for. Kept as the test's own expectation (the mirror
+ * of `lib/task-board.ts`'s STATUS_TO_COLUMN) on purpose: a spec that imported the product map
+ * could not catch the product map being wrong.
+ */
+export function boardColumnFor(status: string): "draft" | "ready" | "running" | "awaiting_review" | "done" {
+  switch (status) {
+    case "draft":
+      return "draft"
+    case "ready":
+      return "ready"
+    case "running":
+    case "archiving":
+      return "running"
+    case "awaiting_review":
+      return "awaiting_review"
+    default:
+      // done / failed / aborted — 终态同归「完成」列，卡片自己的状态行区分（票 11 AC2）。
+      return "done"
+  }
 }
 
 /** Wait until a task reaches one of the target statuses (via API poll). */

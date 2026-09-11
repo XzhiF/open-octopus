@@ -93,9 +93,6 @@ export class ExecutionLifecycle {
 
     // G1: construct this workspace's TaskDispatchPort and wire it into the engine
     // factory (so every engine built here gets the port via setTaskDispatchPort).
-    // The resume callback is bound lazily — dispatchChildSchedule only fires at
-    // engine.run() time, long after this constructor returns, so binding it here
-    // (via an arrow that calls this.resumeTaskDispatch) is safe.
     this.taskDispatchService = new TaskDispatchService({
       db,
       workspaceId,
@@ -104,9 +101,6 @@ export class ExecutionLifecycle {
       workspaceService: new WorkspaceService(new WorkspaceDAO(db)),
       sse,
     })
-    this.taskDispatchService.setResumeParentCallback(
-      (execId, nodeId, output) => this.resumeTaskDispatch(execId, nodeId, output),
-    )
     this.engineFactory.setTaskDispatchPort(this.taskDispatchService)
     this.gitOps = new GitOperations(workspacePath)
     this.stateManager = new StateFileManager(workspacePath, workspaceDbId, dao)
@@ -202,10 +196,29 @@ export class ExecutionLifecycle {
 
   // ==================== Start ====================
 
-  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
+  async start(
+    id: string,
+    inputValues?: Record<string, string>,
+    syncMainBranch?: boolean,
+    claimedLease?: string,
+  ): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (exec.status !== "pending") throw Object.assign(new Error("Execution is not pending"), { status: 400 })
+    // Two ways a row arrives here. The normal one: a human or a chain starts a 'pending'
+    // row and this method performs the transition. The task one (ADR-0021 票03): the
+    // built-in task-lifecycle job already moved pending→running under a GUARDED claim —
+    // that claim is the serializer for "who starts this task", so the job cannot also be
+    // asked to satisfy a 'pending' precondition it just consumed. It hands back the lease
+    // token its claim wrote, and `started_at` matching that token is what proves the row is
+    // MINE rather than some other owner's live run (a UI 启动 that won the race left a
+    // different started_at, and is refused below).
+    if (claimedLease) {
+      if (exec.status !== "running" || exec.started_at !== claimedLease) {
+        throw Object.assign(new Error("Execution is not claimed by this launcher"), { status: 400 })
+      }
+    } else if (exec.status !== "pending") {
+      throw Object.assign(new Error("Execution is not pending"), { status: 400 })
+    }
 
     try { await this.drainPendingHooks() } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -218,7 +231,9 @@ export class ExecutionLifecycle {
     }
 
     const now = new Date().toISOString()
-    this.updateStatus(id, "running", { started_at: now })
+    // A claimed row is already 'running' with the claim's started_at — rewriting it would
+    // move the launch instant the queue and the duration math both read.
+    if (!claimedLease) this.updateStatus(id, "running", { started_at: now })
 
     if (inputValues) {
       this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
@@ -513,8 +528,8 @@ export class ExecutionLifecycle {
           data: {
             executionId: id,
             nodeId: taskDispatchMeta?.nodeId,
-            scheduleId: taskDispatchMeta?.scheduleHandle.schedule_id,
-            workspaceId: taskDispatchMeta?.scheduleHandle.workspace_id,
+            childId: taskDispatchMeta?.childHandle.child_id,
+            workspaceId: taskDispatchMeta?.childHandle.workspace_id,
             subunitName: taskDispatchMeta?.subunitName,
           },
         })
@@ -1342,6 +1357,18 @@ export class ExecutionLifecycle {
 
   // ==================== Skip ====================
 
+  /**
+   * Is an engine instance for this execution alive IN THIS PROCESS right now?
+   *
+   * The DB says a row is 'running'; this says whether anybody is actually running it.
+   * The built-in task-lifecycle job's reconcile pass is the only caller: after a restart
+   * (or a crash) rows outlive their engines, and the difference between 「还在跑」 and
+   * 「行还在、引擎没了」 is the difference between leaving a run alone and reaping it.
+   */
+  hasLiveEngine(executionId: string): boolean {
+    return this.enginePool.has(executionId)
+  }
+
   skip(id: string): boolean {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
@@ -1663,6 +1690,9 @@ export class ExecutionLifecycle {
       child_index?: number; node_type?: string; input_values?: Record<string, unknown>;
       triggered_by?: string; initial_var_pool?: Record<string, string>;
       allow_existing_root?: boolean;
+      // ADR-0021 票03 — task launch identity (see the facade's create for why it is
+      // written at insert rather than updated afterwards).
+      task_id?: string | null; phase_index?: number | null; round_index?: number | null;
     },
     org: string,
   ): ExecutionRow {
@@ -1671,13 +1701,15 @@ export class ExecutionLifecycle {
     const isRootRequest = !input.parent_id || input.parent_id === "0"
     const nodeType = input.node_type ?? "normal"
 
-    // task-phase-redesign (K4/K5): a v4 task binds ONE workspace for its whole
-    // life, and every round is an independent root execution under the same
-    // schedule envelope (1 round = 1 executions row + 1 schedule_executions
-    // row — NOT a chain child). The v1 "one root per ws" invariant does not
-    // hold for v4 task ws; the caller opts out explicitly. v3/generic/cron
-    // never pass the flag — their behavior is byte-identical (regression floor).
-    if (isRootRequest && !input.allow_existing_root) {
+    // task-phase-redesign (K4/K5) + ADR-0021 票03: a task binds ONE workspace for its
+    // whole life and every phase/round is an independent root execution under it, so the
+    // v1 "one root per ws" invariant does not hold for task workspaces. The serialization
+    // that replaces it is ux_exec_task_active (one live row per TASK), which is a tighter
+    // statement of what the caller actually means: "not two runs of this task", not "not
+    // two runs in this directory". A task-bound row is therefore exempt for its whole
+    // life, not just while the caller remembers to pass the flag; generic/cron launches
+    // (task_id null) keep the invariant byte-identically.
+    if (isRootRequest && !input.allow_existing_root && !input.task_id) {
       const existingRoot = this.dao.findRootExecutionId(workspaceId)
       if (existingRoot) throw new Error(`Workspace already has a root execution (${existingRoot.id}).`)
     }
@@ -1695,6 +1727,15 @@ export class ExecutionLifecycle {
       status: "pending", input_values: inputValuesJson, var_pool: varPoolJson,
       triggered_by: input.triggered_by ?? "manual",
       node_type: nodeType, branch, org,
+      // ADR-0021 票03 — the identity the root-guard above just reasoned about must land on
+      // the row in the SAME statement. Without it the row is not a task instance: the
+      // latch (ux_exec_task_active) cannot protect it, idx_exec_pending_claimable cannot
+      // find it, so the built-in job never launches it and the task board never sees it.
+      // The unit tests missed this for a whole ticket because they stub create() and do the
+      // INSERT themselves; this is the seam that has to be tested unstubbed.
+      task_id: input.task_id ?? null,
+      phase_index: input.phase_index ?? null,
+      round_index: input.round_index ?? null,
       created_at: now, updated_at: now,
     })
 

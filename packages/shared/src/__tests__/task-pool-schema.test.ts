@@ -12,7 +12,7 @@ import {
   type IntegrationGoal,
 } from "../types/scheduler-job"
 import { NodeSchema, WorkflowSchema, type NodeDef } from "../types/workflow"
-import type { TaskDispatchPort, ScheduleHandle } from "../types/task-dispatch-port"
+import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
 
 // Independent source of truth for the new terminal statuses (spec G2).
 const EXPECTED_TERMINAL_STATUSES = ["failed", "aborted"] as const
@@ -289,23 +289,23 @@ describe("task_dispatch node type (AC3)", () => {
 
 // ── AC4: TaskDispatchPort interface ──────────────────────────────────
 describe("TaskDispatchPort interface (AC4, G1)", () => {
-  it("ScheduleHandle carries schedule_id", () => {
-    const handle: ScheduleHandle = { schedule_id: "sch-1" }
-    expect(handle.schedule_id).toBe("sch-1")
+  it("ChildHandle carries child_id (票03: a child is an execution, not a schedule)", () => {
+    const handle: ChildHandle = { child_id: "run-1" }
+    expect(handle.child_id).toBe("run-1")
   })
 
   it("accepts a conforming implementation at the type level", () => {
     const impl: TaskDispatchPort = {
-      async dispatchChildSchedule(subunit) {
+      async dispatchChild(subunit) {
         expect(subunit.name).toBeDefined()
-        return { schedule_id: "sch-1", workspace_id: "ws-1" }
+        return { child_id: "run-1", workspace_id: "ws-1" }
       },
       async resumeOnCompletion(handle, output) {
-        expect(handle.schedule_id).toBeDefined()
+        expect(handle.child_id).toBeDefined()
         expect(output).toBeTypeOf("object")
       },
     }
-    expect(impl.dispatchChildSchedule).toBeTypeOf("function")
+    expect(impl.dispatchChild).toBeTypeOf("function")
     expect(impl.resumeOnCompletion).toBeTypeOf("function")
   })
 })

@@ -202,7 +202,7 @@ describe('SchedulerEngine', () => {
   })
 
   // ── G6 (ticket 05): buildSchedulerJob cast must carry every ScheduleStatus ──
-  it('G6: buildSchedulerJob passes through every ScheduleStatus (not narrowed to draft/queued/claimed)', () => {
+  it('G6: buildSchedulerJob passes through every ScheduleStatus (not narrowed to queued/claimed)', () => {
     db.prepare(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
@@ -221,7 +221,9 @@ describe('SchedulerEngine', () => {
     // Every ScheduleStatus literal must flow through unchanged. The old cast
     // (`as 'draft'|'queued'|'claimed'`) lied to TypeScript; the runtime value
     // still passed, so this also guards against a future default-coercion bug.
-    const statuses = ['draft', 'queued', 'claimed', 'running', 'done', 'failed', 'aborted'] as const
+    // 票03 (ADR-0021): 'draft' is off the union — it was the parked state of a task
+    // envelope, and a task owns no schedules row any more.
+    const statuses = ['queued', 'claimed', 'running', 'done', 'failed', 'aborted'] as const
     for (const status of statuses) {
       configDAO.updateSchedule('s-g6', { status })
       const row = configDAO.findByIdRaw('s-g6')!
@@ -233,14 +235,16 @@ describe('SchedulerEngine', () => {
   // ── G2 (ticket 05): failed/aborted are terminal — checkStaleClaimed must NOT roll back ──
   it('G2: checkStaleClaimed does not roll back terminal failed/aborted (prevents infinite re-dispatch)', async () => {
     const old = new Date(Date.now() - 20 * 60_000).toISOString() // 20 min ago, beyond 10min stale threshold
-    // SG1b (ticket 06): trigger_source DROPPED → origin_type ('task' = v1 'requirement')
-    const baseCols = `id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, origin_type, claimed_at`
-    // terminal failed
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-failed', 'test', 'f', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'failed', 'task', ?)`).run(old)
-    // terminal aborted
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-aborted', 'test', 'a', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'aborted', 'task', ?)`).run(old)
+    // 票03 (ADR-0021): origin_type is off the table (v42). The run-state cols the sweep
+    // reads (status/claimed_at) stayed — they belong to the pump, not to a task.
+    const baseCols = `id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, claimed_at`
+    const seed = (id: string, status: string) => db
+      .prepare(`INSERT INTO schedules (${baseCols}) VALUES (?, 'test', ?, NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, ?, ?)`)
+      .run(id, id, status, old)
+    seed('s-failed', 'failed')
+    seed('s-aborted', 'aborted')
     // control: claimed + stale → SHOULD roll back to queued (existing behavior)
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-claimed', 'test', 'c', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'claimed', 'task', ?)`).run(old)
+    seed('s-claimed', 'claimed')
 
     const executors = new Map<string, Executor>()
     executors.set('workflow', createMockExecutor())
@@ -256,44 +260,9 @@ describe('SchedulerEngine', () => {
     expect(claimed.status).toBe('queued')   // control — rolled back (existing behavior)
   })
 
-  // ── G2 (ticket 05): retry cap — N consecutive failures promote requirement schedule to terminal 'failed' ──
-  it('G2 retry cap: requirement schedule promoted to failed after N consecutive failures (terminal, no re-dispatch)', async () => {
-    // One failure shy of the N=5 auto-disable threshold.
-    db.prepare(`
-      INSERT INTO schedules (
-        id, org, name, cron_expression, timezone,
-        enabled, timeout_seconds, notify_on_failure,
-        created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, origin_type, claimed_at
-      ) VALUES ('s-retry', 'test', 'retry', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'),
-        'workflow', '{"schema_version":"2.0","type":"workflow","workspace_spec":{"org":"t","branch_prefix":"b","projects":[{"name":"p","source_path":"","group":""}]},"workflow_chain":[{"workflow_ref":"w","input_values":{}}]}',
-        'skip', 1, 4, 10, 'queued', 'task', NULL)
-    `).run()
-
-    const failingExecutor: Executor = {
-      getType: () => 'workflow',
-      execute: vi.fn(async () => ({
-        success: false, exitCode: 1, durationMs: 10, status: 'failure' as const, errorMessage: 'boom',
-      })),
-    }
-    const executors = new Map<string, Executor>()
-    executors.set('workflow', failingExecutor)
-    const engine = new SchedulerEngine(new ScheduleConfigDAO(db), new ScheduleRunDAO(db), mockWorkspaceScheduleService, executors)
-
-    // checkQueuedTasks claims (status='claimed') + dispatches → executor fails →
-    // onExecutionComplete → recordFailure (5th) → autoDisabled → status='failed'.
-    await (engine as any).checkQueuedTasks()
-    await new Promise(r => setTimeout(r, 50)) // let executeWorkflow .then(onExecutionComplete) resolve
-
-    const row = db.prepare('SELECT status, enabled, consecutive_failures FROM schedules WHERE id = ?').get('s-retry') as { status: string; enabled: number; consecutive_failures: number }
-    expect(row.status).toBe('failed')           // terminal promotion (G2 retry cap)
-    expect(row.enabled).toBe(0)                  // auto-disabled (existing tracker)
-    expect(row.consecutive_failures).toBe(5)     // threshold reached
-
-    // Terminal: subsequent ticks must NOT re-dispatch or roll back (the G2 loop).
-    await (engine as any).checkStaleClaimed()
-    await (engine as any).checkQueuedTasks()
-    const row2 = db.prepare('SELECT status FROM schedules WHERE id = ?').get('s-retry') as { status: string }
-    expect(row2.status).toBe('failed')
-  })
+  // 票03 删除的 G2「连败 N 次 → 终态 failed」用例：那条提升的条件是 origin_type='task'。
+  // 它存在的原因是信封可以被 findQueuedSchedules 无视 enabled 重新领走，于是
+  // claimed→stale→queued→再派发 会无限循环；没有队列之后 enabled=0 已经止住一切
+  // （见 scheduler-engine.onExecutionComplete 的 G2 注释）。剩下的自动停用由
+  // consecutive-failure-tracker 自己的用例覆盖，不再在这里断言不存在的状态。
 })

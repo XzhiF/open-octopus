@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { materializeTaskSpecToConfig } from "../scheduler-service"
+import { buildTaskLaunchConfig as materializeTaskSpecToConfig } from "../../tasks/task-materialize"
 import type { TaskSpec } from "@octopus/shared"
 
 /** task-workflow-presets (T4): materializeTaskSpecToConfig integration with

@@ -6,16 +6,26 @@
 // ExecutionService registry mirroring lifecycle.create's DB write — same
 // harness family as tasks-v4-acceptance.test.ts, R1-R7):
 //   AC1: accept phase 1 (handoff.md pre-placed in its batch dir) → the next
-//        phase's round-1 chain input_values carry prev_handoff_paths =
-//        {specDir}/handoff.md, platform-native ABSOLUTE path (API↔DB↔fs).
+//        phase's round-1 LAUNCH carries prev_handoff_paths = {specDir}/handoff.md,
+//        platform-native ABSOLUTE path (API↔DB↔fs).
 //   AC2: predecessor without handoff.md → silently filtered; all-missing →
 //        the key is absent and input_values match the baseline key set.
 //   AC3: same-phase rerun NEVER injects (even with an accepted predecessor
 //        holding a handoff); multiple predecessors → ascending index, "\n"-joined.
 //   AC4: manual advance (/api/tasks/:id/advance) behaves identically to the
 //        autoAdvance acceptance path.
-//   AC5: v3 tasks refuse at both gates (no injection surface); envelopes'
-//        frozen phases[] stay byte-identical (K16).
+//   AC5: v3 tasks refuse at both gates (no injection surface); a dispatch never
+//        rewrites the author's phases[] binding.
+//
+// 票03 换了读点：注入值不再写进「信封 config 的 chain[0]」（那份冻结副本随票03 退役），
+// 而是长在**这一轮的执行行**上（executions.input_values）—— 断言因此读行，且读的是
+// 真 INSERT 出来的行（stub 直写 executions，ux_exec_task_active / task_id 都是真的）。
+//
+// 为什么这些用例特意钉「卡片仍是 running 时也能起下一轮」：v4 一轮跑完 job 不改
+// tasks.status（K3：待验收是派生态，不是一次机器转移），而 acceptance 的
+// rejected / autoAdvance 两支与 advance 都是**人在授权**，发生在卡片写着 running 的
+// 时候。armTask 若只领 ready，整条 v4 流程就断在半路 —— 票03 复核抓到过一次，故
+// 这里连同 ws-reuse/archiving 的用例一起当作回归锚点。
 //
 // E2E_HO_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
@@ -26,6 +36,8 @@ import path from "path"
 import fs from "fs"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -35,20 +47,33 @@ const ORG = "e2e-ho"
 const BATCH_DATE = "20260905"
 
 // ── ExecutionService registry stub (mirrors tasks-v4-acceptance.test.ts) ──
+// A REAL 'pending' root row: the built-in job's claim loop, the one-instance latch
+// and deriveView all read what is actually stored, not what this stub pretends.
 const stubService = {
   create: vi.fn((workspaceId: string, input: Record<string, unknown>) => {
     const id = `e2e-ho-exec-${execSeq++}`
     mockHooks.db!
       .prepare(
-        `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`,
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+           status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+         VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?, ?, ?)`,
       )
-      .run(id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""), ORG)
+      .run(
+        id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+        JSON.stringify(input.input_values ?? {}), ORG,
+        input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
+      )
     return { id }
   }),
-  start: vi.fn(async () => {}),
+  start: vi.fn(async (id: string) => {
+    mockHooks.db!
+      .prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?")
+      .run(id)
+  }),
   registerExternalCallbacks: vi.fn(() => {}),
   clearExternalCallbacks: vi.fn(),
+  cancel: vi.fn((id: string) => ({ id })),
+  hasLiveEngine: () => false,
 }
 let execSeq = 0
 const mockHooks: { db: Database.Database | null } = { db: null }
@@ -98,10 +123,13 @@ let taskSeq = 0
 
 /**
  * Build a v4 task world for the handoff-channel tests: task home + phase batch
- * dirs (with optional pre-placed handoff.md), a bound workspace, the K5
- * envelope (materialized specDir shape, terminal status → active slot free),
- * per-phase tagged terminal executions and pre-inserted ledger rows — so the
- * derived view parks exactly where each AC needs the gate to open.
+ * dirs (with optional pre-placed handoff.md), a bound workspace, per-phase tagged
+ * terminal execution rows and pre-inserted ledger rows — so the derived view parks
+ * exactly where each AC needs the gate to open.
+ *
+ * 票03: 没有「K5 信封」了。一轮就是一行 executions（task_id 直连 + parent_id='0' +
+ * 轮次坐标），deriveView 读的就是它；启动计划每次 arm 从 task_spec + home 现算，
+ * 所以批次 spec.md 必须真在盘上（arm 会重查 v4 契约）。
  */
 function seed(opts: {
   phases?: PhaseDef[]
@@ -133,8 +161,8 @@ function seed(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(wsPath, { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
-  ).run(workspaceId, `task:${taskId}`, ORG, wsPath)
+    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+  ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
     format: "v4",
@@ -157,37 +185,8 @@ function seed(opts: {
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
   `).run(taskId, ORG, `E2E_HO ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId)
 
-  const scheduleId = `e2e-ho-sched-${taskSeq}`
-  db.prepare(`
-    INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled,
-      job_type, config, parallel_policy, status, origin_type, origin_id, origin_role,
-      scheduled_at, created_at, updated_at, max_retain)
-    VALUES (?, ?, ?, NULL, 'UTC', 1, 'workflow', ?, 'skip', 'done', 'task', ?, 'primary', NULL, ?, ?, 10)
-  `).run(
-    scheduleId, ORG, `task-${taskId}-primary`,
-    JSON.stringify({
-      schema_version: "3.0",
-      type: "workflow",
-      workspace_spec: { org: ORG, branch_prefix: "taskpool-e2e-ho", projects: [] },
-      workflow_chain: [{ workflow_ref: phases[0].workflowRef, input_values: {} }],
-      max_retain: 10,
-      format: "v4",
-      phases: phases.map((p) => ({
-        index: p.index,
-        name: p.name,
-        slug: p.slug,
-        specPath: path.join(specDirs.get(p.index)!, "spec.md"),
-        specDir: specDirs.get(p.index),
-        workflowRef: p.workflowRef,
-        inputValues: {},
-      })),
-    }),
-    taskId, now, now,
-  )
-
-  // Seeded terminal rounds — each execution rides a COMPLETED
-  // schedule_executions row (deriveView scopes rounds THROUGH the schedule
-  // link; a completed slot never blocks the dispatch's active index).
+  // Seeded terminal rounds — 票03 起这就是全部的读模型（task_id + parent_id='0' +
+  // (phase_index, round_index)）；终态行既不挡闩锁也不占算力槽。
   const roundsByPhase = opts.roundsByPhase ?? { 1: [{ round: 1, status: "completed" }] }
   const execIds: string[] = []
   for (const [phaseIdxStr, rounds] of Object.entries(roundsByPhase)) {
@@ -196,20 +195,15 @@ function seed(opts: {
       const execId = `e2e-ho-exec-seeded-${taskSeq}-${phaseIdx}-${r.round}`
       execIds.push(execId)
       db.prepare(
-        `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org,
-          phase_index, round_index, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+           status, org, created_at, updated_at, task_id, phase_index, round_index, completed_at)
+         VALUES (?, ?, '0', 0, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, datetime('now'))`,
       ).run(
         execId, workspaceId,
         phases.find((p) => p.index === phaseIdx)!.workflowRef,
         phases.find((p) => p.index === phaseIdx)!.workflowRef,
-        r.status, ORG, phaseIdx, r.round,
+        r.status, ORG, taskId, phaseIdx, r.round,
       )
-      db.prepare(`
-        INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-          timezone_offset, timezone_iana, created_at, triggered_by, execution_id)
-        VALUES (?, ?, 'completed', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler', ?)
-      `).run(`e2e-ho-se-${taskSeq}-${phaseIdx}-${r.round}`, scheduleId, execId)
     }
   }
 
@@ -219,23 +213,28 @@ function seed(opts: {
     ).run(`e2e-ho-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision)
   }
 
-  return { db, taskId, scheduleId, workspaceId, home, specDirs, execIds }
+  return { db, taskId, workspaceId, home, specDirs, execIds }
 }
 
-/** Read the materialized chain[0] off the persisted envelope (DB side — what
- *  a crash re-claim replays). */
-function envelopeCfg(taskId: string): {
-  workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
-  phases: Array<{ index: number; workflowRef: string; specDir?: string }>
-} {
-  const { config } = db
-    .prepare("SELECT config FROM schedules WHERE origin_type='task' AND origin_id=? AND origin_role='primary'")
-    .get(taskId) as { config: string }
-  return JSON.parse(config)
+/** The input_values of the task's CURRENT instance — the row the run actually eats
+ *  (replaces reading the envelope's materialized chain[0]). */
+function launchedIV(taskId: string): Record<string, string> {
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  if (!row) throw new Error(`no launch row for ${taskId}`)
+  return JSON.parse(row.input_values) as Record<string, string>
 }
 
-function chainIV(taskId: string): Record<string, string> {
-  return envelopeCfg(taskId).workflow_chain[0].input_values
+function launchedRow(taskId: string) {
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  if (!row) throw new Error(`no launch row for ${taskId}`)
+  return row
+}
+
+function specPhasesOf(taskId: string): Array<Record<string, unknown>> {
+  const { task_spec } = mockHooks.db!
+    .prepare("SELECT task_spec FROM tasks WHERE id = ?")
+    .get(taskId) as { task_spec: string }
+  return (JSON.parse(task_spec) as { phases: Array<Record<string, unknown>> }).phases
 }
 
 const handoffPathOf = (specDirs: Map<number, string>, idx: number): string =>
@@ -273,7 +272,15 @@ beforeEach(() => {
   process.env.USERPROFILE = fakeHome // os.homedir() on Windows reads USERPROFILE
   taskHome = new TaskHomeService(path.join(fakeHome, ".octopus"))
   sse = new SSEService()
-  service = new TasksService(db, sse, undefined, taskHome)
+  // arm 重查 v4 契约 ⇒ 需要能解析 built-in/*；派发⇒ job 的 prepareWorkspace ⇒ 需要
+  // 真 WorkspaceService（绑定复用路径也要先拿到服务才查绑定）。
+  const builtIn = {
+    get: (ref: string) => ({ ref, content: "name: demo\nnodes: []\n", name: "demo" }),
+  } as never
+  service = new TasksService(
+    db, sse, undefined, taskHome, undefined, builtIn, null,
+    new WorkspaceService(new WorkspaceDAO(db)),
+  )
   app = new Hono().route("/api/tasks", createTasksRoutes(service, sse))
 })
 
@@ -287,7 +294,7 @@ afterEach(() => {
 })
 
 describe("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API↔DB↔fs 四方）", () => {
-  it("phase1 accepted（预置 handoff.md）→ phase2 首轮 chain input_values 带 home 绝对路径", async () => {
+  it("phase1 accepted（预置 handoff.md）→ phase2 首轮的执行行带 home 绝对路径", async () => {
     const { taskId, specDirs } = seed({ handoffs: { 1: "# handoff p1\n" } })
 
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
@@ -302,25 +309,31 @@ describe("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API�
     expect(fs.existsSync(expected)).toBe(true)
     expect(path.isAbsolute(expected)).toBe(true)
 
-    // DB 面：materialized chain[0]（崩溃 re-claim 可复现的持久化位）。
-    const iv = chainIV(taskId)
+    // DB 面：注入值长在**这一轮的行**上（票03：没有信封 config 可读）。
+    const iv = launchedIV(taskId)
     expect(iv.prev_handoff_paths).toBe(expected)
     // 执行 create() 拿到同一份 stepInputValues。
     const createCall = stubService.create.mock.calls.at(-1)!
     expect((createCall[1].input_values as Record<string, string>).prev_handoff_paths).toBe(expected)
-    // 恢复 stamps 同段共存。
+    // 轮次坐标同段共存（行上 + input_values 双写：前者给 derive/账本，后者给 var pool）。
     expect(iv._phase_index).toBe("2")
     expect(iv._round_index).toBe("1")
+    expect([launchedRow(taskId).phase_index, launchedRow(taskId).round_index]).toEqual([2, 1])
   })
 
-  it("注入不触碰信封冻结面：phases[] 的 workflowRef/specDir 原样（K16）", async () => {
+  it("注入不重写作者的绑定：task_spec.phases[] 逐字段原样", async () => {
     const { taskId, specDirs } = seed({ handoffs: { 1: "h" } })
-    const before = envelopeCfg(taskId).phases
-    await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
-    const after = envelopeCfg(taskId).phases
-    expect(after.map((p) => ({ index: p.index, workflowRef: p.workflowRef, specDir: p.specDir })))
-      .toEqual(before.map((p) => ({ index: p.index, workflowRef: p.workflowRef, specDir: p.specDir })))
-    expect(after[0].specDir).toBe(specDirs.get(1))
+    const before = specPhasesOf(taskId)
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    // 先确认派发真的发生了 —— 否则「绑定没被改写」会因为什么都没做而空过。
+    expect(res.status, await res.clone().text()).toBe(200)
+    const after = specPhasesOf(taskId)
+    // 票03 之后 phases[] 是绑定的唯一存放处 —— 旧版「信封冻结面不被改写」的同一条
+    // K16 纪律，换了对象：派发（含注入）绝不回写 task_spec。
+    expect(after).toEqual(before)
+    expect(after[0].slug).toBe("p1")
+    expect(after[0].specPath).toBe(path.join(batchRel("p1"), "spec.md"))
+    void specDirs
   })
 })
 
@@ -329,10 +342,17 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
     const { taskId } = seed()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
-    const iv = chainIV(taskId)
+    const iv = launchedIV(taskId)
     expect("prev_handoff_paths" in iv).toBe(false)
-    // phase.inputValues 为 {} ⇒ 基线只有恢复 stamps 两键（无新键泄漏）。
-    expect(Object.keys(iv).sort()).toEqual(["_phase_index", "_round_index"])
+    // phase.inputValues 为 {} ⇒ 基线只有「轮次 stamps + $vars 管理键」。管理键是
+    // buildTaskLaunchConfig 对 v4 也注入的(D14/ADR-0018:工作流用 $vars.task_artifacts_dir
+    // / task_workflows_dir),信封时代同样如此 —— 本条要钉的是交接注入**没有多加任何键**。
+    expect(Object.keys(iv).sort()).toEqual([
+      "_phase_index",
+      "_round_index",
+      "task_artifacts_dir",
+      "task_workflows_dir",
+    ])
   })
 
   it("多前序中缺 handoff 的被静默跳过，存在的那条仍注入（不 fail）", async () => {
@@ -346,7 +366,7 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
     })
     const res = await postAcceptance(taskId, { phase_index: 2, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
-    const iv = chainIV(taskId)
+    const iv = launchedIV(taskId)
     expect(iv.prev_handoff_paths).toBe(handoffPathOf(specDirs, 2))
     expect(iv.prev_handoff_paths).not.toContain(handoffPathOf(specDirs, 1))
   })
@@ -364,17 +384,20 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
       phase_index: 2, round_index: 1, decision: "rejected", feedback: "接口漏了分页",
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    const iv = chainIV(taskId)
+    const iv = launchedIV(taskId)
     expect("prev_handoff_paths" in iv).toBe(false)
     // 既有信道不受影响：feedback + stamps 原样。
     expect(iv.feedback).toBe("接口漏了分页")
     expect(iv._phase_index).toBe("2")
     expect(iv._round_index).toBe("2")
+    expect([launchedRow(taskId).phase_index, launchedRow(taskId).round_index]).toEqual([2, 2])
   })
 
   it("两个 accepted 前序（1+2）→ 开 phase3 首轮见两行、index 升序", async () => {
     const { taskId, specDirs } = seed({
       phases: THREE_PHASES,
+      status: "ready", // autoAdvance=false 的合法落点：人在人工闸前，卡片就是已入队
+      autoAdvance: false, // phase1/2 已 accepted ⇒ 停在人工闸，由 advance 起 phase3
       ledger: [
         { phase_index: 1, round_index: 1, decision: "accepted" },
         { phase_index: 2, round_index: 1, decision: "accepted" },
@@ -384,7 +407,7 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
     })
     const res = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
     expect(res.status, await res.clone().text()).toBe(200)
-    const value = chainIV(taskId).prev_handoff_paths
+    const value = launchedIV(taskId).prev_handoff_paths
     expect(value.split("\n")).toEqual([handoffPathOf(specDirs, 1), handoffPathOf(specDirs, 2)])
   })
 })
@@ -392,12 +415,17 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
 // review-cycle-1（Completeness-C8）：存在性过滤的两个边界 —— 目录形态与同批次去重。
 describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重", () => {
   it("前序 handoff.md 位是目录（异常形态）→ isFile 过滤，键不出现", async () => {
-    const { taskId, specDirs } = seed()
+    // 卡片 ready + phase1 已 accepted（人工闸后的世界）⇒ advance 起 phase2 首轮。
+    const { taskId, specDirs } = seed({
+      status: "ready",
+      ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
+    })
     // 不写文件，改在 handoff.md 期望位建目录（existsSync 会放行、isFile 必须挡下）。
+    fs.rmSync(handoffPathOf(specDirs, 1), { force: true })
     fs.mkdirSync(handoffPathOf(specDirs, 1), { recursive: true })
-    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    const res = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
     expect(res.status, await res.clone().text()).toBe(200)
-    expect("prev_handoff_paths" in chainIV(taskId)).toBe(false)
+    expect("prev_handoff_paths" in launchedIV(taskId)).toBe(false)
   })
 
   it("两个 accepted 前序共享同一批次目录（同 slug）→ 注入去重，只出现一行", async () => {
@@ -408,6 +436,8 @@ describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重
     ]
     const { taskId, specDirs } = seed({
       phases: shared,
+      status: "ready",
+      autoAdvance: false, // 同上：accepted×2 ∧ phase3 pending ⇒ 人工 advance 起轮
       ledger: [
         { phase_index: 1, round_index: 1, decision: "accepted" },
         { phase_index: 2, round_index: 1, decision: "accepted" },
@@ -417,7 +447,7 @@ describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重
     })
     const res = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
     expect(res.status, await res.clone().text()).toBe(200)
-    expect(chainIV(taskId).prev_handoff_paths.split("\n"))
+    expect(launchedIV(taskId).prev_handoff_paths.split("\n"))
       .toEqual([handoffPathOf(specDirs, 1)])
   })
 })
@@ -428,8 +458,8 @@ describe("AC4 — 手动推进与 autoAdvance 行为一致", () => {
     const parked = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(parked.status, await parked.clone().text()).toBe(200)
     expect(((await parked.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
-    // 未派发 ⇒ 没有任何注入发生（chain 仍是信封基线）。
-    expect("prev_handoff_paths" in chainIV(taskId)).toBe(false)
+    // 未派发 ⇒ 没有任何注入发生（最新一行仍是那轮终态行，键不在其上）。
+    expect("prev_handoff_paths" in launchedIV(taskId)).toBe(false)
 
     const adv = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
     expect(adv.status, await adv.clone().text()).toBe(200)
@@ -437,7 +467,7 @@ describe("AC4 — 手动推进与 autoAdvance 行为一致", () => {
     expect(body.next_action).toBe("dispatched")
     expect(body.dispatch).toMatchObject({ phase_index: 2, round_index: 1 })
     // 与 AC1 auto 路径同值：同一判定源 ⇒ 同一 home 绝对路径。
-    expect(chainIV(taskId).prev_handoff_paths).toBe(handoffPathOf(specDirs, 1))
+    expect(launchedIV(taskId).prev_handoff_paths).toBe(handoffPathOf(specDirs, 1))
   })
 })
 
@@ -466,8 +496,8 @@ describe("AC5 — v3 任务零影响（回归）", () => {
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { next_action: string }).next_action).toBe("archiving")
-    // 末 phase accepted → 不开新轮 ⇒ chain 保持信封基线，无键泄漏。
-    expect("prev_handoff_paths" in chainIV(taskId)).toBe(false)
+    // 末 phase accepted → 不开新轮 ⇒ 最新行仍是那轮终态行，键不泄漏。
     expect(stubService.create).not.toHaveBeenCalled()
+    expect("prev_handoff_paths" in launchedIV(taskId)).toBe(false)
   })
 })

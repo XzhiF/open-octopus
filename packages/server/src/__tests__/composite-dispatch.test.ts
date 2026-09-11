@@ -1,350 +1,471 @@
 // packages/server/src/__tests__/composite-dispatch.test.ts
 //
-// Ticket 04 — server composite dispatch runtime (coordinator-ws + composition wf +
-// parent aggregation). Verifies the SERVER-side dispatch path: a composite config
-// (task_spec.subunits present) is dispatched by materializing a coordinator-ws with
-// NO projects and running the composition-task workflow_ref, feeding subunits as
-// input_values. Parent schedule status = 'running' while the composition wf runs;
-// 'done' when it completes with no failed children; 'failed' if any child failed.
+// ADR-0021 票03/票04 — the composite task END TO END on the server side: a task whose
+// task_spec carries subunits arms a COORDINATOR workspace that runs the composition
+// workflow, the composition workflow's `task_dispatch` node fans out a child RUN, the
+// child finishes, and the PAUSED parent is woken with the child's output.
 //
-// The engine-level pause/resume (Loop + task_dispatch inner node + moa) is owned by
-// tickets 02/03 and covered by packages/engine/src/__tests__/task-dispatch*.test.ts.
-// Here, getExecutionService is mocked so the composition wf "completes" in a
-// controlled way — this test asserts the SERVER dispatch decision + coordinator-ws
-// materialization + parent-status wiring, not the engine's loop semantics.
+// What changed (ticket03-contract §数据形状 / §新行为 11) and how this file follows:
+//   * The child used to be a private `schedules` row (origin_role='subunit') plus a
+//     `schedule_executions` link, and the PARENT's status lived on the parent's
+//     schedules row ('running' while the composition wf ran, 'done'/'failed' aggregated
+//     from the CHILD schedules' statuses). All of that is gone: there is no parent
+//     schedule to flip and no child schedule to aggregate. Deleted outright, not
+//     weakened — the contract's aggregation rule for a finished composite is now
+//     structural: the coordinator IS the round; its root execution row carries the
+//     outcome (task-lifecycle finalize), and the children are its internals.
+//   * The load-bearing pause/resume intent survives verbatim and is what this file now
+//     pins: 父 composition-wf 在 task_dispatch 处持久暂停,子完成后被唤醒并拿到子的
+//     var_pool 输出 — expressed as: dispatch arms an `executions` child row with
+//     parent_id + task_id (rows, not callbacks → restart-safe); the completion path
+//     derives the parent's RUNNING task_dispatch node and calls
+//     resumeTaskDispatch(parentId, nodeId, childVarPool); a failed child still wakes
+//     the parent (with an empty output — the composition wf decides); an over-cap
+//     child parks as 'pending' and the built-in job's claim starts it, and a child
+//     finalized through the job resumes the parent WITHOUT touching tasks.status
+//     (a subunit's outcome is not the task's outcome).
+//
+// The engine-level Loop + task_dispatch semantics (pause → retryFrom) are owned by
+// packages/engine/src/__tests__/{task-dispatch,task-dispatch-bridge,loop-task-dispatch}.test.ts;
+// here the engine is stubbed at the ExecutionService seam (anti-fake-run: the DB writes,
+// the arming, the claim, the correlation and the resume wiring all run for real).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
-import { applySchema } from "../db/schema"
-import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
-import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../db/dao"
-import type { SchedulerJob, WorkflowConfig, SubunitSpec } from "@octopus/shared"
+import fs from "fs"
+import os from "os"
+import path from "path"
 
-const COMPOSITION_WF_REF = "composition-task"
-
-// ── Mock getExecutionService ──────────────────────────────────────────
-// The coordinator-ws's ExecutionService is stubbed so the composition wf does not
-// actually run through the engine (which would need Loop+task_dispatch support —
-// a 02/engine concern). createSpy captures the workflow_ref + input_values the
-// dispatch path passes so we can assert the composite materialization shape.
-const createSpy = vi.fn(() => ({ id: "exec-comp-1" }))
-const startSpy = vi.fn(async () => undefined)
-const registerCallbacksSpy = vi.fn()
-const clearCallbacksSpy = vi.fn()
-vi.mock("../services/execution-service-registry", () => ({
-  getExecutionService: vi.fn(() => ({
-    service: {
-      create: createSpy,
-      start: startSpy,
-      registerExternalCallbacks: registerCallbacksSpy,
-      clearExternalCallbacks: clearCallbacksSpy,
-    },
-    wsPath: "/tmp/e2e-tp-composite-ws",
-  })),
+const stub = vi.hoisted(() => ({
+  db: null as Database.Database | null,
+  wsDir: "",
+  started: [] as string[],
+  created: [] as Array<Record<string, unknown>>,
+  wsSpecs: [] as Array<Record<string, unknown>>,
+  callbacks: new Map<string, (status?: string) => void>(),
+  resumes: [] as Array<{ parentId: string; nodeId: string; output: Record<string, unknown> }>,
+  /** Executions whose engine is NOT in this process — the mock's liveness answer. */
+  dead: [] as string[],
+  seq: 0,
 }))
+
+vi.mock("../services/execution-service-registry", () => ({
+  getExecutionService: (wsId: string) => {
+    const ws = stub.db!.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
+      { path: string } | undefined
+    if (!ws) return undefined
+    return {
+      wsPath: ws.path,
+      service: {
+        create: (workspaceId: string, input: Record<string, unknown>) => {
+          const id = `comp-exec-${stub.seq++}`
+          // Real INSERT: ux_exec_task_active + the claim queue behave as in production.
+          stub.db!.prepare(
+            `INSERT INTO executions
+               (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
+                input_values, var_pool, org, triggered_by, created_at, updated_at, task_id, phase_index, round_index)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '{}', ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`,
+          ).run(
+            id, workspaceId,
+            String(input.parent_id ?? "0"), Number(input.child_index ?? 0),
+            String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+            JSON.stringify(input.input_values ?? {}),
+            "e2e-tp-org", String(input.triggered_by ?? "manual"),
+            (input.task_id as string) ?? null,
+            (input.phase_index as number) ?? null, (input.round_index as number) ?? null,
+          )
+          stub.created.push({ id, workspaceId, ...input })
+          return { id }
+        },
+        // Same precondition as the real engine — including the claimedLease handoff, so a
+        // launcher that claims and then starts cannot drift from production again (票05).
+        start: async (id: string, _iv?: unknown, _sync?: unknown, claimedLease?: string) => {
+          const row = stub.db!.prepare("SELECT status, started_at FROM executions WHERE id=?").get(id) as
+            { status: string; started_at: string | null } | undefined
+          if (claimedLease) {
+            if (!row || row.status !== "running" || row.started_at !== claimedLease) {
+              throw new Error("Execution is not claimed by this launcher")
+            }
+          } else if (!row || row.status !== "pending") {
+            throw new Error("Execution is not pending")
+          }
+          stub.started.push(id)
+          if (!claimedLease) {
+            stub.db!.prepare("UPDATE executions SET status='running', started_at=? WHERE id=?")
+              .run(new Date().toISOString(), id)
+          }
+        },
+        registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
+          if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
+        },
+        clearExternalCallbacks: (id: string) => { stub.callbacks.delete(id) },
+        hasLiveEngine: (id: string) => !stub.dead.includes(id),
+        resumeTaskDispatch: async (parentId: string, nodeId: string, output: Record<string, unknown>) => {
+          stub.resumes.push({ parentId, nodeId, output })
+        },
+      },
+    }
+  },
+}))
+
+// Cap pinned for the same reason task-lifecycle.test.ts pins it: what is under test is
+// that dispatch RESPECTS the shared meter, not what the number is today.
+vi.mock("../services/scheduler/concurrency", () => ({
+  MAX_PARALLEL_WORKSPACES: 2,
+  MAX_AGENT_CONCURRENCY: 10,
+  STALE_CLAIMED_THRESHOLD_MS: 600_000,
+}))
+
+import { applySchema } from "../db/schema"
+import { SSEService } from "../services/sse"
+import { TaskDAO } from "../db/dao/task-dao"
+import { ExecutionDAO } from "../db/dao/execution-dao"
+import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
+import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
+import { TaskHomeService } from "../services/tasks/task-home-service"
+import type { TaskRow } from "../db/types"
+import type { SubunitSpec, TaskSpec } from "@octopus/shared"
+
+const ORG = "e2e-tp-org"
+const COMPOSITION_WF_REF = "composition-task"
 
 function makeSubunit(name: string): SubunitSpec {
   return {
     name,
     workspace_spec: {
-      org: "e2e-tp-org",
+      org: ORG,
       branch_prefix: `e2e-tp-${name}`,
       projects: [{ name: "E2E_TP_project", source_path: "", group: "" }],
     },
     workflow_ref: "e2e-tp/simple-spec-workflow",
     input_values: {},
     skills: [],
+    resources: [],
   }
 }
 
-/** MINIMAL composite config shape ticket 04 wires for runtime dispatch (G9). The
- *  workspace_spec carries a placeholder project for schema validity, but the
- *  coordinator-ws is materialized with NO projects (orchestration only — spec D4). */
-function makeCompositeConfig(subunits: SubunitSpec[]): WorkflowConfig {
-  return {
-    schema_version: "3.0",
-    type: "workflow",
-    workspace_spec: {
-      org: "e2e-tp-org",
-      branch_prefix: "e2e-tp-coordinator",
-      projects: [{ name: "E2E_TP_coordinator", source_path: "", group: "" }],
-    },
-    workflow_chain: [{ workflow_ref: COMPOSITION_WF_REF, input_values: {} }],
-    max_retain: 10,
-    task_spec: {
-      goal: "E2E_TP_composite_goal",
-      ac: ["E2E_TP_ac_1"],
-      subunits,
-      integration_goal: { strategy: "synthesis", prompt: "E2E_TP_synthesis_prompt" },
-    },
-  }
-}
-
-function buildCompositeJob(scheduleId: string, config: WorkflowConfig): SchedulerJob {
-  return {
-    id: scheduleId,
-    name: "e2e-tp-composite-task",
-    job_type: "workflow",
-    cron_expression: null,
-    timezone: "UTC",
-    enabled: true,
-    org: "e2e-tp-org",
-    config,
-    parallel_policy: "skip",
-    timeout_seconds: 3600,
-    notify_on_failure: false,
-    version: 1,
-    consecutive_failures: 0,
-    next_trigger_at: null,
-    deleted_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    status: "claimed",
-    trigger_source: "requirement",
-    source_chat_session_id: null,
-    claimed_at: new Date().toISOString(),
-  }
-}
-
-describe("WorkflowExecutor composite dispatch (ticket 04)", () => {
+describe("composite task dispatch — coordinator arm + child run + parent resume (票03/票04)", () => {
   let db: Database.Database
-  let executor: WorkflowExecutor
-  const wsId = "e2e-tp-ws"
-  const schedId = "e2e-tp-sched"
-  const schedExecId = "e2e-tp-se"
-  const mockSSE = { emit: vi.fn() } as any
-  // Stub WorkspaceService — only createFromSpec + delete are used by the dispatch path.
-  const createFromSpecSpy = vi.fn(() => ({ id: "e2e-tp-coord-ws" }))
-  const mockWorkspaceService = { createFromSpec: createFromSpecSpy, delete: vi.fn() } as any
+  let svc: TaskLifecycleService
+  let dispatch: TaskDispatchService
+  let execs: ExecutionDAO
+  let tasks: TaskDAO
+  let homeDir: string
+  let wsDir: string
+  let realHome: string | undefined
+  let realUserProfile: string | undefined
+  let taskHome: TaskHomeService
 
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF")
-    db.prepare(
-      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'e2e-tp-ws', 'e2e-tp-org', '/tmp/e2e-tp-ws', datetime('now'), datetime('now'))`,
-    ).run(wsId)
-    executor = new WorkflowExecutor(
-      mockSSE,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
-      new ExecutionDAO(db),
-      mockWorkspaceService,
-    )
-    createSpy.mockClear()
-    startSpy.mockClear()
-    registerCallbacksSpy.mockClear()
-    createFromSpecSpy.mockClear()
-    mockSSE.emit.mockClear()
+    stub.db = db
+    stub.started = []
+    stub.created = []
+    stub.wsSpecs = []
+    stub.callbacks = new Map()
+    stub.resumes = []
+    stub.dead = []
+    stub.seq = 0
+
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "comp-home-"))
+    wsDir = fs.mkdtempSync(path.join(os.tmpdir(), "comp-ws-"))
+    stub.wsDir = wsDir
+    // HOME redirection + restore, same discipline as task-lifecycle.test.ts: leaking a
+    // temp HOME into another file in the same worker produces isolation-only red.
+    realHome = process.env.HOME
+    realUserProfile = process.env.USERPROFILE
+    process.env.HOME = homeDir
+    process.env.USERPROFILE = homeDir
+    taskHome = new TaskHomeService(path.join(homeDir, ".octopus"))
+
+    const workspaceService = {
+      getById: (id: string) =>
+        (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+      ensureWorktreesForReuse: () => ({ rebuilt: [] }),
+      createFromSpec: (input: Record<string, unknown>) => {
+        const id = `comp-ws-${stub.wsSpecs.length}`
+        const p = path.join(wsDir, id)
+        fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
+        db.prepare(
+          `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+        ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+        stub.wsSpecs.push({ id, ...input })
+        return { id, name: input.name, org: ORG, status: "active", path: p }
+      },
+    }
+
+    svc = new TaskLifecycleService({
+      db,
+      sse: new SSEService(),
+      workspaceService: workspaceService as never,
+      builtInWorkflows: { get: (ref: string) => ({ ref, content: "name: demo\nnodes: []\n", name: "demo" }) } as never,
+      taskHomeService: taskHome,
+    })
+
+    // The port the engine calls from inside the coordinator's task_dispatch node.
+    // Its workspaceId is the coordinator ws — resolved per test after arming.
+    dispatch = null as never
+    tasks = new TaskDAO(db)
+    execs = new ExecutionDAO(db)
   })
 
   afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+    if (realUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = realUserProfile
     db.close()
+    fs.rmSync(wsDir, { recursive: true, force: true })
+    fs.rmSync(homeDir, { recursive: true, force: true })
   })
 
-  function seedCompositeSchedule(config: WorkflowConfig): void {
-    db.prepare(
-      `INSERT INTO schedules (
-        id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
-        created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, origin_type, claimed_at
-      ) VALUES (?, 'e2e-tp-org', 'e2e-tp-composite-task', NULL, 'UTC', 1, 3600, 0,
-        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'claimed', 'task', ?)`,
-    ).run(schedId, JSON.stringify(config), new Date().toISOString())
+  function insertCompositeTask(id: string, subunitNames: string[]): TaskRow {
+    const now = new Date().toISOString()
+    const spec = {
+      goal: "E2E_TP_composite_goal",
+      ac: ["E2E_TP_ac_1"],
+      task_type: "coding",
+      subunits: subunitNames.map(makeSubunit),
+      integration_goal: { strategy: "synthesis", prompt: "E2E_TP_synthesis_prompt" },
+    } as unknown as TaskSpec
+    const row = {
+      id, org: ORG, name: `T_${id}`, status: "ready",
+      task_spec: JSON.stringify(spec),
+      authoring_resources: "[]", resources: "[]", skills: "[]", project_ids: '["E2E_TP_proj"]',
+      workflow_ref: null, version: 1, source_chat_session_id: null,
+      deleted_at: null, created_at: now, updated_at: now, completed_at: null, workspace_id: null,
+      trigger_mode: "manual", trigger_at: null, cron_expression: null,
+      cron_timezone: "Asia/Shanghai", trigger_enabled: 1, next_fire_at: null, last_fired_at: null,
+    } as unknown as TaskRow
+    tasks.insert(row as never)
+    return row
   }
 
-  function seedScheduleExecution(): void {
-    db.prepare(
-      `INSERT INTO schedule_executions (
-        id, schedule_id, status, trigger_type, triggered_at, timezone_offset,
-        timezone_iana, created_at, triggered_by
-      ) VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
+  function makeDispatch(coordinatorWsId: string): TaskDispatchService {
+    return new TaskDispatchService({
+      db,
+      workspaceId: coordinatorWsId,
+      workspacePath: path.join(wsDir, coordinatorWsId),
+      org: ORG,
+      workspaceService: {
+        createFromSpec: (input: Record<string, unknown>) => {
+          const id = `child-ws-${stub.wsSpecs.length}`
+          const p = path.join(wsDir, id)
+          fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
+          db.prepare(
+            `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+             VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+          ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+          stub.wsSpecs.push({ id, ...input })
+          return { id }
+        },
+      } as never,
+      sse: new SSEService(),
+    })
   }
 
-  // ── AC: composite dispatch → coordinator-ws + composition-task workflow + parent running ──
-  it("dispatches a composite config by materializing a coordinator-ws (NO projects) + composition-task workflow_ref + subunits as input_values", async () => {
-    const subunits = [makeSubunit("a"), makeSubunit("b"), makeSubunit("c")]
-    const config = makeCompositeConfig(subunits)
-    seedCompositeSchedule(config)
-    seedScheduleExecution()
+  // ── AC: arming a composite builds a COORDINATOR ws (no projects) + composition wf ──
+  it("arms a composite task as a coordinator workspace with NO projects + the composition-task ref + composite input_values", () => {
+    insertCompositeTask("t-comp-1", ["a", "b", "c"])
+    const execId = svc.armTask("t-comp-1")
 
-    const result = await executor.execute(buildCompositeJob(schedId, config), schedExecId)
+    // Coordinator ws: projects=[] is the load-bearing distinction from a simple arm
+    // (spec D4 — orchestration only; each subunit gets its own ws at dispatch).
+    const coord = stub.wsSpecs.at(-1)!
+    expect(coord.projects).toEqual([])
+    expect((coord.workflow_chain as Array<{ workflow_ref: string }>)[0].workflow_ref).toBe(COMPOSITION_WF_REF)
 
-    // Dispatch succeeded (running — async composition wf fires-and-forgets)
-    expect(result.success).toBe(true)
-    expect(result.status).toBe("running")
+    // The root execution carries the task binding and runs the composition wf with the
+    // synthesized inputs the Loop consumes ($iteration.subunit / break_when count).
+    const row = execs.findById(execId)!
+    expect(row.task_id).toBe("t-comp-1")
+    expect(row.parent_id).toBe("0")
+    expect(row.workflow_ref).toBe(COMPOSITION_WF_REF)
+    const iv = JSON.parse(row.input_values) as Record<string, unknown>
+    expect(iv.subunit_count).toBe(3)
+    expect(iv.goal).toBe("E2E_TP_composite_goal")
+    expect(iv.integration_prompt).toBe("E2E_TP_synthesis_prompt")
+    expect(Array.isArray(iv.subunits)).toBe(true)
+    expect((iv.subunits as SubunitSpec[]).map((s) => s.name)).toEqual(["a", "b", "c"])
+    // ticket08 AC2 preserved: the replacement must not DROP the injected home key.
+    expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir("t-comp-1"))
 
-    // Coordinator-ws materialized with NO projects (spec D4 — orchestration only).
-    // createFromSpec is the single workspace-creation seam; asserting projects=[] is
-    // the load-bearing check that distinguishes composite from simple dispatch.
-    expect(createFromSpecSpy).toHaveBeenCalledTimes(1)
-    const createArg = createFromSpecSpy.mock.calls[0][0] as { projects: unknown[] }
-    expect(createArg.projects).toEqual([])
+    // No schedule row anywhere — the composite no longer borrows the pump's tables.
+    expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
+  })
 
-    // composition-task workflow_ref + subunits/subunit_count/goal/integration_prompt
-    // passed to the composition wf's execution (input_values carry the real subunit
-    // array — the composition Loop consumes $iteration.subunit downstream).
-    expect(createSpy).toHaveBeenCalledTimes(1)
-    const createCall = createSpy.mock.calls[0]
-    expect(createCall[1]).toMatchObject({
-      workflow_ref: COMPOSITION_WF_REF,
-      triggered_by: "scheduler",
+  // ── AC: 父在 task_dispatch 处持久暂停,子完成后被唤醒并拿到子的 var_pool 输出 ──
+  it("the paused parent is woken with the child's var_pool output when the child run finalizes", async () => {
+    insertCompositeTask("t-comp-2", ["a", "b"])
+    const rootId = svc.armTask("t-comp-2")
+    // The composition wf is dispatched on the coordinator → the engine marks the root
+    // RUNNING and pauses INSIDE the task_dispatch node (a running node row is what the
+    // pause persists — that is the whole restart-safety argument of 票03).
+    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
+    const coordinatorWsId = execs.findById(rootId)!.workspace_id
+    db.prepare(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
+    ).run(`${rootId}-dispatch-child`, rootId)
+
+    // The engine's port dispatches one subunit → a CHILD executions row correlated to
+    // the paused root (parent_id) and to the same task (task_id).
+    dispatch = makeDispatch(coordinatorWsId)
+    const handle = await dispatch.dispatchChild(makeSubunit("a"))
+    const child = execs.findById(handle.child_id)!
+    expect(child.parent_id).toBe(rootId)
+    expect(child.task_id).toBe("t-comp-2")
+
+    // The child ran and put its result in its var_pool; the engine's terminal callback
+    // now fires (row still 'running' — the persist lands after the callback, which is
+    // exactly why finalize resolves the status from the engine's report).
+    db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?").run(JSON.stringify({ result: "E2E_TP_subunit_a_out" }), handle.child_id)
+
+    // The ONLY two resume paths are the completion callback and the job's finalize —
+    // here the job side: finalizeLaunch sees a CHILD row and hands the result to the
+    // parent's waiting node instead of writing the task card.
+    svc.finalizeLaunch(handle.child_id, "completed")
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    expect(stub.resumes).toHaveLength(1)
+    expect(stub.resumes[0]).toMatchObject({
+      parentId: rootId,
+      nodeId: "dispatch-child",
+      output: { result: "E2E_TP_subunit_a_out" },
     })
-    const inputValues = createCall[1].input_values as Record<string, unknown>
-    expect(inputValues.subunits).toEqual(subunits)
-    expect(inputValues.subunit_count).toBe(3)
-    expect(inputValues.goal).toBe("E2E_TP_composite_goal")
-    expect(inputValues.integration_prompt).toBe("E2E_TP_synthesis_prompt")
+    // Finalized as terminal, and the row — not the card — carries the outcome.
+    expect(execs.findById(handle.child_id)!.status).toBe("completed")
+    // A subunit's outcome is NOT the task's outcome: no done/failed mirror for
+    // children (task-lifecycle finalizeLaunch returns before the task write).
+    expect(tasks.getById("t-comp-2")!.status).toBe("ready")
+  })
 
-    // Parent schedule status='running' while the composition wf is in flight + SSE.
-    const sched = db.prepare("SELECT status FROM schedules WHERE id = ?").get(schedId) as {
-      status: string
-    }
-    expect(sched.status).toBe("running")
-    expect(mockSSE.emit).toHaveBeenCalledWith("taskpool", {
-      event: "schedule_status",
-      data: { schedule_id: schedId, status: "running" },
+  it("a FAILED child still wakes the paused parent (empty output), never leaves it stalled", async () => {
+    insertCompositeTask("t-comp-3", ["a", "b"])
+    const rootId = svc.armTask("t-comp-3")
+    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
+    const coordinatorWsId = execs.findById(rootId)!.workspace_id
+    db.prepare(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
+    ).run(`${rootId}-dispatch-child`, rootId)
+
+    dispatch = makeDispatch(coordinatorWsId)
+    const handle = await dispatch.dispatchChild(makeSubunit("a"))
+
+    // The dispatch path registered its own completion callback (startChildRun). The
+    // child died with nothing in its pool — the callback still forwards, empty.
+    stub.callbacks.get(handle.child_id)?.("failed")
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    // The composition workflow's own aggregation decides what a missing subunit means;
+    // the parent is NOT left paused forever.
+    expect(stub.resumes).toHaveLength(1)
+    expect(stub.resumes[0]).toMatchObject({ parentId: rootId, nodeId: "dispatch-child", output: {} })
+  })
+
+  // ── AC: 超并发的子留 pending,由内置 job 领取并接通父回填 ──
+  // KNOWN PRODUCT BUG (票04-partial, reported not papered): a parked child is claimed
+  // by TaskLifecycleService.launchQueued, which flips pending→running via
+  // execDAO.claimLaunch BEFORE delegating to startChildRun — but startChildRun re-runs
+  // the SAME guarded claimLaunch (task-child-run.ts:149) and, seeing status!='pending',
+  // returns false, so the child is marked running with NO engine started and the parent
+  // is never wired. The two claims must be one guarded flip. This assertion is the
+  // contract (§新行为 11 "超并发时留 pending 由 job 领取"); it goes green when the
+  // double-claim is collapsed.
+  it("an over-cap child parks as pending; the job's claim starts it with the parent-resume wiring", async () => {
+    insertCompositeTask("t-comp-4", ["a", "b"])
+    const rootId = svc.armTask("t-comp-4")
+    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
+    const coordinatorWsId = execs.findById(rootId)!.workspace_id
+    db.prepare(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
+    ).run(`${rootId}-dispatch-child`, rootId)
+
+    // Fill the shared gate (cap 2): the coordinator root is 1; one more live task row
+    // puts countActiveWork at the cap, so the child cannot start now.
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, started_at, created_at, updated_at, task_id)
+       VALUES ('exec-busy', ?, '0', 'w', 'w', ?, 'running', datetime('now'), datetime('now'), datetime('now'), 't-busy')`,
+    ).run(coordinatorWsId, ORG)
+
+    dispatch = makeDispatch(coordinatorWsId)
+    const handle = await dispatch.dispatchChild(makeSubunit("a"))
+    expect(execs.findById(handle.child_id)!.status).toBe("pending")
+    expect(stub.started).not.toContain(handle.child_id)
+
+    // Free a slot; the built-in job's claim loop starts the parked child — the SAME
+    // queue a root launch uses, so composite fan-out inherits the cap for free.
+    db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE id='exec-busy'").run()
+    const { launched } = svc.launchQueued()
+    expect(launched).toBeGreaterThanOrEqual(1)
+    expect(execs.findById(handle.child_id)!.status).toBe("running")
+    expect(stub.started).toContain(handle.child_id)
+
+    // The claim wired the child's completion to the parent: fire it, expect the resume.
+    db.prepare("UPDATE executions SET var_pool='{\"result\":\"E2E_TP_claimed_out\"}', status='completed', completed_at=datetime('now') WHERE id=?").run(handle.child_id)
+    stub.callbacks.get(handle.child_id)?.("completed")
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+    expect(stub.resumes).toContainEqual({
+      parentId: rootId,
+      nodeId: "dispatch-child",
+      output: { result: "E2E_TP_claimed_out" },
     })
   })
 
-  // ── AC: 父卡聚合状态 — done when composition wf completes (no failed children) ──
-  it("parent status='done' when the composition wf completes with no failed children", () => {
-    const subunits = [makeSubunit("a"), makeSubunit("b"), makeSubunit("c")]
-    const config = makeCompositeConfig(subunits)
-    seedCompositeSchedule(config)
-    // Composition wf root execution (status='completed' → done path)
+  it("a parent whose child's completion callback was lost is woken by the tick (lost wake-up)", async () => {
+    // The shape a lost callback leaves behind: the child row is terminal, the parent is
+    // still 'pending_task_dispatch' with its engine alive, and the one callback that would
+    // have resumed it is never coming. RecoveryManager does not cover it — it restarts
+    // INTERRUPTED engines, and a paused parent is not interrupted, it is waiting on a
+    // waiter that no longer exists. So nothing else in the system ever tells it, and the
+    // round hangs holding a slot. What makes the question askable at all is 票03's row
+    // shape: 「这个暂停节点还欠着子执行吗」 is a parent_id query, not a config-marker scan.
+    insertCompositeTask("t-comp-5", ["a", "b"])
+    const rootId = svc.armTask("t-comp-5")
+    db.prepare("UPDATE executions SET status='pending_task_dispatch' WHERE id=?").run(rootId)
+    const coordinatorWsId = execs.findById(rootId)!.workspace_id
+    db.prepare(
+      `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at)
+       VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'pending_task_dispatch', datetime('now'))`,
+    ).run(`${rootId}-dispatch-child`, rootId)
     db.prepare(
       `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-        status, triggered_by, org, created_at, updated_at)
-       VALUES (?, ?, '0', 0, ?, 'composition-task', 'completed', 'scheduler', 'e2e-tp-org', datetime('now'), datetime('now'))`,
-    ).run("exec-comp-1", wsId, COMPOSITION_WF_REF)
-    db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-        timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'running', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
+         org, status, var_pool, started_at, completed_at, created_at, updated_at, task_id)
+       VALUES ('child-done', ?, ?, 0, 'wf/a', 'a', ?, 'completed', '{"result":"E2E_TP_orphan"}',
+         datetime('now','-3 minutes'), datetime('now','-2 minutes'), datetime('now','-3 minutes'), datetime('now','-2 minutes'), ?)`,
+    ).run(coordinatorWsId, rootId, ORG, "t-comp-5")
 
-    // Simulate the composition wf's onComplete → handleChainComplete
-    const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
-    ;(executor as any).handleChainComplete({
-      executionId: "exec-comp-1",
-      schedExecId,
-      schedWsId: "sw-nonexistent", // findScheduleWorkspaceById → null → cleanup skipped
-      scheduleId: schedId,
-      triggeredAt: Date.now() - 1000,
-      notifyOnFailure: false,
-      schedule,
-      maxRetain: 10,
-      isRequirement: true,
+    const { resynced } = svc.reconcile()
+    expect(resynced).toBeGreaterThanOrEqual(1)
+    expect(stub.resumes).toContainEqual({
+      parentId: rootId,
+      nodeId: "dispatch-child",
+      output: { result: "E2E_TP_orphan" },
     })
 
-    const sched = db.prepare("SELECT status, claimed_at FROM schedules WHERE id = ?").get(schedId) as {
-      status: string
-      claimed_at: string | null
-    }
-    expect(sched.status).toBe("done")
-    expect(sched.claimed_at).toBeNull()
-    expect(mockSSE.emit).toHaveBeenCalledWith("taskpool", {
-      event: "schedule_status",
-      data: { schedule_id: schedId, status: "done" },
-    })
-  })
+    // The negatives that make the above mean something:
+    //   ① a child still parked behind the cap (pending) or itself waiting must NOT be
+    //      declared over, or the parent would be resumed with the wrong subunit's output
+    //      mid-fan-out;
+    //   ② a parent whose engine is ALSO gone must NOT be counted as recovered — there is
+    //      nothing to receive the resume, and the strand reap owns that row (it ends it
+    //      past the stale threshold instead of reporting a wake-up that cannot happen).
+    stub.resumes.length = 0
+    db.prepare("UPDATE executions SET status='pending' WHERE id='child-done'").run()
+    svc.reconcile()
+    expect(stub.resumes).toHaveLength(0)
 
-  // ── AC: 任一子 failed → 父 failed (propagate at composition-wf completion) ──
-  it("parent status='failed' when the composition wf completes but one child schedule failed", () => {
-    const subunits = [makeSubunit("a"), makeSubunit("b"), makeSubunit("c")]
-    const config = makeCompositeConfig(subunits)
-    seedCompositeSchedule(config)
-    db.prepare(
-      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-        status, triggered_by, org, created_at, updated_at)
-       VALUES (?, ?, '0', 0, ?, 'composition-task', 'completed', 'scheduler', 'e2e-tp-org', datetime('now'), datetime('now'))`,
-    ).run("exec-comp-1", wsId, COMPOSITION_WF_REF)
-    db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-        timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'running', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
-
-    // Seed a FAILED child schedule whose config carries the parent_task_dispatch
-    // marker pointing at the composition wf root execution (03's TaskDispatchService
-    // writes this marker at dispatch time; here we simulate the persisted state).
-    const childConfig = {
-      schema_version: "3.0",
-      type: "workflow",
-      workspace_spec: subunits[0].workspace_spec,
-      workflow_chain: [{ workflow_ref: subunits[0].workflow_ref, input_values: {} }],
-      max_retain: 10,
-      parent_task_dispatch: { execution_id: "exec-comp-1", node_id: "dispatch-child" },
-    }
-    db.prepare(
-      `INSERT INTO schedules (
-        id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
-        created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, origin_type
-      ) VALUES (?, 'e2e-tp-org', 'e2e-tp-child-failed', NULL, 'UTC', 1, 3600, 0,
-        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'failed', 'task')`,
-    ).run("e2e-tp-child-1", JSON.stringify(childConfig))
-
-    // Composition wf completes (done path) but a failed child exists → propagate failed
-    const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
-    ;(executor as any).handleChainComplete({
-      executionId: "exec-comp-1",
-      schedExecId,
-      schedWsId: "sw-nonexistent",
-      scheduleId: schedId,
-      triggeredAt: Date.now() - 1000,
-      notifyOnFailure: false,
-      schedule,
-      maxRetain: 10,
-      isRequirement: true,
-    })
-
-    const sched = db.prepare("SELECT status, claimed_at FROM schedules WHERE id = ?").get(schedId) as {
-      status: string
-      claimed_at: string | null
-    }
-    expect(sched.status).toBe("failed")
-    expect(sched.claimed_at).toBeNull()
-    expect(mockSSE.emit).toHaveBeenCalledWith("taskpool", {
-      event: "schedule_status",
-      data: { schedule_id: schedId, status: "failed" },
-    })
-  })
-
-  // ── AC: composition wf itself fails → parent failed (05's writer already covers this;
-  //  verify the composite path doesn't regress) ──
-  it("parent status='failed' when the composition wf itself fails (status='failed')", () => {
-    const config = makeCompositeConfig([makeSubunit("a")])
-    seedCompositeSchedule(config)
-    db.prepare(
-      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-        status, triggered_by, org, created_at, updated_at)
-       VALUES (?, ?, '0', 0, ?, 'composition-task', 'failed', 'scheduler', 'e2e-tp-org', datetime('now'), datetime('now'))`,
-    ).run("exec-comp-1", wsId, COMPOSITION_WF_REF)
-    db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-        timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'running', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
-
-    const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
-    ;(executor as any).handleChainComplete({
-      executionId: "exec-comp-1",
-      schedExecId,
-      schedWsId: "sw-nonexistent",
-      scheduleId: schedId,
-      triggeredAt: Date.now() - 1000,
-      notifyOnFailure: false,
-      schedule,
-      maxRetain: 10,
-      isRequirement: true,
-    })
-
-    const sched = db.prepare("SELECT status FROM schedules WHERE id = ?").get(schedId) as {
-      status: string
-    }
-    expect(sched.status).toBe("failed")
+    db.prepare("UPDATE executions SET status='completed' WHERE id='child-done'").run()
+    stub.dead.push(rootId)
+    const after = svc.reconcile()
+    expect(stub.resumes).toHaveLength(0)
+    expect(after.resynced).toBe(0)
+    expect(after.reaped).toBe(0) // still inside the stale window — left alone, not killed early
+    expect(execs.findById(rootId)!.status).toBe("pending_task_dispatch")
   })
 })

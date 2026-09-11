@@ -12,9 +12,9 @@
 //
 // 能力（v4-only UI，generic/任务级 v3 单卡已随 goal/ac 旧路径退役）：
 //   • 增删 phase、改 name/slug/specPath、上移/下移 —— 仅 draft 态开放。
-//     裁定依据：index=数组位次是验收查询（/:id/acceptance）与信封定位
-//     （dispatchPhaseRound）的键，gate 按位次报 phase:<i>；ready 起信封已物化
-//     冻结（K16 隔离即冻结），看板上的结构重排会造成派生/账本/信封三方错位。
+//     裁定依据：index=数组位次是验收查询（/:id/acceptance）与轮次定位
+//     （dispatchPhaseRound）的键，gate 按位次报 phase:<i>；ready 起 spec 快照已物化
+//     冻结（K16 隔离即冻结），看板上的结构重排会造成派生/账本/快照三方错位。
 //     ready 后退化为只读 + 换绑定；跨轮传播走 task-author 对话（agent 车道）。
 //   • 逐行「spec.md」→ PhaseSpecDialog（home-file GET/PUT，契约修复新端点）。
 //   • taskPhaseSchema.workflowRef 非空（shared min(1)）→ 新 phase 表单必须带

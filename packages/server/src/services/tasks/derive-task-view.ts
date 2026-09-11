@@ -282,7 +282,7 @@ function buildPhaseView(
  * Derive the display state of a task from its row + round executions +
  * acceptance ledger. Pure & idempotent — safe to call on every GET / every
  * SSE fold (spec R2). `executions` / `acceptances` must already be scoped to
- * THIS task by the caller (票 07 joins via the task's schedules/workspaces);
+ * THIS task by the caller (票03: `executions.task_id` — the join through the scheduler's tables is gone);
  * rows for other phases/rounds are ignored defensively, never throw.
  */
 export function deriveTaskView(

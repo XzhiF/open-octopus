@@ -1,10 +1,12 @@
 // packages/web-app/components/tasks/trigger-dialog.tsx
 //
 // v39 人工触发对话框 — 入队(ready)不再自动执行；由用户在此显式触发：
-//   · 立即触发 — trigger without `at` (server: scheduled_at = now, next wake)
+//   · 立即触发 — trigger without `at` (server arms + launches inside the cap at once)
 //   · 定时触发 — one-shot future absolute time (datetime-local → ISO8601)
-// 同任务互斥：一个任务同时只有一个实例——queued/running 状态下再次触发被服务端
-// 409 拒绝；到点后的定时触发由 poller 领取（受全局并发上限 ≤3 约束）。
+// 票03 (ADR-0021): 定时 = `tasks.trigger_mode='once' + next_fire_at`（任务自己的
+// 到期游标，由内置 task-lifecycle job 到点起），不再写私有 schedule 信封。
+// 同任务互斥：一个任务同时只有一个实例——排队/执行中再次触发被服务端 409 拒绝
+// （到点后的领取受全局并发上限约束，pending 行 = 已排队等位）。
 
 "use client"
 
@@ -16,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Zap, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
-import { triggerTask, cancelTaskTrigger } from "@/lib/tasks-api"
+import { triggerTask, cancelTaskTrigger, type TaskView } from "@/lib/tasks-api"
 
 export interface TriggerDialogProps {
   open: boolean
@@ -115,40 +117,32 @@ function d0(iso: string): string {
 
 // ── Inline trigger/cancel actions (shared by SimpleExecutionMode + CompositeMode) ──
 
-/** Renders per task state (v39):
- *  · ready                → 「触发」 button (opens TriggerDialog)
- *  · running + queued+future → 定时待触发提示 + 「取消触发」
- *  · running + queued+past  → 即将开始提示（不再显示取消——领取竞态由服务端守卫）
+/** Renders per task state (v39, 票03 语义):
+ *  · ready + 无游标        → 「触发」 button (opens TriggerDialog)
+ *  · once 游标在未来        → 已定时提示 + 「取消触发」(status 仍是 ready —— armOnce
+ *                            只写 next_fire_at，不建实例)
+ *  · 实例 pending（并发闸后等位）→ 排队提示（不给取消：与旧的「已到点」窗口同义，
+ *                            领取竞态由服务端守卫）
  *  · otherwise             → null */
-export function TriggerActions({ task, onMutated }: { task: Task; onMutated: () => void }) {
+export function TriggerActions({ task, onMutated }: { task: TaskView; onMutated: () => void }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
 
-  const armed =
-    task.status === "running" && task.schedule_status === "queued" && !!task.scheduled_at
-  const future = armed && new Date(task.scheduled_at!).getTime() > Date.now()
+  // 票03: 「已排队」的两个真相都在任务自己身上 —— next_fire_at 是唯一的到期游标，
+  // execution.status='pending' 表示实例已武装、在共享并发闸后等位。
+  const dueAt = task.next_fire_at
+  const armedFuture = !!dueAt && new Date(dueAt).getTime() > Date.now()
+  const waitingForSlot = task.execution?.status === "pending"
 
-  if (task.status === "ready") {
-    return (
-      <>
-        <Button size="sm" onClick={() => setDialogOpen(true)} data-task-trigger>
-          <Zap className="size-4" />
-          触发
-        </Button>
-        <TriggerDialog open={dialogOpen} onOpenChange={setDialogOpen} task={task} onTriggered={onMutated} />
-      </>
-    )
-  }
-
-  if (armed) {
+  if (armedFuture || waitingForSlot) {
     return (
       <div className="flex items-center gap-2">
         <span className="text-xs text-pop-amber">
-          {future
-            ? `已定时 · ${new Date(task.scheduled_at!).toLocaleString()} 触发`
+          {armedFuture
+            ? `已定时 · ${new Date(dueAt!).toLocaleString()} 触发`
             : "已到点，即将执行"}
         </span>
-        {future && (
+        {armedFuture && (
           <Button
             variant="outline"
             size="sm"
@@ -171,6 +165,18 @@ export function TriggerActions({ task, onMutated }: { task: Task; onMutated: () 
           </Button>
         )}
       </div>
+    )
+  }
+
+  if (task.status === "ready") {
+    return (
+      <>
+        <Button size="sm" onClick={() => setDialogOpen(true)} data-task-trigger>
+          <Zap className="size-4" />
+          触发
+        </Button>
+        <TriggerDialog open={dialogOpen} onOpenChange={setDialogOpen} task={task} onTriggered={onMutated} />
+      </>
     )
   }
 

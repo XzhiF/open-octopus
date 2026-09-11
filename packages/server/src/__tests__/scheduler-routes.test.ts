@@ -6,8 +6,8 @@ import { SchedulerService } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { createSchedulerRoutes, resetSchedulerRateLimitersForTests } from '../routes/scheduler'
-import { createCloneSessionRoutes } from '../routes/clone'
-import { ScheduleConfigDAO, ScheduleRunDAO, AgentSessionDAO } from '../db/dao'
+import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { registerCodeJobHandler } from '../services/scheduler/code-job-registry'
 
 describe('Scheduler Routes (integration)', () => {
   let db: Database.Database
@@ -25,13 +25,17 @@ describe('Scheduler Routes (integration)', () => {
     const service = new SchedulerService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const dashboard = new DashboardService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const exportService = new ExportService(new ScheduleConfigDAO(db))
-    // G7: scheduler route now binds a REAL task-author clone session (sessions table)
-    // via AgentSessionDAO, replacing the retired 'taskpool-draft' chat_sessions sentinel.
-    const agentSessionDAO = new AgentSessionDAO(db)
+    // 票03 (ADR-0021): 这里原来还挂了一份 clone-session 路由 + AgentSessionDAO，为的是
+    // G7「POST /jobs(requirement) 自动建 task-author 会话」。那条分支随 requirement 载荷
+    // 一起从路由里删了（POST /api/scheduler/jobs 现在只做 createJob），夹具跟着撤。
     app = new Hono()
-    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService, agentSessionDAO))
-    // Mount clone routes so task-author chat session resolves via the clone-session mechanism.
-    app.route('/api/clones', createCloneSessionRoutes({ sessionDAO: agentSessionDAO }))
+    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService))
+
+    // The handler registry is process-global and production boots with these names
+    // registered before the pump starts. A `job` row can no longer be created for an
+    // unregistered handler (see assertHandlerRegistered), so this fixture registers what
+    // it creates — mirroring the boot order instead of stubbing past the precondition.
+    registerCodeJobHandler('task-lifecycle', async () => {})
   })
 
   afterAll(() => {
@@ -120,6 +124,31 @@ describe('Scheduler Routes (integration)', () => {
       }),
     })
     expect(res.status).toBe(400)
+  })
+
+  it('POST /jobs rejects an absent cron_expression (jobs are cron-armed only since 票03)', async () => {
+    // 票03 之后 POST /api/scheduler/jobs 是纯作业入口：不再接受 trigger_source /
+    // task_spec / cron_expression=null 的「草稿信封」（那条 requirement 路径与
+    // POST /jobs/:id/enqueue 一起下线，任务侧改走 /api/tasks 的 trigger）。
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'no-cron',
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement', // 旧载荷：必须被忽略，而不是被当成入队凭据
+        config: { schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 's', projects: [{ name: 'p', source_path: '/tmp' }] }, workflow_chain: [{ workflow_ref: 'x.yaml', input_values: {} }], max_retain: 10 },
+      }),
+    })
+    expect(res.status).toBe(400)
+    const body = await json<{ error: string }>(res)
+    expect(body.error).toMatch(/cron_expression/i)
+    // 反假跑: 没有偷偷建出一行草稿
+    const cnt = db.prepare("SELECT COUNT(*) as c FROM schedules WHERE name = 'no-cron'").get() as { c: number }
+    expect(cnt.c).toBe(0)
   })
 
   it('GET /jobs/:id returns 404 for unknown', async () => {
@@ -267,27 +296,35 @@ describe('Scheduler Routes (integration)', () => {
     const after = await json<{ items: Array<{ id: string }> }>(afterRes)
     expect(after.items.find(j => j.id === id)).toBeUndefined()
   })
+  // ── 票03 (ADR-0021): 表里剩下的每一行都是作业 ────────────────────
+  //
+  // 本节原来有 6 条 requirement/enqueue 用例（AC21 toggle 拒绝、AC22-rev/AC22-compat、
+  // ?origin=task、?origin=bogus→400、?trigger_source=requirement）与 3 条 G7（POST /jobs
+  // 自动建 task-author clone 会话）：它们的主体是「一条 schedules 行可以是一个任务的信封」
+  // 这件事 —— origin_* 列在 v42 删了，POST /jobs/:id/enqueue 与 ?trigger_source=&origin=
+  // 两个查询参数一起下线，requirement 载荷在路由层就变成 400（上面那条用例钉住它）。
+  // G7 的自动建会话分支也随 requirement 路径删除（routes/scheduler.ts 的 POST /jobs 现在
+  // 只做 createJob）。保留的是仍然成立的那半句：列表与 DTO 里不该再有任何 origin 痕迹。
 
-  // ── T-10: Scheduler Endpoint Isolation ────────────────────
+  const jobConfig = {
+    schema_version: '2.0',
+    type: 'workflow',
+    workspace_spec: { org: 'test', branch_prefix: 'sched', projects: [{ name: 'p', source_path: '/tmp' }] },
+    workflow_chain: [{ workflow_ref: 'g4.yaml', input_values: {} }],
+    max_retain: 10,
+  }
 
-  async function createRequirementJob(): Promise<string> {
+  async function createCronJob(prefix: string): Promise<string> {
     const res = await app.request('/api/scheduler/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: `t10-req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         job_type: 'workflow',
-        cron_expression: null,
+        cron_expression: '0 9 * * *',
         timezone: 'Asia/Shanghai',
         org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 't10.yaml', input_values: {} }],
-          max_retain: 10,
-        },
+        config: jobConfig,
       }),
     })
     expect(res.status).toBe(201)
@@ -295,313 +332,61 @@ describe('Scheduler Routes (integration)', () => {
     return body.id
   }
 
-  it('AC21: POST /jobs/:id/toggle on requirement-type returns 400', async () => {
-    const id = await createRequirementJob()
-
-    const res = await app.request(`/api/scheduler/jobs/${id}/toggle`, { method: 'POST' })
-    expect(res.status).toBe(400)
-    const body = await json<{ error: string }>(res)
-    expect(body.error).toMatch(/cron/i)
-
-    // 反假跑 AC21: status 仍是 draft, 未变 enabled/disabled
-    const detail = await app.request(`/api/scheduler/jobs/${id}`)
-    const job = await json<{ status: string; enabled: boolean }>(detail)
-    expect(['draft', 'queued', 'claimed']).toContain(job.status)
-  })
-
-  // 2026-08-29 (task-board observability, approach A): the old AC22 contract
-  // ("default excludes requirement-type") is REVERSED — the readyTask dispatch
-  // seam creates origin_type='task' schedules and the scheduler UI must show
-  // them (they were counted by DashboardCards but invisible in the table).
-  // cron-only views remain available via ?trigger_source=cron / ?origin=cron.
-
-  it('AC22-rev: GET /jobs default includes requirement-type records with origin fields', async () => {
-    const id = await createRequirementJob()
+  it('DTO 不再携带 origin 字段，列表里每一行都是一个作业', async () => {
+    const id = await createCronJob('t03-row')
 
     const res = await app.request('/api/scheduler/jobs')
     expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ id: string; trigger_source?: string | null; origin_type?: string | null }> }>(res)
-    // 反假跑: the requirement row is in the DEFAULT list (not hidden behind ?trigger_source=)
+    const data = await json<{ items: Array<Record<string, unknown>> }>(res)
     const mine = data.items.find(j => j.id === id)
-    expect(mine).toBeDefined()
-    expect(mine!.trigger_source).toBe('requirement')
-    // 反假跑 (approach A): authoritative origin passes through the DTO for the UI badge
-    expect(mine!.origin_type).toBe('task')
+    expect(mine, '新建的作业出现在默认列表里（没有 origin 过滤可藏）').toBeDefined()
+    // 反假跑: 字段是「不存在」，不是「为 null」—— SchedulerJob 上这几个键已删
+    for (const gone of ['trigger_source', 'origin_type', 'origin_id', 'source_chat_session_id']) {
+      expect(gone in mine!, `${gone} 不应再出现在作业 DTO 上`).toBe(false)
+    }
+    // 作业自己的 run-state 仍在（status/claimed_at 是泵的，不是任务的）
+    expect(mine!.status).toBe('queued')
+    expect('claimed_at' in mine!).toBe(true)
   })
 
-  it('AC22-compat: GET /jobs?trigger_source=cron still excludes requirement-type records', async () => {
-    await createRequirementJob()
+  it('列表行的「上次触发」带耗时（票06 手测⑤：内置 job 那行要能看出跑了多久）', async () => {
+    // 走真路由而不是单测 enrichJobRow：这一列的形状是「DAO 的相关子查询 → service 映射 →
+    // wire」三段接起来的，之前正是因为本地又抄了一遍行类型，第四段子查询加了也没人发现。
+    const id = await createCronJob('t05-dur')
+    const insert = db.prepare(
+      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+         timezone_offset, timezone_iana, created_at, duration_ms)
+       VALUES (?, ?, ?, 'scheduled', ?, '+00:00', 'UTC', ?, ?)`,
+    )
+    const older = new Date(Date.now() - 3600_000).toISOString()
+    const newer = new Date().toISOString()
+    insert.run(`${id}-e1`, id, 'failed', older, older, 9000)
+    insert.run(`${id}-e2`, id, 'completed', newer, newer, 1234)
 
-    const res = await app.request('/api/scheduler/jobs?trigger_source=cron')
-    expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ trigger_source?: string | null }> }>(res)
-    expect(data.items.every(j => (j.trigger_source ?? 'cron') === 'cron')).toBe(true)
-  })
+    const res = await app.request('/api/scheduler/jobs')
+    const mine = (await json<{ items: Array<Record<string, unknown>> }>(res)).items.find(j => j.id === id)
+    // 取最新那条（1234），不是任一行的最大值，也不是先插的那条。completed 在 DTO 上叫
+    // success（mapExecutionStatus 的既有口径），断的是 wire，不是表里的词。
+    expect(mine!.last_execution).toMatchObject({ status: 'success', duration_ms: 1234 })
 
-  it('GET /jobs?origin=task returns only task-origin records', async () => {
-    const id = await createRequirementJob()
-
-    const res = await app.request('/api/scheduler/jobs?origin=task')
-    expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ id: string; origin_type?: string | null }> }>(res)
-    expect(data.items.some(j => j.id === id)).toBe(true)
-    // 反假跑: single-origin filter is exact — no cron rows leak in
-    expect(data.items.every(j => j.origin_type === 'task')).toBe(true)
-  })
-
-  it('GET /jobs?origin=bogus → 400', async () => {
-    const res = await app.request('/api/scheduler/jobs?origin=bogus')
-    expect(res.status).toBe(400)
-    const body = await json<{ error: string }>(res)
-    expect(body.error).toMatch(/invalid origin/)
-  })
-
-  it('AC22: GET /jobs?trigger_source=requirement returns only requirement-type records', async () => {
-    await createRequirementJob()
-
-    const res = await app.request('/api/scheduler/jobs?trigger_source=requirement')
-    expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ trigger_source?: string | null }> }>(res)
-    expect(data.items.length).toBeGreaterThan(0)
-    // 反假跑: 所有记录都是 requirement
-    expect(data.items.every(j => j.trigger_source === 'requirement')).toBe(true)
-  })
-
-  // ── G7: task-author clone session binding (retires 'taskpool-draft' sentinel) ──
-
-  it('G7/AC18: POST /jobs with trigger_source=requirement auto-creates a REAL task-author clone session + scope_id=job.id', async () => {
-    const res = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: `t9-draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    expect(res.status).toBe(201)
-    const body = await json<{ id: string; source_chat_session_id: string | null }>(res)
-    // SG1b (ticket 06): source_chat_session_id is no longer persisted on schedules
-    // (column DROPPED). enrichJobRow returns null always. The auto-created task-author
-    // clone session is still created (G7 preserved) — find it via scope_id = task id below.
-    expect(body.source_chat_session_id).toBeNull()
-
-    // G7: session is a REAL clone session in the `sessions` table (clone-session mechanism),
-    // NOT a chat_sessions row with the retired 'taskpool-draft' fake workspace_id.
-    // SG1b: look up by scope_id = body.id (the route links scope_id to the task id).
-    const sessionRow = db.prepare(
-      'SELECT id, clone_name, session_type, scope_id, is_deleted FROM sessions WHERE scope_id = ? AND clone_name = ?'
-    ).get(body.id, 'task-author') as
-      | { id: string; clone_name: string; session_type: string; scope_id: string | null; is_deleted: number }
-      | undefined
-    expect(sessionRow, 'task-author clone session must exist in sessions table (scope_id=task_id)').toBeDefined()
-    expect(sessionRow!.clone_name).toBe('task-author')
-    expect(sessionRow!.session_type).toBe('clone_direct')
-    expect(sessionRow!.scope_id).toBe(body.id) // linked to the task id (G7: scope_id=task_id)
-    expect(sessionRow!.is_deleted).toBe(0)
-
-    // G7 反假跑: NO 'taskpool-draft' fake workspace_id row in chat_sessions (sentinel retired)
-    const chatRow = db.prepare('SELECT id FROM chat_sessions WHERE id = ?').get(sessionRow!.id)
-    expect(chatRow, 'chat_sessions must NOT carry the retired taskpool-draft sentinel').toBeUndefined()
-  })
-
-  it('G7: POST /api/clones/task-author/sessions/:id/chat resolves the real clone session (not 404)', async () => {
-    // Create a requirement draft → auto-creates a task-author clone session with scope_id=job.id
-    const createRes = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: `g7-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 'g7.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    expect(createRes.status).toBe(201)
-    const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
-    // SG1b: source_chat_session_id no longer in response (null). The auto-created
-    // task-author clone session still exists — find it via scope_id = task id.
-    expect(created.source_chat_session_id).toBeNull()
-    const session = db.prepare(
-      'SELECT id FROM sessions WHERE scope_id = ? AND clone_name = ?'
-    ).get(created.id, 'task-author') as { id: string } | undefined
-    expect(session, 'task-author clone session must exist (scope_id=task_id)').toBeDefined()
-    const sessionId = session!.id
-
-    // The auto-created session is a real task-author clone session, so the generic
-    // clone chat route must resolve it (200 SSE stream). The provider may error
-    // inside the stream, but the session+clone must NOT 404.
-    const chatRes = await app.request(`/api/clones/task-author/sessions/${sessionId}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'draft a simple task spec' }),
-    })
-    expect(chatRes.status).toBe(200)
-    // Drain the SSE body so the stream completes cleanly
-    await chatRes.text()
-  })
-
-  it('G7: createJob failure rolls back the auto-created task-author session (no orphan)', async () => {
-    // Baseline: create a requirement draft whose name we will duplicate
-    const dupName = `E2E_TP_rollback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    const first = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: dupName,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 'r.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    expect(first.status).toBe(201)
-
-    // Count ACTIVE task-author clone sessions right before the failing create
-    const activeBefore = (db.prepare(
-      "SELECT COUNT(*) as c FROM sessions WHERE clone_name = 'task-author' AND is_deleted = 0"
-    ).get() as { c: number }).c
-
-    // Duplicate name → 409. The route auto-creates a session BEFORE calling createJob,
-    // then createJob throws → the catch block must roll the orphan session back.
-    const dup = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: dupName,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 'r.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    expect(dup.status).toBe(409)
-
-    // 反假跑: NO active orphan session left (the rolled-back one is is_deleted=1, not chattable)
-    const activeAfter = (db.prepare(
-      "SELECT COUNT(*) as c FROM sessions WHERE clone_name = 'task-author' AND is_deleted = 0"
-    ).get() as { c: number }).c
-    expect(activeAfter).toBe(activeBefore)
-  })
-
-  // SKIPPED (ticket 06 SG1b): source_chat_session_id is no longer persisted on schedules
-  // (column DROPPED) — enrichJobRow returns null always, so a caller-provided id cannot
-  // be round-tripped via the response. The tasks table owns the chat-session back-ref now.
-  it.skip('AC18 反假跑: caller-provided source_chat_session_id is preserved (no auto-create override)', async () => {
-    const res = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: `t9-explicit-${Date.now()}`,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        source_chat_session_id: 'caller-provided-session-id',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    expect(res.status).toBe(201)
-    const body = await json<{ source_chat_session_id: string | null }>(res)
-    // Caller's session id preserved, not overridden
-    expect(body.source_chat_session_id).toBe('caller-provided-session-id')
-  })
-
-  // SKIPPED (ticket 06 SG1b): source_chat_session_id is no longer persisted on schedules
-  // (column DROPPED) — GET /jobs/:id returns null always. The tasks table owns the
-  // chat-session back-ref now; the auto-created task-author clone session is verified in
-  // G7/AC18 above (via sessions.scope_id = task id).
-  it.skip('AC19: GET /jobs/:id returns source_chat_session_id for requirement-type draft', async () => {
-    // Create a draft (auto-creates chat session)
-    const createRes = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: `t9-get-${Date.now()}`,
-        job_type: 'workflow',
-        cron_expression: null,
-        timezone: 'Asia/Shanghai',
-        org: 'test',
-        trigger_source: 'requirement',
-        config: {
-          schema_version: '2.0',
-          type: 'workflow',
-          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
-          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
-          max_retain: 10,
-        },
-      }),
-    })
-    const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
-    expect(createRes.status).toBe(201)
-    expect(created.source_chat_session_id).toBeTruthy()
-
-    // 反假跑 AC19: GET 接口返回 source_chat_session_id 字段
-    const getRes = await app.request(`/api/scheduler/jobs/${created.id}`)
-    expect(getRes.status).toBe(200)
-    const body = await json<{ id: string; source_chat_session_id: string | null }>(getRes)
-    expect(body.id).toBe(created.id)
-    expect(body.source_chat_session_id).toBe(created.source_chat_session_id)
-    expect(body.source_chat_session_id).toBeTruthy()
+    // skip 行没有引擎可计时 → 是 null，不是 0：0 会被 UI 念成「跑了 0ms」，那是假话
+    insert.run(`${id}-e3`, id, 'skipped', new Date(Date.now() + 1000).toISOString(), newer, null)
+    const after = (await json<{ items: Array<Record<string, unknown>> }>(
+      await app.request('/api/scheduler/jobs'),
+    )).items.find(j => j.id === id)
+    expect(after!.last_execution).toMatchObject({ status: 'skipped', duration_ms: null })
   })
 
   // ── G4 (ticket 06): abort endpoint + workspace cleanup ──────────
 
-  // Helper: create a requirement draft, enqueue → queued, then simulate the
-  // engine claim (status='claimed', claimed_at set) + insert an ACTIVE
-  // schedule_execution (status='triggered') and a schedule_workspace row
-  // (status='running') so the abort path has the full in-flight state to tear
-  // down. Mirrors what checkQueuedTasks + dispatchExecution produce at runtime.
-  async function createClaimedScheduleWithActiveExecution(
+  // Helper: create a cron job, then put it into the in-flight run-state a fire produces
+  // (status claimed|running + claimed_at) with an ACTIVE schedule_execution and a
+  // schedule_workspace row — i.e. exactly what triggerSchedule + WorkflowExecutor leave
+  // behind, minus the envelope the ticket removed.
+  async function createInFlightJob(
     status: 'claimed' | 'running' = 'claimed',
   ): Promise<{ id: string; execId: string; wsRowId: string }> {
-    const id = await createRequirementJob() // status='draft'
-    // draft → queued (confirm gate)
-    const enq = await app.request(`/api/scheduler/jobs/${id}/enqueue`, { method: 'POST' })
-    expect(enq.status).toBe(200)
-
+    const id = await createCronJob('g4')
     const now = new Date().toISOString()
     db.prepare('UPDATE schedules SET status = ?, claimed_at = ? WHERE id = ?').run(status, now, id)
 
@@ -621,7 +406,7 @@ describe('Scheduler Routes (integration)', () => {
   }
 
   it('G4/AC15: POST /jobs/:id/abort on claimed → aborted + executions failed + ws cleaned + audit', async () => {
-    const { id, execId, wsRowId } = await createClaimedScheduleWithActiveExecution('claimed')
+    const { id, execId, wsRowId } = await createInFlightJob('claimed')
 
     const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
     expect(res.status).toBe(200)
@@ -652,8 +437,8 @@ describe('Scheduler Routes (integration)', () => {
     const sw = db.prepare('SELECT status FROM schedule_workspaces WHERE id = ?').get(wsRowId) as { status: string }
     expect(sw.status).toBe('cleaned')
 
-    // audit log action='aborted' (filter by action — created_at ties with the
-    // prior 'enqueued' audit make ORDER BY created_at DESC nondeterministic)
+    // audit log action='aborted' (filter by action — created_at ties with the prior
+    // 'created' audit and makes ORDER BY created_at DESC nondeterministic)
     const audit = db.prepare(
       "SELECT action FROM scheduler_audit_logs WHERE schedule_id = ? AND action = 'aborted'",
     ).get(id) as { action: string } | undefined
@@ -662,7 +447,7 @@ describe('Scheduler Routes (integration)', () => {
   })
 
   it('G4: POST /jobs/:id/abort on running → aborted + executions failed', async () => {
-    const { id, execId } = await createClaimedScheduleWithActiveExecution('running')
+    const { id, execId } = await createInFlightJob('running')
 
     const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
     expect(res.status).toBe(200)
@@ -675,31 +460,116 @@ describe('Scheduler Routes (integration)', () => {
     expect(exec.status).toBe('failed')
   })
 
-  it('G4/AC: POST /jobs/:id/abort on a draft → 400 (not abortable, status unchanged)', async () => {
-    const id = await createRequirementJob() // status='draft'
+  it('G4/AC: POST /jobs/:id/abort on a never-fired job → 400 (nothing in flight, status unchanged)', async () => {
+    // 'draft' 这一档随信封消失：作业建出来就是 'queued'（= 已登记、无在飞），中止它对
+    // 谁都不是一个转换。原来「draft → 400」与「queued → 400」两条用例现在同义，留一条。
+    const id = await createCronJob('g4-idle')
 
     const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
     expect(res.status).toBe(400)
     const body = await json<{ error: string }>(res)
     expect(body.error).toMatch(/status/i)
 
-    // 反假跑: status unchanged (still draft, no partial mutation)
+    // 反假跑: status unchanged (still queued, no partial mutation)
     const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(id) as
       { status: string; claimed_at: string | null }
-    expect(sched.status).toBe('draft')
-  })
-
-  it('G4/AC: POST /jobs/:id/abort on queued → 400 (not yet claimed)', async () => {
-    const id = await createRequirementJob()
-    const enq = await app.request(`/api/scheduler/jobs/${id}/enqueue`, { method: 'POST' })
-    expect(enq.status).toBe(200)
-
-    const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
-    expect(res.status).toBe(400)
+    expect(sched.status).toBe('queued')
+    expect(sched.claimed_at).toBeNull()
   })
 
   it('G4/AC: POST /jobs/:id/abort on unknown → 404', async () => {
     const res = await app.request('/api/scheduler/jobs/nonexistent-job-id/abort', { method: 'POST' })
     expect(res.status).toBe(404)
   })
+  // ── 票05: the built-in job is protected at the API, not just in the menu ──
+  it('DELETE /jobs/builtin-* → 400,PUT 改 config → 400,但改 cron 仍可用', async () => {
+    const { seedBuiltinCodeJobs } = await import('../services/scheduler/builtin-jobs')
+    seedBuiltinCodeJobs(new ScheduleConfigDAO(db), 'test')
+    const id = 'builtin-task-lifecycle'
+
+    const del = await app.request(`/api/scheduler/jobs/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(400)
+    expect((await json<{ error: string }>(del)).error).toContain('不可删除')
+    // The row must still be there and still enabled — a refused delete changes nothing.
+    expect((await json<{ items: Array<{ id: string }> }>(
+      await app.request('/api/scheduler/jobs?job_type=job'),
+    )).items.map((j) => j.id)).toContain(id)
+
+    const ver = (await json<{ version: number }>(await app.request(`/api/scheduler/jobs/${id}`))).version
+    const badCfg = await app.request(`/api/scheduler/jobs/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'if-match': String(ver) },
+      body: JSON.stringify({ config: { schema_version: '1.0', type: 'agent', prompt: 'clobber the handler' } }),
+    })
+    expect(badCfg.status).toBe(400)
+    expect((await json<{ error: string }>(badCfg)).error).toContain('handler 指针')
+
+    // What IS the user's to tune — the cadence — still goes through.
+    const ver2 = (await json<{ version: number }>(await app.request(`/api/scheduler/jobs/${id}`))).version
+    const okCron = await app.request(`/api/scheduler/jobs/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'if-match': String(ver2) },
+      body: JSON.stringify({ cron_expression: '*/5 * * * *' }),
+    })
+    expect(okCron.status).toBe(200)
+  })
+
+  // ── 票05: the list filter knows all three job types ────────────────
+  it('GET /jobs?job_type=job 筛出 job 行，乱值等于不加过滤（cast 曾把 job 当不存在）', async () => {
+    const created = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'e2e-job-row',
+        job_type: 'job',
+        cron_expression: '* * * * *',
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        // 票02 的形状：库里只有 handler 名 + args，代码永不入库。
+        config: { schema_version: '1.0', type: 'job', handler: 'task-lifecycle', args: {} },
+      }),
+    })
+    expect(created.status).toBe(201)
+
+    const onlyJobs = await json<{ items: Array<{ job_type: string }> }>(
+      await app.request('/api/scheduler/jobs?job_type=job'),
+    )
+    expect(onlyJobs.items.length).toBeGreaterThan(0)
+    expect(onlyJobs.items.every((j) => j.job_type === 'job')).toBe(true)
+
+    // The route used to cast the query param to 'workflow' | 'agent'. A cast is not a
+    // check: ?job_type=bogus reached the WHERE clause verbatim. Off-contract now reads
+    // as "no filter", which is also what a typo means to a human.
+    const unfiltered = await json<{ items: Array<{ job_type: string }>; total: number }>(
+      await app.request('/api/scheduler/jobs?job_type=bogus'),
+    )
+    const all = await json<{ total: number }>(await app.request('/api/scheduler/jobs'))
+    expect(unfiltered.total).toBe(all.total)
+    expect(unfiltered.items.some((j) => j.job_type === 'job')).toBe(true)
+  })
+
+  it('POST /jobs 指向未注册的 handler → 400，并把可用名字报出来', async () => {
+    // 形状对、名字错的 job 行是「每分钟红一次的死行」：pump 每分钟 fire 它、registry 每分钟
+    // 拒它、consecutive_failures 一路涨，而看起来像作业坏了，不像创建时打错了一个字。
+    // 收口放在名字被敲下的那一端（§13-2：能力收口写在服务端，不写在某个表单里）。
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'e2e-job-ghost',
+        job_type: 'job',
+        cron_expression: '* * * * *',
+        org: 'test',
+        config: { schema_version: '1.0', type: 'job', handler: 'ghost-handler', args: {} },
+      }),
+    })
+    expect(res.status).toBe(400)
+    const msg = (await json<{ error: string }>(res)).error
+    expect(msg).toContain('ghost-handler')
+    expect(msg).toContain('task-lifecycle') // 报出注册表里真有的名字，打字错误当场能改
+    expect((await json<{ total: number }>(
+      await app.request('/api/scheduler/jobs?search=e2e-job-ghost'),
+    )).total).toBe(0) // 被拒的创建不留行
+  })
+
 })

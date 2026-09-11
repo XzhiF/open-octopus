@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from "vitest"
 import { VarPool } from "@octopus/shared"
-import type { NodeDef, TaskDispatchPort, ScheduleHandle, SubunitSpec } from "@octopus/shared"
+import type { NodeDef, TaskDispatchPort, ChildHandle, SubunitSpec } from "@octopus/shared"
 import { TaskDispatchExecutor } from "../executors/task-dispatch"
 
 function makeSubunit(overrides: Partial<SubunitSpec> = {}): SubunitSpec {
@@ -23,21 +23,21 @@ function makeSubunit(overrides: Partial<SubunitSpec> = {}): SubunitSpec {
   }
 }
 
-function makePort(handle: ScheduleHandle, spy?: ReturnType<typeof vi.fn>): TaskDispatchPort {
+function makePort(handle: ChildHandle, spy?: ReturnType<typeof vi.fn>): TaskDispatchPort {
   return {
-    dispatchChildSchedule: spy ?? vi.fn().mockResolvedValue(handle),
+    dispatchChild: spy ?? vi.fn().mockResolvedValue(handle),
     resumeOnCompletion: vi.fn().mockResolvedValue(undefined),
   }
 }
 
 describe("TaskDispatchExecutor", () => {
-  // ── AC: execute 调 port.dispatchChildSchedule + pause（不 throw、不阻塞 loop）──
+  // ── AC: execute 调 port.dispatchChild + pause（不 throw、不阻塞 loop）──
   it("dispatches a child schedule and returns pending_task_dispatch on first call", async () => {
     const subunit = makeSubunit()
     const pool = new VarPool()
     pool.set("current_subunit", subunit)
 
-    const handle: ScheduleHandle = { schedule_id: "sch-123", workspace_id: "ws-123" }
+    const handle: ChildHandle = { child_id: "sch-123", workspace_id: "ws-123" }
     const dispatchSpy = vi.fn().mockResolvedValue(handle)
     const port = makePort(handle, dispatchSpy)
 
@@ -62,15 +62,15 @@ describe("TaskDispatchExecutor", () => {
     // Metadata carries the schedule handle for the server's resume correlation
     expect(result.taskDispatchMetadata).toBeDefined()
     expect(result.taskDispatchMetadata?.nodeId).toBe("dispatch-1")
-    expect(result.taskDispatchMetadata?.scheduleHandle.schedule_id).toBe("sch-123")
-    expect(result.taskDispatchMetadata?.scheduleHandle.workspace_id).toBe("ws-123")
+    expect(result.taskDispatchMetadata?.childHandle.child_id).toBe("sch-123")
+    expect(result.taskDispatchMetadata?.childHandle.workspace_id).toBe("ws-123")
     expect(result.taskDispatchMetadata?.subunitName).toBe("E2E_TP_subunit_a")
   })
 
   it("resolves $iteration.subunit from loopContext", async () => {
     const subunit = makeSubunit({ name: "E2E_TP_iter_sub" })
     const pool = new VarPool()
-    const handle: ScheduleHandle = { schedule_id: "sch-iter" }
+    const handle: ChildHandle = { child_id: "sch-iter" }
     const dispatchSpy = vi.fn().mockResolvedValue(handle)
     const port = makePort(handle, dispatchSpy)
 
@@ -109,7 +109,7 @@ describe("TaskDispatchExecutor", () => {
 
   it("fails when the subunit reference cannot be resolved", async () => {
     const pool = new VarPool() // no current_subunit set
-    const port = makePort({ schedule_id: "sch-x" })
+    const port = makePort({ child_id: "sch-x" })
     const node: NodeDef = {
       id: "dispatch-bad-ref",
       type: "task_dispatch",
@@ -121,7 +121,7 @@ describe("TaskDispatchExecutor", () => {
 
     expect(result.status).toBe("failed")
     expect(result.error).toMatch(/missing_subunit|subunit/i)
-    expect(port.dispatchChildSchedule).not.toHaveBeenCalled()
+    expect(port.dispatchChild).not.toHaveBeenCalled()
   })
 
   // ── AC: await=false → fire-and-forget (no pause) ──
@@ -129,7 +129,7 @@ describe("TaskDispatchExecutor", () => {
     const subunit = makeSubunit()
     const pool = new VarPool()
     pool.set("current_subunit", subunit)
-    const handle: ScheduleHandle = { schedule_id: "sch-fire" }
+    const handle: ChildHandle = { child_id: "sch-fire" }
     const dispatchSpy = vi.fn().mockResolvedValue(handle)
     const port = makePort(handle, dispatchSpy)
 
@@ -144,7 +144,7 @@ describe("TaskDispatchExecutor", () => {
 
     expect(dispatchSpy).toHaveBeenCalledWith(subunit)
     expect(result.status).toBe("completed")
-    expect(result.outputs.schedule_id).toBe("sch-fire")
+    expect(result.outputs.child_id).toBe("sch-fire")
     // Did not expose pause metadata
     expect(result.taskDispatchMetadata).toBeUndefined()
   })
@@ -170,8 +170,8 @@ describe("TaskDispatchExecutor", () => {
     }
 
     // Resume: childOutput provided → no dispatch, just mapping + complete
-    const dispatchSpy = vi.fn().mockResolvedValue({ schedule_id: "should-not-fire" })
-    const port = makePort({ schedule_id: "should-not-fire" }, dispatchSpy)
+    const dispatchSpy = vi.fn().mockResolvedValue({ child_id: "should-not-fire" })
+    const port = makePort({ child_id: "should-not-fire" }, dispatchSpy)
 
     const executor = new TaskDispatchExecutor(node, pool, {
       port,
@@ -205,7 +205,7 @@ describe("TaskDispatchExecutor", () => {
       await: true,
     }
     const executor = new TaskDispatchExecutor(node, pool, {
-      port: makePort({ schedule_id: "sch" }),
+      port: makePort({ child_id: "sch" }),
       childOutput: { present: "yes" },
     })
     const result = await executor.execute()
@@ -221,7 +221,7 @@ describe("TaskDispatchExecutor", () => {
     const pool = new VarPool()
     pool.set("current_subunit", subunit)
 
-    const handle: ScheduleHandle = { schedule_id: "sch-roundtrip" }
+    const handle: ChildHandle = { child_id: "sch-roundtrip" }
     const port = makePort(handle)
 
     const node: NodeDef = {
@@ -236,7 +236,7 @@ describe("TaskDispatchExecutor", () => {
     const first = new TaskDispatchExecutor(node, pool, { port })
     const firstResult = await first.execute()
     expect(firstResult.status).toBe("pending_task_dispatch")
-    expect(firstResult.taskDispatchMetadata?.scheduleHandle.schedule_id).toBe("sch-roundtrip")
+    expect(firstResult.taskDispatchMetadata?.childHandle.child_id).toBe("sch-roundtrip")
 
     // Server completes the child → re-invokes engine → factory builds a NEW executor with childOutput
     const second = new TaskDispatchExecutor(node, pool, {
@@ -263,7 +263,7 @@ describe("TaskDispatchExecutor", () => {
         await: true,
       },
       pool,
-      { port: makePort({ schedule_id: "sch" }), signal: ac.signal },
+      { port: makePort({ child_id: "sch" }), signal: ac.signal },
     )
     const result = await executor.execute()
     expect(result.status).toBe("cancelled")

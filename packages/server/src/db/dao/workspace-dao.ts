@@ -24,11 +24,27 @@ export class WorkspaceDAO extends BaseDAO {
     return this.stmt(`SELECT * FROM workspaces ${where} ORDER BY updated_at DESC`).all(...params) as WorkspaceRow[]
   }
 
-  insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
+  insert(
+    row: Omit<WorkspaceRow, "source" | "source_schedule_id" | "task_id"> & {
+      source?: string
+      source_schedule_id?: string | null
+      /** ADR-0021 票03: which task this workspace serves. Replaces walking
+       *  source_schedule_id → schedules.origin_id to discover task ownership. */
+      task_id?: string | null
+    },
+  ): Database.RunResult {
     return this.stmt(
-      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
-    ).run(row.id, row.name, row.org, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.created_at, row.updated_at)
+      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`
+    ).run(row.id, row.name, row.org, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.task_id ?? null, row.created_at, row.updated_at)
+  }
+
+  /** The workspace bound to a task (newest first — a task binds one, but a hand-deleted
+   *  row plus a rebuild leaves the old one behind as history). */
+  findByTaskId(taskId: string): WorkspaceRow | null {
+    return (this.stmt(
+      "SELECT * FROM workspaces WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+    ).get(taskId) as WorkspaceRow) ?? null
   }
 
   update(id: string, fields: Record<string, unknown>): Database.RunResult {

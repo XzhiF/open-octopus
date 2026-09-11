@@ -26,12 +26,12 @@ export interface InteractionMetadata {
 }
 
 /** Metadata returned when a task_dispatch node pauses to await a child schedule (G1).
- *  The server correlates the completion callback via scheduleHandle.schedule_id
+ *  The server correlates the completion callback via childHandle.child_id
  *  and resumes the parent by re-invoking the engine with a childOutput payload. */
 export interface TaskDispatchMetadata {
   nodeId: string
   /** Opaque handle to the dispatched child schedule (shared type). */
-  scheduleHandle: { schedule_id: string; workspace_id?: string }
+  childHandle: { child_id: string; workspace_id?: string }
   /** Name of the subunit that was dispatched (observability). */
   subunitName?: string
 }

@@ -18,6 +18,8 @@ import fs from "fs"
 import { execFileSync } from "child_process"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { WorkspaceDAO } from "../db/dao"
+import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -34,23 +36,33 @@ import {
 
 const ORG = "e2e-archive"
 
-// ExecutionService registry stub (mirror of tasks-v4-acceptance.test.ts) — the
-// archiver never touches it (it resolves worktrees through the workspaces row
-// + ws config.json); only the advance/dispatch tests below need it.
+// ExecutionService registry stub — the archiver never touches it (it resolves
+// worktrees through the workspaces row + ws config.json); only the advance/dispatch
+// tests below do. It writes a REAL armed ('pending') root row so the built-in job\'s
+// claim path, task_id 直连 and ux_exec_task_active are all exercised for real.
 const stubService = {
   create: vi.fn((workspaceId: string, input: Record<string, unknown>) => {
     const id = `e2e-ar-exec-dispatch-${stubSeq++}`
     mockHooks.db!
       .prepare(
-        `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`,
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+           status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+         VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?, ?, ?)`,
       )
-      .run(id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""), ORG)
+      .run(
+        id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+        JSON.stringify(input.input_values ?? {}), ORG,
+        input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
+      )
     return { id }
   }),
-  start: vi.fn(async () => {}),
+  start: vi.fn(async (id: string) => {
+    mockHooks.db!.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(id)
+  }),
   registerExternalCallbacks: vi.fn(),
   clearExternalCallbacks: vi.fn(),
+  cancel: vi.fn((id: string) => ({ id })),
+  hasLiveEngine: () => false,
 }
 let stubSeq = 0
 const mockHooks: { db: Database.Database | null } = { db: null }
@@ -246,9 +258,9 @@ const REPO_A_CONTEXT = [
 /** Lay out an archiving-ready fixture: 1~2 project repos (+worktrees under a
  *  real ws dir with config.json), a task home holding docs/adr + context-notes,
  *  and the tasks/workspaces rows. `status` defaults to 'archiving' (the
- *  retry seam); AC3 instead seeds an awaitable acceptance state (envelope +
- *  tagged terminal execution + ledger-free) so the LAST-phase acceptance path
- *  drives the built-in archiver end to end. */
+ *  retry seam); AC3 instead seeds an awaitable acceptance state (a tagged terminal
+ *  execution row for phase 1, ledger-free) so the LAST-phase acceptance path drives
+ *  the built-in archiver end to end. 票03: 没有信封，也没有 schedule_executions 链接。*/
 function seedArchiveFixture(opts: {
   projects?: Array<{ name: string; fx: RepoFixture }>
   homeAdrs: Array<{ rel: string; content: string }>
@@ -308,36 +320,14 @@ function seedArchiveFixture(opts: {
   `).run(taskId, ORG, `E2E_AR ${taskId}`, mode === "awaiting" ? "running" : "archiving", JSON.stringify(spec), JSON.stringify(projects.map((p) => p.name)), now, now, wsId)
 
   if (mode === "awaiting") {
-    // envelope + ONE terminal (1,1) execution via the schedule link → derive:
-    // phase 1 awaiting_review → acceptance(i=1=n) → beginArchiving (built-in).
-    const scheduleId = `e2e-ar-sched-${seq}`
-    db.prepare(`
-      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled,
-        job_type, config, parallel_policy, status, origin_type, origin_id, origin_role,
-        scheduled_at, created_at, updated_at, max_retain)
-      VALUES (?, ?, ?, NULL, 'UTC', 1, 'workflow', ?, 'skip', 'done', 'task', ?, 'primary', NULL, ?, ?, 10)
-    `).run(
-      scheduleId, ORG, `task-${taskId}-primary`,
-      JSON.stringify({
-        schema_version: "3.0", type: "workflow",
-        workspace_spec: { org: ORG, branch_prefix: "taskpool-e2e-ar", projects: [] },
-        workflow_chain: [{ workflow_ref: "built-in/flow-p1", input_values: {} }],
-        max_retain: 10, format: "v4",
-        phases: [{ index: 1, name: "Phase 1", slug: "p1", specPath: path.join(specDir, "spec.md"), specDir, workflowRef: "built-in/flow-p1", inputValues: {} }],
-      }),
-      taskId, now, now,
-    )
-    const seId = `e2e-ar-se-${seq}`
+    // 票03: 一轮 = 一行 executions(task_id, parent_id='0', 带轮次坐标)。derive 看到
+    // phase 1 终态 → 该 phase awaiting_review → acceptance(i=1=n) → beginArchiving。
+    // 没有信封，也没有 schedule_executions 链接。
     db.prepare(
-      `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org,
-        phase_index, round_index, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'completed', ?, 1, 1, datetime('now'), datetime('now'))`,
-    ).run(`e2e-ar-exec-${seq}`, wsId, "built-in/flow-p1", "built-in/flow-p1", ORG)
-    db.prepare(`
-      INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-        timezone_offset, timezone_iana, created_at, triggered_by, execution_id, workspace_id)
-      VALUES (?, ?, 'completed', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler', ?, ?)
-    `).run(seId, scheduleId, `e2e-ar-exec-${seq}`, wsId)
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, org, created_at, updated_at, task_id, phase_index, round_index, completed_at)
+       VALUES (?, ?, '0', 0, ?, ?, 'completed', ?, datetime('now'), datetime('now'), ?, 1, 1, datetime('now'))`,
+    ).run(`e2e-ar-exec-${seq}`, wsId, "built-in/flow-p1", "built-in/flow-p1", ORG, taskId)
   }
   return { taskId, wsPath, home, wts }
 }
@@ -398,7 +388,17 @@ beforeEach(() => {
   process.env.USERPROFILE = fakeHome // os.homedir() on Windows reads USERPROFILE
   taskHome = new TaskHomeService(path.join(fakeHome, ".octopus"))
   sse = new SSEService()
-  service = new TasksService(db, sse, undefined, taskHome)
+  // A built-in stub is needed from 票03 on: the launch re-checks the v4 contract on
+  // every arm (nothing is frozen at enqueue any more), so the phase refs must resolve.
+  const builtIn = {
+    get: (ref: string) => ({ ref, content: "name: demo\nnodes: []\n", name: "demo" }),
+  } as never
+  // 票03: 派发/推进走的是 job 的 armTask ⇒ 它要真 WorkspaceService 才能准备工作区
+  // (绑定复用路径也要 —— prepareWorkspace 先取服务再查绑定)。
+  service = new TasksService(
+    db, sse, undefined, taskHome, undefined, builtIn, null,
+    new WorkspaceService(new WorkspaceDAO(db)),
+  )
   app = new Hono().route("/api/tasks", createTasksRoutes(service, sse))
   repoA = makeProjectRepo("repo-a", { adrs: ["0001-one.md", "0002-two.md", "0003-three.md"], contextMd: REPO_A_CONTEXT })
 })
@@ -564,25 +564,17 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
   })
 })
 
-describe("AC5 — done 解除 retention 豁免", () => {  it("done 后 executor 豁免谓词 (row && status!=='done') 为 false → 可回收", async () => {
-    const { taskId } = seedArchiveFixture({ homeAdrs: [{ rel: "0001-only.md", content: "# 只有我\n" }] })
-    await postRetry(taskId)
-    await runToReport(taskId)
-    const wsId = taskRowOf(taskId).workspace_id
-    // 与 WorkflowExecutor.isTaskWorkspaceUnarchived (workflow-executor.ts:1180)
-    // 同一条谓词 SQL：task done ⇒ 查询无行 ⇒ 豁免 false ⇒ retention 扫描可删 ws。
-    const unarchived = mockHooks.db!
-      .prepare("SELECT status FROM tasks WHERE workspace_id = ? AND deleted_at IS NULL AND status != 'done'")
-      .all(wsId)
-    expect(unarchived).toEqual([])
-    expect(taskRowOf(taskId).status).toBe("done")
-  })
-})
+// AC5（「done 解除 retention 豁免」）随票03 删除：那个豁免谓词（未归档的任务 ws 不
+// 可回收）已经没有对应代码了 —— 任务 ws 带 workspaces.task_id、根本不进
+// schedule_workspaces，retention 的候选集结构上够不到它（workflow-executor.ts:743）。
+// 留着只会变成「fixture 本来就没写那张表」的空断言。存活的那半边（任务 ws 不是回收
+// 候选 + 作业 ws 照常回收）改由 tasks-v4-ws-reuse.test.ts AC4 用真实首建 + 真实
+// enforceRetention 清扫钉住。
 
 // ── advance (票 07 移交裁决): POST /:id/advance ──────────────────────
 
-/** Two-phase v4 task. `p1`: phase-1 round-1 terminal exec, optionally with the
- *  accepted ledger row; `p2Terminal`: give phase 2 a terminal (2,1) exec. */
+/** Two-phase v4 task. `p1`: phase-1 round-1 terminal execution row, optionally with
+ *  the accepted ledger row; `p2Terminal`: give phase 2 a terminal (2,1) row. */
 function seedTwoPhase(opts: {
   autoAdvance?: boolean
   p1?: "none" | "awaiting" | "accepted"
@@ -617,35 +609,21 @@ function seedTwoPhase(opts: {
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
   `).run(taskId, ORG, `E2E_AR ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, wsId)
-  const scheduleId = `e2e-ar-advsched-${seq}`
-  d.prepare(`
-    INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled,
-      job_type, config, parallel_policy, status, origin_type, origin_id, origin_role,
-      scheduled_at, created_at, updated_at, max_retain)
-    VALUES (?, ?, ?, NULL, 'UTC', 1, 'workflow', ?, 'skip', 'done', 'task', ?, 'primary', NULL, ?, ?, 10)
-  `).run(
-    scheduleId, ORG, `task-${taskId}-primary`,
-    JSON.stringify({
-      schema_version: "3.0", type: "workflow",
-      workspace_spec: { org: ORG, branch_prefix: "taskpool-e2e-ar", projects: [] },
-      workflow_chain: [{ workflow_ref: "built-in/flow-p1", input_values: {} }],
-      max_retain: 10, format: "v4",
-      phases: defs.map((p) => ({ ...p, specPath: path.join(taskHome.homePath(taskId), ".scratch", "20260903", p.slug, "spec.md"), specDir: path.join(taskHome.homePath(taskId), ".scratch", "20260903", p.slug), inputValues: {} })),
-    }),
-    taskId, now, now,
-  )
+  // 票03: arm 时重查 v4 契约（信封里那份冻结副本没了）⇒ 每个 phase 的批次 spec.md 必须真在 home 上。
+  for (const p of defs) {
+    const dir = path.join(taskHome.homePath(taskId), ".scratch", "20260903", p.slug)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, "spec.md"), `# ${p.name}\n`)
+  }
   let seSeq = 0
   const layExec = (phaseIdx: number, status: string): void => {
-    const execId = `e2e-ar-advexec-${seq}-${phaseIdx}-${seSeq}`
+    // 票03 形状：task_id 直连 + parent_id='0' 根行；deriveView 按 (phase,round) 读它。
+    const execId = `e2e-ar-advexec-${seq}-${phaseIdx}-${seSeq++}`
     d.prepare(
-      `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, phase_index, round_index, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))`,
-    ).run(execId, wsId, `built-in/flow-p${phaseIdx}`, `built-in/flow-p${phaseIdx}`, status, ORG, phaseIdx)
-    d.prepare(`
-      INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-        timezone_offset, timezone_iana, created_at, triggered_by, execution_id)
-      VALUES (?, ?, 'completed', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler', ?)
-    `).run(`e2e-ar-advse-${seq}-${seSeq++}`, scheduleId, execId)
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, org, created_at, updated_at, task_id, phase_index, round_index, completed_at)
+       VALUES (?, ?, '0', 0, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, 1, datetime('now'))`,
+    ).run(execId, wsId, `built-in/flow-p${phaseIdx}`, `built-in/flow-p${phaseIdx}`, status, ORG, taskId, phaseIdx)
   }
   if (opts.p1 && opts.p1 !== "none") {
     layExec(1, "completed")
@@ -686,23 +664,28 @@ describe("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", ()
     expect(body.task.derived.phaseViews.find((p) => p.index === 2)!.status).toBe("running")
   })
 
+  // 这张窗口的形状：上一 phase 已 accepted 但那一轮派发没成功（ws 掉线/闸满），
+  // 卡片停在 running、账本已落一行。人重试 advance 必须能起 phase2 —— 它和
+  // acceptance 的 rejected/autoAdvance 两支是同一个前提：armTask 领 ready **或** running
+  // （人是授权者，机器的轮次结束不改卡片状态）。
   it("派发失败后的窗口（phase1 accepted ∧ phase2 pending）advance 续跑成功", async () => {
     // ledger accepted without dispatch ever happening == the exact observable
     // world after 「上 phase 已 accepted 未派发」.
     const { taskId } = seedTwoPhase({ p1: "accepted" })
     const res = await advance(taskId)
-    expect(res.status).toBe(200)
+    expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { dispatch: Record<string, unknown> }).dispatch).toMatchObject({ phase_index: 2, round_index: 1 })
   })
 
   it("负例：phase1 未 accepted → 409；phase2 已 awaiting_review → 409；v3 → 409；未知 → 404", async () => {
     const a = seedTwoPhase({ p1: "awaiting" })
-    expect((await advance(a.taskId)).status).toBe(409)
-    const b = seedTwoPhase({ p1: "accepted", p2Terminal: true })
-    expect((await advance(b.taskId)).status).toBe(409) // phase2 是 awaiting_review 非 pending
+    expect(((await (await advance(a.taskId)).json()) as { error: string }).error).toMatch(/无可推进的 phase/)
+    // 卡片回 ready 才测得到「派生态」这道守卫本身（否则先被 ready 门弹回，见上条 bug）。
+    const b = seedTwoPhase({ p1: "accepted", p2Terminal: true, status: "ready" })
+    expect(((await (await advance(b.taskId)).json()) as { error: string }).error).toMatch(/无可推进的 phase/) // phase2 是 awaiting_review 非 pending
     const c = seedTwoPhase({})
     mockHooks.db!.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(JSON.stringify({ goal: "g", ac: ["x"] }), c.taskId)
-    expect((await advance(c.taskId)).status).toBe(409)
+    expect(((await (await advance(c.taskId)).json()) as { error: string }).error).toMatch(/advance 仅适用于 v4/)
     expect((await advance("e2e-ar-adv-missing")).status).toBe(404)
   })
 })
