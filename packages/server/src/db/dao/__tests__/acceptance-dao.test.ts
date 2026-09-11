@@ -72,7 +72,7 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
       // v40-specific literal retired: user_version must land on the shipped constant
       // (v41 = ADR-0021 added tasks.trigger_* / executions.task_id after this test).
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(SCHEMA_VERSION).toBe(42)
+      expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42)
       expect(v).toBe(SCHEMA_VERSION)
     })
 
