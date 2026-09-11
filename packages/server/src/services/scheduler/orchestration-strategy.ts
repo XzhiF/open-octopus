@@ -28,7 +28,7 @@
 // materialized WorkflowConfig. Both must agree on the threshold + composition
 // ref; this module exports both as the single source of truth.
 
-import type { SubunitSpec, TaskSpec, OriginRole } from "@octopus/shared"
+import type { SubunitSpec, TaskSpec } from "@octopus/shared"
 
 /** Composition workflow template (core-pack/workflows/composition-task.yaml).
  *  A composite task's coordinator-ws runs this workflow, whose Loop +
@@ -45,16 +45,17 @@ export const COMPOSITE_SUBUNIT_THRESHOLD = 2
 /** The kind of dispatch plan a task gets. */
 export type OrchestrationStrategyKind = "simple" | "composite"
 
-/** The dispatch plan returned by {@link OrchestrationStrategy.planDispatch}.
- *  The dispatch seam (routes/tasks + scheduler-service materialize) consumes
- *  this to build the schedule envelope(s). Pure data — no I/O. */
+/** The dispatch plan returned by {@link OrchestrationStrategy.planDispatch}. The
+ *  task side (task-materialize / task-lifecycle) consumes it to shape the run. Pure
+ *  data — no I/O.
+ *
+ *  票05 dropped `primaryOriginRole`: it named the envelope row's role, and the envelope
+ *  is gone — the coordinator/subunit distinction is now read off the executions row
+ *  (parent_id='0' + isCompositeWorkflowConfig) and rendered from its `name`. */
 export interface OrchestrationDispatchPlan {
-  /** 'simple' = 1 primary schedule, direct (no coordinator-ws).
-   *  'composite' = coordinator schedule + N subunit children. */
+  /** 'simple' = the task's own workflow runs directly.
+   *  'composite' = a coordinator run fans out N subunit child runs. */
   strategy: OrchestrationStrategyKind
-  /** OriginRole the primary/coordinator schedule carries. 'primary' for
-   *  simple, 'coordinator' for composite. */
-  primaryOriginRole: OriginRole
   /** For composite: the composition workflow_ref to run in the coordinator-ws.
    *  Undefined for simple (the task's own workflow_ref is used directly). */
   compositionWorkflowRef?: string
@@ -117,7 +118,6 @@ export class DefaultOrchestrationStrategy implements OrchestrationStrategy {
     if (!isComposite) {
       return {
         strategy: "simple",
-        primaryOriginRole: "primary",
         compositionWorkflowRef: undefined,
         subunits: [],
         isComposite: false,
@@ -125,7 +125,6 @@ export class DefaultOrchestrationStrategy implements OrchestrationStrategy {
     }
     return {
       strategy: "composite",
-      primaryOriginRole: "coordinator",
       compositionWorkflowRef: this.compositionWorkflowRef,
       subunits,
       isComposite: true,

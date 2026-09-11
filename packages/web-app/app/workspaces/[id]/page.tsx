@@ -986,13 +986,13 @@ const handleOpenAsText = async (file: FileNode) => {
                       >
                         {tab.type === "execution" && <GitBranch className="h-4 w-4" />}
                         {tab.type === "detail" && <Play className="h-4 w-4" />}
-                        {tab.type === "workflow-editor" && <GitBranch className="h-4 w-4 text-violet-500" />}
+                        {tab.type === "workflow-editor" && <GitBranch className="h-4 w-4 text-pop-purple" />}
                         {tab.type === "text-editor" && <FileCode className="h-4 w-4" />}
-                        {tab.type === "image-viewer" && <FileImage className="h-4 w-4 text-emerald-500" />}
-                        {tab.type === "schedule" && <Clock className="h-4 w-4 text-blue-500" />}
+                        {tab.type === "image-viewer" && <FileImage className="h-4 w-4 text-pop-green" />}
+                        {tab.type === "schedule" && <Clock className="h-4 w-4 text-pop-cyan" />}
                         <span title={tab.name}>{getTabDisplayName(tab, tabs)}</span>
                         {tab.filePath && isDirty(tab.filePath) && (
-                          <span className="text-orange-500 text-xs">●</span>
+                          <span className="text-pop-amber text-xs">●</span>
                         )}
                         {tab.closable && (
                           <span

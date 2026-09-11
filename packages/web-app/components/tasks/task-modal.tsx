@@ -7,8 +7,9 @@
 // SpecPanel-based AuthoringMode 与其 re-export 已删除；创作走
 // AuthoringWorkspace（task-author 对话 + v4 产出面板）。
 //
-// router.push retarget (SG15): child drill-down →
-// `/tasks/:taskId/children/:scheduleId` (was `/scheduler/jobs/:id`).
+// Drill-down (票03, ADR-0021): a task's runs ARE executions rows, each carrying its
+// own workspace_id, so every run card deep-links
+// /workspaces/{workspace_id}?tab=detail&execId={execution.id}.
 
 "use client"
 
@@ -26,9 +27,10 @@ import {
 import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
-import { PROJECT_SYNC_EVENT } from "@octopus/shared"
+import { PROJECT_SYNC_EVENT, TASK_STATUS_EVENT, TASK_EXECUTION_EVENT } from "@octopus/shared"
 import {
-  getTask, abortTask, deleteTask, reopenTask, type TaskDetail, type TaskChild,
+  getTask, abortTask, deleteTask, reopenTask,
+  type TaskDetail, type TaskExecutionBadge, type TaskView,
 } from "@/lib/tasks-api"
 import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
@@ -41,7 +43,7 @@ import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
 import { EditableTitle } from "./editable-title"
-import { TaskRunDetailView } from "./execution-summary"
+import { TaskRunDetailView, RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
 import { createTask } from "@/lib/tasks-api"
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -51,11 +53,11 @@ interface TaskModalProps {
   onOpenChange: (open: boolean) => void
   /** null = new-task authoring ([+新建]). A draft task opens authoring resumed
    *  on its source_chat_session_id; non-draft opens execution/done/terminal. */
-  task: Task | null
+  task: TaskView | null
   /** Refresh the kanban after a mutation (ready / abort / draft edit). */
   onMutated: () => void
   /** Page adopts a draft the task-author clone just created (new-task flow). */
-  onDraftResolved?: (task: Task) => void
+  onDraftResolved?: (task: TaskView) => void
 }
 
 type ModalMode =
@@ -112,28 +114,115 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const STATUS_TONE: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  ready: "bg-blue-500/15 text-blue-500",
-  running: "bg-blue-500/15 text-blue-500",
+  draft: "bg-pop-idle text-pop-dim",
+  ready: "bg-pop-cyan-soft text-pop-cyan",
+  running: "bg-pop-purple-soft text-pop-purple",
   // K3/US8: 待验收=琥珀（等人放行，非红死）；归档中=橙（票 08 编排中）。
-  awaiting_review: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  archiving: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-  done: "bg-emerald-500/15 text-emerald-600",
-  failed: "bg-red-500/15 text-red-500",
-  aborted: "bg-zinc-500/15 text-zinc-500",
+  awaiting_review: "bg-pop-yellow-soft text-pop-amber",
+  archiving: "bg-pop-amber-soft text-pop-amber",
+  done: "bg-pop-green-soft text-pop-green",
+  failed: "bg-pop-pink-soft text-pop-red",
+  aborted: "bg-pop-idle text-pop-dim",
 }
 
 // ── TaskModal ───────────────────────────────────────────────────────
 
 export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
   const mode = resolveMode(task)
+  // 模板选择页(直建第一屏)只是单列表单 → 用紧凑弹窗;工作台/执行视图才需要宽面。
+  const isTemplate = mode === "authoring-template"
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // 🎪 弹窗尺寸(视口百分比):右下角把手可调,localStorage 记忆。
+  const [modalSize, setModalSize] = useState<{ w: number; h: number }>(() => {
+    const clamp = (v: number) => Math.min(97, Math.max(45, v))
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem("octopus:taskmodal:size")
+        const p = raw ? JSON.parse(raw) as { w?: unknown; h?: unknown } : null
+        if (p && Number.isFinite(p.w) && Number.isFinite(p.h)) {
+          return { w: clamp(Number(p.w)), h: clamp(Number(p.h)) }
+        }
+      } catch { /* 损坏/无痕 → 默认 */ }
+    }
+    return { w: 88, h: 93 } // 默认更高（用户要求）
+  })
+  useEffect(() => {
+    if (isFullscreen) return
+    try { window.localStorage.setItem("octopus:taskmodal:size", JSON.stringify(modalSize)) } catch { /* ignore */ }
+  }, [modalSize, isFullscreen])
+  // 🎪 拖拽移动:按住标题栏空白拖动弹窗;窗口始终 clamp 在视口内(不可移出屏幕)。
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const clampCenter = (v: number, sizePx: number, fullPx: number) => {
+    const lo = (sizePx - fullPx) / 2, hi = (fullPx - sizePx) / 2
+    return lo > hi ? 0 : Math.min(hi, Math.max(lo, v))
+  }
+  const startHeaderDrag = useCallback((e: React.PointerEvent) => {
+    if (isFullscreen) return
+    const t = e.target as HTMLElement
+    if (t.closest("button, input, textarea, select, a, [data-no-drag]")) return
+    e.preventDefault()
+    // 指针捕获:拖出浏览器窗口也不丢 move/up,松手必达(防"卡拖拽")。
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* noop */ }
+    const sx = e.clientX - dragOffset.x, sy = e.clientY - dragOffset.y
+    const W = (modalSize.w / 100) * window.innerWidth, H = (modalSize.h / 100) * window.innerHeight
+    document.body.style.cursor = "grabbing"
+    document.body.style.userSelect = "none"
+    const onMove = (ev: PointerEvent) => {
+      setDragOffset({
+        x: clampCenter(ev.clientX - sx, W, window.innerWidth),
+        y: clampCenter(ev.clientY - sy, H, window.innerHeight),
+      })
+    }
+    const onUp = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+    }
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
+  }, [isFullscreen, dragOffset, modalSize])
+  // 🎪 边/角缩放:对边锚定(被拖的边跟手),尺寸与位置都 clamp 在视口内 ——
+  // 任何方向都拖不出屏幕。模板页/全屏不给把手。
+  type DialogEdge = { t?: boolean; b?: boolean; l?: boolean; r?: boolean }
+  const startDialogResize = useCallback((e: React.PointerEvent, edge: DialogEdge) => {
+    e.preventDefault()
+    e.stopPropagation()
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* noop */ }
+    const vw = window.innerWidth, vh = window.innerHeight
+    const sx = e.clientX, sy = e.clientY
+    const sw = (modalSize.w / 100) * vw, sh = (modalSize.h / 100) * vh
+    const ox = dragOffset.x, oy = dragOffset.y
+    const minW = vw * 0.3, minH = vh * 0.35
+    document.body.style.cursor = "nwse-resize"
+    document.body.style.userSelect = "none"
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy
+      let W = sw, H = sh, X = ox, Y = oy
+      if (edge.r) { W = sw + dx; X = ox + dx / 2 }
+      else if (edge.l) { W = sw - dx; X = ox + dx / 2 }
+      if (edge.b) { H = sh + dy; Y = oy + dy / 2 }
+      else if (edge.t) { H = sh - dy; Y = oy + dy / 2 }
+      W = Math.min(vw - 8, Math.max(minW, W))
+      H = Math.min(vh - 8, Math.max(minH, H))
+      setModalSize({ w: (W / vw) * 100, h: (H / vh) * 100 })
+      setDragOffset({ x: clampCenter(X, W, vw), y: clampCenter(Y, H, vh) })
+    }
+    const onUp = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+    }
+    document.addEventListener("pointermove", onMove)
+    document.addEventListener("pointerup", onUp)
+  }, [modalSize, dragOffset])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
 
-  // Reset fullscreen when modal closes
+  // Reset fullscreen & drag position when modal closes
   useEffect(() => {
-    if (!open) setIsFullscreen(false)
+    if (!open) { setIsFullscreen(false); setDragOffset({ x: 0, y: 0 }) }
   }, [open])
 
   const handleDeleteDraft = useCallback(async () => {
@@ -160,7 +249,23 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           className={
             isFullscreen
               ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
-              : "sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
+              : isTemplate
+                ? "sm:max-w-[680px] w-[92vw] max-h-[84vh] h-[80vh] p-0 gap-0 flex flex-col"
+                : "max-h-[97vh] p-0 gap-0 flex flex-col"
+          }
+          style={
+            isFullscreen || isTemplate
+              ? undefined
+              : {
+                width: `${modalSize.w}vw`,
+                maxWidth: "97vw",
+                height: `${modalSize.h}vh`,
+                // v4 的 translate-x-[-50%] 是独立 `translate` 属性,会和本行
+                // transform 叠加(双重居中)→ 必须显式清零,居中只走 transform。
+                translate: "0px 0px",
+                // 覆盖基类的 translate-[-50%] 居中定位,叠加拖拽偏移
+                transform: `translate(calc(-50% + ${dragOffset.x}px), calc(-50% + ${dragOffset.y}px))`,
+              }
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
@@ -178,6 +283,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             onToggleFullscreen={() => setIsFullscreen((f) => !f)}
             onDeleteDraft={() => setDeleteConfirmOpen(true)}
             onMutated={onMutated}
+            onHeaderPointerDown={startHeaderDrag}
           />
           <div className="flex-1 min-h-0 overflow-hidden">
             {mode === "authoring-template" && (
@@ -199,6 +305,44 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             {mode === "done" && task && <DoneMode task={task} />}
             {mode === "terminal" && task && <TerminalMode task={task} />}
           </div>
+
+          {/* 🎪 八向缩放手柄:四边 + 四角(对边锚定,拖不出视口);
+              SE 角保留唯一可见的斜纹把手。模板页固定尺寸不给把手。 */}
+          {!isFullscreen && !isTemplate && (
+            <>
+              <div data-modal-resize="n" title="拖拽调整高度"
+                onPointerDown={(e) => startDialogResize(e, { t: true })}
+                className="absolute inset-x-8 top-0 z-30 h-1.5 touch-none cursor-ns-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="s" title="拖拽调整高度"
+                onPointerDown={(e) => startDialogResize(e, { b: true })}
+                className="absolute inset-x-8 bottom-0 z-30 h-1.5 touch-none cursor-ns-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="w" title="拖拽调整宽度"
+                onPointerDown={(e) => startDialogResize(e, { l: true })}
+                className="absolute inset-y-8 left-0 z-30 w-1.5 touch-none cursor-ew-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="e" title="拖拽调整宽度"
+                onPointerDown={(e) => startDialogResize(e, { r: true })}
+                className="absolute inset-y-8 right-0 z-30 w-1.5 touch-none cursor-ew-resize hover:bg-pop-pink/40" />
+              <div data-modal-resize="nw" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { t: true, l: true })}
+                className="absolute left-0 top-0 z-40 size-4 touch-none cursor-nwse-resize" />
+              <div data-modal-resize="ne" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { t: true, r: true })}
+                className="absolute right-0 top-0 z-40 size-4 touch-none cursor-nesw-resize" />
+              <div data-modal-resize="sw" title="拖拽调整宽高"
+                onPointerDown={(e) => startDialogResize(e, { b: true, l: true })}
+                className="absolute bottom-0 left-0 z-40 size-4 touch-none cursor-nesw-resize" />
+              <div data-modal-resize="se" title="拖拽调整宽高" aria-label="调整弹窗宽高"
+                onPointerDown={(e) => startDialogResize(e, { b: true, r: true })}
+                className="absolute bottom-0.5 right-0.5 z-40 size-5 touch-none cursor-nwse-resize text-pop-bd/60 transition-colors hover:text-pop-pink"
+              >
+                <svg viewBox="0 0 20 20" className="size-full" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                  <path d="M5 18.5 18.5 5" />
+                  <path d="M10.5 18.5 18.5 10.5" />
+                  <path d="M15.5 18.5 18.5 15.5" />
+                </svg>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -216,7 +360,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             <AlertDialogAction
               disabled={deleteBusy}
               onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-pop-red hover:bg-pop-red/90"
             >
               {deleteBusy ? "删除中…" : "确认废弃"}
             </AlertDialogAction>
@@ -227,8 +371,10 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
   )
 }
 
-function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft, onMutated }: {
-  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void; onMutated: () => void
+function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft, onMutated, onHeaderPointerDown }: {
+  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void; onMutated: () => void;
+  /** 🎪 按住标题栏空白拖窗;interactive 元素由守卫排除。 */
+  onHeaderPointerDown?: (e: React.PointerEvent) => void
 }) {
   const status = task?.status ?? "draft"
   const isDraft = status === "draft"
@@ -243,7 +389,11 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
             ? "创作"
             : "执行"
   return (
-    <DialogHeader className="px-5 py-3 border-b border-border flex-row items-center justify-between space-y-0">
+    <DialogHeader
+      onPointerDown={onHeaderPointerDown}
+      title="按住空白处拖拽移动窗口"
+      className="px-5 py-3 border-b-2 border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
+    >
       <div className="min-w-0">
         <EditableTitle task={task} onMutated={onMutated} />
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
@@ -253,7 +403,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10"
+            className="h-7 text-xs text-pop-red hover:text-pop-red/80 hover:bg-pop-pink-soft"
             onClick={onDeleteDraft}
             data-task-modal-delete
           >
@@ -270,7 +420,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
         >
           {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </Button>
-        <Badge variant="secondary" className={`${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
+        <Badge variant="secondary" className={`rounded-full border-2 border-pop-bd text-[10px] font-black shadow-pop-sm ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
           {STATUS_LABEL[status] ?? status}
         </Badge>
       </div>
@@ -293,7 +443,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
 function TemplatePickerMode({
   onDraftResolved, onMutated, onClose,
 }: {
-  onDraftResolved: (task: Task) => void
+  onDraftResolved: (task: TaskView) => void
   onMutated: () => void
   onClose: () => void
 }) {
@@ -335,7 +485,7 @@ function TemplatePickerMode({
 
 // ── Simple execution: full info body + trigger/abort footer ─────────
 
-function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutated: () => void; onClose: () => void }) {
+function SimpleExecutionMode({ task, onMutated, onClose }: { task: TaskView; onMutated: () => void; onClose: () => void }) {
   const [aborting, setAborting] = useState(false)
   const [reopening, setReopening] = useState(false)
   // server abortTask accepts ready/running — the button used to grey out on
@@ -419,29 +569,57 @@ function deriveDag(spec: TaskSpec | null): { nodes: { id: string; type: "subunit
   return { nodes, edges }
 }
 
-/** Map TaskDetail.children (server S2 origin lookup) → the JobDetailChild shape
- *  the existing CompositeDag/child-card components consume (name → subunit_name).
- *  Keeps composite-dag.tsx untouched (ticket 11's lane). */
-function childrenToDagChildren(children: TaskChild[]): { schedule_id: string; name: string; status: string; workflow_ref: string; subunit_name: string }[] {
-  return children.map((c) => ({
-    schedule_id: c.schedule_id,
-    name: c.name,
-    status: c.status,
-    workflow_ref: c.workflow_ref ?? "",
-    subunit_name: c.name,
-  }))
+/** Project the task's run history onto the child axis composite-dag/composite-status
+ *  consume. 票05 (ADR-0021): the fan-out arms ARE `root.children[]` (detail/history
+ *  loads them; the board badge does not), and each arm's label is the badge's own
+ *  `name` — dispatchChildRun wrote subunit.name onto the row, replacing the retired
+ *  `schedules.origin_role='subunit'` labelling and the workflow_ref→spec match (kept
+ *  only as fallback for name-less rows). A root whose `children` is undefined never
+ *  contributes arms: undefined = the read model did not load the fan-out, which is
+ *  NOT the same fact as [] (loaded, nothing dispatched yet) — either way the axis
+ *  stays empty, the UI must not claim 「无子单元」. */
+function executionsToDagChildren(
+  execs: TaskExecutionBadge[],
+  spec: TaskSpec | null,
+): { run_id: string; name: string; status: string; workflow_ref: string; subunit_name: string }[] {
+  const subunitByRef = new Map((spec?.subunits ?? []).map(s => [s.workflow_ref, s.name]))
+  const toChild = (e: TaskExecutionBadge) => {
+    const specMatch = subunitByRef.get(e.workflow_ref)
+    const label = e.name || specMatch || e.workflow_ref
+    return {
+      run_id: e.id,
+      name: label,
+      status: e.status,
+      workflow_ref: e.workflow_ref,
+      subunit_name: e.name ?? specMatch ?? "",
+    }
+  }
+  const arms: TaskExecutionBadge[] = []
+  for (const root of execs) arms.push(...(root.children ?? []))
+  return arms.map(toChild)
+}
+
+const RUN_DONE = new Set(["done", "completed", "success"])
+
+/** A run row's label. 票05: an execution badge carries `name` (simple run name /
+ *  composite arm = the subunit name written at dispatch), so the row names itself;
+ *  the spec workflow_ref match and the raw ref are fallbacks for name-less rows. */
+function runLabelOf(exec: TaskExecutionBadge, spec: TaskSpec | null): string {
+  if (exec.name) return exec.name
+  const subunit = (spec?.subunits ?? []).find(s => s.workflow_ref === exec.workflow_ref)?.name
+  return subunit ?? exec.workflow_ref
 }
 
 function integrationStatusOf(parent: string, children: { status: string }[]): string {
   if (parent === "done" || parent === "failed" || parent === "aborted") return parent
-  const allChildrenDone = children.length > 0 && children.every((c) => c.status === "done")
+  const allChildrenDone = children.length > 0 && children.every((c) => RUN_DONE.has(c.status))
   return allChildrenDone ? "running" : "pending"
 }
 
 export function CompositeMode({
   task, onMutated, onClose,
 }: {
-  task: Task
+  task: TaskView
   onMutated: () => void
   onClose: () => void
 }) {
@@ -475,39 +653,51 @@ export function CompositeMode({
     detailRef.current = detail
   }, [detail])
 
-  // Real-time SSE on /api/tasks/events. The server's `taskpool` channel carries
-  // TWO event types this drill-down cares about (both forwarded by the route):
-  //  - task_status    {task_id, status, schedule_id, origin_type}  — parent
-  //                    mirror emitted by ScheduleStatusListener (SG2) when a
-  //                    child schedule transition mirrors onto tasks.status.
-  //  - schedule_status {schedule_id, status}                       — per-schedule
-  //                    transitions emitted by task-dispatch-service (child
-  //                    queued/running, SG10) + workflow-executor (running/done/
-  //                    failed). These are the most frequent child signals; without
-  //                    this subscription child cards only refresh on the slower
-  //                    parent-mirror event (ticket 10's minimal wiring).
+  // Real-time SSE on /api/tasks/events. 票03 (ADR-0021) leaves TWO event types on the
+  // `taskpool` channel that this drill-down cares about (both forwarded by the route):
+  //  - task_status    {task_id, status}                          — the task row's own
+  //                    transitions, written by the built-in task-lifecycle job (the
+  //                    ScheduleStatusListener mirror + its schedule_id/origin_type keys
+  //                    went away with the envelope row).
+  //  - task_execution {task_id, execution_id, status, phase_index?, round_index?,
+  //                    subunit?, parent_id?, reason?}            — per-run transitions
+  //                    (arm→pending, launch→running, terminal, 子单元派发). These are
+  //                    the frequent signals; without this subscription the cards only
+  //                    refresh on the slower parent event. The schedule_status events
+  //                    that used to carry them now belong to job definitions only, so
+  //                    subscribing to them here would filter every real run out.
   useEffect(() => {
     if (!task.id) return
     const eventsUrl = `${getServerUrl()}/api/tasks/events`
     const parentLabel = "父任务"
 
-    const labelFor = (scheduleId: string): string => {
-      if (scheduleId === task.id) return parentLabel
-      const child = detailRef.current?.children?.find((c) => c.schedule_id === scheduleId)
-      return child?.name ?? scheduleId.slice(0, 8)
+    /** A run row's label for the events panel (see runLabelOf); arms live inside
+     *  their root's `children`, so the lookup descends one level (票05). */
+    const findRun = (executionId: string): TaskExecutionBadge | null => {
+      const d = detailRef.current
+      if (!d) return null
+      for (const e of d.executions ?? []) {
+        if (e.id === executionId) return e
+        const arm = (e.children ?? []).find((c) => c.id === executionId)
+        if (arm) return arm
+      }
+      return null
     }
-    // Relevance: task_status is relevant if task_id is the parent OR a known
-    // child schedule_id; schedule_status is relevant only for known children.
-    const isChildSchedule = (scheduleId: string): boolean =>
-      detailRef.current?.children?.some((c) => c.schedule_id === scheduleId) ?? false
+    const runLabel = (executionId: string): string => {
+      const exec = findRun(executionId)
+      return exec ? runLabelOf(exec, detailRef.current?.task_spec ?? null) : executionId.slice(0, 8)
+    }
 
-    const pushEvent = (scheduleId: string, status: string) => {
+    const pushEvent = (runId: string, status: string, label?: string, reason?: string) => {
       setEvents((prev) => [
         ...prev,
         {
-          schedule_id: scheduleId,
+          run_id: runId,
           status,
-          label: labelFor(scheduleId),
+          label: label ?? (runId === task.id ? parentLabel : runLabel(runId)),
+          // 票05 契约 §新事实-2: reason 只在失败/回收路径出现，且红状态才露出
+          // （绿行永不显示遗留字段 —— 与 runErrorOf 同一判据）。
+          reason: RUN_ERROR_STATUSES.has(status) ? reason : undefined,
           at: new Date().toISOString(),
         },
       ])
@@ -515,25 +705,26 @@ export function CompositeMode({
 
     const onTaskStatus = (e: MessageEvent) => {
       try {
-        const payload = JSON.parse(e.data) as { task_id: string; status: string; schedule_id?: string }
-        const isParent = payload.task_id === task.id
-        const isChild = payload.schedule_id ? isChildSchedule(payload.schedule_id) : false
-        if (!isParent && !isChild) return
-        pushEvent(payload.schedule_id ?? payload.task_id, payload.status)
+        const payload = JSON.parse(e.data) as { task_id: string; status: string }
+        if (payload.task_id !== task.id) return
+        pushEvent(task.id, payload.status, parentLabel)
         void fetchDetail(task.id)
       } catch {
         // Malformed event payload — ignore.
       }
     }
 
-    const onScheduleStatus = (e: MessageEvent) => {
+    const onTaskExecution = (e: MessageEvent) => {
       try {
-        const payload = JSON.parse(e.data) as { schedule_id: string; status: string }
-        // schedule_status fires for EVERY schedule on the taskpool channel
-        // (incl. cron jobs unrelated to this task). Filter to this task's children
-        // so an unrelated transition doesn't trigger a spurious refetch.
-        if (!isChildSchedule(payload.schedule_id)) return
-        pushEvent(payload.schedule_id, payload.status)
+        const payload = JSON.parse(e.data) as {
+          task_id: string; execution_id: string; status: string; subunit?: string; reason?: string
+        }
+        // task_execution fires for every task on the shared taskpool channel — filter
+        // to this task so an unrelated run doesn't trigger a spurious refetch. The arm
+        // name comes from the payload (`subunit`) or the row (`children[].name`, 票05);
+        // `reason` is the failure/reap one-liner (see pushEvent's status gate).
+        if (payload.task_id !== task.id) return
+        pushEvent(payload.execution_id, payload.status, payload.subunit, payload.reason)
         void fetchDetail(task.id)
       } catch {
         // Malformed event payload — ignore.
@@ -563,38 +754,47 @@ export function CompositeMode({
       }
     }
 
-    const unsubTaskStatus = subscribeSSE(eventsUrl, "task_status", onTaskStatus)
-    const unsubScheduleStatus = subscribeSSE(eventsUrl, "schedule_status", onScheduleStatus)
+    // task_trigger_failed deliberately has NO subscription here: the kanban is its
+    // one outlet (see app/tasks/page.tsx). This drill-down's cursor state is
+    // already carried by task_status (the status really moves back to ready there).
+    const unsubTaskStatus = subscribeSSE(eventsUrl, TASK_STATUS_EVENT, onTaskStatus)
+    const unsubTaskExecution = subscribeSSE(eventsUrl, TASK_EXECUTION_EVENT, onTaskExecution)
     const unsubProjectSync = subscribeSSE(eventsUrl, PROJECT_SYNC_EVENT, onProjectSync)
     return () => {
       unsubTaskStatus()
-      unsubScheduleStatus()
+      unsubTaskExecution()
       unsubProjectSync()
     }
   }, [task.id, fetchDetail])
 
-  const children = detail?.children ?? []
-  const dagChildren = childrenToDagChildren(children)
+  const runs = detail?.executions ?? []
+  const dagChildren = executionsToDagChildren(runs, taskSpecOf(task))
   const dag = deriveDag(taskSpecOf(task))
   const parentStatus = detail?.status ?? task.status
   const aggregate = computeAggregateStatus(dagChildren, parentStatus)
-  const integrationStatus = integrationStatusOf(parentStatus, children)
+  const integrationStatus = integrationStatusOf(parentStatus, dagChildren)
   const canAbort = parentStatus === "running"
 
-  // SG15: retarget child drill-down to the tasks domain. 弹窗优化 (2026-08-29):
-  // /tasks/:id/children/:sid 页面并不存在（点了 404）——一旦 children 带上
-  // workspace/execution 引用（children[].execution_ref），直接深链到 workspace
-  // 页的执行详情面板；否则保留原路由（现状不变，等 ticket 11 落地该页）。
-  const handleChildClick = useCallback((scheduleId: string) => {
-    const child = detailRef.current?.children?.find((c) => c.schedule_id === scheduleId)
-    const ws = child?.execution_ref?.workspace_id ?? child?.workspace_id
-    const exec = child?.execution_ref?.execution_id
-    if (ws) {
-      router.push(exec ? `/workspaces/${ws}?tab=detail&execId=${exec}` : `/workspaces/${ws}`)
-      return
+  // 票03: a run row IS the execution and carries its own workspace_id, so the drill-down
+  // is always the workspace 执行详情 deep link — the /tasks/:id/children/:sid route this
+  // used to fall back to never existed (404) and nothing needs it any more.
+  // 票05: the clicked id may be a fan-out arm — it lives inside its root's `children`
+  // and links to its OWN workspace row, same as a root does.
+  const handleRunClick = useCallback((executionId: string) => {
+    const d = detailRef.current
+    if (!d) return
+    for (const e of d.executions ?? []) {
+      if (e.id === executionId && e.workspace_id) {
+        router.push(`/workspaces/${e.workspace_id}?tab=detail&execId=${e.id}`)
+        return
+      }
+      const arm = (e.children ?? []).find((c) => c.id === executionId)
+      if (arm?.workspace_id) {
+        router.push(`/workspaces/${arm.workspace_id}?tab=detail&execId=${arm.id}`)
+        return
+      }
     }
-    router.push(`/tasks/${task.id}/children/${scheduleId}`)
-  }, [router, task.id])
+  }, [router])
 
   if (loading && !detail) {
     return (
@@ -615,7 +815,7 @@ export function CompositeMode({
               {STATUS_LABEL[aggregate] ?? aggregate}
             </Badge>
           </div>
-          <span className="text-xs text-muted-foreground">{children.length} 个子任务</span>
+          <span className="text-xs text-muted-foreground">{runs.length} 条运行</span>
         </div>
 
         {dag.nodes.length > 0 ? (
@@ -625,8 +825,8 @@ export function CompositeMode({
               children={dagChildren}
               integrationStatus={integrationStatus}
               onChildClick={(name) => {
-                const child = children.find((c) => c.name === name)
-                if (child) handleChildClick(child.schedule_id)
+                const child = dagChildren.find((c) => c.subunit_name === name)
+                if (child) handleRunClick(child.run_id)
               }}
             />
           </div>
@@ -635,29 +835,63 @@ export function CompositeMode({
         )}
 
         <div className="p-3 space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">子任务执行</h3>
-          {children.map((c) => (
-            <button
-              key={c.schedule_id}
-              data-testid={`composite-child-${c.schedule_id}`}
-              onClick={() => handleChildClick(c.schedule_id)}
-              className="w-full text-left rounded-md border border-border bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all flex items-center gap-2"
-            >
-              <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[c.status] ?? "bg-muted-foreground"}`} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{c.name}</div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <code className="text-[10px]">{c.workflow_ref ?? "—"}</code>
-                  <span>·</span>
-                  <span>{STATUS_LABEL[c.status] ?? c.status}</span>
-                  {c.origin_role ? <span className="text-[10px] px-1 rounded bg-muted">{c.origin_role}</span> : null}
+          <h3 className="text-xs font-semibold text-muted-foreground">执行记录</h3>
+          {runs.map((r) => (
+            <div key={r.id} className="space-y-1">
+              <button
+                data-testid={`composite-child-${r.id}`}
+                onClick={() => handleRunClick(r.id)}
+                className="w-full text-left rounded-md border border-border bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all flex items-center gap-2"
+              >
+                <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[r.status] ?? "bg-muted-foreground"}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{runLabelOf(r, detail?.task_spec ?? null)}</div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <code className="text-[10px]">{r.workflow_ref}</code>
+                    <span>·</span>
+                    <span>{RUN_STATUS_LABEL[r.status] ?? r.status}</span>
+                    {r.phase_index != null && (
+                      <span className="text-[10px] px-1 rounded bg-muted">
+                        P{r.phase_index}·R{r.round_index ?? 1}
+                      </span>
+                    )}
+                  </div>
+                  {runErrorOf(r) && (
+                    <div className="text-xs text-pop-red break-words" data-run-error={r.id}>{runErrorOf(r)}</div>
+                  )}
                 </div>
-              </div>
-              <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
-            </button>
+                <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
+              </button>
+              {/* 票05: composite fan-out arms under their root — labelled by the badge's
+                  own `name` (the dispatch-time subunit name). `children === undefined`
+                  (read model did not load the fan-out) and `[]` both render nothing:
+                  「没加载」不是「没有」, never a 「无子单元」 claim. */}
+              {(r.children?.length ?? 0) > 0 && (
+                <div className="pl-4 space-y-1 border-l border-border/60" data-testid={`composite-arms-${r.id}`}>
+                  {(r.children ?? []).map((arm) => {
+                    const armError = runErrorOf(arm)
+                    return (
+                      <button
+                        key={arm.id}
+                        data-testid={`composite-arm-${arm.id}`}
+                        onClick={() => handleRunClick(arm.id)}
+                        className="w-full text-left rounded-md border border-border bg-card/50 px-2.5 py-1.5 hover:border-primary/40 transition-all flex items-center gap-2 text-xs"
+                      >
+                        <span className={`size-1.5 rounded-full shrink-0 ${STATUS_DOT_COLOR[arm.status] ?? "bg-muted-foreground"}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{arm.name || arm.workflow_ref || `执行 ${arm.id.slice(0, 8)}`}</div>
+                          {armError && <div className="text-pop-red break-words" data-run-error={arm.id}>{armError}</div>}
+                        </div>
+                        <span className="text-muted-foreground shrink-0">{RUN_STATUS_LABEL[arm.status] ?? arm.status}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           ))}
-          {children.length === 0 && (
-            <p className="text-xs text-muted-foreground py-2">子任务尚未派发。</p>
+          {runs.length === 0 && (
+            <p className="text-xs text-muted-foreground py-2">任务尚未派发执行。</p>
           )}
         </div>
 
@@ -709,19 +943,25 @@ export function CompositeMode({
 }
 
 const STATUS_DOT_COLOR: Record<string, string> = {
-  queued: "bg-blue-500",
-  claimed: "bg-amber-500",
-  running: "bg-blue-500 animate-pulse",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-  aborted: "bg-zinc-500",
-  pending: "bg-muted-foreground",
+  // executions 词表 (票03: 运行行状态)
+  pending: "bg-pop-amber",
+  completed: "bg-pop-green",
+  completed_with_failures: "bg-pop-amber",
+  cancelled: "bg-pop-dim",
+  rejected: "bg-pop-dim",
+  // 旧 schedule 词表（v3 历史行只读）
+  queued: "bg-pop-cyan",
+  claimed: "bg-pop-amber",
+  running: "bg-pop-cyan animate-pulse",
+  done: "bg-pop-green",
+  failed: "bg-pop-red",
+  aborted: "bg-pop-dim",
 }
 
 function DoneMode({ task }: { task: Task }) {
   return (
     <div className="flex flex-col h-full min-h-0" data-task-done>
-      <div className="shrink-0 flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/5 px-5 py-2.5 text-sm text-emerald-600">
+      <div className="shrink-0 flex items-center gap-2 border-b border-pop-green/30 bg-pop-green-soft px-5 py-2.5 text-sm text-pop-green">
         <CheckCircle2 className="size-4" /> 任务完成{task.completed_at ? ` · ${new Date(task.completed_at).toLocaleString("zh-CN")}` : ""}
       </div>
       <div className="flex-1 min-h-0">
@@ -735,7 +975,7 @@ function TerminalMode({ task }: { task: Task }) {
   const failed = task.status === "failed"
   return (
     <div className="flex flex-col h-full min-h-0" data-task-terminal>
-      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-red-500/30 bg-red-500/5 text-red-500" : "border-zinc-500/30 bg-zinc-500/5 text-zinc-500 dark:text-zinc-400"}`}>
+      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-pop-red/30 bg-pop-pink-soft text-pop-red" : "border-pop-bd/30 bg-pop-idle text-pop-dim"}`}>
         {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
         {failed ? "任务失败" : "任务已中止"}
         <span className="ml-auto text-xs text-muted-foreground font-normal">

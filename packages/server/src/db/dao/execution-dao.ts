@@ -24,10 +24,19 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   findRunningLeaves(workspaceId: string): ExecutionRow[] {
+    // 「这个工作区里跑得最深的那条」— the child predicate is workspace-scoped on
+    // purpose (票03 复核). Composite children each live in their OWN workspace, so an
+    // unscoped NOT EXISTS would stop treating the coordinator as a leaf the moment the
+    // FIRST subunit was dispatched, and the second dispatchChild would find no parent at
+    // all. Same-workspace chain children (triggerChildStep) are still excluded, which is
+    // the invariant this helper was written for.
     return this.stmt(`
       SELECT e.* FROM executions e
       WHERE e.workspace_id = ? AND e.status = 'running'
-        AND NOT EXISTS (SELECT 1 FROM executions c WHERE c.parent_id = e.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM executions c
+          WHERE c.parent_id = e.id AND c.workspace_id = e.workspace_id
+        )
     `).all(workspaceId) as ExecutionRow[]
   }
 
@@ -35,6 +44,157 @@ export class ExecutionDAO extends BaseDAO {
     return (this.stmt(
       "SELECT * FROM executions WHERE workspace_id = ? AND (parent_id = '0' OR parent_id IS NULL) LIMIT 1"
     ).get(workspaceId) as ExecutionRow) ?? null
+  }
+
+  // ── Task launches (ADR-0021) ────────────────────────────────────────
+  //
+  // A task run IS an executions row carrying task_id; `pending` = armed and waiting
+  // behind the concurrency gate. These are the only reads the built-in task-lifecycle
+  // job needs, and they are deliberately task-agnostic in the other direction: the
+  // scheduler never queries them.
+
+  /** The task's CURRENT instance = its most recent ROOT row, whatever its status
+   *  ('pending' = queued, terminal = the previous round). NULL = never ran.
+   *  Serves both the 单实例 guard and the board badge. Uses idx_exec_task
+   *  (task_id, created_at DESC). Children are excluded: a composite task's children
+   *  belong to a root that is already this row. */
+  findLatestTaskRoot(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions WHERE task_id = ? AND parent_id = '0'
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId) as ExecutionRow) ?? null
+  }
+
+  /** The current instance of EACH of many tasks, in one query — the kanban's badge
+   *  source. Latest root per task by rowid (monotonic per insert), which is also the
+   *  tiebreak `created_at` cannot provide for two rounds armed in the same second. */
+  findLatestTaskRoots(taskIds: readonly string[]): ExecutionRow[] {
+    if (taskIds.length === 0) return []
+    const ph = taskIds.map(() => "?").join(",")
+    return this.stmt(
+      `SELECT e.* FROM executions e
+       WHERE e.parent_id = '0' AND e.task_id IN (${ph})
+         AND e.rowid = (
+           SELECT MAX(e2.rowid) FROM executions e2
+           WHERE e2.task_id = e.task_id AND e2.parent_id = '0'
+         )`,
+    ).all(...taskIds) as ExecutionRow[]
+  }
+
+  /** Every root execution of a task, newest first — the 「执行历史」 read model that
+   *  replaced the envelope's children[]. */
+  listTaskRoots(taskId: string, limit = 50): ExecutionRow[] {
+    return this.stmt(
+      `SELECT * FROM executions WHERE task_id = ? AND parent_id = '0'
+       ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    ).all(taskId, limit) as ExecutionRow[]
+  }
+
+  /** A round row addressed by (task, phase, round) — the acceptance ledger's join key
+   *  (round_index is bumped INHERIT mode writes a new row, so this stays 1:1). */
+  findTaskRound(taskId: string, phaseIndex: number, roundIndex: number): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND parent_id = '0' AND phase_index = ? AND round_index = ?
+       ORDER BY created_at DESC LIMIT 1`,
+    ).get(taskId, phaseIndex, roundIndex) as ExecutionRow) ?? null
+  }
+
+  /** The claim queue, FIFO, over a task's roots AND its composite children (partial
+   *  index idx_exec_pending_claimable). A child that overflowed the cap is parked here
+   *  exactly like an armed root, so claiming only roots would strand it forever. */
+  listClaimableTaskLaunches(limit: number): ExecutionRow[] {
+    return this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id IS NOT NULL AND status = 'pending'
+       ORDER BY created_at LIMIT ?`,
+    ).all(limit) as ExecutionRow[]
+  }
+
+  /** Task rows stranded in a live status whose engine is no longer running in this
+   *  process — the crash/restart residue the reconciliation pass resolves. Root only:
+   *  a child's fate is decided with its parent. */
+  listLiveTaskRootsNotIn(statuses: readonly string[]): Array<{ id: string; task_id: string; workspace_id: string; status: string }> {
+    if (statuses.length === 0) return []
+    const placeholders = statuses.map(() => "?").join(",")
+    return this.stmt(
+      `SELECT id, task_id, workspace_id, status FROM executions
+       WHERE task_id IS NOT NULL AND parent_id = '0' AND status NOT IN (${placeholders})`,
+    ).all(...statuses) as Array<{ id: string; task_id: string; workspace_id: string; status: string }>
+  }
+
+  /** System-event status write for a launch row: flips pending→running on claim and
+   *  running→terminal on finalize. NO version/optimistic-lock story here — the row is
+   *  owned by the job, not by an editor (same discipline as the tasks.status mirrors).
+   *
+   *  `error` is merged into the row's var pool under `error` rather than into its own
+   *  column: `executions` has no error column (the engine keeps node failures on
+   *  node_executions), and the read model already projects var_pool.error as the badge's
+   *  one-line reason. Every failure writer must pass it or the badge shows a red run with
+   *  nothing to say about it. */
+  setLaunchStatus(id: string, status: string, opts?: {
+    startedAt?: string; completedAt?: string; duration?: number; error?: string | null
+  }): Database.RunResult {
+    const now = new Date().toISOString()
+    if (opts?.error == null) {
+      return this.stmt(
+        `UPDATE executions SET status = ?, updated_at = ?,
+           started_at = COALESCE(?, started_at),
+           completed_at = COALESCE(?, completed_at),
+           duration = COALESCE(?, duration)
+         WHERE id = ?`,
+      ).run(status, now, opts?.startedAt ?? null, opts?.completedAt ?? null, opts?.duration ?? null, id)
+    }
+    return this.stmt(
+      `UPDATE executions SET status = ?, updated_at = ?,
+         started_at = COALESCE(?, started_at),
+         completed_at = COALESCE(?, completed_at),
+         duration = COALESCE(?, duration),
+         var_pool = json_patch(COALESCE(NULLIF(var_pool, ''), '{}'), ?)
+       WHERE id = ?`,
+    ).run(
+      status, now, opts.startedAt ?? null, opts.completedAt ?? null, opts.duration ?? null,
+      JSON.stringify({ error: opts.error }), id,
+    )
+  }
+
+  /** Every subunit run of a task (child executions the task side armed), grouped by the
+   *  caller. `task_id IS NOT NULL AND parent_id != '0'` is the subunit predicate: engine
+   *  chain children carry parent_id too but no task_id, so they stay out of the task's
+   *  fan-out view. One query per read-model call, grouped in TS — the alternative
+   *  (findChildren per root) is N queries for a 50-row history. */
+  listTaskChildRuns(taskId: string): ExecutionRow[] {
+    return this.stmt(
+      `SELECT * FROM executions WHERE task_id = ? AND parent_id != '0' ORDER BY child_index ASC`,
+    ).all(taskId) as ExecutionRow[]
+  }
+
+  /** Claim a specific armed row out of the queue. Guarded on status='pending' so two
+   *  overlapping job rounds (wake() + auxiliary tick) can never both launch it:
+   *  changes===0 means someone else got there first.
+   *
+   *  `leaseAt` is the started_at this claim writes, and the caller passes it to the
+   *  engine's `start(..., claimedLease)` as proof of ownership: the claim is the
+   *  serializer, and `start` needs to distinguish "the row I just claimed" from "somebody
+   *  else's live run". Callers that want the token generate it; the default keeps the DAO
+   *  usable standalone. */
+  claimLaunch(id: string, leaseAt = new Date().toISOString()): Database.RunResult {
+    return this.stmt(
+      "UPDATE executions SET status = 'running', started_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+    ).run(leaseAt, leaseAt, id)
+  }
+
+  /** Retire an armed-but-not-started row (abort while queued / failed arming). Guarded
+   *  on status='pending' so it can never touch a live run — the caller re-reads and
+   *  aborts properly if the row has already started. */
+  retireLaunch(id: string, status: string, error?: string): Database.RunResult {
+    const now = new Date().toISOString()
+    return this.stmt(
+      `UPDATE executions SET status = ?, completed_at = ?, updated_at = ?,
+         var_pool = CASE WHEN ? = '' THEN var_pool
+                         ELSE json_patch(COALESCE(NULLIF(var_pool, ''), '{}'), ?) END
+       WHERE id = ? AND status = 'pending'`,
+    ).run(status, now, now, error ?? "", JSON.stringify({ error }), id)
   }
 
   insertExecution(row: Partial<ExecutionRow> & { id: string; workspace_id: string; org: string }): Database.RunResult {
@@ -46,8 +206,8 @@ export class ExecutionDAO extends BaseDAO {
         progress, triggered_by, started_at, completed_at, duration, org,
         created_at, updated_at, node_type, branch, start_commit_id, end_commit_id,
         name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs,
-        phase_index, round_index
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        phase_index, round_index, task_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.parent_id ?? "0", row.child_index ?? 0,
       row.workflow_ref ?? "", row.workflow_name ?? "",
@@ -64,6 +224,9 @@ export class ExecutionDAO extends BaseDAO {
       row.chain_retry_count ?? 0,
       row.preset_inputs ?? null,
       row.phase_index ?? null, row.round_index ?? null,
+      // ADR-0021: NULL = not a task launch (cron jobs, ad-hoc runs, chain children).
+      // Set = this row IS a task instance; ux_exec_task_active then serializes it.
+      row.task_id ?? null,
     )
   }
 
@@ -693,6 +856,24 @@ export class ExecutionDAO extends BaseDAO {
   findFirstRunningNode(executionId: string): NodeExecutionRow | null {
     return (this.stmt(
       "SELECT * FROM node_executions WHERE execution_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1"
+    ).get(executionId) as NodeExecutionRow) ?? null
+  }
+
+  /**
+   * The task_dispatch node a composite parent is parked on — the resume target after a
+   * child finishes. Written to accept BOTH persistences rather than guess one: the node
+   * row mirroring the engine's `pending_task_dispatch` status, or (if the engine only
+   * persisted the execution-level status) the still-'running' task_dispatch node.
+   * `started_at DESC` matches findFirstRunningNode's convention for the same reason —
+   * the most recent visit is the one that is waiting, since a Loop re-enters the node.
+   */
+  findWaitingDispatchNode(executionId: string): NodeExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM node_executions
+       WHERE execution_id = ?
+         AND (status = 'pending_task_dispatch'
+              OR (node_type = 'task_dispatch' AND status = 'running'))
+       ORDER BY started_at DESC LIMIT 1`,
     ).get(executionId) as NodeExecutionRow) ?? null
   }
 

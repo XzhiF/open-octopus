@@ -251,6 +251,24 @@ export function createTasksRoutes(
     }
   })
 
+  // ── Run history (票03/票05 — ADR-0021) ──────────────────────────────
+  // GET /:id/executions — this task's runs, newest first. The board's 执行历史 and the
+  // 弹窗 drill-down read this instead of the retired envelope's children[]: one row per
+  // run (v4 round / composite dispatch), with the phase/round coordinates the acceptance
+  // ledger uses and the workspace to deep-link into.
+  router.get("/:id/executions", (c) => {
+    try {
+      const limitParam = c.req.query("limit")
+      const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 200) : 50
+      const id = c.req.param("id")
+      const rows = service.listRunHistory(id, limit)
+      return c.json({ items: rows, total: rows.length })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── Artifacts (ticket 06 — US7) ────────────────────────────────────
   // GET /:id/artifacts — the artifact index (artifacts.json). Missing file →
   // []; corrupted JSON → [] + warn (SW-BP12); missing task → 404. The index
@@ -409,7 +427,8 @@ export function createTasksRoutes(
     }
   })
 
-  // DELETE /:id — soft-delete (discard draft/ready) + cascade-reap schedules
+  // DELETE /:id — soft-delete. 票03: nothing cascades (a task's runs are executions rows);
+  // only a running task is refused, everything else is discardable.
   router.delete("/:id", (c) => {
     try {
       const result = service.deleteTask(c.req.param("id"))
@@ -507,7 +526,8 @@ export function createTasksRoutes(
     }
   })
 
-  // POST /:id/ready — draft→ready + dispatch seam (creates schedules envelope).
+  // POST /:id/ready — draft→ready + arm seam (writes tasks.trigger_* / arms an execution
+  // row; 票03: no schedule row is created, the built-in job starts it).
   // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
   // list so the UI can show exactly what to confirm before enqueue (US6).
   router.post("/:id/ready", (c) => {
@@ -535,10 +555,11 @@ export function createTasksRoutes(
     }
   })
 
-  // POST /:id/trigger — v39 manual/time trigger: arms the parked (draft) root
-  // envelope draft→queued with scheduled_at = at ?? now. Body: { at?: ISO8601 }
-  // (absent = 立即触发; future = 单次定时; past = 尽快). Same-task mutex is
-  // structural: only a ready task with a draft root can arm (409 otherwise).
+  // POST /:id/trigger — manual / one-shot time trigger. Body: { at?: ISO8601 }
+  // (absent or past = 立即跑; future = 单次定时, the built-in job starts it at that
+  // moment without anyone pressing anything). Same-task mutex is now a DB constraint:
+  // only a ready task with no live instance can arm, so a double click and a
+  // schedule-collides-with-a-running-round get the same 409 with a readable reason.
   router.post("/:id/trigger", async (c) => {
     const body = await safeJson(c)
     let at: string | undefined
@@ -558,9 +579,8 @@ export function createTasksRoutes(
     }
   })
 
-  // POST /:id/trigger/cancel — withdraw an armed-but-not-started one-shot
-  // (queued, unclaimed, future due) back to parked draft; task returns to
-  // ready. Already claimed/executing → 409.
+  // POST /:id/trigger/cancel — withdraw a not-yet-started fire (the queued instance
+  // and/or the armed cursor); the task returns to ready. Already started → 409.
   router.post("/:id/trigger/cancel", (c) => {
     try {
       const task = service.cancelTaskTrigger(c.req.param("id"))
@@ -571,7 +591,44 @@ export function createTasksRoutes(
     }
   })
 
-  // POST /:id/abort — running→aborted + ws cleanup (v1 G4)
+  // POST /:id/trigger/schedule — 周期触发 (票03, ADR-0021). Body:
+  //   { cron: "* * * * *", timezone?: "Asia/Shanghai" }  → arm a recurring fire
+  //   { enabled: false }                                 → pause without forgetting it
+  //   { cron: null } / POST /:id/trigger/unschedule      → back to manual
+  // The task's own columns hold this; there is no job row, and the scheduler is
+  // unaware a cron expression exists anywhere outside its own definitions.
+  router.post("/:id/trigger/schedule", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    const id = c.req.param("id")
+    try {
+      if (typeof body.enabled === "boolean" && body.cron === undefined) {
+        service.setTriggerEnabled(id, body.enabled)
+      } else {
+        const cron = typeof body.cron === "string" ? body.cron : null
+        const timezone = typeof body.timezone === "string" ? body.timezone : "Asia/Shanghai"
+        service.setCronTrigger(id, cron, timezone)
+      }
+      return c.json(service.getTaskSummary(id))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/trigger/unschedule — drop the schedule, keep the task.
+  router.post("/:id/trigger/unschedule", (c) => {
+    try {
+      service.setCronTrigger(c.req.param("id"), null, undefined)
+      return c.json(service.getTaskSummary(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/abort — running→aborted (the task's own instances stop; the bound
+  // workspace survives for the next round, K12)
   router.post("/:id/abort", async (c) => {
     try {
       const task = await service.abortTask(c.req.param("id"))

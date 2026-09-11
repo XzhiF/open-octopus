@@ -13,9 +13,9 @@ interface SuggestionPanelProps {
 }
 
 const SEVERITY_CONFIG = {
-  critical: { icon: AlertTriangle, color: "text-red-600", bg: "bg-red-500/10" },
-  warning: { icon: AlertTriangle, color: "text-amber-600", bg: "bg-amber-500/10" },
-  info: { icon: Info, color: "text-blue-600", bg: "bg-blue-500/10" },
+  critical: { icon: AlertTriangle, color: "text-pop-red", bg: "bg-pop-red/10" },
+  warning: { icon: AlertTriangle, color: "text-pop-amber", bg: "bg-pop-amber/10" },
+  info: { icon: Info, color: "text-pop-cyan", bg: "bg-pop-cyan/10" },
 }
 
 export function SuggestionPanel({ workspaceId, workflowRef }: SuggestionPanelProps) {
@@ -46,7 +46,7 @@ export function SuggestionPanel({ workspaceId, workflowRef }: SuggestionPanelPro
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Lightbulb className="h-4 w-4 text-amber-500" />
+        <Lightbulb className="h-4 w-4 text-pop-amber" />
         <span className="text-sm font-medium">优化建议 ({suggestions.length})</span>
       </div>
       {suggestions.map((s) => {
@@ -61,7 +61,7 @@ export function SuggestionPanel({ workspaceId, workflowRef }: SuggestionPanelPro
             <p className="text-xs text-muted-foreground">{s.diagnosis}</p>
             <p className="text-xs font-medium">{s.prescription}</p>
             {s.impact_estimate && (
-              <p className="text-xs text-emerald-600">{s.impact_estimate}</p>
+              <p className="text-xs text-pop-green">{s.impact_estimate}</p>
             )}
             <Button size="sm" variant="outline" className="h-7 text-xs"
               onClick={() => {

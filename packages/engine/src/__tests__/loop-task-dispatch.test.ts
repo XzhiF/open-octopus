@@ -17,7 +17,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { WorkflowEngine } from "../engine"
 import { VarPool } from "@octopus/shared"
-import type { WorkflowDef, NodeDef, TaskDispatchPort, ScheduleHandle, SubunitSpec } from "@octopus/shared"
+import type { WorkflowDef, NodeDef, TaskDispatchPort, ChildHandle, SubunitSpec } from "@octopus/shared"
 
 const SUBPROCESS_TIMEOUT = 20000
 
@@ -45,12 +45,12 @@ function makeSubunit(name: string, overrides: Partial<SubunitSpec> = {}): Subuni
 function makePort(): TaskDispatchPort {
   let n = 0
   return {
-    dispatchChildSchedule: vi.fn().mockImplementation((_subunit: SubunitSpec) => {
+    dispatchChild: vi.fn().mockImplementation((_subunit: SubunitSpec) => {
       n += 1
       return Promise.resolve({
-        schedule_id: `sch-child-${n}`,
+        child_id: `sch-child-${n}`,
         workspace_id: `ws-child-${n}`,
-      } as ScheduleHandle)
+      } as ChildHandle)
     }),
     resumeOnCompletion: vi.fn().mockResolvedValue(undefined),
   }
@@ -151,11 +151,11 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
     const final = results[results.length - 1]
 
     // Loop iterated exactly once per subunit (3 dispatches, no more)
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(3)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(3)
     // Each subunit dispatched in order (object identity preserved — not stringified)
-    expect(port.dispatchChildSchedule).toHaveBeenNthCalledWith(1, subunits[0])
-    expect(port.dispatchChildSchedule).toHaveBeenNthCalledWith(2, subunits[1])
-    expect(port.dispatchChildSchedule).toHaveBeenNthCalledWith(3, subunits[2])
+    expect(port.dispatchChild).toHaveBeenNthCalledWith(1, subunits[0])
+    expect(port.dispatchChild).toHaveBeenNthCalledWith(2, subunits[1])
+    expect(port.dispatchChild).toHaveBeenNthCalledWith(3, subunits[2])
 
     // Workflow completed (loop broke at $iteration >= 3, aggregate ran)
     expect(final.status).toBe("completed")
@@ -176,7 +176,7 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
     expect(first.nodeResults["loop-subunits"].status).toBe("pending_task_dispatch")
     const meta1 = first.nodeResults["loop-subunits"].taskDispatchMetadata
     expect(meta1?.nodeId).toBe("dispatch-child")
-    expect(meta1?.scheduleHandle.schedule_id).toBe("sch-child-1")
+    expect(meta1?.childHandle.child_id).toBe("sch-child-1")
     // Aggregate not reached yet (loop paused)
     expect(first.nodeResults["aggregate"]).toBeUndefined()
 
@@ -185,7 +185,7 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
       taskDispatchChildOutput: { last_output: "E2E_TP_p1_out" },
     })
     expect(second.status).toBe("pending_task_dispatch")
-    expect(second.nodeResults["loop-subunits"].taskDispatchMetadata?.scheduleHandle.schedule_id).toBe("sch-child-2")
+    expect(second.nodeResults["loop-subunits"].taskDispatchMetadata?.childHandle.child_id).toBe("sch-child-2")
 
     // ── Resume 2: subunits[1] completes → break_when ($iteration>=2) → loop done → aggregate ──
     const third = await engine.retryFrom("dispatch-child", {
@@ -196,7 +196,7 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
     expect(third.nodeResults["aggregate"].status).toBe("completed")
 
     // Two subunits → exactly two dispatches
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(2)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(2)
   }, SUBPROCESS_TIMEOUT)
 
   it("does not re-dispatch on resume (one child schedule per subunit)", async () => {
@@ -214,7 +214,7 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
     ])
 
     // 3 subunits, 3 resumes → still only 3 dispatches (resume must NOT re-dispatch)
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(3)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(3)
   }, SUBPROCESS_TIMEOUT)
 
   it("output_mapping writes each child output to $vars.result; aggregate sees the last", async () => {
@@ -254,7 +254,7 @@ describe("WorkflowEngine loop + task_dispatch end-to-end (02/03 gap)", () => {
       taskDispatchChildOutput: { last_output: "E2E_TP_single_out" },
     })
     expect(final.status).toBe("completed")
-    expect(port.dispatchChildSchedule).toHaveBeenCalledTimes(1)
+    expect(port.dispatchChild).toHaveBeenCalledTimes(1)
     expect(final.poolSnapshot.result).toBe("E2E_TP_single_out")
   }, SUBPROCESS_TIMEOUT)
 })

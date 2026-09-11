@@ -117,6 +117,11 @@ export class ExecutionService {
     // task-phase-redesign (K4/K5): v4 task rounds are independent roots on the
     // reused bound ws — see ExecutionLifecycle.create for the rationale.
     allow_existing_root?: boolean;
+    // ADR-0021 票03: task launch identity, written AT INSERT so the row is a task
+    // instance from the moment it exists. A later UPDATE would leave a window where
+    // ux_exec_task_active does not apply to it — the latch only protects rows that
+    // already carry task_id, so the arming side must never insert it in two steps.
+    task_id?: string | null; phase_index?: number | null; round_index?: number | null;
   }): ExecutionRow {
     return this.lifecycle.create(workspaceId, input, this.org) as ExecutionRow
   }
@@ -146,8 +151,16 @@ export class ExecutionService {
 
   // ==================== Lifecycle ====================
 
-  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
-    return this.lifecycle.start(id, inputValues, syncMainBranch)
+  async start(
+    id: string,
+    inputValues?: Record<string, string>,
+    syncMainBranch?: boolean,
+    claimedLease?: string,
+  ): Promise<ExecutionRow> {
+    // claimedLease — see ExecutionLifecycle.start: the task-lifecycle job claims the row
+    // under a guarded UPDATE and hands its lease back here instead of re-asserting
+    // 'pending', which its own claim already consumed.
+    return this.lifecycle.start(id, inputValues, syncMainBranch, claimedLease)
   }
 
   async cancel(id: string): Promise<ExecutionRow> {
@@ -187,6 +200,11 @@ export class ExecutionService {
 
   async resume(executionId: string, intervention?: string): Promise<{ success: boolean; error?: string }> {
     return this.lifecycle.resume(executionId, intervention)
+  }
+
+  /** Engine alive in this process for this execution (see ExecutionLifecycle.hasLiveEngine). */
+  hasLiveEngine(executionId: string): boolean {
+    return this.lifecycle.hasLiveEngine(executionId)
   }
 
   skip(id: string): boolean {

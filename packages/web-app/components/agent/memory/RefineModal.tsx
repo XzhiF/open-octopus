@@ -52,8 +52,8 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
   const afterTokenCount = serverAfterTokens || (refinedContent ? Math.ceil(refinedContent.length / 3) : 0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-agent-divider bg-agent-surface-raised shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4">
+      <div className="w-full max-w-2xl rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-lg overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-agent-divider bg-agent-surface-inset">
           <div className="flex items-center gap-2">
@@ -62,7 +62,7 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+            className="p-1 rounded hover:bg-pop-ink/5 transition-colors"
             aria-label="关闭"
           >
             <X className="h-4 w-4 text-muted-foreground" />

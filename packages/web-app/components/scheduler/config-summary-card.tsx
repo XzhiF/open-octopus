@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { format, parseISO } from "date-fns"
-import type { SchedulerJob, WorkflowConfig, AgentConfig } from "@/lib/scheduler-api"
+import type { SchedulerJob, WorkflowConfig, AgentConfig, CodeJobConfig } from "@/lib/scheduler-api"
 import { StatusBadge } from "./status-badge"
 import { JobTypeBadge } from "./job-type-badge"
 import { ToggleSwitch } from "./toggle-switch"
@@ -100,6 +100,16 @@ export function ConfigSummaryCard({ job, onToggle }: ConfigSummaryCardProps) {
               <ConfigRow
                 label="保留数量"
                 value={String((config as WorkflowConfig).max_retain ?? job.max_retain ?? 10)}
+              />
+            </>
+          ) : job.job_type === "job" ? (
+            // 票03 第三类作业：跑一个注册好的 TS handler（内置 系统 · 任务生命周期）。
+            // 不能落到下面的 Agent 分支——那会把「模型 default」报给一个没有模型的行。
+            <>
+              <ConfigRow
+                label="处理器"
+                value={(job.config as CodeJobConfig).handler ?? "-"}
+                mono
               />
             </>
           ) : (

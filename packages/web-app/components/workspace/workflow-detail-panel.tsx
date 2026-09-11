@@ -67,21 +67,21 @@ function livePatchWins(patchTs: number, t0: number, snapshot: StepExecution): bo
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; label: string }> = {
-    running: { color: "bg-amber-500", label: "运行中" },
-    paused: { color: "bg-violet-500", label: "已暂停" },
-    completed: { color: "bg-emerald-500", label: "已完成" },
-    failed: { color: "bg-red-500", label: "失败" },
-    pending: { color: "bg-blue-500", label: "待开始" },
-    pending_approval: { color: "bg-amber-500", label: "待审批" },
-    pending_interaction: { color: "bg-purple-500", label: "交互中" },
-    cancelled: { color: "bg-gray-500", label: "已取消" },
-    rejected: { color: "bg-orange-500", label: "已拒绝" },
+    running: { color: "bg-pop-amber-soft text-pop-ink", label: "运行中" },
+    paused: { color: "bg-pop-purple-soft text-pop-purple", label: "已暂停" },
+    completed: { color: "bg-pop-green-soft text-pop-green", label: "已完成" },
+    failed: { color: "bg-pop-pink-soft text-pop-red", label: "失败" },
+    pending: { color: "bg-pop-cyan-soft text-pop-ink", label: "待开始" },
+    pending_approval: { color: "bg-pop-amber-soft text-pop-ink", label: "待审批" },
+    pending_interaction: { color: "bg-pop-purple-soft text-pop-purple", label: "交互中" },
+    cancelled: { color: "bg-pop-idle text-pop-dim", label: "已取消" },
+    rejected: { color: "bg-pop-amber-soft text-pop-ink", label: "已拒绝" },
   }
 
-  const { color, label } = config[status] || { color: "bg-gray-500", label: status }
+  const { color, label } = config[status] || { color: "bg-pop-idle text-pop-dim", label: status }
 
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white", color)}>
+    <span className={cn("inline-flex items-center gap-1 rounded-md border-2 border-pop-bd px-1.5 py-0.5 text-xs font-bold", color)}>
       {label}
     </span>
   )
@@ -513,12 +513,12 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           {execution.harnessStatus && (
             <span
               className={cn(
-                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white",
+                "inline-flex items-center gap-1 rounded-md border-2 border-pop-bd px-1.5 py-0.5 text-xs font-bold",
                 execution.harnessStatus === "blocked"
-                  ? "bg-red-500"
+                  ? "bg-pop-pink-soft text-pop-red"
                   : execution.harnessStatus === "delegated"
-                    ? "bg-violet-500"
-                    : "bg-amber-500",
+                    ? "bg-pop-purple-soft text-pop-purple"
+                    : "bg-pop-amber-soft text-pop-ink",
               )}
             >
               🛡️{" "}
@@ -616,7 +616,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-purple-500"
+              className="h-7 w-7 text-pop-purple"
               onClick={() => setInteractionOpen(true)}
               title="交互"
             >
@@ -640,14 +640,14 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
 
       {/* Inline Approval Prompt */}
       {liveStatus === "pending_approval" && liveApprovalMetadata && (
-        <div className="flex items-center gap-2 border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
-          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-          <span className="text-sm text-amber-800 dark:text-amber-200">工作流已暂停，等待审批确认</span>
+        <div className="flex items-center gap-2 border-b border-pop-bd/30 bg-pop-amber-soft px-3 py-1.5">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-pop-ink" />
+          <span className="text-sm text-pop-ink">工作流已暂停，等待审批确认</span>
           <Button
             size="sm"
             variant="outline"
             onClick={() => setApprovalOpen(true)}
-            className="ml-auto h-6 text-xs border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+            className="ml-auto h-6 text-xs border-pop-bd/40 text-pop-ink hover:bg-pop-amber/20"
           >
             打开审批
           </Button>
@@ -801,12 +801,12 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
   return (
     <div className="space-y-3">
       {/* Summary */}
-      <div className="rounded-lg border bg-card p-3">
+      <div className="rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-3">
         <div className="text-xs font-medium text-muted-foreground mb-2">总览</div>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <div className="text-muted-foreground">总成本</div>
-            <div className="text-lg font-bold tabular-nums text-amber-600">
+            <div className="text-lg font-bold tabular-nums text-pop-amber">
               {formatCost(aggregates.totals.cost.usd, aggregates.totals.cost.complete)}
             </div>
           </div>
@@ -833,7 +833,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
 
       {/* Model Breakdown */}
       {models.length > 0 && (
-        <div className="rounded-lg border bg-card p-3">
+        <div className="rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-3">
           <div className="text-xs font-medium text-muted-foreground mb-2">按模型分解</div>
           <div className="space-y-2">
             {models.map(([model, stats]) => (

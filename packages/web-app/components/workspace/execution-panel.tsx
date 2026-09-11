@@ -45,14 +45,14 @@ const stepStatusConfig: Record<
   { icon: React.ElementType; color: string; label: string }
 > = {
   pending: { icon: Clock, color: "text-muted-foreground", label: "待开始" },
-  running: { icon: Loader2, color: "text-amber-500", label: "执行中" },
-  completed: { icon: CheckCircle2, color: "text-emerald-500", label: "完成" },
+  running: { icon: Loader2, color: "text-pop-amber", label: "执行中" },
+  completed: { icon: CheckCircle2, color: "text-pop-green", label: "完成" },
   failed: { icon: XCircle, color: "text-destructive", label: "失败" },
   skipped: { icon: SkipForward, color: "text-muted-foreground", label: "跳过" },
   cancelled: { icon: Ban, color: "text-muted-foreground", label: "已取消" },
-  paused: { icon: PauseCircle, color: "text-violet-500", label: "已暂停" },
-  rejected: { icon: Ban, color: "text-orange-500", label: "已拒绝" },
-  pending_approval: { icon: ShieldCheck, color: "text-amber-500", label: "待审批" },
+  paused: { icon: PauseCircle, color: "text-pop-purple", label: "已暂停" },
+  rejected: { icon: Ban, color: "text-pop-amber", label: "已拒绝" },
+  pending_approval: { icon: ShieldCheck, color: "text-pop-amber", label: "待审批" },
 }
 
 function StepItem({ step, isLast }: { step: StepExecution; isLast: boolean }) {
@@ -67,13 +67,13 @@ function StepItem({ step, isLast }: { step: StepExecution; isLast: boolean }) {
         <div
           className={cn(
             "flex h-6 w-6 items-center justify-center rounded-full border-2",
-            step.status === "completed" && "border-emerald-500 bg-emerald-500/10",
+            step.status === "completed" && "border-pop-green/40 bg-pop-green/10",
             step.status === "failed" && "border-destructive bg-destructive/10",
-            step.status === "running" && "border-amber-500 bg-amber-500/10",
+            step.status === "running" && "border-pop-amber/40 bg-pop-amber/10",
             step.status === "pending" && "border-border bg-muted",
             step.status === "skipped" && "border-border bg-muted",
             step.status === "cancelled" && "border-border bg-muted",
-            step.status === "paused" && "border-violet-500 bg-violet-500/10"
+            step.status === "paused" && "border-pop-purple/40 bg-pop-purple/10"
           )}
         >
           <Icon
@@ -88,7 +88,7 @@ function StepItem({ step, isLast }: { step: StepExecution; isLast: boolean }) {
           <div
             className={cn(
               "h-full w-0.5 flex-1",
-              step.status === "completed" ? "bg-emerald-500" : "bg-border"
+              step.status === "completed" ? "bg-pop-green" : "bg-border"
             )}
           />
         )}
@@ -400,14 +400,14 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
 
       {/* Inline Approval Prompt */}
       {isPendingApproval && execution.approvalMetadata && (
-        <div className="flex items-center gap-2 border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
-          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-          <span className="text-sm text-amber-800 dark:text-amber-200">工作流已暂停，等待审批确认</span>
+        <div className="flex items-center gap-2 border-b border-pop-amber/40 bg-pop-amber-soft px-3 py-1.5">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-pop-amber" />
+          <span className="text-sm text-pop-ink">工作流已暂停，等待审批确认</span>
           <Button
             size="sm"
             variant="outline"
             onClick={() => setApprovalOpen(true)}
-            className="ml-auto h-6 text-xs border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+            className="ml-auto h-6 text-xs border-pop-amber/40 text-pop-amber hover:bg-pop-amber-soft"
           >
             打开审批
           </Button>
@@ -416,13 +416,13 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
 
       {/* Paused state resume prompt */}
       {isPaused && !execution.approvalMetadata && (
-        <div className="border-b border-border bg-violet-50 dark:bg-violet-950/20 p-3">
+        <div className="border-b border-border bg-pop-purple-soft p-3">
           <div className="flex items-center gap-2">
-            <PauseCircle className="text-violet-500" size={16} />
-            <span className="text-sm text-violet-700">执行已暂停，可点击继续恢复运行</span>
+            <PauseCircle className="text-pop-purple" size={16} />
+            <span className="text-sm text-pop-ink">执行已暂停，可点击继续恢复运行</span>
             <button
               onClick={() => resumeExecution()}
-              className="ml-auto px-3 py-1 rounded bg-violet-600 text-white text-sm hover:bg-violet-700"
+              className="ml-auto px-3 py-1 rounded bg-pop-purple text-white text-sm hover:bg-pop-purple/90"
             >
               继续
             </button>

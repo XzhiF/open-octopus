@@ -15,22 +15,28 @@
 //        local sanity that v3 keys never leak the phase: prefix.
 //   AC3: unknown placeholder ${nope} in a phase inputValues → missing entry,
 //        NOT a 500 (v3 discipline inherited).
-//   AC4: a passing v4 ready materializes the envelope: schedule status='draft',
-//        origin_type='task', config carries format='v4' + per-phase resolved
-//        phases[] (absolute specPath, placeholder-resolved input_values,
-//        managed task_artifacts_dir key) and workflow_chain[0] = phase 1.
+//   AC4: a passing v4 ready creates NO envelope (票03) and the per-phase resolution
+//        (absolute specPath, placeholder-resolved input_values, managed
+//        task_artifacts_dir key, chain = phase 1) lands on the LAUNCH — i.e. the
+//        executions row the built-in job arms for that round.
 //   Vocab: ${phase.slug} / ${phase.spec_dir} / ${task.home} /
 //          ${task_artifacts_dir} resolve via resolveInputValues ctx overload;
 //          ${goal}/${ac} preserved; no-ctx dotted names → unresolved (no throw).
 //
 // Anti-fake-run: real DB + applySchema (R1/R3/R5), Hono app.request (R3),
 // E2E_TD_ data prefix (R7), assert response body + SQL + fs (R4).
+//
+// 票03 换了 AC4 的**读点**：readyTask 不再物化信封（config 冻结在 schedules 行里），
+// 启动计划由内置 job 每次 arm 时从 task_spec + home 重新算。所以「per-phase 解析结果
+// 是否落进这一轮」现在只能也必须在 `executions.input_values` 上验 —— 那才是执行真正
+// 吃到的东西。本文件因此带一个 ExecutionService stub：它写**真实 executions 行**，
+// 于是 ux_exec_task_active / task_id 直连这些约束也是真的。
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
-import { AgentSessionDAO } from "../db/dao"
+import { AgentSessionDAO, ExecutionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
@@ -41,6 +47,51 @@ import os from "os"
 import fs from "fs"
 
 const ORG = "e2e-td-v4gate"
+
+const stub = vi.hoisted(() => ({
+  db: null as Database.Database | null,
+  wsDir: "",
+  wsSeq: 0,
+  seq: 0,
+  started: [] as string[],
+}))
+
+vi.mock("../services/execution-service-registry", () => ({
+  getExecutionService: (wsId: string) => {
+    const ws = stub.db!.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
+      { path: string } | undefined
+    if (!ws) return undefined
+    return {
+      wsPath: ws.path,
+      service: {
+        create: (_wsId: string, input: Record<string, unknown>) => {
+          const id = `td-gate-exec-${stub.seq++}`
+          stub.db!
+            .prepare(
+              `INSERT INTO executions
+                 (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
+                  input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+               VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?, ?, ?)`,
+            )
+            .run(
+              id, _wsId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+              JSON.stringify(input.input_values ?? {}), ORG,
+              input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
+            )
+          return { id }
+        },
+        start: async (id: string) => {
+          stub.started.push(id)
+          stub.db!.prepare("UPDATE executions SET status='running' WHERE id=?").run(id)
+        },
+        registerExternalCallbacks: () => {},
+        clearExternalCallbacks: () => {},
+        cancel: (id: string) => ({ id }),
+        hasLiveEngine: () => false,
+      },
+    }
+  },
+}))
 
 // Workflow YAMLs served by the stub builtin — same shapes as
 // tasks-v3-ready-inputs.test.ts (required inputs drive the input:<name> checks).
@@ -71,8 +122,43 @@ inputs:
 let db: Database.Database
 let app: Hono
 let tmpDir: string
+let wsTmpDir: string
 let taskHome: TaskHomeService
+let service: TasksService
+let execs: ExecutionDAO
 let nextTaskSeq = 0
+
+/** Minimal WorkspaceService stand-in: a row + a real directory (seed 下行 writes into
+ *  it), because arming a task is what builds the workspace now (K4 一 task 一 ws). */
+function fakeWorkspaceService() {
+  return {
+    getById: (id: string) =>
+      (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+    ensureWorktreesForReuse: () => ({ rebuilt: [] }),
+    createFromSpec: (input: Record<string, unknown>) => {
+      const id = `td-gate-ws-${stub.wsSeq++}`
+      const p = path.join(wsTmpDir, id)
+      fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
+      db.prepare(
+        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+      ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+      return { id, name: input.name, org: ORG, status: "active", path: p }
+    },
+  }
+}
+
+/** ready → arm through the real job → read the row the run actually eats. */
+function launchRow(taskId: string): { input: Record<string, string>; ref: string; phase: number | null; round: number | null } {
+  const execId = service.taskLifecycle.armTask(taskId)
+  const row = execs.findById(execId)!
+  return {
+    input: JSON.parse(row.input_values) as Record<string, string>,
+    ref: row.workflow_ref,
+    phase: row.phase_index,
+    round: row.round_index,
+  }
+}
 
 function newDb(): Database.Database {
   const db = new Database(":memory:")
@@ -143,9 +229,13 @@ function validPhase(id: string, n: number): PhaseInput {
 
 beforeAll(() => {
   db = newDb()
+  stub.db = db
+  execs = new ExecutionDAO(db)
   const sse = new SSEService()
   tmpDir = path.join(os.tmpdir(), `test-v4-gate-${Date.now()}`)
+  wsTmpDir = path.join(os.tmpdir(), `test-v4-gate-ws-${Date.now()}`)
   fs.mkdirSync(tmpDir, { recursive: true })
+  fs.mkdirSync(wsTmpDir, { recursive: true })
   taskHome = new TaskHomeService(tmpDir)
   const stubBuiltIn = {
     get(ref: string) {
@@ -153,9 +243,10 @@ beforeAll(() => {
       if (ref.includes("v4-no-required")) return { ref, content: WORKFLOW_NO_REQUIRED_INPUTS }
       return null
     },
-  } as any
-  const service = new TasksService(
-    db, sse, new AgentSessionDAO(db), taskHome, undefined, stubBuiltIn,
+  } as never
+  service = new TasksService(
+    db, sse, new AgentSessionDAO(db), taskHome, undefined, stubBuiltIn, null,
+    fakeWorkspaceService() as never,
   )
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(service, sse))
@@ -164,6 +255,7 @@ beforeAll(() => {
 afterAll(() => {
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
+  fs.rmSync(wsTmpDir, { recursive: true, force: true })
 })
 
 describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)", () => {
@@ -294,7 +386,7 @@ describe("ticket 04 AC3: unknown placeholder → missing entry, never 500", () =
 })
 
 describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型流绑定用）", () => {
-  it("home-relative specPath → envelope 冻结 posix 相对批次目录", async () => {
+  it("home-relative specPath → 这一轮吃到的 batch_dir 是 posix 相对批次目录", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
     insertV4Task(id, [
       {
@@ -305,16 +397,14 @@ describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型�
     ])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status, await res.clone().text()).toBe(200)
-    const sched = db
-      .prepare("SELECT config FROM schedules WHERE origin_type='task' AND origin_id=?")
-      .get(id) as { config: string }
-    const config = JSON.parse(sched.config) as {
-      phases: Array<{ inputValues: Record<string, string> }>
-      workflow_chain: Array<{ input_values: Record<string, string> }>
-    }
-    // posix home-relative —— 与 seed 下行到 ws 的落位一字不差。
-    expect(config.phases[0].inputValues.batch_dir).toBe(".scratch/v4d/p1")
-    expect(config.workflow_chain[0].input_values.batch_dir).toBe(".scratch/v4d/p1")
+    // 票03：没有冻结的信封 config 可读，启动计划每次 arm 现算 —— 所以断言读**行上的**
+    // input_values（seed 下行用的正是同一个 batchRelPath，两者必须一字不差）。
+    const launched = launchRow(id)
+    expect(launched.input.batch_dir).toBe(".scratch/v4d/p1")
+    const wsPath = (db
+      .prepare("SELECT path FROM workspaces WHERE task_id=?")
+      .get(id) as { path: string }).path
+    expect(fs.existsSync(path.join(wsPath, ".scratch", "v4d", "p1", "spec.md"))).toBe(true)
   })
 
   it("specPath 落在 home 外（agent 绝对路径直写）→ batch_rel 解析空 → 409 input，不 500", async () => {
@@ -337,8 +427,8 @@ describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型�
   })
 })
 
-describe("ticket 04 AC4: v4 materialize embeds per-phase results in the envelope", () => {
-  it("AC4a: ready 200 → one draft task-origin envelope; config.format=v4 + phases[] resolved", async () => {
+describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结果落在启动行上", () => {
+  it("AC4a: ready 200 → 零 schedule 行；arm 出的 executions 行带 phase1 解析后的 input_values", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p1 = validPhase(id, 1)
     const p2 = validPhase(id, 2)
@@ -357,53 +447,51 @@ describe("ticket 04 AC4: v4 materialize embeds per-phase results in the envelope
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(200)
-
-    // DB cross-check (R3): exactly one envelope, draft-parked, task origin (K5).
-    const rows = db.prepare(
-      "SELECT * FROM schedules WHERE origin_type = 'task' AND origin_id = ?",
-    ).all(id) as Array<{ status: string; origin_role: string; config: string }>
-    expect(rows).toHaveLength(1)
-    const sched = rows[0]
-    expect(sched.status).toBe("draft")
-    expect(sched.origin_role).toBe("primary")
-
-    const config = JSON.parse(sched.config) as {
-      format?: string
-      phases?: Array<{
-        index: number; slug: string; specPath: string; specDir: string
-        workflowRef: string; inputValues: Record<string, string>
-      }>
-      workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
+    // 入队只写状态：三张 schedule 表一行都不该有（K5「一任务一信封」随票03 退役）。
+    for (const table of ["schedules", "schedule_executions", "schedule_workspaces"]) {
+      expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
     }
-    expect(config.format).toBe("v4")
-    expect(config.phases).toHaveLength(2)
 
-    const [cp1, cp2] = config.phases!
-    // specPath resolved to an absolute under the task home and exists.
-    expect(path.isAbsolute(cp1.specPath)).toBe(true)
-    expect(fs.existsSync(cp1.specPath)).toBe(true)
-    expect(cp1.specDir).toBe(path.dirname(cp1.specPath))
-    // v4 vocabulary resolved per-phase. specPath/slug stay the validPhase
-    // defaults (p1) — only the NAME shown to the UI is "alpha-phase".
-    expect(cp1.inputValues.idea).toBe("alpha-phase")
-    expect(cp1.inputValues.spec_dir).toBe(path.join(taskHome.homePath(id), ".scratch", "v4d", "p1"))
-    expect(cp1.inputValues.home).toBe(taskHome.homePath(id))
-    expect(cp2.inputValues.art).toBe(taskHome.artifactsDir(id))
-    // Managed keys appended per-phase (ticket 05 seed/collect contract).
-    expect(cp1.inputValues.task_artifacts_dir).toBe(taskHome.artifactsDir(id))
-    // Per-phase workflow_ref carried through.
-    expect(cp2.workflowRef).toBe("built-in/v4-no-required-flow")
-
-    // One-schedule envelope (K5): chain[0] = phase 1 → trigger runs it directly.
-    expect(config.workflow_chain).toHaveLength(1)
-    expect(config.workflow_chain[0].workflow_ref).toBe("built-in/v4-required-flow")
-    expect(config.workflow_chain[0].input_values.idea).toBe("alpha-phase")
-    expect(config.workflow_chain[0].input_values.spec_dir).toBe(
-      path.join(taskHome.homePath(id), ".scratch", "v4d", "p1"),
-    )
+    const launched = launchRow(id)
+    // 首触就是 phase 1 那一轮 —— 不再有「把 chain[0] 预载成 phase 1」这一步。
+    expect(launched.ref).toBe("built-in/v4-required-flow")
+    expect([launched.phase, launched.round]).toEqual([1, 1])
+    // v4 词表逐键解析（specPath/slug 仍是 validPhase 的 p1，变的只是展示名）。
+    expect(launched.input.idea).toBe("alpha-phase")
+    expect(launched.input.spec_dir).toBe(path.join(taskHome.homePath(id), ".scratch", "v4d", "p1"))
+    expect(launched.input.home).toBe(taskHome.homePath(id))
+    // 管理键（seed/collect 的挂载点）由 materialize 追加。
+    expect(launched.input.task_artifacts_dir).toBe(taskHome.artifactsDir(id))
   })
 
-  it("AC4b: v3 ready envelope shape unchanged — NO format/phases keys (regression)", async () => {
+  it("AC4b: 后续轮按 (phase,round) 现算 —— 轮次坐标建行即带，不再改写任何定义", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const p1 = validPhase(id, 1)
+    const p2 = validPhase(id, 2)
+    insertV4Task(id, [
+      p1,
+      { ...p2, workflowRef: "built-in/v4-no-required-flow", inputValues: { art: "${task_artifacts_dir}" } },
+    ])
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(200)
+
+    const launched = service.taskLifecycle.armTask(id, { phaseIndex: 2, roundIndex: 2, feedback: "重做" })
+    const row = execs.findById(launched)!
+    expect(row.workflow_ref).toBe("built-in/v4-no-required-flow")
+    expect([row.phase_index, row.round_index]).toEqual([2, 2])
+    const iv = JSON.parse(row.input_values) as Record<string, string>
+    expect(iv.art).toBe(taskHome.artifactsDir(id))
+    expect(iv._phase_index).toBe("2")
+    expect(iv._round_index).toBe("2")
+    expect(iv.feedback).toBe("重做")
+    // 定义层零写入：task_spec.phases[] 还是作者写的那份。
+    const spec = JSON.parse(
+      (db.prepare("SELECT task_spec FROM tasks WHERE id=?").get(id) as { task_spec: string }).task_spec,
+    ) as { phases: Array<{ inputValues: Record<string, string> }> }
+    expect(Object.keys(spec.phases[1].inputValues)).toEqual(["art"])
+  })
+
+  it("AC4c: v3 任务的一轮 = 绑定的 workflow_ref，且不打 phase/round 标（回归）", async () => {
     const id = insertTask(
       {
         goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding",
@@ -413,15 +501,14 @@ describe("ticket 04 AC4: v4 materialize embeds per-phase results in the envelope
     )
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(200)
-    const sched = db.prepare(
-      "SELECT config FROM schedules WHERE origin_type = 'task' AND origin_id = ?",
-    ).get(id) as { config: string }
-    const config = JSON.parse(sched.config) as Record<string, unknown>
-    expect(config.format).toBeUndefined()
-    expect(config.phases).toBeUndefined()
-    expect((config.workflow_chain as Array<Record<string, unknown>>)[0].workflow_ref).toBe(
-      "built-in/v4-no-required-flow",
-    )
+    expect(db.prepare("SELECT COUNT(*) c FROM schedules").get()).toEqual({ c: 0 })
+
+    const launched = launchRow(id)
+    expect(launched.ref).toBe("built-in/v4-no-required-flow")
+    expect([launched.phase, launched.round]).toEqual([null, null])
+    // v3 没有 phases[] 可解析 —— 不该冒出轮次键，但管理键同规则注入。
+    expect(launched.input._phase_index).toBeUndefined()
+    expect(launched.input.task_artifacts_dir).toBe(taskHome.artifactsDir(id))
   })
 })
 

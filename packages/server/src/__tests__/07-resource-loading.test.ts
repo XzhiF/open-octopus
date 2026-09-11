@@ -4,6 +4,11 @@
 // config.requires → workflow.requires UNION) + SG11 (TaskAuthorSessionAugmenter
 // resurrects dead `enhancePromptWithSkills`).
 //
+// 票03 (ADR-0021): the materializer moved VERBATIM from scheduler-service into the task
+// domain (`services/tasks/task-materialize.ts` → buildTaskLaunchConfig) because it is the
+// thing that knows what a TaskSpec is. Same function, same output shape — the AC1
+// assertions below are unchanged, only the import path followed the relocation.
+//
 // Peer-audit correction: task-author uses `getProvider('claude')` (Claude SDK),
 // NOT Pi. `assembleContext()` is already fresh per turn (clone-runtime.ts:278);
 // the `systemPrompt.append` seam (clone-runtime.ts:346-348) is where
@@ -11,7 +16,7 @@
 // specUpdateNotice uses. No fresh-session / pi-adapter / DB-history-prepend.
 //
 // Scope:
-//   AC1 (SG7): materializeTaskSpecToConfig propagates tasks.resources[] +
+//   AC1 (SG7): buildTaskLaunchConfig propagates tasks.resources[] +
 //              subunit.resources[] → config.requires (UNION, deduped)
 //   AC2 (SG7): EngineInitPhase UNION-merges configRequires → workflow.requires
 //              for provisioning (no override, no duplicates)
@@ -27,8 +32,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { materializeTaskSpecToConfig } from "../services/scheduler/scheduler-service"
-import { ResourceManager } from "@octopus/shared"
+import { buildTaskLaunchConfig } from "../services/tasks/task-materialize"
+import { ResourceManager, taskSpecSchema } from "@octopus/shared"
 import type { TaskSpec, ResourceRef, WorkflowDef } from "@octopus/shared"
 import { TaskAuthorSessionAugmenter } from "../services/tasks/task-author-session-augmenter"
 import { CloneRuntime } from "../services/agent/clone-runtime"
@@ -39,9 +44,9 @@ const ORG = "e2e-td-07"
 
 // ── AC1: SG7 materialize resources → config.requires ────────────────
 
-describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.requires", () => {
+describe("07 SG7: buildTaskLaunchConfig propagates resources → config.requires", () => {
   it("propagates task-level resources[] → config.requires (all 4 types)", () => {
-    const taskSpec: TaskSpec = {
+    const taskSpec: TaskSpec = taskSpecSchema.parse({
       goal: "g",
       ac: ["a"],
       resources: [
@@ -50,8 +55,8 @@ describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.re
         { type: "command", name: "ship" },
         { type: "rule", name: "coding-style" },
       ],
-    }
-    const config = materializeTaskSpecToConfig(
+    })
+    const config = buildTaskLaunchConfig(
       taskSpec,
       ["proj"],
       ORG,
@@ -66,7 +71,7 @@ describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.re
   })
 
   it("propagates subunit.resources[] → config.requires (flattened + deduped)", () => {
-    const taskSpec: TaskSpec = {
+    const taskSpec: TaskSpec = taskSpecSchema.parse({
       goal: "g",
       ac: ["a"],
       subunits: [
@@ -90,15 +95,15 @@ describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.re
           ],
         },
       ],
-    }
-    const config = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, undefined, [])
+    })
+    const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, undefined, [])
     // 'shared-skill' appears once (deduped)
     expect(config.requires?.skills).toEqual(["shared-skill"])
     expect(config.requires?.commands).toEqual(["ship-cmd"])
   })
 
   it("UNION-merges task-level + subunit-level resources (deduped)", () => {
-    const taskSpec: TaskSpec = {
+    const taskSpec: TaskSpec = taskSpecSchema.parse({
       goal: "g",
       ac: ["a"],
       resources: [{ type: "skill", name: "task-skill" }],
@@ -115,8 +120,8 @@ describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.re
           ],
         },
       ],
-    }
-    const config = materializeTaskSpecToConfig(
+    })
+    const config = buildTaskLaunchConfig(
       taskSpec,
       ["proj"],
       ORG,
@@ -129,8 +134,8 @@ describe("07 SG7: materializeTaskSpecToConfig propagates resources → config.re
   })
 
   it("omits requires when no resources (backward compat with 06's AC4)", () => {
-    const taskSpec: TaskSpec = { goal: "g", ac: ["a"] }
-    const config = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, "wf", [])
+    const taskSpec: TaskSpec = taskSpecSchema.parse({ goal: "g", ac: ["a"] })
+    const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, "wf", [])
     expect(config.requires).toBeUndefined()
   })
 })

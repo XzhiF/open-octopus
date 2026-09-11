@@ -12,9 +12,9 @@
 //
 // 能力（v4-only UI，generic/任务级 v3 单卡已随 goal/ac 旧路径退役）：
 //   • 增删 phase、改 name/slug/specPath、上移/下移 —— 仅 draft 态开放。
-//     裁定依据：index=数组位次是验收查询（/:id/acceptance）与信封定位
-//     （dispatchPhaseRound）的键，gate 按位次报 phase:<i>；ready 起信封已物化
-//     冻结（K16 隔离即冻结），看板上的结构重排会造成派生/账本/信封三方错位。
+//     裁定依据：index=数组位次是验收查询（/:id/acceptance）与轮次定位
+//     （dispatchPhaseRound）的键，gate 按位次报 phase:<i>；ready 起 spec 快照已物化
+//     冻结（K16 隔离即冻结），看板上的结构重排会造成派生/账本/快照三方错位。
 //     ready 后退化为只读 + 换绑定；跨轮传播走 task-author 对话（agent 车道）。
 //   • 逐行「spec.md」→ PhaseSpecDialog（home-file GET/PUT，契约修复新端点）。
 //   • taskPhaseSchema.workflowRef 非空（shared min(1)）→ 新 phase 表单必须带
@@ -176,7 +176,8 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
 
   return (
     <SectionCard
-      icon={<Link2 className="size-3.5 text-muted-foreground shrink-0" />}
+      icon={<Link2 className="size-3.5 text-pop-ink shrink-0" />}
+      iconTint="var(--pop-purple-soft)"
       title="Phase 计划"
       count={phases.length}
       storageKey="authoring-phases"
@@ -252,7 +253,7 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
             <AlertDialogAction
               disabled={busy}
               onClick={(e) => { e.preventDefault(); if (deletingIdx != null) handleDelete(deletingIdx) }}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-pop-red hover:bg-pop-red/90"
             >
               确认删除
             </AlertDialogAction>
@@ -366,7 +367,7 @@ function PhaseRow({
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] w-10 shrink-0">slug</Label>
             <Input
-              className={`h-6 text-xs ${slug && !SLUG_RE.test(slug) ? "border-red-500" : ""}`}
+              className={`h-6 text-xs ${slug && !SLUG_RE.test(slug) ? "border-pop-red" : ""}`}
               value={slug}
               maxLength={100}
               title="path-safe：字母/数字开头，可含 . _ -"
@@ -406,7 +407,7 @@ function PhaseRow({
                 {phase.workflowRef}
               </Badge>
             ) : (
-              <span className="text-[10px] text-amber-500 ml-auto" data-phase-unbound={phase.index}>
+              <span className="text-[10px] text-pop-amber ml-auto" data-phase-unbound={phase.index}>
                 未绑定
               </span>
             )}
@@ -470,7 +471,7 @@ function PhaseRow({
                     <ArrowDown className="size-3" />
                   </Button>
                   <Button
-                    variant="ghost" size="sm" className="size-6 p-0 text-red-500 hover:text-red-600"
+                    variant="ghost" size="sm" className="size-6 p-0 text-pop-red hover:text-pop-red/80"
                     title={canDelete ? "删除 phase" : "至少保留一个 phase"} disabled={!canDelete || busy}
                     onClick={() => onRequestDelete(phase.index)}
                     data-phase-delete-button={phase.index}
@@ -490,7 +491,7 @@ function PhaseRow({
               {/* spec 磁盘灯（K5 判定源=tree；扫描未就绪/域外路径不臆断，中性表达） */}
               {specEntry ? (
                 <div className="flex items-center gap-1.5 text-[10px]" data-phase-spec-disk={phase.index}>
-                  <span className="text-emerald-600">spec.md ✓</span>
+                  <span className="text-pop-green">spec.md ✓</span>
                   <span className="font-mono text-muted-foreground">
                     {fmtBytes(specEntry.bytes)} · {fmtTime(specEntry.mtime)}
                   </span>
@@ -506,7 +507,7 @@ function PhaseRow({
                   spec.md · 磁盘状态未知（扫描未就绪，可在「草稿批次」区 [↻] 刷新）
                 </div>
               ) : isRelativeScratchSpec(phase.specPath) ? (
-                <div className="text-[10px] text-amber-600" data-phase-spec-missing={phase.index}>
+                <div className="text-[10px] text-pop-amber" data-phase-spec-missing={phase.index}>
                   spec.md ✗ 磁盘未落盘 —— 该 phase 已登记但批次目录里还没有 spec.md
                 </div>
               ) : phase.specPath ? (
@@ -632,7 +633,7 @@ function AddPhaseRow({
           data-phase-add-name
         />
         <Input
-          className={`h-6 text-xs w-32 font-mono ${slugTouched && effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-red-500" : ""}`}
+          className={`h-6 text-xs w-32 font-mono ${slugTouched && effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-pop-red" : ""}`}
           placeholder={`slug=${suggestedSlug}`} value={effectiveSlug} maxLength={100}
           onChange={(e) => { setSlugTouched(true); setSlug(e.target.value) }}
           data-phase-add-slug
@@ -904,7 +905,7 @@ function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, onMutated
                             <div key={name} className="space-y-0.5">
                               <Label className="text-[10px] flex items-center gap-1">
                                 {name}
-                                {def?.required && <span className="text-red-500">*</span>}
+                                {def?.required && <span className="text-pop-red">*</span>}
                               </Label>
                               <Input
                                 className="h-6 text-xs font-mono"

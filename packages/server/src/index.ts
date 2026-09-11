@@ -70,7 +70,6 @@ import { initExecutionServiceRegistry, getExecutionService } from "./services/ex
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
-import { TaskScheduleStatusListener } from "./services/scheduler/schedule-status-listener"
 import { TasksService } from "./services/tasks/tasks-service"
 import { TaskHomeService } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
@@ -79,6 +78,9 @@ import { WorkflowPresetsService } from "./services/workflow-presets-service"
 import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
+import { CodeJobExecutor } from "./services/scheduler/executors/code-job-executor"
+import { registerAndSeedBuiltinCodeJobs } from "./services/scheduler/builtin-jobs"
+import { taskLifecycleHandlerFor } from "./services/tasks/task-lifecycle-service"
 import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
@@ -709,17 +711,13 @@ if (shouldServe) {
 
       // ★ Initialize Scheduler Service (always available, not gated by feature flag)
       // Pattern A (Singleton): Services created once with pre-built DAOs
-      // 03 (SG2): TaskScheduleStatusListener injected into the scheduler service
-      // (covers enqueueJob→queued + abortJob→aborted), the engine (claim/rollback/
-      // retry-cap-failed), and the workflow executor (running/done/failed). The
-      // listener self-filters by origin_type='task' so non-task schedules no-op.
-      const scheduleStatusListener = new TaskScheduleStatusListener(
-        daos!.task,
-        daos!.scheduleConfig,
-        sse,
-      )
+      // 票03 (ADR-0021): the TaskScheduleStatusListener and its three injection points
+      // are gone. Its whole job was mirroring a schedule row's status onto the parent
+      // task's status — a translation that existed only because a task HAD a schedule
+      // row. Task status is now written by the task-lifecycle job that owns the runs;
+      // a job's status stays a job's business.
       const schedulerService = new SchedulerService(
-        daos!.scheduleConfig, daos!.scheduleRun, sse, scheduleStatusListener,
+        daos!.scheduleConfig, daos!.scheduleRun, sse,
       )
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
@@ -767,16 +765,30 @@ if (shouldServe) {
         const executors = new Map<string, import('./services/scheduler/executors/executor-interface').Executor>()
         executors.set('workflow', new WorkflowExecutor(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution, workspaceService!,
-          scheduleStatusListener,
-          daos!.task,
         ))
         executors.set('agent', new AgentExecutor(
           daos!.scheduleRun, daos!.execution, undefined,
         ))
+        // ADR-0021: third job type — a registered TypeScript handler, for the system's
+        // own periodic duties. Seeded rows must exist before start(), so the first tick
+        // never resolves a built-in job to a missing handler.
+        executors.set('job', new CodeJobExecutor(daos!.scheduleRun))
+        // The composition root is the ONLY place the two domains meet: it hands the
+        // built-in job's handler (task domain) to the scheduler's registry, so the
+        // scheduler fires task lifecycle code without ever importing the task domain.
+        const seeded = registerAndSeedBuiltinCodeJobs(
+          daos!.scheduleConfig,
+          '',
+          taskLifecycleHandlerFor(tasksService.taskLifecycle),
+        )
+        if (seeded.created.length || seeded.repaired.length) {
+          console.log(
+            `[scheduler] built-in jobs: ${seeded.created.length} created, ${seeded.repaired.length} repaired`,
+          )
+        }
 
         const schedulerEngine = new SchedulerEngine(
           daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
-          scheduleStatusListener,
         )
         scheduleService.setOnScheduleChange(() => schedulerEngine.reload())
 
@@ -789,14 +801,15 @@ if (shouldServe) {
         })
 
         schedulerEngine.start()
-        // v39: sub-second claim pickup after an explicit task trigger
-        // (TasksService.triggerTask calls this; late-bound because the engine
-        // is constructed after tasksService).
-        tasksService.setWakeScheduler(() => schedulerEngine.wake())
+        // 票03: the task domain no longer needs the engine's wake() — triggering a task
+        // arms and claims through the lifecycle job synchronously, so a user pressing
+        // 触发 never waits on a cron minute. wake() stays for the scheduler's own rows.
         ;(global as any).__octopus_scheduler = schedulerEngine
         ;(global as any).__octopus_schedule_service = scheduleService
         const jobCount = schedulerEngine['cronJobs']?.size ?? 0
-        console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow + agent)`)
+        // Three types now, and the parenthetical used to name two — which read as "the
+        // built-in task-lifecycle row isn't one of these" to whoever debugs a boot.
+        console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow / agent / job)`)
       } else {
         // Engine not running — manual triggers and cron won't execute.
         // Surface this clearly so users don't see perpetual 'triggered' rows.

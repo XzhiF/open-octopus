@@ -10,11 +10,11 @@ import { ToolCallRow } from "./tool-call-row"
 import { TextOutputBlock } from "./text-output-block"
 
 const AGENT_EVENT_COLORS: Record<string, { text: string; bg: string }> = {
-  thinking: { text: "text-violet-500", bg: "bg-violet-500/5" },
-  tool: { text: "text-amber-500", bg: "bg-amber-500/5" },
-  text: { text: "text-blue-500", bg: "bg-blue-500/5" },
-  error: { text: "text-red-500", bg: "bg-red-500/5" },
-  status: { text: "text-gray-500", bg: "bg-gray-500/5" },
+  thinking: { text: "text-pop-purple", bg: "bg-pop-purple/5" },
+  tool: { text: "text-pop-amber", bg: "bg-pop-amber/5" },
+  text: { text: "text-pop-cyan", bg: "bg-pop-cyan/5" },
+  error: { text: "text-pop-red", bg: "bg-pop-red/5" },
+  status: { text: "text-pop-dim", bg: "bg-pop-dim/5" },
 }
 
 function getTurnDuration(turn: TurnGroup): number {
@@ -86,7 +86,7 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
   return (
     <div className={cn(
       "rounded-lg border transition-colors",
-      isLive && "border-violet-300 dark:border-violet-700",
+      isLive && "border-pop-purple",
       !isExpanded && "hover:bg-muted/50 cursor-pointer",
     )}>
       <button
@@ -106,7 +106,7 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
         <span className="text-muted-foreground">{summary}</span>
         <div className="ml-auto flex items-center gap-2">
           {isLive && (
-            <span className="flex items-center gap-1 text-xs text-violet-500">
+            <span className="flex items-center gap-1 text-xs text-pop-purple">
               <Clock className="h-3 w-3 animate-pulse" />
               streaming
             </span>
@@ -171,7 +171,7 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
             }
             if (group.type === "error") {
               return (
-                <div key={gi} className="flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                <div key={gi} className="flex items-center gap-2 rounded-md bg-pop-red/10 px-3 py-2 text-xs text-pop-red">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{group.events.map(e => e.error_message ?? e.content ?? "").join(" ")}</span>
                 </div>

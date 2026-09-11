@@ -37,7 +37,7 @@ import * as agentApi from "@/lib/agent/api"
 import { OutputViewer } from "./output-viewer"
 import { WorkflowBox } from "./workflow-box"
 import { DraftBatches } from "./draft-batches"
-import { SectionCard } from "./section-card"
+import { SectionCard, SectionGroupLabel } from "./section-card"
 import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
@@ -87,17 +87,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   }, [task.id, onMutated])
 
   // ── Resizable panels: drag the divider to adjust chat ↔ output width ──
-  // Default split: 60% chat (left) / 40% output (right).
+  // Default split: 70% chat (left) / 30% output (right)（用户定,原 60/40）。
   const containerRef = useRef<HTMLDivElement>(null)
   const [rightWidth, setRightWidth] = useState(0)
   const draggingRef = useRef(false)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
-  // Measure container on mount and set initial 40% width.
+  // Measure container on mount and set initial 30% width.
   useEffect(() => {
     if (containerRef.current && rightWidth === 0) {
-      setRightWidth(Math.round(containerRef.current.clientWidth * 0.4))
+      setRightWidth(Math.max(240, Math.round(containerRef.current.clientWidth * 0.3)))
     }
   }, [rightWidth])
 
@@ -483,36 +483,38 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-0" data-authoring-workspace>
-      {/* ── top bar (AC3) ── */}
-      <div className="px-4 py-2 border-b bg-muted/30 flex items-center gap-2 flex-wrap">
-        <Badge variant="secondary" className="text-[10px]" data-task-type-badge>{typeBadge}</Badge>
+      {/* ── top bar (AC3) — 🎪 贴纸糖豆徽章 + 粉色入队 CTA ── */}
+      <div className="px-4 py-2 border-b-[2.5px] border-pop-bd bg-pop-paper flex items-center gap-2 flex-wrap">
+        <Badge variant="secondary" className="rounded-full border-2 border-pop-bd bg-pop-yellow text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-type-badge>{typeBadge}</Badge>
         {skillGroups.map((g) => (
-          <Badge key={g} variant="outline" className="text-[10px]" data-skill-group-badge={g}>
+          <Badge key={g} variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-cyan-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-skill-group-badge={g}>
             <Lock className="size-2.5 mr-0.5" aria-label="锁定" /> {g}
           </Badge>
         ))}
         {/* #53 K3：resources/authoring_resources 是 agent spec-field 可写的活字段，
             非空时给最小展示面（hover 列名）——manifest 影子字段的人话归宿之一。 */}
         {(spec.resources?.length ?? 0) > 0 && (
-          <Badge variant="outline" className="text-[10px]" data-task-resources
+          <Badge variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-purple-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-resources
             title={spec.resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
             📦 resources · {spec.resources!.length}
           </Badge>
         )}
         {(spec.authoring_resources?.length ?? 0) > 0 && (
-          <Badge variant="outline" className="text-[10px]" data-task-authoring-resources
+          <Badge variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-green-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-authoring-resources
             title={spec.authoring_resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
             🧪 authoring · {spec.authoring_resources!.length}
           </Badge>
         )}
         {/* codebase 预设恒呈现（v4-only UI：所有任务都有项目语境；非空即锁） */}
-        <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
+        <Button variant="pop-quiet" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
           <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
         </Button>
         <div className="ml-auto flex items-center gap-2">
           <Button
+            variant="pop"
             size="sm"
-            className="h-6 text-[10px]"
+            className="h-6 text-[10px] data-[gate=ok]:bg-pop-green"
+            data-gate={canEnqueue ? "ok" : "no"}
             onClick={handleEnqueue}
             disabled={!canEnqueue || enqueueBusy}
             data-task-enqueue data-testid="task-enqueue"
@@ -531,24 +533,24 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r border-border">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r-[2.5px] border-pop-bd bg-pop-paper">
           {/* Assist-trigger bar (MoA). Skill commands moved to the chat input's
               `/` slash-autocomplete — no more command-bar chips that auto-send. */}
-          <div className="px-3 py-1.5 border-b bg-background flex items-center gap-2" data-command-bar>
+          <div className="px-3 py-1.5 border-b-2 border-dashed border-pop-bd/25 bg-pop-paper flex items-center gap-2 text-pop-dim" data-command-bar>
             {commands.length > 0 && (
-              <span className="text-[10px] text-muted-foreground">输入 / 调用技能（{commands.length} 个可用）</span>
+              <span className="text-[10px]">输入 / 调用技能（{commands.length} 个可用）</span>
             )}
             {commands.length === 0 && (
-              <span className="text-[10px] text-muted-foreground">无额外命令（仅内置 spec-field 流程）</span>
+              <span className="text-[10px]">无额外命令（仅内置 spec-field 流程）</span>
             )}
             <div className="ml-auto">
               <button
                 onClick={() => setMoaOpen(true)}
-                className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
+                className="shrink-0 rounded-full border-2 border-pop-bd bg-pop-purple-soft px-2.5 py-0.5 text-[10px] font-black text-pop-purple shadow-pop-sm pop-press flex items-center gap-1"
                 data-assist-trigger="moa-requirements-review"
                 title="运行专家咨询辅助工作流（MoA / Debate / 单专家）"
               >
-                <Brain className="size-3" /> 专家咨询
+                <Brain className="size-3" /> 🧠 专家咨询
               </button>
               <MoATriggerDialog
                 task={task}
@@ -572,7 +574,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             {chat.resumeStreaming && (
               <div
                 data-resume-banner=""
-                className="m-3 mb-0 flex shrink-0 items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400"
+                className="m-3 mb-0 flex shrink-0 items-center gap-2 rounded-lg border-2 border-pop-bd bg-pop-purple-soft px-3 py-1.5 text-xs font-bold text-pop-purple shadow-pop-sm"
               >
                 <Spinner className="size-3" />
                 AI 回复生成中 —— 关闭弹窗不会中断，点「停止」才会中断
@@ -603,15 +605,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
           </div>
         </div>
 
-        {/* ── Draggable divider ── */}
+        {/* ── Draggable divider — 黑虚线拉条 ── */}
         <div
           onMouseDown={onDividerMouseDown}
-          className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 active:bg-primary transition-colors"
+          className="w-1.5 shrink-0 cursor-col-resize opacity-40 transition-opacity hover:opacity-80 active:opacity-100"
+          style={{ background: "repeating-linear-gradient(180deg, var(--pop-bd) 0 8px, transparent 8px 16px)" }}
           title="拖拽调整宽度"
         />
 
-        {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
-        <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-2.5" data-output-viewer>
+        {/* ── RIGHT: output viewer (D11 — no skill-group info here) — 🎪 SPEC/RUN/GATE 三段 ── */}
+        <div style={{ width: rightWidth }} className="pop-confetti shrink-0 flex flex-col min-h-0 overflow-y-auto p-3 space-y-2.5" data-output-viewer>
+          <SectionGroupLabel data-no-tilt tone="var(--pop-yellow)">SPEC · 规格</SectionGroupLabel>
           {/* PhaseListEditor/绑定卡内部按 v4 format 分叉（goal/ac 卡已随 v4-only UI 退役） */}
           <WorkflowBox task={task} onMutated={onMutated} batchTree={batchTree} />
 
@@ -626,12 +630,15 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             />
           )}
 
+          <SectionGroupLabel data-no-tilt tone="var(--pop-cyan)">RUN · 运行</SectionGroupLabel>
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
           {/* enqueue checklist — v4 五行 phase 契约（server gateV4Phases +
               项目仓库预检同源）；非 v4 历史行同样渲染（五行不绿）。状态只显；按钮在顶栏。 */}
+          <SectionGroupLabel data-no-tilt tone="var(--pop-green)">GATE · 放行</SectionGroupLabel>
           <SectionCard
-            icon={<ClipboardCheck className="size-3.5 text-muted-foreground" />}
+            icon={<ClipboardCheck className="size-3.5 text-pop-ink" />}
+            iconTint="var(--pop-green-soft)"
             title="入队清单"
             count={`${[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRepos].filter(Boolean).length}/5`}
             hint="v4 phase 契约"
@@ -656,13 +663,13 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                     data-checklist-v4={row.id}
                     data-testid={`checklist-v4-${row.id}`}
                   >
-                    <span className={good ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500"}>
+                    <span className={good ? "text-pop-green" : failed ? "text-pop-red" : "text-pop-amber"}>
                       {good ? "✅" : failed ? "✗" : "⏳"}
                     </span>
                     <span>
                       {row.label}
                       {failed && (
-                        <ul className="ml-4 list-disc text-[10px] text-red-500">
+                        <ul className="ml-4 list-disc text-[10px] text-pop-red">
                           {row.hits.map((h) => <li key={h}>{h}</li>)}
                         </ul>
                       )}
@@ -727,14 +734,15 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 <p className="text-muted-foreground">未配置组织</p>
               )}
             </div>
-            <div className="rounded-md border border-dashed p-2 text-[10px] text-muted-foreground">
+            <div className="rounded-md border-2 border-dashed border-pop-bd/40 bg-pop-amber-soft p-2 text-[10px] font-bold text-pop-ink">
               {presetLocked
-                ? "语境已锁定。换语境 = 新建任务。"
+                ? "🔒 语境已锁定。换语境 = 新建任务。"
                 : "选择项目后保存以锁定。保存后不可更改。"}
             </div>
             {!presetLocked && (
               <div className="flex justify-end">
                 <Button
+                  variant="pop"
                   size="sm"
                   disabled={!presetDirty || presetSaveBusy}
                   onClick={() => { void handleSavePreset() }}

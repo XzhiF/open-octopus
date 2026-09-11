@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'user',
   source_schedule_id TEXT,
+  -- schema v41 (task-scheduler-decouple): direct task ownership. Replaces the
+  -- `source_schedule_id → schedules.origin_id` reverse lookup that composite parent-task
+  -- resolution used to walk. No FK (S2 polymorphic convention).
+  task_id TEXT,
   archive_status TEXT DEFAULT NULL
 );
 
@@ -63,6 +67,14 @@ CREATE TABLE IF NOT EXISTS executions (
   budget_snapshot TEXT DEFAULT NULL,
   phase_index INTEGER DEFAULT NULL,
   round_index INTEGER DEFAULT NULL,
+  -- schema v41 (task-scheduler-decouple): an execution states WHICH task it serves.
+  -- Until v41 the board reached a task's executions only by joining through `schedules`
+  -- (origin_type='task'), which forced task code to know the scheduler's table. A
+  -- task_id row is also the task-side launch queue — status 'pending' means armed and
+  -- waiting behind the concurrency gate, claimed by the built-in task-lifecycle job.
+  -- No FK (S2 convention: app-level integrity, so a tasks rebuild can't strand the
+  -- ledger).
+  task_id TEXT,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,
@@ -262,16 +274,18 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
--- 15. Schedules
--- schema v37: cron_expression nullable (drafts from trigger_source='requirement' had no cron)
---             + status / trigger_source / source_chat_session_id / claimed_at for task-pool
--- schema v38: ADDITIVE origin cols (origin_type/origin_id/origin_role/assoc_meta) for S2
---             polymorphic origin (no FK on origin_id — app-level cascade-reap + orphan
---             reaper maintain integrity). trigger_source/source_chat_session_id are KEPT
---             for now (coexist transiently) — their REMOVAL + migrating the 3 承重 sites
---             (scheduler-engine failed-promotion / checkQueuedTasks filter / task-dispatch
---             child creation) to origin_type is ticket 06's job, done together so the build
---             stays green through the removal. The first-class `tasks` table owns lifecycle/spec.
+-- 15. Schedules — A JOB DEFINITION, nothing else.
+-- v37/v38 grew this table until it also carried a task: origin_type/origin_id/origin_role/
+-- assoc_meta (a schedule row POINTING AT a task), a `config` that doubled as a round
+-- cursor, and the run-phase columns the per-task envelope parked in. v41 moved the WHEN
+-- onto tasks.trigger_*; 票03 moved the runs onto executions.task_id; v42 takes the rest.
+--
+-- v42 drops: origin_type / origin_id / origin_role / assoc_meta (a definition never needs
+-- to know who asked for it) and scheduled_at (the envelope's one-shot due time, superseded
+-- by tasks.next_fire_at). v42 keeps status + claimed_at: they are the pump's own run-state
+-- for its cron/agent jobs (manual trigger, aborting a live fire, the stale sweep).
+-- Removing those means moving that state onto schedule_executions — a separate change with
+-- its own risk surface, and nothing task-shaped reads them any more.
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
   org TEXT NOT NULL DEFAULT '',
@@ -300,17 +314,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   max_retain INTEGER NOT NULL DEFAULT 10,
   status TEXT NOT NULL DEFAULT 'queued',
-  -- v2: trigger_source + source_chat_session_id REMOVED (SG1b) — schedules is now
-  -- origin-typed (origin_type/origin_id/origin_role/assoc_meta); task linkage lives on
-  -- tasks.source_chat_session_id. status + claimed_at KEPT (run-phase, runner needs).
-  origin_type TEXT NOT NULL DEFAULT 'cron',
-  origin_id TEXT,
-  origin_role TEXT,
-  assoc_meta TEXT,
   claimed_at TEXT,
-  -- schema v39: one-shot due time for task-origin triggers (manual/time trigger).
-  -- NULL = cron/legacy/claim-immediately. Distinct from next_trigger_at (cron cycle).
-  scheduled_at TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
@@ -392,6 +396,68 @@ CREATE TABLE IF NOT EXISTS schedule_workspaces (
 );
 
 -- =============================================================================
+-- Scheduling v41 (task-scheduler-decouple — ADR-0021)
+--
+-- NO new tables. `schedules` returns to being ONLY a job definition; every column
+-- that existed to bind a definition to a task (origin_type / origin_id / origin_role /
+-- assoc_meta) plus the envelope's due-time column (scheduled_at) are dropped in v42.
+-- status + claimed_at stay: the pump's run-state for its OWN jobs. v39 pre-created one
+-- parked envelope row per task — that is how task and scheduler ended up owning each
+-- other's lifecycle (see ADR-0021 背景).
+--
+-- What task launching uses instead:
+--   tasks.trigger_*       WHEN a task wants to run — the task's own data.
+--   executions.task_id    the launch instance IS the execution row; one row per v4
+--                         round / composite child, status 'pending' = armed and
+--                         waiting behind the concurrency gate.
+--   ux_exec_task_active   「one task, one live instance」as a DB constraint.
+--
+-- A third job_type ('job') runs a registered TypeScript handler on the same cron /
+-- enabled / timeout / consecutive_failures machinery as workflow and agent jobs. The
+-- system's single built-in job (task-lifecycle) is the one unit allowed to know both
+-- worlds: it arms due tasks, watches their executions, advances phases, reaps orphans.
+-- =============================================================================
+
+-- Execution → task direct link (replaces the join through schedules the board needed)
+CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, created_at DESC)
+  WHERE task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ws_task ON workspaces(task_id) WHERE task_id IS NOT NULL;
+
+-- Single-instance latch, ROOT executions only (parent_id = '0'). A violating insert IS
+-- the 「已触发/排队中/本轮在飞」 answer — the pre-v41 equivalent was ~10 guard queries
+-- plus a borrowed UNIQUE index on schedule_executions.
+--
+-- Roots only, because a composite task legitimately runs several CHILD executions of the
+-- same task concurrently (the engine's existing parent_id/child_index nesting, which the
+-- built-in job schedules inside the parent). v4 phase rounds are sequential, so the root
+-- latch is exactly the gate they need.
+--
+-- Written as NOT IN (terminal) rather than IN (active) ON PURPOSE: an execution is alive
+-- in five statuses (pending, running, paused, pending_approval, pending_resume — a
+-- waiting approval or interaction node still holds its workspace), and any status added
+-- later must default to HOLDING the slot. An allow-list would silently let a task be
+-- double-launched the day someone adds a sixth live status. A row stranded in a
+-- non-terminal status is the built-in task-lifecycle job's reconciliation pass to
+-- resolve, not a license to run a second copy.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_exec_task_active ON executions(task_id)
+  WHERE task_id IS NOT NULL AND parent_id = '0'
+    AND status NOT IN ('completed','completed_with_failures','failed','cancelled','aborted','skipped','rejected');
+-- The job's claim scan — armed-but-not-started task launches, globally ordered.
+-- (task_id, created_at) serves 「this task's queue」, which is never the bottleneck: a
+-- task has at most one armed ROOT (ux_exec_task_active) and that index makes the lookup
+-- a single-row unique probe, so no task_id index is needed for it either. What needs its
+-- own index is the job's per-tick scan across ALL tasks, which filters on status alone
+-- and therefore cannot use a task_id-leading index.
+--
+-- Children are IN this predicate on purpose: a composite fan-out that overflows the
+-- concurrency cap parks its child as a pending row — that IS the queue — and after 票03
+-- deleted the scheduler's own claim loop, the job is the only owner left to pick it up.
+-- The latch above stays roots-only, because a composite may run several children of one
+-- task at once.
+CREATE INDEX IF NOT EXISTS idx_exec_pending_claimable ON executions(created_at)
+  WHERE task_id IS NOT NULL AND status = 'pending';
+
+-- =============================================================================
 -- Agent Tables (from agent_memory.db — agent-schema.ts + agent-migrations/)
 -- =============================================================================
 
@@ -451,6 +517,25 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at TEXT NOT NULL,
   completed_at TEXT,
   workspace_id TEXT DEFAULT NULL,
+  -- ── schema v41 (task-scheduler-decouple) ── WHEN the task wants to run, owned by
+  -- the task. Before v41 `tasks` had no trigger columns at all: the due time lived
+  -- on a private `schedules` row that `readyTask` pre-created and parked
+  -- ('draft'), so "arming" a task meant flipping that row — which is why task and
+  -- scheduler ended up owning each other's lifecycle (see ADR-0021).
+  --   manual — a human presses 触发 (writes next_fire_at = now once)
+  --   once   — one-shot at trigger_at
+  --   cron   — recurring; next_fire_at recomputed after each fire
+  -- next_fire_at is the SINGLE due cursor the scheduler's scan reads (once: =
+  -- trigger_at; cron: computed by cron-utils.calculateNextExecutions). The task
+  -- side owns all of it; the scheduler never writes these columns.
+  trigger_mode TEXT NOT NULL DEFAULT 'manual'
+    CHECK (trigger_mode IN ('manual','once','cron')),
+  trigger_at TEXT,
+  cron_expression TEXT,
+  cron_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  trigger_enabled INTEGER NOT NULL DEFAULT 1,
+  next_fire_at TEXT,
+  last_fired_at TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 
@@ -647,10 +732,7 @@ CREATE INDEX IF NOT EXISTS idx_schedules_enabled_type ON schedules(enabled, job_
 CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status) WHERE deleted_at IS NULL;
 -- schema v38: additive origin lookup index (S2 polymorphic association).
 -- findSchedulesByOrigin + cascade-reap + orphan reaper use (origin_type, origin_id).
-CREATE INDEX IF NOT EXISTS idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_claimed ON schedules(claimed_at) WHERE claimed_at IS NOT NULL;
--- v39: due-time FIFO for queued task triggers
-CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(scheduled_at) WHERE deleted_at IS NULL AND status = 'queued';
 
 -- Schedule executions indexes
 CREATE INDEX IF NOT EXISTS idx_sched_execs_schedule ON schedule_executions(schedule_id, triggered_at DESC);
@@ -690,6 +772,11 @@ CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_source_chat_session ON tasks(source_chat_session_id) WHERE source_chat_session_id IS NOT NULL AND deleted_at IS NULL;
 -- board recency sort
 CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC) WHERE deleted_at IS NULL;
+-- schema v41 (ADR-0021): the due-trigger scan. next_fire_at is the single cursor the
+-- scheduler reads; partial so it stays tiny (only armed, live, ready tasks index).
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(next_fire_at)
+  WHERE deleted_at IS NULL AND status = 'ready' AND trigger_enabled = 1
+    AND next_fire_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_summary ON messages(is_summary) WHERE is_summary = 1;
 CREATE INDEX IF NOT EXISTS idx_clones_org ON clones(org);

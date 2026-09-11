@@ -12,16 +12,16 @@ import type { AgentVersionInfo, VersionStage, AgentVersionStatus } from '@/lib/a
 // ── Badge configs ──────────────────────────────────────────────────
 
 const stageConfig: Record<VersionStage, { label: string; className: string }> = {
-  alpha: { label: 'Alpha', className: 'bg-orange-50 text-orange-700 border-orange-200' },
-  beta: { label: 'Beta', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  rc: { label: 'RC', className: 'bg-purple-50 text-purple-700 border-purple-200' },
-  stable: { label: 'Stable', className: 'bg-green-50 text-green-700 border-green-200' },
+  alpha: { label: 'Alpha', className: 'bg-pop-amber-soft text-pop-ink border-pop-bd/30' },
+  beta: { label: 'Beta', className: 'bg-pop-cyan-soft text-pop-ink border-pop-bd/30' },
+  rc: { label: 'RC', className: 'bg-pop-purple-soft text-pop-ink border-pop-bd/30' },
+  stable: { label: 'Stable', className: 'bg-pop-green-soft text-pop-ink border-pop-bd/30' },
 }
 
 const statusConfig: Record<AgentVersionStatus, { label: string; className: string }> = {
   draft: { label: '草稿', className: 'bg-muted text-muted-foreground' },
-  published: { label: '已发布', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  archived: { label: '已归档', className: 'bg-gray-50 text-gray-500 border-gray-200' },
+  published: { label: '已发布', className: 'bg-pop-green-soft text-pop-ink border-pop-bd/30' },
+  archived: { label: '已归档', className: 'bg-pop-idle text-pop-dim border-pop-bd/30' },
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

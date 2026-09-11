@@ -8,6 +8,7 @@ import type {
   JobConfig,
   WorkflowConfig,
   AgentConfig,
+  CodeJobConfig,
   AgentRetryPolicy,
   SchedulerJob,
   SchedulerExecution,
@@ -35,6 +36,7 @@ export type {
   JobConfig,
   WorkflowConfig,
   AgentConfig,
+  CodeJobConfig,
   AgentRetryPolicy,
   SchedulerJob,
   SchedulerExecution,
@@ -52,12 +54,14 @@ export type {
   ListAuditLogsParams,
 }
 
-// ============ JobDetail (composite view, ticket 10/13) ============
-// GET /jobs/:id returns a JobDetail for composite tasks: children[] (actual
-// dispatched child schedules) + dag (composition structure from task_spec).
-// The canonical definitions live in @octopus/server (scheduler-service.ts), but
-// web-app cannot import from the server package — these mirror that shape so the
-// client is type-safe without a cross-package dependency.
+// ============ JobDetail ============
+// GET /jobs/:id returns a plain SchedulerJob (ticket 10/13 used to hang a composite
+// children[]/dag[] off it, read out of the per-task envelope rows; ADR-0021 票03
+// deleted SchedulerService.findCompositeChildren/buildDagFromTaskSpec, and a task's
+// runs now live on GET /api/tasks/:id instead. The alias stays because getJob/abortJob
+// are typed with it and because the two composite view-models below are still the
+// shapes components/tasks/composite-dag.tsx renders — it builds them client-side from
+// task_spec.subunits.
 
 export interface JobDetailDagNode {
   id: string
@@ -76,20 +80,32 @@ export interface JobDetailDag {
   edges: JobDetailDagEdge[]
 }
 
+/** One run row in the composite drill-down (a task execution badge projected onto
+ *  the DAG's child axis). `run_id` was `schedule_id` while children were envelope
+ *  rows; it is now the execution id, and 票05 put the subunit label ON the badge
+ *  (`TaskExecutionBadge.name`, written at dispatch), so `subunit_name` reads that
+ *  first — the workflow_ref→spec match is only the name-less fallback now. */
 export interface JobDetailChild {
-  schedule_id: string
+  run_id: string
   name: string
   status: string
   workflow_ref: string
   subunit_name: string
 }
 
-/** JobDetail = SchedulerJob + optional composite fields. Simple tasks return a
- *  plain SchedulerJob (children/dag undefined) — backward compatible. */
-export type JobDetail = SchedulerJob & {
-  children?: JobDetailChild[]
-  dag?: JobDetailDag
+/** The built-in code-job rows (the `job`-type system duties, e.g. 系统 · 任务生命周期)
+ *  carry a DETERMINISTIC id — `builtin-<handler>` — which is the server's seed key
+ *  (packages/server/src/services/scheduler/builtin-jobs.ts, `builtinJobId`). The ops
+ *  page uses this to render them as pausable-but-not-deletable: 删掉内置 job = 停掉
+ *  全系统的任务启动，而 seed 不会复活软删的行（findByIdRaw 连 deleted 一起看）。
+ *  User-created `job` rows are NOT builtin — they keep the normal delete affordance. */
+export function isBuiltinJob(job: Pick<SchedulerJob, "id">): boolean {
+  return job.id.startsWith("builtin-")
 }
+
+/** JobDetail = SchedulerJob. Kept as a name so the callers (getJob / abortJob) do
+ *  not have to change with the payload. */
+export type JobDetail = SchedulerJob
 
 // ============ Helpers ============
 
@@ -184,17 +200,11 @@ export async function triggerJob(
   return handleResponse(res)
 }
 
-/** Confirm gate (D13/G7): move a draft schedule draft→queued. Server runs enqueueJob →
- *  schedules.status='queued' + SSE schedule_status(queued). */
-export async function enqueueJob(id: string): Promise<SchedulerJob> {
-  const res = await fetch(`${getServerUrl()}${BASE}/jobs/${id}/enqueue`, {
-    method: "POST",
-  })
-  return handleResponse<SchedulerJob>(res)
-}
-
 /** User-triggered abort (G4): guard status in (claimed,running) → schedules.status='aborted'
- *  + workspace cleanup + SSE schedule_status(aborted). */
+ *  + workspace cleanup + SSE schedule_status(aborted).
+ *  (The draft→queued confirm gate `POST /jobs/:id/enqueue` was deleted by ADR-0021 票03
+ *   together with enqueueJob + the 'draft' status: a job definition is registered, not
+ *   parked. Task arming moved to POST /api/tasks/:id/trigger*.) */
 export async function abortJob(id: string): Promise<JobDetail> {
   const res = await fetch(`${getServerUrl()}${BASE}/jobs/${id}/abort`, {
     method: "POST",

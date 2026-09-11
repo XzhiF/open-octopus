@@ -118,7 +118,7 @@ export function WorkflowViewerDialog({ taskId, workflowRef, open, onOpenChange }
           ) : state.kind === "error" ? (
             <div className="p-6 space-y-2 text-xs" data-workflow-degraded>
               {state.status === 400 ? (
-                <div className="flex items-start gap-2 text-amber-600">
+                <div className="flex items-start gap-2 text-pop-amber">
                   <ShieldAlert className="size-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="font-medium">绑定的工作流已不存在</div>
@@ -128,7 +128,7 @@ export function WorkflowViewerDialog({ taskId, workflowRef, open, onOpenChange }
                   </div>
                 </div>
               ) : state.status === 404 ? (
-                <div className="flex items-start gap-2 text-amber-600">
+                <div className="flex items-start gap-2 text-pop-amber">
                   <FileQuestion className="size-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="font-medium">任务不存在</div>
@@ -136,7 +136,7 @@ export function WorkflowViewerDialog({ taskId, workflowRef, open, onOpenChange }
                   </div>
                 </div>
               ) : (
-                <div className="text-red-600">{state.message || "加载工作流内容失败"}</div>
+                <div className="text-pop-red">{state.message || "加载工作流内容失败"}</div>
               )}
             </div>
           ) : state.kind === "loaded" && state.view.content ? (

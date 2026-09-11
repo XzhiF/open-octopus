@@ -68,16 +68,16 @@ export function ExecutionButtonBar({
 
   return (
     <div className="flex flex-wrap items-center gap-1 mt-2 nodrag min-w-0">
-      <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-emerald-600 border-emerald-300 hover:bg-emerald-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onDetail?.() }}>
+      <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-green border-pop-green/40 hover:bg-pop-green-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onDetail?.() }}>
         <FileText className="h-3 w-3" />详细
       </Button>
       {showApprove && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-violet-600 border-violet-300 hover:bg-violet-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onApprove?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-purple border-pop-purple/40 hover:bg-pop-purple-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onApprove?.() }}>
           <CheckCircle className="h-3 w-3" />审批
         </Button>
       )}
       {showExecute && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-blue-600 border-blue-300 hover:bg-blue-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onExecute?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-cyan border-pop-cyan/40 hover:bg-pop-cyan-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onExecute?.() }}>
           <Play className="h-3 w-3" />执行
         </Button>
       )}
@@ -85,7 +85,7 @@ export function ExecutionButtonBar({
         <Button
           variant="outline"
           size="sm"
-          className="h-6 px-1.5 text-xs gap-1 text-amber-600 border-amber-300 hover:bg-amber-50 cursor-pointer whitespace-nowrap"
+          className="h-6 px-1.5 text-xs gap-1 text-pop-ink border-pop-amber/60 hover:bg-pop-amber-soft cursor-pointer whitespace-nowrap"
           onClick={(e) => { e.stopPropagation(); if (!pausing) onPause?.() }}
           disabled={pausing}
         >
@@ -94,17 +94,17 @@ export function ExecutionButtonBar({
         </Button>
       )}
       {showResume && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-emerald-600 border-emerald-300 hover:bg-emerald-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onResume?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-green border-pop-green/40 hover:bg-pop-green-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onResume?.() }}>
           <Play className="h-3 w-3" />继续
         </Button>
       )}
       {showRetry && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-red-600 border-red-200 hover:bg-red-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onRetry?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-red border-pop-red/40 hover:bg-pop-pink-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onRetry?.() }}>
           <RotateCcw className="h-3 w-3" />重试
         </Button>
       )}
       {showSkip && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-gray-600 border-gray-200 hover:bg-gray-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onSkip?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-dim border-pop-bd/30 hover:bg-pop-idle cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onSkip?.() }}>
           <SkipForward className="h-3 w-3" />跳过
         </Button>
       )}
@@ -120,7 +120,7 @@ export function ExecutionButtonBar({
         </Button>
       )}
       {showDelete && (
-        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-red-500 border-red-300 hover:bg-red-50 cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onDelete?.() }}>
+        <Button variant="outline" size="sm" className="h-6 px-1.5 text-xs gap-1 text-pop-red border-pop-red/40 hover:bg-pop-pink-soft cursor-pointer whitespace-nowrap" onClick={(e) => { e.stopPropagation(); onDelete?.() }}>
           <Trash2 className="h-3 w-3" />删除
         </Button>
       )}

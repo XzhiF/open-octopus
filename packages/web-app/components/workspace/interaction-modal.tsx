@@ -200,7 +200,7 @@ export function InteractionModal({
         <DialogHeader className="flex-shrink-0 px-6 pt-4 pb-2">
           <div className="flex items-center justify-between pr-8">
             <DialogTitle className="flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-purple-500" />
+              <MessageCircle className="h-5 w-5 text-pop-purple" />
               Interaction: {nodeId}
             </DialogTitle>
             <Button
@@ -208,7 +208,7 @@ export function InteractionModal({
               size="sm"
               onClick={() => setConfirmOpen(true)}
               disabled={forceCompleting}
-              className="text-amber-600 border-amber-300 hover:bg-amber-50"
+              className="text-pop-amber border-pop-amber/40 hover:bg-pop-amber-soft"
             >
               <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
               {forceCompleting ? "结束中..." : "结束交互"}
@@ -236,7 +236,7 @@ export function InteractionModal({
           <AlertDialogCancel>取消</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleForceComplete}
-            className="bg-amber-600 text-white hover:bg-amber-700"
+            className="bg-pop-amber text-white hover:bg-pop-amber/90"
           >
             {forceCompleting ? "结束中..." : "确认结束"}
           </AlertDialogAction>

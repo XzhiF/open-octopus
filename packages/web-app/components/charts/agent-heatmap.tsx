@@ -17,10 +17,10 @@ interface AgentHeatmapProps {
 function intensityColor(count: number, max: number): string {
   const ratio = max > 0 ? count / max : 0
   if (ratio === 0) return "bg-muted/20"
-  if (ratio < 0.25) return "bg-violet-200 dark:bg-violet-900/30"
-  if (ratio < 0.5) return "bg-violet-300 dark:bg-violet-800/40"
-  if (ratio < 0.75) return "bg-violet-400 dark:bg-violet-700/50"
-  return "bg-violet-500 dark:bg-violet-600/60"
+  if (ratio < 0.25) return "bg-pop-purple/25"
+  if (ratio < 0.5) return "bg-pop-purple/50"
+  if (ratio < 0.75) return "bg-pop-purple/75"
+  return "bg-pop-purple"
 }
 
 export function AgentHeatmap({ cells, days = 30 }: AgentHeatmapProps) {

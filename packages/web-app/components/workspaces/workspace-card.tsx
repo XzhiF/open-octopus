@@ -131,7 +131,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
             <Badge variant={config.variant} data-testid="workspace-status-badge">{config.label}</Badge>
             {isRunning && (
               <Badge
-                className="border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                className="border-pop-amber/40 bg-pop-amber/10 text-pop-amber"
                 data-testid="workspace-running-badge"
               >
                 运行中 {runningCount}

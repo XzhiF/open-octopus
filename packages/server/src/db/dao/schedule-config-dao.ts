@@ -2,6 +2,16 @@ import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { ScheduleRow, ScheduleWorkspaceRow, SchedulerStateRow } from "../types"
 
+/** A `schedules` row plus its most recent fire, as the job list/get read model needs it.
+ *  The four `last_exec_*` fields are correlated subqueries over `schedule_executions` —
+ *  named once here so the list query and the single-get query cannot drift apart. */
+export type ScheduleRowWithLastExec = ScheduleRow & {
+  last_exec_status?: string | null
+  last_exec_triggered_at?: string | null
+  last_exec_error_summary?: string | null
+  last_exec_duration_ms?: number | null
+}
+
 /**
  * ScheduleConfigDAO — CRUD for schedule definitions and scheduler state.
  * Covers: schedules, schedule_workspaces, scheduler_state tables.
@@ -19,22 +29,6 @@ export class ScheduleConfigDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM schedules WHERE id = ?").get(id) as ScheduleRow) ?? null
   }
 
-  /**
-   * Ticket 04 (composite dispatch parent aggregation): find FAILED child schedules
-   * dispatched by a task_dispatch node whose persisted `parent_task_dispatch` marker
-   * points at the given parent composition-wf execution. The marker is written by
-   * TaskDispatchService at dispatch time (03) so the correlation survives restarts;
-   * this query reads it back via json_extract to propagate child failure → parent
-   * 'failed' at composition-wf completion. Read-only — symmetric to 05's failed writer.
-   */
-  findFailedChildSchedules(parentExecutionId: string): ScheduleRow[] {
-    return this.stmt(
-      `SELECT * FROM schedules
-       WHERE deleted_at IS NULL
-         AND status = 'failed'
-         AND json_extract(config, '$.parent_task_dispatch.execution_id') = ?`,
-    ).all(parentExecutionId) as ScheduleRow[]
-  }
 
   /**
    * Ticket 10 (JobDetail composite view): find ALL child schedules dispatched by a
@@ -52,22 +46,6 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all(parentExecutionId) as ScheduleRow[]
   }
 
-  /**
-   * S2 polymorphic origin lookup (schema v38): find all schedules whose
-   * `origin_type` + `origin_id` point at the given parent. For tasks, this is
-   * `findSchedulesByOrigin('task', task.id)` — used by GET /tasks/:id (children
-   * drill-down), the cascade-reap on task delete/abort, and the orphan reaper
-   * (SG12). No FK on origin_id (S2 tradeoff) — app-level integrity. Returns
-   * active (non-deleted) schedules ordered by created_at ASC so dispatch order
-   * (primary → subunits) is stable.
-   */
-  findSchedulesByOrigin(originType: string, originId: string): ScheduleRow[] {
-    return this.stmt(
-      `SELECT * FROM schedules
-       WHERE origin_type = ? AND origin_id = ? AND deleted_at IS NULL
-       ORDER BY created_at ASC`,
-    ).all(originType, originId) as ScheduleRow[]
-  }
 
   findByName(name: string): ScheduleRow | null {
     return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
@@ -127,10 +105,10 @@ export class ScheduleConfigDAO extends BaseDAO {
     cron_expression: string | null; timezone: string;
   }): Database.RunResult {
     const now = new Date().toISOString()
-    // schema v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id
-    // are DROPPED from schedules. New dispatch-seam callers set origin_type/
-    // origin_id/origin_role/assoc_meta; legacy callers passing the removed
-    // trigger_source/source_chat_session_id keys have them ignored (not written).
+    // v42 (ADR-0021 票03): origin_type / origin_id / origin_role / assoc_meta and
+    // scheduled_at are dropped from the INSERT along with the columns. Callers that used
+    // to bind a schedule to a task through them (readyTask's envelope, task-dispatch
+    // children) no longer create schedule rows at all, so there is nothing to pass.
     return this.stmt(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone, workspace_id, workflow_ref,
@@ -138,8 +116,8 @@ export class ScheduleConfigDAO extends BaseDAO {
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
-        status, origin_type, origin_id, origin_role, assoc_meta, claimed_at, scheduled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
@@ -152,10 +130,7 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.parallel_policy ?? "skip", row.description ?? null,
       row.version ?? 1, row.consecutive_failures ?? 0, row.max_retain ?? 10,
       row.status ?? "queued",
-      row.origin_type ?? "cron", row.origin_id ?? null,
-      row.origin_role ?? null, row.assoc_meta ?? null,
       row.claimed_at ?? null,
-      row.scheduled_at ?? null,
     )
   }
 
@@ -181,6 +156,15 @@ export class ScheduleConfigDAO extends BaseDAO {
     return this.stmt(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND version = ?`).run(...vals)
   }
 
+  /** Clear a soft delete. Used by the built-in job seed: a row the operator deleted
+   *  stays deleted, but a built-in whose row got soft-deleted (by API, by hand, by an
+   *  older build that lacked the guard) must come back at next boot — see the WHY in
+   *  seedBuiltinCodeJobs. */
+  undelete(id: string): Database.RunResult {
+    const now = new Date().toISOString()
+    return this.stmt("UPDATE schedules SET deleted_at = NULL, updated_at = ? WHERE id = ?").run(now, id)
+  }
+
   softDelete(id: string): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, id)
@@ -198,44 +182,9 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all() as ScheduleRow[]
   }
 
-  /** v39: queued rows that are DUE (scheduled_at NULL = legacy/cron/immediate,
-   *  always claimable; future scheduled_at rows are returned only once due).
-   *  FIFO by due time (COALESCE keeps legacy created_at ordering). */
-  findQueuedSchedules(nowIso: string): ScheduleRow[] {
-    return this.stmt(
-      "SELECT * FROM schedules WHERE status = 'queued' AND deleted_at IS NULL AND (scheduled_at IS NULL OR scheduled_at <= ?) ORDER BY COALESCE(scheduled_at, created_at) ASC"
-    ).all(nowIso) as ScheduleRow[]
-  }
 
-  /** v39 board enrichment: one batched query for the root schedule rows
-   *  (status + due time) of many task ids. Returns plain rows (not ScheduleRow). */
-  findRootSchedulesByTaskIds(taskIds: string[]): { origin_id: string; status: string; scheduled_at: string | null }[] {
-    if (taskIds.length === 0) return []
-    const placeholders = taskIds.map(() => "?").join(", ")
-    return this.stmt(
-      `SELECT origin_id, status, scheduled_at FROM schedules
-       WHERE origin_type = 'task' AND origin_role IN ('primary', 'coordinator')
-         AND deleted_at IS NULL AND origin_id IN (${placeholders})`
-    ).all(...taskIds) as { origin_id: string; status: string; scheduled_at: string | null }[]
-  }
 
-  /** v39 trigger: guarded parked→armed flip (draft → queued + due time).
-   *  changes===0 ⇒ lost a race (abort/re-trigger) — caller returns 409. */
-  claimParkedTaskSchedule(id: string, scheduledAtIso: string): Database.RunResult {
-    const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE schedules SET status = 'queued', scheduled_at = ?, updated_at = ? WHERE id = ? AND status = 'draft' AND deleted_at IS NULL"
-    ).run(scheduledAtIso, now, id)
-  }
 
-  /** v39 cancel trigger: armed-but-not-started → parked
-   *  (queued → draft, clears due time). Requires unclaimed AND still in the
-   *  future — the poller cannot have due-claimed it. changes===0 ⇒ race. */
-  cancelTriggeredTaskSchedule(id: string, nowIso: string): Database.RunResult {
-    return this.stmt(
-      "UPDATE schedules SET status = 'draft', scheduled_at = NULL, updated_at = ? WHERE id = ? AND status = 'queued' AND claimed_at IS NULL AND scheduled_at > ? AND deleted_at IS NULL"
-    ).run(nowIso, id, nowIso)
-  }
 
   // T-5 AC11: stale claimed/running — claimed_at older than cutoff ISO string.
   // Includes 'running' so a task that crashed mid-execution (status advanced past
@@ -567,43 +516,40 @@ export class ScheduleConfigDAO extends BaseDAO {
 
   // ── Scheduler-service queries (global job list with last-exec subqueries) ──
 
+  /** The last-exec projection, shared by the list and the single-get query: four
+   *  correlated subqueries over the same "newest fire" row, so a column added here shows
+   *  up in both paths (and cannot be added to one only). */
+  private static readonly LAST_EXEC_SELECT = `
+        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
+        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
+        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary,
+        (SELECT duration_ms FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_duration_ms`
+
   listJobsQuery(params: {
     conditions: string[]; queryParams: unknown[];
     orderClause: string; limit: number; offset: number;
-  }): { rows: ScheduleRow[]; total: number } {
+  }): { rows: ScheduleRowWithLastExec[]; total: number } {
     const whereClause = params.conditions.join(' AND ')
     const countSql = `SELECT COUNT(*) as cnt FROM schedules s WHERE ${whereClause}`
     const total = (this.stmt(countSql).get(...params.queryParams) as { cnt: number }).cnt
 
     const querySql = `
-      SELECT s.*,
-        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
-        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
-        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary
+      SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
       FROM schedules s
       WHERE ${whereClause}
       ORDER BY ${params.orderClause}
       LIMIT ? OFFSET ?
     `
-    const rows = this.stmt(querySql).all(...params.queryParams, params.limit, params.offset) as (ScheduleRow & {
-      last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-    })[]
+    const rows = this.stmt(querySql).all(...params.queryParams, params.limit, params.offset) as ScheduleRowWithLastExec[]
     return { rows, total }
   }
 
-  getJobWithLastExec(id: string): (ScheduleRow & {
-    last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-  }) | null {
+  getJobWithLastExec(id: string): ScheduleRowWithLastExec | null {
     return (this.stmt(`
-      SELECT s.*,
-        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_status,
-        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_triggered_at,
-        (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary
+      SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
       FROM schedules s
       WHERE s.id = ? AND s.deleted_at IS NULL
-    `).get(id) as (ScheduleRow & {
-      last_exec_status?: string | null; last_exec_triggered_at?: string | null; last_exec_error_summary?: string | null
-    })) ?? null
+    `).get(id) as ScheduleRowWithLastExec | undefined) ?? null
   }
 
   // ── Agent route queries ────────────────────────────────────────────

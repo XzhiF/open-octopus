@@ -97,7 +97,7 @@ export function VersionDetail({ version, onRollback, onArchive, onViewDiff, isAr
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5 text-amber-600 hover:text-amber-700"
+              className="gap-1.5 text-pop-amber hover:text-pop-ink"
               onClick={() => setShowRollbackConfirm(true)}
             >
               <RotateCcw className="h-3.5 w-3.5" />

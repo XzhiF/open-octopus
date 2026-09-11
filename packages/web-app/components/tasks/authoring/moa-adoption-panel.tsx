@@ -99,7 +99,7 @@ export function MoaAdoptionPanel({
       data-moa-adoption-panel
     >
       {adopted ? (
-        <div className="text-emerald-600" data-moa-adopted>
+        <div className="text-pop-green" data-moa-adopted>
           ✅ 已采纳 {adopted.ac.length} 条 ac + {adopted.decisions.length} 条方案建议
           <span className="block text-muted-foreground mt-0.5">
             方案建议进入决策备忘{!v4 && "；ac 已合并进右侧目标卡"}。
@@ -110,7 +110,7 @@ export function MoaAdoptionPanel({
           {!v4 && output.ac_candidates.length > 0 && (
             <div>
               <div className="font-medium mb-1 flex items-center gap-1">
-                <Check className="size-3 text-emerald-600" /> ac 候选（勾选采纳）
+                <Check className="size-3 text-pop-green" /> ac 候选（勾选采纳）
               </div>
               {output.ac_candidates.map((c, i) => (
                 <label key={i} className="flex items-start gap-2 py-0.5 cursor-pointer">
@@ -129,7 +129,7 @@ export function MoaAdoptionPanel({
           {output.suggestions.length > 0 && (
             <div>
               <div className="font-medium mb-1 flex items-center gap-1">
-                <Lightbulb className="size-3 text-amber-500" /> 方案建议（勾选 → 决策备忘）
+                <Lightbulb className="size-3 text-pop-amber" /> 方案建议（勾选 → 决策备忘）
               </div>
               {output.suggestions.map((s, i) => (
                 <label key={i} className="flex items-start gap-2 py-0.5 cursor-pointer">
@@ -148,7 +148,7 @@ export function MoaAdoptionPanel({
           {output.risks.length > 0 && (
             <div>
               <div className="font-medium mb-1 flex items-center gap-1">
-                <AlertTriangle className="size-3 text-red-500" /> 风险（仅告知）
+                <AlertTriangle className="size-3 text-pop-red" /> 风险（仅告知）
               </div>
               <ul className="text-muted-foreground space-y-0.5 list-disc pl-4">
                 {output.risks.map((r, i) => <li key={i}>{r}</li>)}

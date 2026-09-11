@@ -16,6 +16,8 @@ interface CostWaterfallProps {
 
 const known = (v: number | null) => v ?? 0
 
+const POP_SERIES = ['var(--pop-pink)', 'var(--pop-amber)', 'var(--pop-purple)', 'var(--pop-green)', 'var(--pop-cyan)']
+
 export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
   const bars = useMemo(() => {
     if (!models.length) return []
@@ -43,7 +45,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <div className="h-2 w-2 rounded-full bg-blue-500" />
+        <div className="h-2 w-2 rounded-full bg-pop-cyan" />
         <span className="text-sm font-medium">成本瀑布图</span>
         <span className="ml-auto text-xs text-muted-foreground">
           {formatCost(allUnpriced ? null : grandTotal, bars.every((b) => b.total_cost !== null))} 总计
@@ -61,7 +63,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
                 className="h-full rounded transition-all duration-500"
                 style={{
                   width: `${bar.pct}%`,
-                  background: `hsl(${i * 45 + 200}, 70%, 50%)`,
+                  background: POP_SERIES[i % POP_SERIES.length],
                 }}
               />
               <span className="absolute inset-0 flex items-center px-2 text-xs text-white/80 font-medium truncate">

@@ -22,7 +22,7 @@ export function TokenUsageDisplay({ usages, isRunning, maxVisible = DEFAULT_MAX_
   const overflow = filtered.length - maxVisible
   const hasOverflow = overflow > 0
 
-  const rowColor = isRunning ? "text-amber-600 font-medium" : "text-muted-foreground"
+  const rowColor = isRunning ? "text-pop-amber font-medium" : "text-muted-foreground"
 
   return (
     <div className="space-y-0.5 mt-1">

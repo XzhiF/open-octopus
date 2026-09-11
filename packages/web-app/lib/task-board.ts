@@ -21,7 +21,7 @@
 // the Record<TaskStatus, …> exhaustiveness point that forces new states to be
 // handled, 票 07 发现的 web typecheck 红线); the column layer folds buckets.
 
-import type { Task, TaskStatus } from "@octopus/shared"
+import { taskTriggerFailedPayloadSchema, type Task, type TaskStatus, type TaskTriggerFailedSsePayload } from "@octopus/shared"
 import type { TaskDerivedView, TaskPhaseView } from "@/lib/tasks-api"
 
 /** All persisted/displayable task states (v4 K3: + awaiting_review/archiving). */
@@ -75,13 +75,15 @@ export const COLUMN_STATUSES: Record<TaskBoardColumnId, readonly TaskStatus[]> =
   done: ["done", "failed", "aborted"],
 }
 
-export type TasksByStatus = Record<TaskBoardStatus, Task[]>
+/** Bucket map, generic in the row type so a caller carrying the 票03 trigger columns
+ *  (TaskView) gets its own type back instead of a widened `Task[]`. */
+export type TasksByStatus<T extends Task = Task> = Record<TaskBoardStatus, T[]>
 
 /** 看板列内序：创建时间新→旧（用户要求「从上到下从新到旧」）。纯函数、
  *  返回新数组（与 groupTasksByStatus 同纪律 — 不 mutate 入参）；同刻创建
  *  以 updated_at DESC 破平，再同以 id 稳定兜底。装桶按迭代序 push，故在
  *  groupTasksByStatus 之前过一次本函数，每列天然继承新→旧。 */
-export function sortByCreatedDesc(tasks: Task[]): Task[] {
+export function sortByCreatedDesc<T extends Task>(tasks: T[]): T[] {
   return [...tasks].sort((a, b) => {
     const ca = Date.parse(a.created_at)
     const cb = Date.parse(b.created_at)
@@ -97,8 +99,8 @@ export function sortByCreatedDesc(tasks: Task[]): Task[] {
  *  status is not a known column (defensive against future enum additions /
  *  legacy rows) are dropped rather than crashing the kanban. Does NOT mutate
  *  the input array. Callers pass EFFECTIVE statuses (see `effectiveStatusOf`). */
-export function groupTasksByStatus(tasks: Task[]): TasksByStatus {
-  const grouped: TasksByStatus = {
+export function groupTasksByStatus<T extends Task>(tasks: T[]): TasksByStatus<T> {
+  const grouped: TasksByStatus<T> = {
     draft: [],
     ready: [],
     running: [],
@@ -111,14 +113,14 @@ export function groupTasksByStatus(tasks: Task[]): TasksByStatus {
   for (const task of tasks) {
     const status = task.status as string
     if (status in grouped) {
-      ;(grouped as Record<string, Task[]>)[status].push(task)
+      ;(grouped as Record<string, T[]>)[status].push(task)
     }
   }
   return grouped
 }
 
 /** Flatten the buckets belonging to one column (column render order). */
-export function tasksForColumn(grouped: TasksByStatus, column: TaskBoardColumnId): Task[] {
+export function tasksForColumn<T extends Task>(grouped: TasksByStatus<T>, column: TaskBoardColumnId): T[] {
   return COLUMN_STATUSES[column].flatMap((st) => grouped[st])
 }
 
@@ -189,4 +191,26 @@ export function overBudgetRoundOf(
     }
   }
   return null
+}
+
+// ── task_trigger_failed (票05 — 「到点但起不来」) ────────────────────
+
+/** Parse one `task_trigger_failed` SSE frame. The field vocabulary is owned by
+ *  shared's `taskTriggerFailedPayloadSchema` — web must NOT redeclare it here
+ *  (this function only bridges SSE text → the shared type). Malformed / foreign
+ *  shapes (e.g. the pre-票05 `{action}` payload) parse-fail to null and the
+ *  caller ignores the frame: a notification the board cannot read must not
+ *  crash the board.
+ *
+ *  Why this is its own event instead of a fold into task_status: the trigger
+ *  failed but the task's STATUS did not move (it goes back to / stays at
+ *  ready). task_status would be lying; this event says "nothing happened, and
+ *  here is why" — without it the only trace is a server log and the card sits
+ *  at 「待执行」 forever (the fire cursor retired itself). */
+export function parseTaskTriggerFailed(data: string): TaskTriggerFailedSsePayload | null {
+  try {
+    return taskTriggerFailedPayloadSchema.parse(JSON.parse(data))
+  } catch {
+    return null
+  }
 }

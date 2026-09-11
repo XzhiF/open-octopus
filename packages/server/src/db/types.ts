@@ -14,6 +14,10 @@ export interface WorkspaceRow {
   updated_at: string
   source: string
   source_schedule_id: string | null
+  /** v41 (ADR-0021): direct task ownership — which task this workspace serves.
+   *  Replaces the `source_schedule_id → schedules.origin_id` reverse lookup composite
+   *  used to walk to find the parent task. */
+  task_id: string | null
   archive_status: string | null
 }
 
@@ -54,6 +58,10 @@ export interface ExecutionRow {
    *  NULL = v3/generic (non-phase execution). */
   phase_index: number | null
   round_index: number | null
+  /** v41 (ADR-0021): the board reaches an execution directly by task instead of joining
+   *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
+   *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */
+  task_id: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -264,23 +272,10 @@ export interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string
-  /** v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id were
-   *  DROPPED from schedules. The承重 sites are migrated to origin_type (S2
-   *  polymorphic origin). The shared `SchedulerJob` type still carries a
-   *  `trigger_source` field (boundary: shared off-limits) — derived from
-   *  origin_type by buildSchedulerJob/enrichJobRow, NOT read from this row. */
-  /** v38 S2 polymorphic origin (no FK on origin_id). 'cron' default for legacy rows. */
-  origin_type: string
-  /** Parent id — for tasks: the tasks.id this schedule was dispatched from. */
-  origin_id: string | null
-  /** Role within the parent origin: 'primary' | 'coordinator' | 'subunit' | 'auxiliary'. */
-  origin_role: string | null
-  /** Arbitrary JSON for the origin association (e.g. parent_task_dispatch marker). */
-  assoc_meta: string | null
   claimed_at: string | null
-  /** v39 — one-shot due time (ISO) for task-origin triggers; NULL =
-   *  cron/legacy/claim-immediately. Distinct from next_trigger_at (cron cycle). */
-  scheduled_at: string | null
+  // v42 (ADR-0021 票03): origin_type / origin_id / origin_role / assoc_meta and
+  // scheduled_at are gone with the task envelope. A schedule is a definition; whose task
+  // (if any) it served was a back-reference no job definition should carry.
 }
 
 export interface ScheduleExecutionRow {
@@ -389,6 +384,22 @@ export interface TaskRow {
   /** v40 (K4): bound workspace — NULL = never triggered; first trigger creates +
    *  binds, later phase rounds reuse (dispatchPhaseRound, 票 05). */
   workspace_id: string | null
+  // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
+  // Before v41 the due time lived on a private `schedules` row that readyTask
+  // pre-created and parked ('draft'); arming a task meant flipping that row, which
+  // is how task and scheduler ended up owning each other's lifecycle.
+  /** 'manual' (human presses 触发) | 'once' (one-shot at trigger_at) | 'cron' */
+  trigger_mode: string
+  /** Author input for trigger_mode='once' — the ISO time shown on the board badge. */
+  trigger_at: string | null
+  cron_expression: string | null
+  cron_timezone: string
+  /** Master switch for trigger_mode='cron' (pausing a recurring task). */
+  trigger_enabled: number
+  /** The SINGLE due cursor the scheduler's scan reads. once: = trigger_at;
+   *  cron: recomputed after each fire; NULL = nothing armed. */
+  next_fire_at: string | null
+  last_fired_at: string | null
 }
 
 // ── Task Phase Acceptances (schema v40 — task-phase-redesign K4) ────────

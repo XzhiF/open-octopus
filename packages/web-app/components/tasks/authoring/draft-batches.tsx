@@ -139,7 +139,8 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
 
   return (
     <SectionCard
-      icon={<Layers className="size-3.5 text-muted-foreground" />}
+      icon={<Layers className="size-3.5 text-pop-ink" />}
+      iconTint="var(--pop-cyan-soft)"
       title="草稿批次"
       count={batches.length}
       hint="磁盘直扫 · 落盘即现"
@@ -175,7 +176,7 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
 
       {/* 「未落盘」判据只在扫描就绪时讲真话（loading/error 态不误警） */}
       {orphans.length > 0 && !loading && !error && (
-        <div className="px-3 py-1 border-b text-[10px] text-amber-600 flex items-center gap-1" data-batch-orphans>
+        <div className="px-3 py-1 border-b text-[10px] text-pop-amber flex items-center gap-1" data-batch-orphans>
           <FileWarning className="size-3 shrink-0" />
           已登记未落盘：{orphans.map((p) => `P${p.index}`).join(", ")}
         </div>
@@ -186,7 +187,7 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
           <Spinner className="size-3" /> 扫描批次目录…
         </div>
       ) : error && batches.length === 0 ? (
-        <div className="px-3 py-2 text-[11px] text-red-600">{error}</div>
+        <div className="px-3 py-2 text-[11px] text-pop-red">{error}</div>
       ) : batches.length === 0 ? (
         <div className="px-3 py-3 text-[11px] text-muted-foreground/60" data-batch-empty>
           ⏳ 尚无批次文件——对话里让 agent 拆，spec/票一旦写进 `.scratch/` 这里立刻出现（不必等 phases 写回）。
@@ -204,13 +205,13 @@ export function DraftBatches({ task, phases, isDraft, tree, onMutated }: DraftBa
                   <button className="flex items-center gap-2 flex-1 min-w-0" onClick={() => toggle(b.dir)} data-batch-toggle={b.slug}>
                     {open ? <ChevronDown className="size-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-3 shrink-0 text-muted-foreground" />}
                     <span className="text-xs font-mono truncate" data-batch-slug={b.slug}>{b.slug}</span>
-                    <Badge variant={hasSpec ? "secondary" : "outline"} className={`text-[9px] ${hasSpec ? "" : "text-amber-600 border-amber-400/50"}`}>
+                    <Badge variant={hasSpec ? "secondary" : "outline"} className={`text-[9px] ${hasSpec ? "" : "text-pop-amber border-pop-amber/50"}`}>
                       spec{hasSpec ? "✓" : "✗"}
                     </Badge>
                     <span className="text-[9px] text-muted-foreground">票×{tickets.length}</span>
                   </button>
                   {matched ? (
-                    <span className="text-[10px] text-emerald-600 shrink-0" data-batch-matched={b.slug}>● P{matched.index}</span>
+                    <span className="text-[10px] text-pop-green shrink-0" data-batch-matched={b.slug}>● P{matched.index}</span>
                   ) : isDraft ? (
                     <Button
                       size="sm"

@@ -97,6 +97,33 @@ export function emitPhaseAwaitingReview(
   })
 }
 
+/** task-workflow-handoff (ADR-0013, S2a): copy YAML files from the task home's
+ *  `workflows/` directory into the execution workspace's `workflows/` dir. The
+ *  engine's existing `{ws}/workflows/` resolver finds them on create. Empty
+ *  source dir is a no-op (no YAML to copy → nothing copied). Missing source
+ *  dir is also a no-op (legacy tasks may lack the dir). */
+export function copyTaskWorkflowsToWs(taskWorkflowsDir: string, wsPath: string): void {
+  if (!fs.existsSync(taskWorkflowsDir)) return
+  const wsWorkflowsDir = path.join(wsPath, "workflows")
+  // Ensure ws workflows/ exists (createFromSpec already creates it, but this
+  // is defensive — a test or a non-standard scaffold may skip it).
+  fs.mkdirSync(wsWorkflowsDir, { recursive: true })
+  const entries = fs.readdirSync(taskWorkflowsDir)
+  for (const entry of entries) {
+    if (!entry.endsWith(".yaml") && !entry.endsWith(".yml")) continue
+    const src = path.join(taskWorkflowsDir, entry)
+    // Defensive: skip non-files (subdirs, symlinks to dirs) — we only copy YAML files.
+    try {
+      const stat = fs.statSync(src)
+      if (!stat.isFile()) continue
+    } catch {
+      continue
+    }
+    const dst = path.join(wsWorkflowsDir, entry)
+    fs.copyFileSync(src, dst)
+  }
+}
+
 /** seed 下行: recursively copy `homeAbsSpecDir` into
  *  `{wsPath}/{relBatchPath}` (mkdir -p, home overwrites ws same-names,
  *  idempotent re-seed safe). Missing/empty source, non-directory source or an

@@ -66,9 +66,9 @@ export function SwarmDetailTabs({
           <Badge
             variant="outline"
             className={`text-xs ${
-              status === "completed" ? "text-emerald-600" :
-              status === "failed" ? "text-red-600" :
-              status === "running" ? "text-amber-600" :
+              status === "completed" ? "text-pop-green" :
+              status === "failed" ? "text-pop-red" :
+              status === "running" ? "text-pop-amber" :
               "text-muted-foreground"
             }`}
           >
@@ -112,9 +112,9 @@ export function SwarmDetailTabs({
           <Badge
             variant="outline"
             className={`text-xs ${
-              budgetExhausted ? "text-red-600" :
-              timeoutExceeded ? "text-amber-600" :
-              "text-emerald-600"
+              budgetExhausted ? "text-pop-red" :
+              timeoutExceeded ? "text-pop-amber" :
+              "text-pop-green"
             }`}
           >
             {budgetExhausted ? "已耗尽" : timeoutExceeded ? "已超时" : "正常"}
@@ -134,9 +134,9 @@ export function SwarmDetailTabs({
                   <Badge
                     variant="outline"
                     className={`text-[10px] shrink-0 ${
-                      expert.status === "completed" ? "text-emerald-600" :
-                      expert.status === "failed" ? "text-red-600" :
-                      expert.status === "running" ? "text-amber-600" :
+                      expert.status === "completed" ? "text-pop-green" :
+                      expert.status === "failed" ? "text-pop-red" :
+                      expert.status === "running" ? "text-pop-amber" :
                       "text-muted-foreground"
                     }`}
                   >

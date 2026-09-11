@@ -14,19 +14,19 @@ import { useLiveTimer } from "@/hooks/use-live-timer"
 import { TokenAggregateLine } from "./token-aggregate-line"
 
 const statusConfig: Record<ExecutionStatus, { color: string; bgColor: string; borderColor: string; label: string }> = {
-  pending: { color: "text-blue-600", bgColor: "bg-blue-50", borderColor: "border-blue-200", label: "待开始" },
-  running: { color: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-300", label: "运行中" },
-  completed: { color: "text-emerald-600", bgColor: "bg-emerald-50", borderColor: "border-emerald-200", label: "已完成" },
-  completed_with_failures: { color: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-300", label: "部分失败" },
-  failed: { color: "text-red-600", bgColor: "bg-red-50", borderColor: "border-red-200", label: "失败" },
-  cancelled: { color: "text-gray-600", bgColor: "bg-gray-50", borderColor: "border-gray-200", label: "已取消" },
-  paused: { color: "text-violet-600", bgColor: "bg-violet-50", borderColor: "border-violet-200", label: "已暂停" },
-  pending_approval: { color: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-200", label: "待审批" },
-  pending_interaction: { color: "text-purple-600", bgColor: "bg-purple-50", borderColor: "border-purple-200", label: "交互中" },
-  pending_resume: { color: "text-blue-600", bgColor: "bg-blue-50", borderColor: "border-blue-200", label: "待恢复" },
-  skipped: { color: "text-gray-400", bgColor: "bg-gray-50", borderColor: "border-gray-200", label: "已跳过" },
-  rejected: { color: "text-orange-600", bgColor: "bg-orange-50", borderColor: "border-orange-200", label: "已拒绝" },
-  budget_exceeded: { color: "text-red-600", bgColor: "bg-red-50", borderColor: "border-red-200", label: "预算超限" },
+  pending: { color: "text-pop-cyan", bgColor: "bg-pop-cyan-soft", borderColor: "border-pop-cyan/40", label: "待开始" },
+  running: { color: "text-pop-ink", bgColor: "bg-pop-amber-soft", borderColor: "border-pop-amber/40", label: "运行中" },
+  completed: { color: "text-pop-green", bgColor: "bg-pop-green-soft", borderColor: "border-pop-green/40", label: "已完成" },
+  completed_with_failures: { color: "text-pop-ink", bgColor: "bg-pop-amber-soft", borderColor: "border-pop-amber/40", label: "部分失败" },
+  failed: { color: "text-pop-red", bgColor: "bg-pop-pink-soft", borderColor: "border-pop-red/40", label: "失败" },
+  cancelled: { color: "text-pop-dim", bgColor: "bg-pop-idle", borderColor: "border-pop-bd/30", label: "已取消" },
+  paused: { color: "text-pop-purple", bgColor: "bg-pop-purple-soft", borderColor: "border-pop-purple/40", label: "已暂停" },
+  pending_approval: { color: "text-pop-ink", bgColor: "bg-pop-amber-soft", borderColor: "border-pop-amber/40", label: "待审批" },
+  pending_interaction: { color: "text-pop-purple", bgColor: "bg-pop-purple-soft", borderColor: "border-pop-purple/40", label: "交互中" },
+  pending_resume: { color: "text-pop-cyan", bgColor: "bg-pop-cyan-soft", borderColor: "border-pop-cyan/40", label: "待恢复" },
+  skipped: { color: "text-pop-dim", bgColor: "bg-pop-idle", borderColor: "border-pop-bd/30", label: "已跳过" },
+  rejected: { color: "text-pop-ink", bgColor: "bg-pop-amber-soft", borderColor: "border-pop-amber/40", label: "已拒绝" },
+  budget_exceeded: { color: "text-pop-red", bgColor: "bg-pop-pink-soft", borderColor: "border-pop-red/40", label: "预算超限" },
 }
 
 const gateLabelMap: Record<GateStatus, string> = {
@@ -49,27 +49,27 @@ function HarnessStatusIndicator({ status }: { status: HarnessNodeStatus }) {
     case "harness_intervening":
       return (
         <span title="Harness 正在干预" className="inline-flex items-center">
-          <ShieldCheck className="h-4 w-4 text-violet-500 animate-pulse" />
+          <ShieldCheck className="h-4 w-4 text-pop-purple animate-pulse" />
         </span>
       )
     case "harness_modified":
       return (
         <span title="Harness 已修改并重试" className="inline-flex items-center gap-0.5">
-          <ShieldCheck className="h-4 w-4 text-violet-500" />
-          <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+          <ShieldCheck className="h-4 w-4 text-pop-purple" />
+          <CheckCircle2 className="h-3 w-3 text-pop-green" />
         </span>
       )
     case "harness_executed":
       return (
         <span title="Harness Agent 接管执行" className="inline-flex items-center">
-          <Bot className="h-4 w-4 text-rose-500" />
+          <Bot className="h-4 w-4 text-pop-red" />
         </span>
       )
     case "harness_blocked":
       return (
         <span title="Harness 已阻断（进程冲突）" className="inline-flex items-center gap-0.5">
           <span className="text-sm leading-none">🛡️</span>
-          <XCircle className="h-3 w-3 text-red-500" />
+          <XCircle className="h-3 w-3 text-pop-red" />
         </span>
       )
     default:
@@ -119,7 +119,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const isLast = data.isLastCompleted ?? false
   const badgeVariant = isLast ? "default" : "outline"
   const badgeLabel = isLast ? "最近完成" : displayLabel
-  const badgeClasses = isLast ? "bg-emerald-600 text-white border-emerald-600" : config.color
+  const badgeClasses = isLast ? "bg-pop-green text-white border-pop-green" : config.color
   const isRunning = data.executionStatus === "running"
   const isHarnessIntervening = data.harnessStatus === "harness_intervening"
     || data.harnessExecutionStatus === "intervened"
@@ -131,7 +131,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const card = (
     <div
       className={cn(
-        "rounded-[calc(var(--radius)-2px)] bg-card shadow-sm hover:shadow-md",
+        "rounded-xl bg-pop-paper shadow-[3px_3px_0_rgba(28,27,34,0.13)]",
         "transition-shadow duration-200",
         isRunning ? "" : "border-2 " + config.borderColor,
         "cursor-grab active:cursor-grabbing",
@@ -141,8 +141,8 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
     >
       <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
       <div className={cn("flex items-center gap-2 rounded-t-md px-3 py-2", config.bgColor, isLast && "animate-shimmer-sweep relative overflow-hidden")}>
-        {isLast && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-200/30 to-transparent shimmer-overlay" />}
-        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-card">
+        {isLast && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-pop-green/30 to-transparent shimmer-overlay" />}
+        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-pop-paper">
           {isRunning ? <Loader2 className={cn("h-4 w-4 animate-spin", config.color)} />
           : data.executionStatus === "completed" ? <CheckCircle2 className={cn("h-4 w-4", config.color)} />
           : data.executionStatus === "failed" || data.executionStatus === "budget_exceeded" ? <XCircle className={cn("h-4 w-4", config.color)} />
@@ -161,17 +161,17 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           <HarnessExecutionBadge status={data.harnessExecutionStatus} />
         )}
         {data.gateStatus === "bypassed" && (
-          <ShieldOff className="h-4 w-4 text-gray-400" />
+          <ShieldOff className="h-4 w-4 text-pop-dim" />
         )}
       </div>
       {isRunning && (
         <div className="h-1 bg-muted">
-          <div className="h-full bg-amber-500 transition-all duration-500" style={{ width: `${data.progress}%` }} />
+          <div className="h-full bg-pop-amber transition-all duration-500" style={{ width: `${data.progress}%` }} />
         </div>
       )}
       <div className="p-3">
         {data.executionStatus === "paused" && data.approvalMetadata && (
-          <div className="mb-2 flex items-center gap-1.5 rounded-md bg-violet-50 px-2 py-1.5 text-xs text-violet-700 dark:bg-violet-950/20 dark:text-violet-300">
+          <div className="mb-2 flex items-center gap-1.5 rounded-md bg-pop-purple-soft px-2 py-1.5 text-xs text-pop-purple">
             <PauseCircle className="h-3.5 w-3.5" />
             <span className="font-medium truncate">{data.approvalMetadata.prompt}</span>
           </div>
@@ -202,7 +202,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           <div className="flex items-center gap-1.5 min-w-0">
             {isRunning && <span className="tabular-nums shrink-0">{data.progress}%</span>}
             {showRollback && (
-              <span className="flex items-center gap-1 text-orange-600" title="仅回滚工作区文件变更，数据库等外部变更需手动处理">
+              <span className="flex items-center gap-1 text-pop-ink" title="仅回滚工作区文件变更，数据库等外部变更需手动处理">
                 <Undo2 className="h-3 w-3" />回滚: {data.rollbackOnError ? "git-reset+clean" : data.rollback}
               </span>
             )}
@@ -216,7 +216,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
             )}
           </div>
           {isRunning && elapsedSeconds !== undefined && (
-            <span className="flex items-center gap-1 shrink-0 tabular-nums text-amber-600 font-medium">
+            <span className="flex items-center gap-1 shrink-0 tabular-nums text-pop-ink font-medium">
               <Timer className="h-3 w-3" />{formatDuration(elapsedSeconds * 1000)}
             </span>
           )}
@@ -251,7 +251,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   )
 
   if (isRunning) {
-    const marchColor = isHarnessIntervening ? "#8b5cf6" : "#f59e0b"
+    const marchColor = isHarnessIntervening ? "var(--pop-purple)" : "var(--pop-amber)"
     return (
       <div
         className="border-march rounded-lg p-0.5 min-w-[300px] max-w-[340px]"

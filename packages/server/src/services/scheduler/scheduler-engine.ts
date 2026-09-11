@@ -11,27 +11,16 @@ import { ConsecutiveFailureTracker } from './consecutive-failure-tracker'
 import type { Executor, ExecutionResult } from './executors/executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
-import { reapOrphanSchedules } from './orphan-reaper'
-import type { ScheduleStatusListener, OriginType, ScheduleStatus } from '@octopus/shared'
+import type { ScheduleStatus } from '@octopus/shared'
 
 const AUXILIARY_TICK_INTERVAL = parseInt(
   process.env.OCTOPUS_SCHEDULER_TICK_MS ?? '60000',
   10,
 )
-const MAX_AGENT_CONCURRENCY = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_AGENT_CONCURRENT ?? '10',
-  10,
-)
-// AC6: mirrors workflow-executor.ts MAX_PARALLEL_WORKSPACES — kept in sync via env var
-const MAX_PARALLEL_WORKSPACES = parseInt(
-  process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
-  10,
-)
-// AC11: stale claimed threshold — claimed_at older than this rolls back to queued
-const STALE_CLAIMED_THRESHOLD_MS = parseInt(
-  process.env.OCTOPUS_SCHEDULER_STALE_CLAIMED_MS ?? '600000',
-  10,
-)
+// ADR-0021: cap + agent gate + stale threshold are single-sourced in ./concurrency —
+// MAX_PARALLEL_WORKSPACES used to be parsed here AND in workflow-executor AND in
+// task-dispatch-service, held together by a comment claiming they stayed in sync.
+import { MAX_AGENT_CONCURRENCY, MAX_PARALLEL_WORKSPACES, STALE_CLAIMED_THRESHOLD_MS } from './concurrency'
 
 interface ScheduleRow {
   id: string
@@ -57,15 +46,10 @@ interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string | null
-  // schema v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id
-  // DROPPED. The承重 sites below use origin_type (S2 polymorphic origin).
-  origin_type: string | null
-  origin_id: string | null
-  origin_role: string | null
-  assoc_meta: string | null
   claimed_at: string | null
-  /** v39 — one-shot due time (ISO) for task-origin triggers; NULL = claim-immediately */
-  scheduled_at: string | null
+  // v42 (ADR-0021 票03): origin_type / origin_id / origin_role / assoc_meta /
+  // scheduled_at are gone from the table, so this projection stops carrying them. The
+  // engine no longer needs to know who created a definition — only when to fire it.
 }
 
 /**
@@ -80,8 +64,6 @@ interface ScheduleRow {
 export class SchedulerEngine {
   private cronJobs = new Map<string, cron.ScheduledTask>()
   private running = false
-  /** v39: re-entrancy flag for checkQueuedTasks (wake() + auxiliary tick overlap) */
-  private queuedChecking = false
   private tickInterval: ReturnType<typeof setInterval> | null = null
   private notificationService = new NotificationService()
   private failureTracker: ConsecutiveFailureTracker
@@ -105,12 +87,6 @@ export class SchedulerEngine {
     // keep compiling; production (index.ts) always passes the real SSEService.
     // Emits are guarded with this.sse?.emit so absent-sse is a no-op, not a crash.
     private sse?: SSEService,
-    // 03 (SG2): optional ScheduleStatusListener. When injected, every
-    // schedule_status emit also mirrors onto tasks.status + emits task_status
-    // SSE (covers checkQueuedTasks claim, sync-rollback, stale-rollback, and
-    // onExecutionComplete retry-cap → failed — the transitions this engine
-    // owns). Optional so existing 5-arg call sites keep compiling.
-    private scheduleStatusListener?: ScheduleStatusListener,
   ) {
     this.failureTracker = new ConsecutiveFailureTracker(configDAO)
     this.configDAO = configDAO
@@ -121,16 +97,6 @@ export class SchedulerEngine {
     return this.running
   }
 
-  /** v39: run the queued-claim pass NOW — sub-second pickup after an explicit
-   *  task trigger instead of waiting up to AUXILIARY_TICK_INTERVAL (60s).
-   *  No-op when the engine is not running (restart recovery flows through the
-   *  regular tick on start). Re-entrancy is handled inside checkQueuedTasks. */
-  wake(): void {
-    if (!this.running) return
-    this.checkQueuedTasks().catch((err) => {
-      console.error('[SchedulerEngine] wake claim pass failed:', err instanceof Error ? err.message : String(err))
-    })
-  }
 
   getCircuitBreakerSummary(): { state: 'open' | 'closed' | 'half-open' } {
     return { state: this.agentCircuitBreaker.getState() }
@@ -274,6 +240,16 @@ export class SchedulerEngine {
       return
     }
 
+    // The definition's own run-state, written by the ONLY two places that know a fire
+    // started and stopped (票03 audit). `status` + `claimed_at` are what make abortJob's
+    // 「只有 in-flight 可中止」 guard and checkStaleClaimed's 10-minute sweep able to match
+    // anything at all: the sweep reads claimed_at, and both were unreachable for cron jobs
+    // once the queued-claim loop (their last writer) went away with the task envelopes.
+    this.configDAO.updateSchedule(schedule.id, {
+      status: 'running',
+      claimed_at: new Date().toISOString(),
+    })
+
     const job = this.buildSchedulerJob(schedule)
 
     if (jobType === 'agent') {
@@ -379,6 +355,14 @@ export class SchedulerEngine {
     schedExecId: string,
     result: ExecutionResult,
   ): void {
+    // Settle the run-state (the counterpart of the write in dispatchExecution). Terminal
+    // statuses are what keep checkStaleClaimed from rolling a finished fire back to
+    // 'queued' — the invariant the G2 comments in this file have always described.
+    this.configDAO.updateSchedule(schedule.id, {
+      status: result.success || result.status === 'skipped' ? 'done' : 'failed',
+      claimed_at: null,
+    })
+
     if (result.success || result.status === 'skipped') {
       this.failureTracker.recordSuccess(schedule.id)
     } else {
@@ -394,34 +378,11 @@ export class SchedulerEngine {
         }
       }
 
-      // G2 retry cap (ticket 05 → migrated to origin_type by ticket 06 / SG1):
-      // for task-origin schedules, the cron-style auto-disable above (enabled=0)
-      // does NOT stop re-dispatch, because findQueuedSchedules filters by
-      // status='queued' only and ignores enabled. A persistently-failing task
-      // would otherwise loop claimed→(stale rollback)→queued→redispatch forever.
-      // Promote to terminal 'failed' exactly when the N=5 threshold fires:
-      // findStaleClaimed (status IN claimed/running) and findQueuedSchedules
-      // (status='queued') both skip 'failed', so the loop stops.
-      //
-      // SG1: the gate now keys on origin_type='task' (was trigger_source='requirement').
-      // agent-origin (origin_type='agent') defaults to v1 auto-disable (the block
-      // above) and is NOT promoted to terminal 'failed' — the auto-disable + cron
-      // re-trigger path is sufficient for agent schedules. SSE emit for this
-      // transition is wired by ticket 07 (ScheduleStatusListener injection).
-      if (
-        trackerResult.autoDisabled &&
-        (schedule.origin_type ?? 'cron') === 'task'
-      ) {
-        this.configDAO.updateSchedule(schedule.id, {
-          status: 'failed',
-          claimed_at: null,
-        })
-        // 07 (G5): emit the terminal 'failed' transition so the /tasks kanban
-        // updates in real time instead of waiting for the 10s poll. 05 wired the
-        // DB write + deferred this SSE emit to 07 (see comment above).
-        this.emitScheduleStatus(schedule.id, 'failed')
-      }
-
+      // G2 retry cap: auto-disable above is the whole story now. The second, terminal
+      // 'failed' promotion existed because a task envelope could be re-claimed from the
+      // queue regardless of `enabled` (findQueuedSchedules ignored it), so a
+      // persistently failing task looped claimed→stale-rollback→queued→redispatch. There
+      // is no queue and no envelopes, so enabled=0 stops everything that can happen.
       if (schedule.notify_on_failure) {
         const errorSummary = result.errorMessage ?? 'Execution failed'
         this.notificationService
@@ -460,105 +421,15 @@ export class SchedulerEngine {
       ),
     )
 
-    this.checkQueuedTasks().catch((err: unknown) =>
-      console.error(
-        '[SchedulerEngine] checkQueuedTasks error:',
-        err instanceof Error ? err.message : String(err),
-      ),
-    )
+    // 票03 (ADR-0021): the queued-task claim loop and the orphan reaper are gone from the
+    // tick. Nothing queues work as a schedule row any more (the only producer of 'queued'
+    // task rows was readyTask's envelope), and there is no task-owned definition row left
+    // to orphan — the question the reaper asked (「origin_id 还指向活着的任务吗」) has no
+    // meaning. Task pickup is the built-in task-lifecycle job, fired by this pump like any
+    // other job; that job's own reconcile pass is the equivalent backstop over executions.
 
-    // SG12 (ticket 06): orphan schedule reaper. Scans for task-origin schedules
-    // whose origin_id points at a missing/deleted task and soft-deletes them.
-    // This is the app-level integrity backstop for S2's no-FK origin_id. Runs on
-    // every auxiliary tick (cheap LEFT JOIN; no-op when no orphans). Cascade-
-    // reap on task delete/abort is the primary path; this covers the gap.
-    try {
-      reapOrphanSchedules(this.configDAO.getDb())
-    } catch (err: unknown) {
-      console.error(
-        '[SchedulerEngine] orphan reaper error:',
-        err instanceof Error ? err.message : String(err),
-      )
-    }
   }
 
-  // T-8: claim BEFORE dispatch; on sync dispatch failure rollback to 'queued' so next tick can retry.
-  // ponytail: only catches sync throws from insert/dispatch; async executor failures flow through
-  // executeWorkflow's .catch + T-5 checkStaleClaimed (claimed_at > 10min) — rolling those back here
-  // would create an infinite retry loop on persistent workflow errors.
-  // AC6: respects MAX_PARALLEL_WORKSPACES — remaining queued tasks retry on next tick.
-  // SG1 (ticket 06): the claim filter now keys on origin_type IN ('task','manual','api')
-  // (was trigger_source='requirement'). cron-origin schedules stay on their own
-  // triggerSchedule path (cron re-trigger by cron_expression), so checkQueuedTasks
-  // must NOT claim them. 'agent' origin also stays out (agent schedules use the
-  // agent executor + cron re-trigger, not the task queue).
-  private async checkQueuedTasks(): Promise<void> {
-    // v39 re-entrancy guard: `wake()` and the 60s auxiliary tick can overlap.
-    // The fetch→claim span below is synchronous (better-sqlite3), so an
-    // interleave could double-claim across overlapping invocations — guard.
-    if (this.queuedChecking) return
-    this.queuedChecking = true
-    try {
-      // v39 due-filter: rows with a future scheduled_at are not returned until
-      // due; NULL-due (legacy/cron/manual) stay claim-immediately. FIFO by
-      // COALESCE(scheduled_at, created_at).
-      const nowIso = new Date().toISOString()
-      const queued = this.configDAO.findQueuedSchedules(nowIso) as ScheduleRow[]
-
-      for (const schedule of queued) {
-        // SG1: claim task/manual/api-origin schedules only. cron + agent stay on
-        // their own trigger paths. Default to 'cron' for legacy rows (no origin_type).
-        const originType = schedule.origin_type ?? 'cron'
-        if (
-          originType !== 'task' &&
-          originType !== 'manual' &&
-          originType !== 'api'
-        ) {
-          continue
-        }
-
-        // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
-        // stay in 'queued' status and retry on the next tick when active count drops.
-        const activeCount = this.runDAO.countDistinctActiveSchedules()
-        if (activeCount >= MAX_PARALLEL_WORKSPACES) break
-
-        const now = new Date()
-        const schedExecId = randomUUID()
-        const tzOffset = this.getTimezoneOffset(schedule.timezone)
-
-        this.configDAO.updateSchedule(schedule.id, {
-          status: 'claimed',
-          claimed_at: now.toISOString(),
-        })
-        // 07 (G5): emit the queued→claimed transition so the kanban claims the
-        // card in real time, not on the next 10s poll.
-        this.emitScheduleStatus(schedule.id, 'claimed')
-
-        try {
-          this.runDAO.insertTriggeredExecution(
-            schedExecId, schedule.id, 'scheduled',
-            now.toISOString(), tzOffset, schedule.timezone, 'scheduler',
-          )
-
-          this.dispatchExecution(schedule, schedExecId)
-        } catch (err: unknown) {
-          console.error(
-            '[SchedulerEngine] checkQueuedTasks dispatch failed, rolling back to queued:',
-            err instanceof Error ? err.message : String(err),
-          )
-          this.configDAO.updateSchedule(schedule.id, {
-            status: 'queued',
-            claimed_at: null,
-          })
-          // 07 (G5): emit the rollback transition so the kanban releases the card
-          // back to the queued column instead of leaving it visually claimed.
-          this.emitScheduleStatus(schedule.id, 'queued')
-        }
-      }
-    } finally {
-      this.queuedChecking = false
-    }
-  }
 
   // T-5 AC11: stale claimed (claimed_at older than threshold) → rollback to queued
   // + mark any incomplete schedule_workspaces as cleaned.
@@ -745,22 +616,10 @@ export class SchedulerEngine {
       } as import('@octopus/shared').JobConfig
     }
 
-    // SG1b (ticket 06): trigger_source + source_chat_session_id were DROPPED
-    // from schedules (migrated to origin_type). The shared SchedulerJob type
-    // still carries trigger_source (boundary: shared off-limits), so derive it
-    // from origin_type: cron → 'cron'; task/agent/manual/api → 'requirement'
-    // (the v1 'requirement' semantics = "not cron-driven, queue/claim-driven").
-    // This keeps workflow-executor's isRequirement = job.trigger_source === 'requirement'
-    // working for task-origin schedules without touching the shared type.
-    const originType = (schedule.origin_type ?? 'cron') as
-      | 'cron' | 'task' | 'agent' | 'manual' | 'api'
-    const derivedTriggerSource: 'cron' | 'requirement' =
-      originType === 'cron' ? 'cron' : 'requirement'
-
     return {
       id: schedule.id,
       name: schedule.name,
-      job_type: schedule.job_type as 'workflow' | 'agent',
+      job_type: schedule.job_type as import('@octopus/shared').JobType,
       cron_expression: schedule.cron_expression,
       timezone: schedule.timezone,
       enabled: schedule.enabled === 1,
@@ -782,9 +641,6 @@ export class SchedulerEngine {
       // like 'running'/'done'/'failed'/'aborted' still flowed through) — callers
       // comparing job.status to those literals got false "impossible" feedback.
       status: (schedule.status ?? 'queued') as import('@octopus/shared').ScheduleStatus,
-      // SG1b: derived from origin_type (see comment above). NOT read from a DB col.
-      trigger_source: derivedTriggerSource,
-      source_chat_session_id: null,
       claimed_at: schedule.claimed_at ?? null,
     }
   }
@@ -830,21 +686,9 @@ export class SchedulerEngine {
       event: 'schedule_status',
       data: { schedule_id: scheduleId, status },
     })
-    // 03 (SG2): mirror the schedule transition onto the parent task's status +
-    // emit task_status SSE. The listener self-filters by origin_type='task'
-    // (cron/agent/manual/api schedules are no-ops). Fetched here via findByIdRaw
-    // to pass origin_type/origin_id — origin_id IS the parent task id (S2).
-    // No-op when no listener was injected (test contexts that don't assert
-    // task-status mirroring).
-    const schedule = this.configDAO.findByIdRaw(scheduleId)
-    if (schedule && schedule.origin_type) {
-      this.scheduleStatusListener?.onScheduleTransition({
-        schedule_id: scheduleId,
-        origin_type: schedule.origin_type as OriginType,
-        origin_id: schedule.origin_id ?? '',
-        status: status as ScheduleStatus,
-      })
-    }
+    // 票03 (ADR-0021): no tasks.status mirror here. The listener this used to feed
+    // existed only to reflect a task's envelope state onto its own row; a job's status is
+    // a job's business now, and the board reads task state from the task's own runs.
   }
 }
 

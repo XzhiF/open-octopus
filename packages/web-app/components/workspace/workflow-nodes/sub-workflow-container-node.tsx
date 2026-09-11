@@ -30,31 +30,31 @@ interface SubWorkflowContainerData {
 }
 
 const statusBorderColor: Record<string, string> = {
-  running: "border-blue-400",
-  completed: "border-green-400",
-  failed: "border-red-400",
-  skipped: "border-gray-300",
-  cancelled: "border-gray-300",
-  paused: "border-violet-400",
+  running: "border-pop-cyan",
+  completed: "border-pop-green",
+  failed: "border-pop-red",
+  skipped: "border-pop-bd/40",
+  cancelled: "border-pop-bd/40",
+  paused: "border-pop-purple",
 }
 
 const statusBgColor: Record<string, string> = {
-  running: "bg-blue-50/80",
-  completed: "bg-green-50/80",
-  failed: "bg-red-50/80",
-  paused: "bg-violet-50/80",
+  running: "bg-pop-cyan-soft",
+  completed: "bg-pop-green-soft",
+  failed: "bg-pop-pink-soft",
+  paused: "bg-pop-purple-soft",
 }
 
 const statusVisualConfig: Record<StepExecutionStatus, { color: string; label: string }> = {
-  pending: { color: "text-blue-600", label: "待开始" },
-  running: { color: "text-amber-600", label: "运行中" },
-  completed: { color: "text-emerald-600", label: "已完成" },
-  failed: { color: "text-red-600", label: "失败" },
-  skipped: { color: "text-gray-600", label: "跳过" },
-  cancelled: { color: "text-gray-500", label: "已取消" },
-  paused: { color: "text-violet-600", label: "已暂停" },
-  rejected: { color: "text-orange-600", label: "已拒绝" },
-  pending_approval: { color: "text-amber-600", label: "待审批" },
+  pending: { color: "text-pop-cyan", label: "待开始" },
+  running: { color: "text-pop-ink", label: "运行中" },
+  completed: { color: "text-pop-green", label: "已完成" },
+  failed: { color: "text-pop-red", label: "失败" },
+  skipped: { color: "text-pop-dim", label: "跳过" },
+  cancelled: { color: "text-pop-dim", label: "已取消" },
+  paused: { color: "text-pop-purple", label: "已暂停" },
+  rejected: { color: "text-pop-ink", label: "已拒绝" },
+  pending_approval: { color: "text-pop-ink", label: "待审批" },
 }
 
 function aggregateTokens(overlay?: StatusOverlay): { input: number; output: number } | null {
@@ -95,9 +95,9 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
   const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
   const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
   const marchColor = (swData.statusOverlay?.harnessStatus === "harness_intervening"
-    || swData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#6366f1"
-  const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-indigo-300"
-  const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-indigo-50/80" : "bg-indigo-50/80"
+    || swData.harnessStatus === "harness_intervening") ? "var(--pop-purple)" : "var(--pop-cyan)"
+  const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-pop-bd/40" : "border-pop-purple/40"
+  const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-pop-purple-soft" : "bg-pop-purple-soft"
   const tokens = aggregateTokens(swData.statusOverlay)
   const statusConfig = swData.statusOverlay ? statusVisualConfig[swData.statusOverlay.stepStatus] : null
   const execMode = swData.execution_mode ?? "inline"
@@ -130,9 +130,9 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
       )}
       <div
         className={cn(
-          "border-2 border-dashed rounded-lg w-full h-full relative",
+          "border-2 border-dashed rounded-xl w-full h-full relative",
           borderColor,
-          selected && "ring-2 ring-primary ring-offset-2",
+          selected && "ring-2 ring-pop-pink ring-offset-2",
           showMarchingAnts && "border-running",
         )}
       >
@@ -144,7 +144,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
             headerBg,
           )}
         >
-          <Layers className="w-4 h-4 text-indigo-500 shrink-0" />
+          <Layers className="w-4 h-4 text-pop-purple shrink-0" />
           <div className="flex-1 min-w-0">
             <span className="text-sm font-medium truncate block">{swData.name}</span>
             {swData.workflow && (
@@ -154,7 +154,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
             )}
           </div>
 
-          <Badge variant="outline" className="text-xs border-indigo-300 text-indigo-600 bg-indigo-50 shrink-0">
+          <Badge variant="outline" className="text-xs border-pop-purple/40 text-pop-purple bg-pop-purple-soft shrink-0">
             {execMode}
           </Badge>
 
@@ -163,7 +163,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
           </Badge>
 
           {isDynamic && (
-            <Badge variant="outline" className="text-xs border-amber-300 text-amber-600 bg-amber-50 shrink-0">
+            <Badge variant="outline" className="text-xs border-pop-amber/40 text-pop-ink bg-pop-amber-soft shrink-0">
               ⚡ Dynamic
             </Badge>
           )}
@@ -188,7 +188,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
               ))}
             </div>
           ) : isDynamic ? (
-            <div className="flex items-center justify-center h-full text-xs text-amber-600">
+            <div className="flex items-center justify-center h-full text-xs text-pop-ink">
               ⚡ 运行时生成
             </div>
           ) : !swData.workflow ? (

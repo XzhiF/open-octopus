@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { enqueueJob, abortJob } from "../scheduler-api"
+import { listJobs, abortJob, isBuiltinJob } from "../scheduler-api"
 
 /** Build a minimal fetch Response double for happy-path assertions. */
 function mockJsonResponse(body: unknown, ok = true): Response {
@@ -9,36 +9,39 @@ function mockJsonResponse(body: unknown, ok = true): Response {
   } as Response
 }
 
-describe("enqueueJob", () => {
+describe("listJobs", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.stubGlobal("fetch", vi.fn())
   })
 
-  it("POSTs to /api/scheduler/jobs/:id/enqueue and returns the parsed body (AC: 入队 draft→queued)", async () => {
+  it("GETs /api/scheduler/jobs with only the surviving filters", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
-    fetchMock.mockResolvedValue(mockJsonResponse({ ok: true }))
+    fetchMock.mockResolvedValue(mockJsonResponse({ items: [], total: 0, page: 1, limit: 20 }))
 
-    const result = await enqueueJob("job-1")
+    await listJobs({ page: 2, limit: 10, search: "nightly", job_type: "job" })
 
-    // Arrange the expected request shape, then assert the call matches exactly.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe("http://localhost:3001/api/scheduler/jobs/job-1/enqueue")
-    expect(init.method).toBe("POST")
-    // enqueue is a confirm-gate trigger — no request body.
-    expect(init.body).toBeUndefined()
-    expect(result).toEqual({ ok: true })
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain("/api/scheduler/jobs?")
+    expect(url).toContain("page=2")
+    expect(url).toContain("limit=10")
+    expect(url).toContain("search=nightly")
+    // job_type='job' is the third type 票03 added (a registered TS handler) — it is a
+    // filterable row of this table now, not something the client hides.
+    expect(url).toContain("job_type=job")
   })
 
-  it("throws when the server rejects the enqueue", async () => {
+  // ADR-0021 票03: ?trigger_source= / ?origin= left the route with the origin_* columns.
+  // ListJobsParams no longer declares them, so nothing can put them on the query string.
+  it("never sends the retired trigger_source / origin query params", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
-    fetchMock.mockResolvedValue({
-      ok: false,
-      json: async () => ({ error: "already queued" }),
-    } as Response)
+    fetchMock.mockResolvedValue(mockJsonResponse({ items: [], total: 0, page: 1, limit: 20 }))
 
-    await expect(enqueueJob("job-1")).rejects.toThrow("already queued")
+    await listJobs({ search: "x" })
+
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).not.toContain("trigger_source=")
+    expect(url).not.toContain("origin=")
   })
 })
 
@@ -60,5 +63,25 @@ describe("abortJob", () => {
     expect(init.method).toBe("POST")
     expect(init.body).toBeUndefined()
     expect(result).toEqual({ ok: true })
+  })
+})
+
+// POST /api/scheduler/jobs/:id/enqueue + SchedulerService.enqueueJob were deleted by
+// ADR-0021 票03 (a job definition is registered, never parked — the 'draft' schedule
+// status went with it). The task-side confirm/trigger surface it used to serve is now
+// covered in lib/__tests__/tasks-api.test.ts (triggerTask / scheduleTaskTrigger).
+
+// ── isBuiltinJob (票05: 内置 job 的「不可删」判据) ─────────────────────
+
+describe("isBuiltinJob", () => {
+  it("recognizes the deterministic builtin- row ids the server seeds", () => {
+    // server: builtinJobId(handler) = `builtin-${handler}` (builtin-jobs.ts) —
+    // the seed key is primary-key-idempotent, so the prefix is the contract.
+    expect(isBuiltinJob({ id: "builtin-task-lifecycle" })).toBe(true)
+  })
+
+  it("user-created rows (uuid or otherwise) are deletable", () => {
+    expect(isBuiltinJob({ id: "9f2c1d34-77ab-4a01-9ef3-a1b2c3d4e5f6" })).toBe(false)
+    expect(isBuiltinJob({ id: "job-user-created" })).toBe(false)
   })
 })

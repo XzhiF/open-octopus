@@ -1,77 +1,96 @@
 // packages/server/src/__tests__/tasks-v3-dispatch.test.ts
 //
-// Ticket 08 — dispatch $vars.task_artifacts_dir injection (three paths, SW-BP7).
+// Ticket 08 — dispatch $vars.task_artifacts_dir / $vars.task_workflows_dir injection.
 //
-// Four independent assertions:
-//   AC1  simple task   → materializeTaskSpecToConfig injects
-//                        input_values.task_artifacts_dir == homePath(id)/artifacts
-//   AC2  composite task → buildCompositeInputValues PRESERVES the key (not dropped
-//                        by the chain input_values replacement) → composition wf
-//                        receives $vars.task_artifacts_dir
-//   AC3  composition wf → dispatch-child input_mapping forwards
-//                        $vars.task_artifacts_dir → subunit input_values
-//   AC4  backward compat → legacy task (no taskArtifactsDir) → key omitted, no error
+// ADR-0021 票03 rewrite notes (this file moved with the materializer):
+//   * `materializeTaskSpecToConfig` was RENAMED to `buildTaskLaunchConfig` and MOVED out
+//     of services/scheduler/scheduler-service.ts into services/tasks/task-materialize.ts
+//     (first 7 positional args unchanged). AC1/AC4 are the same pure-function checks.
+//   * AC2 used to drive WorkflowExecutor.execute to prove buildCompositeInputValues
+//     preserved task_artifacts_dir across the chain-input replacement (SW-BP7). 票03
+//     removed every task branch from the executor; the replacement now happens in
+//     TaskLifecycleService.armTask, which composes {...buildCompositeInputValues(spec,
+//     plan), ...step.inputValues} onto the armed execution. AC2 pins the SAME rule at
+//     that seam — the created row's input_values must carry the composite keys AND the
+//     injected dir (not dropped by the wholesale replacement).
+//   * The injection-seam describe used to read the materialized config back off a
+//     schedules envelope that readyTask wrote. readyTask now writes ONLY the status
+//     (contract §新行为 1: 不建任何 schedules 行) — asserted directly. The per-launch
+//     materializer is armTask, so the injected TaskHomeService.baseDir is asserted on
+//     the ARMED execution's input_values instead; the legacy (no home) case stays a
+//     pure-function assertion because an empty workflow_ref refuses to arm by design.
 //
-// Anti-fake-run: real better-sqlite3 + applySchema for AC2 (R1/R3); real
-// WorkflowEngine for AC3 (R1 — deterministic edges not mocked); real
-// TaskHomeService.artifactsDir path computation cross-checked (R3).
+// AC3 (engine input_mapping) and AC10 (ADR-0013 workflows copy) are unchanged in intent.
+//
+// Anti-fake-run: real better-sqlite3 + applySchema for AC2/seam (R1/R3); real
+// WorkflowEngine for AC3 (deterministic edges not mocked); real TaskHomeService path
+// computation cross-checked (R3).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { materializeTaskSpecToConfig } from "../services/scheduler/scheduler-service"
+import { buildTaskLaunchConfig } from "../services/tasks/task-materialize"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { TasksService } from "../services/tasks/tasks-service"
+import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
 import { SSEService } from "../services/sse"
-import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
-import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../db/dao"
 import { applySchema } from "../db/schema"
+import { TaskDAO } from "../db/dao/task-dao"
+import { ExecutionDAO } from "../db/dao/execution-dao"
 import { WorkflowEngine } from "@octopus/engine"
-import { VarPool } from "@octopus/shared"
-import type {
-  TaskSpec,
-  SubunitSpec,
-  WorkflowConfig,
-  WorkflowDef,
-  NodeDef,
-  TaskDispatchPort,
-  ScheduleHandle,
-  SchedulerJob,
-} from "@octopus/shared"
+import type { TaskSpec, SubunitSpec, WorkflowDef, NodeDef, TaskDispatchPort, ChildHandle } from "@octopus/shared"
 
 const ORG = "e2e-td-08"
 
-// ── Mock getExecutionService for AC2 (composition wf fires-and-forgets) ──
-const createSpy = vi.fn(() => ({ id: "exec-08-1" }))
-const startSpy = vi.fn(async () => undefined)
-const registerCallbacksSpy = vi.fn()
-const clearCallbacksSpy = vi.fn()
+// ── Mock getExecutionService ───────────────────────────────────────────
+// The armed paths stub the engine at the ExecutionService seam: create INSERTS a real
+// executions row (so the armed shape is read back from disk, not from a spy) and keeps
+// the full input for assertions.
+const stub = vi.hoisted(() => ({
+  db: null as Database.Database | null,
+  seq: 0,
+  created: [] as Array<Record<string, unknown>>,
+}))
 vi.mock("../services/execution-service-registry", () => ({
-  getExecutionService: vi.fn(() => ({
-    service: {
-      create: createSpy,
-      start: startSpy,
-      registerExternalCallbacks: registerCallbacksSpy,
-      clearExternalCallbacks: clearCallbacksSpy,
-    },
-    wsPath: "/tmp/e2e-td-08-ws",
-  })),
+  getExecutionService: (wsId: string) => {
+    const ws = stub.db?.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
+      { path: string } | undefined
+    if (!ws) return undefined
+    return {
+      wsPath: ws.path,
+      service: {
+        create: (workspaceId: string, input: Record<string, unknown>) => {
+          const id = `td08-exec-${stub.seq++}`
+          stub.db!.prepare(
+            `INSERT INTO executions
+               (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
+                input_values, var_pool, org, created_at, updated_at, task_id)
+             VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?)`,
+          ).run(
+            id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+            JSON.stringify(input.input_values ?? {}), ORG, (input.task_id as string) ?? null,
+          )
+          stub.created.push({ id, workspaceId, ...input })
+          return { id }
+        },
+        start: async () => {},
+        registerExternalCallbacks: () => {},
+        clearExternalCallbacks: () => {},
+      },
+    }
+  },
 }))
 
 // ──────────────────────────────────────────────────────────────────────
-//  AC1 + AC4: materializeTaskSpecToConfig (pure function, no DB)
+//  AC1 + AC4: buildTaskLaunchConfig (pure function, no DB)
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection", () => {
+describe("08 AC1/AC4: buildTaskLaunchConfig task_artifacts_dir injection", () => {
   const tmpBase = path.join(os.tmpdir(), `octopus-08-${Date.now()}`)
   const home = new TaskHomeService(tmpBase)
   const TASK_ID = "e2e-td-08-task-ac1"
-
-  afterEach(() => {
-    try { require("fs").rmSync(tmpBase, { recursive: true, force: true }) } catch { /* */ }
-  })
 
   // AC1: simple task → input_values.task_artifacts_dir == homePath(id)/artifacts
   it("AC1: simple task config has input_values.task_artifacts_dir == artifactsDir(id)", () => {
@@ -80,7 +99,7 @@ describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection",
     // Cross-check the path convention (ADR-0011): base/tasks/{id}/artifacts
     expect(expected).toBe(path.join(tmpBase, "tasks", TASK_ID, "artifacts"))
 
-    const config = materializeTaskSpecToConfig(
+    const config = buildTaskLaunchConfig(
       taskSpec, ["proj"], ORG, "e2e-td-08/wf", [], undefined, expected,
     )
     expect(config.workflow_chain[0].workflow_ref).toBe("e2e-td-08/wf")
@@ -99,7 +118,7 @@ describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection",
       ],
     } as unknown as TaskSpec
     const expected = home.artifactsDir(TASK_ID)
-    const config = materializeTaskSpecToConfig(
+    const config = buildTaskLaunchConfig(
       taskSpec, ["proj"], ORG, undefined, [], undefined, expected,
     )
     // Composite → composition-task workflow_ref
@@ -111,38 +130,30 @@ describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection",
   // AC4: no taskArtifactsDir → key absent (legacy task backward compat)
   it("AC4: legacy task (no taskArtifactsDir) → no task_artifacts_dir key, no error", () => {
     const taskSpec = { goal: "g", ac: ["a"] } as unknown as TaskSpec
-    const config = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, "wf", [])
+    const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, "wf", [])
     const iv = config.workflow_chain[0].input_values as Record<string, unknown>
     expect(iv.task_artifacts_dir).toBeUndefined()
   })
 
-  // GS5/r2-05: key-set integrity. Value-checks (above) confirm the VALUE; this
-  // confirms the KEY's structural presence/absence in Object.keys — a stronger
-  // claim that catches "key set with undefined value" or "extra key leaked"
-  // which toBeUndefined/toBe would miss. Independent truth source: the function
-  // body builds simpleInputValues as `{}` or `{task_artifacts_dir}` — nothing else.
+  // GS5/r2-05: key-set integrity — a stronger claim than toBeUndefined (catches a
+  // "key set with undefined value" or a leaked extra key).
   it("AC1/AC4 boundary: simple input_values key-set is EXACTLY [task_artifacts_dir] when provided, [] when undefined (no leakage)", () => {
     const taskSpec = { goal: "g", ac: ["a"] } as unknown as TaskSpec
     const expected = home.artifactsDir(TASK_ID)
 
-    const withArt = materializeTaskSpecToConfig(
+    const withArt = buildTaskLaunchConfig(
       taskSpec, ["proj"], ORG, "e2e-td-08/wf", [], undefined, expected,
     )
     const ivWith = withArt.workflow_chain[0].input_values as Record<string, unknown>
-    // Exact key-set: only task_artifacts_dir, no surprise keys.
     expect(Object.keys(ivWith)).toEqual(["task_artifacts_dir"])
 
-    const withoutArt = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, "e2e-td-08/wf", [])
+    const withoutArt = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, "e2e-td-08/wf", [])
     const ivWithout = withoutArt.workflow_chain[0].input_values as Record<string, unknown>
-    // Exact empty key-set: the key is never SET (not just undefined-valued) —
-    // legacy tasks get a minimal config with no injection trace.
     expect(Object.keys(ivWithout)).toEqual([])
   })
 
-  // GS5/r2-05: composite key-set + derived value. subunit_count is DERIVED inside
-  // the function from `task_spec.subunits?.length` (not echoed from a param), so
-  // asserting ===3 with 3 subunits is a real derived-value check. And the exact
-  // key-set proves the composite branch carries both subunit_count + task_artifacts_dir.
+  // GS5/r2-05: composite key-set + derived value (subunit_count derived from
+  // subunits.length inside the function, not echoed from a param).
   it("AC1 composite boundary: composite input_values key-set is EXACTLY [subunit_count, task_artifacts_dir] (subunit_count derived from subunits.length)", () => {
     const taskSpec = {
       goal: "g", ac: ["a"],
@@ -153,53 +164,87 @@ describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection",
       ],
     } as unknown as TaskSpec
     const expected = home.artifactsDir(TASK_ID)
-    const config = materializeTaskSpecToConfig(
+    const config = buildTaskLaunchConfig(
       taskSpec, ["proj"], ORG, undefined, [], undefined, expected,
     )
     const iv = config.workflow_chain[0].input_values as Record<string, unknown>
-    // subunit_count is derived from task_spec.subunits.length inside the function
-    // (not a param echo) — 3 subunits → 3.
     expect(iv.subunit_count).toBe(3)
-    // Exact key-set (sorted for order-independence): composite branch produces
-    // subunit_count + task_artifacts_dir, nothing else.
     expect(Object.keys(iv).sort()).toEqual(["subunit_count", "task_artifacts_dir"].sort())
+  })
+
+  // ADR-0013: the task_workflows_dir injection mirrors the artifacts one.
+  it("ADR-0013: task_workflows_dir lands in input_values when a workflows dir is passed", () => {
+    const taskSpec = { goal: "g", ac: ["a"] } as unknown as TaskSpec
+    const wfDir = home.workflowsDir(TASK_ID)
+    const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, "wf", [], undefined, home.artifactsDir(TASK_ID), wfDir)
+    const iv = config.workflow_chain[0].input_values as Record<string, unknown>
+    expect(iv.task_workflows_dir).toBe(wfDir)
   })
 })
 
 // ──────────────────────────────────────────────────────────────────────
-//  AC2: buildCompositeInputValues preserves task_artifacts_dir
+//  AC2: armTask preserves task_artifacts_dir across the composite
+//  input_values replacement (was: WorkflowExecutor.execute + materialized
+//  schedules envelope; 票03 moved the composition to the lifecycle job)
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC2: composite dispatch — buildCompositeInputValues preserves task_artifacts_dir", () => {
+describe("08 AC2: composite arm — buildCompositeInputValues preserves task_artifacts_dir", () => {
   let db: Database.Database
-  let executor: WorkflowExecutor
-  const wsId = "e2e-td-08-ws"
-  const schedId = "e2e-td-08-sched"
-  const schedExecId = "e2e-td-08-se"
-  const mockSSE = { emit: vi.fn() } as any
-  const createFromSpecSpy = vi.fn(() => ({ id: "e2e-td-08-coord-ws" }))
-  const mockWorkspaceService = { createFromSpec: createFromSpecSpy, delete: vi.fn() } as any
+  let svc: TaskLifecycleService
+  let tasks: TaskDAO
+  let execs: ExecutionDAO
+  let homeDir: string
+  let wsDir: string
+  let taskHome: TaskHomeService
+  let realHome: string | undefined
+  let realUserProfile: string | undefined
 
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF")
-    db.prepare(
-      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'e2e-td-08-ws', ?, '/tmp/e2e-td-08-ws', datetime('now'), datetime('now'))`,
-    ).run(wsId, ORG)
-    executor = new WorkflowExecutor(
-      mockSSE,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
-      new ExecutionDAO(db),
-      mockWorkspaceService,
-    )
-    createSpy.mockClear()
-    startSpy.mockClear()
-    createFromSpecSpy.mockClear()
-    mockSSE.emit.mockClear()
+    stub.db = db
+    stub.seq = 0
+    stub.created = []
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "td08-ac2-home-"))
+    wsDir = fs.mkdtempSync(path.join(os.tmpdir(), "td08-ac2-ws-"))
+    realHome = process.env.HOME
+    realUserProfile = process.env.USERPROFILE
+    process.env.HOME = homeDir
+    process.env.USERPROFILE = homeDir
+    taskHome = new TaskHomeService(path.join(homeDir, ".octopus"))
+    tasks = new TaskDAO(db)
+    execs = new ExecutionDAO(db)
+    svc = new TaskLifecycleService({
+      db,
+      sse: new SSEService(),
+      workspaceService: {
+        getById: (id: string) => (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+        ensureWorktreesForReuse: () => ({ rebuilt: [] }),
+        createFromSpec: (input: Record<string, unknown>) => {
+          const id = `ac2-ws-${stub.created.length}-${Math.random().toString(36).slice(2, 6)}`
+          const p = path.join(wsDir, id)
+          fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
+          db.prepare(
+            `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+             VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+          ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+          return { id }
+        },
+      } as never,
+      builtInWorkflows: { get: (ref: string) => ({ ref, content: "name: demo\nnodes: []\n", name: "demo" }) } as never,
+      taskHomeService: taskHome,
+    })
   })
-  afterEach(() => db.close())
+  afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+    if (realUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = realUserProfile
+    db.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(wsDir, { recursive: true, force: true })
+  })
 
   function makeSubunit(name: string): SubunitSpec {
     return {
@@ -212,115 +257,49 @@ describe("08 AC2: composite dispatch — buildCompositeInputValues preserves tas
     }
   }
 
-  /** Composite config WITH task_artifacts_dir in workflow_chain[0].input_values
-   *  (as materializeTaskSpecToConfig produces when taskArtifactsDir is provided). */
-  function makeCompositeConfigWithArtifacts(subunits: SubunitSpec[], artifactsDir: string): WorkflowConfig {
-    return {
-      schema_version: "3.0",
-      type: "workflow",
-      workspace_spec: { org: ORG, branch_prefix: "e2e-td-08-coord", projects: [{ name: "coord", source_path: "", group: "" }] },
-      workflow_chain: [{
-        workflow_ref: "composition-task",
-        input_values: {
-          subunit_count: subunits.length,
-          task_artifacts_dir: artifactsDir,
-        } as unknown as Record<string, string>,
-      }],
-      max_retain: 10,
-      task_spec: {
-        goal: "E2E_TD_08_goal",
-        ac: ["ac1"],
-        subunits,
+  function insertCompositeTask(id: string, subunits: SubunitSpec[]): void {
+    const now = new Date().toISOString()
+    tasks.insert({
+      id, org: ORG, name: `T_${id}`, status: "ready",
+      task_spec: JSON.stringify({
+        goal: "E2E_TD_08_goal", ac: ["ac1"], task_type: "coding", subunits,
         integration_goal: { strategy: "synthesis", prompt: "E2E_TD_08_synth" },
-      } as unknown as TaskSpec,
-    }
+      } as unknown as TaskSpec),
+      authoring_resources: "[]", resources: "[]", skills: "[]", project_ids: '["E2E_TP_proj"]',
+      workflow_ref: null, version: 1, source_chat_session_id: null,
+      deleted_at: null, created_at: now, updated_at: now, completed_at: null, workspace_id: null,
+      trigger_mode: "manual", trigger_at: null, cron_expression: null,
+      cron_timezone: "Asia/Shanghai", trigger_enabled: 1, next_fire_at: null, last_fired_at: null,
+    } as never)
   }
 
-  function buildCompositeJob(config: WorkflowConfig): SchedulerJob {
-    return {
-      id: schedId, name: "e2e-td-08-composite", job_type: "workflow",
-      cron_expression: null, timezone: "UTC", enabled: true, org: ORG, config,
-      parallel_policy: "skip", timeout_seconds: 3600, notify_on_failure: false,
-      version: 1, consecutive_failures: 0, next_trigger_at: null, deleted_at: null,
-      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      status: "claimed", trigger_source: "requirement", source_chat_session_id: null,
-      claimed_at: new Date().toISOString(),
-    }
-  }
-
-  it("AC2: composition wf receives task_artifacts_dir in input_values (not dropped)", async () => {
+  it("AC2: the armed composite execution carries task_artifacts_dir (not dropped by the replacement)", () => {
     const subunits = [makeSubunit("a"), makeSubunit("b"), makeSubunit("c")]
-    const artifactsDir = "/tmp/e2e-td-08/home/tasks/e2e-td-08-task/artifacts"
-    const config = makeCompositeConfigWithArtifacts(subunits, artifactsDir)
+    insertCompositeTask("td08-ac2", subunits)
+    const execId = svc.armTask("td08-ac2")
+    const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
 
-    db.prepare(
-      `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
-        created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, origin_type, claimed_at)
-       VALUES (?, ?, ?, NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'claimed', 'task', ?)`,
-    ).run(schedId, ORG, "e2e-td-08-composite", JSON.stringify(config), new Date().toISOString())
-
-    db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
-
-    const result = await executor.execute(buildCompositeJob(config), schedExecId)
-    expect(result.success).toBe(true)
-
-    // The composition wf's create() call carries buildCompositeInputValues output.
-    // AC2: task_artifacts_dir must be present (not dropped by the replacement).
-    expect(createSpy).toHaveBeenCalledTimes(1)
-    // Cast through unknown: the spy is typed as a no-arg fn but the real
-    // ExecutionService.create passes (workspaceId, config) — same pattern as
-    // composite-dispatch.test.ts.
-    const createCall = createSpy.mock.calls[0] as unknown as [unknown, { input_values: Record<string, unknown> }]
-    const inputValues = createCall[1].input_values
-    expect(inputValues.task_artifacts_dir).toBe(artifactsDir)
-    // The other composite keys are still present (not clobbered)
-    expect(inputValues.subunit_count).toBe(3)
-    expect(inputValues.goal).toBe("E2E_TD_08_goal")
-
-    // GS5/r2-05: composite preservation integrity. buildCompositeInputValues
-    // completely REPLACES firstStep.input_values (the SW-BP7 hazard), then spreads
-    // ...artifactsEntry LAST. These assertions prove every original key survives
-    // that replacement AND task_artifacts_dir is not clobbered by an earlier key:
-    //   - integration_prompt: a KEY-RENAME (task_spec.integration_goal.prompt →
-    //     integration_prompt). Asserting the renamed key + value catches a
-    //     regression where the rename is dropped (would yield undefined).
-    //   - subunits: must be the ARRAY (not stringified) so the composition Loop
-    //     can iterate it.
-    //   - exact key-set: no key dropped, no extra key leaked.
-    expect(inputValues.integration_prompt).toBe("E2E_TD_08_synth")
-    expect(Array.isArray(inputValues.subunits)).toBe(true)
-    expect(inputValues.subunits).toHaveLength(3)
-    expect(Object.keys(inputValues).sort()).toEqual(
-      ["goal", "integration_prompt", "subunit_count", "subunits", "task_artifacts_dir"],
-    )
-  })
-
-  it("AC2/AC4: composite config WITHOUT task_artifacts_dir → key absent (backward compat)", async () => {
-    const subunits = [makeSubunit("a"), makeSubunit("b")]
-    const config = makeCompositeConfigWithArtifacts(subunits, "")
-    // Remove the task_artifacts_dir to simulate a legacy config
-    ;(config.workflow_chain[0].input_values as Record<string, unknown>).task_artifacts_dir = undefined
-
-    db.prepare(
-      `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
-        created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, origin_type, claimed_at)
-       VALUES (?, ?, ?, NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'claimed', 'task', ?)`,
-    ).run(schedId, ORG, "e2e-td-08-compat", JSON.stringify(config), new Date().toISOString())
-
-    db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(schedExecId, schedId)
-
-    const result = await executor.execute(buildCompositeJob(config), schedExecId)
-    expect(result.success).toBe(true)
-
-    const createCall = createSpy.mock.calls[0] as unknown as [unknown, { input_values: Record<string, unknown> }]
-    const inputValues = createCall[1].input_values
-    expect(inputValues.task_artifacts_dir).toBeUndefined()
+    // AC2 core: the injected dir SURVIVES buildCompositeInputValues's wholesale
+    // replacement of chain[0].input_values (the SW-BP7 hazard).
+    expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir("td08-ac2"))
+    // The other composite keys are present (not clobbered).
+    expect(iv.subunit_count).toBe(3)
+    expect(iv.goal).toBe("E2E_TD_08_goal")
+    // integration_prompt is a KEY-RENAME (task_spec.integration_goal.prompt →
+    // integration_prompt): asserting the renamed key catches a dropped rename.
+    expect(iv.integration_prompt).toBe("E2E_TD_08_synth")
+    // subunits must be the ARRAY (not stringified) for the composition Loop.
+    expect(Array.isArray(iv.subunits)).toBe(true)
+    expect(iv.subunits).toHaveLength(3)
+    // Exact key-set. The two management dirs (artifacts + workflows) are BOTH injected
+    // by the per-launch materializer (buildTaskLaunchConfig writes them, and
+    // resolveTaskLaunchStep copies chain[0].input_values into step.inputValues), then
+    // merged over buildCompositeInputValues's composite keys. So the armed row carries
+    // goal + integration_prompt + subunit_count + subunits + both dirs — nothing dropped,
+    // nothing leaked.
+    expect(Object.keys(iv).sort()).toEqual([
+      "goal", "integration_prompt", "subunit_count", "subunits", "task_artifacts_dir", "task_workflows_dir",
+    ])
   })
 })
 
@@ -342,8 +321,6 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     }
   }
 
-  /** Composition-style workflow (mirrors core-pack/composition-task.yaml shape)
-   *  with input_mapping on the dispatch-child node. */
   function compositionWorkflow(subunits: SubunitSpec[]): WorkflowDef {
     const nodes: NodeDef[] = [
       {
@@ -382,15 +359,14 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     }
   }
 
+  // The port shape changed with 票03: dispatchChildSchedule → dispatchChild, and it
+  // resolves a ChildHandle ({ child_id }) instead of a ScheduleHandle ({ schedule_id }).
   function makePort(): { port: TaskDispatchPort; spy: ReturnType<typeof vi.fn> } {
     const spy = vi.fn().mockImplementation((_subunit: SubunitSpec) =>
-      Promise.resolve({ schedule_id: "sch-08-1", workspace_id: "ws-08-1" } as ScheduleHandle),
+      Promise.resolve({ child_id: "child-08-1", workspace_id: "ws-08-1" } as ChildHandle),
     )
     return {
-      port: {
-        dispatchChildSchedule: spy,
-        resumeOnCompletion: vi.fn().mockResolvedValue(undefined),
-      },
+      port: { dispatchChild: spy, resumeOnCompletion: vi.fn().mockResolvedValue(undefined) },
       spy,
     }
   }
@@ -403,26 +379,19 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     const engine = new WorkflowEngine(wf, {}, process.cwd())
     engine.setTaskDispatchPort(port)
 
-    // First run → dispatches subunit[0] → pauses (pending_task_dispatch)
     const res = await engine.run()
     expect(res.status).toBe("pending_task_dispatch")
 
-    // The port received the subunit. AC3: the subunit's input_values must carry
-    // task_artifacts_dir (resolved from $vars.task_artifacts_dir via input_mapping).
     expect(spy).toHaveBeenCalledTimes(1)
     const receivedSubunit = spy.mock.calls[0][0] as SubunitSpec
     expect(receivedSubunit.input_values.task_artifacts_dir).toBe(ARTIFACTS_DIR)
-    // The existing goal mapping also works (bonus — input_mapping was previously
-    // declared in composition-task.yaml but not resolved by the executor)
     expect(receivedSubunit.input_values.goal).toBe("E2E_TD_08_goal")
-    // Original subunit identity preserved (not stringified)
     expect(receivedSubunit.name).toBe("a")
     expect(receivedSubunit.workflow_ref).toBe("e2e-td-08/simple")
   }, 20000)
 
   it("AC3/AC4: no input_mapping on the node → subunit input_values unchanged (backward compat)", async () => {
     const subunits = [makeSubunit("a")]
-    // Workflow WITHOUT input_mapping on dispatch-child (existing behavior)
     const nodes: NodeDef[] = [
       {
         id: "loop-subunits",
@@ -457,20 +426,13 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     const res = await engine.run()
     expect(res.status).toBe("pending_task_dispatch")
 
-    // No input_mapping → subunit's input_values stays {} (task_artifacts_dir NOT injected)
     expect(spy).toHaveBeenCalledTimes(1)
     const receivedSubunit = spy.mock.calls[0][0] as SubunitSpec
     expect(receivedSubunit.input_values.task_artifacts_dir).toBeUndefined()
   }, 20000)
 
-  // GS5/r2-05: type preservation through input_mapping. resolveMappingValue
-  // (task-dispatch.ts:257) does `return this.pool.get(key)` for pure $vars.xxx —
-  // VarPool stores `any` in a Map, and Object.entries preserves number/boolean.
-  // So a non-string $vars value MUST arrive at the subunit with its type intact
-  // (not stringified to "42"/"true"). This is a real edge the existing AC3 test
-  // (string-only) does not cover. If a future refactor routes $vars through
-  // substituteVars (which String()ifies), this test fails — catching the
-  // type-loss regression before it reaches production dispatch.
+  // GS5/r2-05: type preservation through input_mapping (resolveMappingValue returns
+  // pool.get raw, not substituteVars's String()).
   it("AC3/type-preservation: input_mapping resolves $vars.<numeric>/<boolean> preserving type (not stringified)", async () => {
     const subunits = [makeSubunit("a")]
     const nodes: NodeDef[] = [
@@ -486,9 +448,7 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
             subunit: "$iteration.subunit",
             await: true,
             input_mapping: {
-              // string path (regression guard — existing behavior must still hold)
               task_artifacts_dir: "$vars.task_artifacts_dir",
-              // numeric + boolean paths — the new edge under test
               numeric_metric: "$vars.numeric_metric",
               flag: "$vars.flag",
             },
@@ -503,15 +463,13 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
       name: "loop-task-dispatch-08-types",
       execution_mode: "serial",
       budget: {} as any,
-      // variables seeds VarPool via `new Map(Object.entries(variables))` —
-      // Object.entries preserves number/boolean (not stringified).
       variables: {
         subunits,
         subunit_count: subunits.length,
         goal: "g",
         task_artifacts_dir: ARTIFACTS_DIR,
-        numeric_metric: 42,   // number, not "42"
-        flag: true,           // boolean, not "true"
+        numeric_metric: 42,
+        flag: true,
       } as Record<string, unknown>,
       nodes,
     }
@@ -525,61 +483,83 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     expect(spy).toHaveBeenCalledTimes(1)
 
     const received = spy.mock.calls[0][0] as SubunitSpec
-    // resolveMappingValue returns pool.get(key) raw (no String()). Object.is is
-    // type-strict, so toBe(42) DISTINGUISHES the number 42 from the string "42" —
-    // a single assertion that fails the moment a refactor routes $vars through
-    // substituteVars (which would stringify). No separate typeof check: it would
-    // be logically implied by toBe(42) and thus tautological padding.
     expect(received.input_values.numeric_metric).toBe(42)
     expect(received.input_values.flag).toBe(true)
   }, 20000)
 })
 
 // ──────────────────────────────────────────────────────────────────────
-//  GS5/r2-05: injection seam — TasksService.readyTask threads the injected
-//  TaskHomeService.artifactsDir into the materialized schedule config.
-//
-//  Confirmed seam (Round 1): TasksService constructor takes an optional
-//  `taskHomeService` (position 4). readyTask computes
-//  `taskArtifactsDir = taskSpec.task_type !== undefined
-//                      ? this.taskHomeService.artifactsDir(id) : undefined`
-//  and passes it to materializeTaskSpecToConfig. By injecting a TaskHomeService
-//  whose baseDir is a known temp prefix, we assert the resulting schedule
-//  config's task_artifacts_dir CARRIES that temp prefix — proving the path
-//  went through the injected seam, not the default os.homedir()/.octopus.
-//  This is an end-to-end ready→materialize→insertSchedule exercise (real
-//  :memory: DB, real TasksService); no HTTP, no production changes.
+//  Injection seam — 票03: readyTask creates NO schedules envelope; the plan is
+//  materialized per-launch by the lifecycle job, which reads the injected
+//  TaskHomeService. So the "readyTask materialized a schedule config" read is gone;
+//  its replacement asserts (1) readyTask leaves no schedule row, (2) armTask threads
+//  the injected home base into the armed execution's input_values.
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeService.baseDir", () => {
+describe("08 injection-seam: readyTask creates no envelope; armTask uses the injected TaskHomeService baseDir", () => {
   let db: Database.Database
   let tempBase: string
   let svc: TasksService
-  let sse: SSEService
+  let lifecycle: TaskLifecycleService
+  let execs: ExecutionDAO
+  let wsSeq = 0
+  const homeBase = path.join(os.tmpdir(), `octopus-seam-${Date.now()}`)
+  let realHome: string | undefined
+  let realUserProfile: string | undefined
 
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
+    db.pragma("foreign_keys = OFF")
+    stub.db = db
+    stub.seq = 0
+    stub.created = []
+    wsSeq = 0
     tempBase = path.join(os.tmpdir(), `octopus-r2-05-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
-    sse = new SSEService()
-    // Inject a TaskHomeService whose baseDir is the temp prefix. readyTask will
-    // call artifactsDir(id) = path.join(tempBase, "tasks", id, "artifacts").
-    // task-workflow-handoff (ADR-0013): stub BuiltInWorkflowService recognizes
-    // any ref containing "e2e-td" (same pattern as v3-gates).
+    realHome = process.env.HOME
+    realUserProfile = process.env.USERPROFILE
+    process.env.HOME = homeBase
+    process.env.USERPROFILE = homeBase
+    const sse = new SSEService()
     const stubBuiltIn = {
       get(ref: string) {
         if (ref.includes("e2e-td")) return { ref, content: "stub-builtin" }
         return null
       },
-    } as any
+    } as never
     svc = new TasksService(db, sse, undefined, new TaskHomeService(tempBase), undefined, stubBuiltIn)
+    const workspaceService = {
+      getById: (id: string) => (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+      ensureWorktreesForReuse: () => ({ rebuilt: [] }),
+      createFromSpec: (input: Record<string, unknown>) => {
+        const id = `seam-ws-${wsSeq++}`
+        const p = path.join(os.tmpdir(), `octopus-seam-ws-${id}`)
+        fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
+        db.prepare(
+          `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
+        ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+        return { id }
+      },
+    }
+    lifecycle = new TaskLifecycleService({
+      db,
+      sse,
+      workspaceService: workspaceService as never,
+      builtInWorkflows: stubBuiltIn,
+      taskHomeService: new TaskHomeService(tempBase),
+    })
+    execs = new ExecutionDAO(db)
   })
   afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+    if (realUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = realUserProfile
     db.close()
-    try { require("fs").rmSync(tempBase, { recursive: true, force: true }) } catch { /* */ }
+    try { fs.rmSync(tempBase, { recursive: true, force: true }) } catch { /* */ }
   })
 
-  /** Seed a draft task row directly (mirrors tasks-v3-gates.test.ts insertTask). */
   function insertDraftTask(id: string, spec: Record<string, unknown>, workflowRef: string | null = null): void {
     const now = new Date().toISOString()
     db.prepare(`
@@ -590,86 +570,46 @@ describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeServic
     `).run(id, ORG, "r2-05-task", JSON.stringify(spec), workflowRef, now, now)
   }
 
-  /** Read the schedule config that readyTask materialized (S2 origin lookup). */
-  function readScheduleConfig(taskId: string): {
-    workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, unknown> }>
-    task_spec?: unknown
-    workspace_spec?: { org: string }
-  } {
-    const row = db.prepare(
-      "SELECT config FROM schedules WHERE origin_id = ? AND origin_type = 'task'",
-    ).get(taskId) as { config: string }
-    return JSON.parse(row.config)
-  }
-
-  it("AC1-seam: v3 task ready → config.task_artifacts_dir carries injected tempBase (not default homedir)", () => {
-    const id = "e2e-td-08-r2-05-v3"
+  it("AC1/§1: readyTask flips status to ready and creates NO schedules row (contract §新行为 1)", () => {
+    const id = "e2e-td-08-seam-nosched"
     insertDraftTask(id, {
-      goal: "E2E_TD r2-05 goal", ac: ["E2E_TD ac1"],
-      task_type: "coding",            // v3 → readyTask injects taskArtifactsDir
-      goal_confirmed: true,            // gate satisfied
-      ac_confirmed: ["E2E_TD ac1"],
-    }, "e2e-td-08/wf") // simple task → dispatch workflow_ref required by the gate
-
-    const dto = svc.readyTask(id)
-    expect(dto.status).toBe("ready")
-
-    const config = readScheduleConfig(id)
-    const iv = config.workflow_chain[0].input_values
-    const expected = path.join(tempBase, "tasks", id, "artifacts")
-    // The injected base threaded through: path is EXACTLY tempBase/tasks/id/artifacts.
-    expect(iv.task_artifacts_dir).toBe(expected)
-    // SG5 (ticket 06): task_spec is DROPPED from the materialized config (lives
-    // in the tasks table). A regression that re-attaches task_spec would fail
-    // this — catches the "config carries task_spec" hazard independent of the
-    // path assertions above.
-    expect(config).not.toHaveProperty("task_spec")
-    // The schedule envelope carries the S2 origin wiring (origin_type='task',
-    // origin_id=task.id) — the seam TasksService.readyTask is responsible for.
-    const sched = db.prepare(
-      "SELECT origin_type, origin_id, status FROM schedules WHERE origin_id = ? AND origin_type = 'task'",
-    ).get(id) as { origin_type: string; origin_id: string; status: string }
-    expect(sched.origin_type).toBe("task")
-    expect(sched.origin_id).toBe(id)
-  })
-
-  it("AC4-seam: v2 task (no task_type) ready → task_artifacts_dir key ABSENT (legacy backward compat, no home)", () => {
-    const id = "e2e-td-08-r2-05-v2"
-    // v2 task: no task_type → readyTask's `taskSpec.task_type !== undefined` is
-    // false → taskArtifactsDir is undefined → no injection (AC4 backward compat).
-    // The confirmation gate is ALSO skipped for v2 (gate is v3-only).
-    insertDraftTask(id, { goal: "E2E_TD r2-05 v2 goal", ac: ["E2E_TD ac1"] })
-
-    const dto = svc.readyTask(id)
-    expect(dto.status).toBe("ready")
-
-    const config = readScheduleConfig(id)
-    const iv = config.workflow_chain[0].input_values
-    // Exact empty key-set: legacy tasks get a minimal config with NO injection
-    // trace (stronger than toBeUndefined — the key is never SET, so Object.keys
-    // excludes it). A regression that injects an empty-string or undefined-valued
-    // key would pass toBeUndefined but FAIL this exact-set check.
-    expect(Object.keys(iv)).toEqual([])
-    // No workflow_ref seeded on the task → materialize defaults to '' for simple.
-    expect(config.workflow_chain[0].workflow_ref).toBe("")
-  })
-
-  it("AC1-seam: v3 task ready → config carries task_workflows_dir (ADR-0013 injection seam)", () => {
-    const id = "e2e-td-08-r2-05-wf"
-    insertDraftTask(id, {
-      goal: "E2E_TD r2-05 wf", ac: ["E2E_TD ac1"],
-      task_type: "coding",
-      goal_confirmed: true,
-      ac_confirmed: ["E2E_TD ac1"],
+      goal: "E2E_TD goal", ac: ["E2E_TD ac1"],
+      task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
     }, "e2e-td-08/wf")
 
     const dto = svc.readyTask(id)
     expect(dto.status).toBe("ready")
+    // The envelope is dead: enqueuing touches no schedule table at all.
+    expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
+  })
 
-    const config = readScheduleConfig(id)
-    const iv = config.workflow_chain[0].input_values as Record<string, unknown>
-    const expected = path.join(tempBase, "tasks", id, "workflows")
-    expect(iv.task_workflows_dir).toBe(expected)
+  it("AC1-seam: v3 task arm → input_values.task_artifacts_dir carries injected tempBase (not default homedir)", () => {
+    const id = "e2e-td-08-seam-v3"
+    insertDraftTask(id, {
+      goal: "E2E_TD r2-05 goal", ac: ["E2E_TD ac1"],
+      task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
+    }, "e2e-td-08/wf")
+    svc.readyTask(id)
+    const execId = lifecycle.armTask(id)
+    const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
+    const expected = path.join(tempBase, "tasks", id, "artifacts")
+    // The injected base threaded through the per-launch materializer.
+    expect(iv.task_artifacts_dir).toBe(expected)
+    // SG5/r2-05 preserved: task_spec is dropped from the plan (lives in the tasks table);
+    // the armed input_values carries no task_spec trace either.
+    expect(iv).not.toHaveProperty("task_spec")
+  })
+
+  it("AC1-seam: v3 task arm → input_values carries task_workflows_dir (ADR-0013 injection seam)", () => {
+    const id = "e2e-td-08-seam-wf"
+    insertDraftTask(id, {
+      goal: "E2E_TD r2-05 wf", ac: ["E2E_TD ac1"],
+      task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
+    }, "e2e-td-08/wf")
+    svc.readyTask(id)
+    const execId = lifecycle.armTask(id)
+    const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
+    expect(iv.task_workflows_dir).toBe(path.join(tempBase, "tasks", id, "workflows"))
   })
 })
 
@@ -684,7 +624,6 @@ describe("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws wor
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-td-ac10-home-"))
     tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-td-ac10-ws-"))
-    // Create ws workflows/ dir (as createFromSpec would)
     fs.mkdirSync(path.join(tmpWs, "workflows"), { recursive: true })
   })
 
@@ -694,34 +633,28 @@ describe("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws wor
   })
 
   it("copies YAML files from task_workflows_dir into ws workflows/", async () => {
-    // Seed task home workflows/ dir with two YAMLs + one non-YAML
     const srcDir = path.join(tmpHome, "tasks", "task-1", "workflows")
     fs.mkdirSync(srcDir, { recursive: true })
     fs.writeFileSync(path.join(srcDir, "my-flow.yaml"), "workflow: my-flow\n", "utf-8")
     fs.writeFileSync(path.join(srcDir, "other.yml"), "workflow: other\n", "utf-8")
     fs.writeFileSync(path.join(srcDir, "readme.md"), "ignore me", "utf-8")
 
-    // Exercise the exported helper directly (it's a pure FS function, no DB)
-    const { copyTaskWorkflowsToWs } = await import(
-      "../services/scheduler/executors/workflow-executor"
-    )
+    // 票03: the copy helper moved to services/tasks/task-artifact-sync (the executor
+    // now imports it from there); ADR-0013 behaviour is unchanged.
+    const { copyTaskWorkflowsToWs } = await import("../services/tasks/task-artifact-sync")
     copyTaskWorkflowsToWs(srcDir, tmpWs)
 
-    // Both YAMLs present in ws workflows/
     const wsWf = path.join(tmpWs, "workflows")
     expect(fs.existsSync(path.join(wsWf, "my-flow.yaml"))).toBe(true)
     expect(fs.existsSync(path.join(wsWf, "other.yml"))).toBe(true)
-    // Non-YAML not copied
     expect(fs.existsSync(path.join(wsWf, "readme.md"))).toBe(false)
-    // Content preserved
     expect(fs.readFileSync(path.join(wsWf, "my-flow.yaml"), "utf-8")).toBe("workflow: my-flow\n")
   })
 
   it("no-op when source dir is missing (legacy tasks)", async () => {
-    const { copyTaskWorkflowsToWs } = await import(
-      "../services/scheduler/executors/workflow-executor"
-    )
-    // Missing source dir — must not throw, must not add files to ws
+    // 票03: the copy helper moved to services/tasks/task-artifact-sync (the executor
+    // now imports it from there); ADR-0013 behaviour is unchanged.
+    const { copyTaskWorkflowsToWs } = await import("../services/tasks/task-artifact-sync")
     copyTaskWorkflowsToWs("/nonexistent/path", tmpWs)
     expect(fs.readdirSync(path.join(tmpWs, "workflows"))).toEqual([])
   })
@@ -729,9 +662,9 @@ describe("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws wor
   it("no-op when source dir is empty", async () => {
     const emptyDir = path.join(tmpHome, "empty")
     fs.mkdirSync(emptyDir, { recursive: true })
-    const { copyTaskWorkflowsToWs } = await import(
-      "../services/scheduler/executors/workflow-executor"
-    )
+    // 票03: the copy helper moved to services/tasks/task-artifact-sync (the executor
+    // now imports it from there); ADR-0013 behaviour is unchanged.
+    const { copyTaskWorkflowsToWs } = await import("../services/tasks/task-artifact-sync")
     copyTaskWorkflowsToWs(emptyDir, tmpWs)
     expect(fs.readdirSync(path.join(tmpWs, "workflows"))).toEqual([])
   })

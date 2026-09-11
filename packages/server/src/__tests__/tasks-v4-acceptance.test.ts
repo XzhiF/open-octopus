@@ -3,11 +3,21 @@
 // task-phase-redesign ticket 07 — the acceptance API (通过/打回/auto_advance/入
 // archiving) + the derived view on GET /:id + the `phases` spec-field.
 //
-// Verifies (real better-sqlite3 + applySchema + real tmp task homes + stubbed
-// ExecutionService registry that mirrors lifecycle.create's DB write, R1-R7):
+// 票03 (ADR-0021 task-scheduler-decouple) rewrote this file's read model: a v4 round
+// IS an `executions` row (task_id + parent_id='0' + phase_index/round_index), read
+// directly by deriveTaskView. There is no `schedules` envelope any more — no parked
+// definition row, no schedule_executions slot, no config to rewrite per round, and no
+// status listener mirroring a schedule onto tasks.status. The fixture therefore lays
+// rounds down as executions rows, and the launch assertions read the row the run
+// actually ate (same harness family as tasks-v4-handoff-injection.test.ts, which was
+// converted first — the stub here writes REAL rows so the latch/claim scan/derive all
+// see what is really stored).
+//
+// Verifies (real better-sqlite3 + applySchema + real tmp task homes + a stubbed
+// ExecutionService registry that writes real executions rows, R1-R7):
 //   AC1: accepted mid-phase → ledger row appended (decision=accepted, feedback
 //        NULL) + next_action='dispatched' + the NEXT phase's round 1 dispatches
-//        on the bound ws (executions tagged (i+1,1)); accepted on the LAST
+//        on the bound ws (round row tagged (i+1,1)); accepted on the LAST
 //        phase → next_action='archiving', persisted status 'archiving', the
 //        票 08 hook fires, and NO execution is dispatched.
 //   AC2: autoAdvance=false → accepted records the decision but does NOT start
@@ -19,8 +29,10 @@
 //   AC4: 409 when the derived phase status is not awaiting_review / the round
 //        is not the awaiting one / the round was already decided / a non-v4
 //        task; 404 unknown task; 400 malformed body (incl. rejected without
-//        feedback). A leftover persisted 'done' (the SG2 listener mirrors the
-//        FIRST round's terminal transition) must NOT block acceptance.
+//        feedback). A persisted status the human-gated flow legitimately leaves
+//        behind (a card parked at 'ready' while its round waits for review — the
+//        lifecycle job mirrors the launch, and K3 forbids it mirroring a v4
+//        round's ending) must NOT block acceptance.
 //   AC5: spec-field field=phases (whole-array PUT, version bump, SSE).
 //   + GET /:id embeds deriveTaskView's output as `derived`.
 //
@@ -36,31 +48,59 @@ import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
+import { WorkspaceService } from "../services/workspace"
 import { createTasksRoutes } from "../routes/tasks"
 import { PHASE_STATUS_UPDATE_EVENT, TASK_STATUS_EVENT } from "@octopus/shared"
-import { TaskScheduleStatusListener } from "../services/scheduler/schedule-status-listener"
-import { TaskDAO, ScheduleConfigDAO } from "../db/dao"
+import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
 
 const ORG = "e2e-ac"
 const BATCH_DATE = "20260903"
 
-// ── ExecutionService registry stub (mirrors tasks-v4-ws-reuse.test.ts) ──
+/** The refs this suite's fixtures bind phases to. armTask re-materializes the launch
+ *  plan from task_spec + home on EVERY round (票03), so a v4 dispatch now has to be
+ *  able to resolve its phase refs — hence a stub with a deliberate whitelist: the
+ *  AC5 gate case binds `built-in/task-dev`, which must stay unresolvable. */
+const KNOWN_REFS = new Set([
+  "built-in/flow-p1",
+  "built-in/flow-p2",
+  "built-in/flow-p3",
+  "built-in/task-fix",
+])
+const builtInStub = {
+  get: (ref: string) =>
+    KNOWN_REFS.has(ref) ? { ref, content: "name: demo\nnodes: []\n", name: "demo" } : null,
+} as never
+
+// ── ExecutionService registry stub (mirrors tasks-v4-handoff-injection.test.ts) ──
+// create() lands a REAL armed root row: ux_exec_task_active, the job's claim scan and
+// deriveView all read what is actually stored, not what this stub pretends.
 const stubService = {
   create: vi.fn((workspaceId: string, input: Record<string, unknown>) => {
     const id = `e2e-ac-exec-${execSeq++}`
     mockHooks.db!
       .prepare(
-        `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`,
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+           status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+         VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?, ?, ?)`,
       )
-      .run(id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""), ORG)
+      .run(
+        id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+        JSON.stringify(input.input_values ?? {}), ORG,
+        input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
+      )
     return { id }
   }),
-  start: vi.fn(async () => {}),
+  start: vi.fn(async (id: string) => {
+    mockHooks.db!
+      .prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?")
+      .run(id)
+  }),
   registerExternalCallbacks: vi.fn((hooks: { onComplete?: (s?: string) => void }, execId: string) => {
     capturedCallbacks.set(execId, hooks.onComplete ?? null)
   }),
   clearExternalCallbacks: vi.fn(),
+  cancel: vi.fn((id: string) => ({ id })),
+  hasLiveEngine: () => false,
 }
 let execSeq = 0
 const capturedCallbacks = new Map<string, ((s?: string) => void) | null>()
@@ -107,15 +147,21 @@ let taskSeq = 0
 
 /**
  * Build a v4 task parked in 「待验收」: task home with the phase batch dirs +
- * spec files, a bound workspace row (real dir), the K5 envelope (terminal, so
- * the active slot is free), and ONE terminal round-1 execution tagged (1,1).
- * deriveTaskView then reports phase 1 = awaiting_review / awaitingRound = 1.
+ * spec files, a bound workspace row (real dir), and ONE terminal round-1 execution
+ * tagged (1,1) on that task. deriveTaskView then reports phase 1 = awaiting_review /
+ * awaitingRound = 1.
+ *
+ * 票03: that row IS the whole read model — there is no envelope to park (the active
+ * slot releases itself once the row goes terminal) and no schedule_executions to
+ * bridge through. The batch spec.md files must exist on disk because armTask re-checks
+ * the v4 contract on every round it starts.
  */
 function seedAwaitingReview(opts: {
   phases?: PhaseDef[]
   autoAdvance?: boolean
-  /** Persisted tasks.status — 'running' is the normal v4 mid-flight value;
-   *  'done' reproduces the listener's premature mirror (see ticket notes). */
+  /** Persisted tasks.status — 'running' is what the lifecycle job leaves between
+   *  rounds (it mirrors the launch, never a v4 round's ending); 'ready' is where a
+   *  human gate parks the card; 'done'/'archiving' only ever come from the archiver. */
   status?: string
   /** Extra ledger rows to pre-insert (round/replay scenarios). */
   ledger?: Array<{ phase_index: number; round_index: number; decision: string; feedback?: string }>
@@ -138,13 +184,13 @@ function seedAwaitingReview(opts: {
     specDirs.set(p.index, dir)
   }
 
-  // workspace row + dir (dispatchPhaseRound requires a bound, live ws).
+  // workspace row + dir (armTask reuses the bound ws; K4 one ws per task).
   const workspaceId = `e2e-ac-ws-${taskSeq}`
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(wsPath, { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
-  ).run(workspaceId, `task:${taskId}`, ORG, wsPath)
+    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+  ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
     format: "v4",
@@ -167,58 +213,22 @@ function seedAwaitingReview(opts: {
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
   `).run(taskId, ORG, `E2E_AC ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId)
 
-  // envelope (K5 一封套) — materialized-phase shape (absolute specPath/specDir).
-  const scheduleId = `e2e-ac-sched-${taskSeq}`
-  db.prepare(`
-    INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled,
-      job_type, config, parallel_policy, status, origin_type, origin_id, origin_role,
-      scheduled_at, created_at, updated_at, max_retain)
-    VALUES (?, ?, ?, NULL, 'UTC', 1, 'workflow', ?, 'skip', 'done', 'task', ?, 'primary', NULL, ?, ?, 10)
-  `).run(
-    scheduleId, ORG, `task-${taskId}-primary`,
-    JSON.stringify({
-      schema_version: "3.0",
-      type: "workflow",
-      workspace_spec: { org: ORG, branch_prefix: "taskpool-e2e-ac", projects: [] },
-      workflow_chain: [{ workflow_ref: phases[0].workflowRef, input_values: {} }],
-      max_retain: 10,
-      format: "v4",
-      phases: phases.map((p) => ({
-        index: p.index,
-        name: p.name,
-        slug: p.slug,
-        specPath: path.join(specDirs.get(p.index)!, "spec.md"),
-        specDir: specDirs.get(p.index),
-        workflowRef: p.workflowRef,
-        inputValues: {},
-      })),
-    }),
-    taskId, now, now,
-  )
-
-  // completed schedule_executions slot (no active row → dispatch is allowed).
-  const seedSchedExecId = `e2e-ac-se-${taskSeq}`
-  db.prepare(`
-    INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-      timezone_offset, timezone_iana, created_at, triggered_by)
-    VALUES (?, ?, 'completed', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')
-  `).run(seedSchedExecId, scheduleId)
-
-  // round executions, tagged (phase,round), terminal by default. deriveView
-  // resolves them through the schedule link (S2), so mirror what
-  // WorkflowExecutor/dispatchPhaseRound write there.
+  // round executions — 票03 起这就是全部的读模型：task_id 直连 + parent_id='0' +
+  // 轮次坐标在列上（deriveView/账本/历史都读它，不再有 join 桥）。
   const rounds = opts.rounds ?? [{ round: 1, status: "completed" }]
   const execIds: string[] = []
   for (const r of rounds) {
     const execId = `e2e-ac-exec-seeded-${taskSeq}-${r.round}`
     execIds.push(execId)
     db.prepare(
-      `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org,
-        phase_index, round_index, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, datetime('now'), datetime('now'))`,
-    ).run(execId, workspaceId, phases[0].workflowRef, phases[0].workflowRef, r.status, ORG, r.round)
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index, completed_at)
+       VALUES (?, ?, '0', 0, ?, ?, ?, '{}', '{}', ?, datetime('now'), datetime('now'), ?, 1, ?, datetime('now'))`,
+    ).run(
+      execId, workspaceId, phases[0].workflowRef, phases[0].workflowRef,
+      r.status, ORG, taskId, r.round,
+    )
   }
-  db.prepare("UPDATE schedule_executions SET execution_id = ? WHERE id = ?").run(execIds[0], seedSchedExecId)
 
   for (const row of opts.ledger ?? []) {
     db.prepare(
@@ -226,7 +236,7 @@ function seedAwaitingReview(opts: {
     ).run(`e2e-ac-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision, row.feedback ?? null)
   }
 
-  return { db, taskId, scheduleId, workspaceId, wsPath, home, specDirs, execIds }
+  return { db, taskId, workspaceId, wsPath, home, specDirs, execIds }
 }
 
 function ledgerRows(db: Database.Database, taskId: string) {
@@ -238,6 +248,26 @@ function ledgerRows(db: Database.Database, taskId: string) {
 function taskRow(db: Database.Database, taskId: string) {
   return db.prepare("SELECT status, workspace_id, version, completed_at FROM tasks WHERE id = ?").get(taskId) as
     { status: string; workspace_id: string | null; version: number; completed_at: string | null }
+}
+
+/** The row the run actually ate — replaces reading the envelope's materialized
+ *  chain[0]/config (票03: the launch plan is derived per arm, the coordinates and the
+ *  input_values live ON the round's own row). */
+function launchedRow(taskId: string) {
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  if (!row) throw new Error(`no launch row for ${taskId}`)
+  return row
+}
+
+function launchedIV(taskId: string): Record<string, string> {
+  return JSON.parse(launchedRow(taskId).input_values) as Record<string, string>
+}
+
+function specPhasesOf(taskId: string): Array<Record<string, unknown>> {
+  const { task_spec } = mockHooks.db!
+    .prepare("SELECT task_spec FROM tasks WHERE id = ?")
+    .get(taskId) as { task_spec: string }
+  return (JSON.parse(task_spec) as { phases: Array<Record<string, unknown>> }).phases
 }
 
 function phaseOf(view: { phaseViews: Array<{ index: number }> }, index: number) {
@@ -253,14 +283,18 @@ function phaseOf(view: { phaseViews: Array<{ index: number }> }, index: number) 
   }
 }
 
-/** Fire a dispatched round's terminal callback (what the engine would do). */
+/** Fire a dispatched round's terminal callback (what the engine would do). The row's
+ *  terminal status is written by the lifecycle job (finalizeLaunch → setLaunchStatus),
+ *  so the fixture verifies it instead of UPDATE-ing it by hand — a hand-written status
+ *  would hide a broken finalize the same way the deleted listener used to. */
 function completeDispatchedRound(execId: string, status = "completed"): void {
   const cb = capturedCallbacks.get(execId)
   expect(cb, `no terminal callback captured for ${execId}`).toBeTruthy()
   cb!(status)
-  mockHooks.db!
-    .prepare("UPDATE executions SET status = ? WHERE id = ?")
-    .run(status, execId)
+  const row = mockHooks.db!
+    .prepare("SELECT status FROM executions WHERE id = ?")
+    .get(execId) as { status: string }
+  expect(row.status, `finalizeLaunch did not land '${status}' on ${execId}`).toBe(status)
 }
 
 // ── Suite ────────────────────────────────────────────────────────────
@@ -303,7 +337,13 @@ beforeEach(() => {
   sse = new SSEService()
   sseEvents = []
   sse.subscribe("taskpool", (e) => sseEvents.push({ event: e.event, data: e.data as Record<string, unknown> }))
-  service = new TasksService(db, sse, undefined, taskHome)
+  // 票03: dispatching a round goes through the task-lifecycle job, which resolves each
+  // phase's ref (contract re-check) and prepares the workspace — both need wiring the
+  // pre-票03 fixture could dodge by rewriting an envelope.
+  service = new TasksService(
+    db, sse, undefined, taskHome, undefined, builtInStub, null,
+    new WorkspaceService(new WorkspaceDAO(db)),
+  )
   app = new Hono().route("/api/tasks", createTasksRoutes(service, sse))
 })
 
@@ -341,11 +381,14 @@ describe("AC1 — accepted: ledger + advance", () => {
     expect(createCall[0]).toBe(workspaceId)
     expect(createCall[1].workflow_ref).toBe("built-in/flow-p2")
     const tagged = db
-      .prepare("SELECT phase_index, round_index, workspace_id, status FROM executions WHERE phase_index = 2")
-      .all() as Array<{ phase_index: number; round_index: number; workspace_id: string; status: string }>
+      .prepare("SELECT phase_index, round_index, workspace_id, status, task_id FROM executions WHERE phase_index = 2")
+      .all() as Array<{ phase_index: number; round_index: number; workspace_id: string; status: string; task_id: string }>
     expect(tagged).toHaveLength(1)
     expect(tagged[0].round_index).toBe(1)
     expect(tagged[0].workspace_id).toBe(workspaceId)
+    // 票03: the row belongs to the TASK, not to an envelope — that column is what
+    // deriveView and the one-instance latch key on.
+    expect(tagged[0].task_id).toBe(taskId)
 
     // 返回体嵌派生视图：phase1 accepted / phase2 running。
     expect(body.task.derived.isV4).toBe(true)
@@ -355,12 +398,15 @@ describe("AC1 — accepted: ledger + advance", () => {
   })
 
   it("emits phase_status_update at the acceptance-caused transitions and keeps the task dispatchable", async () => {
-    // status='done' reproduces the live post-first-round world: the SG2
-    // listener mirrored the FIRST phase's terminal transition onto tasks.status
-    // (dispatchPhaseRound never touches it), so the acceptance path has to
-    // realign the row with what the human just authorized — otherwise
-    // abortTask (ready/running only) would 409 on a task that IS running.
-    const { taskId } = seedAwaitingReview({ status: "done" })
+    // The world 票03 actually leaves behind: a card parked at 'ready' by the human gate
+    // (autoAdvance=false, or an accepted phase whose dispatch failed) while phase 1's
+    // round sits terminal-and-unreviewed. The status the old SG2 listener produced by
+    // mirroring the FIRST round's ending no longer exists — but the same regression is
+    // still worth pinning: the gate is derive-based, so the stale row must not stop the
+    // decision, and after it acceptance has to realign the row with what the human just
+    // authorized — otherwise abortTask (ready/running only) would 409 a task that IS
+    // running.
+    const { taskId } = seedAwaitingReview({ status: "ready" })
     await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
 
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
@@ -370,7 +416,7 @@ describe("AC1 — accepted: ledger + advance", () => {
     // A round is in flight again → the persisted status mirrors that (abortTask
     // must stay legal: it only accepts ready/running).
     expect(taskRow(db, taskId).status).toBe("running")
-    expect(sseOf("task_status").at(-1)).toMatchObject({ data: { status: "running" } })
+    expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "running" } })
     expect(() => service.abortTask(taskId)).not.toThrow()
     expect(taskRow(db, taskId).status).toBe("aborted")
   })
@@ -395,9 +441,12 @@ describe("AC1 — accepted: ledger + advance", () => {
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
       { event: PHASE_STATUS_UPDATE_EVENT, data: { task_id: taskId, phase_index: 1, status: "accepted", round_index: 1 } },
     ])
-    expect(sseOf("task_status").at(-1)).toMatchObject({ data: { status: "archiving" } })
+    expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "archiving" } })
     // Ledger still exactly one row.
     expect(ledgerRows(db, taskId)).toHaveLength(1)
+    // 票03: enqueueing/accepting never touches the scheduler's tables — a task has no
+    // definition row of its own any more.
+    expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
   })
 })
 
@@ -439,6 +488,8 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
     expect(iv.feedback).toBe("登录跳转丢了 session，补 E2E")
     expect(iv._phase_index).toBe("1")
     expect(iv._round_index).toBe("2")
+    // 票03: 轮次坐标同样长在行上（派生视图/账本按键取行，不再从 config 反查）。
+    expect([launchedRow(taskId).phase_index, launchedRow(taskId).round_index]).toEqual([1, 2])
 
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
       { event: PHASE_STATUS_UPDATE_EVENT, data: { task_id: taskId, phase_index: 1, status: "running", round_index: 2 } },
@@ -491,41 +542,32 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
 describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
   const posix = (p: string): string => p.split(path.sep).join("/")
 
-  function envelopeConfig(taskId: string): {
-    workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
-    phases: Array<{ index: number; workflowRef: string }>
-  } {
-    const { config } = db
-      .prepare("SELECT config FROM schedules WHERE origin_type='task' AND origin_id=? AND origin_role='primary'")
-      .get(taskId) as { config: string }
-    return JSON.parse(config)
-  }
-
-  it("default (no next_flow) = rerun: chain[0] 重跑 phase 绑定流，行为与基线一致", async () => {
+  it("default (no next_flow) = rerun: 这一轮跑 phase 绑定流，行为与基线一致", async () => {
     const { taskId } = seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "范围没做全",
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    const cfg = envelopeConfig(taskId)
-    expect(cfg.workflow_chain[0].workflow_ref).toBe("built-in/flow-p1")
-    expect(cfg.phases[0].workflowRef).toBe("built-in/flow-p1") // K16 信封 phases[] 冻结
+    // 票03 之后没有信封可读：本轮实际跑的流就是行上的 workflow_ref。
+    expect(launchedRow(taskId).workflow_ref).toBe("built-in/flow-p1")
+    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // K16 绑定不被改写
     // 派生轮次视图带上实际执行流（round 徽标数据源 — ADR-0018 审计线）。
     const body = (await res.json()) as { task: { derived: never } }
     const p1 = phaseOf(body.task.derived, 1)
     expect(p1.rounds.at(-1)!.exec).toMatchObject({ workflow_ref: "built-in/flow-p1" })
   })
 
-  it("next_flow=fix: chain override built-in/task-fix + server 合成输入（home 绑定不变）", async () => {
+  it("next_flow=fix: 本轮行上换成 built-in/task-fix + server 合成输入（home 绑定不变）", async () => {
     const { taskId } = seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修", next_flow: "fix",
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    const cfg = envelopeConfig(taskId)
-    expect(cfg.workflow_chain[0].workflow_ref).toBe("built-in/task-fix")
-    expect(cfg.phases[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
-    const iv = cfg.workflow_chain[0].input_values
+    const row = launchedRow(taskId)
+    expect(row.workflow_ref).toBe("built-in/task-fix")
+    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
+    // 合成输入长在这一轮的行上（旧断言读的是信封 chain[0].input_values）。
+    const iv = launchedIV(taskId)
     // ws 同构相对位（执行侧在 ws 操作，collect 回流 home — ADR-0018）
     expect(iv.phase_spec_dir).toBe(posix(batchRel("p1")))
     expect(iv.feedback_path).toBe(posix(path.join(batchRel("p1"), "fix-feedback-r1.md")))
@@ -533,11 +575,8 @@ describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
     expect(iv.feedback).toBe("小错直接修")
     expect(iv._phase_index).toBe("1")
     expect(iv._round_index).toBe("2")
-    // executions 行带实际流名。
-    const execRow = db
-      .prepare("SELECT workflow_ref FROM executions WHERE phase_index = 1 AND round_index = 2")
-      .get() as { workflow_ref: string }
-    expect(execRow.workflow_ref).toBe("built-in/task-fix")
+    // 行上的轮次坐标与 input_values 的 stamps 同段共存。
+    expect([row.phase_index, row.round_index]).toEqual([1, 2])
   })
 
   it("非法 next_flow → 400（zod enum 拦截，账本不脏）", async () => {
@@ -615,15 +654,15 @@ describe("AC4 — guards (409/404/400)", () => {
     expect(ledgerRows(db, taskId)).toEqual([])
   })
 
-  it("a rejected decision is STILL recorded when the retry dispatch fails (ws vanished)", async () => {
-    const { taskId } = seedAwaitingReview()
-    // Bind the task to a workspace that no longer exists (out-of-band rm):
-    // deriveView still sees the rounds (it scopes through the task's
-    // schedules, not the ws), so the gate opens, the decision lands — and the
-    // dispatch that follows refuses. The ledger row must survive it.
-    db.prepare("UPDATE tasks SET workspace_id = 'e2e-ac-ws-gone' WHERE id = ?").run(taskId)
+  it("a rejected decision is STILL recorded when the retry dispatch fails (contract broke out of band)", async () => {
+    const { taskId, specDirs } = seedAwaitingReview()
+    // 票03 换了失败面：deriveView 按 executions.task_id 取轮次（不再 join 工作区/信封），
+    // 所以工作区消失也照样看得见轮次、闸门照开；而 arm 每次都从 task_spec + home 现算
+    // 启动计划 ⇒ 带外删掉批次的 spec.md 就是「决定能落、派发被拒」的现实来源。
+    fs.rmSync(path.join(specDirs.get(1)!, "spec.md"))
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
-    expect(res.status).toBe(409)
+    expect(res.status, await res.clone().text()).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toMatch(/phase:1:spec-missing/)
     // 人的决定是历史事实：账本保留，只是没有新轮次。
     expect(ledgerRows(db, taskId)).toHaveLength(1)
     expect((db.prepare("SELECT COUNT(*) c FROM executions WHERE round_index = 2").get() as { c: number }).c).toBe(0)
@@ -649,6 +688,15 @@ describe("derived view on GET /:id + board visibility", () => {
     const res = await app.request(`/api/tasks/${taskId}`)
     expect(res.status).toBe(200)
     expect(((await res.json()) as { derived: { isV4: boolean } }).derived.isV4).toBe(true)
+  })
+
+  it("rounds of ANOTHER task never leak into the view (task_id scoping replaces the envelope join)", () => {
+    const a = seedAwaitingReview()
+    const b = seedAwaitingReview()
+    expect(phaseOf(service.getTask(a.taskId).derived, 1).rounds.map((r) => r.exec.id))
+      .toEqual([a.execIds[0]])
+    expect(phaseOf(service.getTask(b.taskId).derived, 1).rounds.map((r) => r.exec.id))
+      .toEqual([b.execIds[0]])
   })
 
   it("a v3 task keeps the verbatim mirror (isV4 false, no phases, 'failed' legal — K13)", () => {
@@ -746,10 +794,12 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
     fs.mkdirSync(path.join(taskHome.homePath(taskId), batchRel("p1")), { recursive: true })
     fs.writeFileSync(path.join(taskHome.homePath(taskId), batchRel("p1"), "spec.md"), "# p1\n")
     const res = await app.request(`/api/tasks/${taskId}/ready`, { method: "POST" })
-    // The stub built-in set is empty here → the gate reports the phase's
-    // workflow_ref as unresolvable (never a 500, never the v3 keys).
+    // The stub built-in set does not contain built-in/task-dev → the gate reports the
+    // phase's workflow_ref as unresolvable (never a 500, never the v3 keys).
     expect(res.status).toBe(409)
     expect(((await res.json()) as { missing: string[] }).missing).toEqual(["phase:1:workflow-ref"])
+    // 票03: enqueue is a CHECK + a status write — it used to park an envelope row too.
+    expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
   })
 })
 
@@ -777,59 +827,16 @@ describe("AC2 — autoAdvance=false parks at the human gate", () => {
 })
 
 // ── Phase 2 review fixes ─────────────────────────────────────────────
-// C1: the SG2 listener's done/failed mirror bypasses the phase-level gate —
-//     for v4 it must NOT fire (K3: task status mirrors human decisions only).
 // P3: a tagged round reaching terminal fires phase_status_update
 //     {status:'awaiting_review'} on BOTH finalize paths (dispatch + claim).
 // M2: K16 edit window — a v4 spec stays editable until done/archiving/aborted.
-
-describe("review C1 — listener skips done/failed mirror for v4", () => {
-  const mkListener = () =>
-    new TaskScheduleStatusListener(new TaskDAO(db), new ScheduleConfigDAO(db), sse)
-
-  it("v4: schedule done leaves persisted 'running' and acceptance stays reachable", async () => {
-    const { taskId, scheduleId } = seedAwaitingReview()
-    mkListener().onScheduleTransition({
-      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "done",
-    })
-    expect(taskRow(db, taskId).status).toBe("running")
-    expect(sseOf(TASK_STATUS_EVENT).filter((e) => e.data.status === "done")).toHaveLength(0)
-    // The card must still be acceptable (gate is derive-based, persistence
-    // never went terminal → board 待验收 column holds it).
-    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
-    expect(res.status, await res.clone().text()).toBe(200)
-  })
-
-  it("v4: schedule failed likewise does not mirror (US8 — failure awaits a human, not a red state)", () => {
-    const { taskId, scheduleId } = seedAwaitingReview()
-    mkListener().onScheduleTransition({
-      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "failed", error_summary: "boom",
-    })
-    expect(taskRow(db, taskId).status).toBe("running")
-  })
-
-  it("v4: aborted IS mirrored (a human decision, K3)", () => {
-    const { taskId, scheduleId } = seedAwaitingReview()
-    mkListener().onScheduleTransition({
-      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "aborted",
-    })
-    expect(taskRow(db, taskId).status).toBe("aborted")
-  })
-
-  it("v3 regression: done mirror byte-identical (K13)", () => {
-    const now = new Date().toISOString()
-    db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
-        authoring_resources, resources, skills, project_ids, workflow_ref, version,
-        deleted_at, created_at, updated_at, completed_at, workspace_id)
-      VALUES (?, ?, 'E2E_AC v3-mirror', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-    `).run("e2e-ac-v3-mirror", ORG, JSON.stringify({ goal: "g", ac: ["a"] }), now, now)
-    mkListener().onScheduleTransition({
-      schedule_id: "e2e-ac-v3-sched", origin_type: "task", origin_id: "e2e-ac-v3-mirror", status: "done",
-    })
-    expect(taskRow(db, "e2e-ac-v3-mirror").status).toBe("done")
-  })
-})
+//
+// 原 review C1（TaskScheduleStatusListener 不做 v4 done/failed 镜像）随该 listener 在
+// 票03 一起删除：镜像 tasks.status 的职责回到 task-lifecycle job 自己身上，K3 那条规则
+// 「一轮跑完不决定任务」现在钉在
+// packages/server/src/services/tasks/__tests__/task-lifecycle.test.ts
+// （"a v4 round ending does NOT decide the task"）。本文件不再重造那个 listener，只在
+// 真实派发路径上验它的可观察面（见 P3 的 failed 用例）。
 
 describe("review P3 — dispatched round terminal fires awaiting_review", () => {
   it("rejected → round 2 dispatches → round completes → awaiting_review frame (1,2)", async () => {
@@ -841,6 +848,9 @@ describe("review P3 — dispatched round terminal fires awaiting_review", () => 
     expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review"
       && (f.data as { phase_index?: number }).phase_index === 1
       && (f.data as { round_index?: number }).round_index === 2)).toBe(true)
+    // 卡片进「待验收」是派生态：没有新行被持久化成终态。
+    expect(taskRow(db, taskId).status).toBe("running")
+    expect(service.getTask(taskId).derived.taskStatus).toBe("awaiting_review")
   })
 
   it("failed round also fires awaiting_review (terminal ≠ success)", async () => {
@@ -850,6 +860,12 @@ describe("review P3 — dispatched round terminal fires awaiting_review", () => 
     completeDispatchedRound(dispatch.execution_id, "failed")
     const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
     expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review")).toBe(true)
+    // K3（原 C1 的规则，换了写者）：一轮失败不是机器可以写进 tasks.status 的事实，
+    // 否则卡片离开「待验收」列，acceptance 就再也点不动了。
+    expect(taskRow(db, taskId).status).toBe("running")
+    expect(sseOf(TASK_STATUS_EVENT).filter((e) => e.data.status === "failed")).toHaveLength(0)
+    const res2 = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "accepted" })
+    expect(res2.status, await res2.clone().text()).toBe(200)
   })
 })
 

@@ -48,57 +48,57 @@ const MAX_RENDERED_EVENTS = 100
 export function EventIcon({ event, agentType }: { event: string; agentType?: string }) {
   // Merged event types (server-side pre-merged)
   switch (event) {
-    case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
-    case "text_block": return <FileText className="h-3 w-3 text-blue-400 shrink-0" />
-    case "tool_call": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
+    case "thinking_block": return <Brain className="h-3 w-3 text-pop-purple shrink-0" />
+    case "text_block": return <FileText className="h-3 w-3 text-pop-cyan shrink-0" />
+    case "tool_call": return <Wrench className="h-3 w-3 text-pop-amber shrink-0" />
     case "bash_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-    case "approval_metadata": return <MessageSquare className="h-3 w-3 text-cyan-400 shrink-0" />
+    case "approval_metadata": return <MessageSquare className="h-3 w-3 text-pop-cyan shrink-0" />
     case "python_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-    case "bash_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
-    case "python_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
-    case "branch_start": return <Play className="h-3 w-3 text-emerald-400 shrink-0" />
-    case "branch_end": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
-    case "node_log": return <FileText className="h-3 w-3 text-indigo-400 shrink-0" />
+    case "bash_stderr": return <X className="h-3 w-3 text-pop-red shrink-0" />
+    case "python_stderr": return <X className="h-3 w-3 text-pop-red shrink-0" />
+    case "branch_start": return <Play className="h-3 w-3 text-pop-green shrink-0" />
+    case "branch_end": return <Check className="h-3 w-3 text-pop-green shrink-0" />
+    case "node_log": return <FileText className="h-3 w-3 text-pop-purple shrink-0" />
   }
 
   // Legacy agent_event sub-types
   if (event === "agent_event" && agentType) {
     // Harness events stored as agent_event with harness_* type
     if (agentType.startsWith("harness_")) {
-      return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+      return <ShieldCheck className="h-3 w-3 text-pop-purple shrink-0" />
     }
     switch (agentType) {
-      case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
-      case "tool_start": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
-      case "tool_input": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
-      case "tool_result": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
-      case "text_delta": return <FileText className="h-3 w-3 text-blue-400 shrink-0" />
-      case "error": return <X className="h-3 w-3 text-red-400 shrink-0" />
+      case "thinking_block": return <Brain className="h-3 w-3 text-pop-purple shrink-0" />
+      case "tool_start": return <Wrench className="h-3 w-3 text-pop-amber shrink-0" />
+      case "tool_input": return <Wrench className="h-3 w-3 text-pop-amber shrink-0" />
+      case "tool_result": return <Wrench className="h-3 w-3 text-pop-amber shrink-0" />
+      case "text_delta": return <FileText className="h-3 w-3 text-pop-cyan shrink-0" />
+      case "error": return <X className="h-3 w-3 text-pop-red shrink-0" />
       default: return <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
     }
   }
 
   switch (event) {
-    case "start": return <Play className="h-3 w-3 text-emerald-400 shrink-0" />
-    case "end": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+    case "start": return <Play className="h-3 w-3 text-pop-green shrink-0" />
+    case "end": return <Check className="h-3 w-3 text-pop-green shrink-0" />
     case "bash_log": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
     case "python_log": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-    case "expert_spawn": return <Users className="h-3 w-3 text-cyan-400 shrink-0" />
-    case "expert_complete": return <Check className="h-3 w-3 text-cyan-400 shrink-0" />
-    case "expert_message": return <MessageSquare className="h-3 w-3 text-blue-400 shrink-0" />
-    case "swarm_round_end": return <RotateCcw className="h-3 w-3 text-purple-400 shrink-0" />
-    case "swarm_complete": return <Award className="h-3 w-3 text-yellow-400 shrink-0" />
-    case "consensus_check": return <Award className="h-3 w-3 text-purple-400 shrink-0" />
+    case "expert_spawn": return <Users className="h-3 w-3 text-pop-cyan shrink-0" />
+    case "expert_complete": return <Check className="h-3 w-3 text-pop-cyan shrink-0" />
+    case "expert_message": return <MessageSquare className="h-3 w-3 text-pop-cyan shrink-0" />
+    case "swarm_round_end": return <RotateCcw className="h-3 w-3 text-pop-purple shrink-0" />
+    case "swarm_complete": return <Award className="h-3 w-3 text-pop-yellow shrink-0" />
+    case "consensus_check": return <Award className="h-3 w-3 text-pop-purple shrink-0" />
     // Interaction milestone events
-    case "interaction_started": return <MessageCircle className="h-3 w-3 text-purple-400 shrink-0" />
-    case "interaction_ask_user_question": return <HelpCircle className="h-3 w-3 text-amber-400 shrink-0" />
-    case "interaction_completed": return <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
-    case "heartbeat": return <Activity className="h-3 w-3 text-rose-500 shrink-0" />
-    case "harness_directive": return <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
-    case "heartbeat_stall": return <AlertTriangle className="h-3 w-3 text-orange-500 shrink-0" />
+    case "interaction_started": return <MessageCircle className="h-3 w-3 text-pop-purple shrink-0" />
+    case "interaction_ask_user_question": return <HelpCircle className="h-3 w-3 text-pop-amber shrink-0" />
+    case "interaction_completed": return <CheckCircle2 className="h-3 w-3 text-pop-green shrink-0" />
+    case "heartbeat": return <Activity className="h-3 w-3 text-pop-red shrink-0" />
+    case "harness_directive": return <AlertTriangle className="h-3 w-3 text-pop-red shrink-0" />
+    case "heartbeat_stall": return <AlertTriangle className="h-3 w-3 text-pop-amber shrink-0" />
     default:
       // Generic harness events (harness_stupid_retry, harness_process_conflict, etc.)
-      if (event.startsWith("harness_")) return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+      if (event.startsWith("harness_")) return <ShieldCheck className="h-3 w-3 text-pop-purple shrink-0" />
       return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
@@ -112,12 +112,12 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       const dur = entry.startedAt && entry.completedAt
         ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
-      return <span className="text-purple-400">思考完成{dur ? ` (${dur})` : ""}</span>
+      return <span className="text-pop-purple">思考完成{dur ? ` (${dur})` : ""}</span>
     }
     case "text_block": {
       const text = entry.content ?? ""
       return (
-        <span className="text-blue-300 font-mono truncate max-w-[300px]">
+        <span className="text-pop-cyan font-mono truncate max-w-[300px]">
           {text.length > 80 ? `${text.slice(0, 80)}...` : text}
         </span>
       )
@@ -128,7 +128,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
         ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
       return (
-        <span className={entry.isError ? "text-red-400" : "text-amber-400"}>
+        <span className={entry.isError ? "text-pop-red" : "text-pop-amber"}>
           <code className="text-xs bg-muted px-1 rounded">{name}</code>
           {" "}{entry.isError ? "失败" : "完成"}{dur ? ` (${dur})` : ""}
         </span>
@@ -140,13 +140,13 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     }
     case "node_log": {
       const line = entry.line ?? entry.content ?? ""
-      return <span className="text-indigo-400 font-mono text-[11px] truncate max-w-[300px]">{line}</span>
+      return <span className="text-pop-purple font-mono text-[11px] truncate max-w-[300px]">{line}</span>
     }
     case "approval_metadata": {
       const decision = entry.decision ?? ""
       return decision
-        ? <span className="text-emerald-400">用户选择: <span className="font-mono font-bold">{decision}</span></span>
-        : <span className="text-cyan-400">等待审批...</span>
+        ? <span className="text-pop-green">用户选择: <span className="font-mono font-bold">{decision}</span></span>
+        : <span className="text-pop-cyan">等待审批...</span>
     }
     case "python_output": {
       const lineCount = entry.lines?.length ?? 0
@@ -154,16 +154,16 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     }
     case "bash_stderr": {
       const text = entry.content ?? entry.lines?.join("\n") ?? ""
-      return <span className="text-red-400 font-mono">终端错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
+      return <span className="text-pop-red font-mono">终端错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
     }
     case "python_stderr": {
       const text = entry.content ?? entry.lines?.join("\n") ?? ""
-      return <span className="text-red-400 font-mono">Python 错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
+      return <span className="text-pop-red font-mono">Python 错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
     }
     case "branch_start":
-      return <span className="text-emerald-400">迭代开始{entry.iteration ? ` #${entry.iteration}` : ""}</span>
+      return <span className="text-pop-green">迭代开始{entry.iteration ? ` #${entry.iteration}` : ""}</span>
     case "branch_end":
-      return <span className="text-emerald-400">迭代结束{entry.iteration ? ` #${entry.iteration}` : ""}</span>
+      return <span className="text-pop-green">迭代结束{entry.iteration ? ` #${entry.iteration}` : ""}</span>
   }
 
   // Harness events: render detector name + severity from event data
@@ -177,7 +177,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     let label = `🛡️ ${pattern}`
     if (decision) label += ` → ${decision}`
     else if (status) label += ` (${status})`
-    const colorClass = severity === "critical" ? "text-red-400" : severity === "warning" ? "text-amber-400" : "text-violet-400"
+    const colorClass = severity === "critical" ? "text-pop-red" : severity === "warning" ? "text-pop-amber" : "text-pop-purple"
     return <span className={colorClass}>{label}</span>
   }
 
@@ -190,7 +190,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
         const tokenCount = entry.__mergedCount ?? 0
         const dur = e.duration
         return (
-          <span className={isDone ? "text-purple-400" : "text-purple-300"}>
+          <span className={isDone ? "text-pop-purple" : "text-pop-purple"}>
             {isDone
               ? `思考完成${dur ? ` (${dur})` : ""}`
               : `思考中${tokenCount > 0 ? ` (${tokenCount} tokens)` : ""}...`
@@ -198,10 +198,10 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
           </span>
         )
       }
-      case "tool_start": return <span className="text-amber-400">调用工具 <code className="text-xs bg-muted px-1 rounded">{e.toolName}</code></span>
-      case "tool_input": return <span className="text-amber-300">工具参数</span>
+      case "tool_start": return <span className="text-pop-amber">调用工具 <code className="text-xs bg-muted px-1 rounded">{e.toolName}</code></span>
+      case "tool_input": return <span className="text-pop-amber">工具参数</span>
       case "tool_result": return (
-        <span className={e.isError ? "text-red-400" : "text-amber-300"}>
+        <span className={e.isError ? "text-pop-red" : "text-pop-amber"}>
           <code className="text-xs bg-muted px-1 rounded">{e.toolName ?? "工具"}</code>
           {" "}结果 {e.duration && `(${e.duration})`}
         </span>
@@ -210,14 +210,14 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
         const text = e.content ?? ""
         const count = entry.__mergedCount ?? 1
         return (
-          <span className="text-blue-300 font-mono truncate max-w-[300px]">
+          <span className="text-pop-cyan font-mono truncate max-w-[300px]">
             {text.length > 60 ? `${text.slice(0, 60)}...` : text}
             {count > 1 && <span className="text-muted-foreground ml-1">({count} chunks)</span>}
           </span>
         )
       }
       case "status": return <span className="text-muted-foreground">状态: {e.status}</span>
-      case "error": return <span className="text-red-400">错误: {e.message}</span>
+      case "error": return <span className="text-pop-red">错误: {e.message}</span>
       default: {
         // Harness events: harness_process_conflict, harness_stupid_retry, etc.
         if (e.type?.startsWith("harness_")) {
@@ -240,23 +240,23 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
             switch (decision) {
               case "fix_and_retry": {
                 const summary = reasoning ? reasoning.slice(0, 60) : ""
-                return <span className="text-violet-400">🛡️🔧 Harness 修复并重试: {detector}{summary ? ` — ${summary}` : ""}</span>
+                return <span className="text-pop-purple">🛡️🔧 Harness 修复并重试: {detector}{summary ? ` — ${summary}` : ""}</span>
               }
               case "guide_and_retry": {
                 const hint = harnessHint ? harnessHint.slice(0, 60) : ""
-                return <span className="text-violet-400">🛡️💬 Harness 指导重试: {detector}{hint ? ` — ${hint}` : ""}</span>
+                return <span className="text-pop-purple">🛡️💬 Harness 指导重试: {detector}{hint ? ` — ${hint}` : ""}</span>
               }
               case "reconfigure_and_retry": {
                 const model = modelOverride || "new model"
-                return <span className="text-violet-400">🛡️🔄 Harness 切换配置重试: {detector} — model → {model}</span>
+                return <span className="text-pop-purple">🛡️🔄 Harness 切换配置重试: {detector} — model → {model}</span>
               }
               case "agent_takeover": {
                 const summary = reasoning ? reasoning.slice(0, 60) : ""
-                return <span className="text-emerald-400">🤖✅ Harness Agent 接管完成: {detector}{summary ? ` — ${summary}` : ""}</span>
+                return <span className="text-pop-green">🤖✅ Harness Agent 接管完成: {detector}{summary ? ` — ${summary}` : ""}</span>
               }
               case "block_node": {
                 const reason = blockReason || reasoning || evidenceText
-                return <span className="text-red-400">🛡️❌ Harness 阻断: {detector}{reason ? ` — ${reason.slice(0, 80)}` : ""}</span>
+                return <span className="text-pop-red">🛡️❌ Harness 阻断: {detector}{reason ? ` — ${reason.slice(0, 80)}` : ""}</span>
               }
             }
           }
@@ -265,7 +265,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
           const isBlocked = status === "harness_blocked"
           const isModified = status === "harness_modified"
           const isExecuted = status === "harness_executed"
-          const color = isBlocked ? "text-red-400" : isModified || isExecuted ? "text-violet-400" : severity === "critical" ? "text-red-400" : "text-amber-400"
+          const color = isBlocked ? "text-pop-red" : isModified || isExecuted ? "text-pop-purple" : severity === "critical" ? "text-pop-red" : "text-pop-amber"
           const label = isBlocked ? `🛡️ Harness 阻断: ${detector}` : isModified ? "🛡️ Harness 已修正" : isExecuted ? "🤖 Harness Agent 接管" : `🛡️ Harness 检测: ${detector}`
           const detail = isBlocked ? (evidenceText ? ` — ${evidenceText.slice(0, 80)}` : ` (${severity})`) : isModified || isExecuted ? `: ${detector}` : ` (${severity})`
           return <span className={color}>{label}{detail}</span>
@@ -276,9 +276,9 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
   }
 
   switch (entry.event) {
-    case "start": return <span className="text-emerald-400">开始执行</span>
+    case "start": return <span className="text-pop-green">开始执行</span>
     case "end": return (
-      <span className={entry.status === "failed" || entry.exitCode ? "text-red-400" : "text-emerald-400"}>
+      <span className={entry.status === "failed" || entry.exitCode ? "text-pop-red" : "text-pop-green"}>
         完成 {entry.durationMs != null && `(${formatDuration(entry.durationMs)})`}
         {entry.exitCode != null && entry.exitCode !== 0 && ` exit=${entry.exitCode}`}
         {entry.status === "failed" && " — 失败"}
@@ -286,16 +286,16 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     )
     case "bash_log": {
       const isStderr = entry.line?.startsWith("[stderr]")
-      return <span className={cn(isStderr ? "text-red-400" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
+      return <span className={cn(isStderr ? "text-pop-red" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
     }
     case "python_log": {
       const isStderr = entry.line?.startsWith("[stderr]")
-      return <span className={cn(isStderr ? "text-red-400" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
+      return <span className={cn(isStderr ? "text-pop-red" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
     }
     case "expert_spawn":
-      return <span className="text-cyan-400">专家启动 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code> <span className="text-muted-foreground/60">({entry.model ?? "default"})</span></span>
+      return <span className="text-pop-cyan">专家启动 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code> <span className="text-muted-foreground/60">({entry.model ?? "default"})</span></span>
     case "expert_complete":
-      return <span className={entry.status === "failed" ? "text-red-400" : "text-cyan-400"}>
+      return <span className={entry.status === "failed" ? "text-pop-red" : "text-pop-cyan"}>
         专家完成 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code>
         {entry.tokens != null && <span className="text-muted-foreground/60 ml-1">({formatTokenCount(entry.tokens)})</span>}
         {entry.status === "failed" && " — 失败"}
@@ -305,41 +305,41 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       if (entry.tokens != null) meta.push(formatTokenCount(entry.tokens))
       if (entry.round != null) meta.push(`第${entry.round}轮`)
       const metaStr = meta.length > 0 ? ` (${meta.join(", ")})` : ""
-      return <span className={entry.status === "failed" ? "text-red-400" : "text-blue-400"}>
+      return <span className={entry.status === "failed" ? "text-pop-red" : "text-pop-cyan"}>
         专家 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code>
         <span className="text-muted-foreground/60 ml-1">{metaStr}</span>
         {entry.status === "failed" && " — 失败"}
       </span>
     }
     case "swarm_round_end":
-      return <span className="text-purple-400">轮次结束 第{entry.round}轮 ({entry.expertCount} 专家)</span>
+      return <span className="text-pop-purple">轮次结束 第{entry.round}轮 ({entry.expertCount} 专家)</span>
     case "swarm_complete":
-      return <span className={entry.status === "failed" ? "text-red-400" : "text-yellow-400"}>
+      return <span className={entry.status === "failed" ? "text-pop-red" : "text-pop-yellow"}>
         Swarm 完成 — {entry.status}
       </span>
     case "consensus_check":
-      return <span className="text-purple-400">共识检测 第{entry.round}轮</span>
+      return <span className="text-pop-purple">共识检测 第{entry.round}轮</span>
     // Interaction milestone events
     case "interaction_started":
-      return <span className="text-purple-400">交互开始</span>
+      return <span className="text-pop-purple">交互开始</span>
     case "interaction_ask_user_question":
-      return <span className="text-amber-400">等待用户回答</span>
+      return <span className="text-pop-amber">等待用户回答</span>
     case "interaction_completed":
-      return <span className="text-emerald-400">交互完成</span>
+      return <span className="text-pop-green">交互完成</span>
     case "heartbeat": {
       const hb = entry.heartbeatPayload
-      if (!hb) return <span className="text-rose-500">心跳</span>
+      if (!hb) return <span className="text-pop-red">心跳</span>
       const tokens = hb.tokens_used?.toLocaleString() ?? "0"
       const activity = hb.current_activity ? ` · ${hb.current_activity}` : ""
-      return <span className="text-rose-500">心跳: Step {hb.step} · {tokens} tokens{activity}</span>
+      return <span className="text-pop-red">心跳: Step {hb.step} · {tokens} tokens{activity}</span>
     }
     case "harness_directive": {
       const dir = entry.directivePayload
-      if (!dir) return <span className="text-red-500">指令</span>
+      if (!dir) return <span className="text-pop-red">指令</span>
       const isAbort = dir.type === "abort"
       const isInject = dir.type === "inject"
       return (
-        <span className={isAbort ? "text-red-500" : isInject ? "text-violet-500" : "text-amber-500"}>
+        <span className={isAbort ? "text-pop-red" : isInject ? "text-pop-purple" : "text-pop-amber"}>
           {isInject ? "🛡️ 注入" : isAbort ? "🚫 终止" : "⏸️ 暂停"}: {dir.reason}
           {isInject && dir.message && (
             <span className="text-muted-foreground ml-1">→ {dir.message.slice(0, 40)}{dir.message.length > 40 ? "..." : ""}</span>
@@ -350,7 +350,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "heartbeat_stall": {
       const stall = entry.stallPayload
       const timeout = stall?.timeout_seconds ?? "?"
-      return <span className="text-orange-500">停滞检测: 超过 {timeout}s 无心跳</span>
+      return <span className="text-pop-amber">停滞检测: 超过 {timeout}s 无心跳</span>
     }
     default: return <span className="text-muted-foreground">{entry.event}</span>
   }
@@ -408,7 +408,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
       {expanded && isMergedOutput && entry.lines && entry.lines.length > 0 && (
         <div className={cn(
           "ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs font-mono whitespace-pre-wrap break-all max-h-[400px] overflow-y-auto",
-          entry.event.includes("stderr") ? "bg-red-950/20" : "bg-muted/30",
+          entry.event.includes("stderr") ? "bg-pop-red/10" : "bg-muted/30",
         )}>
           <code>{entry.lines.join("\n")}</code>
         </div>
@@ -416,7 +416,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
       {expanded && isMergedOutput && entry.content && (!entry.lines || entry.lines.length === 0) && (
         <div className={cn(
           "ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs font-mono whitespace-pre-wrap break-all",
-          entry.event.includes("stderr") ? "bg-red-950/20" : "bg-muted/30",
+          entry.event.includes("stderr") ? "bg-pop-red/10" : "bg-muted/30",
         )}>
           <code>{entry.content}</code>
         </div>
@@ -424,22 +424,22 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Approval metadata detail */}
       {expanded && entry.event === "approval_metadata" && (
-        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-cyan-950/20 rounded text-xs whitespace-pre-wrap">
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-pop-cyan/10 rounded text-xs whitespace-pre-wrap">
           {entry.prompt && (
             <div className="mb-1">
-              <span className="text-cyan-400">提示:</span>{" "}
+              <span className="text-pop-cyan">提示:</span>{" "}
               <span>{entry.prompt}</span>
             </div>
           )}
           {entry.options && Array.isArray(entry.options) && entry.options.length > 0 && (
             <div className="mb-1">
-              <span className="text-cyan-400">选项:</span>{" "}
+              <span className="text-pop-cyan">选项:</span>{" "}
               <span>{entry.options.map((o: any) => o.label).join(", ")}</span>
             </div>
           )}
           {entry.decision && (
             <div className="mb-1">
-              <span className="text-emerald-400">决定:</span>{" "}
+              <span className="text-pop-green">决定:</span>{" "}
               <span className="font-mono">{entry.decision}</span>
             </div>
           )}
@@ -454,7 +454,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Octopus agent event detail: heartbeat */}
       {expanded && entry.event === "heartbeat" && entry.heartbeatPayload && (
-        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-rose-950/20 rounded text-xs whitespace-pre-wrap">
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-pop-red/10 rounded text-xs whitespace-pre-wrap">
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
             <span className="text-muted-foreground">步骤:</span>
             <span>{entry.heartbeatPayload.step}{entry.heartbeatPayload.total_steps ? ` / ${entry.heartbeatPayload.total_steps}` : ""}</span>
@@ -477,7 +477,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
             {entry.heartbeatPayload.issues.length > 0 && (
               <>
                 <span className="text-muted-foreground">问题:</span>
-                <span className="text-amber-400">{entry.heartbeatPayload.issues.join(", ")}</span>
+                <span className="text-pop-amber">{entry.heartbeatPayload.issues.join(", ")}</span>
               </>
             )}
           </div>
@@ -486,10 +486,10 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Octopus agent event detail: harness_directive */}
       {expanded && entry.event === "harness_directive" && entry.directivePayload && (
-        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : entry.directivePayload.type === "inject" ? "bg-violet-950/20" : "bg-amber-950/20"}`}>
+        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-pop-red/10" : entry.directivePayload.type === "inject" ? "bg-pop-purple/10" : "bg-pop-amber/10"}`}>
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
             <span className="text-muted-foreground">类型:</span>
-            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : entry.directivePayload.type === "inject" ? "text-violet-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
+            <span className={entry.directivePayload.type === "abort" ? "text-pop-red font-semibold" : entry.directivePayload.type === "inject" ? "text-pop-purple font-semibold" : "text-pop-amber font-semibold"}>{entry.directivePayload.type}</span>
             <span className="text-muted-foreground">原因:</span>
             <span>{entry.directivePayload.reason}</span>
             <span className="text-muted-foreground">发起者:</span>
@@ -497,7 +497,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
             {entry.directivePayload.type === "inject" && entry.directivePayload.message && (
               <>
                 <span className="text-muted-foreground">消息:</span>
-                <span className="text-violet-300 font-mono">{entry.directivePayload.message}</span>
+                <span className="text-pop-purple font-mono">{entry.directivePayload.message}</span>
               </>
             )}
             {entry.directivePayload.type === "inject" && entry.directivePayload.nodeId && (
@@ -512,7 +512,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Octopus agent event detail: heartbeat_stall */}
       {expanded && entry.event === "heartbeat_stall" && entry.stallPayload && (
-        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-orange-950/20 rounded text-xs whitespace-pre-wrap">
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-pop-amber/10 rounded text-xs whitespace-pre-wrap">
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
             <span className="text-muted-foreground">超时阈值:</span>
             <span>{entry.stallPayload.timeout_seconds}s</span>
@@ -974,7 +974,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-1">
-        <span className="text-xs text-red-400">日志加载失败</span>
+        <span className="text-xs text-pop-red">日志加载失败</span>
         <span className="text-[10px] text-muted-foreground">{error}</span>
       </div>
     )

@@ -6,15 +6,11 @@
 // server is the single source of truth for response shapes (TaskDTO /
 // TaskDetailDTO). Types come from @octopus/shared so the client stays in lock
 // step with the Zod schemas (SG14: read `Task`, NOT `SchedulerJob`).
-//
-// The `TaskDetail.children` shape mirrors the server's TaskDetailDTO.children
-// (S2 origin lookup — schedules WHERE origin_type='task' AND origin_id=task.id).
-// There is no FK; integrity is maintained server-side (cascade-reap + orphan
-// reaper, SG12).
 
 import { getServerUrl } from "@/lib/server-config"
 import type {
   Task,
+  TaskExecutionBadge,
   TaskStatus,
   TaskSpecField,
   TaskSpec,
@@ -24,46 +20,41 @@ import type {
   TaskPhaseStatus,
 } from "@octopus/shared"
 
-// ============ TaskDetail (composite view) ============
-// GET /api/tasks/:id returns a TaskDetail: Task + children schedules (S2 origin
-// lookup). The canonical definitions live in @octopus/server (tasks-service.ts
-// TaskDetailDTO); web-app cannot import from the server package — this mirror
-// keeps the client type-safe without a cross-package dependency. Mirrors the
-// JobDetail pattern in scheduler-api.ts.
+// ── Task read-model aliases (ADR-0021 票05) ─────────────────────────
+//
+// The wire shape is shared's `Task`, verbatim: the trigger columns
+// (trigger_mode / trigger_at / cron_* / trigger_enabled:boolean / next_fire_at /
+// last_fired_at) and the current-instance badge (`execution: TaskExecutionBadge`)
+// are declared there, envelope mirrors `schedule_status`/`scheduled_at` included
+// in the deletion. lib/ no longer mirrors any of it — the old local copies
+// existed only while shared still carried the retired envelope columns; that
+// trim is done, and a second copy would just be drift bait (the number-vs-boolean
+// `trigger_enabled` between an old mirror and shared literally collapsed every
+// `Task & TaskTriggerFields` consumer to `never`).
+//
+// What still legitimately lives here, because the server file that produces it
+// is not importable from web:
+//   - `derived` on the detail payload (mirror of @octopus/server
+//     derive-task-view.ts — see TaskDerivedView below), and
+//   - `executions[]` on the detail payload (GET /:id run history; each badge may
+//     carry its composite fan-out in `children` — the board's list badge does
+//     NOT load children, so `children === undefined` means "not loaded", never
+//     "no subunits").
+// `TaskView` stays as the board-row name (the list/summary endpoints answer it);
+// `TaskDetail` is that plus the two fields above.
 
-export interface TaskChild {
-  /** The child schedule's id (origin_type='task', origin_id=parent task). */
-  schedule_id: string
-  /** Schedule name (e.g. "task-{taskId}-coordinator" / "task-{taskId}-primary"
-   *  / the subunit name for fan-out children). */
-  name: string
-  /** Schedule status (ScheduleStatus — queued/claimed/running/done/failed/aborted). */
-  status: string
-  /** Dispatch role: 'primary' (simple) | 'coordinator' (composite parent) |
-   *  'subunit' (composite fan-out child). */
-  origin_role: string | null
-  /** workflow_ref extracted from the schedule's config.workflow_chain[0]. */
-  workflow_ref: string | null
-  /** v39 — one-shot due time (ISO). Root rows carry the trigger time; null = none. */
-  scheduled_at?: string | null
-  /** 弹窗优化 (2026-08-29): the schedule's workspace id — null until the runner
-   *  provisions one. Pairs with execution_ref.execution_id for the
-   *  /workspaces/{ws}?tab=detail&execId={exec} deep link. */
-  workspace_id?: string | null
-  /** Latest schedule_executions row (compact; null before first run).
-   *  agent_output / token_usage are fetched on demand via
-   *  getExecution(schedule_id, id) from scheduler-api. */
-  execution_ref?: {
-    id: string
-    status: string
-    execution_id: string | null
-    /** Per-run workspace (schedule_executions.workspace_id). */
-    workspace_id: string | null
-    triggered_at: string
-    completed_at: string | null
-    duration_ms: number | null
-    error_summary: string | null
-  } | null
+/** TaskDTO — one board row (GET /api/tasks items, GET /:id, and the trigger
+ *  endpoints' summary). Alias of shared `Task` by design: keep the name so the
+ *  seam (what the tasks API answers) has one place to grow. */
+export type TaskView = Task
+
+/** TaskDetail = TaskView + run history + derived (v4 视图). */
+export type TaskDetail = TaskView & {
+  /** Every ROOT execution of this task, newest first (empty for a draft).
+   *  Composite SUBUNIT runs hang off their root's `children` (票05: detail and
+   *  /executions load the fan-out; the board badge does not). */
+  executions: TaskExecutionBadge[]
+  derived?: TaskDerivedView
 }
 
 // ── Derived phase view (task-phase-redesign v4, ticket 07 契约) ──────
@@ -71,7 +62,8 @@ export interface TaskChild {
 // GET /api/tasks/:id embeds `derived` = the server's deriveTaskView output
 // VERBATIM (票 03 唯一真相；票 07 「GET /:id 增 phases 视图」). The canonical
 // types live in @octopus/server (derive-task-view.ts) — web-app cannot import
-// cross-package, so this is the mirror (same discipline as TaskChild above).
+// cross-package, so this mirror stays (it is the only reason the local
+// detail type above extends shared instead of aliasing it).
 // 票 11 看板角标/时间线 与 票 12 验收弹窗都只读这个视图，MUST NOT re-implement
 // the derive matrix client-side.
 
@@ -132,12 +124,6 @@ export interface TaskDerivedView {
   taskStatus: TaskStatus
   isV4: boolean
   phaseViews: TaskPhaseView[]
-}
-
-/** TaskDetail = Task + optional children + optional derived (v4 视图). */
-export type TaskDetail = Task & {
-  children?: TaskChild[]
-  derived?: TaskDerivedView
 }
 
 // ============ Input types ============
@@ -245,13 +231,15 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
 
 // ============ Tasks CRUD ============
 
-/** GET /api/tasks — list (kanban); ?status=&org=. Returns {items: Task[]}. */
-export async function listTasks(params?: ListTasksParams): Promise<{ items: Task[] }> {
+/** GET /api/tasks — list (kanban); ?status=&org=. Returns {items: TaskView[]}, each
+ *  row carrying the 票03 trigger columns + its current instance (`execution`), which
+ *  is what the 「已排队」 badge and the 上一轮 status now read. */
+export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
   const res = await fetch(buildUrl("", { status: params?.status, org: params?.org }))
-  return handleResponse<{ items: Task[] }>(res)
+  return handleResponse<{ items: TaskView[] }>(res)
 }
 
-/** GET /api/tasks/:id — detail (task + children schedules via S2 origin lookup). */
+/** GET /api/tasks/:id — detail (task + run history `executions` + derived v4 view). */
 export async function getTask(id: string, signal?: AbortSignal): Promise<TaskDetail> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}`, { signal })
   return handleResponse<TaskDetail>(res)
@@ -263,13 +251,13 @@ export async function getTask(id: string, signal?: AbortSignal): Promise<TaskDet
  *  v3 (ticket 09, D15): the two-phase template page sends source_chat_session_id
  *  (created first) + task_type + skill_groups[] + preset{org,projects}. Legacy
  *  callers (no task_type) take the v2 path. */
-export async function createTask(input: CreateTaskInput): Promise<Task> {
+export async function createTask(input: CreateTaskInput): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
 }
 
 /** PUT /api/tasks/:id — [save draft] with If-Match optimistic locking. Only
@@ -281,7 +269,7 @@ export async function updateTask(
   id: string,
   input: UpdateTaskInput,
   version: number,
-): Promise<Task> {
+): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}`, {
     method: "PUT",
     headers: {
@@ -290,11 +278,12 @@ export async function updateTask(
     },
     body: JSON.stringify(input),
   })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
 }
 
-/** DELETE /api/tasks/:id — soft-delete (discard draft/ready) + cascade-reap
- *  child schedules (R-INT). Running tasks must be aborted first (409). */
+/** DELETE /api/tasks/:id — soft-delete (discard draft/ready). 票03: no cascade — a
+ *  task's runs are `executions` rows, which outlive it as rows (nothing to reap).
+ *  Running tasks must be aborted first (409). */
 export async function deleteTask(id: string): Promise<{ ok: true }> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}`, { method: "DELETE" })
   return handleResponse<{ ok: true }>(res)
@@ -302,18 +291,14 @@ export async function deleteTask(id: string): Promise<{ ok: true }> {
 
 // ============ Actions ============
 
-/** POST /api/tasks/:id/ready — draft→ready (confirm gate, v1 D13) + dispatch
- *  seam (creates the schedules envelope: simple=1 primary; composite=1
- *  coordinator). Runner claims the schedule; ScheduleStatusListener mirrors
- *  running. 409 if not draft.
- *
- *  v3 (ticket 09, D18/US6): a v3 task (task_type set) must additionally pass
- *  the confirmation gate (goal non-empty ∧ ac≥1 ∧ goal_confirmed ∧ all ac in
- *  ac_confirmed). On failure the server returns 409 with `{error, missing[]}`;
- *  this function throws a {@link TaskReadyGateError} carrying `.missing` so
- *  the UI can show exactly what to confirm before enqueue (server-side gate
- *  is the backstop for UI temp state lost on modal close). */
-export async function readyTask(id: string): Promise<Task> {
+/** POST /api/tasks/:id/ready — draft→ready (confirm gate, v1 D13). 票03: the gate
+ *  creates NO run — arming happens in /trigger. v3 tasks (task_type set) must
+ *  additionally pass the confirmation gate (goal non-empty ∧ ac≥1 ∧ goal_confirmed ∧
+ *  all ac in ac_confirmed). On failure the server returns 409 with `{error,
+ *  missing[]}`; this function throws a {@link TaskReadyGateError} carrying `.missing`
+ *  so the UI can show exactly what to confirm before enqueue (server-side gate
+ *  is the backstop for UI temp state lost on modal close). 409 if not draft. */
+export async function readyTask(id: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, { method: "POST" })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -326,42 +311,72 @@ export async function readyTask(id: string): Promise<Task> {
   return res.json()
 }
 
-/** POST /api/tasks/:id/abort — running/ready→aborted + ws cleanup (v1 G4).
- *  Finds all child schedules via S2 origin lookup, aborts each in-flight
- *  (claimed/running) schedule, writes tasks.status='aborted', emits
- *  task_status SSE. 409 if not ready/running. */
-export async function abortTask(id: string): Promise<Task> {
+/** POST /api/tasks/:id/abort — running/ready→aborted (v1 G4). 票03: stops the task's
+ *  OWN instances (a live one goes through the engine cancel, a queued one is
+ *  retired), writes tasks.status='aborted', emits task_status SSE. Does not touch
+ *  schedules. 409 if not ready/running. */
+export async function abortTask(id: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/abort`, { method: "POST" })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
 }
 
-/** POST /api/tasks/:id/reopen — 入队撤回 (ready→draft)：回收未开跑的信封
- *  schedule，任务回到 draft 重新可编辑。已领取/执行 ⇒ 409（改用中止）。 */
-export async function reopenTask(id: string): Promise<Task> {
+/** POST /api/tasks/:id/reopen — 入队撤回 (ready→draft)：任务回到 draft 重新可编辑。
+ *  票03 守卫改成「没有活实例」：currentInstance 非终态即 409（改用中止）。 */
+export async function reopenTask(id: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/reopen`, { method: "POST" })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
 }
 
-/** POST /api/tasks/:id/trigger — v39 人工触发. Arms the parked (draft) root
- *  envelope: draft→queued with scheduled_at = at ?? now. `at` absent = 立即触发;
- *  future ISO = 单次定时触发. Rejections (not ready / already armed / running /
- *  envelope missing) → Error(body.error) — the server's conflict messages are
- *  already user-facing Chinese. */
-export async function triggerTask(id: string, at?: string): Promise<Task> {
+/** POST /api/tasks/:id/trigger — v39 人工触发 (票03 semantics).
+ *  `at` absent/past → arms a run + launches it inside the concurrency gate right
+ *  away (status → running). `at` in the future → only arms the cursor: the task
+ *  stays 'ready' with `next_fire_at = at`, and the built-in task-lifecycle job starts
+ *  it when due. Existing live instance → 409 (「已有进行中的实例」); a workspace that
+ *  cannot be pre-built → 409 on the click, not a minute later. Error(body.error) —
+ *  the server's conflict messages are already user-facing Chinese. */
+export async function triggerTask(id: string, at?: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(at ? { at } : {}),
   })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
 }
 
-/** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started
- *  timed trigger (queued, unclaimed, future due) back to parked; task returns
- *  to ready. Already claimed/executing → 409 Error. */
-export async function cancelTaskTrigger(id: string): Promise<Task> {
+/** POST /api/tasks/:id/trigger/cancel — withdraw a not-yet-started fire: the queued
+ *  (pending) instance is retired + the cursor is disarmed, task returns to ready.
+ *  Already started → 409 Error. */
+export async function cancelTaskTrigger(id: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger/cancel`, { method: "POST" })
-  return handleResponse<Task>(res)
+  return handleResponse<TaskView>(res)
+}
+
+/** POST /api/tasks/:id/trigger/schedule — 周期触发 (票03, ADR-0021). Two body
+ *  shapes, exactly as the route branches them:
+ *   `{ cron, timezone? }`  → arm / replace a recurring fire (trigger_mode='cron')
+ *   `{ enabled: boolean }` → pause / resume that fire without forgetting the cron
+ * `cron: null` (or {@link unscheduleTaskTrigger}) goes back to manual. The server
+ * answers with the task's list-row summary (trigger columns + current instance), so
+ * the caller re-reads one number instead of a whole detail payload. */
+export async function scheduleTaskTrigger(
+  id: string,
+  body: { cron: string; timezone?: string } | { enabled: boolean },
+): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger/schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<TaskView>(res)
+}
+
+/** POST /api/tasks/:id/trigger/unschedule — drop the schedule, keep the task
+ *  (trigger_mode → 'manual'). Same summary response as {@link scheduleTaskTrigger}. */
+export async function unscheduleTaskTrigger(id: string): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger/unschedule`, {
+    method: "POST",
+  })
+  return handleResponse<TaskView>(res)
 }
 
 // ============ v4 验收 Gate (task-phase-redesign ticket 07 契约) ────────
@@ -401,9 +416,9 @@ export interface AcceptanceInput {
 export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
 
 /** Round identity the server actually dispatched (present iff
- *  next_action === "dispatched"). */
+ *  next_action === "dispatched"). 票03: `schedule_id` left with the envelope row —
+ *  the round IS the execution, so `execution_id` is the only run handle. */
 export interface AcceptanceDispatch {
-  schedule_id: string
   execution_id: string
   workspace_id: string
   phase_index: number
@@ -411,7 +426,7 @@ export interface AcceptanceDispatch {
 }
 
 /** 200 body of POST /:id/acceptance — `task` is the SAME shape as GET /:id
- *  (children + derived included), re-derived AFTER the decision was applied. */
+ *  (executions + derived included), re-derived AFTER the decision was applied. */
 export interface AcceptanceResult {
   task: TaskDetail
   acceptance_id: string
@@ -757,4 +772,14 @@ export async function getAssistWorkflowRun(taskId: string, runId: string): Promi
 }
 
 // Re-export shared types so callers can import everything from one place.
-export type { Task, TaskStatus, TaskSpecField, ArtifactIndexEntry, AssistWorkflowRun, TaskPhase, TaskPhaseStatus } from "@octopus/shared"
+export type {
+  Task,
+  TaskExecutionBadge,
+  TaskStatus,
+  TaskSpecField,
+  TriggerMode,
+  ArtifactIndexEntry,
+  AssistWorkflowRun,
+  TaskPhase,
+  TaskPhaseStatus,
+} from "@octopus/shared"

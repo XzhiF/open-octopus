@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { TERMINAL_EXECUTION_STATUSES } from "@octopus/shared"
 import { BaseDAO } from "./base"
 import type { ScheduleExecutionRow, ScheduleAuditLogRow, SchedulerAuditLogRow, PaginatedResult } from "../types"
 
@@ -173,6 +174,82 @@ export class ScheduleRunDAO extends BaseDAO {
     return (this.stmt(
       "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND id != ? AND status IN ('triggered', 'running')"
     ).get(scheduleId, excludeId) as { cnt: number }).cnt
+  }
+
+  /**
+   * The ONE concurrency meter the whole fleet shares (ADR-0021 §5.4) — every cap
+   * consumer must use this, not the per-table counts below.
+   *
+   * It deliberately spans two tables, because after v41 "work in flight" lives in two
+   * places: a job fire is a `schedule_executions` row, a task launch is an `executions`
+   * row carrying `task_id`. Counting only the first would let a burst of task launches
+   * walk straight past the cap that cron jobs obediently wait behind (and vice versa).
+   *
+   * `job_type='job'` fires are EXCLUDED: the built-in housekeeping jobs (task-lifecycle
+   * above all) run every minute by design and are not work — counting them would let the
+   * janitor permanently occupy one of the 3 real slots.
+   *
+   * Task rows use the same fail-closed predicate as `ux_exec_task_active` (NOT IN
+   * terminal) — but over EVERY task-bound row, roots and composite children alike. This
+   * axis is compute slots, and a running subunit holds a workspace and an engine exactly
+   * like a root does; the pre-v41 meter counted each child as its own schedule row, so
+   * counting only roots would silently raise the real concurrency of a composite task.
+   * The other axis, `ux_exec_task_active`, is deliberately ROOTS ONLY: a composite is
+   * allowed to run several children of one task at once.
+   *
+   * EXCEPT that `pending` is subtracted back out, and the two lists are NOT the same
+   * axis: an armed-but-not-started row holds the task's IDENTITY slot (the latch must
+   * keep counting it, or the same task gets launched twice) while holding no compute at
+   * all. Counting it here would make the gate self-blocking — three armed tasks would
+   * read as "cap reached" and freeze every other launch behind rows that are, by
+   * design, waiting for this exact meter to free up.
+   */
+  countActiveWork(opts?: { excludeFireId?: string; excludeTaskExecutionId?: string }): number {
+    const excludeFire = opts?.excludeFireId
+    const jobs = (this.stmt(
+      excludeFire
+        ? `SELECT COUNT(DISTINCT se.schedule_id) AS cnt
+           FROM schedule_executions se
+           JOIN schedules s ON s.id = se.schedule_id
+           WHERE se.status IN ('triggered', 'running') AND s.job_type != 'job' AND se.id != ?`
+        : `SELECT COUNT(DISTINCT se.schedule_id) AS cnt
+           FROM schedule_executions se
+           JOIN schedules s ON s.id = se.schedule_id
+           WHERE se.status IN ('triggered', 'running') AND s.job_type != 'job'`,
+    ).get(...(excludeFire ? [excludeFire] : [])) as { cnt: number }).cnt
+
+    const excludeTask = opts?.excludeTaskExecutionId
+    const tasks = (this.stmt(
+      `SELECT COUNT(*) AS cnt FROM executions
+       WHERE task_id IS NOT NULL
+         AND status NOT IN (${TERMINAL_EXECUTION_STATUSES.map(() => "?").join(", ")})
+         AND status != 'pending'
+         ${excludeTask ? "AND id != ?" : ""}`,
+    ).get(
+      ...TERMINAL_EXECUTION_STATUSES,
+      ...(excludeTask ? [excludeTask] : []),
+    ) as { cnt: number }).cnt
+
+    return jobs + tasks
+  }
+
+  /** Terminal bookends for a `job` fire (the ops row: what ran, what it said, how long). */
+  markCodeJobComplete(id: string, handler: string, summary: string, durationMs: number): Database.RunResult {
+    return this.stmt(
+      `UPDATE schedule_executions
+       SET status = 'completed', agent_output = ?, model_used = ?, exit_code = 0,
+           duration_ms = ?, completed_at = datetime('now')
+       WHERE id = ?`,
+    ).run(summary, `job:${handler}`, durationMs, id)
+  }
+
+  markCodeJobFailed(id: string, errorSummary: string, durationMs: number, exitCode: number): Database.RunResult {
+    return this.stmt(
+      `UPDATE schedule_executions
+       SET status = 'failed', error_summary = ?, exit_code = ?,
+           duration_ms = ?, completed_at = datetime('now')
+       WHERE id = ?`,
+    ).run(errorSummary, exitCode, durationMs, id)
   }
 
   countDistinctActiveSchedules(excludeId?: string): number {

@@ -53,9 +53,9 @@ function DiffBlock({ content, label }: { content: string; label: string }) {
         <pre className="text-xs font-mono p-3 bg-muted rounded-md">
           {lines.map((line, i) => {
             let className = ''
-            if (line.startsWith('+')) className = 'text-green-700 bg-green-50'
-            else if (line.startsWith('-')) className = 'text-red-700 bg-red-50'
-            else if (line.startsWith('@@')) className = 'text-blue-600 font-medium'
+            if (line.startsWith('+')) className = 'text-pop-green bg-pop-green-soft'
+            else if (line.startsWith('-')) className = 'text-pop-red bg-pop-pink-soft'
+            else if (line.startsWith('@@')) className = 'text-pop-cyan font-medium'
             return (
               <div key={i} className={className}>
                 {line || ' '}
@@ -169,7 +169,7 @@ export function VersionDiff({
         </div>
 
         {error && (
-          <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+          <div className="rounded-md bg-pop-pink-soft border border-pop-red/30 p-3 text-sm text-pop-red">
             {error}
           </div>
         )}

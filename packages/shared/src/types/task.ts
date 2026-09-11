@@ -1,10 +1,7 @@
 import { z } from "zod"
 import {
-  OriginTypeSchema,
-  type OriginType,
   type ResourceRef,
   type TaskSpec,
-  type ScheduleStatus,
   subunitSpecSchema,
   integrationGoalSchema,
   resourceRefSchema,
@@ -106,21 +103,93 @@ export const specFieldUpdatePayloadSchema = z.object({
 })
 export type SpecFieldUpdatePayload = z.infer<typeof specFieldUpdatePayloadSchema>
 
-// ── task_status SSE payload (SG2 — ScheduleStatusListener emits) ─────
-/** SSE event name emitted when a schedule transition is reflected onto the
- *  parent task's status, so the /tasks kanban updates in real time. */
+// ── Task trigger (ADR-0021 票05 — WHEN a task runs, on the task) ──────
+/** How a task is armed. Replaces the v39 envelope, where this information lived on a
+ *  private `schedules` row and the values were 'draft'/'queued'/… mirror states:
+ *    manual — only a human (or the agent tool) pressing 触发 starts a round; the due
+ *             cursor stays NULL, so the built-in job never picks it up.
+ *    once   — fire one round at `trigger_at`, then the cursor burns to NULL.
+ *    cron   — fire every occurrence of `cron_expression` in `cron_timezone`; after each
+ *             finished round the task returns to 'ready' with the cursor advanced, which
+ *             is what makes a periodic task structurally possible now (under the
+ *             envelope a fired task went terminal and nothing re-armed it). */
+export const TriggerModeSchema = z.enum(["manual", "once", "cron"])
+export type TriggerMode = z.infer<typeof TriggerModeSchema>
+
+/** One task instance, projected for the wire (the board's badge and the detail's run
+ *  history share this shape — one function builds both, so they cannot drift).
+ *
+ *  A run IS an `executions` row (`task_id` set, `parent_id='0'` for a root); there is no
+ *  schedule row behind it. `status` is the execution vocabulary: 'pending' = 排队中
+ *  (armed, waiting behind the shared concurrency gate), 'running' = 执行中, a terminal
+ *  status = the previous run. */
+export interface TaskExecutionBadge {
+  id: string
+  status: string
+  workflow_ref: string
+  /** The run's display name (composite subunit label = the subunit's workflow name).
+   *  This replaces `schedules.origin_role='subunit'` as the thing that told the UI
+   *  "this row is one fan-out arm of the parent": which arm it is comes from the row. */
+  name: string | null
+  phase_index: number | null
+  round_index: number | null
+  workspace_id: string
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  /** Why a red run is red, one line, for the badge + tooltip. Sourced from the row's
+   *  var-pool `error` key, which every failure writer now fills (the reap reason, the
+   *  start failure, the engine's failed node) — a terminal row with no reason says
+   *  NULL, not a stale key. */
+  error_summary: string | null
+  /** Composite fan-out: this root's child runs (empty for a simple task; omitted where
+   *  the read model did not load them — the board's badge carries no children, the
+   *  detail/history does). */
+  children?: TaskExecutionBadge[]
+}
+
+// ── task_execution SSE payload (ADR-0021 票03/票05) ──────────────────
+/** Emitted on the "taskpool" channel on every task-instance transition the job performs
+ *  (armed / launched / finalized / reaped). 票03 introduced the event with a literal
+ *  name; 票05 puts the name + payload on the wire contract so the board can fold it in
+ *  instead of waiting for the 10s poll — '排队中' and '执行中' are now different facts,
+ *  and a badge that only updates on a poll shows the wrong one for up to 10s. */
+export const TASK_EXECUTION_EVENT = "task_execution" as const
+
+export const taskExecutionSsePayloadSchema = z.object({
+  task_id: z.string().min(1),
+  execution_id: z.string().min(1),
+  /** ExecutionStatus vocabulary, not TaskStatus — this is about the RUN. */
+  status: z.string().min(1),
+  phase_index: z.number().int().nullable().optional(),
+  round_index: z.number().int().nullable().optional(),
+  /** Set when this run is one arm of a composite fan-out: the dispatching run, and which
+   *  subunit it is. The child's identity is `parent_id` + `name` on the row — this is the
+   *  same pair on the wire, so the timeline can place an arm without re-fetching. */
+  parent_id: z.string().min(1).optional(),
+  subunit: z.string().min(1).optional(),
+  /** Present on the failure/reap paths only: the same one-liner the badge shows. */
+  reason: z.string().optional(),
+})
+export type TaskExecutionSsePayload = z.infer<typeof taskExecutionSsePayloadSchema>
+
+// ── task_status SSE payload ──────────────────────────────────────────
+/** SSE event name emitted when a task's own status column moves (armed→ready,
+ *  launch→running, a terminal run→done/failed/aborted, reopen→draft).
+ *
+ *  Under the envelope this event was the scheduler's status listener reflecting
+ *  `schedules.status` onto the task; the payload carried `schedule_id` + an
+ *  `origin_type='task'` discriminator to say which world the transition came from.
+ *  There is one writer now (the task-lifecycle job / the task routes), so both fields
+ *  retired — a task_status event is about a task, full stop. */
 export const TASK_STATUS_EVENT = "task_status" as const
 
 export const taskStatusSsePayloadSchema = z.object({
   task_id: z.string().min(1),
   status: TaskStatusSchema,
-  // Traceability back to the schedule that drove the transition. Optional —
-  // not every transition originates from a schedule (e.g. draft→ready via the
-  // /ready API, or running→aborted via /abort).
-  schedule_id: z.string().min(1).optional(),
-  origin_type: OriginTypeSchema.optional(),
 })
 export type TaskStatusSsePayload = z.infer<typeof taskStatusSsePayloadSchema>
+
 
 // ── project_sync SSE payload (repo-sync 2026-09-08) ──────────────────
 /** Emitted on the "taskpool" channel as the task's selected repos are force
@@ -140,21 +209,45 @@ export const projectSyncSsePayloadSchema = z.object({
 })
 export type ProjectSyncSsePayload = z.infer<typeof projectSyncSsePayloadSchema>
 
-// ── task_trigger SSE payload (v39 — manual/time trigger) ──────────────
-/** Emitted on the "taskpool" channel when a parked (draft) task schedule is
- *  explicitly triggered (immediately or at a future point), or when a pending
- *  timed trigger is cancelled. The kanban subscribes to refresh the
- *  「已排队 · … 触发」 badge without waiting for the 10s poll. */
+// ── task_trigger SSE payload (ADR-0021 — the task's own trigger changed) ──
+/** Emitted on the "taskpool" channel when a task's trigger changes: 触发 now (immediate
+ *  or at a future point), 定时 cancelled, cron set/toggled. The kanban subscribes to
+ *  refresh the 「排队 · … 触发」 badge without waiting for the 10s poll.
+ *
+ *  v39 emitted this from the envelope flip (`scheduled_at` was the private schedule's
+ *  due column); the cursor is `tasks.next_fire_at` now, so the field follows the column. */
 export const TASK_TRIGGER_EVENT = "task_trigger" as const
 
 export const taskTriggerSsePayloadSchema = z.object({
   task_id: z.string().min(1),
-  /** triggered = immediate; scheduled = future one-shot; cancelled = pending trigger withdrawn */
-  action: z.enum(["triggered", "scheduled", "cancelled"]),
-  /** ISO due time; null = immediate trigger or cancel */
-  scheduled_at: z.string().nullable(),
+  /** The vocabulary is exactly what the server emits — no value here is aspirational:
+   *  scheduled (定时/周期已排上, from triggerTask(at) and setCronTrigger) · unscheduled
+   *  (cron 撤下) · cancelled (排队中的到期游标被撤回) · paused / resumed (总开关).
+   *  An immediate 触发 sends nothing on this event: it arms a row, so the board learns
+   *  about it from task_execution + task_status, which is the same pair every other
+   *  instance change uses. */
+  action: z.enum(["scheduled", "unscheduled", "cancelled", "paused", "resumed"]),
+  /** ISO due time of the next fire; null = immediate trigger, cancel, or cron off. */
+  next_fire_at: z.string().nullable(),
 })
 export type TaskTriggerSsePayload = z.infer<typeof taskTriggerSsePayloadSchema>
+
+/** Emitted when a DUE trigger could not be armed at all (deleted phase spec, no workflow
+ *  bound, workspace could not be built). The cursor still retires — otherwise a broken
+ *  task retries against the concurrency gate every minute — so without this event the
+ *  user's only evidence is a server log line and a card that quietly stays 已入队.
+ *
+ *  Not sent for an in-flight suppression: a skipped fire while the previous round runs is
+ *  not a failure, and `task_execution` already narrates the live round. */
+export const TASK_TRIGGER_FAILED_EVENT = "task_trigger_failed" as const
+
+export const taskTriggerFailedPayloadSchema = z.object({
+  task_id: z.string().min(1),
+  /** The arm refusal's own message — the same one-liner discipline as error_summary. */
+  reason: z.string().min(1),
+  trigger_mode: TriggerModeSchema,
+})
+export type TaskTriggerFailedSsePayload = z.infer<typeof taskTriggerFailedPayloadSchema>
 
 // ── phase_status_update SSE payload (task-phase-redesign v4, ticket 07) ──
 /** Per-phase display status vocabulary on the wire. Structurally identical to
@@ -347,11 +440,14 @@ export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
 // ── Task row (first-class tasks table; v2-D1, S2 polymorphic origin) ─
 /** A first-class task row.
  *
- * S2 (polymorphic origin, no FK): there is NO schedule_id / execution_id /
- * claimed_at on this row. The link to schedules is via
- * `schedules.origin_type='task' AND origin_id=task.id`; integrity is maintained
- * at the app level (cascade-reap on task delete/abort + an orphan reaper, SG12)
- * — the tradeoff for S2's uniform polymorphic association.
+ * ADR-0021: this row owns BOTH halves of a task — WHAT (task_spec) and WHEN
+ * (trigger_mode / trigger_at / cron_* / next_fire_at). Before it, WHEN had nowhere to
+ * live, so each task secretly pre-created a private `schedules` row (the "envelope")
+ * and the board read its badge off that row's status; the coupling grew to three
+ * written tables, two mirrored state machines and an orphan reaper. The envelope is
+ * gone: the built-in `task-lifecycle` job scans `next_fire_at` here, and one run is one
+ * `executions` row (`execution` below, `task_id` set directly — no join through the
+ * scheduler's tables).
  *
  * `task_spec` is the structured WHAT (D9). `resources` (workspace-scope →
  * workflow.requires at dispatch, v2-D13/SG7) and `authoring_resources`
@@ -383,34 +479,22 @@ export interface Task {
   updated_at: string
   /** Set when status reaches a terminal done/failed/aborted. */
   completed_at?: string | null
-  /** v39 board enrichment (batched root-schedule join at list time): the task's
-   *  root schedule row status ('draft' parked / 'queued' waiting trigger due /
-   *  'claimed'/'running' ...). Undefined when no root row exists (draft task). */
-  schedule_status?: string | null
-  /** v39 — root schedule's one-shot due time (ISO). Null/undefined = parked or
-   *  immediate. Together with schedule_status='queued' renders the
-   *  「已排队 · … 触发」 badge while the task is mirrored 'running'. */
-  scheduled_at?: string | null
-}
-
-// ── ScheduleStatusListener (SG2 — engine↔server boundary port) ───────
-/** Listens to schedule lifecycle transitions and reflects them onto the parent
- *  task's status, then emits `task_status` SSE on the "taskpool" channel.
- *
- *  Mapping (spec SG2): queued/claimed → running, done → done, failed → failed,
- *  aborted → aborted. The impl is provided by the server and injected into
- *  SchedulerEngine — same port/adapter pattern as {@link TaskDispatchPort}
- *  (interface in shared, impl in server, injected via context). The listener
- *  only fires for schedules whose `origin_type='task'` (others are cron-driven
- *  and don't touch tasks.status). */
-export interface ScheduleStatusListener {
-  onScheduleTransition(args: {
-    schedule_id: string
-    origin_type: OriginType
-    /** The parent task id (schedules.origin_id). */
-    origin_id: string
-    /** The schedule's new status — the impl maps this to TaskStatus. */
-    status: ScheduleStatus
-    error_summary?: string | null
-  }): Promise<void> | void
+  // ── WHEN this task runs (票03 moved these off the envelope onto the task) ──
+  /** Default 'manual' — nothing fires unless a human or the agent tool says so. */
+  trigger_mode: TriggerMode
+  /** One-shot due time (ISO); only meaningful with trigger_mode='once'. */
+  trigger_at: string | null
+  cron_expression: string | null
+  cron_timezone: string
+  /** Master switch on this task's triggers (independent of the built-in job's row,
+   *  which is the system-wide switch). */
+  trigger_enabled: boolean
+  /** THE due cursor — what the built-in job scans (`next_fire_at <= now`). NULL = not
+   *  armed; a cron task's value advances after each round, a once task's burns to NULL
+   *  when it fires. There is exactly one number because there is exactly one cursor. */
+  next_fire_at: string | null
+  last_fired_at: string | null
+  /** The task's current instance (newest root execution) — the board badge. Null for a
+   *  task that never ran. Populated by the read model (GET /api/tasks, GET /:id). */
+  execution?: TaskExecutionBadge | null
 }

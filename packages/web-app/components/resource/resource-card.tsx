@@ -20,12 +20,12 @@ const typeIcon: Record<ResourceType, React.ComponentType<{ className?: string }>
 const typeBadge = cva("text-xs font-medium", {
   variants: {
     type: {
-      skill: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-      agent: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-      workflow: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-      rule: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-      command: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
-      clone: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200",
+      skill: "bg-pop-cyan-soft text-pop-ink",
+      agent: "bg-pop-purple-soft text-pop-ink",
+      workflow: "bg-pop-green-soft text-pop-ink",
+      rule: "bg-pop-amber-soft text-pop-ink",
+      command: "bg-pop-cyan-soft text-pop-ink",
+      clone: "bg-pop-pink-soft text-pop-ink",
     },
   },
 })
@@ -65,7 +65,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
                 {entry.type}
               </Badge>
               {isActivated && (
-                <Badge variant="outline" className="shrink-0 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-green-300">
+                <Badge variant="outline" className="shrink-0 bg-pop-green-soft text-pop-ink border-pop-green/40">
                   <CheckCircle2 className="mr-1 h-3 w-3" />
                   Activated
                 </Badge>
@@ -92,7 +92,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
               onClick={() => onActivate(entry.name, entry.type as ResourceType)}
               title="激活"
             >
-              <Zap className="h-4 w-4 text-green-600" />
+              <Zap className="h-4 w-4 text-pop-green" />
               <span className="sr-only">激活</span>
             </Button>
           )}
@@ -103,7 +103,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
               onClick={() => onDeactivate(entry.name, entry.type as ResourceType)}
               title="停用"
             >
-              <ZapOff className="h-4 w-4 text-amber-600" />
+              <ZapOff className="h-4 w-4 text-pop-amber" />
               <span className="sr-only">停用</span>
             </Button>
           )}
@@ -130,7 +130,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
           >
             <CheckCircle2 className={cn(
               "h-5 w-5",
-              entry.status === "installed" ? "text-green-600 dark:text-green-400" : "text-amber-500"
+              entry.status === "installed" ? "text-pop-green" : "text-pop-amber"
             )} />
           </div>
           {entry.installPath && (

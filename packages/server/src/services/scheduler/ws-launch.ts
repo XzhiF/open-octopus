@@ -45,26 +45,34 @@ export function isCompositeWorkflowConfig(config: CompositeProbe): boolean {
   return false
 }
 
-/** 命名块（workflow-executor.ts:222-237 的 verbatim 语义迁移）。
- *  triggerTask 预建与 executor 首建共用 — 同名同支是复用命中的前提。
- *  taskRow=null（v3/cron/查无任务）→ 回退旧 taskpool 命名，与抽前一致。 */
+/** Naming block (workflow-executor.ts:222-237 的 verbatim 语义迁移).
+ *
+ *  ADR-0021 票03: the discriminator used to be the derived string
+ *  `trigger_source === 'requirement'`, and the id used to be a schedule id — both
+ *  artifacts of tasks being launched through the scheduler. It is now an explicit
+ *  `naming` axis plus an `instanceKey`:
+ *    - `naming:'task'` + instanceKey = the TASK id → deterministic `taskpool-{taskId}`
+ *      branch prefix, so every round of one task shares a branch lineage (was
+ *      `taskpool-{envelopeId}`, which changed if the task was reopened + re-enqueued);
+ *    - `naming:'cron'` → the job's own AI-authored workspace_spec.branch_prefix.
+ *  taskRow=null (v3/cron/查无任务) → 回退旧 taskpool 命名,与抽前一致. */
 export function computeTaskWsLaunchParams(a: {
-  scheduleId: string
-  /** job.trigger_source（scheduler-service.ts:1555 派生：origin_type!=='cron' → 'requirement'）。 */
-  triggerSource: string | undefined
+  /** Stable per-run-series identifier: task id for a task launch, schedule id for a job. */
+  instanceKey: string
+  naming: "task" | "cron"
   config: { workspace_spec: { branch_prefix: string } } & CompositeProbe
   taskRow: { name: string | null; task_spec: string | null | unknown } | null
   date?: Date
 }): { branchPrefix: string; branchSuffix: string; workspaceName: string } {
   const branchSuffix = formatBranchSuffix(a.date ?? new Date())
-  const isRequirement = a.triggerSource === "requirement"
-  const branchPrefix = isRequirement ? `taskpool-${a.scheduleId}` : a.config.workspace_spec.branch_prefix
+  const isTask = a.naming === "task"
+  const branchPrefix = isTask ? `taskpool-${a.instanceKey}` : a.config.workspace_spec.branch_prefix
   const taskWsName = a.taskRow
     ? taskWorkspaceName({ name: a.taskRow.name, task_spec: a.taskRow.task_spec })
     : null
   const workspaceName =
     taskWsName ??
-    (isRequirement
+    (isTask
       ? `${branchPrefix}-${branchSuffix}`
       : `${a.config.workspace_spec.branch_prefix}-${branchSuffix}`)
   return { branchPrefix, branchSuffix, workspaceName }

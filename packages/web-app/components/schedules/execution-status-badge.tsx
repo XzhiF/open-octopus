@@ -13,10 +13,10 @@ const STATUS_CONFIG: Record<
 > = {
   triggered: { label: "Triggered", variant: "default" },
   running: { label: "Running", variant: "default", className: "animate-pulse" },
-  completed: { label: "Completed", className: "bg-green-100 text-green-800 border-green-200" },
+  completed: { label: "Completed", className: "bg-pop-green-soft text-pop-green border-pop-green/40" },
   failed: { label: "Failed", variant: "destructive" },
   skipped: { label: "Skipped", variant: "secondary" },
-  missed: { label: "Missed", className: "bg-yellow-100 text-yellow-800 border-yellow-200" },
+  missed: { label: "Missed", className: "bg-pop-yellow-soft text-pop-amber border-pop-yellow/40" },
 }
 
 export function ExecutionStatusBadge({ status }: Props) {

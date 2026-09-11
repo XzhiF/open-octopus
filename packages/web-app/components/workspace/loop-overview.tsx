@@ -25,9 +25,9 @@ interface LoopOverviewProps {
 }
 
 const iterStatusIcon: Record<IterationDetail["status"], { icon: React.ElementType; className: string }> = {
-  completed: { icon: CheckCircle2, className: "text-emerald-500" },
-  failed: { icon: XCircle, className: "text-red-400" },
-  running: { icon: Loader2, className: "text-amber-400 animate-spin" },
+  completed: { icon: CheckCircle2, className: "text-pop-green" },
+  failed: { icon: XCircle, className: "text-pop-red" },
+  running: { icon: Loader2, className: "text-pop-amber animate-spin" },
   pending: { icon: Clock, className: "text-muted-foreground" },
 }
 
@@ -119,14 +119,14 @@ export const LoopOverview = memo(function LoopOverview({
       {/* Failed iteration jump-to (TC-016) */}
       {failed > 0 && (
         <div className="flex items-center gap-2 text-xs">
-          <Badge variant="outline" className="text-red-400 border-red-400/30 shrink-0">
+          <Badge variant="outline" className="text-pop-red border-pop-red/30 shrink-0">
             <AlertTriangle className="h-3 w-3 mr-0.5" />
             {failed} 个失败迭代
           </Badge>
           {failedIters.length === 1 ? (
             <button
               onClick={() => jumpToIteration(failedIters[0].iteration)}
-              className="text-red-400 hover:text-red-300 underline underline-offset-2 transition-colors"
+              className="text-pop-red hover:text-pop-red/80 underline underline-offset-2 transition-colors"
             >
               跳转到失败迭代
             </button>
@@ -137,7 +137,7 @@ export const LoopOverview = memo(function LoopOverview({
                 <button
                   key={fi.iteration}
                   onClick={() => jumpToIteration(fi.iteration)}
-                  className="text-red-400 hover:text-red-300 underline underline-offset-2 transition-colors"
+                  className="text-pop-red hover:text-pop-red/80 underline underline-offset-2 transition-colors"
                 >
                   #{fi.iteration}
                 </button>
@@ -172,7 +172,7 @@ export const LoopOverview = memo(function LoopOverview({
               }}
               className={cn(
                 "rounded transition-colors",
-                isHighlighted && "ring-1 ring-red-400/50 bg-red-400/5",
+                isHighlighted && "ring-1 ring-pop-red/50 bg-pop-red/5",
               )}
             >
               <Collapsible open={isExpanded} onOpenChange={() => toggleIter(iter.iteration)}>
@@ -198,13 +198,13 @@ export const LoopOverview = memo(function LoopOverview({
                       </span>
                     )}
                     {iter.status === "running" && (
-                      <span className="text-amber-400 ml-auto shrink-0">running...</span>
+                      <span className="text-pop-amber ml-auto shrink-0">running...</span>
                     )}
                     {iter.status === "pending" && (
                       <span className="text-muted-foreground ml-auto shrink-0">pending</span>
                     )}
                     {iter.error && (
-                      <span className="text-red-400 truncate max-w-[100px] shrink-0" title={iter.error}>
+                      <span className="text-pop-red truncate max-w-[100px] shrink-0" title={iter.error}>
                         {iter.error}
                       </span>
                     )}

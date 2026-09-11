@@ -2,19 +2,28 @@
 //
 // task-phase-redesign ticket 06 — 产物单向环: seed 下行 / collect 上行 / SSE。
 //
+// 票03 (ADR-0021) moved both halves of the loop onto the built-in task-lifecycle
+// job: `armTask` seeds this round's batch dir into the workspace, and the terminal
+// finalize collects the execution side's changes back to the home. They used to sit
+// inside `WorkflowExecutor` (which is how a scheduler file ended up knowing about
+// task homes), so the harness drives the REAL new path — no envelope, no
+// `executor.execute()`.
+//
 // Verifies (real better-sqlite3 + applySchema + REAL WorkspaceService + REAL
-// TaskHomeService layout under a fake HOME tmp dir + stubbed ExecutionService
-// registry, same harness shape as tasks-v4-ws-reuse.test.ts):
-//   AC1: 首触 execute() → ws 内存在 seed 文件且内容=home 版；round2 开跑
-//        （dispatchPhaseRound）前改 home spec → ws 反映新内容（home 覆盖 ws 同名）。
+// TaskHomeService layout under a fake HOME tmp dir + an ExecutionService stub that
+// writes real executions rows and captures the terminal callback, same harness
+// family as tasks-v4-ws-reuse.test.ts):
+//   AC1: 首轮 arm → ws 内存在 seed 文件且内容=home 版；home 在两轮之间被改 → 下一轮
+//        seed 反映新内容（home 覆盖 ws 同名）。
+//   AC1b: v3 任务（无 format/phases）不 seed（底线）。
 //   AC2: 执行侧改 issues Status（终态回调后）home 同名文件更新 + 新报告回流，
 //        且 SSE task_artifacts_update 在 taskpool 事件流可收到。
 //   AC3: 写权纪律（ADR-0018 反转）— 批次目录 ws 权威：执行侧在 ws 更新 spec.md，
-//        collect 回流覆盖 home（home=终态镜像；未改动轮 re-collect 仍为 no-op）。
-//   AC4: ws 目录被 rm -rf 后 home 产物完整（防丢兜底）。
-//   底线: v3 envelope（无 format/phases）execute() 不 seed 不 collect。
+//        collect 回流覆盖 home（home=终态镜像）。
+//   AC4: ws 目录被 rm -rf 后 home 产物完整（防丢兜底）；collect 遇 ws 不可用是 no-op。
 //
-// E2E_AL_ data prefix; all fs assertions under mkdtemp tmp dirs (cleaned).
+// E2E_AL_ data prefix; all fs assertions under mkdtemp tmp dirs (cleaned; HOME and
+// USERPROFILE restored with `delete` so no later file in this worker inherits them).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
@@ -22,79 +31,79 @@ import os from "os"
 import path from "path"
 import fs from "fs"
 import { applySchema } from "../db/schema"
-import {
-  ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, WorkspaceDAO, TaskDAO,
-} from "../db/dao"
+import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { WorkspaceService } from "../services/workspace"
-import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
 import { TasksService } from "../services/tasks/tasks-service"
+import { TaskHomeService } from "../services/tasks/task-home-service"
 import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
-import type { SchedulerJob, WorkflowConfig } from "@octopus/shared"
 
 const ORG = "e2e-al"
+const DATE = "20260903"
 
 // ── ExecutionService registry stub (ws-reuse 同款) ────────────────────
-const stubService = {
-  create: vi.fn((workspaceId: string, input: Record<string, unknown>) => {
-    const id = `e2e-al-exec-${execSeq++}`
-    mockHooks.db!
-      .prepare(
-        `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`,
-      )
-      .run(id, workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""), ORG)
-    return { id }
-  }),
-  start: vi.fn(async () => {}),
-  registerExternalCallbacks: vi.fn(),
-  clearExternalCallbacks: vi.fn(),
-}
-let execSeq = 0
-const mockHooks: { db: Database.Database | null } = { db: null }
+// A real 'pending' root row (so task_id / (phase,round) / the latch are the real
+// ones) + the terminal callback captured per execution, which is how a round ends.
+const stub = vi.hoisted(() => ({
+  callbacks: new Map<string, (status?: string) => void>(),
+  live: new Set<string>(),
+  seq: 0,
+  db: null as Database.Database | null,
+  org: "e2e-al",
+}))
 
 vi.mock("../services/execution-service-registry", () => ({
   getExecutionService: (wsId: string) => {
-    const ws = mockHooks.db!
-      .prepare("SELECT path FROM workspaces WHERE id = ?")
-      .get(wsId) as { path: string } | undefined
-    return ws ? { service: stubService, wsPath: ws.path } : undefined
+    const db = stub.db!
+    const ws = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
+      { path: string } | undefined
+    if (!ws) return undefined // ws 被带外删除 → 注册表查不到（AC4 的那一半）
+    return {
+      wsPath: ws.path,
+      service: {
+        create: (_wsId: string, input: Record<string, unknown>) => {
+          const id = `e2e-al-exec-${stub.seq++}`
+          db.prepare(
+            `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+               status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+             VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, '{}', ?, datetime('now'), datetime('now'), ?, ?, ?)`,
+          ).run(
+            id, _wsId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+            JSON.stringify(input.input_values ?? {}), stub.org,
+            input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
+          )
+          return { id }
+        },
+        start: async (id: string) => {
+          stub.live.add(id)
+          db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(id)
+        },
+        registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
+          if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
+        },
+        clearExternalCallbacks: (id: string) => {
+          stub.callbacks.delete(id)
+          stub.live.delete(id)
+        },
+        cancel: (id: string) => ({ id }),
+        hasLiveEngine: (id: string) => stub.live.has(id),
+      },
+    }
   },
 }))
 
 // ── Fixture helpers ───────────────────────────────────────────────────
 
-function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
-  db.prepare(
-    "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
-  ).run()
-  return db
-}
-
+let db: Database.Database
+let sse: SSEService
+let workspaceService: WorkspaceService
+let service: TasksService
+let taskHome: TaskHomeService
+let fakeHome: string
+let realHome: string | undefined
+let realUserProfile: string | undefined
+let artifactsEvents: Array<Record<string, unknown>>
 let seq = 0
-function insertV4Task(db: Database.Database): string {
-  const id = `e2e-al-task-${seq++}`
-  const now = new Date().toISOString()
-  db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
-      authoring_resources, resources, skills, project_ids, workflow_ref, version,
-      deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-  `).run(
-    id, ORG, `E2E_AL ${id}`,
-    JSON.stringify({ format: "v4", task_type: "coding", phases: [] }),
-    now, now,
-  )
-  return id
-}
-
-/** Task home per ADR-0011: os.homedir()/.octopus/tasks/{id} — with HOME
- *  pointed at fakeHome, that is fakeHome/.octopus/tasks/{id}. */
-function homeFor(taskId: string): string {
-  return path.join(fakeHome, ".octopus", "tasks", taskId)
-}
 
 function writeBatchDir(dir: string, files: Record<string, string>): void {
   for (const [rel, content] of Object.entries(files)) {
@@ -104,77 +113,34 @@ function writeBatchDir(dir: string, files: Record<string, string>): void {
   }
 }
 
-const DATE = "20260903"
-
 /** home 批次目录: {home}/.scratch/<date>/<slug>/ */
 function seedHomeBatch(taskId: string, slug: string, files: Record<string, string>): string {
-  const dir = path.join(homeFor(taskId), ".scratch", DATE, slug)
+  const dir = path.join(taskHome.homePath(taskId), ".scratch", DATE, slug)
   writeBatchDir(dir, files)
   return dir
 }
 
-/** v4 envelope config in exactly ticket 04's materialized shape (absolute
- *  specPath/specDir under the task home). */
-function v4EnvelopeConfig(taskId: string): WorkflowConfig {
-  const p1Dir = path.join(homeFor(taskId), ".scratch", DATE, "p1")
-  const p2Dir = path.join(homeFor(taskId), ".scratch", DATE, "p2")
-  return {
-    schema_version: "3.0",
-    type: "workflow",
-    workspace_spec: { org: ORG, branch_prefix: `taskpool-e2e-al-env`, projects: [] },
-    workflow_chain: [
-      { workflow_ref: "built-in/flow-p1", input_values: { idea: "p1" } },
-    ],
-    max_retain: 10,
-    format: "v4",
-    phases: [
-      { index: 1, name: "Phase 1", slug: "p1", specPath: path.join(p1Dir, "spec.md"), specDir: p1Dir, workflowRef: "built-in/flow-p1", inputValues: { idea: "p1" } },
-      { index: 2, name: "Phase 2", slug: "p2", specPath: path.join(p2Dir, "spec.md"), specDir: p2Dir, workflowRef: "built-in/flow-p2", inputValues: { idea: "p2" } },
-    ],
-  } as unknown as WorkflowConfig
-}
-
-function seedEnvelope(db: Database.Database, taskId: string, config: WorkflowConfig): { scheduleId: string; schedExecId: string } {
-  const scheduleId = `e2e-al-sched-${seq++}`
-  const schedExecId = `e2e-al-se-${seq++}`
+/** A v4 task whose phases[] point at those batch dirs (relative = home register). */
+function insertV4Task(taskId: string, slugs: string[]): string {
   const now = new Date().toISOString()
-  db.prepare(`
-    INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled,
-      job_type, config, parallel_policy, status, origin_type, origin_id, origin_role,
-      scheduled_at, created_at, updated_at, max_retain)
-    VALUES (?, ?, ?, NULL, 'UTC', 1, 'workflow', ?, 'skip', 'running', 'task', ?, 'primary', ?, ?, ?, 10)
-  `).run(scheduleId, ORG, `task-${taskId}-primary`, JSON.stringify(config), taskId, now, now, now)
-  db.prepare(`
-    INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-      timezone_offset, timezone_iana, created_at, triggered_by)
-    VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')
-  `).run(schedExecId, scheduleId)
-  return { scheduleId, schedExecId }
+  const phases = slugs.map((slug, i) => ({
+    index: i + 1,
+    name: `Phase ${i + 1}`,
+    slug,
+    specPath: path.join(".scratch", DATE, slug, "spec.md"),
+    workflowRef: `built-in/flow-${slug}`,
+    inputValues: {},
+  }))
+  db.prepare(
+    `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      authoring_resources, resources, skills, project_ids, workflow_ref, version,
+      deleted_at, created_at, updated_at, completed_at, workspace_id)
+     VALUES (?, ?, ?, 'ready', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)`,
+  ).run(taskId, ORG, `E2E_AL ${taskId}`, JSON.stringify({ format: "v4", task_type: "coding", phases }), now, now)
+  return taskId
 }
 
-function buildJob(scheduleId: string, config: WorkflowConfig): SchedulerJob {
-  return {
-    id: scheduleId,
-    name: `task-${scheduleId}-primary`,
-    job_type: "workflow",
-    cron_expression: null,
-    timezone: "UTC",
-    enabled: true,
-    org: ORG,
-    config,
-    parallel_policy: "skip",
-    timeout_seconds: 3600,
-    notify_on_failure: false,
-    version: 1,
-    consecutive_failures: 0,
-    next_trigger_at: null,
-    deleted_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  } as unknown as SchedulerJob
-}
-
-function boundWs(db: Database.Database, taskId: string): { wsId: string; wsPath: string } {
+function boundWs(taskId: string): { wsId: string; wsPath: string } {
   const { workspace_id: wsId } = db.prepare("SELECT workspace_id FROM tasks WHERE id = ?").get(taskId) as
     { workspace_id: string }
   const { path: wsPath } = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
@@ -182,113 +148,116 @@ function boundWs(db: Database.Database, taskId: string): { wsId: string; wsPath:
   return { wsId, wsPath }
 }
 
-/** The onComplete callback the last registerExternalCalls capture holds —
- *  invoking it simulates the engine reaching a terminal status. */
-function lastOnComplete(): (status?: string) => void {
-  return stubService.registerExternalCallbacks.mock.calls.at(-1)![0].onComplete
+/** 一轮收尾的现实形状：行进终态（终态回调已经跑过或手动落），人重新入队。 */
+function endRoundAndRequeue(taskId: string): void {
+  db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE task_id=?")
+    .run(taskId)
+  db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(taskId)
 }
 
-let fakeHome: string
-let realHome: string | undefined
-let realUserProfile: string | undefined
+/** Fire the terminal callback the way the engine does, and await the async tail. */
+async function complete(execId: string, status = "completed"): Promise<void> {
+  stub.callbacks.get(execId)?.(status)
+  await new Promise((r) => setImmediate(r))
+}
 
-describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
-  let db: Database.Database
-  let sse: SSEService
-  let workspaceService: WorkspaceService
-  let executor: WorkflowExecutor
-  let artifactsEvents: Array<Record<string, unknown>>
+beforeEach(() => {
+  db = new Database(":memory:")
+  db.pragma("foreign_keys = ON")
+  applySchema(db)
+  db.prepare(
+    "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
+  ).run()
+  stub.db = db
+  stub.callbacks = new Map()
+  stub.live = new Set()
+  stub.seq = 0
+  seq = 0
+  vi.clearAllMocks()
 
-  beforeEach(() => {
-    db = newDb()
-    mockHooks.db = db
-    execSeq = 0
-    seq = 0
-    vi.clearAllMocks()
-    realHome = process.env.HOME
-    realUserProfile = process.env.USERPROFILE
-    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-al-home-"))
-    // Fake BOTH: os.homedir() reads $HOME on POSIX but %USERPROFILE% on Windows —
-    // without the latter the REAL user home was used on Windows (root cause of the
-    // baseline-red: colon-mkdir ENOENT + cross-test same-second name collisions).
-    process.env.HOME = fakeHome
-    process.env.USERPROFILE = fakeHome
-    sse = new SSEService()
-    artifactsEvents = []
-    sse.subscribe("taskpool", (e) => {
-      if (e.event === TASK_ARTIFACTS_UPDATE_EVENT) artifactsEvents.push(e.data as Record<string, unknown>)
-    })
-    workspaceService = new WorkspaceService(new WorkspaceDAO(db))
-    executor = new WorkflowExecutor(
-      sse,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
-      new ExecutionDAO(db),
-      workspaceService,
-      undefined,
-      new TaskDAO(db),
-    )
+  realHome = process.env.HOME
+  realUserProfile = process.env.USERPROFILE
+  fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-al-home-"))
+  // Fake BOTH: os.homedir() reads $HOME on POSIX but %USERPROFILE% on Windows —
+  // without the latter the REAL user home was used on Windows (root cause of the
+  // baseline-red: colon-mkdir ENOENT + cross-test same-second name collisions).
+  process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome
+
+  artifactsEvents = []
+  sse = new SSEService()
+  sse.subscribe("taskpool", (e) => {
+    if (e.event === TASK_ARTIFACTS_UPDATE_EVENT) artifactsEvents.push(e.data as Record<string, unknown>)
   })
+  taskHome = new TaskHomeService(path.join(fakeHome, ".octopus"))
+  workspaceService = new WorkspaceService(new WorkspaceDAO(db))
+  // arm 会重查 v4 契约 ⇒ phase 的 workflowRef 必须可解析（stub built-in，无必填输入）。
+  const builtIn = {
+    get: (ref: string) => ({ ref, content: "name: demo\nnodes: []\n", name: "demo" }),
+  } as never
+  service = new TasksService(
+    db, sse, undefined, taskHome, undefined, builtIn, null, workspaceService,
+  )
+})
 
-  afterEach(() => {
-    if (realHome === undefined) delete process.env.HOME
-    else process.env.HOME = realHome
-    if (realUserProfile === undefined) delete process.env.USERPROFILE
-    else process.env.USERPROFILE = realUserProfile
-    fs.rmSync(fakeHome, { recursive: true, force: true })
-    db.close()
-  })
+afterEach(() => {
+  if (realHome === undefined) delete process.env.HOME
+  else process.env.HOME = realHome
+  if (realUserProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = realUserProfile
+  fs.rmSync(fakeHome, { recursive: true, force: true })
+  db.close()
+})
 
-  // ── AC1 (part 1) — 首触 execute(): seed home→ws ─────────────────────
-  it("AC1: first execute seeds {home}/.scratch/<date>/<slug>/ into the ws verbatim", async () => {
-    const taskId = insertV4Task(db)
-    const p1 = seedHomeBatch(taskId, "p1", {
+describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 job 里）", () => {
+  // ── AC1 (part 1) — 首轮 arm: seed home→ws ───────────────────────────
+  it("AC1: 首轮 arm 把 {home}/.scratch/<date>/<slug>/ 逐文件复制进 ws", async () => {
+    const taskId = insertV4Task("e2e-al-task-1", ["p1"])
+    seedHomeBatch(taskId, "p1", {
       "spec.md": "# spec p1 v1\n",
       "issues/01-x.md": "Status: ready-for-agent\n",
     })
-    const config = v4EnvelopeConfig(taskId)
-    const { scheduleId, schedExecId } = seedEnvelope(db, taskId, config)
 
-    const result = await executor.execute(buildJob(scheduleId, config), schedExecId)
-    expect(result.status, `execute failed: ${result.errorMessage}`).not.toBe("failure")
+    await service.triggerTask(taskId)
 
-    const { wsPath } = boundWs(db, taskId)
+    const { wsPath } = boundWs(taskId)
     const wsBatch = path.join(wsPath, ".scratch", DATE, "p1")
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p1 v1\n")
     expect(fs.readFileSync(path.join(wsBatch, "issues/01-x.md"), "utf-8")).toBe("Status: ready-for-agent\n")
-    void p1
+    // seed 只下行、不动 home。
+    expect(fs.readFileSync(
+      path.join(taskHome.homePath(taskId), ".scratch", DATE, "p1", "spec.md"), "utf-8",
+    )).toBe("# spec p1 v1\n")
   })
 
-  it("AC1b: a v3 (non-v4) envelope gets NO seed at all (字节不变底线)", async () => {
-    const taskId = insertV4Task(db)
+  it("AC1b: v3 任务（无 format/phases）一行都不 seed（字节不变底线）", async () => {
+    const taskId = insertV4Task("e2e-al-task-v3", ["p1"])
     seedHomeBatch(taskId, "p1", { "spec.md": "# spec p1\n" })
-    const config = v4EnvelopeConfig(taskId)
-    // v3 shape: no format, no phases
-    delete (config as unknown as { format?: string }).format
-    delete (config as unknown as { phases?: unknown }).phases
-    const { scheduleId, schedExecId } = seedEnvelope(db, taskId, config)
+    // v3 shape: no format, no phases — same spec shape the v3 flow materializes.
+    db.prepare("UPDATE tasks SET task_spec = ?, workflow_ref = 'built-in/flow-p1' WHERE id = ?")
+      .run(JSON.stringify({ goal: "g", ac: ["a"], task_type: "generic" }), taskId)
 
-    const result = await executor.execute(buildJob(scheduleId, config), schedExecId)
-    expect(result.status).not.toBe("failure")
+    await service.triggerTask(taskId)
 
-    // v3: no tasks.workspace_id write-back — read the created ws directly.
-    const row = db.prepare("SELECT path FROM workspaces ORDER BY rowid DESC LIMIT 1").get() as
-      { path: string } | undefined
-    expect(row).toBeDefined()
-    expect(fs.existsSync(path.join(row!.path, ".scratch"))).toBe(false)
+    const { wsPath } = boundWs(taskId)
+    expect(fs.existsSync(path.join(wsPath, ".scratch"))).toBe(false)
+    // 未打标 ⇒ collect 上行同样不触发（终态回调后 home 一字未改）。
+    const execId = new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id
+    const homeSpec = path.join(taskHome.homePath(taskId), ".scratch", DATE, "p1", "spec.md")
+    await complete(execId)
+    expect(fs.readFileSync(homeSpec, "utf-8")).toBe("# spec p1\n")
   })
 
-  // ── AC2 (execute path) — 首触终态回调 collect + SSE ──────────────────
-  it("AC2: first-round terminal callback collects execution-side changes into home + emits task_artifacts_update", async () => {
-    const taskId = insertV4Task(db)
+  // ── AC2 (首触终态回调) — collect 上行 + SSE ────────────────────────────
+  it("AC2: 首轮终态回调把执行侧改动收回 home + 发 task_artifacts_update", async () => {
+    const taskId = insertV4Task("e2e-al-task-2", ["p1"])
     const p1 = seedHomeBatch(taskId, "p1", {
       "spec.md": "# spec p1\n",
       "issues/01-x.md": "Status: ready-for-agent\n",
     })
-    const config = v4EnvelopeConfig(taskId)
-    const { scheduleId, schedExecId } = seedEnvelope(db, taskId, config)
-    await executor.execute(buildJob(scheduleId, config), schedExecId)
-    const { wsPath } = boundWs(db, taskId)
+    await service.triggerTask(taskId)
+    const execId = new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id
+    const { wsPath } = boundWs(taskId)
 
     // Simulated execution side: edit the issues status, add a report, and
     // REVIEW/UPDATE spec.md in the ws (AC3 — ws is the final spec authority,
@@ -303,8 +272,8 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     fs.writeFileSync(report, "# round 1 report\n")
     fs.writeFileSync(path.join(wsBatch, "spec.md"), "REVISED BY EXECUTION\n")
 
-    // Engine terminal → the onComplete registered by execute() finalizes.
-    lastOnComplete()("completed")
+    // Engine terminal → the onComplete registered by the job finalizes (collect).
+    await complete(execId)
 
     expect(fs.readFileSync(path.join(p1, "issues/01-x.md"), "utf-8")).toBe("Status: done\n")
     expect(fs.readFileSync(path.join(p1, "report-r1.md"), "utf-8")).toBe("# round 1 report\n")
@@ -313,30 +282,31 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     expect(fs.readFileSync(path.join(p1, "spec.md"), "utf-8")).toBe("REVISED BY EXECUTION\n")
     // SSE 上行可收 (taskpool 订阅).
     expect(artifactsEvents.some((d) => d.task_id === taskId)).toBe(true)
-    void scheduleId; void schedExecId
   })
 
-  // ── AC1c + AC2/AC3 (dispatch path) — dispatchPhaseRound seed / finalize collect
-  it("dispatchPhaseRound seeds the target batch; execution edits collect back at finalize; round-2 re-seed reflects home edits", async () => {
-    const taskId = insertV4Task(db)
+  // ── AC1c + AC2/AC3 (后续轮) — dispatch seed / finalize collect / 再 seed
+  it("后续轮：dispatch 种子到目标批次；执行侧改动在 finalize 收回；两轮之间改 home 下一次 seed 覆盖", async () => {
+    const taskId = insertV4Task("e2e-al-task-3", ["p1", "p2"])
     seedHomeBatch(taskId, "p1", { "spec.md": "# spec p1\n" })
     const p2 = seedHomeBatch(taskId, "p2", {
       "spec.md": "# spec p2 v1\n",
       "issues/02-y.md": "Status: needs-info\n",
     })
-    const config = v4EnvelopeConfig(taskId)
-    const { scheduleId, schedExecId } = seedEnvelope(db, taskId, config)
-    await executor.execute(buildJob(scheduleId, config), schedExecId)
-    lastOnComplete()("completed") // release the phase-1 slot
+    await service.triggerTask(taskId) // phase 1
+    await complete(new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id) // 收轮
+    endRoundAndRequeue(taskId)
 
-    const service = new TasksService(db, sse)
-    const { wsPath } = boundWs(db, taskId)
-
-    // ── round 1 of phase 2: seed puts p2 batch into ws (home 版内容) ──
-    await service.dispatchPhaseRound(taskId, 2, 1, "go")
+    // ── round 1 of phase 2: seed puts the p2 batch into the ws (home 版内容) ──
+    const dispatched = await service.dispatchPhaseRound(taskId, 2, 1, "go")
+    const { wsPath } = boundWs(taskId)
     const wsBatch = path.join(wsPath, ".scratch", DATE, "p2")
+    expect(dispatched.workspaceId).toBe(boundWs(taskId).wsId) // 一 task 一 ws，轮次不换支
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p2 v1\n")
     expect(fs.readFileSync(path.join(wsBatch, "issues/02-y.md"), "utf-8")).toBe("Status: needs-info\n")
+    // 打回反馈走的是 input_values 通道，不落批次目录（产物化是 acceptance 的职责）。
+    const iv = JSON.parse(new ExecutionDAO(db).findById(dispatched.executionId)!.input_values) as
+      Record<string, string>
+    expect(iv.feedback).toBe("go")
 
     // Execution side: update issues + revise spec.md in the ws copy.
     const edited = path.join(wsBatch, "issues/02-y.md")
@@ -345,22 +315,25 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE", () => {
     fs.utimesSync(edited, st.atime, new Date(st.mtimeMs + 5000))
     fs.writeFileSync(path.join(wsBatch, "spec.md"), "REVISED IN WS\n")
 
-    // Terminal → finalizePhaseRoundExecution collects.
-    lastOnComplete()("completed")
+    // Terminal → the job's finalize collects.
+    await complete(dispatched.executionId)
     expect(fs.readFileSync(path.join(p2, "issues/02-y.md"), "utf-8")).toBe("Status: done\n")
-    expect(fs.readFileSync(path.join(p2, "spec.md"), "utf-8")).toBe("REVISED IN WS\n") // AC3 (ADR-0018 ws 权威)
+    expect(fs.readFileSync(path.join(p2, "spec.md"), "utf-8")).toBe("REVISED IN WS\n") // AC3
     expect(artifactsEvents.some((d) => d.task_id === taskId)).toBe(true) // AC2
 
     // ── round 2: home spec edited between rounds → next seed 覆盖 ws 同名 ──
     fs.writeFileSync(path.join(p2, "spec.md"), "# spec p2 v2\n")
-    await service.dispatchPhaseRound(taskId, 2, 2)
+    endRoundAndRequeue(taskId)
+    const r2 = await service.dispatchPhaseRound(taskId, 2, 2)
+    expect(r2.workspaceId).toBe(boundWs(taskId).wsId)
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p2 v2\n")
 
-    // AC4: ws 后续被删 — home 产物完整 (防丢兜底).
-    lastOnComplete()("completed")
+    // AC4: ws 被带外删除 — home 产物完整（防丢兜底），且 collect 退化为 no-op。
+    const r2exec = new ExecutionDAO(db).findById(r2.executionId)!
+    expect(r2exec.status).toBe("running")
     fs.rmSync(wsPath, { recursive: true, force: true })
+    await complete(r2.executionId)
     expect(fs.readFileSync(path.join(p2, "spec.md"), "utf-8")).toBe("# spec p2 v2\n")
     expect(fs.readFileSync(path.join(p2, "issues/02-y.md"), "utf-8")).toBe("Status: done\n")
-    void scheduleId; void schedExecId
   })
 })

@@ -113,7 +113,6 @@ export default function SchedulerPage() {
     !!filters.search ||
     !!filters.status ||
     !!filters.job_type ||
-    !!filters.origin ||
     !!filters.workspace_id
 
   const handleToggle = useCallback(

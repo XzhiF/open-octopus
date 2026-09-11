@@ -205,7 +205,7 @@ export function InteractionDetailTabs({
               <div className="bg-muted rounded p-2 text-xs space-y-1">
                 {Object.entries(resultData.varsUpdate).map(([key, value]) => (
                   <div key={key} className="flex gap-2">
-                    <span className="font-mono text-blue-600">{key}:</span>
+                    <span className="font-mono text-pop-cyan">{key}:</span>
                     <span className="text-muted-foreground">{String(value)}</span>
                   </div>
                 ))}

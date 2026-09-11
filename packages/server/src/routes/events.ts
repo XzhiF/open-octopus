@@ -23,10 +23,16 @@ export function eventRoutes(sse: SSEService): Hono {
 }
 
 /**
- * Global task-pool SSE channel. Kanban /tasks subscribes here for real-time
- * schedule status changes (running / done / rollback). Draft→queued→claimed
- * transitions stay on the existing 10s poll (fast enough); the expensive,
- * user-care-about transitions (task starts running, completes) push instantly.
+ * Global task-pool SSE channel. /tasks (kanban) and the 系统调度页 subscribe here.
+ *
+ * 票03 (ADR-0021) changed what flows on it: the scheduler's `schedule_status` mirror of
+ * task rows is gone — that event now describes a job's own run-state only (queued/claimed/
+ * aborted on the pump, still tested by 07-sse-schedule-status). The task vocabulary is the
+ * task domain's own: `task_execution` (a run moved: armed → running → terminal, with
+ * `reason` on the red paths) and `task_status` (the task card's column moved). Every
+ * terminal write on a task run owes exactly one of these, including 中止 (票05): a
+ * transition that only touches the row is invisible until the board's next poll, and the
+ * poll has no reason to show.
  */
 export function taskpoolEventRoutes(sse: SSEService): Hono {
   const app = new Hono()

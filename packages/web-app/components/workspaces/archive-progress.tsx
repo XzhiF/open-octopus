@@ -137,9 +137,9 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
 
   const StepIcon = ({ status }: { status: StepStatus }) => {
     switch (status) {
-      case "done":    return <CheckCircle2 className="h-5 w-5 text-green-500" />
-      case "running": return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
-      case "error":   return <XCircle className="h-5 w-5 text-red-500" />
+      case "done":    return <CheckCircle2 className="h-5 w-5 text-pop-green" />
+      case "running": return <Loader2 className="h-5 w-5 text-pop-cyan animate-spin" />
+      case "error":   return <XCircle className="h-5 w-5 text-pop-red" />
       case "paused":  return <Pause className="h-5 w-5 text-muted-foreground" />
       default:        return <Circle className="h-5 w-5 text-muted-foreground" />
     }
@@ -152,7 +152,7 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
       {/* Dual panel layout */}
       <div className="flex flex-1 gap-4 min-h-0">
         {/* Steps panel — left 280px */}
-        <div className="w-[280px] shrink-0 border rounded-lg p-4 overflow-y-auto">
+        <div className="w-[280px] shrink-0 border-2 border-pop-bd rounded-xl bg-pop-paper shadow-pop-sm p-4 overflow-y-auto">
           <h4 className="text-sm font-semibold mb-3 text-muted-foreground">归档步骤</h4>
           <div className="space-y-1">
             {defs.map((def) => {
@@ -162,16 +162,16 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
                   key={def.key}
                   className={cn(
                     "flex items-start gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                    state?.status === "running" && "bg-blue-50 dark:bg-blue-950/30",
-                    state?.status === "error" && "bg-red-50 dark:bg-red-950/30",
+                    state?.status === "running" && "bg-pop-cyan-soft",
+                    state?.status === "error" && "bg-pop-pink-soft",
                   )}
                 >
                   <StepIcon status={state?.status ?? "pending"} />
                   <div className="flex-1 min-w-0">
                     <div className={cn(
                       "font-medium",
-                      state?.status === "done" && "text-green-700 dark:text-green-400",
-                      state?.status === "error" && "text-red-700 dark:text-red-400",
+                      state?.status === "done" && "text-pop-green",
+                      state?.status === "error" && "text-pop-red",
                       state?.status === "paused" && "text-muted-foreground",
                     )}>
                       {def.label}
@@ -189,21 +189,21 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
         </div>
 
         {/* Terminal panel — right flex-1 */}
-        <div className="flex-1 min-w-0 border rounded-lg flex flex-col">
+        <div className="flex-1 min-w-0 border-2 border-pop-bd rounded-xl flex flex-col">
           <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/50 rounded-t-lg">
             <Terminal className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-mono text-muted-foreground">归档日志</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed bg-zinc-950 text-zinc-100 rounded-b-lg">
+          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed bg-pop-ink text-pop-paper rounded-b-lg">
             {logs.length === 0 ? (
-              <div className="text-zinc-500 italic">等待归档开始...</div>
+              <div className="text-pop-dim italic">等待归档开始...</div>
             ) : (
               logs.map((line, i) => (
                 <div key={i} className={cn(
                   "whitespace-pre-wrap",
-                  line.includes("ERROR") && "text-red-400",
-                  line.includes("✓") && "text-green-400",
-                  line.includes("═══") && "text-zinc-500",
+                  line.includes("ERROR") && "text-pop-red",
+                  line.includes("✓") && "text-pop-green",
+                  line.includes("═══") && "text-pop-dim",
                 )}>
                   {line}
                 </div>
@@ -221,10 +221,10 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
             <span className="text-muted-foreground">归档进行中，请勿关闭此窗口</span>
           )}
           {phase === "complete" && (
-            <span className="text-green-600 font-medium">{"✅"} 归档完成</span>
+            <span className="text-pop-green font-medium">{"✅"} 归档完成</span>
           )}
           {phase === "error" && (
-            <span className="text-red-600 font-medium">{"⚠️"} {errorMsg ?? "归档失败"}</span>
+            <span className="text-pop-red font-medium">{"⚠️"} {errorMsg ?? "归档失败"}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

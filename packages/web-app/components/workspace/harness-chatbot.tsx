@@ -224,14 +224,14 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
             className={`flex gap-2 text-xs ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             {msg.role === "system" && (
-              <ShieldCheck className="h-4 w-4 text-violet-500 shrink-0 mt-0.5" />
+              <ShieldCheck className="h-4 w-4 text-pop-purple shrink-0 mt-0.5" />
             )}
             <div
               className={`max-w-[80%] rounded-lg px-2.5 py-1.5 ${
                 msg.role === "user"
-                  ? "bg-blue-600 text-white"
+                  ? "bg-pop-cyan text-white"
                   : msg.status === "error"
-                    ? "bg-red-950/30 text-red-300 border border-red-800"
+                    ? "bg-pop-red/10 text-pop-red border border-pop-red/40"
                     : "bg-muted text-foreground"
               }`}
             >
@@ -243,7 +243,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
           </div>
         ))}
         {delegating && (
-          <div className="flex items-center gap-2 text-xs text-violet-400 py-1">
+          <div className="flex items-center gap-2 text-xs text-pop-purple py-1">
             <Loader2 className="h-3 w-3 animate-spin" />
             <span>Harness Agent 思考中...</span>
           </div>

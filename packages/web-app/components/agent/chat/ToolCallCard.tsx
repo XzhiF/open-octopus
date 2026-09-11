@@ -139,8 +139,8 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
       <CollapsibleTrigger asChild>
         <button
           className={cn(
-            'flex items-center gap-2 w-full rounded-lg border border-agent-divider bg-agent-surface-inset px-3 py-2 text-sm transition-colors hover:bg-accent',
-            effectiveStatus === 'fail' && 'border-agent-error/30'
+            'flex items-center gap-2 w-full rounded-xl border-2 border-pop-bd bg-pop-paper px-3 py-2 text-sm text-pop-ink shadow-[2px_2px_0_rgba(28,27,34,.12)] transition-colors hover:bg-pop-yellow-soft',
+            effectiveStatus === 'fail' && 'bg-pop-pink-soft'
           )}
           role="status"
           aria-label={`工具调用: ${toolCall.name}, 状态: ${effectiveStatus ?? 'unknown'}`}
@@ -163,7 +163,7 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mt-1 rounded-lg border border-agent-divider bg-agent-surface-inset p-3 text-xs">
+        <div className="mt-1 rounded-xl border-2 border-pop-bd bg-pop-bg p-3 text-xs">
           {toolCall.input != null && (
             <div className="mb-2">
               <span className="font-medium text-muted-foreground">输入:</span>

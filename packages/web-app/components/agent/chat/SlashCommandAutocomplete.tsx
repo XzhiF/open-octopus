@@ -159,7 +159,7 @@ export function SlashCommandAutocomplete({
             i === selectedIndex && 'bg-accent',
           )}
         >
-          <code className="text-sm font-mono font-medium text-blue-600 shrink-0">
+          <code className="text-sm font-mono font-medium text-pop-cyan shrink-0">
             /{cmd.name}
           </code>
           {cmd.description && (

@@ -28,21 +28,21 @@ const DAGRE_NODE_WIDTH = 170
 const DAGRE_NODE_HEIGHT = 64
 
 const STATUS_TONE: Record<string, string> = {
-  queued: "border-blue-500/60 bg-blue-500/5",
-  claimed: "border-amber-500/60 bg-amber-500/5",
-  running: "border-blue-500/60 bg-blue-500/5",
-  done: "border-emerald-500/60 bg-emerald-500/5",
-  failed: "border-red-500/60 bg-red-500/5",
-  aborted: "border-zinc-500/60 bg-zinc-500/5",
+  queued: "border-pop-cyan/60 bg-pop-cyan-soft",
+  claimed: "border-pop-amber/60 bg-pop-amber-soft",
+  running: "border-pop-cyan/60 bg-pop-cyan-soft",
+  done: "border-pop-green/60 bg-pop-green-soft",
+  failed: "border-pop-red/60 bg-pop-pink-soft",
+  aborted: "border-pop-bd/30 bg-pop-idle",
 }
 
 const STATUS_DOT: Record<string, string> = {
-  queued: "bg-blue-500",
-  claimed: "bg-amber-500",
-  running: "bg-blue-500 animate-pulse",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-  aborted: "bg-zinc-500",
+  queued: "bg-pop-cyan",
+  claimed: "bg-pop-amber",
+  running: "bg-pop-cyan animate-pulse",
+  done: "bg-pop-green",
+  failed: "bg-pop-red",
+  aborted: "bg-pop-dim",
 }
 
 const STATUS_LABEL: Record<string, string> = {

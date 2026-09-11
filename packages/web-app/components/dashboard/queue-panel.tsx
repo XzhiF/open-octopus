@@ -25,8 +25,8 @@ function ExecutionItem({ execution }: { execution: Execution }) {
       {/* Status indicator */}
       <div className="flex-shrink-0">
         {isRunning ? (
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10">
-            <Play className="h-4 w-4 text-amber-500" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-pop-amber/10">
+            <Play className="h-4 w-4 text-pop-amber" />
           </div>
         ) : (
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">

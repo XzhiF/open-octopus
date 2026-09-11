@@ -37,12 +37,12 @@ export function TokenAggregateLine({
   const modelLabel = models.length === 0 ? null : models.length === 1 ? models[0] : `${models[0]} +${models.length - 1}`
 
   return (
-    <div className={cn("text-xs tabular-nums flex items-center gap-1.5", isRunning ? "text-amber-600 font-medium" : "text-muted-foreground", className)}>
+    <div className={cn("text-xs tabular-nums flex items-center gap-1.5", isRunning ? "text-pop-amber font-medium" : "text-muted-foreground", className)}>
       {modelLabel && <span className="font-medium truncate max-w-[150px]" title={models.join(" / ")}>{modelLabel}</span>}
       {total > 0 && <span title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(total)}</span>}
       {!!requestCount && <span title="LLM 请求次数">{requestCount}次</span>}
       {cost != null && <span>{formatCost(cost, complete)}</span>}
-      {isRunning && <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />}
+      {isRunning && <span className="inline-block h-1.5 w-1.5 rounded-full bg-pop-amber animate-pulse" />}
     </div>
   )
 }

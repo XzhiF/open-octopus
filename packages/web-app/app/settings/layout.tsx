@@ -53,16 +53,16 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Tab bar */}
         {tabs.length > 0 && (
-          <div className="flex items-center border-b border-border bg-background shrink-0 px-2">
+          <div className="flex items-center border-b-2 border-pop-bd bg-pop-paper shrink-0 px-2 pt-1.5">
             <div className="flex flex-1 overflow-x-auto">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 text-sm border-b-2 transition-colors whitespace-nowrap shrink-0",
+                    "flex items-center gap-2 rounded-t-lg px-3 py-1.5 text-sm border-b-2 transition-colors whitespace-nowrap shrink-0",
                     activeTabId === tab.id
-                      ? "border-primary text-primary font-medium bg-muted/50"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                      ? "border-pop-bd bg-pop-yellow text-pop-ink font-black"
+                      : "border-transparent text-pop-dim font-bold hover:bg-accent hover:text-pop-ink"
                   )}
                   onClick={() => handleTabClick(tab.id)}
                 >

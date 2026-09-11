@@ -49,7 +49,7 @@ export function CostTab({ aggregates }: CostTabProps) {
           </>
         )}
         <span>·</span>
-        <span className="tabular-nums font-medium text-amber-600 dark:text-amber-400">{formatCost(totals.cost.usd, totals.cost.complete)}</span>
+        <span className="tabular-nums font-medium text-pop-amber">{formatCost(totals.cost.usd, totals.cost.complete)}</span>
       </div>
 
       {models.length > 0 && (

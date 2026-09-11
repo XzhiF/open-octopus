@@ -157,12 +157,12 @@ export function ResourceDetail() {
                 <h2 className="text-xl font-bold" title={entry.name}>{entry.name}</h2>
                 <Badge variant="outline">{entry.type}</Badge>
                 {entry.status === "installed" ? (
-                  <Badge variant="secondary" className="gap-1 text-green-700 dark:text-green-400">
+                  <Badge variant="secondary" className="gap-1 text-pop-green">
                     <CheckCircle2 className="h-3 w-3" />
                     已安装
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="gap-1 text-amber-600">
+                  <Badge variant="secondary" className="gap-1 text-pop-amber">
                     <AlertTriangle className="h-3 w-3" />
                     未验证
                   </Badge>

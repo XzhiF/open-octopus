@@ -133,16 +133,16 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
     <div className="mb-4">
       <div className={cn(
         "bg-secondary rounded-xl px-4 py-3 text-sm max-w-[90%] border-l-3",
-        submitted ? "border-l-emerald-400" : "border-l-amber-400"
+        submitted ? "border-l-pop-green" : "border-l-pop-amber"
       )}>
         {/* Header */}
         <div className="flex items-center gap-2 mb-3">
           {submitted ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-pop-green shrink-0" />
           ) : disabled ? (
-            <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
+            <Loader2 className="w-4 h-4 text-pop-cyan animate-spin shrink-0" />
           ) : (
-            <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <HelpCircle className="w-4 h-4 text-pop-amber shrink-0" />
           )}
           <span className="font-medium text-sm">
             {submitted ? "已回答" : disabled ? "AI 正在工作中，完成后可提交答案" : "AI 想要确认以下问题"}
@@ -276,7 +276,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
               提交答案
             </Button>
             {disabled ? (
-              <span className="text-xs text-blue-400 flex items-center gap-1">
+              <span className="text-xs text-pop-cyan flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 等待 AI 完成
               </span>
@@ -285,7 +285,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
             )}
           </div>
         ) : (
-          <div className="mt-3 flex items-center gap-2 text-xs text-emerald-500">
+          <div className="mt-3 flex items-center gap-2 text-xs text-pop-green">
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>答案已提交</span>
           </div>

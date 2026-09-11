@@ -2,8 +2,8 @@
 //
 // task-phase-redesign 票 12（K14/D11/US9-12）：v4 验收三栏证据面。
 //
-//   ┌ 左：执行摘要（round 用时 / token / cost — fetchLLMCalls 聚合 + children
-//   │     execution_ref 联查；TaskAiUsageCard 同等数据）
+//   ┌ 左：执行摘要（round 用时 / 失败原因 / token / cost — fetchLLMCalls 聚合 +
+//   │     本轮 run 由 executions[] 按 id 联查；TaskAiUsageCard 同等数据）
 //   ├ 中：产物核对（本 phase 批次文件 → 既有 ArtifactViewerDialog 展开全文；
 //   │     task_artifacts_update SSE 挂窗即时刷新 — 票 06 collect 上行）
 //   └ 右：动作区（验收通过 / 打回[反馈必填] / 中止 + autoAdvance 只读态）
@@ -53,7 +53,7 @@ import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
-import { TaskAiUsageCard } from "./execution-summary"
+import { TaskAiUsageCard, runErrorOf } from "./execution-summary"
 
 // 归档重试客户端 postArchiveRetry 位于 lib/tasks-api.ts（review ①: API 层惯例
 // — 全部 client endpoint 住 tasks-api 单源；page.tsx 的「重试归档」按钮直连）。
@@ -154,25 +154,22 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     return () => { cancelled = true }
   }, [open, execId])
 
-  // 用时：children[].execution_ref 与 round.exec.id 联查（derived 无 completed_at）。
+  // 本轮 run：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
+  // 徽章自带 started_at/completed_at，duration 自己算；票05 起徽章带 error_summary）。
+  const roundRun = useMemo(
+    () => (awaitingRound ? detail?.executions?.find((e) => e.id === awaitingRound.exec.id) ?? null : null),
+    [awaitingRound, detail],
+  )
   const durationMs: number | null = useMemo(() => {
-    if (!awaitingRound || !detail?.children) return null
-    const ref = detail.children
-      .map((c) => c.execution_ref)
-      .find((r) => r?.execution_id === awaitingRound.exec.id)
-    if (!ref) return null
-    if (ref.duration_ms != null) return ref.duration_ms
-    if (ref.completed_at) return Math.max(0, Date.parse(ref.completed_at) - Date.parse(ref.triggered_at))
-    return null
-  }, [awaitingRound, detail])
+    if (!roundRun?.completed_at) return null
+    const startMs = roundRun.started_at ? Date.parse(roundRun.started_at) : Date.parse(roundRun.created_at)
+    if (Number.isNaN(startMs)) return null
+    return Math.max(0, Date.parse(roundRun.completed_at) - startMs)
+  }, [roundRun])
 
-  const errorSummary = useMemo(() => {
-    if (!awaitingRound || !detail?.children) return null
-    const ref = detail.children
-      .map((c) => c.execution_ref)
-      .find((r) => r?.execution_id === awaitingRound.exec.id)
-    return ref?.error_summary ?? null
-  }, [awaitingRound, detail])
+  // 该轮为什么红（票05）：验收者面对 failed round 时缺的就是这一行 —— 数据源是
+  // executions[] 联查到的徽章 error_summary，按红状态门控（runErrorOf），不臆造拉取。
+  const roundError = awaitingRound?.state === "failed" && roundRun ? runErrorOf(roundRun) : null
 
   // 产物核对：登记产物里命中本 phase slug 的文件（K10 批次目录
   // `.scratch/<date>/<slug>/`，登记可见语义 — 接缝③）。
@@ -362,14 +359,24 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       <span
                         data-acceptance-round-state={awaitingRound.state} data-testid="acceptance-round-state"
                         className={
-                          awaitingRound.state === "succeeded" ? "text-emerald-600"
-                            : awaitingRound.state === "failed" ? "text-amber-600" // US8: 失败=待处理，不是红死
+                          awaitingRound.state === "succeeded" ? "text-pop-green"
+                            : awaitingRound.state === "failed" ? "text-pop-amber" // US8: 失败=待处理，不是红死
                               : "text-muted-foreground"
                         }
                       >
                         {ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state}
                       </span>
                     </div>
+                    {/* 票05: 红轮的一行原因（error_summary 出口之一 —— 验收面是它最该
+                        被看到的地方）。绿轮/无原因 → 不渲染。 */}
+                    {roundError && (
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-muted-foreground text-xs shrink-0">失败原因</span>
+                        <span className="text-pop-amber text-xs text-right break-words" data-acceptance-round-error data-testid="acceptance-round-error">
+                          {roundError}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-muted-foreground text-xs">用时</span>
                       <span className="tabular-nums" data-acceptance-duration data-testid="acceptance-duration">
@@ -377,11 +384,6 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       </span>
                     </div>
                   </div>
-                  {errorSummary && (
-                    <p className="text-xs text-amber-600 break-words whitespace-pre-wrap rounded-md border border-amber-400/40 bg-amber-500/5 p-2" data-acceptance-error>
-                      {errorSummary}
-                    </p>
-                  )}
                   {/* token/cost：TaskAiUsageCard 同等数据（round 口径注入） */}
                   <TaskAiUsageCard agg={agg} loading={aggLoading} runCount={execId ? 1 : 0} />
                 </>
@@ -458,8 +460,8 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                   </Button>
 
                   {rejectOpen && (
-                    <div className="rounded-md border border-amber-400/40 bg-amber-500/5 p-2.5 space-y-2" data-reject-panel>
-                      <label className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                    <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2.5 space-y-2" data-reject-panel>
+                      <label className="text-[11px] font-medium text-pop-ink">
                         打回反馈（必填 — 落 fix-feedback-r{awaitingPhase.awaitingRound}.md）
                       </label>
                       <Textarea
@@ -473,7 +475,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                       {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
                           信封 phases[] 绑定冻结不破） */}
                       <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
-                        <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">下一轮路由</div>
+                        <div className="text-[11px] font-medium text-pop-ink">下一轮路由</div>
                         <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
                           <input
                             type="radio" name="reject-flow" className="mt-0.5"
@@ -518,7 +520,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
                   <div className="pt-2 border-t space-y-1.5">
                     <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
                       <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
-                      <span className={autoOn ? "text-emerald-600" : "text-amber-600"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
+                      <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
                     </div>
                     <p className="text-[10px] text-muted-foreground">开关在草稿面板（入队清单下方）</p>
                   </div>
@@ -659,7 +661,7 @@ export function ImpactApprovalList({ taskId, phases, items, onDone }: ImpactAppr
   }
 
   return (
-    <div className="rounded-md border border-purple-400/40 bg-purple-500/5 p-2.5 space-y-2" data-impact-list>
+    <div className="rounded-md border border-pop-purple/40 bg-pop-purple-soft p-2.5 space-y-2" data-impact-list>
       <div className="text-[11px] font-semibold text-muted-foreground">决策影响清单（批准即改写后续 phase）</div>
       <ul className="space-y-1.5">
         {items.map((it) => (

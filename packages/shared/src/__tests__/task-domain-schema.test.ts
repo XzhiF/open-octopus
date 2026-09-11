@@ -3,13 +3,11 @@ import {
   taskSpecSchema,
   subunitSpecSchema,
   workflowConfigSchema,
-  OriginTypeSchema,
   taskResourceTypeSchema,
   resourceRefSchema,
   type TaskSpec,
   type SubunitSpec,
   type WorkflowConfig,
-  type OriginType,
   type ResourceRef,
   type TaskResourceType,
 } from "../types/scheduler-job"
@@ -28,12 +26,19 @@ import {
   type SpecFieldUpdatePayload,
   type TaskStatusSsePayload,
   type UpdateTaskSpecFieldTool,
-  type ScheduleStatusListener,
+  type TaskExecutionBadge,
+  type TaskExecutionSsePayload,
+  type TriggerMode,
   SPEC_FIELD_UPDATE_EVENT,
   TASK_STATUS_EVENT,
+  TASK_EXECUTION_EVENT,
+  TASK_TRIGGER_FAILED_EVENT,
+  TriggerModeSchema,
+  taskExecutionSsePayloadSchema,
+  taskTriggerFailedPayloadSchema,
   UPDATE_TASK_SPEC_FIELD_TOOL_NAME,
 } from "../types/task"
-import type { TaskDispatchPort, ScheduleHandle, OriginRole } from "../types/task-dispatch-port"
+import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
 
 // Independent sources of truth (spec literals — not derived from the code).
 // task-phase-redesign v4 (ticket 07): 'awaiting_review' + 'archiving' join the
@@ -49,9 +54,13 @@ const EXPECTED_TASK_STATUSES = [
   "failed",
   "aborted",
 ] as const
-const EXPECTED_ORIGIN_TYPES = ["cron", "task", "agent", "manual", "api"] as const
+// ADR-0021 票05: `EXPECTED_ORIGIN_TYPES` / `EXPECTED_ORIGIN_ROLES` are gone with the
+// types they pinned. WHAT created a schedule stopped being a question anyone asks: the
+// origin_* columns died in schema v42, and the last wire reference (the
+// `origin_type: 'task'` discriminator on taskpool SSE) died here. WHEN a task runs is
+// now the task's own field, so that is what gets pinned below.
+const EXPECTED_TRIGGER_MODES = ["manual", "once", "cron"] as const
 const EXPECTED_RESOURCE_TYPES = ["skill", "agent", "command", "rule"] as const
-const EXPECTED_ORIGIN_ROLES = ["primary", "coordinator", "subunit"] as const
 // Spec-field names the tool/SSE may carry (spec v2-D12 + glossary).
 // task-workflow-handoff (ADR-0013): adds `workflow_ref` to the bindable set.
 // task-phase-redesign v4 (ticket 07): adds `phases`.
@@ -80,7 +89,7 @@ const baseWorkspaceSpec = {
 type AssertAbsent<T, K extends string | number | symbol> = T extends { [P in K]: unknown } ? false : true
 
 // ── AC1: TaskStatus + OriginType enums ───────────────────────────────
-describe("AC1 — TaskStatus + OriginType enums", () => {
+describe("AC1 — TaskStatus + TriggerMode enums", () => {
   it("TaskStatusSchema parses every expected status", () => {
     for (const s of EXPECTED_TASK_STATUSES) {
       expect(TaskStatusSchema.safeParse(s).success, `expected ${s} to parse`).toBe(true)
@@ -118,23 +127,22 @@ describe("AC1 — TaskStatus + OriginType enums", () => {
     expect(options).toEqual([...EXPECTED_TASK_STATUSES])
   })
 
-  it("OriginTypeSchema parses every expected origin", () => {
-    for (const t of EXPECTED_ORIGIN_TYPES) {
-      expect(OriginTypeSchema.safeParse(t).success, `expected ${t} to parse`).toBe(true)
+  it("TriggerModeSchema parses every expected mode, and nothing else", () => {
+    // The three modes are the whole of 「任务何时该跑」 after ADR-0021. 'queued' /
+    // 'claimed' / 'draft' deliberately do NOT parse — those were ENVELOPE row states,
+    // and a mode enum that also accepts them is how the mirror would creep back in.
+    for (const m of EXPECTED_TRIGGER_MODES) {
+      expect(TriggerModeSchema.safeParse(m).success, `expected ${m} to parse`).toBe(true)
+    }
+    for (const m of ["queued", "claimed", "draft", "scheduled", "requirement"]) {
+      expect(TriggerModeSchema.safeParse(m).success, `expected ${m} to be rejected`).toBe(false)
     }
   })
 
-  it("OriginTypeSchema rejects the v1 'requirement' value and unknown origins", () => {
-    expect(OriginTypeSchema.safeParse("requirement").success).toBe(false)
-    expect(OriginTypeSchema.safeParse("webhook").success).toBe(false)
-  })
-
-  it("every expected OriginType is a member of the union (type-level)", () => {
-    expectTypeOf<"cron">().toMatchTypeOf<OriginType>()
-    expectTypeOf<"task">().toMatchTypeOf<OriginType>()
-    expectTypeOf<"agent">().toMatchTypeOf<OriginType>()
-    expectTypeOf<"manual">().toMatchTypeOf<OriginType>()
-    expectTypeOf<"api">().toMatchTypeOf<OriginType>()
+  it("every expected TriggerMode is a member of the union (type-level)", () => {
+    for (const m of EXPECTED_TRIGGER_MODES) {
+      expectTypeOf<(typeof EXPECTED_TRIGGER_MODES)[number]>().toMatchTypeOf<TriggerMode>()
+    }
   })
 })
 
@@ -277,69 +285,37 @@ describe("AC2 — resource refs + spec/config extensions", () => {
   })
 })
 
-// ── AC3: TaskDispatchPort +origin_role param ────────────────────────
-describe("AC3 — TaskDispatchPort origin_role param", () => {
-  it("OriginRole is primary | coordinator | subunit (type-level)", () => {
-    const roles: OriginRole[] = [...EXPECTED_ORIGIN_ROLES]
-    for (const r of EXPECTED_ORIGIN_ROLES) {
-      expect(roles).toContain(r)
-    }
-  })
-
-  it("dispatchChildSchedule accepts origin_role as a required param (type-level)", () => {
-    // Conforming impl MUST accept origin_role. If origin_role is removed from
-    // the interface, this assignment fails tsc.
+// ── AC3: TaskDispatchPort — a child RUN, not a child schedule (ADR-0021 票03/票04) ──
+describe("AC3 — TaskDispatchPort dispatchChild / ChildHandle", () => {
+  it("dispatchChild takes ONLY the subunit and returns a ChildHandle", () => {
+    // Type-level: a conforming implementation must satisfy the interface. The old
+    // version of this test asserted the OPPOSITE direction — that omitting
+    // origin_role would fail to compile — because a child schedule row needed a role
+    // written into schedules.origin_role. A child execution row carries parent_id and
+    // child_index instead, so the role parameter has nothing to feed.
     const impl: TaskDispatchPort = {
-      async dispatchChildSchedule(subunit, origin_role) {
+      async dispatchChild(subunit) {
         expect(subunit.name).toBeDefined()
-        expect(origin_role).toBeDefined()
-        return { schedule_id: "sch-1", workspace_id: "ws-1" }
+        return { child_id: "run-1", workspace_id: "ws-1" }
       },
       async resumeOnCompletion(handle, output) {
-        expect(handle.schedule_id).toBeDefined()
+        expect(handle.child_id).toBeDefined()
         expect(output).toBeTypeOf("object")
       },
     }
-    expect(impl.dispatchChildSchedule).toBeTypeOf("function")
+    expect(impl.dispatchChild).toBeTypeOf("function")
   })
 
-  it("dispatchChildSchedule can be invoked with origin_role", async () => {
+  it("ChildHandle carries child_id (the executions row), never schedule_id", async () => {
     const impl: TaskDispatchPort = {
-      async dispatchChildSchedule(_subunit, origin_role) {
-        return { schedule_id: `sch-${origin_role}`, workspace_id: "ws-1" }
+      async dispatchChild() {
+        return { child_id: "run-1", workspace_id: "ws-1" }
       },
       async resumeOnCompletion() {},
     }
-    const handle = await impl.dispatchChildSchedule(
-      {
-        name: "be",
-        workspace_spec: { org: "o", branch_prefix: "b", projects: [] },
-        workflow_ref: "x",
-        input_values: {},
-        skills: [],
-        resources: [],
-      },
-      "subunit",
-    )
-    expect(handle.schedule_id).toBe("sch-subunit")
-  })
-
-  it("v1-style impl (ignoring origin_role) still satisfies the interface (backward-compat)", () => {
-    // TS permits impls that accept fewer params than the interface declares.
-    const v1Impl: TaskDispatchPort = {
-      async dispatchChildSchedule(subunit) {
-        return { schedule_id: "sch-legacy", workspace_id: "ws-1" }
-      },
-      async resumeOnCompletion(handle) {
-        expect(handle.schedule_id).toBeDefined()
-      },
-    }
-    expect(v1Impl.dispatchChildSchedule).toBeTypeOf("function")
-  })
-
-  it("ScheduleHandle still carries schedule_id", () => {
-    const handle: ScheduleHandle = { schedule_id: "sch-1" }
-    expect(handle.schedule_id).toBe("sch-1")
+    const handle = await impl.dispatchChild({ name: "s1", workflow_ref: "wf", input_values: {}, workspace_spec: { org: "o", branch_prefix: "b", projects: [] } } as never)
+    expect(handle.child_id).toBe("run-1")
+    expect("schedule_id" in handle).toBe(false)
   })
 })
 
@@ -401,7 +377,7 @@ describe("AC4 — spec_field_update SSE + update_task_spec_field tool", () => {
     ).toBe(true)
   })
 
-  it("taskStatusSsePayloadSchema parses {task_id, status, origin_type?, schedule_id?}", () => {
+  it("taskStatusSsePayloadSchema parses {task_id, status}", () => {
     const r = taskStatusSsePayloadSchema.safeParse({ task_id: "task-1", status: "running" })
     expect(r.success).toBe(true)
     if (r.success) {
@@ -409,7 +385,12 @@ describe("AC4 — spec_field_update SSE + update_task_spec_field tool", () => {
     }
   })
 
-  it("taskStatusSsePayloadSchema accepts optional schedule_id + origin_type for traceability", () => {
+  it("task_status no longer carries schedule_id / origin_type (票05 retirement)", () => {
+    // A payload-shaped test is where a retired field actually dies: zod strips unknown
+    // keys, so a producer still sending origin_type is not an error — it just stops
+    // meaning anything. This asserts the CONTRACT has no room for them, which is what
+    // lets the scheduler-side vocabulary stay deleted instead of being re-added "for
+    // traceability" the next time someone needs to know which world emitted an event.
     const r = taskStatusSsePayloadSchema.safeParse({
       task_id: "task-1",
       status: "done",
@@ -418,9 +399,57 @@ describe("AC4 — spec_field_update SSE + update_task_spec_field tool", () => {
     })
     expect(r.success).toBe(true)
     if (r.success) {
-      expect(r.data.schedule_id).toBe("sch-9")
-      expect(r.data.origin_type).toBe("task")
+      expect(r.data).not.toHaveProperty("schedule_id")
+      expect(r.data).not.toHaveProperty("origin_type")
+      expect(r.data).not.toHaveProperty("execution_id")
     }
+  })
+
+  it("task_execution is the event that names the RUN (票03's literal, now on the contract)", () => {
+    expect(TASK_EXECUTION_EVENT).toBe("task_execution")
+    const ok = taskExecutionSsePayloadSchema.safeParse({
+      task_id: "task-1",
+      execution_id: "exec-1",
+      status: "running",
+      phase_index: 2,
+      round_index: 1,
+    })
+    expect(ok.success).toBe(true)
+    if (ok.success) expect(ok.data.execution_id).toBe("exec-1")
+
+    // A terminal failure carries the one-liner the badge shows.
+    const fail = taskExecutionSsePayloadSchema.safeParse({
+      task_id: "task-1",
+      execution_id: "exec-2",
+      status: "failed",
+      reason: "工作区已不可用（行缺失或路径失效）",
+    })
+    expect(fail.success).toBe(true)
+    if (fail.success) expect((fail.data as TaskExecutionSsePayload).reason).toContain("工作区")
+
+    // execution_id is load-bearing (it is the whole point of the event) — not optional.
+    expect(
+      taskExecutionSsePayloadSchema.safeParse({ task_id: "t", status: "running" }).success,
+    ).toBe(false)
+  })
+
+  it("task_trigger_failed is on the contract, with trigger_mode (票05)", () => {
+    // The one event whose whole purpose is "nothing happened, and here is why". It lived
+    // as a bare string with an `action` field that actually held the trigger mode — an
+    // off-contract event is how a user-facing signal ends up with zero consumers.
+    expect(TASK_TRIGGER_FAILED_EVENT).toBe("task_trigger_failed")
+    const ok = taskTriggerFailedPayloadSchema.safeParse({
+      task_id: "task-1",
+      reason: "阶段 1 的 spec 文件不存在",
+      trigger_mode: "cron",
+    })
+    expect(ok.success).toBe(true)
+    expect(
+      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "", trigger_mode: "cron" }).success,
+    ).toBe(false)
+    expect(
+      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "x", trigger_mode: "queued" }).success,
+    ).toBe(false)
   })
 
   it("taskStatusSsePayloadSchema rejects invalid status", () => {
@@ -466,6 +495,15 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
     deleted_at: null as string | null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    // ADR-0021: WHEN lives here. Required, not optional — an optional trigger is how a
+    // row silently stops being scannable by the built-in job.
+    trigger_mode: "manual" as TriggerMode,
+    trigger_at: null as string | null,
+    cron_expression: null as string | null,
+    cron_timezone: "Asia/Shanghai",
+    trigger_enabled: true,
+    next_fire_at: null as string | null,
+    last_fired_at: null as string | null,
   }
 
   it("Task is assignable with the full row shape", () => {
@@ -498,16 +536,40 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
     expect(t.completed_at).toBe("2026-01-02T00:00:00Z")
   })
 
-  it("ScheduleStatusListener interface is implementable", () => {
-    const listener: ScheduleStatusListener = {
-      onScheduleTransition(args) {
-        expect(args.schedule_id).toBeDefined()
-        expect(args.origin_type).toBeDefined()
-        expect(args.origin_id).toBeDefined()
-        expect(args.status).toBeDefined()
-      },
+  it("TaskExecutionBadge is the board badge AND the history row (one shape)", () => {
+    // It replaced two things: the envelope status mirror (schedule_status/scheduled_at
+    // on the task) and children[] (the child SCHEDULE rows). name + error_summary are
+    // what the UI used to have no source for — a subunit's label and a red run's reason.
+    const badge: TaskExecutionBadge = {
+      id: "exec-1",
+      status: "failed",
+      workflow_ref: "built-in/task-dev",
+      name: "backend",
+      phase_index: 1,
+      round_index: 2,
+      workspace_id: "ws-1",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      error_summary: "engine died at node 3",
+      children: [
+        {
+          id: "exec-2", status: "completed", workflow_ref: "wf/a", name: "subunit-a",
+          phase_index: null, round_index: null, workspace_id: "ws-2",
+          started_at: null, completed_at: null, created_at: "2026-01-01T00:00:00Z",
+          error_summary: null,
+        },
+      ],
     }
-    expect(listener.onScheduleTransition).toBeTypeOf("function")
+    expect(badge.children).toHaveLength(1)
+    expectTypeOf<TaskExecutionBadge["children"]>().toEqualTypeOf<
+      TaskExecutionBadge[] | undefined
+    >()
+    // The mirror columns must not come back as optional-anythings: absent is the fix,
+    // not nullable (a null schedule_status still says "there is a schedule").
+    expectTypeOf<Task>().toHaveProperty("execution")
+    type AssertNoEnvelope<T> = "schedule_status" extends keyof T ? false : true
+    expectTypeOf<AssertNoEnvelope<Task>>().toEqualTypeOf<true>()
   })
 })
 

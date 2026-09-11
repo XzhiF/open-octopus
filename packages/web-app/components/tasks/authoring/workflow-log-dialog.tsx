@@ -29,18 +29,18 @@ function statusBadge(status: string): { label: string; className: string } {
   const cls = "text-[9px] "
   switch (status) {
     case "running":
-      return { label: "运行中", className: cls + "bg-purple-500/15 text-purple-600 animate-pulse" }
+      return { label: "运行中", className: cls + "bg-pop-purple-soft text-pop-purple animate-pulse" }
     case "done":
     case "completed":
-      return { label: "完成", className: cls + "bg-emerald-500/15 text-emerald-600" }
+      return { label: "完成", className: cls + "bg-pop-green-soft text-pop-green" }
     case "failed":
     case "error":
-      return { label: "失败", className: cls + "bg-red-500/15 text-red-600" }
+      return { label: "失败", className: cls + "bg-pop-pink-soft text-pop-red" }
     case "aborted":
-      return { label: "中止", className: cls + "bg-zinc-500/15 text-zinc-600" }
+      return { label: "中止", className: cls + "bg-pop-idle text-pop-dim" }
     case "pending":
     case "queued":
-      return { label: "排队", className: cls + "bg-amber-500/15 text-amber-600" }
+      return { label: "排队", className: cls + "bg-pop-amber-soft text-pop-amber" }
     default:
       return { label: status || "未知", className: cls + "bg-muted text-muted-foreground" }
   }

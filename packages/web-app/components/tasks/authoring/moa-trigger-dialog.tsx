@@ -193,7 +193,7 @@ export function MoATriggerDialog({
       <DialogContent className="sm:max-w-[640px] max-h-[85vh] flex flex-col gap-0 p-0" showCloseButton>
         <DialogHeader className="px-5 pt-4 pb-3 border-b shrink-0">
           <DialogTitle className="text-sm flex items-center gap-2">
-            <Brain className="size-4 text-purple-500" />
+            <Brain className="size-4 text-pop-purple" />
             专家分析
           </DialogTitle>
           <DialogDescription className="text-[11px]">
@@ -207,15 +207,15 @@ export function MoATriggerDialog({
           <div className="flex items-center gap-3">
             <span className="text-[11px] font-medium text-muted-foreground">模式:</span>
             <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
-              <input type="radio" name="moa-mode" checked={mode === "moa"} onChange={() => setMode("moa")} className="accent-purple-600" />
+              <input type="radio" name="moa-mode" checked={mode === "moa"} onChange={() => setMode("moa")} className="accent-pop-purple" />
               MoA 多专家并行
             </label>
             <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
-              <input type="radio" name="moa-mode" checked={mode === "debate"} onChange={() => setMode("debate")} className="accent-purple-600" />
+              <input type="radio" name="moa-mode" checked={mode === "debate"} onChange={() => setMode("debate")} className="accent-pop-purple" />
               Debate 多轮辩论
             </label>
             <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
-              <input type="radio" name="moa-mode" checked={mode === "single"} onChange={() => setMode("single")} className="accent-purple-600" />
+              <input type="radio" name="moa-mode" checked={mode === "single"} onChange={() => setMode("single")} className="accent-pop-purple" />
               💬 单专家咨询
             </label>
           </div>
@@ -237,7 +237,7 @@ export function MoATriggerDialog({
                 )}
               </div>
             ) : (
-              <div className="rounded-md border border-amber-400/40 bg-amber-500/5 p-2.5 text-[11px] text-amber-600">
+              <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2.5 text-[11px] text-pop-amber">
                 ⚠️ 草稿尚未填写目标或验收标准 — 专家分析可能不够聚焦
               </div>
             )}
@@ -301,7 +301,7 @@ export function MoATriggerDialog({
                     <button
                       onClick={() => removeRow(row.id)}
                       disabled={rows.length <= 2 || running}
-                      className="p-0.5 rounded text-muted-foreground hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="p-0.5 rounded text-muted-foreground hover:text-pop-red disabled:opacity-30 disabled:cursor-not-allowed"
                       title="移除"
                     >
                       <X className="size-3.5" />
@@ -438,7 +438,7 @@ export function MoATriggerDialog({
             size="sm"
             onClick={handleSubmit}
             disabled={!canSubmit || running}
-            className="bg-purple-600 hover:bg-purple-700 text-white"
+            className="bg-pop-purple hover:bg-pop-purple/90 text-white"
           >
             {running ? (
               <><Loader2 className="size-3.5 mr-1.5 animate-spin" />处理中…</>

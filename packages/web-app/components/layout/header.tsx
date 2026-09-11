@@ -33,17 +33,17 @@ export function Header() {
   const pathname = usePathname()
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b-[2.5px] border-pop-bd bg-pop-paper">
       <div className="flex h-14 items-center px-4 lg:px-6">
-        {/* Logo */}
+        {/* Logo — 粉色贴纸 */}
         <Link href="/" className="flex items-center gap-2 mr-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border-2 border-pop-bd bg-pop-pink text-white shadow-pop-sm">
             <Activity className="h-4 w-4" />
           </div>
-          <span className="font-semibold text-lg tracking-tight">Octopus</span>
+          <span className="font-black text-lg tracking-tight text-pop-ink">Octopus</span>
         </Link>
 
-        {/* Navigation */}
+        {/* Navigation — 激活 = 黄贴纸 */}
         <nav aria-label="主导航" className="flex items-center gap-1">
           {navigation.map((item) => {
             const isActive = pathname === item.href ||
@@ -53,10 +53,10 @@ export function Header() {
                 key={item.name}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-all",
                   isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    ? "border-2 border-pop-bd bg-pop-yellow font-black text-pop-ink shadow-[2px_2px_0_rgba(28,27,34,0.16)] dark:shadow-[2px_2px_0_rgba(0,0,0,0.45)]"
+                    : "font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
                 )}
               >
                 <item.icon className="h-4 w-4" />

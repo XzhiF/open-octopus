@@ -108,7 +108,7 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
           ) : state.kind === "error" ? (
             <div className="p-6 space-y-2 text-xs" data-artifact-degraded>
               {state.status === 403 ? (
-                <div className="flex items-start gap-2 text-amber-600">
+                <div className="flex items-start gap-2 text-pop-amber">
                   <ShieldAlert className="size-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="font-medium">无权访问该路径</div>
@@ -118,7 +118,7 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
                   </div>
                 </div>
               ) : state.status === 404 ? (
-                <div className="flex items-start gap-2 text-amber-600">
+                <div className="flex items-start gap-2 text-pop-amber">
                   <FileQuestion className="size-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="font-medium">磁盘上未找到该文件</div>
@@ -128,7 +128,7 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
                   </div>
                 </div>
               ) : (
-                <div className="text-red-600">{state.message || "加载产物内容失败"}</div>
+                <div className="text-pop-red">{state.message || "加载产物内容失败"}</div>
               )}
             </div>
           ) : (

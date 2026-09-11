@@ -318,8 +318,13 @@ export class WorkspaceService {
     projects: Array<{ name: string; source_path: string; group?: string }>
     branch_prefix: string
     branch_suffix: string
-    source: 'scheduler'
-    source_schedule_id: string
+    // ADR-0021 票03: a task workspace is built by the built-in task-lifecycle job and
+    // belongs to a TASK (`workspaces.task_id`). `source_schedule_id` stays for job
+    // workspaces, which are still created by the pump. Task rows never carry a schedule
+    // id — that indirection is exactly what this refactor removed.
+    source: 'scheduler' | 'task'
+    source_schedule_id?: string | null
+    task_id?: string | null
     workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
   }): WorkspaceRow {
     const id = randomUUID()
@@ -381,7 +386,10 @@ export class WorkspaceService {
       name: input.name,
       org: input.org,
       source: input.source,
-      source_schedule_id: input.source_schedule_id,
+      // ensureWorktreesForReuse reads config.repos back for the self-heal; the two
+      // provenance keys stay here so a workspace directory alone can still be traced.
+      source_schedule_id: input.source_schedule_id ?? null,
+      task_id: input.task_id ?? null,
       workflow_chain: input.workflow_chain.slice(1), // remaining chain (root is triggered immediately)
       repos: [],
       created: now,
@@ -418,7 +426,8 @@ export class WorkspaceService {
       id, name: input.name, org: input.org,
       description: null,
       status: "active", path: wsDir,
-      source: 'scheduler', source_schedule_id: input.source_schedule_id,
+      source: input.source, source_schedule_id: input.source_schedule_id ?? null,
+      task_id: input.task_id ?? null,
       created_at: now, updated_at: now,
     })
 

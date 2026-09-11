@@ -32,7 +32,7 @@ function TrendBadge({ current, prev, unit = "", isDuration = false }: { current:
   return (
     <div className="flex items-center gap-1">
       <span className="text-lg font-bold tabular-nums">{formattedValue}</span>
-      <span className={cn("flex items-center text-xs tabular-nums", isPositive ? "text-emerald-600" : "text-red-600")}>
+      <span className={cn("flex items-center text-xs tabular-nums", isPositive ? "text-pop-green" : "text-pop-red")}>
         {isPositive ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
         {formatPercent(Math.abs(pct) / 100)}
       </span>

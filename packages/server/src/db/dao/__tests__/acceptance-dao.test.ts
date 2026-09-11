@@ -64,14 +64,16 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
       expect(idx.map(i => i.name)).toContain("idx_task_phase_acceptances_task_phase")
     })
 
-    it("executions gains phase_index/round_index; tasks gains workspace_id; version is 40", () => {
+    it("executions gains phase_index/round_index; tasks gains workspace_id; version is current", () => {
       applySchema(db)
       expect(colNames("executions")).toContain("phase_index")
       expect(colNames("executions")).toContain("round_index")
       expect(colNames("tasks")).toContain("workspace_id")
-      expect(SCHEMA_VERSION).toBe(40)
+      // v40-specific literal retired: user_version must land on the shipped constant
+      // (v41 = ADR-0021 added tasks.trigger_* / executions.task_id after this test).
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(40)
+      expect(SCHEMA_VERSION).toBe(42)
+      expect(v).toBe(SCHEMA_VERSION)
     })
 
     it("decision CHECK accepts accepted|rejected and rejects anything else", () => {

@@ -242,7 +242,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
 
     return parts.map((part, i) =>
       part.highlight
-        ? <span key={i} className="text-red-500">{part.text}</span>
+        ? <span key={i} className="text-pop-red">{part.text}</span>
         : <span key={i}>{part.text}</span>
     )
   }

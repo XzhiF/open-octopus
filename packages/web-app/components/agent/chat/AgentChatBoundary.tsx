@@ -21,7 +21,7 @@ export function AgentChatBoundary({ context }: AgentChatBoundaryProps) {
     )}>
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-pop-ink/5 transition-colors"
       >
         <Info className="h-4 w-4 shrink-0 text-agent-primary" />
         <span className="font-medium flex-1">

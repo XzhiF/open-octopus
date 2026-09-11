@@ -19,7 +19,7 @@ interface AgentTabsProps {
 export function AgentTabs({ activeTab, onTabChange }: AgentTabsProps) {
   return (
     <div
-      className="flex items-center gap-0.5 px-4 border-b border-agent-divider bg-agent-surface-raised overflow-x-auto"
+      className="flex items-center gap-0.5 px-4 border-b-[2.5px] border-pop-bd bg-pop-paper overflow-x-auto"
       role="tablist"
       aria-label="Agent 功能标签"
     >
@@ -43,10 +43,10 @@ export function AgentTabs({ activeTab, onTabChange }: AgentTabsProps) {
               }
             }}
             className={cn(
-              'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap',
+              'flex items-center gap-2 rounded-t-lg px-4 py-2.5 text-sm border-b-[2.5px] -mb-[2.5px] transition-colors whitespace-nowrap',
               isActive
-                ? 'border-agent-primary text-agent-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                ? 'border-pop-bd bg-pop-yellow font-black text-pop-ink'
+                : 'border-transparent font-bold text-pop-dim hover:bg-accent hover:text-pop-ink'
             )}
           >
             <Icon className="h-4 w-4" />

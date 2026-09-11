@@ -99,7 +99,7 @@ export function ScheduleList({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span role="img" aria-label={`Workflow not found for ${schedule.name}`}>
-                          <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />
+                          <AlertTriangle className="h-3.5 w-3.5 text-pop-amber" />
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>Workflow not found</TooltipContent>

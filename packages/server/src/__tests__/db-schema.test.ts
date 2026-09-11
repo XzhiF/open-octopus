@@ -24,7 +24,9 @@ describe("DB Schema", () => {
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
       // Core tables (40) — includes `tasks` (schema v38, v2-D1 first-class task
-      // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
+      // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4).
+      // v41 (ADR-0021) deliberately adds NO table: `schedules` goes back to being only
+      // a job definition and a task launch is an `executions` row carrying task_id.
       "agent_events", "agent_versions", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
       "harness_config", "harness_events",
@@ -52,7 +54,13 @@ describe("DB Schema", () => {
     // (idx_tasks_status/org_status/org/source_chat_session/updated) = 93
     // + schema v39: idx_schedules_due = 94
     // + schema v40: idx_task_phase_acceptances_task_phase = 95
-    expect(rows.length).toBe(95)
+    // + schema v41 (ADR-0021): idx_tasks_due + idx_exec_task + idx_ws_task
+    //   + idx_exec_pending_claimable = 99
+    // + schema v42 (ADR-0021 票03): − idx_schedules_origin − idx_schedules_due = 97.
+    //   Both existed for the task envelope (origin lookup / queued due-time FIFO).
+    //   (The single-instance latch is ux_exec_task_active — outside this idx_%
+    //   filter; it is pinned by task-trigger-dao.test.ts instead.)
+    expect(rows.length).toBe(97)
   })
 
   it("workspaces table has correct columns", () => {

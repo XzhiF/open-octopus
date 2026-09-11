@@ -1,11 +1,26 @@
 import type { JobDetailChild } from "@/lib/scheduler-api"
 
-/** Lifecycle statuses that count as "in-flight" for a child subunit. A child in
- *  any of these states means the composite is still running. */
-const IN_FLIGHT = new Set(["queued", "claimed", "running"])
+/** Lifecycle statuses that count as "in-flight" for a child run. A child in
+ *  any of these states means the composite is still running.
+ *  票03 (ADR-0021): children are `executions` rows now, so the vocabulary is the
+ *  execution one — 'pending' (armed, waiting behind the concurrency cap) and the
+ *  approval/resume waits are in-flight too; the schedule-only 'queued'/'claimed'
+ *  keys stay for v3 rows written before the cutover. */
+const IN_FLIGHT = new Set([
+  "pending", "running", "paused", "pending_approval", "pending_resume",
+  "queued", "claimed",
+])
+
+/** Child statuses that mean "this run finished well" (task rows = 'completed';
+ *  'done'/'success' = the older words the same slot has been written under). */
+const DONE = new Set(["completed", "done", "success"])
+
+/** "Stopped without finishing": 'cancelled'/'rejected' are the execution-row words
+ *  for what a schedule row called 'aborted' (票03 — children ARE executions rows now). */
+const ABORTED = new Set(["aborted", "cancelled", "rejected"])
 
 /** Terminal non-success child statuses. */
-const TERMINAL_FAIL = new Set(["failed", "aborted"])
+const TERMINAL_FAIL = new Set(["failed", ...ABORTED])
 
 /** Compute the parent aggregate status from children + parent (integration) status.
  *
@@ -28,9 +43,9 @@ export function computeAggregateStatus(
   const statuses = children.map((c) => c.status)
 
   if (statuses.some((s) => s === "failed")) return "failed"
-  if (statuses.some((s) => s === "aborted")) return "aborted"
+  if (statuses.some((s) => ABORTED.has(s))) return "aborted"
   if (statuses.some((s) => IN_FLIGHT.has(s))) return "running"
-  if (statuses.every((s) => s === "done") && parentStatus === "done") return "done"
+  if (statuses.every((s) => DONE.has(s)) && parentStatus === "done") return "done"
 
   return parentStatus
 }

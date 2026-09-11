@@ -37,7 +37,7 @@ export function ConditionNode({ data, selected }: NodeProps<WorkflowNode>) {
           id={`case-${index}`}
           style={{
             left: `${(index + 1) * (100 / (data.cases!.length + 1))}%`,
-            background: index === 0 ? "#10b981" : "#ef4444",
+            background: index === 0 ? "var(--pop-green)" : "var(--pop-red)",
           }}
           className={cn("!w-3 !h-3 !border-2 !border-white")}
         />
@@ -53,7 +53,7 @@ export function ConditionNode({ data, selected }: NodeProps<WorkflowNode>) {
             <span
               className={cn(
                 "inline-block w-2 h-2 rounded-full",
-                index === 0 ? "bg-emerald-500" : "bg-red-500"
+                index === 0 ? "bg-pop-green" : "bg-pop-red"
               )}
             />
             <span className="truncate text-muted-foreground">{caseItem.when}</span>

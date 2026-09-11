@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChevronUp, Eye } from "lucide-react"
-import type { SchedulerExecution, JobType, ExecutionStatus } from "@/lib/scheduler-api"
+import type { SchedulerExecution, JobType, SchedulerExecutionStatus } from "@/lib/scheduler-api"
 import { LogViewer } from "./log-viewer"
 import { AgentOutputViewer } from "./agent-output-viewer"
 
@@ -47,7 +47,7 @@ const EXEC_STATUS_LABELS: Record<string, string> = {
   missed: "已错过",
 }
 
-function ExecutionStatusBadge({ status }: { status: ExecutionStatus }) {
+function ExecutionStatusBadge({ status }: { status: SchedulerExecutionStatus }) {
   return (
     <Badge
       variant="outline"
@@ -124,7 +124,7 @@ function ExecutionRow({
         <tr>
           <td
             colSpan={jobType === "agent" ? 8 : 6}
-            className="bg-neutral-950/5 p-0"
+            className="bg-pop-idle p-0"
           >
             {jobType === "agent" && execution.agent_output && (
               <div className="p-4 border-b border-border">

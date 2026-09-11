@@ -54,7 +54,7 @@ export function PageState(props: PageStateProps) {
     case "stale":
       return (
         <div>
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-pop-amber/40 bg-pop-amber-soft px-3 py-2 text-xs text-pop-amber">
             <AlertTriangle className="h-3.5 w-3.5" />
             数据可能已过期 (更新于 {props.lastUpdated.toLocaleTimeString("zh-CN")})
             <Button variant="outline" size="sm" className="ml-auto h-7 text-xs" onClick={props.onRefresh}>

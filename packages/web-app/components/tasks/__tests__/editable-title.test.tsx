@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task } from "@octopus/shared"
+import type { TaskView } from "@/lib/tasks-api"
 
 // ── Mocks (collaborators) ────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockUpdateTask.mockResolvedValue({} as Task)
+  mockUpdateTask.mockResolvedValue({} as TaskView)
 })
 
 afterEach(() => {

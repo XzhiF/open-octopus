@@ -23,31 +23,31 @@ interface LoopContainerData {
 }
 
 const statusBorderColor: Record<string, string> = {
-  running: "border-blue-400",
-  completed: "border-green-400",
-  failed: "border-red-400",
-  skipped: "border-gray-300",
-  cancelled: "border-gray-300",
-  paused: "border-violet-400",
+  running: "border-pop-cyan",
+  completed: "border-pop-green",
+  failed: "border-pop-red",
+  skipped: "border-pop-bd/40",
+  cancelled: "border-pop-bd/40",
+  paused: "border-pop-purple",
 }
 
 const statusBgColor: Record<string, string> = {
-  running: "bg-blue-50/80",
-  completed: "bg-green-50/80",
-  failed: "bg-red-50/80",
-  paused: "bg-violet-50/80",
+  running: "bg-pop-cyan-soft",
+  completed: "bg-pop-green-soft",
+  failed: "bg-pop-pink-soft",
+  paused: "bg-pop-purple-soft",
 }
 
 const statusVisualConfig: Record<StepExecutionStatus, { color: string; label: string }> = {
-  pending: { color: "text-blue-600", label: "待开始" },
-  running: { color: "text-amber-600", label: "运行中" },
-  completed: { color: "text-emerald-600", label: "已完成" },
-  failed: { color: "text-red-600", label: "失败" },
-  skipped: { color: "text-gray-600", label: "跳过" },
-  cancelled: { color: "text-gray-500", label: "已取消" },
-  paused: { color: "text-violet-600", label: "已暂停" },
-  rejected: { color: "text-orange-600", label: "已拒绝" },
-  pending_approval: { color: "text-amber-600", label: "待审批" },
+  pending: { color: "text-pop-cyan", label: "待开始" },
+  running: { color: "text-pop-ink", label: "运行中" },
+  completed: { color: "text-pop-green", label: "已完成" },
+  failed: { color: "text-pop-red", label: "失败" },
+  skipped: { color: "text-pop-dim", label: "跳过" },
+  cancelled: { color: "text-pop-dim", label: "已取消" },
+  paused: { color: "text-pop-purple", label: "已暂停" },
+  rejected: { color: "text-pop-ink", label: "已拒绝" },
+  pending_approval: { color: "text-pop-ink", label: "待审批" },
 }
 
 function aggregateTokens(overlay?: StatusOverlay): { input: number; output: number } | null {
@@ -75,19 +75,19 @@ function IterationDots({ summary }: { summary: LoopIterationSummary }) {
         switch (it.status) {
           case "completed":
             return (
-              <Check key={it.iteration} className="w-3.5 h-3.5 text-green-500" />
+              <Check key={it.iteration} className="w-3.5 h-3.5 text-pop-green" />
             )
           case "failed":
             return (
-              <X key={it.iteration} className="w-3.5 h-3.5 text-red-500" />
+              <X key={it.iteration} className="w-3.5 h-3.5 text-pop-red" />
             )
           case "running":
             return (
-              <Loader2 key={it.iteration} className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+              <Loader2 key={it.iteration} className="w-3.5 h-3.5 text-pop-cyan animate-spin" />
             )
           default:
             return (
-              <Circle key={it.iteration} className="w-3.5 h-3.5 text-gray-300" />
+              <Circle key={it.iteration} className="w-3.5 h-3.5 text-pop-dim/40" />
             )
         }
       })}
@@ -120,9 +120,9 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
   const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
   const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
   const marchColor = (loopData.statusOverlay?.harnessStatus === "harness_intervening"
-    || loopData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#f59e0b"
-  const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-gray-300"
-  const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-gray-50/80" : "bg-gray-50/80"
+    || loopData.harnessStatus === "harness_intervening") ? "var(--pop-purple)" : "var(--pop-amber)"
+  const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-pop-bd/40" : "border-pop-bd/40"
+  const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-pop-idle" : "bg-pop-idle"
   const tokens = aggregateTokens(loopData.statusOverlay)
   const maxIter = loopData.max_iterations ?? loopData.iterations
   const statusConfig = loopData.statusOverlay ? statusVisualConfig[loopData.statusOverlay.stepStatus] : null
@@ -153,9 +153,9 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
       )}
       <div
         className={cn(
-          "border-2 border-dashed rounded-lg w-full h-full relative",
+          "border-2 border-dashed rounded-xl w-full h-full relative",
           borderColor,
-          selected && "ring-2 ring-primary ring-offset-2",
+          selected && "ring-2 ring-pop-pink ring-offset-2",
           showMarchingAnts && "border-running",
         )}
       >
@@ -167,7 +167,7 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
           headerBg,
         )}
       >
-        <Repeat className="w-4 h-4 text-orange-500 shrink-0" />
+        <Repeat className="w-4 h-4 text-pop-amber shrink-0" />
         <div className="flex-1 min-w-0">
           <span className="text-sm font-medium truncate block">{loopData.name}</span>
         </div>

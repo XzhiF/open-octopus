@@ -254,9 +254,9 @@ function FileTreeNode({
               <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
             )}
             {isExpanded ? (
-              <FolderOpen className="h-4 w-4 flex-shrink-0 text-amber-500" />
+              <FolderOpen className="h-4 w-4 flex-shrink-0 text-pop-amber" />
             ) : (
-              <Folder className="h-4 w-4 flex-shrink-0 text-amber-500" />
+              <Folder className="h-4 w-4 flex-shrink-0 text-pop-amber" />
             )}
           </>
         ) : (
@@ -266,7 +266,7 @@ function FileTreeNode({
           </>
         )}
         {!isDirectory && externalChanges?.[node.path] && (
-          <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 flex-shrink-0" title="文件已被外部修改" />
+          <span className="w-1.5 h-1.5 rounded-full bg-pop-yellow flex-shrink-0" title="文件已被外部修改" />
         )}
         <span className="truncate">{node.name}</span>
       </button>
@@ -275,7 +275,7 @@ function FileTreeNode({
           {isDirectory ? (
             <>
               <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              <Folder className="h-4 w-4 flex-shrink-0 text-amber-500" />
+              <Folder className="h-4 w-4 flex-shrink-0 text-pop-amber" />
             </>
           ) : (
             <>
@@ -395,7 +395,7 @@ function FileTreeNode({
             <div style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }} className="flex items-center gap-1 py-1 px-2">
               <span className="w-3.5" />
               {creatingInDir.type === "directory" ? (
-                <Folder className="h-4 w-4 flex-shrink-0 text-amber-500" />
+                <Folder className="h-4 w-4 flex-shrink-0 text-pop-amber" />
               ) : (
                 <File className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
               )}
@@ -496,7 +496,7 @@ export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSe
                 新建文件
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setCreatingInDir({ parentPath: "/", type: "directory" })}>
-                <Folder className="mr-2 h-4 w-4 text-amber-500" />
+                <Folder className="mr-2 h-4 w-4 text-pop-amber" />
                 新建文件夹
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -542,7 +542,7 @@ export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSe
             <div className="flex items-center gap-1 py-1 px-2" style={{ paddingLeft: `${0 * 12 + 8}px` }}>
               <span className="w-3.5" />
               {creatingInDir.type === "directory" ? (
-                <Folder className="h-4 w-4 flex-shrink-0 text-amber-500" />
+                <Folder className="h-4 w-4 flex-shrink-0 text-pop-amber" />
               ) : (
                 <File className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
               )}

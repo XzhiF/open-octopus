@@ -13,9 +13,9 @@ import type { TokenUsage } from "@/lib/types"
 import { TokenAggregateLine } from "@/components/workspace/workflow-nodes/token-aggregate-line"
 
 const statusBadgeConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> = {
-  completed: { label: "已完成", color: "text-emerald-600", icon: CheckCircle2 },
-  failed: { label: "失败", color: "text-red-600", icon: XCircle },
-  running: { label: "运行中", color: "text-amber-600", icon: Loader2 },
+  completed: { label: "已完成", color: "text-swarm-expert-completed", icon: CheckCircle2 },
+  failed: { label: "失败", color: "text-swarm-expert-failed", icon: XCircle },
+  running: { label: "运行中", color: "text-swarm-expert-running", icon: Loader2 },
 }
 
 export interface SwarmNodeData {
@@ -49,18 +49,18 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
           "rounded-[calc(var(--radius)-2px)] bg-card shadow-sm cursor-pointer",
           "transition-all duration-200 hover:shadow-md",
           "border-2 min-w-[260px] max-w-[300px]",
-          isRunning && "border-cyan-300 dark:border-cyan-700 animate-swarm-pulse",
-          isCompleted && "border-emerald-200 dark:border-emerald-800",
-          isFailed && "border-red-200 dark:border-red-800",
-          !isRunning && !isCompleted && !isFailed && "border-cyan-200 dark:border-cyan-800",
+          isRunning && "border-swarm-primary animate-swarm-pulse",
+          isCompleted && "border-swarm-expert-completed",
+          isFailed && "border-swarm-expert-failed",
+          !isRunning && !isCompleted && !isFailed && "border-swarm-primary/30",
         )}
       >
         <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
 
         {/* Header */}
-        <div className="flex items-center gap-2 rounded-t-md px-3 py-2 bg-cyan-50 dark:bg-cyan-950/30">
+        <div className="flex items-center gap-2 rounded-t-md px-3 py-2 bg-swarm-primary-light">
           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-card">
-            <Network className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+            <Network className="h-4 w-4 text-swarm-primary" />
           </div>
           <div className="flex-1 min-w-0">
             <h4 className="truncate text-sm font-medium">{data.name || "Swarm"}</h4>
@@ -95,7 +95,7 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
 
           {isRunning && (
             <div className="h-1 bg-muted rounded-full overflow-hidden">
-              <div className="h-full w-full bg-cyan-400 rounded-full animate-pulse" />
+              <div className="h-full w-full bg-swarm-primary rounded-full animate-pulse" />
             </div>
           )}
 

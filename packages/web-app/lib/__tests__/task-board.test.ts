@@ -12,6 +12,7 @@ import {
   computePhaseBadge,
   phaseBudgetMs,
   overBudgetRoundOf,
+  parseTaskTriggerFailed,
   PHASE_BUDGET_DEFAULT_MS,
   type TaskBoardStatus,
 } from "../task-board"
@@ -303,5 +304,37 @@ describe("sortByCreatedDesc", () => {
 
   it("empty input → empty output", () => {
     expect(sortByCreatedDesc([])).toEqual([])
+  })
+})
+
+// ── 票05 task_trigger_failed 解析 (字段词汇 = shared schema 单源) ─────
+//
+// 断言的不是「我们声明过哪些字段」（那会再造一个镜像），而是解析边界：真 payload
+// 通过、读不懂的形状（包括改名前的 `{action}`）落 null 被调用方忽略 —— 看板对读
+// 不懂的事件必须静默，不能让一条畸形 SSE 打崩盘面。
+
+describe("parseTaskTriggerFailed", () => {
+  it("parses the live payload {task_id, reason, trigger_mode} via the shared schema", () => {
+    const p = parseTaskTriggerFailed(JSON.stringify({
+      task_id: "t1", reason: "phase spec 不存在: .scratch/x/spec.md", trigger_mode: "cron",
+    }))
+    expect(p).not.toBeNull()
+    expect(p!.task_id).toBe("t1")
+    expect(p!.reason).toBe("phase spec 不存在: .scratch/x/spec.md")
+    expect(p!.trigger_mode).toBe("cron")
+  })
+
+  it("rejects the retired `{action}` shape — the rename is enforced by the schema, not by convention", () => {
+    // 服务端曾把 trigger_mode 装进 action 字段；契约收编为 trigger_mode 后，旧形状
+    // 必须 parse 失败（若 web 还按旧字段名读，这条会在改动时变红）。
+    expect(parseTaskTriggerFailed(JSON.stringify({
+      task_id: "t1", reason: "x", action: "cron",
+    }))).toBeNull()
+  })
+
+  it("rejects an empty reason / dirty trigger_mode / non-JSON frames", () => {
+    expect(parseTaskTriggerFailed(JSON.stringify({ task_id: "t1", reason: "", trigger_mode: "cron" }))).toBeNull()
+    expect(parseTaskTriggerFailed(JSON.stringify({ task_id: "t1", reason: "x", trigger_mode: "queued" }))).toBeNull()
+    expect(parseTaskTriggerFailed("not json")).toBeNull()
   })
 })

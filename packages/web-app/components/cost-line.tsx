@@ -16,7 +16,7 @@ export function CostLine({ costUsd, turns, tools, durationMs }: CostLineProps) {
   const parts: React.ReactNode[] = []
 
   parts.push(
-    <span key="cost" className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
+    <span key="cost" className="flex items-center gap-1 font-medium text-pop-amber">
       <Coins className="h-3 w-3" />{formatCost(costUsd)}
     </span>
   )

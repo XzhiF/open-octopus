@@ -34,24 +34,24 @@ export const PHASE_STATUS_LABEL: Record<string, string> = {
 
 const PHASE_DOT: Record<string, string> = {
   pending: "bg-muted-foreground/60",
-  running: "bg-blue-500 animate-pulse",
-  awaiting_review: "bg-amber-500",
-  accepted: "bg-emerald-500",
+  running: "bg-pop-cyan animate-pulse",
+  awaiting_review: "bg-pop-amber",
+  accepted: "bg-pop-green",
 }
 
 const STATUS_BADGE_TONE: Record<string, string> = {
   pending: "bg-muted text-muted-foreground",
-  running: "bg-blue-500/15 text-blue-500",
-  awaiting_review: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  accepted: "bg-emerald-500/15 text-emerald-600",
+  running: "bg-pop-cyan-soft text-pop-cyan",
+  awaiting_review: "bg-pop-amber-soft text-pop-amber",
+  accepted: "bg-pop-green-soft text-pop-green",
 }
 
 const ROUND_TONE: Record<string, string> = {
   pending: "border-border text-muted-foreground",
-  running: "border-blue-400/50 bg-blue-500/10 text-blue-500",
-  succeeded: "border-emerald-400/40 bg-emerald-500/10 text-emerald-600",
-  failed: "border-red-400/40 bg-red-500/10 text-red-500",
-  cancelled: "border-zinc-400/40 bg-zinc-500/10 text-zinc-500",
+  running: "border-pop-cyan/50 bg-pop-cyan-soft text-pop-cyan",
+  succeeded: "border-pop-green/40 bg-pop-green-soft text-pop-green",
+  failed: "border-pop-red/40 bg-pop-pink-soft text-pop-red",
+  cancelled: "border-pop-bd/30 bg-pop-idle text-pop-dim",
 }
 
 /** Round chip glyph — the human decision (ledger) outranks the machine state. */
@@ -92,10 +92,10 @@ export function PhaseTimeline({ derived, budgetMs, now }: PhaseTimelineProps) {
   if (!derived.isV4) {
     const st = derived.taskStatus
     const dot =
-      st === "done" ? "bg-emerald-500"
-        : st === "failed" ? "bg-red-500"
-          : st === "aborted" ? "bg-zinc-500"
-            : st === "running" || st === "awaiting_review" || st === "archiving" ? "bg-blue-500 animate-pulse"
+      st === "done" ? "bg-pop-green"
+        : st === "failed" ? "bg-pop-red"
+          : st === "aborted" ? "bg-pop-dim"
+            : st === "running" || st === "awaiting_review" || st === "archiving" ? "bg-pop-cyan animate-pulse"
               : "bg-muted-foreground/60"
     return (
       <section className="rounded-lg border border-border p-4" data-testid="phase-timeline">
@@ -140,7 +140,7 @@ export function PhaseTimeline({ derived, budgetMs, now }: PhaseTimelineProps) {
                 data-testid={`phase-row-${p.index}`}
                 data-phase-status={p.status}
                 className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-2.5 py-1.5 text-sm ${
-                  awaiting ? "border-amber-400/50 bg-amber-500/5" : "border-border"
+                  awaiting ? "border-pop-amber/50 bg-pop-amber-soft" : "border-border"
                 }`}
               >
                 <span className={`size-2 rounded-full shrink-0 ${PHASE_DOT[p.status] ?? "bg-muted-foreground"}`} />

@@ -148,12 +148,12 @@ export function TextEditorTab({
   return (
     <div className="h-full w-full">
       {hasConflict && (
-        <div className="flex items-center gap-2 bg-yellow-50 border-b border-yellow-200 px-3 py-1.5 text-sm">
-          <span className="text-yellow-600">&#9888;</span>
-          <span className="text-yellow-800 text-xs">其他人修改了此文件</span>
+        <div className="flex items-center gap-2 bg-pop-yellow-soft border-b border-pop-yellow/40 px-3 py-1.5 text-sm">
+          <span className="text-pop-amber">&#9888;</span>
+          <span className="text-pop-ink text-xs">其他人修改了此文件</span>
           <button
             onClick={onViewConflict}
-            className="ml-auto text-xs text-blue-600 hover:text-blue-800 underline font-medium"
+            className="ml-auto text-xs text-pop-cyan hover:text-pop-cyan/80 underline font-medium"
           >
             查看 diff
           </button>

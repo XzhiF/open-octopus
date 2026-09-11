@@ -16,15 +16,15 @@ interface StatusShellProps {
 }
 
 const borderConfig: Record<StepExecutionStatus, string> = {
-  pending: "border-blue-200",
-  running: "border-amber-300",
-  completed: "border-emerald-200",
-  failed: "border-red-200",
-  skipped: "border-gray-200",
-  cancelled: "border-gray-200",
-  paused: "border-violet-300",
-  rejected: "border-orange-300",
-  pending_approval: "border-amber-300",
+  pending: "border-pop-cyan/40",
+  running: "border-pop-amber/40",
+  completed: "border-pop-green/40",
+  failed: "border-pop-red/40",
+  skipped: "border-pop-bd/30",
+  cancelled: "border-pop-bd/30",
+  paused: "border-pop-purple/40",
+  rejected: "border-pop-amber/40",
+  pending_approval: "border-pop-amber/40",
 }
 
 export function StatusShell({
@@ -40,7 +40,7 @@ export function StatusShell({
   const effectiveBorderColor = statusOverlay ? borderConfig[statusOverlay.stepStatus] : typeConfig.borderColor
   const isHarnessActive = statusOverlay?.harnessStatus === "harness_intervening"
     || statusOverlay?.harnessStatus === "harness_modified"
-  const marchColor = statusOverlay?.harnessStatus === "harness_intervening" ? "#8b5cf6" : "#f59e0b"
+  const marchColor = statusOverlay?.harnessStatus === "harness_intervening" ? "var(--pop-purple)" : "var(--pop-amber)"
   const isDone = statusOverlay?.stepStatus === "completed"
     || statusOverlay?.stepStatus === "failed"
     || statusOverlay?.stepStatus === "rejected"
@@ -51,14 +51,14 @@ export function StatusShell({
   return (
     <div
       className={cn(
-        "rounded-lg border-2 bg-card transition-all shadow-sm hover:shadow-md w-[280px] overflow-hidden",
+        "rounded-xl border-2 bg-pop-paper transition-all shadow-pop-sm hover:shadow-pop w-[280px] overflow-hidden",
         effectiveBorderColor,
-        selected && "ring-2 ring-primary ring-offset-2",
+        selected && "ring-2 ring-pop-pink ring-offset-2",
         statusOverlay?.stepStatus === "running" && "border-running",
         statusOverlay?.stepStatus === "skipped" && "opacity-70",
         statusOverlay?.stepStatus === "cancelled" && "opacity-60",
-        statusOverlay?.stepStatus === "paused" && "animate-pulse shadow-violet-100",
-        statusOverlay?.stepStatus === "pending_approval" && "animate-pulse shadow-amber-100",
+        statusOverlay?.stepStatus === "paused" && "animate-pulse shadow-pop",
+        statusOverlay?.stepStatus === "pending_approval" && "animate-pulse shadow-pop",
       )}
       style={showMarchingAnts ? {
         borderColor: "transparent",
