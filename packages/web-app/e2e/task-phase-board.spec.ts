@@ -208,7 +208,8 @@ test("AC3 phase timeline shows one row per phase; v3 legacy card shows single ro
   const dialog = page.getByRole("dialog")
   await expect(dialog.locator("[data-testid='phase-timeline']")).toBeVisible()
   await expect(dialog.locator("[data-testid^='phase-row-']")).toHaveCount(3)
-  // 限定到时间线行（概要卡的 Phase 计划列表也含 phase 名 — v4-only 改版）。
+  // 限定到 rail 节点（2026-09-21 控制台改版：phase 名在 rail 一处 + 选中面
+  // 头部回声一处；「概要卡第三列」已随五区去重退役）。
   await expect(dialog.getByTestId("phase-row-1").getByText("票11阶段1")).toBeVisible()
   await expect(dialog.getByText("未开始")).toHaveCount(3)
   await page.screenshot({ path: screenshotPath("T11-AC3-timeline-3phases.png") })

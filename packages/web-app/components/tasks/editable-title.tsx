@@ -46,6 +46,17 @@ export function EditableTitle({ task, onMutated, variant = "default" }: Editable
   useEffect(() => { setDraft(task?.name ?? "") }, [task?.name])
 
   if (!isDraft) {
+    // term 变体（执行态弹窗的 terminal 导航条，2026-09-21 改版）：只读标签也
+    // 要长成条内白字 —— 浅色 text-base 标题在深色条上不可见。与草稿 term 变体
+    // 同一纪律：不挂 DialogTitle（裸挂载会抛 `must be used within Dialog`），
+    // a11y 标题由 TaskModal 的 sr-only DialogTitle 兜底。
+    if (variant === "term") {
+      return (
+        <span className="min-w-0 max-w-[36ch] truncate font-mono text-[11px] font-bold text-pop-bg">
+          {task?.name ?? "任务"}
+        </span>
+      )
+    }
     return <DialogTitle className="text-base truncate">{task?.name ?? "新建任务"}</DialogTitle>
   }
 
