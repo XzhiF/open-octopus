@@ -20,7 +20,23 @@ interface ProviderEntry {
   kind: "builtin" | "custom"
 }
 
-function parseProviders(content: string): ProviderEntry[] {
+/** 只取块内与首键同缩进的顶层键 —— 嵌套空值键(如 models 下每个模型的
+ *  cost:)缩进更深,不再被误当 provider 名(此前会产生重复的 custom-cost)。 */
+function blockTopLevelKeys(block: string): string[] {
+  const keys: string[] = []
+  let indent: number | null = null
+  for (const line of block.split(/\r?\n/)) {
+    if (!line.trim() || line.trim().startsWith("#")) continue
+    const ind = line.length - line.trimStart().length
+    if (indent === null) indent = ind
+    if (ind !== indent) continue
+    const m = line.match(/^\s*(\w[\w-]*):\s*$/)
+    if (m) keys.push(m[1])
+  }
+  return keys
+}
+
+export function parseProviders(content: string): ProviderEntry[] {
   try {
     // ponytail: regex-based extraction avoids pulling js-yaml into the client bundle
     const providers: ProviderEntry[] = []
@@ -28,24 +44,21 @@ function parseProviders(content: string): ProviderEntry[] {
     // Match top-level "providers:" block keys
     const providersMatch = content.match(/^providers:\s*\n((?:[ \t]+\S.*\n?)*)/m)
     if (providersMatch) {
-      const block = providersMatch[1]
-      const keys = block.matchAll(/^[ \t]+(\w[\w-]*):\s*$/gm)
-      for (const m of keys) {
-        providers.push({ name: m[1], kind: "builtin" })
+      for (const name of blockTopLevelKeys(providersMatch[1])) {
+        providers.push({ name, kind: "builtin" })
       }
     }
 
     // Match "custom_providers:" block keys
     const customMatch = content.match(/^custom_providers:\s*\n((?:[ \t]+\S.*\n?)*)/m)
     if (customMatch) {
-      const block = customMatch[1]
-      const keys = block.matchAll(/^[ \t]+(\w[\w-]*):\s*$/gm)
-      for (const m of keys) {
-        providers.push({ name: m[1], kind: "custom" })
+      for (const name of blockTopLevelKeys(customMatch[1])) {
+        providers.push({ name, kind: "custom" })
       }
     }
 
-    return providers
+    // 兜底去重(YAML 同层重键本应被服务端校验拒掉,这里保证 React key 唯一)
+    return [...new Map(providers.map((p) => [`${p.kind}-${p.name}`, p])).values()]
   } catch {
     return []
   }
