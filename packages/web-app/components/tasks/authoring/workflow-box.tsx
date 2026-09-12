@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
-  Link2, Search, ChevronRight, ChevronDown, Plus, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
+  Search, ChevronRight, Plus, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
@@ -53,7 +53,7 @@ import {
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
-import { SectionCard } from "./section-card"
+import { cn } from "@/lib/utils"
 import {
   findBatchFor,
   findSpecEntry,
@@ -110,6 +110,18 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
   const [specTarget, setSpecTarget] = useState<{ phase: TaskPhase; activeRel?: string } | null>(null)
   const [deletingIdx, setDeletingIdx] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // 分层展开（2026-09-12 拍板）：默认只展开「当前 phase」（= 首个，draft 期
+  // 即待推进的那格），其余收成细条。null = 尚未交互，仍走默认（agent 稍后
+  // 写回 phases 时，首个 phase 自动获得默认展开）。
+  const [openSet, setOpenSet] = useState<Set<number> | null>(null)
+  const effectiveOpen = openSet ?? new Set(phases.length > 0 ? [phases[0].index] : [])
+  const togglePhase = (idx: number) => {
+    const next = new Set(effectiveOpen)
+    if (next.has(idx)) next.delete(idx)
+    else next.add(idx)
+    setOpenSet(next)
+  }
 
   // 所有结构动作共用的串行闸：一次只有一个在飞（连点重排会连 bump version）。
   const guard = useCallback(
@@ -175,16 +187,9 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
     })
 
   return (
-    <SectionCard
-      icon={<Link2 className="size-3.5 text-pop-ink shrink-0" />}
-      iconTint="var(--pop-purple-soft)"
-      title="Phase 计划"
-      count={phases.length}
-      storageKey="authoring-phases"
-      data-workflow-box
-      data-phase-binding-list
-    >
-      <div className="space-y-2">
+    // 卡壳退役（2026-09-12 分层重排）：phase 直接排在「SPEC · 规格」分组吊牌下，
+    // 每 phase 一张独立贴纸卡；「Phase 计划」折叠壳由逐卡展开态取代。
+    <div className="space-y-1.5" data-workflow-box data-phase-binding-list>
       {phases.length === 0 ? (
         <p className="text-[11px] text-muted-foreground" data-phase-bind-empty>
           尚无 phase —— 对话里让 agent 拆分（拆分产物会先在下方「草稿批次」区出现），或用「添加 Phase」手动建骨架。
@@ -200,6 +205,9 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
             first={i === 0}
             last={i === phases.length - 1}
             canDelete={phases.length > 1}
+            current={i === 0}
+            expanded={effectiveOpen.has(p.index)}
+            onToggle={() => togglePhase(p.index)}
             onMove={handleMove}
             onRequestDelete={setDeletingIdx}
             onOpenBind={setOpenPhaseIdx}
@@ -260,8 +268,7 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      </div>
-    </SectionCard>
+    </div>
   )
 }
 
@@ -275,6 +282,11 @@ interface PhaseRowProps {
   first: boolean
   last: boolean
   canDelete: boolean
+  /** 是否首个 phase（导航语义：当前待推进 → 「当前」chip）。 */
+  current: boolean
+  /** 受控展开（PhaseListEditor 管默认「只展开当前」，2026-09-12 分层重排）。 */
+  expanded: boolean
+  onToggle: () => void
   onMove: (index: number, dir: -1 | 1) => void
   onRequestDelete: (index: number) => void
   onOpenBind: (index: number) => void
@@ -289,16 +301,27 @@ const fmtBytes = (n: number): string =>
 const fmtTime = (iso: string): string => (iso ? iso.slice(5, 16).replace("T", " ") : "")
 const baseName = (p: string): string => normalizeRel(p).split("/").pop() ?? p
 
+// 分层重排（2026-09-12）：phase 色号瓷砖循环 —— P1 黄、P2 粉、P3 紫…
+const PHASE_TONES = [
+  "bg-pop-yellow text-pop-ink",
+  "bg-pop-pink text-white",
+  "bg-pop-purple text-white",
+  "bg-pop-cyan text-pop-ink",
+  "bg-pop-green text-white",
+  "bg-pop-amber text-pop-ink",
+]
+const toneFor = (index: number): string =>
+  PHASE_TONES[((index - 1) % PHASE_TONES.length + PHASE_TONES.length) % PHASE_TONES.length]
+
 function PhaseRow({
-  task, phase, editable, busy, first, last, canDelete,
+  task, phase, editable, busy, first, last, canDelete, current, expanded, onToggle,
   onMove, onRequestDelete, onOpenBind, onOpenSpec, onEdited, busyGate, batchTree,
 }: PhaseRowProps) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(phase.name)
   const [slug, setSlug] = useState(phase.slug)
   const [specPath, setSpecPath] = useState(phase.specPath)
-  // #53 行内展开：契约行不变，展开区吃磁盘树（PP2 的「点小图标弹窗」降级为深读）。
-  const [expanded, setExpanded] = useState(false)
+  // #53 行内展开：展开态受控（默认只展开当前 phase），展开区吃磁盘树。
   const [summary, setSummary] = useState<{ kdRows: number; excerpt: string } | undefined>(undefined)
 
   const batches = batchTree?.batches ?? []
@@ -349,11 +372,14 @@ function PhaseRow({
 
   return (
     <div
-      className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-1"
       data-phase-bind-card={phase.index}
+      className={cn(
+        "group overflow-hidden rounded-xl border-pop-bd bg-pop-paper transition-shadow hover:shadow-pop",
+        expanded ? "border-[2.5px] shadow-pop-sm" : "border-2 shadow-none",
+      )}
     >
       {editing ? (
-        <div className="space-y-1.5" data-phase-row-edit-form={phase.index}>
+        <div className="space-y-1.5 px-2.5 py-2" data-phase-row-edit-form={phase.index}>
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] w-10 shrink-0">name</Label>
             <Input
@@ -395,41 +421,151 @@ function PhaseRow({
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium truncate" data-phase-name={phase.index}>
-              Phase {phase.index} · {phase.name}
+          {/* ── header 行：整行 = 展开开关（P# 瓷砖 + 名称 + 绑定 + chevron）── */}
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            title="展开/收起：spec 磁盘状态 + 票清单 + 摘要（不必开弹窗）"
+            data-phase-expand-toggle={phase.index}
+            className={cn("flex w-full min-w-0 items-center gap-2 text-left", expanded ? "px-2.5 pt-2" : "px-2 py-1")}
+          >
+            <span aria-hidden className={cn(
+              "grid shrink-0 place-items-center rounded-lg border-2 border-pop-bd font-mono font-black shadow-[2px_2px_0_rgba(28,27,34,.15)]",
+              toneFor(phase.index),
+              expanded ? "size-[26px] text-[11px]" : "size-[18px] rounded-[6px] text-[9px]",
+            )}>
+              P{phase.index}
             </span>
-            <span className="text-[9px] font-mono text-muted-foreground truncate" data-phase-slug={phase.index}>
-              {phase.slug}
+            <span data-phase-name={phase.index} className={cn(
+              "min-w-0 truncate",
+              expanded ? "text-[12.5px] font-black text-pop-ink" : "text-[11px] font-bold text-pop-dim",
+            )}>
+              {phase.name}
             </span>
+            {expanded && (
+              <span className="min-w-0 shrink truncate text-[9px] font-mono text-pop-dim/80" data-phase-slug={phase.index}>
+                {phase.slug}
+              </span>
+            )}
+            {current && (
+              <span className="shrink-0 rounded-full border-[1.5px] border-pop-bd bg-pop-cyan-soft px-1.5 text-[8.5px] font-black text-pop-cyan">当前</span>
+            )}
             {phase.workflowRef ? (
-              <Badge variant="secondary" className="text-[10px] max-w-[160px] truncate ml-auto" data-phase-workflow-ref={phase.index}>
+              <span data-phase-workflow-ref={phase.index} className="ml-auto max-w-[150px] shrink-0 truncate rounded-md border-[1.5px] border-pop-bd bg-pop-purple-soft px-1.5 py-px font-mono text-[9px] font-black text-pop-purple">
                 {phase.workflowRef}
-              </Badge>
+              </span>
             ) : (
-              <span className="text-[10px] text-pop-amber ml-auto" data-phase-unbound={phase.index}>
+              <span className="ml-auto shrink-0 text-[10px] font-black text-pop-amber" data-phase-unbound={phase.index}>
                 未绑定
               </span>
             )}
-          </div>
-          <InputChips values={phase.inputValues ?? {}} />
-          {/* 按钮带：展开 + 绑定为常用动作居左；深读/结构动作收进右侧图标组 */}
-          <div className="flex items-center gap-1.5">
+            <ChevronRight aria-hidden className={cn("size-3 shrink-0 text-pop-dim transition-transform", expanded && "rotate-90")} />
+          </button>
+
+          {/* ── 展开体：三层信息（① spec 磁盘灯 ② 批次/票 ③ inputs 折叠）── */}
+          {expanded && (
+            <div className="mx-2 mt-1.5 space-y-1 rounded-lg border-[1.5px] border-pop-bd/25 bg-pop-bg px-2.5 py-2" data-phase-expand-panel={phase.index}>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-8 shrink-0 font-mono text-[8.5px] font-black tracking-wider text-pop-dim/70">SPEC</span>
+                {/* spec 磁盘灯（K5 判定源=tree；扫描未就绪/域外路径不臆断，中性表达） */}
+                {specEntry ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[10px]" data-phase-spec-disk={phase.index}>
+                    <span className="text-pop-green">spec.md ✓</span>
+                    <span className="font-mono text-muted-foreground">
+                      {fmtBytes(specEntry.bytes)} · {fmtTime(specEntry.mtime)}
+                    </span>
+                    <button
+                      className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                      onClick={() => onOpenSpec(phase)}
+                      data-phase-open-editor={phase.index}
+                    >
+                      打开编辑器
+                    </button>
+                  </div>
+                ) : !diskKnown ? (
+                  <div className="min-w-0 flex-1 text-[10px] text-muted-foreground" data-phase-spec-unknown={phase.index}>
+                    spec.md · 磁盘状态未知（扫描未就绪，可在「草稿批次」区 [↻] 刷新）
+                  </div>
+                ) : isRelativeScratchSpec(phase.specPath) ? (
+                  <div className="min-w-0 flex-1 text-[10px] text-pop-amber" data-phase-spec-missing={phase.index}>
+                    spec.md ✗ 磁盘未落盘 —— 该 phase 已登记但批次目录里还没有 spec.md
+                  </div>
+                ) : phase.specPath ? (
+                  <div className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground font-mono" data-phase-spec-abs={phase.index}>
+                    路径不在 `.scratch` 扫描域（绝对路径直写）：{baseName(phase.specPath)}
+                  </div>
+                ) : (
+                  <div className="min-w-0 flex-1 text-[10px] text-muted-foreground" data-phase-spec-nopath={phase.index}>
+                    尚未设定 spec 路径
+                  </div>
+                )}
+              </div>
+
+              {/* 摘要（懒取，失败静默） */}
+              {summary && (summary.kdRows > 0 || summary.excerpt) && (
+                <div className="pl-10 text-[10px] text-muted-foreground" data-phase-summary={phase.index}>
+                  {summary.kdRows > 0 && <span className="mr-1.5">Key Decisions {summary.kdRows} 条</span>}
+                  {summary.excerpt && <span className="line-clamp-2">{summary.excerpt}</span>}
+                </div>
+              )}
+
+              <div className="flex items-start gap-2 min-w-0">
+                <span className="w-8 shrink-0 pt-px font-mono text-[8.5px] font-black tracking-wider text-pop-dim/70">批次</span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  {batch && (
+                    <div className="truncate text-[9px] font-mono text-pop-dim/80" title={batch.dir}>{batch.dir}</div>
+                  )}
+                  {/* 票清单 chips（点击 = 复用弹窗打开该票） */}
+                  {batch ? (
+                    ticketFiles.length > 0 ? (
+                      <div className="flex flex-wrap gap-1" data-phase-tickets={phase.index}>
+                        {ticketFiles.map((f) => (
+                          <button
+                            key={f.path}
+                            onClick={() => onOpenSpec(phase, normalizeRel(f.path))}
+                            className="rounded border-[1.5px] border-pop-bd/40 bg-pop-paper px-1.5 py-0.5 font-mono text-[9px] hover:bg-pop-yellow-soft"
+                            title={f.path}
+                            data-phase-ticket={f.path}
+                          >
+                            {baseName(f.path)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-muted-foreground/70" data-phase-tickets-empty={phase.index}>
+                        issues/ 尚无票
+                      </div>
+                    )
+                  ) : diskKnown ? (
+                    <div className="text-[10px] text-muted-foreground/70" data-phase-batch-missing={phase.index}>
+                      未找到该 phase 的批次目录（落盘后自动出现）
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* inputs 默认收进 details（层级：文件/批次先于参数） */}
+              {Object.keys(phase.inputValues ?? {}).length > 0 && (
+                <details className="pl-10">
+                  <summary className="cursor-pointer font-mono text-[8.5px] font-black tracking-wider text-pop-dim/70 hover:text-pop-ink">
+                    INPUTS ×{Object.keys(phase.inputValues ?? {}).length}
+                  </summary>
+                  <div className="pt-1"><InputChips values={phase.inputValues ?? {}} /></div>
+                </details>
+              )}
+            </div>
+          )}
+
+          {/* ── 动作带：恒在 DOM（e2e 钉点）；收起态 hover/focus 才显形 ── */}
+          <div className={cn(
+            "flex items-center gap-1.5 px-2 pb-1.5 transition-opacity duration-150",
+            expanded ? "pt-0.5" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+          )}>
             <Button
               variant="ghost"
               size="sm"
-              className="size-6 p-0 text-muted-foreground hover:text-foreground"
-              title="展开：spec 磁盘状态 + 票清单 + 摘要（不必开弹窗）"
-              onClick={() => setExpanded((v) => !v)}
-              aria-expanded={expanded}
-              data-phase-expand-toggle={phase.index}
-            >
-              {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+              className="h-5 px-1.5 text-[10px] font-black text-pop-purple hover:bg-pop-purple-soft hover:text-pop-purple"
               onClick={() => onOpenBind(phase.index)}
               data-phase-bind-button={phase.index}
             >
@@ -482,80 +618,6 @@ function PhaseRow({
               )}
             </div>
           </div>
-
-          {expanded && (
-            <div
-              className="mt-1 rounded-md border bg-background px-2.5 py-2 space-y-1.5"
-              data-phase-expand-panel={phase.index}
-            >
-              {/* spec 磁盘灯（K5 判定源=tree；扫描未就绪/域外路径不臆断，中性表达） */}
-              {specEntry ? (
-                <div className="flex items-center gap-1.5 text-[10px]" data-phase-spec-disk={phase.index}>
-                  <span className="text-pop-green">spec.md ✓</span>
-                  <span className="font-mono text-muted-foreground">
-                    {fmtBytes(specEntry.bytes)} · {fmtTime(specEntry.mtime)}
-                  </span>
-                  <button
-                    className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2"
-                    onClick={() => onOpenSpec(phase)}
-                    data-phase-open-editor={phase.index}                  >
-                    打开编辑器
-                  </button>
-                </div>
-              ) : !diskKnown ? (
-                <div className="text-[10px] text-muted-foreground" data-phase-spec-unknown={phase.index}>
-                  spec.md · 磁盘状态未知（扫描未就绪，可在「草稿批次」区 [↻] 刷新）
-                </div>
-              ) : isRelativeScratchSpec(phase.specPath) ? (
-                <div className="text-[10px] text-pop-amber" data-phase-spec-missing={phase.index}>
-                  spec.md ✗ 磁盘未落盘 —— 该 phase 已登记但批次目录里还没有 spec.md
-                </div>
-              ) : phase.specPath ? (
-                <div className="text-[10px] text-muted-foreground font-mono truncate" data-phase-spec-abs={phase.index}>
-                  路径不在 `.scratch` 扫描域（绝对路径直写）：{baseName(phase.specPath)}
-                </div>
-              ) : (
-                <div className="text-[10px] text-muted-foreground" data-phase-spec-nopath={phase.index}>
-                  尚未设定 spec 路径
-                </div>
-              )}
-
-              {/* 摘要（懒取，失败静默） */}
-              {summary && (summary.kdRows > 0 || summary.excerpt) && (
-                <div className="text-[10px] text-muted-foreground" data-phase-summary={phase.index}>
-                  {summary.kdRows > 0 && <span className="mr-1.5">Key Decisions {summary.kdRows} 条</span>}
-                  {summary.excerpt && <span className="line-clamp-2">{summary.excerpt}</span>}
-                </div>
-              )}
-
-              {/* 票清单 chips（点击 = 复用弹窗打开该票） */}
-              {batch ? (
-                ticketFiles.length > 0 ? (
-                  <div className="flex flex-wrap gap-1" data-phase-tickets={phase.index}>
-                    {ticketFiles.map((f) => (
-                      <button
-                        key={f.path}
-                        onClick={() => onOpenSpec(phase, normalizeRel(f.path))}
-                        className="text-[9px] px-1.5 py-0.5 rounded border border-border hover:bg-muted/50 font-mono"
-                        title={f.path}
-                        data-phase-ticket={f.path}
-                      >
-                        {baseName(f.path)}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-muted-foreground/70" data-phase-tickets-empty={phase.index}>
-                    issues/ 尚无票
-                  </div>
-                )
-              ) : diskKnown ? (
-                <div className="text-[10px] text-muted-foreground/70" data-phase-batch-missing={phase.index}>
-                  未找到该 phase 的批次目录（落盘后自动出现）
-                </div>
-              ) : null}
-            </div>
-          )}
         </>
       )}
     </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react'
 import { Send, Square, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
@@ -85,6 +85,10 @@ interface ChatAreaProps {
   currentModel?: string
   /** Callback when user switches model. */
   onModelChange?: (model: string) => void
+  /** 输入行左端的动作槽（草稿工作台把「专家咨询」小贴纸挂这里，替代独立辅助条）。 */
+  composerLeading?: ReactNode
+  /** 非流式时的输入框 placeholder（草稿工作台把「/ 调用技能」计数提示收编于此）。 */
+  composerPlaceholder?: string
 }
 
 export function ChatArea({
@@ -93,6 +97,7 @@ export function ChatArea({
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, currentModel, onModelChange,
+  composerLeading, composerPlaceholder,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -179,7 +184,7 @@ export function ChatArea({
         )
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+          <div className="max-w-3xl mx-auto px-4 py-4 space-y-2.5">
             {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
               <ChatBubble key={msg.id} message={msg} />
             ))}
@@ -380,7 +385,7 @@ export function ChatArea({
       )}
 
       {/* Input area — always visible */}
-      <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-4">
+      <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
           {/* @@mention autocomplete */}
           <MentionAutocomplete
@@ -400,6 +405,9 @@ export function ChatArea({
           )}
 
           <div className="flex items-end gap-2">
+            {composerLeading && (
+              <div className="flex shrink-0 flex-col gap-1" data-composer-leading>{composerLeading}</div>
+            )}
             <AutoResizeTextarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -411,10 +419,10 @@ export function ChatArea({
                   if (!slashOpen) handleSend()
                 }
               }}
-              placeholder={streaming ? 'Agent 正在回复中...' : '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
+              placeholder={streaming ? 'Agent 正在回复中...' : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
               disabled={streaming || !!pendingConfirm}
               className={cn(
-                'min-h-[44px] max-h-[200px] resize-none rounded-xl border-2 border-pop-bd text-pop-ink focus-visible:ring-pop-bd',
+                'min-h-[38px] max-h-[200px] resize-none rounded-xl border-2 border-pop-bd text-[12.5px] text-pop-ink focus-visible:ring-pop-bd',
                 chatState === 'waiting' ? 'bg-pop-amber-soft' : 'bg-pop-bg',
               )}
             />
@@ -423,7 +431,7 @@ export function ChatArea({
                 onClick={onStop}
                 variant="outline"
                 size="icon"
-                className="shrink-0 h-10 w-10 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft"
+                className="shrink-0 h-9 w-9 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft"
               >
                 <Square className="h-4 w-4" />
               </Button>
@@ -432,7 +440,7 @@ export function ChatArea({
                 onClick={handleSend}
                 disabled={!input.trim()}
                 size="icon"
-                className="shrink-0 h-10 w-10 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90"
+                className="shrink-0 h-9 w-9 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90"
               >
                 <Send className="h-4 w-4" />
               </Button>

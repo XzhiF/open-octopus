@@ -18,9 +18,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Settings2, Lock, Brain, ClipboardCheck } from "lucide-react"
+import { Lock, Brain, ClipboardCheck, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
@@ -38,18 +37,30 @@ import { OutputViewer } from "./output-viewer"
 import { WorkflowBox } from "./workflow-box"
 import { DraftBatches } from "./draft-batches"
 import { SectionCard, SectionGroupLabel } from "./section-card"
+import { EditableTitle } from "../editable-title"
 import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
+/** TaskModal 把窗口级动作（拖拽/全屏/废弃草稿）经此传入 —— draft 模式下
+ *  ModalHeader 不再渲染，terminal 导航条就是标题栏（2026-09-12 改版）。 */
+export interface AuthoringChrome {
+  isFullscreen: boolean
+  onToggleFullscreen: () => void
+  onDeleteDraft: () => void
+  /** 按住导航条空白拖窗（同原 ModalHeader 行为）。 */
+  onHeaderPointerDown?: (e: React.PointerEvent) => void
+}
+
 export interface AuthoringWorkspaceProps {
   task: Task
   onMutated: () => void
   onClose: () => void
+  chrome?: AuthoringChrome
 }
 
-export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorkspaceProps) {
+export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: AuthoringWorkspaceProps) {
   const spec = task.task_spec
   // v4-only UI (契约修复改版): format 旗标是唯一判别器（看板直建即带；历史无
   // 旗标 draft 只做降级展示 — 清单不绿、入队由 server 兜底，不专门建分支）。
@@ -483,46 +494,100 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-0" data-authoring-workspace>
-      {/* ── top bar (AC3) — 🎪 贴纸糖豆徽章 + 粉色入队 CTA ── */}
-      <div className="px-4 py-2 border-b-[2.5px] border-pop-bd bg-pop-paper flex items-center gap-2 flex-wrap">
-        <Badge variant="secondary" className="rounded-full border-2 border-pop-bd bg-pop-yellow text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-type-badge>{typeBadge}</Badge>
+      {/* ── terminal 导航条（2026-09-12 改版·方案 A）── 原 ModalHeader + 信息栏
+          两条横幅压成一条 28px 深色 mono 条：红绿灯 + 标题即改 + 状态/语境
+          token（hover 显全量）+ 废弃/全屏/入队。拖窗逻辑经 chrome 继承自
+          TaskModal 标题栏。 ── */}
+      <div
+        data-terminal-bar
+        onPointerDown={chrome?.onHeaderPointerDown}
+        title={chrome ? "按住空白处拖拽移动窗口" : undefined}
+        className={
+          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[2.5px] border-pop-bd bg-pop-ink px-2.5 pr-8 font-mono text-[11px] text-pop-bg " +
+          (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
+        }
+      >
+        {/* 红绿灯糖豆 */}
+        <span aria-hidden className="flex shrink-0 items-center gap-[5px]">
+          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-pink" />
+          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-yellow" />
+          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-cyan" />
+        </span>
+        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <EditableTitle task={task} onMutated={onMutated} variant="term" />
+        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <span
+          data-task-type-badge
+          className="shrink-0 rounded border-[1.5px] border-pop-bd bg-pop-yellow px-1.5 py-px text-[9px] font-black text-pop-ink"
+        >
+          {typeBadge}
+        </span>
+        <span data-task-modal-status={task.status} className="shrink-0 font-bold text-pop-cyan">
+          ● 草稿
+        </span>
         {skillGroups.map((g) => (
-          <Badge key={g} variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-cyan-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-skill-group-badge={g}>
-            <Lock className="size-2.5 mr-0.5" aria-label="锁定" /> {g}
-          </Badge>
+          <span
+            key={g}
+            data-skill-group-badge={g}
+            className="flex shrink-0 items-center gap-0.5 rounded border-[1.5px] border-pop-bg/25 bg-pop-bg/10 px-1.5 py-px text-[9px] font-black text-pop-bg"
+          >
+            <Lock className="size-2.5" aria-label="锁定" />
+            <span>{g}</span>
+          </span>
         ))}
-        {/* #53 K3：resources/authoring_resources 是 agent spec-field 可写的活字段，
-            非空时给最小展示面（hover 列名）——manifest 影子字段的人话归宿之一。 */}
+        {/* #53 K3：manifest 影子字段的最小展示面（hover 列名） */}
         {(spec.resources?.length ?? 0) > 0 && (
-          <Badge variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-purple-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-resources
-            title={spec.resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
-            📦 resources · {spec.resources!.length}
-          </Badge>
+          <span data-task-resources title={spec.resources!.map((r) => `${r.type}:${r.name}`).join("\n")}
+            className="shrink-0 text-[10px] text-pop-bg/70">📦{spec.resources!.length}</span>
         )}
         {(spec.authoring_resources?.length ?? 0) > 0 && (
-          <Badge variant="outline" className="rounded-full border-2 border-pop-bd bg-pop-green-soft text-[10px] font-black text-pop-ink shadow-pop-sm" data-task-authoring-resources
-            title={spec.authoring_resources!.map((r) => `${r.type}:${r.name}`).join("\n")}>
-            🧪 authoring · {spec.authoring_resources!.length}
-          </Badge>
+          <span data-task-authoring-resources title={spec.authoring_resources!.map((r) => `${r.type}:${r.name}`).join("\n")}
+            className="shrink-0 text-[10px] text-pop-bg/70">🧪{spec.authoring_resources!.length}</span>
         )}
         {/* codebase 预设恒呈现（v4-only UI：所有任务都有项目语境；非空即锁） */}
-        <Button variant="pop-quiet" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
-          <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
-        </Button>
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="pop"
-            size="sm"
-            className="h-6 text-[10px] data-[gate=ok]:bg-pop-green"
+        <button
+          data-preset-button
+          onClick={() => setPresetOpen(true)}
+          className="shrink-0 rounded border-[1.5px] border-pop-bg/25 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
+        >
+          ⚙ codebase · {presetOrg} · {presetProjects.length} 项目
+        </button>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {chrome && (
+            <button
+              data-task-modal-delete
+              onClick={chrome.onDeleteDraft}
+              title="废弃草稿"
+              className="flex items-center gap-0.5 rounded border-[1.5px] border-transparent px-1 py-px text-[9.5px] font-black text-pop-bg/55 transition-colors hover:border-pop-red/60 hover:text-pop-red"
+            >
+              <Trash2 className="size-2.5" /> 废弃
+            </button>
+          )}
+          {chrome && (
+            <button
+              onClick={chrome.onToggleFullscreen}
+              title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
+              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-bg/40 hover:text-pop-yellow"
+            >
+              {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+            </button>
+          )}
+          <button
             data-gate={canEnqueue ? "ok" : "no"}
             onClick={handleEnqueue}
             disabled={!canEnqueue || enqueueBusy}
-            data-task-enqueue data-testid="task-enqueue"
+            data-task-enqueue
+            data-testid="task-enqueue"
+            className={
+              "flex items-center gap-1 rounded-[7px] border-[1.5px] border-pop-bd px-2.5 py-1 text-[10px] font-black transition-colors " +
+              (canEnqueue
+                ? "bg-pop-green text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] pop-press hover:bg-pop-green/90"
+                : "bg-pop-bg/10 text-pop-bg/40")
+            }
           >
-            {enqueueBusy ? <Spinner className="size-3" /> : <Send className="size-3 mr-0.5" />}
-            入队执行
-          </Button>
-        </div>
+            {enqueueBusy ? <Spinner className="size-3" /> : <span aria-hidden>⏎</span>} 入队执行
+          </button>
+        </span>
       </div>
 
       <div className="flex-1 flex min-h-0">
@@ -533,35 +598,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r-[2.5px] border-pop-bd bg-pop-paper">
-          {/* Assist-trigger bar (MoA). Skill commands moved to the chat input's
-              `/` slash-autocomplete — no more command-bar chips that auto-send. */}
-          <div className="px-3 py-1.5 border-b-2 border-dashed border-pop-bd/25 bg-pop-paper flex items-center gap-2 text-pop-dim" data-command-bar>
-            {commands.length > 0 && (
-              <span className="text-[10px]">输入 / 调用技能（{commands.length} 个可用）</span>
-            )}
-            {commands.length === 0 && (
-              <span className="text-[10px]">无额外命令（仅内置 spec-field 流程）</span>
-            )}
-            <div className="ml-auto">
-              <button
-                onClick={() => setMoaOpen(true)}
-                className="shrink-0 rounded-full border-2 border-pop-bd bg-pop-purple-soft px-2.5 py-0.5 text-[10px] font-black text-pop-purple shadow-pop-sm pop-press flex items-center gap-1"
-                data-assist-trigger="moa-requirements-review"
-                title="运行专家咨询辅助工作流（MoA / Debate / 单专家）"
-              >
-                <Brain className="size-3" /> 🧠 专家咨询
-              </button>
-              <MoATriggerDialog
-                task={task}
-                open={moaOpen}
-                onOpenChange={setMoaOpen}
-                onTrigger={handleTriggerMoa}
-                onConsultSingle={handleSingleConsult}
-                running={moaRunning}
-              />
-            </div>
-          </div>
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r-[2.5px] border-pop-bd">
+          {/* 辅助条已退役（2026-09-12 改版）：技能计数提示 → 输入框 placeholder，
+              专家咨询 → ChatArea composer 左端贴纸（composerLeading 槽）。 */}
 
           {/* flex flex-col (bugfix 2026-08-19): ChatArea's root is `flex-1`,
               which only constrains its height inside a flex parent — without
@@ -601,6 +640,31 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
               contextUsage={chat.contextUsage}
               currentModel={model}
               onModelChange={setModel}
+              composerPlaceholder={
+                commands.length > 0
+                  ? `输入 / 调用技能（${commands.length} 个可用）`
+                  : "无额外命令（仅内置 spec-field 流程）"
+              }
+              composerLeading={
+                <>
+                  <button
+                    onClick={() => setMoaOpen(true)}
+                    className="shrink-0 rounded-full border-2 border-pop-bd bg-pop-purple-soft px-2 py-1 text-[10px] font-black text-pop-purple shadow-pop-sm pop-press flex items-center gap-1"
+                    data-assist-trigger="moa-requirements-review"
+                    title="运行专家咨询辅助工作流（MoA / Debate / 单专家）"
+                  >
+                    <Brain className="size-3" /> 🧠 专家咨询
+                  </button>
+                  <MoATriggerDialog
+                    task={task}
+                    open={moaOpen}
+                    onOpenChange={setMoaOpen}
+                    onTrigger={handleTriggerMoa}
+                    onConsultSingle={handleSingleConsult}
+                    running={moaRunning}
+                  />
+                </>
+              }
             />
           </div>
         </div>

@@ -15,7 +15,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import {
-  Dialog, DialogContent, DialogHeader, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -276,15 +276,24 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           }}
           overlayClassName={isFullscreen ? "bg-transparent" : undefined}
         >
-          <ModalHeader
-            task={task}
-            mode={mode}
-            isFullscreen={isFullscreen}
-            onToggleFullscreen={() => setIsFullscreen((f) => !f)}
-            onDeleteDraft={() => setDeleteConfirmOpen(true)}
-            onMutated={onMutated}
-            onHeaderPointerDown={startHeaderDrag}
-          />
+          {/* draft 工作台不再渲染 ModalHeader（2026-09-12 改版）：AuthoringWorkspace
+              自带的 terminal 导航条就是标题栏（拖窗/全屏/废弃经 chrome 传入）。 */}
+          {mode === "authoring-workspace" && (
+            // Radix a11y：草稿模式下可见标题在 terminal 导航条里（EditableTitle
+            // term 变体，不挂 DialogTitle），这里补一个 sr-only 标题兜底。
+            <DialogTitle className="sr-only">{task?.name ?? "任务草稿"}</DialogTitle>
+          )}
+          {mode !== "authoring-workspace" && (
+            <ModalHeader
+              task={task}
+              mode={mode}
+              isFullscreen={isFullscreen}
+              onToggleFullscreen={() => setIsFullscreen((f) => !f)}
+              onDeleteDraft={() => setDeleteConfirmOpen(true)}
+              onMutated={onMutated}
+              onHeaderPointerDown={startHeaderDrag}
+            />
+          )}
           <div className="flex-1 min-h-0 overflow-hidden">
             {mode === "authoring-template" && (
               <TemplatePickerMode
@@ -294,7 +303,17 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
               />
             )}
             {mode === "authoring-workspace" && task && (
-              <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+              <AuthoringWorkspace
+                task={task}
+                onMutated={onMutated}
+                onClose={() => onOpenChange(false)}
+                chrome={{
+                  isFullscreen,
+                  onToggleFullscreen: () => setIsFullscreen((f) => !f),
+                  onDeleteDraft: () => setDeleteConfirmOpen(true),
+                  onHeaderPointerDown: startHeaderDrag,
+                }}
+              />
             )}
             {mode === "simple-execution" && task && (
               <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
