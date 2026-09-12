@@ -99,13 +99,13 @@ function ReportContent({ content, degraded }: { content: string; degraded: boole
       )}
 
       {parsedJson ? (
-        <div className="rounded-lg border border-border bg-card p-4">
+        <div className="rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-4">
           <pre className="text-xs font-mono leading-relaxed">
             <JsonTreeView data={parsedJson} />
           </pre>
         </div>
       ) : (
-        <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border bg-card p-4">
+        <div className="prose prose-sm dark:prose-invert max-w-none rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-4">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
             {content}
           </ReactMarkdown>

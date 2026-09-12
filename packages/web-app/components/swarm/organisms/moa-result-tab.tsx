@@ -166,7 +166,7 @@ export function MoaResultTab({
             </div>
 
             {hostReport && (
-              <div className="rounded-md border border-moa-aggregator/30 bg-moa-aggregator-light p-3">
+              <div className="rounded-lg border-2 border-pop-bd bg-moa-aggregator-light shadow-pop-sm p-3">
                 <p className="text-xs font-medium text-moa-aggregator-foreground mb-1">
                   Aggregator 基线
                 </p>

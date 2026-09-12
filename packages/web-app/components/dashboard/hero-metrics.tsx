@@ -51,10 +51,10 @@ export function HeroMetrics({ totalExecutions, successRate, totalCost, totalCost
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {metrics.map(m => (
-        <div key={m.label} className="rounded-lg border bg-card p-4">
-          <p className="text-xs text-muted-foreground">{m.label}</p>
+        <div key={m.label} className="rounded-xl border-[2.5px] border-pop-bd bg-pop-paper shadow-pop-sm p-4">
+          <p className="text-xs font-bold text-pop-dim">{m.label}</p>
           {m.display !== undefined
-            ? <p className="text-2xl font-bold tabular-nums mt-1">{m.display}</p>
+            ? <p className="text-2xl font-black tabular-nums mt-1 text-pop-ink">{m.display}</p>
             : <TrendBadge current={m.value ?? 0} prev={m.prev} unit={m.unit} isDuration={m.isDuration} />}
         </div>
       ))}

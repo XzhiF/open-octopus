@@ -174,7 +174,7 @@ export default function SchedulerPage() {
       <Panel defaultSize={75} minSize={50}>
         <div className="min-w-0 space-y-6 p-6 overflow-auto h-full">
           <header className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">调度管理</h1>
+            <h1 className="text-2xl font-black tracking-tight text-pop-ink">调度管理</h1>
             <div className="ml-auto flex gap-2">
               <Button onClick={() => { setEditingJob(null); setFormOpen(true) }}>
                 <Plus className="size-4" />

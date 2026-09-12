@@ -71,7 +71,7 @@ export function SchedulerTable({
   }
 
   return (
-    <div className="rounded-md border">
+    <div className="rounded-xl border-[2.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden">
       <Table aria-label="调度任务列表">
         <TableHeader>
           <TableRow>

@@ -21,15 +21,15 @@ function ExecutionItem({ execution }: { execution: Execution }) {
   const isRunning = execution.status === "running"
 
   return (
-    <div className="group flex items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/50">
+    <div className="group flex items-center gap-4 rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-4 transition-colors hover:bg-pop-yellow-soft">
       {/* Status indicator */}
       <div className="flex-shrink-0">
         {isRunning ? (
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-pop-amber/10">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-pop-bd bg-pop-amber-soft shadow-pop-sm">
             <Play className="h-4 w-4 text-pop-amber" />
           </div>
         ) : (
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-pop-bd bg-pop-idle shadow-pop-sm">
             <Clock className="h-4 w-4 text-muted-foreground" />
           </div>
         )}
@@ -81,7 +81,7 @@ export function QueuePanel({ runningExecutions, pendingExecutions }: QueuePanelP
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-semibold">执行队列</CardTitle>
+          <CardTitle className="text-base font-black text-pop-ink">执行队列</CardTitle>
           <Badge variant="outline" className="font-mono">
             {runningExecutions.length} 运行中 · {pendingExecutions.length} 待开始
           </Badge>
@@ -90,10 +90,10 @@ export function QueuePanel({ runningExecutions, pendingExecutions }: QueuePanelP
       <CardContent className="space-y-3 flex-1">
         {allExecutions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-pop-bd bg-pop-idle shadow-pop-sm">
               <Clock className="h-5 w-5 text-muted-foreground" />
             </div>
-            <h3 className="mt-3 text-sm font-medium">没有正在执行的任务</h3>
+            <h3 className="mt-3 text-sm font-bold">没有正在执行的任务</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               进入工作空间执行工作流后，运行中的任务将显示在这里
             </p>

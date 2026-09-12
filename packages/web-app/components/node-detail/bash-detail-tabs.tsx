@@ -11,7 +11,7 @@ interface BashDetailTabsProps {
 export function BashDetailTabs({ step, isRunning }: BashDetailTabsProps) {
   return (
     <Tabs defaultValue="output">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="output" className="text-xs">输出</TabsTrigger>
         <TabsTrigger value="env" className="text-xs">环境</TabsTrigger>
         <TabsTrigger value="history" className="text-xs">历史</TabsTrigger>

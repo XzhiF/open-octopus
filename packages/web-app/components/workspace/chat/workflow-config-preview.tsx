@@ -19,9 +19,9 @@ export function WorkflowConfigPreview({ content, onRetry }: WorkflowConfigPrevie
     return (
       <div
         data-testid="workflow-config-preview"
-        className="mt-3 border border-border/70 rounded-lg overflow-hidden bg-muted/40"
+        className="mt-3 rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden"
       >
-        <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border-b border-border/70 text-xs font-medium">
+        <div className="flex items-center gap-2 px-3 py-2 bg-pop-yellow-soft border-b-2 border-pop-bd text-xs font-bold text-pop-ink">
           <FileJson className="w-3.5 h-3.5" aria-hidden="true" />
           <span>WorkflowConfig 预览</span>
         </div>
@@ -54,7 +54,7 @@ export function WorkflowConfigPreview({ content, onRetry }: WorkflowConfigPrevie
   return (
     <div
       data-testid="workflow-config-error"
-      className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-pop-red/40 bg-pop-red/10 text-xs text-pop-red"
+      className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-pop-bd bg-pop-pink-soft text-xs text-pop-red shadow-pop-sm"
     >
       <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       <span className="flex-1 break-words">{result.message}</span>
@@ -63,7 +63,7 @@ export function WorkflowConfigPreview({ content, onRetry }: WorkflowConfigPrevie
           type="button"
           onClick={onRetry}
           data-testid="workflow-config-retry"
-          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded bg-pop-red/20 hover:bg-pop-red/30 transition-colors"
+          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border-[1.5px] border-pop-bd bg-pop-red text-white font-bold shadow-pop-sm pop-press transition-colors"
         >
           <RefreshCw className="w-3 h-3" aria-hidden="true" />
           <span>重新生成</span>

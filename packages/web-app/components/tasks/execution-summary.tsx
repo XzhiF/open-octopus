@@ -241,7 +241,7 @@ function ExecRunRow({ exec, now, agg }: { exec: TaskExecutionBadge; now: number;
   }
 
   return (
-    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5" data-run-child={exec.id}>
+    <div className="rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-2.5 space-y-1.5" data-run-child={exec.id}>
       <div className="flex items-center gap-2">
         <span className={`size-2 rounded-full shrink-0 ${RUN_DOT[exec.status] ?? "bg-muted-foreground"}`} />
         <span className="text-sm font-medium truncate">{execLabel(exec)}</span>

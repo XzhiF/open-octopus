@@ -317,7 +317,7 @@ export function ResourceList() {
         />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="pop-tilt grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {paginatedEntries.map((entry) => (
               <ResourceCard
                 key={`${entry.type}:${(entry as any).group ?? ""}:${entry.name}`}

@@ -227,12 +227,12 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
               <ShieldCheck className="h-4 w-4 text-pop-purple shrink-0 mt-0.5" />
             )}
             <div
-              className={`max-w-[80%] rounded-lg px-2.5 py-1.5 ${
+              className={`max-w-[80%] rounded-[10px] border-2 border-pop-bd shadow-pop-sm px-2.5 py-1.5 ${
                 msg.role === "user"
                   ? "bg-pop-cyan text-white"
                   : msg.status === "error"
-                    ? "bg-pop-red/10 text-pop-red border border-pop-red/40"
-                    : "bg-muted text-foreground"
+                    ? "bg-pop-pink-soft text-pop-red"
+                    : "bg-pop-paper text-pop-ink"
               }`}
             >
               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
@@ -251,7 +251,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 border-t border-border p-2 flex gap-2">
+      <div className="shrink-0 border-t-[2.5px] border-pop-bd p-2 flex gap-2">
         <input
           ref={inputRef}
           type="text"
@@ -260,7 +260,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
           onKeyDown={handleKeyDown}
           placeholder={isRunning ? "输入干预指令..." : "执行已结束"}
           disabled={!isRunning || sending}
-          className="flex-1 h-8 px-2 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          className="flex-1 h-8 px-2 text-xs rounded-lg border-2 border-pop-bd bg-pop-bg text-pop-ink focus:outline-none focus:ring-2 focus:ring-pop-bd disabled:opacity-50"
         />
         <Button
           size="sm"

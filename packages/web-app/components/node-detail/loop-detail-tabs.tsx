@@ -13,7 +13,7 @@ interface LoopDetailTabsProps {
 export function LoopDetailTabs({ step, isRunning, loopIterations }: LoopDetailTabsProps) {
   return (
     <Tabs defaultValue="iterations">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="iterations" className="text-xs">迭代列表</TabsTrigger>
         <TabsTrigger value="exit" className="text-xs">退出条件</TabsTrigger>
         <TabsTrigger value="history" className="text-xs">历史</TabsTrigger>

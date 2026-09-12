@@ -101,7 +101,7 @@ export function InteractionDetailTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2 shrink-0">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2 shrink-0">
         <TabsTrigger value="conversation" className="text-xs">
           对话记录 {messages.length > 0 && `(${messages.length})`}
         </TabsTrigger>

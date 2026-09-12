@@ -10,15 +10,15 @@ interface CostTrendChartProps {
 
 export function CostTrendChart({ data, days }: CostTrendChartProps) {
   if (data.length === 0) {
-    return <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">暂无成本数据</div>
+    return <div className="rounded-xl border-[2.5px] border-pop-bd bg-pop-paper shadow-pop-sm p-8 text-center text-sm text-muted-foreground">暂无成本数据</div>
   }
 
   const maxCost = Math.max(...data.map(d => d.total_cost), 0.01)
 
   return (
     <ChartErrorBoundary componentName="成本趋势图">
-      <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-sm font-medium mb-4">{days} 日成本趋势</h3>
+      <div className="rounded-xl border-[2.5px] border-pop-bd bg-pop-paper shadow-pop-sm p-4">
+        <h3 className="text-sm font-black text-pop-ink mb-4">{days} 日成本趋势</h3>
         <div className="flex items-end gap-1 h-32">
           {data.map((d, i) => (
             <div

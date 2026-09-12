@@ -225,7 +225,7 @@ export function MoaConfigPanel({
             {state.experts.map((expert, index) => (
               <div
                 key={expert.id}
-                className="rounded-lg border border-border p-3 space-y-2"
+                className="rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm p-3 space-y-2"
                 role="listitem"
                 aria-label={`Expert: ${expert.role || `#${index + 1}`}`}
               >

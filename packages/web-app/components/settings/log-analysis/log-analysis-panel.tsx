@@ -62,7 +62,7 @@ export function LogAnalysisPanel() {
     <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full">
       {/* Tab bar + workspace selector */}
       <div className="flex items-center justify-between border-b border-border bg-background px-6 shrink-0">
-        <TabsList className="bg-transparent border-0 h-auto p-0 gap-1">
+        <TabsList className="bg-transparent rounded-none border-x-0 border-t-0 border-b-[2.5px] border-pop-bd h-auto p-0 gap-1">
           {tabItems.map(tab => (
             <TabsTrigger key={tab.id} value={tab.id} className={tabTriggerClass}>
               {tab.label}

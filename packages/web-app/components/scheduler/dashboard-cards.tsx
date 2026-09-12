@@ -119,14 +119,14 @@ export function DashboardCards({ data, loading }: DashboardCardsProps) {
       {cards.map((card) => (
         <Card key={card.label} className="gap-0 py-0">
           <CardContent className="flex items-start gap-4 p-5">
-            <div className="shrink-0 rounded-lg bg-muted p-2.5">
+            <div className="flex shrink-0 items-center justify-center rounded-full border-2 border-pop-bd bg-pop-yellow-soft p-2.5 shadow-pop-sm">
               {card.icon}
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs text-muted-foreground mb-1">
                 {card.label}
               </p>
-              <p className="text-2xl font-semibold tracking-tight leading-none mb-1.5">
+              <p className="text-2xl font-black tracking-tight leading-none mb-1.5 text-pop-ink">
                 {card.value}
               </p>
               <p className="text-xs text-muted-foreground truncate">

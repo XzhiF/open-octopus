@@ -27,33 +27,35 @@ export function ThinkingBlock({ message }: ThinkingBlockProps) {
   if (!hasThinking) return null
 
   return (
-    <div className="mb-3">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors mb-1.5"
-      >
-        <Brain className="w-3.5 h-3.5" />
-        <span className="font-medium">
-          {isActive ? "思考中" : "思考"}
-        </span>
-        {isActive && (
-          <span className="tabular-nums">{elapsed}s</span>
+    <div className="mb-3 max-w-[90%]">
+      <div className="rounded-xl border-2 border-pop-bd bg-pop-purple-soft px-3 py-2 shadow-pop-sm">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-center gap-2 text-xs font-black text-pop-purple"
+        >
+          <Brain className={`w-3.5 h-3.5 shrink-0 ${isActive ? "pop-pulse" : ""}`} />
+          <span>
+            {isActive ? "思考中" : "思考"}
+          </span>
+          {isActive && (
+            <span className="tabular-nums">{elapsed}s</span>
+          )}
+          {!isActive && message.thinkingDuration && (
+            <span className="text-pop-green">耗时{message.thinkingDuration}</span>
+          )}
+          {!isActive && !message.thinkingDuration && (
+            <span className="text-pop-green">完成</span>
+          )}
+          <ChevronDown
+            className={`w-3 h-3 ml-auto transition-transform ${expanded ? "rotate-0" : "-rotate-90"}`}
+          />
+        </button>
+        {expanded && (
+          <div className="pop-dash mt-1.5 pt-1.5 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+            {message.thinkingContent}
+          </div>
         )}
-        {!isActive && message.thinkingDuration && (
-          <span className="text-pop-green">耗时{message.thinkingDuration}</span>
-        )}
-        {!isActive && !message.thinkingDuration && (
-          <span className="text-pop-green">完成</span>
-        )}
-        <ChevronDown
-          className={`w-3 h-3 transition-transform ${expanded ? "rotate-0" : "-rotate-90"}`}
-        />
-      </button>
-      {expanded && (
-        <div className="border-l-2 border-border ml-2 pl-3 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
-          {message.thinkingContent}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

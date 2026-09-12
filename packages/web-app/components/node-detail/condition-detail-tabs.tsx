@@ -8,7 +8,7 @@ interface ConditionDetailTabsProps { step?: StepExecution; isRunning: boolean }
 export function ConditionDetailTabs({ step, isRunning }: ConditionDetailTabsProps) {
   return (
     <Tabs defaultValue="expression">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="expression" className="text-xs">表达式</TabsTrigger>
         <TabsTrigger value="cases" className="text-xs">分支</TabsTrigger>
         <TabsTrigger value="snapshot" className="text-xs">变量快照</TabsTrigger>
