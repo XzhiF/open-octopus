@@ -593,7 +593,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             onClick={onClose}
             aria-label="关闭"
             title="关闭（Esc 同效）"
-            className="grid size-[18px] shrink-0 place-items-center rounded-full border-[1.5px] border-pop-red/70 text-[10px] leading-none text-pop-red transition-colors hover:bg-pop-red hover:text-white"
+            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors pop-press hover:bg-pop-red/90"
           >
             <span aria-hidden>✕</span>
           </button>

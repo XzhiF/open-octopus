@@ -293,7 +293,7 @@ describe("TaskModal 接线（新壳）", () => {
     expect(document.querySelector('[data-task-modal-status="running"]')).toBeTruthy()
     // 旧 header 副标题与旧 footer 横幅绝迹
     expect(screen.queryByText("执行")).toBeNull()
-    // 悬浮关闭 X 让位条内红圈
+    // 悬浮关闭 X 让位条内关闭方糖
     expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull()
     expect(document.querySelector('[data-terminal-bar] button[aria-label="关闭"]')).toBeTruthy()
     expect(screen.getByText(/■ 中止/)).toBeTruthy()

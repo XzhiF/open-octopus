@@ -76,7 +76,10 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-4 right-4 grid size-7 place-items-center rounded-full border-2 border-pop-bd bg-pop-paper text-pop-dim opacity-80 shadow-pop-sm transition-all hover:opacity-100 hover:bg-pop-yellow focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            // 方糖化（2026-09-12）：原 rounded-full 圆圈包 X 在波普皮肤里突兀，
+            // 改为与全站 Memphis 按钮同语言的圆角方块 + 黑边 + 硬投影 + pop-press。
+            // 保留中性纸白/hover 黄配色（红实心只适配深色导航条，见 task-run-console）。
+            className="pop-press absolute top-4 right-4 grid size-7 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-paper text-pop-dim shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors hover:bg-pop-yellow hover:text-pop-ink focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">Close</span>

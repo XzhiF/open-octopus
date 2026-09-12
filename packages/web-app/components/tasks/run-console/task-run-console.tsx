@@ -4,7 +4,7 @@
 // （2026-09-12 执行弹窗改版·方案已拍板 tmp/exec-modal-proto）。
 //
 //   ┌ terminal 导航条（28px，与草稿窗同款壳）：红绿灯 + 标题 + 状态 pill +
-//   │   语境 token（秒表/AI 账目/已等时长）+ 动作簇（触发/退回草稿/中止/⛶/红圈）
+//   │   语境 token（秒表/AI 账目/已等时长）+ 动作簇（触发/退回草稿/中止/⛶/关闭方糖）
 //   ├ 左 rail：Phase 流水线 —— 唯一的状态呈现与导航（吸收 PhaseTimeline，
 //   │   票 11 testid 钉点 phase-timeline/phase-row-*/phase-round-*/legacy 全保）
 //   ├ 右 surface：选中 Phase 的控制台（PhaseSurface）/ 总战报（ReportSurface）
@@ -310,7 +310,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
             onClick={onClose}
             aria-label="关闭"
             title="关闭（Esc 同效）"
-            className="grid size-[18px] shrink-0 place-items-center rounded-full border-[1.5px] border-pop-red/70 text-[10px] leading-none text-pop-red transition-colors hover:bg-pop-red hover:text-white"
+            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors pop-press hover:bg-pop-red/90"
           >
             <span aria-hidden>✕</span>
           </button>
