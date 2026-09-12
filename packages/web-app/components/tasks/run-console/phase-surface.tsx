@@ -92,8 +92,9 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
   const tickets = batch?.files.filter((f) => f.path.includes("/issues/")) ?? []
   const others = batch?.files.filter((f) => !f.path.includes("/issues/") && !/(^|\/)spec\.md$/i.test(f.path)) ?? []
 
-  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string) => (
+  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string, key?: string) => (
     <button
+      key={key}
       onClick={onClick}
       title={title}
       className={`rounded-[7px] border-[1.5px] border-pop-bd bg-pop-bg px-1.5 py-0.5 font-mono text-[10.5px] transition-colors hover:bg-pop-yellow-soft ${cls}`}
@@ -122,6 +123,7 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
           </span>,
           () => setViewing({ file: f.path }),
           "",
+          f.path,
           f.path,
         )
       })}
