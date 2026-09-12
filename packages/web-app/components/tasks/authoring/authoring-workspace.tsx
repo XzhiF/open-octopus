@@ -503,7 +503,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         onPointerDown={chrome?.onHeaderPointerDown}
         title={chrome ? "按住空白处拖拽移动窗口" : undefined}
         className={
-          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[2.5px] border-pop-bd bg-pop-ink px-2.5 pr-8 font-mono text-[11px] text-pop-bg " +
+          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[2.5px] border-pop-bd bg-pop-ink px-2.5 font-mono text-[11px] text-pop-bg " +
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
@@ -586,6 +586,16 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             }
           >
             {enqueueBusy ? <Spinner className="size-3" /> : <span aria-hidden>⏎</span>} 入队执行
+          </button>
+          {/* 关闭钮收进条内（2026-09-12 反馈）：入队右侧、同框 —— 原右上角
+              悬浮 X 经 showCloseButton=false 摘除（overlay/Esc 仍可关）。 */}
+          <button
+            onClick={onClose}
+            aria-label="关闭"
+            title="关闭（Esc 同效）"
+            className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-red/60 hover:text-pop-red"
+          >
+            <span aria-hidden className="text-[11px] leading-none">✕</span>
           </button>
         </span>
       </div>

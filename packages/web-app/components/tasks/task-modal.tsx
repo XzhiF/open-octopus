@@ -245,7 +245,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          showCloseButton
+          showCloseButton={mode !== "authoring-workspace"}
           className={
             isFullscreen
               ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
