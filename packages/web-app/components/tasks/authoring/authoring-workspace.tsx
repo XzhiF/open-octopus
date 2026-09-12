@@ -593,9 +593,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             onClick={onClose}
             aria-label="关闭"
             title="关闭（Esc 同效）"
-            className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-red/60 hover:text-pop-red"
+            className="grid size-[18px] shrink-0 place-items-center rounded-full border-[1.5px] border-pop-red/70 text-[10px] leading-none text-pop-red transition-colors hover:bg-pop-red hover:text-white"
           >
-            <span aria-hidden className="text-[11px] leading-none">✕</span>
+            <span aria-hidden>✕</span>
           </button>
         </span>
       </div>
@@ -663,7 +663,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
                     data-assist-trigger="moa-requirements-review"
                     title="运行专家咨询辅助工作流（MoA / Debate / 单专家）"
                   >
-                    <Brain className="size-3" /> 🧠 专家咨询
+                    <Brain className="size-3" /> 专家咨询
                   </button>
                   <MoATriggerDialog
                     task={task}
