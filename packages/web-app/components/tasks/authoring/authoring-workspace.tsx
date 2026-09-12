@@ -563,15 +563,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               <Trash2 className="size-2.5" /> 废弃
             </button>
           )}
-          {chrome && (
-            <button
-              onClick={chrome.onToggleFullscreen}
-              title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
-              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-bg/40 hover:text-pop-yellow"
-            >
-              {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-            </button>
-          )}
+          {/* 入队 ↔ 全屏换序（2026-09-12 反馈）：主操作紧跟废弃，⛶ 收边到关窗前 */}
           <button
             data-gate={canEnqueue ? "ok" : "no"}
             onClick={handleEnqueue}
@@ -587,6 +579,15 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           >
             {enqueueBusy ? <Spinner className="size-3" /> : <span aria-hidden>⏎</span>} 入队执行
           </button>
+          {chrome && (
+            <button
+              onClick={chrome.onToggleFullscreen}
+              title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
+              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-bg/40 hover:text-pop-yellow"
+            >
+              {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+            </button>
+          )}
           {/* 关闭钮收进条内（2026-09-12 反馈）：入队右侧、同框 —— 原右上角
               悬浮 X 经 showCloseButton=false 摘除（overlay/Esc 仍可关）。 */}
           <button
