@@ -69,6 +69,43 @@ describe("Nested hierarchy callback propagation", () => {
     })
   })
 
+  describe("SubWorkflowExecutor — onNodeCompacted forwarding (agent_events 散装收编)", () => {
+    it("forwards child compaction with scoped node id so parent replaceMergedEvents hits the fragment rows", async () => {
+      const { SubWorkflowExecutor } = await import("../executors/sub-workflow")
+      const { VarPool } = await import("@octopus/shared")
+
+      const onNodeCompacted = vi.fn()
+      const executor = new SubWorkflowExecutor(
+        { id: "call-analysis", type: "sub_workflow" as const, workflow: "child-wf" },
+        new VarPool(),
+        { cwd: "/tmp", callbacks: { onNodeCompacted } },
+      )
+
+      const childCallbacks = (executor as any).createChildCallbacks([], "child-wf")
+      const merged = [{ event: "tool_call", startedAt: "2026-09-14T00:00:00.000Z" }]
+      childCallbacks.onNodeCompacted("ticket-01", merged)
+
+      expect(onNodeCompacted).toHaveBeenCalledWith("call-analysis:ticket-01", merged)
+    })
+
+    it("inside a loop the scoped id carries the iter suffix (matches fragment write id)", async () => {
+      const { SubWorkflowExecutor } = await import("../executors/sub-workflow")
+      const { VarPool } = await import("@octopus/shared")
+
+      const onNodeCompacted = vi.fn()
+      const executor = new SubWorkflowExecutor(
+        { id: "call-analysis", type: "sub_workflow" as const, workflow: "child-wf" },
+        new VarPool(),
+        { cwd: "/tmp", iterationIndex: 2, callbacks: { onNodeCompacted } },
+      )
+
+      const childCallbacks = (executor as any).createChildCallbacks([], "child-wf")
+      childCallbacks.onNodeCompacted("ticket-01", [])
+
+      expect(onNodeCompacted).toHaveBeenCalledWith("call-analysis:ticket-01-iter2", [])
+    })
+  })
+
   describe("RuntimeNodeMeta type", () => {
     it("is exported from engine module", async () => {
       const engine = await import("../engine")
