@@ -433,7 +433,10 @@ export class ExecutionDAO extends BaseDAO {
       `)
       for (let i = 0; i < mergedEvents.length; i++) {
         const e = mergedEvents[i]
-        const ts = e.startedAt || e.timestamp || new Date().toISOString()
+        // timestamp 列是 INTEGER —— 必须落 epoch-ms。历史 bug：此处曾直存 ISO 串，
+        // SQLite 整数恒小于文本，retention 的 `timestamp < ?`(epoch) 对这些行永不命中
+        // → 合并事件(节点收尾后的存活者)无限累积。v43 迁移回填存量,写侧就此收口。
+        const ts = toEpochMs(e.startedAt ?? e.timestamp) || Date.now()
         // For merged block types, store the full event as JSON so the read path
         // can round-trip without losing startedAt/completedAt/toolName/etc.
         const isMergedType = ExecutionDAO.MERGED_EVENT_TYPES.has(e.event)
@@ -441,7 +444,7 @@ export class ExecutionDAO extends BaseDAO {
           ? JSON.stringify(e)
           : (e.content ?? e.line ?? (e.lines ? e.lines.join("\n") : null))
         // 与读侧 assignTurnsToEvents 同一真相源(llm_calls 时间窗)，写读一致。
-        const evMs = toEpochMs(e.startedAt ?? e.timestamp)
+        const evMs = ts
         const turn = (bounds.length > 0 && evMs > 0) ? deriveTurnForTs(bounds, evMs) : (e.turnIndex ?? 1)
         insert.run(
           neId, i, turn, e.event, ts,

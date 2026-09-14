@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 42
+export const SCHEMA_VERSION = 43
 
 /**
  * Apply the complete unified schema to the given database.
@@ -102,6 +102,46 @@ function handleSchemaMigrations(db: Database.Database): void {
   // schema v42 (ADR-0021 票03): schedules stops being a task's shadow — the polymorphic
   // origin back-reference and the envelope's due-time column come off.
   migrateSchedulesV42DropOriginCols(db)
+
+  // schema v43 (perf/agent-event-optimize): agent_events timestamp 类型收口 + 冗余索引下线。
+  migrateAgentEventsV43(db)
+}
+
+/**
+ * schema v43: agent_events 两项收口 —
+ * 1. 回填文本时间戳:合并写路径 (replaceMergedEvents) 历史上往 INTEGER 列直存 ISO 串。
+ *    SQLite 排序里整数恒小于文本,retention 的 `WHERE timestamp < <epoch-ms>` 对这些行
+ *    永不命中 → 合并事件(节点收尾后的存活者)无限累积。统一换算成 epoch-ms。
+ *    幂等:typeof='text' 不再命中即完成;无法解析的串保留原样并告警。
+ * 2. 删除 idx_agent_events_node:与 PK 自动索引 (node_execution_id, event_order) 及
+ *    idx_agent_events_turn 的左前缀完全重复,每次 insert 白维护一棵 B-tree。
+ *    替代的 idx_agent_events_ts(服务 retention 范围扫描)由 schema.sql 的
+ *    CREATE INDEX IF NOT EXISTS 在每次启动时自动补齐,不在此处建。
+ */
+function migrateAgentEventsV43(db: Database.Database): void {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_events'").all()
+  if (tables.length === 0) return
+
+  try {
+    const fixed = db.prepare(`
+      UPDATE agent_events
+      SET timestamp = CAST(ROUND((julianday(timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      WHERE typeof(timestamp) = 'text' AND julianday(timestamp) IS NOT NULL
+    `).run()
+    if (fixed.changes > 0) {
+      console.log(`[schema v43] agent_events: converted ${fixed.changes} ISO text timestamps → epoch-ms`)
+    }
+    const unparseable = (db.prepare(
+      "SELECT COUNT(*) AS c FROM agent_events WHERE typeof(timestamp) = 'text'"
+    ).get() as { c: number }).c
+    if (unparseable > 0) {
+      console.warn(`[schema v43] agent_events: ${unparseable} unparseable text timestamps left as-is`)
+    }
+  } catch (err) {
+    console.warn(`[schema v43] timestamp backfill skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  db.exec("DROP INDEX IF EXISTS idx_agent_events_node")
 }
 
 /**

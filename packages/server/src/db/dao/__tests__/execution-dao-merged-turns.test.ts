@@ -67,4 +67,28 @@ describe("replaceMergedEvents — llm_calls 窗口盖轮次", () => {
     const harness = (db.prepare(`SELECT COUNT(*) c FROM agent_events WHERE node_execution_id=? AND event_type='harness_timeout_cascade'`).get(NE) as { c: number }).c
     expect(harness).toBe(1)
   })
+
+  // v43 回归：ISO startedAt 曾被原样写进 INTEGER 列 → typeof='text'，
+  // retention 的 `timestamp < <epoch-ms>` 永不命中(SQLite 整数恒小于文本) → 合并事件无限累积。
+  it("timestamp 以整数 epoch-ms 落库（ISO startedAt 不再存文本）", () => {
+    dao.replaceMergedEvents(EXE, NODE, [
+      { event: "tool_call", startedAt: "2026-08-14T05:54:42.008Z", toolName: "Bash" },
+      { event: "end", timestamp: "2026-08-14T06:00:00.000Z" },
+      { event: "thinking_block" }, // 无时间戳 → Date.now() 兜底，仍是整数
+    ])
+    const rows = db.prepare(`SELECT typeof(timestamp) t, timestamp ts FROM agent_events WHERE node_execution_id=? ORDER BY event_order`).all(NE) as Array<{ t: string; ts: number }>
+    expect(rows).toHaveLength(3)
+    expect(rows.every(r => r.t === "integer")).toBe(true)
+    expect(Math.abs(rows[0].ts - Date.parse("2026-08-14T05:54:42.008Z"))).toBeLessThanOrEqual(2)
+  })
+
+  it("旧 ISO 合并事件可被 retention 删除（修 bug 前永删不掉）", () => {
+    dao.replaceMergedEvents(EXE, NODE, [
+      { event: "tool_call", startedAt: "2026-01-01T00:00:00.000Z", toolName: "Bash" },
+    ])
+    const cutoff90d = Date.now() - 90 * 86_400_000
+    const deleted = dao.deleteOldAgentEvents(cutoff90d).changes
+    expect(deleted).toBe(1)
+    expect((db.prepare("SELECT COUNT(*) c FROM agent_events").get() as { c: number }).c).toBe(0)
+  })
 })
