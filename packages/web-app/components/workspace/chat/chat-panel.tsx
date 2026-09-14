@@ -34,7 +34,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
 
   if (streamEndState === 'done') {
     return (
-      <div className="px-4 py-1.5 text-xs text-pop-green border-t border-border/50 flex items-center gap-1.5 shrink-0">
+      <div className="px-4 py-1.5 text-xs text-pop-green bg-pop-paper border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <Check className="w-3 h-3 shrink-0" />
         <span>完成 耗时 {formatDuration(elapsed * 1000)}</span>
       </div>
@@ -43,7 +43,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
 
   if (streamEndState === 'aborted') {
     return (
-      <div className="px-4 py-1.5 text-xs text-pop-red border-t border-border/50 flex items-center gap-1.5 shrink-0">
+      <div className="px-4 py-1.5 text-xs text-pop-red bg-pop-paper border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <X className="w-3 h-3 shrink-0" />
         <span>已中断 {formatDuration(elapsed * 1000)}</span>
       </div>
@@ -51,7 +51,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
   }
 
   return (
-    <div className="px-4 py-1.5 text-xs text-muted-foreground border-t border-border/50 flex items-center gap-2 shrink-0">
+    <div className="px-4 py-1.5 text-xs text-muted-foreground bg-pop-paper border-t border-border/50 flex items-center gap-2 shrink-0">
       <div className="w-2 h-2 bg-pop-cyan rounded-full animate-pulse shrink-0" />
       <span>AI 正在工作 {formatDuration(elapsed * 1000)}</span>
     </div>
@@ -170,7 +170,7 @@ export function ChatPanel({
   }, [messages.length])
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full min-h-0">
       <SessionTabs
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -182,14 +182,16 @@ export function ChatPanel({
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 flex flex-col">
         {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            开始对话 — 发送消息即可与 AI 助手交互
+          <div className="flex items-center justify-center h-full px-4">
+            <div className="w-full max-w-xs rounded-xl border-2 border-dashed border-pop-bd/40 bg-pop-paper py-10 px-4 text-center text-sm text-muted-foreground shadow-pop-sm">
+              开始对话 — 发送消息即可与 AI 助手交互
+            </div>
           </div>
         )}
         {hasMoreMessages && (
           <button
             onClick={onLoadMoreMessages}
-            className="mb-3 w-full text-xs text-muted-foreground hover:text-foreground py-1.5 border border-border/50 rounded-md transition-colors"
+            className="mb-3 w-full text-xs font-bold text-pop-dim hover:text-pop-foreground py-1.5 rounded-lg border-2 border-pop-bd/40 bg-pop-paper hover:bg-pop-yellow-soft transition-colors"
           >
             加载更多消息
           </button>
@@ -223,7 +225,7 @@ export function ChatPanel({
 
       <StreamingStatusBar isStreaming={isStreaming} streamStartMs={streamStartMs} streamEndState={streamEndState} />
 
-      <div className="border-t border-border p-3 shrink-0">
+      <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-3 shrink-0">
         <div className="flex items-end gap-2">
           <div ref={inputWrapRef} className="flex-1 min-w-0">
             <textarea
@@ -235,14 +237,14 @@ export function ChatPanel({
               aria-label="发送消息给 AI 助手"
               rows={1}
               disabled={isStreaming}
-              className="w-full bg-secondary rounded-lg px-3 py-2 text-sm resize-none outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 max-h-[120px] placeholder:text-xs"
+              className="w-full bg-pop-bg rounded-xl border-2 border-pop-bd text-pop-ink px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-pop-bd disabled:opacity-50 max-h-[120px] placeholder:text-xs"
             />
           </div>
           {isStreaming ? (
             <button
               onClick={onAbort}
               aria-label="停止生成"
-              className="p-2 bg-pop-red hover:bg-pop-red/90 text-white rounded-lg transition-colors shrink-0"
+              className="p-2 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft transition-colors shrink-0"
               title="停止生成"
             >
               <Square className="w-4 h-4" aria-hidden="true" />
@@ -252,7 +254,7 @@ export function ChatPanel({
               onClick={handleSend}
               disabled={!input.trim()}
               aria-label="发送消息"
-              className="p-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg transition-colors shrink-0 disabled:opacity-50"
+              className="p-2 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90 transition-colors shrink-0 disabled:opacity-50"
             >
               <Send className="w-4 h-4" aria-hidden="true" />
             </button>

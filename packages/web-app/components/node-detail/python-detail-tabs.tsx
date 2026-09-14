@@ -11,7 +11,7 @@ interface PythonDetailTabsProps {
 export function PythonDetailTabs({ step, isRunning }: PythonDetailTabsProps) {
   return (
     <Tabs defaultValue="output">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="output" className="text-xs">输出</TabsTrigger>
         <TabsTrigger value="script" className="text-xs">脚本</TabsTrigger>
         <TabsTrigger value="traceback" className="text-xs">Traceback</TabsTrigger>

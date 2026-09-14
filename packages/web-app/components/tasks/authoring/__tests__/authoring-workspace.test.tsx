@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import type { ReactNode } from "react"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task } from "@octopus/shared"
 import type { SelectedProject } from "@/components/scheduler/project-selector"
@@ -71,13 +72,21 @@ vi.mock("@/hooks/useAgentChat", () => ({
   }),
 }))
 
-// ChatArea: stub — the workspace's job is to mount it + the command bar, not
+// ChatArea: stub — the workspace's job is to mount it + the composer slots, not
 // to reproduce chat internals (those have their own tests). It surfaces the
 // aggregated slash-commands it receives (AC7: the /-autocomplete lives inside
-// ChatArea since the command-bar chips were removed).
+// ChatArea) and the composer placeholder/leading slots (2026-09-12 改版：辅助条
+// 退役 → 技能计数提示进 placeholder、专家咨询进 composerLeading)。
 vi.mock("@/components/agent/chat/ChatArea", () => ({
-  ChatArea: (props: { onSend: (m: string) => void; commands?: Array<{ name: string; description?: string }> }) => (
+  ChatArea: (props: {
+    onSend: (m: string) => void
+    commands?: Array<{ name: string; description?: string }>
+    composerPlaceholder?: string
+    composerLeading?: ReactNode
+  }) => (
     <div data-testid="chat-area">
+      <textarea data-testid="chat-input" readOnly placeholder={props.composerPlaceholder} />
+      <div data-testid="composer-leading">{props.composerLeading}</div>
       <button data-testid="chat-send" onClick={() => props.onSend("hi")}>send</button>
       {(props.commands ?? []).map((c) => (
         <span key={c.name} data-testid={`slash-cmd-${c.name}`}>/{c.name}</span>
@@ -196,9 +205,9 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
     const task = makeTask({ id: "t1" })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
     await waitFor(() => {
-      // Command bar shows the aggregated count (open-spec group → 2 commands;
-      // default group contributes nothing — D17 empty marker, no commands).
-      expect(screen.getByText("输入 / 调用技能（2 个可用）")).toBeDefined()
+      // 聚合计数收进输入框 placeholder（2026-09-12 辅助条退役；open-spec 组 →
+      // 2 commands；default 组 D17 空标记不贡献）。
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("输入 / 调用技能（2 个可用）")
     })
     // The aggregated slash-commands are handed to the chat's /-autocomplete.
     expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
@@ -225,7 +234,9 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
       } as Task["task_spec"],
     })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
-    await waitFor(() => expect(screen.getByText("输入 / 调用技能（2 个可用）")).toBeDefined())
+    await waitFor(() =>
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("输入 / 调用技能（2 个可用）"),
+    )
     // Locked group's commands are present; the unselected group's is not.
     expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
     expect(screen.getByTestId("slash-cmd-spec-review")).toBeDefined()
@@ -239,7 +250,7 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
     })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
     await waitFor(() => {
-      expect(screen.getByText("无额外命令（仅内置 spec-field 流程）")).toBeDefined()
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("无额外命令（仅内置 spec-field 流程）")
     })
   })
 })

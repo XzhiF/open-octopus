@@ -76,7 +76,10 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-4 right-4 grid size-7 place-items-center rounded-full border-2 border-pop-bd bg-pop-paper text-pop-dim opacity-80 shadow-pop-sm transition-all hover:opacity-100 hover:bg-pop-yellow focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            // 关闭方糖（2026-09-12 两轮反馈）：圆圈包 X 突兀 + size-7 太大 ——
+            // 与 terminal 导航条（task-run-console/authoring-workspace）完全同款：
+            // 19px 红实心方糖 + 黑边 + 硬投影 + pop-press。
+            className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3"
           >
             <XIcon />
             <span className="sr-only">Close</span>

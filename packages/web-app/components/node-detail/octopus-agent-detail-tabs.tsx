@@ -30,7 +30,7 @@ export function OctopusAgentDetailTabs({
 
   return (
     <Tabs defaultValue="traces">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="traces" className="text-xs">追踪</TabsTrigger>
         <TabsTrigger value="cost" className="text-xs">成本</TabsTrigger>
         <TabsTrigger value="info" className="text-xs">信息</TabsTrigger>

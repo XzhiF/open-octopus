@@ -8,7 +8,7 @@ interface ApprovalDetailTabsProps { step?: StepExecution; isRunning: boolean }
 export function ApprovalDetailTabs({ step, isRunning }: ApprovalDetailTabsProps) {
   return (
     <Tabs defaultValue="decision">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="decision" className="text-xs">决策</TabsTrigger>
         <TabsTrigger value="options" className="text-xs">选项</TabsTrigger>
         <TabsTrigger value="auto-answer" className="text-xs">Auto Answer</TabsTrigger>

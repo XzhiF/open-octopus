@@ -110,7 +110,7 @@ describe("QuestionCard", () => {
       expect(screen.queryByText("提交答案")).not.toBeInTheDocument()
     })
 
-    it("uses amber border throughout preparing phase", () => {
+    it("uses amber-soft sticker tint throughout preparing phase", () => {
       const { container } = render(
         <QuestionCard
           message={makeMessage(singleSelectQuestions, { displayType: "tool_call" })}
@@ -119,9 +119,9 @@ describe("QuestionCard", () => {
         />
       )
 
-      const card = container.querySelector("[class*='border-l-amber-400']")
+      const card = container.querySelector("[class*='bg-pop-amber-soft']")
       expect(card).toBeInTheDocument()
-      expect(container.querySelector("[class*='border-l-blue-400']")).not.toBeInTheDocument()
+      expect(container.querySelector("[class*='bg-pop-green-soft']")).not.toBeInTheDocument()
     })
   })
 
@@ -212,20 +212,20 @@ describe("QuestionCard", () => {
       expect(screen.getByText("答案已提交")).toBeInTheDocument()
     })
 
-    it("transitions border color to emerald after submission", async () => {
+    it("transitions sticker tint to green after submission", async () => {
       const { container } = render(
         <QuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />
       )
 
-      // Initially amber
-      expect(container.querySelector("[class*='border-l-amber-400']")).toBeInTheDocument()
+      // Initially amber-soft sticker (pop skin)
+      expect(container.querySelector("[class*='bg-pop-amber-soft']")).toBeInTheDocument()
 
       const user = userEvent.setup()
       await user.click(screen.getByText("工作流定义"))
       await user.click(screen.getByText("提交答案"))
 
-      // After submission, emerald
-      expect(container.querySelector("[class*='border-l-emerald-400']")).toBeInTheDocument()
+      // After submission, green-soft sticker
+      expect(container.querySelector("[class*='bg-pop-green-soft']")).toBeInTheDocument()
     })
 
     it("shows answered header after submission", async () => {

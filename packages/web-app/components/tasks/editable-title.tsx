@@ -25,13 +25,16 @@ import { Pencil } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { updateTask } from "@/lib/tasks-api"
+import { cn } from "@/lib/utils"
 
 export interface EditableTitleProps {
   task: Task | null
   onMutated: () => void
+  /** "term" = 深色 terminal 导航条内嵌款（mono、黄字、虚下划线，2026-09-12 草稿改版）。 */
+  variant?: "default" | "term"
 }
 
-export function EditableTitle({ task, onMutated }: EditableTitleProps) {
+export function EditableTitle({ task, onMutated, variant = "default" }: EditableTitleProps) {
   const isDraft = task?.status === "draft"
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(task?.name ?? "")
@@ -43,6 +46,17 @@ export function EditableTitle({ task, onMutated }: EditableTitleProps) {
   useEffect(() => { setDraft(task?.name ?? "") }, [task?.name])
 
   if (!isDraft) {
+    // term 变体（执行态弹窗的 terminal 导航条，2026-09-21 改版）：只读标签也
+    // 要长成条内白字 —— 浅色 text-base 标题在深色条上不可见。与草稿 term 变体
+    // 同一纪律：不挂 DialogTitle（裸挂载会抛 `must be used within Dialog`），
+    // a11y 标题由 TaskModal 的 sr-only DialogTitle 兜底。
+    if (variant === "term") {
+      return (
+        <span className="min-w-0 max-w-[36ch] truncate font-mono text-[11px] font-bold text-pop-bg">
+          {task?.name ?? "任务"}
+        </span>
+      )
+    }
     return <DialogTitle className="text-base truncate">{task?.name ?? "新建任务"}</DialogTitle>
   }
 
@@ -79,8 +93,11 @@ export function EditableTitle({ task, onMutated }: EditableTitleProps) {
     }
   }
 
-  return (
-    <DialogTitle className="group/title text-base min-w-0">
+  // term 变体（terminal 导航条内嵌）不包 DialogTitle —— Radix 要求 Dialog
+  // 上下文，而 AuthoringWorkspace 会被单测裸挂载；草稿态的 DialogTitle 由
+  // TaskModal 以 sr-only 形式兜底（a11y 标题不缺）。
+  const inner = (
+    <>
       {editing ? (
         <input
           ref={inputRef}
@@ -94,7 +111,11 @@ export function EditableTitle({ task, onMutated }: EditableTitleProps) {
           disabled={saving}
           aria-label="编辑任务标题"
           data-title-edit-input
-          className="w-72 max-w-[60vw] bg-muted/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary"
+          className={
+            variant === "term"
+              ? "w-64 max-w-[50vw] rounded bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-pop-bg outline-none focus:ring-1 focus:ring-pop-yellow"
+              : "w-72 max-w-[60vw] bg-muted/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary"
+          }
         />
       ) : (
         <button
@@ -102,12 +123,28 @@ export function EditableTitle({ task, onMutated }: EditableTitleProps) {
           onClick={startEdit}
           title="点击编辑标题"
           data-title-edit
-          className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-left hover:text-primary transition-colors"
+          className={cn(
+            "inline-flex items-center gap-1.5 min-w-0 max-w-full text-left transition-colors",
+            variant === "term"
+              ? "min-w-0 max-w-[36ch] font-mono text-[11px] font-bold text-pop-yellow hover:underline hover:decoration-dashed hover:underline-offset-4"
+              : "hover:text-primary",
+          )}
         >
-          <span className="truncate">{task?.name ?? "新建任务"}</span>
-          <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+          {variant === "term" && <span aria-hidden>✎</span>}
+          <span className={variant === "term" ? "truncate" : undefined}>{task?.name ?? "新建任务"}</span>
+          {variant !== "term" && <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />}
         </button>
       )}
+    </>
+  )
+
+  if (variant === "term") {
+    return <span className="inline-flex min-w-0 max-w-full items-center">{inner}</span>
+  }
+
+  return (
+    <DialogTitle className="group/title text-base min-w-0">
+      {inner}
     </DialogTitle>
   )
 }

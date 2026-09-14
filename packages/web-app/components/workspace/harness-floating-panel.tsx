@@ -77,8 +77,8 @@ function CollapsedPanel({
   return (
     <div
       className={cn(
-        "w-fit min-w-[170px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
-        hasActivity && "border-pop-purple/60",
+        "w-fit min-w-[170px] rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-sm cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
+        hasActivity && "border-pop-purple",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
       onMouseDown={handleMouseDown}
@@ -778,8 +778,8 @@ export function HarnessFloatingPanel({
     <div
       ref={panelRef}
       className={cn(
-        "fixed z-50 flex flex-col bg-card",
-        maximized ? "border-0" : "rounded-lg border border-border shadow-xl",
+        "fixed z-50 flex flex-col bg-pop-paper",
+        maximized ? "border-0" : "rounded-xl border-[2.5px] border-pop-bd shadow-pop",
       )}
       style={{
         left: pos.left,
@@ -794,11 +794,11 @@ export function HarnessFloatingPanel({
     >
       {/* Title bar with drag handle */}
       <div
-        className="flex items-center gap-2 px-3 py-2 border-b border-border cursor-grab active:cursor-grabbing shrink-0 bg-muted/30"
+        className="flex items-center gap-2 px-3 py-2 border-b-[2.5px] border-pop-bd cursor-grab active:cursor-grabbing shrink-0 bg-pop-yellow-soft"
         onMouseDown={handleDragStart}
       >
-        <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/60" />
-        <span className="text-xs font-medium flex-1 select-none">🛡️ 监控面板</span>
+        <GripHorizontal className="h-3.5 w-3.5 text-pop-dim/60" />
+        <span className="text-xs font-black text-pop-ink flex-1 select-none">🛡️ 监控面板</span>
         <Button
           variant="ghost"
           size="icon"

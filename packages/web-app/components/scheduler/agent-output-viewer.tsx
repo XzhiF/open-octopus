@@ -56,7 +56,7 @@ export function AgentOutputViewer({
 
       {/* Output content */}
       <div className="relative">
-        <pre className="bg-muted rounded-md p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96">
+        <pre className="rounded-lg border-2 border-pop-bd bg-pop-ink text-pop-paper p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96">
           {displayText}
           {isTruncated && !expanded && "..."}
         </pre>
