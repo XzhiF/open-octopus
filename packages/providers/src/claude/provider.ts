@@ -275,6 +275,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
     const timingOn = process.env.OCTOPUS_EXEC_TIMING === "1"
     let tFirstEvent = 0
     let tFirstMsgStart = 0
+    let tInit = 0
+    let firstEventDesc = ""
     const toolResultQueue: ToolResultEntry[] = []
     const pendingQuestions: PendingQuestion[] = []
     const pendingCompletions: PendingCompletion[] = []
@@ -379,7 +381,15 @@ export class ClaudeSDKProvider implements IAgentProvider {
 
     for await (const event of q) {
 
-      if (timingOn && !tFirstEvent) tFirstEvent = Date.now()
+      if (timingOn) {
+        if (!tFirstEvent) {
+          tFirstEvent = Date.now()
+          const ev = event as { type?: string; subtype?: string }
+          firstEventDesc = `${ev.type ?? "?"}${ev.subtype ? ":" + ev.subtype : ""}`
+        }
+        const ev2 = event as { type?: string; subtype?: string }
+        if (ev2.type === 'system' && ev2.subtype === 'init') tInit = Date.now()
+      }
 
       while (toolResultQueue.length > 0) {
         const tr = toolResultQueue.shift()!
@@ -632,7 +642,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
             tag: options?.timingTag ?? "",
             model: modelName,
             resumed: !!resumeSessionId,
+            t_entry: tEntry,
+            first_event: firstEventDesc,
             boot_ms: tFirstEvent ? tFirstEvent - tEntry : undefined,
+            init_ms: tInit ? tInit - tEntry : undefined,
             first_msg_ms: tFirstMsgStart ? tFirstMsgStart - tEntry : undefined,
             result_ms: Date.now() - tEntry,
           })}`)
