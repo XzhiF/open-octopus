@@ -266,6 +266,15 @@ export class ClaudeSDKProvider implements IAgentProvider {
     resumeSessionId?: string,
     options?: SendQueryOptions
   ): AsyncGenerator<MessageChunk> {
+    // ── [exec-timing] instrumentation (OCTOPUS_EXEC_TIMING=1) ──────────────
+    // Attributes the per-node overhead: query() spawns a fresh CLI subprocess,
+    // which must boot (settings/plugins/skills load) and read the resumed
+    // session transcript before the first LLM round-trip. first_event_ms is the
+    // subprocess boot + init cost we want to eliminate/overlap.
+    const tEntry = Date.now()
+    const timingOn = process.env.OCTOPUS_EXEC_TIMING === "1"
+    let tFirstEvent = 0
+    let tFirstMsgStart = 0
     const toolResultQueue: ToolResultEntry[] = []
     const pendingQuestions: PendingQuestion[] = []
     const pendingCompletions: PendingCompletion[] = []
@@ -370,6 +379,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
 
     for await (const event of q) {
 
+      if (timingOn && !tFirstEvent) tFirstEvent = Date.now()
+
       while (toolResultQueue.length > 0) {
         const tr = toolResultQueue.shift()!
         yield {
@@ -404,6 +415,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
         const e = (event as unknown as { event: SDKStreamEvent }).event
 
         if (e.type === 'message_start') {
+          if (timingOn && !tFirstMsgStart) tFirstMsgStart = Date.now()
           currentMessageId = e.message?.id ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
           blockTypes.clear()
           // ★ 关键：用 SDK 返回的真实 model ID（e.message.model，例如 'claude-sonnet-4-5-20250827'），
@@ -615,6 +627,16 @@ export class ClaudeSDKProvider implements IAgentProvider {
       }
 
       else if (event.type === 'result') {
+        if (timingOn) {
+          console.log(`[exec-timing] provider-query ${JSON.stringify({
+            tag: options?.timingTag ?? "",
+            model: modelName,
+            resumed: !!resumeSessionId,
+            boot_ms: tFirstEvent ? tFirstEvent - tEntry : undefined,
+            first_msg_ms: tFirstMsgStart ? tFirstMsgStart - tEntry : undefined,
+            result_ms: Date.now() - tEntry,
+          })}`)
+        }
         const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
         // result.modelUsage is the ONLY authoritative source of per-model token totals.
         // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。

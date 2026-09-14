@@ -187,6 +187,7 @@ describe("JSONL log compaction", () => {
     }
 
     const logFile = join(logger.getLogDir(), `${nodeId}.jsonl`)
+    logger.flush() // log() is async-batched; drain before reading on disk
     const before = readFileSync(logFile, "utf8").split("\n").filter(Boolean).length
     expect(before).toBe(10)
 
@@ -298,6 +299,7 @@ describe("JSONL log compaction", () => {
     logger.log("node-d", "start", {})
 
     const logDir = join(tmpDir, "logs", "test-exec")
+    logger.flush() // log() is async-batched; drain before listing files
     const files = readdirSync(logDir)
 
     // node-a and node-c should be in outer loop's iteration file

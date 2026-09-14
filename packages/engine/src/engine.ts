@@ -427,6 +427,10 @@ export class WorkflowEngine {
       this.writeStateJson(result, durationMs)
     }
 
+    // Flush + release JSONL log fds before announcing completion (readers of
+    // onComplete may immediately read the log files).
+    this.logger?.close()
+
     this.callbacks?.onComplete?.(result.status)
 
     return {
@@ -966,16 +970,30 @@ export class WorkflowEngine {
         })
       }
 
+      const _et = process.env.OCTOPUS_EXEC_TIMING === "1"
+        ? { nodeEnd0: Date.now(), nodeEnd1: 0, compact1: 0, persist1: 0 }
+        : null
       this.callbacks?.onNodeEnd?.(node.id, nodeResult.status, nodeResult.durationMs, nodeResult, node.type)
+      if (_et) _et.nodeEnd1 = Date.now()
 
       // Compact JSONL after node completes
       try {
         const mergedEvents = this.logger?.compactFile(node.id)
+        if (_et) _et.compact1 = Date.now()
         if (mergedEvents && mergedEvents.length > 0) {
           this.callbacks?.onNodeCompacted?.(node.id, mergedEvents)
         }
+        if (_et) _et.persist1 = Date.now()
       } catch (err) {
         // compact failure is non-fatal
+      }
+      if (_et) {
+        console.log(`[exec-timing] node-tail ${JSON.stringify({
+          nodeId: node.id,
+          onNodeEnd_ms: _et.nodeEnd1 - _et.nodeEnd0,
+          compact_ms: (_et.compact1 ?? 0) - (_et.nodeEnd1 ?? 0),
+          persistMerged_ms: (_et.persist1 ?? 0) - (_et.compact1 ?? 0),
+        })}`)
       }
 
       return nodeResult

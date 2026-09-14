@@ -33,6 +33,9 @@ export interface SendQueryOptions {
   model?: string
   systemPrompt?: SystemPromptInput
   abortSignal?: AbortSignal
+  /** Free-form tag (usually the workflow node id) echoed into [exec-timing]
+   *  logs when OCTOPUS_EXEC_TIMING=1. No behavioral effect. */
+  timingTag?: string
   /** USD budget cap — SDK enforces it via `error_max_budget_usd` terminal result. */
   maxBudgetUsd?: number
   /** Hard cap on assistant API round-trips — SDK enforces it via `error_max_turns`. */

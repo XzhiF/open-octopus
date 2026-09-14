@@ -109,6 +109,7 @@ export class AgentExecutor implements NodeExecutor {
 
       const result = await this.runner.run({
         prompt,
+        timingTag: this.node.id,
         agent: this.node.agent,
         skills: this.node.skills,
         agents: this.resolveAgents(),
