@@ -1172,5 +1172,38 @@ nodes:
         cleanupDir(dir)
       }
     })
+
+    it("child callbacks forward onNodeCompacted with scoped node id — 子流合并产物回流父侧收编碎片", async () => {
+      const dir = createTempDir()
+      try {
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a DAG",
+          workflow: "cb-test",
+        }
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: {},
+          outputDir: join(dir, "workflows"),
+          workflow: { name: "parent" },
+        })
+
+        const compactSpy = vi.fn()
+        executor["config"] = {
+          ...executor["config"],
+          callbacks: { onNodeCompacted: compactSpy },
+        }
+        const childCallbacks = (executor as any).createChildCallbacks([], "test-wf")
+
+        const merged = [{ event: "text_block", startedAt: "2026-09-14T00:00:00.000Z" }]
+        childCallbacks.onNodeCompacted("impl-node", merged)
+
+        expect(compactSpy).toHaveBeenCalledWith("plan:impl-node", merged)
+      } finally {
+        cleanupDir(dir)
+      }
+    })
   })
 })

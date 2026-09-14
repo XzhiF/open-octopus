@@ -710,8 +710,11 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspac
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_node_token_usages_node ON node_token_usages(node_execution_id);
 CREATE INDEX IF NOT EXISTS idx_ntu_composite ON node_token_usages(node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd);
-CREATE INDEX IF NOT EXISTS idx_agent_events_node ON agent_events(node_execution_id);
+-- agent_events: node 维度查询走 PK (node_execution_id, event_order) 左前缀即可,
+-- 曾有 idx_agent_events_node(node_execution_id) 与之重复 — v43 起删除(迁移侧 DROP)。
+-- idx_agent_events_ts 服务 data-retention 的 `timestamp < ?` 范围清理。
 CREATE INDEX IF NOT EXISTS idx_agent_events_turn ON agent_events(node_execution_id, turn_index);
+CREATE INDEX IF NOT EXISTS idx_agent_events_ts ON agent_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_node ON llm_calls(node_execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_execution ON llm_calls(execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);

@@ -767,6 +767,11 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
       onAgentEvent: (nodeId: string, event: any) => {
         this.config.callbacks?.onAgentEvent?.(scoped(nodeId), event)
       },
+      // 与 sub-workflow.ts 同因同修:子流节点 compact 产物以 scoped id 转发给父回调,
+      // 否则碎片(父执行 + 冒号 id)永远等不到 replaceMergedEvents 的收编。
+      onNodeCompacted: (nodeId: string, mergedEvents: any[]) => {
+        this.config.callbacks?.onNodeCompacted?.(scoped(nodeId), mergedEvents)
+      },
     }
   }
 
