@@ -5,6 +5,7 @@
 // 升级路径 = tracker onMessageStop 钩子逐条 INSERT 明细 + result 时 UPDATE 校准。
 
 import type { LLMCallRecord } from '@octopus/providers'
+import { LLM_CALL_SOURCE } from '@octopus/shared'
 import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import { ledgerCostUsd } from '../../db/dao/usage-ledger'
 import type { LlmCallRow } from '../../db/types'
@@ -65,7 +66,7 @@ export function captureChatRound(dao: TokenUsageDAO, ctx: ChatRoundCapture): voi
         node_id: null,
         session_id: sessionId,
         instance_id: null,
-        source: 'chat',
+        source: LLM_CALL_SOURCE.chat,
         trace_id: traceId,
         span_id: r.messageId ?? null,
       }))
@@ -99,7 +100,7 @@ export function captureChatRound(dao: TokenUsageDAO, ctx: ChatRoundCapture): voi
           model,
           usage: g.usage,
           costUsd: allPriced ? g.costs.reduce((a, c) => a + (c ?? 0), 0) : undefined,
-          source: 'chat',
+          source: LLM_CALL_SOURCE.chat,
           createdAt: new Date().toISOString(),
           sessionId,
           traceId,

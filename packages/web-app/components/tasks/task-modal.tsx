@@ -15,7 +15,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import {
-  Dialog, DialogContent, DialogHeader, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -24,12 +24,12 @@ import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
-import { Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2, Undo2 } from "lucide-react"
+import { Ban, Workflow, ExternalLink, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import { PROJECT_SYNC_EVENT, TASK_STATUS_EVENT, TASK_EXECUTION_EVENT } from "@octopus/shared"
 import {
-  getTask, abortTask, deleteTask, reopenTask,
+  getTask, abortTask, deleteTask,
   type TaskDetail, type TaskExecutionBadge, type TaskView,
 } from "@/lib/tasks-api"
 import { TriggerActions } from "@/components/tasks/trigger-dialog"
@@ -43,7 +43,8 @@ import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
 import { EditableTitle } from "./editable-title"
-import { TaskRunDetailView, RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
+import { TaskRunConsole } from "./run-console/task-run-console"
+import { RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
 import { createTask } from "@/lib/tasks-api"
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -96,8 +97,8 @@ function resolveMode(task: Task | null): ModalMode {
     return isComposite(task) ? "composite" : "simple-execution"
   }
   // task-phase-redesign 票 11 双态分流：v4 的 awaiting_review / archiving 是
-  // 「执行期的人机窗口」（验收/归档中），不是终态 — 走执行视图（TaskRunDetail
-  // View 顶部 PhaseTimeline；票 12 在此挂验收三栏）。旧逻辑会把它们误入
+  // 「执行期的人机窗口」（验收/归档中），不是终态 — 走执行视图（TaskRunConsole
+  // 的 rail+控制台；验收三栏证据面由控制台判决条拉起）。旧逻辑会把它们误入
   // terminal（渲染成「任务已中止」横幅）。
   if (task.status === "awaiting_review" || task.status === "archiving") {
     return isComposite(task) ? "composite" : "simple-execution"
@@ -245,7 +246,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          showCloseButton
+          showCloseButton={mode === "authoring-template" || mode === "composite"}
           className={
             isFullscreen
               ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
@@ -276,15 +277,30 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           }}
           overlayClassName={isFullscreen ? "bg-transparent" : undefined}
         >
-          <ModalHeader
-            task={task}
-            mode={mode}
-            isFullscreen={isFullscreen}
-            onToggleFullscreen={() => setIsFullscreen((f) => !f)}
-            onDeleteDraft={() => setDeleteConfirmOpen(true)}
-            onMutated={onMutated}
-            onHeaderPointerDown={startHeaderDrag}
-          />
+          {/* draft 工作台与执行态三模式（2026-09-12/09-21 改版）不再渲染
+              ModalHeader：各自的 terminal 导航条就是标题栏（拖窗/全屏/动作
+              经 chrome 传入，DialogTitle 由条内 EditableTitle term 变体挂）。
+              ModalHeader 只剩模板页 + composite。 */}
+          {mode === "authoring-workspace" && (
+            // Radix a11y：草稿模式下可见标题在 terminal 导航条里（EditableTitle
+            // term 变体，不挂 DialogTitle），这里补一个 sr-only 标题兜底。
+            <DialogTitle className="sr-only">{task?.name ?? "任务草稿"}</DialogTitle>
+          )}
+          {(mode === "simple-execution" || mode === "done" || mode === "terminal") && (
+            // 执行态控制台同款：条内标题是纯样式 span，sr-only 兜底。
+            <DialogTitle className="sr-only">{task?.name ?? "任务"}</DialogTitle>
+          )}
+          {(mode === "composite" || mode === "authoring-template") && (
+            <ModalHeader
+              task={task}
+              mode={mode}
+              isFullscreen={isFullscreen}
+              onToggleFullscreen={() => setIsFullscreen((f) => !f)}
+              onDeleteDraft={() => setDeleteConfirmOpen(true)}
+              onMutated={onMutated}
+              onHeaderPointerDown={startHeaderDrag}
+            />
+          )}
           <div className="flex-1 min-h-0 overflow-hidden">
             {mode === "authoring-template" && (
               <TemplatePickerMode
@@ -294,16 +310,35 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
               />
             )}
             {mode === "authoring-workspace" && task && (
-              <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+              <AuthoringWorkspace
+                task={task}
+                onMutated={onMutated}
+                onClose={() => onOpenChange(false)}
+                chrome={{
+                  isFullscreen,
+                  onToggleFullscreen: () => setIsFullscreen((f) => !f),
+                  onDeleteDraft: () => setDeleteConfirmOpen(true),
+                  onHeaderPointerDown: startHeaderDrag,
+                }}
+              />
             )}
-            {mode === "simple-execution" && task && (
-              <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+            {(mode === "simple-execution" || mode === "done" || mode === "terminal") && task && (
+              // 执行态控制台（2026-09-21 改版）：terminal 导航条 + Phase 流水线
+              // rail + 当前 phase 控制台，done/terminal 默认落「任务战报」。
+              <TaskRunConsole
+                task={task}
+                onMutated={onMutated}
+                onClose={() => onOpenChange(false)}
+                chrome={{
+                  isFullscreen,
+                  onToggleFullscreen: () => setIsFullscreen((f) => !f),
+                  onHeaderPointerDown: startHeaderDrag,
+                }}
+              />
             )}
             {mode === "composite" && task && (
               <CompositeMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
             )}
-            {mode === "done" && task && <DoneMode task={task} />}
-            {mode === "terminal" && task && <TerminalMode task={task} />}
           </div>
 
           {/* 🎪 八向缩放手柄:四边 + 四角(对边锚定,拖不出视口);
@@ -483,66 +518,10 @@ function TemplatePickerMode({
 //  自 bugfix 2026-08-19 起对全部 draft 不可达；v4-only UI 改版随契约修复删除。
 //  创作一律走 AuthoringWorkspace：task-author 对话 + v4 产出面板。)
 
-// ── Simple execution: full info body + trigger/abort footer ─────────
-
-function SimpleExecutionMode({ task, onMutated, onClose }: { task: TaskView; onMutated: () => void; onClose: () => void }) {
-  const [aborting, setAborting] = useState(false)
-  const [reopening, setReopening] = useState(false)
-  // server abortTask accepts ready/running — the button used to grey out on
-  // ready (canAbort=running only), strapping a not-yet-started task shut with
-  // no exit at all. Same source of truth as the server guard now.
-  const canAbort = task.status === "running" || task.status === "ready"
-  const canReopen = task.status === "ready"
-
-  const handleAbort = async () => {
-    setAborting(true)
-    try {
-      await abortTask(task.id)
-      toast.success("已中止任务，工作区将清理")
-      onMutated()
-      onClose()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "中止失败")
-    } finally {
-      setAborting(false)
-    }
-  }
-
-  const handleReopen = async () => {
-    setReopening(true)
-    try {
-      await reopenTask(task.id)
-      toast.success("已退回草稿 — 回到创作面板继续修改，改完可重新入队")
-      onMutated()
-      onClose()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "退回草稿失败")
-    } finally {
-      setReopening(false)
-    }
-  }
-
-  return (
-    <div className="flex flex-col h-full min-h-0" data-task-simple-execution>
-      <div className="flex-1 min-h-0">
-        <TaskRunDetailView task={task} />
-      </div>
-      <div className="shrink-0 flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
-        {canReopen && (
-          <Button variant="ghost" size="sm" onClick={handleReopen} disabled={reopening} data-task-reopen>
-            {reopening ? <Spinner className="size-4" /> : <Undo2 className="size-4" />}
-            退回草稿
-          </Button>
-        )}
-        <TriggerActions task={task} onMutated={onMutated} />
-        <Button variant="destructive" size="sm" onClick={handleAbort} disabled={!canAbort || aborting} data-task-abort>
-          {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
-          中止
-        </Button>
-      </div>
-    </div>
-  )
-}
+// ── Simple execution / done / terminal ─────────────────────────────
+// （2026-09-21 改版：SimpleExecutionMode/DoneMode/TerminalMode 三兄弟退役，
+//  统一由 run-console/TaskRunConsole 承接 —— 导航条收拢 footer 动作，
+//  banner/信息体五区去重进 rail+surface。）
 
 // ── Composite: composition DAG + N child cards + integration + SSE ──────
 
@@ -956,35 +935,4 @@ const STATUS_DOT_COLOR: Record<string, string> = {
   done: "bg-pop-green",
   failed: "bg-pop-red",
   aborted: "bg-pop-dim",
-}
-
-function DoneMode({ task }: { task: Task }) {
-  return (
-    <div className="flex flex-col h-full min-h-0" data-task-done>
-      <div className="shrink-0 flex items-center gap-2 border-b border-pop-green/30 bg-pop-green-soft px-5 py-2.5 text-sm text-pop-green">
-        <CheckCircle2 className="size-4" /> 任务完成{task.completed_at ? ` · ${new Date(task.completed_at).toLocaleString("zh-CN")}` : ""}
-      </div>
-      <div className="flex-1 min-h-0">
-        <TaskRunDetailView task={task} />
-      </div>
-    </div>
-  )
-}
-
-function TerminalMode({ task }: { task: Task }) {
-  const failed = task.status === "failed"
-  return (
-    <div className="flex flex-col h-full min-h-0" data-task-terminal>
-      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-pop-red/30 bg-pop-pink-soft text-pop-red" : "border-pop-bd/30 bg-pop-idle text-pop-dim"}`}>
-        {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
-        {failed ? "任务失败" : "任务已中止"}
-        <span className="ml-auto text-xs text-muted-foreground font-normal">
-          {failed ? "失败为终态 (G2)，不会自动重派，可新建任务重试" : "中止为终态，工作区已清理"}
-        </span>
-      </div>
-      <div className="flex-1 min-h-0">
-        <TaskRunDetailView task={task} />
-      </div>
-    </div>
-  )
 }

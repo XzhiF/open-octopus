@@ -39,7 +39,7 @@ import {
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-32 items-center justify-center rounded-md border bg-muted text-sm text-muted-foreground">
+    <div className="flex h-32 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-paper text-sm text-muted-foreground shadow-pop-sm">
       加载编辑器...
     </div>
   ),
@@ -104,12 +104,12 @@ export function WorkflowScheduleForm({
       {/* Mode toggle */}
       <div className="flex items-center justify-between">
         <Label className="text-xs text-muted-foreground">编辑模式</Label>
-        <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+        <div className="flex gap-1 rounded-xl border-2 border-pop-bd bg-pop-idle p-1 shadow-pop-sm">
           <button
             type="button"
             className={cn(
-              "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-              !jsonMode ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              "rounded-lg border-[1.5px] px-3 py-1 text-xs transition-colors",
+              !jsonMode ? "bg-pop-yellow text-pop-ink font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
             )}
             onClick={() => jsonMode && onJsonModeToggle()}
           >
@@ -118,8 +118,8 @@ export function WorkflowScheduleForm({
           <button
             type="button"
             className={cn(
-              "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-              jsonMode ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              "rounded-lg border-[1.5px] px-3 py-1 text-xs transition-colors",
+              jsonMode ? "bg-pop-yellow text-pop-ink font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
             )}
             onClick={() => !jsonMode && onJsonModeToggle()}
           >
@@ -146,7 +146,7 @@ export function WorkflowScheduleForm({
           />
           <div className="space-y-1.5">
             <Label>工作流配置 (v2.0 JSON)</Label>
-            <div className={cn("overflow-hidden rounded-md border", configError && "border-destructive")}>
+            <div className={cn("overflow-hidden rounded-xl border-2 border-pop-bd", configError && "border-destructive")}>
               <MonacoEditor
                 height="300px"
                 language="json"

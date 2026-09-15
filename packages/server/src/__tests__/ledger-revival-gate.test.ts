@@ -69,7 +69,9 @@ describe("ledger 防复活门禁 (C3)", () => {
     const inserters: string[] = []
     for (const file of walk(SRC)) {
       const text = fs.readFileSync(file, "utf-8")
-      if (/INSERT\s+INTO\s+node_token_usages/i.test(text)) inserters.push(path.relative(SRC, file))
+      // 票02 后 INSERT 文本单源下沉 shared USAGE_WRITE_SQL，server 侧只剩引用 ——
+      // 探测 = 字面 INSERT 或引用单源，两者都算写入口候选。
+      if (/INSERT\s+INTO\s+node_token_usages|USAGE_WRITE_SQL/i.test(text)) inserters.push(path.relative(SRC, file))
     }
     expect(inserters, `node_token_usages 应只有一个写入口，发现：${inserters.join(", ")}`).toEqual([
       path.join("db", "dao", "token-usage-dao.ts"),

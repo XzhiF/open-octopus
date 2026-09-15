@@ -57,6 +57,44 @@ export const LEDGER_SQL = {
     `ELSE NULL END`,
 } as const
 
+// —— 写侧 SQL（all-sources-2 票02 / KD4 直写定案）——
+//
+// llm_calls / node_token_usages 的 INSERT/UPSERT 唯一文本源：server DAO 与 CLI 直写
+// 进程共用，加列不漂移。占位符与绑定顺序在两侧固定：
+// - insertLlmCall：named params（better-sqlite3 @col，25 列全量）
+// - upsertNodeUsage：位置参数 12 个，顺序 = VALUES (?,×12)；同 id 冲突累加
+//   （engine/harness 确定式 id 重跑语义），chat/cli 侧防重放靠存在性检查。
+
+export const USAGE_WRITE_SQL = {
+  insertLlmCall: `
+    INSERT OR IGNORE INTO llm_calls (
+      id, node_execution_id, execution_id, turn_index, call_index, message_id,
+      model, stop_reason, timestamp, duration_ms, ttft_ms,
+      input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+      cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id,
+      source, trace_id, span_id
+    ) VALUES (
+      @id, @node_execution_id, @execution_id, @turn_index, @call_index,
+      @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
+      @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
+      @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id,
+      @source, @trace_id, @span_id
+    )`,
+  upsertNodeUsage: `
+    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at, session_id, trace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      input_tokens = input_tokens + excluded.input_tokens,
+      output_tokens = output_tokens + excluded.output_tokens,
+      cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+      cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
+      cost_usd = CASE
+        WHEN node_token_usages.cost_usd IS NULL AND excluded.cost_usd IS NULL THEN NULL
+        ELSE COALESCE(node_token_usages.cost_usd, 0) + COALESCE(excluded.cost_usd, 0)
+      END,
+      created_at = excluded.created_at`,
+} as const
+
 // —— JS 侧公式 ——
 
 export function costSummary(costs: readonly (number | null | undefined)[]): LedgerCost {

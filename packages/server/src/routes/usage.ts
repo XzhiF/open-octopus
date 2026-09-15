@@ -4,7 +4,7 @@
 // 函数（「total 不是字段」，不手搓求和；未定价保持 null 不焊 0）。
 
 import { Hono, type Context } from "hono"
-import { costSummary, totalTokens, type TokenUsage } from "@octopus/shared"
+import { costSummary, totalTokens, LLM_CALL_SOURCE, type TokenUsage } from "@octopus/shared"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import type { LlmCallRow } from "../db/types"
 
@@ -134,7 +134,7 @@ export function createUsageRoutes(tokenDao: TokenUsageDAO): Hono {
       if (Number.isInteger(n) && n > 0) limit = Math.min(n, MAX_LIMIT) // >500 截断；非法回落默认
     }
     // 缺省口径 = 'chat'（本 API 为 chat 回读而生，KD6）；其他词表值须显式传 source=
-    const source = c.req.query("source") || "chat"
+    const source = c.req.query("source") || LLM_CALL_SOURCE.chat
 
     const rows = tokenDao.queryLlmCalls({
       sessionId,

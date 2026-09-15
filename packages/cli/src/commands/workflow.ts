@@ -6,6 +6,8 @@ import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, P
 import { WorkflowEngine, registerBuiltinProviders, type TestRunnerResult } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
+import { openUsageDb, captureNodeUsage } from "../utils/usage-writer"
+import { randomUUID } from "node:crypto"
 import { load as yamlLoad, JSON_SCHEMA } from "js-yaml"
 
 export const workflowCmd = new Command("workflow")
@@ -96,14 +98,26 @@ workflowCmd
       console.warn(`[preflight] ${err instanceof Error ? err.message : String(err)}`)
     }
 
+    // 票02（KD4 直写）：CLI 真跑落库 —— run 级 trace_id + onNodeEnd 终局消耗 tracker。
+    // 库打不开（server 未初始化中心库）→ usageDb=null，捕获静默跳过，不影响执行。
+    const runId = randomUUID()
+    const usageDb = openUsageDb()
+    const usageCallbacks = usageDb
+      ? {
+          onNodeEnd: (nodeId: string, _status: string, _durationMs: number, result?: { llmCalls?: Parameters<typeof captureNodeUsage>[2]; modelUsages?: Parameters<typeof captureNodeUsage>[3]; sessionId?: string }) => {
+            captureNodeUsage(usageDb, { runId, org, workflowRef: absPath, nodeId, sessionId: result?.sessionId ?? null }, result?.llmCalls ?? [], result?.modelUsages)
+          },
+        }
+      : undefined
+
     const engine = new WorkflowEngine(
       wf,
       providers,
       process.cwd(),
       orgDir,
+      usageCallbacks,
       undefined,
-      undefined,
-      undefined,
+      runId,
       Object.keys(initialInputs).length > 0 ? initialInputs : undefined,
       options.executionName,
     )
@@ -136,6 +150,7 @@ workflowCmd
     }
 
     const result = await engine.run()
+    usageDb?.close()
 
     if (result.status === "completed") {
       console.log("✓ Workflow completed successfully")

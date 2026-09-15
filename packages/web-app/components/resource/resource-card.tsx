@@ -46,11 +46,11 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
   const canDeactivate = isActivated
 
   return (
-    <div data-testid={`resource-card-${entry.name}`} className="group relative rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50">
+    <div data-testid={`resource-card-${entry.name}`} className="group relative rounded-xl border-[2.5px] border-pop-bd bg-pop-paper p-4 shadow-pop-sm transition-colors hover:bg-pop-yellow-soft">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <Icon className="h-5 w-5 text-muted-foreground" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-pink-soft shadow-pop-sm">
+            <Icon className="h-5 w-5 text-pop-ink" />
           </div>
           <div className="min-w-0 flex-1">
             <Link

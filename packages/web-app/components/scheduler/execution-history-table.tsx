@@ -74,7 +74,7 @@ function ExecutionRow({
     <>
       <tr
         className={cn(
-          "border-b transition-colors hover:bg-muted/50",
+          "border-b-2 border-pop-bd/20 transition-colors hover:bg-muted/50",
           isFailed && "bg-destructive/5"
         )}
       >
@@ -171,19 +171,19 @@ export function ExecutionHistoryTable({
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="border-b text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">触发时间</th>
-            <th className="px-3 py-2 font-medium">状态</th>
-            <th className="px-3 py-2 font-medium">触发方式</th>
-            <th className="px-3 py-2 font-medium">耗时</th>
-            <th className="px-3 py-2 font-medium">退出码</th>
+          <tr className="border-b-[2.5px] border-pop-bd bg-pop-paper text-left text-xs text-pop-ink">
+            <th className="px-3 py-2 font-black">触发时间</th>
+            <th className="px-3 py-2 font-black">状态</th>
+            <th className="px-3 py-2 font-black">触发方式</th>
+            <th className="px-3 py-2 font-black">耗时</th>
+            <th className="px-3 py-2 font-black">退出码</th>
             {jobType === "agent" && (
               <>
-                <th className="px-3 py-2 font-medium">模型</th>
-                <th className="px-3 py-2 font-medium">Token (i/o)</th>
+                <th className="px-3 py-2 font-black">模型</th>
+                <th className="px-3 py-2 font-black">Token (i/o)</th>
               </>
             )}
-            <th className="px-3 py-2 font-medium">操作</th>
+            <th className="px-3 py-2 font-black">操作</th>
           </tr>
         </thead>
         <tbody>

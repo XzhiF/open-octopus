@@ -498,12 +498,18 @@ describe("WorkflowBox — Phase 行内展开 (#53)", () => {
         batchTree={mkTree() as never}
       />,
     )
-    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    // 2026-09-12 分层改版：默认只展开当前（首）phase → P1 灯不点即在
     await waitFor(() => expect(q('[data-phase-spec-disk="1"]')).toBeTruthy())
     expect(q('[data-phase-spec-disk="1"]')!.textContent).toContain("spec.md ✓")
     expect(q('[data-phase-spec-disk="1"]')!.textContent).toContain("2.3K")
     expect(q('[data-phase-summary="1"]')!.textContent).toContain("Key Decisions 1 条")
     expect(q('[data-phase-tickets="1"]')!.querySelectorAll("button")).toHaveLength(2)
+
+    // 再点 = 收起（展开区卸载），三点回来
+    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    await waitFor(() => expect(q('[data-phase-expand-panel="1"]')).toBeNull())
+    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    await waitFor(() => expect(q('[data-phase-spec-disk="1"]')).toBeTruthy())
 
     // phase2 无对应批次文件 → ✗ 未落盘灯
     fireEventClick(q('[data-phase-expand-toggle="2"]')!)
@@ -520,7 +526,7 @@ describe("WorkflowBox — Phase 行内展开 (#53)", () => {
         batchTree={mkTree() as never}
       />,
     )
-    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
+    // 首 phase 默认已展开 → 票 chips 直接在场
     await waitFor(() => expect(q('[data-phase-ticket=".scratch/20260903/slug-1/issues/07-e2e.md"]')).toBeTruthy())
     fireEventClick(q('[data-phase-ticket=".scratch/20260903/slug-1/issues/07-e2e.md"]')!)
     // 弹窗以 phase 规范 specPath 定批次域（列整批），被点票经 initialActivePath 定位
@@ -530,10 +536,9 @@ describe("WorkflowBox — Phase 行内展开 (#53)", () => {
     expect(getHomeFile).toHaveBeenCalledWith("test-task", ".scratch/20260903/slug-1/issues/07-e2e.md")
   })
 
-  it("无 batchTree prop（旧调用面）→ 展开可用且磁盘态中性「未知」，不产假 ✗", async () => {
+  it("无 batchTree prop（旧调用面）→ 默认展开态磁盘态中性「未知」，不产假 ✗", async () => {
     mockCatalog()
     render(<WorkflowBox task={v4Task([makePhase(1)])} onMutated={() => {}} />)
-    fireEventClick(q('[data-phase-expand-toggle="1"]')!)
     await waitFor(() => expect(q('[data-phase-spec-unknown="1"]')).toBeTruthy())
     expect(q('[data-phase-spec-missing="1"]')).toBeNull()
     expect(q('[data-phase-batch-missing="1"]')).toBeNull()

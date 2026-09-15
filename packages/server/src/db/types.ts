@@ -1,6 +1,8 @@
 // packages/server/src/db/types.ts
 // Row type interfaces used by DAOs — mirrors schema.sql column definitions.
 
+import type { LlmCallSource } from '@octopus/shared'
+
 // ── Core Tables ─────────────────────────────────────────────────────
 
 export interface WorkspaceRow {
@@ -143,7 +145,8 @@ export interface NodeTokenUsageRow {
   cache_read_tokens: number
   cache_creation_tokens: number
   created_at: string
-  source?: string | null
+  /** 词表单源见 @octopus/shared LLM_CALL_SOURCE；'node' 为引擎账本行专用（NodeUsageSource） */
+  source?: LlmCallSource | 'node' | null
   /** v43 (token-capture-1): chat 账本归属 */
   session_id?: string | null
   trace_id?: string | null
@@ -174,7 +177,7 @@ export interface LlmCallRow {
   session_id: string | null
   instance_id: string | null
   /** v43 (token-capture-1 票01): 来源词表（既有行为 NULL；chat 路径写 'chat'） */
-  source?: string | null
+  source?: LlmCallSource | null
   /** v43 (KD5): 一轮聊天的运行标识（session 内唯一） */
   trace_id?: string | null
   /** v43 (KD5): 单次 LLM call —— tracker messageId 直存 */

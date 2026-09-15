@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from "fs"
+import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, openSync, writeSync, closeSync } from "fs"
 import { join } from "path"
 
 /** Event types produced by the merge algorithm. */
@@ -60,6 +60,11 @@ export class JsonlLogger {
   private logDir: string
   private loopNodeId?: string
   private iteration?: number
+  /** Persistent append fds per resolved file path — opened on first write, closed in close(). */
+  private fds = new Map<string, number>()
+  /** Lines waiting for the next flush tick, grouped by resolved file path. */
+  private pending = new Map<string, string[]>()
+  private flushScheduled = false
 
   constructor(orgDir: string, executionId: string) {
     this.logDir = join(orgDir, "logs", executionId)
@@ -114,10 +119,70 @@ export class JsonlLogger {
       entry.iteration = this.iteration
     }
 
-    appendFileSync(
-      this.getLogFilePath(nodeId),
-      JSON.stringify(entry) + "\n",
-    )
+    // Queue the line and coalesce all entries accumulated within this macrotask
+    // into ONE writeSync against a persistent fd. This replaces the old
+    // per-event appendFileSync (open+write+close syscalls per streaming delta),
+    // which blocked the event loop on every text/thinking chunk.
+    const path = this.getLogFilePath(nodeId)
+    let queue = this.pending.get(path)
+    if (!queue) { queue = []; this.pending.set(path, queue) }
+    queue.push(JSON.stringify(entry) + "\n")
+    if (!this.flushScheduled) {
+      this.flushScheduled = true
+      setImmediate(() => { this.flushScheduled = false; this.flushAll() })
+    }
+  }
+
+  /** Drain every pending queue with one writeSync per file. */
+  private flushAll(): void {
+    for (const [path, queue] of this.pending) {
+      if (queue.length > 0) this.writeBatch(path, queue.splice(0))
+    }
+  }
+
+  /** Public sync drain — call before reading log files that a same-tick log() wrote to. */
+  flush(): void {
+    this.flushAll()
+  }
+
+  /** Synchronously drain the queue for one node's log file (used before compaction reads). */
+  private flushNodeFile(nodeId: string): void {
+    const path = this.getLogFilePath(nodeId)
+    const queue = this.pending.get(path)
+    if (queue && queue.length > 0) this.writeBatch(path, queue.splice(0))
+  }
+
+  private writeBatch(path: string, lines: string[]): void {
+    try {
+      let fd = this.fds.get(path)
+      if (fd === undefined) {
+        fd = openSync(path, "a")
+        this.fds.set(path, fd)
+      }
+      writeSync(fd, lines.join(""))
+    } catch (err) {
+      // Flush failures must never propagate into the execution stream loop.
+      console.error(`[JsonlLogger] flush failed for ${path}:`, err)
+    }
+  }
+
+  /** Close + forget the cached fd for one path (after the file was renamed/rewritten). */
+  private dropFd(path: string): void {
+    const fd = this.fds.get(path)
+    if (fd !== undefined) {
+      try { closeSync(fd) } catch { /* already gone */ }
+      this.fds.delete(path)
+    }
+  }
+
+  /** Release pending lines and all fds. Called when the execution finishes. */
+  close(): void {
+    this.flushAll()
+    for (const fd of this.fds.values()) {
+      try { closeSync(fd) } catch { /* already gone */ }
+    }
+    this.fds.clear()
+    this.pending.clear()
   }
 
   /**
@@ -146,6 +211,8 @@ export class JsonlLogger {
     const bakPath = `${filePath}.bak`
 
     try {
+      // Pending queued lines must be on disk before we read the whole file back.
+      this.flushNodeFile(nodeId)
       if (!existsSync(filePath)) return null
 
       const content = readFileSync(filePath, "utf8")
@@ -166,9 +233,13 @@ export class JsonlLogger {
       try {
         writeFileSync(filePath, merged.map(e => JSON.stringify(e)).join("\n") + "\n")
         unlinkSync(bakPath)
+        // The rewrite replaced the file — the cached fd (if any) points at the
+        // old renamed inode. Drop it so subsequent log() calls reopen.
+        this.dropFd(filePath)
       } catch (writeErr) {
         // restore from backup on write failure
         try { renameSync(bakPath, filePath) } catch { /* already lost */ }
+        this.dropFd(filePath)
         throw writeErr
       }
       return merged

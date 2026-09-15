@@ -12,7 +12,7 @@ interface AssistantMessageProps {
 export function AssistantMessage({ message, isStreaming, onRetry }: AssistantMessageProps) {
   return (
     <div className="mb-4">
-      <div className="bg-secondary rounded-xl px-4 py-3 text-sm leading-relaxed break-words overflow-wrap-anywhere max-w-[90%]">
+      <div className="bg-pop-paper text-pop-ink rounded-[14px] rounded-bl-[4px] border-2 border-pop-bd shadow-pop-sm px-4 py-3 text-sm leading-relaxed break-words overflow-wrap-anywhere max-w-[90%]">
         <div
           className="prose prose-sm dark:prose-invert max-w-none [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs"
           dangerouslySetInnerHTML={{

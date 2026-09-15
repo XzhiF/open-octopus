@@ -146,11 +146,11 @@ export function ResourceDetail() {
       </Link>
 
       {/* Header */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-5">
+      <div className="mb-6 rounded-xl border-[2.5px] border-pop-bd bg-pop-paper p-5 shadow-pop-sm">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted">
-              <Icon className="h-6 w-6 text-muted-foreground" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-pink-soft shadow-pop-sm">
+              <Icon className="h-6 w-6 text-pop-ink" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -204,10 +204,10 @@ export function ResourceDetail() {
       </div>
 
       {/* File Explorer */}
-      <div className="rounded-lg border border-border bg-card">
-        <div className="flex border-b border-border">
+      <div className="rounded-xl border-[2.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden">
+        <div className="flex border-b-2 border-pop-bd">
           {/* Sidebar — file tree */}
-          <div className="w-56 shrink-0 border-r border-border p-2">
+          <div className="w-56 shrink-0 border-r-2 border-pop-bd/30 p-2">
             <div className="mb-2 px-2 text-xs font-medium text-muted-foreground">
               文件 ({files.length})
             </div>
@@ -265,7 +265,7 @@ export function ResourceDetail() {
                   {selectedFile.endsWith(".md") ? (
                     <MarkdownPreview content={fileContent} />
                   ) : (
-                    <pre className="overflow-x-auto rounded-md bg-muted p-4 text-sm">
+                    <pre className="overflow-x-auto rounded-lg border-2 border-pop-bd bg-pop-ink text-pop-paper p-4 text-sm">
                       <code>{fileContent}</code>
                     </pre>
                   )}

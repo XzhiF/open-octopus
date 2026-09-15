@@ -63,7 +63,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
   if (questions.length === 0) {
     return (
       <div className="mb-4">
-        <div className="bg-secondary rounded-xl px-4 py-3 text-sm text-muted-foreground max-w-[90%]">
+        <div className="bg-pop-paper text-pop-ink rounded-[14px] border-[2.5px] border-pop-bd shadow-pop-sm px-4 py-3 text-sm text-muted-foreground max-w-[90%]">
           无法解析问题数据
         </div>
       </div>
@@ -132,8 +132,9 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
   return (
     <div className="mb-4">
       <div className={cn(
-        "bg-secondary rounded-xl px-4 py-3 text-sm max-w-[90%] border-l-3",
-        submitted ? "border-l-pop-green" : "border-l-pop-amber"
+        "rounded-[14px] border-[2.5px] border-pop-bd px-4 py-3 text-sm text-pop-ink max-w-[90%] shadow-pop",
+        "transition-colors duration-300 ease-out",
+        submitted ? "bg-pop-green-soft" : "bg-pop-amber-soft"
       )}>
         {/* Header */}
         <div className="flex items-center gap-2 mb-3">

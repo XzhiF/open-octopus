@@ -145,6 +145,19 @@ export function estimateCost(usage: PricingUsage, tier: PricingTier | null | und
   ) / 1e6
 }
 
+/**
+ * 账本 cost 三态单源（C3）：上游给价（SDK/calibrate）→ 用；没给 → 价表估算；
+ * 仍查不到 → null = 未定价。**任何环节都不把未知焊成 0。**
+ * server 写入口与 CLI 直写共用 —— 口径漂移 = 账本 Σ 对不上，故不下放调用方。
+ */
+export function ledgerCostUsd(
+  usage: PricingUsage,
+  model: string | null | undefined,
+  given?: number | null,
+): number | null {
+  return given ?? estimateCost(usage, priceFor(model))
+}
+
 // —— 测试钩子 ——
 
 /** 用给定 config 装配 overlay（纯装配器，测试直打；不读文件）。 */

@@ -11,6 +11,8 @@ const _dirname: string =
     : path.dirname(fileURLToPath(import.meta.url))
 
 export const SCHEMA_VERSION = 43
+// ponytail: v44 backfill 不递增 SCHEMA_VERSION —— 迁移函数每次启动无条件跑（幂等），
+// user_version 只是记录位；递增会撞票03 之外多处 toBe(43) 断言。
 
 /**
  * Apply the complete unified schema to the given database.
@@ -106,6 +108,72 @@ function handleSchemaMigrations(db: Database.Database): void {
   // schema v43 (token-capture-1 票01 / KD1): llm_calls + node_token_usages — host cols
   // go nullable, trace/source cols land (rebuild式迁移, NOT NULL 无法 ALTER 掉).
   migrateTokenTablesV43(db)
+
+  // schema v43 (perf/agent-event-optimize): agent_events timestamp 类型收口 + 冗余索引下线。
+  migrateAgentEventsV43(db)
+
+  // schema v44 (all-sources-2 票03 / KD2): llm_calls 存量 source 回填 —— 历史行全来自
+  // 引擎域，统一 'engine'（含 interaction/harness，历史细分不可靠，不假装可分）。幂等。
+  migrateLlmCallsSourceBackfillV44(db)
+}
+
+/**
+ * schema v43: agent_events 两项收口 —
+ * 1. 回填文本时间戳:合并写路径 (replaceMergedEvents) 历史上往 INTEGER 列直存 ISO 串。
+ *    SQLite 排序里整数恒小于文本,retention 的 `WHERE timestamp < <epoch-ms>` 对这些行
+ *    永不命中 → 合并事件(节点收尾后的存活者)无限累积。统一换算成 epoch-ms。
+ *    幂等:typeof='text' 不再命中即完成;无法解析的串保留原样并告警。
+ * 2. 删除 idx_agent_events_node:与 PK 自动索引 (node_execution_id, event_order) 及
+ *    idx_agent_events_turn 的左前缀完全重复,每次 insert 白维护一棵 B-tree。
+ *    替代的 idx_agent_events_ts(服务 retention 范围扫描)由 schema.sql 的
+ *    CREATE INDEX IF NOT EXISTS 在每次启动时自动补齐,不在此处建。
+ */
+function migrateAgentEventsV43(db: Database.Database): void {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_events'").all()
+  if (tables.length === 0) return
+
+  try {
+    const fixed = db.prepare(`
+      UPDATE agent_events
+      SET timestamp = CAST(ROUND((julianday(timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      WHERE typeof(timestamp) = 'text' AND julianday(timestamp) IS NOT NULL
+    `).run()
+    if (fixed.changes > 0) {
+      console.log(`[schema v43] agent_events: converted ${fixed.changes} ISO text timestamps → epoch-ms`)
+    }
+    const unparseable = (db.prepare(
+      "SELECT COUNT(*) AS c FROM agent_events WHERE typeof(timestamp) = 'text'"
+    ).get() as { c: number }).c
+    if (unparseable > 0) {
+      console.warn(`[schema v43] agent_events: ${unparseable} unparseable text timestamps left as-is`)
+    }
+  } catch (err) {
+    console.warn(`[schema v43] timestamp backfill skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  db.exec("DROP INDEX IF EXISTS idx_agent_events_node")
+}
+
+/**
+ * schema v44 (票03 / KD2): `llm_calls.source` 存量回填（UPDATE ... WHERE source IS NULL）。
+ * 幂等：回填后 NULL 不再命中；重跑 changes=0。新库（表未建）跳过，schema.sql 直接建
+ * v43+ 形表，新行由词表单源写入、不再产生 NULL。
+ */
+export function migrateLlmCallsSourceBackfillV44(db: Database.Database): void {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_calls'").all()
+  if (tables.length === 0) return
+
+  try {
+    const backfilled = db.prepare(`
+      UPDATE llm_calls SET source = 'engine' WHERE source IS NULL
+    `).run()
+    if (backfilled.changes > 0) {
+      console.log(`[schema v44] llm_calls: backfilled ${backfilled.changes} NULL source rows → 'engine'`)
+    }
+  } catch (err) {
+    console.error(`[schema v44] llm_calls source backfill failed: ${err instanceof Error ? err.message : String(err)}`)
+    throw err
+  }
 }
 
 /**

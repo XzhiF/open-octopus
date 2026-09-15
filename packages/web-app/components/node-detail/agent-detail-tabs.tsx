@@ -21,7 +21,7 @@ export function AgentDetailTabs({ executionId, nodeId, step, workspaceId, isRunn
 
   return (
     <Tabs defaultValue="traces">
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-x-0 border-t-0 border-b-[2.5px] border-pop-bd px-2">
         <TabsTrigger value="traces" className="text-xs">追踪</TabsTrigger>
         <TabsTrigger value="cost" className="text-xs">成本</TabsTrigger>
       </TabsList>

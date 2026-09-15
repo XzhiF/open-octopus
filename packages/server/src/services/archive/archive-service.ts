@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3"
-import { LEDGER_SQL, costSummary } from "@octopus/shared"
+import { randomUUID } from "crypto"
+import { LEDGER_SQL, costSummary, LLM_CALL_SOURCE } from "@octopus/shared"
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from "../agent/aux-usage-capture"
 import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
@@ -610,10 +612,25 @@ export class ArchiveService {
 
       const provider = getProvider('claude')
       const chunks: string[] = []
+      const callStart = Date.now()
+      const usageSink: ResultUsageSink = {}
       const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
       for await (const chunk of stream) {
         if (chunk.type === "text_delta") chunks.push(chunk.content)
+        else if (chunk.type === "result") collectResultUsage(chunk, usageSink)
       }
+      // 票04: 记忆提炼（archive 分身）→ aux_memory，workspace 归因
+      captureAuxCall(this.db, {
+        source: LLM_CALL_SOURCE.aux_memory,
+        traceId: `archive:${workspaceId}:${randomUUID()}`,
+        usage: usageSink.usage ?? null,
+        modelUsages: usageSink.modelUsages ?? null,
+        costUsd: usageSink.costUsd ?? null,
+        org,
+        workspaceId,
+        timestamp: callStart,
+        durationMs: Date.now() - callStart,
+      })
       const raw = chunks.join("")
 
       if (!raw) {

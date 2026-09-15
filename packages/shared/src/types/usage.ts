@@ -70,3 +70,20 @@ function add(a: TokenUsage, b: TokenUsage): TokenUsage {
     cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
   }
 }
+
+/**
+ * llm_calls.source 词表（all-sources-2 KD1，单源）。DAO/调用侧禁止散字面串，
+ * 一律取 `LLM_CALL_SOURCE.*`。新辅助调用按 aux_* 族一行扩枚举。
+ */
+export const LLM_CALL_SOURCE = {
+  chat: 'chat',
+  engine: 'engine',
+  interaction: 'interaction',
+  harness: 'harness',
+  scheduler: 'scheduler',
+  cli: 'cli',
+  aux_compress: 'aux_compress',
+  aux_memory: 'aux_memory',
+  aux_suggest: 'aux_suggest',
+} as const
+export type LlmCallSource = (typeof LLM_CALL_SOURCE)[keyof typeof LLM_CALL_SOURCE]

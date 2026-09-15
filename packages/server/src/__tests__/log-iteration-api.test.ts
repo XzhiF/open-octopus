@@ -108,6 +108,7 @@ describe("JsonlLogger loop context", () => {
 
   it("writes to plain nodeId file without loop context", () => {
     logger.log("node1", "start", {})
+    logger.flush() // log() batches to the next tick — drain before reading
     const logDir = join(tmpDir, "logs", "test-exec")
     const files = readdirSync(logDir)
     expect(files).toContain("node1.jsonl")
@@ -116,6 +117,7 @@ describe("JsonlLogger loop context", () => {
   it("writes to iteration-scoped file when loop context is set", () => {
     logger.setLoopContext("loop1", 2)
     logger.log("inner-bash", "bash_log", { line: "hello" })
+    logger.flush()
     const logDir = join(tmpDir, "logs", "test-exec")
     const files = readdirSync(logDir)
     expect(files).toContain("loop1-iter-2__inner-bash.jsonl")
@@ -124,6 +126,7 @@ describe("JsonlLogger loop context", () => {
   it("includes iteration field in JSONL entry when loop context is set", () => {
     logger.setLoopContext("loop1", 3)
     logger.log("task", "start", {})
+    logger.flush()
     const logDir = join(tmpDir, "logs", "test-exec")
     const content = readFileSync(join(logDir, "loop1-iter-3__task.jsonl"), "utf-8")
     const entry = JSON.parse(content.trim())
@@ -134,6 +137,7 @@ describe("JsonlLogger loop context", () => {
 
   it("does NOT include iteration field without loop context", () => {
     logger.log("node1", "start", {})
+    logger.flush()
     const logDir = join(tmpDir, "logs", "test-exec")
     const content = readFileSync(join(logDir, "node1.jsonl"), "utf-8")
     const entry = JSON.parse(content.trim())
@@ -145,6 +149,7 @@ describe("JsonlLogger loop context", () => {
     logger.log("a", "start", {})
     logger.restoreLoopContext(prev)
     logger.log("b", "start", {})
+    logger.flush()
     const logDir = join(tmpDir, "logs", "test-exec")
     const files = readdirSync(logDir)
     expect(files).toContain("loop1-iter-1__a.jsonl")
@@ -154,6 +159,7 @@ describe("JsonlLogger loop context", () => {
   it("sanitizes node IDs with dots in filenames", () => {
     logger.setLoopContext("loop.v2", 1)
     logger.log("task.sub", "start", {})
+    logger.flush()
     const logDir = join(tmpDir, "logs", "test-exec")
     const files = readdirSync(logDir)
     expect(files).toContain("loop_v2-iter-1__task_sub.jsonl")

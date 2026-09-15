@@ -352,6 +352,12 @@ export class SubWorkflowExecutor implements NodeExecutor {
       onAgentEvent: (nodeId: string, event: any) => {
         this.config.callbacks?.onAgentEvent?.(scoped(nodeId), event)
       },
+      // 子流 agent 节点的 JSONL 合并在子引擎里发生(engine.ts onNodeCompacted),此前没有
+      // 转发 → 碎片以 scoped id 写进父执行后无人 replaceMergedEvents,散装永久残留。
+      // scoped(nodeId) 拼出的正是碎片写入时的 id,父侧 DELETE 得已命中。
+      onNodeCompacted: (nodeId: string, mergedEvents: any[]) => {
+        this.config.callbacks?.onNodeCompacted?.(scoped(nodeId), mergedEvents)
+      },
     }
   }
 }

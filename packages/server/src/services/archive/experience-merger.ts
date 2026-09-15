@@ -1,4 +1,7 @@
 import path from "path"
+import { randomUUID } from "crypto"
+import { LLM_CALL_SOURCE } from "@octopus/shared"
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from "../agent/aux-usage-capture"
 import type { StepEmitter } from "./step-emitter"
 import { getProvider } from "@octopus/providers"
 import {
@@ -38,6 +41,7 @@ export class ExperienceMerger {
     }
 
     const groups = this.groupByTarget(selectedExperiences, org)
+    const mergeTrace = `merge:${org}:${randomUUID()}`
     let added = 0
     let updated = 0
     let deleted = 0
@@ -47,7 +51,7 @@ export class ExperienceMerger {
 
       const currentContent = readKnowledgeFile(group.filePath)
       const mergePrompt = this.buildMergePrompt(group, currentContent)
-      const mergedContent = await this.callMergeAgent(mergePrompt)
+      const mergedContent = await this.callMergeAgent(mergePrompt, org, mergeTrace, group.filePath)
 
       if (mergedContent) {
         writeKnowledgeFile(group.filePath, mergedContent)
@@ -118,17 +122,35 @@ ${changes}
 OUTPUT: Return the complete updated file content. Preserve the document structure and formatting. Only apply the specified changes. For ADD operations, append new entries as bullet points. For UPDATE operations, find and replace the matching text. For DELETE operations, remove the matching entry entirely.`
   }
 
-  private async callMergeAgent(prompt: string): Promise<string | null> {
+  private async callMergeAgent(prompt: string, org: string, traceId: string, spanId: string): Promise<string | null> {
     try {
       const provider = getProvider("claude")
       const chunks: string[] = []
+      const callStart = Date.now()
+      const usageSink: ResultUsageSink = {}
       const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
         systemPrompt:
           "You are a precise document merge agent. Return only the complete file content, no explanations.",
       })
       for await (const chunk of stream) {
         if (chunk.type === "text_delta") chunks.push(chunk.content)
+        else if (chunk.type === "result") collectResultUsage(chunk, usageSink)
       }
+      // 票04: 经验合并（记忆提炼）→ aux_memory；org 归因（无 workspace 宿主）
+      const { getDb } = await import("../../db")
+      captureAuxCall(getDb(), {
+        source: LLM_CALL_SOURCE.aux_memory,
+        // KD6：trace_id 保持运行根（mergeTrace），每次调用用 spanId 判别 —— 之前拼
+        // `:${randomUUID()}` 进 trace 把运行→调用链拆断了。
+        traceId,
+        spanId,
+        usage: usageSink.usage ?? null,
+        modelUsages: usageSink.modelUsages ?? null,
+        costUsd: usageSink.costUsd ?? null,
+        org,
+        timestamp: callStart,
+        durationMs: Date.now() - callStart,
+      })
       const raw = chunks.join("").trim()
       return raw.replace(/^```(?:markdown|md)?\n?/, "").replace(/\n?```$/, "").trim() || null
     } catch {

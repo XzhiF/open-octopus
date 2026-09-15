@@ -59,9 +59,12 @@ export class StateFileManager implements IStateFileManager {
    * Used by the frontend for the execution tree view.
    */
   syncStateJson(): void {
+    const timingOn = process.env.OCTOPUS_EXEC_TIMING === "1"
+    const t0 = timingOn ? Date.now() : 0
     if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true })
 
     const rows = this.dao.findExecutionsForStateSync(this.workspaceDbId)
+    const t1 = timingOn ? Date.now() : 0
 
     const safeJsonParse = (v: string | null | undefined): Record<string, string> | null => {
       if (!v) return null
@@ -82,7 +85,17 @@ export class StateFileManager implements IStateFileManager {
       })),
     }
 
-    writeFileSync(join(this.stateDir, "executions.json"), JSON.stringify(state, null, 2), "utf-8")
+    const json = JSON.stringify(state, null, 2)
+    if (timingOn) {
+      const t2 = Date.now()
+      writeFileSync(join(this.stateDir, "executions.json"), json, "utf-8")
+      console.log(`[exec-timing] syncStateJson ${JSON.stringify({
+        rows: rows.length,
+        query_ms: t1 - t0, build_stringify_ms: t2 - t1, write_ms: Date.now() - t2,
+      })}`)
+    } else {
+      writeFileSync(join(this.stateDir, "executions.json"), json, "utf-8")
+    }
   }
 
   /**

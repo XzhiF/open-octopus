@@ -1,5 +1,9 @@
 import fs from 'fs'
 import path from 'path'
+import { randomUUID } from 'crypto'
+import { LLM_CALL_SOURCE } from '@octopus/shared'
+import { getDb } from '../../db'
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from './aux-usage-capture'
 import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
@@ -99,6 +103,8 @@ export class SchedulerAdapter {
       const reportDate = new Date().toISOString().split('T')[0]
       const reportPath = config.memory_strategy.write_report_path.replace('{date}', reportDate)
       let reportContent: string
+      const callStart = Date.now()
+      const usageSink: ResultUsageSink = {}
 
       try {
         const { getProvider } = await import('@octopus/providers')
@@ -115,9 +121,23 @@ export class SchedulerAdapter {
         for await (const chunk of chunks) {
           if (chunk.type === 'text_delta') {
             textParts.push(chunk.content)
+          } else if (chunk.type === 'result') {
+            // 票04: 与 AgentExecutor 同 —— 不走 chat() 收口，终局消耗 result usage
+            collectResultUsage(chunk, usageSink)
           }
         }
         reportContent = textParts.join('')
+
+        captureAuxCall(() => getDb(), {
+          source: LLM_CALL_SOURCE.scheduler,
+          traceId: randomUUID(),
+          usage: usageSink.usage ?? null,
+          modelUsages: usageSink.modelUsages ?? null,
+          costUsd: usageSink.costUsd ?? null,
+          org: this.org,
+          timestamp: callStart,
+          durationMs: Date.now() - callStart,
+        })
 
         // If Claude SDK returned no content, fall back to template
         if (!reportContent.trim()) {

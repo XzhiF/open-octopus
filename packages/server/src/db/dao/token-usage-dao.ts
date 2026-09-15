@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import { LEDGER_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
+import { LEDGER_SQL, USAGE_WRITE_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
 import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
 
 export class TokenUsageDAO extends BaseDAO {
@@ -54,20 +54,8 @@ export class TokenUsageDAO extends BaseDAO {
     traceId?: string | null
   }): Database.RunResult {
     const cost = ledgerCostUsd(input.usage, input.model, input.costUsd)
-    return this.stmt(`
-      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at, session_id, trace_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        input_tokens = input_tokens + excluded.input_tokens,
-        output_tokens = output_tokens + excluded.output_tokens,
-        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-        cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-        cost_usd = CASE
-          WHEN node_token_usages.cost_usd IS NULL AND excluded.cost_usd IS NULL THEN NULL
-          ELSE COALESCE(node_token_usages.cost_usd, 0) + COALESCE(excluded.cost_usd, 0)
-        END,
-        created_at = excluded.created_at
-    `).run(
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）
+    return this.stmt(USAGE_WRITE_SQL.upsertNodeUsage).run(
       input.id, input.nodeExecutionId, input.model,
       input.usage.inputTokens, input.usage.outputTokens, cost,
       input.usage.cacheReadTokens, input.usage.cacheCreationTokens,
@@ -245,22 +233,14 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   insertLlmCall(row: LlmCallRow): Database.RunResult {
-    return this.stmt(`
-      INSERT OR IGNORE INTO llm_calls (
-        id, node_execution_id, execution_id, turn_index, call_index, message_id,
-        model, stop_reason, timestamp, duration_ms, ttft_ms,
-        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id,
-        source, trace_id, span_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
-      row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
-      row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
-      row.cache_creation_tokens, row.cost_usd, row.org, row.workspace_id,
-      row.workflow_ref, row.node_id, row.session_id, row.instance_id,
-      row.source ?? null, row.trace_id ?? null, row.span_id ?? null,
-    )
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）；named params 需全键对象
+    return this.stmt(USAGE_WRITE_SQL.insertLlmCall).run({
+      source: null, trace_id: null, span_id: null, node_execution_id: null,
+      execution_id: null, message_id: null, model: null, stop_reason: null,
+      ttft_ms: null, cost_usd: null, org: null, workspace_id: null,
+      workflow_ref: null, node_id: null, session_id: null, instance_id: null,
+      ...row,
+    })
   }
 
   deleteLlmCallsByExecution(executionId: string): Database.RunResult {
@@ -279,21 +259,8 @@ export class TokenUsageDAO extends BaseDAO {
 
   insertLlmCallBatch(rows: LlmCallRow[]): void {
     if (rows.length === 0) return
-    const insertStmt = this.stmt(`
-      INSERT OR IGNORE INTO llm_calls (
-        id, node_execution_id, execution_id, turn_index, call_index, message_id,
-        model, stop_reason, timestamp, duration_ms, ttft_ms,
-        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id,
-        source, trace_id, span_id
-      ) VALUES (
-        @id, @node_execution_id, @execution_id, @turn_index, @call_index,
-        @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
-        @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id,
-        @source, @trace_id, @span_id
-      )
-    `)
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）
+    const insertStmt = this.stmt(USAGE_WRITE_SQL.insertLlmCall)
     this.transaction(() => {
       // better-sqlite3 要求对象含全部 named 参数；v43 新列对旧调用方（observability）
       // 缺省 = NULL，兜底放在展开之前。

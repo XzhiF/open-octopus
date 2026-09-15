@@ -133,7 +133,11 @@ test.describe("#53 起草面产物可见性穿线", () => {
     await expect(dialog.locator("[data-checklist-v4='spec']")).toContainText("✅")
     await page.screenshot({ path: screenshotPath("53-03-adopt-and-gate.png") })
 
-    // ⑥ PP2 核心断言：Phase 行 ▾ 展开 = spec ✓ 灯 + 票 chips（不点小图标不开弹窗）
+    // ⑥ PP2 核心断言：Phase 行 ▾ 展开 = spec ✓ 灯 + 票 chips（不点小图标不开弹窗）。
+    // 2026-09-12 分层改版：首个 phase 默认已展开 → 先点收起、再点展开验证 toggle。
+    await expect(dialog.locator("[data-phase-expand-panel='1']")).toBeVisible({ timeout: 10_000 })
+    await dialog.locator("[data-phase-expand-toggle='1']").click()
+    await expect(dialog.locator("[data-phase-expand-panel='1']")).toHaveCount(0)
     await dialog.locator("[data-phase-expand-toggle='1']").click()
     await expect(dialog.locator("[data-phase-spec-disk='1']")).toContainText("spec.md ✓")
     await expect(dialog.locator(`[data-phase-ticket=".scratch/${TODAY}/${BATCH_A}/issues/01-price-db.md"]`)).toBeVisible()

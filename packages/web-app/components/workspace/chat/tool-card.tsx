@@ -10,28 +10,25 @@ interface ToolCardProps {
 
 const statusConfig = {
   running: {
-    border: "border-l-pop-cyan",
     icon: Loader2,
     iconClass: "text-pop-cyan animate-spin",
     text: "",
     textClass: "text-muted-foreground",
-    bg: "bg-secondary",
+    card: "bg-pop-paper hover:bg-pop-yellow-soft",
   },
   done: {
-    border: "border-l-pop-green",
     icon: Wrench,
     iconClass: "text-pop-green",
     text: "完成",
     textClass: "text-pop-green",
-    bg: "bg-secondary",
+    card: "bg-pop-paper hover:bg-pop-yellow-soft",
   },
   error: {
-    border: "border-l-pop-red",
     icon: Wrench,
     iconClass: "text-pop-red",
     text: "失败",
     textClass: "text-pop-red",
-    bg: "bg-pop-red/10",
+    card: "bg-pop-pink-soft hover:bg-pop-pink-soft/70",
   },
 }
 
@@ -59,7 +56,7 @@ export function ToolCard({ message }: ToolCardProps) {
   return (
     <div className="mb-1.5">
       <div
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border-l-3 ${config.border} ${config.bg} max-w-full cursor-pointer`}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border-2 border-pop-bd shadow-pop-sm transition-colors ${config.card} max-w-full cursor-pointer`}
         onClick={() => hasDetails && setExpanded(!expanded)}
         title={message.toolName}
       >
@@ -80,7 +77,7 @@ export function ToolCard({ message }: ToolCardProps) {
         )}
       </div>
       {expanded && hasDetails && (
-        <div className="mt-1 ml-2 bg-secondary rounded-md p-2 text-xs font-mono text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
+        <div className="mt-1 ml-2 rounded-lg border-2 border-pop-bd bg-pop-bg p-2 text-xs font-mono text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
           {Boolean(message.toolInput) && (
             <div className="mb-1">
               <span className="text-muted-foreground/60">{"// 输入: "}</span>
