@@ -29,7 +29,7 @@ WITH rounds AS (
   WHERE task_id IS NOT NULL
     AND phase_index IS NOT NULL          -- 只动 v4 轮次（实例标记）
 )
-SELECT r.task_id, r.id, r.phase_index, r.round_index, r.status,
+SELECT r.task_id, r.id, e.phase_index, e.round_index, e.status,
        r.old_parent,
        CASE WHEN r.old_parent = '0' THEN '(root)' ELSE r.old_parent END AS current_parent,
        COALESCE(r.want_parent, '(keep root)') AS target_parent
