@@ -28,9 +28,9 @@ agent 链（tiny prompt / sonnet / continue→resume），每节点墙钟 ≈ 3.
 - WAL 补 `synchronous=NORMAL`。
 - syncStateJson：当前每工作区 executions ≤9 行，实测非瓶颈，**不动**（前端消费该文件，去抖有无谓的陈旧风险）。
 
-**下一票方向（未定，见 issues/01）：** 常驻 streaming-input 进程（消灭 boot+init+组装重复，预估再省 1.5-2s/节点）
-对比选项裁剪（settingSources/preset 系统提示瘦身）。前者需 ADR + 引擎"节点=一次 sendQuery"假设的重构，
-后者先用一次对照实验量化 1.45s 里本地组装 vs 网络 TTFT 的占比。
+**下一票方向（未定，见 issues/01）：** ~~B 实验~~ **B 已做且证伪**（min-prompt 对照无差异 → 1.45s
+主要是 API TTFT，详见 issues/01 文末结果表）；A（常驻进程）收益重估为 ~1.0-1.5s/节点，待用户拍板。
+零代码先行：独立小节点 YAML 写 `context: new` 削历史重发。
 
 ## 测量复现
 
