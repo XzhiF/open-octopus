@@ -254,7 +254,7 @@ function taskRow(db: Database.Database, taskId: string) {
  *  chain[0]/config (票03: the launch plan is derived per arm, the coordinates and the
  *  input_values live ON the round's own row). */
 function launchedRow(taskId: string) {
-  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return row
 }

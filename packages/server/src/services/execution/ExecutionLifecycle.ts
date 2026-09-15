@@ -253,7 +253,12 @@ export class ExecutionLifecycle {
     const abortController = new AbortController()
 
     let resolvedInputValues = inputValues
-    if (exec.parent_id && exec.parent_id !== "0") {
+    // Cross-exec inheritance ($parent./$ancestor[. resolution + YAML input-default merge)
+    // belongs to SUB-WORKFLOW children and composite arms only. Since task-exec-tree (v44)
+    // a chained v4 ROUND also carries parent_id — as lineage, not as a dispatch link — and
+    // must start byte-identically to how it started as a root. The phase tag is the
+    // instance marker: a parented row with one is an instance, not a child.
+    if (exec.parent_id && exec.parent_id !== "0" && exec.phase_index == null) {
       const lookup: ExecutionLookup = {
         getById: (eid: string) => {
           const row = this.dao.findExecutionForLookup(eid)
@@ -1701,14 +1706,16 @@ export class ExecutionLifecycle {
     const isRootRequest = !input.parent_id || input.parent_id === "0"
     const nodeType = input.node_type ?? "normal"
 
-    // task-phase-redesign (K4/K5) + ADR-0021 票03: a task binds ONE workspace for its
-    // whole life and every phase/round is an independent root execution under it, so the
-    // v1 "one root per ws" invariant does not hold for task workspaces. The serialization
-    // that replaces it is ux_exec_task_active (one live row per TASK), which is a tighter
-    // statement of what the caller actually means: "not two runs of this task", not "not
-    // two runs in this directory". A task-bound row is therefore exempt for its whole
-    // life, not just while the caller remembers to pass the flag; generic/cron launches
-    // (task_id null) keep the invariant byte-identically.
+    // task-phase-redesign (K4/K5) + ADR-0021 票03 + task-exec-tree (v44): a task binds ONE
+    // workspace for its whole life; its rounds are independent task INSTANCES there (since
+    // v44 they also chain parent→child for the tree view, but the instance semantics are
+    // unchanged), so the v1 "one root per ws" invariant does not hold for task workspaces.
+    // The serialization that replaces it is ux_exec_task_active (one live instance row per
+    // TASK, v44 predicate included), which is a tighter statement of what the caller
+    // actually means: "not two runs of this task", not "not two runs in this directory". A
+    // task-bound row is therefore exempt for its whole life, not just while the caller
+    // remembers to pass the flag; generic/cron launches (task_id null) keep the invariant
+    // byte-identically.
     if (isRootRequest && !input.allow_existing_root && !input.task_id) {
       const existingRoot = this.dao.findRootExecutionId(workspaceId)
       if (existingRoot) throw new Error(`Workspace already has a root execution (${existingRoot.id}).`)

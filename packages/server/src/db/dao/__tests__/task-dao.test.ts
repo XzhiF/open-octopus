@@ -58,10 +58,10 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
 
 describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
   describe("schema", () => {
-    it("schema version is 43 (v43 = agent_events timestamp 收口 + 冗余索引下线)", () => {
+    it("schema version is 44 (v44 = ux_exec_task_active 从 roots-only 放宽到 task instances)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(43)
-      expect(SCHEMA_VERSION).toBe(43)
+      expect(v).toBe(44)
+      expect(SCHEMA_VERSION).toBe(44)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {

@@ -737,7 +737,9 @@ export class TasksService {
    *  tasks.workspace_id was the wrong key; both objections dissolve once the launch
    *  carries its own task id: it is neither a location nor an indirection). The
    *  phase_index IS NOT NULL filter keeps child loop/swarm executions (and all
-   *  v3/generic rows) out; derive ignores anything untagged anyway. */
+   *  v3/generic rows) out; derive ignores anything untagged anyway. It is ALSO the
+   *  round's identity since task-exec-tree (v44): a chained round is not a root, so no
+   *  parent filter may appear here — the tag says 「instance」 at any tree depth. */
   private deriveView(row: TaskRow): TaskView {
     const executions: DeriveExecutionInput[] = this.taskDAO
       .getDb()
@@ -745,7 +747,6 @@ export class TasksService {
         `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
            FROM executions e
           WHERE e.task_id = ?
-            AND e.parent_id = '0'
             AND e.phase_index IS NOT NULL
           ORDER BY e.created_at ASC`,
       )
@@ -763,9 +764,10 @@ export class TasksService {
    * coordinates the acceptance ledger reads and the workspace to deep-link into. This
    * replaced children[], which listed the envelope rows standing for the same runs.
    *
-   * `current` is the row the board's badge shows: the newest ROOT. It is not inferred
-   * from time here — the history is already ordered by the same key the latch and the
-   * badge read, so index 0 is the answer.
+   * `current` is the row the board's badge shows: the newest INSTANCE (v44 — a chained
+   *  round is an instance too, the tag decides, not the parent). It is not inferred
+   *  from time here — the history is already ordered by the same key the latch and the
+   *  badge read, so index 0 is the answer.
    */
   listRunHistory(id: string, limit = 50): Array<TaskExecutionBadge & { current: boolean }> {
     const row = this.taskDAO.getById(id)

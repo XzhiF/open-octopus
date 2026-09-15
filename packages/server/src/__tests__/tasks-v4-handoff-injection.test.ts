@@ -219,13 +219,13 @@ function seed(opts: {
 /** The input_values of the task's CURRENT instance — the row the run actually eats
  *  (replaces reading the envelope's materialized chain[0]). */
 function launchedIV(taskId: string): Record<string, string> {
-  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return JSON.parse(row.input_values) as Record<string, string>
 }
 
 function launchedRow(taskId: string) {
-  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return row
 }

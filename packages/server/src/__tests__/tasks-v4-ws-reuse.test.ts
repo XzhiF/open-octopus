@@ -143,7 +143,7 @@ function wsCount(db: Database.Database): number {
 
 /** 票03: the run's own row is the read model (no join through schedules). */
 function latestRoot(db: Database.Database, taskId: string) {
-  return new ExecutionDAO(db).findLatestTaskRoot(taskId)
+  return new ExecutionDAO(db).findLatestTaskInstance(taskId)
 }
 
 /** Free the task's slot the way reality does: the round reached a terminal status

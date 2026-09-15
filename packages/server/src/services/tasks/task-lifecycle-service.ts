@@ -106,6 +106,17 @@ export interface ArmOptions {
   triggeredBy?: string
 }
 
+/**
+ * The subunit-ARM predicate (v44, task-exec-tree). Before rounds chained, `parent_id != '0'`
+ * alone separated a composite arm from a task instance. It no longer can: a v4 round carries
+ * parent_id as its LINEAGE (它挂在上一轮下), not as a dispatch relationship. The arm is
+ * precisely a parented row that is NOT phase-tagged — the round tag is what says 「this row
+ * is an instance of the task」 even when the tree puts it under another instance.
+ */
+export function isSubunitArmRow(row: { parent_id?: string | null; phase_index?: number | null }): boolean {
+  return !!row.parent_id && row.parent_id !== "0" && row.phase_index == null
+}
+
 export interface TickMetrics {
   armed: number
   launched: number
@@ -247,7 +258,10 @@ export class TaskLifecycleService {
         // A composite child needs the PARENT-resume wiring, not the task finalize — the
         // parent is what decides what a finished subunit means. Claimed here rather than
         // in TaskDispatchService so an over-cap child has exactly one owner.
-        if (row.parent_id && row.parent_id !== "0") {
+        // v44 note: a chained round also carries parent_id (its lineage), so the arm test
+        // is parent-set AND untagged — a phase-tagged row is an INSTANCE and starts through
+        // the task path no matter where it hangs in the tree.
+        if (isSubunitArmRow(row)) {
           const iv = parseJSON<Record<string, string>>(row.input_values, {})
           // alreadyClaimed=true: this loop moved the row pending→running just above,
           // under the guarded claim that keeps two owners from both starting it.
@@ -355,7 +369,10 @@ export class TaskLifecycleService {
 
     // Pre-check for a human-readable refusal; ux_exec_task_active below is the actual
     // serializer (the pre-check cannot close the race, the index can).
-    const latest = this.execDAO.findLatestTaskRoot(taskId)
+    // task-exec-tree (v44): `latest` doubles as the CHAIN TIP — the terminal row this
+    // launch hangs under. An in-flight row is refused above, so `latest` here is either
+    // NULL (never ran) or terminal.
+    const latest = this.execDAO.findLatestTaskInstance(taskId)
     if (latest && !isTerminal(latest.status)) {
       throw new TaskLifecycleError(
         "in-flight",
@@ -464,6 +481,18 @@ export class TaskLifecycleService {
     }
 
     const nowIso = new Date().toISOString()
+    // task-exec-tree (v44): a TAGGED v4 round hangs under the task's previous instance so
+    // the whole run history reads as ONE tree in the ws view (外层看是一棵树). `latest`
+    // passed the in-flight guard above, so it is terminal — the chain grows one node per
+    // round. Untagged launches (v3, composite coordinators) stay roots: their parent_id is
+    // still the arm-vs-instance discriminator and the root is what their latch counts.
+    // The same-ws check is a real constraint, not paranoia: create() refuses a parent
+    // from another workspace, so when prepareWorkspace had to rebuild the ws the tree
+    // restarts at a fresh root there instead of arming into a hard failure.
+    const chainParentId =
+      step.phaseIndex != null && latest && latest.workspace_id === workspaceId
+        ? latest.id
+        : undefined
     // create() returns the execution-layer row shape (services/execution/types), which is
     // a different declaration from db/types' ExecutionRow; only the id is needed here.
     let executionId: string
@@ -472,11 +501,13 @@ export class TaskLifecycleService {
         workflow_ref: step.workflowRef,
         triggered_by: opts.triggeredBy ?? "task-lifecycle",
         input_values: inputValues,
-        // v4 rounds are independent roots on the task's ONE workspace; the v1
-        // "one root per ws" invariant is the wrong serialization for a task (it would
-        // allow two live instances of one task in separate ws while forbidding two
-        // sequential rounds in the same one). task_id makes the exemption permanent —
-        // ux_exec_task_active is what actually serializes this task.
+        parent_id: chainParentId,
+        // The FIRST round of a task is a root on a possibly reused ws; the v1 "one root
+        // per ws" invariant is the wrong serialization for a task (it would allow two
+        // live instances of one task in separate ws while forbidding two sequential
+        // rounds in the same one). task_id makes the exemption permanent —
+        // ux_exec_task_active is what actually serializes this task. Chained rounds are
+        // not root requests at all; the flag is inert for them.
         allow_existing_root: true,
         task_id: taskId,
         phase_index: step.phaseIndex,
@@ -604,8 +635,9 @@ export class TaskLifecycleService {
       if (isWaiting(row.status)) return
       const taskId = row.task_id
       // A composite child is not a round: its outcome belongs to the parent's waiting
-      // node, and it must never drive the task card or open 待验收.
-      const isChild = !!row.parent_id && row.parent_id !== "0"
+      // node, and it must never drive the task card or open 待验收. (v44: a chained round
+      // is an instance too — the tag, not the parent, decides.)
+      const isChild = isSubunitArmRow(row)
       // Status resolution (goal-task-dev status-mirror lesson, verbatim ordering):
       // the persisted row wins when it already holds a FINAL status — it is written
       // after ExecutionLifecycle's allSkipped→failed adjustment and covers resume
@@ -769,7 +801,7 @@ export class TaskLifecycleService {
   reconcile(nowIso = new Date().toISOString()): { resynced: number; reaped: number } {
     let resynced = 0
     let reaped = 0
-    const liveRoots = this.execDAO.listLiveTaskRootsNotIn(TERMINAL_EXECUTION_STATUSES)
+    const liveRoots = this.execDAO.listLiveTaskInstancesNotIn(TERMINAL_EXECUTION_STATUSES)
 
     for (const row of liveRoots) {
       try {
@@ -809,7 +841,7 @@ export class TaskLifecycleService {
     // that died between the execution write and the status mirror). Only for tasks that
     // are still sitting in 'running' with no live instance.
     for (const task of this.taskDAO.listByStatus("running")) {
-      const latest = this.execDAO.findLatestTaskRoot(task.id)
+      const latest = this.execDAO.findLatestTaskInstance(task.id)
       if (!latest || !isTerminal(latest.status)) continue
       this.finishTaskOutcome(task.id, isTerminalStatusOk(latest.status) ? "done" : "failed")
       resynced++
@@ -1005,7 +1037,7 @@ export class TaskLifecycleService {
   abortTask(taskId: string): { cancelled: string[]; retired: string[] } {
     const cancelled: string[] = []
     const retired: string[] = []
-    for (const row of this.execDAO.listTaskRoots(taskId, 5)) {
+    for (const row of this.execDAO.listTaskInstances(taskId, 5)) {
       if (isTerminal(row.status)) continue
       if (row.status === "pending") {
         const reason = "任务被中止（排队中）"
@@ -1071,11 +1103,11 @@ export class TaskLifecycleService {
 
   /** The one row a human is looking at: the task's current instance. */
   currentInstance(taskId: string): ExecutionRow | null {
-    return this.execDAO.findLatestTaskRoot(taskId)
+    return this.execDAO.findLatestTaskInstance(taskId)
   }
 
   history(taskId: string, limit = 50): ExecutionRow[] {
-    return this.execDAO.listTaskRoots(taskId, limit)
+    return this.execDAO.listTaskInstances(taskId, limit)
   }
 
   /**
@@ -1101,7 +1133,7 @@ export class TaskLifecycleService {
 
   /** The board's badge source: the newest instance of each task, one query. */
   latestInstances(taskIds: readonly string[]): ExecutionRow[] {
-    return this.execDAO.findLatestTaskRoots(taskIds)
+    return this.execDAO.findLatestTaskInstances(taskIds)
   }
 
   private mirrorTaskStatus(taskId: string, status: "running" | "done" | "failed" | "aborted"): void {
