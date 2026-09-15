@@ -458,6 +458,29 @@ export class WorkflowEngine {
       taskDispatchChildOutput?: Record<string, unknown>
     }
   ): Promise<ExecutionResult> {
+    try {
+      return await this.retryFromInner(nodeId, opts)
+    } finally {
+      // 终态统一回收 JSONL 持久 fd（run() 同理）。logger.log() 按需重开 fd，
+      // 因此"暂停→返回→稍后再 retryFrom"也安全：下一段日志会自动重连。
+      // 不补这一刀的话，交互/干预/任务派发恢复的执行（retryFrom 收尾、不再进
+      // run()）会让 hook/checkpoint/notify 这类永不 compact 的文件 fd 泄漏。
+      this.logger?.close()
+    }
+  }
+
+  private async retryFromInner(
+    nodeId: string,
+    opts?: {
+      userChoice?: string
+      userComment?: string
+      signal?: AbortSignal
+      intervention?: string
+      interactionCompletion?: { summary: string; vars_update?: Record<string, any> }
+      interactionSessionId?: string
+      taskDispatchChildOutput?: Record<string, unknown>
+    }
+  ): Promise<ExecutionResult> {
     this.pendingApprovalNodeId = undefined
     this.pendingInteractionNodeId = undefined
     this.pendingTaskDispatchNodeId = undefined
