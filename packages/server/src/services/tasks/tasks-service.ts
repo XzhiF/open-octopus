@@ -814,12 +814,13 @@ export class TasksService {
     return this.taskHomeService.readArtifactContent(taskId, requestedPath)
   }
 
-  /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面). Read a
-   *  `.scratch/**.md` file relative to the task home (the per-phase spec.md the
-   *  kanban opens). Task-exists check FIRST (→404 — also the guard against a
-   *  garbage id materializing a stray home on the write side). Path whitelist /
-   *  escape / suffix guards live in TaskHomeService (→403/404 via
-   *  ArtifactAccessError, same classification as artifacts/content). */
+  /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面) +
+   *  acceptance-evidence read. Any file under `.scratch/**` (size-capped by
+   *  TaskHomeService), the per-phase spec.md the kanban opens. Task-exists
+   *  check FIRST (→404 — also the guard against a garbage id materializing a
+   *  stray home on the write side). Whitelist / escape guards live in
+   *  TaskHomeService (→403/404/413 via ArtifactAccessError, same classification
+   *  as artifacts/content). */
   readHomeFile(
     taskId: string,
     requestedPath: string,
@@ -829,14 +830,15 @@ export class TasksService {
     return this.taskHomeService.readHomeFile(taskId, requestedPath)
   }
 
-  /** GET /api/tasks/:id/home-file?path=<dir>&list=1 — ADR-0018 batch-file
+  /** GET /api/tasks/:id/home-file?path=<dir>&list=1[&all=1] — ADR-0018 batch-file
    *  listing (spec family + feedback/report + issues under a `.scratch/` dir).
-   *  Read side: same edit-window freedom as read (guard is the dir-mode home
-   *  whitelist — `.scratch/**`, `.md` only, depth ≤2). */
-  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+   *  Default `.md`-only; `all=1` (includeAll) admits every regular file — the
+   *  v4 acceptance evidence面 needs e2e-data/*.txt、probe/*.json 等。Guard is the
+   *  dir-mode home whitelist (`.scratch/**`, no escape), depth ≤2 / cap 200. */
+  listHomeDir(taskId: string, requestedDir: string, includeAll = false): Array<{ path: string; mtime: string; bytes: number }> {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
-    return this.taskHomeService.listHomeDir(taskId, requestedDir)
+    return this.taskHomeService.listHomeDir(taskId, requestedDir, includeAll)
   }
 
   /** GET /api/tasks/:id/batch-tree — draft-artifact visibility (#53): disk-direct

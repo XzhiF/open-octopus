@@ -583,10 +583,16 @@ export async function getTaskContext(taskId: string): Promise<{
   return res.json()
 }
 
-// ============ Home batch-file read/write (契约修复: v4 phase spec.md) ============
+// ============ Home batch-file read/write (v4 spec 审阅 + 验收证据面) ============
 
-/** GET /api/tasks/:id/home-file?path= — read a `.scratch/**.md` under the task
- *  home (per-phase spec). 404 (file missing) / 403 (path off-whitelist) throw
+/** Mirror of server TaskHomeService.MAX_HOME_FILE_READ_BYTES (packages/server/
+ *  src/services/tasks/task-home-service.ts) — 改一处必改两处。Used to pre-gate
+ *  unpreviewable rows; the server's 413 stays authoritative. */
+export const MAX_HOME_FILE_READ_BYTES = 512_000
+
+/** GET /api/tasks/:id/home-file?path= — read ANY file under `.scratch/**` of
+ *  the task home (spec.md 审阅 + v4 验收证据: e2e txt/json/probe …). 404 (file
+ *  missing) / 403 (off-whitelist) / 413 (over the byte cap) throw
  *  {@link TaskApiError} carrying the status: the PhaseSpecDialog maps 404 →
  *  "create skeleton" empty state, 403 → read-only path display. */
 export async function getHomeFile(taskId: string, relPath: string): Promise<ArtifactContent> {
@@ -630,11 +636,18 @@ export interface HomeFileListingEntry {
   bytes: number
 }
 
-/** GET /api/tasks/:id/home-file?path=<dir>&list=1 — list the batch dir's .md
- *  files (depth ≤2, cap 200). 404 dir missing → TaskApiError(404); the dialog
- *  renders its empty state from that. */
-export async function listHomeDir(taskId: string, relDir: string): Promise<HomeFileListingEntry[]> {
-  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1" }))
+/** GET /api/tasks/:id/home-file?path=<dir>&list=1[&all=1] — list the batch
+ *  dir's files (depth ≤2, cap 200). Default `.md`-only (作者态契约); `opts.all`
+ *  widens to every regular file (验收证据面: e2e-data/*.txt …). 404 dir missing
+ *  → TaskApiError(404); the dialog renders its empty state from that. */
+export async function listHomeDir(
+  taskId: string,
+  relDir: string,
+  opts?: { all?: boolean },
+): Promise<HomeFileListingEntry[]> {
+  const res = await fetch(
+    buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1", ...(opts?.all ? { all: "1" } : {}) }),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)

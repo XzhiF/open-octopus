@@ -50,6 +50,40 @@ phase 标记 → `parent_id = 上一实例 id`。v3 / composite 协调器等无�
 （验收 409）。顺序：phase 2 跑完（旧代码按 root 正确收尾）→ 重启 → `sqlite3 ~/.octopus/db/octopus.db < fix-data.sql`。
 若期间旧代码又起了 phase 3（散根），脚本重跑一次一并收编。
 
+（2026-09-16 更新：phase 2 终态后已执行，a04aab5a → parent=38127532 链成 ✓；
+用户重启 3001，v44 生效，前端执行树关联渲染确认。）
+
+## 验收证据面（续座：中列接批次目录）
+
+树修好后暴露的下一层问题：待验收三栏证据面中列「产物核对」对 v4 任务恒空 ——
+它读 `GET /:id/artifacts`（artifacts/ 目录扫描），而真正证据（round-report /
+handoff / code-review / spec / issues / e2e-data / probe）全在
+`{home}/.scratch/<date>/<slug>/` 批次目录，collect 每轮回流但面板从来看不到
+（旧注释自称「登记可见 v4.1 接缝」，实为接错数据源）。
+
+改动（无 schema 变更，SCHEMA_VERSION 保持 44）：
+
+- server `task-home-service`：home-file **读门**从 `.md`-only 放宽到 `.scratch/**`
+  任意文件（mode "read"），新增 512KB 上限（`MAX_HOME_FILE_READ_BYTES`，超限 413
+  TOO_LARGE）；写门（PUT/mode "file"）守卫原样。`listHomeDir` 加 `includeAll`
+  （跳 dotfile；`batchTree` 不动 — 作者态依赖其 md-only 形状）。
+- server `routes/tasks.ts`：`classifyError` TOO_LARGE→413；`GET /:id/home-file`
+  的 list 分支识别 `&all=1`。
+- web `lib/tasks-api`：`listHomeDir(taskId, dir, {all})`；镜像上限常量。
+- web `ArtifactViewerDialog`：新增 `homeEntry` 模式（getHomeFile 取内容，
+  403/404/413 降级文案分支；entry 模式两个既有消费方零改动）。
+- web `acceptance-modal` 中列重写：批次定位 **specPath 优先**
+  （`isRelativeScratchSpec`+`batchDirOf`，与 server `phaseSpecDir` 同语义），
+  绝对/缺失回退 `getBatchTree` slug 匹配；`round-report.md` 顶部内嵌
+  MarkdownPreview；mtime ∈ round 时间窗 [started_at??created_at, completed_at]
+  打「本轮」徽章（seed/collect 双向保留 mtime 是判据成立的前提）；二进制/超限行
+  「不可预览」置灰但可见（.db 存在性=证据）；SSE task_artifacts_update 改指批次重拉。
+
+验证：server `tasks-home-file` 18 绿（G3 403→404 契约变更钉 + E1-E3/L1-L3 新覆盖）、
+`tasks-batch-tree` 7 绿；server 全量 35 失败 = main 既有红群逐项一致，无新增；
+web `components/tasks` 137 全绿（acceptance-modal 中列用例重写 + 状态面 5 例 +
+artifact-viewer-dialog 新套件 4 例）；web 全量 6 失败 = 既有基线（stash 对照吻合）。
+
 ## 验证记录
 
 - 副本演练：UPDATE 后 `a04aab5a.parent=38127532`，树成型 ✓

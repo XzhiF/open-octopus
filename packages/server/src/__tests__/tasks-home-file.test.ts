@@ -2,8 +2,10 @@
 //
 // 契约修复 — GET/PUT /api/tasks/:id/home-file（v4 batch spec.md 审阅/编辑面）。
 // 守卫矩阵（与 readArtifactContent 同一 idiom，基目录换 home 根）:
-//   • 白名单: 仅 `.scratch/**` 前缀 + `.md` 后缀；context.md / manifest.json /
-//     旧名 spec.json / artifacts/… / skills/… 一律 403（它们各有自己的既有端点）。
+//   • 读白名单: `.scratch/**` 前缀（已放宽到任意后缀 — 验收证据含 txt/json）；缺文件
+//     仍 404。context.md / manifest.json / 旧名 spec.json / artifacts/… / skills/… 一律
+//     403（无 `.scratch` 前缀，各有既有端点）。读 >512KB → 413。
+//   • 写白名单: 仍 `.md` only（PUT 门不变）；list 默认 `.md`，&all=1 放宽全量。
 //   • 逃逸: `../`、盘符绝对路径、null byte → 403；未知任务 → 404。
 //   • GET 缺文件 → 404（UI 据此渲染「创建骨架」空态）；目录 → 404。
 //   • PUT: 建父目录（UI 增 phase 行后落骨架的硬需求）/ 覆写 / content>512KB →
@@ -105,7 +107,8 @@ describe("GET home-file — 读路径与守卫", () => {
     expect((await get(id, "manifest.json")).status).toBe(403)
     expect((await get(id, "spec.json")).status).toBe(403) // 旧名同样不在白名单
     expect((await get(id, ".scratch/../context.md")).status).toBe(403) // 逃逸出 .scratch → FORBIDDEN
-    expect((await get(id, ".scratch/notes.txt")).status).toBe(403)     // 非 .md
+    // .scratch/** 内的非 .md 文件读门已放宽（验收证据）：白名单通过、缺文件 → 404（不再是 403）
+    expect((await get(id, ".scratch/notes.txt")).status).toBe(404)
     expect((await get(id, "skills/foo/SKILL.md")).status).toBe(403)
   })
 
@@ -185,5 +188,110 @@ describe("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
     expect((await put(id, ".scratch/nov-bump.md", "x\n")).status).toBe(200)
     const after = (db.prepare("SELECT version FROM tasks WHERE id = ?").get(id) as { version: number }).version
     expect(after).toBe(before)
+  })
+})
+
+// ── 验收证据面（task-exec-tree 后续）: 读门放宽到 .scratch/** 全量 + list all=1 ──
+// round 终态 collect 把执行侧改动回流批次目录，其中大量证据不是 .md（e2e 快照
+// *.txt、结构化断言 *.json、探针 *.cjs）。旧读门 `.md` only → 这些证据 403，
+// 验收中列只能显示半个事实。放宽只开在读侧（带 512KB 上限）；写门（PUT）原样。
+describe("GET home-file — 证据读（非 .md / 413 上限）", () => {
+  /** 直写 home 下的文件（模拟 collect 回流；PUT 门只收 .md，绕不开）。 */
+  function seedFile(id: string, rel: string, content: string): void {
+    const full = path.join(taskHome.homePath(id), rel)
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, content, "utf-8")
+  }
+
+  it("E1: 读 e2e-data/*.txt 与 probe/*.json → 200（collect 回流的非 md 证据）", async () => {
+    const id = await newV4Task()
+    seedFile(id, ".scratch/20260905/ev-1/e2e-data/00-baseline.txt", "WAL ok\n")
+    seedFile(id, ".scratch/20260905/ev-1/probe/result.json", '{"ok":true}\n')
+    const r1 = await get(id, ".scratch/20260905/ev-1/e2e-data/00-baseline.txt")
+    expect(r1.status).toBe(200)
+    expect(((await r1.json()) as { content: string }).content).toBe("WAL ok\n")
+    const r2 = await get(id, ".scratch/20260905/ev-1/probe/result.json")
+    expect(r2.status).toBe(200)
+    expect(((await r2.json()) as { content: string }).content).toBe('{"ok":true}\n')
+  })
+
+  it("E2: 超 512_000 字节 → 413（读前 stat 拒，不吐内容）；md 同规", async () => {
+    const id = await newV4Task()
+    seedFile(id, ".scratch/20260905/ev-2/huge.txt", "x".repeat(512_001))
+    const r = await get(id, ".scratch/20260905/ev-2/huge.txt")
+    expect(r.status).toBe(413)
+    expect(((await r.json()) as { error: string }).error).toContain("too large")
+    // 等长上限内 → 200（边界钉）
+    seedFile(id, ".scratch/20260905/ev-2/edge.md", "y".repeat(512_000))
+    expect((await get(id, ".scratch/20260905/ev-2/edge.md")).status).toBe(200)
+  })
+
+  it("E3: 放宽不破逃逸/前缀 — .scratch 兄弟目录里的证据文件仍 403", async () => {
+    const id = await newV4Task()
+    // artifacts/ 下真放一个 txt：读门必须拒（那是另一条端点的领地）
+    seedFile(id, "artifacts/leak.txt", "secret\n")
+    expect((await get(id, "artifacts/leak.txt")).status).toBe(403)
+    expect((await get(id, ".scratch/../artifacts/leak.txt")).status).toBe(403)
+  })
+})
+
+// ── list 模式此前零覆盖（G3 只测读单文件）；md-only 默认 + all=1 扩面各钉一发 ──
+describe("GET home-file?list — 默认 md-only / all=1 证据全量", () => {
+  function seedFile(id: string, rel: string, content = "x\n"): void {
+    const full = path.join(taskHome.homePath(id), rel)
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, content, "utf-8")
+  }
+  async function list(id: string, dir: string, all = false): Promise<Response> {
+    return app.request(
+      `/api/tasks/${id}/home-file?path=${encodeURIComponent(dir)}&list=1${all ? "&all=1" : ""}`,
+    )
+  }
+
+  it("L1: 默认只回 .md（作者态回归钉 — phase-spec-dialog/draft-batches 依赖此形状）", async () => {
+    const id = await newV4Task()
+    const dir = ".scratch/20260905/ls-1"
+    seedFile(id, `${dir}/spec.md`)
+    seedFile(id, `${dir}/e2e-data/run.txt`)
+    seedFile(id, `${dir}/issues/01.md`)
+    const body = (await (await list(id, dir)).json()) as {
+      files: Array<{ path: string; mtime: string; bytes: number }>
+    }
+    expect(body.files.map((f) => f.path).sort()).toEqual([
+      ".scratch/20260905/ls-1/issues/01.md",
+      ".scratch/20260905/ls-1/spec.md",
+    ])
+  })
+
+  it("L2: all=1 收全部常规文件（含子目录 txt/json/db），跳 dotfile，带 mtime/bytes", async () => {
+    const id = await newV4Task()
+    const dir = ".scratch/20260905/ls-2"
+    seedFile(id, `${dir}/round-report.md`, "# r1\n")
+    seedFile(id, `${dir}/e2e-data/run.txt`, "ok\n")
+    seedFile(id, `${dir}/e2e-data/state.db`, "binary-ish\n")
+    seedFile(id, `${dir}/probe/log.json`, "{}\n")
+    seedFile(id, `${dir}/.DS_Store`, "junk\n")
+    const body = (await (await list(id, dir, true)).json()) as {
+      files: Array<{ path: string; mtime: string; bytes: number }>
+    }
+    const paths = body.files.map((f) => f.path).sort()
+    expect(paths).toEqual([
+      ".scratch/20260905/ls-2/e2e-data/run.txt",
+      ".scratch/20260905/ls-2/e2e-data/state.db",
+      ".scratch/20260905/ls-2/probe/log.json",
+      ".scratch/20260905/ls-2/round-report.md",
+    ])
+    for (const f of body.files) {
+      expect(Date.parse(f.mtime)).not.toBeNaN()
+      expect(f.bytes).toBeGreaterThan(0)
+    }
+    // home-relative posix —— 可直接喂 GET ?path=（无二次转换）
+    const one = await get(id, paths[0]!)
+    expect(one.status).toBe(200)
+  })
+
+  it("L3: 目录不存在 → 404（UI 空态）；all=1 不改变该语义", async () => {
+    const id = await newV4Task()
+    expect((await list(id, ".scratch/20260905/never", true)).status).toBe(404)
   })
 })

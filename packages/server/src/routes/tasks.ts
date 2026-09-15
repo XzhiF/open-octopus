@@ -52,11 +52,14 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
   // 06 (US7): artifact content whitelist + missing-file classification. The
   // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
-  // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4).
+  // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4) vs
+  // TOO_LARGE (413 — batch evidence file over the read ceiling; a missed case
+  // would silently fall through to 500, pinned by tasks-home-file tests).
   if (err instanceof ArtifactAccessError) {
     switch (err.code) {
       case "FORBIDDEN": return { status: 403, message: err.message }
       case "NOT_FOUND": return { status: 404, message: err.message }
+      case "TOO_LARGE": return { status: 413, message: err.message }
     }
   }
   // 07: assist-workflow template/run classification.
@@ -338,15 +341,17 @@ export function createTasksRoutes(
     }
   })
 
-  // ── Home batch-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ────
-  // GET /:id/home-file?path=<rel> — read a `.scratch/**.md` under the task home
-  // (the per-phase spec.md). ?path=<dir>&list=1 — list the dir's .md files
-  // (ADR-0018 spec-family visibility). PUT /:id/home-file {path, content} —
-  // write/overwrite (creates parents, so a UI-added phase row can seed a spec
-  // skeleton). Guards (`.scratch` prefix / `.md` suffix / no-escape / no absolute
-  // / task-exists→404 / edit-window→409) live in the service+home service; a body
-  // over 512_000 chars → 400 via homeFileBodySchema. Errors classify through the
-  // shared ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
+  // ── Home batch-file read/write (v4 spec 审阅/编辑 + 验收证据面) ────────────
+  // GET /:id/home-file?path=<rel> — read ANY file under `.scratch/**` (v4
+  // acceptance evidence: e2e-data/*.txt, probe/*.json …; read capped at
+  // MAX_HOME_FILE_READ_BYTES → 413). ?path=<dir>&list=1 — list the dir's .md
+  // files (ADR-0018 spec-family visibility); &all=1 widens the listing to all
+  // regular files (acceptance 中列). PUT /:id/home-file {path, content} —
+  // write/overwrite, STILL `.md`-only (creates parents, so a UI-added phase row
+  // can seed a spec skeleton). Guards (`.scratch` prefix / suffix-by-mode /
+  // no-escape / no absolute / task-exists→404 / edit-window→409) live in the
+  // service+home service; a body over 512_000 chars → 400 via homeFileBodySchema.
+  // Errors classify through ArtifactAccessError (403 / 404 / TOO_LARGE→413).
   router.get("/:id/home-file", (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
@@ -354,7 +359,8 @@ export function createTasksRoutes(
     }
     try {
       if (c.req.query("list")) {
-        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath) })
+        const all = ["1", "true"].includes(c.req.query("all") ?? "")
+        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath, all) })
       }
       const result = service.readHomeFile(c.req.param("id"), requestedPath)
       return c.json(result)

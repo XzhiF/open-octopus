@@ -4,7 +4,9 @@
 //
 //   ┌ 左：执行摘要（round 用时 / 失败原因 / token / cost — fetchLLMCalls 聚合 +
 //   │     本轮 run 由 executions[] 按 id 联查；TaskAiUsageCard 同等数据）
-//   ├ 中：产物核对（本 phase 批次文件 → 既有 ArtifactViewerDialog 展开全文；
+//   ├ 中：产物核对（本 phase 批次目录 listHomeDir(all=1) 直读 + round-report.md
+//   │     内嵌 markdown 渲染；round 时间窗命中打「本轮」徽章；点开全文走
+//   │     ArtifactViewerDialog home 模式（getHomeFile，登记语义已退役）；
 //   │     task_artifacts_update SSE 挂窗即时刷新 — 票 06 collect 上行）
 //   └ 右：动作区（验收通过 / 打回[反馈必填] / 中止 + autoAdvance 只读态）
 //
@@ -18,8 +20,8 @@
 //      「轻量修复」（server override built-in/task-fix + 合成输入即时派发）。
 //   ② D14 影响清单：server 无 spec-r2 impact API → ImpactApprovalList 渲染 +
 //      批准写回逻辑就绪（updateSpecField phases 整数组），数据源为空态。
-//   ③ collect 落 home/.scratch 但不登记 artifacts.json → 中列对批次文件是
-//      「登记可见」语义（登记即出现，未登记则空态），自动登记归 server。
+//      （collect→artifacts.json 的旧接缝③已兑现为直读：中列改盘扫批次目录，
+//      server 读门同步放宽到 .scratch/** 全文件 + 512KB 上限。）
 
 "use client"
 
@@ -34,15 +36,19 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import type { ArtifactIndexEntry, Task, TaskPhase } from "@octopus/shared"
+import type { Task, TaskPhase } from "@octopus/shared"
 import { PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT } from "@octopus/shared"
 import {
   abortTask,
   getTask,
-  listArtifacts,
+  getBatchTree,
+  getHomeFile,
+  listHomeDir,
   postAcceptance,
   updateSpecField,
   TaskApiError,
+  MAX_HOME_FILE_READ_BYTES,
+  type HomeFileListingEntry,
   type TaskDetail,
   type TaskPhaseView,
   type TaskRoundView,
@@ -52,7 +58,10 @@ import type { LLMCallAggregates } from "@/lib/types"
 import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
+import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
+import { ArtifactViewerDialog, type HomeViewEntry } from "./authoring/artifact-viewer-dialog"
+import { batchDirOf } from "./authoring/phase-spec-dialog"
+import { isRelativeScratchSpec } from "./authoring/use-batch-tree"
 import { TaskAiUsageCard, runErrorOf } from "./execution-summary"
 
 // 归档重试客户端 postArchiveRetry 位于 lib/tasks-api.ts（review ①: API 层惯例
@@ -73,12 +82,20 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
+/** 中列不可预览扩展名（二进制/压缩 — 点开只会吐乱码或 413）。 */
+const NON_PREVIEW_RE = /\.(db|sqlite3?|png|jpe?g|gif|webp|ico|zip|gz|zst|tar|pdf|wasm|mp4|webm|so|dylib|dll)$/i
+
 /** K14 的「1 分钟决策成本」：三栏 grid，窄屏折叠为纵向。 */
 export function AcceptanceModal({ task, open, onOpenChange, onMutated }: AcceptanceModalProps) {
   const taskId = task?.id ?? null
   const [detail, setDetail] = useState<TaskDetail | null>(null)
-  const [artifacts, setArtifacts] = useState<ArtifactIndexEntry[]>([])
-  const [viewing, setViewing] = useState<ArtifactIndexEntry | null>(null)
+  // 中列 = 本 phase 批次目录直读（task-exec-tree 验收证据面）：files 为 null
+  // 表示未载/重载入中，[] 是「目录存在但无文件」或「目录未落盘(404)」。
+  const [files, setFiles] = useState<HomeFileListingEntry[] | null>(null)
+  const [batchError, setBatchError] = useState<string | null>(null)
+  const [batchReload, setBatchReload] = useState(0) // SSE collect → bump 重拉
+  const [homeViewing, setHomeViewing] = useState<HomeViewEntry | null>(null)
+  const [roundReport, setRoundReport] = useState<string | null>(null)
   const [agg, setAgg] = useState<LLMCallAggregates | null>(null)
   const [aggLoading, setAggLoading] = useState(false)
 
@@ -89,18 +106,19 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
   const [nextFlow, setNextFlow] = useState<"rerun" | "fix">("rerun")
   const [busy, setBusy] = useState<"accept" | "reject" | "abort" | null>(null)
   const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string; flow: "rerun" | "fix" } | null>(null)
+  // specPath 绝对/缺失（gateV4 容忍 agent 旁路直写）时的批次定位回退位：
+  // getBatchTree 按 slug 取 latest_mtime 最新 dir（specPath 优先,正常 v4 恒命中）。
+  // tried 区分「还在扫」与「扫完没有」——防中列无限转圈。
+  const [fallbackDir, setFallbackDir] = useState<string | null>(null)
+  const [fallbackTried, setFallbackTried] = useState(false)
 
   const refetchDetail = useCallback(() => {
     if (!taskId) return
     getTask(taskId).then(setDetail).catch(() => { /* keep last snapshot */ })
   }, [taskId])
 
-  const refetchArtifacts = useCallback(() => {
-    if (!taskId) return
-    listArtifacts(taskId).then(setArtifacts).catch(() => setArtifacts([]))
-  }, [taskId])
-
-  // 开窗：拉 detail + artifacts；复位打回子块。
+  // 开窗：拉 detail（批次文件列表由 [open, batchDir] 的下行 effect 拉，detail
+  // 到手才知道 batchDir）；复位打回子块。
   useEffect(() => {
     if (!open || !taskId) return
     setDetail(null)
@@ -108,12 +126,17 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     setFeedback("")
     setNextFlow("rerun")
     setRejectedSeam(null)
+    setFiles(null)
+    setBatchError(null)
+    setRoundReport(null)
+    setFallbackDir(null)
+    setFallbackTried(false)
     refetchDetail()
-    refetchArtifacts()
-  }, [open, taskId, refetchDetail, refetchArtifacts])
+  }, [open, taskId, refetchDetail])
 
   // SSE 挂窗（K14「无需刷新」）：phase_status_update / task_status → 重拉派生；
-  // task_artifacts_update → 重拉产物索引（票 06 collect 上行即推）。
+  // task_artifacts_update → 重拉批次列表（票 06 collect 轮终态上行即推 — 中列
+  // 的证据就是这个事件带回来的）。
   useEffect(() => {
     if (!open || !taskId) return
     const url = `${getServerUrl()}/api/tasks/events`
@@ -126,9 +149,9 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     }
     const unPhase = subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unStatus = subscribeSSE(url, TASK_STATUS_EVENT, (e) => { if (mine(e)) refetchDetail() })
-    const unArts = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => { if (mine(e)) refetchArtifacts() })
+    const unArts = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => { if (mine(e)) setBatchReload((v) => v + 1) })
     return () => { unPhase(); unStatus(); unArts() }
-  }, [open, taskId, refetchDetail, refetchArtifacts])
+  }, [open, taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
   const phaseViews = detail?.derived?.phaseViews ?? []
@@ -171,14 +194,94 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
   // executions[] 联查到的徽章 error_summary，按红状态门控（runErrorOf），不臆造拉取。
   const roundError = awaitingRound?.state === "failed" && roundRun ? runErrorOf(roundRun) : null
 
-  // 产物核对：登记产物里命中本 phase slug 的文件（K10 批次目录
-  // `.scratch/<date>/<slug>/`，登记可见语义 — 接缝③）。
-  const phaseArtifacts = useMemo(() => {
-    const slug = awaitingPhase?.slug ?? (rejectedSeam ? "" : "")
-    if (!slug) return artifacts
-    const hit = artifacts.filter((a) => a.path.includes(slug))
-    return hit.length > 0 ? hit : artifacts
-  }, [artifacts, awaitingPhase, rejectedSeam])
+  // ── 中列证据面：本 phase 批次目录直读（盘上真相,登记语义已退役） ──────────
+  // 定位：specPath 优先（server 权威 phaseSpecDir = dirname(specPath),同语义零
+  // 歧义）；绝对/缺失才回退 batch-tree 的 slug 匹配。列表 listHomeDir(all=1)
+  // 收全文件（e2e-data/*.txt、probe/*.json 也是证据）；SSE batchReload 重拉。
+  const awaitingSpec = useMemo(() => {
+    const phases = (detail?.task_spec ?? task?.task_spec)?.phases
+    return awaitingPhase ? phases?.find((p) => p.index === awaitingPhase.index) ?? null : null
+  }, [detail, task, awaitingPhase])
+  const specBatchDir = useMemo(
+    () => (awaitingSpec?.specPath && isRelativeScratchSpec(awaitingSpec.specPath)
+      ? batchDirOf(awaitingSpec.specPath) || null
+      : null),
+    [awaitingSpec],
+  )
+  useEffect(() => {
+    if (!open || !taskId || !awaitingPhase || specBatchDir) { setFallbackDir(null); return }
+    let cancelled = false
+    getBatchTree(taskId)
+      .then((bs) => {
+        if (cancelled) return
+        const hit = bs
+          .filter((b) => b.slug === awaitingPhase.slug)
+          .sort((a, b) => (a.latest_mtime < b.latest_mtime ? 1 : a.latest_mtime > b.latest_mtime ? -1 : 0))[0]
+        setFallbackDir(hit?.dir ?? null)
+        setFallbackTried(true)
+      })
+      .catch(() => { if (!cancelled) { setFallbackDir(null); setFallbackTried(true) } })
+    return () => { cancelled = true }
+  }, [open, taskId, awaitingPhase, specBatchDir])
+  const batchDir = specBatchDir ?? fallbackDir
+
+  useEffect(() => {
+    if (!open || !taskId || !batchDir) return
+    let cancelled = false
+    setFiles(null)
+    setBatchError(null)
+    listHomeDir(taskId, batchDir, { all: true })
+      .then((fs) => { if (!cancelled) { setFiles(fs); setBatchError(null) } })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        // 目录未落盘（首轮 collect 前）= 正常空态；其余（server 未更新 403 等）显式报错
+        if (err instanceof TaskApiError && err.status === 404) setFiles([])
+        else setBatchError(err instanceof Error ? err.message : "批次目录读取失败")
+      })
+    return () => { cancelled = true }
+  }, [open, taskId, batchDir, batchReload])
+
+  // round 时间窗（「本轮」徽章判据）：seed/collect 双向保留 mtime
+  // (task-artifact-sync 设计不变式) → mtime ∈ [started_at??created_at, completed_at]
+  // 即"本轮执行侧动过的文件"。依赖同机时钟（dev 单机部署,注释即裁决）。running 轮
+  // 无上界 → now,SSE 重拉时徽章随盘更新。roundRun 联查不到（server 老/列表缺）→ 无徽章。
+  const roundWindow = useMemo(() => {
+    if (!roundRun) return null
+    const lo = Date.parse(roundRun.started_at ?? roundRun.created_at)
+    if (Number.isNaN(lo)) return null
+    const hi = roundRun.completed_at ? Date.parse(roundRun.completed_at) : Date.now()
+    return { lo, hi }
+  }, [roundRun])
+  const inRound = useCallback((f: HomeFileListingEntry): boolean =>
+    !!roundWindow && Date.parse(f.mtime) >= roundWindow.lo && Date.parse(f.mtime) <= roundWindow.hi,
+  [roundWindow])
+
+  // 不可预览预门控：二进制/压缩类扩展名 + 超读上限（server 413 的镜像,避免
+  // 点开才见错误）。.db 仍展示 —— 证据存在性本身就是决策信息。
+  const previewable = useCallback(
+    (f: HomeFileListingEntry): boolean => !NON_PREVIEW_RE.test(f.path) && f.bytes <= MAX_HOME_FILE_READ_BYTES,
+    [],
+  )
+
+  // 内嵌 round-report：固定文件名、每轮覆写（task-author SKILL 约定;fix 轮的
+  // fix-report-rN.md 是普通可点行）。mtime 进 deps → collect 覆写后自动重拉。
+  const reportFile = useMemo(
+    () => (files ?? []).find((f) => (f.path.split("/").pop() ?? "").toLowerCase() === "round-report.md") ?? null,
+    [files],
+  )
+  useEffect(() => {
+    if (!taskId || !reportFile || reportFile.bytes > MAX_HOME_FILE_READ_BYTES) { setRoundReport(null); return }
+    let cancelled = false
+    getHomeFile(taskId, reportFile.path)
+      .then((r) => { if (!cancelled) setRoundReport(r.content) })
+      .catch(() => { if (!cancelled) setRoundReport(null) })
+    return () => { cancelled = true }
+  }, [taskId, reportFile?.path, reportFile?.mtime, reportFile?.bytes])
+
+  const sortedFiles = useMemo(
+    () => (files ?? []).slice().sort((a, b) => (a.mtime === b.mtime ? 0 : a.mtime < b.mtime ? 1 : -1)),
+    [files],
+  )
 
   // ── 前序交接提示行（phase-handoff-chaining 票 04 / spec K6） ──────────
   // decision=accepted 语境（确认按钮上方）∧ 存在下一 phase → 一行提示：
@@ -390,39 +493,87 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
               )}
             </div>
 
-            {/* ── 中：产物核对 ── */}
+            {/* ── 中：产物核对（批次目录直读） ── */}
             <div className="min-h-0 border-r border-border overflow-y-auto p-4 space-y-2" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
                 <FileText className="size-3.5" /> 产物核对
                 <span className="ml-auto font-normal">
-                  {awaitingPhase ? `批次 slug: ${awaitingPhase.slug}` : ""} · {phaseArtifacts.length} 个 · 点击看全文
+                  {awaitingPhase ? `批次 slug: ${awaitingPhase.slug}` : ""}{batchDir ? ` · ${batchDir}` : ""}{files ? ` · ${files.length} 个` : ""} · 点击看全文
                 </span>
               </div>
-              {phaseArtifacts.length === 0 ? (
-                <div className="rounded-md border border-dashed p-4 text-[11px] text-muted-foreground space-y-1" data-acceptance-artifacts-empty>
-                  <p>本 Phase 的批次目录暂无登记产物。</p>
-                  <p className="text-[10px]">round 终态 collect 回收执行侧改动并推 task_artifacts_update；登记进产物索引后即时出现（collect 自动登记为 v4.1 接缝）。</p>
-                </div>
+
+              {!awaitingPhase ? (
+                <p className="text-[11px] text-muted-foreground" data-acceptance-batch-idle data-testid="acceptance-batch-idle">
+                  当前无待验收 round — 验收时在此核对本 phase 批次文件。
+                </p>
               ) : (
-                <ul className="space-y-1.5" data-acceptance-artifact-rows data-testid="acceptance-artifact-rows">
-                  {phaseArtifacts.map((a) => (
-                    <li key={a.path}>
-                      <button
-                        className="w-full text-left rounded-md border border-border px-2.5 py-1.5 hover:border-primary/40 transition-colors"
-                        onClick={() => setViewing(a)}
-                        data-acceptance-artifact-row={a.path} data-testid={`acceptance-artifact-row-${a.path}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-sm truncate">{a.title || a.path}</span>
-                          {a.external && <span className="text-[10px] px-1 rounded bg-muted shrink-0">外部</span>}
-                          <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{a.updated_at.slice(0, 16).replace("T", " ")}</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">{a.path} · by {a.by}</div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  {/* 决策主证据内嵌渲染（K14「1 分钟决策成本」）：round-report.md
+                      markdown 直出,列表在其下 — 其余文件点开全文看。 */}
+                  {roundReport && (
+                    <div className="rounded-md border border-border bg-muted/20 space-y-1" data-acceptance-round-report data-testid="acceptance-round-report">
+                      <div className="px-3 pt-2 flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                        <FileText className="size-3" /> round-report.md · 本轮终报
+                      </div>
+                      <div className="px-3 pb-2 max-h-[420px] overflow-y-auto">
+                        <MarkdownPreview content={roundReport} className="text-[11px]" />
+                      </div>
+                    </div>
+                  )}
+
+                  {batchError && (
+                    <div className="text-[11px] text-pop-red" data-acceptance-batch-error data-testid="acceptance-batch-error">
+                      批次目录读取失败：{batchError}
+                    </div>
+                  )}
+                  {files === null && !batchError && (batchDir || !fallbackTried) && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Spinner className="size-3" /> {batchDir ? "读取批次目录…" : "定位批次目录…"}
+                    </div>
+                  )}
+                  {((files !== null && files.length === 0) ||
+                    (files === null && !batchError && !batchDir && fallbackTried)) && (
+                    <div className="rounded-md border border-dashed p-4 text-[11px] text-muted-foreground" data-acceptance-batch-empty data-testid="acceptance-batch-empty">
+                      {`本 Phase 批次目录${batchDir ? `（${batchDir}）` : ""}暂无文件 — round 终态 collect 回收执行侧改动后即时出现。`}
+                    </div>
+                  )}
+                  {sortedFiles.length > 0 && (
+                    <ul className="space-y-1.5" data-acceptance-artifact-rows data-testid="acceptance-artifact-rows">
+                      {sortedFiles.map((f) => {
+                        const name = f.path.split("/").pop() ?? f.path
+                        const canPreview = previewable(f)
+                        const badge = inRound(f)
+                        return (
+                          <li key={f.path}>
+                            <button
+                              className={`w-full text-left rounded-md border px-2.5 py-1.5 transition-colors ${
+                                canPreview ? "border-border hover:border-primary/40" : "border-border/50 opacity-60 cursor-default"
+                              }`}
+                              disabled={!canPreview}
+                              onClick={() => canPreview && setHomeViewing({ path: f.path, bytes: f.bytes, mtime: f.mtime })}
+                              data-acceptance-artifact-row={f.path} data-testid={`acceptance-artifact-row-${f.path}`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
+                                <span className="text-sm truncate">{name}</span>
+                                {badge && (
+                                  <Badge className="text-[9px] px-1 py-0 shrink-0" data-acceptance-round-badge={f.path} data-testid={`acceptance-round-badge-${f.path}`}>
+                                    本轮
+                                  </Badge>
+                                )}
+                                <span className="ml-auto text-[10px] text-muted-foreground shrink-0 tabular-nums">{f.mtime.slice(5, 16).replace("T", " ")}</span>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">
+                                {f.path} · {Math.max(1, Math.round(f.bytes / 1024))} KB
+                                {!canPreview && <span className="text-pop-amber"> · 不可预览</span>}
+                              </div>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </>
               )}
             </div>
 
@@ -576,8 +727,9 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
 
       <ArtifactViewerDialog
         taskId={taskId ?? ""}
-        entry={viewing}
-        onOpenChange={(o) => { if (!o) setViewing(null) }}
+        entry={null}
+        homeEntry={homeViewing}
+        onOpenChange={(o) => { if (!o) setHomeViewing(null) }}
       />
     </>
   )
