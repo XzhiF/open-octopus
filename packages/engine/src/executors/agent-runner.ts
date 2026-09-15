@@ -58,6 +58,8 @@ export class AgentNodeRunner {
     maxBudgetUsd?: number
     /** Base tool set for this agent (SDK `tools`; claude engine only). */
     tools?: string[]
+    /** Node id echoed into [exec-timing] logs (OCTOPUS_EXEC_TIMING=1). */
+    timingTag?: string
   }): Promise<AgentRunResult> {
     const start = Date.now()
     const maxRetries = opts.maxRetries ?? 1
@@ -145,6 +147,7 @@ export class AgentNodeRunner {
             tools: opts.tools,
             systemPrompt: opts.systemPrompt ?? { type: "preset", preset: "claude_code" },
             abortSignal: localAbort.signal,
+            ...(opts.timingTag ? { timingTag: opts.timingTag } : {}),
             onBeforeToolCall: opts.onBeforeToolCall,
             // Non-interaction agents must be autonomous: block interaction-session
             // tools so they cannot ask the user mid-execution (would hang/empty-answer).

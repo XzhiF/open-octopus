@@ -69,6 +69,11 @@ export class EngineCallbacks implements IEngineCallbacks {
     // Track branch start times for durationMs computation
     const branchStartTimes = new Map<string, number>()
 
+    // workflow_ref is immutable for an execution — the old code re-ran a
+    // synchronous SELECT on EVERY streaming agent event just to read it.
+    // Lazily cache it once per execution instead.
+    let workflowRefCache: string | undefined
+
     // Throttle for execution_metrics SSE: max 1 emit per 500ms (trailing edge)
     let metricsTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -603,10 +608,13 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (getFlag("agent_events_persist")) {
           try {
             const neId = `${id}-${nodeId}`
-            const exec = dao.findById(id)
+            if (workflowRefCache === undefined) {
+              const exec = dao.findById(id)
+              workflowRefCache = exec?.workflow_ref ?? "unknown"
+            }
             obs.bufferEvent(neId, event, {
               executionId: id, nodeId, org: this.org,
-              workspaceId: this.workspaceDbId, workflowRef: exec?.workflow_ref ?? "unknown",
+              workspaceId: this.workspaceDbId, workflowRef: workflowRefCache,
             })
           } catch { /* silent */ }
         }

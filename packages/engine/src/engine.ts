@@ -427,6 +427,10 @@ export class WorkflowEngine {
       this.writeStateJson(result, durationMs)
     }
 
+    // Flush + release JSONL log fds before announcing completion (readers of
+    // onComplete may immediately read the log files).
+    this.logger?.close()
+
     this.callbacks?.onComplete?.(result.status)
 
     return {
@@ -451,6 +455,29 @@ export class WorkflowEngine {
       /** G1 task_dispatch resume payload: the completed child schedule's output
        *  snapshot. When present on a task_dispatch pause node, the executor applies
        *  output_mapping and completes (mirrors interactionCompletion for interaction). */
+      taskDispatchChildOutput?: Record<string, unknown>
+    }
+  ): Promise<ExecutionResult> {
+    try {
+      return await this.retryFromInner(nodeId, opts)
+    } finally {
+      // 终态统一回收 JSONL 持久 fd（run() 同理）。logger.log() 按需重开 fd，
+      // 因此"暂停→返回→稍后再 retryFrom"也安全：下一段日志会自动重连。
+      // 不补这一刀的话，交互/干预/任务派发恢复的执行（retryFrom 收尾、不再进
+      // run()）会让 hook/checkpoint/notify 这类永不 compact 的文件 fd 泄漏。
+      this.logger?.close()
+    }
+  }
+
+  private async retryFromInner(
+    nodeId: string,
+    opts?: {
+      userChoice?: string
+      userComment?: string
+      signal?: AbortSignal
+      intervention?: string
+      interactionCompletion?: { summary: string; vars_update?: Record<string, any> }
+      interactionSessionId?: string
       taskDispatchChildOutput?: Record<string, unknown>
     }
   ): Promise<ExecutionResult> {
@@ -966,16 +993,30 @@ export class WorkflowEngine {
         })
       }
 
+      const _et = process.env.OCTOPUS_EXEC_TIMING === "1"
+        ? { nodeEnd0: Date.now(), nodeEnd1: 0, compact1: 0, persist1: 0 }
+        : null
       this.callbacks?.onNodeEnd?.(node.id, nodeResult.status, nodeResult.durationMs, nodeResult, node.type)
+      if (_et) _et.nodeEnd1 = Date.now()
 
       // Compact JSONL after node completes
       try {
         const mergedEvents = this.logger?.compactFile(node.id)
+        if (_et) _et.compact1 = Date.now()
         if (mergedEvents && mergedEvents.length > 0) {
           this.callbacks?.onNodeCompacted?.(node.id, mergedEvents)
         }
+        if (_et) _et.persist1 = Date.now()
       } catch (err) {
         // compact failure is non-fatal
+      }
+      if (_et) {
+        console.log(`[exec-timing] node-tail ${JSON.stringify({
+          nodeId: node.id,
+          onNodeEnd_ms: _et.nodeEnd1 - _et.nodeEnd0,
+          compact_ms: (_et.compact1 ?? 0) - (_et.nodeEnd1 ?? 0),
+          persistMerged_ms: (_et.persist1 ?? 0) - (_et.compact1 ?? 0),
+        })}`)
       }
 
       return nodeResult

@@ -106,9 +106,12 @@ export class AgentExecutor implements NodeExecutor {
 
     try {
       const prompt = this.buildPrompt()
+      const timingOn = process.env.OCTOPUS_EXEC_TIMING === "1"
+      const tPreDone = Date.now()
 
       const result = await this.runner.run({
         prompt,
+        timingTag: this.node.id,
         agent: this.node.agent,
         skills: this.node.skills,
         agents: this.resolveAgents(),
@@ -127,6 +130,14 @@ export class AgentExecutor implements NodeExecutor {
         tools: this.node.tools,
         disallowedTools: this.node.disallowed_tools,
       })
+
+      if (timingOn) {
+        console.log(`[exec-timing] agent-pre ${JSON.stringify({
+          tag: this.node.id,
+          pre_ms: tPreDone - start,
+          runner_ms: Date.now() - tPreDone,
+        })}`)
+      }
 
       clearTimeout(activityTimer)
 

@@ -65,6 +65,10 @@ export function initDb(dbPath?: string): Database.Database {
   const resolved = getDbPath(dbPath)
   db = new Database(resolved)
   db.pragma("journal_mode = WAL")
+  // WAL + synchronous=NORMAL: commits skip the per-commit fsync (the big win for
+  // batched event writes). Still crash-safe for process crashes; only an OS/power
+  // crash can roll back the last WAL commit. busy_timeout keeps writers fair.
+  db.pragma("synchronous = NORMAL")
   db.pragma("busy_timeout = 5000")
   db.pragma("foreign_keys = ON")
   applySchema(db)
