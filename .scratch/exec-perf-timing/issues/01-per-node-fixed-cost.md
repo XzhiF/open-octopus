@@ -46,22 +46,20 @@ SDK `query({ prompt: AsyncIterable })` 支持进程挂活、多条 user 消息�
 
 ## 候选 B 实验结果（2026-09-15，provider 临时 env 开关，测毕已移除）
 
-同一探针（2 节点 tiny prompt / sonnet），`OCTOPUS_TIMING_MIN_PROMPT=1`（极简 systemPrompt
-替换 claude_code preset）对比本票所在会话已记录的 3 样本基线：
+**扩样本两臂对照（5 节点 continue 链 ×2，tiny prompt / sonnet，共 10 个节点样本）：**
 
-| 指标 | 基线（preset） | 实验（min prompt） | Δ |
-|---|---|---|---|
-| boot_ms | 361-434 | 401-412 | ≈0 |
-| init_ms | 488-553 | 506-534 | ≈0 |
-| first_msg_ms | 1971-2229 | 2431-1792 | **噪声带内，无变化** |
-| result_ms | 2565-2899 | 3105-2343 | ≈0 |
+| 臂 | n | first_msg 中位 | 均值 | 范围 | boot/init/result |
+|---|---|---|---|---|---|
+| default（claude_code preset） | 5 | 1855ms | 2173ms | 1758-2768 | 持平 |
+| min-prompt（极简 systemPrompt） | 5 | 2020ms | 2049ms | 1742-2417 | 持平 |
 
-**结论**：boot→首token 的 ~1.45s 不是 preset 系统提示的本地组装/上传。`NO_SETTINGS` 组未跑——
-设置/CLAUDE.md 扫描位于 init 前，而 init 全程 ≈0.5s，杠杆上限 ~0.2s，不值一次节点开销。
-剩余解释以 **API TTFT（每请求全量 tool schema + 消息上传，网络+服务端队列）为主**，
-B 路线判死。
+均值差 124ms（σ≈400ms，噪声带内；中位数还反向）→ **preset 系统提示的本地组装/上传不是那 1.45s**，
+B 判死。`NO_SETTINGS` 组未跑（其作用区间在 init 前，init 全程 ≈0.5s，上限 ~0.2s）。
 
-**n=2 诚实标注**：样本薄，但要证伪"省 >0.7s"够用（两点均落在基线 ±400ms 噪声内，无方向性）。
+**副产品——resume 历史增长不抬 TTFT**：default 臂序号↔first_msg 相关 **-0.85**（n1/n2 2661/2768 →
+n3-5 ~1800），即链上越跑越快，服务端 prompt cache 预热压过了历史变重的影响。含义：
+`context: new` 的卫生化省的是 token 钱（真实任务池 cache_read 22k-50k/节点），**不是时延**。
+（tiny 规模结论，大 transcript 下可能反转。）
 
 ## A 的收益重估（决策前必读）
 
@@ -70,9 +68,9 @@ A 省不了 TTFT。常驻进程可消灭的是每节点的 boot(0.4s)+init(0.12s
 碎节点工作流（15-30 agent 节点）一轮省 15-45s；是否值当引擎"一节点=一次 sendQuery"假设重构 +
 取消/重试/预算归属重设计 + ADR，由用户拍板。
 
-**零代码替代（先做这个）**：globalSessionId 链上 resume 本地 ≈0 成本，但每节点重发全史
-（真实任务池 cache_read 22k-50k）→ 对不需要前文的独立小节点，在 YAML 写 `context: new`
-可同时削 token 钱与部分 TTFT。spec-dag / loop 内短节点是首要候选。
+**零代码替代（定位修正）**：独立小节点 `context: new` 省的是 **token 钱**（真实任务池 resume 每节点
+重发 22k-50k 历史）——上面的副产品实验显示它对**时延无益**（链上 cache 预热反而越跑越快），
+别拿它当性能手段，只当成本控制手段。
 
 ## 已落地的前置项（本分支 feat-exec-perf）
 
