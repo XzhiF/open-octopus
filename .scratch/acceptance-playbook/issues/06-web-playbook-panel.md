@@ -7,7 +7,7 @@
 05
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: 渲染 payload → 步数/预算/carryover 正确;✗ 存在时 onFailCount>0 冒给父(供 disabled)

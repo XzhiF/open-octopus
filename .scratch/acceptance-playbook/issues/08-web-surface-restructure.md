@@ -7,7 +7,7 @@ acceptance-surface.tsx:①②③④ 顺序入 mid(①RoundDiff 外层包「状�
 06, 07
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: 三列锚点 testid 仍可过;acceptance-surface.test.tsx 全绿(含断言更新)

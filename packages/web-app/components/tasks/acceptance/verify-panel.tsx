@@ -160,8 +160,9 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
 
       {/* 输出控制台：pop 终端 chrome */}
       {(running || lines.length > 0) && (
-        <div className="max-h-[280px] overflow-auto border-y-2 border-pop-bd bg-pop-ink px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-paper" ref={consoleRef} data-testid="verify-console">
-          {lines.map((l, i) => (
+        <div className="border-y-2 border-pop-bd bg-pop-ink px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-paper" ref={consoleRef} data-testid="verify-console">
+          {lines.length > 120 && <div className="text-pop-dim">[…前 {lines.length - 120} 行已折叠，完整看 verdict 文件]</div>}
+          {lines.slice(-120).map((l, i) => (
             <div key={i} className={`whitespace-pre-wrap break-all ${/^\[stderr\]|error|Error|FAIL/.test(l) ? "text-pop-amber" : ""}`}>{l || " "}</div>
           ))}
           {running && <div className="pop-blink text-pop-green">▊</div>}

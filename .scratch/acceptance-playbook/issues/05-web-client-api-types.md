@@ -7,7 +7,7 @@
 02, 03
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: 409/400/404 → TaskApiError(status 透传),形状与 server payload 一致(手改字段有 tsc 报错保护)

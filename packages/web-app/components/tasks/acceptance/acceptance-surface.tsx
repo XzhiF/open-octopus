@@ -35,10 +35,10 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import type { Task, AcceptanceVerify } from "@octopus/shared"
+import type { Task, AcceptanceVerify, AcceptancePreview } from "@octopus/shared"
 import {
   PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT,
-  TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT,
+  TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT, TASK_PREVIEW_EVENT,
 } from "@octopus/shared"
 import {
   abortTask,
@@ -54,16 +54,20 @@ import {
   getVerifyStatus,
   startVerify,
   abortVerify,
+  getPlaybook,
+  startPreview,
+  getPreview,
+  stopPreview,
   type HomeFileListingEntry,
   type RoundDiffPayload,
   type VerifySummary,
   type VerifyState,
+  type PlaybookPayload,
+  type PreviewSummary,
   type TaskDetail,
   type TaskPhaseView,
   type TaskRoundView,
 } from "@/lib/tasks-api"
-import { fetchLLMCalls } from "@/lib/observability-api"
-import type { LLMCallAggregates } from "@/lib/types"
 import { formatDuration } from "@/lib/format"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
@@ -73,9 +77,12 @@ import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
 import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
+import { PreviewBar } from "./preview-bar"
+import { PlaybookPanel } from "./playbook-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
-import { TaskAiUsageCard, runErrorOf } from "../execution-summary"
+import { runErrorOf } from "../execution-summary"
 import { ImpactApprovalList } from "./impact-approval-list"
+import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 
 // ── Props ────────────────────────────────────────────────────────────
 
@@ -105,8 +112,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const [batchReload, setBatchReload] = useState(0) // SSE collect → bump 重拉
   const [homeViewing, setHomeViewing] = useState<HomeViewEntry | null>(null)
   const [roundReport, setRoundReport] = useState<string | null>(null)
-  const [agg, setAgg] = useState<LLMCallAggregates | null>(null)
-  const [aggLoading, setAggLoading] = useState(false)
 
   // 打回子块（右列展开）+ 提交后的路由回显/D14 接缝卡。
   const [rejectOpen, setRejectOpen] = useState(false)
@@ -137,6 +142,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const [verify, setVerify] = useState<VerifySummary | null>(null)
   const [verifyLines, setVerifyLines] = useState<string[]>([])
   const [verifyBusy, setVerifyBusy] = useState(false)
+  // ── 验收面 v2.1 状态：剧本 + 预览 + 决策确认层 ──
+  const [playbook, setPlaybook] = useState<PlaybookPayload | null>(null)
+  const [gate, setGate] = useState<{ pass: number; fail: number; skip: number; undecided: number; total: number; failTickets: string[] }>({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+  const [checksSaving, setChecksSaving] = useState(false)
+  const [preview, setPreview] = useState<PreviewSummary | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [ledgerOpen, setLedgerOpen] = useState(false)   // 通过 = ledger 预览确认弹层
+  const [abortOpen, setAbortOpen] = useState(false)      // 中止 = 危险确认
 
   const refetchDetail = useCallback(() => {
     if (!taskId) return
@@ -163,6 +176,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     specFetchedForRef.current = null
     setVerify(null)
     setVerifyLines([])
+    setPlaybook(null)
+    setGate({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+    setPreview(null)
+    setLedgerOpen(false)
+    setAbortOpen(false)
     refetchDetail()
   }, [taskId, refetchDetail])
 
@@ -202,7 +220,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         setVerify((prev) => (prev ? { ...prev, ...d } : prev))
       } catch { /* drop */ }
     })
-    return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify() }
+    // 预览状态流转（starting→ready→stopped/exited）；终态不静默。
+    const unPreview = subscribeSSE(url, TASK_PREVIEW_EVENT, (e) => {
+      if (!mine(e)) return
+      try {
+        const d = JSON.parse(e.data) as Partial<PreviewSummary> & { task_id: string }
+        setPreview((prev) => (prev ? { ...prev, ...d } : prev))
+      } catch { /* drop */ }
+    })
+    return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify(); unPreview() }
   }, [taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
@@ -216,18 +242,27 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     return awaitingPhase.rounds.find((r) => r.roundIndex === awaitingPhase.awaitingRound) ?? null
   }, [awaitingPhase])
 
-  // round 的 AI 消耗（execution 口径，非任务合计口径 — 左列）。
-  const execId = awaitingRound?.exec.id ?? null
+  // ── 验收面 v2.1：剧本编译 + 预览会话恢复 ──
+  // playbook：按 awaiting 轮现拉（服务端派生；409 无 awaiting → null 静默，面板有 idle 态）。
+  // preview：挂载 GET 一次（SSE 无 replay；external 探活由 server 兜）。execId 换轮即重拉。
   useEffect(() => {
-    if (!execId) { setAgg(null); return }
+    if (!taskId || !awaitingRound) { setPlaybook(null); return }
     let cancelled = false
-    setAggLoading(true)
-    fetchLLMCalls(execId)
-      .then((r) => { if (!cancelled) setAgg(r.aggregates ?? null) })
-      .catch(() => { if (!cancelled) setAgg(null) })
-      .finally(() => { if (!cancelled) setAggLoading(false) })
+    getPlaybook(taskId)
+      .then((p) => { if (!cancelled) setPlaybook(p) })
+      .catch(() => { if (!cancelled) setPlaybook(null) })
     return () => { cancelled = true }
-  }, [execId])
+  }, [taskId, awaitingRound?.exec.id])
+
+  useEffect(() => {
+    if (!taskId || !awaitingRound) return
+    let cancelled = false
+    getPreview(taskId)
+      .then((s) => { if (!cancelled && s) setPreview(s) })
+      .catch(() => { /* not wired / offline */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, awaitingRound?.exec.id])
 
   // 本轮 run：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
   // 徽章自带 started_at/completed_at，duration 自己算；票05 起徽章带 error_summary）。
@@ -436,7 +471,47 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     }
   }, [taskId, refetchDetail])
 
-  // ── 前序交接提示行（phase-handoff-chaining 票 04 / spec K6） ──────────
+  // ── 跑起来看（preview） handlers ──
+  const previewCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_preview ?? null
+
+  const handlePreviewStart = useCallback(async () => {
+    if (!taskId) return
+    setPreviewBusy(true)
+    try {
+      const s = await startPreview(taskId)
+      setPreview(s)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "预览启动失败")
+    } finally {
+      setPreviewBusy(false)
+    }
+  }, [taskId])
+
+  const handlePreviewStop = useCallback(async () => {
+    if (!taskId) return
+    setPreviewBusy(true)
+    try {
+      const s = await stopPreview(taskId)
+      setPreview((prev) => (prev ? { ...prev, ...s } : s))
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "停止失败")
+    } finally {
+      setPreviewBusy(false)
+    }
+  }, [taskId])
+
+  const handlePreviewSave = useCallback(async (v: AcceptancePreview | null): Promise<boolean> => {
+    if (!taskId) return false
+    try {
+      await updateSpecField(taskId, "acceptance_preview", v, { source: "user" })
+      refetchDetail()
+      toast.success(v ? "预览配置已保存 — 随任务持久化，下个 phase 复用" : "预览配置已清除")
+      return true
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? `保存失败：${err.message}` : "保存失败")
+      return false
+    }
+  }, [taskId, refetchDetail])
   // decision=accepted 语境（确认按钮上方）∧ 存在下一 phase → 一行提示：
   // 本 phase handoff.md 连同已 accepted 前序，accepted 时由 server 作
   // prev_handoff_paths 自动注入下一 phase 执行会话。数据源 = phaseViews
@@ -462,8 +537,16 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
 
   // ── 动作 ──────────────────────────────────────────────────────────
 
-  const handleAccept = useCallback(async () => {
+  // 决策：通过 = 先开 ledger 预览确认弹层（唯一入口，D7/D8），确认后才 postAcceptance。
+  const requestAccept = useCallback(() => {
+    if (busy) return
+    if (gate.fail > 0) { toast.error("存在 ✗ 未过项 —— 通过被拦，请改走打回（反馈已预填）"); return }
+    setLedgerOpen(true)
+  }, [busy, gate.fail])
+
+  const doAccept = useCallback(async () => {
     if (!task || !awaitingPhase || awaitingPhase.awaitingRound == null || busy) return
+    setLedgerOpen(false)
     setBusy("accept")
     try {
       const result = await postAcceptance(task.id, {
@@ -475,14 +558,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       const n = result.task.derived?.phaseViews.length ?? phaseViews.length
       switch (result.next_action) {
         case "archiving":
-          toast.success("末 Phase 已通过 — 归档编排中（全绿才 done）")
+          toast.success("末 Phase 已通过 — 台账落盘，归档编排中（全绿才 done）")
           break
         case "awaiting_manual_trigger":
-          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过 — autoAdvance 关闭，下一 Phase 停在你的 gate（看板卡片「启动下一 Phase」）`)
+          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（台账已写）— autoAdvance 关闭，下一 Phase 停在你的 gate`)
           break
         default:
-          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过 — 下一 Phase 已自动开跑`)
+          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（台账已写）— 下一 Phase 已自动开跑`)
       }
+      setPreview((prev) => (prev && prev.state !== "stopped" && prev.state !== "exited" ? { ...prev, state: "stopped" } : prev))
       onDecided?.()
     } catch (err: unknown) {
       if (err instanceof TaskApiError && err.status === 409) {
@@ -497,6 +581,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     }
   }, [task, awaitingPhase, busy, onMutated, onDecided, phaseViews.length, refetchDetail])
 
+  // 打回：开弹窗即预填 ✗ 票清单（详细「未过项」节由 server augmentReject 权威追加）。
+  const openReject = useCallback(() => {
+    if (busy) return
+    if (!feedback.trim() && gate.failTickets.length) {
+      setFeedback(`未过（验收台剧本 ✗）：\n${gate.failTickets.map((t) => `- ${t}`).join("\n")}\n\n补充：\n`)
+    }
+    setRejectOpen(true)
+  }, [busy, feedback, gate.failTickets])
+
   const handleReject = useCallback(async () => {
     const trimmed = feedback.trim()
     if (!task || !awaitingPhase || awaitingPhase.awaitingRound == null || !trimmed || busy) return
@@ -508,6 +601,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         decision: "rejected",
         feedback: trimmed,
         next_flow: nextFlow, // ADR-0018 二分路由（round 级，只作用下一轮）
+        ...(gate.failTickets.length ? { reopen_tickets: gate.failTickets } : {}), // ADR-0022 ✗→票重开
       })
       setRejectedSeam({
         phaseIndex: awaitingPhase.index,
@@ -536,10 +630,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     } finally {
       setBusy(null)
     }
-  }, [task, awaitingPhase, feedback, nextFlow, busy, onMutated, refetchDetail])
+  }, [task, awaitingPhase, feedback, nextFlow, gate.failTickets, busy, onMutated, refetchDetail])
+
+  const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
 
   const handleAbort = useCallback(async () => {
     if (!task || busy) return
+    setAbortOpen(false)
     setBusy("abort")
     try {
       await abortTask(task.id)
@@ -579,68 +676,68 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           摘要 + 动作合进同一个滚动壳 —— 内容装得下就零滚动条；DOM 序 右栏→主面，
           flex+order 还原视觉（主面左、右栏 360px）。max-lg 纵排 col-reverse（主面上）。 */}
       <div className="flex min-h-0 flex-1 max-lg:flex-col-reverse max-lg:overflow-y-auto">
-        {/* ── 右栏（单滚动）：执行摘要 + 动作区 ── */}
-        <div className="order-2 flex w-[360px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
-        <div className="space-y-2.5 p-4 pb-3" data-acceptance-col-summary data-testid="acceptance-col-summary">
-          <div className="text-xs font-semibold text-muted-foreground">执行摘要</div>
+        {/* ── 右栏（A′，v2.1）：验收进度 + 决策（唯一入口）。token/cost 已迁出 ── */}
+        <div className="order-2 flex w-[240px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
+        <div className="space-y-2 p-3 pb-2" data-acceptance-col-summary data-testid="acceptance-col-summary">
+          <div className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">验收进度</div>
           {!detail ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
           ) : !awaitingRound ? (
-            <p className="text-xs text-muted-foreground" data-acceptance-no-round>
-              {rejectedSeam
-                ? `本 Phase 已打回（Round ${rejectedSeam.roundIndex}）— 修复轮在跑。`
-                : "当前无待验收 round。"}
+            <p className="text-[11px] text-muted-foreground" data-acceptance-no-round>
+              {rejectedSeam ? `本 Phase 已打回（Round ${rejectedSeam.roundIndex}）— 修复轮在跑。` : "当前无待验收 round。"}
             </p>
           ) : (
-            <>
-              {/* 行版式（v2.4）：label 不缩、value 可换行全展示 —— 旧 truncate
-                  在 flex 里没有 min-w-0 配合，长值撑破 360px 引出横向滚动条。 */}
-              <div className="space-y-1 text-sm">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 text-muted-foreground text-xs">Phase</span>
-                  <span className="min-w-0 text-right break-words font-medium">{awaitingPhase?.index}/{total} · {awaitingPhase?.name}</span>
-                </div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 text-muted-foreground text-xs">Round</span>
-                  <span className="tabular-nums">R{awaitingRound.roundIndex}</span>
-                </div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="shrink-0 text-muted-foreground text-xs">Workflow</span>
-                  <code className="min-w-0 text-right text-[11px] break-all">{awaitingPhase?.workflowRef || "—"}</code>
-                </div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-muted-foreground text-xs">执行结果</span>
-                  <span
-                    data-acceptance-round-state={awaitingRound.state} data-testid="acceptance-round-state"
-                    className={
-                      awaitingRound.state === "succeeded" ? "text-pop-green"
-                        : awaitingRound.state === "failed" ? "text-pop-amber" // US8: 失败=待处理，不是红死
-                          : "text-muted-foreground"
-                    }
-                  >
-                    {ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state}
-                  </span>
-                </div>
-                {/* 票05: 红轮的一行原因（error_summary 出口之一 —— 验收面是它最该
-                    被看到的地方）。绿轮/无原因 → 不渲染。 */}
-                {roundError && (
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="shrink-0 text-muted-foreground text-xs">失败原因</span>
-                    <span className="text-pop-amber break-words text-right text-xs" data-acceptance-round-error data-testid="acceptance-round-error">
-                      {roundError}
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-muted-foreground text-xs">用时</span>
-                  <span className="tabular-nums" data-acceptance-duration data-testid="acceptance-duration">
-                    {durationMs != null ? formatDuration(durationMs) : "—"}
-                  </span>
-                </div>
+            <div className="space-y-1 text-[11px]">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="shrink-0 text-muted-foreground">Phase</span>
+                <span className="min-w-0 truncate text-right font-medium" title={`${awaitingPhase?.index}/${total} ${awaitingPhase?.name}`}>{awaitingPhase?.index}/{total}</span>
               </div>
-              {/* token/cost：TaskAiUsageCard 同等数据（round 口径注入） */}
-              <TaskAiUsageCard agg={agg} loading={aggLoading} runCount={execId ? 1 : 0} />
-            </>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-muted-foreground">执行结果</span>
+                <span
+                  data-acceptance-round-state={awaitingRound.state} data-testid="acceptance-round-state"
+                  className={awaitingRound.state === "succeeded" ? "text-pop-green" : awaitingRound.state === "failed" ? "text-pop-amber" : "text-muted-foreground"}
+                >
+                  {ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state}
+                </span>
+              </div>
+              {roundError && (
+                <div className="text-pop-amber break-words text-[10.5px]" data-acceptance-round-error data-testid="acceptance-round-error">{roundError}</div>
+              )}
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-muted-foreground">用时</span>
+                <span className="tabular-nums" data-acceptance-duration data-testid="acceptance-duration">{durationMs != null ? formatDuration(durationMs) : "—"}</span>
+              </div>
+              <hr className="border-border" />
+              {playbook?.available ? (
+                <>
+                  <div className="flex items-baseline justify-between gap-2" data-testid="rail-walk-count">
+                    <span className="text-muted-foreground">走查</span>
+                    <b className="tabular-nums">
+                      <span className="text-pop-green">{gate.pass}</span>/<span className="text-pop-dim">{gate.total}</span>✓
+                      {gate.fail > 0 && <span className="text-pop-red"> · ✗{gate.fail}</span>}
+                      {gate.undecided > 0 && <span className="text-muted-foreground"> · 未决{gate.undecided}</span>}
+                    </b>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-muted-foreground">跳过</span>
+                    <span className="tabular-nums text-pop-amber">⊘{gate.skip} → 下轮</span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-[10px] text-muted-foreground">本轮无编译剧本（见实物/叙述佐证）</div>
+              )}
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-muted-foreground">自动复检</span>
+                <span className={verify?.state === "passed" ? "text-pop-green" : verify?.state === "running" ? "text-pop-amber" : verify?.state ? "text-pop-red" : "text-muted-foreground"}>
+                  {verify ? verify.state : "未跑"}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-muted-foreground">预览</span>
+                <span className={preview?.state === "ready" ? "text-pop-green" : preview?.state === "starting" ? "text-pop-amber" : "text-muted-foreground"}>{preview?.state ?? "未起"}</span>
+              </div>
+            </div>
           )}
         </div>
 
@@ -658,20 +755,23 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
               <Button
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 size="sm"
-                disabled={busy !== null}
-                onClick={() => void handleAccept()}
+                disabled={busy !== null || gate.fail > 0}
+                onClick={requestAccept}
                 data-acceptance-approve data-testid="acceptance-approve"
               >
                 {busy === "accept" ? <Spinner className="size-4 mr-1" /> : <CheckCircle2 className="size-4 mr-1" />}
                 验收通过{awaitingPhase.index === total ? "（进入归档）" : `（放行 Phase ${phaseViews[phaseViews.findIndex(p => p.index === awaitingPhase.index) + 1]?.index ?? "?"}）`}
               </Button>
+              {gate.fail > 0 && (
+                <p className="text-[10px] text-pop-red" data-testid="acceptance-approve-blocked">✗ 未过 {gate.fail} 项 —— 通过被拦，请打回（反馈预填 + 票重开）</p>
+              )}
 
               <Button
                 variant="outline"
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 size="sm"
                 disabled={busy !== null}
-                onClick={() => setRejectOpen(true)}
+                onClick={openReject}
                 data-acceptance-reject data-testid="acceptance-reject"
               >
                 <Undo2 className="size-4 mr-1" /> 打回（写反馈）
@@ -692,7 +792,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                 size="sm"
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 disabled={busy !== null}
-                onClick={() => void handleAbort()}
+                onClick={requestAbort}
                 data-acceptance-abort data-testid="acceptance-abort"
               >
                 {busy === "abort" ? <Spinner className="size-4 mr-1" /> : <Ban className="size-4 mr-1" />}
@@ -791,6 +891,27 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                       onRun={() => void handleVerifyRun()}
                       onAbort={() => void handleVerifyAbort()}
                     />
+                    <PreviewBar
+                      cfg={previewCfg}
+                      preview={preview}
+                      busy={previewBusy}
+                      disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
+                      onSaveCfg={handlePreviewSave}
+                      onStart={() => void handlePreviewStart()}
+                      onStop={() => void handlePreviewStop()}
+                    />
+                    {playbook && (
+                      <PlaybookPanel
+                        taskId={taskId ?? ""}
+                        batchRelDir={batchDir}
+                        roundIndex={awaitingPhase?.awaitingRound ?? 0}
+                        playbook={playbook}
+                        onGate={setGate}
+                        disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史台账/verdict 仍在）" : undefined}
+                        saving={checksSaving}
+                        onSaveStateChange={setChecksSaving}
+                      />
+                    )}
                   </>
                 )}
                 {midTab === "matrix" && (
@@ -817,7 +938,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                         <div className="flex items-center gap-2 px-3 pt-2 text-[10px] font-mono text-muted-foreground">
                           <FileText className="size-3" /> round-report.md · agent 自述
                         </div>
-                        <div className="max-h-[420px] overflow-y-auto px-3 pb-2">
+                        <div className="px-3 pb-2">
                           <MarkdownPreview content={roundReport} className="text-[11px]" />
                         </div>
                       </div>
@@ -955,6 +1076,49 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 通过 · 台账预览确认（D8：这一眼就是最终产物，确认即机写不可改） */}
+      <Dialog open={ledgerOpen} onOpenChange={(o) => { if (!o && busy !== "accept") setLedgerOpen(false) }}>
+        <DialogContent className="sm:max-w-[560px]" data-testid="ledger-dialog">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">
+              {gate.undecided > 0
+                ? `有 ${gate.undecided} 项走查未决 —— 确认跳过并放行？`
+                : `全 ${gate.pass} 项走查 ✓ —— 确认验收通过？`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-[11.5px]">
+            {playbook?.goal && <p className="font-semibold text-pop-ink">{playbook.goal}</p>}
+            <div className="rounded-md border border-pop-bd/20 bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
+              <div>实物 · {roundDiff?.available ? `${roundDiff.aggregate.commits} commits · +${roundDiff.aggregate.additions}/−${roundDiff.aggregate.dels} · ${roundDiff.aggregate.files} 文件` : "无有效 diff"}</div>
+              <div>自动复检 · {verify ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : "未跑（≠失败）"}</div>
+              <div>跑起来看 · {preview && preview.state !== "stopped" ? `${preview.state}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
+              <div>人工走查 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
+            </div>
+            {gate.skip > 0 && <p className="text-[10.5px] text-pop-amber">⊘ 跳过项将进入下一轮 carryover 首段（补验或再豁免），并写入台账。</p>}
+            {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入台账 —— 永久留痕，下轮 round-report 需解释。</p>}
+            <p className="text-[10px] text-muted-foreground">确认后 server 机写 acceptance-ledger-r{awaitingPhase?.awaitingRound}.md 进批次目录（叙述 tab 可见，不可改）。</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setLedgerOpen(false)}>再看看</Button>
+            <Button size="sm" className="h-auto py-1.5 text-xs whitespace-normal leading-snug" disabled={busy !== null} onClick={() => void doAccept()} data-testid="ledger-confirm">
+              {busy === "accept" ? <Spinner className="size-3 mr-1" /> : null}确认通过 · 写台账
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 中止 · 危险二次确认（D8） */}
+      <ConfirmDialog
+        open={abortOpen}
+        onOpenChange={(o) => { if (!o && busy !== "abort") setAbortOpen(false) }}
+        title={`中止任务「${task?.name ?? ""}」？`}
+        description="在跑的复检 / 预览会被一并 SIGTERM；Phase 置 aborted 不可恢复 —— 票与 diff 保留，可整任务重开。"
+        confirmLabel="确认中止"
+        variant="destructive"
+        loading={busy === "abort"}
+        onConfirm={() => void handleAbort()}
+      />
 
       <ArtifactViewerDialog
         taskId={taskId ?? ""}

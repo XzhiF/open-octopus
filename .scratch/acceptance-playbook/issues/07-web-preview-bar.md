@@ -7,7 +7,7 @@
 01, 05
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: stopped→starting→ready→stop 全态渲染;ready 时 ↗ 的 href=url

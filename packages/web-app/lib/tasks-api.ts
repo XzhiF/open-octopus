@@ -406,6 +406,9 @@ export interface AcceptanceInput {
    *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
    *  built-in/task-fix + 合成输入）。 */
   next_flow?: "fix" | "rerun"
+  /** ADR-0022 打回 ✗ 闭环：被重开的票名基（如 "11-e2e-story"），server 把对应
+   *  issues/<name>.md 的 Status done→reopened。 */
+  reopen_tickets?: string[]
 }
 
 /** What the caller must do next (票 07):
@@ -792,6 +795,122 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
   return body as VerifySummary
+}
+
+// ============ 验收面 v2.1: 验收剧本(playbook)+ 跑起来看(preview)============
+// 镜像 server playbook-types.ts / round-evidence-service.ts。checks 走 home-file
+// 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
+
+export type PlaybookItemKind = "walk" | "probe" | "claim"
+export interface PlaybookItem { id: string; op: string; expect: string; evidence?: string; probe?: { command: string } }
+export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
+export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
+export interface PlaybookBudget { steps: number; estMin: number; over: boolean; degraded: boolean }
+export interface PlaybookPayload {
+  available: boolean
+  goal: string
+  specRevised: boolean
+  budget: PlaybookBudget
+  sections: PlaybookSection[]
+  finePrint: Array<{ ticket: string; acs: string[] }>
+  carryover: PlaybookCarryover[]
+  coverage: { found: string[]; missing: string[] }
+}
+
+/** GET /:id/playbook — 派生视图。409 无 awaiting;available:false = 无契约结构。 */
+export async function getPlaybook(taskId: string): Promise<PlaybookPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/playbook`))
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PlaybookPayload
+}
+
+// ── preview ───────────────────────────────────────────────────────────
+export type PreviewState = "starting" | "ready" | "exited" | "stopped" | "failed"
+export interface PreviewSummary {
+  task_id: string
+  execution_id?: string
+  command?: string
+  url: string
+  state: PreviewState
+  external?: boolean
+  started_at?: string
+  ended_at?: string
+  exit_code?: number
+  duration_ms?: number
+  tail?: string[]
+}
+
+/** POST /:id/preview — 起跑长驻进程(202)。400 未配命令/非法url/$vars.;409 冲突。 */
+export async function startPreview(taskId: string): Promise<PreviewSummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/preview`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PreviewSummary
+}
+/** GET /:id/preview — 会话态或一次性外部探活(external)。 */
+export async function getPreview(taskId: string): Promise<PreviewSummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/preview`))
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return (body ?? null) as PreviewSummary | null
+}
+/** POST /:id/preview/stop — SIGTERM 树。409 没有在跑的。 */
+export async function stopPreview(taskId: string): Promise<PreviewSummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/preview/stop`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PreviewSummary
+}
+
+// ── checks 落盘(acceptance-checks-r{N}.md,复用 home-file .md 门)──────────
+export type CheckDecision = "pass" | "fail" | "skip"
+export interface CheckEntry { decision: CheckDecision; note: string; at: string }
+export interface ChecksFile { version: "1"; task_id?: string; round_index?: number; checks: Record<string, CheckEntry> }
+
+export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
+const CHECKS_FENCE_RE = /```json\s*\n([\s\S]*?)\n```/
+
+export function parseChecksMd(md: string): ChecksFile | null {
+  const m = CHECKS_FENCE_RE.exec(md)
+  if (!m) return null
+  try {
+    const o = JSON.parse(m[1]) as ChecksFile
+    return o && typeof o === "object" && typeof o.checks === "object" && o.checks ? o : null
+  } catch {
+    return null
+  }
+}
+export function renderChecksMd(data: ChecksFile): string {
+  return [
+    `# 走查勾选 · Round ${data.round_index ?? "?"}`,
+    "",
+    "> 机器读写:验收台勾选 → 本文件;ledger 聚合、下轮 carryover 都吃它。JSON 体可手改。",
+    "",
+    "```json",
+    JSON.stringify(data, null, 2),
+    "```",
+    "",
+  ].join("\n")
+}
+export const checksRelPath = (batchRelDir: string, roundIndex: number): string =>
+  `${batchRelDir}/${checksFileName(roundIndex)}`
+
+/** 读某轮 checks;不存在/解析失败 → {}(诚实空态,不猜)。 */
+export async function readChecks(taskId: string, batchRelDir: string, roundIndex: number): Promise<ChecksFile> {
+  try {
+    const f = await getHomeFile(taskId, checksRelPath(batchRelDir, roundIndex))
+    return parseChecksMd(f.content) ?? { version: "1", round_index: roundIndex, checks: {} }
+  } catch {
+    return { version: "1", round_index: roundIndex, checks: {} }
+  }
+}
+/** 写某轮 checks(整文件覆盖,panel 是唯一作者;round-trip 幂等)。 */
+export async function saveChecks(
+  taskId: string, batchRelDir: string, roundIndex: number, checks: Record<string, CheckEntry>,
+): Promise<void> {
+  const data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks }
+  await putHomeFile(taskId, checksRelPath(batchRelDir, roundIndex), renderChecksMd(data))
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============

@@ -7,7 +7,7 @@
 04, 08
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: 通过弹层内容=future ledger 文本预览;未决>0 列出项与票号;disabled 逻辑对 fail

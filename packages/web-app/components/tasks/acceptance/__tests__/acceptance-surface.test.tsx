@@ -13,6 +13,7 @@ const {
   mockFetchLLMCalls, mockUpdateSpecField,
   mockListHomeDir, mockGetHomeFile, mockGetBatchTree,
   mockGetRoundDiff, mockGetRoundPatch, mockStartVerify, mockGetVerifyStatus, mockAbortVerify,
+  mockGetPlaybook, mockStartPreview, mockGetPreview, mockStopPreview, mockSaveChecks, mockPutHomeFile,
   sseHandlers,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
@@ -28,6 +29,12 @@ const {
   mockStartVerify: vi.fn(),
   mockGetVerifyStatus: vi.fn(),
   mockAbortVerify: vi.fn(),
+  mockGetPlaybook: vi.fn(),
+  mockStartPreview: vi.fn(),
+  mockGetPreview: vi.fn(),
+  mockStopPreview: vi.fn(),
+  mockSaveChecks: vi.fn(),
+  mockPutHomeFile: vi.fn(),
   sseHandlers: new Map<string, (e: MessageEvent) => void>(),
 }))
 
@@ -52,13 +59,24 @@ vi.mock("@/lib/tasks-api", () => {
     listHomeDir: mockListHomeDir,
     getHomeFile: mockGetHomeFile,
     getBatchTree: mockGetBatchTree,
-    putHomeFile: vi.fn(),
     MAX_HOME_FILE_READ_BYTES: 512_000,
     getRoundDiff: mockGetRoundDiff,
     getRoundPatch: mockGetRoundPatch,
     startVerify: mockStartVerify,
     getVerifyStatus: mockGetVerifyStatus,
     abortVerify: mockAbortVerify,
+    // 验收面 v2.1：剧本 + 预览 + checks（默认返回「无剧本 / 无预览」，具体用例覆写）。
+    getPlaybook: mockGetPlaybook,
+    startPreview: mockStartPreview,
+    getPreview: mockGetPreview,
+    stopPreview: mockStopPreview,
+    putHomeFile: mockPutHomeFile,
+    readChecks: () => Promise.resolve({ version: "1", checks: {} }),
+    saveChecks: mockSaveChecks,
+    checksFileName: (n: number) => `acceptance-checks-r${n}.md`,
+    checksRelPath: (d: string, n: number) => `${d}/acceptance-checks-r${n}.md`,
+    parseChecksMd: () => null,
+    renderChecksMd: () => "",
   }
 })
 // react-markdown 全家桶对单测是纯负担 — 桩到内容透传（渲染质量归 MarkdownPreview 自己）。
@@ -117,6 +135,12 @@ const V4_SPEC = {
     { index: 1, name: "脚手架", slug: "scaffold-1", specPath: "./.scratch/20260903/scaffold-1/spec.md", workflowRef: "task-dev", inputValues: {} },
     { index: 2, name: "观测", slug: "metering-2", specPath: "./.scratch/20260903/metering-2/spec.md", workflowRef: "task-dev", inputValues: {} },
   ],
+} as unknown as TaskSpec
+
+/** 验收面 v2.1：带 acceptance_preview 配置 → 预览条显示 ▶启动（非配置态）。 */
+const V4_SPEC_WITH_PREVIEW = {
+  ...(V4_SPEC as object),
+  acceptance_preview: { command: "mvn -q spring-boot:run", url: "http://localhost:8080/" },
 } as unknown as TaskSpec
 
 /** specPath 绝对（gateV4 旁路直写）→ 中列定位走 getBatchTree slug 回退。 */
@@ -306,6 +330,16 @@ beforeEach(() => {
   })
   mockGetVerifyStatus.mockResolvedValue(null)
   mockAbortVerify.mockResolvedValue({ state: "running" })
+  // 验收面 v2.1 默认：无剧本（面板显降级空态，不打扰既有断言）+ 无预览会话。
+  mockGetPlaybook.mockResolvedValue({
+    available: false, goal: "", specRevised: false,
+    budget: { steps: 0, estMin: 0, over: false, degraded: false },
+    sections: [], finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+  })
+  mockGetPreview.mockResolvedValue(null)
+  mockStartPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "starting" })
+  mockStopPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "stopped" })
+  mockSaveChecks.mockResolvedValue(undefined)
 })
 
 function renderModal(spec: TaskSpec = V4_SPEC) {
@@ -327,8 +361,8 @@ async function openStoryTab() {
   fireEvent.click(tab)
 }
 
-describe("AcceptanceSurface — AC1 三栏证据面", () => {
-  it("三栏齐现；左列=round 状态/用时/token/cost（round 口径），角标=Phase 1/2 · Round 1", async () => {
+describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cost 已迁出）", () => {
+  it("三栏齐现；右栏=round 状态/用时/复检态；AC6：验货台不再拉 fetchLLMCalls、无 token/cost", async () => {
     renderModal()
     expect(await screen.findByTestId("acceptance-modal")).toBeTruthy()
     expect(screen.getByTestId("acceptance-col-summary")).toBeTruthy()
@@ -336,12 +370,56 @@ describe("AcceptanceSurface — AC1 三栏证据面", () => {
     expect(screen.getByTestId("acceptance-col-actions"))
     expect(screen.getByTestId("acceptance-phase-label").textContent).toBe("Phase 1/2 · Round 1")
     expect(screen.getByTestId("acceptance-round-state").textContent).toBe("执行成功")
-    // 用时 = children.execution_ref.duration_ms 联查（2,520,000ms = 42m）
     expect(screen.getByTestId("acceptance-duration").textContent).toBe("42m 0s")
-    // token/cost = fetchLLMCalls(exec-1)（round 口径，一次）
-    await waitFor(() => expect(mockFetchLLMCalls).toHaveBeenCalledWith("exec-1"))
-    expect(screen.getByText(/30 次调用|↑/)).toBeTruthy()
-    expect(screen.getByText(/\$0\.03/)).toBeTruthy()
+    // ADR-0022：token/cost 撤出验货台（迁执行控制台 AI 卡）——绝不再拉，DOM 无成本串。
+    expect(mockFetchLLMCalls).not.toHaveBeenCalled()
+    expect(screen.queryByText(/\$\d/)).toBeNull()
+    expect(screen.queryByText(/次调用|↑/)).toBeNull()
+    // 复检态行进右栏进度卡
+    expect(screen.getByText("未跑")).toBeTruthy()
+  })
+
+  it("T06 剧本渲染：available:true → 主角卡 + 步 + ✓✗⊘ 三钮", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: true, goal: "走通剧本", specRevised: false,
+      budget: { steps: 1, estMin: 2, over: false, degraded: false },
+      sections: [{ kind: "walk", title: "E2E 测试计划", source: "e2e-test-plan.md",
+        items: [{ id: "walk:plan:1", op: "打开验收台", expect: "剧本 ≥3 步", evidence: "有预期句" }] }],
+      finePrint: [], carryover: [], coverage: { found: ["e2e-test-plan.md"], missing: [] },
+    })
+    renderModal()
+    const panel = await screen.findByTestId("playbook-panel")
+    expect(panel.textContent).toContain("打开验收台")
+    expect(panel.textContent).toContain("剧本 ≥3 步")
+    expect(screen.getByTestId("step-walk:plan:1")).toBeTruthy()
+    expect(screen.getAllByTestId("decide-pass").length).toBeGreaterThan(0)
+    expect(screen.getByTestId("preview-bar")).toBeTruthy()
+  })
+
+  it("T09 决策闭环：标 ✗ → 验收通过 disabled + 拦截提示；台账弹层出现", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: true, goal: "g", specRevised: false,
+      budget: { steps: 1, estMin: 2, over: false, degraded: false },
+      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [{ id: "walk:plan:1", op: "op", expect: "exp" }] }],
+      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    fireEvent.click(screen.getByTestId("decide-fail"))
+    // fail → gate.fail>0 → approve disabled + 提示
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+    expect(screen.getByTestId("acceptance-approve-blocked")).toBeTruthy()
+  })
+
+  it("T07 预览启动：点 ▶启动 → startPreview(t1) + 状态条切 starting", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: false, goal: "", specRevised: false, budget: { steps: 0, estMin: 0, over: false, degraded: false },
+      sections: [], finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    })
+    renderModal(V4_SPEC_WITH_PREVIEW)
+    await screen.findByTestId("preview-bar")
+    fireEvent.click(screen.getByTestId("preview-start"))
+    await waitFor(() => expect(mockStartPreview).toHaveBeenCalledWith("t1"))
   })
 
   it("右列动作区：通过/打回/中止 齐备 + autoAdvance 只读态", async () => {
@@ -589,21 +667,28 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     expect(screen.getByTestId("impact-list-empty")).toBeTruthy()
   })
 
-  it("accepted 提交：phase_index/round_index 取 derived 的 awaitingRound；409 → 刷新盘面", async () => {
+  it("accepted 提交：先开台账确认弹层，ledger-confirm 才 postAcceptance；409 → 刷新盘面", async () => {
     renderModal()
     mockPostAcceptance
       .mockRejectedValueOnce(new TaskApiError("phase 1 当前派生态 running（无待验收轮），与请求 round 1 不匹配", 409))
       .mockResolvedValueOnce({
         task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "awaiting_manual_trigger",
       })
+    // 第一步：点通过 = 只开台账弹层，还没提交
     fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    const ledger = await screen.findByTestId("ledger-dialog")
+    expect(ledger).toBeTruthy()
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
+    // 第二步：确认 → 才 postAcceptance(accepted)
+    fireEvent.click(screen.getByTestId("ledger-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
       phase_index: 1, round_index: 1, decision: "accepted",
     }))
     // 409 分支：重拉 GET /:id（初次开窗 1 次 + 409 刷新 1 次）
     await waitFor(() => expect(mockGetTask.mock.calls.length).toBeGreaterThanOrEqual(2))
-    // 第二次点通过 → 成功走 awaiting_manual_trigger（autoAdvance=false 语义提示）
+    // 第二次：通过 → 台账 → 确认 → awaiting_manual_trigger 成功
     fireEvent.click(screen.getByTestId("acceptance-approve"))
+    fireEvent.click(await screen.findByTestId("ledger-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledTimes(2))
   })
 })

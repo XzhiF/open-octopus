@@ -236,7 +236,7 @@ function DiffFileRow({ taskId, repo, file }: { taskId: string; repo: string; fil
 function PatchBlock({ patch }: { patch: { text: string; truncated: boolean } }) {
   const lines = useMemo(() => patch.text.split("\n"), [patch.text])
   return (
-    <div className="max-h-[420px] overflow-auto rounded-md border-2 border-pop-bd bg-pop-paper" data-testid="round-diff-patch">
+    <div className="rounded-md border-2 border-pop-bd bg-pop-paper" data-testid="round-diff-patch">
       <pre className="p-2 font-mono text-[10.5px] leading-[1.5]">
         {lines.map((l, i) => {
           let cls = "text-pop-ink/70"
