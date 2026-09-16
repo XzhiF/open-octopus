@@ -272,6 +272,10 @@ nodes:
            spec.md 为准（spec-rN.md 留作历史，不再更新）。
       3. 票的增删改**原位增量**（不重写整目录）：新票顺延编号，末张保持
          `NN-e2e-*` 验收票；被反馈作废的票标 Status: skip（不物理删）。
+         **重开纪律**：反馈涉及的、已标 `Status: done` 的票 → 把 Status 改回
+         `ready`（实现缺陷=原票重开；规格错误=原票重开+按新 spec 改票文）。
+         不回开 = 下游 planner 只见 done 票 → 0 节点 DAG → 整轮空转失败
+         （2026-09-16 三单 r2 实证）。与反馈无关的 done 票保持不动。
       4. 修订点记入 $inputs.batch_dir/round-report.md 的「## Spec 修订」节
          （反馈条目 → 是否改 spec → 改了什么），供验收人对照。
       5. 只动本批次目录，不碰 projects/ 代码（实现是 Stage 1 的事）。
@@ -363,7 +367,7 @@ nodes:
   - id: code-review
     type: agent
     depends_on: [integration-gate]
-    max_turns: 8
+    max_turns: 14
     prompt: |
       使用 code-review skill 独立审查所有代码变更。
       主 agent 从没看过实现过程，天然独立 → 直接审查。
@@ -373,7 +377,7 @@ nodes:
       Spec: $inputs.batch_dir/spec.md（spec-review 跑过时它已是修订终态）
       三轴不变: Standards / Spec 对照 / Completeness。
 
-      ═══ 回合预算（硬约束，总 ≤8 回合）═══
+      ═══ 回合预算（硬约束，总 ≤12 回合；多个独立 Read/Bash 尽量同回合并发）═══
       1. 一条 bash 拿清单: git -C <repo> diff --name-only origin/main...HEAD
       2. 逐个 Read 变更文件全文 + spec.md（仅此，不做其他考古）
       3. findings 一次成表：每条 ≤2 行（🔴/🟡/🔵 + 文件:行 + 一句），
