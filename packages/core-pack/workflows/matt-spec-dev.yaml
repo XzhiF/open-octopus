@@ -372,7 +372,10 @@ nodes:
   - id: code-review
     type: agent
     depends_on: [integration-gate]
-    max_turns: '${vars.review_budget}'
+    # 熔断丝随票数伸缩(spec-resolve 算 review_budget)。注意:模板正统语法是
+    # $vars.x 无花括号 —— ${vars.x} 在 substituteVarsFull 里归 filter 引擎,
+    # 不带 |filter 不解析(五单 R1 实证 "treated as unset")。
+    max_turns: $vars.review_budget
     # 熔断/出错不连坐: 节点如实 failed (看板徽章可见), 但 ship 照常把货端上
     # 验收台 (引擎 on_error:continue → completed_with_failures, 人 gate 裁决)。
     on_error: continue
