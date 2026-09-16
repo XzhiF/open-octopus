@@ -7,6 +7,7 @@ import {
   resourceRefSchema,
   taskPhaseSchema,
   acceptanceVerifySchema,
+  acceptancePreviewSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -76,6 +77,9 @@ export const TaskSpecFieldSchema = z.enum([
   // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
   // like every other spec-field; editable through awaiting_review.
   "acceptance_verify",
+  // 验收面 v2.1「跑起来看」: the live-preview service ({@link
+  // acceptancePreviewSchema}). Same JSON-field/spec-field discipline as above.
+  "acceptance_preview",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -106,6 +110,11 @@ export const TASK_VERIFY_EVENT = "task_verify" as const
 /** One streamed output line: {task_id, line, stream:"stdout"|"stderr"}.
  *  Per-line = same volume class as node_log → server SILENT_EVENTS. */
 export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
+/** 验收面 v2.1「跑起来看」terminal/state event (ADR-0022):
+ *  {task_id, state:"starting"|"ready"|"exited"|"stopped", url, external?,
+ *  exit_code?}. No log stream — preview output stays server-side (tail in
+ *  GET /:id/preview), the panel only needs state transitions. */
+export const TASK_PREVIEW_EVENT = "task_preview" as const
 
 export const specFieldUpdatePayloadSchema = z.object({
   task_id: z.string().min(1),
@@ -383,6 +392,10 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
       // later taskSpecSchema.parse, which admits undefined, not null).
       if (value === null) return undefined
       return acceptanceVerifySchema.parse(value)
+    case "acceptance_preview":
+      // 验收面 v2.1: same null-clears semantics as acceptance_verify above.
+      if (value === null) return undefined
+      return acceptancePreviewSchema.parse(value)
     case "resources":
     case "authoring_resources":
       if (!Array.isArray(value)) {

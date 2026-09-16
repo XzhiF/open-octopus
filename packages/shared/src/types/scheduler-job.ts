@@ -144,6 +144,20 @@ export const acceptanceVerifySchema = z.object({
   timeoutS: z.number().int().min(5).max(1800).optional(),
 })
 export type AcceptanceVerify = z.infer<typeof acceptanceVerifySchema>
+/** 验收面 v2.1「跑起来看」— the task's live-preview service (ADR-0022).
+ *  Same trust class as {@link acceptanceVerifySchema}: user-authored,
+ *  user-triggered, NEVER auto-run. Runs as a long-lived BashExecutor process
+ *  in the task workspace; readiness = HTTP probe of `url` (any response =
+ *  port up) optionally AND-matched against stdout `readyPattern`. No iframe —
+ *  the panel only starts/stops and links out. Hard cap 2h (server-side),
+ *  auto-stopped by every acceptance decision (recorded in the ledger). */
+export const acceptancePreviewSchema = z.object({
+  command: z.string().min(1).max(4000),
+  cwd: z.string().max(500).optional(),
+  url: z.string().min(1).max(200).regex(/^https?:\/\//i, { message: "url must be http(s)" }),
+  readyPattern: z.string().max(500).optional(),
+})
+export type AcceptancePreview = z.infer<typeof acceptancePreviewSchema>
 export type TaskPhase = z.infer<typeof taskPhaseSchema>
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
@@ -219,6 +233,9 @@ export const taskSpecSchema = z.object({
   // 验收面 v2: the 验货台 re-verify command (see {@link acceptanceVerifySchema}).
   // Optional — absent = 「尚未预设复检命令」 state in the acceptance panel.
   acceptance_verify: acceptanceVerifySchema.optional(),
+  // 验收面 v2.1: the 「跑起来看」 preview service ({@link acceptancePreviewSchema}).
+  // Optional — absent = 「未配置预览」 state; clearable to null via spec-field.
+  acceptance_preview: acceptancePreviewSchema.optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────
