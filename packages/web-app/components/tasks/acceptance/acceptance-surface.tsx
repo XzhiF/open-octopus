@@ -575,13 +575,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         </span>
       </div>
 
-      {/* 两栏版面（2026-09-16 用户回灌两轮：三栏后中列太窄 → 摘要/动作并进右列；
-          右列双滚动条 + 摘要行截断横滚 → 摘要自然高全展示、动作仅溢出时兜底滚）。
-          实物|核对|叙述 = 主面吃满剩余宽；右 360px：执行摘要（上，自然高不滚动）、
-          动作区（下，撑满剩余，仅内容超界才滚）。窄屏折叠为纵向（DOM 序：摘要→主面→动作）。 */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-none max-lg:overflow-y-auto">
-        {/* ── 右侧栏上：执行摘要（自然高 —— 行内换行全展示，不再自带滚动） ── */}
-        <div className="col-start-2 row-start-1 space-y-2.5 border-l border-border p-4 max-lg:col-auto max-lg:row-auto max-lg:border-l-0 max-lg:border-b" data-acceptance-col-summary data-testid="acceptance-col-summary">
+      {/* 右栏单滚动容器（v2.5，用户：「动作区还有个上下的滚动条。单独的。很恶心」）：
+          摘要 + 动作合进同一个滚动壳 —— 内容装得下就零滚动条；DOM 序 右栏→主面，
+          flex+order 还原视觉（主面左、右栏 360px）。max-lg 纵排 col-reverse（主面上）。 */}
+      <div className="flex min-h-0 flex-1 max-lg:flex-col-reverse max-lg:overflow-y-auto">
+        {/* ── 右栏（单滚动）：执行摘要 + 动作区 ── */}
+        <div className="order-2 flex w-[360px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
+        <div className="space-y-2.5 p-4 pb-3" data-acceptance-col-summary data-testid="acceptance-col-summary">
           <div className="text-xs font-semibold text-muted-foreground">执行摘要</div>
           {!detail ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
@@ -644,8 +644,98 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           )}
         </div>
 
+        {/* ── 右侧栏下：动作区 ── */}
+        <div className="border-t border-border p-4 pt-3 space-y-3" data-acceptance-col-actions data-testid="acceptance-col-actions">
+          <div className="text-xs font-semibold text-muted-foreground">动作区</div>
+
+          {awaitingPhase ? (
+            <>
+              {hasNextPhase && !rejectOpen && (
+                <p className="text-[10px] text-muted-foreground" data-handoff-hint data-testid="handoff-hint">
+                  {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
+                </p>
+              )}
+              <Button
+                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
+                size="sm"
+                disabled={busy !== null}
+                onClick={() => void handleAccept()}
+                data-acceptance-approve data-testid="acceptance-approve"
+              >
+                {busy === "accept" ? <Spinner className="size-4 mr-1" /> : <CheckCircle2 className="size-4 mr-1" />}
+                验收通过{awaitingPhase.index === total ? "（进入归档）" : `（放行 Phase ${phaseViews[phaseViews.findIndex(p => p.index === awaitingPhase.index) + 1]?.index ?? "?"}）`}
+              </Button>
+
+              <Button
+                variant="outline"
+                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
+                size="sm"
+                disabled={busy !== null}
+                onClick={() => setRejectOpen(true)}
+                data-acceptance-reject data-testid="acceptance-reject"
+              >
+                <Undo2 className="size-4 mr-1" /> 打回（写反馈）
+              </Button>
+
+              {/* 打回表单 v2.4：右列内联展开 → 独立弹窗（见文末 Dialog）。 */}
+
+              <div className="space-y-1.5 border-t pt-2">
+                <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
+                  <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
+                  <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">开关在草稿面板（入队清单下方）</p>
+              </div>
+
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
+                disabled={busy !== null}
+                onClick={() => void handleAbort()}
+                data-acceptance-abort data-testid="acceptance-abort"
+              >
+                {busy === "abort" ? <Spinner className="size-4 mr-1" /> : <Ban className="size-4 mr-1" />}
+                中止
+              </Button>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground" data-acceptance-idle>
+              {rejectedSeam ? "已打回 — 修复轮在跑（右下方为形态推荐/影响清单接缝）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
+            </p>
+          )}
+
+          {/* ── 打回提交后：本轮路由回显（ADR-0018，D13① 接缝已兑现） ── */}
+          {rejectedSeam && (
+            <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2.5" data-agent-recommend-card data-testid="agent-recommend-card">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+                <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 下一轮路由：
+                {rejectedSeam.flow === "fix" ? "轻量修复（task-fix）" : "修订重跑（绑定流先再审 spec）"}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md。
+                {rejectedSeam.flow === "fix"
+                  ? " task-fix 定点修复后会产 fix-report-rN.md 回批次目录。"
+                  : " 执行侧在 workspace 里就地维护 spec 终态，collect 回流 task home（round-report 含 Spec 修订节）。"}
+                路由仅作用本轮 — phase 绑定不变。
+              </p>
+            </div>
+          )}
+
+          {/* ── D14 影响清单（渲染逻辑就绪 / 数据源空态 = v4.1 接缝） ── */}
+          {rejectedSeam && task && (
+            <ImpactApprovalList
+              taskId={task.id}
+              phases={(detail?.task_spec ?? task.task_spec).phases ?? []}
+              items={[]}
+              onDone={() => { refetchDetail(); onMutated() }}
+            />
+          )}
+        </div>
+        </div>
+
         {/* ── 主面：验货台（实物 | 核对 | 叙述）── */}
-        <div className="col-start-1 row-span-2 row-start-1 flex min-h-0 flex-col max-lg:col-auto max-lg:row-auto max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
+        <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col max-lg:order-none max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
           {!awaitingPhase ? (
             <div className="space-y-2 p-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -792,94 +882,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           )}
         </div>
 
-        {/* ── 右侧栏下：动作区 ── */}
-        <div className="col-start-2 row-start-2 min-h-0 overflow-y-auto border-l border-border p-4 space-y-3 max-lg:col-auto max-lg:row-auto max-lg:border-l-0" data-acceptance-col-actions data-testid="acceptance-col-actions">
-          <div className="text-xs font-semibold text-muted-foreground">动作区</div>
 
-          {awaitingPhase ? (
-            <>
-              {hasNextPhase && !rejectOpen && (
-                <p className="text-[10px] text-muted-foreground" data-handoff-hint data-testid="handoff-hint">
-                  {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
-                </p>
-              )}
-              <Button
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => void handleAccept()}
-                data-acceptance-approve data-testid="acceptance-approve"
-              >
-                {busy === "accept" ? <Spinner className="size-4 mr-1" /> : <CheckCircle2 className="size-4 mr-1" />}
-                验收通过{awaitingPhase.index === total ? "（进入归档）" : `（放行 Phase ${phaseViews[phaseViews.findIndex(p => p.index === awaitingPhase.index) + 1]?.index ?? "?"}）`}
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => setRejectOpen(true)}
-                data-acceptance-reject data-testid="acceptance-reject"
-              >
-                <Undo2 className="size-4 mr-1" /> 打回（写反馈）
-              </Button>
-
-              {/* 打回表单 v2.4：右列内联展开 → 独立弹窗（见文末 Dialog）。 */}
-
-              <div className="space-y-1.5 border-t pt-2">
-                <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
-                  <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
-                  <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
-                </div>
-                <p className="text-[10px] text-muted-foreground">开关在草稿面板（入队清单下方）</p>
-              </div>
-
-              <Button
-                variant="destructive"
-                size="sm"
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                disabled={busy !== null}
-                onClick={() => void handleAbort()}
-                data-acceptance-abort data-testid="acceptance-abort"
-              >
-                {busy === "abort" ? <Spinner className="size-4 mr-1" /> : <Ban className="size-4 mr-1" />}
-                中止
-              </Button>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground" data-acceptance-idle>
-              {rejectedSeam ? "已打回 — 修复轮在跑（右下方为形态推荐/影响清单接缝）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
-            </p>
-          )}
-
-          {/* ── 打回提交后：本轮路由回显（ADR-0018，D13① 接缝已兑现） ── */}
-          {rejectedSeam && (
-            <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2.5" data-agent-recommend-card data-testid="agent-recommend-card">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold">
-                <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 下一轮路由：
-                {rejectedSeam.flow === "fix" ? "轻量修复（task-fix）" : "修订重跑（绑定流先再审 spec）"}
-              </div>
-              <p className="text-[10px] text-muted-foreground">
-                反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md。
-                {rejectedSeam.flow === "fix"
-                  ? " task-fix 定点修复后会产 fix-report-rN.md 回批次目录。"
-                  : " 执行侧在 workspace 里就地维护 spec 终态，collect 回流 task home（round-report 含 Spec 修订节）。"}
-                路由仅作用本轮 — phase 绑定不变。
-              </p>
-            </div>
-          )}
-
-          {/* ── D14 影响清单（渲染逻辑就绪 / 数据源空态 = v4.1 接缝） ── */}
-          {rejectedSeam && task && (
-            <ImpactApprovalList
-              taskId={task.id}
-              phases={(detail?.task_spec ?? task.task_spec).phases ?? []}
-              items={[]}
-              onDone={() => { refetchDetail(); onMutated() }}
-            />
-          )}
-        </div>
       </div>
 
       {/* 打回反馈弹窗（v2.4 用户裁决：右列内联展开别扭 → 独立弹窗输入；
