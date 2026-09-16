@@ -170,20 +170,27 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     const W = (modalSize.w / 100) * window.innerWidth, H = (modalSize.h / 100) * window.innerHeight
     document.body.style.cursor = "grabbing"
     document.body.style.userSelect = "none"
+    // 卡拖拽硬防（2026-09-16 用户回灌：鼠标滑动=界面死）：窗口失焦/在浏览器外
+    // 松手时 pointerup 永不到达，监听器残留会让此后每个 move 搬窗 + body 样式
+    // 泄漏。buttons===0（下一次 move 已无按键按下）与 pointercancel 双兜底收兵。
+    const stop = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.removeEventListener("pointercancel", stop)
+    }
     const onMove = (ev: PointerEvent) => {
+      if (ev.buttons === 0) { stop(); return }
       setDragOffset({
         x: clampCenter(ev.clientX - sx, W, window.innerWidth),
         y: clampCenter(ev.clientY - sy, H, window.innerHeight),
       })
     }
-    const onUp = () => {
-      document.body.style.cursor = ""
-      document.body.style.userSelect = ""
-      document.removeEventListener("pointermove", onMove)
-      document.removeEventListener("pointerup", onUp)
-    }
+    const onUp = () => stop()
     document.addEventListener("pointermove", onMove)
     document.addEventListener("pointerup", onUp)
+    document.addEventListener("pointercancel", stop)
   }, [isFullscreen, dragOffset, modalSize])
   // 🎪 边/角缩放:对边锚定(被拖的边跟手),尺寸与位置都 clamp 在视口内 ——
   // 任何方向都拖不出屏幕。模板页/全屏不给把手。
@@ -199,7 +206,16 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     const minW = vw * 0.3, minH = vh * 0.35
     document.body.style.cursor = "nwse-resize"
     document.body.style.userSelect = "none"
+    // 同拖窗的卡拖拽硬防（见 startHeaderDrag 注）。
+    const stop = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.removeEventListener("pointercancel", stop)
+    }
     const onMove = (ev: PointerEvent) => {
+      if (ev.buttons === 0) { stop(); return }
       const dx = ev.clientX - sx, dy = ev.clientY - sy
       let W = sw, H = sh, X = ox, Y = oy
       if (edge.r) { W = sw + dx; X = ox + dx / 2 }
@@ -211,14 +227,10 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
       setModalSize({ w: (W / vw) * 100, h: (H / vh) * 100 })
       setDragOffset({ x: clampCenter(X, W, vw), y: clampCenter(Y, H, vh) })
     }
-    const onUp = () => {
-      document.body.style.cursor = ""
-      document.body.style.userSelect = ""
-      document.removeEventListener("pointermove", onMove)
-      document.removeEventListener("pointerup", onUp)
-    }
+    const onUp = () => stop()
     document.addEventListener("pointermove", onMove)
     document.addEventListener("pointerup", onUp)
+    document.addEventListener("pointercancel", stop)
   }, [modalSize, dragOffset])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)

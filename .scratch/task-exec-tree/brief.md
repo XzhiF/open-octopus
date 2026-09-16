@@ -135,3 +135,13 @@ artifact-viewer-dialog 新套件 4 例）；web 全量 6 失败 = 既有基线�
 - web 全量 580 绿 / **6 失败 = 既有基线原样**（harness×3+knowledge×3，system-pages 文件级）；console 14（新增：证据链接切 tab / 切回 / 条内钮 / startOnAcceptance 直达 ×2 视口用例合并计 2）、surface 23 全绿——含一处**旧测试自带 race**（同步 querySelector 抓 patch 行，旧弹窗版侥幸微任务序绿）改 waitFor 内查询。
 - 真浏览器双视口（1460×930 + 1280×720 桌面 Chrome e2e 同档）矩阵全绿：直达 tab ✓、截断 0 ✓、sub-tab 狂点×5 lag <35ms ✓、核对 tab US 块+全局对账渲染 ✓、文件开合+重进 tab ✓、**关控制台后 body pointerEvents=auto / overlay=0 / 看板可点 ✓**（`html overflow:hidden` 为 app-shell CSS 恒值，非 remove-scroll 泄漏，fresh load 对照钉死）。console errors 两视口零。截图 `tmp/tab-check/`。
 - 遗留小刺（知情不修）：判决条「✕ 打回」现在只切 tab，反馈面板需在验货台内再点一下「打回（写反馈）」展开（省一个 intent 透传 prop，行为可接受）。
+
+## v2.3 续座（同日用户两轮回灌）：两栏版面 + 紧凑账目口径 + 卡拖拽根治
+
+**用户线索**：「卡死」实为**鼠标划选文字后界面死锁**。headless 复现划选（长文/拖出窗外/textarea，含查看器内三轮来回划选）rAF 全程 <30ms 无冻结 —— 弹窗层收掉后此路已净；顺藤摸到真正的死锁体质：**拖窗/缩窗/分栏线把 move/up 挂 document，窗口外松手或失焦时 `pointerup` 永不到达 → 监听器残留，此后每个 move 都在搬窗/改尺寸 + `userSelect:none`/cursor 泄漏**（体感即「动不了」）。三处同病根一并硬防：task-modal 拖窗+八向缩（`buttons===0` 即收兵 + `pointercancel` 兜底）、authoring-workspace 分栏线（同 + `mouseleave`）、harness-floating-panel 拖/缩（`buttons===0`）。
+
+**两栏版面（用户裁决：三栏把中列挤窄）**：验货台改 `grid-cols-[minmax(0,1fr)_360px]` 两行右栏 —— 实物|核对|叙述 主面吃满剩余宽（1460 视口下 691px，父窗可拖更大）；执行摘要（上，max-h 46% 滚动）+ 动作区（下）合并右侧栏。DOM 序不变（摘要→主面→动作），窄屏 max-lg 折叠纵向。钮文字截断实测 0。
+
+**紧凑账目口径（用户圈定 cost-tab 风格、明令去掉工具调用）**：`AggInline`（execution-summary 新出口）= `∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用`。替换四处旧文案：phase-surface `aggLine`（轮次行/LIVE 卡/交付报告「94 calls · $6.28 · ↑654 ↓76.7K」怪串整体退役）、TaskAiUsageCard 数值行、导航条 token 段（dim 传深色 token class）、rail「次调用→次请求」。真任务回灌渲染 `∑5.8M ↑654 ↓76.7K ⚡5.4M 🗡️263.3K · 94 次请求 · $6.28` ✓。
+
+验证：web 全量 580 绿 / 6 失败=既有基线原样；tsc 触及文件零新增错（残余 1 条 draft-batches 与 children-prop lint 均既有）；两栏+口径浏览器实测截图 `tmp/tab-check/E-layout-*.png`。

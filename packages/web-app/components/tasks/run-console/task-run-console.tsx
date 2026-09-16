@@ -29,14 +29,14 @@ import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { formatCost, formatTokenCount } from "@/lib/format"
+import { formatCost } from "@/lib/format"
 import { phaseBudgetMs } from "@/lib/task-board"
 import { EditableTitle } from "../editable-title"
 import { AcceptanceSurface } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates,
+  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
 import {
@@ -299,7 +299,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           <>
             <span className="shrink-0 text-pop-bg/70">⏱ <b className="text-pop-bg tabular-nums">{liveDur(liveRun, now)}</b>{liveRun.phase_index != null ? `（P${liveRun.phase_index}·R${liveRun.round_index ?? 1}）` : ""}</span>
             {totalAgg && totalAgg.totalCalls > 0 && (
-              <span className="shrink-0 text-pop-bg/70" title="任务全部运行合计">↑<b className="text-pop-bg">{formatTokenCount(totalAgg.usage.inputTokens)}</b> ↓<b className="text-pop-bg">{formatTokenCount(totalAgg.usage.outputTokens)}</b> · <b className="text-pop-bg">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b></span>
+              <AggInline agg={totalAgg} className="shrink-0 font-mono text-pop-bg/70" dim="text-pop-bg/45" />
             )}
           </>
         )}
@@ -547,7 +547,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
         <div>预算 <b className="text-pop-ink">{Math.round(budgetMs / 60000)}</b> 分/phase · 已用 <b className="text-pop-ink">{wallMs != null ? shortDur(wallMs) : "—"}</b></div>
         <div data-rail-ledger-line={totalAgg ? undefined : "pending"}>
           {totalAgg && totalAgg.totalCalls > 0
-            ? <>账目 <b className="text-pop-ink">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b> · <b className="text-pop-ink">{totalAgg.totalCalls}</b> 次调用</>
+            ? <>账目 <b className="text-pop-ink">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b> · <b className="text-pop-ink">{totalAgg.totalCalls}</b> 次请求</>
             : aggLoaded ? "账目 —（暂无已落库调用）" : "账目读取中…"}
         </div>
         {awaitingLine(ctx)}

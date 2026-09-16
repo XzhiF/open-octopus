@@ -21,8 +21,8 @@ import type { BatchTreeState } from "../authoring/use-batch-tree"
 import { findSpecEntry, isRelativeScratchSpec } from "../authoring/use-batch-tree"
 import { PhaseSpecDialog, specFileClass } from "../authoring/phase-spec-dialog"
 import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
-import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp } from "../execution-summary"
-import { formatBytes, formatCost, formatDuration, formatTokenCount } from "@/lib/format"
+import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
+import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
 
 /** 活动流一行（SSE 到达即推，客户端聚合，权威态仍是 GET /:id）。 */
@@ -71,11 +71,7 @@ function Box({ tag, tail, tone, children, className }: {
   )
 }
 
-/** 该轮次/运行的账目一行（calls · tokens · cost；无则 null）。 */
-function aggLine(agg: LLMCallAggregates | null | undefined): string | null {
-  if (!agg || agg.totalCalls === 0) return null
-  return `${agg.totalCalls} calls · ${formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}`
-}
+/** 该轮次/运行的账目一行 → 统一走 AggInline（∑/↑/↓/⚡/🗡️·N 次请求·$，2026-09-16 定版）。 */
 
 // ── 盘上文件 chips（吸收原「草稿批次」执行态职责）────────────────────
 
@@ -170,7 +166,7 @@ export function RoundRow({ ctx, exec, meta }: {
         <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[10.5px] text-pop-ink">
           <span className="text-pop-dim" title={timeStamp(exec.started_at ?? exec.created_at)}>{clockShort(exec.started_at ?? exec.created_at)}</span>
           {duration != null && <span>{formatDuration(duration)}</span>}
-          {aggLine(agg) && <span>{aggLine(agg)}</span>}
+          <AggInline agg={agg} />
         </span>
         {link && (
           <button
@@ -317,7 +313,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               <span className="font-black text-pop-purple">{RUN_STATUS_LABEL[run?.status ?? liveRound.exec.status] ?? "执行中"}</span>
               <span className="font-mono text-pop-dim" title={timeStamp(run?.started_at ?? liveRound.exec.created_at)}>起 {clockShort(run?.started_at ?? liveRound.exec.created_at)}</span>
               {dur != null && <span className="font-mono font-black tabular-nums">{formatDuration(dur)}</span>}
-              {aggLine(agg) && <span className="font-mono">{aggLine(agg)}</span>}
+              <AggInline agg={agg} className="font-mono" />
             </div>
           </section>
         )
@@ -344,7 +340,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
                     {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
                   </span>
-                  {aggLine(agg) && <span className="font-mono text-pop-dim">{aggLine(agg)}{agg && agg.totalCalls > 0 ? ` · ↑${formatTokenCount(agg.usage.inputTokens)} ↓${formatTokenCount(agg.usage.outputTokens)}` : ""}</span>}
+                  <AggInline agg={agg} className="font-mono" />
                   <button onClick={ctx.openAcceptance} className="ml-auto shrink-0 font-mono text-[10.5px] font-black text-pop-purple underline hover:text-pop-ink" data-acceptance-evidence-link>
                     验货台核对实物 →
                   </button>

@@ -4,16 +4,16 @@
 // AcceptanceModal 收编为 tab，父窗（TaskModal 执行控制台）自带拖拽/缩放/
 // 全屏，弹窗层数 3→2，原弹窗宽度截断与多层 modal 交互死锁一并消除）。
 //
-//   ┌ 左：执行摘要（round 用时 / 失败原因 / token / cost — fetchLLMCalls 聚合 +
-//   │     本轮 run 由 executions[] 按 id 联查；TaskAiUsageCard 同等数据）
-//   ├ 中：实物 | 核对 | 叙述 三 sub-tab
+//   ┌ 主面（左，吃满剩余宽）：实物 | 核对 | 叙述 三 sub-tab
 //   │     实物 = 待验收轮 start..end 的真实 git diff（RoundEvidenceService 服务端
 //   │     解析,web 不见 SHA）+ 当场复检（acceptance_verify 命令在活工作区现跑,
 //   │     task_verify/_log SSE 流式,PASS/FAIL 盖章,verdict .md 落批次目录）;
 //   │     核对 = spec 票 × 报告声称 × diff 实物路径三方对账（lib/acceptance-matrix,
 //   │     纯解析零 AI）; 叙述 = 批次目录直读（listHomeDir all=1 + round-report
 //   │     内嵌 markdown + 「本轮」mtime 徽章 — v1 证据面整体降级收容于此）
-//   └ 右：动作区（验收通过 / 打回[反馈必填] / 中止 + autoAdvance 只读态）
+//   └ 右侧栏（360px，摘要上/动作下各自滚动）：执行摘要（round 用时/失败原因/
+//         token/cost — AggInline 紧凑口径）+ 动作区（验收通过/打回[反馈必填]/
+//         中止 + autoAdvance 只读态）
 //
 // 数据权威 = GET /:id 的 derived（票 03/07 唯一真相；票 11 已镜像类型）——
 // 本组件只读 phaseViews，MUST NOT 重实现派生矩阵。提交走票 11 交付的
@@ -570,13 +570,16 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         )}
         {task && <Badge variant="outline" className="max-w-[260px] truncate text-[10px]">{task.name}</Badge>}
         <span className="ml-auto hidden text-[10px] text-muted-foreground sm:block">
-          执行摘要 | 实物 · 核对 · 叙述 | 动作区 — 验收 = 验货，不是读汇报
+          实物 · 核对 · 叙述 | 右侧摘要 + 动作 — 验收 = 验货，不是读汇报
         </span>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_320px] max-lg:grid-cols-1 max-lg:overflow-y-auto">
-        {/* ── 左：执行摘要 ── */}
-        <div className="min-h-0 overflow-y-auto border-r border-border p-4 space-y-3 max-lg:border-r-0 max-lg:border-b" data-acceptance-col-summary data-testid="acceptance-col-summary">
+      {/* 两栏版面（2026-09-16 用户回灌：三栏后中列太窄）：
+          实物|核对|叙述 = 主面吃满剩余宽；执行摘要+动作区 合并右 360px 侧栏
+          （摘要上、动作下，各自滚动）。窄屏折叠为纵向（DOM 序：摘要→主面→动作）。 */}
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-none max-lg:overflow-y-auto">
+        {/* ── 右侧栏上：执行摘要 ── */}
+        <div className="col-start-2 row-start-1 min-h-0 max-h-[46%] space-y-3 overflow-y-auto border-l border-border p-4 max-lg:col-auto max-lg:row-auto max-lg:max-h-none max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b" data-acceptance-col-summary data-testid="acceptance-col-summary">
           <div className="text-xs font-semibold text-muted-foreground">执行摘要</div>
           {!detail ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
@@ -599,7 +602,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-muted-foreground text-xs">Workflow</span>
-                  <code className="max-w-[130px] truncate text-[11px]">{awaitingPhase?.workflowRef || "—"}</code>
+                  <code className="max-w-[200px] truncate text-[11px]">{awaitingPhase?.workflowRef || "—"}</code>
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-muted-foreground text-xs">执行结果</span>
@@ -637,8 +640,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           )}
         </div>
 
-        {/* ── 中：验货台（实物 | 核对 | 叙述） ── */}
-        <div className="flex min-h-0 flex-col border-r border-border max-lg:border-r-0 max-lg:border-b" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
+        {/* ── 主面：验货台（实物 | 核对 | 叙述）── */}
+        <div className="col-start-1 row-span-2 row-start-1 flex min-h-0 flex-col max-lg:col-auto max-lg:row-auto max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
           {!awaitingPhase ? (
             <div className="space-y-2 p-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -785,8 +788,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           )}
         </div>
 
-        {/* ── 右：动作区 ── */}
-        <div className="min-h-0 space-y-3 overflow-y-auto p-4" data-acceptance-col-actions data-testid="acceptance-col-actions">
+        {/* ── 右侧栏下：动作区 ── */}
+        <div className="col-start-2 row-start-2 min-h-0 overflow-y-auto border-l border-border p-4 space-y-3 max-lg:col-auto max-lg:row-auto max-lg:border-l-0" data-acceptance-col-actions data-testid="acceptance-col-actions">
           <div className="text-xs font-semibold text-muted-foreground">动作区</div>
 
           {awaitingPhase ? (

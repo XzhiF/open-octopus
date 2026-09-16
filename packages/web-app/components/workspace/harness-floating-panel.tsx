@@ -657,6 +657,8 @@ export function HarnessFloatingPanel({
 
       const handleDragMove = (me: MouseEvent) => {
         if (!dragRef.current) return
+        // 卡拖拽硬防：窗口外松手/失焦时 mouseup 永不到达 → 无按键的 move 即收兵
+        if (me.buttons === 0) { handleDragEnd(); return }
         const newLeft = dragRef.current.origLeft + (me.clientX - dragRef.current.startX)
         const newTop = dragRef.current.origTop + (me.clientY - dragRef.current.startY)
         const clampedLeft = Math.max(0, Math.min(window.innerWidth - 120, newLeft))
@@ -691,6 +693,7 @@ export function HarnessFloatingPanel({
 
       const handleResizeMove = (me: MouseEvent) => {
         if (!resizeRef.current) return
+        if (me.buttons === 0) { handleResizeEnd(); return }
         const dx = me.clientX - resizeRef.current.startX
         const dy = me.clientY - resizeRef.current.startY
         let newWidth = size.width

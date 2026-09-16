@@ -24,7 +24,7 @@ import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { formatTokenCount, formatCost, formatPercent } from "@/lib/format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
@@ -151,6 +151,32 @@ export function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | 
   }
 }
 
+/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 node-detail/cost-tab 同口径视觉 —
+ *  ∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用，**不列工具调用**。
+ *  任务域所有「calls · tokens · cost」行统一吃这一个实现。null/零调用 → null。 */
+export function AggInline({ agg, className, dim = "text-pop-dim" }: {
+  agg: LLMCallAggregates | null | undefined
+  className?: string
+  /** 弱色 token class —— 深色导航条等底色面传入对应值。 */
+  dim?: string
+}) {
+  if (!agg || agg.totalCalls === 0) return null
+  const { usage, totals, totalCalls } = agg
+  const cr = usage.cacheReadTokens ?? 0
+  const cw = usage.cacheCreationTokens ?? 0
+  return (
+    <span className={`tabular-nums inline-flex shrink-0 items-center gap-1.5 ${className ?? ""}`} data-agg-inline data-testid="agg-inline">
+      <span className="font-black" title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(totals.tokens)}</span>
+      <span title="输入">↑{formatTokenCount(usage.inputTokens ?? 0)}</span>
+      <span title="输出">↓{formatTokenCount(usage.outputTokens ?? 0)}</span>
+      {cr > 0 && <span title="缓存读取" className={dim}>⚡{formatTokenCount(cr)}</span>}
+      {cw > 0 && <span title="缓存创建" className={dim}>🗡️{formatTokenCount(cw)}</span>}
+      <span className={dim}>· {totalCalls} 次请求 ·</span>
+      <span className="font-medium text-pop-amber" title="价表估算（≈=部分未定价）">{formatCost(totals.cost.usd, totals.cost.complete)}</span>
+    </span>
+  )
+}
+
 /** 任务级 AI 消耗卡（2026-08-29 语义修正）：聚合该任务**全部工作流执行**的
  *  LLM 调用 —— simple=1 条主执行、composite=协调器+N 子单元全部求和，所以它是
  *  任务口径而非单次执行口径；单次执行的用量在下方各行内联展示。
@@ -175,15 +201,8 @@ export function TaskAiUsageCard({ agg, loading, runCount }: {
         </p>
       ) : (
         <div className="space-y-2" data-ai-usage>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
-            <span className="text-muted-foreground">调用 <b className="text-foreground tabular-nums">{agg.totalCalls}</b> 次</span>
-            <span className="tabular-nums" title="input / output tokens">↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)}</span>
-            {(agg.usage.cacheReadTokens > 0 || agg.usage.cacheCreationTokens > 0) && (
-              <span className="text-xs text-muted-foreground tabular-nums" title={agg.totals.cacheHitRate === null ? "缓存命中率: 无输入类 token" : `缓存命中率 ${formatPercent(agg.totals.cacheHitRate, 1)}`}>
-                缓存 读{formatTokenCount(agg.usage.cacheReadTokens)}·写{formatTokenCount(agg.usage.cacheCreationTokens)}
-              </span>
-            )}
-            <span className="font-semibold tabular-nums" title="价表估算（≈=部分未定价）">{formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
+            <AggInline agg={agg} />
           </div>
           {models.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
