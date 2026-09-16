@@ -681,6 +681,119 @@ export async function getBatchTree(taskId: string): Promise<BatchTreeEntry[]> {
   return data.batches
 }
 
+// ============ 验货台 (acceptance v2): 实物 round-diff + 当场复检 ============
+// 镜像 server round-evidence-service.ts 的 payload 形状（SHAs 永不出服务端；
+// 端点都按 task id 解析 awaiting round，无 awaiting → 409）。
+
+export interface DiffFile {
+  path: string
+  /** rename/copy source (status R/C). */
+  oldPath?: string
+  /** git 单字母状态码 A/M/D/R/C/T。 */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
+}
+
+export interface DiffGroup {
+  dir: string
+  additions: number
+  dels: number
+  files: DiffFile[]
+}
+
+export interface RepoDiff {
+  name: string
+  expired?: boolean
+  reason?: "no_workspace" | "no_commits" | "worktree_gone"
+  commits: number
+  additions: number
+  dels: number
+  files: number
+  truncated: boolean
+  groups: DiffGroup[]
+}
+
+export interface RoundDiffPayload {
+  available: boolean
+  reason?: string
+  aggregate: { commits: number; additions: number; dels: number; files: number }
+  /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
+  interventions: number | null
+  repos: RepoDiff[]
+}
+
+export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"
+
+export interface VerifySummary {
+  task_id: string
+  execution_id: string
+  phase_index: number
+  round_index: number
+  command: string
+  cwd: string
+  state: VerifyState
+  started_at: string
+  ended_at?: string
+  exit_code?: number
+  duration_ms?: number
+  verdict_path?: string | null
+  tail?: string[]
+}
+
+/** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
+export async function getRoundDiff(taskId: string): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** GET /:id/round-diff/patch?repo=&path= — 单文件 unified patch（懒拉，512K 截断）。 */
+export async function getRoundPatch(
+  taskId: string,
+  repo: string,
+  filePath: string,
+): Promise<{ patch: string; truncated: boolean }> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff/patch`, { repo, path: filePath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** POST /:id/verify — 起当场复检（202 + running summary）。400 未配置命令 /
+ *  409 无 awaiting·在跑·ws 不在。进度走 taskpool SSE（task_verify_log 逐行 +
+ *  task_verify 终态），重连用 getVerifyStatus 的 tail 重建。 */
+export async function startVerify(taskId: string): Promise<VerifySummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/verify`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as VerifySummary
+}
+
+/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。 */
+export async function getVerifyStatus(taskId: string): Promise<VerifySummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/verify`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  }
+  return (await res.json()) as VerifySummary | null
+}
+
+/** POST /:id/verify/abort — SIGTERM 进程树；终态经 SSE 到达。409 没有在跑的。 */
+export async function abortVerify(taskId: string): Promise<VerifySummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/verify/abort`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as VerifySummary
+}
+
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
 
 /** Error thrown by {@link getWorkflowRefView} when the bound ref can no longer

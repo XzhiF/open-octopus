@@ -804,15 +804,19 @@
 @keyframes pop-blink { 50% { opacity: 0; } }
 @keyframes pop-jump { 40% { transform: translateY(-4px); } }
 @keyframes pop-pulse { 50% { opacity: 0.3; } }
+/* 验货台盖章（acceptance v2）：verdict 落地瞬间从 1.6x 砸下来。 */
+@keyframes stamp-in { from { transform: scale(1.6) rotate(4deg); opacity: 0; } }
 .pop-blink { animation: pop-blink 0.9s steps(1) infinite; }
 .pop-jump { animation: pop-jump 0.9s infinite; }
 .pop-pulse { animation: pop-pulse 1.2s infinite; }
+.pop-stamp { animation: stamp-in 0.25s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
   .pop-tilt > *,
   .pop-blink,
   .pop-jump,
-  .pop-pulse {
+  .pop-pulse,
+  .pop-stamp {
     animation: none;
     transform: none;
   }

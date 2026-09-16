@@ -4,10 +4,13 @@
 //
 //   ┌ 左：执行摘要（round 用时 / 失败原因 / token / cost — fetchLLMCalls 聚合 +
 //   │     本轮 run 由 executions[] 按 id 联查；TaskAiUsageCard 同等数据）
-//   ├ 中：产物核对（本 phase 批次目录 listHomeDir(all=1) 直读 + round-report.md
-//   │     内嵌 markdown 渲染；round 时间窗命中打「本轮」徽章；点开全文走
-//   │     ArtifactViewerDialog home 模式（getHomeFile，登记语义已退役）；
-//   │     task_artifacts_update SSE 挂窗即时刷新 — 票 06 collect 上行）
+//   ├ 中：验货台（acceptance v2）— 三 tab：实物 | 核对 | 叙述
+//   │     实物 = 待验收轮 start..end 的真实 git diff（RoundEvidenceService 服务端
+//   │     解析,web 不见 SHA）+ 当场复检（acceptance_verify 命令在活工作区现跑,
+//   │     task_verify/_log SSE 流式,PASS/FAIL 盖章,verdict .md 落批次目录）;
+//   │     核对 = spec 票 × 报告声称 × diff 实物路径三方对账（lib/acceptance-matrix,
+//   │     纯解析零 AI）; 叙述 = 批次目录直读（listHomeDir all=1 + round-report
+//   │     内嵌 markdown + 「本轮」mtime 徽章 — v1 证据面整体降级收容于此）
 //   └ 右：动作区（验收通过 / 打回[反馈必填] / 中止 + autoAdvance 只读态）
 //
 // 数据权威 = GET /:id 的 derived（票 03/07 唯一真相；票 11 已镜像类型）——
@@ -36,8 +39,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import type { Task, TaskPhase } from "@octopus/shared"
-import { PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT } from "@octopus/shared"
+import type { Task, TaskPhase, AcceptanceVerify } from "@octopus/shared"
+import {
+  PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT,
+  TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT,
+} from "@octopus/shared"
 import {
   abortTask,
   getTask,
@@ -48,7 +54,14 @@ import {
   updateSpecField,
   TaskApiError,
   MAX_HOME_FILE_READ_BYTES,
+  getRoundDiff,
+  getVerifyStatus,
+  startVerify,
+  abortVerify,
   type HomeFileListingEntry,
+  type RoundDiffPayload,
+  type VerifySummary,
+  type VerifyState,
   type TaskDetail,
   type TaskPhaseView,
   type TaskRoundView,
@@ -62,6 +75,9 @@ import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
 import { ArtifactViewerDialog, type HomeViewEntry } from "./authoring/artifact-viewer-dialog"
 import { batchDirOf } from "./authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "./authoring/use-batch-tree"
+import { RoundDiffPanel } from "./acceptance/round-diff-panel"
+import { VerifyPanel } from "./acceptance/verify-panel"
+import { AcMatrixPanel } from "./acceptance/ac-matrix-panel"
 import { TaskAiUsageCard, runErrorOf } from "./execution-summary"
 
 // 归档重试客户端 postArchiveRetry 位于 lib/tasks-api.ts（review ①: API 层惯例
@@ -111,6 +127,18 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
   // tried 区分「还在扫」与「扫完没有」——防中列无限转圈。
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
   const [fallbackTried, setFallbackTried] = useState(false)
+  // ── 验货台 (acceptance v2) 状态 ──
+  // midTab：实物(默认=C位) | 核对 | 叙述；roundDiff=真实提交区间；verify=当场复检。
+  const [midTab, setMidTab] = useState<"diff" | "matrix" | "story">("diff")
+  const [roundDiff, setRoundDiff] = useState<RoundDiffPayload | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [diffError, setDiffError] = useState<string | null>(null)
+  const [diffReload, setDiffReload] = useState(0) // 实物面板「重试」
+  const [specMd, setSpecMd] = useState<string | null>(null) // 核对 tab 懒拉;"" = 不存在
+  const [specLoading, setSpecLoading] = useState(false)
+  const [verify, setVerify] = useState<VerifySummary | null>(null)
+  const [verifyLines, setVerifyLines] = useState<string[]>([])
+  const [verifyBusy, setVerifyBusy] = useState(false)
 
   const refetchDetail = useCallback(() => {
     if (!taskId) return
@@ -131,6 +159,12 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     setRoundReport(null)
     setFallbackDir(null)
     setFallbackTried(false)
+    setMidTab("diff")
+    setRoundDiff(null)
+    setDiffError(null)
+    setSpecMd(null)
+    setVerify(null)
+    setVerifyLines([])
     refetchDetail()
   }, [open, taskId, refetchDetail])
 
@@ -150,7 +184,27 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     const unPhase = subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unStatus = subscribeSSE(url, TASK_STATUS_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unArts = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => { if (mine(e)) setBatchReload((v) => v + 1) })
-    return () => { unPhase(); unStatus(); unArts() }
+    // 验货台复检：逐行进控制台（client cap 2000；重连由 GET /:id/verify tail 兜底），
+    // 终态合并进 summary（stamp/verdict 指针都读 summary.state，不另设标志位）。
+    const unVLog = subscribeSSE(url, TASK_VERIFY_LOG_EVENT, (e) => {
+      if (!mine(e)) return
+      try {
+        const d = JSON.parse(e.data) as { line?: string; stream?: string }
+        if (typeof d.line !== "string") return
+        const line = d.stream === "stderr" ? `[stderr] ${d.line}` : d.line
+        setVerifyLines((prev) => (prev.length > 2000 ? [...prev.slice(prev.length - 2000), line] : [...prev, line]))
+      } catch { /* malformed frame — drop */ }
+    })
+    const unVerify = subscribeSSE(url, TASK_VERIFY_EVENT, (e) => {
+      if (!mine(e)) return
+      try {
+        const d = JSON.parse(e.data) as {
+          state?: VerifyState; exit_code?: number; duration_ms?: number; verdict_path?: string | null
+        }
+        setVerify((prev) => (prev ? { ...prev, ...d } : prev))
+      } catch { /* drop */ }
+    })
+    return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify() }
   }, [open, taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
@@ -282,6 +336,100 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     () => (files ?? []).slice().sort((a, b) => (a.mtime === b.mtime ? 0 : a.mtime < b.mtime ? 1 : -1)),
     [files],
   )
+
+  // ── 验货台数据流（acceptance v2） ──────────────────────────────────────
+  // 实物 diff：按 awaiting 轮现拉（服务端解析 commit 区间；409 无 awaiting = 静默
+  // null —— 面板本身有 idle 态）。exec id 变化（换轮/重开）即重拉。
+  const awaitingExecId = awaitingRound?.exec.id ?? ""
+  useEffect(() => {
+    if (!open || !taskId || !awaitingExecId) { setRoundDiff(null); setDiffError(null); return }
+    let cancelled = false
+    setDiffLoading(true)
+    setDiffError(null)
+    getRoundDiff(taskId)
+      .then((d) => { if (!cancelled) setRoundDiff(d) })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setRoundDiff(null)
+        setDiffError(err instanceof Error ? err.message : "实物 diff 读取失败")
+      })
+      .finally(() => { if (!cancelled) setDiffLoading(false) })
+    return () => { cancelled = true }
+  }, [open, taskId, awaitingExecId, diffReload])
+
+  // 复检会话恢复：开窗 GET 一次（SSE 无 replay，tail 由 GET 承载；501/离线 = null）。
+  useEffect(() => {
+    if (!open || !taskId || !awaitingExecId) return
+    let cancelled = false
+    getVerifyStatus(taskId)
+      .then((s) => {
+        if (cancelled || !s) return
+        setVerify(s)
+        if (s.tail?.length) setVerifyLines(s.tail)
+      })
+      .catch(() => { /* 未装配/离线 — 无会话可恢复 */ })
+    return () => { cancelled = true }
+  }, [open, taskId, awaitingExecId])
+
+  // 核对 tab 的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。
+  useEffect(() => {
+    if (!open || !taskId || !batchDir || midTab !== "matrix" || specMd !== null || specLoading) return
+    let cancelled = false
+    setSpecLoading(true)
+    getHomeFile(taskId, `${batchDir}/spec.md`)
+      .then((r) => { if (!cancelled) setSpecMd(r.content) })
+      .catch(() => { if (!cancelled) setSpecMd("") })
+      .finally(() => { if (!cancelled) setSpecLoading(false) })
+    return () => { cancelled = true }
+  }, [open, taskId, batchDir, midTab, specMd, specLoading])
+
+  const verifyCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_verify ?? null
+  const verifyRunning = verify?.state === "running"
+  const wsGone = roundDiff !== null && !roundDiff.available && roundDiff.reason === "no_workspace"
+  const verifyDisabled = wsGone
+    ? "工作区目录已不在 — 当场复检不可用（叙述/历史 verdict 仍可看）"
+    : undefined
+
+  const handleVerifyRun = useCallback(async () => {
+    if (!taskId) return
+    setVerifyBusy(true)
+    try {
+      const s = await startVerify(taskId)
+      setVerify(s)
+      setVerifyLines([])
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "复检启动失败")
+    } finally {
+      setVerifyBusy(false)
+    }
+  }, [taskId])
+
+  const handleVerifyAbort = useCallback(async () => {
+    if (!taskId) return
+    setVerifyBusy(true)
+    try {
+      const s = await abortVerify(taskId)
+      setVerify((prev) => (prev ? { ...prev, ...s } : s))
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "中止失败")
+    } finally {
+      setVerifyBusy(false)
+    }
+  }, [taskId])
+
+  /** spec-field 持久化（awaiting_review 编辑合法，v4 冻结线在 done/aborted/archiving）。 */
+  const handleVerifySave = useCallback(async (v: AcceptanceVerify | null): Promise<boolean> => {
+    if (!taskId) return false
+    try {
+      await updateSpecField(taskId, "acceptance_verify", v, { source: "user" })
+      refetchDetail()
+      toast.success(v ? "复检命令已保存 — 随任务持久化，下个 phase 也用它" : "复检命令已清除")
+      return true
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? `保存失败：${err.message}` : "保存失败")
+      return false
+    }
+  }, [taskId, refetchDetail])
 
   // ── 前序交接提示行（phase-handoff-chaining 票 04 / spec K6） ──────────
   // decision=accepted 语境（确认按钮上方）∧ 存在下一 phase → 一行提示：
@@ -426,7 +574,7 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
               {task && <Badge variant="outline" className="text-[10px] max-w-[260px] truncate">{task.name}</Badge>}
             </DialogTitle>
             <DialogDescription className="text-[11px]">
-              三栏证据面（K14）：执行摘要 | 产物核对 | 动作区 — 1 分钟决策成本
+              验货台（K14 升级）：执行摘要 | 实物 · 核对 · 叙述 | 动作区 — 验收 = 验货，不是读汇报
             </DialogDescription>
           </DialogHeader>
 
@@ -493,86 +641,150 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
               )}
             </div>
 
-            {/* ── 中：产物核对（批次目录直读） ── */}
-            <div className="min-h-0 border-r border-border overflow-y-auto p-4 space-y-2" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
-              <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <FileText className="size-3.5" /> 产物核对
-                <span className="ml-auto font-normal">
-                  {awaitingPhase ? `批次 slug: ${awaitingPhase.slug}` : ""}{batchDir ? ` · ${batchDir}` : ""}{files ? ` · ${files.length} 个` : ""} · 点击看全文
-                </span>
-              </div>
-
+            {/* ── 中：验货台（实物 | 核对 | 叙述） ── */}
+            <div className="min-h-0 border-r border-border flex flex-col" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
               {!awaitingPhase ? (
-                <p className="text-[11px] text-muted-foreground" data-acceptance-batch-idle data-testid="acceptance-batch-idle">
-                  当前无待验收 round — 验收时在此核对本 phase 批次文件。
-                </p>
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                    <FileText className="size-3.5" /> 验货台
+                  </div>
+                  <p className="text-[11px] text-muted-foreground" data-acceptance-batch-idle data-testid="acceptance-batch-idle">
+                    当前无待验收 round — 验收时在此验货（实物 diff / 当场复检 / 票对账）。
+                  </p>
+                </div>
               ) : (
                 <>
-                  {/* 决策主证据内嵌渲染（K14「1 分钟决策成本」）：round-report.md
-                      markdown 直出,列表在其下 — 其余文件点开全文看。 */}
-                  {roundReport && (
-                    <div className="rounded-md border border-border bg-muted/20 space-y-1" data-acceptance-round-report data-testid="acceptance-round-report">
-                      <div className="px-3 pt-2 flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                        <FileText className="size-3" /> round-report.md · 本轮终报
-                      </div>
-                      <div className="px-3 pb-2 max-h-[420px] overflow-y-auto">
-                        <MarkdownPreview content={roundReport} className="text-[11px]" />
-                      </div>
-                    </div>
-                  )}
+                  {/* tab 条：三枚 chunky 贴纸，选中的黄底压黑边（波普） */}
+                  <div className="shrink-0 flex items-center gap-1.5 border-b-2 border-pop-bd/10 bg-pop-paper px-3 py-2">
+                    {([
+                      ["diff", "实物", roundDiff?.available ? String(roundDiff.aggregate.files) : ""],
+                      ["matrix", "核对", ""],
+                      ["story", "叙述", files ? String(files.length) : ""],
+                    ] as const).map(([id, label, count]) => (
+                      <button
+                        key={id}
+                        onClick={() => setMidTab(id)}
+                        aria-selected={midTab === id}
+                        className={`rounded-full border-[2px] px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                          midTab === id
+                            ? "border-pop-bd bg-pop-yellow text-pop-ink shadow-pop-sm"
+                            : "border-pop-bd/25 text-pop-dim hover:border-pop-bd/60"
+                        }`}
+                        data-acceptance-midtab={id} data-testid={`acceptance-tab-${id}`}
+                      >
+                        {label}{count && <span className="ml-1 tabular-nums opacity-70">{count}</span>}
+                      </button>
+                    ))}
+                  </div>
 
-                  {batchError && (
-                    <div className="text-[11px] text-pop-red" data-acceptance-batch-error data-testid="acceptance-batch-error">
-                      批次目录读取失败：{batchError}
-                    </div>
-                  )}
-                  {files === null && !batchError && (batchDir || !fallbackTried) && (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Spinner className="size-3" /> {batchDir ? "读取批次目录…" : "定位批次目录…"}
-                    </div>
-                  )}
-                  {((files !== null && files.length === 0) ||
-                    (files === null && !batchError && !batchDir && fallbackTried)) && (
-                    <div className="rounded-md border border-dashed p-4 text-[11px] text-muted-foreground" data-acceptance-batch-empty data-testid="acceptance-batch-empty">
-                      {`本 Phase 批次目录${batchDir ? `（${batchDir}）` : ""}暂无文件 — round 终态 collect 回收执行侧改动后即时出现。`}
-                    </div>
-                  )}
-                  {sortedFiles.length > 0 && (
-                    <ul className="space-y-1.5" data-acceptance-artifact-rows data-testid="acceptance-artifact-rows">
-                      {sortedFiles.map((f) => {
-                        const name = f.path.split("/").pop() ?? f.path
-                        const canPreview = previewable(f)
-                        const badge = inRound(f)
-                        return (
-                          <li key={f.path}>
-                            <button
-                              className={`w-full text-left rounded-md border px-2.5 py-1.5 transition-colors ${
-                                canPreview ? "border-border hover:border-primary/40" : "border-border/50 opacity-60 cursor-default"
-                              }`}
-                              disabled={!canPreview}
-                              onClick={() => canPreview && setHomeViewing({ path: f.path, bytes: f.bytes, mtime: f.mtime })}
-                              data-acceptance-artifact-row={f.path} data-testid={`acceptance-artifact-row-${f.path}`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
-                                <span className="text-sm truncate">{name}</span>
-                                {badge && (
-                                  <Badge className="text-[9px] px-1 py-0 shrink-0" data-acceptance-round-badge={f.path} data-testid={`acceptance-round-badge-${f.path}`}>
-                                    本轮
-                                  </Badge>
-                                )}
-                                <span className="ml-auto text-[10px] text-muted-foreground shrink-0 tabular-nums">{f.mtime.slice(5, 16).replace("T", " ")}</span>
-                              </div>
-                              <div className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">
-                                {f.path} · {Math.max(1, Math.round(f.bytes / 1024))} KB
-                                {!canPreview && <span className="text-pop-amber"> · 不可预览</span>}
-                              </div>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
+                  <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+                    {midTab === "diff" && (
+                      <>
+                        <RoundDiffPanel
+                          taskId={taskId ?? ""}
+                          diff={roundDiff}
+                          loading={diffLoading}
+                          error={diffError}
+                          onRetry={() => setDiffReload((v) => v + 1)}
+                        />
+                        <VerifyPanel
+                          cfg={verifyCfg}
+                          summary={verify}
+                          lines={verifyLines}
+                          running={!!verifyRunning}
+                          busy={verifyBusy}
+                          disabledReason={verifyDisabled}
+                          onSaveCommand={handleVerifySave}
+                          onRun={() => void handleVerifyRun()}
+                          onAbort={() => void handleVerifyAbort()}
+                        />
+                      </>
+                    )}
+                    {midTab === "matrix" && (
+                      <AcMatrixPanel
+                        specMd={specMd === "" ? null : specMd}
+                        specLoading={specLoading}
+                        reportMd={roundReport}
+                        diff={roundDiff}
+                      />
+                    )}
+                    {midTab === "story" && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                          <FileText className="size-3.5" /> 叙述材料（批次目录直读）
+                          <span className="ml-auto font-normal">
+                            {`批次 slug: ${awaitingPhase.slug}`}{batchDir ? ` · ${batchDir}` : ""}{files ? ` · ${files.length} 个` : ""} · 点击看全文
+                          </span>
+                        </div>
+
+                        {/* agent 自述主文档内嵌渲染（v1 语义保留）：round-report.md
+                            markdown 直出，列表在其下 — 其余文件点开全文看。 */}
+                        {roundReport && (
+                          <div className="rounded-md border border-border bg-muted/20 space-y-1" data-acceptance-round-report data-testid="acceptance-round-report">
+                            <div className="px-3 pt-2 flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                              <FileText className="size-3" /> round-report.md · agent 自述
+                            </div>
+                            <div className="px-3 pb-2 max-h-[420px] overflow-y-auto">
+                              <MarkdownPreview content={roundReport} className="text-[11px]" />
+                            </div>
+                          </div>
+                        )}
+
+                        {batchError && (
+                          <div className="text-[11px] text-pop-red" data-acceptance-batch-error data-testid="acceptance-batch-error">
+                            批次目录读取失败：{batchError}
+                          </div>
+                        )}
+                        {files === null && !batchError && (batchDir || !fallbackTried) && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Spinner className="size-3" /> {batchDir ? "读取批次目录…" : "定位批次目录…"}
+                          </div>
+                        )}
+                        {((files !== null && files.length === 0) ||
+                          (files === null && !batchError && !batchDir && fallbackTried)) && (
+                          <div className="rounded-md border border-dashed p-4 text-[11px] text-muted-foreground" data-acceptance-batch-empty data-testid="acceptance-batch-empty">
+                            {`本 Phase 批次目录${batchDir ? `（${batchDir}）` : ""}暂无文件 — round 终态 collect 回收执行侧改动后即时出现。`}
+                          </div>
+                        )}
+                        {sortedFiles.length > 0 && (
+                          <ul className="space-y-1.5" data-acceptance-artifact-rows data-testid="acceptance-artifact-rows">
+                            {sortedFiles.map((f) => {
+                              const name = f.path.split("/").pop() ?? f.path
+                              const canPreview = previewable(f)
+                              const badge = inRound(f)
+                              return (
+                                <li key={f.path}>
+                                  <button
+                                    className={`w-full text-left rounded-md border px-2.5 py-1.5 transition-colors ${
+                                      canPreview ? "border-border hover:border-primary/40" : "border-border/50 opacity-60 cursor-default"
+                                    }`}
+                                    disabled={!canPreview}
+                                    onClick={() => canPreview && setHomeViewing({ path: f.path, bytes: f.bytes, mtime: f.mtime })}
+                                    data-acceptance-artifact-row={f.path} data-testid={`acceptance-artifact-row-${f.path}`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
+                                      <span className="text-sm truncate">{name}</span>
+                                      {badge && (
+                                        <Badge className="text-[9px] px-1 py-0 shrink-0" data-acceptance-round-badge={f.path} data-testid={`acceptance-round-badge-${f.path}`}>
+                                          本轮
+                                        </Badge>
+                                      )}
+                                      <span className="ml-auto text-[10px] text-muted-foreground shrink-0 tabular-nums">{f.mtime.slice(5, 16).replace("T", " ")}</span>
+                                    </div>
+                                    <div className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">
+                                      {f.path} · {Math.max(1, Math.round(f.bytes / 1024))} KB
+                                      {!canPreview && <span className="text-pop-amber"> · 不可预览</span>}
+                                    </div>
+                                  </button>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>

@@ -1,9 +1,7 @@
-// task-phase-redesign 票 12 — AcceptanceModal 三栏证据面 + 打回链 + D13①/D14
-// 接缝组件测试。数据权威 = GET /:id.derived（票 03 唯一真相），本套用固定
-// fixture（独立于组件的派生实现 — 反天：期望值来自票 07 契约的字面量）。
-//
-// 中列（task-exec-tree 验收证据面）：登记语义已退役 — 组件改直读批次目录
-// （listHomeDir all=1 + getHomeFile + getBatchTree 回退定位），本套 mock 面对应。
+// task-phase-redesign 票 12（AC1/AC2）+ 验货台 v2（实物 diff / 当场复检 / 票对账）
+// — AcceptanceModal 组件测试。数据权威 = GET /:id.derived（票 03 唯一真相），
+// fixture 独立于组件实现。中列三 tab：默认「实物」；「叙述」承接 v1 批次文件断言
+// （点击 tab 后可见）；复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
@@ -13,6 +11,8 @@ const {
   mockGetTask, mockPostAcceptance, mockAbortTask,
   mockFetchLLMCalls, mockUpdateSpecField,
   mockListHomeDir, mockGetHomeFile, mockGetBatchTree,
+  mockGetRoundDiff, mockGetRoundPatch, mockStartVerify, mockGetVerifyStatus, mockAbortVerify,
+  sseHandlers,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockPostAcceptance: vi.fn(),
@@ -22,6 +22,12 @@ const {
   mockListHomeDir: vi.fn(),
   mockGetHomeFile: vi.fn(),
   mockGetBatchTree: vi.fn(),
+  mockGetRoundDiff: vi.fn(),
+  mockGetRoundPatch: vi.fn(),
+  mockStartVerify: vi.fn(),
+  mockGetVerifyStatus: vi.fn(),
+  mockAbortVerify: vi.fn(),
+  sseHandlers: new Map<string, (e: MessageEvent) => void>(),
 }))
 
 vi.mock("@/lib/tasks-api", () => {
@@ -41,14 +47,17 @@ vi.mock("@/lib/tasks-api", () => {
     getArtifactContent: vi.fn(),
     ArtifactContentError: class extends Error {},
     TaskApiError,
-    // 中列证据面（批次直读）+ ArtifactViewerDialog home 模式所需出口。
-    // putHomeFile：phase-spec-dialog 模块图会 import 它（batchDirOf 复用其导出），
-    // vitest 对 mock 缺失出口直接 throw —— 一并给上。
+    // 叙述 tab（v1 证据面）+ 验货台 v2 出口。
     listHomeDir: mockListHomeDir,
     getHomeFile: mockGetHomeFile,
     getBatchTree: mockGetBatchTree,
     putHomeFile: vi.fn(),
     MAX_HOME_FILE_READ_BYTES: 512_000,
+    getRoundDiff: mockGetRoundDiff,
+    getRoundPatch: mockGetRoundPatch,
+    startVerify: mockStartVerify,
+    getVerifyStatus: mockGetVerifyStatus,
+    abortVerify: mockAbortVerify,
   }
 })
 // react-markdown 全家桶对单测是纯负担 — 桩到内容透传（渲染质量归 MarkdownPreview 自己）。
@@ -56,12 +65,18 @@ vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
-vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: vi.fn(() => () => {}) }))
+vi.mock("@/lib/sse-manager", () => ({
+  subscribeSSE: (_url: string, event: string, cb: (e: MessageEvent) => void) => {
+    sseHandlers.set(event, cb)
+    return () => { sseHandlers.delete(event) }
+  },
+}))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { AcceptanceModal, ImpactApprovalList } from "../acceptance-modal"
 import { TaskApiError } from "@/lib/tasks-api"
+import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
 // ── fixtures（票 07 GET /:id 契约形状） ──────────────────────────────
 
@@ -102,12 +117,18 @@ const V4_SPEC = {
   ],
 } as unknown as TaskSpec
 
-/** specPath 绝对（agent 旁路直写）→ 中列定位走 getBatchTree slug 回退。 */
+/** specPath 绝对（gateV4 旁路直写）→ 中列定位走 getBatchTree slug 回退。 */
 const V4_SPEC_ABS = {
   ...(V4_SPEC as object),
   phases: [
     { index: 1, name: "脚手架", slug: "scaffold-1", specPath: "/tmp/ws/scaffold/spec.md", workflowRef: "task-dev", inputValues: {} },
   ],
+} as unknown as TaskSpec
+
+/** 带 acceptance_verify 配置的 spec（复检面板显示命令 + ▶ 可点）。 */
+const V4_SPEC_VERIFY = {
+  ...(V4_SPEC as object),
+  acceptance_verify: { command: "pnpm test", timeoutS: 600 },
 } as unknown as TaskSpec
 
 function makeDetail(derived: TaskDerivedView, spec: TaskSpec = V4_SPEC): TaskDetail {
@@ -205,7 +226,7 @@ const AGG = {
   modelBreakdown: {},
 }
 
-// 中列证据 fixture — home-relative posix（listHomeDir all=1 的真实形状）。
+// 叙述 tab 证据 fixture — home-relative posix（listHomeDir all=1 的真实形状）。
 // round 窗口 = exec-1 [00:00, 00:42]：窗内三个带「本轮」，窗外 handoff 不带；
 // state.db 属不可预览门（存在即证据，行在但点不开）。
 const BATCH_DIR = ".scratch/20260903/scaffold-1"
@@ -217,24 +238,77 @@ const HOME_FILES = [
   { path: `${BATCH_DIR}/handoff.md`, mtime: "2026-09-01T00:00:00Z", bytes: 200 },
 ]
 
+// 实物 tab fixture — server RoundDiffPayload 形状（SHA 不出服务端，web 只见统计）。
+const ROUND_DIFF = {
+  available: true,
+  aggregate: { commits: 2, additions: 2271, dels: 95, files: 39 },
+  interventions: 3,
+  repos: [
+    {
+      name: "open-octopus",
+      commits: 2, additions: 2271, dels: 95, files: 2, truncated: false,
+      groups: [
+        { dir: "packages", additions: 2271, dels: 95, files: [
+          { path: "packages/cli/src/utils/usage-writer.ts", status: "A", adds: 2200, dels: 0 },
+          { path: "packages/server/src/db/schema.ts", status: "M", adds: 71, dels: 95 },
+        ] },
+      ],
+    },
+  ],
+}
+
+const SPEC_MATRIX_MD = `# scaffold-1
+## User Stories
+- **US1** 脚手架可用
+## Ticket DAG
+| 票 | 标题 | blockedBy |
+|----|------|-----------|
+| 01 | 初始化 | — |
+| 02 | 挂点 | 01 |
+`
+const REPORT_MATRIX_MD = `# Round Report · scaffold-1 · r1
+## 票执行摘要
+| 票 | 标题 | 状态 | 备注 |
+|----|------|------|------|
+| 01 | 初始化 | ✅ done | packages/cli/src/utils/usage-writer.ts 新建 |
+| 02 | 挂点 | ✅ done | 改了些不存在的路径/ghost-file.ts |
+`
+
+function fireSse(event: string, payload: Record<string, unknown>): void {
+  const cb = sseHandlers.get(event)
+  if (!cb) throw new Error(`no SSE handler subscribed for ${event}`)
+  cb(new MessageEvent("message", { data: JSON.stringify(payload) }))
+}
+
 function rowByPath(p: string): HTMLElement | null {
   return document.querySelector(`[data-acceptance-artifact-row="${p}"]`)
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  sseHandlers.clear()
   mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: AGG })
   mockListHomeDir.mockResolvedValue(HOME_FILES)
-  mockGetHomeFile.mockImplementation(async (_id: string, p: string) => ({
-    path: p,
-    content: p.endsWith("round-report.md") ? "# 本轮终报\n\n- 全绿" : "# spec body",
-  }))
+  mockGetHomeFile.mockImplementation(async (_id: string, p: string) => {
+    if (p.endsWith("spec.md")) return { path: p, content: SPEC_MATRIX_MD }
+    if (p.endsWith("round-report.md")) return { path: p, content: REPORT_MATRIX_MD }
+    return { path: p, content: "# spec body" }
+  })
   mockGetBatchTree.mockResolvedValue([])
+  mockGetRoundDiff.mockResolvedValue(ROUND_DIFF)
+  mockGetRoundPatch.mockResolvedValue({ patch: "@@ -1 +1,2 @@\n-l2\n+l2-edited\n", truncated: false })
+  mockStartVerify.mockResolvedValue({
+    task_id: "t1", execution_id: "exec-1", phase_index: 1, round_index: 1,
+    command: "pnpm test", cwd: ".", state: "running", started_at: "2026-09-03T01:00:00Z",
+  })
+  mockGetVerifyStatus.mockResolvedValue(null)
+  mockAbortVerify.mockResolvedValue({ state: "running" })
 })
 
-function renderModal() {
-  const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+function renderModal(spec: TaskSpec = V4_SPEC) {
+  mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, spec))
+  const task = makeDetail(PHASE1_AWAITING, spec) as unknown as Task
   return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
 }
 
@@ -243,6 +317,12 @@ function renderModalWith(derived: TaskDerivedView, spec: TaskSpec = V4_SPEC) {
   mockGetTask.mockResolvedValue(makeDetail(derived, spec))
   const task = makeDetail(derived, spec) as unknown as Task
   return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+}
+
+/** tab 条在 awaitingPhase 到手（detail 落地）后才渲染 — 必须异步等。 */
+async function openStoryTab() {
+  const tab = await screen.findByTestId("acceptance-tab-story")
+  fireEvent.click(tab)
 }
 
 describe("AcceptanceModal — AC1 三栏证据面", () => {
@@ -262,10 +342,119 @@ describe("AcceptanceModal — AC1 三栏证据面", () => {
     expect(screen.getByText(/\$0\.03/)).toBeTruthy()
   })
 
-  it("中列：specPath 定位批次目录 all=1 直读；行渲染 + 内嵌 round-report + 本轮徽章 + 不可预览门", async () => {
+  it("右列动作区：通过/打回/中止 齐备 + autoAdvance 只读态", async () => {
     renderModal()
-    // 定位 = dirname(specPath)（posix 归一后），all=1 收全文件
+    expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-reject")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-abort")).toBeTruthy()
+    expect(screen.getByTestId("autoadvance-readonly").textContent).toContain("开")
+  })
+})
+
+describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
+  it("开窗即拉 round-diff；stat strip + repo 分组 + 文件行渲染（web 不见 SHA）", async () => {
+    renderModal()
+    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1"))
+    const strip = await screen.findByTestId("round-diff-strip")
+    expect(strip.textContent).toContain("2271") // +新增行
+    expect(strip.textContent).toContain("95")
+    expect(screen.getByTestId("round-diff-repo-open-octopus")).toBeTruthy()
+    expect(document.querySelector('[data-acceptance-diff-row="open-octopus:packages/cli/src/utils/usage-writer.ts"]')).toBeTruthy()
+    // 实物 tab 里没有叙述文件列表（tab 隔离）
+    expect(screen.queryByTestId("acceptance-artifact-rows")).toBeNull()
+  })
+
+  it("文件点开 → 懒拉 patch（getRoundPatch repo+path）行着色渲染；不重复拉", async () => {
+    renderModal()
+    const row = await screen.findByTestId(`acceptance-tab-diff`)
+    expect(row).toBeTruthy()
+    const fileBtn = document.querySelector('[data-acceptance-diff-row="open-octopus:packages/server/src/db/schema.ts"]') as HTMLButtonElement
+    await waitFor(() => expect(fileBtn).toBeTruthy())
+    fireEvent.click(fileBtn)
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "open-octopus", "packages/server/src/db/schema.ts"))
+    const patch = await screen.findByTestId("round-diff-patch")
+    expect(patch.textContent).toContain("l2-edited")
+    fireEvent.click(fileBtn) // 收起
+    fireEvent.click(fileBtn) // 再展开 → 缓存，不再拉
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledTimes(1))
+  })
+
+  it("diff 不可得 → 诚实过期卡（不是 500，不是空表）", async () => {
+    mockGetRoundDiff.mockResolvedValue({ available: false, reason: "no_commits", aggregate: { commits: 0, additions: 0, dels: 0, files: 0 }, interventions: null, repos: [{ name: "open-octopus", expired: true, reason: "no_commits", commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }] })
+    renderModal()
+    expect(await screen.findByTestId("round-diff-expired")).toBeTruthy()
+  })
+})
+
+describe("验货台 v2 — 当场复检", () => {
+  it("未配置命令 → 编辑器入口存在、▶ 不可见；保存走 spec-field(user)", async () => {
+    renderModal() // V4_SPEC 无 acceptance_verify
+    expect(await screen.findByText("未预设复检命令")).toBeTruthy()
+    fireEvent.click(screen.getByTestId("verify-edit"))
+    fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "pnpm build && pnpm test" } })
+    mockUpdateSpecField.mockResolvedValue({ version: 5 })
+    fireEvent.click(screen.getByTestId("verify-save"))
+    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledWith(
+      "t1", "acceptance_verify",
+      { command: "pnpm build && pnpm test", timeoutS: 600 },
+      { source: "user" },
+    ))
+    expect(screen.queryByTestId("verify-editor")).toBeNull() // 成功即收
+  })
+
+  it("已配置 → ▶复检 startVerify + SSE log 进控制台 + 终态事件盖章 PASSED", async () => {
+    renderModal(V4_SPEC_VERIFY)
+    const runBtn = await screen.findByTestId("verify-run")
+    fireEvent.click(runBtn)
+    await waitFor(() => expect(mockStartVerify).toHaveBeenCalledWith("t1"))
+    // 逐行事件（stderr 带前缀）→ 控制台
+    await waitFor(() => expect(sseHandlers.has(TASK_VERIFY_LOG_EVENT)).toBe(true))
+    fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "building…", stream: "stdout" })
+    fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "nope", stream: "stderr" })
+    expect(await screen.findByTestId("verify-console")).textContent?.toContain("[stderr] nope")
+    // 终态 → 盖章
+    fireSse(TASK_VERIFY_EVENT, { task_id: "t1", state: "passed", exit_code: 0, duration_ms: 1500, verdict_path: `${BATCH_DIR}/verify-r1-x.md` })
+    const stamp = await screen.findByTestId("verify-stamp")
+    expect(stamp.textContent).toContain("PASSED")
+    expect(stamp.getAttribute("data-state")).toBe("passed")
+  })
+
+  it("启动被拒（409 复检进行中）→ toast，不崩", async () => {
+    mockStartVerify.mockRejectedValue(new TaskApiError("复检进行中 — 中止或等它跑完", 409))
+    renderModal(V4_SPEC_VERIFY)
+    fireEvent.click(await screen.findByTestId("verify-run"))
+    await waitFor(() => expect(mockStartVerify).toHaveBeenCalled())
+    const { toast } = await import("sonner")
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("复检进行中"))
+  })
+})
+
+describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", () => {
+  it("懒拉 spec.md；矩阵行锚定/无锚定按 diff 真实路径判定", async () => {
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
+    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/spec.md`))
+    const matrix = await screen.findByTestId("ac-matrix")
+    expect(matrix.textContent).toContain("1/2") // 票01 锚定 usage-writer.ts；票02 ghost-file.ts 无实物
+    expect(document.querySelector('[data-acceptance-matrix-row="01"]')?.textContent).toContain("有实物")
+    expect(document.querySelector('[data-acceptance-matrix-row="02"]')?.textContent).toContain("说了没锚")
+  })
+
+  it("diff 不可得 → 判定列全「存疑」+ 警示行", async () => {
+    mockGetRoundDiff.mockResolvedValue({ available: false, reason: "no_commits", aggregate: { commits: 0, additions: 0, dels: 0, files: 0 }, interventions: null, repos: [] })
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
+    expect(await screen.findByTestId("ac-matrix-diff-missing")).toBeTruthy()
+  })
+})
+
+describe("AcceptanceModal — 叙述 tab（v1 批次直读整体降级收容）", () => {
+  it("specPath 定位批次目录 all=1 直读；行渲染 + 内嵌 round-report + 本轮徽章 + 不可预览门", async () => {
+    renderModal()
+    // 列表拉取不依赖 tab（matrix/叙述共用 files state）
     await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", BATCH_DIR, { all: true }))
+    await openStoryTab()
+    // 定位 = dirname(specPath)（posix 归一后），all=1 收全文件
     expect(await screen.findByTestId("acceptance-artifact-rows")).toBeTruthy()
     expect(rowByPath(`${BATCH_DIR}/spec.md`)).toBeTruthy()
     expect(rowByPath(`${BATCH_DIR}/e2e-data/state.db`)).toBeTruthy() // .db 可见（证据存在性）
@@ -273,7 +462,7 @@ describe("AcceptanceModal — AC1 三栏证据面", () => {
 
     // 内嵌轮次报告：round-report.md 存在 → 卡片渲染 markdown（MarkdownPreview 桩）
     const report = await screen.findByTestId("acceptance-round-report")
-    expect(report.textContent).toContain("本轮终报")
+    expect(report.textContent).toContain("票执行摘要")
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/round-report.md`))
 
     // 「本轮」徽章 = mtime ∈ [started_at, completed_at]；窗外文件不带
@@ -290,25 +479,18 @@ describe("AcceptanceModal — AC1 三栏证据面", () => {
     expect(mockGetHomeFile).not.toHaveBeenCalled()
 
     // 可预览行点开 → ArtifactViewerDialog home 模式经 getHomeFile 出全文
-    fireEvent.click(rowByPath(`${BATCH_DIR}/spec.md`)!)
-    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/spec.md`))
+    fireEvent.click(rowByPath(`${BATCH_DIR}/e2e-data/run.txt`)!)
+    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/e2e-data/run.txt`))
     await waitFor(() => expect(document.querySelector("[data-artifact-content]")).toBeTruthy())
     expect(document.querySelector("[data-artifact-content]")!.textContent).toContain("# spec body")
-  })
-
-  it("右列动作区：通过/打回/中止 齐备 + autoAdvance 只读态", async () => {
-    renderModal()
-    expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
-    expect(screen.getByTestId("acceptance-reject")).toBeTruthy()
-    expect(screen.getByTestId("acceptance-abort")).toBeTruthy()
-    expect(screen.getByTestId("autoadvance-readonly").textContent).toContain("开")
   })
 })
 
 describe("AcceptanceModal — 中列状态面（404 空态 / 错误行 / 回退定位 / idle）", () => {
-  it("批次目录 404（collect 前未落盘）→ 空态卡，不显错误", async () => {
+  it("批次目录 404（collect 前未落盘）→ 叙述 tab 空态卡，不显错误", async () => {
     mockListHomeDir.mockRejectedValue(new TaskApiError("batch dir not found", 404))
     renderModal()
+    await openStoryTab()
     expect(await screen.findByTestId("acceptance-batch-empty")).toBeTruthy()
     expect(screen.queryByTestId("acceptance-batch-error")).toBeNull()
   })
@@ -316,6 +498,7 @@ describe("AcceptanceModal — 中列状态面（404 空态 / 错误行 / 回退�
   it("列表非 404 失败（server 未更新的 403 / 网络）→ 一行显式错误", async () => {
     mockListHomeDir.mockRejectedValue(new TaskApiError("path not whitelisted", 403))
     renderModal()
+    await openStoryTab()
     const err = await screen.findByTestId("acceptance-batch-error")
     expect(err.textContent).toContain("path not whitelisted")
   })
@@ -326,18 +509,15 @@ describe("AcceptanceModal — 中列状态面（404 空态 / 错误行 / 回退�
       { dir: ".scratch/20260903/scaffold-1", slug: "scaffold-1", files: [], latest_mtime: "2026-09-03T00:00:00Z" },
       { dir: ".scratch/20260903/other-9", slug: "other-9", files: [], latest_mtime: "2026-09-04T00:00:00Z" },
     ])
-    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC_ABS))
-    const task = makeDetail(PHASE1_AWAITING, V4_SPEC_ABS) as unknown as Task
-    render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+    renderModalWith(PHASE1_AWAITING, V4_SPEC_ABS)
     await waitFor(() => expect(mockGetBatchTree).toHaveBeenCalledWith("t1"))
     await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", ".scratch/20260903/scaffold-1", { all: true }))
   })
 
   it("回退扫描无命中 → 仍落空态（绝不无限转圈）", async () => {
-    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC_ABS))
+    renderModalWith(PHASE1_AWAITING, V4_SPEC_ABS)
     mockGetBatchTree.mockResolvedValue([])
-    const task = makeDetail(PHASE1_AWAITING, V4_SPEC_ABS) as unknown as Task
-    render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+    await openStoryTab()
     expect(await screen.findByTestId("acceptance-batch-empty")).toBeTruthy()
   })
 
