@@ -7,7 +7,7 @@ phase-surface.tsx:删 :353-372 verdict 行 → 「→ 去验货台验收」CTA(c
 08
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
 - [ ] AC1: 控制台 DOM 无 data-verdict-row/acceptance-approve;CTA 切 tab 生效

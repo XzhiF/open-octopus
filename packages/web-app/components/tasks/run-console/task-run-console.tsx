@@ -36,7 +36,7 @@ import { AcceptanceSurface } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline,
+  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
 import {
@@ -414,6 +414,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+              {view !== "report" && derived && runs.length > 0 && (
+                <TaskAiUsageCard
+                  agg={totalAgg} loading={!aggLoaded} runCount={runs.length}
+                  rounds={runs.map((r) => ({ key: r.id, label: execLabel(r), agg: aggMap[r.id] ?? null }))}
+                />
+              )}
               {view === "report" || !derived
                 ? <ReportSurface ctx={ctx} />
                 : (() => {

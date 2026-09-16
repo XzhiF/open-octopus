@@ -9,11 +9,9 @@
 
 import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import type { Task, TaskExecutionBadge, TaskPhase } from "@octopus/shared"
 import {
-  postAcceptance, TaskApiError,
   type TaskDetail, type TaskPhaseView, type TaskRoundView,
 } from "@/lib/tasks-api"
 import type { LLMCallAggregates } from "@/lib/types"
@@ -225,45 +223,12 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
   const awaiting = pv.status === "awaiting_review" && pv.awaitingRound != null
     ? pv.rounds.find((r) => r.roundIndex === pv.awaitingRound) ?? null
     : null
-  const [acceptBusy, setAcceptBusy] = useState(false)
   const goal = ctx.task.task_spec?.goal
   const phases = ctx.specPhases
   // 已定时/等到点的大按钮让位（与 TriggerActions 同判据：游标与实例状态都在任务行上）。
   const armedFuture = !!ctx.task.next_fire_at && new Date(ctx.task.next_fire_at).getTime() > Date.now()
   const waitingForSlot = ctx.task.execution?.status === "pending"
 
-  const handleAccept = async () => {
-    if (!awaiting || acceptBusy) return
-    setAcceptBusy(true)
-    try {
-      const result = await postAcceptance(ctx.task.id, {
-        phase_index: pv.index,
-        round_index: awaiting.roundIndex,
-        decision: "accepted",
-      })
-      ctx.onMutated()
-      const n = ctx.phaseViews.length
-      switch (result.next_action) {
-        case "archiving":
-          toast.success("末 Phase 已通过 — 归档编排中（全绿才 done）")
-          break
-        case "awaiting_manual_trigger":
-          toast.success(`Phase ${pv.index}/${n} 已通过 — autoAdvance 关闭，下一 Phase 停在你的 gate（看板卡片「启动下一 Phase」）`)
-          break
-        default:
-          toast.success(`Phase ${pv.index}/${n} 已通过 — 下一 Phase 已自动开跑`)
-      }
-    } catch (err: unknown) {
-      if (err instanceof TaskApiError && err.status === 409) {
-        toast.error(`${err.message}（已刷新最新状态）`)
-        ctx.refetch()
-      } else {
-        toast.error(err instanceof Error ? err.message : "验收提交失败")
-      }
-    } finally {
-      setAcceptBusy(false)
-    }
-  }
 
   // 发射门禁（ready 语境）：只讲 client 拿得到的真相，服务端 ready/trigger 闸口为准。
   const gateRows: { ok: boolean | null; text: string }[] | null = specPhase ? (() => {
@@ -350,23 +315,16 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                 )}
               </div>
             </section>
-            <div className="flex gap-2" data-verdict-row>
-              <button
-                onClick={() => void handleAccept()}
-                disabled={acceptBusy}
-                className="pop-press flex flex-1 items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90 disabled:opacity-60"
-                data-acceptance-approve
-              >
-                {acceptBusy ? <Spinner className="size-3.5" /> : "✓"} 验收通过{pv.index === ctx.phaseViews.length ? "（进入归档）" : "（放行下一 Phase）"}
-              </button>
-              <button
-                onClick={ctx.openAcceptance}
-                className="flex items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-paper px-3 py-2 font-mono text-[12px] font-black text-pop-red shadow-pop-sm transition-colors hover:bg-pop-pink-soft"
-                data-acceptance-reject-open
-              >
-                ✕ 打回（写反馈）
-              </button>
-            </div>
+            {/* ADR-0022：决策唯一入口 = 验货台（实物/剧本/预览之后才盖章）。
+                原先此处的 ✓通过/✕打回 直通 postAcceptance、绕过一切证据 —— 已撤。 */}
+            <button
+              onClick={ctx.openAcceptance}
+              className="pop-press flex w-full items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90"
+              data-acceptance-open
+              data-testid="console-open-acceptance"
+            >
+              → 去验货台验收（实物 · 剧本 · 跑起来看）
+            </button>
           </>
         )
       })()}

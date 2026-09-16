@@ -229,15 +229,18 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(await screen.findByText(/📄 spec\.md 未落盘/)).toBeTruthy()
   })
 
-  it("awaiting_review：交付报告 + 判决条，验收通过打 postAcceptance", async () => {
-    mockPostAcceptance.mockResolvedValue({ next_action: "dispatched", task: {}, dispatch: { round_index: 2 } })
+  it("awaiting_review：交付报告在位，但决策入口撤出控制台（ADR-0022）→「去验货台」CTA 切 tab，不打 postAcceptance", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views) })
     expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
-    fireEvent.click(screen.getByText(/验收通过（放行下一 Phase）/))
-    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("task-1", { phase_index: 2, round_index: 1, decision: "accepted" }))
-    expect(screen.getByText(/验货台核对实物/)).toBeTruthy()
+    // 旧的 ✓通过/✕打回 判决条已撤 → 控制台不再直通 postAcceptance
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    const cta = await screen.findByTestId("console-open-acceptance")
+    expect(cta.textContent).toContain("去验货台")
+    fireEvent.click(cta)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
   })
 
   it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {

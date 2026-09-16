@@ -73,12 +73,26 @@ describe("mergeAggregates — C3 合并单源", () => {
   })
 })
 
-describe("TaskAiUsageCard（acceptance-modal 左列注入 round 口径仍用）", () => {
-  it("无 run 不渲染；有账出数；模型徽标在位", () => {
+describe("TaskAiUsageCard（ADR-0022 三层完整口径：总计/按模型/分轮）", () => {
+  it("无 run 不渲染；有账 → 七量纲瓷砖 + 模型行 + 分轮行", () => {
     const { rerender } = render(<TaskAiUsageCard agg={null} loading={false} runCount={0} />)
     expect(screen.queryByText("任务 AI 消耗")).toBeNull()
-    rerender(<TaskAiUsageCard agg={AGG_A} loading={false} runCount={1} />)
+    rerender(
+      <TaskAiUsageCard
+        agg={AGG_A} loading={false} runCount={2}
+        rounds={[{ key: "e1", label: "Phase 1 · Round 1", agg: AGG_A }, { key: "e2", label: "Phase 1 · Round 2", agg: null }]}
+      />,
+    )
     expect(screen.getByText("任务 AI 消耗")).toBeTruthy()
-    expect(screen.getByText("m1×2")).toBeTruthy()
+    // 总计瓷砖标签 + 三层小标题
+    expect(screen.getByText("总计")).toBeTruthy()
+    expect(screen.getByText("按模型")).toBeTruthy()
+    expect(screen.getByText("分轮账本")).toBeTruthy()
+    // 模型以整行呈现（名字在），不再是旧的 `m×N` 徽章
+    expect(screen.getByText("m1")).toBeTruthy()
+    expect(screen.queryByText(/m1×\d/)).toBeNull()
+    // 分轮：缺数轮标「缺数」不臆造
+    expect(screen.getByText("Phase 1 · Round 1")).toBeTruthy()
+    expect(screen.getByText("缺数")).toBeTruthy()
   })
 })
