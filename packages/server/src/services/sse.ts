@@ -11,6 +11,8 @@ export const SILENT_EVENTS = new Set([
   "expert_spawn", "expert_message", "expert_complete",
   "consensus_check", "swarm_round_end", "swarm_complete",
   "agent_heartbeat", "heartbeat_stall",
+  // 验货台当场复检：逐行输出 = node_log 同频率级别（task_verify 终态事件不静默）。
+  "task_verify_log",
 ])
 
 export class SSEService {

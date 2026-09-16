@@ -127,6 +127,23 @@ export const taskPhaseSchema = z.object({
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
 })
+
+/** 验收面 v2「验货台」— the task's on-demand re-verification command
+ *  (`acceptance_verify`). Acceptance is the moment to VERIFY goods, not read
+ *  reports; this field persists what the platform runs live in the task's
+ *  workspace when the reviewer hits ▶复检. Trust class = workflow bash nodes
+ *  (user-authored, never auto-run — explicit button only). `cwd` is
+ *  workspace-relative (no escape; default = workspace root); `timeoutS`
+ *  defaults to 600 server-side, hard-capped at 1800. Edge: the bash runner
+ *  substitutes literal `$vars.` / `${x|filter}` sequences — avoid them in
+ *  commands. A spec-field (whitelisted) so it is bindable/patchable at
+ *  awaiting_review time (v4 spec stays editable until done/aborted/archiving). */
+export const acceptanceVerifySchema = z.object({
+  command: z.string().min(1).max(4000),
+  cwd: z.string().max(500).optional(),
+  timeoutS: z.number().int().min(5).max(1800).optional(),
+})
+export type AcceptanceVerify = z.infer<typeof acceptanceVerifySchema>
 export type TaskPhase = z.infer<typeof taskPhaseSchema>
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
@@ -199,6 +216,9 @@ export const taskSpecSchema = z.object({
   // the human gate. Kept optional (no zod default) so v3 stored JSON never
   // gains a spurious key on PUT round-trips.
   autoAdvance: z.boolean().optional(),
+  // 验收面 v2: the 验货台 re-verify command (see {@link acceptanceVerifySchema}).
+  // Optional — absent = 「尚未预设复检命令」 state in the acceptance panel.
+  acceptance_verify: acceptanceVerifySchema.optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

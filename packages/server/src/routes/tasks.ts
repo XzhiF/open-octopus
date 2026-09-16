@@ -35,6 +35,7 @@ import {
   resourceRefSchema,
   type TaskStatus,
 } from "@octopus/shared"
+import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ export function createTasksRoutes(
   service: TasksService,
   sse: SSEService,
   assistService?: AssistWorkflowService,
+  evidence?: RoundEvidenceService,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -378,6 +380,67 @@ export function createTasksRoutes(
     try {
       const batches = service.batchTree(c.req.param("id"))
       return c.json({ batches })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
+  // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
+  // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
+  // 未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
+  router.get("/:id/round-diff", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.getRoundDiff(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/round-diff/patch", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const repo = c.req.query("repo")
+    const filePath = c.req.query("path")
+    if (!repo?.trim() || !filePath?.trim()) {
+      return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
+    }
+    try {
+      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 复检绝不自动跑 —— 本 POST 是唯一入口（202 = 已起会话，进度走 taskpool SSE：
+  // task_verify_log 逐行 + task_verify 终态）。
+  router.post("/:id/verify", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.startVerify(c.req.param("id")), 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/verify", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.getVerifyStatus(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.post("/:id/verify/abort", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.abortVerify(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

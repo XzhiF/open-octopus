@@ -1187,8 +1187,11 @@ export class TasksService {
       case "decisions":
       case "goal_confirmed":
       case "ac_confirmed":
+      case "acceptance_verify":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
+        // acceptance_verify: validator returns undefined on null-clear →
+        // JSON.stringify drops the key (见 shared validator)。
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
       case "phases": {

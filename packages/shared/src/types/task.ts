@@ -6,6 +6,7 @@ import {
   integrationGoalSchema,
   resourceRefSchema,
   taskPhaseSchema,
+  acceptanceVerifySchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -71,6 +72,10 @@ export const TaskSpecFieldSchema = z.enum([
   "decisions",
   "workflow_ref",
   "phases",
+  // 验收面 v2「验货台」: the on-demand re-verify command ({@link
+  // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
+  // like every other spec-field; editable through awaiting_review.
+  "acceptance_verify",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -89,6 +94,18 @@ export const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update" as const
 /** Emitted on the "taskpool" channel when an assist-workflow run changes
  *  phase (start/complete/error). Payload: {task_id, run_id, phase}. */
 export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
+
+// ── 验收面 v2「验货台」SSE events ───────────────────────────────────────
+/** Lifecycle of the acceptance-time re-verification run (one per task; the
+ *  server keeps a single in-memory session per task).
+ *  Payload: {task_id, execution_id, state:"running"|"passed"|"failed"|
+ *  "aborted"|"timeout", exit_code?, verdict_path?, tail?}. `tail` rides on the
+ *  terminal event (the last lines) because the log event channel has no
+ *  replay — a client that joined mid-run reconstructs from GET /:id/verify. */
+export const TASK_VERIFY_EVENT = "task_verify" as const
+/** One streamed output line: {task_id, line, stream:"stdout"|"stderr"}.
+ *  Per-line = same volume class as node_log → server SILENT_EVENTS. */
+export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
 
 export const specFieldUpdatePayloadSchema = z.object({
   task_id: z.string().min(1),
@@ -360,6 +377,12 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
       return value.map((v) => subunitSpecSchema.parse(v))
     case "integration_goal":
       return integrationGoalSchema.parse(value)
+    case "acceptance_verify":
+      // 验收面 v2: null clears the field — undefined rides into the spec merge
+      // and JSON.stringify drops the key (storing `null` would poison every
+      // later taskSpecSchema.parse, which admits undefined, not null).
+      if (value === null) return undefined
+      return acceptanceVerifySchema.parse(value)
     case "resources":
     case "authoring_resources":
       if (!Array.isArray(value)) {
