@@ -39,6 +39,7 @@ import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
 import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
+import { createUsageRoutes } from "./routes/usage"
 import { eventRoutes, taskpoolEventRoutes } from "./routes/events"
 import { createPipelineRoutes } from "./routes/pipeline"
 import chainRoutes from "./routes/chain-routes"
@@ -451,6 +452,8 @@ app.route("/api/workspaces/:id/schedules", scheduleRoutes)
 app.route("/api/cron", cronRoutes)
 app.route("/api/schedules/cron", cronRoutes)
 app.route("/api", createAnalyticsRoutes(d.execution, d.tokenUsage, d.workspace, globalErrorTracker))
+// token-capture-1 票03：chat 明细/轮次聚合回读（唯一新 GET seam）
+app.route("/api/usage", createUsageRoutes(d.tokenUsage))
 app.route("/api/agent", createAgentRoutes({
   workspaceDAO: d.workspace,
   sessionDAO: d.agentSession,

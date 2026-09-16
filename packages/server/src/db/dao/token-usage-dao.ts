@@ -1,8 +1,43 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import { LEDGER_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
+import { LEDGER_SQL, USAGE_WRITE_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
 import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
+
+/** usage-admin-3 票01 聚合维度（day/source/model/clone，KD3 首轮四 tab）。 */
+export type LlmCallAggregateDim = "day" | "source" | "model" | "clone"
+
+/** group-by 结果行：四字段 + 具名和 totalTokens + cost 三态 + 命中率。 */
+export interface LlmCallAggregateRow {
+  key: string
+  keyLabel: string
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  totalTokens: number
+  costUsd: number | null
+  costComplete: boolean
+  cacheHitRate: number | null
+}
+
+/** llm_calls 过滤 where 单源（query/count 共用，分页 total 与页内容径不分叉）。 */
+function llmCallWhere(f: {
+  sessionId?: string; traceId?: string; source?: string; model?: string; org?: string; workspaceId?: string; from?: number; to?: number
+}): { where: string; params: unknown[] } {
+  const clauses: string[] = []
+  const params: unknown[] = []
+  if (f.sessionId) { clauses.push("session_id = ?"); params.push(f.sessionId) }
+  if (f.traceId) { clauses.push("trace_id = ?"); params.push(f.traceId) }
+  if (f.source) { clauses.push("source = ?"); params.push(f.source) }
+  if (f.model) { clauses.push("model = ?"); params.push(f.model) }
+  if (f.org) { clauses.push("org = ?"); params.push(f.org) }
+  if (f.workspaceId) { clauses.push("workspace_id = ?"); params.push(f.workspaceId) }
+  if (f.from != null) { clauses.push("timestamp >= ?"); params.push(f.from) }
+  if (f.to != null) { clauses.push("timestamp <= ?"); params.push(f.to) }
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params }
+}
 
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -36,36 +71,30 @@ export class TokenUsageDAO extends BaseDAO {
    * （ExecutionDAO.insertNodeTokenUsage / 本表旧 insert / HarnessDAO.insertHarnessTokenUsage）
    * 收编于此：UPSERT 累加 + source 判别 + cost 三态（未知保持 NULL，绝不焊 0）。
    * 同 id 冲突累加（engine/harness 用确定式 id 重跑累加；interaction 每轮新 uuid 不冲突）。
+   *
+   * v43 (token-capture-1 票02): nodeExecutionId 可空（chat 账本行无节点宿主，票01 已放
+   * 可空）；chat 路径带 sessionId/traceId 填票01 新列。累加语义不变 —— chat 的防重放
+   * 由确定式 id + 捕获侧存在性检查承担，不在此动刀。
    */
   recordNodeUsage(input: {
     id: string
-    nodeExecutionId: string
+    nodeExecutionId: string | null
     model: string
     usage: Pick<TokenUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>
     /** SDK/calibrate 给的价格；null/undefined = 未给，入口会查价表估算（ledgerCostUsd） */
     costUsd?: number | null
     source: NodeUsageSource
     createdAt: string
+    sessionId?: string | null
+    traceId?: string | null
   }): Database.RunResult {
     const cost = ledgerCostUsd(input.usage, input.model, input.costUsd)
-    return this.stmt(`
-      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        input_tokens = input_tokens + excluded.input_tokens,
-        output_tokens = output_tokens + excluded.output_tokens,
-        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-        cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-        cost_usd = CASE
-          WHEN node_token_usages.cost_usd IS NULL AND excluded.cost_usd IS NULL THEN NULL
-          ELSE COALESCE(node_token_usages.cost_usd, 0) + COALESCE(excluded.cost_usd, 0)
-        END,
-        created_at = excluded.created_at
-    `).run(
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）
+    return this.stmt(USAGE_WRITE_SQL.upsertNodeUsage).run(
       input.id, input.nodeExecutionId, input.model,
       input.usage.inputTokens, input.usage.outputTokens, cost,
       input.usage.cacheReadTokens, input.usage.cacheCreationTokens,
-      input.source, input.createdAt,
+      input.source, input.createdAt, input.sessionId ?? null, input.traceId ?? null,
     )
   }
 
@@ -202,6 +231,104 @@ export class TokenUsageDAO extends BaseDAO {
     return this.stmt("SELECT * FROM llm_calls WHERE node_execution_id = ?").all(nodeExecutionId) as LlmCallRow[]
   }
 
+  /**
+   * 票03 回读 seam（最小面）：按 session_id/trace_id 查明细，可叠加 source 词表与
+   * timestamp（epoch ms）窗口。rounds 聚合在路由侧用 shared/ledger.ts 具名口径函数
+   * 对返回行做 JS 折叠（口径单源；limit 截断后 rounds 与 calls 保持自洽）。
+   * usage-admin-3 票02 扩：model/org 等值过滤 + offset/倒序（分页浏览模式）；count 同口径。
+   */
+  queryLlmCalls(f: {
+    sessionId?: string
+    traceId?: string
+    source?: string
+    model?: string
+    org?: string
+    workspaceId?: string
+    from?: number
+    to?: number
+    limit: number
+    offset?: number
+    desc?: boolean
+  }): LlmCallRow[] {
+    const { where, params } = llmCallWhere(f)
+    return this.stmt(
+      `SELECT * FROM llm_calls ${where} ORDER BY timestamp ${f.desc ? "DESC" : "ASC"}, id ${f.desc ? "DESC" : "ASC"} LIMIT ?${f.offset ? " OFFSET ?" : ""}`,
+    ).all(...params, f.limit, ...(f.offset ? [f.offset] : [])) as LlmCallRow[]
+  }
+
+  /** 分页浏览模式的 total：与 queryLlmCalls 同一 where 构造器，口径不分叉。 */
+  countLlmCalls(f: {
+    sessionId?: string
+    traceId?: string
+    source?: string
+    model?: string
+    org?: string
+    workspaceId?: string
+    from?: number
+    to?: number
+  }): number {
+    const { where, params } = llmCallWhere(f)
+    return (this.stmt(`SELECT COUNT(*) AS n FROM llm_calls ${where}`).get(...params) as { n: number }).n
+  }
+
+  /**
+   * usage-admin-3 票01 —— group-by 聚合直接对 llm_calls（KD2 单一读口径）。
+   * 总量/cost 三态/命中率全部走 LEDGER_SQL 表达式（禁手搓公式）；四字段列和随组
+   * 原样返回（UI 四字段总量用）。dim=clone 走 chat_sessions.title 回退 id。
+   */
+  aggregateLlmCalls(f: {
+    dim: LlmCallAggregateDim
+    from?: number
+    to?: number
+    org?: string
+    workspaceId?: string
+  }): LlmCallAggregateRow[] {
+    const keyExpr =
+      f.dim === "day" ? `strftime('%Y-%m-%d', lc.timestamp / 1000, 'unixepoch', 'localtime')` :
+      f.dim === "source" ? `COALESCE(lc.source, 'unknown')` :
+      f.dim === "model" ? `COALESCE(lc.model, 'unknown')` :
+      `COALESCE(lc.session_id, 'unknown')`
+    const labelExpr = f.dim === "clone" ? `COALESCE(cs.title, lc.session_id, 'unknown')` : keyExpr
+    const where: string[] = []
+    const params: unknown[] = []
+    if (f.from != null) { where.push("lc.timestamp >= ?"); params.push(f.from) }
+    if (f.to != null) { where.push("lc.timestamp <= ?"); params.push(f.to) }
+    if (f.org) { where.push("lc.org = ?"); params.push(f.org) }
+    if (f.workspaceId) { where.push("lc.workspace_id = ?"); params.push(f.workspaceId) }
+    const rows = this.stmt(`
+      SELECT
+        ${keyExpr} AS key,
+        ${labelExpr} AS key_label,
+        COUNT(*) AS calls,
+        COALESCE(SUM(lc.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(lc.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(lc.cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(lc.cache_creation_tokens), 0) AS cache_creation_tokens,
+        ${LEDGER_SQL.sumTokens('lc.')} AS total_tokens,
+        ${LEDGER_SQL.sumCost('lc.')} AS cost_usd,
+        ${LEDGER_SQL.costComplete('lc.')} AS cost_complete,
+        ${LEDGER_SQL.cacheHitRate('lc.')} AS cache_hit_rate
+      FROM llm_calls lc
+      ${f.dim === "clone" ? "LEFT JOIN chat_sessions cs ON cs.id = lc.session_id" : ""}
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      GROUP BY key
+      ORDER BY cost_usd DESC, total_tokens DESC, key ASC
+    `).all(...params) as Array<Record<string, unknown>>
+    return rows.map(r => ({
+      key: r.key as string,
+      keyLabel: r.key_label as string,
+      calls: r.calls as number,
+      inputTokens: r.input_tokens as number,
+      outputTokens: r.output_tokens as number,
+      cacheReadTokens: r.cache_read_tokens as number,
+      cacheCreationTokens: r.cache_creation_tokens as number,
+      totalTokens: r.total_tokens as number,
+      costUsd: r.cost_usd as number | null,
+      costComplete: r.cost_complete === 1,
+      cacheHitRate: r.cache_hit_rate as number | null,
+    }))
+  }
+
   findLlmCallsByWorkspace(workspaceId: string, sinceTimestamp?: number): LlmCallRow[] {
     if (sinceTimestamp) {
       return this.stmt(
@@ -214,20 +341,14 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   insertLlmCall(row: LlmCallRow): Database.RunResult {
-    return this.stmt(`
-      INSERT OR IGNORE INTO llm_calls (
-        id, node_execution_id, execution_id, turn_index, call_index, message_id,
-        model, stop_reason, timestamp, duration_ms, ttft_ms,
-        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
-      row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
-      row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
-      row.cache_creation_tokens, row.cost_usd, row.org, row.workspace_id,
-      row.workflow_ref, row.node_id, row.session_id, row.instance_id,
-    )
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）；named params 需全键对象
+    return this.stmt(USAGE_WRITE_SQL.insertLlmCall).run({
+      source: null, trace_id: null, span_id: null, node_execution_id: null,
+      execution_id: null, message_id: null, model: null, stop_reason: null,
+      ttft_ms: null, cost_usd: null, org: null, workspace_id: null,
+      workflow_ref: null, node_id: null, session_id: null, instance_id: null,
+      ...row,
+    })
   }
 
   deleteLlmCallsByExecution(executionId: string): Database.RunResult {
@@ -246,21 +367,12 @@ export class TokenUsageDAO extends BaseDAO {
 
   insertLlmCallBatch(rows: LlmCallRow[]): void {
     if (rows.length === 0) return
-    const insertStmt = this.stmt(`
-      INSERT OR IGNORE INTO llm_calls (
-        id, node_execution_id, execution_id, turn_index, call_index, message_id,
-        model, stop_reason, timestamp, duration_ms, ttft_ms,
-        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
-      ) VALUES (
-        @id, @node_execution_id, @execution_id, @turn_index, @call_index,
-        @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
-        @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id
-      )
-    `)
+    // 票02: SQL 单源下沉 shared（CLI 直写进程共用同一文本）
+    const insertStmt = this.stmt(USAGE_WRITE_SQL.insertLlmCall)
     this.transaction(() => {
-      for (const row of rows) insertStmt.run(row)
+      // better-sqlite3 要求对象含全部 named 参数；v43 新列对旧调用方（observability）
+      // 缺省 = NULL，兜底放在展开之前。
+      for (const row of rows) insertStmt.run({ source: null, trace_id: null, span_id: null, ...row })
     })
   }
 

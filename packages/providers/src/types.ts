@@ -1,4 +1,4 @@
-import type { LLMCallRecord } from './llm-call-tracker'
+import type { LLMCallRecord, LLMCallTracker } from './llm-call-tracker'
 import type { EffortLevel } from '@octopus/shared'
 // TokenUsage / ModelUsage / TokenUsageDelta 全站规范形状定义在 @octopus/shared（C1 口径统一）。
 // provider 的职责：在 SDK seam 把 snake_case 原始事件转成规范形状，其余各层不再换形。
@@ -41,6 +41,14 @@ export interface SendQueryOptions {
   /** Hard cap on assistant API round-trips — SDK enforces it via `error_max_turns`. */
   maxTurns?: number
   env?: Record<string, string>
+  /**
+   * Per-round isolated usage tracker. When provided, sendQuery records this
+   * round's per-call usage here instead of the provider's shared tracker, so
+   * concurrent rounds cannot reset/overwrite or cross-read each other's calls.
+   * (getLLMCalls() keeps the legacy shared-tracker behavior for callers that
+   * don't pass one — e.g. engine agent-runner.)
+   */
+  llmTracker?: LLMCallTracker
   agent?: string
   skills?: string[]
   tools?: string[]

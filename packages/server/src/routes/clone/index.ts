@@ -543,6 +543,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         let fullContent = ''
         let fullThinking = ''
         let resultSessionId: string | null = null
+        // 票04 E2E：result 事件的权威 modelUsage 随 done 透出（calibrate 的输入即此值，
+        // 供 Σ明细===authTotal 不变式核对；纯观测，零逻辑分支）
+        let resultModelUsages: unknown[] | null = null
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
@@ -661,6 +664,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               break
             case 'result':
               resultSessionId = chunk.sessionId ?? null
+              resultModelUsages = chunk.modelUsages ?? null
               break
             case 'error':
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
@@ -788,6 +792,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               message_id: assistantMsgId,
               session_title: sessionDAO.findById(sessionId)?.title,
               model: body.model ?? cloneDef.config.model ?? undefined,
+              // 票04：result 事件 modelUsage（tracker calibrate 的同一输入源）
+              ...(resultModelUsages ? { model_usages: resultModelUsages } : {}),
             }),
           })
         }

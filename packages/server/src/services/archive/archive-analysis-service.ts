@@ -6,6 +6,9 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { randomUUID } from 'crypto'
+import { LLM_CALL_SOURCE } from '@octopus/shared'
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from '../agent/aux-usage-capture'
 import { getProvider } from '@octopus/providers'
 import type { StepEmitter } from './step-emitter'
 import { createNullEmitter } from './step-emitter'
@@ -105,10 +108,12 @@ export class ArchiveAnalysisService {
     const { buildRetrospectivePrompt, buildExperiencePrompt, buildSkillDiscoveryPrompt } = await import('./prompts')
     const { assembleAnalysis } = await import('./analysis-assembler')
 
+    // 票04: 一次归档分析 = 一个运行根 trace（3 个 LLM call 共享归因链，KD6）
+    const traceId = `archive-analysis:${workspaceId}:${randomUUID()}`
     const [reportResult, experienceResult, skillResult] = await Promise.allSettled([
-      this.callArchiveLLM(buildRetrospectivePrompt(ctx), 'You are an expert engineering analyst.'),
-      this.callArchiveLLM(buildExperiencePrompt(ctx), 'You are a knowledge extraction engine. Respond with only the JSON array.'),
-      this.callArchiveLLM(buildSkillDiscoveryPrompt(ctx), 'You are a skill discovery agent. Respond with only the JSON array.'),
+      this.callArchiveLLM(buildRetrospectivePrompt(ctx), 'You are an expert engineering analyst.', workspaceId, traceId, 'retrospective'),
+      this.callArchiveLLM(buildExperiencePrompt(ctx), 'You are a knowledge extraction engine. Respond with only the JSON array.', workspaceId, traceId, 'experience'),
+      this.callArchiveLLM(buildSkillDiscoveryPrompt(ctx), 'You are a skill discovery agent. Respond with only the JSON array.', workspaceId, traceId, 'skill-discovery'),
     ])
 
     const report = parseReport(reportResult)
@@ -159,14 +164,30 @@ export class ArchiveAnalysisService {
     return preview
   }
 
-  private async callArchiveLLM(prompt: string, systemPrompt: string): Promise<string> {
+  private async callArchiveLLM(prompt: string, systemPrompt: string, workspaceId: string, traceId: string, spanId: string): Promise<string> {
     try {
       const provider = getProvider('claude')
       const chunks: string[] = []
+      const callStart = Date.now()
+      const usageSink: ResultUsageSink = {}
       const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
       for await (const chunk of stream) {
         if (chunk.type === 'text_delta') chunks.push(chunk.content)
+        else if (chunk.type === 'result') collectResultUsage(chunk, usageSink)
       }
+      // 票04: 归档分析（分身 LLM）→ aux_memory；workspace 归因，trace = 归档分析运行根
+      const { getDb } = await import('../../db')
+      captureAuxCall(getDb(), {
+        source: LLM_CALL_SOURCE.aux_memory,
+        traceId,
+        spanId, // 同 trace 三个并发 call 各占一 span，防同 model 明细互撞
+        usage: usageSink.usage ?? null,
+        modelUsages: usageSink.modelUsages ?? null,
+        costUsd: usageSink.costUsd ?? null,
+        workspaceId,
+        timestamp: callStart,
+        durationMs: Date.now() - callStart,
+      })
       return chunks.join('')
     } catch {
       return ''

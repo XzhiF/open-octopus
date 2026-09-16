@@ -39,6 +39,8 @@ vi.mock("lucide-react", () => ({
   FileText: () => <span data-testid="icon-filetext" />,
   Loader2: () => <span data-testid="icon-loader" />,
   ChevronRight: () => <span data-testid="icon-chevron" />,
+  ShieldCheck: () => <span data-testid="icon-shield" />,
+  Coins: () => <span data-testid="icon-coins" />,
 }))
 
 import SystemLayout from "../layout"
@@ -54,6 +56,7 @@ describe("SystemLayout", () => {
 
     expect(screen.getByText("模型管理")).toBeDefined()
     expect(screen.getByText("仓库管理")).toBeDefined()
+    expect(screen.getByText("Token 使用")).toBeDefined()
   })
 
   it("renders correct navigation links", () => {

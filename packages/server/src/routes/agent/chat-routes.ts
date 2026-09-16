@@ -6,11 +6,16 @@
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import { getProvider } from '@octopus/providers'
+import { getProvider, LLMCallTracker } from '@octopus/providers'
+import { LLM_CALL_SOURCE } from '@octopus/shared'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { createAgentError } from './middleware'
+import { getDb } from '../../db'
+import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import { captureChatRound } from '../../services/agent/chat-usage-capture'
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from '../../services/agent/aux-usage-capture'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
@@ -185,8 +190,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     try {
       const provider = getProvider('claude')
       const cwd = getAgentDir()
+      // token-capture 审查修复：本入口（task-author / agent 会话聊天）不走
+      // CloneRuntime.chat() 收口，轮次终局须自行捕获，否则这里的调用零落库。
+      // per-round 私有 tracker（并发不串归属），捕获永不阻断聊天。
+      const roundTracker = new LLMCallTracker()
       const messageChunks = provider.sendQuery(message, cwd, undefined, {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+        llmTracker: roundTracker,
       })
 
       let fullContent = ''
@@ -236,6 +246,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
             break
         }
+      }
+
+      // 轮次终局捕获（CloneRuntime.captureChatUsage 同型）：流正常耗尽即落库，
+      // 与 generated 无关——abort/无文本时 tracker 里真实发生的调用同样要记。
+      try {
+        const records = roundTracker.getLLMCalls()
+        if (records.length > 0) {
+          captureChatRound(new TokenUsageDAO(getDb()), {
+            sessionId, org, traceId: crypto.randomUUID(), records,
+          })
+        }
+      } catch (err: unknown) {
+        console.error('[agent] chat usage capture failed (non-fatal):', err instanceof Error ? err.message : String(err))
       }
 
       if (generated && fullContent) {
@@ -291,12 +314,28 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             const provider = getProvider('claude')
             const cwd = getAgentDir()
             let titleContent = ''
+            // all-sources-2 InScope#3/KD1: 标题生成 = LLM 调用，归 aux_suggest
+            const callStart = Date.now()
+            const usageSink: ResultUsageSink = {}
             for await (const chunk of provider.sendQuery(
               `Generate a concise session title (max 20 chars, Chinese preferred) from: "${rawMsg.slice(0, 200)}". Reply with ONLY the title.`,
               cwd, undefined, { model: 'haiku' },
             )) {
               if (chunk.type === 'text_delta') titleContent += chunk.content
+              else collectResultUsage(chunk, usageSink)
             }
+            captureAuxCall(() => getDb(), {
+              source: LLM_CALL_SOURCE.aux_suggest,
+              traceId: crypto.randomUUID(),
+              model: 'haiku',
+              usage: usageSink.usage ?? null,
+              modelUsages: usageSink.modelUsages ?? null,
+              costUsd: usageSink.costUsd ?? null,
+              org,
+              sessionId,
+              timestamp: callStart,
+              durationMs: Date.now() - callStart,
+            })
             if (titleContent) {
               const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
               if (llmTitle && llmTitle !== autoTitle) {

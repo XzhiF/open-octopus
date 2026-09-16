@@ -5,8 +5,9 @@ import { emptyTokenUsage } from '@octopus/shared'
 import type { Executor, ExecutionResult } from './executor-interface'
 import type { IAgentProvider, MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
-import { ScheduleRunDAO } from '../../../db/dao'
-import { ExecutionDAO } from '../../../db/dao'
+import { LLM_CALL_SOURCE } from '@octopus/shared'
+import { captureAuxCall, collectResultUsage, type ResultUsageSink } from '../../agent/aux-usage-capture'
+import type { ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
 
 const DEFAULT_TIMEOUT_SECONDS = 300
 const MAX_OUTPUT_LENGTH = 50_000
@@ -113,6 +114,7 @@ export class AgentExecutor implements Executor {
     let modelUsed: string | undefined
     let tokenUsage: TokenUsage | undefined
     let resultContent: string | undefined
+    const usageSink: ResultUsageSink = {}
 
     try {
       const stream = provider.sendQuery(config.prompt, cwd, undefined, {
@@ -140,6 +142,9 @@ export class AgentExecutor implements Executor {
             if (chunk.modelUsages && chunk.modelUsages.length > 0) {
               modelUsed = chunk.modelUsages[0].model
             }
+            // 票04: scheduler 不走 chat() 收口（KD5 验证：直连 provider.sendQuery），
+            // 同型终局处消耗 usage → 明细+账本。
+            collectResultUsage(chunk, usageSink)
             break
           default:
             // Other chunk types (thinking, tool_call, etc.) are not persisted
@@ -176,6 +181,22 @@ export class AgentExecutor implements Executor {
       JSON.stringify(finalTokens),
       durationMs,
     )
+
+    // 票04: trace_id = schedule run 根（executionId），workspace 归因；捕获失败不阻断 job
+    // （getter 惰性传入：getDb() 求值也要落在 captureAuxCall 的 try 内，见 scheduler-adapter 同型）
+    captureAuxCall(() => this.execDAO.getDb(), {
+      source: LLM_CALL_SOURCE.scheduler,
+      traceId: executionId,
+      spanId: `attempt-${_attempt}`, // 重试 = 新真实调用：span 分开记，账本按运行根×model 累加
+      model: finalModel,
+      usage: usageSink.usage ?? null,
+      modelUsages: usageSink.modelUsages ?? null,
+      costUsd: usageSink.costUsd ?? null,
+      org: job.org ?? null,
+      workspaceId: job.workspace_id ?? null,
+      timestamp: startTime,
+      durationMs,
+    })
 
     return {
       success: true,

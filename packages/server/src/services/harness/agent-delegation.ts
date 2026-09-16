@@ -20,7 +20,7 @@ import type {
   DelegationResult,
   ModelUsage,
 } from "@octopus/shared"
-import { emptyTokenUsage } from "@octopus/shared"
+import { emptyTokenUsage, LLM_CALL_SOURCE } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
@@ -889,7 +889,8 @@ export class AgentDelegationService {
         model: tokenInfo.model,
         usage: tokenInfo,
         costUsd: tokenInfo.costUsd,
-        source: 'harness',
+        // 票03/KD1: 账本与词表单源对齐（harness 明细若出现同词表）
+        source: LLM_CALL_SOURCE.harness,
         createdAt: new Date().toISOString(),
       })
     } catch (err) {

@@ -58,10 +58,12 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
 
 describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
   describe("schema", () => {
-    it("schema version is 43 (v43 = agent_events timestamp 收口 + 冗余索引下线)", () => {
+    it("schema version is 42+ (v42 = ADR-0021 票03; v43 = token-capture-1 票01)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(43)
-      expect(SCHEMA_VERSION).toBe(43)
+      // Live-constant convention (见 schema-migration v35 suite 注释)：exact pin lives
+      // in schema-migration.test.ts, so later version bumps don't re-break this suite.
+      expect(v).toBe(SCHEMA_VERSION)
+      expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {

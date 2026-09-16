@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
+import { LLM_CALL_SOURCE } from "@octopus/shared"
 import { PrivacyFilter } from "./privacy-filter"
 import { ledgerCostUsd } from "../db/dao/usage-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
@@ -215,6 +216,12 @@ export class ObservabilityService {
         node_id: meta.nodeId,
         session_id: meta.sessionId ?? null,
         instance_id: instanceId,
+        // 票03/KD1: 引擎域明细补标（词表单源 shared）
+        source: LLM_CALL_SOURCE.engine,
+        // 票05 Quick Fix / spec KD6: trace_id = 运行根（execution）标识，engine 域 API 可按 trace 过滤
+        trace_id: executionId,
+        // 审查修复（all-sources-2 US2「trace→span 全源成立」）: span = 单次调用 messageId（chat 同型）
+        span_id: call.messageId ?? null,
       }))
 
       this.tokenDao.insertLlmCallBatch(rows)

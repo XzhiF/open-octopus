@@ -1,6 +1,8 @@
 // packages/server/src/db/types.ts
 // Row type interfaces used by DAOs — mirrors schema.sql column definitions.
 
+import type { LlmCallSource } from '@octopus/shared'
+
 // ── Core Tables ─────────────────────────────────────────────────────
 
 export interface WorkspaceRow {
@@ -134,7 +136,8 @@ export interface AgentEventRow {
 
 export interface NodeTokenUsageRow {
   id: string
-  node_execution_id: string
+  /** v43 (票01): chat 账本行无节点宿主 → 可空 */
+  node_execution_id: string | null
   model: string
   input_tokens: number
   output_tokens: number
@@ -142,12 +145,18 @@ export interface NodeTokenUsageRow {
   cache_read_tokens: number
   cache_creation_tokens: number
   created_at: string
+  /** 词表单源见 @octopus/shared LLM_CALL_SOURCE；'node' 为引擎账本行专用（NodeUsageSource） */
+  source?: LlmCallSource | 'node' | null
+  /** v43 (token-capture-1): chat 账本归属 */
+  session_id?: string | null
+  trace_id?: string | null
 }
 
 export interface LlmCallRow {
   id: string
-  node_execution_id: string
-  execution_id: string
+  /** v43 (票01/KD1): chat 明细无节点宿主 → 可空 */
+  node_execution_id: string | null
+  execution_id: string | null
   turn_index: number
   call_index: number
   message_id: string | null
@@ -167,6 +176,12 @@ export interface LlmCallRow {
   node_id: string | null
   session_id: string | null
   instance_id: string | null
+  /** v43 (token-capture-1 票01): 来源词表（既有行为 NULL；chat 路径写 'chat'） */
+  source?: LlmCallSource | null
+  /** v43 (KD5): 一轮聊天的运行标识（session 内唯一） */
+  trace_id?: string | null
+  /** v43 (KD5): 单次 LLM call —— tracker messageId 直存 */
+  span_id?: string | null
 }
 
 export interface OptimizationSuggestionRow {

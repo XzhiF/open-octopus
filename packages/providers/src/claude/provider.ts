@@ -284,7 +284,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
     const blockTypes = new Map<number, 'thinking' | 'text' | 'tool_use'>()
     const pendingToolCalls = new Map<number, PendingToolCall>()
     const modelName = this.resolveModelName(options?.model)
-    this._llmTracker.reset()
+    // Usage recording: a caller-provided per-round tracker isolates concurrent
+    // rounds (no cross-round reset()/overwrite). Legacy path: shared tracker,
+    // reset per round, readable via getLLMCalls().
+    const llmTracker = options?.llmTracker ?? this._llmTracker
+    if (llmTracker === this._llmTracker) llmTracker.reset()
 
     // Build canUseTool callback — ALWAYS active to enforce tool interception
     // even with permissionMode: 'bypassPermissions'.
@@ -433,7 +437,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           // 不在 stream 阶段读 input_tokens：message_start.usage.input_tokens 包含 cache-reused tokens，
           // 会放大 5-10 倍。权威数据来自 result.modelUsage，由 calibrateFromModelUsage 填充。
           const actualModel = e.message?.model ?? modelName
-          this._llmTracker.onMessageStart(currentMessageId, actualModel)
+          llmTracker.onMessageStart(currentMessageId, actualModel)
           yield { type: 'message_start', messageId: currentMessageId }
 
           // Fetch context window usage breakdown from the SDK (control request).
@@ -458,7 +462,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           if (block.type === 'text') {
             // text block start — content is empty, wait for text_delta
           } else if (block.type === 'thinking') {
-            this._llmTracker.onThinkingDelta()
+            llmTracker.onThinkingDelta()
             yield { type: 'thinking_start', messageId: currentMessageId }
             if (block.thinking) {
               yield { type: 'thinking', content: block.thinking, messageId: currentMessageId }
@@ -481,10 +485,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
         else if (e.type === 'content_block_delta') {
           const delta = e.delta!
           if (delta.type === 'text_delta') {
-            this._llmTracker.onTextDelta()
+            llmTracker.onTextDelta()
             yield { type: 'text_delta', content: delta.text!, messageId: currentMessageId }
           } else if (delta.type === 'thinking_delta') {
-            this._llmTracker.onThinkingDelta()
+            llmTracker.onThinkingDelta()
             yield { type: 'thinking', content: delta.thinking!, messageId: currentMessageId }
           } else if (delta.type === 'signature_delta') {
             // ignore — thinking block signature, not readable
@@ -538,7 +542,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
                 cacheCreationTokens: numOrUndef(rawU.cache_creation_input_tokens),
               }
             : undefined
-          this._llmTracker.onMessageDelta(e.delta?.stop_reason ?? '', usage)
+          llmTracker.onMessageDelta(e.delta?.stop_reason ?? '', usage)
           yield {
             type: 'message_delta',
             stopReason: e.delta?.stop_reason ?? '',
@@ -549,7 +553,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
 
         else if (e.type === 'message_stop') {
-          this._llmTracker.onMessageStop(currentMessageId)
+          llmTracker.onMessageStop(currentMessageId)
           yield { type: 'message_stop', messageId: currentMessageId }
         }
       }
@@ -665,7 +669,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
             costUsd: mu.costUSD || undefined,
           }))
           // Calibrate tracker's completed calls with authoritative token data
-          this._llmTracker.calibrateFromModelUsage(modelUsages)
+          llmTracker.calibrateFromModelUsage(modelUsages)
           if (rm.subtype === 'success') {
             yield {
               type: 'result',
@@ -692,7 +696,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           }
           const hasAny = fallbackModelUsage.outputTokens > 0 || fallbackModelUsage.cacheReadTokens > 0 || fallbackModelUsage.cacheCreationTokens > 0
           if (hasAny) {
-            this._llmTracker.calibrateFromModelUsage([fallbackModelUsage])
+            llmTracker.calibrateFromModelUsage([fallbackModelUsage])
           }
           if (rm.subtype === 'success') {
             yield {

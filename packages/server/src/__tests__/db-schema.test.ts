@@ -58,9 +58,11 @@ describe("DB Schema", () => {
     //   + idx_exec_pending_claimable = 99
     // + schema v42 (ADR-0021 票03): − idx_schedules_origin − idx_schedules_due = 97.
     //   Both existed for the task envelope (origin lookup / queued due-time FIFO).
+    // + schema v43 (token-capture-1 票01): idx_llm_calls_source_session + idx_llm_calls_trace
+    //   = 99. Back-read (按会话查 chat 明细) + phase 3 聚类的前置索引。
     //   (The single-instance latch is ux_exec_task_active — outside this idx_%
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
-    expect(rows.length).toBe(97)
+    expect(rows.length).toBe(99)
   })
 
   it("workspaces table has correct columns", () => {
