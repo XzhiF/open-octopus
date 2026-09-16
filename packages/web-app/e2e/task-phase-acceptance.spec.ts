@@ -485,6 +485,8 @@ test("B: real accept on autoAdvance=false parks at the gate and surfaces 启动�
   await dialog.locator("[data-autoadvance-readonly]").filter({ hasText: "关" }).waitFor({ timeout: 15_000 })
   // 真实 POST /:id/acceptance accepted（autoAdvance=false → 零派发，K6 人工 gate）
   await dialog.locator("[data-acceptance-approve]").click()
+  // ADR-0022：通过先开台账预览弹层，确认才提交
+  await page.locator("[data-testid='ledger-confirm']").click()
   await expect
     .poll(async () => {
       const rows = await dbAll<{ decision: string }>(
