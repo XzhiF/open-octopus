@@ -11,7 +11,7 @@ import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/t
 
 const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
-  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, pushSpy,
+  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, pushSpy, mockFetchAgentEvents,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -22,7 +22,10 @@ const {
   mockReopen: vi.fn(),
   mockCancelTrigger: vi.fn(),
   pushSpy: vi.fn(),
+  mockFetchAgentEvents: vi.fn(),
 }))
+
+vi.mock("@/lib/api-client", () => ({ fetchAgentEvents: mockFetchAgentEvents }))
 
 vi.mock("@/lib/tasks-api", () => ({
   getTask: mockGetTask,
@@ -139,6 +142,8 @@ beforeEach(() => {
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: null })
   mockListArtifacts.mockResolvedValue([])
   mockGetBatchTree.mockResolvedValue([])
+  mockFetchAgentEvents.mockReset()
+  mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-x", events: [], source: "sqlite", _degraded: false, _message: null })
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -233,6 +238,28 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     fireEvent.click(screen.getByText(/验收通过（放行下一 Phase）/))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("task-1", { phase_index: 2, round_index: 1, decision: "accepted" }))
     expect(screen.getByText(/完整三栏证据面/)).toBeTruthy()
+  })
+
+  it("过程回放（走查回灌）：agent-events 节点边界垫进活动流，事后打开不再「暂无事件」", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
+        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
+        { nodeId: "ticket-01", event: "agent_event", timestamp: "2026-09-21T09:02:00Z" },
+        { nodeId: "ship", event: "end", timestamp: "2026-09-21T09:10:00Z" },
+      ],
+    })
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    expect(await screen.findByText(/回放 · spec-resolve 起/)).toBeTruthy()
+    expect(screen.getByText(/回放 · ship 收/)).toBeTruthy()
+    // 非边界事件不进 feed；引擎内部节点不算过程
+    expect(screen.queryByText(/agent_event/)).toBeNull()
+    expect(screen.queryByText(/__engine_init__/)).toBeNull()
+    // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
+    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
   })
 
   it("done：默认战报（4 数字瓦片 + 轮次账本 + 产物），rail「任务战报」可切回 phase 面", async () => {

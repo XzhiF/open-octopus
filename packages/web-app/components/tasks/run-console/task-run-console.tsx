@@ -25,6 +25,7 @@ import {
   type Task,
 } from "@octopus/shared"
 import { getTask, reopenTask, abortTask, cancelTaskTrigger, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
+import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
@@ -154,6 +155,49 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
     return active?.index ?? "report"
   }, [derived, phaseViews, task.status])
   const view = sel ?? autoView
+
+  // ── 过程回放种子（走查回灌 2026-09-16）──────────────────────────────
+  // 活动流此前只吃开窗后的 SSE 内存增量 —— 事后打开恒「暂无事件」，执行
+  // 过程看不到。现把该轮执行的 agent-events 节点边界事件（start/end，工作区
+  // 执行详情同信道）压缩成回放行垫进 feed；live SSE 继续在其上追加，
+  // 权威仍是 GET /:id derived，这里只是可读性层。切轮/切 phase 重垫一次。
+  const replayTarget = useMemo(() => {
+    const runs = detail?.executions ?? []
+    if (runs.length === 0) return null
+    if (view !== "report") {
+      const pv = phaseViews.find((p) => p.index === view)
+      const last = pv?.rounds[pv.rounds.length - 1]
+      const hit = last ? runs.find((r) => r.id === last.exec.id) : null
+      if (hit) return hit
+    }
+    return runs[runs.length - 1] ?? null
+  }, [detail, view, phaseViews])
+
+  const replayedExecRef = useRef<string | null>(null)
+  useEffect(() => {
+    const exec = replayTarget
+    if (!exec?.workspace_id || replayedExecRef.current === exec.id) return
+    replayedExecRef.current = exec.id
+    let cancelled = false
+    fetchAgentEvents(exec.workspace_id, exec.id)
+      .then((res) => {
+        if (cancelled || replayedExecRef.current !== exec.id) return
+        const rows: StreamEvent[] = []
+        for (const e of res.events) {
+          if (e.event !== "start" && e.event !== "end") continue
+          if (e.nodeId.startsWith("__engine_")) continue
+          rows.push({
+            at: e.timestamp ? new Date(e.timestamp).toLocaleTimeString("zh-CN", { hour12: false }) : "",
+            glyph: e.event === "start" ? "▸" : "◂",
+            tone: e.event === "start" ? "text-pop-cyan" : "text-pop-green",
+            text: `回放 · ${e.nodeId} ${e.event === "start" ? "起" : "收"}`,
+          })
+        }
+        if (rows.length > 0) setEvents(rows.slice(-40))
+      })
+      .catch(() => { /* 回放不可得照常 —— feed 退化为 live-only（原行为） */ })
+    return () => { cancelled = true }
+  }, [replayTarget])
 
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
