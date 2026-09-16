@@ -4,6 +4,41 @@ import type { NodeTokenUsageRow, LlmCallRow } from "../types"
 import { LEDGER_SQL, USAGE_WRITE_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
 import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
 
+/** usage-admin-3 票01 聚合维度（day/source/model/clone，KD3 首轮四 tab）。 */
+export type LlmCallAggregateDim = "day" | "source" | "model" | "clone"
+
+/** group-by 结果行：四字段 + 具名和 totalTokens + cost 三态 + 命中率。 */
+export interface LlmCallAggregateRow {
+  key: string
+  keyLabel: string
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  totalTokens: number
+  costUsd: number | null
+  costComplete: boolean
+  cacheHitRate: number | null
+}
+
+/** llm_calls 过滤 where 单源（query/count 共用，分页 total 与页内容径不分叉）。 */
+function llmCallWhere(f: {
+  sessionId?: string; traceId?: string; source?: string; model?: string; org?: string; workspaceId?: string; from?: number; to?: number
+}): { where: string; params: unknown[] } {
+  const clauses: string[] = []
+  const params: unknown[] = []
+  if (f.sessionId) { clauses.push("session_id = ?"); params.push(f.sessionId) }
+  if (f.traceId) { clauses.push("trace_id = ?"); params.push(f.traceId) }
+  if (f.source) { clauses.push("source = ?"); params.push(f.source) }
+  if (f.model) { clauses.push("model = ?"); params.push(f.model) }
+  if (f.org) { clauses.push("org = ?"); params.push(f.org) }
+  if (f.workspaceId) { clauses.push("workspace_id = ?"); params.push(f.workspaceId) }
+  if (f.from != null) { clauses.push("timestamp >= ?"); params.push(f.from) }
+  if (f.to != null) { clauses.push("timestamp <= ?"); params.push(f.to) }
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params }
+}
+
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
 
@@ -200,25 +235,98 @@ export class TokenUsageDAO extends BaseDAO {
    * 票03 回读 seam（最小面）：按 session_id/trace_id 查明细，可叠加 source 词表与
    * timestamp（epoch ms）窗口。rounds 聚合在路由侧用 shared/ledger.ts 具名口径函数
    * 对返回行做 JS 折叠（口径单源；limit 截断后 rounds 与 calls 保持自洽）。
+   * usage-admin-3 票02 扩：model/org 等值过滤 + offset/倒序（分页浏览模式）；count 同口径。
    */
   queryLlmCalls(f: {
     sessionId?: string
     traceId?: string
     source?: string
+    model?: string
+    org?: string
+    workspaceId?: string
     from?: number
     to?: number
     limit: number
+    offset?: number
+    desc?: boolean
   }): LlmCallRow[] {
+    const { where, params } = llmCallWhere(f)
+    return this.stmt(
+      `SELECT * FROM llm_calls ${where} ORDER BY timestamp ${f.desc ? "DESC" : "ASC"}, id ${f.desc ? "DESC" : "ASC"} LIMIT ?${f.offset ? " OFFSET ?" : ""}`,
+    ).all(...params, f.limit, ...(f.offset ? [f.offset] : [])) as LlmCallRow[]
+  }
+
+  /** 分页浏览模式的 total：与 queryLlmCalls 同一 where 构造器，口径不分叉。 */
+  countLlmCalls(f: {
+    sessionId?: string
+    traceId?: string
+    source?: string
+    model?: string
+    org?: string
+    workspaceId?: string
+    from?: number
+    to?: number
+  }): number {
+    const { where, params } = llmCallWhere(f)
+    return (this.stmt(`SELECT COUNT(*) AS n FROM llm_calls ${where}`).get(...params) as { n: number }).n
+  }
+
+  /**
+   * usage-admin-3 票01 —— group-by 聚合直接对 llm_calls（KD2 单一读口径）。
+   * 总量/cost 三态/命中率全部走 LEDGER_SQL 表达式（禁手搓公式）；四字段列和随组
+   * 原样返回（UI 四字段总量用）。dim=clone 走 chat_sessions.title 回退 id。
+   */
+  aggregateLlmCalls(f: {
+    dim: LlmCallAggregateDim
+    from?: number
+    to?: number
+    org?: string
+    workspaceId?: string
+  }): LlmCallAggregateRow[] {
+    const keyExpr =
+      f.dim === "day" ? `strftime('%Y-%m-%d', lc.timestamp / 1000, 'unixepoch', 'localtime')` :
+      f.dim === "source" ? `COALESCE(lc.source, 'unknown')` :
+      f.dim === "model" ? `COALESCE(lc.model, 'unknown')` :
+      `COALESCE(lc.session_id, 'unknown')`
+    const labelExpr = f.dim === "clone" ? `COALESCE(cs.title, lc.session_id, 'unknown')` : keyExpr
     const where: string[] = []
     const params: unknown[] = []
-    if (f.sessionId) { where.push("session_id = ?"); params.push(f.sessionId) }
-    if (f.traceId) { where.push("trace_id = ?"); params.push(f.traceId) }
-    if (f.source) { where.push("source = ?"); params.push(f.source) }
-    if (f.from != null) { where.push("timestamp >= ?"); params.push(f.from) }
-    if (f.to != null) { where.push("timestamp <= ?"); params.push(f.to) }
-    return this.stmt(
-      `SELECT * FROM llm_calls ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY timestamp ASC, id ASC LIMIT ?`,
-    ).all(...params, f.limit) as LlmCallRow[]
+    if (f.from != null) { where.push("lc.timestamp >= ?"); params.push(f.from) }
+    if (f.to != null) { where.push("lc.timestamp <= ?"); params.push(f.to) }
+    if (f.org) { where.push("lc.org = ?"); params.push(f.org) }
+    if (f.workspaceId) { where.push("lc.workspace_id = ?"); params.push(f.workspaceId) }
+    const rows = this.stmt(`
+      SELECT
+        ${keyExpr} AS key,
+        ${labelExpr} AS key_label,
+        COUNT(*) AS calls,
+        COALESCE(SUM(lc.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(lc.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(lc.cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(lc.cache_creation_tokens), 0) AS cache_creation_tokens,
+        ${LEDGER_SQL.sumTokens('lc.')} AS total_tokens,
+        ${LEDGER_SQL.sumCost('lc.')} AS cost_usd,
+        ${LEDGER_SQL.costComplete('lc.')} AS cost_complete,
+        ${LEDGER_SQL.cacheHitRate('lc.')} AS cache_hit_rate
+      FROM llm_calls lc
+      ${f.dim === "clone" ? "LEFT JOIN chat_sessions cs ON cs.id = lc.session_id" : ""}
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      GROUP BY key
+      ORDER BY cost_usd DESC, total_tokens DESC, key ASC
+    `).all(...params) as Array<Record<string, unknown>>
+    return rows.map(r => ({
+      key: r.key as string,
+      keyLabel: r.key_label as string,
+      calls: r.calls as number,
+      inputTokens: r.input_tokens as number,
+      outputTokens: r.output_tokens as number,
+      cacheReadTokens: r.cache_read_tokens as number,
+      cacheCreationTokens: r.cache_creation_tokens as number,
+      totalTokens: r.total_tokens as number,
+      costUsd: r.cost_usd as number | null,
+      costComplete: r.cost_complete === 1,
+      cacheHitRate: r.cache_hit_rate as number | null,
+    }))
   }
 
   findLlmCallsByWorkspace(workspaceId: string, sinceTimestamp?: number): LlmCallRow[] {

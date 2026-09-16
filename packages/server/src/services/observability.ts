@@ -220,6 +220,8 @@ export class ObservabilityService {
         source: LLM_CALL_SOURCE.engine,
         // 票05 Quick Fix / spec KD6: trace_id = 运行根（execution）标识，engine 域 API 可按 trace 过滤
         trace_id: executionId,
+        // 审查修复（all-sources-2 US2「trace→span 全源成立」）: span = 单次调用 messageId（chat 同型）
+        span_id: call.messageId ?? null,
       }))
 
       this.tokenDao.insertLlmCallBatch(rows)

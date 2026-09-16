@@ -151,6 +151,23 @@ describe("GET /api/usage/llm-calls", () => {
     expect(u.rounds).toEqual([])
   })
 
+  // usage-admin-3 票04：trace 下钻要全源组（chat+aux+engine 同 trace_id）——source=all 哨兵
+  it("source=all → 跨源 trace 全组；缺省仍仅 chat", async () => {
+    dao.insertLlmCallBatch([
+      chatRow({ id: "t1-chat", message_id: "m1", span_id: "m1", trace_id: "tAll" }),
+      chatRow({ id: "t1-aux", message_id: "m2", span_id: "m2", trace_id: "tAll", source: "aux_compress" }),
+      chatRow({ id: "t1-eng", message_id: "m3", span_id: "m3", trace_id: "tAll", source: "engine" }),
+      chatRow({ id: "other", message_id: "m4", span_id: "m4", trace_id: "tOther" }),
+    ])
+    const all = await json(await app.request("/api/usage/llm-calls?trace_id=tAll&source=all"))
+    expect((all.calls as Array<{ id: string }>).map(c => c.id).sort()).toEqual(["t1-aux", "t1-chat", "t1-eng"])
+    const chatOnly = await json(await app.request("/api/usage/llm-calls?trace_id=tAll"))
+    expect((chatOnly.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["t1-chat"]) // 票03 缺省口径不回退
+    // all 不是词表值：分页模式下也不落成 source='all' 条件（同样放行全源）
+    const paged = await json(await app.request("/api/usage/llm-calls?page=1&trace_id=tAll&source=all"))
+    expect(paged.total).toBe(3)
+  })
+
   describe("参数边界", () => {
     it("全空参 → 400；只有 source / 只有 from-to → 也 400（session_id/trace_id 必含其一）", async () => {
       expect((await app.request("/api/usage/llm-calls")).status).toBe(400)
@@ -188,6 +205,56 @@ describe("GET /api/usage/llm-calls", () => {
       expect((win.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["mid"])
       const open = await json(await app.request("/api/usage/llm-calls?session_id=sess-1&from=500"))
       expect((open.calls as Array<{ id: string }>).map(c => c.id).sort()).toEqual(["hi", "mid"])
+    })
+  })
+
+  // usage-admin-3 票02：page 参数存在 = 分页浏览模式（放宽 session/trace 必含；source 缺省全源）
+  describe("分页列表模式（page 参数）", () => {
+    beforeEach(() => {
+      // 5 行：3 chat（ts 100/200/300）+ 1 cli + 1 engine，跨 org
+      dao.insertLlmCallBatch([
+        chatRow({ id: "a1", message_id: "x1", span_id: "x1", timestamp: 100 }),
+        chatRow({ id: "a2", message_id: "x2", span_id: "x2", timestamp: 200, model: "m-2" }),
+        chatRow({ id: "a3", message_id: "x3", span_id: "x3", timestamp: 300 }),
+        chatRow({ id: "b1", message_id: "y1", span_id: "y1", source: "cli", timestamp: 400, org: "org-2" }),
+        chatRow({ id: "c9", message_id: "z1", span_id: "z1", source: "engine", timestamp: 500 }),
+      ])
+    })
+
+    it("page=1 全源时间倒序、total 全量、页大小生效", async () => {
+      const body = await json(await app.request("/api/usage/llm-calls?page=1&page_size=2"))
+      expect(body.total).toBe(5)
+      expect(body.page).toBe(1)
+      expect(body.pageSize).toBe(2)
+      expect((body.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["c9", "b1"]) // desc，含非 chat 源
+    })
+
+    it("page=2 翻页续上；越界页返回空 calls（total 不变）", async () => {
+      const p2 = await json(await app.request("/api/usage/llm-calls?page=2&page_size=2"))
+      expect((p2.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["a3", "a2"])
+      const p9 = await json(await app.request("/api/usage/llm-calls?page=9&page_size=2"))
+      expect(p9.calls).toEqual([])
+      expect(p9.total).toBe(5)
+    })
+
+    it("org / model / source / session_id 筛选进 count+list 同口径", async () => {
+      const byOrg = await json(await app.request("/api/usage/llm-calls?page=1&org=org-2"))
+      expect(byOrg.total).toBe(1)
+      expect((byOrg.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["b1"])
+      const byModel = await json(await app.request("/api/usage/llm-calls?page=1&model=m-2"))
+      expect((byModel.calls as Array<{ id: string }>).map(c => c.id)).toEqual(["a2"])
+      const bySource = await json(await app.request("/api/usage/llm-calls?page=1&source=chat"))
+      expect(bySource.total).toBe(3)
+      const bySession = await json(await app.request("/api/usage/llm-calls?page=1&session_id=sess-1"))
+      expect(bySession.total).toBe(5) // chat 行 session 都是 sess-1；b1/c9 同
+    })
+
+    it("page_size 缺省 50、>200 截断；非法 page 回落 400（无 session/trace）", async () => {
+      const dflt = await json(await app.request("/api/usage/llm-calls?page=1"))
+      expect(dflt.pageSize).toBe(50)
+      const capped = await json(await app.request("/api/usage/llm-calls?page=1&page_size=9999"))
+      expect(capped.pageSize).toBe(200)
+      expect((await app.request("/api/usage/llm-calls?page=abc")).status).toBe(400)
     })
   })
 })

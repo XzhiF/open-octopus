@@ -183,7 +183,8 @@ export class AgentExecutor implements Executor {
     )
 
     // 票04: trace_id = schedule run 根（executionId），workspace 归因；捕获失败不阻断 job
-    captureAuxCall(this.execDAO.getDb(), {
+    // （getter 惰性传入：getDb() 求值也要落在 captureAuxCall 的 try 内，见 scheduler-adapter 同型）
+    captureAuxCall(() => this.execDAO.getDb(), {
       source: LLM_CALL_SOURCE.scheduler,
       traceId: executionId,
       spanId: `attempt-${_attempt}`, // 重试 = 新真实调用：span 分开记，账本按运行根×model 累加

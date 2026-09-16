@@ -10,7 +10,7 @@ import fs from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
-import { getProvider } from '@octopus/providers'
+import { getProvider, LLMCallTracker } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 import { getDb } from '../../db'
 import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
@@ -319,6 +319,10 @@ export class CloneRuntime {
     // 捕获 seam 唯一挂在本方法终局（两处 yield* 正常完成之后）；provider 抛错/
     // 消费者中断 → 轮未终局，不落库（KD3 接受丢当前轮）。
     const traceId = randomUUID()
+    // 审查修复：per-round 私有 tracker。provider 实例是单例且共享 tracker，
+    // 并发两轮聊天会互相 reset/读到对方的 call —— 落库串归属（钱数记错人）。
+    // 传私有 tracker 后两轮各记各的（retry-without-resume 同轮共用，跨 attempt 累积）。
+    const roundTracker = new LLMCallTracker()
 
     // First attempt: use resume if available
     try {
@@ -333,9 +337,10 @@ export class CloneRuntime {
         taskHomePath,
         modelOverride,
         subagents,
+        roundTracker,
       )
       yield* stream
-      this.captureChatUsage(sessionId, traceId)
+      this.captureChatUsage(sessionId, traceId, roundTracker)
       return
     } catch (err) {
       // Resume failure → retry without resume
@@ -354,9 +359,10 @@ export class CloneRuntime {
             taskHomePath,
             modelOverride,
             subagents,
+            roundTracker,
           )
           yield* stream
-          this.captureChatUsage(sessionId, traceId)
+          this.captureChatUsage(sessionId, traceId, roundTracker)
           return
         } catch (retryErr) {
           console.error(`[CloneRuntime] Retry without resume also failed:`,
@@ -382,9 +388,9 @@ export class CloneRuntime {
    *
    * ponytail: KD3 轮次末批写 —— 崩溃丢当前轮；有实测丢失再升级逐条即时写。
    */
-  private captureChatUsage(sessionId: string, traceId: string): void {
+  private captureChatUsage(sessionId: string, traceId: string, roundTracker: LLMCallTracker): void {
     try {
-      const records = getProvider('claude').getLLMCalls?.() ?? []
+      const records = roundTracker.getLLMCalls()
       if (records.length === 0) return
       captureChatRound(new TokenUsageDAO(getDb()), {
         sessionId,
@@ -423,6 +429,7 @@ export class CloneRuntime {
     taskHomePath?: string,
     modelOverride?: string,
     subagents?: Record<string, OctopusAgentDef>,
+    llmTracker?: LLMCallTracker,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
@@ -452,6 +459,7 @@ export class CloneRuntime {
       },
       abortSignal,
       model: modelOverride ?? this.cloneDef.config.model,
+      llmTracker,
       agents: subagents,
       plugins: this.getPlugins(taskHomePath),
       // AskUserQuestion 交互接管（2026-09-09）：不传则 canUseTool 直接 allow，

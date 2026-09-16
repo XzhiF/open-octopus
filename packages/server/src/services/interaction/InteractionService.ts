@@ -820,6 +820,8 @@ export class InteractionService {
       source: LLM_CALL_SOURCE.interaction,
       // 票05 Quick Fix / spec KD6: trace_id = 运行根（execution）标识
       trace_id: session.executionId,
+      // 审查修复（all-sources-2 US2「trace→span 全源成立」）: span = 本轮累积的 assistant messageId（chat 同型）
+      span_id: acc.assistantMessageId ?? null,
     }
     this.tokenDao.insertLlmCall(llmCallRow)
   }

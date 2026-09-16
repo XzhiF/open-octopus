@@ -206,13 +206,25 @@ describe('CloneRuntime.chat() 收口（seam）：轮次末消费 tracker', () =>
   it('流终局 → tracker 的 records 落库为 chat 明细 + 账本行', async () => {
     db = freshDb()
     mockDb = db
-    const records = [rec({ messageId: 'm1', model: 'model-a', inputTokens: 10, outputTokens: 20, costUsd: 0.1 })]
     const providers = await import('@octopus/providers')
     let sends = 0
+    // 审查修复后契约：chat() 每轮建私有 LLMCallTracker 并经 options.llmTracker 传给
+    // provider；provider 把本轮 call 记进该 tracker；轮次终局从 tracker 读取落库。
+    // mock 按同型行为喂 tracker（同时钉住「不再读 provider 全局」这一修复点）。
     vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
       getType: () => 'claude',
-      sendQuery: async function* () { sends++; yield { type: 'text', text: 'ok' } },
-      getLLMCalls: () => records,
+      sendQuery: async function* (
+        _m: string, _cwd: string, _resume: unknown,
+        options?: { llmTracker?: import('@octopus/providers').LLMCallTracker },
+      ) {
+        sends++
+        expect(options?.llmTracker, 'chat() 必须传 per-round tracker').toBeTruthy()
+        options?.llmTracker?.onMessageStart('m1', 'model-a')
+        options?.llmTracker?.onMessageDelta('end_turn', { inputTokens: 10, outputTokens: 20 })
+        options?.llmTracker?.onMessageStop('m1')
+        yield { type: 'text', text: 'ok' }
+      },
+      getLLMCalls: () => [], // 全局 tracker 故意留空：落库数据只能来自 roundTracker
     }) as unknown as ReturnType<typeof providers.getProvider>)
 
     const runtime = makeRuntime()

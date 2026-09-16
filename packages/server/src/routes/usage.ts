@@ -4,12 +4,17 @@
 // 函数（「total 不是字段」，不手搓求和；未定价保持 null 不焊 0）。
 
 import { Hono, type Context } from "hono"
-import { costSummary, totalTokens, LLM_CALL_SOURCE, type TokenUsage } from "@octopus/shared"
-import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
+import {
+  costSummary, totalTokens, LLM_CALL_SOURCE, mergeLedgerParts,
+  type TokenUsage, type LedgerPart,
+} from "@octopus/shared"
+import type { LlmCallAggregateRow, LlmCallAggregateDim, TokenUsageDAO } from "../db/dao/token-usage-dao"
 import type { LlmCallRow } from "../db/types"
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 500
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
 
 export interface LlmCallView {
   id: string
@@ -103,12 +108,49 @@ function aggregateRounds(rows: LlmCallRow[]): ChatRoundView[] {
 }
 
 const INVALID = Symbol("invalid")
-
 /** from/to = epoch ms，非负整数；缺省 undefined，非法 → INVALID。 */
 function parseEpoch(c: Context, key: string): number | typeof INVALID | undefined {
   const raw = c.req.query(key)
   if (raw === undefined || raw === "") return undefined
   return /^\d+$/.test(raw) ? Number(raw) : INVALID
+}
+
+// —— /aggregate（usage-admin-3 票01）——
+
+const AGG_DIMS: readonly LlmCallAggregateDim[] = ["day", "source", "model", "clone"]
+// ponytail: TopN 固定 20（票 01 默认即全部诉求）；要参数化再开 topn= 旋钮
+const TOP_N = 20
+// phase 4 形状（KD6）：聚合行带 currency，USD 阶段恒定
+const CURRENCY = "USD"
+
+export interface UsageAggregateRowView extends LlmCallAggregateRow {
+  currency: string
+}
+
+/** 前 TOP_N 保留，其余归并成单行 others（公式走 mergeLedgerParts，不手搓）。 */
+function withOthers(rows: LlmCallAggregateRow[]): UsageAggregateRowView[] {
+  const view = (r: LlmCallAggregateRow): UsageAggregateRowView => ({ ...r, currency: CURRENCY })
+  if (rows.length <= TOP_N) return rows.map(view)
+  const head = rows.slice(0, TOP_N)
+  const tail = rows.slice(TOP_N)
+  const { usage, totals } = mergeLedgerParts(tail.map(r => ({
+    usage: {
+      inputTokens: r.inputTokens, outputTokens: r.outputTokens,
+      cacheReadTokens: r.cacheReadTokens, cacheCreationTokens: r.cacheCreationTokens,
+    },
+    cost: { usd: r.costUsd, complete: r.costComplete },
+  } satisfies LedgerPart)))
+  return [...head.map(view), {
+    key: "others",
+    keyLabel: `其他 (${tail.length} 组)`,
+    calls: tail.reduce((a, r) => a + r.calls, 0),
+    ...usage,
+    totalTokens: totals.tokens,
+    costUsd: totals.cost.usd,
+    costComplete: totals.cost.complete,
+    cacheHitRate: totals.cacheHitRate,
+    currency: CURRENCY,
+  }]
 }
 
 export function createUsageRoutes(tokenDao: TokenUsageDAO): Hono {
@@ -117,14 +159,42 @@ export function createUsageRoutes(tokenDao: TokenUsageDAO): Hono {
   router.get("/llm-calls", (c: Context) => {
     const sessionId = c.req.query("session_id") || undefined
     const traceId = c.req.query("trace_id") || undefined
-    // 必含其一（票03）：全空参 / 只有 source / 只有窗口 → 400，不给无界全表扫描留门
-    if (!sessionId && !traceId) {
-      return c.json({ error: "session_id or trace_id is required" }, 400)
-    }
+    // session_id/trace_id 必含的旧守卫已下移至票02 的 page 感知守卫（分页模式豁免）
     const from = parseEpoch(c, "from")
     const to = parseEpoch(c, "to")
     if (from === INVALID || to === INVALID) {
       return c.json({ error: "from/to must be epoch-ms integers" }, 400)
+    }
+
+    const org = c.req.query("org") || undefined
+    const model = c.req.query("model") || undefined
+    // 票02 审查修复（US1）：明细列表工作区筛选——此前只有 /aggregate 收 workspace_id，
+    // 明细面无（筛选器集合与 spec「source/model/会话/工作区/org/时间窗」不齐）。
+    const workspaceId = c.req.query("workspace_id") || undefined
+    const sourceRaw = c.req.query("source") || undefined
+    // 票04：source=all 哨兵（非词表值）= 放行全源，供 trace 下钻取跨源同组
+    const sourceFilter = sourceRaw === "all" ? undefined : sourceRaw
+
+    // usage-admin-3 票02：page=正整数 → 分页浏览模式（放宽 session/trace 必含——
+    // LIMIT/OFFSET + timestamp 索引撑住，不再留无界扫描门）。此模式 source 缺省 = 全源、
+    // 时间倒序、返回 total；缺 page 时既有语义逐字不变（票03 契约）。
+    const pageRaw = c.req.query("page")
+    const page = pageRaw !== undefined && /^[1-9]\d*$/.test(pageRaw) ? Number(pageRaw) : 0
+    if (!page && !sessionId && !traceId) {
+      return c.json({ error: "session_id or trace_id is required" }, 400)
+    }
+
+    if (page) {
+      let pageSize = DEFAULT_PAGE_SIZE
+      const rawSize = c.req.query("page_size")
+      if (rawSize !== undefined && rawSize !== "") {
+        const n = Number(rawSize)
+        if (Number.isInteger(n) && n > 0) pageSize = Math.min(n, MAX_PAGE_SIZE)
+      }
+      const filters = { sessionId, traceId, source: sourceFilter, model, org, workspaceId, from: from as number | undefined, to: to as number | undefined }
+      const total = tokenDao.countLlmCalls(filters)
+      const rows = tokenDao.queryLlmCalls({ ...filters, limit: pageSize, offset: (page - 1) * pageSize, desc: true })
+      return c.json({ calls: rows.map(toCallView), rounds: aggregateRounds(rows), total, page, pageSize })
     }
 
     let limit = DEFAULT_LIMIT
@@ -133,18 +203,41 @@ export function createUsageRoutes(tokenDao: TokenUsageDAO): Hono {
       const n = Number(rawLimit)
       if (Number.isInteger(n) && n > 0) limit = Math.min(n, MAX_LIMIT) // >500 截断；非法回落默认
     }
-    // 缺省口径 = 'chat'（本 API 为 chat 回读而生，KD6）；其他词表值须显式传 source=
-    const source = c.req.query("source") || LLM_CALL_SOURCE.chat
+    // 缺省口径 = 'chat'（本 API 为 chat 回读而生，KD6）；其他词表值须显式传 source=；all = 全源（票04）
+    const source = sourceRaw === "all" ? undefined : (sourceRaw ?? LLM_CALL_SOURCE.chat)
 
     const rows = tokenDao.queryLlmCalls({
       sessionId,
       traceId,
       source,
+      model,
+      org,
+      workspaceId,
       from: from as number | undefined,
       to: to as number | undefined,
       limit,
     })
     return c.json({ calls: rows.map(toCallView), rounds: aggregateRounds(rows) })
+  })
+
+  router.get("/aggregate", (c: Context) => {
+    const dim = c.req.query("dim") as LlmCallAggregateDim | undefined
+    if (!dim || !AGG_DIMS.includes(dim)) {
+      return c.json({ error: `dim must be one of ${AGG_DIMS.join("|")}` }, 400)
+    }
+    const from = parseEpoch(c, "from")
+    const to = parseEpoch(c, "to")
+    if (from === INVALID || to === INVALID) {
+      return c.json({ error: "from/to must be epoch-ms integers" }, 400)
+    }
+    const rows = tokenDao.aggregateLlmCalls({
+      dim,
+      from: from as number | undefined,
+      to: to as number | undefined,
+      org: c.req.query("org") || undefined,
+      workspaceId: c.req.query("workspace_id") || undefined,
+    })
+    return c.json({ dim, rows: withOthers(rows) })
   })
 
   return router
