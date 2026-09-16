@@ -37,8 +37,10 @@ import {
   VarPool,
   TASK_VERIFY_EVENT,
   TASK_VERIFY_LOG_EVENT,
+  TASK_PREVIEW_EVENT,
   TaskSpecFieldError,
   type AcceptanceVerify,
+  type AcceptancePreview,
   type TaskSpec,
 } from "@octopus/shared"
 import { BashExecutor } from "@octopus/engine"
@@ -116,6 +118,39 @@ const VERIFY_TAIL_LINES = 200
 const VERIFY_DEFAULT_TIMEOUT_S = 600
 const VERDICT_MAX_TAIL_BYTES = 200_000
 
+// ── live preview (跑起来看) — 长驻进程 + HTTP 探活 (ADR-0022) ──────────
+export type PreviewState = "starting" | "ready" | "exited" | "stopped" | "failed"
+export interface PreviewSummary {
+  task_id: string
+  execution_id?: string
+  command?: string
+  url: string
+  state: PreviewState
+  /** true = url responds but NO session owns it (user ran pnpm dev themselves). */
+  external?: boolean
+  started_at?: string
+  ended_at?: string
+  exit_code?: number
+  duration_ms?: number
+  /** last stdout lines (for readyPattern debugging; not streamed over SSE). */
+  tail?: string[]
+}
+const PREVIEW_TIMEOUT_S = 7200        // 2h hard cap; every decision auto-stops
+const PREVIEW_PROBE_MS = 1500         // readiness poll cadence while starting
+const PREVIEW_PROBE_TIMEOUT_MS = 800  // per-probe fetch budget
+const PREVIEW_TAIL = 120
+
+/** One in-memory preview session per task. No verdict file — the ledger records it. */
+interface PreviewSession {
+  summary: PreviewSummary
+  lines: string[]
+  userAborted: boolean
+  ready: boolean
+  probeTimer?: ReturnType<typeof setInterval>
+  controller: AbortController
+  done: boolean
+}
+
 /** One in-memory verify session per task (running or most recent terminal). */
 interface VerifySession {
   summary: VerifySummary
@@ -129,6 +164,7 @@ interface VerifySession {
 export class RoundEvidenceService {
   private readonly execDao: ExecutionDAO
   private readonly sessions = new Map<string, VerifySession>()
+  private readonly previewSessions = new Map<string, PreviewSession>()
 
   constructor(
     db: Database.Database,
@@ -548,9 +584,197 @@ export class RoundEvidenceService {
       prevChecks,
     })
   }
+
+  // ── live preview (跑起来看) ────────────────────────────────────────────
+
+  private previewCfg(taskId: string): AcceptancePreview | undefined {
+    const detail = this.tasksService.getTask(taskId)
+    return (detail.task_spec as TaskSpec | undefined)?.acceptance_preview as AcceptancePreview | undefined
+  }
+
+  /** One bounded HTTP probe — ANY response (2xx/3xx/4xx) means the port is up.
+   *  Network error / timeout → false. Never throws. */
+  private async probeUrl(url: string): Promise<boolean> {
+    try {
+      const ctrl = new AbortController()
+      const to = setTimeout(() => ctrl.abort(), PREVIEW_PROBE_TIMEOUT_MS)
+      try {
+        await fetch(url, { method: "GET", signal: ctrl.signal, redirect: "follow" })
+        return true // resolved (any status) = port serving
+      } finally {
+        clearTimeout(to)
+      }
+    } catch {
+      return false
+    }
+  }
+
+  /** POST /:id/preview — start the task's acceptance_preview command as a
+   *  long-lived process in the (alive) workspace; readiness via HTTP probe.
+   *  Gates mirror startVerify. NEVER auto-runs (explicit button only). */
+  async startPreview(taskId: string): Promise<PreviewSummary> {
+    const { execRow } = this.resolveAwaiting(taskId)
+    const cfg = this.previewCfg(taskId)
+    if (!cfg?.command?.trim()) {
+      throw new TaskSpecFieldError("未配置预览命令 — 在验收面板写下起服务的命令(长驻,随任务持久化)")
+    }
+    let url: string
+    try {
+      url = new URL(cfg.url).toString()
+    } catch {
+      throw new TaskSpecFieldError(`预览 url 非法: ${cfg.url}`)
+    }
+    // 引擎替换语法撞车预检(与 bash 节点同纪律,ADR commit 209a9ce6 教训)。
+    if (/\$vars\.|\$\{[^}]*\|/.test(cfg.command)) {
+      throw new TaskSpecFieldError("预览命令含引擎替换语法($vars./${x|filter}) — 会被 BashExecutor 误替换,请改写")
+    }
+    const prev = this.previewSessions.get(taskId)
+    if (prev && !prev.done) throw new TaskStatusConflictError("预览已在跑 — 先停止")
+    const ws = this.workspaceService.getById(execRow.workspace_id)
+    if (!ws || !existsSync(ws.path)) throw new TaskStatusConflictError("工作区目录不在了 — 预览不可用")
+    const cwdAbs = path.resolve(ws.path, cfg.cwd ?? ".")
+    const cwdRel = path.relative(ws.path, cwdAbs)
+    if (cwdRel.startsWith("..") || path.isAbsolute(cwdRel)) {
+      throw new TaskSpecFieldError(`预览 cwd 逃逸出工作区: ${cfg.cwd}`)
+    }
+
+    const controller = new AbortController()
+    const session: PreviewSession = {
+      summary: {
+        task_id: taskId,
+        execution_id: execRow.id,
+        command: cfg.command,
+        url,
+        state: "starting",
+        started_at: new Date().toISOString(),
+      },
+      lines: [],
+      userAborted: false,
+      ready: false,
+      controller,
+      done: false,
+    }
+    this.previewSessions.set(taskId, session)
+    this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
+
+    const node = { id: `preview-${taskId}`, type: "bash" as const, bash: cfg.command, timeout: PREVIEW_TIMEOUT_S }
+    const pattern = cfg.readyPattern ? safeRegex(cfg.readyPattern) : null
+    const executor = new BashExecutor(node, new VarPool(), {
+      cwd: cwdAbs,
+      signal: controller.signal,
+      executionId: execRow.id,
+      onLog: (line: string) => {
+        session.lines.push(line)
+        if (session.lines.length > PREVIEW_TAIL) session.lines.splice(0, session.lines.length - PREVIEW_TAIL)
+      },
+    })
+    void executor.execute()
+      .then((r) => this.settlePreview(taskId, session, r))
+      .catch(() => this.settlePreview(taskId, session, { status: "failed", logLines: ["preview crashed"] }))
+
+    // Readiness poller: any HTTP response (+ readyPattern if configured) → ready.
+    session.probeTimer = setInterval(() => {
+      void (async () => {
+        if (session.done || session.ready) return
+        const probeOk = await this.probeUrl(url)
+        const patOk = pattern ? pattern.test(session.lines.join("\n")) : true
+        if (probeOk && patOk) {
+          session.ready = true
+          session.summary.state = "ready"
+          this.stopProbe(session)
+          this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
+        }
+      })()
+    }, PREVIEW_PROBE_MS)
+
+    return { ...session.summary }
+  }
+
+  private settlePreview(
+    taskId: string,
+    session: PreviewSession,
+    r: { status: string; exitCode?: number; logLines: string[] },
+  ): void {
+    if (session.done) return
+    this.stopProbe(session)
+    session.done = true
+    const s = session.summary
+    s.ended_at = new Date().toISOString()
+    if (s.started_at) s.duration_ms = Date.parse(s.ended_at) - Date.parse(s.started_at)
+    if (session.userAborted) s.state = "stopped"
+    else if (typeof r.exitCode === "number") s.state = "exited"
+    else s.state = "failed"
+    s.exit_code = r.exitCode
+    this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, s) })
+  }
+
+  private stopProbe(session: PreviewSession): void {
+    if (session.probeTimer) { clearInterval(session.probeTimer); session.probeTimer = undefined }
+  }
+
+  /** GET /:id/preview — session state, or a one-shot external probe (a `pnpm dev`
+   *  the user started outside Octopus still shows as openable). */
+  async getPreview(taskId: string): Promise<PreviewSummary | null> {
+    const session = this.previewSessions.get(taskId)
+    if (session) return { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
+    const cfg = this.previewCfg(taskId)
+    if (!cfg?.url) return null
+    let url: string
+    try {
+      url = new URL(cfg.url).toString()
+    } catch {
+      return null
+    }
+    if (await this.probeUrl(url)) {
+      return { task_id: taskId, url, state: "ready", external: true }
+    }
+    return { task_id: taskId, url, state: "stopped" }
+  }
+
+  /** POST /:id/preview/stop — SIGTERM tree via BashExecutor's abort chain. */
+  stopPreview(taskId: string): PreviewSummary {
+    const session = this.previewSessions.get(taskId)
+    if (!session || session.done) throw new TaskStatusConflictError("没有在跑的预览可停止")
+    session.userAborted = true
+    this.stopProbe(session)
+    session.controller.abort()
+    return { ...session.summary }
+  }
+
+  /** Decision hook (T04): stop any running preview WITHOUT throwing when idle. */
+  stopPreviewQuiet(taskId: string): void {
+    const session = this.previewSessions.get(taskId)
+    if (session && !session.done) {
+      session.userAborted = true
+      this.stopProbe(session)
+      session.controller.abort()
+    }
+  }
+
+  /** Ledger hook: last-known preview summary (for the台账 line). */
+  previewStatus(taskId: string): PreviewSummary | null {
+    const s = this.previewSessions.get(taskId)
+    return s ? { ...s.summary } : null
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
+
+function previewData(taskId: string, s: PreviewSummary): Record<string, unknown> {
+  return {
+    task_id: taskId, execution_id: s.execution_id, state: s.state, url: s.url,
+    external: s.external, exit_code: s.exit_code, duration_ms: s.duration_ms,
+  }
+}
+/** Compile a user readyPattern; a bad regex must not kill a preview — return a
+ *  never-matching pattern so readiness falls back to the HTTP probe alone. */
+function safeRegex(src: string): RegExp {
+  try {
+    return new RegExp(src, "i")
+  } catch {
+    return /(?!)/
+  }
+}
 
 function parseCommitMap(json: string | null | undefined): Record<string, string> {
   if (!json) return {}

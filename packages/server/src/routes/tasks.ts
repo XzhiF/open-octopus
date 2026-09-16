@@ -459,6 +459,36 @@ export function createTasksRoutes(
     }
   })
 
+  // 跑起来看：acceptance_preview 命令在活工作区长驻 + HTTP 探活。同样绝不自动跑，
+  // POST /:id/preview 是唯一启动入口（202）。进度走 taskpool SSE task_preview。
+  router.post("/:id/preview", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.startPreview(c.req.param("id")), 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+  router.get("/:id/preview", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.getPreview(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+  router.post("/:id/preview/stop", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.stopPreview(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   router.put("/:id/home-file", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)

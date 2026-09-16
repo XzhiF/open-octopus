@@ -7,12 +7,12 @@ RoundEvidenceService preview 会话(start/status/stop):闸门与 cwd 逃逸校�
 01
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
-- [ ] AC1: `node -e http server` fixture 起→ready→stop 后端口释放(再 probe 不通)
-- [ ] AC2: 进程自发退出 → exited+exit_code;未配置 → 400;无 awaiting/ws 没了 → 409
-- [ ] AC3: 外部进程占 url、本服务无会话 → GET {ready,external:true}
+- [x] AC1: `node -e http server` fixture 起→ready→stop 后端口释放(再 probe 不通)
+- [x] AC2: 进程自发退出 → exited+exit_code;未配置 → 400;无 awaiting/ws 没了 → 409
+- [x] AC3: 外部进程占 url、本服务无会话 → GET {ready,external:true}
 
 ## Verification Method
 **type**: unit — server 起真子进程(node/python 内联 http),端口用 ephemeral;SSE 断言走 emit spy。

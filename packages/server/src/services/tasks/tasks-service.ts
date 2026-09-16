@@ -1188,6 +1188,7 @@ export class TasksService {
       case "goal_confirmed":
       case "ac_confirmed":
       case "acceptance_verify":
+      case "acceptance_preview":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
