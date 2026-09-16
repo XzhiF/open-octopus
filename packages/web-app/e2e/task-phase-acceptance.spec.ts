@@ -355,7 +355,7 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
 // ── AC3（拆分）: 影响清单批准写回链的服务端半程 — spec-field(phases) →
 //    home manifest.json 内容变化 + version bump（API 回读断言）。
 //    web 半程（勾选→updateSpecField(phases) 整数组）由组件测试
-//    acceptance-modal.test.tsx「ImpactApprovalList」断言；e2e 里弹窗无法
+//    acceptance-surface.test.tsx「ImpactApprovalList」断言；e2e 里无 items 注入
 //    注入 items（server 无 impact API — v4.1 接缝，票头已记）。 ──────────
 
 test("AC3 phases write-back roundtrip: spec-field(phases) changes home manifest.json + bumps version", async () => {

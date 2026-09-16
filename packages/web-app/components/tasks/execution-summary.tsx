@@ -3,7 +3,7 @@
 // 执行弹窗的公共件（2026-09-12 执行弹窗改版后瘦身）：
 //   RUN_STATUS_LABEL / RUN_ERROR_STATUSES / runErrorOf — 运行行状态词表与红行
 //     判据单源（看板 tooltip / 控制台轮次行 / composite 弹窗共用）。
-//   TaskAiUsageCard — AI 消耗卡（acceptance-modal 左列注入 round 口径仍用）。
+//   TaskAiUsageCard — AI 消耗卡（验货台左列注入 round 口径仍用）。
 //   ArtifactsCard — task home artifacts.json 列表 + 查看全文。
 //   useRunsAggregates / mergeAggregates / deepLinkTarget / execLabel — run-console
 //     的数据 plumbing（一次拉取喂多处显示）。

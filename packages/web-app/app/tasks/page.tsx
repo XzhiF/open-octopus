@@ -26,7 +26,6 @@ import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
 import { runErrorOf } from "@/components/tasks/execution-summary"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
-import { AcceptanceModal } from "@/components/tasks/acceptance-modal"
 import {
   TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT,
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_TRIGGER_FAILED_EVENT,
@@ -96,6 +95,9 @@ export default function TasksPage() {
   // null task = new-task authoring ([+新建]); a Task = card click.
   const [modalTask, setModalTask] = useState<TaskView | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  // 票 12 (K14)→ 2026-09-16 改版: 待验收列卡「验收」= 打开任务控制台并落在
+  // 「验货台」tab（独立三栏弹窗 AcceptanceModal 退役）。
+  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
 
   // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
   // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
@@ -245,7 +247,7 @@ export default function TasksPage() {
 
   const openNew = () => { setModalTask(null); setModalOpen(true) }
   const openCard = (task: TaskView) => { setModalTask(task); setModalOpen(true) }
-  const close = () => { setModalOpen(false); setModalTask(null) }
+  const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
 
   // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that
   // used to emit it is gone with the origin_* columns — the URL itself stays, it is
@@ -272,9 +274,6 @@ export default function TasksPage() {
 
   // v39: which ready task has the trigger dialog open.
   const [triggerTaskId, setTriggerTaskId] = useState<string | null>(null)
-
-  // 票 12 (K14): which task has the 验收三栏 modal open (待验收列卡「验收」按钮).
-  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
 
   // 票 12 (US11/K6): autoAdvance=false 时「启动下一 Phase」— POST /:id/advance
   // (票 08 契约). Busy-guard per click; 409 = 派生态已变 → 刷新盘面.
@@ -399,7 +398,7 @@ export default function TasksPage() {
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
-                        onAcceptRequest={(t) => setAcceptTaskId(t.id)}
+                        onAcceptRequest={(t) => { setAcceptTaskId(t.id); openCard(t) }}
                         onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                       />
@@ -428,6 +427,7 @@ export default function TasksPage() {
         task={modalTask}
         onMutated={fetchTasks}
         onDraftResolved={handleDraftResolved}
+        startOnAcceptance={acceptTaskId !== null && acceptTaskId === modalTask?.id}
       />
 
       {/* v39 trigger dialog — armed from ready-column cards (or modal) */}
@@ -438,14 +438,8 @@ export default function TasksPage() {
         onTriggered={fetchTasks}
       />
 
-      {/* 票 12 (K14): 验收三栏 modal — 待验收列卡「验收」打开；task 引用随
-          fetchTasks 刷新（同 modalTask 的同步模式）。 */}
-      <AcceptanceModal
-        open={!!acceptTaskId}
-        onOpenChange={(o) => { if (!o) setAcceptTaskId(null) }}
-        task={tasks.find((t) => t.id === acceptTaskId) ?? null}
-        onMutated={fetchTasks}
-      />
+      {/* 票 12 (K14) 验收三栏弹窗已于 2026-09-16 收编为执行控制台的「验货台」
+          tab（TaskModal startOnAcceptance 直达）— AcceptanceModal 挂载点退役。 */}
 
       {/* Confirm-delete dialog for draft tasks */}
       <AlertDialog open={!!deletingTaskId} onOpenChange={(o) => { if (!o) setDeletingTaskId(null) }}>

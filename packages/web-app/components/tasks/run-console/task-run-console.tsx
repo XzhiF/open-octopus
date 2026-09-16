@@ -32,7 +32,7 @@ import { getServerUrl } from "@/lib/server-config"
 import { formatCost, formatTokenCount } from "@/lib/format"
 import { phaseBudgetMs } from "@/lib/task-board"
 import { EditableTitle } from "../editable-title"
-import { AcceptanceModal } from "../acceptance-modal"
+import { AcceptanceSurface } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
@@ -56,20 +56,27 @@ interface TaskRunConsoleProps {
   onMutated: () => void
   onClose: () => void
   chrome?: RunConsoleChrome
+  /** 看板「验收」按钮直开时：落地即选中「验货台」tab。 */
+  startOnAcceptance?: boolean
 }
 
 const LIVE_RUN_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
 const ERROR_RUN_STATUSES = new Set(["failed", "aborted", "completed_with_failures"])
 const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 
-export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunConsoleProps) {
+export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAcceptance }: TaskRunConsoleProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [triggerOpen, setTriggerOpen] = useState(false)
-  const [accOpen, setAccOpen] = useState(false)
+  // 验货台 = 本控制台的 tab（2026-09-16 改版：原三栏弹窗 AcceptanceModal 收编
+  // 内嵌，父窗自带拖拽/缩放/全屏；打回回显留在 tab 里，不随派生态变化弹出）。
+  const [surfaceTab, setSurfaceTab] = useState<"console" | "accept">("console")
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
-  useEffect(() => { setSel(undefined) }, [task.id])
+  useEffect(() => {
+    setSel(undefined)
+    setSurfaceTab(startOnAcceptance ? "accept" : "console")
+  }, [task.id, startOnAcceptance])
 
   const isLive =
     task.status === "ready" || task.status === "running" ||
@@ -202,7 +209,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
     now, isLive, events, refetch, onMutated,
-    openAcceptance: () => setAccOpen(true),
+    openAcceptance: () => setSurfaceTab("accept"),
     openTrigger: () => setTriggerOpen(true),
   }
 
@@ -311,8 +318,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
             </button>
           )}
           {task.status === "awaiting_review" && (
-            <button onClick={() => setAccOpen(true)} data-acceptance-open-bar className={barBtn} title="三栏证据面（摘要/产物/动作）">
-              🔍 证据面
+            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对·叙述/动作）">
+              🔍 验货台
             </button>
           )}
           {task.status === "ready" && !armedFuture && !waitingForSlot && (
@@ -367,13 +374,54 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
           ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel}
           isV4={isV4} aggLoaded={aggLoaded}
         />
-        <div className="min-w-0 flex-1 overflow-y-auto bg-pop-bg p-3.5">
-          {view === "report" || !derived
-            ? <ReportSurface ctx={ctx} />
-            : (() => {
-              const pv = phaseViews.find((p) => p.index === view)
-              return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
-            })()}
+        <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
+          {/* ── surface tabs（2026-09-16）：有待验收轮时亮出「执行控制台 | 验货台」
+              二档 —— 验货台从独立弹窗收编为 tab，继承父窗拖拽/缩放/全屏。
+              打回后派生态暂无 awaiting（修复轮在跑），若用户正停在验货台看
+              回显卡，条不撤（撤了就等于把 seam 踢没）。 ── */}
+          {(awaitingPv || surfaceTab === "accept") && (
+            <div className="flex shrink-0 items-center gap-1.5 border-b-[2px] border-pop-bd/15 bg-pop-paper px-3 py-1.5" data-console-tabs>
+              <button
+                onClick={() => setSurfaceTab("console")}
+                aria-selected={surfaceTab === "console"}
+                data-console-tab="console" data-testid="console-tab-console"
+                className={`rounded-full border-[2px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                  surfaceTab === "console"
+                    ? "border-pop-bd bg-pop-yellow text-pop-ink shadow-pop-sm"
+                    : "border-pop-bd/25 text-pop-dim hover:border-pop-bd/60"
+                }`}
+              >
+                ▶ 执行控制台
+              </button>
+              <button
+                onClick={() => setSurfaceTab("accept")}
+                aria-selected={surfaceTab === "accept"}
+                data-console-tab="accept" data-testid="console-tab-accept"
+                className={`flex items-center gap-1 rounded-full border-[2px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                  surfaceTab === "accept"
+                    ? "border-pop-bd bg-pop-amber text-white shadow-pop-sm"
+                    : "border-pop-amber/50 bg-pop-amber-soft text-pop-amber hover:border-pop-bd/60"
+                }`}
+              >
+                🔍 验货台
+                {awaitingPv && <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>}
+              </button>
+            </div>
+          )}
+          {surfaceTab === "accept" ? (
+            <div className="min-h-0 flex-1 bg-pop-paper">
+              <AcceptanceSurface task={task} onMutated={() => { onMutated(); refetch() }} onDecided={() => setSurfaceTab("console")} />
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+              {view === "report" || !derived
+                ? <ReportSurface ctx={ctx} />
+                : (() => {
+                  const pv = phaseViews.find((p) => p.index === view)
+                  return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
+                })()}
+            </div>
+          )}
         </div>
       </div>
 
@@ -401,9 +449,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome }: TaskRunCons
         )}
       </div>
 
-      {/* 对话框宿主（单实例） */}
+      {/* 对话框宿主（单实例）—— 验货台已收编为上方 tab，不再挂弹窗。 */}
       <TriggerDialog open={triggerOpen} onOpenChange={setTriggerOpen} task={task} onTriggered={() => { onMutated(); refetch() }} />
-      <AcceptanceModal task={task} open={accOpen} onOpenChange={setAccOpen} onMutated={() => { onMutated(); refetch() }} />
     </div>
   )
 }

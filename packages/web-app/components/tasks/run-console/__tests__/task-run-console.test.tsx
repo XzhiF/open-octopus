@@ -61,7 +61,7 @@ vi.mock("../../authoring/phase-spec-dialog", () => ({
   specFileClass: () => ({ label: "md", tone: "bg-muted" }),
   batchDirOf: (p: string) => p.split("/").slice(0, -1).join("/"),
 }))
-vi.mock("../../acceptance-modal", () => ({ AcceptanceModal: () => null }))
+vi.mock("../../acceptance/acceptance-surface", () => ({ AcceptanceSurface: () => <div data-acceptance-surface-stub /> }))
 vi.mock("../../trigger-dialog", () => ({
   TriggerDialog: () => null,
   TriggerActions: () => null,
@@ -237,7 +237,35 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
     fireEvent.click(screen.getByText(/验收通过（放行下一 Phase）/))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("task-1", { phase_index: 2, round_index: 1, decision: "accepted" }))
-    expect(screen.getByText(/完整三栏证据面/)).toBeTruthy()
+    expect(screen.getByText(/验货台核对实物/)).toBeTruthy()
+  })
+
+  it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    // 有待验收轮 → tab 条亮出两档，surface 未挂
+    const acceptTab = await screen.findByTestId("console-tab-accept")
+    expect(acceptTab.textContent).toContain("P1·R1")
+    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
+    // 交付报告里的「验货台核对实物 →」= 切 tab，不是开弹窗
+    fireEvent.click(screen.getByText(/验货台核对实物/))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    // 切回执行控制台
+    fireEvent.click(screen.getByTestId("console-tab-console"))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull())
+    expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
+    // 导航条「🔍 验货台」也走切 tab（chip 直接文本同为 🔍 验货台，取条内钮的锚点）
+    fireEvent.click(document.querySelector("[data-acceptance-open-bar]") as HTMLElement)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+  })
+
+  it("startOnAcceptance（看板「验收」按钮）：挂载即落验货台 tab", async () => {
+    const t = makeTask("awaiting_review")
+    mockGetTask.mockResolvedValue({ ...t, derived: derivedOf([pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]) } as never)
+    render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} startOnAcceptance />)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
 
   it("过程回放（走查回灌）：agent-events 节点边界垫进活动流，事后打开不再「暂无事件」", async () => {

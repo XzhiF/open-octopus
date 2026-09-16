@@ -1,7 +1,8 @@
 // task-phase-redesign 票 12（AC1/AC2）+ 验货台 v2（实物 diff / 当场复检 / 票对账）
-// — AcceptanceModal 组件测试。数据权威 = GET /:id.derived（票 03 唯一真相），
-// fixture 独立于组件实现。中列三 tab：默认「实物」；「叙述」承接 v1 批次文件断言
-// （点击 tab 后可见）；复检 SSE 用 subscribeSSE 捕获表手动注入事件。
+// — AcceptanceSurface 组件测试（2026-09-16：三栏弹窗 AcceptanceModal 收编为执行
+// 控制台的「验货台」tab，本测试随内容组件迁移）。数据权威 = GET /:id.derived
+// （票 03 唯一真相），fixture 独立于组件实现。中列三 tab：默认「实物」；「叙述」
+// 承接 v1 批次文件断言（点击 tab 后可见）；复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
@@ -74,7 +75,8 @@ vi.mock("@/lib/sse-manager", () => ({
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-import { AcceptanceModal, ImpactApprovalList } from "../acceptance-modal"
+import { AcceptanceSurface } from "../acceptance-surface"
+import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
@@ -309,14 +311,14 @@ beforeEach(() => {
 function renderModal(spec: TaskSpec = V4_SPEC) {
   mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, spec))
   const task = makeDetail(PHASE1_AWAITING, spec) as unknown as Task
-  return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+  return render(<AcceptanceSurface task={task} onMutated={() => {}} />)
 }
 
 /** 票 04：指定派生视图开窗（覆盖 beforeEach 的默认 mockGetTask 返回值）。 */
 function renderModalWith(derived: TaskDerivedView, spec: TaskSpec = V4_SPEC) {
   mockGetTask.mockResolvedValue(makeDetail(derived, spec))
   const task = makeDetail(derived, spec) as unknown as Task
-  return render(<AcceptanceModal task={task} open onOpenChange={() => {}} onMutated={() => {}} />)
+  return render(<AcceptanceSurface task={task} onMutated={() => {}} />)
 }
 
 /** tab 条在 awaitingPhase 到手（detail 落地）后才渲染 — 必须异步等。 */
@@ -325,7 +327,7 @@ async function openStoryTab() {
   fireEvent.click(tab)
 }
 
-describe("AcceptanceModal — AC1 三栏证据面", () => {
+describe("AcceptanceSurface — AC1 三栏证据面", () => {
   it("三栏齐现；左列=round 状态/用时/token/cost（round 口径），角标=Phase 1/2 · Round 1", async () => {
     renderModal()
     expect(await screen.findByTestId("acceptance-modal")).toBeTruthy()
@@ -366,16 +368,20 @@ describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
 
   it("文件点开 → 懒拉 patch（getRoundPatch repo+path）行着色渲染；不重复拉", async () => {
     renderModal()
-    const row = await screen.findByTestId(`acceptance-tab-diff`)
-    expect(row).toBeTruthy()
-    const fileBtn = document.querySelector('[data-acceptance-diff-row="open-octopus:packages/server/src/db/schema.ts"]') as HTMLButtonElement
-    await waitFor(() => expect(fileBtn).toBeTruthy())
-    fireEvent.click(fileBtn)
+    expect(await screen.findByTestId(`acceptance-tab-diff`)).toBeTruthy()
+    // 查询必须在 waitFor 里做 — diff 行随 getRoundDiff 的 promise 落地，
+    // 同步 querySelector 拿到的是加载前的 null（旧弹窗版靠微任务时序侥幸绿）。
+    let fileBtn: HTMLButtonElement | null = null
+    await waitFor(() => {
+      fileBtn = document.querySelector('[data-acceptance-diff-row="open-octopus:packages/server/src/db/schema.ts"]')
+      expect(fileBtn).toBeTruthy()
+    })
+    fireEvent.click(fileBtn!)
     await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "open-octopus", "packages/server/src/db/schema.ts"))
     const patch = await screen.findByTestId("round-diff-patch")
     expect(patch.textContent).toContain("l2-edited")
-    fireEvent.click(fileBtn) // 收起
-    fireEvent.click(fileBtn) // 再展开 → 缓存，不再拉
+    fireEvent.click(fileBtn!) // 收起
+    fireEvent.click(fileBtn!) // 再展开 → 缓存，不再拉
     await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledTimes(1))
   })
 
@@ -450,7 +456,7 @@ describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", ()
   })
 })
 
-describe("AcceptanceModal — 叙述 tab（v1 批次直读整体降级收容）", () => {
+describe("AcceptanceSurface — 叙述 tab（v1 批次直读整体降级收容）", () => {
   it("specPath 定位批次目录 all=1 直读；行渲染 + 内嵌 round-report + 本轮徽章 + 不可预览门", async () => {
     renderModal()
     // 列表拉取不依赖 tab（matrix/叙述共用 files state）
@@ -488,7 +494,7 @@ describe("AcceptanceModal — 叙述 tab（v1 批次直读整体降级收容）"
   })
 })
 
-describe("AcceptanceModal — 中列状态面（404 空态 / 错误行 / 回退定位 / idle）", () => {
+describe("AcceptanceSurface — 中列状态面（404 空态 / 错误行 / 回退定位 / idle）", () => {
   it("批次目录 404（collect 前未落盘）→ 叙述 tab 空态卡，不显错误", async () => {
     mockListHomeDir.mockRejectedValue(new TaskApiError("batch dir not found", 404))
     renderModal()
@@ -530,7 +536,7 @@ describe("AcceptanceModal — 中列状态面（404 空态 / 错误行 / 回退�
   })
 })
 
-describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
+describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
   it("反馈为空时打回确认 disabled；缺省路由=修订重跑；选轻量修复后 body 带 next_flow=fix", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
@@ -602,7 +608,7 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二�
   })
 })
 
-describe("AcceptanceModal — 票 04 前序交接提示行（phase-handoff-chaining K6）", () => {
+describe("AcceptanceSurface — 票 04 前序交接提示行（phase-handoff-chaining K6）", () => {
   it("AC1: 双 phase、phase1 待验收 → 确认按钮上方显示提示行 N=1；打回面板展开即隐藏、取消恢复", async () => {
     renderModal()
     const hint = await screen.findByTestId("handoff-hint")

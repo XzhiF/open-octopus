@@ -118,3 +118,20 @@ artifact-viewer-dialog 新套件 4 例）；web 全量 6 失败 = 既有基线�
 2. 票级锚依赖报告备注写文件路径；matt-spec-dev 现状备注不写 → 主要靠全局对账。抬票级锚率需 ship 段纪律「判据结果带路径」（SKILL 侧，别处改）。
 3. 矩阵判定与「验收通过」无联动：FAIL 盖章/幻影申报不拦决策、决策也不附证据快照。
 4. 归档（ws 销毁）后 diff 三态过期，verdict .md 是唯一留存实物证据；diff 摘要快照未做。
+
+## 验货台 tab 化（v2.2，2026-09-16 用户 UI 回灌）
+
+用户三连击：①弹窗宽度不够、右列按钮文字被截；②没有全屏/拖动/调大小（「跟任务草稿窗一样」）；③切 tab 点点点后界面卡死。裁决：**「把这个界面作为 tab 页放到红框的这个『任务执行控制台』里面，类似『流程|活动|产物』这些 tab 一样」**。
+
+### 方案 = 退役弹窗，收编为控制台 tab
+
+- **AcceptanceSurface**（新 `components/tasks/acceptance/acceptance-surface.tsx`）：原 AcceptanceModal 全部数据流/三栏 UI 平迁，去 `open` 门（挂载即活）；根锚点保留 `data-acceptance-modal`/`data-testid=acceptance-modal` + `data-acceptance-col-*`，**e2e（task-phase-acceptance / lifecycle）选择器零改写命中内嵌面**。`ImpactApprovalList` 搬 `acceptance/impact-approval-list.tsx`。`acceptance-modal.tsx` 删除。
+- **控制台 tab**（task-run-console）：有待验收轮即亮 `[▶ 执行控制台 | 🔍 验货台 P{p}·R{r}]`；判决条「完整三栏证据面 ↗」改「验货台核对实物 →」= 切 tab；条内 🔍 钮同效。**通过/中止 → onDecided 弹回控制台 tab；打回不弹**（回显卡+影响清单留在原地）。tab 不随派生态消失硬撤（防 seam 被踢没）。
+- **三个抱怨的对账**：①宽度 = 继承控制台视口百分比宽（默认可调）+ 右列 320px + 通过/打回/中止钮 `whitespace-normal` 换行不截断（实测两视口 scrollWidth/clientWidth 零截断）；②拖/缩/全屏 = 父窗自带（chrome 契约原样），弹窗层 3→2；③卡死 = headless 复现 rAF 全程 <160ms 无 CPU 冻结，实锤的是多层 modal 叠加的交互死锁面 + **核对 tab 懒载死锁**（旧 specLoading 进 deps → setSpecLoading(true) 触发 effect 自重跑，cleanup 抢在响应前 cancelled=true，永卡「读取契约结构…」；tab 化后此景=用户所述「切一下 tab 就卡」）。改 `specFetchedForRef` once 门（不进 deps），实测 `ac-matrix-us` 上屏 = spec.md 真到手。
+- **看板「验收」按钮**：不再开独立弹窗 → `startOnAcceptance` 直达 TaskModal 验货台 tab（TaskModal→TaskRunConsole 透传）。
+
+### 验证记录（v2.2）
+
+- web 全量 580 绿 / **6 失败 = 既有基线原样**（harness×3+knowledge×3，system-pages 文件级）；console 14（新增：证据链接切 tab / 切回 / 条内钮 / startOnAcceptance 直达 ×2 视口用例合并计 2）、surface 23 全绿——含一处**旧测试自带 race**（同步 querySelector 抓 patch 行，旧弹窗版侥幸微任务序绿）改 waitFor 内查询。
+- 真浏览器双视口（1460×930 + 1280×720 桌面 Chrome e2e 同档）矩阵全绿：直达 tab ✓、截断 0 ✓、sub-tab 狂点×5 lag <35ms ✓、核对 tab US 块+全局对账渲染 ✓、文件开合+重进 tab ✓、**关控制台后 body pointerEvents=auto / overlay=0 / 看板可点 ✓**（`html overflow:hidden` 为 app-shell CSS 恒值，非 remove-scroll 泄漏，fresh load 对照钉死）。console errors 两视口零。截图 `tmp/tab-check/`。
+- 遗留小刺（知情不修）：判决条「✕ 打回」现在只切 tab，反馈面板需在验货台内再点一下「打回（写反馈）」展开（省一个 intent 透传 prop，行为可接受）。

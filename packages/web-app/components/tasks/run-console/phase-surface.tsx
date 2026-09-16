@@ -49,7 +49,7 @@ export interface RunCtx {
   events: StreamEvent[]
   refetch: () => void
   onMutated: () => void
-  /** 打开三栏验收证据面（现有 AcceptanceModal 不改）。 */
+  /** 切到「验货台」tab（三栏证据面已收编为控制台 tab，2026-09-16）。 */
   openAcceptance: () => void
   /** 打开触发对话框（TriggerDialog，控制台单实例）。 */
   openTrigger: () => void
@@ -346,7 +346,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   </span>
                   {aggLine(agg) && <span className="font-mono text-pop-dim">{aggLine(agg)}{agg && agg.totalCalls > 0 ? ` · ↑${formatTokenCount(agg.usage.inputTokens)} ↓${formatTokenCount(agg.usage.outputTokens)}` : ""}</span>}
                   <button onClick={ctx.openAcceptance} className="ml-auto shrink-0 font-mono text-[10.5px] font-black text-pop-purple underline hover:text-pop-ink" data-acceptance-evidence-link>
-                    完整三栏证据面 ↗
+                    验货台核对实物 →
                   </button>
                 </div>
                 {roundError && (

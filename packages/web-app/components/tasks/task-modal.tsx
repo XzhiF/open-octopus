@@ -59,6 +59,8 @@ interface TaskModalProps {
   onMutated: () => void
   /** Page adopts a draft the task-author clone just created (new-task flow). */
   onDraftResolved?: (task: TaskView) => void
+  /** 看板「验收」按钮：打开即落在执行控制台的「验货台」tab。 */
+  startOnAcceptance?: boolean
 }
 
 type ModalMode =
@@ -128,7 +130,7 @@ const STATUS_TONE: Record<string, string> = {
 
 // ── TaskModal ───────────────────────────────────────────────────────
 
-export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
+export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved, startOnAcceptance }: TaskModalProps) {
   const mode = resolveMode(task)
   // 模板选择页(直建第一屏)只是单列表单 → 用紧凑弹窗;工作台/执行视图才需要宽面。
   const isTemplate = mode === "authoring-template"
@@ -329,6 +331,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
                 task={task}
                 onMutated={onMutated}
                 onClose={() => onOpenChange(false)}
+                startOnAcceptance={startOnAcceptance}
                 chrome={{
                   isFullscreen,
                   onToggleFullscreen: () => setIsFullscreen((f) => !f),
