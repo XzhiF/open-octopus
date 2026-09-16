@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, AcceptanceVerify } from "@octopus/shared"
@@ -574,12 +575,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         </span>
       </div>
 
-      {/* 两栏版面（2026-09-16 用户回灌：三栏后中列太窄）：
-          实物|核对|叙述 = 主面吃满剩余宽；执行摘要+动作区 合并右 360px 侧栏
-          （摘要上、动作下，各自滚动）。窄屏折叠为纵向（DOM 序：摘要→主面→动作）。 */}
+      {/* 两栏版面（2026-09-16 用户回灌两轮：三栏后中列太窄 → 摘要/动作并进右列；
+          右列双滚动条 + 摘要行截断横滚 → 摘要自然高全展示、动作仅溢出时兜底滚）。
+          实物|核对|叙述 = 主面吃满剩余宽；右 360px：执行摘要（上，自然高不滚动）、
+          动作区（下，撑满剩余，仅内容超界才滚）。窄屏折叠为纵向（DOM 序：摘要→主面→动作）。 */}
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-none max-lg:overflow-y-auto">
-        {/* ── 右侧栏上：执行摘要 ── */}
-        <div className="col-start-2 row-start-1 min-h-0 max-h-[46%] space-y-3 overflow-y-auto border-l border-border p-4 max-lg:col-auto max-lg:row-auto max-lg:max-h-none max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b" data-acceptance-col-summary data-testid="acceptance-col-summary">
+        {/* ── 右侧栏上：执行摘要（自然高 —— 行内换行全展示，不再自带滚动） ── */}
+        <div className="col-start-2 row-start-1 space-y-2.5 border-l border-border p-4 max-lg:col-auto max-lg:row-auto max-lg:border-l-0 max-lg:border-b" data-acceptance-col-summary data-testid="acceptance-col-summary">
           <div className="text-xs font-semibold text-muted-foreground">执行摘要</div>
           {!detail ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
@@ -591,18 +593,20 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
             </p>
           ) : (
             <>
+              {/* 行版式（v2.4）：label 不缩、value 可换行全展示 —— 旧 truncate
+                  在 flex 里没有 min-w-0 配合，长值撑破 360px 引出横向滚动条。 */}
               <div className="space-y-1 text-sm">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-muted-foreground text-xs">Phase</span>
-                  <span className="truncate font-medium">{awaitingPhase?.index}/{total} · {awaitingPhase?.name}</span>
+                  <span className="shrink-0 text-muted-foreground text-xs">Phase</span>
+                  <span className="min-w-0 text-right break-words font-medium">{awaitingPhase?.index}/{total} · {awaitingPhase?.name}</span>
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-muted-foreground text-xs">Round</span>
+                  <span className="shrink-0 text-muted-foreground text-xs">Round</span>
                   <span className="tabular-nums">R{awaitingRound.roundIndex}</span>
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-muted-foreground text-xs">Workflow</span>
-                  <code className="max-w-[200px] truncate text-[11px]">{awaitingPhase?.workflowRef || "—"}</code>
+                  <span className="shrink-0 text-muted-foreground text-xs">Workflow</span>
+                  <code className="min-w-0 text-right text-[11px] break-all">{awaitingPhase?.workflowRef || "—"}</code>
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-muted-foreground text-xs">执行结果</span>
@@ -815,69 +819,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 size="sm"
                 disabled={busy !== null}
-                onClick={() => setRejectOpen((v) => !v)}
+                onClick={() => setRejectOpen(true)}
                 data-acceptance-reject data-testid="acceptance-reject"
               >
                 <Undo2 className="size-4 mr-1" /> 打回（写反馈）
               </Button>
 
-              {rejectOpen && (
-                <div className="space-y-2 rounded-md border border-pop-amber/40 bg-pop-amber-soft p-2.5" data-reject-panel>
-                  <label className="text-[11px] font-medium text-pop-ink">
-                    打回反馈（必填 — 落 fix-feedback-r{awaitingPhase.awaitingRound}.md）
-                  </label>
-                  <Textarea
-                    rows={4}
-                    value={feedback}
-                    onChange={(e) => setFeedback(e.target.value)}
-                    placeholder="哪里不对 / 期望怎么修 — agent 修复轮以此为输入"
-                    className="text-xs"
-                    data-reject-feedback data-testid="reject-feedback"
-                  />
-                  {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
-                      信封 phases[] 绑定冻结不破） */}
-                  <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
-                    <div className="text-[11px] font-medium text-pop-ink">下一轮路由</div>
-                    <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
-                      <input
-                        type="radio" name="reject-flow" className="mt-0.5"
-                        checked={nextFlow === "rerun"}
-                        onChange={() => setNextFlow("rerun")}
-                      />
-                      <span>
-                        <b>修订重跑</b>（重跑绑定流 · 默认）
-                        <span className="block text-[10px] text-muted-foreground">绑定 matt-spec-dev 时流内先按反馈就地审查更新 spec，再整轮重执行</span>
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="fix">
-                      <input
-                        type="radio" name="reject-flow" className="mt-0.5"
-                        checked={nextFlow === "fix"}
-                        onChange={() => setNextFlow("fix")}
-                      />
-                      <span>
-                        <b>轻量修复</b>（task-fix）
-                        <span className="block text-[10px] text-muted-foreground">按反馈定点修 + fix-report，不重跑整个里程碑；规格级问题请改选修订重跑</span>
-                      </span>
-                    </label>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setRejectOpen(false)}>
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-auto py-1 text-[10px] whitespace-normal text-right leading-snug"
-                      disabled={!feedback.trim() || busy !== null}
-                      onClick={() => void handleReject()}
-                      data-reject-confirm data-testid="reject-confirm"
-                    >
-                      {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
-                      打回确认（开 Round {awaitingPhase.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"} · {nextFlow === "fix" ? "轻量修复" : "修订重跑"}）
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {/* 打回表单 v2.4：右列内联展开 → 独立弹窗（见文末 Dialog）。 */}
 
               <div className="space-y-1.5 border-t pt-2">
                 <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
@@ -933,6 +881,77 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           )}
         </div>
       </div>
+
+      {/* 打回反馈弹窗（v2.4 用户裁决：右列内联展开别扭 → 独立弹窗输入；
+          皮肤 = 全站贴纸 Dialog，与任务草稿窗同风格。路由二分（ADR-0018）照旧。 */}
+      <Dialog
+        open={rejectOpen}
+        onOpenChange={(o) => { if (!o && busy !== "reject") setRejectOpen(false) }}
+      >
+        <DialogContent className="sm:max-w-[540px]" data-reject-dialog data-testid="reject-dialog">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">
+              {`打回 Phase ${awaitingPhase?.index ?? "?"} · Round ${awaitingPhase?.awaitingRound ?? "?"} — 写反馈`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3" data-reject-panel>
+            <label className="text-[11px] font-medium text-pop-ink">
+              打回反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md）
+            </label>
+            <Textarea
+              rows={6}
+              autoFocus
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              placeholder="哪里不对 / 期望怎么修 — agent 修复轮以此为输入"
+              className="min-h-[120px] text-xs"
+              data-reject-feedback data-testid="reject-feedback"
+            />
+            {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
+                信封 phases[] 绑定冻结不破） */}
+            <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
+              <div className="text-[11px] font-medium text-pop-ink">下一轮路由</div>
+              <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
+                <input
+                  type="radio" name="reject-flow" className="mt-0.5"
+                  checked={nextFlow === "rerun"}
+                  onChange={() => setNextFlow("rerun")}
+                />
+                <span>
+                  <b>修订重跑</b>（重跑绑定流 · 默认）
+                  <span className="block text-[10px] text-muted-foreground">绑定 matt-spec-dev 时流内先按反馈就地审查更新 spec，再整轮重执行</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="fix">
+                <input
+                  type="radio" name="reject-flow" className="mt-0.5"
+                  checked={nextFlow === "fix"}
+                  onChange={() => setNextFlow("fix")}
+                />
+                <span>
+                  <b>轻量修复</b>（task-fix）
+                  <span className="block text-[10px] text-muted-foreground">按反馈定点修 + fix-report，不重跑整个里程碑；规格级问题请改选修订重跑</span>
+                </span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setRejectOpen(false)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                className="h-auto py-1.5 text-xs whitespace-normal text-right leading-snug"
+                disabled={!feedback.trim() || busy !== null}
+                onClick={() => void handleReject()}
+                data-reject-confirm data-testid="reject-confirm"
+              >
+                {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
+                打回确认（开 Round {awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"} · {nextFlow === "fix" ? "轻量修复" : "修订重跑"}）
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ArtifactViewerDialog
         taskId={taskId ?? ""}

@@ -165,7 +165,7 @@ export function AggInline({ agg, className, dim = "text-pop-dim" }: {
   const cr = usage.cacheReadTokens ?? 0
   const cw = usage.cacheCreationTokens ?? 0
   return (
-    <span className={`tabular-nums inline-flex shrink-0 items-center gap-1.5 ${className ?? ""}`} data-agg-inline data-testid="agg-inline">
+    <span className={`tabular-nums inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 ${className ?? ""}`} data-agg-inline data-testid="agg-inline">
       <span className="font-black" title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(totals.tokens)}</span>
       <span title="输入">↑{formatTokenCount(usage.inputTokens ?? 0)}</span>
       <span title="输出">↓{formatTokenCount(usage.outputTokens ?? 0)}</span>
@@ -227,9 +227,9 @@ export function SectionCard({ icon, title, right, children, tone }: {
   return (
     <section className={`rounded-lg border p-4 space-y-3 ${tone ?? "border-border"}`}>
       <header className="flex items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
+        <span className="shrink-0 text-muted-foreground">{icon}</span>
         <h3 className="text-sm font-semibold">{title}</h3>
-        <div className="ml-auto flex items-center gap-2">{right}</div>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">{right}</div>
       </header>
       {children}
     </section>

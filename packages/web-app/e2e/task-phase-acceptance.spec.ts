@@ -261,16 +261,16 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
 
   // 反馈为空 / 全空白 → 打回确认 disabled
   await dialog.locator("[data-acceptance-reject]").click()
-  const confirm = dialog.locator("[data-reject-confirm]")
+  const confirm = page.locator("[data-reject-panel] [data-reject-confirm]")
   await expect(confirm).toBeDisabled()
-  await dialog.locator("[data-reject-feedback]").fill("   ")
+  await page.locator("[data-reject-panel] [data-reject-feedback]").fill("   ")
   await expect(confirm).toBeDisabled()
   await page.screenshot({ path: screenshotPath("T12-AC2-reject-disabled.png") })
 
   // —— 真实提交（不拦截）：server 写账本 + fix-feedback-r1.md；派发因 fixture 的 home 里
   // 没有批次 spec 文件 → armTask 的 resolveV4Phases 门前抛「任务契约已不再满足」而 409
   // （票 07：账本保留，重试=人工动作）→ UI 报错不崩。
-  await dialog.locator("[data-reject-feedback]").fill("E2E_TD 路由没接上，请修复")
+  await page.locator("[data-reject-panel] [data-reject-feedback]").fill("E2E_TD 路由没接上，请修复")
   await expect(confirm).toBeEnabled()
   await confirm.click()
   await expect
@@ -333,11 +333,11 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   const dlg2 = page.locator("[data-acceptance-modal]")
   await expect(dlg2).toBeVisible()
   await dlg2.locator("[data-acceptance-reject]").click()
-  await dlg2.locator("[data-reject-feedback]").fill("E2E_TD 成功路径反馈")
+  await page.locator("[data-reject-panel] [data-reject-feedback]").fill("E2E_TD 成功路径反馈")
   // ADR-0018 打回二分路由：二选一 radio 是活的，默认 = 修订重跑
-  await expect(dlg2.locator('[data-reject-flow="rerun"] input')).toBeChecked()
-  await expect(dlg2.locator('[data-reject-flow="fix"] input')).toBeEnabled()
-  await dlg2.locator("[data-reject-confirm]").click()
+  await expect(page.locator('[data-reject-panel] [data-reject-flow="rerun"] input')).toBeChecked()
+  await expect(page.locator('[data-reject-panel] [data-reject-flow="fix"] input')).toBeEnabled()
+  await page.locator("[data-reject-panel] [data-reject-confirm]").click()
   // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）+ D14 影响清单空态。
   await expect(dlg2.locator("[data-agent-recommend-card]")).toBeVisible({ timeout: 15_000 })
   await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("修订重跑")

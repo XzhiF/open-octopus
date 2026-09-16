@@ -647,9 +647,9 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
 
     // 打回：反馈必填 gate → 填写 → 真 POST
     await modal.locator("[data-acceptance-reject]").click()
-    const confirm = modal.locator("[data-reject-confirm]")
+    const confirm = page.locator("[data-reject-panel] [data-reject-confirm]")
     await expect(confirm).toBeDisabled()
-    await modal.locator("[data-reject-feedback]").fill(`E2E_TD 打回反馈：请补齐 ${RUN} 的出口核对`)
+    await page.locator("[data-reject-panel] [data-reject-feedback]").fill(`E2E_TD 打回反馈：请补齐 ${RUN} 的出口核对`)
     await expect(confirm).toBeEnabled()
     const accRespP = page.waitForResponse((r) => r.url().includes(`/api/tasks/${taskId}/acceptance`) && r.request().method() === "POST")
     await confirm.click()

@@ -145,3 +145,11 @@ artifact-viewer-dialog 新套件 4 例）；web 全量 6 失败 = 既有基线�
 **紧凑账目口径（用户圈定 cost-tab 风格、明令去掉工具调用）**：`AggInline`（execution-summary 新出口）= `∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用`。替换四处旧文案：phase-surface `aggLine`（轮次行/LIVE 卡/交付报告「94 calls · $6.28 · ↑654 ↓76.7K」怪串整体退役）、TaskAiUsageCard 数值行、导航条 token 段（dim 传深色 token class）、rail「次调用→次请求」。真任务回灌渲染 `∑5.8M ↑654 ↓76.7K ⚡5.4M 🗡️263.3K · 94 次请求 · $6.28` ✓。
 
 验证：web 全量 580 绿 / 6 失败=既有基线原样；tsc 触及文件零新增错（残余 1 条 draft-batches 与 children-prop lint 均既有）；两栏+口径浏览器实测截图 `tmp/tab-check/E-layout-*.png`。
+
+## 验货台 v2.4（2026-09-16，二单 DateUtils 实单回灌）
+
+**右列滚动治理（用户：「这里滚动条。。太扯淡的」）**：执行摘要去 `max-h-[46%]/overflow-y-auto` 改自然高全展示（摘要行 `truncate`→`min-w-0 text-right break-words`，Workflow code→break-all，根治 flex min-width:auto 撑破 360px 引出的横向滚动条）；动作区保留 `overflow-y-auto` 仅作溢出兜底（内容短，实测无滚动条）。根因二：`AggInline` 根 span 带 `shrink-0` 且内部不换行（为深色导航条防挤压加的那颗，把 359px 摘要列撑到 419px）→ 改 `min-w-0 flex-wrap gap-y-0.5`，bar 处的防挤压交回调用方 `className="shrink-0"`。SectionCard 头 right 容器加 `min-w-0 flex-wrap justify-end`。实测：摘要/动作/主面 横向纵向滚动条全零，账目在卡内两行折好。
+
+**打回反馈弹窗化（用户：「直接弹窗，我输入，而不是现在展开，写得太别扭」）**：右列 `rejectOpen` 内联面板整体迁入贴纸 Dialog（`[data-reject-dialog]`，sm:max-w-[540px]，与任务草稿同皮肤）——大输入框 autoFocus rows6、路由二分 radio、取消/打回确认（空反馈 disabled）照旧。按钮从 toggle 改单向 setTrue。**锚点迁移**：面板 portal 到 body 后 `[data-acceptance-modal]` 后代选择器断链 → e2e 两 spec 的 `[data-reject-*]` 全部改页级 `[data-reject-panel] [data-reject-*]`（9 处）；vitest screen 级查询无感。
+
+**二单实单记录**：API 直建 v4 任务配方 = POST /api/tasks（task_spec.format=v4 + phases[specPath/workflowRef/inputValues.batch_dir="${phase.batch_rel}"] + acceptance_verify）→ PUT home-file 写 spec.md → POST ready → **POST trigger（ready 不自动点火，手动触发）**。坑：种子只写 spec.md 不写 issues/*.md → 流内 fail-fast 止损（0 烧钱），安全守护 Agent 自动按 spec「Ticket DAG」表转录三票落盘 → 打回一轮即全绿。教训：**API 建单要在 ready 前把 issues/ 一并 PUT 落盘**。验证：web 全量 580 绿/6 失败=基线；打回弹窗 jsdom+真浏览器双实测（开/输/禁→启/取消，未提交）。
