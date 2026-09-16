@@ -7,13 +7,13 @@
 无
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
-- [ ] AC1: fixture 全料 → 票级步(每 item op/expect/evidence 非空)、finePrint 收录票内全部 AC、id 稳定(两次调用相同)
-- [ ] AC2: 缺全部文件 → available:false 不崩;部分缺 → coverage 如实
-- [ ] AC3: 9+ 票步 → degraded 故事级(每票 1 条)
-- [ ] AC4: 上轮 checks-r{N-1}.json skip/fail → carryover 段(带 fromRound/decision/note)
+- [x] AC1: fixture 全料 → 票级步(每 item op/expect/evidence 非空)、finePrint 收录票内全部 AC、id 稳定(两次调用相同)
+- [x] AC2: 缺全部文件 → available:false 不崩;部分缺 → coverage 如实
+- [x] AC3: 9+ 票步 → degraded 故事级(每票 1 条)
+- [x] AC4: 上轮 checks-r{N-1}.json skip/fail → carryover 段(带 fromRound/decision/note)
 
 ## Verification Method
 **type**: unit(vitest)— 临时目录 fixture 写 markdown,直接 service 级测(仿 tasks-verify.test.ts 装配)。

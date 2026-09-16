@@ -415,6 +415,18 @@ export function createTasksRoutes(
     }
   })
 
+  // 验收剧本：把 awaiting 轮的契约文件编译成走查清单（派生视图，不入库）。
+  // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
+  router.get("/:id/playbook", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.getPlaybook(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // 复检绝不自动跑 —— 本 POST 是唯一入口（202 = 已起会话，进度走 taskpool SSE：
   // task_verify_log 逐行 + task_verify 终态）。
   router.post("/:id/verify", async (c) => {

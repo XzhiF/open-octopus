@@ -51,6 +51,10 @@ import { TaskStatusConflictError } from "./tasks-service"
 import type { TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
+import { compilePlaybook } from "./playbook-compile"
+import type { PlaybookPayload, ChecksFile } from "./playbook-types"
+
+export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry } from "./playbook-types"
 
 // ── payload shapes (mirror: web lib/tasks-api.ts) ─────────────────────
 
@@ -475,6 +479,74 @@ export class RoundEvidenceService {
     session.userAborted = true
     session.controller.abort()
     return { ...session.summary }
+  }
+
+  // ── 验收剧本 (acceptance playbook) ─────────────────────────────────────
+
+  /** GET /:id/playbook — compile the awaiting round's契约 files into a walk/
+   *  probe/claim checklist (ADR-0022). Pure read + {@link compilePlaybook};
+   *  missing sources degrade into coverage.missing, never throw (200 with
+   *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
+  getPlaybook(taskId: string): PlaybookPayload {
+    const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+    if (!batchRelDir) {
+      // absolute specPath bypass — no batch dir to read, honest empty state.
+      return compilePlaybook({ roundIndex })
+    }
+    let listing: Array<{ path: string }> = []
+    try {
+      listing = this.taskHome.listHomeDir(taskId, batchRelDir, true)
+    } catch {
+      listing = [] // batch dir not on disk yet
+    }
+    const byBase = (re: RegExp): string | null => {
+      const hit = listing.find((e) => re.test(e.path.split("/").pop() ?? ""))
+      return hit ? hit.path : null
+    }
+    const read = (relPath: string | null): string | null => {
+      if (!relPath) return null
+      try {
+        return this.taskHome.readHomeFile(taskId, relPath).content
+      } catch {
+        return null // NOT_FOUND/race — treat as missing source
+      }
+    }
+    // latest NN-e2e-*.md (highest leading number), if any.
+    const e2ePaths = listing
+      .filter((e) => /(^|\/)\d[\d.-]*e2e[^/]*\.md$/i.test(e.path))
+      .map((e) => e.path)
+      .sort((a, b) => (parseInt(a.match(/\d+/)?.[0] ?? "0", 10) - parseInt(b.match(/\d+/)?.[0] ?? "0", 10)))
+    const e2ePath = e2ePaths[e2ePaths.length - 1] ?? null
+    // prior round's checks file (acceptance-checks-r{N}.json, N < roundIndex, max).
+    const prevPath = listing
+      .map((e) => e.path)
+      .map((p) => {
+        const m = /acceptance-checks-r(\d+)\.json$/.exec(p)
+        return m && Number(m[1]) < roundIndex ? { p, r: Number(m[1]) } : null
+      })
+      .filter((x): x is { p: string; r: number } => x !== null)
+      .sort((a, b) => b.r - a.r)[0] ?? null
+    let prevChecks: { round: number; data: ChecksFile } | null = null
+    if (prevPath) {
+      const raw = read(prevPath.p)
+      if (raw) {
+        try {
+          prevChecks = { round: prevPath.r, data: JSON.parse(raw) as ChecksFile }
+        } catch {
+          /* corrupt checks file → ignore, honest (carryover just empty) */
+        }
+      }
+    }
+    return compilePlaybook({
+      roundIndex,
+      specMd: read(byBase(/^spec\.md$/i) ?? byBase(/spec.*\.md$/i)),
+      e2eTicket: e2ePath
+        ? { name: e2ePath.split("/").pop() ?? "e2e.md", content: read(e2ePath) ?? "" }
+        : null,
+      e2eTestPlan: read(byBase(/^e2e-test-plan\.md$/i)),
+      roundReport: read(byBase(/^round-report\.md$/i) ?? byBase(/round.*report.*\.md$/i)),
+      prevChecks,
+    })
   }
 }
 
