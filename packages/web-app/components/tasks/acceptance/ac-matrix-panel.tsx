@@ -3,10 +3,12 @@
 // 验货台「核对」tab (acceptance v2) — spec 票清单 × round-report 声称 × diff 实物
 // 路径的三方对账。全部计算在 lib/acceptance-matrix.ts（纯函数，单测覆盖），本
 // 组件只渲染。行语义：
-//   anchored   ✅ 报告说了、diff 里真有 —— 有实物对应
-//   unanchored ⚠ 报告提了文件但 diff 没有 —— 说了没做/路径存疑
-//   no-claim   ⬜ spec 有此票但报告只字未提 —— 最该被追问的一行
-// footer「N/M 票有实物锚」= 这一轮的可信度速览。零 AI，判定可复核。
+//   anchored ✅ 有实物 —— 备注路径 token 或裸文件名锚到 diff
+//   unanchored ⚠ 说了没锚 —— 备注写了路径但 diff 没有
+//   silent ○ 无路径申报 —— 备注只有判据文字（真实报告常态），看全局对账块
+//   no-claim ⬜ spec 有此票但报告只字未提 —— 最该被追问的一行
+// 全局块 = 报告 Changed Files × diff 的文件级对账（幻影申报/未上报）。
+// footer「N/M 票有实物锚」+ 全局一致性 = 这一轮的可信度速览。零 AI，判定可复核。
 
 "use client"
 
@@ -17,6 +19,7 @@ import type { RoundDiffPayload } from "@/lib/tasks-api"
 import {
   buildAcMatrix,
   flattenDiffFiles,
+  parseReportChangedFiles,
   parseReportTickets,
   parseSpecTickets,
   type MatrixRow,
@@ -37,7 +40,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff }: AcMatrixP
     const spec = specMd ? parseSpecTickets(specMd) : { ticketIds: [], userStories: [], inScope: [] }
     const report = reportMd ? parseReportTickets(reportMd) : []
     const files = diff ? flattenDiffFiles(diff.repos.filter((r) => !r.expired)) : []
-    return buildAcMatrix(spec, report, files)
+    return buildAcMatrix(spec, report, files, reportMd ? parseReportChangedFiles(reportMd) : undefined)
   }, [specMd, reportMd, diff])
 
   if (specLoading && !matrix) {
@@ -97,6 +100,33 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff }: AcMatrixP
           </tbody>
         </table>
       </div>
+      {/* 全局对账（走查回灌 2026-09-16）：票级备注往往不写路径，实物清单集中在
+          报告 Changed Files 段 —— 这一段给出「报了没做 / 做了没说」的文件级铁证。 */}
+      {matrix.global && !diffUnavailable && (
+        <div
+          className={`rounded-[13px] border-2 px-3 py-2 text-[10.5px] space-y-1 ${matrix.global.aligned ? "border-pop-green/50 bg-pop-green-soft" : "border-pop-amber/50 bg-pop-amber-soft"}`}
+          data-testid="ac-matrix-global"
+        >
+          <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            全局对账 · 报告 Changed Files × diff 实物
+          </div>
+          <div className="font-black">
+            {matrix.global.aligned
+              ? `✓ 报告与实物一致（${matrix.global.claimedFiles.length} 个文件两两对上）`
+              : `△ 报告声明 ${matrix.global.claimedFiles.length} 个 · 幻影 ${matrix.global.phantom.length} · 未上报 ${matrix.global.unreported.length}`}
+          </div>
+          {matrix.global.phantom.length > 0 && (
+            <div className="font-mono text-[10px] text-pop-red" data-testid="ac-global-phantom">
+              报了但 diff 里没有：{matrix.global.phantom.join("，")}
+            </div>
+          )}
+          {matrix.global.unreported.length > 0 && (
+            <div className="font-mono text-[10px] text-pop-amber" data-testid="ac-global-unreported">
+              diff 里有但报告没报：{matrix.global.unreported.join("，")}
+            </div>
+          )}
+        </div>
+      )}
       {matrix.userStories.length > 0 && (
         <div className="rounded-[13px] border-2 border-pop-bd/30 px-3 py-2 text-[10.5px] text-muted-foreground space-y-0.5" data-testid="ac-matrix-us">
           <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">USER STORIES（{matrix.userStories.length}）· 锚到票即可，逐条读去叙述 tab 的 spec.md</div>
@@ -115,8 +145,10 @@ function MatrixRowView({ row, diffUnavailable }: { row: MatrixRow; diffUnavailab
     : row.status === "anchored"
       ? { label: "有实物", cls: "text-pop-green", Icon: Link2 }
       : row.status === "unanchored"
-        ? { label: row.claimed == null ? "未上报" : "说了没锚", cls: "text-pop-amber", Icon: CircleDashed }
-        : { label: "无实物对应", cls: "text-pop-red", Icon: CircleDashed }
+        ? { label: "说了没锚", cls: "text-pop-amber", Icon: CircleDashed }
+        : row.status === "silent"
+          ? { label: "无路径申报", cls: "text-pop-dim", Icon: CircleDashed }
+          : { label: "未上报", cls: "text-pop-red", Icon: CircleDashed }
   const claimedLabel = row.claimed === "pass" ? "✅" : row.claimed === "warn" ? "⚠️" : row.claimed === "other" ? "❔" : "—"
   return (
     <tr className="border-b border-pop-bd/5 last:border-0" data-acceptance-matrix-row={row.ticket}>

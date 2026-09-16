@@ -42,10 +42,22 @@ export function parsePipeTableAfter(md: string, headingKeyword: RegExp): string[
   return rows.length > 1 ? rows : null // 只有表头 = 无数据
 }
 
-function columnBy(rows: string[][], keywords: RegExp, fallback: number): number {
+/** 互斥列识别（走查回灌 2026-09-16）：真实 round-report 表头是
+ *  `| 票 | 状态 | 判据结果 |` —— 无标题列时旧逻辑把状态列吞成标题、
+ *  备注落空，锚定全军覆没。这里按 票→状态→判据/备注→标题 的优先级
+ *  互斥指派，任一列被抢走就换下一候选。 */
+function assignColumns(rows: string[][]): { ti: number; tt: number; st: number; rm: number } {
   const header = rows[0] ?? []
-  const hit = header.findIndex((h) => keywords.test(h))
-  return hit >= 0 ? hit : fallback
+  const has = (re: RegExp) => (exclude: number[]) =>
+    header.findIndex((h, i) => !exclude.includes(i) && re.test(h))
+  const ti = has(/^票|ID|编号/)([-1])
+  const tiSafe = ti >= 0 ? ti : 0
+  const st0 = has(/状态|Status|state/)([tiSafe])
+  const st = st0 >= 0 ? st0 : has(/结果|Result|Outcome/)([tiSafe])
+  const rm = has(/备注|说明|实物|判据|Notes?|Remark/)([tiSafe, st])
+  // 标题列优先命中；没有就把剩下唯一的数据列当标题（而不是当备注）。
+  const tt = has(/标题|Title/)([tiSafe, st, rm])
+  return { ti: tiSafe, tt, st, rm }
 }
 
 // ── 两侧契约 ─────────────────────────────────────────────────────────────
@@ -66,28 +78,44 @@ export interface SpecTickets {
   inScope: string[]
 }
 
-/** round-report 的「票执行摘要」表：票|标题|状态|备注（列按表头关键字定位）。 */
+/** round-report 的「票执行摘要」表：票|标题|状态|备注（列互斥识别，见 assignColumns）。 */
 export function parseReportTickets(reportMd: string): ReportTicket[] {
   const rows = parsePipeTableAfter(reportMd, /票执行摘要|执行摘要|Ticket.*(执行|Summary)/i)
   if (!rows) return []
-  const ti = columnBy(rows, /^票|ID|编号/, 0)
-  const tt = columnBy(rows, /标题|Title/, 1)
-  const st = columnBy(rows, /状态|结果|Status/, 2)
-  const rm = columnBy(rows, /备注|说明|实物|Notes?|Remark/, 3)
+  const { ti, tt, st, rm } = assignColumns(rows)
+  const cell = (r: string[], i: number) => (i >= 0 ? (r[i] ?? "") : "")
   return rows.slice(1)
     .map((r) => {
-      const ticket = (r[ti] ?? "").replace(/[*`]/g, "").trim()
-      const statusCell = r[st] ?? ""
+      const ticket = cell(r, ti).replace(/[*`]/g, "").trim()
+      const statusCell = cell(r, st)
       return {
         ticket,
-        title: (r[tt] ?? "").trim(),
+        title: cell(r, tt).trim(),
         claimed: /✅|done|完成|pass/i.test(statusCell) ? "pass"
           : /⚠|❌|🟡|🔴|partial|部分|fail/i.test(statusCell) ? "warn"
             : "other",
-        remark: (r[rm] ?? "").trim(),
+        remark: cell(r, rm).trim(),
       } as ReportTicket
     })
     .filter((r) => r.ticket.length > 0)
+}
+
+/** 「Changed Files」全局段（git diff --stat 块）里的路径 token。
+ *  真实报告的票级备注往往不写路径，实物清单集中在这一节 ——
+ *  核对 tab 用它做「报告 vs 实物」全局对账（缺节 → []，调用方视为无全局数据）。 */
+export function parseReportChangedFiles(reportMd: string): string[] {
+  const lines = reportMd.split(/\r?\n/)
+  let i = 0
+  for (; i < lines.length; i++) {
+    const l = lines[i]!
+    if (/^#{1,6}\s/.test(l) && /Changed Files|变更文件|实物清单|改动文件/i.test(l)) break
+  }
+  if (i >= lines.length) return []
+  let j = i + 1
+  for (; j < lines.length; j++) {
+    if (/^#{1,6}\s/.test(lines[j]!)) break
+  }
+  return extractPathTokens(lines.slice(i + 1, j).join("\n"))
 }
 
 /** spec.md 的票契约：Ticket DAG 表（或任何名字含 ticket 的表）首列 + US/In Scope 列表。 */
@@ -129,7 +157,7 @@ function bulletLinesUnder(md: string, headingKeyword: RegExp): string[] {
  *     因此 URL(`//x.io/pull/1`)里的 `.io` 不会被误当成末段扩展名吞进来；
  *  ② 裸文件名 `file.<已知代码扩展名>`（带否定前瞻，不吃 URL 域名段）。 */
 export function extractPathTokens(text: string): string[] {
-  const CODE_EXT = "ts|tsx|js|jsx|mjs|cjs|py|md|mdx|json|ya?ml|yml|toml|sql|sh|bash|css|scss|go|rs|java|kt|swift|rb|php|c|cc|cpp|h|hpp|vue|svelte|txt|csv|env|lock|proto|graphql"
+  const CODE_EXT = "ts|tsx|js|jsx|mjs|cjs|py|md|mdx|json|ya?ml|yml|toml|sql|sh|bash|css|scss|go|rs|java|kt|swift|rb|php|c|cc|cpp|h|hpp|vue|svelte|txt|csv|env|lock|proto|graphql|db|sqlite|log"
   const re = new RegExp(
     `(?:[\\w@~+\\-]+\\/)+[\\w@~+\\-]+\\.\\w{1,12}|[\\w@~+\\-]+\\.(?:${CODE_EXT})(?![\\w./-])`,
     "g",
@@ -155,13 +183,27 @@ export interface MatrixRow {
   title: string
   /** 报告声称状态；null = 报告没有这张票的行。 */
   claimed: ReportTicket["claimed"] | null
+  /** 备注原文（判定列）——锚定证据可复核。 */
+  remark: string
   /** 备注里命中的文件 token。 */
   anchoredTokens: string[]
   /** 备注未锚定的文件 token（可疑：说了但没改）。 */
   unanchoredTokens: string[]
+  /** 备注裸文件名锚（词干 = diff 文件名词干；走查回灌新增）。 */
+  anchoredStems: string[]
   /** diff 里被锚定的真实路径。 */
   matchedPaths: string[]
-  status: "anchored" | "unanchored" | "no-claim"
+  status: "anchored" | "unanchored" | "no-claim" | "silent"
+}
+
+/** 报告 Changed Files 段 vs diff 实物的全局对账（走查回灌新增）。 */
+export interface GlobalReconcile {
+  claimedFiles: string[]
+  /** 报了但 diff 里没有（说了没做，文件级）。 */
+  phantom: string[]
+  /** diff 里有但报告没报（做了没说，文件级）。 */
+  unreported: string[]
+  aligned: boolean
 }
 
 export interface AcMatrix {
@@ -171,13 +213,17 @@ export interface AcMatrix {
   /** 两侧都没票 = 契约结构缺失（UI 降级卡）。 */
   degraded: boolean
   userStories: string[]
+  /** 报告无 Changed Files 段 = null（不硬造全局判定）。 */
+  global: GlobalReconcile | null
 }
 
-/** 三方对账主入口。diffPaths 传 round-diff 展平后的 (path, oldPath) 全集。 */
+/** 三方对账主入口。diffPaths 传 round-diff 展平后的 (path, oldPath) 全集；
+ *  changedFiles = parseReportChangedFiles(reportMd)（缺省/空 = 无全局数据 → global null）。 */
 export function buildAcMatrix(
   spec: SpecTickets,
   report: ReportTicket[],
   diffPaths: Iterable<{ path: string; oldPath?: string }>,
+  changedFiles?: string[],
 ): AcMatrix {
   const paths = [...diffPaths]
   const byTicket = new Map<string, ReportTicket>()
@@ -199,25 +245,71 @@ export function buildAcMatrix(
         unanchoredTokens.push(tok)
       }
     }
-    const status: MatrixRow["status"] = !rep ? "no-claim" : anchoredTokens.length > 0 ? "anchored" : "unanchored"
+    // 裸文件名锚：备注词集 × diff 文件名词干（票号 slug 不参与，防同批互撞；
+    // 短干 <6 字符不参与，交给全局块）。
+    const anchoredStems: string[] = []
+    const words = wordSet(rep?.remark ?? "")
+    for (const p of paths) {
+      if (matchedPaths.includes(p.path)) continue
+      const stem = stemOf(p.path)
+      if (stem.length >= 6 && words.has(stem.toLowerCase())) {
+        anchoredStems.push(stem)
+        matchedPaths.push(p.path)
+      }
+    }
+    const status: MatrixRow["status"] = !rep
+      ? "no-claim"
+      : anchoredTokens.length + anchoredStems.length > 0
+        ? "anchored"
+        : tokens.length > 0
+          ? "unanchored"
+          : "silent"
     return {
       ticket,
       title: rep?.title ?? "",
       claimed: rep?.claimed ?? null,
+      remark: rep?.remark ?? "",
       anchoredTokens,
       unanchoredTokens,
+      anchoredStems: [...new Set(anchoredStems)],
       matchedPaths: [...new Set(matchedPaths)],
       status,
     }
   })
   const anchoredCount = rows.filter((r) => r.status === "anchored").length
+
+  let global: GlobalReconcile | null = null
+  if (changedFiles && changedFiles.length > 0) {
+    const phantom: string[] = []
+    const covered = new Set<string>()
+    for (const tok of changedFiles) {
+      const hits = paths.filter((p) => pathHit(tok, p.path) || (p.oldPath != null && pathHit(tok, p.oldPath)))
+      if (hits.length === 0) phantom.push(tok)
+      for (const h of hits) covered.add(h.path)
+    }
+    const unreported = paths.map((p) => p.path).filter((p) => !covered.has(p))
+    global = { claimedFiles: changedFiles, phantom, unreported, aligned: phantom.length === 0 && unreported.length === 0 }
+  }
+
   return {
     rows,
     anchoredCount,
     total: rows.length,
     degraded: rows.length === 0,
     userStories: spec.userStories,
+    global,
   }
+}
+
+/** 备注词集（小写）：token 同时保留原样与去尾缀扩展名两形。 */
+function wordSet(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(/[a-z0-9_.-]+/g) ?? []).flatMap((w) => [w, w.replace(/\.[a-z]+$/, "")]))
+}
+
+/** diff 文件名词干（去扩展名）。 */
+function stemOf(p: string): string {
+  const base = p.split("/").pop() ?? ""
+  return base.replace(/\.[^.]+$/, "")
 }
 
 /** round-diff repos → 展平 diff 文件（含 rename 的 oldPath）。 */

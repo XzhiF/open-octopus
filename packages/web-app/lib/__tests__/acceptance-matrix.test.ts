@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest"
 import {
   parsePipeTableAfter,
   parseReportTickets,
+  parseReportChangedFiles,
   parseSpecTickets,
   extractPathTokens,
   buildAcMatrix,
@@ -107,6 +108,7 @@ describe("buildAcMatrix — 三方对账", () => {
   const spec = parseSpecTickets(SPEC_MD)
   const report = parseReportTickets(REPORT_MD)
   const m = buildAcMatrix(spec, report, DIFF_FILES)
+  const byId = new Map(m.rows.map((r) => [r.ticket, r]))
 
   it("锚定计数与行状态", () => {
     expect(m.total).toBe(5)
@@ -117,8 +119,8 @@ describe("buildAcMatrix — 三方对账", () => {
     expect(byId.get("02")!.anchoredTokens.length).toBe(2)
     // 票03：schema.ts 命中裸文件名；token-usage-dao.ts 命中全路径
     expect(byId.get("03")!.status).toBe("anchored")
-    // 票01：备注只有 issues/01（无扩展名不成 token）→ 说了但无可锚 = unanchored
-    expect(byId.get("01")!.status).toBe("unanchored")
+    // 票01：备注只有 issues/01（无扩展名不成 token）且无裸文件名命中 → silent（无路径申报）
+    expect(byId.get("01")!.status).toBe("silent")
     // 票05：e2e-final.db 不成锚（.db 扩展名 token 存在但 diff 没有该路径）→ unanchored
     expect(byId.get("05")!.status).toBe("unanchored")
     expect(m.anchoredCount).toBe(3)
@@ -149,3 +151,118 @@ describe("buildAcMatrix — 三方对账", () => {
     expect(flat.length).toBe(3)
   })
 })
+
+// ── 真实形状（aae32573 / mask-utils-1 r1，2026-09-16 走查回灌）──────────
+// matt-spec-dev 实产物：表头 `| 票 | 状态 | 判据结果 |`（无标题列、备注无路径），
+// 文件路径只出现在全局「Changed Files」段。旧解析在此形状上 0/3 锚且全标
+// 「说了没做」—— 本组用例钉死新语义：列识别不串位、裸文件名锚、全局对账。
+const REAL_SPEC = `# MaskUtils
+
+## User Stories
+
+- US1 maskPhone 前3后4。
+- US2 maskIdCard 前3后2。
+- US3 maskEmail 首尾留样。
+
+## Ticket DAG
+
+| 票 | 标题 | 依赖 |
+|----|------|------|
+| 01-maskutils-core | 实现 | — |
+| 02-maskutils-tests | 测试 | 01 |
+| 03-e2e-walk | 走查 | 01,02 |
+`
+
+const REAL_REPORT = `# Round Report — mask-utils-1 (r1)
+
+## 票执行摘要（对照 issues/ 现态）
+
+| 票 | 状态 | 判据结果 |
+|---|---|---|
+| 01-maskutils-core | done | compile exit 0；三方法 + final/私有构造 + 零 import；票内含 email 规则裁定 |
+| 02-maskutils-tests | done | \`MaskUtilsTest\` 13 tests 全绿；模块 87 全绿；未加依赖 |
+| 03-e2e-walk | done | 命令级走查 \`mvn -B -pl java-common-util test\` EXIT=0；Verification Result 段已回写 |
+
+## Changed Files（git diff --stat origin/main...HEAD）
+
+\`\`\`
+ README.md                                  |   9 +
+ java-common-util/README.md                 |  15 +
+ java-common-util/src/main/.../MaskUtils.java     |  77 +
+ java-common-util/src/test/.../MaskUtilsTest.java | 102 +
+ 4 files changed, 203 insertions(+)
+\`\`\`
+`
+
+const REAL_DIFF = [
+  { path: "java-common-util/README.md", status: "A", adds: 15, dels: 0 },
+  { path: "java-common-util/src/main/java/com/octopus/demo/common/util/MaskUtils.java", status: "A", adds: 77, dels: 0 },
+  { path: "java-common-util/src/test/java/com/octopus/demo/common/util/MaskUtilsTest.java", status: "A", adds: 102, dels: 0 },
+  { path: "README.md", status: "M", adds: 9, dels: 0 },
+]
+
+describe("buildAcMatrix — 真实 3 列报告形状", () => {
+  const m = buildAcMatrix(parseSpecTickets(REAL_SPEC), parseReportTickets(REAL_REPORT), REAL_DIFF, parseReportChangedFiles(REAL_REPORT))
+  const byId = () => new Map(m.rows.map((r) => [r.ticket, r]))
+
+  it("列识别不串位：状态列=done→pass，判据结果进备注，标题列缺席不吞状态", () => {
+    const r01 = byId().get("01-maskutils-core")!
+    expect(r01.claimed).toBe("pass")
+    expect(r01.title).toBe("")
+    expect(r01.remark ?? "").not.toContain("done")
+    expect(r01.remark).toContain("三方法")
+  })
+
+  it("裸文件名锚：备注词精确命中 diff 文件名词干（票号 slug 不参与，防同批互撞）", () => {
+    const r02 = byId().get("02-maskutils-tests")!
+    expect(r02.status).toBe("anchored")
+    expect(r02.matchedPaths).toEqual(["java-common-util/src/test/java/com/octopus/demo/common/util/MaskUtilsTest.java"])
+    // 票01 备注只有中文判据无文件名 → silent；票03 同理
+    expect(byId().get("01-maskutils-core")!.status).toBe("silent")
+  })
+
+  it("无路径申报 = silent（○），绝不判成「说了没做」", () => {
+    expect(byId().get("03-e2e-walk")!.status).toBe("silent")
+  })
+
+  it("全局 Changed Files 对账：4/4 对齐，无幻影申报、无未上报文件", () => {
+    expect(m.global).not.toBeNull()
+    expect(m.global!.claimedFiles.length).toBe(4)
+    expect(m.global!.phantom).toEqual([])
+    expect(m.global!.unreported).toEqual([])
+    expect(m.global!.aligned).toBe(true)
+  })
+})
+
+describe("全局对账的反例", () => {
+  it("报告 Changed Files 声明了 diff 没有的文件 → phantom；漏了 diff 有的 → unreported", () => {
+    const report = `## 票执行摘要
+
+| 票 | 状态 | 判据结果 |
+|---|---|---|
+| 01 | done | 改 schema.ts |
+
+## Changed Files
+
+\`\`\`
+packages/server/src/db/schema.ts | 1 +
+ghost/deleted.ts                 | 9 +
+\`\`\`
+`
+    const diff = [
+      { path: "packages/server/src/db/schema.ts", status: "M", adds: 1, dels: 0 },
+      { path: "packages/server/other.ts", status: "A", adds: 2, dels: 0 },
+    ]
+    const m = buildAcMatrix(parseSpecTickets(REAL_SPEC), parseReportTickets(report), diff, parseReportChangedFiles(report))
+    expect(m.global!.phantom).toEqual(["ghost/deleted.ts"])
+    expect(m.global!.unreported).toEqual(["packages/server/other.ts"])
+    expect(m.global!.aligned).toBe(false)
+  })
+
+  it("无 Changed Files 段 → global null（UI 不渲染全局块）", () => {
+    const rpt = "## 票执行摘要\n\n| 票 | 状态 |\n|---|---|\n| 01 | done |"
+    const m = buildAcMatrix(parseSpecTickets(REAL_SPEC), parseReportTickets(rpt), REAL_DIFF, parseReportChangedFiles(rpt))
+    expect(m.global).toBeNull()
+  })
+})
+
