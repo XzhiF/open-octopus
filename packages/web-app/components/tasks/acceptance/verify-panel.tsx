@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react"
 import { Ban, Play, Square, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AcceptanceVerify } from "@octopus/shared"
+import { formatDuration } from "@/lib/format"
 import type { VerifySummary } from "@/lib/tasks-api"
 
 interface VerifyPanelProps {
@@ -185,7 +186,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         {summary && summary.state !== "running" && (
           <span className="font-mono text-[9.5px] text-pop-dim tabular-nums">
             {new Date(summary.ended_at ?? summary.started_at).toLocaleString("zh-CN", { hour12: false })}
-            {summary.duration_ms != null ? ` · ${(summary.duration_ms / 1000).toFixed(1)}s` : ""}
+            {summary.duration_ms != null ? ` · ${formatDuration(summary.duration_ms)}` : ""}
           </span>
         )}
         <span className="ml-auto text-[10px] text-muted-foreground">

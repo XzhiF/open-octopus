@@ -411,7 +411,9 @@ describe("验货台 v2 — 当场复检", () => {
     await waitFor(() => expect(sseHandlers.has(TASK_VERIFY_LOG_EVENT)).toBe(true))
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "building…", stream: "stdout" })
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "nope", stream: "stderr" })
-    expect(await screen.findByTestId("verify-console")).textContent?.toContain("[stderr] nope")
+    // （原写法 expect(await …).textContent 把属性访问落在 Chai Assertion 上 → Invalid Chai property）
+    const vConsole = await screen.findByTestId("verify-console")
+    await waitFor(() => expect(vConsole.textContent).toContain("[stderr] nope"))
     // 终态 → 盖章
     fireSse(TASK_VERIFY_EVENT, { task_id: "t1", state: "passed", exit_code: 0, duration_ms: 1500, verdict_path: `${BATCH_DIR}/verify-r1-x.md` })
     const stamp = await screen.findByTestId("verify-stamp")
