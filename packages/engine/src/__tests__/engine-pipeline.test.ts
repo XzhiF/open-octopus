@@ -140,6 +140,34 @@ describe("Engine + Pipeline Failure Strategy", () => {
     expect(result.nodeResults["step-c"].status).toBe("skipped")
   })
 
+  it("on_error: continue — failed node releases its dependents (deterministic fuse-safety)", async () => {
+    // 场景 (三单 r1 实证): code-review 熔断 goal_not_met → 旧语义整轮白跑。
+    // 新语义: 节点如实 failed, 但下游照常执行, 轮次落 completed_with_failures。
+    const workflow: WorkflowDef = {
+      apiVersion: "octopus/v1", kind: "Workflow", name: "test-onerror-continue",
+      execution_mode: "serial",
+      nodes: [
+        { id: "review", type: "bash", bash: "exit 1", on_error: "continue" },
+        { id: "ship", type: "bash", bash: "echo ok", depends_on: ["review"] },
+      ],
+    }
+    let callCount = 0
+    vi.mocked(BashExecutor).mockImplementation(function(this: any) {
+      this.execute = async () => {
+        callCount++
+        if (callCount === 1) return { outputs: {}, status: "failed" as const, durationMs: 50, logLines: ["goal_not_met (max_turns)"], exitCode: 1 }
+        return { outputs: {}, status: "completed" as const, durationMs: 50, logLines: ["ok"], exitCode: 0 }
+      }
+    } as any)
+    const engine = new WorkflowEngine(workflow, {}, "/tmp")
+    const result = await engine.run()
+    expect(result.status).toBe("completed_with_failures")
+    expect(result.nodeResults["review"].status).toBe("failed")
+    expect(result.nodeResults["review"].onErrorContinue).toBe(true)
+    expect(result.nodeResults["ship"].status).toBe("completed")
+    expect(callCount).toBe(2)
+  })
+
   it("skip: failed node → downstream skipped_failed → completed_with_failures", async () => {
     const workflow: WorkflowDef = {
       apiVersion: "octopus/v1", kind: "Workflow", name: "test-skip",

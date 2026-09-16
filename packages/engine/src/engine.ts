@@ -1210,6 +1210,7 @@ export class WorkflowEngine {
           if (!depResult) return false
           if (depResult.skippedByCondition) return false // intentional skip, don't cascade
           if (depResult.harnessContinue) return false // harness block_node with continueSubsequent
+          if (depResult.onErrorContinue) return false // node declared on_error: continue — deterministic release
           return ["skipped", "skipped_failed", "rejected", "cancelled", "failed"].includes(depResult.status)
         })
         if (hasSkippedDep) {
@@ -1403,6 +1404,24 @@ export class WorkflowEngine {
             continue
           }
         }
+        // ★ Node-level on_error: "continue" — schema field previously honored
+        //   only by sub-workflow executors; for generic DAG nodes a failed
+        //   review/optional-stage used to dead-chain the whole round (三单 r1:
+        //   goal_not_met on code-review → ship skipped → tickets' work wasted).
+        //   Deterministic release: reuse the harnessContinue downstream-release
+        //   semantics. The node stays "failed" (honest DB row + badge),
+        //   dependents still run, execution lands completed_with_failures →
+        //   人 gate = 看板验收 sees goods AND the failure.
+        if (node.on_error === "continue") {
+          this.hasPartialFailure = true
+          this.nodeResults[node.id] = {
+            ...nodeResult,
+            status: "failed",
+            onErrorContinue: true,
+          }
+          this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+          continue
+        }
         if (strategy === "fail_fast") {
           this.pausedAt = node.id
           this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
@@ -1553,6 +1572,7 @@ export class WorkflowEngine {
             if (!depResult) return false
             if (depResult.skippedByCondition) return false // intentional skip, don't cascade
             if (depResult.harnessContinue) return false // harness block_node with continueSubsequent
+            if (depResult.onErrorContinue) return false // node declared on_error: continue — deterministic release
             return ["skipped", "rejected", "cancelled"].includes(depResult.status)
           })
           if (hasSkippedDep) {
@@ -1790,7 +1810,7 @@ export class WorkflowEngine {
                 for (const node of levels[nextLevel]) {
                   if (!this.nodeResults[node.id] && node.depends_on?.some(d => {
                     const dep = this.nodeResults[d]
-                    return dep && (dep.status === "failed" || dep.status === "skipped_failed")
+                    return dep && !dep.onErrorContinue && (dep.status === "failed" || dep.status === "skipped_failed")
                   })) {
                     this.nodeResults[node.id] = {
                       outputs: {}, status: "skipped_failed", durationMs: 0,

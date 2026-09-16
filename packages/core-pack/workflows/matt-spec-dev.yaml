@@ -63,6 +63,7 @@ variables:
   has_feedback: "false"
   latest_feedback: ""
   has_e2e: "false"
+  review_budget: ""
   branch: ""
   build_status: ""
   review_status: ""
@@ -184,6 +185,10 @@ nodes:
         ls "$BATCH"/issues/*-e2e-*.md >/dev/null 2>&1 && HAS_E2E="true"
       fi
 
+      # code-review 熔断丝（保险丝非目标）: 10 + 5×票数 —— 3 票批实测 review 用 8-17 回合,
+      # 定长者对复杂批必爆(三单 r1 的 max_turns=8 实证),随票数线性放缩。
+      REVIEW_BUDGET=$(( 10 + 5 * ${TICKETS:-0} ))
+
       # 未消化反馈探测：存在 fix-feedback-rN.md → 本轮先过 spec-review 再审段
       FB=""; HAS_FB="false"
       if [ -z "$REASON" ]; then
@@ -223,13 +228,13 @@ nodes:
 
       if [ -n "$REASON" ]; then
         echo "PRECHECK FAILED: $REASON"
-        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "has_e2e": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$HAS_E2E" "$PREV_JSON" "$PREV_COUNT"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "has_e2e": "%s", "review_budget": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$HAS_E2E" "$REVIEW_BUDGET" "$PREV_JSON" "$PREV_COUNT"
         exit 0
       fi
 
       if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
       echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS e2e=$HAS_E2E feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "has_e2e": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$HAS_E2E" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "has_e2e": "%s", "review_budget": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$HAS_E2E" "$REVIEW_BUDGET" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -367,29 +372,37 @@ nodes:
   - id: code-review
     type: agent
     depends_on: [integration-gate]
-    max_turns: 14
+    max_turns: '${vars.review_budget}'
+    # 熔断/出错不连坐: 节点如实 failed (看板徽章可见), 但 ship 照常把货端上
+    # 验收台 (引擎 on_error:continue → completed_with_failures, 人 gate 裁决)。
+    on_error: continue
     prompt: |
       使用 code-review skill 独立审查所有代码变更。
       主 agent 从没看过实现过程，天然独立 → 直接审查。
+      三轴不变: Standards / Spec 对照 $inputs.batch_dir/spec.md / Completeness。
+      审查范围: 分支 $vars.branch 上 projects/ 下的代码仓。
 
-      ═══ 审查范围 ═══
-      Branch: $vars.branch（在 projects/ 下的代码仓里对比 origin/main...HEAD）
-      Spec: $inputs.batch_dir/spec.md（spec-review 跑过时它已是修订终态）
-      三轴不变: Standards / Spec 对照 / Completeness。
+      ═══ 审查锚点（别探索、别就此成文）═══
+      审查发生在 ship 之前 —— HEAD == origin/main，全部变更在**工作树**:
+      锚点 = git status --porcelain + git diff HEAD + 未跟踪文件清单。
+      origin/main...HEAD 必为空是流水线几何，不是异常：不探测、不成文。
 
-      ═══ 回合预算（硬约束，总 ≤12 回合；多个独立 Read/Bash 尽量同回合并发）═══
-      1. 一条 bash 拿清单: git -C <repo> diff --name-only origin/main...HEAD
-      2. 逐个 Read 变更文件全文 + spec.md（仅此，不做其他考古）
-      3. findings 一次成表：每条 ≤2 行（🔴/🟡/🔵 + 文件:行 + 一句），
-         不复述 diff、不写过渡语
-      4. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
+      ═══ 回合预算（目标 ≤10 回合；熔断丝 = 10+5×票数，保险丝不是绩效目标）═══
+      1. 清单一条 bash 拿全，然后**同一回合并发 Read** 全部变更文件全文 + spec.md
+      2. findings 一次成表后**立即落盘** code-review.md 初版（每条 ≤2 行:
+         🔴/🟡/🔵 + 文件:行 + 一句）—— 报告先存在，再好起来
+      3. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
          保留进报告，人 gate = 看板验收，不阻断）
-      5. 测一次:
-         - 第 4 步零编辑 → 不测（gate/e2e 票的绿仍是现物），直接落笔
+      4. 测一次:
+         - 第 3 步零编辑 → 不测（gate/e2e 票的绿仍是现物）
          - 有编辑 → 全量 build+test **恰一次**（本轮终检，不可跳过；构建
            系统自识别，此后禁止再补任何测试）
-      6. code-review.md 一次写完：三轴 findings 表 + 修复记录 + 「## 终检」节
-         （全量测试终态；零编辑未测则写明"零编辑未测，绿引 gate/e2e 票现物"）
+      5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，
+         绿引 gate/e2e 票现物"）
+
+      ═══ 修复轮增量（批目录已有上一轮 code-review.md 时）═══
+      只审上一轮之后的工作树变化 + 上轮每条 finding 的处置状态（已修/仍开/
+      不修原因），**不重做全量三轴**。上轮报告是你本轮的输入。
 
       最后输出 vars_update JSON:
       {"vars_update": {"review_status": "passed|has_notes|has_fixes", "verify_status": "passed|failed|not_needed"}}
@@ -427,6 +440,9 @@ nodes:
          在其后追加，不覆盖）必须依次含四节，节名逐字:
            ## 票执行摘要      表格: | 票 | 状态 | 判据结果 |（每票一行，含 skip）
            ## Code Review 结论 findings/fixed/noted，对照 code-review.md
+              （review_status 为空/failed —— 评审熔断或出错 → 本节如实写
+              "评审未完成（原因）"，code-review.md 有初稿则引用已落盘部分，
+              并把该缺口记进 Remaining Issues；货照常交付，人 gate 裁决）
            ## E2E 证据索引    e2e-data/ 关键文件 + 结果（无走查票则写"本批无"）
            ## Changed Files   git diff --stat 原样贴入，不重排不截断
          可另加 ## Remaining Issues（如实，含终检 failed 时的详情）。
