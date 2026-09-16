@@ -28,6 +28,45 @@ import type {
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookBudget, PlaybookCarryover } from "./playbook-types"
 
+// ── checks-on-disk codec (acceptance-checks-r{N}.md) ──────────────────
+// Stored as MARKDOWN (````json` fenced) so it rides the existing .md-only
+// home-file write door (no security-surface change) and stays human-readable
+// /editable in the 叙述 tab. The panel writes via PUT /:id/home-file.
+
+export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
+
+export function renderChecksMd(data: ChecksFile): string {
+  return [
+    `# 走查勾选 · Round ${data.round_index ?? "?"}`,
+    "",
+    "> 机器读写:验收台勾选 → 本文件;ledger 聚合、下轮 carryover 都吃它。JSON 体可手改。",
+    "",
+    "```json",
+    JSON.stringify(data, null, 2),
+    "```",
+    "",
+  ].join("\n")
+}
+
+/** Extract + validate the fenced ChecksFile; null on any miss/corruption. */
+export function parseChecksMd(md: string): ChecksFile | null {
+  const m = /```json\s*\n([\s\S]*?)\n```/.exec(md)
+  if (!m) return null
+  try {
+    const o = JSON.parse(m[1]) as ChecksFile
+    if (!o || typeof o !== "object" || typeof o.checks !== "object" || o.checks === null) return null
+    return o
+  } catch {
+    return null
+  }
+}
+
+/** ticket base name a playbook item id was derived from (walk:<base>:n etc). */
+export function ticketBaseFromItemId(id: string): string | null {
+  const m = /^(?:walk|probe|claim):([^:]+):\d+$/.exec(id)
+  return m && m[1] !== "plan" && m[1] !== "spec" ? m[1] : null
+}
+
 /** Max checkable steps the panel renders before the compiler degrades (D1/D4).
  *  Beyond this a human stops reading the report and stops ticking boxes — the
  *  whole point is a walkthrough you actually do. */

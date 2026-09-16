@@ -7,12 +7,12 @@ S3:`writeLedger(taskId, decision)` 聚合 round-diff/verify 会话/preview 会�
 02, 03
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
-- [ ] AC1: accepted → ledger 存在且含实物/复检/走查计数;writeLedger 抛错不改决策结果(降级 warn)
-- [ ] AC2: rejected+reopen → 票 Status 变 reopened、反馈文件含未过项节;非法票名(../)→ 400
-- [ ] AC3: 决策后 preview 会话 stopped 且 ledger 记 stop
+- [x] AC1: accepted → ledger 存在且含实物/复检/走查计数;writeLedger 抛错不改决策结果(降级 warn)
+- [x] AC2: rejected+reopen → 票 Status 变 reopened、反馈文件含未过项节;非法票名(../)→ 400
+- [x] AC3: 决策后 preview 会话 stopped 且 ledger 记 stop
 
 ## Verification Method
 **type**: unit — 仿 tasks-acceptance 既有测试族 + fixture 批次目录。

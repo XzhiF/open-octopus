@@ -98,6 +98,9 @@ const acceptanceBodySchema = z
     // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
     // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
     next_flow: z.enum(["fix", "rerun"]).optional(),
+    // ADR-0022 验收台 ✗ 闭环：rejected 时打回的票名基（`NN-e2e-*`），server 把
+    // 对应 issues/<name>.md 的 Status done→reopened。路径安全：仅文件名基。
+    reopen_tickets: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)).max(20).optional(),
   })
   .superRefine((b, ctx) => {
     // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
@@ -576,7 +579,27 @@ export function createTasksRoutes(
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
         ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
+      // ADR-0022: freeze the round's evidence BEFORE the decision lands (after
+      // it, the awaiting view is gone), and stop any live preview. The
+      // acceptance itself stays authoritative — ledger/reopen side-effects are
+      // best-effort (a failed ledger never rolls back a committed decision).
+      const snap = evidence ? await evidence.snapshotEvidence(c.req.param("id")).catch(() => null) : null
       const result = await service.acceptance(c.req.param("id"), input)
+      if (evidence) {
+        try {
+          evidence.stopPreviewQuiet(c.req.param("id"))
+          if (snap) {
+            if (parsed.decision === "accepted") {
+              evidence.writeLedger(snap, "accepted")
+            } else {
+              evidence.writeLedger(snap, "rejected")
+              evidence.augmentReject(snap, parsed.reopen_tickets)
+            }
+          }
+        } catch (err: unknown) {
+          console.error("[tasks] acceptance ledger/reopen side-effect failed (decision already committed):", err)
+        }
+      }
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

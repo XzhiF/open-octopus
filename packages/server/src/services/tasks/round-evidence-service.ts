@@ -38,6 +38,7 @@ import {
   TASK_VERIFY_EVENT,
   TASK_VERIFY_LOG_EVENT,
   TASK_PREVIEW_EVENT,
+  TASK_ARTIFACTS_UPDATE_EVENT,
   TaskSpecFieldError,
   type AcceptanceVerify,
   type AcceptancePreview,
@@ -53,7 +54,7 @@ import { TaskStatusConflictError } from "./tasks-service"
 import type { TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
-import { compilePlaybook } from "./playbook-compile"
+import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
 import type { PlaybookPayload, ChecksFile } from "./playbook-types"
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry } from "./playbook-types"
@@ -149,6 +150,20 @@ interface PreviewSession {
   probeTimer?: ReturnType<typeof setInterval>
   controller: AbortController
   done: boolean
+}
+
+/** Evidence frozen while the round is still awaiting (see snapshotEvidence). */
+export interface LedgerSnapshot {
+  taskId: string
+  phaseIndex: number
+  roundIndex: number
+  phaseName: string
+  batchRelDir: string | null
+  diff: RoundDiffPayload
+  playbook: PlaybookPayload
+  verify: VerifySummary | null
+  preview: PreviewSummary | null
+  checks: ChecksFile | null
 }
 
 /** One in-memory verify session per task (running or most recent terminal). */
@@ -553,11 +568,11 @@ export class RoundEvidenceService {
       .map((e) => e.path)
       .sort((a, b) => (parseInt(a.match(/\d+/)?.[0] ?? "0", 10) - parseInt(b.match(/\d+/)?.[0] ?? "0", 10)))
     const e2ePath = e2ePaths[e2ePaths.length - 1] ?? null
-    // prior round's checks file (acceptance-checks-r{N}.json, N < roundIndex, max).
+    // prior round's checks file (acceptance-checks-r{N}.md, N < roundIndex, max).
     const prevPath = listing
       .map((e) => e.path)
       .map((p) => {
-        const m = /acceptance-checks-r(\d+)\.json$/.exec(p)
+        const m = /acceptance-checks-r(\d+)\.md$/.exec(p)
         return m && Number(m[1]) < roundIndex ? { p, r: Number(m[1]) } : null
       })
       .filter((x): x is { p: string; r: number } => x !== null)
@@ -566,11 +581,8 @@ export class RoundEvidenceService {
     if (prevPath) {
       const raw = read(prevPath.p)
       if (raw) {
-        try {
-          prevChecks = { round: prevPath.r, data: JSON.parse(raw) as ChecksFile }
-        } catch {
-          /* corrupt checks file → ignore, honest (carryover just empty) */
-        }
+        const data = parseChecksMd(raw)
+        if (data) prevChecks = { round: prevPath.r, data }
       }
     }
     return compilePlaybook({
@@ -756,6 +768,129 @@ export class RoundEvidenceService {
     const s = this.previewSessions.get(taskId)
     return s ? { ...s.summary } : null
   }
+
+  // ── 台账机写 + 打回票重开 (ADR-0022 T04) ──────────────────────────────
+
+  /** Snapshot the awaiting round's evidence BEFORE the decision lands (after
+   *  it, resolveAwaiting 409s — the ledger/reopen must be built from a still-
+   *  awaiting view). Throws like resolveAwaiting; route wraps best-effort. */
+  async snapshotEvidence(taskId: string): Promise<LedgerSnapshot> {
+    const { execRow, phaseIndex, roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+    const detail = this.tasksService.getTask(taskId)
+    const playbook = this.getPlaybook(taskId)
+    const diff = await this.getRoundDiff(taskId)
+    const verify = this.sessions.get(taskId)?.summary ?? null
+    const preview = this.previewSessions.get(taskId)?.summary ?? null
+    let checks: ChecksFile | null = null
+    if (batchRelDir) {
+      try {
+        const raw = this.taskHome.readHomeFile(taskId, `${batchRelDir}/${checksFileName(roundIndex)}`).content
+        checks = parseChecksMd(raw)
+      } catch {
+        checks = null // no checks written this round yet — ledger shows 未决=all
+      }
+    }
+    return {
+      taskId, phaseIndex, roundIndex, batchRelDir,
+      phaseName: ((detail.task_spec as TaskSpec | undefined)?.phases?.[phaseIndex - 1]?.name) ?? `Phase ${phaseIndex}`,
+      diff, playbook, verify, preview, checks,
+    }
+  }
+
+  /** Build + write acceptance-ledger-r{N}.md (fire-safe — a failed ledger
+   *  never flips the decision that already committed). Returns verdict_path. */
+  writeLedger(snap: LedgerSnapshot, decision: "accepted" | "rejected"): string | null {
+    if (!snap.batchRelDir) return null
+    const rel = `${snap.batchRelDir}/acceptance-ledger-r${snap.roundIndex}.md`
+    try {
+      this.writeEvidenceFile(snap.taskId, rel, buildLedgerMd(snap, decision))
+      return rel
+    } catch (err: unknown) {
+      console.error("[round-evidence] ledger write failed (non-fatal):", err instanceof Error ? err.message : err)
+      return null
+    }
+  }
+
+  /** rejected side-effects: append the 未过项 (✗) section to the just-written
+   *  fix-feedback-r{N}.md, and flip each fail item's source ticket done→
+   *  reopened. `reopenTickets` (validated body override) is UNIONed with ids
+   *  derived from checks so a client that only sends notes still reopens. */
+  augmentReject(snap: LedgerSnapshot, reopenTickets?: string[]): { reopened: string[] } {
+    const reopened: string[] = []
+    if (!snap.batchRelDir) return { reopened }
+    const fails = (snap.checks ? Object.entries(snap.checks.checks).filter(([, c]) => c.decision === "fail") : []) as Array<[string, { note: string }]>
+    // 1. append 未过项 section to fix-feedback (file written by tasks-service).
+    if (fails.length) {
+      const fbRel = `${snap.batchRelDir}/fix-feedback-r${snap.roundIndex}.md`
+      const flat = snap.playbook.sections.flatMap((s) => s.items)
+      const sec =
+        `\n\n## 未过项(验收台剧本 ✗)\n\n` +
+        fails.map(([id, c]) => {
+          const it = flat.find((x) => x.id === id)
+          return `- [${ticketBaseFromItemId(id) ?? id}] ${it?.op ?? id}\n  - 预期: ${it?.expect ?? "—"}\n  - 现象: ${c.note || "(未填)"}`
+        }).join("\n") + "\n"
+      try {
+        const cur = this.taskHome.readHomeFile(snap.taskId, fbRel).content
+        this.writeEvidenceFile(snap.taskId, fbRel, cur + sec)
+      } catch (err: unknown) {
+        console.error("[round-evidence] fix-feedback append failed:", err instanceof Error ? err.message : err)
+      }
+    }
+    // 2. flip tickets done→reopened (from fail ids ∪ body override).
+    const want = new Set<string>([
+      ...fails.map(([id]) => ticketBaseFromItemId(id)).filter((x): x is string => !!x),
+      ...(reopenTickets ?? []),
+    ])
+    if (want.size) {
+      let listing: Array<{ path: string }> = []
+      try {
+        listing = this.taskHome.listHomeDir(snap.taskId, snap.batchRelDir, false)
+      } catch {
+        listing = []
+      }
+      for (const base of want) {
+        const hit = listing.find((e) => {
+          const bn = e.path.split("/").pop() ?? ""
+          return bn === `${base}.md` || bn.replace(/\.md$/i, "") === base
+        })
+        if (!hit) continue
+        try {
+          const content = this.taskHome.readHomeFile(snap.taskId, hit.path).content
+          const flipped = flipTicketStatus(content)
+          if (flipped !== content) {
+            this.writeEvidenceFile(snap.taskId, hit.path, flipped)
+            reopened.push(base)
+          }
+        } catch (err: unknown) {
+          console.error(`[round-evidence] reopen ${base} failed:`, err instanceof Error ? err.message : err)
+        }
+      }
+    }
+    return { reopened }
+  }
+
+  /** Server-authoritative evidence write — the underlying taskHome door (path/
+   *  suffix guards only, NO edit-window gate: a final-phase ledger lands during
+   *  'archiving' when user-editing is already closed). Emits the artifacts SSE
+   *  so the 叙述 tab re-pulls the new file. */
+  private writeEvidenceFile(taskId: string, rel: string, content: string): { path: string; bytes: number } {
+    const res = this.taskHome.writeHomeFile(taskId, rel, content)
+    this.sse.emit("taskpool", { event: TASK_ARTIFACTS_UPDATE_EVENT, data: { task_id: taskId } })
+    return res
+  }
+}
+
+/** done → reopened under a `## Status` heading (first bare `done` line only),
+ *  idempotent. Leaves triage/other statuses untouched. */
+function flipTicketStatus(md: string): string {
+  const ls = md.replace(/\r\n/g, "\n").split("\n")
+  const h = ls.findIndex((l) => /^#{1,6}\s*Status\b/i.test(l))
+  if (h < 0) return md
+  for (let i = h + 1; i < ls.length; i++) {
+    if (/^#{1,6}\s/.test(ls[i])) break
+    if (/^\s*done\s*$/i.test(ls[i])) { ls[i] = "reopened"; return ls.join("\n") }
+  }
+  return md
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -843,6 +978,66 @@ function buildVerdictMd(s: VerifySummary, lines: string[]): string {
     "```",
     clipped || "(空)",
     "```",
+    "",
+  ].join("\n")
+}
+
+/** The acceptance ledger — machine-written AT decision time, the evidence chain
+ *  that outranks every narration. Aggregates the four independent facts the
+ *  panel surfaced (real diff / auto re-verify / live preview / human walkthrough)
+ *  into one immutable file (ADR-0022). */
+function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"): string {
+  const now = new Date().toISOString()
+  const d = snap.diff
+  const agg = d.aggregate
+  const totalSteps = snap.playbook.sections.reduce((n, sec) => n + sec.items.length, 0)
+  const checks = snap.checks?.checks ?? {}
+  const decided = Object.keys(checks).length
+  const nPass = Object.values(checks).filter((c) => c.decision === "pass").length
+  const nFail = Object.values(checks).filter((c) => c.decision === "fail").length
+  const nSkip = Object.values(checks).filter((c) => c.decision === "skip").length
+  const undecided = Math.max(0, totalSteps - decided)
+  const verifyLine = snap.verify
+    ? `- 自动复检: \`${snap.verify.command}\` → **${snap.verify.state.toUpperCase()}**` +
+        `${snap.verify.exit_code != null ? ` (exit ${snap.verify.exit_code})` : ""} · 用时 ${snap.verify.duration_ms != null ? `${Math.round(snap.verify.duration_ms / 1000)}s` : "—"}${snap.verify.verdict_path ? ` → ${snap.verify.verdict_path}` : ""}`
+    : "- 自动复检: 本轮未跑（≠ 失败；如需新鲜裁决请点 ▶ 复检）"
+  const previewLine = snap.preview
+    ? `- 跑起来看: \`${snap.preview.command ?? ""}\` @ ${snap.preview.url} → ${snap.preview.state.toUpperCase()}` +
+        `${snap.preview.external ? "(外部进程)" : ""} · 决策时自动停止`
+    : "- 跑起来看: 未使用"
+  const stepLines = snap.playbook.sections.flatMap((sec) =>
+    sec.items.map((it) => {
+      const c = checks[it.id]
+      const mark = !c ? "·" : c.decision === "pass" ? "✓" : c.decision === "fail" ? "✗" : "⊘"
+      const note = c?.note ? ` — ${c.note}` : ""
+      return `  - [${mark}] ${it.op}${c && c.decision !== "pass" ? ` (预期: ${it.expect})${note}` : ""}`
+    }),
+  )
+  const stamp = decision === "accepted" ? "✅ 通过" : "↩ 打回"
+  return [
+    `# 验收台账 · Phase ${snap.phaseIndex} Round ${snap.roundIndex} · ${stamp}`,
+    "",
+    `> ${now} · 机器写入（验收面 v2.1 验货台，唯一决策链，不可改）`,
+    `> ${snap.phaseName}${snap.playbook.goal ? ` · ${snap.playbook.goal}` : ""}${snap.playbook.specRevised ? " · ⚠ 含 Spec 修订" : ""}`,
+    "",
+    "## 实物（真 git 区间）",
+    d.available
+      ? `- ${d.repos.filter((r) => !r.expired).length}/${d.repos.length} repos 有效 · ${agg.commits} commits · +${agg.additions}/−${agg.dels} · ${agg.files} 文件 · 干预 ${d.interventions ?? "—"}`
+      : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 叙述/历史 verdict 仍可参考`,
+    "",
+    "## 自动复检",
+    verifyLine,
+    "",
+    "## 跑起来看",
+    previewLine,
+    "",
+    "## 人工走查",
+    `- 计 ${totalSteps} 步：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
+    ...(stepLines.length ? stepLines : ["  - （无编译步）"]),
+    ...(nSkip ? ["", `> ⊘ 跳过项将进入下一轮 carryover（${snap.batchRelDir ? checksFileName(snap.roundIndex + 1) : "?"} 前置），补验或再豁免需新原因。`] : []),
+    "",
+    "## 决策",
+    `- ${stamp} · 触发人 = 验收面板 · autoAdvance/派发由 tasks-service 账本另记`,
     "",
   ].join("\n")
 }
