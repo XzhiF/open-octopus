@@ -241,6 +241,9 @@ beforeAll(() => {
     get(ref: string) {
       if (ref.includes("v4-required-flow")) return { ref, content: WORKFLOW_REQUIRED_INPUTS }
       if (ref.includes("v4-no-required")) return { ref, content: WORKFLOW_NO_REQUIRED_INPUTS }
+      // check ④ fires only for batch-consuming flows — serve the real name so
+      // the HTTP-level cases below exercise the same path a user hits.
+      if (ref.includes("matt-spec-dev")) return { ref, content: WORKFLOW_NO_REQUIRED_INPUTS }
       return null
     },
   } as never
@@ -336,6 +339,62 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
     expect(res.status).toBe(200)
     const task = (await res.json()) as { status: string }
     expect(task.status).toBe("ready")
+  })
+})
+
+// ── check ④: batch-consuming flows need a final acceptance ticket ────────
+//
+// The writing convention ("always generate a final NN-e2e-* ticket") had no
+// enforcement — the v4 gate never looked at issues/ at all. A batch could reach
+// execution with no acceptance ticket; the workflow's fallback gate for that
+// case (integration-gate) was dead code under the convention and has been
+// deleted, so the convention had to become a real gate. These are the
+// HTTP-level cases for the layer a user actually hits.
+describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:no-final-verification）", () => {
+  /** Write a ticket into the batch dir that owns `phase.specPath`. */
+  function writeTicket(id: string, specRel: string, filename: string): void {
+    const dir = path.join(taskHome.homePath(id), path.dirname(specRel), "issues")
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, filename), "# E2E_TD ticket\n")
+  }
+
+  const BATCH_FLOW = "built-in/matt-spec-dev"
+
+  it("misses with the exact key when issues/ has no *-e2e-* ticket", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const p = { ...validPhase(id, 1), workflowRef: BATCH_FLOW }
+    insertV4Task(id, [p])
+    writeTicket(id, p.specPath, "01-functional.md")
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { missing: string[] }).missing)
+      .toEqual(["phase:1:no-final-verification"])
+  })
+
+  it("passes once the final acceptance ticket is present", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const p = { ...validPhase(id, 1), workflowRef: BATCH_FLOW }
+    insertV4Task(id, [p])
+    writeTicket(id, p.specPath, "01-functional.md")
+    writeTicket(id, p.specPath, "02-e2e-acceptance.md")
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { status: string }).status).toBe("ready")
+  })
+
+  it("does not apply to a flow that does not consume the batch", async () => {
+    // A self-built or non-batch flow has its own verification story; demanding
+    // a ticket it will never read would block legitimate work.
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }])
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(200)
   })
 })
 

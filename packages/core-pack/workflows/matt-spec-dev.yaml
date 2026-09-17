@@ -11,14 +11,19 @@ kind: Workflow
 #     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
 #     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
 #                  → ticket-dag  (dynamic_sub_workflow — issues/ DAG 并发实现)
-#                  → integration-gate (仅无 e2e 走查票的批次；有则整体跳过)
 #                  → code-review (判→批修→一测；终检在此) → ship-pr (Git PR)
 #
 # 快线化 (2026-09-16 实测 Round2=27.6min 的复盘): decode-bound —— 56.5K 输出
-# tokens 里 ~60% 是转述散文，全量 mvn 同轮跑 4-5 遍。对策 = ①e2e 票在场则
-# gate 确定性跳过 (has_e2e 路由)；②review 回合硬预算 (≤8 回合, 批修一测,
-# 零编辑零测)；③integration-verify 节点删除，终检并入 review 收尾；④ship-pr
-# 基于共享会话禁重读 + 产物契约节名逐字 (核对 tab 正则消费者)；⑤票探路上限。
+# tokens 里 ~60% 是转述散文，全量 mvn 同轮跑 4-5 遍。对策 = ①review 回合硬预算
+# (≤8 回合, 批修一测, 零编辑零测)；②integration-verify 节点删除，终检并入
+# review 收尾；③ship-pr 基于共享会话禁重读 + 产物契约节名逐字 (核对 tab 正则
+# 消费者)；④票探路上限。
+#
+# 全量验证的归属（2026-09-17）：**由末张 `NN-e2e-*` 验收票承担，每批恒有**。
+# server 的入队 gate 强制 issues/ 下存在该票（missing: phase:<i>:no-final-verification），
+# 所以「本批无验收票」不再是可达状态 —— 曾用于兜底它的 integration-gate 节点
+# 因此是不可达死码，已删除（其 has_e2e 路由随之退役）。原本挂在它下面的
+# code-review 直接依赖 ticket-dag。
 # 会话共享是实测事实 (node_executions.session_id)：主链同 global_session，
 # TTFT 全程 13.4s —— 慢的不是上下文，是逐字生成。
 #
@@ -62,10 +67,8 @@ variables:
   spec_file: ""
   has_feedback: "false"
   latest_feedback: ""
-  has_e2e: "false"
   review_budget: ""
   branch: ""
-  build_status: ""
   review_status: ""
   verify_status: ""
   pr_url: ""
@@ -111,7 +114,7 @@ hooks:
       template:
         severity: info
         title: "🚀 matt-spec-dev — 轮次完成"
-        body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 build: $vars.build_status | review: $vars.review_status"
+        body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 review: $vars.review_status"
 
   on_node_success:
     - id: notify-spec-review
@@ -174,15 +177,12 @@ nodes:
         fi
       fi
 
-      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-*）
-      # HAS_E2E：有走查票 = 集成验证已由票负责 → integration-gate 确定性跳过
-      HAS_E2E="false"
+      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-* 恒在 —— gate 强制）
       if [ -z "$REASON" ]; then
         TICKETS=$(ls "$BATCH"/issues/*.md 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TICKETS" = "0" ]; then
           REASON="issues/ empty under: $BATCH (nothing to execute)"
         fi
-        ls "$BATCH"/issues/*-e2e-*.md >/dev/null 2>&1 && HAS_E2E="true"
       fi
 
       # code-review 熔断丝（保险丝非目标）: 10 + 5×票数 —— 3 票批实测 review 用 8-17 回合,
@@ -228,13 +228,13 @@ nodes:
 
       if [ -n "$REASON" ]; then
         echo "PRECHECK FAILED: $REASON"
-        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "has_e2e": "%s", "review_budget": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$HAS_E2E" "$REVIEW_BUDGET" "$PREV_JSON" "$PREV_COUNT"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "review_budget": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$REVIEW_BUDGET" "$PREV_JSON" "$PREV_COUNT"
         exit 0
       fi
 
       if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
-      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS e2e=$HAS_E2E feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "has_e2e": "%s", "review_budget": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$HAS_E2E" "$REVIEW_BUDGET" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS feedback=$HAS_FB branch=$BR"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "review_budget": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$REVIEW_BUDGET" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -285,7 +285,8 @@ nodes:
          （反馈条目 → 是否改 spec → 改了什么），供验收人对照。
       5. 只动本批次目录，不碰 projects/ 代码（实现是 Stage 1 的事）。
 
-      最后输出 vars_update: {"vars_update": {"spec_reviewed": "true"}}
+      （本节点不产 vars_update —— 它报过的 spec_reviewed 无声明也无消费方，
+       2026-09-17 清除。节点的完成状态由引擎记录，下游用不着额外信号。）
 
   # ------------------------------------------------------------
   # Stage 1: 票 DAG 执行（dynamic_sub_workflow — LLM 规划，引擎并发）
@@ -343,35 +344,13 @@ nodes:
       - 已完成（done/skip）的 ticket 不创建节点
 
   # ------------------------------------------------------------
-  # Stage 1.5: 集成门禁（仅无 e2e 走查票的批次；有走查票时全量验证由票负责，
-  #            本节点被 has_e2e 确定性跳过 — 2026-09-16 实测同轮 4-5 遍全量 mvn 的税）
-  # ------------------------------------------------------------
-
-  - id: integration-gate
-    type: agent
-    depends_on: [ticket-dag]
-    execute_when: '$vars.has_e2e != "true"'
-    prompt: |
-      ═══ Integration Gate（本批无 e2e 走查票 — 你补全量集成验证）═══
-      你守的是编译与测试，不是读代码 —— spec/票/实现过程一概不重读。
-      ═══ 步骤 ═══
-      1. projects/ 下定位仓库根，识别构建系统（pom.xml→mvn，package.json→pnpm；
-         不照搬任何示例命令）
-      2. 全量 build+test **只跑一次**；绿 → 立即输出，禁止"为放心二跑"
-      3. 红 → 分析→修→只重跑失败用例；全部修完收尾全量一次。最多 2 轮
-      ═══ 输出 ═══
-      最后输出 vars_update JSON:
-      成功: {"vars_update": {"build_status": "passed"}}
-      失败: {"vars_update": {"build_status": "failed"}}
-
-  # ------------------------------------------------------------
   # Stage 2: Code Review（裁判 ≠ 球员；对照 spec.md 现态。2026-09-16 快线化:
   #          判→批修→一测，终检并入本节点，原 integration-verify 吸收于此）
   # ------------------------------------------------------------
 
   - id: code-review
     type: agent
-    depends_on: [integration-gate]
+    depends_on: [ticket-dag]
     # 熔断丝随票数伸缩(spec-resolve 算 review_budget)。注意:模板正统语法是
     # $vars.x 无花括号 —— ${vars.x} 在 substituteVarsFull 里归 filter 引擎,
     # 不带 |filter 不解析(五单 R1 实证 "treated as unset")。
@@ -397,11 +376,11 @@ nodes:
       3. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
          保留进报告，人 gate = 看板验收，不阻断）
       4. 测一次:
-         - 第 3 步零编辑 → 不测（gate/e2e 票的绿仍是现物）
+         - 第 3 步零编辑 → 不测（e2e 票的绿仍是现物）
          - 有编辑 → 全量 build+test **恰一次**（本轮终检，不可跳过；构建
            系统自识别，此后禁止再补任何测试）
       5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，
-         绿引 gate/e2e 票现物"）
+         绿引 e2e 票现物"）
 
       ═══ 修复轮增量（批目录已有上一轮 code-review.md 时）═══
       只审上一轮之后的工作树变化 + 上轮每条 finding 的处置状态（已修/仍开/

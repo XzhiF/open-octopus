@@ -265,6 +265,12 @@ export function buildCompositeInputValues(
   }
 }
 
+/** Flows that execute a phase's authored Batch directory (spec.md + issues/)
+ *  as their work plan. Matched on the ref's basename so both `matt-spec-dev`
+ *  and `built-in/matt-spec-dev` hit. Adding a flow here means its phases must
+ *  ship a final acceptance ticket — see check ④ in resolveV4Phases. */
+const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
+
 /**
  * The v4 ready-gate's phase contract, as a pure function.
  *
@@ -284,9 +290,15 @@ export function buildCompositeInputValues(
  *      vocabulary resolves (${goal}/${ac}/${phase.slug}/${phase.spec_dir}/${task.home}/
  *      ${task_artifacts_dir}); unknown or empty-resolving placeholders surface as
  *      `phase:<i>:input:<key>` too (never a 500 — v3 AC3 discipline inherited).
+ *   ④ (batch-consuming flows only, see BATCH_CONSUMING_FLOWS) the phase's `issues/`
+ *      dir contains a final acceptance ticket (`*-e2e-*.md`) ⇒ miss:
+ *      `phase:<i>:no-final-verification`. Structural, not stylistic: for these
+ *      flows the tickets ARE the work plan, and that one ticket is the place a
+ *      real browser / API walkthrough happens.
  *
  * ① and ② run independently so the UI sees every defect at once; ③ only runs when ②
- * hit (no workflow content to parse otherwise). A phase that passes all three yields a
+ * hit (no workflow content to parse otherwise); ④ needs a spec on disk, so it is
+ * skipped when ① already missed. A phase that passes all four yields a
  * TaskV4PhaseConfig. Empty/missing phases ⇒ single `phase:0:no-phases`. Throws nothing
  * — the caller turns a non-empty missing list into TaskReadyGateError.
  *
@@ -346,6 +358,22 @@ export function resolveV4Phases(args: {
       if (def.required && !values[def.name]?.trim()) {
         missing.push(`phase:${i}:input:${def.name}`)
       }
+    }
+    // ④ batch-consuming flows must ship a final acceptance ticket.
+    // For these flows the batch's tickets ARE the work plan, so the final
+    // `NN-e2e-*` ticket is structural: it is where a real browser (or an
+    // API-level walkthrough) runs, and the flow routes to it by that filename.
+    // Enforced here because the writing convention alone was not enough — a
+    // batch with no acceptance ticket would otherwise sail through, and the
+    // workflow's once-existing fallback gate (integration-gate) is gone.
+    // Scoped to the flows that actually read the batch, so a self-built or
+    // non-batch flow is never told to invent a ticket it will not consume.
+    if (specOk && BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
+      const issueDir = path.join(path.dirname(absSpec), 'issues')
+      const hasFinalTicket =
+        fs.existsSync(issueDir) &&
+        fs.readdirSync(issueDir).some((f) => f.endsWith('.md') && f.includes('-e2e-'))
+      if (!hasFinalTicket) missing.push(`phase:${i}:no-final-verification`)
     }
     if (specOk) {
       resolved.push({

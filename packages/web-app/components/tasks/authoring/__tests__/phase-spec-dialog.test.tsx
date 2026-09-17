@@ -164,4 +164,14 @@ describe("specSkeleton 模板", () => {
     expect(s).toContain("## 验收方式")
     expect(s).toContain("issues/")
   })
+
+  it("点明末张验收票是硬要求（与 v4 gate 的 no-final-verification 对齐）", () => {
+    // The skeleton is where an author learns the convention before writing any
+    // ticket. Since the server now ENFORCES it (phase:<i>:no-final-verification),
+    // the skeleton must say so — otherwise it reads as an optional nicety and
+    // the first [入队] attempt fails on a rule the UI never mentioned.
+    const s = specSkeleton(makePhase())
+    expect(s).toContain("NN-e2e-*")
+    expect(s).toContain("no-final-verification")
+  })
 })

@@ -424,13 +424,18 @@ export class CloneRuntime {
       // deny 文案指示模型结束回合等待下一条 user 消息（ChatArea 的
       // QuestionCard 答完即以 user 消息续流，provider resume 接续会话）。
       interactionSession: true,
-      // Path guard: for task-author sessions, block Write/Edit outside the
-      // task home directory. This is a HARD enforcement — the agent CANNOT
-      // write to the project codebase or other locations. Rules file is
-      // advisory (agent can ignore); the hook is mandatory.
-      onBeforeToolCall: taskHomePath
-        ? buildPathGuard(taskHomePath)
-        : undefined,
+      // The task-author authoring guard (see buildPathGuard): blocks (a) Write/Edit
+      // outside the task home and (b) development-executing Bash commands
+      // (build/test/commit/dev-server). Both are HARD enforcement — the agent
+      // CANNOT write to the project codebase, and cannot run the build. Rules
+      // files are advisory (the agent can ignore them); this hook is mandatory.
+      //
+      // Task-author ONLY: every other clone keeps its full command surface —
+      // the workspace clone is a full-stack dev assistant and must be able to
+      // build. Note this is installed even when `taskHomePath` is undefined
+      // (task home missing on disk), because the command half does not need a
+      // home to be enforced; that session previously ran completely bare.
+      onBeforeToolCall: isTaskAuthorClone(this.cloneDef) ? buildPathGuard(taskHomePath) : undefined,
     })
   }
 
@@ -727,13 +732,145 @@ export class CloneRuntime {
  *  backticks, `$(…)`) are BLOCKED — conservative hard-guard posture.
  *  Known residual holes (defense-in-depth, not a sandbox): `cd /elsewhere &&
  *  echo x > rel`, and interpreter-internal writes (`python -c open(…)`). */
-export function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
-  const normalizedHome = path.resolve(taskHomePath)
+// ── Bash command-guard (the "spec author may not execute" half) ──────
+
+/** The one built-in clone whose job is authoring, not executing. */
+export const TASK_AUTHOR_CLONE_NAME = 'task-author'
+
+/** True when this clone definition is the task-author spec author. */
+export function isTaskAuthorClone(cloneDef: { name: string }): boolean {
+  return cloneDef.name === TASK_AUTHOR_CLONE_NAME
+}
+
+/** `git` subcommands that mutate history, the index, the worktree, or publish. */
+const DENIED_GIT_SUBCOMMANDS = new Set([
+  'add', 'commit', 'push', 'checkout', 'reset', 'rebase', 'merge', 'cherry-pick',
+  'stash', 'clean', 'rm', 'mv', 'restore', 'switch', 'revert', 'am', 'apply',
+  'tag', 'init', 'clone', 'pull', 'fetch', 'submodule', 'worktree',
+])
+
+/** Package-manager subcommands that install, build, test, or publish. */
+const DENIED_PKG_SUBCOMMANDS = new Set([
+  'build', 'test', 'dev', 'start', 'serve', 'install', 'i', 'ci', 'add',
+  'publish', 'deploy', 'link', 'run', 'exec', 'dlx',
+])
+
+/** Standalone build/test runners — the program itself is the offence. */
+const DENIED_RUNNERS = new Set([
+  'mvn', 'mvnw', 'gradle', 'gradlew', 'ant', 'bazel',
+  'make', 'cmake', 'ninja', 'msbuild', 'tsc', 'webpack', 'rollup', 'esbuild',
+])
+
+/** Package managers whose *subcommand* decides (see DENIED_PKG_SUBCOMMANDS). */
+const PACKAGE_MANAGERS = new Set(['pnpm', 'npm', 'yarn', 'bun', 'pip', 'pip3', 'poetry', 'uv'])
+
+/** Dev-server launchers — invoking the program is itself the offence. An
+ *  author has no legitimate reason to call any of these (`next build` and
+ *  `vite build` are builds too, not just `dev`), so no subcommand is required. */
+const DEV_SERVERS = new Set([
+  'next', 'vite', 'nodemon', 'uvicorn', 'gunicorn', 'flask', 'django-admin',
+  'rails', 'php', 'webpack-dev-server', 'http-server', 'serve',
+])
+
+/** Run-in-another-package runners that can smuggle a denied program through. */
+const RUNNER_PREFIXES = new Set(['npx', 'bunx', 'pnpx', 'time', 'sudo', 'env', 'command', 'exec'])
+
+/** Force flags on `rm` — an author has no reason to force-delete anything. */
+const RM_FORCE_RE = /^-[a-z]*[rf]/i
+
+/** Classify one simple command. Returns the offending program (for the
+ *  message) or null. Flags are skipped positionally except where noted. */
+function classifyCommand(tokens: string[]): string | null {
+  // Strip leading `VAR=value` env assignments and wrapper programs so
+  // `sudo pnpm test` / `FOO=1 mvn test` are seen through.
+  let i = 0
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+  while (i < tokens.length && RUNNER_PREFIXES.has(path.basename(tokens[i]))) i++
+  if (i >= tokens.length) return null
+
+  const program = path.basename(tokens[i])
+  const rest = tokens.slice(i + 1)
+
+  if (program === 'git') {
+    return rest.some((t) => !t.startsWith('-') && DENIED_GIT_SUBCOMMANDS.has(t)) ? 'git' : null
+  }
+  if (PACKAGE_MANAGERS.has(program)) {
+    return rest.some((t) => !t.startsWith('-') && DENIED_PKG_SUBCOMMANDS.has(t)) ? program : null
+  }
+  if (DENIED_RUNNERS.has(program)) return program
+  if (DEV_SERVERS.has(program)) return program
+  if (program === 'go' || program === 'cargo') {
+    return rest.some((t) => !t.startsWith('-') && ['build', 'test', 'run', 'install'].includes(t))
+      ? program
+      : null
+  }
+  if (program === 'rm') {
+    return rest.some((t) => RM_FORCE_RE.test(t)) ? 'rm' : null
+  }
+  // Wrapper programs (`npx next dev`) are handled by RUNNER_PREFIXES above,
+  // which strips them before classification — so `next` is judged on its own.
+  return null
+}
+
+/** Deny development-executing Bash commands in a task-author session.
+ *
+ *  This is a DENYLIST, not a sandbox — it raises the cost of an accidental
+ *  "let me just run the tests" well above zero, and stops the common shapes
+ *  (`pnpm test`, `git commit -m`, `mvn verify`, `next dev`). It deliberately
+ *  does NOT try to contain interpreter-internal work (`python -c "open(…)"`,
+ *  `node -e`, `cd /elsewhere && …`) — same residual holes the write guard
+ *  documents, and the same posture: defense in depth, not isolation.
+ *
+ *  Allowed on purpose: `octopus workflow validate|simulate` (required for an
+ *  author to land a self-built flow through its two hard gates), read-only
+ *  `git` (`status`/`diff`/`log`/`show`/`branch`), `curl`, and every read tool. */
+function checkBashCommandGuard(input: unknown): { allow: boolean; reason?: string } | undefined {
+  const inp = input as Record<string, unknown> | null
+  const command = inp?.command
+  if (typeof command !== 'string' || command === '') return undefined
+
+  const offender = segmentize(command)
+    .map((tokens) => classifyCommand(tokens))
+    .find((p): p is string => p !== null)
+  if (!offender) return undefined
+
+  return {
+    allow: false,
+    reason: [
+      `BLOCKED: \`${offender}\` is a development-execution command.`,
+      ``,
+      `This session authors the spec — it does not run the work. You may not`,
+      `build, test, install, commit, push, or start a dev server.`,
+      ``,
+      `What to do instead:`,
+      `- Write the tickets that describe the work → issues/NN-*.md`,
+      `- Hand the task back and let the user enqueue it; the bound workflow`,
+      `  executes it, phase by phase, with a human acceptance gate.`,
+      ``,
+      `Still allowed: \`octopus workflow validate|simulate\` (for a self-built`,
+      `flow), read-only \`git status|diff|log\`, \`curl\`, and all read tools.`,
+    ].join('\n'),
+  }
+}
+
+/** The authoring guard for a task-author session. `taskHomePath` is optional:
+ *  the command half applies regardless, the write half needs a home to scope
+ *  against. See checkBashCommandGuard + checkBashWriteGuard. */
+export function buildPathGuard(taskHomePath?: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+  const normalizedHome = taskHomePath ? path.resolve(taskHomePath) : null
 
   return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
     if (toolName === 'Bash') {
-      return checkBashWriteGuard(input, normalizedHome)
+      // Command guard first — it is home-independent, so it still applies when
+      // there is no task home (the case where the write guard has nothing to
+      // scope against and would otherwise let the session run bare).
+      const denied = checkBashCommandGuard(input)
+      if (denied) return denied
+      return normalizedHome === null ? undefined : checkBashWriteGuard(input, normalizedHome)
     }
+
+    // No home → no write scope to enforce. (Reads are never blocked here.)
+    if (normalizedHome === null) return undefined
 
     // Only intercept file-write tools
     if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') {

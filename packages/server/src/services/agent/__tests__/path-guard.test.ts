@@ -52,7 +52,14 @@ const CASES: Array<[string, string, boolean]> = [
   // --- blocked: plain redirects outside the whitelist
   ['stdout 重定向到 home 外绝对路径', 'echo x > /etc/passwd', true],
   ['append 重定向到 home 外绝对路径', 'echo x >> /Users/dev/outside/notes.md', true],
-  ['stderr 重定向也被查', 'make 2> /var/log/build.err', true],
+  // NOTE (command-guard layering): the write guard runs AFTER the command
+  // guard (clone-runtime buildPathGuard). Cases below must therefore use a
+  // program the command guard does NOT deny — otherwise the command guard
+  // answers first and the write-guard path is never exercised. That is why
+  // this is `tar 2>` and not `make 2>` (make is a denied build runner), and
+  // `git … status` and not `git … commit` (commit is a denied git subcommand).
+  // The command-guard denials themselves live in command-guard.test.ts.
+  ['stderr 重定向也被查', 'tar -cf x.tar . 2> /var/log/build.err', true],
   // --- blocked: write commands
   ['tee 写 home 外', 'cat secret | tee /root/.ssh/authorized_keys', true],
   ['tee 多目标含 home 外', 'echo x | tee artifacts/ok.md /etc/bad', true],
@@ -60,7 +67,7 @@ const CASES: Array<[string, string, boolean]> = [
   ['dd of= 写 home 外', 'dd if=/dev/zero of=/Users/dev/disk.img bs=1 count=1', true],
   ['cp 目标在 home 外', 'cp notes.md /Users/dev/outside/', true],
   ['mv 目标在 home 外', 'mv artifacts/draft.md /Users/dev/outside/final.md', true],
-  ['git --git-dir 指向 home 外仓库', 'git --git-dir=/Users/dev/other/.git commit -m x', true],
+  ['git --git-dir 指向 home 外仓库', 'git --git-dir=/Users/dev/other/.git status', true],
   // --- blocked: 绕过变体
   ['引号包裹的绝对路径', 'echo x > "/Users/dev/My Documents/evil.txt"', true],
   ['$HOME 变量目标不可静态解析 → 保守拦', 'echo x > $HOME/.bashrc', true],

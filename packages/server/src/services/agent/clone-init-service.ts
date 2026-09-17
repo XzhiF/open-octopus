@@ -5,19 +5,32 @@
 //
 import fs from 'fs'
 import path from 'path'
+import { createHash } from 'crypto'
 import { copyDirSync, type CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
 import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
 import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
 
-// ── Matt skill-family seed (task-phase-redesign ticket 09, K15/AC1) ─────
+// ── task-author clone assets (fork source) ──────────────────────────────
 //
-// The spec-drafting skill family the upgraded task-author flow (K15) runs on.
-// Seeded into built-in/task-author/skills/ so the Claude SDK plugin scan
-// (clone-runtime.getPlugins already includes the clone dir) discovers them
-// with zero per-session code. Names match the dirs under the repo's
-// .claude/skills/ — the same source-of-truth the matt-dev pipeline uses here.
+// The task-author clone's persona + skill family are NOT copied from the repo's
+// shared `.claude/skills/` tree — that is the *development* session's skill
+// tree, whose copies carry execution-side exits ("Next Steps: run
+// matt-dev-pipeline / matt-pipeline-loop") that are wrong for a spec author.
+// They live in `packages/core-pack/clones/task-author/` as a deliberate fork;
+// see that directory's README for what diverges and why.
+//
+// Seeding is versioned, following the workflow-presets precedent
+// (workflow-presets-seed.ts) adapted from one file to a directory tree: a
+// `.seed-manifest.json` records the sha256 of every file we last wrote, so an
+// untouched file can be refreshed from the fork while a hand-edited one is
+// preserved.
+export const TASK_AUTHOR_SEED_MANIFEST = '.seed-manifest.json'
+
+/** The skill family the fork ships. Declared (not derived by scanning) so a
+ *  test can assert the fork's `skills/` dir matches it exactly — adding or
+ *  renaming a skill must be a conscious act, not a silent drift. */
 export const MATT_SKILL_FAMILY: readonly string[] = [
   'matt-verified-requirement',
   'matt-verified-spec',
@@ -27,26 +40,67 @@ export const MATT_SKILL_FAMILY: readonly string[] = [
   'wayfinder',
 ]
 
-/** Locate the repo's .claude/skills/ dir (the matt family source). Mirrors
- *  init-service.findCorePackSkillsDir: __dirname candidates for src (vitest)
- *  and bundled-dist layouts + process.cwd() candidates (dev.mjs/prod.mjs run
- *  with cwd = repo root; `pnpm -F @octopus/server test` runs with cwd =
- *  packages/server). Returns null when unavailable (e.g. an install without
- *  the repo tree) — seeding is then a silent no-op, same posture as
- *  copyBuiltinSkills. */
-function findRepoClaudeSkillsDir(): string | null {
+/** Locate the task-author clone asset source
+ *  (`packages/core-pack/clones/task-author/`). Exported so tests can point at a
+ *  temp tree rather than the real repo. Returns null when unavailable (a
+ *  packaged install without the repo tree) — seeding is then a silent no-op,
+ *  the same posture as copyBuiltinSkills. */
+export function findTaskAuthorSeedDir(): string | null {
+  // Explicit override — used by tests to drive a temp source tree through the
+  // refresh matrix, and available to a packaged install that ships the fork
+  // somewhere other than the repo layout below.
+  const override = process.env.OCTOPUS_TASK_AUTHOR_SEED_DIR
+  if (override && fs.existsSync(path.join(override, 'persona.md'))) return override
+
   const candidates = [
-    path.resolve(__dirname, '../../../../../.claude/skills'),  // src/services/agent → repo root
-    path.resolve(__dirname, '../../../.claude/skills'),        // dist (packages/server/dist) → repo root
-    path.resolve(__dirname, '../../../../.claude/skills'),     // dist one-dir-deeper variants
-    path.resolve(process.cwd(), '.claude/skills'),             // cwd = repo root
-    path.resolve(process.cwd(), '../.claude/skills'),          // cwd = packages/server
-    path.resolve(process.cwd(), '../../.claude/skills'),       // cwd = packages/* subdirs
+    // src/services/agent and dist/services/agent both sit 4 levels under packages/
+    path.resolve(__dirname, '../../../../core-pack/clones/task-author'),
+    path.resolve(process.cwd(), 'packages/core-pack/clones/task-author'), // cwd = repo root
+    path.resolve(process.cwd(), '../core-pack/clones/task-author'),       // cwd = packages/server
+    path.resolve(process.cwd(), '../../core-pack/clones/task-author'),    // cwd = packages/* subdirs
   ]
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c
+    if (fs.existsSync(path.join(c, 'persona.md'))) return c
   }
   return null
+}
+
+/** Relative paths of every file under `root`, restricted to the given entries.
+ *  Each entry is a file (`persona.md`) or a directory (`skills`) walked
+ *  recursively. Returns posix-normalized relative paths. */
+export function collectSeedFiles(root: string, entries: readonly string[]): string[] {
+  const out: string[] = []
+  const walk = (rel: string): void => {
+    const abs = path.join(root, rel)
+    let st: fs.Stats
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      return
+    }
+    if (st.isFile()) {
+      out.push(rel.split(path.sep).join('/'))
+      return
+    }
+    if (!st.isDirectory()) return
+    for (const name of fs.readdirSync(abs)) walk(path.join(rel, name))
+  }
+  for (const entry of entries) walk(entry)
+  return out
+}
+
+/** sha256 hex of a file, or null when it does not exist / cannot be read. */
+function sha256File(abs: string): string | null {
+  try {
+    return createHash('sha256').update(fs.readFileSync(abs)).digest('hex')
+  } catch {
+    return null
+  }
+}
+
+interface SeedManifest {
+  version: number
+  files: Record<string, string>
 }
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -92,39 +146,146 @@ export class CloneInitService {
 
   // ── Private Helpers ─────────────────────────────────────────────
 
-  /** Copy every {@link MATT_SKILL_FAMILY} dir from the repo .claude/skills/
-   *  into `{cloneDir}/skills/` — per-skill skip-if-exists. See call site
-   *  (initSingleClone step 3b) for the rationale. */
-  private seedMattSkills(cloneDir: string, result: CloneInitResult): void {
-    const srcRoot = findRepoClaudeSkillsDir()
+  /** Seed the task-author clone's own assets — `persona.md` + the whole
+   *  `skills/` tree — from the fork at `packages/core-pack/clones/task-author/`.
+   *
+   *  Versioned refresh via `{cloneDir}/.seed-manifest.json` (sha256 per file):
+   *    no manifest      → back up what is there, then take over wholesale.
+   *                       Can't tell a stale seed from a hand-edit, so the
+   *                       backup is the only safety net. This is the one-time
+   *                       migration for installs seeded before versioning.
+   *    sha == recorded  → untouched → overwrite from the fork (upgrade lands)
+   *    sha != recorded  → hand-edited → keep, warn once
+   *    dest missing     → write it (deleting a file is the documented way to
+   *                       force a re-seed, so re-writing is the intent)
+   *    source gone      → keep; never delete user-visible files
+   *
+   *  Non-fatal throughout: a failure leaves the clone with one asset less, and
+   *  the session still runs (same posture as copyBuiltinSkills). */
+  private seedTaskAuthorAssets(cloneDir: string, result: CloneInitResult): void {
+    const srcRoot = findTaskAuthorSeedDir()
     if (!srcRoot) return
 
-    const targetRoot = path.join(cloneDir, 'skills')
-    for (const skill of MATT_SKILL_FAMILY) {
-      const key = `built-in/task-author/skills/${skill}`
-      const srcDir = path.join(srcRoot, skill)
-      const destDir = path.join(targetRoot, skill)
+    const manifestPath = path.join(cloneDir, TASK_AUTHOR_SEED_MANIFEST)
+    const prev = this.readSeedManifest(manifestPath)
+    if (!prev) this.backupSeedTargets(cloneDir, result)
 
-      if (fs.existsSync(destDir)) {
-        result.filesSkipped.push(key)
+    const srcFiles = collectSeedFiles(srcRoot, ['persona.md', 'skills'])
+    const nextFiles: Record<string, string> = {}
+
+    for (const rel of srcFiles) {
+      const key = `built-in/task-author/${rel}`
+      const srcAbs = path.join(srcRoot, rel)
+      const destAbs = path.join(cloneDir, rel)
+      const srcHash = sha256File(srcAbs)
+      if (srcHash === null) continue // unreadable source — nothing to seed
+      nextFiles[rel] = srcHash
+
+      const destHash = sha256File(destAbs)
+      if (destHash === null) {
+        this.seedCopyFile(srcAbs, destAbs, key, result, false)
         continue
       }
-      // Source missing for one skill (renamed upstream) → skip that entry,
-      // keep seeding the rest. A dir without SKILL.md is not a skill — skip.
-      if (!fs.existsSync(path.join(srcDir, 'SKILL.md'))) continue
-
-      try {
-        fs.mkdirSync(targetRoot, { recursive: true })
-        copyDirSync(srcDir, destDir)
-        result.filesCreated.push(key)
-      } catch (err: unknown) {
-        // Non-fatal: plugin scan simply finds one less skill.
-        console.warn(
-          `[CloneInitService] matt-skill seed failed for ${skill}:`,
-          err instanceof Error ? err.message : String(err),
-        )
+      if (destHash === srcHash) {
+        result.filesSkipped.push(key) // already fresh
+        continue
       }
+      // Content differs. With a manifest, only an untouched file is safe to
+      // overwrite — a differing hash means the user edited it.
+      const recorded = prev?.files[rel]
+      if (prev && recorded !== undefined && destHash !== recorded) {
+        result.filesSkipped.push(key)
+        this.warnUserModified(destAbs, key)
+        continue
+      }
+      this.seedCopyFile(srcAbs, destAbs, key, result, true)
     }
+
+    try {
+      const manifest: SeedManifest = { version: 1, files: nextFiles }
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
+    } catch (err: unknown) {
+      // Losing the manifest only costs us the next run's edit detection.
+      console.warn(
+        `[CloneInitService] could not write ${TASK_AUTHOR_SEED_MANIFEST}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Read the seed manifest, or null when missing/unparseable. */
+  private readSeedManifest(manifestPath: string): SeedManifest | null {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as SeedManifest
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.files !== 'object') return null
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
+  /** One-time migration safety net: move the existing `persona.md` + `skills/`
+   *  aside before we overwrite them, so hand-edits made before versioning
+   *  existed are recoverable. No-op when there is nothing to back up. */
+  private backupSeedTargets(cloneDir: string, result: CloneInitResult): void {
+    const targets = ['persona.md', 'skills'].filter((t) => fs.existsSync(path.join(cloneDir, t)))
+    if (targets.length === 0) return
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupDir = path.join(cloneDir, `seed.bak-${stamp}`)
+    try {
+      fs.mkdirSync(backupDir, { recursive: true })
+      for (const t of targets) {
+        const src = path.join(cloneDir, t)
+        const dst = path.join(backupDir, t)
+        if (fs.statSync(src).isDirectory()) copyDirSync(src, dst)
+        else fs.copyFileSync(src, dst)
+      }
+      result.dirsCreated.push(`built-in/task-author/seed.bak-${stamp}`)
+      console.warn(
+        `[CloneInitService] task-author assets were not versioned yet — backed up to ` +
+        `built-in/task-author/seed.bak-${stamp}/ before the first managed seed. ` +
+        `Local edits are now tracked by ${TASK_AUTHOR_SEED_MANIFEST} and will be preserved.`,
+      )
+    } catch (err: unknown) {
+      // Losing the backup is bad but not fatal — warn loudly and carry on.
+      console.warn(
+        `[CloneInitService] could not back up task-author assets:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Copy one seed file into place, creating parent dirs. `refreshed` picks the
+   *  result bucket (filesRefreshed vs filesCreated). */
+  private seedCopyFile(
+    srcAbs: string,
+    destAbs: string,
+    key: string,
+    result: CloneInitResult,
+    refreshed: boolean,
+  ): void {
+    try {
+      fs.mkdirSync(path.dirname(destAbs), { recursive: true })
+      fs.copyFileSync(srcAbs, destAbs)
+      if (refreshed) result.filesRefreshed.push(key)
+      else result.filesCreated.push(key)
+    } catch (err: unknown) {
+      console.warn(
+        `[CloneInitService] seed failed for ${key}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Warn once per process per file (see `warnedUserModified`). */
+  private warnUserModified(destAbs: string, key: string): void {
+    if (this.warnedUserModified.has(destAbs)) return
+    this.warnedUserModified.add(destAbs)
+    console.warn(
+      `[CloneInitService] ${key} was user-modified — keeping it; ` +
+      `seed updates NOT applied (delete the file to re-seed)`,
+    )
   }
 
   private initSingleClone(
@@ -152,7 +313,24 @@ export class CloneInitService {
       result.dirsCreated.push(`built-in/${name}/memory/daily`)
     }
 
-    // 2. Write default persona.md (skip if exists)
+    // 2. Seed the task-author clone's own assets — persona.md + the whole
+    // skills/ tree — from the fork at packages/core-pack/clones/task-author/
+    // (see seedTaskAuthorAssets). Versioned refresh: an untouched file is
+    // upgraded from the fork, a hand-edited one is preserved. This is what
+    // replaced the old copy-from-.claude/skills-once, which never refreshed and
+    // so silently stranded installs on stale skills.
+    //
+    // Runs BEFORE the persona fallback below so that:
+    //   - a fresh install never writes a fallback persona just for the seed to
+    //     treat it as pre-existing (and back it up) on the same run;
+    //   - `persona.md` is owned by the fork when the fork is present.
+    if (name === 'task-author') {
+      this.seedTaskAuthorAssets(cloneDir, result)
+    }
+
+    // 3. Write default persona.md — only a fallback now: for non-task-author
+    // clones (no fork), and for task-author installs where the fork was
+    // unavailable. When the seed already wrote it, this is a no-op.
     const personaPath = path.join(cloneDir, 'persona.md')
     if (!fs.existsSync(personaPath)) {
       fs.writeFileSync(personaPath, cloneDef.persona, 'utf-8')
@@ -161,7 +339,7 @@ export class CloneInitService {
       result.filesSkipped.push(`built-in/${name}/persona.md`)
     }
 
-    // 3. Write config.json
+    // 4. Write config.json
     const configPath = path.join(cloneDir, 'config.json')
     if (!fs.existsSync(configPath)) {
       const config = {
@@ -179,7 +357,7 @@ export class CloneInitService {
       result.filesSkipped.push(`built-in/${name}/config.json`)
     }
 
-    // 3. Seed/migrate workflow-presets.yaml for the task-author clone
+    // 5. Seed/migrate workflow-presets.yaml for the task-author clone
     // (task-workflow-presets T3 review fix; versioned migration added by
     // goal-task-dev ticket 05): pure skip-if-exists meant existing installs
     // NEVER refreshed the default catalog (general-dev kept pointing at
@@ -230,17 +408,7 @@ export class CloneInitService {
       }
     }
 
-    // 3b. Seed the matt skill-family into built-in/task-author/skills/
-    // (task-phase-redesign ticket 09, AC1/K15). Whole-directory copy-if-missing
-    // (skills ship auxiliary files — references/, *-FORMAT.md), skip-if-exists
-    // so user edits survive across restarts (persona.md precedent). Missing
-    // source (packaged install without the repo .claude/ tree) → silent no-op,
-    // same posture as init-service.copyBuiltinSkills.
-    if (name === 'task-author') {
-      this.seedMattSkills(cloneDir, result)
-    }
-
-    // 4. Register in DB (skip if exists)
+    // 6. Register in DB (skip if exists)
     try {
       const existing = cloneDAO.findByName(name)
       if (!existing) {
