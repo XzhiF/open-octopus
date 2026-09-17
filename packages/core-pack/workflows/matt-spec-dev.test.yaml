@@ -17,6 +17,7 @@ scenarios:
   - name: "first round — spec executed directly, no spec-review"
     inputs:
       batch_dir: ".scratch/20260905/llm-event-bus-1"
+      is_final_phase: "false"
       task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
     mocks:
       spec-resolve:
@@ -63,6 +64,7 @@ scenarios:
   - name: "rework round — feedback present, spec reviewed in ws before execution"
     inputs:
       batch_dir: ".scratch/20260905/llm-event-bus-1"
+      is_final_phase: "false"
       task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
     mocks:
       spec-resolve:
@@ -110,6 +112,7 @@ scenarios:
   - name: "precheck fail — batch dir missing (seed broken)"
     inputs:
       batch_dir: ".scratch/20260905/ghost-phase-9"
+      is_final_phase: "false"
       task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
     mocks:
       spec-resolve:
@@ -146,6 +149,7 @@ scenarios:
       - spec-resolve
     inputs:
       batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+      is_final_phase: "false"
       prev_handoff_paths: |-
         .scratch/phase-handoff-chaining/sim/prev-phase/ghost-handoff.md
         .scratch/phase-handoff-chaining/sim/prev-phase/handoff.md
@@ -193,6 +197,7 @@ scenarios:
       - spec-resolve
     inputs:
       batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+      is_final_phase: "false"
     mocks:
       ticket-dag:
         output: "1 ticket executed: 01 done"

@@ -31,6 +31,20 @@ import { batchRelPath } from "./task-artifact-sync"
  *  consumers (workflow YAML `$vars.prev_handoff_paths`) read the same string. */
 export const PREV_HANDOFF_PATHS_KEY = "prev_handoff_paths"
 
+/** phase-handoff-chaining (ADR-0019 §1 边界): whether the phase being launched is
+ *  the task's LAST one. Always injected ("true"/"false"), never omitted — an
+ *  unresolved `$inputs.X` reference survives substitution as a literal, and the
+ *  workflow branches on this value, so a missing key would read as a bogus word
+ *  rather than as "false" (contrast PREV_HANDOFF_PATHS_KEY, which is omitted when
+ *  empty and therefore needs spec-resolve's sentinel dance).
+ *
+ *  Why the workflow needs it: ship produces `handoff.md` for the NEXT phase's
+ *  execution session. On the final phase there is no next session — the file would
+ *  have no reader at all (the board's acceptance hint already hides itself there,
+ *  see acceptance-surface's `hasNextPhase`; archiving never reads it; and
+ *  collectPrevHandoffPaths only ever picks up `index < targetPhaseIndex`). */
+export const IS_FINAL_PHASE_KEY = "is_final_phase"
+
 // SG9 (ticket 06): composite requires subunits.length >= 2 (1-subunit → simple
 // workflow_chain). The dispatch seam (TasksService.readyTask) uses the same
 // threshold; materialize + isCompositeTask (workflow-executor) mirror it so
@@ -433,17 +447,21 @@ export function resolveTaskLaunchStep(args: {
     format?: string
     phases?: TaskV4PhaseConfig[]
   }
-  const phase = ext.format === "v4"
-    ? (ext.phases ?? []).find((p) => p.index === (phaseIndex ?? 1))
-    : undefined
+  const v4Phases = ext.format === "v4" ? (ext.phases ?? []) : []
+  const phase = v4Phases.find((p) => p.index === (phaseIndex ?? 1))
 
   if (phase) {
+    // "Last" by MAX index rather than array position — robust to ordering, and the
+    // phase set here is the gate-resolved one (a missing spec never dispatches).
+    const lastIndex = v4Phases.reduce((max, p) => Math.max(max, p.index), phase.index)
     const stepInputValues: Record<string, string> = {
       ...(args.inputOverride ?? phase.inputValues),
       ...(feedback && feedback.trim() ? { feedback } : {}),
       // phase-handoff-chaining: accepted predecessor handoffs, newline-joined.
       // Same-phase rerun/fix never passes it ⇒ never injected.
       ...(args.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: args.prevHandoffPaths.join("\n") } : {}),
+      // Always injected (see IS_FINAL_PHASE_KEY) — the workflow branches on it.
+      [IS_FINAL_PHASE_KEY]: phase.index === lastIndex ? "true" : "false",
       // Stamps kept: the var pool exposes them to the workflow and a crash-recovery
       // re-launch of THIS row re-derives identically from the persisted input_values.
       _phase_index: String(phaseIndex ?? 1),

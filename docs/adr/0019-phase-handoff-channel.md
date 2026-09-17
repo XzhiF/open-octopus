@@ -20,6 +20,19 @@ v4 多 phase 任务的跨 phase 上下文信道只有 spec 文本（起草期人
 - 结构 = 头块（phase · 终态轮次 rN · PR 链接 · 批次路径）+ 三段式沿用 `iteration-handoff.md`。与 round-report.md 的分工：**round-report 给验收人（全量轮报），handoff 给下游执行会话（精选短页，一屏内，引用不复制）**。
 - 覆写语义 ⇒ accepted 那刻它天然是终态交接；打回轮的交接也不丢（裁决人可对照上轮 handoff 决策——被视为优点）。
 
+#### 边界（2026-09-18 补）：末 phase 不产 handoff.md
+
+本节原文写「ship **每轮末**产/覆写」，没考虑末 phase——那条设计缺口，不是实现漏做。末 phase 的 handoff **没有任何读者**：§2 的注入只取 `index < 目标 phase`（`collectPrevHandoffPaths`），归档链不读它，验收台的衔接提示也已自行隐藏（`acceptance-surface` 的 `hasNextPhase`）。产出来只有误导——让人以为末 phase 也有下游。
+
+现状是**看板知道、workflow 不知道**：`ship-pr` 手里只有 `batch_dir` 与 `prev_handoffs`（**前**序），slug 尾部数字只给「本 phase 序号」不给「总数」，它无从判断自己是不是最后一站。故补一个与 §2 同族的**内置注入键**（server 派发时注入，不进占位符词表、`template-resolver.ts` 仍零改动）：
+
+- `is_final_phase` = `"true"` / `"false"`，`resolveTaskLaunchStep` 按 `phases[]` 的最大 index 判定。
+- **恒注入**（两个值都注），不像 `prev_handoff_paths` 那样空则省略——引擎对「未解析引用」原样保留字面量，若省略，`ship-pr` 读到的会是 `$inputs.is_final_phase` 这个裸词而非 `"false"`，而它要按这个值分支。
+- `ship-pr` 提示词据此在末站跳过 handoff.md（并删掉可能残留的旧版），改在 `round-report.md` 的 `Remaining Issues` 留一行说明。
+- `matt-spec-dev` 的 inputs 声明该键（`required: false`，与 `task_artifacts_dir` / `prev_handoff_paths` 同款「看板注入、表单无需手填」）。
+
+§4「不变量」不受影响：无 DB schema 变更、无新端点；多出的只是一个注入键与一段提示词分支。
+
 ### 2. 信道：server 自动注入 `prev_handoff_paths`（内置键，非占位符）
 
 - `acceptance()` accepted→下一 phase 与手动推进两处，`dispatchPhaseRound` 把**全部已 accepted 前序**的 `{specDir}/handoff.md` 绝对路径（存在性过滤、换行连接）append 进 materialized input_values——与 `feedback`/`task_artifacts_dir` 注入同族。

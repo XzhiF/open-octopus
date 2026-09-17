@@ -88,7 +88,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 ├── fix-feedback-r1.md ← 人打回 round1 时由 server 产物化（你只读，不预造）
 ├── fix-report-r1.md   ← task-fix 轻量修复轮由执行侧产出（ws → collect 上行）
 ├── round-report.md    ← matt-spec-dev 每轮终报（含「Spec 修订」节：反馈→是否改 spec→改了什么）
-└── handoff.md         ← matt-spec-dev ship 每轮末产/覆写、面向下游 phase 的精选交接短页（见「phase 衔接信道」节）
+└── handoff.md         ← matt-spec-dev ship 每轮产/覆写、面向下游 phase 的精选交接短页（末 phase 不产——无下游读者；见「phase 衔接信道」节）
 ```
 
 - `<YYYYMMDD>` = 起草日，同 date 前缀 = 同需求批次；slug **path-safe**（`[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验），kebab-case + 序号后缀。
@@ -149,7 +149,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 跨 phase 上下文不靠人工转述——v4 内置一条产物信道，三环全自动（零起草负担，但你要能向用户解释它，且知它的边界）：
 
-1. **产物（执行侧）**：`ship-pr`（matt-spec-dev）每轮末在批次目录产/覆写 `handoff.md`——面向下游执行会话的精选交接短页（与面向验收人的 round-report.md 受众不同；头块 = phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段：`## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（下游可直接复用的接口/表/组件/命令——给路径不给描述）/ `## Gap Targets`（如实遗留：skip 票、noted 风险、未竟事项）。流内纪律：每轮整页重写禁追加、一屏内、细节引用 round-report.md 不复制；只写 ws，collect 回流 home。
+1. **产物（执行侧）**：`ship-pr`（matt-spec-dev）每轮在批次目录产/覆写 `handoff.md`——面向下游执行会话的精选交接短页（与面向验收人的 round-report.md 受众不同；头块 = phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段：`## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（下游可直接复用的接口/表/组件/命令——给路径不给描述）/ `## Gap Targets`（如实遗留：skip 票、noted 风险、未竟事项）。流内纪律：每轮整页重写禁追加、一屏内、细节引用 round-report.md 不复制；只写 ws，collect 回流 home。
+   **末 phase 不产**（ADR-0019 §1 边界）：它没有下游执行会话，产出来只有误导。server 派发时恒注入内置键 `is_final_phase`（`"true"`/`"false"`，非占位符）供 `ship-pr` 判定——同理**不要手填进绑定表单**。你要向用户解释的是：一个 3-phase 任务只有 phase1/2 的批次目录里会有 handoff.md，末 phase 的那页不存在，不是 ship 崩了。
 2. **注入（server）**：phase accepted→下一 phase 首轮开轮（autoAdvance 与看板手动推进两处同行为），`prev_handoff_paths` 注入该轮物化 input_values = 全部已 accepted 前序（含刚 accepted 的本 phase）`handoff.md` 的 **home 绝对路径**（存在性过滤、index 升序、换行连接；全空则键不出现；只注路径不注内容），与 `feedback`/`task_artifacts_dir` 注入同族。**同 phase 打回 rerun/fix 不注入**——该轮已有 feedback/fix-feedback 信道。
 3. **消费（执行侧）**：`spec-resolve` 逐行探测路径存在性 → `$vars.prev_handoffs` / `prev_handoff_count` → spec-review / 票 DAG / ship 提示词要求「先读前序交接：不回退 Protected Decisions，Confirmed Interfaces 直接复用现物，Gap Targets 未闭环项承接或显式关闭」。
 
@@ -157,6 +158,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 - 消费仅对 matt-spec-dev（或按同契约自建、显式读取 `prev_handoff_paths` 输入并产 handoff.md 的流）成立——**绑其他自定义流时注入键无人消费，信道静默失效、无任何报错**。拆分流推荐到非默认流，损失要说在前头。
 - ship 崩溃 ⇒ 该 phase 无 handoff.md ⇒ accepted 后下 phase 信道静默缺一角（存在性过滤吞掉，不烧派发）——验收人靠批次清单（home-file LIST）可见 handoff 缺失，打回人可对照批次里上轮 handoff.md（覆写非删除）。
+- **末 phase 无 handoff.md 是规定动作，不是缺角**：那条「下 phase 信道静默缺一角」的排查规则只适用于非末 phase。3-phase 任务里 phase3 的批次目录本就不该有它（见上）。
 - 存量任务（本特性前已 accepted 的 phase）无 handoff.md = 现状，不迁移、不回归。
 
 ## 拆 Phase 方法论

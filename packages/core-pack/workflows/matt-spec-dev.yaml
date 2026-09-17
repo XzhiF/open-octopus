@@ -59,6 +59,9 @@ inputs:
   prev_handoff_paths:
     description: "已 accepted 前序 phase 的 handoff.md 绝对路径（换行连接，home 位）— 看板 accept→下一 phase 开轮时自动注入（内置键，非占位符），绑定表单无需手填；spec-resolve 探测存在性后写 vars.prev_handoffs / prev_handoff_count，缺失路径静默跳过"
     required: false
+  is_final_phase:
+    description: "本 phase 是否任务末站（\"true\"/\"false\"）— 看板派发时自动注入（内置键，非占位符），绑定表单无需手填。末站无下游执行会话，ship-pr 据此不产 handoff.md"
+    required: false
 
 # --- 变量（spec-resolve 写，下游读；串行链上的路由真相）---
 variables:
@@ -390,7 +393,8 @@ nodes:
       {"vars_update": {"review_status": "passed|has_notes|has_fixes", "verify_status": "passed|failed|not_needed"}}
 
   # ------------------------------------------------------------
-  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接）
+  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接；
+#          末 phase 不产 handoff —— 无下游执行会话，见 §2 产物 2 的末站跳过）
   # 2026-09-16 快线化: 共享会话禁重读 + 事实一条 bash 采齐 + 产物契约节名逐字
   # （round-report「票执行摘要」「Changed Files」与 handoff 三节是核对 tab /
   #   下一 phase 的解析锚点 —— 压缩只压正文，不压节名与表头）
@@ -403,12 +407,13 @@ nodes:
     tools: [Read, Bash, Grep, Glob]
     prompt: |
       完成 Ship 交付: Round Report + Git PR。
-      使用 handoff skill 方法论记录本轮交接。
+      使用 handoff skill 方法论记录本轮交接（**仅当本 phase 非末站** —— 见产物 2 的末站跳过）。
 
       ═══ 上下文 ═══
       Batch 目录（ws 根下，与 task home 同构）: $inputs.batch_dir
       代码仓: projects/ 下的 git repo（worktree，分支 $vars.branch）
       前序交接（有则先读，其 Gap Targets 未闭环项须承接或显式关闭；空则本 phase 无前序）: $vars.prev_handoffs
+      本 phase 是否末站: $inputs.is_final_phase（true ⇒ 无下游执行会话，跳过产物 2）
 
       ═══ 速度纪律 ═══
       - 你在共享会话里 —— spec/票/gate/review 的来龙去脉已在你上下文中，
@@ -437,6 +442,12 @@ nodes:
          - `## Confirmed Interfaces` — 下游可直接复用的接口/表/组件/命令，给路径不给描述
          - `## Gap Targets` — 如实遗留：skip 票、noted 风险、未竟事项（含承接的前序 Gap 去向）
          节名逐字不可改（下一 phase 的 prompt 逐字引用）；正文 ≤25 行，压正文不压节。
+         ⚠️ **末站跳过**（$inputs.is_final_phase == "true"）：本 phase 是任务最后一个，
+         没有下游执行会话会读它（server 只在 index < 目标 phase 的范围内注入前序交接，
+         归档链也不读）—— 此时**不产 handoff.md**（已有旧版则一并删掉，留着是误导），
+         改为在 round-report 的 `## Remaining Issues` 写一行
+         "末 phase（无下游）：按 ADR-0019 §1 边界跳过 handoff.md"。验收人要看本轮全貌有
+         round-report，不缺这一页。
       3. issues/ 有票漏回写 Status → 补写。
 
       ═══ Git ═══
