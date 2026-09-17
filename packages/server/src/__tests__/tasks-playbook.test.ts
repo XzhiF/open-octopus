@@ -119,7 +119,7 @@ describe("GET /:id/playbook", () => {
   it("P4: prior-round checks carryover resurfaces skip/fail over HTTP", async () => {
     const taskId = await newAwaitingTask()
     writeBatch(taskId, "e2e-test-plan.md", "## 测试步骤\n\n### Step 1: S1\n- 操作: o1\n- 断言: e1\n\n### Step 2: S2\n- 操作: o2\n- 断言: e2\n")
-    writeBatch(taskId, "acceptance-checks-r1.json", JSON.stringify({ version: "1", checks: { "walk:plan:1": { decision: "skip", note: "上轮环境问题", at: "t" }, "walk:plan:2": { decision: "pass", note: "", at: "t" } } }))
+    writeBatch(taskId, "acceptance-checks-r1.md", "# 走查勾选 · Round 1\n\n```json\n" + JSON.stringify({ version: "1", checks: { "walk:plan:1": { decision: "skip", note: "上轮环境问题", at: "t" }, "walk:plan:2": { decision: "pass", note: "", at: "t" } } }) + "\n```\n")
     const { body } = await getPlaybook(taskId)
     // roundIndex=1 here; r1<1 false → carryover NOT read (same round). Force via a fresh awaiting at round 2? The service reads N<roundIndex only. With roundIndex 1, r1 is skipped. Assert that guard instead:
     expect(body.carryover).toHaveLength(0)

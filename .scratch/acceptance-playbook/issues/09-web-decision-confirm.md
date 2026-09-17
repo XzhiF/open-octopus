@@ -10,8 +10,8 @@
 done
 
 ## Acceptance Criteria
-- [ ] AC1: 通过弹层内容=future ledger 文本预览;未决>0 列出项与票号;disabled 逻辑对 fail
-- [ ] AC2: 打回提交 body 含 reopen_tickets;中止必过确认(组件测查询无 confirm 路径不可达 abort)
+- [x] AC1: 通过弹层内容=future ledger 文本预览;未决>0 列出项与票号;disabled 逻辑对 fail —「T09 决策闭环」「accepted 提交」2 测 + live 截图(⊘carryover 预告/未决留痕承诺)
+- [x] AC2: 打回提交 body 含 reopen_tickets;中止必过确认(组件测查询无 confirm 路径不可达 abort) —「T09 AC2 ✗ 闭环」断言 reopen_tickets=["02-e2e-status"](plan 兜底正确滤除);中止走 ConfirmDialog
 
 ## Verification Method
 **type**: component test(acceptance-surface.test.tsx 扩展)+ 目检截图。

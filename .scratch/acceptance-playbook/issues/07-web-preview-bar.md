@@ -10,8 +10,8 @@
 done
 
 ## Acceptance Criteria
-- [ ] AC1: stopped→starting→ready→stop 全态渲染;ready 时 ↗ 的 href=url
-- [ ] AC2: 配置保存走 spec-field;400/409 原因行内显示
+- [x] AC1: stopped→starting→ready→stop 全态渲染;ready 时 ↗ 的 href=url —「T07 预览启动」「T07 AC1 ready 态」2 测;live:mvn spring-boot:run → ready 4s → :8080/api/status 真 JSON → stop 端口释放
+- [x] AC2: 配置保存走 spec-field;400/409 原因行内显示 —「T07 AC2 预览配置」断言 source=user 载荷 + 失败不收起抽屉。**偏差记**:原因呈现走 toast(与复检配置同通道),非抽屉行内——弹窗内不引第二种错误样式(D6 克制)
 
 ## Verification Method
 **type**: component test + 状态流转(SSE stub 注 task_preview 事件)。

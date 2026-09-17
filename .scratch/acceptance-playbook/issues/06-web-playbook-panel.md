@@ -10,9 +10,9 @@
 done
 
 ## Acceptance Criteria
-- [ ] AC1: 渲染 payload → 步数/预算/carryover 正确;✗ 存在时 onFailCount>0 冒给父(供 disabled)
-- [ ] AC2: 勾选 → 300ms 内 putHomeFile 一次(合批);刷新回填
-- [ ] AC3: available:false → 降级卡 + 「配置命令」指引(不白屏)
+- [x] AC1: 渲染 payload → 步数/预算/carryover 正确;✗ 存在时 onFailCount>0 冒给父(供 disabled) —「T06 剧本渲染」「T09 决策闭环」+ java 靶 live(5 步/预算 7min 见截图)
+- [x] AC2: 勾选 → 300ms 内 putHomeFile 一次(合批);刷新回填 —「T06 AC2 勾选合批写回/刷新回填」2 测;live:盘上 .md 跨刷新/重启回填 ✓2·⊘1
+- [x] AC3: available:false → 降级卡 + 「配置命令」指引(不白屏) —「T06 AC3 降级」点名缺源 + 决策面在场
 
 ## Verification Method
 **type**: component test(vitest+jsdom,仿 acceptance-surface.test.tsx 的 fetch stub)。

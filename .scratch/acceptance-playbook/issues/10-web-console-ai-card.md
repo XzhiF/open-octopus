@@ -10,9 +10,9 @@ phase-surface.tsx:删 :353-372 verdict 行 → 「→ 去验货台验收」CTA(c
 done
 
 ## Acceptance Criteria
-- [ ] AC1: 控制台 DOM 无 data-verdict-row/acceptance-approve;CTA 切 tab 生效
-- [ ] AC2: AI 卡三层字段完整(七量纲),execution-summary.test.tsx 更新全绿
-- [ ] AC3: 验货台无 token/cost 字样(grep test 断言)
+- [x] AC1: 控制台 DOM 无 data-verdict-row/acceptance-approve;CTA 切 tab 生效 — 组件测 + 真栈 DOM 审计(hasVerdictApprove=false / CTA=true,截图)
+- [x] AC2: AI 卡三层字段完整(七量纲),execution-summary.test.tsx 更新全绿 — 测绿;真栈无 llm_calls 落库时显诚实空态(不猜)
+- [x] AC3: 验货台无 token/cost 字样(grep test 断言) —「AC6 不再拉 fetchLLMCalls」断言 + 真栈 hasTokenCost=false
 
 ## Verification Method
 **type**: component test + e2e 两 spec 更新(task-phase-acceptance:487,572 / task-phase-lifecycle:722,775 改走验货台锚点)。

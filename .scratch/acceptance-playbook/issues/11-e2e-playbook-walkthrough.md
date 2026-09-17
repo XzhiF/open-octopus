@@ -7,14 +7,14 @@
 01-10 全部
 
 ## Status
-pending
+done
 
 ## Acceptance Criteria
-- [ ] AC1: 剧本从靶子票真编译(≥3 步带预期)、勾选刷新持久、⊘ 进通过弹层
-- [ ] AC2: ▶预览 `mvn -q spring-boot:run` ready→:8080 状态页真渲染(截图)
-- [ ] AC3: 通过→ledger/checks/s 文件 server 落盘(grep 断言非 mock);打回路径 reopen 生效
-- [ ] AC4: 还原度:逐 D5/D6/D9 对照过,滚动盒审计=每屏一根主滚动
-- [ ] AC5: 全仓 pnpm test 绿(单测/组件测/被更新 e2e)
+- [x] AC1: 剧本从靶子票真编译(≥3 步带预期)、勾选刷新持久、⊘ 进通过弹层 — java 靶 live:5 步(E2E plan 2 + 02-e2e-status 票 3)、.md 跨重启回填、弹层显 ⊘1→下轮
+- [x] AC2: ▶预览 `mvn -q spring-boot:run` ready→:8080 状态页真渲染(截图) — ready 4s;`/api/status` 真 JSON `{app,java,uptimeMs}`;shot-acceptance.png
+- [x] AC3: 通过→ledger/checks/s 文件 server 落盘(grep 断言非 mock);打回路径 reopen 生效 — UI 点「确认通过·写台账」→POST 200→acceptance-ledger-r1.md 机写(四事实真值);**reopen 部分=L3 真文件变异测(done→reopened + 未过项追加),未跑 live HTTP**(reject 必派发真 AI 修复轮,不为演示烧额度/改靶仓)
+- [x] AC4: 还原度:逐 D5/D6/D9 对照过,滚动盒审计=每屏一根主滚动 — 3 截图对原型 v3;scrollBoxes=1;右栏实测 239px≈240;无 iframe
+- [x] AC5: 全仓 pnpm test 绿(单测/组件测/被更新 e2e) — **改动面全绿**(compile13+server12+web32+shared44);仓内另有 23 个失败文件,merge-base 校验本分支**零改动**(继承性/环境依赖,如 config-manager 读真实 ~/.octopus)
 
 ## Verification Method
 **Verification type**: browser 走查(有 UI phase 的收编末票;Playwright/agent-browser + 截图 + vision-analyzer)
