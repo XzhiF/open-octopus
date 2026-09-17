@@ -9,6 +9,8 @@
 //   ready            → 待执行
 //   running+archiving→ 执行中 (archiving 卡片加 ⚠归档中 徽标 — K6 末验收态仍是
 //                       「在跑」的人机语义；票 08 是 done 唯一写者)
+//   paused           → 执行中 (⏸已暂停 徽标 — 暂停的轮仍占 latch 与并发名额，
+//                       折列而非新开一列)
 //   awaiting_review  → 待验收 (琥珀高亮 — US8「失败不是红死状态而是待处理」)
 //   done+failed+aborted → 完成 (终态列；failed/aborted 仅 v3 可持久 (K13)，
 //                       卡片状态行自证真实终态)
@@ -22,7 +24,7 @@
 // handled, 票 07 发现的 web typecheck 红线); the column layer folds buckets.
 
 import { taskTriggerFailedPayloadSchema, type Task, type TaskStatus, type TaskTriggerFailedSsePayload } from "@octopus/shared"
-import type { TaskDerivedView, TaskPhaseView } from "@/lib/tasks-api"
+import type { TaskDerivedView, TaskDisplayStatus, TaskPhaseView } from "@/lib/tasks-api"
 
 /** All persisted/displayable task states (v4 K3: + awaiting_review/archiving). */
 export type TaskBoardStatus = TaskStatus
@@ -59,6 +61,10 @@ export const STATUS_TO_COLUMN: Record<TaskStatus, TaskBoardColumnId> = {
   draft: "draft",
   ready: "ready",
   running: "running",
+  // 暂停也留在「执行中」列 (⏸徽标由卡片渲染) — same fold as archiving, and for the
+  // same reason: a paused round is still alive, still holding the latch and a
+  // concurrency credit. A separate column would suggest it had left the works.
+  paused: "running",
   archiving: "running", // 归档中留在执行中列 (⚠徽标由卡片渲染)
   awaiting_review: "awaiting_review",
   done: "done",
@@ -70,7 +76,7 @@ export const STATUS_TO_COLUMN: Record<TaskStatus, TaskBoardColumnId> = {
 export const COLUMN_STATUSES: Record<TaskBoardColumnId, readonly TaskStatus[]> = {
   draft: ["draft"],
   ready: ["ready"],
-  running: ["running", "archiving"],
+  running: ["running", "paused", "archiving"],
   awaiting_review: ["awaiting_review"],
   done: ["done", "failed", "aborted"],
 }
@@ -104,6 +110,7 @@ export function groupTasksByStatus<T extends Task>(tasks: T[]): TasksByStatus<T>
     draft: [],
     ready: [],
     running: [],
+    paused: [],
     awaiting_review: [],
     archiving: [],
     done: [],
@@ -129,7 +136,10 @@ export function tasksForColumn<T extends Task>(grouped: TasksByStatus<T>, column
  *  活体交互 #1), EXCEPT persisted draft (derive has no 'draft' output — 草稿列
  *  按设计读持久态) and persisted aborted (人的决定，derive 同样输出 aborted，
  *  但 derived 缺失时也要正确归位). v3 / derived 未加载 → 持久态 verbatim. */
-export function effectiveStatusOf(task: Task, derived: TaskDerivedView | undefined): TaskStatus {
+export function effectiveStatusOf(
+  task: Task,
+  derived: TaskDerivedView | undefined,
+): TaskDisplayStatus {
   if (!derived || !derived.isV4) return task.status
   if (task.status === "draft" || task.status === "aborted") return task.status
   return derived.taskStatus
@@ -184,6 +194,8 @@ export function overBudgetRoundOf(
   if (!derived || !derived.isV4) return null
   for (const pv of derived.phaseViews) {
     for (const r of pv.rounds) {
+      // 'paused' is deliberately excluded: a round a human put on the brake should not
+      // keep accruing a ⏳ 「超预算」 scolding for time it is not spending.
       if (r.state !== "pending" && r.state !== "running") continue
       const started = Date.parse(r.exec.created_at)
       if (Number.isNaN(started)) continue

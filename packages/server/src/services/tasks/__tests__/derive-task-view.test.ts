@@ -8,7 +8,7 @@
 //
 // AC1: parameterized matrix ≥12 combos — running/succeeded/failed execs ×
 //      accepted/rejected/no acceptance × first/middle/last phase.
-// AC2: invariant — v4 output taskStatus ∈ {ready,running,awaiting_review,
+// AC2: invariant — v4 output taskStatus ∈ {ready,running,paused,awaiting_review,
 //      archiving,done,aborted}, NEVER failed (失败归 round 层, K3).
 
 import { describe, expect, it } from "vitest"
@@ -79,10 +79,13 @@ function acc(
   }
 }
 
-/** Derived 6-value enum (AC2) — asserted toContain for EVERY matrix row. */
+/** Derived 7-value enum (AC2) — asserted toContain for EVERY matrix row.
+ *  'paused' joined in the task-pause work: it is the ONLY value here that no persisted
+ *  task row can carry (the truth is executions.status='paused'). */
 const V4_TASK_STATUSES: DerivedTaskStatus[] = [
   "ready",
   "running",
+  "paused",
   "awaiting_review",
   "archiving",
   "done",
@@ -298,6 +301,45 @@ const MATRIX: MatrixCase[] = [
     expectTask: "archiving",
     expectPhaseStatuses: ["accepted", "accepted", "accepted"],
   },
+  // ── 暂停态 (task-pause): 真相在 executions.status='paused' ──
+  {
+    name: "P1 · round paused → task paused (且绝不可落 awaiting_review)",
+    persisted: "running",
+    execs: [[1, 1, "paused"]],
+    accs: [],
+    expectTask: "paused",
+    expectPhaseStatuses: ["paused", "pending", "pending"],
+  },
+  {
+    name: "P1 accepted 覆盖同轮暂停 (人的放行 > 踩刹车) → archiving",
+    persisted: "running",
+    execs: [[1, 1, "paused"]],
+    accs: [[1, 1, "accepted"]],
+    expectTask: "archiving",
+    expectPhaseStatuses: ["accepted"],
+  },
+  {
+    name: "P1 accepted · P2 paused → task paused (踩刹车压过『等着放行』)",
+    persisted: "running",
+    execs: [
+      [1, 1, "completed"],
+      [2, 1, "paused"],
+    ],
+    accs: [[1, 1, "accepted"]],
+    expectTask: "paused",
+    expectPhaseStatuses: ["accepted", "paused"],
+  },
+  {
+    name: "paused 与 running 并存 → running 赢 (有东西真在跑就别说自己停了)",
+    persisted: "running",
+    execs: [
+      [1, 1, "paused"],
+      [2, 1, "running"],
+    ],
+    accs: [],
+    expectTask: "running",
+    expectPhaseStatuses: ["paused", "running"],
+  },
   // ── task-level overrides ──
   {
     name: "aborted 优先: persisted aborted 覆盖 running exec",
@@ -306,6 +348,14 @@ const MATRIX: MatrixCase[] = [
     accs: [],
     expectTask: "aborted",
     expectPhaseStatuses: ["running", "pending", "pending"],
+  },
+  {
+    name: "aborted 优先于暂停 (中止压过一切)",
+    persisted: "aborted",
+    execs: [[1, 1, "paused"]],
+    accs: [],
+    expectTask: "aborted",
+    expectPhaseStatuses: ["paused"],
   },
   {
     name: "fresh ready task · zero execs → ready, all phases pending",
@@ -493,7 +543,7 @@ describe("exec status → round state 映射", () => {
   const STATUS_MAP: [string, DerivedTaskStatus][] = [
     ["pending", "running"],
     ["running", "running"],
-    ["paused", "running"],
+    ["paused", "paused"],
     ["pending_approval", "running"],
     ["pending_resume", "running"],
     ["brand_new_status", "running"], // unknown → 保守视为在跑
@@ -503,6 +553,10 @@ describe("exec status → round state 映射", () => {
     ["rejected", "awaiting_review"],
     ["cancelled", "awaiting_review"],
     ["skipped", "awaiting_review"],
+    // 'aborted' 由 task abort 与 reconcile 的 reap 直接写入。缺键时 `?? "running"` 会把
+    // 卡永久钉在「执行中」—— 验收/触发/推进三条人工出路全断。补键后它落 awaiting_review
+    // (「失败不是红死状态而是待处理」)。
+    ["aborted", "awaiting_review"],
   ]
 
   it.each(STATUS_MAP)(
@@ -513,12 +567,12 @@ describe("exec status → round state 映射", () => {
     },
   )
 
-  it("映射明细: completed_with_failures=succeeded / rejected=failed / skipped=cancelled / paused=running", () => {
+  it("映射明细: completed_with_failures=succeeded / rejected=failed / skipped=cancelled / paused=paused / aborted=cancelled", () => {
     const view = deriveTaskView(
       task(
         JSON.stringify({
           format: "v4",
-          phases: [1, 2, 3, 4].map((i) => ({
+          phases: [1, 2, 3, 4, 5].map((i) => ({
             index: i,
             name: `p${i}`,
             slug: `p${i}`,
@@ -529,13 +583,67 @@ describe("exec status → round state 映射", () => {
         }),
         "running",
       ),
-      [ex(1, 1, "completed_with_failures"), ex(2, 1, "rejected"), ex(3, 1, "skipped"), ex(4, 1, "paused")],
+      [
+        ex(1, 1, "completed_with_failures"),
+        ex(2, 1, "rejected"),
+        ex(3, 1, "skipped"),
+        ex(4, 1, "paused"),
+        ex(5, 1, "aborted"),
+      ],
       [],
     )
     expect(view.phaseViews[0].rounds[0].state).toBe("succeeded")
     expect(view.phaseViews[1].rounds[0].state).toBe("failed")
     expect(view.phaseViews[2].rounds[0].state).toBe("cancelled")
-    expect(view.phaseViews[3].rounds[0].state).toBe("running")
+    expect(view.phaseViews[3].rounds[0].state).toBe("paused")
+    expect(view.phaseViews[4].rounds[0].state).toBe("cancelled")
+  })
+})
+
+// ── 暂停态的不变量 (task-pause) ──────────────────────────────────────
+
+describe("暂停态 — 不变量与刻意的取舍", () => {
+  it("暂停中绝不可派生 awaiting_review (否则验收闸会放行 —— 无编译错误、无红测的静默陷阱)", () => {
+    for (const spec of ["paused", "pending_approval"]) {
+      const view = deriveTaskView(task(v4Spec(2), "running"), [ex(1, 1, spec)], [])
+      const p1 = view.phaseViews[0]
+      expect(p1.status).not.toBe("awaiting_review")
+      // 验收闸认的是 (awaiting_review ∧ awaitingRound === round_index) 这一对。
+      expect(p1.awaitingRound).toBeNull()
+    }
+    // 对照: 同一条轮子跑到终态时确实该开验收 —— 免得上面两条断言因「永远不开」而假绿。
+    const settled = deriveTaskView(task(v4Spec(2), "running"), [ex(1, 1, "failed")], [])
+    expect(settled.phaseViews[0].status).toBe("awaiting_review")
+    expect(settled.phaseViews[0].awaitingRound).toBe(1)
+  })
+
+  it("暂停的轮仍在 phaseViews.rounds 里且 state='paused' (rail 与卡片必须同口供)", () => {
+    const view = deriveTaskView(task(v4Spec(1), "running"), [ex(1, 1, "paused")], [])
+    expect(view.phaseViews[0].rounds).toHaveLength(1)
+    expect(view.phaseViews[0].rounds[0].state).toBe("paused")
+    expect(view.phaseViews[0].currentRound).toBe(1)
+    // 暂停不是验收的候选: awaitingRound 为 null, acceptedRound 也为 null。
+    expect(view.phaseViews[0].acceptedRound).toBeNull()
+  })
+
+  it("孤儿 paused 轮不算暂停 (刻意的非对称): 否则 spec 重写会把它永久钉死", () => {
+    // spec 只有 2 个 phase, 而 phase 5 有一轮正 paused —— 它已被 spec 重写删除。
+    // running 侧保留全局扫描(既有行为), paused 侧只认 phaseViews —— 这是刻意的。
+    const view = deriveTaskView(
+      task(v4Spec(2), "running"),
+      [
+        ex(1, 1, "completed"),
+        ex(2, 1, "completed"),
+        ex(5, 1, "paused"),
+      ],
+      [
+        acc(1, 1, "accepted"),
+        acc(2, 1, "accepted"),
+      ],
+    )
+    // 末 phase 已 accepted → 该归档, 不该被一个已经不存在的 phase 的暂停轮扣住。
+    expect(view.taskStatus).toBe("archiving")
+    expect(view.phaseViews.every((p) => p.status === "accepted")).toBe(true)
   })
 })
 

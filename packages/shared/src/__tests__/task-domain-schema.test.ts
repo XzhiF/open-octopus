@@ -50,6 +50,10 @@ const EXPECTED_TASK_STATUSES = [
   "draft",
   "ready",
   "running",
+  // task-pause: derived-only — no writer ever persists it on a task row (the truth is
+  // executions.status='paused'), which is why it is absent from the schema-v40 DB CHECK
+  // mirrored above. 'awaiting_review' is the other such value.
+  "paused",
   "awaiting_review",
   "archiving",
   "done",

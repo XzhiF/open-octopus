@@ -16,8 +16,17 @@
 //     'awaiting_review' ("失败不是红死状态而是待处理", US8).
 //   • 'draft' is not in the v4 output enum (the board's 草稿 column reads the
 //     persisted status; the derived view describes the execution contract).
+//   • 'paused' is the ONLY output value with no persisted counterpart: the truth
+//     lives on executions.status='paused' (ExecutionLifecycle.pause), and nothing
+//     ever writes a paused task row. The host of a pause is the RUN, not the task
+//     — that is what keeps the execution layer unaware of tasks, since not every
+//     workflow has one bound.
 //   • persisted 'aborted'/'done' outrank everything (task status only mirrors
-//     human decisions — abort beats an in-flight exec, done beats archiving).
+//     human decisions — abort beats an in-flight exec, abort beats a pause, done
+//     beats archiving).
+//   • suspension outranks 'archiving'/'awaiting_review' but not 'running': those
+//     two are states that can still make progress, so a brake must beat them, or
+//     the card would sit in 待验收 with its accept button lit.
 //   • last phase accepted → 'archiving' (K6; 票 08 flips the ledger to done
 //     once git succeeds, which is why 'done' can only come from the row).
 //   • Non-v4 (v3/generic/composite) tasks pass through untouched:
@@ -52,6 +61,7 @@ import type {
 export type DerivedTaskStatus =
   | "ready"
   | "running"
+  | "paused"
   | "awaiting_review"
   | "archiving"
   | "done"
@@ -63,14 +73,17 @@ export type DerivedTaskStatus =
 export type DerivedPhaseStatus =
   | "pending"
   | "running"
+  | "paused"
   | "awaiting_review"
   | "accepted"
 
 /** Normalized outcome of one round's execution row. Terminal = succeeded |
- *  failed | cancelled; pending/running are in-flight. */
+ *  failed | cancelled; pending/running/paused are in-flight (all three hold the
+ *  task's slot — see isInFlight). */
 export type TaskRoundState =
   | "pending"
   | "running"
+  | "paused"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -148,7 +161,13 @@ export interface TaskView {
 const ROUND_STATE_BY_EXEC_STATUS: Record<string, TaskRoundState> = {
   pending: "pending",
   running: "running",
-  paused: "running",
+  // The task-pause work's whole input: ExecutionLifecycle.pause() hard-kills the
+  // in-flight node and lands the execution on 'paused' — that row IS the pause, and
+  // the task side only ever derives it (no persisted task status, no migration).
+  paused: "paused",
+  // Approval / interaction waits are the engine ALIVE and parked in a human's queue —
+  // nobody pressed pause, so they must NOT display as 已暂停 (that would bury the
+  // actual to-do, "需要你审批").
   pending_approval: "running",
   pending_resume: "running",
   completed: "succeeded",
@@ -158,13 +177,28 @@ const ROUND_STATE_BY_EXEC_STATUS: Record<string, TaskRoundState> = {
   rejected: "failed",
   cancelled: "cancelled",
   skipped: "cancelled",
+  // 'aborted' is written straight to the row by both task abort and reconcile's reap
+  // (it is deliberately absent from ExecutionStatusSchema). Without this key the
+  // `?? "running"` default reported a dead round as live, pinning the card at 执行中
+  // forever — and that state closes all three human exits (accept needs
+  // awaiting_review, trigger needs persisted 'ready', advance needs accepted→pending),
+  // leaving only 中止/退回草稿. Same terminal bucket as skipped.
+  aborted: "cancelled",
 }
 
 function roundStateOf(execStatus: string): TaskRoundState {
   return ROUND_STATE_BY_EXEC_STATUS[execStatus] ?? "running"
 }
 
-function isInFlight(state: TaskRoundState): boolean {
+/** Actively burning compute — 'pending' counts (queued, not yet claimed). 'paused'
+ *  is deliberately excluded: the phase/task branches need 「有东西真在跑」 distinct
+ *  from 「人在踩刹车」, and running has to win when both somehow appear.
+ *
+ *  Note the separation this encodes: 'paused' is still IN FLIGHT in the occupancy
+ *  sense (it holds ux_exec_task_active's latch and one concurrency credit), and the
+ *  branches below rely on that — a paused round must never reach the
+ *  「末轮终态且无验收」 awaiting_review branch, or the acceptance gate opens mid-pause. */
+function isActivelyRunning(state: TaskRoundState): boolean {
   return state === "pending" || state === "running"
 }
 
@@ -250,10 +284,15 @@ function buildPhaseView(
 
   let status: DerivedPhaseStatus
   if (acceptedRound !== null) {
-    // 人的放行覆盖一切 display 状态 (含在跑 exec 的异常窗口).
+    // 人的放行覆盖一切 display 状态 (含在跑 exec 的异常窗口, 也含踩着刹车的轮).
     status = "accepted"
-  } else if (rounds.some((r) => isInFlight(r.state))) {
+  } else if (rounds.some((r) => isActivelyRunning(r.state))) {
     status = "running"
+  } else if (rounds.some((r) => r.state === "paused")) {
+    // 暂停必须排在 awaiting_review 之前: 落到 awaiting_review 就等于向验收闸
+    // (tasks-service 认的是 awaiting_review ∧ awaitingRound === round_index) 放行,
+    // 而需求明令暂停期间不可验收 —— 且这条错法既无编译错误也无红测.
+    status = "paused"
   } else if (rounds.length > 0 && rounds[rounds.length - 1].decision === null) {
     // 最新轮到达终态 (成/败/取消) 且无验收记录 → 待验收.
     status = "awaiting_review"
@@ -307,9 +346,17 @@ export function deriveTaskView(
 
   // Global in-flight scan: includes orphan rows (phase_index outside spec —
   // e.g. a spec-r2 rewrite dropped a phase while its round still runs).
-  const anyInFlight = executions.some(
-    (e) => e.phase_index !== null && isInFlight(roundStateOf(e.status)),
+  const anyRunning = executions.some(
+    (e) => e.phase_index !== null && isActivelyRunning(roundStateOf(e.status)),
   )
+
+  // Suspension is read off phaseViews, NOT via the orphan-inclusive global scan above —
+  // deliberately asymmetric. An orphaned paused round (spec-r2 dropped its phase while
+  // the round sat paused) would otherwise pin the task at 'paused' forever, since
+  // reconcile now exempts paused rows from the strand reap. A phase the spec no longer
+  // declares must not be able to hold the whole task hostage. 'running' keeps the global
+  // scan to preserve 票 03's existing orphan behaviour.
+  const anyPaused = phaseViews.some((p) => p.status === "paused")
 
   const last = phaseViews.length > 0 ? phaseViews[phaseViews.length - 1] : null
   let taskStatus: DerivedTaskStatus
@@ -317,8 +364,12 @@ export function deriveTaskView(
     taskStatus = "aborted" // 中止优先 (票 03 prompt 不变量序)
   } else if (task.status === "done") {
     taskStatus = "done" // 归档器 (票 08) 是 done 的唯一写者
-  } else if (anyInFlight) {
-    taskStatus = "running"
+  } else if (anyRunning) {
+    taskStatus = "running" // 有东西真在跑就别说自己停了
+  } else if (anyPaused) {
+    // 踩刹车压过「等你放行」与「归档编排中」—— 这两个都是可以继续推进的状态,
+    // 让它们赢会让卡片停在待验收列、验收按钮照旧亮着, 与「暂停期间不可验收」冲突.
+    taskStatus = "paused"
   } else if (last !== null && last.status === "accepted") {
     taskStatus = "archiving" // K6: 末验收 → archiving
   } else if (phaseViews.some((p) => p.status === "awaiting_review")) {

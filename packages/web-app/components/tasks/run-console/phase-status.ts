@@ -6,17 +6,19 @@
 
 import type { TaskRoundView } from "@/lib/tasks-api"
 
-/** 共享线协议词表（TaskPhaseStatusSchema）→ 中文。 */
+/** 派生态 phase 词表 → 中文。注意这不是共享的 TaskPhaseStatusSchema：那是持久节点
+ *  词表，而这里描述 deriveTaskView 的输出，多一个 'paused'（无持久对应物）。 */
 export const PHASE_STATUS_LABEL: Record<string, string> = {
   pending: "未开始",
   running: "执行中",
+  paused: "已暂停",
   awaiting_review: "待验收",
   accepted: "已通过",
 }
 
 /** 状态词 → 任务状态 pill（导航条），与旧 ModalHeader STATUS_LABEL 同词。 */
 export const TASK_STATUS_LABEL: Record<string, string> = {
-  draft: "草稿", ready: "待执行", running: "执行中",
+  draft: "草稿", ready: "待执行", running: "执行中", paused: "已暂停",
   awaiting_review: "待验收", archiving: "归档中",
   done: "已完成", failed: "失败", aborted: "已中止",
 }
@@ -25,6 +27,8 @@ export const TASK_STATUS_LABEL: Record<string, string> = {
 export const TASK_PILL: Record<string, string> = {
   ready: "border-pop-cyan text-pop-cyan bg-pop-cyan/10",
   running: "border-pop-purple text-[#a48bff] bg-pop-purple/20 animate-pulse",
+  // 暂停不 pulse：它没有在动，闪烁会谎报「还在跑」。
+  paused: "border-pop-purple text-[#a48bff] bg-pop-purple/20",
   awaiting_review: "border-pop-amber text-pop-amber bg-pop-amber/10",
   archiving: "border-pop-amber text-pop-amber bg-pop-amber/10",
   done: "border-[#33d69f] text-[#33d69f] bg-pop-green/10",
@@ -38,6 +42,7 @@ export function phaseTileTone(status: string, isNext: boolean): string {
     case "accepted": return "bg-pop-green text-white"
     case "awaiting_review": return "bg-pop-amber text-pop-ink"
     case "running": return "bg-pop-purple text-white"
+    case "paused": return "bg-pop-purple-soft text-pop-purple"
     default: return isNext ? "bg-pop-cyan text-pop-ink" : "bg-pop-idle text-pop-dim"
   }
 }
@@ -46,6 +51,7 @@ export function phaseTileTone(status: string, isNext: boolean): string {
 export const PHASE_PILL: Record<string, string> = {
   pending: "bg-pop-idle text-pop-dim",
   running: "bg-pop-purple-soft text-pop-purple",
+  paused: "bg-pop-purple-soft text-pop-purple",
   awaiting_review: "bg-pop-amber-soft text-pop-ink",
   accepted: "bg-pop-green-soft text-pop-green",
 }
@@ -59,6 +65,8 @@ export function roundTone(r: TaskRoundView): string {
     case "failed": return "bg-pop-pink-soft text-pop-red"
     case "cancelled": return "bg-pop-idle text-pop-dim"
     case "running": return "bg-pop-purple-soft text-pop-purple animate-pulse"
+    // 暂停：同紫但去 pulse —— 它确实没在跑。
+    case "paused": return "bg-pop-purple-soft text-pop-purple"
     default: return "bg-pop-idle text-pop-dim"
   }
 }
@@ -72,6 +80,7 @@ export function roundGlyph(r: TaskRoundView): string {
     case "failed": return "●"
     case "cancelled": return "○"
     case "running": return "▶"
+    case "paused": return "⏸"
     default: return "…"
   }
 }

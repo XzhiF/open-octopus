@@ -55,7 +55,7 @@ describe("TASK_COLUMNS (票 11 五列)", () => {
 
   it("STATUS_TO_COLUMN is exhaustive over TaskStatusSchema (the 票 07 widening point)", () => {
     const all: TaskBoardStatus[] = [
-      "draft", "ready", "running", "awaiting_review", "archiving",
+      "draft", "ready", "running", "paused", "awaiting_review", "archiving",
       "done", "failed", "aborted",
     ]
     expect(Object.keys(STATUS_TO_COLUMN).sort()).toEqual([...all].sort())
@@ -63,6 +63,9 @@ describe("TASK_COLUMNS (票 11 五列)", () => {
     // failed/aborted（仅 v3 可持久，K13）→完成（终态）列。
     expect(STATUS_TO_COLUMN.awaiting_review).toBe("awaiting_review")
     expect(STATUS_TO_COLUMN.archiving).toBe("running")
+    // task-pause：暂停折进「执行中」列（⏸ 徽标区分），不新开一列 —— 暂停的轮仍占
+    // latch 与并发名额，语义上还是「在跑」的那张卡。
+    expect(STATUS_TO_COLUMN.paused).toBe("running")
     expect(STATUS_TO_COLUMN.failed).toBe("done")
     expect(STATUS_TO_COLUMN.aborted).toBe("done")
     expect(STATUS_TO_COLUMN.done).toBe("done")
@@ -78,11 +81,11 @@ describe("TASK_COLUMNS (票 11 五列)", () => {
 // ── groupTasksByStatus + tasksForColumn ─────────────────────────────
 
 describe("groupTasksByStatus", () => {
-  it("returns all 8 buckets even when input is empty (反假跑, Record<TaskStatus> 穷尽)", () => {
+  it("returns all 9 buckets even when input is empty (反假跑, Record<TaskStatus> 穷尽)", () => {
     const grouped = groupTasksByStatus([])
     const bucketKeys = Object.keys(grouped).sort()
     const expected: TaskBoardStatus[] = [
-      "draft", "ready", "running", "awaiting_review", "archiving",
+      "draft", "ready", "running", "paused", "awaiting_review", "archiving",
       "done", "failed", "aborted",
     ]
     expect(bucketKeys).toEqual([...expected].sort())
@@ -155,6 +158,19 @@ describe("effectiveStatusOf", () => {
     expect(effectiveStatusOf(t, undefined)).toBe("failed")
     const v3 = { taskStatus: "failed", isV4: false, phaseViews: [] } as unknown as TaskDerivedView
     expect(effectiveStatusOf(t, v3)).toBe("failed")
+  })
+
+  it("v4 暂停：派生 'paused' 覆盖持久 'running'，并折进「执行中」列", () => {
+    // 暂停不写 task 行 —— 持久态仍是 'running'，所以卡片要显示「已暂停」只能靠派生。
+    // 这条同时是 STATUS_TO_COLUMN 有 paused 键的守卫：漏了它会掉进 groupTasksByStatus
+    // 的未知桶丢弃分支，卡从看板上**静默消失**。
+    const t = makeTask({ id: "x", status: "running" })
+    const eff = effectiveStatusOf(t, v4Derived("paused"))
+    expect(eff).toBe("paused")
+    expect(STATUS_TO_COLUMN[eff as TaskBoardStatus]).toBe("running")
+    // 且确实落进「执行中」列，不是被丢掉。
+    const grouped = groupTasksByStatus([{ ...t, status: eff }])
+    expect(tasksForColumn(grouped, "running")).toHaveLength(1)
   })
 })
 

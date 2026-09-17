@@ -11,7 +11,8 @@ import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/t
 
 const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
-  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, pushSpy, mockFetchAgentEvents,
+  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
+  pushSpy, mockFetchAgentEvents,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -21,6 +22,8 @@ const {
   mockAbort: vi.fn(),
   mockReopen: vi.fn(),
   mockCancelTrigger: vi.fn(),
+  mockPause: vi.fn(),
+  mockResume: vi.fn(),
   pushSpy: vi.fn(),
   mockFetchAgentEvents: vi.fn(),
 }))
@@ -35,6 +38,8 @@ vi.mock("@/lib/tasks-api", () => ({
   abortTask: mockAbort,
   reopenTask: mockReopen,
   cancelTaskTrigger: mockCancelTrigger,
+  pauseTask: mockPause,
+  resumeTask: mockResume,
   // 其余导入面（task-modal / trigger-dialog 等）——测试不触发，桩即可
   deleteTask: vi.fn(), createTask: vi.fn(), updateTask: vi.fn(), updateSpecField: vi.fn(),
   listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(),
@@ -129,8 +134,18 @@ function pv(index: number, name: string, status: TaskPhaseView["status"], over: 
   }
 }
 
-function derivedOf(phaseViews: TaskPhaseView[], isV4 = true): TaskDerivedView {
-  return { taskStatus: "running", isV4, phaseViews }
+/** `taskStatus` defaults to 在跑，which is what most fixtures want; a case whose task
+ *  row is TERMINAL must pass the matching value. The server's derive cannot contradict a
+ *  terminal row (task.status 'done'/'aborted'短路上优先，见 derive-task-view.ts 的分支链),
+ *  so a fixture pairing a 'done' row with a 'running' derived view is not a state the
+ *  product can be in — and since the console chrome now reads the derived status (as the
+ *  board already does), such a fixture would assert against a fiction. */
+function derivedOf(
+  phaseViews: TaskPhaseView[],
+  isV4 = true,
+  taskStatus: TaskDerivedView["taskStatus"] = "running",
+): TaskDerivedView {
+  return { taskStatus, isV4, phaseViews }
 }
 
 beforeEach(() => {
@@ -138,6 +153,7 @@ beforeEach(() => {
   mockGetTask.mockReset(); mockListArtifacts.mockReset(); mockFetchLLMCalls.mockReset()
   mockGetBatchTree.mockReset(); mockPostAcceptance.mockReset()
   mockAbort.mockReset(); mockReopen.mockReset(); mockCancelTrigger.mockReset()
+  mockPause.mockReset(); mockResume.mockReset()
   pushSpy.mockReset()
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: null })
   mockListArtifacts.mockResolvedValue([])
@@ -299,7 +315,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     ])
     const t = makeTask("done")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
     expect(await screen.findByText("任务战报")).toBeTruthy()
     expect(screen.getByText("墙钟总用时")).toBeTruthy()
     expect(screen.getByText("AI 总成本")).toBeTruthy()
@@ -323,6 +339,61 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     })
     expect(await screen.findByText("对账回收：引擎进程已丢失")).toBeTruthy()
     expect(screen.queryByText("上一轮遗留键")).toBeNull()
+  })
+
+  it("暂停中：chrome 读派生态 —— pill 显「已暂停」、给「恢复」而非「暂停」、秒表让位", async () => {
+    // 持久 task.status 仍是 'running'（暂停不写 task 行），所以这条同时钉住「整套
+    // chrome 必须读 effectiveStatusOf 派生态」这件事：若退回读 task.status，pill 会
+    // 自称「执行中」并继续渲染秒表，而卡片那边显示「已暂停」—— 两个面自相矛盾。
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    expect(await screen.findByText(/⏸ 已暂停/)).toBeTruthy()
+    expect(document.querySelector('[data-task-modal-status="paused"]')).toBeTruthy()
+    // 暂停不是「在跑」：给恢复，不给暂停。
+    expect(document.querySelector("[data-task-resume]")).toBeTruthy()
+    expect(document.querySelector("[data-task-pause]")).toBeNull()
+    // 中止必须仍然在 —— 暂停的退出只有恢复与中止。
+    expect(document.querySelector("[data-task-abort]")).toBeTruthy()
+  })
+
+  it("暂停中：没有 running 轮就不给「暂停」钮（停在审批等人的运行不在其列）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "pending_approval", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    // 有活轮但没在 running → 不给暂停；也没 paused 轮 → 不给恢复。
+    expect(await screen.findByTestId("phase-timeline")).toBeTruthy()
+    expect(document.querySelector("[data-task-pause]")).toBeNull()
+    expect(document.querySelector("[data-task-resume]")).toBeNull()
+  })
+
+  it("运行中：点「暂停」打 pauseTask；点「恢复」打 resumeTask（不带 body，与工作流页一致）", async () => {
+    mockPause.mockResolvedValue({})
+    mockResume.mockResolvedValue({})
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByText(/⏸ 暂停/))
+    await waitFor(() => expect(mockPause).toHaveBeenCalledWith("task-1"))
+
+    // 恢复钮只在有 paused 轮时出现 —— 换一份盘面重渲染。
+    const t2 = makeTask("running")
+    renderConsole(t2, {
+      ...t2,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    fireEvent.click(await screen.findByText(/▶ 恢复/))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
   })
 
   it("ready+已定时：条内 ⏰ 已定时 token + 取消触发（打 cancelTaskTrigger），大触发钮让位", async () => {
@@ -359,7 +430,7 @@ describe("TaskModal 接线（新壳）", () => {
 
   it("done/failed → 同壳（战报 + 状态 pill），不再渲染「任务完成/任务失败」独立横幅", async () => {
     const t = makeTask("done")
-    mockGetTask.mockResolvedValue({ ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "accepted")]) })
+    mockGetTask.mockResolvedValue({ ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "accepted")], true, "done") })
     renderModal(t)
     expect(await screen.findByText("任务战报")).toBeTruthy()
     expect(document.querySelector('[data-task-modal-status="done"]')).toBeTruthy()

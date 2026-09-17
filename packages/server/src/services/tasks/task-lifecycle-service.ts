@@ -283,15 +283,22 @@ export class TaskLifecycleService {
     return { launched, capped: false }
   }
 
-  /** Start a row this job has already claimed. `claimedLease` is the started_at the claim
-   *  wrote — the engine needs it because its own precondition ('pending') is one the
-   *  claim consumed; without the handoff every task launch dies at "Execution is not
-   *  pending" (票05 真机实测:the stubbed create/start in the unit tests hid exactly this). */
-  private startRow(row: ExecutionRow, claimedLease?: string): void {
+  /**
+   * Bind this task's finalize to an execution's engine callbacks. Idempotent and
+   * RE-CALLABLE, which is the whole point: EngineCallbacks fires onComplete and then
+   * DELETES the external entry, so a run that ended in 'paused' burns its callback while
+   * finalizeLaunch correctly declines to finalize (isWaiting). Resuming rebuilds the
+   * engine from persisted state and the map entry is gone — without a re-register before
+   * resume, the round's eventual completion would never call finalizeLaunch, silently
+   * losing collectRound (批次产物回收进 task home), the 待验收 SSE frame and the red
+   * round's var_pool.error reason. Every pause→resume would drop them.
+   *
+   * Callers: startRow (fresh launch) and TasksService.resumeTask (before delegating
+   * resume — the engine is reconstructed during resume, so ordering is load-bearing).
+   */
+  registerLaunchCallbacks(row: ExecutionRow): void {
     const registry = getExecutionService(row.workspace_id)
-    if (!registry) throw new Error(`workspace ${row.workspace_id} 不可用（行缺失或路径失效）`)
-    const inputValues = parseJSON<Record<string, string>>(row.input_values, {})
-
+    if (!registry) return // workspace gone — startRow raises its own error for that
     // The `as never` pair below is the engine-callback arity mismatch the pre-票03
     // dispatchPhaseRound had too: ExecutionService takes Partial<EngineCallbacks>, whose
     // onComplete is typed for the engine's own finalization payload, while the task side
@@ -305,6 +312,18 @@ export class TaskLifecycleService {
       } as never,
       row.id,
     )
+  }
+
+  /** Start a row this job has already claimed. `claimedLease` is the started_at the claim
+   *  wrote — the engine needs it because its own precondition ('pending') is one the
+   *  claim consumed; without the handoff every task launch dies at "Execution is not
+   *  pending" (票05 真机实测:the stubbed create/start in the unit tests hid exactly this). */
+  private startRow(row: ExecutionRow, claimedLease?: string): void {
+    const registry = getExecutionService(row.workspace_id)
+    if (!registry) throw new Error(`workspace ${row.workspace_id} 不可用（行缺失或路径失效）`)
+    const inputValues = parseJSON<Record<string, string>>(row.input_values, {})
+
+    this.registerLaunchCallbacks(row)
 
     registry.service.start(row.id, inputValues, undefined, claimedLease).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
@@ -817,6 +836,18 @@ export class TaskLifecycleService {
         // Armed and waiting for a slot is not a strand — it is the queue working as
         // designed. Only a row that already started can be orphaned.
         if (full.status === "pending") continue
+
+        // A pause is a human decision, not a strand. Without this the exemption above
+        // would be doing the opposite of its job: pause() calls enginePool.remove()
+        // when the engine settles on 'paused' (ExecutionLifecycle), so engineAlive is
+        // ALREADY false by the time pause() returns, and staleness is measured from
+        // started_at — the round's START, not the pause. A 30-minute-old round would
+        // therefore be reaped to 'aborted' on the very next tick, silently undoing the
+        // pause within a minute. Resume reconstructs the engine from persisted state,
+        // which is exactly why the row deserves to survive. Holding the slot while
+        // paused is intended (WAITING_EXECUTION_STATUSES), and the exits stay open:
+        // resume, or abort (cancel() accepts 'paused').
+        if (full.status === "paused") continue
 
         // dbTimeMs, not Date.parse: see the helper for why a naive timestamp here is
         // 8 hours of phantom age on a UTC+8 box — enough to reap a live run one tick

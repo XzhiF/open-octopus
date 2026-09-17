@@ -76,11 +76,13 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
   },
 }
 
-/** 卡片整面染色:八状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。 */
+/** 卡片整面染色:九状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。
+ *  paused 与 running 同紫:暂停仍在执行中列、仍占 latch，靠 ⏸ 徽标区分而不是靠底色。 */
 const CARD_THEME: Record<Task["status"], string> = {
   draft: "bg-pop-paper",
   ready: "bg-pop-cyan-soft",
   running: "bg-pop-purple-soft",
+  paused: "bg-pop-purple-soft",
   archiving: "bg-pop-amber-soft",
   awaiting_review: "bg-pop-yellow-soft",
   done: "bg-pop-green-soft",
@@ -541,6 +543,18 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
               title={`当前 Phase ${badge.phase}/${badge.total}（第一个未通过验收的 phase）`}
             >
               {`Phase ${badge.phase}/${badge.total}${badge.round != null ? ` · Round ${badge.round}` : ""}`}
+            </span>
+          )}
+          {/* task-pause: 暂停也留在执行中列 + ⏸已暂停徽标。状态是**派生**的
+              （绑定 execution 的 status='paused'），持久 task 行不写这个值 —
+              所以这里读到的 task.status 已经是 effectiveStatusOf 折过的派生态。 */}
+          {task.status === "paused" && (
+            <span
+              data-task-paused-badge
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-purple-soft text-pop-purple"
+              title="运行已暂停（打开的阻塞点已中断，恢复时从该节点重跑）。暂停期间不能验收，退出只有恢复或中止。"
+            >
+              ⏸ 已暂停
             </span>
           )}
           {/* 票 11: archiving 留在执行中列 + ⚠归档中徽标（票 08 编排中，失败可重试） */}

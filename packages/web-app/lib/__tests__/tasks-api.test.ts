@@ -12,6 +12,8 @@ import {
   deleteTask,
   readyTask,
   abortTask,
+  pauseTask,
+  resumeTask,
   updateSpecField,
   scheduleTaskTrigger,
   unscheduleTaskTrigger,
@@ -345,6 +347,52 @@ describe("abortTask", () => {
     expect(url).toBe("http://localhost:3001/api/tasks/t1/abort")
     expect(init.method).toBe("POST")
     expect(result.status).toBe("aborted")
+  })
+})
+
+// ── pauseTask / resumeTask (task-pause: 委派给绑定执行) ──────────────
+
+describe("pauseTask", () => {
+  it("POSTs /api/tasks/:id/pause with no body and returns the Task", async () => {
+    const paused = makeTask({ id: "t1", status: "running" })
+    mockFetchOnce(paused)
+
+    const result = await pauseTask("t1")
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/pause")
+    expect(init.method).toBe("POST")
+    expect(init.body).toBeUndefined()
+    expect(result.status).toBe("running")
+  })
+
+  it("surfaces the server's 409 reason verbatim (面向用户的中文，别吞成通用文案)", async () => {
+    mockFetchOnce({ error: "执行当前没有运行中的节点，无法暂停" }, { ok: false, status: 409 })
+    await expect(pauseTask("t1")).rejects.toThrow(/没有运行中的节点/)
+  })
+})
+
+describe("resumeTask", () => {
+  it("POSTs /api/tasks/:id/resume with no body when no intervention is given", async () => {
+    const resumed = makeTask({ id: "t1", status: "running" })
+    mockFetchOnce(resumed)
+
+    await resumeTask("t1")
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/resume")
+    expect(init.method).toBe("POST")
+    // 无 body 是常态（与工作流页 resume 同形）；带空串反而会被服务端当成畸形输入校验。
+    expect(init.body).toBeUndefined()
+  })
+
+  it("sends {intervention} when one is given", async () => {
+    mockFetchOnce(makeTask({ id: "t1", status: "running" }))
+
+    await resumeTask("t1", "跳过迁移脚本")
+
+    const [, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(JSON.parse(String(init.body))).toEqual({ intervention: "跳过迁移脚本" })
   })
 })
 

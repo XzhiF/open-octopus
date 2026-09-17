@@ -49,7 +49,10 @@ function makeTask(phases: TaskPhase[], status: Task["status"] = "draft"): Task {
     task_spec: { format: "v4", phases, resources: [], authoring_resources: [], skill_groups: [], decisions: [], ac_confirmed: [] } as unknown as TaskSpec,
     resources: [], authoring_resources: [], skills: [], project_ids: [],
     deleted_at: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-  } as Task
+    // Two hops on purpose: this builder deliberately omits the trigger/preset columns
+    // (the panel under test never reads them), so a direct `as Task` is not a valid
+    // assertion — same idiom as task_spec above.
+  } as unknown as Task
 }
 const f = (p: string, mtime = "2026-01-01T00:00:00.000Z") => ({ path: p, mtime, bytes: 100 })
 function batch(slug: string, files: BatchTreeEntry["files"], date = "20260101"): BatchTreeEntry {

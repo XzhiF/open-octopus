@@ -276,6 +276,61 @@ describe("ExecutionLifecycle.skip", () => {
   })
 })
 
+// ==================== pause() ====================
+
+describe("ExecutionLifecycle.pause", () => {
+  /** A 'running' execution whose single node sits in `nodeStatus` (null = no node at all). */
+  function runningExec(nodeStatus: string | null) {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    dao.updateExecution(exec.id, { status: "running" })
+    if (nodeStatus) {
+      dao.insertNodeExecution({
+        id: `${exec.id}-step1`, execution_id: exec.id,
+        node_id: "step1", node_type: "bash", status: nodeStatus,
+      })
+    }
+    return exec
+  }
+
+  it("refuses when no node is running — and leaves the row untouched", async () => {
+    // Pausing in the window BETWEEN two nodes has nothing to freeze. Writing 'paused'
+    // anyway yields a row resume() can never take back: resume looks for
+    // node_executions in 'paused' and returns 「未找到暂停节点」. Task-lifecycle's
+    // reconcile now also exempts paused rows from the strand reap, so such a row would
+    // sit at 已暂停 forever with every exit closed but abort. Hence: refuse, don't
+    // half-pause. This is what makes 「paused ⟹ resumable」 a hard invariant.
+    const exec = runningExec(null)
+    const res = await lifecycle.pause(exec.id)
+    expect(res.success).toBe(false)
+    expect(dao.findById(exec.id)!.status).toBe("running")
+  })
+
+  it("refuses when the only node is queued, not running", async () => {
+    const exec = runningExec("pending")
+    const res = await lifecycle.pause(exec.id)
+    expect(res.success).toBe(false)
+    expect(dao.findById(exec.id)!.status).toBe("running")
+  })
+
+  it("refuses an execution that is not running", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG) // pending
+    const res = await lifecycle.pause(exec.id)
+    expect(res.success).toBe(false)
+    expect(dao.findById(exec.id)!.status).toBe("pending")
+  })
+
+  it("pauses a running node, and paused ⟹ resumable holds", async () => {
+    const exec = runningExec("running")
+    const res = await lifecycle.pause(exec.id)
+    expect(res.success).toBe(true)
+    expect(dao.findById(exec.id)!.status).toBe("paused")
+    expect(dao.findNodeExecutionById(`${exec.id}-step1`)!.status).toBe("paused")
+    // The invariant the three refusals above exist to protect: every paused row has a
+    // paused node for resume() to pick up.
+    expect(dao.findRunningNodeExecutionsByStatus(exec.id, ["paused"])).toHaveLength(1)
+  })
+})
+
 // ==================== computeBranch() ====================
 
 describe("ExecutionLifecycle.computeBranch", () => {

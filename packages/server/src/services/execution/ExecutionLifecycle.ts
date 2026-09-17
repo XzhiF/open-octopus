@@ -1305,19 +1305,27 @@ export class ExecutionLifecycle {
 
     const runningNode = this.dao.findFirstRunningNode(executionId)
 
-    if (runningNode) {
-      this.dao.updateNodeExecution(runningNode.id, { status: "paused" })
+    // Refuse rather than half-pause. In the window BETWEEN two nodes there is nothing to
+    // freeze, and writing 'paused' without a paused node yields a row resume() can never
+    // take back — resume looks for node_executions in 'paused' and returns
+    // 「未找到暂停节点」. Since task-lifecycle's reconcile now exempts paused rows from the
+    // strand reap, such a row would sit at 已暂停 forever with every exit closed but
+    // abort. Refusing keeps 「paused ⟹ resumable」 a hard invariant, at the cost of a
+    // narrower window (the caller simply retries).
+    if (!runningNode) {
+      return { success: false, error: "执行当前没有运行中的节点，无法暂停" }
     }
 
+    this.dao.updateNodeExecution(runningNode.id, { status: "paused" })
     this.dao.updateExecution(executionId, { status: "paused" })
 
     const inst = this.enginePool.get(executionId)
-    if (inst && runningNode) {
+    if (inst) {
       inst.engine.pauseAtNode(runningNode.node_id)
       await this.abortAndWait(inst.abortController, executionId)
     }
 
-    this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId, nodeId: runningNode?.node_id } })
+    this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId, nodeId: runningNode.node_id } })
     return { success: true }
   }
 

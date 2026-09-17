@@ -1871,6 +1871,16 @@ export class TasksService {
     }
 
     const view = this.deriveView(row)
+
+    // A suspended round must not be reviewable anywhere on the task. The per-phase check
+    // below cannot catch the cross-phase case (phase 1 awaiting_review while phase 2's
+    // round sits paused), and the rule the user set is flat: 暂停期间不可验收.
+    if (view.taskStatus === "paused") {
+      throw new TaskStatusConflictError(
+        "任务已暂停，无法验收 —— 请先恢复运行（或中止任务）",
+      )
+    }
+
     const pos = view.phaseViews.findIndex((p) => p.index === input.phase_index)
     const pv = pos >= 0 ? view.phaseViews[pos] : undefined
     if (!pv) {
@@ -2353,6 +2363,138 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)!
     return this.attachInstances([row])[0] ?? toDTO(row)
+  }
+
+  // ── Pause / Resume (the RUN is the host; the task only reflects it) ────
+
+  /**
+   * The ONE instance a human is looking at, or null when nothing is in flight.
+   *
+   * ux_exec_task_active + armTask's latch guarantee a task has at most ONE non-terminal
+   * instance row, and rounds chain newest-last, so the newest instance IS the live one
+   * whenever any exists. That is why this is a single row and not a scan: abortTask loops
+   * over instances only to sweep up historical dirt, and a pause that looped would have
+   * to invent a rollback story for 「multiple workspaces, partially succeeded」 — complexity
+   * with no caller. Returns null for a terminal/no instance row so callers can 409 with a
+   * message that matches the actual situation.
+   */
+  private liveInstance(id: string): ExecutionRow | null {
+    const inst = this.lifecycle.currentInstance(id)
+    if (!inst || TERMINAL_INSTANCES.has(inst.status)) return null
+    return inst
+  }
+
+  /**
+   * The 409 message for "you asked to pause/resume, but there is nothing to act on".
+   * Split per state because these are genuinely different situations with different ways
+   * out, and one catch-all string ("执行未在运行中") would tell the user nothing about
+   * which one they are in.
+   */
+  private noLiveRoundMessage(inst: ExecutionRow | null, verb: string): string {
+    if (!inst) return `当前没有进行中的执行，无法${verb}`
+    if (inst.status === "pending") return `本轮仍在排队（未启动），无法${verb}；可取消定时触发或中止任务`
+    if (inst.status === "pending_approval" || inst.status === "pending_interaction") {
+      return `本轮停在审批/交互节点，请先在处理框中完成它（${verb}只作用于正在运行的执行）`
+    }
+    return `执行未在运行中（当前 '${inst.status}'），无法${verb}`
+  }
+
+  /**
+   * POST /api/tasks/:id/pause — suspend the task's live round.
+   *
+   * The pause IS an execution fact: ExecutionLifecycle.pause hard-kills the in-flight
+   * node and lands `executions.status='paused'`. The task side never persists a paused
+   * status — deriveTaskView reads it back off that row — which is exactly what keeps the
+   * execution layer unaware of tasks (not every workflow has one bound). So this method
+   * is a thin delegation and deliberately nothing more: no status write, no mirror.
+   *
+   * Strictly mirrors the workflow page's rule (pause() accepts only a genuinely running
+   * execution). A run parked at an approval/interaction node is the engine ALIVE and
+   * waiting, not computing — it cannot be paused, and calling it 已暂停 would bury the
+   * real to-do («需要你审批»). The messages above say so instead.
+   */
+  async pauseTask(id: string): Promise<TaskDTO> {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+
+    const inst = this.liveInstance(id)
+    if (!inst || inst.status !== "running") {
+      throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "暂停"))
+    }
+
+    const registry = getExecutionService(inst.workspace_id)
+    if (!registry) {
+      throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法暂停`)
+    }
+
+    const result = await registry.service.pause(inst.id)
+    if (!result.success) {
+      // e.g. the between-nodes window: pause() refuses rather than leaving a 'paused' row
+      // that resume() could never take back. Surface its reason verbatim.
+      throw new TaskStatusConflictError(result.error ?? "暂停失败")
+    }
+
+    // No task_status event: the persisted task status does not change. This is the
+    // execution-transition channel, which is what the board and the run console already
+    // fold on (both re-fetch, so the derived 已暂停 lands with it).
+    this.emitRunTransition(existing.id, inst, "paused")
+
+    const row = this.taskDAO.getById(id)!
+    return this.attachInstances([row])[0] ?? toDTO(row)
+  }
+
+  /**
+   * POST /api/tasks/:id/resume — take the round back off the brake, optionally injecting
+   * an intervention prompt (`{intervention}`) for the node that was interrupted — same
+   * body the workflow page's resume sends.
+   *
+   * Ordering is load-bearing: the callbacks must be re-registered BEFORE delegating,
+   * because EngineCallbacks deletes the external onComplete entry when it fires and
+   * resume rebuilds the engine from persisted state. Without the re-register the round
+   * would complete with nobody listening — losing collectRound (批次产物回收进 task home),
+   * the 待验收 SSE frame and the red round's error reason, silently and only after a pause.
+   */
+  async resumeTask(id: string, intervention?: string): Promise<TaskDTO> {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+
+    const inst = this.liveInstance(id)
+    if (!inst || (inst.status !== "paused" && inst.status !== "pending_resume")) {
+      throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "恢复"))
+    }
+
+    const registry = getExecutionService(inst.workspace_id)
+    if (!registry) {
+      throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法恢复`)
+    }
+
+    this.lifecycle.registerLaunchCallbacks(inst)
+
+    const result = await registry.service.resume(inst.id, intervention)
+    if (!result.success) {
+      throw new TaskStatusConflictError(result.error ?? "恢复失败")
+    }
+
+    this.emitRunTransition(existing.id, inst, "running")
+
+    const row = this.taskDAO.getById(id)!
+    return this.attachInstances([row])[0] ?? toDTO(row)
+  }
+
+  /** Announce a run transition on the taskpool channel. Mirrors the payload shape of
+   *  TaskLifecycleService.emitExecutionTransition so every consumer that already folds
+   *  TASK_EXECUTION_EVENT needs no new branch. */
+  private emitRunTransition(taskId: string, inst: ExecutionRow, status: string): void {
+    this.sse.emit("taskpool", {
+      event: TASK_EXECUTION_EVENT,
+      data: {
+        task_id: taskId,
+        execution_id: inst.id,
+        status,
+        phase_index: inst.phase_index,
+        round_index: inst.round_index,
+      },
+    })
   }
 
   /** DELETE /api/tasks/:id — soft-delete. 票03: there is nothing to cascade — a task's

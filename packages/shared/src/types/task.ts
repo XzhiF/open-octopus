@@ -26,10 +26,24 @@ import {
  *  DerivedTaskStatus — widening the shared enum is what makes them legal on the
  *  wire (task_status SSE payload + TaskDTO status typing). 'failed' stays legal
  *  for v3 rows (K13 旧链零破坏); a v4 task never persists 'failed' (K3). */
+//  task-pause: adds 'paused' — the SECOND value in this enum with no persisted writer
+//  ('awaiting_review' was the first). The truth of a pause lives on
+//  executions.status='paused' (ExecutionLifecycle.pause hard-kills the in-flight node);
+//  the task side only ever DERIVES it (deriveTaskView), and deliberately so: the host of
+//  a pause is the RUN, which keeps the execution layer unaware of tasks — not every
+//  workflow has one bound (解耦 requirement).
+//
+//  Listed here, NOT in the DB CHECK (schema.sql tasks.status): the CHECK's meaning is
+//  "values allowed to be persisted", and a mis-write of a paused task row should fail
+//  loudly rather than quietly become a second source of truth. Widening the enum is what
+//  turns the web's several Record<TaskStatus, …> tables (task-board's column map, CARD_THEME)
+//  into COMPILE errors instead of silently-unstyled cards, which is the discipline
+//  task-board.ts already documents.
 export const TaskStatusSchema = z.enum([
   "draft",
   "ready",
   "running",
+  "paused",
   "awaiting_review",
   "archiving",
   "done",

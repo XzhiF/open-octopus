@@ -864,6 +864,22 @@ describe("task-lifecycle — reconciliation (the orphan path, now task-side)", (
     expect(execs.findById(execId)!.status).toBe("pending")
   })
 
+  it("never reaps a PAUSED row — a pause is a human decision, not a strand", () => {
+    // ⚠️ This is not an edge case. ExecutionLifecycle.pause() calls
+    // enginePool.remove() when the engine returns 'paused', so hasLiveEngine() is
+    // ALREADY false when pause() returns — the engineAlive guard above cannot save
+    // the row. And staleness is measured from started_at (the round's START), not
+    // from the pause. So without the paused exemption a round that had been running
+    // 30 minutes gets reaped to 'aborted' on the very next tick: the pause silently
+    // undoes itself within a minute.
+    const execId = stranded("e7", 30, "paused")
+    const before = tasks.getById("e7")!.status
+    expect(svc.reconcile().reaped).toBe(0)
+    expect(execs.findById(execId)!.status).toBe("paused")
+    // The task's row is untouched too — no reap means no finishTaskOutcome mirror.
+    expect(tasks.getById("e7")!.status).toBe(before)
+  })
+
   it("resyncs a task whose row finished but whose status never mirrored (died callback)", () => {
     insertTask("e5")
     const execId = svc.armAndLaunch("e5")

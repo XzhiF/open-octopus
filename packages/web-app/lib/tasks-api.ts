@@ -69,7 +69,30 @@ export type TaskDetail = TaskView & {
 
 /** Normalized outcome of one round's execution row (mirror of server
  *  TaskRoundState). Terminal = succeeded | failed | cancelled. */
-export type TaskRoundState = "pending" | "running" | "succeeded" | "failed" | "cancelled"
+export type TaskRoundState = "pending" | "running" | "paused" | "succeeded" | "failed" | "cancelled"
+
+/** Mirror of the server's DerivedTaskStatus (derive-task-view.ts). Deliberately NOT
+ *  `TaskStatus`: the derive output vocabulary is its own thing — 'draft'/'failed' are
+ *  input-side passthroughs it never produces, and 'paused' is a value NO task row can
+ *  ever carry (the truth is executions.status='paused'). Typing the wire field as plain
+ *  TaskStatus was a mirror that lied, and the label tables below fall back silently on a
+ *  missing key rather than failing loudly. */
+export type DerivedTaskStatus =
+  | "ready"
+  | "running"
+  | "paused"
+  | "awaiting_review"
+  | "archiving"
+  | "done"
+  | "aborted"
+
+/** Mirror of the server's DerivedPhaseStatus. Same reasoning: 'accepted' is derive-only
+ *  and 'paused' has no persisted counterpart. */
+export type DerivedPhaseStatus = "pending" | "running" | "paused" | "awaiting_review" | "accepted"
+
+/** What a card's column is decided by: persisted status for v3, derived for v4 —
+ *  hence the union (mirrors the server's `TaskView.taskStatus`). */
+export type TaskDisplayStatus = TaskStatus | DerivedTaskStatus
 
 /** Human decision overlay on a round (latest ledger row wins). */
 export type TaskRoundDecision = "accepted" | "rejected"
@@ -103,9 +126,10 @@ export interface TaskPhaseView {
   name: string
   slug: string
   workflowRef: string
-  /** Shared wire vocabulary (TaskPhaseStatusSchema) — same enum the
-   *  phase_status_update SSE payload carries. */
-  status: TaskPhaseStatus
+  /** Derived display status — NOT the shared TaskPhaseStatusSchema (that enum describes
+   *  the persisted phase node; this one is deriveTaskView's output vocabulary and
+   *  additionally carries 'paused'). */
+  status: DerivedPhaseStatus
   /** Ascending by roundIndex. */
   rounds: TaskRoundView[]
   /** Max round_index seen (null = never started). */
@@ -121,7 +145,9 @@ export interface TaskPhaseView {
  *  (票 07 契约), so 票 11/12 render one code path. Optional in the type only for
  *  backward compat with pre-v4 servers / test fixtures. */
 export interface TaskDerivedView {
-  taskStatus: TaskStatus
+  /** v4: always within DerivedTaskStatus. Non-v4: verbatim mirror of task.status
+   *  (which is why the server types this as the union). */
+  taskStatus: TaskDisplayStatus
   isV4: boolean
   phaseViews: TaskPhaseView[]
 }
@@ -317,6 +343,32 @@ export async function readyTask(id: string): Promise<TaskView> {
  *  schedules. 409 if not ready/running. */
 export async function abortTask(id: string): Promise<TaskView> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/abort`, { method: "POST" })
+  return handleResponse<TaskView>(res)
+}
+
+/** POST /api/tasks/:id/pause — 暂停任务当前这一轮。
+ *
+ *  暂停本身是 **execution** 的事实（服务端委派给绑定执行的 pause：硬杀在飞节点、
+ *  落 executions.status='paused'），task 的「已暂停」是从那一行**派生**出来的 ——
+ *  没有 paused 的 task 行。这就是解耦的落点：不是每个工作流都绑了 task。
+ *
+ *  与工作流页同规则：只有真正 running 的执行能暂停。停在审批/交互节点等人的运行
+ *  会被 409 拒绝并给出对应说法（那种情况是引擎活着在等人，标成「已暂停」会把
+ *  「需要你审批」这件事盖掉）。409 的 message 已是面向用户的中文。 */
+export async function pauseTask(id: string): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/pause`, { method: "POST" })
+  return handleResponse<TaskView>(res)
+}
+
+/** POST /api/tasks/:id/resume — 把这一轮从刹车放开，可带一句 `intervention`
+ *  注入给被中断的节点（与工作流页 resume 的 body 同形）。 */
+export async function resumeTask(id: string, intervention?: string): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/resume`, {
+    method: "POST",
+    ...(intervention
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intervention }) }
+      : {}),
+  })
   return handleResponse<TaskView>(res)
 }
 

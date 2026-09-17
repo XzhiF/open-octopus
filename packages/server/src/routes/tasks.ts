@@ -773,6 +773,43 @@ export function createTasksRoutes(
     }
   })
 
+  // POST /:id/pause — suspend the task's live round. The pause is delegated to the
+  // bound execution (ExecutionLifecycle.pause) and the task's 已暂停 is DERIVED from
+  // executions.status='paused' — nothing writes a paused task row. 409 carries the
+  // state-specific reason (queued / at an approval gate / nothing in flight).
+  router.post("/:id/pause", async (c) => {
+    try {
+      const task = await service.pauseTask(c.req.param("id"))
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/resume — take the round back off the brake. Optional body
+  // { intervention } rides through to the interrupted node, same as the workflow
+  // page's resume. No body at all is the normal case, so a parse failure is not
+  // an error (mirrors execution.ts's resume route).
+  router.post("/:id/resume", async (c) => {
+    const body = await safeJson(c)
+    const raw = body?.intervention
+    if (raw !== undefined && typeof raw !== "string") {
+      return c.json({ error: "intervention must be a string" }, 400)
+    }
+    // Bound the prompt: it is injected into a node's context, not a free-form log.
+    if (typeof raw === "string" && raw.length > 4000) {
+      return c.json({ error: "intervention must be at most 4000 characters" }, 400)
+    }
+    try {
+      const task = await service.resumeTask(c.req.param("id"), raw)
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── Assist workflows (ticket 07 — US9/10/11) ────────────────────
   // POST /:id/assist-workflows — trigger a built-in assist-workflow run
   // (AC3). Body: { template, input? }. Returns { run_id, execution_id,

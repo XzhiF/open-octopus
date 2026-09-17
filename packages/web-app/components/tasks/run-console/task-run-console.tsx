@@ -24,13 +24,13 @@ import {
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
-import { phaseBudgetMs } from "@/lib/task-board"
+import { effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
 import { EditableTitle } from "../editable-title"
 import { AcceptanceSurface } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
@@ -70,7 +70,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // 验货台 = 本控制台的 tab（2026-09-16 改版：原三栏弹窗 AcceptanceModal 收编
   // 内嵌，父窗自带拖拽/缩放/全屏；打回回显留在 tab 里，不随派生态变化弹出）。
   const [surfaceTab, setSurfaceTab] = useState<"console" | "accept">("console")
-  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | null>(null)
+  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
@@ -150,17 +150,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const specPhases = detail?.task_spec?.phases ?? task.task_spec?.phases ?? []
   const budgetMs = phaseBudgetMs()
 
-  // 自动选中：待验收/执行中的那个 phase 优先，其次待发/首个；终态与 v3 → 战报。
+  // 显示态 = 派生态（v4）/ 持久态（v3）。暂停是**派生**的：绑定执行落
+  // executions.status='paused'，持久 task 行仍是 'running' —— 整条 chrome 若直接读
+  // task.status，控制台会在暂停时继续自称「执行中」并照常渲染秒表/中止。
+  // 优先级单源复用看板的 effectiveStatusOf（含 draft/aborted 例外），不在这里重写。
+  const derivedStatus = effectiveStatusOf(task, derived)
+
+  // 自动选中：待验收/执行中/已暂停的那个 phase 优先，其次待发/首个；终态与 v3 → 战报。
   const autoView: number | "report" = useMemo(() => {
     if (!derived || !derived.isV4 || phaseViews.length === 0) return "report"
-    if (TERMINAL_TASK_STATUSES.has(task.status)) return "report"
+    if (TERMINAL_TASK_STATUSES.has(derivedStatus)) return "report"
     const active =
       phaseViews.find((p) => p.status === "awaiting_review") ??
       phaseViews.find((p) => p.status === "running") ??
+      // 暂停的 phase 必须在这条链里：多 phase 任务暂停在 P1 时，漏掉它就会兜底
+      // 跳到**最后一个** phase 的面板 —— 静默错位。
+      phaseViews.find((p) => p.status === "paused") ??
       phaseViews.find((p) => p.status === "pending") ??
       phaseViews[phaseViews.length - 1]
     return active?.index ?? "report"
-  }, [derived, phaseViews, task.status])
+  }, [derived, phaseViews, derivedStatus])
   const view = sel ?? autoView
 
   // ── 过程回放种子（走查回灌 2026-09-16）──────────────────────────────
@@ -214,6 +223,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }
 
   // ── 导航条动作 ─────────────────────────────────────────────────────
+  // canAbort / canReopen 读**持久**态，刻意不切派生态：暂停期间持久态仍是 running，
+  // 这正是中止这条逃生口要保持畅通的原因（暂停的退出只有恢复与中止）。canAbort 因
+  // 此在暂停时天然为真 —— 已由 server 侧测试钉住。
   const canAbort = task.status === "running" || task.status === "ready"
   const canReopen = task.status === "ready"
   const dueAt = task.next_fire_at
@@ -221,6 +233,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const waitingForSlot = task.execution?.status === "pending"
   const liveRun = runs.find((r) => LIVE_RUN_STATUSES.has(r.status)) ?? null
   const awaitingPv = phaseViews.find((p) => p.status === "awaiting_review") ?? null
+  // 暂停/恢复只在「真有一轮在跑/被按住」时出现 —— 与工作流页同判据（服务端也要求
+  // 执行确实 running 才接受暂停；停在审批节点的运行不在其列）。
+  const runningRun = runs.find((r) => r.status === "running") ?? null
+  const pausedRun = runs.find((r) => r.status === "paused") ?? null
+  const canPause = !!runningRun
+  const canResume = !!pausedRun
   const awaitingRun = awaitingPv?.awaitingRound != null
     ? runsById.get(awaitingPv!.rounds.find((r) => r.roundIndex === awaitingPv!.awaitingRound)?.exec.id ?? "") ?? null
     : null
@@ -259,6 +277,32 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     } finally { setBusy(null) }
   }
 
+  const handlePause = async () => {
+    setBusy("pause")
+    try {
+      await pauseTask(task.id)
+      toast.success("已暂停 — 恢复时会从被打断的节点重跑")
+      onMutated(); refetch()
+    } catch (err: unknown) {
+      // 409 的 message 已是面向用户的中文（排队中 / 停在审批节点 / 没有进行中的执行），
+      // 直接透出比换成一句笼统的「暂停失败」有用。
+      toast.error(err instanceof Error ? err.message : "暂停失败")
+    } finally { setBusy(null) }
+  }
+  // 恢复不带输入框 —— 与工作流页完全一致（workflow-flow-panel.resumeExecution 也只在
+  // 调用方能给时才带 intervention；execution-panel 干脆不带 body）。intervention 是
+  // API 能力，不是这里的必经步骤；想要的是一模一样的操作手感。
+  const handleResume = async () => {
+    setBusy("resume")
+    try {
+      await resumeTask(task.id)
+      toast.success("已恢复运行")
+      onMutated(); refetch()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "恢复失败")
+    } finally { setBusy(null) }
+  }
+
   const barBtn = "rounded border-[1.5px] border-pop-bg/30 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
 
   return (
@@ -282,20 +326,20 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
         <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
         <span
-          data-task-modal-status={task.status}
-          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[task.status] ?? "border-pop-bg/30 text-pop-bg/70"}`}
+          data-task-modal-status={derivedStatus}
+          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[derivedStatus] ?? "border-pop-bg/30 text-pop-bg/70"}`}
         >
-          {task.status === "awaiting_review" && awaitingPv
+          {derivedStatus === "awaiting_review" && awaitingPv
             ? `◆ 待验收 · P${awaitingPv.index}`
-            : `● ${TASK_STATUS_LABEL[task.status] ?? task.status}`}
+            : `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`}
         </span>
         {/* 语境 token：一条把「现在最该知道的数」说完 */}
-        {task.status === "ready" && (armedFuture
+        {derivedStatus === "ready" && (armedFuture
           ? <span className="shrink-0 text-pop-bg/70">⏰ 已定时 <b className="text-pop-bg">{clockShort(dueAt)}</b> 触发</span>
           : waitingForSlot
             ? <span className="shrink-0 text-pop-amber">⏳ 已到点，等并发闸…</span>
             : <span className="shrink-0 text-pop-bg/70">⚡ 待触发 · {specPhases.length || phaseViews.length} phases</span>)}
-        {task.status === "running" && liveRun && (
+        {derivedStatus === "running" && liveRun && (
           <>
             <span className="shrink-0 text-pop-bg/70">⏱ <b className="text-pop-bg tabular-nums">{liveDur(liveRun, now)}</b>{liveRun.phase_index != null ? `（P${liveRun.phase_index}·R${liveRun.round_index ?? 1}）` : ""}</span>
             {totalAgg && totalAgg.totalCalls > 0 && (
@@ -303,11 +347,15 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             )}
           </>
         )}
-        {task.status === "awaiting_review" && waitedMs != null && (
+        {/* 暂停：不显秒表（时间不在走），只说「等你恢复」 */}
+        {derivedStatus === "paused" && (
+          <span className="shrink-0 text-pop-bg/70">⏸ 已暂停{pausedRun?.phase_index != null ? `（P${pausedRun.phase_index}·R${pausedRun.round_index ?? 1}）` : ""} · 恢复后从该节点重跑</span>
+        )}
+        {derivedStatus === "awaiting_review" && waitedMs != null && (
           <span className="shrink-0 text-pop-bg/70">等你放行 · 已等 <b className="text-pop-amber">{shortDur(waitedMs)}</b></span>
         )}
-        {task.status === "archiving" && <span className="shrink-0 text-pop-bg/70">🗄 归档编排中（全绿才 done）</span>}
-        {(task.status === "done" || task.status === "failed" || task.status === "aborted") && task.completed_at && (
+        {derivedStatus === "archiving" && <span className="shrink-0 text-pop-bg/70">🗄 归档编排中（全绿才 done）</span>}
+        {(derivedStatus === "done" || derivedStatus === "failed" || derivedStatus === "aborted") && task.completed_at && (
           <span className="shrink-0 text-pop-bg/70">{clockShort(task.completed_at)}{totalAgg && totalAgg.totalCalls > 0 ? ` · ${formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}` : ""}</span>
         )}
 
@@ -335,6 +383,31 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           {task.status === "ready" && armedFuture && (
             <button onClick={() => void handleCancelTrigger()} disabled={busy !== null} data-task-trigger-cancel className="rounded border-[1.5px] border-pop-amber/60 px-1.5 py-px text-[9.5px] font-black text-pop-amber transition-colors hover:bg-pop-amber hover:text-pop-ink">
               ✕ 取消触发
+            </button>
+          )}
+          {/* task-pause: 暂停/恢复 —— 委派给绑定执行，与工作流页同操作。
+              只有真有一轮 running 时才给「暂停」（服务端同样只认 running：停在审批
+              节点的运行是引擎活着在等人，标成已暂停会把「需要你审批」盖掉）。 */}
+          {canPause && (
+            <button
+              onClick={() => void handlePause()}
+              disabled={busy !== null}
+              data-task-pause
+              className={barBtn}
+              title="暂停这一轮（中断当前节点；恢复时从该节点重跑）"
+            >
+              {busy === "pause" ? <Spinner className="size-2.5" /> : "⏸ 暂停"}
+            </button>
+          )}
+          {canResume && (
+            <button
+              onClick={() => void handleResume()}
+              disabled={busy !== null}
+              data-task-resume
+              className="rounded border-[1.5px] border-pop-green/60 px-1.5 py-px text-[9.5px] font-black text-[#33d69f] transition-colors hover:bg-pop-green hover:text-white"
+              title="恢复运行（从被打断的节点继续）"
+            >
+              {busy === "resume" ? <Spinner className="size-2.5" /> : "▶ 恢复"}
             </button>
           )}
           {canAbort && (
