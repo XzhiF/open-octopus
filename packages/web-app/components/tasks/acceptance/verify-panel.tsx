@@ -14,7 +14,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Ban, Play, Square, Terminal } from "lucide-react"
+import { Ban, ChevronDown, ChevronRight, Play, Square, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AcceptanceVerify } from "@octopus/shared"
 import { formatDuration } from "@/lib/format"
@@ -46,6 +46,16 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
   const [saveBusy, setSaveBusy] = useState(false)
   const consoleRef = useRef<HTMLDivElement>(null)
   const [elapsedS, setElapsedS] = useState(0)
+  // 输出框开合（用户反馈 2026-09-17:mvn 全量输出刷屏,想把框收起来看上面的 diff）。
+  const [open, setOpen] = useState(true)
+  // 「前 N 行已折叠」原本是死文本 — 现在是拉取更早行的真按钮(封顶防 jsdom/浏览器卡死)。
+  const [showAll, setShowAll] = useState(false)
+
+  // 新一次跑批 = 重新展开 + 回到末 120 行窗口。
+  useEffect(() => {
+    setShowAll(false)
+    setOpen(true)
+  }, [summary?.started_at])
 
   // 运行中的秒表（marching-ants 是装饰，数字才是耐心药）。
   useEffect(() => {
@@ -83,7 +93,16 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
     >
       {/* 头：命令 + 编辑/超时/跑钮 */}
       <div className="flex flex-wrap items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
-        <Terminal className="size-3.5 shrink-0 text-pop-dim" />
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex shrink-0 items-center gap-0.5 rounded px-0.5 text-pop-dim transition-colors hover:text-pop-ink"
+          title={open ? "收起输出" : "展开输出"}
+          aria-expanded={open}
+          data-testid="verify-console-toggle"
+        >
+          <Terminal className="size-3.5" />
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        </button>
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
         {cfg ? (
           <code className="min-w-0 flex-1 truncate rounded bg-pop-bd/5 px-1.5 py-0.5 font-mono text-[11px]" title={cfg.command}>
@@ -158,12 +177,22 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         </div>
       )}
 
-      {/* 输出控制台：pop 终端 chrome */}
-      {(running || lines.length > 0) && (
+      {/* 输出控制台：pop 终端 chrome（头行 Terminal 钮可整块收起） */}
+      {open && (running || lines.length > 0) && (
         <div className="border-y-2 border-pop-bd bg-pop-ink px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-paper" ref={consoleRef} data-testid="verify-console">
-          {lines.length > 120 && <div className="text-pop-dim">[…前 {lines.length - 120} 行已折叠，完整看 verdict 文件]</div>}
-          {lines.slice(-120).map((l, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all ${/^\[stderr\]|error|Error|FAIL/.test(l) ? "text-pop-amber" : ""}`}>{l || " "}</div>
+          {lines.length > 120 && (
+            <button
+              className="block text-left text-pop-dim underline decoration-dotted underline-offset-2 hover:text-pop-paper"
+              onClick={() => setShowAll((v) => !v)}
+              data-testid="verify-fold-hint"
+            >
+              {showAll
+                ? `▾ 收回前 ${lines.length - 120} 行（回到末 120 行）`
+                : `…前 ${lines.length - 120} 行已折叠 — 点击展开（完整留档看 verdict 文件）`}
+            </button>
+          )}
+          {(showAll ? lines.slice(-3000) : lines.slice(-120)).map((l, i, arr) => (
+            <div key={showAll ? `all-${lines.length - arr.length + i}` : `tail-${lines.length - arr.length + i}`} className={`whitespace-pre-wrap break-all ${/^\[stderr\]|error|Error|FAIL/.test(l) ? "text-pop-amber" : ""}`}>{l || " "}</div>
           ))}
           {running && <div className="pop-blink text-pop-green">▊</div>}
         </div>
