@@ -43,16 +43,25 @@ export function PlaybookPanel({
   const [openFine, setOpenFine] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyRef = useRef(false)
+  // Mirror of `checks` for event handlers — decides compute `next` synchronously
+  // from this (updater purity: side effects like onGate/persist must NEVER run
+  // inside a setState updater — React executes it in the PARENT's render pass →
+  // "Cannot update a component while rendering a different component", 六单实证).
+  const checksRef = useRef<Record<string, CheckEntry>>({})
 
   // (re)load persisted checks on task/round switch — a fresh server restart
   // re-reads the .md the panel wrote last time (durable truth).
   useEffect(() => {
     let cancelled = false
     dirtyRef.current = false
-    if (!batchRelDir) { setChecks({}); onGate(summarize(playbook, {})); return }
+    if (!batchRelDir) { checksRef.current = {}; setChecks({}); onGate(summarize(playbook, {})); return }
     void readChecks(taskId, batchRelDir, roundIndex).then((f) => {
-      if (!cancelled) { setChecks(f.checks ?? {}); onGate(summarize(playbook, f.checks ?? {})) }
-    }).catch(() => { if (!cancelled) onGate(summarize(playbook, {})) })
+      if (!cancelled) {
+        checksRef.current = f.checks ?? {}
+        setChecks(f.checks ?? {})
+        onGate(summarize(playbook, f.checks ?? {}))
+      }
+    }).catch(() => { if (!cancelled) { checksRef.current = {}; onGate(summarize(playbook, {})) } })
     return () => { cancelled = true }
     // playbook recompute must re-summarize too (step count can shift)
   }, [taskId, batchRelDir, roundIndex, playbook, onGate])
@@ -69,25 +78,28 @@ export function PlaybookPanel({
     }, 300)
   }, [taskId, batchRelDir, roundIndex, onSaveStateChange])
 
+  // Single mutation funnel — called from event handlers only (NEVER from an
+  // updater): parent-facing side effects must happen outside the render pass.
+  const commit = useCallback((next: Record<string, CheckEntry>) => {
+    checksRef.current = next
+    setChecks(next)
+    onGate(summarize(playbook, next))
+    persist(next)
+  }, [onGate, playbook, persist])
+
   const decide = useCallback((id: string, decision: CheckDecision | null, note?: string) => {
-    setChecks((prev) => {
-      const next = { ...prev }
-      if (decision === null) delete next[id]
-      else next[id] = { decision, note: note ?? next[id]?.note ?? "", at: new Date().toISOString() }
-      onGate(summarize(playbook, next))
-      persist(next)
-      return next
-    })
-  }, [playbook, onGate, persist])
+    const prev = checksRef.current
+    const next = { ...prev }
+    if (decision === null) delete next[id]
+    else next[id] = { decision, note: note ?? prev[id]?.note ?? "", at: new Date().toISOString() }
+    commit(next)
+  }, [commit])
 
   const setNote = useCallback((id: string, note: string) => {
-    setChecks((prev) => {
-      const cur = prev[id]; if (!cur) return prev
-      const next = { ...prev, [id]: { ...cur, note } }
-      persist(next)
-      return next
-    })
-  }, [persist])
+    const cur = checksRef.current[id]
+    if (!cur) return
+    commit({ ...checksRef.current, [id]: { ...cur, note } })
+  }, [commit])
 
   const allItems = useMemo(() => playbook.sections.flatMap((s) => s.items), [playbook])
 
