@@ -479,7 +479,7 @@ function workspaceGuide() {
     "# \u7CBE\u9009\u590D\u5236\u5230 .claude/agents/\uFF08\u4EC5\u9700\u8981\u7684\u90E8\u95E8\u548C\u6587\u4EF6\uFF09",
     "```",
     "\u5DE5\u4F5C\u6D41 YAML \u4E2D\u901A\u8FC7 `agent_file:` \u5B57\u6BB5\u5F15\u7528 `.claude/agents/` \u4E0B\u7684 .md \u6587\u4EF6\uFF0C",
-    "\u5F15\u64CE\u8FD0\u884C\u65F6\u8BFB\u53D6\u6587\u4EF6\u5185\u5BB9 + `prompt` \u62FC\u63A5\u540E\u4F20\u7ED9 Claude Agent SDK\u3002",
+    "\u5F15\u64CE\u8FD0\u884C\u65F6\u8BFB\u53D6\u6587\u4EF6\u5185\u5BB9 + `prompt` \u62FC\u63A5\u540E\u4F20\u7ED9 Claude Agent SDK\u3002"
   ];
 }
 function writeClaudeMd(wsDir, wsName, repos) {

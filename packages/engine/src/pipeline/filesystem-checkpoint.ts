@@ -164,7 +164,3 @@ export class FilesystemCheckpointStore implements ICheckpointStore {
       .sort()
   }
 }
-
-// Legacy aliases for backward compatibility
-export { FilesystemCheckpointStore as CheckpointStore }
-export { FilesystemCheckpointStore as SqliteCheckpointStore }

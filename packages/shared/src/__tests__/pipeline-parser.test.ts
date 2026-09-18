@@ -32,7 +32,6 @@ kind: Pipeline
     expect(result.execution.failure_strategy).toBe("fail_fast")
     expect(result.execution.timeout).toBe(86400)
     expect(result.retry.default.max_attempts).toBe(1)
-    expect(result.fork.path_strategy).toBe("all")
     expect(result.checkpoint.enabled).toBe(true)
   })
 
@@ -128,10 +127,6 @@ retry:
       max_attempts: 1
       retry_on:
         - timeout
-fork:
-  path_strategy: all
-  merge_strategy: first_complete
-  failure_handling: best_effort
 checkpoint:
   enabled: true
   save_on: per-level
@@ -144,7 +139,6 @@ checkpoint:
     expect(result.description).toBe("Full test pipeline")
     expect(result.execution.failure_strategy).toBe("skip")
     expect(result.retry.default.backoff.type).toBe("linear")
-    expect(result.fork.merge_strategy).toBe("first_complete")
     expect(result.checkpoint.max_checkpoints).toBe(20)
   })
 })

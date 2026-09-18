@@ -22,26 +22,9 @@ const PIPELINE_GUIDE_MD = `# Pipeline v2 配置指南
 
 修改后下次执行自动生效，**无需重启服务**。
 
-## 七大功能模块
+## 五大功能模块
 
-### 1. 执行链（chain）
-
-控制多个 execution 节点的自动编排。
-
-| 配置 | 选项 | 说明 |
-|------|------|------|
-| \`auto_execute\` | \`true\`/\`false\` | 自动按树结构依次执行 pending 节点 |
-| \`failure_strategy\` | \`stop\` | 任一节点失败立即停止链 |
-| | \`continue\` | 标记失败，继续执行后续节点 |
-| | \`retry_leaf\` | 叶子节点失败时自动重试 |
-| \`on_success\` | \`continue\` | 成功后继续执行子节点 |
-| | \`stop\` | 成功后停止 |
-| \`config_change_strategy\` | \`snapshot\` | 执行中使用启动时的配置快照 |
-| | \`abort\` | 配置变更时中止执行 |
-
-**执行顺序**：由 execution 树结构决定（非静态列表），支持运行中动态增删节点。
-
-### 2. Prompt 注入（prompts）
+### 1. Prompt 注入（prompts）
 
 为 agent 节点注入额外的系统级指令。
 
@@ -65,7 +48,7 @@ prompts:
 
 总长度限制 5000 字符，超出时按优先级截断。
 
-### 3. 全局 Hook（hooks）
+### 2. 全局 Hook（hooks）
 
 在 workflow 级别未定义 hook 时，pipeline 级 hook 作为 fallback。
 
@@ -87,7 +70,7 @@ hooks:
       bash: echo "✅ $hook.node_id 完成 ($hook.duration_ms ms)"
 \`\`\`
 
-### 4. 失败策略（execution.failure_strategy）
+### 3. 失败策略（execution.failure_strategy）
 
 | 策略 | 行为 | 适用场景 |
 |------|------|---------|
@@ -100,7 +83,7 @@ hooks:
 - \`completed_with_failures\` — 部分失败但执行完毕
 - \`failed\` — 因失败中止
 
-### 5. 自动重试（retry）
+### 4. 自动重试（retry）
 
 #### 退避策略
 
@@ -133,15 +116,7 @@ retry:
       max_attempts: 5        # glob 匹配
 \`\`\`
 
-### 6. Fork 分支控制（fork）
-
-| 配置 | 选项 | 说明 |
-|------|------|------|
-| \`path_strategy\` | \`all\` / \`primary\` | 执行所有/仅 primary 分支 |
-| \`merge_strategy\` | \`wait_all\` / \`wait_any\` / \`first_complete\` | 合并策略 |
-| \`failure_handling\` | \`fail_all\` / \`best_effort\` | 失败处理 |
-
-### 7. Checkpoint 中断恢复（checkpoint）
+### 5. Checkpoint 中断恢复（checkpoint）
 
 **存储位置：** \`.octopus/checkpoints/{executionId}/\`
 
@@ -164,12 +139,6 @@ retry:
 \`\`\`yaml
 apiVersion: octopus/v2
 kind: Pipeline
-
-chain:
-  auto_execute: true
-  failure_strategy: continue
-  on_success: continue
-  config_change_strategy: snapshot
 
 prompts:
   global:
@@ -202,11 +171,6 @@ retry:
     deploy:
       max_attempts: 1
 
-fork:
-  path_strategy: all
-  merge_strategy: wait_all
-  failure_handling: fail_all
-
 checkpoint:
   enabled: true
   save_on: per-node
@@ -215,7 +179,6 @@ checkpoint:
 ## 向后兼容
 
 - 无 \`pipeline.yaml\` → 行为与旧版本完全一致
-- \`chain\` 未指定 → 不自动执行（需手动触发）
 - \`failure_strategy\` 未指定 → 默认 \`fail_fast\`
 - \`retry.default.max_attempts\` 未指定 → 默认 \`3\`
 - \`checkpoint.enabled\` 未指定 → 默认 \`true\`

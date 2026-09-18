@@ -40,8 +40,6 @@ import { createOrgRoutes } from "./routes/org"
 import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
 import { eventRoutes, taskpoolEventRoutes } from "./routes/events"
-import { createPipelineRoutes } from "./routes/pipeline"
-import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
@@ -446,8 +444,6 @@ app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactio
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
 app.route("/api/scheduler/events", taskpoolEventRoutes(sse))
-app.route("/api/workspaces", createPipelineRoutes(d.workspace))
-app.route("/api/workspaces", chainRoutes)
 app.route("/api/workspaces/:id/schedules", scheduleRoutes)
 app.route("/api/cron", cronRoutes)
 app.route("/api/schedules/cron", cronRoutes)

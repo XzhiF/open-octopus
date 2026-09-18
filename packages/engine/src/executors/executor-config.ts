@@ -285,17 +285,5 @@ export interface ResumeConfig {
 }
 
 // ============================================================
-// WorkflowEngine config (Phase 4)
+// Executor option shapes (per node type)
 // ============================================================
-
-export interface EngineConfig extends CoreConfig {
-  orgDir?: string
-  executionId?: string
-  initialInputs?: Record<string, string>
-  executionName?: string
-  crossExecResolver?: CrossExecResolver
-  promptInjector?: PromptInjector
-  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
-  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
-  agentResolver?: AgentResolver
-}

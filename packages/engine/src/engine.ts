@@ -2224,7 +2224,7 @@ export class WorkflowEngine {
 
   /** Build a checkpoint snapshot from current engine state. */
   private buildCheckpoint(): Checkpoint {
-    const completedNodes: Record<string, import("./pipeline/checkpoint").CheckpointNodeResult> = {}
+    const completedNodes: Record<string, import("./pipeline/checkpoint-types").CheckpointNodeResult> = {}
     for (const [id, result] of Object.entries(this.nodeResults)) {
       if (result.status === "completed" || result.status === "failed" || result.status === "skipped" || result.status === "skipped_failed") {
         completedNodes[id] = {

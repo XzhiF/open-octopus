@@ -72,7 +72,6 @@ export class PipelineConfigLoader {
         kind: "Pipeline",
         execution: v1.execution,
         retry: v1.retry,
-        fork: v1.fork,
         checkpoint: v1.checkpoint,
       }
     } else {
@@ -89,60 +88,6 @@ export class PipelineConfigLoader {
     const yaml = yamlDump(config, { indent: 2 })
     writeFileSync(configPath, yaml, "utf-8")
     this.reload()
-  }
-
-  /**
-   * 生成默认 v2 配置模板
-   */
-  generateDefault(): string {
-    return `# Octopus Pipeline v2 配置
-apiVersion: octopus/v2
-kind: Pipeline
-
-# ── 执行链策略 ──
-chain:
-  auto_execute: true           # 自动按树结构依次执行 pending 节点
-  failure_strategy: stop       # stop | continue | retry_leaf — 任一节点失败立即停止链
-  on_success: continue         # continue | stop
-  config_change_strategy: snapshot  # snapshot | abort
-
-# ── Prompt 注入 ──
-prompts:
-  global: []
-  targeted: []
-
-# ── 全局 Hook ──
-hooks: {}
-
-# ── 执行策略 ──
-execution:
-  failure_strategy: fail_fast
-  timeout: 86400
-  resume_on_interrupt: auto
-  auto_resume_max_attempts: 3
-  auto_resume_delay: 10
-
-# ── 重试 ──
-retry:
-  default:
-    max_attempts: 3
-    backoff:
-      type: exponential
-      initial_delay: 5
-      multiplier: 2
-      max_delay: 300
-
-# ── Fork ──
-fork:
-  path_strategy: all
-  merge_strategy: wait_all
-  failure_handling: fail_all
-
-# ── Checkpoint ──
-checkpoint:
-  enabled: true
-  save_on: per-node
-`
   }
 
   private getConfigPath(): string {
