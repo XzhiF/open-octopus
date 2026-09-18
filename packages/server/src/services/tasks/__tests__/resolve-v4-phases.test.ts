@@ -11,9 +11,10 @@
 // refuses to enqueue a phase whose issues/ has no final `*-e2e-*` acceptance
 // ticket.
 //
-// Why ④ exists: the writing convention alone was not enough. matt-verified-
-// requirement says the final acceptance ticket is "always generated", but
-// nothing enforced it — the v4 gate never looked at issues/ at all. So a batch
+// Why ④ exists: the writing convention alone was not enough. author-
+// verified-requirement says the final acceptance ticket is "always generated",
+// but nothing enforced it — the v4 gate never looked at issues/ at all. So a
+// batch
 // could reach execution with no acceptance ticket, which used to be caught by
 // the workflow's integration-gate fallback; that node turned out to be dead
 // code under the convention and was deleted. Making the convention a real gate

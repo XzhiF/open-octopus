@@ -12,7 +12,7 @@
 // 2. **task-author clone assets** (persona.md + the whole skills/ tree) — the
 //    same class of bug, worse blast radius. The skills were copied once from
 //    the repo's shared `.claude/skills/` and never refreshed, so installs were
-//    stranded on copies missing later discipline (e.g. matt-verified-tickets
+//    stranded on copies missing later discipline (e.g. author-verified-tickets
 //    without Rule 5's browser-dedup ladder). They now come from the fork at
 //    packages/core-pack/clones/task-author/ with a `.seed-manifest.json`
 //    recording each file's sha256, so an untouched file upgrades and a
@@ -239,6 +239,12 @@ function buildSource(files: Record<string, string> = {}): void {
   for (const [rel, content] of Object.entries(files)) writeSource(rel, content)
 }
 
+/** Retire a skill from the source tree — the rename/migration shape the
+ *  orphan sweep exists for. */
+function retireFromSource(skill: string): void {
+  fs.rmSync(path.join(SRC, 'skills', skill), { recursive: true, force: true })
+}
+
 describe('CloneInitService — task-author clone assets seed', () => {
   beforeEach(() => {
     buildSource()
@@ -361,6 +367,92 @@ describe('CloneInitService — task-author clone assets seed', () => {
     expect(fs.existsSync(destOf('skills/grilling/SKILL.md'))).toBe(true)
   })
 
+  // ── orphan sweep: the rename-migration path ─────────────────────────
+  // The real trigger: matt-verified-* → author-verified-*. A renamed skill
+  // whose untouched old copy survives seeding would stay discoverable under
+  // the retired name (SDK reads frontmatter `name` across the whole tree),
+  // colliding with the project-level skill it was forked away from.
+
+  it('removes an untouched orphan whose source is gone, prunes its empty dirs', () => {
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    // The fork renames the skill (grilling retires, author-verified-requirement
+    // takes over).
+    buildSource({ 'skills/author-verified-requirement/SKILL.md': '# author-verified-requirement v1\n' })
+    retireFromSource('grilling')
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(fs.existsSync(destOf('skills/grilling/SKILL.md'))).toBe(false)
+    expect(fs.existsSync(destOf('skills/grilling'))).toBe(false) // no empty shell
+    expect(fs.existsSync(destOf('skills/author-verified-requirement/SKILL.md'))).toBe(true)
+    expect(result.filesRefreshed).toContain('built-in/task-author/skills/grilling/SKILL.md')
+    expect(result.filesCreated).toContain('built-in/task-author/skills/author-verified-requirement/SKILL.md')
+    // The retired name is gone from the manifest too — the next run must not
+    // resurrect it.
+    const manifest = JSON.parse(fs.readFileSync(manifestPath(), 'utf-8'))
+    expect(Object.keys(manifest.files)).not.toContain('skills/grilling/SKILL.md')
+  })
+
+  it('keeps a hand-edited orphan and warns once; removes its untouched sibling', () => {
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    fs.writeFileSync(destOf('skills/grilling/SKILL.md'), '# my own grilling notes\n', 'utf-8')
+
+    buildSource()
+    retireFromSource('grilling')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+      // hand-edited orphan → user's file, kept + warned exactly once
+      expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8'))
+        .toBe('# my own grilling notes\n')
+      // untouched orphan aux file under the same retired skill → removed, but
+      // the dir survives because the kept file still lives in it
+      expect(fs.existsSync(destOf('skills/grilling/agents/openai.yaml'))).toBe(false)
+      const own = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('user-modified'),
+      )
+      expect(own).toHaveLength(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('forgets an orphan the user already deleted (no warn, nothing recreated)', () => {
+    buildSource({ 'skills/wayfinder/SKILL.md': '# wayfinder v1\n' })
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    fs.rmSync(destOf('skills/wayfinder/SKILL.md'))
+
+    retireFromSource('wayfinder') // fork retires it
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+      expect(fs.existsSync(destOf('skills/wayfinder/SKILL.md'))).toBe(false)
+      expect(result.filesCreated).not.toContain('built-in/task-author/skills/wayfinder/SKILL.md')
+      expect(result.filesRefreshed).not.toContain('built-in/task-author/skills/wayfinder/SKILL.md')
+      expect(warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('user-modified'),
+      )).toHaveLength(0)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('never deletes on a pre-versioning takeover — the backup is the safety net', () => {
+    // No manifest → no recorded sha → cannot tell stale seed from hand-edit,
+    // so the sweep is inert; the old copy is taken over, not removed (and
+    // preserved in seed.bak-<ts>/).
+    fs.mkdirSync(path.join(cloneDir(), 'skills', 'grilling'), { recursive: true })
+    fs.writeFileSync(destOf('skills/grilling/SKILL.md'), '# pre-versioning copy\n', 'utf-8')
+
+    buildSource({ 'skills/wayfinder/SKILL.md': '# wayfinder v1\n' })
+    retireFromSource('grilling') // retired in the fork — but sweep stays inert without a manifest
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8')).toBe('# pre-versioning copy\n')
+  })
+
   it('does NOT touch assets for other clones', () => {
     new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
@@ -396,7 +488,7 @@ describe('task-author fork — shape of the shipped source', () => {
       ).toBe(true)
     }
     expect(
-      fs.existsSync(path.join(realFork, 'skills/matt-verified-requirement/references/story-walkthrough.md')),
+      fs.existsSync(path.join(realFork, 'skills/author-verified-requirement/references/story-walkthrough.md')),
     ).toBe(true)
     expect(fs.existsSync(path.join(realFork, 'skills/domain-modeling/ADR-FORMAT.md'))).toBe(true)
   })
@@ -413,7 +505,7 @@ describe('task-author fork — shape of the shipped source', () => {
     // If the shared copies gain something that must not reach the author view,
     // this is where it should fail rather than in a live drafting session.
     const requirement = fs.readFileSync(
-      path.join(realFork, 'skills/matt-verified-requirement/SKILL.md'),
+      path.join(realFork, 'skills/author-verified-requirement/SKILL.md'),
       'utf-8',
     )
     expect(requirement).not.toContain('Execution Decisions Gate')
@@ -433,10 +525,13 @@ describe('persona.md ↔ builtin-clones.ts consistency', () => {
   // TASK_AUTHOR_PERSONA constant is the fallback when the file is missing.
   // Two copies that can drift is exactly the bug this whole change fixes, so
   // pin them together rather than trusting discipline.
-  it('the fork persona and the inline fallback are byte-identical', () => {
+  it('the fork persona and the inline fallback are identical (modulo platform EOLs)', () => {
     const realFork = path.resolve(__dirname, '../../../../../core-pack/clones/task-author')
-    const fork = fs.readFileSync(path.join(realFork, 'persona.md'), 'utf-8')
+    // autocrlf checkouts hand Windows devs a CRLF persona.md while the .ts
+    // source keeps its committed LF — that is git checkout noise, not the
+    // drift this pin exists to catch. Compare content, not carriage returns.
+    const fork = fs.readFileSync(path.join(realFork, 'persona.md'), 'utf-8').replace(/\r\n/g, '\n')
     const def = BUILTIN_CLONES.find((c) => c.name === 'task-author')!
-    expect(def.persona).toBe(fork)
+    expect(def.persona.replace(/\r\n/g, '\n')).toBe(fork)
   })
 })

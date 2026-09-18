@@ -1,13 +1,13 @@
 ---
-name: matt-verified-tickets
-description: Enhancement of to-tickets. Adds verification method binding — every ticket gets executable verification steps. Used as a guide by the main session during matt-verified-requirement.
+name: author-verified-tickets
+description: Enhancement of to-tickets. Adds verification method binding — every ticket gets executable verification steps. Used as a guide by the main session during author-verified-requirement.
 reference-only: true
 ---
 
 # Verified Tickets — Enhancement of `to-tickets`
 
 > **This skill enhances `to-tickets`.** Follow `to-tickets` for the base process (tracer bullet splitting, blocking edges, publishing), then add the verification enhancements below.
-> It is a methodology reference — the main session reads it when writing issues/ during `matt-verified-requirement`. NOT auto-invoked by any agent.
+> It is a methodology reference — the main session reads it when writing issues/ during `author-verified-requirement`. NOT auto-invoked by any agent.
 
 ## Base Skill
 

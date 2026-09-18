@@ -32,9 +32,9 @@ export const TASK_AUTHOR_SEED_MANIFEST = '.seed-manifest.json'
  *  test can assert the fork's `skills/` dir matches it exactly — adding or
  *  renaming a skill must be a conscious act, not a silent drift. */
 export const MATT_SKILL_FAMILY: readonly string[] = [
-  'matt-verified-requirement',
-  'matt-verified-spec',
-  'matt-verified-tickets',
+  'author-verified-requirement',
+  'author-verified-spec',
+  'author-verified-tickets',
   'domain-modeling',
   'grilling',
   'wayfinder',
@@ -158,7 +158,10 @@ export class CloneInitService {
    *    sha != recorded  → hand-edited → keep, warn once
    *    dest missing     → write it (deleting a file is the documented way to
    *                       force a re-seed, so re-writing is the intent)
-   *    source gone      → keep; never delete user-visible files
+   *    source gone      → remove the orphan this seed wrote (untouched sha), so a
+   *                       renamed skill does not stay discoverable under its old
+   *                       name; hand-edited → keep, warn once; never-written →
+   *                       forget
    *
    *  Non-fatal throughout: a failure leaves the clone with one asset less, and
    *  the session still runs (same posture as copyBuiltinSkills). */
@@ -199,6 +202,31 @@ export class CloneInitService {
         continue
       }
       this.seedCopyFile(srcAbs, destAbs, key, result, true)
+    }
+
+    // Orphan sweep — a file we once seeded whose source is gone from the fork
+    // (the usual cause: a skill rename). Deleting the old dest is not enough:
+    // the SDK discovers skills by frontmatter `name` across the whole skills/
+    // tree, so an untouched old copy would keep answering to the retired name
+    // next to its renamed twin. Removal is safe only when the dest still equals
+    // what we last wrote; a hand-edited orphan is the user's file — keep, warn.
+    // (No-manifest installs skip this: without a recorded sha we cannot tell a
+    // stale seed from a hand-edit, so the backup above is the only safety net.)
+    if (prev) {
+      const srcSet = new Set(srcFiles)
+      for (const rel of Object.keys(prev.files)) {
+        if (srcSet.has(rel)) continue
+        const key = `built-in/task-author/${rel}`
+        const destAbs = path.join(cloneDir, rel)
+        const destHash = sha256File(destAbs)
+        if (destHash === null) continue // already gone from disk — just forget it
+        if (destHash !== prev.files[rel]) {
+          result.filesSkipped.push(key)
+          this.warnUserModified(destAbs, key)
+          continue
+        }
+        this.seedRemoveFile(destAbs, key, cloneDir, result)
+      }
     }
 
     try {
@@ -273,6 +301,32 @@ export class CloneInitService {
     } catch (err: unknown) {
       console.warn(
         `[CloneInitService] seed failed for ${key}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Delete one orphan seed file (source gone from the fork, dest untouched),
+   *  then prune empty parent dirs up to the clone root — otherwise a renamed
+   *  skill leaves an empty directory shell behind. */
+  private seedRemoveFile(
+    destAbs: string,
+    key: string,
+    cloneDir: string,
+    result: CloneInitResult,
+  ): void {
+    try {
+      fs.rmSync(destAbs)
+      result.filesRefreshed.push(key)
+      let dir = path.dirname(destAbs)
+      while (dir.startsWith(cloneDir + path.sep) && dir !== cloneDir) {
+        if ((fs.readdirSync(dir) as string[]).length > 0) break
+        fs.rmdirSync(dir)
+        dir = path.dirname(dir)
+      }
+    } catch (err: unknown) {
+      console.warn(
+        `[CloneInitService] orphan cleanup failed for ${key}:`,
         err instanceof Error ? err.message : String(err),
       )
     }

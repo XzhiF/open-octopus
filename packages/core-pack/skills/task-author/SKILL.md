@@ -176,13 +176,13 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ## matt 技能族产物协议
 
-task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直接调用）：`matt-verified-requirement`（需求澄清总入口，grilling/wayfinder 双路径）、`grilling`、`wayfinder`、`domain-modeling`（术语+ADR）、`matt-verified-spec`、`matt-verified-tickets`（spec/tickets 写作方法论）。
+task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直接调用）：`author-verified-requirement`（需求澄清总入口，grilling/wayfinder 双路径）、`grilling`、`wayfinder`、`domain-modeling`（术语+ADR）、`author-verified-spec`、`author-verified-tickets`（spec/tickets 写作方法论）。
 
 ### 逐 phase 产出协议
 
 1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
 2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
-3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（matt-verified-tickets 规则，**含末张 `NN-e2e-*` 票——这项由 server gate 强制**，见下）。
+3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（author-verified-tickets 规则，**含末张 `NN-e2e-*` 票——这项由 server gate 强制**，见下）。
    > ⚠️ **末张 `NN-e2e-*` 票是硬要求，不是建议**：绑批次消费型流（默认 `matt-spec-dev`）时，`issues/` 缺该票会让 [入队] 直接 409 `phase:<i>:no-final-verification`。它不是「多跑一遍 E2E」的仪式——对这类流，票就是执行计划，而这张票是全 phase 唯一真起浏览器（有 UI）或做 API 级走查（纯后端）的地方，工作流按文件名路由到它。
 4. **验证方式类型阶梯（防重复烧钱，票写作硬纪律）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（此禁令无条件，不随 spec 纪律豁免）；UI 功能票的渲染/交互断言（列齐全、徽标、币种换算即时生效等）一律收编进末张 `NN-e2e-*` 票的走查步骤。**末张 `NN-e2e-*` 是全 phase 唯一许起浏览器的一张，模式随验收面自动选定**：phase 验收物含 UI/页面交互 → **browser 走查**（Playwright+截图证据）；纯后端/无 UI phase（交付物=API/DB/CLI 态）→ **API 级走查**（curl+sqlite+手算，此为天然形态，无需任何声明）——不给不存在的页面烧浏览器/vision 成本。有 UI 时若 spec「验证纪律」节按 token 预算仍拍板全流程不做浏览器，末张降 API 级走查。模式在一处定死（验收面天然决定，或 spec 拍板），各票类型行照抄，不留票级自由裁量。功能票写了 browser E2E = 与末张票双跑，多烧一整轮成本——写完自查一遍票类型。
 5. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。

@@ -1,5 +1,5 @@
 ---
-name: matt-verified-requirement
+name: author-verified-requirement
 description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a verified spec.md and DAG-structured issues/ (always including a final E2E acceptance ticket) as the authoring deliverable for one v4 task phase — the phase is then enqueued and executed by its bound workflow, never by this session. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
 dependencies: domain-modeling, grilling, wayfinder, research
 ---
@@ -287,7 +287,7 @@ This section runs **only if the user opted in to the Story Walk-Through decision
    Story Walk-Through analysis.
    Protocol: this skill's own `references/story-walkthrough.md`
    (resolved under the clone plugin dir, e.g.
-    ~/.octopus/agent/built-in/task-author/skills/matt-verified-requirement/references/story-walkthrough.md)
+    ~/.octopus/agent/built-in/task-author/skills/author-verified-requirement/references/story-walkthrough.md)
    Explore the codebase freely to verify each story step.
    
    Output TWO things:
@@ -386,10 +386,10 @@ Round reports and handoffs (`round-report.md`, `handoff.md`, `fix-report-rN.md`)
 **Steps**:
 1. Create directory `<artifacts.dir>/<feature-slug>/`
 2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
-3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `matt-verified-spec` skill as methodology reference)
+3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `author-verified-spec` skill as methodology reference)
 4. Ask the **Story Walk-Through decision** — ONE ask (run / skip) → record the answer in spec.md `## Execution Decisions`
 5. If walkthrough opted in: spawn story-walkthrough sub-agent → read findings → present to user for confirmation → fix spec.md; if opted out: proceed (decision already recorded)
-6. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference) — **always append the final E2E ticket** (see Issues Writing rule 8)
+6. Write `<artifacts.dir>/<feature-slug>/issues/` (using `author-verified-tickets` skill as methodology reference) — **always append the final E2E ticket** (see Issues Writing rule 8)
 7. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
 8. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
 9. Tell the user the output paths and how to proceed (see Next Steps)
@@ -428,7 +428,7 @@ Round reports and handoffs (`round-report.md`, `handoff.md`, `fix-report-rN.md`)
 
 ## Spec Template (single source of truth)
 
-See `matt-verified-spec` skill (enhancement of `to-spec`) for verification strategy additions and writing rules.
+See `author-verified-spec` skill (enhancement of `to-spec`) for verification strategy additions and writing rules.
 
 ```markdown
 # Spec: [Feature Title]
@@ -542,7 +542,7 @@ Map: [map.md](./map.md)
 [...]
 ```
 
-**Spec writing rules** (from `matt-verified-spec`):
+**Spec writing rules** (from `author-verified-spec`):
 1. Every User Story MUST have a verification method
 2. Verification methods must be executable (specific commands, not "test the API")
 3. Use project domain terminology (consistent with CONTEXT.md)
@@ -553,7 +553,7 @@ Map: [map.md](./map.md)
 
 After spec.md is finalized (including story walk-through fixes, when the user opted in), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
 
-See `matt-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
+See `author-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
 
 ### Process
 1. Gather context (read spec.md, explore codebase)
@@ -601,7 +601,7 @@ ready-for-agent
 5. Executable verification — specific commands, specific SQL, specific assertions
 6. One session size — each ticket fits in one agent call
 7. DAG structure — tickets without mutual blockers can run concurrently in the same stage
-8. **Final acceptance ticket always generated** — `issues/` MUST end with exactly one `NN-e2e-*` ticket: blocked by all functional tickets, Verification type = browser walkthrough / API-level walkthrough (per spec's Verification Strategy), ACs drawn from the spec's E2E-level ACs. It is the phase's acceptance ticket — the one place in the whole phase that really starts a browser, and the bound workflow routes to it by that filename. Write the mode into the ticket itself (see `matt-verified-tickets` rule 5).
+8. **Final acceptance ticket always generated** — `issues/` MUST end with exactly one `NN-e2e-*` ticket: blocked by all functional tickets, Verification type = browser walkthrough / API-level walkthrough (per spec's Verification Strategy), ACs drawn from the spec's E2E-level ACs. It is the phase's acceptance ticket — the one place in the whole phase that really starts a browser, and the bound workflow routes to it by that filename. Write the mode into the ticket itself (see `author-verified-tickets` rule 5).
 
 ## Relationship to Original Skills
 
@@ -611,8 +611,8 @@ ready-for-agent
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
 | `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this flow. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
-| `matt-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
-| `matt-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
+| `author-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
+| `author-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
 
 ## Next Steps
 

@@ -95,7 +95,7 @@ export function specSkeleton(phase: TaskPhase): string {
 
 ## issues/
 
-（票清单由 matt-verified-tickets 产出至本目录 issues/NN-*.md；末张 NN-e2e-* 验收票是
+（票清单由 author-verified-tickets 产出至本目录 issues/NN-*.md；末张 NN-e2e-* 验收票是
 硬要求——绑批次消费型流时缺失会让 [入队] 报 no-final-verification）
 `
 }

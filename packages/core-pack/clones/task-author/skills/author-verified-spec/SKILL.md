@@ -1,13 +1,13 @@
 ---
-name: matt-verified-spec
-description: Enhancement of to-spec. Adds verification strategy block — every user story gets a concrete, executable verification method. Used as a guide by the main session during matt-verified-requirement.
+name: author-verified-spec
+description: Enhancement of to-spec. Adds verification strategy block — every user story gets a concrete, executable verification method. Used as a guide by the main session during author-verified-requirement.
 reference-only: true
 ---
 
 # Verified Spec — Enhancement of `to-spec`
 
 > **This skill enhances `to-spec`.** Follow `to-spec` for the base process and template, then add the verification enhancements below.
-> It is a methodology reference — the main session reads it when writing spec.md during `matt-verified-requirement`. NOT auto-invoked by any agent.
+> It is a methodology reference — the main session reads it when writing spec.md during `author-verified-requirement`. NOT auto-invoked by any agent.
 
 ## Base Skill
 
