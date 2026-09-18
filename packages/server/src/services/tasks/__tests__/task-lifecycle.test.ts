@@ -41,14 +41,17 @@ vi.mock("../../execution-service-registry", () => ({
       service: {
         create: (_workspaceId: string, input: Record<string, unknown>) => {
           // A real INSERT, so task_id + the UNIQUE latch behave exactly as in production.
+          // parent_id is written from the input too (task-exec-tree v44): the arm side now
+          // hands create() a chain lineage, and a stub that ignored it would hide whether
+          // the row actually lands under its predecessor.
           const id = `lc-exec-${stub.seq++}`
           stub.db!.prepare(
             `INSERT INTO executions
                (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
                 input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
-             VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`,
+             VALUES (?, ?, ?, 0, ?, ?, 'pending', ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`,
           ).run(
-            id, _workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+            id, _workspaceId, input.parent_id ? String(input.parent_id) : "0", String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
             JSON.stringify(input.input_values ?? {}), JSON.stringify(input.initial_var_pool ?? {}),
             String(input.org ?? "xzf"), input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
           )
@@ -252,7 +255,7 @@ function bindWorkspace(taskId: string): string {
 }
 
 function latestRoot(taskId: string) {
-  return execs.findLatestTaskRoot(taskId)
+  return execs.findLatestTaskInstance(taskId)
 }
 
 /** Fire the terminal callback the way the engine does, and await the async tail. */
@@ -361,7 +364,7 @@ describe("task-lifecycle — arming creates the instance row", () => {
     const wsId = bindWorkspace("b1")
     svc.armTask("b1")
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces WHERE task_id='b1'").get()).toEqual({ c: 1 })
-    expect(execs.findLatestTaskRoot("b1")!.workspace_id).toBe(wsId)
+    expect(execs.findLatestTaskInstance("b1")!.workspace_id).toBe(wsId)
   })
 
   it("builds and binds a workspace on first arm (task_id written, no schedule anywhere)", () => {
@@ -371,6 +374,123 @@ describe("task-lifecycle — arming creates the instance row", () => {
     expect(ws).toBeTruthy()
     expect(execs.findById(execId)!.workspace_id).toBe(ws.id)
     expect(tasks.getById("b2")!.workspace_id).toBe(ws.id)
+  })
+})
+
+// ── ①b execution tree (task-exec-tree, schema v44) ───────────────────
+
+describe("task-lifecycle — the run history is one tree (v44)", () => {
+  /** arm → launch → complete one round, returning its row. */
+  async function round(taskId: string, opts?: Parameters<TaskLifecycleService["armTask"]>[1]) {
+    const execId = svc.armTask(taskId, opts)
+    svc.launchQueued()
+    await complete(execId, "completed")
+    return execs.findById(execId)!
+  }
+
+  it("the first round is a root; every later TAGGED round chains under the previous instance", async () => {
+    insertV4Task("t1", { phases: 3 })
+    const r1 = await round("t1")
+    expect(r1.parent_id).toBe("0")
+    const r2 = await round("t1", { phaseIndex: 2, roundIndex: 1 })
+    expect(r2.parent_id).toBe(r1.id)
+    const r3 = await round("t1", { phaseIndex: 3, roundIndex: 1 })
+    expect(r3.parent_id).toBe(r2.id)
+  })
+
+  it("an UNTAGGED launch (v3) stays a root — the chain belongs to tagged rounds only", async () => {
+    insertTask("t2")
+    await round("t2")
+    db.prepare("UPDATE tasks SET status='ready' WHERE id='t2'").run()
+    const again = await round("t2")
+    expect(again.parent_id).toBe("0")
+  })
+
+  it("the badge/currentInstance follows the CHAIN TIP, not the newest root", async () => {
+    insertV4Task("t3", { phases: 3 })
+    const r1 = await round("t3")
+    const execId = svc.armTask("t3", { phaseIndex: 2 })
+    expect(execs.findLatestTaskInstance("t3")!.id).toBe(execId)
+    expect(execs.findLatestTaskInstances(["t3"])[0].id).toBe(execId)
+    // History is both instances, newest first.
+    expect(execs.listTaskInstances("t3").map((r) => r.id)).toEqual([execId, r1.id])
+  })
+
+  it("a chained round still holds the single-instance latch (phase tag is enough)", async () => {
+    insertV4Task("t4")
+    const r1 = await round("t4")
+    const r2 = svc.armTask("t4", { phaseIndex: 2 }) // chained, pending — instance row
+    // Direct SQL, bypassing every pre-check: the index itself must refuse a second live
+    // instance even though neither row may any longer be found by a roots-only probe.
+    expect(() =>
+      db.prepare(
+        `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id, phase_index, round_index)
+         VALUES ('t4-x', (SELECT workspace_id FROM executions WHERE id=?), ?, 'w', 'w', 'pending', 'xzf', datetime('now'), datetime('now'), 't4', 3, 1)`,
+      ).run(r2, r1.id),
+    ).toThrow(/UNIQUE/)
+  })
+
+  it("a chained round launches through the TASK path (startRow), not the arm path", async () => {
+    insertV4Task("t5", { phases: 3 })
+    await round("t5")
+    const r2 = svc.armTask("t5", { phaseIndex: 2 })
+    expect(svc.launchQueued().launched).toBe(1)
+    expect(stub.started).toContain(r2) // startChildRun would have failed on a completed parent
+    await complete(r2, "completed")
+    // Only the instance finalize emits the round's 待验收 + task_execution — the child
+    // path returns before collectRound/emitPhaseAwaitingReview ever runs.
+    const done = events.find(
+      (e) => (e.data as { execution_id?: string })?.execution_id === r2 && (e.data as { phase_index?: number })?.phase_index === 2,
+    )
+    expect(done).toBeTruthy()
+  })
+
+  it("arms under a rebuilt workspace start a NEW tree (no cross-ws parent)", async () => {
+    insertV4Task("t6")
+    const r1 = await round("t6")
+    // Simulate the ws-rebuild branch of prepareWorkspace: the previous instance lives in
+    // a workspace that is gone. Arm must not hand create() a cross-ws parent.
+    db.pragma("foreign_keys = OFF")
+    db.prepare("UPDATE executions SET workspace_id = 'ws-from-a-deleted-world' WHERE id = ?").run(r1.id)
+    const r2 = svc.armTask("t6", { phaseIndex: 2 })
+    db.pragma("foreign_keys = ON")
+    expect(execs.findById(r2)!.parent_id).toBe("0")
+  })
+
+  it("listTaskChildRuns keeps ARMS (untagged children); chained rounds are instances", () => {
+    insertTask("t7")
+    const ws = bindWorkspace("t7")
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id, phase_index, round_index)
+       VALUES ('c-r1', ?, '0', 'w', 'w', 'completed', 'xzf', datetime('now'), datetime('now'), 't7', 1, 1)`,
+    ).run(ws)
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id, phase_index, round_index)
+       VALUES ('c-r2', ?, 'c-r1', 'w', 'w', 'running', 'xzf', datetime('now'), datetime('now'), 't7', 2, 1)`,
+    ).run(ws)
+    // An arm: task_id set, parent set, NO phase tag → the subunit predicate, not an instance.
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id)
+       VALUES ('c-arm', ?, 'c-r2', 0, 'w', 'w', 'running', 'xzf', datetime('now'), datetime('now'), 't7')`,
+    ).run(ws)
+    expect(execs.listTaskChildRuns("t7").map((r) => r.id)).toEqual(["c-arm"])
+    // Both r1 (root) and r2 (chained) count as instances; the tip wins latest.
+    expect(execs.listTaskInstances("t7").map((r) => r.id).sort()).toEqual(["c-r1", "c-r2"])
+    expect(execs.findLatestTaskInstance("t7")!.id).toBe("c-r2")
+  })
+
+  it("schema v44 rebuilds a roots-only latch over instances (re-entrant)", () => {
+    // Recreate the OLD index verbatim, then run the startup sequence again.
+    db.exec("DROP INDEX ux_exec_task_active")
+    db.exec(`CREATE UNIQUE INDEX ux_exec_task_active ON executions(task_id)
+      WHERE task_id IS NOT NULL AND parent_id = '0'
+        AND status NOT IN ('completed','completed_with_failures','failed','cancelled','aborted','skipped','rejected')`)
+    applySchema(db)
+    const { sql } = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_exec_task_active'").get() as { sql: string }
+    expect(sql).toContain("phase_index IS NOT NULL")
+    applySchema(db) // second pass: no-op, must not throw
+    const { sql: sql2 } = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_exec_task_active'").get() as { sql: string }
+    expect(sql2).toBe(sql)
   })
 })
 
@@ -742,6 +862,22 @@ describe("task-lifecycle — reconciliation (the orphan path, now task-side)", (
     db.prepare("UPDATE executions SET created_at=datetime('now','-90 minutes') WHERE id=?").run(execId)
     expect(svc.reconcile().reaped).toBe(0)
     expect(execs.findById(execId)!.status).toBe("pending")
+  })
+
+  it("never reaps a PAUSED row — a pause is a human decision, not a strand", () => {
+    // ⚠️ This is not an edge case. ExecutionLifecycle.pause() calls
+    // enginePool.remove() when the engine returns 'paused', so hasLiveEngine() is
+    // ALREADY false when pause() returns — the engineAlive guard above cannot save
+    // the row. And staleness is measured from started_at (the round's START), not
+    // from the pause. So without the paused exemption a round that had been running
+    // 30 minutes gets reaped to 'aborted' on the very next tick: the pause silently
+    // undoes itself within a minute.
+    const execId = stranded("e7", 30, "paused")
+    const before = tasks.getById("e7")!.status
+    expect(svc.reconcile().reaped).toBe(0)
+    expect(execs.findById(execId)!.status).toBe("paused")
+    // The task's row is untouched too — no reap means no finishTaskOutcome mirror.
+    expect(tasks.getById("e7")!.status).toBe(before)
   })
 
   it("resyncs a task whose row finished but whose status never mirrored (died callback)", () => {

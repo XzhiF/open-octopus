@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 43
+export const SCHEMA_VERSION = 44
 
 /**
  * Apply the complete unified schema to the given database.
@@ -105,6 +105,11 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // schema v43 (perf/agent-event-optimize): agent_events timestamp 类型收口 + 冗余索引下线。
   migrateAgentEventsV43(db)
+
+  // schema v44 (task-exec-tree): the single-instance latch widens from ROOTS to
+  // INSTANCES — a v4 round chains under its predecessor (parent_id = 上一轮) so the task
+  // reads as one tree, and a chained round must keep holding the latch.
+  migrateExecTaskLatchV44(db)
 }
 
 /**
@@ -142,6 +147,41 @@ function migrateAgentEventsV43(db: Database.Database): void {
   }
 
   db.exec("DROP INDEX IF EXISTS idx_agent_events_node")
+}
+
+/**
+ * schema v44 (task-exec-tree): ux_exec_task_active 的谓词从「parent_id = '0'」放宽到
+ * 「parent_id = '0' OR phase_index IS NOT NULL」。v4 轮次自此链式挂在上一轮下
+ * (外层执行树 = 一棵树),但链式轮仍是任务实例 —— 不加回谓词,第二轮起单实例闩锁
+ * 形同虚设。composite 子单元臂 (parent != '0' 且 phase_index IS NULL) 依旧在外。
+ * 幂等:旧文本不含 phase_index 才 DROP;新谓词由 schema.sql 的 CREATE IF NOT EXISTS
+ * 随后补建(migrations 先于 schema.sql 执行)。
+ */
+function migrateExecTaskLatchV44(db: Database.Database): void {
+  const row = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_exec_task_active'",
+  ).get() as { sql: string } | undefined
+  if (!row) return // fresh DB — schema.sql creates the new shape directly
+  if (row.sql.includes("phase_index")) return // already rebuilt (re-entrant)
+
+  // Fail-closed pre-check: the new predicate is built on the old invariant (one live
+  // instance per task — rounds used to all be roots). If any task somehow holds two
+  // live instance rows, dropping the old latch would hand schema.sql a UNIQUE
+  // violation and kill startup. Refuse the rebuild and say so instead.
+  const dupes = (db.prepare(`
+    SELECT COUNT(*) AS c FROM (
+      SELECT task_id FROM executions
+       WHERE task_id IS NOT NULL AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND status NOT IN ('completed','completed_with_failures','failed','cancelled','aborted','skipped','rejected')
+       GROUP BY task_id HAVING COUNT(*) > 1
+    )
+  `).get() as { c: number }).c
+  if (dupes > 0) {
+    console.warn(`[schema v44] ux_exec_task_active NOT rebuilt: ${dupes} task(s) hold two live instance rows — resolve them (abort/reap), restart to retry`)
+    return
+  }
+  db.exec("DROP INDEX ux_exec_task_active")
+  console.log("[schema v44] ux_exec_task_active: dropped roots-only latch; schema.sql rebuilds it over instances")
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, it, expect, expectTypeOf } from "vitest"
 import {
   taskSpecSchema,
+  acceptancePreviewSchema,
   subunitSpecSchema,
   workflowConfigSchema,
   taskResourceTypeSchema,
@@ -37,6 +38,7 @@ import {
   taskExecutionSsePayloadSchema,
   taskTriggerFailedPayloadSchema,
   UPDATE_TASK_SPEC_FIELD_TOOL_NAME,
+  TASK_PREVIEW_EVENT,
 } from "../types/task"
 import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
 
@@ -48,6 +50,10 @@ const EXPECTED_TASK_STATUSES = [
   "draft",
   "ready",
   "running",
+  // task-pause: derived-only — no writer ever persists it on a task row (the truth is
+  // executions.status='paused'), which is why it is absent from the schema-v40 DB CHECK
+  // mirrored above. 'awaiting_review' is the other such value.
+  "paused",
   "awaiting_review",
   "archiving",
   "done",
@@ -657,5 +663,53 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
         round_index: 1,
       }).success,
     ).toBe(false)
+  })
+})
+
+describe("ticket 01 (v2.1) — acceptance_preview spec-field contract", () => {
+  const okPreview = { command: "mvn -q spring-boot:run", url: "http://localhost:8080" }
+
+  it("AC1: acceptancePreviewSchema accepts minimal + full, rejects bad url/empty cmd", () => {
+    expect(acceptancePreviewSchema.safeParse(okPreview).success).toBe(true)
+    expect(acceptancePreviewSchema.safeParse({
+      ...okPreview, cwd: "packages", readyPattern: "Started .*Application",
+    }).success).toBe(true)
+    // url must be http(s)
+    expect(acceptancePreviewSchema.safeParse({ command: "x", url: "localhost:8080" }).success).toBe(false)
+    expect(acceptancePreviewSchema.safeParse({ command: "x", url: "ftp://h/p" }).success).toBe(false)
+    // command required non-empty
+    expect(acceptancePreviewSchema.safeParse({ command: "", url: "http://x" }).success).toBe(false)
+    // url required
+    expect(acceptancePreviewSchema.safeParse({ command: "x" }).success).toBe(false)
+  })
+
+  it("AC1: validateSpecFieldValue('acceptance_preview') parses object, null→undefined (clears)", () => {
+    expect(validateSpecFieldValue("acceptance_preview", okPreview)).toMatchObject({ url: "http://localhost:8080" })
+    // null clears — rides into spec merge as undefined so JSON.stringify drops the key
+    expect(validateSpecFieldValue("acceptance_preview", null)).toBeUndefined()
+    expect(() => validateSpecFieldValue("acceptance_preview", { command: "x", url: "nope" })).toThrow()
+  })
+
+  it("AC2: 'acceptance_preview' is a whitelisted TaskSpecField + round-trips on taskSpecSchema", () => {
+    // The zod enum admits the new member (a stale build would reject the literal).
+    const f: TaskSpecField = "acceptance_preview"
+    expect(f).toBe("acceptance_preview")
+    const spec = taskSpecSchema.parse({
+      format: "v4", goal: "g", ac: ["a"],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      acceptance_preview: okPreview,
+    })
+    expect(spec.acceptance_preview?.url).toBe("http://localhost:8080")
+    // absent stays absent (no spurious key), same discipline as acceptance_verify
+    const bare = taskSpecSchema.parse({
+      format: "v4", goal: "g", ac: ["a"],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+    })
+    expect("acceptance_preview" in bare).toBe(false)
+    expect("acceptance_verify" in bare).toBe(false)
+  })
+
+  it("TASK_PREVIEW_EVENT is the pinned SSE channel name", () => {
+    expect(TASK_PREVIEW_EVENT).toBe("task_preview")
   })
 })

@@ -35,6 +35,7 @@ import {
   resourceRefSchema,
   type TaskStatus,
 } from "@octopus/shared"
+import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -52,11 +53,14 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
   // 06 (US7): artifact content whitelist + missing-file classification. The
   // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
-  // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4).
+  // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4) vs
+  // TOO_LARGE (413 — batch evidence file over the read ceiling; a missed case
+  // would silently fall through to 500, pinned by tasks-home-file tests).
   if (err instanceof ArtifactAccessError) {
     switch (err.code) {
       case "FORBIDDEN": return { status: 403, message: err.message }
       case "NOT_FOUND": return { status: 404, message: err.message }
+      case "TOO_LARGE": return { status: 413, message: err.message }
     }
   }
   // 07: assist-workflow template/run classification.
@@ -94,6 +98,9 @@ const acceptanceBodySchema = z
     // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
     // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
     next_flow: z.enum(["fix", "rerun"]).optional(),
+    // ADR-0022 验收台 ✗ 闭环：rejected 时打回的票名基（`NN-e2e-*`），server 把
+    // 对应 issues/<name>.md 的 Status done→reopened。路径安全：仅文件名基。
+    reopen_tickets: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)).max(20).optional(),
   })
   .superRefine((b, ctx) => {
     // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
@@ -121,6 +128,7 @@ export function createTasksRoutes(
   service: TasksService,
   sse: SSEService,
   assistService?: AssistWorkflowService,
+  evidence?: RoundEvidenceService,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -338,15 +346,17 @@ export function createTasksRoutes(
     }
   })
 
-  // ── Home batch-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ────
-  // GET /:id/home-file?path=<rel> — read a `.scratch/**.md` under the task home
-  // (the per-phase spec.md). ?path=<dir>&list=1 — list the dir's .md files
-  // (ADR-0018 spec-family visibility). PUT /:id/home-file {path, content} —
-  // write/overwrite (creates parents, so a UI-added phase row can seed a spec
-  // skeleton). Guards (`.scratch` prefix / `.md` suffix / no-escape / no absolute
-  // / task-exists→404 / edit-window→409) live in the service+home service; a body
-  // over 512_000 chars → 400 via homeFileBodySchema. Errors classify through the
-  // shared ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
+  // ── Home batch-file read/write (v4 spec 审阅/编辑 + 验收证据面) ────────────
+  // GET /:id/home-file?path=<rel> — read ANY file under `.scratch/**` (v4
+  // acceptance evidence: e2e-data/*.txt, probe/*.json …; read capped at
+  // MAX_HOME_FILE_READ_BYTES → 413). ?path=<dir>&list=1 — list the dir's .md
+  // files (ADR-0018 spec-family visibility); &all=1 widens the listing to all
+  // regular files (acceptance 中列). PUT /:id/home-file {path, content} —
+  // write/overwrite, STILL `.md`-only (creates parents, so a UI-added phase row
+  // can seed a spec skeleton). Guards (`.scratch` prefix / suffix-by-mode /
+  // no-escape / no absolute / task-exists→404 / edit-window→409) live in the
+  // service+home service; a body over 512_000 chars → 400 via homeFileBodySchema.
+  // Errors classify through ArtifactAccessError (403 / 404 / TOO_LARGE→413).
   router.get("/:id/home-file", (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
@@ -354,7 +364,8 @@ export function createTasksRoutes(
     }
     try {
       if (c.req.query("list")) {
-        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath) })
+        const all = ["1", "true"].includes(c.req.query("all") ?? "")
+        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath, all) })
       }
       const result = service.readHomeFile(c.req.param("id"), requestedPath)
       return c.json(result)
@@ -372,6 +383,109 @@ export function createTasksRoutes(
     try {
       const batches = service.batchTree(c.req.param("id"))
       return c.json({ batches })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
+  // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
+  // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
+  // 未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
+  router.get("/:id/round-diff", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.getRoundDiff(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/round-diff/patch", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const repo = c.req.query("repo")
+    const filePath = c.req.query("path")
+    if (!repo?.trim() || !filePath?.trim()) {
+      return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
+    }
+    try {
+      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 验收剧本：把 awaiting 轮的契约文件编译成走查清单（派生视图，不入库）。
+  // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
+  router.get("/:id/playbook", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.getPlaybook(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 复检绝不自动跑 —— 本 POST 是唯一入口（202 = 已起会话，进度走 taskpool SSE：
+  // task_verify_log 逐行 + task_verify 终态）。
+  router.post("/:id/verify", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.startVerify(c.req.param("id")), 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/verify", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.getVerifyStatus(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.post("/:id/verify/abort", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.abortVerify(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 跑起来看：acceptance_preview 命令在活工作区长驻 + HTTP 探活。同样绝不自动跑，
+  // POST /:id/preview 是唯一启动入口（202）。进度走 taskpool SSE task_preview。
+  router.post("/:id/preview", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.startPreview(c.req.param("id")), 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+  router.get("/:id/preview", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.getPreview(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+  router.post("/:id/preview/stop", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.stopPreview(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -465,7 +579,27 @@ export function createTasksRoutes(
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
         ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
+      // ADR-0022: freeze the round's evidence BEFORE the decision lands (after
+      // it, the awaiting view is gone), and stop any live preview. The
+      // acceptance itself stays authoritative — ledger/reopen side-effects are
+      // best-effort (a failed ledger never rolls back a committed decision).
+      const snap = evidence ? await evidence.snapshotEvidence(c.req.param("id")).catch(() => null) : null
       const result = await service.acceptance(c.req.param("id"), input)
+      if (evidence) {
+        try {
+          evidence.stopPreviewQuiet(c.req.param("id"))
+          if (snap) {
+            if (parsed.decision === "accepted") {
+              evidence.writeLedger(snap, "accepted")
+            } else {
+              evidence.writeLedger(snap, "rejected")
+              evidence.augmentReject(snap, parsed.reopen_tickets)
+            }
+          }
+        } catch (err: unknown) {
+          console.error("[tasks] acceptance ledger/reopen side-effect failed (decision already committed):", err)
+        }
+      }
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -632,6 +766,43 @@ export function createTasksRoutes(
   router.post("/:id/abort", async (c) => {
     try {
       const task = await service.abortTask(c.req.param("id"))
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/pause — suspend the task's live round. The pause is delegated to the
+  // bound execution (ExecutionLifecycle.pause) and the task's 已暂停 is DERIVED from
+  // executions.status='paused' — nothing writes a paused task row. 409 carries the
+  // state-specific reason (queued / at an approval gate / nothing in flight).
+  router.post("/:id/pause", async (c) => {
+    try {
+      const task = await service.pauseTask(c.req.param("id"))
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/resume — take the round back off the brake. Optional body
+  // { intervention } rides through to the interrupted node, same as the workflow
+  // page's resume. No body at all is the normal case, so a parse failure is not
+  // an error (mirrors execution.ts's resume route).
+  router.post("/:id/resume", async (c) => {
+    const body = await safeJson(c)
+    const raw = body?.intervention
+    if (raw !== undefined && typeof raw !== "string") {
+      return c.json({ error: "intervention must be a string" }, 400)
+    }
+    // Bound the prompt: it is injected into a node's context, not a free-form log.
+    if (typeof raw === "string" && raw.length > 4000) {
+      return c.json({ error: "intervention must be at most 4000 characters" }, 400)
+    }
+    try {
+      const task = await service.resumeTask(c.req.param("id"), raw)
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

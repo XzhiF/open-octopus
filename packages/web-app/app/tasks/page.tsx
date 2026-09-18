@@ -26,7 +26,6 @@ import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
 import { runErrorOf } from "@/components/tasks/execution-summary"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
-import { AcceptanceModal } from "@/components/tasks/acceptance-modal"
 import {
   TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT,
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_TRIGGER_FAILED_EVENT,
@@ -77,11 +76,13 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
   },
 }
 
-/** 卡片整面染色:八状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。 */
+/** 卡片整面染色:九状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。
+ *  paused 与 running 同紫:暂停仍在执行中列、仍占 latch，靠 ⏸ 徽标区分而不是靠底色。 */
 const CARD_THEME: Record<Task["status"], string> = {
   draft: "bg-pop-paper",
   ready: "bg-pop-cyan-soft",
   running: "bg-pop-purple-soft",
+  paused: "bg-pop-purple-soft",
   archiving: "bg-pop-amber-soft",
   awaiting_review: "bg-pop-yellow-soft",
   done: "bg-pop-green-soft",
@@ -96,6 +97,9 @@ export default function TasksPage() {
   // null task = new-task authoring ([+新建]); a Task = card click.
   const [modalTask, setModalTask] = useState<TaskView | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  // 票 12 (K14)→ 2026-09-16 改版: 待验收列卡「验收」= 打开任务控制台并落在
+  // 「验货台」tab（独立三栏弹窗 AcceptanceModal 退役）。
+  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
 
   // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
   // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
@@ -245,7 +249,7 @@ export default function TasksPage() {
 
   const openNew = () => { setModalTask(null); setModalOpen(true) }
   const openCard = (task: TaskView) => { setModalTask(task); setModalOpen(true) }
-  const close = () => { setModalOpen(false); setModalTask(null) }
+  const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
 
   // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that
   // used to emit it is gone with the origin_* columns — the URL itself stays, it is
@@ -272,9 +276,6 @@ export default function TasksPage() {
 
   // v39: which ready task has the trigger dialog open.
   const [triggerTaskId, setTriggerTaskId] = useState<string | null>(null)
-
-  // 票 12 (K14): which task has the 验收三栏 modal open (待验收列卡「验收」按钮).
-  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
 
   // 票 12 (US11/K6): autoAdvance=false 时「启动下一 Phase」— POST /:id/advance
   // (票 08 契约). Busy-guard per click; 409 = 派生态已变 → 刷新盘面.
@@ -399,7 +400,7 @@ export default function TasksPage() {
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
-                        onAcceptRequest={(t) => setAcceptTaskId(t.id)}
+                        onAcceptRequest={(t) => { setAcceptTaskId(t.id); openCard(t) }}
                         onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                       />
@@ -428,6 +429,7 @@ export default function TasksPage() {
         task={modalTask}
         onMutated={fetchTasks}
         onDraftResolved={handleDraftResolved}
+        startOnAcceptance={acceptTaskId !== null && acceptTaskId === modalTask?.id}
       />
 
       {/* v39 trigger dialog — armed from ready-column cards (or modal) */}
@@ -438,14 +440,8 @@ export default function TasksPage() {
         onTriggered={fetchTasks}
       />
 
-      {/* 票 12 (K14): 验收三栏 modal — 待验收列卡「验收」打开；task 引用随
-          fetchTasks 刷新（同 modalTask 的同步模式）。 */}
-      <AcceptanceModal
-        open={!!acceptTaskId}
-        onOpenChange={(o) => { if (!o) setAcceptTaskId(null) }}
-        task={tasks.find((t) => t.id === acceptTaskId) ?? null}
-        onMutated={fetchTasks}
-      />
+      {/* 票 12 (K14) 验收三栏弹窗已于 2026-09-16 收编为执行控制台的「验货台」
+          tab（TaskModal startOnAcceptance 直达）— AcceptanceModal 挂载点退役。 */}
 
       {/* Confirm-delete dialog for draft tasks */}
       <AlertDialog open={!!deletingTaskId} onOpenChange={(o) => { if (!o) setDeletingTaskId(null) }}>
@@ -547,6 +543,18 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
               title={`当前 Phase ${badge.phase}/${badge.total}（第一个未通过验收的 phase）`}
             >
               {`Phase ${badge.phase}/${badge.total}${badge.round != null ? ` · Round ${badge.round}` : ""}`}
+            </span>
+          )}
+          {/* task-pause: 暂停也留在执行中列 + ⏸已暂停徽标。状态是**派生**的
+              （绑定 execution 的 status='paused'），持久 task 行不写这个值 —
+              所以这里读到的 task.status 已经是 effectiveStatusOf 折过的派生态。 */}
+          {task.status === "paused" && (
+            <span
+              data-task-paused-badge
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-purple-soft text-pop-purple"
+              title="运行已暂停（打开的阻塞点已中断，恢复时从该节点重跑）。暂停期间不能验收，退出只有恢复或中止。"
+            >
+              ⏸ 已暂停
             </span>
           )}
           {/* 票 11: archiving 留在执行中列 + ⚠归档中徽标（票 08 编排中，失败可重试） */}

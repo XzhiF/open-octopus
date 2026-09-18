@@ -25,12 +25,28 @@ import type { ArtifactIndexEntry } from "@octopus/shared"
 import {
   getArtifactContent,
   ArtifactContentError,
+  getHomeFile,
+  TaskApiError,
+  MAX_HOME_FILE_READ_BYTES,
 } from "@/lib/tasks-api"
+
+/** A file in the task home's batch area (`.scratch/**`) — the v4 acceptance
+ *  evidence viewer payload. Paths are home-relative posix straight from
+ *  listHomeDir; content comes from GET /:id/home-file?path= (any extension,
+ *  server-capped at MAX_HOME_FILE_READ_BYTES → 413). */
+export interface HomeViewEntry {
+  path: string
+  bytes?: number
+  mtime?: string
+}
 
 export interface ArtifactViewerDialogProps {
   taskId: string
   /** The entry being viewed; null/undefined → dialog closed. */
   entry: ArtifactIndexEntry | null
+  /** Home batch-file being viewed (acceptance 中列) — takes precedence when
+   *  both set; the `entry` path/behavior is untouched for existing callers. */
+  homeEntry?: HomeViewEntry | null
   onOpenChange: (open: boolean) => void
 }
 
@@ -48,23 +64,29 @@ interface Loading {
 }
 type State = Loading | Loaded | Errored
 
-export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactViewerDialogProps) {
-  const open = !!entry
+export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }: ArtifactViewerDialogProps) {
+  const open = !!entry || !!homeEntry
   const [state, setState] = useState<State>({ kind: "loading" })
 
   // Fetch content when a new entry opens. Reset on close so a reopen re-fetches
   // live disk content (the agent may have rewritten the artifact between views).
+  // homeEntry mode (验收中列): GET /:id/home-file — any .scratch/** file, no
+  // artifacts.json registration semantics. TaskApiError.status normalizes into
+  // the same degraded states as ArtifactContentError (403/404) + 413.
   useEffect(() => {
-    if (!entry) return
+    if (!entry && !homeEntry) return
     let cancelled = false
     setState({ kind: "loading" })
-    getArtifactContent(taskId, entry.path)
-      .then((res) => {
-        if (!cancelled) setState({ kind: "loaded", content: res.content })
+    const load = homeEntry
+      ? getHomeFile(taskId, homeEntry.path).then((res) => res.content)
+      : getArtifactContent(taskId, entry!.path).then((res) => res.content)
+    load
+      .then((content) => {
+        if (!cancelled) setState({ kind: "loaded", content })
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        if (err instanceof ArtifactContentError) {
+        if (err instanceof ArtifactContentError || err instanceof TaskApiError) {
           setState({ kind: "error", status: err.status, message: err.message })
         } else {
           setState({
@@ -75,7 +97,7 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
         }
       })
     return () => { cancelled = true }
-  }, [taskId, entry])
+  }, [taskId, entry, homeEntry])
 
   // Line/char stats for the footer (only when content is actually loaded).
   const stats =
@@ -93,10 +115,16 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
         <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
           <DialogTitle className="text-sm flex items-center gap-2">
             <FileText className="size-3.5" />
-            <span className="truncate">{entry?.title || entry?.path}</span>
+            <span className="truncate">
+              {entry?.title || entry?.path || (homeEntry ? homeEntry.path.split("/").pop() : "")}
+            </span>
           </DialogTitle>
           <DialogDescription className="font-mono text-[10px] truncate">
-            {entry ? `${entry.path} · by ${entry.by}${entry.external ? " · external" : ""}` : ""}
+            {homeEntry && !entry
+              ? `${homeEntry.path}${homeEntry.bytes != null ? ` · ${Math.max(1, Math.round(homeEntry.bytes / 1024))} KB` : ""}${homeEntry.mtime ? ` · ${homeEntry.mtime.slice(0, 16).replace("T", " ")}` : ""}`
+              : entry
+                ? `${entry.path} · by ${entry.by}${entry.external ? " · external" : ""}`
+                : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -107,13 +135,25 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
             </div>
           ) : state.kind === "error" ? (
             <div className="p-6 space-y-2 text-xs" data-artifact-degraded>
-              {state.status === 403 ? (
+              {state.status === 413 ? (
+                <div className="flex items-start gap-2 text-pop-amber">
+                  <FileQuestion className="size-4 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-medium">文件过大，无法在线预览</div>
+                    <div className="text-muted-foreground mt-0.5">
+                      服务端读取上限 {Math.round(MAX_HOME_FILE_READ_BYTES / 1000)} KB — 请到磁盘批次目录查看该文件。
+                    </div>
+                  </div>
+                </div>
+              ) : state.status === 403 ? (
                 <div className="flex items-start gap-2 text-pop-amber">
                   <ShieldAlert className="size-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="font-medium">无权访问该路径</div>
                     <div className="text-muted-foreground mt-0.5">
-                      路径越权或未在 artifacts.json 登记（external 产物需先登记才能查看）。
+                      {homeEntry && !entry
+                        ? "路径不在批次白名单（.scratch/**）内 — 批次面只服务 home 的 .scratch 子树。"
+                        : "路径越权或未在 artifacts.json 登记（external 产物需先登记才能查看）。"}
                     </div>
                   </div>
                 </div>
@@ -123,7 +163,9 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
                   <div>
                     <div className="font-medium">磁盘上未找到该文件</div>
                     <div className="text-muted-foreground mt-0.5">
-                      产物已登记但文件缺失——可能 agent 尚未写入或被外部删除。
+                      {homeEntry && !entry
+                        ? "批次目录里列到时又消失了 — collect 后被执行侧改动或工作区已清理。"
+                        : "产物已登记但文件缺失——可能 agent 尚未写入或被外部删除。"}
                     </div>
                   </div>
                 </div>
@@ -139,7 +181,11 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
         </ScrollArea>
 
         <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0 flex items-center justify-between gap-2">
-          <span>有意见？关闭后在左侧对话里直接说，agent 会修改并更新此产物</span>
+          <span>
+            {homeEntry && !entry
+              ? "验收意见请回到右侧动作区 — 打回（写反馈）会以反馈为输入开下一轮"
+              : "有意见？关闭后在左侧对话里直接说，agent 会修改并更新此产物"}
+          </span>
           {stats && (
             <span className="font-mono shrink-0 tabular-nums" data-artifact-stats>
               {stats.lines} 行 · {stats.chars} 字

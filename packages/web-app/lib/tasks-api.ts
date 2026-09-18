@@ -69,7 +69,30 @@ export type TaskDetail = TaskView & {
 
 /** Normalized outcome of one round's execution row (mirror of server
  *  TaskRoundState). Terminal = succeeded | failed | cancelled. */
-export type TaskRoundState = "pending" | "running" | "succeeded" | "failed" | "cancelled"
+export type TaskRoundState = "pending" | "running" | "paused" | "succeeded" | "failed" | "cancelled"
+
+/** Mirror of the server's DerivedTaskStatus (derive-task-view.ts). Deliberately NOT
+ *  `TaskStatus`: the derive output vocabulary is its own thing — 'draft'/'failed' are
+ *  input-side passthroughs it never produces, and 'paused' is a value NO task row can
+ *  ever carry (the truth is executions.status='paused'). Typing the wire field as plain
+ *  TaskStatus was a mirror that lied, and the label tables below fall back silently on a
+ *  missing key rather than failing loudly. */
+export type DerivedTaskStatus =
+  | "ready"
+  | "running"
+  | "paused"
+  | "awaiting_review"
+  | "archiving"
+  | "done"
+  | "aborted"
+
+/** Mirror of the server's DerivedPhaseStatus. Same reasoning: 'accepted' is derive-only
+ *  and 'paused' has no persisted counterpart. */
+export type DerivedPhaseStatus = "pending" | "running" | "paused" | "awaiting_review" | "accepted"
+
+/** What a card's column is decided by: persisted status for v3, derived for v4 —
+ *  hence the union (mirrors the server's `TaskView.taskStatus`). */
+export type TaskDisplayStatus = TaskStatus | DerivedTaskStatus
 
 /** Human decision overlay on a round (latest ledger row wins). */
 export type TaskRoundDecision = "accepted" | "rejected"
@@ -103,9 +126,10 @@ export interface TaskPhaseView {
   name: string
   slug: string
   workflowRef: string
-  /** Shared wire vocabulary (TaskPhaseStatusSchema) — same enum the
-   *  phase_status_update SSE payload carries. */
-  status: TaskPhaseStatus
+  /** Derived display status — NOT the shared TaskPhaseStatusSchema (that enum describes
+   *  the persisted phase node; this one is deriveTaskView's output vocabulary and
+   *  additionally carries 'paused'). */
+  status: DerivedPhaseStatus
   /** Ascending by roundIndex. */
   rounds: TaskRoundView[]
   /** Max round_index seen (null = never started). */
@@ -121,7 +145,9 @@ export interface TaskPhaseView {
  *  (票 07 契约), so 票 11/12 render one code path. Optional in the type only for
  *  backward compat with pre-v4 servers / test fixtures. */
 export interface TaskDerivedView {
-  taskStatus: TaskStatus
+  /** v4: always within DerivedTaskStatus. Non-v4: verbatim mirror of task.status
+   *  (which is why the server types this as the union). */
+  taskStatus: TaskDisplayStatus
   isV4: boolean
   phaseViews: TaskPhaseView[]
 }
@@ -320,6 +346,32 @@ export async function abortTask(id: string): Promise<TaskView> {
   return handleResponse<TaskView>(res)
 }
 
+/** POST /api/tasks/:id/pause — 暂停任务当前这一轮。
+ *
+ *  暂停本身是 **execution** 的事实（服务端委派给绑定执行的 pause：硬杀在飞节点、
+ *  落 executions.status='paused'），task 的「已暂停」是从那一行**派生**出来的 ——
+ *  没有 paused 的 task 行。这就是解耦的落点：不是每个工作流都绑了 task。
+ *
+ *  与工作流页同规则：只有真正 running 的执行能暂停。停在审批/交互节点等人的运行
+ *  会被 409 拒绝并给出对应说法（那种情况是引擎活着在等人，标成「已暂停」会把
+ *  「需要你审批」这件事盖掉）。409 的 message 已是面向用户的中文。 */
+export async function pauseTask(id: string): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/pause`, { method: "POST" })
+  return handleResponse<TaskView>(res)
+}
+
+/** POST /api/tasks/:id/resume — 把这一轮从刹车放开，可带一句 `intervention`
+ *  注入给被中断的节点（与工作流页 resume 的 body 同形）。 */
+export async function resumeTask(id: string, intervention?: string): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/resume`, {
+    method: "POST",
+    ...(intervention
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intervention }) }
+      : {}),
+  })
+  return handleResponse<TaskView>(res)
+}
+
 /** POST /api/tasks/:id/reopen — 入队撤回 (ready→draft)：任务回到 draft 重新可编辑。
  *  票03 守卫改成「没有活实例」：currentInstance 非终态即 409（改用中止）。 */
 export async function reopenTask(id: string): Promise<TaskView> {
@@ -406,6 +458,9 @@ export interface AcceptanceInput {
    *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
    *  built-in/task-fix + 合成输入）。 */
   next_flow?: "fix" | "rerun"
+  /** ADR-0022 打回 ✗ 闭环：被重开的票名基（如 "11-e2e-story"），server 把对应
+   *  issues/<name>.md 的 Status done→reopened。 */
+  reopen_tickets?: string[]
 }
 
 /** What the caller must do next (票 07):
@@ -583,10 +638,16 @@ export async function getTaskContext(taskId: string): Promise<{
   return res.json()
 }
 
-// ============ Home batch-file read/write (契约修复: v4 phase spec.md) ============
+// ============ Home batch-file read/write (v4 spec 审阅 + 验收证据面) ============
 
-/** GET /api/tasks/:id/home-file?path= — read a `.scratch/**.md` under the task
- *  home (per-phase spec). 404 (file missing) / 403 (path off-whitelist) throw
+/** Mirror of server TaskHomeService.MAX_HOME_FILE_READ_BYTES (packages/server/
+ *  src/services/tasks/task-home-service.ts) — 改一处必改两处。Used to pre-gate
+ *  unpreviewable rows; the server's 413 stays authoritative. */
+export const MAX_HOME_FILE_READ_BYTES = 512_000
+
+/** GET /api/tasks/:id/home-file?path= — read ANY file under `.scratch/**` of
+ *  the task home (spec.md 审阅 + v4 验收证据: e2e txt/json/probe …). 404 (file
+ *  missing) / 403 (off-whitelist) / 413 (over the byte cap) throw
  *  {@link TaskApiError} carrying the status: the PhaseSpecDialog maps 404 →
  *  "create skeleton" empty state, 403 → read-only path display. */
 export async function getHomeFile(taskId: string, relPath: string): Promise<ArtifactContent> {
@@ -630,11 +691,18 @@ export interface HomeFileListingEntry {
   bytes: number
 }
 
-/** GET /api/tasks/:id/home-file?path=<dir>&list=1 — list the batch dir's .md
- *  files (depth ≤2, cap 200). 404 dir missing → TaskApiError(404); the dialog
- *  renders its empty state from that. */
-export async function listHomeDir(taskId: string, relDir: string): Promise<HomeFileListingEntry[]> {
-  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1" }))
+/** GET /api/tasks/:id/home-file?path=<dir>&list=1[&all=1] — list the batch
+ *  dir's files (depth ≤2, cap 200). Default `.md`-only (作者态契约); `opts.all`
+ *  widens to every regular file (验收证据面: e2e-data/*.txt …). 404 dir missing
+ *  → TaskApiError(404); the dialog renders its empty state from that. */
+export async function listHomeDir(
+  taskId: string,
+  relDir: string,
+  opts?: { all?: boolean },
+): Promise<HomeFileListingEntry[]> {
+  const res = await fetch(
+    buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1", ...(opts?.all ? { all: "1" } : {}) }),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -666,6 +734,235 @@ export async function getBatchTree(taskId: string): Promise<BatchTreeEntry[]> {
   }
   const data = (await res.json()) as { batches: BatchTreeEntry[] }
   return data.batches
+}
+
+// ============ 验货台 (acceptance v2): 实物 round-diff + 当场复检 ============
+// 镜像 server round-evidence-service.ts 的 payload 形状（SHAs 永不出服务端；
+// 端点都按 task id 解析 awaiting round，无 awaiting → 409）。
+
+export interface DiffFile {
+  path: string
+  /** rename/copy source (status R/C). */
+  oldPath?: string
+  /** git 单字母状态码 A/M/D/R/C/T。 */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
+}
+
+export interface DiffGroup {
+  dir: string
+  additions: number
+  dels: number
+  files: DiffFile[]
+}
+
+export interface RepoDiff {
+  name: string
+  expired?: boolean
+  reason?: "no_workspace" | "no_commits" | "worktree_gone"
+  commits: number
+  additions: number
+  dels: number
+  files: number
+  truncated: boolean
+  groups: DiffGroup[]
+}
+
+export interface RoundDiffPayload {
+  available: boolean
+  reason?: string
+  aggregate: { commits: number; additions: number; dels: number; files: number }
+  /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
+  interventions: number | null
+  repos: RepoDiff[]
+}
+
+export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"
+
+export interface VerifySummary {
+  task_id: string
+  execution_id: string
+  phase_index: number
+  round_index: number
+  command: string
+  cwd: string
+  state: VerifyState
+  started_at: string
+  ended_at?: string
+  exit_code?: number
+  duration_ms?: number
+  verdict_path?: string | null
+  tail?: string[]
+}
+
+/** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
+export async function getRoundDiff(taskId: string): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** GET /:id/round-diff/patch?repo=&path= — 单文件 unified patch（懒拉，512K 截断）。 */
+export async function getRoundPatch(
+  taskId: string,
+  repo: string,
+  filePath: string,
+): Promise<{ patch: string; truncated: boolean }> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff/patch`, { repo, path: filePath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** POST /:id/verify — 起当场复检（202 + running summary）。400 未配置命令 /
+ *  409 无 awaiting·在跑·ws 不在。进度走 taskpool SSE（task_verify_log 逐行 +
+ *  task_verify 终态），重连用 getVerifyStatus 的 tail 重建。 */
+export async function startVerify(taskId: string): Promise<VerifySummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/verify`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as VerifySummary
+}
+
+/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。 */
+export async function getVerifyStatus(taskId: string): Promise<VerifySummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/verify`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  }
+  return (await res.json()) as VerifySummary | null
+}
+
+/** POST /:id/verify/abort — SIGTERM 进程树；终态经 SSE 到达。409 没有在跑的。 */
+export async function abortVerify(taskId: string): Promise<VerifySummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/verify/abort`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as VerifySummary
+}
+
+// ============ 验收面 v2.1: 验收剧本(playbook)+ 跑起来看(preview)============
+// 镜像 server playbook-types.ts / round-evidence-service.ts。checks 走 home-file
+// 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
+
+export type PlaybookItemKind = "walk" | "probe" | "claim"
+export interface PlaybookItem { id: string; op: string; expect: string; evidence?: string; probe?: { command: string } }
+export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
+export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
+export interface PlaybookBudget { steps: number; estMin: number; over: boolean; degraded: boolean }
+export interface PlaybookPayload {
+  available: boolean
+  goal: string
+  specRevised: boolean
+  budget: PlaybookBudget
+  sections: PlaybookSection[]
+  finePrint: Array<{ ticket: string; acs: string[] }>
+  carryover: PlaybookCarryover[]
+  coverage: { found: string[]; missing: string[] }
+}
+
+/** GET /:id/playbook — 派生视图。409 无 awaiting;available:false = 无契约结构。 */
+export async function getPlaybook(taskId: string): Promise<PlaybookPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/playbook`))
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PlaybookPayload
+}
+
+// ── preview ───────────────────────────────────────────────────────────
+export type PreviewState = "starting" | "ready" | "exited" | "stopped" | "failed"
+export interface PreviewSummary {
+  task_id: string
+  execution_id?: string
+  command?: string
+  url: string
+  state: PreviewState
+  external?: boolean
+  started_at?: string
+  ended_at?: string
+  exit_code?: number
+  duration_ms?: number
+  tail?: string[]
+}
+
+/** POST /:id/preview — 起跑长驻进程(202)。400 未配命令/非法url/$vars.;409 冲突。 */
+export async function startPreview(taskId: string): Promise<PreviewSummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/preview`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PreviewSummary
+}
+/** GET /:id/preview — 会话态或一次性外部探活(external)。 */
+export async function getPreview(taskId: string): Promise<PreviewSummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/preview`))
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return (body ?? null) as PreviewSummary | null
+}
+/** POST /:id/preview/stop — SIGTERM 树。409 没有在跑的。 */
+export async function stopPreview(taskId: string): Promise<PreviewSummary> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/preview/stop`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as PreviewSummary
+}
+
+// ── checks 落盘(acceptance-checks-r{N}.md,复用 home-file .md 门)──────────
+export type CheckDecision = "pass" | "fail" | "skip"
+export interface CheckEntry { decision: CheckDecision; note: string; at: string }
+export interface ChecksFile { version: "1"; task_id?: string; round_index?: number; checks: Record<string, CheckEntry> }
+
+export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
+const CHECKS_FENCE_RE = /```json\s*\n([\s\S]*?)\n```/
+
+export function parseChecksMd(md: string): ChecksFile | null {
+  const m = CHECKS_FENCE_RE.exec(md)
+  if (!m) return null
+  try {
+    const o = JSON.parse(m[1]) as ChecksFile
+    return o && typeof o === "object" && typeof o.checks === "object" && o.checks ? o : null
+  } catch {
+    return null
+  }
+}
+export function renderChecksMd(data: ChecksFile): string {
+  return [
+    `# 走查勾选 · Round ${data.round_index ?? "?"}`,
+    "",
+    "> 机器读写:验收台勾选 → 本文件;ledger 聚合、下轮 carryover 都吃它。JSON 体可手改。",
+    "",
+    "```json",
+    JSON.stringify(data, null, 2),
+    "```",
+    "",
+  ].join("\n")
+}
+export const checksRelPath = (batchRelDir: string, roundIndex: number): string =>
+  `${batchRelDir}/${checksFileName(roundIndex)}`
+
+/** 读某轮 checks;不存在/解析失败 → {}(诚实空态,不猜)。 */
+export async function readChecks(taskId: string, batchRelDir: string, roundIndex: number): Promise<ChecksFile> {
+  try {
+    const f = await getHomeFile(taskId, checksRelPath(batchRelDir, roundIndex))
+    return parseChecksMd(f.content) ?? { version: "1", round_index: roundIndex, checks: {} }
+  } catch {
+    return { version: "1", round_index: roundIndex, checks: {} }
+  }
+}
+/** 写某轮 checks(整文件覆盖,panel 是唯一作者;round-trip 幂等)。 */
+export async function saveChecks(
+  taskId: string, batchRelDir: string, roundIndex: number, checks: Record<string, CheckEntry>,
+): Promise<void> {
+  const data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks }
+  await putHomeFile(taskId, checksRelPath(batchRelDir, roundIndex), renderChecksMd(data))
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============

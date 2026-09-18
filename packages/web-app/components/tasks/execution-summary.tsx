@@ -3,7 +3,7 @@
 // 执行弹窗的公共件（2026-09-12 执行弹窗改版后瘦身）：
 //   RUN_STATUS_LABEL / RUN_ERROR_STATUSES / runErrorOf — 运行行状态词表与红行
 //     判据单源（看板 tooltip / 控制台轮次行 / composite 弹窗共用）。
-//   TaskAiUsageCard — AI 消耗卡（acceptance-modal 左列注入 round 口径仍用）。
+//   TaskAiUsageCard — AI 消耗卡（验货台左列注入 round 口径仍用）。
 //   ArtifactsCard — task home artifacts.json 列表 + 查看全文。
 //   useRunsAggregates / mergeAggregates / deepLinkTarget / execLabel — run-console
 //     的数据 plumbing（一次拉取喂多处显示）。
@@ -16,15 +16,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Boxes, Bot, FileText } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { mergeLedgerParts } from "@octopus/shared"
 import { listArtifacts, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchLLMCalls } from "@/lib/observability-api"
-import type { LLMCallAggregates } from "@/lib/types"
+import type { LLMCallAggregates, UsageWire } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { formatTokenCount, formatCost, formatPercent } from "@/lib/format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
@@ -151,47 +150,130 @@ export function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | 
   }
 }
 
-/** 任务级 AI 消耗卡（2026-08-29 语义修正）：聚合该任务**全部工作流执行**的
- *  LLM 调用 —— simple=1 条主执行、composite=协调器+N 子单元全部求和，所以它是
- *  任务口径而非单次执行口径；单次执行的用量在下方各行内联展示。
- *  统计面备注：编写期 task-author 对话的 token 目前没有落库来源（token_usage
- *  表未建，见已中止的「token计费」任务），如实标注不臆造。 */
-export function TaskAiUsageCard({ agg, loading, runCount }: {
+/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 node-detail/cost-tab 同口径视觉 —
+ *  ∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用，**不列工具调用**。
+ *  任务域所有「calls · tokens · cost」行统一吃这一个实现。null/零调用 → null。 */
+export function AggInline({ agg, className, dim = "text-pop-dim" }: {
+  agg: LLMCallAggregates | null | undefined
+  className?: string
+  /** 弱色 token class —— 深色导航条等底色面传入对应值。 */
+  dim?: string
+}) {
+  if (!agg || agg.totalCalls === 0) return null
+  const { usage, totals, totalCalls } = agg
+  const cr = usage.cacheReadTokens ?? 0
+  const cw = usage.cacheCreationTokens ?? 0
+  return (
+    <span className={`tabular-nums inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 ${className ?? ""}`} data-agg-inline data-testid="agg-inline">
+      <span className="font-black" title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(totals.tokens)}</span>
+      <span title="输入">↑{formatTokenCount(usage.inputTokens ?? 0)}</span>
+      <span title="输出">↓{formatTokenCount(usage.outputTokens ?? 0)}</span>
+      {cr > 0 && <span title="缓存读取" className={dim}>⚡{formatTokenCount(cr)}</span>}
+      {cw > 0 && <span title="缓存创建" className={dim}>🗡️{formatTokenCount(cw)}</span>}
+      <span className={dim}>· {totalCalls} 次请求 ·</span>
+      <span className="font-medium text-pop-amber" title="价表估算（≈=部分未定价）">{formatCost(totals.cost.usd, totals.cost.complete)}</span>
+    </span>
+  )
+}
+
+/** 七量纲（∑=入+出+缓存读+缓存写，与 AggInline 同口径）。供卡内瓷砖/行复用。 */
+function aggNumbers(a: { usage: UsageWire; totals?: { tokens: number; cost: { usd: number | null; complete: boolean } }; totalCalls?: number }) {
+  const u = a.usage
+  const cr = u.cacheReadTokens ?? 0, cw = u.cacheCreationTokens ?? 0
+  const sum = a.totals?.tokens ?? ((u.inputTokens ?? 0) + (u.outputTokens ?? 0) + cr + cw)
+  return { sum, inp: u.inputTokens ?? 0, out: u.outputTokens ?? 0, cr, cw, calls: a.totalCalls ?? 0 }
+}
+
+/** AI 卡里的一行完整七量纲（按模型 / 分轮复用），口径同 AggInline。 */
+function AggMetrics({ sum, inp, out, cr, cw, calls, usd, complete, dim = "text-pop-dim" }: {
+  sum: number; inp: number; out: number; cr: number; cw: number; calls: number; usd: number | null; complete?: boolean; dim?: string
+}) {
+  return (
+    <span className="tabular-nums inline-flex min-w-0 flex-wrap items-center gap-x-1.5 font-mono text-[11px]">
+      <span className="font-black" title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(sum)}</span>
+      <span title="输入">↑{formatTokenCount(inp)}</span>
+      <span title="输出">↓{formatTokenCount(out)}</span>
+      {cr > 0 && <span title="缓存读取" className={dim}>⚡{formatTokenCount(cr)}</span>}
+      {cw > 0 && <span title="缓存创建" className={dim}>🗡️{formatTokenCount(cw)}</span>}
+      <span className={dim}>· {calls} 次请求 ·</span>
+      <span className="font-medium text-pop-amber">{formatCost(usd, complete ?? true)}</span>
+    </span>
+  )
+}
+
+/** 任务级 AI 消耗卡（ADR-0022 三层完整口径还原）：总计瓷砖 / 按模型行 / 分轮行，
+ *  每层都摊全 ∑↑↓⚡🗡️·请求·成本 —— 不再有任何层级被缩写。数据源 llm_calls
+ *  （节点结束落库，半途中止可能缺数 → 缺行标灰不猜）。编写期 task-author 对话
+ *  token 目前无落库来源（见既有备注），如实说明不臆造、不放假开关。 */
+export function TaskAiUsageCard({ agg, loading, runCount, rounds }: {
   agg: LLMCallAggregates | null; loading: boolean; runCount: number
+  /** 分轮行（label + 该轮 agg + 状态词）。缺省则不显分轮段（单轮任务够用）。 */
+  rounds?: Array<{ key: string; label: string; agg: LLMCallAggregates | null; note?: string }>
 }) {
   if (runCount === 0) return null
-  const models = agg ? Object.entries(agg.modelBreakdown).sort((a, b) => b[1].calls - a[1].calls) : []
+  const models = agg ? Object.entries(agg.modelBreakdown ?? {}).sort((a, b) => b[1].calls - a[1].calls) : []
   return (
     <SectionCard
       icon={<Bot className="size-4" />}
       title="任务 AI 消耗"
-      right={<span className="text-[10px] text-muted-foreground">全部 {runCount} 次执行合计 · 不含编写期对话</span>}
+      right={<span className="text-[10px] text-muted-foreground">全部 {runCount} 次执行合计 · 编写期对话未落库（不臆造）</span>}
     >
       {!agg || agg.totalCalls === 0 ? (
         <p className="text-xs text-muted-foreground" data-ai-usage>
-          {loading
-            ? "统计加载中…"
-            : "暂无已落库的 LLM 调用记录（llm_calls 在节点结束时写入；半途中止的运行可能缺数据）。"}
+          {loading ? "统计加载中…" : "暂无已落库的 LLM 调用记录（llm_calls 在节点结束时写入；半途中止的运行可能缺数据）。"}
         </p>
       ) : (
-        <div className="space-y-2" data-ai-usage>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
-            <span className="text-muted-foreground">调用 <b className="text-foreground tabular-nums">{agg.totalCalls}</b> 次</span>
-            <span className="tabular-nums" title="input / output tokens">↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)}</span>
-            {(agg.usage.cacheReadTokens > 0 || agg.usage.cacheCreationTokens > 0) && (
-              <span className="text-xs text-muted-foreground tabular-nums" title={agg.totals.cacheHitRate === null ? "缓存命中率: 无输入类 token" : `缓存命中率 ${formatPercent(agg.totals.cacheHitRate, 1)}`}>
-                缓存 读{formatTokenCount(agg.usage.cacheReadTokens)}·写{formatTokenCount(agg.usage.cacheCreationTokens)}
-              </span>
-            )}
-            <span className="font-semibold tabular-nums" title="价表估算（≈=部分未定价）">{formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}</span>
-          </div>
-          {models.length > 0 && (
+        <div className="space-y-3" data-ai-usage>
+          {/* 总计：七瓷砖 */}
+          <div>
+            <div className="mb-1 font-mono text-[9px] font-black tracking-[.09em] text-pop-dim">总计</div>
             <div className="flex flex-wrap gap-1.5">
-              {models.map(([m, b]) => (
-                <Badge key={m} variant="outline" className="text-[10px] font-mono" title={`${b.calls} 次 · ↑${b.inputTokens} ↓${b.outputTokens} · ${formatCost(b.costUsd)}`}>
-                  {m}×{b.calls}
-                </Badge>
-              ))}
+              {(() => {
+                const n = aggNumbers(agg)
+                return ([
+                  ["∑ 处理量", formatTokenCount(n.sum)], ["↑ 输入", formatTokenCount(n.inp)], ["↓ 输出", formatTokenCount(n.out)],
+                  ["⚡ 缓存读", formatTokenCount(n.cr)], ["🗡️ 缓存写", formatTokenCount(n.cw)],
+                  ["请求", `${n.calls} 次`], ["成本", formatCost(agg.totals.cost.usd, agg.totals.cost.complete)],
+                ] as const).map(([l, v]) => (
+                  <div key={l} className="min-w-[64px] rounded-md border border-pop-bd/20 bg-pop-idle/40 px-2 py-1 text-center">
+                    <div className="font-mono text-[13px] font-black tabular-nums text-pop-ink">{v}</div>
+                    <div className="text-[9px] text-pop-dim">{l}</div>
+                  </div>
+                ))
+              })()}
+            </div>
+          </div>
+          {/* 按模型：每模型全量纲行 */}
+          {models.length > 0 && (
+            <div>
+              <div className="mb-1 font-mono text-[9px] font-black tracking-[.09em] text-pop-dim">按模型</div>
+              <div className="space-y-1">
+                {models.map(([m, b]) => {
+                  const cr = b.cacheReadTokens ?? 0, cw = b.cacheCreationTokens ?? 0
+                  return (
+                    <div key={m} className="flex flex-wrap items-center gap-x-2">
+                      <span className="w-[120px] shrink-0 truncate font-mono text-[11px] font-bold" title={m}>{m}</span>
+                      <AggMetrics sum={(b.inputTokens ?? 0) + (b.outputTokens ?? 0) + cr + cw} inp={b.inputTokens ?? 0} out={b.outputTokens ?? 0} cr={cr} cw={cw} calls={b.calls} usd={b.costUsd} />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          {/* 分轮：每轮全量纲行 */}
+          {rounds && rounds.length > 0 && (
+            <div>
+              <div className="mb-1 font-mono text-[9px] font-black tracking-[.09em] text-pop-dim">分轮账本</div>
+              <div className="space-y-1">
+                {rounds.map((r) => (
+                  <div key={r.key} className="flex flex-wrap items-center gap-x-2">
+                    <span className="w-[120px] shrink-0 truncate font-mono text-[11px]" title={r.label}>{r.label}</span>
+                    {r.agg ? <AggMetrics {...(() => { const n = aggNumbers(r.agg); return { sum: n.sum, inp: n.inp, out: n.out, cr: n.cr, cw: n.cw, calls: n.calls, usd: r.agg.totals.cost.usd, complete: r.agg.totals.cost.complete } })()} />
+                      : <span className="font-mono text-[11px] text-pop-dim" title="该轮无落库数据（中止/旧服务）">缺数</span>}
+                    {r.note && <span className="text-[9px] text-muted-foreground">{r.note}</span>}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -208,9 +290,9 @@ export function SectionCard({ icon, title, right, children, tone }: {
   return (
     <section className={`rounded-lg border p-4 space-y-3 ${tone ?? "border-border"}`}>
       <header className="flex items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
+        <span className="shrink-0 text-muted-foreground">{icon}</span>
         <h3 className="text-sm font-semibold">{title}</h3>
-        <div className="ml-auto flex items-center gap-2">{right}</div>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">{right}</div>
       </header>
       {children}
     </section>

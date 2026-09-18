@@ -1,0 +1,313 @@
+<!doctype html>
+<!--
+  PROTOTYPE v3 — 两屏定稿确认:【执行控制台】↔【验货台 A′】,看完请确认。
+  v3 变更(用户裁决):
+    1) 执行控制台撤 verdict 行(原 phase-surface.tsx:360 ✓通过/✕打回) → 唯一决策入口 = 验货台;
+    2) 验货台右栏撤"执行摘要"(token/cost 不进验收视野) → AI 消耗去控制台并完善(轮次账本/节点Top3/编写期口径切换);
+    3) 所有决策类按钮(通过/打回/中止)一律过 confirm 层 —— 通过=账本预览即确认, 打回=必填反馈(已有)+路由单选, 中止=红色危险确认;
+    4) A′ 布局定稿: ①②③状态条内联展开 + ④走查主角 + 右栏240不滚动; iframe 已死; ✓✗⊘ 闭环(✗→票重开, ⊘→carryover)。
+  单滚动纪律不变: 每屏只有主列一根滚动条。真 token = globals.css Pop。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>验收剧本原型 v3 · 两屏定稿 · PROTOTYPE</title>
+<style>
+:root{--bg:#fffdf5;--paper:#fff;--ink:#1c1b22;--dim:#77757f;--bd:#211f27;--bdw:2.5px;
+ --pink:#ff4d6d;--pink-s:#ffe3e9;--yellow:#ffd23f;--yellow-s:#fff3c4;--purple:#5b45ff;--purple-s:#eceaff;
+ --green:#00b575;--green-s:#d9f5e7;--amber:#ffb800;--amber-s:#fff0cc;--cyan:#22b8e0;--cyan-s:#daf4fb;
+ --red:#e5484d;--idle:#eceaf5;--sh-sm:3px 3px 0 rgba(28,27,34,.13);--sh:5px 5px 0 rgba(28,27,34,.16);--sh-lg:8px 8px 0 rgba(28,27,34,.18);
+ --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--sans:-apple-system,"PingFang SC","Noto Sans CJK SC",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px}
+button{font-family:inherit;cursor:pointer}code{font-family:var(--mono)}a{color:var(--purple)}
+.mono{font-family:var(--mono)}.dim{color:var(--dim)}.xs{font-size:9.5px}.sm{font-size:10.5px}
+.lbl{font-family:var(--mono);font-size:9.5px;font-weight:900;letter-spacing:.09em;color:var(--dim)}
+.modal{max-width:1240px;margin:26px auto 96px;background:var(--bg);border:var(--bdw) solid var(--bd);border-radius:16px;box-shadow:var(--sh-lg);overflow:hidden}
+.mhead{display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:var(--bdw) solid var(--bd);background:var(--paper);flex-wrap:wrap}
+.mhead b{font-size:12.5px}
+.tabs{display:flex;gap:2px;margin-left:10px}.tabs button{padding:3px 11px;border-radius:8px;font-size:11.5px;font-weight:800;border:1.5px solid transparent;background:none;color:var(--dim)}
+.tabs button.on{background:var(--ink);color:var(--paper)}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1.5px solid var(--bd);border-radius:99px;padding:1px 8px;font-size:10px;font-weight:800;background:var(--paper)}
+.chip.g{background:var(--green-s)}.chip.a{background:var(--amber-s)}.chip.r{background:var(--pink-s)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--dim);display:inline-block}
+.dot.g{background:var(--green)}.dot.a{background:var(--amber);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.stamp{display:inline-block;border:var(--bdw) solid;border-radius:10px;outline:3px solid;padding:0 8px;font-family:var(--mono);font-size:10.5px;font-weight:900;letter-spacing:.1em;transform:rotate(-2deg);background:var(--paper)}
+.stamp.p{color:var(--green);border-color:var(--green);outline-color:var(--green)}
+.stamp.r{color:var(--red);border-color:var(--red);outline-color:var(--red)}
+.stamp.a{color:var(--amber);border-color:var(--amber);outline-color:var(--amber)}
+.btn{border:1.5px solid var(--bd);border-radius:8px;background:var(--paper);padding:3px 10px;font-size:11px;font-weight:700;box-shadow:2px 2px 0 rgba(28,27,34,.13)}
+.btn:active{box-shadow:none;transform:translate(2px,2px)}
+.btn.dark{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn.green{background:var(--green);color:#fff;border-color:var(--bd);border-width:var(--bdw);box-shadow:var(--sh-sm)}
+.btn.red{background:var(--red);color:#fff}.btn.purple{background:var(--purple);color:#fff;border-color:var(--purple)}
+.btn.ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--dim)}
+.btn:disabled{opacity:.4;box-shadow:none}
+.card{background:var(--paper);border:2px solid var(--bd);border-radius:13px;box-shadow:var(--sh-sm);margin-bottom:10px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:8px;padding:7px 11px;flex-wrap:wrap}
+.card.click .card-h{cursor:pointer}.card.click .card-h:hover{background:#fffdf2}
+.num{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:var(--ink);color:var(--paper);font-size:10px;font-weight:900;flex:none}
+.chev{margin-left:auto;font-size:10px;color:var(--dim);font-family:var(--mono)}
+.card-b{border-top:2px solid rgba(33,31,39,.14);padding:9px 11px}
+.console{background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:10.5px;line-height:1.8;padding:8px 11px;border-radius:9px;white-space:pre-wrap;word-break:break-all}
+.console b{color:var(--green)}
+.tile{background:var(--idle);border:1.5px solid var(--bd);border-radius:9px;padding:3px 10px;text-align:center}
+.tile b{display:block;font-family:var(--mono);font-size:13px}.tile span{font-size:9px;color:var(--dim)}
+.row-tiles{display:flex;gap:6px;flex-wrap:wrap}
+table.df{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+table.df td{padding:3px 4px;border-bottom:1px dashed rgba(33,31,39,.15)}
+.add{color:var(--green);font-family:var(--mono)}.del{color:var(--red);font-family:var(--mono)}
+.body{display:grid;grid-template-columns:1fr 240px;min-height:600px}
+.mid{padding:12px 13px;border-right:2px solid rgba(33,31,39,.14);overflow-y:auto;max-height:calc(100vh - 215px);min-width:0}
+.rail{padding:12px;display:flex;flex-direction:column;gap:10px}
+.subtabs{display:flex;gap:5px;margin-bottom:11px}
+.subtabs button{border:1.5px solid var(--bd);background:var(--paper);border-radius:8px;padding:4px 13px;font-size:11.5px;font-weight:800;box-shadow:2px 2px 0 rgba(28,27,34,.1)}
+.subtabs button.on{background:var(--ink);color:var(--paper)}
+.step{background:var(--paper);border:2px solid var(--bd);border-radius:12px;box-shadow:var(--sh-sm);padding:8px 11px;margin-bottom:8px}
+.step.f{border-color:var(--red);background:#fff5f5}
+.step .op{font-size:12.5px;font-weight:700}.step .opd{font-size:11.5px;color:#4d4856;margin-top:2px}
+.step .exp{font-size:11px;margin-top:5px;background:var(--yellow-s);border-left:4px solid var(--amber);padding:4px 9px;border-radius:0 7px 7px 0}
+.step .src{font-size:9.5px;color:var(--dim);font-family:var(--mono)}
+.decide{display:flex;gap:5px;margin-top:7px}
+.decide button{border-radius:7px;border:1.5px solid var(--bd);background:var(--idle);font-size:10.5px;padding:2px 9px;font-weight:800}
+.decide .on-p{background:var(--green);color:#fff;border-color:var(--green)}
+.decide .on-f{background:var(--red);color:#fff;border-color:var(--red)}
+.decide .on-s{background:var(--dim);color:#fff;border-color:var(--dim)}
+.conseq{font-size:10px;margin-top:6px;padding:4px 9px;border-radius:7px;background:var(--idle)}
+.note{width:100%;margin-top:6px;border:1.5px dashed var(--bd);border-radius:7px;padding:4px 8px;font-size:10.5px;font-family:var(--sans)}
+.budget{display:flex;align-items:center;gap:8px;border:1.5px solid var(--bd);border-radius:9px;background:var(--paper);padding:4px 10px;margin-bottom:10px;font-size:10.5px}
+.bmeter{flex:1;height:8px;border-radius:99px;background:var(--idle);border:1px solid rgba(33,31,39,.2);overflow:hidden}
+.bmeter i{display:block;height:100%;background:var(--green)}
+details.fine{border:1.5px dashed var(--bd);border-radius:9px;padding:5px 10px}
+details.fine summary{cursor:pointer;font-size:10.5px;color:var(--dim);font-weight:700}
+.rv{font-size:11px;padding:2px 0;display:flex;justify-content:space-between}.rv b{font-family:var(--mono)}
+.gate{border:1.5px solid var(--amber);background:var(--amber-s);border-radius:9px;padding:6px 9px;font-size:11px}
+.proto-tag{position:fixed;top:10px;right:14px;z-index:60;background:var(--pink);color:#fff;font-family:var(--mono);font-size:9.5px;font-weight:900;letter-spacing:.08em;padding:3px 9px;border-radius:7px;transform:rotate(2deg);box-shadow:var(--sh-sm)}
+.switcher{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:4px;background:var(--ink);border-radius:99px;padding:5px 6px;box-shadow:var(--sh)}
+.switcher button{width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,253,245,.15);color:var(--paper);font-size:14px}
+.switcher .lab{color:var(--paper);font-family:var(--mono);font-size:10.5px;padding:0 10px;white-space:nowrap}.switcher .lab i{color:var(--yellow);font-style:normal;font-weight:900}
+.qcard{max-width:1240px;margin:0 auto 12px;background:var(--ink);color:var(--paper);border-radius:12px;padding:8px 14px;font-size:11.5px;line-height:1.7}
+.qcard b{color:var(--yellow)}.qcard .rm{color:#ff9aa8;text-decoration:line-through}
+.dlg{position:fixed;inset:0;background:rgba(28,27,34,.45);display:none;align-items:center;justify-content:center;z-index:50}
+.dlg.on{display:flex}
+.dlg .c{background:var(--bg);border:var(--bdw) solid var(--bd);border-radius:16px;max-width:600px;width:92%;padding:16px;box-shadow:var(--sh-lg);max-height:86vh;overflow-y:auto}
+.prev-chip{margin-left:auto;display:flex;align-items:center;gap:6px;border:2px solid var(--bd);border-radius:99px;background:var(--paper);padding:2px 5px 2px 10px;font-family:var(--mono);font-size:10.5px;font-weight:800;box-shadow:2px 2px 0 rgba(28,27,34,.13)}
+/* AI 消耗卡 */
+.cost-row{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:4px 0}
+.cost-bar{height:10px;border-radius:6px;background:var(--purple);box-shadow:inset 0 0 0 1.5px var(--bd)}
+.mono-t{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="proto-tag">PROTOTYPE v3 — 两屏定稿</div>
+<div id="app"></div>
+<div class="switcher"><button id="prev">←</button><span class="lab" id="vlabel"></span><button id="next">→</button></div>
+
+<div class="dlg" id="dlg"></div>
+
+<script>
+// ── shared data ─────────────────────────────────────────────────────────
+const TASK={name:"验收面 v2.1 — 验收剧本 + 跑起来看",phase:2,round:1};
+const DIFF={repos:3,commits:12,add:1204,del:388,files:41,inv:2,rows:[
+ ["packages/server","round-evidence-service +596 · tasks.ts +44 · sse.ts +12","+640","−31"],
+ ["packages/web-app","acceptance/verify-panel +186 · surface +142 · tasks-api +88","+320","−41"],
+ ["packages/shared","scheduler-job +18 · task +9","+44","−6"]]};
+const AUTO={cmd:"pnpm --filter @octopus/server exec vitest run",at:"14:32",dur:"87s",file:"verify-r1-…14-32.md"};
+const PREV={cmd:"pnpm build && pnpm --filter web-app dev",url:"http://localhost:3000"};
+const STEPS=[
+ {id:"a1",t:"剧本编译器降级",op:"对一个【缺 round-report】的轮打开剧本区",exp:"「无契约结构」降级条 + 手动补步骤入口,不白屏",src:"12-e2e AC1"},
+ {id:"a2",t:"勾选回填持久",op:"勾 2 项 → 刷新页面",exp:"勾选不丢(acceptance-checks.json);换轮自动清态",src:"12-e2e AC2"},
+ {id:"a3",t:"预览起停+探活",op:"▶启动,等状态变 ready,浏览器打开 :3000 走真页面",exp:"starting→ready 流转对;■停止后进程树无残留、状态回 stopped",src:"12-e2e AC3"},
+ {id:"a4",t:"决策门 fail 拦截",op:"把一项标 ✗不过(不填备注)→ 看通过钮",exp:"通过 disabled+原因提示;打回反馈预填该步 [票号]标题+预期",src:"12-e2e AC4"},
+ {id:"a5",t:"未决确认弹层",op:"留 1 项未勾 → 点验收通过",exp:"弹层逐项列未决与票号;确认后 ledger 记 skip 节",src:"12-e2e AC5"},
+ {id:"a6",t:"故事线主路",op:"创建任务→入队→执行→验收台→剧本出现,走通一条线",exp:"剧本①-④齐全;走查预算 ≤10min 不爆表",src:"e2e-plan Step1"},
+ {id:"a7",t:"台账与落盘",op:"叙述 tab 看本轮新增文件",exp:"verify-r1-*.md + acceptance-ledger.md 出现,带「本轮」徽章",src:"回归"}];
+const AI={rounds:[
+ {r:"P1·R1",st:"accepted",m:{sum:"14.2M",inp:"820",out:"62.4K",cr:"13.5M",cw:"640K",req:164,cost:"$12.31"}},
+ {r:"P2·R1",st:"awaiting",m:{sum:"56.3M",inp:"2.3K",out:"265.9K",cr:"53.4M",cw:"2.6M",req:526,cost:"$37.12"}}],
+ byModel:[{name:"qwen3.8-flash",m:{sum:"70.5M",inp:"3.1K",out:"328.3K",cr:"66.9M",cw:"3.2M",req:690,cost:"$49.43"}}],
+ nodes:[["dev-impl ×3","$21.4"],["code-review","$8.9"],["e2e-verify","$6.8"]],
+ total:{sum:"70.5M",inp:"3.1K",out:"328.3K",cr:"66.9M",cw:"3.2M",req:690,cost:"$49.43"},
+ authoring:{tok:"2.1M",calls:63}};
+// 与真身 AggInline 同口径: ∑=入+出+缓存读+缓存写
+function agg(m){return `<span class="mono sm"><b>∑${m.sum}</b> ↑${m.inp} ↓${m.out} <span class="dim">⚡${m.cr} 🗡️${m.cw}</span> · ${m.req} 次请求 · <b>${m.cost}</b></span>`}
+const BUDGET=10;
+const $=s=>document.querySelector(s);
+const state={checks:{},verify:"passed",preview:"ready",view:"C",x:{diff:false,auto:false,prev:false},includeAuthoring:false,decided:null};
+const done=()=>STEPS.filter(s=>state.checks[s.id]==='p').length;
+const fails=()=>STEPS.filter(s=>state.checks[s.id]==='f');
+const skips=()=>STEPS.filter(s=>state.checks[s.id]==='s');
+const openn=()=>STEPS.filter(s=>!state.checks[s.id]).length;
+// ── 通用 confirm 弹层(三态: 账本确认 / 打回 / 危险中止) ─────────────────
+function dlg(html){$('#dlg').innerHTML=`<div class="c">${html}</div>`;$('#dlg').classList.add('on');}
+function closeDlg(){$('#dlg').classList.remove('on');}
+$('#dlg')&&$('#dlg').addEventListener('click',e=>{if(e.target.id==='dlg')closeDlg()});
+function confirmAccept(){
+ if(fails().length){alert('(stub) ✗ 存在 → 通过钮 disabled,走不到这');return}
+ const pend=STEPS.filter(s=>!state.checks[s.id]);
+ dlg(`<div class="lbl" style="margin-bottom:6px">验收通过 · 确认即写台账(唯一入口:验货台)</div>
+ <b style="font-size:14px">${pend.length?`有 ${pend.length} 项走查未决 —— 确认跳过并放行 Phase ${TASK.phase+1}?`:'全 ' + done() + ' 项走查 ✓ —— 确认放行 Phase '+(TASK.phase+1)+'?'}</b>
+ ${pend.length?`<ul style="font-size:11.5px;color:#4d4856;padding-left:18px;margin:6px 0">${pend.map(s=>`<li>[${s.src}] ${s.t} <span class="xs dim">→ ledger skip 节 + 下轮 carryover</span></li>`).join('')}</ul>`:''}
+ <div class="console" style="margin:10px 0"># acceptance-ledger.md · 确认后立即机写
+- 实物: ${DIFF.repos} repos +${DIFF.add}/−${DIFF.del} · 干预 ${DIFF.inv}
+- 自动复检: PASSED exit 0 (${AUTO.dur}) → ${AUTO.file}
+- 预览: ${state.preview==='ready'?'ready :3000 · 决策时自动 stop':'未用'}
+- 走查: ${done()}/7 ✓ · ⊘${skips().length}(原因随记) · 未决${pend.length}
+- 决策: 通过 · 确认人 <b>you</b> @ ${new Date().toTimeString().slice(0,8)}</div>
+ <div class="sm dim" style="margin-bottom:12px">台账 = 本轮验收依据链,落批次目录,叙述 tab 可见 —— 这一眼就是最终产物,确认后不可改。</div>
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeDlg()">再看看</button>
+ <button class="btn green" onclick="doAccept()">确认通过 · 写台账</button></div>`);}
+function doAccept(){state.decided='accepted';closeDlg();render();}
+function confirmReject(){
+ const f=fails();
+ dlg(`<div class="lbl" style="margin-bottom:6px">打回 · 反馈必填 + 下一轮流选择(决策类操作 · 必过此层)</div>
+ <b style="font-size:14px">打回 Phase ${TASK.phase} · Round ${TASK.round}</b>
+ ${f.length?`<div class="gate" style="margin:8px 0;border-color:var(--red);background:#fff0f0"><b>✗ 未过项已预填进反馈(含票号 → 这些票将被重开):</b><br>${f.map(s=>`· [${s.src}] ${s.t} — 预期: ${s.exp}`).join('<br>')}</div>`:''}
+ <textarea class="note" style="display:block;min-height:74px;margin-top:8px" placeholder="补充反馈(必填 → 落 fix-feedback-r${TASK.round}.md,下一轮 round-report 必须逐条解释)"></textarea>
+ <div style="display:flex;gap:8px;margin-top:10px;font-size:11.5px;align-items:center">
+  <label><input type="radio" name="fl" checked> 修订重跑(绑定流 matt-spec-dev 再审 spec)</label>
+  <label><input type="radio" name="fl"> 轻量修复(task-fix 自动派发)</label></div>
+ <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="closeDlg()">取消</button>
+ <button class="btn red" onclick="closeDlg();alert('(stub) 已打回 —— 反馈+fail票清单进下轮 brief,carryover 顶置')">确认打回</button></div>`);}
+function confirmAbort(){
+ dlg(`<div class="lbl" style="margin-bottom:6px;color:var(--red)">危险操作 · 二次确认</div>
+ <b style="font-size:14px;color:var(--red)">中止任务「${TASK.name}」?</b>
+ <div class="sm" style="margin:8px 0;color:#4d4856">在跑的复检/预览会一并 SIGTERM;Phase ${TASK.phase} 派生为 <b>aborted</b>,不可恢复 —— 票与 diff 保留,可整任务重开。</div>
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeDlg()">取消</button>
+ <button class="btn red" onclick="closeDlg();alert('(stub) 已中止')">确认中止</button></div>`);}
+// ── 决策小工具 ──────────────────────────────────────────────────────────
+function decide(id,d){state.checks[id]=state.checks[id]===d?"":d;render();}
+function tg(k){state.x[k]=!state.x[k];render();}
+function consequence(s){const d=state.checks[s.id];if(!d)return '';
+ if(d==='p')return `<div class="conseq" style="border-left:4px solid var(--green)">→ 销账:后续轮次不再出现 · 写入 ledger ✓节</div>`;
+ if(d==='f')return `<div class="conseq" style="border-left:4px solid var(--red);background:#fff0f0">→ 硬闸:通过被拦 · 打回反馈预填「[${s.src}] ${s.t}」· <b>票按 src 重开(done→reopened)</b></div>`;
+ return `<div class="conseq" style="border-left:4px solid var(--amber)">→ 下轮 carryover 首段:补验 或 再豁免(需新原因)· 最终轮未决 → PR「已知未验」</div>`;}
+function checkBtns(id){const d=state.checks[id]||"";const s=STEPS.find(x=>x.id===id);
+ return `<div class="decide">
+  <button class="${d==='p'?'on-p':''}" onclick="decide('${id}','p')">✓ 通过</button>
+  <button class="${d==='f'?'on-f':''}" onclick="decide('${id}','f')">✗ 不过</button>
+  <button class="${d==='s'?'on-s':''}" onclick="decide('${id}','s')">⊘ 跳过</button></div>
+ ${consequence(s)}${(d==='f'||d==='s')?`<textarea class="note" placeholder="${d==='f'?'不过的实际现象 —— 进打回反馈与下轮 gap brief':'为什么这次可以不验(下轮仍会问)'}"></textarea>`:''}`}
+function meter(n,min){return `<div class="budget"><span class="mono xs">预算表</span><b class="mono">${n} 步 · ~${min}min</b>
+ <div class="bmeter"><i style="width:${Math.min(100,min/BUDGET*100)}%"></i></div>
+ <span class="xs mono dim">${min<=BUDGET?'≤10min ✓':'超预算→降档(硬约束)'}</span></div>`;}
+// ── 验货台三段状态条(复用) ─────────────────────────────────────────────
+function s1(){const e=state.x.diff;return `<div class="card click"><div class="card-h" onclick="tg('diff')">
+ <span class="num">1</span><span class="lbl">本轮改了什么</span>
+ <span class="mono sm">${DIFF.repos} repos · ${DIFF.commits} commits · <span class="add">+${DIFF.add}</span> <span class="del">−${DIFF.del}</span> · ${DIFF.files} 文件 · 干预 ${DIFF.inv}</span>
+ <span class="chev">${e?'收起 ▴':'展开 ▾'}</span></div>
+ ${e?`<div class="card-b"><table class="df">${DIFF.rows.map(r=>`<tr><td class="mono">${r[0]}</td><td class="xs dim">${r[1]}</td><td class="add" style="text-align:right">${r[2]} ${r[3]}</td></tr>`).join('')}</table>
+ <div class="xs dim" style="margin-top:6px">文件行点开 → 就地内联单文件 patch(512K 截断,无嵌套滚动)· SHA 永不出服务端</div></div>`:''}</div>`;}
+function s2(){const e=state.x.auto;const run=state.verify==='running';
+ return `<div class="card"><div class="card-h">
+ <span class="num">2</span><span class="lbl">自动复检</span>
+ <code class="sm" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${AUTO.cmd}</code>
+ <span style="margin-left:auto;display:flex;gap:7px;align-items:center">
+ ${run?'<span class="chip a"><span class="dot a"></span>RUNNING</span>':'<span class="stamp p">PASSED · exit 0</span><span class="xs dim mono">'+AUTO.at+' · '+AUTO.dur+'</span>'}
+ <button class="btn" onclick="runVerify()">▶ 重跑</button>
+ <button class="btn ghost" onclick="tg('auto')">${e?'日志 ▴':'日志 ▾'}</button></span></div>
+ ${e||run?`<div style="padding:0 11px 9px"><div class="console" id="vcon">${run?'▸ vitest run @ packages/server…':'<b>✓ 148 passing</b> (86s)\nℹ coverage server 82.4% · shared 97.1%\nverdict → '+AUTO.file}</div>
+ <div class="xs dim" style="margin-top:5px">只内联最后 15 行,完整看 verdict 文件(叙述 tab)—— 日志不套滚动</div></div>`:''}</div>`;}
+function runVerify(){state.verify='running';state.x.auto=true;render();let i=0;const L=['▸ vitest run @ packages/server','✓ db/dao/task.test.ts (12)','✓ services/sse.test.ts (9)','✓ routes/tasks.test.ts (34)','<b>✓ 148 passing</b> (86s)'];
+ const iv=setInterval(()=>{const c=$('#vcon');if(!c||state.verify!=='running'){clearInterval(iv);return}c.innerHTML=L.slice(0,++i).join('\n');
+ if(i>=L.length){clearInterval(iv);setTimeout(()=>{state.verify='passed';render()},400)}},450);}
+function s3(){const e=state.x.prev;const p=state.preview;
+ return `<div class="card click"><div class="card-h" onclick="tg('prev')">
+ <span class="num">3</span><span class="lbl">跑起来看</span><span class="dot ${p==='ready'?'g':''}"></span>
+ <span class="mono sm">${p==='stopped'?'未启动':p==='starting'?'启动中…':'ready · :3000'}</span>
+ <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+ ${p==='stopped'?'<button class="btn green" onclick="event.stopPropagation();startPrev()">▶ 启动</button>':
+   p==='starting'?'<button class="btn red" onclick="event.stopPropagation();stopPrev()">■ 停止</button>':
+   `<a class="btn dark" href="${PREV.url}" onclick="return false">↗ 浏览器打开</a><button class="btn red" onclick="event.stopPropagation();stopPrev()">■ 停止</button>`}
+ <span class="chev">${e?'▴':'▾'}</span></span></div>
+ ${e?`<div class="card-b"><div class="mono sm" style="margin-bottom:6px;background:var(--idle);border:1.5px solid var(--bd);border-radius:7px;padding:3px 8px"><code>$ ${PREV.cmd}</code></div>
+ <div class="console">${p==='ready'?'▲ next dev ready :3000 · server hash-port :3001 (worktree 隔离)\nℹ 决策(通过/打回/中止)确认时自动 stop 并记入 ledger':p==='starting'?'… 轮询 '+PREV.url+'(任意 HTTP 响应 = 端口已起)':"(未运行) 长驻命令:pnpm dev / uvicorn / mvn spring-boot:run"}</div></div>`:''}</div>`;}
+function startPrev(){state.preview='starting';state.x.prev=true;render();setTimeout(()=>{if(state.preview==='starting'){state.preview='ready';render()}},1800)}
+function stopPrev(){state.preview='stopped';render();}
+function s4(){return `<div class="card" style="border-width:var(--bdw);box-shadow:var(--sh)">
+ <div class="card-h" style="background:var(--yellow-s);border-bottom:2px solid var(--bd)"><span class="num">4</span><span class="lbl" style="color:var(--ink)">人工走查 · 按票编译(主角)</span>
+ <span class="xs mono dim" style="margin-left:auto">${done()}/${STEPS.length}✓ · ${skips().length}⊘ · ${fails().length}✗ · ${openn()}未决</span></div>
+ <div class="card-b">${meter(STEPS.length,9)}
+ <div class="xs dim" style="margin:-4px 0 8px">票 12 的 18 条 AC → 归并 ${STEPS.length} 条票级步,细目折叠兜底。后果条是真下游:✗→票重开 · ⊘→下轮 carryover。</div>
+ ${STEPS.map(s=>`<div class="step ${state.checks[s.id]==='f'?'f':''}">
+ <div style="display:flex;gap:8px;align-items:baseline"><span class="op">${s.t}</span><span class="src" style="margin-left:auto">[${s.src}]</span></div>
+ <div class="opd">${s.op}</div><div class="exp"><b>预期</b> · ${s.exp}</div>${checkBtns(s.id)}</div>`).join('')}
+ <details class="fine"><summary>▸ 票 12 的 18 条 AC 细目(回溯用,不在这层勾选)</summary>
+ <div class="xs mono dim" style="column-count:2;padding-top:6px">${["AC1.1 缺spec不崩","AC1.2 缺票表不崩","AC2.1 勾选写文件","AC2.2 换轮清态","AC3.1 ready探测","AC3.2 中止无残留","AC3.3 决策自动stop","AC4.1 fail→禁通过","AC4.2 打回预填","AC5.1 未决弹层","AC5.2 弹层列票号","AC6.1 ledger全链","AC6.2 时间戳","AC6.3 叙述徽章","Step1 页面路径","Step1 断言密度","回归 $vars. 替换","回归 SSE 无泄漏"].map(a=>'· '+a).join('<br>')}</div></details></div></div>`;}
+function rail(){const f=fails();
+ return `<div class="rail">
+ <div class="card" style="margin:0"><div class="card-b">
+ <div class="lbl" style="margin-bottom:6px">验收进度</div>
+ <div class="rv"><span>走查</span><b>${done()}/${STEPS.length} ✓${f.length?` <span style="color:var(--red)">✗${f.length}</span>`:''}${openn()?` <span class="dim">未决${openn()}</span>`:''}</b></div>
+ <div class="rv"><span>跳过</span><b style="color:var(--amber)">⊘${skips().length} → 下轮</b></div>
+ <div class="rv"><span>自动复检</span><b style="color:${state.verify==='passed'?'var(--green)':'var(--amber)'}">${state.verify.toUpperCase()}</b></div>
+ <div class="rv"><span>预览</span><b>${state.preview}</b></div></div></div>
+ ${f.length?`<div class="gate" style="border-color:var(--red);background:#fff0f0">存在 ✗ —— 通过硬拦;打回将预填 fail 项并重开对应票。</div>`:''}
+ ${state.decided?`<div class="card" style="margin:0;border-color:var(--green)"><div class="card-b" style="text-align:center"><span class="stamp p">ACCEPTED</span><div class="xs dim" style="margin-top:5px">ledger 已写 · 预览已 stop · 放行 Phase 3</div></div></div>`:`
+ <div class="card" style="margin:0"><div class="card-b" style="display:flex;flex-direction:column;gap:7px">
+ <div class="lbl">决策(唯一入口 · 全部过确认层)</div>
+ <button class="btn green" style="font-size:12.5px;padding:7px" ${f.length?'disabled':''} onclick="confirmAccept()">验收通过 · 写台账</button>
+ <button class="btn" onclick="confirmReject()">打回(写反馈)</button>
+ <button class="btn ghost" onclick="confirmAbort()">中止任务…</button>
+ <div class="xs dim">autoAdvance: accepted → Phase ${TASK.phase+1}</div></div></div>`}
+ </div>`;}
+// ── 屏 2: 验货台 A′ 定稿 ───────────────────────────────────────────────
+function viewAccept(){return `<div class="qcard"><b>屏 2/2 · 验货台 A′(定稿)</b> —— 右栏只有<b>进度+三颗决策钮</b>,执行摘要/token/cost 全部撤走(去了控制台的 AI 消耗卡);决策全过确认层:点「验收通过」看到的弹层 = ledger 预览即确认。<b style="color:var(--pink)">iframe 已死</b>,预览只「起/开/停」。</div>
+<div class="modal">${mhead()}<div class="body"><div class="mid">
+ <div class="subtabs"><button class="on">实物</button><button>核对</button><button>叙述</button></div>
+ ${s1()}${s2()}${s3()}${s4()}</div>${rail()}</div></div>`;}
+function mhead(){return `<div class="mhead"><b>📦 ${TASK.name}</b><span class="chip">Phase ${TASK.phase} · Round ${TASK.round}</span><span class="chip g">awaiting_review</span>
+ <div class="tabs"><button onclick="go('C')">执行控制台</button><button class="on">验货台</button><button>会话</button></div></div>`;}
+// ── 屏 1: 执行控制台(定稿: 撤verdict + AI消耗完善) ─────────────────────
+function viewConsole(){return `<div class="qcard"><b>屏 1/2 · 执行控制台(定稿)</b> —— ① <span class="rm">✓验收通过 ✕打回</span> verdict 行撤除(原 phase-surface.tsx:360)→ 唯一决策入口=验货台;② 验货台不再放 token/cost,AI 消耗在本屏<b>完善成轮次账本 + 节点 Top3 + 编写期口径开关</b>;③ 中止等危险操作同样过确认层。</div>
+<div class="modal"><div class="mhead"><b>📦 ${TASK.name}</b><span class="chip">Phase 1 ✓ · Phase 2 ●</span><span class="chip g">awaiting_review</span>
+ <div class="tabs"><button class="on">执行控制台</button><button onclick="go('A')">验货台</button><button>会话</button></div>
+ <span class="prev-chip"><span class="dot ${state.preview==='ready'?'g':''}"></span>${state.preview==='ready'?'预览 :3000 ✓':state.preview} ${state.preview==='stopped'?'<button class="btn" onclick="startPrev()" style="padding:1px 8px">▶</button>':state.preview==='ready'?'<button class="btn red" onclick="stopPrev()" style="padding:1px 8px">■</button>':''}</span></div>
+ <div class="mid" style="border-right:0;max-height:calc(100vh - 230px)">
+ ${aiCard()}
+ <div class="card"><div class="card-h"><span class="num">P1</span><span class="lbl">MVP · 实物diff+复检</span><span class="chip g">accepted</span><span class="xs dim mono">21m · $12.31 · 台账 ✓</span></div></div>
+ <div class="card" style="border-color:var(--amber)"><div class="card-h"><span class="num">P2</span><span class="lbl">剧本+预览(本轮)</span><span class="chip a">awaiting_review</span><span class="xs dim mono" style="margin-left:auto">R1 用时 14m · 执行成功</span></div>
+ <div class="card-b">
+ <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+ <span class="mono sm"><b style="color:var(--green)">✓ 执行成功</b> · R1 交付报告已出(机检 3/3)</span>
+ <button class="btn purple" style="margin-left:auto;font-size:12px;padding:6px 14px" onclick="go('A')">→ 去验货台验收(唯一决策入口)</button></div>
+ <div class="xs dim" style="margin-top:6px">此处原挂「<s>✓ 验收通过 · ✕ 打回</s>」—— 已撤:决策只出现在看过实物/走查之后,即验货台;避免双入口不同行为(控制台此前直通提交,绕过一切证据)。</div></div></div>
+ <div class="card"><div class="card-h"><span class="lbl">轮次账本</span><span class="xs dim" style="margin-left:auto">一行一轮 · 打回史留痕</span></div>
+ <div class="card-b" style="padding:4px 11px"><table class="df">
+ <tr><td class="mono">P1·R1</td><td><span class="chip g">accepted</span></td><td class="xs">一次过 · ledger 在叙述</td><td class="mono" style="text-align:right">$12.31</td></tr>
+ <tr><td class="mono">P2·R1</td><td><span class="chip a">awaiting</span></td><td class="xs">待走查(7 步)</td><td class="mono" style="text-align:right">$37.12</td></tr></table></div></div>
+ <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px"><button class="btn ghost" onclick="confirmAbort()">中止任务…</button></div>
+ </div></div>`;}
+function aiCard(){const t=AI.total;const maxc=Math.max(...AI.rounds.map(r=>parseFloat(r.m.cost.slice(1))));
+ return `<div class="card" style="border-width:var(--bdw);box-shadow:var(--sh)">
+ <div class="card-h" style="background:var(--purple-s);border-bottom:2px solid var(--bd)"><span class="lbl" style="color:var(--ink)">🤖 任务 AI 消耗</span>
+ <span class="xs dim" style="margin-left:auto">全部 2 次执行合计 · 不含编写期对话(下方开关)</span></div>
+ <div class="card-b">
+ <div class="lbl">总计</div>
+ <div class="row-tiles" style="margin:4px 0 2px">
+ ${[["∑","处理量",t.sum],["↑","输入",t.inp],["↓","输出",t.out],["⚡","缓存读",t.cr],["🗡️","缓存写",t.cw],["","请求",t.req+" 次"],["","成本",t.cost]]
+  .map(([g,l,v])=>`<div class="tile"><b>${g?g+" "+v:v}</b><span>${l}</span></div>`).join('')}</div>
+ <div class="lbl" style="margin-top:10px">按模型</div>
+ ${AI.byModel.map(b=>`<div class="cost-row" style="padding:3px 0"><span class="mono-t sm" style="width:120px"><b>${b.name}</b></span>${agg(b.m)}</div>`).join('')}
+ <div class="lbl" style="margin-top:10px">分轮账本(点开 → 该轮节点级瀑布)</div>
+ ${AI.rounds.map(r=>{const c=parseFloat(r.m.cost.slice(1));
+ return `<div class="cost-row"><span class="mono-t sm" style="width:56px"><b>${r.r}</b></span><span class="chip ${r.st==='accepted'?'g':'a'}" style="width:78px;justify-content:center">${r.st}</span>
+ <div class="cost-bar" style="width:${c/maxc*70}px"></div>${agg(r.m)}</div>`}).join('')}
+ <div class="lbl" style="margin-top:10px">烧钱 Top3 节点(本轮)</div>
+ <div class="xs mono dim">${AI.nodes.map(([n,c])=>`<span class="chip" style="margin-right:6px">${n} · ${c}</span>`).join('')}</div>
+ <label class="xs dim" style="display:flex;gap:5px;align-items:center;margin-top:9px"><input type="checkbox" ${state.includeAuthoring?'checked':''} onchange="state.includeAuthoring=!state.includeAuthoring;render()">计入编写期对话(+${AI.authoring.tok} · ${AI.authoring.calls} calls —— task-author 会话,单独口径)</label>
+ <div class="xs dim" style="margin-top:5px">口径同顶栏 AggInline:∑ = ↑+↓+⚡+🗡️ · 数据源 llm_calls(节点结束落库),半途中止可能缺数 —— 缺失行标灰不猜</div></div></div>`;}
+function go(v){state.view=v;render();}
+// ── switcher ────────────────────────────────────────────────────────────
+const VIEWS={C:["执行控制台(撤决策钮+AI消耗完善)",viewConsole],A:["验货台 A′(进度+决策·全confirm)",viewAccept]};
+const ORD=['C','A'];
+function render(){$('#app').innerHTML=VIEWS[state.view][1]();$('#vlabel').innerHTML=`<i>${ORD.indexOf(state.view)+1}/${ORD.length}</i> ${VIEWS[state.view][0]}`;history.replaceState(null,'',' #'.replace(' ','')+'view='+(state.view==='C'?'console':'accept'));}
+function cyc(d){state.view=ORD[(ORD.indexOf(state.view)+d+ORD.length)%ORD.length];render();}
+$('#prev').onclick=()=>cyc(-1);$('#next').onclick=()=>cyc(1);
+addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)||document.activeElement.isContentEditable)return;if(e.key==='ArrowLeft')cyc(-1);if(e.key==='ArrowRight')cyc(1);if(e.key==='Escape')closeDlg();});
+const m=location.hash.match(/view=(console|accept)/i);if(m)state.view=m[1].toLowerCase()==='console'?'C':'A';
+render();
+</script>
+</body>
+</html>

@@ -31,6 +31,20 @@ import { batchRelPath } from "./task-artifact-sync"
  *  consumers (workflow YAML `$vars.prev_handoff_paths`) read the same string. */
 export const PREV_HANDOFF_PATHS_KEY = "prev_handoff_paths"
 
+/** phase-handoff-chaining (ADR-0019 §1 边界): whether the phase being launched is
+ *  the task's LAST one. Always injected ("true"/"false"), never omitted — an
+ *  unresolved `$inputs.X` reference survives substitution as a literal, and the
+ *  workflow branches on this value, so a missing key would read as a bogus word
+ *  rather than as "false" (contrast PREV_HANDOFF_PATHS_KEY, which is omitted when
+ *  empty and therefore needs spec-resolve's sentinel dance).
+ *
+ *  Why the workflow needs it: ship produces `handoff.md` for the NEXT phase's
+ *  execution session. On the final phase there is no next session — the file would
+ *  have no reader at all (the board's acceptance hint already hides itself there,
+ *  see acceptance-surface's `hasNextPhase`; archiving never reads it; and
+ *  collectPrevHandoffPaths only ever picks up `index < targetPhaseIndex`). */
+export const IS_FINAL_PHASE_KEY = "is_final_phase"
+
 // SG9 (ticket 06): composite requires subunits.length >= 2 (1-subunit → simple
 // workflow_chain). The dispatch seam (TasksService.readyTask) uses the same
 // threshold; materialize + isCompositeTask (workflow-executor) mirror it so
@@ -265,6 +279,12 @@ export function buildCompositeInputValues(
   }
 }
 
+/** Flows that execute a phase's authored Batch directory (spec.md + issues/)
+ *  as their work plan. Matched on the ref's basename so both `matt-spec-dev`
+ *  and `built-in/matt-spec-dev` hit. Adding a flow here means its phases must
+ *  ship a final acceptance ticket — see check ④ in resolveV4Phases. */
+const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
+
 /**
  * The v4 ready-gate's phase contract, as a pure function.
  *
@@ -284,9 +304,15 @@ export function buildCompositeInputValues(
  *      vocabulary resolves (${goal}/${ac}/${phase.slug}/${phase.spec_dir}/${task.home}/
  *      ${task_artifacts_dir}); unknown or empty-resolving placeholders surface as
  *      `phase:<i>:input:<key>` too (never a 500 — v3 AC3 discipline inherited).
+ *   ④ (batch-consuming flows only, see BATCH_CONSUMING_FLOWS) the phase's `issues/`
+ *      dir contains a final acceptance ticket (`*-e2e-*.md`) ⇒ miss:
+ *      `phase:<i>:no-final-verification`. Structural, not stylistic: for these
+ *      flows the tickets ARE the work plan, and that one ticket is the place a
+ *      real browser / API walkthrough happens.
  *
  * ① and ② run independently so the UI sees every defect at once; ③ only runs when ②
- * hit (no workflow content to parse otherwise). A phase that passes all three yields a
+ * hit (no workflow content to parse otherwise); ④ needs a spec on disk, so it is
+ * skipped when ① already missed. A phase that passes all four yields a
  * TaskV4PhaseConfig. Empty/missing phases ⇒ single `phase:0:no-phases`. Throws nothing
  * — the caller turns a non-empty missing list into TaskReadyGateError.
  *
@@ -347,6 +373,22 @@ export function resolveV4Phases(args: {
         missing.push(`phase:${i}:input:${def.name}`)
       }
     }
+    // ④ batch-consuming flows must ship a final acceptance ticket.
+    // For these flows the batch's tickets ARE the work plan, so the final
+    // `NN-e2e-*` ticket is structural: it is where a real browser (or an
+    // API-level walkthrough) runs, and the flow routes to it by that filename.
+    // Enforced here because the writing convention alone was not enough — a
+    // batch with no acceptance ticket would otherwise sail through, and the
+    // workflow's once-existing fallback gate (integration-gate) is gone.
+    // Scoped to the flows that actually read the batch, so a self-built or
+    // non-batch flow is never told to invent a ticket it will not consume.
+    if (specOk && BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
+      const issueDir = path.join(path.dirname(absSpec), 'issues')
+      const hasFinalTicket =
+        fs.existsSync(issueDir) &&
+        fs.readdirSync(issueDir).some((f) => f.endsWith('.md') && f.includes('-e2e-'))
+      if (!hasFinalTicket) missing.push(`phase:${i}:no-final-verification`)
+    }
     if (specOk) {
       resolved.push({
         index: i,
@@ -405,17 +447,21 @@ export function resolveTaskLaunchStep(args: {
     format?: string
     phases?: TaskV4PhaseConfig[]
   }
-  const phase = ext.format === "v4"
-    ? (ext.phases ?? []).find((p) => p.index === (phaseIndex ?? 1))
-    : undefined
+  const v4Phases = ext.format === "v4" ? (ext.phases ?? []) : []
+  const phase = v4Phases.find((p) => p.index === (phaseIndex ?? 1))
 
   if (phase) {
+    // "Last" by MAX index rather than array position — robust to ordering, and the
+    // phase set here is the gate-resolved one (a missing spec never dispatches).
+    const lastIndex = v4Phases.reduce((max, p) => Math.max(max, p.index), phase.index)
     const stepInputValues: Record<string, string> = {
       ...(args.inputOverride ?? phase.inputValues),
       ...(feedback && feedback.trim() ? { feedback } : {}),
       // phase-handoff-chaining: accepted predecessor handoffs, newline-joined.
       // Same-phase rerun/fix never passes it ⇒ never injected.
       ...(args.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: args.prevHandoffPaths.join("\n") } : {}),
+      // Always injected (see IS_FINAL_PHASE_KEY) — the workflow branches on it.
+      [IS_FINAL_PHASE_KEY]: phase.index === lastIndex ? "true" : "false",
       // Stamps kept: the var pool exposes them to the workflow and a crash-recovery
       // re-launch of THIS row re-derives identically from the persisted input_values.
       _phase_index: String(phaseIndex ?? 1),

@@ -132,12 +132,20 @@ function probeProjectConventions(projectPath: string): { line: string; allMissin
 export class ArtifactAccessError extends Error {
   constructor(
     message: string,
-    public readonly code: "FORBIDDEN" | "NOT_FOUND",
+    public readonly code: "FORBIDDEN" | "NOT_FOUND" | "TOO_LARGE",
   ) {
     super(message)
     this.name = "ArtifactAccessError"
   }
 }
+
+/** Read ceiling for batch-area files (acceptance-evidence surface reads whole
+ *  files into the UI). Symmetric with the PUT /home-file body cap in
+ *  routes/tasks.ts (512_000) — what the write door admits, the read door can
+ *  serve. TOO_LARGE is thrown BEFORE any readFileSync. The web mirrors this
+ *  constant (lib/tasks-api.ts) to pre-gate rows, but the server check is the
+ *  authoritative one. */
+export const MAX_HOME_FILE_READ_BYTES = 512_000
 
 export class TaskHomeService {
   private readonly baseDir: string
@@ -822,8 +830,12 @@ export class TaskHomeService {
   //   • first segment must be `.scratch`  — context.md/manifest.json already have
   //     GET /:id/context, artifacts/ has its own endpoint, skills/ + .claude/
   //     are system-managed. Nothing legitimately editable lives elsewhere.
-  //   • `.md` suffix (read AND write)     — spec.md/brief.md/issues/*.md are
-  //     all markdown; no executables land through this door.
+  //   • write stays `.md`-only (mode "file") — spec/brief/issues are markdown;
+  //     no executables land through the write door.
+  //   • read widened to ANY file under `.scratch/` (mode "read") + a byte cap —
+  //     the acceptance evidence面 needs the round's non-md artifacts (e2e-data/
+  //     *.txt/*.json, probe/*.cjs). Same prefix/no-escape guards; the cap
+  //     (MAX_HOME_FILE_READ_BYTES) keeps the whole-file-into-UI pattern bounded.
   //   • absolute paths rejected outright  — gateV4 accepts absolute specPaths
   //     (agent direct-writes), but the UI editor only serves home-relative.
   // Write creates parents (mkdir -p) so a UI-added phase row can seed its spec
@@ -831,12 +843,14 @@ export class TaskHomeService {
   // involved — file content is not the task row).
 
   /** Guard shared by readHomeFile/writeHomeFile/listHomeDir. `mode:"file"`
-   *  additionally requires the `.md` suffix; `mode:"dir"` (batch file listing,
+   *  additionally requires the `.md` suffix (the WRITE door); `mode:"read"` is
+   *  "file" minus the suffix rule (the evidence READ door — any batch file, size
+   *  capped by the caller after resolve); `mode:"dir"` (batch file listing,
    *  ADR-0018 spec-family visibility) drops the suffix rule but keeps every
    *  other rule identical (`.scratch/` prefix / no-escape / no absolute /
    *  no null bytes). Returns the resolved absolute path, or throws
    *  ArtifactAccessError (FORBIDDEN) on any rule violation. */
-  private resolveHomePath(taskId: string, requestedPath: string, mode: "file" | "dir"): string {
+  private resolveHomePath(taskId: string, requestedPath: string, mode: "file" | "dir" | "read"): string {
     if (requestedPath.includes("\0")) {
       throw new ArtifactAccessError(
         "home-file path must not contain null bytes",
@@ -875,12 +889,14 @@ export class TaskHomeService {
     return resolved
   }
 
-  /** List the `.md` files under a `.scratch/` directory of the task home
+  /** List the files under a `.scratch/` directory of the task home
    *  (ADR-0018 batch-file visibility: spec.md / spec-rN.md / fix-feedback-rN /
-   *  fix-report-rN / issues/*.md). Depth ≤2 below the given dir, cap 200,
+   *  fix-report-rN / issues/*.md). Default is `.md`-only; `includeAll` admits
+   *  every regular file except dotfiles (acceptance evidence: e2e-data/*.txt,
+   *  probe/*.json …). Depth ≤2 below the given dir, cap 200,
    *  paths home-relative posix (directly usable as readHomeFile arguments).
    *  NOT_FOUND when the dir is missing (UI renders the empty state). */
-  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+  listHomeDir(taskId: string, requestedDir: string, includeAll = false): Array<{ path: string; mtime: string; bytes: number }> {
     const home = this.homePath(taskId)
     const dirAbs = this.resolveHomePath(taskId, requestedDir, "dir")
     if (!fs.existsSync(dirAbs) || !fs.statSync(dirAbs).isDirectory()) {
@@ -902,7 +918,9 @@ export class TaskHomeService {
           walk(full, depth + 1)
           continue
         }
-        if (!ent.isFile() || !ent.name.toLowerCase().endsWith(".md")) continue
+        if (!ent.isFile()) continue
+        if (ent.name.startsWith(".")) continue // dotfile noise (.DS_Store, editor swap) — never evidence
+        if (!includeAll && !ent.name.toLowerCase().endsWith(".md")) continue
         try {
           const st = fs.statSync(full)
           out.push({
@@ -1033,15 +1051,26 @@ export class TaskHomeService {
     return out
   }
 
-  /** Read a `.scratch/**.md` file relative to the task home. NOT_FOUND (404)
-   *  when the whitelisted path is missing — the UI maps that to its "create
-   *  skeleton" empty state. */
+  /** Read a `.scratch/**` file relative to the task home (ANY extension —
+   *  evidence files include e2e txt/json/probe scripts). NOT_FOUND (404) when
+   *  the whitelisted path is missing — the UI maps that to its "create
+   *  skeleton"/"collect pending" empty states. TOO_LARGE before the read when
+   *  the file exceeds MAX_HOME_FILE_READ_BYTES. */
   readHomeFile(taskId: string, requestedPath: string): { path: string; content: string } {
-    const resolved = this.resolveHomePath(taskId, requestedPath, "file")
-    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    const resolved = this.resolveHomePath(taskId, requestedPath, "read")
+    let st: fs.Stats
+    try {
+      st = fs.statSync(resolved)
+    } catch {
+      throw new ArtifactAccessError(`batch file not found: ${requestedPath}`, "NOT_FOUND")
+    }
+    if (!st.isFile()) {
+      throw new ArtifactAccessError(`batch file not found: ${requestedPath}`, "NOT_FOUND")
+    }
+    if (st.size > MAX_HOME_FILE_READ_BYTES) {
       throw new ArtifactAccessError(
-        `batch file not found: ${requestedPath}`,
-        "NOT_FOUND",
+        `batch file too large to read: ${requestedPath} (${st.size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
+        "TOO_LARGE",
       )
     }
     const content = fs.readFileSync(resolved, "utf-8")

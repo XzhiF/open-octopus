@@ -7,6 +7,11 @@ const execFileAsync = promisify(execFile)
 
 const GIT_TIMEOUT_MS = 30_000
 const GIT_MAX_BUFFER = 1024 * 1024
+/** Diff-family buffer (验货台 round-diff): numstat of a huge branch diff and a
+ *  single-file patch both blow past the 1MB default; the READ ceiling for
+ *  patches is still enforced at 512K chars above that (truncated flag). */
+export const GIT_DIFF_MAX_BUFFER = 16 * 1024 * 1024
+export const GIT_PATCH_CHAR_CAP = 512_000
 
 function gitError(projectPath: string, args: string[], cause: unknown): Error {
   const message = cause instanceof Error ? cause.message : String(cause)
@@ -19,12 +24,13 @@ async function runGit(
   projectPath: string,
   args: string[],
   timeoutMs = GIT_TIMEOUT_MS,
+  maxBufferBytes = GIT_MAX_BUFFER,
 ): Promise<{ stdout: string; stderr: string }> {
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
       cwd: projectPath,
       timeout: timeoutMs,
-      maxBuffer: GIT_MAX_BUFFER,
+      maxBuffer: maxBufferBytes,
     })
     return { stdout: stdout.trim(), stderr: stderr.trim() }
   } catch (error: unknown) {
@@ -239,6 +245,131 @@ export class GitOps {
     const head = await this.getHeadCommit(repoPath)
     return { branch, commit: head.slice(0, 8) }
   }
+
+  // ── 验货台 (acceptance v2)：range-diff family ──────────────────────────
+  // All read-only; called with FULL 40-char SHAs from executions.start/end_commit
+  // (never user-typed refs — the round-evidence service validates first).
+  // execFile array args → no shell; pathspecs use :(literal) magic.
+
+  /** `rev-parse --verify <sha>^{commit}` — false on missing object/dir. The
+   *  honest evidence-expiry probe (worktree gone but main clone holds the
+   *  object store → still true when run against main_path). */
+  async commitExists(projectPath: string, sha: string): Promise<boolean> {
+    try {
+      await runGit(projectPath, ["rev-parse", "--verify", "--quiet", `${sha}^{commit}`])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** commits in (from..to] — cheap count for the stat strip. */
+  async countCommits(projectPath: string, from: string, to: string): Promise<number> {
+    try {
+      const { stdout } = await runGit(projectPath, ["rev-list", "--count", `${from}..${to}`])
+      return parseInt(stdout, 10) || 0
+    } catch {
+      return 0
+    }
+  }
+
+  /** Diffstat of start..end: `-M` rename detection, `-z` machine-safe parse.
+   *  name-status drives entry arity/order; numstat is consumed positionally
+   *  against it (both list the same files in the same order for one command).
+   *  files capped at `cap` → truncated flag (aggregate sums stay honest up
+   *  to the cap). Binary pairs come as "-\t-" → binary:true, 0/0. */
+  async diffStat(
+    projectPath: string,
+    from: string,
+    to: string,
+    cap = 3000,
+  ): Promise<{ files: DiffFileEntry[]; truncated: boolean }> {
+    const { stdout: nsOut } = await runGit(
+      projectPath, ["diff", "-M", "--name-status", "-z", from, to],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    const { stdout: numOut } = await runGit(
+      projectPath, ["diff", "-M", "--numstat", "-z", from, to],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    // name-status -z: STATUS\0path | Rxxx\0old\0new | Cxxx\0old\0new (NUL-terminated triples)
+    const nsTok = nsOut.split("\0").filter((t) => t.length > 0)
+    const entries: { status: string; path: string; oldPath?: string }[] = []
+    for (let i = 0; i < nsTok.length; i++) {
+      const status = nsTok[i]!
+      const code = status[0]!
+      if (code === "R" || code === "C") {
+        const oldPath = nsTok[i + 1]!
+        const path = nsTok[i + 2]!
+        entries.push({ status: code, path, oldPath })
+        i += 2
+      } else {
+        entries.push({ status: code, path: nsTok[i + 1]! })
+        i += 1
+      }
+    }
+    // numstat -z record shapes (columns are TAB-separated; only the PATH ends
+    // at NUL): normal → "<adds>\t<dels>\t<path>"; rename/copy →
+    // "<adds>\t<dels>\t" then two more NUL-terminated tokens old/new (the lone
+    // tab of the empty path field survives the empty-filter — arity is driven
+    // by name-status, which stays authoritative for paths/order).
+    const numTok = numOut.split("\0").filter((t) => t.length > 0)
+    const files: DiffFileEntry[] = []
+    let truncated = false
+    let ti = 0
+    for (const e of entries) {
+      if (ti >= numTok.length) break // malformed tail (concurrent repo change) — stop, keep what we have
+      const rec = numTok[ti++]!
+      const first = rec.indexOf("\t")
+      const addsRaw = first < 0 ? rec : rec.slice(0, first)
+      const rest = first < 0 ? "" : rec.slice(first + 1)
+      const second = rest.indexOf("\t")
+      const delsRaw = second < 0 ? rest : rest.slice(0, second)
+      if (e.oldPath != null) ti += 2 // skip the ""/old/new path tokens (paths from name-status)
+      if (files.length >= cap) { truncated = true; continue } // keep draining to stay token-synced
+      const binary = addsRaw === "-" || delsRaw === "-"
+      files.push({
+        path: e.path,
+        ...(e.oldPath != null ? { oldPath: e.oldPath } : {}),
+        status: e.status,
+        adds: binary ? 0 : parseInt(addsRaw, 10) || 0,
+        dels: binary ? 0 : parseInt(delsRaw, 10) || 0,
+        ...(binary ? { binary: true } : {}),
+      })
+    }
+    if (entries.length > cap) truncated = true
+    return { files, truncated }
+  }
+
+  /** Unified patch for ONE file across start..end (lazy, on click).
+   *  :(literal) pathspec → glob chars in real filenames match literally. */
+  async diffPatchFor(
+    projectPath: string,
+    from: string,
+    to: string,
+    filePath: string,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const { stdout } = await runGit(
+      projectPath, ["diff", "-M", "-U3", from, to, "--", `:(literal)${filePath}`],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    if (stdout.length > GIT_PATCH_CHAR_CAP) {
+      return { patch: stdout.slice(0, GIT_PATCH_CHAR_CAP), truncated: true }
+    }
+    return { patch: stdout, truncated: false }
+  }
+}
+
+/** One row of a range-diff stat (验货台 实物 tab). */
+export interface DiffFileEntry {
+  path: string
+  /** rename/copy source (status R/C). */
+  oldPath?: string
+  /** single-letter git status code: A M D R C T. */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
 }
 
 export const gitOps = new GitOps()

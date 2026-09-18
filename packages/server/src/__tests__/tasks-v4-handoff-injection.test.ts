@@ -219,13 +219,13 @@ function seed(opts: {
 /** The input_values of the task's CURRENT instance — the row the run actually eats
  *  (replaces reading the envelope's materialized chain[0]). */
 function launchedIV(taskId: string): Record<string, string> {
-  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return JSON.parse(row.input_values) as Record<string, string>
 }
 
 function launchedRow(taskId: string) {
-  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskRoot(taskId)
+  const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return row
 }
@@ -344,15 +344,21 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
     expect(res.status, await res.clone().text()).toBe(200)
     const iv = launchedIV(taskId)
     expect("prev_handoff_paths" in iv).toBe(false)
-    // phase.inputValues 为 {} ⇒ 基线只有「轮次 stamps + $vars 管理键」。管理键是
-    // buildTaskLaunchConfig 对 v4 也注入的(D14/ADR-0018:工作流用 $vars.task_artifacts_dir
-    // / task_workflows_dir),信封时代同样如此 —— 本条要钉的是交接注入**没有多加任何键**。
+    // phase.inputValues 为 {} ⇒ 基线只有「轮次 stamps + $vars 管理键 + 末站标记」。
+    // 管理键是 buildTaskLaunchConfig 对 v4 也注入的(D14/ADR-0018:工作流用
+    // $vars.task_artifacts_dir / task_workflows_dir)，信封时代同样如此 —— 本条要钉的
+    // 是交接注入**没有多加任何键**。is_final_phase 属另一条信道（ADR-0019 §1 边界，
+    // 恒注入，见下方专门的一组），此处一并钉住它的在场。
     expect(Object.keys(iv).sort()).toEqual([
       "_phase_index",
       "_round_index",
+      "is_final_phase",
       "task_artifacts_dir",
       "task_workflows_dir",
     ])
+    // 这一轮派的正是 TWO_PHASES 的 phase2 = 末站 —— 与「键在场」同处断言，免得
+    // 只钉了键名却不知道值。语义断言见 AC6。
+    expect(iv.is_final_phase).toBe("true")
   })
 
   it("多前序中缺 handoff 的被静默跳过，存在的那条仍注入（不 fail）", async () => {
@@ -499,5 +505,69 @@ describe("AC5 — v3 任务零影响（回归）", () => {
     // 末 phase accepted → 不开新轮 ⇒ 最新行仍是那轮终态行，键不泄漏。
     expect(stubService.create).not.toHaveBeenCalled()
     expect("prev_handoff_paths" in launchedIV(taskId)).toBe(false)
+  })
+})
+
+// ── AC6 — is_final_phase（ADR-0019 §1 边界：末 phase 不产 handoff）────────
+//
+// 与 prev_handoff_paths 同族的内置注入键，但语义相反的一对：
+//   prev_handoff_paths = 「上游有什么」（前序交接路径，可选、空则键不出现）
+//   is_final_phase     = 「下游还有没有」（末站标记，**恒注入** true/false）
+// 恒注入是刻意的：引擎对「未解析引用」原样保留字面量，若像 prev_handoff_paths
+// 那样空则不注入，工作流读到的会是 `$inputs.is_final_phase` 这个裸词而非 "false"，
+// 而 ship-pr 要在提示词里按它分支（末站跳过 handoff.md）。
+describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）", () => {
+  it("被派发的是末 phase → \"true\"（TWO_PHASES 里 accept 1 → 派发 2）", async () => {
+    const { taskId } = seed({ handoffs: { 1: "h" } })
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect(((await res.json()) as { dispatch?: Record<string, unknown> }).dispatch)
+      .toMatchObject({ phase_index: 2 })
+
+    const iv = launchedIV(taskId)
+    expect(iv.is_final_phase).toBe("true")
+    // 执行 create() 拿到同一份 stepInputValues（与 AC1 同一条读法）。
+    const createCall = stubService.create.mock.calls.at(-1)!
+    expect((createCall[1].input_values as Record<string, string>).is_final_phase).toBe("true")
+  })
+
+  it("后面还有 phase → \"false\"（THREE_PHASES 里 accept 1 → 派发 2）", async () => {
+    const { taskId } = seed({ phases: THREE_PHASES, handoffs: { 1: "h" } })
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect(((await res.json()) as { dispatch?: Record<string, unknown> }).dispatch)
+      .toMatchObject({ phase_index: 2 })
+
+    expect(launchedIV(taskId).is_final_phase).toBe("false")
+  })
+
+  it("手动推进同行为（/advance 与 autoAdvance 两路不许分叉）", async () => {
+    const { taskId } = seed({ phases: THREE_PHASES, autoAdvance: false, handoffs: { 1: "h" } })
+    const parked = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(((await parked.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
+
+    const adv = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
+    expect(adv.status, await adv.clone().text()).toBe(200)
+    expect(launchedIV(taskId).is_final_phase).toBe("false")
+  })
+
+  it("打回重跑轮也带 —— 与前序在场与否无关（恒注入）", async () => {
+    // 打回 rerun 是「同 phase 开下一轮」：prev_handoff_paths 按设计不注入（那是给
+    // 跨 phase 的），但末站标记仍须在场，否则 ship-pr 那段提示词读到的会是未解析的
+    // 字面量 `$inputs.is_final_phase` 而不是 "false" —— 恒注入的全部意义在此。
+    const { taskId } = seed({
+      phases: THREE_PHASES,
+      ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
+      roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
+      handoffs: { 1: "# handoff p1\n" },
+    })
+    const res = await postAcceptance(taskId, {
+      phase_index: 2, round_index: 1, decision: "rejected", feedback: "接口漏了分页",
+    })
+    expect(res.status, await res.clone().text()).toBe(200)
+    const iv = launchedIV(taskId)
+    expect("prev_handoff_paths" in iv).toBe(false) // 同 phase 重跑，无跨 phase 交接
+    expect(iv.is_final_phase).toBe("false")        // phase 2/3 —— 后面还有一站
+    expect(iv._round_index).toBe("2")              // 确实是重跑轮，不是首轮
   })
 })

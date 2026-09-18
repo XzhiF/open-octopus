@@ -11,7 +11,8 @@ import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/t
 
 const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
-  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, pushSpy,
+  mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
+  pushSpy, mockFetchAgentEvents,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -21,8 +22,13 @@ const {
   mockAbort: vi.fn(),
   mockReopen: vi.fn(),
   mockCancelTrigger: vi.fn(),
+  mockPause: vi.fn(),
+  mockResume: vi.fn(),
   pushSpy: vi.fn(),
+  mockFetchAgentEvents: vi.fn(),
 }))
+
+vi.mock("@/lib/api-client", () => ({ fetchAgentEvents: mockFetchAgentEvents }))
 
 vi.mock("@/lib/tasks-api", () => ({
   getTask: mockGetTask,
@@ -32,6 +38,8 @@ vi.mock("@/lib/tasks-api", () => ({
   abortTask: mockAbort,
   reopenTask: mockReopen,
   cancelTaskTrigger: mockCancelTrigger,
+  pauseTask: mockPause,
+  resumeTask: mockResume,
   // 其余导入面（task-modal / trigger-dialog 等）——测试不触发，桩即可
   deleteTask: vi.fn(), createTask: vi.fn(), updateTask: vi.fn(), updateSpecField: vi.fn(),
   listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(),
@@ -58,7 +66,7 @@ vi.mock("../../authoring/phase-spec-dialog", () => ({
   specFileClass: () => ({ label: "md", tone: "bg-muted" }),
   batchDirOf: (p: string) => p.split("/").slice(0, -1).join("/"),
 }))
-vi.mock("../../acceptance-modal", () => ({ AcceptanceModal: () => null }))
+vi.mock("../../acceptance/acceptance-surface", () => ({ AcceptanceSurface: () => <div data-acceptance-surface-stub /> }))
 vi.mock("../../trigger-dialog", () => ({
   TriggerDialog: () => null,
   TriggerActions: () => null,
@@ -126,8 +134,18 @@ function pv(index: number, name: string, status: TaskPhaseView["status"], over: 
   }
 }
 
-function derivedOf(phaseViews: TaskPhaseView[], isV4 = true): TaskDerivedView {
-  return { taskStatus: "running", isV4, phaseViews }
+/** `taskStatus` defaults to 在跑，which is what most fixtures want; a case whose task
+ *  row is TERMINAL must pass the matching value. The server's derive cannot contradict a
+ *  terminal row (task.status 'done'/'aborted'短路上优先，见 derive-task-view.ts 的分支链),
+ *  so a fixture pairing a 'done' row with a 'running' derived view is not a state the
+ *  product can be in — and since the console chrome now reads the derived status (as the
+ *  board already does), such a fixture would assert against a fiction. */
+function derivedOf(
+  phaseViews: TaskPhaseView[],
+  isV4 = true,
+  taskStatus: TaskDerivedView["taskStatus"] = "running",
+): TaskDerivedView {
+  return { taskStatus, isV4, phaseViews }
 }
 
 beforeEach(() => {
@@ -135,10 +153,13 @@ beforeEach(() => {
   mockGetTask.mockReset(); mockListArtifacts.mockReset(); mockFetchLLMCalls.mockReset()
   mockGetBatchTree.mockReset(); mockPostAcceptance.mockReset()
   mockAbort.mockReset(); mockReopen.mockReset(); mockCancelTrigger.mockReset()
+  mockPause.mockReset(); mockResume.mockReset()
   pushSpy.mockReset()
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: null })
   mockListArtifacts.mockResolvedValue([])
   mockGetBatchTree.mockResolvedValue([])
+  mockFetchAgentEvents.mockReset()
+  mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-x", events: [], source: "sqlite", _degraded: false, _message: null })
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -224,15 +245,68 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(await screen.findByText(/📄 spec\.md 未落盘/)).toBeTruthy()
   })
 
-  it("awaiting_review：交付报告 + 判决条，验收通过打 postAcceptance", async () => {
-    mockPostAcceptance.mockResolvedValue({ next_action: "dispatched", task: {}, dispatch: { round_index: 2 } })
+  it("awaiting_review：交付报告在位，但决策入口撤出控制台（ADR-0022）→「去验货台」CTA 切 tab，不打 postAcceptance", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views) })
     expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
-    fireEvent.click(screen.getByText(/验收通过（放行下一 Phase）/))
-    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("task-1", { phase_index: 2, round_index: 1, decision: "accepted" }))
-    expect(screen.getByText(/完整三栏证据面/)).toBeTruthy()
+    // 旧的 ✓通过/✕打回 判决条已撤 → 控制台不再直通 postAcceptance
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    const cta = await screen.findByTestId("console-open-acceptance")
+    expect(cta.textContent).toContain("去验货台")
+    fireEvent.click(cta)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
+  })
+
+  it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    // 有待验收轮 → tab 条亮出两档，surface 未挂
+    const acceptTab = await screen.findByTestId("console-tab-accept")
+    expect(acceptTab.textContent).toContain("P1·R1")
+    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
+    // 交付报告里的「验货台核对实物 →」= 切 tab，不是开弹窗
+    fireEvent.click(screen.getByText(/验货台核对实物/))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    // 切回执行控制台
+    fireEvent.click(screen.getByTestId("console-tab-console"))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull())
+    expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
+    // 导航条「🔍 验货台」也走切 tab（chip 直接文本同为 🔍 验货台，取条内钮的锚点）
+    fireEvent.click(document.querySelector("[data-acceptance-open-bar]") as HTMLElement)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+  })
+
+  it("startOnAcceptance（看板「验收」按钮）：挂载即落验货台 tab", async () => {
+    const t = makeTask("awaiting_review")
+    mockGetTask.mockResolvedValue({ ...t, derived: derivedOf([pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]) } as never)
+    render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} startOnAcceptance />)
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+  })
+
+  it("过程回放（走查回灌）：agent-events 节点边界垫进活动流，事后打开不再「暂无事件」", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
+        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
+        { nodeId: "ticket-01", event: "agent_event", timestamp: "2026-09-21T09:02:00Z" },
+        { nodeId: "ship", event: "end", timestamp: "2026-09-21T09:10:00Z" },
+      ],
+    })
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    expect(await screen.findByText(/回放 · spec-resolve 起/)).toBeTruthy()
+    expect(screen.getByText(/回放 · ship 收/)).toBeTruthy()
+    // 非边界事件不进 feed；引擎内部节点不算过程
+    expect(screen.queryByText(/agent_event/)).toBeNull()
+    expect(screen.queryByText(/__engine_init__/)).toBeNull()
+    // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
+    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
   })
 
   it("done：默认战报（4 数字瓦片 + 轮次账本 + 产物），rail「任务战报」可切回 phase 面", async () => {
@@ -241,7 +315,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     ])
     const t = makeTask("done")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
     expect(await screen.findByText("任务战报")).toBeTruthy()
     expect(screen.getByText("墙钟总用时")).toBeTruthy()
     expect(screen.getByText("AI 总成本")).toBeTruthy()
@@ -265,6 +339,61 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     })
     expect(await screen.findByText("对账回收：引擎进程已丢失")).toBeTruthy()
     expect(screen.queryByText("上一轮遗留键")).toBeNull()
+  })
+
+  it("暂停中：chrome 读派生态 —— pill 显「已暂停」、给「恢复」而非「暂停」、秒表让位", async () => {
+    // 持久 task.status 仍是 'running'（暂停不写 task 行），所以这条同时钉住「整套
+    // chrome 必须读 effectiveStatusOf 派生态」这件事：若退回读 task.status，pill 会
+    // 自称「执行中」并继续渲染秒表，而卡片那边显示「已暂停」—— 两个面自相矛盾。
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    expect(await screen.findByText(/⏸ 已暂停/)).toBeTruthy()
+    expect(document.querySelector('[data-task-modal-status="paused"]')).toBeTruthy()
+    // 暂停不是「在跑」：给恢复，不给暂停。
+    expect(document.querySelector("[data-task-resume]")).toBeTruthy()
+    expect(document.querySelector("[data-task-pause]")).toBeNull()
+    // 中止必须仍然在 —— 暂停的退出只有恢复与中止。
+    expect(document.querySelector("[data-task-abort]")).toBeTruthy()
+  })
+
+  it("暂停中：没有 running 轮就不给「暂停」钮（停在审批等人的运行不在其列）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "pending_approval", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    // 有活轮但没在 running → 不给暂停；也没 paused 轮 → 不给恢复。
+    expect(await screen.findByTestId("phase-timeline")).toBeTruthy()
+    expect(document.querySelector("[data-task-pause]")).toBeNull()
+    expect(document.querySelector("[data-task-resume]")).toBeNull()
+  })
+
+  it("运行中：点「暂停」打 pauseTask；点「恢复」打 resumeTask（不带 body，与工作流页一致）", async () => {
+    mockPause.mockResolvedValue({})
+    mockResume.mockResolvedValue({})
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByText(/⏸ 暂停/))
+    await waitFor(() => expect(mockPause).toHaveBeenCalledWith("task-1"))
+
+    // 恢复钮只在有 paused 轮时出现 —— 换一份盘面重渲染。
+    const t2 = makeTask("running")
+    renderConsole(t2, {
+      ...t2,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    fireEvent.click(await screen.findByText(/▶ 恢复/))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
   })
 
   it("ready+已定时：条内 ⏰ 已定时 token + 取消触发（打 cancelTaskTrigger），大触发钮让位", async () => {
@@ -301,7 +430,7 @@ describe("TaskModal 接线（新壳）", () => {
 
   it("done/failed → 同壳（战报 + 状态 pill），不再渲染「任务完成/任务失败」独立横幅", async () => {
     const t = makeTask("done")
-    mockGetTask.mockResolvedValue({ ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "accepted")]) })
+    mockGetTask.mockResolvedValue({ ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "accepted")], true, "done") })
     renderModal(t)
     expect(await screen.findByText("任务战报")).toBeTruthy()
     expect(document.querySelector('[data-task-modal-status="done"]')).toBeTruthy()

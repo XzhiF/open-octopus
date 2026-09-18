@@ -271,7 +271,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     expect(config.repos[0]).toMatchObject({ name: REPO, main_path: repoDir })
 
     // 一次运行 = 一行 executions；任何 schedule 表都没写。
-    const root = execs.findLatestTaskRoot("t-ok")!
+    const root = execs.findLatestTaskInstance("t-ok")!
     expect(root.status).toBe("running")
     expect(root.parent_id).toBe("0")
     expect(root.workflow_ref).toBe("built-in/demo")
@@ -288,7 +288,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     await expect(service.triggerTask("t-409")).rejects.toThrow(TaskStatusConflictError)
     await expect(service.triggerTask("t-409")).rejects.toThrow(/预建工作区失败/)
     expect(taskRow("t-409").status).toBe("ready")
-    expect(execs.findLatestTaskRoot("t-409")).toBeNull()
+    expect(execs.findLatestTaskInstance("t-409")).toBeNull()
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces").get()).toEqual({ c: 0 })
     expect(scheduleRowCount()).toBe(0)
   })
@@ -340,7 +340,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     await service.triggerTask("t-v3")
     expect(spyV3).toHaveBeenCalledTimes(1)
     expect(taskRow("t-v3").status).toBe("running")
-    expect(execs.findLatestTaskRoot("t-v3")!.phase_index).toBeNull() // v3 不打 phase/round 标
+    expect(execs.findLatestTaskInstance("t-v3")!.phase_index).toBeNull() // v3 不打 phase/round 标
     spyV3.mockRestore()
 
     // composite（subunits≥2）：协调工作区按设计不带项目（spec D4），扇出由 composition 自己建
@@ -394,7 +394,7 @@ describe("ready gate 项目预检（B1）", () => {
     insertTask("t-gate", ["ghost-repo"], { status: "draft" })
     expect(() => service.readyTask("t-gate")).toThrow(/project:ghost-repo/)
     // 预检发生在入队，不等触发：一行都不该被建出来
-    expect(execs.findLatestTaskRoot("t-gate")).toBeNull()
+    expect(execs.findLatestTaskInstance("t-gate")).toBeNull()
   })
 
   it("v4 + 可解析项目 → missing 不含 project:（phase 缺陷照常报，不误伤仓库）", () => {

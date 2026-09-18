@@ -99,10 +99,7 @@ octopus repos update/pull/clone/rebuild-index
 
 
 ## 可用资源 (Octopus 资源库)
-<!-- octopus-resources -->
 
-### 使用方式
-- 搜索更多: 使用 octo-resource-manager skill
-- 浏览全部: octopus resource list
-
-<!-- /octopus-resources -->
+- 浏览清单: `octopus resource list`（CLI）· `GET /api/resources`（服务端）
+- 搜索与安装: octo-resource-manager skill
+- 全量清单快照: [docs/resources.md](./docs/resources.md) — 静态快照，资源装卸不再自动改写任何文档

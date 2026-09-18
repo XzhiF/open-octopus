@@ -59,6 +59,8 @@ interface TaskModalProps {
   onMutated: () => void
   /** Page adopts a draft the task-author clone just created (new-task flow). */
   onDraftResolved?: (task: TaskView) => void
+  /** 看板「验收」按钮：打开即落在执行控制台的「验货台」tab。 */
+  startOnAcceptance?: boolean
 }
 
 type ModalMode =
@@ -128,7 +130,7 @@ const STATUS_TONE: Record<string, string> = {
 
 // ── TaskModal ───────────────────────────────────────────────────────
 
-export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
+export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved, startOnAcceptance }: TaskModalProps) {
   const mode = resolveMode(task)
   // 模板选择页(直建第一屏)只是单列表单 → 用紧凑弹窗;工作台/执行视图才需要宽面。
   const isTemplate = mode === "authoring-template"
@@ -168,20 +170,27 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     const W = (modalSize.w / 100) * window.innerWidth, H = (modalSize.h / 100) * window.innerHeight
     document.body.style.cursor = "grabbing"
     document.body.style.userSelect = "none"
+    // 卡拖拽硬防（2026-09-16 用户回灌：鼠标滑动=界面死）：窗口失焦/在浏览器外
+    // 松手时 pointerup 永不到达，监听器残留会让此后每个 move 搬窗 + body 样式
+    // 泄漏。buttons===0（下一次 move 已无按键按下）与 pointercancel 双兜底收兵。
+    const stop = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.removeEventListener("pointercancel", stop)
+    }
     const onMove = (ev: PointerEvent) => {
+      if (ev.buttons === 0) { stop(); return }
       setDragOffset({
         x: clampCenter(ev.clientX - sx, W, window.innerWidth),
         y: clampCenter(ev.clientY - sy, H, window.innerHeight),
       })
     }
-    const onUp = () => {
-      document.body.style.cursor = ""
-      document.body.style.userSelect = ""
-      document.removeEventListener("pointermove", onMove)
-      document.removeEventListener("pointerup", onUp)
-    }
+    const onUp = () => stop()
     document.addEventListener("pointermove", onMove)
     document.addEventListener("pointerup", onUp)
+    document.addEventListener("pointercancel", stop)
   }, [isFullscreen, dragOffset, modalSize])
   // 🎪 边/角缩放:对边锚定(被拖的边跟手),尺寸与位置都 clamp 在视口内 ——
   // 任何方向都拖不出屏幕。模板页/全屏不给把手。
@@ -197,7 +206,16 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
     const minW = vw * 0.3, minH = vh * 0.35
     document.body.style.cursor = "nwse-resize"
     document.body.style.userSelect = "none"
+    // 同拖窗的卡拖拽硬防（见 startHeaderDrag 注）。
+    const stop = () => {
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("pointermove", onMove)
+      document.removeEventListener("pointerup", onUp)
+      document.removeEventListener("pointercancel", stop)
+    }
     const onMove = (ev: PointerEvent) => {
+      if (ev.buttons === 0) { stop(); return }
       const dx = ev.clientX - sx, dy = ev.clientY - sy
       let W = sw, H = sh, X = ox, Y = oy
       if (edge.r) { W = sw + dx; X = ox + dx / 2 }
@@ -209,14 +227,10 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
       setModalSize({ w: (W / vw) * 100, h: (H / vh) * 100 })
       setDragOffset({ x: clampCenter(X, W, vw), y: clampCenter(Y, H, vh) })
     }
-    const onUp = () => {
-      document.body.style.cursor = ""
-      document.body.style.userSelect = ""
-      document.removeEventListener("pointermove", onMove)
-      document.removeEventListener("pointerup", onUp)
-    }
+    const onUp = () => stop()
     document.addEventListener("pointermove", onMove)
     document.addEventListener("pointerup", onUp)
+    document.addEventListener("pointercancel", stop)
   }, [modalSize, dragOffset])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -329,6 +343,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
                 task={task}
                 onMutated={onMutated}
                 onClose={() => onOpenChange(false)}
+                startOnAcceptance={startOnAcceptance}
                 chrome={{
                   isFullscreen,
                   onToggleFullscreen: () => setIsFullscreen((f) => !f),

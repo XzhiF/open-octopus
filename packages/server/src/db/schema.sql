@@ -423,14 +423,18 @@ CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, created_at DESC)
   WHERE task_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ws_task ON workspaces(task_id) WHERE task_id IS NOT NULL;
 
--- Single-instance latch, ROOT executions only (parent_id = '0'). A violating insert IS
--- the 「已触发/排队中/本轮在飞」 answer — the pre-v41 equivalent was ~10 guard queries
--- plus a borrowed UNIQUE index on schedule_executions.
+-- Single-instance latch over TASK INSTANCES: a root row (v3/composite coordinator and
+-- everything pre-v44) plus every tagged v4 ROUND (parent_id = '0' OR phase_index IS NOT
+-- NULL). A violating insert IS the 「已触发/排队中/本轮在飞」 answer — the pre-v41
+-- equivalent was ~10 guard queries plus a borrowed UNIQUE index on schedule_executions.
 --
--- Roots only, because a composite task legitimately runs several CHILD executions of the
--- same task concurrently (the engine's existing parent_id/child_index nesting, which the
--- built-in job schedules inside the parent). v4 phase rounds are sequential, so the root
--- latch is exactly the gate they need.
+-- Why rounds are IN on purpose (task-exec-tree, 2026-09-15): a v4 round now chains under
+-- the task's previous instance (parent_id = 上一轮), so the task's run history reads as
+-- ONE tree in the ws view. The chains must keep holding the latch or 「一个任务一个在飞」
+-- would evaporate for every round after the first. What stays OUT are the composite
+-- subunit ARMS (parent_id != '0' AND phase_index IS NULL): a composite legitimately runs
+-- several arms of the same task at once — the coordinator root is the instance, the arms
+-- are its internals.
 --
 -- Written as NOT IN (terminal) rather than IN (active) ON PURPOSE: an execution is alive
 -- in five statuses (pending, running, paused, pending_approval, pending_resume — a
@@ -440,20 +444,20 @@ CREATE INDEX IF NOT EXISTS idx_ws_task ON workspaces(task_id) WHERE task_id IS N
 -- non-terminal status is the built-in task-lifecycle job's reconciliation pass to
 -- resolve, not a license to run a second copy.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_exec_task_active ON executions(task_id)
-  WHERE task_id IS NOT NULL AND parent_id = '0'
+  WHERE task_id IS NOT NULL AND (parent_id = '0' OR phase_index IS NOT NULL)
     AND status NOT IN ('completed','completed_with_failures','failed','cancelled','aborted','skipped','rejected');
 -- The job's claim scan — armed-but-not-started task launches, globally ordered.
 -- (task_id, created_at) serves 「this task's queue」, which is never the bottleneck: a
--- task has at most one armed ROOT (ux_exec_task_active) and that index makes the lookup
--- a single-row unique probe, so no task_id index is needed for it either. What needs its
--- own index is the job's per-tick scan across ALL tasks, which filters on status alone
--- and therefore cannot use a task_id-leading index.
+-- task has at most one armed instance (ux_exec_task_active) and that index makes the
+-- lookup a single-row unique probe, so no task_id index is needed for it either. What
+-- needs its own index is the job's per-tick scan across ALL tasks, which filters on
+-- status alone and therefore cannot use a task_id-leading index.
 --
 -- Children are IN this predicate on purpose: a composite fan-out that overflows the
 -- concurrency cap parks its child as a pending row — that IS the queue — and after 票03
 -- deleted the scheduler's own claim loop, the job is the only owner left to pick it up.
--- The latch above stays roots-only, because a composite may run several children of one
--- task at once.
+-- The latch above counts instances but excludes the subunit ARMS, because a composite
+-- may run several children of one task at once.
 CREATE INDEX IF NOT EXISTS idx_exec_pending_claimable ON executions(created_at)
   WHERE task_id IS NOT NULL AND status = 'pending';
 

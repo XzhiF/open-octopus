@@ -99,8 +99,13 @@ describe("harnessIntervene", () => {
 
   it("applies pause directive by pausing the execution", async () => {
     const exec = execService.create(workspaceId, { workflow_ref: "test.yaml" })
-    // Force status to 'running'
+    // Force status to 'running' AND give it a running node — a pause needs something to
+    // freeze. Without the node, resume() could never take the row back (it looks for
+    // node_executions in 'paused'); that shape is covered by the refusal test below.
     db.prepare("UPDATE executions SET status = 'running' WHERE id = ?").run(exec.id)
+    db.prepare(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status) VALUES (?, ?, ?, ?, ?)",
+    ).run(`${exec.id}-step1`, exec.id, "step1", "bash", "running")
 
     const result = await execService.harnessIntervene(exec.id, {
       nodeId: "step1",
@@ -111,9 +116,30 @@ describe("harnessIntervene", () => {
     expect(result.directive_applied).toBe("pause")
     expect(result.error).toBeUndefined()
 
-    // Verify DB status changed to paused
+    // Verify DB status changed to paused — node included, so resume() has a handle.
     const updated = db.prepare("SELECT status FROM executions WHERE id = ?").get(exec.id) as any
     expect(updated.status).toBe("paused")
+    const node = db.prepare("SELECT status FROM node_executions WHERE id = ?").get(`${exec.id}-step1`) as any
+    expect(node.status).toBe("paused")
+  })
+
+  it("refuses the pause directive when no node is running (between nodes)", async () => {
+    // A 'running' execution with nothing running is the between-nodes window. Pausing
+    // there would persist 'paused' with no paused node, i.e. a row resume() can never
+    // take back — and task-lifecycle's reconcile now exempts paused rows from the strand
+    // reap, so it would stay 已暂停 forever. Refusing keeps paused ⟹ resumable.
+    const exec = execService.create(workspaceId, { workflow_ref: "test.yaml" })
+    db.prepare("UPDATE executions SET status = 'running' WHERE id = ?").run(exec.id)
+
+    const result = await execService.harnessIntervene(exec.id, {
+      nodeId: "step1",
+      directive: { type: "pause", reason: "review needed", issued_by: "user" },
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("运行中的节点")
+    const updated = db.prepare("SELECT status FROM executions WHERE id = ?").get(exec.id) as any
+    expect(updated.status).toBe("running")
   })
 })
 

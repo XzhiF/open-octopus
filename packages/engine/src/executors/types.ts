@@ -67,6 +67,11 @@ export interface NodeExecutionResult {
    *  Downstream nodes should NOT cascade-skip from this — the harness decided
    *  the failure is acceptable and subsequent nodes should continue. */
   harnessContinue?: boolean
+  /** True when the node declared on_error: "continue" and its execution failed.
+   *  Same downstream-release semantics as harnessContinue, but deterministic
+   *  (declared in the workflow, not LLM-decided): the node stays "failed"
+   *  honestly, dependents still run, execution lands completed_with_failures. */
+  onErrorContinue?: boolean
   /** Number of retries before final result (0 = first attempt succeeded or no retry) */
   retryCount?: number
   /** Raw LLM call records for observability persistence */

@@ -28,7 +28,7 @@ version: 3.5.2
 ③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准后先 spec-field 写 phases 骨架，再产 spec，批准前不写 phases、不绑工作流
 ④ 逐 phase 产 spec   拆卡批准后，每 phase 走 matt 族内容轮产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
 ⑤ 逐 phase 绑定      绑定目录 GET /api/workflow-presets → 推荐+骨架预填 input_values → 用户确认 → spec-field field=phases
-⑥ 交付              自查 v4 gate 四项齐备 → 把 TASK_ID 给用户，等用户 [入队]
+⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户，等用户 [入队]
 ```
 
 ## 前置条件
@@ -88,7 +88,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 ├── fix-feedback-r1.md ← 人打回 round1 时由 server 产物化（你只读，不预造）
 ├── fix-report-r1.md   ← task-fix 轻量修复轮由执行侧产出（ws → collect 上行）
 ├── round-report.md    ← matt-spec-dev 每轮终报（含「Spec 修订」节：反馈→是否改 spec→改了什么）
-└── handoff.md         ← matt-spec-dev ship 每轮末产/覆写、面向下游 phase 的精选交接短页（见「phase 衔接信道」节）
+└── handoff.md         ← matt-spec-dev ship 每轮产/覆写、面向下游 phase 的精选交接短页（末 phase 不产——无下游读者；见「phase 衔接信道」节）
 ```
 
 - `<YYYYMMDD>` = 起草日，同 date 前缀 = 同需求批次；slug **path-safe**（`[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验），kebab-case + 序号后缀。
@@ -149,7 +149,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 跨 phase 上下文不靠人工转述——v4 内置一条产物信道，三环全自动（零起草负担，但你要能向用户解释它，且知它的边界）：
 
-1. **产物（执行侧）**：`ship-pr`（matt-spec-dev）每轮末在批次目录产/覆写 `handoff.md`——面向下游执行会话的精选交接短页（与面向验收人的 round-report.md 受众不同；头块 = phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段：`## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（下游可直接复用的接口/表/组件/命令——给路径不给描述）/ `## Gap Targets`（如实遗留：skip 票、noted 风险、未竟事项）。流内纪律：每轮整页重写禁追加、一屏内、细节引用 round-report.md 不复制；只写 ws，collect 回流 home。
+1. **产物（执行侧）**：`ship-pr`（matt-spec-dev）每轮在批次目录产/覆写 `handoff.md`——面向下游执行会话的精选交接短页（与面向验收人的 round-report.md 受众不同；头块 = phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段：`## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（下游可直接复用的接口/表/组件/命令——给路径不给描述）/ `## Gap Targets`（如实遗留：skip 票、noted 风险、未竟事项）。流内纪律：每轮整页重写禁追加、一屏内、细节引用 round-report.md 不复制；只写 ws，collect 回流 home。
+   **末 phase 不产**（ADR-0019 §1 边界）：它没有下游执行会话，产出来只有误导。server 派发时恒注入内置键 `is_final_phase`（`"true"`/`"false"`，非占位符）供 `ship-pr` 判定——同理**不要手填进绑定表单**。你要向用户解释的是：一个 3-phase 任务只有 phase1/2 的批次目录里会有 handoff.md，末 phase 的那页不存在，不是 ship 崩了。
 2. **注入（server）**：phase accepted→下一 phase 首轮开轮（autoAdvance 与看板手动推进两处同行为），`prev_handoff_paths` 注入该轮物化 input_values = 全部已 accepted 前序（含刚 accepted 的本 phase）`handoff.md` 的 **home 绝对路径**（存在性过滤、index 升序、换行连接；全空则键不出现；只注路径不注内容），与 `feedback`/`task_artifacts_dir` 注入同族。**同 phase 打回 rerun/fix 不注入**——该轮已有 feedback/fix-feedback 信道。
 3. **消费（执行侧）**：`spec-resolve` 逐行探测路径存在性 → `$vars.prev_handoffs` / `prev_handoff_count` → spec-review / 票 DAG / ship 提示词要求「先读前序交接：不回退 Protected Decisions，Confirmed Interfaces 直接复用现物，Gap Targets 未闭环项承接或显式关闭」。
 
@@ -157,6 +158,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 - 消费仅对 matt-spec-dev（或按同契约自建、显式读取 `prev_handoff_paths` 输入并产 handoff.md 的流）成立——**绑其他自定义流时注入键无人消费，信道静默失效、无任何报错**。拆分流推荐到非默认流，损失要说在前头。
 - ship 崩溃 ⇒ 该 phase 无 handoff.md ⇒ accepted 后下 phase 信道静默缺一角（存在性过滤吞掉，不烧派发）——验收人靠批次清单（home-file LIST）可见 handoff 缺失，打回人可对照批次里上轮 handoff.md（覆写非删除）。
+- **末 phase 无 handoff.md 是规定动作，不是缺角**：那条「下 phase 信道静默缺一角」的排查规则只适用于非末 phase。3-phase 任务里 phase3 的批次目录本就不该有它（见上）。
 - 存量任务（本特性前已 accepted 的 phase）无 handoff.md = 现状，不迁移、不回归。
 
 ## 拆 Phase 方法论
@@ -174,13 +176,14 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ## matt 技能族产物协议
 
-task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直接调用）：`matt-verified-requirement`（需求澄清总入口，grilling/wayfinder 双路径）、`grilling`、`wayfinder`、`domain-modeling`（术语+ADR）、`matt-verified-spec`、`matt-verified-tickets`（spec/tickets 写作方法论）。
+task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直接调用）：`author-verified-requirement`（需求澄清总入口，grilling/wayfinder 双路径）、`grilling`、`wayfinder`、`domain-modeling`（术语+ADR）、`author-verified-spec`、`author-verified-tickets`（spec/tickets 写作方法论）。
 
 ### 逐 phase 产出协议
 
 1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
 2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
-3. 产物齐全标准（= v4 gate 的「spec 文件存在」检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（matt-verified-tickets 规则，含末张 E2E 票）。
+3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（author-verified-tickets 规则，**含末张 `NN-e2e-*` 票——这项由 server gate 强制**，见下）。
+   > ⚠️ **末张 `NN-e2e-*` 票是硬要求，不是建议**：绑批次消费型流（默认 `matt-spec-dev`）时，`issues/` 缺该票会让 [入队] 直接 409 `phase:<i>:no-final-verification`。它不是「多跑一遍 E2E」的仪式——对这类流，票就是执行计划，而这张票是全 phase 唯一真起浏览器（有 UI）或做 API 级走查（纯后端）的地方，工作流按文件名路由到它。
 4. **验证方式类型阶梯（防重复烧钱，票写作硬纪律）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（此禁令无条件，不随 spec 纪律豁免）；UI 功能票的渲染/交互断言（列齐全、徽标、币种换算即时生效等）一律收编进末张 `NN-e2e-*` 票的走查步骤。**末张 `NN-e2e-*` 是全 phase 唯一许起浏览器的一张，模式随验收面自动选定**：phase 验收物含 UI/页面交互 → **browser 走查**（Playwright+截图证据）；纯后端/无 UI phase（交付物=API/DB/CLI 态）→ **API 级走查**（curl+sqlite+手算，此为天然形态，无需任何声明）——不给不存在的页面烧浏览器/vision 成本。有 UI 时若 spec「验证纪律」节按 token 预算仍拍板全流程不做浏览器，末张降 API 级走查。模式在一处定死（验收面天然决定，或 spec 拍板），各票类型行照抄，不留票级自由裁量。功能票写了 browser E2E = 与末张票双跑，多烧一整轮成本——写完自查一遍票类型。
 5. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
 
@@ -262,12 +265,16 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 # v4 gate 四项：phases≥1 ∧ 每 phase specPath 文件存在 ∧ 每 phase workflowRef 可解析 ∧ required inputs 非空
+#          第五项（仅批次消费型流，如 matt-spec-dev）：issues/ 下有末张 *-e2e-* 验收票
+#          —— 缺则 409 phase:<i>:no-final-verification
 # 不过 → 409 { missing: ["phase:<i>:<why>", …] }（无 goal/ac/双确认检查）
 # 过   → 仅置 ready。**不产生任何 schedules 行**（ADR-0021 票03）：跑什么由系统内置
 #        的 task-lifecycle job 在每次起轮时按 task_spec.phases[] 现推，信封已退役
 ```
 
-missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing` ｜ `phase:<i>:workflow-ref` ｜ `phase:<i>:input:<name>`。
+missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing` ｜ `phase:<i>:workflow-ref` ｜ `phase:<i>:input:<name>` ｜ `phase:<i>:no-final-verification`。
+
+> `no-final-verification`：**批次消费型流**（`matt-spec-dev` 及其同族——读 `spec.md`+`issues/` 当执行计划的那种）要求 `issues/` 下有末张 `*-e2e-*` 验收票，缺则 409。这不是文风约束而是结构约束：对这类流，票就是执行计划，而那张票是全 phase 唯一真起浏览器/做 API 级走查的地方（workflow 按文件名路由到它）。自建流等不消费批次的流不受此检。
 
 > **入队前自查（server gate 不含此项，K5 文本档纪律）**：拆分表「依赖前序」列引用的 batch slug 全部存在（`.scratch/<date>/` 下目录真实在场）——衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
 
@@ -368,5 +375,5 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 | 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）/ home-file content 超限 | 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
 | 403 | home-file 路径不合规（非 `.scratch/**.md`、绝对路径、逃逸）| 见 §6，路径改 home 相对且落 `.scratch/` |
 | 404 | task 不存在 / home-file 读缺文件 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1）；spec.md 缺=还没产出 |
-| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值） |
+| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值；no-final-verification=把末张 `*-e2e-*` 验收票写进 `issues/`） |
 | 428 | PUT 缺 If-Match | 补 `If-Match: <version>` |

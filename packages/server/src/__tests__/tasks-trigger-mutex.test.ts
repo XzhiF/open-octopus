@@ -261,7 +261,7 @@ describe("票03 §2 — triggerTask(立即)", () => {
     const dto = await service.triggerTask(id)
     expect(dto.status).toBe("running")
 
-    const root = execs.findLatestTaskRoot(id)!
+    const root = execs.findLatestTaskInstance(id)!
     expect(root.status).toBe("running")
     expect(root.parent_id).toBe("0")
     expect(root.workflow_ref).toBe("built-in/w")
@@ -293,7 +293,7 @@ describe("票03 §2 — triggerTask(立即)", () => {
     service.readyTask(id)
     await service.triggerTask(id)
 
-    const root = execs.findLatestTaskRoot(id)!
+    const root = execs.findLatestTaskInstance(id)!
     expect(root.status).toBe("pending")
     expect(db.prepare("SELECT status FROM tasks WHERE id=?").get(id)).toEqual({ status: "ready" })
     expect(stub.started).toEqual([])
@@ -405,16 +405,16 @@ describe("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化者"
     await Promise.all([service.triggerTask(a), service.triggerTask(b), service.triggerTask(c)])
 
     // cap=2 → 前两个 running，第三个 armed 排队（不是失败）。
-    expect(execs.findLatestTaskRoot(a)!.status).toBe("running")
-    expect(execs.findLatestTaskRoot(b)!.status).toBe("running")
-    expect(execs.findLatestTaskRoot(c)!.status).toBe("pending")
+    expect(execs.findLatestTaskInstance(a)!.status).toBe("running")
+    expect(execs.findLatestTaskInstance(b)!.status).toBe("running")
+    expect(execs.findLatestTaskInstance(c)!.status).toBe("pending")
     // 排队不占算力槽（否则队列自己堵自己）。
     expect(liveInstances(c)).toBe(1)
     // 腾出一个槽 → 队列自己续领，不需要任何人再点按钮，也不用等下一个 cron 分钟:
     // 终态回调在释放槽位后顺手 drain 一次(launchQueued(1))。
-    stub.callbacks.get(execs.findLatestTaskRoot(a)!.id)!("completed")
+    stub.callbacks.get(execs.findLatestTaskInstance(a)!.id)!("completed")
     await new Promise((r) => setImmediate(r))
-    expect(execs.findLatestTaskRoot(c)!.status).toBe("running")
+    expect(execs.findLatestTaskInstance(c)!.status).toBe("running")
     expect(stub.started).toHaveLength(3)
     // 排空后再手动领一次必须是 0 —— 证明续领不重复起(finished 的行不会被再次 claim)。
     const second = service.taskLifecycle.launchQueued()
@@ -497,7 +497,7 @@ describe("票03 §3 — cancelTaskTrigger", () => {
     const m = service.taskLifecycle.tick(new Date(Date.now() + 120_000).toISOString())
     expect(m.armed).toBe(1)
     expect(m.launched).toBe(0)
-    const row = execs.findLatestTaskRoot(id)!
+    const row = execs.findLatestTaskInstance(id)!
     expect(row.status).toBe("pending")
 
     const dto = service.cancelTaskTrigger(id)
@@ -512,7 +512,7 @@ describe("票03 §3 — cancelTaskTrigger", () => {
     service.readyTask(id)
     await service.triggerTask(id)
     expect(() => service.cancelTaskTrigger(id)).toThrow(/已开始执行/)
-    expect(execs.findLatestTaskRoot(id)!.status).toBe("running")
+    expect(execs.findLatestTaskInstance(id)!.status).toBe("running")
   })
 
   it("没有可取消的定时触发 → 409（不是静默成功）", () => {

@@ -45,6 +45,7 @@ import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
+import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
 import { createAgentRoutes } from "./routes/agent"
@@ -747,7 +748,10 @@ if (shouldServe) {
         repoSyncService, workspaceService,
       )
       const assistService = new AssistWorkflowService(db, sse)
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))
+      // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
+      // (tests that build the route factory without it get 501 on those 5 endpoints).
+      const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))

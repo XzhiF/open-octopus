@@ -242,7 +242,7 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
     const { wsPath } = boundWs(taskId)
     expect(fs.existsSync(path.join(wsPath, ".scratch"))).toBe(false)
     // 未打标 ⇒ collect 上行同样不触发（终态回调后 home 一字未改）。
-    const execId = new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id
+    const execId = new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id
     const homeSpec = path.join(taskHome.homePath(taskId), ".scratch", DATE, "p1", "spec.md")
     await complete(execId)
     expect(fs.readFileSync(homeSpec, "utf-8")).toBe("# spec p1\n")
@@ -256,7 +256,7 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
       "issues/01-x.md": "Status: ready-for-agent\n",
     })
     await service.triggerTask(taskId)
-    const execId = new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id
+    const execId = new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id
     const { wsPath } = boundWs(taskId)
 
     // Simulated execution side: edit the issues status, add a report, and
@@ -293,7 +293,7 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
       "issues/02-y.md": "Status: needs-info\n",
     })
     await service.triggerTask(taskId) // phase 1
-    await complete(new ExecutionDAO(db).findLatestTaskRoot(taskId)!.id) // 收轮
+    await complete(new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id) // 收轮
     endRoundAndRequeue(taskId)
 
     // ── round 1 of phase 2: seed puts the p2 batch into the ws (home 版内容) ──

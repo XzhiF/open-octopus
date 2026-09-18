@@ -6,6 +6,8 @@ import {
   integrationGoalSchema,
   resourceRefSchema,
   taskPhaseSchema,
+  acceptanceVerifySchema,
+  acceptancePreviewSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -24,10 +26,24 @@ import {
  *  DerivedTaskStatus — widening the shared enum is what makes them legal on the
  *  wire (task_status SSE payload + TaskDTO status typing). 'failed' stays legal
  *  for v3 rows (K13 旧链零破坏); a v4 task never persists 'failed' (K3). */
+//  task-pause: adds 'paused' — the SECOND value in this enum with no persisted writer
+//  ('awaiting_review' was the first). The truth of a pause lives on
+//  executions.status='paused' (ExecutionLifecycle.pause hard-kills the in-flight node);
+//  the task side only ever DERIVES it (deriveTaskView), and deliberately so: the host of
+//  a pause is the RUN, which keeps the execution layer unaware of tasks — not every
+//  workflow has one bound (解耦 requirement).
+//
+//  Listed here, NOT in the DB CHECK (schema.sql tasks.status): the CHECK's meaning is
+//  "values allowed to be persisted", and a mis-write of a paused task row should fail
+//  loudly rather than quietly become a second source of truth. Widening the enum is what
+//  turns the web's several Record<TaskStatus, …> tables (task-board's column map, CARD_THEME)
+//  into COMPILE errors instead of silently-unstyled cards, which is the discipline
+//  task-board.ts already documents.
 export const TaskStatusSchema = z.enum([
   "draft",
   "ready",
   "running",
+  "paused",
   "awaiting_review",
   "archiving",
   "done",
@@ -71,6 +87,13 @@ export const TaskSpecFieldSchema = z.enum([
   "decisions",
   "workflow_ref",
   "phases",
+  // 验收面 v2「验货台」: the on-demand re-verify command ({@link
+  // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
+  // like every other spec-field; editable through awaiting_review.
+  "acceptance_verify",
+  // 验收面 v2.1「跑起来看」: the live-preview service ({@link
+  // acceptancePreviewSchema}). Same JSON-field/spec-field discipline as above.
+  "acceptance_preview",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -89,6 +112,23 @@ export const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update" as const
 /** Emitted on the "taskpool" channel when an assist-workflow run changes
  *  phase (start/complete/error). Payload: {task_id, run_id, phase}. */
 export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
+
+// ── 验收面 v2「验货台」SSE events ───────────────────────────────────────
+/** Lifecycle of the acceptance-time re-verification run (one per task; the
+ *  server keeps a single in-memory session per task).
+ *  Payload: {task_id, execution_id, state:"running"|"passed"|"failed"|
+ *  "aborted"|"timeout", exit_code?, verdict_path?, tail?}. `tail` rides on the
+ *  terminal event (the last lines) because the log event channel has no
+ *  replay — a client that joined mid-run reconstructs from GET /:id/verify. */
+export const TASK_VERIFY_EVENT = "task_verify" as const
+/** One streamed output line: {task_id, line, stream:"stdout"|"stderr"}.
+ *  Per-line = same volume class as node_log → server SILENT_EVENTS. */
+export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
+/** 验收面 v2.1「跑起来看」terminal/state event (ADR-0022):
+ *  {task_id, state:"starting"|"ready"|"exited"|"stopped", url, external?,
+ *  exit_code?}. No log stream — preview output stays server-side (tail in
+ *  GET /:id/preview), the panel only needs state transitions. */
+export const TASK_PREVIEW_EVENT = "task_preview" as const
 
 export const specFieldUpdatePayloadSchema = z.object({
   task_id: z.string().min(1),
@@ -360,6 +400,16 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
       return value.map((v) => subunitSpecSchema.parse(v))
     case "integration_goal":
       return integrationGoalSchema.parse(value)
+    case "acceptance_verify":
+      // 验收面 v2: null clears the field — undefined rides into the spec merge
+      // and JSON.stringify drops the key (storing `null` would poison every
+      // later taskSpecSchema.parse, which admits undefined, not null).
+      if (value === null) return undefined
+      return acceptanceVerifySchema.parse(value)
+    case "acceptance_preview":
+      // 验收面 v2.1: same null-clears semantics as acceptance_verify above.
+      if (value === null) return undefined
+      return acceptancePreviewSchema.parse(value)
     case "resources":
     case "authoring_resources":
       if (!Array.isArray(value)) {

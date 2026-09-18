@@ -11,9 +11,21 @@ kind: Workflow
 #     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
 #     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
 #                  → ticket-dag  (dynamic_sub_workflow — issues/ DAG 并发实现)
-#                  → integration-gate ┐
-#                     code-review     ├→ integration-verify → ship-pr (Git PR)
-#                  ┘
+#                  → code-review (判→批修→一测；终检在此) → ship-pr (Git PR)
+#
+# 快线化 (2026-09-16 实测 Round2=27.6min 的复盘): decode-bound —— 56.5K 输出
+# tokens 里 ~60% 是转述散文，全量 mvn 同轮跑 4-5 遍。对策 = ①review 回合硬预算
+# (≤8 回合, 批修一测, 零编辑零测)；②integration-verify 节点删除，终检并入
+# review 收尾；③ship-pr 基于共享会话禁重读 + 产物契约节名逐字 (核对 tab 正则
+# 消费者)；④票探路上限。
+#
+# 全量验证的归属（2026-09-17）：**由末张 `NN-e2e-*` 验收票承担，每批恒有**。
+# server 的入队 gate 强制 issues/ 下存在该票（missing: phase:<i>:no-final-verification），
+# 所以「本批无验收票」不再是可达状态 —— 曾用于兜底它的 integration-gate 节点
+# 因此是不可达死码，已删除（其 has_e2e 路由随之退役）。原本挂在它下面的
+# code-review 直接依赖 ticket-dag。
+# 会话共享是实测事实 (node_executions.session_id)：主链同 global_session，
+# TTFT 全程 13.4s —— 慢的不是上下文，是逐字生成。
 #
 # spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧** —— 打回反馈指向
 # 规格本身问题时，本流的 spec-review 段在 ws 里就地更新 spec.md（决策表行/编号
@@ -47,6 +59,9 @@ inputs:
   prev_handoff_paths:
     description: "已 accepted 前序 phase 的 handoff.md 绝对路径（换行连接，home 位）— 看板 accept→下一 phase 开轮时自动注入（内置键，非占位符），绑定表单无需手填；spec-resolve 探测存在性后写 vars.prev_handoffs / prev_handoff_count，缺失路径静默跳过"
     required: false
+  is_final_phase:
+    description: "本 phase 是否任务末站（\"true\"/\"false\"）— 看板派发时自动注入（内置键，非占位符），绑定表单无需手填。末站无下游执行会话，ship-pr 据此不产 handoff.md"
+    required: false
 
 # --- 变量（spec-resolve 写，下游读；串行链上的路由真相）---
 variables:
@@ -55,8 +70,8 @@ variables:
   spec_file: ""
   has_feedback: "false"
   latest_feedback: ""
+  review_budget: ""
   branch: ""
-  build_status: ""
   review_status: ""
   verify_status: ""
   pr_url: ""
@@ -102,7 +117,7 @@ hooks:
       template:
         severity: info
         title: "🚀 matt-spec-dev — 轮次完成"
-        body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 build: $vars.build_status | review: $vars.review_status"
+        body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 review: $vars.review_status"
 
   on_node_success:
     - id: notify-spec-review
@@ -165,13 +180,17 @@ nodes:
         fi
       fi
 
-      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-*）
+      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-* 恒在 —— gate 强制）
       if [ -z "$REASON" ]; then
         TICKETS=$(ls "$BATCH"/issues/*.md 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TICKETS" = "0" ]; then
           REASON="issues/ empty under: $BATCH (nothing to execute)"
         fi
       fi
+
+      # code-review 熔断丝（保险丝非目标）: 10 + 5×票数 —— 3 票批实测 review 用 8-17 回合,
+      # 定长者对复杂批必爆(三单 r1 的 max_turns=8 实证),随票数线性放缩。
+      REVIEW_BUDGET=$(( 10 + 5 * ${TICKETS:-0} ))
 
       # 未消化反馈探测：存在 fix-feedback-rN.md → 本轮先过 spec-review 再审段
       FB=""; HAS_FB="false"
@@ -212,13 +231,13 @@ nodes:
 
       if [ -n "$REASON" ]; then
         echo "PRECHECK FAILED: $REASON"
-        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$PREV_JSON" "$PREV_COUNT"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "review_budget": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$REVIEW_BUDGET" "$PREV_JSON" "$PREV_COUNT"
         exit 0
       fi
 
       if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
       echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "review_budget": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$REVIEW_BUDGET" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -261,11 +280,16 @@ nodes:
            spec.md 为准（spec-rN.md 留作历史，不再更新）。
       3. 票的增删改**原位增量**（不重写整目录）：新票顺延编号，末张保持
          `NN-e2e-*` 验收票；被反馈作废的票标 Status: skip（不物理删）。
+         **重开纪律**：反馈涉及的、已标 `Status: done` 的票 → 把 Status 改回
+         `ready`（实现缺陷=原票重开；规格错误=原票重开+按新 spec 改票文）。
+         不回开 = 下游 planner 只见 done 票 → 0 节点 DAG → 整轮空转失败
+         （2026-09-16 三单 r2 实证）。与反馈无关的 done 票保持不动。
       4. 修订点记入 $inputs.batch_dir/round-report.md 的「## Spec 修订」节
          （反馈条目 → 是否改 spec → 改了什么），供验收人对照。
       5. 只动本批次目录，不碰 projects/ 代码（实现是 Stage 1 的事）。
 
-      最后输出 vars_update: {"vars_update": {"spec_reviewed": "true"}}
+      （本节点不产 vars_update —— 它报过的 spec_reviewed 无声明也无消费方，
+       2026-09-17 清除。节点的完成状态由引擎记录，下游用不着额外信号。）
 
   # ------------------------------------------------------------
   # Stage 1: 票 DAG 执行（dynamic_sub_workflow — LLM 规划，引擎并发）
@@ -298,7 +322,7 @@ nodes:
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求\n2. 探索类似代码（找 analog，grep 跨包）\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——同会话前后票已探过的路禁止重走\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method；修复轮只重跑失败用例，收尾全量一次\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["implement", "tdd"],
         "depends_on": ["ticket-XX"]
       }
@@ -323,117 +347,93 @@ nodes:
       - 已完成（done/skip）的 ticket 不创建节点
 
   # ------------------------------------------------------------
-  # Stage 1.5: 集成门禁（DAG 后统一 build + test）
-  # ------------------------------------------------------------
-
-  - id: integration-gate
-    type: agent
-    depends_on: [ticket-dag]
-    prompt: |
-      ═══ Integration Gate ═══
-      你是集成门禁。确保项目能 build + test 通过。
-
-      ═══ 步骤 ═══
-      1. 先探索 workspace 结构，找到 monorepo 根目录（通常 projects/ 下的 git repo）
-      2. 在正确目录执行 pnpm build
-      3. 如果 build 失败，分析错误并尝试修复（最多 2 轮）
-      4. build 通过后，执行 pnpm test
-      5. 如果 test 失败，分析失败原因并尝试修复（最多 2 轮）
-
-      ═══ 输出 ═══
-      最后输出 vars_update JSON:
-      成功: {"vars_update": {"build_status": "passed"}}
-      失败: {"vars_update": {"build_status": "failed"}}
-
-  # ------------------------------------------------------------
-  # Stage 2: Code Review（裁判 ≠ 球员；对照 spec.md 现态）
+  # Stage 2: Code Review（裁判 ≠ 球员；对照 spec.md 现态。2026-09-16 快线化:
+  #          判→批修→一测，终检并入本节点，原 integration-verify 吸收于此）
   # ------------------------------------------------------------
 
   - id: code-review
     type: agent
-    depends_on: [integration-gate]
+    depends_on: [ticket-dag]
+    # 熔断丝随票数伸缩(spec-resolve 算 review_budget)。注意:模板正统语法是
+    # $vars.x 无花括号 —— ${vars.x} 在 substituteVarsFull 里归 filter 引擎,
+    # 不带 |filter 不解析(五单 R1 实证 "treated as unset")。
+    max_turns: $vars.review_budget
+    # 熔断/出错不连坐: 节点如实 failed (看板徽章可见), 但 ship 照常把货端上
+    # 验收台 (引擎 on_error:continue → completed_with_failures, 人 gate 裁决)。
+    on_error: continue
     prompt: |
       使用 code-review skill 独立审查所有代码变更。
       主 agent 从没看过实现过程，天然独立 → 直接审查。
+      三轴不变: Standards / Spec 对照 $inputs.batch_dir/spec.md / Completeness。
+      审查范围: 分支 $vars.branch 上 projects/ 下的代码仓。
 
-      ═══ 审查范围 ═══
-      Branch: $vars.branch（在 projects/ 下的代码仓里对比 origin/main...HEAD）
-      Spec: $inputs.batch_dir/spec.md（spec-review 跑过时它已是修订终态）
+      ═══ 审查锚点（别探索、别就此成文）═══
+      审查发生在 ship 之前 —— HEAD == origin/main，全部变更在**工作树**:
+      锚点 = git status --porcelain + git diff HEAD + 未跟踪文件清单。
+      origin/main...HEAD 必为空是流水线几何，不是异常：不探测、不成文。
 
-      ═══ 三轴审查 ═══
-      1. Standards: 编码规范 + code smells
-      2. Spec: diff 对照 spec — 遗漏需求 / 范围蔓延 / 实现偏差
-      3. Completeness: diff 对照同类实现 — 遗漏文件 / 数据流断链
+      ═══ 回合预算（目标 ≤10 回合；熔断丝 = 10+5×票数，保险丝不是绩效目标）═══
+      1. 清单一条 bash 拿全，然后**同一回合并发 Read** 全部变更文件全文 + spec.md
+      2. findings 一次成表后**立即落盘** code-review.md 初版（每条 ≤2 行:
+         🔴/🟡/🔵 + 文件:行 + 一句）—— 报告先存在，再好起来
+      3. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
+         保留进报告，人 gate = 看板验收，不阻断）
+      4. 测一次:
+         - 第 3 步零编辑 → 不测（e2e 票的绿仍是现物）
+         - 有编辑 → 全量 build+test **恰一次**（本轮终检，不可跳过；构建
+           系统自识别，此后禁止再补任何测试）
+      5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，
+         绿引 e2e 票现物"）
 
-      ═══ 严重度分类 ═══
-      - 🔴 Must fix: 直接 Edit 修复 → pnpm test 验证
-      - 🟡 Should fix: 直接 Edit 修复 → pnpm test 验证
-      - 🔵 Note: 记入报告，不修复
-
-      ═══ 修复纪律 ═══
-      - 主 Agent 直接 Edit 修复（不要重新 spawn 实现者）
-      - 修复后 pnpm test 验证
-      - 最多 2 轮 review-fix 循环
-      - 🔴 持续 2 轮 → 记入报告，继续（不阻断 — 人 gate = 看板验收）
-
-      ═══ 输出 ═══
-      写入: $inputs.batch_dir/code-review.md
+      ═══ 修复轮增量（批目录已有上一轮 code-review.md 时）═══
+      只审上一轮之后的工作树变化 + 上轮每条 finding 的处置状态（已修/仍开/
+      不修原因），**不重做全量三轴**。上轮报告是你本轮的输入。
 
       最后输出 vars_update JSON:
-      {"vars_update": {"review_status": "passed|has_notes|has_fixes"}}
+      {"vars_update": {"review_status": "passed|has_notes|has_fixes", "verify_status": "passed|failed|not_needed"}}
 
   # ------------------------------------------------------------
-  # Stage 2.5: 集成验证（review 修复后复验）
-  # ------------------------------------------------------------
-
-  - id: integration-verify
-    type: agent
-    depends_on: [code-review]
-    prompt: |
-      ═══ Post-Review Integration Verify ═══
-      Code review 可能修改了代码。重新验证 build + test。
-
-      1. 找到 monorepo 根目录（workspace projects/ 下）
-      2. 执行 pnpm build && pnpm test
-      3. 如果失败，分析并修复（最多 1 轮）
-      4. 输出 vars_update: {"vars_update": {"verify_status": "passed|failed"}}
-
-  # ------------------------------------------------------------
-  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接）
+  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接；
+#          末 phase 不产 handoff —— 无下游执行会话，见 §2 产物 2 的末站跳过）
+  # 2026-09-16 快线化: 共享会话禁重读 + 事实一条 bash 采齐 + 产物契约节名逐字
+  # （round-report「票执行摘要」「Changed Files」与 handoff 三节是核对 tab /
+  #   下一 phase 的解析锚点 —— 压缩只压正文，不压节名与表头）
   # ------------------------------------------------------------
 
   - id: ship-pr
     type: agent
-    depends_on: [integration-verify]
+    depends_on: [code-review]
     timeout: 1800
     tools: [Read, Bash, Grep, Glob]
     prompt: |
       完成 Ship 交付: Round Report + Git PR。
-      使用 handoff skill 方法论记录本轮交接。
+      使用 handoff skill 方法论记录本轮交接（**仅当本 phase 非末站** —— 见产物 2 的末站跳过）。
 
       ═══ 上下文 ═══
       Batch 目录（ws 根下，与 task home 同构）: $inputs.batch_dir
       代码仓: projects/ 下的 git repo（worktree，分支 $vars.branch）
       前序交接（有则先读，其 Gap Targets 未闭环项须承接或显式关闭；空则本 phase 无前序）: $vars.prev_handoffs
+      本 phase 是否末站: $inputs.is_final_phase（true ⇒ 无下游执行会话，跳过产物 2）
 
-      ═══ 执行 ═══
-      1. 生成/补全 $inputs.batch_dir/round-report.md（spec-review 已写「Spec 修订」节的，
-         在其后追加，不覆盖）:
-         - 票执行摘要（NN → status，对照 issues/ 现态）
-         - Code Review 结论（findings/fixed/noted，对照 code-review.md）
-         - E2E 证据索引（e2e-data/ 关键文件 + 结果）
-         - Changed Files（在代码仓内 git diff --stat origin/main...HEAD）
-         - Remaining Issues（如实，含 build_status=failed 时的失败详情）
+      ═══ 速度纪律 ═══
+      - 你在共享会话里 —— spec/票/gate/review 的来龙去脉已在你上下文中，
+        禁止重读这些文件。
+      - 事实采集一条 bash 拿全: git -C <repo> diff --stat origin/main...HEAD
+        + grep -H "Status:" $inputs.batch_dir/issues/*.md
+        + code-review.md 的结论行。此后除落笔与 git 操作外不再探索。
 
-      2. 在代码仓内 commit + push:
-         git add -A && git commit -m "feat(<batch slug>): spec-dev round" && git push origin $vars.branch
-
-      3. 创建或更新 PR（代码仓内）:
-         - gh pr list --head $vars.branch --state open
-         - 已有 → gh pr edit（保留 MANUAL 区块）
-         - 无 → gh pr create
-
-      4. 产/覆写 $inputs.batch_dir/handoff.md — 面向下游 phase 执行会话的精选交接短页
+      ═══ 产物契约（下游消费者是正则解析器，节名/表头一字不能改）═══
+      1. $inputs.batch_dir/round-report.md（spec-review 已写「Spec 修订」节的，
+         在其后追加，不覆盖）必须依次含四节，节名逐字:
+           ## 票执行摘要      表格: | 票 | 状态 | 判据结果 |（每票一行，含 skip）
+           ## Code Review 结论 findings/fixed/noted，对照 code-review.md
+              （review_status 为空/failed —— 评审熔断或出错 → 本节如实写
+              "评审未完成（原因）"，code-review.md 有初稿则引用已落盘部分，
+              并把该缺口记进 Remaining Issues；货照常交付，人 gate 裁决）
+           ## E2E 证据索引    e2e-data/ 关键文件 + 结果（无走查票则写"本批无"）
+           ## Changed Files   git diff --stat 原样贴入，不重排不截断
+         可另加 ## Remaining Issues（如实，含终检 failed 时的详情）。
+      2. $inputs.batch_dir/handoff.md — 面向下游 phase 执行会话的精选交接短页
          （每轮整页重写、禁止追加 — 头块轮次 rN 即最新终态）:
          - 头块：phase 名与 batch slug · 终态轮次 rN（当前轮号 — 从批内
            fix-feedback-rN.md / round-report.md 现态判定，首跑 = r1）· PR 链接 · 批次路径
@@ -441,7 +441,22 @@ nodes:
            Key Decisions 表）
          - `## Confirmed Interfaces` — 下游可直接复用的接口/表/组件/命令，给路径不给描述
          - `## Gap Targets` — 如实遗留：skip 票、noted 风险、未竟事项（含承接的前序 Gap 去向）
-         纪律：一屏内精选短页；细节引用 round-report.md 不复制；只写 ws（collect 管回流 home）。
+         节名逐字不可改（下一 phase 的 prompt 逐字引用）；正文 ≤25 行，压正文不压节。
+         ⚠️ **末站跳过**（$inputs.is_final_phase == "true"）：本 phase 是任务最后一个，
+         没有下游执行会话会读它（server 只在 index < 目标 phase 的范围内注入前序交接，
+         归档链也不读）—— 此时**不产 handoff.md**（已有旧版则一并删掉，留着是误导），
+         改为在 round-report 的 `## Remaining Issues` 写一行
+         "末 phase（无下游）：按 ADR-0019 §1 边界跳过 handoff.md"。验收人要看本轮全貌有
+         round-report，不缺这一页。
+      3. issues/ 有票漏回写 Status → 补写。
+
+      ═══ Git ═══
+      4. 在代码仓内 commit + push:
+         git add -A && git commit -m "feat(<batch slug>): spec-dev round" && git push origin $vars.branch
+      5. 创建或更新 PR（代码仓内）:
+         - gh pr list --head $vars.branch --state open
+         - 已有 → gh pr edit（保留 MANUAL 区块）
+         - 无 → gh pr create
 
       ═══ 纪律 ═══
       - 只 commit 代码仓变更；批次目录（ws 根 .scratch/ 下）不进代码仓 git。

@@ -114,8 +114,9 @@ export class ExecutionService {
     workflow_ref: string; name?: string; parent_id?: string | null;
     child_index?: number; node_type?: string; input_values?: Record<string, unknown>;
     triggered_by?: string; initial_var_pool?: Record<string, string>;
-    // task-phase-redesign (K4/K5): v4 task rounds are independent roots on the
-    // reused bound ws — see ExecutionLifecycle.create for the rationale.
+    // task-phase-redesign (K4/K5) + task-exec-tree (v44): the FIRST round of a task is a
+    // root on the reused bound ws (later rounds chain under it via parent_id) — see
+    // ExecutionLifecycle.create for the rationale.
     allow_existing_root?: boolean;
     // ADR-0021 票03: task launch identity, written AT INSERT so the row is a task
     // instance from the moment it exists. A later UPDATE would leave a window where

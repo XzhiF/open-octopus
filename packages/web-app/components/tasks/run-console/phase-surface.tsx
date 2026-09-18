@@ -9,11 +9,9 @@
 
 import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import type { Task, TaskExecutionBadge, TaskPhase } from "@octopus/shared"
 import {
-  postAcceptance, TaskApiError,
   type TaskDetail, type TaskPhaseView, type TaskRoundView,
 } from "@/lib/tasks-api"
 import type { LLMCallAggregates } from "@/lib/types"
@@ -21,8 +19,8 @@ import type { BatchTreeState } from "../authoring/use-batch-tree"
 import { findSpecEntry, isRelativeScratchSpec } from "../authoring/use-batch-tree"
 import { PhaseSpecDialog, specFileClass } from "../authoring/phase-spec-dialog"
 import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
-import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp } from "../execution-summary"
-import { formatBytes, formatCost, formatDuration, formatTokenCount } from "@/lib/format"
+import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
+import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
 
 /** 活动流一行（SSE 到达即推，客户端聚合，权威态仍是 GET /:id）。 */
@@ -49,7 +47,7 @@ export interface RunCtx {
   events: StreamEvent[]
   refetch: () => void
   onMutated: () => void
-  /** 打开三栏验收证据面（现有 AcceptanceModal 不改）。 */
+  /** 切到「验货台」tab（三栏证据面已收编为控制台 tab，2026-09-16）。 */
   openAcceptance: () => void
   /** 打开触发对话框（TriggerDialog，控制台单实例）。 */
   openTrigger: () => void
@@ -71,11 +69,7 @@ function Box({ tag, tail, tone, children, className }: {
   )
 }
 
-/** 该轮次/运行的账目一行（calls · tokens · cost；无则 null）。 */
-function aggLine(agg: LLMCallAggregates | null | undefined): string | null {
-  if (!agg || agg.totalCalls === 0) return null
-  return `${agg.totalCalls} calls · ${formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}`
-}
+/** 该轮次/运行的账目一行 → 统一走 AggInline（∑/↑/↓/⚡/🗡️·N 次请求·$，2026-09-16 定版）。 */
 
 // ── 盘上文件 chips（吸收原「草稿批次」执行态职责）────────────────────
 
@@ -170,7 +164,7 @@ export function RoundRow({ ctx, exec, meta }: {
         <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[10.5px] text-pop-ink">
           <span className="text-pop-dim" title={timeStamp(exec.started_at ?? exec.created_at)}>{clockShort(exec.started_at ?? exec.created_at)}</span>
           {duration != null && <span>{formatDuration(duration)}</span>}
-          {aggLine(agg) && <span>{aggLine(agg)}</span>}
+          <AggInline agg={agg} />
         </span>
         {link && (
           <button
@@ -229,45 +223,12 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
   const awaiting = pv.status === "awaiting_review" && pv.awaitingRound != null
     ? pv.rounds.find((r) => r.roundIndex === pv.awaitingRound) ?? null
     : null
-  const [acceptBusy, setAcceptBusy] = useState(false)
   const goal = ctx.task.task_spec?.goal
   const phases = ctx.specPhases
   // 已定时/等到点的大按钮让位（与 TriggerActions 同判据：游标与实例状态都在任务行上）。
   const armedFuture = !!ctx.task.next_fire_at && new Date(ctx.task.next_fire_at).getTime() > Date.now()
   const waitingForSlot = ctx.task.execution?.status === "pending"
 
-  const handleAccept = async () => {
-    if (!awaiting || acceptBusy) return
-    setAcceptBusy(true)
-    try {
-      const result = await postAcceptance(ctx.task.id, {
-        phase_index: pv.index,
-        round_index: awaiting.roundIndex,
-        decision: "accepted",
-      })
-      ctx.onMutated()
-      const n = ctx.phaseViews.length
-      switch (result.next_action) {
-        case "archiving":
-          toast.success("末 Phase 已通过 — 归档编排中（全绿才 done）")
-          break
-        case "awaiting_manual_trigger":
-          toast.success(`Phase ${pv.index}/${n} 已通过 — autoAdvance 关闭，下一 Phase 停在你的 gate（看板卡片「启动下一 Phase」）`)
-          break
-        default:
-          toast.success(`Phase ${pv.index}/${n} 已通过 — 下一 Phase 已自动开跑`)
-      }
-    } catch (err: unknown) {
-      if (err instanceof TaskApiError && err.status === 409) {
-        toast.error(`${err.message}（已刷新最新状态）`)
-        ctx.refetch()
-      } else {
-        toast.error(err instanceof Error ? err.message : "验收提交失败")
-      }
-    } finally {
-      setAcceptBusy(false)
-    }
-  }
 
   // 发射门禁（ready 语境）：只讲 client 拿得到的真相，服务端 ready/trigger 闸口为准。
   const gateRows: { ok: boolean | null; text: string }[] | null = specPhase ? (() => {
@@ -317,7 +278,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               <span className="font-black text-pop-purple">{RUN_STATUS_LABEL[run?.status ?? liveRound.exec.status] ?? "执行中"}</span>
               <span className="font-mono text-pop-dim" title={timeStamp(run?.started_at ?? liveRound.exec.created_at)}>起 {clockShort(run?.started_at ?? liveRound.exec.created_at)}</span>
               {dur != null && <span className="font-mono font-black tabular-nums">{formatDuration(dur)}</span>}
-              {aggLine(agg) && <span className="font-mono">{aggLine(agg)}</span>}
+              <AggInline agg={agg} className="font-mono" />
             </div>
           </section>
         )
@@ -344,9 +305,9 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
                     {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
                   </span>
-                  {aggLine(agg) && <span className="font-mono text-pop-dim">{aggLine(agg)}{agg && agg.totalCalls > 0 ? ` · ↑${formatTokenCount(agg.usage.inputTokens)} ↓${formatTokenCount(agg.usage.outputTokens)}` : ""}</span>}
+                  <AggInline agg={agg} className="font-mono" />
                   <button onClick={ctx.openAcceptance} className="ml-auto shrink-0 font-mono text-[10.5px] font-black text-pop-purple underline hover:text-pop-ink" data-acceptance-evidence-link>
-                    完整三栏证据面 ↗
+                    验货台核对实物 →
                   </button>
                 </div>
                 {roundError && (
@@ -354,23 +315,16 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                 )}
               </div>
             </section>
-            <div className="flex gap-2" data-verdict-row>
-              <button
-                onClick={() => void handleAccept()}
-                disabled={acceptBusy}
-                className="pop-press flex flex-1 items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90 disabled:opacity-60"
-                data-acceptance-approve
-              >
-                {acceptBusy ? <Spinner className="size-3.5" /> : "✓"} 验收通过{pv.index === ctx.phaseViews.length ? "（进入归档）" : "（放行下一 Phase）"}
-              </button>
-              <button
-                onClick={ctx.openAcceptance}
-                className="flex items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-paper px-3 py-2 font-mono text-[12px] font-black text-pop-red shadow-pop-sm transition-colors hover:bg-pop-pink-soft"
-                data-acceptance-reject-open
-              >
-                ✕ 打回（写反馈）
-              </button>
-            </div>
+            {/* ADR-0022：决策唯一入口 = 验货台（实物/剧本/预览之后才盖章）。
+                原先此处的 ✓通过/✕打回 直通 postAcceptance、绕过一切证据 —— 已撤。 */}
+            <button
+              onClick={ctx.openAcceptance}
+              className="pop-press flex w-full items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90"
+              data-acceptance-open
+              data-testid="console-open-acceptance"
+            >
+              → 去验货台验收（实物 · 剧本 · 跑起来看）
+            </button>
           </>
         )
       })()}

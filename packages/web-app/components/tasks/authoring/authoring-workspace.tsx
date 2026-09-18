@@ -122,6 +122,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return
+      // 卡拖拽硬防：窗口外松手/失焦时 mouseup 永不到达 → move 已无按键即收兵
+      if (ev.buttons === 0) { onMouseUp(); return }
       // Dragging left → wider right panel (delta negative → right grows)
       const delta = startXRef.current - ev.clientX
       const container = containerRef.current
@@ -134,9 +136,11 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
       document.body.style.userSelect = ""
       document.removeEventListener("mousemove", onMouseMove)
       document.removeEventListener("mouseup", onMouseUp)
+      document.removeEventListener("mouseleave", onMouseUp)
     }
     document.addEventListener("mousemove", onMouseMove)
     document.addEventListener("mouseup", onMouseUp)
+    document.addEventListener("mouseleave", onMouseUp)
   }, [rightWidth])
 
   // ── Skill-group commands (AC7): fetch once, filter to locked groups ──

@@ -386,6 +386,10 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   // ── Health & monitoring queries ──────────────────────────────────────
+  //
+  // 「parent_id = '0'」 here always meant 「count launched instances, not composite
+  // arms」. Since task-exec-tree (v44) a v4 round carries a parent (its lineage), so
+  // the honest predicate is (parent = '0' OR phase-tagged) — the latch's predicate.
 
   getHealthStats(workspaceId: string, days: number): { total: number; success_count: number; failure_count: number; avg_duration: number | null; total_cost: number | null; cost_complete: boolean } {
     const statsRow = this.stmt(`
@@ -394,7 +398,7 @@ export class TokenUsageDAO extends BaseDAO {
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failure_count,
         AVG(CASE WHEN duration IS NOT NULL THEN duration END) as avg_duration
       FROM executions
-      WHERE workspace_id = ? AND parent_id = '0'
+      WHERE workspace_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
         AND created_at >= datetime('now', '-' || ? || ' days')
     `).get(workspaceId, days) as { total: number; success_count: number; failure_count: number; avg_duration: number | null }
 
@@ -415,7 +419,7 @@ export class TokenUsageDAO extends BaseDAO {
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count
       FROM executions
-      WHERE workspace_id = ? AND parent_id = '0'
+      WHERE workspace_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
         AND created_at >= datetime('now', '-' || ? || ' days')
       GROUP BY DATE(created_at) ORDER BY date ASC
     `).all(workspaceId, days) as Array<{ date: string; success_count: number; failed_count: number }>
@@ -425,7 +429,7 @@ export class TokenUsageDAO extends BaseDAO {
     const row = this.stmt(`
       SELECT COUNT(*) as count FROM (
         SELECT 1 FROM executions
-        WHERE workspace_id = ? AND parent_id = '0' AND status = 'failed'
+        WHERE workspace_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL) AND status = 'failed'
           AND created_at >= datetime('now', '-' || ? || ' days')
         GROUP BY workflow_ref
         HAVING COUNT(*) >= 3
@@ -443,7 +447,7 @@ export class TokenUsageDAO extends BaseDAO {
           ROW_NUMBER() OVER (PARTITION BY workflow_ref ORDER BY created_at)
           - ROW_NUMBER() OVER (PARTITION BY workflow_ref, status ORDER BY created_at) as streak_group
         FROM executions
-        WHERE parent_id = '0' AND workspace_id = ?
+        WHERE (parent_id = '0' OR phase_index IS NOT NULL) AND workspace_id = ?
           AND created_at >= datetime('now', '-' || ? || ' days')
       ),
       streak_counts AS (
@@ -650,7 +654,7 @@ export class TokenUsageDAO extends BaseDAO {
       FROM executions e
       LEFT JOIN node_executions ne ON ne.execution_id = e.id
       LEFT JOIN node_token_usages ntu ON ntu.node_execution_id = ne.id
-      WHERE e.workspace_id = ? AND e.parent_id = '0'
+      WHERE e.workspace_id = ? AND (e.parent_id = '0' OR e.phase_index IS NOT NULL)
         AND e.created_at >= datetime('now', '-' || ? || ' days')
       GROUP BY DATE(e.created_at) ORDER BY date ASC
     `).all(workspaceId, days) as Array<{ date: string; total_cost: number | null; exec_count: number }>
@@ -687,7 +691,7 @@ export class TokenUsageDAO extends BaseDAO {
       FROM executions e
       LEFT JOIN node_executions ne ON ne.execution_id = e.id
       LEFT JOIN node_token_usages ntu ON ntu.node_execution_id = ne.id
-      WHERE e.workspace_id = ? AND e.parent_id = '0'
+      WHERE e.workspace_id = ? AND (e.parent_id = '0' OR e.phase_index IS NOT NULL)
         AND e.created_at >= datetime('now', '-' || ? || ' days')
       GROUP BY e.workflow_ref ORDER BY total_cost DESC
     `).all(workspaceId, days) as Array<{

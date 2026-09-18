@@ -647,9 +647,9 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
 
     // 打回：反馈必填 gate → 填写 → 真 POST
     await modal.locator("[data-acceptance-reject]").click()
-    const confirm = modal.locator("[data-reject-confirm]")
+    const confirm = page.locator("[data-reject-panel] [data-reject-confirm]")
     await expect(confirm).toBeDisabled()
-    await modal.locator("[data-reject-feedback]").fill(`E2E_TD 打回反馈：请补齐 ${RUN} 的出口核对`)
+    await page.locator("[data-reject-panel] [data-reject-feedback]").fill(`E2E_TD 打回反馈：请补齐 ${RUN} 的出口核对`)
     await expect(confirm).toBeEnabled()
     const accRespP = page.waitForResponse((r) => r.url().includes(`/api/tasks/${taskId}/acceptance`) && r.request().method() === "POST")
     await confirm.click()
@@ -720,6 +720,8 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     await page.screenshot({ path: shot("s4-accept-r2-modal.png") })
     const accP = page.waitForResponse((r) => r.url().includes(`/api/tasks/${taskId}/acceptance`) && r.request().method() === "POST")
     await modal.locator("[data-acceptance-approve]").click()
+    // ADR-0022：通过 = 先开台账预览弹层，点确认才真正 POST acceptance
+    await page.locator("[data-testid='ledger-confirm']").click()
     const acc = await accP
     const body = (await acc.json()) as AcceptanceResp["body"]
     expect(acc.status()).toBe(200)
@@ -773,6 +775,8 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     await expect(modal).toBeVisible({ timeout: 15_000 })
     const accP = page.waitForResponse((r) => r.url().includes(`/api/tasks/${taskId}/acceptance`) && r.request().method() === "POST")
     await modal.locator("[data-acceptance-approve]").click()
+    // ADR-0022：通过 = 先开台账预览弹层，点确认才真正 POST acceptance
+    await page.locator("[data-testid='ledger-confirm']").click()
     const acc = await accP
     const body = (await acc.json()) as AcceptanceResp["body"]
     expect(acc.status()).toBe(200)

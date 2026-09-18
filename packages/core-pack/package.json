@@ -6,6 +6,7 @@
   "main": "index.js",
   "files": [
     "skills/",
+    "clones/",
     "agents/",
     "scripts/",
     "templates/",

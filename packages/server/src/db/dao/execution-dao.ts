@@ -53,49 +53,56 @@ export class ExecutionDAO extends BaseDAO {
   // job needs, and they are deliberately task-agnostic in the other direction: the
   // scheduler never queries them.
 
-  /** The task's CURRENT instance = its most recent ROOT row, whatever its status
+  /** The task's CURRENT instance = its most recent INSTANCE row, whatever its status
    *  ('pending' = queued, terminal = the previous round). NULL = never ran.
    *  Serves both the 单实例 guard and the board badge. Uses idx_exec_task
-   *  (task_id, created_at DESC). Children are excluded: a composite task's children
-   *  belong to a root that is already this row. */
-  findLatestTaskRoot(taskId: string): ExecutionRow | null {
+   *  (task_id, created_at DESC).
+   *
+   *  task-exec-tree (v44): an instance is a root OR a chained v4 round — the predicate
+   *  `(parent_id = '0' OR phase_index IS NOT NULL)` is the latch's predicate, and it is
+   *  the ONLY legal way to tell 「任务实例」 from a composite subunit arm (arms: parent
+   *  set, phase NULL). A round's parent is the previous round, so the newest row — not
+   *  the newest root — is what a human is looking at. */
+  findLatestTaskInstance(taskId: string): ExecutionRow | null {
     return (this.stmt(
-      `SELECT * FROM executions WHERE task_id = ? AND parent_id = '0'
+      `SELECT * FROM executions WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
     ).get(taskId) as ExecutionRow) ?? null
   }
 
   /** The current instance of EACH of many tasks, in one query — the kanban's badge
-   *  source. Latest root per task by rowid (monotonic per insert), which is also the
-   *  tiebreak `created_at` cannot provide for two rounds armed in the same second. */
-  findLatestTaskRoots(taskIds: readonly string[]): ExecutionRow[] {
+   *  source. Latest instance per task by rowid (monotonic per insert), which is also
+   *  the tiebreak `created_at` cannot provide for two rounds armed in the same second. */
+  findLatestTaskInstances(taskIds: readonly string[]): ExecutionRow[] {
     if (taskIds.length === 0) return []
     const ph = taskIds.map(() => "?").join(",")
     return this.stmt(
       `SELECT e.* FROM executions e
-       WHERE e.parent_id = '0' AND e.task_id IN (${ph})
+       WHERE (e.parent_id = '0' OR e.phase_index IS NOT NULL) AND e.task_id IN (${ph})
          AND e.rowid = (
            SELECT MAX(e2.rowid) FROM executions e2
-           WHERE e2.task_id = e.task_id AND e2.parent_id = '0'
+           WHERE e2.task_id = e.task_id AND (e2.parent_id = '0' OR e2.phase_index IS NOT NULL)
          )`,
     ).all(...taskIds) as ExecutionRow[]
   }
 
-  /** Every root execution of a task, newest first — the 「执行历史」 read model that
-   *  replaced the envelope's children[]. */
-  listTaskRoots(taskId: string, limit = 50): ExecutionRow[] {
+  /** Every instance execution of a task (roots + chained v4 rounds), newest first — the
+   *  「执行历史」 read model that replaced the envelope's children[]. */
+  listTaskInstances(taskId: string, limit = 50): ExecutionRow[] {
     return this.stmt(
-      `SELECT * FROM executions WHERE task_id = ? AND parent_id = '0'
+      `SELECT * FROM executions WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
        ORDER BY created_at DESC, rowid DESC LIMIT ?`,
     ).all(taskId, limit) as ExecutionRow[]
   }
 
   /** A round row addressed by (task, phase, round) — the acceptance ledger's join key
-   *  (round_index is bumped INHERIT mode writes a new row, so this stays 1:1). */
+   *  (round_index is bumped INHERIT mode writes a new row, so this stays 1:1).
+   *  No parent filter: task-exec-tree chains rounds under their predecessor, and a round
+   *  is identified by its (phase, round) tag, never by being a root. */
   findTaskRound(taskId: string, phaseIndex: number, roundIndex: number): ExecutionRow | null {
     return (this.stmt(
       `SELECT * FROM executions
-       WHERE task_id = ? AND parent_id = '0' AND phase_index = ? AND round_index = ?
+       WHERE task_id = ? AND phase_index = ? AND round_index = ?
        ORDER BY created_at DESC LIMIT 1`,
     ).get(taskId, phaseIndex, roundIndex) as ExecutionRow) ?? null
   }
@@ -112,14 +119,16 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   /** Task rows stranded in a live status whose engine is no longer running in this
-   *  process — the crash/restart residue the reconciliation pass resolves. Root only:
-   *  a child's fate is decided with its parent. */
-  listLiveTaskRootsNotIn(statuses: readonly string[]): Array<{ id: string; task_id: string; workspace_id: string; status: string }> {
+   *  process — the crash/restart residue the reconciliation pass resolves. Instances
+   *  only (roots + chained v4 rounds): a composite arm's fate is decided with its
+   *  parent, and a chained round is an instance, not an arm (task-exec-tree v44). */
+  listLiveTaskInstancesNotIn(statuses: readonly string[]): Array<{ id: string; task_id: string; workspace_id: string; status: string }> {
     if (statuses.length === 0) return []
     const placeholders = statuses.map(() => "?").join(",")
     return this.stmt(
       `SELECT id, task_id, workspace_id, status FROM executions
-       WHERE task_id IS NOT NULL AND parent_id = '0' AND status NOT IN (${placeholders})`,
+       WHERE task_id IS NOT NULL AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND status NOT IN (${placeholders})`,
     ).all(...statuses) as Array<{ id: string; task_id: string; workspace_id: string; status: string }>
   }
 
@@ -159,13 +168,16 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   /** Every subunit run of a task (child executions the task side armed), grouped by the
-   *  caller. `task_id IS NOT NULL AND parent_id != '0'` is the subunit predicate: engine
-   *  chain children carry parent_id too but no task_id, so they stay out of the task's
-   *  fan-out view. One query per read-model call, grouped in TS — the alternative
-   *  (findChildren per root) is N queries for a 50-row history. */
+   *  caller. `task_id IS NOT NULL AND parent_id != '0' AND phase_index IS NULL` is the
+   *  subunit predicate: engine chain children carry parent_id too but no task_id, and
+   *  chained v4 ROUNDS carry both (task-exec-tree v44) — the phase tag is what tells a
+   *  round apart from an arm. One query per read-model call, grouped in TS — the
+   *  alternative (findChildren per root) is N queries for a 50-row history. */
   listTaskChildRuns(taskId: string): ExecutionRow[] {
     return this.stmt(
-      `SELECT * FROM executions WHERE task_id = ? AND parent_id != '0' ORDER BY child_index ASC`,
+      `SELECT * FROM executions
+       WHERE task_id = ? AND parent_id != '0' AND phase_index IS NULL
+       ORDER BY child_index ASC`,
     ).all(taskId) as ExecutionRow[]
   }
 
@@ -922,12 +934,12 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt(`
       WITH root_executions AS (
         SELECT id, status as root_status, duration, completed_at, started_at
-        FROM executions WHERE parent_id IS NULL OR parent_id = '0'
+        FROM executions WHERE parent_id IS NULL OR parent_id = '0' OR phase_index IS NOT NULL
       ),
       latest_children AS (
         SELECT parent_id, status as child_status,
           ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY started_at DESC) as rn
-        FROM executions WHERE parent_id IS NOT NULL AND parent_id != '0'
+        FROM executions WHERE parent_id IS NOT NULL AND parent_id != '0' AND phase_index IS NULL
       ),
       effective_status AS (
         SELECT r.id, COALESCE(lc.child_status, r.root_status) as status,
@@ -986,12 +998,12 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt(`
       WITH root_executions AS (
         SELECT id, workflow_ref, status as root_status, duration, completed_at, started_at
-        FROM executions WHERE parent_id IS NULL OR parent_id = '0'
+        FROM executions WHERE parent_id IS NULL OR parent_id = '0' OR phase_index IS NOT NULL
       ),
       latest_children AS (
         SELECT parent_id, status as child_status,
           ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY started_at DESC) as rn
-        FROM executions WHERE parent_id IS NOT NULL AND parent_id != '0'
+        FROM executions WHERE parent_id IS NOT NULL AND parent_id != '0' AND phase_index IS NULL
       ),
       effective_status AS (
         SELECT r.id, r.workflow_ref, COALESCE(lc.child_status, r.root_status) as status,
