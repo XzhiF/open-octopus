@@ -191,26 +191,6 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
     }
   })
 
-  /**
-   * GET /sessions/:id/messages/count — Get message count
-   */
-  sessions.get('/sessions/:id/messages/count', (c) => {
-    try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
-      const id = c.req.param('id')
-      const count = getSessionService().getMessageCount(org, id)
-
-      return c.json({ count })
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error(String(err))
-      const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'
-      return c.json(createAgentError(code, error.message), mapErrorToStatus(code))
-    }
-  })
 
   return sessions
 }

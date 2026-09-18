@@ -39,7 +39,7 @@ import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
 import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
-import { eventRoutes, taskpoolEventRoutes } from "./routes/events"
+import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
@@ -443,9 +443,7 @@ app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
 app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
-app.route("/api/scheduler/events", taskpoolEventRoutes(sse))
 app.route("/api/workspaces/:id/schedules", scheduleRoutes)
-app.route("/api/cron", cronRoutes)
 app.route("/api/schedules/cron", cronRoutes)
 app.route("/api", createAnalyticsRoutes(d.execution, d.tokenUsage, d.workspace, globalErrorTracker))
 app.route("/api/agent", createAgentRoutes({

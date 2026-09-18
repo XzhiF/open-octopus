@@ -171,33 +171,6 @@ export function createAnalyticsLogRoutes(
     }
   })
 
-  // ponytail: TC-P1-004 replay export — returns swarm execution data as downloadable JSON
-  analyticsRoutes.get("/swarm-replay/:executionId", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "Workspace not found" }, 404)
-
-    const executionId = c.req.param("executionId")
-    if (!executionId) return c.json({ error: "executionId required" }, 400)
-    // ponytail: prevent path traversal — executionId must be UUID-like or alphanumeric
-    if (!/^[a-zA-Z0-9_-]+$/.test(executionId) || executionId.length > 128) {
-      return c.json({ error: "Invalid executionId format" }, 400)
-    }
-
-    try {
-      const wsPath = (ws.path || "").replace(/^~/, os.homedir())
-      const logsDir = join(wsPath, "logs", executionId)
-      if (!existsSync(logsDir)) {
-        return c.json({ error: "Execution logs not found" }, 404)
-      }
-
-      const replayData = buildReplayData(logsDir, executionId)
-      c.header("Content-Disposition", `attachment; filename="swarm-replay-${executionId}.json"`)
-      return c.json(replayData)
-    } catch {
-      return c.json({ error: "Failed to build replay data" }, 500)
-    }
-  })
 
   return analyticsRoutes
 }
@@ -305,53 +278,6 @@ function emptyStats(): SwarmStatsResponse {
     top_roles: [],
     router_accuracy: null,
   }
-}
-
-/** TC-P1-004: Build replay data from execution logs */
-function buildReplayData(logsDir: string, executionId: string): {
-  executionId: string
-  messages: Array<{ from: string; to: string; round: number; content: string; timestamp: number }>
-  experts: Array<{ role: string; status: string; rounds: number }>
-  consensus_history: Array<{ round: number; score: number; should_continue: boolean }>
-} {
-  const messages: Array<{ from: string; to: string; round: number; content: string; timestamp: number }> = []
-  const experts: Array<{ role: string; status: string; rounds: number }> = []
-  const consensus_history: Array<{ round: number; score: number; should_continue: boolean }> = []
-
-  for (const file of readdirSync(logsDir)) {
-    if (!file.endsWith(".jsonl")) continue
-    try {
-      const lines = readFileSync(join(logsDir, file), "utf-8").split("\n").filter(Boolean)
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line)
-          if (entry.event === "expert_message" && entry.eventData) {
-            messages.push({
-              from: entry.eventData.role || entry.eventData.from,
-              to: "*",
-              round: entry.eventData.round ?? 1,
-              content: entry.eventData.content || "",
-              timestamp: entry.eventData.timestamp || new Date(entry.timestamp).getTime(),
-            })
-          } else if (entry.event === "expert_complete" && entry.eventData) {
-            experts.push({
-              role: entry.eventData.role || "unknown",
-              status: entry.eventData.status || "completed",
-              rounds: entry.eventData.round ?? 1,
-            })
-          } else if (entry.event === "consensus_check" && entry.eventData) {
-            consensus_history.push({
-              round: entry.eventData.round ?? 1,
-              score: entry.eventData.score ?? 0,
-              should_continue: entry.eventData.shouldContinue ?? true,
-            })
-          }
-        } catch { /* skip malformed */ }
-      }
-    } catch { /* skip unreadable */ }
-  }
-
-  return { executionId, messages, experts, consensus_history }
 }
 
 export default createAnalyticsLogRoutes

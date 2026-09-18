@@ -28,42 +28,6 @@ export interface SkillRouteDeps {
 export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   const app = new Hono()
 
-  // M4: Improved skill search (must be before /skills/:name)
-  app.get('/skills/search', (c) => {
-    try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-
-      const q = c.req.query('q') ?? ''
-      const limit = Math.min(parseInt(c.req.query('limit') ?? '10', 10), 50)
-      if (!q) return c.json(createAgentError('INVALID_PARAM', 'q (search query) is required'), 400)
-
-      const adapter = getSubsystemAdapter(org)
-      const results = adapter.searchSkills(q, limit)
-
-      const enhancedResults = results.map(r => {
-        let contentPreview = ''
-        try {
-          if (fs.existsSync(r.path)) {
-            const content = fs.readFileSync(r.path, 'utf-8')
-            const descLines = content.split('\n').slice(1, 5).filter(l => l.trim() && !l.startsWith('#'))
-            contentPreview = descLines.join(' ').slice(0, 200)
-            const queryTerms = q.toLowerCase().split(/\s+/).filter(t => t.length >= 2)
-            const contentLower = content.toLowerCase()
-            const contentMatches = queryTerms.filter(t => contentLower.includes(t)).length
-            if (contentMatches > 0) r.similarity = Math.min(1, r.similarity + contentMatches * 0.15)
-          }
-        } catch { /* non-fatal */ }
-        return { name: r.name, path: r.path, similarity: r.similarity, source: r.source, content_preview: contentPreview }
-      })
-
-      enhancedResults.sort((a, b) => b.similarity - a.similarity)
-      return c.json({ items: enhancedResults.slice(0, limit), total: enhancedResults.length, query: q, degraded: results.every(r => r.source === 'local_scan') })
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error(String(err))
-      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
-    }
-  })
 
   // ── Skills list ─────────────────────────────────────────────────
   app.get('/skills', (c) => {
