@@ -321,14 +321,6 @@ export async function promptSession(
   await session.prompt(prompt, options)
 }
 
-export function abortSession(session: any): void {
-  try {
-    session.abort()
-  } catch {
-    // Session may already be completed
-  }
-}
-
 export function disposeSession(session: any): void {
   try {
     session.dispose()

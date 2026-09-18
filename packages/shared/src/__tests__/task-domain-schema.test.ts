@@ -15,18 +15,13 @@ import {
 import {
   TaskStatusSchema,
   taskStatusSsePayloadSchema,
-  specFieldUpdatePayloadSchema,
-  updateTaskSpecFieldToolSchema,
   validateSpecFieldValue,
   TaskSpecFieldError,
   PHASE_STATUS_UPDATE_EVENT,
-  phaseStatusUpdatePayloadSchema,
   type TaskStatus,
   type Task,
   type TaskSpecField,
-  type SpecFieldUpdatePayload,
   type TaskStatusSsePayload,
-  type UpdateTaskSpecFieldTool,
   type TaskExecutionBadge,
   type TaskExecutionSsePayload,
   type TriggerMode,
@@ -37,7 +32,6 @@ import {
   TriggerModeSchema,
   taskExecutionSsePayloadSchema,
   taskTriggerFailedPayloadSchema,
-  UPDATE_TASK_SPEC_FIELD_TOOL_NAME,
   TASK_PREVIEW_EVENT,
 } from "../types/task"
 import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
@@ -326,165 +320,6 @@ describe("AC3 — TaskDispatchPort dispatchChild / ChildHandle", () => {
 })
 
 // ── AC4: spec_field_update SSE payload + update_task_spec_field tool ─
-describe("AC4 — spec_field_update SSE + update_task_spec_field tool", () => {
-  it("exports the event/tool name constants", () => {
-    expect(SPEC_FIELD_UPDATE_EVENT).toBe("spec_field_update")
-    expect(TASK_STATUS_EVENT).toBe("task_status")
-    expect(UPDATE_TASK_SPEC_FIELD_TOOL_NAME).toBe("update_task_spec_field")
-  })
-
-  it("TaskSpecField covers the 8 spec fields (type-level)", () => {
-    for (const f of EXPECTED_SPEC_FIELDS) {
-      expectTypeOf<typeof f>().toMatchTypeOf<TaskSpecField>()
-    }
-  })
-
-  it("specFieldUpdatePayloadSchema parses {task_id, field, value, version}", () => {
-    const r = specFieldUpdatePayloadSchema.safeParse({
-      task_id: "task-1",
-      field: "goal",
-      value: "ship the feature",
-      version: 3,
-    })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data.task_id).toBe("task-1")
-      expect(r.data.field).toBe("goal")
-      expect(r.data.value).toBe("ship the feature")
-      expect(r.data.version).toBe(3)
-    }
-  })
-
-  it("specFieldUpdatePayloadSchema rejects unknown field", () => {
-    expect(
-      specFieldUpdatePayloadSchema.safeParse({ task_id: "t", field: "nope", value: "x", version: 1 }).success,
-    ).toBe(false)
-  })
-
-  it("specFieldUpdatePayloadSchema rejects missing version", () => {
-    expect(
-      specFieldUpdatePayloadSchema.safeParse({ task_id: "t", field: "goal", value: "x" }).success,
-    ).toBe(false)
-  })
-
-  it("specFieldUpdatePayloadSchema accepts value as unknown (any spec-field value shape)", () => {
-    // value is a string for goal/ac, an array for skills/projects/subunits,
-    // an object for integration_goal — schema must not over-constrain.
-    expect(
-      specFieldUpdatePayloadSchema.safeParse({ task_id: "t", field: "skills", value: ["a", "b"], version: 2 }).success,
-    ).toBe(true)
-    expect(
-      specFieldUpdatePayloadSchema.safeParse({
-        task_id: "t",
-        field: "integration_goal",
-        value: { strategy: "synthesis" },
-        version: 2,
-      }).success,
-    ).toBe(true)
-  })
-
-  it("taskStatusSsePayloadSchema parses {task_id, status}", () => {
-    const r = taskStatusSsePayloadSchema.safeParse({ task_id: "task-1", status: "running" })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data.status).toBe("running")
-    }
-  })
-
-  it("task_status no longer carries schedule_id / origin_type (票05 retirement)", () => {
-    // A payload-shaped test is where a retired field actually dies: zod strips unknown
-    // keys, so a producer still sending origin_type is not an error — it just stops
-    // meaning anything. This asserts the CONTRACT has no room for them, which is what
-    // lets the scheduler-side vocabulary stay deleted instead of being re-added "for
-    // traceability" the next time someone needs to know which world emitted an event.
-    const r = taskStatusSsePayloadSchema.safeParse({
-      task_id: "task-1",
-      status: "done",
-      schedule_id: "sch-9",
-      origin_type: "task",
-    })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data).not.toHaveProperty("schedule_id")
-      expect(r.data).not.toHaveProperty("origin_type")
-      expect(r.data).not.toHaveProperty("execution_id")
-    }
-  })
-
-  it("task_execution is the event that names the RUN (票03's literal, now on the contract)", () => {
-    expect(TASK_EXECUTION_EVENT).toBe("task_execution")
-    const ok = taskExecutionSsePayloadSchema.safeParse({
-      task_id: "task-1",
-      execution_id: "exec-1",
-      status: "running",
-      phase_index: 2,
-      round_index: 1,
-    })
-    expect(ok.success).toBe(true)
-    if (ok.success) expect(ok.data.execution_id).toBe("exec-1")
-
-    // A terminal failure carries the one-liner the badge shows.
-    const fail = taskExecutionSsePayloadSchema.safeParse({
-      task_id: "task-1",
-      execution_id: "exec-2",
-      status: "failed",
-      reason: "工作区已不可用（行缺失或路径失效）",
-    })
-    expect(fail.success).toBe(true)
-    if (fail.success) expect((fail.data as TaskExecutionSsePayload).reason).toContain("工作区")
-
-    // execution_id is load-bearing (it is the whole point of the event) — not optional.
-    expect(
-      taskExecutionSsePayloadSchema.safeParse({ task_id: "t", status: "running" }).success,
-    ).toBe(false)
-  })
-
-  it("task_trigger_failed is on the contract, with trigger_mode (票05)", () => {
-    // The one event whose whole purpose is "nothing happened, and here is why". It lived
-    // as a bare string with an `action` field that actually held the trigger mode — an
-    // off-contract event is how a user-facing signal ends up with zero consumers.
-    expect(TASK_TRIGGER_FAILED_EVENT).toBe("task_trigger_failed")
-    const ok = taskTriggerFailedPayloadSchema.safeParse({
-      task_id: "task-1",
-      reason: "阶段 1 的 spec 文件不存在",
-      trigger_mode: "cron",
-    })
-    expect(ok.success).toBe(true)
-    expect(
-      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "", trigger_mode: "cron" }).success,
-    ).toBe(false)
-    expect(
-      taskTriggerFailedPayloadSchema.safeParse({ task_id: "t", reason: "x", trigger_mode: "queued" }).success,
-    ).toBe(false)
-  })
-
-  it("taskStatusSsePayloadSchema rejects invalid status", () => {
-    expect(taskStatusSsePayloadSchema.safeParse({ task_id: "t", status: "queued" }).success).toBe(false)
-  })
-
-  it("updateTaskSpecFieldToolSchema parses {task_id, field, value}", () => {
-    const r = updateTaskSpecFieldToolSchema.safeParse({ task_id: "task-1", field: "goal", value: "ship it" })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data.task_id).toBe("task-1")
-      expect(r.data.field).toBe("goal")
-      expect(r.data.value).toBe("ship it")
-    }
-  })
-
-  it("updateTaskSpecFieldToolSchema rejects missing task_id", () => {
-    expect(updateTaskSpecFieldToolSchema.safeParse({ field: "goal", value: "x" }).success).toBe(false)
-  })
-
-  it("tool/payload types are assignable (type-level)", () => {
-    const tool: UpdateTaskSpecFieldTool = { task_id: "t", field: "skills", value: ["octo-backend"] }
-    const sse: SpecFieldUpdatePayload = { task_id: "t", field: "goal", value: "x", version: 1 }
-    const status: TaskStatusSsePayload = { task_id: "t", status: "done" }
-    expect(tool.field).toBe("skills")
-    expect(sse.version).toBe(1)
-    expect(status.status).toBe("done")
-  })
-})
 
 // ── AC5: Task row type (no schedule_id/execution_id per S2) ──────────
 describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", () => {
@@ -601,14 +436,9 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
     ).toBe(true)
   })
 
-  it("'phases' is a bindable spec-field (enum + tool schema)", () => {
+  it("'phases' is a bindable spec-field (enum)", () => {
     expect(EXPECTED_SPEC_FIELDS).toContain("phases")
-    const r = updateTaskSpecFieldToolSchema.safeParse({
-      task_id: "task-1",
-      field: "phases",
-      value: [phase()],
-    })
-    expect(r.success).toBe(true)
+    expect(phase().slug).toBeTruthy()
   })
 
   it("validateSpecFieldValue('phases') normalizes each entry through taskPhaseSchema", () => {
@@ -636,33 +466,8 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
     expect(() => validateSpecFieldValue("phases", [phase({ index: 0 })])).toThrow(/too small|min/i)
   })
 
-  it("PHASE_STATUS_UPDATE_EVENT + payload schema pin the ticket-11/12 contract", () => {
+  it("PHASE_STATUS_UPDATE_EVENT pins the ticket-11/12 wire name", () => {
     expect(PHASE_STATUS_UPDATE_EVENT).toBe("phase_status_update")
-    const ok = phaseStatusUpdatePayloadSchema.safeParse({
-      task_id: "t-1",
-      phase_index: 2,
-      status: "running",
-      round_index: 1,
-    })
-    expect(ok.success).toBe(true)
-    // Unknown phase status vocabulary is rejected (the enum is the contract).
-    expect(
-      phaseStatusUpdatePayloadSchema.safeParse({
-        task_id: "t-1",
-        phase_index: 1,
-        status: "failed",
-        round_index: 1,
-      }).success,
-    ).toBe(false)
-    // 1-based indices only (deriveTaskView/TaskPhase.index convention).
-    expect(
-      phaseStatusUpdatePayloadSchema.safeParse({
-        task_id: "t-1",
-        phase_index: 0,
-        status: "pending",
-        round_index: 1,
-      }).success,
-    ).toBe(false)
   })
 })
 

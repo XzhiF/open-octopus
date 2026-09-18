@@ -34,7 +34,6 @@ export const ModelPresetSchema = z.object({
     cacheWrite: z.number().optional(),
   }).optional(),
 })
-export type ModelPreset = z.infer<typeof ModelPresetSchema>
 
 const CustomProviderSchema = z.object({
   base_url: z.string(),
@@ -45,7 +44,6 @@ const CustomProviderSchema = z.object({
 
 export const CustomProvidersMapSchema = z.record(z.string(), CustomProviderSchema)
 export type CustomProviderDef = z.infer<typeof CustomProviderSchema>
-export type CustomProvidersMap = z.infer<typeof CustomProvidersMapSchema>
 
 export const ModelAliasConfigSchema = z.object({
   default: z.string().default('pro'),

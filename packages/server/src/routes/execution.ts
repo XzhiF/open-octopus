@@ -277,34 +277,6 @@ executionRoutes.post("/:executionId/start", async (c) => {
   try {
     const result = await svc.service.start(executionId, body.inputValues, body.syncMainBranch)
 
-    // Auto-start chain if auto_execute is enabled. Task-bound rows are EXCLUDED:
-    // since v44 a task's rounds chain parent→child in this ws, and the chain engine
-    // would happily start a queued (pending) round that the task-lifecycle job is
-    // holding behind the concurrency cap — a second owner starting rows whose
-    // finalize callbacks the job never registered. The tree of a task belongs to the
-    // job, not to the chain.
-    const exec = svc.service.getById(executionId)
-    if (exec && !exec.task_id) {
-      const configLoader = new PipelineConfigLoader(svc.wsPath)
-      const config = configLoader.getConfig()
-
-      if (config?.chain?.auto_execute) {
-        // Find the root of this execution's tree
-        let rootId = exec.id
-        let current = exec
-        while (current.parent_id && current.parent_id !== "0") {
-          const parent = svc.service.getById(current.parent_id)
-          if (!parent) break
-          rootId = parent.id
-          current = parent
-        }
-
-        // Import chain-routes dynamically to avoid circular dependency
-        const { tryAutoStartChain } = await import("./chain-routes")
-        tryAutoStartChain(workspaceId, svc, rootId)
-      }
-    }
-
     return c.json(result)
   } catch (err: unknown) {
     return handleError(err)
@@ -329,29 +301,6 @@ executionRoutes.post("/:executionId/retry", async (c) => {
   // before its first await, then continues engine execution in the background.
   // The HTTP response returns immediately — SSE events report progress/completion.
   svc.service.retry(executionId, body.failedNodeId, body.inputValues, body.intervention)
-    .then(async () => {
-      // Auto-start chain if auto_execute is enabled — task rows excluded, same rule
-      // as the /start hook above (the task tree belongs to the task-lifecycle job).
-      if (!exec.task_id) {
-        const configLoader = new PipelineConfigLoader(svc.wsPath)
-        const config = configLoader.getConfig()
-
-        if (config?.chain?.auto_execute) {
-          // Find the root of this execution's tree
-          let rootId = exec.id
-          let current = exec
-          while (current.parent_id && current.parent_id !== "0") {
-            const parent = svc.service.getById(current.parent_id)
-            if (!parent) break
-            rootId = parent.id
-            current = parent
-          }
-
-          const { tryAutoStartChain } = await import("./chain-routes")
-          tryAutoStartChain(workspaceId, svc, rootId)
-        }
-      }
-    })
     .catch((err: unknown) => console.error(`[retry] ${executionId} background error:`, err))
 
   return c.json(svc.service.getById(executionId) ?? exec)

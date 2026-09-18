@@ -3,19 +3,17 @@
 > 📌 静态快照（2026-09-18，open-spec 588 条伪 agent 卸载后）。ResourceManager 已移除自动改写本文件/CLAUDE.md 的机制。
 > 查询 CLI：`octopus resource list`
 
-## Skills (102)
+## Skills (86)
 
-### built-in (43)
+### built-in (27)
 
 - octo-actuator-guide
 - octo-agent-clones
 - octo-agent-config
 - octo-agent-debug
-- octo-agent-evolution
 - octo-agent-memory
 - octo-agent-orchestrator
 - octo-agent-safety
-- octo-agent-scheduler
 - octo-agent-sessions
 - octo-agent-workspace
 - octo-browser-debug
@@ -35,20 +33,6 @@
 - octo-workflow-ops
 - octo-workflow-repair
 - octo-workflow-test
-- octo-xzf-brief-maker
-- octo-xzf-clarify
-- octo-xzf-decomposer
-- octo-xzf-implementer
-- octo-xzf-init
-- octo-xzf-orchestrator
-- octo-xzf-research
-- octo-xzf-ship
-- octo-xzf-spec-designer
-- octo-xzf-spec-to-tasks
-- octo-xzf-story-walker
-- octo-xzf-story-writer
-- octo-xzf-task-planner
-- octo-xzf-verification
 - task-author
 
 ### mattpocock-skills (39)
@@ -116,27 +100,17 @@
 - writing-plans
 - writing-skills
 
-## Agents (281)
+## Agents (271)
 
-### built-in (17)
+### built-in (7)
 
 - architecture-explorer
 - devil-advocate
 - harness-agent
-- octo-xzf-architect
-- octo-xzf-backend-expert
-- octo-xzf-codebase-architect
-- octo-xzf-external-researcher
-- octo-xzf-frontend-expert
-- octo-xzf-product-manager
-- octo-xzf-risk-analyst
-- octo-xzf-security-expert
-- octo-xzf-test-architect
 - testing-engineering-software-architect
 - testing-evidence-collector
 - testing-qa-engineer
 - testing-reality-checker
-- vision-analyzer
 
 ### agency-agents-zh (264)
 

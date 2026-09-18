@@ -233,11 +233,3 @@ export function extractDescFromMdContent(text: string): string {
 
   return ""
 }
-
-export function findAgentMd(localPath: string): string | null {
-  for (const candidate of ["CLAUDE.md", "AGENT.md"]) {
-    const full = join(localPath, candidate)
-    if (existsSync(full)) return full
-  }
-  return null
-}

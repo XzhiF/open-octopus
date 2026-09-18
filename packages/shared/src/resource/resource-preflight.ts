@@ -150,7 +150,7 @@ export class ResourcePreFlight {
    * 检查 workspace 中是否已有 manifest 中的资源
    *
    * 支持 group-qualified 名称: "group/name" 会被解析为纯名称用于路径检查。
-   * 例: "built-in/vision-analyzer" → 检查 .claude/agents/vision-analyzer.md
+   * 例: "built-in/architecture-explorer" → 检查 .claude/agents/architecture-explorer.md
    */
   check(manifest: ResourceManifest, workspaceDir: string): ResourceCheckResult {
     const available: Array<{ type: ResourceItemType; name: string }> = []
@@ -250,7 +250,7 @@ export class ResourcePreFlight {
   /**
    * 从 agent_file 路径中提取 agent 名称
    * 跳过变量引用（$vars.xxx）
-   * 支持 group-qualified 路径: "built-in/vision-analyzer.md" → "vision-analyzer"
+   * 支持 group-qualified 路径: "built-in/architecture-explorer.md" → "architecture-explorer"
    */
   private extractAgentName(agentFile: string): string | null {
     if (typeof agentFile !== 'string') return null

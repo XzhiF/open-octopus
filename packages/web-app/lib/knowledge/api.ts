@@ -69,27 +69,12 @@ export async function updatePreference(
   return handleResponse(res)
 }
 
-export async function getEffectiveness(ruleId?: string) {
-  const params = ruleId ? `?ruleId=${encodeURIComponent(ruleId)}` : ''
-  const res = await apiFetch(`${getServerUrl()}/api/knowledge/effectiveness${params}`)
-  return handleResponse(res)
-}
-
 export async function restoreRule(ruleId: string, org?: string) {
   const params = org ? `?org=${encodeURIComponent(org)}` : ''
   const res = await apiFetch(
     `${getServerUrl()}/api/knowledge/rule/${encodeURIComponent(ruleId)}/restore${params}`,
     { method: 'POST' }
   )
-  return handleResponse(res)
-}
-
-export async function compactKnowledge(org: string, filePath: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/knowledge/compact`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ org, filePath }),
-  })
   return handleResponse(res)
 }
 

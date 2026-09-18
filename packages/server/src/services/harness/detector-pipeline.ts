@@ -59,7 +59,7 @@ export interface PendingBlockAction {
 
 /**
  * Preference-to-model resolution map for switch_model actions.
- * Mirrors the logic in actions/switch-model.ts for synchronous extraction.
+ * Synchronous extraction — mirrors the async resolver in the model tier config.
  */
 const PREFERENCE_MODELS: Record<string, string> = {
   vision_capable: "claude-sonnet-4-20250514",

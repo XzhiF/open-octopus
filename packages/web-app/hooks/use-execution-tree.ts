@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dagre from '@dagrejs/dagre'
 import { type Node, type Edge, useNodesState, useEdgesState } from '@xyflow/react'
-import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, AgentTraceEvent, LoopIterationSummary, IterationDetail, HarnessExecutionStatus, HarnessSummary } from '@/lib/types'
+import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, LoopIterationSummary, IterationDetail, HarnessExecutionStatus, HarnessSummary } from '@/lib/types'
 import { getBranchColor } from '@/lib/branch-colors'
 import { fetchExecutionTree, createExecution, startExecution, retryExecution, cancelExecution, skipExecution, deleteExecution } from '@/lib/api-client'
 import { getServerUrl } from '@/lib/server-config'
 import { subscribeSSE } from '@/lib/sse-manager'
-import { pushAgentEvents } from '@/hooks/use-agent-traces'
 
 const DAGRE_NODE_WIDTH = 300
 const DAGRE_NODE_HEIGHT = 160
@@ -303,13 +302,6 @@ export function useExecutionTree(
           ...(toolCount != null ? { toolCount } : {}),
           ...(executorType ? { executorType } : {}),
         } : n))
-      } catch { /* skip malformed event */ }
-    }))
-
-    unsubs.push(subscribeSSE(sseUrl, "agent_event", (e: MessageEvent) => {
-      try {
-        const { executionId, nodeId, event } = JSON.parse(e.data) as { executionId: string; nodeId: string; event: AgentTraceEvent }
-        pushAgentEvents([{ executionId, nodeId, event }])
       } catch { /* skip malformed event */ }
     }))
 

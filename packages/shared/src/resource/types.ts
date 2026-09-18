@@ -275,19 +275,9 @@ export const SourceInstallRequestSchema = z.object({
   all: z.boolean().default(false),
   caller: ResourceAuditCaller.default("cli"),
 })
-export type SourceInstallRequest = z.infer<typeof SourceInstallRequestSchema>
 
 export const SourceSyncRequestSchema = z.object({
   sourceName: z.string().regex(SAFE_NAME_RE),
   caller: ResourceAuditCaller.default("cli"),
 })
-export type SourceSyncRequest = z.infer<typeof SourceSyncRequestSchema>
 
-export const SourceSyncResponseSchema = z.object({
-  sourceName: z.string(),
-  updated: z.number(),
-  added: z.number(),
-  removed: z.number(),
-  unchanged: z.number(),
-})
-export type SourceSyncResponse = z.infer<typeof SourceSyncResponseSchema>

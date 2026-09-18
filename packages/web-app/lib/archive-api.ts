@@ -42,12 +42,6 @@ export async function getResourceGroups(): Promise<ResourceGroups> {
   }
 }
 
-/** @deprecated Use getResourceGroups() instead */
-export async function getSkillGroups(org?: string): Promise<string[]> {
-  const groups = await getResourceGroups()
-  return groups.skillGroups
-}
-
 export interface WorkspaceStats {
   execution_count: number
   success_rate: number

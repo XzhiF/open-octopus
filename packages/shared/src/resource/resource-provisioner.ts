@@ -77,7 +77,7 @@ export class ResourceProvisioner {
 
     const sourcePath = entry.installPath
     // Use entry.name (plain name from registry) for path construction,
-    // since `name` parameter may be group-qualified (e.g. "built-in/vision-analyzer")
+    // since `name` parameter may be group-qualified (e.g. "built-in/architecture-explorer")
     const plainName = entry.name
     const destBase = path.join(workspaceDir, '.claude')
 

@@ -93,35 +93,4 @@ describe("Analytics Routes", () => {
     expect(res.status).toBe(404)
   })
 
-  it("TC-P1-004: GET swarm-replay returns replay data with messages/experts/consensus", async () => {
-    // Create mock log data
-    const execId = "test-replay-exec"
-    const logDir = path.join("/tmp/test-ws", "logs", execId)
-    fs.mkdirSync(logDir, { recursive: true })
-    const logLines = [
-      JSON.stringify({ event: "expert_message", timestamp: "2024-01-01T00:00:01Z", eventData: { role: "reviewer", round: 1, content: "LGTM", timestamp: 1000 } }),
-      JSON.stringify({ event: "expert_message", timestamp: "2024-01-01T00:00:02Z", eventData: { role: "critic", round: 1, content: "needs work", timestamp: 2000 } }),
-      JSON.stringify({ event: "expert_complete", timestamp: "2024-01-01T00:00:03Z", eventData: { role: "reviewer", status: "completed", round: 1 } }),
-      JSON.stringify({ event: "expert_complete", timestamp: "2024-01-01T00:00:04Z", eventData: { role: "critic", status: "completed", round: 1 } }),
-      JSON.stringify({ event: "consensus_check", timestamp: "2024-01-01T00:00:05Z", eventData: { round: 1, score: 0.75, shouldContinue: true } }),
-    ].join("\n")
-    fs.writeFileSync(path.join(logDir, "swarm-1.jsonl"), logLines)
-
-    const res = await app.request(`/api/workspaces/${WS_ID}/analytics/swarm-replay/${execId}`)
-    expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data.executionId).toBe(execId)
-    expect(Array.isArray(data.messages)).toBe(true)
-    expect(data.messages.length).toBeGreaterThan(0)
-    expect(data.messages[0]).toHaveProperty("from")
-    expect(data.messages[0]).toHaveProperty("round")
-    expect(data.messages[0]).toHaveProperty("content")
-    expect(Array.isArray(data.experts)).toBe(true)
-    expect(data.experts.length).toBeGreaterThan(0)
-    expect(Array.isArray(data.consensus_history)).toBe(true)
-    expect(data.consensus_history[0]).toHaveProperty("score")
-
-    // Cleanup
-    fs.rmSync(logDir, { recursive: true, force: true })
-  })
 })

@@ -39,9 +39,6 @@ export async function getProviderAsync(id: string): Promise<IAgentProvider> {
   return instance
 }
 
-export function isProviderRegistered(id: string): boolean {
-  return factories.has(id)
-}
 
 export function listProviders(): string[] {
   return [...factories.keys()]

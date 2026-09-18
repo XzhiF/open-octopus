@@ -398,7 +398,7 @@ function copyAgents(wsDir) {
   if (!corePackAgentsDir) return;
   const agentsDir = path.join(wsDir, ".claude", "agents");
   fs.mkdirSync(agentsDir, { recursive: true });
-  const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"];
+  const coreAgents = ["devil-advocate.md", "architecture-explorer.md"];
   for (const agentFile of coreAgents) {
     const dest = path.join(agentsDir, agentFile);
     if (fs.existsSync(dest)) continue;
@@ -479,15 +479,7 @@ function workspaceGuide() {
     "# \u7CBE\u9009\u590D\u5236\u5230 .claude/agents/\uFF08\u4EC5\u9700\u8981\u7684\u90E8\u95E8\u548C\u6587\u4EF6\uFF09",
     "```",
     "\u5DE5\u4F5C\u6D41 YAML \u4E2D\u901A\u8FC7 `agent_file:` \u5B57\u6BB5\u5F15\u7528 `.claude/agents/` \u4E0B\u7684 .md \u6587\u4EF6\uFF0C",
-    "\u5F15\u64CE\u8FD0\u884C\u65F6\u8BFB\u53D6\u6587\u4EF6\u5185\u5BB9 + `prompt` \u62FC\u63A5\u540E\u4F20\u7ED9 Claude Agent SDK\u3002",
-    "",
-    "## \u89C6\u89C9\u5206\u6790\u89C4\u5219\uFF08\u91CD\u8981\uFF09",
-    "",
-    "**\u56FE\u7247\u6570\u636E\u6C38\u8FDC\u4E0D\u80FD\u8FDB\u5165\u4E3B Agent \u7684 session \u4E0A\u4E0B\u6587\u3002**",
-    "",
-    "- \u9700\u8981\u5206\u6790\u622A\u56FE/\u56FE\u7247\u65F6\uFF0C\u5FC5\u987B\u4F7F\u7528 SDK \u5B50\u4EE3\u7406\uFF08`agents` \u53C2\u6570\u5B9A\u4E49 `vision-analyzer`\uFF09\u6216\u5916\u90E8\u5DE5\u5177\uFF08`python vision_analyze.py`\uFF09",
-    "- \u7981\u6B62\u7236\u4EE3\u7406\u76F4\u63A5\u5904\u7406\u56FE\u7247\uFF0C\u5426\u5219\u4F1A\u6C61\u67D3 session \u4E0A\u4E0B\u6587\uFF0C\u5BFC\u81F4\u540E\u7EED\u975E\u89C6\u89C9\u6A21\u578B\u8282\u70B9 400 \u62A5\u9519",
-    "- \u5B50\u4EE3\u7406\u6709\u72EC\u7ACB\u4E0A\u4E0B\u6587\uFF0C\u6267\u884C\u5B8C\u6BD5\u540E\u53EA\u6709\u6587\u672C\u7ED3\u679C\u8FD4\u56DE\u7236\u4EE3\u7406"
+    "\u5F15\u64CE\u8FD0\u884C\u65F6\u8BFB\u53D6\u6587\u4EF6\u5185\u5BB9 + `prompt` \u62FC\u63A5\u540E\u4F20\u7ED9 Claude Agent SDK\u3002"
   ];
 }
 function writeClaudeMd(wsDir, wsName, repos) {

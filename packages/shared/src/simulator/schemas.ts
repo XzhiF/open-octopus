@@ -103,6 +103,3 @@ export const TestFixtureSchema = z.object({
 
 // ── Inferred types ────────────────────────────────────────────
 
-export type TestFixtureInput = z.infer<typeof TestFixtureSchema>
-export type TestScenarioInput = z.infer<typeof TestScenarioSchema>
-export type AssertionDefInput = z.infer<typeof AssertionDefSchema>

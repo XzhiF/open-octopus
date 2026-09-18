@@ -52,10 +52,4 @@ export function parseRef(ref: string): ParsedRef {
   return parser(namePart)
 }
 
-export function registerRefParser(source: string, parser: RefParserFn): void {
-  parsers.set(source, parser)
-}
 
-export function getRegisteredSources(): string[] {
-  return [...parsers.keys()]
-}

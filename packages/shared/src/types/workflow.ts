@@ -12,7 +12,6 @@ import { parseTokenAmount } from "../parse-token-amount"
  * - "no_cache": input + output only
  */
 export const TokenCountingModeSchema = z.enum(["all", "no_cache"]).optional().default("all")
-export type TokenCountingMode = z.infer<typeof TokenCountingModeSchema>
 
 /**
  * TokenAmountSchema — accepts a plain positive integer or a human-readable string
@@ -62,7 +61,6 @@ export const BudgetSchema = z.object({
   token_counting_mode: TokenCountingModeSchema,
 }).optional()
 
-export type BudgetDef = z.infer<typeof BudgetSchema>
 
 export interface SubAgentDef {
   description: string
@@ -516,7 +514,6 @@ export const WorkflowSchema = z.object({
 
 export type WorkflowDef = z.infer<typeof WorkflowSchema>
 export type AutoAnswer = z.infer<typeof AutoAnswerSchema>
-export type SubAgentDefType = z.infer<typeof SubAgentDefSchema>
 export type CaseDef = z.infer<typeof CaseSchema>
 export type ApprovalOption = z.infer<typeof ApprovalOptionSchema>
 export type WorkflowInput = z.infer<typeof WorkflowInputSchema>

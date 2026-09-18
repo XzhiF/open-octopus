@@ -19,16 +19,6 @@ export type KnowledgeScope = typeof KnowledgeScopeValues[number]
 export const ConflictTypeValues = ['contradicts', 'overlaps', 'supersedes'] as const
 export type ConflictType = typeof ConflictTypeValues[number]
 
-// === Zod Schemas ===
-export const KnowledgeRuleSchema = z.object({
-  ruleId: z.string(),
-  fileName: z.string(),
-  text: z.string(),
-  scope: z.enum(KnowledgeScopeValues),
-  source: z.enum(PendingSourceValues),
-  createdAt: z.string(),
-  status: z.enum(['active', 'retired']),
-})
 
 export const ConflictInfoSchema = z.object({
   existingRule: z.string(),
@@ -72,7 +62,6 @@ export const KnowledgeConfigSchema = z.object({
 })
 
 // === TS Interfaces ===
-export type KnowledgeRule = z.infer<typeof KnowledgeRuleSchema>
 export type ConflictInfo = z.infer<typeof ConflictInfoSchema>
 export type PendingItem = z.infer<typeof PendingReviewSchema>
 export type KnowledgeEffectiveness = z.infer<typeof KnowledgeEffectivenessSchema>

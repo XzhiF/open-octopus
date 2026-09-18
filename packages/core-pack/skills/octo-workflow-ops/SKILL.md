@@ -1,3 +1,10 @@
+---
+name: octo-workflow-ops
+description: Workflow Ops API 操作助手 — 查询与控制工作流执行（执行列表/状态详情/中止运行中执行/查看节点事件）。当需要监控执行进度、中止卡死的工作流、或排查某次运行的节点事件时使用。端点位于 /api/workspaces/{workspaceId}/workflows。
+category: coding-assistant
+tags: [workflow, ops, execution, abort, events]
+---
+
 # octo-workflow-ops
 
 Query and control workflow executions via the Workflow Ops API.

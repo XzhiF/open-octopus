@@ -38,27 +38,3 @@ export async function fetchWorkflowAnalytics(workspaceId: string, workflowRef: s
   if (!res.ok) return { data: null, executions: [] }
   return res.json()
 }
-
-export async function fetchCostAnalysis(workspaceId: string, range = '30d') {
-  const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/analytics/cost?range=${range}`)
-  if (!res.ok) return { data: null, byModel: [], byWorkflow: [], dailyTrend: [] }
-  return res.json()
-}
-
-export async function fetchSuggestions(workspaceId: string, status?: string) {
-  const url = new URL(`${getServerUrl()}/api/workspaces/${workspaceId}/suggestions`)
-  if (status) url.searchParams.set('status', status)
-  const res = await fetch(url.toString())
-  if (!res.ok) return { data: [] }
-  return res.json()
-}
-
-export async function applySuggestion(workspaceId: string, suggestionId: string, changes: Record<string, unknown>) {
-  const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/suggestions/${suggestionId}/apply`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(changes),
-  })
-  if (!res.ok) return { success: false }
-  return res.json()
-}

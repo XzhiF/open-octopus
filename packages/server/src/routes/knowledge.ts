@@ -324,17 +324,6 @@ export function createKnowledgeRoutes(
     }
   })
 
-  // POST /api/knowledge/rebuild-index — rebuild index.md
-  routes.post("/rebuild-index", (c) => {
-    const org = c.req.query("org") || undefined
-    try {
-      const result = rebuildIndex(org)
-      return c.json({ ok: true, ...result })
-    } catch (err) {
-      const { body, status } = errorResponse(err, "rebuild-index")
-      return c.json(body, status)
-    }
-  })
 
   // POST /api/knowledge/rule/:id/restore — restore retired rule
   routes.post("/rule/:id/restore", async (c) => {

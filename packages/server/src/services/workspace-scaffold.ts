@@ -19,13 +19,6 @@ export const DEFAULT_PIPELINE_YAML = `# Octopus Pipeline v2 配置
 apiVersion: octopus/v2
 kind: Pipeline
 
-# ── 执行链策略 ────────────────────────────────────────────
-chain:
-  auto_execute: true            # 自动按树结构依次执行 pending 节点
-  failure_strategy: stop        # stop | continue | retry_leaf — 任一节点失败立即停止链
-  on_success: continue          # continue | stop
-  config_change_strategy: snapshot  # snapshot | abort — 执行中配置变更策略
-
 # ── 重试策略 ──────────────────────────────────────────────
 retry:
   default:
@@ -182,7 +175,7 @@ export class WorkspaceScaffold {
     const agentsDir = path.join(workspacePath, ".claude", "agents")
     fs.mkdirSync(agentsDir, { recursive: true })
 
-    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"]
+    const coreAgents = ["devil-advocate.md", "architecture-explorer.md"]
     for (const agentFile of coreAgents) {
       const dest = path.join(agentsDir, agentFile)
       if (fs.existsSync(dest)) continue

@@ -37,7 +37,6 @@ function makePipelineConfig(runtimeNodes: any[] = []): PipelineConfig {
       pending_resume_timeout: 600,
     },
     retry: { default: { max_attempts: 1, backoff: { type: "fixed", initial_delay: 1, multiplier: 1, increment: 0, max_delay: 10 }, max_total_duration: 0, retry_on: [], never_retry_on: [] }, overrides: {} },
-    fork: { path_strategy: "all", merge_strategy: "wait_all", failure_handling: "fail_all" },
     checkpoint: { enabled: false, save_on: "per-node", max_checkpoints: 10, ttl: 86400, max_size_bytes: 1048576 },
     runtime_nodes: runtimeNodes,
   }

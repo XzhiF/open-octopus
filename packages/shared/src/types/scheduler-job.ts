@@ -316,12 +316,6 @@ export const jobConfigSchema = z.discriminatedUnion('type', [
   codeJobConfigSchema,
 ])
 
-/** Accepts both v1.0 (legacy) and v2.0 workflow configs */
-export const legacyJobConfigSchema = z.union([
-  workflowConfigSchemaV1,
-  workflowConfigSchema,
-  agentConfigSchema,
-])
 
 export const configSchemasByJobType = {
   workflow: workflowConfigSchema,
@@ -335,15 +329,12 @@ export type AgentRetryPolicy = z.infer<typeof agentRetryPolicySchema>
 export type ProjectSpec = z.infer<typeof projectSpecSchema>
 export type WorkspaceSpec = z.infer<typeof workspaceSpecSchema>
 export type WorkflowChainItem = z.infer<typeof workflowChainItemSchema>
-export type IntegrationGoal = z.infer<typeof integrationGoalSchema>
 export type SubunitSpec = z.infer<typeof subunitSpecSchema>
 export type TaskSpec = z.infer<typeof taskSpecSchema>
 export type WorkflowConfig = z.infer<typeof workflowConfigSchema>
-export type WorkflowConfigV1 = z.infer<typeof workflowConfigSchemaV1>
 export type AgentConfig = z.infer<typeof agentConfigSchema>
 export type CodeJobConfig = z.infer<typeof codeJobConfigSchema>
 export type JobConfig = z.infer<typeof jobConfigSchema>
-export type LegacyJobConfig = z.infer<typeof legacyJobConfigSchema>
 
 /** The one fire the list row shows: the job's most recent schedule_executions row.
  *  `duration_ms` is the fire's own wall clock (NULL while it is still running, and NULL

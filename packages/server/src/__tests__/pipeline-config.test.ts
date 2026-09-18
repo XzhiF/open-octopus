@@ -35,13 +35,10 @@ execution:
     expect(config!.execution?.failure_strategy).toBe("continue")
   })
 
-  it("loads v2 config with chain settings", () => {
+  it("loads v2 config with prompt settings", () => {
     const v2Config = `
 apiVersion: octopus/v2
 kind: Pipeline
-chain:
-  auto_execute: true
-  failure_strategy: retry_leaf
 prompts:
   global:
     - "Follow best practices"
@@ -49,8 +46,6 @@ prompts:
     writeFileSync(join(testDir, "pipeline.yaml"), v2Config)
     const loader = new PipelineConfigLoader(testDir)
     const config = loader.getConfig()
-    expect(config!.chain?.auto_execute).toBe(true)
-    expect(config!.chain?.failure_strategy).toBe("retry_leaf")
     expect(config!.prompts?.global).toEqual(["Follow best practices"])
   })
 
@@ -70,21 +65,23 @@ kind: Pipeline
     writeFileSync(join(testDir, "pipeline.yaml"), `
 apiVersion: octopus/v2
 kind: Pipeline
-chain:
-  auto_execute: false
+retry:
+  default:
+    max_attempts: 1
 `)
     const loader = new PipelineConfigLoader(testDir)
-    expect(loader.getConfig()!.chain?.auto_execute).toBe(false)
+    expect(loader.getConfig()!.retry.default.max_attempts).toBe(1)
 
     // 修改文件
     await new Promise(resolve => setTimeout(resolve, 100))
     writeFileSync(join(testDir, "pipeline.yaml"), `
 apiVersion: octopus/v2
 kind: Pipeline
-chain:
-  auto_execute: true
+retry:
+  default:
+    max_attempts: 5
 `)
 
-    expect(loader.getConfig()!.chain?.auto_execute).toBe(true)
+    expect(loader.getConfig()!.retry.default.max_attempts).toBe(5)
   })
 })

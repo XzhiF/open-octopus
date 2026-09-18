@@ -31,24 +31,9 @@ export async function listResources(opts?: ListQuery): Promise<ResourceListRespo
   return handleResponse<ResourceListResponse>(res)
 }
 
-export async function getResourceStats(): Promise<{
-  total: number; installed: number; unverified: number;
-  byType: Record<string, number>; bySource: Record<string, number>
-}> {
-  const res = await apiFetch(`${base()}/stats`)
-  return handleResponse(res)
-}
-
 export async function getResource(type: string, name: string): Promise<ResourceEntry> {
   const res = await apiFetch(`${base()}/${encodeURIComponent(type)}/${encodeURIComponent(name)}`)
   return handleResponse<ResourceEntry>(res)
-}
-
-export async function getResourceVerify(type: string, name: string): Promise<{
-  name: string; type: string; verify: VerifyResult
-}> {
-  const res = await apiFetch(`${base()}/${encodeURIComponent(type)}/${encodeURIComponent(name)}/verify`)
-  return handleResponse(res)
 }
 
 export async function getResourceFiles(type: string, name: string, filePath?: string): Promise<{
@@ -101,14 +86,6 @@ export async function deactivateResource(name: string, type: string): Promise<{
 }
 
 // ============ Builtin ============
-
-export async function listBuiltin(): Promise<{
-  resources: Array<{ name: string; type: string; description: string; installed: boolean }>;
-  total: number
-}> {
-  const res = await apiFetch(`${base()}/builtin`)
-  return handleResponse(res)
-}
 
 // ============ Audit ============
 
@@ -179,17 +156,6 @@ export async function removeSource(name: string): Promise<{ name: string; status
   return handleResponse(res)
 }
 
-export async function analyzeSource(url: string): Promise<{
-  resources: Array<{ name: string; type: string; path: string }>
-}> {
-  const res = await apiFetch(`${base()}/source/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  })
-  return handleResponse(res)
-}
-
 export async function installFromSource(req: {
   sourceName: string; group?: string; all?: boolean
   resources?: Array<{ type: string; name: string; path: string }>
@@ -198,17 +164,6 @@ export async function installFromSource(req: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, caller: "ui" }),
-  })
-  return handleResponse(res)
-}
-
-export async function syncSource(sourceName: string): Promise<{
-  sourceName: string; updated: number; added: number; removed: number; unchanged: number
-}> {
-  const res = await apiFetch(`${base()}/source/sync`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sourceName, caller: "ui" }),
   })
   return handleResponse(res)
 }

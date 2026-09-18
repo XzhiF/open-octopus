@@ -3,7 +3,7 @@ export type {
   ExecutorDeps, EngineServices, CoreConfig,
   PythonConfig, ApprovalConfig, BashConfig,
   AgentConfig, SwarmConfig, LoopConfig, ResumeConfig,
-  InteractionConfig, SubWorkflowConfig, DynamicSubWorkflowConfig, EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
+  InteractionConfig, SubWorkflowConfig, DynamicSubWorkflowConfig, OnLogCallback, HookExecutor, AgentResolver,
 } from "./executors/executor-config"
 export { BashExecutor } from "./executors/bash"
 export { PythonExecutor } from "./executors/python"
@@ -25,6 +25,7 @@ export type { AgentEvent, AgentRunResult } from "./executors/agent-types"
 
 export { WorkflowEngine } from "./engine"
 export type { ExecutionResult, EngineCallbacks } from "./engine"
+export { PromptInjector } from "./prompt-injector"
 
 export { EngineInitPhase } from "./engine-init"
 export type {
@@ -35,7 +36,7 @@ export type {
 
 export { KnowledgeInjector } from "./knowledge-injector"
 
-export { JsonlLogger, sanitizeId, parseLogFilename, isMergedEvent, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"
+export { JsonlLogger, sanitizeId, parseLogFilename, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"
 export type { MergedEventType, ParsedLogFilename } from "./logger"
 // Pipeline modules
 export * from "./pipeline"

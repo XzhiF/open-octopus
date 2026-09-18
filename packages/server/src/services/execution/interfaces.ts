@@ -31,22 +31,9 @@ export interface IHookExecutor {
   executeWorkflowHooks(event: string, context: any, workflow: any, executionId: string): Promise<void>
 }
 
-// GitBranchManager 接口（Task 12）
-export interface IGitBranchManager {
-  createExecutionBranch(executionId: string, parentBranch?: string): Promise<string>
-  switchToBranch(branch: string): Promise<void>
-  getCurrentBranch(): Promise<string>
-}
-
 // StateFileManager 接口（Task 13）
 export interface IStateFileManager {
   saveExecutionState(execution: ExecutionRow): void
   loadExecutionState(executionId: string): any
   updateExecutionState(executionId: string, updates: Partial<ExecutionRow>): void
-}
-
-// RecoveryManager 接口（Task 14）
-export interface IRecoveryManager {
-  recoverInterruptedExecutions(): Promise<void>
-  recoverChainState(): Promise<void>  // 新增：链恢复
 }

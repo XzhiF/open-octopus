@@ -5,6 +5,7 @@ import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { WorkspaceDAO } from "../db/dao"
 import type { ResourceManager } from "@octopus/shared"
+import { parseWorkflow, validateWorkflow } from "@octopus/shared"
 
 const service = new WorkflowService()
 
@@ -41,6 +42,39 @@ export function createWorkflowRoutes(
     }
     const workflow = service.create(ws.path, body.ref, body.content)
     return c.json(workflow, 201)
+  })
+
+  // POST /validate — structural + semantic check of a draft workflow YAML.
+  // Called by the web authoring panels (MOA config save). Shares the exact
+  // parse+validate pipeline with `octopus workflow validate` (cli) so the
+  // three entry points can never disagree.
+  router.post("/validate", async (c) => {
+    const workspaceId = c.req.param("id")
+    const ws = getWorkspace(workspaceId)
+    if (!ws) return c.json({ error: "workspace not found" }, 404)
+
+    const body = await c.req.json<{ yaml?: string }>().catch(() => ({}) as { yaml?: string })
+    if (!body.yaml) {
+      return c.json({ valid: false, errors: [{ path: [], message: "yaml is required", code: "missing_yaml" }], warnings: [] }, 400)
+    }
+    try {
+      const wf = parseWorkflow(body.yaml)
+      const { warnings } = validateWorkflow(wf)
+      const swarm = wf.nodes.find((n) => n.type === "swarm")
+      return c.json({
+        valid: true,
+        errors: [],
+        warnings: warnings.map((w) => ({ path: [], message: w, severity: "warning" as const })),
+        parsed: {
+          mode: wf.execution_mode,
+          expertCount: swarm?.swarm?.experts?.length,
+          hasAggregator: Boolean(swarm?.swarm?.aggregator),
+        },
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      return c.json({ valid: false, errors: [{ path: [], message, code: "parse_error" }], warnings: [] })
+    }
   })
 
   router.get("/:ref", (c) => {

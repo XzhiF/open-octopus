@@ -447,21 +447,6 @@ nodes:
     Do NOT re-narrate their content.
 ```
 
-### Visual isolation (screenshot analysis)
-```yaml
-- id: e2e-test
-  type: agent
-  agents:
-    vision-analyzer:
-      description: "Analyze screenshots. Delegate when visual inspection needed."
-      agent_file: "~/.octopus/resources/installed/agents/built-in/vision-analyzer/vision-analyzer.md"
-      model: pro
-      tools: ["Bash", "Read"]
-  prompt: |
-    Run E2E tests. When screenshot analysis needed, delegate vision-analyzer.
-    Only take text conclusions from it.
-```
-
 ---
 
 ## 10. `dynamic_sub_workflow` — Dynamic DAG Orchestration

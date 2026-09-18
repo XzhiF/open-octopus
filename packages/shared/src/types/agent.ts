@@ -33,10 +33,6 @@ export type AgentSSEEvent =
 
 // ===== Pagination =====
 
-export interface PaginationQuery {
-  cursor?: string
-  limit?: number
-}
 
 export interface AgentPaginatedResponse<T> {
   items: T[]

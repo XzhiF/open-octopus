@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import {
   parseManifest,
-  writeManifest,
   findManifestEntry,
   findManifestGroup,
   type ManifestEntry,
@@ -136,25 +135,6 @@ describe("parseManifest", () => {
   })
 })
 
-describe("writeManifest", () => {
-  it("writes manifest entries back to string", () => {
-    const entries: Record<string, ManifestEntry[]> = {
-      xzf: [
-        {
-          name: "project-a",
-          git_url: "https://git.example.com/a.git",
-          branch: "master",
-          manual_tags: ["java", "spring"],
-          group: "xzf",
-        },
-      ],
-    }
-    const result = writeManifest(entries, { xzf: "旧架构" })
-    expect(result).toContain("## xzf (旧架构)")
-    expect(result).toContain("- project-a [master] {java/spring}")
-    expect(result).toContain("https://git.example.com/a.git")
-  })
-})
 
 describe("findManifestEntry", () => {
   it("finds entry by project name", () => {

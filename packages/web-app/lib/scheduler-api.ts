@@ -226,16 +226,6 @@ export async function listExecutions(
   return handleResponse<PaginatedResponse<SchedulerExecution>>(res)
 }
 
-export async function getExecution(
-  jobId: string,
-  executionId: string
-): Promise<SchedulerExecution> {
-  const res = await fetch(
-    `${getServerUrl()}${BASE}/jobs/${jobId}/executions/${executionId}`
-  )
-  return handleResponse<SchedulerExecution>(res)
-}
-
 export async function getExecutionLog(
   jobId: string,
   executionId: string,
@@ -306,18 +296,6 @@ export async function parseCron(
     body: JSON.stringify({ expression, timezone }),
   })
   return handleResponse<CronParseResult>(res)
-}
-
-export async function naturalToCron(
-  text: string,
-  timezone: string
-): Promise<NaturalCronResult> {
-  const res = await fetch(`${getServerUrl()}${BASE}/cron/natural`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, timezone }),
-  })
-  return handleResponse<NaturalCronResult>(res)
 }
 
 // ============ Schedule Workspaces ============

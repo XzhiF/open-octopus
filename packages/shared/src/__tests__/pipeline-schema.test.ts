@@ -6,13 +6,9 @@ import {
   RetryPolicySchema,
   RetryConfigSchema,
   ExecutionConfigSchema,
-  ForkConfigSchema,
   CheckpointConfigSchema,
   PipelineConfigSchema,
   FailureStrategySchema,
-  ForkPathStrategySchema,
-  ForkMergeStrategySchema,
-  ForkFailureHandlingSchema,
   CheckpointSaveOnSchema,
   ResumeOnInterruptSchema,
 } from "../types/pipeline"
@@ -221,60 +217,6 @@ describe("ExecutionConfigSchema", () => {
   })
 })
 
-describe("ForkPathStrategySchema", () => {
-  it("accepts valid values", () => {
-    expect(ForkPathStrategySchema.parse("all")).toBe("all")
-    expect(ForkPathStrategySchema.parse("primary")).toBe("primary")
-  })
-
-  it("rejects invalid value", () => {
-    expect(() => ForkPathStrategySchema.parse("random")).toThrow()
-  })
-})
-
-describe("ForkMergeStrategySchema", () => {
-  it("accepts valid values", () => {
-    expect(ForkMergeStrategySchema.parse("wait_all")).toBe("wait_all")
-    expect(ForkMergeStrategySchema.parse("wait_any")).toBe("wait_any")
-    expect(ForkMergeStrategySchema.parse("first_complete")).toBe("first_complete")
-  })
-
-  it("rejects invalid value", () => {
-    expect(() => ForkMergeStrategySchema.parse("merge_last")).toThrow()
-  })
-})
-
-describe("ForkFailureHandlingSchema", () => {
-  it("accepts valid values", () => {
-    expect(ForkFailureHandlingSchema.parse("fail_all")).toBe("fail_all")
-    expect(ForkFailureHandlingSchema.parse("best_effort")).toBe("best_effort")
-  })
-
-  it("rejects invalid value", () => {
-    expect(() => ForkFailureHandlingSchema.parse("ignore_all")).toThrow()
-  })
-})
-
-describe("ForkConfigSchema", () => {
-  it("applies defaults", () => {
-    const result = ForkConfigSchema.parse({})
-    expect(result.path_strategy).toBe("all")
-    expect(result.merge_strategy).toBe("wait_all")
-    expect(result.failure_handling).toBe("fail_all")
-  })
-
-  it("accepts custom values", () => {
-    const result = ForkConfigSchema.parse({
-      path_strategy: "primary",
-      merge_strategy: "first_complete",
-      failure_handling: "best_effort",
-    })
-    expect(result.path_strategy).toBe("primary")
-    expect(result.merge_strategy).toBe("first_complete")
-    expect(result.failure_handling).toBe("best_effort")
-  })
-})
-
 describe("CheckpointSaveOnSchema", () => {
   it("accepts valid values", () => {
     expect(CheckpointSaveOnSchema.parse("per-node")).toBe("per-node")
@@ -336,7 +278,6 @@ describe("PipelineConfigSchema", () => {
     expect(result.description).toBeUndefined()
     expect(result.execution.failure_strategy).toBe("fail_fast")
     expect(result.retry.default.max_attempts).toBe(1)
-    expect(result.fork.path_strategy).toBe("all")
     expect(result.checkpoint.enabled).toBe(true)
   })
 
@@ -410,19 +351,6 @@ describe("PipelineConfigSchema", () => {
     expect(result.retry.overrides["build-*"]?.max_attempts).toBe(5)
   })
 
-  it("applies nested fork config", () => {
-    const result = PipelineConfigSchema.parse({
-      ...minimalPipeline,
-      fork: {
-        path_strategy: "primary",
-        merge_strategy: "wait_any",
-      },
-    })
-    expect(result.fork.path_strategy).toBe("primary")
-    expect(result.fork.merge_strategy).toBe("wait_any")
-    expect(result.fork.failure_handling).toBe("fail_all") // default
-  })
-
   it("applies nested checkpoint config", () => {
     const result = PipelineConfigSchema.parse({
       ...minimalPipeline,
@@ -460,11 +388,6 @@ describe("PipelineConfigSchema", () => {
           "test-*": { max_attempts: 1, retry_on: ["timeout"] },
         },
       },
-      fork: {
-        path_strategy: "all",
-        merge_strategy: "first_complete",
-        failure_handling: "best_effort",
-      },
       checkpoint: {
         enabled: true,
         save_on: "per-level",
@@ -475,7 +398,6 @@ describe("PipelineConfigSchema", () => {
     })
     expect(result.execution.failure_strategy).toBe("skip")
     expect(result.retry.default.backoff.type).toBe("linear")
-    expect(result.fork.merge_strategy).toBe("first_complete")
     expect(result.checkpoint.max_checkpoints).toBe(20)
   })
 })

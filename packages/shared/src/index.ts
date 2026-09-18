@@ -37,11 +37,11 @@ export * from "./types/knowledge"
 export * from "./types/repair"
 export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
-export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './config/model-alias'
+export type { ModelAliasConfig, CustomProviderDef } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
 export { BUILTIN_PRICING, priceFor, estimateCost, __setPricingOverlayForTest, __resetPricingOverlayForTest } from './pricing'
 export type { PricingTier } from './pricing'
-export { LEDGER_SQL, costSummary, cacheHitRateOf, ledgerTotals, totalsFromUsage, mergeLedgerParts } from './ledger'
+export { LEDGER_SQL, costSummary, cacheHitRateOf, ledgerTotals, mergeLedgerParts } from './ledger'
 export type { LedgerCost, LedgerTotals, LedgerRow, LedgerPart } from './ledger'
 export { resolveMoaModel } from './config/moa-model-resolver'
 export type { MoaModelResolution } from './config/moa-model-resolver'

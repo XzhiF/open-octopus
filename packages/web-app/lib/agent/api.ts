@@ -166,19 +166,11 @@ export function searchMemory(q: string, limit?: number) {
   if (limit) params.set('limit', String(limit))
   return request<{ results: MemorySearchResult[]; degraded: boolean }>(`/memory/search?${params}`)
 }
-export function rebuildFts() {
-  return request<{ ok: boolean; indexed_count: number }>('/memory/rebuild-fts', { method: 'POST' })
-}
 export function refineMemory() {
   return request<{
     ok: boolean; refined: string; before_tokens: number; after_tokens: number;
     backup_path: string; saved_tokens: number
   }>('/memory/refine', { method: 'POST' })
-}
-export function triggerArchive(date?: string) {
-  return request<{ ok: boolean; archived_date: string; essence_summary: string }>('/memory/archive', {
-    method: 'POST', body: JSON.stringify({ date })
-  })
 }
 
 // Clones (unified API at /api/clones)
@@ -209,9 +201,6 @@ export function createClone(data: CreateCloneRequest) {
 }
 export function listClones() {
   return cloneRequest<{ clones: CloneInfo[]; total: number }>('')
-}
-export function getClone(name: string) {
-  return cloneRequest<{ clone: CloneInfo }>(`/${name}`)
 }
 export function deleteClone(name: string) {
   return cloneRequest<{ ok: true }>(`/${name}`, { method: 'DELETE' })
@@ -355,55 +344,6 @@ export function stopCloneChat(cloneName: string, sessionId: string) {
 export function mergeClone(name: string) {
   return request<{ ok: boolean; archived_lessons: number; clone_removed: boolean }>(`/clones/${name}/merge`, { method: 'POST' })
 }
-export function delegateStream(name: string, prompt: string): AgentSSEConnection {
-  const controller = new AbortController()
-  const url = `${BASE()}/clones/${name}/delegate`
-  const body = JSON.stringify({ prompt })
-
-  const streamPromise = fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_HEADER },
-    body,
-    signal: controller.signal,
-  })
-
-  const readable = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        const response = await streamPromise
-        if (!response.ok || !response.body) {
-          controller.error(new Error(`SSE connection failed: ${response.status}`))
-          return
-        }
-        const reader = response.body.getReader()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          controller.enqueue(value)
-        }
-        controller.close()
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
-          controller.error(err)
-        }
-      }
-    }
-  })
-
-  return {
-    reader: readable.getReader(),
-    abort: () => controller.abort(),
-  }
-}
-export function cancelDelegate(name: string) {
-  return request<{ ok: boolean }>(`/clones/${name}/delegate/cancel`, { method: 'POST' })
-}
-export function getCloneExperiences(name: string, q?: string) {
-  const params = new URLSearchParams()
-  if (q) params.set('q', q)
-  const qs = params.toString()
-  return request<{ experiences: Experience[] }>(`/clones/${name}/experiences${qs ? `?${qs}` : ''}`)
-}
 
 // Skills
 export function listSkills() {
@@ -443,14 +383,6 @@ export function getExperiences(query?: { skill?: string; q?: string }) {
 export function rollbackEvolution(id: number) {
   return request<{ ok: boolean; rolled_back_skill: string; new_changelog_id: number }>(`/evolution/rollback/${id}`, { method: 'POST' })
 }
-export function markInsight(data: { skill_name: string; insight: string; session_id?: string }) {
-  return request<{ id: number }>('/evolution/mark-insight', { method: 'POST', body: JSON.stringify(data) })
-}
-export function processMarks(sessionId?: string) {
-  return request<{ processed: number; results: Array<{ skill_name: string; identified: boolean; level: string }> }>('/evolution/process-marks', {
-    method: 'POST', body: JSON.stringify({ session_id: sessionId }),
-  })
-}
 
 // Tasks
 export function getTasks(history = false) {
@@ -458,28 +390,6 @@ export function getTasks(history = false) {
 }
 export function cancelTask(id: string) {
   return request<{ ok: boolean }>(`/tasks/${id}/cancel`, { method: 'POST' })
-}
-export function getTaskProgress() {
-  return request<{
-    executions: Array<{ id: string; workflow_name: string; status: string; started_at: string | null; current_node: string | null; progress: number | null; workspace_name?: string; elapsed_ms: number | null }>
-    clone_delegations: Array<{ name: string; task: string; delegated_at: string }>
-    total_active: number
-  }>('/tasks/progress')
-}
-export function getTaskHistory(query?: { job_name?: string; limit?: number }) {
-  const params = new URLSearchParams()
-  if (query?.job_name) params.set('job_name', query.job_name)
-  if (query?.limit) params.set('limit', String(query.limit))
-  const qs = params.toString()
-  return request<{
-    executions: Array<{
-      id: string; job_name: string; status: string; started_at: string;
-      finished_at: string | null; duration_ms: number | null;
-      report_path: string | null; report_summary: string | null;
-      error_message: string | null; trigger_type: string; metadata: unknown
-    }>
-    summary: { total: number; success: number; failure: number; avg_duration_ms: number; success_rate: number }
-  }>(`/tasks/history${qs ? `?${qs}` : ''}`)
 }
 export function getReports(query?: { task?: string; date?: string; q?: string; limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
@@ -556,15 +466,6 @@ export function getAssembleDetail(chatId: string) {
   return request<DebugLogEntry>(`/debug/assemble/${chatId}`)
 }
 
-// Observability (tracer + metrics + events)
-export function getObservability(view?: string, opts?: Record<string, string>) {
-  const params = new URLSearchParams()
-  if (view) params.set('view', view)
-  if (opts) Object.entries(opts).forEach(([k, v]) => params.set(k, v))
-  const qs = params.toString()
-  return request<unknown>(`/observability${qs ? `?${qs}` : ''}`)
-}
-
 // ── Scheduler (for cron-based archive config) ───────────────────────
 
 const SCHEDULER_BASE = () => `${getServerUrl()}/api/scheduler`
@@ -639,10 +540,6 @@ export function listCloneVersions(name: string, query?: { status?: string; stage
   return cloneRequest<VersionListResponse>(`/${name}/versions${qs ? `?${qs}` : ''}`)
 }
 
-export function getCloneVersion(name: string, version: string) {
-  return cloneRequest<{ version: AgentVersionInfo }>(`/${name}/versions/${encodeURIComponent(version)}`)
-}
-
 export function publishCloneVersion(name: string, data: { version: string; stage?: string; changelog?: string }) {
   return cloneRequest<{ version: AgentVersionInfo }>(`/${name}/versions`, {
     method: 'POST',
@@ -698,10 +595,6 @@ export function listMainAgentVersions(query?: { status?: string; stage?: string;
   if (query?.limit) params.set('limit', String(query.limit))
   const qs = params.toString()
   return mainAgentRequest<VersionListResponse>(`/versions${qs ? `?${qs}` : ''}`)
-}
-
-export function getMainAgentVersion(version: string) {
-  return mainAgentRequest<{ version: AgentVersionInfo }>(`/versions/${encodeURIComponent(version)}`)
 }
 
 export function publishMainAgentVersion(data: { version: string; stage?: string; changelog?: string }) {

@@ -33,11 +33,6 @@ export async function listSchedules(
   return handleResponse<Schedule[]>(res)
 }
 
-export async function getSchedule(wsId: string, scheduleId: string): Promise<Schedule> {
-  const res = await fetch(`${getServerUrl()}/api/workspaces/${wsId}/schedules/${scheduleId}`)
-  return handleResponse<Schedule>(res)
-}
-
 export async function createSchedule(wsId: string, data: CreateScheduleInput): Promise<Schedule> {
   const res = await fetch(`${getServerUrl()}/api/workspaces/${wsId}/schedules`, {
     method: "POST",
@@ -152,13 +147,6 @@ export async function listScheduleAuditLogs(
   const qs = params.toString() ? `?${params}` : ""
   const res = await fetch(`${getServerUrl()}/api/workspaces/${wsId}/schedules/audit-logs${qs}`)
   return handleResponse<PaginatedResponse<ScheduleAuditLog>>(res)
-}
-
-export async function getSchedulePermissions(
-  wsId: string
-): Promise<SchedulePermissions> {
-  const res = await fetch(`${getServerUrl()}/api/workspaces/${wsId}/schedules/permissions`)
-  return handleResponse<SchedulePermissions>(res)
 }
 
 // ============ Cron Helpers ============

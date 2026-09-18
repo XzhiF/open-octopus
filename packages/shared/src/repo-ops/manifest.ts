@@ -123,38 +123,7 @@ export function findManifestGroup(
   return undefined
 }
 
-export function writeManifest(
-  entries: Record<string, ManifestEntry[]>,
-  groupLabels?: Record<string, string>
-): string {
-  const lines: string[] = []
 
-  for (const [groupName, groupEntries] of Object.entries(entries)) {
-    const label = groupLabels?.[groupName] ?? groupName
-    lines.push(`## ${groupName} (${label})`)
-    lines.push("")
-    for (const entry of groupEntries) {
-      let line = `- ${entry.name}`
-      if (entry.branch) {
-        line += ` [${entry.branch}]`
-      }
-      if (entry.manual_tags.length > 0) {
-        line += ` {${entry.manual_tags.join("/")}}`
-      }
-      if (entry.git_url) {
-        line += ` ${entry.git_url}`
-      }
-      lines.push(line)
-    }
-    lines.push("")
-  }
-
-  return lines.join("\n")
-}
-
-export interface ManifestJsonData {
-  groups: Record<string, ManifestEntry[]>
-}
 
 export function parseManifestJson(content: string): Record<string, ManifestEntry[]> {
   if (!content || !content.trim()) {
