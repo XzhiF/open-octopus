@@ -141,6 +141,11 @@ export const taskPhaseSchema = z.object({
 export const acceptanceVerifySchema = z.object({
   command: z.string().min(1).max(4000),
   cwd: z.string().max(500).optional(),
+  // 双靶/跨仓任务（多 worktree 在 projects/ 下）：per_repo=true 时，server 对
+  // projects/*/ 每个 git 仓各跑一次 command（仓根为 cwd，聚合退出码：任一仓失败
+  // 即整体 failed）。此时 command 应写成「仓内相对」（如 `mvn -B test`），不带
+  // cd 前缀；cwd 字段被忽略。timeoutS 视为多仓总预算。
+  per_repo: z.boolean().optional(),
   timeoutS: z.number().int().min(5).max(1800).optional(),
 })
 export type AcceptanceVerify = z.infer<typeof acceptanceVerifySchema>
@@ -158,6 +163,34 @@ export const acceptancePreviewSchema = z.object({
   readyPattern: z.string().max(500).optional(),
 })
 export type AcceptancePreview = z.infer<typeof acceptancePreviewSchema>
+/** 验收台「跑起来看」通用运行手册（runbook）—— 把「起服务→等就绪→给入口→收尾」
+ *  抽象成 4 个工具无关的槽，一套覆盖单服务 / docker-compose / N×java -jar / 脚本 /
+ *  远端 Jenkins 部署。平台不认具体工具，只：跑 `up`（可前台长驻、可快速退出=detached）、
+ *  轮询跑 `ready`（**退出码 0 = 就绪**，这是唯一就绪判据）、暴露 `views[]` 入口、
+ *  收尾跑 `down`（可缺省 → 停止只结束会话，用于远端部署不可/不该本地杀的情况）。
+ *  工具差异全塞进 command 数据或项目自带脚本，schema 不随新工具增长。
+ *  与 {@link acceptancePreviewSchema} 并存：后者是单服务简写，server 会把它合成为
+ *  一份 runbook（up=command，ready=`curl` 探 url 看退出码，views=[url]），故旧任务
+ *  与 web 面板零改动继续跑；runbook 是给多服务/远端部署的正道形态。 */
+export const runbookStepSchema = z.object({
+  command: z.string().min(1).max(4000),
+  cwd: z.string().max(500).optional(),
+})
+export const runbookViewSchema = z.object({
+  label: z.string().max(120).optional(),
+  url: z.string().min(1).max(200).regex(/^https?:\/\//i, { message: "url must be http(s)" }),
+})
+export const acceptanceRunbookSchema = z.object({
+  up: runbookStepSchema,
+  ready: runbookStepSchema,
+  views: z.array(runbookViewSchema).max(20).optional(),
+  down: runbookStepSchema.optional(),
+  /** ready 轮询总预算（秒）；缺省用 server 端默认。 */
+  timeoutS: z.number().int().min(5).max(1800).optional(),
+})
+export type RunbookStep = z.infer<typeof runbookStepSchema>
+export type RunbookView = z.infer<typeof runbookViewSchema>
+export type AcceptanceRunbook = z.infer<typeof acceptanceRunbookSchema>
 export type TaskPhase = z.infer<typeof taskPhaseSchema>
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
@@ -236,6 +269,9 @@ export const taskSpecSchema = z.object({
   // 验收面 v2.1: the 「跑起来看」 preview service ({@link acceptancePreviewSchema}).
   // Optional — absent = 「未配置预览」 state; clearable to null via spec-field.
   acceptance_preview: acceptancePreviewSchema.optional(),
+  // 通用运行手册（多服务/远端部署的正道形态，见 {@link acceptanceRunbookSchema}）。
+  // 缺省时 server 从 acceptance_preview 合成一份；两者都无 → 「未配置预览」。
+  acceptance_runbook: acceptanceRunbookSchema.optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

@@ -18,7 +18,7 @@ import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
-import { RoundEvidenceService, type VerifySummary } from "../services/tasks/round-evidence-service"
+import { RoundEvidenceService, buildPerRepoVerifyBash, type VerifySummary } from "../services/tasks/round-evidence-service"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-td-verify"
@@ -223,5 +223,37 @@ describe("verify — 门链与终态", () => {
     const spec = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as { task_spec: string }
     const parsed = JSON.parse(spec.task_spec) as Record<string, unknown>
     expect("acceptance_verify" in parsed).toBe(false)
+  })
+
+  it("V10: per_repo 逐仓复检 — 两仓 marker 齐 → passed；一仓缺 → failed（聚合退出码）", async () => {
+    // 在共享 ws1/projects 下铺两个假 git 仓（[ -e .git ] 判 worktree）
+    const mk = (name: string, withMarker: boolean) => {
+      const d = path.join(tmp, "ws1", "projects", name)
+      fs.rmSync(d, { recursive: true, force: true })
+      fs.mkdirSync(d, { recursive: true })
+      fs.writeFileSync(path.join(d, ".git"), "gitdir: x\n")
+      if (withMarker) fs.writeFileSync(path.join(d, "marker.txt"), "1")
+    }
+    mk("repo-a", true)
+    mk("repo-b", true)
+    const okTask = await newAwaitingTask()
+    expect((await setVerify(okTask, { command: "test -f marker.txt", per_repo: true, timeoutS: 60 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${okTask}/verify`, { method: "POST" })).status).toBe(202)
+    expect((await pollTerminal(okTask)).state).toBe("passed")
+
+    // repo-b 去 marker → 任一仓失败即整体 failed
+    fs.rmSync(path.join(tmp, "ws1", "projects", "repo-b", "marker.txt"), { force: true })
+    const badTask = await newAwaitingTask()
+    expect((await setVerify(badTask, { command: "test -f marker.txt", per_repo: true, timeoutS: 60 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${badTask}/verify`, { method: "POST" })).status).toBe(202)
+    expect((await pollTerminal(badTask)).state).toBe("failed")
+  })
+
+  it("V11: buildPerRepoVerifyBash 生成逐仓循环骨架", () => {
+    const bash = buildPerRepoVerifyBash("mvn -B test")
+    expect(bash).toContain("for D in projects/*/")
+    expect(bash).toContain('[ -e "$D/.git" ]')
+    expect(bash).toContain('( cd "$D" && mvn -B test ) || rc=1')
+    expect(bash.trimEnd().endsWith("exit $rc")).toBe(true)
   })
 })

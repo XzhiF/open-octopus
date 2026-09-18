@@ -182,10 +182,18 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 
 1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
 2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
-3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（author-verified-tickets 规则，**含末张 `NN-e2e-*` 票——这项由 server gate 强制**，见下）。
-   > ⚠️ **末张 `NN-e2e-*` 票是硬要求，不是建议**：绑批次消费型流（默认 `matt-spec-dev`）时，`issues/` 缺该票会让 [入队] 直接 409 `phase:<i>:no-final-verification`。它不是「多跑一遍 E2E」的仪式——对这类流，票就是执行计划，而这张票是全 phase 唯一真起浏览器（有 UI）或做 API 级走查（纯后端）的地方，工作流按文件名路由到它。
-4. **验证方式类型阶梯（防重复烧钱，票写作硬纪律）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（此禁令无条件，不随 spec 纪律豁免）；UI 功能票的渲染/交互断言（列齐全、徽标、币种换算即时生效等）一律收编进末张 `NN-e2e-*` 票的走查步骤。**末张 `NN-e2e-*` 是全 phase 唯一许起浏览器的一张，模式随验收面自动选定**：phase 验收物含 UI/页面交互 → **browser 走查**（Playwright+截图证据）；纯后端/无 UI phase（交付物=API/DB/CLI 态）→ **API 级走查**（curl+sqlite+手算，此为天然形态，无需任何声明）——不给不存在的页面烧浏览器/vision 成本。有 UI 时若 spec「验证纪律」节按 token 预算仍拍板全流程不做浏览器，末张降 API 级走查。模式在一处定死（验收面天然决定，或 spec 拍板），各票类型行照抄，不留票级自由裁量。功能票写了 browser E2E = 与末张票双跑，多烧一整轮成本——写完自查一遍票类型。
+3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（author-verified-tickets 规则）；**批次消费型流的"验证声明"见下 §3.5——要么有末张 `NN-e2e-*` 票，要么 spec 显式写 `Verification Tier: unit-only`，二选一**。
+   > ⚠️ **`NN-e2e-*` 票不再是无条件硬要求（2026-09-18 几何重构）**：绑批次消费型流（默认 `matt-spec-dev`）时，[入队] gate 检的是"本 phase 声明了怎么被验证"，不是"必须有 e2e 票"。执行流里 e2e 走查是**独立的 `e2e-verify` 节点、排在 code-review 之后**（验最终 HEAD，修了"e2e 先跑、review 后改错则绿过期"的时序倒挂）。要不要这张票 = 要不要跑这个节点，由你按验收面判（§3.5）。
+3.5 **验证分层决策（省成本的关键——写票前先定这一层）**：逐 phase 二选一——
+   - **`unit-only` 层**（免走查）：本 phase 验收面被功能票的 unit / integration(API↔DB) / contract 测**完整覆盖**，无需端到端走查也敢放行。典型＝纯重构、薄后端切片、内部 util/算法、无新增用户可见行为。**不产 `NN-e2e-*` 票**，改为在 `spec.md` 写一行 `Verification Tier: unit-only`（gate 靠它放行；执行流的 e2e-verify 节点据此整体跳过，省掉最贵的走查成本）。
+   - **走查层**：本 phase 有"单测够不着"的整链路用户可见行为（起真服务串请求看端到端结果、有 UI 要看渲染/交互）。**产末张 `NN-e2e-*` 票**，模式随验收面自动定：含 UI/页面交互 → browser 走查（Playwright+截图）；纯后端交付物=API/DB/CLI 态 → API 级走查（curl+sqlite+手算）。跨仓复用任务（消费仓 import 产出仓新符号）走查票里加"消费方契约探针"断言真复用非就地重写。
+   判据是"验收面是否需要端到端证据"，不是"图省事"——写不准往哪层放时，宁可产 e2e 票（安全侧）。
+4. **功能票验证纪律（不变）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（无条件）。UI 渲染/交互断言一律收编进走查层末张 `NN-e2e-*` 票；走查票是全 phase 唯一许起浏览器的一张。功能票写了 browser E2E = 与走查票双跑。写完自查一遍票类型。
 5. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
+6. **验收台预设（多项目/微服务必做，否则看板「当场复检」只测一仓、「跑起来看」空）**：任务建好后用 spec-field 写两个 task 级字段（全 phase 复用）——
+   - `acceptance_verify`：当场复检命令。**多仓任务必须加 `per_repo:true`**，`command` 写成**仓内相对**（不带 `cd`/仓名，如 `<仓的构建> test`），server 对 `projects/*/` 每仓各跑一次、任一仓失败即整体 failed。单仓任务可不填 per_repo。
+   - `acceptance_preview` **或** `acceptance_runbook`（二选一）：跑起来看。**单一可运行服务** → `acceptance_preview`（`{command,url}`）。**多服务 / docker-compose / N×进程 / 远端 Jenkins 部署** → `acceptance_runbook`：`{ up:{command,cwd?}, ready:{command,cwd?}, views:[{label?,url}], down?:{command,cwd?}, timeoutS? }`——`up` 起（可前台长驻、可快速退出=detached），`ready` **跑命令看退出码0=就绪**（唯一就绪判据，端口/日志/Jenkins 状态都压成这条），`views` 给 0..N 个入口，`down` 收尾（远端部署就不填，停止只结束会话不乱杀）。工具差异全写进 command，别塞进平台。
+   - **更省事的正道**：若项目仓里已带 `.octopus/acceptance/{up,health,down}.sh`(+可选 `views`)，**两个字段都不用你写**——server 会自动按脚本合成 runbook。起草时探到这些脚本就优先依赖约定；没有再按上面显式配。判不出启动/就绪命令时**问用户一次**，别编。
 
 ### 写权环（单写者、单方向——破坏它 = merge 灾难）
 
@@ -265,8 +273,9 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 # v4 gate 四项：phases≥1 ∧ 每 phase specPath 文件存在 ∧ 每 phase workflowRef 可解析 ∧ required inputs 非空
-#          第五项（仅批次消费型流，如 matt-spec-dev）：issues/ 下有末张 *-e2e-* 验收票
-#          —— 缺则 409 phase:<i>:no-final-verification
+#          第五项（仅批次消费型流，如 matt-spec-dev）：每 phase「验证声明」二选一——
+#            issues/ 有末张 *-e2e-* 票，或 spec.md 写 `Verification Tier: unit-only`
+#          —— 两者都无则 409 phase:<i>:no-final-verification
 # 不过 → 409 { missing: ["phase:<i>:<why>", …] }（无 goal/ac/双确认检查）
 # 过   → 仅置 ready。**不产生任何 schedules 行**（ADR-0021 票03）：跑什么由系统内置
 #        的 task-lifecycle job 在每次起轮时按 task_spec.phases[] 现推，信封已退役
@@ -274,7 +283,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 
 missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing` ｜ `phase:<i>:workflow-ref` ｜ `phase:<i>:input:<name>` ｜ `phase:<i>:no-final-verification`。
 
-> `no-final-verification`：**批次消费型流**（`matt-spec-dev` 及其同族——读 `spec.md`+`issues/` 当执行计划的那种）要求 `issues/` 下有末张 `*-e2e-*` 验收票，缺则 409。这不是文风约束而是结构约束：对这类流，票就是执行计划，而那张票是全 phase 唯一真起浏览器/做 API 级走查的地方（workflow 按文件名路由到它）。自建流等不消费批次的流不受此检。
+> `no-final-verification`：**批次消费型流**（`matt-spec-dev` 及其同族——读 `spec.md`+`issues/` 当执行计划的那种）要求每个 phase 声明它怎么被验证，二选一即放行：① `issues/` 下有末张 `*-e2e-*` 验收票（执行流的 `e2e-verify` 节点会在 code-review 之后对它做真走查），或 ② spec.md 写 `Verification Tier: unit-only`（本 phase 验收面被功能票 unit/接口测完整覆盖，免走查，e2e-verify 节点整体跳过）。两者都无 → 409。自建流等不消费批次的流不受此检。写票前的分层判断见 §产出 Step 3.5。
 
 > **入队前自查（server gate 不含此项，K5 文本档纪律）**：拆分表「依赖前序」列引用的 batch slug 全部存在（`.scratch/<date>/` 下目录真实在场）——衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
 
@@ -375,5 +384,5 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 | 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）/ home-file content 超限 | 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
 | 403 | home-file 路径不合规（非 `.scratch/**.md`、绝对路径、逃逸）| 见 §6，路径改 home 相对且落 `.scratch/` |
 | 404 | task 不存在 / home-file 读缺文件 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1）；spec.md 缺=还没产出 |
-| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值；no-final-verification=把末张 `*-e2e-*` 验收票写进 `issues/`） |
+| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值；no-final-verification=补验证声明：给该 phase 产末张 `*-e2e-*` 票，或在 spec.md 写 `Verification Tier: unit-only`） |
 | 428 | PUT 缺 If-Match | 补 `If-Match: <version>` |

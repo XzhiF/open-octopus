@@ -2,6 +2,7 @@ import { Command } from "commander"
 import chalk from "chalk"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
+import { createHash } from "crypto"
 import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager, type ProvisionableType } from "@octopus/shared"
 import { WorkflowEngine, registerBuiltinProviders, type TestRunnerResult } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
@@ -172,11 +173,41 @@ workflowCmd
       console.log(`  Name: ${wf.name}`)
       console.log(`  Nodes: ${wf.nodes.length}`)
       for (const w of warnings) console.warn(`⚠ ${w}`)
+      // 漂移检测：若这份 yaml 有对应的已安装内置副本（~/.octopus/resources/installed/
+      // workflows/<group>/<name>/<name>.yaml），比对内容 hash —— 不一致说明运行的是旧副本，
+      // 源码改动还没生效（built-in 仅在 server 启动 [sync-builtin] 时刷新，需重启 dev）。
+      const drifted = detectInstalledDrift(wf.name, content)
+      if (drifted) console.warn(`⚠ ${drifted}`)
     } catch (error: any) {
       console.error(`✗ Validation failed: ${error.message}`)
       process.exit(1)
     }
   })
+
+/** 比对源码 yaml 与其已安装内置副本，内容不一致时返回警告文案（一致或无副本返回 null）。 */
+function detectInstalledDrift(name: string, sourceContent: string): string | null {
+  try {
+    const base = resolveBuiltinWorkflowsDir()
+    if (!existsSync(base)) return null
+    const srcHash = createHash("sha256").update(sourceContent).digest("hex")
+    // 布局 workflows/<group>/<name>/<name>.yaml —— 扫所有 group 找同名内置流
+    for (const grp of readdirSync(base, { withFileTypes: true })) {
+      if (!grp.isDirectory()) continue
+      const cand = join(base, grp.name, name, `${name}.yaml`)
+      const candYml = join(base, grp.name, name, `${name}.yml`)
+      const inst = existsSync(cand) ? cand : existsSync(candYml) ? candYml : null
+      if (!inst) continue
+      const instHash = createHash("sha256").update(readFileSync(inst, "utf-8")).digest("hex")
+      if (instHash !== srcHash) {
+        return `源码与运行副本不一致（重启 dev / [sync-builtin] 才生效）：\n   源码: ${name}\n   副本: ${inst}`
+      }
+      return null
+    }
+  } catch {
+    /* 漂移检测是尽力而为的旁路，任何 IO 异常都不该影响 validate 主流程 */
+  }
+  return null
+}
 
 workflowCmd
   .command("list")

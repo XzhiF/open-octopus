@@ -60,6 +60,12 @@ async function setPreview(taskId: string, value: unknown): Promise<Response> {
     body: JSON.stringify({ field: "acceptance_preview", value, source: "user" }),
   })
 }
+async function setRunbook(taskId: string, value: unknown): Promise<Response> {
+  return app.request(`/api/tasks/${taskId}/spec-field`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ field: "acceptance_runbook", value, source: "user" }),
+  })
+}
 async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => boolean, ms = 12_000): Promise<PreviewSummary | null> {
   const t0 = Date.now()
   for (;;) {
@@ -86,7 +92,14 @@ beforeAll(() => {
   const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
 })
-afterAll(() => { unSub?.(); db.close(); fs.rmSync(tmp, { recursive: true, force: true }) })
+afterAll(async () => {
+  unSub?.(); db.close()
+  // Windows: a just-exited BashExecutor child may momentarily hold a dir handle → EPERM;
+  // retry best-effort so teardown never flakes the suite.
+  for (let i = 0; i < 50; i++) {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); return } catch { await new Promise((r) => setTimeout(r, 100)) }
+  }
+})
 
 describe("preview — 生命周期", () => {
   it("PV1: 起 node http server → ready → stop → 端口释放", async () => {
@@ -142,4 +155,70 @@ describe("preview — 生命周期", () => {
     expect(g?.state).toBe("ready")
     server.close()
   }, 10_000)
+
+  it("PV5: runbook — detached up + rc 探针 + 多 views + down 收尾", async () => {
+    const taskId = await newAwaitingTask()
+    // up 后台化(nohup 重定向→不占 stdout，up 秒退 0)，2s 后落 ready 标记；
+    // ready 只看标记文件退出码；down 删标记。模拟 compose -d / 远端部署起法。
+    const marker = `rb5.ready`
+    const up = `nohup bash -c 'sleep 2; touch ${marker}' >/dev/null 2>&1 & echo launched`
+    const rb = {
+      up: { command: up },
+      ready: { command: `test -f ${marker}` },
+      views: [{ label: "admin", url: "http://localhost:9501/" }, { label: "common", url: "http://localhost:9502/" }],
+      down: { command: `rm -f ${marker}` },
+      timeoutS: 30,
+    }
+    expect((await setRunbook(taskId, rb)).status).toBe(200)
+    const start = await app.request(`/api/tasks/${taskId}/preview`, { method: "POST" })
+    expect(start.status).toBe(202)
+    const ready = await pollPreview(taskId, (s) => s?.state === "ready", 12_000)
+    expect(ready?.state).toBe("ready")
+    expect(ready?.views).toHaveLength(2)                 // 多服务入口
+    expect(ready?.url).toBe("http://localhost:9501/")    // url = 首个 view（旧面板回读）
+    // down 收尾：stop 后标记文件应被删
+    expect((await app.request(`/api/tasks/${taskId}/preview/stop`, { method: "POST" })).status).toBe(200)
+    const markerAbs = path.join(tmp, "ws1", marker)
+    for (let i = 0; i < 100 && fs.existsSync(markerAbs); i++) await new Promise((r) => setTimeout(r, 100))
+    expect(fs.existsSync(markerAbs)).toBe(false)
+  }, 25_000)
+
+  it("PV6: runbook — ready 探针始终不过 → 超时判 failed", async () => {
+    const taskId = await newAwaitingTask()
+    const rb = {
+      up: { command: "echo up-no-service" },           // 秒退 0（detached），但没有东西起来
+      ready: { command: "test -f never-exists-rb6" },   // 永远 rc!=0
+      views: [{ url: "http://localhost:9599/" }],
+      timeoutS: 5,
+    }
+    expect((await setRunbook(taskId, rb)).status).toBe(200)
+    await app.request(`/api/tasks/${taskId}/preview`, { method: "POST" })
+    const s = await pollPreview(taskId, (x) => x?.state === "failed", 12_000)
+    expect(s?.state).toBe("failed")
+  }, 15_000)
+
+  it("PV7: 项目自带 .octopus/acceptance/{up,health,down}.sh + views — 无显式配置也起得来", async () => {
+    const taskId = await newAwaitingTask()
+    const dir = path.join(tmp, "ws1", ".octopus", "acceptance")
+    fs.mkdirSync(dir, { recursive: true })
+    // 后台化 up（模拟 compose up -d / 触发远端）；health 探标记；down 收尾
+    fs.writeFileSync(path.join(dir, "up.sh"), `#!/bin/sh\nnohup sh -c 'sleep 2; touch pv7.ready' >/dev/null 2>&1 &\necho launched\n`)
+    fs.writeFileSync(path.join(dir, "health.sh"), `#!/bin/sh\ntest -f pv7.ready\n`)
+    fs.writeFileSync(path.join(dir, "down.sh"), `#!/bin/sh\nrm -f pv7.ready\n`)
+    fs.writeFileSync(path.join(dir, "views"), "http://localhost:9601/\nhttp://localhost:9602/\n")
+    // 不写 acceptance_preview / acceptance_runbook —— 全靠脚本约定
+    const start = await app.request(`/api/tasks/${taskId}/preview`, { method: "POST" })
+    expect(start.status).toBe(202)
+    const ready = await pollPreview(taskId, (s) => s?.state === "ready", 12_000)
+    expect(ready?.state).toBe("ready")
+    expect(ready?.views).toHaveLength(2)
+    expect((await app.request(`/api/tasks/${taskId}/preview/stop`, { method: "POST" })).status).toBe(200)
+    const markerAbs = path.join(dir, "pv7.ready")
+    for (let i = 0; i < 100 && fs.existsSync(markerAbs); i++) await new Promise((r) => setTimeout(r, 100))
+    expect(fs.existsSync(markerAbs)).toBe(false)
+    // 收尾清理：down.sh 子进程可能还短暂占着该目录(Windows EPERM)，best-effort + 容错。
+    for (let i = 0; i < 50; i++) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); break } catch { await new Promise((r) => setTimeout(r, 100)) }
+    }
+  }, 25_000)
 })

@@ -42,6 +42,8 @@ import {
   TaskSpecFieldError,
   type AcceptanceVerify,
   type AcceptancePreview,
+  type AcceptanceRunbook,
+  type RunbookView,
   type TaskSpec,
 } from "@octopus/shared"
 import { BashExecutor } from "@octopus/engine"
@@ -126,6 +128,8 @@ export interface PreviewSummary {
   execution_id?: string
   command?: string
   url: string
+  /** runbook 的全部入口（多服务时 >1）；`url` 恒 = views[0]?.url 供旧面板回读。 */
+  views?: RunbookView[]
   state: PreviewState
   /** true = url responds but NO session owns it (user ran pnpm dev themselves). */
   external?: boolean
@@ -138,8 +142,9 @@ export interface PreviewSummary {
 }
 const PREVIEW_TIMEOUT_S = 7200        // 2h hard cap; every decision auto-stops
 const PREVIEW_PROBE_MS = 1500         // readiness poll cadence while starting
-const PREVIEW_PROBE_TIMEOUT_MS = 800  // per-probe fetch budget
+const PREVIEW_PROBE_TIMEOUT_MS = 800  // per-probe fetch budget (getPreview external check)
 const PREVIEW_TAIL = 120
+const PREVIEW_READY_TIMEOUT_S = 120   // default total budget for the ready-probe to pass
 
 /** One in-memory preview session per task. No verdict file — the ledger records it. */
 interface PreviewSession {
@@ -150,6 +155,8 @@ interface PreviewSession {
   probeTimer?: ReturnType<typeof setInterval>
   controller: AbortController
   done: boolean
+  /** runbook teardown (stop 时 best-effort 跑一次；缺省=只结束会话，用于远端部署）。 */
+  down?: { command: string; cwd: string }
 }
 
 /** Evidence frozen while the round is still awaiting (see snapshotEvidence). */
@@ -391,11 +398,19 @@ export class RoundEvidenceService {
     if (!ws || !existsSync(ws.path)) {
       throw new TaskStatusConflictError("工作区目录不在了 — 实物复检不可用（叙述/历史 verdict 仍有效）")
     }
-    const cwdAbs = path.resolve(ws.path, cfg.cwd ?? ".")
-    const cwdRel = path.relative(ws.path, cwdAbs)
-    if (cwdRel.startsWith("..") || path.isAbsolute(cwdRel)) {
-      throw new TaskSpecFieldError(`复检 cwd 逃逸出工作区: ${cfg.cwd}`)
+    const runPerRepo = cfg.per_repo === true
+    let cwdAbs: string
+    if (runPerRepo) {
+      // 多仓复检：在 ws 根跑一个遍历 projects/*/ 的循环，command 以各仓根为 cwd。
+      cwdAbs = ws.path
+    } else {
+      cwdAbs = path.resolve(ws.path, cfg.cwd ?? ".")
+      const cwdRel = path.relative(ws.path, cwdAbs)
+      if (cwdRel.startsWith("..") || path.isAbsolute(cwdRel)) {
+        throw new TaskSpecFieldError(`复检 cwd 逃逸出工作区: ${cfg.cwd}`)
+      }
     }
+    const verifyBash = runPerRepo ? buildPerRepoVerifyBash(cfg.command) : cfg.command
 
     const controller = new AbortController()
     const session: VerifySession = {
@@ -405,7 +420,7 @@ export class RoundEvidenceService {
         phase_index: phaseIndex,
         round_index: roundIndex,
         command: cfg.command,
-        cwd: cfg.cwd ?? ".",
+        cwd: runPerRepo ? "projects/* (逐仓)" : (cfg.cwd ?? "."),
         state: "running",
         started_at: new Date().toISOString(),
       },
@@ -428,7 +443,7 @@ export class RoundEvidenceService {
     const node = {
       id: `verify-${taskId}`,
       type: "bash" as const,
-      bash: cfg.command,
+      bash: verifyBash,
       timeout: cfg.timeoutS ?? VERIFY_DEFAULT_TIMEOUT_S,
     }
     const executor = new BashExecutor(
@@ -599,12 +614,78 @@ export class RoundEvidenceService {
 
   // ── live preview (跑起来看) ────────────────────────────────────────────
 
-  private previewCfg(taskId: string): AcceptancePreview | undefined {
-    const detail = this.tasksService.getTask(taskId)
-    return (detail.task_spec as TaskSpec | undefined)?.acceptance_preview as AcceptancePreview | undefined
+  /** Resolve the effective runbook (wsPath 用于探测项目自带脚本)：优先级
+   *  ① 显式 `acceptance_runbook`；② legacy `acceptance_preview` 合成（单服务，
+   *  旧面板零改动）；③ 项目自带 `.octopus/acceptance/{up,health,down}.sh`(+可选
+   *  `views` 文件) —— 企业里 docker-compose / 多 jar / Jenkins 部署各自的复杂度
+   *  全留在这些脚本里，平台只认 up/health/down/urls 契约，不枚举任何工具。
+   *  三者皆无 → null。 */
+  private resolveRunbook(taskId: string, wsPath?: string): AcceptanceRunbook | null {
+    const spec = this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined
+    const rb = spec?.acceptance_runbook as AcceptanceRunbook | undefined
+    if (rb?.up?.command?.trim() && rb?.ready?.command?.trim()) return rb
+    const legacy = spec?.acceptance_preview as AcceptancePreview | undefined
+    if (legacy?.command?.trim() && legacy?.url) {
+      return {
+        up: { command: legacy.command, cwd: legacy.cwd },
+        // rc0 = got any HTTP response (conn refused → rc7 → not ready); mirrors
+        // the old "any response = port up" probe under the unified exit-code rule.
+        ready: { command: `curl -s -o /dev/null ${JSON.stringify(legacy.url)}` },
+        views: [{ url: legacy.url }],
+      }
+    }
+    // ③ 项目约定脚本：wsPath/.octopus/acceptance/{up,health,down}.sh + views
+    if (wsPath) {
+      const dir = path.join(wsPath, ".octopus", "acceptance")
+      const script = (n: string): string | null => {
+        const p = path.join(dir, n)
+        return existsSync(p) ? p : null
+      }
+      const upSh = script("up.sh")
+      const healthSh = script("health.sh")
+      if (upSh && healthSh) {
+        const downSh = script("down.sh")
+        const viewsFile = script("views")
+        let views: RunbookView[] = []
+        if (viewsFile) {
+          try {
+            views = readFileSync(viewsFile, "utf-8")
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter((l) => l && /^https?:\/\//i.test(l))
+              .slice(0, 20)
+              .map((url) => ({ url }))
+          } catch {
+            views = []
+          }
+        }
+        // 脚本以 POSIX sh 跑（Git Bash/WSL/Linux 皆可）。用相对 cwd 定位脚本目录，
+        // 避免把带反斜杠的 Windows 绝对路径塞进 sh 命令（转义地狱）。
+        const rel = ".octopus/acceptance"
+        return {
+          up: { command: "sh up.sh", cwd: rel },
+          ready: { command: "sh health.sh", cwd: rel },
+          views,
+          down: downSh ? { command: "sh down.sh", cwd: rel } : undefined,
+        }
+      }
+    }
+    return null
+  }
+
+  /** Run one readiness probe: exit code 0 = ready. Short-bounded, never throws. */
+  private async runReadyProbe(command: string, cwd: string, executionId: string): Promise<boolean> {
+    try {
+      const node = { id: `preview-probe-${executionId}`, type: "bash" as const, bash: command, timeout: 15 }
+      const r = await new BashExecutor(node, new VarPool(), { cwd, executionId }).execute()
+      return r.status === "completed" && (r.exitCode ?? 1) === 0
+    } catch {
+      return false
+    }
   }
 
   /** One bounded HTTP probe — ANY response (2xx/3xx/4xx) means the port is up.
+   *  Used only by getPreview's one-shot "external process already serving?" check.
    *  Network error / timeout → false. Never throws. */
   private async probeUrl(url: string): Promise<boolean> {
     try {
@@ -621,33 +702,33 @@ export class RoundEvidenceService {
     }
   }
 
-  /** POST /:id/preview — start the task's acceptance_preview command as a
-   *  long-lived process in the (alive) workspace; readiness via HTTP probe.
-   *  Gates mirror startVerify. NEVER auto-runs (explicit button only). */
+  /** POST /:id/preview — run the task's runbook `up` in the live workspace, poll
+   *  `ready` (exit code 0 = ready) until ready or timeout, expose `views[]`.
+   *  `down` runs on stop (absent → stop only ends the session, for remote deploys
+   *  you must not kill). `up` may stay foreground (a server) or exit fast (a
+   *  detached `docker compose -d` / a Jenkins trigger) — both handled: readiness is
+   *  decoupled from up's lifetime. NEVER auto-runs (explicit button only). */
   async startPreview(taskId: string): Promise<PreviewSummary> {
     const { execRow } = this.resolveAwaiting(taskId)
-    const cfg = this.previewCfg(taskId)
-    if (!cfg?.command?.trim()) {
-      throw new TaskSpecFieldError("未配置预览命令 — 在验收面板写下起服务的命令(长驻,随任务持久化)")
-    }
-    let url: string
-    try {
-      url = new URL(cfg.url).toString()
-    } catch {
-      throw new TaskSpecFieldError(`预览 url 非法: ${cfg.url}`)
-    }
-    // 引擎替换语法撞车预检(与 bash 节点同纪律,ADR commit 209a9ce6 教训)。
-    if (/\$vars\.|\$\{[^}]*\|/.test(cfg.command)) {
-      throw new TaskSpecFieldError("预览命令含引擎替换语法($vars./${x|filter}) — 会被 BashExecutor 误替换,请改写")
-    }
     const prev = this.previewSessions.get(taskId)
     if (prev && !prev.done) throw new TaskStatusConflictError("预览已在跑 — 先停止")
     const ws = this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) throw new TaskStatusConflictError("工作区目录不在了 — 预览不可用")
-    const cwdAbs = path.resolve(ws.path, cfg.cwd ?? ".")
+    const rb = this.resolveRunbook(taskId, ws.path)
+    if (!rb) {
+      throw new TaskSpecFieldError("未配置预览 — 写 acceptance_preview(单服务) 或 acceptance_runbook(多服务/远端部署)；或让项目带 .octopus/acceptance/{up,health}.sh")
+    }
+    // 引擎替换语法撞车预检(与 bash 节点同纪律,ADR commit 209a9ce6 教训)。
+    for (const step of [rb.up, rb.ready, rb.down]) {
+      if (step && /\$vars\.|\$\{[^}]*\|/.test(step.command)) {
+        throw new TaskSpecFieldError("预览命令含引擎替换语法($vars./${x|filter}) — 会被 BashExecutor 误替换,请改写")
+      }
+    }
+    const views = rb.views ?? []
+    const cwdAbs = path.resolve(ws.path, rb.up.cwd ?? ".")
     const cwdRel = path.relative(ws.path, cwdAbs)
     if (cwdRel.startsWith("..") || path.isAbsolute(cwdRel)) {
-      throw new TaskSpecFieldError(`预览 cwd 逃逸出工作区: ${cfg.cwd}`)
+      throw new TaskSpecFieldError(`预览 cwd 逃逸出工作区: ${rb.up.cwd}`)
     }
 
     const controller = new AbortController()
@@ -655,8 +736,9 @@ export class RoundEvidenceService {
       summary: {
         task_id: taskId,
         execution_id: execRow.id,
-        command: cfg.command,
-        url,
+        command: rb.up.command,
+        url: views[0]?.url ?? "",
+        views,
         state: "starting",
         started_at: new Date().toISOString(),
       },
@@ -665,12 +747,14 @@ export class RoundEvidenceService {
       ready: false,
       controller,
       done: false,
+      down: rb.down ? { command: rb.down.command, cwd: path.resolve(ws.path, rb.down.cwd ?? ".") } : undefined,
     }
     this.previewSessions.set(taskId, session)
     this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
 
-    const node = { id: `preview-${taskId}`, type: "bash" as const, bash: cfg.command, timeout: PREVIEW_TIMEOUT_S }
-    const pattern = cfg.readyPattern ? safeRegex(cfg.readyPattern) : null
+    // up: fire-and-track. A non-zero exit before readiness = failed; a clean/fast
+    // exit (detached launcher) is fine — the probe below decides readiness.
+    const node = { id: `preview-${taskId}`, type: "bash" as const, bash: rb.up.command, timeout: PREVIEW_TIMEOUT_S }
     const executor = new BashExecutor(node, new VarPool(), {
       cwd: cwdAbs,
       signal: controller.signal,
@@ -681,22 +765,37 @@ export class RoundEvidenceService {
       },
     })
     void executor.execute()
-      .then((r) => this.settlePreview(taskId, session, r))
-      .catch(() => this.settlePreview(taskId, session, { status: "failed", logLines: ["preview crashed"] }))
-
-    // Readiness poller: any HTTP response (+ readyPattern if configured) → ready.
-    session.probeTimer = setInterval(() => {
-      void (async () => {
+      .then((r) => {
         if (session.done || session.ready) return
-        const probeOk = await this.probeUrl(url)
-        const patOk = pattern ? pattern.test(session.lines.join("\n")) : true
-        if (probeOk && patOk) {
-          session.ready = true
-          session.summary.state = "ready"
-          this.stopProbe(session)
-          this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
-        }
-      })()
+        // A NON-zero up exit is a hard failure. A CLEAN/fast exit while still
+        // probing means a detached launcher (`compose up -d`, a Jenkins trigger)
+        // handed off and returned — keep probing; readiness/timeout decides the
+        // outcome, not up's lifetime.
+        if (typeof r.exitCode === "number" && r.exitCode !== 0) this.settlePreview(taskId, session, r)
+      })
+      .catch(() => { if (!session.ready && !session.done) this.settlePreview(taskId, session, { status: "failed", logLines: ["preview up crashed"] }) })
+
+    // Readiness poller: run `ready` (rc0 = ready), self-guarded against overlap,
+    // until ready or the total budget (rb.timeoutS) elapses.
+    const deadline = Date.now() + (rb.timeoutS ?? PREVIEW_READY_TIMEOUT_S) * 1000
+    let probing = false
+    session.probeTimer = setInterval(() => {
+      if (probing || session.done || session.ready) return
+      if (Date.now() > deadline) {
+        this.settlePreview(taskId, session, { status: "failed", logLines: ["就绪探测超时 — up 未在预算内让 ready 探针通过(退出码 0)"] })
+        return
+      }
+      probing = true
+      void this.runReadyProbe(rb.ready.command, cwdAbs, execRow.id)
+        .then((ok) => {
+          if (ok && !session.done && !session.ready) {
+            session.ready = true
+            session.summary.state = "ready"
+            this.stopProbe(session)
+            this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
+          }
+        })
+        .finally(() => { probing = false })
     }, PREVIEW_PROBE_MS)
 
     return { ...session.summary }
@@ -729,27 +828,39 @@ export class RoundEvidenceService {
   async getPreview(taskId: string): Promise<PreviewSummary | null> {
     const session = this.previewSessions.get(taskId)
     if (session) return { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
-    const cfg = this.previewCfg(taskId)
-    if (!cfg?.url) return null
-    let url: string
-    try {
-      url = new URL(cfg.url).toString()
-    } catch {
-      return null
-    }
+    const wsId = this.resolveAwaiting(taskId).execRow.workspace_id
+    const wsPath = this.workspaceService.getById(wsId)?.path
+    const url = this.resolveRunbook(taskId, wsPath)?.views?.[0]?.url
+    if (!url) return null
     if (await this.probeUrl(url)) {
-      return { task_id: taskId, url, state: "ready", external: true }
+      return { task_id: taskId, url, views: [{ url }], state: "ready", external: true }
     }
-    return { task_id: taskId, url, state: "stopped" }
+    return { task_id: taskId, url, views: [{ url }], state: "stopped" }
   }
 
-  /** POST /:id/preview/stop — SIGTERM tree via BashExecutor's abort chain. */
+  /** Best-effort runbook teardown on stop — fire `down` (rc ignored), never throws.
+   *  Absent down (remote deploys) → no-op; stop already just ends the session. */
+  private fireDown(taskId: string, session: PreviewSession, executionId: string): void {
+    if (!session.down) return
+    const node = { id: `preview-down-${taskId}`, type: "bash" as const, bash: session.down.command, timeout: 60 }
+    void new BashExecutor(node, new VarPool(), { cwd: session.down.cwd, executionId })
+      .execute()
+      .catch(() => { /* teardown is best-effort */ })
+  }
+
+  /** POST /:id/preview/stop — SIGTERM the up tree via BashExecutor's abort chain,
+   *  then run the runbook's `down` (best-effort; absent → nothing to tear down). */
   stopPreview(taskId: string): PreviewSummary {
     const session = this.previewSessions.get(taskId)
     if (!session || session.done) throw new TaskStatusConflictError("没有在跑的预览可停止")
     session.userAborted = true
     this.stopProbe(session)
     session.controller.abort()
+    this.fireDown(taskId, session, session.summary.execution_id ?? taskId)
+    // Settle the stop transition HERE (the up executor's .then is deliberately
+    // suppressed once ready — so a foreground up being killed would otherwise
+    // never flip the session to "stopped").
+    this.settlePreview(taskId, session, { status: "stopped", logLines: [] })
     return { ...session.summary }
   }
 
@@ -760,6 +871,8 @@ export class RoundEvidenceService {
       session.userAborted = true
       this.stopProbe(session)
       session.controller.abort()
+      this.fireDown(taskId, session, session.summary.execution_id ?? taskId)
+      this.settlePreview(taskId, session, { status: "stopped", logLines: [] })
     }
   }
 
@@ -901,15 +1014,6 @@ function previewData(taskId: string, s: PreviewSummary): Record<string, unknown>
     external: s.external, exit_code: s.exit_code, duration_ms: s.duration_ms,
   }
 }
-/** Compile a user readyPattern; a bad regex must not kill a preview — return a
- *  never-matching pattern so readiness falls back to the HTTP probe alone. */
-function safeRegex(src: string): RegExp {
-  try {
-    return new RegExp(src, "i")
-  } catch {
-    return /(?!)/
-  }
-}
 
 function parseCommitMap(json: string | null | undefined): Record<string, string> {
   if (!json) return {}
@@ -938,6 +1042,25 @@ function expiredRepo(name: string, reason: "no_workspace" | "no_commits" | "work
 /** BashExecutor 语义（bash.ts execute/catch 实证）：非零退出带 exitCode；
  *  超时/中止走 catch → status:"failed" 无 exitCode，message 在 logLines 尾
  *  （"Timeout after Ns" / "Aborted" / "Execution cancelled before start"）。 */
+/** Cross-repo 复检命令生成器（acceptance_verify.per_repo=true）。
+ *  对 ws 根下每个 projects/* 且是 git 仓的子目录，各以仓根为 cwd 跑一次用户
+ *  命令（子 shell 隔离，`cd` 不泄漏到下一条），聚合退出码：任一仓非零即整体失败。
+ *  命令按 BashExecutor 的 Git-Bash 语义写（与 matt-spec-dev spec-resolve 同源约定：
+ *  相对路径、正斜杠、`[ -e "$D/.git" ]` 判定 worktree）。 */
+export function buildPerRepoVerifyBash(userCmd: string): string {
+  return [
+    "rc=0; found=0",
+    "for D in projects/*/; do",
+    '  [ -e "$D/.git" ] || continue',
+    "  found=1",
+    '  echo "=== verify @ ${D%/} ==="',
+    `  ( cd "$D" && ${userCmd} ) || rc=1`,
+    "done",
+    'if [ "$found" = 0 ]; then echo "projects/ 下无 git 仓 — 逐仓复检跳过"; fi',
+    "exit $rc",
+  ].join("\n")
+}
+
 function classifyVerifyResult(
   userAborted: boolean,
   r: { status: string; exitCode?: number; logLines: string[] },

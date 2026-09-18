@@ -10,8 +10,10 @@ kind: Workflow
 #   spec-resolve (bash — 确定性核对 + spec 定位 + 反馈/前序交接探测，不烧 agent token)
 #     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
 #     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
-#                  → ticket-dag  (dynamic_sub_workflow — issues/ DAG 并发实现)
-#                  → code-review (判→批修→一测；终检在此) → ship-pr (Git PR)
+#                  → ticket-dag  (dynamic_sub_workflow — 功能票 DAG；跳过 NN-e2e 票)
+#                  → code-review (判→批修→一测；终检在此)
+#                  → e2e-verify  (agent — 仅 has_e2e：对最终 HEAD 走查，review 之后)
+#                  → ship-pr (Git PR)
 #
 # 快线化 (2026-09-16 实测 Round2=27.6min 的复盘): decode-bound —— 56.5K 输出
 # tokens 里 ~60% 是转述散文，全量 mvn 同轮跑 4-5 遍。对策 = ①review 回合硬预算
@@ -19,11 +21,16 @@ kind: Workflow
 # review 收尾；③ship-pr 基于共享会话禁重读 + 产物契约节名逐字 (核对 tab 正则
 # 消费者)；④票探路上限。
 #
-# 全量验证的归属（2026-09-17）：**由末张 `NN-e2e-*` 验收票承担，每批恒有**。
-# server 的入队 gate 强制 issues/ 下存在该票（missing: phase:<i>:no-final-verification），
-# 所以「本批无验收票」不再是可达状态 —— 曾用于兜底它的 integration-gate 节点
-# 因此是不可达死码，已删除（其 has_e2e 路由随之退役）。原本挂在它下面的
-# code-review 直接依赖 ticket-dag。
+# 验证归属：e2e 是 code-review **之后**的独立 e2e-verify 节点（验最终 HEAD），且不再
+# 每批恒有 —— gate 放宽为「验证声明二选一」：有 `NN-e2e-*` 票，或 spec 写
+# `Verification Tier: unit-only`。无票 → has_e2e=false → e2e-verify 跳过，轻 phase
+# 不烧最贵的走查成本。（曾有过的 integration-gate 兜底节点仍是死码，保持删除。）
+#
+# 多仓：spec-resolve 枚举**全部** projects/*/ 仓及各自分支写入 $vars.repos（旧实现只认
+# 第一个仓 → 第二仓分支/PR 会丢）。code-review / ship-pr 逐仓循环，每个有改动的仓各出
+# 一个 PR。跨仓依赖由票 Blocked by 定序 + 被依赖票按自身构建系统安装产物保证编译可见。
+# e2e 票的 e2e-harness 依赖按需 —— 仅 browser 走查票挂（它是 web-app 专用 Playwright
+# 库），API 级走查票不挂。
 # 会话共享是实测事实 (node_executions.session_id)：主链同 global_session，
 # TTFT 全程 13.4s —— 慢的不是上下文，是逐字生成。
 #
@@ -72,8 +79,13 @@ variables:
   latest_feedback: ""
   review_budget: ""
   branch: ""
+  repos: ""
+  repo_count: "0"
+  has_e2e: "false"
+  e2e_ticket: ""
   review_status: ""
   verify_status: ""
+  e2e_status: ""
   pr_url: ""
   prev_handoffs: ""
   prev_handoff_count: "0"
@@ -180,7 +192,7 @@ nodes:
         fi
       fi
 
-      # issues/ 非空（票 = 执行单元；SKILL 契约末张 NN-e2e-* 恒在 —— gate 强制）
+      # issues/ 非空（票 = 执行单元）
       if [ -z "$REASON" ]; then
         TICKETS=$(ls "$BATCH"/issues/*.md 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TICKETS" = "0" ]; then
@@ -188,9 +200,19 @@ nodes:
         fi
       fi
 
-      # code-review 熔断丝（保险丝非目标）: 10 + 5×票数 —— 3 票批实测 review 用 8-17 回合,
-      # 定长者对复杂批必爆(三单 r1 的 max_turns=8 实证),随票数线性放缩。
-      REVIEW_BUDGET=$(( 10 + 5 * ${TICKETS:-0} ))
+      # e2e 探测：issues/ 有 `NN-e2e-*` 票 → has_e2e=true。该票不进 ticket-dag（planner
+      # 跳过），改由 code-review 之后的 e2e-verify 节点对最终 HEAD 走查。作者判定本
+      # phase 免走查（spec 写 Verification Tier: unit-only）时不产 e2e 票 →
+      # has_e2e=false → e2e-verify 整节点跳过，省掉最贵的走查成本。
+      HAS_E2E="false"; E2E_FILE=""
+      if [ -z "$REASON" ]; then
+        E2E_FILE=$(ls "$BATCH"/issues/*-e2e-*.md 2>/dev/null | head -1)
+        [ -n "$E2E_FILE" ] && HAS_E2E="true"
+      fi
+
+      # code-review 熔断丝：随票数 + 仓数伸缩。10 + 5×票 + 3×仓 —— 3 票批实测 review 用
+      # 8-17 回合，定长者对复杂批必爆(三单 r1 的 max_turns=8 实证)；跨仓终检按 reactor 序
+      # 每仓多跑一轮 mvn，故再并入仓数。实际预算在下方仓枚举算出 RC 后再定。
 
       # 未消化反馈探测：存在 fix-feedback-rN.md → 本轮先过 spec-review 再审段
       FB=""; HAS_FB="false"
@@ -222,22 +244,33 @@ nodes:
         fi
       done <<< "$PH_RAW"
 
-      # 分支名：worktree 在 projects/ 下（ws 根不是 git repo）
-      BR=""
-      REPO=$(ls -d projects/*/ 2>/dev/null | head -1)
-      if [ -n "$REPO" ]; then
-        BR=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-      fi
+      # 代码仓枚举（worktree 在 projects/ 下，ws 根不是 git repo）。单仓列一行、跨仓
+      # 任务列全部，下游 code-review / ship-pr 逐仓循环。REPOS 每行 `path|branch`
+      # （相对路径、正斜杠、JSON-safe）；branch 留首仓值供展示。
+      REPOS_JSON=""; BR=""; RC=0
+      for D in projects/*/; do
+        [ -e "$D/.git" ] || continue
+        B=$(git -C "$D" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        [ -z "$B" ] && continue
+        P=${D%/}
+        if [ "$RC" -gt 0 ]; then REPOS_JSON="$REPOS_JSON\\n"; fi
+        REPOS_JSON="$REPOS_JSON$P|$B"
+        [ -z "$BR" ] && BR="$B"
+        RC=$((RC+1))
+      done
+
+      # 熔断丝现在算（依赖 RC — 见上方仓枚举）：10 + 5×票 + 3×仓
+      REVIEW_BUDGET=$(( 10 + 5 * ${TICKETS:-0} + 3 * RC ))
 
       if [ -n "$REASON" ]; then
         echo "PRECHECK FAILED: $REASON"
-        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "review_budget": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$REVIEW_BUDGET" "$PREV_JSON" "$PREV_COUNT"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "review_budget": "%s", "repos": "%s", "repo_count": "%s", "has_e2e": "false", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$REVIEW_BUDGET" "$REPOS_JSON" "$RC" "$PREV_JSON" "$PREV_COUNT"
         exit 0
       fi
 
       if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
-      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "review_budget": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$REVIEW_BUDGET" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS repos=$RC has_e2e=$HAS_E2E feedback=$HAS_FB branch=$BR"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "review_budget": "%s", "branch": "%s", "repos": "%s", "repo_count": "%s", "has_e2e": "%s", "e2e_ticket": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$REVIEW_BUDGET" "$BR" "$REPOS_JSON" "$RC" "$HAS_E2E" "$E2E_FILE" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -314,30 +347,23 @@ nodes:
          - "Blocked by" 字段（依赖关系）
          - "Status" 字段（跳过 status: done 或 skip 的）
          - "Verification Method" 字段（票节点必须执行它）
-      3. 构建依赖图
-      4. 为每个待执行的 ticket 创建一个 agent 节点:
+      3. 构建依赖图 —— **但把末张 `NN-e2e-*` 验收票排除出 DAG**（不给它建节点）：
+         它改由下游独立的 e2e-verify 节点在 code-review 之后执行（验最终 HEAD）。
+         DAG 只规划功能票；功能票依赖里若引用了 e2e 票 ID 也一并忽略。
+      4. 为每个待执行的功能 ticket 创建一个 agent 节点:
 
       普通票节点格式:
       ```json
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——同会话前后票已探过的路禁止重走\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method；修复轮只重跑失败用例，收尾全量一次\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下可能有多个仓（跨仓任务：提供方仓产出符号、消费方仓引用）。先定位本票改动落在哪个仓。\n跨仓依赖：若本票引用另一仓本次新产出的符号，其构建/安装步骤以被依赖票自己的 Verification Method 为准（作者按各仓构建系统写好），票间 Blocked by 保证顺序——本票编译前先确认依赖方产物已就绪。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——同会话前后票已探过的路禁止重走\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method；修复轮只重跑失败用例，收尾全量一次\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["implement", "tdd"],
         "depends_on": ["ticket-XX"]
       }
       ```
 
-      E2E 票（文件名 NN-e2e-* 的末张验收票）改用（**双模式：先读票上「类型」声明选路**）:
-      ```json
-      {
-        "id": "ticket-NN",
-        "type": "agent",
-        "prompt": "你是 E2E 验证者，执行票 <spec 文件> 定义的最终验收。\n使用 matt-e2e-test-methodology 方法论 + e2e-harness 库:\n0. 模式分流（以票的「类型」声明为准；票未声明则按 spec 验收面判定）：\n   - 「browser 走查」→ Playwright 真起浏览器 + 截图/vision 证据\n   - 「API 级走查（不开浏览器）」→ 真实服务 curl + sqlite 直查 + 手算交叉，\n     **禁起浏览器、跳截图步骤**（无 UI 的 phase 此为默认，不为不存在的页面烧成本）\n1. 读 spec 的 Verification Strategy / AC 表 + 票的 Verification Method\n2. 需要真实服务时自行启动 dev server（端口冲突用 --isolated）\n3. 反假跑纪律（两模式通用）: 真实服务、断言业务值、≥2 种证据、\n   E2E_TD_ 前缀数据、测后清理恢复\n4. 证据写 $inputs.batch_dir/e2e-data/（截图 e2e-screenshots/，脚本 e2e-scripts/；API 级模式写响应体/SQL 原样输出/手算记录）\n5. 失败项: Quick Fix 一轮 → 修不动则 diagnosing-bugs 深挖 → 仍失败如实标 Status 并写原因\n6. 票文件原位回写 Status + 结果摘要\n\n不要伪造通过。输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
-        "skills": ["matt-e2e-test-methodology", "diagnosing-bugs", "e2e-harness"],
-        "depends_on": ["ticket-XX"]
-      }
-      ```
+      （E2E 票不在这里建节点 —— 见下方 e2e-verify 独立节点。）
 
       ═══ 约束 ═══
       - 所有节点必须是 type: "agent"
@@ -345,6 +371,7 @@ nodes:
       - 无依赖的 ticket 并行执行
       - depends_on 引用 ticket ID（如 "ticket-01"）
       - 已完成（done/skip）的 ticket 不创建节点
+      - **`NN-e2e-*` 票不创建节点**（由 code-review 之后的 e2e-verify 独立节点执行）
 
   # ------------------------------------------------------------
   # Stage 2: Code Review（裁判 ≠ 球员；对照 spec.md 现态。2026-09-16 快线化:
@@ -365,11 +392,12 @@ nodes:
       使用 code-review skill 独立审查所有代码变更。
       主 agent 从没看过实现过程，天然独立 → 直接审查。
       三轴不变: Standards / Spec 对照 $inputs.batch_dir/spec.md / Completeness。
-      审查范围: 分支 $vars.branch 上 projects/ 下的代码仓。
+      审查范围: $vars.repos 列出的**每个**代码仓（每行 `path|branch`）。逐仓取工作树
+      变更，合并进同一份审查；某仓工作树无改动则跳过该仓。单仓时只有一行，行为同旧流。
 
       ═══ 审查锚点（别探索、别就此成文）═══
-      审查发生在 ship 之前 —— HEAD == origin/main，全部变更在**工作树**:
-      锚点 = git status --porcelain + git diff HEAD + 未跟踪文件清单。
+      审查发生在 ship 之前 —— 每仓 HEAD == origin/main，全部变更在**工作树**:
+      锚点 = 逐仓 `git -C <path> status --porcelain` + `git -C <path> diff HEAD` + 未跟踪清单。
       origin/main...HEAD 必为空是流水线几何，不是异常：不探测、不成文。
 
       ═══ 回合预算（目标 ≤10 回合；熔断丝 = 10+5×票数，保险丝不是绩效目标）═══
@@ -379,11 +407,10 @@ nodes:
       3. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
          保留进报告，人 gate = 看板验收，不阻断）
       4. 测一次:
-         - 第 3 步零编辑 → 不测（e2e 票的绿仍是现物）
-         - 有编辑 → 全量 build+test **恰一次**（本轮终检，不可跳过；构建
-           系统自识别，此后禁止再补任何测试）
-      5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，
-         绿引 e2e 票现物"）
+         - 第 3 步零编辑 → 不测（功能票的测试绿仍是现物）
+         - 有编辑 → 每仓按各自构建系统全量 test **各恰一次**（本轮终检，不可跳过；
+           此后禁止再补任何测试）。仓间有依赖时按依赖序：先构建/安装被依赖仓，再测消费仓。
+      5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，绿引功能票测试现物"）
 
       ═══ 修复轮增量（批目录已有上一轮 code-review.md 时）═══
       只审上一轮之后的工作树变化 + 上轮每条 finding 的处置状态（已修/仍开/
@@ -391,6 +418,48 @@ nodes:
 
       最后输出 vars_update JSON:
       {"vars_update": {"review_status": "passed|has_notes|has_fixes", "verify_status": "passed|failed|not_needed"}}
+
+  # ------------------------------------------------------------
+  # Stage 2.5: E2E 走查 —— code-review 之后，对最终 HEAD 执行 NN-e2e 票；
+  #   has_e2e=false 则整节点跳过，走查挂了 on_error:continue 不阻断 ship（人 gate 裁决）
+  # ------------------------------------------------------------
+
+  - id: e2e-verify
+    type: agent
+    depends_on: [code-review]
+    execute_when: '$vars.has_e2e == "true"'
+    on_error: continue
+    timeout: 1800
+    skills: [matt-e2e-test-methodology, diagnosing-bugs]
+    prompt: |
+      你是 E2E 验证者，对**已 review 修复后的最终代码**执行验收票 $vars.e2e_ticket 定义的走查。
+      本节点在 code-review 之后 —— 你现在验的正是即将 ship 的那版，别再回头改代码（除 Quick Fix）。
+
+      ═══ 双模式（先读票上「类型」声明选路）═══
+      - 「browser 走查」→ Playwright 真起浏览器 + 截图/vision 证据（仅 web-app 类；可用 e2e-harness 库）
+      - 「API 级走查（不开浏览器）」→ 真实服务 curl + sqlite 直查 + 手算交叉；
+        禁起浏览器、跳截图、**不用 e2e-harness**（那是 Octopus web-app 专用 Playwright 库，
+        纯后端用不上）。无 UI 的 phase 此为默认。
+
+      ═══ 步骤 ═══
+      1. 读票的 Verification Method + spec 的 Verification Strategy / AC 表
+      2. 需要真实服务时，优先复用项目自带的验收运行契约：若工作区/代码仓有
+         `.octopus/acceptance/{up,health,down}.sh`（或 spec 指明的启动契约），跑
+         up → 轮询 health(退出码0=就绪) → 走查 → down 收尾；没有再自行起服务
+         （端口冲突用 --isolated）。契约与验收台「跑起来看」同源，别各起一套。
+      3. 反假跑纪律：真实服务、断言业务值、≥2 种证据、E2E_TD_ 前缀数据、测后清理恢复
+      4. **跨仓复用契约探针（消费方视角）**：若本 phase 跨仓（消费仓引用了产出仓本次新增
+         的符号），加一条断言证明「真复用而非就地重写」——用该仓构建系统的依赖解析或
+         import/字节码级检查，确认消费方编译产物真的链到了产出方的实现。只看端点返回值
+         证不了复用的是别人的实现。
+      5. 证据写 $inputs.batch_dir/e2e-data/（截图 e2e-screenshots/，脚本 e2e-scripts/；
+         API 级写响应体/SQL 原样输出/手算记录）
+      6. 失败项：Quick Fix 一轮 → 修不动则 diagnosing-bugs 深挖 → 仍失败如实标 Status +
+         原因（不得伪造通过；本节点 on_error continue，挂了也不阻断 ship，人 gate 裁决）
+      7. 票文件原位回写 Status + 结果摘要
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"e2e_status": "passed|failed"}}
 
   # ------------------------------------------------------------
   # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接；
@@ -402,7 +471,7 @@ nodes:
 
   - id: ship-pr
     type: agent
-    depends_on: [code-review]
+    depends_on: [e2e-verify]
     timeout: 1800
     tools: [Read, Bash, Grep, Glob]
     prompt: |
@@ -411,14 +480,14 @@ nodes:
 
       ═══ 上下文 ═══
       Batch 目录（ws 根下，与 task home 同构）: $inputs.batch_dir
-      代码仓: projects/ 下的 git repo（worktree，分支 $vars.branch）
+      代码仓: $vars.repos 列出的**每个** git repo（每行 `path|branch`，跨项目任务多仓）
       前序交接（有则先读，其 Gap Targets 未闭环项须承接或显式关闭；空则本 phase 无前序）: $vars.prev_handoffs
       本 phase 是否末站: $inputs.is_final_phase（true ⇒ 无下游执行会话，跳过产物 2）
 
       ═══ 速度纪律 ═══
       - 你在共享会话里 —— spec/票/gate/review 的来龙去脉已在你上下文中，
         禁止重读这些文件。
-      - 事实采集一条 bash 拿全: git -C <repo> diff --stat origin/main...HEAD
+      - 事实采集一条 bash 拿全: **逐仓** `git -C <path> diff --stat origin/main...HEAD`
         + grep -H "Status:" $inputs.batch_dir/issues/*.md
         + code-review.md 的结论行。此后除落笔与 git 操作外不再探索。
 
@@ -430,8 +499,10 @@ nodes:
               （review_status 为空/failed —— 评审熔断或出错 → 本节如实写
               "评审未完成（原因）"，code-review.md 有初稿则引用已落盘部分，
               并把该缺口记进 Remaining Issues；货照常交付，人 gate 裁决）
-           ## E2E 证据索引    e2e-data/ 关键文件 + 结果（无走查票则写"本批无"）
-           ## Changed Files   git diff --stat 原样贴入，不重排不截断
+           ## E2E 证据索引    e2e-verify 节点产物：$vars.e2e_status + e2e-data/ 关键文件与
+              结果（e2e_status=passed/failed 如实写；has_e2e=false 的免走查 phase 写
+              "本批 unit-only 免走查（spec 声明）"）
+           ## Changed Files   逐仓 git -C <path> diff --stat 分节原样贴入，不重排不截断
          可另加 ## Remaining Issues（如实，含终检 failed 时的详情）。
       2. $inputs.batch_dir/handoff.md — 面向下游 phase 执行会话的精选交接短页
          （每轮整页重写、禁止追加 — 头块轮次 rN 即最新终态）:
@@ -450,13 +521,15 @@ nodes:
          round-report，不缺这一页。
       3. issues/ 有票漏回写 Status → 补写。
 
-      ═══ Git ═══
-      4. 在代码仓内 commit + push:
-         git add -A && git commit -m "feat(<batch slug>): spec-dev round" && git push origin $vars.branch
-      5. 创建或更新 PR（代码仓内）:
-         - gh pr list --head $vars.branch --state open
+      ═══ Git（逐仓交付：$vars.repos 每个有改动的仓各出一个 PR）═══
+      4. 对 $vars.repos 每行 `path|branch`:
+         - git -C <path> status --porcelain 为空 → 该仓无改动，跳过（不出 PR）
+         - 否则在该仓内: git add -A && git commit -m "feat(<batch slug>): spec-dev round" && git push origin <branch>
+      5. 每个已 push 的仓创建或更新 PR（在该仓目录内执行）:
+         - gh pr list --head <branch> --state open
          - 已有 → gh pr edit（保留 MANUAL 区块）
          - 无 → gh pr create
+      6. pr_url 汇总所有已出 PR 的链接（多个用换行连接，单仓时就是一个）。
 
       ═══ 纪律 ═══
       - 只 commit 代码仓变更；批次目录（ws 根 .scratch/ 下）不进代码仓 git。
