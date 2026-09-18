@@ -1,5 +1,3 @@
-# Skill Search cache
-.claude/skills/my-skill-helper/scripts/skill_search/cache/
 .claude/settings.local.json
 .claude/worktrees/
 # Archon runtime artifacts — NEVER commit
@@ -22,19 +20,6 @@ __pycache__/
 *.pyc
 *.pyo
 .python-version
-
-# web-app (Next.js)
-prototype/web-app/node_modules/
-prototype/web-app/.next/
-prototype/web-app/.next/standalone/
-prototype/web-app/out/
-prototype/web-app/build/
-prototype/web-app/dist/
-prototype/web-app/.env*
-prototype/web-app/.vercel/
-prototype/web-app/*.tsbuildinfo
-prototype/web-app/next-env.d.ts
-prototype/web-app/npm-debug.log*
 
 # web-app (Next.js)
 packages/web-app/node_modules/
@@ -71,4 +56,3 @@ tmp/
 test-results/
 e2e-screenshots/
 .e2e-sandbox/
-.gstack/
