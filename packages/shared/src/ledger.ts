@@ -114,11 +114,3 @@ export function mergeLedgerParts(parts: readonly LedgerPart[]): { usage: TokenUs
   }
 }
 
-/** 已有一份合并好的 usage + 各行 cost 时直出 totals（SSE live 累计用）。 */
-export function totalsFromUsage(usage: TokenUsage, costs: readonly (number | null | undefined)[]): LedgerTotals {
-  return {
-    tokens: totalTokens(usage),
-    cost: costSummary(costs),
-    cacheHitRate: cacheHitRateOf(usage),
-  }
-}

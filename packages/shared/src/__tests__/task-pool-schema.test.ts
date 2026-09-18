@@ -9,7 +9,6 @@ import {
   type ScheduleStatus,
   type TaskSpec,
   type SubunitSpec,
-  type IntegrationGoal,
 } from "../types/scheduler-job"
 import { NodeSchema, WorkflowSchema, type NodeDef } from "../types/workflow"
 import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"

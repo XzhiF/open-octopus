@@ -95,15 +95,6 @@ export type HarnessSSEEvent =
       }
     }
 
-/**
- * HarnessSystemConfig — top-level system configuration (parsed from harness.yaml).
- * Distinct from the per-node HarnessConfig in types/octopus-agent.ts.
- */
-export interface HarnessSystemConfig {
-  detectors: Record<string, DetectorConfig>
-  strategies: StrategyConfig[]
-  isolation: IsolationConfig
-}
 
 export interface DetectorConfig {
   enabled: boolean

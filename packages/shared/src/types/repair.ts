@@ -65,19 +65,12 @@ export interface RecentError {
 
 // ── Repair Operation Request/Response ─────────────────────────────
 
-export interface VarPoolUpdateRequest {
-  updates: Record<string, unknown>
-}
 
 export interface VarPoolUpdateResponse {
   updated: number
   snapshot: Record<string, unknown>
 }
 
-export interface NodeResetRequest {
-  status: "pending" | "completed"
-  outputs?: Record<string, unknown>
-}
 
 export interface NodeResetResponse {
   nodeId: string
@@ -85,37 +78,23 @@ export interface NodeResetResponse {
   newStatus: string
 }
 
-export interface RestorePointRequest {
-  nodeId: string
-  resetVarPool?: boolean
-}
 
 export interface RestorePointResponse {
   resetNodes: string[]
   restoredFrom: string
 }
 
-export interface ReloadWorkflowRequest {
-  content: string
-}
 
 export interface ReloadWorkflowResponse {
   reloaded: boolean
   diff: string[]
 }
 
-export interface InterveneRequest {
-  nodeId: string
-  message: string
-}
 
 export interface InterveneResponse {
   injected: boolean
 }
 
-export interface ClearRetryRequest {
-  nodeIds?: string[]
-}
 
 export interface ClearRetryResponse {
   cleared: string[]

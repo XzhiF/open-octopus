@@ -1,8 +1,5 @@
 // packages/shared/src/variables/cross-exec-resolver.ts
 
-export interface ExecutionPoolSnapshot {
-  var_pool?: Record<string, any>
-}
 
 export interface ExecutionLookup {
   getById(id: string): { parent_id?: string | null; var_pool?: string | null; input_values?: string | null } | null | undefined

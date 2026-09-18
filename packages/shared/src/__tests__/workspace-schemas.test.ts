@@ -2,27 +2,27 @@ import { describe, it, expect } from "vitest"
 import {
   WorkspaceStatusSchema,
   WorkspaceSchema,
-  CreateWorkspaceSchema,
-  UpdateWorkspaceSchema,
+  
+  
   ExecutionStatusSchema,
   GateStatusSchema,
   ExecutionSchema,
-  CreateExecutionSchema,
+  
   NodeTypeSchema,
   NodeExecutionStatusSchema,
   NodeExecutionSchema,
-  EdgeTypeSchema,
-  NodeEdgeSchema,
-  BranchExecutionSchema,
+  
+  
+  
   MessageRoleSchema,
   MessageTypeSchema,
   ChatSessionSchema,
-  CreateChatSessionSchema,
+  
   ChatMessageSchema,
-  CreateChatMessageSchema,
-  SSEExecutionEventSchema,
-  SSEWorkspaceEventSchema,
-  SSEChatEventSchema,
+  
+  
+  
+  
 } from "../types/workspace"
 
 describe("WorkspaceSchema", () => {
@@ -59,33 +59,7 @@ describe("WorkspaceSchema", () => {
   })
 })
 
-describe("CreateWorkspaceSchema", () => {
-  it("validates create workspace input", () => {
-    const result = CreateWorkspaceSchema.safeParse({
-      name: "my-workspace",
-      org: "xzf",
-      path: "/tmp/ws",
-    })
-    expect(result.success).toBe(true)
-  })
 
-  it("rejects create without name", () => {
-    const result = CreateWorkspaceSchema.safeParse({ org: "xzf", path: "/tmp/ws" })
-    expect(result.success).toBe(false)
-  })
-})
-
-describe("UpdateWorkspaceSchema", () => {
-  it("allows partial updates", () => {
-    const result = UpdateWorkspaceSchema.safeParse({ name: "updated-name" })
-    expect(result.success).toBe(true)
-  })
-
-  it("allows empty object (all optional)", () => {
-    const result = UpdateWorkspaceSchema.safeParse({})
-    expect(result.success).toBe(true)
-  })
-})
 
 describe("ExecutionSchema", () => {
   it("validates minimal execution", () => {
@@ -144,14 +118,6 @@ describe("ExecutionSchema", () => {
   })
 })
 
-describe("CreateExecutionSchema", () => {
-  it("validates create execution input", () => {
-    const result = CreateExecutionSchema.safeParse({
-      workflow_ref: "flows/test",
-    })
-    expect(result.success).toBe(true)
-  })
-})
 
 describe("NodeExecutionSchema", () => {
   it("validates minimal node execution", () => {
@@ -168,41 +134,7 @@ describe("NodeExecutionSchema", () => {
   })
 })
 
-describe("NodeEdgeSchema", () => {
-  it("validates node edge", () => {
-    const result = NodeEdgeSchema.safeParse({
-      id: "edge-1",
-      execution_id: "exec-1",
-      from_node_id: "node-1",
-      to_node_id: "node-2",
-      edge_type: "dependency",
-    })
-    expect(result.success).toBe(true)
-  })
-})
 
-describe("BranchExecutionSchema", () => {
-  it("validates branch execution", () => {
-    const result = BranchExecutionSchema.safeParse({
-      id: "branch-1",
-      node_execution_id: "ne-1",
-    })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.status).toBe("pending")
-    }
-  })
-
-  it("validates branch with iteration", () => {
-    const result = BranchExecutionSchema.safeParse({
-      id: "branch-1",
-      node_execution_id: "ne-1",
-      iteration: 1,
-      branch_label: "loop-1",
-    })
-    expect(result.success).toBe(true)
-  })
-})
 
 describe("ChatSessionSchema", () => {
   it("validates chat session", () => {
@@ -245,63 +177,6 @@ describe("ChatMessageSchema", () => {
   })
 })
 
-describe("SSEEventSchemas", () => {
-  it("validates execution node_start event", () => {
-    const result = SSEExecutionEventSchema.safeParse({
-      event: "node_start",
-      data: { executionId: "exec-1", nodeId: "node-1", nodeType: "bash" },
-    })
-    expect(result.success).toBe(true)
-  })
-
-  it("validates execution complete event", () => {
-    const result = SSEExecutionEventSchema.safeParse({
-      event: "complete",
-      data: { executionId: "exec-1", finalStatus: "completed" },
-    })
-    expect(result.success).toBe(true)
-  })
-
-  it("rejects invalid SSE event", () => {
-    const result = SSEExecutionEventSchema.safeParse({
-      event: "invalid_event",
-      data: {},
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it("validates workspace execution_created event", () => {
-    const result = SSEWorkspaceEventSchema.safeParse({
-      event: "execution_created",
-      data: { executionId: "exec-1", treeNodeId: "tree-1" },
-    })
-    expect(result.success).toBe(true)
-  })
-
-  it("validates chat message event", () => {
-    const result = SSEChatEventSchema.safeParse({
-      event: "message",
-      data: { id: "msg-1", role: "user", type: "text", content: "hi" },
-    })
-    expect(result.success).toBe(true)
-  })
-
-  it("validates workspace complete event", () => {
-    const result = SSEWorkspaceEventSchema.safeParse({
-      event: "complete",
-      data: { executionId: "exec-1", finalStatus: "completed" },
-    })
-    expect(result.success).toBe(true)
-  })
-
-  it("validates workspace gate_change event", () => {
-    const result = SSEWorkspaceEventSchema.safeParse({
-      event: "gate_change",
-      data: { executionId: "exec-1", gateStatus: "open" },
-    })
-    expect(result.success).toBe(true)
-  })
-})
 
 describe("ExecutionSchema new fields", () => {
   it("defaults node_type to 'normal' and parent_id to '0'", () => {

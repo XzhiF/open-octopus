@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { costSummary, cacheHitRateOf, ledgerTotals, totalsFromUsage, type LedgerRow } from '../ledger'
+import { costSummary, cacheHitRateOf, ledgerTotals, type LedgerRow } from '../ledger'
 import { emptyTokenUsage } from '../types/usage'
 
 const row = (inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheCreationTokens = 0, costUsd?: number | null): LedgerRow =>
@@ -54,15 +54,5 @@ describe('ledgerTotals — 跨行唯一总量 (C3/Q2+Q4)', () => {
       cost: { usd: null, complete: true },
       cacheHitRate: null,
     })
-  })
-  it('totalsFromUsage 与 ledgerTotals 对同一数据产出一致（SSE live 路径复用）', () => {
-    const rows = [row(30, 5, 400, 60, 0.01), row(70, 15, 100, 40, null)]
-    const merged = rows.reduce((a, r) => ({
-      inputTokens: a.inputTokens + r.inputTokens,
-      outputTokens: a.outputTokens + r.outputTokens,
-      cacheReadTokens: a.cacheReadTokens + r.cacheReadTokens,
-      cacheCreationTokens: a.cacheCreationTokens + r.cacheCreationTokens,
-    }), emptyTokenUsage())
-    expect(totalsFromUsage(merged, rows.map(r => r.costUsd))).toEqual(ledgerTotals(rows))
   })
 })

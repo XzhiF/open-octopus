@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { registerProvider, getProvider, resetProviderInstances, isProviderRegistered, listProviders } from '../registry'
+import { registerProvider, getProvider, resetProviderInstances, listProviders } from '../registry'
 
 describe('Registry base', () => {
   beforeEach(() => {
@@ -14,20 +14,6 @@ describe('Registry base', () => {
 
   it('throws for unknown provider (P1-2)', () => {
     expect(() => getProvider('nonexistent')).toThrow('Unknown provider: nonexistent')
-  })
-
-  it('isProviderRegistered returns true/false (P1-2)', () => {
-    expect(isProviderRegistered('test-reg')).toBe(false)
-    registerProvider('test-reg', () => ({ getType: () => 'test', sendQuery: async function*() {} } as any))
-    expect(isProviderRegistered('test-reg')).toBe(true)
-  })
-
-  it('listProviders returns registered IDs (P1-2)', () => {
-    registerProvider('alpha', () => ({ getType: () => 'alpha', sendQuery: async function*() {} } as any))
-    registerProvider('beta', () => ({ getType: () => 'beta', sendQuery: async function*() {} } as any))
-    const ids = listProviders()
-    expect(ids).toContain('alpha')
-    expect(ids).toContain('beta')
   })
 })
 

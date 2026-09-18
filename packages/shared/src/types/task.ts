@@ -130,18 +130,6 @@ export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
  *  GET /:id/preview), the panel only needs state transitions. */
 export const TASK_PREVIEW_EVENT = "task_preview" as const
 
-export const specFieldUpdatePayloadSchema = z.object({
-  task_id: z.string().min(1),
-  field: TaskSpecFieldSchema,
-  // value shape depends on field: string (goal/ac), string[] (skills/projects),
-  // object (integration_goal), ResourceRef[] (resources/authoring_resources),
-  // SubunitSpec[] (subunits). Schema must not over-constrain here — the server
-  // validates per field against the matching TaskSpec/column schema before
-  // merging.
-  value: z.unknown(),
-  version: z.number().int().nonnegative(),
-})
-export type SpecFieldUpdatePayload = z.infer<typeof specFieldUpdatePayloadSchema>
 
 // ── Task trigger (ADR-0021 票05 — WHEN a task runs, on the task) ──────
 /** How a task is armed. Replaces the v39 envelope, where this information lived on a
@@ -238,16 +226,6 @@ export type TaskStatusSsePayload = z.infer<typeof taskStatusSsePayloadSchema>
  *  ok = success, failed = warning with the stale-code hint). */
 export const PROJECT_SYNC_EVENT = "project_sync" as const
 
-export const projectSyncSsePayloadSchema = z.object({
-  task_id: z.string().min(1),
-  project: z.string().min(1),
-  status: z.enum(["syncing", "ok", "failed"]),
-  branch: z.string().optional(),
-  commit: z.string().optional(),
-  error: z.string().optional(),
-  at: z.string(),
-})
-export type ProjectSyncSsePayload = z.infer<typeof projectSyncSsePayloadSchema>
 
 // ── task_trigger SSE payload (ADR-0021 — the task's own trigger changed) ──
 /** Emitted on the "taskpool" channel when a task's trigger changes: 触发 now (immediate
@@ -315,33 +293,8 @@ export type TaskPhaseStatus = z.infer<typeof TaskPhaseStatusSchema>
  *  `derived` view (K3 派生不存, spec R2). */
 export const PHASE_STATUS_UPDATE_EVENT = "phase_status_update" as const
 
-export const phaseStatusUpdatePayloadSchema = z.object({
-  task_id: z.string().min(1),
-  /** 1-based, mirrors TaskPhase.index. */
-  phase_index: z.number().int().min(1),
-  status: TaskPhaseStatusSchema,
-  /** The round the status refers to (≥1; for status='pending' the round that
-   *  is about to start). */
-  round_index: z.number().int().min(1),
-})
-export type PhaseStatusUpdatePayload = z.infer<typeof phaseStatusUpdatePayloadSchema>
 
-// ── update_task_spec_field tool (v2-D7) ──────────────────────────────
-/** Agent tool name + input schema. The server's tool handler validates input,
- *  merges the field into tasks.task_spec / resources / authoring_resources /
- *  skills / project_ids, bumps version, and emits `spec_field_update` SSE.
- *  Conflict on stale version → 409 → agent re-GET + retry (v2-D12). */
-export const UPDATE_TASK_SPEC_FIELD_TOOL_NAME = "update_task_spec_field" as const
 
-export const updateTaskSpecFieldToolSchema = z.object({
-  task_id: z.string().min(1),
-  field: TaskSpecFieldSchema,
-  // See specFieldUpdatePayloadSchema.value — shape varies by field.
-  value: z.unknown(),
-})
-export type UpdateTaskSpecFieldTool = z.infer<typeof updateTaskSpecFieldToolSchema>
-
-// ── spec-field value validation (v3 — shared canonical seam, SW-BP3) ──
 /** Error thrown by {@link validateSpecFieldValue} on invalid input. The server
  *  route maps it to HTTP 400 (not 500). Mirrored from the server's local
  *  validator so shared is the single source of truth for per-field validation;
@@ -352,6 +305,7 @@ export class TaskSpecFieldError extends Error {
     this.name = "TaskSpecFieldError"
   }
 }
+
 
 /** Validate a spec-field value against the per-field schema (v2-D12 + v3
  *  `decisions`, SW-BP3). Throws {@link TaskSpecFieldError} on invalid input so

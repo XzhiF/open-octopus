@@ -12,8 +12,3 @@ export interface ScheduleWorkspace {
   error: string | null
 }
 
-export interface ListScheduleWorkspacesParams {
-  page?: number
-  limit?: number
-  status?: ScheduleWorkspaceStatus
-}

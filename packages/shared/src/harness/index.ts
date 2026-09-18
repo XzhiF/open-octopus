@@ -8,7 +8,6 @@ export type {
   InterventionAction,
   HarnessNodeStatus,
   HarnessSSEEvent,
-  HarnessSystemConfig,
   DetectorConfig,
   StrategyConfig,
   StrategyAction,
