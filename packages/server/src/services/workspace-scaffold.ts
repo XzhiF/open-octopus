@@ -182,7 +182,7 @@ export class WorkspaceScaffold {
     const agentsDir = path.join(workspacePath, ".claude", "agents")
     fs.mkdirSync(agentsDir, { recursive: true })
 
-    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"]
+    const coreAgents = ["devil-advocate.md", "architecture-explorer.md"]
     for (const agentFile of coreAgents) {
       const dest = path.join(agentsDir, agentFile)
       if (fs.existsSync(dest)) continue

@@ -285,7 +285,7 @@ export class WorkspaceService {
     this.scaffold.writeConfigJson(resolvedPath, input.name, input.repos ?? [], branchName)
     // Copy octo-dev-copilot skill to workspace for Claude Code
     this.scaffold.copySkill(resolvedPath)
-    // Copy core agents (devil-advocate, code-reviewer, vision-analyzer) to workspace
+    // Copy core agents (devil-advocate, architecture-explorer) to workspace
     this.scaffold.copyAgents(resolvedPath)
 
     this.dao.insert({

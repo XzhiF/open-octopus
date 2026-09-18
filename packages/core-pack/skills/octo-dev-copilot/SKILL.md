@@ -58,7 +58,7 @@ core-pack/
 │   └── {skill-name}/
 │       ├── SKILL.md     ← 主文件
 │       └── scripts/     ← 辅助脚本
-├── agents/              ← 核心 Agent 角色 (devil-advocate, vision-analyzer, ...)
+├── agents/              ← 核心 Agent 角色 (devil-advocate, architecture-explorer, ...)
 ├── presets/
 │   └── workflows/       ← 预设工作流 YAML + schema 定义
 ├── templates/           ← 代码/配置模板

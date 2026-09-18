@@ -497,7 +497,7 @@ The executor resolves the `subunit` string **without** `substituteVars` (object-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `skills` | string[] | — | Skill dependencies (`group/name` format, e.g. `superpowers-zh/test-driven-development`) |
-| `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/vision-analyzer.md`) |
+| `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/architecture-explorer.md`) |
 
 > See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
 

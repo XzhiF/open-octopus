@@ -19,7 +19,7 @@ requires:
     - superpowers-zh/systematic-debugging
     - built-in/octo-workflow-dev
   agent_files:
-    - built-in/vision-analyzer.md               # group/name.md 格式
+    - built-in/architecture-explorer.md               # group/name.md 格式
     - agency-agents-zh/engineering-code-reviewer.md
 
 nodes:
@@ -31,7 +31,7 @@ nodes:
 | 字段 | 格式 | 说明 | 示例 |
 |------|------|------|------|
 | `requires.skills` | `group/name` | 技能依赖，带分组避免重名 | `superpowers-zh/test-driven-development` |
-| `requires.agent_files` | `group/name.md` | Agent 文件依赖 | `built-in/vision-analyzer.md` |
+| `requires.agent_files` | `group/name.md` | Agent 文件依赖 | `built-in/architecture-explorer.md` |
 
 > **没有指定分组时**，引擎按注册表顺序匹配第一个同名资源。建议始终带分组以避免歧义。
 

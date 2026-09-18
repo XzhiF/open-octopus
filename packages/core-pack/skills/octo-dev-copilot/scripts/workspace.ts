@@ -490,7 +490,7 @@ function copyAgents(wsDir: string): void {
   fs.mkdirSync(agentsDir, { recursive: true });
 
   // Copy all .md files (not .md.tpl templates) from core-pack/agents/
-  const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"];
+  const coreAgents = ["devil-advocate.md", "architecture-explorer.md"];
   for (const agentFile of coreAgents) {
     const dest = path.join(agentsDir, agentFile);
     if (fs.existsSync(dest)) continue;
@@ -577,14 +577,6 @@ function workspaceGuide(): string[] {
     "```",
     "工作流 YAML 中通过 `agent_file:` 字段引用 `.claude/agents/` 下的 .md 文件，",
     "引擎运行时读取文件内容 + `prompt` 拼接后传给 Claude Agent SDK。",
-    "",
-    "## 视觉分析规则（重要）",
-    "",
-    "**图片数据永远不能进入主 Agent 的 session 上下文。**",
-    "",
-    "- 需要分析截图/图片时，必须使用 SDK 子代理（`agents` 参数定义 `vision-analyzer`）或外部工具（`python vision_analyze.py`）",
-    "- 禁止父代理直接处理图片，否则会污染 session 上下文，导致后续非视觉模型节点 400 报错",
-    "- 子代理有独立上下文，执行完毕后只有文本结果返回父代理",
   ];
 }
 

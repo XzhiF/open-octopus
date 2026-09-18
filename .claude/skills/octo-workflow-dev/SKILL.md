@@ -36,7 +36,7 @@ d.resources.filter(r=>r.installed&&r.type==='skill')
 "
 ```
 
-- `agent_file` = role card → use `group/name.md` short path (e.g. `built-in/vision-analyzer.md`)
+- `agent_file` = role card → use `group/name.md` short path (e.g. `built-in/architecture-explorer.md`)
 - `skills` = capability injection → plain name at node level, `group/name` in `requires`
 - → See `references/requires-and-effort.md` for `requires` block and `effort` field details
 
