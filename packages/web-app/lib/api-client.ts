@@ -39,15 +39,6 @@ export async function createWorkspace(data: { name: string; org: string; descrip
   return handleResponse(res)
 }
 
-export async function updateWorkspace(id: string, data: { name?: string; org?: string; description?: string }) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  })
-  return handleResponse(res)
-}
-
 export async function deleteWorkspace(id: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
   return handleResponse(res)
@@ -72,9 +63,6 @@ export async function fetchManifestRepos(org: string) {
   return handleResponse(res)
 }
 
-// Legacy aliases
-export const fetchWorkspaces = listWorkspaces
-export const fetchWorkspace = getWorkspace
 
 // ============ File Tree ============
 
@@ -84,14 +72,6 @@ interface FileTreeItem {
   path: string
   extension?: string
   size?: number
-}
-
-export async function fetchFileTree(workspaceId: string, dirPath?: string): Promise<FileTreeItem[]> {
-  const url = new URL(`${getServerUrl()}/api/workspaces/${workspaceId}/file-tree`)
-  if (dirPath) url.searchParams.set("path", dirPath)
-  const res = await apiFetch(url.toString())
-  if (!res.ok) return []
-  return res.json()
 }
 
 export async function fetchFileContent(workspaceId: string, filePath: string): Promise<string> {
@@ -280,49 +260,7 @@ export async function fetchWorkflowHealth() {
 
 // ============ Chat ============
 
-export async function createChatSession(workspaceId: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions`, {
-    method: "POST",
-  })
-  return handleResponse(res)
-}
-
-export async function fetchChatSessions(workspaceId: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions`)
-  return res.json()
-}
-
 // sendMessage is now handled by useChatStream hook consuming streamSSE directly
-
-export async function fetchSessionWithMessages(
-  workspaceId: string,
-  sessionId: string
-): Promise<ChatSession | null> {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions/${sessionId}`)
-  if (!res.ok) return null
-  const data = await res.json()
-  return {
-    id: data.id,
-    workspaceId: data.workspaceId,
-    title: data.title ?? null,
-    isActive: data.isActive ?? true,
-    messages: data.messages ?? [],
-    createdAt: data.createdAt ?? new Date().toISOString(),
-    updatedAt: data.updatedAt ?? new Date().toISOString(),
-  }
-}
-
-export async function generateSessionTitle(
-  workspaceId: string,
-  sessionId: string
-): Promise<string | null> {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions/${sessionId}/generate-title`, {
-    method: "POST",
-  })
-  if (!res.ok) return null
-  const data = await res.json()
-  return data.title ?? null
-}
 
 // ============ Swarm Stats ============
 

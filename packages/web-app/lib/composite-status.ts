@@ -49,15 +49,3 @@ export function computeAggregateStatus(
 
   return parentStatus
 }
-
-/** True when a child status is a non-terminal, in-flight state. Exposed for the
- *  events panel / cards to derive a "still running" badge without duplicating the
- *  set. */
-export function isChildInFlight(status: string): boolean {
-  return IN_FLIGHT.has(status)
-}
-
-/** True when a child status is a terminal failure. */
-export function isChildTerminalFail(status: string): boolean {
-  return TERMINAL_FAIL.has(status)
-}
