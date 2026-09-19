@@ -81,7 +81,6 @@ import { PreviewBar } from "./preview-bar"
 import { PlaybookPanel } from "./playbook-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
 import { runErrorOf } from "../execution-summary"
-import { FoldHandle, useFold } from "../fold-context"
 import { ImpactApprovalList } from "./impact-approval-list"
 import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 
@@ -127,8 +126,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
   const [fallbackTried, setFallbackTried] = useState(false)
   // ── 验货台 (acceptance v2) 状态 ──
-  const fold = useFold()
-  const closedOf = (id: string, g: "info" | "main" = "info") => (fold ? fold.closed(id, g) : false)
   // subTab：实物(默认=C位) | 核对 | 叙述；roundDiff=真实提交区间；verify=当场复检。
   const [midTab, setMidTab] = useState<"diff" | "matrix" | "story">("diff")
   const [roundDiff, setRoundDiff] = useState<RoundDiffPayload | null>(null)
@@ -697,16 +694,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         {/* ── 右栏（A′，v2.1）：验收进度 + 决策（唯一入口）。token/cost 已迁出 ── */}
         <div className="order-2 flex w-[240px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
         <div className="space-y-2 p-3 pb-2" data-acceptance-col-summary data-testid="acceptance-col-summary">
-          <div className="flex items-center gap-1.5">
-            {fold && <FoldHandle id="acc-summary" closed={closedOf("acc-summary")} onToggle={() => fold.toggle("acc-summary", "info")} />}
-            <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">验收进度</span>
-            {closedOf("acc-summary") && (
-              <span className="truncate font-mono text-[10px] font-black" data-fold-badge="acc-summary">
-                {awaitingRound ? `${ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state} · 走查 ${gate.pass}/${gate.total}` : "无待验轮"}
-              </span>
-            )}
-          </div>
-          {!closedOf("acc-summary") && (!detail ? (
+          <div className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">验收进度</div>
+          {!detail ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
           ) : !awaitingRound ? (
             <p className="text-[11px] text-muted-foreground" data-acceptance-no-round>
@@ -764,22 +753,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                 <span className={preview?.state === "ready" ? "text-pop-green" : preview?.state === "starting" ? "text-pop-amber" : "text-muted-foreground"}>{preview?.state ?? "未起"}</span>
               </div>
             </div>
-          ))}
+          )}
         </div>
 
         {/* ── 右侧栏下：动作区 ── */}
         <div className="border-t border-border p-4 pt-3 space-y-3" data-acceptance-col-actions data-testid="acceptance-col-actions">
-          <div className="flex items-center gap-1.5">
-            {fold && <FoldHandle id="acc-actions" group="main" closed={closedOf("acc-actions", "main")} onToggle={() => fold.toggle("acc-actions", "main")} />}
-            <span className="text-xs font-semibold text-muted-foreground">动作区</span>
-            {closedOf("acc-actions", "main") && (
-              <span className="truncate font-mono text-[10px] font-black" data-fold-badge="acc-actions">
-                {awaitingPhase ? `待放行 · ✗${gate.fail}${gate.undecided ? ` · 未决${gate.undecided}` : ""}` : "无待验轮"}
-              </span>
-            )}
-          </div>
+          <div className="text-xs font-semibold text-muted-foreground">动作区</div>
 
-          {!closedOf("acc-actions", "main") && (<>
           {awaitingPhase ? (
             <>
               {hasNextPhase && !rejectOpen && (
@@ -866,8 +846,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
               onDone={() => { refetchDetail(); onMutated() }}
             />
           )}
-          </>
-          )}
         </div>
         </div>
 
@@ -905,15 +883,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                     {label}{count && <span className="ml-1 tabular-nums opacity-70">{count}</span>}
                   </button>
                 ))}
-                {fold && (
-                  <span className="ml-auto flex items-center gap-1.5">
-                    {closedOf("acc-artifacts", "main") && <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="acc-artifacts">实物 {roundDiff?.available ? `${roundDiff.aggregate.files} 文件` : "·"} · 叙述 {files ? files.length : "·"} 件</span>}
-                    <FoldHandle id="acc-artifacts" group="main" closed={closedOf("acc-artifacts", "main")} onToggle={() => fold.toggle("acc-artifacts", "main")} />
-                  </span>
-                )}
+
               </div>
 
-              <div data-testid="acc-artifacts-body" className={closedOf("acc-artifacts", "main") ? "hidden" : "min-h-0 flex-1 space-y-3 overflow-y-auto p-3"}>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                 {midTab === "diff" && (
                   <>
                     <RoundDiffPanel

@@ -9,6 +9,7 @@
 
 "use client"
 
+import { FoldHandle, useFold } from "../fold-context"
 import { useCallback, useMemo, useState } from "react"
 import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, GitCommitHorizontal, Layers } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
@@ -23,6 +24,8 @@ interface RoundDiffPanelProps {
 }
 
 export function RoundDiffPanel({ taskId, diff, loading, error, onRetry }: RoundDiffPanelProps) {
+  const fold = useFold()
+  const closed = fold ? fold.closed("item-diff", "info") : false
   if (loading && !diff) {
     return (
       <div className="flex items-center gap-2 p-6 text-xs text-muted-foreground" data-testid="round-diff-loading">
@@ -69,11 +72,26 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry }: RoundD
   }
 
   return (
-    <div className="space-y-3">
-      <StatStrip diff={diff} />
-      {diff.repos.map((repo) => (
-        <RepoSection key={repo.name} taskId={taskId} repo={repo} />
-      ))}
+    <div className="overflow-hidden rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="round-diff-card" data-fold-box="item-diff" data-fold-closed={closed ? "true" : undefined}>
+      <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+        {fold && <FoldHandle id="item-diff" closed={closed} onToggle={() => fold.toggle("item-diff", "info")} />}
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">项目代码的变动</span>
+        {closed ? (
+          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-diff">
+            {diff.aggregate.commits} 提交 · +{diff.aggregate.additions} −{diff.aggregate.dels} · {diff.aggregate.files} 文件
+          </span>
+        ) : (
+          <span className="ml-auto font-mono text-[9.5px] text-pop-dim">{diff.repos.length} 仓</span>
+        )}
+      </div>
+      {!closed && (
+        <div className="space-y-3 p-3">
+          <StatStrip diff={diff} />
+          {diff.repos.map((repo) => (
+            <RepoSection key={repo.name} taskId={taskId} repo={repo} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

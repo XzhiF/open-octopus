@@ -18,6 +18,7 @@ import { Ban, ChevronDown, ChevronRight, Play, Square, Terminal } from "lucide-r
 import { Button } from "@/components/ui/button"
 import type { AcceptanceVerify } from "@octopus/shared"
 import { formatDuration } from "@/lib/format"
+import { FoldHandle, useFold } from "../fold-context"
 import type { VerifySummary } from "@/lib/tasks-api"
 
 interface VerifyPanelProps {
@@ -88,13 +89,18 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         : summary ? "border-pop-red outline-pop-red text-pop-red"
           : "border-pop-dim outline-pop-dim text-pop-dim"
 
+  const fold = useFold()
+  const closed = fold ? fold.closed("item-verify", "info") : false
   return (
     <div
       className={`rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden ${running ? "marching-ants-border" : ""}`}
-      data-verify-panel data-testid="verify-panel"
+      data-verify-panel data-testid="verify-panel" data-fold-box="item-verify" data-fold-closed={closed ? "true" : undefined}
     >
       {/* 头：命令 + 编辑/超时/跑钮 */}
       <div className="flex flex-wrap items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+        {/* 折叠把手在最左；Terminal(>_) 输出钮挪到标题之后 —— 曾被当成折叠钮（2026-09-20 用户点名） */}
+        {fold && <FoldHandle id="item-verify" closed={closed} onToggle={() => fold.toggle("item-verify", "info")} />}
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
         <button
           onClick={() => setOpen((v) => !v)}
           className="flex shrink-0 items-center gap-0.5 rounded px-0.5 text-pop-dim transition-colors hover:text-pop-ink"
@@ -102,18 +108,22 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
           aria-expanded={open}
           data-testid="verify-console-toggle"
         >
-          <Terminal className="size-3.5" />
+          <Terminal className="size-3" />
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </button>
-        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
-        {cfg ? (
+        {closed && (
+          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-verify">
+            {summary ? `上次复检 ${summary.state}` : cfg ? "已配命令" : "未配复检命令"}
+          </span>
+        )}
+        {!closed && (cfg ? (
           <code className="min-w-0 flex-1 truncate rounded bg-pop-bd/5 px-1.5 py-0.5 font-mono text-[11px]" title={cfg.command}>
             {cfg.command}
             {cfg.per_repo ? "（逐仓各跑一次）" : ""}
           </code>
         ) : (
           <span className="flex-1 text-[11px] text-muted-foreground">未预设复检命令</span>
-        )}
+        ))}
         {cfg?.per_repo && (
           <span className="shrink-0 rounded-full border border-pop-bd/40 bg-pop-bd/10 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim" data-testid="verify-per-repo" title="对 projects/*/ 每个 git 仓各跑一次（仓根为 cwd），任一仓失败即整体 FAILED">逐仓</span>
         )}
@@ -146,6 +156,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         ) : null}
       </div>
 
+      {!closed && (<>
       {disabledReason && !editing && (
         <div className="border-b border-pop-bd/10 bg-pop-amber-soft px-3 py-1.5 text-[10px] text-pop-ink/80" data-testid="verify-disabled-reason">
           {disabledReason}
@@ -242,6 +253,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
           {summary?.verdict_path ? `机器裁决已落盘：${summary.verdict_path}` : "verdict 落批次目录（叙述 tab 可见）"}
         </span>
       </div>
+      </>)}
     </div>
   )
 }

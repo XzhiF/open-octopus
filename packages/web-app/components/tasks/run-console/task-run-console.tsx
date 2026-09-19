@@ -39,7 +39,7 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
-import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
+import { FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
@@ -439,7 +439,6 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <PipelineRail
           ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel}
           isV4={isV4} aggLoaded={aggLoaded}
-          showMaster={!(awaitingPv || surfaceTab === "accept")}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
           {/* ── surface tabs（2026-09-16）：有待验收轮时亮出「执行控制台 | 验货台」
@@ -473,7 +472,6 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 🔍 验货台
                 {awaitingPv && <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>}
               </button>
-              <FoldMasterChip className="ml-auto" />
             </div>
           )}
           {surfaceTab === "accept" ? (
@@ -548,7 +546,6 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
     <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
-        {showMaster && <span className="ml-auto"><FoldMasterBar /></span>}
       </div>
 
       {terminal && isV4 && phaseViews.length > 0 && (

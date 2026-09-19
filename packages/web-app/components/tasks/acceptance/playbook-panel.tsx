@@ -19,6 +19,7 @@
 
 "use client"
 
+import { FoldHandle, useFold } from "../fold-context"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown, Play, Square, Wrench } from "lucide-react"
 import {
@@ -55,6 +56,8 @@ const LIFECYCLE_HINT: Record<"start" | "ready" | "teardown", string> = {
 export function PlaybookPanel({
   taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange,
 }: PlaybookPanelProps) {
+  const fold = useFold()
+  const panelClosed = fold ? fold.closed("item-playbook", "info") : false
   const [checks, setChecks] = useState<Record<string, CheckEntry>>({})
   const [openFine, setOpenFine] = useState(false)
   // 收起的步骤 id 集（默认全展开 = v2.1 行为不变；「收起全部」一键瘦身）。
@@ -203,8 +206,14 @@ export function PlaybookPanel({
     <div className="rounded-[13px] border-[2.5px] border-pop-bd bg-pop-paper shadow-pop overflow-hidden" data-acceptance-playbook data-testid="playbook-panel">
       {/* 主角头（黄软条，与 verify-panel 头语言一致） */}
       <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 bg-pop-amber-soft px-3 py-2">
+        {fold && <FoldHandle id="item-playbook" closed={panelClosed} onToggle={() => fold.toggle("item-playbook", "info")} />}
         <ClipboardCheck className="size-3.5 text-pop-ink" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-ink">人工走查 · 验收剧本</span>
+        {panelClosed && (
+          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-playbook">
+            {countOf(checks, "pass")}/{allItems.length}✓ · {countOf(checks, "fail")}✗ · {countOf(checks, "skip")}⊘
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-1">
           {runnableItems.length > 0 && (
             <button
@@ -232,6 +241,7 @@ export function PlaybookPanel({
         </div>
       </div>
 
+      {!panelClosed && (
       <div className="space-y-2 p-3">
         {/* 目标 + 预算表 */}
         {playbook.goal && <div className="text-[11px] font-semibold text-pop-ink leading-snug">{playbook.goal}</div>}
@@ -319,6 +329,7 @@ export function PlaybookPanel({
           编译来源：{playbook.coverage.found.join(" · ") || "无"}{playbook.coverage.missing.length ? ` ｜ 缺：${playbook.coverage.missing.join(" · ")}` : ""}
         </div>
       </div>
+      )}
     </div>
   )
 }

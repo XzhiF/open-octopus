@@ -98,7 +98,7 @@ vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:30
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { AcceptanceSurface } from "../acceptance-surface"
-import { FoldProvider, useFold } from "../../fold-context"
+import { FoldProvider } from "../../fold-context"
 import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
@@ -1089,30 +1089,45 @@ describe("PB4/PB5 — 连跑全部与 lifecycle 折叠", () => {
   })
 })
 
-describe("全框折叠 × 验货台（藏青档 · 一键盘不掏空回归钉）", () => {
-  function CycleBtn() {
-    const f = useFold()
-    return <button data-testid="fold-cycle" onClick={() => f?.cycle()} />
-  }
-  it("一键盘第一下只收进度信息框 —— 主面与动作区（main 组）全留；第二下才连坐", async () => {
+
+describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，不是大折叠）", () => {
+  function renderFolded() {
     mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC))
     const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
-    render(<FoldProvider taskId="fold-t1"><CycleBtn /><AcceptanceSurface task={task} onMutated={() => {}} /></FoldProvider>)
-    await screen.findByTestId("acceptance-approve")
-    const body = () => screen.getByTestId("acc-artifacts-body")
-    expect(body().className).not.toContain("hidden")
-    // 第一档：信息框收（进度徽章顶上），主面/动作区纹丝不动
-    fireEvent.click(screen.getByTestId("fold-cycle"))
-    expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
-    expect(body().className).not.toContain("hidden")
-    expect(document.querySelector('[data-fold-badge="acc-summary"]')).toBeTruthy()
-    // 第二档：连坐（全部已收）—— 主面 body 藏、动作区拆走
-    fireEvent.click(screen.getByTestId("fold-cycle"))
-    await waitFor(() => expect(body().className).toContain("hidden"))
-    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
-    // 第三档：弹回原样
-    fireEvent.click(screen.getByTestId("fold-cycle"))
-    await waitFor(() => expect(screen.getByTestId("acceptance-approve")).toBeTruthy())
-    expect(body().className).not.toContain("hidden")
+    return render(<FoldProvider taskId="it-fold"><AcceptanceSurface task={task} onMutated={() => {}} /></FoldProvider>)
+  }
+  it("复检块：把手折上 → 命令/跑钮消失、结论徽章顶上；再点回开", async () => {
+    renderFolded()
+    let vh: HTMLElement | null = null
+    const handles = () => [...document.querySelectorAll("[data-fold-toggle]")].map((x) => x.getAttribute("data-fold-toggle")).join(",")
+    await waitFor(() => { vh = document.querySelector('[data-fold-toggle="item-verify"]'); expect(handles()).toContain("item-verify") })
+    // 把手在 header 最左；>_ 输出钮被挪到标题之后（曾是误认源头）
+    const header = document.querySelector('[data-verify-panel] > div') as HTMLElement
+    expect(header.children[0].getAttribute("data-fold-toggle")).toBe("item-verify")
+    expect(header.children[1].textContent).toContain("当场复检")
+    expect(header.children[2].getAttribute("data-testid")).toBe("verify-console-toggle")
+    fireEvent.click(vh!)
+    await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBe("true"))
+    expect((document.querySelector('[data-fold-badge="item-verify"]')?.textContent ?? "")).toContain("复检")
+    fireEvent.click(document.querySelector('[data-fold-toggle="item-verify"]') as HTMLElement)
+    await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBeNull())
+  })
+  it("变动块：折上显「N 提交 · +x −y · z 文件」一行结论；预览块独立各折互不影响", async () => {
+    const first = renderFolded()
+    let dh: HTMLElement | null = null
+    await waitFor(() => { dh = document.querySelector('[data-fold-toggle="item-diff"]'); expect(dh).toBeTruthy() })
+    fireEvent.click(dh!)
+    expect((document.querySelector('[data-fold-badge="item-diff"]')?.textContent ?? "")).toMatch(/\d+ 提交 · \+\d+ −\d+ · \d+ 文件/)
+    expect(screen.queryByTestId("round-diff-strip")).toBeNull()
+    // 预览块折自己的一份，diff 保持折上状态（块间无串扰）
+    fireEvent.click(document.querySelector('[data-fold-toggle="item-preview"]') as HTMLElement)
+    expect((document.querySelector('[data-fold-box="item-preview"]') as HTMLElement).getAttribute("data-fold-closed")).toBe("true")
+    expect(document.querySelector('[data-fold-badge="item-diff"]')).toBeTruthy()
+    // 无 provider（面板被独立挂载）→ 零把手护栏（先卸有 provider 的那份，防 DOM 残影）
+    const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
+    first.unmount()
+    render(<AcceptanceSurface task={task} onMutated={() => {}} />)
+    await waitFor(() => expect(screen.getByTestId("verify-panel")).toBeTruthy())
+    expect(document.querySelector('[data-fold-toggle="item-verify"]')).toBeNull()
   })
 })
