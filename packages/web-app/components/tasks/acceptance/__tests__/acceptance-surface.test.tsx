@@ -98,6 +98,7 @@ vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:30
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { AcceptanceSurface } from "../acceptance-surface"
+import { FoldProvider, useFold } from "../../fold-context"
 import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
@@ -1085,5 +1086,33 @@ describe("PB4/PB5 — 连跑全部与 lifecycle 折叠", () => {
     // a 章 passed、b 章 failed 并触发硬闸停在此
     expect(screen.getByTestId("probe-stamp-probe:x:1").textContent).toContain("EXIT 0")
     await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+  })
+})
+
+describe("全框折叠 × 验货台（藏青档 · 一键盘不掏空回归钉）", () => {
+  function CycleBtn() {
+    const f = useFold()
+    return <button data-testid="fold-cycle" onClick={() => f?.cycle()} />
+  }
+  it("一键盘第一下只收进度信息框 —— 主面与动作区（main 组）全留；第二下才连坐", async () => {
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC))
+    const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
+    render(<FoldProvider taskId="fold-t1"><CycleBtn /><AcceptanceSurface task={task} onMutated={() => {}} /></FoldProvider>)
+    await screen.findByTestId("acceptance-approve")
+    const body = () => screen.getByTestId("acc-artifacts-body")
+    expect(body().className).not.toContain("hidden")
+    // 第一档：信息框收（进度徽章顶上），主面/动作区纹丝不动
+    fireEvent.click(screen.getByTestId("fold-cycle"))
+    expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
+    expect(body().className).not.toContain("hidden")
+    expect(document.querySelector('[data-fold-badge="acc-summary"]')).toBeTruthy()
+    // 第二档：连坐（全部已收）—— 主面 body 藏、动作区拆走
+    fireEvent.click(screen.getByTestId("fold-cycle"))
+    await waitFor(() => expect(body().className).toContain("hidden"))
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    // 第三档：弹回原样
+    fireEvent.click(screen.getByTestId("fold-cycle"))
+    await waitFor(() => expect(screen.getByTestId("acceptance-approve")).toBeTruthy())
+    expect(body().className).not.toContain("hidden")
   })
 })

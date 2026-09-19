@@ -907,13 +907,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                 ))}
                 {fold && (
                   <span className="ml-auto flex items-center gap-1.5">
-                    {closedOf("acc-artifacts") && <span className="truncate font-mono text-[10px] font-black text-pop-ink" data-fold-badge="acc-artifacts">实物 · 核对 · 叙述</span>}
-                    <FoldHandle id="acc-artifacts" closed={closedOf("acc-artifacts")} onToggle={() => fold.toggle("acc-artifacts", "info")} />
+                    {closedOf("acc-artifacts", "main") && <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="acc-artifacts">实物 {roundDiff?.available ? `${roundDiff.aggregate.files} 文件` : "·"} · 叙述 {files ? files.length : "·"} 件</span>}
+                    <FoldHandle id="acc-artifacts" group="main" closed={closedOf("acc-artifacts", "main")} onToggle={() => fold.toggle("acc-artifacts", "main")} />
                   </span>
                 )}
               </div>
 
-              <div className={closedOf("acc-artifacts") ? "hidden" : "min-h-0 flex-1 space-y-3 overflow-y-auto p-3"}>
+              <div data-testid="acc-artifacts-body" className={closedOf("acc-artifacts", "main") ? "hidden" : "min-h-0 flex-1 space-y-3 overflow-y-auto p-3"}>
                 {midTab === "diff" && (
                   <>
                     <RoundDiffPanel
