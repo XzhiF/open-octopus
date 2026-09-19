@@ -43,12 +43,61 @@
 
 ## 未完成 / 下一步（按优先级）
 
-1. **web 多 view 渲染**：`packages/web-app/components/tasks/acceptance/preview-bar.tsx` 目前只显示/编辑首个 url（`summary.url`）。后端已返回 `views[]`，需改成渲染多入口 + 编辑面板支持多服务 runbook（可暂用文本编辑 up/health/down command）。用户已问过、待其确认是否本轮做。
-2. **活体验证新几何**（静态+单测绿，但没跑过真流）：
-   - A：建 `unit-only` 单仓小任务 → 验 gate 放行 + e2e-verify **整节点跳过**。
-   - B：再跑双仓+e2e 任务 → 验 e2e-verify 在 code-review **之后**跑、失败不阻断 ship。
-   - 建任务配方见 memory `v4-task-api-seed-recipe`（REST 直建：POST /api/tasks → PUT home-file 写 spec.md **和每张 issues/*.md** → POST /ready → **手动 POST /trigger**）。dev server 起了才有 API。靶子项目：`C:\xzf\java\octopus-demo-java-common` + `octopus-demo-api-admin`（org `xzf`，repos 在 `~/.octopus/orgs/xzf/repos/projects/xzf/`）。
-   - **换机注意**：本机 `pnpm install && pnpm build`（重建 shared，别只重启 dev），再 `pnpm dev`；靶仓 SNAPSHOT 首跑前需 `mvn install`（m2 在 `C:\MiYuan\Tools\apache-maven-repo`，settings.xml 自定义）。
+0. **2026-09-19 活体验证 A+B 已完成**（Mac，双靶 java-common + api-admin）。新几何全部成立：
+   - **A（unit-only 单仓）**：gate ④ 经 `Verification Tier: unit-only` 放行；`spec-resolve` 实测
+     `repos=1 has_e2e=false` → **e2e-verify 整节点 skipped**（无 jsonl、状态 skipped），~5.9min 出
+     PR [java-common #13]。round-2 走了一次 rejected→fix-feedback（顺带验了 has_feedback=true 让
+     spec-review 复活、票 done 回写、末站按契约不产 handoff.md）。
+   - **B（双仓 + e2e）**：preset 两 project → ws `projects/*/` 两 worktree；`repos=2 has_e2e=true`；
+     ticket-dag 01→02 定序（provider `mvn install` → consumer 编译）；e2e-verify 在 code-review
+     **之后**跑、票 03 回写 `done (PASS)`；ship 逐仓两 PR [java-common #14, api-admin #8]；
+     全程 ~25min。e2e 走查本身抓出两次真问题（Tomcat 对未编码中文 query 400、陈旧 target 假绿
+     → clean+三重探针）——走查有牙齿的实证。
+   - **验收台 runbook 活体过**：B 挂 `acceptance_runbook`（up=`mvn package && java -jar :18081`），
+     gate 时 POST /preview → ready+views 正常；stop 首跑**没杀干净**（见下 ③）。
+   - **活体抓出的 ③ = 本次已修的引擎 bug**（未提交，工作区里）：
+     a) Bash/PythonExecutor spawn 未 `detached` → `killProcessTree` 的 `kill(-pid)` 主路径失效，
+        abort/timeout 只杀外层 bash，`mvn && java` 的 java 成孤儿（预览 stop 后端口仍在服务）。
+        修：POSIX `detached:true`。b) runbook 的 `down` 经 BashExecutor 走 harness wrapper，
+        `pkill` 被别名桩成拒绝桩 → down 永远杀不掉自己该收的尸。修：`BashConfig.skipHarness`，
+        fireDown 用之（平台自有生命周期步骤，非模型命令）。回归锁：`bash-process-group.test.ts`
+        2 例 + tasks-preview **PV8**（nohup daemon 由 down 收尸）。已验：全套 5128 例失败集与
+        基线逐条相同（11 例 pre-existing：providers/pi、clone-file-mgmt、archive 等，与本改无关）。
+
+1. **web 多 view 渲染**（仍开放）：`packages/web-app/components/tasks/acceptance/preview-bar.tsx`
+   目前只显示/编辑首个 url（`summary.url`）。后端已返回 `views[]`，需改成渲染多入口 + 编辑面板
+   支持多服务 runbook（可暂用文本编辑 up/health/down command）。用户已问过、待其确认是否本轮做。
+
+1b. **待处置**：上面 ③ 的修复未 commit（bash/python/executor-config/round-evidence + 两测试 +
+   `packages/core-pack/skills/matt-e2e-test-methodology/`，见 2b）。演示 PR：A #13 / B #14、#8
+   与存量 java-common `#12`、api-admin `#7` 仍 OPEN；A/B 看板 awaiting_review，验证完可关。
+
+2. ~~活体验证新几何~~ ✅ 见 0。
+   - 建任务配方见 memory `v4-task-api-seed-recipe`（REST 直建：POST /api/tasks → PUT home-file
+     写 spec.md **和每张 issues/*.md** → POST /ready → **手动 POST /trigger**；PUT phases 用
+     If-Match 乐观锁，specPath `./.scratch/<date>/<slug>/spec.md`，inputValues 只需
+     `batch_dir:${phase.batch_rel}`）。**注意：这两份 memory 在 Windows 机器上，Mac 本机没带过来**，
+     已按代码重建配方并回写 Mac 版。dev server 起了才有 API。靶子项目：
+     `~/.octopus/orgs/xzf/repos/projects/xzf/octopus-demo-java-common` + `octopus-demo-api-admin`
+     （org `xzf`）。
+   - **Mac 环境事实**：maven local repo = `/Users/xzf/DevelopmentSofts/apache-maven-repo`
+     （~/.m2/settings.xml 指定），首跑前 java-common 需 `mvn install -DskipTests`（已完成）。
+     shared/server/engine 改动后必须重建对应包 dist（`pnpm build` 最稳）再重启 dev。
+
+2b. **换机/新装机的 builtin 坑（本次实测，比 §4 更准）**：
+   - `scripts/sync-builtin.mjs` 只同步 **skills/agents**（core-pack → `.claude/` + `~/.octopus/agent/skills`），
+     **根本不同步 workflows**。`~/.octopus/resources/installed/workflows/built-in/<name>/<name>.yaml`
+     是 resource install 落的一次性副本——本仓库改 yaml 后，运行时（BuiltInWorkflowService 只读
+     installed）**不会自动拿到新几何**，CLI `workflow validate` 的 hash warn 就是为这个。
+     刷新办法 = `POST /api/resources/uninstall {name,type:"workflow"}` + `install {ref:"builtin:matt-spec-dev",type:"workflow",caller:"cli"}`
+     （install 无 force；caller 只认 cli|ui；ref 不带 type 会把 builtin 误判成 skill）。
+   - 内置流依赖的 skill 必须**真的在资源 registry**里，否则 `__engine_init__` 78ms 硬失败
+     （scan 无差别 provision 全部节点 skills，哪怕节点会被 execute_when 跳过）。
+     `matt-e2e-test-methodology` 原只在 `.claude/skills/`（registry 无）→ 已收编进
+     `packages/core-pack/skills/`（octopus 适配版为准，含 OCTO-STANDARDS.md），换机后仍需
+     一次 `resource install builtin:matt-e2e-test-methodology`（或看板预检）。
+     `local:` ref 安装带路径会被 SAFE_NAME_RE 拒（install 未 basename 化，另一个小坑，未修）。
+
 3. **收尾杂项**：
    - 演示产物待处置：GitHub 上 java-common `#12`、api-admin `#7` 两 PR 仍 OPEN；看板"七单"任务 status running / phase awaiting_review。验证完可关。
    - 提交里**排除**了 `octo-dev-copilot/scripts/workspace.js`（两份）——那是 CRLF 行尾噪声(0 内容变更)、非本次改动，`git status` 里会继续显示为 modified，忽略即可。

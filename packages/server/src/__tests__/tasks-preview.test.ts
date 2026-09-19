@@ -11,6 +11,7 @@ import path from "path"
 import os from "os"
 import net from "net"
 import http from "http"
+import { execFileSync } from "child_process"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
@@ -36,6 +37,15 @@ function freePort(): Promise<number> {
     const s = net.createServer()
     s.listen(0, () => { const p = (s.address() as net.AddressInfo).port; s.close(() => res(p)) })
   })
+}
+
+/** pgrep -f <pat> 命中的 pid 列表（PV8 用 [x] 方括号式防自匹配）。 */
+function alivePat(pat: string): string {
+  try {
+    return execFileSync("pgrep", ["-f", pat], { encoding: "utf-8" }).trim()
+  } catch {
+    return "" // rc1 = 无匹配
+  }
 }
 
 async function newAwaitingTask(): Promise<string> {
@@ -66,8 +76,7 @@ async function setRunbook(taskId: string, value: unknown): Promise<Response> {
     body: JSON.stringify({ field: "acceptance_runbook", value, source: "user" }),
   })
 }
-async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => boolean, ms = 12_000): Promise<PreviewSummary | null> {
-  const t0 = Date.now()
+async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => boolean, ms = 12_000): Promise<PreviewSummary | null> {  const t0 = Date.now()
   for (;;) {
     const r = await app.request(`/api/tasks/${taskId}/preview`)
     const s = (await r.json()) as PreviewSummary | null
@@ -221,4 +230,32 @@ describe("preview — 生命周期", () => {
       try { fs.rmSync(dir, { recursive: true, force: true }); break } catch { await new Promise((r) => setTimeout(r, 100)) }
     }
   }, 25_000)
+
+  it("PV8: runbook — down 的 pkill 真杀 nohup daemon（up 已退出时 down 是唯一收尸人）", async () => {
+    if (process.platform === "win32") return // pkill/pgrep 是 POSIX 工具
+    const taskId = await newAwaitingTask()
+    const marker = `pv8-daemon-${process.pid}-${Date.now()}`
+    const pat = `[${marker[0]}]${marker.slice(1)}` // 防 pkill 自匹配（方括号只进 daemon 的 argv 匹配式）
+    const rb = {
+      // up 用 nohup 后台化 daemon 后立即退出（PV5 同款「detached launcher」起法）：
+      // 会话 ready 后 up 进程早没了，stop 的组杀够不着 daemon —— 只有 down 能收。
+      up: { command: `nohup bash -c 'sleep 60; : ${marker}' >/dev/null 2>&1 & echo launched` },
+      ready: { command: "true" },
+      views: [{ label: "pv8", url: "http://localhost:9608/" }],
+      down: { command: `pkill -f '${pat}' || true` },
+      timeoutS: 30,
+    }
+    expect((await setRunbook(taskId, rb)).status).toBe(200)
+    const start = await app.request(`/api/tasks/${taskId}/preview`, { method: "POST" })
+    expect(start.status).toBe(202)
+    const ready = await pollPreview(taskId, (s) => s?.state === "ready", 12_000)
+    expect(ready?.state).toBe("ready")
+    // daemon 确实在跑（down 有活可干）
+    await new Promise((r) => setTimeout(r, 200))
+    expect(alivePat(pat)).not.toBe("")
+    expect((await app.request(`/api/tasks/${taskId}/preview/stop`, { method: "POST" })).status).toBe(200)
+    for (let i = 0; i < 50 && alivePat(pat); i++) await new Promise((r) => setTimeout(r, 100))
+    // 回归锁：down 被 harness 的 pkill 别名桩掉时，daemon 会活满 60s → 此处非空 → 红
+    expect(alivePat(pat)).toBe("")
+  }, 30_000)
 })

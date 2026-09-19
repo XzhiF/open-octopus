@@ -125,6 +125,9 @@ export class PythonExecutor implements NodeExecutor {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         env,
+        // POSIX process-group leader — see bash.ts: makes killProcessTree's
+        // `process.kill(-pid)` path real so grandchildren die with the node.
+        detached: process.platform !== "win32",
       })
 
       let stdout = ""

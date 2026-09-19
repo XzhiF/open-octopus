@@ -839,11 +839,15 @@ export class RoundEvidenceService {
   }
 
   /** Best-effort runbook teardown on stop — fire `down` (rc ignored), never throws.
-   *  Absent down (remote deploys) → no-op; stop already just ends the session. */
+   *  Absent down (remote deploys) → no-op; stop already just ends the session.
+   *  skipHarness: the wrapper aliases kill/pkill into host-protection stubs, so a
+   *  harness-wrapped `down` could never kill the service it is there to tear down
+   *  (live-verified 2026-09-19: preview stopped, java survived on the port). This
+   *  command is platform-issued lifecycle teardown, not model-authored bash. */
   private fireDown(taskId: string, session: PreviewSession, executionId: string): void {
     if (!session.down) return
     const node = { id: `preview-down-${taskId}`, type: "bash" as const, bash: session.down.command, timeout: 60 }
-    void new BashExecutor(node, new VarPool(), { cwd: session.down.cwd, executionId })
+    void new BashExecutor(node, new VarPool(), { cwd: session.down.cwd, executionId, skipHarness: true })
       .execute()
       .catch(() => { /* teardown is best-effort */ })
   }

@@ -131,6 +131,11 @@ export interface BashConfig {
   crossExecResolver?: CrossExecResolver
   executionId?: string
   nodeOutputs?: Record<string, Record<string, any>>
+  /** Skip the harness safety wrapper (kill/pkill aliases). Only platform-owned
+   *  lifecycle steps qualify — e.g. a runbook's `down`, whose whole job is to
+   *  terminate the service the platform started for this session. Model-authored
+   *  flow commands must never set this. */
+  skipHarness?: boolean
 }
 
 /** AgentExecutor — the heaviest config, runner is required */

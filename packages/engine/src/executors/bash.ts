@@ -52,6 +52,7 @@ export class BashExecutor implements NodeExecutor {
   private executionId?: string
   private loopContext?: Record<string, any>
   private nodeOutputs?: Record<string, Record<string, any>>
+  private skipHarness?: boolean
 
   constructor(
     private node: NodeDef,
@@ -65,6 +66,7 @@ export class BashExecutor implements NodeExecutor {
     this.executionId = config?.executionId
     this.loopContext = config?.loopContext
     this.nodeOutputs = config?.nodeOutputs
+    this.skipHarness = config?.skipHarness
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -81,7 +83,10 @@ export class BashExecutor implements NodeExecutor {
     const start = Date.now()
     let script = substituteVarsFull(this.node.bash!, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
     script = this.resolveInputs(script)
-    script = prependWrapper(script)
+    // skipHarness: 平台自有的生命周期步骤（runbook `down` 收尾等）——其职责就是
+    // 杀掉自己起的进程，harness 的 pkill/kill 别名会让它永远杀不掉。模型可写的
+    // flow 命令仍走 wrapper（别名限制保留）。
+    if (!this.skipHarness) script = prependWrapper(script)
     const timeout = this.node.timeout ?? 30
 
     try {
@@ -174,6 +179,11 @@ export class BashExecutor implements NodeExecutor {
         shell: false,
         cwd: this.cwd,
         env,
+        // POSIX: child becomes its own process-group leader so killProcessTree's
+        // primary path (`process.kill(-pid)`) actually reaches — without this the
+        // group does not exist, the fallback kills only the shell, and every
+        // grandchild (mvn → java, `... & sleep`) is orphaned on abort/timeout.
+        detached: process.platform !== "win32",
       })
 
       let stdout = ""
