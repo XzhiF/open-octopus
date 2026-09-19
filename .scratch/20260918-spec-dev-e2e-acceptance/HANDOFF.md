@@ -75,6 +75,18 @@
      孤儿注册（如实进 ship diff + 报告声明）。
    - 现开放：PR 池共 5 个 OPEN（A#13 / B#14、#8 / C#15、#9），A/B/C 均 awaiting_review 未动决策。
 
+1a. **2026-09-19 「验收剧本」空面板修复**（commit `4dfdd1e9`）：web 接线后被指「最新待验收
+   剧本仍是空的」。根因=**三方词表漂移**：剧本编译器只认 author-verified-tickets 正典
+   （`**Verification type**` + ```bash 围栏），在盘实票（含用户真任务 token-91c5a975 的
+   05-e2e）写的是 `Type:` 头 + `## 走查步骤` 编号列表（行内反引命令 + `→` 断言）+
+   `## 证据要求` → 全编 0 步；且「票存在但 0 步」时 spec AC 兜底被 `!e2eTicket.content`
+   掐死。修（playbook-compile.ts，正典路径逐条不变）：ticketSteps 方言解析（末箭头拆
+   操作/预期、行首命令词白名单防产物名假命令）+ spec 兜底放宽为「无票或票 0 步」+
+   不可解析如实记 missing。活体：token 任务 7 walk / A 3 claim / B 4 probe / C 5 probe
+   （`→ data == true` 断言保留）。新测 5 例（fixture 照抄在盘票）。**教训：改 durable
+   格式后拿真产物跑消费方**——单测 fixture 全用理想模板,漂移没人看见（同
+   [[verify-real-formats-before-green]]）。
+
 1b. **待处置**：上面 ③ 的修复未 commit（bash/python/executor-config/round-evidence + 两测试 +
    `packages/core-pack/skills/matt-e2e-test-methodology/`，见 2b）。演示 PR：A #13 / B #14、#8
    与存量 java-common `#12`、api-admin `#7` 仍 OPEN；A/B 看板 awaiting_review，验证完可关。
