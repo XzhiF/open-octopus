@@ -854,7 +854,11 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
 // 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
 
 export type PlaybookItemKind = "walk" | "probe" | "claim"
-export interface PlaybookItem { id: string; op: string; expect: string; evidence?: string; probe?: { command: string } }
+export interface PlaybookItem {
+  id: string; op: string; expect: string; evidence?: string; probe?: { command: string }
+  /** 配了 runbook 时编译器把起服/就绪/收尾步打标（面板折一行提示、不给执行钮、不进连跑）。 */
+  lifecycle?: "start" | "ready" | "teardown"
+}
 export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
 export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
 export interface PlaybookBudget { steps: number; estMin: number; over: boolean; degraded: boolean }

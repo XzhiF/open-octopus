@@ -273,3 +273,26 @@ describe("T02 AC5 — 实票方言编译（Type:/走查步骤/行内命令/证�
     expect(a.sections.flatMap((s) => s.items).map((i) => i.id)).toEqual(b.sections.flatMap((s) => s.items).map((i) => i.id))
   })
 })
+
+describe("T02 AC6 — ③ 管道步 lifecycle（hasRunbook 时起服/就绪/收尾折提示）", () => {
+  const LIFE_TICKET = `# 03 · e2e
+Type: e2e
+## 走查步骤
+1. 起服务：\`cd r && java -jar app.jar &\`
+2. 就绪：\`until curl -sf http://localhost:18082/demo; do sleep 2; done\`
+3. 真值：\`curl -sf 'http://localhost:18082/demo/luhn?no=123'\` → data == true
+4. 收尾：\`kill java\`
+`
+  it("有 runbook → start/ready/teardown 打标，curl 断言步不打标", () => {
+    const p = compile({ e2eTicket: { name: "03-e2e-luhn.md", content: LIFE_TICKET }, e2eTestPlan: null, roundReport: null, hasRunbook: true })
+    const items = p.sections.flatMap((s) => s.items)
+    expect(items.find((i) => i.probe?.command.includes("java -jar"))?.lifecycle).toBe("start")
+    expect(items.find((i) => i.probe?.command.startsWith("until"))?.lifecycle).toBe("ready")
+    expect(items.find((i) => i.probe?.command.startsWith("kill"))?.lifecycle).toBe("teardown")
+    expect(items.find((i) => i.probe?.command.includes("demo/luhn"))?.lifecycle).toBeUndefined()
+  })
+  it("无 runbook → 全部保持可跑（不打标），否则没人起服务", () => {
+    const p = compile({ e2eTicket: { name: "03-e2e-luhn.md", content: LIFE_TICKET }, e2eTestPlan: null, roundReport: null })
+    expect(p.sections.flatMap((s) => s.items).every((i) => !i.lifecycle)).toBe(true)
+  })
+})

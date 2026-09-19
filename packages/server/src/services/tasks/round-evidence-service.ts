@@ -554,10 +554,14 @@ export class RoundEvidenceService {
    *  missing sources degrade into coverage.missing, never throw (200 with
    *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
   getPlaybook(taskId: string): PlaybookPayload {
-    const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+    const { roundIndex, batchRelDir, execRow } = this.resolveAwaiting(taskId)
+    // ③ 管道步过滤前提：本任务有没有「跑起来看」可用（三级 runbook 任一命中）。
+    // 有 → 起服/就绪/收尾类票步折给预览按钮；无 → 它们留在剧本里可跑（否则没人起服务）。
+    const ws = execRow ? this.workspaceService.getById(execRow.workspace_id) : null
+    const hasRunbook = !!this.resolveRunbook(taskId, ws?.path)
     if (!batchRelDir) {
       // absolute specPath bypass — no batch dir to read, honest empty state.
-      return compilePlaybook({ roundIndex })
+      return compilePlaybook({ roundIndex, hasRunbook })
     }
     let listing: Array<{ path: string }> = []
     try {
@@ -602,6 +606,7 @@ export class RoundEvidenceService {
     }
     return compilePlaybook({
       roundIndex,
+      hasRunbook,
       specMd: read(byBase(/^spec\.md$/i) ?? byBase(/spec.*\.md$/i)),
       e2eTicket: e2ePath
         ? { name: e2ePath.split("/").pop() ?? "e2e.md", content: read(e2ePath) ?? "" }

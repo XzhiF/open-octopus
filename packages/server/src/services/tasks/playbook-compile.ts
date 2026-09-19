@@ -88,6 +88,9 @@ export interface PlaybookInputs {
   prevChecks?: { round: number; data: ChecksFile } | null
   /** this round index (for carryover labeling). */
   roundIndex: number
+  /** 本任务配了 runbook（三级任一命中）→ 起服/就绪/收尾类探针折为 lifecycle
+   *  提示（生命周期归「跑起来看」，剧本只留断言）；缺省 false 全步可跑。 */
+  hasRunbook?: boolean
 }
 
 // ── line-level markdown helpers (tolerant; \r\n normalised) ───────────
@@ -156,6 +159,23 @@ function fencedCommands(md: string, fenceRe: RegExp): string[] {
 // `e2e-report.md`、`IdCheckUtils.class` 这类产物名误判成可执行步。
 const CMD_START_RE =
   /^\s*(cd|curl|wget|java|mvn|mvnw|gradle|pnpm|npm|npx|node|python3?|pytest|sqlite3|bash|sh|docker|make|go|cargo|until|while|for|if|kill|pkill|ps|lsof|grep|jq|awk|wc|open)\b/
+
+/** 生命周期命令分类（③ 管道步过滤）。仅当 task 配了 runbook 时用于把「起服/
+ *  就绪轮询/收尾」折成一行提示——它们的活儿由「跑起来看」按钮统一做，剧本不该
+ *  再让人逐条点。判据保守：只认明确的起/杀/就绪姿势，普通 curl/test/mvn 断言
+ *  不沾（那些是真·验收点，要留执行钮）。ready 探活的 `curl health` 归 start 段
+ *  引导后就不重复——故裸 curl 一律不判 lifecycle。 */
+function lifecycleOf(cmd: string): PlaybookItem["lifecycle"] | undefined {
+  const c = cmd.trim().toLowerCase()
+  // 后台起进程/起容器 = start（nohup、& 结尾、java -jar、docker run/up/compose up）。
+  if (/(^|[;&|]\s*)(nohup\b|java\s+-jar|python[3]?\s+-m|docker\s+(run|start|compose\s+up)|(pnpm|npm|yarn)\s+(run\s+)?(dev|start)|\b.*&\s*$)/.test(c)
+    && !/\bcurl\b/.test(c)) return "start"
+  // 就绪轮询（until/while ... curl ... do sleep / ; sleep ... done）。
+  if (/^(until|while)\b/.test(c) || /\bdone\b/.test(c) && /sleep/.test(c)) return "ready"
+  // 收尾杀进程（kill/pkill + 进程名，或含端口拒连确认）。
+  if (/^(sudo\s+)?(kill|pkill|killall)\b/.test(c) || /(kill|pkill)\s+.*(java|node|server|jar|\.pid)/.test(c)) return "teardown"
+  return undefined
+}
 
 /** 文本里第一条"像命令"的 inline 反引号；无 → null。 */
 function inlineCmd(text: string): string | null {
@@ -304,21 +324,32 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
           evidence: s.expect ? undefined : d.passCriteria || undefined,
         }))
       } else {
-        d.steps.filter((s) => s.cmd).forEach((s, n) => items.push({
-          id: `probe:${base}:${n + 1}`,
-          op: `执行 \`${s.cmd}\``,
-          expect: s.expect || d.passCriteria || "命令 exit 0 且输出符合预期",
-          probe: { command: s.cmd as string },
-        }))
+        d.steps.filter((s) => s.cmd).forEach((s, n) => {
+          const life = inp.hasRunbook ? lifecycleOf(s.cmd as string) : undefined
+          items.push({
+            id: `probe:${base}:${n + 1}`,
+            op: `执行 \`${s.cmd}\``,
+            expect: s.expect || d.passCriteria || "命令 exit 0 且输出符合预期",
+            probe: { command: s.cmd as string },
+            // ③ 管道步过滤：配了 runbook，起服/就绪/收尾类命令折给「跑起来看」——
+            // 面板渲染成一行灰提示、不给执行钮、不进连跑。无 runbook 时保留可跑。
+            ...(life ? { lifecycle: life } : {}),
+          })
+        })
       }
     } else {
       // 正典模板路径（行为与 2026-09-18 前一致）。
       if (d.type === "browser" && d.build) {
         items.push({ id: `walk:${base}:0`, op: `照「${d.build.split("\n")[0]?.slice(0, 60) ?? base}」走一遍关键 UI 路径`, expect: d.passCriteria || "所有 AC 通过", evidence: d.passCriteria || undefined })
       }
-      d.probeCmds.slice(0, 3).forEach((cmd, n) =>
-        items.push({ id: `probe:${base}:${n + 1}`, op: `执行 \`${cmd}\``, expect: d.passCriteria || "命令 exit 0 且输出符合预期", probe: { command: cmd } }),
-      )
+      d.probeCmds.slice(0, 3).forEach((cmd, n) => {
+        const life = inp.hasRunbook ? lifecycleOf(cmd) : undefined
+        items.push({
+          id: `probe:${base}:${n + 1}`, op: `执行 \`${cmd}\``,
+          expect: d.passCriteria || "命令 exit 0 且输出符合预期", probe: { command: cmd },
+          ...(life ? { lifecycle: life } : {}),
+        })
+      })
       if (!items.length && d.acs.length) {
         items.push({ id: `claim:${base}:0`, op: `逐条核对 ${base} 的 AC`, expect: d.acs[0] ?? "", evidence: d.passCriteria || undefined })
       }

@@ -20,7 +20,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown, Play } from "lucide-react"
+import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown, Play, Square, Wrench } from "lucide-react"
 import {
   readChecks, saveChecks, runProbe, type PlaybookPayload, type PlaybookItem, type CheckDecision,
   type CheckEntry, type ProbeRunResult,
@@ -42,6 +42,16 @@ interface PlaybookPanelProps {
 
 const KIND_LABEL: Record<string, string> = { walk: "走查", probe: "探针", claim: "核对" }
 
+// ③ lifecycle 步文案：本任务配了 runbook，这些命令的职责已由「跑起来看」钮承担。
+const LIFECYCLE_LABEL: Record<"start" | "ready" | "teardown", string> = {
+  start: "起服务·预览负责", ready: "就绪轮询·预览负责", teardown: "收尾·预览负责",
+}
+const LIFECYCLE_HINT: Record<"start" | "ready" | "teardown", string> = {
+  start: "此步起停服务由上方「跑起来看 ▶启动」统一做，剧本不再逐条点（命令仍可展开查看）",
+  ready: "等服务就绪由「跑起来看」的 ready 探针轮询，无需在此跑",
+  teardown: "收尾杀进程由「跑起来看 ■停止」的 down 步骤负责",
+}
+
 export function PlaybookPanel({
   taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange,
 }: PlaybookPanelProps) {
@@ -51,6 +61,9 @@ export function PlaybookPanel({
   const [collapsed, setCollapsed] = useState<Record<string, true>>({})
   // 探针执行：面板级串行（一次一条，防并发打同一服务/抢端口）。
   const [runningProbe, setRunningProbe] = useState<string | null>(null)
+  // ② 连跑全部：整段按序跑，遇首个 ✗ 即停；cancelRef 让「停止」在步间生效。
+  const [runningAll, setRunningAll] = useState(false)
+  const cancelRef = useRef(false)
   // 探针输出 tail 只驻内存（持久的是 entry.probe 章 + note 里的现象行）。
   const [probeNow, setProbeNow] = useState<Record<string, ProbeRunResult>>({})
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -114,12 +127,12 @@ export function PlaybookPanel({
     commit({ ...checksRef.current, [id]: { ...cur, note } })
   }, [commit])
 
-  /** [▶ 执行] 一步探针：同步跑 → 出结果章 + 自动判定（exit0→✓ / 其余→✗，
-   *  人工可改判）。已有判定被机器结果覆盖是有意为之——刚跑的证据比旧手感新，
+  /** 跑一条探针 + 就地盖章（exit0→✓ / 其余→✗，人工可改判）。返回是否通过，供
+   *  连跑决定续不停。已有判定被机器结果覆盖是有意为之——刚跑的证据比旧手感新，
    *  note 带 🔬 前缀，ledger 里机器留痕与人工笔迹可分。 */
-  const runOne = useCallback(async (item: PlaybookItem) => {
+  const stampProbe = useCallback(async (item: PlaybookItem): Promise<boolean> => {
     const cmd = item.probe?.command
-    if (!cmd || runningProbe || disabledReason) return
+    if (!cmd) return true
     setRunningProbe(item.id)
     try {
       const r = await runProbe(taskId, cmd)
@@ -131,13 +144,42 @@ export function PlaybookPanel({
         ? `🔬 探针 exit 0 · ${dur}s · ${at}`
         : `🔬 探针 ${r.state === "timeout" ? "超时" : `exit ${r.exit_code}`} · ${dur}s · ${at} · ${lastMeaningful(r.tail).slice(0, 90)}`
       decide(item.id, r.state === "passed" ? "pass" : "fail", note, stamp)
+      return r.state === "passed"
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setProbeNow((m) => ({ ...m, [item.id]: { state: "failed", exit_code: null, duration_ms: 0, tail: [msg] } }))
+      return false
     } finally {
       setRunningProbe(null)
     }
-  }, [taskId, runningProbe, disabledReason, decide])
+  }, [taskId, decide])
+
+  /** [▶ 执行] 单步复跑。连跑进行中禁用（串行防抢端口）。 */
+  const runOne = useCallback(async (item: PlaybookItem) => {
+    if (!item.probe?.command || item.lifecycle || runningProbe || runningAll || disabledReason) return
+    await stampProbe(item)
+  }, [stampProbe, runningProbe, runningAll, disabledReason])
+
+  // 连跑只收「断言类」可跑步：有命令 + 非 lifecycle + 面板未禁。lifecycle 步
+  // （起服/就绪/收尾）由「跑起来看」runbook 负责，剧本不逐条点（③）。
+  const runnableItems = useMemo(
+    () => playbook.sections.flatMap((s) => s.items).filter((i) => i.probe?.command && !i.lifecycle),
+    [playbook],
+  )
+
+  /** ▶ 连跑全部：按剧本顺序逐条 stampProbe，任一 ✗ 即停（停在真问题处，不空跑
+   *  尾部）；「停止」按钮置 cancelRef，在下一步开始前生效。 */
+  const runAll = useCallback(async () => {
+    if (runningAll || runningProbe || disabledReason) return
+    setRunningAll(true)
+    cancelRef.current = false
+    for (const it of runnableItems) {
+      if (cancelRef.current) break
+      const ok = await stampProbe(it)
+      if (!ok) break
+    }
+    setRunningAll(false)
+  }, [runningAll, runningProbe, disabledReason, runnableItems, stampProbe])
 
   const allItems = useMemo(() => playbook.sections.flatMap((s) => s.items), [playbook])
   const expandAll = () => setCollapsed({})
@@ -164,6 +206,18 @@ export function PlaybookPanel({
         <ClipboardCheck className="size-3.5 text-pop-ink" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-ink">人工走查 · 验收剧本</span>
         <div className="ml-auto flex items-center gap-1">
+          {runnableItems.length > 0 && (
+            <button
+              onClick={runningAll ? () => { cancelRef.current = true } : () => void runAll()}
+              disabled={!!disabledReason || (!!runningProbe && !runningAll)}
+              data-testid="playbook-run-all"
+              title={runningAll ? "再点=下一步后停止（当前步会跑完）" : `按剧本顺序连跑 ${runnableItems.length} 条断言探针，遇首个 ✗ 即停（起服/就绪/收尾归「跑起来看」）`}
+              className={`flex items-center gap-1 rounded-md border-[2px] px-2 py-0.5 font-mono text-[10px] font-black shadow-pop-sm transition-colors ${
+                runningAll ? "border-pop-amber bg-pop-amber-soft text-pop-amber" : "border-pop-bd bg-pop-green text-white hover:brightness-105 disabled:opacity-40"}`}
+            >
+              {runningAll ? <><Square className="size-2.5" />停止</> : <><Play className="size-2.5" />连跑 {runnableItems.length}</>}
+            </button>
+          )}
           <button
             className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold text-pop-ink/60 transition-colors hover:bg-pop-bd/10"
             onClick={allCollapsed ? expandAll : collapseAll}
@@ -239,7 +293,7 @@ export function PlaybookPanel({
                   open={!collapsed[it.id]} onToggle={() => setCollapsed((c) => { const n = { ...c }; if (n[it.id]) delete n[it.id]; else n[it.id] = true; return n })}
                   onDecide={decide} onNote={setNote}
                   probe={probeNow[it.id]} probeRunning={runningProbe === it.id} onRunProbe={() => void runOne(it)}
-                  runBlockedReason={disabledReason ?? (runningProbe && runningProbe !== it.id ? "另一条探针在跑 — 探针串行" : undefined)}
+                  runBlockedReason={disabledReason ?? (runningAll ? "连跑进行中 — 单步钮暂禁" : runningProbe && runningProbe !== it.id ? "另一条探针在跑 — 探针串行" : undefined)}
                 />
               ))}
             </div>
@@ -299,7 +353,16 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
             <DecideBtn key={k} active={d === k} decision={k} disabled={disabled} onClick={() => onDecide(item.id, d === k ? null : k)} />
           ))}
         </span>
-        {item.probe?.command && (
+        {item.probe?.command && (item.lifecycle ? (
+          // ③ 起了 runbook 的管道步：不逐条点，折成一行提示（起服/就绪/收尾归预览钮）。
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-pop-bd/40 bg-pop-idle/40 px-1.5 py-0.5 font-mono text-[9px] text-pop-dim"
+            data-testid={`probe-lifecycle-${item.id}`}
+            title={LIFECYCLE_HINT[item.lifecycle]}
+          >
+            <Wrench className="size-2.5" />{LIFECYCLE_LABEL[item.lifecycle]}
+          </span>
+        ) : (
           <button
             onClick={onRunProbe}
             disabled={disabled || probeRunning || !!runBlockedReason}
@@ -311,7 +374,7 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
           >
             {probeRunning ? "⏳ 跑…" : <span className="inline-flex items-center gap-0.5"><Play className="size-2.5" />执行</span>}
           </button>
-        )}
+        ))}
         {(probe || entry?.probe) && (
           <span
             className={`pop-stamp shrink-0 rounded border-[2px] bg-transparent px-1.5 py-px font-mono text-[9px] font-black ${

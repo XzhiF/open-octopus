@@ -1045,3 +1045,45 @@ describe("PB — 剧本探针执行与展开", () => {
     await waitFor(() => expect(panel.textContent).toContain("剧本明细只在展开时可见"))
   })
 })
+
+// ── PB4/PB5: 连跑全部 + lifecycle 折叠 (② + ③) ──────────────────────
+const RUNALL_PB = {
+  available: true, goal: "g", specRevised: false,
+  budget: { steps: 4, estMin: 3, over: false, degraded: false },
+  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
+    { id: "probe:x:1", op: "断言真值", expect: "true", probe: { command: "curl a" } },
+    { id: "probe:x:2", op: "起服务", expect: "up", probe: { command: "java -jar app &" }, lifecycle: "start" },
+    { id: "probe:x:3", op: "断言假值", expect: "false", probe: { command: "curl b" } },
+    { id: "probe:x:4", op: "不该跑到", expect: "x", probe: { command: "curl c" } },
+  ] }],
+  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
+}
+
+describe("PB4/PB5 — 连跑全部与 lifecycle 折叠", () => {
+  it("PB5: 起了 runbook 的 lifecycle 步 → Wrench 提示、无 ▶执行、连跑计数只数断言步", async () => {
+    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    expect(screen.getByTestId("probe-lifecycle-probe:x:2")).toBeTruthy()
+    expect(screen.queryByTestId("probe-run-probe:x:2")).toBeNull()
+    // 连跑钮只数非 lifecycle 的 3 条断言步
+    expect(screen.getByTestId("playbook-run-all").textContent).toContain("3")
+  })
+
+  it("PB4: ▶连跑按序跑断言步(跳过 lifecycle)、遇首个✗即停、尾部不空跑", async () => {
+    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
+    const calls: string[] = []
+    mockRunProbe.mockImplementation(async (_t: string, cmd: string) => {
+      calls.push(cmd)
+      if (cmd === "curl b") return { state: "failed", exit_code: 22, duration_ms: 5, tail: ["boom 500"] }
+      return { state: "passed", exit_code: 0, duration_ms: 3, tail: ["ok"] }
+    })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    fireEvent.click(screen.getByTestId("playbook-run-all"))
+    await waitFor(() => expect(calls).toEqual(["curl a", "curl b"])) // lifecycle 未进、c 未跑
+    // a 章 passed、b 章 failed 并触发硬闸停在此
+    expect(screen.getByTestId("probe-stamp-probe:x:1").textContent).toContain("EXIT 0")
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+  })
+})
