@@ -60,11 +60,21 @@ export interface PlaybookPayload {
 // ── on-disk checks file (acceptance-checks-r{N}.json) ────────────────
 
 export type CheckDecision = "pass" | "fail" | "skip"
+/** 剧本探针单发执行（POST /:id/playbook/run）的同步结果。 */
+export type ProbeState = "passed" | "failed" | "timeout"
+export interface ProbeRunResult {
+  state: ProbeState
+  exit_code: number | null
+  duration_ms: number
+  tail: string[]
+}
 export interface CheckEntry {
   decision: CheckDecision
   /** required when decision is fail/skip — rides into reject feedback / carryover. */
   note: string
   at: string
+  /** 最近一次机器探针盖章（面板据结果自动写 ✓/✗ 时留痕,carryover 也能看到）。 */
+  probe?: { state: ProbeState; exit_code: number | null; at: string }
 }
 export interface ChecksFile {
   version: "1"

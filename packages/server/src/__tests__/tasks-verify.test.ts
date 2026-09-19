@@ -12,6 +12,7 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { execFileSync } from "node:child_process"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
@@ -255,5 +256,59 @@ describe("verify — 门链与终态", () => {
     expect(bash).toContain('[ -e "$D/.git" ]')
     expect(bash).toContain('( cd "$D" && mvn -B test ) || rc=1')
     expect(bash.trimEnd().endsWith("exit $rc")).toBe(true)
+  })
+})
+
+// ── 剧本探针单发执行 (POST /:id/playbook/run) ───────────────────────────
+describe("playbook probe — 同步单发,就地盖章", () => {
+  it("PR1: echo → passed, exit 0, tail 带回显;工作区根为 cwd", async () => {
+    const taskId = await newAwaitingTask()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "echo probe-hello && pwd" }),
+    })
+    expect(res.status).toBe(200)
+    const r = (await res.json()) as { state: string; exit_code: number | null; tail: string[] }
+    expect(r.state).toBe("passed")
+    expect(r.exit_code).toBe(0)
+    expect(r.tail.join("\n")).toContain("probe-hello")
+    expect(r.tail.join("\n")).toContain(path.join(tmp, "ws1")) // ws 根 cwd
+  })
+
+  it("PR2: 断言失败 → failed + 真实退出码(C 票步 5 形状)", async () => {
+    const taskId = await newAwaitingTask()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "test 1 = 2 && echo data == false" }),
+    })
+    const r = (await res.json()) as { state: string; exit_code: number | null }
+    expect(r.state).toBe("failed")
+    expect(r.exit_code).not.toBe(0)
+  })
+
+  it("PR3: 尾随 & 拉起式包成 nohup,秒回且服务真活着(防 close 挂死→组杀)", async () => {
+    const taskId = await newAwaitingTask()
+    const t0 = Date.now()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "sleep 60 &", timeoutS: 10 }),
+    })
+    const r = (await res.json()) as { state: string; tail: string[] }
+    expect(Date.now() - t0).toBeLessThan(8000) // 不挂满 timeout
+    expect(r.state).toBe("passed")
+    expect(r.tail.join(" ")).toContain("launcher")
+    const out = execFileSync("pgrep", ["-f", "[s]leep 60"], { encoding: "utf8" }).trim()
+    expect(out.length).toBeGreaterThan(0) // 服务没被组杀火葬
+    for (const pid of out.split("\n")) { try { process.kill(Number(pid), "SIGKILL") } catch { /* gone */ } }
+  })
+
+  it("PR4: 空命令/超长 → 400;无 awaiting → 409", async () => {
+    const taskId = await newAwaitingTask()
+    expect((await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: "  " }),
+    })).status).toBe(400)
+    expect((await app.request("/api/tasks/no-such-task/playbook/run", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: "true" }),
+    })).status).toBe(404) // 任务不存在 = 404（resolveAwaiting 的 NotFound 语义）
   })
 })

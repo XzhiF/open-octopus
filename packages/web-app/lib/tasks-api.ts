@@ -919,8 +919,31 @@ export async function stopPreview(taskId: string): Promise<PreviewSummary> {
 
 // ── checks 落盘(acceptance-checks-r{N}.md,复用 home-file .md 门)──────────
 export type CheckDecision = "pass" | "fail" | "skip"
-export interface CheckEntry { decision: CheckDecision; note: string; at: string }
+export interface CheckEntry {
+  decision: CheckDecision
+  note: string
+  at: string
+  /** 机器探针盖章(runProbe 后由面板写入并持久化)。 */
+  probe?: { state: ProbeState; exit_code: number | null; at: string }
+}
 export interface ChecksFile { version: "1"; task_id?: string; round_index?: number; checks: Record<string, CheckEntry> }
+
+// ── 剧本探针单发执行 (POST /:id/playbook/run,镜像 server ProbeRunResult) ──
+export type ProbeState = "passed" | "failed" | "timeout"
+export interface ProbeRunResult { state: ProbeState; exit_code: number | null; duration_ms: number; tail: string[] }
+
+/** 执行剧本 probe 步的一条命令(票内 curl/until 级),同步返回就地盖章。
+ *  与复检同纪律:只有人点击才跑;409 ws 不在/无 awaiting。 */
+export async function runProbe(taskId: string, command: string, timeoutS?: number): Promise<ProbeRunResult> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/playbook/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ command, ...(timeoutS ? { timeoutS } : {}) }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as ProbeRunResult
+}
 
 export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
 const CHECKS_FENCE_RE = /```json\s*\n([\s\S]*?)\n```/

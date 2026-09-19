@@ -14,6 +14,7 @@ const {
   mockListHomeDir, mockGetHomeFile, mockGetBatchTree,
   mockGetRoundDiff, mockGetRoundPatch, mockStartVerify, mockGetVerifyStatus, mockAbortVerify,
   mockGetPlaybook, mockStartPreview, mockGetPreview, mockStopPreview, mockSaveChecks, mockPutHomeFile, mockReadChecks,
+  mockRunProbe,
   sseHandlers,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
@@ -36,6 +37,7 @@ const {
   mockSaveChecks: vi.fn(),
   mockReadChecks: vi.fn(),
   mockPutHomeFile: vi.fn(),
+  mockRunProbe: vi.fn(),
   sseHandlers: new Map<string, (e: MessageEvent) => void>(),
 }))
 
@@ -74,6 +76,7 @@ vi.mock("@/lib/tasks-api", () => {
     putHomeFile: mockPutHomeFile,
     readChecks: mockReadChecks,
     saveChecks: mockSaveChecks,
+    runProbe: mockRunProbe,
     checksFileName: (n: number) => `acceptance-checks-r${n}.md`,
     checksRelPath: (d: string, n: number) => `${d}/acceptance-checks-r${n}.md`,
     parseChecksMd: () => null,
@@ -342,6 +345,7 @@ beforeEach(() => {
   mockStopPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "stopped" })
   mockSaveChecks.mockResolvedValue(undefined)
   mockReadChecks.mockResolvedValue({ version: "1", checks: {} })
+  mockRunProbe.mockResolvedValue({ state: "passed", exit_code: 0, duration_ms: 900, tail: ["ok"] })
 })
 
 function renderModal(spec: TaskSpec = V4_SPEC) {
@@ -974,5 +978,70 @@ describe("ImpactApprovalList — D14 批准→spec-field phases 写回（渲染�
     const phases = value as Array<{ index: number; workflowRef: string }>
     expect(phases.find((p) => p.index === 2)?.workflowRef).toBe("task-fix") // 受影响 phase 改写
     expect(phases.find((p) => p.index === 1)?.workflowRef).toBe("task-dev") // 未勾选保持
+  })
+})
+
+// ── PB: 剧本探针就地执行 + 全展开/收起 (v2.2, 用户反馈 2026-09-19) ──────
+const PB_PLAYBOOK = {
+  available: true, goal: "g", specRevised: false,
+  budget: { steps: 2, estMin: 3, over: false, degraded: false },
+  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
+    { id: "probe:03-e2e:1", op: "执行真值探针", expect: "data == true", probe: { command: "curl -sf localhost:18082/demo/luhn?no=x" } },
+    { id: "probe:03-e2e:2", op: "执行假值探针", expect: "data == false", probe: { command: "curl -sf localhost:18082/demo/luhn?no=y" } },
+  ] }],
+  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
+}
+
+describe("PB — 剧本探针执行与展开", () => {
+  it("PB1: probe 步有 [▶执行]；exit 0 → 自动✓ + 🔬note + EXIT 章 + probe 持久化", async () => {
+    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    expect(screen.getByTestId("probe-run-probe:03-e2e:1")).toBeTruthy()
+    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:1"))
+    await waitFor(() => expect(mockRunProbe).toHaveBeenCalledWith("t1", "curl -sf localhost:18082/demo/luhn?no=x"))
+    expect(screen.getByTestId("probe-stamp-probe:03-e2e:1").textContent).toContain("EXIT 0")
+    await new Promise((r) => setTimeout(r, 450))
+    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string; probe?: unknown }>
+    expect(payload["probe:03-e2e:1"].decision).toBe("pass")
+    expect(payload["probe:03-e2e:1"].note).toContain("🔬 探针 exit 0")
+    expect(payload["probe:03-e2e:1"].probe).toMatchObject({ state: "passed", exit_code: 0 })
+  })
+
+  it("PB2: exit≠0 → 自动✗（硬闸拦通过）+ 现象行进备注；人工改判 ✓ 可放行", async () => {
+    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
+    mockRunProbe.mockResolvedValueOnce({ state: "failed", exit_code: 22, duration_ms: 300, tail: ["[stderr] curl: (22) The requested URL returned error: 500"] })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:2"))
+    await new Promise((r) => setTimeout(r, 450))
+    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string }>
+    expect(payload["probe:03-e2e:2"].decision).toBe("fail")
+    expect(payload["probe:03-e2e:2"].note).toContain("exit 22")
+    expect(payload["probe:03-e2e:2"].note).toContain("curl: (22)")
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+    // 人工改判：✗→✓ 解除硬闸（机器章可被人的最终判断覆盖）
+    fireEvent.click(screen.getAllByTestId("step-probe:03-e2e:2").at(-1)!.querySelector("[data-testid=decide-pass]")!)
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it("PB3: 收起全部 → 预期明细隐藏但勾选可用；再展开回原样", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: true, goal: "g", specRevised: false,
+      budget: { steps: 1, estMin: 2, over: false, degraded: false },
+      sections: [{ kind: "probe" as const, title: "T", source: "s", items: [
+        { id: "probe:01:1", op: "打开页面", expect: "剧本明细只在展开时可见", probe: { command: "true" } }] }],
+      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    })
+    renderModal()
+    const panel = await screen.findByTestId("playbook-panel")
+    expect(panel.textContent).toContain("剧本明细只在展开时可见")
+    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
+    await waitFor(() => expect(screen.getByTestId("playbook-toggle-all").textContent).toBe("展开全部"))
+    expect(panel.textContent).not.toContain("剧本明细只在展开时可见")
+    expect(panel.textContent).toContain("打开页面") // 标题仍在
+    expect(screen.getByTestId("decide-pass")).toBeTruthy() // 收起态照样能勾
+    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
+    await waitFor(() => expect(panel.textContent).toContain("剧本明细只在展开时可见"))
   })
 })

@@ -122,6 +122,12 @@ const homeFileBodySchema = z.object({
   content: z.string().max(512_000),
 })
 
+// 剧本探针单发执行体（POST /:id/playbook/run）——command 来自编译票步,人点才跑。
+const probeRunBodySchema = z.object({
+  command: z.string().min(1).max(4000),
+  timeoutS: z.number().int().min(5).max(600).optional(),
+})
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -424,6 +430,22 @@ export function createTasksRoutes(
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     try {
       return c.json(evidence.getPlaybook(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 剧本探针单发执行：票步里的可执行命令（curl/until 级），同步返回 exit+tail
+  // 供面板就地盖章。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
+  router.post("/:id/playbook/run", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const parsed = probeRunBodySchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400)
+    }
+    try {
+      return c.json(await evidence.runProbe(c.req.param("id"), parsed.data.command, parsed.data.timeoutS))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

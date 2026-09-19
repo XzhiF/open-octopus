@@ -57,9 +57,9 @@ import type { TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
 import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
-import type { PlaybookPayload, ChecksFile } from "./playbook-types"
+import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState } from "./playbook-types"
 
-export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry } from "./playbook-types"
+export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry, ProbeRunResult, ProbeState } from "./playbook-types"
 
 // ── payload shapes (mirror: web lib/tasks-api.ts) ─────────────────────
 
@@ -612,6 +612,48 @@ export class RoundEvidenceService {
     })
   }
 
+  // ── 剧本探针单发执行 (playbook probe run) ─────────────────────────────
+  //
+  // 验收剧本里 probe 步（编译自票内命令）的 [▶ 执行]：在活工作区根**同步**跑
+  // 一条命令，秒级返回 exit+tail 给面板就地盖章。信任边界与复检完全一致——
+  // 命令来自票内人可阅文本、只有人点按钮才 spawn、绝不自动绝不批量；harness
+  // 别名限制保留（探针职责是断言不是收尸，不像 runbook down 需要绕桩）。
+  // 唯一加工：尾随 `&` 的拉起式命令包成 nohup + 输出丢弃——否则后台子进程
+  // 继承 stdout 管道，BashExecutor 的 close 要等管道关闭才触发，会挂死到
+  // timeout 再把刚拉起的服务连同进程组被强杀链火葬（C 票步 1 形状推演）。
+
+  /** @throws TaskStatusConflictError 无 awaiting 轮 / ws 目录已不在。 */
+  async runProbe(taskId: string, command: string, timeoutS = 120): Promise<ProbeRunResult> {
+    const { execRow } = this.resolveAwaiting(taskId)
+    const cmd = command.trim()
+    if (!cmd) throw new TaskSpecFieldError("探针命令为空")
+    const ws = this.workspaceService.getById(execRow.workspace_id)
+    if (!ws || !existsSync(ws.path)) {
+      throw new TaskStatusConflictError("工作区目录不在了 — 探针不可执行（剧本仍可人工勾选）")
+    }
+    const capped = Math.max(5, Math.min(600, Math.round(timeoutS)))
+    const launcher = /&\s*$/.test(cmd) && !cmd.includes("nohup") && !/\/dev\/null/.test(cmd)
+    const bash = launcher
+      ? `nohup bash -c ${shellQuote(cmd.replace(/&\s*$/, ""))} >/dev/null 2>&1 &\nsleep 0.5\necho "[launcher] 已后台拉起（输出丢弃）— 就绪/断言探针稍后逐条执行"`
+      : cmd
+    const lines: string[] = []
+    const node = { id: `probe-${taskId}`, type: "bash" as const, bash, timeout: capped }
+    const r = await new BashExecutor(
+      node,
+      new VarPool(),
+      {
+        cwd: ws.path,
+        executionId: execRow.id,
+        onLog: (line: string) => { if (lines.length < 400) lines.push(line) },
+      },
+    ).execute()
+    const exit = r.exitCode ?? null
+    const state: ProbeState = exit === 0 && r.status !== "failed"
+      ? "passed"
+      : exit === null ? "timeout" : "failed"
+    return { state, exit_code: exit, duration_ms: r.durationMs, tail: lines.slice(-60) }
+  }
+
   // ── live preview (跑起来看) ────────────────────────────────────────────
 
   /** Resolve the effective runbook (wsPath 用于探测项目自带脚本)：优先级
@@ -1063,6 +1105,11 @@ export function buildPerRepoVerifyBash(userCmd: string): string {
     'if [ "$found" = 0 ]; then echo "projects/ 下无 git 仓 — 逐仓复检跳过"; fi',
     "exit $rc",
   ].join("\n")
+}
+
+/** 单引号硬转义（探针 launcher 包裹时内层命令的安全嵌入）。 */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
 function classifyVerifyResult(
