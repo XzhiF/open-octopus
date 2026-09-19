@@ -42,6 +42,8 @@ const STATE_LABEL: Record<string, string> = {
 export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason, onSaveCommand, onRun, onAbort }: VerifyPanelProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(cfg?.command ?? "")
+  const [cwdDraft, setCwdDraft] = useState(cfg?.cwd ?? "")
+  const [perRepo, setPerRepo] = useState(!!cfg?.per_repo)
   const [timeoutDraft, setTimeoutDraft] = useState(String(cfg?.timeoutS ?? 600))
   const [saveBusy, setSaveBusy] = useState(false)
   const consoleRef = useRef<HTMLDivElement>(null)
@@ -107,20 +109,24 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         {cfg ? (
           <code className="min-w-0 flex-1 truncate rounded bg-pop-bd/5 px-1.5 py-0.5 font-mono text-[11px]" title={cfg.command}>
             {cfg.command}
+            {cfg.per_repo ? "（逐仓各跑一次）" : ""}
           </code>
         ) : (
           <span className="flex-1 text-[11px] text-muted-foreground">未预设复检命令</span>
         )}
+        {cfg?.per_repo && (
+          <span className="shrink-0 rounded-full border border-pop-bd/40 bg-pop-bd/10 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim" data-testid="verify-per-repo" title="对 projects/*/ 每个 git 仓各跑一次（仓根为 cwd），任一仓失败即整体 FAILED">逐仓</span>
+        )}
         {cfg && !editing && (
           <>
             <span className="font-mono text-[9px] tabular-nums text-pop-dim">≤{cfg.timeoutS ?? 600}s</span>
-            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setDraft(cfg.command); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
               编辑
             </Button>
           </>
         )}
         {!cfg && !editing && (
-          <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setDraft(""); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
             配置命令
           </Button>
         )}
@@ -157,6 +163,19 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             data-testid="verify-command-input"
           />
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 font-mono text-[10px] text-pop-dim" title="对 projects/*/ 每仓各跑一次（仓根为 cwd，命令写仓内相对；多仓任务用这个，cwd 被忽略）">
+              <input type="checkbox" checked={perRepo} onChange={(e) => setPerRepo(e.target.checked)} data-testid="verify-per-repo-input" />
+              逐仓
+            </label>
+            <input
+              type="text"
+              className={`w-36 rounded-md border-2 border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[10.5px] ${perRepo ? "opacity-40" : ""}`}
+              placeholder="cwd(可选)"
+              value={cwdDraft}
+              disabled={perRepo}
+              onChange={(e) => setCwdDraft(e.target.value)}
+              data-testid="verify-cwd-input"
+            />
             <label className="font-mono text-[10px] text-pop-dim">超时秒</label>
             <input
               type="number" min={5} max={1800}
@@ -169,7 +188,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saveBusy} onClick={() => void save(null)} data-testid="verify-clear">
                 清除配置
               </Button>
-              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim()} onClick={() => void save({ command: draft.trim(), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
+              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim()} onClick={() => void save({ command: draft.trim(), ...(perRepo ? { per_repo: true } : {}), ...(!perRepo && cwdDraft.trim() ? { cwd: cwdDraft.trim() } : {}), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
                 保存（随任务持久化）
               </Button>
             </div>

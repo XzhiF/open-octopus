@@ -35,7 +35,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import type { Task, AcceptanceVerify, AcceptancePreview } from "@octopus/shared"
+import type { Task, AcceptanceVerify, AcceptancePreview, AcceptanceRunbook } from "@octopus/shared"
 import {
   PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT,
   TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT, TASK_PREVIEW_EVENT,
@@ -473,6 +473,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
 
   // ── 跑起来看（preview） handlers ──
   const previewCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_preview ?? null
+  // runbook 优先于简写（与 server resolveRunbook 同一裁判）：有它面板就走多服务态。
+  const runbookCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_runbook ?? null
 
   const handlePreviewStart = useCallback(async () => {
     if (!taskId) return
@@ -506,6 +508,19 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       await updateSpecField(taskId, "acceptance_preview", v, { source: "user" })
       refetchDetail()
       toast.success(v ? "预览配置已保存 — 随任务持久化，下个 phase 复用" : "预览配置已清除")
+      return true
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? `保存失败：${err.message}` : "保存失败")
+      return false
+    }
+  }, [taskId, refetchDetail])
+
+  const handleRunbookSave = useCallback(async (v: AcceptanceRunbook | null): Promise<boolean> => {
+    if (!taskId) return false
+    try {
+      await updateSpecField(taskId, "acceptance_runbook", v, { source: "user" })
+      refetchDetail()
+      toast.success(v ? "runbook 已保存 — 起→就绪判据→入口→收尾，随任务持久化" : "runbook 已清除")
       return true
     } catch (err: unknown) {
       toast.error(err instanceof Error ? `保存失败：${err.message}` : "保存失败")
@@ -893,10 +908,12 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                     />
                     <PreviewBar
                       cfg={previewCfg}
+                      runbook={runbookCfg}
                       preview={preview}
                       busy={previewBusy}
                       disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
                       onSaveCfg={handlePreviewSave}
+                      onSaveRunbook={handleRunbookSave}
                       onStart={() => void handlePreviewStart()}
                       onStop={() => void handlePreviewStop()}
                     />

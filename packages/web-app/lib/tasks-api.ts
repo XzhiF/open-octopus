@@ -884,6 +884,8 @@ export interface PreviewSummary {
   execution_id?: string
   command?: string
   url: string
+  /** runbook 多入口（server 原样透传 runbook.views[]；简写合成为 [url]）。 */
+  views?: { label?: string; url: string }[]
   state: PreviewState
   external?: boolean
   started_at?: string

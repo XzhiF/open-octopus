@@ -512,6 +512,92 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     await waitFor(() => expect(mockStopPreview).toHaveBeenCalledWith("t1"))
   })
 
+  // ── runbook（acceptance v2.2 多服务运行手册 — 与 server resolveRunbook 同优先级）──
+
+  const V4_SPEC_RUNBOOK = {
+    ...(V4_SPEC as object),
+    acceptance_runbook: {
+      up: { command: "mvn -B -DskipTests package && java -jar target/x.jar --server.port=18081", cwd: "projects/api" },
+      ready: { command: "curl -sf http://localhost:18081/demo" },
+      views: [{ label: "admin", url: "http://localhost:18081/demo" }, { label: "docs", url: "http://localhost:18081/docs" }],
+      down: { command: "pkill -f x.jar || true" },
+      timeoutS: 300,
+    },
+  } as unknown as TaskSpec
+
+  it("RB1: 任务只有 acceptance_runbook → 预览条识别为 runbook 态，▶启动可点（不再「未配置」）", async () => {
+    mockGetPreview.mockResolvedValue(null)
+    renderModal(V4_SPEC_RUNBOOK)
+    await screen.findByTestId("preview-mode-runbook")
+    expect(screen.getByTestId("preview-mode-runbook").textContent).toContain("runbook")
+    fireEvent.click(screen.getByTestId("preview-start"))
+    await waitFor(() => expect(mockStartPreview).toHaveBeenCalledWith("t1"))
+  })
+
+  it("RB2: ready + views[] → 多入口链接全渲染（href/label 各一），不再只见首 url", async () => {
+    mockGetPreview.mockResolvedValue({
+      task_id: "t1", url: "http://localhost:18081/demo", state: "ready",
+      views: [{ label: "admin", url: "http://localhost:18081/demo" }, { label: "docs", url: "http://localhost:18081/docs" }],
+    })
+    renderModal(V4_SPEC_RUNBOOK)
+    const links = await screen.findAllByTestId("preview-url")
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute("href")).toBe("http://localhost:18081/demo")
+    expect(links[1].getAttribute("href")).toBe("http://localhost:18081/docs")
+    expect(links[1].textContent).toContain("docs")
+  })
+
+  it("RB3: runbook 编辑抽屉 — up/ready/views/down 可改，保存写 acceptance_runbook（spec-field user）", async () => {
+    renderModal(V4_SPEC_RUNBOOK)
+    await screen.findByTestId("preview-mode-runbook")
+    fireEvent.click(screen.getByTestId("preview-edit"))
+    fireEvent.change(screen.getByTestId("rb-ready-command"), { target: { value: "curl -sf http://localhost:18082/actuator/health" } })
+    fireEvent.change(screen.getByTestId("rb-views"), { target: { value: "admin|http://localhost:18082/\nhttp://localhost:18082/docs" } })
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() =>
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "acceptance_runbook",
+        {
+          up: { command: "mvn -B -DskipTests package && java -jar target/x.jar --server.port=18081", cwd: "projects/api" },
+          ready: { command: "curl -sf http://localhost:18082/actuator/health" },
+          views: [{ label: "admin", url: "http://localhost:18082/" }, { url: "http://localhost:18082/docs" }],
+          down: { command: "pkill -f x.jar || true" },
+          timeoutS: 300,
+        },
+        { source: "user" },
+      ),
+    )
+  })
+
+  it("RB4: 简写配置可一键升级 runbook（预填 up/ready/views），保存写 runbook 不碰简写", async () => {
+    renderModal(V4_SPEC_WITH_PREVIEW)
+    await screen.findByTestId("preview-bar")
+    fireEvent.click(screen.getByTestId("preview-edit"))
+    fireEvent.click(screen.getByTestId("preview-to-rb"))
+    expect(screen.getByTestId("rb-up-command").getAttribute("value")).toBe("mvn -q spring-boot:run")
+    expect(screen.getByTestId("rb-ready-command").getAttribute("value")).toContain("curl -sf")
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledWith("t1", "acceptance_runbook", expect.anything(), { source: "user" }))
+    expect(mockUpdateSpecField.mock.calls.some((c) => c[1] === "acceptance_preview")).toBe(false)
+  })
+
+  it("RB5: 未配置态给两条路（配置预览 / runbook 方式）；runbook 路径起多服务表单", async () => {
+    renderModal()
+    await screen.findByTestId("preview-bar")
+    fireEvent.click(screen.getByTestId("preview-configure-rb"))
+    expect(screen.getByTestId("preview-editor").getAttribute("data-rb")).toBe("true")
+    fireEvent.change(screen.getByTestId("rb-up-command"), { target: { value: "docker compose up -d" } })
+    fireEvent.change(screen.getByTestId("rb-ready-command"), { target: { value: "docker compose ps web | grep healthy" } })
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() =>
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "acceptance_runbook",
+        { up: { command: "docker compose up -d" }, ready: { command: "docker compose ps web | grep healthy" }, timeoutS: 120 },
+        { source: "user" },
+      ),
+    )
+  })
+
   it("T09 AC2 ✗ 闭环：打回提交 body 携带 reopen_tickets（票名基去兜底）", async () => {
     mockGetPlaybook.mockResolvedValue({
       available: true, goal: "g", specRevised: false,
@@ -598,6 +684,31 @@ describe("验货台 v2 — 当场复检", () => {
       { source: "user" },
     ))
     expect(screen.queryByTestId("verify-editor")).toBeNull() // 成功即收
+  })
+
+  it("VP1 多仓：per_repo 配置 → 「逐仓」徽章 + 命令注记；编辑预勾且 cwd 禁用（被忽略）", async () => {
+    renderModal({ ...(V4_SPEC as object), acceptance_verify: { command: "mvn -B test", per_repo: true, timeoutS: 900 } } as unknown as TaskSpec)
+    expect(await screen.findByTestId("verify-per-repo")).toBeTruthy()
+    expect(screen.getByTestId("verify-panel").textContent).toContain("逐仓各跑一次")
+    fireEvent.click(screen.getByTestId("verify-edit"))
+    const cb = screen.getByTestId("verify-per-repo-input") as HTMLInputElement
+    expect(cb.checked).toBe(true)
+    expect((screen.getByTestId("verify-cwd-input") as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it("VP2 勾「逐仓」保存 → spec-field 载荷带 per_repo:true 且不带 cwd；回显不再抹掉", async () => {
+    renderModal() // 无 verify 起步
+    await screen.findByText("未预设复检命令")
+    fireEvent.click(screen.getByTestId("verify-edit"))
+    fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "mvn -B test" } })
+    fireEvent.click(screen.getByTestId("verify-per-repo-input"))
+    mockUpdateSpecField.mockResolvedValue({ version: 6 })
+    fireEvent.click(screen.getByTestId("verify-save"))
+    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledWith(
+      "t1", "acceptance_verify",
+      { command: "mvn -B test", per_repo: true, timeoutS: 600 },
+      { source: "user" },
+    ))
   })
 
   it("已配置 → ▶复检 startVerify + SSE log 进控制台 + 终态事件盖章 PASSED", async () => {
