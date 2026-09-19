@@ -1,0 +1,143 @@
+<!doctype html>
+<!-- 最终界面确认稿 · 改完后执行控制台 tab 的真实样子（V2 紫 + B 单入口 + 新 tab） -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>改后最终界面 — 执行控制台 · 待验收态</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --purple-soft:#eceaff; --green:#00b575; --amber:#ffb800; --amber-soft:#fff0cc;
+    --idle:#eceae4; --red:#e5484d; --cyan:#22b8e0;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#ded9cc;color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:30px;display:flex;justify-content:center}
+  /* 弹窗 chrome 示意 */
+  .modal{width:860px;background:var(--bg);border:2.5px solid var(--bd);border-radius:18px;box-shadow:8px 8px 0 rgba(33,31,39,.25);overflow:hidden}
+  .mhead{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:2.5px solid var(--bd);background:var(--paper)}
+  .mhead .name{font-weight:900;font-size:13px}
+  .mhead .stbadge{border:2px solid var(--bd);border-radius:7px;padding:1px 8px;font:900 9.5px var(--mono);background:var(--amber-soft)}
+  .mhead .sp{margin-left:auto}
+  .mhead .x{border:2px solid var(--bd);background:var(--paper);border-radius:8px;width:22px;height:22px;display:grid;place-items:center;font:900 12px var(--mono);color:var(--dim)}
+  .tabs{display:flex;gap:6px;padding:8px 14px 0}
+  .tab{border:2px solid var(--bd);border-bottom:none;border-radius:10px 10px 0 0;padding:5px 14px;font:900 11px var(--mono);background:var(--idle);color:var(--dim)}
+  .tab.on{background:var(--bg);color:var(--ink);position:relative;top:2px;padding-bottom:7px}
+  .body{border-top:2px solid var(--bd);padding:14px 16px 18px;display:grid;grid-template-columns:200px 1fr;gap:14px}
+  /* 左 rail */
+  .rail{border:2px solid var(--bd);border-radius:13px;background:var(--paper);padding:8px;align-self:start}
+  .rail .node{display:flex;align-items:center;gap:6px;border:1.5px dashed rgba(33,31,39,.25);border-radius:8px;padding:5px 7px;font:10.5px var(--mono);margin-bottom:5px;color:var(--dim)}
+  .rail .node.done{border-style:solid;background:var(--idle)}
+  .rail .node .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .rail h6{margin:2px 0 8px;font:900 9px var(--mono);letter-spacing:.1em;color:var(--dim)}
+  /* 主区 */
+  h5{margin:2px 0 8px;font:900 10px var(--mono);letter-spacing:.1em;color:var(--dim)}
+  .card{border:2px solid var(--amber);border-radius:13px;overflow:hidden;background:var(--amber-soft);box-shadow:3px 3px 0 rgba(33,31,39,.12);cursor:pointer}
+  .card:hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 rgba(33,31,39,.16)}
+  .cardhead{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:2px solid rgba(33,31,39,.08);font:900 9.5px var(--mono);letter-spacing:.08em}
+  .time{margin-left:auto;font-weight:400;font-size:10px;color:var(--dim)}
+  .btn{display:inline-flex;align-items:center;gap:5px;border:2.5px solid var(--bd);border-radius:10px;font-family:var(--mono);cursor:pointer;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2)}
+  .btn:hover{transform:translate(-1px,-1px)}
+  .flow{background:var(--purple);color:#fff;font-size:11px;font-weight:900;padding:6px 12px;margin-left:10px}
+  .flow .x{font-weight:400}
+  .accept{background:var(--green);color:#fff;font:900 11.5px var(--mono);padding:6px 13px}
+  .cardbody{padding:10px 12px 11px}
+  .row1{display:flex;align-items:center;gap:10px;font-size:12.5px}
+  .ok{font-weight:900;color:var(--green)}
+  .agg{font:10.5px var(--mono);color:var(--dim)}
+  .hint{font:11px var(--mono);color:var(--dim);margin-top:5px}
+  /* 轮次账本 */
+  .ledger{border:2px solid var(--bd);border-radius:13px;background:var(--paper);padding:10px 12px;margin-top:14px;box-shadow:3px 3px 0 rgba(33,31,39,.12)}
+  .lh{display:flex;align-items:center;font:900 9.5px var(--mono);letter-spacing:.08em;color:var(--dim);margin-bottom:6px}
+  .lh .tail{margin-left:auto;font-weight:400}
+  .runrow{display:flex;align-items:center;gap:8px;border-bottom:1.5px dashed rgba(33,31,39,.12);padding:8px 2px;font-size:12px}
+  .runrow:last-child{border-bottom:none}
+  .rbadge{border:2px solid var(--bd);border-radius:7px;padding:1px 6px;font:900 10px/1.5 var(--mono);background:var(--idle)}
+  .rbadge.live{background:#d9f2fa;color:#0e7d9c}
+  .wf{font:11px var(--mono);color:var(--dim)}
+  .st{font-weight:900}
+  .meta{margin-left:auto;display:flex;align-items:center;gap:8px;font:10.5px var(--mono);color:var(--dim)}
+  .chip{border:2px solid var(--purple);background:var(--purple-soft);color:var(--purple);border-radius:8px;font:900 10px var(--mono);padding:2.5px 8px;cursor:pointer;box-shadow:2px 2px 0 rgba(91,69,255,.25)}
+  .chip:hover{transform:translate(-1px,-1px)}
+  .chip .x{font-weight:400}
+  /* 盘上文件 chips（风格参照物，不动） */
+  .files{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+  .fchip{border:1.5px solid var(--bd);background:var(--bg);border-radius:7px;padding:2px 8px;font:10.5px var(--mono);color:var(--dim)}
+  .fchip b{color:var(--ink)}
+  .ann{margin-top:16px;border:2px dashed rgba(33,31,39,.3);border-radius:12px;padding:9px 12px;font-size:11.5px;color:var(--dim);line-height:1.7}
+  .ann b{color:var(--ink)}
+  .del{text-decoration:line-through;text-decoration-color:var(--red);opacity:.65}
+  kbd{font:900 9px var(--mono);border:1.5px solid rgba(33,31,39,.35);border-bottom-width:3px;border-radius:5px;padding:0 5px;background:var(--paper)}
+</style>
+</head>
+<body>
+<div class="modal">
+  <div class="mhead">
+    <span class="name">验收C：双仓 Luhn 校验链路</span><span class="stbadge">待验收 · P1 R2</span>
+    <span class="sp"></span><span class="x">⤢</span><span class="x">×</span>
+  </div>
+  <div class="tabs"><div class="tab on">▶ 执行控制台</div><div class="tab">验货台</div></div>
+
+  <div class="body">
+    <!-- 左 rail：phase 节点（现状件，未动，供风格对照） -->
+    <div class="rail">
+      <h6>PHASE 轨</h6>
+      <div class="node done"><span class="dot"></span>P1 票DAG · 完成</div>
+      <div class="node done"><span class="dot"></span>P1 CR · 完成</div>
+      <div class="node done"><span class="dot"></span>P1 e2e · PASS</div>
+      <div class="node"><span class="dot" style="background:var(--amber)"></span>P1 待人工验收</div>
+      <div class="node"><span class="dot" style="background:#bbb"></span>P2 未开始</div>
+    </div>
+
+    <div>
+      <h5>本轮焦点</h5>
+      <!-- ① B 定稿：交付卡 = 唯一入口，卡头两钮（流程图紫实心 V2 + 绿章），整卡可点 -->
+      <div class="card">
+        <div class="cardhead">
+          R2 交付报告 · 机检结果
+          <span class="btn flow"><span>⌗</span> 执行流程图 <span class="x">↗</span></span>
+          <span class="time">用时 25m</span>
+          <span class="btn accept">→ 去验货台验收</span>
+        </div>
+        <div class="cardbody">
+          <div class="row1"><span class="ok">✓ 执行成功</span><span class="agg">3票 · 2PR · 0跳过 · cost $1.31</span></div>
+          <div class="hint">实物 · 剧本 · 跑起来看 已就绪 —— 点卡片任意处进入</div>
+        </div>
+      </div>
+
+      <!-- ② A 定稿 V2：轮次账本行内 = 紫软底小章（每行一枚，开新 tab） -->
+      <div class="ledger">
+        <div class="lh">轮次账本（全部）<span class="tail">↗ 均为新标签页打开</span></div>
+        <div class="runrow">
+          <span class="rbadge">R1 ✓</span><span class="wf">matt-spec-dev</span><span class="st">成功</span>
+          <span class="meta">14:22 · 25m · 3票/2PR</span>
+          <span class="chip">流程图 <span class="x">↗</span></span>
+        </div>
+        <div class="runrow">
+          <span class="rbadge live">R2 ●</span><span class="wf">matt-spec-dev</span><span class="st">成功</span>
+          <span class="meta">13:55 · 18m · 5票/1PR</span>
+          <span class="chip">流程图 <span class="x">↗</span></span>
+        </div>
+        <div class="runrow">
+          <span class="rbadge">R3 ✗</span><span class="wf">matt-spec-dev</span><span class="st">中止</span>
+          <span class="meta">13:31 · 4m</span>
+          <span class="chip">流程图 <span class="x">↗</span></span>
+        </div>
+      </div>
+
+      <!-- ③ 既有件（盘上文件 chips）未动 —— 风格锚点 -->
+      <div class="files">
+        <span class="fchip"><b>spec.md</b></span><span class="fchip"><b>issues/</b> ×3</span><span class="fchip"><b>round-report.md</b></span><span class="fchip"><b>e2e-data/</b></span>
+      </div>
+
+      <div class="ann">
+        <b>相对现状的差量</b>：<br>
+        ① 卡内紫字链 <span class="del">「验货台核对实物 →」</span> 与卡外整行绿横幅 <span class="del">「→ 去验货台验收（实物·剧本·跑起来看）」</span> 已删 —— 全页去验货台只剩卡头这一枚绿章（整卡仍是扩大点击热区）。<br>
+        ② 行尾裸 <span class="del">「↗」</span> → <b>「流程图 ↗」紫软底章</b>；焦点卡头加 <b>紫实心大章</b>（V2）。全部 <b>新标签页</b> 打开（<kbd>⌘</kbd>/中键同样），控制台弹窗留在原地。<br>
+        ③ 盘上文件 chips、左 phase 轨、tab 条等一切现状件未动 —— 新章与它们同族（墨边+硬影+mono）。
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

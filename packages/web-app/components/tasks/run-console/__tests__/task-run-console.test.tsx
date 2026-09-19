@@ -211,10 +211,16 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} />)
     expect(await screen.findByTestId("phase-row-legacy")).toBeTruthy()
     expect(screen.getByText(/v3 单阶段/)).toBeTruthy()
-    // 深链：徽章自带 workspace_id + id
-    const jump = (await screen.findByText("↗"))
+    // 深链（V2 定稿后）：行内「流程图 ↗」章 → 新标签页，不再 router.push
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    const jump = await waitFor(() => {
+      const el = document.querySelector("[data-run-deeplink=\"execution\"]") as HTMLElement
+      if (!el) throw new Error("deeplink chip not mounted")
+      return el
+    })
     fireEvent.click(jump)
-    expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9")
+    expect(openSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9", "_blank", expect.any(String))
+    openSpy.mockRestore()
   })
 
   it("derived 缺失（旧 server）不崩，账本兜底", async () => {
@@ -259,6 +265,26 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(mockPostAcceptance).not.toHaveBeenCalled()
   })
 
+  it("流程图入口（V2 定稿）：卡头/行内章均 window.open 新 tab，不再 router.push 顶走弹窗", async () => {
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1, workspace_id: "ws-e1" })], derived: derivedOf(views) })
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    await screen.findByTestId("console-acceptance-card")
+    fireEvent.click(screen.getByTestId("console-open-acceptance"))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    fireEvent.click(screen.getByTestId("console-tab-console"))
+    await screen.findByTestId("console-acceptance-card")
+    const flow = document.querySelector("[data-run-deeplink=\"awaiting\"]") as HTMLElement
+    expect(flow).toBeTruthy()
+    fireEvent.click(flow)
+    expect(openSpy).toHaveBeenCalledWith(expect.stringContaining("/workspaces/ws-e1?tab=detail&execId=exec-1"), "_blank", expect.any(String))
+    // 点击流程图章不得误触整卡热区（stopPropagation）
+    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
+    openSpy.mockRestore()
+  })
+
   it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
@@ -267,8 +293,10 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     const acceptTab = await screen.findByTestId("console-tab-accept")
     expect(acceptTab.textContent).toContain("P1·R1")
     expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
-    // 交付报告里的「验货台核对实物 →」= 切 tab，不是开弹窗
-    fireEvent.click(screen.getByText(/验货台核对实物/))
+    // 单入口定稿：旧「验货台核对实物 →」链与卡外绿横幅已删；点整卡 = 切 tab
+    expect(screen.queryByText(/验货台核对实物/)).toBeNull()
+    expect(screen.queryByText(/去验货台验收（实物/)).toBeNull()
+    fireEvent.click(screen.getByTestId("console-acceptance-card"))
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
     // 切回执行控制台

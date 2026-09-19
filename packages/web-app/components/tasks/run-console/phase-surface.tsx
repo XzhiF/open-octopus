@@ -8,7 +8,6 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import type { Task, TaskExecutionBadge, TaskPhase } from "@octopus/shared"
 import {
@@ -142,7 +141,6 @@ export function RoundRow({ ctx, exec, meta }: {
   meta: { pv?: TaskPhaseView; r?: TaskRoundView }
   exec: TaskExecutionBadge
 }) {
-  const router = useRouter()
   const agg = ctx.aggMap[exec.id] ?? null
   const startedMs = exec.started_at ? Date.parse(exec.started_at) : Date.parse(exec.created_at)
   const isLive = ["pending", "running", "paused", "pending_approval", "pending_resume"].includes(exec.status)
@@ -168,12 +166,13 @@ export function RoundRow({ ctx, exec, meta }: {
         </span>
         {link && (
           <button
-            onClick={() => router.push(link)}
-            title="跳转到该次执行的流程图"
-            className="shrink-0 rounded-[6px] border-[1.5px] border-pop-purple px-1.5 py-px font-mono text-[10px] font-black text-pop-purple transition-colors hover:bg-pop-purple-soft"
+            // 新标签页打开——控制台弹窗留在原地（router.push 会把弹窗整个顶走，2026-09-19 用户拍板）
+            onClick={() => window.open(link, "_blank", "noopener")}
+            title="在工作区查看该次执行的流程图（新标签页）"
+            className="shrink-0 rounded-[8px] border-2 border-pop-purple bg-pop-purple-soft px-2 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-transform hover:-translate-y-px"
             data-run-deeplink="execution"
           >
-            ↗
+            流程图 <span className="font-normal">↗</span>
           </button>
         )}
       </div>
@@ -272,6 +271,19 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
           <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm">
             <header className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5">
               <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">▶ LIVE ROUND · R{liveRound.roundIndex}</span>
+              {(() => {
+                const liveLink = run ? deepLinkTarget(run) : null // 同上：workspace_id 在徽章上
+                return liveLink ? (
+                  <button
+                    onClick={() => window.open(liveLink, "_blank", "noopener")}
+                    title="在工作区查看进行中的流程图（新标签页打开）"
+                    className="rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-0.5 font-mono text-[10px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                    data-run-deeplink="live"
+                  >
+                    执行流程图 <span className="font-normal">↗</span>
+                  </button>
+                ) : null
+              })()}
               <span className="ml-auto font-mono text-[10px] text-pop-dim">{(liveRound.exec.workflow_ref ?? pv.workflowRef).replace(/^built-in\//, "")}</span>
             </header>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[11.5px]">
@@ -295,36 +307,56 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
           : null
         return (
           <>
-            <section className="overflow-hidden rounded-[13px] border-2 border-pop-amber bg-pop-amber-soft shadow-pop-sm">
-              <header className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-1.5">
-                <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
-                <span className="ml-auto font-mono text-[10px] text-pop-dim">{dur != null ? `用时 ${formatDuration(dur)}` : ""}</span>
-              </header>
-              <div className="space-y-1 px-3 py-2 text-[12px]">
-                <div className="flex items-center gap-2">
-                  <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
-                    {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
-                  </span>
-                  <AggInline agg={agg} className="font-mono" />
-                  <button onClick={ctx.openAcceptance} className="ml-auto shrink-0 font-mono text-[10.5px] font-black text-pop-purple underline hover:text-pop-ink" data-acceptance-evidence-link>
-                    验货台核对实物 →
-                  </button>
-                </div>
-                {roundError && (
-                  <p className="break-words font-mono text-[11px] text-pop-red" data-acceptance-round-error>{roundError}</p>
-                )}
-              </div>
-            </section>
-            {/* ADR-0022：决策唯一入口 = 验货台（实物/剧本/预览之后才盖章）。
-                原先此处的 ✓通过/✕打回 直通 postAcceptance、绕过一切证据 —— 已撤。 */}
-            <button
-              onClick={ctx.openAcceptance}
-              className="pop-press flex w-full items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90"
-              data-acceptance-open
-              data-testid="console-open-acceptance"
-            >
-              → 去验货台验收（实物 · 剧本 · 跑起来看）
-            </button>
+            {/* 单入口定稿（2026-09-19 用户拍板）：原先卡内紫字链「验货台核对实物 →」+
+                卡外整行绿横幅 = 同一动作两入口 → 收敛为「整卡可点 + 卡头一枚绿章」。
+                流程图章（V2 紫实心）坐它左边弱一档：查看 vs 主行动，层级分明。
+                两章均 stopPropagation——别撞整卡热区。 */}
+            {(() => {
+              // workspace_id 只在执行徽章上（TaskRoundExec 不带），从 run 取。
+              const flowLink = run ? deepLinkTarget(run) : null
+              return (
+                <section
+                  className="cursor-pointer overflow-hidden rounded-[13px] border-2 border-pop-amber bg-pop-amber-soft shadow-pop-sm transition-transform hover:-translate-y-px hover:shadow-pop"
+                  onClick={ctx.openAcceptance}
+                  data-acceptance-open
+                  data-testid="console-acceptance-card"
+                >
+                  <header className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-1.5">
+                    <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
+                    {flowLink && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open(flowLink, "_blank", "noopener") }}
+                        title="在工作区查看本轮执行的流程图（新标签页打开）"
+                        className="ml-1 shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-1 font-mono text-[10.5px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                        data-run-deeplink="awaiting"
+                      >
+                        执行流程图 <span className="font-normal">↗</span>
+                      </button>
+                    )}
+                    <span className="ml-auto font-mono text-[10px] text-pop-dim">{dur != null ? `用时 ${formatDuration(dur)}` : ""}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); ctx.openAcceptance() }}
+                      className="shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-green px-3 py-1 font-mono text-[11px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                      data-testid="console-open-acceptance"
+                    >
+                      → 去验货台验收
+                    </button>
+                  </header>
+                  <div className="space-y-1 px-3 py-2 text-[12px]">
+                    <div className="flex items-center gap-2">
+                      <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
+                        {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
+                      </span>
+                      <AggInline agg={agg} className="font-mono" />
+                    </div>
+                    <div className="font-mono text-[11px] text-pop-dim">实物 · 剧本 · 跑起来看 已就绪 — 点卡片任意处进入</div>
+                    {roundError && (
+                      <p className="break-words font-mono text-[11px] text-pop-red" data-acceptance-round-error>{roundError}</p>
+                    )}
+                  </div>
+                </section>
+              )
+            })()}
           </>
         )
       })()}
@@ -451,7 +483,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
         </Box>
       )}
 
-      <Box tag="轮次账本（全部）" tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 跳工作区执行详情" : undefined}>
+      <Box tag="轮次账本（全部）" tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 均为新标签页打开" : undefined}>
         {runs.length === 0 && ctx.phaseViews.length === 0 ? (
           <p className="py-0.5 text-[11px] text-pop-dim">任务尚未派发执行。</p>
         ) : (
