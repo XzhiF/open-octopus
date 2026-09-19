@@ -64,9 +64,16 @@
         2 例 + tasks-preview **PV8**（nohup daemon 由 down 收尸）。已验：全套 5128 例失败集与
         基线逐条相同（11 例 pre-existing：providers/pi、clone-file-mgmt、archive 等，与本改无关）。
 
-1. **web 多 view 渲染**（仍开放）：`packages/web-app/components/tasks/acceptance/preview-bar.tsx`
-   目前只显示/编辑首个 url（`summary.url`）。后端已返回 `views[]`，需改成渲染多入口 + 编辑面板
-   支持多服务 runbook（可暂用文本编辑 up/health/down command）。用户已问过、待其确认是否本轮做。
+1. **web 多 view 渲染 + runbook 接线** ✅（commit `d28965b4`）：preview-bar 双模式（runbook 徽章 /
+   views[] 全渲染 / up·ready·views·down·timeoutS 编辑抽屉 / 简写一键升级）；verify-panel 补
+   「逐仓」勾选 + cwd（旧版整值覆盖会抹掉 agent 写的 per_repo）。测试 RB1-5 + VP1-2。
+   - **任务 C 全链路复跑**（双仓 Luhn + 验收面全家桶，入队前即登记 per_repo verify + runbook）：
+     gate 放行 → repos=2 has_e2e=true → DAG 01→02 → CR → e2e 后置 PASS → 双 PR
+     [java-common #15, api-admin #9]。验收台活体：**preview runbook 起→ready→2 views→stop 后
+     进程空 + 18082 拒连**（down 绕 harness 修复的首个真任务级复验）；**per_repo 当场复检
+     passed**（projects/* 逐仓 mvn -B test，~20s 增量）。e2e 走查顺带修了一处阻塞服务启动的
+     孤儿注册（如实进 ship diff + 报告声明）。
+   - 现开放：PR 池共 5 个 OPEN（A#13 / B#14、#8 / C#15、#9），A/B/C 均 awaiting_review 未动决策。
 
 1b. **待处置**：上面 ③ 的修复未 commit（bash/python/executor-config/round-evidence + 两测试 +
    `packages/core-pack/skills/matt-e2e-test-methodology/`，见 2b）。演示 PR：A #13 / B #14、#8
