@@ -39,6 +39,7 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
+import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
@@ -297,6 +298,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const barBtn = "rounded border-[1.5px] border-pop-bg/30 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
 
   return (
+    <FoldProvider taskId={task.id}>
     <div className="flex h-full min-h-0 flex-col" data-run-console={task.status}>
       {/* ── terminal 导航条 ──（与草稿窗同壳：28px 深色 mono） */}
       <div
@@ -437,6 +439,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <PipelineRail
           ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel}
           isV4={isV4} aggLoaded={aggLoaded}
+          showMaster={!(awaitingPv || surfaceTab === "accept")}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
           {/* ── surface tabs（2026-09-16）：有待验收轮时亮出「执行控制台 | 验货台」
@@ -470,6 +473,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 🔍 验货台
                 {awaitingPv && <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>}
               </button>
+              <FoldMasterChip className="ml-auto" />
             </div>
           )}
           {surfaceTab === "accept" ? (
@@ -522,13 +526,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       {/* 对话框宿主（单实例）—— 验货台已收编为上方 tab，不再挂弹窗。 */}
       <TriggerDialog open={triggerOpen} onOpenChange={setTriggerOpen} task={task} onTriggered={() => { onMutated(); refetch() }} />
     </div>
+    </FoldProvider>
   )
 }
 
 // ── 左 rail：Phase 流水线（唯一状态位）──────────────────────────────
 
-function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
+function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMaster }: {
   ctx: RunCtx; budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean; aggLoaded: boolean
+  /** tab 条缺席（非待验收）时，一键盘落 rail 头部；有 tab 条则让位，绝不同时出两枚。 */
+  showMaster: boolean
 }) {
   const { task, detail, phaseViews, now, totalAgg } = ctx
   const derived = detail?.derived
@@ -541,6 +548,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
     <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
+        {showMaster && <span className="ml-auto"><FoldMasterBar /></span>}
       </div>
 
       {terminal && isV4 && phaseViews.length > 0 && (
