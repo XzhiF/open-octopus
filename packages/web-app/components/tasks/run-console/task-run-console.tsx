@@ -530,10 +530,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
 // ── 左 rail：Phase 流水线（唯一状态位）──────────────────────────────
 
-function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMaster }: {
+function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
   ctx: RunCtx; budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean; aggLoaded: boolean
-  /** tab 条缺席（非待验收）时，一键盘落 rail 头部；有 tab 条则让位，绝不同时出两枚。 */
-  showMaster: boolean
 }) {
   const { task, detail, phaseViews, now, totalAgg } = ctx
   const derived = detail?.derived
