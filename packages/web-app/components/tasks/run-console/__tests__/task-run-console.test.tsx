@@ -200,7 +200,8 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     expect(chip.textContent).toContain("⏳")
     expect(screen.getByTestId("phase-round-1-1").textContent).toContain("✓")
     expect(await screen.findByText(/LIVE ROUND/)).toBeTruthy()
-    expect(screen.getByText(/执行动线 \/ FLOW/)).toBeTruthy()
+    // 全绿 + 无在跑长命令 → 大事报整块不存在（「没事不显示」主用例）
+    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
     // 1 轮 + LIVE 卡在位 → ROUNDS 账本框不再把同一枚轮说第二遍（降噪定稿）
     expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 自动选中在跑的 P2（选中 = outline 高亮）
@@ -317,32 +318,50 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
 
-  it("执行动线（取代起收回放）：真事件形状压成节点行+时长+工具行，事后打开有全程；1 轮无 ROUNDS 框", async () => {
+  it("大事报（取代起收回放/动线）：挂过+自愈真信号上屏，全绿履历一个字不占；1 轮无 ROUNDS 框", async () => {
     mockFetchAgentEvents.mockResolvedValue({
       executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
       events: [
         { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
+        // 全绿的节点（真数据里有 6 段 —— 一件不提）
         { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
         { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:01Z", durationMs: 48, status: "completed" },
         { nodeId: "e2e-verify", event: "start", timestamp: "2026-09-21T09:00:02Z" },
-        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:01:00Z", toolName: "Bash", input: { command: "curl -sf http://localhost:18082/demo/luhn?no=4539" } },
+        // C 真形状：老行 input 空串，result 带 Exit code；后有同工具成功 = 自愈
+        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:01:00Z", toolName: "Bash", input: "", isError: true, result: "Exit code 1\nmvn -B -pl util install failed" },
+        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:03:00Z", toolName: "Bash", input: { command: "mvn -B -pl util install -am" }, result: "BUILD SUCCESS" },
         { nodeId: "e2e-verify", event: "end", timestamp: "2026-09-21T09:10:00Z", durationMs: 579337, status: "completed" },
       ],
     })
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
-    // 节点行：起止配成一行、durationMs 说话（旧形状是「回放 · e2e-verify 起/收」两行）
-    await waitFor(() => expect(document.querySelector('[data-flow-node="e2e-verify"]')).toBeTruthy())
-    expect(screen.getByText(/9m 39s/)).toBeTruthy()
-    expect(screen.getByText(/curl -sf http:\/\/localhost:18082/)).toBeTruthy()
-    // 起收流水账与内部节点绝迹
+    // ✗ 行：聚合计数 + 自愈判定 + result 首行详情（glyph 与文本同节，textContent 整取）
+    await waitFor(() => expect(document.querySelector('[data-signal="bad"]')?.textContent).toMatch(/挂过 1 次 Bash（均已自愈）/))
+    // 全绿履历一个字不占：没有节点清单、没有起收、没有 spec-resolve
     expect(screen.queryByText(/回放 ·/)).toBeNull()
-    expect(screen.queryByText(/__engine_init__/)).toBeNull()
+    expect(screen.queryByText("spec-resolve")).toBeNull()
+    expect(screen.queryByText("e2e-verify", { selector: "[data-flow-node]" })).toBeNull()
     // 1 轮 + 交付卡 → ROUNDS 框撤（卡即轮）
     expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
     await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
+  })
+
+  it("大事报全绿即消失：待验收但本轮零异常 → 框整行不存在", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
+        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:02Z", durationMs: 1000, status: "completed" },
+      ],
+    })
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    await screen.findByText(/R1 交付报告/) // 交付卡在位（说明盘面渲染完整）
+    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalled())
+    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
   })
 
   it("轮次分档：≥2 轮账本框回来（打回史全留痕）", async () => {

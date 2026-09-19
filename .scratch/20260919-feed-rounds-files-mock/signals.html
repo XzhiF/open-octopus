@@ -1,0 +1,122 @@
+<!doctype html>
+<!-- .scratch/20260919-feed-rounds-files-mock/signals.html · 「大事报」方案稿
+     诊断：动线把 304 条事件压成 6 行全绿流水账 —— 屏上没有任何一行需要你参与决策，
+     所以「看不看一样」。解法顺着你的话：没意义的不显示，只报需要你知情的信号。
+     全部规则吃现有数据（isError / 重试段 / loop / 事件静默时长），零新 API。 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>活动流终局：没事不显示，有事一行说清</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --purple-soft:#eceaff; --green:#00b575; --green-soft:#d9f5e7;
+    --amber:#ffb800; --amber-soft:#fff0cc; --cyan:#22b8e0; --cyan-soft:#daf4fb;
+    --red:#e5484d; --red-soft:#ffe3e9; --idle:#eceae4; --yellow-soft:#fff3c4;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#ded9cc;color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:24px 28px 60px}
+  h1{font-size:16px;margin:0 0 3px}
+  .sub{color:var(--dim);font-size:11.5px;margin:0 0 16px}
+  .sub b{color:var(--ink)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .pane{border:2.5px solid var(--bd);border-radius:16px;background:var(--bg);box-shadow:5px 5px 0 rgba(33,31,39,.15);overflow:hidden}
+  .pane>header{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:2px solid var(--bd);background:var(--paper);font:900 10px var(--mono);letter-spacing:.06em}
+  .pill{border:1.5px solid var(--bd);border-radius:6px;padding:0 7px;font:900 9px var(--mono);background:var(--idle);color:var(--dim)}
+  .pill.live{background:var(--cyan-soft);color:#0e7d9c}
+  .pill.wait{background:var(--amber-soft);color:#8a6400}
+  .pbody{padding:10px 12px 12px;display:flex;flex-direction:column;gap:9px}
+  h5{margin:0;font:900 9px var(--mono);letter-spacing:.1em;color:var(--dim)}
+  .box{border:2px solid var(--bd);border-radius:13px;background:var(--paper);box-shadow:3px 3px 0 rgba(33,31,39,.1);overflow:hidden}
+  .boxhead{display:flex;align-items:center;padding:6px 11px;border-bottom:2px solid rgba(33,31,39,.08);font:900 9px var(--mono);letter-spacing:.09em;color:var(--dim)}
+  .boxhead .tail{margin-left:auto;font-weight:400}
+  .boxbody{padding:8px 11px;font-size:12px}
+  /* 动线（将被替换件） */
+  .flow{font:11px/1.9 var(--mono);color:var(--dim)}
+  .flow b{color:var(--ink)}
+  /* 信号行 */
+  .sig{display:flex;align-items:baseline;gap:7px;font:11.5px/1.9 var(--mono);border-radius:8px;padding:1px 6px}
+  .sig .g{font-weight:900;width:14px;text-align:center;flex-shrink:0}
+  .sig.bad .g{color:var(--red)} .sig.bad{background:var(--red-soft)}
+  .sig.hold .g{color:#8a6400} .sig.hold{background:var(--amber-soft)}
+  .sig.stall .g{color:var(--cyan)} .sig.stall{background:var(--cyan-soft)}
+  .sig.out .g{color:var(--green)}
+  .sig em{font-style:normal;font-weight:900}
+  .sig .q{color:var(--dim);font-size:10px}
+  .sig .expand{margin-left:auto;border:1.5px solid var(--bd);border-radius:6px;background:var(--paper);font:900 9.5px var(--mono);padding:0 6px;cursor:pointer;flex-shrink:0}
+  .sigdetail{font:10.5px/1.8 var(--mono);color:var(--dim);padding:2px 8px 4px 27px}
+  .sigdetail code{background:var(--idle);border-radius:4px;padding:0 4px}
+  /* LIVE 卡 */
+  .livecard{border:2px solid var(--purple);border-radius:13px;overflow:hidden;background:var(--paper)}
+  .livecard .lh{display:flex;align-items:center;gap:8px;padding:6px 11px;background:var(--purple-soft);font:900 9px var(--mono);letter-spacing:.08em;color:var(--purple)}
+  .livecard .lb{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:7px 11px;font:11.5px var(--mono)}
+  .stamp{border:2.5px solid var(--bd);border-radius:10px;background:var(--purple);color:#fff;font:900 10.5px var(--mono);padding:4px 10px;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2);margin-left:auto}
+  /* 消失示意 */
+  .gone{border:2px dashed rgba(33,31,39,.35);border-radius:13px;padding:14px 12px;text-align:center;font:900 11px var(--mono);color:var(--dim);background:repeating-linear-gradient(-45deg,transparent,transparent 9px,rgba(33,31,39,.03) 9px,rgba(33,31,39,.03) 18px)}
+  .gone b{color:#0f7b3d}
+  .ann{grid-column:1/-1;border:2px dashed rgba(33,31,39,.3);border-radius:12px;padding:10px 13px;font-size:11.5px;color:var(--dim);line-height:1.75;background:rgba(255,255,255,.45)}
+  .ann b{color:var(--ink)}.ann code{font:10.5px var(--mono);background:var(--idle);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<h1>活动流终局方案 —— 「大事报 / SIGNAL」：没事不显示</h1>
+<p class="sub">诊断：动线把 304 条事件压成 <b>6 行全绿的履历</b>，屏上没有一行需要你决策 —— 所以看不看一样。新规则恰好反过来：<b>只报「你该知道的事」，全绿无事 = 这块整行不存在</b>。信号全部从现有 agent-events 榨：isError 计数、重试段、loop 失败轮、事件静默时长、写入去重。</p>
+
+<div class="cols">
+  <!-- running 现场 -->
+  <div class="pane">
+    <header>执行中（回放 C · 14:03 时刻）<span class="pill live">4 行全是信号</span></header>
+    <div class="pbody">
+      <div class="livecard"><div class="lh">▶ LIVE ROUND · R1 · e2e-verify<span class="stamp">执行流程图 ↗</span></div>
+        <div class="lb" style="color:var(--purple)"><b>执行中</b><span style="color:var(--dim)">起 13:55</span><b>8m02s</b><span>∑$2.1</span></div>
+      </div>
+      <div class="box"><div class="boxhead">大事报 / SIGNAL<span class="tail">只在有事时出现</span></div>
+        <div class="boxbody" style="padding:5px 7px">
+          <div class="sig stall"><span class="g">⏳</span><span>e2e-verify <em>52s 没动静</em> <span class="q">（上次动作: Bash until 探活）—— 卡住？</span></span><span class="expand">流程 ↗</span></div>
+          <div class="sig hold"><span class="g">♻</span><span>e2e <em>修复第 2/3 轮</em> · 第 1 轮挂在预览超时</span></div>
+          <div class="sig bad"><span class="g">✗</span><span>一路挂过 2 次 Bash <span class="q">（e2e-verify · 均已恢复）</span></span><span class="expand">看详情</span></div>
+          <div class="sigdetail"><code>mvn -B -pl java-common-util install → exit 1</code> · 41s 后重试成功</div>
+          <div class="sig out"><span class="g">📦</span><span>已落 <em>12 个文件</em> <span class="q">LuhnUtils.java · LuhnController.java · walkthrough.sh +9</span></span></div>
+        </div>
+      </div>
+      <div class="pbody" style="padding:0">
+        <h5 style="margin-bottom:4px">对比：同时刻的动线会显示什么</h5>
+        <div class="box"><div class="boxhead">执行动线 / FLOW</div><div class="boxbody flow">
+          13:55 <b>ticket-dag ✓</b> 2m26s · 6 工具<br>
+          13:55 <b>spec-resolve ✓</b> 48ms<br>
+          …<span style="opacity:.5">（全绿履历，一行都不必看）</span>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 待验收现场 -->
+  <div class="pane">
+    <header>待验收（C · 此刻真状态）<span class="pill wait">信号只剩一条</span></header>
+    <div class="pbody">
+      <div class="box"><div class="boxhead">大事报 / SIGNAL</div>
+        <div class="boxbody" style="padding:5px 7px">
+          <div class="sig bad"><span class="g">✗</span><span>本轮挂过 <em>2 次</em>，都自愈 <span class="q">（e2e-verify · mvn 首跑失败 → 改 -am 后过）—— 验收时可重点核这条链路</span></span><span class="expand">看详情</span></div>
+        </div>
+      </div>
+      <div class="gone"><b>动线 / FLOW 框 —— 没了。</b><br>跑完且没异常时，这块整行不存在；履历归「流程图 ↗」和轮次账本，控制台只留判决入口。<br>一条信号都没有的轮 = 不占一行高。</div>
+      <h5 style="margin-top:2px">信号字典（就这五种，全可派生）</h5>
+      <div class="box"><div class="boxbody flow">
+        <span style="color:var(--cyan)">⏳</span> <b>卡住</b> —— 活节点事件静默 ≥2min（含工具在跑没落事件的）<br>
+        <span style="color:#8a6400">♻</span> <b>修复轮</b> —— loop 进行中：第几轮/共几 + 上轮挂因<br>
+        <span style="color:var(--red)">✗</span> <b>挂过</b> —— isError 按节点聚合计数 + 首条命令 + 是否重试恢复；完结后保留（对验收有用：是不是硬修绿的）<br>
+        <span style="color:var(--green)">📦</span> <b>产出</b> —— 仅 live：Write/Edit 去重文件数 + 代表名<br>
+        ◆ <b>状态跳变</b> —— SSE 的 task/phase 变更垫底（原样保留）
+      </div></div>
+    </div>
+  </div>
+
+  <div class="ann wide">
+    <b>与动线的取舍</b>：动线想回答「它经历了什么」，但你从不需要在那 8 行里找答案 —— 真要看全程，<b>流程图 ↗ 本来就一键直达</b>。控制台的信息职责是「此刻什么需要你知情/决策」，所以动线退役，换「大事报」：<b>空 = 不渲染</b>（比"全绿"更好的报告是没有报告）。<br>
+    <b>数据兑现度</b>：⏳=事件时间戳 vs now（live 5s 轮询已在）；♻=loopIterations；✗=isError+重试段配对（flow-build 已有料）；📦=tool_call 文件名去重。全部现有通道，<b>零 server 改动</b>；flow-build.ts 就地改成 buildSignals，动线渲染删除。<br>
+    <b>钉死测试</b>：全绿 fixture → 框不渲染（这是主用例）；两类信号各自出形；「挂过但自愈」行必须同时含 2次/自愈/首条命令三要素。
+  </div>
+</div>
+</body>
+</html>

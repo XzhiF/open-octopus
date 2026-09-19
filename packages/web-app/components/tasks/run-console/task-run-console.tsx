@@ -39,7 +39,7 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
-import { buildFlow, type FlowLine } from "./flow-build"
+import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone,
@@ -173,11 +173,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [derived, phaseViews, derivedStatus])
   const view = sel ?? autoView
 
-  // ── 执行动线（2026-09-19 降噪定稿，取代「起/收」回放垫底）────────────
-  // agent-events 里躺着节点起止+时长、116 次工具调用、swarm 子代理与修复轮进度，
-  // 旧回放只榨出「回放 · 节点 起/收」——看不看一样的根因。现把整包事件压成
-  // FlowLine（纯函数 buildFlow，真格式单测钉死）。活轮在跑时每 5s 重拉一次尾部；
-  // 权威仍是 GET /:id derived，这里只是可读性层。切轮/切 phase 重锚。
+  // ── 大事报信号（2026-09-20 定稿：没事不显示）─────────────────────────
+  // 动线复盘被否：全绿履历没有一行需要用户决策。现只榨四类信号
+  // （✗挂过自愈 / ♻修复轮 / ▷在跑长命令 / 📦产出），纯函数 buildSignals
+  // 真格式单测钉死。活轮在跑时每 5s 重拉尾部；权威仍是 GET /:id derived。切轮重锚。
   const replayTarget = useMemo(() => {
     const runs = detail?.executions ?? []
     if (runs.length === 0) return null
@@ -190,7 +189,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return runs[runs.length - 1] ?? null
   }, [detail, view, phaseViews])
 
-  const [flow, setFlow] = useState<FlowLine[]>([])
+  const [signals, setSignals] = useState<SignalLine[]>([])
   const targetId = replayTarget?.id ?? null
   const targetWs = replayTarget?.workspace_id ?? null
   const targetLive = !!replayTarget && LIVE_RUN_STATUSES.has(replayTarget.status)
@@ -199,8 +198,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     let cancelled = false
     const pull = () => {
       fetchAgentEvents(targetWs, targetId)
-        .then((res) => { if (!cancelled) setFlow(buildFlow(res.events, Date.now(), res.loopIterations)) })
-        .catch(() => { /* 动线不可得照常 —— feed 退化为 SSE-only（原行为） */ })
+        .then((res) => { if (!cancelled) setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations })) })
+        .catch(() => { /* 信号不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
     }
     pull()
     const timer = targetLive && isLive ? setInterval(pull, 5000) : null
@@ -209,7 +208,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
-    now, isLive, events, flow, refetch, onMutated,
+    now, isLive, events, signals, refetch, onMutated,
     openAcceptance: () => setSurfaceTab("accept"),
     openTrigger: () => setTriggerOpen(true),
   }

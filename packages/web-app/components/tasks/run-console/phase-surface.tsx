@@ -2,7 +2,7 @@
 //
 // 执行态控制台右半 —— 「当前 Phase 的一切」（2026-09-12 执行弹窗改版）。
 // 五区去重的归宿：任务概要 goal / 发射门禁 / 盘上文件(固定分桶) / 轮次(分档：
-// 0 不渲染 · 1 轮无框 · ≥2 轮立账) / 执行动线 + 验收判决条，全在这一面。
+// 0 不渲染 · 1 轮无框 · ≥2 轮立账) / 大事报(没事不显示) + 验收判决条，全在这一面。
 // 一个事实只出现一次：本组件不渲染 phase 状态文字（rail 是唯一状态位）。
 
 "use client"
@@ -21,9 +21,9 @@ import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
 import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
 import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
-import { FLOW_NODE_CAP, type FlowLine } from "./flow-build"
+import type { SignalLine } from "./signal-build"
 
-/** 活动流一行（SSE 到达即推，客户端聚合，权威态仍是 GET /:id）。 */
+/** SSE 状态跳变一行（大事报在屏时垫底；权威态仍是 GET /:id）。 */
 export interface StreamEvent {
   at: string
   glyph: string
@@ -45,8 +45,8 @@ export interface RunCtx {
   now: number
   isLive: boolean
   events: StreamEvent[]
-  /** 执行动线（agent-events 压缩产物，console 顶层拉取；空 = 无可回放）。 */
-  flow: FlowLine[]
+  /** 大事报信号（agent-events 榨出，console 顶层拉取；空 = 整块不渲染）。 */
+  signals: SignalLine[]
   refetch: () => void
   onMutated: () => void
   /** 切到「验货台」tab（三栏证据面已收编为控制台 tab，2026-09-16）。 */
@@ -220,57 +220,39 @@ export function RoundRow({ ctx, exec, meta }: {
   )
 }
 
-// ── 执行动线（取代「起/收」活动流，2026-09-19 降噪定稿）───────────────
+// ── 大事报（2026-09-20 定稿：只报你该知道的事，没事整块不存在）────────
 
-function FlowFeed({ flow, events, isLive }: { flow: FlowLine[]; events: StreamEvent[]; isLive: boolean }) {
-  const nodes = flow.filter((l) => l.kind === "node").length
-  const shown = flow.slice(0, FLOW_NODE_CAP * 4)
-  const status = events.slice(-4).reverse()
+const SIG_TONE: Record<SignalLine["kind"], string> = {
+  bad: "border-pop-red bg-[#fff5f5]",
+  loop: "border-pop-amber bg-pop-amber-soft",
+  stall: "border-pop-cyan bg-pop-cyan-soft",
+  out: "border-pop-green/60 bg-[#f6fffa]",
+}
+
+function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamEvent[] }) {
+  const [openBad, setOpenBad] = useState(false)
+  if (signals.length === 0) return null // 全绿 = 没有报告 —— 这就是报告本身
   return (
-    <Box tag="执行动线 / FLOW" tail={isLive ? "agent-events · 5s" : "agent-events 回放"}>
-      {shown.length === 0 && status.length === 0 ? (
-        <p className="font-mono text-[11px] text-pop-dim">⏳ 暂无动线 —— 开跑后节点起止、工具动作即时上屏。</p>
-      ) : (
-        <div className="max-h-[168px] overflow-y-auto font-mono text-[11px] leading-[1.8]">
-          {shown.map((l) => {
-            if (l.kind === "loop") {
-              return (
-                <div key={l.key} className="truncate pl-[22px] text-pop-amber" data-flow-line="loop">
-                  <b className="font-black">{l.label}</b> <span className="text-pop-dim">{l.detail}</span>
-                </div>
-              )
-            }
-            if (l.kind === "tool") {
-              return (
-                <div key={l.key} className="truncate text-pop-dim" data-flow-line="tool" style={{ paddingLeft: l.depth * 22 }} title={l.note || undefined}>
-                  <span className={`mr-1.5 rounded border-[1.5px] border-pop-bd px-1 text-[9px] font-black ${l.err ? "bg-[#ffe3e9] text-[#d61f47]" : "bg-pop-idle text-pop-ink"}`}>{l.chip}{l.err ? "✗" : ""}</span>
-                  {l.note || <span className="italic opacity-60">（input 未落库）</span>}
-                </div>
-              )
-            }
-            return (
-              <div key={l.key} className="flex items-baseline gap-1.5 truncate" data-flow-line="node" data-flow-node={l.name} style={{ paddingLeft: l.depth * 14 }}>
-                {l.depth > 0 && <span aria-hidden className="text-pop-bd/30">└</span>}
-                {l.at && <span className="text-[9.5px] text-pop-dim">{l.at}</span>}
-                {l.running && <span className="animate-pulse font-black text-pop-cyan">▸</span>}
-                <span className={`font-black ${l.bad ? "text-pop-red" : l.running ? "text-pop-cyan" : "text-pop-ink"}`}>{l.name}</span>
-                <span className={`font-black ${l.bad ? "text-pop-red" : "text-pop-green"}`}>{l.running ? "运行中" : l.bad ? "✗" : "✓"}</span>
-                <span className="text-[10px] text-pop-dim">{l.dur}{l.tools > 0 ? ` · ${l.tools} 工具` : ""}{l.writeNote ? ` · 写 ${l.writeNote}` : ""}</span>
-              </div>
-            )
-          })}
-          {status.map((e, i) => (
-            <div key={`s${i}`} className="truncate text-pop-dim" data-flow-line="status">
-              <span>{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
-            </div>
-          ))}
-        </div>
-      )}
-      {nodes > 0 && (
-        <p className="mt-1 border-t border-dashed border-pop-bd/15 pt-1 text-[9.5px] text-pop-dim" data-flow-summary>
-          {nodes} 段 · 顶栏为最近动作 —— 全程去工作区流程图 ↗
-        </p>
-      )}
+    <Box tag="大事报 / SIGNAL" tail="只在有事时出现" tone="border-pop-bd">
+      <div className="space-y-1" data-testid="signal-box">
+        {signals.map((l) => (
+          <div key={l.text} className={`rounded-lg border-[1.5px] px-2 py-1 font-mono text-[11.5px] ${SIG_TONE[l.kind]}`} data-signal={l.kind}>
+            <b className="mr-1.5 font-black">{l.glyph}</b>
+            {l.text}
+            {l.detail && (
+              <button onClick={() => setOpenBad((v) => !v)} className="ml-2 rounded border-[1.5px] border-pop-bd/40 px-1 text-[9px] font-black text-pop-dim hover:bg-pop-paper" data-signal-expand>
+                {openBad ? "收起" : "详情"}
+              </button>
+            )}
+            {l.detail && openBad && <div className="mt-0.5 truncate text-[10.5px] text-pop-dim" title={l.detail}>{l.detail}</div>}
+          </div>
+        ))}
+        {events.slice(-3).reverse().map((e, i) => (
+          <div key={`s${i}`} className="truncate font-mono text-[10.5px] text-pop-dim" data-signal="status">
+            <span>{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
+          </div>
+        ))}
+      </div>
     </Box>
   )
 }
@@ -491,7 +473,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         ) : null
       })()}
 
-      {(ctx.isLive || ctx.task.status === "awaiting_review") && <FlowFeed flow={ctx.flow} events={ctx.events} isLive={ctx.isLive} />}
+      {(ctx.isLive || ctx.task.status === "awaiting_review") && <SignalBox signals={ctx.signals} events={ctx.events} />}
 
       <WorkflowViewerDialog taskId={ctx.task.id} workflowRef={pv.workflowRef} open={wfOpen} onOpenChange={setWfOpen} />
     </div>
