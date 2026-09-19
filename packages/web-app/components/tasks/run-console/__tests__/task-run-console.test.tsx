@@ -200,7 +200,9 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     expect(chip.textContent).toContain("⏳")
     expect(screen.getByTestId("phase-round-1-1").textContent).toContain("✓")
     expect(await screen.findByText(/LIVE ROUND/)).toBeTruthy()
-    expect(screen.getByText(/活动流 \/ ACTIVITY/)).toBeTruthy()
+    expect(screen.getByText(/执行动线 \/ FLOW/)).toBeTruthy()
+    // 1 轮 + LIVE 卡在位 → ROUNDS 账本框不再把同一枚轮说第二遍（降噪定稿）
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 自动选中在跑的 P2（选中 = outline 高亮）
     expect(screen.getByTestId("phase-row-2").getAttribute("class")).toContain("outline")
   })
@@ -315,26 +317,84 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
 
-  it("过程回放（走查回灌）：agent-events 节点边界垫进活动流，事后打开不再「暂无事件」", async () => {
+  it("执行动线（取代起收回放）：真事件形状压成节点行+时长+工具行，事后打开有全程；1 轮无 ROUNDS 框", async () => {
     mockFetchAgentEvents.mockResolvedValue({
       executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
       events: [
         { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
         { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
-        { nodeId: "ticket-01", event: "agent_event", timestamp: "2026-09-21T09:02:00Z" },
-        { nodeId: "ship", event: "end", timestamp: "2026-09-21T09:10:00Z" },
+        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:01Z", durationMs: 48, status: "completed" },
+        { nodeId: "e2e-verify", event: "start", timestamp: "2026-09-21T09:00:02Z" },
+        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:01:00Z", toolName: "Bash", input: { command: "curl -sf http://localhost:18082/demo/luhn?no=4539" } },
+        { nodeId: "e2e-verify", event: "end", timestamp: "2026-09-21T09:10:00Z", durationMs: 579337, status: "completed" },
       ],
     })
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
-    expect(await screen.findByText(/回放 · spec-resolve 起/)).toBeTruthy()
-    expect(screen.getByText(/回放 · ship 收/)).toBeTruthy()
-    // 非边界事件不进 feed；引擎内部节点不算过程
-    expect(screen.queryByText(/agent_event/)).toBeNull()
+    // 节点行：起止配成一行、durationMs 说话（旧形状是「回放 · e2e-verify 起/收」两行）
+    await waitFor(() => expect(document.querySelector('[data-flow-node="e2e-verify"]')).toBeTruthy())
+    expect(screen.getByText(/9m 39s/)).toBeTruthy()
+    expect(screen.getByText(/curl -sf http:\/\/localhost:18082/)).toBeTruthy()
+    // 起收流水账与内部节点绝迹
+    expect(screen.queryByText(/回放 ·/)).toBeNull()
     expect(screen.queryByText(/__engine_init__/)).toBeNull()
+    // 1 轮 + 交付卡 → ROUNDS 框撤（卡即轮）
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
     await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
+  })
+
+  it("轮次分档：≥2 轮账本框回来（打回史全留痕）", async () => {
+    const t = makeTask("done")
+    const two = {
+      ...pv(1, "票11阶段1", "accepted"),
+      rounds: [
+        { roundIndex: 1, state: "failed" as const, decision: null, exec: { id: "exec-1a", status: "failed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:00:00Z" } },
+        { roundIndex: 2, state: "succeeded" as const, decision: "accepted" as const, exec: { id: "exec-1", status: "completed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 2, created_at: "2026-09-21T08:59:00Z" } },
+      ],
+    }
+    renderConsole(t, { ...t, executions: [badge("exec-1a", "failed", { round_index: 1 }), badge("exec-1", "completed", { round_index: 2 })], derived: derivedOf([two], true, "done") })
+    await screen.findByText("任务战报")
+    fireEvent.click(screen.getByTestId("phase-row-1"))
+    expect(await screen.findByText("轮次 / ROUNDS")).toBeTruthy()
+    expect(screen.getByText("2 轮")).toBeTruthy()
+  })
+
+  it("轮次分档：1 轮已判（无卡）→ 细条一行，不立框", async () => {
+    const t = makeTask("done")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
+    await screen.findByText("任务战报")
+    fireEvent.click(screen.getByTestId("phase-row-2"))
+    expect(await screen.findByTestId("round-strip-2")).toBeTruthy()
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
+  })
+
+  it("盘上文件分桶：19 件只铺 ≤5 枚章，散文件名绝迹", async () => {
+    const dir = ".scratch/20260912/p1"
+    const f = (p: string, bytes = 100, mtime = "2026-09-21T09:00:00Z") => ({ path: `${dir}/${p}`, mtime, bytes })
+    mockGetBatchTree.mockResolvedValue([{
+      dir, slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
+      files: [
+        f("spec.md", 2048),
+        f("issues/01-a.md"), f("issues/02-b.md"), f("issues/03-e2e-luhn.md", 300, "2026-09-21T09:05:00Z"),
+        f("round-report.md", 300, "2026-09-21T09:06:00Z"), f("code-review.md"),
+        f("e2e-data/00-run.log"), f("e2e-data/e2e-report.md"), f("e2e-data/walkthrough-true.json"),
+        ...Array.from({ length: 10 }, (_, i) => f(`e2e-data/junk-${i}.log`)),
+      ],
+    }])
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    expect(await screen.findByTestId("file-bucket-issues")).toBeTruthy()
+    expect(screen.getByTestId("file-bucket-issues").textContent).toContain("×3")
+    expect(screen.getByTestId("file-bucket-reports").textContent).toContain("×2")
+    expect(screen.getByTestId("file-bucket-evidence").textContent).toContain("证据 e2e-data")
+    expect(screen.getByTestId("file-bucket-all").textContent).toContain("全部 19")
+    // 散章绝迹：单文件不再各占一枚
+    expect(screen.queryByText(/junk-0\.log/)).toBeNull()
+    expect(screen.queryByText(/walkthrough-true\.json/)).toBeNull()
   })
 
   it("done：默认战报（4 数字瓦片 + 轮次账本 + 产物），rail「任务战报」可切回 phase 面", async () => {

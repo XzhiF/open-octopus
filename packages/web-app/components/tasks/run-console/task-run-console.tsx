@@ -16,7 +16,7 @@
 
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
@@ -39,6 +39,7 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
+import { buildFlow, type FlowLine } from "./flow-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone,
@@ -172,11 +173,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [derived, phaseViews, derivedStatus])
   const view = sel ?? autoView
 
-  // ── 过程回放种子（走查回灌 2026-09-16）──────────────────────────────
-  // 活动流此前只吃开窗后的 SSE 内存增量 —— 事后打开恒「暂无事件」，执行
-  // 过程看不到。现把该轮执行的 agent-events 节点边界事件（start/end，工作区
-  // 执行详情同信道）压缩成回放行垫进 feed；live SSE 继续在其上追加，
-  // 权威仍是 GET /:id derived，这里只是可读性层。切轮/切 phase 重垫一次。
+  // ── 执行动线（2026-09-19 降噪定稿，取代「起/收」回放垫底）────────────
+  // agent-events 里躺着节点起止+时长、116 次工具调用、swarm 子代理与修复轮进度，
+  // 旧回放只榨出「回放 · 节点 起/收」——看不看一样的根因。现把整包事件压成
+  // FlowLine（纯函数 buildFlow，真格式单测钉死）。活轮在跑时每 5s 重拉一次尾部；
+  // 权威仍是 GET /:id derived，这里只是可读性层。切轮/切 phase 重锚。
   const replayTarget = useMemo(() => {
     const runs = detail?.executions ?? []
     if (runs.length === 0) return null
@@ -189,35 +190,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return runs[runs.length - 1] ?? null
   }, [detail, view, phaseViews])
 
-  const replayedExecRef = useRef<string | null>(null)
+  const [flow, setFlow] = useState<FlowLine[]>([])
+  const targetId = replayTarget?.id ?? null
+  const targetWs = replayTarget?.workspace_id ?? null
+  const targetLive = !!replayTarget && LIVE_RUN_STATUSES.has(replayTarget.status)
   useEffect(() => {
-    const exec = replayTarget
-    if (!exec?.workspace_id || replayedExecRef.current === exec.id) return
-    replayedExecRef.current = exec.id
+    if (!targetId || !targetWs) return
     let cancelled = false
-    fetchAgentEvents(exec.workspace_id, exec.id)
-      .then((res) => {
-        if (cancelled || replayedExecRef.current !== exec.id) return
-        const rows: StreamEvent[] = []
-        for (const e of res.events) {
-          if (e.event !== "start" && e.event !== "end") continue
-          if (e.nodeId.startsWith("__engine_")) continue
-          rows.push({
-            at: e.timestamp ? new Date(e.timestamp).toLocaleTimeString("zh-CN", { hour12: false }) : "",
-            glyph: e.event === "start" ? "▸" : "◂",
-            tone: e.event === "start" ? "text-pop-cyan" : "text-pop-green",
-            text: `回放 · ${e.nodeId} ${e.event === "start" ? "起" : "收"}`,
-          })
-        }
-        if (rows.length > 0) setEvents(rows.slice(-40))
-      })
-      .catch(() => { /* 回放不可得照常 —— feed 退化为 live-only（原行为） */ })
-    return () => { cancelled = true }
-  }, [replayTarget])
+    const pull = () => {
+      fetchAgentEvents(targetWs, targetId)
+        .then((res) => { if (!cancelled) setFlow(buildFlow(res.events, Date.now(), res.loopIterations)) })
+        .catch(() => { /* 动线不可得照常 —— feed 退化为 SSE-only（原行为） */ })
+    }
+    pull()
+    const timer = targetLive && isLive ? setInterval(pull, 5000) : null
+    return () => { cancelled = true; if (timer) clearInterval(timer) }
+  }, [targetId, targetWs, targetLive, isLive])
 
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
-    now, isLive, events, refetch, onMutated,
+    now, isLive, events, flow, refetch, onMutated,
     openAcceptance: () => setSurfaceTab("accept"),
     openTrigger: () => setTriggerOpen(true),
   }

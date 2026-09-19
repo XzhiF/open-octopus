@@ -1,0 +1,225 @@
+<!doctype html>
+<!-- .scratch/20260919-feed-rounds-files-mock/index.html · v2 —— 全部换成「验收C：双仓 Luhn」真数据
+     活体任务 5db37385 · exec 077578ec · P1·R1 刚跑完停在待验收（正是被吐槽的现场）
+     节点/工具/文件/账目 均 curl 自本机 server (agent-events + llm-calls + 批次目录盘点) -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>用验收C真数据说话：动线·轮次·盘上文件</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --purple-soft:#eceaff; --green:#00b575; --green-soft:#d9f5e7;
+    --amber:#ffb800; --amber-soft:#fff0cc; --cyan:#22b8e0; --cyan-soft:#daf4fb;
+    --red:#e5484d; --idle:#eceae4; --yellow-soft:#fff3c4;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#ded9cc;color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:24px 28px 60px}
+  h1{font-size:16px;margin:0 0 3px}
+  .sub{color:var(--dim);font-size:11.5px;margin:0 0 16px}
+  .sub b{color:var(--ink)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .wide{grid-column:1/-1}
+  .pane{border:2.5px solid var(--bd);border-radius:16px;background:var(--bg);box-shadow:5px 5px 0 rgba(33,31,39,.15);overflow:hidden}
+  .pane>header{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:2px solid var(--bd);background:var(--paper);font:900 10px var(--mono);letter-spacing:.06em}
+  .pane>header .pill{border:1.5px solid var(--bd);border-radius:6px;padding:0 7px;font-size:9px;background:var(--idle);color:var(--dim);font-weight:900}
+  .pane>header .pill.now{background:var(--amber-soft);color:#8a6400}
+  .pane>header .pill.live{background:var(--cyan-soft);color:#0e7d9c}
+  .pane>header .pill.bad{background:#ffe3e9;color:#d61f47}
+  .pbody{padding:10px 12px 12px;display:flex;flex-direction:column;gap:9px}
+  h5{margin:0;font:900 9px var(--mono);letter-spacing:.1em;color:var(--dim)}
+  .old h5{color:#b0413e}.new h5{color:#0f7b3d}
+  .note{font-size:11px;color:var(--dim);line-height:1.6}
+  .note b{color:var(--ink)}
+  .box{border:2px solid var(--bd);border-radius:13px;background:var(--paper);box-shadow:3px 3px 0 rgba(33,31,39,.1);overflow:hidden}
+  .boxhead{display:flex;align-items:center;padding:6px 11px;border-bottom:2px solid rgba(33,31,39,.08);font:900 9px var(--mono);letter-spacing:.09em;color:var(--dim)}
+  .boxhead .tail{margin-left:auto;font-weight:400}
+  .boxbody{padding:8px 11px;font-size:12px}
+  /* 交付卡（现状件·未动） */
+  .card{border:2px solid var(--amber);border-radius:13px;overflow:hidden;background:var(--amber-soft);box-shadow:3px 3px 0 rgba(33,31,39,.12)}
+  .cardhead{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:2px solid rgba(33,31,39,.08);font:900 9px var(--mono);letter-spacing:.08em}
+  .stamp{border:2.5px solid var(--bd);border-radius:10px;font:900 10.5px var(--mono);padding:4px 10px;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2);background:var(--purple);color:#fff}
+  .stamp.g{background:var(--green);color:#fff}
+  .time{margin-left:auto;font:400 10px var(--mono);color:var(--dim)}
+  .cardbody{padding:8px 12px}
+  /* feed 行 */
+  .flow{font:11px/1.85 var(--mono)}
+  .frow{display:flex;align-items:baseline;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .frow .t{color:var(--dim);font-size:9.5px;flex-shrink:0}
+  .node{font-weight:900}
+  .node .dur{font-weight:400;color:var(--dim);font-size:10px}
+  .sub2{padding-left:22px;color:var(--dim)}
+  .sub2::before{content:"└ ";color:rgba(33,31,39,.3)}
+  .tool{color:var(--dim);padding-left:22px}
+  .tool .tn{border:1.5px solid var(--bd);border-radius:5px;padding:0 5px;font:900 8.5px var(--mono);background:var(--idle);color:var(--ink);margin-right:5px}
+  .tool .tn.wr{background:var(--green-soft)}.tool .tn.ed{background:var(--yellow-soft)}.tool .tn.ba{background:var(--cyan-soft)}
+  .tool em{font-style:normal;color:var(--ink)}
+  .tool .hit{color:var(--green);font-weight:900}
+  .evd{padding-left:22px;color:#8a6400;font-size:10.5px}
+  .evd .k{border:1.5px dashed var(--amber);border-radius:5px;padding:0 5px;font:900 8.5px var(--mono);background:var(--amber-soft);margin-right:5px}
+  .caret{color:var(--cyan);font-weight:900}
+  /* LIVE 卡 */
+  .livecard{border:2px solid var(--purple);border-radius:13px;overflow:hidden;background:var(--paper)}
+  .livecard .lh{display:flex;align-items:center;gap:8px;padding:6px 11px;background:var(--purple-soft);font:900 9px var(--mono);letter-spacing:.08em;color:var(--purple)}
+  .livecard .lb{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:7px 11px;font:11.5px var(--mono)}
+  /* 轮次细条 */
+  .strip{display:flex;align-items:center;gap:8px;border:1.5px dashed rgba(33,31,39,.35);border-radius:9px;padding:5px 10px;font:11.5px var(--mono)}
+  .rbadge{border:2px solid var(--bd);border-radius:7px;padding:1px 6px;font:900 10px/1.5 var(--mono);background:var(--idle)}
+  .meta{margin-left:auto;display:flex;gap:8px;color:var(--dim);font-size:10.5px}
+  .chip{border:2px solid var(--purple);background:var(--purple-soft);color:var(--purple);border-radius:8px;font:900 10px var(--mono);padding:2px 8px;cursor:pointer;box-shadow:2px 2px 0 rgba(91,69,255,.25)}
+  /* 盘上文件 */
+  .files{display:flex;gap:6px;flex-wrap:wrap}
+  .fchip{border:1.5px solid var(--bd);background:var(--bg);border-radius:7px;padding:2px 8px;font:10.5px var(--mono);color:var(--ink)}
+  .fchip .n{color:var(--dim)}
+  .fchip.all{background:var(--ink);color:var(--paper);font-weight:900;box-shadow:2px 2px 0 rgba(33,31,39,.25)}
+  .ann{border:2px dashed rgba(33,31,39,.3);border-radius:12px;padding:10px 13px;font-size:11.5px;color:var(--dim);line-height:1.75;background:rgba(255,255,255,.45)}
+  .ann b{color:var(--ink)}.ann code{font:10.5px var(--mono);background:var(--idle);border-radius:4px;padding:0 4px}
+  .dupe{color:#b0413e;font-weight:900}
+</style>
+</head>
+<body>
+<h1>验收C：双仓 Luhn —— 现状病灶 vs 新设计（全真数据）</h1>
+<p class="sub">任务此刻就停在 <b>待验收 · P1·R1</b>。左列 = 你现在打开会看到的；右列 = 新设计。数据：exec 077578ec 的 agent-events（6 段节点 / 116 次工具调用）、llm-calls（45 次 · $3.21）、批次目录实点（20 个文件）。零新 API，全在已有通道里。</p>
+
+<div class="cols">
+  <!-- ════════ 现场：待验收态 全家福 ════════ -->
+  <div class="pane old">
+    <header>现场 · 此刻的执行控制台 <span class="pill now">待验收 R1</span><span class="pill bad">病灶</span></header>
+    <div class="pbody">
+      <h5>交付卡 + 轮次账本 + 起收流水账 —— R1 的事说了三遍</h5>
+      <div class="card">
+        <div class="cardhead">R1 交付报告 · 机检结果 <span class="stamp">执行流程图 ↗</span><span class="time">用时 17m</span><span class="stamp g">→ 去验货台验收</span></div>
+        <div class="cardbody" style="font:11.5px var(--mono)"><b style="color:var(--green)">✓ 执行成功</b> <span style="color:var(--dim)">∑$3.21 · 45 次请求 · 用时 17m04s</span><br><span class="note" style="font:11px var(--mono)">实物 · 剧本 · 跑起来看 已就绪</span></div>
+      </div>
+      <div class="box"><div class="boxhead">盘上文件<span class="tail">批次目录 · .scratch/20260919/luhn-chain-1</span></div>
+        <div class="boxbody files">
+          <span class="fchip"><b>spec.md</b> <span class="n">2.4K</span></span>
+          <span class="fchip">🎫 issues ×3</span>
+          <span class="fchip">round-report.md <span class="n">2.9K</span></span>
+          <span class="fchip">code-review.md <span class="n">2.9K</span></span>
+          <span class="fchip">00-run.log <span class="n">75B</span></span>
+          <span class="fchip">build-consumer.log <span class="n">67B</span></span>
+          <span class="fchip">build-provider.log <span class="n">67B</span></span>
+          <span class="fchip">e2e-report.md <span class="n">3.0K</span></span>
+          <span class="fchip">walkthrough.sh <span class="n">138B</span></span>
+          <span class="fchip">server.log <span class="n">3.8K</span></span>
+          <span class="fchip">util.jar <span class="n">4.1K</span></span>
+          <span class="fchip">util-jar-sha.txt <span class="n">67B</span></span>
+          <span class="fchip">walkthrough-false.json</span>
+          <span class="fchip">walkthrough-garbage.json</span>
+          <span class="fchip">walkthrough-missing.json</span>
+          <span class="fchip">walkthrough-true.json</span>
+          <span class="fchip">walkthrough-results.txt <span class="n">9.4K</span></span>
+        </div>
+      </div>
+      <div class="box"><div class="boxhead">轮次 / ROUNDS<span class="tail">1 轮</span></div>
+        <div class="boxbody strip" style="border:0;padding:0"><span class="rbadge">R1 ✓</span><span style="color:var(--dim)">matt-spec-dev</span><b>成功</b><span class="meta">13:55 · 17m · $3.21</span><span class="chip">流程图 ↗</span></div>
+      </div>
+      <span class="dupe">▲ 同一枚 R1：卡说了、账本又说、rail chip 再说第三次；「用时 17m · $3.21 · 流程图」满屏都是</span>
+      <div class="box"><div class="boxhead">活动流 / ACTIVITY<span class="tail">SSE 实时</span></div>
+        <div class="boxbody flow">
+          <div class="frow"><span class="t">14:11</span><b style="color:var(--green)">◂</b> 回放 · ship-pr 收</div>
+          <div class="frow"><span class="t">14:09</span><b style="color:var(--cyan)">▸</b> 回放 · e2e-verify 起</div>
+          <div class="frow"><span class="t">14:00</span><b style="color:var(--green)">◂</b> 回放 · e2e-verify 收</div>
+          <div class="frow"><span class="t">13:57</span><b style="color:var(--cyan)">▸</b> 回放 · e2e-verify 起</div>
+          <div class="frow"><span class="t">13:57</span><b style="color:var(--green)">◂</b> 回放 · code-review 收</div>
+          <div class="frow"><span class="t">13:55</span><b style="color:var(--cyan)">▸</b> 回放 · ticket-dag 起</div>
+          <div class="frow"><span class="t">13:55</span><b style="color:var(--green)">◂</b> 回放 · spec-resolve 收</div>
+        </div>
+      </div>
+      <span class="dupe">▲ 304 条真事件在手，只榨出「起/收」；e2e-verify 9m39s 里发生了什么，一个字没有</span>
+    </div>
+  </div>
+
+  <div class="pane new">
+    <header>新设计 · 同一现场 <span class="pill now">待验收 R1</span></header>
+    <div class="pbody">
+      <h5>卡只说「判决」；动线说「过程」；文件归桶；ROUNDS 框没了</h5>
+      <div class="card">
+        <div class="cardhead">R1 交付报告 · 机检结果 <span class="stamp">执行流程图 ↗</span><span class="time">用时 17m</span><span class="stamp g">→ 去验货台验收</span></div>
+        <div class="cardbody" style="font:11.5px var(--mono)"><b style="color:var(--green)">✓ 执行成功</b> <span style="color:var(--dim)">∑$3.21 · 45 次请求 · 用时 17m04s</span><br><span class="note" style="font:11px var(--mono)">实物 · 剧本 · 跑起来看 已就绪</span></div>
+      </div>
+      <div class="note">✓ <b>轮次 / ROUNDS 整框删除</b> —— 1 轮且交付卡在屏，卡即轮。打回出 R2 后框自然回来（见页脚规则）。</div>
+      <div class="box"><div class="boxhead">盘上文件<span class="tail">批次目录 · .scratch/20260919/luhn-chain-1 · 20 件</span></div>
+        <div class="boxbody files">
+          <span class="fchip"><b>spec.md</b> <span class="n">2.4K</span></span>
+          <span class="fchip"><b>🎫 票</b> <span class="n">×3 · 03-e2e-luhn…</span></span>
+          <span class="fchip"><b>📃 报告</b> <span class="n">×2 · round-report…</span></span>
+          <span class="fchip"><b>🧪 证据 e2e-data</b> <span class="n">×13</span></span>
+          <span class="fchip all">全部 20 ▸</span>
+        </div>
+      </div>
+      <div class="box"><div class="boxhead">执行动线 / FLOW<span class="tail">5 节点 · 116 工具 · 真数据</span></div>
+        <div class="boxbody flow">
+          <div class="frow"><span class="t">14:10</span><span class="node">ship-pr ✓ <span class="dur">2m00s · 13 工具</span></span></div>
+          <div class="tool frow"><span class="tn ba">Bash</span>for repo in projects/octopus-demo-api-admin projects/… <em>→ 2 PR pushed</em></div>
+          <div class="frow"><span class="t">14:00</span><span class="node">e2e-verify ✓ <span class="dur">9m39s · 33 工具</span></span></div>
+          <div class="evd frow"><span class="k">证</span>walkthrough-results.txt · <span class="hit">TOTAL_FAIL_CASES=0</span> · CLEANUP=PASS 18082 无残留</div>
+          <div class="tool frow"><span class="tn ed">Edit</span>LuhnController.java <em>+12 −3</em></div>
+          <div class="frow"><span class="t">13:57</span><span class="node">code-review ✓ <span class="dur">2m27s · 22 工具</span></span></div>
+          <div class="frow"><span class="t">13:55</span><span class="node">ticket-dag ✓ <span class="dur">2m26s</span></span></div>
+          <div class="sub2 frow"><span class="node">├ ticket-01 ✓ <span class="dur">18 工具 · 写 LuhnUtils</span></span></div>
+          <div class="sub2 frow"><span class="node">└ ticket-02 ✓ <span class="dur">24 工具 · 写 /demo/luhn</span></span></div>
+          <div class="frow"><span class="t">13:55</span><span class="node">spec-resolve ✓ <span class="dur">48ms</span></span></div>
+        </div>
+      </div>
+      <div class="note">同一数据源，一行一段带时长；子代理票（swarm 派发的 ticket-01/02）缩进挂父节点下；最新动作顶置。</div>
+    </div>
+  </div>
+
+  <!-- ════════ running 态 ════════ -->
+  <div class="pane old">
+    <header>running 态对照 <span class="pill live">14:03 时刻回放</span><span class="pill bad">病灶</span></header>
+    <div class="pbody">
+      <h5>此刻（e2e-verify 跑到一半）用户看得到什么</h5>
+      <div class="livecard"><div class="lh">▶ LIVE ROUND · R1<span style="margin-left:auto" class="stamp">执行流程图 ↗</span></div>
+        <div class="lb"><b style="color:var(--purple)">执行中</b><span style="color:var(--dim)">起 13:55</span><b>8m02s</b><span>∑$2.1 · 29 次请求</span></div>
+      </div>
+      <div class="box"><div class="boxhead">轮次 / ROUNDS<span class="tail">1 轮</span></div>
+        <div class="boxbody strip" style="border:0;padding:0"><span class="rbadge">R1 ●</span><span style="color:var(--dim)">matt-spec-dev</span><b>执行中</b><span class="meta">13:55 · 8m · $2.1</span><span class="chip">流程图 ↗</span></div>
+      </div>
+      <div class="box"><div class="boxhead">活动流 / ACTIVITY<span class="tail">SSE 实时</span></div>
+        <div class="boxbody flow">
+          <div class="frow"><span class="t">14:00</span><b>◂</b> 回放 · code-review 收</div>
+          <div class="frow"><span class="t">13:57</span><b>▸</b> 回放 · code-review 起</div>
+          <div class="frow"><span class="t">13:57</span><b style="color:var(--purple)">◂</b> 回放 · ticket-dag 收</div>
+          <div class="frow"><span class="t">13:55</span><b>▸</b> 回放 · ticket-dag 起</div>
+        </div>
+      </div>
+      <span class="dupe">▲ AI 正在 20 条 Bash/5 条 Edit 里干活，屏上只有「谁起了谁收了」</span>
+    </div>
+  </div>
+
+  <div class="pane new">
+    <header>running 态 · 新 <span class="pill live">同一时刻</span></header>
+    <div class="pbody">
+      <h5>ROUNDS 框消失（LIVE 卡即轮），动线全是正在发生的事</h5>
+      <div class="livecard"><div class="lh">▶ LIVE ROUND · R1 · e2e-verify<span style="margin-left:auto" class="stamp">执行流程图 ↗</span></div>
+        <div class="lb"><b style="color:var(--purple)">执行中</b><span style="color:var(--dim)">起 13:55</span><b>8m02s</b><span>∑$2.1 · 29 次请求</span></div>
+      </div>
+      <div class="box"><div class="boxhead">执行动线 / FLOW<span class="tail">live · 5s 刷新</span></div>
+        <div class="boxbody flow">
+          <div class="frow"><span class="caret">▸</span><span class="node">e2e-verify <span style="color:var(--cyan)">运行中</span> <span class="dur">3m12s · 已 21 工具</span></span></div>
+          <div class="tool frow"><span class="tn ba">Bash</span>curl -sf 'http://localhost:18082/demo/luhn?no=4539…' <em class="hit">→ data:true ✓</em></div>
+          <div class="tool frow"><span class="tn ba">Bash</span>until curl -sf :18082/demo; do sleep 2; done <em>→ ready 4.1s</em></div>
+          <div class="tool frow"><span class="tn wr">Write</span>e2e-data/walkthrough-true.json</div>
+          <div class="frow"><span class="t">14:00</span><span class="node">code-review ✓ <span class="dur">2m27s · 22 工具</span></span></div>
+          <div class="frow"><span class="t">13:55</span><span class="node">ticket-dag ✓ <span class="dur">2m26s · 6 工具</span></span></div>
+        </div>
+      </div>
+      <div class="note">顶栏 = 该节点<b>最近 3 条工具动作</b>（命令摘要 → 结果一行），跑完即沉底并入节点行。当前节点名同时上 LIVE 卡头「R1 · e2e-verify」。</div>
+    </div>
+  </div>
+
+  <!-- ════════ 规则页脚 ════════ -->
+  <div class="ann wide">
+    <b>落码规则（吃透真数据后定的）</b><br>
+    ① <b>执行动线</b>：节点行 = start/end 配对 + durationMs（<b>每段都有，本单 5/5 命中</b>）+ 该节点 tool_call 计数；工具行 = 最近 N 条 tool_call —— <code>input</code> 可解析时出命令/文件摘要，<b>老 SQLite 行 input 为空则退化为 toolName + result.filePath</b>（本单确实混存两种格式，已按最差形状设计）；swarm 子节点缩进挂父。<b>真动线取代 SSE 起收；SSE 的 ◆ 状态行保留垫底</b>。running 时每 5s 拉一次 events 尾部（与现有轮询同节奏），终态停轮。<br>
+    ② <b>轮次分档</b>：0 轮不渲染；1 轮且有卡（LIVE/交付）→ <b>框整个消失</b>（本单两个现场都被它重复）；1 轮且 phase 已判 → 标题下一条 <b>strip 细条</b>；≥2 轮 → 框回来，打回理由上行走红。<br>
+    ③ <b>盘上文件固定桶</b>：spec.md ｜ 票（issues/×N）｜ 报告（顶层 *report*/review ×N）｜ 证据（非 issues 子目录 ×N，如 e2e-data）｜ 全部 N ▸。空桶不渲染，章数 ≤5 恒定 —— <b>本单 20 文件现状铺 18 枚（spec+票桶+16 散章），新法 5 枚封顶</b>。桶章点击开 PhaseSpecDialog 定位该桶最新一件，「全部」开树不定位。<br>
+    交付卡 / rail / 流程图新 tab —— 全部不动。回「照稿落」即按此实现；嫌哪块还啰嗦，点名。
+  </div>
+</div>
+</body>
+</html>

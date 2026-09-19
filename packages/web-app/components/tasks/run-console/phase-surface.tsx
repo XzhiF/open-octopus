@@ -1,8 +1,8 @@
 // packages/web-app/components/tasks/run-console/phase-surface.tsx
 //
 // 执行态控制台右半 —— 「当前 Phase 的一切」（2026-09-12 执行弹窗改版）。
-// 五区去重的归宿：任务概要 goal / 发射门禁 / 盘上文件(原草稿批次) / 轮次表
-// (原执行记录，轮次即运行) / 活动流 + 验收判决条，全在这一面。
+// 五区去重的归宿：任务概要 goal / 发射门禁 / 盘上文件(固定分桶) / 轮次(分档：
+// 0 不渲染 · 1 轮无框 · ≥2 轮立账) / 执行动线 + 验收判决条，全在这一面。
 // 一个事实只出现一次：本组件不渲染 phase 状态文字（rail 是唯一状态位）。
 
 "use client"
@@ -16,11 +16,12 @@ import {
 import type { LLMCallAggregates } from "@/lib/types"
 import type { BatchTreeState } from "../authoring/use-batch-tree"
 import { findSpecEntry, isRelativeScratchSpec } from "../authoring/use-batch-tree"
-import { PhaseSpecDialog, specFileClass } from "../authoring/phase-spec-dialog"
+import { PhaseSpecDialog } from "../authoring/phase-spec-dialog"
 import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
 import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
 import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
+import { FLOW_NODE_CAP, type FlowLine } from "./flow-build"
 
 /** 活动流一行（SSE 到达即推，客户端聚合，权威态仍是 GET /:id）。 */
 export interface StreamEvent {
@@ -44,6 +45,8 @@ export interface RunCtx {
   now: number
   isLive: boolean
   events: StreamEvent[]
+  /** 执行动线（agent-events 压缩产物，console 顶层拉取；空 = 无可回放）。 */
+  flow: FlowLine[]
   refetch: () => void
   onMutated: () => void
   /** 切到「验货台」tab（三栏证据面已收编为控制台 tab，2026-09-16）。 */
@@ -70,7 +73,11 @@ function Box({ tag, tail, tone, children, className }: {
 
 /** 该轮次/运行的账目一行 → 统一走 AggInline（∑/↑/↓/⚡/🗡️·N 次请求·$，2026-09-16 定版）。 */
 
-// ── 盘上文件 chips（吸收原「草稿批次」执行态职责）────────────────────
+// ── 盘上文件（固定分桶，2026-09-19 降噪定稿）─────────────────────────
+// 旧版把 issues 外每个文件铺一枚章 —— 验收C 实测 20 文件 = 18 枚章炸版。
+// 新章数恒定 ≤5：spec ｜ 票 (issues/) ｜ 报告 (顶层 *report/review/finding*)
+// ｜ 证据 (非 issues 子目录 + 游离顶层，单一目录时带目录名) ｜ 全部 N ▸。
+// 桶章点击 = 打开 PhaseSpecDialog 并定位该桶最新一件；「全部」进树不定位。
 
 export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
   const { batches } = ctx.tree
@@ -82,12 +89,31 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
     [batches, norm],
   )
   const [viewing, setViewing] = useState<{ file: string } | null>(null)
-  const tickets = batch?.files.filter((f) => f.path.includes("/issues/")) ?? []
-  const others = batch?.files.filter((f) => !f.path.includes("/issues/") && !/(^|\/)spec\.md$/i.test(f.path)) ?? []
 
-  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string, key?: string) => (
+  const buckets = useMemo(() => {
+    if (!batch) return null
+    const strip = (p: string) => p.slice(batch.dir.length + 1).replace(/\\/g, "/")
+    const notSpec = batch.files.filter((f) => !/(^|\/)spec\.md$/i.test(strip(f.path)))
+    const tickets = notSpec.filter((f) => strip(f.path).startsWith("issues/"))
+    const outside = notSpec.filter((f) => !strip(f.path).startsWith("issues/"))
+    const isTop = (f: { path: string }) => !strip(f.path).includes("/")
+    const reports = outside.filter((f) => isTop(f) && /(report|review|finding)/i.test(f.path))
+    const evidence = outside.filter((f) => !reports.includes(f))
+    const dirs = new Set(evidence.map((f) => { const s = strip(f.path); return s.includes("/") ? s.split("/")[0] : "" }))
+    const sole = dirs.size === 1 && !dirs.has("") ? [...dirs][0] : null
+    const newest = (arr: typeof batch.files) => arr.reduce<(typeof batch.files)[number] | null>((a, b) => (!a || b.mtime > a.mtime ? b : a), null)
+    return {
+      total: batch.files.length,
+      tickets: { n: tickets.length, at: newest(tickets)?.path ?? "" },
+      reports: { n: reports.length, at: newest(reports)?.path ?? "" },
+      evidence: { n: evidence.length, at: newest(evidence)?.path ?? "", dir: sole },
+    }
+  }, [batch])
+
+  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string, key?: string, testid?: string) => (
     <button
       key={key}
+      data-testid={testid}
       onClick={onClick}
       title={title}
       className={`rounded-[7px] border-[1.5px] border-pop-bd bg-pop-bg px-1.5 py-0.5 font-mono text-[10.5px] transition-colors hover:bg-pop-yellow-soft ${cls}`}
@@ -105,21 +131,23 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
       ) : (
         <span className="rounded-[7px] border-[1.5px] border-pop-bd/30 bg-pop-idle px-1.5 py-0.5 font-mono text-[10.5px] text-pop-dim" title={phase.specPath}>📄 绝对路径 spec · 磁盘不判定</span>
       )}
-      {tickets.length > 0 && chip(`🎫 issues ×${tickets.length}`, () => setViewing({ file: tickets[0].path }))}
-      {others.map((f) => {
-        const cls = specFileClass(f.path)
-        const name = f.path.split("/").pop() ?? f.path
-        return chip(
-          <span className="flex items-center gap-1">
-            <span className={`rounded px-1 ${cls.tone}`}>{cls.label}</span>
-            {name} {formatBytes(f.bytes)}
-          </span>,
-          () => setViewing({ file: f.path }),
-          "",
-          f.path,
-          f.path,
-        )
-      })}
+      {buckets && buckets.tickets.n > 0 && chip(
+        <span><b className="font-black">🎫 票</b> <span className="text-pop-dim">×{buckets.tickets.n}</span></span>,
+        () => setViewing({ file: buckets.tickets.at }), "", "issues/ 全量票", "b-issues", "file-bucket-issues",
+      )}
+      {buckets && buckets.reports.n > 0 && chip(
+        <span><b className="font-black">📃 报告</b> <span className="text-pop-dim">×{buckets.reports.n}</span></span>,
+        () => setViewing({ file: buckets.reports.at }), "", "round-report / code-review 等顶层报告", "b-reports", "file-bucket-reports",
+      )}
+      {buckets && buckets.evidence.n > 0 && chip(
+        <span><b className="font-black">{buckets.evidence.dir ? `🧪 证据 ${buckets.evidence.dir}` : "📁 其他"}</b> <span className="text-pop-dim">×{buckets.evidence.n}</span></span>,
+        () => setViewing({ file: buckets.evidence.at }), "", "非票非报告的产物（日志/数据/截图）", "b-evidence", "file-bucket-evidence",
+      )}
+      {buckets && buckets.total > 0 && chip(
+        <b className="font-black">全部 {buckets.total} ▸</b>,
+        () => setViewing({ file: specHit?.path ?? batch?.files[0]?.path ?? "" }),
+        "border-pop-ink bg-pop-ink text-pop-bg shadow-pop-sm", "文件树全量", "b-all", "file-bucket-all",
+      )}
       {viewing && (
         <PhaseSpecDialog
           task={ctx.task}
@@ -192,22 +220,56 @@ export function RoundRow({ ctx, exec, meta }: {
   )
 }
 
-// ── 活动流（running 面的心跳）───────────────────────────────────────
+// ── 执行动线（取代「起/收」活动流，2026-09-19 降噪定稿）───────────────
 
-function ActivityFeed({ events }: { events: StreamEvent[] }) {
-  const recent = events.slice(-8).reverse()
+function FlowFeed({ flow, events, isLive }: { flow: FlowLine[]; events: StreamEvent[]; isLive: boolean }) {
+  const nodes = flow.filter((l) => l.kind === "node").length
+  const shown = flow.slice(0, FLOW_NODE_CAP * 4)
+  const status = events.slice(-4).reverse()
   return (
-    <Box tag="活动流 / ACTIVITY" tail="SSE 实时">
-      {recent.length === 0 ? (
-        <p className="font-mono text-[11px] text-pop-dim">⏳ 暂无事件 —— 轮次状态一变即上屏。</p>
+    <Box tag="执行动线 / FLOW" tail={isLive ? "agent-events · 5s" : "agent-events 回放"}>
+      {shown.length === 0 && status.length === 0 ? (
+        <p className="font-mono text-[11px] text-pop-dim">⏳ 暂无动线 —— 开跑后节点起止、工具动作即时上屏。</p>
       ) : (
-        <div className="max-h-[120px] overflow-hidden font-mono text-[11px] leading-[1.75]">
-          {recent.map((e, i) => (
-            <div key={i} className={`truncate ${i === 0 && e.glyph === "▶" ? "text-pop-purple" : ""}`}>
-              <span className="text-pop-dim">{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
+        <div className="max-h-[168px] overflow-y-auto font-mono text-[11px] leading-[1.8]">
+          {shown.map((l) => {
+            if (l.kind === "loop") {
+              return (
+                <div key={l.key} className="truncate pl-[22px] text-pop-amber" data-flow-line="loop">
+                  <b className="font-black">{l.label}</b> <span className="text-pop-dim">{l.detail}</span>
+                </div>
+              )
+            }
+            if (l.kind === "tool") {
+              return (
+                <div key={l.key} className="truncate text-pop-dim" data-flow-line="tool" style={{ paddingLeft: l.depth * 22 }} title={l.note || undefined}>
+                  <span className={`mr-1.5 rounded border-[1.5px] border-pop-bd px-1 text-[9px] font-black ${l.err ? "bg-[#ffe3e9] text-[#d61f47]" : "bg-pop-idle text-pop-ink"}`}>{l.chip}{l.err ? "✗" : ""}</span>
+                  {l.note || <span className="italic opacity-60">（input 未落库）</span>}
+                </div>
+              )
+            }
+            return (
+              <div key={l.key} className="flex items-baseline gap-1.5 truncate" data-flow-line="node" data-flow-node={l.name} style={{ paddingLeft: l.depth * 14 }}>
+                {l.depth > 0 && <span aria-hidden className="text-pop-bd/30">└</span>}
+                {l.at && <span className="text-[9.5px] text-pop-dim">{l.at}</span>}
+                {l.running && <span className="animate-pulse font-black text-pop-cyan">▸</span>}
+                <span className={`font-black ${l.bad ? "text-pop-red" : l.running ? "text-pop-cyan" : "text-pop-ink"}`}>{l.name}</span>
+                <span className={`font-black ${l.bad ? "text-pop-red" : "text-pop-green"}`}>{l.running ? "运行中" : l.bad ? "✗" : "✓"}</span>
+                <span className="text-[10px] text-pop-dim">{l.dur}{l.tools > 0 ? ` · ${l.tools} 工具` : ""}{l.writeNote ? ` · 写 ${l.writeNote}` : ""}</span>
+              </div>
+            )
+          })}
+          {status.map((e, i) => (
+            <div key={`s${i}`} className="truncate text-pop-dim" data-flow-line="status">
+              <span>{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
             </div>
           ))}
         </div>
+      )}
+      {nodes > 0 && (
+        <p className="mt-1 border-t border-dashed border-pop-bd/15 pt-1 text-[9.5px] text-pop-dim" data-flow-summary>
+          {nodes} 段 · 顶栏为最近动作 —— 全程去工作区流程图 ↗
+        </p>
       )}
     </Box>
   )
@@ -406,11 +468,10 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         </>
       )}
 
-      {/* 轮次账本：一行一轮，打回史全留痕 */}
-      <Box tag="轮次 / ROUNDS" tail={pv.currentRound != null ? `${pv.rounds.length} 轮` : "未启动"}>
-        {pv.rounds.length === 0 ? (
-          <p className="py-0.5 text-[11px] text-pop-dim">{ctx.task.status === "ready" ? "本 phase 未触发 —— 门禁全绿后按上方「触发执行」开跑。" : "尚无轮次。"}</p>
-        ) : (
+      {/* 轮次分档（2026-09-19 降噪定稿）：0 轮不渲染；1 轮有卡（LIVE/交付）→ 框整个
+          消失（卡即轮）；1 轮已判 → 细条一行；≥2 轮（打回史）→ 账本框才回来。 */}
+      {pv.rounds.length >= 2 && (
+        <Box tag="轮次 / ROUNDS" tail={`${pv.rounds.length} 轮`}>
           <div>
             {pv.rounds.map((r) => {
               const exec = ctx.runsById.get(r.exec.id) ?? null
@@ -418,10 +479,19 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               return <RoundRow key={r.exec.id} ctx={ctx} meta={{ pv, r }} exec={exec} />
             })}
           </div>
-        )}
-      </Box>
+        </Box>
+      )}
+      {pv.rounds.length === 1 && !liveRound && !awaiting && (() => {
+        const r = pv.rounds[0]
+        const exec = ctx.runsById.get(r.exec.id) ?? null
+        return exec ? (
+          <div className="rounded-[9px] border-[1.5px] border-dashed border-pop-bd/35 bg-pop-paper px-2" data-testid={`round-strip-${pv.index}`}>
+            <RoundRow ctx={ctx} meta={{ pv, r }} exec={exec} />
+          </div>
+        ) : null
+      })()}
 
-      {(ctx.isLive || ctx.task.status === "awaiting_review") && <ActivityFeed events={ctx.events} />}
+      {(ctx.isLive || ctx.task.status === "awaiting_review") && <FlowFeed flow={ctx.flow} events={ctx.events} isLive={ctx.isLive} />}
 
       <WorkflowViewerDialog taskId={ctx.task.id} workflowRef={pv.workflowRef} open={wfOpen} onOpenChange={setWfOpen} />
     </div>
