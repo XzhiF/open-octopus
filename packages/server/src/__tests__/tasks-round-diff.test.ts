@@ -45,6 +45,9 @@ async function newAwaitingTask(opts: {
   end?: Record<string, string>
   status?: string
   harnessSummary?: string
+  /** S3 fixture：多轮各插一行 (phase1,round_n)，awaiting 落最高轮；给定时
+   *  覆盖 start/end/status 的单轮形状。 */
+  rounds?: Array<{ round: number; start: Record<string, string>; end: Record<string, string> }>
 } = {}): Promise<[string, string]> {
   const res = await app.request("/api/tasks", {
     method: "POST",
@@ -66,18 +69,24 @@ async function newAwaitingTask(opts: {
   const taskId = ((await res.json()) as { id: string }).id
   const execId = `exec-rd-${seq}`
   const now = new Date().toISOString()
-  db.prepare(`
+  const insert = db.prepare(`
     INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
       task_id, phase_index, round_index, start_commit_id, end_commit_id, harness_summary,
       started_at, completed_at, created_at, updated_at)
-    VALUES (?, ?, ?, 'task-dev', 'rd', ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    execId, WS_ID, ORG, opts.status ?? "completed", taskId,
-    JSON.stringify(opts.start ?? { app: c1 }),
-    JSON.stringify(opts.end ?? { app: c2 }),
-    opts.harnessSummary ?? '{"totalInterventions":2}',
-    now, now, now, now,
-  )
+    VALUES (?, ?, ?, 'task-dev', 'rd', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  if (opts.rounds?.length) {
+    for (const r of opts.rounds) {
+      insert.run(`${execId}-r${r.round}`, WS_ID, ORG, "completed", taskId, r.round,
+        JSON.stringify(r.start), JSON.stringify(r.end), null, now, now, now, now)
+    }
+  } else {
+    insert.run(execId, WS_ID, ORG, opts.status ?? "completed", taskId, 1,
+      JSON.stringify(opts.start ?? { app: c1 }),
+      JSON.stringify(opts.end ?? { app: c2 }),
+      opts.harnessSummary ?? '{"totalInterventions":2}',
+      now, now, now, now)
+  }
   return [taskId, execId]
 }
 
@@ -213,5 +222,61 @@ describe("round-diff — 实物 numstat / 分组 / 汇总", () => {
     const d = await diffOf(taskId)
     expect(d.available).toBe(true)
     expect(d.aggregate).toEqual({ commits: 0, additions: 0, dels: 0, files: 0 })
+  })
+})
+
+// ── S3 (2026-09-20): scope=cumulative — 本 phase 首轮 start 锚 .. 本轮 end 锚 ──
+describe("round-diff — cumulative 口径", () => {
+  /** 独立新仓（projects/<name>）三提交 k0<k1<k2，互不干扰 R3 的 app 仓突变。 */
+  function freshRepo(name: string): [string, string, string] {
+    const dir = path.join(wsDir, "projects", name)
+    fs.mkdirSync(dir, { recursive: true })
+    git(dir, "init", "-b", "main")
+    git(dir, "config", "user.email", "t@t.io")
+    git(dir, "config", "user.name", "T")
+    fs.writeFileSync(path.join(dir, "seed.txt"), "s\n")
+    git(dir, "add", "-A"); git(dir, "commit", "-m", "k0")
+    const k0 = git(dir, "rev-parse", "HEAD")
+    fs.writeFileSync(path.join(dir, "r1.txt"), "1a\n1b\n1c\n")
+    git(dir, "add", "-A"); git(dir, "commit", "-m", "k1")
+    const k1 = git(dir, "rev-parse", "HEAD")
+    fs.writeFileSync(path.join(dir, "r2.txt"), "2a\n")
+    git(dir, "add", "-A"); git(dir, "commit", "-m", "k2")
+    const k2 = git(dir, "rev-parse", "HEAD")
+    return [k0, k1, k2]
+  }
+
+  it("C1: 两轮 fixture → cumulative=2 commits ⊇ 本轮=1；显式 scope=round 与缺省逐字一致（回归）", async () => {
+    const [k0, k1, k2] = freshRepo("acc")
+    const [taskId] = await newAwaitingTask({ rounds: [
+      { round: 1, start: { acc: k0 }, end: { acc: k1 } },
+      { round: 2, start: { acc: k1 }, end: { acc: k2 } },
+    ] })
+    const round = await diffOf(taskId) // 缺省 = round，锚 = 本轮 k1..k2
+    expect(round.available).toBe(true)
+    expect(round.aggregate.commits).toBe(1)
+    const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
+    expect(cum.available).toBe(true)
+    expect(cum.aggregate.commits).toBe(2)
+    expect(cum.aggregate.commits).toBeGreaterThanOrEqual(round.aggregate.commits)
+    expect(cum.aggregate.additions).toBeGreaterThanOrEqual(round.aggregate.additions)
+    // payload 形状零新字段：与 round 口径同 key 集合
+    expect(Object.keys(cum).sort()).toEqual(Object.keys(round).sort())
+    // 显式 scope=round → 与缺省响应逐字一致
+    const explicit = await (await app.request(`/api/tasks/${taskId}/round-diff?scope=round`)).json()
+    expect(explicit).toEqual(round)
+  })
+
+  it("C2: 首轮行 start 锚缺失 → 回落本轮口径（诚实降级，绝不报错）", async () => {
+    const [k0, k1, k2] = freshRepo("acc2")
+    void k0
+    const [taskId] = await newAwaitingTask({ rounds: [
+      { round: 1, start: {}, end: { acc2: k1 } }, // 首轮无 start 锚（老行形状）
+      { round: 2, start: { acc2: k1 }, end: { acc2: k2 } },
+    ] })
+    const round = await diffOf(taskId)
+    const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
+    expect(cum).toEqual(round)
+    expect(cum.aggregate.commits).toBe(1)
   })
 })

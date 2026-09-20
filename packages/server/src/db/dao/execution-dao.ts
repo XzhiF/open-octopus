@@ -107,6 +107,22 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId, phaseIndex, roundIndex) as ExecutionRow) ?? null
   }
 
+  /** 本 phase 最早轮的「最新一条」exec 行 —— round-diff cumulative 口径（S3，
+   *  2026-09-20）的 start 锚来源。轮号由 dispatchPhaseRound 保证自 1 起连续，
+   *  MIN(round_index) 即首轮；同轮多条（接管/重写）取 created_at 最新 —— 与
+   *  deriveTaskView 的 latestByRound 同律，锚的是那一轮真正跑过的行。 */
+  findTaskPhaseFirstRound(taskId: string, phaseIndex: number): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND phase_index = ?
+         AND round_index = (
+           SELECT MIN(round_index) FROM executions
+           WHERE task_id = ? AND phase_index = ? AND round_index IS NOT NULL
+         )
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId, phaseIndex, taskId, phaseIndex) as ExecutionRow) ?? null
+  }
+
   /** The claim queue, FIFO, over a task's roots AND its composite children (partial
    *  index idx_exec_pending_claimable). A child that overflowed the cap is parked here
    *  exactly like an armed root, so claiming only roots would strand it forever. */

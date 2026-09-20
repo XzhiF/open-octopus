@@ -8,14 +8,16 @@
 // 头三层重排（2026-09-20 原型定稿 20260920-verify-header-mock，用户点名「一行八物太乱」）：
 //   L1 身份行 = 把手 + 题名 + 状态胶囊（未跑/跑着·Ns/✓ passed·dur/✗ failed·dur）+ 右动作区；
 //   L2 参数行 = `$ 命令` + 逐仓 chip + ≤Ns + 编辑（文字钮）—— 命令是参数不是动作；
-//   L3 结果区 = 状态驱动的输出：**跑着常开随流；挂了尾窗顶出+「看输出」开关；
-//       过了整区不显示**（verdict 行即全部）。旧 Terminal(>_) 手动钮退役 ——
-//       它既被误认成折叠钮，显示时机又无需用户决定。
+//   L3 结果区 = 状态驱动的输出：跑着常开随流；**跑完（过/挂）尾窗保留可见，
+//       结论行「收起/看输出」开关控制显隐**（2026-09-20 用户改判：结束即消失
+//       的终端没处回看，保留能看到、可折叠即可）。verdict 路径直接可点开全文。
+//       旧 Terminal(>_) 手动钮退役 —— 它既被误认成折叠钮，显示时机又无需用户决定。
 //
 // Honesty rules baked in:
 //   - never auto-runs (button only, threat model in the server service header);
 //   - ws gone / no config / already running → explicit disabled reasons;
-//   - verdict .md written by server lands in 叙述 tab (this panel just points).
+//   - verdict .md written by server lands in the batch dir; this panel points at
+//     it and opens it in place (onOpenVerdict → ArtifactViewerDialog).
 
 "use client"
 
@@ -25,6 +27,7 @@ import { Button } from "@/components/ui/button"
 import type { AcceptanceVerify } from "@octopus/shared"
 import { formatDuration } from "@/lib/format"
 import { FoldHandle, useFold } from "../fold-context"
+import { verifyPillLabel } from "./acceptance-labels"
 import type { VerifySummary } from "@/lib/tasks-api"
 
 interface VerifyPanelProps {
@@ -37,11 +40,13 @@ interface VerifyPanelProps {
   disabledReason?: string
   /** 保存/清除复检命令；true=成功（面板随即收起编辑抽屉），false=失败保持编辑。 */
   onSaveCommand: (v: AcceptanceVerify | null) => Promise<boolean>
+  /** 点开 verdict .md 全文（home-relative path → ArtifactViewerDialog）。 */
+  onOpenVerdict?: (path: string) => void
   onRun: () => void
   onAbort: () => void
 }
 
-export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason, onSaveCommand, onRun, onAbort }: VerifyPanelProps) {
+export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason, onSaveCommand, onOpenVerdict, onRun, onAbort }: VerifyPanelProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(cfg?.command ?? "")
   const [cwdDraft, setCwdDraft] = useState(cfg?.cwd ?? "")
@@ -50,21 +55,25 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
   const [saveBusy, setSaveBusy] = useState(false)
   const consoleRef = useRef<HTMLDivElement>(null)
   const [elapsedS, setElapsedS] = useState(0)
-  // 挂/断后的尾输出窗开关（L3「看输出」）；跑着时控制台无条件在。
-  const [outOpen, setOutOpen] = useState(false)
+  // 跑完后的输出窗折叠开关（缺省=开着：结束保留可见，嫌占眼再折上）。
+  const [outOpen, setOutOpen] = useState(true)
   const [showAll, setShowAll] = useState(false)
 
-  // 新一次跑批 = 输出窗复位。
+  // 新一次跑批 = 输出窗复位（重新开脸就展开）。
   useEffect(() => {
     setShowAll(false)
-    setOutOpen(false)
+    setOutOpen(true)
   }, [summary?.started_at])
 
-  // 运行中的秒表。
+  // 运行中的秒表：从会话真实起点起算（started_at），重挂/切 tab 回来不归零 ——
+  // 旧实现 t0=Date.now() 在每次挂载重算，跑 10 分钟切走再回显「跑着 · 2s」是假数。
   useEffect(() => {
     if (!running) { setElapsedS(0); return }
-    const t0 = Date.now()
-    const iv = setInterval(() => setElapsedS(Math.floor((Date.now() - t0) / 1000)), 1000)
+    const t0 = summary?.started_at ? Date.parse(summary.started_at) : Date.now()
+    const base = Number.isNaN(t0) ? Date.now() : t0
+    const tick = () => setElapsedS(Math.max(0, Math.floor((Date.now() - base) / 1000)))
+    tick()
+    const iv = setInterval(tick, 1000)
     return () => clearInterval(iv)
   }, [running, summary?.started_at])
 
@@ -93,17 +102,17 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
   const pill = live
     ? { t: `● 跑着 · ${elapsedS}s`, cls: "bg-pop-amber-soft text-pop-amber", st: "running" }
     : done?.state === "passed"
-      ? { t: `✓ passed${dur}`, cls: "bg-pop-green-soft text-[#0c7a4d]", st: "passed" }
+      ? { t: `✓ ${verifyPillLabel("passed")}${dur}`, cls: "bg-pop-green-soft text-[#0c7a4d]", st: "passed" }
       : done
-        ? { t: `✗ ${done.state}${dur}`, cls: "bg-[#ffe3e9] text-pop-red", st: done.state }
+        ? { t: `✗ ${verifyPillLabel(done.state)}${dur}`, cls: "bg-[#ffe3e9] text-pop-red", st: done.state }
         : cfg
           ? { t: "未跑", cls: "bg-pop-idle text-pop-dim", st: "idle" }
           : { t: "未配置", cls: "bg-pop-idle text-pop-dim", st: "none" }
   // 控制台出现时机：跑着/有未裁决的流在（断线重连 lines 先到）→ 常开；
-  // 挂了 → 「看输出」开关；过了 → 整区消失（日志留 verdict 文件）。
-  const consoleOn = !closed && !editing && (live || (lines.length > 0 && !done) || (!!failish && outOpen))
-  // 尾窗行数：挂了收起态只看末 40 行；跑着/展开看满窗（显式变量，勿再写一行内联三元）。
-  const consoleCap = live || !failish ? 120 : (outOpen ? 3000 : 40)
+  // 跑完（过/挂）→ 尾窗保留，跟 outOpen 折叠开关走 —— 结束后不再自动消失。
+  const consoleOn = !closed && !editing && lines.length > 0 && (live || !done || outOpen)
+  // 尾窗行数：跑着/通过截末 120 行（「前 N 行」钮可放全量）；挂了展开看全量。
+  const consoleCap = live || !failish ? 120 : 3000
   return (
     <div
       className={`rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden ${running ? "marching-ants-border" : ""}`}
@@ -131,11 +140,11 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             <Button size="sm" variant="destructive" className="h-6 border-[2.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={onAbort} disabled={busy} data-testid="verify-abort">
               <Square className="size-3 mr-1" /> 中止
             </Button>
-          ) : cfg && !editing ? (
-            <Button size="sm" className="h-6 border-[2.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-white shadow-pop-sm pop-press" disabled={busy || !!disabledReason || closed} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
+          ) : cfg && !editing && !closed ? (
+            <Button size="sm" className="h-6 border-[2.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-white shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
               <Play className="size-3 mr-1" /> ▶ 复检
             </Button>
-          ) : !cfg && !editing ? (
+          ) : !cfg && !editing && !closed ? (
             <Button size="sm" variant="outline" className="h-6 border-[2.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
               配置命令
             </Button>
@@ -213,27 +222,47 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         </div>
       )}
 
-      {/* L3 结果区：失败/中止的裁决行（原因头 + 输出开关） */}
+      {/* L3 结果区：失败/中止的裁决行（原因头 + verdict 入口 + 输出折叠开关） */}
       {done && failish && !closed && (
         <div className="border-t border-pop-bd/10 bg-[#fff5f5] px-3 py-1.5 font-mono text-[10.5px] text-pop-ink/80" data-testid="verify-result">
-          <b className="text-pop-red">✗ {done.state}</b>
+          <b className="text-pop-red">✗ {verifyPillLabel(done.state)}</b>
           {done.exit_code != null ? ` · exit ${done.exit_code}` : ""}
           {" — "}
-          <span className="text-pop-dim">{outOpen ? "输出在下" : done.verdict_path ? "原因与完整输出看 verdict 文件" : "verdict 落批次目录（叙述 tab 可见）"}</span>
+          <span className="text-pop-dim">{outOpen ? "输出在下" : "输出已折叠"}</span>
+          {done.verdict_path && onOpenVerdict && (
+            <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
+              verdict 文件
+            </button>
+          )}
           <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
             {outOpen ? "收起输出 ▴" : "看输出 ▾"}
           </button>
         </div>
       )}
-      {/* 通过：一行结论即全部，日志不占面 */}
+      {/* 通过：结论行 + verdict 入口 + 折叠开关（输出窗保留，不再整区消失） */}
       {done && !failish && !closed && (
         <div className="border-t border-pop-bd/10 bg-[#fbf8ee] px-3 py-1.5 font-mono text-[10.5px] text-pop-dim" data-testid="verify-result">
           <b className="text-pop-green">✓ 全绿</b> · {new Date(done.ended_at ?? done.started_at).toLocaleString("zh-CN", { hour12: false })}
-          <span className="ml-1">{done.verdict_path ? `· 机器裁决已落盘：${done.verdict_path}` : "· verdict 落批次目录（叙述 tab 可见）"}</span>
+          {done.verdict_path ? (
+            onOpenVerdict ? (
+              <button className="ml-1 text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
+                {`· 机器裁决：${done.verdict_path}`}
+              </button>
+            ) : (
+              <span className="ml-1">{`· 机器裁决已落盘：${done.verdict_path}`}</span>
+            )
+          ) : (
+            <span className="ml-1">· verdict 落批次目录</span>
+          )}
+          {lines.length > 0 && (
+            <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
+              {outOpen ? "收起输出 ▴" : "看输出 ▾"}
+            </button>
+          )}
         </div>
       )}
 
-      {/* 输出控制台（跑着常开 / 挂了开关开；过了永不开）：pop 终端 chrome */}
+      {/* 输出控制台（跑着常开；跑完跟折叠开关走，过/挂都保留）：pop 终端 chrome */}
       {consoleOn && (
         <div className="border-y-2 border-pop-bd bg-pop-ink px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-paper" ref={consoleRef} data-testid="verify-console">
           {lines.length > 120 && (

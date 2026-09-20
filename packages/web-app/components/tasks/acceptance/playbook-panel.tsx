@@ -22,6 +22,7 @@
 import { FoldHandle, useFold } from "../fold-context"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown, Play, Square, Wrench } from "lucide-react"
+import { toast } from "sonner"
 import {
   readChecks, saveChecks, runProbe, type PlaybookPayload, type PlaybookItem, type CheckDecision,
   type CheckEntry, type ProbeRunResult,
@@ -39,6 +40,9 @@ interface PlaybookPanelProps {
   disabledReason?: string
   saving: boolean
   onSaveStateChange: (saving: boolean) => void
+  /** 台账竞态闸（2026-09-20）：父级提交决策前调用，把 debounce 窗里的最后一笔
+   *  勾选立刻落盘并等写完成 —— server 的 ledger/硬闸读的是盘上文件，不能少最后一笔。 */
+  registerFlush?: (fn: (() => Promise<void>) | null) => void
 }
 
 const KIND_LABEL: Record<string, string> = { walk: "走查", probe: "探针", claim: "核对" }
@@ -54,7 +58,7 @@ const LIFECYCLE_HINT: Record<"start" | "ready" | "teardown", string> = {
 }
 
 export function PlaybookPanel({
-  taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange,
+  taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange, registerFlush,
 }: PlaybookPanelProps) {
   const fold = useFold()
   const panelClosed = fold ? fold.closed("item-playbook", "info") : false
@@ -71,6 +75,8 @@ export function PlaybookPanel({
   const [probeNow, setProbeNow] = useState<Record<string, ProbeRunResult>>({})
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyRef = useRef(false)
+  // 台账竞态闸：在飞的 saveChecks promise（flush 时 await 它；快照直接读 checksRef）。
+  const inflightRef = useRef<Promise<unknown> | null>(null)
   // Mirror of `checks` for event handlers — decides compute `next` synchronously
   // from this (updater purity: side effects like onGate/persist must NEVER run
   // inside a setState updater — React executes it in the PARENT's render pass →
@@ -95,17 +101,39 @@ export function PlaybookPanel({
     // playbook recompute must re-summarize too (step count can shift)
   }, [taskId, batchRelDir, roundIndex, playbook, onGate])
 
-  const persist = useCallback((next: Record<string, CheckEntry>) => {
+  /** 立刻写盘（清 debounce 定时器 + 抓 checksRef 最新快照）；在飞 promise 记进
+   *  inflightRef 供 flush await。失败不再静默 —— 台账/硬闸读的都是这个文件。 */
+  const writeChecks = useCallback((): Promise<void> => {
+    if (!batchRelDir) return Promise.resolve()
+    dirtyRef.current = false
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
+    const p = saveChecks(taskId, batchRelDir, roundIndex, checksRef.current)
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? `勾选保存失败：${err.message}` : "勾选保存失败 — 台账可能少记，请重试")
+      })
+      .finally(() => { inflightRef.current = null; onSaveStateChange(false) })
+    inflightRef.current = p
+    return p
+  }, [taskId, batchRelDir, roundIndex, onSaveStateChange])
+
+  const persist = useCallback(() => {
     if (!batchRelDir) return
     dirtyRef.current = true
     onSaveStateChange(true)
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      void saveChecks(taskId, batchRelDir, roundIndex, next)
-        .catch(() => {/* toast handled upstream via saving=false + keep local */})
-        .finally(() => { dirtyRef.current = false; onSaveStateChange(false) })
-    }, 300)
-  }, [taskId, batchRelDir, roundIndex, onSaveStateChange])
+    saveTimer.current = setTimeout(() => { saveTimer.current = null; void writeChecks() }, 300)
+  }, [batchRelDir, onSaveStateChange, writeChecks])
+
+  /** flush = 决策提交前的竞态闸：把 debounce 窗里的最后一笔立刻落盘并等写完。 */
+  const flush = useCallback(async (): Promise<void> => {
+    if (saveTimer.current || dirtyRef.current) await writeChecks()
+    else if (inflightRef.current) await inflightRef.current
+  }, [writeChecks])
+
+  useEffect(() => {
+    registerFlush?.(flush)
+    return () => registerFlush?.(null)
+  }, [registerFlush, flush])
 
   // Single mutation funnel — called from event handlers only (NEVER from an
   // updater): parent-facing side effects must happen outside the render pass.
@@ -113,7 +141,7 @@ export function PlaybookPanel({
     checksRef.current = next
     setChecks(next)
     onGate(summarize(playbook, next))
-    persist(next)
+    persist()
   }, [onGate, playbook, persist])
 
   const decide = useCallback((id: string, decision: CheckDecision | null, note?: string, probe?: CheckEntry["probe"]) => {

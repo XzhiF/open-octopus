@@ -4,13 +4,15 @@
 // AcceptanceModal 收编为 tab，父窗（TaskModal 执行控制台）自带拖拽/缩放/
 // 全屏，弹窗层数 3→2，原弹窗宽度截断与多层 modal 交互死锁一并消除）。
 //
-//   ┌ 主面（左，吃满剩余宽）：实物 | 核对 | 叙述 三 sub-tab
+//   ┌ 主面（左，吃满剩余宽）：实物 | 核对 两 sub-tab（叙述 tab 已于 2026-09-20
+//   │     用户裁决删除：round-report 已被核对三方对账消费，批次目录直读无验收增量；
+//   │     verdict 文件入口收进复检块，点开走 ArtifactViewerDialog）
 //   │     实物 = 待验收轮 start..end 的真实 git diff（RoundEvidenceService 服务端
 //   │     解析,web 不见 SHA）+ 当场复检（acceptance_verify 命令在活工作区现跑,
-//   │     task_verify/_log SSE 流式,PASS/FAIL 盖章,verdict .md 落批次目录）;
+//   │     task_verify/_log SSE 流式,PASS/FAIL 盖章,verdict .md 落批次目录,
+//   │     结束后台保留可见、可折叠）;
 //   │     核对 = spec 票 × 报告声称 × diff 实物路径三方对账（lib/acceptance-matrix,
-//   │     纯解析零 AI）; 叙述 = 批次目录直读（listHomeDir all=1 + round-report
-//   │     内嵌 markdown + 「本轮」mtime 徽章 — v1 证据面整体降级收容于此）
+//   │     纯解析零 AI; round-report.md 拉取定位仍走批次目录 listHomeDir）
 //   └ 右侧栏（360px，摘要上/动作下各自滚动）：执行摘要（round 用时/失败原因/
 //         token/cost — AggInline 紧凑口径）+ 动作区（验收通过/打回[反馈必填]/
 //         中止 + autoAdvance 只读态）
@@ -33,7 +35,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Ban, Bot, CheckCircle2, FileText, FolderOpen, Undo2 } from "lucide-react"
+import { Ban, Bot, CheckCircle2, FileText, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, AcceptanceVerify, AcceptancePreview, AcceptanceRunbook } from "@octopus/shared"
 import {
@@ -60,6 +62,7 @@ import {
   stopPreview,
   type HomeFileListingEntry,
   type RoundDiffPayload,
+  type RoundDiffScope,
   type VerifySummary,
   type VerifyState,
   type PlaybookPayload,
@@ -69,9 +72,8 @@ import {
   type TaskRoundView,
 } from "@/lib/tasks-api"
 import { formatDuration } from "@/lib/format"
-import { subscribeSSE } from "@/lib/sse-manager"
+import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
 import { ArtifactViewerDialog, type HomeViewEntry } from "../authoring/artifact-viewer-dialog"
 import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
@@ -81,7 +83,7 @@ import { PreviewBar } from "./preview-bar"
 import { PlaybookPanel } from "./playbook-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
 import { runErrorOf } from "../execution-summary"
-import { ImpactApprovalList } from "./impact-approval-list"
+import { verifyStateLabel, previewStateLabel } from "./acceptance-labels"
 import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 
 // ── Props ────────────────────────────────────────────────────────────
@@ -92,6 +94,12 @@ export interface AcceptanceSurfaceProps {
   onMutated: () => void
   /** 验收通过 / 中止 后回调（控制台据此切回「执行控制台」tab）。 */
   onDecided?: () => void
+  /** detail 单源化（2026-09-20 架构收敛）：嵌在执行控制台里时由父级注入同一份
+   *  GET /:id 快照 + 重拉通道，杜绝「modal/console/surface 各持一份互相矛盾」。
+   *  undefined = 独立挂载（单测/其他宿主）→ 组件自拉保底。 */
+  detailOverride?: TaskDetail | null
+  /** 配套 detailOverride 的重拉钩子（409 恢复、spec-field 保存后走它）。 */
+  onRefetch?: () => void
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -99,16 +107,14 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-/** 中列不可预览扩展名（二进制/压缩类 — 点开只会吐乱码或 413）。 */
-const NON_PREVIEW_RE = /\.(db|sqlite3?|png|jpe?g|gif|webp|ico|zip|gz|zst|tar|pdf|wasm|mp4|webm|so|dylib|dll)$/i
-
-export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurfaceProps) {
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
-  const [detail, setDetail] = useState<TaskDetail | null>(null)
-  // 中列 = 本 phase 批次目录直读（task-exec-tree 验收证据面）：files 为 null
-  // 表示未载/重载入中，[] 是「目录存在但无文件」或「目录未落盘(404)」。
+  const embedded = detailOverride !== undefined
+  const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
+  const detail = embedded ? detailOverride : internalDetail
+  // 批次目录文件清单 —— 叙述 tab 退役后只剩一个消费方：定位 round-report.md
+  // （核对 tab 的「报告声称」源）。null=未载/重载入中，[]=无文件或目录未落盘(404)。
   const [files, setFiles] = useState<HomeFileListingEntry[] | null>(null)
-  const [batchError, setBatchError] = useState<string | null>(null)
   const [batchReload, setBatchReload] = useState(0) // SSE collect → bump 重拉
   const [homeViewing, setHomeViewing] = useState<HomeViewEntry | null>(null)
   const [roundReport, setRoundReport] = useState<string | null>(null)
@@ -122,12 +128,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string; flow: "rerun" | "fix" } | null>(null)
   // specPath 绝对/缺失（gateV4 容忍 agent 旁路直写）时的批次定位回退位：
   // getBatchTree 按 slug 取 latest_mtime 最新 dir（specPath 优先,正常 v4 恒命中）。
-  // tried 区分「还在扫」与「扫完没有」——防中列无限转圈。
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
-  const [fallbackTried, setFallbackTried] = useState(false)
   // ── 验货台 (acceptance v2) 状态 ──
-  // subTab：实物(默认=C位) | 核对 | 叙述；roundDiff=真实提交区间；verify=当场复检。
-  const [midTab, setMidTab] = useState<"diff" | "matrix" | "story">("diff")
+  // subTab：实物(默认=C位) | 核对；roundDiff=真实提交区间；verify=当场复检。
+  const [midTab, setMidTab] = useState<"diff" | "matrix">("diff")
   const [roundDiff, setRoundDiff] = useState<RoundDiffPayload | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
@@ -141,6 +145,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const specFetchedForRef = useRef<string | null>(null)
   const [verify, setVerify] = useState<VerifySummary | null>(null)
   const [verifyLines, setVerifyLines] = useState<string[]>([])
+  // 本次复检会话已收行数（SSE 流 1:1 计数，与窗口 cap 无关）—— 断线重连时作
+  // GET /:id/verify?since=n 的游标，只补缺口不重搬全量（server S5）。
+  const verifySeenRef = useRef(0)
   const [verifyBusy, setVerifyBusy] = useState(false)
   // ── 验收面 v2.1 状态：剧本 + 预览 + 决策确认层 ──
   const [playbook, setPlaybook] = useState<PlaybookPayload | null>(null)
@@ -150,41 +157,51 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const [previewBusy, setPreviewBusy] = useState(false)
   const [ledgerOpen, setLedgerOpen] = useState(false)   // 通过 = ledger 预览确认弹层
   const [abortOpen, setAbortOpen] = useState(false)      // 中止 = 危险确认
+  // 竞态闸（A1/C1）：决策 POST 前把 debounce 窗里的最后一笔勾选 flush 落盘 ——
+  // server 硬闸与台账读的都是 acceptance-checks 盘上文件，屏幕真相必须已进盘。
+  const playbookFlushRef = useRef<(() => Promise<void>) | null>(null)
+  const registerPlaybookFlush = useCallback((fn: (() => Promise<void>) | null) => { playbookFlushRef.current = fn }, [])
 
   const refetchDetail = useCallback(() => {
     if (!taskId) return
-    getTask(taskId).then(setDetail).catch(() => { /* keep last snapshot */ })
-  }, [taskId])
+    if (embedded) { onRefetch?.(); return }
+    getTask(taskId).then(setInternalDetail).catch(() => { /* keep last snapshot */ })
+  }, [taskId, embedded, onRefetch])
 
-  // 挂载/taskId 变化：拉 detail + 复位打回子块与验货台缓存。
+  // 挂载/taskId 变化：拉 detail（独立挂载时）+ 复位打回子块与验货台缓存。
+  // 嵌入态 detail 归父级（控制台）所有，这里只清自己的会话缓存。
   useEffect(() => {
     if (!taskId) return
-    setDetail(null)
+    if (!embedded) setInternalDetail(null)
     setRejectOpen(false)
     setFeedback("")
     setNextFlow("rerun")
     setRejectedSeam(null)
     setFiles(null)
-    setBatchError(null)
     setRoundReport(null)
     setFallbackDir(null)
-    setFallbackTried(false)
     setMidTab("diff")
     setRoundDiff(null)
     setDiffError(null)
+    setDiffScope("round")
+    setCumDiff(null)
+    setCumError(null)
+    setFixReportMd(null)
     setSpecMd(null)
     specFetchedForRef.current = null
     setVerify(null)
     setVerifyLines([])
+    verifySeenRef.current = 0
     setPlaybook(null)
     setGate({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
     setPreview(null)
     setLedgerOpen(false)
     setAbortOpen(false)
-    refetchDetail()
-  }, [taskId, refetchDetail])
+    if (!embedded) refetchDetail()
+  }, [taskId, embedded, refetchDetail])
 
-  // SSE 挂面（K14「无需刷新」）：phase_status_update / task_status → 重拉派生；
+  // SSE 挂面（K14「无需刷新」）：phase_status_update / task_status → 重拉派生
+  // （嵌入态由控制台代拉 —— detail 单源，一份事件只发一次 GET）；
   // task_artifacts_update → 重拉批次列表（票 06 collect 轮终态上行即推 — 中列
   // 的证据就是这个事件带回来的）。
   useEffect(() => {
@@ -197,8 +214,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         return false
       }
     }
-    const unPhase = subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => { if (mine(e)) refetchDetail() })
-    const unStatus = subscribeSSE(url, TASK_STATUS_EVENT, (e) => { if (mine(e)) refetchDetail() })
+    const unPhase = embedded ? () => {} : subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => { if (mine(e)) refetchDetail() })
+    const unStatus = embedded ? () => {} : subscribeSSE(url, TASK_STATUS_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unArts = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => { if (mine(e)) setBatchReload((v) => v + 1) })
     // 验货台复检：逐行进控制台（client cap 2000；重连由 GET /:id/verify tail 兜底），
     // 终态合并进 summary（stamp/verdict 指针都读 summary.state，不另设标志位）。
@@ -208,6 +225,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
         const d = JSON.parse(e.data) as { line?: string; stream?: string }
         if (typeof d.line !== "string") return
         const line = d.stream === "stderr" ? `[stderr] ${d.line}` : d.line
+        verifySeenRef.current++
         setVerifyLines((prev) => (prev.length > 2000 ? [...prev.slice(prev.length - 2000), line] : [...prev, line]))
       } catch { /* malformed frame — drop */ }
     })
@@ -229,6 +247,56 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       } catch { /* drop */ }
     })
     return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify(); unPreview() }
+  }, [taskId, refetchDetail])
+
+  // ── 连接可见性（2026-09-20：断线静默失真比缺功能更致命）──
+  // 旧 EventSource 掉线后盘面停在旧快照且「看起来是活的」。现在：断线顶条挂
+  // 「连接中断 · 数据截至 HH:MM:SS」（截的正是失联那一刻），重连（浏览器自愈或
+  // sse-manager 手动重建）即补拉一遍：detail / 批次清单 / verify 会话 / preview。
+  // verify 尾窗用服务端 tail 整体替换 —— 宁可短且无缺口，不要长但中段丢行。
+  const [sseDown, setSseDown] = useState(false)
+  const [sseDownAt, setSseDownAt] = useState<string | null>(null)
+  useEffect(() => {
+    if (!taskId) return
+    const url = `${getServerUrl()}/api/tasks/events`
+    let everDown = false
+    return subscribeSSEStatus(url, (s) => {
+      if (!s.connected) {
+        everDown = true
+        setSseDown(true)
+        setSseDownAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }))
+        return
+      }
+      setSseDown(false)
+      setSseDownAt(null)
+      if (s.reconnected || everDown) {
+        everDown = false
+        refetchDetail()
+        setBatchReload((v) => v + 1)
+        // 断线期间的日志缺口用 since 游标补拉（server S5：lines_after 与 SSE 流
+        // 1:1 对齐；未见过任何行时 since=0 = 全量重建，尾部撞 ring 上限即止）。
+        getVerifyStatus(taskId, verifySeenRef.current)
+          .then((sv) => {
+            if (!sv) return
+            setVerify((prev) => (prev ? { ...prev, ...sv } : sv))
+            const after = sv.lines_after
+            if (after?.length) {
+              const append = verifySeenRef.current > 0
+              verifySeenRef.current += after.length
+              setVerifyLines((prev) => {
+                const merged = append ? [...prev, ...after] : after
+                return merged.length > 2000 ? merged.slice(merged.length - 2000) : merged
+              })
+            } else if (sv.tail?.length && verifySeenRef.current === 0) {
+              setVerifyLines(sv.tail)
+            }
+          })
+          .catch(() => { /* 未装配/老 server — 保持现状，横幅已尽告知义务 */ })
+        getPreview(taskId)
+          .then((sp) => { if (sp) setPreview((prev) => (prev ? { ...prev, ...sp } : sp)) })
+          .catch(() => { /* same */ })
+      }
+    })
   }, [taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
@@ -305,9 +373,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           .filter((b) => b.slug === awaitingPhase.slug)
           .sort((a, b) => (a.latest_mtime < b.latest_mtime ? 1 : a.latest_mtime > b.latest_mtime ? -1 : 0))[0]
         setFallbackDir(hit?.dir ?? null)
-        setFallbackTried(true)
       })
-      .catch(() => { if (!cancelled) { setFallbackDir(null); setFallbackTried(true) } })
+      .catch(() => { if (!cancelled) setFallbackDir(null) })
     return () => { cancelled = true }
   }, [taskId, awaitingPhase, specBatchDir])
   const batchDir = specBatchDir ?? fallbackDir
@@ -316,42 +383,16 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     if (!taskId || !batchDir) return
     let cancelled = false
     setFiles(null)
-    setBatchError(null)
     listHomeDir(taskId, batchDir, { all: true })
-      .then((fs) => { if (!cancelled) { setFiles(fs); setBatchError(null) } })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        // 目录未落盘（首轮 collect 前）= 正常空态；其余（server 未更新 403 等）显式报错
-        if (err instanceof TaskApiError && err.status === 404) setFiles([])
-        else setBatchError(err instanceof Error ? err.message : "批次目录读取失败")
-      })
+      .then((fs) => { if (!cancelled) setFiles(fs) })
+      // 目录未落盘（首轮 collect 前）或读失败 = 同一空态：核对 tab 自会诚实降级
+      // （round-report 缺席 → 对账缺一角），叙述 tab 时代的一行显式错误已无处安放。
+      .catch(() => { if (!cancelled) setFiles([]) })
     return () => { cancelled = true }
   }, [taskId, batchDir, batchReload])
 
-  // round 时间窗（「本轮」徽章判据）：seed/collect 双向保留 mtime
-  // (task-artifact-sync 设计不变式) → mtime ∈ [started_at??created_at, completed_at]
-  // 即"本轮执行侧动过的文件"。依赖同机时钟（dev 单机部署,注释即裁决）。running 轮
-  // 无上界 → now,SSE 重拉时徽章随盘更新。roundRun 联查不到（server 老/列表缺）→ 无徽章。
-  const roundWindow = useMemo(() => {
-    if (!roundRun) return null
-    const lo = Date.parse(roundRun.started_at ?? roundRun.created_at)
-    if (Number.isNaN(lo)) return null
-    const hi = roundRun.completed_at ? Date.parse(roundRun.completed_at) : Date.now()
-    return { lo, hi }
-  }, [roundRun])
-  const inRound = useCallback((f: HomeFileListingEntry): boolean =>
-    !!roundWindow && Date.parse(f.mtime) >= roundWindow.lo && Date.parse(f.mtime) <= roundWindow.hi,
-  [roundWindow])
-
-  // 不可预览预门控：二进制/压缩类扩展名 + 超读上限（server 413 的镜像,避免
-  // 点开才见错误）。.db 仍展示 —— 证据存在性本身就是决策信息。
-  const previewable = useCallback(
-    (f: HomeFileListingEntry): boolean => !NON_PREVIEW_RE.test(f.path) && f.bytes <= MAX_HOME_FILE_READ_BYTES,
-    [],
-  )
-
-  // 内嵌 round-report：固定文件名、每轮覆写（task-author SKILL 约定;fix 轮的
-  // fix-report-rN.md 是普通可点行）。mtime 进 deps → collect 覆写后自动重拉。
+  // 内嵌 round-report 拉取（核对 tab 的「报告声称」源）：固定文件名、每轮覆写
+  // （task-author SKILL 约定）。mtime 进 deps → collect 覆写后自动重拉。
   const reportFile = useMemo(
     () => (files ?? []).find((f) => (f.path.split("/").pop() ?? "").toLowerCase() === "round-report.md") ?? null,
     [files],
@@ -364,11 +405,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       .catch(() => { if (!cancelled) setRoundReport(null) })
     return () => { cancelled = true }
   }, [taskId, reportFile?.path, reportFile?.mtime, reportFile?.bytes])
-
-  const sortedFiles = useMemo(
-    () => (files ?? []).slice().sort((a, b) => (a.mtime === b.mtime ? 0 : a.mtime < b.mtime ? 1 : -1)),
-    [files],
-  )
 
   // ── 验货台数据流（acceptance v2） ──────────────────────────────────────
   // 实物 diff：按 awaiting 轮现拉（服务端解析 commit 区间；409 无 awaiting = 静默
@@ -389,6 +425,48 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       .finally(() => { if (!cancelled) setDiffLoading(false) })
     return () => { cancelled = true }
   }, [taskId, awaitingExecId, diffReload])
+
+  // ── 实物口径（B 档 / server S3）：本轮 = 本次执行增量；累计 = 本 phase 全轮 ──
+  // 修复轮旧病：人只看到 delta，放行对象却是整个 phase 终态。cumulative 按需拉、
+  // 换轮/重试即清仓；round-1 时两口径同物，开关不出现。
+  const [diffScope, setDiffScope] = useState<RoundDiffScope>("round")
+  const [cumDiff, setCumDiff] = useState<RoundDiffPayload | null>(null)
+  const [cumLoading, setCumLoading] = useState(false)
+  const [cumError, setCumError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!taskId || !awaitingExecId || diffScope !== "cumulative") return
+    let cancelled = false
+    setCumLoading(true)
+    setCumError(null)
+    getRoundDiff(taskId, "cumulative")
+      .then((d) => { if (!cancelled) setCumDiff(d) })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setCumDiff(null)
+        setCumError(err instanceof Error ? err.message : "累计 diff 读取失败")
+      })
+      .finally(() => { if (!cancelled) setCumLoading(false) })
+    return () => { cancelled = true }
+  }, [taskId, awaitingExecId, diffScope, diffReload])
+
+  // ── 打回→修复 回应对账（B 档）：round R 为修复轮时，批次目录成对存在
+  // fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（task-fix SKILL：N=被打回轮，
+  // 成对可追溯）。report 三列表逐行 × 本轮实物 diff → 幻影回应在核对 tab 现形。
+  const fixPairRound = Math.max(0, (awaitingRound?.roundIndex ?? 1) - 1)
+  const fixByName = useCallback((name: string) => (fixPairRound >= 1
+    ? (files ?? []).find((f) => (f.path.split("/").pop() ?? "").toLowerCase() === `${name}-r${fixPairRound}.md`) ?? null
+    : null), [files, fixPairRound])
+  const fixReportFile = useMemo(() => fixByName("fix-report"), [fixByName])
+  const fixFeedbackFile = useMemo(() => fixByName("fix-feedback"), [fixByName])
+  const [fixReportMd, setFixReportMd] = useState<string | null>(null)
+  useEffect(() => {
+    if (!taskId || !fixReportFile || fixReportFile.bytes > MAX_HOME_FILE_READ_BYTES) { setFixReportMd(null); return }
+    let cancelled = false
+    getHomeFile(taskId, fixReportFile.path)
+      .then((r) => { if (!cancelled) setFixReportMd(r.content) })
+      .catch(() => { if (!cancelled) setFixReportMd(null) })
+    return () => { cancelled = true }
+  }, [taskId, fixReportFile?.path, fixReportFile?.mtime, fixReportFile?.bytes])
 
   // 复检会话恢复：挂载 GET 一次（SSE 无 replay，tail 由 GET 承载；501/离线 = null）。
   useEffect(() => {
@@ -427,7 +505,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
   const verifyRunning = verify?.state === "running"
   const wsGone = roundDiff !== null && !roundDiff.available && roundDiff.reason === "no_workspace"
   const verifyDisabled = wsGone
-    ? "工作区目录已不在 — 当场复检不可用（叙述/历史 verdict 仍可看）"
+    ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）"
     : undefined
 
   const handleVerifyRun = useCallback(async () => {
@@ -437,6 +515,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       const s = await startVerify(taskId)
       setVerify(s)
       setVerifyLines([])
+      verifySeenRef.current = 0
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "复检启动失败")
     } finally {
@@ -564,6 +643,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     setLedgerOpen(false)
     setBusy("accept")
     try {
+      await playbookFlushRef.current?.()
       const result = await postAcceptance(task.id, {
         phase_index: awaitingPhase.index,
         round_index: awaitingPhase.awaitingRound,
@@ -571,15 +651,18 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
       })
       onMutated()
       const n = result.task.derived?.phaseViews.length ?? phaseViews.length
+      // 台账诚实化（A6）：server 机写 ledger 是决策后的 best-effort，写失败/定位不到
+      // 批次目录时不再谎报「台账已写」—— 由响应体 ledger_written 承载真相（票 07 契约扩展）。
+      const ledgerNote = result.ledger_written === false ? "⚠ 台账写入失败，请手动补记批次目录" : "台账已写"
       switch (result.next_action) {
         case "archiving":
-          toast.success("末 Phase 已通过 — 台账落盘，归档编排中（全绿才 done）")
+          toast.success(`末 Phase 已通过 — ${ledgerNote}，归档编排中（全绿才 done）`)
           break
         case "awaiting_manual_trigger":
-          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（台账已写）— autoAdvance 关闭，下一 Phase 停在你的 gate`)
+          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（${ledgerNote}）— autoAdvance 关闭，下一 Phase 停在你的 gate`)
           break
         default:
-          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（台账已写）— 下一 Phase 已自动开跑`)
+          toast.success(`Phase ${awaitingPhase.index}/${n} 已通过（${ledgerNote}）— 下一 Phase 已自动开跑`)
       }
       setPreview((prev) => (prev && prev.state !== "stopped" && prev.state !== "exited" ? { ...prev, state: "stopped" } : prev))
       onDecided?.()
@@ -610,6 +693,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     if (!task || !awaitingPhase || awaitingPhase.awaitingRound == null || !trimmed || busy) return
     setBusy("reject")
     try {
+      await playbookFlushRef.current?.()
       const result = await postAcceptance(task.id, {
         phase_index: awaitingPhase.index,
         round_index: awaitingPhase.awaitingRound,
@@ -634,7 +718,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           : `修订重跑 Round ${result.dispatch?.round_index ?? "?"} 已按绑定流开跑（流内先再审 spec）`
         : "反馈已落账（fix-feedback-rN.md）"
       toast.success(`Phase ${awaitingPhase.index} Round ${awaitingPhase.awaitingRound} 已打回 — ${dispatched}`)
-      setDetail(result.task)
+      // 决策响应自带新 task 快照 —— 独立挂载直接吸收；嵌入态交还给父级重拉
+      // （detail 单源，本地不留第四份副本）。
+      if (embedded) onRefetch?.()
+      else setInternalDetail(result.task)
     } catch (err: unknown) {
       if (err instanceof TaskApiError && err.status === 409) {
         toast.error(`${err.message}（已刷新最新状态）`)
@@ -645,7 +732,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
     } finally {
       setBusy(null)
     }
-  }, [task, awaitingPhase, feedback, nextFlow, gate.failTickets, busy, onMutated, refetchDetail])
+  }, [task, awaitingPhase, feedback, nextFlow, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
 
   const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
 
@@ -682,8 +769,17 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
           </span>
         )}
         {task && <Badge variant="outline" className="max-w-[260px] truncate text-[10px]">{task.name}</Badge>}
+        {sseDown && (
+          <span
+            className="rounded-full border-2 border-pop-red bg-[#ffe3e9] px-2 py-px font-mono text-[9.5px] font-black text-pop-red"
+            data-sse-down data-testid="acceptance-sse-down"
+            title="实时连接中断 —— 盘面停在断线时刻的快照，恢复后自动补拉"
+          >
+            ⚠ 连接中断 · 数据截至 {sseDownAt}
+          </span>
+        )}
         <span className="ml-auto hidden text-[10px] text-muted-foreground sm:block">
-          实物 · 核对 · 叙述 | 右侧摘要 + 动作 — 验收 = 验货，不是读汇报
+          实物 · 核对 | 右侧摘要 + 动作 — 验收 = 验货，不是读汇报
         </span>
       </div>
 
@@ -740,17 +836,17 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                   </div>
                 </>
               ) : (
-                <div className="text-[10px] text-muted-foreground">本轮无编译剧本（见实物/叙述佐证）</div>
+                <div className="text-[10px] text-muted-foreground">本轮无编译剧本（见实物/核对佐证）</div>
               )}
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-muted-foreground">自动复检</span>
                 <span className={verify?.state === "passed" ? "text-pop-green" : verify?.state === "running" ? "text-pop-amber" : verify?.state ? "text-pop-red" : "text-muted-foreground"}>
-                  {verify ? verify.state : "未跑"}
+                  {verifyStateLabel(verify?.state)}
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-muted-foreground">预览</span>
-                <span className={preview?.state === "ready" ? "text-pop-green" : preview?.state === "starting" ? "text-pop-amber" : "text-muted-foreground"}>{preview?.state ?? "未起"}</span>
+                <span className={preview?.state === "ready" ? "text-pop-green" : preview?.state === "starting" ? "text-pop-amber" : "text-muted-foreground"}>{previewStateLabel(preview?.state)}</span>
               </div>
             </div>
           )}
@@ -770,7 +866,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
               <Button
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 size="sm"
-                disabled={busy !== null || gate.fail > 0}
+                disabled={busy !== null || gate.fail > 0 || checksSaving}
+                title={checksSaving ? "走查勾选保存中 — 稍候再提交（防止台账少记最后一笔）" : undefined}
                 onClick={requestAccept}
                 data-acceptance-approve data-testid="acceptance-approve"
               >
@@ -799,7 +896,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                   <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
                   <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
                 </div>
-                <p className="text-[10px] text-muted-foreground">开关在草稿面板（入队清单下方）</p>
+                <p className="text-[10px] text-muted-foreground">此项在草稿期设定，验收阶段只读 —— 决定「通过」后下一 Phase 是自动开跑还是停在你手上</p>
               </div>
 
               <Button
@@ -816,7 +913,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
             </>
           ) : (
             <p className="text-xs text-muted-foreground" data-acceptance-idle>
-              {rejectedSeam ? "已打回 — 修复轮在跑（右下方为形态推荐/影响清单接缝）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
+              {rejectedSeam ? "已打回 — 修复轮在跑（下方为路由回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
             </p>
           )}
 
@@ -837,19 +934,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
             </div>
           )}
 
-          {/* ── D14 影响清单（渲染逻辑就绪 / 数据源空态 = v4.1 接缝） ── */}
-          {rejectedSeam && task && (
-            <ImpactApprovalList
-              taskId={task.id}
-              phases={(detail?.task_spec ?? task.task_spec).phases ?? []}
-              items={[]}
-              onDone={() => { refetchDetail(); onMutated() }}
-            />
-          )}
+          {/* D14 影响清单（v4.1 接缝）已摘除：server 无 spec-r2 影响分析 API，
+              items 恒空 —— 每次打回都亮一张「未上线」告示，只制造「这里坏了？」的
+              疑惑。ImpactApprovalList 组件与单测保留，API 落地当天在 rejectedSeam 下接回。 */}
         </div>
         </div>
 
-        {/* ── 主面：验货台（实物 | 核对 | 叙述）── */}
+        {/* ── 主面：验货台（实物 | 核对）── */}
         <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col max-lg:order-none max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
           {!awaitingPhase ? (
             <div className="space-y-2 p-4">
@@ -862,12 +953,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
             </div>
           ) : (
             <>
-              {/* sub-tab 条：三枚 chunky 贴纸，选中的黄底压黑边（波普） */}
+              {/* sub-tab 条：两枚 chunky 贴纸，选中的黄底压黑边（波普） */}
               <div className="flex shrink-0 items-center gap-1.5 border-b-2 border-pop-bd/10 bg-pop-paper px-3 py-2">
                 {([
                   ["diff", "实物", roundDiff?.available ? String(roundDiff.aggregate.files) : ""],
                   ["matrix", "核对", ""],
-                  ["story", "叙述", files ? String(files.length) : ""],
                 ] as const).map(([id, label, count]) => (
                   <button
                     key={id}
@@ -891,10 +981,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                   <>
                     <RoundDiffPanel
                       taskId={taskId ?? ""}
-                      diff={roundDiff}
-                      loading={diffLoading}
-                      error={diffError}
+                      diff={diffScope === "round" ? roundDiff : cumDiff}
+                      loading={diffScope === "round" ? diffLoading : cumLoading}
+                      error={diffScope === "round" ? diffError : cumError}
                       onRetry={() => setDiffReload((v) => v + 1)}
+                      scope={diffScope}
+                      onScopeChange={setDiffScope}
+                      canCumulative={fixPairRound >= 1}
+                      roundIndex={awaitingRound?.roundIndex ?? null}
                     />
                     <VerifyPanel
                       cfg={verifyCfg}
@@ -904,6 +998,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                       busy={verifyBusy}
                       disabledReason={verifyDisabled}
                       onSaveCommand={handleVerifySave}
+                      onOpenVerdict={(p) => setHomeViewing({ path: p })}
                       onRun={() => void handleVerifyRun()}
                       onAbort={() => void handleVerifyAbort()}
                     />
@@ -928,6 +1023,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                         disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史台账/verdict 仍在）" : undefined}
                         saving={checksSaving}
                         onSaveStateChange={setChecksSaving}
+                        registerFlush={registerPlaybookFlush}
                       />
                     )}
                   </>
@@ -938,83 +1034,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
                     specLoading={specLoading}
                     reportMd={roundReport}
                     diff={roundDiff}
+                    fixReportMd={fixReportMd}
+                    hasFixFeedback={!!fixFeedbackFile}
                   />
-                )}
-                {midTab === "story" && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                      <FileText className="size-3.5" /> 叙述材料（批次目录直读）
-                      <span className="ml-auto font-normal">
-                        {`批次 slug: ${awaitingPhase.slug}`}{batchDir ? ` · ${batchDir}` : ""}{files ? ` · ${files.length} 个` : ""} · 点击看全文
-                      </span>
-                    </div>
-
-                    {/* agent 自述主文档内嵌渲染（v1 语义保留）：round-report.md
-                        markdown 直出，列表在其下 — 其余文件点开全文看。 */}
-                    {roundReport && (
-                      <div className="space-y-1 rounded-md border border-border bg-muted/20" data-acceptance-round-report data-testid="acceptance-round-report">
-                        <div className="flex items-center gap-2 px-3 pt-2 text-[10px] font-mono text-muted-foreground">
-                          <FileText className="size-3" /> round-report.md · agent 自述
-                        </div>
-                        <div className="px-3 pb-2">
-                          <MarkdownPreview content={roundReport} className="text-[11px]" />
-                        </div>
-                      </div>
-                    )}
-
-                    {batchError && (
-                      <div className="text-[11px] text-pop-red" data-acceptance-batch-error data-testid="acceptance-batch-error">
-                        批次目录读取失败：{batchError}
-                      </div>
-                    )}
-                    {files === null && !batchError && (batchDir || !fallbackTried) && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Spinner className="size-3" /> {batchDir ? "读取批次目录…" : "定位批次目录…"}
-                      </div>
-                    )}
-                    {((files !== null && files.length === 0) ||
-                      (files === null && !batchError && !batchDir && fallbackTried)) && (
-                      <div className="rounded-md border border-dashed p-4 text-[11px] text-muted-foreground" data-acceptance-batch-empty data-testid="acceptance-batch-empty">
-                        {`本 Phase 批次目录${batchDir ? `（${batchDir}）` : ""}暂无文件 — round 终态 collect 回收执行侧改动后即时出现。`}
-                      </div>
-                    )}
-                    {sortedFiles.length > 0 && (
-                      <ul className="space-y-1.5" data-acceptance-artifact-rows data-testid="acceptance-artifact-rows">
-                        {sortedFiles.map((f) => {
-                          const name = f.path.split("/").pop() ?? f.path
-                          const canPreview = previewable(f)
-                          const badge = inRound(f)
-                          return (
-                            <li key={f.path}>
-                              <button
-                                className={`w-full rounded-md border px-2.5 py-1.5 text-left transition-colors ${
-                                  canPreview ? "border-border hover:border-primary/40" : "border-border/50 opacity-60 cursor-default"
-                                }`}
-                                disabled={!canPreview}
-                                onClick={() => canPreview && setHomeViewing({ path: f.path, bytes: f.bytes, mtime: f.mtime })}
-                                data-acceptance-artifact-row={f.path} data-testid={`acceptance-artifact-row-${f.path}`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                                  <span className="truncate text-sm">{name}</span>
-                                  {badge && (
-                                    <Badge className="shrink-0 px-1 py-0 text-[9px]" data-acceptance-round-badge={f.path} data-testid={`acceptance-round-badge-${f.path}`}>
-                                      本轮
-                                    </Badge>
-                                  )}
-                                  <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{f.mtime.slice(5, 16).replace("T", " ")}</span>
-                                </div>
-                                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                                  {f.path} · {Math.max(1, Math.round(f.bytes / 1024))} KB
-                                  {!canPreview && <span className="text-pop-amber"> · 不可预览</span>}
-                                </div>
-                              </button>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-                  </div>
                 )}
               </div>
             </>
@@ -1110,12 +1132,12 @@ export function AcceptanceSurface({ task, onMutated, onDecided }: AcceptanceSurf
             <div className="rounded-md border border-pop-bd/20 bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
               <div>实物 · {roundDiff?.available ? `${roundDiff.aggregate.commits} commits · +${roundDiff.aggregate.additions}/−${roundDiff.aggregate.dels} · ${roundDiff.aggregate.files} 文件` : "无有效 diff"}</div>
               <div>自动复检 · {verify ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : "未跑（≠失败）"}</div>
-              <div>跑起来看 · {preview && preview.state !== "stopped" ? `${preview.state}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
+              <div>跑起来看 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
               <div>人工走查 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
             </div>
             {gate.skip > 0 && <p className="text-[10.5px] text-pop-amber">⊘ 跳过项将进入下一轮 carryover 首段（补验或再豁免），并写入台账。</p>}
-            {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入台账 —— 永久留痕，下轮 round-report 需解释。</p>}
-            <p className="text-[10px] text-muted-foreground">确认后 server 机写 acceptance-ledger-r{awaitingPhase?.awaitingRound}.md 进批次目录（叙述 tab 可见，不可改）。</p>
+            {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入台账 —— 永久留痕。</p>}
+            <p className="text-[10px] text-muted-foreground">确认后 server 机写 acceptance-ledger-r{awaitingPhase?.awaitingRound}.md 进批次目录（审计留痕，不可改）。</p>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setLedgerOpen(false)}>再看看</Button>

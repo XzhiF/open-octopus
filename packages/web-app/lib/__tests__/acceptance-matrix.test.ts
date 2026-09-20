@@ -8,6 +8,7 @@ import {
   parseSpecTickets,
   extractPathTokens,
   buildAcMatrix,
+  buildFixResponse,
   flattenDiffFiles,
 } from "../acceptance-matrix"
 
@@ -266,3 +267,33 @@ ghost/deleted.ts                 | 9 +
   })
 })
 
+
+// ── buildFixResponse（B 档 2026-09-20：打回→修复 回应对账）──────────────
+describe("buildFixResponse — fix-report 三列表 × 实物 diff", () => {
+  const FIX_MD = `# Fix Report r1
+## 反馈条目表
+| 反馈 | 修复动作 | 验证证据 |
+|------|----------|----------|
+| 端点缺字段校验 | 补 zod 校验 | packages/server/src/routes/usage.ts · vitest 3 passed |
+| 文档未更新 | 改写 README | docs/ghost.md 已同步 |
+| 清理死代码 | 删注释分支 | 跑过 build 无告警（无路径） |
+`
+  const DIFF = [{ path: "packages/server/src/routes/usage.ts", status: "M" as const, adds: 1, dels: 0 }]
+
+  it("三行分别命中 anchored / unanchored / silent", () => {
+    const rows = buildFixResponse(FIX_MD, DIFF)
+    expect(rows.map((r) => r.status)).toEqual(["anchored", "unanchored", "silent"])
+    expect(rows[0].matchedPaths).toEqual(["packages/server/src/routes/usage.ts"])
+    expect(rows[1].unanchoredTokens).toEqual(["docs/ghost.md"])
+    expect(rows[2].evidence).toContain("build")
+  })
+
+  it("无反馈条目表 → []（UI 走「点名缺表」分支，绝不猜）", () => {
+    expect(buildFixResponse("# Fix Report r1\n就一句话，没表。", DIFF)).toEqual([])
+  })
+
+  it("无 diff → 全 silent（不假装对过账）", () => {
+    const rows = buildFixResponse(FIX_MD)
+    expect(rows.every((r) => r.status === "silent" && r.matchedPaths.length === 0)).toBe(true)
+  })
+})

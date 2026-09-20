@@ -43,7 +43,7 @@ interface PreviewBarProps {
 
 const STATE_TXT: Record<string, { t: string; dot: string }> = {
   starting: { t: "启动中…", dot: "bg-pop-amber animate-pulse" },
-  ready: { t: "ready", dot: "bg-pop-green" },
+  ready: { t: "就绪", dot: "bg-pop-green" },
   exited: { t: "已退出", dot: "bg-pop-red" },
   stopped: { t: "未运行", dot: "bg-pop-dim" },
   failed: { t: "启动失败", dot: "bg-pop-red" },

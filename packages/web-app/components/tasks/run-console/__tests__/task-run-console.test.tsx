@@ -50,7 +50,10 @@ vi.mock("@/lib/tasks-api", () => ({
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
-vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: () => () => {} }))
+vi.mock("@/lib/sse-manager", () => ({
+  subscribeSSE: () => () => {},
+  subscribeSSEStatus: () => () => {},
+}))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
@@ -163,6 +166,15 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
+/** 验货台 surface 是否**在场**（keep-mounted 2026-09-20：tab 切换不再卸载，改 hidden
+ *  切显隐）。返回 false = 未挂载或被 hidden 挡住，两者对用户等价于「看不见」。 */
+const acceptanceSurfaceVisible = (): boolean => {
+  const stub = document.querySelector("[data-acceptance-surface-stub]")
+  if (!stub) return false
+  const wrap = stub.parentElement
+  return !!wrap && !wrap.classList.contains("hidden")
+}
+
 const renderConsole = (task: Task, detail: Record<string, unknown>) => {
   mockGetTask.mockResolvedValue(detail)
   return render(<TaskRunConsole task={task} onMutated={() => {}} onClose={() => {}} />)
@@ -263,8 +275,10 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(screen.queryByTestId("acceptance-approve")).toBeNull()
     const cta = await screen.findByTestId("console-open-acceptance")
     expect(cta.textContent).toContain("去验货台")
+    // keep-mounted 预挂：有 awaiting 轮时 surface 已挂载但被 hidden 挡着
+    expect(acceptanceSurfaceVisible()).toBe(false)
     fireEvent.click(cta)
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(mockPostAcceptance).not.toHaveBeenCalled()
   })
 
@@ -283,8 +297,8 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(flow).toBeTruthy()
     fireEvent.click(flow)
     expect(openSpy).toHaveBeenCalledWith(expect.stringContaining("/workspaces/ws-e1?tab=detail&execId=exec-1"), "_blank", expect.any(String))
-    // 点击流程图章不得误触整卡热区（stopPropagation）
-    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
+    // 点击流程图章不得误触整卡热区（stopPropagation）—— surface 在场但仍是藏着的
+    expect(acceptanceSurfaceVisible()).toBe(false)
     openSpy.mockRestore()
   })
 
@@ -335,23 +349,23 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
-    // 有待验收轮 → tab 条亮出两档，surface 未挂
+    // 有待验收轮 → tab 条亮出两档；surface 预挂但藏着（keep-mounted）
     const acceptTab = await screen.findByTestId("console-tab-accept")
     expect(acceptTab.textContent).toContain("P1·R1")
-    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
+    expect(acceptanceSurfaceVisible()).toBe(false)
     // 单入口定稿：旧「验货台核对实物 →」链与卡外绿横幅已删；点整卡 = 切 tab
     expect(screen.queryByText(/验货台核对实物/)).toBeNull()
     expect(screen.queryByText(/去验货台验收（实物/)).toBeNull()
     fireEvent.click(screen.getByTestId("console-acceptance-card"))
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
-    // 切回执行控制台
+    // 切回执行控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）
     fireEvent.click(screen.getByTestId("console-tab-console"))
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(false))
     expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
     // 导航条「🔍 验货台」也走切 tab（chip 直接文本同为 🔍 验货台，取条内钮的锚点）
     fireEvent.click(document.querySelector("[data-acceptance-open-bar]") as HTMLElement)
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
   })
 
   it("startOnAcceptance（看板「验收」按钮）：挂载即落验货台 tab", async () => {

@@ -26,7 +26,7 @@
 //
 // Sessions live IN MEMORY (one per task, running-or-last). A server restart
 // loses the map — the verdict .md written into the batch dir is the durable
-// truth (and shows up in the 叙述 listing via the existing all=1 scan). No
+// truth (批次目录文件在验货台仍可直接查看；「叙述」tab 已退役 2026-09-20). No
 // schema change, no new table, on purpose: the round is terminal and tiny;
 // the batch dir + derived view already own its bookkeeping.
 
@@ -94,6 +94,13 @@ export interface RoundDiffPayload {
   repos: RepoDiff[]
 }
 
+/** diff 区间口径（S3，2026-09-20）：
+ *  - "round"（缺省）= 本轮 exec 的 start_commit..end_commit（v2 现行为）；
+ *  - "cumulative"   = 本 phase 首轮 exec 的 start_commit..本轮 exec 的
+ *    end_commit —— 修复轮只见 delta，但人放行的是 phase 终态，累计口径给
+ *    「这整个 phase 到底改了什么」的答案。输出形状两者完全一致。 */
+export type RoundDiffScope = "round" | "cumulative"
+
 export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"
 
 export interface VerifySummary {
@@ -114,12 +121,18 @@ export interface VerifySummary {
   /** GET carries the last {@link VERIFY_TAIL_LINES} lines — SSE has no replay
    *  on the taskpool channel, so a client that joined mid-run reconstructs here. */
   tail?: string[]
+  /** GET 带 `since=<n>` 时附：第 n 行（0 基，计数 = onLog/SSE task_verify_log
+   *  事件序号）起的补拉切片 —— SSE 断线重连后找回错过的日志行（S5）。被 ring
+   *  裁掉的头部行诚实缺失（tail/verdict 文件同理）。 */
+  lines_after?: string[]
 }
 
 const VERIFY_RING_CAP = 5000
 const VERIFY_TAIL_LINES = 200
 const VERIFY_DEFAULT_TIMEOUT_S = 600
 const VERDICT_MAX_TAIL_BYTES = 200_000
+/** ring 裁头后塞进 lines[0] 的占位行（不是 onLog 真行，since 补拉时按位跳过）。 */
+const VERIFY_DROP_MARKER = "[…日志超长 — 早期行已丢弃，完整输出看 verdict 文件]"
 
 // ── live preview (跑起来看) — 长驻进程 + HTTP 探活 (ADR-0022) ──────────
 export type PreviewState = "starting" | "ready" | "exited" | "stopped" | "failed"
@@ -178,6 +191,8 @@ interface VerifySession {
   summary: VerifySummary
   lines: string[]
   droppedHead: boolean
+  /** 已被 ring 裁掉的 onLog 真行数（不含占位 marker）—— since 补拉的全局游标。 */
+  realDropped: number
   userAborted: boolean
   controller: AbortController
   done: boolean
@@ -246,9 +261,17 @@ export class RoundEvidenceService {
 
   // ── 实物 diff ───────────────────────────────────────────────────────────
 
-  async getRoundDiff(taskId: string): Promise<RoundDiffPayload> {
-    const { execRow } = this.resolveAwaiting(taskId)
-    const starts = parseCommitMap(execRow.start_commit_id)
+  /** scope="cumulative"（S3）：起点换成同 phase 首轮 exec 的 start 锚 ——
+   *  首轮行缺失时回落本轮口径（诚实降级，payload 形状不变）。某仓在首轮 start
+   *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。 */
+  async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
+    const { execRow, phaseIndex } = this.resolveAwaiting(taskId)
+    let starts = parseCommitMap(execRow.start_commit_id)
+    if (scope === "cumulative") {
+      const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const firstStarts = parseCommitMap(first?.start_commit_id)
+      if (Object.keys(firstStarts).length > 0) starts = firstStarts
+    }
     const ends = parseCommitMap(execRow.end_commit_id)
     const names = [...new Set([...Object.keys(starts), ...Object.keys(ends)])]
     const interventions = parseInterventions(execRow.harness_summary)
@@ -396,7 +419,7 @@ export class RoundEvidenceService {
     }
     const ws = this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) {
-      throw new TaskStatusConflictError("工作区目录不在了 — 实物复检不可用（叙述/历史 verdict 仍有效）")
+      throw new TaskStatusConflictError("工作区目录不在了 — 实物复检不可用（复检历史与 verdict 文件仍可查看）")
     }
     const runPerRepo = cfg.per_repo === true
     let cwdAbs: string
@@ -426,6 +449,7 @@ export class RoundEvidenceService {
       },
       lines: [],
       droppedHead: false,
+      realDropped: 0,
       userAborted: false,
       controller,
       done: false,
@@ -456,10 +480,14 @@ export class RoundEvidenceService {
         onLog: (line: string, stream?: "stdout" | "stderr") => {
           session.lines.push(line)
           if (session.lines.length > VERIFY_RING_CAP) {
-            session.lines.splice(0, session.lines.length - VERIFY_RING_CAP)
+            const over = session.lines.length - VERIFY_RING_CAP
+            // 游标只数 onLog 真行：占位 marker 若恰在头部被挤掉，不计入。
+            const markerOut = session.droppedHead && session.lines[0] === VERIFY_DROP_MARKER ? 1 : 0
+            session.lines.splice(0, over)
+            session.realDropped += over - markerOut
             if (!session.droppedHead) {
               session.droppedHead = true
-              session.lines.unshift("[…日志超长 — 早期行已丢弃，完整输出看 verdict 文件]")
+              session.lines.unshift(VERIFY_DROP_MARKER)
             }
           }
           this.sse.emit("taskpool", {
@@ -488,7 +516,8 @@ export class RoundEvidenceService {
   }
 
   /** Terminal classification + durable verdict .md (writeHomeFile wrapper →
-   *  SSE task_artifacts_update fires for free — the 叙述 list re-fetches it) */
+   *  SSE task_artifacts_update fires for free — 验货台批次文件列表 re-fetches it；
+   *  「叙述」tab 已退役 2026-09-20) */
   private settleVerify(
     taskId: string,
     session: VerifySession,
@@ -529,11 +558,19 @@ export class RoundEvidenceService {
     })
   }
 
-  /** GET /:id/verify — session summary (+tail) or null (never ran / restarted). */
-  getVerifyStatus(taskId: string): VerifySummary | null {
+  /** GET /:id/verify — session summary (+tail) or null (never ran / restarted).
+   *  `since`（S5）：附带自第 since 个 onLog 真行（0 基，= 客户端已收
+   *  task_verify_log 计数）起的 lines_after 补拉切片；头部已被 ring 裁掉的
+   *  部分诚实缺失（切片从现存最早行给起）。 */
+  getVerifyStatus(taskId: string, since?: number): VerifySummary | null {
     const session = this.sessions.get(taskId)
     if (!session) return null
-    return { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
+    const out: VerifySummary = { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
+    if (since != null && Number.isFinite(since) && since >= 0) {
+      const marker = session.droppedHead && session.lines[0] === VERIFY_DROP_MARKER ? 1 : 0
+      out.lines_after = session.lines.slice(marker + Math.max(0, since - session.realDropped))
+    }
+    return out
   }
 
   /** POST /:id/verify/abort — SIGTERM tree-kill via BashExecutor's chain. */
@@ -1036,7 +1073,7 @@ export class RoundEvidenceService {
   /** Server-authoritative evidence write — the underlying taskHome door (path/
    *  suffix guards only, NO edit-window gate: a final-phase ledger lands during
    *  'archiving' when user-editing is already closed). Emits the artifacts SSE
-   *  so the 叙述 tab re-pulls the new file. */
+   *  so 验货台批次文件区 re-pulls the new file（「叙述」tab 已退役）。 */
   private writeEvidenceFile(taskId: string, rel: string, content: string): { path: string; bytes: number } {
     const res = this.taskHome.writeHomeFile(taskId, rel, content)
     this.sse.emit("taskpool", { event: TASK_ARTIFACTS_UPDATE_EVENT, data: { task_id: taskId } })
@@ -1202,7 +1239,7 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     "## 实物（真 git 区间）",
     d.available
       ? `- ${d.repos.filter((r) => !r.expired).length}/${d.repos.length} repos 有效 · ${agg.commits} commits · +${agg.additions}/−${agg.dels} · ${agg.files} 文件 · 干预 ${d.interventions ?? "—"}`
-      : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 叙述/历史 verdict 仍可参考`,
+      : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 复检历史与 verdict 文件仍可参考`,
     "",
     "## 自动复检",
     verifyLine,

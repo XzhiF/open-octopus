@@ -481,12 +481,15 @@ export interface AcceptanceDispatch {
 }
 
 /** 200 body of POST /:id/acceptance — `task` is the SAME shape as GET /:id
- *  (executions + derived included), re-derived AFTER the decision was applied. */
+ *  (executions + derived included), re-derived AFTER the decision was applied.
+ *  `ledger_written`（A6 诚实化）：server 决策后 best-effort 机写台账/打回增强，
+ *  写失败或定位不到批次目录 = false（缺省 true，兼容未升级的 server）。 */
 export interface AcceptanceResult {
   task: TaskDetail
   acceptance_id: string
   next_action: AcceptanceNextAction
   dispatch?: AcceptanceDispatch
+  ledger_written?: boolean
 }
 
 /** 200 body of POST /:id/advance — same shape minus the ledger row (advance
@@ -795,11 +798,18 @@ export interface VerifySummary {
   duration_ms?: number
   verdict_path?: string | null
   tail?: string[]
+  /** GET /:id/verify?since=n 的增量补拉载荷（server S5）：自第 n 行（0 基，与
+   *  task_verify_log SSE 流 1:1）起的行；被 5000 行 ring 裁掉的头部诚实缺失。 */
+  lines_after?: string[]
 }
 
+/** diff 口径（server S3）：round = 本轮 exec start..end（缺省）；
+ *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
+export type RoundDiffScope = "round" | "cumulative"
+
 /** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
-export async function getRoundDiff(taskId: string): Promise<RoundDiffPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff`))
+export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`, scope === "cumulative" ? { scope } : {}))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -831,9 +841,10 @@ export async function startVerify(taskId: string): Promise<VerifySummary> {
   return body as VerifySummary
 }
 
-/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。 */
-export async function getVerifyStatus(taskId: string): Promise<VerifySummary | null> {
-  const res = await fetch(buildUrl(`/${taskId}/verify`))
+/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。
+ *  since = 前端已收到的 SSE 行数 → 响应带 lines_after 增量（断线补拉用）。 */
+export async function getVerifyStatus(taskId: string, since?: number): Promise<VerifySummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/verify`, since != null && since >= 0 ? { since: String(since) } : {}))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)

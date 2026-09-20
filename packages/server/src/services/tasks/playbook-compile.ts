@@ -38,7 +38,8 @@ export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookBudget, Pl
 // ── checks-on-disk codec (acceptance-checks-r{N}.md) ──────────────────
 // Stored as MARKDOWN (````json` fenced) so it rides the existing .md-only
 // home-file write door (no security-surface change) and stays human-readable
-// /editable in the 叙述 tab. The panel writes via PUT /:id/home-file.
+// /editable in the batch file view（「叙述」tab 已退役 2026-09-20）. The panel
+// writes via PUT /:id/home-file.
 
 export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
 

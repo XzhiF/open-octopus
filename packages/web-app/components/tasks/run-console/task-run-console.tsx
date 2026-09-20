@@ -27,7 +27,7 @@ import {
 import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
-import { subscribeSSE } from "@/lib/sse-manager"
+import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
 import { effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
@@ -72,12 +72,17 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // 验货台 = 本控制台的 tab（2026-09-16 改版：原三栏弹窗 AcceptanceModal 收编
   // 内嵌，父窗自带拖拽/缩放/全屏；打回回显留在 tab 里，不随派生态变化弹出）。
   const [surfaceTab, setSurfaceTab] = useState<"console" | "accept">("console")
+  // keep-mounted 挂载闸（2026-09-20）：点过验货台或出现待验收轮后**常挂载**，
+  // tab 切换只切 hidden —— 三元卸载会把在飞的复检会话打回服务端尾 200 行、
+  // gate/编辑草稿归零、重拉 5-6 个请求（「切走再回来失忆」）。换任务时复位。
+  const [acceptMounted, setAcceptMounted] = useState(!!startOnAcceptance)
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
     setSel(undefined)
     setSurfaceTab(startOnAcceptance ? "accept" : "console")
+    setAcceptMounted(!!startOnAcceptance)
   }, [task.id, startOnAcceptance])
 
   const isLive =
@@ -93,6 +98,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     const id = setInterval(refetch, 5000)
     return () => clearInterval(id)
   }, [isLive, refetch])
+
+  // SSE 实况（2026-09-20）：footer 的 SSE● 旧版只看「任务活着」常亮脉冲，连接断了
+  // 照样亮 —— 现接 sse-manager 的真实连接态（同 url 全页共享一条连接）。
+  const [sseLive, setSseLive] = useState(true)
+  useEffect(() => {
+    const url = `${getServerUrl()}/api/tasks/events`
+    return subscribeSSEStatus(url, (s) => setSseLive(s.connected))
+  }, [])
 
   // ── SSE：状态即时重拉（与退役前 TaskRunDetailView 同四路）+ 活动流采集 ──
   const [events, setEvents] = useState<StreamEvent[]>([])
@@ -236,6 +249,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     : null
   const waitedMs = awaitingRun?.completed_at ? Math.max(0, now - Date.parse(awaitingRun.completed_at)) : null
 
+  // keep-mounted 触发：待验收轮一出现（或用户点过验货台）即常挂载，此后不随派生态消失而卸载。
+  useEffect(() => {
+    if (awaitingPv) setAcceptMounted(true)
+  }, [awaitingPv])
+
   const handleAbort = async () => {
     setBusy("abort")
     try {
@@ -359,7 +377,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             </button>
           )}
           {task.status === "awaiting_review" && (
-            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对·叙述/动作）">
+            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对/动作）">
               🔍 验货台
             </button>
           )}
@@ -476,11 +494,23 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               <FoldMasterChip className="ml-auto" />
             </div>
           )}
-          {surfaceTab === "accept" ? (
-            <div className="min-h-0 flex-1 bg-pop-paper">
-              <AcceptanceSurface task={task} onMutated={() => { onMutated(); refetch() }} onDecided={() => setSurfaceTab("console")} />
+          {/* keep-mounted：见 acceptMounted 声明处注释。hidden 切换而非三元卸载，
+              复检会话/走查 gate/编辑草稿活过 tab 往返；e2e 的 [data-acceptance-modal]
+              可见性断言不受影响（Radix 之外，hidden 属性即 Playwright 不可见）。 */}
+          {acceptMounted && (
+            <div className={`min-h-0 flex-1 bg-pop-paper ${surfaceTab !== "accept" ? "hidden" : ""}`}>
+              {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入（嵌入式
+                  AcceptanceSurface 不再自养第三份副本 / 重复订 phase 事件）。 */}
+              <AcceptanceSurface
+                task={task}
+                detailOverride={detail}
+                onRefetch={refetch}
+                onMutated={() => { onMutated(); refetch() }}
+                onDecided={() => setSurfaceTab("console")}
+              />
             </div>
-          ) : (
+          )}
+          {surfaceTab !== "accept" && (
             <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
               {view !== "report" && derived && runs.length > 0 && (
                 <TaskAiUsageCard
@@ -517,7 +547,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           </>
         )}
         {isLive ? (
-          <span className="ml-auto flex items-center gap-1.5 text-pop-cyan">SSE<i className="block size-[7px] animate-pulse rounded-full bg-pop-cyan" /></span>
+          sseLive ? (
+            <span className="ml-auto flex items-center gap-1.5 text-pop-cyan">SSE<i className="block size-[7px] animate-pulse rounded-full bg-pop-cyan" /></span>
+          ) : (
+            // 旧实现只看任务态常亮脉冲 —— 断线后照亮，盘面停在旧快照却「看起来是活的」。
+            <span className="ml-auto flex items-center gap-1.5 text-pop-red" title="实时连接中断 — 盘面为断线前快照，浏览器/管理器会自动重连">SSE 断线<i className="block size-[7px] rounded-full bg-pop-red" /></span>
+          )
         ) : (
           <span className="ml-auto text-pop-bg/35">终态 · 已停轮询</span>
         )}

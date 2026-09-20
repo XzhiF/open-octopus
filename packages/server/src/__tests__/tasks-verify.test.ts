@@ -257,6 +257,32 @@ describe("verify — 门链与终态", () => {
     expect(bash).toContain('( cd "$D" && mvn -B test ) || rc=1')
     expect(bash.trimEnd().endsWith("exit $rc")).toBe(true)
   })
+
+  it("V12: GET ?since=n 增量补拉 — lines_after 自第 n 个真行起；无/非法 since 不带该字段（S5）", async () => {
+    const taskId = await newAwaitingTask()
+    expect((await setVerify(taskId, { command: "for i in 1 2 3 4; do echo L$i; done", timeoutS: 30 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${taskId}/verify`, { method: "POST" })).status).toBe(202)
+    await pollTerminal(taskId)
+
+    const full = (await (await app.request(`/api/tasks/${taskId}/verify`)).json()) as VerifySummary
+    expect((full.tail ?? []).join("\n")).toContain("L4")
+    expect(full.lines_after).toBeUndefined()
+
+    const p2 = (await (await app.request(`/api/tasks/${taskId}/verify?since=2`)).json()) as VerifySummary
+    const got2 = (p2.lines_after ?? []).join("\n")
+    expect(got2).not.toContain("L1")
+    expect(got2).toContain("L3")
+    expect(got2).toContain("L4")
+
+    const p0 = (await (await app.request(`/api/tasks/${taskId}/verify?since=0`)).json()) as VerifySummary
+    expect((p0.lines_after ?? []).join("\n")).toContain("L1")
+
+    // 越界 since → 空切片；非法 since → 视为缺省（现行为逐字不变）
+    const pBig = (await (await app.request(`/api/tasks/${taskId}/verify?since=9999`)).json()) as VerifySummary
+    expect(pBig.lines_after).toEqual([])
+    const pBad = (await (await app.request(`/api/tasks/${taskId}/verify?since=abc`)).json()) as VerifySummary
+    expect(pBad.lines_after).toBeUndefined()
+  })
 })
 
 // ── 剧本探针单发执行 (POST /:id/playbook/run) ───────────────────────────

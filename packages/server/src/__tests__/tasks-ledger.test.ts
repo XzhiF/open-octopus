@@ -132,7 +132,10 @@ describe("T04 ledger + reopen", () => {
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
     })
     expect(r.status).toBe(200)
-    expect(((await r.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
+    // S2 (2026-09-20): 台账写没写成功进响应体 —— 前端 toast 从此吃真话。
+    const body = (await r.json()) as { next_action: string; ledger_written: boolean }
+    expect(body.next_action).toBe("awaiting_manual_trigger")
+    expect(body.ledger_written).toBe(true)
     expect(has(taskId, "acceptance-ledger-r1.md")).toBe(true)
   })
 
@@ -144,6 +147,75 @@ describe("T04 ledger + reopen", () => {
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "rejected", feedback: "x", reopen_tickets: ["../../etc/passwd"] }),
     })
     expect(r.status).toBe(400)
+  })
+})
+
+// ── S1 (2026-09-20): 走查 ✗ 服务端硬闸 —— 前端 disabled 不再是唯一防线 ──
+describe("S1 acceptance 硬闸", () => {
+  async function postAccepted(taskId: string): Promise<Response> {
+    return app.request(`/api/tasks/${taskId}/acceptance`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
+    })
+  }
+  function decisionRows(taskId: string): number {
+    return (db.prepare("SELECT COUNT(*) AS n FROM task_phase_acceptances WHERE task_id = ?")
+      .get(taskId) as { n: number }).n
+  }
+
+  it("G1: checks 有 ✗ → 409 硬闸，决策表零行、台账不写", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "walk:plan:1": { decision: "pass", note: "", at: "t" },
+      "walk:plan:2": { decision: "fail", note: "按钮 404", at: "t" },
+      "walk:plan:3": { decision: "fail", note: "台账没落", at: "t" },
+    } }))
+    const r = await postAccepted(taskId)
+    expect(r.status).toBe(409)
+    expect(((await r.json()) as { error: string }).error).toContain("走查存在 2 项 ✗ —— 服务端硬闸拦截，请改走打回")
+    expect(decisionRows(taskId)).toBe(0)
+    expect(has(taskId, "acceptance-ledger-r1.md")).toBe(false)
+  })
+
+  it("G2: 全 ✓ → 放行，决策生效且 ledger_written:true", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "walk:plan:1": { decision: "pass", note: "", at: "t" },
+      "walk:plan:2": { decision: "pass", note: "", at: "t" },
+    } }))
+    const r = await postAccepted(taskId)
+    expect(r.status).toBe(200)
+    expect(((await r.json()) as { ledger_written: boolean }).ledger_written).toBe(true)
+    expect(decisionRows(taskId)).toBe(1)
+  })
+
+  it("G3: 无 checks 文件 / 文件解析失败 → 放行（诚实降级，绝不误伤）", async () => {
+    const noFile = await newAwaiting(true, false)
+    wb(noFile, "e2e-test-plan.md", PLAN)
+    expect((await postAccepted(noFile)).status).toBe(200)
+
+    const corrupt = await newAwaiting(true, false)
+    wb(corrupt, "e2e-test-plan.md", PLAN)
+    wb(corrupt, "acceptance-checks-r1.md", "# 手改坏掉的\n```json\n{not-json\n```\n")
+    expect((await postAccepted(corrupt)).status).toBe(200)
+  })
+
+  it("G4: 只 ⊘（无 ✗）→ 不触发硬闸；轮次不匹配的 accepted 仍由 service 409", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "walk:plan:1": { decision: "skip", note: "环境未就绪", at: "t" },
+    } }))
+    expect((await postAccepted(taskId)).status).toBe(200)
+    // round_index 对不上 awaiting 轮 → 硬闸不抢话，service 的 409 语义原样返回
+    const r = await app.request(`/api/tasks/${taskId}/acceptance`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ phase_index: 1, round_index: 9, decision: "accepted" }),
+    })
+    expect(r.status).toBe(409)
+    expect(((await r.json()) as { error: string }).error).toContain("不匹配")
   })
 })
 
