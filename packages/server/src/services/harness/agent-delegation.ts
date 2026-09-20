@@ -882,13 +882,13 @@ export class AgentDelegationService {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
-      // C3: 恒 NULL 时代终结 —— ledger 唯一写入口统一补 cost（SDK 未给 → 价表估算 → 未知仍 NULL）
+      // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService 产出
+      // （SDK 上报价 tokenInfo.costUsd 不再传入 —— KD2 不作账；未配价 NULL —— KD4 不估算）。
       this.tokenUsageDao.recordNodeUsage({
         id: tokenId,
         nodeExecutionId: nodeExecId,
         model: tokenInfo.model,
         usage: tokenInfo,
-        costUsd: tokenInfo.costUsd,
         source: 'harness',
         createdAt: new Date().toISOString(),
       })

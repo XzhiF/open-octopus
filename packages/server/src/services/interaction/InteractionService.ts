@@ -11,7 +11,6 @@ import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
-import { ledgerCostUsd } from "../../db/dao/usage-ledger"
 import { extractInteractionCompletion } from "@octopus/engine"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
@@ -776,13 +775,13 @@ export class InteractionService {
   /** Write aggregated token usage to node_token_usages. */
   private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
-    // C3: ledger 唯一写入口（每轮新 uuid 不冲突；cost 未知时入口按价表估算）
+    // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService 产出
+    // （SDK 上报价不再传入 —— KD2）。每轮新 uuid 不冲突。
     this.tokenDao.recordNodeUsage({
       id: randomUUID(),
       nodeExecutionId: session.nodeExecutionId,
       model: acc.model ?? "unknown",
       usage: acc.usage,
-      costUsd: acc.costUsd,
       source: 'interaction',
       createdAt: new Date().toISOString(),
     })
@@ -792,6 +791,9 @@ export class InteractionService {
   private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
     const now = Date.now()
+    // billing-core-1 票04（KD2/KD4/KD5/KD11）：cost 唯一来源 = BillingService，
+    // SDK 上报价不作账；未配价 → 三列 NULL + unpriced。
+    const cost = this.tokenDao.billing().computeForModel(acc.model, acc.usage)
     const llmCallRow: LlmCallRow = {
       id: randomUUID(),
       node_execution_id: session.nodeExecutionId,
@@ -808,8 +810,10 @@ export class InteractionService {
       output_tokens: acc.usage.outputTokens,
       cache_read_tokens: acc.usage.cacheReadTokens,
       cache_creation_tokens: acc.usage.cacheCreationTokens,
-      // C3: 与 node 表写入口同一 cost 兜底（SDK 未给价 → 价表估算 → 未知 NULL）
-      cost_usd: ledgerCostUsd(acc.usage, acc.model, acc.costUsd),
+      cost_usd: cost.cost_usd,
+      cost_native: cost.cost_native,
+      cost_currency: cost.cost_currency,
+      price_status: cost.price_status,
       org: null,
       workspace_id: session.workspaceId,
       workflow_ref: null,

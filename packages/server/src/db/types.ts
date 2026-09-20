@@ -161,6 +161,11 @@ export interface LlmCallRow {
   cache_read_tokens: number
   cache_creation_tokens: number
   cost_usd: number | null
+  /** billing-core-1 (v45/票04) 双币种快照 (KD5)：原币金额+币种，写入口经 BillingService。
+   *  老行 / 未带列插入 = NULL，不回填。price_status: priced|unpriced (KD4)。 */
+  cost_native?: number | null
+  cost_currency?: string | null
+  price_status?: string | null
   org: string | null
   workspace_id: string | null
   workflow_ref: string | null

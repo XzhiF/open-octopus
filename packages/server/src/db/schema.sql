@@ -218,6 +218,11 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd              REAL,
+  -- billing-core-1 v45: 双币种快照 (KD5) — cost_native 原币金额 + cost_currency 原币种，
+  -- cost_usd 继续存按记账时汇率归一的 USD 值。老行三列为 NULL，不回填 (KD3)。
+  cost_native           REAL,
+  cost_currency         TEXT,
+  price_status          TEXT,
   org                   TEXT,
   workspace_id          TEXT,
   workflow_ref          TEXT,
@@ -670,6 +675,28 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
   trigger_type TEXT NOT NULL DEFAULT 'cron',
   org TEXT NOT NULL,
   metadata TEXT
+);
+
+-- 29. Billing — 价格配置与全局计费设置 (billing-core-1 ticket 01, KD5/KD6/KD7)
+-- 单价语义 = 金额 / 1M tokens（KD6）。model_id 全表唯一（KD9 精确匹配的真相源）。
+CREATE TABLE IF NOT EXISTS billing_price_config (
+  id                     TEXT PRIMARY KEY,
+  vendor                 TEXT NOT NULL,
+  model_id               TEXT NOT NULL UNIQUE,
+  input_unit_price       REAL NOT NULL,
+  output_unit_price      REAL NOT NULL,
+  cache_write_unit_price REAL NOT NULL,
+  cache_read_unit_price  REAL NOT NULL,
+  currency               TEXT NOT NULL CHECK (currency IN ('USD','CNY')),
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL
+);
+
+-- key/value 全局设置：usd_to_cny（1 USD = N CNY 手工汇率，KD7）、display_currency（展示币种，KD8）。
+-- 内置键的默认值兜底在 billing-dao 侧（getSetting），不在此种子，避免覆盖用户后改的值。
+CREATE TABLE IF NOT EXISTS billing_setting (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 
 -- =============================================================================

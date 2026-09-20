@@ -2,7 +2,6 @@ import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
-import { ledgerCostUsd } from "../db/dao/usage-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
@@ -191,31 +190,44 @@ export class ObservabilityService {
     if (!meta) return
 
     try {
-      const rows: LlmCallRow[] = calls.map((call, i) => ({
-        id: crypto.randomUUID(),
-        node_execution_id: nodeExecId,
-        execution_id: executionId,
-        turn_index: call.turnIndex,
-        call_index: i,
-        message_id: call.messageId ?? null,
-        model: call.model ?? null,
-        stop_reason: call.stopReason ?? null,
-        timestamp: call.timestamp,
-        duration_ms: call.durationMs,
-        ttft_ms: call.ttftMs ?? null,
-        input_tokens: call.inputTokens,
-        output_tokens: call.outputTokens,
-        cache_read_tokens: call.cacheReadTokens,
-        cache_creation_tokens: call.cacheCreationTokens,
-        // C2/C3：SDK/价表都没有 → 写 NULL（未定价）；ledger 唯一 cost 决策函数
-        cost_usd: ledgerCostUsd(call, call.model, call.costUsd),
-        org: meta.org,
-        workspace_id: meta.workspaceId,
-        workflow_ref: meta.workflowRef,
-        node_id: meta.nodeId,
-        session_id: meta.sessionId ?? null,
-        instance_id: instanceId,
-      }))
+      const billing = this.tokenDao.billing()
+      const rows: LlmCallRow[] = calls.map((call, i) => {
+        // billing-core-1 票04（KD2/KD4/KD5/KD11）：cost 唯一来源 = BillingService ——
+        // SDK 上报价不作账，未配价 → 三列 NULL + unpriced（不估算）。
+        const cost = billing.computeForModel(call.model ?? null, {
+          inputTokens: call.inputTokens,
+          outputTokens: call.outputTokens,
+          cacheReadTokens: call.cacheReadTokens,
+          cacheCreationTokens: call.cacheCreationTokens,
+        })
+        return {
+          id: crypto.randomUUID(),
+          node_execution_id: nodeExecId,
+          execution_id: executionId,
+          turn_index: call.turnIndex,
+          call_index: i,
+          message_id: call.messageId ?? null,
+          model: call.model ?? null,
+          stop_reason: call.stopReason ?? null,
+          timestamp: call.timestamp,
+          duration_ms: call.durationMs,
+          ttft_ms: call.ttftMs ?? null,
+          input_tokens: call.inputTokens,
+          output_tokens: call.outputTokens,
+          cache_read_tokens: call.cacheReadTokens,
+          cache_creation_tokens: call.cacheCreationTokens,
+          cost_usd: cost.cost_usd,
+          cost_native: cost.cost_native,
+          cost_currency: cost.cost_currency,
+          price_status: cost.price_status,
+          org: meta.org,
+          workspace_id: meta.workspaceId,
+          workflow_ref: meta.workflowRef,
+          node_id: meta.nodeId,
+          session_id: meta.sessionId ?? null,
+          instance_id: instanceId,
+        }
+      })
 
       this.tokenDao.insertLlmCallBatch(rows)
     } catch {

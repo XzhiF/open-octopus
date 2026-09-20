@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 44
+export const SCHEMA_VERSION = 45
 
 /**
  * Apply the complete unified schema to the given database.
@@ -312,6 +312,13 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'executions', 'phase_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
+
+  // schema v45 (billing-core-1 ticket 01): llm_calls 双币种快照列 (KD5)。
+  // cost_native 原币金额 + cost_currency 原币种 + price_status (priced|unpriced, KD4)。
+  // Additive nullable — 老行保持 NULL，不回填 (KD3 不回溯重算)。
+  ensureColumn(db, 'llm_calls', 'cost_native', "REAL")
+  ensureColumn(db, 'llm_calls', 'cost_currency', "TEXT")
+  ensureColumn(db, 'llm_calls', 'price_status', "TEXT")
 }
 
 /**

@@ -382,13 +382,13 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (result?.modelUsages && result.modelUsages.length > 0) {
           const now = new Date().toISOString()
           for (const mu of result.modelUsages) {
-            // C3: ledger 唯一写入口（cost 兜底估算也在入口内，与 llm_calls 对称）
+            // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService
+            // 产出（SDK 上报价 mu.costUsd 不再传入 —— KD2 不作账）。
             tokenUsageDao.recordNodeUsage({
               id: `${neId}-token-${mu.model}`,
               nodeExecutionId: neId,
               model: mu.model,
               usage: mu,
-              costUsd: mu.costUsd,
               source: 'node',
               createdAt: now,
             })

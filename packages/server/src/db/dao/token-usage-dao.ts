@@ -2,10 +2,22 @@ import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
 import { LEDGER_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
-import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
+import { type NodeUsageSource } from "./usage-ledger"
+import { BillingDAO } from "./billing-dao"
+import { BillingService } from "../../services/billing"
 
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
+
+  /**
+   * billing-core-1 票04：算钱唯一 seam = BillingService（KD2/KD11）。同库惰性建一份；
+   * observability / InteractionService 等写入口经本访问器复用同一实例（单一 seam 单一构造点）。
+   */
+  private _billing?: BillingService
+  billing(): BillingService {
+    if (!this._billing) this._billing = new BillingService(new BillingDAO(this.db))
+    return this._billing
+  }
 
   // ── node_token_usages ───────────────────────────────────────────
 
@@ -32,22 +44,25 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   /**
-   * node_token_usages 唯一写入口（C3 · UsageLedger）。三条旧路径
+   * node_token_usages 唯一写入口（C3 · UsageLedger + billing-core-1 票04）。三条旧路径
    * （ExecutionDAO.insertNodeTokenUsage / 本表旧 insert / HarnessDAO.insertHarnessTokenUsage）
    * 收编于此：UPSERT 累加 + source 判别 + cost 三态（未知保持 NULL，绝不焊 0）。
    * 同 id 冲突累加（engine/harness 用确定式 id 重跑累加；interaction 每轮新 uuid 不冲突）。
+   *
+   * 票04 换源（KD2/KD11）：cost 不再信上游给价、不再走 shared 价表估算 —— 唯一来源是
+   * BillingService（billing_price_config + 记账时刻汇率），未配价 → NULL（KD4 不估算）。
    */
   recordNodeUsage(input: {
     id: string
     nodeExecutionId: string
     model: string
     usage: Pick<TokenUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>
-    /** SDK/calibrate 给的价格；null/undefined = 未给，入口会查价表估算（ledgerCostUsd） */
+    /** @deprecated SDK/calibrate 上报价不再作为落库 cost 来源（KD2）；参数仅为调用方兼容保留，本入口忽略。 */
     costUsd?: number | null
     source: NodeUsageSource
     createdAt: string
   }): Database.RunResult {
-    const cost = ledgerCostUsd(input.usage, input.model, input.costUsd)
+    const cost = this.billing().computeForModel(input.model, input.usage).cost_usd
     return this.stmt(`
       INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -219,14 +234,16 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cost_usd, cost_native, cost_currency, price_status,
+        org, workspace_id, workflow_ref, node_id, session_id, instance_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
       row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
       row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
-      row.cache_creation_tokens, row.cost_usd, row.org, row.workspace_id,
-      row.workflow_ref, row.node_id, row.session_id, row.instance_id,
+      row.cache_creation_tokens, row.cost_usd, row.cost_native ?? null, row.cost_currency ?? null,
+      row.price_status ?? null,
+      row.org, row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
     )
   }
 
@@ -251,16 +268,26 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        cost_usd, org, workspace_id, workflow_ref, node_id, session_id, instance_id
+        cost_usd, cost_native, cost_currency, price_status,
+        org, workspace_id, workflow_ref, node_id, session_id, instance_id
       ) VALUES (
         @id, @node_execution_id, @execution_id, @turn_index, @call_index,
         @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
         @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @cost_usd, @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id
+        @cost_usd, @cost_native, @cost_currency, @price_status,
+        @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id
       )
     `)
     this.transaction(() => {
-      for (const row of rows) insertStmt.run(row)
+      for (const row of rows) {
+        // 三新列是 optional 字段 —— named 绑定缺 key/undefined 会抛，统一补 NULL 兜底
+        insertStmt.run({
+          ...row,
+          cost_native: row.cost_native ?? null,
+          cost_currency: row.cost_currency ?? null,
+          price_status: row.price_status ?? null,
+        })
+      }
     })
   }
 
