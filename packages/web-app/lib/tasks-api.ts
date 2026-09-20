@@ -481,12 +481,15 @@ export interface AcceptanceDispatch {
 }
 
 /** 200 body of POST /:id/acceptance — `task` is the SAME shape as GET /:id
- *  (executions + derived included), re-derived AFTER the decision was applied. */
+ *  (executions + derived included), re-derived AFTER the decision was applied.
+ *  `ledger_written`（A6 诚实化）：server 决策后 best-effort 机写台账/打回增强，
+ *  写失败或定位不到批次目录 = false（缺省 true，兼容未升级的 server）。 */
 export interface AcceptanceResult {
   task: TaskDetail
   acceptance_id: string
   next_action: AcceptanceNextAction
   dispatch?: AcceptanceDispatch
+  ledger_written?: boolean
 }
 
 /** 200 body of POST /:id/advance — same shape minus the ledger row (advance
@@ -795,11 +798,18 @@ export interface VerifySummary {
   duration_ms?: number
   verdict_path?: string | null
   tail?: string[]
+  /** GET /:id/verify?since=n 的增量补拉载荷（server S5）：自第 n 行（0 基，与
+   *  task_verify_log SSE 流 1:1）起的行；被 5000 行 ring 裁掉的头部诚实缺失。 */
+  lines_after?: string[]
 }
 
+/** diff 口径（server S3）：round = 本轮 exec start..end（缺省）；
+ *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
+export type RoundDiffScope = "round" | "cumulative"
+
 /** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
-export async function getRoundDiff(taskId: string): Promise<RoundDiffPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff`))
+export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`, scope === "cumulative" ? { scope } : {}))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -831,9 +841,10 @@ export async function startVerify(taskId: string): Promise<VerifySummary> {
   return body as VerifySummary
 }
 
-/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。 */
-export async function getVerifyStatus(taskId: string): Promise<VerifySummary | null> {
-  const res = await fetch(buildUrl(`/${taskId}/verify`))
+/** GET /:id/verify — 会话摘要（含 tail 200）；从未跑过/重启后 → null。
+ *  since = 前端已收到的 SSE 行数 → 响应带 lines_after 增量（断线补拉用）。 */
+export async function getVerifyStatus(taskId: string, since?: number): Promise<VerifySummary | null> {
+  const res = await fetch(buildUrl(`/${taskId}/verify`, since != null && since >= 0 ? { since: String(since) } : {}))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
@@ -854,7 +865,11 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
 // 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
 
 export type PlaybookItemKind = "walk" | "probe" | "claim"
-export interface PlaybookItem { id: string; op: string; expect: string; evidence?: string; probe?: { command: string } }
+export interface PlaybookItem {
+  id: string; op: string; expect: string; evidence?: string; probe?: { command: string }
+  /** 配了 runbook 时编译器把起服/就绪/收尾步打标（面板折一行提示、不给执行钮、不进连跑）。 */
+  lifecycle?: "start" | "ready" | "teardown"
+}
 export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
 export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
 export interface PlaybookBudget { steps: number; estMin: number; over: boolean; degraded: boolean }
@@ -884,6 +899,8 @@ export interface PreviewSummary {
   execution_id?: string
   command?: string
   url: string
+  /** runbook 多入口（server 原样透传 runbook.views[]；简写合成为 [url]）。 */
+  views?: { label?: string; url: string }[]
   state: PreviewState
   external?: boolean
   started_at?: string
@@ -917,8 +934,31 @@ export async function stopPreview(taskId: string): Promise<PreviewSummary> {
 
 // ── checks 落盘(acceptance-checks-r{N}.md,复用 home-file .md 门)──────────
 export type CheckDecision = "pass" | "fail" | "skip"
-export interface CheckEntry { decision: CheckDecision; note: string; at: string }
+export interface CheckEntry {
+  decision: CheckDecision
+  note: string
+  at: string
+  /** 机器探针盖章(runProbe 后由面板写入并持久化)。 */
+  probe?: { state: ProbeState; exit_code: number | null; at: string }
+}
 export interface ChecksFile { version: "1"; task_id?: string; round_index?: number; checks: Record<string, CheckEntry> }
+
+// ── 剧本探针单发执行 (POST /:id/playbook/run,镜像 server ProbeRunResult) ──
+export type ProbeState = "passed" | "failed" | "timeout"
+export interface ProbeRunResult { state: ProbeState; exit_code: number | null; duration_ms: number; tail: string[] }
+
+/** 执行剧本 probe 步的一条命令(票内 curl/until 级),同步返回就地盖章。
+ *  与复检同纪律:只有人点击才跑;409 ws 不在/无 awaiting。 */
+export async function runProbe(taskId: string, command: string, timeoutS?: number): Promise<ProbeRunResult> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/playbook/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ command, ...(timeoutS ? { timeoutS } : {}) }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as ProbeRunResult
+}
 
 export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
 const CHECKS_FENCE_RE = /```json\s*\n([\s\S]*?)\n```/

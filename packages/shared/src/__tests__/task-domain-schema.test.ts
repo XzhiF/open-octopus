@@ -2,6 +2,7 @@ import { describe, it, expect, expectTypeOf } from "vitest"
 import {
   taskSpecSchema,
   acceptancePreviewSchema,
+  acceptanceRunbookSchema,
   subunitSpecSchema,
   workflowConfigSchema,
   taskResourceTypeSchema,
@@ -512,6 +513,41 @@ describe("ticket 01 (v2.1) — acceptance_preview spec-field contract", () => {
     })
     expect("acceptance_preview" in bare).toBe(false)
     expect("acceptance_verify" in bare).toBe(false)
+  })
+
+  it("acceptance_runbook: 多服务/远端部署的正道形态（up/ready/views/down?）", () => {
+    const ok = {
+      up: { command: "docker compose up -d" },
+      ready: { command: "docker compose ps | grep -q healthy" },
+      views: [{ label: "web", url: "http://localhost:3000" }, { url: "http://localhost:8080" }],
+      down: { command: "docker compose down" },
+      timeoutS: 120,
+    }
+    // schema + spec-field
+    expect(acceptanceRunbookSchema.safeParse(ok).success).toBe(true)
+    // down 可缺省（远端部署不该本地杀）
+    expect(acceptanceRunbookSchema.safeParse({ up: ok.up, ready: ok.ready }).success).toBe(true)
+    // 缺 up 或 ready → 拒
+    expect(acceptanceRunbookSchema.safeParse({ ready: ok.ready }).success).toBe(false)
+    expect(acceptanceRunbookSchema.safeParse({ up: ok.up }).success).toBe(false)
+    // view url 必须 http(s)
+    expect(acceptanceRunbookSchema.safeParse({ ...ok, views: [{ url: "localhost:1" }] }).success).toBe(false)
+    // spec-field null-clears + 白名单成员
+    expect(validateSpecFieldValue("acceptance_runbook", ok)).toMatchObject({ up: ok.up })
+    expect(validateSpecFieldValue("acceptance_runbook", null)).toBeUndefined()
+    const f: TaskSpecField = "acceptance_runbook"
+    expect(f).toBe("acceptance_runbook")
+    const spec = taskSpecSchema.parse({
+      format: "v4", goal: "g", ac: ["a"],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      acceptance_runbook: ok,
+    })
+    expect(spec.acceptance_runbook?.views).toHaveLength(2)
+    const bare = taskSpecSchema.parse({
+      format: "v4", goal: "g", ac: ["a"],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+    })
+    expect("acceptance_runbook" in bare).toBe(false)
   })
 
   it("TASK_PREVIEW_EVENT is the pinned SSE channel name", () => {

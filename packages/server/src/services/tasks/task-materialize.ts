@@ -304,11 +304,11 @@ const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
  *      vocabulary resolves (${goal}/${ac}/${phase.slug}/${phase.spec_dir}/${task.home}/
  *      ${task_artifacts_dir}); unknown or empty-resolving placeholders surface as
  *      `phase:<i>:input:<key>` too (never a 500 — v3 AC3 discipline inherited).
- *   ④ (batch-consuming flows only, see BATCH_CONSUMING_FLOWS) the phase's `issues/`
- *      dir contains a final acceptance ticket (`*-e2e-*.md`) ⇒ miss:
- *      `phase:<i>:no-final-verification`. Structural, not stylistic: for these
- *      flows the tickets ARE the work plan, and that one ticket is the place a
- *      real browser / API walkthrough happens.
+ *   ④ (batch-consuming flows only, see BATCH_CONSUMING_FLOWS) the phase declares
+ *      its verification: issues/ contains a final acceptance ticket (`*-e2e-*.md`)
+ *      OR spec.md carries `Verification Tier: unit-only` ⇒ miss:
+ *      `phase:<i>:no-final-verification`. Conditional, not forced: e2e runs only
+ *      when the author warrants a walkthrough; light phases opt out explicitly.
  *
  * ① and ② run independently so the UI sees every defect at once; ③ only runs when ②
  * hit (no workflow content to parse otherwise); ④ needs a spec on disk, so it is
@@ -373,21 +373,29 @@ export function resolveV4Phases(args: {
         missing.push(`phase:${i}:input:${def.name}`)
       }
     }
-    // ④ batch-consuming flows must ship a final acceptance ticket.
-    // For these flows the batch's tickets ARE the work plan, so the final
-    // `NN-e2e-*` ticket is structural: it is where a real browser (or an
-    // API-level walkthrough) runs, and the flow routes to it by that filename.
-    // Enforced here because the writing convention alone was not enough — a
-    // batch with no acceptance ticket would otherwise sail through, and the
-    // workflow's once-existing fallback gate (integration-gate) is gone.
-    // Scoped to the flows that actually read the batch, so a self-built or
-    // non-batch flow is never told to invent a ticket it will not consume.
+    // ④ batch-consuming flows must declare HOW the phase is verified — one of:
+    //    (a) issues/ has a final acceptance ticket (`*-e2e-*.md`) → the flow's
+    //        e2e-verify node (post code-review) walks it; or
+    //    (b) spec.md carries an explicit `Verification Tier: unit-only` line →
+    //        the author judged this phase needs no browser/API walkthrough
+    //        (pure refactor / thin backend slice covered by functional tickets'
+    //        unit/API tests), so e2e-verify is skipped and no token is burned.
+    //    Geometric refactor (2026-09-18): e2e is no longer forced-every-batch —
+    //    it's conditional on this declaration. Neither present ⇒ miss.
     if (specOk && BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
       const issueDir = path.join(path.dirname(absSpec), 'issues')
       const hasFinalTicket =
         fs.existsSync(issueDir) &&
         fs.readdirSync(issueDir).some((f) => f.endsWith('.md') && f.includes('-e2e-'))
-      if (!hasFinalTicket) missing.push(`phase:${i}:no-final-verification`)
+      let unitOnly = false
+      if (!hasFinalTicket) {
+        try {
+          unitOnly = /^\s*Verification Tier:\s*unit-only\s*$/im.test(fs.readFileSync(absSpec, 'utf-8'))
+        } catch {
+          unitOnly = false
+        }
+      }
+      if (!hasFinalTicket && !unitOnly) missing.push(`phase:${i}:no-final-verification`)
     }
     if (specOk) {
       resolved.push({

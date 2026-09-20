@@ -8,12 +8,19 @@
 // Contract sources (all fixed markdown produced by task-author / matt-spec-dev):
 //   • e2e-test-plan.md   — `## 测试步骤` / `### Step N: 名 (spec-…)` with
 //                          `- 页面/操作/断言/反假跑` bullets  → walk items
-//   • last NN-e2e-*.md   — `## Acceptance Criteria` (AC list → finePrint),
-//                          `**Verification type**` (browser→walk / api→probe),
-//                          `**Verification steps**` fenced bash block (→ probe),
-//                          `**Pass criteria**` (→ evidence on the ticket claim)
+//   • last NN-e2e-*.md   — TWO dialects are accepted:
+//                          ① 正典 author-verified-tickets 模板: `## Acceptance
+//                             Criteria` (→ finePrint), `**Verification type**`,
+//                             fenced ```bash 块 (→ probe), `**Pass criteria**`
+//                          ② 实票方言（在盘真任务实测形状,2026-09-19）: `Type:` /
+//                             `走查模式：browser 走查` 行 + `## 走查步骤（…）` 编号
+//                             列表（行内反引号命令 + `→` 后断言）+ `## 证据要求`
+//                             （→ pass criteria）。编号步带可辨命令 → probe，
+//                             browser 票 → walk；正典缺失时以此兜底。
 //   • round-report.md    — `## 票执行摘要` (goal line) + `## Spec 修订` (⚠ flag)
-//   • spec.md            — `## Acceptance Criteria` fallback ACs when no e2e ticket
+//   • spec.md            — `## Acceptance Criteria` fallback ACs when no e2e
+//                          ticket OR the ticket parsed to zero steps (兜底不再被
+//                          「有票但读不懂」掐死——六单实机回归)
 //   • acceptance-checks-r{N-1}.json — prior round skip/fail → carryover (top)
 //
 // Honesty rules (mirror acceptance-matrix degradation discipline): every missing
@@ -31,7 +38,8 @@ export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookBudget, Pl
 // ── checks-on-disk codec (acceptance-checks-r{N}.md) ──────────────────
 // Stored as MARKDOWN (````json` fenced) so it rides the existing .md-only
 // home-file write door (no security-surface change) and stays human-readable
-// /editable in the 叙述 tab. The panel writes via PUT /:id/home-file.
+// /editable in the batch file view（「叙述」tab 已退役 2026-09-20）. The panel
+// writes via PUT /:id/home-file.
 
 export const checksFileName = (roundIndex: number): string => `acceptance-checks-r${roundIndex}.md`
 
@@ -81,6 +89,9 @@ export interface PlaybookInputs {
   prevChecks?: { round: number; data: ChecksFile } | null
   /** this round index (for carryover labeling). */
   roundIndex: number
+  /** 本任务配了 runbook（三级任一命中）→ 起服/就绪/收尾类探针折为 lifecycle
+   *  提示（生命周期归「跑起来看」，剧本只留断言）；缺省 false 全步可跑。 */
+  hasRunbook?: boolean
 }
 
 // ── line-level markdown helpers (tolerant; \r\n normalised) ───────────
@@ -120,6 +131,12 @@ function listItems(block: string): string[] {
     .filter(Boolean)
 }
 
+/** 人读步标题截断（列表项可能整段带命令,面板一屏原则）。 */
+function clip(s: string, max = 80): string {
+  const t = s.replace(/\s+/g, " ").trim()
+  return t.length > max ? t.slice(0, max - 1) + "…" : t
+}
+
 /** LAST fenced block whose info-line matches fenceRe (```bash …). Returns its
  *  inner non-comment lines. No matching fence → []. */
 function fencedCommands(md: string, fenceRe: RegExp): string[] {
@@ -136,6 +153,78 @@ function fencedCommands(md: string, fenceRe: RegExp): string[] {
     .slice(lastStart + 1, end)
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("#") && !l.startsWith("//"))
+}
+
+// ── 实票方言（2026-09-19 六单/token 任务在盘形状）─────────────────────
+// 行首命令词白名单：inline 反引号必须"像命令"才转 probe——防把
+// `e2e-report.md`、`IdCheckUtils.class` 这类产物名误判成可执行步。
+const CMD_START_RE =
+  /^\s*(cd|curl|wget|java|mvn|mvnw|gradle|pnpm|npm|npx|node|python3?|pytest|sqlite3|bash|sh|docker|make|go|cargo|until|while|for|if|kill|pkill|ps|lsof|grep|jq|awk|wc|open)\b/
+
+/** 生命周期命令分类（③ 管道步过滤）。仅当 task 配了 runbook 时用于把「起服/
+ *  就绪轮询/收尾」折成一行提示——它们的活儿由「跑起来看」按钮统一做，剧本不该
+ *  再让人逐条点。判据保守：只认明确的起/杀/就绪姿势，普通 curl/test/mvn 断言
+ *  不沾（那些是真·验收点，要留执行钮）。ready 探活的 `curl health` 归 start 段
+ *  引导后就不重复——故裸 curl 一律不判 lifecycle。 */
+function lifecycleOf(cmd: string): PlaybookItem["lifecycle"] | undefined {
+  const c = cmd.trim().toLowerCase()
+  // 后台起进程/起容器 = start（nohup、& 结尾、java -jar、docker run/up/compose up）。
+  if (/(^|[;&|]\s*)(nohup\b|java\s+-jar|python[3]?\s+-m|docker\s+(run|start|compose\s+up)|(pnpm|npm|yarn)\s+(run\s+)?(dev|start)|\b.*&\s*$)/.test(c)
+    && !/\bcurl\b/.test(c)) return "start"
+  // 就绪轮询（until/while ... curl ... do sleep / ; sleep ... done）。
+  if (/^(until|while)\b/.test(c) || /\bdone\b/.test(c) && /sleep/.test(c)) return "ready"
+  // 收尾杀进程（kill/pkill + 进程名，或含端口拒连确认）。
+  if (/^(sudo\s+)?(kill|pkill|killall)\b/.test(c) || /(kill|pkill)\s+.*(java|node|server|jar|\.pid)/.test(c)) return "teardown"
+  return undefined
+}
+
+/** 文本里第一条"像命令"的 inline 反引号；无 → null。 */
+function inlineCmd(text: string): string | null {
+  for (const m of text.matchAll(/`([^`\n]+)`/g)) {
+    const c = (m[1] ?? "").trim()
+    if (c && c.length <= 160 && CMD_START_RE.test(c)) return c
+  }
+  return null
+}
+
+interface TicketStep { op: string; expect: string; cmd: string | null }
+
+/** 实票步解析：`## 走查步骤/验证步骤/测试步骤` 标题 或 `**Verification steps**:`
+ *  粗体行 之后、下一个标题/粗体字段之前的编号·列表项。每项 = 一步；`→`/`=>`/`->`
+ *  之后的文字 = 预期；inline 反引号命令 = probe 命令。 */
+function ticketSteps(content: string): TicketStep[] {
+  const ls = lines(content)
+  let start = -1
+  for (let i = 0; i < ls.length; i++) {
+    const l = ls[i] ?? ""
+    if (/^#{1,6}\s/.test(l) && /走查步骤|验证步骤|测试步骤|walkthrough\s*steps|verification\s*steps/i.test(l)) { start = i; break }
+    if (/^\s*\*\*\s*Verification\s+steps\s*\*\*\s*[:：]/i.test(l)) { start = i; break }
+  }
+  if (start < 0) return []
+  const out: TicketStep[] = []
+  for (let i = start + 1; i < ls.length && out.length < 8; i++) {
+    const l = ls[i] ?? ""
+    if (/^#{1,6}\s/.test(l) || /^\s*\*\*[^*]/.test(l)) break // 下一节/下一字段
+    const m = /^\s*(?:\d+[.)]|[-*])\s+(.*)$/.exec(l)
+    if (!m) continue
+    let text = (m[1] ?? "").trim()
+    // 续行并入（缩进散文行属于本步）
+    for (let j = i + 1; j < ls.length; j++) {
+      const c = (ls[j] ?? "").trim()
+      if (!c || /^#{1,6}\s/.test(c) || /^\s*\*\*[^*]/.test(c) || /^\s*(?:\d+[.)]|[-*])\s+/.test(c)) break
+      text += " " + c
+      i = j
+    }
+    const arrowRe = /\s*(?:→|=>|->)\s*/g
+    let last: RegExpExecArray | null = null
+    let am: RegExpExecArray | null
+    while ((am = arrowRe.exec(text))) last = am
+    const op = (last ? text.slice(0, last.index) : text).trim()
+    const expect = (last ? text.slice(last.index + last[0].length) : "").trim()
+    const cmd = inlineCmd(text)
+    if (op || cmd) out.push({ op: op || (cmd ?? ""), expect, cmd })
+  }
+  return out
 }
 
 // ── per-source extractors ────────────────────────────────────────────
@@ -173,19 +262,35 @@ interface TicketDigest {
   probeCmds: string[]
   passCriteria: string
   build: string
+  /** 实票方言的编号步（正典票通常为空——无 `## 走查步骤` 标题）。 */
+  steps: TicketStep[]
 }
 function digestTicket(content: string): TicketDigest {
   const acBody = sectionBody(content, /Acceptance\s*Criteria|验收标准/i) ?? ""
   const acs = listItems(acBody)
   const vm = sectionBody(content, /Verification\s*Method|验证方式/i) ?? content
-  const typeRaw = /\*\*\s*Verification type\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1]?.toLowerCase() ?? ""
-  const type: TicketDigest["type"] = /browser|playwright|ui|e2e/.test(typeRaw) ? "browser"
-    : /api|curl|sqlite|contract|http/.test(typeRaw) ? "api"
-      : /unit|jest|vitest|test/.test(typeRaw) ? "unit" : "unknown"
-  const probeCmds = fencedCommands(vm, /bash|sh|shell|console/i)
-  const passCriteria = /\*\*\s*Pass criteria\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1]?.trim() ?? ""
-  const build = sectionBody(content, /What to build|要做什么|目标/i) ?? ""
-  return { acs, type, probeCmds, passCriteria, build }
+  // type 三行词表并集：正典 `**Verification type**:` ∪ 实票 `Type:` 头 ∪ `走查模式：`
+  // ——05 票的 Type 行只有裸 `e2e`、browser 实证在「走查模式」行，单选一源会误类。
+  const typeRaw = [
+    /\*\*\s*Verification type\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1],
+    /^\s*Type\s*[:：]\s*(.+)$/im.exec(content)?.[1],
+    /走查模式\s*[:：]\s*(.+)/.exec(content)?.[1],
+  ].filter(Boolean).join(" · ").toLowerCase()
+  const steps = ticketSteps(content)
+  // 分类序：browser 要实证（截图/Playwright/浏览器字样）——裸 `e2e` 不算 browser
+  // （实盘 `Type: e2e` + 纯 curl 票是 API 级走查，归 browser 会丢命令 chip）。
+  const type: TicketDigest["type"] = /browser|playwright|截图|screenshot|\bui\b/.test(typeRaw) ? "browser"
+    : /api|curl|sqlite|contract|http|cli/.test(typeRaw) ? "api"
+      : /unit|jest|vitest|pytest/.test(typeRaw) ? "unit"
+        : steps.some((s) => s.cmd) ? "api" : "unknown"
+  let probeCmds = fencedCommands(vm, /bash|sh|shell|console/i)
+  if (!probeCmds.length) probeCmds = steps.filter((s) => s.cmd).map((s) => s.cmd as string)
+  const passCriteria =
+    /\*\*\s*Pass criteria\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1]?.trim()
+    ?? /^\s*Pass criteria\s*[:：]\s*(.+)/im.exec(content)?.[1]?.trim()
+    ?? clip(sectionBody(content, /证据要求|放行标准/) ?? "", 120)
+  const build = sectionBody(content, /What to build|要做什么|目标|目的/i) ?? ""
+  return { acs, type, probeCmds, passCriteria, build, steps }
 }
 
 /** strip a `## Status\n...done` region detection for reopen is done elsewhere. */
@@ -202,22 +307,56 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
   let goal = ""
 
   // ── e2e ticket (the ONE browser ticket per phase) ──
+  let ticketStepCount = 0
   if (inp.e2eTicket?.content) {
     found.push(`issues/${inp.e2eTicket.name}`)
     const base = inp.e2eTicket.name.replace(/\.md$/i, "")
     const d = digestTicket(inp.e2eTicket.content)
     if (d.acs.length) finePrint.push({ ticket: base, acs: d.acs })
     const items: PlaybookItem[] = []
-    // browser ticket → a walk item ("run the story"); api ticket → probes only
-    if (d.type === "browser" && d.build) {
-      items.push({ id: `walk:${base}:0`, op: `照「${d.build.split("\n")[0]?.slice(0, 60) ?? base}」走一遍关键 UI 路径`, expect: d.passCriteria || "所有 AC 通过", evidence: d.passCriteria || undefined })
+    if (d.steps.length) {
+      // 实票方言：编号步即人工走查脚本——browser → walk（动作+预期），
+      // 其余 → 带命令的 probe（行首命令词白名单已滤掉产物名假命令）。
+      if (d.type === "browser") {
+        d.steps.forEach((s, n) => items.push({
+          id: `walk:${base}:${n + 1}`,
+          op: clip(s.op.replace(/`/g, "")),
+          expect: s.expect || d.passCriteria || "见票内预期/证据要求",
+          evidence: s.expect ? undefined : d.passCriteria || undefined,
+        }))
+      } else {
+        d.steps.filter((s) => s.cmd).forEach((s, n) => {
+          const life = inp.hasRunbook ? lifecycleOf(s.cmd as string) : undefined
+          items.push({
+            id: `probe:${base}:${n + 1}`,
+            op: `执行 \`${s.cmd}\``,
+            expect: s.expect || d.passCriteria || "命令 exit 0 且输出符合预期",
+            probe: { command: s.cmd as string },
+            // ③ 管道步过滤：配了 runbook，起服/就绪/收尾类命令折给「跑起来看」——
+            // 面板渲染成一行灰提示、不给执行钮、不进连跑。无 runbook 时保留可跑。
+            ...(life ? { lifecycle: life } : {}),
+          })
+        })
+      }
+    } else {
+      // 正典模板路径（行为与 2026-09-18 前一致）。
+      if (d.type === "browser" && d.build) {
+        items.push({ id: `walk:${base}:0`, op: `照「${d.build.split("\n")[0]?.slice(0, 60) ?? base}」走一遍关键 UI 路径`, expect: d.passCriteria || "所有 AC 通过", evidence: d.passCriteria || undefined })
+      }
+      d.probeCmds.slice(0, 3).forEach((cmd, n) => {
+        const life = inp.hasRunbook ? lifecycleOf(cmd) : undefined
+        items.push({
+          id: `probe:${base}:${n + 1}`, op: `执行 \`${cmd}\``,
+          expect: d.passCriteria || "命令 exit 0 且输出符合预期", probe: { command: cmd },
+          ...(life ? { lifecycle: life } : {}),
+        })
+      })
+      if (!items.length && d.acs.length) {
+        items.push({ id: `claim:${base}:0`, op: `逐条核对 ${base} 的 AC`, expect: d.acs[0] ?? "", evidence: d.passCriteria || undefined })
+      }
     }
-    d.probeCmds.slice(0, 3).forEach((cmd, n) =>
-      items.push({ id: `probe:${base}:${n + 1}`, op: `执行 \`${cmd}\``, expect: d.passCriteria || "命令 exit 0 且输出符合预期", probe: { command: cmd } }),
-    )
-    if (!items.length && d.acs.length) {
-      items.push({ id: `claim:${base}:0`, op: `逐条核对 ${base} 的 AC`, expect: d.acs[0] ?? "", evidence: d.passCriteria || undefined })
-    }
+    ticketStepCount = items.length
+    if (!items.length) missing.push(`issues/${inp.e2eTicket.name} 无可解析步骤`)
     if (items.length) sections.push({ kind: d.type === "api" ? "probe" : d.type === "browser" ? "walk" : "claim", title: base, source: `issues/${inp.e2eTicket.name}`, items })
   } else {
     missing.push("末张 NN-e2e-*.md")
@@ -247,7 +386,9 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
   if (inp.specMd) {
     found.push("spec.md")
     if (!goal) goal = /^#\s+(.+)/m.exec(inp.specMd)?.[1]?.trim() ?? ""
-    if (!inp.e2eTicket?.content) {
+    // 「无票」或「有票但两副词表都编不出步」都退 spec AC——六单实证:票存在却
+    // 读不懂时旧逻辑把兜底掐死,整面板空在「无剧本」上。
+    if (!inp.e2eTicket?.content || !ticketStepCount) {
       const acs = listItems(sectionBody(inp.specMd, /Acceptance\s*Criteria|验收标准|^##\s*AC\b/im) ?? "")
       if (acs.length) {
         finePrint.push({ ticket: "spec", acs })

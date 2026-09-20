@@ -1,8 +1,9 @@
 // task-phase-redesign 票 12（AC1/AC2）+ 验货台 v2（实物 diff / 当场复检 / 票对账）
 // — AcceptanceSurface 组件测试（2026-09-16：三栏弹窗 AcceptanceModal 收编为执行
 // 控制台的「验货台」tab，本测试随内容组件迁移）。数据权威 = GET /:id.derived
-// （票 03 唯一真相），fixture 独立于组件实现。中列三 tab：默认「实物」；「叙述」
-// 承接 v1 批次文件断言（点击 tab 后可见）；复检 SSE 用 subscribeSSE 捕获表手动注入事件。
+// （票 03 唯一真相），fixture 独立于组件实现。中列两 tab：默认「实物」+「核对」
+// （叙述 tab 已于 2026-09-20 用户裁决退役，批次清单只剩 round-report 定位一职）；
+// 复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
@@ -14,7 +15,9 @@ const {
   mockListHomeDir, mockGetHomeFile, mockGetBatchTree,
   mockGetRoundDiff, mockGetRoundPatch, mockStartVerify, mockGetVerifyStatus, mockAbortVerify,
   mockGetPlaybook, mockStartPreview, mockGetPreview, mockStopPreview, mockSaveChecks, mockPutHomeFile, mockReadChecks,
+  mockRunProbe,
   sseHandlers,
+  sseStatusCbs,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockPostAcceptance: vi.fn(),
@@ -36,7 +39,9 @@ const {
   mockSaveChecks: vi.fn(),
   mockReadChecks: vi.fn(),
   mockPutHomeFile: vi.fn(),
+  mockRunProbe: vi.fn(),
   sseHandlers: new Map<string, (e: MessageEvent) => void>(),
+  sseStatusCbs: new Set<(s: { connected: boolean; reconnected: boolean }) => void>(),
 }))
 
 vi.mock("@/lib/tasks-api", () => {
@@ -56,7 +61,7 @@ vi.mock("@/lib/tasks-api", () => {
     getArtifactContent: vi.fn(),
     ArtifactContentError: class extends Error {},
     TaskApiError,
-    // 叙述 tab（v1 证据面）+ 验货台 v2 出口。
+    // 批次文件清单/读文件（核对 tab 的 round-report 定位）+ 验货台 v2 出口。
     listHomeDir: mockListHomeDir,
     getHomeFile: mockGetHomeFile,
     getBatchTree: mockGetBatchTree,
@@ -74,6 +79,7 @@ vi.mock("@/lib/tasks-api", () => {
     putHomeFile: mockPutHomeFile,
     readChecks: mockReadChecks,
     saveChecks: mockSaveChecks,
+    runProbe: mockRunProbe,
     checksFileName: (n: number) => `acceptance-checks-r${n}.md`,
     checksRelPath: (d: string, n: number) => `${d}/acceptance-checks-r${n}.md`,
     parseChecksMd: () => null,
@@ -90,11 +96,16 @@ vi.mock("@/lib/sse-manager", () => ({
     sseHandlers.set(event, cb)
     return () => { sseHandlers.delete(event) }
   },
+  subscribeSSEStatus: (_url: string, cb: (s: { connected: boolean; reconnected: boolean }) => void) => {
+    sseStatusCbs.add(cb)
+    return () => { sseStatusCbs.delete(cb) }
+  },
 }))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { AcceptanceSurface } from "../acceptance-surface"
+import { FoldProvider } from "../../fold-context"
 import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
@@ -253,9 +264,9 @@ const AGG = {
   modelBreakdown: {},
 }
 
-// 叙述 tab 证据 fixture — home-relative posix（listHomeDir all=1 的真实形状）。
-// round 窗口 = exec-1 [00:00, 00:42]：窗内三个带「本轮」，窗外 handoff 不带；
-// state.db 属不可预览门（存在即证据，行在但点不开）。
+// 批次目录清单 fixture — home-relative posix（listHomeDir all=1 的真实形状）。
+// 叙述 tab 退役后这份清单只剩一个消费方：reportFile 定位 round-report.md
+// （核对 tab 的「报告声称」源）。spec.md/e2e-data 等行保留只为形状真实。
 const BATCH_DIR = ".scratch/20260903/scaffold-1"
 const HOME_FILES = [
   { path: `${BATCH_DIR}/round-report.md`, mtime: "2026-09-03T00:40:00Z", bytes: 500 },
@@ -263,6 +274,9 @@ const HOME_FILES = [
   { path: `${BATCH_DIR}/e2e-data/run.txt`, mtime: "2026-09-03T00:30:00Z", bytes: 120 },
   { path: `${BATCH_DIR}/e2e-data/state.db`, mtime: "2026-09-03T00:31:00Z", bytes: 9000 },
   { path: `${BATCH_DIR}/handoff.md`, mtime: "2026-09-01T00:00:00Z", bytes: 200 },
+  // 打回→修复成对文件（N=被打回轮 1）：R2 待验收时供「反馈回应对照」消费。
+  { path: `${BATCH_DIR}/fix-feedback-r1.md`, mtime: "2026-09-03T01:10:00Z", bytes: 260 },
+  { path: `${BATCH_DIR}/fix-report-r1.md`, mtime: "2026-09-03T01:50:00Z", bytes: 420 },
 ]
 
 // 实物 tab fixture — server RoundDiffPayload 形状（SHA 不出服务端，web 只见统计）。
@@ -301,25 +315,64 @@ const REPORT_MATRIX_MD = `# Round Report · scaffold-1 · r1
 | 02 | 挂点 | ✅ done | 改了些不存在的路径/ghost-file.ts |
 `
 
+// task-fix SKILL 三列契约（反馈→修复动作→验证证据）fixture：
+// 行1 usage-writer.ts 在 ROUND_DIFF 实物里 → 有实物；行2 ghost-readme 不在 → 幻影；
+// 行3 无路径 token → 文字证据（不许假装对上过）。
+const FIX_REPORT_MD = `# Fix Report r1
+## 反馈条目表
+| 反馈 | 修复动作 | 验证证据 |
+|------|----------|----------|
+| 端点缺字段校验 | 补 zod 校验并回填错误码 | packages/cli/src/utils/usage-writer.ts · vitest 3 passed |
+| 文档未更新 | 改写 README 部署节 | docs/ghost-readme.md 已同步 |
+| 顺手清理死代码 | 删了三处注释掉的分支 | 跑过 build 无告警（无路径） |
+`
+
+/** R2 待验收（R1 被打了回）：反馈回应对照 + 累计口径两个修复轮专属面齐活。 */
+const PHASE_R2_AWAITING: TaskDerivedView = {
+  taskStatus: "awaiting_review",
+  isV4: true,
+  phaseViews: [
+    {
+      index: 1, name: "脚手架", slug: "scaffold-1", workflowRef: "task-dev",
+      status: "awaiting_review",
+      rounds: [
+        {
+          roundIndex: 1,
+          exec: { id: "exec-1", status: "completed", phase_index: 1, round_index: 1, created_at: "2026-09-03T00:00:00Z" },
+          state: "succeeded", decision: null,
+        },
+        {
+          roundIndex: 2,
+          exec: { id: "exec-2", status: "completed", phase_index: 1, round_index: 2, created_at: "2026-09-03T02:00:00Z" },
+          state: "succeeded", decision: null,
+        },
+      ],
+      currentRound: 2, acceptedRound: null, awaitingRound: 2,
+    },
+    {
+      index: 2, name: "观测", slug: "metering-2", workflowRef: "task-dev",
+      status: "pending", rounds: [], currentRound: null, acceptedRound: null, awaitingRound: null,
+    },
+  ],
+}
+
 function fireSse(event: string, payload: Record<string, unknown>): void {
   const cb = sseHandlers.get(event)
   if (!cb) throw new Error(`no SSE handler subscribed for ${event}`)
   cb(new MessageEvent("message", { data: JSON.stringify(payload) }))
 }
 
-function rowByPath(p: string): HTMLElement | null {
-  return document.querySelector(`[data-acceptance-artifact-row="${p}"]`)
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   sseHandlers.clear()
+  sseStatusCbs.clear()
   mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
   mockFetchLLMCalls.mockResolvedValue({ data: [], aggregates: AGG })
   mockListHomeDir.mockResolvedValue(HOME_FILES)
   mockGetHomeFile.mockImplementation(async (_id: string, p: string) => {
     if (p.endsWith("spec.md")) return { path: p, content: SPEC_MATRIX_MD }
     if (p.endsWith("round-report.md")) return { path: p, content: REPORT_MATRIX_MD }
+    if (p.endsWith("fix-report-r1.md")) return { path: p, content: FIX_REPORT_MD }
     return { path: p, content: "# spec body" }
   })
   mockGetBatchTree.mockResolvedValue([])
@@ -342,6 +395,7 @@ beforeEach(() => {
   mockStopPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "stopped" })
   mockSaveChecks.mockResolvedValue(undefined)
   mockReadChecks.mockResolvedValue({ version: "1", checks: {} })
+  mockRunProbe.mockResolvedValue({ state: "passed", exit_code: 0, duration_ms: 900, tail: ["ok"] })
 })
 
 function renderModal(spec: TaskSpec = V4_SPEC) {
@@ -355,12 +409,6 @@ function renderModalWith(derived: TaskDerivedView, spec: TaskSpec = V4_SPEC) {
   mockGetTask.mockResolvedValue(makeDetail(derived, spec))
   const task = makeDetail(derived, spec) as unknown as Task
   return render(<AcceptanceSurface task={task} onMutated={() => {}} />)
-}
-
-/** tab 条在 awaitingPhase 到手（detail 落地）后才渲染 — 必须异步等。 */
-async function openStoryTab() {
-  const tab = await screen.findByTestId("acceptance-tab-story")
-  fireEvent.click(tab)
 }
 
 describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cost 已迁出）", () => {
@@ -512,6 +560,92 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     await waitFor(() => expect(mockStopPreview).toHaveBeenCalledWith("t1"))
   })
 
+  // ── runbook（acceptance v2.2 多服务运行手册 — 与 server resolveRunbook 同优先级）──
+
+  const V4_SPEC_RUNBOOK = {
+    ...(V4_SPEC as object),
+    acceptance_runbook: {
+      up: { command: "mvn -B -DskipTests package && java -jar target/x.jar --server.port=18081", cwd: "projects/api" },
+      ready: { command: "curl -sf http://localhost:18081/demo" },
+      views: [{ label: "admin", url: "http://localhost:18081/demo" }, { label: "docs", url: "http://localhost:18081/docs" }],
+      down: { command: "pkill -f x.jar || true" },
+      timeoutS: 300,
+    },
+  } as unknown as TaskSpec
+
+  it("RB1: 任务只有 acceptance_runbook → 预览条识别为 runbook 态，▶启动可点（不再「未配置」）", async () => {
+    mockGetPreview.mockResolvedValue(null)
+    renderModal(V4_SPEC_RUNBOOK)
+    await screen.findByTestId("preview-mode-runbook")
+    expect(screen.getByTestId("preview-mode-runbook").textContent).toContain("runbook")
+    fireEvent.click(screen.getByTestId("preview-start"))
+    await waitFor(() => expect(mockStartPreview).toHaveBeenCalledWith("t1"))
+  })
+
+  it("RB2: ready + views[] → 多入口链接全渲染（href/label 各一），不再只见首 url", async () => {
+    mockGetPreview.mockResolvedValue({
+      task_id: "t1", url: "http://localhost:18081/demo", state: "ready",
+      views: [{ label: "admin", url: "http://localhost:18081/demo" }, { label: "docs", url: "http://localhost:18081/docs" }],
+    })
+    renderModal(V4_SPEC_RUNBOOK)
+    const links = await screen.findAllByTestId("preview-url")
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute("href")).toBe("http://localhost:18081/demo")
+    expect(links[1].getAttribute("href")).toBe("http://localhost:18081/docs")
+    expect(links[1].textContent).toContain("docs")
+  })
+
+  it("RB3: runbook 编辑抽屉 — up/ready/views/down 可改，保存写 acceptance_runbook（spec-field user）", async () => {
+    renderModal(V4_SPEC_RUNBOOK)
+    await screen.findByTestId("preview-mode-runbook")
+    fireEvent.click(screen.getByTestId("preview-edit"))
+    fireEvent.change(screen.getByTestId("rb-ready-command"), { target: { value: "curl -sf http://localhost:18082/actuator/health" } })
+    fireEvent.change(screen.getByTestId("rb-views"), { target: { value: "admin|http://localhost:18082/\nhttp://localhost:18082/docs" } })
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() =>
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "acceptance_runbook",
+        {
+          up: { command: "mvn -B -DskipTests package && java -jar target/x.jar --server.port=18081", cwd: "projects/api" },
+          ready: { command: "curl -sf http://localhost:18082/actuator/health" },
+          views: [{ label: "admin", url: "http://localhost:18082/" }, { url: "http://localhost:18082/docs" }],
+          down: { command: "pkill -f x.jar || true" },
+          timeoutS: 300,
+        },
+        { source: "user" },
+      ),
+    )
+  })
+
+  it("RB4: 简写配置可一键升级 runbook（预填 up/ready/views），保存写 runbook 不碰简写", async () => {
+    renderModal(V4_SPEC_WITH_PREVIEW)
+    await screen.findByTestId("preview-bar")
+    fireEvent.click(screen.getByTestId("preview-edit"))
+    fireEvent.click(screen.getByTestId("preview-to-rb"))
+    expect(screen.getByTestId("rb-up-command").getAttribute("value")).toBe("mvn -q spring-boot:run")
+    expect(screen.getByTestId("rb-ready-command").getAttribute("value")).toContain("curl -sf")
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledWith("t1", "acceptance_runbook", expect.anything(), { source: "user" }))
+    expect(mockUpdateSpecField.mock.calls.some((c) => c[1] === "acceptance_preview")).toBe(false)
+  })
+
+  it("RB5: 未配置态给两条路（配置预览 / runbook 方式）；runbook 路径起多服务表单", async () => {
+    renderModal()
+    await screen.findByTestId("preview-bar")
+    fireEvent.click(screen.getByTestId("preview-configure-rb"))
+    expect(screen.getByTestId("preview-editor").getAttribute("data-rb")).toBe("true")
+    fireEvent.change(screen.getByTestId("rb-up-command"), { target: { value: "docker compose up -d" } })
+    fireEvent.change(screen.getByTestId("rb-ready-command"), { target: { value: "docker compose ps web | grep healthy" } })
+    fireEvent.click(screen.getByTestId("rb-save"))
+    await waitFor(() =>
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "acceptance_runbook",
+        { up: { command: "docker compose up -d" }, ready: { command: "docker compose ps web | grep healthy" }, timeoutS: 120 },
+        { source: "user" },
+      ),
+    )
+  })
+
   it("T09 AC2 ✗ 闭环：打回提交 body 携带 reopen_tickets（票名基去兜底）", async () => {
     mockGetPlaybook.mockResolvedValue({
       available: true, goal: "g", specRevised: false,
@@ -554,8 +688,12 @@ describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
     expect(strip.textContent).toContain("95")
     expect(screen.getByTestId("round-diff-repo-open-octopus")).toBeTruthy()
     expect(document.querySelector('[data-acceptance-diff-row="open-octopus:packages/cli/src/utils/usage-writer.ts"]')).toBeTruthy()
-    // 实物 tab 里没有叙述文件列表（tab 隔离）
-    expect(screen.queryByTestId("acceptance-artifact-rows")).toBeNull()
+    // 叙述 tab 已退役（2026-09-20 用户裁决）：tab 条只剩 实物/核对 两枚贴纸
+    expect(screen.queryByTestId("acceptance-tab-story")).toBeNull()
+    expect(screen.getByTestId("acceptance-tab-diff")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-tab-matrix")).toBeTruthy()
+    // R1 无「本轮|累计」口径可切（首轮两口径同物）→ 开关不出现
+    expect(screen.queryByTestId("round-diff-scope")).toBeNull()
   })
 
   it("文件点开 → 懒拉 patch（getRoundPatch repo+path）行着色渲染；不重复拉", async () => {
@@ -587,7 +725,7 @@ describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
 describe("验货台 v2 — 当场复检", () => {
   it("未配置命令 → 编辑器入口存在、▶ 不可见；保存走 spec-field(user)", async () => {
     renderModal() // V4_SPEC 无 acceptance_verify
-    expect(await screen.findByText("未预设复检命令")).toBeTruthy()
+    expect(await screen.findByText("配置命令")).toBeTruthy()
     fireEvent.click(screen.getByTestId("verify-edit"))
     fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "pnpm build && pnpm test" } })
     mockUpdateSpecField.mockResolvedValue({ version: 5 })
@@ -600,6 +738,31 @@ describe("验货台 v2 — 当场复检", () => {
     expect(screen.queryByTestId("verify-editor")).toBeNull() // 成功即收
   })
 
+  it("VP1 多仓：per_repo 配置 → 「逐仓」徽章 + 命令注记；编辑预勾且 cwd 禁用（被忽略）", async () => {
+    renderModal({ ...(V4_SPEC as object), acceptance_verify: { command: "mvn -B test", per_repo: true, timeoutS: 900 } } as unknown as TaskSpec)
+    expect(await screen.findByTestId("verify-per-repo")).toBeTruthy()
+    expect(screen.getByTestId("verify-params").textContent).toContain("mvn -B test")
+    fireEvent.click(screen.getByTestId("verify-edit"))
+    const cb = screen.getByTestId("verify-per-repo-input") as HTMLInputElement
+    expect(cb.checked).toBe(true)
+    expect((screen.getByTestId("verify-cwd-input") as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it("VP2 勾「逐仓」保存 → spec-field 载荷带 per_repo:true 且不带 cwd；回显不再抹掉", async () => {
+    renderModal() // 无 verify 起步
+    await screen.findByText("配置命令")
+    fireEvent.click(screen.getByTestId("verify-edit"))
+    fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "mvn -B test" } })
+    fireEvent.click(screen.getByTestId("verify-per-repo-input"))
+    mockUpdateSpecField.mockResolvedValue({ version: 6 })
+    fireEvent.click(screen.getByTestId("verify-save"))
+    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledWith(
+      "t1", "acceptance_verify",
+      { command: "mvn -B test", per_repo: true, timeoutS: 600 },
+      { source: "user" },
+    ))
+  })
+
   it("已配置 → ▶复检 startVerify + SSE log 进控制台 + 终态事件盖章 PASSED", async () => {
     renderModal(V4_SPEC_VERIFY)
     const runBtn = await screen.findByTestId("verify-run")
@@ -609,14 +772,25 @@ describe("验货台 v2 — 当场复检", () => {
     await waitFor(() => expect(sseHandlers.has(TASK_VERIFY_LOG_EVENT)).toBe(true))
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "building…", stream: "stdout" })
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "nope", stream: "stderr" })
-    // （原写法 expect(await …).textContent 把属性访问落在 Chai Assertion 上 → Invalid Chai property）
-    const vConsole = await screen.findByTestId("verify-console")
-    await waitFor(() => expect(vConsole.textContent).toContain("[stderr] nope"))
+    // 重查而非持节点（终态盖章会重渲染子树，旧引用会脱挂）
+    await waitFor(() => expect(screen.getByTestId("verify-console").textContent).toContain("[stderr] nope"))
     // 终态 → 盖章
     fireSse(TASK_VERIFY_EVENT, { task_id: "t1", state: "passed", exit_code: 0, duration_ms: 1500, verdict_path: `${BATCH_DIR}/verify-r1-x.md` })
-    const stamp = await screen.findByTestId("verify-stamp")
-    expect(stamp.textContent).toContain("PASSED")
-    expect(stamp.getAttribute("data-state")).toBe("passed")
+    const pill = await screen.findByTestId("verify-pill")
+    expect(pill.textContent).toContain("通过") // 中文态（A4）；机器真相在 data-state
+    expect(pill.getAttribute("data-state")).toBe("passed")
+    // 2026-09-20 用户改判：结束 ≠ 消失 —— passed 后输出窗保留可见，折叠开关才收
+    expect(screen.getByTestId("verify-console").textContent).toContain("[stderr] nope")
+    expect(screen.getByTestId("verify-result").textContent).toContain("✓ 全绿")
+    // 折叠 → 终端收；再点回开
+    fireEvent.click(screen.getByTestId("verify-out-toggle"))
+    expect(screen.queryByTestId("verify-console")).toBeNull()
+    fireEvent.click(screen.getByTestId("verify-out-toggle"))
+    expect(screen.getByTestId("verify-console")).toBeTruthy()
+    // verdict 路径可点开 → ArtifactViewerDialog 出全文（叙述 tab 退役后的唯一入口）
+    fireEvent.click(screen.getByTestId("verify-verdict-open"))
+    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/verify-r1-x.md`))
+    await waitFor(() => expect(document.querySelector("[data-artifact-content]")).toBeTruthy())
   })
 
   it("启动被拒（409 复检进行中）→ toast，不崩", async () => {
@@ -632,6 +806,9 @@ describe("验货台 v2 — 当场复检", () => {
 describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", () => {
   it("懒拉 spec.md；矩阵行锚定/无锚定按 diff 真实路径判定", async () => {
     renderModal()
+    // 批次清单 → round-report 定位 → 报告拉取：叙述退役后这条链是核对 tab 独占
+    await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", BATCH_DIR, { all: true }))
+    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/round-report.md`))
     fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/spec.md`))
     const matrix = await screen.findByTestId("ac-matrix")
@@ -648,61 +825,7 @@ describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", ()
   })
 })
 
-describe("AcceptanceSurface — 叙述 tab（v1 批次直读整体降级收容）", () => {
-  it("specPath 定位批次目录 all=1 直读；行渲染 + 内嵌 round-report + 本轮徽章 + 不可预览门", async () => {
-    renderModal()
-    // 列表拉取不依赖 tab（matrix/叙述共用 files state）
-    await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", BATCH_DIR, { all: true }))
-    await openStoryTab()
-    // 定位 = dirname(specPath)（posix 归一后），all=1 收全文件
-    expect(await screen.findByTestId("acceptance-artifact-rows")).toBeTruthy()
-    expect(rowByPath(`${BATCH_DIR}/spec.md`)).toBeTruthy()
-    expect(rowByPath(`${BATCH_DIR}/e2e-data/state.db`)).toBeTruthy() // .db 可见（证据存在性）
-    expect(screen.queryByTestId("acceptance-batch-empty")).toBeNull()
-
-    // 内嵌轮次报告：round-report.md 存在 → 卡片渲染 markdown（MarkdownPreview 桩）
-    const report = await screen.findByTestId("acceptance-round-report")
-    expect(report.textContent).toContain("票执行摘要")
-    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/round-report.md`))
-
-    // 「本轮」徽章 = mtime ∈ [started_at, completed_at]；窗外文件不带
-    expect(screen.getByTestId(`acceptance-round-badge-${BATCH_DIR}/spec.md`)).toBeTruthy()
-    expect(screen.getByTestId(`acceptance-round-badge-${BATCH_DIR}/e2e-data/run.txt`)).toBeTruthy()
-    expect(screen.queryByTestId(`acceptance-round-badge-${BATCH_DIR}/handoff.md`)).toBeNull()
-
-    // 不可预览行（.db）：disabled 且点击不触读
-    const dbRow = rowByPath(`${BATCH_DIR}/e2e-data/state.db`) as HTMLButtonElement | null
-    expect(dbRow).toBeTruthy()
-    expect(dbRow!.disabled).toBe(true)
-    mockGetHomeFile.mockClear()
-    fireEvent.click(dbRow!)
-    expect(mockGetHomeFile).not.toHaveBeenCalled()
-
-    // 可预览行点开 → ArtifactViewerDialog home 模式经 getHomeFile 出全文
-    fireEvent.click(rowByPath(`${BATCH_DIR}/e2e-data/run.txt`)!)
-    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/e2e-data/run.txt`))
-    await waitFor(() => expect(document.querySelector("[data-artifact-content]")).toBeTruthy())
-    expect(document.querySelector("[data-artifact-content]")!.textContent).toContain("# spec body")
-  })
-})
-
-describe("AcceptanceSurface — 中列状态面（404 空态 / 错误行 / 回退定位 / idle）", () => {
-  it("批次目录 404（collect 前未落盘）→ 叙述 tab 空态卡，不显错误", async () => {
-    mockListHomeDir.mockRejectedValue(new TaskApiError("batch dir not found", 404))
-    renderModal()
-    await openStoryTab()
-    expect(await screen.findByTestId("acceptance-batch-empty")).toBeTruthy()
-    expect(screen.queryByTestId("acceptance-batch-error")).toBeNull()
-  })
-
-  it("列表非 404 失败（server 未更新的 403 / 网络）→ 一行显式错误", async () => {
-    mockListHomeDir.mockRejectedValue(new TaskApiError("path not whitelisted", 403))
-    renderModal()
-    await openStoryTab()
-    const err = await screen.findByTestId("acceptance-batch-error")
-    expect(err.textContent).toContain("path not whitelisted")
-  })
-
+describe("AcceptanceSurface — 批次定位（specPath 回退 / idle）", () => {
   it("绝对 specPath（gateV4 旁路直写）→ getBatchTree 按 slug 回退取最新 dir", async () => {
     mockGetBatchTree.mockResolvedValue([
       { dir: ".scratch/20260901/scaffold-1", slug: "scaffold-1", files: [], latest_mtime: "2026-09-01T00:00:00Z" },
@@ -714,11 +837,13 @@ describe("AcceptanceSurface — 中列状态面（404 空态 / 错误行 / 回�
     await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", ".scratch/20260903/scaffold-1", { all: true }))
   })
 
-  it("回退扫描无命中 → 仍落空态（绝不无限转圈）", async () => {
-    renderModalWith(PHASE1_AWAITING, V4_SPEC_ABS)
+  it("回退扫描无命中 → 无批次目录：不拉清单，核对 tab 诚实空态（绝不无限转圈）", async () => {
     mockGetBatchTree.mockResolvedValue([])
-    await openStoryTab()
-    expect(await screen.findByTestId("acceptance-batch-empty")).toBeTruthy()
+    renderModalWith(PHASE1_AWAITING, V4_SPEC_ABS)
+    await waitFor(() => expect(mockGetBatchTree).toHaveBeenCalledWith("t1"))
+    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
+    expect(await screen.findByText(/spec\/报告未就绪/)).toBeTruthy()
+    expect(mockListHomeDir).not.toHaveBeenCalled()
   })
 
   it("无待验收 round → idle 提示，不拉批次列表", async () => {
@@ -766,7 +891,7 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     }))
   })
 
-  it("提交成功后显示路由回显卡（活的，非 disabled 占位）+ D14 影响清单空态", async () => {
+  it("提交成功后显示路由回显卡（活的，非 disabled 占位）", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
@@ -778,7 +903,8 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     const card = await screen.findByTestId("agent-recommend-card")
     expect(card.textContent).toContain("修订重跑")
     expect(card.querySelector("input[disabled]")).toBeNull() // D13① disabled 假卡已兑现为回显
-    expect(screen.getByTestId("impact-list-empty")).toBeTruthy()
+    // D14 空卡已摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）
+    expect(screen.queryByTestId("impact-list-empty")).toBeNull()
   })
 
   it("accepted 提交：先开台账确认弹层，ledger-confirm 才 postAcceptance；409 → 刷新盘面", async () => {
@@ -863,5 +989,273 @@ describe("ImpactApprovalList — D14 批准→spec-field phases 写回（渲染�
     const phases = value as Array<{ index: number; workflowRef: string }>
     expect(phases.find((p) => p.index === 2)?.workflowRef).toBe("task-fix") // 受影响 phase 改写
     expect(phases.find((p) => p.index === 1)?.workflowRef).toBe("task-dev") // 未勾选保持
+  })
+})
+
+// ── PB: 剧本探针就地执行 + 全展开/收起 (v2.2, 用户反馈 2026-09-19) ──────
+const PB_PLAYBOOK = {
+  available: true, goal: "g", specRevised: false,
+  budget: { steps: 2, estMin: 3, over: false, degraded: false },
+  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
+    { id: "probe:03-e2e:1", op: "执行真值探针", expect: "data == true", probe: { command: "curl -sf localhost:18082/demo/luhn?no=x" } },
+    { id: "probe:03-e2e:2", op: "执行假值探针", expect: "data == false", probe: { command: "curl -sf localhost:18082/demo/luhn?no=y" } },
+  ] }],
+  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
+}
+
+describe("PB — 剧本探针执行与展开", () => {
+  it("PB1: probe 步有 [▶执行]；exit 0 → 自动✓ + 🔬note + EXIT 章 + probe 持久化", async () => {
+    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    expect(screen.getByTestId("probe-run-probe:03-e2e:1")).toBeTruthy()
+    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:1"))
+    await waitFor(() => expect(mockRunProbe).toHaveBeenCalledWith("t1", "curl -sf localhost:18082/demo/luhn?no=x"))
+    expect(screen.getByTestId("probe-stamp-probe:03-e2e:1").textContent).toContain("EXIT 0")
+    await new Promise((r) => setTimeout(r, 450))
+    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string; probe?: unknown }>
+    expect(payload["probe:03-e2e:1"].decision).toBe("pass")
+    expect(payload["probe:03-e2e:1"].note).toContain("🔬 探针 exit 0")
+    expect(payload["probe:03-e2e:1"].probe).toMatchObject({ state: "passed", exit_code: 0 })
+  })
+
+  it("PB2: exit≠0 → 自动✗（硬闸拦通过）+ 现象行进备注；人工改判 ✓ 可放行", async () => {
+    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
+    mockRunProbe.mockResolvedValueOnce({ state: "failed", exit_code: 22, duration_ms: 300, tail: ["[stderr] curl: (22) The requested URL returned error: 500"] })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:2"))
+    await new Promise((r) => setTimeout(r, 450))
+    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string }>
+    expect(payload["probe:03-e2e:2"].decision).toBe("fail")
+    expect(payload["probe:03-e2e:2"].note).toContain("exit 22")
+    expect(payload["probe:03-e2e:2"].note).toContain("curl: (22)")
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+    // 人工改判：✗→✓ 解除硬闸（机器章可被人的最终判断覆盖）
+    fireEvent.click(screen.getAllByTestId("step-probe:03-e2e:2").at(-1)!.querySelector("[data-testid=decide-pass]")!)
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it("PB3: 收起全部 → 预期明细隐藏但勾选可用；再展开回原样", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: true, goal: "g", specRevised: false,
+      budget: { steps: 1, estMin: 2, over: false, degraded: false },
+      sections: [{ kind: "probe" as const, title: "T", source: "s", items: [
+        { id: "probe:01:1", op: "打开页面", expect: "剧本明细只在展开时可见", probe: { command: "true" } }] }],
+      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    })
+    renderModal()
+    const panel = await screen.findByTestId("playbook-panel")
+    expect(panel.textContent).toContain("剧本明细只在展开时可见")
+    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
+    await waitFor(() => expect(screen.getByTestId("playbook-toggle-all").textContent).toBe("展开全部"))
+    expect(panel.textContent).not.toContain("剧本明细只在展开时可见")
+    expect(panel.textContent).toContain("打开页面") // 标题仍在
+    expect(screen.getByTestId("decide-pass")).toBeTruthy() // 收起态照样能勾
+    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
+    await waitFor(() => expect(panel.textContent).toContain("剧本明细只在展开时可见"))
+  })
+})
+
+// ── PB4/PB5: 连跑全部 + lifecycle 折叠 (② + ③) ──────────────────────
+const RUNALL_PB = {
+  available: true, goal: "g", specRevised: false,
+  budget: { steps: 4, estMin: 3, over: false, degraded: false },
+  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
+    { id: "probe:x:1", op: "断言真值", expect: "true", probe: { command: "curl a" } },
+    { id: "probe:x:2", op: "起服务", expect: "up", probe: { command: "java -jar app &" }, lifecycle: "start" },
+    { id: "probe:x:3", op: "断言假值", expect: "false", probe: { command: "curl b" } },
+    { id: "probe:x:4", op: "不该跑到", expect: "x", probe: { command: "curl c" } },
+  ] }],
+  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
+}
+
+describe("PB4/PB5 — 连跑全部与 lifecycle 折叠", () => {
+  it("PB5: 起了 runbook 的 lifecycle 步 → Wrench 提示、无 ▶执行、连跑计数只数断言步", async () => {
+    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    expect(screen.getByTestId("probe-lifecycle-probe:x:2")).toBeTruthy()
+    expect(screen.queryByTestId("probe-run-probe:x:2")).toBeNull()
+    // 连跑钮只数非 lifecycle 的 3 条断言步
+    expect(screen.getByTestId("playbook-run-all").textContent).toContain("3")
+  })
+
+  it("PB4: ▶连跑按序跑断言步(跳过 lifecycle)、遇首个✗即停、尾部不空跑", async () => {
+    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
+    const calls: string[] = []
+    mockRunProbe.mockImplementation(async (_t: string, cmd: string) => {
+      calls.push(cmd)
+      if (cmd === "curl b") return { state: "failed", exit_code: 22, duration_ms: 5, tail: ["boom 500"] }
+      return { state: "passed", exit_code: 0, duration_ms: 3, tail: ["ok"] }
+    })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    fireEvent.click(screen.getByTestId("playbook-run-all"))
+    await waitFor(() => expect(calls).toEqual(["curl a", "curl b"])) // lifecycle 未进、c 未跑
+    // a 章 passed、b 章 failed 并触发硬闸停在此
+    expect(screen.getByTestId("probe-stamp-probe:x:1").textContent).toContain("EXIT 0")
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+  })
+})
+
+
+describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，不是大折叠）", () => {
+  function renderFolded() {
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC))
+    const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
+    return render(<FoldProvider taskId="it-fold"><AcceptanceSurface task={task} onMutated={() => {}} /></FoldProvider>)
+  }
+  it("复检块：把手折上 → 命令/跑钮消失、结论徽章顶上；再点回开", async () => {
+    renderFolded()
+    let vh: HTMLElement | null = null
+    const handles = () => [...document.querySelectorAll("[data-fold-toggle]")].map((x) => x.getAttribute("data-fold-toggle")).join(",")
+    await waitFor(() => { vh = document.querySelector('[data-fold-toggle="item-verify"]'); expect(handles()).toContain("item-verify") })
+    // 把手在 L1 最左；>_ 手动钮已整体删除（输出显示时机由状态决定）
+    const header = document.querySelector('[data-verify-panel] > div') as HTMLElement
+    expect(header.children[0].getAttribute("data-fold-toggle")).toBe("item-verify")
+    expect(header.children[1].textContent).toContain("当场复检")
+    expect(header.children[2].getAttribute("data-testid")).toBe("verify-pill")
+    expect(screen.queryByTestId("verify-console-toggle")).toBeNull()
+    fireEvent.click(vh!)
+    await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBe("true"))
+    // 折上 = 只剩 L1：状态胶囊即结论，参数行消失（此 harness 无 verify 配置 → 未配置）
+    expect(screen.getByTestId("verify-pill").textContent).toContain("未配置")
+    expect(screen.queryByTestId("verify-params")).toBeNull()
+    fireEvent.click(document.querySelector('[data-fold-toggle="item-verify"]') as HTMLElement)
+    await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBeNull())
+  })
+  it("变动块：折上显「N 提交 · +x −y · z 文件」一行结论；预览块独立各折互不影响", async () => {
+    const first = renderFolded()
+    let dh: HTMLElement | null = null
+    await waitFor(() => { dh = document.querySelector('[data-fold-toggle="item-diff"]'); expect(dh).toBeTruthy() })
+    fireEvent.click(dh!)
+    expect((document.querySelector('[data-fold-badge="item-diff"]')?.textContent ?? "")).toMatch(/\d+ 提交 · \+\d+ −\d+ · \d+ 文件/)
+    expect(screen.queryByTestId("round-diff-strip")).toBeNull()
+    // 预览块折自己的一份，diff 保持折上状态（块间无串扰）
+    fireEvent.click(document.querySelector('[data-fold-toggle="item-preview"]') as HTMLElement)
+    expect((document.querySelector('[data-fold-box="item-preview"]') as HTMLElement).getAttribute("data-fold-closed")).toBe("true")
+    expect(document.querySelector('[data-fold-badge="item-diff"]')).toBeTruthy()
+    // 无 provider（面板被独立挂载）→ 零把手护栏（先卸有 provider 的那份，防 DOM 残影）
+    const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
+    first.unmount()
+    render(<AcceptanceSurface task={task} onMutated={() => {}} />)
+    await waitFor(() => expect(screen.getByTestId("verify-panel")).toBeTruthy())
+    expect(document.querySelector('[data-fold-toggle="item-verify"]')).toBeNull()
+  })
+})
+
+// ── A/C 档：实况可信 + 决策诚实（2026-09-20）────────────────────────────
+function fireSseStatus(s: { connected: boolean; reconnected: boolean }): void {
+  for (const cb of sseStatusCbs) cb(s)
+}
+
+describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
+  it("ledger_written:false → toast 不再谎报「台账已写」", async () => {
+    renderModal()
+    mockPostAcceptance.mockResolvedValueOnce({
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-9", next_action: "awaiting_manual_trigger",
+      ledger_written: false,
+    })
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    fireEvent.click(await screen.findByTestId("ledger-confirm"))
+    const { toast } = await import("sonner")
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("台账写入失败")))
+  })
+
+  it("server 硬闸 409（走查 ✗ 他窗放行）→ err.message 直出 + 重拉盘面", async () => {
+    renderModal()
+    mockPostAcceptance.mockRejectedValueOnce(new TaskApiError("走查存在 2 项 ✗ —— 服务端硬闸拦截，请改走打回", 409))
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    fireEvent.click(await screen.findByTestId("ledger-confirm"))
+    const { toast } = await import("sonner")
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("服务端硬闸拦截")))
+    await waitFor(() => expect(mockGetTask.mock.calls.length).toBeGreaterThanOrEqual(2))
+  })
+
+  it("勾选 debounce 窗内：通过 disabled + 原因 title；打回不拦但提交即 flush（竞态闸）", async () => {
+    mockGetPlaybook.mockResolvedValue({
+      available: true, goal: "g", specRevised: false,
+      budget: { steps: 1, estMin: 2, over: false, degraded: false },
+      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [{ id: "walk:plan:1", op: "op", expect: "e" }] }],
+      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    })
+    renderModal()
+    await screen.findByTestId("playbook-panel")
+    await new Promise((r) => setTimeout(r, 400)) // 排空前序用例遗留的 debounce 定时器
+    mockSaveChecks.mockClear()
+    fireEvent.click(screen.getByTestId("decide-pass"))
+    const approve = screen.getByTestId("acceptance-approve") as HTMLButtonElement
+    expect(approve.disabled).toBe(true)
+    expect(approve.title).toContain("保存中")
+    // 打回按钮不拦：弹窗照常开，提交时 flush 让最后一笔先落盘再 POST
+    fireEvent.click(screen.getByTestId("acceptance-reject"))
+    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "顺手 flush" } })
+    mockPostAcceptance.mockResolvedValueOnce({
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-f", next_action: "dispatched",
+      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+    })
+    fireEvent.click(screen.getByTestId("reject-confirm"))
+    await waitFor(() => expect(mockSaveChecks).toHaveBeenCalledWith("t1", BATCH_DIR, 1, {
+      "walk:plan:1": expect.objectContaining({ decision: "pass" }),
+    }))
+    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it("SSE 断线 → 顶条横幅「数据截至」；重连 → since 游标补缺口，横幅退场", async () => {
+    renderModal(V4_SPEC_VERIFY)
+    await screen.findByTestId("verify-panel")
+    await waitFor(() => expect(sseHandlers.has(TASK_VERIFY_LOG_EVENT)).toBe(true))
+    fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "l1" })
+    await waitFor(() => expect(screen.getByTestId("verify-console").textContent).toContain("l1"))
+    // 断线：横幅亮出且截停表时间
+    fireSseStatus({ connected: false, reconnected: false })
+    expect(await screen.findByTestId("acceptance-sse-down")).toBeTruthy()
+    // 重连：服务端把断流期的 1 行补成 lines_after（游标 = 前端已收行数）
+    mockGetVerifyStatus.mockResolvedValueOnce({
+      task_id: "t1", execution_id: "exec-1", phase_index: 1, round_index: 1,
+      command: "pnpm test", cwd: ".", state: "running", started_at: "2026-09-03T01:00:00Z",
+      lines_after: ["l2-gap"],
+    })
+    fireSseStatus({ connected: true, reconnected: true })
+    await waitFor(() => expect(mockGetVerifyStatus).toHaveBeenLastCalledWith("t1", 1))
+    await waitFor(() => expect(screen.getByTestId("verify-console").textContent).toContain("l2-gap"))
+    expect(screen.queryByTestId("acceptance-sse-down")).toBeNull()
+  })
+})
+
+// ── B 档：修复轮上下文（反馈回应对照 + 累计口径）────────────────────────
+describe("验货台 — 修复轮上下文（B 档）", () => {
+  it("R2 修复轮：核对 tab 出「打回反馈→本轮回应」；幻影回应标红、文字证据不装", async () => {
+    renderModalWith(PHASE_R2_AWAITING)
+    await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/fix-report-r1.md`))
+    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
+    const card = await screen.findByTestId("fix-response")
+    expect(card.textContent).toContain("幻影回应 1")
+    expect(screen.getByTestId("fix-response-row-0").textContent).toContain("有实物")
+    expect(screen.getByTestId("fix-response-row-1").textContent).toContain("说了没锚")
+    expect(screen.getByTestId("fix-response-row-2").textContent).toContain("文字证据")
+  })
+
+  it("fix-report 无对照表 → 点名「无法机器验证」，不安静省略", async () => {
+    mockGetHomeFile.mockImplementation(async (_id: string, p: string) => {
+      if (p.endsWith("fix-report-r1.md")) return { path: p, content: "# Fix Report r1\n\n本轮按反馈修了，跑过测试挺好。\n" }
+      if (p.endsWith("spec.md")) return { path: p, content: SPEC_MATRIX_MD }
+      if (p.endsWith("round-report.md")) return { path: p, content: REPORT_MATRIX_MD }
+      return { path: p, content: "# spec body" }
+    })
+    renderModalWith(PHASE_R2_AWAITING)
+    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
+    expect(await screen.findByTestId("fix-response-missing")).toBeTruthy()
+  })
+
+  it("实物口径切「累计」→ getRoundDiff(t1, cumulative) + 面板标「全 phase 累计」", async () => {
+    renderModalWith(PHASE_R2_AWAITING)
+    const toggle = await screen.findByTestId("round-diff-scope")
+    expect(screen.getByTestId("round-diff-scope-round").getAttribute("aria-selected")).toBe("true")
+    fireEvent.click(screen.getByTestId("round-diff-scope-cumulative"))
+    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative"))
+    await waitFor(() => expect(screen.getByTestId("round-diff-scope-label").textContent).toContain("全 phase 累计"))
   })
 })

@@ -1,8 +1,13 @@
 // packages/web-app/components/tasks/acceptance/playbook-panel.tsx
 //
-// 验收台「验收剧本」(acceptance v2.1, ADR-0022) — the human walkthrough
+// 验收台「验收剧本」(acceptance v2.2, ADR-0022) — the human walkthrough
 // checklist the server COMPILES from the round's contract files. Presentational
 // + owns its own checkbox state (debounced persistence via PUT home-file).
+//
+// v2.2 用户反馈（2026-09-19）：probe 步不该让人肉复制粘贴——就地 [▶ 执行]，
+// 同步拿 exit+tail 像复检一样出结果并自动盖章（exit 0→✓、非零/超时→✗，人工
+// 可随时改判；note 前缀 🔬 区分机器留痕）。长列表配「展开全部/收起全部」，
+// 收起态仍可逐条 ✓✗⊘。
 //
 // 还原基准 = .scratch/20260917-acceptance-playbook-proto (A′ 变体): 黄头条主角卡、
 // 预算表、票级步(操作/预期/反假跑)、✓✗⊘ 三色后果条、carryover 首段、finePrint 折叠、
@@ -14,10 +19,13 @@
 
 "use client"
 
+import { FoldHandle, useFold } from "../fold-context"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown } from "lucide-react"
+import { ClipboardCheck, ExternalLink, ChevronRight, ChevronDown, Play, Square, Wrench } from "lucide-react"
+import { toast } from "sonner"
 import {
-  readChecks, saveChecks, type PlaybookPayload, type PlaybookItem, type CheckDecision, type CheckEntry,
+  readChecks, saveChecks, runProbe, type PlaybookPayload, type PlaybookItem, type CheckDecision,
+  type CheckEntry, type ProbeRunResult,
 } from "@/lib/tasks-api"
 
 interface PlaybookPanelProps {
@@ -32,17 +40,43 @@ interface PlaybookPanelProps {
   disabledReason?: string
   saving: boolean
   onSaveStateChange: (saving: boolean) => void
+  /** 台账竞态闸（2026-09-20）：父级提交决策前调用，把 debounce 窗里的最后一笔
+   *  勾选立刻落盘并等写完成 —— server 的 ledger/硬闸读的是盘上文件，不能少最后一笔。 */
+  registerFlush?: (fn: (() => Promise<void>) | null) => void
 }
 
 const KIND_LABEL: Record<string, string> = { walk: "走查", probe: "探针", claim: "核对" }
 
+// ③ lifecycle 步文案：本任务配了 runbook，这些命令的职责已由「跑起来看」钮承担。
+const LIFECYCLE_LABEL: Record<"start" | "ready" | "teardown", string> = {
+  start: "起服务·预览负责", ready: "就绪轮询·预览负责", teardown: "收尾·预览负责",
+}
+const LIFECYCLE_HINT: Record<"start" | "ready" | "teardown", string> = {
+  start: "此步起停服务由上方「跑起来看 ▶启动」统一做，剧本不再逐条点（命令仍可展开查看）",
+  ready: "等服务就绪由「跑起来看」的 ready 探针轮询，无需在此跑",
+  teardown: "收尾杀进程由「跑起来看 ■停止」的 down 步骤负责",
+}
+
 export function PlaybookPanel({
-  taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange,
+  taskId, batchRelDir, roundIndex, playbook, onGate, disabledReason, saving, onSaveStateChange, registerFlush,
 }: PlaybookPanelProps) {
+  const fold = useFold()
+  const panelClosed = fold ? fold.closed("item-playbook", "info") : false
   const [checks, setChecks] = useState<Record<string, CheckEntry>>({})
   const [openFine, setOpenFine] = useState(false)
+  // 收起的步骤 id 集（默认全展开 = v2.1 行为不变；「收起全部」一键瘦身）。
+  const [collapsed, setCollapsed] = useState<Record<string, true>>({})
+  // 探针执行：面板级串行（一次一条，防并发打同一服务/抢端口）。
+  const [runningProbe, setRunningProbe] = useState<string | null>(null)
+  // ② 连跑全部：整段按序跑，遇首个 ✗ 即停；cancelRef 让「停止」在步间生效。
+  const [runningAll, setRunningAll] = useState(false)
+  const cancelRef = useRef(false)
+  // 探针输出 tail 只驻内存（持久的是 entry.probe 章 + note 里的现象行）。
+  const [probeNow, setProbeNow] = useState<Record<string, ProbeRunResult>>({})
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyRef = useRef(false)
+  // 台账竞态闸：在飞的 saveChecks promise（flush 时 await 它；快照直接读 checksRef）。
+  const inflightRef = useRef<Promise<unknown> | null>(null)
   // Mirror of `checks` for event handlers — decides compute `next` synchronously
   // from this (updater purity: side effects like onGate/persist must NEVER run
   // inside a setState updater — React executes it in the PARENT's render pass →
@@ -54,6 +88,7 @@ export function PlaybookPanel({
   useEffect(() => {
     let cancelled = false
     dirtyRef.current = false
+    setProbeNow({})
     if (!batchRelDir) { checksRef.current = {}; setChecks({}); onGate(summarize(playbook, {})); return }
     void readChecks(taskId, batchRelDir, roundIndex).then((f) => {
       if (!cancelled) {
@@ -66,17 +101,39 @@ export function PlaybookPanel({
     // playbook recompute must re-summarize too (step count can shift)
   }, [taskId, batchRelDir, roundIndex, playbook, onGate])
 
-  const persist = useCallback((next: Record<string, CheckEntry>) => {
+  /** 立刻写盘（清 debounce 定时器 + 抓 checksRef 最新快照）；在飞 promise 记进
+   *  inflightRef 供 flush await。失败不再静默 —— 台账/硬闸读的都是这个文件。 */
+  const writeChecks = useCallback((): Promise<void> => {
+    if (!batchRelDir) return Promise.resolve()
+    dirtyRef.current = false
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
+    const p = saveChecks(taskId, batchRelDir, roundIndex, checksRef.current)
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? `勾选保存失败：${err.message}` : "勾选保存失败 — 台账可能少记，请重试")
+      })
+      .finally(() => { inflightRef.current = null; onSaveStateChange(false) })
+    inflightRef.current = p
+    return p
+  }, [taskId, batchRelDir, roundIndex, onSaveStateChange])
+
+  const persist = useCallback(() => {
     if (!batchRelDir) return
     dirtyRef.current = true
     onSaveStateChange(true)
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      void saveChecks(taskId, batchRelDir, roundIndex, next)
-        .catch(() => {/* toast handled upstream via saving=false + keep local */})
-        .finally(() => { dirtyRef.current = false; onSaveStateChange(false) })
-    }, 300)
-  }, [taskId, batchRelDir, roundIndex, onSaveStateChange])
+    saveTimer.current = setTimeout(() => { saveTimer.current = null; void writeChecks() }, 300)
+  }, [batchRelDir, onSaveStateChange, writeChecks])
+
+  /** flush = 决策提交前的竞态闸：把 debounce 窗里的最后一笔立刻落盘并等写完。 */
+  const flush = useCallback(async (): Promise<void> => {
+    if (saveTimer.current || dirtyRef.current) await writeChecks()
+    else if (inflightRef.current) await inflightRef.current
+  }, [writeChecks])
+
+  useEffect(() => {
+    registerFlush?.(flush)
+    return () => registerFlush?.(null)
+  }, [registerFlush, flush])
 
   // Single mutation funnel — called from event handlers only (NEVER from an
   // updater): parent-facing side effects must happen outside the render pass.
@@ -84,14 +141,14 @@ export function PlaybookPanel({
     checksRef.current = next
     setChecks(next)
     onGate(summarize(playbook, next))
-    persist(next)
+    persist()
   }, [onGate, playbook, persist])
 
-  const decide = useCallback((id: string, decision: CheckDecision | null, note?: string) => {
+  const decide = useCallback((id: string, decision: CheckDecision | null, note?: string, probe?: CheckEntry["probe"]) => {
     const prev = checksRef.current
     const next = { ...prev }
     if (decision === null) delete next[id]
-    else next[id] = { decision, note: note ?? prev[id]?.note ?? "", at: new Date().toISOString() }
+    else next[id] = { decision, note: note ?? prev[id]?.note ?? "", at: new Date().toISOString(), ...(probe ? { probe } : {}) }
     commit(next)
   }, [commit])
 
@@ -101,7 +158,64 @@ export function PlaybookPanel({
     commit({ ...checksRef.current, [id]: { ...cur, note } })
   }, [commit])
 
+  /** 跑一条探针 + 就地盖章（exit0→✓ / 其余→✗，人工可改判）。返回是否通过，供
+   *  连跑决定续不停。已有判定被机器结果覆盖是有意为之——刚跑的证据比旧手感新，
+   *  note 带 🔬 前缀，ledger 里机器留痕与人工笔迹可分。 */
+  const stampProbe = useCallback(async (item: PlaybookItem): Promise<boolean> => {
+    const cmd = item.probe?.command
+    if (!cmd) return true
+    setRunningProbe(item.id)
+    try {
+      const r = await runProbe(taskId, cmd)
+      setProbeNow((m) => ({ ...m, [item.id]: r }))
+      const at = new Date().toLocaleTimeString("zh-CN", { hour12: false })
+      const dur = (r.duration_ms / 1000).toFixed(1)
+      const stamp = { state: r.state, exit_code: r.exit_code, at: new Date().toISOString() }
+      const note = r.state === "passed"
+        ? `🔬 探针 exit 0 · ${dur}s · ${at}`
+        : `🔬 探针 ${r.state === "timeout" ? "超时" : `exit ${r.exit_code}`} · ${dur}s · ${at} · ${lastMeaningful(r.tail).slice(0, 90)}`
+      decide(item.id, r.state === "passed" ? "pass" : "fail", note, stamp)
+      return r.state === "passed"
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setProbeNow((m) => ({ ...m, [item.id]: { state: "failed", exit_code: null, duration_ms: 0, tail: [msg] } }))
+      return false
+    } finally {
+      setRunningProbe(null)
+    }
+  }, [taskId, decide])
+
+  /** [▶ 执行] 单步复跑。连跑进行中禁用（串行防抢端口）。 */
+  const runOne = useCallback(async (item: PlaybookItem) => {
+    if (!item.probe?.command || item.lifecycle || runningProbe || runningAll || disabledReason) return
+    await stampProbe(item)
+  }, [stampProbe, runningProbe, runningAll, disabledReason])
+
+  // 连跑只收「断言类」可跑步：有命令 + 非 lifecycle + 面板未禁。lifecycle 步
+  // （起服/就绪/收尾）由「跑起来看」runbook 负责，剧本不逐条点（③）。
+  const runnableItems = useMemo(
+    () => playbook.sections.flatMap((s) => s.items).filter((i) => i.probe?.command && !i.lifecycle),
+    [playbook],
+  )
+
+  /** ▶ 连跑全部：按剧本顺序逐条 stampProbe，任一 ✗ 即停（停在真问题处，不空跑
+   *  尾部）；「停止」按钮置 cancelRef，在下一步开始前生效。 */
+  const runAll = useCallback(async () => {
+    if (runningAll || runningProbe || disabledReason) return
+    setRunningAll(true)
+    cancelRef.current = false
+    for (const it of runnableItems) {
+      if (cancelRef.current) break
+      const ok = await stampProbe(it)
+      if (!ok) break
+    }
+    setRunningAll(false)
+  }, [runningAll, runningProbe, disabledReason, runnableItems, stampProbe])
+
   const allItems = useMemo(() => playbook.sections.flatMap((s) => s.items), [playbook])
+  const expandAll = () => setCollapsed({})
+  const collapseAll = () => setCollapsed(Object.fromEntries(allItems.map((i) => [i.id, true as const])))
+  const allCollapsed = allItems.length > 0 && allItems.every((i) => collapsed[i.id])
 
   if (!playbook.available) {
     return (
@@ -120,13 +234,42 @@ export function PlaybookPanel({
     <div className="rounded-[13px] border-[2.5px] border-pop-bd bg-pop-paper shadow-pop overflow-hidden" data-acceptance-playbook data-testid="playbook-panel">
       {/* 主角头（黄软条，与 verify-panel 头语言一致） */}
       <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 bg-pop-amber-soft px-3 py-2">
+        {fold && <FoldHandle id="item-playbook" closed={panelClosed} onToggle={() => fold.toggle("item-playbook", "info")} />}
         <ClipboardCheck className="size-3.5 text-pop-ink" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-ink">人工走查 · 验收剧本</span>
-        <span className="ml-auto font-mono text-[9.5px] text-pop-ink/70 tabular-nums" data-testid="playbook-count">
-          {countOf(checks, "pass")}/{allItems.length}✓ · {countOf(checks, "skip")}⊘ · {countOf(checks, "fail")}✗
-        </span>
+        {panelClosed && (
+          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-playbook">
+            {countOf(checks, "pass")}/{allItems.length}✓ · {countOf(checks, "fail")}✗ · {countOf(checks, "skip")}⊘
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {runnableItems.length > 0 && (
+            <button
+              onClick={runningAll ? () => { cancelRef.current = true } : () => void runAll()}
+              disabled={!!disabledReason || (!!runningProbe && !runningAll)}
+              data-testid="playbook-run-all"
+              title={runningAll ? "再点=下一步后停止（当前步会跑完）" : `按剧本顺序连跑 ${runnableItems.length} 条断言探针，遇首个 ✗ 即停（起服/就绪/收尾归「跑起来看」）`}
+              className={`flex items-center gap-1 rounded-md border-[2px] px-2 py-0.5 font-mono text-[10px] font-black shadow-pop-sm transition-colors ${
+                runningAll ? "border-pop-amber bg-pop-amber-soft text-pop-amber" : "border-pop-bd bg-pop-green text-white hover:brightness-105 disabled:opacity-40"}`}
+            >
+              {runningAll ? <><Square className="size-2.5" />停止</> : <><Play className="size-2.5" />连跑 {runnableItems.length}</>}
+            </button>
+          )}
+          <button
+            className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold text-pop-ink/60 transition-colors hover:bg-pop-bd/10"
+            onClick={allCollapsed ? expandAll : collapseAll}
+            data-testid="playbook-toggle-all"
+            title={allCollapsed ? "展开全部步骤明细" : "收起明细，只留标题+勾选（逐条速览）"}
+          >
+            {allCollapsed ? "展开全部" : "收起全部"}
+          </button>
+          <span className="font-mono text-[9.5px] text-pop-ink/70 tabular-nums" data-testid="playbook-count">
+            {countOf(checks, "pass")}/{allItems.length}✓ · {countOf(checks, "skip")}⊘ · {countOf(checks, "fail")}✗
+          </span>
+        </div>
       </div>
 
+      {!panelClosed && (
       <div className="space-y-2 p-3">
         {/* 目标 + 预算表 */}
         {playbook.goal && <div className="text-[11px] font-semibold text-pop-ink leading-snug">{playbook.goal}</div>}
@@ -183,7 +326,13 @@ export function PlaybookPanel({
             </div>
             <div className="p-2 space-y-2">
               {sec.items.map((it) => (
-                <StepRow key={it.id} item={it} entry={checks[it.id]} disabled={!!disabledReason} onDecide={decide} onNote={setNote} />
+                <StepRow
+                  key={it.id} item={it} entry={checks[it.id]} disabled={!!disabledReason}
+                  open={!collapsed[it.id]} onToggle={() => setCollapsed((c) => { const n = { ...c }; if (n[it.id]) delete n[it.id]; else n[it.id] = true; return n })}
+                  onDecide={decide} onNote={setNote}
+                  probe={probeNow[it.id]} probeRunning={runningProbe === it.id} onRunProbe={() => void runOne(it)}
+                  runBlockedReason={disabledReason ?? (runningAll ? "连跑进行中 — 单步钮暂禁" : runningProbe && runningProbe !== it.id ? "另一条探针在跑 — 探针串行" : undefined)}
+                />
               ))}
             </div>
           </div>
@@ -208,40 +357,94 @@ export function PlaybookPanel({
           编译来源：{playbook.coverage.found.join(" · ") || "无"}{playbook.coverage.missing.length ? ` ｜ 缺：${playbook.coverage.missing.join(" · ")}` : ""}
         </div>
       </div>
+      )}
     </div>
   )
 }
 
 // ── one walkthrough step ──────────────────────────────────────────────
-function StepRow({ item, entry, disabled, onDecide, onNote }: {
-  item: PlaybookItem; entry?: CheckEntry; disabled: boolean
-  onDecide: (id: string, d: CheckDecision | null, note?: string) => void
+function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, probe, probeRunning, onRunProbe, runBlockedReason }: {
+  item: PlaybookItem; entry?: CheckEntry; disabled: boolean; open: boolean
+  onToggle: () => void
+  onDecide: (id: string, d: CheckDecision | null, note?: string, probe?: CheckEntry["probe"]) => void
   onNote: (id: string, note: string) => void
+  probe?: ProbeRunResult; probeRunning: boolean
+  onRunProbe: () => void; runBlockedReason?: string
 }) {
   const d = entry?.decision
   const needsNote = d === "fail" || d === "skip"
   return (
     <div className={`rounded-md border p-2 transition-colors ${d === "fail" ? "border-pop-red bg-pop-red/5" : d === "pass" ? "border-pop-green/30 bg-pop-green-soft/30" : "border-pop-bd/20 bg-pop-paper"}`} data-step={item.id} data-testid={`step-${item.id}`}>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-[11.5px] font-semibold text-pop-ink leading-snug">{item.op}</span>
-        <span className="ml-auto shrink-0 font-mono text-[8.5px] text-pop-dim">{item.id.split(":").slice(1, 2)[0]}</span>
-      </div>
-      {item.probe?.command && (
-        <code className="mt-1 block truncate rounded bg-pop-ink px-1.5 py-0.5 font-mono text-[10px] text-pop-bg" title={item.probe.command}>$ {item.probe.command}</code>
-      )}
-      <div className="mt-1 rounded-r border-l-[3px] border-pop-amber bg-pop-amber-soft/50 px-2 py-0.5 text-[10.5px] text-pop-ink/75">
-        <b>预期</b> · {item.expect}{item.evidence ? <span className="text-pop-dim"> ｜ 反假跑：{item.evidence}</span> : null}
-      </div>
-      <div className="mt-1.5 flex gap-1">
-        {(["pass", "fail", "skip"] as const).map((k) => (
-          <DecideBtn key={k} active={d === k} decision={k} disabled={disabled} onClick={() => onDecide(item.id, d === k ? null : k)} />
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <button
+          onClick={onToggle}
+          className="flex shrink-0 items-center rounded px-0.5 text-pop-dim transition-colors hover:text-pop-ink"
+          title={open ? "收起本步明细" : "展开本步明细"}
+          aria-expanded={open}
+          data-testid={`step-toggle-${item.id}`}
+        >
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        </button>
+        <span className="min-w-0 flex-1 basis-40 text-[11.5px] font-semibold text-pop-ink leading-snug">{item.op}</span>
+        <span className="shrink-0 font-mono text-[8.5px] text-pop-dim">{item.id.split(":").slice(1, 2)[0]}</span>
+        <span className="flex shrink-0 items-center gap-1">
+          {(["pass", "fail", "skip"] as const).map((k) => (
+            <DecideBtn key={k} active={d === k} decision={k} disabled={disabled} onClick={() => onDecide(item.id, d === k ? null : k)} />
+          ))}
+        </span>
+        {item.probe?.command && (item.lifecycle ? (
+          // ③ 起了 runbook 的管道步：不逐条点，折成一行提示（起服/就绪/收尾归预览钮）。
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-pop-bd/40 bg-pop-idle/40 px-1.5 py-0.5 font-mono text-[9px] text-pop-dim"
+            data-testid={`probe-lifecycle-${item.id}`}
+            title={LIFECYCLE_HINT[item.lifecycle]}
+          >
+            <Wrench className="size-2.5" />{LIFECYCLE_LABEL[item.lifecycle]}
+          </span>
+        ) : (
+          <button
+            onClick={onRunProbe}
+            disabled={disabled || probeRunning || !!runBlockedReason}
+            title={runBlockedReason ?? "在工作区执行这条探针（同步出结果，自动盖章，可改判）"}
+            className={`shrink-0 rounded-md border-[2px] px-2 py-0.5 font-mono text-[10px] font-black transition-colors ${
+              probeRunning ? "border-pop-amber bg-pop-amber-soft text-pop-amber"
+                : "border-pop-bd bg-pop-green text-white shadow-pop-sm hover:brightness-105 disabled:opacity-40"}`}
+            data-testid={`probe-run-${item.id}`}
+          >
+            {probeRunning ? "⏳ 跑…" : <span className="inline-flex items-center gap-0.5"><Play className="size-2.5" />执行</span>}
+          </button>
         ))}
+        {(probe || entry?.probe) && (
+          <span
+            className={`pop-stamp shrink-0 rounded border-[2px] bg-transparent px-1.5 py-px font-mono text-[9px] font-black ${
+              (probe?.state ?? entry?.probe?.state) === "passed" ? "border-pop-green text-pop-green" : "border-pop-red text-pop-red"}`}
+            data-testid={`probe-stamp-${item.id}`}
+            title={`机器探针 · exit ${probe?.exit_code ?? entry?.probe?.exit_code}${probe?.duration_ms != null ? ` · ${(probe.duration_ms / 1000).toFixed(1)}s` : ""}`}
+          >
+            {(probe?.state ?? entry?.probe?.state) === "passed" ? `EXIT ${probe?.exit_code ?? entry?.probe?.exit_code ?? 0}` : `EXIT ${probe?.exit_code ?? entry?.probe?.exit_code ?? "?"}`}
+          </span>
+        )}
       </div>
-      {d && <Consequence decision={d} ticketHint={item.id} />}
-      {needsNote && (
-        <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd/40 p-1 text-[10.5px]" rows={1}
-          placeholder={d === "fail" ? "不过的实际现象（必填）— 进打回反馈 + 重开此票" : "为什么这次可以不验（必填）— 下轮仍会问"}
-          value={entry?.note ?? ""} onChange={(e) => onNote(item.id, e.target.value)} data-testid={`note-${item.id}`} />
+      {open && (
+        <>
+          {item.probe?.command && (
+            <code className="mt-1 block truncate rounded bg-pop-ink px-1.5 py-0.5 font-mono text-[10px] text-pop-bg" title={item.probe.command}>$ {item.probe.command}</code>
+          )}
+          <div className="mt-1 rounded-r border-l-[3px] border-pop-amber bg-pop-amber-soft/50 px-2 py-0.5 text-[10.5px] text-pop-ink/75">
+            <b>预期</b> · {item.expect}{item.evidence ? <span className="text-pop-dim"> ｜ 反假跑：{item.evidence}</span> : null}
+          </div>
+          {d && <Consequence decision={d} ticketHint={item.id} />}
+          {needsNote && (
+            <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd/40 p-1 text-[10.5px]" rows={1}
+              placeholder={d === "fail" ? "不过的实际现象（必填）— 进打回反馈 + 重开此票" : "为什么这次可以不验（必填）— 下轮仍会问"}
+              value={entry?.note ?? ""} onChange={(e) => onNote(item.id, e.target.value)} data-testid={`note-${item.id}`} />
+          )}
+          {probe?.tail.length ? (
+            <div className="mt-1 max-h-40 overflow-auto rounded bg-pop-ink px-1.5 py-1 font-mono text-[9.5px] leading-snug text-pop-paper" data-testid={`probe-tail-${item.id}`}>
+              {probe.tail.slice(-20).map((l, i) => <div key={i} className={`whitespace-pre-wrap break-all ${/error|fail/i.test(l) ? "text-pop-amber" : ""}`}>{l}</div>)}
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   )
@@ -270,6 +473,14 @@ function Consequence({ decision, ticketHint }: { decision: CheckDecision; ticket
 // ── helpers ───────────────────────────────────────────────────────────
 function countOf(checks: Record<string, CheckEntry>, d: CheckDecision): number {
   return Object.values(checks).filter((c) => c.decision === d).length
+}
+/** 探针失败时给 note 找一条最能说明问题的输出（倒找第一条非引擎噪声行）。 */
+function lastMeaningful(tail: string[]): string {
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const l = (tail[i] ?? "").trim()
+    if (l && !/^\[stderr\] Script failed|^Script (completed|failed)/.test(l)) return l
+  }
+  return "无输出"
 }
 function summarize(playbook: PlaybookPayload, checks: Record<string, CheckEntry>) {
   const total = playbook.sections.flatMap((s) => s.items).length

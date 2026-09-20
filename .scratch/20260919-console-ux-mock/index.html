@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- .scratch/20260919-console-ux-mock/index.html · v3 真·色板版
+     前置调查：pop 色板职能 → pink=#ff4d6d 实为 --primary/--ring（品牌主强调，
+     仅在 failed 徽章以 soft 底出现）；cyan=ready/下一发(51文件占用)；
+     yellow=AI成本/--accent；green=主行动盖章；purple=验收品牌/流。
+     结论：给「查看型入口」上色的正统候选 = pink(主强调) 或 purple(现有 ↗ 族)。 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>流程图入口 · v3 上色版（色职能已排查）</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --purple-soft:#eceaff; --green:#00b575; --green-soft:#d9f5e7;
+    --amber:#ffb800; --amber-soft:#fff0cc; --cyan:#22b8e0; --cyan-soft:#daf4fb;
+    --pink:#ff4d6d; --pink-soft:#ffe3e9; --yellow:#ffd23f; --yellow-soft:#fff3c4;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:28px 34px 70px}
+  h1{font-size:17px;margin-bottom:4px}
+  .sub{color:var(--dim);font-size:11.5px;margin:0 0 16px}
+  table.roles{border-collapse:collapse;font-size:11px;margin:10px 0 22px}
+  table.roles th,table.roles td{border:1.5px solid rgba(33,31,39,.2);padding:4px 10px;text-align:left}
+  table.roles th{font:900 10px var(--mono);background:var(--paper)}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:3px;border:1.5px solid var(--bd);vertical-align:-1px;margin-right:5px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .pane{border:2.5px solid var(--bd);border-radius:16px;padding:13px;background:var(--paper);box-shadow:4px 4px 0 rgba(33,31,39,.14)}
+  .pane>header{font:900 10px/1 var(--mono);letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .rec{font:900 9px var(--mono);background:var(--ink);color:var(--paper);border-radius:5px;padding:2px 7px}
+  .runrow{display:flex;align-items:center;gap:8px;border:1.5px solid rgba(33,31,39,.12);border-radius:8px;background:var(--bg);padding:7px 9px;font-size:12px;margin-bottom:9px}
+  .rbadge{border:2px solid var(--bd);border-radius:7px;padding:1px 6px;font:900 10px/1.5 var(--mono);background:var(--idle,#eceae4)}
+  .wf{font:11px var(--mono);color:var(--dim)}
+  .st{font-weight:900}
+  .meta{margin-left:auto;font:10.5px var(--mono);color:var(--dim)}
+  .btn{display:inline-flex;align-items:center;gap:5px;font:900 10px var(--mono);border-radius:8px;padding:3px 9px;cursor:pointer;border:2px solid var(--bd);box-shadow:2px 2px 0 rgba(33,31,39,.2)}
+  .btn:hover{transform:translate(-1px,-1px)}
+  .btn .x{font-weight:400;font-size:11px}
+  .btn.big{font-size:11.5px;padding:6px 12px;border-radius:10px;border-width:2.5px;box-shadow:3px 3px 0 rgba(33,31,39,.2)}
+  .p-s{background:var(--pink-soft);color:#d61f47}
+  .p-f{background:var(--pink);color:#fff}
+  .v-s{background:var(--purple-soft);color:var(--purple)}
+  .v-f{background:var(--purple);color:#fff}
+  .card{border:2px solid var(--amber);border-radius:13px;overflow:hidden;background:var(--amber-soft)}
+  .cardhead{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:2px solid rgba(33,31,39,.08);font:900 9.5px var(--mono);letter-spacing:.08em}
+  .acceptbtn{margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:2.5px solid var(--bd);border-radius:10px;background:var(--green);color:#fff;font:900 11px var(--mono);padding:5px 11px;cursor:pointer;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2)}
+  .note{font-size:11.5px;color:var(--dim);line-height:1.65;margin-top:6px}
+  .note b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<h1>流程图入口 · 上色版（v3）</h1>
+<p class="sub">形制不变：2px 墨边 + 硬偏移影 + mono 黑体 + 只用 ↗ 符号。先上色板职能普查，再给四款候选（每款 = 行内小章 + 焦点卡头大章，嵌真实 amber 卡，右边绿章=B已定稿的唯一验货入口）。</p>
+
+<table class="roles">
+  <tr><th>色</th><th>hex</th><th>现有职能（用量核查后）</th><th>可挪用性</th></tr>
+  <tr><td><span class="sw" style="background:var(--pink)"></span>pink</td><td>#ff4d6d</td><td><b>--primary / --ring（品牌主强调， chrome 里几乎闲置！）</b>；soft 底在 failed 徽章</td><td>✅ 正统强调位</td></tr>
+  <tr><td><span class="sw" style="background:var(--purple)"></span>purple</td><td>#5b45ff</td><td>验收品牌/tab/核对链 + 现有 ↗ 小章</td><td>⚠ 和「验收」抢戏</td></tr>
+  <tr><td><span class="sw" style="background:var(--cyan)"></span>cyan</td><td>#22b8e0</td><td>ready/「下一发」状态（51 文件重占用）</td><td>❌ 撞状态色</td></tr>
+  <tr><td><span class="sw" style="background:var(--yellow)"></span>yellow</td><td>#ffd23f</td><td>AI 成本卡 / --accent / hover 高光</td><td>❌ 撞钱语义</td></tr>
+  <tr><td><span class="sw" style="background:var(--green)"></span>green</td><td>#00b575</td><td>主行动盖章（复检/去验货/通过）</td><td>❌ 会抢主行动</td></tr>
+</table>
+
+<div class="grid">
+  <div class="pane">
+    <header><span class="sw" style="background:var(--pink)"></span>P1 粉软底贴纸 <span class="rec">推荐·行内</span></header>
+    <div class="runrow"><span class="rbadge">R1 ✓</span><span class="wf">matt-spec-dev</span><span class="st">成功</span><span class="meta">14:22 · 25m</span><span class="btn p-s">流程图 <span class="x">↗</span></span></div>
+    <div class="card"><div class="cardhead">R1 交付报告 <span class="btn p-s big">执行流程图 <span class="x">↗</span></span><button class="acceptbtn">→ 去验货台验收</button></div></div>
+    <div class="note">pink 是系统 <b>--primary</b> 却几乎没用在大 chrome 上——用它就是"用回品牌色"。soft 底不压字，行内一排也不吵。</div>
+  </div>
+
+  <div class="pane">
+    <header><span class="sw" style="background:var(--pink)"></span>P2 粉实心盖章 <span class="rec">推荐·卡头大章</span></header>
+    <div class="runrow"><span class="rbadge">R1 ✓</span><span class="wf">matt-spec-dev</span><span class="st">成功</span><span class="meta">14:22 · 25m</span><span class="btn p-s">流程图 <span class="x">↗</span></span></div>
+    <div class="card"><div class="cardhead">R1 交付报告 <span class="btn p-f big">执行流程图 <span class="x">↗</span></span><button class="acceptbtn">→ 去验货台验收</button></div></div>
+    <div class="note">行内保持 P1 软底，卡头大章上<b>实心粉</b>：粉/绿两章并排，品牌强调 vs 主行动，等重不打架。<b>P1+P2 混搭 = 我的推荐。</b></div>
+  </div>
+
+  <div class="pane">
+    <header><span class="sw" style="background:var(--purple)"></span>V1 紫软底（现有血统放大）</header>
+    <div class="runrow"><span class="rbadge">R1 ✓</span><span class="wf">matt-spec-dev</span><span class="st">成功</span><span class="meta">14:22 · 25m</span><span class="btn v-s">流程图 <span class="x">↗</span></span></div>
+    <div class="card"><div class="cardhead">R1 交付报告 <span class="btn v-s big">执行流程图 <span class="x">↗</span></span><button class="acceptbtn">→ 去验货台验收</button></div></div>
+    <div class="note">现 ↗ 小章的直系放大，零新色。但和「验货台核对」紫链同族——查看型和验收型混在一起。</div>
+  </div>
+
+  <div class="pane">
+    <header><span class="sw" style="background:var(--purple)"></span>V2 紫实心</header>
+    <div class="runrow"><span class="rbadge">R1 ✓</span><span class="wf">matt-spec-dev</span><span class="st">成功</span><span class="meta">14:22 · 25m</span><span class="btn v-s">流程图 <span class="x">↗</span></span></div>
+    <div class="card"><div class="cardhead">R1 交付报告 <span class="btn v-f big">执行流程图 <span class="x">↗</span></span><button class="acceptbtn">→ 去验货台验收</button></div></div>
+    <div class="note">紫实心在 amber 卡上对比一般（两个暖味撞），且和绿章并排时紫=验收、绿=行动互相误读。不推荐。</div>
+  </div>
+</div>
+
+<p class="note" style="margin-top:22px">
+<b>推荐 = P1+P2 混搭</b>：行内「粉软底小章」、焦点卡头「粉实心大章」，并在 globals.css 注释给 pink 定下职能：<b>品牌强调 = 查看/外跳型入口</b>（cyan/yellow/green/purple 的既有职能表顺带写进去防后人再猜）。B 单入口（整卡+绿章）已定稿随批实现。选 P 系、V 系、还是再说口味（比如"粉可以但实心太艳"），我落组件。
+</p>
+
+</body>
+</html>

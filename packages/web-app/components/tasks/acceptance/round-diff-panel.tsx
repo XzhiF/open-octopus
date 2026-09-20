@@ -9,6 +9,7 @@
 
 "use client"
 
+import { FoldHandle, useFold } from "../fold-context"
 import { useCallback, useMemo, useState } from "react"
 import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, GitCommitHorizontal, Layers } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
@@ -20,9 +21,18 @@ interface RoundDiffPanelProps {
   loading: boolean
   error: string | null
   onRetry: () => void
+  /** 实物口径（B 档/server S3）：round = 本轮增量（缺省）；cumulative = 本 phase 累计。 */
+  scope?: "round" | "cumulative"
+  onScopeChange?: (s: "round" | "cumulative") => void
+  /** round-1 时两口径同物 → 不出开关。 */
+  canCumulative?: boolean
+  /** 当前待验收轮号（开关 title 用）。 */
+  roundIndex?: number | null
 }
 
-export function RoundDiffPanel({ taskId, diff, loading, error, onRetry }: RoundDiffPanelProps) {
+export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = "round", onScopeChange, canCumulative, roundIndex }: RoundDiffPanelProps) {
+  const fold = useFold()
+  const closed = fold ? fold.closed("item-diff", "info") : false
   if (loading && !diff) {
     return (
       <div className="flex items-center gap-2 p-6 text-xs text-muted-foreground" data-testid="round-diff-loading">
@@ -55,7 +65,7 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry }: RoundD
             : "本轮的提交对象不可达（仓库/对象库被动过）— 无法出示实物 diff。"}
         </p>
         <p className="text-[10px] text-muted-foreground">
-          叙述与历史 verdict 仍然可看（核对 tab），但请知情：此时验收只剩转述。
+          历史复检输出与 verdict 仍可看（复检块），但请知情：此时验收只剩转述。
         </p>
         {diff.repos.some((r) => r.expired) && (
           <ul className="pt-1 font-mono text-[10px] text-muted-foreground">
@@ -69,11 +79,46 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry }: RoundD
   }
 
   return (
-    <div className="space-y-3">
-      <StatStrip diff={diff} />
-      {diff.repos.map((repo) => (
-        <RepoSection key={repo.name} taskId={taskId} repo={repo} />
-      ))}
+    <div className="overflow-hidden rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="round-diff-card" data-fold-box="item-diff" data-fold-closed={closed ? "true" : undefined}>
+      <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+        {fold && <FoldHandle id="item-diff" closed={closed} onToggle={() => fold.toggle("item-diff", "info")} />}
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">项目代码的变动</span>
+        {canCumulative && !closed && (
+          <span className="flex overflow-hidden rounded-full border-2 border-pop-bd/40 font-mono text-[9px] font-black" data-testid="round-diff-scope">
+            {(["round", "cumulative"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => onScopeChange?.(s)}
+                aria-selected={scope === s}
+                title={s === "round" ? `本轮增量（R${roundIndex ?? "?"}）` : "本 phase 累计实物（首轮起）—— 放行的是终态，不只看这一轮"}
+                className={`px-2 py-px transition-colors ${
+                  scope === s ? "border-pop-navy bg-pop-navy text-white" : "border-pop-bd/40 bg-pop-paper text-pop-dim hover:text-pop-ink"
+                }`}
+                data-testid={`round-diff-scope-${s}`}
+              >
+                {s === "round" ? "本轮" : "累计"}
+              </button>
+            ))}
+          </span>
+        )}
+        {closed ? (
+          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-diff">
+            {diff.aggregate.commits} 提交 · +{diff.aggregate.additions} −{diff.aggregate.dels} · {diff.aggregate.files} 文件
+          </span>
+        ) : (
+          <span className="ml-auto font-mono text-[9.5px] text-pop-dim" data-testid="round-diff-scope-label">
+            {scope === "cumulative" ? "全 phase 累计 · " : ""}{diff.repos.length} 仓
+          </span>
+        )}
+      </div>
+      {!closed && (
+        <div className="space-y-3 p-3">
+          <StatStrip diff={diff} />
+          {diff.repos.map((repo) => (
+            <RepoSection key={repo.name} taskId={taskId} repo={repo} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

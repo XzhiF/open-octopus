@@ -1,0 +1,194 @@
+<!doctype html>
+<!-- .scratch/20260919-feed-rounds-files-mock/fold.html · 可交互原型：验收弹窗全框折叠
+     体验点：① 每框点标题即折叠，折后 header 变「一行结论」（徽章摘要）
+     ② tab 条尾一枚主开关，三态循环：全展开 → 收信息框(留主卡) → 全收(连卡) → 全展开
+     ③ 折叠状态记忆（localStorage），刷新还在
+     内容 = 验收C 真现场（待验收 · R1 · 20文件 · 挂过2次） -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>验收弹窗 · 全框折叠原型（可点）</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --purple-soft:#eceaff; --green:#00b575; --green-soft:#d9f5e7;
+    --amber:#ffb800; --amber-soft:#fff0cc; --cyan:#22b8e0; --cyan-soft:#daf4fb;
+    --red:#e5484d; --red-soft:#ffe3e9; --idle:#eceae4;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#ded9cc;color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:26px;display:flex;justify-content:center}
+  .modal{width:880px;background:var(--bg);border:2.5px solid var(--bd);border-radius:18px;box-shadow:8px 8px 0 rgba(33,31,39,.25);overflow:hidden}
+  .mhead{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:2.5px solid var(--bd);background:var(--paper)}
+  .mhead .name{font-weight:900;font-size:13px}
+  .stbadge{border:2px solid var(--bd);border-radius:7px;padding:1px 8px;font:900 9.5px var(--mono);background:var(--amber-soft)}
+  .mhead .sp{margin-left:auto}
+  .tabs{display:flex;gap:6px;padding:8px 14px 0;align-items:flex-end}
+  .tab{border:2px solid var(--bd);border-bottom:none;border-radius:10px 10px 0 0;padding:5px 14px;font:900 11px var(--mono);background:var(--idle);color:var(--dim);cursor:pointer}
+  .tab.on{background:var(--bg);color:var(--ink);position:relative;top:2px;padding-bottom:7px}
+  /* 主开关 */
+  .master{margin-left:auto;margin-bottom:2px;display:inline-flex;align-items:center;gap:6px;border:2.5px solid var(--bd);border-radius:9px;background:var(--paper);font:900 10px var(--mono);padding:3.5px 10px;cursor:pointer;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2);transition:transform .08s}
+  .master:hover{transform:translate(-1px,-1px)}
+  .master .st{color:var(--dim);font-weight:400}
+  .master.s1{background:var(--amber-soft)} .master.s2{background:var(--ink);color:var(--paper)}
+  .body{border-top:2px solid var(--bd);padding:12px 14px 16px;display:grid;grid-template-columns:200px 1fr;gap:12px}
+  .rail{border:2px solid var(--bd);border-radius:13px;background:var(--paper);padding:8px;align-self:start;font:10.5px var(--mono);color:var(--dim)}
+  .rail .node{border:1.5px dashed rgba(33,31,39,.25);border-radius:8px;padding:5px 7px;margin-bottom:5px}
+  .rail .node.done{border-style:solid;background:var(--idle)}
+  .pane{display:flex;flex-direction:column;gap:10px;min-width:0}
+  /* ── 可折叠框 ── */
+  .fold{border:2px solid var(--bd);border-radius:13px;background:var(--paper);box-shadow:3px 3px 0 rgba(33,31,39,.1);overflow:hidden;transition:box-shadow .12s}
+  .fold>h6{display:flex;align-items:center;gap:8px;margin:0;padding:7px 11px;font:900 9px/1.4 var(--mono);letter-spacing:.09em;color:var(--dim);cursor:pointer;user-select:none;background:var(--paper)}
+  .fold>h6:hover{background:#fbf7ea}
+  .fold>h6 .chev{font-size:9px;transition:transform .15s;color:var(--ink)}
+  .fold.closed>h6 .chev{transform:rotate(-90deg)}
+  .fold>h6 .badge{font-weight:900;color:var(--ink);letter-spacing:0;font-size:10px;opacity:0;max-width:0;overflow:hidden;white-space:nowrap;transition:opacity .15s}
+  .fold.closed>h6 .badge{opacity:1;max-width:400px}
+  .fold>h6 .chipmore{margin-left:auto;font-weight:400;font-size:9.5px;color:var(--dim)}
+  .fold>.content{padding:2px 11px 10px;border-top:2px dashed rgba(33,31,39,.08)}
+  .fold.closed>.content{display:none}
+  .fold.closed{box-shadow:1.5px 1.5px 0 rgba(33,31,39,.1)}
+  .fold.card{border-color:var(--amber);background:var(--amber-soft)}
+  .fold.card>h6{background:transparent}
+  .fold.sig{border-color:var(--red)}
+  .fold.sig>h6 .g0{color:var(--red);font-size:11px}
+  .fold.live{border-color:var(--purple)}
+  .stamp{border:2.5px solid var(--bd);border-radius:10px;font:900 10.5px var(--mono);padding:4px 10px;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.2);cursor:pointer}
+  .stamp.p{background:var(--purple);color:#fff}.stamp.gr{background:var(--green);color:#fff}
+  .row{display:flex;align-items:center;gap:8px;font:11.5px var(--mono)}
+  .dim{color:var(--dim)}
+  .files{display:flex;gap:6px;flex-wrap:wrap}
+  .fchip{border:1.5px solid var(--bd);background:var(--bg);border-radius:7px;padding:2px 8px;font:10.5px var(--mono)}
+  .fchip.all{background:var(--ink);color:var(--paper);font-weight:900}
+  .sigrow{border:1.5px solid var(--red);background:#fff5f5;border-radius:8px;padding:4px 9px;font:11.5px var(--mono)}
+  .sigrow b{color:var(--red)}
+  .usage{display:flex;gap:14px;font:11.5px var(--mono);align-items:center}
+  .usage i{font-style:normal}
+  .bar{height:8px;border:1.5px solid var(--bd);border-radius:99px;background:var(--idle);overflow:hidden;flex:1}
+  .bar i{display:block;height:100%;background:var(--purple)}
+  .ann{margin-top:14px;border:2px dashed rgba(33,31,39,.3);border-radius:12px;padding:9px 12px;font-size:11.5px;color:var(--dim);line-height:1.7}
+  .ann b{color:var(--ink)}
+  kbd{font:900 9px var(--mono);border:1.5px solid rgba(33,31,39,.35);border-bottom-width:3px;border-radius:5px;padding:0 5px;background:var(--paper)}
+  .hintline{font:10.5px var(--mono);color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="modal">
+  <div class="mhead">
+    <span class="name">验收C：双仓 Luhn 校验链路</span><span class="stbadge">待验收 · P1 R1</span>
+    <span class="sp"></span><span class="dim" style="font:10px var(--mono)">交互原型 · 随便点</span>
+  </div>
+  <div class="tabs">
+    <div class="tab on" data-tab="console" onclick="setTab('console')">▶ 执行控制台</div>
+    <div class="tab" data-tab="accept" onclick="setTab('accept')">🔍 验货台</div>
+    <button class="master" id="master" onclick="cycleMaster()">⇕ <span id="mtext">一键盘：全展开</span> <span class="st" id="mhint">点一下收拢</span></button>
+  </div>
+
+  <div class="body">
+    <div class="rail">
+      <div class="node done">P1 票DAG·CR·e2e·PR ✓</div>
+      <div class="node" style="background:var(--amber-soft);border-style:solid">◆ P1 待人工验收</div>
+      <div class="hintline" style="margin-top:6px">rail 不参与折叠<br>（它是导航不是内容）</div>
+    </div>
+
+    <!-- ══ 执行控制台 tab ══ -->
+    <div class="pane" id="pane-console">
+      <div class="fold" data-fold="usage" data-group="info">
+        <h6><span class="chev">▾</span> AI 成本 / USAGE<span class="badge">∑$3.21 · 45 次</span><span class="chipmore"></span></h6>
+        <div class="content">
+          <div class="usage"><i><b>$3.21</b> <span class="dim">· 45 次请求</span></i><span class="bar"><i style="width:78%"></i></span><i class="dim">qwen3.8-flash 78%</i></div>
+        </div>
+      </div>
+
+      <div class="fold card" data-fold="deliver" data-group="main">
+        <h6><span class="chev">▾</span> R1 交付报告 · 机检结果
+          <span class="stamp p" style="margin-left:8px" onclick="event.stopPropagation()">执行流程图 ↗</span>
+          <span class="badge">✓ 成功 · 用时 17m · $3.21</span>
+          <span class="stamp gr" style="margin-left:auto" onclick="event.stopPropagation()">→ 去验货台验收</span></h6>
+        <div class="content">
+          <div class="row"><b style="color:var(--green)">✓ 执行成功</b><span class="dim">∑$3.21 · 45 次请求 · 用时 17m04s</span></div>
+          <div class="hintline">实物 · 剧本 · 跑起来看 已就绪 — 点卡片任意处进入</div>
+        </div>
+      </div>
+
+      <div class="fold sig" data-fold="signal" data-group="info">
+        <h6><span class="chev">▾</span> <span class="g0">✗</span> 大事报 / SIGNAL<span class="badge">挂过 2 次 Bash · 均已自愈</span><span class="chipmore">只在有事时出现</span></h6>
+        <div class="content">
+          <div class="sigrow"><b>✗</b> e2e-verify 挂过 2 次 Bash（均已自愈） <u class="dim" style="font-size:10px">详情: Exit code 1 …</u></div>
+          <div class="hintline" style="margin-top:4px">其余全程无异常 —— 本框只有这一行，没有履历</div>
+        </div>
+      </div>
+
+      <div class="fold" data-fold="files" data-group="info">
+        <h6><span class="chev">▾</span> 盘上文件<span class="badge">20 件 · 票×3 · 证据 e2e-data×13</span><span class="chipmore dim" style="font-weight:400">.scratch/20260919/luhn-chain-1</span></h6>
+        <div class="content files">
+          <span class="fchip"><b>spec.md</b> <span class="dim">2.4K</span></span>
+          <span class="fchip">🎫 票 <span class="dim">×3</span></span>
+          <span class="fchip">📃 报告 <span class="dim">×2</span></span>
+          <span class="fchip">🧪 证据 e2e-data <span class="dim">×13</span></span>
+          <span class="fchip all">全部 20 ▸</span>
+        </div>
+      </div>
+
+      <div class="ann" style="margin:0">ready 态同理：GOAL、发射门禁、轮次账本（≥2轮时）各是一个可折框；触发大按钮不参与折叠。running 态：LIVE 卡=主卡（同交付卡规则）。</div>
+    </div>
+
+    <!-- ══ 验货台 tab ══ -->
+    <div class="pane" id="pane-accept" style="display:none">
+      <div class="fold" data-fold="summary" data-group="info">
+        <h6><span class="chev">▾</span> 执行摘要<span class="badge">R1 · 成功 · 17m · $3.21</span></h6>
+        <div class="content"><div class="row"><b style="color:var(--green)">✓ R1 成功</b><span class="dim">09-19 13:55 → 14:11 · 2 票 · 2 PR</span></div></div>
+      </div>
+      <div class="fold" data-fold="playbook" data-group="info">
+        <h6><span class="chev">▾</span> 验收剧本<span class="badge">8 步 · 已勾 0 · 含 2 条命令探针</span><span class="chipmore dim" style="font-weight:400">内部另有逐步折叠</span></h6>
+        <div class="content">
+          <div class="row"><span class="stamp" style="background:var(--ink);color:#fff;border-width:2px;padding:2px 8px;font-size:9.5px">▶ 连跑 6</span><span class="dim">探针×2 · 走查×6 —— 框折上时步骤细节收起，结论进 header 徽章</span></div>
+        </div>
+      </div>
+      <div class="fold" data-fold="evidence" data-group="info">
+        <h6><span class="chev">▾</span> 实物 / 核对 / 叙述<span class="badge">diff 2 仓 · 三方对账 5/5 吻合</span></h6>
+        <div class="content"><div class="row dim">主面 sub-tab 区整体可折 —— 折上后从三栏高度缩为一行</div></div>
+      </div>
+      <div class="fold" data-fold="actions" data-group="main">
+        <h6><span class="chev">▾</span> 动作区<span class="badge">待放行 · 剧本 0/8 未勾</span></h6>
+        <div class="content"><div class="row"><span class="stamp gr" style="opacity:.5">✓ 验收通过</span><span class="stamp" style="background:var(--paper);color:var(--ink)">✕ 打回</span><span class="dim">主卡类：一键盘第一档不碰它</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const KEY="octopus-fold-demo-v1"
+  let st=JSON.parse(localStorage.getItem(KEY)||'{}')   // {foldId:true=closed}
+  let mode=st.mode??0                                   // 0 全展开 1 收信息框 2 全收
+  function apply(){
+    document.querySelectorAll('[data-fold]').forEach(f=>{
+      const id=f.dataset.fold
+      let closed=!!(st[id]??false)
+      if(mode===1) closed = f.dataset.group==='info'
+      if(mode===2) closed = true
+      if(st[id]!==undefined && mode===0) closed=!!st[id]
+      f.classList.toggle('closed',closed)
+    })
+    const m=document.getElementById('master')
+    m.className='master'+(mode?' s'+mode:'')
+    document.getElementById('mtext').textContent=['一键盘：全展开','一键盘：信息框已收','一键盘：全部已收'][mode]
+    document.getElementById('mhint').textContent=['点一下收拢','再点连主卡一起收','再点全展开'][mode]
+    st.mode=mode;localStorage.setItem(KEY,JSON.stringify(st))
+  }
+  // 单框点击 = 手动档，退出主开循环态
+  document.querySelectorAll('.fold > h6').forEach(h=>h.addEventListener('click',()=>{
+    const f=h.parentElement,st0=mode;mode=0
+    const id=f.dataset.fold;const wasClosed=f.classList.contains('closed')
+    st[id]=!wasClosed;apply()
+  }))
+  function cycleMaster(){mode=(mode+1)%3;for(const k in st)if(k!=='mode')delete st[k];apply()}
+  function setTab(t){
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t))
+    document.getElementById('pane-console').style.display=t==='console'?'flex':'none'
+    document.getElementById('pane-accept').style.display=t==='accept'?'flex':'none'
+  }
+  apply()
+</script>
+</body>
+</html>

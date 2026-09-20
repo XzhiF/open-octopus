@@ -634,15 +634,16 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     await card.locator("[data-task-accept-btn]").click()
     const modal = page.locator("[data-acceptance-modal]")
     await expect(modal).toBeVisible({ timeout: 15_000 })
-    // 三栏齐现 + 左列数据。中列对 .scratch 批次件是「登记可见」语义（票 12 登记
-    // 的 v4.1 接缝③：collect 落 home/.scratch 不登记 artifacts.json）→ 断言诚实
-    // 空态；产物流动的真证据在 fs/DB 层（S2 collect + 本步 seed/fix-feedback）。
+    // 三栏齐现 + 左列数据。中列 v2：「叙述」tab 已退役（2026-09-20 用户裁决，
+    // v1 时代的 data-acceptance-artifacts-empty 空态锚点随之入土）→ 只剩 实物/核对
+    // 两枚贴纸；产物流动的真证据在 fs/DB 层（S2 collect + 本步 seed/fix-feedback）。
     await expect(modal.locator("[data-acceptance-col-summary]")).toBeVisible()
     await expect(modal.locator("[data-acceptance-col-artifacts]")).toBeVisible()
     await expect(modal.locator("[data-acceptance-col-actions]")).toBeVisible()
     await expect(modal.locator("[data-acceptance-phase-label]")).toHaveText("Phase 1/2 · Round 1")
     await expect(modal.locator("[data-acceptance-round-state]")).toContainText("执行成功")
-    await expect(modal.locator("[data-acceptance-artifacts-empty]")).toBeVisible({ timeout: 15_000 })
+    await expect(modal.getByTestId("acceptance-tab-diff")).toBeVisible()
+    await expect(modal.getByTestId("acceptance-tab-story")).toHaveCount(0)
     await page.screenshot({ path: shot("s3-acceptance-three-columns.png") })
 
     // 打回：反馈必填 gate → 填写 → 真 POST

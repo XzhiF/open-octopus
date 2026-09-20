@@ -316,3 +316,113 @@ function stemOf(p: string): string {
 export function flattenDiffFiles(repos: Array<{ groups: Array<{ files: DiffFile[] }> }>): DiffFile[] {
   return repos.flatMap((r) => r.groups.flatMap((g) => g.files))
 }
+
+// ── 打回→修复 回应对账（B 档 2026-09-20）────────────────────────────────
+// task-fix 流（ADR-0018 轻量修复路由）必产 fix-report-rN.md（N=被打回轮），
+// 其「反馈条目表」是 SKILL 规定的三列契约：反馈 → 修复动作 → 验证证据。
+// 本节把第三列的路径 token 锚到修复轮的 diff 实物 —— 「幻影回应」（写了没改）
+// 在这里现形。零 AI、纯解析；无表/列缺 → 空数组，UI 走诚实降级（与票对账同纪律）。
+
+export interface FixResponseRow {
+  feedback: string
+  action: string
+  evidence: string
+  anchoredTokens: string[]
+  /** 证据里写了路径但本轮 diff 没有 —— 幻影回应。 */
+  unanchoredTokens: string[]
+  matchedPaths: string[]
+  /** anchored=证据路径对上了实物; unanchored=说了没锚; silent=只有文字证据。 */
+  status: "anchored" | "unanchored" | "silent"
+}
+
+/** 证据文本 token × diff 实物路径 → 锚定三分（buildAcMatrix 同规则的独立出口）。 */
+export function anchorEvidenceTokens(
+  tokens: string[],
+  paths: Iterable<{ path: string; oldPath?: string }>,
+): { anchoredTokens: string[]; unanchoredTokens: string[]; matchedPaths: string[] } {
+  const arr = [...paths]
+  const anchoredTokens: string[] = []
+  const unanchoredTokens: string[] = []
+  const matchedPaths: string[] = []
+  for (const tok of tokens) {
+    const hit = arr.find((p) => pathHit(tok, p.path) || (p.oldPath != null && pathHit(tok, p.oldPath)))
+    if (hit) {
+      anchoredTokens.push(tok)
+      matchedPaths.push(hit.path)
+    } else {
+      unanchoredTokens.push(tok)
+    }
+  }
+  return { anchoredTokens, unanchoredTokens, matchedPaths: [...new Set(matchedPaths)] }
+}
+
+/** fix-report-rN.md → 反馈条目三列表（**含表头行**；列位由表头定，对账见 buildFixResponse）。 */
+export function parseFixResponseTable(fixReportMd: string): string[][] {
+  const rows = parsePipeTableAfter(fixReportMd, /反馈条目|反馈.*(表|清单)|Feedback.*(Table|Items)/i)
+    ?? firstFeedbackLikeTable(fixReportMd)
+  if (!rows) return []
+  return rows.filter((r) => (r[0] ?? "").trim().length > 0)
+}
+
+/** 兜底：全文扫第一张「表头含 反馈/修复/证据 字样」的 ≥3 列表（agent 没按节名写时的宽容路径）。 */
+function firstFeedbackLikeTable(md: string): string[][] | null {
+  const lines = md.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!.trim()
+    if (!l.startsWith("|")) continue
+    const header = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim())
+    if (header.length < 3) continue
+    const joined = header.join(" ")
+    if (!/反馈|修复|证据|Feedback|Fix|Evidence/i.test(joined)) continue
+    const rows: string[][] = [header]
+    for (let j = i + 1; j < lines.length; j++) {
+      const r = lines[j]!.trim()
+      if (!r.startsWith("|")) break
+      const cells = r.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim())
+      if (cells.every((c) => /^:?-{2,}:?$/.test(c) || c === "")) continue
+      rows.push(cells)
+    }
+    if (rows.length > 1) return rows
+  }
+  return null
+}
+
+/** 回应对账主入口：三列表逐行 × 修复轮 diff 实物。diffPaths 缺省 = 无实物可对
+ *  （全判 silent，调用方按「存疑」渲染，绝不假装通过）。 */
+export function buildFixResponse(
+  fixReportMd: string,
+  diffPaths?: Iterable<{ path: string; oldPath?: string }>,
+): FixResponseRow[] {
+  const table = parseFixResponseTable(fixReportMd)
+  if (table.length === 0) return []
+  const header = table[0] ?? []
+  const used = new Set<number>()
+  const colOf = (re: RegExp, fallback: number) => {
+    const i = header.findIndex((h, idx) => !used.has(idx) && re.test(h))
+    if (i >= 0) { used.add(i); return i }
+    if (!used.has(fallback) && fallback < header.length) { used.add(fallback); return fallback }
+    return -1
+  }
+  const fi = colOf(/反馈|意见|Feedback/i, 0)
+  const ai = colOf(/修复|动作|改动|Fix|Action/i, 1)
+  const ei = colOf(/证据|验证|结果|Evidence|Test/i, 2)
+  return table.slice(1).map((cells) => {
+    const pick = (i: number) => (i >= 0 ? (cells[i] ?? "").trim() : "")
+    const feedback = pick(fi)
+    const action = pick(ai)
+    const evidence = pick(ei)
+    if (diffPaths == null) {
+      return { feedback, action, evidence, anchoredTokens: [], unanchoredTokens: [], matchedPaths: [], status: "silent" } as FixResponseRow
+    }
+    const { anchoredTokens, unanchoredTokens, matchedPaths } = anchorEvidenceTokens(extractPathTokens(evidence), diffPaths)
+    return {
+      feedback,
+      action,
+      evidence,
+      anchoredTokens,
+      unanchoredTokens,
+      matchedPaths,
+      status: anchoredTokens.length > 0 ? "anchored" : unanchoredTokens.length > 0 ? "unanchored" : "silent",
+    } as FixResponseRow
+  }).filter((r) => r.feedback.length > 0)
+}

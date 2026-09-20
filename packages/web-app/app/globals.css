@@ -171,6 +171,8 @@
   --pop-cyan: #22b8e0;
   --pop-cyan-soft: #daf4fb;
   --pop-red: #e5484d;
+  --pop-navy: #23486b;          /* 藏青 —— 折叠态身份色（一键盘/把手/折后徽章） */
+  --pop-navy-soft: #e6edf5;
   --pop-idle: #eceaf5;
   --pop-bdw: 2.5px;
   --pop-shadow: 5px 5px 0 rgba(28, 27, 34, 0.16);
@@ -703,6 +705,8 @@
   --color-moa-resolve-error-light: var(--moa-resolve-error-light);
 
   /* ── Pop (Memphis 波普贴纸) colors ── */
+  --color-pop-navy: var(--pop-navy);
+  --color-pop-navy-soft: var(--pop-navy-soft);
   --color-pop-bg: var(--pop-bg);
   --color-pop-paper: var(--pop-paper);
   --color-pop-ink: var(--pop-ink);

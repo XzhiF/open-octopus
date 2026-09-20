@@ -113,6 +113,26 @@ describe('resolveV4Phases — ④ final acceptance ticket (batch-consuming flows
     expect(run([phase()], BATCH_FLOW).missing).toEqual(['phase:1:no-final-verification'])
   })
 
+  it('passes (no e2e ticket) when spec declares `Verification Tier: unit-only` (几何重构: 条件化 e2e)', () => {
+    writeSpec(
+      '.scratch/20260917/p1/spec.md',
+      '# spec\n\n## Verification\nVerification Tier: unit-only\n',
+    )
+    writeTicket('.scratch/20260917/p1/spec.md', '01-thing.md') // functional only, no e2e
+
+    const { missing, phases } = run([phase()], BATCH_FLOW)
+
+    expect(missing).toEqual([])
+    expect(phases).toHaveLength(1)
+  })
+
+  it('still misses when neither an e2e ticket nor a unit-only tier declaration is present', () => {
+    writeSpec('.scratch/20260917/p1/spec.md', '# spec\nVerification Strategy: manual\n')
+    writeTicket('.scratch/20260917/p1/spec.md', '01-thing.md')
+
+    expect(run([phase()], BATCH_FLOW).missing).toEqual(['phase:1:no-final-verification'])
+  })
+
   it('accepts the ticket wherever `-e2e-` sits in the name (the flow globs *-e2e-*)', () => {
     writeSpec('.scratch/20260917/p1/spec.md')
     writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-verification.md')

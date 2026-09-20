@@ -50,7 +50,10 @@ vi.mock("@/lib/tasks-api", () => ({
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
-vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: () => () => {} }))
+vi.mock("@/lib/sse-manager", () => ({
+  subscribeSSE: () => () => {},
+  subscribeSSEStatus: () => () => {},
+}))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
@@ -163,6 +166,15 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
+/** 验货台 surface 是否**在场**（keep-mounted 2026-09-20：tab 切换不再卸载，改 hidden
+ *  切显隐）。返回 false = 未挂载或被 hidden 挡住，两者对用户等价于「看不见」。 */
+const acceptanceSurfaceVisible = (): boolean => {
+  const stub = document.querySelector("[data-acceptance-surface-stub]")
+  if (!stub) return false
+  const wrap = stub.parentElement
+  return !!wrap && !wrap.classList.contains("hidden")
+}
+
 const renderConsole = (task: Task, detail: Record<string, unknown>) => {
   mockGetTask.mockResolvedValue(detail)
   return render(<TaskRunConsole task={task} onMutated={() => {}} onClose={() => {}} />)
@@ -200,7 +212,10 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     expect(chip.textContent).toContain("⏳")
     expect(screen.getByTestId("phase-round-1-1").textContent).toContain("✓")
     expect(await screen.findByText(/LIVE ROUND/)).toBeTruthy()
-    expect(screen.getByText(/活动流 \/ ACTIVITY/)).toBeTruthy()
+    // 全绿 + 无在跑长命令 → 大事报整块不存在（「没事不显示」主用例）
+    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
+    // 1 轮 + LIVE 卡在位 → ROUNDS 账本框不再把同一枚轮说第二遍（降噪定稿）
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 自动选中在跑的 P2（选中 = outline 高亮）
     expect(screen.getByTestId("phase-row-2").getAttribute("class")).toContain("outline")
   })
@@ -211,10 +226,16 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} />)
     expect(await screen.findByTestId("phase-row-legacy")).toBeTruthy()
     expect(screen.getByText(/v3 单阶段/)).toBeTruthy()
-    // 深链：徽章自带 workspace_id + id
-    const jump = (await screen.findByText("↗"))
+    // 深链（V2 定稿后）：行内「流程图 ↗」章 → 新标签页，不再 router.push
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    const jump = await waitFor(() => {
+      const el = document.querySelector("[data-run-deeplink=\"execution\"]") as HTMLElement
+      if (!el) throw new Error("deeplink chip not mounted")
+      return el
+    })
     fireEvent.click(jump)
-    expect(pushSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9")
+    expect(openSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9", "_blank", expect.any(String))
+    openSpy.mockRestore()
   })
 
   it("derived 缺失（旧 server）不崩，账本兜底", async () => {
@@ -254,30 +275,97 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(screen.queryByTestId("acceptance-approve")).toBeNull()
     const cta = await screen.findByTestId("console-open-acceptance")
     expect(cta.textContent).toContain("去验货台")
+    // keep-mounted 预挂：有 awaiting 轮时 surface 已挂载但被 hidden 挡着
+    expect(acceptanceSurfaceVisible()).toBe(false)
     fireEvent.click(cta)
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(mockPostAcceptance).not.toHaveBeenCalled()
+  })
+
+  it("流程图入口（V2 定稿）：卡头/行内章均 window.open 新 tab，不再 router.push 顶走弹窗", async () => {
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1, workspace_id: "ws-e1" })], derived: derivedOf(views) })
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    await screen.findByTestId("console-acceptance-card")
+    fireEvent.click(screen.getByTestId("console-open-acceptance"))
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    fireEvent.click(screen.getByTestId("console-tab-console"))
+    await screen.findByTestId("console-acceptance-card")
+    const flow = document.querySelector("[data-run-deeplink=\"awaiting\"]") as HTMLElement
+    expect(flow).toBeTruthy()
+    fireEvent.click(flow)
+    expect(openSpy).toHaveBeenCalledWith(expect.stringContaining("/workspaces/ws-e1?tab=detail&execId=exec-1"), "_blank", expect.any(String))
+    // 点击流程图章不得误触整卡热区（stopPropagation）—— surface 在场但仍是藏着的
+    expect(acceptanceSurfaceVisible()).toBe(false)
+    openSpy.mockRestore()
+  })
+
+  it("全框折叠：点标题折/开（折上显一行结论徽章）+ 一键盘三态 + 按任务记忆", async () => {
+    mockGetBatchTree.mockResolvedValue([{
+      dir: ".scratch/20260912/p1", slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
+      files: [
+        { path: ".scratch/20260912/p1/spec.md", mtime: "2026-09-21T09:00:00Z", bytes: 2048 },
+        { path: ".scratch/20260912/p1/issues/01-a.md", mtime: "2026-09-21T09:01:00Z", bytes: 100 },
+      ],
+    }])
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    await screen.findByText(/R1 交付报告/)
+    const filesBox = () => document.querySelector('[data-fold-box="files"]') as HTMLElement
+    const card = () => document.querySelector('[data-fold-box="deliver"]') as HTMLElement
+
+    // ① 单框：点标题 → 折上，header 变一行结论（徽章= 件数·票数），内容不再占面
+    fireEvent.click(screen.getByText("盘上文件"))
+    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
+    expect(filesBox().querySelector('[data-fold-badge="files"]')?.textContent).toContain("2 件 · 票×1")
+    expect(screen.queryByTestId("file-bucket-all")).toBeNull()
+    fireEvent.click(filesBox().querySelector("header")!) // 再点回开
+    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
+
+    // ② 交付卡用把手折（整卡 onClick=进验货台，点标题会误触 —— 专用小靶）
+    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
+    expect(card().getAttribute("data-fold-closed")).toBe("true")
+    expect(card().querySelector('[data-fold-badge="deliver"]')?.textContent).toContain("✓ 执行成功")
+    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
+
+    // ③ 一键盘三态：收信息框（主卡留）→ 连主卡收 → 全展开
+    const master = () => screen.getByTestId("fold-master")
+    fireEvent.click(master())
+    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
+    expect(card().getAttribute("data-fold-closed")).toBeNull() // 主卡不伤验收动线
+    fireEvent.click(master())
+    expect(card().getAttribute("data-fold-closed")).toBe("true")
+    fireEvent.click(master())
+    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
+    expect(card().getAttribute("data-fold-closed")).toBeNull()
+    // ④ 按任务记忆落盘
+    expect(localStorage.getItem("octopus-fold:task-1")).toContain('"mode":0')
   })
 
   it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
-    // 有待验收轮 → tab 条亮出两档，surface 未挂
+    // 有待验收轮 → tab 条亮出两档；surface 预挂但藏着（keep-mounted）
     const acceptTab = await screen.findByTestId("console-tab-accept")
     expect(acceptTab.textContent).toContain("P1·R1")
-    expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull()
-    // 交付报告里的「验货台核对实物 →」= 切 tab，不是开弹窗
-    fireEvent.click(screen.getByText(/验货台核对实物/))
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(acceptanceSurfaceVisible()).toBe(false)
+    // 单入口定稿：旧「验货台核对实物 →」链与卡外绿横幅已删；点整卡 = 切 tab
+    expect(screen.queryByText(/验货台核对实物/)).toBeNull()
+    expect(screen.queryByText(/去验货台验收（实物/)).toBeNull()
+    fireEvent.click(screen.getByTestId("console-acceptance-card"))
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
-    // 切回执行控制台
+    // 切回执行控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）
     fireEvent.click(screen.getByTestId("console-tab-console"))
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeNull())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(false))
     expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
     // 导航条「🔍 验货台」也走切 tab（chip 直接文本同为 🔍 验货台，取条内钮的锚点）
     fireEvent.click(document.querySelector("[data-acceptance-open-bar]") as HTMLElement)
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
   })
 
   it("startOnAcceptance（看板「验收」按钮）：挂载即落验货台 tab", async () => {
@@ -287,26 +375,102 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
 
-  it("过程回放（走查回灌）：agent-events 节点边界垫进活动流，事后打开不再「暂无事件」", async () => {
+  it("大事报（取代起收回放/动线）：挂过+自愈真信号上屏，全绿履历一个字不占；1 轮无 ROUNDS 框", async () => {
     mockFetchAgentEvents.mockResolvedValue({
       executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
       events: [
         { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
+        // 全绿的节点（真数据里有 6 段 —— 一件不提）
         { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
-        { nodeId: "ticket-01", event: "agent_event", timestamp: "2026-09-21T09:02:00Z" },
-        { nodeId: "ship", event: "end", timestamp: "2026-09-21T09:10:00Z" },
+        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:01Z", durationMs: 48, status: "completed" },
+        { nodeId: "e2e-verify", event: "start", timestamp: "2026-09-21T09:00:02Z" },
+        // C 真形状：老行 input 空串，result 带 Exit code；后有同工具成功 = 自愈
+        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:01:00Z", toolName: "Bash", input: "", isError: true, result: "Exit code 1\nmvn -B -pl util install failed" },
+        { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:03:00Z", toolName: "Bash", input: { command: "mvn -B -pl util install -am" }, result: "BUILD SUCCESS" },
+        { nodeId: "e2e-verify", event: "end", timestamp: "2026-09-21T09:10:00Z", durationMs: 579337, status: "completed" },
       ],
     })
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
-    expect(await screen.findByText(/回放 · spec-resolve 起/)).toBeTruthy()
-    expect(screen.getByText(/回放 · ship 收/)).toBeTruthy()
-    // 非边界事件不进 feed；引擎内部节点不算过程
-    expect(screen.queryByText(/agent_event/)).toBeNull()
-    expect(screen.queryByText(/__engine_init__/)).toBeNull()
+    // ✗ 行：聚合计数 + 自愈判定 + result 首行详情（glyph 与文本同节，textContent 整取）
+    await waitFor(() => expect(document.querySelector('[data-signal="bad"]')?.textContent).toMatch(/挂过 1 次 Bash（均已自愈）/))
+    // 全绿履历一个字不占：没有节点清单、没有起收、没有 spec-resolve
+    expect(screen.queryByText(/回放 ·/)).toBeNull()
+    expect(screen.queryByText("spec-resolve")).toBeNull()
+    expect(screen.queryByText("e2e-verify", { selector: "[data-flow-node]" })).toBeNull()
+    // 1 轮 + 交付卡 → ROUNDS 框撤（卡即轮）
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
     // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
     await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
+  })
+
+  it("大事报全绿即消失：待验收但本轮零异常 → 框整行不存在", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
+        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:02Z", durationMs: 1000, status: "completed" },
+      ],
+    })
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    await screen.findByText(/R1 交付报告/) // 交付卡在位（说明盘面渲染完整）
+    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalled())
+    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
+  })
+
+  it("轮次分档：≥2 轮账本框回来（打回史全留痕）", async () => {
+    const t = makeTask("done")
+    const two = {
+      ...pv(1, "票11阶段1", "accepted"),
+      rounds: [
+        { roundIndex: 1, state: "failed" as const, decision: null, exec: { id: "exec-1a", status: "failed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:00:00Z" } },
+        { roundIndex: 2, state: "succeeded" as const, decision: "accepted" as const, exec: { id: "exec-1", status: "completed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 2, created_at: "2026-09-21T08:59:00Z" } },
+      ],
+    }
+    renderConsole(t, { ...t, executions: [badge("exec-1a", "failed", { round_index: 1 }), badge("exec-1", "completed", { round_index: 2 })], derived: derivedOf([two], true, "done") })
+    await screen.findByText("任务战报")
+    fireEvent.click(screen.getByTestId("phase-row-1"))
+    expect(await screen.findByText("轮次 / ROUNDS")).toBeTruthy()
+    expect(screen.getByText("2 轮")).toBeTruthy()
+  })
+
+  it("轮次分档：1 轮已判（无卡）→ 细条一行，不立框", async () => {
+    const t = makeTask("done")
+    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
+    await screen.findByText("任务战报")
+    fireEvent.click(screen.getByTestId("phase-row-2"))
+    expect(await screen.findByTestId("round-strip-2")).toBeTruthy()
+    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
+  })
+
+  it("盘上文件分桶：19 件只铺 ≤5 枚章，散文件名绝迹", async () => {
+    const dir = ".scratch/20260912/p1"
+    const f = (p: string, bytes = 100, mtime = "2026-09-21T09:00:00Z") => ({ path: `${dir}/${p}`, mtime, bytes })
+    mockGetBatchTree.mockResolvedValue([{
+      dir, slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
+      files: [
+        f("spec.md", 2048),
+        f("issues/01-a.md"), f("issues/02-b.md"), f("issues/03-e2e-luhn.md", 300, "2026-09-21T09:05:00Z"),
+        f("round-report.md", 300, "2026-09-21T09:06:00Z"), f("code-review.md"),
+        f("e2e-data/00-run.log"), f("e2e-data/e2e-report.md"), f("e2e-data/walkthrough-true.json"),
+        ...Array.from({ length: 10 }, (_, i) => f(`e2e-data/junk-${i}.log`)),
+      ],
+    }])
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    expect(await screen.findByTestId("file-bucket-issues")).toBeTruthy()
+    expect(screen.getByTestId("file-bucket-issues").textContent).toContain("×3")
+    expect(screen.getByTestId("file-bucket-reports").textContent).toContain("×2")
+    expect(screen.getByTestId("file-bucket-evidence").textContent).toContain("证据 e2e-data")
+    expect(screen.getByTestId("file-bucket-all").textContent).toContain("全部 19")
+    // 散章绝迹：单文件不再各占一枚
+    expect(screen.queryByText(/junk-0\.log/)).toBeNull()
+    expect(screen.queryByText(/walkthrough-true\.json/)).toBeNull()
   })
 
   it("done：默认战报（4 数字瓦片 + 轮次账本 + 产物），rail「任务战报」可切回 phase 面", async () => {

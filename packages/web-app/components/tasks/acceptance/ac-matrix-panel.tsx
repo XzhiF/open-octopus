@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner"
 import type { RoundDiffPayload } from "@/lib/tasks-api"
 import {
   buildAcMatrix,
+  buildFixResponse,
   flattenDiffFiles,
   parseReportChangedFiles,
   parseReportTickets,
@@ -29,12 +30,94 @@ interface AcMatrixPanelProps {
   /** 本 phase spec.md 全文（null = 尚未拉到/不存在）。 */
   specMd: string | null
   specLoading: boolean
-  /** round-report.md 全文（与叙述 tab 的内嵌块同一份 state）。 */
+  /** round-report.md 全文（核对 tab 的唯一「报告声称」源；叙述 tab 已退役）。 */
   reportMd: string | null
   diff: RoundDiffPayload | null
+  /** 修复轮的 fix-report-rN.md 全文（task-fix 三列契约：反馈→动作→证据）。 */
+  fixReportMd?: string | null
+  /** 上轮确被打回（fix-feedback-rN.md 存在）但 report 缺席/无表时的诚实提示。 */
+  hasFixFeedback?: boolean
 }
 
-export function AcMatrixPanel({ specMd, specLoading, reportMd, diff }: AcMatrixPanelProps) {
+export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd, hasFixFeedback }: AcMatrixPanelProps) {
+  // 打回→修复 回应对账（B 档 2026-09-20）：fix-report 三列表逐行 × 本轮实物 diff。
+  // 这是打回闭环缺的半边 —— 反馈是机器写的（fix-feedback-rN.md），回应的证据
+  // 此前无处兑现；幻影回应（写了路径但 diff 里没有）在这里逐行现形。
+  const fixRows = useMemo(() => {
+    if (!fixReportMd) return []
+    const paths = diff?.available ? flattenDiffFiles(diff.repos.filter((r) => !r.expired)) : undefined
+    return buildFixResponse(fixReportMd, paths)
+  }, [fixReportMd, diff])
+  const fixAnchored = fixRows.filter((r) => r.status === "anchored").length
+  const fixPhantom = fixRows.filter((r) => r.status === "unanchored").length
+
+  const fixBlock = fixRows.length > 0 ? (
+    <div className="rounded-[13px] border-2 border-pop-purple/50 bg-pop-purple-soft/30 shadow-pop-sm overflow-hidden" data-testid="fix-response">
+      <div className="flex items-center gap-2 border-b-2 border-pop-purple/20 px-3 py-2">
+        <ListChecks className="size-3.5 text-pop-purple" />
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">上轮打回 → 本轮回应 · fix-report × 实物 diff</span>
+        <span className="ml-auto font-mono text-[10px] font-black tabular-nums" data-testid="fix-response-count">
+          <span className="text-pop-green">{fixAnchored}</span>
+          <span className="text-pop-dim">/{fixRows.length} 条有实物</span>
+          {fixPhantom > 0 && <span className="text-pop-red"> · 幻影回应 {fixPhantom}</span>}
+        </span>
+      </div>
+      {!diff?.available && (
+        <div className="border-b border-pop-amber/30 bg-pop-amber-soft px-3 py-1 text-[10px]" data-testid="fix-response-diff-missing">
+          实物 diff 不可得 —— 证据列只展原文，无法机器对账，逐条存疑。
+        </div>
+      )}
+      <table className="w-full text-left text-[11px]">
+        <thead>
+          <tr className="border-b border-pop-purple/15 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            <th className="px-3 py-1.5">反馈条目</th>
+            <th className="py-1.5 pr-2">修复声称</th>
+            <th className="py-1.5 pr-3 w-[34%]">证据实物对应</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fixRows.map((r, i) => (
+            <tr key={i} className="border-b border-pop-purple/10 last:border-0 align-top" data-testid={`fix-response-row-${i}`}>
+              <td className="px-3 py-1.5">
+                <span className="line-clamp-2 text-pop-ink/85" title={r.feedback}>{r.feedback}</span>
+              </td>
+              <td className="py-1.5 pr-2">
+                <span className="block max-w-[240px] truncate text-[10.5px] text-muted-foreground" title={r.action}>{r.action || "—"}</span>
+              </td>
+              <td className="py-1.5 pr-3">
+                {r.status === "anchored" && (
+                  <span className="flex flex-wrap items-center gap-1">
+                    {r.matchedPaths.slice(0, 3).map((p) => (
+                      <span key={p} className="max-w-[160px] truncate rounded-full border-[1.5px] border-pop-green/40 bg-pop-green-soft px-1.5 py-px font-mono text-[9px] text-pop-green" title={p}>
+                        {p.split("/").slice(-2).join("/")}
+                      </span>
+                    ))}
+                    {r.matchedPaths.length > 3 && <span className="font-mono text-[9px] text-pop-dim">+{r.matchedPaths.length - 3}</span>}
+                    <b className="font-mono text-[9.5px] text-pop-green">✓ 有实物</b>
+                  </span>
+                )}
+                {r.status === "unanchored" && (
+                  <span className="font-mono text-[9.5px] font-black text-pop-red" title={`证据写了路径但本轮 diff 没有：${r.unanchoredTokens.join(", ")}`}>
+                    ⚠ 说了没锚：{r.unanchoredTokens.slice(0, 3).join(", ")}{r.unanchoredTokens.length > 3 ? " …" : ""}
+                  </span>
+                )}
+                {r.status === "silent" && (
+                  <span className="font-mono text-[9.5px] text-pop-dim" title={r.evidence}>○ 文字证据（无路径可对）</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : hasFixFeedback ? (
+    // 上轮确被打回（fix-feedback 在），但本轮没有可解析的回应对照表 —— 打回闭环
+    // 在机器侧落了账、在人侧断了线，这一眼必须说出来而不是安静省略。
+    <div className="rounded-[13px] border-2 border-dashed border-pop-amber/60 bg-pop-amber-soft px-3 py-2 text-[10.5px] space-y-0.5" data-testid="fix-response-missing">
+      <b>上轮打回，但本轮没有可解析的「反馈→修复→证据」对照表</b>
+      <p className="text-muted-foreground">反馈是否被逐条回应无法机器验证 —— 放行前请对着实物 diff 人工确认，或打回时点名要 fix-report。</p>
+    </div>
+  ) : null
   const matrix = useMemo(() => {
     if (!specMd && !reportMd) return null
     const spec = specMd ? parseSpecTickets(specMd) : { ticketIds: [], userStories: [], inScope: [] }
@@ -45,31 +128,43 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff }: AcMatrixP
 
   if (specLoading && !matrix) {
     return (
-      <div className="flex items-center gap-2 p-6 text-xs text-muted-foreground">
-        <Spinner className="size-3.5" /> 读取契约结构…
-      </div>
+      <>
+        {fixBlock}
+        <div className="flex items-center gap-2 p-6 text-xs text-muted-foreground">
+          <Spinner className="size-3.5" /> 读取契约结构…
+        </div>
+      </>
     )
   }
   if (!matrix) {
-    return <p className="p-4 text-[11px] text-muted-foreground">spec/报告未就绪 — 无法对账。</p>
+    return (
+      <>
+        {fixBlock}
+        <p className="p-4 text-[11px] text-muted-foreground">spec/报告未就绪 — 无法对账。</p>
+      </>
+    )
   }
   if (matrix.degraded) {
     return (
-      <div className="m-3 rounded-[13px] border-2 border-dashed border-pop-bd/40 p-4 text-[11px] text-muted-foreground space-y-1" data-testid="ac-matrix-degraded">
-        <div className="font-mono text-[10px] font-black text-pop-dim">无契约结构</div>
-        <p>本轮 spec.md 没有可解析的「Ticket DAG」表、round-report 也没有「票执行摘要」表 —— 三方对账缺一角，降级为逐文件人肉核对（叙述 tab）。</p>
-        {matrix.userStories.length > 0 && (
-          <ul className="pt-1 list-disc pl-4">
-            {matrix.userStories.map((u, i) => <li key={i} className="truncate">{u}</li>)}
-          </ul>
-        )}
-      </div>
+      <>
+        {fixBlock}
+        <div className="m-3 rounded-[13px] border-2 border-dashed border-pop-bd/40 p-4 text-[11px] text-muted-foreground space-y-1" data-testid="ac-matrix-degraded">
+          <div className="font-mono text-[10px] font-black text-pop-dim">无契约结构</div>
+          <p>本轮 spec.md 没有可解析的「Ticket DAG」表、round-report 也没有「票执行摘要」表 —— 三方对账缺一角，降级为逐文件人肉核对（实物 tab diff）。</p>
+          {matrix.userStories.length > 0 && (
+            <ul className="pt-1 list-disc pl-4">
+              {matrix.userStories.map((u, i) => <li key={i} className="truncate">{u}</li>)}
+            </ul>
+          )}
+        </div>
+      </>
     )
   }
 
   const diffUnavailable = !diff || (!diff.available)
   return (
     <div className="space-y-3">
+      {fixBlock}
       <div className="rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-testid="ac-matrix">
         <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
           <ListChecks className="size-3.5 text-pop-dim" />
@@ -129,7 +224,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff }: AcMatrixP
       )}
       {matrix.userStories.length > 0 && (
         <div className="rounded-[13px] border-2 border-pop-bd/30 px-3 py-2 text-[10.5px] text-muted-foreground space-y-0.5" data-testid="ac-matrix-us">
-          <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">USER STORIES（{matrix.userStories.length}）· 锚到票即可，逐条读去叙述 tab 的 spec.md</div>
+          <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">USER STORIES（{matrix.userStories.length}）· 锚到票即可，全文看草稿面板的 spec</div>
           {matrix.userStories.map((u, i) => (
             <div key={i} className="truncate" title={u}>{u}</div>
           ))}

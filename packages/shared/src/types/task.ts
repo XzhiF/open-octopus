@@ -8,6 +8,7 @@ import {
   taskPhaseSchema,
   acceptanceVerifySchema,
   acceptancePreviewSchema,
+  acceptanceRunbookSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -94,6 +95,9 @@ export const TaskSpecFieldSchema = z.enum([
   // 验收面 v2.1「跑起来看」: the live-preview service ({@link
   // acceptancePreviewSchema}). Same JSON-field/spec-field discipline as above.
   "acceptance_preview",
+  // 通用运行手册 ({@link acceptanceRunbookSchema})：多服务/远端部署的正道形态，
+  // 同样 JSON-field 语义（null 清空、awaiting_review 可编辑）。
+  "acceptance_runbook",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -364,6 +368,11 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
       // 验收面 v2.1: same null-clears semantics as acceptance_verify above.
       if (value === null) return undefined
       return acceptancePreviewSchema.parse(value)
+    case "acceptance_runbook":
+      // null-clears; runbook supersedes acceptance_preview at read time (server
+      // prefers it, else synthesizes from the legacy single-service preview).
+      if (value === null) return undefined
+      return acceptanceRunbookSchema.parse(value)
     case "resources":
     case "authoring_resources":
       if (!Array.isArray(value)) {

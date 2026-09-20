@@ -1,14 +1,13 @@
 // packages/web-app/components/tasks/run-console/phase-surface.tsx
 //
 // 执行态控制台右半 —— 「当前 Phase 的一切」（2026-09-12 执行弹窗改版）。
-// 五区去重的归宿：任务概要 goal / 发射门禁 / 盘上文件(原草稿批次) / 轮次表
-// (原执行记录，轮次即运行) / 活动流 + 验收判决条，全在这一面。
+// 五区去重的归宿：任务概要 goal / 发射门禁 / 盘上文件(固定分桶) / 轮次(分档：
+// 0 不渲染 · 1 轮无框 · ≥2 轮立账) / 大事报(没事不显示) + 验收判决条，全在这一面。
 // 一个事实只出现一次：本组件不渲染 phase 状态文字（rail 是唯一状态位）。
 
 "use client"
 
 import { useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import type { Task, TaskExecutionBadge, TaskPhase } from "@octopus/shared"
 import {
@@ -17,13 +16,15 @@ import {
 import type { LLMCallAggregates } from "@/lib/types"
 import type { BatchTreeState } from "../authoring/use-batch-tree"
 import { findSpecEntry, isRelativeScratchSpec } from "../authoring/use-batch-tree"
-import { PhaseSpecDialog, specFileClass } from "../authoring/phase-spec-dialog"
+import { PhaseSpecDialog } from "../authoring/phase-spec-dialog"
 import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
 import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
 import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
+import { FoldBox, FoldHandle, useFold } from "../fold-context"
+import type { SignalLine } from "./signal-build"
 
-/** 活动流一行（SSE 到达即推，客户端聚合，权威态仍是 GET /:id）。 */
+/** SSE 状态跳变一行（大事报在屏时垫底；权威态仍是 GET /:id）。 */
 export interface StreamEvent {
   at: string
   glyph: string
@@ -45,6 +46,8 @@ export interface RunCtx {
   now: number
   isLive: boolean
   events: StreamEvent[]
+  /** 大事报信号（agent-events 榨出，console 顶层拉取；空 = 整块不渲染）。 */
+  signals: SignalLine[]
   refetch: () => void
   onMutated: () => void
   /** 切到「验货台」tab（三栏证据面已收编为控制台 tab，2026-09-16）。 */
@@ -53,25 +56,15 @@ export interface RunCtx {
   openTrigger: () => void
 }
 
-// ── 通用小区块（波普皮肤，浅色面内）─────────────────────────────────
-
-function Box({ tag, tail, tone, children, className }: {
-  tag: string; tail?: React.ReactNode; tone?: string; children: React.ReactNode; className?: string
-}) {
-  return (
-    <section className={`overflow-hidden rounded-[13px] border-2 bg-pop-paper shadow-pop-sm ${tone ?? "border-pop-bd"} ${className ?? ""}`}>
-      <header className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-1.5">
-        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">{tag}</span>
-        {tail && <span className="ml-auto font-mono text-[10px] text-pop-dim">{tail}</span>}
-      </header>
-      <div className="px-3 py-2">{children}</div>
-    </section>
-  )
-}
+// ── 框皮肤统一走 ../fold-context 的 FoldBox（可折 + 折后一行结论）────────
 
 /** 该轮次/运行的账目一行 → 统一走 AggInline（∑/↑/↓/⚡/🗡️·N 次请求·$，2026-09-16 定版）。 */
 
-// ── 盘上文件 chips（吸收原「草稿批次」执行态职责）────────────────────
+// ── 盘上文件（固定分桶，2026-09-19 降噪定稿）─────────────────────────
+// 旧版把 issues 外每个文件铺一枚章 —— 验收C 实测 20 文件 = 18 枚章炸版。
+// 新章数恒定 ≤5：spec ｜ 票 (issues/) ｜ 报告 (顶层 *report/review/finding*)
+// ｜ 证据 (非 issues 子目录 + 游离顶层，单一目录时带目录名) ｜ 全部 N ▸。
+// 桶章点击 = 打开 PhaseSpecDialog 并定位该桶最新一件；「全部」进树不定位。
 
 export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
   const { batches } = ctx.tree
@@ -83,12 +76,31 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
     [batches, norm],
   )
   const [viewing, setViewing] = useState<{ file: string } | null>(null)
-  const tickets = batch?.files.filter((f) => f.path.includes("/issues/")) ?? []
-  const others = batch?.files.filter((f) => !f.path.includes("/issues/") && !/(^|\/)spec\.md$/i.test(f.path)) ?? []
 
-  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string, key?: string) => (
+  const buckets = useMemo(() => {
+    if (!batch) return null
+    const strip = (p: string) => p.slice(batch.dir.length + 1).replace(/\\/g, "/")
+    const notSpec = batch.files.filter((f) => !/(^|\/)spec\.md$/i.test(strip(f.path)))
+    const tickets = notSpec.filter((f) => strip(f.path).startsWith("issues/"))
+    const outside = notSpec.filter((f) => !strip(f.path).startsWith("issues/"))
+    const isTop = (f: { path: string }) => !strip(f.path).includes("/")
+    const reports = outside.filter((f) => isTop(f) && /(report|review|finding)/i.test(f.path))
+    const evidence = outside.filter((f) => !reports.includes(f))
+    const dirs = new Set(evidence.map((f) => { const s = strip(f.path); return s.includes("/") ? s.split("/")[0] : "" }))
+    const sole = dirs.size === 1 && !dirs.has("") ? [...dirs][0] : null
+    const newest = (arr: typeof batch.files) => arr.reduce<(typeof batch.files)[number] | null>((a, b) => (!a || b.mtime > a.mtime ? b : a), null)
+    return {
+      total: batch.files.length,
+      tickets: { n: tickets.length, at: newest(tickets)?.path ?? "" },
+      reports: { n: reports.length, at: newest(reports)?.path ?? "" },
+      evidence: { n: evidence.length, at: newest(evidence)?.path ?? "", dir: sole },
+    }
+  }, [batch])
+
+  const chip = (label: React.ReactNode, onClick: () => void, cls = "", title?: string, key?: string, testid?: string) => (
     <button
       key={key}
+      data-testid={testid}
       onClick={onClick}
       title={title}
       className={`rounded-[7px] border-[1.5px] border-pop-bd bg-pop-bg px-1.5 py-0.5 font-mono text-[10.5px] transition-colors hover:bg-pop-yellow-soft ${cls}`}
@@ -106,21 +118,23 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
       ) : (
         <span className="rounded-[7px] border-[1.5px] border-pop-bd/30 bg-pop-idle px-1.5 py-0.5 font-mono text-[10.5px] text-pop-dim" title={phase.specPath}>📄 绝对路径 spec · 磁盘不判定</span>
       )}
-      {tickets.length > 0 && chip(`🎫 issues ×${tickets.length}`, () => setViewing({ file: tickets[0].path }))}
-      {others.map((f) => {
-        const cls = specFileClass(f.path)
-        const name = f.path.split("/").pop() ?? f.path
-        return chip(
-          <span className="flex items-center gap-1">
-            <span className={`rounded px-1 ${cls.tone}`}>{cls.label}</span>
-            {name} {formatBytes(f.bytes)}
-          </span>,
-          () => setViewing({ file: f.path }),
-          "",
-          f.path,
-          f.path,
-        )
-      })}
+      {buckets && buckets.tickets.n > 0 && chip(
+        <span><b className="font-black">🎫 票</b> <span className="text-pop-dim">×{buckets.tickets.n}</span></span>,
+        () => setViewing({ file: buckets.tickets.at }), "", "issues/ 全量票", "b-issues", "file-bucket-issues",
+      )}
+      {buckets && buckets.reports.n > 0 && chip(
+        <span><b className="font-black">📃 报告</b> <span className="text-pop-dim">×{buckets.reports.n}</span></span>,
+        () => setViewing({ file: buckets.reports.at }), "", "round-report / code-review 等顶层报告", "b-reports", "file-bucket-reports",
+      )}
+      {buckets && buckets.evidence.n > 0 && chip(
+        <span><b className="font-black">{buckets.evidence.dir ? `🧪 证据 ${buckets.evidence.dir}` : "📁 其他"}</b> <span className="text-pop-dim">×{buckets.evidence.n}</span></span>,
+        () => setViewing({ file: buckets.evidence.at }), "", "非票非报告的产物（日志/数据/截图）", "b-evidence", "file-bucket-evidence",
+      )}
+      {buckets && buckets.total > 0 && chip(
+        <b className="font-black">全部 {buckets.total} ▸</b>,
+        () => setViewing({ file: specHit?.path ?? batch?.files[0]?.path ?? "" }),
+        "border-pop-ink bg-pop-ink text-pop-bg shadow-pop-sm", "文件树全量", "b-all", "file-bucket-all",
+      )}
       {viewing && (
         <PhaseSpecDialog
           task={ctx.task}
@@ -142,7 +156,6 @@ export function RoundRow({ ctx, exec, meta }: {
   meta: { pv?: TaskPhaseView; r?: TaskRoundView }
   exec: TaskExecutionBadge
 }) {
-  const router = useRouter()
   const agg = ctx.aggMap[exec.id] ?? null
   const startedMs = exec.started_at ? Date.parse(exec.started_at) : Date.parse(exec.created_at)
   const isLive = ["pending", "running", "paused", "pending_approval", "pending_resume"].includes(exec.status)
@@ -168,12 +181,13 @@ export function RoundRow({ ctx, exec, meta }: {
         </span>
         {link && (
           <button
-            onClick={() => router.push(link)}
-            title="跳转到该次执行的流程图"
-            className="shrink-0 rounded-[6px] border-[1.5px] border-pop-purple px-1.5 py-px font-mono text-[10px] font-black text-pop-purple transition-colors hover:bg-pop-purple-soft"
+            // 新标签页打开——控制台弹窗留在原地（router.push 会把弹窗整个顶走，2026-09-19 用户拍板）
+            onClick={() => window.open(link, "_blank", "noopener")}
+            title="在工作区查看该次执行的流程图（新标签页）"
+            className="shrink-0 rounded-[8px] border-2 border-pop-purple bg-pop-purple-soft px-2 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-transform hover:-translate-y-px"
             data-run-deeplink="execution"
           >
-            ↗
+            流程图 <span className="font-normal">↗</span>
           </button>
         )}
       </div>
@@ -193,24 +207,40 @@ export function RoundRow({ ctx, exec, meta }: {
   )
 }
 
-// ── 活动流（running 面的心跳）───────────────────────────────────────
+// ── 大事报（2026-09-20 定稿：只报你该知道的事，没事整块不存在）────────
 
-function ActivityFeed({ events }: { events: StreamEvent[] }) {
-  const recent = events.slice(-8).reverse()
+const SIG_TONE: Record<SignalLine["kind"], string> = {
+  bad: "border-pop-red bg-[#fff5f5]",
+  loop: "border-pop-amber bg-pop-amber-soft",
+  stall: "border-pop-cyan bg-pop-cyan-soft",
+  out: "border-pop-green/60 bg-[#f6fffa]",
+}
+
+function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamEvent[] }) {
+  const [openBad, setOpenBad] = useState(false)
+  if (signals.length === 0) return null // 全绿 = 没有报告 —— 这就是报告本身
   return (
-    <Box tag="活动流 / ACTIVITY" tail="SSE 实时">
-      {recent.length === 0 ? (
-        <p className="font-mono text-[11px] text-pop-dim">⏳ 暂无事件 —— 轮次状态一变即上屏。</p>
-      ) : (
-        <div className="max-h-[120px] overflow-hidden font-mono text-[11px] leading-[1.75]">
-          {recent.map((e, i) => (
-            <div key={i} className={`truncate ${i === 0 && e.glyph === "▶" ? "text-pop-purple" : ""}`}>
-              <span className="text-pop-dim">{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
-            </div>
-          ))}
-        </div>
-      )}
-    </Box>
+    <FoldBox id="signal" tag="大事报 / SIGNAL" badge={`${signals.length} 条 · ${signals[0].glyph} ${signals[0].text}`} tail="只在有事时出现" tone="border-pop-bd">
+      <div className="space-y-1" data-testid="signal-box">
+        {signals.map((l) => (
+          <div key={l.text} className={`rounded-lg border-[1.5px] px-2 py-1 font-mono text-[11.5px] ${SIG_TONE[l.kind]}`} data-signal={l.kind}>
+            <b className="mr-1.5 font-black">{l.glyph}</b>
+            {l.text}
+            {l.detail && (
+              <button onClick={() => setOpenBad((v) => !v)} className="ml-2 rounded border-[1.5px] border-pop-bd/40 px-1 text-[9px] font-black text-pop-dim hover:bg-pop-paper" data-signal-expand>
+                {openBad ? "收起" : "详情"}
+              </button>
+            )}
+            {l.detail && openBad && <div className="mt-0.5 truncate text-[10.5px] text-pop-dim" title={l.detail}>{l.detail}</div>}
+          </div>
+        ))}
+        {events.slice(-3).reverse().map((e, i) => (
+          <div key={`s${i}`} className="truncate font-mono text-[10.5px] text-pop-dim" data-signal="status">
+            <span>{e.at}</span> <span className={e.tone}>{e.glyph}</span> {e.text}
+          </div>
+        ))}
+      </div>
+    </FoldBox>
   )
 }
 
@@ -219,6 +249,16 @@ function ActivityFeed({ events }: { events: StreamEvent[] }) {
 export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
   const specPhase = ctx.specPhases.find((p) => p.index === pv.index) ?? null
   const [wfOpen, setWfOpen] = useState(false)
+  const fold = useFold()
+  const closedOf = (id: string, group: "info" | "main" = "info") => (fold ? fold.closed(id, group) : false)
+  const filesBadge = useMemo(() => {
+    if (!specPhase) return ""
+    const norm = specPhase.specPath.replace(/\\/g, "/").replace(/^\.\//, "")
+    const b = ctx.tree.batches.find((x) => norm.startsWith(`${x.dir}/`))
+    if (!b) return ""
+    const strip = (p: string) => p.slice(b.dir.length + 1)
+    return `${b.files.length} 件 · 票×${b.files.filter((f) => strip(f.path).startsWith("issues/")).length}`
+  }, [specPhase, ctx.tree.batches])
   const liveRound = pv.rounds.find((r) => r.state === "running" || r.state === "pending") ?? null
   const awaiting = pv.status === "awaiting_review" && pv.awaitingRound != null
     ? pv.rounds.find((r) => r.roundIndex === pv.awaitingRound) ?? null
@@ -269,12 +309,27 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         const dur = !Number.isNaN(startedMs) ? Math.max(0, ctx.now - startedMs) : null
         const agg = ctx.aggMap[liveRound.exec.id] ?? null
         return (
-          <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm">
+          <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm" data-fold-box="live" data-fold-closed={closedOf("live", "main") ? "true" : undefined}>
             <header className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5">
+              {fold && <FoldHandle id="live" group="main" closed={closedOf("live", "main")} onToggle={() => fold.toggle("live", "main")} />}
               <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">▶ LIVE ROUND · R{liveRound.roundIndex}</span>
+              {closedOf("live", "main") && <span className="truncate font-mono text-[10px] font-black" data-fold-badge="live">{RUN_STATUS_LABEL[run?.status ?? "running"] ?? "执行中"}{dur != null ? ` · ${formatDuration(dur)}` : ""}</span>}
+              {(() => {
+                const liveLink = run ? deepLinkTarget(run) : null // 同上：workspace_id 在徽章上
+                return liveLink ? (
+                  <button
+                    onClick={() => window.open(liveLink, "_blank", "noopener")}
+                    title="在工作区查看进行中的流程图（新标签页打开）"
+                    className="rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-0.5 font-mono text-[10px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                    data-run-deeplink="live"
+                  >
+                    执行流程图 <span className="font-normal">↗</span>
+                  </button>
+                ) : null
+              })()}
               <span className="ml-auto font-mono text-[10px] text-pop-dim">{(liveRound.exec.workflow_ref ?? pv.workflowRef).replace(/^built-in\//, "")}</span>
             </header>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[11.5px]">
+            <div className={closedOf("live", "main") ? "hidden" : "flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[11.5px]"}>
               <span className="font-black text-pop-purple">{RUN_STATUS_LABEL[run?.status ?? liveRound.exec.status] ?? "执行中"}</span>
               <span className="font-mono text-pop-dim" title={timeStamp(run?.started_at ?? liveRound.exec.created_at)}>起 {clockShort(run?.started_at ?? liveRound.exec.created_at)}</span>
               {dur != null && <span className="font-mono font-black tabular-nums">{formatDuration(dur)}</span>}
@@ -295,60 +350,88 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
           : null
         return (
           <>
-            <section className="overflow-hidden rounded-[13px] border-2 border-pop-amber bg-pop-amber-soft shadow-pop-sm">
-              <header className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-1.5">
-                <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
-                <span className="ml-auto font-mono text-[10px] text-pop-dim">{dur != null ? `用时 ${formatDuration(dur)}` : ""}</span>
-              </header>
-              <div className="space-y-1 px-3 py-2 text-[12px]">
-                <div className="flex items-center gap-2">
-                  <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
-                    {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
-                  </span>
-                  <AggInline agg={agg} className="font-mono" />
-                  <button onClick={ctx.openAcceptance} className="ml-auto shrink-0 font-mono text-[10.5px] font-black text-pop-purple underline hover:text-pop-ink" data-acceptance-evidence-link>
-                    验货台核对实物 →
-                  </button>
-                </div>
-                {roundError && (
-                  <p className="break-words font-mono text-[11px] text-pop-red" data-acceptance-round-error>{roundError}</p>
-                )}
-              </div>
-            </section>
-            {/* ADR-0022：决策唯一入口 = 验货台（实物/剧本/预览之后才盖章）。
-                原先此处的 ✓通过/✕打回 直通 postAcceptance、绕过一切证据 —— 已撤。 */}
-            <button
-              onClick={ctx.openAcceptance}
-              className="pop-press flex w-full items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2 font-mono text-[12px] font-black text-white shadow-pop-sm transition-colors hover:bg-pop-green/90"
-              data-acceptance-open
-              data-testid="console-open-acceptance"
-            >
-              → 去验货台验收（实物 · 剧本 · 跑起来看）
-            </button>
+            {/* 单入口定稿（2026-09-19 用户拍板）：原先卡内紫字链「验货台核对实物 →」+
+                卡外整行绿横幅 = 同一动作两入口 → 收敛为「整卡可点 + 卡头一枚绿章」。
+                流程图章（V2 紫实心）坐它左边弱一档：查看 vs 主行动，层级分明。
+                两章均 stopPropagation——别撞整卡热区。 */}
+            {(() => {
+              // workspace_id 只在执行徽章上（TaskRoundExec 不带），从 run 取。
+              const flowLink = run ? deepLinkTarget(run) : null
+              return (
+                <section
+                  className="cursor-pointer overflow-hidden rounded-[13px] border-2 border-pop-amber bg-pop-amber-soft shadow-pop-sm transition-transform hover:-translate-y-px hover:shadow-pop"
+                  onClick={ctx.openAcceptance}
+                  data-acceptance-open
+                  data-testid="console-acceptance-card"
+                  data-fold-box="deliver"
+                  data-fold-closed={closedOf("deliver", "main") ? "true" : undefined}
+                >
+                  <header className="flex items-center gap-2 px-3 py-1.5 border-b-2 border-pop-bd/10">
+                    {fold && <FoldHandle id="deliver" group="main" closed={closedOf("deliver", "main")} onToggle={() => fold.toggle("deliver", "main")} />}
+                    <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
+                    {closedOf("deliver", "main") && (
+                      <span className="truncate font-mono text-[10px] font-black" data-fold-badge="deliver">
+                        {awaiting.state === "succeeded" ? "✓ 执行成功" : "✗ 执行失败"}{dur != null ? ` · 用时 ${formatDuration(dur)}` : ""}
+                      </span>
+                    )}
+                    {flowLink && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open(flowLink, "_blank", "noopener") }}
+                        title="在工作区查看本轮执行的流程图（新标签页打开）"
+                        className="ml-1 shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-1 font-mono text-[10.5px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                        data-run-deeplink="awaiting"
+                      >
+                        执行流程图 <span className="font-normal">↗</span>
+                      </button>
+                    )}
+                    <span className="ml-auto font-mono text-[10px] text-pop-dim">{dur != null ? `用时 ${formatDuration(dur)}` : ""}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); ctx.openAcceptance() }}
+                      className="shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-green px-3 py-1 font-mono text-[11px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                      data-testid="console-open-acceptance"
+                    >
+                      → 去验货台验收
+                    </button>
+                  </header>
+                  <div className={closedOf("deliver", "main") ? "hidden" : "space-y-1 px-3 py-2 text-[12px]"}>
+                    <div className="flex items-center gap-2">
+                      <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
+                        {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
+                      </span>
+                      <AggInline agg={agg} className="font-mono" />
+                    </div>
+                    <div className="font-mono text-[11px] text-pop-dim">实物 · 剧本 · 跑起来看 已就绪 — 点卡片任意处进入</div>
+                    {roundError && (
+                      <p className="break-words font-mono text-[11px] text-pop-red" data-acceptance-round-error>{roundError}</p>
+                    )}
+                  </div>
+                </section>
+              )
+            })()}
           </>
         )
       })()}
 
       {/* 盘上文件（原草稿批次区的执行态替身） */}
       {specPhase && (
-        <Box tag="盘上文件" tail={`批次目录 · ${specPhase.specPath.replace(/^\.\/|\/spec\.md$/g, "")}`} className="bg-pop-paper">
+        <FoldBox id="files" tag="盘上文件" badge={filesBadge} tail={`批次目录 · ${specPhase.specPath.replace(/^\.\/|\/spec\.md$/g, "")}`} className="bg-pop-paper">
           <FileChips ctx={ctx} phase={specPhase} />
-        </Box>
+        </FoldBox>
       )}
 
       {/* 待执行：GOAL + 发射门禁 + 触发 CTA */}
       {ctx.task.status === "ready" && (
         <>
           {goal && (
-            <Box tag="GOAL">
+            <FoldBox id="goal" tag="GOAL" badge={goal.length > 28 ? `${goal.slice(0, 28)}…` : goal}>
               <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed">{goal}</p>
               {(ctx.task.task_spec?.ac?.length ?? 0) > 0 && (
                 <p className="mt-1 font-mono text-[10.5px] text-pop-dim">验收标准 {ctx.task.task_spec!.ac!.length} 条 · 全文见 spec</p>
               )}
-            </Box>
+            </FoldBox>
           )}
           {gateRows && (
-            <Box tag="发射门禁 / GATE" tail="服务端闸口为准">
+            <FoldBox id="gate" tag="发射门禁 / GATE" badge={`${gateRows.filter((g) => g.ok === true).length}/${gateRows.length} 绿`} tail="服务端闸口为准">
               <div className="space-y-1">
                 {gateRows.map((g) => (
                   <div key={g.text} className="flex items-center gap-2 text-[12px]">
@@ -359,7 +442,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   </div>
                 ))}
               </div>
-            </Box>
+            </FoldBox>
           )}
           {pv === ctx.phaseViews.find((p) => p.status === "pending")
             && !armedFuture && !waitingForSlot && (
@@ -374,11 +457,10 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         </>
       )}
 
-      {/* 轮次账本：一行一轮，打回史全留痕 */}
-      <Box tag="轮次 / ROUNDS" tail={pv.currentRound != null ? `${pv.rounds.length} 轮` : "未启动"}>
-        {pv.rounds.length === 0 ? (
-          <p className="py-0.5 text-[11px] text-pop-dim">{ctx.task.status === "ready" ? "本 phase 未触发 —— 门禁全绿后按上方「触发执行」开跑。" : "尚无轮次。"}</p>
-        ) : (
+      {/* 轮次分档（2026-09-19 降噪定稿）：0 轮不渲染；1 轮有卡（LIVE/交付）→ 框整个
+          消失（卡即轮）；1 轮已判 → 细条一行；≥2 轮（打回史）→ 账本框才回来。 */}
+      {pv.rounds.length >= 2 && (
+        <FoldBox id="rounds" tag="轮次 / ROUNDS" badge={`${pv.rounds.length} 轮`} tail={`${pv.rounds.length} 轮`}>
           <div>
             {pv.rounds.map((r) => {
               const exec = ctx.runsById.get(r.exec.id) ?? null
@@ -386,10 +468,19 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               return <RoundRow key={r.exec.id} ctx={ctx} meta={{ pv, r }} exec={exec} />
             })}
           </div>
-        )}
-      </Box>
+        </FoldBox>
+      )}
+      {pv.rounds.length === 1 && !liveRound && !awaiting && (() => {
+        const r = pv.rounds[0]
+        const exec = ctx.runsById.get(r.exec.id) ?? null
+        return exec ? (
+          <div className="rounded-[9px] border-[1.5px] border-dashed border-pop-bd/35 bg-pop-paper px-2" data-testid={`round-strip-${pv.index}`}>
+            <RoundRow ctx={ctx} meta={{ pv, r }} exec={exec} />
+          </div>
+        ) : null
+      })()}
 
-      {(ctx.isLive || ctx.task.status === "awaiting_review") && <ActivityFeed events={ctx.events} />}
+      {(ctx.isLive || ctx.task.status === "awaiting_review") && <SignalBox signals={ctx.signals} events={ctx.events} />}
 
       <WorkflowViewerDialog taskId={ctx.task.id} workflowRef={pv.workflowRef} open={wfOpen} onOpenChange={setWfOpen} />
     </div>
@@ -433,7 +524,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
       </div>
 
       {models.length > 0 && (
-        <Box tag="模型分布" tail={`${totalAgg?.totalCalls ?? 0} 次调用`}>
+        <FoldBox id="models" tag="模型分布" badge={`${models.length} 模型 · ${totalAgg?.totalCalls ?? 0} 次`} tail={`${totalAgg?.totalCalls ?? 0} 次调用`}>
           <div className="space-y-1.5">
             {models.map(([m, b]) => {
               const share = calls > 0 ? b.calls / calls : 0
@@ -448,10 +539,10 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
               )
             })}
           </div>
-        </Box>
+        </FoldBox>
       )}
 
-      <Box tag="轮次账本（全部）" tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 跳工作区执行详情" : undefined}>
+      <FoldBox id="ledger" tag="轮次账本（全部）" badge={`${runs.length} 次执行`} tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 均为新标签页打开" : undefined}>
         {runs.length === 0 && ctx.phaseViews.length === 0 ? (
           <p className="py-0.5 text-[11px] text-pop-dim">任务尚未派发执行。</p>
         ) : (
@@ -477,7 +568,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
             })()}
           </div>
         )}
-      </Box>
+      </FoldBox>
 
       <ArtifactsCard taskId={task.id} />
     </div>

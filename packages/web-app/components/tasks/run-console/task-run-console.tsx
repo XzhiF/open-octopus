@@ -16,7 +16,7 @@
 
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
@@ -27,7 +27,7 @@ import {
 import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
-import { subscribeSSE } from "@/lib/sse-manager"
+import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
 import { effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
@@ -39,6 +39,8 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
+import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
+import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone,
@@ -70,12 +72,17 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // 验货台 = 本控制台的 tab（2026-09-16 改版：原三栏弹窗 AcceptanceModal 收编
   // 内嵌，父窗自带拖拽/缩放/全屏；打回回显留在 tab 里，不随派生态变化弹出）。
   const [surfaceTab, setSurfaceTab] = useState<"console" | "accept">("console")
+  // keep-mounted 挂载闸（2026-09-20）：点过验货台或出现待验收轮后**常挂载**，
+  // tab 切换只切 hidden —— 三元卸载会把在飞的复检会话打回服务端尾 200 行、
+  // gate/编辑草稿归零、重拉 5-6 个请求（「切走再回来失忆」）。换任务时复位。
+  const [acceptMounted, setAcceptMounted] = useState(!!startOnAcceptance)
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
     setSel(undefined)
     setSurfaceTab(startOnAcceptance ? "accept" : "console")
+    setAcceptMounted(!!startOnAcceptance)
   }, [task.id, startOnAcceptance])
 
   const isLive =
@@ -91,6 +98,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     const id = setInterval(refetch, 5000)
     return () => clearInterval(id)
   }, [isLive, refetch])
+
+  // SSE 实况（2026-09-20）：footer 的 SSE● 旧版只看「任务活着」常亮脉冲，连接断了
+  // 照样亮 —— 现接 sse-manager 的真实连接态（同 url 全页共享一条连接）。
+  const [sseLive, setSseLive] = useState(true)
+  useEffect(() => {
+    const url = `${getServerUrl()}/api/tasks/events`
+    return subscribeSSEStatus(url, (s) => setSseLive(s.connected))
+  }, [])
 
   // ── SSE：状态即时重拉（与退役前 TaskRunDetailView 同四路）+ 活动流采集 ──
   const [events, setEvents] = useState<StreamEvent[]>([])
@@ -172,11 +187,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [derived, phaseViews, derivedStatus])
   const view = sel ?? autoView
 
-  // ── 过程回放种子（走查回灌 2026-09-16）──────────────────────────────
-  // 活动流此前只吃开窗后的 SSE 内存增量 —— 事后打开恒「暂无事件」，执行
-  // 过程看不到。现把该轮执行的 agent-events 节点边界事件（start/end，工作区
-  // 执行详情同信道）压缩成回放行垫进 feed；live SSE 继续在其上追加，
-  // 权威仍是 GET /:id derived，这里只是可读性层。切轮/切 phase 重垫一次。
+  // ── 大事报信号（2026-09-20 定稿：没事不显示）─────────────────────────
+  // 动线复盘被否：全绿履历没有一行需要用户决策。现只榨四类信号
+  // （✗挂过自愈 / ♻修复轮 / ▷在跑长命令 / 📦产出），纯函数 buildSignals
+  // 真格式单测钉死。活轮在跑时每 5s 重拉尾部；权威仍是 GET /:id derived。切轮重锚。
   const replayTarget = useMemo(() => {
     const runs = detail?.executions ?? []
     if (runs.length === 0) return null
@@ -189,35 +203,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return runs[runs.length - 1] ?? null
   }, [detail, view, phaseViews])
 
-  const replayedExecRef = useRef<string | null>(null)
+  const [signals, setSignals] = useState<SignalLine[]>([])
+  const targetId = replayTarget?.id ?? null
+  const targetWs = replayTarget?.workspace_id ?? null
+  const targetLive = !!replayTarget && LIVE_RUN_STATUSES.has(replayTarget.status)
   useEffect(() => {
-    const exec = replayTarget
-    if (!exec?.workspace_id || replayedExecRef.current === exec.id) return
-    replayedExecRef.current = exec.id
+    if (!targetId || !targetWs) return
     let cancelled = false
-    fetchAgentEvents(exec.workspace_id, exec.id)
-      .then((res) => {
-        if (cancelled || replayedExecRef.current !== exec.id) return
-        const rows: StreamEvent[] = []
-        for (const e of res.events) {
-          if (e.event !== "start" && e.event !== "end") continue
-          if (e.nodeId.startsWith("__engine_")) continue
-          rows.push({
-            at: e.timestamp ? new Date(e.timestamp).toLocaleTimeString("zh-CN", { hour12: false }) : "",
-            glyph: e.event === "start" ? "▸" : "◂",
-            tone: e.event === "start" ? "text-pop-cyan" : "text-pop-green",
-            text: `回放 · ${e.nodeId} ${e.event === "start" ? "起" : "收"}`,
-          })
-        }
-        if (rows.length > 0) setEvents(rows.slice(-40))
-      })
-      .catch(() => { /* 回放不可得照常 —— feed 退化为 live-only（原行为） */ })
-    return () => { cancelled = true }
-  }, [replayTarget])
+    const pull = () => {
+      fetchAgentEvents(targetWs, targetId)
+        .then((res) => { if (!cancelled) setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations })) })
+        .catch(() => { /* 信号不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
+    }
+    pull()
+    const timer = targetLive && isLive ? setInterval(pull, 5000) : null
+    return () => { cancelled = true; if (timer) clearInterval(timer) }
+  }, [targetId, targetWs, targetLive, isLive])
 
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
-    now, isLive, events, refetch, onMutated,
+    now, isLive, events, signals, refetch, onMutated,
     openAcceptance: () => setSurfaceTab("accept"),
     openTrigger: () => setTriggerOpen(true),
   }
@@ -243,6 +248,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     ? runsById.get(awaitingPv!.rounds.find((r) => r.roundIndex === awaitingPv!.awaitingRound)?.exec.id ?? "") ?? null
     : null
   const waitedMs = awaitingRun?.completed_at ? Math.max(0, now - Date.parse(awaitingRun.completed_at)) : null
+
+  // keep-mounted 触发：待验收轮一出现（或用户点过验货台）即常挂载，此后不随派生态消失而卸载。
+  useEffect(() => {
+    if (awaitingPv) setAcceptMounted(true)
+  }, [awaitingPv])
 
   const handleAbort = async () => {
     setBusy("abort")
@@ -306,6 +316,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const barBtn = "rounded border-[1.5px] border-pop-bg/30 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
 
   return (
+    <FoldProvider taskId={task.id}>
     <div className="flex h-full min-h-0 flex-col" data-run-console={task.status}>
       {/* ── terminal 导航条 ──（与草稿窗同壳：28px 深色 mono） */}
       <div
@@ -366,7 +377,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             </button>
           )}
           {task.status === "awaiting_review" && (
-            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对·叙述/动作）">
+            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对/动作）">
               🔍 验货台
             </button>
           )}
@@ -446,6 +457,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <PipelineRail
           ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel}
           isV4={isV4} aggLoaded={aggLoaded}
+          showMaster={!(awaitingPv || surfaceTab === "accept")}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
           {/* ── surface tabs（2026-09-16）：有待验收轮时亮出「执行控制台 | 验货台」
@@ -479,13 +491,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 🔍 验货台
                 {awaitingPv && <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>}
               </button>
+              <FoldMasterChip className="ml-auto" />
             </div>
           )}
-          {surfaceTab === "accept" ? (
-            <div className="min-h-0 flex-1 bg-pop-paper">
-              <AcceptanceSurface task={task} onMutated={() => { onMutated(); refetch() }} onDecided={() => setSurfaceTab("console")} />
+          {/* keep-mounted：见 acceptMounted 声明处注释。hidden 切换而非三元卸载，
+              复检会话/走查 gate/编辑草稿活过 tab 往返；e2e 的 [data-acceptance-modal]
+              可见性断言不受影响（Radix 之外，hidden 属性即 Playwright 不可见）。 */}
+          {acceptMounted && (
+            <div className={`min-h-0 flex-1 bg-pop-paper ${surfaceTab !== "accept" ? "hidden" : ""}`}>
+              {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入（嵌入式
+                  AcceptanceSurface 不再自养第三份副本 / 重复订 phase 事件）。 */}
+              <AcceptanceSurface
+                task={task}
+                detailOverride={detail}
+                onRefetch={refetch}
+                onMutated={() => { onMutated(); refetch() }}
+                onDecided={() => setSurfaceTab("console")}
+              />
             </div>
-          ) : (
+          )}
+          {surfaceTab !== "accept" && (
             <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
               {view !== "report" && derived && runs.length > 0 && (
                 <TaskAiUsageCard
@@ -522,7 +547,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           </>
         )}
         {isLive ? (
-          <span className="ml-auto flex items-center gap-1.5 text-pop-cyan">SSE<i className="block size-[7px] animate-pulse rounded-full bg-pop-cyan" /></span>
+          sseLive ? (
+            <span className="ml-auto flex items-center gap-1.5 text-pop-cyan">SSE<i className="block size-[7px] animate-pulse rounded-full bg-pop-cyan" /></span>
+          ) : (
+            // 旧实现只看任务态常亮脉冲 —— 断线后照亮，盘面停在旧快照却「看起来是活的」。
+            <span className="ml-auto flex items-center gap-1.5 text-pop-red" title="实时连接中断 — 盘面为断线前快照，浏览器/管理器会自动重连">SSE 断线<i className="block size-[7px] rounded-full bg-pop-red" /></span>
+          )
         ) : (
           <span className="ml-auto text-pop-bg/35">终态 · 已停轮询</span>
         )}
@@ -531,13 +561,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       {/* 对话框宿主（单实例）—— 验货台已收编为上方 tab，不再挂弹窗。 */}
       <TriggerDialog open={triggerOpen} onOpenChange={setTriggerOpen} task={task} onTriggered={() => { onMutated(); refetch() }} />
     </div>
+    </FoldProvider>
   )
 }
 
 // ── 左 rail：Phase 流水线（唯一状态位）──────────────────────────────
 
-function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
+function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMaster }: {
   ctx: RunCtx; budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean; aggLoaded: boolean
+  /** tab 条缺席（非待验收）时，一键盘落 rail 头部；有 tab 条则让位，绝不同时出两枚。 */
+  showMaster: boolean
 }) {
   const { task, detail, phaseViews, now, totalAgg } = ctx
   const derived = detail?.derived
@@ -550,6 +583,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
     <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
+        {showMaster && <span className="ml-auto"><FoldMasterBar /></span>}
       </div>
 
       {terminal && isV4 && phaseViews.length > 0 && (

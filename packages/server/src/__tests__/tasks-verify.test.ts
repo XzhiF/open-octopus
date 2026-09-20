@@ -12,13 +12,14 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { execFileSync } from "node:child_process"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
-import { RoundEvidenceService, type VerifySummary } from "../services/tasks/round-evidence-service"
+import { RoundEvidenceService, buildPerRepoVerifyBash, type VerifySummary } from "../services/tasks/round-evidence-service"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-td-verify"
@@ -223,5 +224,117 @@ describe("verify — 门链与终态", () => {
     const spec = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as { task_spec: string }
     const parsed = JSON.parse(spec.task_spec) as Record<string, unknown>
     expect("acceptance_verify" in parsed).toBe(false)
+  })
+
+  it("V10: per_repo 逐仓复检 — 两仓 marker 齐 → passed；一仓缺 → failed（聚合退出码）", async () => {
+    // 在共享 ws1/projects 下铺两个假 git 仓（[ -e .git ] 判 worktree）
+    const mk = (name: string, withMarker: boolean) => {
+      const d = path.join(tmp, "ws1", "projects", name)
+      fs.rmSync(d, { recursive: true, force: true })
+      fs.mkdirSync(d, { recursive: true })
+      fs.writeFileSync(path.join(d, ".git"), "gitdir: x\n")
+      if (withMarker) fs.writeFileSync(path.join(d, "marker.txt"), "1")
+    }
+    mk("repo-a", true)
+    mk("repo-b", true)
+    const okTask = await newAwaitingTask()
+    expect((await setVerify(okTask, { command: "test -f marker.txt", per_repo: true, timeoutS: 60 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${okTask}/verify`, { method: "POST" })).status).toBe(202)
+    expect((await pollTerminal(okTask)).state).toBe("passed")
+
+    // repo-b 去 marker → 任一仓失败即整体 failed
+    fs.rmSync(path.join(tmp, "ws1", "projects", "repo-b", "marker.txt"), { force: true })
+    const badTask = await newAwaitingTask()
+    expect((await setVerify(badTask, { command: "test -f marker.txt", per_repo: true, timeoutS: 60 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${badTask}/verify`, { method: "POST" })).status).toBe(202)
+    expect((await pollTerminal(badTask)).state).toBe("failed")
+  })
+
+  it("V11: buildPerRepoVerifyBash 生成逐仓循环骨架", () => {
+    const bash = buildPerRepoVerifyBash("mvn -B test")
+    expect(bash).toContain("for D in projects/*/")
+    expect(bash).toContain('[ -e "$D/.git" ]')
+    expect(bash).toContain('( cd "$D" && mvn -B test ) || rc=1')
+    expect(bash.trimEnd().endsWith("exit $rc")).toBe(true)
+  })
+
+  it("V12: GET ?since=n 增量补拉 — lines_after 自第 n 个真行起；无/非法 since 不带该字段（S5）", async () => {
+    const taskId = await newAwaitingTask()
+    expect((await setVerify(taskId, { command: "for i in 1 2 3 4; do echo L$i; done", timeoutS: 30 })).status).toBe(200)
+    expect((await app.request(`/api/tasks/${taskId}/verify`, { method: "POST" })).status).toBe(202)
+    await pollTerminal(taskId)
+
+    const full = (await (await app.request(`/api/tasks/${taskId}/verify`)).json()) as VerifySummary
+    expect((full.tail ?? []).join("\n")).toContain("L4")
+    expect(full.lines_after).toBeUndefined()
+
+    const p2 = (await (await app.request(`/api/tasks/${taskId}/verify?since=2`)).json()) as VerifySummary
+    const got2 = (p2.lines_after ?? []).join("\n")
+    expect(got2).not.toContain("L1")
+    expect(got2).toContain("L3")
+    expect(got2).toContain("L4")
+
+    const p0 = (await (await app.request(`/api/tasks/${taskId}/verify?since=0`)).json()) as VerifySummary
+    expect((p0.lines_after ?? []).join("\n")).toContain("L1")
+
+    // 越界 since → 空切片；非法 since → 视为缺省（现行为逐字不变）
+    const pBig = (await (await app.request(`/api/tasks/${taskId}/verify?since=9999`)).json()) as VerifySummary
+    expect(pBig.lines_after).toEqual([])
+    const pBad = (await (await app.request(`/api/tasks/${taskId}/verify?since=abc`)).json()) as VerifySummary
+    expect(pBad.lines_after).toBeUndefined()
+  })
+})
+
+// ── 剧本探针单发执行 (POST /:id/playbook/run) ───────────────────────────
+describe("playbook probe — 同步单发,就地盖章", () => {
+  it("PR1: echo → passed, exit 0, tail 带回显;工作区根为 cwd", async () => {
+    const taskId = await newAwaitingTask()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "echo probe-hello && pwd" }),
+    })
+    expect(res.status).toBe(200)
+    const r = (await res.json()) as { state: string; exit_code: number | null; tail: string[] }
+    expect(r.state).toBe("passed")
+    expect(r.exit_code).toBe(0)
+    expect(r.tail.join("\n")).toContain("probe-hello")
+    expect(r.tail.join("\n")).toContain(path.join(tmp, "ws1")) // ws 根 cwd
+  })
+
+  it("PR2: 断言失败 → failed + 真实退出码(C 票步 5 形状)", async () => {
+    const taskId = await newAwaitingTask()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "test 1 = 2 && echo data == false" }),
+    })
+    const r = (await res.json()) as { state: string; exit_code: number | null }
+    expect(r.state).toBe("failed")
+    expect(r.exit_code).not.toBe(0)
+  })
+
+  it("PR3: 尾随 & 拉起式包成 nohup,秒回且服务真活着(防 close 挂死→组杀)", async () => {
+    const taskId = await newAwaitingTask()
+    const t0 = Date.now()
+    const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "sleep 60 &", timeoutS: 10 }),
+    })
+    const r = (await res.json()) as { state: string; tail: string[] }
+    expect(Date.now() - t0).toBeLessThan(8000) // 不挂满 timeout
+    expect(r.state).toBe("passed")
+    expect(r.tail.join(" ")).toContain("launcher")
+    const out = execFileSync("pgrep", ["-f", "[s]leep 60"], { encoding: "utf8" }).trim()
+    expect(out.length).toBeGreaterThan(0) // 服务没被组杀火葬
+    for (const pid of out.split("\n")) { try { process.kill(Number(pid), "SIGKILL") } catch { /* gone */ } }
+  })
+
+  it("PR4: 空命令/超长 → 400;无 awaiting → 409", async () => {
+    const taskId = await newAwaitingTask()
+    expect((await app.request(`/api/tasks/${taskId}/playbook/run`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: "  " }),
+    })).status).toBe(400)
+    expect((await app.request("/api/tasks/no-such-task/playbook/run", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: "true" }),
+    })).status).toBe(404) // 任务不存在 = 404（resolveAwaiting 的 NotFound 语义）
   })
 })

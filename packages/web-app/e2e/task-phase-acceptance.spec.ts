@@ -144,20 +144,6 @@ async function insertPhaseRoundExec(
   created.executionIds.push(execId)
 }
 
-/** 写真实 task home 产物（scan-first：文件即产物，无需登记）。 */
-function writeHomeArtifact(taskId: string, relPath: string, content: string): string {
-  const dir = path.join(os.homedir(), ".octopus", "tasks", taskId, "artifacts")
-  const file = path.join(dir, relPath)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, content, "utf-8")
-  const home = path.join(os.homedir(), ".octopus", "tasks", taskId)
-  if (!created.homeDirs.includes(home)) created.homeDirs.push(home)
-  return file
-}
-
-/** makeV4Task 的 phase-1 slug 字面量（与内联生成规则一致）。 */
-const phase1Slug = (taskId: string): string => `e2e-td-acc-p1-${taskId.slice(0, 8)}`
-
 async function awaitingTaskFixture(name: string, opts: { autoAdvance?: boolean } = {}): Promise<string> {
   const taskId = await makeV4Task(name, opts)
   await insertPhaseRoundExec(taskId, { phaseIndex: 1, roundIndex: 1, execStatus: "completed", createdAt: hoursAgo(1), durationMs: 600_000 })
@@ -208,14 +194,11 @@ test.afterAll(async () => {
   }
 })
 
-// ── AC1: 三栏齐现且数据正确；产物点击展开全文 ────────────────────────
+// ── AC1: 三栏齐现且数据正确；sub-tab 条 = 实物|核对（叙述已退役） ────────
 
-test("AC1 acceptance modal renders three columns with fixture data; artifact row opens full content", async ({ page }) => {
+test("AC1 acceptance modal renders three columns with fixture data; sub-tab bar = 实物|核对", async ({ page }) => {
   test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
   const taskId = await awaitingTaskFixture("E2E_TD_验收三栏")
-  const phaseSlug = phase1Slug(taskId)
-  writeHomeArtifact(taskId, `${phaseSlug}/report-r1.md`, "# E2E_TD_报告\nround-1 执行报告\n")
-  writeHomeArtifact(taskId, "e2e-td-acc-p2-OTHER/spec.md", "should be filtered out\n")
 
   await page.goto("/tasks")
   const card = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${taskId}"]`)
@@ -233,18 +216,12 @@ test("AC1 acceptance modal renders three columns with fixture data; artifact row
   await expect(dialog.locator("[data-acceptance-phase-label]")).toHaveText("Phase 1/2 · Round 1")
   await expect(dialog.locator("[data-acceptance-round-state]")).toHaveText("执行成功")
   await expect(dialog.locator("[data-acceptance-duration]")).toHaveText("10m 0s")
-  // 中列：slug 过滤命中本 phase 文件，别的 phase 不混入
-  const row = dialog.locator(`[data-acceptance-artifact-row$="${phaseSlug}/report-r1.md"]`)
-  await expect(row).toBeVisible()
-  await expect(dialog.locator('[data-acceptance-artifact-row*="OTHER"]')).toHaveCount(0)
-  // 点击展开全文（ArtifactViewerDialog 叠层）
-  await row.click()
-  // data-artifact-viewer-dialog / data-artifact-content 都在 DialogContent 子树
-  // （前者即 dialog 元素本身 → 用属性直查，不玩 role+filter 自嵌套）
-  await expect(page.locator("[data-artifact-viewer-dialog]")).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator("[data-artifact-content]")).toContainText("E2E_TD_报告", { timeout: 15_000 })
+  // 中列 sub-tab（2026-09-20 用户裁决）：只剩 实物/核对 两枚贴纸，叙述整体退役，
+  // verdict 文件入口收进复检块（点开走 ArtifactViewerDialog）。
+  await expect(dialog.getByTestId("acceptance-tab-diff")).toBeVisible()
+  await expect(dialog.getByTestId("acceptance-tab-matrix")).toBeVisible()
+  await expect(dialog.getByTestId("acceptance-tab-story")).toHaveCount(0)
   await page.screenshot({ path: screenshotPath("T12-AC1-three-columns.png") })
-  await page.keyboard.press("Escape") // 关 viewer（保留 modal）
 })
 
 // ── AC2: 反馈必填 gate + 真实账本 + 提交成功态（route-fulfill 票 07 契约） ──
@@ -338,11 +315,12 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   await expect(page.locator('[data-reject-panel] [data-reject-flow="rerun"] input')).toBeChecked()
   await expect(page.locator('[data-reject-panel] [data-reject-flow="fix"] input')).toBeEnabled()
   await page.locator("[data-reject-panel] [data-reject-confirm]").click()
-  // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）+ D14 影响清单空态。
+  // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）。
   await expect(dlg2.locator("[data-agent-recommend-card]")).toBeVisible({ timeout: 15_000 })
   await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("修订重跑")
   await expect(dlg2.locator('[data-recommend-option="fix-flow"]')).toHaveCount(0)
-  await expect(dlg2.locator("[data-impact-list-empty]")).toBeVisible()
+  // D14 空卡已整体摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）。
+  await expect(dlg2.locator("[data-impact-list-empty]")).toHaveCount(0)
   const body = (page as unknown as { __t12: Record<string, unknown> }).__t12
   expect(body.decision).toBe("rejected")
   expect(body.phase_index).toBe(1)

@@ -122,6 +122,12 @@ const homeFileBodySchema = z.object({
   content: z.string().max(512_000),
 })
 
+// 剧本探针单发执行体（POST /:id/playbook/run）——command 来自编译票步,人点才跑。
+const probeRunBodySchema = z.object({
+  command: z.string().min(1).max(4000),
+  timeoutS: z.number().int().min(5).max(600).optional(),
+})
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -393,10 +399,15 @@ export function createTasksRoutes(
   // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
   // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
   // 未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
+  // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的
+  // start 锚 .. 本轮 exec 的 end 锚（放行判的是 phase 终态，修复轮不再只见
+  // delta）；缺省/其他值 = round（本轮区间，现行为逐字不变）。payload 形状
+  // 两口径完全一致（RoundDiffPayload），web 零解析改动。
   router.get("/:id/round-diff", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
     try {
-      return c.json(await evidence.getRoundDiff(c.req.param("id")))
+      return c.json(await evidence.getRoundDiff(c.req.param("id"), scope))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -430,6 +441,22 @@ export function createTasksRoutes(
     }
   })
 
+  // 剧本探针单发执行：票步里的可执行命令（curl/until 级），同步返回 exit+tail
+  // 供面板就地盖章。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
+  router.post("/:id/playbook/run", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const parsed = probeRunBodySchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400)
+    }
+    try {
+      return c.json(await evidence.runProbe(c.req.param("id"), parsed.data.command, parsed.data.timeoutS))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // 复检绝不自动跑 —— 本 POST 是唯一入口（202 = 已起会话，进度走 taskpool SSE：
   // task_verify_log 逐行 + task_verify 终态）。
   router.post("/:id/verify", async (c) => {
@@ -442,10 +469,16 @@ export function createTasksRoutes(
     }
   })
 
+  // GET /:id/verify — 会话摘要（tail ≤200）。S5（2026-09-20）：可选
+  // ?since=<n> 增量补拉 —— n = 客户端已收 task_verify_log 行数（0 基全局序号），
+  // 响应附 lines_after（自第 n 行起）；SSE 断线重连后找回错过的行。非法/缺省
+  // since = 现行为不变（无该字段）。
   router.get("/:id/verify", (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const sinceRaw = c.req.query("since")
+    const since = sinceRaw !== undefined && sinceRaw !== "" ? Number(sinceRaw) : undefined
     try {
-      return c.json(evidence.getVerifyStatus(c.req.param("id")))
+      return c.json(evidence.getVerifyStatus(c.req.param("id"), Number.isFinite(since) ? since : undefined))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -567,6 +600,8 @@ export function createTasksRoutes(
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
   // （含 rejected 缺 feedback — K7「打回必填反馈文本」由 superRefine 拦）。
+  // S1 硬闸：accepted ∧ 本轮 checks 有 ✗ → 409 不落决策（见路由内注释）。
+  // 响应体（S2 起）除 AcceptanceResult 外另带 ledger_written: boolean。
   router.post("/:id/acceptance", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
@@ -584,23 +619,42 @@ export function createTasksRoutes(
       // acceptance itself stays authoritative — ledger/reopen side-effects are
       // best-effort (a failed ledger never rolls back a committed decision).
       const snap = evidence ? await evidence.snapshotEvidence(c.req.param("id")).catch(() => null) : null
+      // 走查 ✗ 服务端硬闸（S1，2026-09-20）：前端 gate.fail>0 的 disabled 只拦
+      // UI 入口，任何非 UI 通道（curl/脚本）都能无痕放行。checks 与写入侧同源
+      // （snapshotEvidence 内 batchRelDir + checksFileName/parseChecksMd），此
+      // 处在决策落账之前重数 ✗：n>0 → 409，不落决策、不写台账、不翻票。
+      // 诚实降级：文件缺失/解析失败/无 ✗/快照拿不到 → 放行（未决软放行本就是
+      // 前端既有语义，绝不误伤）。轮次不匹配时交给 service.acceptance 的 409。
+      if (parsed.decision === "accepted" && snap
+        && snap.phaseIndex === parsed.phase_index && snap.roundIndex === parsed.round_index) {
+        const nFail = Object.values(snap.checks?.checks ?? {}).filter((ck) => ck.decision === "fail").length
+        if (nFail > 0) {
+          return c.json({ error: `走查存在 ${nFail} 项 ✗ —— 服务端硬闸拦截，请改走打回` }, 409)
+        }
+      }
       const result = await service.acceptance(c.req.param("id"), input)
+      // 台账写入诚实化（S2，2026-09-20）：写没写成功不再只有 console.error 知道 ——
+      // ledger_written 进响应体。判据：accepted = writeLedger 落盘非 null；
+      // rejected = writeLedger 非 null 且 augmentReject 未抛；快照缺失 /
+      // batchRelDir 解析不出 / 写失败 / 抛错 → false。决策本身不回滚（K6）。
+      let ledgerWritten = false
       if (evidence) {
         try {
           evidence.stopPreviewQuiet(c.req.param("id"))
           if (snap) {
             if (parsed.decision === "accepted") {
-              evidence.writeLedger(snap, "accepted")
+              ledgerWritten = evidence.writeLedger(snap, "accepted") !== null
             } else {
-              evidence.writeLedger(snap, "rejected")
+              const led = evidence.writeLedger(snap, "rejected")
               evidence.augmentReject(snap, parsed.reopen_tickets)
+              ledgerWritten = led !== null
             }
           }
         } catch (err: unknown) {
           console.error("[tasks] acceptance ledger/reopen side-effect failed (decision already committed):", err)
         }
       }
-      return c.json(result)
+      return c.json({ ...result, ledger_written: ledgerWritten })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
