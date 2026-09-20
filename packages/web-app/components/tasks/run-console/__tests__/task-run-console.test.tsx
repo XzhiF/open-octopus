@@ -288,6 +288,49 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     openSpy.mockRestore()
   })
 
+  it("全框折叠：点标题折/开（折上显一行结论徽章）+ 一键盘三态 + 按任务记忆", async () => {
+    mockGetBatchTree.mockResolvedValue([{
+      dir: ".scratch/20260912/p1", slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
+      files: [
+        { path: ".scratch/20260912/p1/spec.md", mtime: "2026-09-21T09:00:00Z", bytes: 2048 },
+        { path: ".scratch/20260912/p1/issues/01-a.md", mtime: "2026-09-21T09:01:00Z", bytes: 100 },
+      ],
+    }])
+    const t = makeTask("awaiting_review")
+    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    await screen.findByText(/R1 交付报告/)
+    const filesBox = () => document.querySelector('[data-fold-box="files"]') as HTMLElement
+    const card = () => document.querySelector('[data-fold-box="deliver"]') as HTMLElement
+
+    // ① 单框：点标题 → 折上，header 变一行结论（徽章= 件数·票数），内容不再占面
+    fireEvent.click(screen.getByText("盘上文件"))
+    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
+    expect(filesBox().querySelector('[data-fold-badge="files"]')?.textContent).toContain("2 件 · 票×1")
+    expect(screen.queryByTestId("file-bucket-all")).toBeNull()
+    fireEvent.click(filesBox().querySelector("header")!) // 再点回开
+    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
+
+    // ② 交付卡用把手折（整卡 onClick=进验货台，点标题会误触 —— 专用小靶）
+    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
+    expect(card().getAttribute("data-fold-closed")).toBe("true")
+    expect(card().querySelector('[data-fold-badge="deliver"]')?.textContent).toContain("✓ 执行成功")
+    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
+
+    // ③ 一键盘三态：收信息框（主卡留）→ 连主卡收 → 全展开
+    const master = () => screen.getByTestId("fold-master")
+    fireEvent.click(master())
+    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
+    expect(card().getAttribute("data-fold-closed")).toBeNull() // 主卡不伤验收动线
+    fireEvent.click(master())
+    expect(card().getAttribute("data-fold-closed")).toBe("true")
+    fireEvent.click(master())
+    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
+    expect(card().getAttribute("data-fold-closed")).toBeNull()
+    // ④ 按任务记忆落盘
+    expect(localStorage.getItem("octopus-fold:task-1")).toContain('"mode":0')
+  })
+
   it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]

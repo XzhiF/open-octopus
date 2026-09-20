@@ -21,7 +21,7 @@ import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
 import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
 import { formatBytes, formatCost, formatDuration } from "@/lib/format"
 import { clockShort, roundGlyph, roundTone } from "./phase-status"
-
+import { FoldBox, FoldHandle, useFold } from "../fold-context"
 import type { SignalLine } from "./signal-build"
 
 /** SSE 状态跳变一行（大事报在屏时垫底；权威态仍是 GET /:id）。 */
@@ -56,22 +56,7 @@ export interface RunCtx {
   openTrigger: () => void
 }
 
-// ── 通用小区块（波普皮肤，浅色面内）─────────────────────────────────
-// 2026-09-20：大折叠按用户反馈撤下（要的是验货台 tab 内每块折叠，见 acceptance/*）。
-
-function Box({ tag, tail, tone, children, className }: {
-  tag: string; tail?: React.ReactNode; tone?: string; children: React.ReactNode; className?: string
-}) {
-  return (
-    <section className={`overflow-hidden rounded-[13px] border-2 bg-pop-paper shadow-pop-sm ${tone ?? "border-pop-bd"} ${className ?? ""}`}>
-      <header className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-1.5">
-        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">{tag}</span>
-        {tail && <span className="ml-auto font-mono text-[10px] text-pop-dim">{tail}</span>}
-      </header>
-      <div className="px-3 py-2">{children}</div>
-    </section>
-  )
-}
+// ── 框皮肤统一走 ../fold-context 的 FoldBox（可折 + 折后一行结论）────────
 
 /** 该轮次/运行的账目一行 → 统一走 AggInline（∑/↑/↓/⚡/🗡️·N 次请求·$，2026-09-16 定版）。 */
 
@@ -235,7 +220,7 @@ function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamE
   const [openBad, setOpenBad] = useState(false)
   if (signals.length === 0) return null // 全绿 = 没有报告 —— 这就是报告本身
   return (
-    <Box tag="大事报 / SIGNAL" tail="只在有事时出现" tone="border-pop-bd">
+    <FoldBox id="signal" tag="大事报 / SIGNAL" badge={`${signals.length} 条 · ${signals[0].glyph} ${signals[0].text}`} tail="只在有事时出现" tone="border-pop-bd">
       <div className="space-y-1" data-testid="signal-box">
         {signals.map((l) => (
           <div key={l.text} className={`rounded-lg border-[1.5px] px-2 py-1 font-mono text-[11.5px] ${SIG_TONE[l.kind]}`} data-signal={l.kind}>
@@ -255,7 +240,7 @@ function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamE
           </div>
         ))}
       </div>
-    </Box>
+    </FoldBox>
   )
 }
 
@@ -264,6 +249,16 @@ function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamE
 export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
   const specPhase = ctx.specPhases.find((p) => p.index === pv.index) ?? null
   const [wfOpen, setWfOpen] = useState(false)
+  const fold = useFold()
+  const closedOf = (id: string, group: "info" | "main" = "info") => (fold ? fold.closed(id, group) : false)
+  const filesBadge = useMemo(() => {
+    if (!specPhase) return ""
+    const norm = specPhase.specPath.replace(/\\/g, "/").replace(/^\.\//, "")
+    const b = ctx.tree.batches.find((x) => norm.startsWith(`${x.dir}/`))
+    if (!b) return ""
+    const strip = (p: string) => p.slice(b.dir.length + 1)
+    return `${b.files.length} 件 · 票×${b.files.filter((f) => strip(f.path).startsWith("issues/")).length}`
+  }, [specPhase, ctx.tree.batches])
   const liveRound = pv.rounds.find((r) => r.state === "running" || r.state === "pending") ?? null
   const awaiting = pv.status === "awaiting_review" && pv.awaitingRound != null
     ? pv.rounds.find((r) => r.roundIndex === pv.awaitingRound) ?? null
@@ -314,9 +309,11 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         const dur = !Number.isNaN(startedMs) ? Math.max(0, ctx.now - startedMs) : null
         const agg = ctx.aggMap[liveRound.exec.id] ?? null
         return (
-          <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm">
+          <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm" data-fold-box="live" data-fold-closed={closedOf("live", "main") ? "true" : undefined}>
             <header className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5">
+              {fold && <FoldHandle id="live" group="main" closed={closedOf("live", "main")} onToggle={() => fold.toggle("live", "main")} />}
               <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">▶ LIVE ROUND · R{liveRound.roundIndex}</span>
+              {closedOf("live", "main") && <span className="truncate font-mono text-[10px] font-black" data-fold-badge="live">{RUN_STATUS_LABEL[run?.status ?? "running"] ?? "执行中"}{dur != null ? ` · ${formatDuration(dur)}` : ""}</span>}
               {(() => {
                 const liveLink = run ? deepLinkTarget(run) : null // 同上：workspace_id 在徽章上
                 return liveLink ? (
@@ -332,7 +329,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               })()}
               <span className="ml-auto font-mono text-[10px] text-pop-dim">{(liveRound.exec.workflow_ref ?? pv.workflowRef).replace(/^built-in\//, "")}</span>
             </header>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[11.5px]">
+            <div className={closedOf("live", "main") ? "hidden" : "flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[11.5px]"}>
               <span className="font-black text-pop-purple">{RUN_STATUS_LABEL[run?.status ?? liveRound.exec.status] ?? "执行中"}</span>
               <span className="font-mono text-pop-dim" title={timeStamp(run?.started_at ?? liveRound.exec.created_at)}>起 {clockShort(run?.started_at ?? liveRound.exec.created_at)}</span>
               {dur != null && <span className="font-mono font-black tabular-nums">{formatDuration(dur)}</span>}
@@ -366,9 +363,17 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   onClick={ctx.openAcceptance}
                   data-acceptance-open
                   data-testid="console-acceptance-card"
+                  data-fold-box="deliver"
+                  data-fold-closed={closedOf("deliver", "main") ? "true" : undefined}
                 >
                   <header className="flex items-center gap-2 px-3 py-1.5 border-b-2 border-pop-bd/10">
+                    {fold && <FoldHandle id="deliver" group="main" closed={closedOf("deliver", "main")} onToggle={() => fold.toggle("deliver", "main")} />}
                     <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
+                    {closedOf("deliver", "main") && (
+                      <span className="truncate font-mono text-[10px] font-black" data-fold-badge="deliver">
+                        {awaiting.state === "succeeded" ? "✓ 执行成功" : "✗ 执行失败"}{dur != null ? ` · 用时 ${formatDuration(dur)}` : ""}
+                      </span>
+                    )}
                     {flowLink && (
                       <button
                         onClick={(e) => { e.stopPropagation(); window.open(flowLink, "_blank", "noopener") }}
@@ -388,7 +393,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                       → 去验货台验收
                     </button>
                   </header>
-                  <div className="space-y-1 px-3 py-2 text-[12px]">
+                  <div className={closedOf("deliver", "main") ? "hidden" : "space-y-1 px-3 py-2 text-[12px]"}>
                     <div className="flex items-center gap-2">
                       <span className={`font-black ${awaiting.state === "succeeded" ? "text-pop-green" : "text-pop-red"}`}>
                         {awaiting.state === "succeeded" ? "✓ 执行成功" : awaiting.state === "failed" ? "✗ 执行失败" : `○ ${awaiting.state}`}
@@ -409,24 +414,24 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
 
       {/* 盘上文件（原草稿批次区的执行态替身） */}
       {specPhase && (
-        <Box tag="盘上文件" tail={`批次目录 · ${specPhase.specPath.replace(/^\.\/|\/spec\.md$/g, "")}`} className="bg-pop-paper">
+        <FoldBox id="files" tag="盘上文件" badge={filesBadge} tail={`批次目录 · ${specPhase.specPath.replace(/^\.\/|\/spec\.md$/g, "")}`} className="bg-pop-paper">
           <FileChips ctx={ctx} phase={specPhase} />
-        </Box>
+        </FoldBox>
       )}
 
       {/* 待执行：GOAL + 发射门禁 + 触发 CTA */}
       {ctx.task.status === "ready" && (
         <>
           {goal && (
-            <Box tag="GOAL">
+            <FoldBox id="goal" tag="GOAL" badge={goal.length > 28 ? `${goal.slice(0, 28)}…` : goal}>
               <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed">{goal}</p>
               {(ctx.task.task_spec?.ac?.length ?? 0) > 0 && (
                 <p className="mt-1 font-mono text-[10.5px] text-pop-dim">验收标准 {ctx.task.task_spec!.ac!.length} 条 · 全文见 spec</p>
               )}
-            </Box>
+            </FoldBox>
           )}
           {gateRows && (
-            <Box tag="发射门禁 / GATE" tail="服务端闸口为准">
+            <FoldBox id="gate" tag="发射门禁 / GATE" badge={`${gateRows.filter((g) => g.ok === true).length}/${gateRows.length} 绿`} tail="服务端闸口为准">
               <div className="space-y-1">
                 {gateRows.map((g) => (
                   <div key={g.text} className="flex items-center gap-2 text-[12px]">
@@ -437,7 +442,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   </div>
                 ))}
               </div>
-            </Box>
+            </FoldBox>
           )}
           {pv === ctx.phaseViews.find((p) => p.status === "pending")
             && !armedFuture && !waitingForSlot && (
@@ -455,7 +460,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
       {/* 轮次分档（2026-09-19 降噪定稿）：0 轮不渲染；1 轮有卡（LIVE/交付）→ 框整个
           消失（卡即轮）；1 轮已判 → 细条一行；≥2 轮（打回史）→ 账本框才回来。 */}
       {pv.rounds.length >= 2 && (
-        <Box tag="轮次 / ROUNDS" tail={`${pv.rounds.length} 轮`}>
+        <FoldBox id="rounds" tag="轮次 / ROUNDS" badge={`${pv.rounds.length} 轮`} tail={`${pv.rounds.length} 轮`}>
           <div>
             {pv.rounds.map((r) => {
               const exec = ctx.runsById.get(r.exec.id) ?? null
@@ -463,7 +468,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               return <RoundRow key={r.exec.id} ctx={ctx} meta={{ pv, r }} exec={exec} />
             })}
           </div>
-        </Box>
+        </FoldBox>
       )}
       {pv.rounds.length === 1 && !liveRound && !awaiting && (() => {
         const r = pv.rounds[0]
@@ -519,7 +524,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
       </div>
 
       {models.length > 0 && (
-        <Box tag="模型分布" tail={`${totalAgg?.totalCalls ?? 0} 次调用`}>
+        <FoldBox id="models" tag="模型分布" badge={`${models.length} 模型 · ${totalAgg?.totalCalls ?? 0} 次`} tail={`${totalAgg?.totalCalls ?? 0} 次调用`}>
           <div className="space-y-1.5">
             {models.map(([m, b]) => {
               const share = calls > 0 ? b.calls / calls : 0
@@ -534,10 +539,10 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
               )
             })}
           </div>
-        </Box>
+        </FoldBox>
       )}
 
-      <Box tag="轮次账本（全部）" tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 均为新标签页打开" : undefined}>
+      <FoldBox id="ledger" tag="轮次账本（全部）" badge={`${runs.length} 次执行`} tail={runs.length > 0 || ctx.phaseViews.length > 0 ? "↗ 均为新标签页打开" : undefined}>
         {runs.length === 0 && ctx.phaseViews.length === 0 ? (
           <p className="py-0.5 text-[11px] text-pop-dim">任务尚未派发执行。</p>
         ) : (
@@ -563,7 +568,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
             })()}
           </div>
         )}
-      </Box>
+      </FoldBox>
 
       <ArtifactsCard taskId={task.id} />
     </div>

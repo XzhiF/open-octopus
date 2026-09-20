@@ -26,6 +26,7 @@ import { getServerUrl } from "@/lib/server-config"
 import { formatTokenCount, formatCost } from "@/lib/format"
 import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry } from "@octopus/shared"
+import { FoldHandle, useFold } from "./fold-context"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 
 // executions-row statuses (票03: a task's runs ARE executions rows — the schedule
@@ -214,6 +215,7 @@ export function TaskAiUsageCard({ agg, loading, runCount, rounds }: {
   const models = agg ? Object.entries(agg.modelBreakdown ?? {}).sort((a, b) => b[1].calls - a[1].calls) : []
   return (
     <SectionCard
+      fold={{ id: "usage", badge: agg && agg.totalCalls > 0 ? `∑${formatCost(agg.totals.cost.usd, agg.totals.cost.complete)} · ${agg.totalCalls} 次` : "暂无落库调用" }}
       icon={<Bot className="size-4" />}
       title="任务 AI 消耗"
       right={<span className="text-[10px] text-muted-foreground">全部 {runCount} 次执行合计 · 编写期对话未落库（不臆造）</span>}
@@ -284,17 +286,23 @@ export function TaskAiUsageCard({ agg, loading, runCount, rounds }: {
 
 // ── 通用小区块 ──────────────────────────────────────────────────────
 
-export function SectionCard({ icon, title, right, children, tone }: {
+export function SectionCard({ icon, title, right, children, tone, fold }: {
   icon: React.ReactNode; title: string; right?: React.ReactNode; children: React.ReactNode; tone?: string
+  /** 传入且弹窗挂着 FoldProvider 时：标题行出把手，可折；折上显 badge（一行结论）。 */
+  fold?: { id: string; group?: "info" | "main"; badge?: string }
 }) {
+  const f = useFold()
+  const closed = !!(f && fold && f.closed(fold.id, fold.group ?? "info"))
   return (
-    <section className={`rounded-lg border p-4 space-y-3 ${tone ?? "border-border"}`}>
-      <header className="flex items-center gap-2">
+    <section className={`rounded-lg border p-4 ${closed ? "space-y-0" : "space-y-3"} ${tone ?? "border-border"}`} data-fold-box={fold?.id} data-fold-closed={closed ? "true" : undefined}>
+      <header className={`flex items-center gap-2 ${fold && f ? "cursor-pointer select-none" : ""}`} onClick={fold && f ? () => f.toggle(fold.id, fold.group ?? "info") : undefined}>
+        {fold && f && <FoldHandle id={fold.id} group={fold.group ?? "info"} closed={closed} onToggle={() => f.toggle(fold.id, fold.group ?? "info")} />}
         <span className="shrink-0 text-muted-foreground">{icon}</span>
         <h3 className="text-sm font-semibold">{title}</h3>
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">{right}</div>
+        {closed && fold?.badge && <span className="truncate font-mono text-[10px] font-black" data-fold-badge={fold.id}>{fold.badge}</span>}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">{!closed && right}</div>
       </header>
-      {children}
+      {!closed && children}
     </section>
   )
 }
@@ -317,6 +325,7 @@ export function ArtifactsCard({ taskId }: { taskId: string }) {
 
   return (
     <SectionCard
+      fold={{ id: "artifacts", badge: entries ? `${entries.length} 个产物` : "读取中…" }}
       icon={<FileText className="size-4" />}
       title="任务产物"
       right={entries ? <span className="text-xs text-muted-foreground">{entries.length} 个</span> : <Spinner className="size-3" />}
