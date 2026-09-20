@@ -1544,6 +1544,115 @@ export class TasksService {
     return toDTO(row)
   }
 
+  // ── Duplicate (整单复制 → 直入待执行) ─────────────────────────────────────
+
+  /** POST /api/tasks/:id/duplicate — 把源 task 的**全部草稿面**复制成一个新 task：
+   *  DB 行（task_spec v4 / org / project_ids / skills / resources /
+   *  authoring_resources / v3 workflow_ref 列）+ home 磁盘（.scratch/ 批次
+   *  spec.md+issues、workflows/ 自写 YAML）。executions 历史、验收账本、
+   *  workspace 绑定、trigger 游标、源会话**一律不带**（新 task 是全新草稿，
+   *  workspace_id=NULL → 首触发才建自己的 ws）。
+   *
+   *  默认 `ready:true` —— 复制完立刻过同款入队 gate：源是完备的 ready/done 任务
+   *  时副本直接落待执行（用户场景：实现不满意 → 复制 → 再跑）；gate 不过（如源
+   *  是半草稿）不回滚复制，副本留在草稿并回传 gate_missing（UI 提示"副本已存为
+   *  草稿"）。warnings：spec 的 input_values 里出现源 task id 字面量（绝对路径
+   *  指向源 home，执行时不会自动重映射）时告警。home 相对 specPath 无需改写
+   *  （home 按 id 隔离，天然不撞）。 */
+  duplicateTask(
+    id: string,
+    opts: { ready?: boolean } = {},
+  ): { task: TaskDTO; gate_missing?: string[]; warnings?: string[] } {
+    const src = this.taskDAO.getById(id)
+    if (!src) throw new TaskNotFoundError()
+
+    const srcSpec = parseJSON<Record<string, unknown>>(src.task_spec, {})
+    const isV4 = srcSpec.format === "v4"
+    // 锁定字段随 spec 原样直传（createTask 对 v3 会再注入一遍，同值无害）。
+    const taskType =
+      typeof srcSpec.task_type === "string" && (srcSpec.task_type === "coding" || srcSpec.task_type === "generic")
+        ? (srcSpec.task_type as "coding" | "generic")
+        : undefined
+    const skillGroups = Array.isArray(srcSpec.skill_groups)
+      ? (srcSpec.skill_groups as unknown[]).filter((g): g is string => typeof g === "string")
+      : undefined
+
+    // task_spec 只在 parse 得动时直传（v4 必 parse 得动 —— 它进过 gate；v2 的
+    // baseline {goal:"",ac:[]} 会被 schema 拒 → 副本回落 baseline，行为同源）。
+    let specForInput: unknown | undefined
+    if (isV4 || srcSpec.task_type !== undefined) {
+      specForInput = src.task_spec ? JSON.parse(src.task_spec) : undefined
+    }
+
+    const baseName = (src.name ?? "").trim() || DEFAULT_TASK_NAME
+    const copyName = baseName.endsWith("(copy)") ? baseName : `${baseName} (copy)`
+
+    const created = this.createTask({
+      org: src.org,
+      name: copyName,
+      task_spec: specForInput,
+      ...(taskType ? { task_type: taskType, skill_groups: skillGroups ?? [] } : {}),
+      project_ids: parseJSON<string[]>(src.project_ids, []),
+      skills: parseJSON<string[]>(src.skills, []),
+      resources: parseJSON<ResourceRef[]>(src.resources, []),
+      authoring_resources: parseJSON<ResourceRef[]>(src.authoring_resources, []),
+      // source_chat_session_id 故意不复制：autosave seam 按会话反查任务，
+      // 共享 session id 会串台。
+    })
+
+    // 草稿面磁盘复制 —— 必须先于 ready gate（gateV4Phases 按 home 解 specPath
+    // 存在性 + workflows/ 解析 workflowRef）。失败 → 回滚软删（draft 顺带
+    // reapHome），500 弹回，不留半成品副本。
+    try {
+      this.taskHomeService.copyDraftArtifacts(id, created.id)
+    } catch (err: unknown) {
+      try {
+        this.deleteTask(created.id)
+      } catch {
+        /* 回滚尽力而为：行/目录残留可被废弃草稿操作再清 */
+      }
+      throw err
+    }
+
+    // v3 顶层 workflow_ref 列：createTask 不收，这里照抄一次（v4 用不到，仅保
+    // v3 复制完整）。
+    if (src.workflow_ref) {
+      const fresh = this.taskDAO.getById(created.id)
+      if (fresh) this.taskDAO.updateWithVersion(created.id, { workflow_ref: src.workflow_ref }, fresh.version)
+    }
+
+    // 字面绝对路径指向源 home 的告警（${task.home} 占位符安全 —— launch 时按
+    // 新 home 重解析）。扫顶层 input_values + 每 phase 的 inputValues。
+    const warnings: string[] = []
+    const scanValues = (obj: unknown, where: string) => {
+      if (!obj || typeof obj !== "object") return
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        if (typeof v === "string" && v.includes(id)) {
+          warnings.push(`${where}.${k} 引用了原任务 home 的路径，副本执行时不会自动重映射，请检查`)
+        }
+      }
+    }
+    scanValues(srcSpec.input_values, "input_values")
+    if (Array.isArray(srcSpec.phases)) {
+      ;(srcSpec.phases as Array<Record<string, unknown>>).forEach((ph, i) =>
+        scanValues(ph?.inputValues, `phases[${i}].inputValues`),
+      )
+    }
+
+    const finish = (): TaskDTO => toDTO(this.taskDAO.getById(created.id)!)
+    if (opts.ready === false) return { task: finish(), warnings: warnings.length ? warnings : undefined }
+
+    try {
+      return { task: this.readyTask(created.id), warnings: warnings.length ? warnings : undefined }
+    } catch (err: unknown) {
+      if (err instanceof TaskReadyGateError) {
+        // 副本已创建且留在草稿 —— gate 的缺项原样回传给 UI。
+        return { task: finish(), gate_missing: err.missing, warnings: warnings.length ? warnings : undefined }
+      }
+      throw err
+    }
+  }
+
   // ── Reopen (ready → draft) ───────────────────────────────────────────────
 
   /** POST /api/tasks/:id/reopen — the enqueue undo. A ready task whose run has NOT

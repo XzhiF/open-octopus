@@ -4,6 +4,7 @@ import path from "path"
 import os from "os"
 import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
+import { WORKSPACE_NAME_PATTERN } from "@octopus/shared"
 import { logError } from "../file-logger"
 import { getArchiveService } from "./archive/archive-service"
 import { WorkspaceScaffold, DEFAULT_PIPELINE_YAML } from "./workspace-scaffold"
@@ -195,6 +196,11 @@ export class WorkspaceService {
   }
 
   create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
+    // 禁中文命名 (2026-09-20)：name 直接进目录名 + git 分支名（branchName 兜底），
+    // route 层已 400，这里挡住内部新调用方漏网。
+    if (!WORKSPACE_NAME_PATTERN.test(input.name)) {
+      throw new Error(`workspace 名称非法: "${input.name}" — 仅允许英文字母、数字、下划线、连字符`)
+    }
     const id = randomUUID()
     const now = new Date().toISOString()
     const resolvedPath = input.path.replace(/^~/, os.homedir())
@@ -302,7 +308,10 @@ export class WorkspaceService {
     // keep the display name (downstream all consume the row's `path`, and
     // /importable reconstructs paths from actual dir entries — both stay
     // consistent).
-    const dirName = input.name.replace(/[/\\:*?"<>|]/g, "")
+    // 禁中文命名 (2026-09-20)：sanitize 从「剥 8 个保留字符（中文存活进目录名）」
+    // 升级为「只留 [A-Za-z0-9_-]」。上游 task-ws-name 已产出纯 ASCII 名，这里是
+    // 防御层（老数据/旁路调用兜底）；剥空 → ws-{ts} 保证目录名永远合法非空。
+    const dirName = input.name.replace(/[^a-zA-Z0-9_-]/g, "") || `ws-${Date.now()}`
     const wsDir = path.join(os.homedir(), ".octopus", "orgs", input.org, "workspaces", dirName)
     // task-phase-redesign (ticket 05, K12 / 票03暗雷#3): the old behavior was
     // `rmSync(wsDir, recursive)` + rebuild. With the v4 model a workspace is no

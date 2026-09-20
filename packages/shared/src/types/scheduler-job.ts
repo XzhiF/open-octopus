@@ -107,11 +107,29 @@ export const subunitSpecSchema = z.object({
   resources: z.array(resourceRefSchema).default([]),
 })
 
+/** Path-safe slug 的单一规则 —— task 级主 slug（{@link taskSpecSchema}.slug，
+ *  批次父目录名）与 phase 级 sub-slug（{@link taskPhaseSchema}.slug，批次子目录
+ *  名）共用：字母/数字开头，其后字母/数字/._-。批次目录 =
+ *  `.scratch/<main-slug>/<sub-slug>/`（2026-09-20 契约改版，替代旧日期层
+ *  `.scratch/<YYYYMMDD>/<slug>/`；旧布局存量任务不迁移 —— gate/batchTree 按
+ *  home 相对路径解存在性，布局无关）。 */
+export const pathSafeSlugSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, {
+    message: "Invalid slug: path-safe only (letters/digits start, then letters/digits/dots/hyphens/underscores)",
+  })
+
 /** task-phase-redesign (K1/K4, ticket 01) — one Phase of a v4 task.
  *  1 phase = 1 spec (scope + tickets + acceptance method, pointed to by
  *  `specPath` at the task home) + 1 workflow binding (`workflowRef` +
- *  `inputValues`) + ≥1 round. Phase↔slug is 1:1; `slug` names the batch dir
- *  `.scratch/<YYYYMMDD>/<slug>/` (K10), so it is path-safe by regex.
+ *  `inputValues`) + ≥1 round. Phase↔slug is 1:1; `slug` names the batch
+ *  SUB-dir — `.scratch/<task.slug>/<slug>/` (K10), so it is path-safe by
+ *  regex. Convention since 2026-09-20: short kebab sub-name (e.g. `auth-flow`,
+ *  `2`) — the main name already lives in the parent dir. Pre-contract tasks
+ *  keep their `<main>-<i>` full-name slugs untouched (slug 字段语义放宽为约定,
+ *  不是校验差集)。
  *  `index` is 1-based (ticket 07 derivation: accepted ∧ i<n → next round is
  *  i+1; accepted ∧ i=n → archiving). `inputValues` values may carry the v4
  *  placeholder vocabulary (`${phase.slug}`, `${phase.spec_dir}`,
@@ -120,9 +138,7 @@ export const subunitSpecSchema = z.object({
 export const taskPhaseSchema = z.object({
   index: z.number().int().min(1),
   name: z.string().min(1).max(100),
-  slug: z.string().min(1).max(100).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, {
-    message: "Invalid slug: path-safe only (letters/digits start, then letters/digits/dots/hyphens/underscores)",
-  }),
+  slug: pathSafeSlugSchema,
   specPath: z.string().min(1),
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
@@ -253,6 +269,12 @@ export const taskSpecSchema = z.object({
   // Sole v4 discriminator. Absent ⇒ v3/legacy (generic/composite keep the old
   // chain: goal/ac double-confirm gate). Only "v4" is defined today.
   format: z.literal("v4").optional(),
+  // 批次主 slug (2026-09-20 契约改版) — task 级唯一命名锚，Batch 目录的父层：
+  // specPath 约定 `./.scratch/<slug>/<phase.slug>/spec.md`（旧约定为日期层
+  // `<YYYYMMDD>`，已废 —— 新草稿一律主 slug；存量任务无此字段照旧运行）。
+  // 拆分定一次、全 phase 共用；也用作自动 workspace 名的第一优先来源
+  // (task-ws-name.ts)。Optional — not locked (draft 期可改，ready 后随结构冻结)。
+  slug: pathSafeSlugSchema.optional(),
   // Phase plan (K1). Optional: a v4 draft mid-authoring may omit it entirely;
   // when present it must carry ≥1 phase (the ready gate, ticket 04, re-checks
   // ≥1 plus per-phase specPath/workflowRef resolvability — schema only owns

@@ -42,7 +42,7 @@ vi.mock("@/lib/tasks-api", () => ({
   resumeTask: mockResume,
   // 其余导入面（task-modal / trigger-dialog 等）——测试不触发，桩即可
   deleteTask: vi.fn(), createTask: vi.fn(), updateTask: vi.fn(), updateSpecField: vi.fn(),
-  listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(),
+  listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(), duplicateTask: vi.fn(),
   TaskApiError: class extends Error { constructor(msg: string, public status = 0) { super(msg) } },
   ArtifactContentError: class extends Error {},
   WorkflowRefViewError: class extends Error {},

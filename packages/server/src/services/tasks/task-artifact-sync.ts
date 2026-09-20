@@ -141,7 +141,10 @@ export function seedPhaseToWorkspace(
   return copyTree(homeAbsSpecDir, path.join(wsPath, relBatchPath))
 }
 
-function copyTree(srcDir: string, dstDir: string): number {
+/** Recursive copy, mtime-preserving, symlink-skipping. Exported for
+ *  TaskHomeService.copyDraftArtifacts (duplicate-task 2026-09-20) — the
+ *  symlink skip is exactly what keeps skills/ junctions out of a copied home. */
+export function copyTree(srcDir: string, dstDir: string): number {
   let count = 0
   fs.mkdirSync(dstDir, { recursive: true })
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {

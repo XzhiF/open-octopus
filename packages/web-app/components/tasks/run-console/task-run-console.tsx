@@ -24,7 +24,7 @@ import {
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
@@ -76,7 +76,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // tab 切换只切 hidden —— 三元卸载会把在飞的复检会话打回服务端尾 200 行、
   // gate/编辑草稿归零、重拉 5-6 个请求（「切走再回来失忆」）。换任务时复位。
   const [acceptMounted, setAcceptMounted] = useState(!!startOnAcceptance)
-  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | null>(null)
+  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
@@ -286,6 +286,23 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       toast.error(err instanceof Error ? err.message : "取消失败")
     } finally { setBusy(null) }
   }
+  // duplicate — 整单复制（spec/issues/自写 workflows 全量带走），副本默认直入
+  // 待执行；源是半草稿时 gate 不过 → 副本留草稿 + missing 说清楚。
+  const handleDuplicate = async () => {
+    setBusy("duplicate")
+    try {
+      const result = await duplicateTask(task.id)
+      if (result.gate_missing?.length) {
+        toast.warning(`副本已存为草稿（未入队）：缺 ${result.gate_missing.join("、")}`)
+      } else {
+        toast.success(`已复制「${result.task.name}」到待执行`)
+      }
+      for (const w of result.warnings ?? []) toast.warning(w)
+      onMutated()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "复制失败")
+    } finally { setBusy(null) }
+  }
 
   const handlePause = async () => {
     setBusy("pause")
@@ -432,6 +449,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               {busy === "abort" ? <Spinner className="size-2.5" /> : "■ 中止"}
             </button>
           )}
+          {/* duplicate: 任意状态可用 —— 实现不满意 → 整单复制再跑一单。 */}
+          <button
+            onClick={() => void handleDuplicate()}
+            disabled={busy !== null}
+            data-task-duplicate
+            className={barBtn}
+            title="复制整单（spec/issues/自写 workflows 全量）→ 新任务直入待执行"
+          >
+            {busy === "duplicate" ? <Spinner className="size-2.5" /> : "⧉ 复制"}
+          </button>
           {chrome && (
             <button
               onClick={chrome.onToggleFullscreen}

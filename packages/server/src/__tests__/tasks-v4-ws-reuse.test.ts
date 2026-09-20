@@ -253,10 +253,11 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
       expect(task.workspace_id).toBeTruthy()
       expect(task.version).toBe(1)
 
-      // ws 名 = task:{标题}-{MMDD-HHmmss}（首建拼名），目录真实落盘。
+      // ws 名 = task-{ASCII core}-{MMDD-HHmmss}（首建拼名；禁中文命名 2026-09-20，
+      // 标题剥成合法英文名），目录真实落盘。
       const ws = db.prepare("SELECT name, path, task_id, source FROM workspaces WHERE id = ?").get(task.workspace_id!) as
         { name: string; path: string; task_id: string | null; source: string }
-      expect(ws.name).toMatch(/^task:E2E_WR .+-\d{4}-\d{6}$/)
+      expect(ws.name).toMatch(/^task-E2E_WR.+-\d{4}-\d{6}$/)
       // v41 反向指针：「这个工作区属于哪个任务」是一次列读，不是 origin_id 反查桥。
       expect(ws.task_id).toBe(taskId)
       expect(ws.source).toBe("task")
