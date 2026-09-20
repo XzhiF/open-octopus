@@ -1,0 +1,147 @@
+<!doctype html>
+<!-- .scratch/20260920-verify-header-mock/index.html · 当场复检 header 重排原型
+     病根：一行塞八物（折/输出/题/命令/逐仓/超时/编辑/重跑/复检），命令与动作互相抢主。
+     重排：三层各司其职 —— 第1行身份+结论+主钮；第2行参数（命令/逐仓/超时+编辑）；
+     结果/输出永远在第3区。次行动作（重跑）降为图标钮，永远只有一枚绿章。 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>当场复检 · header 重排</title>
+<style>
+  :root{
+    --bg:#fffdf5; --paper:#fff; --ink:#1c1b22; --dim:#77757f; --bd:#211f27;
+    --purple:#5b45ff; --green:#00b575; --green-soft:#d9f5e7; --amber:#ffb800; --amber-soft:#fff0cc;
+    --cyan:#22b8e0; --cyan-soft:#daf4fb; --red:#e5484d; --red-soft:#ffe3e9; --idle:#eceaf5;
+    --navy:#23486b; --navy-soft:#e6edf5;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#ded9cc;color:var(--ink);font:13px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;padding:24px 28px 70px}
+  h1{font-size:16px;margin:0 0 3px}
+  .sub{color:var(--dim);font-size:11.5px;margin:0 0 16px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1080px}
+  .cell{display:flex;flex-direction:column;gap:6px}
+  .cell>label{font:900 9px var(--mono);letter-spacing:.1em;color:var(--dim)}
+  /* 现状病样 */
+  .oldcard{border:2px solid var(--bd);border-radius:13px;background:var(--paper);padding:8px 11px;font:11.5px var(--mono);display:flex;flex-wrap:wrap;gap:7px;align-items:center;box-shadow:3px 3px 0 rgba(33,31,39,.1)}
+  .oldcard .bad{outline:2px dashed var(--red);outline-offset:1px;border-radius:5px}
+  /* 新卡 */
+  .card{border:2px solid var(--bd);border-radius:13px;background:var(--paper);box-shadow:3px 3px 0 rgba(33,31,39,.12);overflow:hidden}
+  .h1row{display:flex;align-items:center;gap:8px;padding:7px 11px}
+  .h2row{display:flex;align-items:center;gap:8px;padding:5px 11px 7px;border-top:1.5px dashed rgba(33,31,39,.12);font:11px var(--mono);background:#fbf8ee}
+  .chev{width:18px;height:18px;border:1.5px solid var(--navy);border-radius:6px;color:var(--navy);background:var(--navy-soft);display:grid;place-items:center;font:900 9px var(--mono);cursor:pointer}
+  .term{width:18px;height:18px;border:1.5px solid rgba(33,31,39,.3);border-radius:6px;color:var(--dim);display:grid;place-items:center;font:900 8.5px var(--mono);cursor:pointer}
+  .term:hover,.chev:hover{border-color:var(--bd)}
+  .title{font:900 10px var(--mono);letter-spacing:.08em;color:var(--dim)}
+  .pill{border:2px solid var(--bd);border-radius:99px;padding:1px 9px;font:900 10px var(--mono);background:var(--idle);color:var(--dim)}
+  .pill.ok{background:var(--green-soft);color:#0c7a4d}
+  .pill.bad{background:var(--red-soft);color:#c22}
+  .pill.run{background:var(--amber-soft);color:#8a6400}
+  .right{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .iconbtn{width:24px;height:24px;border:2px solid var(--bd);border-radius:8px;background:var(--paper);font:900 12px var(--mono);cursor:pointer;box-shadow:2px 2px 0 rgba(33,31,39,.18);display:grid;place-items:center}
+  .iconbtn:hover{transform:translate(-1px,-1px)}
+  .primary{border:2.5px solid var(--bd);border-radius:9px;background:var(--green);color:#fff;font:900 11px var(--mono);padding:3.5px 12px;cursor:pointer;box-shadow:2.5px 2.5px 0 rgba(33,31,39,.22)}
+  .primary.stop{background:var(--red)}
+  .dollar{color:var(--dim)}
+  .cmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip{border:1.5px dashed rgba(33,31,39,.35);border-radius:6px;padding:0 6px;font:900 9px var(--mono);color:var(--dim);background:var(--paper)}
+  .tmo{font:10px var(--mono);color:var(--dim)}
+  .edit{border:none;background:none;font:900 9.5px var(--mono);color:var(--navy);cursor:pointer;text-decoration:underline dotted;padding:0}
+  .result{border-top:2px solid rgba(33,31,39,.08);background:#fbf8ee;padding:6px 11px;font:11px var(--mono);color:var(--dim)}
+  .result b{color:#0c7a4d}
+  .result.err b{color:#c22}
+  .out{border-top:2px solid rgba(33,31,39,.08);background:var(--bd);color:#d8d5e6;font:10.5px/1.7 var(--mono);padding:7px 11px;max-height:92px;overflow:hidden}
+  .note{font-size:11.5px;color:var(--dim);line-height:1.7;margin-top:14px;max-width:1080px}
+  .note b{color:var(--ink)}
+  .del{text-decoration:line-through;text-decoration-color:var(--red);opacity:.7}
+</style>
+</head>
+<body>
+<h1>当场复检 —— header 三层重排</h1>
+<p class="sub">命令是参数不是动作，动作永远只有右边那一枚绿章。逐仓/超时跟着命令走第2行，编辑降为第2行尾的文字钮；重跑收进图标钮 ↻。</p>
+
+<div class="grid">
+  <div class="cell">
+    <label>现状（一行八物，命令把按钮挤下跳）</label>
+    <div class="oldcard">
+      <span class="bad">▾</span><span class="bad">&gt;_▾</span><b>当场复检</b>
+      <span class="bad" style="border:1px solid rgba(33,31,39,.2);border-radius:6px;padding:1px 6px;background:rgba(33,31,39,.05)">mvn -B test（逐仓各跑一次）</span>
+      <span class="bad">逐仓</span><span class="bad">≤900s</span>
+      <span class="bad">编辑</span><span class="bad">重跑</span>
+      <span class="bad" style="background:var(--green);color:#fff;border-radius:8px;padding:2px 10px;font-weight:900">▶ 复检</span>
+    </div>
+    <div class="oldcard" style="color:var(--dim);font-weight:900;border-style:dashed;outline:2px dashed rgba(229,72,77,.45)">
+      ⚠ 上面这行宽度一窄就折成两三行，绿章和灰钮各占一行头
+    </div>
+  </div>
+
+  <div class="cell">
+    <label>新 · 状态 A：跑过且过了</label>
+    <div class="card">
+      <div class="h1row">
+        <span class="chev">▾</span>
+        <span class="title">当场复检</span>
+        <span class="pill ok">✓ passed · 2m41s</span>
+        <span class="right">
+          <button class="iconbtn" title="重跑（与初跑同参数）">↻</button>
+          <button class="primary">▶ 复检</button>
+        </span>
+      </div>
+      <div class="h2row">
+        <span class="dollar">$</span><span class="cmd" title="cd repo && mvn -B test">mvn -B test</span>
+        <span class="chip">逐仓 ×2</span><span class="tmo">≤900s</span>
+        <button class="edit">编辑</button>
+      </div>
+      <div class="result"><b>✓ 全绿</b> · 2 仓各过 · verdict 已落批次目录</div>
+    </div>
+  </div>
+
+  <div class="cell">
+    <label>新 · 状态 B：正在跑</label>
+    <div class="card">
+      <div class="h1row">
+        <span class="chev">▾</span>
+        <span class="title">当场复检</span>
+        <span class="pill run">● 跑着 · 34s · util→admin</span>
+        <span class="right"><button class="primary stop">■ 中止</button></span>
+      </div>
+      <div class="h2row">
+        <span class="dollar">$</span><span class="cmd">mvn -B test</span>
+        <span class="chip">逐仓 ×2</span><span class="tmo">剩 ~14m</span>
+      </div>
+      <div class="out">[INFO] Tests run: 12, Failures: 0 …<br>[INFO] Building admin 0.1.0 [2/2]</div>
+    </div>
+  </div>
+
+  <div class="cell">
+    <label>新 · 状态 C：挂了 + 没配命令两种极端</label>
+    <div class="card">
+      <div class="h1row">
+        <span class="chev">▸</span>
+        <span class="title">当场复检</span>
+        <span class="pill bad">✗ failed · 2m08s</span>
+        <span class="right"><button class="iconbtn" title="重跑">↻</button><button class="primary">▶ 复检</button></span>
+      </div>
+      <div class="result err"><b>✗ admin 3 用例未过</b> — LuhnControllerTest.garbage：expected false, got 500 <button class="edit" style="margin-left:6px">看输出 ▾</button></div>
+    </div>
+    <div class="cell" style="margin-top:10px"><label>没配命令（全卡只此一行）</label>
+    <div class="card">
+      <div class="h1row">
+        <span class="chev">▾</span>
+        <span class="title">当场复检</span>
+        <span class="pill">未配置</span>
+        <span class="right"><button class="primary" style="background:var(--paper);color:var(--ink)">配置命令</button></span>
+      </div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<p class="note">
+<b>规则</b>：① 第1行永远 ≤10 个可视元素：把手 / 题名 / <b>状态胶囊</b>（结果从正文升级为胶囊，<span class="del">pass 藏在角落小字</span>）/ 右侧动作区（↻ + 绿章；跑着时只剩 ■）。
+② 第2行 = 参数行：命令 + 逐仓 + 超时 + 编辑；<b>跑着/挂了的第2行换成剩时/进度</b>。没命令就没有第2行。
+③ 折上（把手 ▸）：只留第1行，胶囊就是结论 —— 现在徽章那行「上次复检 passed」被胶囊取代，不再重复。<br>
+<b>实现映射</b>：verify-panel.tsx 现结构改动小 —— 状态胶囊复用 summary/running 已有态；↻=现 重跑；编辑/配置=现钮换位置；逐仓/超时 chip 进 h2row。<b>&gt;_ 钮整个删除</b>，输出改按状态自动决定：<b>跑着=常开随流</b>（B 卡），<b>挂了=尾 20 行直接顶出 +「看完整输出」文字钮</b>（C 卡），<b>过了=根本不显示</b>（A 卡，verdict 行即全部）—— 想看的时刻它就在，不想看的不占一票之地。<span class="del">未预设复检命令</span>长条 code 框整个退役（信息进胶囊「未配置」）。
+</p>
+</body>
+</html>

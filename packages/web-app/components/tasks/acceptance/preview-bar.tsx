@@ -213,6 +213,10 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
             </label>
             <span className="text-[10px] text-muted-foreground">别写字面 <code>$vars.</code> / <code>{"${x|filter}"}</code></span>
             <div className="ml-auto flex gap-1.5">
+              {/* 取消 = 丢弃草稿原样收回（2026-09-20 用户点名：不该只有保存/清除两扇门） */}
+              <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => setEditing(false)} data-testid="preview-cancel">
+                取消
+              </Button>
               {cfg && (
                 <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => { setRbMode(false); setEditing(false) }} title="任务另有单服务简写配置，切回去看">
                   简写方式
@@ -245,6 +249,9 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
           <div className="flex items-center gap-2 pt-0.5">
             <span className="text-[10px] text-muted-foreground">命令里别写字面 <code>$vars.</code> / <code>{"${x|filter}"}</code>（引擎替换语法，会被误替换）</span>
             <div className="ml-auto flex gap-1.5">
+              <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => setEditing(false)} data-testid="preview-cancel">
+                取消
+              </Button>
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => void seedRbFromPreview()} data-testid="preview-to-rb">runbook 方式 →</Button>
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => void save(() => onSaveCfg(null))} data-testid="preview-clear">清除</Button>
               <Button size="sm" className="h-6 text-[10px]" disabled={saving || !cmd.trim() || !/^https?:\/\//i.test(url)} onClick={() => void save(() => onSaveCfg({ command: cmd.trim(), url: url.trim(), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), ...(pattern.trim() ? { readyPattern: pattern.trim() } : {}) }))} data-testid="preview-save">

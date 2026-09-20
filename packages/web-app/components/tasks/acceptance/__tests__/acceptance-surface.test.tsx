@@ -678,7 +678,7 @@ describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
 describe("验货台 v2 — 当场复检", () => {
   it("未配置命令 → 编辑器入口存在、▶ 不可见；保存走 spec-field(user)", async () => {
     renderModal() // V4_SPEC 无 acceptance_verify
-    expect(await screen.findByText("未预设复检命令")).toBeTruthy()
+    expect(await screen.findByText("配置命令")).toBeTruthy()
     fireEvent.click(screen.getByTestId("verify-edit"))
     fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "pnpm build && pnpm test" } })
     mockUpdateSpecField.mockResolvedValue({ version: 5 })
@@ -694,7 +694,7 @@ describe("验货台 v2 — 当场复检", () => {
   it("VP1 多仓：per_repo 配置 → 「逐仓」徽章 + 命令注记；编辑预勾且 cwd 禁用（被忽略）", async () => {
     renderModal({ ...(V4_SPEC as object), acceptance_verify: { command: "mvn -B test", per_repo: true, timeoutS: 900 } } as unknown as TaskSpec)
     expect(await screen.findByTestId("verify-per-repo")).toBeTruthy()
-    expect(screen.getByTestId("verify-panel").textContent).toContain("逐仓各跑一次")
+    expect(screen.getByTestId("verify-params").textContent).toContain("mvn -B test")
     fireEvent.click(screen.getByTestId("verify-edit"))
     const cb = screen.getByTestId("verify-per-repo-input") as HTMLInputElement
     expect(cb.checked).toBe(true)
@@ -703,7 +703,7 @@ describe("验货台 v2 — 当场复检", () => {
 
   it("VP2 勾「逐仓」保存 → spec-field 载荷带 per_repo:true 且不带 cwd；回显不再抹掉", async () => {
     renderModal() // 无 verify 起步
-    await screen.findByText("未预设复检命令")
+    await screen.findByText("配置命令")
     fireEvent.click(screen.getByTestId("verify-edit"))
     fireEvent.change(screen.getByTestId("verify-command-input"), { target: { value: "mvn -B test" } })
     fireEvent.click(screen.getByTestId("verify-per-repo-input"))
@@ -725,14 +725,16 @@ describe("验货台 v2 — 当场复检", () => {
     await waitFor(() => expect(sseHandlers.has(TASK_VERIFY_LOG_EVENT)).toBe(true))
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "building…", stream: "stdout" })
     fireSse(TASK_VERIFY_LOG_EVENT, { task_id: "t1", line: "nope", stream: "stderr" })
-    // （原写法 expect(await …).textContent 把属性访问落在 Chai Assertion 上 → Invalid Chai property）
-    const vConsole = await screen.findByTestId("verify-console")
-    await waitFor(() => expect(vConsole.textContent).toContain("[stderr] nope"))
+    // 重查而非持节点（passed 后控制台按设计卸载，旧引用会脱挂）
+    await waitFor(() => expect(screen.getByTestId("verify-console").textContent).toContain("[stderr] nope"))
     // 终态 → 盖章
     fireSse(TASK_VERIFY_EVENT, { task_id: "t1", state: "passed", exit_code: 0, duration_ms: 1500, verdict_path: `${BATCH_DIR}/verify-r1-x.md` })
-    const stamp = await screen.findByTestId("verify-stamp")
-    expect(stamp.textContent).toContain("PASSED")
-    expect(stamp.getAttribute("data-state")).toBe("passed")
+    const pill = await screen.findByTestId("verify-pill")
+    expect(pill.textContent).toContain("passed")
+    expect(pill.getAttribute("data-state")).toBe("passed")
+    // 「过了 → 输出整区不显示」定稿行为（日志留 verdict 文件）
+    expect(screen.queryByTestId("verify-console")).toBeNull()
+    expect(screen.getByTestId("verify-result").textContent).toContain("✓ 全绿")
   })
 
   it("启动被拒（409 复检进行中）→ toast，不崩", async () => {
@@ -1101,14 +1103,17 @@ describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，
     let vh: HTMLElement | null = null
     const handles = () => [...document.querySelectorAll("[data-fold-toggle]")].map((x) => x.getAttribute("data-fold-toggle")).join(",")
     await waitFor(() => { vh = document.querySelector('[data-fold-toggle="item-verify"]'); expect(handles()).toContain("item-verify") })
-    // 把手在 header 最左；>_ 输出钮被挪到标题之后（曾是误认源头）
+    // 把手在 L1 最左；>_ 手动钮已整体删除（输出显示时机由状态决定）
     const header = document.querySelector('[data-verify-panel] > div') as HTMLElement
     expect(header.children[0].getAttribute("data-fold-toggle")).toBe("item-verify")
     expect(header.children[1].textContent).toContain("当场复检")
-    expect(header.children[2].getAttribute("data-testid")).toBe("verify-console-toggle")
+    expect(header.children[2].getAttribute("data-testid")).toBe("verify-pill")
+    expect(screen.queryByTestId("verify-console-toggle")).toBeNull()
     fireEvent.click(vh!)
     await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBe("true"))
-    expect((document.querySelector('[data-fold-badge="item-verify"]')?.textContent ?? "")).toContain("复检")
+    // 折上 = 只剩 L1：状态胶囊即结论，参数行消失（此 harness 无 verify 配置 → 未配置）
+    expect(screen.getByTestId("verify-pill").textContent).toContain("未配置")
+    expect(screen.queryByTestId("verify-params")).toBeNull()
     fireEvent.click(document.querySelector('[data-fold-toggle="item-verify"]') as HTMLElement)
     await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBeNull())
   })
