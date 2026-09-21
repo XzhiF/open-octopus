@@ -33,6 +33,12 @@ interface GeneratedAgentNode {
   skills?: string[]
   depends_on?: string[]
   model?: string
+  /** 会话策略（2026-09-21 起由规划器显式产出，引擎只透传+护栏）：
+   *  "new" = 自开独立会话（缺省值——并行票互不灌上下文）；
+   *  "continue" = 续接工作流主线会话。 */
+  context?: "new" | "continue"
+  /** 从某个 depends_on 内的前驱节点会话续接（链式复用其探路成果）。 */
+  resume_from?: string
 }
 
 interface GeneratedOctopusAgentNode {
@@ -103,9 +109,16 @@ export function buildGenerationPrompt(
   parts.push('  "type": "agent",')
   parts.push('  "prompt": "What this agent should do",')
   parts.push('  "skills": ["optional-skill-name"],')
-  parts.push('  "depends_on": ["other-node-id"]')
+  parts.push('  "depends_on": ["other-node-id"],')
+  parts.push('  "context": "new",')
+  parts.push('  "resume_from": "optional-predecessor-in-depends-on"')
   parts.push('}')
   parts.push('```')
+  parts.push("")
+  parts.push("### Session policy (agent nodes) — you decide it, per node:")
+  parts.push('- `"context": "new"` (DEFAULT if omitted): the node runs in its OWN conversation session. Use for any node that may run **in parallel** with another node.')
+  parts.push('- `"resume_from": "<id>"`: continue the session of a completed predecessor — the node inherits what that predecessor read/explored instead of re-exploring. ONLY allowed when: (a) it is listed in this node\'s `depends_on`, (b) the referenced node is an `agent` node. Omit it for nodes with multiple deps (merge/join nodes should rely on files, not any one branch\'s memory).')
+  parts.push('- `"context": "continue"`: join the workflow\'s main shared thread — avoid for parallel nodes (shared sessions inflate each other\'s context and slow everything down).')
   parts.push("")
   parts.push("### 2. `octopus_agent` — versioned Octopus agent (use for tasks that need a specific agent's expertise)")
   parts.push('```json')
@@ -181,10 +194,16 @@ function dagToWorkflowDef(dag: GeneratedDAG, workflowName: string, parentModel?:
           model: n.model ?? parentModel,
         }
       }
-      // resume_from 仅挂「唯一的 agent 前驱」—— octopus_agent 的会话不进
-      // branchSessionIds，挂了也会静默落空，不如不挂。
-      const soleDep = n.depends_on?.length === 1
-        ? dag.nodes.find((x) => x.id === n.depends_on![0])
+      // 会话策略 = 规划器在 DAG 里显式产出（2026-09-21 用户拍板：策略进动态 workflow
+      // 声明，不在引擎代码里代劳）。引擎只做两件事：
+      // ① 缺省 context:"new" —— 规划器漏写时并行票不互灌（phase-2 实测共享会话把
+      //    ctx 灌到 274k/回合、llm-calls 跨节点重复记账，缺省必须安全）；
+      // ② 护栏 —— resume_from 必须同时是 depends_on 里的 agent 节点，否则丢弃
+      //    （从非依赖节点续会话 = 把并行分支的会话接进来，正是隔离要消灭的东西；
+      //    octopus_agent 的会话不进 branchSessionIds，挂了也静默落空）。
+      const resumeFrom = n.resume_from && n.depends_on?.includes(n.resume_from)
+        && dag.nodes.find((x) => x.id === n.resume_from)?.type === "agent"
+        ? n.resume_from
         : undefined
       return {
         id: n.id,
@@ -193,13 +212,8 @@ function dagToWorkflowDef(dag: GeneratedDAG, workflowName: string, parentModel?:
         skills: n.skills,
         depends_on: n.depends_on,
         model: n.model ?? parentModel,
-        // 会话隔离 (2026-09-21 phase-2 实测: 并行票共享 globalSession, 上下文互灌至
-        // 274k/回合, decode 拖慢 + llm-calls 归因互相重复)。
-        // 规则: context:"new" 各自开会话; **恰好一个 agent 前驱**时 resume_from 链式
-        // 续接(串行链复用探路成果); 零/多前驱(汇聚票)不续接 —— 汇聚票的输入真相在
-        // 文件里(票状态/handoff), 不在任何一个分支的记忆里。
-        ...(soleDep && soleDep.type === "agent" ? { resume_from: soleDep.id } : {}),
-        context: "new" as const,
+        ...(resumeFrom ? { resume_from: resumeFrom } : {}),
+        context: n.context ?? ("new" as const),
       }
     }),
   }
@@ -245,6 +259,9 @@ function workflowDefToYaml(wf: WorkflowDef): string {
           lines.push(`    prompt: "${node.prompt.replace(/"/g, '\\"')}"`)
         }
       }
+      // 会话策略字段必须落盘 —— rerun 复用路径 (parseYamlToDag) 靠它还原声明
+      if (node.context && node.type === "agent") lines.push(`    context: ${node.context}`)
+      if ((node as any).resume_from) lines.push(`    resume_from: ${(node as any).resume_from}`)
     }
     if (node.model) lines.push(`    model: ${node.model}`)
     if (node.skills && node.skills.length > 0) {
@@ -626,6 +643,9 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
           const prompt = promptMatch?.[1] ?? promptMatch?.[2]?.trim()
           const skillsMatch = block.match(/skills:\s*\[([^\]]*)\]/)?.[1]
           const skills = skillsMatch ? skillsMatch.split(",").map((s) => s.trim()) : undefined
+          // 会话策略字段回读（与 workflowDefToYaml 的落盘对称）
+          const ctxRaw = block.match(/context:\s*(new|continue)\b/)?.[1]
+          const resumeFrom = block.match(/resume_from:\s*([\w-]+)/)?.[1]
 
           nodes.push({
             id,
@@ -634,6 +654,8 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
             skills,
             depends_on,
             model,
+            context: ctxRaw === "new" || ctxRaw === "continue" ? ctxRaw : undefined,
+            ...(resumeFrom ? { resume_from: resumeFrom } : {}),
           })
         }
       }

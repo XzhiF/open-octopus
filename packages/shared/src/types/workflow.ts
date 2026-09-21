@@ -132,6 +132,7 @@ export const HookSchema = z.object({
 })
 
 export interface WorkflowHooks {
+  on_workflow_start?: HookDef[]
   on_node_success?: HookDef[]
   on_node_failure?: HookDef[]
   on_workflow_failure?: HookDef[]
@@ -153,6 +154,7 @@ export interface WorkflowHooks {
 }
 
 export const WorkflowHooksSchema = z.object({
+  on_workflow_start: z.array(HookSchema).optional(),
   on_node_success: z.array(HookSchema).optional(),
   on_node_failure: z.array(HookSchema).optional(),
   on_workflow_failure: z.array(HookSchema).optional(),

@@ -379,6 +379,18 @@ export class WorkflowEngine {
       }
     }
 
+    // on_workflow_start: 开跑即通知 (2026-09-21 用户诉求 —— 此前首条通知要等
+    // ticket DAG 规划完才有，flow 是否真的启动了要盯页面)。仅 notify 类钩子；
+    // 失败绝不影响执行 (executeNodes 之前跑，让模板用 $inputs.* —— $vars 未产)。
+    try {
+      await this.executeNotifyOnlyHooks("on_workflow_start", {
+        total_count: this.workflow.nodes.length,
+      })
+    } catch (hookErr: unknown) {
+      const msg = hookErr instanceof Error ? hookErr.message : String(hookErr)
+      this.logger?.log("hook", "error", { event: "on_workflow_start", error: msg })
+    }
+
     const result = await this.executeNodes(this.workflow.nodes, this.signal)
 
     const durationMs = Date.now() - start
