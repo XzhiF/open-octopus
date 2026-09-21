@@ -9,7 +9,7 @@ import { testConnectivity, resetProviderInstances, listProviders } from '@octopu
 import type { ConnectivityResult } from '@octopus/providers'
 import { getDb } from '../db/connection'
 import { BillingDAO } from '../db/dao/billing-dao'
-import type { BillingPricePatch } from '../db/dao/billing-dao'
+import type { BillingPricePatch, BillingReportGroupBy, BillingReportRankBy } from '../db/dao/billing-dao'
 
 const DEFAULT_TEMPLATE = `# Octopus 模型配置
 # 编辑后保存即可生效，无需重启
@@ -381,6 +381,9 @@ export function createSystemRoutes(): Hono {
     model: z.string().min(1).optional(),
     price_status: z.enum(['priced', 'unpriced']).optional(),
     workspace_id: z.string().min(1).optional(),
+    // billing-report-3 票04 联动下钻：session 排行条目 / 厂商分布条目 → 明细筛选注入
+    session_id: z.string().min(1).optional(),
+    vendor: z.string().min(1).optional(),
     // billing-coverage-2 票05 (KD20/KD26): 来源筛选（枚举外 400）；响应带当前筛选下各来源小计
     source_path: z.enum(LLM_CALL_SOURCE_PATHS).optional(),
     from: z.coerce.number().int().optional(),
@@ -399,11 +402,265 @@ export function createSystemRoutes(): Hono {
     const q = parsed.data
     try {
       const dao = billingDao()
-      const filters = { model: q.model, priceStatus: q.price_status, workspaceId: q.workspace_id, sourcePath: q.source_path, fromTs: q.from, toTs: q.to }
+      const filters = { model: q.model, priceStatus: q.price_status, workspaceId: q.workspace_id, sessionId: q.session_id, vendor: q.vendor, sourcePath: q.source_path, fromTs: q.from, toTs: q.to }
       const { rows, total } = dao.listCalls(filters, q.page_size, (q.page - 1) * q.page_size)
       return c.json({
         calls: rows, total, page: q.page, pageSize: q.page_size, models: dao.listCallModels(),
         source_subtotals: dao.sourceSubtotals(filters),
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
+    }
+  })
+
+  // ============================================================================
+  // Billing report (billing-report-3 票02) — GET /billing/report/breakdown
+  // 聚合单一真相源 = llm_calls（KD20），SQL 内 GROUP BY（KD22）；数量含 unpriced、
+  // 费用仅 priced 且全未定价 = NULL（KD21/KD4）；出参 USD 基准 + 展示币种双字段，
+  // 换算用服务端当时汇率（与明细页同源同规则，US6/KD7/KD8）。
+  // ============================================================================
+
+  /**
+   * from/to 界值解析：YYYY-MM-DD（KD24 本地时区日界，含首尾日）或 epoch 毫秒。
+   * 返回 undefined = 未提供（不设界）；null = 非法。
+   */
+  function reportDateBound(raw: string | undefined, edge: 'from' | 'to'): number | null | undefined {
+    if (raw === undefined) return undefined
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [y, m, d] = raw.split('-').map(Number)
+      const dt = new Date(y, m - 1, d)
+      if (m < 1 || m > 12 || d < 1 || d > 31 || dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
+      // to 界 = 次日本地零点 - 1ms（DST 23h/25h 日均正确；与 billingReportRange 缺省路径同构）
+      return edge === 'from' ? dt.getTime() : new Date(y, m - 1, d + 1).getTime() - 1
+    }
+    const n = Number(raw)
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+
+  function billingReportBounds(q: { from?: string; to?: string }): { fromTs?: number; toTs?: number } | null {
+    const fromTs = reportDateBound(q.from, 'from')
+    const toTs = reportDateBound(q.to, 'to')
+    if (fromTs === null || toTs === null) return null
+    return { fromTs: fromTs ?? undefined, toTs: toTs ?? undefined }
+  }
+
+  const breakdownQuerySchema = z.object({
+    group_by: z.enum(['model', 'vendor', 'source']),
+    from: z.string().optional(),
+    to: z.string().optional(),
+  })
+
+  // GET /billing/report/breakdown — 费用分布（share 之和 = 1；无费用基准时全部记 0）
+  router.get('/billing/report/breakdown', (c) => {
+    const parsed = breakdownQuerySchema.safeParse(c.req.query())
+    if (!parsed.success) {
+      return c.json({
+        error: { code: 'VALIDATION_FAILED', message: '查询参数校验失败', details: parsed.error.issues },
+      }, 400)
+    }
+    const q = parsed.data
+    const bounds = billingReportBounds(q)
+    if (!bounds) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'from/to 需为 YYYY-MM-DD 日期或 epoch 毫秒' } }, 400)
+    }
+    if (bounds.fromTs !== undefined && bounds.toTs !== undefined && bounds.toTs < bounds.fromTs) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'to 不能早于 from' } }, 400)
+    }
+    try {
+      const dao = billingDao()
+      const groups = dao.reportBreakdown(q.group_by as BillingReportGroupBy, bounds.fromTs, bounds.toTs)
+      const rate = dao.getUsdToCny()
+      const currency = dao.getDisplayCurrency()
+      const total = groups.reduce((s, g) => s + (g.cost_usd ?? 0), 0)
+      const items = groups.map(g => ({
+        key: g.key,
+        cost_usd: g.cost_usd,
+        cost_display: g.cost_usd === null ? null : (currency === 'CNY' ? g.cost_usd * rate : g.cost_usd),
+        calls: g.calls,
+        share: total > 0 && g.cost_usd !== null ? g.cost_usd / total : 0,
+      }))
+      return c.json({ items, group_by: q.group_by, display_currency: currency, usd_to_cny: rate })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
+    }
+  })
+
+  const rankingQuerySchema = z.object({
+    by: z.enum(['workspace', 'session']),
+    // KD25：Top N 默认 10，N>50 → 400（与 page_size 越界同款惯例，取"4xx"实现并一致）
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+    from: z.string().optional(),
+    to: z.string().optional(),
+  })
+
+  // GET /billing/report/ranking — 费用排行 Top N（口径同 breakdown）
+  router.get('/billing/report/ranking', (c) => {
+    const parsed = rankingQuerySchema.safeParse(c.req.query())
+    if (!parsed.success) {
+      return c.json({
+        error: { code: 'VALIDATION_FAILED', message: '查询参数校验失败', details: parsed.error.issues },
+      }, 400)
+    }
+    const q = parsed.data
+    const bounds = billingReportBounds(q)
+    if (!bounds) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'from/to 需为 YYYY-MM-DD 日期或 epoch 毫秒' } }, 400)
+    }
+    if (bounds.fromTs !== undefined && bounds.toTs !== undefined && bounds.toTs < bounds.fromTs) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'to 不能早于 from' } }, 400)
+    }
+    try {
+      const dao = billingDao()
+      const rows = dao.reportRanking(q.by as BillingReportRankBy, bounds.fromTs, bounds.toTs, q.limit)
+      const rate = dao.getUsdToCny()
+      const currency = dao.getDisplayCurrency()
+      const items = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        cost_usd: r.cost_usd,
+        cost_display: r.cost_usd === null ? null : (currency === 'CNY' ? r.cost_usd * rate : r.cost_usd),
+        calls: r.calls,
+      }))
+      return c.json({ items, by: q.by, limit: q.limit, display_currency: currency, usd_to_cny: rate })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
+    }
+  })
+
+  // ============================================================================
+  // Billing report (billing-report-3 票01) — GET /billing/report/summary|trend
+  // 出参形状 = 票面契约：summary { total_cost_usd, total_cost_display, total_calls,
+  // tokens{in,out,cache_w,cache_r}, unpriced{calls,ratio}, currency_rate }；
+  // trend 逐日 { date, cost_usd, cost_display, calls }，无调用日补 0。
+  // 日期缺省 = 最近 30 天（含今日）；to < from → 400；空区间 → 全 0 结构非 404（AC2）。
+  // currency_rate = USD→展示币种乘数（CNY 时 = usd_to_cny，USD 时 = 1；与明细页同汇率 US6/KD7/KD8）。
+  // 聚合在 SQL（KD22）；费用排除 unpriced、数量含之（KD21）；本地日界（KD24，经 reportDateBound）。
+  // ============================================================================
+
+  const reportRangeSchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+  })
+
+  function localDayStr(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+
+  function shiftLocalDay(dateStr: string, days: number): string {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return localDayStr(new Date(y, m - 1, d + days))
+  }
+
+  /**
+   * summary/trend 区间解析：from/to 可缺省 —— 缺省时 to = 今日、from = to 回拨 29 天
+   * （"最近 30 天含今日"票面缺省）。null = 日期非法。
+   */
+  function billingReportRange(q: { from?: string; to?: string }):
+    { fromTs: number; toTs: number; fromStr: string; toStr: string } | null {
+    const fromProbe = reportDateBound(q.from, 'from')
+    const toProbe = reportDateBound(q.to, 'to')
+    if (fromProbe === null || toProbe === null) return null
+    const toStr = toProbe === undefined ? localDayStr(new Date()) : localDayStr(new Date(toProbe))
+    const fromStr = fromProbe === undefined ? shiftLocalDay(toStr, -29) : localDayStr(new Date(fromProbe))
+    const [fy, fm, fd] = fromStr.split('-').map(Number)
+    const [ty, tm, td] = toStr.split('-').map(Number)
+    const fromTs = fromProbe ?? new Date(fy, fm - 1, fd).getTime()
+    const toTs = toProbe ?? new Date(ty, tm - 1, td + 1).getTime() - 1
+    return { fromTs, toTs, fromStr, toStr }
+  }
+
+  // GET /billing/report/summary — 区间汇总卡数据源（US1）
+  router.get('/billing/report/summary', (c) => {
+    const parsed = reportRangeSchema.safeParse(c.req.query())
+    if (!parsed.success) {
+      return c.json({
+        error: { code: 'VALIDATION_FAILED', message: '查询参数校验失败', details: parsed.error.issues },
+      }, 400)
+    }
+    const r = billingReportRange(parsed.data)
+    if (!r) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'from/to 需为 YYYY-MM-DD 日期或 epoch 毫秒' } }, 400)
+    }
+    if (r.toTs < r.fromTs) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'to 不能早于 from' } }, 400)
+    }
+    try {
+      const dao = billingDao()
+      const s = dao.reportSummary(r.fromTs, r.toTs)
+      const rate = dao.getUsdToCny()
+      const currency = dao.getDisplayCurrency()
+      const factor = currency === 'CNY' ? rate : 1
+      return c.json({
+        from: r.fromStr,
+        to: r.toStr,
+        total_cost_usd: s.total_cost_usd,
+        total_cost_display: s.total_cost_usd === null ? null : s.total_cost_usd * factor,
+        total_calls: s.total_calls,
+        tokens: {
+          in: s.input_tokens,
+          out: s.output_tokens,
+          cache_w: s.cache_creation_tokens,
+          cache_r: s.cache_read_tokens,
+        },
+        unpriced: {
+          calls: s.unpriced_calls,
+          ratio: s.total_calls > 0 ? s.unpriced_calls / s.total_calls : 0,
+        },
+        currency_rate: factor,
+        display_currency: currency,
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
+    }
+  })
+
+  // GET /billing/report/trend — 逐日费用/调用数（US2；尖峰可辨识 = 数据本身，图表侧渲染）
+  router.get('/billing/report/trend', (c) => {
+    const parsed = reportRangeSchema.safeParse(c.req.query())
+    if (!parsed.success) {
+      return c.json({
+        error: { code: 'VALIDATION_FAILED', message: '查询参数校验失败', details: parsed.error.issues },
+      }, 400)
+    }
+    const r = billingReportRange(parsed.data)
+    if (!r) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'from/to 需为 YYYY-MM-DD 日期或 epoch 毫秒' } }, 400)
+    }
+    if (r.toTs < r.fromTs) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'to 不能早于 from' } }, 400)
+    }
+    try {
+      const dao = billingDao()
+      const rows = dao.reportTrend(r.fromTs, r.toTs)
+      const byDay = new Map(rows.map(x => [x.day, x]))
+      const rate = dao.getUsdToCny()
+      const currency = dao.getDisplayCurrency()
+      const factor = currency === 'CNY' ? rate : 1
+      const days: Array<{ date: string; cost_usd: number | null; cost_display: number | null; calls: number }> = []
+      for (let cur = r.fromStr; ; cur = shiftLocalDay(cur, 1)) {
+        const row = byDay.get(cur)
+        days.push(row
+          ? {
+              date: cur,
+              cost_usd: row.cost_usd,
+              cost_display: row.cost_usd === null ? null : row.cost_usd * factor,
+              calls: row.calls,
+            }
+          // 无调用日补 0（票面；区别于"有行但全 unpriced"的 NULL，KD4 不焊 0）
+          : { date: cur, cost_usd: 0, cost_display: 0, calls: 0 })
+        if (cur === r.toStr) break
+      }
+      return c.json({
+        from: r.fromStr,
+        to: r.toStr,
+        currency_rate: factor,
+        display_currency: currency,
+        days,
       })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)

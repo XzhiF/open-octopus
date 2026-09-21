@@ -206,6 +206,126 @@ export class BillingDAO extends BaseDAO {
       ORDER BY COALESCE(SUM(CASE WHEN price_status = 'priced' THEN cost_usd END), -1) DESC, source ASC
     `).all(...params) as BillingSourceSubtotal[]
   }
+
+  // ── 报表聚合（billing-report-3 票02）──────────────────────────────────
+  // 单一真相源 = llm_calls（KD20，不用 node_token_usages）；SQL 内 GROUP BY 完成（KD22）；
+  // 数量类聚合计入 unpriced 行、费用类排除且全未定价 = NULL（KD21/KD4）；
+  // 时间按 epoch ms 含界（本地日界换算在路由层，KD24）。
+
+  /**
+   * 费用/数量分布（breakdown）。group_by：
+   *   - model：llm_calls.model，NULL 归 'unknown'
+   *   - vendor：经 model→billing_price_config.vendor 关联（KD23）；无价/无厂商 = 'unknown'
+   *   - source：COALESCE(source_path,'unknown')（口径同 sourceSubtotals）
+   * 出参按费用降序（NULL 费用组垫底，惯例同 sourceSubtotals），费用仅计 priced 行（USD 基准）。
+   */
+  reportBreakdown(groupBy: BillingReportGroupBy, fromTs?: number, toTs?: number): BillingReportGroup[] {
+    const keyExpr: Record<BillingReportGroupBy, string> = {
+      model: "COALESCE(l.model, 'unknown')",
+      vendor: "COALESCE(p.vendor, 'unknown')",
+      source: "COALESCE(l.source_path, 'unknown')",
+    }
+    const join = groupBy === 'vendor'
+      // KD9 全等匹配（BINARY 比较即大小写敏感）；同 model_id 表上 UNIQUE，至多一行 vendor
+      ? 'LEFT JOIN billing_price_config p ON p.model_id = l.model'
+      : ''
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (fromTs !== undefined) { conditions.push('l.timestamp >= ?'); params.push(fromTs) }
+    if (toTs !== undefined) { conditions.push('l.timestamp <= ?'); params.push(toTs) }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const cost = 'SUM(CASE WHEN l.price_status = \'priced\' THEN l.cost_usd END)'
+    const key = keyExpr[groupBy]
+    return this.stmt(`
+      SELECT ${key} AS key,
+             ${cost} AS cost_usd,
+             COUNT(*) AS calls
+      FROM llm_calls l
+      ${join}
+      ${where}
+      GROUP BY ${key}
+      ORDER BY COALESCE(${cost}, -1) DESC, key ASC
+    `).all(...params) as BillingReportGroup[]
+  }
+
+  /**
+   * 费用排行 Top N（票02 / KD25：limit 上限校验在 API 层）。by：
+   *   - workspace：GROUP BY workspace_id，name = workspaces.name，取不到显示 id
+   *   - session：GROUP BY session_id，name 双表兜底 sessions.title → chat_sessions.title，
+   *     取不到显示 id；NULL 归属归 'unknown' 组（口径同 breakdown 的 unknown 惯例）
+   * 数量含 unpriced、费用仅 priced（全未定价组 = NULL 垫底，惯例同 sourceSubtotals）。
+   */
+  reportRanking(by: BillingReportRankBy, fromTs: number | undefined, toTs: number | undefined, limit: number): BillingReportRankRow[] {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (fromTs !== undefined) { conditions.push('l.timestamp >= ?'); params.push(fromTs) }
+    if (toTs !== undefined) { conditions.push('l.timestamp <= ?'); params.push(toTs) }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const cost = 'SUM(CASE WHEN l.price_status = \'priced\' THEN l.cost_usd END)'
+    const idExpr = by === 'workspace'
+      ? "COALESCE(l.workspace_id, 'unknown')"
+      : "COALESCE(l.session_id, 'unknown')"
+    const joins = by === 'workspace'
+      ? 'LEFT JOIN workspaces w ON w.id = l.workspace_id'
+      : 'LEFT JOIN sessions s ON s.id = l.session_id LEFT JOIN chat_sessions cs ON cs.id = l.session_id'
+    // MAX() 仅为满足聚合格式 —— id 对名称表至多一行关联（主键），取值即该组名称
+    const nameExpr = by === 'workspace'
+      ? "COALESCE(MAX(w.name), COALESCE(l.workspace_id, 'unknown'))"
+      : "COALESCE(MAX(s.title), MAX(cs.title), COALESCE(l.session_id, 'unknown'))"
+    params.push(limit)
+    return this.stmt(`
+      SELECT ${idExpr} AS id,
+             ${nameExpr} AS name,
+             ${cost} AS cost_usd,
+             COUNT(*) AS calls
+      FROM llm_calls l
+      ${joins}
+      ${where}
+      GROUP BY ${idExpr}
+      ORDER BY COALESCE(${cost}, -1) DESC, id ASC
+      LIMIT ?
+    `).all(...params) as BillingReportRankRow[]
+  }
+
+  /**
+   * 区间汇总（票01 · reportSummary；timestamp epoch ms 含界）。
+   * 数量类含 unpriced、费用类仅 priced；空区间费用 = 0（AC2 全 0 结构），
+   * 有行但全无 priced 费用 = NULL（KD4 不焊 0）。token SUM 对空集 COALESCE 0。
+   */
+  reportSummary(fromTs: number, toTs: number): BillingReportSummary {
+    const row = this.stmt(`
+      SELECT
+        COUNT(*) AS total_calls,
+        COALESCE(SUM(CASE WHEN price_status = 'priced' THEN 1 ELSE 0 END), 0) AS priced_calls,
+        CASE WHEN COUNT(*) = 0 THEN 0
+             ELSE SUM(CASE WHEN price_status = 'priced' THEN cost_usd END) END AS total_cost_usd,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
+      FROM llm_calls
+      WHERE timestamp >= ? AND timestamp <= ?
+    `).get(fromTs, toTs) as Omit<BillingReportSummary, "unpriced_calls">
+    return { ...row, unpriced_calls: row.total_calls - row.priced_calls }
+  }
+
+  /**
+   * 按日趋势（票01 / KD24 本地日界：date(ts/1000,'unixepoch','localtime')，日界 = 本地 0 点）。
+   * 只返回有调用的日 —— 无调用日补 0 由路由层按日历枚举（票面 AC"无调用日补 0"）。
+   * cost_usd NULL = 当日有行但全无 priced（KD4）；当日费用仅计 priced 行（KD21）。
+   */
+  reportTrend(fromTs: number, toTs: number): BillingReportTrendDay[] {
+    return this.stmt(`
+      SELECT date(timestamp / 1000.0, 'unixepoch', 'localtime') AS day,
+             COUNT(*) AS calls,
+             SUM(CASE WHEN price_status = 'priced' THEN 1 ELSE 0 END) AS priced_calls,
+             SUM(CASE WHEN price_status = 'priced' THEN cost_usd END) AS cost_usd
+      FROM llm_calls
+      WHERE timestamp >= ? AND timestamp <= ?
+      GROUP BY day
+      ORDER BY day ASC
+    `).all(fromTs, toTs) as BillingReportTrendDay[]
+  }
 }
 
 /** llm_calls 流水行（票06 API 契约 —— 展示币种换算在前端纯函数做，这里原样快照）。 */
@@ -241,12 +361,65 @@ export interface BillingSourceSubtotal {
   cost_usd: number | null
 }
 
+/** 报表分布维度（billing-report-3 票02 / spec API seam）。 */
+export type BillingReportGroupBy = 'model' | 'vendor' | 'source'
+
+/** 分布聚合行 —— share/展示币种换算在 API 层（换算规则唯一，见 KD22）。 */
+export interface BillingReportGroup {
+  key: string
+  /** priced 行 USD 基准合计；全未定价 = NULL（KD4） */
+  cost_usd: number | null
+  /** 全部行数（含 unpriced，KD21） */
+  calls: number
+}
+
+/** 报表排行维度（billing-report-3 票02 / US4）。 */
+export type BillingReportRankBy = 'workspace' | 'session'
+
+/** 排行聚合行 —— name 取不到时已在 SQL 兜底显示 id；展示换算在 API 层。 */
+export interface BillingReportRankRow {
+  id: string
+  name: string
+  cost_usd: number | null
+  calls: number
+}
+
+/** 报表汇总行（票01；ratio/展示换算在路由层补齐）。 */
+export interface BillingReportSummary {
+  /** 空区间 = 0；有行但全无 priced = NULL（KD4）。 */
+  total_cost_usd: number | null
+  total_calls: number
+  priced_calls: number
+  /** price_status ≠ 'priced'（含回填前 NULL legacy 行，同不计费口径）。 */
+  unpriced_calls: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+}
+
+/** 报表趋势单日行（票01；仅含出现调用的日，补 0 在路由层）。 */
+export interface BillingReportTrendDay {
+  /** 本地日历日 YYYY-MM-DD（KD24） */
+  day: string
+  /** 全部行数（含 unpriced） */
+  calls: number
+  priced_calls: number
+  /** priced 行合计；当日全无 priced = NULL（KD4） */
+  cost_usd: number | null
+}
+
 export interface BillingCallFilters {
   model?: string
   priceStatus?: "priced" | "unpriced"
   workspaceId?: string
   /** billing-coverage-2 票05: source_path 枚举值；'unknown' 同时兜住回填前 NULL 老行（AC3）。 */
   sourcePath?: string
+  /** billing-report-3 票04 联动下钻：session 精确（排行条目 → 明细） */
+  sessionId?: string
+  /** billing-report-3 票04 联动下钻：厂商（经 model→billing_price_config.vendor 关联，
+   *  KD9 全等匹配语义同 breakdown；无价行 model 命不中价行 → 天然排除，unknown 组由前端降级不注入） */
+  vendor?: string
   /** epoch ms，含界 */
   fromTs?: number
   toTs?: number
@@ -258,6 +431,13 @@ function callFilterWhere(f: BillingCallFilters): { where: string; params: unknow
   if (f.model !== undefined) { conditions.push("model = ?"); params.push(f.model) }
   if (f.priceStatus !== undefined) { conditions.push("price_status = ?"); params.push(f.priceStatus) }
   if (f.workspaceId !== undefined) { conditions.push("workspace_id = ?"); params.push(f.workspaceId) }
+  if (f.sessionId !== undefined) { conditions.push("session_id = ?"); params.push(f.sessionId) }
+  if (f.vendor !== undefined) {
+    // 厂商经 model→价行关联（KD9 全等匹配语义同 breakdown）；无价/未命中行不在厂商下，
+    // 故 vendor='unknown' 组下钻由前端降级为仅区间筛选，不注入此参数。
+    conditions.push("model IN (SELECT model_id FROM billing_price_config WHERE vendor = ?)")
+    params.push(f.vendor)
+  }
   if (f.sourcePath !== undefined) {
     if (f.sourcePath === "unknown") {
       // 老行未回填 = NULL，展示与筛选口径同 COALESCE(source_path,'unknown')（小计同理）

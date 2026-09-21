@@ -1,13 +1,13 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useState } from "react"
+import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { getSettings, listBillingCalls, type BillingCallRow, type BillingSettings, type BillingSourceSubtotal } from "@/lib/billing-api"
+import { getSettings, listBillingCalls, type BillingCallRow, type BillingDrillDown, type BillingSettings, type BillingSourceSubtotal } from "@/lib/billing-api"
 
 /**
  * 票 06 · 计费明细 Tab —— llm_calls 流水 + 筛选（模型/时间区间/定价状态）+
@@ -61,15 +61,20 @@ export function subtotalCostDisplay(s: BillingSourceSubtotal, display: BillingSe
   return convertCostToDisplay({ cost_usd: s.cost_usd, price_status: "priced" }, display, rate)
 }
 
-interface Filters {
+/** 明细筛选状态（票04 起为下钻联动的目标形状，导出供类型断言）。 */
+export interface Filters {
   model: string
   from: string // datetime-local 串
   to: string
   status: "" | "priced" | "unpriced"
   /** billing-coverage-2 票05: 来源筛选（"" = 全部；值域 = LLM_CALL_SOURCE_PATHS 七枚举） */
   source: string
+  /** billing-report-3 票04 联动下钻：workspace / session / 厂商（"" = 全部） */
+  workspace: string
+  session: string
+  vendor: string
 }
-const EMPTY_FILTERS: Filters = { model: "", from: "", to: "", status: "", source: "" }
+const EMPTY_FILTERS: Filters = { model: "", from: "", to: "", status: "", source: "", workspace: "", session: "", vendor: "" }
 
 const PAGE_SIZE = 50
 
@@ -79,12 +84,41 @@ function toEpochMs(local: string): number | undefined {
   return Number.isFinite(t) ? t : undefined
 }
 
+/** 结束时间含整分（…T23:59 → 23:59:59.999）——与报表聚合 to 日界同界，票04 下钻抽查必对上（US5）。 */
+function toEpochMsEndInclusive(local: string): number | undefined {
+  const t = toEpochMs(local)
+  return t === undefined ? undefined : t + 59_999
+}
+
 function fmtTime(ts: number): string {
   return new Date(ts).toLocaleString("zh-CN", { hour12: false })
 }
 
-export function BillingLedgerTab() {
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+/**
+ * billing-report-3 票04 联动：报表条目点击 → 跳明细 Tab 并注入对应筛选。
+ * from/to = 报表本地日区间（KD24），折成 datetime-local 串含首尾日（00:00 ~ 23:59）。
+ * 纯函数导出供组件测试逐值断言。
+ */
+export function drillToFilters(drill: BillingDrillDown): Filters {
+  return {
+    ...EMPTY_FILTERS,
+    model: drill.model ?? "",
+    source: drill.sourcePath ?? "",
+    workspace: drill.workspaceId ?? "",
+    session: drill.sessionId ?? "",
+    vendor: drill.vendor ?? "",
+    from: drill.from ? `${drill.from}T00:00` : "",
+    to: drill.to ? `${drill.to}T23:59` : "",
+  }
+}
+
+export function BillingLedgerTab({ drill, onDrillConsumed }: {
+  /** 报表 Tab 下钻筛选注入（票04）；应用一次即通知父层清空，允许重复下钻同一目标 */
+  drill?: BillingDrillDown | null
+  onDrillConsumed?: () => void
+} = {}) {
+  // 挂载即带 drill 时以注入值初始化（避免先拉一次无筛选的闪变）；后续 drill 变化走下方 effect
+  const [filters, setFilters] = useState<Filters>(() => (drill ? drillToFilters(drill) : EMPTY_FILTERS))
   const [page, setPage] = useState(1)
   const [data, setData] = useState<BillingCallRow[]>([])
   const [total, setTotal] = useState(0)
@@ -98,6 +132,19 @@ export function BillingLedgerTab() {
     getSettings().then(setSettings).catch(() => { /* 明细可用兜底设置继续渲染 */ })
   }, [])
 
+  // 票04 联动注入：drill 变化一次性替换筛选（保留区间 + 对应维度），应用后通知父层清空
+  // （含挂载即带的初始 drill —— 已见 ref 防重复应用，清空防后续手动切 Tab 重放旧筛选）。
+  const seenDrillRef = useRef<BillingDrillDown | null | undefined>(drill)
+  useEffect(() => {
+    if (!drill) return
+    if (drill !== seenDrillRef.current) {
+      seenDrillRef.current = drill
+      setPage(1)
+      setFilters(drillToFilters(drill))
+    }
+    onDrillConsumed?.()
+  }, [drill, onDrillConsumed])
+
   const load = useCallback(async (f: Filters, p: number) => {
     setLoading(true)
     try {
@@ -105,8 +152,11 @@ export function BillingLedgerTab() {
         model: f.model || undefined,
         price_status: f.status || undefined,
         source_path: f.source || undefined,
+        workspace_id: f.workspace || undefined,
+        session_id: f.session || undefined,
+        vendor: f.vendor || undefined,
         from: toEpochMs(f.from),
-        to: toEpochMs(f.to),
+        to: toEpochMsEndInclusive(f.to),
         page: p,
         page_size: PAGE_SIZE,
       })
@@ -137,6 +187,8 @@ export function BillingLedgerTab() {
             <Label htmlFor="bl-model">模型</Label>
             <select id="bl-model" className="h-9 rounded-md border border-pop-bd bg-pop-paper px-2 text-sm" value={filters.model} onChange={(e) => setFilter({ model: e.target.value })}>
               <option value="">全部模型</option>
+              {/* 下钻注入的模型可能不在回包 models 列（如别名形态）→ 补渲染选中项，选择器不丢值 */}
+              {filters.model !== "" && !models.includes(filters.model) && <option value={filters.model}>{filters.model}</option>}
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
@@ -165,7 +217,20 @@ export function BillingLedgerTab() {
               ))}
             </select>
           </div>
-          {(filters.model || filters.from || filters.to || filters.status || filters.source) && (
+          {/* 票04 联动下钻维度：workspace / session / 厂商（多为报表注入的 id，文本框可手输可清） */}
+          <div className="space-y-1">
+            <Label htmlFor="bl-workspace">Workspace</Label>
+            <input id="bl-workspace" data-testid="filter-workspace" type="text" placeholder="workspace id" className="h-9 w-40 rounded-md border border-pop-bd bg-pop-paper px-2 text-sm font-mono" value={filters.workspace} onChange={(e) => setFilter({ workspace: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="bl-session">Session</Label>
+            <input id="bl-session" data-testid="filter-session" type="text" placeholder="session id" className="h-9 w-40 rounded-md border border-pop-bd bg-pop-paper px-2 text-sm font-mono" value={filters.session} onChange={(e) => setFilter({ session: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="bl-vendor">厂商</Label>
+            <input id="bl-vendor" data-testid="filter-vendor" type="text" placeholder="精确匹配" className="h-9 w-28 rounded-md border border-pop-bd bg-pop-paper px-2 text-sm" value={filters.vendor} onChange={(e) => setFilter({ vendor: e.target.value })} />
+          </div>
+          {(filters.model || filters.from || filters.to || filters.status || filters.source || filters.workspace || filters.session || filters.vendor) && (
             <Button size="sm" variant="outline" onClick={() => setFilter(EMPTY_FILTERS)}>清空筛选</Button>
           )}
           <div className="flex-1" />
@@ -217,7 +282,7 @@ export function BillingLedgerTab() {
                     const isOpen = expanded === r.id
                     return (
                       <Fragment key={r.id}>
-                        <tr className="border-b border-pop-bd/50">
+                        <tr data-testid={`call-row-${r.id}`} className="border-b border-pop-bd/50">
                           <td className="px-2 py-2">
                             <button aria-label={isOpen ? "收起归属" : "展开归属"} onClick={() => setExpanded(isOpen ? null : r.id)}>
                               {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

@@ -139,6 +139,9 @@ export interface BillingCallsQuery {
   price_status?: "priced" | "unpriced"
   workspace_id?: string
   source_path?: string
+  /** billing-report-3 票04 联动下钻：session / 厂商筛选 */
+  session_id?: string
+  vendor?: string
   from?: number
   to?: number
   page?: number
@@ -168,4 +171,115 @@ export async function listBillingCalls(query: BillingCallsQuery = {}): Promise<B
     calls: body.calls ?? [], total: body.total ?? 0, page: body.page ?? 1, pageSize: body.pageSize ?? 50,
     models: body.models ?? [], source_subtotals: body.source_subtotals ?? [],
   }
+}
+
+// ── 报表聚合（billing-report-3 票01 API / 票03 消费）───────────────────────────
+// 出参形状 = 票 01 已交付的 /api/system/billing/report/summary|trend 响应（routes/system.ts）：
+//   currency_rate = USD→展示币种乘数（CNY=usd_to_cny，USD=1，与明细页同汇率 US6）；
+//   cost_display/cost_usd 可 NULL = 全未定价（KD4 不焊 0）；trend 无调用日补 0；本地日界 KD24。
+
+export interface BillingReportRange { from: string; to: string } // YYYY-MM-DD（本地日）
+
+export interface BillingReportSummary {
+  from: string
+  to: string
+  total_cost_usd: number | null
+  total_cost_display: number | null
+  total_calls: number
+  tokens: { in: number; out: number; cache_w: number; cache_r: number }
+  unpriced: { calls: number; ratio: number }
+  currency_rate: number
+  display_currency: BillingCurrency
+}
+
+export interface BillingReportTrendDay {
+  date: string
+  cost_usd: number | null
+  cost_display: number | null
+  calls: number
+}
+
+export interface BillingReportTrend {
+  from: string
+  to: string
+  currency_rate: number
+  display_currency: BillingCurrency
+  days: BillingReportTrendDay[]
+}
+
+function reportQuery(range: BillingReportRange): string {
+  return new URLSearchParams({ from: range.from, to: range.to }).toString()
+}
+
+export async function getReportSummary(range: BillingReportRange): Promise<BillingReportSummary> {
+  return parse<BillingReportSummary>(await apiFetch(`${base()}/report/summary?${reportQuery(range)}`))
+}
+
+export async function getReportTrend(range: BillingReportRange): Promise<BillingReportTrend> {
+  return parse<BillingReportTrend>(await apiFetch(`${base()}/report/trend?${reportQuery(range)}`))
+}
+
+// ── 报表分布/排行（billing-report-3 票02 API / 票04 消费）────────────────────────
+// 出参形状 = 票 02 已交付的 /api/system/billing/report/breakdown|ranking 响应：
+//   breakdown items 按费用降序、share 和 = 1（无费用基准全 0）；ranking items 已 Top N。
+//   双币种字段 cost_usd / cost_display（可 NULL = 该组全未定价，KD4），换算服务端完成。
+
+export type BillingReportGroupBy = "model" | "vendor" | "source"
+export type BillingReportRankBy = "workspace" | "session"
+
+export interface BillingReportBreakdownItem {
+  key: string
+  cost_usd: number | null
+  cost_display: number | null
+  calls: number
+  share: number
+}
+
+export interface BillingReportBreakdown {
+  items: BillingReportBreakdownItem[]
+  group_by: BillingReportGroupBy
+  display_currency: BillingCurrency
+  usd_to_cny: number
+}
+
+export interface BillingReportRankItem {
+  id: string
+  name: string
+  cost_usd: number | null
+  cost_display: number | null
+  calls: number
+}
+
+export interface BillingReportRanking {
+  items: BillingReportRankItem[]
+  by: BillingReportRankBy
+  limit: number
+  display_currency: BillingCurrency
+  usd_to_cny: number
+}
+
+export async function getReportBreakdown(groupBy: BillingReportGroupBy, range: BillingReportRange): Promise<BillingReportBreakdown> {
+  const body = await parse<Partial<BillingReportBreakdown>>(await apiFetch(`${base()}/report/breakdown?group_by=${groupBy}&${reportQuery(range)}`))
+  return { items: body.items ?? [], group_by: body.group_by ?? groupBy, display_currency: body.display_currency ?? "CNY", usd_to_cny: body.usd_to_cny ?? 1 }
+}
+
+/** KD25：Top N 默认 10，N≤50。 */
+export async function getReportRanking(by: BillingReportRankBy, range: BillingReportRange, limit = 10): Promise<BillingReportRanking> {
+  const body = await parse<Partial<BillingReportRanking>>(await apiFetch(`${base()}/report/ranking?by=${by}&limit=${limit}&${reportQuery(range)}`))
+  return { items: body.items ?? [], by: body.by ?? by, limit: body.limit ?? limit, display_currency: body.display_currency ?? "CNY", usd_to_cny: body.usd_to_cny ?? 1 }
+}
+
+/**
+ * 报表条目点击 → 明细 Tab 筛选注入（票04 联动契约）。
+ * from/to 为报表区间（YYYY-MM-DD，KD24 本地日）；未知归属（模型/厂商/归属 id = 'unknown'）
+ * 降级为仅区间筛选 —— 明细端点无对应可筛值。
+ */
+export interface BillingDrillDown {
+  model?: string
+  vendor?: string
+  sourcePath?: string
+  workspaceId?: string
+  sessionId?: string
+  from: string
+  to: string
 }
