@@ -16,6 +16,7 @@ import { globalErrorTracker } from "./error-tracker"
 import { RepairService } from "./repair"
 import { getResourceRegistry } from "./resource-registry"
 import type { EngineCallbacks } from "@octopus/engine"
+import type { TokenUsage } from "@octopus/shared"
 import type { ExecutionRow, NodeExecutionRow, BranchExecutionRow } from "./execution/types"
 
 interface TokenUsageEntry {
@@ -135,6 +136,13 @@ export class ExecutionService {
   getByIdWithSteps(id: string): (ExecutionRow & { steps: NodeExecutionRow[] }) | undefined {
     const exec = this.dao.findById(id)
     return exec ? { ...exec, steps: this.dao.findNodeExecutions(id) } as ExecutionRow & { steps: NodeExecutionRow[] } : undefined
+  }
+
+  /** F1（2026-09-21）: 该执行 running 节点的 turn_usage 实时累计（内存活投影，
+   *  易失；node_end 后由 node_token_usages 接管）。GET /:executionId 用它给
+   *  running 步骤附 liveUsage，刷新/重连的客户端从快照即可恢复卡片。 */
+  getLiveUsage(executionId: string): Map<string, { usage: TokenUsage; turn: number; ts: number }> | undefined {
+    return this.lifecycle.liveUsageFor(executionId)
   }
 
   getTokenUsagesForExecution(executionId: string): TokenUsageEntry[] {

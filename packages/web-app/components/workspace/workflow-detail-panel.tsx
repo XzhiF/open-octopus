@@ -62,6 +62,8 @@ const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval", "pend
 function livePatchWins(patchTs: number, t0: number, snapshot: StepExecution): boolean {
   if (patchTs >= t0) return true
   const snapshotHasTokens = (snapshot.tokensInput ?? 0) > 0 || (snapshot.tokensOutput ?? 0) > 0
+    || (snapshot.tokenUsages ?? []).some(u =>
+      ((u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheCreationTokens ?? 0)) > 0)
   return snapshot.status === "running" && !snapshotHasTokens
 }
 
@@ -108,6 +110,9 @@ interface RawStepRow {
   costUsd?: number | null
   costComplete?: boolean
   requestCount?: number
+  /** F1: 运行中节点的 turn_usage 实时累计（REST 快照附带；跨模型单条，无模型标签） */
+  liveUsage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number }
+  liveTurns?: number
   nodeType?: string
   parentNodeId?: string
   iterationIndex?: number
@@ -115,6 +120,26 @@ interface RawStepRow {
   agentVersion?: string
   taskBrief?: string
   harnessStatus?: string
+}
+
+/**
+ * F1（2026-09-21「token 时隐时现」根因）：卡片 TokenAggregateLine 只消费
+ * tokenUsages/requestCount，而运行中的 liveUsage（REST 快照或 SSE turn_usage）
+ * 此前只喂 tokensInput/tokensOutput —— 字段错位 → 运行中聚合行永远空、node_end
+ * 才「出现」。这里把 live 累计折成单条 usage 条目（跨模型无标签，model="" 被
+ * 聚合行的 filter(Boolean) 自然隐藏），SSE 与快照两路共用。
+ */
+function liveUsageEntry(live?: RawStepRow["liveUsage"]): TokenUsage[] | undefined {
+  if (!live) return undefined
+  const sum = (live.inputTokens ?? 0) + (live.outputTokens ?? 0) + (live.cacheReadTokens ?? 0) + (live.cacheCreationTokens ?? 0)
+  if (sum <= 0) return undefined
+  return [{
+    model: "",
+    inputTokens: live.inputTokens ?? 0,
+    outputTokens: live.outputTokens ?? 0,
+    cacheReadTokens: live.cacheReadTokens ?? 0,
+    cacheCreationTokens: live.cacheCreationTokens ?? 0,
+  }]
 }
 
 function mapRawStep(raw: RawStepRow): StepExecution {
@@ -130,12 +155,12 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     error: raw.error,
     model: raw.model,
     // C1：tokensInput/Output 取纯值 usage（与运行中 turn_usage 同口径 → 节点卡不再跳变）
-    tokensInput: raw.usage?.inputTokens ?? raw.tokensInput,
-    tokensOutput: raw.usage?.outputTokens ?? raw.tokensOutput,
-    tokenUsages: raw.modelUsages ?? raw.tokenUsages ?? raw.token_usages,
+    tokensInput: raw.usage?.inputTokens ?? raw.tokensInput ?? raw.liveUsage?.inputTokens,
+    tokensOutput: raw.usage?.outputTokens ?? raw.tokensOutput ?? raw.liveUsage?.outputTokens,
+    tokenUsages: raw.modelUsages ?? raw.tokenUsages ?? raw.token_usages ?? liveUsageEntry(raw.liveUsage),
     costUsd: raw.costUsd,
     costComplete: raw.costComplete,
-    requestCount: raw.requestCount,
+    requestCount: raw.requestCount ?? raw.liveTurns,
     nodeType: raw.nodeType,
     parentNodeId: raw.parentNodeId,
     iterationIndex: raw.iterationIndex,
@@ -331,6 +356,14 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             tokensInput: (total.inputTokens ?? 0) > 0 ? total.inputTokens : undefined,
             tokensOutput: (total.outputTokens ?? 0) > 0 ? total.outputTokens : undefined,
             turns: typeof event.turn === "number" ? event.turn : undefined,
+          }
+          // F1: 卡片聚合行的真正消费口径（tokenUsages/requestCount）。
+          // 此前补丁只写 tokensInput/Output → 运行中卡片永远空，只在 node_end
+          // 落库后才"出现"（且刷新即丢）。cumulative 四字段全 0 时不发条目。
+          const liveEntry = liveUsageEntry(total)
+          if (liveEntry) {
+            raw.tokenUsages = liveEntry
+            raw.requestCount = typeof event.turn === "number" && event.turn > 0 ? event.turn : undefined
           }
           const patch = Object.fromEntries(
             Object.entries(raw).filter(([, v]) => v !== undefined),
