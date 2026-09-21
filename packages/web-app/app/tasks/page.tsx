@@ -20,7 +20,8 @@ import {
   TASK_COLUMNS,
   type TaskBoardColumnId,
 } from "@/lib/task-board"
-import { formatRelativeTime } from "@/lib/format"
+import { formatDuration } from "@/lib/format"
+import { clockShort } from "@/components/tasks/run-console/phase-status"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
@@ -701,9 +702,15 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           )}
         </div>
       </div>
-      {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行只给时间语境 */}
-      <div className="mt-2 text-[10px] font-semibold text-pop-dim" title={new Date(task.created_at).toLocaleString()}>
-        创建 {formatRelativeTime(task.created_at)}
+      {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行给创建时刻 + 全部轮次实跑
+          用时（相对时间「创建 X 小时」把挂了一天没动也读成工时，无信息量，已废）。 */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[10px] font-semibold text-pop-dim">
+        <span title={new Date(task.created_at).toLocaleString()}>创建 {clockShort(task.created_at)}</span>
+        {(task.run_stats?.count ?? 0) > 0 && (
+          <span title={`实跑 ${task.run_stats!.count} 轮 —— 只计 workflow 运行段，不含排队/待验收等待`}>
+            · ⏱ {formatDuration(task.run_stats!.duration_ms)}
+          </span>
+        )}
       </div>
     </article>
   )

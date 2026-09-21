@@ -43,7 +43,7 @@ import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
-  clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone,
+  clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone, sumRunMs,
 } from "./phase-status"
 
 export interface RunConsoleChrome {
@@ -603,8 +603,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
   const derived = detail?.derived
   const terminal = TERMINAL_TASK_STATUSES.has(task.status)
   const runs = detail?.executions ?? []
-  const firstStart = runs.length ? Math.min(...runs.map((r) => r.started_at ? Date.parse(r.started_at) : Date.parse(r.created_at)).filter((n) => !Number.isNaN(n))) : NaN
-  const wallMs = !Number.isNaN(firstStart) ? Math.max(0, (task.completed_at ? Date.parse(task.completed_at) : now) - firstStart) : null
+  const { ms: runMs, count: runCount } = sumRunMs(runs, now)
 
   return (
     <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
@@ -684,7 +683,10 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
       )}
 
       <div className="mt-3 space-y-0.5 border-t-2 border-dashed border-pop-bd/20 px-1 pt-2 font-mono text-[10px] text-pop-dim">
-        <div>预算 <b className="text-pop-ink">{Math.round(budgetMs / 60000)}</b> 分/phase · 已用 <b className="text-pop-ink">{wallMs != null ? shortDur(wallMs) : "—"}</b></div>
+        <div title={`创建 ${task.created_at}\n实跑 ${runCount} 轮 —— 只计 workflow 运行段，不含排队/待验收等待`}>
+          创建 <b className="text-pop-ink">{clockShort(task.created_at)}</b> · 实际用时 <b className="text-pop-ink">{runCount > 0 ? shortDur(runMs) : "—"}</b>（{runCount} 轮）
+        </div>
+        <div>预算 <b className="text-pop-ink">{Math.round(budgetMs / 60000)}</b> 分/phase（advisory ⏳）</div>
         <div data-rail-ledger-line={totalAgg ? undefined : "pending"}>
           {totalAgg && totalAgg.totalCalls > 0
             ? <>账目 <b className="text-pop-ink">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b> · <b className="text-pop-ink">{totalAgg.totalCalls}</b> 次请求</>

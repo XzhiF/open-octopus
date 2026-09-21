@@ -185,6 +185,17 @@ export interface TaskExecutionBadge {
   children?: TaskExecutionBadge[]
 }
 
+/** Σ actual run time over the task's instance executions (rounds / composite roots —
+ *  fan-out arms are inside their root's span and never double-counted). Queued waits
+ *  and 待验收 idle are NOT in here; a still-running round counts up to query time.
+ *  Populated by the read model (GET /api/tasks, GET /:id). */
+export interface TaskRunStats {
+  /** Rounds that have run to a timestamped end (terminal, or running at read time). */
+  count: number
+  /** Σ(completed_at ?? now − started_at) in ms. */
+  duration_ms: number
+}
+
 // ── task_execution SSE payload (ADR-0021 票03/票05) ──────────────────
 /** Emitted on the "taskpool" channel on every task-instance transition the job performs
  *  (armed / launched / finalized / reaped). 票03 introduced the event with a literal
@@ -521,4 +532,6 @@ export interface Task {
   /** The task's current instance (newest root execution) — the board badge. Null for a
    *  task that never ran. Populated by the read model (GET /api/tasks, GET /:id). */
   execution?: TaskExecutionBadge | null
+  /** 所有轮次的实际跑时合计（见 TaskRunStats）。Undefined = never ran. */
+  run_stats?: TaskRunStats | null
 }

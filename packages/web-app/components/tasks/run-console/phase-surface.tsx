@@ -20,7 +20,7 @@ import { PhaseSpecDialog } from "../authoring/phase-spec-dialog"
 import { WorkflowViewerDialog } from "../authoring/workflow-viewer-dialog"
 import { ArtifactsCard, RUN_STATUS_LABEL, deepLinkTarget, timeStamp, AggInline } from "../execution-summary"
 import { formatBytes, formatCost, formatDuration } from "@/lib/format"
-import { clockShort, roundGlyph, roundTone } from "./phase-status"
+import { clockShort, roundGlyph, roundTone, sumRunMs } from "./phase-status"
 import { FoldBox, FoldHandle, useFold } from "../fold-context"
 import type { SignalLine } from "./signal-build"
 
@@ -496,11 +496,19 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
   const firstStart = runs.length ? Math.min(...runs.map((r) => r.started_at ? Date.parse(r.started_at) : Date.parse(r.created_at)).filter((n) => !Number.isNaN(n))) : NaN
   const endMs = task.completed_at ? Date.parse(task.completed_at) : ctx.now
   const wallMs = !Number.isNaN(firstStart) ? Math.max(0, endMs - firstStart) : null
+  const { ms: runMs, count: runCount } = sumRunMs(runs, ctx.now)
   const models = totalAgg ? Object.entries(totalAgg.modelBreakdown).sort((a, b) => b[1].calls - a[1].calls) : []
   const calls = totalAgg?.totalCalls ?? 0
 
-  const tiles: { v: string; k: string; cls: string }[] = [
-    { v: wallMs != null ? formatDuration(wallMs) : "—", k: "墙钟总用时", cls: "bg-pop-green-soft" },
+  const tiles: { v: string; k: string; cls: string; title?: string }[] = [
+    {
+      v: runCount > 0 ? formatDuration(runMs) : "—",
+      k: "实际用时",
+      cls: "bg-pop-green-soft",
+      title: wallMs != null
+        ? `实跑 ${runCount} 轮，不含排队/待验收等待 · 墙钟总跨度 ${formatDuration(wallMs)}`
+        : "实跑轮次不含排队/待验收等待",
+    },
     { v: totalAgg ? formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete) : "—", k: "AI 总成本", cls: "bg-pop-yellow-soft" },
     { v: ctx.phaseViews.length > 0 ? `${ctx.phaseViews.filter((p) => p.status === "accepted").length}/${ctx.phaseViews.length}` : `${runs.length}`, k: ctx.phaseViews.length > 0 ? "phase 通过" : "运行数", cls: "bg-pop-cyan-soft" },
     { v: calls > 0 ? String(calls) : "—", k: "LLM 调用", cls: "bg-pop-purple-soft" },
@@ -516,7 +524,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
       </div>
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {tiles.map((t) => (
-          <div key={t.k} className={`relative overflow-hidden rounded-xl border-[2.5px] border-pop-bd px-3 py-2 shadow-pop-sm ${t.cls}`}>
+          <div key={t.k} className={`relative overflow-hidden rounded-xl border-[2.5px] border-pop-bd px-3 py-2 shadow-pop-sm ${t.cls}`} {...(t.title ? { title: t.title } : {})}>
             <div className="font-mono text-[20px] font-black leading-tight tabular-nums">{t.v}</div>
             <div className="font-mono text-[9px] font-bold tracking-[.1em] text-pop-dim">{t.k}</div>
           </div>

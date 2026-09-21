@@ -41,6 +41,7 @@ import {
   TASK_EXECUTION_EVENT,
   PHASE_STATUS_UPDATE_EVENT,
   type Task,
+  type TaskRunStats,
   type TriggerMode,
   TriggerModeSchema,
   type TaskExecutionBadge,
@@ -720,7 +721,11 @@ export class TasksService {
     const history = this.lifecycle.history(id)
     const byParent = groupChildren(this.lifecycle.childRuns(id))
     const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
-    const dto: TaskDTO = { ...toDTO(row), execution: history[0] ? badge(history[0]) : null }
+    const dto: TaskDTO = {
+      ...toDTO(row),
+      execution: history[0] ? badge(history[0]) : null,
+      run_stats: this.runStats([id]).get(id),
+    }
     return {
       ...dto,
       executions: history.map(badge),
@@ -940,13 +945,39 @@ export class TasksService {
   private attachInstances(rows: TaskRow[]): TaskDTO[] {
     const dtos = rows.map(toDTO)
     if (dtos.length === 0) return dtos
+    const ids = rows.map((r) => r.id)
     const byId = new Map(
-      this.lifecycle.latestInstances(rows.map((r) => r.id)).map((e) => [e.task_id as string, e]),
+      this.lifecycle.latestInstances(ids).map((e) => [e.task_id as string, e]),
     )
+    const stats = this.runStats(ids)
     return dtos.map((d) => {
       const inst = byId.get(d.id)
-      return inst ? { ...d, execution: toExecutionBadge(inst) } : d
+      const rs = stats.get(d.id)
+      if (!inst && !rs) return d
+      return { ...d, ...(inst ? { execution: toExecutionBadge(inst) } : {}), ...(rs ? { run_stats: rs } : {}) }
     })
+  }
+
+  /** Fold the timing rows into one TaskRunStats per task. 墙钟不算 —— created_at→now
+   *  会把「创建后挂了一天没人触发」「待验收等人」记成跑时（17h36m 之误的根源）；这里
+   *  只加 started_at→completed_at 的实跑段。未终态行：running 计到本刻（看板轮询会
+   *  刷新它），pending/paused 不计 —— 暂停期本就不该算工时。 */
+  private runStats(taskIds: readonly string[]): Map<string, TaskRunStats> {
+    const now = Date.now()
+    const out = new Map<string, TaskRunStats>()
+    for (const t of this.lifecycle.runTimings(taskIds)) {
+      if (!t.started_at) continue
+      const start = Date.parse(t.started_at)
+      if (Number.isNaN(start)) continue
+      let end = t.completed_at ? Date.parse(t.completed_at) : NaN
+      if (Number.isNaN(end) && t.status === "running") end = now
+      if (Number.isNaN(end) || end <= start) continue
+      const s = out.get(t.task_id) ?? { count: 0, duration_ms: 0 }
+      s.count += 1
+      s.duration_ms += end - start
+      out.set(t.task_id, s)
+    }
+    return out
   }
 
   // ── Update ([save draft]) ─────────────────────────────────────────

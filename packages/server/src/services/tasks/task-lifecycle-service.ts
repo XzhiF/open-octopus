@@ -1171,6 +1171,17 @@ export class TaskLifecycleService {
     return this.execDAO.findLatestTaskInstances(taskIds)
   }
 
+  /** Timing rows of all instance runs of the given tasks — the 「实际用时」aggregate
+   *  source (TasksService.runStats folds them into a TaskRunStats per task). */
+  runTimings(taskIds: readonly string[]): Array<{
+    task_id: string
+    status: string
+    started_at: string | null
+    completed_at: string | null
+  }> {
+    return this.execDAO.listTaskRunTimings(taskIds)
+  }
+
   private mirrorTaskStatus(taskId: string, status: "running" | "done" | "failed" | "aborted"): void {
     const nowIso = new Date().toISOString()
     const terminal = status === "done" || status === "failed" || status === "aborted"
