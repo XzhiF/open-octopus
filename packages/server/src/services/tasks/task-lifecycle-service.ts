@@ -454,6 +454,10 @@ export class TaskLifecycleService {
       workflowRefOverride: opts.workflowRefOverride,
       inputOverride: opts.inputOverride,
       prevHandoffPaths: opts.prevHandoffPaths,
+      // 验收台预设回填信道（TASK_ID_KEY/OCTOPUS_API_KEY）— 与 index.ts 同源取
+      // 自身端口（dev 3001 / worktree hash / prod 3099 皆对）。
+      taskId,
+      serverUrl: `http://127.0.0.1:${(process.env.PORT ?? "3001").trim()}`,
     })
     if (!step.workflowRef) {
       throw new TaskLifecycleError("no-workflow", "任务未绑定可执行的工作流（workflow_ref 为空）")

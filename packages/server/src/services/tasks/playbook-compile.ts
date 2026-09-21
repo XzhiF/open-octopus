@@ -17,6 +17,9 @@
 //                             列表（行内反引号命令 + `→` 后断言）+ `## 证据要求`
 //                             （→ pass criteria）。编号步带可辨命令 → probe，
 //                             browser 票 → walk；正典缺失时以此兜底。
+//                          ③ Story 档弱兜底（2026-09-21,09-06 存量中文票）:
+//                             行中 `**类型**:` + `## Story` 编号步（无命令 →
+//                             claim 人工核对步）；仅正典/实票两档全空时启用。
 //   • round-report.md    — `## 票执行摘要` (goal line) + `## Spec 修订` (⚠ flag)
 //   • spec.md            — `## Acceptance Criteria` fallback ACs when no e2e
 //                          ticket OR the ticket parsed to zero steps (兜底不再被
@@ -191,13 +194,17 @@ interface TicketStep { op: string; expect: string; cmd: string | null }
 
 /** 实票步解析：`## 走查步骤/验证步骤/测试步骤` 标题 或 `**Verification steps**:`
  *  粗体行 之后、下一个标题/粗体字段之前的编号·列表项。每项 = 一步；`→`/`=>`/`->`
- *  之后的文字 = 预期；inline 反引号命令 = probe 命令。 */
-function ticketSteps(content: string): TicketStep[] {
+ *  之后的文字 = 预期；inline 反引号命令 = probe 命令。
+ *  headingRe 可换起始词表——Story 档（老中文票）复用同一逐行机械，只在正典/强档
+ *  全空时作弱兜底喂入（弱档步多半无行内命令 → 编成 claim 人工核对步）。 */
+function ticketSteps(content: string, headingRe = /走查步骤|验证步骤|测试步骤|walkthrough\s*steps|verification\s*steps/i): TicketStep[] {
   const ls = lines(content)
   let start = -1
   for (let i = 0; i < ls.length; i++) {
     const l = ls[i] ?? ""
-    if (/^#{1,6}\s/.test(l) && /走查步骤|验证步骤|测试步骤|walkthrough\s*steps|verification\s*steps/i.test(l)) { start = i; break }
+    // h2 起步才算节标题——h1 是票题（`# 07 · …故事走查` 会被 Story 词表误中,
+    // 从题行起扫会在 Status 行撞 break 编出 0 步,2026-09-21 活体实证）。
+    if (/^#{2,6}\s/.test(l) && headingRe.test(l)) { start = i; break }
     if (/^\s*\*\*\s*Verification\s+steps\s*\*\*\s*[:：]/i.test(l)) { start = i; break }
   }
   if (start < 0) return []
@@ -264,33 +271,42 @@ interface TicketDigest {
   build: string
   /** 实票方言的编号步（正典票通常为空——无 `## 走查步骤` 标题）。 */
   steps: TicketStep[]
+  /** Story 档弱兜底步（老中文票：`## Story` 编号步=走查脚本，但无强档标题）。
+   *  仅强档 steps 为空时解析——正典票不受影响。 */
+  storySteps: TicketStep[]
 }
 function digestTicket(content: string): TicketDigest {
   const acBody = sectionBody(content, /Acceptance\s*Criteria|验收标准/i) ?? ""
   const acs = listItems(acBody)
   const vm = sectionBody(content, /Verification\s*Method|验证方式/i) ?? content
-  // type 三行词表并集：正典 `**Verification type**:` ∪ 实票 `Type:` 头 ∪ `走查模式：`
-  // ——05 票的 Type 行只有裸 `e2e`、browser 实证在「走查模式」行，单选一源会误类。
+  // type 四行词表并集：正典 `**Verification type**:` ∪ 实票 `Type:` 头 ∪ `走查模式：`
+  // ∪ 中文 `**类型**:`（行中粗体，09-06 老票形状）——05 票的 Type 行只有裸 `e2e`、
+  // browser 实证在「走查模式」行，单选一源会误类。
   const typeRaw = [
     /\*\*\s*Verification type\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1],
     /^\s*Type\s*[:：]\s*(.+)$/im.exec(content)?.[1],
     /走查模式\s*[:：]\s*(.+)/.exec(content)?.[1],
+    /\*\*\s*类型\s*\*\*\s*[:：]\s*(.+)/.exec(content)?.[1],
   ].filter(Boolean).join(" · ").toLowerCase()
   const steps = ticketSteps(content)
+  const storySteps = steps.length ? [] : ticketSteps(content, /story|故事|验收物/i)
   // 分类序：browser 要实证（截图/Playwright/浏览器字样）——裸 `e2e` 不算 browser
   // （实盘 `Type: e2e` + 纯 curl 票是 API 级走查，归 browser 会丢命令 chip）。
-  const type: TicketDigest["type"] = /browser|playwright|截图|screenshot|\bui\b/.test(typeRaw) ? "browser"
+  // 中文「浏览器」需过负向闸：`不开浏览器/零浏览器` 这类拍板句恰恰声明 API 级。
+  const browserEvidence = /browser|playwright|截图|screenshot|\bui\b/.test(typeRaw)
+    || (/浏览器/.test(typeRaw) && !/(不开|不做|不用|无需|不打开|禁止|禁用|零|无|没有|no)\s*浏览器/.test(typeRaw))
+  const type: TicketDigest["type"] = browserEvidence ? "browser"
     : /api|curl|sqlite|contract|http|cli/.test(typeRaw) ? "api"
       : /unit|jest|vitest|pytest/.test(typeRaw) ? "unit"
         : steps.some((s) => s.cmd) ? "api" : "unknown"
   let probeCmds = fencedCommands(vm, /bash|sh|shell|console/i)
   if (!probeCmds.length) probeCmds = steps.filter((s) => s.cmd).map((s) => s.cmd as string)
   const passCriteria =
-    /\*\*\s*Pass criteria\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1]?.trim()
+    /\*\*\s*Pass(?:\s+criteria)?\s*\*\*\s*[:：]\s*(.+)/i.exec(vm)?.[1]?.split(/。\s*\*\*fail/i)[0]?.trim()
     ?? /^\s*Pass criteria\s*[:：]\s*(.+)/im.exec(content)?.[1]?.trim()
     ?? clip(sectionBody(content, /证据要求|放行标准/) ?? "", 120)
   const build = sectionBody(content, /What to build|要做什么|目标|目的/i) ?? ""
-  return { acs, type, probeCmds, passCriteria, build, steps }
+  return { acs, type, probeCmds, passCriteria, build, steps, storySteps }
 }
 
 /** strip a `## Status\n...done` region detection for reopen is done elsewhere. */
@@ -314,9 +330,17 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
     const d = digestTicket(inp.e2eTicket.content)
     if (d.acs.length) finePrint.push({ ticket: base, acs: d.acs })
     const items: PlaybookItem[] = []
+    /** 无命令步 → claim（人工核对项）。id 用 :s{n} 步序命名空间，与 probe 的
+     *  过滤序编号互不侵占——老 checks 台账里的 probe id 跨版本必须原样命中。 */
+    const claimFrom = (s: TicketStep, n: number, prefix = "s"): PlaybookItem => ({
+      id: `claim:${base}:${prefix}${n + 1}`,
+      op: `核对: ${clip(s.op.replace(/`/g, ""))}`,
+      expect: s.expect || d.passCriteria || "人工确认此步达成",
+    })
     if (d.steps.length) {
       // 实票方言：编号步即人工走查脚本——browser → walk（动作+预期），
-      // 其余 → 带命令的 probe（行首命令词白名单已滤掉产物名假命令）。
+      // api/unit → 带命令的 probe（行首命令词白名单已滤掉产物名假命令），
+      // 没带命令的步不再被 filter 丢弃（2026-09-21：散文步也是验收点 → claim）。
       if (d.type === "browser") {
         d.steps.forEach((s, n) => items.push({
           id: `walk:${base}:${n + 1}`,
@@ -325,10 +349,13 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
           evidence: s.expect ? undefined : d.passCriteria || undefined,
         }))
       } else {
-        d.steps.filter((s) => s.cmd).forEach((s, n) => {
+        let probeSeq = 0
+        d.steps.forEach((s, n) => {
+          if (!s.cmd) { items.push(claimFrom(s, n)); return }
+          probeSeq += 1
           const life = inp.hasRunbook ? lifecycleOf(s.cmd as string) : undefined
           items.push({
-            id: `probe:${base}:${n + 1}`,
+            id: `probe:${base}:${probeSeq}`,
             op: `执行 \`${s.cmd}\``,
             expect: s.expect || d.passCriteria || "命令 exit 0 且输出符合预期",
             probe: { command: s.cmd as string },
@@ -354,10 +381,43 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
       if (!items.length && d.acs.length) {
         items.push({ id: `claim:${base}:0`, op: `逐条核对 ${base} 的 AC`, expect: d.acs[0] ?? "", evidence: d.passCriteria || undefined })
       }
+      // Story 档弱兜底（2026-09-21，存量中文票）：无强档标题、正典三招全空，
+      // 但 `## Story` 的编号步本身就是「这一轮该验什么」——browser→walk、
+      // 带命令→probe、其余→claim。正典票永远到不了这行（steps 非空或正典出步）。
+      if (!items.length && d.storySteps.length) {
+        d.storySteps.forEach((s, n) => {
+          if (d.type === "browser") {
+            items.push({
+              id: `walk:${base}:st${n + 1}`,
+              op: clip(s.op.replace(/`/g, "")),
+              expect: s.expect || d.passCriteria || "见票内 Story 段",
+              evidence: s.expect ? undefined : d.passCriteria || undefined,
+            })
+          } else if (s.cmd) {
+            const life = inp.hasRunbook ? lifecycleOf(s.cmd as string) : undefined
+            items.push({
+              id: `probe:${base}:st${n + 1}`, op: `执行 \`${s.cmd}\``,
+              expect: s.expect || d.passCriteria || "命令 exit 0 且输出符合预期",
+              probe: { command: s.cmd as string },
+              ...(life ? { lifecycle: life } : {}),
+            })
+          } else {
+            items.push(claimFrom(s, n, "st"))
+          }
+        })
+      }
     }
     ticketStepCount = items.length
     if (!items.length) missing.push(`issues/${inp.e2eTicket.name} 无可解析步骤`)
-    if (items.length) sections.push({ kind: d.type === "api" ? "probe" : d.type === "browser" ? "walk" : "claim", title: base, source: `issues/${inp.e2eTicket.name}`, items })
+    if (items.length) {
+      // 节型 = 面板分组的帽子：全 claim（无任何可执行/可走查步）时按内容走，
+      // 其余维持 type 口径（browser+围栏混票仍归 walk，行为与既有一致）。
+      const allClaim = !items.some((i) => i.probe) && !items.some((i) => i.id.startsWith("walk:"))
+      sections.push({
+        kind: allClaim ? "claim" : d.type === "api" ? "probe" : d.type === "browser" ? "walk" : "claim",
+        title: base, source: `issues/${inp.e2eTicket.name}`, items,
+      })
+    }
   } else {
     missing.push("末张 NN-e2e-*.md")
   }
@@ -389,12 +449,23 @@ export function compilePlaybook(inp: PlaybookInputs): PlaybookPayload {
     // 「无票」或「有票但两副词表都编不出步」都退 spec AC——六单实证:票存在却
     // 读不懂时旧逻辑把兜底掐死,整面板空在「无剧本」上。
     if (!inp.e2eTicket?.content || !ticketStepCount) {
-      const acs = listItems(sectionBody(inp.specMd, /Acceptance\s*Criteria|验收标准|^##\s*AC\b/im) ?? "")
+      // AC 段词表两档顺序尝试：正典 `## Acceptance Criteria` 优先；matt 系 spec
+      // 模板（Problem Statement/User Stories/Verification Strategy）根本没有 AC
+      // 标题——2026-09-21 实证兜底退到的是不存在的位置,退 User Stories 才接得住。
+      let acs: string[] = []
+      let acTitle = "spec 验收标准"
+      for (const [re, title] of [
+        [/Acceptance\s*Criteria|验收标准|^##\s*AC\b/im, "spec 验收标准"],
+        [/User\s*Stories|用户故事|验收故事/i, "spec 用户故事"],
+      ] as const) {
+        acs = listItems(sectionBody(inp.specMd, re) ?? "")
+        if (acs.length) { acTitle = title; break }
+      }
       if (acs.length) {
         finePrint.push({ ticket: "spec", acs })
         // No e2e ticket → the spec ACs are themselves the checkable steps.
         sections.push({
-          kind: "claim", title: "spec 验收标准", source: "spec.md",
+          kind: "claim", title: acTitle, source: "spec.md",
           items: acs.slice(0, PLAYBOOK_STEP_BUDGET).map((ac, n) => ({
             id: `claim:spec:${n + 1}`, op: `核对:${ac.slice(0, 80)}`, expect: ac,
           })),
