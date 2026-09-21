@@ -1,6 +1,8 @@
 // packages/server/src/db/types.ts
 // Row type interfaces used by DAOs — mirrors schema.sql column definitions.
 
+import type { LlmCallSourcePath } from "@octopus/shared"
+
 // ── Core Tables ─────────────────────────────────────────────────────
 
 export interface WorkspaceRow {
@@ -146,8 +148,9 @@ export interface NodeTokenUsageRow {
 
 export interface LlmCallRow {
   id: string
-  node_execution_id: string
-  execution_id: string
+  /** v47 (票04/KD17): 聊天/压缩类行无执行链路，归属列可空 —— 可得性如实。 */
+  node_execution_id: string | null
+  execution_id: string | null
   turn_index: number
   call_index: number
   message_id: string | null
@@ -172,6 +175,9 @@ export interface LlmCallRow {
   node_id: string | null
   session_id: string | null
   instance_id: string | null
+  /** billing-coverage-2 票01 (KD20): 来源维度。新行必经共用落账 helper 带枚举值；
+   *  列可空只为老行回填前的过渡态服务（回填后全表非 NULL，unknown 兜底）。 */
+  source_path?: LlmCallSourcePath | null
 }
 
 export interface OptimizationSuggestionRow {

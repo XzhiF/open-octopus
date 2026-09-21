@@ -9,6 +9,8 @@ import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir, getBuiltInCloneDir } from "../services/agent/paths"
 import fs from "fs"
 import path from "path"
+import { recordProviderResultUsage } from "../services/llm-call-ledger"
+import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 
 // ── System prompt: loaded from octo-scheduler SKILL.md ─────────────
 
@@ -49,7 +51,7 @@ const GLOBAL_SCOPE_ID = 'global-scheduler-chat'
 
 // ── Route factory ──────────────────────────────────────────────────
 
-export function globalChatRoutes(sseService: SSEService, chatService: ChatService): Hono {
+export function globalChatRoutes(sseService: SSEService, chatService: ChatService, tokenUsageDao?: TokenUsageDAO): Hono {
   const router = new Hono()
 
   function classifyError(error: string): 'auth' | 'rate_limit' | 'timeout' | 'unknown' {
@@ -146,6 +148,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
     return streamSSE(c, async (stream) => {
       let aborted = false
+      const turnStartMs = Date.now()
 
       const abortController = new AbortController()
       stream.onAbort(() => {
@@ -285,6 +288,23 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             }
             currentTokens = chunk.usage
             currentCostUsd = chunk.costUsd
+            // billing-coverage-2 票03 (US2)：全局聊天直连对话入账 —— 经共用落账 helper，
+            // source_path='global_chat'，cost 走 phase 1 BillingService（KD25）。纯旁路：
+            // recordProviderResultUsage 内部吞异常，记账失败不断聊天流。归属如实：
+            // 无执行链路 → node_execution_id/execution_id = NULL（KD17/v47）。
+            if (tokenUsageDao) {
+              recordProviderResultUsage({
+                sourcePath: 'global_chat',
+                nodeExecutionId: null,
+                executionId: null,
+                sessionId,
+                org: c.req.header('X-Octopus-Org') ?? null,
+                workspaceId: session.workspaceId ?? null,
+                startedAtMs: turnStartMs,
+                modelUsages: chunk.modelUsages,
+                usage: chunk.usage,
+              }, tokenUsageDao)
+            }
           }
 
           const sseExtras: Record<string, unknown> = {}

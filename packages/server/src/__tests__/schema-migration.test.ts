@@ -298,10 +298,10 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
   }
 
-  it("pins the current version at 45", () => {
+  it("pins the current version at 47", () => {
     db = createTestDb()
     applySchema(db)
-    expect(SCHEMA_VERSION).toBe(45)
+    expect(SCHEMA_VERSION).toBe(47)
   })
 
   it("① fresh DB: no envelope columns, run-state columns present", () => {

@@ -42,6 +42,23 @@ export function emptyTokenUsage(): TokenUsage {
   return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
 }
 
+/**
+ * llm_calls.source_path —— 记账来源维度（billing-coverage-2 KD20）：六个真实来源 +
+ * `unknown` 兜底（回填推断不出者，KD21）。独立枚举，**不复用** node_token_usages.source
+ * （后者是 harness 标记，跨表语义已混）。phase 2 新增聊天三源 = clone_chat /
+ * global_chat / session_compress。
+ */
+export const LLM_CALL_SOURCE_PATHS = [
+  'workflow', 'interaction', 'harness',
+  'clone_chat', 'global_chat', 'session_compress',
+  'unknown',
+] as const
+export type LlmCallSourcePath = (typeof LLM_CALL_SOURCE_PATHS)[number]
+
+export function isLlmCallSourcePath(v: unknown): v is LlmCallSourcePath {
+  return typeof v === 'string' && (LLM_CALL_SOURCE_PATHS as readonly string[]).includes(v)
+}
+
 /** 全口径总 token 数（含 cache）。聚合端点的「总 tokens」口径以此为准。 */
 export function totalTokens(u: TokenUsage): number {
   return u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheCreationTokens

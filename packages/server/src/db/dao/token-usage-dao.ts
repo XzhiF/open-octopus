@@ -235,8 +235,8 @@ export class TokenUsageDAO extends BaseDAO {
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
         cost_usd, cost_native, cost_currency, price_status,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
       row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
@@ -244,6 +244,7 @@ export class TokenUsageDAO extends BaseDAO {
       row.cache_creation_tokens, row.cost_usd, row.cost_native ?? null, row.cost_currency ?? null,
       row.price_status ?? null,
       row.org, row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
+      row.source_path ?? null,
     )
   }
 
@@ -269,23 +270,24 @@ export class TokenUsageDAO extends BaseDAO {
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
         cost_usd, cost_native, cost_currency, price_status,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id
+        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
       ) VALUES (
         @id, @node_execution_id, @execution_id, @turn_index, @call_index,
         @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
         @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
         @cost_usd, @cost_native, @cost_currency, @price_status,
-        @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id
+        @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id, @source_path
       )
     `)
     this.transaction(() => {
       for (const row of rows) {
-        // 三新列是 optional 字段 —— named 绑定缺 key/undefined 会抛，统一补 NULL 兜底
+        // optional 字段 —— named 绑定缺 key/undefined 会抛，统一补 NULL 兜底
         insertStmt.run({
           ...row,
           cost_native: row.cost_native ?? null,
           cost_currency: row.cost_currency ?? null,
           price_status: row.price_status ?? null,
+          source_path: row.source_path ?? null,
         })
       }
     })

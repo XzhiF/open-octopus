@@ -1,4 +1,13 @@
 import { AgentSessionDAO } from '../../db/dao'
+import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import type { TokenUsage } from '@octopus/shared'
+import { recordLlmCall } from '../llm-call-ledger'
+// 票04 默认压缩 LLM —— 与 clone-runtime / chat-routes / global-chat 一致使用静态
+// getProvider 导入。动态 await import('@octopus/providers') 在打包后的 server 里会
+// 命中另一份 registry 实例（其 factories Map 为空），导致 getProvider('claude')
+// 抛 Unknown provider（E2E 票走查实测）。静态导入共享 index.ts registerProvider 的实例。
+import { getProvider } from '@octopus/providers'
+import { getAgentDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -7,7 +16,29 @@ export interface CompressionResult {
   summary_content: string
   original_message_count: number
   retained_message_count: number
+  /**
+   * chars/4 口径估算 —— KD24：只服务阈值/预算判断（needsCompression /
+   * fitsWithinBudget），永不流向任何记账路径；账本只收厂商真值（result chunk）。
+   */
   total_tokens_estimate: number
+}
+
+/**
+ * 票04 (KD24)：压缩 LLM 调用的注入 seam —— server 侧消费 provider result chunk 后交回
+ * 真值 usage + 摘要文本。返回 null / 缺 usage 视为失败（不落账、走确定性回退）。
+ */
+export interface CompressionLlmResult {
+  text: string
+  model: string | null
+  usage?: Pick<TokenUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens"> | null
+}
+export type CompressionLlmCall = (prompt: string) => Promise<CompressionLlmResult | null>
+
+export interface SessionCompressDeps {
+  /** 缺省 = 保持改造前的确定性摘要（不产 LLM 调用，也就没有可入账的账）。 */
+  llm?: CompressionLlmCall
+  /** 落账用的 DAO（经票01 共用 helper recordLlmCall 写 llm_calls）。 */
+  tokenDao?: TokenUsageDAO
 }
 
 export interface CompressionConfig {
@@ -42,10 +73,14 @@ const CHARS_PER_TOKEN = 4
 export class SessionCompressService {
   private org: string
   private config: CompressionConfig
+  private llm?: CompressionLlmCall
+  private tokenDao?: TokenUsageDAO
 
-  constructor(org: string, private dao: AgentSessionDAO, config?: Partial<CompressionConfig>) {
+  constructor(org: string, private dao: AgentSessionDAO, config?: Partial<CompressionConfig>, deps?: SessionCompressDeps) {
     this.org = org
     this.config = { ...DEFAULT_CONFIG, ...config }
+    this.llm = deps?.llm
+    this.tokenDao = deps?.tokenDao
   }
 
   /**
@@ -92,19 +127,51 @@ export class SessionCompressService {
     const toCompress = messages.slice(0, compressCount)
     const toRetain = messages.slice(compressCount)
 
-    // Generate summary from early messages
-    const summary = this.generateSummary(toCompress)
+    // ── 票04 (KD24/US3)：压缩调用走 provider seam（sendQuery），摘要取 result chunk
+    // 真值。LLM 失败/缺 usage → 确定性摘要回退，且绝不落半行（AC3）。无 seam = 行为与
+    // 改造前完全一致（本来就没有 LLM 调用，也就没有账）。
+    const llmStartedAt = Date.now()
+    let summary: string
+    let llmOutcome: CompressionLlmResult | null = null
+    if (this.llm) {
+      try {
+        const outcome = await this.llm(this.buildCompressionPrompt(toCompress))
+        if (outcome?.usage) {
+          llmOutcome = outcome
+          summary = outcome.text || this.generateSummary(toCompress)
+        } else {
+          summary = this.generateSummary(toCompress)
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[SessionCompress] LLM summary failed for ${sessionId}, fallback to extraction: ${msg}`)
+        summary = this.generateSummary(toCompress)
+      }
+    } else {
+      summary = this.generateSummary(toCompress)
+    }
 
     // Mark early messages as compressed
     const compressIds = toCompress.map(m => m.id)
-    dao.markMessagesCompressed(compressIds)
+    this.dao.markMessagesCompressed(compressIds)
 
     // Insert summary message
     const summaryId = crypto.randomUUID()
     const now = new Date().toISOString()
-    dao.insertSummaryMessage(summaryId, sessionId, summary, now)
+    this.dao.insertSummaryMessage(summaryId, sessionId, summary, now)
 
-    // Calculate token estimate for the compressed context
+    // 入账恰在压缩落定之后：一条真实 LLM 调用 = 一行 session_compress（KD23 一行一调用）。
+    // 记账异常不反噬压缩结果（旁路记账），但必须出声。
+    if (llmOutcome) {
+      try {
+        this.recordCompressionCall(sessionId, llmOutcome, llmStartedAt)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[SessionCompress] billing ledger write failed for ${sessionId}: ${msg}`)
+      }
+    }
+
+    // Calculate token estimate for the compressed context —— 仅预算/阈值语义（KD24），不进账
     const retainedChars = toRetain.reduce((sum, m) => sum + m.content.length, 0) + summary.length
     const totalTokensEstimate = Math.ceil(retainedChars / CHARS_PER_TOKEN)
 
@@ -118,9 +185,41 @@ export class SessionCompressService {
   }
 
   /**
+   * 票04：压缩 prompt —— 让 LLM 摘要早期消息。纯文本输出（summary_max_tokens 约束口径
+   * 沿用既有配置）。
+   */
+  private buildCompressionPrompt(messages: Array<{ role: string; content: string }>): string {
+    const lines = messages.map(m => `${m.role}: ${m.content}`).join('\n')
+    return `请把以下对话历史（共 ${messages.length} 条）压缩成摘要，保留话题、关键决策与事实，不超过 ${this.config.summary_max_tokens} tokens，只输出摘要正文：\n\n${lines}`
+  }
+
+  /**
+   * 票04 (KD24/US3)：压缩调用经票01 共用 helper 入账 —— source_path='session_compress'，
+   * 归属被压缩会话（KD17：session_id + org 如实；无执行链路 → node/execution NULL，v47 列
+   * 可空）。token 用厂商真值（result chunk usage），cost 走 phase 1 同一计费链路（KD25）。
+   */
+  private recordCompressionCall(sessionId: string, outcome: CompressionLlmResult, startedAt: number): void {
+    if (!this.tokenDao || !outcome.usage) return
+    recordLlmCall({
+      id: crypto.randomUUID(),
+      sourcePath: 'session_compress',
+      nodeExecutionId: null,
+      executionId: null,
+      turnIndex: 0,
+      callIndex: 0,
+      model: outcome.model,
+      usage: outcome.usage,
+      timestamp: startedAt,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      org: this.org,
+      sessionId,
+    }, this.tokenDao)
+  }
+
+  /**
    * Generate a summary from a list of messages.
-   * In production, this would use Claude SDK for high-quality summarization.
-   * For now, uses a deterministic extraction-based approach.
+   * 票04 起为**回退路径**：配置了 provider seam 时优先走 LLM 真值摘要（compressSession）；
+   * LLM 失败/未注入时保持这里的历史行为（确定性抽取，不产 LLM 调用、不落账）。
    */
   private generateSummary(messages: Array<{ role: string; content: string; created_at: string }>): string {
     const parts: string[] = []
@@ -249,9 +348,11 @@ export class SessionCompressService {
 
 const instances = new Map<string, SessionCompressService>()
 let _dao: AgentSessionDAO | null = null
+let _tokenDao: TokenUsageDAO | null = null
 
-export function initSessionCompressService(dao: AgentSessionDAO): void {
+export function initSessionCompressService(dao: AgentSessionDAO, tokenDao?: TokenUsageDAO): void {
   _dao = dao
+  _tokenDao = tokenDao ?? null
   instances.clear()
 }
 
@@ -266,8 +367,42 @@ export function getSessionCompressService(org: string): SessionCompressService {
     const config = getConfigManager().getConfig(org)
     instance = new SessionCompressService(org, _dao, {
       threshold_messages: config.memory.session_compress_threshold_messages,
+    }, {
+      // 票04：生产默认接 provider seam（sendQuery → result chunk 真值 → 入账）。
+      llm: providerCompressionLlm,
+      tokenDao: _tokenDao ?? undefined,
     })
     instances.set(org, instance)
   }
   return instance
+}
+
+/**
+ * 票04 默认压缩 LLM —— 经 provider seam（KD22：记账只在 server 消费 result chunk 处做，
+ * 本函数只回真值，不碰 DB）。result chunk 缺 usage 时返回 null（无真值不入账，失败语义）。
+ */
+async function providerCompressionLlm(prompt: string): Promise<CompressionLlmResult | null> {
+  const provider = getProvider('claude')
+  let text = ''
+  let outcome: CompressionLlmResult | null = null
+  for await (const chunk of provider.sendQuery(prompt, getAgentDir(), undefined, {
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: '你是会话摘要器，只输出摘要正文。' },
+  })) {
+    if (chunk.type === 'text_delta') {
+      text += chunk.content
+    } else if (chunk.type === 'result' && chunk.usage) {
+      const u = chunk.usage
+      outcome = {
+        text: chunk.content || text,
+        model: chunk.modelUsages?.[0]?.model ?? null,
+        usage: {
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          cacheReadTokens: u.cacheReadTokens,
+          cacheCreationTokens: u.cacheCreationTokens,
+        },
+      }
+    }
+  }
+  return outcome
 }

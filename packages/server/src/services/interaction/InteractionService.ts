@@ -15,7 +15,8 @@ import { extractInteractionCompletion } from "@octopus/engine"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
-import type { InteractionMessageRow, AgentEventRow, LlmCallRow } from "../../db/types"
+import type { InteractionMessageRow, AgentEventRow } from "../../db/types"
+import { recordLlmCall } from "../llm-call-ledger"
 import { SSEService } from "../sse"
 import { getAgentDir } from "../agent/paths"
 import { INTERACTION_SYSTEM_PROMPT } from "./prompts"
@@ -791,37 +792,26 @@ export class InteractionService {
   private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
     const now = Date.now()
-    // billing-core-1 票04（KD2/KD4/KD5/KD11）：cost 唯一来源 = BillingService，
-    // SDK 上报价不作账；未配价 → 三列 NULL + unpriced。
-    const cost = this.tokenDao.billing().computeForModel(acc.model, acc.usage)
-    const llmCallRow: LlmCallRow = {
+    // billing-coverage-2 票01：interaction 路径收敛到共用落账 helper（行为等价 ——
+    // cost 仍 BillingService 唯一来源，SDK 上报价不作账，未配价三列 NULL + unpriced），
+    // 来源标记 source_path='interaction'。
+    recordLlmCall({
       id: randomUUID(),
-      node_execution_id: session.nodeExecutionId,
-      execution_id: session.executionId,
-      turn_index: session.currentRound,
-      call_index: 0,
-      message_id: acc.assistantMessageId,
+      sourcePath: 'interaction',
+      nodeExecutionId: session.nodeExecutionId,
+      executionId: session.executionId,
+      turnIndex: session.currentRound,
+      callIndex: 0,
+      messageId: acc.assistantMessageId,
       model: acc.model ?? "unknown",
-      stop_reason: acc.completionDetected ? "end_turn" : null,
+      stopReason: acc.completionDetected ? "end_turn" : null,
       timestamp: acc.llmCallStartTime,
-      duration_ms: now - acc.llmCallStartTime,
-      ttft_ms: null,
-      input_tokens: acc.usage.inputTokens,
-      output_tokens: acc.usage.outputTokens,
-      cache_read_tokens: acc.usage.cacheReadTokens,
-      cache_creation_tokens: acc.usage.cacheCreationTokens,
-      cost_usd: cost.cost_usd,
-      cost_native: cost.cost_native,
-      cost_currency: cost.cost_currency,
-      price_status: cost.price_status,
-      org: null,
-      workspace_id: session.workspaceId,
-      workflow_ref: null,
-      node_id: session.nodeId,
-      session_id: session.providerSessionId ?? null,
-      instance_id: null,
-    }
-    this.tokenDao.insertLlmCall(llmCallRow)
+      durationMs: now - acc.llmCallStartTime,
+      usage: acc.usage,
+      workspaceId: session.workspaceId,
+      nodeId: session.nodeId,
+      sessionId: session.providerSessionId ?? null,
+    }, this.tokenDao)
   }
 
   /** Try to extract completion from full text as a fallback. */

@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
+import { composeLlmCallRow } from "./llm-call-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
@@ -190,44 +191,36 @@ export class ObservabilityService {
     if (!meta) return
 
     try {
+      // billing-coverage-2 票01：workflow 路径收敛到共用落账 helper（行为等价 —— cost 仍由
+      // BillingService 唯一产出，KD2/KD4/KD5 链路不动），来源标记 source_path='workflow'。
+      // 批量语义保留：compose 纯函数组行 + insertLlmCallBatch 单事务落库。
       const billing = this.tokenDao.billing()
-      const rows: LlmCallRow[] = calls.map((call, i) => {
-        // billing-core-1 票04（KD2/KD4/KD5/KD11）：cost 唯一来源 = BillingService ——
-        // SDK 上报价不作账，未配价 → 三列 NULL + unpriced（不估算）。
-        const cost = billing.computeForModel(call.model ?? null, {
+      const rows: LlmCallRow[] = calls.map((call, i) => composeLlmCallRow({
+        id: crypto.randomUUID(),
+        sourcePath: 'workflow',
+        nodeExecutionId: nodeExecId,
+        executionId,
+        turnIndex: call.turnIndex,
+        callIndex: i,
+        messageId: call.messageId ?? null,
+        model: call.model ?? null,
+        stopReason: call.stopReason ?? null,
+        timestamp: call.timestamp,
+        durationMs: call.durationMs,
+        ttftMs: call.ttftMs ?? null,
+        usage: {
           inputTokens: call.inputTokens,
           outputTokens: call.outputTokens,
           cacheReadTokens: call.cacheReadTokens,
           cacheCreationTokens: call.cacheCreationTokens,
-        })
-        return {
-          id: crypto.randomUUID(),
-          node_execution_id: nodeExecId,
-          execution_id: executionId,
-          turn_index: call.turnIndex,
-          call_index: i,
-          message_id: call.messageId ?? null,
-          model: call.model ?? null,
-          stop_reason: call.stopReason ?? null,
-          timestamp: call.timestamp,
-          duration_ms: call.durationMs,
-          ttft_ms: call.ttftMs ?? null,
-          input_tokens: call.inputTokens,
-          output_tokens: call.outputTokens,
-          cache_read_tokens: call.cacheReadTokens,
-          cache_creation_tokens: call.cacheCreationTokens,
-          cost_usd: cost.cost_usd,
-          cost_native: cost.cost_native,
-          cost_currency: cost.cost_currency,
-          price_status: cost.price_status,
-          org: meta.org,
-          workspace_id: meta.workspaceId,
-          workflow_ref: meta.workflowRef,
-          node_id: meta.nodeId,
-          session_id: meta.sessionId ?? null,
-          instance_id: instanceId,
-        }
-      })
+        },
+        org: meta.org,
+        workspaceId: meta.workspaceId,
+        workflowRef: meta.workflowRef,
+        nodeId: meta.nodeId,
+        sessionId: meta.sessionId ?? null,
+        instanceId,
+      }, billing))
 
       this.tokenDao.insertLlmCallBatch(rows)
     } catch {

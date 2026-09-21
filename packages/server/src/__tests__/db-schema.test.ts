@@ -63,7 +63,8 @@ describe("DB Schema", () => {
     //   Both existed for the task envelope (origin lookup / queued due-time FIFO).
     //   (The single-instance latch is ux_exec_task_active — outside this idx_%
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
-    expect(rows.length).toBe(97)
+    // + schema v46 (billing-coverage-2 票01): idx_llm_calls_source_ts = 98.
+    expect(rows.length).toBe(98)
   })
 
   it("workspaces table has correct columns", () => {

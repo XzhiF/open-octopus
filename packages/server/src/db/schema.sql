@@ -203,8 +203,11 @@ CREATE TABLE IF NOT EXISTS agent_events (
 -- 11. LLM Calls
 CREATE TABLE IF NOT EXISTS llm_calls (
   id                    TEXT PRIMARY KEY,
-  node_execution_id     TEXT NOT NULL,
-  execution_id          TEXT NOT NULL,
+  -- v47 (billing-coverage-2 票04, KD17「归属维度可得性如实」): node_execution_id /
+  -- execution_id 放宽为可空 —— 聊天/压缩类行(session_compress/clone_chat/global_chat)
+  -- 没有执行链路，归属只到 session 级，不造 FK 目标。FK 保留：非 NULL 值仍须真实。
+  node_execution_id     TEXT,
+  execution_id          TEXT,
   turn_index            INTEGER NOT NULL,
   call_index            INTEGER NOT NULL,
   message_id            TEXT,
@@ -229,6 +232,9 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   node_id               TEXT,
   session_id            TEXT,
   instance_id           TEXT,
+  -- billing-coverage-2 v46 (KD20/KD21): 来源维度。新行经共用落账 helper 必带枚举值；
+  -- 老行由 backfillLlmCallSourcePath 回填（推不出 = unknown），不造假归属。
+  source_path           TEXT,
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
 );
 
@@ -750,6 +756,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_node ON llm_calls(node_execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_execution ON llm_calls(execution_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_workspace_workflow ON llm_calls(workspace_id, workflow_ref);
+-- billing-coverage-2 票01: 来源筛选 + 各来源小计（(source_path, timestamp)）。
+CREATE INDEX IF NOT EXISTS idx_llm_calls_source_ts ON llm_calls(source_path, timestamp);
 CREATE INDEX IF NOT EXISTS idx_suggestions_workspace ON optimization_suggestions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON optimization_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_summaries_workflow ON execution_summaries(workflow_ref, workspace_id);

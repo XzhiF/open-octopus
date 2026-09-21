@@ -167,8 +167,9 @@ export class BillingDAO extends BaseDAO {
   }
 
   /**
-   * 分页流水，timestamp 倒序（US5 筛选 = 模型精确 / 时间含界 / 定价状态 / 工作区）。
-   * 只读 —— 明细行的四件套写入口在 token-usage-dao（票04），本方法不做 cost 语义。
+   * 分页流水，timestamp 倒序（US5 筛选 = 模型精确 / 时间含界 / 定价状态 / 工作区 /
+   * billing-coverage-2 票05: 来源 source_path）。只读 —— 明细行的四件套写入口在
+   * token-usage-dao（票04）+ 共用落账 helper（票01），本方法不做 cost 语义。
    */
   listCalls(filters: BillingCallFilters, limit: number, offset: number): { rows: BillingCallRow[]; total: number } {
     const { where, params } = callFilterWhere(filters)
@@ -176,7 +177,7 @@ export class BillingDAO extends BaseDAO {
       SELECT id, node_execution_id, execution_id, turn_index, call_index, model, timestamp,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
              cost_usd, cost_native, cost_currency, price_status,
-             workspace_id, workflow_ref, node_id, session_id
+             workspace_id, workflow_ref, node_id, session_id, source_path
       FROM llm_calls
       ${where}
       ORDER BY timestamp DESC, id DESC
@@ -184,6 +185,26 @@ export class BillingDAO extends BaseDAO {
     `).all(...params, limit, offset) as BillingCallRow[]
     const total = (this.stmt(`SELECT COUNT(*) AS cnt FROM llm_calls ${where}`).get(...params) as { cnt: number }).cnt
     return { rows, total }
+  }
+
+  /**
+   * 各来源费用小计（票05 / KD26 —— **当前筛选条件下**的各来源合计，随 listCalls 同一 WHERE）。
+   * 口径：count = 该来源全部行；priced_count = 其中 price_status='priced' 的行数；
+   * cost_usd = priced 行 cost 求和（USD 归一值，KD5），unpriced/legacy 行**计入行数不计入费用**；
+   * 全部未定价 → cost_usd = NULL（KD4 聚合不焊 0）。NULL 来源行（回填前老行）归 'unknown'。
+   */
+  sourceSubtotals(filters: BillingCallFilters): BillingSourceSubtotal[] {
+    const { where, params } = callFilterWhere(filters)
+    return this.stmt(`
+      SELECT COALESCE(source_path, 'unknown') AS source,
+             COUNT(*) AS count,
+             SUM(CASE WHEN price_status = 'priced' THEN 1 ELSE 0 END) AS priced_count,
+             SUM(CASE WHEN price_status = 'priced' THEN cost_usd END) AS cost_usd
+      FROM llm_calls
+      ${where}
+      GROUP BY COALESCE(source_path, 'unknown')
+      ORDER BY COALESCE(SUM(CASE WHEN price_status = 'priced' THEN cost_usd END), -1) DESC, source ASC
+    `).all(...params) as BillingSourceSubtotal[]
   }
 }
 
@@ -208,12 +229,24 @@ export interface BillingCallRow {
   workflow_ref: string | null
   node_id: string | null
   session_id: string | null
+  /** billing-coverage-2 票05 (KD20): 来源维度。回填后全表非 NULL；老库快照可能为 null。 */
+  source_path: string | null
+}
+
+/** 各来源小计行（票05 / KD26，口径见 sourceSubtotals 注释）。 */
+export interface BillingSourceSubtotal {
+  source: string
+  count: number
+  priced_count: number
+  cost_usd: number | null
 }
 
 export interface BillingCallFilters {
   model?: string
   priceStatus?: "priced" | "unpriced"
   workspaceId?: string
+  /** billing-coverage-2 票05: source_path 枚举值；'unknown' 同时兜住回填前 NULL 老行（AC3）。 */
+  sourcePath?: string
   /** epoch ms，含界 */
   fromTs?: number
   toTs?: number
@@ -225,6 +258,14 @@ function callFilterWhere(f: BillingCallFilters): { where: string; params: unknow
   if (f.model !== undefined) { conditions.push("model = ?"); params.push(f.model) }
   if (f.priceStatus !== undefined) { conditions.push("price_status = ?"); params.push(f.priceStatus) }
   if (f.workspaceId !== undefined) { conditions.push("workspace_id = ?"); params.push(f.workspaceId) }
+  if (f.sourcePath !== undefined) {
+    if (f.sourcePath === "unknown") {
+      // 老行未回填 = NULL，展示与筛选口径同 COALESCE(source_path,'unknown')（小计同理）
+      conditions.push("(source_path = 'unknown' OR source_path IS NULL)")
+    } else {
+      conditions.push("source_path = ?"); params.push(f.sourcePath)
+    }
+  }
   if (f.fromTs !== undefined) { conditions.push("timestamp >= ?"); params.push(f.fromTs) }
   if (f.toTs !== undefined) { conditions.push("timestamp <= ?"); params.push(f.toTs) }
   return { where: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "", params }

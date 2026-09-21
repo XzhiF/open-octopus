@@ -21,6 +21,8 @@ import { getMemoryService } from '../../services/agent/memory-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
+import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import fs from 'fs'
 import path from 'path'
 
@@ -28,6 +30,9 @@ import path from 'path'
 
 export interface MainAgentRouteDeps {
   sessionDAO: AgentSessionDAO
+  /** billing-coverage-2 票03: 统一入口/委托链入账（共用落账 helper）。
+   *  Optional: absent ⇒ skip（纯旁路）。 */
+  tokenUsageDao?: TokenUsageDAO
 }
 
 // ── Delegation tool definitions ────────────────────────────────────
@@ -152,11 +157,12 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
-  const { sessionDAO } = deps
+  const { sessionDAO, tokenUsageDao } = deps
   const app = new Hono()
 
   app.post('/chat', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
+    const turnStartMs = Date.now()
 
     let body: { message?: string; session_id?: string; delegate_to?: string }
     try {
@@ -240,6 +246,22 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               if ((stream as any)._aborted) break
 
               if (chunk.type === 'text_delta') fullContent += chunk.content
+              // billing-coverage-2 票03 (KD23)：@@mention 委托 —— 实际 provider 调用发生在
+              // 分身侧（CloneRuntime 流），一行 clone_chat 归本会话、node_id=分身名；
+              // Main Agent 本路径不发起路由调用 → 不多记 global_chat 行，绝不双计。
+              if (tokenUsageDao && chunk.type === 'result') {
+                recordProviderResultUsage({
+                  sourcePath: 'clone_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId: sessionId!,
+                  org,
+                  nodeId: targetClone,
+                  startedAtMs: turnStartMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                }, tokenUsageDao)
+              }
               const sseEvent = forwardableSSEEvent(chunk, fullContent, targetClone)
               if (sseEvent) await stream.writeSSE(sseEvent)
             }
@@ -385,6 +407,20 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
             case 'result':
+              // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
+              // 调用 → 单独入账 global_chat（一 chunk 一行，重试=新调用=新行，KD23）。
+              if (tokenUsageDao) {
+                recordProviderResultUsage({
+                  sourcePath: 'global_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId: sessionId!,
+                  org,
+                  startedAtMs: turnStartMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                }, tokenUsageDao)
+              }
               break
             case 'error':
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
@@ -395,7 +431,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         // If delegation was detected, execute via CloneRuntime
         if (delegationDetected && !aborted) {
           await executeDelegation(
-            delegationDetected, sessionId!, org, stream,
+            delegationDetected, sessionId!, org, stream, tokenUsageDao, turnStartMs,
           )
         }
 
@@ -737,6 +773,8 @@ async function executeDelegation(
   sessionId: string,
   org: string,
   stream: SSEStreamingApi,
+  tokenUsageDao?: TokenUsageDAO,
+  startedAtMs = Date.now(),
 ): Promise<void> {
   const cloneName = delegation.cloneName
 
@@ -767,6 +805,21 @@ async function executeDelegation(
     let delegateContent = ''
     for await (const chunk of runtime.chat(delegation.task, sessionId, null, cwd)) {
       if (chunk.type === 'text_delta') delegateContent += chunk.content
+      // billing-coverage-2 票03 (KD23)：工具化委托 —— 分身应答轮是另一次真实 provider
+      // 调用 → 一行 clone_chat（node_id=分身名）；与路由轮的 global_chat 行各归各的调用。
+      if (tokenUsageDao && chunk.type === 'result') {
+        recordProviderResultUsage({
+          sourcePath: 'clone_chat',
+          nodeExecutionId: null,
+          executionId: null,
+          sessionId,
+          org,
+          nodeId: cloneName,
+          startedAtMs,
+          modelUsages: chunk.modelUsages,
+          usage: chunk.usage,
+        }, tokenUsageDao)
+      }
       const sseEvent = forwardableSSEEvent(chunk, delegateContent, cloneName)
       if (sseEvent) await stream.writeSSE(sseEvent)
     }

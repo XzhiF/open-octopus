@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
 import { z } from 'zod'
-import { ModelAliasConfigSchema, loadModelAliasConfig } from '@octopus/shared'
+import { ModelAliasConfigSchema, loadModelAliasConfig, LLM_CALL_SOURCE_PATHS } from '@octopus/shared'
 import type { CustomProviderDef } from '@octopus/shared'
 import { testConnectivity, resetProviderInstances, listProviders } from '@octopus/providers'
 import type { ConnectivityResult } from '@octopus/providers'
@@ -381,6 +381,8 @@ export function createSystemRoutes(): Hono {
     model: z.string().min(1).optional(),
     price_status: z.enum(['priced', 'unpriced']).optional(),
     workspace_id: z.string().min(1).optional(),
+    // billing-coverage-2 票05 (KD20/KD26): 来源筛选（枚举外 400）；响应带当前筛选下各来源小计
+    source_path: z.enum(LLM_CALL_SOURCE_PATHS).optional(),
     from: z.coerce.number().int().optional(),
     to: z.coerce.number().int().optional(),
     page: z.coerce.number().int().min(1).default(1),
@@ -397,12 +399,12 @@ export function createSystemRoutes(): Hono {
     const q = parsed.data
     try {
       const dao = billingDao()
-      const { rows, total } = dao.listCalls(
-        { model: q.model, priceStatus: q.price_status, workspaceId: q.workspace_id, fromTs: q.from, toTs: q.to },
-        q.page_size,
-        (q.page - 1) * q.page_size,
-      )
-      return c.json({ calls: rows, total, page: q.page, pageSize: q.page_size, models: dao.listCallModels() })
+      const filters = { model: q.model, priceStatus: q.price_status, workspaceId: q.workspace_id, sourcePath: q.source_path, fromTs: q.from, toTs: q.to }
+      const { rows, total } = dao.listCalls(filters, q.page_size, (q.page - 1) * q.page_size)
+      return c.json({
+        calls: rows, total, page: q.page, pageSize: q.page_size, models: dao.listCallModels(),
+        source_subtotals: dao.sourceSubtotals(filters),
+      })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)

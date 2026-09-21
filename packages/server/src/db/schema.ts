@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 45
+export const SCHEMA_VERSION = 47
 
 /**
  * Apply the complete unified schema to the given database.
@@ -110,6 +110,124 @@ function handleSchemaMigrations(db: Database.Database): void {
   // INSTANCES — a v4 round chains under its predecessor (parent_id = 上一轮) so the task
   // reads as one tree, and a chained round must keep holding the latch.
   migrateExecTaskLatchV44(db)
+
+  // schema v47 (billing-coverage-2 票04, KD17): llm_calls 归属列可空化 rebuild。
+  // 跑在 v46 回填之前 —— 回填随后在同一张终态表上收敛。
+  migrateLlmCallsNullableAttributionV47(db)
+
+  // schema v46 (billing-coverage-2 票01, KD21): source_path 历史行回填。跑在
+  // ensureColumnsForExistingTables 之后（列必已存在）；幂等 —— 只动 NULL 行。
+  const v46Backfilled = backfillLlmCallSourcePath(db)
+  if (v46Backfilled > 0) {
+    console.log(`[schema v46] llm_calls: backfilled source_path on ${v46Backfilled} legacy rows`)
+  }
+}
+
+/**
+ * schema v46 (billing-coverage-2 票01): 回填 llm_calls 历史行的 source_path（KD21 ——
+ * 可推断者如实，余 unknown；不造假归属，数据诚实优先）。推断依据 = 既有写入点特征：
+ *   该 node_execution 有账本行 source='interaction' → interaction（优先于 execution 关联，
+ *     interaction 轮同样挂在 node_executions 下）
+ *   该 node_execution 有账本行 source='harness'    → harness
+ *   有 node_executions / executions 关联            → workflow
+ *   推不出                                          → unknown
+ * 幂等：只写 source_path IS NULL 的行，重跑零变更（票 AC3）。返回变更行数供观测/测试。
+ */
+export function backfillLlmCallSourcePath(db: Database.Database): number {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_calls'").all()
+  if (tables.length === 0) return 0 // fresh DB — schema.sql creates the column directly, no legacy rows
+  try {
+    return db.prepare(`
+      UPDATE llm_calls SET source_path = CASE
+        WHEN EXISTS (SELECT 1 FROM node_token_usages ntu
+                     WHERE ntu.node_execution_id = llm_calls.node_execution_id AND ntu.source = 'interaction') THEN 'interaction'
+        WHEN EXISTS (SELECT 1 FROM node_token_usages ntu
+                     WHERE ntu.node_execution_id = llm_calls.node_execution_id AND ntu.source = 'harness') THEN 'harness'
+        WHEN EXISTS (SELECT 1 FROM node_executions ne WHERE ne.id = llm_calls.node_execution_id) THEN 'workflow'
+        WHEN EXISTS (SELECT 1 FROM executions e WHERE e.id = llm_calls.execution_id) THEN 'workflow'
+        ELSE 'unknown'
+      END
+      WHERE source_path IS NULL
+    `).run().changes
+  } catch (err) {
+    console.warn(`[schema v46] source_path backfill skipped: ${err instanceof Error ? err.message : String(err)}`)
+    return 0
+  }
+}
+
+/**
+ * schema v47 (billing-coverage-2 票04, KD17「归属维度可得性如实」): llm_calls 的
+ * node_execution_id / execution_id 从 NOT NULL 放宽为可空 —— 聊天/压缩类行
+ * (session_compress 起，票 02/03 的 clone_chat/global_chat 同理) 没有执行链路，
+ * 归属止步于 session 级；与其造假 FK 目标，不如如实留 NULL。FK 引用保留：
+ * 非 NULL 值仍必须是真实 node_execution（SQLite 对 NULL 外键不强制）。
+ *
+ * SQLite 无法原地改 NOT NULL → 蓝绿 rebuild（同 v40 tasks 惯例）：建新表、显式列
+ * 拷贝、换名。数据保留由设计 —— llm_calls 是已收的账，一行都不能丢。无子表引用
+ * llm_calls（grep 证实），DROP+RENAME 不 strand 外键；foreign_keys 在 swap 前后
+ * 关/复（FK 检查在事务里 toggle 无效，故 toggle 包在 transaction 外）。旧索引随表
+ * 消失，由 schema.sql 的 CREATE INDEX IF NOT EXISTS（migrations 之后执行）重建。
+ *
+ * 幂等：PRAGMA table_info 显示两列已可空 → 直接返回；fresh DB 跳过（表不存在，
+ * schema.sql 直接建 v47 形状）。
+ */
+function migrateLlmCallsNullableAttributionV47(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(llm_calls)").all() as Array<{ name: string; notnull: number }>
+  if (cols.length === 0) return // fresh DB — schema.sql creates the v47 shape directly
+  if (!cols.some(c => c.name === "node_execution_id" && c.notnull === 1)) return // already rebuilt
+
+  const count = (db.prepare("SELECT COUNT(*) as cnt FROM llm_calls").get() as { cnt: number }).cnt
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE llm_calls_v47_rebuild (
+        id                    TEXT PRIMARY KEY,
+        node_execution_id     TEXT,
+        execution_id          TEXT,
+        turn_index            INTEGER NOT NULL,
+        call_index            INTEGER NOT NULL,
+        message_id            TEXT,
+        model                 TEXT,
+        stop_reason           TEXT,
+        timestamp             INTEGER NOT NULL,
+        duration_ms           INTEGER NOT NULL,
+        ttft_ms               INTEGER,
+        input_tokens          INTEGER NOT NULL DEFAULT 0,
+        output_tokens         INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd              REAL,
+        cost_native           REAL,
+        cost_currency         TEXT,
+        price_status          TEXT,
+        org                   TEXT,
+        workspace_id          TEXT,
+        workflow_ref          TEXT,
+        node_id               TEXT,
+        session_id            TEXT,
+        instance_id           TEXT,
+        source_path           TEXT,
+        FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+      )
+    `)
+    // Keep this column list in sync with the llm_calls CREATE TABLE in schema.sql.
+    const colNames = cols.map(c => c.name)
+    db.exec(`
+      INSERT INTO llm_calls_v47_rebuild (${colNames.join(", ")})
+      SELECT ${colNames.join(", ")} FROM llm_calls
+    `)
+    db.exec("DROP TABLE llm_calls")
+    db.exec("ALTER TABLE llm_calls_v47_rebuild RENAME TO llm_calls")
+  })
+
+  const fkWasOn = db.pragma("foreign_keys", { simple: true }) as number
+  db.pragma("foreign_keys = OFF")
+  try {
+    rebuild()
+  } finally {
+    if (fkWasOn) db.pragma("foreign_keys = ON")
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[schema v47] llm_calls rebuilt with nullable attribution cols (${count} rows preserved)`)
 }
 
 /**
@@ -319,6 +437,11 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'llm_calls', 'cost_native', "REAL")
   ensureColumn(db, 'llm_calls', 'cost_currency', "TEXT")
   ensureColumn(db, 'llm_calls', 'price_status', "TEXT")
+
+  // schema v46 (billing-coverage-2 票01, KD20): llm_calls 来源维度列。以可空添加而非
+  // NOT NULL DEFAULT —— 否则历史行整片焊成默认值，回填 (KD21) 就分不出「可推断」与
+  // 「推不出」。新行一律经共用落账 helper 带枚举值写入。
+  ensureColumn(db, 'llm_calls', 'source_path', "TEXT")
 }
 
 /**

@@ -234,7 +234,7 @@ if (!process.env.VITEST && daos) {
   initMemoryService(daos.agentSession)
   initEvolutionService(daos.evolution)
   initRecoveryService(daos.agentSession, daos.execution)
-  initSessionCompressService(daos.agentSession)
+  initSessionCompressService(daos.agentSession, daos.tokenUsage)
   initAgentService(daos.agentSession, daos.safety)
 
   // "关闭不丢失" stream-resume: sweep orphan streaming partials left by a
@@ -420,7 +420,7 @@ if (!daos) {
     initMemoryService(d.agentSession)
     initEvolutionService(d.evolution)
     initRecoveryService(d.agentSession, d.execution)
-    initSessionCompressService(d.agentSession)
+    initSessionCompressService(d.agentSession, d.tokenUsage)
     initAgentService(d.agentSession, d.safety)
     try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
@@ -439,7 +439,7 @@ app.route("/api/workspaces/:id/harness", harnessRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
-app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
+app.route("/api/chat/global", globalChatRoutes(sse, chatSvc, d.tokenUsage))
 app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
@@ -455,6 +455,8 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   cloneDAO: d.clone,
   schedulerService: schedSvc,
+  // billing-coverage-2 票03: Main Agent 统一入口/委托链入账。
+  tokenUsageDao: d.tokenUsage,
 }))
 
 // Clone session routes — direct entry for Web UI pages
@@ -465,6 +467,8 @@ app.route("/api/clones", createCloneSessionRoutes({
   taskDAO: d.task,
   // repo-sync chat 门 (2026-09-08): v4 task-author 每轮开工前等待项目镜像同步。
   repoSyncService,
+  // billing-coverage-2 票02: 分身聊天入账 —— result chunk 经共用落账 helper 写 llm_calls。
+  tokenUsageDao: d.tokenUsage,
 }))
 
 // Clone file tree and operations API

@@ -121,12 +121,24 @@ export interface BillingCallRow {
   workflow_ref: string | null
   node_id: string | null
   session_id: string | null
+  /** billing-coverage-2 票05 (KD20): 来源维度（workflow/interaction/harness/clone_chat/
+   *  global_chat/session_compress/unknown）。老库快照可能缺失 → 展示按「未知」。 */
+  source_path?: string | null
+}
+
+/** 各来源费用小计（票05/KD26 —— 当前筛选条件下；口径：priced 行求和，unpriced 计行不计费）。 */
+export interface BillingSourceSubtotal {
+  source: string
+  count: number
+  priced_count: number
+  cost_usd: number | null
 }
 
 export interface BillingCallsQuery {
   model?: string
   price_status?: "priced" | "unpriced"
   workspace_id?: string
+  source_path?: string
   from?: number
   to?: number
   page?: number
@@ -139,6 +151,7 @@ export interface BillingCallsResponse {
   page: number
   pageSize: number
   models: string[]
+  source_subtotals: BillingSourceSubtotal[]
 }
 
 export async function listBillingCalls(query: BillingCallsQuery = {}): Promise<BillingCallsResponse> {
@@ -147,8 +160,12 @@ export async function listBillingCalls(query: BillingCallsQuery = {}): Promise<B
     if (v !== undefined && v !== "") params.set(k, String(v))
   }
   const qs = params.toString()
-  const body = await parse<{ calls?: BillingCallRow[]; total?: number; page?: number; pageSize?: number; models?: string[] }>(
-    await apiFetch(`${base()}/calls${qs ? `?${qs}` : ""}`),
-  )
-  return { calls: body.calls ?? [], total: body.total ?? 0, page: body.page ?? 1, pageSize: body.pageSize ?? 50, models: body.models ?? [] }
+  const body = await parse<{
+    calls?: BillingCallRow[]; total?: number; page?: number; pageSize?: number; models?: string[];
+    source_subtotals?: BillingSourceSubtotal[]
+  }>(await apiFetch(`${base()}/calls${qs ? `?${qs}` : ""}`))
+  return {
+    calls: body.calls ?? [], total: body.total ?? 0, page: body.page ?? 1, pageSize: body.pageSize ?? 50,
+    models: body.models ?? [], source_subtotals: body.source_subtotals ?? [],
+  }
 }

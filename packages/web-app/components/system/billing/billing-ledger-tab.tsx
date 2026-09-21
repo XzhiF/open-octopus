@@ -7,18 +7,37 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { getSettings, listBillingCalls, type BillingCallRow, type BillingSettings } from "@/lib/billing-api"
+import { getSettings, listBillingCalls, type BillingCallRow, type BillingSettings, type BillingSourceSubtotal } from "@/lib/billing-api"
 
 /**
  * 票 06 · 计费明细 Tab —— llm_calls 流水 + 筛选（模型/时间区间/定价状态）+
  * 展示币种换算（KD8：按**当前汇率**折算展示，历史不锁汇）+ 未定价徽标（KD4）。
  * 换算纯函数 convertCostToDisplay 单独导出，供单测直查。
+ * billing-coverage-2 票05：来源维度 —— 来源列（中文标签）+ 来源筛选下拉 +
+ * 顶部各来源小计条（KD26，当前筛选条件下；priced 求和，unpriced 计行不计费）。
  */
 
 export type DisplayCost =
   | { kind: "amount"; symbol: "¥" | "$"; text: string }
   | { kind: "unpriced" }
   | { kind: "legacy" } // 接线前老行（price_status NULL 且无 cost）：不冒充数字
+
+/**
+ * source_path 中文标签（票05 契约：六来源 + unknown）。纯函数导出供单测逐值断言；
+ * 未知值（含 NULL 老行）→「未知」，不报错。
+ */
+export const SOURCE_PATH_LABELS: Record<string, string> = {
+  workflow: "工作流",
+  interaction: "交互",
+  harness: "Harness",
+  clone_chat: "分身聊天",
+  global_chat: "全局聊天·主分身",
+  session_compress: "会话压缩",
+  unknown: "未知",
+}
+export function sourcePathLabel(v: string | null | undefined): string {
+  return (v != null && SOURCE_PATH_LABELS[v]) || "未知"
+}
 
 /**
  * 纯函数换算：display=CNY → cost_usd × rate；display=USD → 直显。
@@ -36,13 +55,21 @@ export function convertCostToDisplay(
   return { kind: "amount", symbol: display === "CNY" ? "¥" : "$", text }
 }
 
+/** 小计条换算：cost_usd = NULL（该来源全未定价，KD4 不焊 0）→ 占位；否则按 KD8 折显。 */
+export function subtotalCostDisplay(s: BillingSourceSubtotal, display: BillingSettings["display_currency"], rate: number): DisplayCost {
+  if (s.cost_usd === null) return { kind: "legacy" }
+  return convertCostToDisplay({ cost_usd: s.cost_usd, price_status: "priced" }, display, rate)
+}
+
 interface Filters {
   model: string
   from: string // datetime-local 串
   to: string
   status: "" | "priced" | "unpriced"
+  /** billing-coverage-2 票05: 来源筛选（"" = 全部；值域 = LLM_CALL_SOURCE_PATHS 七枚举） */
+  source: string
 }
-const EMPTY_FILTERS: Filters = { model: "", from: "", to: "", status: "" }
+const EMPTY_FILTERS: Filters = { model: "", from: "", to: "", status: "", source: "" }
 
 const PAGE_SIZE = 50
 
@@ -62,6 +89,7 @@ export function BillingLedgerTab() {
   const [data, setData] = useState<BillingCallRow[]>([])
   const [total, setTotal] = useState(0)
   const [models, setModels] = useState<string[]>([])
+  const [subtotals, setSubtotals] = useState<BillingSourceSubtotal[]>([])
   const [settings, setSettings] = useState<BillingSettings>({ usd_to_cny: "7.0", display_currency: "CNY" })
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -76,6 +104,7 @@ export function BillingLedgerTab() {
       const res = await listBillingCalls({
         model: f.model || undefined,
         price_status: f.status || undefined,
+        source_path: f.source || undefined,
         from: toEpochMs(f.from),
         to: toEpochMs(f.to),
         page: p,
@@ -84,6 +113,7 @@ export function BillingLedgerTab() {
       setData(res.calls)
       setTotal(res.total)
       setModels(res.models)
+      setSubtotals(res.source_subtotals)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "加载计费明细失败")
     } finally {
@@ -126,7 +156,16 @@ export function BillingLedgerTab() {
               <option value="unpriced">未定价</option>
             </select>
           </div>
-          {(filters.model || filters.from || filters.to || filters.status) && (
+          <div className="space-y-1">
+            <Label htmlFor="bl-source">来源</Label>
+            <select id="bl-source" data-testid="filter-source" className="h-9 rounded-md border border-pop-bd bg-pop-paper px-2 text-sm" value={filters.source} onChange={(e) => setFilter({ source: e.target.value })}>
+              <option value="">全部来源</option>
+              {Object.entries(SOURCE_PATH_LABELS).map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          </div>
+          {(filters.model || filters.from || filters.to || filters.status || filters.source) && (
             <Button size="sm" variant="outline" onClick={() => setFilter(EMPTY_FILTERS)}>清空筛选</Button>
           )}
           <div className="flex-1" />
@@ -135,6 +174,25 @@ export function BillingLedgerTab() {
           </span>
         </CardContent>
       </Card>
+
+      {/* 来源小计条（票05 / KD26 —— 当前筛选条件下的各来源合计；unpriced 计行不计费） */}
+      {subtotals.length > 0 && (
+        <div data-testid="source-subtotals" className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs">
+          <span className="font-black text-pop-dim">来源小计</span>
+          {subtotals.map((s) => {
+            const d = subtotalCostDisplay(s, settings.display_currency, Number.isFinite(rate) && rate > 0 ? rate : 1)
+            const unpricedCount = s.count - s.priced_count
+            return (
+              <span key={s.source} data-testid={`subtotal-${s.source}`} className="rounded-full border border-pop-bd/60 bg-pop-paper px-2 py-0.5">
+                {sourcePathLabel(s.source)}：
+                {d.kind === "amount" ? `${d.symbol}${d.text}` : "—"}
+                {" · "}{s.count} 条{unpricedCount > 0 ? `（含未定价 ${unpricedCount}）` : ""}
+              </span>
+            )
+          })}
+          <span className="text-pop-dim">注：小计 = 已定价行求和；未定价计入条数不计入费用</span>
+        </div>
+      )}
 
       {/* 流水表 */}
       <Card>
@@ -148,7 +206,7 @@ export function BillingLedgerTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b-2 border-pop-bd">
-                    {["", "时间", "模型", "输入", "输出", "缓存写", "缓存读", `费用（${settings.display_currency === "CNY" ? "¥" : "$"}）`, "状态"].map((h, i) => (
+                    {["", "时间", "模型", "来源", "输入", "输出", "缓存写", "缓存读", `费用（${settings.display_currency === "CNY" ? "¥" : "$"}）`, "状态"].map((h, i) => (
                       <th key={i} className="px-2 py-2 font-black whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -167,6 +225,11 @@ export function BillingLedgerTab() {
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap">{fmtTime(r.timestamp)}</td>
                           <td className="px-2 py-2 font-mono">{r.model ?? "—"}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">
+                            <span data-testid={`source-badge-${r.id}`} title={r.source_path ?? undefined} className="rounded border border-pop-bd/60 bg-pop-paper px-1.5 py-0.5 text-xs">
+                              {sourcePathLabel(r.source_path)}
+                            </span>
+                          </td>
                           <td className="px-2 py-2 text-right">{r.input_tokens}</td>
                           <td className="px-2 py-2 text-right">{r.output_tokens}</td>
                           <td className="px-2 py-2 text-right">{r.cache_creation_tokens}</td>
@@ -191,12 +254,13 @@ export function BillingLedgerTab() {
                         {isOpen && (
                           <tr data-testid={`ledger-detail-${r.id}`}>
                             <td />
-                            <td colSpan={8} className="px-2 pb-3 text-xs text-pop-dim">
+                            <td colSpan={9} className="px-2 pb-3 text-xs text-pop-dim">
                               <div className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-3">
                                 <span>execution: <span className="font-mono">{r.execution_id}</span></span>
                                 <span>node: <span className="font-mono">{r.node_execution_id}</span>（{r.node_id ?? "—"}）</span>
                                 <span>session: <span className="font-mono">{r.session_id ?? "—"}</span></span>
                                 <span>workflow: <span className="font-mono">{r.workflow_ref ?? "—"}</span></span>
+                                <span>来源: {sourcePathLabel(r.source_path)}（{r.source_path ?? "NULL"}）</span>
                                 <span>原币快照: {r.cost_native !== null ? `${r.cost_native} ${r.cost_currency ?? ""}` : "—"}</span>
                                 <span>USD 归一: {r.cost_usd ?? "—"}</span>
                                 {r.workspace_id && (
