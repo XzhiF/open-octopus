@@ -1207,3 +1207,68 @@ nodes:
     })
   })
 })
+
+// ──────────────────────────────────────────────────────────────
+// 会话隔离（2026-09-21 提速方案2）— dagToWorkflowDef 给票节点注入
+// context:"new"；唯一 agent 前驱 → resume_from 链式续接；汇聚票/首票不续接。
+// ──────────────────────────────────────────────────────────────
+
+describe("DynamicSubWorkflowExecutor — 票节点会话隔离", () => {
+  async function captureWfDef(dagJson: string): Promise<{ nodes: Array<Record<string, unknown>> } | null> {
+    const dir = createTempDir()
+    try {
+      const EngineMock = vi.fn().mockImplementation(() => ({
+        updateVarPool: vi.fn(),
+        setWorkflowResolver: vi.fn(),
+        run: vi.fn().mockResolvedValue({ status: "completed", nodeResults: {}, poolSnapshot: {}, durationMs: 10 }),
+      }))
+      vi.doMock("../engine", () => ({ WorkflowEngine: EngineMock }))
+
+      const pool = new VarPool()
+      const node: NodeDef = { id: "plan", type: "dynamic_sub_workflow", prompt: "plan", workflow: "iso-test" }
+      const executor = new DynamicSubWorkflowExecutor(node, pool, {
+        cwd: dir,
+        providers: { claude: createMockProvider(dagJson) },
+        outputDir: join(dir, "workflows"),
+        workflow: { name: "parent" },
+      })
+      await executor.execute()
+      expect(EngineMock).toHaveBeenCalledTimes(1)
+      return EngineMock.mock.calls[0][0] as { nodes: Array<Record<string, unknown>> }
+    } finally {
+      cleanupDir(dir)
+      vi.doUnmock("../engine")
+    }
+  }
+
+  it("并行票（零/多前驱）→ context:new，无 resume_from（不再共享 globalSession 互灌）", async () => {
+    const wfDef = await captureWfDef(VALID_DAG_JSON)
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.t1.context).toBe("new")
+    expect(byId.t2.context).toBe("new")
+    expect(byId.t3.context).toBe("new")
+    expect(byId.t1.resume_from).toBeUndefined()
+    expect(byId.t2.resume_from).toBeUndefined()
+    // 汇聚票（两个前驱）不链式 —— 输入真相在文件里，不在任何单一分支记忆里
+    expect(byId.t3.resume_from).toBeUndefined()
+  })
+
+  it("串行链 → 每个票 resume_from 唯一 agent 前驱（链式续接复用探路成果）", async () => {
+    const wfDef = await captureWfDef(CORRECTED_DAG_JSON)
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.t1.resume_from).toBeUndefined()
+    expect(byId.t2.resume_from).toBe("t1")
+    expect(byId.t3.resume_from).toBe("t2")
+    expect(byId.t2.context).toBe("new")
+    expect(byId.t3.context).toBe("new")
+  })
+
+  it("唯一前驱是 octopus_agent → 不挂 resume_from（其会话不进 branchSessionIds）", async () => {
+    const wfDef = await captureWfDef(MIXED_DAG_JSON)
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.impl.type).toBe("octopus_agent")
+    expect(byId.impl.context).toBeUndefined() // octopus_agent 分支不注入
+    expect(byId.test.resume_from).toBeUndefined()
+    expect(byId.test.context).toBe("new")
+  })
+})

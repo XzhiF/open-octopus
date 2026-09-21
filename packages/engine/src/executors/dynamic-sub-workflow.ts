@@ -181,6 +181,11 @@ function dagToWorkflowDef(dag: GeneratedDAG, workflowName: string, parentModel?:
           model: n.model ?? parentModel,
         }
       }
+      // resume_from 仅挂「唯一的 agent 前驱」—— octopus_agent 的会话不进
+      // branchSessionIds，挂了也会静默落空，不如不挂。
+      const soleDep = n.depends_on?.length === 1
+        ? dag.nodes.find((x) => x.id === n.depends_on![0])
+        : undefined
       return {
         id: n.id,
         type: "agent" as const,
@@ -188,6 +193,13 @@ function dagToWorkflowDef(dag: GeneratedDAG, workflowName: string, parentModel?:
         skills: n.skills,
         depends_on: n.depends_on,
         model: n.model ?? parentModel,
+        // 会话隔离 (2026-09-21 phase-2 实测: 并行票共享 globalSession, 上下文互灌至
+        // 274k/回合, decode 拖慢 + llm-calls 归因互相重复)。
+        // 规则: context:"new" 各自开会话; **恰好一个 agent 前驱**时 resume_from 链式
+        // 续接(串行链复用探路成果); 零/多前驱(汇聚票)不续接 —— 汇聚票的输入真相在
+        // 文件里(票状态/handoff), 不在任何一个分支的记忆里。
+        ...(soleDep && soleDep.type === "agent" ? { resume_from: soleDep.id } : {}),
+        context: "new" as const,
       }
     }),
   }

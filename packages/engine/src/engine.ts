@@ -1928,6 +1928,9 @@ export class WorkflowEngine {
     // resume_from: merge branch back into the global thread
     if (node.resume_from) {
       this.globalSessionId = result.sessionId
+      // Also record under this node's id so a downstream resume_from can chain
+      // through it (DAG serial run 01→02→03: 03 resumes_from 02, not just 01).
+      this.branchSessionIds.set(node.id, result.sessionId)
       return
     }
 
