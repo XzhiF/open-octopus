@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
-import { ledgerCostUsd } from "../db/dao/usage-ledger"
+import { composeLlmCallRow } from "./llm-call-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
@@ -191,30 +191,34 @@ export class ObservabilityService {
     if (!meta) return
 
     try {
-      const rows: LlmCallRow[] = calls.map((call, i) => ({
+      // billing NEW-r2：workflow 路径经共用落账 helper 落**纯事实行**（token + 归属，
+      // source_path='workflow'）—— 不再写入时算价，钱查询时派生。
+      // 批量语义保留：compose 纯函数组行 + insertLlmCallBatch 单事务落库。
+      const rows: LlmCallRow[] = calls.map((call, i) => composeLlmCallRow({
         id: crypto.randomUUID(),
-        node_execution_id: nodeExecId,
-        execution_id: executionId,
-        turn_index: call.turnIndex,
-        call_index: i,
-        message_id: call.messageId ?? null,
+        sourcePath: 'workflow',
+        nodeExecutionId: nodeExecId,
+        executionId,
+        turnIndex: call.turnIndex,
+        callIndex: i,
+        messageId: call.messageId ?? null,
         model: call.model ?? null,
-        stop_reason: call.stopReason ?? null,
+        stopReason: call.stopReason ?? null,
         timestamp: call.timestamp,
-        duration_ms: call.durationMs,
-        ttft_ms: call.ttftMs ?? null,
-        input_tokens: call.inputTokens,
-        output_tokens: call.outputTokens,
-        cache_read_tokens: call.cacheReadTokens,
-        cache_creation_tokens: call.cacheCreationTokens,
-        // C2/C3：SDK/价表都没有 → 写 NULL（未定价）；ledger 唯一 cost 决策函数
-        cost_usd: ledgerCostUsd(call, call.model, call.costUsd),
+        durationMs: call.durationMs,
+        ttftMs: call.ttftMs ?? null,
+        usage: {
+          inputTokens: call.inputTokens,
+          outputTokens: call.outputTokens,
+          cacheReadTokens: call.cacheReadTokens,
+          cacheCreationTokens: call.cacheCreationTokens,
+        },
         org: meta.org,
-        workspace_id: meta.workspaceId,
-        workflow_ref: meta.workflowRef,
-        node_id: meta.nodeId,
-        session_id: meta.sessionId ?? null,
-        instance_id: instanceId,
+        workspaceId: meta.workspaceId,
+        workflowRef: meta.workflowRef,
+        nodeId: meta.nodeId,
+        sessionId: meta.sessionId ?? null,
+        instanceId,
       }))
 
       this.tokenDao.insertLlmCallBatch(rows)

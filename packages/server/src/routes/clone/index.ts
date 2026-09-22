@@ -53,6 +53,8 @@ import { TaskHomeService } from '../../services/tasks/task-home-service'
 // （既有 clone 测试零改动）。
 import type { RepoSyncService } from '../../services/tasks/repo-sync-service'
 import { getResourceRegistry } from '../../services/resource-registry'
+import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { ResourceRef } from '@octopus/shared'
 
 // ── Route deps ─────────────────────────────────────────────────────
@@ -74,6 +76,10 @@ export interface CloneSessionRouteDeps {
    *  项目的镜像同步完成（有界，超时放行），并把新鲜度标注写进 context.md。
    *  Optional: absent ⇒ the gate is skipped entirely (v3/legacy untouched). */
   repoSyncService?: RepoSyncService
+  /** billing-coverage-2 票02: 分身聊天入账 —— result chunk 经共用落账 helper
+   *  (services/llm-call-ledger) 写 llm_calls（source_path='clone_chat'）。
+   *  Optional: absent ⇒ skip（纯旁路，记账失败/缺席绝不影响聊天主流水）。 */
+  tokenUsageDao?: TokenUsageDAO
 }
 
 // ── File route constants removed — file ops now in clone-files.ts ──
@@ -121,7 +127,7 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
-  const { sessionDAO, taskDAO, repoSyncService } = deps
+  const { sessionDAO, taskDAO, repoSyncService, tokenUsageDao } = deps
   const partialFlushMs = deps.partialFlushMs ?? 1000
   const app = new Hono()
 
@@ -543,6 +549,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         let fullContent = ''
         let fullThinking = ''
         let resultSessionId: string | null = null
+        const turnStartMs = Date.now()
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
@@ -659,9 +666,29 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             case 'status':
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
-            case 'result':
+            case 'result': {
               resultSessionId = chunk.sessionId ?? null
+              // billing-coverage-2 票02 (US1/KD22)：分身聊天入账 —— 唯一用量来源 =
+              // provider result chunk，经共用落账 helper 写 llm_calls（source_path=
+              // 'clone_chat'。NEW-r2：只落事实行，钱查询时派生）。
+              // 纯旁路 + 无真值不记，收敛在票01 helper（recordProviderResultUsage）。
+              if (tokenUsageDao) {
+                recordProviderResultUsage({
+                  sourcePath: 'clone_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId,
+                  messageId: assistantMsgId,
+                  org,
+                  nodeId: cloneName,
+                  startedAtMs: turnStartMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                  fallbackModel: (typeof body.model === 'string' && body.model) || cloneDef.config?.model || null,
+                }, tokenUsageDao)
+              }
               break
+            }
             case 'error':
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break

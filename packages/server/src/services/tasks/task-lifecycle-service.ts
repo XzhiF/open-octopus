@@ -591,6 +591,17 @@ export class TaskLifecycleService {
         throw new TaskLifecycleError("workspace", `预建工作区失败: ${errMessage(err)}`)
       }
     }
+    // K4 一 task 一 ws：workspace_id 有值却查不到行 = 坏绑定（旧数据 / 手工清库 /
+    // 归档后残留），必须响 —— 绝不能静默 fall through 去建第二个 ws（那会让历史
+    // 轮证据与实物复检失去归属）。仅当 workspace_id 为空（真正首建）才继续新建。
+    // 此前该场景靠「同一秒两次 createFromSpec 撞同名目录」间接抛错，是时序竞态；
+    // 这里改为确定性守卫（2026-09-22）。
+    if (task.workspace_id) {
+      throw new TaskLifecycleError(
+        "workspace",
+        `任务绑定的工作区 ${task.workspace_id} 不可用（行缺失或路径失效）—— 拒绝新建第二个`,
+      )
+    }
 
     const composite = isCompositeWorkflowConfig(plan)
     const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({

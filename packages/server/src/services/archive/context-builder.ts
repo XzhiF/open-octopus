@@ -196,18 +196,13 @@ function buildFailedNodes(executionId: string, db: Database.Database): FailedNod
 }
 
 function getExecutionCost(executionId: string, db: Database.Database): number | null {
-  // C3/Q8-1: 单源 ntu 账本 —— 旧「ntu>0 否则 llm_calls」双表回退链废除
-  // （ntu 已是总量唯一账本；回退链只在旧数据上掩盖两表不对称）。
-  const ntuRow = db
+  // NEW-r2:钱不落账本 —— 从 llm_calls_costed 派生视图按执行聚合(全未定价 SUM=NULL 不焊 0)。
+  const row = db
     .prepare(
-      `SELECT ${LEDGER_SQL.sumCost('')} as cost
-       FROM node_token_usages
-       WHERE node_execution_id IN (
-         SELECT id FROM node_executions WHERE execution_id = ?
-       )`,
+      `SELECT SUM(cost_usd) as cost FROM llm_calls_costed WHERE execution_id = ?`,
     )
     .get(executionId) as { cost: number | null }
-  return ntuRow.cost
+  return row.cost
 }
 
 function sampleExecutions(executions: ExecutionRow[], db: Database.Database): ExecutionRow[] {
@@ -397,15 +392,11 @@ function buildCostProfile(
   workspaceId: string,
   db: Database.Database,
 ): CostProfile {
-  // Use node_token_usages (covers all executor types including swarm)
-  // Path: node_token_usages → node_executions → executions
+  // NEW-r2:钱的单一来源 = llm_calls_costed 派生视图(全未定价 SUM=NULL 不焊 0);
+  // ntu 只贡献 tokens/date-range(非钱路径)。
   const totalRow = db
     .prepare(
-      `SELECT ${LEDGER_SQL.sumCost('ntu.')} as total
-       FROM node_token_usages ntu
-       JOIN node_executions ne ON ntu.node_execution_id = ne.id
-       JOIN executions e ON ne.execution_id = e.id
-       WHERE e.workspace_id = ?`,
+      `SELECT SUM(cost_usd) as total FROM llm_calls_costed WHERE workspace_id = ?`,
     )
     .get(workspaceId) as { total: number | null }
   const total_cost = totalRow.total
@@ -437,10 +428,12 @@ function buildCostProfile(
   // Cost trend from daily costs (group by execution date)
   const dailyRows = db
     .prepare(
-      `SELECT DATE(e.started_at) as day, SUM(ntu.cost_usd) as cost
-       FROM node_token_usages ntu
-       JOIN node_executions ne ON ntu.node_execution_id = ne.id
-       JOIN executions e ON ne.execution_id = e.id
+      `SELECT DATE(e.started_at) as day, SUM(v.c) as cost
+       FROM executions e
+       LEFT JOIN (
+         SELECT execution_id, SUM(cost_usd) as c
+         FROM llm_calls_costed GROUP BY execution_id
+       ) v ON v.execution_id = e.id
        WHERE e.workspace_id = ?
        GROUP BY day
        ORDER BY day ASC`,
@@ -465,27 +458,33 @@ function buildCostProfile(
     }
   }
 
-  // Model breakdown
+  // Model breakdown —— tokens 源 ntu,钱源派生视图,JS 按 model 合流(NEW-r2)
   const modelRows = db
     .prepare(
       `SELECT ntu.model,
               COUNT(*) as calls,
-              ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
-              ${LEDGER_SQL.sumCost('ntu.')} as cost
+              ${LEDGER_SQL.sumTokens('ntu.')} as tokens
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
        JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?
        GROUP BY ntu.model
-       ORDER BY cost DESC`,
+       ORDER BY tokens DESC`,
     )
-    .all(workspaceId) as Array<{ model: string; calls: number; tokens: number; cost: number | null }>
+    .all(workspaceId) as Array<{ model: string; calls: number; tokens: number }>
+  const modelCostRows = db
+    .prepare(
+      `SELECT model, SUM(cost_usd) as cost
+       FROM llm_calls_costed WHERE workspace_id = ? GROUP BY model`,
+    )
+    .all(workspaceId) as Array<{ model: string; cost: number | null }>
+  const costByModel = new Map(modelCostRows.map(r => [r.model, r.cost]))
 
   const modelBreakdown: ModelBreakdown[] = modelRows.map((row) => ({
     model: row.model ?? "unknown",
     calls: row.calls,
     tokens: Number(row.tokens) || 0,
-    cost: Number(row.cost) || 0,
+    cost: Number(costByModel.get(row.model)) || 0,
   }))
 
   return { total_cost, daily_avg, trend_direction, trend_pct, modelBreakdown }

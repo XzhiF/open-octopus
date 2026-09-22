@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 40 tables", () => {
+  it("creates all 42 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,11 +23,14 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (40) — includes `tasks` (schema v38, v2-D1 first-class task
-      // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4).
+      // Core tables (42) — includes `tasks` (schema v38, v2-D1 first-class task
+      // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
+      // + billing_price_config/billing_setting (schema v45, billing-core-1 票01).
       // v41 (ADR-0021) deliberately adds NO table: `schedules` goes back to being only
       // a job definition and a task launch is an `executions` row carrying task_id.
-      "agent_events", "agent_versions", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
+      "agent_events", "agent_versions", "archive_drafts",
+      "billing_price_config", "billing_setting",
+      "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
       "harness_config", "harness_events",
       "insight_marks", "interaction_messages",
@@ -60,7 +63,8 @@ describe("DB Schema", () => {
     //   Both existed for the task envelope (origin lookup / queued due-time FIFO).
     //   (The single-instance latch is ux_exec_task_active — outside this idx_%
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
-    expect(rows.length).toBe(97)
+    // + schema v46 (billing-coverage-2 票01): idx_llm_calls_source_ts = 98.
+    expect(rows.length).toBe(98)
   })
 
   it("workspaces table has correct columns", () => {

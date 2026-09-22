@@ -13,7 +13,7 @@
 // phases[0].slug → djb2 短哈希 → null（调用方 taskpool 兜底）。
 import { describe, it, expect } from "vitest"
 import { computeTaskWsLaunchParams } from "../ws-launch"
-import { taskDisplayTitle, taskWorkspaceName } from "../task-ws-name"
+import { taskBranchPrefix, taskDisplayTitle, taskWorkspaceName } from "../task-ws-name"
 import { WORKSPACE_NAME_PATTERN } from "@octopus/shared"
 
 const FIXED = new Date(2026, 7, 29, 16, 45, 12) // 2026-08-29 16:45:12 本地时间
@@ -143,5 +143,67 @@ describe("computeTaskWsLaunchParams — naming:'cron'（定时作业）", () => 
       instanceKey: "sched-10", naming: "cron", config: cronConfig, taskRow: null, date: FIXED,
     })
     expect(p.branchSuffix.startsWith("20260829164512-")).toBe(true)
+  })
+})
+
+// ── taskBranchPrefix — 分支名收口（2026-09-22：告别 taskpool-{uuid}）────
+describe("taskBranchPrefix — spec.branch > feat-<slug>-<YYYYMMDD> > null", () => {
+  const CREATED = new Date(2026, 8, 22, 10, 0, 0).toISOString() // 2026-09-22 本地
+
+  it("author 显式 spec.branch 最高优先（含中文/冒号先剥成 ASCII）", () => {
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ branch: "feat-my-thing", slug: "ignored" }), created_at: CREATED }))
+      .toBe("feat-my-thing")
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ branch: "fix-中文-name" }), created_at: CREATED }))
+      .toBe("fix-name")
+  })
+
+  it("branch 全非 ASCII（剥后为空）→ 不硬上，继续走 slug 推导→兜底链", () => {
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ branch: "重构:计费" }), created_at: CREATED })).toBeNull()
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ branch: "中文名", slug: "kept" }), created_at: CREATED }))
+      .toBe("feat-kept-20260922")
+  })
+
+  it("无 branch 有主 slug → feat-<slug>-<创建日 YYYYMMDD>（主 slug 优先 phases[0].slug）", () => {
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ slug: "billing-v2", phases: [{ slug: "p1" }] }), created_at: CREATED }))
+      .toBe("feat-billing-v2-20260922")
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ phases: [{ slug: "only-phase-slug" }] }), created_at: CREATED }))
+      .toBe("feat-only-phase-slug-20260922")
+  })
+
+  it("无 slug 锚（仅 goal/name）→ null，调用方保留 taskpool-{taskId} 兜底", () => {
+    expect(taskBranchPrefix({ task_spec: JSON.stringify({ goal: "无 slug" }), created_at: CREATED })).toBeNull()
+    expect(taskBranchPrefix({ task_spec: "{坏 JSON", created_at: CREATED })).toBeNull()
+  })
+
+  it("确定性：同一行两次调用产出逐字节一致（两侧预建/复用命中前提）", () => {
+    const row = { task_spec: JSON.stringify({ slug: "det" }), created_at: CREATED }
+    expect(taskBranchPrefix(row)).toBe(taskBranchPrefix(row))
+  })
+
+  it("整串匹配 ^[a-zA-Z0-9_-]+$（worktree 目录名原料约束）", () => {
+    const b = taskBranchPrefix({ task_spec: JSON.stringify({ slug: "runbook-mem" }), created_at: CREATED })!
+    expect(WORKSPACE_NAME_PATTERN.test(b)).toBe(true)
+  })
+})
+
+describe("computeTaskWsLaunchParams — naming:'task' 走 feat 分支前缀", () => {
+  const CREATED = new Date(2026, 8, 22, 10, 0, 0).toISOString()
+  it("有 slug 的任务 → branch_prefix = feat-<slug>-<YYYYMMDD>（不再是 taskpool-{uuid}）", () => {
+    const p = computeTaskWsLaunchParams({
+      instanceKey: "nm-task-feat", naming: "task", config: cronConfig,
+      taskRow: { name: "计费重构", task_spec: JSON.stringify({ slug: "billing-v2" }), created_at: CREATED },
+      date: FIXED,
+    })
+    expect(p.branchPrefix).toBe("feat-billing-v2-20260922")
+    // 展示名照旧独立于分支前缀。
+    expect(p.workspaceName).toMatch(/^task-/)
+  })
+
+  it("无 slug 锚 → 回退 taskpool-{instanceKey}（既有行为不变）", () => {
+    const p = computeTaskWsLaunchParams({
+      instanceKey: "nm-task-nofeat", naming: "task", config: cronConfig,
+      taskRow: { name: "监控agent context优化", task_spec: '{"goal":"g"}', created_at: CREATED }, date: FIXED,
+    })
+    expect(p.branchPrefix).toBe("taskpool-nm-task-nofeat")
   })
 })

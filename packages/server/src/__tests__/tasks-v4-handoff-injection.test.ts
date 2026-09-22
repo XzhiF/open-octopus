@@ -349,11 +349,15 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
     // $vars.task_artifacts_dir / task_workflows_dir)，信封时代同样如此 —— 本条要钉的
     // 是交接注入**没有多加任何键**。is_final_phase 属另一条信道（ADR-0019 §1 边界，
     // 恒注入，见下方专门的一组），此处一并钉住它的在场。
+    // #68 提速轮起另有 octopus_api / task_id 两个管理键（工作流回调 REST 用），
+    // 同属恒注入信道 —— 基线键集随之扩为 7。
     expect(Object.keys(iv).sort()).toEqual([
       "_phase_index",
       "_round_index",
       "is_final_phase",
+      "octopus_api",
       "task_artifacts_dir",
+      "task_id",
       "task_workflows_dir",
     ])
     // 这一轮派的正是 TWO_PHASES 的 phase2 = 末站 —— 与「键在场」同处断言，免得

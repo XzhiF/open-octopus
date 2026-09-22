@@ -101,6 +101,8 @@ function insertValidV4Task(): { id: string; phases: PhaseInput[] } {
   const id = insertTask({
     format: "v4", task_type: "coding", skill_groups: [],
     decisions: [], resources: [], authoring_resources: [], phases,
+    // runbook 硬闸（2026-09-22）：happy 源必须能过闸 —— 预带合法 preview。
+    acceptance_preview: { command: "echo up", url: "http://localhost:3100/" },
   })
   writeHomeFile(id, specPath, "# E2E_TD dup spec\n", 86_400_000)
   writeHomeFile(id, path.join(".scratch", "dupd", "p1", "issues", "01-e2e-walk.md"), "# E2E_TD issue\n", 86_400_000)

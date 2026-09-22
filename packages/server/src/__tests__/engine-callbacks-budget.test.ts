@@ -42,6 +42,8 @@ function makeMocks() {
 
   const tokenUsageDao = {
     recordNodeUsage: vi.fn(),
+    // NEW-r2: node_end SSE 的费用 = DB 派生(cost_usd 快照列已删)—— mock 供固定值。
+    costForNodeExecution: vi.fn().mockReturnValue({ usd: 0.05, complete: true }),
     aggregateByExecution: vi.fn().mockReturnValue({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
             totals: { tokens: 0, cost: { usd: 0, complete: true }, cacheHitRate: null },

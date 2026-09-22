@@ -1221,10 +1221,14 @@ export class TasksService {
       case "acceptance_verify":
       case "acceptance_preview":
       case "acceptance_runbook":
+      case "slug":
+      case "branch":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
         // JSON.stringify drops the key (见 shared validator)。
+        // slug/branch（2026-09-22）：shared enum 早已可绑但这里没有 case ——
+        // author 写 slug 一直静默丢键，同 null-clear 纪律一并接上。
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
       case "phases": {
@@ -1482,6 +1486,20 @@ export class TasksService {
             missing.push(`project:${name}`)
           }
         }
+      }
+      // 验收 runbook 硬检（2026-09-22）：v4 任务入队前必须预设「跑起来看」的
+      // 起法 —— acceptance_runbook（多服务/远端）∨ acceptance_preview（单服务）
+      // 任一命中即可。两者皆无但配了 acceptance_verify（当场复检）→ 放行：
+      // unit-only 薄切片验收面不需要起服务。author「记忆命中→确认 / 无→问一次」
+      // 是 SKILL 纪律（task-author §启动 Runbook 记忆），这里是机器兜底，防漏写
+      // 到待验收才暴露「跑起来看」空面板。
+      // 命中判据与 resolveRunbook ①② 级对齐：runbook 要 up∧ready 齐、preview 要
+      // command（url 由 schema 保证）；verify 是 unit-only 逃生门。
+      const rb = taskSpec.acceptance_runbook
+      const hasRunbook = !!(rb?.up?.command?.trim() && rb?.ready?.command?.trim())
+      const hasPreview = !!taskSpec.acceptance_preview?.command?.trim()
+      if (!hasRunbook && !hasPreview && !taskSpec.acceptance_verify?.command?.trim()) {
+        missing.push("runbook")
       }
       if (missing.length > 0) {
         throw new TaskReadyGateError(

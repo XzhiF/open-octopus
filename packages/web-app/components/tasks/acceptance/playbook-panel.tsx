@@ -27,6 +27,7 @@ import {
   readChecks, saveChecks, runProbe, type PlaybookPayload, type PlaybookItem, type CheckDecision,
   type CheckEntry, type ProbeRunResult,
 } from "@/lib/tasks-api"
+import { formatDuration } from "@/lib/format"
 
 interface PlaybookPanelProps {
   taskId: string
@@ -419,7 +420,7 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
             className={`pop-stamp shrink-0 rounded border-[2px] bg-transparent px-1.5 py-px font-mono text-[9px] font-black ${
               (probe?.state ?? entry?.probe?.state) === "passed" ? "border-pop-green text-pop-green" : "border-pop-red text-pop-red"}`}
             data-testid={`probe-stamp-${item.id}`}
-            title={`机器探针 · exit ${probe?.exit_code ?? entry?.probe?.exit_code}${probe?.duration_ms != null ? ` · ${(probe.duration_ms / 1000).toFixed(1)}s` : ""}`}
+            title={`机器探针 · exit ${probe?.exit_code ?? entry?.probe?.exit_code}${probe?.duration_ms != null ? ` · ${formatDuration(probe.duration_ms)}` : ""}`}
           >
             {(probe?.state ?? entry?.probe?.state) === "passed" ? `EXIT ${probe?.exit_code ?? entry?.probe?.exit_code ?? 0}` : `EXIT ${probe?.exit_code ?? entry?.probe?.exit_code ?? "?"}`}
           </span>

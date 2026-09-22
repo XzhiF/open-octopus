@@ -21,6 +21,7 @@ import { createScheduleRoutes } from './schedule-routes'
 import { createMiscRoutes } from './misc-routes'
 import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
+import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -34,11 +35,13 @@ interface AgentRouteDeps {
   executionDAO: ExecutionDAO
   cloneDAO: CloneDAO
   schedulerService: SchedulerService
+  /** billing-coverage-2 票03: Main Agent 统一入口/委托链入账（透传给 createMainAgentRoute）。 */
+  tokenUsageDao?: TokenUsageDAO
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
-    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO,
+    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO, tokenUsageDao,
   } = deps
 
   const agent = new Hono()
@@ -89,7 +92,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createTaskRoutes(deps))
 
   // Main Agent unified entry (LLM router with clone delegation)
-  agent.route('/', createMainAgentRoute({ sessionDAO }))
+  agent.route('/', createMainAgentRoute({ sessionDAO, tokenUsageDao }))
 
   return agent
 }

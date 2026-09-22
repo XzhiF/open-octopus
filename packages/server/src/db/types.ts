@@ -1,6 +1,8 @@
 // packages/server/src/db/types.ts
 // Row type interfaces used by DAOs — mirrors schema.sql column definitions.
 
+import type { LlmCallSourcePath } from "@octopus/shared"
+
 // ── Core Tables ─────────────────────────────────────────────────────
 
 export interface WorkspaceRow {
@@ -138,7 +140,6 @@ export interface NodeTokenUsageRow {
   model: string
   input_tokens: number
   output_tokens: number
-  cost_usd: number | null
   cache_read_tokens: number
   cache_creation_tokens: number
   created_at: string
@@ -146,11 +147,13 @@ export interface NodeTokenUsageRow {
 
 export interface LlmCallRow {
   id: string
-  node_execution_id: string
-  execution_id: string
+  /** v47 (票04/KD17): 聊天/压缩类行无执行链路，归属列可空 —— 可得性如实。 */
+  node_execution_id: string | null
+  execution_id: string | null
   turn_index: number
   call_index: number
   message_id: string | null
+  /** v48 (billing NEW-r2): 规范模型名（shared normalizeModelId 落账前归一）。 */
   model: string | null
   stop_reason: string | null
   timestamp: number
@@ -160,13 +163,17 @@ export interface LlmCallRow {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
-  cost_usd: number | null
+  // v48: cost_usd/cost_native/cost_currency/price_status 快照列已删除 ——
+  // 钱不落账本，一切费用都是查询时按 billing_price_config 窗口匹配的派生值。
   org: string | null
   workspace_id: string | null
   workflow_ref: string | null
   node_id: string | null
   session_id: string | null
   instance_id: string | null
+  /** billing-coverage-2 票01 (KD20): 来源维度。新行必经共用落账 helper 带枚举值；
+   *  列可空只为老行回填前的过渡态服务（回填后全表非 NULL，unknown 兜底）。 */
+  source_path?: LlmCallSourcePath | null
 }
 
 export interface OptimizationSuggestionRow {

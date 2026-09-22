@@ -248,12 +248,23 @@ describe("getCostAnalysis", () => {
         daysAgo
       })
 
-      // Add token usage
+      // Add token usage（NEW-r2:ntu 纯 token;钱的 0.05/笔 由事实行 × 兜底价派生）
       db.prepare(
-        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(`tu-${i}`, nodeId, "claude-3", 1000, 500, 0.05, date)
+        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(`tu-${i}`, nodeId, "claude-3", 1000, 500, date)
+      db.prepare(
+        `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, model,
+           timestamp, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, workspace_id, source_path)
+         VALUES (?, ?, ?, 1, 0, 'claude-3', ?, 1, 1000, 500, 0, 0, ?, 'workflow')`
+      ).run(`lc-${i}`, nodeId, execId, new Date(date).getTime(), WORKSPACE_ID)
     }
+
+    // 兜底价 USD:1000×50/1e6 = 0.05/笔
+    const t = new Date().toISOString()
+    db.prepare(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
+        output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, valid_from, valid_to, created_at, updated_at)
+      VALUES ('pp-claude3', 'v', 'claude-3', 50, 0, 0, 0, 'USD', NULL, NULL, ?, ?)`).run(t, t)
 
     const result = service.getCostAnalysis(WORKSPACE_ID, 30)
     expect(result.costTrend.length).toBeGreaterThan(0)

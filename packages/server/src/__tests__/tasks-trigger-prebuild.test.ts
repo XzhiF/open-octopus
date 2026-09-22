@@ -129,6 +129,8 @@ function v4Spec(withPhase = true): string {
     task_type: "coding",
     goal: "g",
     ac: ["a"],
+    // runbook 硬闸（2026-09-22）：合法 v4 模板必须带预设起法，exact-keys 用例才不被污染。
+    acceptance_preview: { command: "echo up", url: "http://localhost:3100/" },
     phases: withPhase
       ? [
           {
@@ -264,7 +266,8 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     expect(existsSync(join(wt, ".git"))).toBe(true)
     expect(existsSync(join(wt, "README.md"))).toBe(true)
     const branch = execFileSync("git", ["-C", wt, "branch", "--show-current"]).toString().trim()
-    expect(branch.startsWith("taskpool-t-ok-")).toBe(true) // 实例键 = 任务 id（旧为信封 id）
+    // 分支命名收口（2026-09-22）：有 slug 锚 → feat-<slug>-<YYYYMMDD>（旧 taskpool-{id}）。
+    expect(branch.startsWith("feat-p1-")).toBe(true)
     const config = JSON.parse(readFileSync(join(ws.path, "config.json"), "utf-8")) as {
       repos: Array<Record<string, unknown>>
     }

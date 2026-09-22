@@ -591,11 +591,11 @@ export class RoundEvidenceService {
    *  missing sources degrade into coverage.missing, never throw (200 with
    *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
   getPlaybook(taskId: string): PlaybookPayload {
-    const { roundIndex, batchRelDir, execRow } = this.resolveAwaiting(taskId)
-    // ③ 管道步过滤前提：本任务有没有「跑起来看」可用（三级 runbook 任一命中）。
-    // 有 → 起服/就绪/收尾类票步折给预览按钮；无 → 它们留在剧本里可跑（否则没人起服务）。
-    const ws = execRow ? this.workspaceService.getById(execRow.workspace_id) : null
-    const hasRunbook = !!this.resolveRunbook(taskId, ws?.path)
+    const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+    // ③ 管道步过滤前提（判据两级，2026-09-22）：本任务有没有「跑起来看」可用
+    // （runbook 两级任一命中）。有 → 起服/就绪/收尾类票步折给预览按钮；
+    // 无 → 它们留在剧本里可跑（否则没人起服务）。
+    const hasRunbook = !!this.resolveRunbook(taskId)
     if (!batchRelDir) {
       // absolute specPath bypass — no batch dir to read, honest empty state.
       return compilePlaybook({ roundIndex, hasRunbook })
@@ -698,13 +698,15 @@ export class RoundEvidenceService {
 
   // ── live preview (跑起来看) ────────────────────────────────────────────
 
-  /** Resolve the effective runbook (wsPath 用于探测项目自带脚本)：优先级
+  /** Resolve the effective runbook（两级，2026-09-22 起）：优先级
    *  ① 显式 `acceptance_runbook`；② legacy `acceptance_preview` 合成（单服务，
-   *  旧面板零改动）；③ 项目自带 `.octopus/acceptance/{up,health,down}.sh`(+可选
-   *  `views` 文件) —— 企业里 docker-compose / 多 jar / Jenkins 部署各自的复杂度
-   *  全留在这些脚本里，平台只认 up/health/down/urls 契约，不枚举任何工具。
-   *  三者皆无 → null。 */
-  private resolveRunbook(taskId: string, wsPath?: string): AcceptanceRunbook | null {
+   *  旧面板零改动）。两者皆无 → null。
+   *  历史第③级「项目自带 `.octopus/acceptance/{up,health,down}.sh` 约定脚本」
+   *  已摘除 —— 它探的是工作区根，而任务仓库 worktree 实际落在 `projects/<repo>/`
+   *  下，两者永不相交（PV7 当年靠手工往工作区根塞脚本才命中，是测试自证假象）；
+   *  且企业侧起法已由 author 经「长期记忆 → spec-field」预设（task-author SKILL
+   *  §启动 Runbook 记忆），运行期不再自动探测文件系统。 */
+  private resolveRunbook(taskId: string): AcceptanceRunbook | null {
     const spec = this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined
     const rb = spec?.acceptance_runbook as AcceptanceRunbook | undefined
     if (rb?.up?.command?.trim() && rb?.ready?.command?.trim()) return rb
@@ -716,42 +718,6 @@ export class RoundEvidenceService {
         // the old "any response = port up" probe under the unified exit-code rule.
         ready: { command: `curl -s -o /dev/null ${JSON.stringify(legacy.url)}` },
         views: [{ url: legacy.url }],
-      }
-    }
-    // ③ 项目约定脚本：wsPath/.octopus/acceptance/{up,health,down}.sh + views
-    if (wsPath) {
-      const dir = path.join(wsPath, ".octopus", "acceptance")
-      const script = (n: string): string | null => {
-        const p = path.join(dir, n)
-        return existsSync(p) ? p : null
-      }
-      const upSh = script("up.sh")
-      const healthSh = script("health.sh")
-      if (upSh && healthSh) {
-        const downSh = script("down.sh")
-        const viewsFile = script("views")
-        let views: RunbookView[] = []
-        if (viewsFile) {
-          try {
-            views = readFileSync(viewsFile, "utf-8")
-              .split(/\r?\n/)
-              .map((l) => l.trim())
-              .filter((l) => l && /^https?:\/\//i.test(l))
-              .slice(0, 20)
-              .map((url) => ({ url }))
-          } catch {
-            views = []
-          }
-        }
-        // 脚本以 POSIX sh 跑（Git Bash/WSL/Linux 皆可）。用相对 cwd 定位脚本目录，
-        // 避免把带反斜杠的 Windows 绝对路径塞进 sh 命令（转义地狱）。
-        const rel = ".octopus/acceptance"
-        return {
-          up: { command: "sh up.sh", cwd: rel },
-          ready: { command: "sh health.sh", cwd: rel },
-          views,
-          down: downSh ? { command: "sh down.sh", cwd: rel } : undefined,
-        }
       }
     }
     return null
@@ -798,9 +764,9 @@ export class RoundEvidenceService {
     if (prev && !prev.done) throw new TaskStatusConflictError("预览已在跑 — 先停止")
     const ws = this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) throw new TaskStatusConflictError("工作区目录不在了 — 预览不可用")
-    const rb = this.resolveRunbook(taskId, ws.path)
+    const rb = this.resolveRunbook(taskId)
     if (!rb) {
-      throw new TaskSpecFieldError("未配置预览 — 写 acceptance_preview(单服务) 或 acceptance_runbook(多服务/远端部署)；或让项目带 .octopus/acceptance/{up,health}.sh")
+      throw new TaskSpecFieldError("未配置预览 — 写 acceptance_preview(单服务) 或 acceptance_runbook(多服务/远端部署)；task-author 起草时应按「启动 Runbook 记忆」预设")
     }
     // 引擎替换语法撞车预检(与 bash 节点同纪律,ADR commit 209a9ce6 教训)。
     for (const step of [rb.up, rb.ready, rb.down]) {
@@ -912,9 +878,8 @@ export class RoundEvidenceService {
   async getPreview(taskId: string): Promise<PreviewSummary | null> {
     const session = this.previewSessions.get(taskId)
     if (session) return { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
-    const wsId = this.resolveAwaiting(taskId).execRow.workspace_id
-    const wsPath = this.workspaceService.getById(wsId)?.path
-    const url = this.resolveRunbook(taskId, wsPath)?.views?.[0]?.url
+    this.resolveAwaiting(taskId) // 409 first (no awaiting → null-safe external probe only on live tasks)
+    const url = this.resolveRunbook(taskId)?.views?.[0]?.url
     if (!url) return null
     if (await this.probeUrl(url)) {
       return { task_id: taskId, url, views: [{ url }], state: "ready", external: true }

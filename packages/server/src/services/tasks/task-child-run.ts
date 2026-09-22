@@ -34,7 +34,7 @@ import type { WorkspaceService } from "../workspace"
 import type { SSEService } from "../sse"
 import { getExecutionService } from "../execution-service-registry"
 import { MAX_PARALLEL_WORKSPACES } from "../scheduler/concurrency"
-import { taskWorkspaceName } from "../scheduler/task-ws-name"
+import { taskBranchPrefix, taskWorkspaceName } from "../scheduler/task-ws-name"
 import { formatBranchSuffix } from "../scheduler/ws-launch"
 
 export interface ChildRunDeps {
@@ -76,6 +76,9 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
   const workspaceName = taskRow
     ? taskWorkspaceName({ name: taskRow.name, task_spec: taskRow.task_spec }, { subName: subunit.name })
     : null
+  // 分支前缀与主工作区同名系（feat-<slug>-<日期>，author 可经 spec.branch 定名）;
+  // 取不到锚时保留旧 taskpool-{parent.id} 兜底。
+  const branchPrefix = (taskRow ? taskBranchPrefix(taskRow) : null) ?? `taskpool-${parent.id}`
 
   // Each subunit gets an INDEPENDENT workspace (its own projects, its own branch). This
   // is the one part of the old shape that was already right, so it carries over verbatim.
@@ -83,9 +86,9 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
   try {
     const created = deps.workspaceService.createFromSpec({
       org: subunit.workspace_spec.org || deps.org,
-      name: workspaceName ?? `taskpool-${parent.id}-${branchSuffix}`,
+      name: workspaceName ?? `${branchPrefix}-${branchSuffix}`,
       projects: subunit.workspace_spec.projects,
-      branch_prefix: `taskpool-${parent.id}`,
+      branch_prefix: branchPrefix,
       branch_suffix: branchSuffix,
       // 票03: a child workspace belongs to the TASK (workspaces.task_id) — the old
       // source_schedule_id was the only way back to the parent task, and it died with

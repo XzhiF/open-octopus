@@ -37,6 +37,8 @@ function makeMocks() {
       totals: { tokens: 0, cost: { usd: 0, complete: true }, cacheHitRate: null },
       totalLlmTurns: 0, errorCount: 0,
     }),
+    // NEW-r2：node_end 节点成本改为视图派生 —— mock 须补此方法
+    costForNodeExecution: vi.fn().mockReturnValue({ usd: 0, complete: true }),
   } as unknown as TokenUsageDAO
   const enginePool = {
     get: vi.fn(() => ({ engine: { getGlobalSessionId: vi.fn(() => "gsid-1") }, abortController: { abort: vi.fn() } })),

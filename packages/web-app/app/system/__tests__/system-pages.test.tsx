@@ -29,17 +29,21 @@ vi.mock("@/components/system/repo-edit-dialog", () => ({
   RepoEditDialog: ({ open }: { open: boolean }) => open ? <div data-testid="repo-edit-dialog" /> : null,
 }))
 
-// Mock lucide-react icons
-vi.mock("lucide-react", () => ({
-  Boxes: () => <span data-testid="icon-boxes" />,
-  Database: () => <span data-testid="icon-database" />,
-  Plus: () => <span data-testid="icon-plus" />,
-  RefreshCw: () => <span data-testid="icon-refresh" />,
-  Download: () => <span data-testid="icon-download" />,
-  FileText: () => <span data-testid="icon-filetext" />,
-  Loader2: () => <span data-testid="icon-loader" />,
-  ChevronRight: () => <span data-testid="icon-chevron" />,
-}))
+// Mock lucide-react icons（partial：保留真实模块其余导出，新增菜单图标不再炸）
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    Boxes: () => <span data-testid="icon-boxes" />,
+    Database: () => <span data-testid="icon-database" />,
+    Plus: () => <span data-testid="icon-plus" />,
+    RefreshCw: () => <span data-testid="icon-refresh" />,
+    Download: () => <span data-testid="icon-download" />,
+    FileText: () => <span data-testid="icon-filetext" />,
+    Loader2: () => <span data-testid="icon-loader" />,
+    ChevronRight: () => <span data-testid="icon-chevron" />,
+  }
+})
 
 import SystemLayout from "../layout"
 import SystemReposPage from "../repos/page"

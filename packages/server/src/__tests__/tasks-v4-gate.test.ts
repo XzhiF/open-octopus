@@ -166,6 +166,11 @@ function newDb(): Database.Database {
   return db
 }
 
+/** 模板默认合法的 acceptance_preview —— runbook 硬闸（2026-09-22）后 v4 过闸
+ *  必须配 runbook/preview/verify 之一；exact-keys 用例因此保持逐字不变。
+ *  想测硬闸本体：spec 里显式置 null 摘除（见文末 runbook 块）。 */
+const OK_PREVIEW = { command: "pnpm dev", url: "http://localhost:3100/" }
+
 /** Insert a draft task row directly (bypass the service) — full spec control. */
 function insertTask(spec: Record<string, unknown>, workflowRef: string | null = null): string {
   const id = `e2e-td-v4gate-${nextTaskSeq++}`
@@ -175,7 +180,7 @@ function insertTask(spec: Record<string, unknown>, workflowRef: string | null = 
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)
-  `).run(id, ORG, `E2E_TD v4 task ${id}`, JSON.stringify(spec), workflowRef, now, now)
+  `).run(id, ORG, `E2E_TD v4 task ${id}`, JSON.stringify({ acceptance_preview: OK_PREVIEW, ...spec }), workflowRef, now, now)
   return id
 }
 
@@ -195,10 +200,16 @@ function writeSpecFile(taskId: string, rel: string): void {
   fs.writeFileSync(abs, `# E2E_TD spec ${rel}\n`)
 }
 
-/** Assemble a v4 task whose phases are given as authored objects. */
-function insertV4Task(id: string, phases: PhaseInput[]): void {
+/** Assemble a v4 task whose phases are given as authored objects. `extra`
+ *  合并进最终 spec（摘除/替换默认 preview 用）。 */
+function insertV4Task(
+  id: string,
+  phases: PhaseInput[],
+  extra: Record<string, unknown> = {},
+): void {
   db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(
     JSON.stringify({
+      acceptance_preview: OK_PREVIEW,
       format: "v4",
       task_type: "coding",
       skill_groups: [],
@@ -206,6 +217,7 @@ function insertV4Task(id: string, phases: PhaseInput[]): void {
       resources: [],
       authoring_resources: [],
       phases,
+      ...extra,
     }),
     id,
   )
@@ -424,6 +436,54 @@ describe("ticket 04 AC2: v3 branch untouched (fork keyed on format only)", () =>
     expect(res.status).toBe(409)
     const body = (await res.json()) as { missing: string[] }
     expect(body.missing).toEqual(["phase:0:no-phases"])
+  })
+})
+
+// ── runbook 硬闸（2026-09-22）────────────────────────────────────────
+// v4 入队闸新增第五类 missing：`runbook` —— 任务未预设「跑起来看」的起法
+// （acceptance_runbook ∧ acceptance_preview 皆无）且没配当场复检（acceptance_verify，
+// unit-only 薄切片的逃生门）时拦下。模板默认带合法 preview，所以既有 exact-keys
+// 用例逐字不变；这一组显式摘除 preview 来单测新键。
+describe("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () => {
+  /** 一条只差 runbook 的干净 v4：spec 就位、v4-required-flow 非批次消费流。 */
+  function cleanTaskMinusRunbook(extra: Record<string, unknown>): string {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    insertV4Task(id, [validPhase(id, 1)], { acceptance_preview: null, ...extra })
+    return id
+  }
+
+  it("三缺（无 runbook/preview/verify）→ 409 missing=['runbook'] only", async () => {
+    const id = cleanTaskMinusRunbook({})
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { missing: string[] }).missing).toEqual(["runbook"])
+  })
+
+  it("半配 runbook（有 up 无 ready，与 resolveRunbook ① 判据对齐）→ 仍拦", async () => {
+    const id = cleanTaskMinusRunbook({
+      acceptance_runbook: { up: { command: "docker compose up -d" } },
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(((await res.json()) as { missing: string[] }).missing).toEqual(["runbook"])
+  })
+
+  it("配了 acceptance_verify（unit-only 逃生门）→ 200 放行", async () => {
+    const id = cleanTaskMinusRunbook({
+      acceptance_verify: { command: "echo x", timeoutS: 5 },
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status, await res.text()).toBe(200)
+  })
+
+  it("配了完整 runbook（up∧ready）→ 200 放行", async () => {
+    const id = cleanTaskMinusRunbook({
+      acceptance_runbook: {
+        up: { command: "docker compose up -d" },
+        ready: { command: "curl -sf http://localhost:8080/health" },
+      },
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status, await res.text()).toBe(200)
   })
 })
 

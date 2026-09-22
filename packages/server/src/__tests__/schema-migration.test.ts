@@ -298,10 +298,10 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
   }
 
-  it("pins the current version at 44", () => {
+  it("pins the current version at 48", () => {
     db = createTestDb()
     applySchema(db)
-    expect(SCHEMA_VERSION).toBe(44)
+    expect(SCHEMA_VERSION).toBe(48)
   })
 
   it("① fresh DB: no envelope columns, run-state columns present", () => {
@@ -404,5 +404,105 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     expect(() => applySchema(db)).not.toThrow()
     const cols = scheduleCols(db)
     for (const col of ENVELOPE_COLS) expect(cols).not.toContain(col)
+  })
+})
+
+// ── v48: billing NEW-r2 —— 快照账 → 规则账 ────────────────────────────────
+describe("Schema v48 — billing 规则账翻转（弃快照列 + 价格窗口 + 模型名归一化）", () => {
+  let db: Database.Database
+  afterEach(() => { db?.close() })
+
+  const colsOf = (name: string) =>
+    (db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[]).map(c => c.name)
+
+  /** 把当前 DB 接骨回 pre-v48 形状（模拟 PR 分支上跑过旧代码的开发库）。 */
+  function graftPreV48Shape() {
+    db.exec(`
+      ALTER TABLE llm_calls ADD COLUMN cost_usd REAL;
+      ALTER TABLE llm_calls ADD COLUMN cost_native REAL;
+      ALTER TABLE llm_calls ADD COLUMN cost_currency TEXT;
+      ALTER TABLE llm_calls ADD COLUMN price_status TEXT;
+    `)
+    db.exec("DROP INDEX idx_ntu_composite")
+    db.exec("ALTER TABLE node_token_usages ADD COLUMN cost_usd REAL")
+    db.exec(`CREATE INDEX idx_ntu_composite ON node_token_usages(node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd)`)
+    // 价格表回旧形（model_id UNIQUE、无窗口列）+ 造撞车：foo 与 foo[1M] 各一条兜底价
+    db.exec("DROP TABLE billing_price_config")
+    db.exec(`
+      CREATE TABLE billing_price_config (
+        id TEXT PRIMARY KEY, vendor TEXT NOT NULL, model_id TEXT NOT NULL UNIQUE,
+        input_unit_price REAL NOT NULL, output_unit_price REAL NOT NULL,
+        cache_write_unit_price REAL NOT NULL, cache_read_unit_price REAL NOT NULL,
+        currency TEXT NOT NULL CHECK (currency IN ('USD','CNY')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )
+    `)
+    const ins = db.prepare(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
+      output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, created_at, updated_at)
+      VALUES (?, 'v', ?, 1, 2, 3, 4, 'USD', 't0', ?)`)
+    ins.run('p-old-keep', 'foo', 't9')       // updated_at 最新 → 并撞时保留
+    ins.run('p-old-drop', 'foo[1M]', 't5')   // 归一化后与上撞车，updated_at 更旧 → 删
+  }
+
+  function seedCall(id: string, model: string, ts: number) {
+    db.prepare(`INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index,
+      model, timestamp, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_path)
+      VALUES (?, NULL, NULL, 1, 0, ?, ?, 1, 1000000, 100000, 0, 0, 'unknown')`).run(id, model, ts)
+  }
+
+  it("① fresh DB: 无 cost 快照列，价格表带窗口，视图存在", () => {
+    db = createTestDb()
+    applySchema(db)
+    for (const c of ["cost_usd", "cost_native", "cost_currency", "price_status"]) {
+      expect(colsOf("llm_calls"), `llm_calls.${c} 不应存在`).not.toContain(c)
+    }
+    expect(colsOf("node_token_usages")).not.toContain("cost_usd")
+    expect(colsOf("billing_price_config")).toEqual(expect.arrayContaining(["valid_from", "valid_to"]))
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='view' AND name='llm_calls_costed'").get()).toBeTruthy()
+  })
+
+  it("② 接骨 DB: 迁移删快照列、价格表窗口化、旧价行平移为兜底价", () => {
+    db = createTestDb()
+    applySchema(db)
+    graftPreV48Shape()
+    expect(colsOf("llm_calls")).toContain("cost_usd") // pre-condition
+
+    applySchema(db)
+
+    for (const c of ["cost_usd", "cost_native", "cost_currency", "price_status"]) expect(colsOf("llm_calls")).not.toContain(c)
+    expect(colsOf("node_token_usages")).not.toContain("cost_usd")
+    expect(colsOf("billing_price_config")).toEqual(expect.arrayContaining(["valid_from", "valid_to"]))
+    const kept = db.prepare("SELECT * FROM billing_price_config WHERE id = 'p-old-keep'").get() as { model_id: string; valid_from: number | null; valid_to: number | null }
+    expect(kept.valid_from).toBeNull(); expect(kept.valid_to).toBeNull() // 存量价 → 全时段兜底
+    // 复合索引已按无 cost 形状重建
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_ntu_composite'").get()).toBeTruthy()
+  })
+
+  it("③ 模型名归一化洗历史行 + 兜底价并撞（保留 updated_at 最新）", () => {
+    db = createTestDb()
+    applySchema(db)
+    graftPreV48Shape()
+    seedCall('c1', 'foo[1M]', 1000)
+    seedCall('c2', 'foo[1M]][1M]', 2000)
+    seedCall('c3', 'bar[1M]', 3000)
+
+    applySchema(db)
+
+    const models = (db.prepare("SELECT DISTINCT model FROM llm_calls ORDER BY model").all() as { model: string }[]).map(r => r.model)
+    expect(models).toEqual(["bar", "foo"])
+    // foo[1M] 与 foo 两条兜底价并撞只剩一条（updated_at 最新 = p-old-keep）
+    const fooRows = db.prepare("SELECT id FROM billing_price_config WHERE model_id='foo'").all() as { id: string }[]
+    expect(fooRows.map(r => r.id)).toEqual(["p-old-keep"])
+    // 归一化后历史账行立即按兜底价出钱（视图派生）：1M×1 + 100k×2 = 1.2 USD
+    const cost = db.prepare("SELECT cost_usd FROM llm_calls_costed WHERE id='c2'").get() as { cost_usd: number }
+    expect(cost.cost_usd).toBeCloseTo(1.2, 9)
+    // 幂等：再跑一遍零变化
+    expect(() => applySchema(db)).not.toThrow()
+    expect((db.prepare("SELECT COUNT(*) n FROM llm_calls_costed").get() as { n: number }).n).toBe(3)
+  })
+
+  it("④ 无价格表的极老库不炸（fresh 前置跳过）", () => {
+    db = createTestDb()
+    expect(() => applySchema(db)).not.toThrow() // createTestDb 空库上直接跑
   })
 })

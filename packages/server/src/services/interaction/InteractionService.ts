@@ -11,12 +11,12 @@ import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
-import { ledgerCostUsd } from "../../db/dao/usage-ledger"
 import { extractInteractionCompletion } from "@octopus/engine"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
-import type { InteractionMessageRow, AgentEventRow, LlmCallRow } from "../../db/types"
+import type { InteractionMessageRow, AgentEventRow } from "../../db/types"
+import { recordLlmCall } from "../llm-call-ledger"
 import { SSEService } from "../sse"
 import { getAgentDir } from "../agent/paths"
 import { INTERACTION_SYSTEM_PROMPT } from "./prompts"
@@ -776,13 +776,13 @@ export class InteractionService {
   /** Write aggregated token usage to node_token_usages. */
   private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
-    // C3: ledger 唯一写入口（每轮新 uuid 不冲突；cost 未知时入口按价表估算）
+    // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
+    // （SDK 上报价不再传入 —— KD2）。每轮新 uuid 不冲突。
     this.tokenDao.recordNodeUsage({
       id: randomUUID(),
       nodeExecutionId: session.nodeExecutionId,
       model: acc.model ?? "unknown",
       usage: acc.usage,
-      costUsd: acc.costUsd,
       source: 'interaction',
       createdAt: new Date().toISOString(),
     })
@@ -792,32 +792,26 @@ export class InteractionService {
   private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
     const now = Date.now()
-    const llmCallRow: LlmCallRow = {
+    // billing-coverage-2 票01：interaction 路径收敛到共用落账 helper（行为等价 ——
+    // SDK 上报价不作账 KD2 延续；钱查询时派生），
+    // 来源标记 source_path='interaction'。
+    recordLlmCall({
       id: randomUUID(),
-      node_execution_id: session.nodeExecutionId,
-      execution_id: session.executionId,
-      turn_index: session.currentRound,
-      call_index: 0,
-      message_id: acc.assistantMessageId,
+      sourcePath: 'interaction',
+      nodeExecutionId: session.nodeExecutionId,
+      executionId: session.executionId,
+      turnIndex: session.currentRound,
+      callIndex: 0,
+      messageId: acc.assistantMessageId,
       model: acc.model ?? "unknown",
-      stop_reason: acc.completionDetected ? "end_turn" : null,
+      stopReason: acc.completionDetected ? "end_turn" : null,
       timestamp: acc.llmCallStartTime,
-      duration_ms: now - acc.llmCallStartTime,
-      ttft_ms: null,
-      input_tokens: acc.usage.inputTokens,
-      output_tokens: acc.usage.outputTokens,
-      cache_read_tokens: acc.usage.cacheReadTokens,
-      cache_creation_tokens: acc.usage.cacheCreationTokens,
-      // C3: 与 node 表写入口同一 cost 兜底（SDK 未给价 → 价表估算 → 未知 NULL）
-      cost_usd: ledgerCostUsd(acc.usage, acc.model, acc.costUsd),
-      org: null,
-      workspace_id: session.workspaceId,
-      workflow_ref: null,
-      node_id: session.nodeId,
-      session_id: session.providerSessionId ?? null,
-      instance_id: null,
-    }
-    this.tokenDao.insertLlmCall(llmCallRow)
+      durationMs: now - acc.llmCallStartTime,
+      usage: acc.usage,
+      workspaceId: session.workspaceId,
+      nodeId: session.nodeId,
+      sessionId: session.providerSessionId ?? null,
+    }, this.tokenDao)
   }
 
   /** Try to extract completion from full text as a fallback. */
