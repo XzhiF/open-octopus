@@ -65,6 +65,7 @@ import {
   DEFAULT_NEW_WORKFLOW,
   SLUG_RE,
   defaultSpecPath,
+  mainSlugOf,
   withPhases,
 } from "./phases-mutation"
 
@@ -177,7 +178,7 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
             index: 9999,
             name: row.name,
             slug: row.slug,
-            specPath: defaultSpecPath(row.slug),
+            specPath: defaultSpecPath(row.slug, mainSlugOf(task)),
             workflowRef: row.workflowRef as TaskPhase["workflowRef"],
             // 目录骨架预填（占位符由 server materialize 解析）
             inputValues: { ...row.inputValues },
@@ -219,7 +220,7 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
         ))
       )}
 
-      {isDraft && <AddPhaseRow busy={busy} onAdd={handleAdd} />}
+      {isDraft && <AddPhaseRow busy={busy} main={mainSlugOf(task)} onAdd={handleAdd} />}
 
       {!isDraft && (
         <p className="text-[10px] text-muted-foreground">
@@ -627,9 +628,11 @@ function PhaseRow({
 // ── 添加 Phase（仅 draft） ───────────────────────────────────────────
 
 function AddPhaseRow({
-  busy, onAdd,
+  busy, main, onAdd,
 }: {
   busy: boolean
+  /** 批次主 slug（新约定父目录，来自 spec.slug；无 → 回退日期约定显示）。 */
+  main?: string
   onAdd: (row: { name: string; slug: string; workflowRef: string; inputValues: Record<string, string> }) => void
 }) {
   const [name, setName] = useState("")
@@ -685,7 +688,7 @@ function AddPhaseRow({
           <Plus className="inline size-3 mr-0.5" />添加 Phase
         </span>
         <span className="text-[9px] text-muted-foreground ml-auto font-mono">
-          {defaultSpecPath(effectiveSlug || "…")}
+          {defaultSpecPath(effectiveSlug || "…", main)}
         </span>
       </div>
       <div className="flex items-center gap-1.5">

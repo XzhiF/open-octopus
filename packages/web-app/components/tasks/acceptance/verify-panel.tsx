@@ -22,7 +22,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Play, RotateCcw, Square } from "lucide-react"
+import { Play, RotateCcw, ShieldCheck, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { AcceptanceVerify } from "@octopus/shared"
 import { formatDuration } from "@/lib/format"
@@ -121,6 +121,8 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
       {/* L1 身份 + 结论 + 动作 */}
       <div className="flex items-center gap-2 px-3 py-2">
         {fold && <FoldHandle id="item-verify" closed={closed} onToggle={() => fold.toggle("item-verify", "info")} />}
+        {/* 身份图标 —— 与「跑起来看」的 Rocket 同规格成对（当场复检=现跑核验） */}
+        <ShieldCheck className="size-3.5 shrink-0 text-pop-dim" />
         <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
         <span className={`shrink-0 rounded-full border-2 border-pop-bd px-2.5 py-px font-mono text-[10px] font-black tabular-nums ${pill.cls}`} data-testid="verify-pill" data-state={pill.st}>
           {pill.t}

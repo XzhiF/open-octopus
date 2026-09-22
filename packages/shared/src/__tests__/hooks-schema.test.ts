@@ -33,6 +33,7 @@ describe("HookSchema", () => {
 describe("WorkflowHooksSchema", () => {
   it("validates full config", () => {
     const result = WorkflowHooksSchema.parse({
+      on_workflow_start: [{ type: "notify", channel: "c", template: { title: "go" } }],
       on_node_success: [{ prompt: "log success" }],
       on_node_failure: [{ type: "bash", bash: "echo fail" }],
       on_workflow_failure: [{ prompt: "alert" }],
@@ -42,6 +43,7 @@ describe("WorkflowHooksSchema", () => {
       on_success: [{ prompt: "final success" }],
       on_complete: [{ prompt: "done" }],
     })
+    expect(result.on_workflow_start).toHaveLength(1)
     expect(result.on_node_success).toHaveLength(1)
     expect(result.on_complete).toHaveLength(1)
   })

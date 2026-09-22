@@ -731,6 +731,24 @@ export function createTasksRoutes(
     }
   })
 
+  // POST /:id/duplicate — 整单复制（spec/issues/自写 workflows 全量）→ 新 task。
+  // body { ready?: boolean }（默认 true）：复制完立刻过同款入队 gate —— 源完备
+  // 则副本直达待执行；gate 不过则副本留草稿并回传 gate_missing。201。
+  router.post("/:id/duplicate", async (c) => {
+    const body = await safeJson(c)
+    if (body && body.ready !== undefined && typeof body.ready !== "boolean") {
+      return c.json({ error: "ready must be a boolean" }, 400)
+    }
+    const ready = body && typeof body.ready === "boolean" ? body.ready : true
+    try {
+      const result = service.duplicateTask(c.req.param("id"), { ready })
+      return c.json(result, 201)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // POST /:id/reopen — the enqueue undo (ready→draft): reaps the not-yet-
   // started envelope and unlocks structural editing. Claimed/running ⇒ 409.
   router.post("/:id/reopen", (c) => {

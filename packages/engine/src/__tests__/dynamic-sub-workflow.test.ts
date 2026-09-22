@@ -1207,3 +1207,82 @@ nodes:
     })
   })
 })
+
+// ──────────────────────────────────────────────────────────────
+// 会话策略（2026-09-21 用户拍板：策略由规划器在 DAG 里显式产出，引擎只
+// 透传 + 护栏 + 缺省 context:"new"）—— dagToWorkflowDef 行为钉。
+// ──────────────────────────────────────────────────────────────
+
+describe("DynamicSubWorkflowExecutor — 票节点会话策略（声明式）", () => {
+  async function captureWfDef(dagJson: string): Promise<{ nodes: Array<Record<string, unknown>> } | null> {
+    const dir = createTempDir()
+    try {
+      const EngineMock = vi.fn().mockImplementation(() => ({
+        updateVarPool: vi.fn(),
+        setWorkflowResolver: vi.fn(),
+        run: vi.fn().mockResolvedValue({ status: "completed", nodeResults: {}, poolSnapshot: {}, durationMs: 10 }),
+      }))
+      vi.doMock("../engine", () => ({ WorkflowEngine: EngineMock }))
+
+      const pool = new VarPool()
+      const node: NodeDef = { id: "plan", type: "dynamic_sub_workflow", prompt: "plan", workflow: "iso-test" }
+      const executor = new DynamicSubWorkflowExecutor(node, pool, {
+        cwd: dir,
+        providers: { claude: createMockProvider(dagJson) },
+        outputDir: join(dir, "workflows"),
+        workflow: { name: "parent" },
+      })
+      await executor.execute()
+      expect(EngineMock).toHaveBeenCalledTimes(1)
+      return EngineMock.mock.calls[0][0] as { nodes: Array<Record<string, unknown>> }
+    } finally {
+      cleanupDir(dir)
+      vi.doUnmock("../engine")
+    }
+  }
+
+  it("规划器漏写 context → 缺省 new（并行票不互灌的安全底）", async () => {
+    const wfDef = await captureWfDef(VALID_DAG_JSON)
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.t1.context).toBe("new")
+    expect(byId.t3.context).toBe("new")
+    // 没声明 resume_from 就不会凭空出现
+    expect(byId.t3.resume_from).toBeUndefined()
+  })
+
+  it("显式 resume_from（合法：在 depends_on 里且前驱是 agent）→ 透传", async () => {
+    const dag = {
+      nodes: [
+        { id: "t1", type: "agent", prompt: "base", context: "new" },
+        { id: "t2", type: "agent", prompt: "chain", depends_on: ["t1"], resume_from: "t1", context: "new" },
+        { id: "t3", type: "agent", prompt: "join", depends_on: ["t2"], resume_from: "t2", context: "new" },
+      ],
+    }
+    const wfDef = await captureWfDef(JSON.stringify(dag))
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.t2.resume_from).toBe("t1")
+    expect(byId.t3.resume_from).toBe("t2")
+  })
+
+  it("护栏：resume_from 不在 depends_on 里 / 指向 octopus_agent → 丢弃", async () => {
+    const dag = {
+      nodes: [
+        { id: "t1", type: "agent", prompt: "a" },
+        { id: "t2", type: "agent", prompt: "b", resume_from: "t1" }, // 不在 depends_on
+        { id: "t3", type: "octopus_agent", agent: "x", task: { brief: "c" } },
+        { id: "t4", type: "agent", prompt: "d", depends_on: ["t3"], resume_from: "t3" }, // 前驱是 octopus_agent
+      ],
+    }
+    const wfDef = await captureWfDef(JSON.stringify(dag))
+    const byId = Object.fromEntries(wfDef!.nodes.map(n => [n.id, n]))
+    expect(byId.t2.resume_from).toBeUndefined()
+    expect(byId.t4.resume_from).toBeUndefined()
+    expect(byId.t3.context).toBeUndefined() // octopus_agent 分支不注入会话字段
+  })
+
+  it("声明的 context:continue 不被引擎改写（引擎只做缺省，不越权）", async () => {
+    const dag = { nodes: [{ id: "t1", type: "agent", prompt: "a", context: "continue" }] }
+    const wfDef = await captureWfDef(JSON.stringify(dag))
+    expect(wfDef!.nodes[0].context).toBe("continue")
+  })
+})

@@ -42,7 +42,7 @@ vi.mock("@/lib/tasks-api", () => ({
   resumeTask: mockResume,
   // 其余导入面（task-modal / trigger-dialog 等）——测试不触发，桩即可
   deleteTask: vi.fn(), createTask: vi.fn(), updateTask: vi.fn(), updateSpecField: vi.fn(),
-  listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(),
+  listTasks: vi.fn(), readyTask: vi.fn(), triggerTask: vi.fn(), duplicateTask: vi.fn(),
   TaskApiError: class extends Error { constructor(msg: string, public status = 0) { super(msg) } },
   ArtifactContentError: class extends Error {},
   WorkflowRefViewError: class extends Error {},
@@ -481,7 +481,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
     expect(await screen.findByText("任务战报")).toBeTruthy()
-    expect(screen.getByText("墙钟总用时")).toBeTruthy()
+    expect(screen.getByText("实际用时")).toBeTruthy()
     expect(screen.getByText("AI 总成本")).toBeTruthy()
     expect(screen.getByText("综合报告")).toBeTruthy()
     // 点 rail P2 → phase 面（轮次账本在位）

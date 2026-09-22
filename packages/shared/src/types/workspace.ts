@@ -16,6 +16,17 @@ export const WorkspaceSchema = z.object({
 })
 export type Workspace = z.infer<typeof WorkspaceSchema>
 
+/** workspace 名合法性（2026-09-20 起，禁中文命名）。name 会直接进磁盘目录名
+ *  (`~/.octopus/orgs/{org}/workspaces/{name}`)、config.json 与 git 分支名 ——
+ *  非 ASCII 目录是 Node v24 cpSync 无声猝死 (0xC0000409) 的事故土壤，且与
+ *  web 创建表单 (create-workspace-dialog.tsx) 的 NAME_PATTERN 同一份规则。
+ *  注意：只用于**写路径**守门（POST /、PUT 改名、import、service assert）；
+ *  WorkspaceSchema.name 故意不收紧 —— 读路径必须还能 parse 存量中文行。 */
+export const WORKSPACE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+export const WorkspaceNameSchema = z
+  .string()
+  .regex(WORKSPACE_NAME_PATTERN, "workspace 名称仅支持英文字母、数字、下划线和连字符（^[a-zA-Z0-9_-]+$）")
+
 
 
 export const ExecutionStatusSchema = z.enum([

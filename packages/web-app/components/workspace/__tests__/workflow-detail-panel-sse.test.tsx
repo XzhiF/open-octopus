@@ -174,6 +174,56 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     expect(n1?.status).toBe("pending")
   })
 
+  // ── F1（2026-09-21 token 时隐时现）：补丁/快照对齐卡片消费口径 tokenUsages+requestCount ──
+
+  it("turn_usage → 卡片聚合字段 tokenUsages/requestCount 同步填上（此前字段错位画不出）", async () => {
+    render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
+    await flush()
+    fire("agent_event", {
+      executionId: "exec-1", nodeId: "n1",
+      event: { type: "turn_usage", turn: 3, delta: { outputTokens: 57 }, cumulative: { inputTokens: 18, outputTokens: 219, cacheReadTokens: 73054, cacheCreationTokens: 36695 } },
+    })
+    const n1 = getSteps().find(s => s.stepId === "n1")
+    const usages = n1?.tokenUsages as Array<Record<string, number | string>> | undefined
+    expect(usages).toHaveLength(1)
+    expect(usages![0].outputTokens).toBe(219)
+    expect(usages![0].cacheReadTokens).toBe(73054)
+    expect(usages![0].model).toBe("") // 跨模型累计无标签，聚合行 filter(Boolean) 隐藏
+    expect(n1?.requestCount).toBe(3)
+  })
+
+  it("turn_usage cumulative 全 0 → 不发 tokenUsages（聚合行保持空）", async () => {
+    render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
+    await flush()
+    fire("agent_event", {
+      executionId: "exec-1", nodeId: "n1",
+      event: { type: "turn_usage", turn: 1, delta: {}, cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 } },
+    })
+    const n1 = getSteps().find(s => s.stepId === "n1")
+    expect(n1?.tokenUsages).toBeUndefined()
+    expect(n1?.requestCount).toBeUndefined()
+  })
+
+  it("快照带 liveUsage（刷新/重连恢复路径）→ running 节点聚合行直接可见", async () => {
+    vi.mocked(fetch).mockImplementation(async () => ({
+      json: async () => ({
+        status: "running",
+        steps: [
+          { stepId: "n1", stepName: "Node 1", status: "running", liveUsage: { inputTokens: 500, outputTokens: 90, cacheReadTokens: 2000, cacheCreationTokens: 0 }, liveTurns: 7 },
+          { stepId: "n2", stepName: "Node 2", status: "pending" },
+        ],
+      }),
+    }) as unknown as Response)
+    render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
+    await flush()
+    const n1 = getSteps().find(s => s.stepId === "n1")
+    const usages = n1?.tokenUsages as Array<Record<string, number | string>> | undefined
+    expect(usages?.[0].inputTokens).toBe(500)
+    expect(usages?.[0].cacheReadTokens).toBe(2000)
+    expect(n1?.requestCount).toBe(7)
+    expect(n1?.tokensInput).toBe(500)
+  })
+
   it("晚于 fetch 发出的 SSE 补丁不被旧轮询快照覆盖", async () => {
     let pollSteps: Array<Record<string, unknown>> = [
       { stepId: "n1", stepName: "Node 1", status: "pending" },

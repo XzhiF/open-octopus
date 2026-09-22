@@ -24,7 +24,7 @@ import {
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
@@ -43,7 +43,7 @@ import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
-  clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone,
+  clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone, sumRunMs,
 } from "./phase-status"
 
 export interface RunConsoleChrome {
@@ -76,7 +76,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // tab 切换只切 hidden —— 三元卸载会把在飞的复检会话打回服务端尾 200 行、
   // gate/编辑草稿归零、重拉 5-6 个请求（「切走再回来失忆」）。换任务时复位。
   const [acceptMounted, setAcceptMounted] = useState(!!startOnAcceptance)
-  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | null>(null)
+  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
@@ -286,6 +286,23 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       toast.error(err instanceof Error ? err.message : "取消失败")
     } finally { setBusy(null) }
   }
+  // duplicate — 整单复制（spec/issues/自写 workflows 全量带走），副本默认直入
+  // 待执行；源是半草稿时 gate 不过 → 副本留草稿 + missing 说清楚。
+  const handleDuplicate = async () => {
+    setBusy("duplicate")
+    try {
+      const result = await duplicateTask(task.id)
+      if (result.gate_missing?.length) {
+        toast.warning(`副本已存为草稿（未入队）：缺 ${result.gate_missing.join("、")}`)
+      } else {
+        toast.success(`已复制「${result.task.name}」到待执行`)
+      }
+      for (const w of result.warnings ?? []) toast.warning(w)
+      onMutated()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "复制失败")
+    } finally { setBusy(null) }
+  }
 
   const handlePause = async () => {
     setBusy("pause")
@@ -432,6 +449,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               {busy === "abort" ? <Spinner className="size-2.5" /> : "■ 中止"}
             </button>
           )}
+          {/* duplicate: 任意状态可用 —— 实现不满意 → 整单复制再跑一单。 */}
+          <button
+            onClick={() => void handleDuplicate()}
+            disabled={busy !== null}
+            data-task-duplicate
+            className={barBtn}
+            title="复制整单（spec/issues/自写 workflows 全量）→ 新任务直入待执行"
+          >
+            {busy === "duplicate" ? <Spinner className="size-2.5" /> : "⧉ 复制"}
+          </button>
           {chrome && (
             <button
               onClick={chrome.onToggleFullscreen}
@@ -576,8 +603,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
   const derived = detail?.derived
   const terminal = TERMINAL_TASK_STATUSES.has(task.status)
   const runs = detail?.executions ?? []
-  const firstStart = runs.length ? Math.min(...runs.map((r) => r.started_at ? Date.parse(r.started_at) : Date.parse(r.created_at)).filter((n) => !Number.isNaN(n))) : NaN
-  const wallMs = !Number.isNaN(firstStart) ? Math.max(0, (task.completed_at ? Date.parse(task.completed_at) : now) - firstStart) : null
+  const { ms: runMs, count: runCount } = sumRunMs(runs, now)
 
   return (
     <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
@@ -657,7 +683,10 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
       )}
 
       <div className="mt-3 space-y-0.5 border-t-2 border-dashed border-pop-bd/20 px-1 pt-2 font-mono text-[10px] text-pop-dim">
-        <div>预算 <b className="text-pop-ink">{Math.round(budgetMs / 60000)}</b> 分/phase · 已用 <b className="text-pop-ink">{wallMs != null ? shortDur(wallMs) : "—"}</b></div>
+        <div title={`创建 ${task.created_at}\n实跑 ${runCount} 轮 —— 只计 workflow 运行段，不含排队/待验收等待`}>
+          创建 <b className="text-pop-ink">{clockShort(task.created_at)}</b> · 实际用时 <b className="text-pop-ink">{runCount > 0 ? shortDur(runMs) : "—"}</b>（{runCount} 轮）
+        </div>
+        <div>预算 <b className="text-pop-ink">{Math.round(budgetMs / 60000)}</b> 分/phase（advisory ⏳）</div>
         <div data-rail-ledger-line={totalAgg ? undefined : "pending"}>
           {totalAgg && totalAgg.totalCalls > 0
             ? <>账目 <b className="text-pop-ink">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b> · <b className="text-pop-ink">{totalAgg.totalCalls}</b> 次请求</>

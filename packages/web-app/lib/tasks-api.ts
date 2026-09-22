@@ -337,6 +337,28 @@ export async function readyTask(id: string): Promise<TaskView> {
   return res.json()
 }
 
+/** POST /api/tasks/:id/duplicate 的结果：新 task + 可选的 gate 缺项 / 路径告警。 */
+export interface DuplicateTaskResult {
+  task: TaskView
+  /** 副本已建成但没通过入队 gate（源本来就是半草稿）→ 副本留在草稿。 */
+  gate_missing?: string[]
+  /** 源 spec 的 input_values 里出现指向源 task home 的字面路径 —— 副本执行时
+   *  不会自动重映射，需要人眼过一遍。 */
+  warnings?: string[]
+}
+
+/** POST /api/tasks/:id/duplicate — 整单复制（spec/issues/自写 workflows 全量）
+ *  成一个新草稿并默认立刻过入队 gate：源完备 → 副本直达待执行（实现不满意时
+ *  复制一份再跑的通道）；gate 不过 → 副本留草稿 + `gate_missing` 回传，不报错。 */
+export async function duplicateTask(id: string, opts?: { ready?: boolean }): Promise<DuplicateTaskResult> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/duplicate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts ?? {}),
+  })
+  return handleResponse<DuplicateTaskResult>(res)
+}
+
 /** POST /api/tasks/:id/abort — running/ready→aborted (v1 G4). 票03: stops the task's
  *  OWN instances (a live one goes through the engine cancel, a queued one is
  *  retired), writes tasks.status='aborted', emits task_status SSE. Does not touch

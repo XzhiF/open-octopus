@@ -1958,6 +1958,11 @@ export class ExecutionLifecycle {
     return this.callbacksBuilder.buildCallbacks(executionId)
   }
 
+  /** F1: EngineCallbacks 实时累计表的只读出口（REST 快照消费）。 */
+  liveUsageFor(executionId: string) {
+    return this.callbacksBuilder.liveUsageFor(executionId)
+  }
+
   // ==================== Token usages ====================
 
   getTokenUsagesPerStep(executionId: string) {

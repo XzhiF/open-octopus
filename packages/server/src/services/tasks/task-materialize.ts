@@ -45,6 +45,14 @@ export const PREV_HANDOFF_PATHS_KEY = "prev_handoff_paths"
  *  collectPrevHandoffPaths only ever picks up `index < targetPhaseIndex`). */
 export const IS_FINAL_PHASE_KEY = "is_final_phase"
 
+/** 验收台预设回填信道 (2026-09-21, 空台事故复盘): 归属任务 id + server 自身
+ *  base URL。ship-pr 据此在 task_spec.acceptance_verify 缺失时 curl spec-field
+ *  回填一条本轮实测过的复检命令（人不用手打）。与 IS_FINAL_PHASE_KEY 同纪律
+ *  **恒注入**（拿不到时注入空串）——缺键会让 `$inputs.task_id` 以字面量残留
+ *  在 prompt 里。空串 = 消费方自检跳过。 */
+export const TASK_ID_KEY = "task_id"
+export const OCTOPUS_API_KEY = "octopus_api"
+
 // SG9 (ticket 06): composite requires subunits.length >= 2 (1-subunit → simple
 // workflow_chain). The dispatch seam (TasksService.readyTask) uses the same
 // threshold; materialize + isCompositeTask (workflow-executor) mirror it so
@@ -449,6 +457,9 @@ export function resolveTaskLaunchStep(args: {
   workflowRefOverride?: string
   inputOverride?: Record<string, string>
   prevHandoffPaths?: string[]
+  /** 验收台预设回填信道（见 TASK_ID_KEY/OCTOPUS_API_KEY）— v4 分支恒注入。 */
+  taskId?: string
+  serverUrl?: string
 }): TaskLaunchStep {
   const { plan, phaseIndex, roundIndex, feedback } = args
   const ext = plan as WorkflowConfig & {
@@ -470,6 +481,10 @@ export function resolveTaskLaunchStep(args: {
       ...(args.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: args.prevHandoffPaths.join("\n") } : {}),
       // Always injected (see IS_FINAL_PHASE_KEY) — the workflow branches on it.
       [IS_FINAL_PHASE_KEY]: phase.index === lastIndex ? "true" : "false",
+      // 恒注入（缺料给空串，消费方自检跳过）— ship-pr 的回填步骤靠这两个键找到
+      // server 与任务；server 权威值压过作者同名输入（与 IS_FINAL 同优先级）。
+      [TASK_ID_KEY]: args.taskId ?? "",
+      [OCTOPUS_API_KEY]: args.serverUrl ?? "",
       // Stamps kept: the var pool exposes them to the workflow and a crash-recovery
       // re-launch of THIS row re-derives identically from the persisted input_values.
       _phase_index: String(phaseIndex ?? 1),

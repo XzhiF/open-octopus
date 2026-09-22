@@ -191,9 +191,12 @@ executionRoutes.get("/:executionId", async (c) => {
   const allTokenUsages = svc.service.getTokenUsagesForExecution(executionId)
   const perStepTokenUsages = svc.service.getTokenUsagesPerStep(executionId)
   const reqCounts = svc.service.llmCallCountsByNode(executionId)
+  // F1: 运行中节点的 turn_usage 实时累计（内存活投影）——running 步骤附 liveUsage/liveTurns
+  const liveUsage = svc.service.getLiveUsage(executionId)
   // Map node_executions to frontend StepExecution format
   const steps = execution.steps.map(ne => {
     const stepTokens = perStepTokenUsages.filter(t => t.stepId === ne.node_id)
+    const live = ne.status === "running" ? liveUsage?.get(ne.node_id) : undefined
     // C1：废除 in+cacheRead / out+cacheCreation 折叠切分 —— 嵌套规范 usage（纯值）。
     // 旧「REST 终态比运行中 turn_usage 虚胖」的节点卡跳变随之消失。
     const stepUsage: TokenUsage | undefined = stepTokens.length > 0
@@ -219,6 +222,7 @@ executionRoutes.get("/:executionId", async (c) => {
       costUsd: nodeCost.usd,
       costComplete: nodeCost.complete,
       ...(requestCount > 0 ? { requestCount } : {}),
+      ...(live && live.usage ? { liveUsage: live.usage, liveTurns: live.turn } : {}),
       modelUsages: stepTokens.length > 0 ? stepTokens.map(t => ({
         model: t.model,
         inputTokens: t.inputTokens,

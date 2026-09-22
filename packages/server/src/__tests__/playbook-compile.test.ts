@@ -296,3 +296,96 @@ Type: e2e
     expect(p.sections.flatMap((s) => s.items).every((i) => !i.lifecycle)).toBe(true)
   })
 })
+
+// ── Story 档弱兜底（2026-09-21 活体回归：09-06 存量中文票整面板空剧本）──
+// 照抄 ~/.octopus/tasks/5720784b…/.scratch/20260906/billing-core-1/issues/07-e2e-
+// billing-reconciliation.md 的形状：`**类型**:` 在 Status 行行中、步挂在 `## Story`
+// 下且多数无行内命令、放行句是 `**Pass**:`（非 Pass criteria）、无 AC 标题。
+
+const STORY_TICKET = `# 07 · E2E 票（API 级）：配价 → 调用 → 对账 故事走查
+
+**Status**: pending（e2e-verify 节点被中断） · **Depends on**: 01–06 · **类型**: E2E（API 级走查，**不开浏览器**）
+
+## Story（= phase 1 验收物的可执行化）
+
+「配好价格，一次调用端到端算对钱、查得到账」全链路走一遍：
+
+1. 价格 API 建/改：在用模型设为**哨兵价**（CNY {1, 10, 2, 0.1}）
+2. 触发一次真实 LLM 调用（最小 workflow 单 agent 节点）
+3. \`GET /api/system/billing/calls\` 取新行：四类 token >0 且与 sqlite 直查三方一致
+4. **手算期望 cost**：与 API 返回 cost_usd 比对（容差 0.01）
+5. 删除该模型价格行 → 再触发 → 新行 price_status='unpriced'、cost 空
+6. settings 展示币种切 USD → 流水 API 换算字段随动；再切回 CNY
+7. **恢复原价、汇率与展示币种，清理 workflow 测试产物**
+
+## Verification Method
+
+- curl（真实 API）+ sqlite 直查交叉 + 手算记录
+
+**Pass**: 7 步全绿。**Fail**: 3 轮修复不过 → 升级人工，不得静默 skip。
+`
+
+const STORY_TICKET_BROWSER = `# 08 · E2E 票（UI）：价格页故事走查
+
+**Status**: ready · **类型**: E2E（浏览器走查）
+
+## Story
+
+1. 打开 系统管理→Token 计费 → 价格表渲染
+2. 新增价格弹窗提交 → 列表新行出现
+`
+
+describe("T02 AC7 — Story 档弱兜底（存量中文票编得出剧本）", () => {
+  it("`## Story` 编号步 + 行中 **类型** + **Pass**: → 7 步 claim，不再 available:false", () => {
+    const p = compile({ e2eTicket: { name: "07-e2e-billing-reconciliation.md", content: STORY_TICKET }, e2eTestPlan: null, roundReport: null })
+    expect(p.available).toBe(true)
+    const sec = p.sections.find((s) => s.title === "07-e2e-billing-reconciliation")
+    expect(sec?.kind).toBe("claim") // 无命令步 → claim；「不开浏览器」负向闸不误判 browser
+    const items = sec?.items ?? []
+    expect(items.length).toBeGreaterThanOrEqual(7)
+    expect(items.every((i) => i.id.startsWith("claim:07-e2e-billing-reconciliation:st"))).toBe(true)
+    // **Pass** 行捕获为预期（Fail 尾句被剥）
+    expect(items[0].expect).toContain("7 步全绿")
+    expect(items[0].expect).not.toContain("静默 skip")
+    // GET 反引号不过命令白名单 → 是 claim 不是假 probe
+    expect(items.some((i) => i.probe)).toBe(false)
+    expect(p.coverage.missing.join()).not.toContain("无可解析步骤")
+  })
+
+  it("同形状但 `**类型**: E2E（浏览器走查）` → walk 步（负向闸只挡『不开』）", () => {
+    const p = compile({ e2eTicket: { name: "08-e2e-price-ui.md", content: STORY_TICKET_BROWSER }, e2eTestPlan: null, roundReport: null })
+    const sec = p.sections.find((s) => s.title === "08-e2e-price-ui")
+    expect(sec?.kind).toBe("walk")
+    expect(sec?.items.every((i) => i.id.startsWith("walk:08-e2e-price-ui:st"))).toBe(true)
+  })
+
+  it("spec 兜底退 User Stories（matt 模板无 AC 标题也接得住）", () => {
+    const p = compile({
+      e2eTicket: { name: "99-e2e-mystery.md", content: "# 99\n\n纯散文,无步。\n" },
+      specMd: "# S\n\n## User Stories\n\n- **US1 价格配置**：作为管理员，我能维护四类 token 单价。\n- **US2 汇率**：作为管理员，我能配置汇率。\n",
+      e2eTestPlan: null, roundReport: null,
+    })
+    expect(p.available).toBe(true)
+    const specSec = p.sections.find((s) => s.source === "spec.md")
+    expect(specSec?.title).toBe("spec 用户故事")
+    expect(specSec?.items).toHaveLength(2)
+    expect(p.finePrint.find((f) => f.ticket === "spec")?.acs).toHaveLength(2)
+  })
+
+  it("正典 AC 段仍优先于 User Stories（词表顺序锁）", () => {
+    const p = compile({
+      e2eTicket: null,
+      specMd: "# S\n## Acceptance Criteria\n- AC1: 甲\n\n## User Stories\n- **US1**：乙\n",
+      e2eTestPlan: null, roundReport: null,
+    })
+    expect(p.sections.find((s) => s.source === "spec.md")?.title).toBe("spec 验收标准")
+    expect(p.sections.find((s) => s.source === "spec.md")?.items).toHaveLength(1)
+  })
+
+  it("正典票不受 Story 档影响（有 AC + bash 围栏 → 走正典分支，id 无 :st 段）", () => {
+    const p = compile()
+    const ids = p.sections.flatMap((s) => s.items).map((i) => i.id)
+    expect(ids.some((i) => /^probe:11-e2e-full-link:\d+$/.test(i))).toBe(true)
+    expect(ids.some((i) => i.includes(":st"))).toBe(false)
+  })
+})
