@@ -83,6 +83,18 @@ export function drillForRanking(by: BillingReportRankBy, id: string, range: { fr
 const BREAKDOWN_TITLES: Record<BillingReportGroupBy, string> = { model: "模型", vendor: "厂商", source: "来源路径" }
 const RANKING_TITLES: Record<BillingReportRankBy, string> = { workspace: "Workspace", session: "Session" }
 
+/**
+ * 分布彩条配色（原型②）：模型=玫红 / 厂商=紫；来源沿用账本来源七色的实色版
+ * （与明细 Tab 徽章同色相 —— 同一维度跨 Tab 认色不认字）。
+ */
+const BREAKDOWN_BAR: Record<BillingReportGroupBy, string> = {
+  model: "bg-pop-pink", vendor: "bg-pop-purple", source: "bg-pop-cyan",
+}
+const SOURCE_BAR_SOLID: Record<string, string> = {
+  workflow: "bg-pop-purple", interaction: "bg-pop-cyan", harness: "bg-pop-navy",
+  clone_chat: "bg-pop-pink", global_chat: "bg-pop-green", session_compress: "bg-pop-yellow", unknown: "bg-pop-dim",
+}
+
 /** 分布条形行（KD26 选型内「条」；HTML 条避免图表库 jsdom 无尺寸问题，图例含 cost 与 share）。 */
 function BreakdownCard({ groupBy, items, currency, onSelect }: {
   groupBy: BillingReportGroupBy
@@ -113,8 +125,8 @@ function BreakdownCard({ groupBy, items, currency, onSelect }: {
                 {fmtDisplayAmount(it.cost_display, currency)} · {fmtRatio(it.share)} · {it.calls} 次
               </span>
             </div>
-            <div className="mt-1 h-2 overflow-hidden rounded-full bg-accent">
-              <div className="h-full rounded-full bg-pop-yellow" style={{ width: `${Math.min(100, it.share * 100)}%` }} />
+            <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-pop-bd/10">
+              <div className={cn("h-full rounded-full", groupBy === "source" ? (SOURCE_BAR_SOLID[it.key] ?? BREAKDOWN_BAR.source) : BREAKDOWN_BAR[groupBy])} style={{ width: `${Math.min(100, it.share * 100)}%` }} />
             </div>
           </button>
         ))}
@@ -157,12 +169,27 @@ function RankingCard({ by, items, currency, onSelect }: {
   )
 }
 
-function SummaryCard({ label, testId, value, hint }: { label: string; testId: string; value: string; hint?: string }) {
+/**
+ * 汇总卡量纲配色（弹屏原型②定稿）：soft 底 + 左侧 8px 色带；费用卡玫红值。
+ * 全部取系统 pop 色板既有 token，零新色值。
+ */
+type Tone = "pink" | "cyan" | "purple" | "yellow" | "green" | "navy" | "amber"
+const TONE_CARD: Record<Tone, string> = {
+  pink: "bg-pop-pink-soft border-l-pop-pink",
+  cyan: "bg-pop-cyan-soft border-l-pop-cyan",
+  purple: "bg-pop-purple-soft border-l-pop-purple",
+  yellow: "bg-pop-yellow-soft border-l-pop-yellow",
+  green: "bg-pop-green-soft border-l-pop-green",
+  navy: "bg-pop-navy-soft border-l-pop-navy",
+  amber: "bg-pop-amber-soft border-l-pop-amber",
+}
+
+function SummaryCard({ label, testId, value, hint, tone }: { label: string; testId: string; value: string; hint?: string; tone?: Tone }) {
   return (
-    <Card className="min-w-0">
+    <Card className={cn("min-w-0 overflow-hidden border-l-8", tone && TONE_CARD[tone])}>
       <CardContent className="p-3">
         <p className="truncate text-xs font-bold text-pop-dim">{label}</p>
-        <p data-testid={testId} className="truncate text-lg font-black text-pop-ink" title={hint}>{value}</p>
+        <p data-testid={testId} className={cn("truncate text-lg font-black text-pop-ink", tone === "pink" && "text-pop-pink")} title={hint}>{value}</p>
       </CardContent>
     </Card>
   )
@@ -286,13 +313,14 @@ export function BillingReportTab({ onDrill }: {
         <>
           {/* 汇总卡行（US1） */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
-            <SummaryCard label={`总费用（${currency}）`} testId="summary-cost" value={fmtDisplayAmount(summary.total_cost_display, currency)} hint={`${summary.total_cost_usd ?? "—"} USD × ${summary.currency_rate}`} />
-            <SummaryCard label="调用数" testId="summary-calls" value={String(summary.total_calls)} />
-            <SummaryCard label="输入 token" testId="summary-token-in" value={formatTokenCount(summary.tokens.in, 2)} hint={summary.tokens.in.toLocaleString("en-US")} />
-            <SummaryCard label="输出 token" testId="summary-token-out" value={formatTokenCount(summary.tokens.out, 2)} hint={summary.tokens.out.toLocaleString("en-US")} />
-            <SummaryCard label="缓存写 token" testId="summary-token-cache-w" value={formatTokenCount(summary.tokens.cache_w, 2)} hint={summary.tokens.cache_w.toLocaleString("en-US")} />
-            <SummaryCard label="缓存读 token" testId="summary-token-cache-r" value={formatTokenCount(summary.tokens.cache_r, 2)} hint={summary.tokens.cache_r.toLocaleString("en-US")} />
+            <SummaryCard tone="pink" label={`总费用（${currency}）`} testId="summary-cost" value={fmtDisplayAmount(summary.total_cost_display, currency)} hint={`${summary.total_cost_usd ?? "—"} USD × ${summary.currency_rate}`} />
+            <SummaryCard tone="cyan" label="调用数" testId="summary-calls" value={String(summary.total_calls)} />
+            <SummaryCard tone="purple" label="输入 token" testId="summary-token-in" value={formatTokenCount(summary.tokens.in, 2)} hint={summary.tokens.in.toLocaleString("en-US")} />
+            <SummaryCard tone="yellow" label="输出 token" testId="summary-token-out" value={formatTokenCount(summary.tokens.out, 2)} hint={summary.tokens.out.toLocaleString("en-US")} />
+            <SummaryCard tone="green" label="缓存写 token" testId="summary-token-cache-w" value={formatTokenCount(summary.tokens.cache_w, 2)} hint={summary.tokens.cache_w.toLocaleString("en-US")} />
+            <SummaryCard tone="navy" label="缓存读 token" testId="summary-token-cache-r" value={formatTokenCount(summary.tokens.cache_r, 2)} hint={summary.tokens.cache_r.toLocaleString("en-US")} />
             <SummaryCard
+              tone="amber"
               label="未定价占比"
               testId="summary-unpriced-ratio"
               value={fmtRatio(summary.unpriced.ratio)}
@@ -321,8 +349,10 @@ export function BillingReportTab({ onDrill }: {
                       <YAxis tick={{ fontSize: 12 }} />
                       <Tooltip formatter={(v: number, name: string) => [fmtDisplayAmount(v, currency), name]} />
                       <Legend />
-                      <Line type="monotone" dataKey="cost" name={`本期费用（${currency}）`} stroke="hsl(var(--chart-1))" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                      <Line type="monotone" dataKey="prevCost" name="上期费用" stroke="hsl(var(--chart-2))" strokeWidth={1.5} strokeDasharray="4 4" dot={false} connectNulls={false} />
+                      {/* 原型②定稿:本期=紫实线(系统主行动色给主线),上期=灰虚线。
+                          直接 var() 取 pop 色 —— 原 hsl(var(--chart-1)) 在 pop 体系下是非法色值(--chart-1 为 hex)。 */}
+                      <Line type="monotone" dataKey="cost" name={`本期费用（${currency}）`} stroke="var(--pop-purple)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                      <Line type="monotone" dataKey="prevCost" name="上期费用" stroke="var(--pop-dim)" strokeWidth={1.5} strokeDasharray="6 5" dot={false} connectNulls={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>

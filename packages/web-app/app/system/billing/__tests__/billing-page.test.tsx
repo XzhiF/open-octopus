@@ -75,6 +75,12 @@ function mockFetch(overrides?: (c: FetchCall) => unknown | undefined) {
     if (call.method === "GET" && call.url.endsWith("/prices")) return { ok: true, status: 200, json: async () => ({ prices: [FIXTURE_PRICE, FIXTURE_PRICE_CNY, FIXTURE_PRICE_WINDOW] }) }
     if (call.method === "GET" && call.url.endsWith("/settings")) return { ok: true, status: 200, json: async () => FIXTURE_SETTINGS }
     if (call.method === "GET" && call.url.includes("/calls")) return { ok: true, status: 200, json: async () => ({ calls: [], total: 0, page: 1, pageSize: 50, models: [] }) }
+    // 报表现为默认 Tab：BillingPage 一挂载就连发四个 report 端点 → 零值兜底
+    // （summary 缺 tokens / trend 缺 days 会让报表组件渲染炸,本文件只测价格与明细）
+    if (call.method === "GET" && call.url.includes("/report/summary")) return { ok: true, status: 200, json: async () => ({ from: "2026-09-01", to: "2026-09-30", total_cost_usd: null, total_cost_display: null, total_calls: 0, tokens: { in: 0, out: 0, cache_w: 0, cache_r: 0 }, unpriced: { calls: 0, ratio: 0 }, currency_rate: 7, display_currency: "CNY" }) }
+    if (call.method === "GET" && call.url.includes("/report/trend")) return { ok: true, status: 200, json: async () => ({ from: "2026-09-01", to: "2026-09-30", currency_rate: 7, display_currency: "CNY", days: [] }) }
+    if (call.method === "GET" && call.url.includes("/report/breakdown")) return { ok: true, status: 200, json: async () => ({ items: [] }) }
+    if (call.method === "GET" && call.url.includes("/report/ranking")) return { ok: true, status: 200, json: async () => ({ items: [] }) }
     if (call.method === "POST" && call.url.endsWith("/price-preview")) return { ok: true, status: 200, json: async () => UNPRICED_PREVIEW }
     if (call.method === "POST" || (call.method === "PUT" && !call.url.endsWith("/settings"))) return { ok: true, status: 201, json: async () => ({ price: { ...FIXTURE_PRICE, ...(call.body as object) } }) }
     if (call.method === "PUT" && call.url.endsWith("/settings")) return { ok: true, status: 200, json: async () => ({ ...FIXTURE_SETTINGS, ...(call.body as object) }) }
@@ -109,12 +115,12 @@ describe("子菜单（AC1）", () => {
   })
 })
 
-describe("两 Tab 骨架（AC1）", () => {
-  it("默认计费明细 Tab（票06 已填充），切到价格配置见表格", async () => {
+describe("三 Tab 骨架（AC1）", () => {
+  it("默认报表 Tab（概览先行）；切计费明细 / 价格配置均出真表格", async () => {
     render(<BillingPage />)
-    expect(screen.getByRole("tab", { name: "计费明细" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "价格配置" })).toBeDefined()
-    await waitFor(() => expect(screen.getByTestId("billing-ledger")).toBeDefined()) // 默认 = 明细（真实 Tab，非占位）
+    expect(screen.getByRole("tab", { name: "报表" }).getAttribute("aria-selected")).toBe("true")
+    fireEvent.click(screen.getByRole("tab", { name: "计费明细" }))
+    await waitFor(() => expect(screen.getByTestId("billing-ledger")).toBeDefined()) // 真实 Tab，非占位
     fireEvent.click(screen.getByRole("tab", { name: "价格配置" }))
     await waitFor(() => expect(screen.getByText(/价格规则/)).toBeDefined())
   })

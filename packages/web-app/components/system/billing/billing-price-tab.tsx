@@ -275,7 +275,11 @@ export function BillingPriceTab() {
             <div className="space-y-4">
               {groups.map(g => (
                 <div key={g.model_id} className="rounded-lg border border-pop-bd/60">
-                  <div className="px-3 py-2 border-b border-pop-bd/50 font-mono text-sm font-bold">{g.model_id}</div>
+                  {/* 原型③:组头紫带 + 色点,模型名一眼分层 */}
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-pop-bd/50 bg-pop-purple-soft font-mono text-sm font-black text-pop-ink">
+                    <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm border-2 border-pop-bd bg-pop-pink" />
+                    {g.model_id}
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
@@ -289,9 +293,8 @@ export function BillingPriceTab() {
                         {g.rows.map((p) => (
                           <tr key={p.id} className="border-b border-pop-bd/30 last:border-b-0">
                             <td className="px-2 py-1.5 whitespace-nowrap">
-                              <span className={isCatchall(p)
-                                ? "rounded bg-muted px-1.5 py-0.5 text-xs font-bold"
-                                : "rounded border border-pop-bd px-1.5 py-0.5 text-xs"}>
+                              {/* 原型③:正常价绿 / 时间段价青 —— 与试算/账本语义色一致 */}
+                              <span className={`rounded-md border-2 border-pop-bd px-1.5 py-0.5 text-xs font-black ${isCatchall(p) ? "bg-pop-green-soft text-pop-ink" : "bg-pop-cyan-soft text-pop-ink"}`}>
                                 {windowLabel(p)}
                               </span>
                             </td>
@@ -429,7 +432,10 @@ function PriceCalculator({ models }: { models: string[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2"><Calculator className="h-4 w-4" /> 试算器 —— 这笔钱是怎么算出来的</CardTitle>
+        <CardTitle className="text-base flex items-center gap-2">
+          <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm border-2 border-pop-bd bg-pop-yellow" />
+          <Calculator className="h-4 w-4 text-pop-purple" /> 试算器 —— 这笔钱是怎么算出来的
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <datalist id="calc-model-options">{models.map(m => <option key={m} value={m} />)}</datalist>
@@ -453,17 +459,18 @@ function PriceCalculator({ models }: { models: string[] }) {
           ))}
         </div>
         {result && (
-          <div data-testid="price-preview-result" className="mt-3 rounded-lg border border-pop-bd/60 p-3 text-sm space-y-1">
+          /* 原型③:命中=绿盒(出钱了),未命中=琥珀盒(待配价) —— 与账本状态色同语义 */
+          <div data-testid="price-preview-result" className={`mt-3 rounded-lg border-2 border-pop-bd/70 p-3 text-sm space-y-1 ${result.price_status === "unpriced" ? "bg-pop-amber-soft" : "bg-pop-green-soft"}`}>
             {result.price_status === "unpriced" ? (
-              <p className="font-bold">未定价 —— 该日期没有命中任何价格行（账本上这笔费用将显示为空，不焊 0）</p>
+              <p className="font-black">未定价 —— 该日期没有命中任何价格行（账本上这笔费用将显示为空，不焊 0）</p>
             ) : (
               <>
                 <p>
-                  命中价行：<span className="font-mono">{result.vendor ?? "-"}</span> · {result.model ?? "-"}
+                  命中价行：<span className="font-mono font-bold">{result.vendor ?? "-"}</span> · <span className="font-mono font-bold">{result.model ?? "-"}</span>
                   {result.price_id && <span className="text-muted-foreground">（price_id {result.price_id.slice(0, 8)}…）</span>}
                 </p>
                 <p>
-                  费用：<b>{result.cost_native} {result.cost_currency ?? ""}</b>
+                  费用：<b className="text-pop-pink">{result.cost_native} {result.cost_currency ?? ""}</b>
                   <span className="text-muted-foreground"> = 原币；折 </span>
                   <b>${result.cost_usd}</b>
                   <span className="text-muted-foreground">（展示 </span><b>{result.cost_display} {result.display_currency}</b><span className="text-muted-foreground">，汇率 ×{result.currency_rate}）</span>

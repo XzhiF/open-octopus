@@ -129,13 +129,13 @@ beforeEach(() => { vi.clearAllMocks(); mockFetch() })
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe("报表 Tab 骨架", () => {
-  it("页含三 Tab，默认仍是计费明细", async () => {
+  it("页含三 Tab（报表 → 计费明细 → 价格配置），默认 = 报表（概览先行）", async () => {
     render(<BillingPage />)
     expect(screen.getByRole("tab", { name: "计费明细" })).toBeDefined()
     expect(screen.getByRole("tab", { name: "价格配置" })).toBeDefined()
     expect(screen.getByRole("tab", { name: "报表" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "计费明细" }).getAttribute("aria-selected")).toBe("true")
-    await waitFor(() => expect(screen.getByTestId("billing-ledger")).toBeDefined())
+    expect(screen.getByRole("tab", { name: "报表" }).getAttribute("aria-selected")).toBe("true")
+    await waitFor(() => expect(screen.getByTestId("billing-report")).toBeDefined())
   })
 })
 

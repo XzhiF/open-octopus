@@ -42,6 +42,26 @@ export function sourcePathLabel(v: string | null | undefined): string {
 }
 
 /**
+ * 来源固定七色（盖章式徽章配色，沿用 resource-card 的 *-soft + ink 系统惯例，零新色值）：
+ * 工作流紫 / 交互青 / Harness藏青 / 分身聊天粉 / 全局聊天绿 / 会话压缩黄 / 未知灰。
+ * 纯映射导出供单测逐值断言；未知值（含 NULL 老行）→ 灰，不报错。
+ */
+export const SOURCE_CHIP_TONES: Record<string, string> = {
+  workflow: "bg-pop-purple-soft text-pop-ink",
+  interaction: "bg-pop-cyan-soft text-pop-ink",
+  harness: "bg-pop-navy-soft text-pop-ink",
+  clone_chat: "bg-pop-pink-soft text-pop-ink",
+  global_chat: "bg-pop-green-soft text-pop-ink",
+  session_compress: "bg-pop-yellow-soft text-pop-ink",
+  unknown: "bg-muted text-pop-dim",
+}
+export function sourceChipTone(v: string | null | undefined): string {
+  return (v != null && SOURCE_CHIP_TONES[v]) || SOURCE_CHIP_TONES.unknown
+}
+/** 盖章徽章底座：2px 描边 + 硬投影（pop 贴纸感）。 */
+const CHIP_BASE = "rounded-md border-2 border-pop-bd px-1.5 py-0.5 text-xs font-black shadow-pop-sm"
+
+/**
  * 纯函数换算：display=CNY → cost_usd × rate；display=USD → 直显。
  * 文本保留最多 4 位小数（金额存储不截断，展示层格式化 —— 票02 口径）。
  */
@@ -249,9 +269,9 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
             const d = subtotalCostDisplay(s, settings.display_currency, Number.isFinite(rate) && rate > 0 ? rate : 1)
             const unpricedCount = s.count - s.priced_count
             return (
-              <span key={s.source} data-testid={`subtotal-${s.source}`} className="rounded-full border border-pop-bd/60 bg-pop-paper px-2 py-0.5">
-                {sourcePathLabel(s.source)}：
-                {d.kind === "amount" ? `${d.symbol}${d.text}` : "—"}
+              <span key={s.source} data-testid={`subtotal-${s.source}`} className="flex items-center gap-1.5 rounded-lg border-2 border-pop-bd/70 bg-pop-paper px-1.5 py-0.5 shadow-pop-sm">
+                <span className={`${CHIP_BASE} ${sourceChipTone(s.source)}`}>{sourcePathLabel(s.source)}</span>
+                ：<b className="font-mono">{d.kind === "amount" ? `${d.symbol}${d.text}` : "—"}</b>
                 {" · "}{s.count} 条{unpricedCount > 0 ? `（含未定价 ${unpricedCount}）` : ""}
               </span>
             )
@@ -295,10 +315,10 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                               {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                             </button>
                           </td>
-                          <td className="px-2 py-2 whitespace-nowrap">{fmtTime(r.timestamp)}</td>
+                          <td className="px-2 py-2 whitespace-nowrap font-mono text-xs">{fmtTime(r.timestamp)}</td>
                           <td className="px-2 py-2 font-mono">{r.model ?? "—"}</td>
                           <td className="px-2 py-2 whitespace-nowrap">
-                            <span data-testid={`source-badge-${r.id}`} title={r.source_path ?? undefined} className="rounded border border-pop-bd/60 bg-pop-paper px-1.5 py-0.5 text-xs">
+                            <span data-testid={`source-badge-${r.id}`} title={r.source_path ?? undefined} className={`${CHIP_BASE} ${sourceChipTone(r.source_path)}`}>
                               {sourcePathLabel(r.source_path)}
                             </span>
                           </td>
@@ -308,18 +328,26 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                           <td className="px-2 py-2 text-right" title={r.cache_read_tokens.toLocaleString("en-US")}>{formatTokenCount(r.cache_read_tokens, 2)}</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">
                             {cost.kind === "amount" && (
-                              <span title="查询时按价格规则现算（NEW-r2）">
+                              <span title="查询时按价格规则现算（NEW-r2）" className="font-mono text-sm font-black text-pop-pink">
                                 {cost.symbol}{cost.text}
                               </span>
                             )}
                             {cost.kind === "unpriced" && (
-                              <span data-testid="badge-unpriced" className="rounded-full border border-pop-amber/60 bg-pop-amber/15 px-2 py-0.5 text-xs font-bold text-pop-amber">
+                              <span data-testid="badge-unpriced" className="rounded-full border-2 border-pop-bd/60 bg-pop-amber-soft px-2 py-0.5 text-xs font-black text-pop-amber">
                                 未定价
                               </span>
                             )}
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap">
-                            {r.price_status === "priced" ? "已定价" : "未定价"}
+                            {r.price_status === "priced" ? (
+                              <span data-testid={`badge-status-priced-${r.id}`} className="rounded-full border-2 border-pop-green/40 bg-pop-green-soft px-2 py-0.5 text-xs font-black text-pop-green">
+                                已定价
+                              </span>
+                            ) : (
+                              <span data-testid={`badge-status-unpriced-${r.id}`} className="rounded-full border-2 border-pop-amber/40 bg-pop-amber-soft px-2 py-0.5 text-xs font-black text-pop-amber">
+                                未定价
+                              </span>
+                            )}
                           </td>
                         </tr>
                         {isOpen && (
