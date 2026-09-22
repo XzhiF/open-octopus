@@ -1,10 +1,11 @@
 // packages/server/src/__tests__/global-chat-capture.test.ts
 //
-// billing-coverage-2 票03 —— 全局聊天 / Main Agent 入账与委托去重（US2/KD23）。
+// billing-coverage-2 票03 + billing NEW-r2 —— 全局聊天 / Main Agent 入账与委托去重（US2/KD23）。
 // Anti-fake-run：真实 better-sqlite3 + applySchema + 真实路由 + 真实 CloneRuntime，
 // 只在 provider 边界 mock（getProvider.sendQuery 吐预置 chunk 流）——行数 = 真实
 // provider 调用数由「第几次 sendQuery 被调」独立核对（callCounts），不以被测代码内部状态自证。
-// cost 手算：{3,15,3.75,0.3}:1000×3+500×15+100×3.75+200×0.3=10935→0.010935；
+// NEW-r2：llm_calls 行 = 纯事实；钱查 llm_calls_costed 视图派生（兜底价配在 beforeAll）。
+// 视图 cost 手算：{3,15,3.75,0.3}:1000×3+500×15+100×3.75+200×0.3=10935→0.010935；
 //           {1,2,0.5,0.1}:400×1+200×2+50×0.5+25×0.1=827.5→0.0008275。
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
@@ -55,6 +56,13 @@ function installProvider(chunks: Array<Array<Record<string, unknown>>>) {
 
 function llmRows(): Array<Record<string, unknown>> {
   return db.prepare("SELECT * FROM llm_calls ORDER BY timestamp, call_index").all() as Array<Record<string, unknown>>
+}
+
+/** NEW-r2：钱不落账本 —— 按行 id 查视图派生 cost_usd（无价 → NULL，不焊 0）。 */
+function viewCost(id: unknown): number | null {
+  const r = db.prepare("SELECT cost_usd FROM llm_calls_costed WHERE id = ?").get(String(id)) as { cost_usd: number | null } | undefined
+  if (!r) throw new Error(`视图行缺失: id=${String(id)}`)
+  return r.cost_usd
 }
 
 beforeAll(() => {
@@ -134,12 +142,13 @@ describe("全局聊天入账（global_chat）", () => {
       workspace_id: "ws-g",
       model: PRIMARY,
       input_tokens: 1000, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 100,
-      price_status: "priced",
-      cost_usd: expect.closeTo(0.010935, 6),
     })
     // 聊天行无执行链路 → 归属列如实 NULL（KD17）
     expect(rows[0].node_execution_id).toBeNull()
     expect(rows[0].execution_id).toBeNull()
+    // NEW-r2：行 = 纯事实；钱查视图，兜底价命中 → 手算 10935/1e6
+    expect(rows[0]).not.toHaveProperty("cost_usd")
+    expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
   it("error-only 流（无 result）→ 零行（有真值才记）", async () => {
@@ -192,8 +201,8 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       source_path: "global_chat", session_id: "ma-1", org: ORG, model: PRIMARY,
-      cost_usd: expect.closeTo(0.010935, 6),
     })
+    expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
   it("@@mention 委托（无自引用）→ Main 不产生路由调用，恰一条 clone_chat 行归分身（node_id=clone）", async () => {
@@ -207,8 +216,8 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
     expect(rows[0]).toMatchObject({
       source_path: "clone_chat", session_id: "ma-2", org: ORG,
       node_id: "scheduler", model: SECONDARY,
-      cost_usd: expect.closeTo(0.0008275, 6),
     })
+    expect(viewCost(rows[0].id)).toBeCloseTo(0.0008275, 6)
   })
 
   it("工具化委托（delegate_to_*）→ Main 路由轮 + 分身应答轮各一行，行数=真实调用数=2，无双计", async () => {
@@ -233,7 +242,7 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
     expect(rows.filter(r => r.source_path === "global_chat")).toHaveLength(1)
     expect(rows.filter(r => r.source_path === "clone_chat")).toHaveLength(1)
     expect(rows.every(r => r.session_id === "ma-3" && r.org === ORG)).toBe(true)
-    const costs = rows.map(r => Number(r.cost_usd)).sort((a, b) => a - b)
+    const costs = rows.map(r => viewCost(r.id) ?? NaN).sort((a, b) => a - b) // 视图派生,每行各算
     expect(costs[0]).toBeCloseTo(0.0008275, 6)
     expect(costs[1]).toBeCloseTo(0.010935, 6)
   })

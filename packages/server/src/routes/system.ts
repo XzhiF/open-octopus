@@ -8,7 +8,7 @@ import type { CustomProviderDef } from '@octopus/shared'
 import { testConnectivity, resetProviderInstances, listProviders } from '@octopus/providers'
 import type { ConnectivityResult } from '@octopus/providers'
 import { getDb } from '../db/connection'
-import { BillingDAO } from '../db/dao/billing-dao'
+import { BillingDAO, BillingPriceValidationError } from '../db/dao/billing-dao'
 import type { BillingPricePatch, BillingReportGroupBy, BillingReportRankBy } from '../db/dao/billing-dao'
 
 const DEFAULT_TEMPLATE = `# Octopus 模型配置
@@ -217,14 +217,17 @@ export function createSystemRoutes(): Hono {
   })
 
   // ============================================================================
-  // Billing (billing-core-1 票03) — /billing/prices CRUD + /billing/settings
-  // 数据层 = billing-dao (票01)；错误形状沿用本文件 { error: { code, message } } 惯例。
-  // 响应字段名 = billing_price_config/billing_setting 行形状（web-app 契约，AC3）。
+  // Billing (billing NEW-r2) — /billing/prices CRUD + /billing/settings + /billing/price-preview
+  // 价格表 = 规则表（兜底价全时段 + 时间段价半开区间，本地日界）；钱不落账本，
+  // 一切费用查询时经 llm_calls_costed 视图现算 —— 改价立即重算全部历史（NEW-r2 翻转）。
+  // 错误形状沿用本文件 { error: { code, message } } 惯例。
   // ============================================================================
 
   const billingDao = () => new BillingDAO(getDb())
 
   const billingCurrencySchema = z.enum(['USD', 'CNY'])
+  /** 窗口边界：YYYY-MM-DD 日期串（服务端换本地零点 epoch ms）；null = 拆界；缺省 = 不动。 */
+  const priceWindowBoundSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '需为 YYYY-MM-DD 日期').nullable()
   const priceCreateSchema = z.object({
     vendor: z.string().min(1),
     model_id: z.string().min(1),
@@ -233,8 +236,27 @@ export function createSystemRoutes(): Hono {
     cache_write_unit_price: z.number().nonnegative(),
     cache_read_unit_price: z.number().nonnegative(),
     currency: billingCurrencySchema.default('CNY'),
+    valid_from: priceWindowBoundSchema.optional(),
+    valid_to: priceWindowBoundSchema.optional(),
   })
   const priceUpdateSchema = priceCreateSchema.partial()
+
+  /** 日期串 → 本地零点 epoch ms。undefined = 缺省(不动)；null = 拆界；NaN = 非法日期。 */
+  function priceDateToMs(raw: string | null | undefined): number | null | undefined {
+    if (raw === undefined || raw === null) return raw
+    const [y, m, d] = raw.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    if (m < 1 || m > 12 || d < 1 || d > 31 || dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return NaN
+    return dt.getTime()
+  }
+
+  /** body 的日期窗口字段 → epoch（保 null=拆界、缺省=不动）；'INVALID' = 日期非法。 */
+  function priceWindowFromBody(body: { valid_from?: string | null; valid_to?: string | null }): { valid_from?: number | null; valid_to?: number | null } | 'INVALID' {
+    const from = priceDateToMs(body.valid_from)
+    const to = priceDateToMs(body.valid_to)
+    if (Number.isNaN(from) || Number.isNaN(to)) return 'INVALID'
+    return { valid_from: from, valid_to: to }
+  }
   const settingsPutSchema = z.object({
     usd_to_cny: z.union([z.number(), z.string()]),
     display_currency: billingCurrencySchema,
@@ -249,11 +271,15 @@ export function createSystemRoutes(): Hono {
     }
   }
 
-  /** DAO 抛出的 SqliteError → 带 code 的 4xx；非约束错误返回 null 交上层 500。 */
-  function billingSqliteErrorResponse(c: { json: (body: unknown, status?: number) => Response }, err: unknown) {
+  /** DAO/校验错误 → 带 code 的 4xx；非约束错误返回 null 交上层 500。 */
+  function billingWriteErrorResponse(c: { json: (body: unknown, status?: number) => Response }, err: unknown) {
+    if (err instanceof BillingPriceValidationError) {
+      return c.json({ error: { code: err.code, message: err.message } }, 400)
+    }
     const msg = err instanceof Error ? err.message : String(err)
+    // 部分唯一索引 ux_price_catchall 的竞态兜底（应用层校验已拦绝大数）
     if (/UNIQUE constraint failed: billing_price_config\.model_id/.test(msg)) {
-      return c.json({ error: { code: 'DUPLICATE_MODEL_ID', message: `model_id 已存在价格配置: ${msg}` } }, 409)
+      return c.json({ error: { code: 'PRICE_CATCHALL_DUPLICATE', message: `该模型已存在兜底价（每模型至多一条）: ${msg}` } }, 400)
     }
     if (/CHECK constraint failed/.test(msg)) {
       return c.json({ error: { code: 'VALIDATION_FAILED', message: msg } }, 400)
@@ -271,7 +297,7 @@ export function createSystemRoutes(): Hono {
     }
   })
 
-  // POST /billing/prices — 新增（model_id 唯一，冲突 409 带 code）
+  // POST /billing/prices — 新增（兜底价每模型一条；时间段行窗口互不重叠，违例 400）
   router.post('/billing/prices', async (c) => {
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
@@ -281,18 +307,23 @@ export function createSystemRoutes(): Hono {
         error: { code: 'VALIDATION_FAILED', message: '价格配置校验失败', details: parsed.error.issues },
       }, 400)
     }
+    const window = priceWindowFromBody(parsed.data)
+    if (window === 'INVALID') {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'valid_from/valid_to 需为有效日期（YYYY-MM-DD）' } }, 400)
+    }
     try {
-      const price = billingDao().createPrice(parsed.data)
+      const { valid_from: _sf, valid_to: _st, ...fields } = parsed.data
+      const price = billingDao().createPrice({ ...fields, ...window })
       return c.json({ price }, 201)
     } catch (err: unknown) {
-      const mapped = billingSqliteErrorResponse(c, err)
+      const mapped = billingWriteErrorResponse(c, err)
       if (mapped) return mapped
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'WRITE_FAILED', message: msg } }, 500)
     }
   })
 
-  // PUT /billing/prices/:id — 改价（改/删只影响新调用 KD3，历史行由记账快照保证）
+  // PUT /billing/prices/:id — 就地改价（NEW-r2：规则表语义，改价立即重算全部历史账目）
   router.put('/billing/prices/:id', async (c) => {
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
@@ -305,12 +336,17 @@ export function createSystemRoutes(): Hono {
     if (Object.keys(parsed.data).length === 0) {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'no fields to update' } }, 400)
     }
+    const window = priceWindowFromBody(parsed.data)
+    if (window === 'INVALID') {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'valid_from/valid_to 需为有效日期（YYYY-MM-DD）' } }, 400)
+    }
     try {
-      const price = billingDao().updatePrice(c.req.param('id'), parsed.data as BillingPricePatch)
+      const { valid_from: _uf, valid_to: _ut, ...fields } = parsed.data
+      const price = billingDao().updatePrice(c.req.param('id'), { ...(fields as BillingPricePatch), ...window })
       if (!price) return c.json({ error: { code: 'NOT_FOUND', message: 'price config not found' } }, 404)
       return c.json({ price })
     } catch (err: unknown) {
-      const mapped = billingSqliteErrorResponse(c, err)
+      const mapped = billingWriteErrorResponse(c, err)
       if (mapped) return mapped
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'WRITE_FAILED', message: msg } }, 500)
@@ -333,6 +369,54 @@ export function createSystemRoutes(): Hono {
   router.get('/billing/settings', (c) => {
     try {
       return c.json(billingDao().getAllSettings())
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
+    }
+  })
+
+  // POST /billing/price-preview — 试算器（配价页的解释器）：
+  // 模型 + 日期 + 四类 token → 命中价行与算出的钱。与账本/报表同一套匹配 SQL，
+  // 公式零复制 —— 「为什么是这笔钱」永远答得和账一致。
+  const previewSchema = z.object({
+    model: z.string().min(1),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    timestamp: z.coerce.number().int().positive().optional(),
+    input_tokens: z.number().int().nonnegative().default(0),
+    output_tokens: z.number().int().nonnegative().default(0),
+    cache_creation_tokens: z.number().int().nonnegative().default(0),
+    cache_read_tokens: z.number().int().nonnegative().default(0),
+  })
+  router.post('/billing/price-preview', async (c) => {
+    const body = await readJsonBody(c)
+    if (body === null) return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
+    const parsed = previewSchema.safeParse(body)
+    if (!parsed.success) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: '试算参数校验失败', details: parsed.error.issues } }, 400)
+    }
+    const q = parsed.data
+    if (q.date === undefined && q.timestamp === undefined) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'date 与 timestamp 至少给一个' } }, 400)
+    }
+    const dateMs = priceDateToMs(q.date ?? undefined)
+    if (Number.isNaN(dateMs)) {
+      return c.json({ error: { code: 'VALIDATION_FAILED', message: 'date 需为有效日期（YYYY-MM-DD）' } }, 400)
+    }
+    try {
+      const dao = billingDao()
+      const result = dao.previewCost(q.model, q.timestamp ?? dateMs ?? 0, {
+        inputTokens: q.input_tokens, outputTokens: q.output_tokens,
+        cacheCreationTokens: q.cache_creation_tokens, cacheReadTokens: q.cache_read_tokens,
+      })
+      const rate = dao.getUsdToCny()
+      const currency = dao.getDisplayCurrency()
+      const factor = currency === 'CNY' ? rate : 1
+      return c.json({
+        ...result,
+        cost_display: result.cost_usd === null ? null : result.cost_usd * factor,
+        currency_rate: factor,
+        display_currency: currency,
+      })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)

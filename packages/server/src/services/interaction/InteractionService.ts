@@ -776,7 +776,7 @@ export class InteractionService {
   /** Write aggregated token usage to node_token_usages. */
   private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
-    // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService 产出
+    // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
     // （SDK 上报价不再传入 —— KD2）。每轮新 uuid 不冲突。
     this.tokenDao.recordNodeUsage({
       id: randomUUID(),
@@ -793,7 +793,7 @@ export class InteractionService {
     if (!acc.usage) return
     const now = Date.now()
     // billing-coverage-2 票01：interaction 路径收敛到共用落账 helper（行为等价 ——
-    // cost 仍 BillingService 唯一来源，SDK 上报价不作账，未配价三列 NULL + unpriced），
+    // SDK 上报价不作账 KD2 延续；钱查询时派生），
     // 来源标记 source_path='interaction'。
     recordLlmCall({
       id: randomUUID(),

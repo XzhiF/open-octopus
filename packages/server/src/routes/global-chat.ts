@@ -289,7 +289,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             currentTokens = chunk.usage
             currentCostUsd = chunk.costUsd
             // billing-coverage-2 票03 (US2)：全局聊天直连对话入账 —— 经共用落账 helper，
-            // source_path='global_chat'，cost 走 phase 1 BillingService（KD25）。纯旁路：
+            // source_path='global_chat'。NEW-r2：只落事实行，钱查询时派生。纯旁路：
             // recordProviderResultUsage 内部吞异常，记账失败不断聊天流。归属如实：
             // 无执行链路 → node_execution_id/execution_id = NULL（KD17/v47）。
             if (tokenUsageDao) {

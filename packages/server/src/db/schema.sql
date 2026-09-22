@@ -165,13 +165,13 @@ CREATE TABLE IF NOT EXISTS orgs (
 );
 
 -- 9. Node Token Usages
+-- billing NEW-r2: cost_usd 快照列移除 —— 节点/执行/工作区费用全部从 llm_calls 查询时现算。
 CREATE TABLE IF NOT EXISTS node_token_usages (
   id TEXT PRIMARY KEY,
   node_execution_id TEXT NOT NULL,
   model TEXT NOT NULL,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd REAL,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   source TEXT DEFAULT 'node',
@@ -220,12 +220,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   output_tokens         INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd              REAL,
-  -- billing-core-1 v45: 双币种快照 (KD5) — cost_native 原币金额 + cost_currency 原币种，
-  -- cost_usd 继续存按记账时汇率归一的 USD 值。老行三列为 NULL，不回填 (KD3)。
-  cost_native           REAL,
-  cost_currency         TEXT,
-  price_status          TEXT,
+  -- billing NEW-r2：钱不落账本 —— 快照列(cost_usd/cost_native/cost_currency/
+  -- price_status)整体移除，费用一律查询时按 billing_price_config 窗口现算。
   org                   TEXT,
   workspace_id          TEXT,
   workflow_ref          TEXT,
@@ -683,20 +679,30 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
   metadata TEXT
 );
 
--- 29. Billing — 价格配置与全局计费设置 (billing-core-1 ticket 01, KD5/KD6/KD7)
--- 单价语义 = 金额 / 1M tokens（KD6）。model_id 全表唯一（KD9 精确匹配的真相源）。
+-- 29. Billing — 价格配置与全局计费设置 (billing NEW-r2：查询时算价的规则表)
+-- 单价语义 = 金额 / 1M tokens（KD6）。每模型至多一条「兜底价」(valid_from/valid_to 双 NULL，
+-- 全时段生效，晚配价立即回算历史)；「时间段价」至少一端有界、半开区间 [from, to)（本地日界，
+-- 同 KD24 口径）、同模型互不重叠（写入侧校验 + SQL 侧命中去重双保险）。
+-- model_id = 归一化后的规范模型名（shared normalizeModelId，落账/配价双端同一函数）。
 CREATE TABLE IF NOT EXISTS billing_price_config (
   id                     TEXT PRIMARY KEY,
   vendor                 TEXT NOT NULL,
-  model_id               TEXT NOT NULL UNIQUE,
+  model_id               TEXT NOT NULL,
   input_unit_price       REAL NOT NULL,
   output_unit_price      REAL NOT NULL,
   cache_write_unit_price REAL NOT NULL,
   cache_read_unit_price  REAL NOT NULL,
   currency               TEXT NOT NULL CHECK (currency IN ('USD','CNY')),
+  valid_from             INTEGER,   -- epoch ms，本地零点；NULL = 不设下界
+  valid_to               INTEGER,   -- epoch ms，本地零点；NULL = 不设上界
   created_at             TEXT NOT NULL,
   updated_at             TEXT NOT NULL
 );
+
+-- 兜底价每模型至多一条（双 NULL 行）；时间段行的互不重叠无法用索引表达，由写入校验保证。
+CREATE UNIQUE INDEX IF NOT EXISTS ux_price_catchall ON billing_price_config(model_id)
+  WHERE valid_from IS NULL AND valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS ix_price_match ON billing_price_config(model_id, valid_from);
 
 -- key/value 全局设置：usd_to_cny（1 USD = N CNY 手工汇率，KD7）、display_currency（展示币种，KD8）。
 -- 内置键的默认值兜底在 billing-dao 侧（getSetting），不在此种子，避免覆盖用户后改的值。
@@ -746,7 +752,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_node_token_usages_node ON node_token_usages(node_execution_id);
-CREATE INDEX IF NOT EXISTS idx_ntu_composite ON node_token_usages(node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd);
+CREATE INDEX IF NOT EXISTS idx_ntu_composite ON node_token_usages(node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens);
 -- agent_events: node 维度查询走 PK (node_execution_id, event_order) 左前缀即可,
 -- 曾有 idx_agent_events_node(node_execution_id) 与之重复 — v43 起删除(迁移侧 DROP)。
 -- idx_agent_events_ts 服务 data-retention 的 `timestamp < ?` 范围清理。

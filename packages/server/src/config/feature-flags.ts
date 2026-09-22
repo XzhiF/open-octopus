@@ -1,6 +1,7 @@
 export interface ObservabilityFlags {
   agent_events_persist: boolean
-  llm_calls_persist: boolean
+  // llm_calls_persist 已退役（billing NEW-r2）：llm_calls 是 workflow 账的唯一事实源，
+  // 落账不再可被 flag 关闭。旧配置键读到时按未知键忽略。
   timeline_tab: boolean
   cost_tab: boolean
   dag_cost_line: boolean
@@ -21,7 +22,6 @@ export interface ObservabilityFlags {
 
 const DEFAULT_FLAGS: ObservabilityFlags = {
   agent_events_persist: true,
-  llm_calls_persist: true,
   timeline_tab: true,
   cost_tab: true,
   dag_cost_line: true,

@@ -2,12 +2,16 @@ import { apiFetch } from "@/lib/api-client"
 import { getServerUrl } from "@/lib/server-config"
 
 /**
- * 计费配置 API 客户端（billing-core-1 票05）。
- * 契约 = 票 03 已交付的 `/api/system/billing/*`（routes/system.ts）响应形状逐字段一致：
- *   GET  /prices    → { prices: BillingPrice[] }
+ * 计费 API 客户端（billing NEW-r2：规则账）。
+ * 契约 = `/api/system/billing/*`（routes/system.ts）：
+ *   GET  /prices    → { prices }（行含 valid_from/valid_to epoch ms | null）
  *   POST /prices    → 201 { price }；PUT /prices/:id → { price }；DELETE → { success, id }
+ *   POST /price-preview → { price_status, cost_usd, cost_display, vendor, price_id, ... }
  *   GET  /settings  → 平铺 { usd_to_cny, display_currency }；PUT → 200 回读生效值
- *   错误体 { error: { code, message, details? } }（DUPLICATE_MODEL_ID 409 等）
+ *   错误体 { error: { code, message, details? } }；窗口违例 400：
+ *   PRICE_WINDOW_ORDER / PRICE_WINDOW_OVERLAP / PRICE_CATCHALL_DUPLICATE / PRICE_MODEL_INVALID
+ * NEW-r2 语义：价格 = 规则表（兜底价全时段 + 时间段价半开区间）；账本不存钱，
+ * 一切费用 = 查询时按命中窗口现算 —— 改价立即重算全部历史。
  */
 
 export type BillingCurrency = "USD" | "CNY"
@@ -21,6 +25,9 @@ export interface BillingPrice {
   cache_write_unit_price: number
   cache_read_unit_price: number
   currency: BillingCurrency
+  /** 时间窗口（epoch ms，本地零点）。双 null = 兜底价（全时段）。 */
+  valid_from: number | null
+  valid_to: number | null
   created_at: string
   updated_at: string
 }
@@ -30,7 +37,7 @@ export interface BillingSettings {
   display_currency: BillingCurrency
 }
 
-/** POST body 形状（无 id/时间戳；票 03 createSchema 口径）。 */
+/** POST/PUT body 形状 —— 窗口收 YYYY-MM-DD 日期串；null = 拆界；缺省 = 不动/兜底价。 */
 export interface BillingPriceInput {
   vendor: string
   model_id: string
@@ -39,6 +46,8 @@ export interface BillingPriceInput {
   cache_write_unit_price: number
   cache_read_unit_price: number
   currency: BillingCurrency
+  valid_from?: string | null
+  valid_to?: string | null
 }
 
 export class BillingApiError extends Error {
@@ -85,6 +94,36 @@ export async function deletePrice(id: string): Promise<void> {
   await parse<{ success: boolean }>(await apiFetch(`${base()}/prices/${encodeURIComponent(id)}`, { method: "DELETE" }))
 }
 
+/** 试算（配价页解释器）：模型+日期+token → 命中行与钱。与服务端账本同源同公式。 */
+export interface BillingPricePreview {
+  model: string | null
+  timestamp: number
+  cost_usd: number | null
+  cost_native: number | null
+  cost_currency: string | null
+  vendor: string | null
+  price_id: string | null
+  price_status: "priced" | "unpriced"
+  cost_display: number | null
+  currency_rate: number
+  display_currency: BillingCurrency
+}
+
+export async function previewPrice(input: {
+  model: string
+  date: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+}): Promise<BillingPricePreview> {
+  return parse<BillingPricePreview>(await apiFetch(`${base()}/price-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }))
+}
+
 export async function getSettings(): Promise<BillingSettings> {
   return parse<BillingSettings>(await apiFetch(`${base()}/settings`))
 }
@@ -100,11 +139,11 @@ export async function updateSettings(input: BillingSettings): Promise<BillingSet
 
 // ── 流水（票06 GET /billing/calls）──────────────────────────────────────────
 
-/** llm_calls 流水行 —— 票 04 写入口落库的快照列原样透出。 */
+/** llm_calls 流水行 —— NEW-r2：cost_usd/price_status 为查询时派生值（非存储快照）。 */
 export interface BillingCallRow {
   id: string
-  node_execution_id: string
-  execution_id: string
+  node_execution_id: string | null
+  execution_id: string | null
   turn_index: number
   call_index: number
   model: string | null
@@ -114,9 +153,8 @@ export interface BillingCallRow {
   cache_read_tokens: number
   cache_creation_tokens: number
   cost_usd: number | null
-  cost_native: number | null
-  cost_currency: string | null
-  price_status: string | null
+  /** NEW-r2：服务端派生，恒为 priced|unpriced（NULL=接线前 legacy 态已随快照列退役）。 */
+  price_status: "priced" | "unpriced"
   workspace_id: string | null
   workflow_ref: string | null
   node_id: string | null

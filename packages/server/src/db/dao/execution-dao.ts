@@ -754,12 +754,22 @@ export class ExecutionDAO extends BaseDAO {
       .get(executionId, nodeId) as { error: string | null; exit_code: number | null }) ?? null
   }
 
+  /**
+   * 每步 token 用量（REST steps 用）。NEW-r2：ntu 无 cost 列 —— costUsd 从
+   * llm_calls_costed 视图按 (node_execution, model) 派生（LEFT JOIN：无明细行 = NULL，
+   * 全未定价组 SUM 自然 NULL 不焊 0）。
+   */
   findNodeTokenUsages(executionId: string): Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }> {
     return this.stmt(
       `SELECT ne.node_id, ntu.model, ntu.input_tokens, ntu.output_tokens,
-              ntu.cache_read_tokens, ntu.cache_creation_tokens, ntu.cost_usd
+              ntu.cache_read_tokens, ntu.cache_creation_tokens, v.cost_usd
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
+       LEFT JOIN (
+         SELECT node_execution_id, model, SUM(cost_usd) AS cost_usd
+         FROM llm_calls_costed
+         GROUP BY node_execution_id, model
+       ) v ON v.node_execution_id = ntu.node_execution_id AND v.model = ntu.model
        WHERE ne.execution_id = ?`
     ).all(executionId) as Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }>
   }

@@ -20,7 +20,7 @@ function srcRow(id: string, source: string | null, cost: number | null): Billing
     id, node_execution_id: "e-1-n1", execution_id: "e-1", turn_index: 1, call_index: 0,
     model: "E2E_TEST_A", timestamp: 1700000000000,
     input_tokens: 100, output_tokens: 50, cache_read_tokens: 10, cache_creation_tokens: 5,
-    cost_usd: cost, cost_native: cost, cost_currency: cost === null ? null : "USD",
+    cost_usd: cost,
     price_status: cost === null ? "unpriced" : "priced",
     workspace_id: "ws-1", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-1",
     source_path: source,
@@ -86,8 +86,8 @@ describe("纯函数 sourcePathLabel（中文标签逐值）", () => {
 })
 
 describe("纯函数 subtotalCostDisplay（小计换算 KD8/KD4）", () => {
-  it("cost NULL（全未定价）→ legacy 占位不冒充 0；非 NULL → 按汇率折算", () => {
-    expect(subtotalCostDisplay({ source: "global_chat", count: 1, priced_count: 0, cost_usd: null }, "CNY", 7)).toEqual({ kind: "legacy" })
+  it("cost NULL（全未定价）→ unpriced 占位不冒充 0；非 NULL → 按汇率折算", () => {
+    expect(subtotalCostDisplay({ source: "global_chat", count: 1, priced_count: 0, cost_usd: null }, "CNY", 7)).toEqual({ kind: "unpriced" })
     const d = subtotalCostDisplay({ source: "workflow", count: 3, priced_count: 2, cost_usd: 0.75 }, "CNY", 7)
     expect(d).toEqual({ kind: "amount", symbol: "¥", text: "5.25" })
   })

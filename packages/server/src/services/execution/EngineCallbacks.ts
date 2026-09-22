@@ -4,7 +4,7 @@
 // ExecutionLifecycle.buildCallbacks(). Handles SSE emission, DB persistence,
 // observability integration, token tracking, and external callback dispatch.
 //
-import { totalTokens, costSummary } from "@octopus/shared"
+import { totalTokens } from "@octopus/shared"
 import type { IEngineCallbacks } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
@@ -382,8 +382,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (result?.modelUsages && result.modelUsages.length > 0) {
           const now = new Date().toISOString()
           for (const mu of result.modelUsages) {
-            // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService
-            // 产出（SDK 上报价 mu.costUsd 不再传入 —— KD2 不作账）。
+            // ledger 唯一写入口；NEW-r2 起本表纯记 token（钱从 llm_calls 派生）。
             tokenUsageDao.recordNodeUsage({
               id: `${neId}-token-${mu.model}`,
               nodeExecutionId: neId,
@@ -413,21 +412,22 @@ export class EngineCallbacks implements IEngineCallbacks {
         obs.flushNode(neId)
 
         const llmCalls = result?.llmCalls ?? []
-        const modelUsages = result?.modelUsages ?? []
-        // C3: 节点 cost 走 ledger 三态（全未定价 = null，不再 ??0 焊成假 $0）
-        const costUsd = costSummary(
-          (llmCalls.length > 0 ? llmCalls : modelUsages).map((c: any) => c.costUsd as number | null | undefined),
-        ).usd
-        const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
-        const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
 
-        if (getFlag("llm_calls_persist") && result?.llmCalls && result.llmCalls.length > 0) {
+        // NEW-r2: llm_calls 落账**无条件** —— 账本不能是可选的。flag 时代 llm_calls
+        // 只是"明细"，钱存 ntu 快照；钱翻到查询时派生后，llm_calls 就是 workflow 账的
+        // 唯一事实源，被 flag 掐掉 = 钱凭空消失。llm_calls_persist 就此退役。
+        if (llmCalls.length > 0) {
           try {
             const exec = dao.findById(id)
-            const calls = result.llmCalls.map((call: any, i: number) => ({ ...call, turnIndex: call.turnIndex || 1 }))
+            const calls = llmCalls.map((call: any, i: number) => ({ ...call, turnIndex: call.turnIndex || 1 }))
             obs.persistLLMCalls(neId, id, calls, exec?.instance_id ?? `inst-${process.env.PORT ?? "3001"}-${exec?.branch ?? "main"}`)
           } catch { /* silent */ }
         }
+
+        // NEW-r2：节点费用 = DB 派生（与报表同源同规则；SDK 上报价不作账，KD2 延续）。
+        const costUsd = tokenUsageDao.costForNodeExecution(neId).usd
+        const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
+        const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
 
         sse.emit(wsId, {
           event: "node_end",

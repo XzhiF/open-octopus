@@ -670,7 +670,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               resultSessionId = chunk.sessionId ?? null
               // billing-coverage-2 票02 (US1/KD22)：分身聊天入账 —— 唯一用量来源 =
               // provider result chunk，经共用落账 helper 写 llm_calls（source_path=
-              // 'clone_chat'，cost 走 phase 1 BillingService 链路 —— KD25 不另算）。
+              // 'clone_chat'。NEW-r2：只落事实行，钱查询时派生）。
               // 纯旁路 + 无真值不记，收敛在票01 helper（recordProviderResultUsage）。
               if (tokenUsageDao) {
                 recordProviderResultUsage({

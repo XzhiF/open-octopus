@@ -1,6 +1,7 @@
 import type { ExecutionDAO } from "../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
-import type { LlmCallRow, NodeExecutionRow, ExecutionRow } from "../db/types"
+import type { NodeExecutionRow, ExecutionRow } from "../db/types"
+import type { LlmCallCostedRow } from "../db/dao/token-usage-dao"
 import type { TokenUsage } from "@octopus/shared"
 import { emptyTokenUsage, addTokenUsage, totalTokens, costSummary, type LedgerTotals } from "@octopus/shared"
 import { usageFromRow } from "../db/dao/usage-mapping"
@@ -177,7 +178,7 @@ export class ObservabilityQueryService {
     return { usage: m.usage, totals: m.totals }
   }
 
-  private computeByModel(llmCalls: LlmCallRow[]): ObservabilityModelBreakdown[] {
+  private computeByModel(llmCalls: LlmCallCostedRow[]): ObservabilityModelBreakdown[] {
     const modelMap = new Map<string, Omit<ObservabilityModelBreakdown, 'costUsd'> & { costs: Array<number | null> }>()
 
     for (const call of llmCalls) {
@@ -203,7 +204,7 @@ export class ObservabilityQueryService {
     }))
   }
 
-  private computeTimeSeries(llmCalls: LlmCallRow[]): ObservabilityTimeSeriesPoint[] {
+  private computeTimeSeries(llmCalls: LlmCallCostedRow[]): ObservabilityTimeSeriesPoint[] {
     // Sort by timestamp, compute cumulative per-node
     const sorted = [...llmCalls].sort((a, b) => a.timestamp - b.timestamp)
 
@@ -233,7 +234,7 @@ export class ObservabilityQueryService {
   }
 
   private computeByNode(
-    llmCalls: LlmCallRow[],
+    llmCalls: LlmCallCostedRow[],
     nodeExecutions: NodeExecutionRow[],
   ): ObservabilityNodeBreakdown[] {
     // Aggregate llm_calls by node_id
@@ -469,7 +470,7 @@ export class ObservabilityQueryService {
   }
 
   private computeRounds(
-    llmCalls: LlmCallRow[],
+    llmCalls: LlmCallCostedRow[],
     nodeExecutions: NodeExecutionRow[],
   ): ObservabilityRounds {
     const totalLlmTurns = llmCalls.length

@@ -2,6 +2,8 @@ import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
+import { normalizeModelId } from "@octopus/shared"
+import { llmCallsCostedViewSql } from "./price-sql"
 
 // Cross-format __dirname: works in both CJS (tsup provides it) and ESM
 declare const __dirname: string
@@ -10,7 +12,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 47
+export const SCHEMA_VERSION = 48
 
 /**
  * Apply the complete unified schema to the given database.
@@ -24,6 +26,12 @@ export function applySchema(db: Database.Database): void {
   const sqlPath = path.join(_dirname, "schema.sql")
   const sql = fs.readFileSync(sqlPath, "utf-8")
   db.exec(sql)
+
+  // billing NEW-r2: 派生视图 llm_calls_costed（账本 + 查询时匹配的价格/厂商列）。
+  // DROP+CREATE 每次重建 —— DDL 由 price-sql 生成，视图与代码永远同源。
+  db.exec("DROP VIEW IF EXISTS llm_calls_costed")
+  db.exec(llmCallsCostedViewSql())
+
   db.pragma(`user_version = ${SCHEMA_VERSION}`)
 }
 
@@ -121,6 +129,11 @@ function handleSchemaMigrations(db: Database.Database): void {
   if (v46Backfilled > 0) {
     console.log(`[schema v46] llm_calls: backfilled source_path on ${v46Backfilled} legacy rows`)
   }
+
+  // schema v48 (billing NEW-r2): 计费翻转 —— 快照账 → 规则账。
+  // llm_calls/ntu 的 cost 快照列全部移除、billing_price_config 加时间窗口、
+  // 模型名统一归一化（normalizeModelId）。幂等：全部按列存在性/差异检测。
+  migrateBillingV48(db)
 }
 
 /**
@@ -177,6 +190,13 @@ function migrateLlmCallsNullableAttributionV47(db: Database.Database): void {
   if (!cols.some(c => c.name === "node_execution_id" && c.notnull === 1)) return // already rebuilt
 
   const count = (db.prepare("SELECT COUNT(*) as cnt FROM llm_calls").get() as { cnt: number }).cnt
+  // v48 形状：无 cost 快照列（钱查询时算）。旧表上残留的 cost 列不拷贝 —— 直接弃。
+  const keepCols = [
+    "id", "node_execution_id", "execution_id", "turn_index", "call_index", "message_id",
+    "model", "stop_reason", "timestamp", "duration_ms", "ttft_ms",
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+    "org", "workspace_id", "workflow_ref", "node_id", "session_id", "instance_id", "source_path",
+  ]
   const rebuild = db.transaction(() => {
     db.exec(`
       CREATE TABLE llm_calls_v47_rebuild (
@@ -195,10 +215,6 @@ function migrateLlmCallsNullableAttributionV47(db: Database.Database): void {
         output_tokens         INTEGER NOT NULL DEFAULT 0,
         cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
         cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-        cost_usd              REAL,
-        cost_native           REAL,
-        cost_currency         TEXT,
-        price_status          TEXT,
         org                   TEXT,
         workspace_id          TEXT,
         workflow_ref          TEXT,
@@ -209,11 +225,11 @@ function migrateLlmCallsNullableAttributionV47(db: Database.Database): void {
         FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
       )
     `)
-    // Keep this column list in sync with the llm_calls CREATE TABLE in schema.sql.
-    const colNames = cols.map(c => c.name)
+    // 只拷新表也有的列（旧表可能有 v45 cost 残留列）。
+    const srcCols = cols.map(c => c.name).filter(n => keepCols.includes(n))
     db.exec(`
-      INSERT INTO llm_calls_v47_rebuild (${colNames.join(", ")})
-      SELECT ${colNames.join(", ")} FROM llm_calls
+      INSERT INTO llm_calls_v47_rebuild (${srcCols.join(", ")})
+      SELECT ${srcCols.join(", ")} FROM llm_calls
     `)
     db.exec("DROP TABLE llm_calls")
     db.exec("ALTER TABLE llm_calls_v47_rebuild RENAME TO llm_calls")
@@ -228,6 +244,137 @@ function migrateLlmCallsNullableAttributionV47(db: Database.Database): void {
   }
   // eslint-disable-next-line no-console
   console.log(`[schema v47] llm_calls rebuilt with nullable attribution cols (${count} rows preserved)`)
+}
+
+/**
+ * schema v48 (billing NEW-r2): 计费翻转 —— 快照账 → 规则账。三件事，全部幂等：
+ *
+ *   1) 弃列 —— llm_calls 的 cost_usd/cost_native/cost_currency/price_status 与
+ *      node_token_usages.cost_usd 全部删除。钱不再落账本；一切"显示钱"的地方
+ *      都是查询时按 billing_price_config 窗口现算的派生值。ntu 旧复合索引引用
+ *      cost_usd，先 DROP INDEX（schema.sql 的新版复合索引已不含该列，随后重建）。
+ *   2) 价格表窗口化 —— 旧形状（model_id UNIQUE、无 valid_from）rebuild 成新形状；
+ *      存量价行全部平移为「兜底价」（窗口双 NULL = 全时段生效）——这正是本次翻转
+ *      的语义：晚配的价立刻回算全部历史。
+ *   3) 模型名归一化 —— llm_calls.model / ntu.model / price.model_id 三表统一走
+ *      shared normalizeModelId（剥 SDK/代理的 `[1M]` 等尾部残渣）；归一化后撞同一
+ *      规范名的多条兜底价只保留 updated_at 最新的一条（其余删除，防部分唯一索引
+ *      违反 + 消歧）。
+ *
+ * fresh DB 各步自动跳过（列/表形状检测差异，无操作）。
+ */
+export function migrateBillingV48(db: Database.Database): void {
+  // 派生视图依赖 billing_price_config/llm_calls 列 —— 本迁移的 DROP COLUMN/RENAME
+  // 会被 SQLite「dependents」检查拒绝。先撤视图；applySchema 在迁移之后统一重建。
+  db.exec("DROP VIEW IF EXISTS llm_calls_costed")
+
+  const colsOf = (t: string): string[] =>
+    (db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map(c => c.name)
+
+  // ── 1) 弃快照列 ─────────────────────────────────────────────────
+  const llmCols = colsOf("llm_calls")
+  for (const col of ["cost_usd", "cost_native", "cost_currency", "price_status"]) {
+    if (llmCols.includes(col)) {
+      try {
+        db.exec(`ALTER TABLE llm_calls DROP COLUMN ${col}`)
+        console.log(`[schema v48] llm_calls.${col} dropped (cost is derived at query time)`)
+      } catch (err) {
+        console.warn(`[schema v48] llm_calls.${col} drop skipped: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  }
+  if (colsOf("node_token_usages").includes("cost_usd")) {
+    db.exec("DROP INDEX IF EXISTS idx_ntu_composite") // 旧索引引用 cost_usd，先撤
+    try {
+      db.exec("ALTER TABLE node_token_usages DROP COLUMN cost_usd")
+      console.log("[schema v48] node_token_usages.cost_usd dropped (node cost derives from llm_calls)")
+    } catch (err) {
+      console.warn(`[schema v48] ntu.cost_usd drop skipped: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // ── 2) 价格表窗口化（存量行 → 全时段兜底价） ─────────────────────
+  const priceCols = colsOf("billing_price_config")
+  if (priceCols.length > 0 && !priceCols.includes("valid_from")) {
+    const carry = [
+      "id", "vendor", "model_id", "input_unit_price", "output_unit_price",
+      "cache_write_unit_price", "cache_read_unit_price", "currency", "created_at", "updated_at",
+    ].filter(c => priceCols.includes(c))
+    const rebuild = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE billing_price_config_v48 (
+          id                     TEXT PRIMARY KEY,
+          vendor                 TEXT NOT NULL,
+          model_id               TEXT NOT NULL,
+          input_unit_price       REAL NOT NULL,
+          output_unit_price      REAL NOT NULL,
+          cache_write_unit_price REAL NOT NULL,
+          cache_read_unit_price  REAL NOT NULL,
+          currency               TEXT NOT NULL CHECK (currency IN ('USD','CNY')),
+          valid_from             INTEGER,
+          valid_to               INTEGER,
+          created_at             TEXT NOT NULL,
+          updated_at             TEXT NOT NULL
+        )
+      `)
+      db.exec(`INSERT INTO billing_price_config_v48 (${carry.join(", ")}) SELECT ${carry.join(", ")} FROM billing_price_config`)
+      db.exec("DROP TABLE billing_price_config")
+      db.exec("ALTER TABLE billing_price_config_v48 RENAME TO billing_price_config")
+    })
+    rebuild()
+    console.log("[schema v48] billing_price_config rebuilt with valid_from/valid_to (legacy rows → catch-all prices)")
+  }
+
+  // ── 3) 模型名归一化 + 兜底价并撞 ─────────────────────────────────
+  // 先撤部分唯一索引再改名/并撞（归一化可能把两条价撞进同键）；收尾重建索引。
+  db.exec("DROP INDEX IF EXISTS ux_price_catchall")
+  const normalizeIn = (table: string, col: string): number => {
+    if (colsOf(table).length === 0) return 0
+    const names = (db.prepare(`SELECT DISTINCT ${col} AS n FROM ${table} WHERE ${col} IS NOT NULL`).all() as Array<{ n: string }>).map(r => r.n)
+    const upd = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`)
+    let changed = 0
+    for (const n of names) {
+      const norm = normalizeModelId(n)
+      if (norm !== null && norm !== n) {
+        upd.run(norm, n)
+        changed++
+      }
+    }
+    return changed
+  }
+  const dedupeCatchall = `
+      DELETE FROM billing_price_config
+      WHERE valid_from IS NULL AND valid_to IS NULL AND EXISTS (
+        SELECT 1 FROM billing_price_config o
+        WHERE o.valid_from IS NULL AND o.valid_to IS NULL
+          AND o.model_id = billing_price_config.model_id
+          AND (o.updated_at > billing_price_config.updated_at
+               OR (o.updated_at = billing_price_config.updated_at AND o.id > billing_price_config.id))
+      )
+    `
+  const merge = db.transaction(() => {
+    const hasPrice = colsOf("billing_price_config").length > 0
+    // 并撞先行（保留 updated_at 最新，同分取 id 大者 —— 确定性）
+    const mergedFirst = hasPrice ? db.prepare(dedupeCatchall).run().changes : 0
+    const nPrice = normalizeIn("billing_price_config", "model_id")
+    const nCalls = normalizeIn("llm_calls", "model")
+    const nNtu = normalizeIn("node_token_usages", "model")
+    // 归一化可能引入新的兜底撞车 —— 再并一次
+    if (nPrice > 0 && hasPrice) db.prepare(dedupeCatchall).run()
+    return { mergedFirst, nPrice, nCalls, nNtu }
+  })
+  const m = merge()
+  if (m.nPrice > 0 || m.nCalls > 0 || m.nNtu > 0 || m.mergedFirst > 0) {
+    console.log(`[schema v48] model names normalized (price=${m.nPrice}, llm_calls=${m.nCalls}, ntu=${m.nNtu}, catch-all merged=${m.mergedFirst})`)
+  }
+  // fresh DB（迁移先于 schema.sql 建表）表还不存在 —— 索引改由 schema.sql 的 IF NOT EXISTS 建。
+  if (colsOf("billing_price_config").length > 0) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_price_catchall ON billing_price_config(model_id)
+        WHERE valid_from IS NULL AND valid_to IS NULL;
+      CREATE INDEX IF NOT EXISTS ix_price_match ON billing_price_config(model_id, valid_from);
+    `)
+  }
 }
 
 /**
@@ -431,12 +578,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
   ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
 
-  // schema v45 (billing-core-1 ticket 01): llm_calls 双币种快照列 (KD5)。
-  // cost_native 原币金额 + cost_currency 原币种 + price_status (priced|unpriced, KD4)。
-  // Additive nullable — 老行保持 NULL，不回填 (KD3 不回溯重算)。
-  ensureColumn(db, 'llm_calls', 'cost_native', "REAL")
-  ensureColumn(db, 'llm_calls', 'cost_currency', "TEXT")
-  ensureColumn(db, 'llm_calls', 'price_status', "TEXT")
+  // schema v45 (billing-core-1 ticket 01) 的双币种快照列 (cost_native/cost_currency/
+  // price_status) 已在 v48 (billing NEW-r2) 整体移除 —— 钱不落账本，查询时算。
+  // 这里不再 ensure 这些列（ensureColumn 反而会把弃列加回来）。
 
   // schema v46 (billing-coverage-2 票01, KD20): llm_calls 来源维度列。以可空添加而非
   // NOT NULL DEFAULT —— 否则历史行整片焊成默认值，回填 (KD21) 就分不出「可推断」与

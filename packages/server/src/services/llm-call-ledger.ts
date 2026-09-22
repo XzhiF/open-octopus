@@ -1,20 +1,24 @@
 /**
- * billing-coverage-2 票01 —— llm_calls 唯一共用落账 helper。
+ * billing NEW-r2 —— llm_calls 唯一共用落账 helper。
  *
- * 所有记账路径（本票收敛的 workflow / interaction 既有两写入点，票 02+ 的
- * clone_chat / global_chat / session_compress 新路径）都调这里：
- *   入 = 四类 token + model + sourcePath + 归属维度（可得性如实，缺则 null）
- *   → 内部经 BillingService 算钱（phase 1 KD2/KD4/KD5 链路，不另算 —— KD25 一本账一个价源）
- *   → 写/产出一条 llm_calls（含 cost_native/cost_currency/price_status 三列 + source_path）。
+ * 所有记账路径（workflow / interaction 既有写入点 + clone_chat / global_chat /
+ * session_compress 聊天路径）都调这里：
+ *   入 = 四类 token + model(归一化) + sourcePath + 归属维度（可得性如实，缺则 null）
+ *   → 写出一条**纯事实** llm_calls。
  *
- * source_path 枚举校验在这里做（shared 定义，KD20）：非法值直接抛，不落库 ——
- * 票 AC2「新写入行 source_path 必属枚举值」的防线。签名进 handoff 供 phase 3 复用。
+ * NEW-r2 翻转：这里**不再算钱** —— 钱不落账本，费用一律查询时按
+ * billing_price_config 窗口现算（见 db/price-sql.ts 与 billing-dao 报表族）。
+ * BillingService 写入时算价链路整体退役。
+ *
+ * 模型名归一化在这里做（shared normalizeModelId，Q9 双端之「落账端」）：
+ * SDK/代理上报名常带 `[1M]` 等尾部残渣，不归一则价表精确匹配永远命不中。
+ *
+ * source_path 枚举校验保留在这里（shared 定义，KD20）：非法值直接抛，不落库。
  */
 import type Database from "better-sqlite3"
 import type { LlmCallRow } from "../db/types"
 import type { TokenUsage } from "@octopus/shared"
-import { isLlmCallSourcePath, type LlmCallSourcePath } from "@octopus/shared"
-import type { BillingService } from "./billing"
+import { isLlmCallSourcePath, normalizeModelId, type LlmCallSourcePath } from "@octopus/shared"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 
 export interface LlmCallLedgerInput {
@@ -26,6 +30,7 @@ export interface LlmCallLedgerInput {
   executionId: string | null
   turnIndex: number
   callIndex: number
+  /** 原始模型名 —— 落库前经 normalizeModelId 归一。 */
   model: string | null
   usage: Pick<TokenUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens">
   timestamp: number
@@ -41,12 +46,11 @@ export interface LlmCallLedgerInput {
   instanceId?: string | null
 }
 
-/** 纯函数部分：算钱 + 组行（批量落库路径用，如 observability 的 flush）。 */
-export function composeLlmCallRow(input: LlmCallLedgerInput, billing: BillingService): LlmCallRow {
+/** 纯函数部分：组行（批量落库路径用，如 observability 的 flush）。NEW-r2 起无副作用、无算价。 */
+export function composeLlmCallRow(input: LlmCallLedgerInput): LlmCallRow {
   if (!isLlmCallSourcePath(input.sourcePath)) {
     throw new Error(`[llm-call-ledger] 非法 source_path: ${String(input.sourcePath)}（必须是 shared LLM_CALL_SOURCE_PATHS 枚举值，KD20）`)
   }
-  const cost = billing.computeForModel(input.model, input.usage)
   return {
     id: input.id,
     node_execution_id: input.nodeExecutionId,
@@ -54,7 +58,7 @@ export function composeLlmCallRow(input: LlmCallLedgerInput, billing: BillingSer
     turn_index: input.turnIndex,
     call_index: input.callIndex,
     message_id: input.messageId ?? null,
-    model: input.model,
+    model: normalizeModelId(input.model),
     stop_reason: input.stopReason ?? null,
     timestamp: input.timestamp,
     duration_ms: input.durationMs,
@@ -63,10 +67,6 @@ export function composeLlmCallRow(input: LlmCallLedgerInput, billing: BillingSer
     output_tokens: input.usage.outputTokens,
     cache_read_tokens: input.usage.cacheReadTokens,
     cache_creation_tokens: input.usage.cacheCreationTokens,
-    cost_usd: cost.cost_usd,
-    cost_native: cost.cost_native,
-    cost_currency: cost.cost_currency,
-    price_status: cost.price_status,
     org: input.org ?? null,
     workspace_id: input.workspaceId ?? null,
     workflow_ref: input.workflowRef ?? null,
@@ -79,10 +79,10 @@ export function composeLlmCallRow(input: LlmCallLedgerInput, billing: BillingSer
 
 /** 单条落库入口：compose + insertLlmCall（DAO 内 INSERT OR IGNORE 幂等）。 */
 export function recordLlmCall(input: LlmCallLedgerInput, tokenDao: TokenUsageDAO): Database.RunResult {
-  return tokenDao.insertLlmCall(composeLlmCallRow(input, tokenDao.billing()))
+  return tokenDao.insertLlmCall(composeLlmCallRow(input))
 }
 
-// ── 聊天/压缩路径 result-chunk 入账入口（票 02/03/05 共用） ──────────────
+// ── 聊天/压缩路径 result-chunk 入账入口 ─────────────────────────────────
 
 import { randomUUID } from "crypto"
 
@@ -114,10 +114,12 @@ const sumTokens = (u?: { inputTokens?: number; outputTokens?: number; cacheReadT
 
 /**
  * 聊天路径（clone_chat / global_chat / session_compress）result chunk 的统一入账：
- * 每 modelUsage 一行（模型粒度算价）；缺 modelUsages 则按 usage+fallbackModel 记一行；
- * 无真值（全零 / 两者都缺）不记、不造数。**纯旁路** —— 任何异常只 log，绝不断聊天主流水
- * （票 02/03 AC「元数据不受影响」）。一行 = 一次实际到达的 result chunk（KD23 防双计：
- * chunk 到达即写，重试是新的真实调用 → 新的真实行）。
+ * 每 modelUsage 一行（模型粒度，算价在查询时按行匹配）；缺 modelUsages 则按
+ * usage+fallbackModel 记一行；无真值（全零 / 两者都缺）不记、不造数。
+ * **纯旁路** —— 任何异常只 log（NEW-r2 起带完整堆栈：编程错误此前被一行 message
+ * 吞掉，排查时被误导成落账逻辑 bug），绝不断聊天主流水。
+ * 一行 = 一次实际到达的 result chunk（KD23 防双计：chunk 到达即写，
+ * 重试是新的真实调用 → 新的真实行）。
  */
 export function recordProviderResultUsage(input: ProviderResultUsageInput, tokenDao: TokenUsageDAO): void {
   try {
@@ -157,7 +159,7 @@ export function recordProviderResultUsage(input: ProviderResultUsageInput, token
   } catch (err) {
     console.error(
       `[llm-call-ledger] ${input.sourcePath} 入账失败 (non-fatal):`,
-      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err : new Error(String(err)),
     )
   }
 }

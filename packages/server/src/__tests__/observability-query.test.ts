@@ -40,33 +40,44 @@ function createNodeExecution(id: string, executionId: string, opts?: {
   )
 }
 
+let __ocqSeq = 0
 function createLlmCall(id: string, nodeExecId: string, executionId: string, opts?: {
   node_id?: string; input_tokens?: number; output_tokens?: number
   cache_read_tokens?: number; cache_creation_tokens?: number; cost_usd?: number
   model?: string; timestamp?: number; turn_index?: number
 }) {
+  const model = opts?.model ?? "claude-sonnet-4-20250514"
+  const inp = opts?.input_tokens ?? 100
+  const out = opts?.output_tokens ?? 50
+  const ts = opts?.timestamp ?? (Date.now() + (++__ocqSeq)) // 每行唯一时刻 → 精确窗口互不重叠
+  const cost = opts?.cost_usd ?? 0.01
+  // NEW-r2:钱不落账本 —— 逐行造「恰命中该笔时刻」的窗口价（仅按 input 计费,
+  // 单价 = cost×1e6/input），派生结果与旧 cost_usd 字面量一致。
+  db.prepare(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
+      output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, valid_from, valid_to, created_at, updated_at)
+    VALUES (?, 'v', ?, ?, 0, 0, 0, 'USD', ?, ?, 't', 't')`)
+    .run(`pp-${id}`, model, (inp > 0 ? cost : 0) * 1e6 / inp, ts, ts + 1)
   db.prepare(`
     INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms,
-      input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd, model, node_id, workspace_id)
-    VALUES (?, ?, ?, ?, 0, ?, 100, ?, ?, ?, ?, ?, ?, ?, 'ws-1')
+      input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model, node_id, workspace_id, source_path)
+    VALUES (?, ?, ?, ?, 0, ?, 100, ?, ?, ?, ?, ?, ?, 'ws-1', 'workflow')
   `).run(
     id, nodeExecId, executionId,
-    opts?.turn_index ?? 1, opts?.timestamp ?? Date.now(),
-    opts?.input_tokens ?? 100, opts?.output_tokens ?? 50,
+    opts?.turn_index ?? 1, ts,
+    inp, out,
     opts?.cache_read_tokens ?? 0, opts?.cache_creation_tokens ?? 0,
-    opts?.cost_usd ?? 0.01, opts?.model ?? "claude-sonnet-4-20250514",
-    opts?.node_id ?? "node-1",
+    model, opts?.node_id ?? "node-1",
   )
   // C3/Q4: summary 总量源 = ntu 账本 —— fixture 同步行（Σntu ≡ Σllm_calls，
-  // 与线上 engine 路径「同一 result 双写」语义一致）
+  // 与线上 engine 路径「同一 result 双写」语义一致）。NEW-r2:ntu 无 cost 列。
   db.prepare(`
     INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
-      cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      cache_read_tokens, cache_creation_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
-    `${id}-ntu`, nodeExecId, opts?.model ?? "claude-sonnet-4-20250514",
-    opts?.input_tokens ?? 100, opts?.output_tokens ?? 50,
-    opts?.cost_usd ?? 0.01, opts?.cache_read_tokens ?? 0, opts?.cache_creation_tokens ?? 0,
+    `${id}-ntu`, nodeExecId, model,
+    inp, out,
+    opts?.cache_read_tokens ?? 0, opts?.cache_creation_tokens ?? 0,
   )
 }
 

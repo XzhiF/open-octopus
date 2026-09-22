@@ -10,17 +10,18 @@ import { Label } from "@/components/ui/label"
 import { getSettings, listBillingCalls, type BillingCallRow, type BillingDrillDown, type BillingSettings, type BillingSourceSubtotal } from "@/lib/billing-api"
 
 /**
- * 票 06 · 计费明细 Tab —— llm_calls 流水 + 筛选（模型/时间区间/定价状态）+
- * 展示币种换算（KD8：按**当前汇率**折算展示，历史不锁汇）+ 未定价徽标（KD4）。
- * 换算纯函数 convertCostToDisplay 单独导出，供单测直查。
+ * 计费明细 Tab（billing NEW-r2 · 规则账）。
+ * llm_calls 流水 + 筛选（模型/时间区间/定价状态）+ 展示币种换算（KD8）。
+ * NEW-r2：行上的 cost_usd/price_status 是**查询时派生值**（账本不存钱）——
+ * 未定价 = 该笔时刻没有任何适用价格行（配上价后历史行立即在此出钱）；
+ * 「legacy 接线前老行」态随快照列一并退役。
  * billing-coverage-2 票05：来源维度 —— 来源列（中文标签）+ 来源筛选下拉 +
- * 顶部各来源小计条（KD26，当前筛选条件下；priced 求和，unpriced 计行不计费）。
+ * 顶部各来源小计条（KD26，当前筛选条件下；派生 priced 求和，unpriced 计行不计费）。
  */
 
 export type DisplayCost =
   | { kind: "amount"; symbol: "¥" | "$"; text: string }
   | { kind: "unpriced" }
-  | { kind: "legacy" } // 接线前老行（price_status NULL 且无 cost）：不冒充数字
 
 /**
  * source_path 中文标签（票05 契约：六来源 + unknown）。纯函数导出供单测逐值断言；
@@ -44,12 +45,11 @@ export function sourcePathLabel(v: string | null | undefined): string {
  * 文本保留最多 4 位小数（金额存储不截断，展示层格式化 —— 票02 口径）。
  */
 export function convertCostToDisplay(
-  row: Pick<BillingCallRow, "cost_usd" | "price_status">,
+  row: { cost_usd: number | null | undefined; price_status: string | null | undefined },
   display: BillingSettings["display_currency"],
   rate: number,
 ): DisplayCost {
-  if (row.price_status === "unpriced") return { kind: "unpriced" }
-  if (row.cost_usd === null || row.cost_usd === undefined) return { kind: "legacy" }
+  if (row.price_status === "unpriced" || row.cost_usd === null || row.cost_usd === undefined) return { kind: "unpriced" }
   const amount = display === "CNY" ? row.cost_usd * rate : row.cost_usd
   const text = amount.toFixed(4).replace(/\.?0+$/, "")
   return { kind: "amount", symbol: display === "CNY" ? "¥" : "$", text }
@@ -57,7 +57,7 @@ export function convertCostToDisplay(
 
 /** 小计条换算：cost_usd = NULL（该来源全未定价，KD4 不焊 0）→ 占位；否则按 KD8 折显。 */
 export function subtotalCostDisplay(s: BillingSourceSubtotal, display: BillingSettings["display_currency"], rate: number): DisplayCost {
-  if (s.cost_usd === null) return { kind: "legacy" }
+  if (s.cost_usd === null) return { kind: "unpriced" }
   return convertCostToDisplay({ cost_usd: s.cost_usd, price_status: "priced" }, display, rate)
 }
 
@@ -301,7 +301,7 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                           <td className="px-2 py-2 text-right">{r.cache_read_tokens}</td>
                           <td className="px-2 py-2 whitespace-nowrap">
                             {cost.kind === "amount" && (
-                              <span title={r.cost_currency ? `原币 ${r.cost_native} ${r.cost_currency}` : undefined}>
+                              <span title="查询时按价格规则现算（NEW-r2）">
                                 {cost.symbol}{cost.text}
                               </span>
                             )}
@@ -310,10 +310,9 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                                 未定价
                               </span>
                             )}
-                            {cost.kind === "legacy" && <span className="text-muted-foreground">—</span>}
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap">
-                            {r.price_status === "priced" ? "已定价" : r.price_status === "unpriced" ? "未定价" : "—"}
+                            {r.price_status === "priced" ? "已定价" : "未定价"}
                           </td>
                         </tr>
                         {isOpen && (
@@ -326,8 +325,7 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                                 <span>session: <span className="font-mono">{r.session_id ?? "—"}</span></span>
                                 <span>workflow: <span className="font-mono">{r.workflow_ref ?? "—"}</span></span>
                                 <span>来源: {sourcePathLabel(r.source_path)}（{r.source_path ?? "NULL"}）</span>
-                                <span>原币快照: {r.cost_native !== null ? `${r.cost_native} ${r.cost_currency ?? ""}` : "—"}</span>
-                                <span>USD 归一: {r.cost_usd ?? "—"}</span>
+                                <span>USD（查询时派生）: {r.cost_usd ?? "—"}</span>
                                 {r.workspace_id && (
                                   <span className="col-span-full">
                                     <Link href={`/workspaces/${r.workspace_id}/executions/${r.execution_id}/observability`} className="underline">

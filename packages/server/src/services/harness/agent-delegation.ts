@@ -882,7 +882,7 @@ export class AgentDelegationService {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
-      // billing-core-1 票04：ledger 唯一写入口；cost 由入口内经 BillingService 产出
+      // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
       // （SDK 上报价 tokenInfo.costUsd 不再传入 —— KD2 不作账；未配价 NULL —— KD4 不估算）。
       this.tokenUsageDao.recordNodeUsage({
         id: tokenId,

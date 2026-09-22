@@ -1,5 +1,6 @@
 // 06 · 计费明细 Tab 组件测试（vitest + jsdom，无浏览器 E2E）
 // Seam: <BillingLedgerTab/> + 纯函数 convertCostToDisplay（fetch mock 断言 query 参数与渲染换算）。
+// billing NEW-r2：行上 cost_usd/price_status 为查询时派生值（账本不存钱、无 legacy 快照态）。
 // 手算期望：PRICED 行 cost_usd=22.05；CNY 展示 × 汇率 7 → 154.35（¥ 前缀）；USD 直显 $22.05。
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
@@ -18,12 +19,12 @@ const ROW_PRICED = {
   id: "r-priced", node_execution_id: "e-1-n1", execution_id: "e-1", turn_index: 1, call_index: 0,
   model: "E2E_TEST_A", timestamp: 1700000001000,
   input_tokens: 1000, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 100,
-  cost_usd: 22.05, cost_native: 22.05, cost_currency: "USD", price_status: "priced",
+  cost_usd: 22.05, price_status: "priced",
   workspace_id: "ws-1", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-1",
 }
 const ROW_UNPRICED = {
   ...ROW_PRICED, id: "r-unpriced", model: "E2E_TEST_B",
-  cost_usd: null, cost_native: null, cost_currency: null, price_status: "unpriced",
+  cost_usd: null, price_status: "unpriced",
 }
 
 function mockFetch(settings: { usd_to_cny: string; display_currency: string }, total = 2) {
@@ -61,9 +62,9 @@ describe("纯函数 convertCostToDisplay（AC3 换算）", () => {
     expect(usd.text).toBe("22.05") // 直显不乘
     expect(usd.symbol).toBe("$")
   })
-  it("unpriced → 徽标态（无数字）；老行 cost null → legacy 占位", () => {
+  it("unpriced → 徽标态（无数字）；cost NULL（含派生前 null price_status）→ 同归 unpriced 占位（NEW-r2 无 legacy 态）", () => {
     expect(convertCostToDisplay({ cost_usd: null, price_status: "unpriced" }, "CNY", 7)).toEqual({ kind: "unpriced" })
-    expect(convertCostToDisplay({ cost_usd: null, price_status: null }, "CNY", 7)).toEqual({ kind: "legacy" })
+    expect(convertCostToDisplay({ cost_usd: null, price_status: null }, "CNY", 7)).toEqual({ kind: "unpriced" })
   })
 })
 

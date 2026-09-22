@@ -140,7 +140,6 @@ export interface NodeTokenUsageRow {
   model: string
   input_tokens: number
   output_tokens: number
-  cost_usd: number | null
   cache_read_tokens: number
   cache_creation_tokens: number
   created_at: string
@@ -154,6 +153,7 @@ export interface LlmCallRow {
   turn_index: number
   call_index: number
   message_id: string | null
+  /** v48 (billing NEW-r2): 规范模型名（shared normalizeModelId 落账前归一）。 */
   model: string | null
   stop_reason: string | null
   timestamp: number
@@ -163,12 +163,8 @@ export interface LlmCallRow {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
-  cost_usd: number | null
-  /** billing-core-1 (v45/票04) 双币种快照 (KD5)：原币金额+币种，写入口经 BillingService。
-   *  老行 / 未带列插入 = NULL，不回填。price_status: priced|unpriced (KD4)。 */
-  cost_native?: number | null
-  cost_currency?: string | null
-  price_status?: string | null
+  // v48: cost_usd/cost_native/cost_currency/price_status 快照列已删除 ——
+  // 钱不落账本，一切费用都是查询时按 billing_price_config 窗口匹配的派生值。
   org: string | null
   workspace_id: string | null
   workflow_ref: string | null

@@ -191,10 +191,9 @@ export class ObservabilityService {
     if (!meta) return
 
     try {
-      // billing-coverage-2 票01：workflow 路径收敛到共用落账 helper（行为等价 —— cost 仍由
-      // BillingService 唯一产出，KD2/KD4/KD5 链路不动），来源标记 source_path='workflow'。
+      // billing NEW-r2：workflow 路径经共用落账 helper 落**纯事实行**（token + 归属，
+      // source_path='workflow'）—— 不再写入时算价，钱查询时派生。
       // 批量语义保留：compose 纯函数组行 + insertLlmCallBatch 单事务落库。
-      const billing = this.tokenDao.billing()
       const rows: LlmCallRow[] = calls.map((call, i) => composeLlmCallRow({
         id: crypto.randomUUID(),
         sourcePath: 'workflow',
@@ -220,7 +219,7 @@ export class ObservabilityService {
         nodeId: meta.nodeId,
         sessionId: meta.sessionId ?? null,
         instanceId,
-      }, billing))
+      }))
 
       this.tokenDao.insertLlmCallBatch(rows)
     } catch {

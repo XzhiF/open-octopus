@@ -59,6 +59,26 @@ export function isLlmCallSourcePath(v: unknown): v is LlmCallSourcePath {
   return typeof v === 'string' && (LLM_CALL_SOURCE_PATHS as readonly string[]).includes(v)
 }
 
+/**
+ * 模型名归一化（billing NEW-r2：账本与价表在「规范名」空间相遇）。
+ *
+ * SDK/代理上报的模型名常带上下文窗口后缀（`qwen3.8-flash[1M]`），代理异常时甚至
+ * 叠出残脏（`x[1M]][1M]`）——价格按 model_id 精确匹配，不归一化就永远配不上。
+ * 规则：**尾部括号残渣循环剥离至不动点**（成对 `[...]` 组与孤立 `]` 都算残渣）；
+ * 只作用于末尾，中段的 `[...]` 不碰。落账前与配价保存时双端调用，同一实现。
+ * 例：`a[1M]`→`a`；`a[1M]][1M]`→`a`；`a[beta]-v2`→原样。
+ */
+export function normalizeModelId(model: string | null | undefined): string | null {
+  if (model == null) return null
+  let s = model.trim()
+  let prev: string
+  do {
+    prev = s
+    s = s.replace(/(?:\s*\[[^\]]*\]|\s*\])+$/, '')
+  } while (s !== prev)
+  return s
+}
+
 /** 全口径总 token 数（含 cache）。聚合端点的「总 tokens」口径以此为准。 */
 export function totalTokens(u: TokenUsage): number {
   return u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheCreationTokens

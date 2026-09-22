@@ -55,6 +55,7 @@ function seedNodeExecution(
   `).run(id, execId, nodeId, nodeType, status, duration, error)
 }
 
+let __cbSeq = 0
 function seedLlmCall(
   db: Database.Database,
   id: string,
@@ -65,17 +66,24 @@ function seedLlmCall(
   inputTokens = 100,
   outputTokens = 50,
 ) {
+  // NEW-r2:钱不落账本 —— 每笔配一行「恰命中该笔时刻」的窗口价(只按 input 计费,
+  // 单价=cost×1e6/input),派生结果与旧 cost_usd 字面量一致。时刻逐笔唯一,窗口不重叠。
+  const ts = 1_000 + ++__cbSeq
+  const t = new Date().toISOString()
+  db.prepare(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
+      output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, valid_from, valid_to, created_at, updated_at)
+    VALUES (?, 'v', ?, ?, 0, 0, 0, 'USD', ?, ?, ?, ?)`)
+    .run(`pp-${id}`, model, costUsd * 1e6 / inputTokens, ts, ts + 1, t, t)
   db.prepare(`
-    INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
-    VALUES (?, ?, ?, 0, 0, 1000, 500, ?, ?, ?, ?, 20, 10)
-  `).run(id, nodeExecId, execId, model, inputTokens, outputTokens, costUsd)
-  // C3/Q8-1: 归档成本单源 = ntu 账本 —— fixture 同步双写（与线上 engine 路径
-  // 「同一 result 双写两表」一致）
+    INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, workspace_id)
+    VALUES (?, ?, ?, 0, 0, ?, 500, ?, ?, ?, 20, 10, 'ws-1')
+  `).run(id, nodeExecId, execId, ts, model, inputTokens, outputTokens)
+  // fixture 同步双写 ntu tokens（与线上 engine 路径一致）;NEW-r2:ntu 无 cost 列。
   db.prepare(`
     INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
-      cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 20, 10, datetime('now'))
-  `).run(`${id}-ntu`, nodeExecId, model, inputTokens, outputTokens, costUsd)
+      cache_read_tokens, cache_creation_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, 20, 10, datetime('now'))
+  `).run(`${id}-ntu`, nodeExecId, model, inputTokens, outputTokens)
 }
 
 describe("buildArchiveContext", () => {

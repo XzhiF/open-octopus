@@ -36,10 +36,10 @@ beforeEach(() => {
     INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at)
     VALUES ('ne-ha', 'e-wf', 'n3', 'agent', 'completed', 0, 10, ?, ?)
   `).run(now, now)
-  // 账本特征行（回填推断依据）
+  // 账本特征行（回填推断依据；NEW-r2：ntu 是纯 token 账，无 cost 列）
   const ntu = db.prepare(`
-    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
-    VALUES (?, ?, 'm', 1, 1, NULL, 0, 0, ?, ?)
+    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source, created_at)
+    VALUES (?, ?, 'm', 1, 1, 0, 0, ?, ?)
   `)
   ntu.run("ntu-wf", "ne-wf", "node", now)
   ntu.run("ntu-ix", "ne-ix", "interaction", now)
