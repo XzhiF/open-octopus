@@ -25,12 +25,15 @@ export function formatCost(usd: number | null | undefined, complete = true): str
   return `${complete ? "$" : "≈$"}${num}`
 }
 
-/** Token 数紧凑格式化（十进制 1000）：<1K 整数原值，<1M → K，≥1M → M，均 1 位小数档 */
-export function formatTokenCount(n: number | null | undefined): string {
+/**
+ * Token 数紧凑格式化（十进制 1000）：<1K 整数原值，<1M → K，≥1M → M。
+ * digits = K/M 档的小数位（默认 1；计费域传 2 —— 单价小、token 缩得太狠会丢分辨力）。
+ */
+export function formatTokenCount(n: number | null | undefined, digits = 1): string {
   if (n == null || Number.isNaN(n)) return "—"
   if (n < 1000) return String(Math.round(n))
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
-  return `${(n / 1_000_000).toFixed(1)}M`
+  if (n < 1_000_000) return `${(n / 1000).toFixed(digits)}K`
+  return `${(n / 1_000_000).toFixed(digits)}M`
 }
 
 /**

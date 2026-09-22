@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { getSettings, listBillingCalls, type BillingCallRow, type BillingDrillDown, type BillingSettings, type BillingSourceSubtotal } from "@/lib/billing-api"
+import { formatTokenCount } from "@/lib/format"
 
 /**
  * 计费明细 Tab（billing NEW-r2 · 规则账）。
@@ -271,8 +272,14 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b-2 border-pop-bd">
-                    {["", "时间", "模型", "来源", "输入", "输出", "缓存写", "缓存读", `费用（${settings.display_currency === "CNY" ? "¥" : "$"}）`, "状态"].map((h, i) => (
-                      <th key={i} className="px-2 py-2 font-black whitespace-nowrap">{h}</th>
+                    {[
+                      { h: "", cls: "" }, { h: "时间", cls: "" }, { h: "模型", cls: "" }, { h: "来源", cls: "" },
+                      { h: "输入", cls: "text-right" }, { h: "输出", cls: "text-right" },
+                      { h: "缓存写", cls: "text-right" }, { h: "缓存读", cls: "text-right" },
+                      { h: `费用（${settings.display_currency === "CNY" ? "¥" : "$"}）`, cls: "text-right" },
+                      { h: "状态", cls: "" },
+                    ].map((c, i) => (
+                      <th key={i} className={`px-2 py-2 font-black whitespace-nowrap ${c.cls}`}>{c.h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -295,11 +302,11 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                               {sourcePathLabel(r.source_path)}
                             </span>
                           </td>
-                          <td className="px-2 py-2 text-right">{r.input_tokens}</td>
-                          <td className="px-2 py-2 text-right">{r.output_tokens}</td>
-                          <td className="px-2 py-2 text-right">{r.cache_creation_tokens}</td>
-                          <td className="px-2 py-2 text-right">{r.cache_read_tokens}</td>
-                          <td className="px-2 py-2 whitespace-nowrap">
+                          <td className="px-2 py-2 text-right" title={r.input_tokens.toLocaleString("en-US")}>{formatTokenCount(r.input_tokens, 2)}</td>
+                          <td className="px-2 py-2 text-right" title={r.output_tokens.toLocaleString("en-US")}>{formatTokenCount(r.output_tokens, 2)}</td>
+                          <td className="px-2 py-2 text-right" title={r.cache_creation_tokens.toLocaleString("en-US")}>{formatTokenCount(r.cache_creation_tokens, 2)}</td>
+                          <td className="px-2 py-2 text-right" title={r.cache_read_tokens.toLocaleString("en-US")}>{formatTokenCount(r.cache_read_tokens, 2)}</td>
+                          <td className="px-2 py-2 text-right whitespace-nowrap">
                             {cost.kind === "amount" && (
                               <span title="查询时按价格规则现算（NEW-r2）">
                                 {cost.symbol}{cost.text}

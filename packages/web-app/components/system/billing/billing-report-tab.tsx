@@ -8,6 +8,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
+import { formatTokenCount } from "@/lib/format"
 import {
   getReportSummary, getReportTrend, getReportBreakdown, getReportRanking,
   type BillingDrillDown, type BillingReportBreakdownItem, type BillingReportGroupBy,
@@ -50,15 +51,16 @@ function presetRange(p: Preset): { from: string; to: string } {
   return { from: shiftLocalDay(to, -(Number(p) - 1)), to }
 }
 
-/** 金额格式化：与明细页同口径（最多 4 位小数，去尾零）；NULL=全未定价 → 占位（KD4）。 */
-export function fmtDisplayAmount(v: number | null, currency: "USD" | "CNY"): string {
+/** 金额格式化（组件私有;全站 format* 导出点唯一 = lib/format.ts,C4 门禁）：
+ *  与明细页同口径（最多 4 位小数,去尾零）；NULL=全未定价 → 占位（KD4）。 */
+function fmtDisplayAmount(v: number | null, currency: "USD" | "CNY"): string {
   if (v === null || !Number.isFinite(v)) return "—"
   const symbol = currency === "CNY" ? "¥" : "$"
-  return symbol + v.toFixed(4).replace(/\.?0+$/, "")
+  return symbol + v.toFixed(4).replace(/\.?0+$/, "") // fmt-ok: 与 formatCost 自适应档不同,报表定档去尾零
 }
-/** 未定价占比：0.25 → "25%"（与 API ratio 逐值一致，仅展示层百分化）。 */
-export function fmtRatio(ratio: number): string {
-  return `${Number((ratio * 100).toFixed(1))}%`
+/** 未定价占比（组件私有）：0.25 → "25%"（与 API ratio 逐值一致,仅展示层百分化）。 */
+function fmtRatio(ratio: number): string {
+  return `${Number((ratio * 100).toFixed(1))}%` // fmt-ok: 百分化非货币/时长量纲家族
 }
 
 /**
@@ -286,10 +288,10 @@ export function BillingReportTab({ onDrill }: {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
             <SummaryCard label={`总费用（${currency}）`} testId="summary-cost" value={fmtDisplayAmount(summary.total_cost_display, currency)} hint={`${summary.total_cost_usd ?? "—"} USD × ${summary.currency_rate}`} />
             <SummaryCard label="调用数" testId="summary-calls" value={String(summary.total_calls)} />
-            <SummaryCard label="输入 token" testId="summary-token-in" value={String(summary.tokens.in)} />
-            <SummaryCard label="输出 token" testId="summary-token-out" value={String(summary.tokens.out)} />
-            <SummaryCard label="缓存写 token" testId="summary-token-cache-w" value={String(summary.tokens.cache_w)} />
-            <SummaryCard label="缓存读 token" testId="summary-token-cache-r" value={String(summary.tokens.cache_r)} />
+            <SummaryCard label="输入 token" testId="summary-token-in" value={formatTokenCount(summary.tokens.in, 2)} hint={summary.tokens.in.toLocaleString("en-US")} />
+            <SummaryCard label="输出 token" testId="summary-token-out" value={formatTokenCount(summary.tokens.out, 2)} hint={summary.tokens.out.toLocaleString("en-US")} />
+            <SummaryCard label="缓存写 token" testId="summary-token-cache-w" value={formatTokenCount(summary.tokens.cache_w, 2)} hint={summary.tokens.cache_w.toLocaleString("en-US")} />
+            <SummaryCard label="缓存读 token" testId="summary-token-cache-r" value={formatTokenCount(summary.tokens.cache_r, 2)} hint={summary.tokens.cache_r.toLocaleString("en-US")} />
             <SummaryCard
               label="未定价占比"
               testId="summary-unpriced-ratio"

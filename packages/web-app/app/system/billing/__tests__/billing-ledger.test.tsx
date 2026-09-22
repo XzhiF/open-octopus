@@ -79,9 +79,9 @@ describe("表格渲染（AC1/AC2 显示面）", () => {
     const badge = screen.getByTestId("badge-unpriced")
     expect(badge.textContent).toBe("未定价") // 费用列只有徽标，无数字
     expect(badge.textContent).not.toMatch(/\d/)
-    // 四类 token 各列（两行同值 → 各 ≥2 个匹配）
-    expect(screen.getAllByText("1000").length).toBeGreaterThanOrEqual(2)
-    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(2)
+    // 四类 token 各列（NEW-r2 显示面:K/M 两位小数,<1K 原值;两行同值 → 各 ≥2 个匹配）
+    expect(screen.getAllByText("1.00K").length).toBeGreaterThanOrEqual(2)   // input 1000
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(2)     // cache 写 100(<1K 原值)
   })
 
   it("切展示币种 USD → 金额随动为 $22.05", async () => {
