@@ -435,8 +435,26 @@ export class CloneRuntime {
       // build. Note this is installed even when `taskHomePath` is undefined
       // (task home missing on disk), because the command half does not need a
       // home to be enforced; that session previously ran completely bare.
-      onBeforeToolCall: isTaskAuthorClone(this.cloneDef) ? buildPathGuard(taskHomePath) : undefined,
+      onBeforeToolCall: isTaskAuthorClone(this.cloneDef)
+        ? buildPathGuard(taskHomePath, this.ownMemoryDir())
+        : undefined,
     })
+  }
+
+  /** The clone's root dir (built-in vs user clone layout differs). */
+  private ownCloneDir(): string {
+    return this.cloneDef.type === 'built-in'
+      ? getBuiltInCloneDir(this.cloneDef.name)
+      : getCloneDir(this.cloneDef.name)
+  }
+
+  /**
+   * The clone's own memory directory. Single source for the guard whitelist,
+   * the prompt injection, and the memory-guidance text — all three must agree
+   * on where memory lives.
+   */
+  private ownMemoryDir(): string {
+    return path.join(this.ownCloneDir(), 'memory')
   }
 
   /**
@@ -610,10 +628,7 @@ export class CloneRuntime {
    * Always loaded regardless of memoryScope — this is the clone's personal memory.
    */
   private readOwnMemory(): string {
-    const clonePath = this.cloneDef.type === 'built-in'
-      ? getBuiltInCloneDir(this.cloneDef.name)
-      : getCloneDir(this.cloneDef.name)
-    const memoryDir = path.join(clonePath, 'memory')
+    const memoryDir = this.ownMemoryDir()
     const parts: string[] = []
 
     // Long-term memory
@@ -651,10 +666,8 @@ export class CloneRuntime {
    * Replaces the SDK's native memory system with file-based management.
    */
   private getMemoryGuidance(): string {
-    const clonePath = this.cloneDef.type === 'built-in'
-      ? getBuiltInCloneDir(this.cloneDef.name)
-      : getCloneDir(this.cloneDef.name)
-    const memoryDir = path.join(clonePath, 'memory')
+    const clonePath = this.ownCloneDir()
+    const memoryDir = this.ownMemoryDir()
     const skillsDir = path.join(clonePath, 'skills')
     const personaPath = path.join(clonePath, 'persona.md')
 
@@ -712,6 +725,8 @@ export class CloneRuntime {
  *  Allowed paths:
  *    - Inside task home (artifacts/, skills/, context.md, .claude/, etc.)
  *    - /tmp (scratch space; ticket 09 whitelist = task home + /tmp)
+ *    - The clone's OWN memory files (long-term.md, daily/*.md) — runbook
+ *      memory channel; narrow shapes only, not the whole memory dir.
  *
  *  Blocked paths:
  *    - Any path outside the task home (project codebase, system dirs, etc.)
@@ -856,7 +871,10 @@ function checkBashCommandGuard(input: unknown): { allow: boolean; reason?: strin
 /** The authoring guard for a task-author session. `taskHomePath` is optional:
  *  the command half applies regardless, the write half needs a home to scope
  *  against. See checkBashCommandGuard + checkBashWriteGuard. */
-export function buildPathGuard(taskHomePath?: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+export function buildPathGuard(
+  taskHomePath?: string,
+  memoryDir?: string,
+): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
   const normalizedHome = taskHomePath ? path.resolve(taskHomePath) : null
 
   return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
@@ -866,7 +884,7 @@ export function buildPathGuard(taskHomePath?: string): (toolName: string, input:
       // scope against and would otherwise let the session run bare).
       const denied = checkBashCommandGuard(input)
       if (denied) return denied
-      return normalizedHome === null ? undefined : checkBashWriteGuard(input, normalizedHome)
+      return normalizedHome === null ? undefined : checkBashWriteGuard(input, normalizedHome, memoryDir)
     }
 
     // No home → no write scope to enforce. (Reads are never blocked here.)
@@ -888,6 +906,11 @@ export function buildPathGuard(taskHomePath?: string): (toolName: string, input:
       return undefined // allowed
     }
 
+    // …or if it is one of the clone's own memory shapes (long-term.md /
+    // daily/*.md) — the runbook-memory channel. Deliberately narrow: the
+    // memory dir's other files (persona adjacencies, nested trees) stay out.
+    if (isWhitelistedMemoryPath(resolved, memoryDir)) return undefined
+
     // Blocked — provide a clear message so the agent redirects to artifacts/
     return {
       allow: false,
@@ -900,6 +923,7 @@ export function buildPathGuard(taskHomePath?: string): (toolName: string, input:
         `You MUST write all output files inside the task home directory.`,
         `- Formal artifacts → write to the artifacts/ subdirectory`,
         `- Working files (context, notes) → write to the task home root`,
+        `- Your own memory files may be written directly: memory/long-term.md and memory/daily/*.md`,
         `- DO NOT write to the project codebase or any other location.`,
         ``,
         `Please redirect this write to the appropriate location inside the task home.`,
@@ -1022,19 +1046,47 @@ function segmentize(cmd: string): string[][] {
 }
 
 /** True if a resolved absolute path is on the write whitelist. */
-function isWhitelistedWritePath(absPath: string, normalizedHome: string): boolean {
+function isWhitelistedWritePath(
+  absPath: string,
+  normalizedHome: string,
+  memoryDir?: string,
+): boolean {
   const r = path.resolve(absPath)
   if (r === normalizedHome || r.startsWith(normalizedHome + path.sep)) return true
   for (const t of BASH_WRITE_TMP_DIRS) {
     if (r === t || r.startsWith(t + '/')) return true
   }
   if (BASH_WRITE_DEV_ALLOW.has(r) || r.startsWith('/dev/fd/')) return true
+  if (isWhitelistedMemoryPath(r, memoryDir)) return true
   return false
+}
+
+/** The clone's OWN memory write shapes — the runbook-memory channel (the
+ *  task-author SKILL asks the clone to persist confirmed project runbooks to
+ *  its long-term.md, which clone-runtime then auto-injects into every session).
+ *  Whitelists EXACTLY two shapes, nothing else under the memory dir:
+ *    <memoryDir>/long-term.md
+ *    <memoryDir>/daily/<name>.md   (single level only — no nested trees)
+ *  Read is unrestricted; this only opens the write half of the guard. */
+function isWhitelistedMemoryPath(resolvedAbs: string, memoryDir?: string): boolean {
+  if (!memoryDir) return false
+  const dir = path.resolve(memoryDir)
+  if (resolvedAbs === path.join(dir, 'long-term.md')) return true
+  const dailyDir = path.join(dir, 'daily')
+  return (
+    path.dirname(resolvedAbs) === dailyDir &&
+    resolvedAbs.endsWith('.md') &&
+    path.basename(resolvedAbs).length > 3
+  )
 }
 
 /** Classify one extracted target. Returns null when the target is fine, or a
  *  human-readable problem string. */
-function classifyWriteTarget(raw: string, normalizedHome: string): string | null {
+function classifyWriteTarget(
+  raw: string,
+  normalizedHome: string,
+  memoryDir?: string,
+): string | null {
   let t = raw.trim()
   // The redirect capture keeps the quotes it matched (`> "/a b"` → `"/a b"`) —
   // strip one layer so the path logic sees the real path.
@@ -1053,7 +1105,7 @@ function classifyWriteTarget(raw: string, normalizedHome: string): string | null
   // happens to resolve inside task home or /tmp (it won't for ~user forms).
   const abs = t.startsWith('~') ? path.resolve(process.env.HOME ?? '', t.slice(1)) : t
   if (path.isAbsolute(abs)) {
-    return isWhitelistedWritePath(abs, normalizedHome)
+    return isWhitelistedWritePath(abs, normalizedHome, memoryDir)
       ? null
       : `"${t}" 是 task home 之外的绝对路径`
   }
@@ -1134,6 +1186,7 @@ function segmentWriteTargets(tokens: string[]): string[] {
 function checkBashWriteGuard(
   input: unknown,
   normalizedHome: string,
+  memoryDir?: string,
 ): { allow: boolean; reason?: string } | undefined {
   const inp = input as Record<string, unknown> | null
   const command = inp?.command
@@ -1141,7 +1194,7 @@ function checkBashWriteGuard(
 
   const offenders: string[] = []
   const report = (raw: string): void => {
-    const problem = classifyWriteTarget(raw, normalizedHome)
+    const problem = classifyWriteTarget(raw, normalizedHome, memoryDir)
     if (problem && !offenders.includes(problem)) offenders.push(problem)
   }
 
@@ -1167,7 +1220,8 @@ function checkBashWriteGuard(
       ...offenders.map((o) => `  - ${o}`),
       ``,
       `Task home: ${normalizedHome}`,
-      `Allowed write locations: task home (incl. artifacts/) and /tmp only.`,
+      `Allowed write locations: task home (incl. artifacts/), /tmp, and the clone's own`,
+      `memory files (memory/long-term.md, memory/daily/*.md) only.`,
       ``,
       `Rewrite the command to target a path inside the task home`,
       `(relative paths resolve from the home), or /tmp for scratch files.`,

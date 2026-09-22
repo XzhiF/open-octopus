@@ -29,6 +29,7 @@ import {
   artifactIndexEntrySchema,
   type ArtifactIndexEntry,
 } from "@octopus/shared"
+import { copyTree } from "./task-artifact-sync"
 
 const SKILLS_DIR = "skills"
 const ARTIFACTS_DIR = "artifacts"
@@ -201,6 +202,26 @@ export class TaskHomeService {
     } catch {
       return []
     }
+  }
+
+  /** duplicate task (2026-09-20): 把源 home 的**草稿面**整体拷进目标 home —
+   *  `.scratch/`（批次区：spec.md + issues/*.md + handoff/spec-rN，入队 gate 按
+   *  home 相对 specPath 解它们）+ `workflows/`（ADR-0013 自写 YAML，workflowRef
+   *  解析集的一部分，缺了 gate 必挂）。刻意不拷：artifacts/（执行产物，属上一轮
+   *  历史）、skills/（junction，由 dst 的 createHome+materializeGroups 自建）、
+   *  context.md/manifest.json（dst 骨架已带自己的新快照）。copyTree 跳 symlink，
+   *  保 mtime（seed/collect 的 mtime 规则对副本同样成立）。返回拷贝文件数。 */
+  copyDraftArtifacts(srcTaskId: string, dstTaskId: string): number {
+    let count = 0
+    const srcScratch = path.join(this.homePath(srcTaskId), BATCH_AREA_PREFIX)
+    if (fs.existsSync(srcScratch) && fs.statSync(srcScratch).isDirectory()) {
+      count += copyTree(srcScratch, path.join(this.homePath(dstTaskId), BATCH_AREA_PREFIX))
+    }
+    const srcWorkflows = this.workflowsDir(srcTaskId)
+    if (fs.existsSync(srcWorkflows) && fs.statSync(srcWorkflows).isDirectory()) {
+      count += copyTree(srcWorkflows, this.workflowsDir(dstTaskId))
+    }
+    return count
   }
 
   /** Path to artifacts.json (may not exist yet). */
@@ -821,8 +842,8 @@ export class TaskHomeService {
   // ── Home-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ─────────
   //
   // The kanban's PhaseListEditor needs to VIEW and EDIT a phase's spec.md
-  // (`./.scratch/<YYYYMMDD>/<slug>/spec.md`, home-relative — the SKILL batch
-  // convention). readArtifactContent can't serve it: relative paths there
+  // (`./.scratch/<main-slug>/<sub-slug>/spec.md`, home-relative — the SKILL batch
+  // convention since 2026-09-20; legacy 日期层 `.scratch/<YYYYMMDD>/<slug>/` 同深度同处理). readArtifactContent can't serve it: relative paths there
   // resolve against artifacts/, so a `.scratch/...` path would `..`-escape → 403.
   // These two methods share its guard idiom (null bytes / resolve+relative
   // no-escape / ArtifactAccessError FORBIDDEN|NOT_FOUND) but base at the home
@@ -942,8 +963,9 @@ export class TaskHomeService {
    *  visibility #53 — the disk source behind 「落盘即现」, decoupled from
    *  task_spec.phases[]). A batch dir = a directory that directly contains at
    *  least one `.md`:
-   *    • convention layout `.scratch/<date>/<slug>/spec.md` — the date layer has
-   *      no direct .md, so its children each form a batch;
+   *    • convention layout `.scratch/<main-slug>/<sub-slug>/spec.md` (2026-09-20
+   *      contract; also the legacy `.scratch/<date>/<slug>/` — same depth, the
+   *      parent layer has no direct .md, so its children each form a batch);
    *    • flat layout `.scratch/<slug>/spec.md` — the child itself is the batch.
    *  Per batch, `.md` files are collected recursively to depth ≤2 (spec family +
    *  `issues/*.md`; anything deeper is not chased), global cap 300 files for the

@@ -19,8 +19,24 @@ export function renumber(phases: TaskPhase[]): TaskPhase[] {
   return phases.map((p, i) => (p.index === i + 1 ? p : { ...p, index: i + 1 }))
 }
 
-/** 默认 specPath：home 相对批次约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md */
-export function defaultSpecPath(slug: string): string {
+/** 批次主 slug（2026-09-20 契约：Batch 目录 = `.scratch/<main>/<sub>/`）：
+ *  任务级 `task_spec.slug` 优先；无此字段的存量任务（旧日期布局）从既有 phase 的
+ *  specPath 反推父目录（跳过 8 位日期层）；都没有 → undefined。 */
+export function mainSlugOf(task: Task): string | undefined {
+  const spec = task.task_spec as unknown as { slug?: unknown; phases?: Array<{ specPath?: string }> }
+  if (typeof spec.slug === "string" && SLUG_RE.test(spec.slug)) return spec.slug
+  for (const p of spec.phases ?? []) {
+    const m = (p.specPath ?? "").replace(/^\.\//, "").match(/^\.scratch\/([^/]+)\//)
+    if (m && SLUG_RE.test(m[1]) && !/^\d{8}$/.test(m[1])) return m[1]
+  }
+  return undefined
+}
+
+/** 默认 specPath：新约定 `./.scratch/<main>/<sub>/spec.md`。main 缺失只可能发生在
+ *  存量日期布局任务上手动建骨架 —— 回退旧日期约定与其同层共存（新草稿由
+ *  task-author 定 spec.slug，不会走到这条回退）。 */
+export function defaultSpecPath(slug: string, main?: string): string {
+  if (main) return `./.scratch/${main}/${slug}/spec.md`
   const d = new Date()
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
   return `./.scratch/${ymd}/${slug}/spec.md`

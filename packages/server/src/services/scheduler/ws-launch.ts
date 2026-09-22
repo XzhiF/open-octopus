@@ -68,7 +68,7 @@ export function computeTaskWsLaunchParams(a: {
   const isTask = a.naming === "task"
   const branchPrefix = isTask ? `taskpool-${a.instanceKey}` : a.config.workspace_spec.branch_prefix
   const taskWsName = a.taskRow
-    ? taskWorkspaceName({ name: a.taskRow.name, task_spec: a.taskRow.task_spec })
+    ? taskWorkspaceName({ name: a.taskRow.name, task_spec: a.taskRow.task_spec }, { date: a.date })
     : null
   const workspaceName =
     taskWsName ??

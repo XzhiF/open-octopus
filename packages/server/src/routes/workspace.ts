@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO, ExecutionDAO } from "../db/dao"
 import { orgExists } from "../services/org"
-import { parseManifest, parseManifestJson, loadModelAliasConfig } from "@octopus/shared"
+import { parseManifest, parseManifestJson, loadModelAliasConfig, WorkspaceNameSchema } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
@@ -43,6 +43,12 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     const body = await c.req.json<{ name: string; org: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
     if (!orgExists(orgDAO, body.org)) {
       return c.json({ error: `Org '${body.org}' not found` }, 400)
+    }
+    // 禁中文命名 (2026-09-20)：name 直接进目录名/分支名，web dialog 早已拦，
+    // 这里收口 CLI / 直连 API 的旁路（name 非法 → 400，错误信息中文可读）。
+    const nameCheck = WorkspaceNameSchema.safeParse(body.name)
+    if (!nameCheck.success) {
+      return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
     }
     const workoutPath = body.path || `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
     const workspace = workspaceService.create({
@@ -109,6 +115,11 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.post("/import", async (c) => {
     const body = await c.req.json<{ name: string; org: string }>()
+    // import ＝ 建行（此后新建一律英文名；存量中文目录不再可导入，属预期收紧）
+    const nameCheck = WorkspaceNameSchema.safeParse(body.name)
+    if (!nameCheck.success) {
+      return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
+    }
     const wsPath = `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
     const resolvedPath = wsPath.replace(/^~/, os.homedir())
     const configPath = join(resolvedPath, "config.json")
@@ -182,6 +193,12 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   workspaceRoutes.put("/:id", async (c) => {
     const id = c.req.param("id")
     const body = await c.req.json<{ name?: string; org?: string }>()
+    if (body.name !== undefined) {
+      const nameCheck = WorkspaceNameSchema.safeParse(body.name)
+      if (!nameCheck.success) {
+        return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
+      }
+    }
     const workspace = workspaceService.update(id, body)
     if (!workspace) return c.json({ error: "not found" }, 404)
     return c.json(workspace)

@@ -258,7 +258,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     const row = taskRow("t-ok")
     expect(row.workspace_id).toBeTruthy()
     const ws = wsService.getById(row.workspace_id!)!
-    expect(ws.name).toContain("E2E_TD prebuild") // taskWorkspaceName 展示名口径
+    expect(ws.name).toMatch(/^task-E2E_TD-prebuild.*-\d{4}-\d{6}$/) // 禁中文命名 (2026-09-20)：展示名＝合法英文名，空格→连字符
     expect(ws.task_id).toBe("t-ok") // v41 反向指针，取代 source_schedule_id→origin_id 反查
     const wt = join(ws.path, "projects", REPO)
     expect(existsSync(join(wt, ".git"))).toBe(true)

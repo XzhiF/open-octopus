@@ -1114,8 +1114,10 @@ describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，
     // 把手在 L1 最左；>_ 手动钮已整体删除（输出显示时机由状态决定）
     const header = document.querySelector('[data-verify-panel] > div') as HTMLElement
     expect(header.children[0].getAttribute("data-fold-toggle")).toBe("item-verify")
-    expect(header.children[1].textContent).toContain("当场复检")
-    expect(header.children[2].getAttribute("data-testid")).toBe("verify-pill")
+    // L1 子序：折叠把手 → 身份图标（2026-09-21 与「跑起来看」Rocket 成对补齐）→ 标题 → 状态胶囊
+    expect(header.children[1].tagName).toBe("svg")
+    expect(header.children[2].textContent).toContain("当场复检")
+    expect(header.children[3].getAttribute("data-testid")).toBe("verify-pill")
     expect(screen.queryByTestId("verify-console-toggle")).toBeNull()
     fireEvent.click(vh!)
     await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBe("true"))

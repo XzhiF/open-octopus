@@ -86,6 +86,32 @@ export class ExecutionDAO extends BaseDAO {
     ).all(...taskIds) as ExecutionRow[]
   }
 
+  /** Timing rows of EVERY instance execution of many tasks, one query — the board's
+   *  「实际用时」aggregate source (TasksService.runStats). Same instance predicate as
+   *  findLatestTaskInstances (roots + chained v4 rounds; fan-out arms live inside their
+   *  root's span and are excluded). Rows never started (armed, queued) carry no
+   *  started_at and are filtered out; the sum itself is done in JS so the
+   *  running-until-now term uses the server clock, not julianday parsing. */
+  listTaskRunTimings(taskIds: readonly string[]): Array<{
+    task_id: string
+    status: string
+    started_at: string | null
+    completed_at: string | null
+  }> {
+    if (taskIds.length === 0) return []
+    const ph = taskIds.map(() => "?").join(",")
+    return this.stmt(
+      `SELECT task_id, status, started_at, completed_at FROM executions
+       WHERE (parent_id = '0' OR phase_index IS NOT NULL) AND task_id IN (${ph})
+         AND started_at IS NOT NULL`,
+    ).all(...taskIds) as Array<{
+      task_id: string
+      status: string
+      started_at: string | null
+      completed_at: string | null
+    }>
+  }
+
   /** Every instance execution of a task (roots + chained v4 rounds), newest first — the
    *  「执行历史」 read model that replaced the envelope's children[]. */
   listTaskInstances(taskId: string, limit = 50): ExecutionRow[] {

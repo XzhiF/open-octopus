@@ -31,8 +31,9 @@ kind: Workflow
 # 一个 PR。跨仓依赖由票 Blocked by 定序 + 被依赖票按自身构建系统安装产物保证编译可见。
 # e2e 票的 e2e-harness 依赖按需 —— 仅 browser 走查票挂（它是 web-app 专用 Playwright
 # 库），API 级走查票不挂。
-# 会话共享是实测事实 (node_executions.session_id)：主链同 global_session，
-# TTFT 全程 13.4s —— 慢的不是上下文，是逐字生成。
+# 会话几何 (2026-09-21 起)：票层声明式隔离 (context:new + 可选 resume_from)，
+# 主链 code-review/e2e-verify/ship-pr 亦各自新会话、以文件为真相 —— TTFT 全程快，
+# 慢的一直是逐字生成。
 #
 # spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧** —— 打回反馈指向
 # 规格本身问题时，本流的 spec-review 段在 ws 里就地更新 spec.md（决策表行/编号
@@ -68,6 +69,12 @@ inputs:
     required: false
   is_final_phase:
     description: "本 phase 是否任务末站（\"true\"/\"false\"）— 看板派发时自动注入（内置键，非占位符），绑定表单无需手填。末站无下游执行会话，ship-pr 据此不产 handoff.md"
+    required: false
+  task_id:
+    description: "归属任务 id — 看板派发时自动注入（内置键，非占位符；空串=拿不到，消费步自检跳过）。ship-pr 的验收台复检回填用（spec-field POST）。"
+    required: false
+  octopus_api:
+    description: "Octopus server 自身 base URL（如 http://127.0.0.1:3001）— 与 task_id 同纪律自动注入，空串同上跳过。"
     required: false
 
 # --- 变量（spec-resolve 写，下游读；串行链上的路由真相）---
@@ -113,6 +120,15 @@ channels:
 
 # --- 钩子 ---
 hooks:
+  on_workflow_start:
+    - id: notify-start
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🏁 matt-spec-dev — 轮次启动"
+        body: "📁 $inputs.batch_dir\n▶ 开跑（DAG 规划即将开始）"
+
   on_workflow_failure:
     - id: notify-failure
       type: notify
@@ -150,6 +166,24 @@ hooks:
         title: "⚡ 票 DAG 执行完成"
         body: "📁 $inputs.batch_dir"
 
+    - id: notify-review
+      type: notify
+      nodes: [code-review]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🔍 Code Review 完成"
+        body: "📁 $inputs.batch_dir\n🔧 review: $vars.review_status · 终检: $vars.verify_status"
+
+    - id: notify-e2e
+      type: notify
+      nodes: [e2e-verify]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🧪 E2E 走查完成"
+        body: "📁 $inputs.batch_dir\n🧪 e2e: $vars.e2e_status（unit-only 批次本节点跳过、不发此通知）"
+
     - id: notify-ship
       type: notify
       nodes: [ship-pr]
@@ -158,6 +192,27 @@ hooks:
         severity: info
         title: "🚀 Ship 完成"
         body: "🌿 $vars.branch | PR: $vars.pr_url"
+
+  on_node_failure:
+    # review/e2e 皆 on_error:continue —— 失败不阻断 ship，不通知就成「沉默即没事」
+    # 的假象；失败信号单独发一条（人 gate 前把话说全）。
+    - id: notify-review-failed
+      type: notify
+      nodes: [code-review]
+      channel: xzf_hermes
+      template:
+        severity: warn
+        title: "🔴 Code Review 未完成（不阻断，待人工裁决）"
+        body: "📁 $inputs.batch_dir\n⚠️ ${hook.error | default:详见节点日志}"
+
+    - id: notify-e2e-failed
+      type: notify
+      nodes: [e2e-verify]
+      channel: xzf_hermes
+      template:
+        severity: warn
+        title: "🔴 E2E 走查未完成（不阻断，待人工裁决）"
+        body: "📁 $inputs.batch_dir\n⚠️ ${hook.error | default:详见节点日志}"
 
 # ============================================================
 # Nodes
@@ -357,11 +412,18 @@ nodes:
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下可能有多个仓（跨仓任务：提供方仓产出符号、消费方仓引用）。先定位本票改动落在哪个仓。\n跨仓依赖：若本票引用另一仓本次新产出的符号，其构建/安装步骤以被依赖票自己的 Verification Method 为准（作者按各仓构建系统写好），票间 Blocked by 保证顺序——本票编译前先确认依赖方产物已就绪。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——同会话前后票已探过的路禁止重走\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method；修复轮只重跑失败用例，收尾全量一次\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下可能有多个仓（跨仓任务：提供方仓产出符号、消费方仓引用）。先定位本票改动落在哪个仓。\n跨仓依赖：若本票引用另一仓本次新产出的符号，其构建/安装步骤以被依赖票自己的 Verification Method 为准（作者按各仓构建系统写好），票间 Blocked by 保证顺序——本票编译前先确认依赖方产物已就绪。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——**已续接前序会话（你唯一依赖的那张票）探过的路**禁止重走；无续接的票（并行票/汇聚票）各自探自己的，别为别人的重复劳动买单\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method —— **只跑本票相关的测试文件/用例（如 vitest run <files>、-t <name>），票内禁跑全量测试套件**（全量终检归 code-review 恰一次）；修复轮只重跑失败用例\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。**相互独立的 Read/Grep 在同一回合并发发起**（一个回合放多个工具调用），不要一回合一个工具排队。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["implement", "tdd"],
-        "depends_on": ["ticket-XX"]
+        "depends_on": ["ticket-XX"],
+        "context": "new",
+        "resume_from": "ticket-XX（可选，见下纪律）"
       }
       ```
+
+      会话纪律（context / resume_from 由你在每个票节点上显式声明）:
+      - 一切票节点 **"context": "new"** —— 各票独立会话，并行的票绝不共享/续接彼此的上下文（实测：共享会话把上下文互灌到 270k+/回合，decode 全线拖慢、账目重复）。
+      - **resume_from** 仅给「恰好一个 Blocked-by 前驱、且你判断继承它的探路成果值得」的票：值 = 那个前驱节点 id，且它必须同时在 depends_on 里。多前驱的汇聚票**不写** resume_from（汇聚票的输入真相在文件里——票状态/handoff——不在任何单一分支的记忆里）。
+      - 首票 / 无前驱票不写 resume_from。
 
       （E2E 票不在这里建节点 —— 见下方 e2e-verify 独立节点。）
 
@@ -381,6 +443,7 @@ nodes:
   - id: code-review
     type: agent
     depends_on: [ticket-dag]
+    context: new
     # 熔断丝随票数伸缩(spec-resolve 算 review_budget)。注意:模板正统语法是
     # $vars.x 无花括号 —— ${vars.x} 在 substituteVarsFull 里归 filter 引擎,
     # 不带 |filter 不解析(五单 R1 实证 "treated as unset")。
@@ -407,7 +470,8 @@ nodes:
       3. 🔴/🟡 一批全部 Edit 完（禁止修一个测一个；🔴 修不动/持续 → 如实
          保留进报告，人 gate = 看板验收，不阻断）
       4. 测一次:
-         - 第 3 步零编辑 → 不测（功能票的测试绿仍是现物）
+         - 第 3 步零编辑 → 不测（功能票的相关测试绿仍是现物；票内已禁全量，
+           全量套件在本节点才有 — 零编辑即无新风险面，不补测）
          - 有编辑 → 每仓按各自构建系统全量 test **各恰一次**（本轮终检，不可跳过；
            此后禁止再补任何测试）。仓间有依赖时按依赖序：先构建/安装被依赖仓，再测消费仓。
       5. 终稿补全: 修复记录 + 「## 终检」节（零编辑未测则写明"零编辑未测，绿引功能票测试现物"）
@@ -430,6 +494,7 @@ nodes:
     execute_when: '$vars.has_e2e == "true"'
     on_error: continue
     timeout: 1800
+    context: new
     skills: [matt-e2e-test-methodology, diagnosing-bugs]
     prompt: |
       你是 E2E 验证者，对**已 review 修复后的最终代码**执行验收票 $vars.e2e_ticket 定义的走查。
@@ -447,6 +512,9 @@ nodes:
          `.octopus/acceptance/{up,health,down}.sh`（或 spec 指明的启动契约），跑
          up → 轮询 health(退出码0=就绪) → 走查 → down 收尾；没有再自行起服务
          （端口冲突用 --isolated）。契约与验收台「跑起来看」同源，别各起一套。
+         **禁无端全量 rebuild**（2026-09-21 实测：本节点隔离启动重跑全量 build 白烧
+         3-5min）—— code-review 终检刚过，构建产物是热的，直接以现有 dist/产物起服务；
+         仅当本节点 Quick Fix 真改了代码，才只重建受影响的部分。
       3. 反假跑纪律：真实服务、断言业务值、≥2 种证据、E2E_TD_ 前缀数据、测后清理恢复
       4. **跨仓复用契约探针（消费方视角）**：若本 phase 跨仓（消费仓引用了产出仓本次新增
          的符号），加一条断言证明「真复用而非就地重写」——用该仓构建系统的依赖解析或
@@ -464,7 +532,7 @@ nodes:
   # ------------------------------------------------------------
   # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接；
 #          末 phase 不产 handoff —— 无下游执行会话，见 §2 产物 2 的末站跳过）
-  # 2026-09-16 快线化: 共享会话禁重读 + 事实一条 bash 采齐 + 产物契约节名逐字
+  # 快线化: 文件快照一遍读齐 + 事实一条 bash 采齐 + 产物契约节名逐字
   # （round-report「票执行摘要」「Changed Files」与 handoff 三节是核对 tab /
   #   下一 phase 的解析锚点 —— 压缩只压正文，不压节名与表头）
   # ------------------------------------------------------------
@@ -473,6 +541,7 @@ nodes:
     type: agent
     depends_on: [e2e-verify]
     timeout: 1800
+    context: new
     tools: [Read, Bash, Grep, Glob]
     prompt: |
       完成 Ship 交付: Round Report + Git PR。
@@ -485,8 +554,9 @@ nodes:
       本 phase 是否末站: $inputs.is_final_phase（true ⇒ 无下游执行会话，跳过产物 2）
 
       ═══ 速度纪律 ═══
-      - 你在共享会话里 —— spec/票/gate/review 的来龙去脉已在你上下文中，
-        禁止重读这些文件。
+      - 你是独立会话（主链已瘦身）—— 文件即真相：**同一回合并发 Read** 拿齐
+        spec.md、末张 e2e 票的走查结果节、code-review.md、（有则）fix-feedback 最新一份，
+        此后这些文件不再回读。
       - 事实采集一条 bash 拿全: **逐仓** `git -C <path> diff --stat origin/main...HEAD`
         + grep -H "Status:" $inputs.batch_dir/issues/*.md
         + code-review.md 的结论行。此后除落笔与 git 操作外不再探索。
@@ -520,6 +590,16 @@ nodes:
          "末 phase（无下游）：按 ADR-0019 §1 边界跳过 handoff.md"。验收人要看本轮全貌有
          round-report，不缺这一页。
       3. issues/ 有票漏回写 Status → 补写。
+      3.5 **验收台「当场复检」回填（fire-safe，绝不为它失败本轮）**——$inputs.task_id 与
+         $inputs.octopus_api 均非空时：curl -s $inputs.octopus_api/api/tasks/$inputs.task_id
+         看 task_spec.acceptance_verify.command —— 已存在 → **绝不覆盖，跳过**；缺失 → 按你
+         本轮**实际跑过**的构建/测试命令回填一条仓根可重跑的（禁编没跑过的命令；命令值保持
+         纯 ASCII，别塞中文）：
+           单仓:  value = {"command":"<cmd>","cwd":"projects/<仓目录名>","timeoutS":900}
+           多仓($vars.repo_count>1): value = {"command":"<仓根相对 cmd,不带 cd/仓名>","per_repo":true,"timeoutS":900}
+         POST $inputs.octopus_api/api/tasks/$inputs.task_id/spec-field，body
+         {"field":"acceptance_verify","value":<上述 value>}。任何非 200 → 静默放弃，
+         人会在验货台抽屉自己配——这一步是锦上添花，不是交付条件。
 
       ═══ Git（逐仓交付：$vars.repos 每个有改动的仓各出一个 PR）═══
       4. 对 $vars.repos 每行 `path|branch`:

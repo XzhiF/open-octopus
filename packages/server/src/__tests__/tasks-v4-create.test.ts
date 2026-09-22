@@ -376,6 +376,19 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     })
     expect(ph.status).toBe(200)
 
+    // ③b spec-field(acceptance_preview) 预设起法 —— runbook 硬闸（2026-09-22）
+    //    后黄金链必须带 runbook/preview/verify 之一才能过闸；顺带验证该字段
+    //    走 spec-field 通路可用。
+    const pv = await app.request(`/api/tasks/${id}/spec-field`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        field: "acceptance_preview",
+        value: { command: "pnpm dev", url: "http://localhost:3100/" },
+      }),
+    })
+    expect(pv.status).toBe(200)
+
     // ④ ready 过闸 = 只有状态。票03 之后入队不再物化信封（旧版这里读
     //    schedules.config 校验 format/phases/chain[0]）；那一形状现在长在
     //    每一轮的 executions 行上，由 tasks-v4-gate.test.ts AC4 钉住。

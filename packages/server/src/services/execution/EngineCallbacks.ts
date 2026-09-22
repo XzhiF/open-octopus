@@ -4,7 +4,9 @@
 // ExecutionLifecycle.buildCallbacks(). Handles SSE emission, DB persistence,
 // observability integration, token tracking, and external callback dispatch.
 //
+// NEW-r2：costSummary 快照计费已退役（费用查询时派生），节点成本走 costForNodeExecution。
 import { totalTokens } from "@octopus/shared"
+import type { TokenUsage } from "@octopus/shared"
 import type { IEngineCallbacks } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
@@ -43,6 +45,21 @@ export class EngineCallbacks implements IEngineCallbacks {
   private workspaceDbId: string
   private externalCallbacks: Map<string, Partial<EngineCallbackType>>
   private syncStateJson: () => void
+
+  /**
+   * F1（2026-09-21「token 时隐时现」）：运行中 agent 节点的 turn_usage 实时累计，
+   * 只活在 SSE 流里、REST 快照永远为空 → 刷新/重连后卡片清零，且子流（scoped
+   * nodeId）事件同样只在流里。这里镜像一份内存累计，让 GET /executions/:id 给
+   * running 节点带 liveUsage，快照即自愈。权威值仍在 node_end 落 node_token_usages
+   * ——本 map 只是易失的运行态投影：node_start（重试归零）/node_end 即删，
+   * 进程重启丢了也无妨（下一 turn 重建）。
+   */
+  private liveUsageByExec = new Map<string, Map<string, { usage: TokenUsage; turn: number; ts: number }>>()
+
+  /** 该执行 running 节点的实时累计表（nodeId → cumulative）；无执行时 undefined。 */
+  liveUsageFor(executionId: string): Map<string, { usage: TokenUsage; turn: number; ts: number }> | undefined {
+    return this.liveUsageByExec.get(executionId)
+  }
 
   constructor(deps: EngineCallbacksDeps) {
     this.ctx = deps.ctx
@@ -341,6 +358,8 @@ export class EngineCallbacks implements IEngineCallbacks {
         obs.resetNodeBuffer(neId)
         // Reset degraded state so the observability buffer resumes writing
         obs.resetDegraded()
+        // F1: 重试/重跑归零实时累计（DB 行同理被重置）
+        this.liveUsageByExec.get(id)?.delete(nodeId)
         dao.updateNodeExecution(neId, { status: "running", started_at: new Date().toISOString() })
         sse.emit(wsId, {
           event: "node_start", data: { executionId: id, nodeId, nodeType, executorType: nodeType },
@@ -364,6 +383,8 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onNodeEnd: (nodeId, status, durationMs, result, nodeType) => {
         const neId = `${id}-${nodeId}`
+        // F1: 落库即权威——实时投影退场（recordNodeUsage 在下面写 modelUsages）
+        this.liveUsageByExec.get(id)?.delete(nodeId)
         const isFailed = ["failed", "skipped_failed", "error"].includes(status)
         const nodeError = isFailed
           ? (result?.logLines?.join("\n") ?? result?.error ?? null)
@@ -501,6 +522,8 @@ export class EngineCallbacks implements IEngineCallbacks {
       // consumer must receive the engine's authoritative value instead of
       // re-reading a still-'running' DB row.
       onComplete: (finalStatus?: string) => {
+        // F1: 执行终态 = 整张实时投影作废（未逐个 node_end 的节点靠这里兜底清理）
+        this.liveUsageByExec.delete(id)
         const ext = this.externalCallbacks.get(id) ?? this.externalCallbacks.get("__default__")
         if (ext?.onComplete) {
           try { ext.onComplete(finalStatus ?? '') } catch (err) {
@@ -524,6 +547,18 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onAgentEvent: (nodeId, event) => {
         sse.emit(wsId, { event: "agent_event", data: { executionId: id, nodeId, event } })
+
+        // F1: 镜像实时累计进内存（子流节点事件到达这里时 nodeId 已是 scoped id，
+        // 与 node_executions 行的 node_id 同键，快照直配）。
+        if (event.type === "turn_usage") {
+          let m = this.liveUsageByExec.get(id)
+          if (!m) { m = new Map(); this.liveUsageByExec.set(id, m) }
+          m.set(nodeId, {
+            usage: (event as { cumulative?: TokenUsage }).cumulative ?? ({} as TokenUsage),
+            turn: (event as { turn?: number }).turn ?? 0,
+            ts: Date.now(),
+          })
+        }
 
         // ── Heartbeat Observation: emit dedicated SSE events ────────────────
         if (event.type === "heartbeat") {

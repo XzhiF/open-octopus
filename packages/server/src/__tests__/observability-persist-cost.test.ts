@@ -127,9 +127,10 @@ describe("llm_calls_persist 已退役 —— 行必落", () => {
   })
 
   it("无 flag 可关的现实下 persistLLMCalls 必落行（批量 compose+insert 语义保留）", () => {
+    // #68 写侧按 (execution, message_id) 去重 —— 两笔须用不同 messageId（真实语义即一条消息一笔）
     svc.persistLLMCalls("e1-n1", "e1", [
-      record({ model: "m-a", turnIndex: 1 }),
-      record({ model: "m-b", turnIndex: 2 }),
+      record({ model: "m-a", turnIndex: 1, messageId: "m1" }),
+      record({ model: "m-b", turnIndex: 2, messageId: "m2" }),
     ], "inst-9")
     const rows = db.prepare("SELECT model, turn_index, call_index, source_path FROM llm_calls ORDER BY turn_index").all() as Array<Record<string, unknown>>
     expect(rows).toHaveLength(2)

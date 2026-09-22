@@ -556,7 +556,7 @@ export function createSystemRoutes(): Hono {
       const groups = dao.reportBreakdown(q.group_by as BillingReportGroupBy, bounds.fromTs, bounds.toTs)
       const rate = dao.getUsdToCny()
       const currency = dao.getDisplayCurrency()
-      const total = groups.reduce((s, g) => s + (g.cost_usd ?? 0), 0)
+      const total = groups.reduce((s, g) => s + (g.cost_usd ?? 0), 0) // ledger-ok: share 分母专用 —— 全未定价组不贡献分母；各条目 cost_usd 仍保 NULL（KD4 不焊 0 仅限出参）
       const items = groups.map(g => ({
         key: g.key,
         cost_usd: g.cost_usd,

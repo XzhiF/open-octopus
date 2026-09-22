@@ -164,6 +164,54 @@ describe('command guard — scoped to task-author, not every clone', () => {
   })
 })
 
+// ── runbook-memory channel: the clone's OWN memory files are writable ──
+// The task-author SKILL persists confirmed project runbooks to its long-term.md
+// (auto-injected into every later session). The guard therefore whitelists
+// EXACTLY two shapes under the memory dir — long-term.md and daily/<x>.md —
+// and nothing else (no nested trees, no side files, no traversal).
+describe('path guard — clone own-memory whitelist (runbook channel)', () => {
+  const HOME2 = path.resolve('/Users/runner/.octopus/tasks/t-mem')
+  const MEM = path.resolve('/Users/runner/.octopus/agents/built-in/task-author/memory')
+  const memGuard = buildPathGuard(HOME2, MEM)
+  const noMemGuard = buildPathGuard(HOME2)
+
+  const writeDenied = async (g: typeof memGuard, file: string): Promise<boolean> =>
+    (await g('Write', { file_path: file }))?.allow === false
+
+  it('allows Write to memory/long-term.md and memory/daily/*.md', async () => {
+    expect(await memGuard('Write', { file_path: path.join(MEM, 'long-term.md') })).toBeUndefined()
+    expect(await memGuard('Write', { file_path: path.join(MEM, 'daily', '2026-09-22.md') })).toBeUndefined()
+    expect(await memGuard('Edit', { file_path: path.join(MEM, 'long-term.md') })).toBeUndefined()
+  })
+
+  it('blocks every other memory-dir shape: side file, nested tree, bare dir file', async () => {
+    expect(await writeDenied(memGuard, path.join(MEM, 'notes.md'))).toBe(true)
+    expect(await writeDenied(memGuard, path.join(MEM, 'long-term.md.bak'))).toBe(true)
+    expect(await writeDenied(memGuard, path.join(MEM, 'daily', 'sub', 'deep.md'))).toBe(true)
+    expect(await writeDenied(memGuard, path.join(MEM, '..', 'persona.md'))).toBe(true)
+  })
+
+  it('blocks memory paths for a guard built WITHOUT memoryDir (backward compat)', async () => {
+    expect(await writeDenied(noMemGuard, path.join(MEM, 'long-term.md'))).toBe(true)
+  })
+
+  it('task home writes still pass unchanged', async () => {
+    expect(await memGuard('Write', { file_path: path.join(HOME2, 'spec.md') })).toBeUndefined()
+  })
+
+  it('Bash redirect/append to the whitelisted shapes is allowed', async () => {
+    const lt = path.join(MEM, 'long-term.md')
+    expect(await allowed(`echo "- runbook: open-octopus ready" >> ${JSON.stringify(lt)}`, memGuard)).toBe(true)
+  })
+
+  it('Bash writes to non-whitelisted memory shapes still off', async () => {
+    const other = path.join(MEM, 'other.md')
+    expect(await denied(`echo x > ${JSON.stringify(other)}`, memGuard)).toBe(true)
+    const nested = path.join(MEM, 'daily', 'a', 'b.md')
+    expect(await denied(`echo x > ${JSON.stringify(nested)}`, memGuard)).toBe(true)
+  })
+})
+
 describe('command guard — documented holes (denylist, not a sandbox)', () => {
   // These are NOT caught. Pinned so the boundary is explicit: if one of these
   // is ever closed, this block fails and whoever closed it updates the docs.

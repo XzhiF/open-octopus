@@ -103,3 +103,24 @@ export function clockShort(iso: string | null | undefined): string {
   const p = (n: number) => String(n).padStart(2, "0")
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
+
+/** Σ 实跑段：逐轮加 (completed_at ?? running 时取 now) − started_at，替代墙钟总跨度 ——
+ *  待验收挂一夜会把墙钟读成跑时（「已用 17h36m」之误）。pending/paused 未闭行不计。 */
+export function sumRunMs(
+  runs: Array<{ started_at?: string | null; completed_at?: string | null; status?: string }>,
+  now: number,
+): { ms: number; count: number } {
+  let ms = 0
+  let count = 0
+  for (const r of runs) {
+    if (!r.started_at) continue
+    const start = Date.parse(r.started_at)
+    if (Number.isNaN(start)) continue
+    let end = r.completed_at ? Date.parse(r.completed_at) : NaN
+    if (Number.isNaN(end) && r.status === "running") end = now
+    if (Number.isNaN(end) || end <= start) continue
+    ms += end - start
+    count += 1
+  }
+  return { ms, count }
+}

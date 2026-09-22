@@ -77,6 +77,8 @@ const EXPECTED_SPEC_FIELDS = [
   "decisions",
   "workflow_ref",
   "phases",
+  // 批次主 slug (2026-09-20 契约改版): `.scratch/<slug>/<sub>/` 的父目录名。
+  "slug",
 ] as const
 
 const baseWorkspaceSpec = {
@@ -465,6 +467,32 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
     // ZodError and TaskSpecFieldError to 400, so the HTTP contract holds.
     expect(() => validateSpecFieldValue("phases", [phase({ slug: "../escape" })])).toThrow(/slug/i)
     expect(() => validateSpecFieldValue("phases", [phase({ index: 0 })])).toThrow(/too small|min/i)
+  })
+
+  // ── 批次主 slug (2026-09-20): task_spec.slug — `.scratch/<main>/<sub>/` 契约 ──
+  it("'slug' is a bindable spec-field (enum)", () => {
+    expect(EXPECTED_SPEC_FIELDS).toContain("slug")
+  })
+
+  it("validateSpecFieldValue('slug') accepts path-safe kebab, normalizes", () => {
+    expect(validateSpecFieldValue("slug", "token-metering")).toBe("token-metering")
+  })
+
+  it("validateSpecFieldValue('slug') rejects path-unsafe / 中文 / empty", () => {
+    expect(() => validateSpecFieldValue("slug", "../escape")).toThrow(/Invalid slug|path-safe/i)
+    expect(() => validateSpecFieldValue("slug", "重构网关")).toThrow(/Invalid slug|path-safe/i)
+    expect(() => validateSpecFieldValue("slug", "")).toThrow()
+    expect(() => validateSpecFieldValue("slug", 42)).toThrow()
+  })
+
+  it("validateSpecFieldValue('slug') null clears (undefined rides out of the JSON merge)", () => {
+    expect(validateSpecFieldValue("slug", null)).toBeUndefined()
+  })
+
+  it("taskSpecSchema carries optional slug and keeps legacy (无 slug) parsing byte-clean", () => {
+    expect(taskSpecSchema.parse({ goal: "g", ac: ["a"], slug: "token-metering" }).slug).toBe("token-metering")
+    const legacy = taskSpecSchema.parse({ goal: "g", ac: ["a"] })
+    expect("slug" in legacy && legacy.slug).toBeFalsy()
   })
 
   it("PHASE_STATUS_UPDATE_EVENT pins the ticket-11/12 wire name", () => {

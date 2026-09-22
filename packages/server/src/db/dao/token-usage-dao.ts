@@ -278,6 +278,36 @@ export class TokenUsageDAO extends BaseDAO {
 
   insertLlmCallBatch(rows: LlmCallRow[]): void {
     if (rows.length === 0) return
+    // 写侧兜底去重 (2026-09-21)：并行票曾共享会话 —— 同一条 LLM 消息被多个在跑节点
+    // 各自缓冲、各自 flush，一条消息给三个节点各记一行，∑/请求数/成本全线膨胀
+    // （phase-2 实测 547 行 vs 320 条真消息）。同一 execution 内按 message_id 只保
+    // 一行（跨批 + 批内）；message_id 为空的行不去重、照原样插。
+    const msgIdsByExec = new Map<string, string[]>()
+    for (const r of rows) {
+      // NEW-r2：execution_id 可空（clone_chat 等无执行归属的行）→ 无归属不去重
+      if (!r.message_id || !r.execution_id) continue
+      const list = msgIdsByExec.get(r.execution_id)
+      if (list) list.push(r.message_id)
+      else msgIdsByExec.set(r.execution_id, [r.message_id])
+    }
+    const existing = new Set<string>()
+    for (const [execId, ids] of msgIdsByExec) {
+      // 动态 IN 列表不走 stmtCache（防缓存被占位符变体灌爆）
+      const placeholders = ids.map(() => "?").join(",")
+      const found = this.db
+        .prepare(`SELECT message_id FROM llm_calls WHERE execution_id = ? AND message_id IN (${placeholders})`)
+        .all(execId, ...ids) as Array<{ message_id: string }>
+      for (const f of found) existing.add(`${execId}|${f.message_id}`)
+    }
+    const seen = new Set<string>()
+    const kept = rows.filter((r) => {
+      if (!r.message_id) return true
+      const key = `${r.execution_id}|${r.message_id}`
+      if (existing.has(key) || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    if (kept.length === 0) return
     const insertStmt = this.stmt(`
       INSERT OR IGNORE INTO llm_calls (
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
@@ -292,7 +322,7 @@ export class TokenUsageDAO extends BaseDAO {
       )
     `)
     this.transaction(() => {
-      for (const row of rows) {
+      for (const row of kept) {
         // optional 字段 —— named 绑定缺 key/undefined 会抛，统一补 NULL 兜底
         insertStmt.run({
           ...row,

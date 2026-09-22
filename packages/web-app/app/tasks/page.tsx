@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
-import { RefreshCw, Plus, Trash2, Inbox } from "lucide-react"
+import { RefreshCw, Plus, Trash2, Copy, Inbox } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import type { Task } from "@octopus/shared"
 import {
-  listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError,
+  listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, duplicateTask, TaskApiError,
   type TaskDerivedView, type TaskView,
 } from "@/lib/tasks-api"
 import { toast } from "sonner"
@@ -20,7 +20,8 @@ import {
   TASK_COLUMNS,
   type TaskBoardColumnId,
 } from "@/lib/task-board"
-import { formatRelativeTime } from "@/lib/format"
+import { formatDuration } from "@/lib/format"
+import { clockShort } from "@/components/tasks/run-console/phase-status"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
@@ -312,6 +313,28 @@ export default function TasksPage() {
     }
   }, [retryBusyId, fetchTasks])
 
+  // duplicate — 整单复制（spec/issues/自写 workflows 全量带走）。副本默认直入
+  // 待执行；源是半草稿时 gate 不过 → 副本留草稿，missing 用 toast 说清楚。
+  const [dupBusyId, setDupBusyId] = useState<string | null>(null)
+  const handleDuplicate = useCallback(async (task: Task) => {
+    if (dupBusyId) return
+    setDupBusyId(task.id)
+    try {
+      const result = await duplicateTask(task.id)
+      if (result.gate_missing?.length) {
+        toast.warning(`副本已存为草稿（未入队）：缺 ${result.gate_missing.join("、")}`)
+      } else {
+        toast.success(`已复制「${result.task.name}」到待执行`)
+      }
+      for (const w of result.warnings ?? []) toast.warning(w)
+      void fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "复制失败")
+    } finally {
+      setDupBusyId(null)
+    }
+  }, [dupBusyId, fetchTasks])
+
   const handleDeleteDraft = useCallback(async (taskId: string) => {
     setDeleteBusy(true)
     try {
@@ -403,6 +426,7 @@ export default function TasksPage() {
                         onAcceptRequest={(t) => { setAcceptTaskId(t.id); openCard(t) }}
                         onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
+                        onDuplicateRequest={(t) => void handleDuplicate(t)}
                       />
                     ))}
                     {colTasks.length === 0 && (
@@ -486,6 +510,8 @@ interface TaskCardProps {
   onAdvanceRequest: (task: Task) => void
   /** 票 12 (US15): archiving 卡「重试归档」→ archive/retry。 */
   onArchiveRetryRequest: (task: Task) => void
+  /** duplicate (2026-09-20): 任意卡「复制」→ 整单副本直入待执行。 */
+  onDuplicateRequest: (task: Task) => void
 }
 
 /** 票 12: advance 窗口 = 「前序 phase accepted ∧ 该 phase pending」的第一个
@@ -499,7 +525,7 @@ function advancePhaseOf(derived: TaskDerivedView | undefined): number | null {
   return null
 }
 
-function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest }: TaskCardProps) {
+function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest, onDuplicateRequest }: TaskCardProps) {
   // SG9: composite requires subunits.length >= 2.
   const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
   const isDraft = task.status === "draft"
@@ -655,6 +681,15 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
               重试归档
             </button>
           )}
+          {/* duplicate: 任意状态可复制（主场景 = 从 完成/失败/待执行 再跑一单）。 */}
+          <button
+            data-task-duplicate-btn
+            onClick={(e) => { e.stopPropagation(); onDuplicateRequest(task) }}
+            className="size-5 rounded flex items-center justify-center text-pop-dim/60 hover:text-pop-purple hover:bg-pop-purple-soft opacity-0 group-hover:opacity-100 transition-all"
+            title="复制整单（spec/issues/workflows 全量）→ 新任务直入待执行"
+          >
+            <Copy className="size-3" />
+          </button>
           {isDraft && (
             <button
               data-task-delete-btn
@@ -667,9 +702,15 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           )}
         </div>
       </div>
-      {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行只给时间语境 */}
-      <div className="mt-2 text-[10px] font-semibold text-pop-dim" title={new Date(task.created_at).toLocaleString()}>
-        创建 {formatRelativeTime(task.created_at)}
+      {/* 列已表达生命周期状态，卡片不再复读英文 status —— 底行给创建时刻 + 全部轮次实跑
+          用时（相对时间「创建 X 小时」把挂了一天没动也读成工时，无信息量，已废）。 */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[10px] font-semibold text-pop-dim">
+        <span title={new Date(task.created_at).toLocaleString()}>创建 {clockShort(task.created_at)}</span>
+        {(task.run_stats?.count ?? 0) > 0 && (
+          <span title={`实跑 ${task.run_stats!.count} 轮 —— 只计 workflow 运行段，不含排队/待验收等待`}>
+            · ⏱ {formatDuration(task.run_stats!.duration_ms)}
+          </span>
+        )}
       </div>
     </article>
   )

@@ -731,7 +731,12 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, `E2E_AC draft ${id}`, JSON.stringify({ format: "v4", task_type: "coding" }), now, now)
+    `).run(id, ORG, `E2E_AC draft ${id}`, JSON.stringify({
+      format: "v4", task_type: "coding",
+      // runbook 硬闸（2026-09-22）：模板带合法 preview，让本文件测的 phase 契约
+      // 闸口不被新键污染（round-trip 的 exact missing 断言据此保持逐字不变）。
+      acceptance_preview: { command: "echo up", url: "http://localhost:3100/" },
+    }), now, now)
     return id
   }
 

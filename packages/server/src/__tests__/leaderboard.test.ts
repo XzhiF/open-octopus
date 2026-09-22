@@ -26,6 +26,8 @@ describe("LeaderboardService", () => {
 
   function cleanAll() {
     db.prepare("DELETE FROM node_token_usages").run()
+    db.prepare("DELETE FROM llm_calls").run()
+    db.prepare("DELETE FROM billing_price_config").run()
     db.prepare("DELETE FROM node_executions").run()
     db.prepare("DELETE FROM executions").run()
     db.prepare("DELETE FROM workspaces").run()
@@ -49,19 +51,35 @@ describe("LeaderboardService", () => {
     ).run(id, executionId, nodeId)
   }
 
+  // NEW-r2：node_token_usages 纯记 token（cost_usd 快照列已删），
+  // 排行榜的钱从 llm_calls_costed 视图派生 —— 出 cost 需 seed 价行 + 对应 llm_calls。
   function seedTokenUsage(
     id: string,
     nodeExecutionId: string,
     model: string,
     input: number,
     output: number,
-    cost: number | null,
     cacheRead = 0,
     cacheCreation = 0,
   ) {
     db.prepare(
-      "INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-    ).run(id, nodeExecutionId, model, input, output, cost, cacheRead, cacheCreation)
+      "INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+    ).run(id, nodeExecutionId, model, input, output, cacheRead, cacheCreation)
+  }
+
+  function seedCall(id: string, nodeExecutionId: string, executionId: string, workspaceId: string, model: string) {
+    db.prepare(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, model, timestamp, duration_ms, input_tokens, output_tokens, workspace_id)
+       VALUES (?, ?, ?, 1, 0, ?, 1700000000000, 100, 1000, 500, ?)`
+    ).run(id, nodeExecutionId, executionId, model, workspaceId)
+  }
+
+  /** USD 全时段兜底价（正常价）；单价/Mtok → 1000 in + 500 out @ {i,o} = i/1000 + o/2000 USD。 */
+  function priceCatchall(id: string, modelId: string, input = 2, output = 8) {
+    db.prepare(
+      `INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price, output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, created_at, updated_at)
+       VALUES (?, 'test-vendor', ?, ?, ?, 0, 0, 'USD', datetime('now'), datetime('now'))`
+    ).run(id, modelId, input, output)
   }
 
   describe("空数据库", () => {
@@ -85,7 +103,9 @@ describe("LeaderboardService", () => {
       seedWorkspace("ws1", "Workspace Alpha")
       seedExecution("exec1", "ws1", "flow.yaml", "流程 A")
       seedNodeExecution("node1", "exec1", "step1")
-      seedTokenUsage("tu1", "node1", "claude-sonnet-4-6", 1000, 500, 0.05)
+      seedTokenUsage("tu1", "node1", "claude-sonnet-4-6", 1000, 500)
+      priceCatchall("p-sonnet", "claude-sonnet-4-6")
+      seedCall("c1", "node1", "exec1", "ws1", "claude-sonnet-4-6")
     })
 
     it("正确聚合", () => {
@@ -111,9 +131,9 @@ describe("LeaderboardService", () => {
       seedNodeExecution("n1", "e1", "s1")
       seedNodeExecution("n2", "e2", "s2")
 
-      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 2000, 1000, 0.10)
-      seedTokenUsage("t2", "n1", "claude-opus-4-5", 500, 200, 0.08)
-      seedTokenUsage("t3", "n2", "claude-sonnet-4-6", 3000, 1500, 0.15)
+      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 2000, 1000)
+      seedTokenUsage("t2", "n1", "claude-opus-4-5", 500, 200)
+      seedTokenUsage("t3", "n2", "claude-sonnet-4-6", 3000, 1500)
     })
 
     it("正确分组和排序", () => {
@@ -152,29 +172,34 @@ describe("LeaderboardService", () => {
     })
   })
 
-  describe("cost_usd 完整性", () => {
+  describe("cost complete (r2: derived from llm_calls_costed view)", () => {
     beforeAll(() => {
       service.clearCache()
       cleanAll()
 
       seedWorkspace("ws1", "Partial Cost")
-      seedExecution("e1", "ws1", "flow.yaml", "流程")
+      seedExecution("e1", "ws1", "flow.yaml", "flow")
       seedNodeExecution("n1", "e1", "s1")
       seedNodeExecution("n2", "e1", "s2")
-      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 1000, 500, 0.05)
-      seedTokenUsage("t2", "n2", "claude-sonnet-4-6", 1000, 500, null)
+      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 1000, 500)
+      seedTokenUsage("t2", "n2", "model-x", 1000, 500)
+      // Only c1 has a model price, c2 is unpriced → not all rows have prices = incomplete
+      priceCatchall("p-sonnet", "claude-sonnet-4-6")
+      seedCall("c1", "n1", "e1", "ws1", "claude-sonnet-4-6")
+      seedCall("c2", "n2", "e1", "ws1", "model-x")
     })
 
-    it("部分记录 null 时 costComplete = false", () => {
+    it("partial rows without a price → costComplete = false", () => {
       const result = service.getLeaderboard()
       expect(result.byWorkspace[0].costComplete).toBe(false)
     })
 
-    it("所有记录都有 cost 时 costComplete = true", () => {
+    it("after all have prices, costComplete = true (late pricing immediately recomputes history)", () => {
       service.clearCache()
-      db.prepare("UPDATE node_token_usages SET cost_usd = 0.05 WHERE id = 't2'").run()
+      priceCatchall("p-x", "model-x")
       const result = service.getLeaderboard()
       expect(result.byWorkspace[0].costComplete).toBe(true)
+      expect(result.byWorkspace[0].totalCostUsd).toBeCloseTo(0.012, 6) // 2 笔 × (1000×2 + 500×8)/Mtok = 0.006/笔
     })
   })
 
@@ -186,7 +211,7 @@ describe("LeaderboardService", () => {
       seedWorkspace("ws1", "Cache Test")
       seedExecution("e1", "ws1", "flow.yaml", "流程")
       seedNodeExecution("n1", "e1", "s1")
-      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 1000, 500, 0.05, 2000, 1000)
+      seedTokenUsage("t1", "n1", "claude-sonnet-4-6", 1000, 500, 2000, 1000)
     })
 
     it("模型排行榜包含缓存数据", () => {
@@ -215,8 +240,8 @@ describe("LeaderboardService", () => {
       seedExecution("e2", "ws2", "f2.yaml", "F2")
       seedNodeExecution("n1", "e1", "s1")
       seedNodeExecution("n2", "e2", "s2")
-      seedTokenUsage("t1", "n1", "model-a", 100, 50, 0.01)
-      seedTokenUsage("t2", "n2", "model-a", 5000, 2500, 0.50)
+      seedTokenUsage("t1", "n1", "model-a", 100, 50)
+      seedTokenUsage("t2", "n2", "model-a", 5000, 2500)
     })
 
     it("按 totalTokens 倒排", () => {
@@ -237,8 +262,8 @@ describe("LeaderboardService", () => {
       seedExecution("e2", "ws2", "flow.yaml", "流程 2")
       seedNodeExecution("n1", "e1", "s1")
       seedNodeExecution("n2", "e2", "s2")
-      seedTokenUsage("t1", "n1", "model-a", 1000, 500, 0.05)
-      seedTokenUsage("t2", "n2", "model-a", 2000, 1000, 0.10)
+      seedTokenUsage("t1", "n1", "model-a", 1000, 500)
+      seedTokenUsage("t2", "n2", "model-a", 2000, 1000)
     })
 
     it("每条 execution 独立展示", () => {
@@ -265,7 +290,7 @@ describe("LeaderboardService", () => {
         seedExecution(`e${i}`, "ws1", `flow${i}.yaml`, `流程 ${i}`)
         seedNodeExecution(`n${i}`, `e${i}`, `s${i}`)
         for (let j = 0; j < 10; j++) {
-          seedTokenUsage(`t${i}_${j}`, `n${i}`, `model-${j}`, 100 + j, 50 + j, 0.01 * j)
+          seedTokenUsage(`t${i}_${j}`, `n${i}`, `model-${j}`, 100 + j, 50 + j)
         }
       }
     })
@@ -287,19 +312,21 @@ describe("LeaderboardService", () => {
       seedWorkspace("ws1", "Retry")
       seedExecution("e1", "ws1", "flow.yaml", "流程")
       seedNodeExecution("n1", "e1", "s1")
-      seedTokenUsage("t1", "n1", "model-a", 1000, 500, 0.05)
+      seedTokenUsage("t1", "n1", "model-a", 1000, 500)
 
-      // 模拟重试：ON CONFLICT DO UPDATE
+      // 模拟重试：ON CONFLICT DO UPDATE（NEW-r2：ntu 不再存钱，upsert 只累计 token）
       db.prepare(
-        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-         VALUES ('t1', 'n1', 'model-a', 500, 250, 0.02, 0, 0, datetime('now'))
+        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at)
+         VALUES ('t1', 'n1', 'model-a', 500, 250, 0, 0, datetime('now'))
          ON CONFLICT(id) DO UPDATE SET
            input_tokens = input_tokens + excluded.input_tokens,
            output_tokens = output_tokens + excluded.output_tokens,
-           cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
            cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
            cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens`,
       ).run()
+      // 钱与 ntu 无关：一笔 llm_call + 兜底价 → 视图派生（seedCall 固定 1000in+500out @ USD {2,8}/Mtok = 0.006）
+      priceCatchall("p-retry", "model-a")
+      seedCall("c-retry", "n1", "e1", "ws1", "model-a")
     })
 
     it("重试后聚合正确", () => {
@@ -307,7 +334,7 @@ describe("LeaderboardService", () => {
       const model = result.byModel[0]
       expect(model.inputTokens).toBe(1500)
       expect(model.outputTokens).toBe(750)
-      expect(model.costUsd).toBeCloseTo(0.07, 5)
+      expect(model.costUsd).toBeCloseTo(0.006, 6)
     })
   })
 
@@ -319,7 +346,7 @@ describe("LeaderboardService", () => {
       seedWorkspace("ws1", "工作空间 <script>")
       seedExecution("e1", "ws1", "流程 & 测试.yaml", "Unicode 测试 🚀")
       seedNodeExecution("n1", "e1", "s1")
-      seedTokenUsage("t1", "n1", "model-a", 100, 50, 0.01)
+      seedTokenUsage("t1", "n1", "model-a", 100, 50)
     })
 
     it("Unicode 字符正常处理", () => {

@@ -77,7 +77,7 @@ export function pricedCallsSql(
   }
 }
 
-/** 派生 price_status（供出参行形状；聚合处直接用 cost_usd IS NOT NULL 同义）。 */
+/** 派生 price_status（供出参行形状；聚合处直接用「cost 非空」谓词同义）。 */
 export function priceStatusExpr(q = "q"): string {
   return `CASE WHEN ${q}.cost_usd IS NULL THEN 'unpriced' ELSE 'priced' END`
 }

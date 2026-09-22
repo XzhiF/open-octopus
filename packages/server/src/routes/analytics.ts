@@ -456,7 +456,19 @@ export function createAnalyticsRoutes(
 
     const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }> = {}
     const modelCosts: Record<string, Array<number | null>> = {}
-    for (const call of calls) {
+    // 账目口径 = **按消息去重**（2026-09-21）：并行票共享会话时代把同一条 LLM 消息
+    // 给多个在跑节点各记了一行（phase-2 实测 547 行 / 320 条真消息），行数与按行求和
+    // 会把 ∑/请求数/成本全线撑大。data 明细保留原始行（审计真相），聚合按首次出现
+    // 的那条算；message_id 为空的行不参与去重。
+    const seenMsg = new Set<string>()
+    const aggCalls = calls.filter((call) => {
+      const mid = call.message_id as string | null
+      if (!mid) return true
+      if (seenMsg.has(mid)) return false
+      seenMsg.add(mid)
+      return true
+    })
+    for (const call of aggCalls) {
       const model = (call.model as string) ?? 'unknown'
       if (!modelBreakdown[model]) {
         modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: null }
@@ -476,7 +488,7 @@ export function createAnalyticsRoutes(
     return c.json({
       data: calls,
       aggregates: {
-        totalCalls: calls.length,
+        totalCalls: aggCalls.length,
         // 工具调用总数 = 不同 tool_call_id 数（raw 三行/merged 两行同 id 自动去重）。
         toolCalls: execDAO.countToolCalls(executionId as string, nodeId || undefined),
         usage: ledgerAgg.usage,

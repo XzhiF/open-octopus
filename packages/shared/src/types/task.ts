@@ -9,6 +9,7 @@ import {
   acceptanceVerifySchema,
   acceptancePreviewSchema,
   acceptanceRunbookSchema,
+  pathSafeSlugSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -88,6 +89,10 @@ export const TaskSpecFieldSchema = z.enum([
   "decisions",
   "workflow_ref",
   "phases",
+  // 批次主 slug (2026-09-20): task 级唯一命名锚（`.scratch/<slug>/<sub>/` 的
+  // 父层目录名）。spec-field 可写 —— author 拆分时定一次；path-safe 由
+  // pathSafeSlugSchema 强校验。
+  "slug",
   // 验收面 v2「验货台」: the on-demand re-verify command ({@link
   // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
   // like every other spec-field; editable through awaiting_review.
@@ -178,6 +183,17 @@ export interface TaskExecutionBadge {
    *  the read model did not load them — the board's badge carries no children, the
    *  detail/history does). */
   children?: TaskExecutionBadge[]
+}
+
+/** Σ actual run time over the task's instance executions (rounds / composite roots —
+ *  fan-out arms are inside their root's span and never double-counted). Queued waits
+ *  and 待验收 idle are NOT in here; a still-running round counts up to query time.
+ *  Populated by the read model (GET /api/tasks, GET /:id). */
+export interface TaskRunStats {
+  /** Rounds that have run to a timestamped end (terminal, or running at read time). */
+  count: number
+  /** Σ(completed_at ?? now − started_at) in ms. */
+  duration_ms: number
 }
 
 // ── task_execution SSE payload (ADR-0021 票03/票05) ──────────────────
@@ -351,6 +367,12 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
         throw new TaskSpecFieldError("field 'phases' must be a non-empty array of TaskPhase")
       }
       return value.map((v) => taskPhaseSchema.parse(v))
+    case "slug":
+      // 批次主 slug — 单一规则 pathSafeSlugSchema（与 phase.slug 同源，
+      // 见 scheduler-job.ts）。null clears the field（同 acceptance_* 纪律：
+      // undefined 随 merge 落盘时 JSON.stringify 掉键；存 null 会毒化后续 parse）。
+      if (value === null) return undefined
+      return pathSafeSlugSchema.parse(value)
     case "subunits":
       if (!Array.isArray(value)) {
         throw new TaskSpecFieldError("field 'subunits' must be an array")
@@ -510,4 +532,6 @@ export interface Task {
   /** The task's current instance (newest root execution) — the board badge. Null for a
    *  task that never ran. Populated by the read model (GET /api/tasks, GET /:id). */
   execution?: TaskExecutionBadge | null
+  /** 所有轮次的实际跑时合计（见 TaskRunStats）。Undefined = never ran. */
+  run_stats?: TaskRunStats | null
 }

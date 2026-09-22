@@ -1,6 +1,6 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；验证方式类型阶梯——功能票只做 unit/API/DB 层不起浏览器、browser 走查恒唯一收编于末张 NN-e2e-* 票且模式随验收面自动选（无 UI phase 天然 API 级走查，有 UI 可经 spec 纪律拍板零浏览器）；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<main-slug>/<sub-slug>/spec.md，main-slug=task 级 spec.slug 批次主目录名、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；验证方式类型阶梯——功能票只做 unit/API/DB 层不起浏览器、browser 走查恒唯一收编于末张 NN-e2e-* 票且模式随验收面自动选（无 UI phase 天然 API 级走查，有 UI 可经 spec 纪律拍板零浏览器）；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
 version: 3.5.2
@@ -25,8 +25,8 @@ version: 3.5.2
 ```
 ① 领域阅读          Read context.md → 各 project 绝对路径 + 惯例 probe（缺则降级标注）
 ② 需求澄清+拆 phase  列故事 + 结构 grilling（≤15 轮，fog-or-ticket）→ 拆分草案（phase 序表：故事/验收物/功能票数/依赖前序 + 卡头风险行）
-③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准后先 spec-field 写 phases 骨架，再产 spec，批准前不写 phases、不绑工作流
-④ 逐 phase 产 spec   拆卡批准后，每 phase 走 matt 族内容轮产 spec.md + issues/ 进 Batch 目录 ./.scratch/<YYYYMMDD>/<slug>/
+③ 拆分确认 gate      多 phase 时枚举拆分卡请用户确认（一表批问）—— 批准后先 spec-field 写 slug（批次主名）+ phases 骨架，再产 spec，批准前不写 phases、不绑工作流
+④ 逐 phase 产 spec   拆卡批准后，每 phase 走 matt 族内容轮产 spec.md + issues/ 进 Batch 目录 ./.scratch/<main-slug>/<sub-slug>/
 ⑤ 逐 phase 绑定      绑定目录 GET /api/workflow-presets → 推荐+骨架预填 input_values → 用户确认 → spec-field field=phases
 ⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户，等用户 [入队]
 ```
@@ -80,7 +80,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 **spec.md 是唯一活文档**（ADR-0018）：入队前你维护初版；入队后执行侧在 ws 就地审查更新，server collect 回流 home 成终态镜像：
 
 ```
-{home}/.scratch/<YYYYMMDD>/<slug>/     ← slug = <kebab-name>-<phase序号>，如 token-metering-2
+{home}/.scratch/<main-slug>/<sub-slug>/   ← main-slug = task_spec.slug（需求主名，拆分时定一次，全 task 共用，如 token-metering）；sub-slug = phase.slug（短 kebab，如 auth-flow / 2）
 ├── spec.md        ← 本 phase 唯一权威 spec（入队前草稿侧写初版；入队后执行侧 ws 就地改，回流覆盖）
 ├── brief.md       ← 一页纸（可选，给人快速核对）
 ├── issues/        ← DAG 票：01-xxx.md … NN-e2e-verification.md（执行侧原位增量）
@@ -91,8 +91,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 └── handoff.md         ← matt-spec-dev ship 每轮产/覆写、面向下游 phase 的精选交接短页（末 phase 不产——无下游读者；见「phase 衔接信道」节）
 ```
 
-- `<YYYYMMDD>` = 起草日，同 date 前缀 = 同需求批次；slug **path-safe**（`[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验），kebab-case + 序号后缀。
-- phase 的 `specPath` 约定 = `./.scratch/<YYYYMMDD>/<slug>/spec.md`（相对 home；server 按 home 解析成绝对路径再核对存在性）。
+- `main-slug` = **`task_spec.slug`**（spec-field `field=slug` 写入，path-safe `[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验）——一个需求一个主名，拆分批准时定一次；不再用日期层（2026-09-20 契约改版，旧任务的 `.scratch/<YYYYMMDD>/…` 布局照旧可读可执行，只是新草稿别再用）。`sub-slug` = phase.slug，同样 path-safe；主名已在父层，子目录**不必再带序号全名**（旧 `token-metering-2` 风格可用，新建议 `auth-flow`/`2`）。
+- phase 的 `specPath` 约定 = `./.scratch/<main-slug>/<sub-slug>/spec.md`（相对 home；server 按 home 解析成绝对路径再核对存在性）。
 
 ### TaskPhase 字段（Zod 单源，写错会被 400 拒）
 
@@ -100,8 +100,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 {
   "index": 2,                        // 1-based，等于数组序，用于 phase:<i> 报错定位与调度序
   "name": "Token 计量",               // 业务里程碑名，≤100 字，命名权在用户——别自己拍脑袋定死
-  "slug": "token-metering-2",        // Batch 目录名（含 phase 序号后缀，同 task 内唯一）
-  "specPath": "./.scratch/20260903/token-metering-2/spec.md",  // 相对 task home
+  "slug": "auth-flow",               // Batch 子目录名（父目录 = task_spec.slug 主名；同 task 内唯一即可）
+  "specPath": "./.scratch/token-metering/auth-flow/spec.md",   // 相对 task home
   "workflowRef": "built-in/matt-spec-dev",                     // 见「绑定目录」章；task-home 自建则用文件名（先登记进目录）
   "inputValues": { "batch_dir": "${phase.batch_rel}" }         // 值可含 v4 占位符；目录骨架即此形状
 }
@@ -136,7 +136,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 |--------|--------|----------|
 | `${phase.slug}` | 本 phase 的 slug | 分支名/产物命名 |
 | `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | home 侧读写的流（如 task-fix 直绑） |
-| `${phase.batch_rel}` | home **相对** posix 批次目录（`.scratch/<date>/<slug>` = ws 同构位） | ★ spec 消费型流（`matt-spec-dev` 的 `batch_dir`）用它——执行侧只碰 ws，终态由 server collect 回流 |
+| `${phase.batch_rel}` | home **相对** posix 批次目录（`.scratch/<main>/<sub>` = ws 同构位） | ★ spec 消费型流（`matt-spec-dev` 的 `batch_dir`）用它——执行侧只碰 ws，终态由 server collect 回流 |
 | `${task.home}` | task home 绝对路径 | 读快照/登记产物 |
 | `${task_artifacts_dir}` | `{home}/artifacts` | 一般**不用填**——见下 |
 | `${goal}` / `${ac}` | v3 遗留；v4 spec 通常无值 → 空并计入 missing | v4 起草**禁用** |
@@ -168,7 +168,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 1. **拆分生成器——先列故事，再定 phase**：第一步回答「这个需求能讲出哪几个完整故事？」→ **phase 1 = MVP 薄切片**（tracer bullet：最薄但端到端贯穿，且**切穿需求最高风险段**——MVP 不是挑最简易功能做）→ 其后每 phase = 在已验收态上叠加一个完整故事，验收叙事天然连续：「上次这样 → 现在这样」。拆相对话与拆分卡都按此顺序成物。
 2. **下界——摊得起一次人工 gate**：一次看板验收 = 人的注意力一整次。一个故事摊不出**功能票 ≥3**（E2E 票不计入）就是太小 → 合进邻故事；**MVP 豁免下限**（薄而穿正是它的正确形态）。整需求列不出 ≥2 个达界故事 → 单 phase 完全合法，小需求别硬拆。
 3. **上界——一次讲得完，phase 层不设时间硬顶**：上界由叙事钉——交付物内聚成一个故事、一次坐得下验收。讲不成一个故事的 phase → 合；故事大到一次验不完 → 故事本身不成立，拆故事或问用户砍范围，**不是把它掰成几个时间块小 phase**。运行期超时仅出 ⏳ advisory 徽标（D18），不自动中断——防线全在拆分期判据。
-4. **时间预算降到票层**：**≤1h/票**（E2E 票可放宽至 1.5h）是票粒度纪律（装进一个 context window）；phase 内票按 DAG 并行。phase ≠ 大票——票层容量尺不构成 phase 层判据，任何「按小时数拆 phase」都是把两层混谈。
+4. **时间预算降到票层**：**≤1h/票**（E2E 票可放宽至 1.5h）是票粒度纪律（装进一个 context window）；票按 DAG 并行，但 **Blocked-by 拉出的 DAG 深度 ≤2 是硬纪律**（2026-09-21 实测：4 层链 58min、并行仅救回 17min——时长由关键路径决定；串行相邻小票必并，详见 author-verified-tickets Rule 7）。phase ≠ 大票——票层容量尺不构成 phase 层判据，任何「按小时数拆 phase」都是把两层混谈。
 5. **两段式对话预算——拆相轮只谈结构**：拆相对话（工作总览②）= **结构 grilling**，10~15 轮封顶，问题对象只有故事边界/验收物/依赖/票量/范围剪裁；**禁下钻 phase 内部**——表结构、API 字段、组件切分留给拆卡批准后、逐 phase 的④内容轮。fog-or-ticket 选型：此刻能精确成问的才在拆相轮问，只能感到形状的留给对应 phase 轮。15 轮收敛不了或故事列出 >7 个 = 上面一层出问题的信号 → 转 map 化拆分（wayfinder）或需求再澄清，不在本层继续拆细。
 6. **写全 + 不画雾（含依赖排序与前提引用）**：phase i 的交付物是 phase i+1 的输入，拆分卡「依赖前序」列显式写 phase i+1 依赖 i 的**什么**；无相互依赖的 phase 也保持可独立验收的顺序叙事。入队前所有 phase（含后段）的 spec **全部写全**，但后段 spec **不画雾**：故事/范围/验收物（不依赖前序处）写实，依赖前序的接口细节**一律不抄不猜**——写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」；凡以自己的前提为前序决策处，写「见 phase i KD#n」行引用，散文转述是退役写法。**毕业** = 前序 accepted 后、本 phase 开轮前，matt-spec-dev 的 spec-review 段自动对位前序 handoff.md（不回退 Protected Decisions／Confirmed Interfaces 直接复用现物／Gap Targets 承接或显式关闭），对位修订即本 phase 执行版（经 collect 回流 home）——起草侧不预写执行细节，也不另发明一轮「毕业重写」。
 7. **Key Decisions 纪律（K8，跨 phase 传播的机械锚点 + 唯一预告账本）**：每个 phase 的 spec.md 必含 `## Key Decisions` 表（`| # | Decision | Conclusion | Reason |`）。rN 修订（spec-rN.md）必须**保持表行与编号稳定**：改行内结论、不删行不改号；新增行标 `NEW-rN`。决策传播比对的是**表格行 diff**而非散文——编号一乱，影响清单就失效。K8 表同时是**对下游的唯一预告账本**：各 phase 的 Key Decisions 草稿态 = 候选 Protected Decisions，ship 的 handoff.md 是其运行态精选——一本账两态，不另立第三账（拆分卡不加「传给下游」列、spec 不加 For Downstream 节）。切账分界：本 task 生命周期内可逆的决策只进 K8 表；**满足三判据（难以逆转／无上下文会惊讶／真实权衡的结果）且活过本 task** 的进 `docs/adr/`。
@@ -181,13 +181,13 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 ### 逐 phase 产出协议
 
 1. 拆分确认后，**每个 phase 一次完整澄清-产出循环**（这里是 phase **内容** grilling——拆相轮不许下钻的表结构/API 字段在此展开）：小 phase 走 `grilling`（一次一问），大/雾 phase 走 `wayfinder`（map + decision tickets）。
-2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<YYYYMMDD>/<slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
+2. 调用时**显式指定产物路径** = 该 phase 的 Batch 目录（`./.scratch/<main-slug>/<sub-slug>/`）。matt 惯例里的 `<artifacts.dir>` 在你的 cwd（=task home）下天然成立。
 3. 产物齐全标准（= v4 gate 检查对象）：`spec.md` 存在且含 Key Decisions 表 + User Stories + `issues/` 非空且票带 Verification Method（author-verified-tickets 规则）；**批次消费型流的"验证声明"见下 §3.5——要么有末张 `NN-e2e-*` 票，要么 spec 显式写 `Verification Tier: unit-only`，二选一**。
    > ⚠️ **`NN-e2e-*` 票不再是无条件硬要求（2026-09-18 几何重构）**：绑批次消费型流（默认 `matt-spec-dev`）时，[入队] gate 检的是"本 phase 声明了怎么被验证"，不是"必须有 e2e 票"。执行流里 e2e 走查是**独立的 `e2e-verify` 节点、排在 code-review 之后**（验最终 HEAD，修了"e2e 先跑、review 后改错则绿过期"的时序倒挂）。要不要这张票 = 要不要跑这个节点，由你按验收面判（§3.5）。
 3.5 **验证分层决策（省成本的关键——写票前先定这一层）**：逐 phase 二选一——
    - **`unit-only` 层**（免走查）：本 phase 验收面被功能票的 unit / integration(API↔DB) / contract 测**完整覆盖**，无需端到端走查也敢放行。典型＝纯重构、薄后端切片、内部 util/算法、无新增用户可见行为。**不产 `NN-e2e-*` 票**，改为在 `spec.md` 写一行 `Verification Tier: unit-only`（gate 靠它放行；执行流的 e2e-verify 节点据此整体跳过，省掉最贵的走查成本）。
-   - **走查层**：本 phase 有"单测够不着"的整链路用户可见行为（起真服务串请求看端到端结果、有 UI 要看渲染/交互）。**产末张 `NN-e2e-*` 票**，模式随验收面自动定：含 UI/页面交互 → browser 走查（Playwright+截图）；纯后端交付物=API/DB/CLI 态 → API 级走查（curl+sqlite+手算）。跨仓复用任务（消费仓 import 产出仓新符号）走查票里加"消费方契约探针"断言真复用非就地重写。
-   判据是"验收面是否需要端到端证据"，不是"图省事"——写不准往哪层放时，宁可产 e2e 票（安全侧）。
+   - **走查层**：本 phase 有"单测够不着"的整链路用户可见行为（起真服务串请求看端到端结果、有 UI 要看渲染/交互）。**产末张 `NN-e2e-*` 票**，模式随验收面自动定：含 UI/页面交互 → browser 走查（Playwright+截图）；纯后端交付物=API/DB/CLI 态 → API 级走查（curl+sqlite+手算）。跨仓复用任务（消费仓 import 产出仓新符号）走查票里加"消费方契约探针"断言真复用非就地重写。**票面必须满足验货台剧本编译形状（author-verified-tickets Rule 6）**：`## 走查步骤` h2 编号步（`动作 → 断言`，可执行命令放行反引号）+ `**Pass criteria**:` 收尾，或正典 `## Acceptance Criteria` + `**Verification type**:` + bash 围栏——形状缺 = 用户验收时面对空剧本柜（2026-09-21 整批 09-06 中文票的空台事故即此因）。
+   判据是"验收面是否需要端到端证据"，不是"图省事"。**集中走查纪律（2026-09-21 提速）**：验收面需要端到端证据但本 phase 不是任务末站时，仍可判 `unit-only`——把该验收面**追加进末 phase 的 e2e 票走查步**（末 phase 票面 ≤8 步预算内合并），本 phase 不产走查票。"宁可产 e2e 票"的安全侧只适用于**末 phase**（那是唯一走查载体，缺了就真没人验）；中间 phase 每多一张 e2e 票 = 整节点 25min+ 的真走查成本（实测 e2e-verify 单节点占整轮 27%）。
 4. **功能票验证纪律（不变）**：功能票的 Verification Method 类型只许 **unit / integration(API↔DB 交叉) / contract / manual checklist**——**不起浏览器、不做故事走查**（无条件）。UI 渲染/交互断言一律收编进走查层末张 `NN-e2e-*` 票；走查票是全 phase 唯一许起浏览器的一张。功能票写了 browser E2E = 与走查票双跑。写完自查一遍票类型。
 5. **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（story walk-through/E2E 模式/执行并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home（见「领域阅读 Step 3」），不落 project。
 6. **验收台预设（多项目/微服务必做，否则看板「当场复检」只测一仓、「跑起来看」空）**：任务建好后用 spec-field 写两个 task 级字段（全 phase 复用）——
@@ -238,7 +238,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks" \
 ```bash
 # 步骤一：用 Write 工具落 body 文件（非 bash！内容按 UTF-8 写，例 ./.tmp/spec-field.json）：
 #   { "field": "phases", "value": [ { "index": 1, "name": "MVP：用户端到端查到自己额度",
-#         "slug": "token-view-1", "specPath": "./.scratch/20260906/token-view-1/spec.md",
+#         "slug": "auth-flow", "specPath": "./.scratch/token-view/auth-flow/spec.md",
 #         "workflowRef": "built-in/matt-spec-dev", "inputValues": { "batch_dir": "${phase.batch_rel}" } } ] }
 # 步骤二：curl 只引用文件路径（argv 全 ASCII，不过码页）：
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
@@ -285,7 +285,7 @@ missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no
 
 > `no-final-verification`：**批次消费型流**（`matt-spec-dev` 及其同族——读 `spec.md`+`issues/` 当执行计划的那种）要求每个 phase 声明它怎么被验证，二选一即放行：① `issues/` 下有末张 `*-e2e-*` 验收票（执行流的 `e2e-verify` 节点会在 code-review 之后对它做真走查），或 ② spec.md 写 `Verification Tier: unit-only`（本 phase 验收面被功能票 unit/接口测完整覆盖，免走查，e2e-verify 节点整体跳过）。两者都无 → 409。自建流等不消费批次的流不受此检。写票前的分层判断见 §产出 Step 3.5。
 
-> **入队前自查（server gate 不含此项，K5 文本档纪律）**：拆分表「依赖前序」列引用的 batch slug 全部存在（`.scratch/<date>/` 下目录真实在场）——衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
+> **入队前自查（server gate 不含此项，K5 文本档纪律）**：拆分表「依赖前序」列引用的 batch slug 全部存在（`.scratch/<main-slug>/` 父目录下子批目录真实在场）——衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
 
 ### 5. 列表 / 详情 / 中止
 
@@ -300,11 +300,11 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/abort" | jq .   # →
 
 ```bash
 # 读某 phase 的 spec.md（`.scratch/**.md`，相对 task home）
-curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/home-file?path=.scratch/20260903/scaffold-1/spec.md" | jq -r .content
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/home-file?path=.scratch/token-metering/scaffold-1/spec.md" | jq -r .content
 # 写/覆写（父目录自动建；用于看板「创建骨架」；agent 常态直接以 cwd=home 用 Write/Bash 落 .scratch/）
 curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
   -H "Content-Type: application/json" \
-  -d '{ "path": ".scratch/20260903/scaffold-1/spec.md", "content": "# Phase 1\n" }' | jq .
+  -d '{ "path": ".scratch/token-metering/scaffold-1/spec.md", "content": "# Phase 1\n" }' | jq .
 ```
 - 守卫：路径必须 `.scratch/` 前缀 + `.md` 后缀、home 相对不逃逸（否则 403）；缺文件读 → 404；任务非可编辑窗口写 → 409；`content ≤ 512_000` 字符。**不写 tasks.version**（文件非行）。
 - **用户经看板 UI 手改 spec.md 会落 `@@spec_updated` 通知**，你下一轮感知——写该 phase spec 前先重读盘（勿拿旧草稿覆盖用户手改）。
@@ -366,7 +366,7 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 
 ## 物化与执行环（你要能向用户解释的下游）
 
-入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<date>/<slug>/` 物理拷进 ws 同路径（home=上轮终态/草稿起点，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（**含 spec.md 终态**——ADR-0018：批次目录全类以 ws 为权威回流 home）并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate（下一 phase 首轮自动注入前序 handoff 路径——「phase 衔接信道」节，手动推进同行为）；打回：反馈落 `fix-feedback-rN.md`，人**二选一路由即时开轮**（轻量修复=task-fix / 修订重跑=绑定流先再审 spec；同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
+入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<main>/<sub>/` 物理拷进 ws 同路径（home=上轮终态/草稿起点，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（**含 spec.md 终态**——ADR-0018：批次目录全类以 ws 为权威回流 home）并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate（下一 phase 首轮自动注入前序 handoff 路径——「phase 衔接信道」节，手动推进同行为）；打回：反馈落 `fix-feedback-rN.md`，人**二选一路由即时开轮**（轻量修复=task-fix / 修订重跑=绑定流先再审 spec；同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
 
 ## 交互风格
 
