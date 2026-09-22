@@ -7,6 +7,7 @@
  *   pnpm dev --skip-build             # skip build (if dist/ already exists)
  *   pnpm dev --isolated               # force hash ports + unique DB (any repo)
  *   pnpm dev --port 4001              # custom server port (web = port+1)
+ *   pnpm dev --port 3101,3100         # explicit web,server pair (web first)
  *   pnpm dev -k                       # kill existing processes on target ports
  *   pnpm dev --kill                   # same as -k
  *   node scripts/dev.mjs              # same as above
@@ -35,6 +36,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import net from "net"
+import { parsePortPair } from "./port-arg.mjs"
 
 const repoRoot = process.cwd()
 
@@ -324,20 +326,31 @@ async function main() {
   const killExisting = (process.argv.includes("--kill") || process.argv.includes("-k"))
     && !process.env.OCTOPUS_HOST_PID  // ignore --kill inside workflow agent
 
-  // --port <N> — custom server port (web = N+1)
+  // --port <N> — legacy: server = N, web = N+1
+  // --port <web>,<server> — explicit pair (web first)
   const portIdx = process.argv.indexOf("--port")
-  const customPort = portIdx !== -1 ? parseInt(process.argv[portIdx + 1]) : null
+  const portArg = portIdx !== -1 ? process.argv[portIdx + 1] : undefined
+  if (portIdx !== -1 && (portArg === undefined || portArg.startsWith("--"))) {
+    console.error(`[dev] --port expects "<N>" or "<web>,<server>" (nothing given)`)
+    process.exit(1)
+  }
+  const portPair = portArg !== undefined ? parsePortPair(portArg) : null
+  const customPort = portArg !== undefined && !portPair ? parseInt(portArg, 10) : null
+  if (portIdx !== -1 && !portPair && !Number.isInteger(customPort)) {
+    console.error(`[dev] --port expects "<N>" or "<web>,<server>" (got "${portArg ?? ""}")`)
+    process.exit(1)
+  }
 
   const worktree = isWorktree()
   let serverPort, webPort, dbPath, branch
 
-  if (customPort) {
+  if (customPort || portPair) {
     // Custom port mode: exact ports, no auto-detection
-    serverPort = customPort
-    webPort = customPort + 1
+    serverPort = portPair ? portPair.server : customPort
+    webPort = portPair ? portPair.web : customPort + 1
     branch = getBranchName()
     dbPath = path.join(os.homedir(), ".octopus", "db", `octopus-${safeName(branch || "custom")}.db`)
-    console.log(`[dev] mode:   custom (port=${customPort})`)
+    console.log(`[dev] mode:   custom (${portPair ? `web=${webPort},server=${serverPort}` : `port=${customPort}`})`)
     if (killExisting) {
       killPort(serverPort)
       killPort(webPort)

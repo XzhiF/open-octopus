@@ -53,7 +53,9 @@ pnpm install          # 安装依赖
 pnpm build            # 构建所有包
 pnpm dev              # 主仓库开发 (server:3001 web:3000)
 pnpm dev --isolated   # 隔离模式
+pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
 pnpm prod             # 生产模式 (server:3099 web:3098)
+pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
 pnpm test:watch       # 监听模式

@@ -5,11 +5,12 @@
  * Usage:
  *   pnpm prod                    # build → copy to stable dir → run
  *   pnpm prod --skip-build       # skip build, use existing stable copy
+ *   pnpm prod --port 3098,3099   # explicit web,server pair (web first)
  *
  * Port allocation (fully isolated from dev):
  *   dev (main):     Server 3001, Web 3000, DB octopus.db
  *   dev (worktree): Server 3100-3598 (hash), Web +1, DB octopus-{branch}.db
- *   prod:           Server 3099, Web 3098, DB octopus-prod.db
+ *   prod:           Server 3099, Web 3098 (default), DB octopus-prod.db
  *
  * Resilience:
  *   - Server/web auto-restart on unexpected exit (up to MAX_RESTARTS in window)
@@ -28,13 +29,15 @@ import { spawn, execSync } from "child_process"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { parsePortPair } from "./port-arg.mjs"
 
 const repoRoot = process.cwd()
 const PROD_DIR = path.join(os.homedir(), ".octopus", "prod")
 
 // prod 独占端口，完全独立于 dev (3001/3000) 和 worktree (3100-3598)
-const SERVER_PORT = 3099
-const WEB_PORT = 3098
+// 可用 --port <web>,<server> 覆盖
+let SERVER_PORT = 3099
+let WEB_PORT = 3098
 const DB_PATH = path.join(os.homedir(), ".octopus", "db", "octopus-prod.db")
 
 // PID lock file — prevents multiple prod.mjs instances
@@ -362,6 +365,19 @@ async function waitForServer(port, timeoutMs = 15000) {
 
 async function main() {
   const skipBuild = process.argv.includes("--skip-build")
+
+  // --port <web>,<server> — explicit pair (web first)
+  const portIdx = process.argv.indexOf("--port")
+  if (portIdx !== -1) {
+    const portArg = process.argv[portIdx + 1]
+    const pair = parsePortPair(portArg)
+    if (!pair) {
+      console.error(`[prod] --port expects "<web>,<server>" (e.g. --port 3098,3099), got "${portArg ?? ""}"`)
+      process.exit(1)
+    }
+    WEB_PORT = pair.web
+    SERVER_PORT = pair.server
+  }
 
   const getLocalIP = () => {
     const interfaces = os.networkInterfaces()
