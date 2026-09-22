@@ -1,6 +1,6 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<main-slug>/<sub-slug>/spec.md，main-slug=task 级 spec.slug 批次主目录名、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；验证方式类型阶梯——功能票只做 unit/API/DB 层不起浏览器、browser 走查恒唯一收编于末张 NN-e2e-* 票且模式随验收面自动选（无 UI phase 天然 API 级走查，有 UI 可经 spec 纪律拍板零浏览器）；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases·slug·branch / 乐观锁编辑 / 入队 gate（含 runbook 硬检） / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<main-slug>/<sub-slug>/spec.md，main-slug=task 级 spec.slug 批次主目录名、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（phase=故事判据：每 phase = 一个完整用户故事叠加在 MVP 上，phase1=MVP 薄切片切穿最高风险段；下界功能票 ≥3 摊得起一次人工 gate、MVP 豁免，上界一次讲得完、phase 层不设时间硬顶；时间预算 ≤1h 属票层；两段式对话预算、写全+不画雾、前提引用「见 phase i KD#n」；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；验证方式类型阶梯——功能票只做 unit/API/DB 层不起浏览器、browser 走查恒唯一收编于末张 NN-e2e-* 票且模式随验收面自动选（无 UI phase 天然 API 级走查，有 UI 可经 spec 纪律拍板零浏览器）；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流绑定目录（workflow-presets.yaml 唯一可选项源，默认 spec-dev→built-in/matt-spec-dev 直读批次 spec 执行；自建流过闸后登记进目录）、启动 Runbook 记忆（逐项目查长期记忆 runbook:<项目>：命中展示请用户确认沿用/过期则重问，未命中问用户一次；确认后三写 spec-field acceptance_runbook + 回写 memory/long-term.md 标准块 + 批次 runbook/ 文件；多仓逐仓记忆+任务级聚合；worktree 端口按 branch hash 可算式禁写死；入队 runbook 硬闸兜底漏配）、执行分支命名（feat-<main-slug>-<创建YYYYMMDD>，spec.branch 显式定名优先、无锚回退 taskpool-<id>）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
 version: 3.5.2
@@ -193,7 +193,22 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 6. **验收台预设（多项目/微服务必做，否则看板「当场复检」只测一仓、「跑起来看」空）**：任务建好后用 spec-field 写两个 task 级字段（全 phase 复用）——
    - `acceptance_verify`：当场复检命令。**多仓任务必须加 `per_repo:true`**，`command` 写成**仓内相对**（不带 `cd`/仓名，如 `<仓的构建> test`），server 对 `projects/*/` 每仓各跑一次、任一仓失败即整体 failed。单仓任务可不填 per_repo。
    - `acceptance_preview` **或** `acceptance_runbook`（二选一）：跑起来看。**单一可运行服务** → `acceptance_preview`（`{command,url}`）。**多服务 / docker-compose / N×进程 / 远端 Jenkins 部署** → `acceptance_runbook`：`{ up:{command,cwd?}, ready:{command,cwd?}, views:[{label?,url}], down?:{command,cwd?}, timeoutS? }`——`up` 起（可前台长驻、可快速退出=detached），`ready` **跑命令看退出码0=就绪**（唯一就绪判据，端口/日志/Jenkins 状态都压成这条），`views` 给 0..N 个入口，`down` 收尾（远端部署就不填，停止只结束会话不乱杀）。工具差异全写进 command，别塞进平台。
-   - **更省事的正道**：若项目仓里已带 `.octopus/acceptance/{up,health,down}.sh`(+可选 `views`)，**两个字段都不用你写**——server 会自动按脚本合成 runbook。起草时探到这些脚本就优先依赖约定；没有再按上面显式配。判不出启动/就绪命令时**问用户一次**，别编。
+   - **入队硬闸（2026-09-22）**：v4 [入队] gate 现检 `runbook`——`acceptance_runbook`(需 up∧ready) / `acceptance_preview` / `acceptance_verify` 三者全无 → 409 missing 含 `runbook`。unit-only 薄切片（不起服务）配 `acceptance_verify` 即可放行。**别再指望仓内 `.octopus/acceptance/*.sh` 约定脚本兜底**（第③级已摘除，运行期不再自动探文件系统）——起法必须你显式预设。
+7. **启动 Runbook 记忆（逐项目，问一次管永久）**：每次为某项目预设起法前，先查你自己的长期记忆块 `## runbook:<项目名>`（记忆自动注入在你的系统提示里）——
+   - **有** → 原样展示四槽 + 确认日期给用户：「本仓记忆存过 <项目> 的起法（confirmed YYYY-MM-DD）：up=… / ready=… / views=… / down=…，命令可能已过期，本次沿用？」→ **用户确认才用**（禁静默复用，起法会随仓演进过期）。用户说不对 → 走「无」分支、拿到新答案后**覆盖**该记忆块。
+   - **无** → 按上面 §6 的字面值向用户**问一次**（up/ready/views/down 四槽，判不出的槽明确问、别编），用户确认后三写：
+     ① **spec-field `acceptance_runbook`(或 `acceptance_preview`)** —— 验收台「跑起来看」吃的权威；
+     ② **append 你自己的 `memory/long-term.md`**（守卫已放行本分身 memory 目录）一个标准块，格式定死供下次解析：
+        ```
+        ## runbook:<项目名> (confirmed YYYY-MM-DD)
+        ```json
+        {"up":{...},"ready":{...},"views":[...],"down":{...},"timeoutS":120}
+        ```
+        ```
+     ③ **批次目录落 `runbook/runbook.json`**（`./.scratch/<main-slug>/<sub-slug>/runbook/`）——随 seed 自动下行进 `ws/.scratch/…/runbook/`，供执行侧走查票和人现场手跑；spec-field 与它内容一致。
+   - **多仓任务**：每仓各查各记一份 `runbook:<项目>`；任务级 `acceptance_runbook` 是聚合（`up` 逐仓拼或指向工作区根编排脚本、`ready` 全过、`views` 并集）。
+   - **端口纪律（最大坑）**：任务在 worktree 跑，`pnpm dev`/服务端口按分支 hash 落 3100–3598（见 `scripts/branch-port.mjs`），**URL 端口禁写死主仓 3000/3001**——写成在 worktree 里可算的式子（health 命令自算 hash 端口再探），否则 ready 恒拒连、超时判 failed。
+8. **执行分支命名（author 定名，2026-09-22）**：任务工作区 git 分支不再用 `taskpool-<uuid>`。取名优先级 = `spec.branch`(spec-field `branch`，path-safe `[A-Za-z0-9_-]{2,60}`) > `feat-<main-slug>-<创建日YYYYMMDD>` > `taskpool-<taskId>`(无 slug 兜底)。因为拆分批准时你已写 `task_spec.slug`，分支默认就是 `feat-<main-slug>-<日期>`——**主 slug 起个好名字就是给分支起名**；用户对分支有专名要求才显式 `spec-field branch=<名>`（同一入队锁定窗，改 slug 即改分支）。
 
 ### 写权环（单写者、单方向——破坏它 = merge 灾难）
 

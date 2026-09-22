@@ -1221,10 +1221,14 @@ export class TasksService {
       case "acceptance_verify":
       case "acceptance_preview":
       case "acceptance_runbook":
+      case "slug":
+      case "branch":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
         // JSON.stringify drops the key (见 shared validator)。
+        // slug/branch（2026-09-22）：shared enum 早已可绑但这里没有 case ——
+        // author 写 slug 一直静默丢键，同 null-clear 纪律一并接上。
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
       case "phases": {

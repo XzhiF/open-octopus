@@ -275,6 +275,13 @@ export const taskSpecSchema = z.object({
   // 拆分定一次、全 phase 共用；也用作自动 workspace 名的第一优先来源
   // (task-ws-name.ts)。Optional — not locked (draft 期可改，ready 后随结构冻结)。
   slug: pathSafeSlugSchema.optional(),
+  // 执行分支名（author 定名，2026-09-22）—— 任务工作区 git 分支前缀的显式来源。
+  // 缺省时 server 以 `feat-<slug|标题锚>-<YYYYMMDD>` 推导（task-ws-name.ts），
+  // 连锚都取不到才回退历史 `taskpool-{taskId}`。字符面与工作名同规
+  // （ASCII [a-zA-Z0-9_-]，禁冒号/空格/中文 —— worktree+Windows 事故史）。
+  branch: z.string().min(2).max(60).regex(/^[a-zA-Z0-9_-]+$/, {
+    message: "branch must match ^[a-zA-Z0-9_-]+$",
+  }).optional(),
   // Phase plan (K1). Optional: a v4 draft mid-authoring may omit it entirely;
   // when present it must carry ≥1 phase (the ready gate, ticket 04, re-checks
   // ≥1 plus per-phase specPath/workflowRef resolvability — schema only owns

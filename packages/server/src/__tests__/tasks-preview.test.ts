@@ -206,30 +206,21 @@ describe("preview — 生命周期", () => {
     expect(s?.state).toBe("failed")
   }, 15_000)
 
-  it("PV7: 项目自带 .octopus/acceptance/{up,health,down}.sh + views — 无显式配置也起得来", async () => {
+  it("PV7: 约定脚本第③级已摘除 — 只放 .octopus/acceptance/*.sh 不配 spec-field → 启动 400", async () => {
+    // 2026-09-22：第③级探测的是工作区根，而任务 worktree 实落 projects/<repo>/，
+    // 两者永不相交（旧 PV7 靠手工往工作区根塞脚本才命中 = 测试自证假象）。
+    // 现运行期不再自动探文件系统：起法必须由 author 写进 spec-field（①②两级）。
+    // 本条反向钉死「摘除」——约定脚本在场也不认，逼配置回权威来源。
     const taskId = await newAwaitingTask()
     const dir = path.join(tmp, "ws1", ".octopus", "acceptance")
     fs.mkdirSync(dir, { recursive: true })
-    // 后台化 up（模拟 compose up -d / 触发远端）；health 探标记；down 收尾
-    fs.writeFileSync(path.join(dir, "up.sh"), `#!/bin/sh\nnohup sh -c 'sleep 2; touch pv7.ready' >/dev/null 2>&1 &\necho launched\n`)
-    fs.writeFileSync(path.join(dir, "health.sh"), `#!/bin/sh\ntest -f pv7.ready\n`)
-    fs.writeFileSync(path.join(dir, "down.sh"), `#!/bin/sh\nrm -f pv7.ready\n`)
-    fs.writeFileSync(path.join(dir, "views"), "http://localhost:9601/\nhttp://localhost:9602/\n")
-    // 不写 acceptance_preview / acceptance_runbook —— 全靠脚本约定
+    fs.writeFileSync(path.join(dir, "up.sh"), "#!/bin/sh\necho launched\n")
+    fs.writeFileSync(path.join(dir, "health.sh"), "#!/bin/sh\ntest -f never\n")
     const start = await app.request(`/api/tasks/${taskId}/preview`, { method: "POST" })
-    expect(start.status).toBe(202)
-    const ready = await pollPreview(taskId, (s) => s?.state === "ready", 12_000)
-    expect(ready?.state).toBe("ready")
-    expect(ready?.views).toHaveLength(2)
-    expect((await app.request(`/api/tasks/${taskId}/preview/stop`, { method: "POST" })).status).toBe(200)
-    const markerAbs = path.join(dir, "pv7.ready")
-    for (let i = 0; i < 100 && fs.existsSync(markerAbs); i++) await new Promise((r) => setTimeout(r, 100))
-    expect(fs.existsSync(markerAbs)).toBe(false)
-    // 收尾清理：down.sh 子进程可能还短暂占着该目录(Windows EPERM)，best-effort + 容错。
-    for (let i = 0; i < 50; i++) {
-      try { fs.rmSync(dir, { recursive: true, force: true }); break } catch { await new Promise((r) => setTimeout(r, 100)) }
-    }
-  }, 25_000)
+    expect(start.status).toBe(400) // 未配置预览 —— ③ 已摘除，约定脚本不再兜底
+    const body = (await start.json()) as { error?: string }
+    expect(body.error ?? "").toMatch(/未配置预览|acceptance/)
+  })
 
   it("PV8: runbook — down 的 pkill 真杀 nohup daemon（up 已退出时 down 是唯一收尸人）", async () => {
     if (process.platform === "win32") return // pkill/pgrep 是 POSIX 工具

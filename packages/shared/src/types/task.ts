@@ -93,6 +93,9 @@ export const TaskSpecFieldSchema = z.enum([
   // 父层目录名）。spec-field 可写 —— author 拆分时定一次；path-safe 由
   // pathSafeSlugSchema 强校验。
   "slug",
+  // 执行分支名（2026-09-22）：author 起草时定名的显式来源；null 清空回退
+  // `feat-<锚>-<YYYYMMDD>` 推导。ASCII 字符面由 validateSpecFieldValue 强校验。
+  "branch",
   // 验收面 v2「验货台」: the on-demand re-verify command ({@link
   // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
   // like every other spec-field; editable through awaiting_review.
@@ -373,6 +376,15 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
       // undefined 随 merge 落盘时 JSON.stringify 掉键；存 null 会毒化后续 parse）。
       if (value === null) return undefined
       return pathSafeSlugSchema.parse(value)
+    case "branch":
+      // 执行分支名（author 定名）— null clears，回退 feat-<锚>-<YYYYMMDD> 推导。
+      // 字符面与工作名同规（ASCII [a-zA-Z0-9_-]，冒号/中文曾让 Windows mkdir
+      // 全线 ENOENT —— 分支名同样进目录/git，不许逃逸）。
+      if (value === null) return undefined
+      if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{2,60}$/.test(value)) {
+        throw new TaskSpecFieldError("field 'branch' must match ^[a-zA-Z0-9_-]{2,60}$")
+      }
+      return value
     case "subunits":
       if (!Array.isArray(value)) {
         throw new TaskSpecFieldError("field 'subunits' must be an array")

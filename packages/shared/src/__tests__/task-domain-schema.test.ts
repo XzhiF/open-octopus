@@ -79,6 +79,8 @@ const EXPECTED_SPEC_FIELDS = [
   "phases",
   // 批次主 slug (2026-09-20 契约改版): `.scratch/<slug>/<sub>/` 的父目录名。
   "slug",
+  // 执行分支名（2026-09-22 author 定名）：spec.branch → feat-<slug>-<日期> 推导的显式来源。
+  "branch",
 ] as const
 
 const baseWorkspaceSpec = {
@@ -493,6 +495,26 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
     expect(taskSpecSchema.parse({ goal: "g", ac: ["a"], slug: "token-metering" }).slug).toBe("token-metering")
     const legacy = taskSpecSchema.parse({ goal: "g", ac: ["a"] })
     expect("slug" in legacy && legacy.slug).toBeFalsy()
+  })
+
+  // ── 执行分支名 (2026-09-22): spec.branch — author 定名，替代 taskpool-{uuid} ──
+  it("'branch' is a bindable spec-field (enum)", () => {
+    expect(EXPECTED_SPEC_FIELDS).toContain("branch")
+  })
+
+  it("validateSpecFieldValue('branch') accepts ASCII, rejects bad shape", () => {
+    expect(validateSpecFieldValue("branch", "feat-runbook-mem")).toBe("feat-runbook-mem")
+    expect(validateSpecFieldValue("branch", "billing-v2")).toBe("billing-v2")
+    expect(() => validateSpecFieldValue("branch", "billing/2")).toThrow(/branch/i) // 斜杠/冒号一律拒
+    expect(() => validateSpecFieldValue("branch", "计费分支")).toThrow(/branch/i)
+    expect(() => validateSpecFieldValue("branch", "a")).toThrow(/branch/i) // <2 字符
+    expect(validateSpecFieldValue("branch", null)).toBeUndefined() // null clears
+  })
+
+  it("taskSpecSchema carries optional branch; legacy 无 branch 照 parse", () => {
+    expect(taskSpecSchema.parse({ goal: "g", ac: ["a"], branch: "feat-x" }).branch).toBe("feat-x")
+    const legacy = taskSpecSchema.parse({ goal: "g", ac: ["a"] })
+    expect("branch" in legacy && legacy.branch).toBeFalsy()
   })
 
   it("PHASE_STATUS_UPDATE_EVENT pins the ticket-11/12 wire name", () => {

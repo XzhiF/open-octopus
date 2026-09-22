@@ -22,8 +22,11 @@
 // 路径被调用（tasks.workspace_id 为空时 execute() 才取名建 ws），后续 phase/round
 // 复用既有 ws、不再拼名；同名目录现为显式报错（旧 rmSync 覆写已移除）。
 // `-MMDD-HHmmss` 尾缀保留 —— 其职责是"不同任务/不同首建时刻互不撞名"。
-// branch_prefix 仍保持确定性的 `taskpool-{scheduleId}`（git 分支名，不进展示；
-// K5 一 task 一信封 ⇒ 恒定，phase/round 不换支）。
+//
+// git 分支前缀（taskBranchPrefix，2026-09-22 收口）：`taskpool-{taskId-uuid}` 太
+// 逆天 —— 现为 spec.branch 显式（author 起草定名）> `feat-<slug|标题锚>-<YYYYMMDD>`
+// （created_at 派生，两侧逐字节确定）> taskpool-{taskId} 兜底（K5 一 task 一信封
+// ⇒ 恒定，phase/round 不换支）。
 
 import { DEFAULT_TASK_NAME } from "../tasks/tasks-service"
 
@@ -48,7 +51,7 @@ export function taskDisplayTitle(row: { name: string | null; task_spec: string |
 /** task_spec 的英文命名锚，两级：task 级主 slug（2026-09-20 批次契约，
  *  `.scratch/<slug>/<sub>/` 的父目录名）优先 —— 它就是这条流水线的 feature
  *  名；缺则退回 v4 phases[0].slug。两者都已过 path-safe schema 校验。 */
-function specSlugAnchor(row: { task_spec: string | null | unknown }): string {
+export function specSlugAnchor(row: { task_spec: string | null | unknown }): string {
   try {
     const spec = typeof row.task_spec === "string" ? JSON.parse(row.task_spec) : (row.task_spec ?? {})
     const s = spec as { slug?: unknown; phases?: unknown }
@@ -79,6 +82,36 @@ function asciiHash(raw: string): string {
   let h = 5381
   for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0
   return h.toString(36).padStart(6, "0").slice(0, 6)
+}
+
+/** 执行 git 分支前缀（taskBranchPrefix）。取名优先级：
+ *    1. spec.branch —— author 起草时的显式定名（唯一「由 agent 确定」通道）；
+ *       过 asciiSlug 兜住手改坏值（中文/冒号/空格一律剔除）。
+ *    2. `feat-<slug锚>-<YYYYMMDD>` —— slug 锚 = spec.slug ∪ phases[0].slug
+ *       （path-safe 已过 schema）；日期取 task 创建日（确定性，两侧逐字节一致）。
+ *    3. 连锚都取不到 → null，调用方保留 `taskpool-{taskId}` 兜底。
+ *  与旧 `taskpool-{id}` 一样：一 task 一支系（K5 恒定，phase/round 不换支），
+ *  且整串匹配 ^[a-zA-Z0-9_-]+$（git 分支 + worktree 目录双约束）。 */
+export function taskBranchPrefix(
+  row: { task_spec: string | null | unknown; created_at?: string | null },
+): string | null {
+  let branch = ""
+  try {
+    const spec = (typeof row.task_spec === "string" ? JSON.parse(row.task_spec) : (row.task_spec ?? {})) as {
+      branch?: unknown
+    }
+    if (typeof spec.branch === "string") branch = spec.branch
+  } catch { /* 坏 JSON → 无显式名，走 slug 推导 */ }
+  const explicit = asciiSlug(branch)
+  if (explicit) return explicit
+
+  const anchor = asciiSlug(specSlugAnchor(row))
+  if (!anchor) return null
+  const d = row.created_at ? new Date(row.created_at) : new Date()
+  const stamp = Number.isNaN(d.getTime())
+    ? ""
+    : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
+  return `feat-${anchor}${stamp ? `-${stamp}` : ""}`
 }
 
 /** `task-{core}-{MMDD-HHmmss}`，core 按文件头注释的四级取名。

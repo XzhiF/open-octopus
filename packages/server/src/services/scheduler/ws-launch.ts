@@ -12,7 +12,7 @@
 // task-dispatch-service 的本地 formatBranchSuffix 副本已收敛于此。
 
 import { COMPOSITION_WF_REF } from "./orchestration-strategy"
-import { taskWorkspaceName } from "./task-ws-name"
+import { taskBranchPrefix, taskWorkspaceName } from "./task-ws-name"
 
 /** `YYYYMMDDHHmmss-<rand4>` 分支/目录唯一性尾缀。executor 与 task-dispatch
  *  历史上的两份逐字相同副本合一（勿改格式 — schedule_workspaces 反查依赖）。 */
@@ -51,9 +51,9 @@ export function isCompositeWorkflowConfig(config: CompositeProbe): boolean {
  *  `trigger_source === 'requirement'`, and the id used to be a schedule id — both
  *  artifacts of tasks being launched through the scheduler. It is now an explicit
  *  `naming` axis plus an `instanceKey`:
- *    - `naming:'task'` + instanceKey = the TASK id → deterministic `taskpool-{taskId}`
- *      branch prefix, so every round of one task shares a branch lineage (was
- *      `taskpool-{envelopeId}`, which changed if the task was reopened + re-enqueued);
+ *    - `naming:'task'` + instanceKey = the TASK id → branch prefix via
+ *      taskBranchPrefix: spec.branch（author 定名）> `feat-<slug>-<YYYYMMDD>` >
+ *      `taskpool-{taskId}` 兜底 —— 一 task 一支系（branch lineage 恒定）;
  *    - `naming:'cron'` → the job's own AI-authored workspace_spec.branch_prefix.
  *  taskRow=null (v3/cron/查无任务) → 回退旧 taskpool 命名,与抽前一致. */
 export function computeTaskWsLaunchParams(a: {
@@ -61,12 +61,14 @@ export function computeTaskWsLaunchParams(a: {
   instanceKey: string
   naming: "task" | "cron"
   config: { workspace_spec: { branch_prefix: string } } & CompositeProbe
-  taskRow: { name: string | null; task_spec: string | null | unknown } | null
+  taskRow: { name: string | null; task_spec: string | null | unknown; created_at?: string | null } | null
   date?: Date
 }): { branchPrefix: string; branchSuffix: string; workspaceName: string } {
   const branchSuffix = formatBranchSuffix(a.date ?? new Date())
   const isTask = a.naming === "task"
-  const branchPrefix = isTask ? `taskpool-${a.instanceKey}` : a.config.workspace_spec.branch_prefix
+  const branchPrefix = isTask
+    ? (a.taskRow ? taskBranchPrefix(a.taskRow) : null) ?? `taskpool-${a.instanceKey}`
+    : a.config.workspace_spec.branch_prefix
   const taskWsName = a.taskRow
     ? taskWorkspaceName({ name: a.taskRow.name, task_spec: a.taskRow.task_spec }, { date: a.date })
     : null
