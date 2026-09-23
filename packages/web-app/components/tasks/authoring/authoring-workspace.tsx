@@ -497,7 +497,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   const typeBadge = isV4 ? "🛠 开发任务" : "📝 草稿"
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full min-h-0" data-authoring-workspace>
+    <div ref={containerRef} className="task-tui flex flex-col h-full min-h-0" data-authoring-workspace>
       {/* ── terminal 导航条（2026-09-12 改版·方案 A）── 原 ModalHeader + 信息栏
           两条横幅压成一条 28px 深色 mono 条：红绿灯 + 标题即改 + 状态/语境
           token（hover 显全量）+ 废弃/全屏/入队。拖窗逻辑经 chrome 继承自
@@ -507,7 +507,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         onPointerDown={chrome?.onHeaderPointerDown}
         title={chrome ? "按住空白处拖拽移动窗口" : undefined}
         className={
-          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[2.5px] border-pop-bd bg-pop-ink px-2.5 font-mono text-[11px] text-pop-bg " +
+          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b border-pop-bd bg-pop-paper px-2.5 font-mono text-[11px] text-pop-ink " +
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
@@ -517,23 +517,23 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-yellow" />
           <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-cyan" />
         </span>
-        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <span aria-hidden className="shrink-0 text-pop-ink/25">│</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
-        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <span aria-hidden className="shrink-0 text-pop-ink/25">│</span>
         <span
           data-task-type-badge
-          className="shrink-0 rounded border-[1.5px] border-pop-bd bg-pop-yellow px-1.5 py-px text-[9px] font-black text-pop-ink"
+          className="shrink-0 rounded border border-pop-bd bg-pop-yellow px-1.5 py-px font-mono text-[9px] font-bold text-[#151413]"
         >
           {typeBadge}
         </span>
-        <span data-task-modal-status={task.status} className="shrink-0 font-bold text-pop-cyan">
+        <span data-task-modal-status={task.status} className="shrink-0 text-pop-green">
           ● 草稿
         </span>
         {skillGroups.map((g) => (
           <span
             key={g}
             data-skill-group-badge={g}
-            className="flex shrink-0 items-center gap-0.5 rounded border-[1.5px] border-pop-bg/25 bg-pop-bg/10 px-1.5 py-px text-[9px] font-black text-pop-bg"
+            className="flex shrink-0 items-center gap-0.5 rounded border border-pop-bd bg-pop-bg/30 px-1.5 py-px font-mono text-[9px] font-bold text-pop-ink"
           >
             <Lock className="size-2.5" aria-label="锁定" />
             <span>{g}</span>
@@ -542,17 +542,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         {/* #53 K3：manifest 影子字段的最小展示面（hover 列名） */}
         {(spec.resources?.length ?? 0) > 0 && (
           <span data-task-resources title={spec.resources!.map((r) => `${r.type}:${r.name}`).join("\n")}
-            className="shrink-0 text-[10px] text-pop-bg/70">📦{spec.resources!.length}</span>
+            className="shrink-0 text-[10px] text-pop-dim">📦{spec.resources!.length}</span>
         )}
         {(spec.authoring_resources?.length ?? 0) > 0 && (
           <span data-task-authoring-resources title={spec.authoring_resources!.map((r) => `${r.type}:${r.name}`).join("\n")}
-            className="shrink-0 text-[10px] text-pop-bg/70">🧪{spec.authoring_resources!.length}</span>
+            className="shrink-0 text-[10px] text-pop-dim">🧪{spec.authoring_resources!.length}</span>
         )}
         {/* codebase 预设恒呈现（v4-only UI：所有任务都有项目语境；非空即锁） */}
         <button
           data-preset-button
           onClick={() => setPresetOpen(true)}
-          className="shrink-0 rounded border-[1.5px] border-pop-bg/25 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
+          className="shrink-0 rounded border border-pop-bd px-1.5 py-px font-mono text-[9.5px] text-pop-dim transition-colors hover:border-pop-pink hover:text-pop-pink"
         >
           ⚙ codebase · {presetOrg} · {presetProjects.length} 项目
         </button>
@@ -562,7 +562,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               data-task-modal-delete
               onClick={chrome.onDeleteDraft}
               title="废弃草稿"
-              className="flex items-center gap-0.5 rounded border-[1.5px] border-transparent px-1 py-px text-[9.5px] font-black text-pop-bg/55 transition-colors hover:border-pop-red/60 hover:text-pop-red"
+              className="flex items-center gap-0.5 rounded border border-transparent px-1 py-px font-mono text-[9.5px] text-pop-dim transition-colors hover:border-pop-red/60 hover:text-pop-red"
             >
               <Trash2 className="size-2.5" /> 废弃
             </button>
@@ -575,10 +575,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             data-task-enqueue
             data-testid="task-enqueue"
             className={
-              "flex items-center gap-1 rounded-[7px] border-[1.5px] border-pop-bd px-2.5 py-1 text-[10px] font-black transition-colors " +
+              "flex items-center gap-1 rounded-md border border-pop-bd px-2.5 py-1 font-mono text-[10px] font-bold transition-colors " +
               (canEnqueue
-                ? "bg-pop-green text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] pop-press hover:bg-pop-green/90"
-                : "bg-pop-bg/10 text-pop-bg/40")
+                ? "bg-pop-green text-[#151413] hover:bg-pop-green/85"
+                : "bg-pop-bg/30 text-pop-dim")
             }
           >
             {enqueueBusy ? <Spinner className="size-3" /> : <span aria-hidden>⏎</span>} 入队执行
@@ -587,7 +587,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             <button
               onClick={chrome.onToggleFullscreen}
               title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
-              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-bg/40 hover:text-pop-yellow"
+              className="rounded border border-transparent p-0.5 text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-pink"
             >
               {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
             </button>
@@ -598,7 +598,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             onClick={onClose}
             aria-label="关闭"
             title="关闭（Esc 同效）"
-            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors pop-press hover:bg-pop-red/90"
+            className="grid size-[19px] shrink-0 place-items-center rounded-md border border-pop-bd bg-pop-red text-[10px] font-bold leading-none text-pop-ink transition-colors hover:bg-pop-red/80"
           >
             <span aria-hidden>✕</span>
           </button>
@@ -613,7 +613,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r-[2.5px] border-pop-bd">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r border-pop-bd">
           {/* 辅助条已退役（2026-09-12 改版）：技能计数提示 → 输入框 placeholder，
               专家咨询 → ChatArea composer 左端贴纸（composerLeading 槽）。 */}
 
@@ -655,6 +655,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               contextUsage={chat.contextUsage}
               currentModel={model}
               onModelChange={setModel}
+              tui
+              onSteer={(m) => void chat.steer(m)}
+              steerActiveRef={chat.steeringRef}
               composerPlaceholder={
                 commands.length > 0
                   ? `输入 / 调用技能（${commands.length} 个可用）`

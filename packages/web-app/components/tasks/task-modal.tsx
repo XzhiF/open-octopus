@@ -42,6 +42,7 @@ import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/co
 import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
+import { tuiEscapeGuard } from "@/lib/tui-escape"
 import { EditableTitle } from "./editable-title"
 import { TaskRunConsole } from "./run-console/task-run-console"
 import { RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
@@ -262,11 +263,17 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
         <DialogContent
           showCloseButton={mode === "authoring-template" || mode === "composite"}
           className={
-            isFullscreen
-              ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
-              : isTemplate
-                ? "sm:max-w-[680px] w-[92vw] max-h-[84vh] h-[80vh] p-0 gap-0 flex flex-col"
-                : "max-h-[97vh] p-0 gap-0 flex flex-col"
+            // 草稿工作台 = TUI（claude-code 终端）皮肤（2026-09-24 改版）：
+            // task-tui 挂在 DialogContent 上，连弹窗底盘/滚动条一起换底。
+            mode === "authoring-workspace"
+              ? (isFullscreen
+                  ? "task-tui sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
+                  : "task-tui max-h-[97vh] p-0 gap-0 flex flex-col")
+              : isFullscreen
+                ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
+                : isTemplate
+                  ? "sm:max-w-[680px] w-[92vw] max-h-[84vh] h-[80vh] p-0 gap-0 flex flex-col"
+                  : "max-h-[97vh] p-0 gap-0 flex flex-col"
           }
           style={
             isFullscreen || isTemplate
@@ -284,6 +291,11 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
+            // TUI 草稿工作台：排队召回/打断优先消费 Esc（见 lib/tui-escape）。
+            if (tuiEscapeGuard.active) {
+              e.preventDefault()
+              return
+            }
             if (isFullscreen) {
               e.preventDefault()
               setIsFullscreen(false)
@@ -499,7 +511,7 @@ function TemplatePickerMode({
 }) {
   const [busy, setBusy] = useState(false)
 
-  const handleCreate = async (value: { org?: string; projects: string[] }) => {
+  const handleCreate = async (value: { name: string; org?: string; projects: string[] }) => {
     setBusy(true)
     try {
       // D15 step 1: create the chat session FIRST.
@@ -507,6 +519,7 @@ function TemplatePickerMode({
       // D15 step 2 + 契约修复: POST 直建 v4（spec 旗标即刻落地）。
       const task = await createTask({
         org: value.org ?? "default",
+        name: value.name,
         source_chat_session_id: session.id,
         task_spec: { format: "v4" },
         project_ids: value.projects,

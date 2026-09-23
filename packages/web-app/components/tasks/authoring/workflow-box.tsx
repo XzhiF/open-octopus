@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
-  Search, ChevronRight, Plus, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
+  Search, ChevronRight, Trash2, ArrowUp, ArrowDown, FileText, Pencil,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
@@ -53,6 +53,7 @@ import {
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
+import { ZoomDialog } from "@/components/ui/zoom-dialog"
 import { cn } from "@/lib/utils"
 import {
   findBatchFor,
@@ -111,6 +112,9 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
   const [specTarget, setSpecTarget] = useState<{ phase: TaskPhase; activeRel?: string } | null>(null)
   const [deletingIdx, setDeletingIdx] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  // TUI 改版（2026-09-24）：添加/编辑一律弹窗（mac 缩放），不再有留空占位卡。
+  const [form, setForm] = useState<{ mode: "add" } | { mode: "edit"; phase: TaskPhase } | null>(null)
+  const [formAnchor, setFormAnchor] = useState<Element | null>(null)
 
   // 分层展开（2026-09-12 拍板）：默认只展开「当前 phase」（= 首个，draft 期
   // 即待推进的那格），其余收成细条。null = 尚未交互，仍走默认（agent 稍后
@@ -165,7 +169,8 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
     slug: string
     workflowRef: string
     inputValues: Record<string, string>
-  }) =>
+  }) => {
+    setForm(null)
     void guard(`Phase ${row.name} 已添加`, async () => {
       await withPhases(task, (base) => {
         if (base.some((p) => p.slug === row.slug)) {
@@ -186,11 +191,40 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
         ]
       })
     })
+  }
+
+  const handleEditSave = (index: number, row: { name: string; slug: string; specPath: string }) => {
+    setForm(null)
+    void guard("已保存", async () => {
+      await withPhases(task, (base) =>
+        base.map((p) =>
+          p.index === index
+            ? { ...p, name: row.name.trim(), slug: row.slug, specPath: row.specPath.trim() }
+            : p,
+        ),
+      )
+    })
+  }
 
   return (
     // 卡壳退役（2026-09-12 分层重排）：phase 直接排在「SPEC · 规格」分组吊牌下，
     // 每 phase 一张独立贴纸卡；「Phase 计划」折叠壳由逐卡展开态取代。
     <div className="space-y-1.5" data-workflow-box data-phase-binding-list>
+      {isDraft && (
+        <div className="flex items-center justify-between py-0.5">
+          <span data-phase-count className="font-mono text-[9px] font-black tracking-wider text-pop-dim">
+            PHASES ×{phases.length}
+          </span>
+          <button
+            type="button"
+            data-phase-add-open
+            onClick={(e) => { setFormAnchor(e.currentTarget); setForm({ mode: "add" }) }}
+            className="rounded border border-pop-bd px-2 py-px font-mono text-[10px] font-bold text-pop-pink transition-colors hover:border-pop-pink"
+          >
+            ＋ 添加
+          </button>
+        </div>
+      )}
       {phases.length === 0 ? (
         <p className="text-[11px] text-muted-foreground" data-phase-bind-empty>
           尚无 phase —— 对话里让 agent 拆分（拆分产物会先在下方「草稿批次」区出现），或用「添加 Phase」手动建骨架。
@@ -213,14 +247,25 @@ function PhaseListEditor({ task, onMutated, batchTree }: WorkflowBoxProps) {
             onRequestDelete={setDeletingIdx}
             onOpenBind={setOpenPhaseIdx}
             onOpenSpec={(p, activeRel) => setSpecTarget({ phase: p, activeRel })}
-            onEdited={onMutated}
-            busyGate={guard}
+            onRequestEdit={(p, el) => { setFormAnchor(el); setForm({ mode: "edit", phase: p }) }}
             batchTree={batchTree}
           />
         ))
       )}
 
-      {isDraft && <AddPhaseRow busy={busy} main={mainSlugOf(task)} onAdd={handleAdd} />}
+      {form && (
+        <PhaseFormDialog
+          open
+          anchor={formAnchor}
+          mode={form.mode}
+          phase={form.mode === "edit" ? form.phase : null}
+          busy={busy}
+          main={mainSlugOf(task)}
+          onClose={() => setForm(null)}
+          onAdd={handleAdd}
+          onEditSave={handleEditSave}
+        />
+      )}
 
       {!isDraft && (
         <p className="text-[10px] text-muted-foreground">
@@ -292,8 +337,8 @@ interface PhaseRowProps {
   onRequestDelete: (index: number) => void
   onOpenBind: (index: number) => void
   onOpenSpec: (phase: TaskPhase, activeRel?: string) => void
-  onEdited: () => void
-  busyGate: (label: string, fn: () => Promise<void>) => Promise<void>
+  /** TUI 改版：编辑走缩放弹窗（名称/slug/spec 路径）。 */
+  onRequestEdit: (phase: TaskPhase, el: Element) => void
   batchTree?: BatchTreeState
 }
 
@@ -316,12 +361,8 @@ const toneFor = (index: number): string =>
 
 function PhaseRow({
   task, phase, editable, busy, first, last, canDelete, current, expanded, onToggle,
-  onMove, onRequestDelete, onOpenBind, onOpenSpec, onEdited, busyGate, batchTree,
+  onMove, onRequestDelete, onOpenBind, onOpenSpec, onRequestEdit, batchTree,
 }: PhaseRowProps) {
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(phase.name)
-  const [slug, setSlug] = useState(phase.slug)
-  const [specPath, setSpecPath] = useState(phase.specPath)
   // #53 行内展开：展开态受控（默认只展开当前 phase），展开区吃磁盘树。
   const [summary, setSummary] = useState<{ kdRows: number; excerpt: string } | undefined>(undefined)
 
@@ -344,33 +385,6 @@ function PhaseRow({
     return () => { cancelled = true }
   }, [expanded, summary, specEntry, task.id, phase.specPath])
 
-  // 退出编辑态/外部刷新（SSE onMutated）→ 回到服务端事实
-  useEffect(() => {
-    if (!editing) {
-      setName(phase.name)
-      setSlug(phase.slug)
-      setSpecPath(phase.specPath)
-    }
-  }, [phase, editing])
-
-  const invalid =
-    !name.trim() || name.trim().length > 100 ||
-    !SLUG_RE.test(slug) || slug.length > 100 ||
-    !specPath.trim()
-
-  const handleSaveRow = () =>
-    busyGate("已保存", async () => {
-      await withPhases(task, (base) =>
-        base.map((p) =>
-          p.index === phase.index
-            ? { ...p, name: name.trim(), slug, specPath: specPath.trim() }
-            : p,
-        ),
-      )
-      setEditing(false)
-      onEdited()
-    })
-
   return (
     <div
       data-phase-bind-card={phase.index}
@@ -379,49 +393,7 @@ function PhaseRow({
         expanded ? "border-[2.5px] shadow-pop-sm" : "border-2 shadow-none",
       )}
     >
-      {editing ? (
-        <div className="space-y-1.5 px-2.5 py-2" data-phase-row-edit-form={phase.index}>
-          <div className="flex items-center gap-1.5">
-            <Label className="text-[10px] w-10 shrink-0">name</Label>
-            <Input
-              className="h-6 text-xs"
-              value={name}
-              maxLength={100}
-              onChange={(e) => setName(e.target.value)}
-              data-phase-name-input={phase.index}
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Label className="text-[10px] w-10 shrink-0">slug</Label>
-            <Input
-              className={`h-6 text-xs ${slug && !SLUG_RE.test(slug) ? "border-pop-red" : ""}`}
-              value={slug}
-              maxLength={100}
-              title="path-safe：字母/数字开头，可含 . _ -"
-              onChange={(e) => setSlug(e.target.value)}
-              data-phase-slug-input={phase.index}
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Label className="text-[10px] w-10 shrink-0">spec</Label>
-            <Input
-              className="h-6 text-xs font-mono"
-              value={specPath}
-              onChange={(e) => setSpecPath(e.target.value)}
-              data-phase-specpath-input={phase.index}
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setEditing(false)} disabled={busy} data-phase-edit-cancel={phase.index}>
-              取消
-            </Button>
-            <Button size="sm" className="h-6 text-[10px]" onClick={() => void handleSaveRow()} disabled={invalid || busy} data-phase-edit-save={phase.index}>
-              {busy ? <Spinner className="size-3 mr-1" /> : null}保存
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <>
+      <>
           {/* ── header 行：整行 = 展开开关（P# 瓷砖 + 名称 + 绑定 + chevron）── */}
           <button
             type="button"
@@ -588,7 +560,7 @@ function PhaseRow({
                 <>
                   <Button
                     variant="ghost" size="sm" className="size-6 p-0 text-muted-foreground hover:text-foreground" title="编辑名称/slug/spec 路径"
-                    onClick={() => setEditing(true)}
+                    onClick={(e) => onRequestEdit(phase, e.currentTarget)}
                     data-phase-edit-button={phase.index}
                   >
                     <Pencil className="size-3" />
@@ -619,32 +591,38 @@ function PhaseRow({
               )}
             </div>
           </div>
-        </>
-      )}
+      </>
     </div>
   )
 }
 
-// ── 添加 Phase（仅 draft） ───────────────────────────────────────────
+// ── Phase 添加/编辑弹窗（mac 缩放，TUI 改版） ─────────────────────────
 
-function AddPhaseRow({
-  busy, main, onAdd,
+function PhaseFormDialog({
+  open, anchor, mode, phase, busy, main, onClose, onAdd, onEditSave,
 }: {
+  open: boolean
+  anchor: Element | null
+  mode: "add" | "edit"
+  phase: TaskPhase | null
   busy: boolean
   /** 批次主 slug（新约定父目录，来自 spec.slug；无 → 回退日期约定显示）。 */
   main?: string
+  onClose: () => void
   onAdd: (row: { name: string; slug: string; workflowRef: string; inputValues: Record<string, string> }) => void
+  onEditSave: (index: number, row: { name: string; slug: string; specPath: string }) => void
 }) {
-  const [name, setName] = useState("")
-  const [slug, setSlug] = useState("")
+  const [name, setName] = useState(phase?.name ?? "")
+  const [slug, setSlug] = useState(phase?.slug ?? "")
+  const [specPath, setSpecPath] = useState(phase?.specPath ?? "")
   const [workflowRef, setWorkflowRef] = useState(DEFAULT_NEW_WORKFLOW)
+  const [slugTouched, setSlugTouched] = useState(mode === "edit")
   const [catalog, setCatalog] = useState<WorkflowPreset[]>([])
   const fetchedRef = useRef(false)
 
-  // 绑定目录一次拉取（catalog 即全部可选项）；失败退化为「只有默认推荐项」的
-  // 自由文本 ref。
+  // 绑定目录一次拉取（add 模式的可选项）；失败退化为「只有默认推荐项」的自由文本 ref。
   useEffect(() => {
-    if (fetchedRef.current) return
+    if (mode !== "add" || fetchedRef.current) return
     fetchedRef.current = true
     listWorkflowPresets()
       .then(({ presets }) => {
@@ -654,75 +632,102 @@ function AddPhaseRow({
         }
       })
       .catch(() => setCatalog([]))
-  }, [])
+  }, [mode])
 
   // slug 未手打过 → 跟随 name 简版 slugify
-  const [slugTouched, setSlugTouched] = useState(false)
   const suggestedSlug = name
     .trim().toLowerCase()
     .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || `phase-${catalog.length + 1}`
   const effectiveSlug = slugTouched ? slug : suggestedSlug
-  const valid =
-    name.trim().length > 0 && name.trim().length <= 100 &&
-    SLUG_RE.test(effectiveSlug) && effectiveSlug.length <= 100
 
-  const handleAdd = () => {
-    if (!valid || busy) return
-    onAdd({
-      name: name.trim(),
-      slug: effectiveSlug,
-      workflowRef,
-      inputValues: { ...catalog.find((w) => w.workflow === workflowRef)?.inputs },
-    })
-    setName("")
-    setSlug("")
-    setSlugTouched(false)
+  const invalid =
+    !name.trim() || name.trim().length > 100 ||
+    !SLUG_RE.test(effectiveSlug) || effectiveSlug.length > 100 ||
+    (mode === "edit" && !specPath.trim())
+
+  const handleSubmit = () => {
+    if (invalid || busy) return
+    if (mode === "add") {
+      onAdd({
+        name: name.trim(),
+        slug: effectiveSlug,
+        workflowRef,
+        inputValues: { ...catalog.find((w) => w.workflow === workflowRef)?.inputs },
+      })
+    } else if (phase) {
+      onEditSave(phase.index, { name: name.trim(), slug: effectiveSlug, specPath: specPath.trim() })
+    }
   }
 
+  const row = "flex items-center gap-2"
+  const lbl = "w-16 shrink-0 font-mono text-[10px] text-pop-dim"
+  const field = "h-7 flex-1 min-w-0 rounded border border-pop-bd bg-pop-bg px-2 font-mono text-[11px] text-pop-ink outline-none transition-colors focus:border-pop-pink"
+
   return (
-    <div className="rounded-md border border-dashed px-2.5 py-2 space-y-1.5" data-phase-add-form>
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-medium text-muted-foreground">
-          <Plus className="inline size-3 mr-0.5" />添加 Phase
-        </span>
-        <span className="text-[9px] text-muted-foreground ml-auto font-mono">
-          {defaultSpecPath(effectiveSlug || "…", main)}
-        </span>
+    <ZoomDialog open={open} onClose={onClose} anchor={anchor} width={430}
+      title={mode === "add" ? "添加 Phase" : `编辑 Phase ${phase?.index ?? ""}`}>
+      <div data-phase-add-form={mode === "add" ? "" : undefined} className="space-y-2">
+        <div className={row}>
+          <Label className={lbl}>名称</Label>
+          <Input className={field} placeholder="例：契约与落库" value={name} maxLength={100}
+            onChange={(e) => setName(e.target.value)}
+            data-phase-add-name={mode === "add" ? "" : undefined}
+            data-phase-name-input={mode === "edit" && phase ? phase.index : undefined} />
+        </div>
+        <div className={row}>
+          <Label className={lbl}>slug</Label>
+          <Input className={`${field} ${effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-pop-red" : ""}`}
+            placeholder={mode === "add" ? `slug=${suggestedSlug}` : ""} value={effectiveSlug} maxLength={100}
+            title="path-safe：字母/数字开头，可含 . _ -"
+            onChange={(e) => { setSlugTouched(true); setSlug(e.target.value) }}
+            data-phase-add-slug={mode === "add" ? "" : undefined}
+            data-phase-slug-input={mode === "edit" && phase ? phase.index : undefined} />
+        </div>
+        {mode === "add" ? (
+          <div className={row}>
+            <Label className={lbl}>绑定工作流</Label>
+            <select
+              className={field}
+              value={workflowRef}
+              onChange={(e) => setWorkflowRef(e.target.value)}
+              data-phase-add-workflow
+            >
+              {(catalog.length > 0 ? catalog.map((w) => w.workflow) : [workflowRef]).map((ref) => (
+                <option key={ref} value={ref}>{ref}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className={row}>
+            <Label className={lbl}>spec 路径</Label>
+            <Input className={`${field}`} value={specPath}
+              onChange={(e) => setSpecPath(e.target.value)}
+              data-phase-specpath-input={phase ? phase.index : undefined} />
+          </div>
+        )}
+        <p className="pl-[4.5rem] font-mono text-[9.5px] text-pop-dim">
+          {mode === "add"
+            ? <>spec 预落 <span className="text-pop-green">{defaultSpecPath(effectiveSlug || "…", main)}</span>；inputs 以目录骨架预填（占位符由 server 解析）</>
+            : "改 slug 不会搬动已落盘的批次目录 —— 同步 specPath 或让 agent 改写"}
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} disabled={busy}
+            className="rounded border border-pop-bd px-3 py-1 font-mono text-[10.5px] text-pop-dim transition-colors hover:text-pop-ink"
+            data-phase-edit-cancel={mode === "edit" && phase ? phase.index : undefined}>
+            取消
+          </button>
+          <button type="button" onClick={handleSubmit} disabled={invalid || busy}
+            className="rounded border border-pop-bd bg-pop-pink px-3 py-1 font-mono text-[10.5px] font-bold text-[#151413] transition-opacity disabled:opacity-40"
+            data-phase-add-submit={mode === "add" ? "" : undefined}
+            data-phase-edit-save={mode === "edit" && phase ? phase.index : undefined}>
+            {busy ? <Spinner className="mr-1 inline size-3" /> : null}
+            {mode === "add" ? "添加" : "保存"}
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1.5">
-        <Input
-          className="h-6 text-xs flex-1" placeholder="名称（≤100 字）" value={name} maxLength={100}
-          onChange={(e) => setName(e.target.value)}
-          data-phase-add-name
-        />
-        <Input
-          className={`h-6 text-xs w-32 font-mono ${slugTouched && effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-pop-red" : ""}`}
-          placeholder={`slug=${suggestedSlug}`} value={effectiveSlug} maxLength={100}
-          onChange={(e) => { setSlugTouched(true); setSlug(e.target.value) }}
-          data-phase-add-slug
-        />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <select
-          className="h-6 flex-1 min-w-0 rounded-md border border-border bg-background px-1.5 text-[11px]"
-          value={workflowRef}
-          onChange={(e) => setWorkflowRef(e.target.value)}
-          data-phase-add-workflow
-        >
-          {(catalog.length > 0 ? catalog.map((w) => w.workflow) : [workflowRef]).map((ref) => (
-            <option key={ref} value={ref}>{ref}</option>
-          ))}
-        </select>
-        <Button size="sm" className="h-6 text-[10px]" onClick={handleAdd} disabled={!valid || busy} data-phase-add-submit>
-          {busy ? <Spinner className="size-3 mr-1" /> : null}添加
-        </Button>
-      </div>
-      <p className="text-[9px] text-muted-foreground">
-        新 phase 以绑定目录骨架预填 inputs（占位符由 server 解析）；随后可在「绑定工作流」弹窗调整。
-      </p>
-    </div>
+    </ZoomDialog>
   )
 }
 

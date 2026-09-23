@@ -12,7 +12,7 @@ interface MentionAutocompleteProps {
   /** Callback when a clone is selected */
   onSelect: (cloneName: string) => void
   /** Position relative to textarea */
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null> | null
   /** Current clone name (for self-reference detection) */
   currentCloneName?: string | null
 }

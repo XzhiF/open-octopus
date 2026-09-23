@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE v3 — 任务草稿弹窗 · claude-code TUI（可删，勿当生产代码读）
+
+  本版按用户反馈：
+  · 专家咨询 / 模型 放回 composer 下方一行。
+  · textarea 长高上限放开（11 行封顶才内滚，修掉「3 行就滚」的 max-height 钳制 bug）。
+  · 排队规则（最多 3 条）：
+      - ⇧⏎ = 加入排队；有排队时 ⏎ = 继续加入排队（≤3）；
+      - 无排队且 SDK 跑着时 ⏎ = 打断接管（steer，保留 ⚠ 截断标记）；
+      - 无排队空闲时 ⏎ = 正常发送；
+      - 有排队时 esc = 队尾退回输入框；无排队 esc = 打断；
+      - 队列条目点击 = 退回输入框；SDK done → 立即 flush 队首。
+  · 右栏：去掉手动加 phase 的留空占位卡；添加/修改一律弹窗，
+    弹窗动画 = mac 文件夹缩放（从点击元素位置 scale 展开，弹性缓动）。
+
+  真实 API 映射：打断 = POST …/sessions/:id/stop → 等 done → POST chat；
+  排队 flush 时机 = SSE done 事件（lib/agent/sse.ts）。
+
+  跑法：http://localhost:3000/prototype/chat-tui.html
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · 任务草稿弹窗 TUI v3</title>
+<style>
+:root{--mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --bg:#191817;--fg:#d8d3cb;--dim:#6e6862;--acc:#d97757;--acc2:#8ba88e;--line:#2b2926;--panel:#211f1e;--chip:#2b2926;--warn:#c9a35c;--red:#b4534a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--mono);font-size:13px;line-height:1.55;background:#0c0b0a;color:var(--fg);overflow:hidden}
+#desk{height:100%;display:flex;align-items:center;justify-content:center;padding:18px}
+#modal{width:min(1280px,100%);height:min(820px,100%);background:var(--bg);border:1px solid var(--line);
+  border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px #000a}
+
+/* ── 顶栏 ── */
+#topbar{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0}
+#topbar .t{font-weight:600}
+#topbar .t::before{content:"✳ ";color:var(--acc)}
+#topbar .st{font-size:11px;color:var(--acc2);border:1px solid var(--acc2);border-radius:999px;padding:0 8px;line-height:16px}
+#topbar .grow{flex:1}
+#topbar .q{font-size:11px;color:var(--dim)}
+#topbar .q b{color:var(--acc)}
+#topbar .btn{border:1px solid var(--line);background:var(--chip);color:var(--fg);font:inherit;font-size:12px;padding:2px 12px;border-radius:6px;cursor:pointer}
+#topbar .btn.x{color:#fff;background:var(--red);border-color:var(--red);font-weight:700;width:24px;padding:2px 0;text-align:center}
+#topbar .btn:hover{border-color:var(--acc)}
+
+#split{flex:1;display:flex;min-height:0}
+#chatcol{flex:0 0 70%;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+#outcol{flex:1;display:flex;flex-direction:column;min-width:0;background:#151413;overflow-y:auto}
+
+/* ── transcript ─ */
+#transcript{flex:1;overflow-y:auto;padding:16px 20px 8px}
+.line{white-space:pre-wrap;word-break:break-word;margin-bottom:2px}
+.head{color:var(--acc);font-weight:600}
+.head.you{color:var(--fg)}
+.dim{color:var(--dim)}
+.md-b{color:var(--acc)}
+code.inline{background:var(--chip);padding:0 4px;border-radius:3px;color:var(--acc2)}
+.interrupted{color:var(--red)}
+.meta{margin:6px 0;color:var(--dim);cursor:pointer;user-select:none}
+.meta:hover{color:var(--fg)}
+.meta .count{color:var(--acc)}
+.meta-body{display:none;margin:2px 0 8px 14px;padding-left:10px;border-left:1px solid var(--line)}
+.meta-open .meta-body{display:block}
+.think{color:var(--dim)} .think::before{content:"◌ "}
+.tool{color:var(--dim)} .tool::before{content:"▸ ";color:var(--acc)}
+.tool .ok{color:var(--acc2)}
+.live{margin:4px 0;padding:6px 10px;border:1px solid var(--line);border-left:2px solid var(--acc2);background:var(--panel);border-radius:2px;color:var(--dim)}
+.live.tool-live{border-left-color:var(--acc)}
+
+/* ── dock：queue 行 + 输入框 + 下方控件行 ── */
+#dock{border-top:1px solid var(--line);flex-shrink:0;padding:8px 16px 10px}
+#queue{margin-bottom:5px}
+.qrow{display:flex;gap:8px;color:var(--dim);cursor:pointer;padding:1px 2px;border-radius:3px}
+.qrow:hover{color:var(--warn)}
+.qrow::before{content:"⧗ queued";color:var(--acc);flex-shrink:0;width:78px;font-size:11px}
+.qrow .pos{color:var(--acc);flex-shrink:0;font-size:11px}
+.qrow .txt{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.qrow .hint{margin-left:auto;flex-shrink:0;font-size:10.5px;color:var(--dim)}
+.cbox{border:1px solid var(--line);border-radius:8px;background:#1d1b1a;padding:7px 10px 5px}
+.cbox:focus-within{border-color:var(--acc)}
+.crow{display:flex;gap:8px;align-items:flex-start}
+.crow .chev{color:var(--acc);font-weight:700;line-height:21px}
+/* 注意：不写 CSS max-height —— 会把 scrollHeight 钳住导致 3 行就滚（v2 bug）。
+   长高由 JS 封顶 220px（≈11 行），超过才 overflow 内滚。 */
+#input{flex:1;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;resize:none;caret-color:var(--acc);min-height:21px;overflow-y:auto;display:block}
+#input::placeholder{color:var(--dim)}
+.cfoot{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11px;margin-top:4px}
+.kbd{border:1px solid var(--line);border-radius:2px;padding:0 4px;font-size:10px}
+.spin{color:var(--acc);display:inline-block;min-width:13px}
+.busyline{color:var(--warn)}
+/* 下方控件行（专家咨询/模型 保留在底部） */
+.ctrlbar{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11.5px;padding-top:6px;margin-top:6px;border-top:1px solid var(--line)}
+.ctrlbar b{color:var(--acc2);font-weight:500;cursor:pointer}
+.ctrlbar b:hover{color:var(--fg)}
+.ctrlbar .sep{color:var(--line)}
+.ctrlbar .grow{flex:1}
+
+/* ── 右栏 ── */
+#outcol h4{color:var(--dim);font-weight:400;text-transform:uppercase;letter-spacing:.08em;font-size:10px;padding:12px 14px 6px;display:flex;align-items:center}
+#outcol h4 .add{margin-left:auto;color:var(--acc);cursor:pointer;font-size:13px;letter-spacing:0;text-transform:none;border:1px solid var(--line);border-radius:4px;padding:0 8px}
+#outcol h4 .add:hover{border-color:var(--acc)}
+.ph{margin:0 14px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:8px 10px;cursor:pointer}
+.ph:hover{border-color:var(--acc)}
+.ph .n{color:var(--fg);font-weight:600}
+.ph .badge{float:right;font-size:10px;border-radius:999px;padding:0 8px;line-height:16px}
+.ph .badge.done{color:var(--acc2);border:1px solid var(--acc2)}
+.ph .badge.draft{color:var(--warn);border:1px solid var(--warn)}
+.ph ul{list-style:none;margin-top:4px;color:var(--dim);font-size:11.5px}
+.ph li::before{content:"· "}
+.chk{margin:2px 14px 4px;font-size:11.5px;color:var(--dim);display:flex;gap:8px}
+.chk .ok{color:var(--acc2)} .chk .no{color:var(--red)}
+.chk code{color:var(--fg)}
+#outview{margin:4px 14px;border:1px dashed var(--line);border-radius:6px;padding:10px;color:var(--dim);font-size:11.5px;min-height:90px}
+#outview .fn{color:var(--acc2)}
+
+/* ── mac 缩放弹窗（phase 添加/编辑）── */
+#zoom{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:#0000;transition:background .28s}
+#zoom.open{display:flex;background:#0009}
+.zcard{width:440px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 30px 90px #000c;
+  transform-origin:center;transition:transform .38s cubic-bezier(.32,1.45,.55,1),opacity .2s}
+.zcard h3{color:var(--acc);font-size:13px;margin-bottom:12px}
+.zrow{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.zrow label{width:88px;color:var(--dim);font-size:11.5px;text-align:right}
+.zrow input,.zrow select{flex:1;background:#1d1b1a;border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;padding:3px 8px;outline:0}
+.zrow input:focus,.zrow select:focus{border-color:var(--acc)}
+.zfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.zfoot button{background:var(--chip);color:var(--fg);border:1px solid var(--line);font:inherit;padding:3px 14px;border-radius:5px;cursor:pointer}
+.zfoot .go{color:#fff;background:var(--acc);border-color:var(--acc)}
+
+/* 专家咨询弹层（也走缩放动画） */
+#moa{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:#0000;transition:background .28s}
+#moa.open{display:flex;background:#0009}
+.moa-box{width:420px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 30px 90px #000c;
+  transition:transform .38s cubic-bezier(.32,1.45,.55,1),opacity .2s}
+.moa-box h3{font-size:13px;color:var(--acc);margin-bottom:10px}
+.moa-box label{display:flex;gap:8px;align-items:center;padding:4px 2px;cursor:pointer}
+.moa-box .roles{margin:6px 0 0 22px;color:var(--dim);font-size:11px}
+.moa-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.moa-foot button{background:var(--chip);color:var(--fg);border:1px solid var(--line);font:inherit;padding:3px 12px;border-radius:4px;cursor:pointer}
+.moa-foot button.go{color:#fff;background:var(--acc);border-color:var(--acc)}
+
+#vtag{position:fixed;left:12px;bottom:10px;font-size:11px;color:var(--dim);z-index:99}
+#vtag b{color:var(--warn)}
+</style>
+</head>
+<body>
+<div id="desk"><div id="modal">
+  <div id="topbar">
+    <span class="t">计费规则时区收进当前 batch</span>
+    <span class="st">draft</span>
+    <span class="grow"></span>
+    <span class="q">入队清单 <b id="qcount">3/4</b></span>
+    <button class="btn">入队</button>
+    <button class="btn x">×</button>
+  </div>
+  <div id="split">
+    <div id="chatcol">
+      <div id="transcript"></div>
+      <div id="dock">
+        <div id="queue"></div>
+        <div class="cbox">
+          <div class="crow"><span class="chev">❯</span><textarea id="input" rows="1" placeholder="问 task-author…　⏎ 发送 · SDK 跑着时 ⏎=打断接管 · ⇧⏎=排队"></textarea></div>
+          <div class="cfoot"><span id="busyhint"></span><span class="grow"></span><span id="busyline"></span></div>
+        </div>
+        <div class="ctrlbar">
+          <b id="moaBtn">⚉ 专家咨询</b><span class="sep">│</span>
+          <span>model</span>
+          <select id="modelSel" style="background:transparent;border:0;color:var(--acc2);font:inherit;outline:0">
+            <option>pro-max</option><option selected>pro</option><option>se</option>
+          </select>
+          <span class="grow"></span>
+          <span id="ctx">ctx 12%</span>
+        </div>
+      </div>
+    </div>
+    <div id="outcol">
+      <h4>phases <span class="add" id="phAdd">＋ 添加</span></h4>
+      <div id="phList"></div>
+      <h4>入队清单</h4>
+      <div class="chk"><span class="ok">✓</span>spec 产物 <code>Phase1/spec.md</code></div>
+      <div class="chk"><span class="ok">✓</span>票 <code>issues/ 4 张</code></div>
+      <div class="chk"><span class="ok">✓</span>工作流绑定 <code>task-dev-pipeline</code></div>
+      <div class="chk"><span class="no">✗</span>runbook / 验收预览 <span class="dim">— 对话里让 agent 补</span></div>
+      <h4>输出区</h4>
+      <div id="outview"><span class="fn">spec.md</span> — Phase 1<br><span class="dim"># 计费规则时区收进当前 batch
+目标：计价窗口匹配按 UTC+8 归一…</span></div>
+    </div>
+  </div>
+</div></div>
+
+<!-- phase 添加/编辑 弹窗（mac 缩放） -->
+<div id="zoom"><div class="zcard" id="zcard">
+  <h3 id="zTitle">添加 Phase</h3>
+  <div class="zrow"><label>名称</label><input id="zName" placeholder="例：契约与落库"></div>
+  <div class="zrow"><label>slug</label><input id="zSlug" placeholder="自动从名称生成"></div>
+  <div class="zrow"><label>绑定工作流</label><select id="zWf"><option>task-dev-pipeline</option><option>matt-dev-pipeline</option><option>octo-quick</option></select></div>
+  <div class="zrow"><label>spec 路径</label><input id="zSpec" placeholder=".scratch/20260924/&lt;slug&gt;/spec.md"></div>
+  <div class="zfoot"><button id="zCancel">取消</button><button class="go" id="zOk">保存</button></div>
+</div></div>
+
+<!-- 专家咨询 -->
+<div id="moa"><div class="moa-box" id="moaBox">
+  <h3>专家咨询</h3>
+  <label><input type="radio" name="mmode" value="single" checked> 单专家（subagent 直询）</label>
+  <label><input type="radio" name="mmode" value="moa"> MoA（多专家并行 → 聚合）</label>
+  <label><input type="radio" name="mmode" value="debate"> Debate（对辩后裁决）</label>
+  <div class="roles">架构师 · 后端专家 · 前端专家 · 测试专家 · 安全专家</div>
+  <div class="moa-foot"><button id="moaCancel">取消</button><button class="go" id="moaGo">发起咨询</button></div>
+</div></div>
+
+<div id="vtag"><b>PROTOTYPE v3</b> · 假数据，交互可玩</div>
+
+<script>
+"use strict";
+const $=s=>document.getElementById(s);
+const S={
+  msgs:[], metaStore:{}, open:{},
+  live:null, busy:false, turn:0,
+  queue:[],                       // ⇧⏎ 排队，done 即 flush，≤3
+  model:"pro", expert:null, draft:"",
+  spin:0, startedAt:0,
+  phases:[{n:"Phase 1 · 契约与落库",badge:"done",items:["spec.md .scratch/20260924/billing-tz/","绑定 task-dev-pipeline · r2 ✓"]}],
+};
+const QMAX=3;
+const SPIN=["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+
+/* ── 对话模拟（token 掐断打断链）── */
+function replyScript(u){return[
+  {t:"think",text:`解析意图：「${u.slice(0,24)}…」→ 先读现有 batch spec 再回答`},
+  {t:"tool",text:"Read .scratch/20260924/billing-tz/spec.md",ret:"ok · 42 行"},
+  {t:"think",text:"spec 未覆盖该点。建议拆两个 Phase：契约落库 → 前端改造。"},
+  {t:"delta",chunks:["收到。核对了当前 batch 产物，建议：\n\n","**Phase 1** — 契约与落库：`POST /api/…` 必填校验 + ","steer 语义（stop→重发）\n","**Phase 2** — TUI composer / 排队 flush / 缩放弹窗\n\n","要我先出 Phase 1 的 spec 草案吗？"]},
+  {t:"done"}];}
+function advanceScript(sc,mt){
+  if(mt!==S.turn)return;
+  if(!sc.length)return finishTurn(false);
+  const ev=sc.shift();
+  if(ev.t==="think"||ev.t==="tool"){S.live.phase=ev.t;S.live.events.push(ev);render();setTimeout(()=>advanceScript(sc,mt),ev.t==="tool"?750:950);}
+  else if(ev.t==="delta"){S.live.phase="text";S.live.chunks=ev.chunks.slice();S.live.events.push({t:"text",acc:""});pumpDeltas(sc,mt);}
+  else finishTurn(false);
+}
+function pumpDeltas(sc,mt){
+  if(mt!==S.turn)return;
+  const ch=S.live.chunks.shift();
+  if(ch===undefined){render();setTimeout(()=>advanceScript(sc,mt),250);return;}
+  S.live.events.at(-1).acc+=ch;render();setTimeout(()=>pumpDeltas(sc,mt),55);
+}
+function finishTurn(byUser){
+  const events=S.live?S.live.events:[];
+  const text=events.filter(e=>e.t==="text").map(e=>e.acc).join("");
+  const meta=events.filter(e=>e.t!=="text"&&e.t!=="done");
+  if(text||meta.length){S.msgs.push({kind:"asst",text,cut:!!byUser});S.metaStore[S.msgs.length-1]=meta;}
+  S.live=null;S.busy=false;render();
+  flushQueue();                     // SDK done → 立即发队首
+}
+function interrupt(){if(!S.busy)return;S.turn++;finishTurn(true);}
+
+/* ── 发送 / 排队 / 召回 / flush ── */
+function take(text){
+  text=(text??S.draft).trim();
+  S.draft="";const el=$("input");el.value="";syncInput();
+  if(!text)return;
+  // 规则：有排队 → 继续排队(≤3)；否则 busy → 打断接管；否则直发。
+  if(S.queue.length){enqueue(text);return;}
+  if(S.busy){interrupt();}
+  S.msgs.push({kind:"you",text});
+  startTurn(text);render();
+}
+function queueShift(text){ // ⇧⏎
+  text=(text??S.draft).trim();
+  S.draft="";const el=$("input");el.value="";syncInput();
+  if(!text)return;
+  if(S.queue.length>=QMAX){flashHint(`队列已满（${QMAX}）`);return;}
+  S.queue.push(text);
+  if(!S.busy)flushQueue();          // 空闲时排队 → 立即走
+  render();
+}
+function enqueue(t){
+  if(S.queue.length>=QMAX){flashHint(`队列已满（${QMAX}）`);return;}
+  S.queue.push(t);
+}
+function flushQueue(){
+  if(!S.busy&&S.queue.length){
+    const next=S.queue.shift();
+    S.msgs.push({kind:"you",text:next,flushed:true});
+    startTurn(next);render();
+  }
+}
+function popQueue(){ // esc：有排队 → 队尾退回输入框
+  if(!S.queue.length)return false;
+  const back=S.queue.pop();
+  S.draft=back+(S.draft?" "+S.draft:"");
+  const el=$("input");el.value=S.draft;      // 聚焦态下 syncInput 不覆盖，须直写
+  render();el.focus();el.setSelectionRange(el.value.length,el.value.length);
+  return true;
+}
+function recallQueue(i){
+  S.draft=S.queue.splice(i,1)[0];
+  const el=$("input");el.value=S.draft;
+  render();el.focus();el.setSelectionRange(el.value.length,el.value.length);
+}
+let hintTimer=null;
+function flashHint(msg){
+  const b=$("busyline");b.innerHTML=`<span style="color:var(--red)">${msg}</span>`;
+  clearTimeout(hintTimer);hintTimer=setTimeout(render,1400);
+}
+function startTurn(u){const mt=++S.turn;S.busy=true;S.live={events:[],phase:"think",chunks:null};S.startedAt=Date.now();advanceScript(replyScript(u),mt);}
+
+/* ── 渲染 ── */
+function esc(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+function md(s){return esc(s).replace(/\*\*(.+?)\*\*/g,'<span class="md-b">**$1**</span>').replace(/`(.+?)`/g,'<code class="inline">$1</code>')}
+function transcriptHTML(){
+  let h=`<div class="line dim">✳ task-author · session s-7f2a · ${esc(S.model)}${S.expert?" · 专家:"+esc(S.expert):""}</div><div class="line">&nbsp;</div>`;
+  S.msgs.forEach((m,i)=>{
+    if(m.kind==="you"){
+      h+=`<div class="line"><span class="head you">❯</span> ${md(m.text)}${m.flushed?' <span class="dim" style="font-size:10.5px">⇧ 排队发出</span>':""}</div>`;
+    }else{
+      const meta=S.metaStore[i]||[];
+      if(meta.length){
+        const o=!!S.open[i];
+        h+=`<div class="meta${o?" meta-open":""}" data-meta="${i}">◌ 过程（时间序）· <span class="count">${meta.length} 步</span> ${o?"▾":"▸"}</div>`;
+        h+=`<div class="meta-body">`+meta.map(e=>e.t==="tool"?`<div class="tool">${esc(e.text)} <span class="ok">[${esc(e.ret||"")}]</span></div>`:`<div class="think">${esc(e.text)}</div>`).join("")+`</div>`;
+      }
+      if(m.text)h+=m.text.split("\n").map(l=>`<div class="line"><span class="head">✳</span> ${md(l)||"&nbsp;"}</div>`).join("");
+      if(m.cut)h+=`<div class="line interrupted dim">（本轮被截断）</div>`;
+    }
+    h+=`<div class="line">&nbsp;</div>`;
+  });
+  if(S.busy&&S.live){
+    h+=`<div class="line"><span class="head">✳</span></div>`;
+    S.live.events.forEach(e=>{
+      if(e.t==="think")h+=`<div class="live">◌ thinking — ${esc(e.text)}</div>`;
+      else if(e.t==="tool")h+=`<div class="live tool-live">▸ ${esc(e.text)} ${e.ret?`<span class="dim">[${esc(e.ret)}]</span>`:`<span class="spin">${SPIN[S.spin]}</span>`}</div>`;
+      else h+=`<div class="line"><span class="head">✳</span> ${md(e.acc)}<span style="color:var(--acc)">▊</span></div>`;
+    });
+  }
+  return h;
+}
+function queueHTML(){
+  if(!S.queue.length)return"";
+  return S.queue.map((q,i)=>`<div class="qrow" data-q="${i}"><span class="pos">${i+1}/${QMAX}</span><span class="txt">${esc(q)}</span><span class="hint">esc/点击 → 退回输入框</span></div>`).join("");
+}
+function hintHTML(){
+  if(S.queue.length)return`<span class="kbd">⏎</span> 继续排队 <span class="kbd">⇧⏎</span> 排队 <span class="kbd">esc</span> 退回输入框 <span class="dim">队列 ${S.queue.length}/${QMAX} · done 即发</span>`;
+  if(S.busy)return`<span class="kbd">⏎</span> 打断并接管 <span class="kbd">⇧⏎</span> 不打断，排队 <span class="kbd">esc</span> 打断`;
+  return`<span class="kbd">⏎</span> 发送 <span class="kbd">⇧⏎</span> 排队 <span class="kbd">⇧⏎⇧⏎</span> 连排`;
+}
+function render(){
+  const t=$("transcript");const stick=t.scrollHeight-t.scrollTop-t.clientHeight<80;
+  t.innerHTML=transcriptHTML();if(stick||S.busy)t.scrollTop=t.scrollHeight;
+  $("queue").innerHTML=queueHTML();
+  document.querySelectorAll("[data-meta]").forEach(el=>el.onclick=()=>{S.open[el.dataset.meta]=!S.open[el.dataset.meta];render();});
+  document.querySelectorAll("[data-q]").forEach(el=>el.onclick=()=>recallQueue(+el.dataset.q));
+  $("busyhint").innerHTML=hintHTML();
+  const bl=$("busyline");
+  if(S.busy&&!hintTimer){const s=((Date.now()-S.startedAt)/1000).toFixed(1);
+    bl.innerHTML=`<span class="busyline"><span class="spin">${SPIN[S.spin]}</span> ${S.live&&S.live.phase==="tool"?"exec":"thinking"} ${s}s</span>`;}
+  else if(!S.busy&&!hintTimer)bl.textContent="";
+  renderPhases();syncInput();
+}
+function renderPhases(){
+  $("phList").innerHTML=S.phases.map((p,i)=>`<div class="ph" data-ph="${i}"><span class="badge ${p.badge==="done"?"done":"draft"}">${p.badge}</span><span class="n">${esc(p.n)}</span><ul>${p.items.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`).join("");
+  document.querySelectorAll("[data-ph]").forEach(el=>el.onclick=e=>openZoom(e.currentTarget,"编辑 Phase",el));
+}
+/* auto-grow：JS 封顶 220px（≈11 行），不再被 CSS max-height 钳住 */
+function syncInput(){
+  const el=$("input");
+  if(document.activeElement!==el&&el.value!==S.draft)el.value=S.draft;
+  el.style.height="auto";
+  el.style.height=Math.min(el.scrollHeight,220)+"px";
+}
+
+/* ── mac 缩放弹窗：从触发元素 scale 展开 ── */
+function zoomIn(card,src){
+  const r=src.getBoundingClientRect();const c=card.getBoundingClientRect();
+  const dx=r.left+r.width/2-(c.left+c.width/2), dy=r.top+r.height/2-(c.top+c.height/2);
+  const sc=Math.max(r.width/c.width,.08);
+  card.style.transition="none";
+  card.style.transform=`translate(${dx}px,${dy}px) scale(${sc})`;card.style.opacity="0";
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    card.style.transition="transform .38s cubic-bezier(.32,1.45,.55,1),opacity .18s";
+    card.style.transform="translate(0,0) scale(1)";card.style.opacity="1";
+  }));
+}
+function zoomOut(wrap,card,src,after){
+  const r=src.getBoundingClientRect();const c=card.getBoundingClientRect();
+  const dx=r.left+r.width/2-(c.left+c.width/2), dy=r.top+r.height/2-(c.top+c.height/2);
+  const sc=Math.max(r.width/c.width,.08);
+  card.style.transition="transform .26s cubic-bezier(.5,0,.75,.4),opacity .22s";
+  card.style.transform=`translate(${dx}px,${dy}px) scale(${sc})`;card.style.opacity="0";
+  setTimeout(()=>{wrap.classList.remove("open");card.style.transform="";after&&after();},270);
+}
+let zoomSrc=null;
+function openZoom(evt,title,src){
+  zoomSrc=src||evt.currentTarget;
+  $("zTitle").textContent=title;
+  if(zoomSrc.dataset.ph!==undefined){const p=S.phases[+zoomSrc.dataset.ph];$("zName").value=p.n.split("· ")[1]||"";$("zSlug").value="billing-tz";}
+  else{$("zName").value="";$("zSlug").value="";$("zSpec").value="";}
+  $("zoom").classList.add("open");
+  zoomIn($("zcard"),zoomSrc);
+  setTimeout(()=>$("zName").focus(),400);
+}
+function closeZoom(){zoomOut($("zoom"),$("zcard"),zoomSrc);}
+$("phAdd").onclick=e=>openZoom(e,"添加 Phase");
+$("zCancel").onclick=closeZoom;
+$("zOk").onclick=()=>{
+  const n=$("zName").value.trim()||"未命名 Phase";
+  const slug=$("zSlug").value.trim()||n.slice(0,8);
+  const wf=$("zWf").value;
+  const idx=S.phases.length+1;
+  const item={n:`Phase ${idx} · ${n}`,badge:"draft",items:[`spec.md .scratch/20260924/${slug}/`,`绑定 ${wf}`]};
+  if(zoomSrc&&zoomSrc.dataset.ph!==undefined)S.phases[+zoomSrc.dataset.ph]=item;
+  else S.phases.push(item);
+  closeZoom();render();
+};
+
+/* 专家咨询（同缩放动画，源=按钮） */
+$("moaBtn").onclick=e=>{$("moa").classList.add("open");zoomIn($("moaBox"),$("moaBtn"));};
+$("moaCancel").onclick=()=>zoomOut($("moa"),$("moaBox"),$("moaBtn"));
+$("moaGo").onclick=()=>{
+  const m=document.querySelector("[name=mmode]:checked").value;
+  S.expert="后端专家"+({single:"",moa:"+MoA",debate:"+对辩"}[m]);
+  zoomOut($("moa"),$("moaBox"),$("moaBtn"),render);
+};
+$("modelSel").onchange=e=>{S.model=e.target.value;render();};
+
+/* ── 键盘 ── */
+$("input").addEventListener("input",e=>{S.draft=e.target.value;syncInput();});
+$("input").addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();take();}          // 发送/接管/续排
+  else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();queueShift();} // ⇧⏎ 排队
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    if($("moa").classList.contains("open")){$("moa").classList.remove("open");return;}
+    if($("zoom").classList.contains("open")){closeZoom();return;}
+    e.preventDefault();
+    if(!popQueue())interrupt();       // 有排队→退回；无排队→打断
+    $("input").focus();
+  }
+});
+setInterval(()=>{if(S.busy){S.spin=(S.spin+1)%SPIN.length;render();}},90);
+
+/* ── 种子 ── */
+S.msgs=[
+  {kind:"you",text:"帮我把计费规则的时区问题收进当前 batch"},
+  {kind:"asst",text:"已核对：计价窗口匹配在 r2 已按 UTC+8 归一。建议本轮只做回归验证，不新开 Phase。要看验证清单吗？"},
+];
+S.metaStore[1]=[{t:"think",text:"「计费规则时区」→ 命中 billing-report-3 的 r2 规则账翻转"},{t:"tool",text:"Grep tz_offset services/billing",ret:"ok · 3 处"}];
+render();$("input").focus();
+</script>
+</body>
+</html>

@@ -187,6 +187,8 @@ describe("WorkflowBox — v4 PhaseListEditor 渲染（票 12 D + 契约修复改
     mockCatalog()
     render(<WorkflowBox task={v4Task([])} onMutated={() => {}} />)
     expect(q("[data-phase-bind-empty]")).toBeTruthy()
+    // TUI 改版：留空占位卡退役 → 「＋ 添加」按钮开缩放弹窗，表单在弹窗内
+    fireEventClick(q("[data-phase-add-open]")!)
     await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
   })
 
@@ -206,14 +208,14 @@ describe("WorkflowBox — 绑定弹窗（目录源 + 定义镜像；S2/S5/AC-20 
   it("S2/AC4: dialog open fetches catalog + defs EXACTLY once each; selections + search do not refetch", async () => {
     const user = userEvent.setup()
     mockCatalog()
-    // AddPhaseRow（draft 常驻）挂载时自取一次「目录」（只 presets，不 defs）。
+    // TUI 改版（2026-09-24）：AddPhaseRow 收进缩放弹窗（开弹窗才取目录），
+    // draft 列表挂载不再自取 presets。
     render(<WorkflowBox task={v4Task([makePhase(1, { workflowRef: "" as TaskPhase["workflowRef"] })])} onMutated={() => {}} />)
-    await waitFor(() => expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(1))
-    expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(0)
+    expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(0)
 
     await user.click(q('[data-phase-bind-button="1"]')!)
     await waitFor(() => expect(q('[data-workflow-item="built-in/matt-spec-dev"]')).toBeTruthy())
-    await waitFor(() => expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(2))
+    await waitFor(() => expect(vi.mocked(listWorkflowPresets).mock.calls.length).toBe(1))
     await waitFor(() => expect(vi.mocked(listBuiltInWorkflows).mock.calls.length).toBe(1))
     const opened = vi.mocked(listWorkflowPresets).mock.calls.length
     const defsOpened = vi.mocked(listBuiltInWorkflows).mock.calls.length
@@ -345,6 +347,7 @@ describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 dr
       makeTask({ version: 5, task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
     )
     render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    fireEventClick(q("[data-phase-add-open]")!)
     await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
 
     await user.type(q("[data-phase-add-name]")!, "验收收尾")
@@ -373,6 +376,7 @@ describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 dr
       makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec }) as never,
     )
     render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
+    fireEventClick(q("[data-phase-add-open]")!)
     await waitFor(() => expect(q("[data-phase-add-form]")).toBeTruthy())
     await user.type(q("[data-phase-add-name]")!, "dup")
     fireEventChange(q("[data-phase-add-slug]")!, "slug-1")
@@ -425,7 +429,7 @@ describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 dr
     expect((q('[data-phase-delete-button="1"]') as unknown as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("inline edit name/slug/specPath → fresh 基底上替换目标行、其余 verbatim", async () => {
+  it("弹窗编辑 name/slug/specPath → fresh 基底上替换目标行、其余 verbatim", async () => {
     const phases = [makePhase(1), makePhase(2)]
     mockCatalog()
     vi.mocked(getTask).mockResolvedValue(
@@ -433,6 +437,7 @@ describe("WorkflowBox — 结构编辑（契约修复：增/删/移/改，仅 dr
     )
     render(<WorkflowBox task={v4Task(phases)} onMutated={() => {}} />)
     fireEventClick(q('[data-phase-edit-button="1"]')!)
+    // 缩放弹窗（TUI 改版）：编辑不再内联
     await waitFor(() => expect(q('[data-phase-name-input="1"]')).toBeTruthy())
     fireEventChange(q('[data-phase-name-input="1"]')!, "改名后的 Phase1")
     fireEventChange(q('[data-phase-slug-input="1"]')!, "renamed-1")

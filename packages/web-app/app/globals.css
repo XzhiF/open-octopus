@@ -181,6 +181,7 @@
   --pop-shadow-lg: 8px 8px 0 rgba(28, 27, 34, 0.18);
   --pop-dot: rgba(28, 27, 34, 0.05);
 
+
   /* ── 全站波普换底 (light):语义 token 一律指向 pop —— 所有 shadcn 组件
      走 bg-primary/border-border/text-muted-foreground 等语义类,自动继承。 ── */
   --background: var(--pop-bg);
@@ -298,6 +299,76 @@
   --agent-surface-inset: var(--pop-idle);
   --agent-divider: rgba(33, 31, 39, 0.22);
 }
+
+
+/* ── task-tui (2026-09-24 草稿工作台 TUI 改版) — claude-code 终端皮肤 ──
+   作用域换底：整棵子树（含 shadcn 语义 token）翻成暖黑终端配色。@theme 是
+   inline 映射 → 工具类编译为 var(--x) 于使用点解析，scope 重定义即全生效；
+   :root 处派生 token 已固化 → 需在本 scope 重钉一遍。
+   色板对应原型 public/prototype/chat-tui.html：bg #191817 / acc #d97757 /
+   sage #8ba88e / warn #c9a35c / red #b4534a。 */
+.task-tui {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
+    --pop-bg: #151413;
+    --pop-paper: #211f1e;
+    --pop-ink: #d8d3cb;
+    --pop-dim: #6e6862;
+    --pop-bd: #3a3733;
+    --pop-pink: #d97757;
+    --pop-pink-soft: #2a1f1a;
+    --pop-yellow: #c9a35c;
+    --pop-yellow-soft: #262119;
+    --pop-purple: #d97757;
+    --pop-purple-soft: #2a1f1a;
+    --pop-green: #8ba88e;
+    --pop-green-soft: #1d241e;
+    --pop-amber: #c9a35c;
+    --pop-amber-soft: #262119;
+    --pop-cyan: #7fa3a8;
+    --pop-cyan-soft: #1c2425;
+    --pop-red: #b4534a;
+    --pop-navy: #43596b;
+    --pop-navy-soft: #1e2730;
+    --pop-idle: #1d1b1a;
+    --pop-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    --pop-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+    --pop-shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.5);
+    --pop-dot: rgba(255, 255, 255, 0.03);
+    /* :root 处派生 token 已固化 → 本 scope 重钉一遍（不重钉则不跟随） */
+    --background: var(--pop-bg);
+    --foreground: var(--pop-ink);
+    --card: var(--pop-paper);
+    --card-foreground: var(--pop-ink);
+    --popover: var(--pop-paper);
+    --popover-foreground: var(--pop-ink);
+    --primary: var(--pop-pink);
+    --primary-foreground: #151413;
+    --secondary: var(--pop-idle);
+    --secondary-foreground: var(--pop-ink);
+    --muted: var(--pop-idle);
+    --muted-foreground: var(--pop-dim);
+    --accent: var(--pop-purple-soft);
+    --accent-foreground: var(--pop-ink);
+    --destructive: var(--pop-red);
+    --destructive-foreground: #f5f2ee;
+    --border: rgba(216, 211, 203, 0.14);
+    --input: var(--pop-bd);
+    --ring: var(--pop-pink);
+    --agent-primary: var(--pop-purple);
+    --agent-primary-light: var(--pop-purple-soft);
+    --agent-surface: var(--pop-bg);
+    --agent-surface-raised: var(--pop-paper);
+    --agent-surface-inset: #121110;
+    --agent-divider: var(--pop-bd);
+    --agent-success: var(--pop-green);
+    --agent-success-light: var(--pop-green-soft);
+    --agent-warn: var(--pop-amber);
+    --agent-warn-light: var(--pop-amber-soft);
+    --agent-error: var(--pop-red);
+    --agent-error-light: #2a1a18;
+    --agent-info: var(--pop-cyan);
+    --agent-info-light: var(--pop-cyan-soft);
+  }
 
 .dark {
   --background: oklch(0.145 0 0);

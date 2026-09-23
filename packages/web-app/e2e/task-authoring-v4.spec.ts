@@ -78,13 +78,16 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
     await expect(picker.getByText(/codebase/)).toBeVisible()
     await page.screenshot({ path: screenshotPath("01-template-v4-only.png") })
 
-    // ② 开始编写（不选项目 — 对话/预设可补；创建序列 = session + POST 直建）
+    // ② 标题必填（task-board-title 改版）→ 开始编写（不选项目 — 对话/预设可补；
+    //    创建序列 = session + POST 直建）
+    const TASK_NAME = `E2E_TD v4穿线 ${UNIQ}`
+    await expect(page.locator("[data-template-create]")).toBeDisabled()
+    await page.locator("[data-task-name-input]").fill(TASK_NAME)
     await page.locator("[data-template-create]").click()
     await expect(page.locator("[data-authoring-workspace]")).toBeVisible({ timeout: 20_000 })
 
     // ③ DB + API 真相：v4 旗标即刻在（不再靠对话 PUT）。UI 创建的 org 来自
-    // useOrgs 首项（非 TASK_E2E_ORG），且未传 name（server 落 "Untitled task"，
-    // autosave 智能标题在首轮对话前不会动）→ 按名字轮询取最新 draft。
+    // useOrgs 首项（非 TASK_E2E_ORG）；标题必填 → 按本次填入的名字轮询取 draft。
     let mine: { id: string } | undefined
     await expect
       .poll(
@@ -93,7 +96,7 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
             await fetch(`${SERVER_URL}/api/tasks?status=draft`)
           ).json()
           mine = (listed.items as Array<{ id: string; name: string; created_at: string }>)
-            .filter((t) => t.name === "Untitled task")
+            .filter((t) => t.name === TASK_NAME)
             .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]
           return mine?.id ?? null
         },
@@ -114,6 +117,7 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
     expect(snap.spec.format).toBe("v4")
 
     // ④ UI 添加 Phase（name → 自动 slug → 目录初选 workflow → 整数组 PUT）
+    await page.locator("[data-phase-add-open]").click()
     await expect(page.locator("[data-phase-add-form]")).toBeVisible()
     await page.locator("[data-phase-add-name]").fill(`穿线阶段 ${UNIQ}`)
     await page.locator("[data-phase-add-slug]").fill(`p-${UNIQ}`)

@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
+import { tuiEscapeGuard } from '@/lib/tui-escape'
+import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
 import type { ChatMessage } from '@/lib/types'
@@ -89,7 +91,19 @@ interface ChatAreaProps {
   composerLeading?: ReactNode
   /** 非流式时的输入框 placeholder（草稿工作台把「/ 调用技能」计数提示收编于此）。 */
   composerPlaceholder?: string
+  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台专用（2026-09-24 改版）：
+   *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
+   *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
+  tui?: boolean
+  /** 打断接管（tui）：stop → 等服务端停 → 重发（useAgentChat.steer）。 */
+  onSteer?: (message: string) => void
+  /** steer 在途（stop→重发谷）：期间 done-flush 让闸，防接管消息被队首抢发。 */
+  steerActiveRef?: React.MutableRefObject<boolean>
 }
+
+/** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
+const TUI_QUEUE_MAX = 3
+const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, pendingConfirm,
@@ -98,6 +112,7 @@ export function ChatArea({
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, currentModel, onModelChange,
   composerLeading, composerPlaceholder,
+  tui, onSteer, steerActiveRef,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -169,6 +184,94 @@ export function ChatArea({
     setInput(`/${commandName} `)
   }
 
+  // ── TUI 排队 / steer（2026-09-24 草稿工作台改版，仅 tui 变体生效）──────
+  // 语义（原型 chat-tui.html 拍板）：⇧⏎=排队（≤3，SDK done 立即 flush 队首）；
+  // 有排队时 ⏎=继续加入排队；无排队 busy ⏎=打断接管（steer）；有排队 esc=队尾
+  // 退回输入框（点击同效），无排队 esc=打断。
+  const [queue, setQueueState] = useState<string[]>([])
+  const queueRef = useRef<string[]>([])
+  const setQueue = (next: string[]) => { queueRef.current = next; setQueueState(next) }
+  const [queueHint, setQueueHint] = useState<string | null>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
+  const turnStartedAtRef = useRef(0)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!tui || !streaming) return
+    const t = setInterval(() => setTick((v) => v + 1), 110)
+    return () => clearInterval(t)
+  }, [tui, streaming])
+  void tick // busy 行（braille spinner + 计时）靠 tick 驱动重渲染
+
+  const wasStreamingRef = useRef(streaming)
+  useEffect(() => {
+    const was = wasStreamingRef.current
+    wasStreamingRef.current = streaming
+    if (!tui) return
+    if (!was && streaming) turnStartedAtRef.current = Date.now()
+    // SDK done → 立即发队首（steer 在途的 false 谷不让发）
+    if (was && !streaming && queueRef.current.length > 0 && !steerActiveRef?.current) {
+      const [head, ...rest] = queueRef.current
+      setQueue(rest)
+      onSend(head)
+    }
+  }, [streaming, tui, onSend])
+
+  const focusDockInput = () => {
+    dockRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+  }
+  const pushQueue = (text: string) => {
+    if (queueRef.current.length >= TUI_QUEUE_MAX) {
+      setQueueHint(`队列已满（${TUI_QUEUE_MAX}）`)
+      setTimeout(() => setQueueHint(null), 1400)
+      return
+    }
+    setQueue([...queueRef.current, text])
+  }
+  const recallQueue = (i: number) => {
+    const back = queueRef.current[i]
+    setQueue(queueRef.current.filter((_, j) => j !== i))
+    setInput((prev) => (prev.trim() ? `${back} ${prev}` : back))
+    focusDockInput()
+  }
+  const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen) return // 自动补全下拉打开时 Enter 归下拉
+    const text = input.trim()
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (!text) return
+      if (e.shiftKey) {
+        setInput('')
+        if (streaming) pushQueue(text)
+        else handleSend()
+        return
+      }
+      if (queue.length > 0) { setInput(''); pushQueue(text); return }
+      if (streaming) {
+        setInput('')
+        if (onSteer) onSteer(text)
+        else onStop()
+        return
+      }
+      handleSend()
+    } else if (e.key === 'Escape') {
+      // 有排队 → 队尾退回输入框；无排队 busy → 打断；否则放行（弹窗 Esc 关闭）。
+      if (queue.length > 0) { e.preventDefault(); e.stopPropagation(); recallQueue(queue.length - 1) }
+      else if (streaming) { e.preventDefault(); e.stopPropagation(); onStop() }
+    }
+  }
+  // Escape 仲裁：排队/生成中由本组件消费 Esc（Radix 捕获相早于 React，须先置位
+  // 让宿主弹窗 preventDefault 放行），否则照常关窗。
+  useEffect(() => {
+    tuiEscapeGuard.active = !!tui && (queue.length > 0 || streaming)
+    return () => { if (tui) tuiEscapeGuard.active = false }
+  }, [tui, queue, streaming])
+
+  const busyElapsed = streaming ? Math.max(0, (Date.now() - turnStartedAtRef.current) / 1000) : 0
+  const busyPhase = toolCalls.some((tc) => tc.status === 'start' || tc.status === 'running' || tc.status === 'pending')
+    ? 'exec' : 'thinking'
+  const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Content area */}
@@ -184,17 +287,20 @@ export function ChatArea({
         )
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 py-4 space-y-2.5">
+          <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
             {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
-              <ChatBubble key={msg.id} message={msg} />
+              tui ? <TuiMessage key={msg.id} message={msg} /> : <ChatBubble key={msg.id} message={msg} />
             ))}
 
             {/* Streaming: interleaved timeline (2026-08-19 UX fix) — thinking /
                 tool / text segments in ARRIVAL order. Thinking shows as
                 in-flow cards (like tool calls) instead of one pinned top
                 block; when the stream completes, the final ChatBubble merges
-                thinking into its collapsible meta. */}
-            {streaming && streamTimeline && streamTimeline.length > 0 && (
+                thinking into its collapsible meta. TUI: same arrival order,
+                terminal lines (◌ thinking / ▸ tool / ✳ text▊). */}
+            {streaming && streamTimeline && streamTimeline.length > 0 && (tui ? (
+              <TuiLive items={streamTimeline} toolCalls={toolCalls} />
+            ) : (
               <>
                 {streamTimeline.map((item) => {
                   if (item.kind === 'thinking') {
@@ -243,12 +349,12 @@ export function ChatArea({
                   )
                 })}
               </>
-            )}
+            ))}
 
             {/* Legacy fixed-order layout for consumers without streamTimeline */}
 
             {/* Streaming: thinking first */}
-            {streaming && !streamTimeline && streamThinking && (
+            {streaming && !streamTimeline && !tui && streamThinking && (
               <div className="border-l-2 border-agent-divider pl-3 py-1">
                 <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                   <span className="animate-pulse">💭</span> 思考中{isThinking ? '...' : ' (完成)'}
@@ -258,7 +364,7 @@ export function ChatArea({
             )}
 
             {/* Streaming: tool calls second */}
-            {streaming && !streamTimeline && toolCalls.length > 0 && (
+            {streaming && !streamTimeline && !tui && toolCalls.length > 0 && (
               <div className="space-y-2">
                 {Array.from(new Map(toolCalls.map(tc => [tc.id, tc])).values()).map((tc) => (
                   tc.name === 'AskUserQuestion' ? (
@@ -276,7 +382,7 @@ export function ChatArea({
             )}
 
             {/* Streaming: text response last */}
-            {streaming && !streamTimeline && streamContent && (
+            {streaming && !streamTimeline && !tui && streamContent && (
               <div>
                 {streamSource && (
                   <div className="flex items-center gap-1.5 mb-1">
@@ -366,7 +472,7 @@ export function ChatArea({
 
       {/* 🎪 状态色带 — composer 上方的贴纸 pill(derived from props,无新链路);
           done 态仅在回合刚完成时闪现(见 doneFlash),不再常驻。 */}
-      {hasSession && chatState !== 'idle' && !(chatState === 'done' && !doneFlash) && (
+      {hasSession && !tui && chatState !== 'idle' && !(chatState === 'done' && !doneFlash) && (
         <div
           data-chat-state={chatState}
           className={cn(
@@ -384,7 +490,164 @@ export function ChatArea({
         </div>
       )}
 
-      {/* Input area — always visible */}
+      {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
+          输入（busy 不锁死）+ 提示行 + 下方控件条（专家咨询│model│ctx）。 */}
+      {tui ? (
+        <div ref={dockRef} className="shrink-0 border-t border-pop-bd bg-pop-bg px-4 pb-3 pt-2" data-tui-dock>
+          <div className="relative mx-auto max-w-4xl">
+            <MentionAutocomplete
+              inputValue={input}
+              onSelect={handleMentionSelect}
+              textareaRef={null}
+              currentCloneName={currentCloneName}
+            />
+            {commands && commands.length > 0 && (
+              <SlashCommandAutocomplete
+                inputValue={input}
+                commands={commands}
+                onSelect={handleSlashSelect}
+                onOpenChange={setSlashOpen}
+              />
+            )}
+            {queue.length > 0 && (
+              <div className="mb-1.5 space-y-0.5" data-tui-queue>
+                {queue.map((q, i) => (
+                  <button
+                    key={`${i}:${q.slice(0, 12)}`}
+                    type="button"
+                    onClick={() => recallQueue(i)}
+                    title="点击退回输入框"
+                    data-tui-queue-item={i}
+                    className="flex w-full items-center gap-2 rounded px-1 text-left text-[11px] text-pop-dim transition-colors hover:text-pop-amber"
+                  >
+                    <span className="w-[72px] shrink-0 text-pop-pink">⧗ queued</span>
+                    <span className="shrink-0 text-pop-pink">{i + 1}/{TUI_QUEUE_MAX}</span>
+                    <span className="min-w-0 flex-1 truncate">{q}</span>
+                    <span className="ml-auto shrink-0 text-[10px]">esc/点击 → 退回输入框</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div
+              data-composer-block
+              className="rounded-lg border border-pop-bd bg-pop-paper px-2.5 py-1.5 transition-colors focus-within:border-pop-pink"
+            >
+              <div className="flex items-start gap-2">
+                <span aria-hidden className="shrink-0 font-bold leading-6 text-pop-pink">❯</span>
+                {/* maxRows=11（≈220px 才内滚）：不写 CSS max-height —— 会钳住
+                    scrollHeight 导致几行就不再长高（原型 v2 实测 bug）。 */}
+                <AutoResizeTextarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleTuiKeyDown}
+                  maxRows={11}
+                  disabled={!!pendingConfirm}
+                  placeholder={
+                    queue.length > 0
+                      ? '继续输入 —— ⏎/⇧⏎ 都会加入排队'
+                      : streaming
+                        ? '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
+                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队'
+                  }
+                  className="min-h-6 flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
+                />
+                <span className="shrink-0 pt-1">
+                  {streaming ? (
+                    <button
+                      type="button"
+                      onClick={onStop}
+                      title="停止（esc 同效）"
+                      data-tui-stop
+                      className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
+                    >
+                      ■
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSend}
+                      disabled={!input.trim()}
+                      title="发送（⏎ 同效）"
+                      data-tui-send
+                      className="grid size-6 place-items-center rounded-md border border-pop-bd bg-pop-pink text-[10px] font-bold text-[#151413] transition-opacity disabled:opacity-40"
+                    >
+                      ⏎
+                    </button>
+                  )}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 px-6 text-[10.5px] text-pop-dim">
+                {queueHint ? (
+                  <span className="text-pop-red" data-tui-hint>{queueHint}</span>
+                ) : queue.length > 0 ? (
+                  <span data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
+                ) : streaming ? (
+                  <span data-tui-hint>⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断</span>
+                ) : (
+                  <span data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · ⇧⏎⇧⏎ 连排</span>
+                )}
+                {streaming && (
+                  <span className="ml-auto shrink-0 text-pop-amber" data-tui-busy>
+                    <span className="text-pop-pink">{spinGlyph}</span> {busyPhase} {busyElapsed.toFixed(1)}s {/* fmt-ok: 终端 busy 行秒数，非全站计时器 */}
+                  </span>
+                )}
+              </div>
+            </div>
+            {/* 控件条：专家咨询 / model 保留在输入框下方（v3 原型拍板） */}
+            <div className="mt-1.5 flex items-center gap-2 border-t border-pop-bd pt-1.5 text-[11px] text-pop-dim" data-tui-ctrlbar>
+              {composerLeading && (
+                <>
+                  <span className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</span>
+                  <span aria-hidden className="text-pop-bd">│</span>
+                </>
+              )}
+              {currentModel && (
+                <span className="flex shrink-0 items-center gap-1">
+                  <span>model</span>
+                  {onModelChange ? (
+                    <select
+                      value={currentModel}
+                      onChange={(e) => onModelChange(e.target.value)}
+                      data-tui-model-select
+                      className="cursor-pointer appearance-none border-0 bg-transparent p-0 text-pop-green outline-none"
+                    >
+                      <option value="pro-max">pro-max</option>
+                      <option value="pro">pro</option>
+                      <option value="se">se</option>
+                    </select>
+                  ) : (
+                    <span className="text-pop-green">{currentModel}</span>
+                  )}
+                  <span aria-hidden className="text-pop-dim">▾</span>
+                </span>
+              )}
+              {contextUsage && (
+                <button
+                  type="button"
+                  onClick={() => setContextExpanded((v) => !v)}
+                  className="ml-auto shrink-0 transition-colors hover:text-pop-ink"
+                  data-tui-ctx
+                >
+                  {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                </button>
+              )}
+            </div>
+            {contextExpanded && contextUsage && (
+              <div className="mt-1.5 rounded-md border border-border/50 bg-muted/30 px-2.5 py-1.5 text-[10px]">
+                {contextUsage.categories.map((cat) => (
+                  <div key={cat.name} className="flex items-center justify-between py-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="size-2 rounded-sm" style={{ backgroundColor: cat.color }} />
+                      <span className="text-muted-foreground">{cat.name}</span>
+                    </div>
+                    <span className="font-mono">{formatTokenCount(cat.tokens)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
       <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
           {/* @@mention autocomplete */}
@@ -521,6 +784,7 @@ export function ChatArea({
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

@@ -224,6 +224,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
     // Capture the session that owns this stream
     streamingSessionRef.current = sessionId
+    steerLostRef.current = false
 
     // Optimistic: add user message (preserve original @@syntax for display)
     const userMsg: AgentMessage = {
@@ -440,6 +441,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         // and resent). Don't surface an error: drop the (never-persisted)
         // optimistic send and tail the live turn instead.
         if (data.code === 'STREAM_IN_PROGRESS' && apiOverrideRef.current?.checkRunning) {
+          if (steeringRef.current) steerLostRef.current = true
+          // 409 = 本条从未落库，撤掉乐观行（steer 重试环会重发）
+          setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
           startResumePolling(sessionId)
           return
         }
@@ -541,6 +545,54 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
   }, [])
 
+  // steer（2026-09-24 TUI 改版）：stopGenerate 只保证本地断流并保存 partial；
+  // 服务端回合可能仍在收尾，立刻重发会撞 409 STREAM_IN_PROGRESS（乐观消息
+  // 被 resume-polling 吞掉）。有 checkRunning 时轮询到回合真正结束再发。
+  const awaitTurnSettled = useCallback(async (sid: string, timeoutMs = 8000) => {
+    const checkRunningFn = apiOverrideRef.current?.checkRunning
+    if (!checkRunningFn) return
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      try {
+        const r = await checkRunningFn(sid)
+        if (!r.running) return
+      } catch {
+        return // probe 失败 = 服务端不可达，交给 sendMessage 的错误路径
+      }
+      await new Promise((res) => setTimeout(res, 250))
+    }
+  }, [])
+
+  // steer 在途标记：stop→重发之间 streaming 有一个 false 谷，UI 侧的 done-flush
+  // 队列若在此刻抢发，会吞掉接管消息 —— 消费方用本 ref 让闸。
+  const steeringRef = useRef(false)
+  // sendMessage 乐观入流标记：本轮若被 STREAM_IN_PROGRESS 吞则置 true，
+  // steer 重试环据此重发。
+  const steerLostRef = useRef(false)
+
+  const steer = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
+    if (!sessionId || !message.trim()) return
+    steeringRef.current = true
+    try {
+      await stopGenerate()
+      if (resumeModeRef.current) return // 尾随他端回合时无本地流可掐，忽略本次接管
+      // 服务端 finalize 与 running 反注册之间可能有一瞬窗口：发送被 409 吞时
+      // （onError 走 resume-polling、消息不落库）轮询到停后重发，≤3 次。
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await awaitTurnSettled(sessionId)
+        if (!streamingRef.current) {
+          await sendMessage(message, opts)
+          await new Promise((res) => setTimeout(res, 800)) // 等 409 判定窗
+          if (!steerLostRef.current) return
+        } else {
+          await new Promise((res) => setTimeout(res, 400)) // resume-polling 尾随旧回合
+        }
+      }
+    } finally {
+      steeringRef.current = false
+    }
+  }, [sessionId, stopGenerate, awaitTurnSettled, sendMessage])
+
   return {
     messages,
     streaming,
@@ -558,6 +610,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     contextUsage,
     sendMessage,
     stopGenerate,
+    steer,
+    /** true 期间（stop→重发谷）UI 不应 flush 排队消息。 */
+    steeringRef,
     handleConfirm,
     loadMessages,
   }
