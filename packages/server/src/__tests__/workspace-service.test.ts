@@ -175,6 +175,32 @@ describe("WorkspaceService", () => {
       }
     })
 
+    it("createFromSpec 持久化 description（task-board-title 改版: task 触发写入任务标题）；缺省为 null", () => {
+      const withDesc = service.createFromSpec({
+        org: "xzf",
+        name: "taskpool-desc-1",
+        description: "任务标题映射到工作区描述",
+        projects: [],
+        branch_prefix: "taskpool-d1",
+        branch_suffix: "suffix",
+        source: "task",
+        task_id: "task-1",
+        workflow_chain: [],
+      })
+      expect(withDesc.description).toBe("任务标题映射到工作区描述")
+
+      const noDesc = service.createFromSpec({
+        org: "xzf",
+        name: "taskpool-desc-2",
+        projects: [],
+        branch_prefix: "taskpool-d2",
+        branch_suffix: "suffix",
+        source: "scheduler",
+        workflow_chain: [],
+      })
+      expect(noDesc.description).toBeNull()
+    })
+
     it("throws when source_path is empty and the repo is not resolvable (no silent skip)", () => {
       // No repos/index.md authored at all → resolveRepoPath throws index.md not found,
       // which must propagate out of createFromSpec.

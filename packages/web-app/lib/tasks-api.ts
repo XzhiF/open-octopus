@@ -156,7 +156,9 @@ export interface TaskDerivedView {
 
 export interface CreateTaskInput {
   org: string
-  name?: string
+  /** 必填（task-board-title 改版）：新建任务时用户输入标题，
+   *  服务端拒绝空 name，不再事后由对话/autosave 生成。 */
+  name: string
   /** Links the new task to a chat session (sessions.scope_id retargets to
    *  tasks.id, SG3). The autosave seam (04) creates a task implicitly; this is
    *  the explicit POST path. */

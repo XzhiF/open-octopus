@@ -221,6 +221,7 @@ describe("createTask", () => {
 
     await createTask({
       org: "E2E_TD_org",
+      name: "v3 task",
       source_chat_session_id: "sess-1",
       task_type: "coding",
       skill_groups: ["default", "open-spec"],

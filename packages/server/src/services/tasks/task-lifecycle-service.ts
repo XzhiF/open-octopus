@@ -617,6 +617,8 @@ export class TaskLifecycleService {
       const created = ws.createFromSpec({
         org: plan.workspace_spec?.org ?? task.org ?? "",
         name: workspaceName,
+        // task-board-title 改版: 任务标题映射到工作区描述字段。
+        description: task.name,
         // A coordinator workspace has NO projects by design (spec D4) — it only runs the
         // composition workflow, which fans out per-subunit workspaces itself.
         projects: composite ? [] : projects,

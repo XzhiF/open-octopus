@@ -50,6 +50,11 @@ afterEach(() => {
 // 契约修复改版（v4-only UI）：模板页只剩 codebase 语境（org + projects，恢复
 // 票 11 下线的项目选择）。类型卡（coding/generic）与 skill 组勾选整体退役 —
 // coding 直通 task-author 且直建 v4，generic 入口移除。
+// task-board-title 改版：任务标题在本页必填，随 payload.name 上送。
+
+function nameInput(): HTMLInputElement {
+  return document.querySelector("[data-task-name-input]") as HTMLInputElement
+}
 
 describe("TemplatePicker — v4-only 模板页", () => {
   it("恒呈现 ProjectSelector（恢复的项目选择），不再有类型卡 / skill 组 / goal-ac 痕迹", async () => {
@@ -71,16 +76,32 @@ describe("TemplatePicker — v4-only 模板页", () => {
 })
 
 describe("TemplatePicker — onCreate payload", () => {
-  it("零项目也可创建（对话内/看板预设仍可补语境）→ {org, projects:[]}", async () => {
+  it("零项目也可创建（对话内/看板预设仍可补语境）→ {name, org, projects:[]}", async () => {
     const onCreate = vi.fn()
     render(<TemplatePicker onCreate={onCreate} />)
     await waitFor(() => expect(screen.getByTestId("project-selector")).toBeTruthy())
 
+    fireEvent.change(nameInput(), { target: { value: " 重构登录页 " } })
     fireEvent.click(screen.getByRole("button", { name: /开始编写/ }))
     expect(onCreate).toHaveBeenCalledOnce()
     const payload = onCreate.mock.calls[0][0] as TemplatePickerValue
+    expect(payload.name).toBe("重构登录页")
     expect(payload.org).toBe("E2E_TD_org")
     expect(payload.projects).toEqual([])
+  })
+
+  it("标题为空 → 创建按钮禁用，点击不触发 onCreate（必填）", async () => {
+    const onCreate = vi.fn()
+    render(<TemplatePicker onCreate={onCreate} />)
+    await waitFor(() => expect(screen.getByTestId("project-selector")).toBeTruthy())
+
+    const btn = screen.getByRole("button", { name: /开始编写/ }) as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    fireEvent.click(btn)
+    expect(onCreate).not.toHaveBeenCalled()
+
+    fireEvent.change(nameInput(), { target: { value: "   " } })
+    expect(btn.disabled).toBe(true)
   })
 
   it("勾选的项目以名字数组上送（→ POST project_ids → 直建 v4 的 home 语境）", async () => {
@@ -88,6 +109,7 @@ describe("TemplatePicker — onCreate payload", () => {
     render(<TemplatePicker onCreate={onCreate} />)
     await waitFor(() => expect(screen.getByTestId("project-selector")).toBeTruthy())
 
+    fireEvent.change(nameInput(), { target: { value: "E2E_TD 双项目" } })
     fireEvent.click(screen.getByLabelText("octopus-server"))
     fireEvent.click(screen.getByLabelText("octopus-engine"))
     fireEvent.click(screen.getByRole("button", { name: /开始编写/ }))

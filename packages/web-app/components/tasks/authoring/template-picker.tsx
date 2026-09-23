@@ -6,24 +6,26 @@
 //   2. 采集 codebase 语境（org + projects — 恢复票 11 下线的项目选择）：
 //      project 语境既进 task home 的 context.md（领域阅读路由键），也是
 //      执行期 workspace 的 repo 绑定来源。
-// 然后 开始编写 → onCreate({org?, projects})。父层（TaskModal）跑 D15 创建序列
+// 然后 开始编写 → onCreate({name, org?, projects})。父层（TaskModal）跑 D15 创建序列
 // （session-first → POST /api/tasks 直建 v4 draft：task_spec:{format:"v4"} +
 // project_ids）并进入 AuthoringWorkspace。
 //
 // 已退役（v4 UI 收敛）：类型卡（coding/generic 二选一 — generic 入口移除）、
 // skill 组勾选（matt 技能族随 task-author clone 自动就位，票 09/K15）、
-// goal/ac 任何痕迹（v4 起草不写）。任务名不在本页采集 — EditableTitle 事后改 +
-// autosave 智能标题机制不变。
+// goal/ac 任何痕迹（v4 起草不写）。
+// 任务标题在本页必填入（task-board-title 改版）— 不再依赖事后对话/autosave 生成。
 
 "use client"
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Lock } from "lucide-react"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 
 export interface TemplatePickerValue {
+  name: string
   org?: string
   projects: string[]
 }
@@ -36,6 +38,7 @@ export interface TemplatePickerProps {
 
 export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
   const { orgs } = useOrgs()
+  const [name, setName] = useState("")
   const [org, setOrg] = useState<string>(orgs[0]?.name ?? "")
   const [projects, setProjects] = useState<SelectedProject[]>([])
 
@@ -47,11 +50,12 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
   // Projects are optional at creation — the conversation can still bind
   // spec-field(projects) later, and the workspace 预设 button stays available
   // (non-empty locks it, same discipline as the authoring workspace).
-  const canCreate = true
+  // 任务标题必填（task-board-title 改版）。
+  const canCreate = name.trim().length > 0
 
   const handleCreate = () => {
     if (!canCreate) return
-    onCreate({ org, projects: projects.map((p) => p.name) })
+    onCreate({ name: name.trim(), org, projects: projects.map((p) => p.name) })
   }
 
   return (
@@ -65,6 +69,20 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
             项目语境可现在选，也可对话中补 <Lock className="inline size-3" />（选定后锁定）。
           </p>
         </div>
+
+        {/* ── 任务标题（必填，创建即落 name）── */}
+        <section data-preset-name>
+          <div className="text-xs font-medium mb-2">
+            任务标题 <span className="text-destructive">*</span>
+          </div>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="一句话描述这个任务（必填）"
+            maxLength={120}
+            data-task-name-input
+          />
+        </section>
 
         {/* ── codebase 语境（org + projects；US14/D13 恢复）── */}
         <section data-preset-context>

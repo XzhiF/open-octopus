@@ -192,9 +192,14 @@ export function createTasksRoutes(
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
+      // task-board-title 改版: 任务标题创建即必填 — 不再回落 "Untitled task"
+      // 等对话/autosave 事后生成。
+      if (typeof body.name !== "string" || body.name.trim().length === 0) {
+        return c.json({ error: "name is required: 任务标题必须非空" }, 400)
+      }
       const input: CreateTaskInput = {
         org: typeof body.org === "string" ? body.org : "default",
-        name: typeof body.name === "string" ? body.name : undefined,
+        name: body.name,
         source_chat_session_id:
           typeof body.source_chat_session_id === "string"
             ? body.source_chat_session_id

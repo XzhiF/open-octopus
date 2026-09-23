@@ -284,6 +284,8 @@ export class WorkspaceService {
   createFromSpec(input: {
     org: string
     name: string
+    /** task-board-title 改版: task 触发起工作区时把任务标题写进描述字段。 */
+    description?: string | null
     projects: Array<{ name: string; source_path: string; group?: string }>
     branch_prefix: string
     branch_suffix: string
@@ -396,7 +398,7 @@ export class WorkspaceService {
     // DB INSERT with source tracking (after worktrees — see rollback note above)
     this.dao.insert({
       id, name: input.name, org: input.org,
-      description: null,
+      description: input.description ?? null,
       status: "active", path: wsDir,
       source: input.source, source_schedule_id: input.source_schedule_id ?? null,
       task_id: input.task_id ?? null,
