@@ -1,16 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useState } from "react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,16 +11,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { WorkspaceCard } from "./workspace-card"
 import { CreateWorkspaceDialog } from "./create-workspace-dialog"
-import { ImportWorkspaceDialog } from "./import-workspace-dialog"
 import { ArchivePreviewDialog } from "./archive-preview-dialog"
 import { ArchiveViewDialog } from "./archive-view-dialog"
+import { WorkspaceBands } from "./workspace-bands"
 import { deleteWorkspace } from "@/lib/api-client"
-import { archiveWorkspace } from "@/lib/archive-api"
 import { toast } from "sonner"
-import type { Workspace, WorkspaceStatus } from "@/lib/types"
-import { Search, Plus, FolderInput, LayoutGrid, List, Archive } from "lucide-react"
+import type { Workspace } from "@/lib/types"
 
 interface WorkspaceListProps {
   workspaces: Workspace[]
@@ -38,17 +25,11 @@ interface WorkspaceListProps {
 }
 
 export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
-  const [search, setSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState<WorkspaceStatus | "all">("all")
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [isImportOpen, setIsImportOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Workspace | null>(null)
   const [viewArchiveTarget, setViewArchiveTarget] = useState<Workspace | null>(null)
-  const [archiveTab, setArchiveTab] = useState<"active" | "archived">("active")
-  const [sortBy, setSortBy] = useState<"updated" | "name" | "created">("updated")
 
   const handleDelete = async () => {
     if (!deleteTarget) return
@@ -65,171 +46,20 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
     }
   }
 
-  const filteredWorkspaces = useMemo(() => {
-    const filtered = workspaces.filter((ws) => {
-      // Filter by archive status
-      const isArchived = (ws as any).archive_status === "archived"
-      if (archiveTab === "archived" && !isArchived) return false
-      if (archiveTab === "active" && isArchived) return false
-
-      const matchesSearch =
-        ws.name.toLowerCase().includes(search.toLowerCase()) ||
-        ws.description.toLowerCase().includes(search.toLowerCase())
-      const matchesStatus = statusFilter === "all" || ws.status === statusFilter
-      return matchesSearch && matchesStatus
-    })
-
-    return [...filtered].sort((a, b) => {
-      if (sortBy === "name") return a.name.localeCompare(b.name)
-      const aCreated = (a as any).created_at ?? a.createdAt ?? ""
-      const bCreated = (b as any).created_at ?? b.createdAt ?? ""
-      const aUpdated = (a as any).updated_at ?? a.updatedAt ?? ""
-      const bUpdated = (b as any).updated_at ?? b.updatedAt ?? ""
-      if (sortBy === "created") return bCreated.localeCompare(aCreated)
-      return bUpdated.localeCompare(aUpdated)
-    })
-  }, [workspaces, search, statusFilter, archiveTab, sortBy])
+  const find = (id: string) => workspaces.find((w) => w.id === id) ?? null
 
   return (
-    <div className="space-y-6" data-testid="workspace-list">
-      {/* Archive Tabs */}
-      <Tabs value={archiveTab} onValueChange={(v) => setArchiveTab(v as "active" | "archived")}>
-        <TabsList>
-          <TabsTrigger value="active">
-            活跃工作空间
-          </TabsTrigger>
-          <TabsTrigger value="archived">
-            <Archive className="mr-2 h-4 w-4" />
-            已归档
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* Toolbar */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 items-center gap-3">
-          {/* Search */}
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="搜索工作空间..."
-              aria-label="搜索工作空间"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-
-          {/* Status Filter */}
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => setStatusFilter(value as WorkspaceStatus | "all")}
-          >
-            <SelectTrigger className="w-[120px]" aria-label="按状态筛选">
-              <SelectValue placeholder="状态" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部状态</SelectItem>
-              <SelectItem value="active">活跃</SelectItem>
-              <SelectItem value="inactive">未激活</SelectItem>
-              <SelectItem value="error">异常</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Sort */}
-          <Select
-            value={sortBy}
-            onValueChange={(value) => setSortBy(value as "updated" | "name" | "created")}
-          >
-            <SelectTrigger className="w-[120px]" aria-label="排序方式">
-              <SelectValue placeholder="排序" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="updated">最近更新</SelectItem>
-              <SelectItem value="created">创建时间</SelectItem>
-              <SelectItem value="name">名称</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-md border border-input" role="group" aria-label="视图模式">
-            <Button
-              variant={viewMode === "grid" ? "secondary" : "ghost"}
-              size="icon"
-              className="h-8 w-8 rounded-r-none"
-              aria-pressed={viewMode === "grid"}
-              onClick={() => setViewMode("grid")}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              <span className="sr-only">网格视图</span>
-            </Button>
-            <Button
-              variant={viewMode === "list" ? "secondary" : "ghost"}
-              size="icon"
-              className="h-8 w-8 rounded-l-none border-l"
-              aria-pressed={viewMode === "list"}
-              onClick={() => setViewMode("list")}
-            >
-              <List className="h-4 w-4" />
-              <span className="sr-only">列表视图</span>
-            </Button>
-          </div>
-          <Button variant="outline" onClick={() => setIsImportOpen(true)} data-testid="btn-import-workspace">
-            <FolderInput className="mr-2 h-4 w-4" />
-            导入
-          </Button>
-          <Button onClick={() => setIsCreateOpen(true)} data-testid="btn-create-workspace">
-            <Plus className="mr-2 h-4 w-4" />
-            新建工作空间
-          </Button>
-        </div>
-      </div>
-
-      {/* Results Info */}
-      <div className="text-sm text-muted-foreground">
-        共 {filteredWorkspaces.length} 个工作空间
-        {archiveTab === "archived" && " (已归档)"}
-        {search && ` · 搜索 "${search}"`}
-      </div>
-
-      {/* Grid */}
-      {filteredWorkspaces.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <Search className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <h3 className="mt-4 text-lg font-medium">未找到工作空间</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {search ? "尝试调整搜索条件" : "创建您的第一个工作空间"}
-          </p>
-          {!search && (
-            <Button className="mt-4" onClick={() => setIsCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              新建工作空间
-            </Button>
-          )}
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredWorkspaces.map((workspace) => (
-            <WorkspaceCard
-              key={workspace.id}
-              workspace={workspace}
-              onDelete={(id) => setDeleteTarget(workspaces.find(w => w.id === id) ?? null)}
-              onArchive={(id) => setArchiveTarget(workspaces.find(w => w.id === id) ?? null)}
-              onViewArchive={(id) => setViewArchiveTarget(workspaces.find(w => w.id === id) ?? null)}
-            />
-          ))}
-        </div>
-      )}
+    <div>
+      <WorkspaceBands
+        workspaces={workspaces}
+        onNew={() => setIsCreateOpen(true)}
+        onDelete={(id) => setDeleteTarget(find(id))}
+        onArchive={(id) => setArchiveTarget(find(id))}
+        onViewArchive={(id) => setViewArchiveTarget(find(id))}
+      />
 
       {/* Create Dialog */}
       <CreateWorkspaceDialog open={isCreateOpen} onOpenChange={setIsCreateOpen} onCreated={onRefresh} />
-
-      {/* Import Dialog */}
-      <ImportWorkspaceDialog open={isImportOpen} onOpenChange={setIsImportOpen} onImported={() => { onRefresh?.() }} />
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>

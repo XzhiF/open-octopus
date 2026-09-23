@@ -36,15 +36,7 @@ export default function WorkspacesPage() {
   }, [fetchData])
 
   return (
-    <div className="container mx-auto px-4 py-6 lg:px-6" data-testid="workspaces-page">
-      {/* Page Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-black tracking-tight text-pop-ink">工作空间</h1>
-        <p className="text-muted-foreground">
-          管理您的工作空间、项目和工作流
-        </p>
-      </div>
-
+    <div className="container mx-auto px-4 py-4 lg:px-6" data-testid="workspaces-page">
       {loading ? (
         <div className="flex items-center justify-center py-12" data-testid="workspace-list-loading">
           <p className="text-muted-foreground">加载中...</p>
