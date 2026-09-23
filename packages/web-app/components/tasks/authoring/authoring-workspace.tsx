@@ -4,9 +4,9 @@
 // Rendered inside TaskModal for every draft. Layout:
 //
 //   ┌─ top bar: type badge + codebase popup + 入队执行 ─────────────────┐
-//   ├─ LEFT (chat): assist-trigger bar (MoA) + ChatArea (task-author)    │
-//   ├─ RIGHT (output viewer): PhaseListEditor + OutputViewer + 入队清单  │
-//   └─ 入队清单四行 = server gateV4Phases 同源镜像 + autoAdvance 开关    ─┘
+//   ├─ LEFT (chat): ChatArea tui 皮肤（排队/打断接管, 2026-09-24 改版）  │
+//   ├─ RIGHT (spec panel): phases / 入队清单 / 输出区（原型 #outcol 1:1）│
+//   └─ 批次/运行产物/语境收进输出区「▸ 更多」缩放弹窗                   ─┘
 //
 // goal/ac 双确认与 GoalAcCard 已随 v4-only UI 退役（server v3 路径保留兜
 // 历史行）；chat 半区复用 task-author clone 会话（task.source_chat_session_id）。
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Lock, Brain, ClipboardCheck, Maximize2, Minimize2, Trash2 } from "lucide-react"
+import { Lock, Brain, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
@@ -33,10 +33,7 @@ import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
-import { OutputViewer } from "./output-viewer"
-import { WorkflowBox } from "./workflow-box"
-import { DraftBatches } from "./draft-batches"
-import { SectionCard, SectionGroupLabel } from "./section-card"
+import { SpecPanel } from "./spec-panel"
 import { EditableTitle } from "../editable-title"
 import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
@@ -96,6 +93,14 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     )
     return () => unsub()
   }, [task.id, onMutated])
+
+  // TUI 皮肤作用域提升（2026-09-24 spec panel 改版）：Radix/shadcn 弹窗都
+  // portal 到 body —— token 挂在弹窗子树会丢皮肤；草稿工作台在场期间把
+  // task-tui 挂到 <html>，body 级 portal（绑定/spec/专家咨询/缩放弹窗）统一换底。
+  useEffect(() => {
+    document.documentElement.classList.add("task-tui")
+    return () => document.documentElement.classList.remove("task-tui")
+  }, [])
 
   // ── Resizable panels: drag the divider to adjust chat ↔ output width ──
   // Default split: 70% chat (left) / 30% output (right)（用户定,原 60/40）。
@@ -557,6 +562,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           ⚙ codebase · {presetOrg} · {presetProjects.length} 项目
         </button>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">
+            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRepos].filter(Boolean).length}/5</b>
+          </span>
           {chrome && (
             <button
               data-task-modal-delete
@@ -695,92 +703,29 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           title="拖拽调整宽度"
         />
 
-        {/* ── RIGHT: output viewer (D11 — no skill-group info here) — 🎪 SPEC/RUN/GATE 三段 ── */}
-        <div style={{ width: rightWidth }} className="pop-confetti shrink-0 flex flex-col min-h-0 overflow-y-auto p-3 space-y-2.5" data-output-viewer>
-          <SectionGroupLabel data-no-tilt tone="var(--pop-yellow)">SPEC · 规格</SectionGroupLabel>
-          {/* PhaseListEditor/绑定卡内部按 v4 format 分叉（goal/ac 卡已随 v4-only UI 退役） */}
-          <WorkflowBox task={task} onMutated={onMutated} batchTree={batchTree} />
-
-          {/* #53 草稿批次区（磁盘直扫，仅 v4）——落盘即现，绕开 phases[] 门控 */}
-          {isV4 && (
-            <DraftBatches
-              task={task}
-              phases={v4Phases}
-              isDraft={task.status === "draft"}
-              tree={batchTree}
-              onMutated={onMutated}
-            />
-          )}
-
-          <SectionGroupLabel data-no-tilt tone="var(--pop-cyan)">RUN · 运行</SectionGroupLabel>
-          <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
-
-          {/* enqueue checklist — v4 五行 phase 契约（server gateV4Phases +
-              项目仓库预检同源）；非 v4 历史行同样渲染（五行不绿）。状态只显；按钮在顶栏。 */}
-          <SectionGroupLabel data-no-tilt tone="var(--pop-green)">GATE · 放行</SectionGroupLabel>
-          <SectionCard
-            icon={<ClipboardCheck className="size-3.5 text-pop-ink" />}
-            iconTint="var(--pop-green-soft)"
-            title="入队清单"
-            count={`${[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRepos].filter(Boolean).length}/5`}
-            hint="v4 phase 契约"
-            storageKey="authoring-enqueue"
-          >
-            <div className="space-y-1" data-enqueue-checklist data-testid="enqueue-checklist-v4">
-              {(
-                [
-                  { id: "phases", ok: v4Rows.rowPhases, hits: gateHits.phases, label: `phases 完备 ×${v4Phases.length}` },
-                  { id: "spec", ok: v4Rows.rowSpec, hits: gateHits.spec, label: v4Rows.specTreeReady ? "逐 phase spec（磁盘已核）" : "逐 phase spec（批次目录 spec.md）" },
-                  { id: "bind", ok: v4Rows.rowBind, hits: gateHits.bind, label: "逐 phase 绑定 workflow" },
-                  { id: "inputs", ok: v4Rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐（必填项非空/占位符）" },
-                  { id: "repos", ok: v4Rows.rowRepos, hits: gateHits.repos, label: "项目仓库（可解析）" },
-                ] as const
-              ).map((row) => {
-                const failed = row.hits.length > 0
-                const good = row.ok && !failed
-                return (
-                  <div
-                    key={row.id}
-                    className="grid grid-cols-[1.1rem_1fr] items-baseline gap-x-1 text-[11px]"
-                    data-checklist-v4={row.id}
-                    data-testid={`checklist-v4-${row.id}`}
-                  >
-                    <span className={good ? "text-pop-green" : failed ? "text-pop-red" : "text-pop-amber"}>
-                      {good ? "✅" : failed ? "✗" : "⏳"}
-                    </span>
-                    <span>
-                      {row.label}
-                      {failed && (
-                        <ul className="ml-4 list-disc text-[10px] text-pop-red">
-                          {row.hits.map((h) => <li key={h}>{h}</li>)}
-                        </ul>
-                      )}
-                    </span>
-                  </div>
-                )
-              })}
-              {v4Rows.inputsUnknown && (
-                <p className="text-[10px] text-muted-foreground">
-                  存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威（项目仓库可解析性同理，入队预检核实）。
-                </p>
-              )}
-              <div className="pt-1 mt-1 border-t flex items-center gap-2 text-[11px]" data-autoadvance-row>
-                <label className="flex items-center gap-1.5 cursor-pointer select-none" data-autoadvance-toggle-label>
-                  <input
-                    type="checkbox"
-                    checked={autoOn}
-                    onChange={() => void handleToggleAutoAdvance()}
-                    data-autoadvance-switch data-testid="autoadvance-switch"
-                  />
-                  验收通过后自动开跑下一 Phase（auto_advance）
-                </label>
+        {/* ── RIGHT: spec panel（原型 #outcol 1:1：phases / 入队清单 / 输出区；
+            批次/运行产物/语境收进输出区「▸ 更多」缩放弹窗） ── */}
+        <div style={{ width: rightWidth }} className="shrink-0 min-w-0" data-output-viewer>
+          <SpecPanel
+            task={task}
+            onMutated={onMutated}
+            batchTree={batchTree}
+            rows={v4Rows}
+            gateHits={gateHits}
+            runIds={runIds}
+            autoRow={
+              <label className="flex cursor-pointer select-none items-center gap-1.5" data-autoadvance-toggle-label>
+                <input
+                  type="checkbox"
+                  checked={autoOn}
+                  onChange={() => void handleToggleAutoAdvance()}
+                  data-autoadvance-switch data-testid="autoadvance-switch"
+                />
+                验收通过后自动开跑下一 Phase（auto_advance）
                 {autoBusy && <Spinner className="size-3" />}
-              </div>
-              {!canEnqueue ? (
-                <p className="text-[10px] text-muted-foreground">四行未齐不可入队 —— 对话里让 agent 补，或在右栏 phase 编辑器逐行配置。</p>
-              ) : null}
-            </div>
-          </SectionCard>
+              </label>
+            }
+          />
         </div>
       </div>
 

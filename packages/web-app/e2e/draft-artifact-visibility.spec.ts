@@ -99,7 +99,9 @@ test.describe("#53 起草面产物可见性穿线", () => {
     await expect(dialog.locator("[data-authoring-workspace]")).toBeVisible({ timeout: 20_000 })
 
     // ② PP1 核心断言：phases[] 为空（契约面「尚无 phase」），磁盘批次行已在
+    //    （2026-09-24 原型改版：批次/产物收进输出区「▸ 更多」缩放弹窗）
     await expect(dialog.locator("[data-phase-bind-empty]")).toBeVisible()
+    await dialog.locator("[data-spec-aux-open]").click()
     const rowA = dialog.locator(`[data-batch-row="${BATCH_A}"]`)
     await expect(rowA).toBeVisible({ timeout: 10_000 })
     await expect(rowA).toContainText("spec✓")
@@ -125,32 +127,28 @@ test.describe("#53 起草面产物可见性穿线", () => {
 
     // ⑤ 建骨架并对位（批次 A）→ phase 行 + ● P1 + 清单磁盘判定绿
     await dialog.locator(`[data-batch-adopt="${BATCH_A}"]`).click()
-    await expect(dialog.locator("[data-phase-bind-card='1']")).toBeVisible({ timeout: 10_000 })
     const rowA2 = dialog.locator(`[data-batch-row="${BATCH_A}"]`)
-    await expect(rowA2.locator(`[data-batch-matched="${BATCH_A}"]`)).toHaveText("● P1")
+    await expect(rowA2.locator(`[data-batch-matched="${BATCH_A}"]`)).toHaveText("● P1", { timeout: 10_000 })
+    // 关「更多」弹窗 → 主面板回到可访问树（Radix modal 期间其余子树 aria-hidden）
+    await page.keyboard.press("Escape")
+    await expect(dialog.locator("[data-phase-bind-card='1']")).toBeVisible({ timeout: 10_000 })
     await expect(dialog.getByTestId("enqueue-checklist-v4")).toContainText("磁盘已核")
-    await expect(dialog.locator("[data-checklist-v4='phases']")).toContainText("✅")
-    await expect(dialog.locator("[data-checklist-v4='spec']")).toContainText("✅")
+    await expect(dialog.locator("[data-checklist-v4='phases']")).toContainText("✓")
+    await expect(dialog.locator("[data-checklist-v4='spec']")).toContainText("✓")
     await page.screenshot({ path: screenshotPath("53-03-adopt-and-gate.png") })
 
-    // ⑥ PP2 核心断言：Phase 行 ▾ 展开 = spec ✓ 灯 + 票 chips（不点小图标不开弹窗）。
-    // 2026-09-12 分层改版：首个 phase 默认已展开 → 先点收起、再点展开验证 toggle。
-    await expect(dialog.locator("[data-phase-expand-panel='1']")).toBeVisible({ timeout: 10_000 })
-    await dialog.locator("[data-phase-expand-toggle='1']").click()
-    await expect(dialog.locator("[data-phase-expand-panel='1']")).toHaveCount(0)
-    await dialog.locator("[data-phase-expand-toggle='1']").click()
-    await expect(dialog.locator("[data-phase-spec-disk='1']")).toContainText("spec.md ✓")
-    await expect(dialog.locator(`[data-phase-ticket=".scratch/${TODAY}/${BATCH_A}/issues/01-price-db.md"]`)).toBeVisible()
-    await expect(dialog.locator(`[data-phase-ticket=".scratch/${TODAY}/${BATCH_A}/issues/09-e2e-verify.md"]`)).toBeVisible()
-    await expect(dialog.locator("[data-phase-summary='1']")).toContainText("Key Decisions 1 条")
-    await page.screenshot({ path: screenshotPath("53-04-inline-expand.png") })
-    // 点票 chip 开弹窗并定位在该票（批次域整列：spec 与另一票可切换）
-    await dialog.locator(`[data-phase-ticket=".scratch/${TODAY}/${BATCH_A}/issues/01-price-db.md"]`).click()
+    // ⑥ PP2 核心断言（2026-09-24 原型改版口径）：输出区逐 phase fn 行 =
+    //    spec.md + 正文摘要（懒取自磁盘真相）；点击 → PhaseSpecDialog 开在该 spec。
+    await expect(dialog.locator("[data-spec-out-row='1']")).toContainText("spec.md", { timeout: 10_000 })
+    await expect(dialog.locator("[data-spec-out-row='1']")).toContainText("计费核心 MVP")
+    await page.screenshot({ path: screenshotPath("53-04-outview-row.png") })
+    await dialog.locator("[data-spec-out-row='1'] button").first().click()
     await expect(editor).toBeVisible({ timeout: 10_000 })
-    await expect(editor).toContainText("价格表 DB 化")
+    await expect(editor).toContainText("价格配置 DB 化")
     await page.keyboard.press("Escape")
 
-    // ⑦ manifest 降位新名
+    // ⑦ manifest 降位新名（「▸ 更多」弹窗内的运行产物区）
+    await dialog.locator("[data-spec-aux-open]").click()
     await expect(dialog.locator("[data-manifest-viewer-row]")).toContainText("规格快照")
 
     // DB↔API 交叉：phases 一行且 specPath 指真实批次目录

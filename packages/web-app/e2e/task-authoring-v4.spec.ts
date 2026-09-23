@@ -6,7 +6,7 @@
 //   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + manifest.json 快照带旗标
 //   ④ 右栏「添加 Phase」手动建行（workflow 走内置目录初选）→ 整数组 PUT 落库
 //   ⑤ 行上 spec.md → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
-//   ⑥ 入队清单五行随写入实时变绿（phases/spec/bind 三行 ✅；repos 行服务端权威恒乐观）
+//   ⑥ 入队清单五行随写入实时变绿（phases/spec/bind 三行 ✓；repos 行服务端权威恒乐观）
 //   ⑦ DELETE 清草稿 + home。
 //
 // Fixture 纪律同 task-phase-* 系（R1/R3：UI 动作走浏览器、断言回 API+DB+fs；
@@ -130,7 +130,7 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
     expect(String(phases[0].specPath)).toMatch(new RegExp(`^\\./\\.scratch/\\d{8}/p-${UNIQ}/spec\\.md$`))
 
     // ⑤ spec.md：404 空态 → 创建骨架 → fs 真相
-    await page.locator("[data-phase-spec-button='1']").click()
+    await page.locator("[data-spec-out-row='1'] button").click()
     await expect(page.locator("[data-spec-skeleton-button]")).toBeVisible({ timeout: 10_000 })
     await page.locator("[data-spec-skeleton-button]").click()
     await expect(page.locator("[data-spec-editor]")).toBeVisible({ timeout: 10_000 })
@@ -150,9 +150,9 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
         return sp?.[0]?.specPath ? true : false
       }, { timeout: 10_000 })
       .toBe(true)
-    await expect(page.locator("[data-checklist-v4='phases']")).toContainText("✅", { timeout: 15_000 })
-    await expect(page.locator("[data-checklist-v4='spec']")).toContainText("✅")
-    await expect(page.locator("[data-checklist-v4='bind']")).toContainText("✅")
+    await expect(page.locator("[data-checklist-v4='phases']")).toContainText("✓", { timeout: 15_000 })
+    await expect(page.locator("[data-checklist-v4='spec']")).toContainText("✓")
+    await expect(page.locator("[data-checklist-v4='bind']")).toContainText("✓")
 
     // ⑦ 清理（afterAll 再兜一次 DELETE；软删 + home reap）
     await deleteTaskRaw(mine!.id)

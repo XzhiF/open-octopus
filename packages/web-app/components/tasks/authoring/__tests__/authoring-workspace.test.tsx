@@ -522,11 +522,11 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       expect(repos.textContent).toContain("✗")
       expect(repos.textContent).toContain("仓库不可解析：demo-repo")
       // 其它行不被 project: 键污染（catch-all 之前拦截）
-      expect(list.querySelector('[data-checklist-v4="phases"]')!.textContent).toContain("✅")
+      expect(list.querySelector('[data-checklist-v4="phases"]')!.textContent).toContain("✓")
     })
   })
 
-  it("v4 无 project_ids：repos 行恒 ✅ 且不禁点（服务端权威，✗ 只由 409 回填）", async () => {
+  it("v4 无 project_ids：repos 行恒 ✓ 且不禁点（服务端权威，✗ 只由 409 回填）", async () => {
     render(
       <AuthoringWorkspace
         task={{ ...makeV4Task("v4-norepo", [COMPLETE_PHASE_1, COMPLETE_PHASE_2]), project_ids: [] } as never}
@@ -536,7 +536,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
     await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
-    expect(list.querySelector('[data-checklist-v4="repos"]')!.textContent).toContain("✅")
+    expect(list.querySelector('[data-checklist-v4="repos"]')!.textContent).toContain("✓")
     expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false)
   })
 
@@ -567,7 +567,7 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
       latest_mtime: "2026-09-03T00:00:00.000Z",
     }))
 
-  it("tree 全命中 → spec 行 ✅「磁盘已核」，四行齐可入队", async () => {
+  it("tree 全命中 → spec 行 ✓「磁盘已核」，四行齐可入队", async () => {
     vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]))
     render(
       <AuthoringWorkspace
@@ -578,7 +578,7 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
     await waitFor(() =>
-      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✅"),
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✓"),
     )
     expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("磁盘已核")
     const btn = document.querySelector('[data-testid="task-enqueue"]') as HTMLButtonElement
@@ -599,7 +599,7 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
     await waitFor(() => {
       const specRow = list.querySelector('[data-checklist-v4="spec"]')!
       expect(specRow.textContent).toContain("⏳")
-      expect(specRow.textContent).not.toContain("✅")
+      expect(specRow.textContent).not.toContain("✓")
     })
     const btn = document.querySelector('[data-testid="task-enqueue"]') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
@@ -616,7 +616,7 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
     await waitFor(() =>
-      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✅"),
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✓"),
     )
     expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).not.toContain("磁盘已核")
   })

@@ -447,7 +447,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     const checklist = modal.locator('[data-testid="enqueue-checklist-v4"]')
     await expect(checklist).toBeVisible({ timeout: 15_000 })
     for (const row of ["phases", "spec", "bind", "inputs", "repos"]) {
-      await expect(checklist.locator(`[data-checklist-v4="${row}"]`)).toContainText("✅", { timeout: 15_000 })
+      await expect(checklist.locator(`[data-checklist-v4="${row}"]`)).toContainText("✓", { timeout: 15_000 })
     }
     await expect(modal.locator("[data-phase-binding-list]")).toBeVisible({ timeout: 15_000 })
     await expect(modal.locator('[data-phase-bind-button="1"]')).toBeVisible()
