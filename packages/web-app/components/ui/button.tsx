@@ -23,7 +23,7 @@ const buttonVariants = cva(
         link: 'text-primary underline-offset-4 hover:underline',
         // 🖥 Pop (终端) — 贴纸按钮:细边 + 软投影 + 轻按压
         pop:
-          'rounded-xl border-[1.5px] border-pop-bd bg-pop-pink text-[#151413] font-black shadow-pop-sm pop-press hover:bg-pop-pink/90',
+          'rounded-xl border-[1.5px] border-pop-bd bg-pop-pink text-pop-bg font-black shadow-pop-sm pop-press hover:bg-pop-pink/90',
         'pop-quiet':
           'rounded-xl border-[1.5px] border-pop-bd bg-pop-paper text-pop-ink font-bold shadow-pop-sm pop-press hover:bg-pop-yellow-soft',
       },

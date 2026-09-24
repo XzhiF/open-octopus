@@ -25,7 +25,7 @@ export function CostTrendChart({ data, days }: CostTrendChartProps) {
     <Card>
       <CardHeader><CardTitle className="text-base">成本趋势（最近 {days} 天）</CardTitle></CardHeader>
       <CardContent>
-        <ChartContainer config={{ cost: { label: "成本 ($)", color: "hsl(var(--chart-1))" } }} className="h-64">
+        <ChartContainer config={{ cost: { label: "成本 ($)", color: "var(--chart-1)" } }} className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />

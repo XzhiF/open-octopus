@@ -37,7 +37,7 @@ export function Header() {
       <div className="flex h-14 items-center px-4 lg:px-6">
         {/* Logo — 赤陶贴纸 */}
         <Link href="/" className="flex items-center gap-2 mr-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg border-[1.5px] border-pop-bd bg-pop-pink text-[#151413] shadow-pop-sm">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border-[1.5px] border-pop-bd bg-pop-pink text-pop-bg shadow-pop-sm">
             <Activity className="h-4 w-4" />
           </div>
           <span className="font-black text-lg tracking-tight text-pop-ink">Octopus</span>
@@ -55,7 +55,7 @@ export function Header() {
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-all",
                   isActive
-                    ? "border-[1.5px] border-pop-bd bg-pop-yellow font-black text-[#151413] shadow-pop-sm"
+                    ? "border-[1.5px] border-pop-bd bg-pop-yellow font-black text-pop-bg shadow-pop-sm"
                     : "font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
                 )}
               >

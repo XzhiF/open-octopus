@@ -109,7 +109,7 @@
 .wsb-band[data-band="error"] .wsb-name { font-size: 15px; }
 .wsb-warn { color: var(--pop-red); font-size: 16px; flex: none; }
 .wsb-err-pill { background: var(--pop-red); color: var(--pop-paper); font-weight: 900; font-size: 10px; padding: 1px 6px; border-radius: 999px; flex: none; }
-.wsb-snippet { font-family: ui-monospace, Menlo, monospace; font-size: 10px; background: #121110; color: var(--pop-dim); padding: 6px 8px; border-radius: 6px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-left: 3px solid var(--pop-red); }
+.wsb-snippet { font-family: ui-monospace, Menlo, monospace; font-size: 10px; background: var(--pop-inset); color: var(--pop-dim); padding: 6px 8px; border-radius: 6px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-left: 3px solid var(--pop-red); }
 .wsb-band[data-band="error"] .wsb-card:hover { animation: wsb-shake 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) 1; }
 @keyframes wsb-shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-3px); } 40%, 60% { transform: translateX(3px); } }
 

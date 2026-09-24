@@ -10,7 +10,7 @@ interface WorkflowYamlEditorProps {
   onSave?: () => void
 }
 
-// 暗黑 TUI 编辑器主题：vs-dark 基础上把底色压到 inset (#121110)
+// 暗黑 TUI 编辑器主题：vs-dark 基础上把底色压到 inset (#020202)
 const OCTOPUS_DARK_THEME = "octopus-dark-tui"
 
 export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEditorProps) {
@@ -67,7 +67,7 @@ export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEdit
             base: "vs-dark",
             inherit: true,
             rules: [],
-            colors: { "editor.background": "#121110" },
+            colors: { "editor.background": "#020202" },
           })
         }}
         theme={OCTOPUS_DARK_THEME}

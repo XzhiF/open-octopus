@@ -596,7 +596,7 @@ export function ChatArea({
                       disabled={!input.trim()}
                       title="发送（⏎ 同效）"
                       data-tui-send
-                      className="grid size-6 place-items-center rounded-md border border-pop-bd bg-pop-pink text-[10px] font-bold text-[#151413] transition-opacity disabled:opacity-40"
+                      className="grid size-6 place-items-center rounded-md border border-pop-bd bg-pop-pink text-[10px] font-bold text-pop-bg transition-opacity disabled:opacity-40"
                     >
                       ⏎
                     </button>

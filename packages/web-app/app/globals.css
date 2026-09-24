@@ -4,7 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ── 全站暗黑 TUI (2026-09 warm-black terminal) :root 即最终暗色，无 .dark 切换 ──
+/* ── 全站暗黑 TUI (2026-09 净黑 neutral-black) :root 即最终暗色，无 .dark 切换 ──
    shadcn 语义 token 按 .task-tui 块同款写法重钉为暗色等值（引用 pop 变量）。 */
 :root {
   --background: var(--pop-bg);
@@ -14,7 +14,7 @@
   --popover: var(--pop-paper);
   --popover-foreground: var(--pop-ink);
   --primary: var(--pop-pink);
-  --primary-foreground: #151413;
+  --primary-foreground: #0A0A0C;
   --secondary: var(--pop-idle);
   --secondary-foreground: var(--pop-ink);
   --muted: var(--pop-idle);
@@ -22,8 +22,8 @@
   --accent: var(--pop-purple-soft);
   --accent-foreground: var(--pop-ink);
   --destructive: var(--pop-red);
-  --destructive-foreground: #f5f2ee;
-  --border: rgba(216, 211, 203, 0.14);
+  --destructive-foreground: #F5F5F2;
+  --border: rgba(245, 245, 242, 0.14);
   --input: var(--pop-bd);
   --ring: var(--pop-pink);
   --chart-1: var(--pop-pink);
@@ -35,10 +35,10 @@
   --sidebar: var(--pop-bg);
   --sidebar-foreground: var(--pop-ink);
   --sidebar-primary: var(--pop-pink);
-  --sidebar-primary-foreground: #151413;
+  --sidebar-primary-foreground: #0A0A0C;
   --sidebar-accent: var(--pop-purple-soft);
   --sidebar-accent-foreground: var(--pop-ink);
-  --sidebar-border: rgba(216, 211, 203, 0.14);
+  --sidebar-border: rgba(245, 245, 242, 0.14);
   --sidebar-ring: var(--pop-pink);
 
   /* 模块色 token（scheduler/knowledge/swarm/moa/agent）统一在下方 pop 派生段
@@ -56,33 +56,36 @@
   /* ── Spacing tokens ── */
   --space-section: clamp(4rem, 3rem + 5vw, 10rem);
 
-  /* ── Pop (暖黑终端 TUI) tokens — 全站最终色板 (dark) ── */
-  --pop-bg: #151413;
-  --pop-paper: #211f1e;
-  --pop-ink: #d8d3cb;
-  --pop-dim: #6e6862;
-  --pop-bd: #3a3733;
-  --pop-pink: #d97757;
-  --pop-pink-soft: #2a1f1a;
-  --pop-yellow: #c9a35c;
-  --pop-yellow-soft: #262119;
-  --pop-purple: #d97757;
-  --pop-purple-soft: #2a1f1a;
-  --pop-green: #8ba88e;
-  --pop-green-soft: #1d241e;
-  --pop-amber: #c9a35c;
-  --pop-amber-soft: #262119;
-  --pop-cyan: #7fa3a8;
-  --pop-cyan-soft: #1c2425;
-  --pop-red: #b4534a;
-  --pop-navy: #43596b;          /* 藏青 —— 折叠态身份色（一键盘/把手/折后徽章） */
-  --pop-navy-soft: #1e2730;
-  --pop-idle: #1d1b1a;
+  /* ── Pop (净黑终端 TUI) tokens — 全站最终色板 (dark) ──
+     选型原型：public/prototype/site-dark-palette.html（?pal=1 = 净黑）。
+     soft 色 = 主色 13~16% 压在 bg 上（oklab），改主色须同步重算 soft。 */
+  --pop-bg: #0A0A0C;
+  --pop-paper: #1C1C22;
+  --pop-ink: #F5F5F2;
+  --pop-dim: #9698A3;
+  --pop-bd: #32323B;
+  --pop-pink: #FF855C;
+  --pop-pink-soft: #2A1B19;
+  --pop-yellow: #FFC857;
+  --pop-yellow-soft: #231E17;
+  --pop-purple: #D2A8FF;
+  --pop-purple-soft: #221E29;
+  --pop-green: #7EE787;
+  --pop-green-soft: #18211A;
+  --pop-amber: #FFC857;
+  --pop-amber-soft: #231E17;
+  --pop-cyan: #4FD1D9;
+  --pop-cyan-soft: #151F21;
+  --pop-red: #FF5C5C;
+  --pop-navy: #4C79BF;          /* 蓝 —— 折叠态身份色（一键盘/把手/折后徽章） */
+  --pop-navy-soft: #181F2D;
+  --pop-idle: #131318;
+  --pop-inset: #020202;         /* 下陷面 —— 输入框/代码块/图片底板，比 bg 更深一档 */
   --pop-bdw: 1.5px;
   --pop-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   --pop-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
   --pop-shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.5);
-  --pop-dot: rgba(255, 255, 255, 0.03);
+  --pop-dot: rgba(245, 245, 242, 0.05);
 
 
   /* ── 全站终端换底 (dark):语义 token 一律指向 pop —— 所有 shadcn 组件
@@ -95,7 +98,7 @@
   --popover: var(--pop-paper);
   --popover-foreground: var(--pop-ink);
   --primary: var(--pop-pink);
-  --primary-foreground: #151413;
+  --primary-foreground: #0A0A0C;
   --secondary: var(--pop-idle);
   --secondary-foreground: var(--pop-ink);
   --muted: var(--pop-idle);
@@ -103,8 +106,8 @@
   --accent: var(--pop-purple-soft);
   --accent-foreground: var(--pop-ink);
   --destructive: var(--pop-red);
-  --destructive-foreground: #f5f2ee;
-  --border: rgba(216, 211, 203, 0.14);
+  --destructive-foreground: #F5F5F2;
+  --border: rgba(245, 245, 242, 0.14);
   --input: var(--pop-bd);
   --ring: var(--pop-pink);
   --chart-1: var(--pop-pink);
@@ -115,10 +118,10 @@
   --sidebar: var(--pop-bg);
   --sidebar-foreground: var(--pop-ink);
   --sidebar-primary: var(--pop-pink);
-  --sidebar-primary-foreground: #151413;
+  --sidebar-primary-foreground: #0A0A0C;
   --sidebar-accent: var(--pop-purple-soft);
   --sidebar-accent-foreground: var(--pop-ink);
-  --sidebar-border: rgba(216, 211, 203, 0.14);
+  --sidebar-border: rgba(245, 245, 242, 0.14);
   --sidebar-ring: var(--pop-pink);
 
   /* 模块 token 同步归一(引用 pop 变量,深浅两态自动跟随) */
@@ -182,7 +185,7 @@
   --agent-primary-hover: color-mix(in oklab, var(--pop-purple) 85%, black);
   --agent-primary-active: color-mix(in oklab, var(--pop-purple) 70%, black);
   --agent-primary-light: var(--pop-purple-soft);
-  --agent-primary-foreground: #151413;
+  --agent-primary-foreground: #0A0A0C;
   --agent-accent: var(--pop-pink);
   --agent-accent-hover: color-mix(in oklab, var(--pop-pink) 85%, black);
   --agent-accent-light: var(--pop-pink-soft);
@@ -200,44 +203,45 @@
   --agent-info-foreground: var(--pop-ink);
   --agent-surface: var(--pop-bg);
   --agent-surface-raised: var(--pop-paper);
-  --agent-surface-inset: var(--pop-idle);
+  --agent-surface-inset: var(--pop-inset);
   --agent-divider: var(--pop-bd);
 }
 
 
-/* ── task-tui (2026-09-24 草稿工作台 TUI 改版) — claude-code 终端皮肤 ──
-   作用域换底：整棵子树（含 shadcn 语义 token）翻成暖黑终端配色。@theme 是
+/* ── task-tui (2026-09-24 草稿工作台 TUI 改版) — 净黑终端皮肤 ──
+   作用域换底：整棵子树（含 shadcn 语义 token）翻成净黑终端配色。@theme 是
    inline 映射 → 工具类编译为 var(--x) 于使用点解析，scope 重定义即全生效；
    :root 处派生 token 已固化 → 需在本 scope 重钉一遍。
-   色板对应原型 public/prototype/chat-tui.html：bg #191817 / acc #d97757 /
-   sage #8ba88e / warn #c9a35c / red #b4534a。 */
+   色板对应原型 public/prototype/site-dark-palette.html?pal=1（净黑）：
+   bg #0A0A0C / acc #FF855C / green #7EE787 / warn #FFC857 / red #FF5C5C。 */
 .task-tui {
     font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
-    --pop-bg: #151413;
-    --pop-paper: #211f1e;
-    --pop-ink: #d8d3cb;
-    --pop-dim: #6e6862;
-    --pop-bd: #3a3733;
-    --pop-pink: #d97757;
-    --pop-pink-soft: #2a1f1a;
-    --pop-yellow: #c9a35c;
-    --pop-yellow-soft: #262119;
-    --pop-purple: #d97757;
-    --pop-purple-soft: #2a1f1a;
-    --pop-green: #8ba88e;
-    --pop-green-soft: #1d241e;
-    --pop-amber: #c9a35c;
-    --pop-amber-soft: #262119;
-    --pop-cyan: #7fa3a8;
-    --pop-cyan-soft: #1c2425;
-    --pop-red: #b4534a;
-    --pop-navy: #43596b;
-    --pop-navy-soft: #1e2730;
-    --pop-idle: #1d1b1a;
+    --pop-bg: #0A0A0C;
+    --pop-paper: #1C1C22;
+    --pop-ink: #F5F5F2;
+    --pop-dim: #9698A3;
+    --pop-bd: #32323B;
+    --pop-pink: #FF855C;
+    --pop-pink-soft: #2A1B19;
+    --pop-yellow: #FFC857;
+    --pop-yellow-soft: #231E17;
+    --pop-purple: #D2A8FF;
+    --pop-purple-soft: #221E29;
+    --pop-green: #7EE787;
+    --pop-green-soft: #18211A;
+    --pop-amber: #FFC857;
+    --pop-amber-soft: #231E17;
+    --pop-cyan: #4FD1D9;
+    --pop-cyan-soft: #151F21;
+    --pop-red: #FF5C5C;
+    --pop-navy: #4C79BF;
+    --pop-navy-soft: #181F2D;
+    --pop-idle: #131318;
+    --pop-inset: #020202;
     --pop-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     --pop-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
     --pop-shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.5);
-    --pop-dot: rgba(255, 255, 255, 0.03);
+    --pop-dot: rgba(245, 245, 242, 0.05);
     /* :root 处派生 token 已固化 → 本 scope 重钉一遍（不重钉则不跟随） */
     --background: var(--pop-bg);
     --foreground: var(--pop-ink);
@@ -246,7 +250,7 @@
     --popover: var(--pop-paper);
     --popover-foreground: var(--pop-ink);
     --primary: var(--pop-pink);
-    --primary-foreground: #151413;
+    --primary-foreground: #0A0A0C;
     --secondary: var(--pop-idle);
     --secondary-foreground: var(--pop-ink);
     --muted: var(--pop-idle);
@@ -254,22 +258,22 @@
     --accent: var(--pop-purple-soft);
     --accent-foreground: var(--pop-ink);
     --destructive: var(--pop-red);
-    --destructive-foreground: #f5f2ee;
-    --border: rgba(216, 211, 203, 0.14);
+    --destructive-foreground: #F5F5F2;
+    --border: rgba(245, 245, 242, 0.14);
     --input: var(--pop-bd);
     --ring: var(--pop-pink);
     --agent-primary: var(--pop-purple);
     --agent-primary-light: var(--pop-purple-soft);
     --agent-surface: var(--pop-bg);
     --agent-surface-raised: var(--pop-paper);
-    --agent-surface-inset: #121110;
+    --agent-surface-inset: var(--pop-inset);
     --agent-divider: var(--pop-bd);
     --agent-success: var(--pop-green);
     --agent-success-light: var(--pop-green-soft);
     --agent-warn: var(--pop-amber);
     --agent-warn-light: var(--pop-amber-soft);
     --agent-error: var(--pop-red);
-    --agent-error-light: #2a1a18;
+    --agent-error-light: #291717;
     --agent-info: var(--pop-cyan);
     --agent-info-light: var(--pop-cyan-soft);
   }
@@ -280,7 +284,7 @@
 html,
 html * {
   scrollbar-width: thin;
-  scrollbar-color: #3b3531 transparent;
+  scrollbar-color: #46464E transparent;
 }
 html::-webkit-scrollbar,
 html *::-webkit-scrollbar { width: 9px; height: 9px; }
@@ -288,14 +292,14 @@ html::-webkit-scrollbar-track,
 html *::-webkit-scrollbar-track { background: transparent; }
 html::-webkit-scrollbar-thumb,
 html *::-webkit-scrollbar-thumb {
-  background: #3b3531;
+  background: #46464E;
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 html::-webkit-scrollbar-thumb:hover,
 html *::-webkit-scrollbar-thumb:hover {
-  background: #57504a;
+  background: #67676D;
   background-clip: content-box;
 }
 html::-webkit-scrollbar-corner,
@@ -458,6 +462,7 @@ html *::-webkit-scrollbar-corner { background: transparent; }
   --color-pop-cyan-soft: var(--pop-cyan-soft);
   --color-pop-red: var(--pop-red);
   --color-pop-idle: var(--pop-idle);
+  --color-pop-inset: var(--pop-inset);
 
   /* pop 硬投影 / 圆角 —— 注册进 Tailwind 命名空间，得 shadow-pop-* / rounded-pop */
   --shadow-pop: var(--pop-shadow);
@@ -481,7 +486,7 @@ html *::-webkit-scrollbar-corner { background: transparent; }
  * 全部收敛在这里,组件里只贴类名 + pop-* token 工具类。
  * ──────────────────────────────────────────────────────────────────────── */
 
-/* 圆点底纹(页面级背景)—— --pop-dot 已是 rgba(255,255,255,0.03) */
+/* 圆点底纹(页面级背景)—— --pop-dot 已是 rgba(245,245,242,0.05) */
 .pop-confetti {
   background-color: var(--pop-bg);
   background-image: radial-gradient(var(--pop-dot) 1.6px, transparent 1.6px);
@@ -528,7 +533,7 @@ html *::-webkit-scrollbar-corner { background: transparent; }
 
 /* 虚线分区带(思考卡 meta / ask 提示等) */
 .pop-dash {
-  border-top: 1.5px dashed rgba(216, 211, 203, 0.16);
+  border-top: 1.5px dashed rgba(245, 245, 242, 0.16);
 }
 
 @keyframes pop-blink { 50% { opacity: 0; } }

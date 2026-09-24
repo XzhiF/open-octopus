@@ -11,8 +11,8 @@ export interface ExpertAvatarProps {
 }
 
 const AVATAR_COLORS = [
-  "#d97757", "#7fa3a8", "#8ba88e", "#c9a35c", "#43596b",
-  "#b4534a", "#6e6862", "#d97757", "#8ba88e", "#7fa3a8",
+  "var(--pop-pink)", "var(--pop-cyan)", "var(--pop-green)", "var(--pop-amber)", "var(--pop-navy)",
+  "var(--pop-red)", "var(--pop-dim)", "var(--pop-pink)", "var(--pop-green)", "var(--pop-cyan)",
 ]
 
 function hashRole(role: string): number {

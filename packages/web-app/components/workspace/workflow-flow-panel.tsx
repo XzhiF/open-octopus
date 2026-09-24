@@ -447,20 +447,20 @@ export function WorkflowFlowPanel({
             proOptions={{ hideAttribution: true }}
             aria-label="执行流程图"
           >
-            <Background color="#3a3733" gap={20} size={1} />
+            <Background color="#32323B" gap={20} size={1} />
             <Controls showInteractive={false} />
             <MiniMap
               nodeColor={(node) => {
                 const status = (node.data as any)?.executionStatus
-                if (status === "completed") return "#8ba88e"
-                if (status === "completed_with_failures") return "#c9a35c"
-                if (status === "running") return "#c9a35c"
-                if (status === "failed") return "#b4534a"
-                if (status === "budget_exceeded") return "#b4534a"
-                if (status === "paused") return "#d97757"
-                if (status === "pending_approval") return "#c9a35c"
-                if (status === "rejected") return "#c9a35c"
-                return "#6e6862"
+                if (status === "completed") return "#7EE787"
+                if (status === "completed_with_failures") return "#FFC857"
+                if (status === "running") return "#FFC857"
+                if (status === "failed") return "#FF5C5C"
+                if (status === "budget_exceeded") return "#FF5C5C"
+                if (status === "paused") return "#FF855C"
+                if (status === "pending_approval") return "#FFC857"
+                if (status === "rejected") return "#FFC857"
+                return "#9698A3"
               }}
               maskColor="rgba(0, 0, 0, 0.5)"
               className="!bg-background/80 !border-border"

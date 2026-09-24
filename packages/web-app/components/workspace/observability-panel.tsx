@@ -143,17 +143,17 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
 }
 
 const PIE_COLORS = [
-  "#7fa3a8", "#8ba88e", "#c9a35c", "#b4534a",
-  "#d97757", "#6e6862", "#d8d3cb", "#43596b",
+  "#4FD1D9", "#7EE787", "#FFC857", "#FF5C5C",
+  "#FF855C", "#9698A3", "#F5F5F2", "#4C79BF",
 ]
 
 // recharts Tooltip 默认浅底 —— 暗黑 TUI 下改用 paper 底 / bd 描边
 const CHART_TOOLTIP_STYLE = {
   fontSize: 11,
-  background: "#211f1e",
-  border: "1px solid #3a3733",
+  background: "var(--pop-paper)",
+  border: "1px solid var(--pop-bd)",
   borderRadius: 8,
-  color: "#d8d3cb",
+  color: "var(--pop-ink)",
 }
 
 // ============ Main Component ============
@@ -369,9 +369,9 @@ function TokenTrendChart({ timeSeries }: { timeSeries: ObservabilityData["timeSe
           <YAxis yAxisId="cost" orientation="right" tick={{ fontSize: 9 }} width={40} />
           <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10 }} />
-          <Line yAxisId="tokens" type="monotone" dataKey="inputTokens" name="输入" stroke="#7fa3a8" dot={false} strokeWidth={1.5} />
-          <Line yAxisId="tokens" type="monotone" dataKey="outputTokens" name="输出" stroke="#8ba88e" dot={false} strokeWidth={1.5} />
-          <Line yAxisId="cost" type="monotone" dataKey="cost" name="成本" stroke="#c9a35c" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="tokens" type="monotone" dataKey="inputTokens" name="输入" stroke="#4FD1D9" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="tokens" type="monotone" dataKey="outputTokens" name="输出" stroke="#7EE787" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="cost" type="monotone" dataKey="cost" name="成本" stroke="#FFC857" dot={false} strokeWidth={1.5} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -394,8 +394,8 @@ function NodeConsumptionChart({ byNode }: { byNode: ObservabilityData["byNode"] 
           <YAxis type="category" dataKey="name" tick={{ fontSize: 9 }} width={90} />
           <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10 }} />
-          <Bar dataKey="inputTokens" name="输入" fill="#7fa3a8" radius={[0, 3, 3, 0]} />
-          <Bar dataKey="outputTokens" name="输出" fill="#8ba88e" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="inputTokens" name="输入" fill="#4FD1D9" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="outputTokens" name="输出" fill="#7EE787" radius={[0, 3, 3, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -147,14 +147,14 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
 
 // 暖黑终端色板：与 --pop-* 暗黑 token 同值（SVG fill/stroke 属性不吃 var()，只能落 hex）
 const PIE_COLORS = [
-  "#7fa3a8", // cyan
-  "#c9a35c", // amber
-  "#8ba88e", // green
-  "#b4534a", // red
-  "#d97757", // pink/purple
-  "#d8d3cb", // ink
-  "#6e6862", // dim
-  "#3a3733", // bd
+  "#4FD1D9", // cyan
+  "#FFC857", // amber
+  "#7EE787", // green
+  "#FF5C5C", // red
+  "#FF855C", // pink/purple
+  "#F5F5F2", // ink
+  "#9698A3", // dim
+  "#32323B", // bd
 ]
 
 const CHART_TOOLTIP_STYLE = {
@@ -507,7 +507,7 @@ function TokenTrendChart({
             type="monotone"
             dataKey="inputTokens"
             name="输入 Token"
-            stroke="#7fa3a8"
+            stroke="#4FD1D9"
             dot={false}
             strokeWidth={2}
           />
@@ -516,7 +516,7 @@ function TokenTrendChart({
             type="monotone"
             dataKey="outputTokens"
             name="输出 Token"
-            stroke="#8ba88e"
+            stroke="#7EE787"
             dot={false}
             strokeWidth={2}
           />
@@ -525,7 +525,7 @@ function TokenTrendChart({
             type="monotone"
             dataKey="cost"
             name="成本 ($)"
-            stroke="#c9a35c"
+            stroke="#FFC857"
             dot={false}
             strokeWidth={2}
           />
@@ -572,13 +572,13 @@ function NodeConsumptionChart({
           <Bar
             dataKey="inputTokens"
             name="输入 Token"
-            fill="#7fa3a8"
+            fill="#4FD1D9"
             radius={[0, 4, 4, 0]}
           />
           <Bar
             dataKey="outputTokens"
             name="输出 Token"
-            fill="#8ba88e"
+            fill="#7EE787"
             radius={[0, 4, 4, 0]}
           />
         </BarChart>

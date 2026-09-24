@@ -39,7 +39,7 @@ const REFRESH_INTERVAL_MS = 10_000
  *  卡片整面吃 *-*soft 全强度（比泳道亮一档 → 卡片从轨道里浮出来）。
  *  accent 与 public/prototype/site-dark-tui.html #tasks 对齐：
  *  草稿 dim / 待执行 cyan / 执行中 amber / 待验收 yellow / 完成 green。
- *  （running 不再用 purple —— 换底后 --pop-purple 与 --pop-pink 同值 #d97757，
+ *  （running 不再用 purple —— 换底后 --pop-purple 与 --pop-pink 同值 #FF855C，
  *   执行中会和「复合」徽章撞色。）
  *  全部为静态 class 字面量（Tailwind JIT）。 */
 const COLUMN_THEME: Record<TaskBoardColumnId, {

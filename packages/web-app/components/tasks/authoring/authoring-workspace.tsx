@@ -542,7 +542,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         <span aria-hidden className="shrink-0 text-pop-ink/25">│</span>
         <span
           data-task-type-badge
-          className="shrink-0 rounded border border-pop-bd bg-pop-yellow px-1.5 py-px font-mono text-[9px] font-bold text-[#151413]"
+          className="shrink-0 rounded border border-pop-bd bg-pop-yellow px-1.5 py-px font-mono text-[9px] font-bold text-pop-bg"
         >
           {typeBadge}
         </span>
@@ -597,7 +597,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             className={
               "flex items-center gap-1 rounded-md border border-pop-bd px-2.5 py-1 font-mono text-[10px] font-bold transition-colors " +
               (canEnqueue
-                ? "bg-pop-green text-[#151413] hover:bg-pop-green/85"
+                ? "bg-pop-green text-pop-bg hover:bg-pop-green/85"
                 : "bg-pop-bg/30 text-pop-dim")
             }
           >

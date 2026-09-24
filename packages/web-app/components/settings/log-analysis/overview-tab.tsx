@@ -107,7 +107,7 @@ export function OverviewTab({ workspaceId }: { workspaceId: string }) {
             <CardTitle className="text-base">执行趋势（最近 {summary.periodDays} 天）</CardTitle>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={{ success: { label: "成功", color: "hsl(var(--chart-1))" }, failed: { label: "失败", color: "hsl(var(--chart-5))" } }} className="h-64" aria-label={`执行趋势图：最近 ${summary.periodDays} 天`}>
+            <ChartContainer config={{ success: { label: "成功", color: "var(--chart-1)" }, failed: { label: "失败", color: "var(--chart-5)" } }} className="h-64" aria-label={`执行趋势图：最近 ${summary.periodDays} 天`}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={summary.dailyTrend}>
                   <title>执行趋势</title>

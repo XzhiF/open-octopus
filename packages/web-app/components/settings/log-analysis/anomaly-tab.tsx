@@ -60,16 +60,16 @@ export function AnomalyTab({ workspaceId }: { workspaceId: string }) {
         <Card>
           <CardHeader><CardTitle className="text-base">耗时异常 (Z-Score &gt; 2)</CardTitle></CardHeader>
           <CardContent>
-            <ChartContainer config={{ anomaly: { label: "耗时", color: "hsl(var(--chart-1))" } }} className="h-64">
+            <ChartContainer config={{ anomaly: { label: "耗时", color: "var(--chart-1)" } }} className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis dataKey="x" name="序号" tick={{ fontSize: 12 }} />
                   <YAxis dataKey="y" name="耗时(s)" tick={{ fontSize: 12 }} />
                   <Tooltip content={<ChartTooltipContent />} />
-                  <ReferenceLine y={meanMs} stroke="hsl(var(--chart-2))" strokeDasharray="3 3" label={`μ=${meanMs.toFixed(0)}s`} /> {/* fmt-ok: 轴刻度 */}
-                  <ReferenceLine y={meanMs + 2 * stddevMs} stroke="hsl(var(--chart-3))" strokeDasharray="3 3" label="μ+2σ" />
-                  <Scatter data={scatterData} fill="hsl(var(--chart-1))" />
+                  <ReferenceLine y={meanMs} stroke="var(--chart-2)" strokeDasharray="3 3" label={`μ=${meanMs.toFixed(0)}s`} /> {/* fmt-ok: 轴刻度 */}
+                  <ReferenceLine y={meanMs + 2 * stddevMs} stroke="var(--chart-3)" strokeDasharray="3 3" label="μ+2σ" />
+                  <Scatter data={scatterData} fill="var(--chart-1)" />
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartContainer>

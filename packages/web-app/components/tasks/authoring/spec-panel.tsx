@@ -630,7 +630,7 @@ export function PhaseFormDialog({
             取消
           </button>
           <button type="button" onClick={handleSubmit} disabled={invalid || busy}
-            className="rounded border border-pop-bd bg-pop-pink px-3 py-1 font-mono text-[10.5px] font-bold text-[#151413] transition-opacity disabled:opacity-40"
+            className="rounded border border-pop-bd bg-pop-pink px-3 py-1 font-mono text-[10.5px] font-bold text-pop-bg transition-opacity disabled:opacity-40"
             data-phase-add-submit={mode === "add" ? "" : undefined}
             data-phase-edit-save={mode === "edit" && phase ? phase.index : undefined}>
             {busy ? <Spinner className="mr-1 inline size-3" /> : null}

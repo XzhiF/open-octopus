@@ -4,15 +4,15 @@ import { BaseEdge, getSmoothStepPath, type EdgeProps } from "@xyflow/react"
 import type { StepExecutionStatus } from "@/lib/types"
 
 const edgeStyleMap: Record<StepExecutionStatus, { stroke: string; strokeWidth: number; dashed: boolean; opacity: number; animated: boolean }> = {
-  pending: { stroke: "#6e6862", strokeWidth: 2, dashed: true, opacity: 1, animated: false },
-  running: { stroke: "#c9a35c", strokeWidth: 3, dashed: true, opacity: 1, animated: true },
-  completed: { stroke: "#8ba88e", strokeWidth: 2, dashed: false, opacity: 1, animated: false },
-  failed: { stroke: "#b4534a", strokeWidth: 2, dashed: false, opacity: 1, animated: false },
-  skipped: { stroke: "#6e6862", strokeWidth: 2, dashed: true, opacity: 0.5, animated: false },
-  cancelled: { stroke: "#6e6862", strokeWidth: 2, dashed: true, opacity: 0.6, animated: false },
-  paused: { stroke: "#d97757", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
-  rejected: { stroke: "#d97757", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
-  pending_approval: { stroke: "#c9a35c", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
+  pending: { stroke: "#9698A3", strokeWidth: 2, dashed: true, opacity: 1, animated: false },
+  running: { stroke: "#FFC857", strokeWidth: 3, dashed: true, opacity: 1, animated: true },
+  completed: { stroke: "#7EE787", strokeWidth: 2, dashed: false, opacity: 1, animated: false },
+  failed: { stroke: "#FF5C5C", strokeWidth: 2, dashed: false, opacity: 1, animated: false },
+  skipped: { stroke: "#9698A3", strokeWidth: 2, dashed: true, opacity: 0.5, animated: false },
+  cancelled: { stroke: "#9698A3", strokeWidth: 2, dashed: true, opacity: 0.6, animated: false },
+  paused: { stroke: "#FF855C", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
+  rejected: { stroke: "#FF855C", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
+  pending_approval: { stroke: "#FFC857", strokeWidth: 2, dashed: true, opacity: 0.8, animated: false },
 }
 
 export function WorkflowStepEdge({

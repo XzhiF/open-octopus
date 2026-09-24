@@ -10,7 +10,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import { XCircle, CheckCircle2 } from "lucide-react"
 
-const COLORS = ["#b4534a", "#d97757", "#c9a35c", "#7fa3a8", "#8ba88e", "#6e6862", "#43596b"]
+const COLORS = ["var(--pop-red)", "var(--pop-pink)", "var(--pop-amber)", "var(--pop-cyan)", "var(--pop-green)", "var(--pop-dim)", "var(--pop-navy)"]
 
 export function FailureTab({ workspaceId }: { workspaceId: string }) {
 

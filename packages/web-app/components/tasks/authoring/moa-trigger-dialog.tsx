@@ -438,7 +438,7 @@ export function MoATriggerDialog({
             size="sm"
             onClick={handleSubmit}
             disabled={!canSubmit || running}
-            className="bg-pop-purple hover:bg-pop-purple/90 text-white"
+            className="bg-pop-purple hover:bg-pop-purple/90 text-pop-bg"
           >
             {running ? (
               <><Loader2 className="size-3.5 mr-1.5 animate-spin" />处理中…</>

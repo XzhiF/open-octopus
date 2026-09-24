@@ -53,7 +53,7 @@ export function WorkflowFlowViewer({ nodes, edges, isEmpty }: WorkflowFlowViewer
   const defaultEdgeOptions = useMemo(
     () => ({
       type: "smoothstep",
-      style: { stroke: "#6e6862", strokeWidth: 2 },
+      style: { stroke: "#9698A3", strokeWidth: 2 },
     }),
     []
   )
@@ -87,7 +87,7 @@ export function WorkflowFlowViewer({ nodes, edges, isEmpty }: WorkflowFlowViewer
         fitView
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#3a3733" gap={20} size={1} />
+        <Background color="#32323B" gap={20} size={1} />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>

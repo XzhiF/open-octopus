@@ -194,7 +194,7 @@ export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, on
             <Terminal className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-mono text-muted-foreground">归档日志</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed bg-[#121110] text-pop-ink rounded-b-lg">
+          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed bg-pop-inset text-pop-ink rounded-b-lg">
             {logs.length === 0 ? (
               <div className="text-pop-dim italic">等待归档开始...</div>
             ) : (

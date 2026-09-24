@@ -66,7 +66,7 @@ export function HomeFileViewerDialog({ taskId, target, onOpenChange }: {
           {state.kind === "error" && (
             <div className="flex items-start gap-2 text-xs py-6 text-muted-foreground">
               {state.status === 403
-                ? <ShieldAlert className="size-4 mt-0.5 shrink-0 text-amber-500" />
+                ? <ShieldAlert className="size-4 mt-0.5 shrink-0 text-pop-amber" />
                 : <FileQuestion className="size-4 mt-0.5 shrink-0 text-muted-foreground" />}
               <div>
                 <div>{state.status === 403 ? "路径不在读取范围（越出任务 home）"

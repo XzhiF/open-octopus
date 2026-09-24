@@ -15,7 +15,7 @@ function Checkbox({
       data-slot="checkbox"
       className={cn(
         // 🖥 墨边方块,勾上=陶底深勾
-        'peer border-pop-bd bg-card data-[state=checked]:bg-pop-pink data-[state=checked]:text-[#151413] focus-visible:ring-pop-pink/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 overflow-hidden rounded-[5px] border-[1.5px] shadow-pop-sm transition-shadow outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50',
+        'peer border-pop-bd bg-card data-[state=checked]:bg-pop-pink data-[state=checked]:text-pop-bg focus-visible:ring-pop-pink/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 overflow-hidden rounded-[5px] border-[1.5px] shadow-pop-sm transition-shadow outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
       {...props}

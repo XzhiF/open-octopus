@@ -104,7 +104,7 @@ export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerT
   const isVector = ext === "svg"
 
   return (
-    <div className="flex flex-col h-full bg-[#121110]">
+    <div className="flex flex-col h-full bg-pop-inset">
       {/* Toolbar */}
       <div className="flex items-center gap-1 border-b border-border/30 bg-background/80 backdrop-blur-sm px-3 py-1.5">
         <div className="flex items-center gap-1">
@@ -168,14 +168,14 @@ export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerT
           className="absolute inset-0"
           style={{
             backgroundImage: `
-              linear-gradient(45deg, #211f1e 25%, transparent 25%),
-              linear-gradient(-45deg, #211f1e 25%, transparent 25%),
-              linear-gradient(45deg, transparent 75%, #211f1e 75%),
-              linear-gradient(-45deg, transparent 75%, #211f1e 75%)
+              linear-gradient(45deg, var(--pop-paper) 25%, transparent 25%),
+              linear-gradient(-45deg, var(--pop-paper) 25%, transparent 25%),
+              linear-gradient(45deg, transparent 75%, var(--pop-paper) 75%),
+              linear-gradient(-45deg, transparent 75%, var(--pop-paper) 75%)
             `,
             backgroundSize: "20px 20px",
             backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
-            backgroundColor: "#1d1b1a",
+            backgroundColor: "var(--pop-idle)",
           }}
         />
 

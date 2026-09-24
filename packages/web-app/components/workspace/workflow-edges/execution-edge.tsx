@@ -4,19 +4,19 @@ import { BaseEdge, getSmoothStepPath, type EdgeProps, MarkerType } from "@xyflow
 import type { ExecutionStatus } from "@/lib/types"
 
 const edgeStyleMap: Record<ExecutionStatus, { stroke: string; strokeWidth: number; dashed: boolean }> = {
-  pending: { stroke: "#6e6862", strokeWidth: 2, dashed: true },
-  running: { stroke: "#c9a35c", strokeWidth: 3, dashed: false },
-  completed: { stroke: "#8ba88e", strokeWidth: 2, dashed: false },
-  completed_with_failures: { stroke: "#d97757", strokeWidth: 2, dashed: false },
-  failed: { stroke: "#b4534a", strokeWidth: 2, dashed: false },
-  cancelled: { stroke: "#6e6862", strokeWidth: 2, dashed: true },
-  paused: { stroke: "#d97757", strokeWidth: 2, dashed: true },
-  skipped: { stroke: "#6e6862", strokeWidth: 1, dashed: true },
-  rejected: { stroke: "#d97757", strokeWidth: 2, dashed: true },
-  pending_approval: { stroke: "#c9a35c", strokeWidth: 2, dashed: true },
-  pending_interaction: { stroke: "#d97757", strokeWidth: 2, dashed: true },
-  pending_resume: { stroke: "#7fa3a8", strokeWidth: 2, dashed: true },
-  budget_exceeded: { stroke: "#b4534a", strokeWidth: 2, dashed: false },
+  pending: { stroke: "#9698A3", strokeWidth: 2, dashed: true },
+  running: { stroke: "#FFC857", strokeWidth: 3, dashed: false },
+  completed: { stroke: "#7EE787", strokeWidth: 2, dashed: false },
+  completed_with_failures: { stroke: "#FF855C", strokeWidth: 2, dashed: false },
+  failed: { stroke: "#FF5C5C", strokeWidth: 2, dashed: false },
+  cancelled: { stroke: "#9698A3", strokeWidth: 2, dashed: true },
+  paused: { stroke: "#FF855C", strokeWidth: 2, dashed: true },
+  skipped: { stroke: "#9698A3", strokeWidth: 1, dashed: true },
+  rejected: { stroke: "#FF855C", strokeWidth: 2, dashed: true },
+  pending_approval: { stroke: "#FFC857", strokeWidth: 2, dashed: true },
+  pending_interaction: { stroke: "#FF855C", strokeWidth: 2, dashed: true },
+  pending_resume: { stroke: "#4FD1D9", strokeWidth: 2, dashed: true },
+  budget_exceeded: { stroke: "#FF5C5C", strokeWidth: 2, dashed: false },
 }
 
 export function ExecutionEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps) {
