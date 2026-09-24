@@ -53,6 +53,7 @@ export class BashExecutor implements NodeExecutor {
   private loopContext?: Record<string, any>
   private nodeOutputs?: Record<string, Record<string, any>>
   private skipHarness?: boolean
+  private onSpawn?: (pid: number) => void
 
   constructor(
     private node: NodeDef,
@@ -67,6 +68,7 @@ export class BashExecutor implements NodeExecutor {
     this.loopContext = config?.loopContext
     this.nodeOutputs = config?.nodeOutputs
     this.skipHarness = config?.skipHarness
+    this.onSpawn = config?.onSpawn
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -184,6 +186,12 @@ export class BashExecutor implements NodeExecutor {
         // group does not exist, the fallback kills only the shell, and every
         // grandchild (mvn → java, `... & sleep`) is orphaned on abort/timeout.
         detached: process.platform !== "win32",
+      })
+
+      proc.on("spawn", () => {
+        if (proc.pid) {
+          try { this.onSpawn?.(proc.pid) } catch { /* bookkeeping must never break execution */ }
+        }
       })
 
       let stdout = ""

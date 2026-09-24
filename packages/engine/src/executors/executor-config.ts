@@ -136,6 +136,10 @@ export interface BashConfig {
    *  terminate the service the platform started for this session. Model-authored
    *  flow commands must never set this. */
   skipHarness?: boolean
+  /** Fires once with the spawned shell's PID (child "spawn" event). Platform
+   *  bookkeeping (e.g. the test-instance registry) uses it as the process-tree
+   *  root to kill later; grandchild survival means PID alone is not authority. */
+  onSpawn?: (pid: number) => void
 }
 
 /** AgentExecutor — the heaviest config, runner is required */
