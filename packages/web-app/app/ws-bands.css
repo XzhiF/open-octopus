@@ -102,7 +102,7 @@
 .wsb-band[data-band="idle"] .wsb-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--pop-cyan); }
 .wsb-band[data-band="idle"] .wsb-card:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--hard); }
 .wsb-band[data-band="idle"] .wsb-ready { position: absolute; right: 8px; top: 8px; font-size: 9px; font-weight: 900; letter-spacing: 0.1em; color: var(--pop-cyan); border: 1.5px dashed var(--pop-cyan); padding: 1px 6px; border-radius: 4px; }
-.wsb-band[data-band="idle"] .wsb-name { font-size: 14px; }
+.wsb-band[data-band="idle"] .wsb-name { font-size: 14px; padding-right: 58px; }
 .wsb-band[data-band="idle"] .wsb-desc { font-size: 11px; }
 
 /* ============ ERROR = hazard + snippet + shake ============ */
