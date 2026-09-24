@@ -530,12 +530,14 @@ export function PhaseFormDialog({
       .catch(() => setCatalog([]))
   }, [])
 
-  // slug 未手打过 → 跟随 name 简版 slugify
+  // slug 未手打过 → 跟随 name 生成。只保留 SLUG_RE 允许的 ASCII 安全字符
+  // （CJK/符号折叠成 -），纯中文名 → 空（诚实的「待手填」，不再造 phase-N
+  // 假默认、也不给必红的非法 slug）。2026-09-24 用户定稿。
   const suggestedSlug = name
     .trim().toLowerCase()
-    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || `phase-${catalog.length + 1}`
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^[^a-z0-9]+|[-.]+$/g, "")
+    .slice(0, 40)
   const effectiveSlug = slugTouched ? slug : suggestedSlug
 
   const invalid =
@@ -589,7 +591,7 @@ export function PhaseFormDialog({
         <div className={row}>
           <Label className={lbl}>slug</Label>
           <Input className={`${field} ${effectiveSlug && !SLUG_RE.test(effectiveSlug) ? "border-pop-red" : ""}`}
-            placeholder={mode === "add" ? `slug=${suggestedSlug}` : ""} value={effectiveSlug} maxLength={100}
+            placeholder={mode === "add" ? "随名称自动生成（可手改）" : ""} value={effectiveSlug} maxLength={100}
             title="path-safe：字母/数字开头，可含 . _ -"
             onChange={(e) => { setSlugTouched(true); setSlug(e.target.value) }}
             data-phase-add-slug={mode === "add" ? "" : undefined}
