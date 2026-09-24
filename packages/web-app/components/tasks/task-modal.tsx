@@ -42,7 +42,7 @@ import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/co
 import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
-import { tuiEscapeGuard } from "@/lib/tui-escape"
+
 import { EditableTitle } from "./editable-title"
 import { TaskRunConsole } from "./run-console/task-run-console"
 import { RUN_STATUS_LABEL, RUN_ERROR_STATUSES, runErrorOf } from "./execution-summary"
@@ -291,16 +291,13 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
-            // TUI 草稿工作台：排队召回/打断优先消费 Esc（见 lib/tui-escape）。
-            if (tuiEscapeGuard.active) {
-              e.preventDefault()
-              return
-            }
-            if (isFullscreen) {
-              e.preventDefault()
-              setIsFullscreen(false)
-            }
+            // 2026-09-24 用户改判：任务窗（草稿/执行）不随 Esc 关闭 —— 误触即丢工作区
+            // 太伤；关闭只走 ✕ / 废弃。Esc 仍保留两件事：全屏退出 + 内层弹层/排队自行消费。
+            e.preventDefault()
+            if (isFullscreen) setIsFullscreen(false)
           }}
+          onInteractOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
           overlayClassName={isFullscreen ? "bg-transparent" : undefined}
         >
           {/* draft 工作台与执行态三模式（2026-09-12/09-21 改版）不再渲染

@@ -22,7 +22,11 @@ export function AutoResizeTextarea({
     const el = textareaRef.current
     if (!el) return
     el.style.height = "auto"
-    const maxHeight = maxRows * LINE_HEIGHT
+    // 行高上限要算上垂直 padding（scrollHeight 含 padding）—— 否则「3 行」
+    // 实际只露出 ~2.5 行就开始内滚。
+    const cs = getComputedStyle(el)
+    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    const maxHeight = maxRows * LINE_HEIGHT + padY
     const newHeight = Math.min(el.scrollHeight, maxHeight)
     el.style.height = `${newHeight}px`
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden"
@@ -41,6 +45,7 @@ export function AutoResizeTextarea({
   return (
     <textarea
       ref={textareaRef}
+      rows={1}
       value={value}
       onChange={handleInput}
       className={cn(

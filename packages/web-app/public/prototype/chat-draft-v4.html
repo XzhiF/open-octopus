@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE v4.3 — 任务草稿 chat（可删，勿当生产代码读）
+
+  v4.2 → v4.3 按用户反馈：
+  · ctx 移到 model pro 紧邻右侧（不再顶到最右），字体提亮。
+  · 滚动条改主题内细暗样式（不再用浏览器默认白灰滚动条）。
+  · 入队清单加两行必检：绑定确认（逐 phase 用户确认）+ runbook 内容 —— 顶栏计数改 N/7。
+  · 滚动跟随改为「贴底才自动滚」：向上拖动后停止自动下滚，拖回底部恢复跟随
+    （对话区可试：点左下「▶ 重放」期间向上拖动滚动条）。
+
+  落地时另做（原型演示不了）：
+  · esc 关闭草稿弹窗（task-modal Esc 通路修复）。
+
+  保留的五项改动演示：thinking 3 行流式 / markdown 去星号 / 用户消息 A 底 /
+  slash 全量 / 入队 = 所有 phase 全满足。
+
+  跑法：http://localhost:3000/prototype/chat-draft-v4.html
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE v4.2 · 任务草稿 chat（高保真）</title>
+<style>
+:root{--mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --bg:#191817;--fg:#d8d3cb;--dim:#6e6862;--acc:#d97757;--acc2:#8ba88e;--line:#2b2926;--panel:#211f1e;--chip:#2b2926;--warn:#c9a35c;--red:#b4534a;--purple:#9d8fc4;--yellow:#d4b95e;--cyan:#7fb5ae}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+/* ⑤ 主题内滚动条：细、暗、圆角，替代浏览器默认样式 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#3b3531;border-radius:5px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#57504a;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-corner{background:transparent}
+html{scrollbar-width:thin;scrollbar-color:#3b3531 transparent}
+body{font-family:var(--mono);font-size:13px;line-height:1.55;background:#0c0b0a;color:var(--fg);overflow:hidden}
+#desk{height:100%;display:flex;align-items:center;justify-content:center;padding:18px}
+#modal{width:min(1280px,100%);height:min(820px,100%);background:var(--bg);border:1px solid var(--line);
+  border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px #000a}
+
+/* ── terminal 导航条（真实 data-terminal-bar 1:1）── */
+#termbar{display:flex;height:28px;flex-shrink:0;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;
+  border-bottom:1px solid var(--line);background:#1d1b1a;padding:0 10px;font-size:11px;color:var(--fg);cursor:grab}
+#termbar .dots{display:flex;gap:5px;flex-shrink:0}
+#termbar .dots i{width:9px;height:9px;border-radius:50%;border:1.5px solid #0005;display:block}
+#termbar .sep{color:#ffffff20;flex-shrink:0}
+#termbar .title{font-weight:600}
+#termbar .tbadge{flex-shrink:0;border:1px solid var(--line);background:var(--yellow);color:#151413;font-weight:700;font-size:9px;padding:0 6px;border-radius:3px}
+#termbar .lock{flex-shrink:0;display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);color:var(--fg);font-size:9px;font-weight:700;padding:0 6px;border-radius:3px}
+#termbar .lock::before{content:"🔒";font-size:8px}
+#termbar .gear{flex-shrink:0;border:1px solid var(--line);color:var(--dim);font-size:9.5px;padding:0 6px;border-radius:3px;cursor:pointer;background:none;font-family:inherit}
+#termbar .gear:hover{color:var(--acc);border-color:var(--acc)}
+#termbar .right{margin-left:auto;display:flex;align-items:center;gap:6px;flex-shrink:0}
+#termbar .cnt{font-size:9.5px;color:var(--dim)}
+#termbar .cnt b{color:var(--acc)}
+#termbar .discard{border:1px solid transparent;background:none;color:var(--dim);font:inherit;font-size:9.5px;cursor:pointer;padding:1px 4px;border-radius:3px}
+#termbar .discard:hover{color:var(--red);border-color:#b4534a99}
+#termbar .eq{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:5px;padding:2px 10px;font:inherit;font-size:10px;font-weight:700;cursor:not-allowed;background:#ffffff08;color:var(--dim)}
+#termbar .eq.go{background:var(--acc2);border-color:var(--acc2);color:#151413;cursor:pointer}
+#termbar .fs{border:1px solid transparent;background:none;color:var(--dim);cursor:pointer;font-size:11px;padding:1px 3px;border-radius:3px}
+#termbar .fs:hover{color:var(--fg);border-color:var(--line)}
+#termbar .x{width:19px;height:19px;display:grid;place-items:center;border:1px solid var(--line);border-radius:5px;background:var(--red);color:var(--fg);font-size:10px;font-weight:700;cursor:pointer}
+
+#split{flex:1;display:flex;min-height:0}
+#chatcol{flex:0 0 66%;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+#outcol{flex:1;display:flex;flex-direction:column;min-width:0;background:#151413;overflow-y:auto}
+
+/* ── transcript ── */
+#transcript{flex:1;overflow-y:auto;padding:14px 20px 8px;font-size:12.5px}
+.head{color:var(--acc);font-weight:600}
+.dim{color:var(--dim)}
+.md-b{color:var(--acc);font-weight:700}
+code.inline{background:var(--chip);padding:0 4px;border-radius:3px;color:var(--acc2)}
+.meta{margin:6px 0;color:var(--dim);cursor:pointer;user-select:none}
+.meta:hover{color:var(--fg)}
+.meta .count{color:var(--acc)}
+.meta-body{display:none;margin:2px 0 8px 14px;padding-left:10px;border-left:1px solid var(--line);white-space:pre-wrap;color:var(--dim);font-size:12px}
+.meta-open .meta-body{display:block}
+
+/* ① thinking 流式：3 行封顶、overflow hidden（无滚动条） */
+#think-live{margin:4px 0;padding:5px 10px;border-left:2px solid var(--dim);background:var(--panel);border-radius:2px;color:var(--dim)}
+#think-live .cap{font-size:10.5px;color:var(--dim)}
+#think-lines{max-height:calc(3 * 1.55 * 12.5px);overflow:hidden}
+#think-lines div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
+#think-lines div:first-child{opacity:.45}
+#think-lines div:nth-child(2){opacity:.75}
+#think-live .cursor{color:var(--acc);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ③ 用户消息 = 定稿 variant A：Claude Code 终端回声 */
+.usr{margin:8px 0;background:var(--panel);border-radius:6px;padding:6px 12px;box-shadow:inset 0 0 0 1px var(--line)}
+.usr::before{content:"❯ ";color:var(--acc);font-weight:700}
+.usr .txt{color:var(--fg);font-style:italic;white-space:pre-wrap;word-break:break-word;display:inline}
+
+/* AI 行：✳ 仅段首一个、缩小（颜色加重：饱和橙 85% 不透明） */
+.asst .mark{color:#e08a63;opacity:.85;font-size:11px;font-weight:700;margin-right:5px}
+.asst{margin:8px 0}
+.asst .body{white-space:pre-wrap;word-break:break-word}
+
+/* ── dock + ④ slash 补全 ── */
+#dock{border-top:1px solid var(--line);flex-shrink:0;padding:8px 16px 10px;position:relative}
+.cbox{border:1px solid var(--line);border-radius:8px;background:#1d1b1a;padding:7px 10px 5px}
+.cbox:focus-within{border-color:var(--acc)}
+.crow{display:flex;gap:8px;align-items:flex-start}
+.crow .chev{color:var(--acc);font-weight:700;line-height:21px}
+#input{flex:1;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;resize:none;caret-color:var(--acc);min-height:21px;overflow-y:auto;display:block}
+#input::placeholder{color:var(--dim)}
+.cfoot{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11px;margin-top:4px}
+.kbd{border:1px solid var(--line);border-radius:2px;padding:0 4px;font-size:10px}
+.ctrlbar{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11.5px;padding-top:6px;margin-top:6px;border-top:1px solid var(--line)}
+.moa{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;border:2px solid var(--line);background:#9d8fc426;color:var(--purple);font:inherit;font-size:10px;font-weight:800;padding:1px 10px;border-radius:999px;cursor:pointer}
+.moa:hover{background:#9d8fc440}
+.ctrlbar .sep{color:var(--line)}
+.ctrlbar select{appearance:none;border:0;background:transparent;color:var(--acc2);font:inherit;font-size:11.5px;cursor:pointer;outline:none}
+.ctrlbar .ctx{cursor:pointer;color:var(--fg)}
+.ctrlbar .ctx:hover{color:var(--acc)}
+#ctxpop{display:none;margin-top:4px;border:1px dashed var(--line);border-radius:6px;padding:6px 10px;font-size:10.5px;color:var(--dim)}
+#ctxpop.open{display:block}
+#ctxpop .cat{display:flex;justify-content:space-between;padding:1px 0}
+#slash{position:absolute;left:26px;right:26px;bottom:100%;margin-bottom:6px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 40px #000b;display:none;max-height:280px;overflow-y:auto;z-index:20}
+#slash.open{display:block}
+#slash .grp{font-size:10.5px;color:var(--dim);padding:6px 12px 2px;letter-spacing:.08em}
+#slash .cmd{display:flex;gap:10px;padding:3px 12px;cursor:pointer}
+#slash .cmd .n{color:var(--acc);font-weight:600;min-width:170px}
+#slash .cmd .d{color:var(--dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#slash .cmd.sel{background:#2b2624}
+#slash .cmd.sel .d{color:var(--fg)}
+
+/* ── 右栏 = SpecPanel 高保真（phases 卡 / 入队清单 / 输出区磁盘树）── */
+#outcol h4{display:flex;align-items:center;color:var(--dim);font-weight:400;text-transform:uppercase;letter-spacing:.08em;font-size:10px;padding:12px 14px 6px}
+#outcol h4 .add{margin-left:auto;color:var(--acc);cursor:pointer;font-size:13px;letter-spacing:0;text-transform:none;border:1px solid var(--line);border-radius:4px;padding:0 8px;background:none;font-family:inherit}
+#outcol h4 .add:hover{border-color:var(--acc)}
+.ph{margin:0 14px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:8px 10px;cursor:pointer}
+.ph:hover{border-color:var(--acc)}
+.ph .n{color:var(--fg);font-weight:600}
+.ph .badge{float:right;font-size:10px;border-radius:999px;padding:0 8px;line-height:16px}
+.ph .badge.done{color:var(--acc2);border:1px solid var(--acc2)}
+.ph .badge.draft{color:var(--warn);border:1px solid var(--warn)}
+.ph ul{list-style:none;margin-top:4px;color:var(--dim);font-size:11.5px}
+.ph li::before{content:"· "}
+.ph li b{font-weight:400;color:var(--dim)}
+.ph li:hover b{color:var(--acc)}
+.chk{margin:2px 14px 4px;font-size:11.5px;color:var(--dim);display:flex;gap:8px}
+.chk .ok{color:var(--acc2)} .chk .no{color:var(--red)}
+.chk code{color:var(--fg)}
+.chk ul{margin:2px 0 0 16px;list-style:disc;color:var(--red);font-size:10.5px}
+.chk .note{margin-left:6px;font-size:10px;color:var(--dim)}
+#outview{margin:4px 14px 14px;border:1px dashed var(--line);border-radius:6px;padding:10px;font-size:11.5px;color:var(--dim);min-height:90px;line-height:1.7}
+#outview .dirpath{font-size:10px;word-break:break-all}
+#outview .d{color:var(--fg)}
+#outview .f{color:var(--acc2);cursor:pointer}
+#outview .f:hover{text-decoration:underline}
+#outview .t{margin-left:6px;font-size:10px;color:var(--dim)}
+#outview .miss{color:var(--red);font-style:italic}
+
+/* 原型工具浮条（不随真实界面落地） */
+#ptool{position:fixed;left:14px;bottom:14px;z-index:99;display:flex;gap:8px;align-items:center;
+  background:#000c;border:1px solid var(--acc);border-radius:999px;padding:4px 14px;font-size:11.5px;color:var(--fg)}
+#ptool b{color:var(--acc)}
+#ptool button{background:none;border:1px solid var(--line);border-radius:4px;color:var(--acc);font:inherit;font-size:11px;padding:1px 8px;cursor:pointer}
+#ptool button:hover{border-color:var(--acc)}
+</style>
+</head>
+<body>
+<div id="desk"><div id="modal">
+
+  <!-- terminal 导航条（真实结构 1:1） -->
+  <div id="termbar">
+    <span class="dots"><i style="background:var(--red)"></i><i style="background:var(--yellow)"></i><i style="background:var(--cyan)"></i></span>
+    <span class="sep">│</span>
+    <span class="title">计费看板优化 · billing-r2</span>
+    <span class="sep">│</span>
+    <span class="tbadge">🛠 开发任务</span>
+    <span class="lock">matt-verified</span>
+    <span class="lock">matt-dev-pipeline</span>
+    <button class="gear">⚙ codebase · octopus · 1 项目</button>
+    <span class="right">
+      <span class="cnt">入队清单 <b id="bar-cnt">6/7</b></span>
+      <button class="discard">🗑 废弃</button>
+      <button class="eq" id="eqbtn">⏎ 入队执行</button>
+      <button class="fs">⛶</button>
+      <button class="x">✕</button>
+    </span>
+  </div>
+
+  <div id="split">
+    <div id="chatcol">
+      <div id="transcript">
+        <div class="usr"><span class="txt">帮我把 P2 的 spec 再细化一下，重点是把退款的边界条件写清楚</span></div>
+
+        <div class="asst"><div class="body"><span class="mark">✳</span>收到。我先读了 <code class="inline">.scratch/2026-09-24/billing-r2/P2-spec.md</code>，退款部分目前只有一条正向路径，缺 <span class="md-b">边界矩阵</span>：
+<span class="head">·</span> 部分退款 × 已开票 —— 走 <code class="inline">refund_partial</code> 分支，需要红字确认单
+<span class="head">·</span> 跨周期退款 —— 账本只存事实，计价按<span class="md-b">时间窗匹配</span>回溯，不在写入时快照价格
+<span class="head">·</span> 退款金额 &gt; 原单 —— 直接拒绝并落 <code class="inline">billing.audit.overrefunded</code> 事件
+
+下一步我把这三条写进 spec 的「边界条件」小节，并给每条配一个 e2e 票。</div>
+          <div class="meta" onclick="this.classList.toggle('meta-open')"><span class="dim">◌ 过程（时间序）· </span><span class="count">7 步</span> ▸
+            <div class="meta-body">◌ thinking 用户要的是退款边界条件，先对照计费核心状态机
+▸ Read P2-spec.md · ok
+▸ Read ledger-append.ts · ok
+◌ thinking 发现 refund_partial 事件类型不存在，需要新增
+▸ Grep "overrefund" · 2 hits
+◌ thinking 三条边界各配一张 e2e 票，命名对齐 issues/ 规范
+▸ Write P2-spec.md · ok</div>
+          </div>
+        </div>
+
+        <!-- ① 流式 thinking：3 行封顶、无滚动条 -->
+        <div id="think-live" style="display:none">
+          <div class="cap">◌ thinking <span class="cursor">▊</span></div>
+          <div id="think-lines"></div>
+        </div>
+        <div id="asst-stream" class="asst" style="display:none"><div class="body"></div></div>
+
+        <div class="usr"><span class="txt">/compact</span></div>
+        <div class="asst"><div class="body"><span class="mark">✳</span>已压缩上下文，保留 <span class="md-b">9 条关键事实</span>（三条退款边界规则、e2e 票清单、slug=billing-r2）。继续。</div></div>
+      </div>
+
+      <div id="dock">
+        <!-- ④ slash 补全：内置 + skill 全量 -->
+        <div id="slash"></div>
+        <div class="cbox">
+          <div class="crow"><span class="chev">❯</span><textarea id="input" rows="1" placeholder="输入 / 调用命令（内置 6 + 技能 12）"></textarea></div>
+          <div class="cfoot">
+            <span><span class="kbd">⏎</span> 发送</span><span><span class="kbd">⇧⏎</span> 换行</span>
+            <span><span class="kbd">↑↓</span> 选命令</span><span><span class="kbd">⇥</span> 补全</span>
+          </div>
+          <!-- 控件条：专家咨询贴纸 │ model │ ctx（对齐 ChatArea.tsx:597） -->
+          <div class="ctrlbar">
+            <button class="moa">🧠 专家咨询</button>
+            <span class="sep">│</span>
+            <span>model</span><select><option>pro</option><option>pro-max</option><option>se</option></select><span class="dim">▾</span>
+            <span class="sep">│</span>
+            <span class="ctx" onclick="document.getElementById('ctxpop').classList.toggle('open')">ctx 32% ▾</span>
+          </div>
+          <div id="ctxpop">
+            <div class="cat"><span>system + tools</span><span>18.4K</span></div>
+            <div class="cat"><span>会话历史</span><span>41.2K</span></div>
+            <div class="cat"><span>文件/产物</span><span>12.9K</span></div>
+            <div class="cat"><span>剩余</span><span>127.5K</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏 = SpecPanel：phases 卡 / 入队清单（⑤ 语义 = 全 phase 与）/ 输出区磁盘树 -->
+    <div id="outcol">
+      <h4>phases<button class="add">＋ 添加</button></h4>
+      <div class="ph"><span class="badge done">ready</span><span class="n">Phase 1 · 账本落事实</span>
+        <ul><li><b>spec.md .scratch/2026-09-24/billing-r2/ ▸</b></li><li><b>绑定 matt-spec-dev ▸</b></li></ul></div>
+      <div class="ph"><span class="badge draft">draft</span><span class="n">Phase 2 · 时间窗计价</span>
+        <ul><li><b>spec.md .scratch/2026-09-24/billing-r2/ ▸</b></li><li><b>绑定 matt-spec-dev ▸</b></li></ul></div>
+      <div class="ph"><span class="badge done">ready</span><span class="n">Phase 3 · 报表对账</span>
+        <ul><li><b>spec.md .scratch/2026-09-24/billing-r2/ ▸</b></li><li><b>绑定 matt-spec-dev ▸</b></li></ul></div>
+
+      <h4>入队清单</h4>
+      <div>
+        <div class="chk"><span class="ok">✓</span><span>phases 完备 <code>×3</code></span></div>
+        <div class="chk"><span class="no">✗</span><span>spec 产物（磁盘已核）<code>2/3 落盘 · P2 缺</code>
+          <ul><li>phase:2:spec-missing</li></ul></span></div>
+        <div class="chk"><span class="ok">✓</span><span>工作流绑定 <code>matt-spec-dev 等 · 3/3 可解析</code></span></div>
+        <div class="chk"><span class="ok">✓</span><span>inputs 齐 <code>必填非空/占位符</code><span class="note">3 个 phase 全过</span></span></div>
+        <div class="chk"><span class="ok">✓</span><span>绑定确认 <code>3/3 phase 人工确认</code></span></div>
+        <div class="chk"><span class="ok">✓</span><span>runbook 内容 <code>起停 up∧ready · 验收命令已填</code></span></div>
+        <div class="chk"><span class="ok">✓</span><span>项目仓库 <code>octopus · 1 项目</code></span></div>
+        <div class="chk" style="margin-top:6px"><span class="dim">⏱</span><span class="dim" style="font-size:10.5px">自动推进 · P1 done 后 P2 起 round（开）</span></div>
+      </div>
+
+      <h4>输出区<button class="add" title="重扫磁盘">↻</button></h4>
+      <div id="outview">
+        <div class="dirpath">~/.octopus/tasks/6c0db77d/</div>
+        <div><span class="dim">▾ </span><span class="d">.scratch/</span></div>
+        <div><span class="dim">│  ├─ ▾ </span><span class="d">2026-09-24/</span></div>
+        <div><span class="dim">│  │  ├─ ▾ </span><span class="d">billing-r2/</span></div>
+        <div><span class="dim">│  │  │  ├─ ▾ </span><span class="d">issues/</span></div>
+        <div><span class="dim">│  │  │  │  ├─ </span><span class="f">01-ledger-append.md</span><span class="t">09-24 08:12 · 4210B</span></div>
+        <div><span class="dim">│  │  │  │  ├─ </span><span class="f">04-e2e-refund-matrix.md</span><span class="t">09-24 08:31 · 3877B</span></div>
+        <div><span class="dim">│  │  │  ├─ </span><span class="f">P1-spec.md</span><span class="t">09-24 07:58 · 8543B</span></div>
+        <div><span class="dim">│  │  │  ├─ </span><span class="f">P3-spec.md</span><span class="t">09-24 08:02 · 6120B</span></div>
+        <div><span class="dim">│  │  │  └─ </span><span class="miss">（P2-spec.md 未落盘 —— 与入队清单 ✗ 同源一致）</span></div>
+        <div><span class="dim">│  └─ ▸ </span><span class="d">2026-09-23/</span></div>
+        <div><span class="dim">└─ ▸ </span><span class="d">memory/</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- 原型工具（不落地）：thinking 重放 -->
+<div id="ptool"><b>PROTOTYPE</b><button onclick="replayThinking()">▶ 重放 thinking 流式</button></div>
+
+<script>
+/* ── ① thinking 流式：只保留最后 3 行，overflow:hidden 无滚动条 ── */
+const thinkSeed=['先看 P2 spec 现有的三条边界，逐条对照计费核心的状态机',
+ 'partial refund 走红字确认单这条在 ledger-append.ts 里没有对应事件类型，需要新增',
+ '跨周期退款的时间窗匹配依赖 rate-window 表的时间索引，确认 migration 已建',
+ 'overrefund 拒绝路径要同时落审计事件，避免只对账不落痕',
+ 'e2e 票至少 3 张：部分退款 / 跨周期 / 超额拒绝，与边界矩阵一一对应'];
+function replayThinking(){
+  const box=document.getElementById('think-live'),lines=document.getElementById('think-lines');
+  box.style.display='block';lines.innerHTML='';let i=0;
+  const t=setInterval(()=>{
+    lines.appendChild(Object.assign(document.createElement('div'),{textContent:thinkSeed[i%thinkSeed.length]}));
+    while(lines.children.length>3)lines.removeChild(lines.firstChild);  /* 3 行窗口 */
+    tr_bottom();
+    if(++i>=thinkSeed.length*2){clearInterval(t);setTimeout(()=>{box.style.display='none';streamAnswer()},600)}
+  },450);
+}
+function streamAnswer(){
+  const el=document.getElementById('asst-stream');el.style.display='block';
+  el.querySelector('.body').innerHTML='<span class="mark">✳</span>P2 spec 已细化：补了<span class="md-b">退款边界矩阵</span>三条（部分退款×已开票、跨周期时间窗回溯、超额拒绝+审计事件），并为每条生成对应 e2e 票骨架。';
+}
+function tr_bottom(){
+  const tr=document.getElementById('transcript');
+  /* 贴底才自动滚：用户向上拖动过 → 不强制下来；拖回底部 → 恢复跟随 */
+  if(tr.dataset.stick==='no')return;
+  tr.scrollTop=tr.scrollHeight;
+}
+(function(){
+  const tr=document.getElementById('transcript');
+  tr.addEventListener('scroll',()=>{
+    tr.dataset.stick=(tr.scrollHeight-tr.scrollTop-tr.clientHeight<40)?'yes':'no';
+  });
+})();
+replayThinking();
+
+/* ── ④ slash 命令：内置 + skill 全量 ── */
+const BUILTIN=[
+ {n:'/compact',d:'压缩会话上下文，保留关键事实'},
+ {n:'/clear',d:'清空当前会话'},
+ {n:'/help',d:'查看可用命令'},
+ {n:'/model',d:'切换本轮使用的模型'},
+ {n:'/memory',d:'查看/整理 agent 长期记忆'},
+ {n:'/stop',d:'打断当前生成'}];
+const SKILLS=[
+ {n:'/matt-spec-dev',d:'规格驱动开发流水线（DAG 工单执行）'},
+ {n:'/matt-verified-requirement',d:'验证式需求澄清，产出 spec.md+issues/'},
+ {n:'/matt-verified-tickets',d:'每张票绑定可执行验证步骤'},
+ {n:'/matt-verification-report',d:'置信度评分的验收报告'},
+ {n:'/matt-e2e-test-methodology',d:'E2E 执行规范与真实性标准'},
+ {n:'/matt-pipeline-loop',d:'验证驱动的迭代循环'},
+ {n:'/tdd',d:'红-绿-重构测试先行'},
+ {n:'/diagnosing-bugs',d:'疑难 bug 诊断循环'},
+ {n:'/grilling',d:'拷问方案，压力测试思路'},
+ {n:'/code-review',d:'标准+规格双轴审查'},
+ {n:'/prototype',d:'一次性原型验证问题'},
+ {n:'/research',d:'高信源调研并落 Markdown'}];
+const input=document.getElementById('input'),slash=document.getElementById('slash');
+let matches=[],msel=0;
+function renderSlash(){
+  const q=input.value.match(/^\/([a-z0-9-]*)$/i);
+  if(!q){closeSlash();return}
+  const f=x=>x.n.slice(1).startsWith(q[1].toLowerCase());
+  const b=BUILTIN.filter(f),s=SKILLS.filter(f);
+  matches=[...b,...s];msel=0;
+  if(!matches.length){closeSlash();return}
+  let h='';
+  if(b.length){h+='<div class="grp">内置命令</div>'+b.map(cmdRow).join('')}
+  if(s.length){h+='<div class="grp">技能命令</div>'+s.map(cmdRow).join('')}
+  slash.innerHTML=h;slash.classList.add('open');markSel();
+}
+function cmdRow(x){return `<div class="cmd" data-n="${x.n}"><span class="n">${x.n}</span><span class="d">${x.d}</span></div>`}
+function markSel(){[...slash.querySelectorAll('.cmd')].forEach((e,i)=>e.classList.toggle('sel',i===msel))}
+function closeSlash(){slash.classList.remove('open');matches=[]}
+function pick(n){input.value=n+' ';closeSlash();input.focus()}
+input.addEventListener('input',renderSlash);
+input.addEventListener('keydown',e=>{
+  if(matches.length){
+    if(e.key==='ArrowDown'){e.preventDefault();msel=(msel+1)%matches.length;markSel();return}
+    if(e.key==='ArrowUp'){e.preventDefault();msel=(msel-1+matches.length)%matches.length;markSel();return}
+    if(e.key==='Tab'){e.preventDefault();pick(matches[msel].n);return}
+  }
+  if(e.key==='Enter'&&!e.shiftKey){
+    e.preventDefault();
+    if(matches.length){pick(matches[msel].n);return}
+    const v=input.value.trim();if(!v)return;
+    const el=document.createElement('div');el.className='usr';
+    el.innerHTML='<span class="txt"></span>';el.querySelector('.txt').textContent=v;
+    document.getElementById('transcript').appendChild(el);
+    input.value='';closeSlash();tr_bottom();setTimeout(replayThinking,300);
+  }
+});
+slash.addEventListener('click',e=>{const c=e.target.closest('.cmd');if(c)pick(c.dataset.n)});
+</script>
+</body>
+</html>

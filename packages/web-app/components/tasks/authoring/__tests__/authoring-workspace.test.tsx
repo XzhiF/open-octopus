@@ -113,6 +113,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }))
 import { listSkillGroups } from "@/lib/skill-groups-api"
 import { readyTask, getBatchTree, TaskApiError } from "@/lib/tasks-api"
 import { AuthoringWorkspace } from "../authoring-workspace"
+import { BUILTIN_SLASH_COMMANDS } from "@/components/agent/chat/SlashCommandAutocomplete"
+const NB = BUILTIN_SLASH_COMMANDS.length
 
 const mockListSkillGroups = vi.mocked(listSkillGroups)
 const mockReadyTask = vi.mocked(readyTask)
@@ -201,23 +203,24 @@ describe("AuthoringWorkspace — top bar (AC3)", () => {
 // ── AC7: command bar aggregates selected groups' /commands ──────────
 
 describe("AuthoringWorkspace — command bar (AC7)", () => {
-  it("aggregates /commands from all selected skill groups for the chat autocomplete", async () => {
+  it("aggregates /commands = 内置 + 锁定技能组，供 chat autocomplete", async () => {
     const task = makeTask({ id: "t1" })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
     await waitFor(() => {
-      // 聚合计数收进输入框 placeholder（2026-09-12 辅助条退役；open-spec 组 →
-      // 2 commands；default 组 D17 空标记不贡献）。
-      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("输入 / 调用技能（2 个可用）")
+      // 聚合计数进 placeholder：内置命令恒在 + 锁定组技能（open-spec → 2）。
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe(`输入 / 调用命令（内置 ${NB} + 技能 2）`)
     })
     // The aggregated slash-commands are handed to the chat's /-autocomplete.
     expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
     expect(screen.getByTestId("slash-cmd-spec-review")).toBeDefined()
+    // 内置命令恒在（chat-draft-v4 原型拍板）
+    expect(screen.getByTestId("slash-cmd-compact")).toBeDefined()
+    expect(screen.getByTestId("slash-cmd-help")).toBeDefined()
   })
 
-  it("scopes the /-autocomplete to the task's locked groups (no cross-group /superpowers)", async () => {
-    // Regression (2026-08-26): the autocomplete previously aggregated EVERY
-    // installed skill from /api/skill-groups — a task locking only open-spec
-    // still advertised unselected groups' commands (e.g. superpowers' /brainstorming).
+  it("scopes skill commands to the task's locked groups (no cross-group /superpowers)", async () => {
+    // Regression (2026-08-26): 技能段只列锁定组 —— 锁 open-spec 时不广告
+    // superpowers 的 /brainstorming（内置段不受影响，恒全）。
     mockListSkillGroups.mockResolvedValue({
       groups: [
         ...GROUPS,
@@ -235,7 +238,7 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
     })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
     await waitFor(() =>
-      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("输入 / 调用技能（2 个可用）"),
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe(`输入 / 调用命令（内置 ${NB} + 技能 2）`),
     )
     // Locked group's commands are present; the unselected group's is not.
     expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
@@ -243,15 +246,27 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
     expect(screen.queryByTestId("slash-cmd-brainstorming")).toBeNull()
   })
 
-  it("shows the empty-commands hint when no locked group contributes commands", async () => {
-    const task = makeTask({ id: "t1" })
-    mockListSkillGroups.mockResolvedValueOnce({
-      groups: [{ group: "default", displayName: "default", skills: [] }],
+  it("v4 草稿无 skill_groups → 技能段回退全量已安装组（修「/ 命令全没了」）", async () => {
+    mockListSkillGroups.mockResolvedValue({
+      groups: [
+        ...GROUPS,
+        { group: "superpowers-zh", displayName: "superpowers-zh", skills: [{ name: "brainstorming" }] },
+      ],
+    })
+    const task = makeTask({
+      id: "t-nogroups",
+      task_spec: {
+        format: "v4", goal: "g", ac: [], skill_groups: [],
+        task_type: undefined, goal_confirmed: false, ac_confirmed: [],
+        decisions: [], resources: [], authoring_resources: [],
+      } as unknown as Task["task_spec"],
     })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
-    await waitFor(() => {
-      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe("无额外命令（仅内置 spec-field 流程）")
-    })
+    await waitFor(() =>
+      expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).placeholder).toBe(`输入 / 调用命令（内置 ${NB} + 技能 3）`),
+    )
+    expect(screen.getByTestId("slash-cmd-brainstorming")).toBeDefined()
+    expect(screen.getByTestId("slash-cmd-compact")).toBeDefined()
   })
 })
 
@@ -282,6 +297,7 @@ describe("AuthoringWorkspace — enqueue gate (v4-only UI)", () => {
     // 占位：真正的反解断言在「v4 入队清单」组；这里只锁 handleEnqueue 的
     // TaskReadyGateError 分支不把异常冒成 unhandled（409 → toast.error 路径）。
     const task = makeV4Task("v4-gate-early", [COMPLETE_PHASE_1])
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1"]) as never) // 本地全绿才点得动按钮
     mockReadyTask.mockRejectedValueOnce(
       new (await import("@/lib/tasks-api")).TaskReadyGateError("nope", ["phase:1:workflow-ref"]),
     )
@@ -397,27 +413,40 @@ function makeV4Task(
       skill_groups: ["default", "open-spec"],
       goal: "g", ac: [], goal_confirmed: false, ac_confirmed: [],
       decisions: [], resources: [], authoring_resources: [],
+      // runbook 行（gate ⑦）默认给 verify 逃生门（与 server 同判据）。
+      acceptance_verify: { command: "vitest run" },
       phases,
       ...specOverrides,
     } as unknown as Task["task_spec"],
   })
 }
 
+/** batch-tree 命中树（p1-1/p2-2 落盘）—— 409 反解组用例需先让本地 gate 放行。 */
+const treeWith = (dirs: string[]) =>
+  dirs.map((slug) => ({
+    dir: `.scratch/20260903/${slug}`,
+    slug,
+    files: [{ path: `.scratch/20260903/${slug}/spec.md`, mtime: "2026-09-03T00:00:00.000Z", bytes: 10 }],
+    latest_mtime: "2026-09-03T00:00:00.000Z",
+  }))
+
 const COMPLETE_PHASE_1 = {
   index: 1, name: "P1", slug: "p1-1",
   specPath: "./.scratch/20260903/p1-1/spec.md",
   workflowRef: "built-in/task-dev",
   inputValues: { idea: "hello" },
+  bindingConfirmed: true,
 }
 const COMPLETE_PHASE_2 = {
   index: 2, name: "P2", slug: "p2-2",
   specPath: "./.scratch/20260903/p2-2/spec.md",
   workflowRef: "built-in/task-dev",
   inputValues: { idea: "world" },
+  bindingConfirmed: true,
 }
 
 describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
-  it("v4: renders the four-row checklist; GoalAcCard is NOT rendered (K13)", async () => {
+  it("v4: renders the seven-row checklist; GoalAcCard is NOT rendered (K13)", async () => {
     render(
       <AuthoringWorkspace
         task={makeV4Task("v4-1", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
@@ -426,7 +455,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       />,
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
-    for (const row of ["phases", "spec", "bind", "inputs", "repos"]) {
+    for (const row of ["phases", "spec", "bind", "inputs", "confirm", "runbook", "repos"]) {
       expect(list.querySelector(`[data-checklist-v4="${row}"]`)).toBeTruthy()
     }
     // goal/ac 卡退役（v3 保留 — 见上组用例）
@@ -435,7 +464,8 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     expect(document.querySelector("[data-phase-binding-list]")).toBeTruthy()
   })
 
-  it("canEnqueue v4: empty phases → disabled; four rows pass → enabled (server 同源预检)", async () => {
+  it("canEnqueue v4: empty phases → disabled; seven rows pass → enabled (server 同源预检)", async () => {
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     const { rerender } = render(
       <AuthoringWorkspace task={makeV4Task("v4-empty", [])} onMutated={() => {}} onClose={() => {}} />,
     )
@@ -450,9 +480,9 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       />,
     )
     await waitFor(() => expect(screen.getByTestId("task-enqueue")).toBeTruthy())
-    // inputs 行吃 built-in 目录（required idea 已填）→ 四行齐
+    // inputs 行吃 built-in 目录（required idea 已填）+ 绑定确认/runbook 齐 → 七行全绿
     await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
-    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false)
+    await waitFor(() => expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false))
   })
 
   it("canEnqueue v4: required input missing → inputs 行 ⏳ → disabled", async () => {
@@ -470,8 +500,9 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
   })
 
   it("gate 409 `phase:<i>:<why>` 反解 → 对应行标 ✗ + 人话（消灭点了才 409 的断链展示）", async () => {
-    // 本地四行全过（idea 用占位符 ${goal}，server 端 goal 为空 → 门禁打回），
+    // 本地七行全过（idea 用占位符 ${goal}，server 端 goal 为空 → 门禁打回），
     // readyTask 抛 TaskReadyGateError → gateHits 反解回填逐行 ✗。
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     mockReadyTask.mockRejectedValueOnce(
       new (await import("@/lib/tasks-api")).TaskReadyGateError(
         "Task not ready: missing phase:2:spec-missing, phase:2:input:idea",
@@ -499,6 +530,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
 
   it("gate 409 `project:<name>` 反解 → repos 行 ✗ + 人话，不误伤其它行", async () => {
     // 仓库预检（B1 服务端）回填：本地无从验证 → 恒乐观 ✅，✗ 只来自 409。
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     mockReadyTask.mockRejectedValueOnce(
       new (await import("@/lib/tasks-api")).TaskReadyGateError(
         "Task not ready: missing project:demo-repo",
@@ -527,6 +559,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
   })
 
   it("v4 无 project_ids：repos 行恒 ✓ 且不禁点（服务端权威，✗ 只由 409 回填）", async () => {
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     render(
       <AuthoringWorkspace
         task={{ ...makeV4Task("v4-norepo", [COMPLETE_PHASE_1, COMPLETE_PHASE_2]), project_ids: [] } as never}
@@ -537,7 +570,22 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
     await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
     expect(list.querySelector('[data-checklist-v4="repos"]')!.textContent).toContain("✓")
-    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false)
+    await waitFor(() => expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it("绑定未确认 / runbook 缺失 → confirm/runbook 行本地即拦（不等 409）", async () => {
+    vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1"]) as never)
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-gate-new", [{ ...COMPLETE_PHASE_1, bindingConfirmed: undefined }], { acceptance_verify: undefined })}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    expect(list.querySelector('[data-checklist-v4="confirm"]')!.textContent).toContain("P1 待确认")
+    expect(list.querySelector('[data-checklist-v4="runbook"]')!.textContent).toContain("⏳")
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
   })
 
   it("AC5: autoAdvance 开关可见可切 — 切换走重取 version 的 PUT", async () => {
@@ -605,8 +653,8 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
     expect(btn.disabled).toBe(true)
   })
 
-  it("tree 请求失败 → 退化字符串判定（现状行为回归保护）", async () => {
-    // beforeEach 默认已 reject
+  it("tree 请求失败 → spec 行 ⏳ 未核（封假绿，原型 v4.3 拍板）+ 入队禁用", async () => {
+    // beforeEach 默认已 reject —— 旧行为「退化字符串 ✓」是假绿口子，已封。
     render(
       <AuthoringWorkspace
         task={makeV4Task("v4-disk-err", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
@@ -615,10 +663,13 @@ describe("AuthoringWorkspace — 入队清单磁盘判定 (#53 K5)", () => {
       />,
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    const specRow = list.querySelector('[data-checklist-v4="spec"]')!
+    expect(specRow.textContent).toContain("⏳")
+    expect(specRow.textContent).toContain("未核")
+    expect(specRow.textContent).not.toContain("✓")
     await waitFor(() =>
-      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✓"),
+      expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true),
     )
-    expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).not.toContain("磁盘已核")
   })
 })
 

@@ -4,9 +4,29 @@
 // 原型 = public/prototype/chat-tui.html：`❯` 用户行 / `✳` agent 行 /
 // `◌ 过程（时间序）· N 步` 折叠 meta（对话完成后思考、步骤收起，沿用原交互）。
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
+
+/** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
+function mdInline(text: string): ReactNode {
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((p, i) => {
+    if (/^\*\*[^*]+\*\*$/.test(p)) return <strong key={i} className="font-bold text-pop-pink">{p.slice(2, -2)}</strong>
+    if (/^`[^`]+`$/.test(p)) return <code key={i} className="rounded-[3px] bg-pop-bd/50 px-1 text-pop-green">{p.slice(1, -1)}</code>
+    return p
+  })
+}
+
+function mdLine(line: string): ReactNode {
+  const h = line.match(/^(#{1,4})\s+(.*)$/)
+  if (h) return <span className="font-bold text-pop-ink">{mdInline(h[2])}</span>
+  return mdInline(line)
+}
+
+/** 段首小 ✳：每段回复仅一个，缩小提亮（原型 v4.3 拍板）。 */
+function TuiMark() {
+  return <span aria-hidden data-tui-mark className="mr-1.5 align-baseline text-[11px] font-bold text-pop-pink/85">✳</span>
+}
 
 /** 工具行一句话摘要：name + 首个字符串参数（截断）。 */
 export function toolBrief(tc: ToolCallRecord): string {
@@ -105,9 +125,9 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
 
   if (isUser) {
     return (
-      <div className="flex gap-2" data-tui-msg="user">
-        <span className="shrink-0 font-bold text-pop-ink">❯</span>
-        <div className="min-w-0 flex-1 break-words whitespace-pre-wrap">{message.content}</div>
+      <div className="rounded-md bg-pop-paper px-3 py-1.5 italic shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
+        <span className="font-bold not-italic text-pop-pink">❯ </span>
+        <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
     )
   }
@@ -117,13 +137,15 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
     <div data-tui-msg="assistant">
       <TuiMeta thinking={message.thinking} toolCalls={message.tool_calls} timeline={timeline} />
       {displayContent
-        ? displayContent.split('\n').map((line, i) => (
-            <div key={i} className="flex gap-2 break-words whitespace-pre-wrap">
-              <span className="shrink-0 font-bold text-pop-pink">✳</span>
-              <span className="min-w-0 flex-1">{line || ' '}</span>
-            </div>
-          ))
-        : metaCount > 0 && <div className="text-pop-dim">✳ （未生成文本回复）</div>}
+        ? (
+          <div className="break-words whitespace-pre-wrap">
+            <TuiMark />
+            {displayContent.split('\n').map((line, i) => (
+              <span key={i}>{i > 0 && '\n'}{mdLine(line)}</span>
+            ))}
+          </div>
+        )
+        : metaCount > 0 && <div className="text-pop-dim"><TuiMark />（未生成文本回复）</div>}
       {message.interrupted && (
         <div className="text-pop-red" data-tui-interrupted>（本轮被截断）</div>
       )}
@@ -140,10 +162,27 @@ export function TuiLive({ items, toolCalls }: {
     <div data-tui-live className="space-y-0.5">
       {items.map((item) => {
         if (item.kind === 'thinking') {
+          // 3 行窗口：只渲染末 3 行，旧行渐隐；overflow-hidden 不出滚动条。
+          const win = item.text.split('\n').slice(-3)
           return (
-            <div key={item.id} className="truncate text-pop-dim">
-              ◌ thinking — {item.text.split('\n').pop()}
-              {item.active && <span className="ml-1 animate-pulse text-pop-pink">▊</span>}
+            <div key={item.id} data-tui-thinking className="text-pop-dim">
+              <div>
+                ◌ thinking
+                {item.active && <span className="ml-1 animate-pulse text-pop-pink">▊</span>}
+              </div>
+              <div className="ml-3 overflow-hidden border-l border-pop-bd pl-2">
+                {win.map((l, i) => (
+                  <div
+                    key={i}
+                    className={
+                      'truncate' +
+                      (win.length === 3 && i === 0 ? ' opacity-40' : win.length >= 2 && i === win.length - 2 ? ' opacity-70' : '')
+                    }
+                  >
+                    {l || ' '}
+                  </div>
+                ))}
+              </div>
             </div>
           )
         }
@@ -152,12 +191,12 @@ export function TuiLive({ items, toolCalls }: {
           return tc ? <ToolLine key={item.id} tc={tc} /> : null
         }
         return (
-          <div key={item.id} className="flex gap-2 break-words whitespace-pre-wrap">
-            <span className="shrink-0 font-bold text-pop-pink">✳</span>
-            <span className="min-w-0 flex-1">
-              {item.text}
-              <span className="animate-pulse text-pop-pink">▊</span>
-            </span>
+          <div key={item.id} className="break-words whitespace-pre-wrap">
+            <TuiMark />
+            {item.text.split('\n').map((line, i) => (
+              <span key={i}>{i > 0 && '\n'}{mdLine(line)}</span>
+            ))}
+            <span className="animate-pulse text-pop-pink">▊</span>
           </div>
         )
       })}

@@ -10,7 +10,6 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
-import { tuiEscapeGuard } from '@/lib/tui-escape'
 import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
@@ -78,7 +77,7 @@ interface ChatAreaProps {
     confidence: number
   }>
   onReviewAction?: (id: string, action: 'approve' | 'reject' | 'defer' | 'edit') => void
-  /** Available slash commands (from locked skill groups). When provided,
+  /** Available slash commands (内置命令 + 技能命令). When provided,
    *  typing `/` in the input opens an autocomplete dropdown. */
   commands?: SlashCommand[]
   /** Context window usage breakdown (from SDK getContextUsage). */
@@ -99,6 +98,9 @@ interface ChatAreaProps {
   onSteer?: (message: string) => void
   /** steer 在途（stop→重发谷）：期间 done-flush 让闸，防接管消息被队首抢发。 */
   steerActiveRef?: React.MutableRefObject<boolean>
+  /** stream-resume 尾随轮（服务端仍在生成，本地无 SSE 所有权）：此期间
+   *  Esc 不被「打断」消费、照常关窗（关闭不丢失，停止走按钮）。 */
+  resumeTailing?: boolean
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -112,12 +114,15 @@ export function ChatArea({
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, currentModel, onModelChange,
   composerLeading, composerPlaceholder,
-  tui, onSteer, steerActiveRef,
+  tui, onSteer, steerActiveRef, resumeTailing,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 贴底跟随（原型 v4.3 拍板）：离底 >40px 视为用户在回看，流式不再强制拉底；
+  // 滚回底部 40px 内自动恢复跟随。发送自己消息时重置为跟随。
+  const stickBottomRef = useRef(true)
   const unansweredAsk = useMemo(() => findUnansweredAsk(messages), [messages])
 
   // 🎪 状态色带（Memphis）：running/waiting/done/error 一眼可辨 —— 从既有
@@ -146,7 +151,7 @@ export function ChatArea({
   }, [chatState])
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && stickBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
     // streamTimeline / streamThinking in deps: thinking deltas (not just text)
@@ -172,6 +177,7 @@ export function ChatArea({
       onSend(text)
     }
     setInput('')
+    stickBottomRef.current = true
   }
 
   const handleMentionSelect = (cloneName: string) => {
@@ -235,6 +241,22 @@ export function ChatArea({
     focusDockInput()
   }
   const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Alt+⏎ = 换行不发送。浏览器对 alt+enter 没有默认换行行为；优先用原生
+    // insertText（保住游标 + 触发受控 onChange，避免手动 rAF 复位与连打竞态），
+    // 不支持时回退到 setState 插入。（下拉开着也要能换行，故在 slashOpen 门之前。）
+    if (e.key === 'Enter' && e.altKey) {
+      e.preventDefault()
+      const ta = e.currentTarget
+      const s = ta.selectionStart
+      const en = ta.selectionEnd
+      ta.setSelectionRange(s, en)
+      const ok = document.execCommand ? document.execCommand('insertText', false, '\n') : false
+      if (!ok) {
+        setInput((prev) => prev.slice(0, s) + '\n' + prev.slice(en))
+        requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 1 })
+      }
+      return
+    }
     if (slashOpen) return // 自动补全下拉打开时 Enter 归下拉
     const text = input.trim()
     if (e.key === 'Enter') {
@@ -255,17 +277,12 @@ export function ChatArea({
       }
       handleSend()
     } else if (e.key === 'Escape') {
-      // 有排队 → 队尾退回输入框；无排队 busy → 打断；否则放行（弹窗 Esc 关闭）。
+      // 有排队 → 队尾退回输入框；无排队 busy（本地流）→ 打断；
+      // resume 尾量 / 空闲 → 放行给宿主弹窗（任务窗 Esc 不关窗，见 task-modal）。
       if (queue.length > 0) { e.preventDefault(); e.stopPropagation(); recallQueue(queue.length - 1) }
-      else if (streaming) { e.preventDefault(); e.stopPropagation(); onStop() }
+      else if (streaming && !resumeTailing) { e.preventDefault(); e.stopPropagation(); onStop() }
     }
   }
-  // Escape 仲裁：排队/生成中由本组件消费 Esc（Radix 捕获相早于 React，须先置位
-  // 让宿主弹窗 preventDefault 放行），否则照常关窗。
-  useEffect(() => {
-    tuiEscapeGuard.active = !!tui && (queue.length > 0 || streaming)
-    return () => { if (tui) tuiEscapeGuard.active = false }
-  }, [tui, queue, streaming])
 
   const busyElapsed = streaming ? Math.max(0, (Date.now() - turnStartedAtRef.current) / 1000) : 0
   const busyPhase = toolCalls.some((tc) => tc.status === 'start' || tc.status === 'running' || tc.status === 'pending')
@@ -286,7 +303,14 @@ export function ChatArea({
           />
         )
       ) : (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          }}
+          className="flex-1 overflow-y-auto"
+        >
           <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
             {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
               tui ? <TuiMessage key={msg.id} message={msg} /> : <ChatBubble key={msg.id} message={msg} />
@@ -491,7 +515,7 @@ export function ChatArea({
       )}
 
       {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
-          输入（busy 不锁死）+ 提示行 + 下方控件条（专家咨询│model│ctx）。 */}
+          输入（busy 不锁死）+ 控件条（专家咨询│model│ctx … 右端挂快捷键提示/busy）。 */}
       {tui ? (
         <div ref={dockRef} className="shrink-0 border-t border-pop-bd bg-pop-bg px-4 pb-3 pt-2" data-tui-dock>
           <div className="relative mx-auto max-w-4xl">
@@ -533,21 +557,24 @@ export function ChatArea({
               className="rounded-lg border border-pop-bd bg-pop-paper px-2.5 py-1.5 transition-colors focus-within:border-pop-pink"
             >
               <div className="flex items-start gap-2">
-                <span aria-hidden className="shrink-0 font-bold leading-6 text-pop-pink">❯</span>
-                {/* maxRows=11（≈220px 才内滚）：不写 CSS max-height —— 会钳住
-                    scrollHeight 导致几行就不再长高（原型 v2 实测 bug）。 */}
+                {/* pt-1.5 与 textarea 的 py-1.5 对齐：两者行高同为 24px，
+                    不补 padding 则 ❯ 比首行文字高 6px（items-start 下不居中）。 */}
+                <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
+                {/* maxRows=3（2026-09-24 用户定稿：初始 1 行、最多长到 3 行，
+                    再超出走内滚）。不写 CSS max-height —— 会钳住 scrollHeight
+                    导致几行就不再长高（原型 v2 实测 bug）。 */}
                 <AutoResizeTextarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleTuiKeyDown}
-                  maxRows={11}
+                  maxRows={3}
                   disabled={!!pendingConfirm}
                   placeholder={
                     queue.length > 0
                       ? '继续输入 —— ⏎/⇧⏎ 都会加入排队'
                       : streaming
                         ? '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
-                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队'
+                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
                   }
                   className="min-h-6 flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
                 />
@@ -576,24 +603,9 @@ export function ChatArea({
                   )}
                 </span>
               </div>
-              <div className="mt-0.5 flex items-center gap-2 px-6 text-[10.5px] text-pop-dim">
-                {queueHint ? (
-                  <span className="text-pop-red" data-tui-hint>{queueHint}</span>
-                ) : queue.length > 0 ? (
-                  <span data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
-                ) : streaming ? (
-                  <span data-tui-hint>⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断</span>
-                ) : (
-                  <span data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · ⇧⏎⇧⏎ 连排</span>
-                )}
-                {streaming && (
-                  <span className="ml-auto shrink-0 text-pop-amber" data-tui-busy>
-                    <span className="text-pop-pink">{spinGlyph}</span> {busyPhase} {busyElapsed.toFixed(1)}s {/* fmt-ok: 终端 busy 行秒数，非全站计时器 */}
-                  </span>
-                )}
-              </div>
             </div>
-            {/* 控件条：专家咨询 / model 保留在输入框下方（v3 原型拍板） */}
+            {/* 控件条：专家咨询 / model / ctx 居左；快捷键提示 + busy 计时挂
+                最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。 */}
             <div className="mt-1.5 flex items-center gap-2 border-t border-pop-bd pt-1.5 text-[11px] text-pop-dim" data-tui-ctrlbar>
               {composerLeading && (
                 <>
@@ -622,15 +634,34 @@ export function ChatArea({
                 </span>
               )}
               {contextUsage && (
-                <button
-                  type="button"
-                  onClick={() => setContextExpanded((v) => !v)}
-                  className="ml-auto shrink-0 transition-colors hover:text-pop-ink"
-                  data-tui-ctx
-                >
-                  {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
-                </button>
+                <>
+                  <span aria-hidden className="text-pop-bd">│</span>
+                  <button
+                    type="button"
+                    onClick={() => setContextExpanded((v) => !v)}
+                    className="shrink-0 text-pop-ink/90 transition-colors hover:text-pop-pink"
+                    data-tui-ctx
+                  >
+                    {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                  </button>
+                </>
               )}
+              <span className="ml-auto flex min-w-0 items-center justify-end gap-2 text-[10.5px]">
+                {streaming && (
+                  <span className="shrink-0 text-pop-amber" data-tui-busy>
+                    <span className="text-pop-pink">{spinGlyph}</span> {busyPhase} {busyElapsed.toFixed(1)}s {/* fmt-ok: 终端 busy 行秒数，非全站计时器 */}
+                  </span>
+                )}
+                {queueHint ? (
+                  <span className="shrink-0 text-pop-red" data-tui-hint>{queueHint}</span>
+                ) : queue.length > 0 ? (
+                  <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
+                ) : streaming ? (
+                  <span className="shrink-0" data-tui-hint>⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断</span>
+                ) : (
+                  <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                )}
+              </span>
             </div>
             {contextExpanded && contextUsage && (
               <div className="mt-1.5 rounded-md border border-border/50 bg-muted/30 px-2.5 py-1.5 text-[10px]">
@@ -681,6 +712,20 @@ export function ChatArea({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.altKey) {
+                  // Alt+⏎ 换行（与 tui 路径同语义：原生 insertText 优先）
+                  e.preventDefault()
+                  const ta = e.currentTarget
+                  const s = ta.selectionStart
+                  const en = ta.selectionEnd
+                  ta.setSelectionRange(s, en)
+                  const ok = document.execCommand ? document.execCommand('insertText', false, '\n') : false
+                  if (!ok) {
+                    setInput((prev) => prev.slice(0, s) + '\n' + prev.slice(en))
+                    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 1 })
+                  }
+                  return
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   // Don't send when an autocomplete dropdown is open — let it

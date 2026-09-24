@@ -32,6 +32,7 @@ import { ProjectSelector, type SelectedProject } from "@/components/scheduler/pr
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
+import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "@/components/agent/chat/SlashCommandAutocomplete"
 import * as agentApi from "@/lib/agent/api"
 import { SpecPanel } from "./spec-panel"
 import { EditableTitle } from "../editable-title"
@@ -159,26 +160,21 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     return () => { cancelled = true }
   }, [])
 
-  // Aggregated slash commands for the `/` autocomplete in the chat input —
-  // scoped to the task's LOCKED skill groups (bugfix 2026-08-26). Previously
-  // this aggregated every installed skill from /api/skill-groups regardless
-  // of the selection: creating a coding task with only mattpocock-skills then
-  // seeing "101 技能可用" + /superpowers commands in the chat was a display
-  // mismatch. The actual loadable set is the task-home materialization (plugin
-  // #3, only the locked groups) + platform built-ins via plugin #1 — the old
-  // comment's "clone has all shared skills" assumption only covered plugin #1's
-  // octo-* built-ins, not the whole global registry. The UI now advertises /
-  // autocompletes only what the selection implies.
-  // "default" group (D17) is an empty marker → contributes nothing.
+  // Aggregated slash commands for the `/` autocomplete — 内置命令恒在 +
+  // 技能命令：任务有锁定 skill 组时只列锁定组（v3 语义），v4 草稿（无
+  // skill_groups）回退全量已安装技能（原型 chat-draft-v4 拍板：v4 不再写
+  // skill_groups，若仍按锁定过滤则命令表恒空 = 「/ 命令全没了」）。
   const lockedGroupNames = useMemo(() => new Set(skillGroups), [skillGroups])
   const commandGroups = useMemo(
-    () => allGroups.filter((g) => lockedGroupNames.has(g.group)),
+    () => lockedGroupNames.size > 0
+      ? allGroups.filter((g) => lockedGroupNames.has(g.group))
+      : allGroups,
     [allGroups, lockedGroupNames],
   )
-  const commands = useMemo(() => {
-    const out: Array<{ name: string; description?: string }> = []
+  const commands = useMemo<SlashCommand[]>(() => {
+    const out: SlashCommand[] = [...BUILTIN_SLASH_COMMANDS]
     for (const g of commandGroups) {
-      for (const s of g.skills) out.push({ name: s.name, description: s.description })
+      for (const s of g.skills) out.push({ name: s.name, description: s.description, kind: 'skill' })
     }
     return out
   }, [commandGroups])
@@ -358,22 +354,28 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   }, [isV4])
 
   const v4Phases = spec.phases ?? []
-  // #53 K5：磁盘树可用（已加载/无错）且 specPath 在扫描域 → 「磁盘真在」判定
-  // （消灭字符串假绿）；扫描域外或树不可用 → 退化现字符串判定，端点故障不冻结面板。
+  // #53 K5 + 原型 chat-draft-v4 改版：磁盘树未就绪 → spec 行「⏳ 未核」（不再
+  // 退化字符串假绿）；入队 = 所有 phase 全满足（spec 落盘 ∧ issues 产物 ∧
+  // 绑定可解析 ∧ inputs ∧ 绑定确认 ∧ runbook）。✗ 行按 phase 点名。
   const specTreeReady = !batchTree.loading && !batchTree.error
   const v4Rows = useMemo(() => {
     const phases = v4Phases
     const rowPhases = phases.length >= 1
-    const specOnDisk = (p: (typeof phases)[number]) => {
-      if (specTreeReady && isRelativeScratchSpec(p.specPath)) {
-        return findSpecEntry(batchTree.batches, p.specPath) !== null
-      }
-      return (p.specPath ?? "").trim().length > 0
-    }
-    const rowSpec = phases.length >= 1 && phases.every(specOnDisk)
-    const rowBind = phases.length >= 1 && phases.every((p) => (p.workflowRef ?? "").trim().length > 0)
+    const relPhases = phases.filter((p) => isRelativeScratchSpec(p.specPath))
+    const specUnknown = !specTreeReady
+    const specMissingIdx = relPhases.filter((p) => findSpecEntry(batchTree.batches, p.specPath) === null).map((p) => p.index)
+    const rowSpec = rowPhases && !specUnknown && specMissingIdx.length === 0
+    const rowBind = rowPhases && phases.every((p) => (p.workflowRef ?? "").trim().length > 0)
+    const unconfirmedIdx = phases.filter((p) => p.bindingConfirmed !== true).map((p) => p.index)
+    const rowConfirm = rowPhases && unconfirmedIdx.length === 0
+    // runbook 与 server readyTask 硬检同判据：起停 up∧ready ∨ preview ∨ verify
+    const rb = spec.acceptance_runbook
+    const rowRunbook =
+      !!(rb?.up?.command?.trim() && rb?.ready?.command?.trim()) ||
+      !!spec.acceptance_preview?.command?.trim() ||
+      !!spec.acceptance_verify?.command?.trim()
     let inputsUnknown = false
-    const rowInputs = phases.length >= 1 && phases.every((p) => {
+    const rowInputs = rowPhases && phases.every((p) => {
       const def = catalog.find((w) => w.ref === p.workflowRef)
       if (!def) { if (p.workflowRef) inputsUnknown = true; return true } // 未知 ref = task-home 工作流，server 权威
       const required = Object.entries(def.inputs ?? {}).filter(([, d]) => d.required).map(([k]) => k)
@@ -382,26 +384,35 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         return v.length > 0 || v.includes("${")
       })
     })
-    return { rowPhases, rowSpec, rowBind, rowInputs, inputsUnknown, specTreeReady, rowRepos: true }
-  }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady])
+    return {
+      rowPhases, rowSpec, specUnknown, specMissingIdx, absSpecCount: phases.length - relPhases.length,
+      rowBind, rowInputs, unconfirmedIdx, rowConfirm, rowRunbook,
+      inputsUnknown, specTreeReady, rowRepos: true,
+    }
+  }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady, spec])
 
-  // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行五行天然不绿，不崩即可）
+  // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行天然不绿，不崩即可）
   // repos 行不并入 canEnqueue —— 本地无 fs 无从验证，恒乐观 ✅；✗ 只由服务端
-  // 409 missing 回填（与 inputs 行的「服务端权威」同模式），按钮不禁点。
-  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs
+  // 409 missing 回填（与 inputs 行的「服务端权威」同模式）。
+  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowConfirm && v4Rows.rowRunbook
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
   // v4 gate 409 missing 反解（票 04 契约 `phase:<i>:<why>`：no-phases /
-  // spec-missing / workflow-ref / input:<key>；仓库预检契约 `project:<name>`
-  // 2026-09-08）→ 回填五行清单 ✗ + 人话。
-  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]>>(() => {
-    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [] }
+  // spec-missing / issues-missing / no-final-verification / workflow-ref /
+  // binding-unconfirmed / input:<key>；仓库预检 `project:<name>`；runbook 全局键）
+  // → 回填七行清单 ✗ + 人话。
+  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]>>(() => {
+    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], confirm: [], runbook: [] }
     for (const key of gateMissing ?? []) {
       // 项目仓库预检键（服务端权威：repos/index.md 解析）—— 先拦前缀再走 catch-all。
       if (key.startsWith("project:")) {
         hits.repos.push(`仓库不可解析：${key.slice("project:".length)}（repos/index.md local 路径缺失/失效）`)
+        continue
+      }
+      if (key === "runbook") {
+        hits.runbook.push("缺「跑起来看」预设：acceptance_runbook（up+ready）∨ preview ∨ verify 任一")
         continue
       }
       const m = /^phase:(\d+):(.+)$/.exec(key)
@@ -410,7 +421,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
       const why = m[2]
       if (why === "no-phases") hits.phases.push("phases 列表为空")
       else if (why === "spec-missing") hits.spec.push(`Phase ${i}：批次目录中 spec 文件缺失`)
+      else if (why === "issues-missing") hits.spec.push(`Phase ${i}：issues/ 无任何票（批次产物未落地）`)
+      else if (why === "no-final-verification") hits.spec.push(`Phase ${i}：issues/ 缺 e2e 终票（或 spec 未声明 unit-only）`)
       else if (why === "workflow-ref") hits.bind.push(`Phase ${i}：工作流引用无法解析`)
+      else if (why === "binding-unconfirmed") hits.confirm.push(`Phase ${i}：绑定未经人工确认（打开绑定弹窗保存一次）`)
       else if (why.startsWith("input:")) hits.inputs.push(`Phase ${i}：必填输入 ${why.slice("input:".length)} 未填（或占位符解析为空）`)
       else hits.phases.push(key)
     }
@@ -532,9 +546,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         >
           {typeBadge}
         </span>
-        <span data-task-modal-status={task.status} className="shrink-0 text-pop-green">
-          ● 草稿
-        </span>
         {skillGroups.map((g) => (
           <span
             key={g}
@@ -564,7 +575,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         </button>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">
-            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRepos].filter(Boolean).length}/5</b>
+            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowConfirm, v4Rows.rowRunbook, v4Rows.rowRepos].filter(Boolean).length}/7</b>
           </span>
           {chrome && (
             <button
@@ -622,7 +633,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r border-pop-bd">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
           {/* 辅助条已退役（2026-09-12 改版）：技能计数提示 → 输入框 placeholder，
               专家咨询 → ChatArea composer 左端贴纸（composerLeading 槽）。 */}
 
@@ -665,13 +676,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               currentModel={model}
               onModelChange={setModel}
               tui
+              resumeTailing={chat.resumeStreaming}
               onSteer={(m) => void chat.steer(m)}
               steerActiveRef={chat.steeringRef}
-              composerPlaceholder={
-                commands.length > 0
-                  ? `输入 / 调用技能（${commands.length} 个可用）`
-                  : "无额外命令（仅内置 spec-field 流程）"
-              }
+              composerPlaceholder={`输入 / 调用命令（内置 ${BUILTIN_SLASH_COMMANDS.length} + 技能 ${commands.length - BUILTIN_SLASH_COMMANDS.length}）`}
               composerLeading={
                 <>
                   <button
@@ -696,13 +704,14 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           </div>
         </div>
 
-        {/* ── Draggable divider — 黑虚线拉条 ── */}
+        {/* ── Draggable divider — 一条细线（6px 隐形命中区保住拖拽） ── */}
         <div
           onMouseDown={onDividerMouseDown}
-          className="w-1.5 shrink-0 cursor-col-resize opacity-40 transition-opacity hover:opacity-80 active:opacity-100"
-          style={{ background: "repeating-linear-gradient(180deg, var(--pop-bd) 0 8px, transparent 8px 16px)" }}
+          className="group relative w-1.5 shrink-0 cursor-col-resize"
           title="拖拽调整宽度"
-        />
+        >
+          <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-pop-bd transition-colors group-hover:bg-pop-pink/60" />
+        </div>
 
         {/* ── RIGHT: spec panel（原型 #outcol 1:1：phases / 入队清单 /
             输出区 = 任务 home 磁盘直扫树，点击文件 = 只读查看弹窗） ── */}

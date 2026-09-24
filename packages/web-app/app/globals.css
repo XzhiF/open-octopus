@@ -370,6 +370,33 @@
     --agent-info-light: var(--pop-cyan-soft);
   }
 
+/* ── task-tui 主题滚动条（原型 v4.3 拍板：去除浏览器默认样式）──
+   task-tui 挂在 <html> 上（authoring-workspace body-class），故同时覆盖
+   元素自身与全部后代；FF 走 scrollbar-* 属性。 */
+.task-tui,
+.task-tui * {
+  scrollbar-width: thin;
+  scrollbar-color: #3b3531 transparent;
+}
+.task-tui::-webkit-scrollbar,
+.task-tui ::-webkit-scrollbar { width: 9px; height: 9px; }
+.task-tui::-webkit-scrollbar-track,
+.task-tui ::-webkit-scrollbar-track { background: transparent; }
+.task-tui::-webkit-scrollbar-thumb,
+.task-tui ::-webkit-scrollbar-thumb {
+  background: #3b3531;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.task-tui::-webkit-scrollbar-thumb:hover,
+.task-tui ::-webkit-scrollbar-thumb:hover {
+  background: #57504a;
+  background-clip: content-box;
+}
+.task-tui::-webkit-scrollbar-corner,
+.task-tui ::-webkit-scrollbar-corner { background: transparent; }
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -1110,3 +1137,4 @@
   margin-right: 0.5em;
   vertical-align: middle;
 }
+

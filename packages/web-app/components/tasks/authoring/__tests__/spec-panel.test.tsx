@@ -128,9 +128,11 @@ const emptyHome: HomeTreeState = { dir: "/home/.octopus/tasks/test-task", entrie
 
 const allOk = {
   rowPhases: true, rowSpec: true, rowBind: true, rowInputs: true, rowRepos: true,
+  rowConfirm: true, rowRunbook: true, specUnknown: false, specMissingIdx: [] as number[],
+  absSpecCount: 0, unconfirmedIdx: [] as number[],
   inputsUnknown: false, specTreeReady: false,
 }
-const noHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [] }
+const noHits: Record<"phases" | "confirm" | "runbook" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], confirm: [], runbook: [] }
 
 function renderPanel(task: Task, rows = allOk, gateHits = noHits, home = emptyHome) {
   return render(
