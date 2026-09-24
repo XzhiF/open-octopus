@@ -1,4 +1,4 @@
-// spec-panel.test.tsx — 右栏原型面板（phases 卡 / 入队清单 / 输出区 / 缩放弹窗）
+// spec-panel.test.tsx — 右栏原型面板（phases 卡 / 入队清单 / 输出区磁盘树 / 缩放弹窗）
 // 自 workflow-box.test.tsx 移植核心契约用例（add/edit PUT 纪律、ready 只读、
 // 清单钉点），并覆盖原型改版新增行为。
 
@@ -7,7 +7,7 @@ import { render, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { SpecPanel } from "../spec-panel"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
-import { updateTask, getTask, getHomeFile } from "@/lib/tasks-api"
+import { updateTask, getTask, getHomeContent } from "@/lib/tasks-api"
 import {
   listBuiltInWorkflows,
   listWorkflowPresets,
@@ -16,6 +16,7 @@ import {
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import type { BatchTreeState } from "../use-batch-tree"
+import type { HomeTreeState } from "../use-home-tree"
 
 // jsdom 无 EventSource（「▸ 更多」弹窗里的 OutputViewer 订阅 SSE 用）
 if (!globalThis.EventSource) {
@@ -50,6 +51,14 @@ vi.mock("@/lib/tasks-api", () => {
       this.status = status
     }
   }
+  class ArtifactContentError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = "ArtifactContentError"
+      this.status = status
+    }
+  }
   return {
     updateTask: vi.fn().mockResolvedValue({ id: "test-task", version: 10 }),
     getTask: vi.fn(),
@@ -59,6 +68,9 @@ vi.mock("@/lib/tasks-api", () => {
     getBatchTree: vi.fn().mockResolvedValue([]),
     getTaskContext: vi.fn().mockResolvedValue({ context: "", manifest: null }),
     listArtifacts: vi.fn().mockResolvedValue([]),
+    getArtifactContent: vi.fn().mockResolvedValue({ path: "reports/a.md", content: "# A\n正文" }),
+    getHomeContent: vi.fn().mockResolvedValue({ path: "artifacts/a.md", content: "# A\n磁盘正文" }),
+    ArtifactContentError,
     getAssistWorkflowRun: vi.fn().mockResolvedValue({ id: "r1", status: "completed", output: null }),
     updateSpecField: vi.fn().mockResolvedValue({ ok: true }),
     MAX_HOME_FILE_READ_BYTES: 1024 * 1024,
@@ -112,15 +124,17 @@ function makePhase(i: number, overrides: Partial<TaskPhase> = {}): TaskPhase {
 
 const emptyTree: BatchTreeState = { batches: [], loading: false, error: null, refresh: () => {} } as BatchTreeState
 
+const emptyHome: HomeTreeState = { dir: "/home/.octopus/tasks/test-task", entries: [], loading: false, error: null, refresh: () => {} }
+
 const allOk = {
   rowPhases: true, rowSpec: true, rowBind: true, rowInputs: true, rowRepos: true,
   inputsUnknown: false, specTreeReady: false,
 }
 const noHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [] }
 
-function renderPanel(task: Task, rows = allOk, gateHits = noHits) {
+function renderPanel(task: Task, rows = allOk, gateHits = noHits, home = emptyHome) {
   return render(
-    <SpecPanel task={task} onMutated={() => {}} batchTree={emptyTree} rows={rows} gateHits={gateHits} runIds={[]} />,
+    <SpecPanel task={task} onMutated={() => {}} batchTree={emptyTree} rows={rows} gateHits={gateHits} home={home} />,
   )
 }
 
@@ -260,18 +274,52 @@ describe("SpecPanel — 入队清单（原型 .chk 行）", () => {
   })
 })
 
-describe("SpecPanel — 输出区", () => {
-  it("逐 phase fn 行 + 点击开 spec 编辑器（404 → 空态骨架按钮）", async () => {
-    renderPanel(makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }))
-    expect(q('[data-spec-out-row="1"]')).toBeTruthy()
-    fireEventClick(q('[data-spec-out-row="1"] button')!)
-    await waitFor(() => expect(q("[data-spec-skeleton-button]")).toBeTruthy())
+describe("SpecPanel — 输出区任务 home 磁盘直扫树", () => {
+  const dir = (p: string) => ({ path: p, type: "dir" as const, bytes: 0, mtime: "2026-09-24T10:00:00Z" })
+  const file = (p: string, bytes = 12) => ({ path: p, type: "file" as const, bytes, mtime: "2026-09-24T10:00:00Z" })
+
+  it("头部显示完整路径；空目录占位；有文件 → 树行（目录折叠 + 文件点击开只读弹窗）", async () => {
+    const user = userEvent.setup()
+    const t = makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec })
+    const { unmount } = renderPanel(t)
+    expect(q("[data-home-dir]")!.textContent).toContain("/home/.octopus/tasks/test-task")
+    expect(q("[data-artifacts-empty]")).toBeTruthy()
+    unmount()
+
+    const home: HomeTreeState = {
+      dir: "/home/.octopus/tasks/test-task",
+      entries: [dir("artifacts/"), dir("artifacts/reports/"), file("artifacts/reports/a.md"), file("context.md"), dir("empty-dir/")],
+      loading: false, error: null, refresh: () => {},
+    }
+    renderPanel(t, allOk, noHits, home)
+    expect(q("[data-artifacts-tree]")).toBeTruthy()
+    expect(q('[data-artifacts-dir="artifacts/"]')).toBeTruthy()
+    expect(q('[data-artifacts-dir="empty-dir/"]')).toBeTruthy() // 空目录如实显示
+    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy()
+    // 折叠 artifacts/ → 子孙行消失
+    fireEventClick(q('[data-artifacts-dir="artifacts/"]')!)
+    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy() // 折叠只影响子树
+    fireEventClick(q('[data-artifacts-dir="artifacts/"]')!)
+    // 点文件 → 只读弹窗读磁盘正文
+    await user.click(q('[data-artifacts-file="context.md"]')!)
+    await waitFor(() => expect(document.body.textContent).toContain("磁盘正文"))
+    expect(getHomeContent).toHaveBeenCalledWith("test-task", "context.md")
   })
 
-  it("「▸ 更多」开窗收编草稿批次/运行产物", async () => {
+  it("error 态显示错误文案，[↻] 走 refresh()", () => {
+    let refreshed = 0
+    const home: HomeTreeState = { dir: "/x", entries: [], loading: false, error: "disk scan failed", refresh: () => { refreshed++ } }
+    renderPanel(makeTask({ task_spec: { format: "v4", phases: [] } as unknown as TaskSpec }), allOk, noHits, home)
+    expect(q("[data-artifacts-error]")!.textContent).toContain("disk scan failed")
+    fireEventClick(q("[data-artifacts-refresh]")!)
+    expect(refreshed).toBe(1)
+  })
+
+  it("phase 卡 spec.md bullet 按钮 → spec 编辑器（404 空态骨架按钮），不触发卡片编辑", async () => {
     renderPanel(makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }))
-    fireEventClick(q("[data-spec-aux-open]")!)
-    await waitFor(() => expect(q('[data-zoom-dialog]')).toBeTruthy())
+    fireEventClick(q('[data-phase-spec-button="1"]')!)
+    await waitFor(() => expect(q("[data-spec-skeleton-button]")).toBeTruthy())
+    expect(q('[data-phase-name-input="1"]')).toBeNull()
   })
 })
 

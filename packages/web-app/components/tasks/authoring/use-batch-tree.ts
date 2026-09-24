@@ -23,29 +23,33 @@ import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 
 /** Tool names whose successful call means "a file just changed on disk". */
-const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"])
+export const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"])
 /** ToolCallRecord statuses meaning the call COMPLETED (server executed it →
  *  the file exists). 'start'/'running'/'pending'/'fail' don't count. */
-const DONE_STATUSES = new Set(["success", "result"])
+export const DONE_STATUSES = new Set(["success", "result"])
 /** R1 debounce: merge burst writes (spec + N tickets in one turn) into one GET. */
 export const R1_DEBOUNCE_MS = 800
 /** doFetch 失败后的静默重试间隔（连接层瞬时抖动的唯一缓冲带）。 */
 export const RETRY_DELAY_MS = 500
 
-/** R1 predicate (pure, unit-tested): is this tool call a file WRITE landing in
- *  `.scratch/`? Input shape is the SDK tool input verbatim (unknown type) —
- *  Write/Edit carry `file_path`, NotebookEdit `notebook_path`; tolerate
+/** R1 predicate (pure, unit-tested): is this tool call a file WRITE whose path
+ *  contains `marker`? Input shape is the SDK tool input verbatim (unknown type)
+ *  — Write/Edit carry `file_path`, NotebookEdit `notebook_path`; tolerate
  *  backslash paths (Windows absolute homes) and non-object inputs. Deliberately
  *  NOT detecting Bash redirections (spec K2 — idle-refresh ④ + [↻] cover them). */
-export function isScratchWrite(name: string, input: unknown): boolean {
+export function isWriteTo(name: string, input: unknown, marker: string): boolean {
   if (!WRITE_TOOLS.has(name)) return false
   if (typeof input !== "object" || input === null) return false
   const rec = input as Record<string, unknown>
   for (const key of ["file_path", "notebook_path", "path"]) {
     const v = rec[key]
-    if (typeof v === "string" && v.replace(/\\/g, "/").includes(".scratch/")) return true
+    if (typeof v === "string" && v.replace(/\\/g, "/").includes(marker)) return true
   }
   return false
+}
+
+export function isScratchWrite(name: string, input: unknown): boolean {
+  return isWriteTo(name, input, ".scratch/")
 }
 
 export interface BatchTreeState {

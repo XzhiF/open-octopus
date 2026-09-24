@@ -1,14 +1,14 @@
 // packages/web-app/e2e/draft-artifact-visibility.spec.ts
 //
-// #53 起草面产物可见性 — 浏览器穿线（票 04）：
-//   ① v4 draft + agent 视角「只写盘不写契约」(phases[] 空) → 「草稿批次」区
-//      仍出现批次行（PP1 修透：可见性不再被 phases[] 门控）
-//   ② 展开批次 → 文件 chips → 点 spec.md → PhaseSpecDialog 内容 UTF-8 干净
-//   ③ 外部再写一批 + [↻] 手刷 → 新批次出现（刷新通路）
-//   ④ [建骨架并对位] → phase 行出现 + ● P1 + 入队清单 phases/spec 绿（磁盘已核）
-//   ⑤ Phase 行 ▾ 展开 → spec ✓ 灯 + 票 chips；点票 chip → 弹窗开在该票（PP2 修透）
-//   ⑥ manifest 行 = 「规格快照」新名
-//   ⑦ DELETE 清草稿 + home。
+// 起草面产物可见性 — 输出区「任务 home 磁盘直扫树」浏览器穿线（2026-09-24 改版：
+// 「更多」弹窗 / 草稿批次区退役，改为整棵任务 home 如实直扫）：
+//   ① v4 draft + 只写盘不写契约（phases[] 空）→ 输出区仍如实显示磁盘文件（PP1：
+//      可见性不被 phases[] 门控）
+//   ② 树头显示任务 home 绝对路径；artifacts/ 与 .scratch/ 文件都在列
+//   ③ 点文件 → 只读查看弹窗，UTF-8 干净（中文不乱码）
+//   ④ 外部再写一批 + [↻] 手刷 → 新文件出现（刷新通路）
+//   ⑤ 空目录如实显示（文件系统即真相，不做产物语义过滤）
+//   ⑥ DELETE 清草稿 + home。
 //
 // 纪律同 task-authoring-v4（UI 动作走浏览器、断言回 API+fs；E2E_TD_ 隔离；
 // server/web 不可达整文件 skip）。R1 的「agent 真会话触发」一项按成本口径
@@ -22,7 +22,6 @@ import {
   TASK_E2E_ORG,
   log,
   isServerAvailable,
-  getTask,
   createTask,
   taskHomePath,
   ensureScreenshotDir,
@@ -32,7 +31,6 @@ import {
 const WEB_URL = process.env.E2E_WEB_URL ?? "http://localhost:3000"
 const UNIQ = `e2e53-${Date.now().toString(36)}`
 const BATCH_A = `${UNIQ}-a`
-const BATCH_B = `${UNIQ}-b`
 const TODAY = (() => {
   const d = new Date()
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
@@ -50,13 +48,20 @@ async function deleteTaskRaw(id: string): Promise<void> {
   }
 }
 
-async function putHomeFile(rel: string, content: string): Promise<void> {
-  const res = await fetch(`${SERVER_URL}/api/tasks/${taskId}/home-file`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: rel, content }),
-  })
-  if (!res.ok) throw new Error(`putHomeFile ${rel} → ${res.status} ${await res.text()}`)
+/** 直写任务 home 文件（绕过 home-file PUT 的 .scratch 白名单 —— 树是整棵 home
+ *  直扫，e2e 用 fs 真相注入 artifacts/ 与 .scratch/ 两侧）。 */
+function seedHome(id: string, rel: string, content: string): void {
+  const home = taskHomePath(id)
+  if (!home) throw new Error(`no home for ${id}`)
+  const full = path.join(home, rel)
+  fs.mkdirSync(path.dirname(full), { recursive: true })
+  fs.writeFileSync(full, content, "utf-8")
+}
+
+function mkdirHome(id: string, rel: string): void {
+  const home = taskHomePath(id)
+  if (!home) throw new Error(`no home for ${id}`)
+  fs.mkdirSync(path.join(home, rel), { recursive: true })
 }
 
 test.beforeAll(async () => {
@@ -75,20 +80,26 @@ test.afterAll(async () => {
   if (taskId) await deleteTaskRaw(taskId)
 })
 
-test.describe("#53 起草面产物可见性穿线", () => {
-  test("落盘即现 → 直扫区/对位/建骨架/行内展开/manifest 新名", async ({ page }) => {
+test.describe("起草面产物可见性 — 任务 home 磁盘直扫树", () => {
+  test("落盘即现 → 完整路径 / 全目录如实 / 只读弹窗 / [↻] 刷新", async ({ page }) => {
     test.skip(!serverOk || !webOk, "dev server / web not reachable")
 
-    // ① 造 live 前置：v4 draft（phases 不写）+ 批次 A 三文件直写磁盘
+    // ① 造 live 前置：v4 draft（phases 不写）+ artifacts/ 与 .scratch/ 各落文件
     const task = await createTask({ org: TASK_E2E_ORG, name: `E2E_TD #53 ${UNIQ}`, task_spec: { format: "v4" } })
     taskId = task.id
-    await putHomeFile(`.scratch/${TODAY}/${BATCH_A}/spec.md`, "# 计费核心 MVP\n\n价格配置 DB 化，一次调用端到端算对钱。\n\n## Key Decisions\n\n| # | Decision | Conclusion | Reason |\n|---|---|---|---|\n| 1 | 边界 | 纯观测 | 用户拍板 |\n")
-    await putHomeFile(`.scratch/${TODAY}/${BATCH_A}/issues/01-price-db.md`, "# 01 价格表 DB 化\n\n验收：四类单价入库。\n")
-    await putHomeFile(`.scratch/${TODAY}/${BATCH_A}/issues/09-e2e-verify.md`, "# 09 E2E 收口\n\n验收：全局计费页可对账。\n")
+    const home = taskHomePath(taskId)!
+    seedHome(taskId, `artifacts/report.md`, "# 计费核心 MVP\n\n价格配置 DB 化，一次调用端到端算对钱。\n")
+    seedHome(taskId, `artifacts/issues/09-e2e-verify.md`, "# 09 E2E 收口\n\n验收：全局计费页可对账。\n")
+    seedHome(taskId, `.scratch/${TODAY}/${BATCH_A}/spec.md`, "# 契约草案\n\nphase 化拆分。\n")
+    mkdirHome(taskId, "artifacts/empty-dir")
 
-    // batch-tree API 真相先行（fs↔API）
-    const tree0 = await (await fetch(`${SERVER_URL}/api/tasks/${taskId}/batch-tree`)).json()
-    expect(tree0.batches.map((b: { slug: string }) => b.slug)).toContain(BATCH_A)
+    // home-tree API 真相先行（fs↔API）
+    const tree0 = await (await fetch(`${SERVER_URL}/api/tasks/${taskId}/home-tree`)).json()
+    const paths0 = (tree0.entries as Array<{ path: string }>).map((e) => e.path)
+    expect(paths0).toContain("artifacts/report.md")
+    expect(paths0).toContain(`.scratch/${TODAY}/${BATCH_A}/spec.md`)
+    expect(paths0).toContain("artifacts/empty-dir/")
+    expect(tree0.dir).toBe(home)
 
     // 进看板 → 打开草稿卡
     await page.goto(`${WEB_URL}/tasks`)
@@ -98,72 +109,38 @@ test.describe("#53 起草面产物可见性穿线", () => {
     const dialog = page.getByRole("dialog")
     await expect(dialog.locator("[data-authoring-workspace]")).toBeVisible({ timeout: 20_000 })
 
-    // ② PP1 核心断言：phases[] 为空（契约面「尚无 phase」），磁盘批次行已在
-    //    （2026-09-24 原型改版：批次/产物收进输出区「▸ 更多」缩放弹窗）
+    // ② 树头 = 任务 home 绝对路径；契约面「尚无 phase」但磁盘文件已在（PP1）
     await expect(dialog.locator("[data-phase-bind-empty]")).toBeVisible()
-    await dialog.locator("[data-spec-aux-open]").click()
-    const rowA = dialog.locator(`[data-batch-row="${BATCH_A}"]`)
-    await expect(rowA).toBeVisible({ timeout: 10_000 })
-    await expect(rowA).toContainText("spec✓")
-    await expect(rowA).toContainText("票×2")
-    await expect(dialog.locator(`[data-batch-adopt="${BATCH_A}"]`)).toBeVisible() // ○ 未对位 + 建骨架
-    await page.screenshot({ path: screenshotPath("53-01-draft-batches-pp1.png") })
+    await expect(dialog.locator("[data-home-dir]")).toContainText(home, { timeout: 10_000 })
+    await expect(dialog.locator('[data-artifacts-file="artifacts/report.md"]')).toBeVisible({ timeout: 10_000 })
+    await expect(dialog.locator('[data-artifacts-dir="artifacts/empty-dir/"]')).toBeVisible()
+    await page.screenshot({ path: screenshotPath("53-01-home-tree.png") })
 
-    // ③ 展开批次 A → chips → 点 spec.md → 弹窗 UTF-8 干净
-    await dialog.locator(`[data-batch-toggle="${BATCH_A}"]`).click()
-    await expect(dialog.locator(`[data-batch-file=".scratch/${TODAY}/${BATCH_A}/spec.md"]`)).toBeVisible()
-    await dialog.locator(`[data-batch-file=".scratch/${TODAY}/${BATCH_A}/issues/09-e2e-verify.md"]`).click()
-    const editor = page.locator("[data-spec-editor]")
-    await expect(editor).toBeVisible({ timeout: 10_000 })
-    await expect(editor).toContainText("E2E 收口") // 中文干净（RC1b 反证）
-    await page.screenshot({ path: screenshotPath("53-02-file-dialog.png") })
+    // ③ 点文件 → 只读查看弹窗，UTF-8 干净（中文不乱码）
+    await dialog.locator('[data-artifacts-file="artifacts/issues/09-e2e-verify.md"]').click()
+    const viewer = page.locator("[data-home-file-content]")
+    await expect(viewer).toBeVisible({ timeout: 10_000 })
+    await expect(viewer).toContainText("E2E 收口")
+    await page.screenshot({ path: screenshotPath("53-02-file-viewer.png") })
     await page.keyboard.press("Escape")
-    await expect(editor).toBeHidden({ timeout: 5_000 })
+    await expect(viewer).toBeHidden({ timeout: 5_000 })
 
-    // ④ 外部直写批次 B + [↻] 手刷 → 新批出现（刷新通路）
-    await putHomeFile(`.scratch/${TODAY}/${BATCH_B}/spec.md`, "# 聚合报表\n\n日报聚合可对账。\n")
-    await dialog.locator("[data-batch-refresh]").click()
-    await expect(dialog.locator(`[data-batch-row="${BATCH_B}"]`)).toBeVisible({ timeout: 10_000 })
+    // ④ 外部直写新文件 + [↻] 手刷 → 新文件出现（刷新通路）
+    seedHome(taskId, "artifacts/late-report.md", "# 迟到产物\n\n聚合报表可对账。\n")
+    await dialog.locator("[data-artifacts-refresh]").click()
+    await expect(dialog.locator('[data-artifacts-file="artifacts/late-report.md"]')).toBeVisible({ timeout: 10_000 })
+    await page.screenshot({ path: screenshotPath("53-03-refresh.png") })
 
-    // ⑤ 建骨架并对位（批次 A）→ phase 行 + ● P1 + 清单磁盘判定绿
-    await dialog.locator(`[data-batch-adopt="${BATCH_A}"]`).click()
-    const rowA2 = dialog.locator(`[data-batch-row="${BATCH_A}"]`)
-    await expect(rowA2.locator(`[data-batch-matched="${BATCH_A}"]`)).toHaveText("● P1", { timeout: 10_000 })
-    // 关「更多」弹窗 → 主面板回到可访问树（Radix modal 期间其余子树 aria-hidden）
-    await page.keyboard.press("Escape")
-    await expect(dialog.locator("[data-phase-bind-card='1']")).toBeVisible({ timeout: 10_000 })
-    await expect(dialog.getByTestId("enqueue-checklist-v4")).toContainText("磁盘已核")
-    await expect(dialog.locator("[data-checklist-v4='phases']")).toContainText("✓")
-    await expect(dialog.locator("[data-checklist-v4='spec']")).toContainText("✓")
-    await page.screenshot({ path: screenshotPath("53-03-adopt-and-gate.png") })
+    // ⑤ 折叠目录 → 子树消失，再展开回来（如实视图的交互闸）
+    await dialog.locator('[data-artifacts-dir="artifacts/issues/"]').click()
+    await expect(dialog.locator('[data-artifacts-file="artifacts/issues/09-e2e-verify.md"]')).toBeHidden({ timeout: 5_000 })
+    await dialog.locator('[data-artifacts-dir="artifacts/issues/"]').click()
+    await expect(dialog.locator('[data-artifacts-file="artifacts/issues/09-e2e-verify.md"]')).toBeVisible({ timeout: 5_000 })
 
-    // ⑥ PP2 核心断言（2026-09-24 原型改版口径）：输出区逐 phase fn 行 =
-    //    spec.md + 正文摘要（懒取自磁盘真相）；点击 → PhaseSpecDialog 开在该 spec。
-    await expect(dialog.locator("[data-spec-out-row='1']")).toContainText("spec.md", { timeout: 10_000 })
-    await expect(dialog.locator("[data-spec-out-row='1']")).toContainText("计费核心 MVP")
-    await page.screenshot({ path: screenshotPath("53-04-outview-row.png") })
-    await dialog.locator("[data-spec-out-row='1'] button").first().click()
-    await expect(editor).toBeVisible({ timeout: 10_000 })
-    await expect(editor).toContainText("价格配置 DB 化")
-    await page.keyboard.press("Escape")
-
-    // ⑦ manifest 降位新名（「▸ 更多」弹窗内的运行产物区）
-    await dialog.locator("[data-spec-aux-open]").click()
-    await expect(dialog.locator("[data-manifest-viewer-row]")).toContainText("规格快照")
-
-    // DB↔API 交叉：phases 一行且 specPath 指真实批次目录
-    const after = await getTask(taskId)
-    const phases = (after.task_spec as unknown as { phases: Array<Record<string, unknown>> }).phases
-    expect(phases).toHaveLength(1)
-    expect(String(phases[0].specPath)).toBe(`./.scratch/${TODAY}/${BATCH_A}/spec.md`)
-    expect(String(phases[0].name)).toBe("计费核心 MVP") // spec 首标题 = phase 名
-    expect(phases[0].workflowRef).toBe("built-in/matt-spec-dev")
-
-    // ⑧ 清理（home 路径 DELETE 前捕获，删后轮询落盘批次树消失）
-    const home = taskHomePath(taskId)
+    // ⑥ 清理（home 路径 DELETE 前捕获，删后轮询 home 目录消失）
     expect(home).toBeTruthy()
     await deleteTaskRaw(taskId)
-    await expect.poll(() => fs.existsSync(path.join(home!, ".scratch")), { timeout: 8_000 }).toBe(false)
+    await expect.poll(() => fs.existsSync(home), { timeout: 8_000 }).toBe(false)
     taskId = null
   })
 })

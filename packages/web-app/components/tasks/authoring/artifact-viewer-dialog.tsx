@@ -1,7 +1,8 @@
 // packages/web-app/components/tasks/authoring/artifact-viewer-dialog.tsx
 //
 // The v3 artifact full-content viewer dialog (ticket 10, US7/AC1/AC2/D11).
-// Opens when the user clicks an artifact row in the OutputViewer. Fetches the
+// Opens when the user clicks a file row in the 输出区 artifacts/ 直扫树（草稿
+// 面板）or an artifact row in 执行摘要. Fetches the
 // live disk content via GET /api/tasks/:id/artifacts/content?path= and renders
 // it monospace. Interaction reference: prototype VariantL artifact dialog
 // (app/tasks/prototype/page.tsx:3428) — code rewritten, not copied.

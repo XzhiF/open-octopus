@@ -36,6 +36,7 @@ import * as agentApi from "@/lib/agent/api"
 import { SpecPanel } from "./spec-panel"
 import { EditableTitle } from "../editable-title"
 import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
+import { useHomeTree } from "./use-home-tree"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
@@ -218,6 +219,12 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   // 「草稿批次」区 + Phase 行内展开 + 入队清单磁盘判定 三处吃同一份数据；
   // R1 实时 = chat tool 事件（agent Write/Edit 命中 .scratch）+ 空闲兜底。
   const batchTree = useBatchTree(task.id, {
+    toolCalls: chat.toolCalls,
+    streaming: chat.streaming,
+    versionKey: task.version,
+  })
+  // 输出区任务 home 磁盘直扫树（同套刷新纪律，R1 = 任意写工具调用）。
+  const homeTree = useHomeTree(task.id, {
     toolCalls: chat.toolCalls,
     streaming: chat.streaming,
     versionKey: task.version,
@@ -439,24 +446,19 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     }
   }
 
-  // ── Assist-workflow runs (US9/AC4): tracked run ids → OutputViewer fetches ─
-  // The command-bar MoA button triggers the built-in moa-requirements-review
-  // template (primary; the agent's suggestion bubble is LLM-driven → manual
-  // verification). The run executes in the background (D16 temp workspace);
-  // progress + completion arrive via assist_run_update SSE (D19) inside the
-  // OutputViewer. Reset on task switch so a different task's runs aren't shown.
-  const [runIds, setRunIds] = useState<string[]>([])
+  // ── Assist-workflow runs (US9/AC4) ───────────────────────────────────
+  // The command-bar MoA button triggers the built-in dynamic-moa-analysis
+  // template. The run executes in the background (D16 temp workspace) and its
+  // result is SAVED AS AN ARTIFACT FILE — 输出区 artifacts/ 直扫树经
+  // task_artifacts_update SSE 自动刷新接住它（2026-09-24「更多」弹窗退役后
+  // 的唯一落点），不再需要前端记 run id。
   const [moaOpen, setMoaOpen] = useState(false)
   const [moaRunning, setMoaRunning] = useState(false)
-  useEffect(() => {
-    setRunIds([])
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on task switch
-  }, [task.id])
 
   const handleTriggerMoa = async (input: MoATriggerInput) => {
     setMoaRunning(true)
     try {
-      const result = await triggerAssistWorkflow(task.id, "dynamic-moa-analysis", {
+      await triggerAssistWorkflow(task.id, "dynamic-moa-analysis", {
         goal: input.goal || undefined,
         ac: input.ac.length > 0 ? input.ac : undefined,
         projects: input.projects.length > 0 ? input.projects : undefined,
@@ -466,9 +468,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         aggregator: input.aggregator,
         rounds: input.rounds,
       })
-      setRunIds((prev) => (prev.includes(result.run_id) ? prev : [...prev, result.run_id]))
       const modeLabel = input.mode === "moa" ? "MoA 分析" : "Debate 辩论"
-      toast.message(`${modeLabel}已启动`, { description: `完成后结果将保存为产物文件` })
+      toast.message(`${modeLabel}已启动`, { description: `完成后结果将保存为产物文件，落进右侧输出区` })
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "触发分析失败")
     } finally {
@@ -703,8 +704,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           title="拖拽调整宽度"
         />
 
-        {/* ── RIGHT: spec panel（原型 #outcol 1:1：phases / 入队清单 / 输出区；
-            批次/运行产物/语境收进输出区「▸ 更多」缩放弹窗） ── */}
+        {/* ── RIGHT: spec panel（原型 #outcol 1:1：phases / 入队清单 /
+            输出区 = 任务 home 磁盘直扫树，点击文件 = 只读查看弹窗） ── */}
         <div style={{ width: rightWidth }} className="shrink-0 min-w-0" data-output-viewer>
           <SpecPanel
             task={task}
@@ -712,7 +713,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             batchTree={batchTree}
             rows={v4Rows}
             gateHits={gateHits}
-            runIds={runIds}
+            home={homeTree}
             autoRow={
               <label className="flex cursor-pointer select-none items-center gap-1.5" data-autoadvance-toggle-label>
                 <input

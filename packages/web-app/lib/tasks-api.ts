@@ -763,6 +763,40 @@ export async function getBatchTree(taskId: string): Promise<BatchTreeEntry[]> {
   return data.batches
 }
 
+// ============ Home 磁盘直扫目录树（输出区 2026-09-24 改版） ============
+
+/** One node of the raw task-home listing. `path` is home-relative posix;
+ *  directories carry a trailing "/" and appear even when empty. */
+export interface HomeTreeEntry {
+  path: string
+  type: "dir" | "file"
+  bytes: number
+  mtime: string
+}
+
+/** GET /api/tasks/:id/home-tree — the whole task home as the filesystem shows
+ *  it (`dir` = absolute home path for the panel header). Unknown task 404. */
+export async function getHomeTree(taskId: string): Promise<{ dir: string; entries: HomeTreeEntry[] }> {
+  const res = await fetch(buildUrl(`/${taskId}/home-tree`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** GET /api/tasks/:id/home-content?path= — read ANY regular file under the
+ *  task home (the 输出区 tree viewer). 400 missing param / 403 escape /
+ *  404 missing-or-dir / 413 over MAX_HOME_FILE_READ_BYTES → TaskApiError. */
+export async function getHomeContent(taskId: string, relPath: string): Promise<ArtifactContent> {
+  const res = await fetch(buildUrl(`/${taskId}/home-content`, { path: relPath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
 // ============ 验货台 (acceptance v2): 实物 round-diff + 当场复检 ============
 // 镜像 server round-evidence-service.ts 的 payload 形状（SHAs 永不出服务端；
 // 端点都按 task id 解析 awaiting round，无 awaiting → 409）。

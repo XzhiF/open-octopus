@@ -5,7 +5,7 @@
 //   ② 开始编写 → D15 序列（clone session + POST 直建 v4）→ 进 AuthoringWorkspace
 //   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + manifest.json 快照带旗标
 //   ④ 右栏「添加 Phase」手动建行（workflow 走内置目录初选）→ 整数组 PUT 落库
-//   ⑤ 行上 spec.md → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
+//   ⑤ 卡上 spec.md bullet → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
 //   ⑥ 入队清单五行随写入实时变绿（phases/spec/bind 三行 ✓；repos 行服务端权威恒乐观）
 //   ⑦ DELETE 清草稿 + home。
 //
@@ -129,8 +129,8 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
     expect(phases[0].slug).toBe(`p-${UNIQ}`)
     expect(String(phases[0].specPath)).toMatch(new RegExp(`^\\./\\.scratch/\\d{8}/p-${UNIQ}/spec\\.md$`))
 
-    // ⑤ spec.md：404 空态 → 创建骨架 → fs 真相
-    await page.locator("[data-spec-out-row='1'] button").click()
+    // ⑤ 卡上 spec.md bullet → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
+    await page.locator("[data-phase-spec-button='1']").click()
     await expect(page.locator("[data-spec-skeleton-button]")).toBeVisible({ timeout: 10_000 })
     await page.locator("[data-spec-skeleton-button]").click()
     await expect(page.locator("[data-spec-editor]")).toBeVisible({ timeout: 10_000 })

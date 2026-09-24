@@ -86,6 +86,17 @@ export interface BatchTreeEntry {
   latest_mtime: string
 }
 
+/** One node of the raw task-home listing (GET /:id/home-tree — 输出区磁盘
+ *  直扫目录树). `path` is home-relative posix; directories carry a trailing
+ *  "/" and appear even when empty (the view is filesystem-truth, not
+ *  artifact-semantics). */
+export interface HomeTreeEntry {
+  path: string
+  type: "dir" | "file"
+  bytes: number
+  mtime: string
+}
+
 /** Matt-convention files probed per selected project when context.md is
  *  written (task-phase-redesign ticket 09, AC3; decisions/06 §2/§4). The
  *  server does a cheap existence check so the agent's domain-reading step
@@ -1097,6 +1108,88 @@ export class TaskHomeService {
     }
     const content = fs.readFileSync(resolved, "utf-8")
     return { path: requestedPath, content }
+  }
+
+  /** Read ANY regular file under the task home (输出区目录树查看器 ——
+   *  context.md / manifest.json / artifacts/** / .scratch/** …)。守卫 =
+   *  resolveHomePath 的前半段（无 null 字节、仅相对路径、不出 home），
+   *  但【不】限 `.scratch` 白名单 —— 树是如实磁盘视图。TOO_LARGE 先于读；
+   *  目录/缺失 → NOT_FOUND。 */
+  readHomeAnyFile(taskId: string, requestedPath: string): { path: string; content: string } {
+    if (requestedPath.includes("\0")) {
+      throw new ArtifactAccessError("home path must not contain null bytes", "FORBIDDEN")
+    }
+    if (path.isAbsolute(requestedPath)) {
+      throw new ArtifactAccessError(`absolute paths are not served: ${requestedPath}`, "FORBIDDEN")
+    }
+    const home = this.homePath(taskId)
+    const resolved = path.resolve(home, requestedPath)
+    const rel = path.relative(home, resolved)
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new ArtifactAccessError(`path escapes the task home: ${requestedPath}`, "FORBIDDEN")
+    }
+    let st: fs.Stats
+    try {
+      st = fs.statSync(resolved)
+    } catch {
+      throw new ArtifactAccessError(`file not found: ${requestedPath}`, "NOT_FOUND")
+    }
+    if (!st.isFile()) {
+      throw new ArtifactAccessError(`not a regular file: ${requestedPath}`, "NOT_FOUND")
+    }
+    if (st.size > MAX_HOME_FILE_READ_BYTES) {
+      throw new ArtifactAccessError(
+        `file too large to read: ${requestedPath} (${st.size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    const content = fs.readFileSync(resolved, "utf-8")
+    return { path: requestedPath, content }
+  }
+
+  /** Raw recursive listing of the task home (输出区「磁盘直扫目录树」2026-09-24
+   *  拍板：完整路径 + 目录如实显示)。与 scanArtifactDir/batchTree 的区别 =
+   *  不做产物/批次语义，只反映文件系统：空目录也在列。软链/junction 不跟随
+   *  (SW-BP14 同口径) 也不显示。cap 500 条 / depth ≤6；缺 home → []。 */
+  homeTree(taskId: string): HomeTreeEntry[] {
+    const root = this.homePath(taskId)
+    const out: HomeTreeEntry[] = []
+    let budget = 500
+    const EPOCH = new Date(0).toISOString()
+    const walk = (rel: string, depth: number): void => {
+      if (depth > 6 || budget <= 0) return
+      let ents: fs.Dirent[]
+      try {
+        ents = fs.readdirSync(path.join(root, rel), { withFileTypes: true })
+      } catch {
+        return // unreadable dir — skip (SW-BP12)
+      }
+      ents.sort((a, b) => {
+        const ad = a.isDirectory() ? 0 : 1
+        const bd = b.isDirectory() ? 0 : 1
+        return ad - bd || a.name.localeCompare(b.name)
+      })
+      for (const ent of ents) {
+        if (budget <= 0) return
+        const child = rel ? `${rel}/${ent.name}` : ent.name
+        let st: fs.Stats | null = null
+        try {
+          st = fs.statSync(path.join(root, child))
+        } catch {
+          st = null
+        }
+        if (ent.isDirectory()) {
+          budget--
+          out.push({ path: `${child}/`, type: "dir", bytes: 0, mtime: st ? st.mtime.toISOString() : EPOCH })
+          walk(child, depth + 1)
+        } else if (ent.isFile()) {
+          budget--
+          out.push({ path: child, type: "file", bytes: st?.size ?? 0, mtime: st ? st.mtime.toISOString() : EPOCH })
+        }
+      }
+    }
+    walk("", 0)
+    return out
   }
 
   /** Write (create or overwrite) a `.scratch/**.md` file under the task home,

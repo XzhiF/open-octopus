@@ -80,7 +80,7 @@ import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./tas
 import { getExecutionService } from "../execution-service-registry"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
-import type { BatchTreeEntry } from "./task-home-service"
+import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
@@ -855,6 +855,25 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.batchTree(taskId)
+  }
+
+  /** GET /api/tasks/:id/home-tree — 输出区磁盘直扫（2026-09-24 拍板）：
+   *  任务 home 原始目录树 + 绝对路径。未知任务 404 先于任何 fs 动作。 */
+  homeTree(taskId: string): { dir: string; entries: HomeTreeEntry[] } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return {
+      dir: this.taskHomeService.homePath(taskId),
+      entries: this.taskHomeService.homeTree(taskId),
+    }
+  }
+
+  /** GET /api/tasks/:id/home-content?path= — 读 home 下任意常规文件
+   *  （目录树查看器）。守卫在 home service（相对路径不出 home + 512KB 上限）。 */
+  readHomeAnyFile(taskId: string, requestedPath: string): { path: string; content: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.readHomeAnyFile(taskId, requestedPath)
   }
 
   /** PUT /api/tasks/:id/home-file — 契约修复 (v4 batch spec 编辑/骨架). Editable

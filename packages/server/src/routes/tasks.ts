@@ -400,6 +400,32 @@ export function createTasksRoutes(
     }
   })
 
+  // GET /:id/home-tree — 输出区磁盘直扫（2026-09-24 拍板）：任务 home 的原始
+  // 目录树（空目录/全部文件如实呈现）+ 绝对路径。{ dir, entries }。
+  router.get("/:id/home-tree", (c) => {
+    try {
+      return c.json(service.homeTree(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/home-content?path= — 读任务 home 下任意常规文件（目录树查看器；
+  // 守卫 = 相对路径不出 home + 512KB 上限，403/404/413 与 home-file 同码）。
+  router.get("/:id/home-content", (c) => {
+    const requestedPath = c.req.query("path")
+    if (!requestedPath || !requestedPath.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    try {
+      return c.json(service.readHomeAnyFile(c.req.param("id"), requestedPath))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
   // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
   // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
