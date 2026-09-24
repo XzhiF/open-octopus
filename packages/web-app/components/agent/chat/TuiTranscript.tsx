@@ -125,8 +125,8 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
 
   if (isUser) {
     return (
-      <div className="rounded-md bg-pop-paper px-3 py-1.5 italic shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
-        <span className="font-bold not-italic text-pop-pink">❯ </span>
+      <div className="rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
+        <span className="font-bold text-pop-pink">❯ </span>
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
     )
