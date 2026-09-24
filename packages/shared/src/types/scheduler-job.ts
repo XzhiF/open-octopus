@@ -142,6 +142,9 @@ export const taskPhaseSchema = z.object({
   specPath: z.string().min(1),
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
+  // 人工确认闸（v4 入队 gate 逐 phase 必检）：用户在绑定/编辑弹窗保存一次
+  // 即 true；agent 整数组改写 phases 或换绑会丢掉本字段 → 重新确认。
+  bindingConfirmed: z.boolean().optional(),
 })
 
 /** 验收面 v2「验货台」— the task's on-demand re-verification command

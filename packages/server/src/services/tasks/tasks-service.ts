@@ -1447,6 +1447,9 @@ export class TasksService {
       homeDir: this.taskHomeService.homePath(taskId),
       taskArtifactsDir: this.taskHomeService.artifactsDir(taskId),
       resolveRef: (ref) => resolveWorkflowRef(ref, this.resolverDeps(taskId)),
+      // 入队路径吃加严闸（⑤ 人工确认绑定 + ⑥ issues/ 产物基线）；
+      // launch 重解析（task-lifecycle）不置 → 历史在队任务不被新闸牵连。
+      enqueueChecks: true,
     })
   }
 

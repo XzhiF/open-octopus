@@ -367,7 +367,8 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     const dto = (await created.json()) as { id: string }
     const id = dto.id
 
-    // ② PUT home-file 写 phase 的 spec.md（父目录连带建出）
+    // ② PUT home-file 写 phase 的 spec.md（父目录连带建出）+ issues/ 票
+    //    （入队加严闸 ⑥ 产物基线，chat-draft-v4 原型拍板）
     const specRel = ".scratch/v4d/golden/spec.md"
     const fileRes = await app.request(`/api/tasks/${id}/home-file`, {
       method: "PUT",
@@ -377,8 +378,14 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     expect(fileRes.status).toBe(200)
     const wr = (await fileRes.json()) as { bytes: number }
     expect(wr.bytes).toBeGreaterThan(0)
+    const ticketRes = await app.request(`/api/tasks/${id}/home-file`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: ".scratch/v4d/golden/issues/01-plan.md", content: "# ticket plan\n" }),
+    })
+    expect(ticketRes.status).toBe(200)
 
-    // ③ spec-field(phases) 整数组写回
+    // ③ spec-field(phases) 整数组写回（bindingConfirmed = 人工确认闸 ⑤）
     const ph = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -389,6 +396,7 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
             index: 1, name: "golden", slug: "golden", specPath: specRel,
             workflowRef: "built-in/v4-required-flow",
             inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
+            bindingConfirmed: true,
           },
         ],
       }),

@@ -191,6 +191,9 @@ interface PhaseInput {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
+  /** 入队加严闸 ⑤（2026-09-24 chat-draft-v4）：人工确认绑定。默认用例走
+   *  validPhase/显式 true；想测闸本体就在对象里置 false/省略。 */
+  bindingConfirmed?: boolean
 }
 
 /** Write a spec file into the task's home at `rel` (creates parent dirs). */
@@ -229,6 +232,12 @@ function validPhase(id: string, n: number): PhaseInput {
   const slug = `p${n}`
   const specPath = path.join(".scratch", "v4d", slug, "spec.md")
   writeSpecFile(id, specPath)
+  // 入队加严闸 ⑥：issues/ 产物基线（≥1 张 .md 票）—— 合法相配套齐。
+  // 票名刻意不含 `-e2e-`：不污染 check ④ 的末张验收票语义。
+  const ticket = path.join(path.dirname(specPath), "issues", "01-plan.md")
+  const abs = path.join(taskHome.homePath(id), ticket)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, "# E2E_TD ticket\n")
   return {
     index: n,
     name: `Phase ${n}`,
@@ -236,6 +245,7 @@ function validPhase(id: string, n: number): PhaseInput {
     specPath,
     workflowRef: "built-in/v4-required-flow",
     inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
+    bindingConfirmed: true,
   }
 }
 
@@ -298,6 +308,7 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
         specPath: path.join(".scratch", "gone", "p1", "spec.md"),
         workflowRef: "built-in/v4-required-flow",
         inputValues: { idea: "x", spec_dir: "y" },
+        bindingConfirmed: true, // 隔离 spec-missing 单因（闸⑤ 与本用例无关）
       },
     ])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
@@ -407,6 +418,50 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
     expect(res.status).toBe(200)
+  })
+})
+
+// ── 入队加严闸 ⑤/⑥（chat-draft-v4 原型拍板，2026-09-24）──────────────
+// ⑤ bindingConfirmed：绑定必须经人工确认（弹窗保存）；⑥ issues/ 产物基线：
+// 所有绑定流统一 ≥1 张 .md 票。两闸只在 readyTask（enqueueChecks）生效。
+describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)", () => {
+  it("⑤ 全绿产物但未确认绑定 → 409 missing=['phase:1:binding-unconfirmed']", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    insertV4Task(id, [{ ...validPhase(id, 1), bindingConfirmed: false }])
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { missing: string[] }).missing)
+      .toEqual(["phase:1:binding-unconfirmed"])
+  })
+
+  it("⑥ spec 在盘 + 已确认，但 issues/ 无票（非批次流也拦）→ 409 issues-missing", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const p = { ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }
+    // validPhase 写过 01-plan.md —— 清空 issues/ 还原「无票」现场
+    fs.rmSync(path.join(taskHome.homePath(id), path.dirname(p.specPath), "issues"), { recursive: true, force: true })
+    insertV4Task(id, [p])
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { missing: string[] }).missing)
+      .toEqual(["phase:1:issues-missing"])
+  })
+
+  it("多 phase 逐一点名：P1 缺票 + P2 未确认 → 两条键各归其位", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const p1 = validPhase(id, 1)
+    const p2 = validPhase(id, 2)
+    fs.rmSync(path.join(taskHome.homePath(id), path.dirname(p1.specPath), "issues"), { recursive: true, force: true })
+    insertV4Task(id, [p1, { ...p2, bindingConfirmed: false }])
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { missing: string[] }).missing)
+      .toEqual(["phase:1:issues-missing", "phase:2:binding-unconfirmed"])
   })
 })
 

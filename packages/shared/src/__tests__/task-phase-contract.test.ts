@@ -28,11 +28,14 @@ interface SpecTaskPhase {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
+  /** v4 入队 gate ⑤：人工确认绑定（chat-draft-v4 原型拍板新增）。 */
+  bindingConfirmed?: boolean
 }
 
 describe("AC2 contract — TaskPhase Zod single source ↔ spec shape", () => {
-  it("Zod shape keys snapshot exactly the 6 spec fields", () => {
+  it("Zod shape keys snapshot exactly the 7 spec fields", () => {
     expect(Object.keys(taskPhaseSchema.shape).sort()).toEqual([
+      "bindingConfirmed",
       "index",
       "inputValues",
       "name",

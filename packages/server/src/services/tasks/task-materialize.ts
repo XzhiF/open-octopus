@@ -323,6 +323,8 @@ const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
  * skipped when ① already missed. A phase that passes all four yields a
  * TaskV4PhaseConfig. Empty/missing phases ⇒ single `phase:0:no-phases`. Throws nothing
  * — the caller turns a non-empty missing list into TaskReadyGateError.
+ * ⑤/⑥（bindingConfirmed 人工确认 + issues/ ≥1 票产物基线）仅在 `enqueueChecks`
+ * （readyTask 入队路径）生效 —— launch 重解析不吃新闸，历史在队任务不受牵连。
  *
  * `resolveRef` is injected rather than called here so the resolution set (which needs
  * BuiltInWorkflowService + TaskHomeService) stays the caller's wiring; the function
@@ -333,8 +335,13 @@ export function resolveV4Phases(args: {
   homeDir: string
   taskArtifactsDir: string
   resolveRef: (ref: string) => { content: string } | null
+  /** 入队专属加严检查（readyTask 置 true；launch 重解析不置）：
+   *  ⑤ bindingConfirmed —— 逐 phase 人工确认绑定，miss `phase:<i>:binding-unconfirmed`；
+   *  ⑥ issues/ 产物基线 —— 批次目录 issues/ 存在且 ≥1 张 .md 票（所有绑定流统一），
+   *     miss `phase:<i>:issues-missing`。历史在队任务经 launch 恢复不受影响。 */
+  enqueueChecks?: boolean
 }): { missing: string[]; phases: TaskV4PhaseConfig[] } {
-  const { taskSpec, homeDir, taskArtifactsDir, resolveRef } = args
+  const { taskSpec, homeDir, taskArtifactsDir, resolveRef, enqueueChecks } = args
   const missing: string[] = []
   const phases = taskSpec.phases ?? []
   if (phases.length < 1) {
@@ -347,6 +354,10 @@ export function resolveV4Phases(args: {
     const absSpec = path.isAbsolute(p.specPath) ? p.specPath : path.join(homeDir, p.specPath)
     const specOk = fs.existsSync(absSpec) && fs.statSync(absSpec).isFile()
     if (!specOk) missing.push(`phase:${i}:spec-missing`)
+    // ⑤ (enqueue only) 人工确认闸：未经绑定弹窗保存/被 agent 改写 → 挡入队
+    if (enqueueChecks && p.bindingConfirmed !== true) {
+      missing.push(`phase:${i}:binding-unconfirmed`)
+    }
     // ② workflow_ref resolvable (single resolve serves ③'s content too)
     const ref = (p.workflowRef ?? "").trim()
     const resolution = ref ? resolveRef(ref) : null
@@ -390,20 +401,27 @@ export function resolveV4Phases(args: {
     //        unit/API tests), so e2e-verify is skipped and no token is burned.
     //    Geometric refactor (2026-09-18): e2e is no longer forced-every-batch —
     //    it's conditional on this declaration. Neither present ⇒ miss.
-    if (specOk && BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
+    if (specOk) {
       const issueDir = path.join(path.dirname(absSpec), 'issues')
-      const hasFinalTicket =
-        fs.existsSync(issueDir) &&
-        fs.readdirSync(issueDir).some((f) => f.endsWith('.md') && f.includes('-e2e-'))
-      let unitOnly = false
-      if (!hasFinalTicket) {
-        try {
-          unitOnly = /^\s*Verification Tier:\s*unit-only\s*$/im.test(fs.readFileSync(absSpec, 'utf-8'))
-        } catch {
-          unitOnly = false
-        }
+      const issueTickets = fs.existsSync(issueDir)
+        ? fs.readdirSync(issueDir).filter((f) => f.endsWith('.md'))
+        : []
+      // ⑥ (enqueue only) 产物基线 —— 所有绑定流统一：批次 issues/ 至少一张 .md 票。
+      if (enqueueChecks && issueTickets.length === 0) {
+        missing.push(`phase:${i}:issues-missing`)
       }
-      if (!hasFinalTicket && !unitOnly) missing.push(`phase:${i}:no-final-verification`)
+      if (BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
+        const hasFinalTicket = issueTickets.some((f) => f.includes('-e2e-'))
+        let unitOnly = false
+        if (!hasFinalTicket) {
+          try {
+            unitOnly = /^\s*Verification Tier:\s*unit-only\s*$/im.test(fs.readFileSync(absSpec, 'utf-8'))
+          } catch {
+            unitOnly = false
+          }
+        }
+        if (!hasFinalTicket && !unitOnly) missing.push(`phase:${i}:no-final-verification`)
+      }
     }
     if (specOk) {
       resolved.push({

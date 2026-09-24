@@ -795,7 +795,8 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
 
   it("a draft's phases round-trip through the ready gate (v4 contract holds end-to-end)", async () => {
     const taskId = seedDraftV4()
-    await postSpecField(taskId, "phases", [phaseBody(1, "p1")])
+    // bindingConfirmed = 入队加严闸 ⑤（人工确认）—— 本用例锁定 workflow-ref 单因。
+    await postSpecField(taskId, "phases", [{ ...phaseBody(1, "p1"), bindingConfirmed: true }])
     fs.mkdirSync(path.join(taskHome.homePath(taskId), batchRel("p1")), { recursive: true })
     fs.writeFileSync(path.join(taskHome.homePath(taskId), batchRel("p1"), "spec.md"), "# p1\n")
     const res = await app.request(`/api/tasks/${taskId}/ready`, { method: "POST" })

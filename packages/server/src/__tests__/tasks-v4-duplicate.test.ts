@@ -76,6 +76,7 @@ interface PhaseInput {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
+  bindingConfirmed?: boolean
 }
 
 function writeHomeFile(taskId: string, rel: string, content: string, backdateMtime?: number): string {
@@ -97,6 +98,7 @@ function insertValidV4Task(): { id: string; phases: PhaseInput[] } {
     index: 1, name: "Phase 1", slug: "p1", specPath,
     workflowRef: "built-in/v4-required-flow",
     inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
+    bindingConfirmed: true, // 入队加严闸 ⑤（人工确认）
   }]
   const id = insertTask({
     format: "v4", task_type: "coding", skill_groups: [],
