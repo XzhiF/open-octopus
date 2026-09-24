@@ -68,7 +68,22 @@ function safeFilePart(s: string): string {
 }
 
 export class TestInstanceRegistry {
-  constructor(private readonly dir = path.join(os.homedir(), ".octopus", "instances")) {}
+  constructor(
+    private readonly dir = path.join(os.homedir(), ".octopus", "instances"),
+    private readonly portsDir = path.join(os.homedir(), ".octopus", "ports"),
+  ) {}
+
+  /** 读 dev.mjs 的分支端口登记文件 ~/.octopus/ports/{safeName(branch)}.json。
+   *  无 branch / 无文件 / 损坏 → null。safeName 与 dev.mjs 同规则。 */
+  branchPorts(branch: string | null | undefined): { branch?: string; server?: number; web?: number } | null {
+    if (!branch) return null
+    const fp = path.join(this.portsDir, `${safeFilePart(branch)}.json`)
+    try {
+      return JSON.parse(readFileSync(fp, "utf-8"))
+    } catch {
+      return null
+    }
+  }
 
   private fileFor(taskId: string): string {
     return path.join(this.dir, `${safeFilePart(taskId)}.json`)

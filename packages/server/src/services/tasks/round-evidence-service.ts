@@ -31,6 +31,7 @@
 // the batch dir + derived view already own its bookkeeping.
 
 import { existsSync, readFileSync } from "fs"
+import os from "os"
 import path from "path"
 import type Database from "better-sqlite3"
 import {
@@ -46,7 +47,7 @@ import {
   type RunbookView,
   type TaskSpec,
 } from "@octopus/shared"
-import { BashExecutor } from "@octopus/engine"
+import { BashExecutor, killProcessTree } from "@octopus/engine"
 import { ExecutionDAO } from "../../db/dao"
 import type { ExecutionRow } from "../../db/types"
 import { gitOps, type DiffFileEntry } from "../git-ops"
@@ -58,6 +59,9 @@ import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
 import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
 import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState } from "./playbook-types"
+import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
+import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
+import { findPidOnPort, waitForPort, portFromUrl, processAncestry } from "../../port-utils"
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry, ProbeRunResult, ProbeState } from "./playbook-types"
 
@@ -170,6 +174,17 @@ interface PreviewSession {
   done: boolean
   /** runbook teardown (stop 时 best-effort 跑一次；缺省=只结束会话，用于远端部署）。 */
   down?: { command: string; cwd: string }
+  /** up 的 shell PID（BashExecutor.onSpawn 透出）—— ready 登记时进注册表。 */
+  shellPid?: number
+  /** 登记幂等锁（ready 只登记一次 entry）。 */
+  registered?: boolean
+}
+
+/** 实例关闭安全闸拒绝（routes classifyError 映射 → 403/409 见 status 码）。 */
+export class InstanceGateError extends Error {
+  constructor(message: string, readonly status: 400 | 403 | 409) {
+    super(message)
+  }
 }
 
 /** Evidence frozen while the round is still awaiting (see snapshotEvidence). */
@@ -209,6 +224,7 @@ export class RoundEvidenceService {
     private readonly tasksService: TasksService,
     private readonly workspaceService: WorkspaceService,
     private readonly taskHome: TaskHomeService,
+    readonly instances: TestInstanceRegistry = new TestInstanceRegistry(),
   ) {
     this.execDao = new ExecutionDAO(db)
   }
@@ -693,6 +709,23 @@ export class RoundEvidenceService {
     const state: ProbeState = exit === 0 && r.status !== "failed"
       ? "passed"
       : exit === null ? "timeout" : "failed"
+    // 后台拉起的探针 = 泄漏点：nohup 的孙进程不在本 shell 的树里，spawn 完即失联。
+    // 从命令串扫 localhost:<port> 登记进注册表（PID 由端口反查，读时 reconcile
+    // 补全）——否则测试结束后没人知道它存在。扫不到端口的（`pnpm dev &` 无 URL
+    // 形状）只能诚实放弃，端口差分扫描留作后续增强。
+    if (launcher && state === "passed") {
+      const ports = new Set<number>()
+      for (const m of cmd.matchAll(/(?:localhost|127\.0\.0\.1):(\d{1,5})/gi)) {
+        const p = parseInt(m[1], 10)
+        if (Number.isInteger(p) && p > 0 && p < 65536) ports.add(p)
+      }
+      if (ports.size > 0) {
+        this.registerInstance(taskId, execRow, ws.path, {
+          source: "probe-launcher",
+          urls: [...ports].map((p) => `http://localhost:${p}`),
+        })
+      }
+    }
     return { state, exit_code: exit, duration_ms: r.durationMs, tail: lines.slice(-60) }
   }
 
@@ -809,6 +842,7 @@ export class RoundEvidenceService {
       cwd: cwdAbs,
       signal: controller.signal,
       executionId: execRow.id,
+      onSpawn: (pid: number) => { session.shellPid = pid },
       onLog: (line: string) => {
         session.lines.push(line)
         if (session.lines.length > PREVIEW_TAIL) session.lines.splice(0, session.lines.length - PREVIEW_TAIL)
@@ -842,6 +876,12 @@ export class RoundEvidenceService {
             session.ready = true
             session.summary.state = "ready"
             this.stopProbe(session)
+            this.registerInstance(taskId, execRow, ws.path, {
+              source: "preview-up",
+              shell_pid: session.shellPid,
+              urls: (session.summary.views ?? []).map((v) => v.url),
+              down: session.down,
+            })
             this.sse.emit("taskpool", { event: TASK_PREVIEW_EVENT, data: previewData(taskId, session.summary) })
           }
         })
@@ -871,6 +911,51 @@ export class RoundEvidenceService {
 
   private stopProbe(session: PreviewSession): void {
     if (session.probeTimer) { clearInterval(session.probeTimer); session.probeTimer = undefined }
+  }
+
+  // ── 测试实例登记/回收 (registry: ~/.octopus/instances/) ────────────────
+  //
+  // 端口反查为权威：登记只发生在「ready/launcher 返回」这类"确实有东西在听"
+  // 的时刻；PID 由 findPidOnPort 现场反查（add 内做），shell_pid 仅是前台长驻
+  // up 的树杀兜底。登记失败绝不阻断预览主流程（诚实降级，UI 会显示"未登记"）。
+
+  private registerInstance(
+    taskId: string,
+    execRow: ExecutionRow,
+    wsPath: string,
+    e: {
+      source: InstanceSource
+      shell_pid?: number
+      urls: string[]
+      down?: { command: string; cwd: string }
+    },
+  ): void {
+    const ports = [...new Set(
+      e.urls
+        .map(portFromUrl)
+        .filter((p): p is number => p !== null && p !== 80 && p !== 443),
+    )].filter((p) => !hostProtectedPorts().has(p))
+    try {
+      // 幂等：同 source 已有 alive entry 与本组端口重叠 → 不再堆（探针可反复跑）。
+      if (ports.length > 0) {
+        const dup = this.instances.listEntries(taskId).some(
+          (x) => x.source === e.source && x.status === "alive" && x.ports.some((p) => ports.includes(p)),
+        )
+        if (dup) return
+      }
+      this.instances.add(taskId, {
+        source: e.source,
+        exec_id: execRow.id,
+        branch: execRow.branch ?? undefined,
+        workspace_path: wsPath,
+        shell_pid: e.shell_pid,
+        ports,
+        urls: e.urls,
+        down: e.down ? { ...e.down } : undefined,
+      })
+    } catch (err: unknown) {
+      console.warn("[instance-registry] add failed (non-fatal):", err instanceof Error ? err.message : err)
+    }
   }
 
   /** GET /:id/preview — session state, or a one-shot external probe (a `pnpm dev`
@@ -914,6 +999,7 @@ export class RoundEvidenceService {
     // suppressed once ready — so a foreground up being killed would otherwise
     // never flip the session to "stopped").
     this.settlePreview(taskId, session, { status: "stopped", logLines: [] })
+    this.scheduleReclaim(taskId)
     return { ...session.summary }
   }
 
@@ -927,12 +1013,138 @@ export class RoundEvidenceService {
       this.fireDown(taskId, session, session.summary.execution_id ?? taskId)
       this.settlePreview(taskId, session, { status: "stopped", logLines: [] })
     }
+    // 无会话也照收：注册表里可能有 server 重启前/探针拉起的残留 entry。
+    this.scheduleReclaim(taskId)
+  }
+
+  /** fireDown 已把 down 打过一遍（即响语义），这里 skipDown 只做端口收敛 +
+   *  树杀 detached 逃逸的孙进程 + 落账 —— 异步，不阻塞 stop/decision 响应。 */
+  private scheduleReclaim(taskId: string): void {
+    void this.reclaimTaskInstances(taskId, { skipDown: true }).catch((err: unknown) => {
+      console.warn(`[instance-registry] reclaim after stop failed (task ${taskId}):`, err instanceof Error ? err.message : err)
+    })
   }
 
   /** Ledger hook: last-known preview summary (for the台账 line). */
   previewStatus(taskId: string): PreviewSummary | null {
     const s = this.previewSessions.get(taskId)
     return s ? { ...s.summary } : null
+  }
+
+  // ── 实例回收 / 一键关闭 (2026-09-24) ────────────────────────────────────
+
+  /** 收敛式回收：down(await) → 等端口释放 → 树杀残留 → 复核 → 落账 stopped。
+   *  与 fireDown 的"即响"语义相对：这里要的是**杀干净**，调用方可 await 结果。
+   *  opts.skipDown = stopPreview 路径专用（down 已被 fireDown 打过，这里只收
+   *  detached 逃过进程树杀的孙进程）。绝不碰宿主保护 PID/端口。 */
+  async reclaimTaskInstances(
+    taskId: string,
+    opts: { skipDown?: boolean; entryIds?: string[] } = {},
+  ): Promise<{ reclaimed: string[]; still_occupied: number[] }> {
+    const targets = this.instances.listEntries(taskId).filter(
+      (e) => e.status !== "stopped" && (!opts.entryIds || opts.entryIds.includes(e.id)),
+    )
+    const reclaimed: string[] = []
+    const still: number[] = []
+    const protectedPids = hostProtectedPids()
+    for (const e of targets) {
+      if (!opts.skipDown && e.down) await this.runDown(e.down, taskId, e.exec_id ?? taskId)
+      // 先礼：down 之后给端口 3s 收敛窗口（同步逐端口等待 = down 的本意）
+      for (const p of e.ports) await waitForPort(p, 3000)
+      // 后兵：仍占端口的逐个树杀（Windows taskkill /T /F；POSIX 组杀）
+      for (const p of e.ports) {
+        for (const pid of findPidOnPort(p)) {
+          if (protectedPids.has(pid)) continue
+          killProcessTree(pid)
+        }
+      }
+      if (e.shell_pid !== undefined && !protectedPids.has(e.shell_pid)) {
+        try { process.kill(e.shell_pid, 0); killProcessTree(e.shell_pid) } catch { /* 已死 */ }
+      }
+      const occupied = e.ports.filter((p) => findPidOnPort(p).length > 0)
+      if (occupied.length === 0) reclaimed.push(e.id)
+      else still.push(...occupied)
+    }
+    if (reclaimed.length > 0) this.instances.markStopped(taskId, reclaimed)
+    return { reclaimed, still_occupied: [...new Set(still)] }
+  }
+
+  private async runDown(down: { command: string; cwd: string }, taskId: string, executionId: string): Promise<void> {
+    const node = { id: `reclaim-down-${taskId}`, type: "bash" as const, bash: down.command, timeout: 30 }
+    try {
+      await new BashExecutor(node, new VarPool(), { cwd: down.cwd, executionId, skipHarness: true }).execute()
+    } catch { /* 收尾尽力而为 */ }
+  }
+
+  /** GET /:id/instances 载荷：注册表 entries（读时 reconcile）+ 外部 dev 候选
+   *  —— 该任务 branch 的端口文件 (~/.octopus/ports/{safe}.json) 里有端口在听、
+   *  但不在注册表也不属宿主 → 多半是用户在 worktree 手动 `pnpm dev` 起的
+   *  （正是"3888/3889 没人收尸"的原型场景），UI 给"按端口关闭"逃生门。 */
+  listInstances(taskId: string): { entries: TestInstanceEntry[]; external: Array<{ port: number; role: string; branch: string | null }> } {
+    const entries = this.instances.listEntries(taskId)
+    const known = new Set(entries.filter((e) => e.status !== "stopped").flatMap((e) => e.ports))
+    const external: Array<{ port: number; role: string; branch: string | null }> = []
+    const fp = this.branchPortsFile(taskId)
+    if (fp) {
+      for (const role of ["web", "server"] as const) {
+        const p = fp[role]
+        if (!Number.isInteger(p) || p! <= 0) continue
+        if (known.has(p!) || hostProtectedPorts().has(p!)) continue
+        if (findPidOnPort(p!).length > 0) external.push({ port: p!, role, branch: fp.branch ?? null })
+      }
+    }
+    return { entries, external }
+  }
+
+  /** 该任务 branch 的端口登记文件（dev.mjs 协议，读取委托给注册表）；
+   *  execRow.branch 优先，回落 task_spec.branch。无 branch / 无文件 → null。 */
+  private branchPortsFile(taskId: string): { branch?: string; server?: number; web?: number } | null {
+    let branch: string | null | undefined
+    try { branch = this.resolveAwaiting(taskId).execRow.branch } catch { /* 无 awaiting 轮 */ }
+    if (!branch) {
+      try { branch = (this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined)?.branch } catch { /* 404 由路由兜 */ }
+    }
+    return this.instances.branchPorts(branch)
+  }
+
+  /** 一键关闭 worktree 上手动起的 dev 实例 —— 三重闸全部服务端重算：
+   *  ① 端口白名单（注册表 ∪ runbook views ∪ branch 端口文件）→ 403；
+   *  ② 宿主端口黑名单 → 400；
+   *  ③ listener PID 及其祖先链 ∩ 宿主 PID 集（env ∪ 自身祖先，独立于
+   *     host-pids.json 时效）→ 409。
+   *  过闸后 taskkill/组杀 + 等端口释放。 */
+  async closeDevPort(taskId: string, port: number): Promise<{ killed: number[]; released: boolean }> {
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new InstanceGateError(`非法端口: ${port}`, 400)
+    }
+    if (hostProtectedPorts().has(port)) {
+      throw new InstanceGateError(`:${port} 是当前 Octopus 宿主在用的端口，拒绝终止`, 400)
+    }
+    const { entries, external } = this.listInstances(taskId)
+    const whitelisted =
+      entries.some((e) => e.status !== "stopped" && e.ports.includes(port)) ||
+      external.some((x) => x.port === port) ||
+      (this.resolveRunbook(taskId)?.views ?? []).some((v) => portFromUrl(v.url) === port)
+    if (!whitelisted) {
+      throw new InstanceGateError(`端口 :${port} 与本任务无登记关联（不在注册表 / runbook / 分支端口文件中）— 如确需终止请手动处理`, 403)
+    }
+    const pids = findPidOnPort(port)
+    if (pids.length === 0) return { killed: [], released: true }
+    const protectedPids = hostProtectedPids()
+    for (const pid of pids) {
+      if (protectedPids.has(pid)) {
+        throw new InstanceGateError(`:${port} 的进程 ${pid} 就是 Octopus 宿主自身，拒绝终止`, 409)
+      }
+      const anc = processAncestry(pid).find((a) => protectedPids.has(a))
+      if (anc !== undefined) {
+        throw new InstanceGateError(
+          `:${port} 的进程 ${pid} 的祖先链含宿主进程 ${anc} —— 若该 dev 实例由 Octopus 会话拉起，请走预览停止/回收而非 close-dev`, 409,
+        )
+      }
+    }
+    for (const pid of pids) killProcessTree(pid)
+    const released = await waitForPort(port, 5000)
+    return { killed: pids, released }
   }
 
   // ── 台账机写 + 打回票重开 (ADR-0022 T04) ──────────────────────────────

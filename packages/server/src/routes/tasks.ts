@@ -36,6 +36,7 @@ import {
   type TaskStatus,
 } from "@octopus/shared"
 import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
+import { InstanceGateError } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -51,6 +52,9 @@ function classifyError(err: unknown): { status: number; message: string } {
   // task exists and is editable; only these two fields are immutable).
   if (err instanceof TaskLockViolationError) return { status: 409, message: err.message }
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
+  // 实例关闭安全闸（2026-09-24）：status 由闸侧裁定（400 非法/宿主端口、
+  // 403 未登记端口、409 进程树涉宿主）。
+  if (err instanceof InstanceGateError) return { status: err.status, message: err.message }
   // 06 (US7): artifact content whitelist + missing-file classification. The
   // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
   // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4) vs
@@ -556,6 +560,55 @@ export function createTasksRoutes(
     }
   })
 
+  // ── 测试实例管理（2026-09-24，自动回收 + 一键关闭） ────────────────────
+  // 注册表 ~/.octopus/instances/{taskId}.json 的读/收/关三面。GET 纯读但带
+  // 读时端口复核（reconcile）；两个 POST 都会真杀进程 —— UI 侧必须过确认框，
+  // 服务端另有 host-guard 三重闸兜底（绝不碰宿主 PID/端口/祖先链）。
+
+  router.get("/:id/instances", (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(evidence.listInstances(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST reclaim — 回收注册表内实例（down → 等端口 → 树杀 → 落账）。
+  // body 可选 {entry_ids}（缺省 = 全部非 stopped entry）。
+  router.post("/:id/instances/reclaim", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const body = await safeJson(c)
+    const entryIds = Array.isArray(body?.entry_ids)
+      ? (body.entry_ids as unknown[]).filter((x): x is string => typeof x === "string")
+      : undefined
+    if (body !== null && !entryIds && body.entry_ids !== undefined) {
+      return c.json({ error: "entry_ids 必须是字符串数组" }, 400)
+    }
+    try {
+      return c.json(await evidence.reclaimTaskInstances(c.req.param("id"), { entryIds }))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST close-dev — 按端口关掉 worktree 上手动 `pnpm dev` 起的整棵 dev 树
+  // （端口须与任务有登记关联；宿主端口/PID/祖先链三闸拦截）。
+  router.post("/:id/instances/close-dev", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const body = await safeJson(c)
+    const port = typeof body?.port === "number" ? body.port : NaN
+    if (!Number.isInteger(port)) return c.json({ error: "body 需数值字段 port" }, 400)
+    try {
+      return c.json(await evidence.closeDevPort(c.req.param("id"), port))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   router.put("/:id/home-file", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
@@ -869,6 +922,15 @@ export function createTasksRoutes(
   router.post("/:id/abort", async (c) => {
     try {
       const task = await service.abortTask(c.req.param("id"))
+      // 2026-09-24 补齐缺口：前端中止确认一直宣称「预览会被一并 SIGTERM」，但
+      // stopPreviewQuiet 此前只挂在验收决策路径上。abort 成功后静默收现场：
+      // 停预览（内部含注册表 reclaim）+ 掐掉在跑的复检。容错 —— 回收失败不
+      // 反转已提交的 abort。
+      if (evidence) {
+        const id = c.req.param("id")
+        try { evidence.stopPreviewQuiet(id) } catch (err: unknown) { console.warn("[tasks] abort stopPreviewQuiet failed:", err) }
+        try { evidence.abortVerify(id) } catch { /* 无在跑复检 = 正常 */ }
+      }
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

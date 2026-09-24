@@ -990,6 +990,62 @@ export async function stopPreview(taskId: string): Promise<PreviewSummary> {
   return body as PreviewSummary
 }
 
+// ── 测试实例管理（2026-09-24，自动回收 + 一键关闭）───────────────────────
+// 镜像 server test-instance-registry.ts。实例 = 预览/探针在任务 worktree 拉起的
+// 常驻进程（按端口反查登记）；external = 分支端口文件里活着但未登记的 dev 实例
+// （用户在 worktree 手动 pnpm dev）——closeDevInstance 是按端口的逃生门。
+export type InstanceSource = "preview-up" | "probe-launcher"
+export type InstanceStatus = "alive" | "stale" | "stopped"
+export interface TestInstanceEntry {
+  id: string
+  source: InstanceSource
+  exec_id?: string
+  branch?: string
+  workspace_path?: string
+  shell_pid?: number
+  pids: number[]
+  ports: number[]
+  urls: string[]
+  down?: { command: string; cwd: string }
+  started_at: string
+  status: InstanceStatus
+}
+export interface InstancesPayload {
+  entries: TestInstanceEntry[]
+  external: Array<{ port: number; role: string; branch: string | null }>
+}
+
+/** GET /:id/instances — 注册表(读时 reconcile) + 外部 dev 候选。 */
+export async function listTaskInstances(taskId: string): Promise<InstancesPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/instances`))
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as InstancesPayload
+}
+
+/** POST /:id/instances/reclaim — 回收（down→等端口→树杀→落账）。entryIds 缺省 = 全部。 */
+export async function reclaimTaskInstances(taskId: string, entryIds?: string[]): Promise<{ reclaimed: string[]; still_occupied: number[] }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/instances/reclaim`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(entryIds?.length ? { entry_ids: entryIds } : {}),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { reclaimed: string[]; still_occupied: number[] }
+}
+
+/** POST /:id/instances/close-dev — 按端口关掉整棵外部 dev 树。
+ *  400 非法/宿主端口;403 与任务无登记关联;409 进程树涉宿主。 */
+export async function closeDevInstance(taskId: string, port: number): Promise<{ killed: number[]; released: boolean }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/instances/close-dev`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ port }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { killed: number[]; released: boolean }
+}
+
 // ── checks 落盘(acceptance-checks-r{N}.md,复用 home-file .md 门)──────────
 export type CheckDecision = "pass" | "fail" | "skip"
 export interface CheckEntry {

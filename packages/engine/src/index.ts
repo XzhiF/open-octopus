@@ -6,6 +6,7 @@ export type {
   InteractionConfig, SubWorkflowConfig, DynamicSubWorkflowConfig, OnLogCallback, HookExecutor, AgentResolver,
 } from "./executors/executor-config"
 export { BashExecutor } from "./executors/bash"
+export { killProcessTree, startForceKillChain, buildHostEnv } from "./executors/process-isolation"
 export { PythonExecutor } from "./executors/python"
 export { ConditionExecutor } from "./executors/condition"
 export { ApprovalExecutor } from "./executors/approval"

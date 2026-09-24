@@ -80,6 +80,7 @@ import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
 import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
+import { InstancesPanel } from "./instances-panel"
 import { PlaybookPanel } from "./playbook-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
 import { runErrorOf } from "../execution-summary"
@@ -1012,6 +1013,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                       onSaveRunbook={handleRunbookSave}
                       onStart={() => void handlePreviewStart()}
                       onStop={() => void handlePreviewStop()}
+                    />
+                    <InstancesPanel
+                      taskId={taskId ?? ""}
+                      rev={(preview?.state ?? "stopped") + (awaitingPhase?.awaitingRound ?? 0)}
+                      disabledReason={wsGone ? "工作区目录已不在 — 回收不可用" : undefined}
                     />
                     {playbook && (
                       <PlaybookPanel

@@ -44,6 +44,7 @@ import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
+import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
 import { createAgentRoutes } from "./routes/agent"
@@ -694,6 +695,23 @@ if (shouldServe) {
         }
       } catch {
         // PID file not available (e.g. prod mode, direct start) — fall back to own PID only
+      }
+
+      // 测试实例 startup sweep（2026-09-24 实例注册协议）：清点重启前遗留的
+      // 存活测试实例（~/.octopus/instances/）。只标记不自动杀 —— up 本就是
+      // detached 设计，"用户故意留着继续验"与"残留待收尸"无法安全区分；
+      // 任务验收面板（GET /api/tasks/:id/instances）提供一键回收。
+      try {
+        const instanceRegistry = new TestInstanceRegistry()
+        let liveInstances = 0
+        for (const t of instanceRegistry.listTaskIds()) {
+          liveInstances += instanceRegistry.listEntries(t).filter((e) => e.status === "alive").length
+        }
+        if (liveInstances > 0) {
+          console.log(`[server] Startup sweep: ${liveInstances} 个存活测试实例（可能来自重启前）— 任务验收面板可回收`)
+        }
+      } catch (err: unknown) {
+        console.warn("[server] instance startup sweep failed:", err instanceof Error ? err.message : err)
       }
 
       // Consume deferred agent hooks now that providers are fully initialized

@@ -19,6 +19,7 @@ import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type PreviewSummary } from "../services/tasks/round-evidence-service"
+import { TestInstanceRegistry, type TestInstanceEntry } from "../services/tasks/test-instance-registry"
 import { TASK_PREVIEW_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-td-preview"
@@ -31,6 +32,7 @@ let taskHome: TaskHomeService
 let seq = 0
 let sseEvents: string[] = []
 let unSub: (() => void) | null = null
+let instances: TestInstanceRegistry
 
 function freePort(): Promise<number> {
   return new Promise((res) => {
@@ -98,7 +100,9 @@ beforeAll(() => {
   taskHome = new TaskHomeService(path.join(tmp, "home"))
   const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
-  const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome)
+  // 实例注册表指到 tmp —— 测试绝不写真实 ~/.octopus。
+  instances = new TestInstanceRegistry(path.join(tmp, "instances"), path.join(tmp, "ports"))
+  const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome, instances)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
 })
 afterAll(async () => {
@@ -109,6 +113,16 @@ afterAll(async () => {
     try { fs.rmSync(tmp, { recursive: true, force: true }); return } catch { await new Promise((r) => setTimeout(r, 100)) }
   }
 })
+
+async function pollInstances(taskId: string, want: (e: TestInstanceEntry[]) => boolean, ms = 8_000): Promise<TestInstanceEntry[]> {
+  const t0 = Date.now()
+  for (;;) {
+    const e = instances.listEntries(taskId)
+    if (want(e)) return e
+    if (Date.now() - t0 > ms) return e
+    await new Promise((res) => setTimeout(res, 150))
+  }
+}
 
 describe("preview — 生命周期", () => {
   it("PV1: 起 node http server → ready → stop → 端口释放", async () => {
@@ -124,6 +138,12 @@ describe("preview — 生命周期", () => {
     expect(ready?.state).toBe("ready")
     expect(sseEvents).toContain("starting")
     expect(sseEvents).toContain("ready")
+    // ── 实例登记（2026-09-24）：ready 翻绿即按端口反查 PID 入册 ──
+    const reg = await pollInstances(taskId, (e) => e.length === 1 && e[0].status === "alive")
+    expect(reg).toHaveLength(1)
+    expect(reg[0].source).toBe("preview-up")
+    expect(reg[0].ports).toEqual([port])
+    expect(reg[0].pids.length).toBeGreaterThan(0)
     // stop
     const stop = await app.request(`/api/tasks/${taskId}/preview/stop`, { method: "POST" })
     expect(stop.status).toBe(200)
@@ -133,7 +153,10 @@ describe("preview — 生命周期", () => {
     const after = (await (await app.request(`/api/tasks/${taskId}/preview`)).json()) as PreviewSummary
     expect(after.state).toBe("stopped")
     expect(after.external).toBeFalsy()
-  }, 20_000)
+    // ── 自动回收：stop 后异步 reclaim 收敛，entry 落账 stopped → 文件删除 ──
+    const cleared = await pollInstances(taskId, (e) => e.length === 0, 15_000)
+    expect(cleared).toEqual([])
+  }, 30_000)
 
   it("PV2: 秒退命令 → exited(带 exit_code),非 running", async () => {
     const taskId = await newAwaitingTask()
