@@ -29,7 +29,7 @@ export default function SystemLayout({ children }: { children: React.ReactNode }
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all",
                   isActive
-                    ? "border-2 border-pop-bd bg-pop-yellow font-black text-pop-ink shadow-[2px_2px_0_rgba(28,27,34,0.16)] dark:shadow-[2px_2px_0_rgba(0,0,0,0.45)]"
+                    ? "border-2 border-pop-bd bg-pop-yellow font-black text-pop-bg shadow-pop-sm"
                     : "font-bold border-2 border-transparent text-pop-dim hover:bg-accent hover:text-pop-ink"
                 )}
               >

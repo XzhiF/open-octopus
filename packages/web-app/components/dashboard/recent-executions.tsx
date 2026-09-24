@@ -60,11 +60,11 @@ function ExecutionRow({ execution }: { execution: Execution }) {
       <div
         className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${
           execution.status === "completed"
-            ? "bg-pop-green/10 text-pop-green"
+            ? "bg-pop-green-soft text-pop-green"
             : execution.status === "completed_with_failures"
-              ? "bg-pop-amber/10 text-pop-amber"
+              ? "bg-pop-amber-soft text-pop-amber"
               : execution.status === "failed" || execution.status === "rejected" || execution.status === "budget_exceeded"
-                ? "bg-destructive/10 text-destructive"
+                ? "bg-pop-pink-soft text-pop-red"
                 : "bg-muted text-muted-foreground"
         }`}
       >

@@ -102,9 +102,9 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
   const pill = live
     ? { t: `● 跑着 · ${elapsedS}s`, cls: "bg-pop-amber-soft text-pop-amber", st: "running" }
     : done?.state === "passed"
-      ? { t: `✓ ${verifyPillLabel("passed")}${dur}`, cls: "bg-pop-green-soft text-[#0c7a4d]", st: "passed" }
+      ? { t: `✓ ${verifyPillLabel("passed")}${dur}`, cls: "bg-pop-green-soft text-pop-green", st: "passed" }
       : done
-        ? { t: `✗ ${verifyPillLabel(done.state)}${dur}`, cls: "bg-[#ffe3e9] text-pop-red", st: done.state }
+        ? { t: `✗ ${verifyPillLabel(done.state)}${dur}`, cls: "bg-pop-pink-soft text-pop-red", st: done.state }
         : cfg
           ? { t: "未跑", cls: "bg-pop-idle text-pop-dim", st: "idle" }
           : { t: "未配置", cls: "bg-pop-idle text-pop-dim", st: "none" }
@@ -115,7 +115,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
   const consoleCap = live || !failish ? 120 : 3000
   return (
     <div
-      className={`rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden ${running ? "marching-ants-border" : ""}`}
+      className={`rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden ${running ? "marching-ants-border" : ""}`}
       data-verify-panel data-testid="verify-panel" data-fold-box="item-verify" data-fold-closed={closed ? "true" : undefined}
     >
       {/* L1 身份 + 结论 + 动作 */}
@@ -124,7 +124,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         {/* 身份图标 —— 与「跑起来看」的 Rocket 同规格成对（当场复检=现跑核验） */}
         <ShieldCheck className="size-3.5 shrink-0 text-pop-dim" />
         <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
-        <span className={`shrink-0 rounded-full border-2 border-pop-bd px-2.5 py-px font-mono text-[10px] font-black tabular-nums ${pill.cls}`} data-testid="verify-pill" data-state={pill.st}>
+        <span className={`shrink-0 rounded-full border-[1.5px] border-pop-bd px-2.5 py-px font-mono text-[10px] font-black tabular-nums ${pill.cls}`} data-testid="verify-pill" data-state={pill.st}>
           {pill.t}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -132,22 +132,22 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             <button
               onClick={onRun} disabled={busy || !!disabledReason}
               title="重跑（与初跑同参数）"
-              className="grid size-[24px] place-items-center rounded-[8px] border-2 border-pop-bd bg-pop-paper text-pop-ink shadow-pop-sm transition-transform hover:-translate-y-px disabled:opacity-40"
+              className="grid size-[24px] place-items-center rounded-[8px] border-[1.5px] border-pop-bd bg-pop-paper text-pop-ink shadow-pop-sm transition-transform hover:-translate-y-px disabled:opacity-40"
               data-testid="verify-rerun"
             >
               <RotateCcw className="size-3" />
             </button>
           )}
           {live ? (
-            <Button size="sm" variant="destructive" className="h-6 border-[2.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={onAbort} disabled={busy} data-testid="verify-abort">
+            <Button size="sm" variant="destructive" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={onAbort} disabled={busy} data-testid="verify-abort">
               <Square className="size-3 mr-1" /> 中止
             </Button>
           ) : cfg && !editing && !closed ? (
-            <Button size="sm" className="h-6 border-[2.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-white shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
+            <Button size="sm" className="h-6 border-[1.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-pop-bg shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
               <Play className="size-3 mr-1" /> ▶ 复检
             </Button>
           ) : !cfg && !editing && !closed ? (
-            <Button size="sm" variant="outline" className="h-6 border-[2.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
+            <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
               配置命令
             </Button>
           ) : null}
@@ -156,15 +156,15 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
 
       {/* L2 参数行（命令是参数，动作不在此） */}
       {!closed && !editing && cfg && (
-        <div className="flex items-center gap-2 border-t-[1.5px] border-dashed border-pop-bd/15 bg-[#fbf8ee] px-3 py-1.5 font-mono" data-testid="verify-params">
+        <div className="flex items-center gap-2 border-t-[1.5px] border-dashed border-pop-bd bg-pop-idle px-3 py-1.5 font-mono" data-testid="verify-params">
           <span aria-hidden className="shrink-0 text-pop-dim">$</span>
           <code className="min-w-0 flex-1 truncate text-[11px]" title={cfg.command}>{cfg.command}</code>
           {cfg.per_repo && (
-            <span className="shrink-0 rounded-[6px] border-[1.5px] border-dashed border-pop-bd/35 bg-pop-paper px-1.5 py-px text-[9px] font-black text-pop-dim" data-testid="verify-per-repo" title="对 projects/*/ 每个 git 仓各跑一次（仓根为 cwd），任一仓失败即整体 FAILED">逐仓</span>
+            <span className="shrink-0 rounded-[6px] border-[1.5px] border-dashed border-pop-bd bg-pop-paper px-1.5 py-px text-[9px] font-black text-pop-dim" data-testid="verify-per-repo" title="对 projects/*/ 每个 git 仓各跑一次（仓根为 cwd），任一仓失败即整体 FAILED">逐仓</span>
           )}
           <span className="shrink-0 text-[10px] tabular-nums text-pop-dim">≤{cfg.timeoutS ?? 600}s</span>
           {!running && (
-            <button className="shrink-0 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
+            <button className="shrink-0 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
               编辑
             </button>
           )}
@@ -172,16 +172,16 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
       )}
 
       {disabledReason && !editing && !closed && (
-        <div className="border-y border-pop-bd/10 bg-pop-amber-soft px-3 py-1.5 text-[10px] text-pop-ink/80" data-testid="verify-disabled-reason">
+        <div className="border-y border-pop-bd bg-pop-amber-soft px-3 py-1.5 text-[10px] text-pop-ink" data-testid="verify-disabled-reason">
           {disabledReason}
         </div>
       )}
 
       {/* 命令编辑抽屉（spec-field 持久化）；取消 = 丢弃草稿原样收回（保存/清除不是仅有的门） */}
       {editing && !closed && (
-        <div className="border-t-2 border-pop-bd/10 bg-pop-bd/5 px-3 py-2 space-y-2" data-testid="verify-editor">
+        <div className="border-t-[1.5px] border-pop-bd bg-pop-idle px-3 py-2 space-y-2" data-testid="verify-editor">
           <textarea
-            className="h-16 w-full resize-y rounded-md border-2 border-pop-bd bg-pop-paper p-2 font-mono text-[11px]"
+            className="h-16 w-full resize-y rounded-md border-[1.5px] border-pop-bd bg-pop-paper p-2 font-mono text-[11px]"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="如：pnpm --filter @octopus/server exec vitest run —— 注意命令里别写字面 $vars.（引擎替换语法）"
@@ -194,7 +194,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             </label>
             <input
               type="text"
-              className={`w-36 rounded-md border-2 border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[10.5px] ${perRepo ? "opacity-40" : ""}`}
+              className={`w-36 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[10.5px] ${perRepo ? "opacity-40" : ""}`}
               placeholder="cwd(可选)"
               value={cwdDraft}
               disabled={perRepo}
@@ -204,7 +204,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             <label className="font-mono text-[10px] text-pop-dim">超时秒</label>
             <input
               type="number" min={5} max={1800}
-              className="w-20 rounded-md border-2 border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
+              className="w-20 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
               value={timeoutDraft}
               onChange={(e) => setTimeoutDraft(e.target.value)}
               data-testid="verify-timeout-input"
@@ -226,28 +226,28 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
 
       {/* L3 结果区：失败/中止的裁决行（原因头 + verdict 入口 + 输出折叠开关） */}
       {done && failish && !closed && (
-        <div className="border-t border-pop-bd/10 bg-[#fff5f5] px-3 py-1.5 font-mono text-[10.5px] text-pop-ink/80" data-testid="verify-result">
+        <div className="border-t border-pop-bd bg-pop-pink-soft px-3 py-1.5 font-mono text-[10.5px] text-pop-ink" data-testid="verify-result">
           <b className="text-pop-red">✗ {verifyPillLabel(done.state)}</b>
           {done.exit_code != null ? ` · exit ${done.exit_code}` : ""}
           {" — "}
           <span className="text-pop-dim">{outOpen ? "输出在下" : "输出已折叠"}</span>
           {done.verdict_path && onOpenVerdict && (
-            <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
+            <button className="ml-2 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
               verdict 文件
             </button>
           )}
-          <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
+          <button className="ml-2 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
             {outOpen ? "收起输出 ▴" : "看输出 ▾"}
           </button>
         </div>
       )}
       {/* 通过：结论行 + verdict 入口 + 折叠开关（输出窗保留，不再整区消失） */}
       {done && !failish && !closed && (
-        <div className="border-t border-pop-bd/10 bg-[#fbf8ee] px-3 py-1.5 font-mono text-[10.5px] text-pop-dim" data-testid="verify-result">
+        <div className="border-t border-pop-bd bg-pop-idle px-3 py-1.5 font-mono text-[10.5px] text-pop-dim" data-testid="verify-result">
           <b className="text-pop-green">✓ 全绿</b> · {new Date(done.ended_at ?? done.started_at).toLocaleString("zh-CN", { hour12: false })}
           {done.verdict_path ? (
             onOpenVerdict ? (
-              <button className="ml-1 text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
+              <button className="ml-1 text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => onOpenVerdict(done.verdict_path!)} title="点开机器裁决文件全文" data-testid="verify-verdict-open">
                 {`· 机器裁决：${done.verdict_path}`}
               </button>
             ) : (
@@ -257,7 +257,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             <span className="ml-1">· verdict 落批次目录</span>
           )}
           {lines.length > 0 && (
-            <button className="ml-2 text-[9.5px] font-black text-pop-navy underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
+            <button className="ml-2 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => setOutOpen((v) => !v)} data-testid="verify-out-toggle">
               {outOpen ? "收起输出 ▴" : "看输出 ▾"}
             </button>
           )}
@@ -266,10 +266,10 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
 
       {/* 输出控制台（跑着常开；跑完跟折叠开关走，过/挂都保留）：pop 终端 chrome */}
       {consoleOn && (
-        <div className="border-y-2 border-pop-bd bg-pop-ink px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-paper" ref={consoleRef} data-testid="verify-console">
+        <div className="border-y-[1.5px] border-pop-bd bg-pop-bg px-3 py-2 font-mono text-[10.5px] leading-relaxed text-pop-ink" ref={consoleRef} data-testid="verify-console">
           {lines.length > 120 && (
             <button
-              className="block text-left text-pop-dim underline decoration-dotted underline-offset-2 hover:text-pop-paper"
+              className="block text-left text-pop-dim underline decoration-dotted underline-offset-2 hover:text-pop-ink"
               onClick={() => setShowAll((v) => !v)}
               data-testid="verify-fold-hint"
             >

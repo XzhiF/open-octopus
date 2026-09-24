@@ -419,7 +419,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             <AlertDialogAction
               disabled={deleteBusy}
               onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
-              className="bg-pop-red hover:bg-pop-red/90"
+              className="bg-pop-red text-pop-ink hover:bg-pop-red/90"
             >
               {deleteBusy ? "删除中…" : "确认废弃"}
             </AlertDialogAction>
@@ -451,7 +451,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
     <DialogHeader
       onPointerDown={onHeaderPointerDown}
       title="按住空白处拖拽移动窗口"
-      className="px-5 py-3 border-b-2 border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
+      className="px-5 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
     >
       <div className="min-w-0">
         <EditableTitle task={task} onMutated={onMutated} />
@@ -479,7 +479,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
         >
           {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </Button>
-        <Badge variant="secondary" className={`rounded-full border-2 border-pop-bd text-[10px] font-black shadow-pop-sm ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
+        <Badge variant="secondary" className={`rounded-full border-[1.5px] border-pop-bd text-[10px] font-black shadow-pop-sm ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
           {STATUS_LABEL[status] ?? status}
         </Badge>
       </div>

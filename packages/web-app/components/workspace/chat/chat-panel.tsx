@@ -254,7 +254,7 @@ export function ChatPanel({
               onClick={handleSend}
               disabled={!input.trim()}
               aria-label="发送消息"
-              className="p-2 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90 transition-colors shrink-0 disabled:opacity-50"
+              className="p-2 rounded-xl border-2 border-pop-bd bg-pop-green text-pop-bg shadow-pop-sm pop-press hover:bg-pop-green/90 transition-colors shrink-0 disabled:opacity-50"
             >
               <Send className="w-4 h-4" aria-hidden="true" />
             </button>

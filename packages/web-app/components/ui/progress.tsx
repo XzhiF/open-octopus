@@ -15,7 +15,7 @@ function Progress({
       data-slot="progress"
       className={cn(
         // 🎪 墨边轨道 + idle 底
-        'bg-pop-idle relative h-2.5 w-full overflow-hidden rounded-full border-2 border-pop-bd',
+        'bg-pop-idle relative h-2.5 w-full overflow-hidden rounded-full border-[1.5px] border-pop-bd',
         className,
       )}
       {...props}

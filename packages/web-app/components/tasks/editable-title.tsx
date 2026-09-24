@@ -52,7 +52,7 @@ export function EditableTitle({ task, onMutated, variant = "default" }: Editable
     // a11y 标题由 TaskModal 的 sr-only DialogTitle 兜底。
     if (variant === "term") {
       return (
-        <span className="min-w-0 max-w-[36ch] truncate font-mono text-[11px] font-bold text-pop-bg">
+        <span className="min-w-0 max-w-[36ch] truncate font-mono text-[11px] font-bold text-pop-ink">
           {task?.name ?? "任务"}
         </span>
       )
@@ -113,7 +113,7 @@ export function EditableTitle({ task, onMutated, variant = "default" }: Editable
           data-title-edit-input
           className={
             variant === "term"
-              ? "w-64 max-w-[50vw] rounded bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-pop-bg outline-none focus:ring-1 focus:ring-pop-yellow"
+              ? "w-64 max-w-[50vw] rounded border border-pop-bd bg-pop-bg px-1.5 py-0.5 font-mono text-[11px] text-pop-ink outline-none focus:ring-1 focus:ring-pop-yellow"
               : "w-72 max-w-[60vw] bg-muted/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary"
           }
         />

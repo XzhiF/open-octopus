@@ -39,7 +39,7 @@ export function ConditionNode({ data, selected }: NodeProps<WorkflowNode>) {
             left: `${(index + 1) * (100 / (data.cases!.length + 1))}%`,
             background: index === 0 ? "var(--pop-green)" : "var(--pop-red)",
           }}
-          className={cn("!w-3 !h-3 !border-2 !border-white")}
+          className={cn("!w-3 !h-3 !border-2 !border-pop-bg")}
         />
       ))}
     </>

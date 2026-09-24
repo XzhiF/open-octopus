@@ -317,7 +317,7 @@ export function ArchiveDialog({
               size="sm"
               onClick={handleSave}
               disabled={saving || loading || selectedCount === 0}
-              className="gap-1.5 bg-knowledge-primary hover:bg-knowledge-primary/90 text-white"
+              className="gap-1.5 bg-knowledge-primary hover:bg-knowledge-primary/90 text-pop-bg"
             >
               {saving ? (
                 <Spinner className="size-3.5" />

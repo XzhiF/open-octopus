@@ -10,7 +10,7 @@ import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import { XCircle, DollarSign } from "lucide-react"
 import { formatCost, formatTokenCount } from "@/lib/format"
 
-const MODEL_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981"]
+const MODEL_COLORS = ["#d97757", "#7fa3a8", "#8ba88e", "#c9a35c", "#43596b"]
 
 export function CostTab({ workspaceId }: { workspaceId: string }) {
 

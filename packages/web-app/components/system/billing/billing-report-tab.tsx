@@ -272,7 +272,7 @@ export function BillingReportTab({ onDrill }: {
                 className={cn(
                   "rounded-lg border-2 px-3 py-1 text-sm transition-all",
                   preset === p
-                    ? "border-pop-bd bg-pop-yellow font-black text-pop-ink"
+                    ? "border-pop-bd bg-pop-yellow font-black text-pop-bg"
                     : "border-transparent font-bold text-pop-dim hover:bg-accent",
                 )}
               >

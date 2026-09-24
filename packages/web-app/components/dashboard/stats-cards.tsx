@@ -20,14 +20,14 @@ export function StatsCards({ stats }: StatsCardsProps) {
       total: stats.totalWorkspaces,
       icon: FolderKanban,
       color: "text-pop-cyan",
-      bgColor: "bg-pop-cyan/10",
+      bgColor: "bg-pop-cyan-soft",
     },
     {
       title: "运行中任务",
       value: stats.runningExecutions,
       icon: Play,
       color: "text-pop-amber",
-      bgColor: "bg-pop-amber/10",
+      bgColor: "bg-pop-amber-soft",
       pulse: stats.runningExecutions > 0,
     },
     {
@@ -42,14 +42,14 @@ export function StatsCards({ stats }: StatsCardsProps) {
       value: stats.completedToday,
       icon: CheckCircle2,
       color: "text-pop-green",
-      bgColor: "bg-pop-green/10",
+      bgColor: "bg-pop-green-soft",
     },
     {
       title: "总失败",
       value: stats.failedToday,
       icon: XCircle,
       color: "text-destructive",
-      bgColor: "bg-destructive/10",
+      bgColor: "bg-pop-pink-soft",
     },
   ]
 

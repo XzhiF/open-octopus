@@ -53,13 +53,13 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = 
   if (!diff.available) {
     return (
       <div
-        className="m-3 rounded-[13px] border-2 border-pop-bd bg-pop-amber-soft p-5 text-xs space-y-1.5"
+        className="m-3 rounded-[13px] border-[1.5px] border-pop-bd bg-pop-amber-soft p-5 text-xs space-y-1.5"
         data-testid="round-diff-expired"
       >
         <div className="flex items-center gap-2 font-black">
           <AlertTriangle className="size-4 text-pop-amber" /> 实物不可得
         </div>
-        <p className="text-pop-ink/80">
+        <p className="text-pop-ink">
           {diff.reason === "no_workspace"
             ? "任务工作区已不在 — diff 依赖的 git 目录丢失。"
             : "本轮的提交对象不可达（仓库/对象库被动过）— 无法出示实物 diff。"}
@@ -79,12 +79,12 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = 
   }
 
   return (
-    <div className="overflow-hidden rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="round-diff-card" data-fold-box="item-diff" data-fold-closed={closed ? "true" : undefined}>
-      <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+    <div className="overflow-hidden rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="round-diff-card" data-fold-box="item-diff" data-fold-closed={closed ? "true" : undefined}>
+      <div className="flex items-center gap-2 border-b-[1.5px] border-pop-bd px-3 py-2">
         {fold && <FoldHandle id="item-diff" closed={closed} onToggle={() => fold.toggle("item-diff", "info")} />}
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">项目代码的变动</span>
         {canCumulative && !closed && (
-          <span className="flex overflow-hidden rounded-full border-2 border-pop-bd/40 font-mono text-[9px] font-black" data-testid="round-diff-scope">
+          <span className="flex overflow-hidden rounded-full border-[1.5px] border-pop-bd font-mono text-[9px] font-black" data-testid="round-diff-scope">
             {(["round", "cumulative"] as const).map((s) => (
               <button
                 key={s}
@@ -92,7 +92,7 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = 
                 aria-selected={scope === s}
                 title={s === "round" ? `本轮增量（R${roundIndex ?? "?"}）` : "本 phase 累计实物（首轮起）—— 放行的是终态，不只看这一轮"}
                 className={`px-2 py-px transition-colors ${
-                  scope === s ? "border-pop-navy bg-pop-navy text-white" : "border-pop-bd/40 bg-pop-paper text-pop-dim hover:text-pop-ink"
+                  scope === s ? "border-pop-navy bg-pop-navy text-pop-ink" : "border-pop-bd bg-pop-paper text-pop-dim hover:text-pop-ink"
                 }`}
                 data-testid={`round-diff-scope-${s}`}
               >
@@ -102,7 +102,7 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = 
           </span>
         )}
         {closed ? (
-          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-diff">
+          <span className="truncate font-mono text-[10px] font-black text-pop-cyan" data-fold-badge="item-diff">
             {diff.aggregate.commits} 提交 · +{diff.aggregate.additions} −{diff.aggregate.dels} · {diff.aggregate.files} 文件
           </span>
         ) : (
@@ -141,7 +141,7 @@ function StatStrip({ diff }: { diff: RoundDiffPayload }) {
   return (
     <div className="grid grid-cols-5 gap-1.5" data-testid="round-diff-strip">
       {tiles.map((t) => (
-        <div key={t.label} className="rounded-[10px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm px-2 py-1.5 text-center">
+        <div key={t.label} className="rounded-[10px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm px-2 py-1.5 text-center">
           <div className={`font-mono text-[15px] font-black tabular-nums leading-none ${t.tone}`} data-acceptance-stat={t.label}>
             {t.value}
           </div>
@@ -170,14 +170,14 @@ function RepoSection({ taskId, repo }: { taskId: string; repo: RepoDiff }) {
   const isGroupOpen = (g: { dir: string }) => overrides[g.dir] ?? repo.files <= 25
   if (repo.expired) {
     return (
-      <div className="rounded-[13px] border-2 border-dashed border-pop-bd/40 p-3 text-[11px] text-muted-foreground font-mono">
+      <div className="rounded-[13px] border-[1.5px] border-dashed border-pop-bd p-3 text-[11px] text-muted-foreground font-mono">
         {repo.name} · ⏳ {repo.reason}
       </div>
     )
   }
   return (
-    <div className="rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-testid={`round-diff-repo-${repo.name}`}>
-      <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+    <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-testid={`round-diff-repo-${repo.name}`}>
+      <div className="flex items-center gap-2 border-b-[1.5px] border-pop-bd px-3 py-2">
         <GitCommitHorizontal className="size-3.5 text-pop-dim" />
         <span className="font-mono text-[11px] font-black">{repo.name}</span>
         <span className="ml-auto font-mono text-[9.5px] tabular-nums text-pop-dim">
@@ -190,7 +190,7 @@ function RepoSection({ taskId, repo }: { taskId: string; repo: RepoDiff }) {
         return (
           <div key={g.dir} data-testid={`round-diff-group-${repo.name}-${g.dir}`}>
             <button
-              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-pop-bd/5"
+              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-pop-idle"
               onClick={() => setOverrides((prev) => ({ ...prev, [g.dir]: !open }))}
             >
               {open ? <ChevronDown className="size-3 text-pop-dim" /> : <ChevronRight className="size-3 text-pop-dim" />}
@@ -235,9 +235,9 @@ function DiffFileRow({ taskId, repo, file }: { taskId: string; repo: string; fil
   const statusTone = file.status === "A" ? "text-pop-green" : file.status === "D" ? "text-pop-red" : file.status === "R" ? "text-pop-cyan" : "text-pop-amber"
 
   return (
-    <div className="border-t border-pop-bd/5">
+    <div className="border-t border-pop-bd">
       <button
-        className="flex w-full items-center gap-2 px-3 py-1 pl-7 text-left hover:bg-pop-bd/5"
+        className="flex w-full items-center gap-2 px-3 py-1 pl-7 text-left hover:bg-pop-idle"
         onClick={toggle}
         data-acceptance-diff-row={`${repo}:${file.path}`}
       >
@@ -261,7 +261,7 @@ function DiffFileRow({ taskId, repo, file }: { taskId: string; repo: string; fil
       {open && (
         <div className="px-3 pb-2">
           {file.binary ? (
-            <div className="rounded-md border-2 border-pop-bd/20 bg-muted/30 p-2 font-mono text-[10px] text-muted-foreground">
+            <div className="rounded-md border-[1.5px] border-pop-bd bg-muted/30 p-2 font-mono text-[10px] text-muted-foreground">
               二进制文件 — 不出 patch（存在性即证据）。
             </div>
           ) : loading ? (
@@ -281,7 +281,7 @@ function DiffFileRow({ taskId, repo, file }: { taskId: string; repo: string; fil
 function PatchBlock({ patch }: { patch: { text: string; truncated: boolean } }) {
   const lines = useMemo(() => patch.text.split("\n"), [patch.text])
   return (
-    <div className="rounded-md border-2 border-pop-bd bg-pop-paper" data-testid="round-diff-patch">
+    <div className="rounded-md border-[1.5px] border-pop-bd bg-pop-paper" data-testid="round-diff-patch">
       <pre className="p-2 font-mono text-[10.5px] leading-[1.5]">
         {lines.map((l, i) => {
           let cls = "text-pop-ink/70"

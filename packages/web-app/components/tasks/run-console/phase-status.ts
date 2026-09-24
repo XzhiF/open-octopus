@@ -23,36 +23,41 @@ export const TASK_STATUS_LABEL: Record<string, string> = {
   done: "已完成", failed: "失败", aborted: "已中止",
 }
 
-/** 导航条深色底上的状态 pill 配色（pop-* tokens，与看板角标同语义）。 */
+/** 状态词 → 任务状态 pill（导航条）。暖黑 TUI 版：一状态一 accent，pill 一律
+ *  「soft 深底 + accent 字 + accent 细边」（原型 .pill.p-*）。
+ *  执行中固定琥珀、待验收固定黄 —— 与看板列 accent 同一个色语，不再用紫色
+ *  （换底后 --pop-purple 与 --pop-pink 同值，紫已不承担「运行」语义）。 */
 export const TASK_PILL: Record<string, string> = {
-  ready: "border-pop-cyan text-pop-cyan bg-pop-cyan/10",
-  running: "border-pop-purple text-[#a48bff] bg-pop-purple/20 animate-pulse",
+  ready: "border-pop-cyan/45 bg-pop-cyan-soft text-pop-cyan",
+  running: "border-pop-amber/45 bg-pop-amber-soft text-pop-amber animate-pulse",
   // 暂停不 pulse：它没有在动，闪烁会谎报「还在跑」。
-  paused: "border-pop-purple text-[#a48bff] bg-pop-purple/20",
-  awaiting_review: "border-pop-amber text-pop-amber bg-pop-amber/10",
-  archiving: "border-pop-amber text-pop-amber bg-pop-amber/10",
-  done: "border-[#33d69f] text-[#33d69f] bg-pop-green/10",
-  failed: "border-pop-red text-[#ff8a8f] bg-pop-red/10",
-  aborted: "border-pop-bg/30 text-pop-bg/60 bg-pop-bg/10",
+  paused: "border-pop-bd bg-pop-idle text-pop-dim",
+  awaiting_review: "border-pop-yellow/45 bg-pop-yellow-soft text-pop-yellow",
+  archiving: "border-pop-amber/45 bg-pop-amber-soft text-pop-amber",
+  done: "border-pop-green/45 bg-pop-green-soft text-pop-green",
+  failed: "border-pop-red/45 bg-pop-pink-soft text-pop-red",
+  aborted: "border-pop-bd bg-pop-idle text-pop-dim",
 }
 
-/** rail 节点 P# 瓷砖色。ready 语境下第一个 pending = 「下一发」给 cyan 点亮。 */
+/** rail 节点 P# 瓷砖色。accent 整面填充上的字统一走 --pop-bg（暖黑盘上
+ *  amber/yellow/cyan/green 都是亮色，深字压亮底）。ready 语境下第一个
+ *  pending = 「下一发」给 cyan 点亮。 */
 export function phaseTileTone(status: string, isNext: boolean): string {
   switch (status) {
-    case "accepted": return "bg-pop-green text-white"
-    case "awaiting_review": return "bg-pop-amber text-pop-ink"
-    case "running": return "bg-pop-purple text-white"
-    case "paused": return "bg-pop-purple-soft text-pop-purple"
-    default: return isNext ? "bg-pop-cyan text-pop-ink" : "bg-pop-idle text-pop-dim"
+    case "accepted": return "bg-pop-green text-pop-bg"
+    case "awaiting_review": return "bg-pop-yellow text-pop-bg"
+    case "running": return "bg-pop-amber text-pop-bg"
+    case "paused": return "bg-pop-amber-soft text-pop-dim"
+    default: return isNext ? "bg-pop-cyan text-pop-bg" : "bg-pop-idle text-pop-dim"
   }
 }
 
 /** rail 节点状态小 pill。 */
 export const PHASE_PILL: Record<string, string> = {
   pending: "bg-pop-idle text-pop-dim",
-  running: "bg-pop-purple-soft text-pop-purple",
-  paused: "bg-pop-purple-soft text-pop-purple",
-  awaiting_review: "bg-pop-amber-soft text-pop-ink",
+  running: "bg-pop-amber-soft text-pop-amber",
+  paused: "bg-pop-idle text-pop-dim",
+  awaiting_review: "bg-pop-yellow-soft text-pop-yellow",
   accepted: "bg-pop-green-soft text-pop-green",
 }
 
@@ -64,9 +69,9 @@ export function roundTone(r: TaskRoundView): string {
     case "succeeded": return "bg-pop-green-soft text-pop-green"
     case "failed": return "bg-pop-pink-soft text-pop-red"
     case "cancelled": return "bg-pop-idle text-pop-dim"
-    case "running": return "bg-pop-purple-soft text-pop-purple animate-pulse"
-    // 暂停：同紫但去 pulse —— 它确实没在跑。
-    case "paused": return "bg-pop-purple-soft text-pop-purple"
+    case "running": return "bg-pop-amber-soft text-pop-amber animate-pulse"
+    // 暂停：dim 且去 pulse —— 它确实没在跑。
+    case "paused": return "bg-pop-idle text-pop-dim"
     default: return "bg-pop-idle text-pop-dim"
   }
 }

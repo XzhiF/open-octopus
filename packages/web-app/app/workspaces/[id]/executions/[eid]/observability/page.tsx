@@ -145,16 +145,25 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
   other: "bg-pop-idle text-pop-dim border-pop-bd/30",
 }
 
+// 暖黑终端色板：与 --pop-* 暗黑 token 同值（SVG fill/stroke 属性不吃 var()，只能落 hex）
 const PIE_COLORS = [
-  "#3b82f6",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#06b6d4",
-  "#ec4899",
-  "#84cc16",
+  "#7fa3a8", // cyan
+  "#c9a35c", // amber
+  "#8ba88e", // green
+  "#b4534a", // red
+  "#d97757", // pink/purple
+  "#d8d3cb", // ink
+  "#6e6862", // dim
+  "#3a3733", // bd
 ]
+
+const CHART_TOOLTIP_STYLE = {
+  background: "var(--pop-paper)",
+  border: "1.5px solid var(--pop-bd)",
+  borderRadius: 10,
+  color: "var(--pop-ink)",
+  fontSize: 12,
+} as const
 
 // ============ Page Component ============
 
@@ -491,14 +500,14 @@ function TokenTrendChart({
           <XAxis dataKey="time" tick={{ fontSize: 10 }} />
           <YAxis yAxisId="tokens" tick={{ fontSize: 10 }} />
           <YAxis yAxisId="cost" orientation="right" tick={{ fontSize: 10 }} />
-          <Tooltip />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend />
           <Line
             yAxisId="tokens"
             type="monotone"
             dataKey="inputTokens"
             name="输入 Token"
-            stroke="#3b82f6"
+            stroke="#7fa3a8"
             dot={false}
             strokeWidth={2}
           />
@@ -507,7 +516,7 @@ function TokenTrendChart({
             type="monotone"
             dataKey="outputTokens"
             name="输出 Token"
-            stroke="#10b981"
+            stroke="#8ba88e"
             dot={false}
             strokeWidth={2}
           />
@@ -516,7 +525,7 @@ function TokenTrendChart({
             type="monotone"
             dataKey="cost"
             name="成本 ($)"
-            stroke="#f59e0b"
+            stroke="#c9a35c"
             dot={false}
             strokeWidth={2}
           />
@@ -558,18 +567,18 @@ function NodeConsumptionChart({
             tick={{ fontSize: 10 }}
             width={120}
           />
-          <Tooltip />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend />
           <Bar
             dataKey="inputTokens"
             name="输入 Token"
-            fill="#3b82f6"
+            fill="#7fa3a8"
             radius={[0, 4, 4, 0]}
           />
           <Bar
             dataKey="outputTokens"
             name="输出 Token"
-            fill="#10b981"
+            fill="#8ba88e"
             radius={[0, 4, 4, 0]}
           />
         </BarChart>
@@ -622,7 +631,7 @@ function ModelUsageChart({
                 />
               ))}
             </Pie>
-            <Tooltip />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           </PieChart>
         </ResponsiveContainer>
       </div>

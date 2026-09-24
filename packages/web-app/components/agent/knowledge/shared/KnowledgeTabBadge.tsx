@@ -15,7 +15,7 @@ export function KnowledgeTabBadge({ count }: KnowledgeTabBadgeProps) {
     <span
       key={count}
       className={cn(
-        'bg-agent-error text-white text-[10px] rounded-full',
+        'bg-agent-error text-destructive-foreground text-[10px] rounded-full',
         'min-w-[18px] h-[18px] flex items-center justify-center',
         'animate-[knowledge-badge-pulse_300ms_ease-in-out]',
       )}

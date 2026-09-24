@@ -75,7 +75,7 @@ function SheetContent({
       >
         {children}
         {/* 关闭方糖：与 dialog.tsx / terminal 导航条完全同款（19px 红实心）。 */}
-        <SheetPrimitive.Close className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3">
+        <SheetPrimitive.Close className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-destructive-foreground shadow-pop-sm transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3">
           <XIcon />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>

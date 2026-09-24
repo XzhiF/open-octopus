@@ -63,7 +63,7 @@ export function BatchActionBar({
           size="sm"
           onClick={onBatchApprove}
           disabled={loading}
-          className="gap-1.5 bg-knowledge-primary hover:bg-knowledge-primary/90 text-white"
+          className="gap-1.5 bg-knowledge-primary hover:bg-knowledge-primary/90 text-pop-bg"
         >
           {loading ? <Spinner className="size-3.5" /> : <Check className="size-3.5" />}
           {loading ? '处理中...' : `纳入选中 (${selectedCount} 条)`}

@@ -26,8 +26,8 @@ function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        // 🎪 贴纸页签:墨边托盘 + 黄底激活
-        'bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg border-2 border-pop-bd p-[3px] shadow-pop-sm',
+        // 🖥 终端页签:细边托盘 + 暗金激活(深字保证对比)
+        'bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg border-[1.5px] border-pop-bd p-[3px] shadow-pop-sm',
         className,
       )}
       {...props}
@@ -43,7 +43,7 @@ function TabsTrigger({
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "data-[state=active]:bg-pop-yellow data-[state=active]:text-pop-ink focus-visible:outline-pop-pink text-foreground inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-bold whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border-2 data-[state=active]:border-pop-bd data-[state=active]:shadow-[2px_2px_0_rgba(28,27,34,0.16)] dark:data-[state=active]:shadow-[2px_2px_0_rgba(0,0,0,0.45)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "data-[state=active]:bg-pop-yellow data-[state=active]:text-[#151413] focus-visible:outline-pop-pink text-foreground inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-bold whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border-[1.5px] data-[state=active]:border-pop-bd data-[state=active]:shadow-pop-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

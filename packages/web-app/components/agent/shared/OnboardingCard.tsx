@@ -76,7 +76,7 @@ export function OnboardingCard({ onComplete }: OnboardingCardProps) {
           </div>
           <button
             onClick={handleSkip}
-            className="p-1 rounded hover:bg-pop-ink/5 transition-colors"
+            className="p-1 rounded hover:bg-pop-idle transition-colors"
             aria-label="跳过引导"
           >
             <X className="h-4 w-4 text-muted-foreground" />

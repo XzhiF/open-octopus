@@ -679,7 +679,7 @@ export function ChatArea({
           </div>
         </div>
       ) : (
-      <div className="border-t-[2.5px] border-pop-bd bg-pop-paper p-3">
+      <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
           {/* @@mention autocomplete */}
           <MentionAutocomplete
@@ -793,7 +793,7 @@ export function ChatArea({
                     onClick={handleSend}
                     disabled={!input.trim()}
                     size="icon"
-                    className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-green text-white shadow-pop-sm pop-press hover:bg-pop-green/90"
+                    className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-pink text-pop-bg shadow-pop-sm pop-press hover:brightness-110"
                   >
                     <Send className="h-3.5 w-3.5" />
                   </Button>

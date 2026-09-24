@@ -67,7 +67,7 @@ export function KnowledgeTab() {
                 <Icon className="h-4 w-4" />
                 <span className="flex-1 text-left">{tab.label}</span>
                 {tab.id === 'review' && pendingCount > 0 && (
-                  <span className="bg-agent-error text-white text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
+                  <span className="bg-agent-error text-destructive-foreground text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
                     {pendingCount > 99 ? '99+' : pendingCount}
                   </span>
                 )}
@@ -96,7 +96,7 @@ export function KnowledgeTab() {
               <Icon className="h-3.5 w-3.5" />
               {tab.label}
               {tab.id === 'review' && pendingCount > 0 && (
-                <span className="bg-agent-error text-white text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
+                <span className="bg-agent-error text-destructive-foreground text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
                   {pendingCount > 99 ? '99+' : pendingCount}
                 </span>
               )}

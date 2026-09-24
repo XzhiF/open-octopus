@@ -63,7 +63,7 @@ export function WorkflowConfigPreview({ content, onRetry }: WorkflowConfigPrevie
           type="button"
           onClick={onRetry}
           data-testid="workflow-config-retry"
-          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border-[1.5px] border-pop-bd bg-pop-red text-white font-bold shadow-pop-sm pop-press transition-colors"
+          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border-[1.5px] border-pop-bd bg-pop-red text-pop-ink font-bold shadow-pop-sm pop-press transition-colors"
         >
           <RefreshCw className="w-3 h-3" aria-hidden="true" />
           <span>重新生成</span>

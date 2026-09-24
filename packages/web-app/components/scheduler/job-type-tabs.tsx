@@ -20,7 +20,7 @@ export function JobTypeTabs({ value, onChange, disabled }: JobTypeTabsProps) {
         className={cn(
           "flex flex-1 items-center justify-center gap-2 rounded-lg border-[1.5px] px-3 py-2 text-sm transition-colors",
           value === "workflow"
-            ? "bg-pop-purple text-white font-black border-pop-bd shadow-pop-sm"
+            ? "bg-pop-purple text-pop-bg font-black border-pop-bd shadow-pop-sm"
             : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-purple-soft",
           disabled && "cursor-not-allowed opacity-50"
         )}
@@ -35,7 +35,7 @@ export function JobTypeTabs({ value, onChange, disabled }: JobTypeTabsProps) {
         className={cn(
           "flex flex-1 items-center justify-center gap-2 rounded-lg border-[1.5px] px-3 py-2 text-sm transition-colors",
           value === "agent"
-            ? "bg-pop-pink text-white font-black border-pop-bd shadow-pop-sm"
+            ? "bg-pop-pink text-pop-bg font-black border-pop-bd shadow-pop-sm"
             : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-pink-soft",
           disabled && "cursor-not-allowed opacity-50"
         )}

@@ -52,8 +52,8 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
   const fixPhantom = fixRows.filter((r) => r.status === "unanchored").length
 
   const fixBlock = fixRows.length > 0 ? (
-    <div className="rounded-[13px] border-2 border-pop-purple/50 bg-pop-purple-soft/30 shadow-pop-sm overflow-hidden" data-testid="fix-response">
-      <div className="flex items-center gap-2 border-b-2 border-pop-purple/20 px-3 py-2">
+    <div className="rounded-[13px] border-[1.5px] border-pop-purple/50 bg-pop-purple-soft/30 shadow-pop-sm overflow-hidden" data-testid="fix-response">
+      <div className="flex items-center gap-2 border-b-[1.5px] border-pop-purple/20 px-3 py-2">
         <ListChecks className="size-3.5 text-pop-purple" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">上轮打回 → 本轮回应 · fix-report × 实物 diff</span>
         <span className="ml-auto font-mono text-[10px] font-black tabular-nums" data-testid="fix-response-count">
@@ -113,7 +113,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
   ) : hasFixFeedback ? (
     // 上轮确被打回（fix-feedback 在），但本轮没有可解析的回应对照表 —— 打回闭环
     // 在机器侧落了账、在人侧断了线，这一眼必须说出来而不是安静省略。
-    <div className="rounded-[13px] border-2 border-dashed border-pop-amber/60 bg-pop-amber-soft px-3 py-2 text-[10.5px] space-y-0.5" data-testid="fix-response-missing">
+    <div className="rounded-[13px] border-[1.5px] border-dashed border-pop-amber/60 bg-pop-amber-soft px-3 py-2 text-[10.5px] space-y-0.5" data-testid="fix-response-missing">
       <b>上轮打回，但本轮没有可解析的「反馈→修复→证据」对照表</b>
       <p className="text-muted-foreground">反馈是否被逐条回应无法机器验证 —— 放行前请对着实物 diff 人工确认，或打回时点名要 fix-report。</p>
     </div>
@@ -148,7 +148,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
     return (
       <>
         {fixBlock}
-        <div className="m-3 rounded-[13px] border-2 border-dashed border-pop-bd/40 p-4 text-[11px] text-muted-foreground space-y-1" data-testid="ac-matrix-degraded">
+        <div className="m-3 rounded-[13px] border-[1.5px] border-dashed border-pop-bd p-4 text-[11px] text-muted-foreground space-y-1" data-testid="ac-matrix-degraded">
           <div className="font-mono text-[10px] font-black text-pop-dim">无契约结构</div>
           <p>本轮 spec.md 没有可解析的「Ticket DAG」表、round-report 也没有「票执行摘要」表 —— 三方对账缺一角，降级为逐文件人肉核对（实物 tab diff）。</p>
           {matrix.userStories.length > 0 && (
@@ -165,8 +165,8 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
   return (
     <div className="space-y-3">
       {fixBlock}
-      <div className="rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-testid="ac-matrix">
-        <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 px-3 py-2">
+      <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-testid="ac-matrix">
+        <div className="flex items-center gap-2 border-b-[1.5px] border-pop-bd px-3 py-2">
           <ListChecks className="size-3.5 text-pop-dim" />
           <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">票 × 声称 × 实物 对账</span>
           <span className="ml-auto font-mono text-[10px] font-black tabular-nums">
@@ -177,13 +177,13 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
           </span>
         </div>
         {diffUnavailable && (
-          <div className="border-b border-pop-bd/10 bg-pop-amber-soft px-3 py-1.5 text-[10px]" data-testid="ac-matrix-diff-missing">
+          <div className="border-b border-pop-bd bg-pop-amber-soft px-3 py-1.5 text-[10px]" data-testid="ac-matrix-diff-missing">
             实物 diff 不可得 —— 锚定列冻结为「存疑」，此时声称无从对账，慎放行。
           </div>
         )}
         <table className="w-full text-left text-[11px]">
           <thead>
-            <tr className="border-b border-pop-bd/10 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            <tr className="border-b border-pop-bd font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
               <th className="px-3 py-1.5">票</th>
               <th className="py-1.5 pr-2">声称</th>
               <th className="py-1.5 pr-2">实物锚</th>
@@ -199,7 +199,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
           报告 Changed Files 段 —— 这一段给出「报了没做 / 做了没说」的文件级铁证。 */}
       {matrix.global && !diffUnavailable && (
         <div
-          className={`rounded-[13px] border-2 px-3 py-2 text-[10.5px] space-y-1 ${matrix.global.aligned ? "border-pop-green/50 bg-pop-green-soft" : "border-pop-amber/50 bg-pop-amber-soft"}`}
+          className={`rounded-[13px] border-[1.5px] px-3 py-2 text-[10.5px] space-y-1 ${matrix.global.aligned ? "border-pop-green/50 bg-pop-green-soft" : "border-pop-amber/50 bg-pop-amber-soft"}`}
           data-testid="ac-matrix-global"
         >
           <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
@@ -223,7 +223,7 @@ export function AcMatrixPanel({ specMd, specLoading, reportMd, diff, fixReportMd
         </div>
       )}
       {matrix.userStories.length > 0 && (
-        <div className="rounded-[13px] border-2 border-pop-bd/30 px-3 py-2 text-[10.5px] text-muted-foreground space-y-0.5" data-testid="ac-matrix-us">
+        <div className="rounded-[13px] border-[1.5px] border-pop-bd px-3 py-2 text-[10.5px] text-muted-foreground space-y-0.5" data-testid="ac-matrix-us">
           <div className="font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">USER STORIES（{matrix.userStories.length}）· 锚到票即可，全文看草稿面板的 spec</div>
           {matrix.userStories.map((u, i) => (
             <div key={i} className="truncate" title={u}>{u}</div>
@@ -246,9 +246,9 @@ function MatrixRowView({ row, diffUnavailable }: { row: MatrixRow; diffUnavailab
           : { label: "未上报", cls: "text-pop-red", Icon: CircleDashed }
   const claimedLabel = row.claimed === "pass" ? "✅" : row.claimed === "warn" ? "⚠️" : row.claimed === "other" ? "❔" : "—"
   return (
-    <tr className="border-b border-pop-bd/5 last:border-0" data-acceptance-matrix-row={row.ticket}>
+    <tr className="border-b border-pop-bd last:border-0" data-acceptance-matrix-row={row.ticket}>
       <td className="px-3 py-1.5 align-top">
-        <span className="grid size-[18px] place-items-center rounded-[8px] border-2 border-pop-bd font-mono text-[9.5px] font-black">{row.ticket}</span>
+        <span className="grid size-[18px] place-items-center rounded-[8px] border-[1.5px] border-pop-bd font-mono text-[9.5px] font-black">{row.ticket}</span>
       </td>
       <td className="py-1.5 pr-2 align-top">
         <div className="max-w-[220px]">
@@ -260,7 +260,7 @@ function MatrixRowView({ row, diffUnavailable }: { row: MatrixRow; diffUnavailab
         {row.matchedPaths.length > 0 ? (
           <div className="flex flex-wrap gap-1">
             {row.matchedPaths.slice(0, 3).map((p) => (
-              <span key={p} className="max-w-[180px] truncate rounded-full border-[1.5px] border-pop-bd/30 bg-pop-green-soft px-1.5 py-px font-mono text-[9px] text-pop-green" title={p}>
+              <span key={p} className="max-w-[180px] truncate rounded-full border-[1.5px] border-pop-bd bg-pop-green-soft px-1.5 py-px font-mono text-[9px] text-pop-green" title={p}>
                 {p.split("/").slice(-2).join("/")}
               </span>
             ))}

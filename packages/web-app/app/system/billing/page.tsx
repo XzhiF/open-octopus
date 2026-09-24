@@ -40,7 +40,7 @@ export default function BillingPage() {
             className={cn(
               "rounded-lg px-3 py-1.5 text-sm transition-all",
               tab === t.key
-                ? "border-2 border-pop-bd bg-pop-yellow font-black text-pop-ink"
+                ? "border-2 border-pop-bd bg-pop-yellow font-black text-pop-bg"
                 : "border-2 border-transparent font-bold text-pop-dim hover:bg-accent hover:text-pop-ink",
             )}
           >

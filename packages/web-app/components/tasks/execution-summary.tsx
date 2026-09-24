@@ -237,7 +237,7 @@ export function TaskAiUsageCard({ agg, loading, runCount, rounds }: {
                   ["⚡ 缓存读", formatTokenCount(n.cr)], ["🗡️ 缓存写", formatTokenCount(n.cw)],
                   ["请求", `${n.calls} 次`], ["成本", formatCost(agg.totals.cost.usd, agg.totals.cost.complete)],
                 ] as const).map(([l, v]) => (
-                  <div key={l} className="min-w-[64px] rounded-md border border-pop-bd/20 bg-pop-idle/40 px-2 py-1 text-center">
+                  <div key={l} className="min-w-[64px] rounded-md border border-pop-bd bg-pop-idle/40 px-2 py-1 text-center">
                     <div className="font-mono text-[13px] font-black tabular-nums text-pop-ink">{v}</div>
                     <div className="text-[9px] text-pop-dim">{l}</div>
                   </div>

@@ -4,7 +4,9 @@ import { useTheme } from 'next-themes'
 import { Toaster as Sonner, ToasterProps } from 'sonner'
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = 'system' } = useTheme()
+  // 全站暗黑 TUI：无 ThemeProvider 时 useTheme 返回 undefined，兜底 'dark'
+  // 使 richColors 成功/错误 toast 走 sonner 深色底，而非跟随 OS 浅色。
+  const { theme = 'dark' } = useTheme()
 
   return (
     <Sonner

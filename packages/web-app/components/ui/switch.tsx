@@ -14,7 +14,7 @@ function Switch({
       data-slot="switch"
       className={cn(
         // 🎪 墨边轨道:开=绿贴纸,关=idle 灰
-        'peer data-[state=checked]:bg-pop-green data-[state=unchecked]:bg-pop-idle focus-visible:ring-pop-pink/50 inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-pop-bd shadow-pop-sm transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50',
+        'peer data-[state=checked]:bg-pop-green data-[state=unchecked]:bg-pop-idle focus-visible:ring-pop-pink/50 inline-flex h-5 w-9 shrink-0 items-center rounded-full border-[1.5px] border-pop-bd shadow-pop-sm transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
       {...props}

@@ -69,7 +69,7 @@ function textToViews(text: string): RunbookView[] {
     .filter((v) => /^https?:\/\//i.test(v.url))
 }
 
-const inputCls = "w-full rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]"
+const inputCls = "w-full rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]"
 
 export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSaveCfg, onSaveRunbook, onStart, onStop }: PreviewBarProps) {
   const [editing, setEditing] = useState(false)
@@ -125,18 +125,18 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
   const fold = useFold()
   const closed = fold ? fold.closed("item-preview", "info") : false
   return (
-    <div className="rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-preview-bar data-testid="preview-bar" data-fold-box="item-preview" data-fold-closed={closed ? "true" : undefined}>
+    <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm overflow-hidden" data-preview-bar data-testid="preview-bar" data-fold-box="item-preview" data-fold-closed={closed ? "true" : undefined}>
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         {fold && <FoldHandle id="item-preview" closed={closed} onToggle={() => fold.toggle("item-preview", "info")} />}
         <Rocket className="size-3.5 shrink-0 text-pop-dim" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">跑起来看</span>
         {mode === "runbook" && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-pop-bd/40 bg-pop-bd/10 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim" data-testid="preview-mode-runbook" title="通用运行手册：up → ready(命令退出码=就绪) → views → down">
+          <span className="inline-flex items-center gap-1 rounded-full border border-pop-bd bg-pop-bd/10 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim" data-testid="preview-mode-runbook" title="通用运行手册：up → ready(命令退出码=就绪) → views → down">
             <Layers className="size-2" />runbook{runbook?.views && runbook.views.length > 1 ? ` ×${runbook.views.length}` : ""}
           </span>
         )}
         <span className={`inline-block size-2 rounded-full ${meta.dot}`} data-testid="preview-dot" />
-        <span className="font-mono text-[11px] text-pop-ink/80">{meta.t}</span>
+        <span className="font-mono text-[11px] text-pop-ink">{meta.t}</span>
         {state === "ready" && views.map((v, i) => (
           <a key={`${v.url}-${i}`} href={v.url} target="_blank" rel="noreferrer" className="truncate font-mono text-[10.5px] text-pop-purple underline decoration-dotted hover:text-pop-ink" title={`在浏览器打开 ${v.label ?? v.url}`} data-testid="preview-url" data-view-label={v.label}>
             {v.label ? `${v.label} ${v.url}` : v.url}{external && i === 0 ? " (外部)" : ""}
@@ -162,7 +162,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
       {!closed && (<>
       {/* 动作行 */}
       {!editing && (
-        <div className="flex items-center gap-2 border-t border-pop-bd/10 px-3 py-1.5">
+        <div className="flex items-center gap-2 border-t border-pop-bd px-3 py-1.5">
           {state === "starting" ? (
             <>
               <span className="text-[10.5px] text-pop-amber">{mode === "runbook" ? "探活中…（ready 命令退出码 0 = 就绪）" : "探活中…（任意 HTTP 响应即就绪）"}</span>
@@ -182,7 +182,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
                   : "配一条起服务命令：compose up / mvn spring-boot:run / uvicorn…，或 runbook 方式（多服务·命令判就绪）")}
               </span>
               {mode && (
-                <Button size="sm" className="ml-auto h-6 border-[2.5px] border-pop-bd bg-pop-green px-2.5 font-mono text-[10px] font-black text-white shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onStart} title={disabledReason ?? "在工作区现场起服务，产出可在真浏览器检验"} data-testid="preview-start">
+                <Button size="sm" className="ml-auto h-6 border-[1.5px] border-pop-bd bg-pop-green px-2.5 font-mono text-[10px] font-black text-pop-bg shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onStart} title={disabledReason ?? "在工作区现场起服务，产出可在真浏览器检验"} data-testid="preview-start">
                   <Play className="size-3 mr-1" />▶ 启动
                 </Button>
               )}
@@ -193,23 +193,23 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
 
       {/* 配置抽屉（spec-field 持久化，随任务全 phase 复用） */}
       {editing && rbMode && (
-        <div className="space-y-1.5 border-t-2 border-pop-bd/10 bg-pop-bd/5 px-3 py-2" data-testid="preview-editor" data-rb="true">
+        <div className="space-y-1.5 border-t-[1.5px] border-pop-bd bg-pop-idle px-3 py-2" data-testid="preview-editor" data-rb="true">
           <div className="flex gap-2">
             <input className={inputCls + " flex-1"} placeholder="up：起服务命令（长驻或快速退出的 launcher 都行）" value={upCmd} onChange={(e) => setUpCmd(e.target.value)} data-testid="rb-up-command" />
-            <input className="w-40 shrink-0 rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={upCwd} onChange={(e) => setUpCwd(e.target.value)} data-testid="rb-up-cwd" />
+            <input className="w-40 shrink-0 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={upCwd} onChange={(e) => setUpCwd(e.target.value)} data-testid="rb-up-cwd" />
           </div>
           <div className="flex gap-2">
             <input className={inputCls + " flex-1"} placeholder="ready：探活命令 — 退出码 0 = 就绪（curl 探 / compose ps / wait-for 全压成这条）" value={readyCmd} onChange={(e) => setReadyCmd(e.target.value)} data-testid="rb-ready-command" />
-            <input className="w-40 shrink-0 rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={readyCwd} onChange={(e) => setReadyCwd(e.target.value)} data-testid="rb-ready-cwd" />
+            <input className="w-40 shrink-0 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={readyCwd} onChange={(e) => setReadyCwd(e.target.value)} data-testid="rb-ready-cwd" />
           </div>
           <textarea rows={3} className={inputCls + " resize-y"} placeholder={"views：每行一个入口，url 或 label|url\n如 admin|http://localhost:8080/\nhttp://localhost:3000/"} value={viewsText} onChange={(e) => setViewsText(e.target.value)} data-testid="rb-views" />
           <div className="flex gap-2">
             <input className={inputCls + " flex-1"} placeholder="down（可选）：停止时收尾杀进程；留空 = 只结束会话（远端部署别写）" value={downCmd} onChange={(e) => setDownCmd(e.target.value)} data-testid="rb-down-command" />
-            <input className="w-40 shrink-0 rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={downCwd} onChange={(e) => setDownCwd(e.target.value)} data-testid="rb-down-cwd" />
+            <input className="w-40 shrink-0 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={downCwd} onChange={(e) => setDownCwd(e.target.value)} data-testid="rb-down-cwd" />
           </div>
           <div className="flex items-center gap-2 pt-0.5">
             <label className="flex items-center gap-1 text-[10px] text-muted-foreground">就绪预算(s)
-              <input type="number" min={5} max={1800} className="w-16 rounded-md border-2 border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[10.5px]" value={timeoutDraft} onChange={(e) => setTimeoutDraft(e.target.value)} data-testid="rb-timeout" />
+              <input type="number" min={5} max={1800} className="w-16 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-0.5 font-mono text-[10.5px]" value={timeoutDraft} onChange={(e) => setTimeoutDraft(e.target.value)} data-testid="rb-timeout" />
             </label>
             <span className="text-[10px] text-muted-foreground">别写字面 <code>$vars.</code> / <code>{"${x|filter}"}</code></span>
             <div className="ml-auto flex gap-1.5">
@@ -239,13 +239,13 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
         </div>
       )}
       {editing && !rbMode && (
-        <div className="space-y-1.5 border-t-2 border-pop-bd/10 bg-pop-bd/5 px-3 py-2" data-testid="preview-editor">
+        <div className="space-y-1.5 border-t-[1.5px] border-pop-bd bg-pop-idle px-3 py-2" data-testid="preview-editor">
           <input className={inputCls} placeholder="长驻命令，如 mvn -q spring-boot:run" value={cmd} onChange={(e) => setCmd(e.target.value)} data-testid="preview-command" />
           <div className="flex gap-2">
-            <input className="min-w-0 flex-1 rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="探活/打开 URL：http://localhost:8080/" value={url} onChange={(e) => setUrl(e.target.value)} data-testid="preview-url-input" />
-            <input className="w-28 rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={cwd} onChange={(e) => setCwd(e.target.value)} data-testid="preview-cwd" />
+            <input className="min-w-0 flex-1 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="探活/打开 URL：http://localhost:8080/" value={url} onChange={(e) => setUrl(e.target.value)} data-testid="preview-url-input" />
+            <input className="w-28 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[11px]" placeholder="cwd(可选)" value={cwd} onChange={(e) => setCwd(e.target.value)} data-testid="preview-cwd" />
           </div>
-          <input className="w-full rounded-md border-2 border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[10.5px]" placeholder="readyPattern（可选，stdout 正则，如 'Started .*Application'）" value={pattern} onChange={(e) => setPattern(e.target.value)} data-testid="preview-pattern" />
+          <input className="w-full rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 font-mono text-[10.5px]" placeholder="readyPattern（可选，stdout 正则，如 'Started .*Application'）" value={pattern} onChange={(e) => setPattern(e.target.value)} data-testid="preview-pattern" />
           <div className="flex items-center gap-2 pt-0.5">
             <span className="text-[10px] text-muted-foreground">命令里别写字面 <code>$vars.</code> / <code>{"${x|filter}"}</code>（引擎替换语法，会被误替换）</span>
             <div className="ml-auto flex gap-1.5">
@@ -262,7 +262,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
         </div>
       )}
       {preview?.tail && preview.tail.length > 0 && state === "starting" && (
-        <div className="max-h-[120px] overflow-hidden border-t border-pop-bd/10 bg-pop-ink px-3 py-1.5 font-mono text-[9.5px] leading-relaxed text-pop-bg">
+        <div className="max-h-[120px] overflow-hidden border-t border-pop-bd bg-pop-bg px-3 py-1.5 font-mono text-[9.5px] leading-relaxed text-pop-ink">
           <div className="flex items-center gap-1 text-pop-dim mb-0.5"><Terminal className="size-2.5" />stdout（末行）</div>
           {preview.tail.slice(-3).map((l, i) => <div key={i} className="truncate">{l}</div>)}
         </div>

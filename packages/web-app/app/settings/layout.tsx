@@ -61,7 +61,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                   className={cn(
                     "flex items-center gap-2 rounded-t-lg px-3 py-1.5 text-sm border-b-2 transition-colors whitespace-nowrap shrink-0",
                     activeTabId === tab.id
-                      ? "border-pop-bd bg-pop-yellow text-pop-ink font-black"
+                      ? "border-pop-bd bg-pop-yellow text-pop-bg font-black"
                       : "border-transparent text-pop-dim font-bold hover:bg-accent hover:text-pop-ink"
                   )}
                   onClick={() => handleTabClick(tab.id)}

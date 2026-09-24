@@ -42,7 +42,7 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         {!isDetailPage && (
-          <div className="mb-6 flex items-end gap-1 border-b-[2.5px] border-pop-bd" role="tablist" aria-label="资源管理标签页">
+          <div className="mb-6 flex items-end gap-1 border-b-[1.5px] border-pop-bd" role="tablist" aria-label="资源管理标签页">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -50,9 +50,9 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
                 aria-selected={activeTab === tab.id}
                 aria-controls={`tabpanel-${tab.id}`}
                 className={cn(
-                  "flex items-center gap-2 rounded-t-lg border-b-[2.5px] px-4 py-2.5 text-sm transition-colors -mb-[2.5px]",
+                  "flex items-center gap-2 rounded-t-lg border-b-[1.5px] px-4 py-2.5 text-sm transition-colors -mb-[1.5px]",
                   activeTab === tab.id
-                    ? "border-pop-bd bg-pop-yellow font-black text-pop-ink"
+                    ? "border-pop-bd bg-pop-yellow font-black text-pop-bg"
                     : "border-transparent font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
                 )}
                 onClick={() => handleTabChange(tab.id)}

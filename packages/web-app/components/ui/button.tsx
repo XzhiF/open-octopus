@@ -10,22 +10,22 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          // 🎪 全站贴纸:厚黑边 + 硬投影 + 按压位移
-          'rounded-lg border-[2.5px] border-pop-bd bg-primary text-primary-foreground font-black shadow-pop-sm pop-press hover:bg-primary/90',
+          // 🖥 全站终端:细边 + 软投影 + 轻按压
+          'rounded-lg border-[1.5px] border-pop-bd bg-primary text-primary-foreground font-black shadow-pop-sm pop-press hover:bg-primary/90',
         destructive:
-          'rounded-lg border-[2.5px] border-pop-bd bg-destructive text-white font-black shadow-pop-sm pop-press hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40',
+          'rounded-lg border-[1.5px] border-pop-bd bg-destructive text-destructive-foreground font-black shadow-pop-sm pop-press hover:bg-destructive/90 focus-visible:ring-destructive/20',
         outline:
-          'rounded-lg border-2 border-pop-bd bg-card font-bold shadow-pop-sm pop-press hover:bg-accent hover:text-accent-foreground',
+          'rounded-lg border-[1.5px] border-pop-bd bg-card font-bold shadow-pop-sm pop-press hover:bg-accent hover:text-accent-foreground',
         secondary:
-          'rounded-lg border-2 border-pop-bd bg-secondary text-secondary-foreground font-bold shadow-pop-sm pop-press hover:bg-secondary/70',
+          'rounded-lg border-[1.5px] border-pop-bd bg-secondary text-secondary-foreground font-bold shadow-pop-sm pop-press hover:bg-secondary/70',
         ghost:
-          'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
+          'hover:bg-accent hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
-        // 🎪 Pop (Memphis) — 贴纸按钮:厚黑边 + 硬投影 + 按压位移
+        // 🖥 Pop (终端) — 贴纸按钮:细边 + 软投影 + 轻按压
         pop:
-          'rounded-xl border-[2.5px] border-pop-bd bg-pop-pink text-white font-black shadow-pop-sm pop-press hover:bg-pop-pink/90',
+          'rounded-xl border-[1.5px] border-pop-bd bg-pop-pink text-[#151413] font-black shadow-pop-sm pop-press hover:bg-pop-pink/90',
         'pop-quiet':
-          'rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-ink font-bold shadow-pop-sm pop-press hover:bg-pop-yellow-soft',
+          'rounded-xl border-[1.5px] border-pop-bd bg-pop-paper text-pop-ink font-bold shadow-pop-sm pop-press hover:bg-pop-yellow-soft',
       },
       size: {
         default: 'h-9 px-4 py-2 has-[>svg]:px-3',

@@ -45,7 +45,10 @@ export interface TaskBoardColumn {
   label: string
 }
 
-/** Five columns in lifecycle order (草稿→待执行→执行中→待验收→完成). */
+/** Five columns in lifecycle order (草稿→待执行→执行中→待验收→完成).
+ *  皮肤不在这一层：列头/泳道与卡片染色（COLUMN_THEME / CARD_THEME）住在渲染层
+ *  `app/tasks/page.tsx` —— Tailwind 静态 class 字面量必须留在被 JIT 扫描的组件文件里；
+ *  本模块只管列归属、角标与预算判据。 */
 export const TASK_COLUMNS: readonly TaskBoardColumn[] = [
   { id: "draft", label: "草稿" },
   { id: "ready", label: "待执行" },

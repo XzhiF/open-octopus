@@ -47,7 +47,7 @@ function TooltipContent({
         sideOffset={sideOffset}
         className={cn(
           // 🎪 黄底墨边小票 tooltip
-          'bg-pop-yellow text-pop-ink border-2 border-pop-bd font-bold animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-lg px-3 py-1.5 text-xs text-balance shadow-pop-sm',
+          'bg-pop-yellow text-[#151413] border-[1.5px] border-pop-bd font-bold animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-lg px-3 py-1.5 text-xs text-balance shadow-pop-sm',
           className,
         )}
         {...props}

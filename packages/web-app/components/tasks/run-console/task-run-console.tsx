@@ -330,7 +330,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     } finally { setBusy(null) }
   }
 
-  const barBtn = "rounded border-[1.5px] border-pop-bg/30 px-1.5 py-px text-[9.5px] font-black text-pop-bg transition-colors hover:border-pop-yellow hover:text-pop-yellow"
+  const barBtn = "rounded border-[1.5px] border-pop-bd px-1.5 py-px text-[9.5px] font-black text-pop-ink transition-colors hover:border-pop-yellow hover:text-pop-yellow"
 
   return (
     <FoldProvider taskId={task.id}>
@@ -341,7 +341,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         onPointerDown={chrome?.onHeaderPointerDown}
         title={chrome ? "按住空白处拖拽移动窗口" : undefined}
         className={
-          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[2.5px] border-pop-bd bg-pop-ink px-2.5 font-mono text-[11px] text-pop-bg " +
+          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[1.5px] border-pop-bd bg-pop-idle px-2.5 font-mono text-[11px] text-pop-ink " +
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
@@ -350,12 +350,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-yellow" />
           <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-cyan" />
         </span>
-        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <span aria-hidden className="shrink-0 text-pop-dim/40">│</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
-        <span aria-hidden className="shrink-0 text-pop-bg/25">│</span>
+        <span aria-hidden className="shrink-0 text-pop-dim/40">│</span>
         <span
           data-task-modal-status={derivedStatus}
-          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[derivedStatus] ?? "border-pop-bg/30 text-pop-bg/70"}`}
+          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[derivedStatus] ?? "border-pop-bd text-pop-dim"}`}
         >
           {derivedStatus === "awaiting_review" && awaitingPv
             ? `◆ 待验收 · P${awaitingPv.index}`
@@ -363,28 +363,28 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         </span>
         {/* 语境 token：一条把「现在最该知道的数」说完 */}
         {derivedStatus === "ready" && (armedFuture
-          ? <span className="shrink-0 text-pop-bg/70">⏰ 已定时 <b className="text-pop-bg">{clockShort(dueAt)}</b> 触发</span>
+          ? <span className="shrink-0 text-pop-dim">⏰ 已定时 <b className="text-pop-ink">{clockShort(dueAt)}</b> 触发</span>
           : waitingForSlot
             ? <span className="shrink-0 text-pop-amber">⏳ 已到点，等并发闸…</span>
-            : <span className="shrink-0 text-pop-bg/70">⚡ 待触发 · {specPhases.length || phaseViews.length} phases</span>)}
+            : <span className="shrink-0 text-pop-dim">⚡ 待触发 · {specPhases.length || phaseViews.length} phases</span>)}
         {derivedStatus === "running" && liveRun && (
           <>
-            <span className="shrink-0 text-pop-bg/70">⏱ <b className="text-pop-bg tabular-nums">{liveDur(liveRun, now)}</b>{liveRun.phase_index != null ? `（P${liveRun.phase_index}·R${liveRun.round_index ?? 1}）` : ""}</span>
+            <span className="shrink-0 text-pop-dim">⏱ <b className="text-pop-ink tabular-nums">{liveDur(liveRun, now)}</b>{liveRun.phase_index != null ? `（P${liveRun.phase_index}·R${liveRun.round_index ?? 1}）` : ""}</span>
             {totalAgg && totalAgg.totalCalls > 0 && (
-              <AggInline agg={totalAgg} className="shrink-0 font-mono text-pop-bg/70" dim="text-pop-bg/45" />
+              <AggInline agg={totalAgg} className="shrink-0 font-mono text-pop-dim" dim="text-pop-dim" />
             )}
           </>
         )}
         {/* 暂停：不显秒表（时间不在走），只说「等你恢复」 */}
         {derivedStatus === "paused" && (
-          <span className="shrink-0 text-pop-bg/70">⏸ 已暂停{pausedRun?.phase_index != null ? `（P${pausedRun.phase_index}·R${pausedRun.round_index ?? 1}）` : ""} · 恢复后从该节点重跑</span>
+          <span className="shrink-0 text-pop-dim">⏸ 已暂停{pausedRun?.phase_index != null ? `（P${pausedRun.phase_index}·R${pausedRun.round_index ?? 1}）` : ""} · 恢复后从该节点重跑</span>
         )}
         {derivedStatus === "awaiting_review" && waitedMs != null && (
-          <span className="shrink-0 text-pop-bg/70">等你放行 · 已等 <b className="text-pop-amber">{shortDur(waitedMs)}</b></span>
+          <span className="shrink-0 text-pop-dim">等你放行 · 已等 <b className="text-pop-amber">{shortDur(waitedMs)}</b></span>
         )}
-        {derivedStatus === "archiving" && <span className="shrink-0 text-pop-bg/70">🗄 归档编排中（全绿才 done）</span>}
+        {derivedStatus === "archiving" && <span className="shrink-0 text-pop-dim">🗄 归档编排中（全绿才 done）</span>}
         {(derivedStatus === "done" || derivedStatus === "failed" || derivedStatus === "aborted") && task.completed_at && (
-          <span className="shrink-0 text-pop-bg/70">{clockShort(task.completed_at)}{totalAgg && totalAgg.totalCalls > 0 ? ` · ${formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}` : ""}</span>
+          <span className="shrink-0 text-pop-dim">{clockShort(task.completed_at)}{totalAgg && totalAgg.totalCalls > 0 ? ` · ${formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}` : ""}</span>
         )}
 
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -403,13 +403,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               onClick={() => setTriggerOpen(true)}
               disabled={busy !== null}
               data-task-trigger
-              className="flex shrink-0 items-center gap-1 rounded-[7px] border-[1.5px] border-pop-bd bg-pop-green px-2.5 py-1 text-[10px] font-black text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors pop-press hover:bg-pop-green/90"
+              className="flex shrink-0 items-center gap-1 rounded-[7px] border-[1.5px] border-pop-bd bg-pop-green px-2.5 py-1 text-[10px] font-black text-pop-bg shadow-pop-sm transition-colors pop-press hover:brightness-110"
             >
               ⚡ 触发
             </button>
           )}
           {task.status === "ready" && armedFuture && (
-            <button onClick={() => void handleCancelTrigger()} disabled={busy !== null} data-task-trigger-cancel className="rounded border-[1.5px] border-pop-amber/60 px-1.5 py-px text-[9.5px] font-black text-pop-amber transition-colors hover:bg-pop-amber hover:text-pop-ink">
+            <button onClick={() => void handleCancelTrigger()} disabled={busy !== null} data-task-trigger-cancel className="rounded border-[1.5px] border-pop-amber/60 px-1.5 py-px text-[9.5px] font-black text-pop-amber transition-colors hover:bg-pop-amber hover:text-pop-bg">
               ✕ 取消触发
             </button>
           )}
@@ -432,7 +432,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               onClick={() => void handleResume()}
               disabled={busy !== null}
               data-task-resume
-              className="rounded border-[1.5px] border-pop-green/60 px-1.5 py-px text-[9.5px] font-black text-[#33d69f] transition-colors hover:bg-pop-green hover:text-white"
+              className="rounded border-[1.5px] border-pop-green/60 px-1.5 py-px text-[9.5px] font-black text-pop-green transition-colors hover:bg-pop-green hover:text-pop-bg"
               title="恢复运行（从被打断的节点继续）"
             >
               {busy === "resume" ? <Spinner className="size-2.5" /> : "▶ 恢复"}
@@ -443,7 +443,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               onClick={() => void handleAbort()}
               disabled={busy !== null}
               data-task-abort
-              className="rounded border-[1.5px] border-pop-red/60 px-1.5 py-px text-[9.5px] font-black text-[#ff8a8f] transition-colors hover:bg-pop-red hover:text-white"
+              className="rounded border-[1.5px] border-pop-red/60 px-1.5 py-px text-[9.5px] font-black text-pop-red transition-colors hover:bg-pop-red hover:text-pop-ink"
               title="中止任务（工作区将清理）"
             >
               {busy === "abort" ? <Spinner className="size-2.5" /> : "■ 中止"}
@@ -463,7 +463,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             <button
               onClick={chrome.onToggleFullscreen}
               title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
-              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-bg/55 transition-colors hover:border-pop-bg/40 hover:text-pop-yellow"
+              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-yellow"
             >
               {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
             </button>
@@ -472,7 +472,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             onClick={onClose}
             aria-label="关闭"
             title="关闭（Esc 同效）"
-            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors pop-press hover:bg-pop-red/90"
+            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-pop-ink shadow-pop-sm transition-colors pop-press hover:brightness-110"
           >
             <span aria-hidden>✕</span>
           </button>
@@ -492,15 +492,15 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               打回后派生态暂无 awaiting（修复轮在跑），若用户正停在验货台看
               回显卡，条不撤（撤了就等于把 seam 踢没）。 ── */}
           {(awaitingPv || surfaceTab === "accept") && (
-            <div className="flex shrink-0 items-center gap-1.5 border-b-[2px] border-pop-bd/15 bg-pop-paper px-3 py-1.5" data-console-tabs>
+            <div className="flex shrink-0 items-center gap-1.5 border-b-[2px] border-pop-bd bg-pop-paper px-3 py-1.5" data-console-tabs>
               <button
                 onClick={() => setSurfaceTab("console")}
                 aria-selected={surfaceTab === "console"}
                 data-console-tab="console" data-testid="console-tab-console"
-                className={`rounded-full border-[2px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                className={`rounded-full border-[1.5px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
                   surfaceTab === "console"
-                    ? "border-pop-bd bg-pop-yellow text-pop-ink shadow-pop-sm"
-                    : "border-pop-bd/25 text-pop-dim hover:border-pop-bd/60"
+                    ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm"
+                    : "border-pop-bd text-pop-dim hover:border-pop-bd/60"
                 }`}
               >
                 ▶ 执行控制台
@@ -509,9 +509,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 onClick={() => setSurfaceTab("accept")}
                 aria-selected={surfaceTab === "accept"}
                 data-console-tab="accept" data-testid="console-tab-accept"
-                className={`flex items-center gap-1 rounded-full border-[2px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                className={`flex items-center gap-1 rounded-full border-[1.5px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
                   surfaceTab === "accept"
-                    ? "border-pop-bd bg-pop-amber text-white shadow-pop-sm"
+                    ? "border-pop-bd bg-pop-amber text-pop-bg shadow-pop-sm"
                     : "border-pop-amber/50 bg-pop-amber-soft text-pop-amber hover:border-pop-bd/60"
                 }`}
               >
@@ -557,20 +557,20 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       </div>
 
       {/* ── footer 状态条 ── */}
-      <div className="flex h-6 shrink-0 select-none items-center gap-3 border-t-[2.5px] border-pop-bd bg-pop-ink px-3 font-mono text-[10.5px] text-pop-bg/70">
-        <span>创建 <b className="font-semibold text-pop-bg">{clockShort(task.created_at)}</b></span>
-        <span aria-hidden className="text-pop-bg/25">·</span>
+      <div className="flex h-6 shrink-0 select-none items-center gap-3 border-t-[1.5px] border-pop-bd bg-pop-idle px-3 font-mono text-[10.5px] text-pop-dim">
+        <span>创建 <b className="font-semibold text-pop-ink">{clockShort(task.created_at)}</b></span>
+        <span aria-hidden className="text-pop-dim/40">·</span>
         <span>{isV4 ? `v4 · ${phaseViews.length || specPhases.length} phases` : "v3 legacy"}</span>
         {liveRun?.workspace_id && (
           <>
-            <span aria-hidden className="text-pop-bg/25">·</span>
-            <span title={`workspace ${liveRun.workspace_id}`}>工作区 <b className="font-semibold text-pop-bg">{liveRun.workspace_id.slice(0, 8)}</b></span>
+            <span aria-hidden className="text-pop-dim/40">·</span>
+            <span title={`workspace ${liveRun.workspace_id}`}>工作区 <b className="font-semibold text-pop-ink">{liveRun.workspace_id.slice(0, 8)}</b></span>
           </>
         )}
         {TERMINAL_TASK_STATUSES.has(task.status) && (
           <>
-            <span aria-hidden className="text-pop-bg/25">·</span>
-            <span className="text-pop-bg/45">{task.status === "done" ? "工作区已归档" : "工作区已清理"}</span>
+            <span aria-hidden className="text-pop-dim/40">·</span>
+            <span className="text-pop-dim">{task.status === "done" ? "工作区已归档" : "工作区已清理"}</span>
           </>
         )}
         {isLive ? (
@@ -581,7 +581,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             <span className="ml-auto flex items-center gap-1.5 text-pop-red" title="实时连接中断 — 盘面为断线前快照，浏览器/管理器会自动重连">SSE 断线<i className="block size-[7px] rounded-full bg-pop-red" /></span>
           )
         ) : (
-          <span className="ml-auto text-pop-bg/35">终态 · 已停轮询</span>
+          <span className="ml-auto text-pop-dim">终态 · 已停轮询</span>
         )}
       </div>
 
@@ -606,7 +606,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
   const { ms: runMs, count: runCount } = sumRunMs(runs, now)
 
   return (
-    <div className="w-[230px] shrink-0 overflow-y-auto border-r-[2.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
+    <div className="w-[230px] shrink-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
         {showMaster && <span className="ml-auto"><FoldMasterBar /></span>}
@@ -623,9 +623,9 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
           onClick={() => onSelect("report")}
           data-testid="phase-row-legacy"
           data-phase-status={derived.taskStatus}
-          className={`flex w-full items-center gap-2 rounded-xl border-2 bg-pop-bg px-2 py-1.5 text-left shadow-pop-sm transition-transform ${view === "report" ? "border-[2.5px] border-pop-bd outline outline-[3px] outline-pop-yellow outline-offset-[1.5px]" : "border-pop-bd/70 hover:-translate-y-px"}`}
+          className={`flex w-full items-center gap-2 rounded-xl border-[1.5px] bg-pop-bg px-2 py-1.5 text-left shadow-pop-sm transition-transform ${view === "report" ? "border-[1.5px] border-pop-bd outline outline-[2px] outline-pop-yellow outline-offset-[1.5px]" : "border-pop-bd/70 hover:-translate-y-px"}`}
         >
-          <span className="grid size-[18px] shrink-0 place-items-center rounded-[6px] border-2 border-pop-bd bg-pop-idle font-mono text-[9px] font-black text-pop-dim">V3</span>
+          <span className="grid size-[18px] shrink-0 place-items-center rounded-[6px] border-[1.5px] border-pop-bd bg-pop-idle font-mono text-[9px] font-black text-pop-dim">V3</span>
           <span className="min-w-0">
             <span className="block truncate text-[12px] font-black">v3 单阶段（legacy）</span>
             <span className="block font-mono text-[9.5px] text-pop-dim">按旧链路整体执行一次</span>
@@ -645,10 +645,10 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
                 data-testid={`phase-row-${p.index}`}
                 data-phase-status={p.status}
                 className={`relative flex w-full items-start gap-2 rounded-xl border bg-pop-bg px-2 py-1.5 text-left shadow-pop-sm transition-transform hover:-translate-y-px ${
-                  selNode ? "border-[2.5px] border-pop-bd outline outline-[3px] outline-pop-yellow outline-offset-[1.5px]" : "border-2 border-pop-bd/70"
+                  selNode ? "border-[1.5px] border-pop-bd outline outline-[2px] outline-pop-yellow outline-offset-[1.5px]" : "border-[1.5px] border-pop-bd/70"
                 } ${p.status === "awaiting_review" ? "bg-pop-amber-soft" : ""}`}
               >
-                <span className={`grid shrink-0 place-items-center rounded-[8px] border-2 border-pop-bd font-mono font-black ${selNode ? "size-[24px] text-[10.5px]" : "size-[18px] text-[9px]"} ${phaseTileTone(p.status, nextUp)}`}>
+                <span className={`grid shrink-0 place-items-center rounded-[8px] border-[1.5px] border-pop-bd font-mono font-black ${selNode ? "size-[24px] text-[10.5px]" : "size-[18px] text-[9px]"} ${phaseTileTone(p.status, nextUp)}`}>
                   P{p.index}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -682,7 +682,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
         })
       )}
 
-      <div className="mt-3 space-y-0.5 border-t-2 border-dashed border-pop-bd/20 px-1 pt-2 font-mono text-[10px] text-pop-dim">
+      <div className="mt-3 space-y-0.5 border-t-[1.5px] border-dashed border-pop-bd px-1 pt-2 font-mono text-[10px] text-pop-dim">
         <div title={`创建 ${task.created_at}\n实跑 ${runCount} 轮 —— 只计 workflow 运行段，不含排队/待验收等待`}>
           创建 <b className="text-pop-ink">{clockShort(task.created_at)}</b> · 实际用时 <b className="text-pop-ink">{runCount > 0 ? shortDur(runMs) : "—"}</b>（{runCount} 轮）
         </div>
@@ -703,8 +703,8 @@ function RailReportChip({ active, onClick }: { active: boolean; onClick: () => v
     <button
       onClick={onClick}
       data-rail-report
-      className={`mb-2 w-full rounded-lg border-2 px-2 py-1 text-left font-mono text-[10px] font-black transition-colors ${
-        active ? "border-pop-bd bg-pop-yellow text-pop-ink shadow-pop-sm" : "border-pop-bd/40 bg-pop-bg text-pop-dim hover:border-pop-bd"
+      className={`mb-2 w-full rounded-lg border-[1.5px] px-2 py-1 text-left font-mono text-[10px] font-black transition-colors ${
+        active ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm" : "border-pop-bd bg-pop-bg text-pop-dim hover:border-pop-bd"
       }`}
     >
       ■ 任务战报

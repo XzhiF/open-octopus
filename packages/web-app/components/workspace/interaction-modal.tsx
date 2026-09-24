@@ -236,7 +236,7 @@ export function InteractionModal({
           <AlertDialogCancel>取消</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleForceComplete}
-            className="bg-pop-amber text-white hover:bg-pop-amber/90"
+            className="bg-pop-amber text-pop-bg hover:bg-pop-amber/90"
           >
             {forceCompleting ? "结束中..." : "确认结束"}
           </AlertDialogAction>

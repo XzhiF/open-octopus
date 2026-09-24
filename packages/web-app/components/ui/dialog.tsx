@@ -67,7 +67,7 @@ function DialogContent({
           // 🎪 贴纸弹窗框:厚黑边 + 硬投影 —— 全站 Dialog 统一皮肤。
           // overflow-hidden 必加:border-radius 不裁剪子元素,顶栏/右栏的直角
           // 背景会从圆角外顶出来(四角白斑、黑边看起来断裂)。
-          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-2xl border-[2.5px] border-pop-bd p-6 shadow-pop-lg duration-200 sm:max-w-lg',
+          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-2xl border-[1.5px] border-pop-bd p-6 shadow-pop-lg duration-200 sm:max-w-lg',
           className,
         )}
         {...props}
@@ -79,7 +79,7 @@ function DialogContent({
             // 关闭方糖（2026-09-12 两轮反馈）：圆圈包 X 突兀 + size-7 太大 ——
             // 与 terminal 导航条（task-run-console/authoring-workspace）完全同款：
             // 19px 红实心方糖 + 黑边 + 硬投影 + pop-press。
-            className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-white shadow-[2px_2px_0_rgba(0,0,0,.4)] transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3"
+            className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-destructive-foreground shadow-pop-sm transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3"
           >
             <XIcon />
             <span className="sr-only">Close</span>

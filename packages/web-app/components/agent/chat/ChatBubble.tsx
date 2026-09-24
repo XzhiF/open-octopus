@@ -35,8 +35,8 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     >
       {/* Avatar — 🎪 糖豆头像(黑边 + 小硬影) */}
       <div className={cn(
-        'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-pop-bd shadow-[2px_2px_0_rgba(28,27,34,.15)]',
-        isUser ? 'bg-pop-pink text-white' : 'bg-pop-purple text-white'
+        'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-pop-bd shadow-pop-sm',
+        isUser ? 'bg-pop-pink text-pop-bg' : 'bg-pop-purple text-pop-bg'
       )}>
         {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
       </div>
@@ -46,7 +46,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       <div className={cn(
         'rounded-[14px] px-3.5 py-2 max-w-[85%] text-[12.5px] leading-relaxed border-2 border-pop-bd shadow-pop-sm',
         isUser
-          ? 'bg-pop-yellow text-pop-ink rounded-br-[4px]'
+          ? 'bg-pop-yellow text-pop-bg rounded-br-[4px]'
           : 'bg-pop-paper text-pop-ink rounded-bl-[4px]'
       )}>
         {/* Collapsible thinking + tool calls (+ chronological timeline) */}

@@ -20,12 +20,12 @@ const typeIcon: Record<ResourceType, React.ComponentType<{ className?: string }>
 const typeBadge = cva("text-xs font-medium", {
   variants: {
     type: {
-      skill: "bg-pop-cyan-soft text-pop-ink",
-      agent: "bg-pop-purple-soft text-pop-ink",
-      workflow: "bg-pop-green-soft text-pop-ink",
-      rule: "bg-pop-amber-soft text-pop-ink",
-      command: "bg-pop-cyan-soft text-pop-ink",
-      clone: "bg-pop-pink-soft text-pop-ink",
+      skill: "bg-pop-cyan-soft text-pop-cyan",
+      agent: "bg-pop-purple-soft text-pop-purple",
+      workflow: "bg-pop-green-soft text-pop-green",
+      rule: "bg-pop-amber-soft text-pop-amber",
+      command: "bg-pop-cyan-soft text-pop-cyan",
+      clone: "bg-pop-pink-soft text-pop-pink",
     },
   },
 })
@@ -46,7 +46,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
   const canDeactivate = isActivated
 
   return (
-    <div data-testid={`resource-card-${entry.name}`} className="group relative rounded-xl border-[2.5px] border-pop-bd bg-pop-paper p-4 shadow-pop-sm transition-colors hover:bg-pop-yellow-soft">
+    <div data-testid={`resource-card-${entry.name}`} className="group relative rounded-xl border-[1.5px] border-pop-bd bg-pop-paper p-4 shadow-pop-sm transition-colors hover:bg-pop-yellow-soft">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-pink-soft shadow-pop-sm">
@@ -65,7 +65,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
                 {entry.type}
               </Badge>
               {isActivated && (
-                <Badge variant="outline" className="shrink-0 bg-pop-green-soft text-pop-ink border-pop-green/40">
+                <Badge variant="outline" className="shrink-0 bg-pop-green-soft text-pop-green border-pop-green/40">
                   <CheckCircle2 className="mr-1 h-3 w-3" />
                   Activated
                 </Badge>

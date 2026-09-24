@@ -97,13 +97,13 @@ export function CloneFileContent({ cloneName, file, onSaved }: CloneFileContentP
           {isMarkdown && !file.readonly && (
             <div className="flex border border-agent-divider rounded overflow-hidden">
               <button
-                className={`px-2 py-1 text-xs ${mode === 'edit' ? 'bg-agent-primary text-white' : 'hover:bg-agent-hover'}`}
+                className={`px-2 py-1 text-xs ${mode === 'edit' ? 'bg-agent-primary text-agent-primary-foreground' : 'hover:bg-agent-hover'}`}
                 onClick={() => setMode('edit')}
               >
                 <Edit className="h-3 w-3" />
               </button>
               <button
-                className={`px-2 py-1 text-xs ${mode === 'preview' ? 'bg-agent-primary text-white' : 'hover:bg-agent-hover'}`}
+                className={`px-2 py-1 text-xs ${mode === 'preview' ? 'bg-agent-primary text-agent-primary-foreground' : 'hover:bg-agent-hover'}`}
                 onClick={() => setMode('preview')}
               >
                 <Eye className="h-3 w-3" />

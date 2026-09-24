@@ -11,7 +11,7 @@
 //
 // 还原基准 = .scratch/20260917-acceptance-playbook-proto (A′ 变体): 黄头条主角卡、
 // 预算表、票级步(操作/预期/反假跑)、✓✗⊘ 三色后果条、carryover 首段、finePrint 折叠、
-// coverage 诚实条。视觉语言与 verify-panel 同源 (pop 贴纸: border-2 border-pop-bd
+// coverage 诚实条。视觉语言与 verify-panel 同源 (pop 贴纸: border-[1.5px] border-pop-bd
 // bg-pop-paper shadow-pop-sm; 盖章 pop-stamp; 尾注 pop-dim)。
 //
 // Honesty baked in: never auto-runs; a ✗ blocks 通过 (reported up via onGate);
@@ -220,7 +220,7 @@ export function PlaybookPanel({
 
   if (!playbook.available) {
     return (
-      <div className="rounded-[13px] border-2 border-dashed border-pop-bd/40 bg-pop-paper p-3 text-[11.5px] text-muted-foreground" data-testid="playbook-empty">
+      <div className="rounded-[13px] border-[1.5px] border-dashed border-pop-bd bg-pop-paper p-3 text-[11.5px] text-muted-foreground" data-testid="playbook-empty">
         <div className="flex items-center gap-2">
           <ClipboardCheck className="size-3.5 text-pop-dim" />
           <span className="font-mono text-[10px] font-black tracking-[.09em] text-pop-dim">验收剧本</span>
@@ -232,14 +232,14 @@ export function PlaybookPanel({
   }
 
   return (
-    <div className="rounded-[13px] border-[2.5px] border-pop-bd bg-pop-paper shadow-pop overflow-hidden" data-acceptance-playbook data-testid="playbook-panel">
+    <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop overflow-hidden" data-acceptance-playbook data-testid="playbook-panel">
       {/* 主角头（黄软条，与 verify-panel 头语言一致） */}
-      <div className="flex items-center gap-2 border-b-2 border-pop-bd/10 bg-pop-amber-soft px-3 py-2">
+      <div className="flex items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-amber-soft px-3 py-2">
         {fold && <FoldHandle id="item-playbook" closed={panelClosed} onToggle={() => fold.toggle("item-playbook", "info")} />}
         <ClipboardCheck className="size-3.5 text-pop-ink" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-ink">人工走查 · 验收剧本</span>
         {panelClosed && (
-          <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge="item-playbook">
+          <span className="truncate font-mono text-[10px] font-black text-pop-cyan" data-fold-badge="item-playbook">
             {countOf(checks, "pass")}/{allItems.length}✓ · {countOf(checks, "fail")}✗ · {countOf(checks, "skip")}⊘
           </span>
         )}
@@ -250,8 +250,8 @@ export function PlaybookPanel({
               disabled={!!disabledReason || (!!runningProbe && !runningAll)}
               data-testid="playbook-run-all"
               title={runningAll ? "再点=下一步后停止（当前步会跑完）" : `按剧本顺序连跑 ${runnableItems.length} 条断言探针，遇首个 ✗ 即停（起服/就绪/收尾归「跑起来看」）`}
-              className={`flex items-center gap-1 rounded-md border-[2px] px-2 py-0.5 font-mono text-[10px] font-black shadow-pop-sm transition-colors ${
-                runningAll ? "border-pop-amber bg-pop-amber-soft text-pop-amber" : "border-pop-bd bg-pop-green text-white hover:brightness-105 disabled:opacity-40"}`}
+              className={`flex items-center gap-1 rounded-md border-[1.5px] px-2 py-0.5 font-mono text-[10px] font-black shadow-pop-sm transition-colors ${
+                runningAll ? "border-pop-amber bg-pop-amber-soft text-pop-amber" : "border-pop-bd bg-pop-green text-pop-bg hover:brightness-105 disabled:opacity-40"}`}
             >
               {runningAll ? <><Square className="size-2.5" />停止</> : <><Play className="size-2.5" />连跑 {runnableItems.length}</>}
             </button>
@@ -274,7 +274,7 @@ export function PlaybookPanel({
       <div className="space-y-2 p-3">
         {/* 目标 + 预算表 */}
         {playbook.goal && <div className="text-[11px] font-semibold text-pop-ink leading-snug">{playbook.goal}</div>}
-        <div className="flex items-center gap-2 rounded-lg border border-pop-bd/30 bg-pop-idle/40 px-2 py-1">
+        <div className="flex items-center gap-2 rounded-lg border border-pop-bd bg-pop-idle/40 px-2 py-1">
           <span className="font-mono text-[9px] text-pop-dim">预算</span>
           <b className="font-mono text-[10.5px]">{playbook.budget.steps} 步 · ~{playbook.budget.estMin}min</b>
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-pop-idle">
@@ -283,12 +283,12 @@ export function PlaybookPanel({
           <span className="font-mono text-[9px] text-pop-dim">{playbook.budget.over ? "超预算→已降档" : "≤10min ✓"}</span>
         </div>
         {playbook.specRevised && (
-          <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft px-2 py-1 text-[10.5px] text-pop-ink/80">
+          <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft px-2 py-1 text-[10.5px] text-pop-ink">
             ⚠ round-report 含「Spec 修订」—— 下列预期以上轮修订后为准,核对时留意。
           </div>
         )}
         {disabledReason && (
-          <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft px-2 py-1 text-[10.5px] text-pop-ink/80">{disabledReason}</div>
+          <div className="rounded-md border border-pop-amber/40 bg-pop-amber-soft px-2 py-1 text-[10.5px] text-pop-ink">{disabledReason}</div>
         )}
 
         {/* carryover 首段（上轮未结，最该先做） */}
@@ -308,7 +308,7 @@ export function PlaybookPanel({
                   ))}
                 </div>
                 {(checks[co.id]?.decision === "fail" || checks[co.id]?.decision === "skip") && (
-                  <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd/40 p-1 text-[10.5px]" rows={1}
+                  <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd p-1 text-[10.5px]" rows={1}
                     placeholder={checks[co.id]?.decision === "fail" ? "仍不过 —— 会再次打回并保票 reopened" : "再豁免一次，需写新原因"}
                     value={checks[co.id]?.note ?? ""} onChange={(e) => setNote(co.id, e.target.value)} data-testid={`carryover-note-${co.id}`} />
                 )}
@@ -319,10 +319,10 @@ export function PlaybookPanel({
 
         {/* 主体：按票分节 */}
         {playbook.sections.filter((s) => s.title.startsWith("上轮未结") === false || playbook.carryover.length === 0).map((sec) => (
-          <div key={sec.source + sec.title} className="rounded-lg border border-pop-bd/20">
-            <div className="flex items-center gap-2 border-b border-pop-bd/15 bg-pop-idle/30 px-2 py-1">
+          <div key={sec.source + sec.title} className="rounded-lg border border-pop-bd">
+            <div className="flex items-center gap-2 border-b border-pop-bd bg-pop-idle/30 px-2 py-1">
               <span className="font-mono text-[9px] font-black tracking-wide text-pop-dim">{KIND_LABEL[sec.kind] ?? sec.kind}</span>
-              <span className="text-[10.5px] font-semibold text-pop-ink/80">{sec.title}</span>
+              <span className="text-[10.5px] font-semibold text-pop-ink">{sec.title}</span>
               <span className="ml-auto font-mono text-[8.5px] text-pop-dim truncate max-w-[40%]" title={sec.source}>{sec.source}</span>
             </div>
             <div className="p-2 space-y-2">
@@ -341,12 +341,12 @@ export function PlaybookPanel({
 
         {/* finePrint 折叠（票内全部 AC，勾选不在这一层） */}
         {playbook.finePrint.length > 0 && (
-          <div className="rounded-lg border border-dashed border-pop-bd/30">
+          <div className="rounded-lg border border-dashed border-pop-bd">
             <button className="flex w-full items-center gap-1.5 px-2 py-1 text-[10.5px] font-semibold text-pop-dim hover:bg-pop-idle/30" onClick={() => setOpenFine((v) => !v)} data-testid="playbook-fine-toggle">
               {openFine ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />} 票内 AC 细目（{playbook.finePrint.reduce((n, f) => n + f.acs.length, 0)} 条，仅供回溯，不在这层勾选）
             </button>
             {openFine && (
-              <div className="border-t border-pop-bd/15 p-2 columns-2 gap-4 text-[10px] font-mono text-pop-dim" data-testid="playbook-fine">
+              <div className="border-t border-pop-bd p-2 columns-2 gap-4 text-[10px] font-mono text-pop-dim" data-testid="playbook-fine">
                 {playbook.finePrint.map((f) => f.acs.map((a, i) => <div key={f.ticket + i} className="break-inside-avoid mb-0.5">· [{f.ticket}] {a}</div>))}
               </div>
             )}
@@ -375,7 +375,7 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
   const d = entry?.decision
   const needsNote = d === "fail" || d === "skip"
   return (
-    <div className={`rounded-md border p-2 transition-colors ${d === "fail" ? "border-pop-red bg-pop-red/5" : d === "pass" ? "border-pop-green/30 bg-pop-green-soft/30" : "border-pop-bd/20 bg-pop-paper"}`} data-step={item.id} data-testid={`step-${item.id}`}>
+    <div className={`rounded-md border p-2 transition-colors ${d === "fail" ? "border-pop-red bg-pop-red/5" : d === "pass" ? "border-pop-green/30 bg-pop-green-soft/30" : "border-pop-bd bg-pop-paper"}`} data-step={item.id} data-testid={`step-${item.id}`}>
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <button
           onClick={onToggle}
@@ -396,7 +396,7 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
         {item.probe?.command && (item.lifecycle ? (
           // ③ 起了 runbook 的管道步：不逐条点，折成一行提示（起服/就绪/收尾归预览钮）。
           <span
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-pop-bd/40 bg-pop-idle/40 px-1.5 py-0.5 font-mono text-[9px] text-pop-dim"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-pop-bd bg-pop-idle/40 px-1.5 py-0.5 font-mono text-[9px] text-pop-dim"
             data-testid={`probe-lifecycle-${item.id}`}
             title={LIFECYCLE_HINT[item.lifecycle]}
           >
@@ -407,9 +407,9 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
             onClick={onRunProbe}
             disabled={disabled || probeRunning || !!runBlockedReason}
             title={runBlockedReason ?? "在工作区执行这条探针（同步出结果，自动盖章，可改判）"}
-            className={`shrink-0 rounded-md border-[2px] px-2 py-0.5 font-mono text-[10px] font-black transition-colors ${
+            className={`shrink-0 rounded-md border-[1.5px] px-2 py-0.5 font-mono text-[10px] font-black transition-colors ${
               probeRunning ? "border-pop-amber bg-pop-amber-soft text-pop-amber"
-                : "border-pop-bd bg-pop-green text-white shadow-pop-sm hover:brightness-105 disabled:opacity-40"}`}
+                : "border-pop-bd bg-pop-green text-pop-bg shadow-pop-sm hover:brightness-105 disabled:opacity-40"}`}
             data-testid={`probe-run-${item.id}`}
           >
             {probeRunning ? "⏳ 跑…" : <span className="inline-flex items-center gap-0.5"><Play className="size-2.5" />执行</span>}
@@ -417,7 +417,7 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
         ))}
         {(probe || entry?.probe) && (
           <span
-            className={`pop-stamp shrink-0 rounded border-[2px] bg-transparent px-1.5 py-px font-mono text-[9px] font-black ${
+            className={`pop-stamp shrink-0 rounded border-[1.5px] bg-transparent px-1.5 py-px font-mono text-[9px] font-black ${
               (probe?.state ?? entry?.probe?.state) === "passed" ? "border-pop-green text-pop-green" : "border-pop-red text-pop-red"}`}
             data-testid={`probe-stamp-${item.id}`}
             title={`机器探针 · exit ${probe?.exit_code ?? entry?.probe?.exit_code}${probe?.duration_ms != null ? ` · ${formatDuration(probe.duration_ms)}` : ""}`}
@@ -429,19 +429,19 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
       {open && (
         <>
           {item.probe?.command && (
-            <code className="mt-1 block truncate rounded bg-pop-ink px-1.5 py-0.5 font-mono text-[10px] text-pop-bg" title={item.probe.command}>$ {item.probe.command}</code>
+            <code className="mt-1 block truncate rounded border border-pop-bd bg-pop-bg px-1.5 py-0.5 font-mono text-[10px] text-pop-ink" title={item.probe.command}>$ {item.probe.command}</code>
           )}
           <div className="mt-1 rounded-r border-l-[3px] border-pop-amber bg-pop-amber-soft/50 px-2 py-0.5 text-[10.5px] text-pop-ink/75">
             <b>预期</b> · {item.expect}{item.evidence ? <span className="text-pop-dim"> ｜ 反假跑：{item.evidence}</span> : null}
           </div>
           {d && <Consequence decision={d} ticketHint={item.id} />}
           {needsNote && (
-            <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd/40 p-1 text-[10.5px]" rows={1}
+            <textarea className="mt-1 w-full rounded border border-dashed border-pop-bd p-1 text-[10.5px]" rows={1}
               placeholder={d === "fail" ? "不过的实际现象（必填）— 进打回反馈 + 重开此票" : "为什么这次可以不验（必填）— 下轮仍会问"}
               value={entry?.note ?? ""} onChange={(e) => onNote(item.id, e.target.value)} data-testid={`note-${item.id}`} />
           )}
           {probe?.tail.length ? (
-            <div className="mt-1 max-h-40 overflow-auto rounded bg-pop-ink px-1.5 py-1 font-mono text-[9.5px] leading-snug text-pop-paper" data-testid={`probe-tail-${item.id}`}>
+            <div className="mt-1 max-h-40 overflow-auto rounded bg-pop-bg px-1.5 py-1 font-mono text-[9.5px] leading-snug text-pop-ink" data-testid={`probe-tail-${item.id}`}>
               {probe.tail.slice(-20).map((l, i) => <div key={i} className={`whitespace-pre-wrap break-all ${/error|fail/i.test(l) ? "text-pop-amber" : ""}`}>{l}</div>)}
             </div>
           ) : null}
@@ -453,13 +453,13 @@ function StepRow({ item, entry, disabled, open, onToggle, onDecide, onNote, prob
 
 function DecideBtn({ active, decision, disabled, onClick }: { active: boolean; decision: CheckDecision; disabled: boolean; onClick: () => void }) {
   const map = {
-    pass: { t: "✓ 通过", on: "bg-pop-green text-white border-pop-green" },
-    fail: { t: "✗ 不过", on: "bg-pop-red text-white border-pop-red" },
-    skip: { t: "⊘ 跳过", on: "bg-pop-dim text-white border-pop-dim" },
+    pass: { t: "✓ 通过", on: "bg-pop-green text-pop-bg border-pop-green" },
+    fail: { t: "✗ 不过", on: "bg-pop-red text-pop-ink border-pop-red" },
+    skip: { t: "⊘ 跳过", on: "bg-pop-bd text-pop-ink border-pop-bd" },
   }[decision]
   return (
     <button disabled={disabled} onClick={onClick}
-      className={`rounded-md border px-2 py-0.5 text-[10px] font-bold transition-colors ${active ? map.on : "border-pop-bd/30 bg-pop-idle/40 text-pop-dim hover:bg-pop-idle"} disabled:opacity-40`}
+      className={`rounded-md border px-2 py-0.5 text-[10px] font-bold transition-colors ${active ? map.on : "border-pop-bd bg-pop-idle/40 text-pop-dim hover:bg-pop-idle"} disabled:opacity-40`}
       data-testid={`decide-${decision}`}>{map.t}</button>
   )
 }

@@ -4,70 +4,46 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── 全站暗黑 TUI (2026-09 warm-black terminal) :root 即最终暗色，无 .dark 切换 ──
+   shadcn 语义 token 按 .task-tui 块同款写法重钉为暗色等值（引用 pop 变量）。 */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.46 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --background: var(--pop-bg);
+  --foreground: var(--pop-ink);
+  --card: var(--pop-paper);
+  --card-foreground: var(--pop-ink);
+  --popover: var(--pop-paper);
+  --popover-foreground: var(--pop-ink);
+  --primary: var(--pop-pink);
+  --primary-foreground: #151413;
+  --secondary: var(--pop-idle);
+  --secondary-foreground: var(--pop-ink);
+  --muted: var(--pop-idle);
+  --muted-foreground: var(--pop-dim);
+  --accent: var(--pop-purple-soft);
+  --accent-foreground: var(--pop-ink);
+  --destructive: var(--pop-red);
+  --destructive-foreground: #f5f2ee;
+  --border: rgba(216, 211, 203, 0.14);
+  --input: var(--pop-bd);
+  --ring: var(--pop-pink);
+  --chart-1: var(--pop-pink);
+  --chart-2: var(--pop-cyan);
+  --chart-3: var(--pop-green);
+  --chart-4: var(--pop-amber);
+  --chart-5: var(--pop-navy);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: var(--pop-bg);
+  --sidebar-foreground: var(--pop-ink);
+  --sidebar-primary: var(--pop-pink);
+  --sidebar-primary-foreground: #151413;
+  --sidebar-accent: var(--pop-purple-soft);
+  --sidebar-accent-foreground: var(--pop-ink);
+  --sidebar-border: rgba(216, 211, 203, 0.14);
+  --sidebar-ring: var(--pop-pink);
 
-  /* ── Scheduler semantic colors ── */
-  --scheduler-success: oklch(72% 0.19 155);
-  --scheduler-warn: oklch(80% 0.16 75);
-  --scheduler-error: oklch(63% 0.22 25);
-  --scheduler-info: oklch(70% 0.15 230);
-  --scheduler-paused: oklch(65% 0 0);
-
-  /* Scheduler primary (blue accent for scheduler module) */
-  --scheduler-primary: oklch(62% 0.21 250);
-  --scheduler-primary-hover: oklch(55% 0.22 250);
-  --scheduler-primary-active: oklch(48% 0.22 250);
-  --scheduler-primary-light: oklch(97% 0.01 250);
-
-  /* Scheduler accent (purple for Agent type) */
-  --scheduler-accent: oklch(62% 0.22 310);
-  --scheduler-accent-hover: oklch(55% 0.23 310);
-  --scheduler-accent-light: oklch(97% 0.03 310);
-
-  /* ── Knowledge module tokens ── */
-  --knowledge-primary: oklch(0.55 0.15 180);
-  --knowledge-primary-hover: oklch(0.48 0.17 180);
-  --knowledge-primary-light: oklch(0.96 0.02 180);
-  --knowledge-primary-foreground: oklch(0.985 0 0);
-  --knowledge-accent: oklch(0.70 0.16 70);
-  --knowledge-accent-light: oklch(0.97 0.03 70);
-  --knowledge-rule-bg: oklch(0.99 0 0);
-  --knowledge-rule-border: oklch(0.88 0.01 180);
-  --knowledge-retired: oklch(0.55 0 0);
-  --knowledge-retired-bg: oklch(0.97 0 0);
+  /* 模块色 token（scheduler/knowledge/swarm/moa/agent）统一在下方 pop 派生段
+     定义 —— 此处不留浅色字面量副本：oklch 字面量会被 Lightning CSS 拆进
+     lab 回退块、排到派生段之后，把浅色"复活"回来（2026-09-24 全站换底踩坑）。 */
 
   /* ── Animation tokens ── */
   --duration-fast: 150ms;
@@ -80,110 +56,38 @@
   /* ── Spacing tokens ── */
   --space-section: clamp(4rem, 3rem + 5vw, 10rem);
 
-  /* ── Swarm module tokens (light) ── */
-  --swarm-primary: oklch(0.72 0.15 195);
-  --swarm-primary-hover: oklch(0.65 0.17 195);
-  --swarm-primary-active: oklch(0.58 0.18 195);
-  --swarm-primary-light: oklch(0.97 0.02 195);
-  --swarm-primary-muted: oklch(0.92 0.04 195);
-
-  --swarm-mode-review: oklch(0.70 0.14 155);
-  --swarm-mode-debate: oklch(0.68 0.18 260);
-  --swarm-mode-dispatch: oklch(0.75 0.16 55);
-  --swarm-mode-swarm: oklch(0.72 0.15 195);
-  --swarm-mode-moa: oklch(0.65 0.18 280);
-
-  --swarm-expert-running: oklch(0.78 0.13 55);
-  --swarm-expert-completed: oklch(0.72 0.19 155);
-  --swarm-expert-failed: oklch(0.63 0.22 25);
-  --swarm-expert-skipped: oklch(0.65 0 0);
-  --swarm-expert-budget-exceeded: oklch(0.75 0.16 75);
-
-  --swarm-consensus-line: oklch(0.65 0.22 260);
-  --swarm-consensus-area: oklch(0.65 0.22 260 / 0.15);
-  --swarm-threshold-line: oklch(0.63 0.22 25);
-  --swarm-consensus-dot: oklch(0.72 0.19 155);
-
-  --swarm-budget-warning: oklch(0.80 0.16 75);
-  --swarm-timeout-warning: oklch(0.75 0.16 55);
-  --swarm-context-overflow: oklch(0.63 0.22 25);
-
-  /* ── MOA-specific tokens (light) ── */
-  --moa-aggregator: oklch(0.75 0.15 80);
-  --moa-aggregator-light: oklch(0.75 0.15 80 / 0.1);
-  --moa-aggregator-foreground: oklch(0.35 0.12 80);
-
-  --moa-resolve-exact: oklch(0.72 0.19 155);
-  --moa-resolve-degraded: oklch(0.75 0.15 70);
-  --moa-resolve-degraded-light: oklch(0.75 0.15 70 / 0.1);
-  --moa-resolve-error: oklch(0.63 0.22 25);
-  --moa-resolve-error-light: oklch(0.55 0.22 25 / 0.1);
-
-  /* ── Agent semantic colors ──
-     从 styles/globals.css 迁回 —— 那份文件无人 import，agent-* 工具类一直被
-     Tailwind v4 丢弃，聊天配色全灭即此根因。 */
-  --agent-primary: oklch(0.55 0.18 260);
-  --agent-primary-hover: oklch(0.48 0.20 260);
-  --agent-primary-active: oklch(0.42 0.21 260);
-  --agent-primary-light: oklch(0.96 0.02 260);
-  --agent-primary-foreground: oklch(0.985 0 0);
-
-  --agent-accent: oklch(0.58 0.20 305);
-  --agent-accent-hover: oklch(0.52 0.22 305);
-  --agent-accent-light: oklch(0.96 0.03 305);
-
-  --agent-success: oklch(0.65 0.17 155);
-  --agent-success-light: oklch(0.96 0.03 155);
-  --agent-success-foreground: oklch(0.20 0.05 155);
-
-  --agent-warn: oklch(0.75 0.14 80);
-  --agent-warn-light: oklch(0.97 0.04 80);
-  --agent-warn-foreground: oklch(0.30 0.08 80);
-
-  --agent-error: oklch(0.58 0.20 25);
-  --agent-error-light: oklch(0.96 0.03 25);
-  --agent-error-foreground: oklch(0.25 0.08 25);
-
-  --agent-info: oklch(0.62 0.13 240);
-  --agent-info-light: oklch(0.96 0.02 240);
-  --agent-info-foreground: oklch(0.25 0.05 240);
-
-  --agent-surface: oklch(0.985 0 0);
-  --agent-surface-raised: oklch(1 0 0);
-  --agent-surface-inset: oklch(0.96 0 0);
-  --agent-divider: oklch(0.90 0 0);
-
-  /* ── Pop (Memphis 波普贴纸) tokens — 任务看板 v4 皮肤 (light) ── */
-  --pop-bg: #fffdf5;
-  --pop-paper: #ffffff;
-  --pop-ink: #1c1b22;
-  --pop-dim: #77757f;
-  --pop-bd: #211f27;
-  --pop-pink: #ff4d6d;
-  --pop-pink-soft: #ffe3e9;
-  --pop-yellow: #ffd23f;
-  --pop-yellow-soft: #fff3c4;
-  --pop-purple: #5b45ff;
-  --pop-purple-soft: #eceaff;
-  --pop-green: #00b575;
-  --pop-green-soft: #d9f5e7;
-  --pop-amber: #ffb800;
-  --pop-amber-soft: #fff0cc;
-  --pop-cyan: #22b8e0;
-  --pop-cyan-soft: #daf4fb;
-  --pop-red: #e5484d;
-  --pop-navy: #23486b;          /* 藏青 —— 折叠态身份色（一键盘/把手/折后徽章） */
-  --pop-navy-soft: #e6edf5;
-  --pop-idle: #eceaf5;
-  --pop-bdw: 2.5px;
-  --pop-shadow: 5px 5px 0 rgba(28, 27, 34, 0.16);
-  --pop-shadow-sm: 3px 3px 0 rgba(28, 27, 34, 0.13);
-  --pop-shadow-lg: 8px 8px 0 rgba(28, 27, 34, 0.18);
-  --pop-dot: rgba(28, 27, 34, 0.05);
+  /* ── Pop (暖黑终端 TUI) tokens — 全站最终色板 (dark) ── */
+  --pop-bg: #151413;
+  --pop-paper: #211f1e;
+  --pop-ink: #d8d3cb;
+  --pop-dim: #6e6862;
+  --pop-bd: #3a3733;
+  --pop-pink: #d97757;
+  --pop-pink-soft: #2a1f1a;
+  --pop-yellow: #c9a35c;
+  --pop-yellow-soft: #262119;
+  --pop-purple: #d97757;
+  --pop-purple-soft: #2a1f1a;
+  --pop-green: #8ba88e;
+  --pop-green-soft: #1d241e;
+  --pop-amber: #c9a35c;
+  --pop-amber-soft: #262119;
+  --pop-cyan: #7fa3a8;
+  --pop-cyan-soft: #1c2425;
+  --pop-red: #b4534a;
+  --pop-navy: #43596b;          /* 藏青 —— 折叠态身份色（一键盘/把手/折后徽章） */
+  --pop-navy-soft: #1e2730;
+  --pop-idle: #1d1b1a;
+  --pop-bdw: 1.5px;
+  --pop-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --pop-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --pop-shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.5);
+  --pop-dot: rgba(255, 255, 255, 0.03);
 
 
-  /* ── 全站波普换底 (light):语义 token 一律指向 pop —— 所有 shadcn 组件
-     走 bg-primary/border-border/text-muted-foreground 等语义类,自动继承。 ── */
+  /* ── 全站终端换底 (dark):语义 token 一律指向 pop —— 所有 shadcn 组件
+     走 bg-primary/border-border/text-muted-foreground 等语义类,自动继承。
+     (与 :root 顶部重钉段同值，保留于此作为唯一真相源的镜像。) ── */
   --background: var(--pop-bg);
   --foreground: var(--pop-ink);
   --card: var(--pop-paper);
@@ -191,30 +95,30 @@
   --popover: var(--pop-paper);
   --popover-foreground: var(--pop-ink);
   --primary: var(--pop-pink);
-  --primary-foreground: #ffffff;
+  --primary-foreground: #151413;
   --secondary: var(--pop-idle);
   --secondary-foreground: var(--pop-ink);
   --muted: var(--pop-idle);
   --muted-foreground: var(--pop-dim);
-  --accent: var(--pop-yellow-soft);
+  --accent: var(--pop-purple-soft);
   --accent-foreground: var(--pop-ink);
   --destructive: var(--pop-red);
-  --destructive-foreground: #ffffff;
-  --border: rgba(33, 31, 39, 0.22);
+  --destructive-foreground: #f5f2ee;
+  --border: rgba(216, 211, 203, 0.14);
   --input: var(--pop-bd);
   --ring: var(--pop-pink);
   --chart-1: var(--pop-pink);
-  --chart-2: var(--pop-amber);
-  --chart-3: var(--pop-purple);
-  --chart-4: var(--pop-green);
-  --chart-5: var(--pop-cyan);
+  --chart-2: var(--pop-cyan);
+  --chart-3: var(--pop-green);
+  --chart-4: var(--pop-amber);
+  --chart-5: var(--pop-navy);
   --sidebar: var(--pop-bg);
   --sidebar-foreground: var(--pop-ink);
   --sidebar-primary: var(--pop-pink);
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: var(--pop-yellow-soft);
+  --sidebar-primary-foreground: #151413;
+  --sidebar-accent: var(--pop-purple-soft);
   --sidebar-accent-foreground: var(--pop-ink);
-  --sidebar-border: rgba(33, 31, 39, 0.22);
+  --sidebar-border: rgba(216, 211, 203, 0.14);
   --sidebar-ring: var(--pop-pink);
 
   /* 模块 token 同步归一(引用 pop 变量,深浅两态自动跟随) */
@@ -278,7 +182,7 @@
   --agent-primary-hover: color-mix(in oklab, var(--pop-purple) 85%, black);
   --agent-primary-active: color-mix(in oklab, var(--pop-purple) 70%, black);
   --agent-primary-light: var(--pop-purple-soft);
-  --agent-primary-foreground: #ffffff;
+  --agent-primary-foreground: #151413;
   --agent-accent: var(--pop-pink);
   --agent-accent-hover: color-mix(in oklab, var(--pop-pink) 85%, black);
   --agent-accent-light: var(--pop-pink-soft);
@@ -297,7 +201,7 @@
   --agent-surface: var(--pop-bg);
   --agent-surface-raised: var(--pop-paper);
   --agent-surface-inset: var(--pop-idle);
-  --agent-divider: rgba(33, 31, 39, 0.22);
+  --agent-divider: var(--pop-bd);
 }
 
 
@@ -370,311 +274,40 @@
     --agent-info-light: var(--pop-cyan-soft);
   }
 
-/* ── task-tui 主题滚动条（原型 v4.3 拍板：去除浏览器默认样式）──
-   task-tui 挂在 <html> 上（authoring-workspace body-class），故同时覆盖
-   元素自身与全部后代；FF 走 scrollbar-* 属性。 */
-.task-tui,
-.task-tui * {
+/* ── 全局终端滚动条（原型 v4.3 拍板：去除浏览器默认样式）──
+   原为 .task-tui 作用域规则，全站换肤后推广为全局挂在 <html> 上；
+   同时覆盖元素自身与全部后代；FF 走 scrollbar-* 属性。 */
+html,
+html * {
   scrollbar-width: thin;
   scrollbar-color: #3b3531 transparent;
 }
-.task-tui::-webkit-scrollbar,
-.task-tui ::-webkit-scrollbar { width: 9px; height: 9px; }
-.task-tui::-webkit-scrollbar-track,
-.task-tui ::-webkit-scrollbar-track { background: transparent; }
-.task-tui::-webkit-scrollbar-thumb,
-.task-tui ::-webkit-scrollbar-thumb {
+html::-webkit-scrollbar,
+html *::-webkit-scrollbar { width: 9px; height: 9px; }
+html::-webkit-scrollbar-track,
+html *::-webkit-scrollbar-track { background: transparent; }
+html::-webkit-scrollbar-thumb,
+html *::-webkit-scrollbar-thumb {
   background: #3b3531;
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-.task-tui::-webkit-scrollbar-thumb:hover,
-.task-tui ::-webkit-scrollbar-thumb:hover {
+html::-webkit-scrollbar-thumb:hover,
+html *::-webkit-scrollbar-thumb:hover {
   background: #57504a;
   background-clip: content-box;
 }
-.task-tui::-webkit-scrollbar-corner,
-.task-tui ::-webkit-scrollbar-corner { background: transparent; }
+html::-webkit-scrollbar-corner,
+html *::-webkit-scrollbar-corner { background: transparent; }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.439 0 0);
+/* .dark 块已删除：全站 :root 即暗色终态，无任何代码切换 .dark 类（next-themes 无 Provider，dark:* 变体不激活）。 */
 
-  /* ── Scheduler semantic colors (dark) ── */
-  --scheduler-success: oklch(65% 0.17 155);
-  --scheduler-warn: oklch(75% 0.14 75);
-  --scheduler-error: oklch(58% 0.20 25);
-  --scheduler-info: oklch(65% 0.13 230);
-  --scheduler-paused: oklch(55% 0 0);
-
-  /* Scheduler primary (dark) */
-  --scheduler-primary: oklch(68% 0.19 250);
-  --scheduler-primary-hover: oklch(72% 0.17 250);
-  --scheduler-primary-active: oklch(75% 0.15 250);
-  --scheduler-primary-light: oklch(25% 0.03 250);
-
-  /* Scheduler accent (dark) */
-  --scheduler-accent: oklch(68% 0.20 310);
-  --scheduler-accent-hover: oklch(72% 0.18 310);
-  --scheduler-accent-light: oklch(25% 0.04 310);
-
-  /* ── Knowledge module tokens (dark) ── */
-  --knowledge-primary: oklch(0.65 0.13 180);
-  --knowledge-primary-hover: oklch(0.70 0.11 180);
-  --knowledge-primary-light: oklch(0.22 0.03 180);
-  --knowledge-primary-foreground: oklch(0.985 0 0);
-  --knowledge-accent: oklch(0.75 0.14 70);
-  --knowledge-accent-light: oklch(0.24 0.03 70);
-  --knowledge-rule-bg: oklch(0.18 0 0);
-  --knowledge-rule-border: oklch(0.32 0.02 180);
-  --knowledge-retired: oklch(0.50 0 0);
-  --knowledge-retired-bg: oklch(0.17 0 0);
-
-  /* ── Swarm module tokens (dark) ── */
-  --swarm-primary: oklch(0.78 0.13 195);
-  --swarm-primary-hover: oklch(0.82 0.11 195);
-  --swarm-primary-active: oklch(0.85 0.10 195);
-  --swarm-primary-light: oklch(0.22 0.03 195);
-  --swarm-primary-muted: oklch(0.28 0.04 195);
-
-  --swarm-mode-review: oklch(0.65 0.12 155);
-  --swarm-mode-debate: oklch(0.72 0.16 260);
-  --swarm-mode-dispatch: oklch(0.78 0.14 55);
-  --swarm-mode-swarm: oklch(0.78 0.13 195);
-  --swarm-mode-moa: oklch(0.70 0.16 280);
-
-  --swarm-expert-running: oklch(0.82 0.11 55);
-  --swarm-expert-completed: oklch(0.65 0.17 155);
-  --swarm-expert-failed: oklch(0.58 0.20 25);
-  --swarm-expert-skipped: oklch(0.55 0 0);
-  --swarm-expert-budget-exceeded: oklch(0.78 0.14 75);
-
-  --swarm-consensus-line: oklch(0.72 0.16 260);
-  --swarm-consensus-area: oklch(0.72 0.16 260 / 0.15);
-  --swarm-threshold-line: oklch(0.58 0.20 25);
-  --swarm-consensus-dot: oklch(0.65 0.17 155);
-
-  --swarm-budget-warning: oklch(0.75 0.14 75);
-  --swarm-timeout-warning: oklch(0.70 0.14 55);
-  --swarm-context-overflow: oklch(0.58 0.20 25);
-
-  /* ── MOA-specific tokens (dark) ── */
-  --moa-aggregator: oklch(0.55 0.12 80);
-  --moa-aggregator-light: oklch(0.55 0.12 80 / 0.15);
-  --moa-aggregator-foreground: oklch(0.85 0.08 80);
-
-  --moa-resolve-exact: oklch(0.65 0.17 155);
-  --moa-resolve-degraded: oklch(0.78 0.14 70);
-  --moa-resolve-degraded-light: oklch(0.78 0.14 70 / 0.1);
-  --moa-resolve-error: oklch(0.58 0.20 25);
-  --moa-resolve-error-light: oklch(0.58 0.20 25 / 0.1);
-
-  /* ── Agent semantic colors (dark) ── */
-  --agent-primary: oklch(0.65 0.16 260);
-  --agent-primary-hover: oklch(0.70 0.14 260);
-  --agent-primary-active: oklch(0.75 0.12 260);
-  --agent-primary-light: oklch(0.22 0.04 260);
-
-  --agent-accent: oklch(0.68 0.18 305);
-  --agent-accent-hover: oklch(0.72 0.16 305);
-  --agent-accent-light: oklch(0.24 0.04 305);
-
-  --agent-success: oklch(0.60 0.15 155);
-  --agent-success-light: oklch(0.22 0.04 155);
-  --agent-success-foreground: oklch(0.92 0.03 155);
-
-  --agent-warn: oklch(0.72 0.12 80);
-  --agent-warn-light: oklch(0.25 0.04 80);
-  --agent-warn-foreground: oklch(0.92 0.03 80);
-
-  --agent-error: oklch(0.55 0.18 25);
-  --agent-error-light: oklch(0.22 0.04 25);
-  --agent-error-foreground: oklch(0.92 0.03 25);
-
-  --agent-info: oklch(0.58 0.11 240);
-  --agent-info-light: oklch(0.22 0.03 240);
-  --agent-info-foreground: oklch(0.92 0.03 240);
-
-  --agent-surface: oklch(0.16 0 0);
-  --agent-surface-raised: oklch(0.20 0 0);
-  --agent-surface-inset: oklch(0.13 0 0);
-  --agent-divider: oklch(0.28 0 0);
-
-  /* ── Pop tokens (dark) — 深色底 + 浅色贴纸描边 + 深调糖果 ── */
-  --pop-bg: #16141c;
-  --pop-paper: #1e1c26;
-  --pop-ink: #f2f0fa;
-  --pop-dim: #a5a2b3;
-  --pop-bd: #5d5872;
-  --pop-pink: #ff5d7a;
-  --pop-pink-soft: #3b1f2b;
-  --pop-yellow: #ffd23f;
-  --pop-yellow-soft: #3a3117;
-  --pop-purple: #8f7dff;
-  --pop-purple-soft: #2a2450;
-  --pop-green: #2ecc8f;
-  --pop-green-soft: #173726;
-  --pop-amber: #ffc233;
-  --pop-amber-soft: #3a2d12;
-  --pop-cyan: #43c6ea;
-  --pop-cyan-soft: #153742;
-  --pop-red: #ff6b6b;
-  --pop-idle: #2a2735;
-  --pop-shadow: 5px 5px 0 rgba(0, 0, 0, 0.45);
-  --pop-shadow-sm: 3px 3px 0 rgba(0, 0, 0, 0.4);
-  --pop-shadow-lg: 8px 8px 0 rgba(0, 0, 0, 0.5);
-  --pop-dot: rgba(242, 240, 250, 0.05);
-
-  /* ── 全站波普换底 (dark):与 light 同构,指向深色 pop 变量。 ── */
-  --background: var(--pop-bg);
-  --foreground: var(--pop-ink);
-  --card: var(--pop-paper);
-  --card-foreground: var(--pop-ink);
-  --popover: var(--pop-paper);
-  --popover-foreground: var(--pop-ink);
-  --primary: var(--pop-pink);
-  --primary-foreground: #16141c;
-  --secondary: var(--pop-idle);
-  --secondary-foreground: var(--pop-ink);
-  --muted: var(--pop-idle);
-  --muted-foreground: var(--pop-dim);
-  --accent: var(--pop-purple-soft);
-  --accent-foreground: var(--pop-ink);
-  --destructive: var(--pop-red);
-  --destructive-foreground: #16141c;
-  --border: rgba(242, 240, 250, 0.16);
-  --input: var(--pop-bd);
-  --ring: var(--pop-pink);
-  --chart-1: var(--pop-pink);
-  --chart-2: var(--pop-amber);
-  --chart-3: var(--pop-purple);
-  --chart-4: var(--pop-green);
-  --chart-5: var(--pop-cyan);
-  --sidebar: var(--pop-bg);
-  --sidebar-foreground: var(--pop-ink);
-  --sidebar-primary: var(--pop-pink);
-  --sidebar-primary-foreground: #16141c;
-  --sidebar-accent: var(--pop-purple-soft);
-  --sidebar-accent-foreground: var(--pop-ink);
-  --sidebar-border: rgba(242, 240, 250, 0.16);
-  --sidebar-ring: var(--pop-pink);
-
-  --scheduler-success: var(--pop-green);
-  --scheduler-warn: var(--pop-amber);
-  --scheduler-error: var(--pop-red);
-  --scheduler-info: var(--pop-cyan);
-  --scheduler-paused: var(--pop-dim);
-  --scheduler-primary: var(--pop-purple);
-  --scheduler-primary-hover: color-mix(in oklab, var(--pop-purple) 80%, white);
-  --scheduler-primary-active: color-mix(in oklab, var(--pop-purple) 65%, white);
-  --scheduler-primary-light: var(--pop-purple-soft);
-  --scheduler-accent: var(--pop-pink);
-  --scheduler-accent-hover: color-mix(in oklab, var(--pop-pink) 80%, white);
-  --scheduler-accent-light: var(--pop-pink-soft);
-
-  --knowledge-primary: var(--pop-cyan);
-  --knowledge-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, white);
-  --knowledge-primary-light: var(--pop-cyan-soft);
-  --knowledge-primary-foreground: var(--pop-ink);
-  --knowledge-accent: var(--pop-amber);
-  --knowledge-accent-light: var(--pop-amber-soft);
-  --knowledge-rule-bg: var(--pop-paper);
-  --knowledge-rule-border: var(--pop-bd);
-  --knowledge-retired: var(--pop-dim);
-  --knowledge-retired-bg: var(--pop-idle);
-
-  --swarm-primary: var(--pop-cyan);
-  --swarm-primary-hover: color-mix(in oklab, var(--pop-cyan) 80%, white);
-  --swarm-primary-active: color-mix(in oklab, var(--pop-cyan) 65%, white);
-  --swarm-primary-light: var(--pop-cyan-soft);
-  --swarm-primary-muted: var(--pop-cyan-soft);
-  --swarm-mode-review: var(--pop-green);
-  --swarm-mode-debate: var(--pop-purple);
-  --swarm-mode-dispatch: var(--pop-amber);
-  --swarm-mode-swarm: var(--pop-cyan);
-  --swarm-mode-moa: var(--pop-pink);
-  --swarm-expert-running: var(--pop-amber);
-  --swarm-expert-completed: var(--pop-green);
-  --swarm-expert-failed: var(--pop-red);
-  --swarm-expert-skipped: var(--pop-dim);
-  --swarm-expert-budget-exceeded: var(--pop-amber);
-  --swarm-consensus-line: var(--pop-purple);
-  --swarm-consensus-area: color-mix(in oklab, var(--pop-purple) 20%, transparent);
-  --swarm-threshold-line: var(--pop-red);
-  --swarm-consensus-dot: var(--pop-green);
-  --swarm-budget-warning: var(--pop-amber);
-  --swarm-timeout-warning: var(--pop-amber);
-  --swarm-context-overflow: var(--pop-red);
-
-  --moa-aggregator: var(--pop-amber);
-  --moa-aggregator-light: var(--pop-amber-soft);
-  --moa-aggregator-foreground: var(--pop-ink);
-  --moa-resolve-exact: var(--pop-green);
-  --moa-resolve-degraded: var(--pop-amber);
-  --moa-resolve-degraded-light: var(--pop-amber-soft);
-  --moa-resolve-error: var(--pop-red);
-  --moa-resolve-error-light: var(--pop-pink-soft);
-
-  --agent-primary: var(--pop-purple);
-  --agent-primary-hover: color-mix(in oklab, var(--pop-purple) 80%, white);
-  --agent-primary-active: color-mix(in oklab, var(--pop-purple) 65%, white);
-  --agent-primary-light: var(--pop-purple-soft);
-  --agent-primary-foreground: var(--pop-ink);
-  --agent-accent: var(--pop-pink);
-  --agent-accent-hover: color-mix(in oklab, var(--pop-pink) 80%, white);
-  --agent-accent-light: var(--pop-pink-soft);
-  --agent-success: var(--pop-green);
-  --agent-success-light: var(--pop-green-soft);
-  --agent-success-foreground: var(--pop-ink);
-  --agent-warn: var(--pop-amber);
-  --agent-warn-light: var(--pop-amber-soft);
-  --agent-warn-foreground: var(--pop-ink);
-  --agent-error: var(--pop-red);
-  --agent-error-light: var(--pop-pink-soft);
-  --agent-error-foreground: var(--pop-ink);
-  --agent-info: var(--pop-cyan);
-  --agent-info-light: var(--pop-cyan-soft);
-  --agent-info-foreground: var(--pop-ink);
-  --agent-surface: var(--pop-bg);
-  --agent-surface-raised: var(--pop-paper);
-  --agent-surface-inset: var(--pop-idle);
-  --agent-divider: rgba(242, 240, 250, 0.16);
-}
-
+/* ── 全站等宽终端字体栈：font-sans/font-mono 均指向 mono，body 的 font-sans
+   类不动即全站换字。 ── */
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --font-sans: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, ui-monospace, monospace;
+  --font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, ui-monospace, monospace;
   --animate-shimmer-sweep: shimmer-sweep 3s ease-in-out infinite;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -839,22 +472,23 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
   }
 }
 
-/* ─── Pop (Memphis 波普贴纸) 皮肤件 — 任务看板 / 草稿工作台 / 弹窗共用 ─────────
- * 原则:结构件保持 shadcn 语义类不动,贴纸外形(厚黑边/硬投影/歪斜/圆点底纹)
+/* ─── Pop (暖黑终端 TUI) 皮肤件 — 任务看板 / 草稿工作台 / 弹窗共用 ─────────
+ * 原则:结构件保持 shadcn 语义类不动,终端外形(细边/软投影/圆点底纹)
  * 全部收敛在这里,组件里只贴类名 + pop-* token 工具类。
  * ──────────────────────────────────────────────────────────────────────── */
 
-/* 圆点彩纸底纹(页面级背景) */
+/* 圆点底纹(页面级背景)—— --pop-dot 已是 rgba(255,255,255,0.03) */
 .pop-confetti {
   background-color: var(--pop-bg);
   background-image: radial-gradient(var(--pop-dot) 1.6px, transparent 1.6px);
   background-size: 26px 26px;
 }
 
-/* 贴纸卡:厚黑边 + 硬投影 —— 与 Tailwind 类混用时以本规则为准 */
+/* 终端卡：细边 + 软投影 —— 与 Tailwind 类混用时以本规则为准 */
 .pop-card {
   border: var(--pop-bdw) solid var(--pop-bd);
   border-radius: 14px;
@@ -862,24 +496,20 @@
   box-shadow: var(--pop-shadow-sm);
 }
 .pop-card-sm {
-  border: 2px solid var(--pop-bd);
+  border: var(--pop-bdw) solid var(--pop-bd);
   border-radius: 12px;
   background: var(--pop-paper);
-  box-shadow: 3px 3px 0 rgba(28, 27, 34, 0.1);
-}
-.dark .pop-card-sm {
-  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: var(--pop-shadow-sm);
 }
 
-/* 歪斜贴纸列:奇偶微歪,hover 摆正并浮起(看板卡列表 / 右栏卡列表)。
-   [data-no-tilt] 排除自带歪斜的吊牌等元素。 */
+/* 列表微歪已中性化（终端皮肤要安静）：只保留 hover 软投影反馈。
+   [data-no-tilt] 排除项保持兼容，不再有实际效果。 */
 .pop-tilt > * {
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: box-shadow 0.15s ease;
 }
-.pop-tilt > *:not([data-no-tilt]):nth-child(odd) { transform: rotate(-0.45deg); }
-.pop-tilt > *:not([data-no-tilt]):nth-child(even) { transform: rotate(0.55deg); }
+.pop-tilt > *:not([data-no-tilt]):nth-child(odd) { transform: none; }
+.pop-tilt > *:not([data-no-tilt]):nth-child(even) { transform: none; }
 .pop-tilt > *:not([data-no-tilt]):hover {
-  transform: rotate(0deg) translate(-2px, -2px);
   box-shadow: var(--pop-shadow);
 }
 .pop-tilt > [data-empty-column] {
@@ -887,21 +517,18 @@
   box-shadow: none;
 }
 
-/* 分组吊牌(SPEC/RUN/GATE)的自带微歪 */
-.pop-tilt-tag { transform: rotate(-1.2deg); }
+/* 分组吊牌(SPEC/RUN/GATE)歪斜已中性化 */
+.pop-tilt-tag { transform: none; }
 
-/* 按压位移(入队按钮 / 发送键) */
+/* 按压位移(入队按钮 / 发送键)—— 终端皮肤下仅 1px 轻沉 */
 .pop-press:active {
-  transform: translate(2px, 2px);
+  transform: translate(1px, 1px);
   box-shadow: none !important;
 }
 
 /* 虚线分区带(思考卡 meta / ask 提示等) */
 .pop-dash {
-  border-top: 2px dashed rgba(33, 31, 39, 0.2);
-}
-.dark .pop-dash {
-  border-top-color: rgba(242, 240, 250, 0.18);
+  border-top: 1.5px dashed rgba(216, 211, 203, 0.16);
 }
 
 @keyframes pop-blink { 50% { opacity: 0; } }
@@ -932,9 +559,9 @@
   scrollbar-width: none;
 }
 
-/* 🎪 Sonner toast 贴纸化:厚墨边 + 硬投影 + 大圆角 */
+/* 🎪 Sonner toast 终端化:细墨边 + 软投影 + 圆角 */
 .toaster [data-sonner-toast] {
-  border: 2.5px solid var(--pop-bd) !important;
+  border: var(--pop-bdw) solid var(--pop-bd) !important;
   border-radius: 14px !important;
   box-shadow: var(--pop-shadow-sm) !important;
   font-weight: 700;
@@ -956,7 +583,7 @@
 
 @keyframes token-bump {
   0% { transform: scale(1); color: inherit; }
-  50% { transform: scale(1.05); color: oklch(0.769 0.188 70.08); }
+  50% { transform: scale(1.05); color: var(--pop-yellow); }
   100% { transform: scale(1); color: inherit; }
 }
 
@@ -978,10 +605,10 @@
   border-color: transparent !important;
   /* 使用 longhand 而非 background 简写，避免重置元素自身的 background-color */
   background-image:
-    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px);
+    repeating-linear-gradient(90deg, var(--pop-amber) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(90deg, var(--pop-amber) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, var(--pop-amber) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, var(--pop-amber) 0 6px, transparent 6px 12px);
   background-position: 0 0, 0 100%, 0 0, 100% 0;
   background-size: 100% 2px, 100% 2px, 2px 100%, 2px 100%;
   background-repeat: no-repeat;
@@ -1137,4 +764,5 @@
   margin-right: 0.5em;
   vertical-align: middle;
 }
+
 

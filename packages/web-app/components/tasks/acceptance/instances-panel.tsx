@@ -87,7 +87,7 @@ export function InstancesPanel({ taskId, rev, disabledReason }: InstancesPanelPr
     void act(() => closeDevInstance(taskId, port))
 
   return (
-    <div className="rounded-[13px] border-2 border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="instances-panel">
+    <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="instances-panel">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <Server className="size-3.5 shrink-0 text-pop-dim" />
         <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">测试实例</span>
@@ -105,16 +105,16 @@ export function InstancesPanel({ taskId, rev, disabledReason }: InstancesPanelPr
       </div>
 
       {error && (
-        <div className="border-t border-pop-bd/10 px-3 py-1.5 font-mono text-[10px] text-pop-red" data-testid="instances-error">{error}</div>
+        <div className="border-t border-pop-bd px-3 py-1.5 font-mono text-[10px] text-pop-red" data-testid="instances-error">{error}</div>
       )}
 
       {aliveEntries.length > 0 && (
-        <div className="border-t border-pop-bd/10">
+        <div className="border-t border-pop-bd">
           {aliveEntries.map((e) => (
             <div key={e.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5" data-testid={`instance-entry-${e.source}`}>
               <span className={`inline-block size-2 rounded-full ${e.status === "alive" ? "bg-pop-green" : "bg-pop-dim"}`} />
-              <span className="rounded-full border border-pop-bd/40 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim">{SRC_TXT[e.source] ?? e.source}</span>
-              <span className="font-mono text-[10.5px] text-pop-ink/80">{e.ports.map((p) => `:${p}`).join(" ") || "端口未知"}</span>
+              <span className="rounded-full border border-pop-bd px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim">{SRC_TXT[e.source] ?? e.source}</span>
+              <span className="font-mono text-[10.5px] text-pop-ink">{e.ports.map((p) => `:${p}`).join(" ") || "端口未知"}</span>
               {e.pids.length > 0 && <span className="font-mono text-[9.5px] text-pop-dim">pid {e.pids.join(",")}</span>}
               {e.workspace_path && <span className="max-w-[220px] truncate font-mono text-[9.5px] text-pop-dim" title={e.workspace_path}>{e.workspace_path}</span>}
               {e.status === "stale" && <span className="font-mono text-[9.5px] text-pop-amber">已失联（进程不在）</span>}
@@ -127,11 +127,11 @@ export function InstancesPanel({ taskId, rev, disabledReason }: InstancesPanelPr
       )}
 
       {(data?.external.length ?? 0) > 0 && (
-        <div className="border-t border-pop-bd/10">
+        <div className="border-t border-pop-bd">
           {data!.external.map((x) => (
             <div key={`ext-${x.port}`} className="flex flex-wrap items-center gap-2 px-3 py-1.5" data-testid="instance-external">
               <TriangleAlert className="size-3 shrink-0 text-pop-amber" />
-              <span className="font-mono text-[10.5px] text-pop-ink/80">
+              <span className="font-mono text-[10.5px] text-pop-ink">
                 外部 dev 实例 :{x.port}（{x.role}{x.branch ? `，分支 ${x.branch}` : ""}）— 未登记（多半是在 worktree 手动 pnpm dev 起的）
               </span>
               <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[10px] text-pop-red" disabled={busy || !!disabledReason} onClick={() => setConfirmCloseDev({ port: x.port, label: x.branch ?? "" })} data-testid={`instance-close-dev-${x.port}`}>
@@ -143,7 +143,7 @@ export function InstancesPanel({ taskId, rev, disabledReason }: InstancesPanelPr
       )}
 
       {disabledReason && total > 0 && (
-        <div className="border-t border-pop-bd/10 px-3 py-1 font-mono text-[9.5px] text-pop-dim">{disabledReason}</div>
+        <div className="border-t border-pop-bd px-3 py-1 font-mono text-[9.5px] text-pop-dim">{disabledReason}</div>
       )}
 
       <ConfirmDialog

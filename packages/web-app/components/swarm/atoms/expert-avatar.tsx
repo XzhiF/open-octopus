@@ -11,8 +11,8 @@ export interface ExpertAvatarProps {
 }
 
 const AVATAR_COLORS = [
-  "#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4",
-  "#6366f1", "#a855f7", "#ec4899", "#a16207", "#475569",
+  "#d97757", "#7fa3a8", "#8ba88e", "#c9a35c", "#43596b",
+  "#b4534a", "#6e6862", "#d97757", "#8ba88e", "#7fa3a8",
 ]
 
 function hashRole(role: string): number {
@@ -47,7 +47,7 @@ export function ExpertAvatar({ role, size = "md", status }: ExpertAvatarProps) {
     <div className="relative inline-flex shrink-0">
       <div
         className={cn(
-          "inline-flex items-center justify-center rounded-full font-semibold text-white",
+          "inline-flex items-center justify-center rounded-full font-semibold text-pop-bg",
           sizeMap[size],
         )}
         style={{ backgroundColor: bgColor }}

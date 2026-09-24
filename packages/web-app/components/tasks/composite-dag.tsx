@@ -33,7 +33,7 @@ const STATUS_TONE: Record<string, string> = {
   running: "border-pop-cyan/60 bg-pop-cyan-soft",
   done: "border-pop-green/60 bg-pop-green-soft",
   failed: "border-pop-red/60 bg-pop-pink-soft",
-  aborted: "border-pop-bd/30 bg-pop-idle",
+  aborted: "border-pop-bd bg-pop-idle",
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -62,7 +62,7 @@ function DagNode({ data }: { data: Record<string, unknown> }) {
   return (
     <div
       className={cn(
-        "rounded-md border-2 px-3 py-2 min-w-[150px] max-w-[190px] shadow-sm",
+        "rounded-md border-[1.5px] px-3 py-2 min-w-[150px] max-w-[190px] shadow-sm",
         tone,
         kind === "integration" && "border-dashed"
       )}

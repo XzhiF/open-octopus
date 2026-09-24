@@ -31,10 +31,10 @@ export function ConditionEdge({
   const isFailure = labelText?.includes("failed") || labelText?.includes("!= 0")
 
   const edgeColor = isSuccess
-    ? "#10b981"
+    ? "#8ba88e"
     : isFailure
-      ? "#ef4444"
-      : "#f59e0b"
+      ? "#b4534a"
+      : "#c9a35c"
 
   return (
     <>
@@ -57,7 +57,7 @@ export function ConditionEdge({
               fontSize: 11,
               fontWeight: 500,
               color: edgeColor,
-              background: "#fff",
+              background: "#211f1e",
               padding: "4px 8px",
               borderRadius: 4,
               pointerEvents: "all",

@@ -188,7 +188,7 @@ export function ConflictDialog({
             {/* Use native button instead of AlertDialogAction to prevent dialog close */}
             <button
               onClick={handleEnterMerge}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-pop-cyan text-white hover:bg-pop-cyan/90 h-9 px-4 py-2 shadow"
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-pop-cyan text-pop-bg hover:bg-pop-cyan/90 h-9 px-4 py-2 shadow"
             >
               解决冲突
             </button>

@@ -447,22 +447,22 @@ export function WorkflowFlowPanel({
             proOptions={{ hideAttribution: true }}
             aria-label="执行流程图"
           >
-            <Background color="#eceaf5" gap={20} size={1} />
+            <Background color="#3a3733" gap={20} size={1} />
             <Controls showInteractive={false} />
             <MiniMap
               nodeColor={(node) => {
                 const status = (node.data as any)?.executionStatus
-                if (status === "completed") return "#00b575"
-                if (status === "completed_with_failures") return "#ffb800"
-                if (status === "running") return "#ffb800"
-                if (status === "failed") return "#e5484d"
-                if (status === "budget_exceeded") return "#e5484d"
-                if (status === "paused") return "#5b45ff"
-                if (status === "pending_approval") return "#ffb800"
-                if (status === "rejected") return "#ffb800"
-                return "#eceaf5"
+                if (status === "completed") return "#8ba88e"
+                if (status === "completed_with_failures") return "#c9a35c"
+                if (status === "running") return "#c9a35c"
+                if (status === "failed") return "#b4534a"
+                if (status === "budget_exceeded") return "#b4534a"
+                if (status === "paused") return "#d97757"
+                if (status === "pending_approval") return "#c9a35c"
+                if (status === "rejected") return "#c9a35c"
+                return "#6e6862"
               }}
-              maskColor="rgba(28, 27, 34, 0.1)"
+              maskColor="rgba(0, 0, 0, 0.5)"
               className="!bg-background/80 !border-border"
             />
           </ReactFlow>
@@ -569,7 +569,7 @@ export function WorkflowFlowPanel({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel onClick={() => setPendingSkip(null)}>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={() => { skipNode(pendingSkip!.nodeId); setPendingSkip(null) }} className="bg-destructive text-white hover:bg-destructive/90">
+              <AlertDialogAction onClick={() => { skipNode(pendingSkip!.nodeId); setPendingSkip(null) }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 确认跳过
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -585,7 +585,7 @@ export function WorkflowFlowPanel({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel onClick={() => setPendingDeleteNode(null)}>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={() => { deleteNode(pendingDeleteNode!.nodeId); setPendingDeleteNode(null) }} className="bg-destructive text-white hover:bg-destructive/90">
+              <AlertDialogAction onClick={() => { deleteNode(pendingDeleteNode!.nodeId); setPendingDeleteNode(null) }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 确认删除
               </AlertDialogAction>
             </AlertDialogFooter>

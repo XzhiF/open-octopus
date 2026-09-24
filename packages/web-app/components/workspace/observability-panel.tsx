@@ -143,9 +143,18 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
 }
 
 const PIE_COLORS = [
-  "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
-  "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16",
+  "#7fa3a8", "#8ba88e", "#c9a35c", "#b4534a",
+  "#d97757", "#6e6862", "#d8d3cb", "#43596b",
 ]
+
+// recharts Tooltip 默认浅底 —— 暗黑 TUI 下改用 paper 底 / bd 描边
+const CHART_TOOLTIP_STYLE = {
+  fontSize: 11,
+  background: "#211f1e",
+  border: "1px solid #3a3733",
+  borderRadius: 8,
+  color: "#d8d3cb",
+}
 
 // ============ Main Component ============
 
@@ -358,11 +367,11 @@ function TokenTrendChart({ timeSeries }: { timeSeries: ObservabilityData["timeSe
           <XAxis dataKey="time" tick={{ fontSize: 9 }} />
           <YAxis yAxisId="tokens" tick={{ fontSize: 9 }} width={40} />
           <YAxis yAxisId="cost" orientation="right" tick={{ fontSize: 9 }} width={40} />
-          <Tooltip contentStyle={{ fontSize: 11 }} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10 }} />
-          <Line yAxisId="tokens" type="monotone" dataKey="inputTokens" name="输入" stroke="#3b82f6" dot={false} strokeWidth={1.5} />
-          <Line yAxisId="tokens" type="monotone" dataKey="outputTokens" name="输出" stroke="#10b981" dot={false} strokeWidth={1.5} />
-          <Line yAxisId="cost" type="monotone" dataKey="cost" name="成本" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="tokens" type="monotone" dataKey="inputTokens" name="输入" stroke="#7fa3a8" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="tokens" type="monotone" dataKey="outputTokens" name="输出" stroke="#8ba88e" dot={false} strokeWidth={1.5} />
+          <Line yAxisId="cost" type="monotone" dataKey="cost" name="成本" stroke="#c9a35c" dot={false} strokeWidth={1.5} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -383,10 +392,10 @@ function NodeConsumptionChart({ byNode }: { byNode: ObservabilityData["byNode"] 
           <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
           <XAxis type="number" tick={{ fontSize: 9 }} />
           <YAxis type="category" dataKey="name" tick={{ fontSize: 9 }} width={90} />
-          <Tooltip contentStyle={{ fontSize: 11 }} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10 }} />
-          <Bar dataKey="inputTokens" name="输入" fill="#3b82f6" radius={[0, 3, 3, 0]} />
-          <Bar dataKey="outputTokens" name="输出" fill="#10b981" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="inputTokens" name="输入" fill="#7fa3a8" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="outputTokens" name="输出" fill="#8ba88e" radius={[0, 3, 3, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -423,7 +432,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ fontSize: 11 }} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
           </PieChart>
         </ResponsiveContainer>
       </div>

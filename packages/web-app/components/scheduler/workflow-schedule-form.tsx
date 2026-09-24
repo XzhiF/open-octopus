@@ -109,7 +109,7 @@ export function WorkflowScheduleForm({
             type="button"
             className={cn(
               "rounded-lg border-[1.5px] px-3 py-1 text-xs transition-colors",
-              !jsonMode ? "bg-pop-yellow text-pop-ink font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
+              !jsonMode ? "bg-pop-yellow text-pop-bg font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
             )}
             onClick={() => jsonMode && onJsonModeToggle()}
           >
@@ -119,7 +119,7 @@ export function WorkflowScheduleForm({
             type="button"
             className={cn(
               "rounded-lg border-[1.5px] px-3 py-1 text-xs transition-colors",
-              jsonMode ? "bg-pop-yellow text-pop-ink font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
+              jsonMode ? "bg-pop-yellow text-pop-bg font-black border-pop-bd shadow-pop-sm" : "text-pop-dim font-bold border-transparent hover:text-pop-ink hover:bg-pop-yellow-soft"
             )}
             onClick={() => !jsonMode && onJsonModeToggle()}
           >

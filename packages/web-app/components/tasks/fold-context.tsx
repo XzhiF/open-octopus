@@ -71,7 +71,7 @@ export function FoldHandle({ id, group = "info", closed, onToggle, className = "
       aria-label={`fold-${id}`}
       data-fold-toggle={id}
       className={`grid size-[18px] shrink-0 place-items-center rounded-[6px] border-[1.5px] font-mono text-[9px] font-black transition-colors ${
-        closed ? "border-pop-navy bg-pop-navy-soft text-pop-navy" : "border-pop-bd/25 text-pop-dim hover:border-pop-navy hover:text-pop-navy"
+        closed ? "border-pop-navy bg-pop-navy-soft text-pop-ink" : "border-pop-bd text-pop-dim hover:border-pop-navy hover:text-pop-ink"
       } ${className}`}
     >
       {closed ? "▸" : "▾"}
@@ -89,8 +89,8 @@ export function FoldMasterChip({ className = "" }: { className?: string }) {
       onClick={fold.cycle}
       title={hint}
       data-testid="fold-master"
-      className={`shrink-0 rounded-[9px] border-[2px] border-pop-bd px-2 py-0.5 font-mono text-[9.5px] font-black shadow-pop-sm transition-colors ${
-        fold.mode === 2 ? "bg-pop-navy text-white" : fold.mode === 1 ? "bg-pop-navy-soft text-pop-navy" : "bg-pop-paper text-pop-ink"
+      className={`shrink-0 rounded-[9px] border-[1.5px] border-pop-bd px-2 py-0.5 font-mono text-[9.5px] font-black shadow-pop-sm transition-colors ${
+        fold.mode === 2 ? "bg-pop-navy text-pop-ink" : fold.mode === 1 ? "bg-pop-navy-soft text-pop-ink" : "bg-pop-paper text-pop-ink"
       } ${className}`}
     >
       ⇕ {label}
@@ -108,7 +108,7 @@ export function FoldMasterBar() {
       title={`${["一键盘：全展开 → 点一下收拢", "信息框已收 — 再点连主卡一起收", "全部已收 — 再点全展开"][fold.mode]}（${["全展开", "收信息框", "全收"][fold.mode]}）`}
       data-testid="fold-master-bar"
       className={`grid size-[18px] place-items-center rounded-[6px] border-[1.5px] font-mono text-[10px] font-black shadow-pop-sm ${
-        fold.mode === 2 ? "border-pop-bd bg-pop-navy text-white" : fold.mode === 1 ? "border-pop-bd bg-pop-navy-soft text-pop-navy" : "border-pop-bd/25 bg-pop-paper text-pop-dim hover:border-pop-navy hover:text-pop-navy"
+        fold.mode === 2 ? "border-pop-bd bg-pop-navy text-pop-ink" : fold.mode === 1 ? "border-pop-bd bg-pop-navy-soft text-pop-ink" : "border-pop-bd bg-pop-paper text-pop-dim hover:border-pop-navy hover:text-pop-ink"
       }`}
     >
       ⇕
@@ -126,19 +126,19 @@ export function FoldBox({ id, tag, badge, tail, group = "info", tone, className,
   const header = (
     <header
       onClick={fold ? () => fold.toggle(id, group) : undefined}
-      className={`flex items-center gap-2 border-b-2 px-3 py-1.5 ${closed ? "border-pop-navy/25 bg-pop-navy-soft" : "border-pop-bd/10"} ${fold ? "cursor-pointer select-none hover:bg-pop-yellow-soft/40" : ""}`}
+      className={`flex items-center gap-2 border-b-[1.5px] px-3 py-1.5 ${closed ? "border-pop-navy bg-pop-navy-soft" : "border-pop-bd"} ${fold ? "cursor-pointer select-none hover:bg-pop-yellow-soft/40" : ""}`}
     >
-      <span className={`font-mono text-[9.5px] font-black tracking-[.09em] ${closed ? "text-pop-navy" : "text-pop-dim"}`}>{tag}</span>
-      {closed && badge && <span className="truncate font-mono text-[10px] font-black text-pop-navy" data-fold-badge={id}>{badge}</span>}
+      <span className={`font-mono text-[9.5px] font-black tracking-[.09em] ${closed ? "text-pop-ink" : "text-pop-dim"}`}>{tag}</span>
+      {closed && badge && <span className="truncate font-mono text-[10px] font-black text-pop-ink" data-fold-badge={id}>{badge}</span>}
       {tail && !closed && <span className="ml-auto font-mono text-[10px] text-pop-dim">{tail}</span>}
-      {closed && !badge && <span className="ml-auto font-mono text-[9px] text-pop-navy/50">▸</span>}
+      {closed && !badge && <span className="ml-auto font-mono text-[9px] text-pop-dim">▸</span>}
     </header>
   )
   return (
     <section
       data-fold-box={id}
       data-fold-closed={closed ? "true" : undefined}
-      className={`overflow-hidden rounded-[13px] border-2 bg-pop-paper shadow-pop-sm ${tone ?? "border-pop-bd"} ${closed ? "shadow-[1.5px_1.5px_0_rgba(33,31,39,.08)]" : ""} ${className ?? ""}`}
+      className={`overflow-hidden rounded-[13px] border-[1.5px] bg-pop-paper shadow-pop-sm ${tone ?? "border-pop-bd"} ${closed ? "shadow-none" : ""} ${className ?? ""}`}
     >
       {header}
       {!closed && <div className="px-3 py-2">{children}</div>}

@@ -229,7 +229,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
             <div
               className={`max-w-[80%] rounded-[10px] border-2 border-pop-bd shadow-pop-sm px-2.5 py-1.5 ${
                 msg.role === "user"
-                  ? "bg-pop-cyan text-white"
+                  ? "bg-pop-cyan text-pop-bg"
                   : msg.status === "error"
                     ? "bg-pop-pink-soft text-pop-red"
                     : "bg-pop-paper text-pop-ink"

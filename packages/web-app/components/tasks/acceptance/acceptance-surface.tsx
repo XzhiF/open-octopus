@@ -762,7 +762,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   return (
     <div className="flex h-full min-h-0 flex-col" data-acceptance-modal data-testid="acceptance-modal">
       {/* 顶条（原弹窗 DialogHeader 的下沉替身）：语境 + 一句宪法。 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-pop-bd/15 bg-pop-paper px-4 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-pop-bd bg-pop-paper px-4 py-1.5">
         <span className="text-[13px] font-black">验收 · 验货台</span>
         {awaitingPhase && (
           <span className="text-xs text-muted-foreground tabular-nums" data-acceptance-phase-label data-testid="acceptance-phase-label">
@@ -772,7 +772,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
         {task && <Badge variant="outline" className="max-w-[260px] truncate text-[10px]">{task.name}</Badge>}
         {sseDown && (
           <span
-            className="rounded-full border-2 border-pop-red bg-[#ffe3e9] px-2 py-px font-mono text-[9.5px] font-black text-pop-red"
+            className="rounded-full border-[1.5px] border-pop-red bg-pop-pink-soft px-2 py-px font-mono text-[9.5px] font-black text-pop-red"
             data-sse-down data-testid="acceptance-sse-down"
             title="实时连接中断 —— 盘面停在断线时刻的快照，恢复后自动补拉"
           >
@@ -955,7 +955,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           ) : (
             <>
               {/* sub-tab 条：两枚 chunky 贴纸，选中的黄底压黑边（波普） */}
-              <div className="flex shrink-0 items-center gap-1.5 border-b-2 border-pop-bd/10 bg-pop-paper px-3 py-2">
+              <div className="flex shrink-0 items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2">
                 {([
                   ["diff", "实物", roundDiff?.available ? String(roundDiff.aggregate.files) : ""],
                   ["matrix", "核对", ""],
@@ -964,10 +964,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                     key={id}
                     onClick={() => setMidTab(id)}
                     aria-selected={midTab === id}
-                    className={`rounded-full border-[2px] px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                    className={`rounded-full border-[1.5px] px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
                       midTab === id
-                        ? "border-pop-bd bg-pop-yellow text-pop-ink shadow-pop-sm"
-                        : "border-pop-bd/25 text-pop-dim hover:border-pop-bd/60"
+                        ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm"
+                        : "border-pop-bd text-pop-dim hover:border-pop-bd/60"
                     }`}
                     data-acceptance-midtab={id} data-testid={`acceptance-tab-${id}`}
                   >
@@ -1135,7 +1135,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           </DialogHeader>
           <div className="space-y-2 text-[11.5px]">
             {playbook?.goal && <p className="font-semibold text-pop-ink">{playbook.goal}</p>}
-            <div className="rounded-md border border-pop-bd/20 bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
+            <div className="rounded-md border border-pop-bd bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
               <div>实物 · {roundDiff?.available ? `${roundDiff.aggregate.commits} commits · +${roundDiff.aggregate.additions}/−${roundDiff.aggregate.dels} · ${roundDiff.aggregate.files} 文件` : "无有效 diff"}</div>
               <div>自动复检 · {verify ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : "未跑（≠失败）"}</div>
               <div>跑起来看 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>

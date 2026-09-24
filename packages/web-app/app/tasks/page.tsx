@@ -34,62 +34,78 @@ import {
 
 const REFRESH_INTERVAL_MS = 10_000
 
-/** 看板状态色彩体系 🎪 Memphis 波普贴纸版:一状态一糖果色,列头彩色吊牌 +
- *  泳道轻染 + 卡片整面染色(歪斜/hover 浮起由 .pop-tilt 统一驱动)。
+/** 看板状态色彩体系 🖥 暖黑终端 (TUI) 版：一状态一暗色染色 —— 列泳道是「列 accent
+ *  的深染底」(soft/35，比盘面略深)，列头是同族 soft 的整幅吊牌 + accent 虚线分隔，
+ *  卡片整面吃 *-*soft 全强度（比泳道亮一档 → 卡片从轨道里浮出来）。
+ *  accent 与 public/prototype/site-dark-tui.html #tasks 对齐：
+ *  草稿 dim / 待执行 cyan / 执行中 amber / 待验收 yellow / 完成 green。
+ *  （running 不再用 purple —— 换底后 --pop-purple 与 --pop-pink 同值 #d97757，
+ *   执行中会和「复合」徽章撞色。）
  *  全部为静态 class 字面量（Tailwind JIT）。 */
 const COLUMN_THEME: Record<TaskBoardColumnId, {
-  lane: string; head: string; label: string; dot: string; pill: string
+  lane: string; head: string; headBd: string; label: string; dot: string; pill: string
 }> = {
   draft: {
-    lane: "bg-pop-paper",
+    lane: "bg-pop-idle/40",
     head: "bg-pop-idle",
+    headBd: "border-b-pop-dim/45",
     label: "text-pop-dim",
-    dot: "bg-pop-dim",
-    pill: "bg-pop-paper text-pop-dim",
+    dot: "bg-pop-dim text-pop-dim",
+    pill: "bg-pop-bg text-pop-dim",
   },
   ready: {
-    lane: "bg-pop-cyan-soft/25",
+    lane: "bg-pop-cyan-soft/35",
     head: "bg-pop-cyan-soft",
+    headBd: "border-b-pop-cyan/45",
     label: "text-pop-cyan",
-    dot: "bg-pop-cyan",
-    pill: "bg-pop-paper text-pop-cyan",
+    dot: "bg-pop-cyan text-pop-cyan",
+    pill: "bg-pop-bg text-pop-cyan",
   },
   running: {
-    lane: "bg-pop-purple-soft/30",
-    head: "bg-pop-purple-soft",
-    label: "text-pop-purple",
-    dot: "bg-pop-purple",
-    pill: "bg-pop-paper text-pop-purple",
+    lane: "bg-pop-amber-soft/35",
+    head: "bg-pop-amber-soft",
+    headBd: "border-b-pop-amber/45",
+    label: "text-pop-amber",
+    // 执行中的灯在闪（原型 .kcol-h i.blink）—— 呼吸而不是硬脉冲。
+    dot: "bg-pop-amber text-pop-amber animate-pulse",
+    pill: "bg-pop-bg text-pop-amber",
   },
   awaiting_review: {
-    lane: "bg-pop-amber-soft/30",
-    head: "bg-pop-amber-soft",
-    label: "text-pop-amber",
-    dot: "bg-pop-amber",
-    pill: "bg-pop-paper text-pop-amber",
+    lane: "bg-pop-yellow-soft/35",
+    head: "bg-pop-yellow-soft",
+    headBd: "border-b-pop-yellow/45",
+    label: "text-pop-yellow",
+    dot: "bg-pop-yellow text-pop-yellow",
+    pill: "bg-pop-bg text-pop-yellow",
   },
   done: {
-    lane: "bg-pop-green-soft/25",
+    lane: "bg-pop-green-soft/35",
     head: "bg-pop-green-soft",
+    headBd: "border-b-pop-green/45",
     label: "text-pop-green",
-    dot: "bg-pop-green",
-    pill: "bg-pop-paper text-pop-green",
+    dot: "bg-pop-green text-pop-green",
+    pill: "bg-pop-bg text-pop-green",
   },
 }
 
-/** 卡片整面染色:九状态各一贴纸底(黑边硬影外形统一,由 .pop-tilt 列容器驱动)。
- *  paused 与 running 同紫:暂停仍在执行中列、仍占 latch，靠 ⏸ 徽标区分而不是靠底色。 */
+/** 卡片整面染色：soft 底换底后即为深棕/深青/深绿，卡内文字统一走 text-pop-ink
+ *  （由页面根节点提供）—— 不再有「浅底深字」假设。
+ *  paused 与 running 同琥珀：暂停仍在执行中列、仍占 latch，靠 ⏸ 徽标区分而不是靠底色。 */
 const CARD_THEME: Record<Task["status"], string> = {
   draft: "bg-pop-paper",
   ready: "bg-pop-cyan-soft",
-  running: "bg-pop-purple-soft",
-  paused: "bg-pop-purple-soft",
-  archiving: "bg-pop-amber-soft",
+  running: "bg-pop-amber-soft",
+  paused: "bg-pop-amber-soft",
+  archiving: "bg-pop-yellow-soft",
   awaiting_review: "bg-pop-yellow-soft",
   done: "bg-pop-green-soft",
   failed: "bg-pop-pink-soft",
   aborted: "bg-pop-idle",
 }
+
+/** 卡内动作片（原型 .tcard .acts button）：小尺寸 + 1px 细边 + 软投影，
+ *  主行动（验收）上 accent，次级动作一律 dim 底、hover 换 accent。 */
+const ACT_CHIP = "h-5 rounded-md border px-2 text-[10px] font-black shadow-pop-sm pop-press"
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskView[]>([])
@@ -374,9 +390,9 @@ export default function TasksPage() {
   return (
     <div className="pop-confetti flex flex-1 min-h-0 flex-col text-pop-ink">
       <div className="flex flex-col h-full min-w-0">
-        <header className="flex items-center gap-3 px-6 py-3 border-b-[2.5px] border-pop-bd bg-pop-paper">
-          <h1 className="text-lg font-black tracking-tight">任务看板</h1>
-          <span className="rounded-full border-2 border-pop-bd bg-pop-yellow px-2 py-0.5 text-xs font-black tabular-nums shadow-pop-sm">{tasks.length} 个任务</span>
+        <header className="flex items-center gap-3 px-6 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper">
+          <h1 className="text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
+          <span className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
           <div className="ml-auto flex gap-2">
             <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
@@ -406,12 +422,12 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-[2.5px] border-pop-bd shadow-pop-sm ${theme.lane}`}
+                  className={`flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${theme.lane}`}
                 >
-                  <header className={`flex items-center gap-2 border-b-2 border-pop-bd px-3 py-2 text-xs font-black ${theme.head}`}>
-                    <span className={`size-2 shrink-0 rounded-[3px] border-[1.5px] border-pop-bd ${theme.dot}`} aria-hidden />
+                  <header className={`flex items-center gap-2 border-b-[1.5px] border-dashed px-3 py-2 text-xs font-black ${theme.head} ${theme.headBd}`}>
+                    <span className={`size-2 shrink-0 rounded-full shadow-[0_0_8px_currentColor] ${theme.dot}`} aria-hidden />
                     <span className={theme.label}>{col.label}</span>
-                    <span className={`ml-auto rounded-full border-2 border-pop-bd px-1.5 py-px text-[10px] font-black tabular-nums shadow-[2px_2px_0_rgba(28,27,34,.13)] ${theme.pill}`}>{colTasks.length}</span>
+                    <span className={`ml-auto rounded-full border border-pop-bd px-1.5 py-px text-[10px] font-black tabular-nums ${theme.pill}`}>{colTasks.length}</span>
                   </header>
                   <div className="pop-tilt flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
                     {colTasks.map((task) => (
@@ -420,6 +436,7 @@ export default function TasksPage() {
                         task={task}
                         derived={derivedMap[task.id]}
                         budgetMs={budgetMs}
+                        colAccent={theme.label}
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
@@ -432,7 +449,7 @@ export default function TasksPage() {
                     {colTasks.length === 0 && (
                       <div
                         data-empty-column={col.id}
-                        className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-pop-bd/30 text-[11px] font-bold text-pop-dim/70"
+                        className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-lg border-[1.5px] border-dashed border-pop-bd text-[11px] font-bold text-pop-dim"
                       >
                         <Inbox className="size-4" aria-hidden />
                         暂无任务
@@ -484,7 +501,7 @@ export default function TasksPage() {
                 e.preventDefault()
                 if (deletingTaskId) void handleDeleteDraft(deletingTaskId)
               }}
-              className="bg-pop-red hover:bg-pop-red/90"
+              className="bg-pop-red text-pop-ink hover:bg-pop-red/90"
             >
               {deleteBusy ? "删除中…" : "确认废弃"}
             </AlertDialogAction>
@@ -501,6 +518,8 @@ interface TaskCardProps {
   derived?: TaskDerivedView
   /** ⏳ 超预算阈值 ms（phaseBudgetMs()）。 */
   budgetMs: number
+  /** 所在列的 accent 文字类（theme.label）—— Phase 角标随列染色，不与「复合」徽章撞色。 */
+  colAccent: string
   onClick: () => void
   onDeleteRequest: (task: Task) => void
   onTriggerRequest: (task: Task) => void
@@ -525,7 +544,7 @@ function advancePhaseOf(derived: TaskDerivedView | undefined): number | null {
   return null
 }
 
-function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest, onDuplicateRequest }: TaskCardProps) {
+function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest, onDuplicateRequest }: TaskCardProps) {
   // SG9: composite requires subunits.length >= 2.
   const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
   const isDraft = task.status === "draft"
@@ -553,19 +572,19 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
-      className={`group relative cursor-pointer rounded-xl border-[2.5px] border-pop-bd p-3 text-sm shadow-pop-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pop-bd ${
+      className={`group relative cursor-pointer rounded-xl border-[1.5px] border-pop-bd p-3 text-sm shadow-pop-sm transition-colors hover:border-pop-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pop-pink ${
         CARD_THEME[task.status] ?? "bg-pop-paper"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-black truncate text-pop-ink">{task.name}</h3>
         <div className="flex items-center gap-1 shrink-0">
-          {composite ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-pink-soft text-pop-pink">复合</span> : null}
+          {composite ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-pink/40 bg-pop-bg/70 text-pop-pink">复合</span> : null}
           {/* 票 11: v4 phase 角标（US7） */}
           {badge && (
             <span
               data-task-phase-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-purple-soft text-pop-purple tabular-nums"
+              className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-bd bg-pop-bg/70 tabular-nums ${colAccent}`}
               title={`当前 Phase ${badge.phase}/${badge.total}（第一个未通过验收的 phase）`}
             >
               {`Phase ${badge.phase}/${badge.total}${badge.round != null ? ` · Round ${badge.round}` : ""}`}
@@ -573,11 +592,13 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           )}
           {/* task-pause: 暂停也留在执行中列 + ⏸已暂停徽标。状态是**派生**的
               （绑定 execution 的 status='paused'），持久 task 行不写这个值 —
-              所以这里读到的 task.status 已经是 effectiveStatusOf 折过的派生态。 */}
+              所以这里读到的 task.status 已经是 effectiveStatusOf 折过的派生态。
+              换肤（原型 #tasks 定稿）：⏸ 走 dim 而不是执行中的琥珀 —— 没有在动的
+              东西不配闪，dim 底把「停着」这件事说清楚。 */}
           {task.status === "paused" && (
             <span
               data-task-paused-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-purple-soft text-pop-purple"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-bd bg-pop-bg/70 text-pop-dim"
               title="运行已暂停（打开的阻塞点已中断，恢复时从该节点重跑）。暂停期间不能验收，退出只有恢复或中止。"
             >
               ⏸ 已暂停
@@ -587,7 +608,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {task.status === "archiving" && (
             <span
               data-task-archiving-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-amber-soft text-pop-ink"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-bd bg-pop-bg/70 text-pop-amber"
               title="末 phase 已验收，归档编排中（git 失败会停在此态可重试）"
             >
               ⚠ 归档中
@@ -597,7 +618,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {overBudget && (
             <span
               data-task-overbudget-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-pop-ink"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-red/45 bg-pop-bg/70 text-pop-red"
               title={`Phase ${overBudget.phaseIndex} Round ${overBudget.roundIndex} 已跑超 ${Math.round(budgetMs / 60000)} 分钟（仅提示，不中断）`}
             >
               ⏳ 超预算
@@ -606,7 +627,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {isQueuedRun && (
             <span
               data-task-queued-badge
-              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd bg-pop-yellow-soft text-pop-ink"
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-cyan/45 bg-pop-bg/70 text-pop-cyan"
               title={task.next_fire_at
                 ? `定时触发：${new Date(task.next_fire_at).toLocaleString()}`
                 : "已武装，等待并发空位（全局上限内排队）"}
@@ -624,21 +645,22 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <span
               data-task-card-status
               title={runError ? `失败原因：${runError}` : undefined}
-              className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border-2 border-pop-bd ${
+              className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border bg-pop-bg/70 ${
                 task.status === "failed"
-                  ? "bg-pop-pink-soft text-pop-red"
-                  : "bg-pop-idle text-pop-dim"
+                  ? "border-pop-red/45 text-pop-red"
+                  : "border-pop-bd text-pop-dim"
               }`}
             >
               {task.status === "failed" ? "失败" : "已中止"}
             </span>
           )}
-          {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal */}
+          {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal
+              （原型定稿：一张卡只有一个 accent 主行动 = 验收，其余是 dim 次级片） */}
           {isAwaitingReview && (
             <button
               data-task-accept-btn
               onClick={(e) => { e.stopPropagation(); onAcceptRequest(task) }}
-              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-yellow text-pop-ink"
+              className={`${ACT_CHIP} border-pop-pink/60 bg-pop-pink-soft text-pop-pink hover:brightness-125`}
               title="打开验收三栏（执行摘要 | 产物核对 | 动作区）"
             >
               验收
@@ -652,7 +674,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-trigger-btn
               onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}
-              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-purple text-white"
+              className={`${ACT_CHIP} border-pop-bd bg-pop-idle text-pop-dim hover:border-pop-pink hover:text-pop-pink`}
               title="人工触发（立即或定时）"
             >
               触发
@@ -664,7 +686,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-advance-btn={advancePhaseOf(derived) ?? ""}
               onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task) }}
-              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-cyan text-pop-ink"
+              className={`${ACT_CHIP} border-pop-bd bg-pop-idle text-pop-dim hover:border-pop-cyan hover:text-pop-cyan`}
               title={`启动 Phase ${advancePhaseOf(derived)}（上一 Phase 已通过验收，autoAdvance 关闭）`}
             >
               启动下一 Phase
@@ -675,7 +697,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-archive-retry-btn
               onClick={(e) => { e.stopPropagation(); onArchiveRetryRequest(task) }}
-              className="h-5 rounded-lg border-2 border-pop-bd px-2 text-[10px] font-black shadow-pop-sm pop-press bg-pop-amber text-pop-ink"
+              className={`${ACT_CHIP} border-pop-bd bg-pop-idle text-pop-dim hover:border-pop-amber hover:text-pop-amber`}
               title="重试归档（project 粒度幂等续跑）"
             >
               重试归档
@@ -685,7 +707,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           <button
             data-task-duplicate-btn
             onClick={(e) => { e.stopPropagation(); onDuplicateRequest(task) }}
-            className="size-5 rounded flex items-center justify-center text-pop-dim/60 hover:text-pop-purple hover:bg-pop-purple-soft opacity-0 group-hover:opacity-100 transition-all"
+            className="size-5 rounded flex items-center justify-center text-pop-dim hover:text-pop-pink hover:bg-pop-bg/70 opacity-0 group-hover:opacity-100 transition-all"
             title="复制整单（spec/issues/workflows 全量）→ 新任务直入待执行"
           >
             <Copy className="size-3" />
@@ -694,7 +716,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
             <button
               data-task-delete-btn
               onClick={(e) => { e.stopPropagation(); onDeleteRequest(task) }}
-              className="size-5 rounded flex items-center justify-center text-pop-dim/60 hover:text-pop-red hover:bg-pop-pink-soft opacity-0 group-hover:opacity-100 transition-all"
+              className="size-5 rounded flex items-center justify-center text-pop-dim hover:text-pop-red hover:bg-pop-bg/70 opacity-0 group-hover:opacity-100 transition-all"
               title="废弃草稿"
             >
               <Trash2 className="size-3" />

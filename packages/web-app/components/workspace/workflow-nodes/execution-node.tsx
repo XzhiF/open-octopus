@@ -119,7 +119,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const isLast = data.isLastCompleted ?? false
   const badgeVariant = isLast ? "default" : "outline"
   const badgeLabel = isLast ? "最近完成" : displayLabel
-  const badgeClasses = isLast ? "bg-pop-green text-white border-pop-green" : config.color
+  const badgeClasses = isLast ? "bg-pop-green text-pop-bg border-pop-green" : config.color
   const isRunning = data.executionStatus === "running"
   const isHarnessIntervening = data.harnessStatus === "harness_intervening"
     || data.harnessExecutionStatus === "intervened"
@@ -131,7 +131,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const card = (
     <div
       className={cn(
-        "rounded-xl bg-pop-paper shadow-[3px_3px_0_rgba(28,27,34,0.13)]",
+        "rounded-xl bg-pop-paper shadow-pop-sm",
         "transition-shadow duration-200",
         isRunning ? "" : "border-2 " + config.borderColor,
         "cursor-grab active:cursor-grabbing",

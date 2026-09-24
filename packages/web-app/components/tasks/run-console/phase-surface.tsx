@@ -114,9 +114,9 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
       {rel ? (
         specHit
           ? chip(`📄 spec.md ${formatBytes(specHit.bytes)}`, () => setViewing({ file: specHit.path }), "text-pop-ink", specHit.path)
-          : <span className="rounded-[7px] border-[1.5px] border-dashed border-pop-amber/70 bg-pop-amber-soft px-1.5 py-0.5 font-mono text-[10.5px] text-pop-ink" data-file-missing>📄 spec.md 未落盘</span>
+          : <span className="rounded-[7px] border-[1.5px] border-dashed border-pop-amber/70 bg-pop-amber-soft px-1.5 py-0.5 font-mono text-[10.5px] text-pop-amber" data-file-missing>📄 spec.md 未落盘</span>
       ) : (
-        <span className="rounded-[7px] border-[1.5px] border-pop-bd/30 bg-pop-idle px-1.5 py-0.5 font-mono text-[10.5px] text-pop-dim" title={phase.specPath}>📄 绝对路径 spec · 磁盘不判定</span>
+        <span className="rounded-[7px] border-[1.5px] border-pop-bd bg-pop-idle px-1.5 py-0.5 font-mono text-[10.5px] text-pop-dim" title={phase.specPath}>📄 绝对路径 spec · 磁盘不判定</span>
       )}
       {buckets && buckets.tickets.n > 0 && chip(
         <span><b className="font-black">🎫 票</b> <span className="text-pop-dim">×{buckets.tickets.n}</span></span>,
@@ -133,7 +133,7 @@ export function FileChips({ ctx, phase }: { ctx: RunCtx; phase: TaskPhase }) {
       {buckets && buckets.total > 0 && chip(
         <b className="font-black">全部 {buckets.total} ▸</b>,
         () => setViewing({ file: specHit?.path ?? batch?.files[0]?.path ?? "" }),
-        "border-pop-ink bg-pop-ink text-pop-bg shadow-pop-sm", "文件树全量", "b-all", "file-bucket-all",
+        "border-pop-pink bg-pop-pink text-pop-bg shadow-pop-sm", "文件树全量", "b-all", "file-bucket-all",
       )}
       {viewing && (
         <PhaseSpecDialog
@@ -167,9 +167,9 @@ export function RoundRow({ ctx, exec, meta }: {
   const ran = meta.r ? (meta.r.exec.workflow_ref ?? meta.pv?.workflowRef ?? exec.workflow_ref) : exec.workflow_ref
 
   return (
-    <div className="border-b-[1.5px] border-dashed border-pop-bd/15 py-1.5 last:border-b-0" data-run-child={exec.id}>
+    <div className="border-b-[1.5px] border-dashed border-pop-bd py-1.5 last:border-b-0" data-run-child={exec.id}>
       <div className="flex min-w-0 items-center gap-2 text-xs">
-        <span className={`shrink-0 rounded-[7px] border-2 border-pop-bd px-1.5 py-px font-mono text-[10px] font-black ${meta.r ? roundTone(meta.r) : "bg-pop-idle text-pop-dim"}`}>
+        <span className={`shrink-0 rounded-[7px] border-[1.5px] border-pop-bd px-1.5 py-px font-mono text-[10px] font-black ${meta.r ? roundTone(meta.r) : "bg-pop-idle text-pop-dim"}`}>
           {meta.r ? `R${meta.r.roundIndex} ${roundGlyph(meta.r)}` : "RUN"}
         </span>
         <span className="truncate font-mono text-[11px] text-pop-dim" title={ran}>{ran.replace(/^built-in\//, "")}</span>
@@ -184,7 +184,7 @@ export function RoundRow({ ctx, exec, meta }: {
             // 新标签页打开——控制台弹窗留在原地（router.push 会把弹窗整个顶走，2026-09-19 用户拍板）
             onClick={() => window.open(link, "_blank", "noopener")}
             title="在工作区查看该次执行的流程图（新标签页）"
-            className="shrink-0 rounded-[8px] border-2 border-pop-purple bg-pop-purple-soft px-2 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-transform hover:-translate-y-px"
+            className="shrink-0 rounded-[8px] border-[1.5px] border-pop-purple bg-pop-purple-soft px-2 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-transform hover:-translate-y-px"
             data-run-deeplink="execution"
           >
             流程图 <span className="font-normal">↗</span>
@@ -194,7 +194,7 @@ export function RoundRow({ ctx, exec, meta }: {
       {error && <div className="truncate pl-11 font-mono text-[10.5px] text-pop-red" title={error} data-run-error={exec.id}>{error}</div>}
       {/* composite 臂（detail 才载；undefined=没加载，绝不说「无子单元」） */}
       {(exec.children?.length ?? 0) > 0 && (
-        <div className="ml-6 mt-1 space-y-1 border-l border-pop-bd/20 pl-2" data-run-arms={exec.id}>
+        <div className="ml-6 mt-1 space-y-1 border-l border-pop-bd pl-2" data-run-arms={exec.id}>
           {(exec.children ?? []).map((arm) => (
             <div key={arm.id} className="flex items-center gap-2 text-[11px]" data-run-arm={arm.id}>
               <span className="truncate font-medium">{arm.name || arm.workflow_ref || `执行 ${arm.id.slice(0, 8)}`}</span>
@@ -210,10 +210,10 @@ export function RoundRow({ ctx, exec, meta }: {
 // ── 大事报（2026-09-20 定稿：只报你该知道的事，没事整块不存在）────────
 
 const SIG_TONE: Record<SignalLine["kind"], string> = {
-  bad: "border-pop-red bg-[#fff5f5]",
+  bad: "border-pop-red/50 bg-pop-pink-soft",
   loop: "border-pop-amber bg-pop-amber-soft",
   stall: "border-pop-cyan bg-pop-cyan-soft",
-  out: "border-pop-green/60 bg-[#f6fffa]",
+  out: "border-pop-green/50 bg-pop-green-soft",
 }
 
 function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamEvent[] }) {
@@ -227,7 +227,7 @@ function SignalBox({ signals, events }: { signals: SignalLine[]; events: StreamE
             <b className="mr-1.5 font-black">{l.glyph}</b>
             {l.text}
             {l.detail && (
-              <button onClick={() => setOpenBad((v) => !v)} className="ml-2 rounded border-[1.5px] border-pop-bd/40 px-1 text-[9px] font-black text-pop-dim hover:bg-pop-paper" data-signal-expand>
+              <button onClick={() => setOpenBad((v) => !v)} className="ml-2 rounded border-[1.5px] border-pop-bd px-1 text-[9px] font-black text-pop-dim hover:bg-pop-paper" data-signal-expand>
                 {openBad ? "收起" : "详情"}
               </button>
             )}
@@ -294,7 +294,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         <button
           onClick={() => setWfOpen(true)}
           title={`${pv.workflowRef} — 点击查看 YAML`}
-          className="shrink-0 rounded-[7px] border-2 border-pop-bd bg-pop-purple-soft px-1.5 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-colors hover:bg-pop-yellow-soft"
+          className="shrink-0 rounded-[7px] border-[1.5px] border-pop-bd bg-pop-purple-soft px-1.5 py-0.5 font-mono text-[10px] font-black text-pop-purple shadow-pop-sm transition-colors hover:bg-pop-yellow-soft"
           data-v4-workflow-ref={pv.index}
         >
           ⚙ {pv.workflowRef.replace(/^built-in\//, "")}
@@ -309,7 +309,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         const dur = !Number.isNaN(startedMs) ? Math.max(0, ctx.now - startedMs) : null
         const agg = ctx.aggMap[liveRound.exec.id] ?? null
         return (
-          <section className="overflow-hidden rounded-[13px] border-2 border-pop-purple bg-pop-paper shadow-pop-sm" data-fold-box="live" data-fold-closed={closedOf("live", "main") ? "true" : undefined}>
+          <section className="overflow-hidden rounded-[13px] border-[1.5px] border-pop-purple bg-pop-paper shadow-pop-sm" data-fold-box="live" data-fold-closed={closedOf("live", "main") ? "true" : undefined}>
             <header className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5">
               {fold && <FoldHandle id="live" group="main" closed={closedOf("live", "main")} onToggle={() => fold.toggle("live", "main")} />}
               <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-purple">▶ LIVE ROUND · R{liveRound.roundIndex}</span>
@@ -320,7 +320,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                   <button
                     onClick={() => window.open(liveLink, "_blank", "noopener")}
                     title="在工作区查看进行中的流程图（新标签页打开）"
-                    className="rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-0.5 font-mono text-[10px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                    className="rounded-[10px] border-[1.5px] border-pop-bd bg-pop-purple px-2.5 py-0.5 font-mono text-[10px] font-black text-pop-bg shadow-pop-sm transition-transform hover:-translate-y-px"
                     data-run-deeplink="live"
                   >
                     执行流程图 <span className="font-normal">↗</span>
@@ -359,14 +359,14 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
               const flowLink = run ? deepLinkTarget(run) : null
               return (
                 <section
-                  className="cursor-pointer overflow-hidden rounded-[13px] border-2 border-pop-amber bg-pop-amber-soft shadow-pop-sm transition-transform hover:-translate-y-px hover:shadow-pop"
+                  className="cursor-pointer overflow-hidden rounded-[13px] border-[1.5px] border-pop-amber bg-pop-amber-soft shadow-pop-sm transition-transform hover:-translate-y-px hover:shadow-pop"
                   onClick={ctx.openAcceptance}
                   data-acceptance-open
                   data-testid="console-acceptance-card"
                   data-fold-box="deliver"
                   data-fold-closed={closedOf("deliver", "main") ? "true" : undefined}
                 >
-                  <header className="flex items-center gap-2 px-3 py-1.5 border-b-2 border-pop-bd/10">
+                  <header className="flex items-center gap-2 px-3 py-1.5 border-b-[1.5px] border-pop-bd">
                     {fold && <FoldHandle id="deliver" group="main" closed={closedOf("deliver", "main")} onToggle={() => fold.toggle("deliver", "main")} />}
                     <span className="font-mono text-[9.5px] font-black tracking-[.09em]">R{awaiting.roundIndex} 交付报告 · 机检结果</span>
                     {closedOf("deliver", "main") && (
@@ -378,7 +378,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                       <button
                         onClick={(e) => { e.stopPropagation(); window.open(flowLink, "_blank", "noopener") }}
                         title="在工作区查看本轮执行的流程图（新标签页打开）"
-                        className="ml-1 shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-purple px-2.5 py-1 font-mono text-[10.5px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                        className="ml-1 shrink-0 rounded-[10px] border-[1.5px] border-pop-bd bg-pop-purple px-2.5 py-1 font-mono text-[10.5px] font-black text-pop-bg shadow-pop-sm transition-transform hover:-translate-y-px"
                         data-run-deeplink="awaiting"
                       >
                         执行流程图 <span className="font-normal">↗</span>
@@ -387,7 +387,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
                     <span className="ml-auto font-mono text-[10px] text-pop-dim">{dur != null ? `用时 ${formatDuration(dur)}` : ""}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); ctx.openAcceptance() }}
-                      className="shrink-0 rounded-[10px] border-[2.5px] border-pop-bd bg-pop-green px-3 py-1 font-mono text-[11px] font-black text-white shadow-pop-sm transition-transform hover:-translate-y-px"
+                      className="shrink-0 rounded-[10px] border-[1.5px] border-pop-bd bg-pop-green px-3 py-1 font-mono text-[11px] font-black text-pop-bg shadow-pop-sm transition-transform hover:-translate-y-px"
                       data-testid="console-open-acceptance"
                     >
                       → 去验货台验收
@@ -448,7 +448,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
             && !armedFuture && !waitingForSlot && (
             <button
               onClick={ctx.openTrigger}
-              className="pop-press flex w-full items-center justify-center gap-2 rounded-xl border-[2.5px] border-pop-bd bg-pop-green px-3 py-2.5 font-mono text-[13px] font-black tracking-[.05em] text-white shadow-pop-sm transition-all hover:bg-pop-green/90"
+              className="pop-press flex w-full items-center justify-center gap-2 rounded-xl border-[1.5px] border-pop-bd bg-pop-green px-3 py-2.5 font-mono text-[13px] font-black tracking-[.05em] text-pop-bg shadow-pop-sm transition-all hover:brightness-110"
               data-task-trigger-big
             >
               ⚡ 触发执行 —— P{pv.index} 开跑
@@ -474,7 +474,7 @@ export function PhaseSurface({ ctx, pv }: { ctx: RunCtx; pv: TaskPhaseView }) {
         const r = pv.rounds[0]
         const exec = ctx.runsById.get(r.exec.id) ?? null
         return exec ? (
-          <div className="rounded-[9px] border-[1.5px] border-dashed border-pop-bd/35 bg-pop-paper px-2" data-testid={`round-strip-${pv.index}`}>
+          <div className="rounded-[9px] border-[1.5px] border-dashed border-pop-bd bg-pop-paper px-2" data-testid={`round-strip-${pv.index}`}>
             <RoundRow ctx={ctx} meta={{ pv, r }} exec={exec} />
           </div>
         ) : null
@@ -524,7 +524,7 @@ export function ReportSurface({ ctx }: { ctx: RunCtx }) {
       </div>
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {tiles.map((t) => (
-          <div key={t.k} className={`relative overflow-hidden rounded-xl border-[2.5px] border-pop-bd px-3 py-2 shadow-pop-sm ${t.cls}`} {...(t.title ? { title: t.title } : {})}>
+          <div key={t.k} className={`relative overflow-hidden rounded-xl border-[1.5px] border-pop-bd px-3 py-2 shadow-pop-sm ${t.cls}`} {...(t.title ? { title: t.title } : {})}>
             <div className="font-mono text-[20px] font-black leading-tight tabular-nums">{t.v}</div>
             <div className="font-mono text-[9px] font-bold tracking-[.1em] text-pop-dim">{t.k}</div>
           </div>

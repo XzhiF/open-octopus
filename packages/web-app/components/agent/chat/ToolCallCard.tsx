@@ -139,7 +139,7 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
       <CollapsibleTrigger asChild>
         <button
           className={cn(
-            'flex items-center gap-2 w-full rounded-xl border-2 border-pop-bd bg-pop-paper px-3 py-2 text-sm text-pop-ink shadow-[2px_2px_0_rgba(28,27,34,.12)] transition-colors hover:bg-pop-yellow-soft',
+            'flex items-center gap-2 w-full rounded-xl border-2 border-pop-bd bg-pop-paper px-3 py-2 text-sm text-pop-ink shadow-pop-sm transition-colors hover:bg-pop-yellow-soft',
             effectiveStatus === 'fail' && 'bg-pop-pink-soft'
           )}
           role="status"

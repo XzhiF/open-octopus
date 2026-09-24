@@ -171,7 +171,7 @@ export function ExecutionHistoryTable({
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="border-b-[2.5px] border-pop-bd bg-pop-paper text-left text-xs text-pop-ink">
+          <tr className="border-b-[1.5px] border-pop-bd bg-pop-paper text-left text-xs text-pop-ink">
             <th className="px-3 py-2 font-black">触发时间</th>
             <th className="px-3 py-2 font-black">状态</th>
             <th className="px-3 py-2 font-black">触发方式</th>

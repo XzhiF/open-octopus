@@ -62,7 +62,7 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-pop-ink/5 transition-colors"
+            className="p-1 rounded hover:bg-pop-idle transition-colors"
             aria-label="关闭"
           >
             <X className="h-4 w-4 text-muted-foreground" />

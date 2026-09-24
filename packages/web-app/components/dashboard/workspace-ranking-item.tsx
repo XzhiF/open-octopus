@@ -21,7 +21,7 @@ export function WorkspaceRankingItem({ rank, item }: WorkspaceRankingItemProps) 
 
   return (
     <div
-      className="border-b border-border/50 py-3 last:border-0"
+      className="border-b border-pop-bd/50 py-3 last:border-0"
       role="listitem"
       tabIndex={0}
       aria-label={`第${rank}名：${item.workspaceName}，总计 ${formatTokenCount(item.totalTokens)} tokens`}

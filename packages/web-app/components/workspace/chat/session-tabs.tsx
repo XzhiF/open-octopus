@@ -32,7 +32,7 @@ export function SessionTabs({
             key={session.id}
             className={`group flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs cursor-pointer transition-colors shrink-0 border-[1.5px] ${
               session.id === activeSessionId
-                ? "bg-pop-yellow text-pop-ink font-black border-pop-bd shadow-pop-sm"
+                ? "bg-pop-yellow text-pop-bg font-black border-pop-bd shadow-pop-sm"
                 : "text-pop-dim hover:text-pop-ink hover:bg-pop-yellow-soft border-transparent"
             }`}
             onClick={() => onSelectSession(session.id)}

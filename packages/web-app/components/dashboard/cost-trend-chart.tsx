@@ -27,7 +27,7 @@ export function CostTrendChart({ data, days }: CostTrendChartProps) {
               style={{ height: `${(d.total_cost / maxCost) * 100}%`, minHeight: d.total_cost > 0 ? '4px' : '0' }}
               title={`${d.date}: ${formatCost(d.total_cost)} (${d.calls} calls)`}
             >
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded border-[1.5px] border-pop-bd bg-pop-paper text-pop-ink text-xs shadow-pop-sm opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
                 {d.date}: {formatCost(d.total_cost)}
               </div>
             </div>

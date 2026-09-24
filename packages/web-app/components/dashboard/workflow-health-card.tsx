@@ -5,11 +5,11 @@ import { formatCost, formatDuration, formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 
 const GRADE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  A: { bg: "bg-pop-green/10", text: "text-pop-green", border: "border-pop-green/40" },
-  B: { bg: "bg-pop-cyan/10", text: "text-pop-cyan", border: "border-pop-cyan/40" },
-  C: { bg: "bg-pop-amber/10", text: "text-pop-amber", border: "border-pop-amber/40" },
-  D: { bg: "bg-pop-yellow/10", text: "text-pop-ink", border: "border-pop-yellow/40" },
-  F: { bg: "bg-pop-red/10", text: "text-pop-red", border: "border-pop-red/40" },
+  A: { bg: "bg-pop-green-soft", text: "text-pop-green", border: "border-pop-green/40" },
+  B: { bg: "bg-pop-cyan-soft", text: "text-pop-cyan", border: "border-pop-cyan/40" },
+  C: { bg: "bg-pop-amber-soft", text: "text-pop-amber", border: "border-pop-amber/40" },
+  D: { bg: "bg-pop-yellow-soft", text: "text-pop-yellow", border: "border-pop-yellow/40" },
+  F: { bg: "bg-pop-pink-soft", text: "text-pop-red", border: "border-pop-red/40" },
 }
 
 interface WorkflowHealthCardProps {
@@ -29,7 +29,7 @@ export function WorkflowHealthCard({ workflowRef, healthScore, grade, successRat
     <div className={cn("rounded-lg border p-4 transition-colors hover:bg-accent/50", colors.border)}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-medium truncate">{workflowRef}</span>
-        <Badge variant="outline" className={cn("text-sm font-bold", colors.text)}>
+        <Badge variant="outline" className={cn("text-sm font-bold", colors.bg, colors.text)}>
           {grade}
         </Badge>
       </div>

@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 
 const alertVariants = cva(
   // 🎪 贴纸告示:墨边 + 硬投影
-  'relative w-full rounded-xl border-[2.5px] border-pop-bd px-4 py-3 text-sm shadow-pop-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-0.5 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 [&>svg]:text-current',
+  'relative w-full rounded-xl border-[1.5px] border-pop-bd px-4 py-3 text-sm shadow-pop-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-0.5 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 [&>svg]:text-current',
   {
     variants: {
       variant: {

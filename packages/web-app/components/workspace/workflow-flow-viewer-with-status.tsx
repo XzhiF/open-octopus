@@ -470,7 +470,7 @@ export function WorkflowFlowViewerWithStatus({
         fitView
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#333" gap={20} size={1} />
+        <Background color="#3a3733" gap={20} size={1} />
         <Controls showInteractive={false} />
       </ReactFlow>
 

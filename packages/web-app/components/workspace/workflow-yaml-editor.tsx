@@ -10,6 +10,9 @@ interface WorkflowYamlEditorProps {
   onSave?: () => void
 }
 
+// 暗黑 TUI 编辑器主题：vs-dark 基础上把底色压到 inset (#121110)
+const OCTOPUS_DARK_THEME = "octopus-dark-tui"
+
 export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEditorProps) {
   const editorRef = useRef<unknown>(null)
   const onSaveRef = useRef(onSave)
@@ -59,7 +62,15 @@ export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEdit
         value={value}
         onChange={handleChange}
         onMount={handleMount}
-        theme="vs-dark"
+        beforeMount={(monaco) => {
+          monaco.editor.defineTheme(OCTOPUS_DARK_THEME, {
+            base: "vs-dark",
+            inherit: true,
+            rules: [],
+            colors: { "editor.background": "#121110" },
+          })
+        }}
+        theme={OCTOPUS_DARK_THEME}
         options={{
           minimap: { enabled: false },
           fontSize: 13,

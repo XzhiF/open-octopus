@@ -67,7 +67,7 @@ export function LogViewer({ jobId, executionId }: LogViewerProps) {
 
   return (
     <div className="p-2">
-      <pre className="overflow-x-auto rounded-lg border-2 border-pop-bd bg-pop-ink p-3 font-mono text-xs leading-relaxed text-pop-paper">
+      <pre className="overflow-x-auto rounded-lg border-2 border-pop-bd bg-pop-bg p-3 font-mono text-xs leading-relaxed text-pop-ink">
         {lines.map((line, idx) => (
           <div key={idx} className="flex">
             <span className="mr-3 inline-block w-8 shrink-0 text-right text-pop-dim select-none">
