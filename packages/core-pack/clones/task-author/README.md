@@ -8,14 +8,14 @@
 这些技能原本从仓库 `.claude/skills/` 拷贝——那是**开发会话**的技能树，面向的是
 「澄清需求 → 直接开发 → 交付」的一条龙流程。task-author 只做前半段：**产规格、
 不执行**。两者需要的技能是有实质差异的，共享一份就会让 task-author 会话加载到
-「Next Steps: 跑 matt-dev-pipeline / matt-pipeline-loop」这类执行侧出口。
+「Next Steps：跑执行侧流水线」这类出口。
 
 本目录的 6 个技能相对 `.claude/skills/` 同名技能**有意分叉**，主要差异：
 
 | 技能 | 改动 |
 |------|------|
 | `author-verified-requirement` | 删 `Execution Decisions Gate` 三问（只保留 Story Walk-Through 一问）；删下游产物表；`Next Steps` 改为「交还用户等 [入队]」并**明文禁止**提议执行流水线；frontmatter description 去掉 execution-options 措辞 |
-| `author-verified-tickets` | 删对 `matt-dev-pipeline` Phase 1 / `matt-dev-runner` 的引用；Rule 5 验证类型阶梯原样保留 |
+| `author-verified-tickets` | 删对执行侧流水线与单票实现者的引用；验证类型阶梯原样保留（现折叠进 ③「端到端走查的唯一归属」） |
 | `author-verified-spec` | 删 `matt-sql-executor` 技能名引用 |
 | `domain-modeling` / `grilling` / `wayfinder` | **无改动**（本就零执行耦合，原样拷贝） |
 

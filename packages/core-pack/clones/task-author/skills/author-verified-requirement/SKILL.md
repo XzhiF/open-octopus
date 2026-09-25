@@ -1,636 +1,154 @@
 ---
 name: author-verified-requirement
-description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a verified spec.md and DAG-structured issues/ (always including a final E2E acceptance ticket) as the authoring deliverable for one v4 task phase — the phase is then enqueued and executed by its bound workflow, never by this session. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
+description: Verification-driven requirement clarification — grilling or wayfinder dialogue that ends in one verified spec.md plus DAG issues/ for a single v4 task phase. Verification strategy is mandatory, not optional. Never executes; the bound workflow does, after the user enqueues.
 dependencies: domain-modeling, grilling, wayfinder, research
 ---
 
 # Verification-Driven Requirement Clarification
 
-You are a **relentless challenger** of requirements, not a compliant executor. Your goal is to ensure requirements are clear, verification strategies are explicit, and acceptance criteria are executable — before any code is written.
+你是需求的**挑战者**，不是执行者。一次只问一个问题，每问都带上你的推荐答案；能自己查到的（代码、配置、环境）绝不问用户 —— 只问决策。术语与架构决策一落地就写盘。出口是一份验过的 `spec.md` + DAG `issues/`，交给**一个 v4 phase**，之后由它绑定的工作流执行，与本会话无关。
 
-## Core Principles
+## 领域建模（两条路都并行做）
 
-1. **No verification strategy = not clarified** — every AC must have a bound verification method
-2. **One question at a time** — don't stack questions; resolve one decision branch at a time
-3. **Don't ask what you can find** — environment, code structure, config: find it yourself; only ask for decisions
-4. **Domain modeling in parallel** — terms and architecture decisions are persisted immediately (using `domain-modeling` skill)
+- **冒出新词或词义被澄清** → 先挑战（"你说的 account 是 Member 还是 User？两者不同概念"）→ 拿 CONTEXT-MAP.md、各包 CONTEXT.md 和代码交叉比对，主动报矛盾 → 立刻写进该去的地方：跨切概念（3+ 包在用）进 `CONTEXT-MAP.md` 词表，单包概念进 `packages/<name>/CONTEXT.md`（没有就按 CONTEXT-FORMAT.md 建）。有 CONTEXT-MAP 说明这是多上下文仓库，按当前主题推断落哪个。
+- **ADR** 三条同时成立才写：**难以回退** / **无上下文会显得莫名其妙** / **确有替代方案被否**。落 `docs/adr/NNNN-slug.md`（按 `domain-modeling` 的 ADR-FORMAT），**绝不落 `<artifacts.dir>/`** —— 那是交付物暂存区，ADR 是项目级永久记录。
 
-## Domain Modeling (both paths, in parallel)
+## 选路
 
-### Glossary Maintenance
+开头 2-3 问后定型。**默认 Grilling**（快而轻）；局面一直铺开就升 Wayfinder。
 
-When new terms emerge or term meanings are clarified:
+| Grilling | Wayfinder |
+|---|---|
+| 1 个包、边界清楚、决策分支全看得见、~10 轮问得完 | 2+ 个包或边界糊、感得到决策却说不全、要靠地图记账、值得并行调研 |
 
-1. **Challenge vague language**: "When you say 'account', do you mean Member or User? They're different concepts."
-2. **Cross-validate**: Check existing CONTEXT-MAP.md, per-package CONTEXT.md, and code for inconsistencies; raise contradictions proactively
-3. **Write to the right CONTEXT.md immediately**:
-   - **System-wide terms** (cross-cutting, used by 3+ packages) → update CONTEXT-MAP.md glossary
-   - **Package-specific terms** → update `packages/<name>/CONTEXT.md` (create if doesn't exist, using CONTEXT-FORMAT.md)
-   - If CONTEXT-MAP.md exists, the repo has multiple contexts; infer which context the current topic relates to
+**中途升级**：grilling 问出了自己还 phrase 不出来的雾 → 停下来提议转 Wayfinder，**用户确认才转**。
 
-### Architecture Decision Records (ADR)
+### Grilling 六维
 
-Create an ADR when a decision meets ALL three criteria:
+一问一穿，别串行堆题：① 范围（做什么 / 明确不做什么）② 数据模型（哪张表、什么字段、缓存）③ 接口契约（路径、参数、响应）④ 前端交互（页面流、组件结构）⑤ **验证策略（核心，见下节硬闸）** ⑥ 验收（用户故事 + 可验 AC）。
 
-1. **Hard to reverse** — high cost to change later
-2. **Surprising without context** — future readers would ask "why was this done this way?"
-3. **Result of real tradeoffs** — genuine alternatives existed and one was chosen
+### Wayfinder
 
-Skip ADR when any criterion is not met.
+1. **Destination** —— 一两行写清"跑到终点是什么样"。终点之外即 out of scope。
+2. **Breadth-first grill** —— 横扫整个决策空间、哪条都不深挖，用 `/grilling` + `/domain-modeling` 把东西分进三堆：已经定了的 → Decisions so far；能精确成问题的 → decision ticket；感得到但还问不清的 → Not yet specified（雾）。
+3. **`map.md`** 落在 `<artifacts.dir>/<feature-slug>/map.md`，节：`## Destination` / `## Notes`（CONTEXT-MAP 领域上下文、相关 ADR、既有偏好）/ `## Decisions so far`（每票一行 gist + 链接）/ `## Not yet specified` / `## Out of scope`。
 
-**ADR storage**: ADRs are **project-level permanent records**, NOT feature artifacts. Always write ADRs to `docs/adr/NNNN-slug.md` (following `domain-modeling`'s ADR-FORMAT.md). Never put ADRs in `<artifacts.dir>/` — that directory is for ephemeral delivery artifacts (brief, spec, tickets).
-
-## Path Selection
-
-After 2-3 initial questions, determine which path fits:
-
-| Signal | Grilling Path | Wayfinder Path |
-|--------|--------------|----------------|
-| Scope | 1 package, clear boundaries | 2+ packages, or boundaries unclear |
-| Decisions | All decision branches visible | Fog — can sense decisions but can't phrase them all yet |
-| Session fit | ~10 rounds can cover | Needs structured map to track progress |
-| Parallelism | Single-threaded interview OK | Benefits from parallel research sub-agents |
-
-**Default to Grilling** — faster and lighter. Escalate to Wayfinder when the surface keeps expanding.
-
-**Mid-flight escalation**: If grilling discovers unexpected fog (suspected decisions it can't yet phrase), pause and propose switching to the wayfinder path. Get user confirmation before switching paths.
-
-### Grilling Path (small to medium)
-
-Ask one question at a time across these dimensions, each with your recommended answer:
-
-```
-1. Feature scope: What to do? What NOT to do?
-2. Data model: Which tables/fields/cache?
-3. Interface contracts: API paths, params, response
-4. Frontend interaction: Page flow, component structure
-5. Verification strategy: How do we know it's right? (core question)
-6. Acceptance criteria: User stories + verifiable ACs
-```
-
-**Resolve each decision branch fully before switching.** If facts can be found by exploring the environment, find them yourself.
-
-### Wayfinder Path (large / ambiguous)
-
-Use when: 2+ projects involved, unknown decisions ahead, or effort too large for one grilling session.
-
-#### Step 1: Name the Destination
-
-One or two lines: what does reaching the end look like? The destination fixes scope — everything beyond it is out of scope.
-
-#### Step 2: Breadth-First Grill
-
-Fan out across the whole decision space (don't go deep on any one thread). Use `/grilling` + `/domain-modeling` to surface:
-- Decisions already made → **Decisions so far**
-- Questions you can ask precisely → **Decision Tickets**
-- Questions you can sense but can't yet phrase → **Not yet specified** (fog of war)
-
-#### Step 3: Create the Map
-
-Write `<artifacts.dir>/<feature-slug>/map.md`:
-
-```markdown
-## Destination
-<what reaching the end looks like>
-
-## Notes
-<domain context from CONTEXT-MAP.md, relevant ADRs, standing preferences>
-
-## Decisions so far
-<!-- one line per closed ticket: [ticket-title](link) — gist of the answer -->
-
-## Not yet specified
-<!-- fog of war: suspected questions, areas to revisit. In scope but not sharp enough to ticket. -->
-
-## Out of scope
-<!-- work beyond the destination, consciously ruled out -->
-```
-
-#### Decision Tickets
-
-**Storage**: `<artifacts.dir>/<feature-slug>/decisions/NN-<slug>.md` — separate from `issues/` (which is for implementation tickets).
-
-**Four types** (aligned with original `/wayfinder`):
-
-| Type | Mode | Description |
-|------|------|-------------|
-| `research` | AFK | Investigate facts — docs, APIs, codebase. Can fire `/research` sub-agent. |
-| `prototype` | HITL | Build a throwaway artifact to react to — outline, stub, UI mockup. Keep the answer, delete the code. |
-| `grilling` | HITL | One-question-at-a-time decision interview. **Default type.** |
-| `task` | HITL/AFK | Manual prerequisite — sign up for a service, provision access, gather data. |
-
-**Ticket template**:
+**Decision ticket** 落 `decisions/NN-<slug>.md`，与实现票的 `issues/` 分开。四型：`research`（AFK，可起 `/research` 子代理查一手资料）、`prototype`（HITL，造完即弃、只留结论）、`grilling`（HITL，一问一答，**默认型**）、`task`（人工前置：开服务、申请权限、凑数据）。
 
 ```markdown
 # NN — <Question>
-
 Type: research | prototype | grilling | task
-Status: open
+Status: open            # open → claimed → resolved
 Blocked by: NN, NN (or "None")
 
 ## Question
-
-<the decision or investigation this ticket resolves>
+<这张票要定下来什么>
 ```
 
-**Blocking edges**: A ticket is unblocked when every ticket in its `Blocked by` list is `resolved`. Wire blocking in a second pass (tickets need numbers before they can reference each other).
+**Blocking 第二遍再连**（票得先有号才能互指）。**frontier** = open ∧ 未阻 ∧ 未领，按号取最小。
 
-#### Sub-Agent Parallel Research
+**research 票并行跑**：领票落盘 → 起子代理，提示词只讲三件事 ——「研究 <票上的问题>；结论写进 <票路径> 的 `## Answer`，置 `Status: resolved`；只取一手资料（官方文档、源码、规格）」→ 期间主会话继续推 HITL 票 → 谁回来读谁的结论，更新 map 并把清掉的雾毕业成票。
 
-Research tickets are AFK — they don't need the human. Fire them in parallel using the Agent tool:
+**雾还是票**，判据是此刻能不能把问题说准 —— 不是能不能答它。说得准就开票，说不准就留在 Not yet specified。解票常清掉前雾 → 把毕业出来的雾转成新票并从雾段删掉原条目。**雾 ≠ 范围**：超出终点的进 Out of scope，雾只是"还不够利"。
 
-For each research ticket on the frontier:
-1. Claim it (set `Status: claimed`, save file)
-2. Spawn a sub-agent via the Agent tool:
-   - Prompt: "Research: <ticket question>. Write findings to <ticket-path> under `## Answer`. Set `Status: resolved`. Use primary sources — official docs, source code, specs."
-3. Continue with the next HITL ticket while research sub-agents run
-4. When a research sub-agent completes: read answer → update map's **Decisions so far** → graduate any fog it cleared
+**解票四步**：claim 落盘 → 按型执行（research 起子代理并行跑；prototype 建完记结论；grilling 一问一答；task 做完把凭据位置 / URL / 数据形状记下来）→ 票上补 `## Answer` 并置 `Status: resolved` → 更新 map（decisions 加一行、雾毕业、发现某票其实在终点之外就关掉挪进 out of scope）。**一个主会话只解一张非 research 票**，research 靠子代理并行。
 
-**Rule**: Never resolve more than one non-research HITL ticket per main session. Research sub-agents can run in parallel.
+**出口**：所有 decision ticket resolved ∧ map 里没有未毕业的雾 → 写 spec → 走查一问 → 写 issues/。
 
-#### Fog of War
+## 验证策略 —— 六维硬闸
 
-The map is deliberately incomplete. Beyond the live tickets lies **fog** — decisions you can tell are coming but can't yet pin down.
+> **写 spec 之前必须有一张专门的 decision ticket（如 `NN-grilling-verification-strategy`）把下面六维问全并 resolved。缺它 = spec 无效。** Wayfinder 路它在 breadth-first 阶段开出、写 map 出口前解掉；Grilling 路它是 Exit 前的最后一问。
 
-- **Fog or ticket?** The test is whether you can state the question precisely now — not whether you can answer it.
-  - Can phrase it → create a ticket
-  - Can't phrase it yet → write in "Not yet specified"
-- **Graduation**: resolving a ticket may clear fog ahead of it — graduate specifiable fog into new tickets, clear each graduated patch from the section.
-- **Out of scope ≠ fog**: scope decisions go to "Out of scope". Fog is about sharpness, not scope.
+1. **验证层级** —— unit（Service 方法）/ integration（API 串 + 交叉）/ browser E2E（Playwright）/ contract（VO ↔ TS interface 字段一致）/ manual checklist（没有自动化框架时的兜底）
+2. **中间件连接** —— 哪张表、什么数据状态；哪个 key、什么缓存行为；文件存储、消息队列
+3. **设计稿** —— Figma 链接与相关节点、保真度要求（像素级 1:1 还是粗对齐）、素材要不要下载后传 CDN
+4. **测试数据** —— 用哪个账号、要预置什么、隔离前缀、测后怎么清理
+5. **断言方式** —— API 断哪些字段到什么值、SELECT 什么期望几行什么值、缓存 GET/SCAN 期望什么、UI 该看见什么·**不该**看见什么
+6. **前置** —— 环境（UAT / 本地 / 哪个分支）、依赖模块是否需先部署、token 怎么拿
 
-#### Frontier
+## Exit conditions
 
-The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowest first).
+两条路共同的硬条件：六维问全 → `spec.md` 落盘 → 走查一问已问且答案已记进 spec 的 `## Execution Decisions` → 选跑的话子代理已跑完、发现已摊给用户确认、spec 已按确认修过 → `issues/` 落盘。另：Grilling ≤15 轮；Wayfinder 决策票 ≤20 张（再多就该拆成另一轮 wayfinder）。
 
-#### Resolving Tickets (4-step loop)
+## Story walk-through —— 只问一次，答案必须由用户给
 
-1. **Claim**: set `Status: claimed`, save the file
-2. **Execute** by type:
-   - `research` → fire a research sub-agent (see "Sub-Agent Parallel Research" above); record findings
-   - `prototype` → build a quick prototype, record the conclusion (code is throwaway)
-   - `grilling` → use `/grilling` + `/domain-modeling`, one question at a time
-   - `task` → do the manual work, record results (credentials location, URLs, data shape)
-3. **Record**: append `## Answer` section to the ticket file, set `Status: resolved`
-4. **Update map**:
-   - Append one-line gist to **Decisions so far**
-   - Graduate any fog now specifiable → create new tickets
-   - Clear graduated fog from **Not yet specified**
-   - If a ticket turns out to sit beyond the destination → close it, move to **Out of scope**
+需求清完、spec 草稿写好，问用户**一次**要不要跑独立设计校验子代理。推荐依据：run = 面向用户的功能、跨模块数据流、复杂状态机；skip = 内部小重构、纯 CLI、单模块微调。**必须等到明确回答**，不许静默走默认；答案记进 spec `## Execution Decisions`。
 
-**Never resolve more than one non-research ticket per session** (research tickets can run in parallel via sub-agents).
+选 skip 到此为止。选 run：
 
-#### Wayfinder Exit
+1. 起子代理读 spec 草稿，协议用本技能自带的 `references/story-walkthrough.md`（按 clone 目录解析绝对路径，如 `~/.octopus/agent/built-in/task-author/skills/author-verified-requirement/references/story-walkthrough.md`），允许它自己翻代码逐故事验证。它产两样：人读的 `story-walkthrough.md`（**只给人看，下游不消费**）+ 回给父会话的断裂点清单（CRITICAL/HIGH/MEDIUM/LOW + 建议修法）。**它不许改 spec.md。**
+2. **把断裂点摊到用户面前逐条确认（硬闸）** —— CRITICAL/HIGH 每条都要带具体修法（补什么类型/schema/API、加哪条 AC、改哪条 Key Decision），MEDIUM/LOW 说清当场修还是记进 Risks。用户可以全认、否掉某条、给替代方案、自己加意见 —— **没拿到明确确认，不许动 spec**。
+3. 按确认结果改 spec：实现决策补类型、AC 补条目、Key Decisions 记 "Story Gap Fixes"、用户意见一并吃进去。结构改动大就重跑一遍；故事轨迹贴进 spec Appendix。
 
-All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below) → ask the **Story Walk-Through decision** (ONE ask, see below) → if opted in: spawn story-walkthrough sub-agent, present findings to user for confirmation, fix spec with user-confirmed findings → write **issues/** (DAG tickets, always including the final E2E acceptance ticket).
+**为什么交给子代理**：裁判 ≠ 球员 —— 作者查不出自己 spec 里的洞，独立读者才看得见。盯六反模式：**Magic Bridge / Orphan Field / Silent Failure / Missing Trigger / Unversioned State / Unconnected Feedback**。
 
-## Verification Strategy Questions (both paths MUST cover)
+## 产物
 
-This is the **core difference** from the original grilling skill. These dimensions must be fully explored.
-
-> **⚠️ MANDATORY GATE**: Before writing spec.md, you MUST create a dedicated decision ticket
-> (e.g., "NN-grilling-verification-strategy") that covers ALL 6 dimensions below.
-> This ticket MUST be resolved before the spec exit. If you skip it, the spec is INVALID.
-> In the Wayfinder path, this ticket is created during Breadth-First Grill and resolved
-> before writing the map's exit. In the Grilling path, this is the LAST question before Exit Conditions.
-
-### 1. Verification Levels
-
-What verification level does this feature need?
-- Unit tests (Service methods)
-- Integration tests (API end-to-end + cross-validation)
-- Browser E2E (Playwright automation)
-- Contract tests (VO <-> TypeScript interface field consistency)
-- Manual checklist (fallback when no automation framework)
-
-### 2. Middleware Connections
-
-Which middleware needs verification?
-- Database: which table, what data state?
-- Cache: which key, what cache behavior?
-- Other: file storage, message queues
-
-### 3. Design Specs (if any)
-
-Is there a Figma design?
-- Figma link, relevant nodes
-- Fidelity requirement: pixel-perfect 1:1 or rough alignment?
-- Need to download image assets -> upload to CDN?
-
-### 4. Test Data
-
-What data for verification?
-- Test user: which account?
-- Seed data: what needs to be ready?
-- Data isolation: prefix? Cleanup after?
-
-### 5. Assertion Methods
-
-How to determine "it's right"?
-- API response assertions: which fields, expected values?
-- Database assertions: SELECT what, expect how many rows, what values?
-- Cache assertions: GET/SCAN expected results?
-- UI assertions: what should be visible, what should NOT?
-
-### 6. Prerequisites
-
-What needs to be ready before verification?
-- Environment: UAT / local / which branch?
-- Dependencies: other modules deployed first?
-- Auth: how to get a token?
-
-## Exit Conditions
-
-### Grilling Path
-- User says "confirmed" or "hand to agent"
-- All verification dimensions explored
-- **spec.md written** (see Artifact Output)
-- **Story Walk-Through decision asked** (ONE ask) and the answer recorded in spec.md `## Execution Decisions`
-- **Story Walk-Through**: opted in → sub-agent completed, findings presented, user-confirmed fixes incorporated; opted out → skip recorded
-- **issues/ written** with DAG tickets
-- Max 15 rounds
-
-### Wayfinder Path
-- All decision tickets resolved
-- Map clear — no ungraduated fog in "Not yet specified"
-- All verification dimensions explored (both paths must cover these)
-- **spec.md written** (see Artifact Output)
-- **Story Walk-Through decision asked** (ONE ask) and the answer recorded in spec.md `## Execution Decisions`
-- **Story Walk-Through**: opted in → sub-agent completed, findings presented, user-confirmed fixes incorporated; opted out → skip recorded
-- **issues/ written** with DAG tickets
-- Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
-
-## Story Walk-Through Decision (optional — ONE ask)
-
-Once requirement clarification is complete (all decision branches resolved + verification strategy explored) and the draft spec.md is written, ask the user **once** whether to run the independent design-validation sub-agent:
-
-| Question | Options | Recommendation basis |
-|----------|---------|---------------------|
-| **Story Walk-Through** — run the independent design-validation sub-agent? | run / skip | run: user-facing features, cross-module data flows, complex state machines · skip: small internal refactors, CLI-only, single-module tweaks |
-
-**Wait for the user's explicit answer** — never proceed with a silent default. Record it in spec.md `## Execution Decisions` (see Spec Template).
-
-> **What is NOT yours to ask**: how the phase gets implemented, whether E2E runs, and how tickets are parallelized are the **bound workflow's** business — they are settled after the task is enqueued, by the board and the workflow YAML. Do not ask the user about them, and do not offer to run anything yourself.
-
-## Story Walk-Through Analysis (OPTIONAL — only if opted in, sub-agent)
-
-This section runs **only if the user opted in to the Story Walk-Through decision above**. If they opted out, skip this entire section (the decision is already recorded in spec.md `## Execution Decisions`) and proceed to issues/.
-
-**What it does**: an independent sub-agent traces each core user story end-to-end through the design to validate it forms a complete closed-loop system.
-
-**Why sub-agent**: 裁判 ≠ 球员 — the spec author cannot reliably find gaps in their own spec. An independent reader catches what the writer missed.
-
-**Execution**:
-1. Write draft `spec.md` (see Spec Template below)
-2. Spawn sub-agent via Agent tool:
-   ```
-   Prompt: "Read the spec at <artifacts.dir>/<feature-slug>/spec.md and perform a
-   Story Walk-Through analysis.
-   Protocol: this skill's own `references/story-walkthrough.md`
-   (resolved under the clone plugin dir, e.g.
-    ~/.octopus/agent/built-in/task-author/skills/author-verified-requirement/references/story-walkthrough.md)
-   Explore the codebase freely to verify each story step.
-   
-   Output TWO things:
-   1. Write <artifacts.dir>/<feature-slug>/story-walkthrough.md — a human-readable
-      report with full story traces, break points, and recommendations.
-      This file is for human review only — nothing downstream consumes it.
-   2. Return structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW)
-      and recommended fixes to the parent agent.
-   
-   Do NOT modify spec.md."
-   ```
-3. Read sub-agent's findings
-4. **Present findings to user and get confirmation** (MANDATORY GATE):
-   - Show a structured summary of ALL break points, grouped by severity:
-     - CRITICAL / HIGH: list each with description + recommended fix
-     - MEDIUM / LOW: list each with description + recommendation (fix now vs note in Risks)
-   - For each CRITICAL/HIGH finding, present the **specific recommended fix**:
-     - What type/schema/API to add
-     - What AC to add
-     - What Key Decision to update
-   - **Wait for user response**. The user may:
-     - Confirm all findings → proceed to fix all
-     - Reject specific findings → skip those, don't fix
-     - Propose alternative fixes → use user's approach instead
-     - Add their own modification suggestions → incorporate into the fix plan
-   - Do NOT proceed to modify spec.md until user explicitly confirms the fix plan
-5. Fix confirmed break points in spec.md:
-   - Add missing types/schemas/APIs to Implementation Decisions
-   - Add new ACs for each fix
-   - Update Key Decisions with "Story Gap Fixes"
-   - Incorporate any user-provided modifications
-6. Re-trace if needed (spawn again if major structural changes)
-7. Append story traces to spec.md Appendix
-
-**Human-readable report**: The sub-agent writes `story-walkthrough.md` as a standalone artifact for human review. Nothing downstream consumes it — it exists purely for the user to understand what gaps were found and how the design was validated.
-
-**Protocol details** → See [references/story-walkthrough.md](references/story-walkthrough.md)
-
-**Watch for 6 anti-patterns**: Magic Bridge, Orphan Field, Silent Failure, Missing Trigger, Unversioned State, Unconnected Feedback.
-
-## Artifact Output
-
-On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
-
-### Grilling Path Output
+`<artifacts.dir>/<feature-slug>/`，slug 小写英文 + 连字符（如 `user-profile-edit`）：
 
 ```
-<artifacts.dir>/<feature-slug>/
-├── brief.md              ← Lightweight core info summary (for human review)
-├── spec.md               ← Full verified spec (single source of truth for agents)
-├── story-walkthrough.md  ← Walkthrough report (only when user opted in; review only, nothing consumes it)
-└── issues/               ← DAG tickets with blocked-by + verification
-    ├── 01-<slug>.md
-    ├── 02-<slug>.md
-    └── ...
+brief.md                一页纸给人快审：Overview（一句）· Summary（决策数 / AC 数 / 故事数，各带跳 spec 的锚链接）· Risks · → spec.md。细表一概不放
+spec.md                 唯一真相源 = 绑定流实现者的输入
+story-walkthrough.md    仅 opt-in：人读报告，无下游消费
+issues/                 DAG 实现票
+map.md · decisions/     仅 Wayfinder 路
 ```
 
-### Wayfinder Path Output
+**本技能只产这些。** `round-report.md` / `handoff.md` / `fix-report-rN.md` / e2e 证据目录都是入队后执行侧在工作区里产的东西，这里一个都不许建。ADR 也不在此目录（见上）。
 
-```
-<artifacts.dir>/<feature-slug>/
-├── brief.md              ← Lightweight core info summary (for human review)
-├── spec.md               ← Full verified spec (written AFTER story walkthrough, when user opted in)
-├── issues/               ← DAG tickets with blocked-by + verification
-├── map.md                ← Decision map (wayfinder core artifact)
-├── decisions/            ← Decision tickets (resolved during wayfinder stage)
-│   ├── 01-research-sdk-plugin.md
-│   ├── 02-prototype-prompt-length.md
-│   └── 03-grilling-discovery.md
-```
+**顺序**：建目录 → brief → spec → 走查一问（选跑则校验并按确认改 spec）→ issues（**必含末张 `NN-e2e-*` 票**，细则见 `author-verified-tickets` ③④）→ 更新 `<artifacts.dir>/index.md` → 把路径报给用户，等 [入队]。
 
-### brief.md — Lightweight Core Info (for human review)
+`index.md` 每次新特性追加一行：`| N | <feature-slug> | YYYY-MM-DD | feat/<branch> | in-progress |`
 
-brief.md is a **minimal one-pager** (一页纸) for the user to quickly review. Contains:
-- Overview (one sentence)
-- Summary (decision count + AC count + story count, with links to spec.md)
-- Risks
-- Link to spec.md
+## Spec 骨架
 
-It does NOT contain detailed tables — all details live in spec.md.
-
-### spec.md — Single Source of Truth (for agents)
-
-spec.md is the main technical document. It contains everything needed to implement and verify the feature, and it is the phase's authoritative artifact: the bound workflow's implementers read it as their input.
-
-### What This Skill Does NOT Produce
-
-`spec.md` and `issues/` are produced by **THIS skill** (see Artifact Output above). `brief.md` is a lightweight summary for human review.
-
-Round reports and handoffs (`round-report.md`, `handoff.md`, `fix-report-rN.md`) and E2E evidence directories are produced **later**, in the execution workspace, by the bound workflow — this skill must **never** create them. Its own deliverable is exactly: `brief.md` + `spec.md` + `issues/`.
-
-**ADR 不在此目录** — ADR 写入 `docs/adr/NNNN-slug.md`，见上方 ADR 规则。
-
-**Naming**: `<feature-slug>` uses lowercase English + hyphens, e.g., `user-profile-edit`.
-
-**Steps**:
-1. Create directory `<artifacts.dir>/<feature-slug>/`
-2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
-3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `author-verified-spec` skill as methodology reference)
-4. Ask the **Story Walk-Through decision** — ONE ask (run / skip) → record the answer in spec.md `## Execution Decisions`
-5. If walkthrough opted in: spawn story-walkthrough sub-agent → read findings → present to user for confirmation → fix spec.md; if opted out: proceed (decision already recorded)
-6. Write `<artifacts.dir>/<feature-slug>/issues/` (using `author-verified-tickets` skill as methodology reference) — **always append the final E2E ticket** (see Issues Writing rule 8)
-7. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
-8. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
-9. Tell the user the output paths and how to proceed (see Next Steps)
-
-### Index File Maintenance
-
-`<artifacts.dir>/index.md` tracks all features. **Append on every new feature**:
-
-```markdown
-| # | feature-slug | Created | Branch | Status |
-|---|-------------|---------|--------|--------|
-| N | <feature-slug> | YYYY-MM-DD | feat/<branch> | in-progress |
-```
-
-## Brief Template (lightweight core info)
-
-```markdown
-# Brief: [Feature Title]
-
-## Overview
-[One sentence description]
-
-## Summary
-- [N] key decisions → [spec.md § Key Decisions](./spec.md)
-- [N] execution decisions (walkthrough) → [spec.md § Execution Decisions](./spec.md)
-- [N] acceptance criteria → [spec.md § Acceptance Criteria](./spec.md)
-- [N] core stories verified → [spec.md § Appendix](./spec.md)
-
-## Risks
-- R1: [risk]
-- R2: [risk]
-
-## Full Spec
-[spec.md](./spec.md)
-```
-
-## Spec Template (single source of truth)
-
-See `author-verified-spec` skill (enhancement of `to-spec`) for verification strategy additions and writing rules.
+写作细则在 `author-verified-spec`，这里是**节名契约**（下游按节名取东西，别改字）：
 
 ```markdown
 # Spec: [Feature Title]
 
-## Problem Statement
-The problem users face, described from the user's perspective.
-
-## Solution
-The solution, described from the user's perspective.
-
-## Projects Involved
-- [ ] [project-1] ([role])
-- [ ] [project-2] ([role])
-
-## Feature Scope
-**Do:** / **Don't:**
-
-## Key Decisions
-| # | Decision | Conclusion | Reason |
-|---|---------|-----------|--------|
-
-## Execution Decisions
-<!-- Filled at the ONE Story Walk-Through ask -->
-| # | Decision | Choice | Reason |
-|---|----------|--------|--------|
-| 1 | Story Walk-Through | run / skipped (user decision) | |
-
-## Decision Map Summary (wayfinder path only)
-| # | Ticket | Type | Decision |
-|---|--------|------|----------|
-Map: [map.md](./map.md)
-
-## User Stories
-1. As a [role], I want [capability], so that [benefit]
-(Exhaustive list covering all aspects of the feature)
-
-## Implementation Decisions
-- Modules involved (new / modified)
-- Inter-module interface definitions
-- Data model changes (tables, fields, indexes)
-- API contracts (paths, methods, params, response)
-- Caching strategy
-- Architecture decisions
-
-## Data Model Changes
-| Table | Operation | Details |
-|-------|-----------|---------|
-
-## API Contracts
-| Method | Path | Side | Params | Response | Notes |
-|--------|------|------|--------|----------|-------|
-
-## Design Specs (if any)
-- Figma link: [URL or "none"]
-- Fidelity: [pixel-perfect 1:1 / rough alignment]
-
+## Problem Statement     用户视角的问题
+## Solution              用户视角的方案
+## Projects Involved     - [ ] [project] ([role])  逐仓
+## Feature Scope         **Do:** … / **Don't:** …
+## Key Decisions         | # | Decision | Conclusion | Reason |   行与编号跨 phase 稳定：改行内、新增标 NEW-rN
+## Execution Decisions   走查一问的答案落这里：| 1 | Story Walk-Through | run / skipped (user decision) | |
+## Decision Map Summary  仅 Wayfinder：| # | Ticket | Type | Decision | + map.md 链接
+## User Stories          穷举覆盖全特性：1. As a [role], I want [capability], so that [benefit]
+## Implementation Decisions  模块增改 / 模块间接口 / 数据模型 / API 契约 / 缓存策略 / 架构决策
+## Data Model Changes     | Table | Operation | Details |
+## API Contracts          | Method | Path | Side | Params | Response | Notes |
+## Design Specs           Figma 链接 + 保真度
 ## Verification Strategy
-
-### Verification Environment
-| Item | Value |
-|------|-------|
-| Environment | [local dev: `pnpm dev`] |
-| API prefix | `/api/` |
-| Database | SQLite: `~/.octopus/db/octopus.db` |
-| Admin UI | `http://localhost:3000` |
-
-### Test Users & Data
-| Item | Value |
-|------|-------|
-| Test account | [admin / regular user] |
-| Data prefix | E2E_TEST_ |
-| Cleanup | DELETE after test |
-
-### AC to Verification Method Mapping
-| US# | User Story | AC | Verification Level | Verification Method |
-|-----|-----------|-----|-------------------|---------------------|
-
-### Verification Methods Detail
-#### Unit Tests
-#### Integration Tests
-#### Browser E2E
-#### Contract Tests
-#### Manual Checklist
-
-### Anti-Fake-Run Standards (R1-R8)
-| # | Criterion | Description |
-|---|-----------|-------------|
-| R1 | Real service | Use real address, not mock |
-| R2 | Business data | Assert specific field values |
-| R3 | Cross-validation | API ↔ DB, at least two-way |
-| R4 | Evidence | Response body + DB query |
-| R5 | Side effects | Write ops verify DB change |
-| R6 | Real user path | Obtain token through login |
-| R7 | Data isolation | E2E_TEST_ prefix |
-| R8 | Repeatable | No manual pre-steps |
-
-### Prerequisites
-- [ ] [Prerequisite 1]
-
+### Verification Environment   例：local dev `pnpm dev` · 前缀 `/api/` · SQLite `~/.octopus/db/octopus.db` · Admin UI `http://localhost:3000`
+### Test Users & Data          账号 · 数据前缀 `E2E_TEST_` · 测后清理
+### AC to Verification Method Mapping   | US# | User Story | AC | Verification Level | Verification Method |
+### Verification Methods Detail  按 Unit / Integration / Browser E2E / Contract / Manual 分节写具体命令
+免走查的 phase 在本段留一行字面量：`Verification Tier: unit-only`（引擎正则精确匹配，别改字、别加前后缀）
+### Anti-Fake-Run Standards   R1 真服务不 mock · R2 断具体业务值 · R3 API↔DB 至少双向交叉 · R4 贴响应体 + DB 查询 · R5 写操作验 DB 副作用 · R6 真登录拿 token · R7 `E2E_TEST_` 前缀隔离 · R8 无手工前置可复跑
+### Prerequisites            - [ ] …
 ## Risks & Notes
-- R1: [risk]
-
-## Glossary (new domain terms)
-| Term | Meaning |
-|------|---------|
-
-## Appendix: Core User Stories（闭环验证）
-### Story 1: [标题]
-[Step-by-step trace with [UI]/[API]/[Data]/[Exec]/[Event] annotations]
-### Story 2: [标题]
-[...]
+## Glossary               本次新增的领域术语 | Term | Meaning |
+## Appendix: Core User Stories（闭环验证）   逐故事分步轨迹，步骤带 [UI]/[API]/[Data]/[Exec]/[Event] 标注
 ```
 
-**Spec writing rules** (from `author-verified-spec`):
-1. Every User Story MUST have a verification method
-2. Verification methods must be executable (specific commands, not "test the API")
-3. Use project domain terminology (consistent with CONTEXT.md)
-4. No implementation code (describe decisions, not code)
-5. No scope reduction ("for now", "for the initial implementation" forbidden)
+五条纪律：每个用户故事必绑验证方式；验证方式必可执行（具体命令，不是 "test the API"）；术语与 CONTEXT.md 一致；只写决策不写实现代码；不许缩小范围（"先做"「初版」一类措辞禁）。
 
-## Issues Writing (DAG Tickets)
+## Issues
 
-After spec.md is finalized (including story walk-through fixes, when the user opted in), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
+细则全在 `author-verified-tickets`（①–④），这里只补它没有的两条：
 
-See `author-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
+- `## Status` 下的值是纯文本四态：`ready-for-agent`（初始）/ `in-progress`（已领）/ `done`（验过）/ `skip`（重试耗尽）。绑定流的执行者读这个字段推进度。
+- 末张 `NN-e2e-*` 票**恒产**（本 phase 唯一的端到端走查声明），AC 取自 spec 的 E2E 级 AC，`Blocked by` 指全部功能票。
 
-### Process
-1. Gather context (read spec.md, explore codebase)
-2. Split into vertical slices (tracer bullet principles)
-3. Order by dependency: DB → Entity → Service → Controller → Frontend API → Frontend pages → E2E
-4. Bind verification method to each ticket
-5. Declare blocking edges (`Blocked by` field — this creates the DAG)
-6. Write to files: one per ticket, numbered from `01-<slug>.md`
+## 与原始技能的关系
 
-### Ticket Template
+借 `grilling` 的一问一答、`domain-modeling` 的词表与 ADR、`/research` 子代理；**取代** `grill-with-docs`（文档与建模已内置，另加验证策略）；**改编** `wayfinder` 的协议（map / decision ticket / 雾 / frontier）成单入口并挂上验证策略，独立的 `/wayfinder` 仍在流程外可用。spec 与 tickets 的写作细则分别下沉在 `author-verified-spec`、`author-verified-tickets`，本文只管流程与契约。
 
-```markdown
-# <NN> — <Ticket Title>
+## 出口
 
-## What to build
-Describe the end-to-end behavior this ticket implements, from the user's perspective.
+产物写完就把路径交给用户：
 
-## Blocked by
-Prerequisite ticket numbers/titles, or "None — can start immediately".
+> spec 与 tickets 已就位 —— brief / spec / issues（N 票，M 个阶段）。你确认后入队，看板会按该 phase 绑定的工作流跑，每个 phase 末了都有人工验收 gate。
 
-## Status
-ready-for-agent
-
-## Acceptance Criteria
-- [ ] AC1: [specific verifiable condition]
-- [ ] AC2: [specific verifiable condition]
-
-## Verification Method
-**Verification type**: [unit test / integration test / browser E2E / contract test / manual checklist]
-
-**Verification steps**:
-[Specific commands, SQL, assertions]
-
-**Pass criteria**: All verification steps PASS
-**Failure handling**: Max 3 fix attempts, then mark SKIP with reason
-```
-
-**Status field convention**: The value under `## Status` heading is plain text. Valid values: `ready-for-agent` (initial), `in-progress` (claimed), `done` (verified), `skip` (failed after retries). The bound workflow's executors read this field to track progress.
-
-### Issues Writing Rules
-1. Every ticket MUST have a Verification Method
-2. Vertical Slice — each ticket is a complete narrow path
-3. Independently verifiable — each ticket can be verified on its own
-4. Clear dependencies — `Blocked by` explicitly declares prerequisites
-5. Executable verification — specific commands, specific SQL, specific assertions
-6. One session size — each ticket fits in one agent call
-7. DAG structure — tickets without mutual blockers can run concurrently in the same stage
-8. **Final acceptance ticket always generated** — `issues/` MUST end with exactly one `NN-e2e-*` ticket: blocked by all functional tickets, Verification type = browser walkthrough / API-level walkthrough (per spec's Verification Strategy), ACs drawn from the spec's E2E-level ACs. It is the phase's acceptance ticket — the one place in the whole phase that really starts a browser, and the bound workflow routes to it by that filename. Write the mode into the ticket itself (see `author-verified-tickets` rule 5).
-
-## Relationship to Original Skills
-
-| Original Skill | This Skill's Relationship |
-|---------------|-------------------------|
-| `grilling` | Reuses its one-question-at-a-time mode |
-| `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
-| `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this flow. |
-| `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
-| `author-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
-| `author-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
-
-## Next Steps
-
-Once all artifacts are written, tell the user the output paths:
-
-> Verified spec and tickets are ready:
-> - Brief (core info): `<artifacts.dir>/<feature-slug>/brief.md`
-> - Spec: `<artifacts.dir>/<feature-slug>/spec.md`
-> - Tickets: `<artifacts.dir>/<feature-slug>/issues/` (N tickets, M stages)
->
-> Enqueue the phase when you're ready — the board runs it as its bound workflow
-> demands, with a human acceptance gate at the end of each phase.
-
-**This is where your job ends.** You do not run the work, and you do not offer to.
-
-Never propose, invoke, or "offer as one of the options" any of: `matt-dev-pipeline`,
-`matt-pipeline-loop`, `matt-dev-runner`, `matt-e2e-tester`, `matt-verification-report`.
-Those are execution-side flows for a session doing development directly. Here,
-execution belongs to the **bound workflow**, driven from the board after enqueue —
-suggesting them would bypass the per-phase acceptance gate and the artifact
-collect-back path, so the tickets you just wrote would never reach an executor.
+**你的活到此为止：不跑，也不提议跑。** 怎么实现、走查跑不跑、票怎么并行，都是入队之后由看板和流 YAML 决定的事 —— 不是你能拿去问用户的，也不是你能替它开工的。

@@ -503,8 +503,6 @@ nodes:
       ═══ 双模式（先读票上「类型」声明选路）═══
       - 「browser 走查」→ Playwright 真起浏览器 + 截图/vision 证据（仅 web-app 类；可用 e2e-harness 库）
       - 「API 级走查（不开浏览器）」→ 真实服务 curl + sqlite 直查 + 手算交叉；
-        禁起浏览器、跳截图、**不用 e2e-harness**（那是 Octopus web-app 专用 Playwright 库，
-        纯后端用不上）。无 UI 的 phase 此为默认。
 
       ═══ 步骤 ═══
       1. 读票的 Verification Method + spec 的 Verification Strategy / AC 表
@@ -512,8 +510,8 @@ nodes:
          `.octopus/acceptance/{up,health,down}.sh`（或 spec 指明的启动契约），跑
          up → 轮询 health(退出码0=就绪) → 走查 → down 收尾；没有再自行起服务
          （端口冲突用 --isolated）。契约与验收台「跑起来看」同源，别各起一套。
-         **禁无端全量 rebuild**（2026-09-21 实测：本节点隔离启动重跑全量 build 白烧
-         3-5min）—— code-review 终检刚过，构建产物是热的，直接以现有 dist/产物起服务；
+         **禁无端全量 rebuild**
+         —— code-review 终检刚过，构建产物是热的，直接以现有 dist/产物起服务；
          仅当本节点 Quick Fix 真改了代码，才只重建受影响的部分。
       3. 反假跑纪律：真实服务、断言业务值、≥2 种证据、E2E_TD_ 前缀数据、测后清理恢复
       4. **跨仓复用契约探针（消费方视角）**：若本 phase 跨仓（消费仓引用了产出仓本次新增

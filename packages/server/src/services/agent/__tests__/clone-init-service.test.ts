@@ -511,7 +511,7 @@ describe('task-author fork — shape of the shipped source', () => {
     expect(requirement).not.toContain('Execution Decisions Gate')
     expect(requirement).not.toContain('Two options to proceed')
     // The ban is stated, not merely implied.
-    expect(requirement).toContain('This is where your job ends')
+    expect(requirement).toContain('你的活到此为止')
 
     const persona = fs.readFileSync(path.join(realFork, 'persona.md'), 'utf-8')
     expect(persona).toContain('禁止执行开发')
