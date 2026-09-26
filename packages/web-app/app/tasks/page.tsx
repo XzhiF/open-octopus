@@ -17,10 +17,12 @@ import { toast } from "sonner"
 import {
   groupTasksByStatus, tasksForColumn, effectiveStatusOf, sortByCreatedDesc,
   computePhaseBadge, overBudgetRoundOf, phaseBudgetMs, parseTaskTriggerFailed,
+  sumTaskUsage,
   TASK_COLUMNS,
   type TaskBoardColumnId,
 } from "@/lib/task-board"
-import { formatDuration } from "@/lib/format"
+import { formatCost, formatDuration, formatPercent, formatTokenCount } from "@/lib/format"
+import { useBillingCurrency } from "@/lib/billing-currency"
 import { clockShort } from "@/components/tasks/run-console/phase-status"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
@@ -386,6 +388,9 @@ export default function TasksPage() {
   })
   const grouped = groupTasksByStatus(sortByCreatedDesc(displayTasks))
   const budgetMs = phaseBudgetMs()
+  const currency = useBillingCurrency()
+  /** 列成本统计（v49）：草稿列也算 —— 草稿的钱挂在作者会话上，读模型已带 ai_usage。 */
+  const boardUsage = sumTaskUsage(displayTasks)
 
   return (
     <div className="pop-confetti flex flex-1 min-h-0 flex-col text-pop-ink">
@@ -393,6 +398,15 @@ export default function TasksPage() {
         <header className="flex items-center gap-3 px-6 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper">
           <h1 className="text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
           <span className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
+          {boardUsage && (
+            <span
+              data-board-usage
+              title={`Σ ${formatTokenCount(boardUsage.totals.tokens)} tok · ${boardUsage.totalCalls} 次请求 · 缓存命中 ${formatPercent(boardUsage.totals.cacheHitRate, 1)}（含草稿作者会话）`}
+              className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-yellow"
+            >
+              {formatCost(boardUsage.totals.cost.usd, boardUsage.totals.cost.complete, currency)}
+            </span>
+          )}
           <div className="ml-auto flex gap-2">
             <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
@@ -417,6 +431,7 @@ export default function TasksPage() {
               {TASK_COLUMNS.map((col) => {
                 const colTasks = tasksForColumn(grouped, col.id)
                 const theme = COLUMN_THEME[col.id]
+                const colUsage = sumTaskUsage(colTasks)
                 return (
                 <section
                   key={col.id}
@@ -428,6 +443,15 @@ export default function TasksPage() {
                     <span className={`size-2 shrink-0 rounded-full shadow-[0_0_8px_currentColor] ${theme.dot}`} aria-hidden />
                     <span className={theme.label}>{col.label}</span>
                     <span className={`ml-auto rounded-full border border-pop-bd px-1.5 py-px text-[10px] font-black tabular-nums ${theme.pill}`}>{colTasks.length}</span>
+                    {colUsage && (
+                      <span
+                        data-col-usage={col.id}
+                        title={`Σ ${formatTokenCount(colUsage.totals.tokens)} tok · ${colUsage.totalCalls} 次请求 · 缓存命中 ${formatPercent(colUsage.totals.cacheHitRate, 1)}`}
+                        className="shrink-0 rounded-full border border-pop-bd bg-pop-bg/70 px-1.5 py-px text-[10px] font-black tabular-nums text-pop-yellow"
+                      >
+                        {formatCost(colUsage.totals.cost.usd, colUsage.totals.cost.complete, currency)}
+                      </span>
+                    )}
                   </header>
                   <div className="pop-tilt flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
                     {colTasks.map((task) => (

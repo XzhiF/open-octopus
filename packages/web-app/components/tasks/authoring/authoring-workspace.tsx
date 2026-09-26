@@ -31,6 +31,7 @@ import { listBuiltInWorkflows, type BuiltInWorkflowSummary } from "@/lib/workflo
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
+import { useSessionUsage } from "@/hooks/useSessionUsage"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "@/components/agent/chat/SlashCommandAutocomplete"
 import * as agentApi from "@/lib/agent/api"
@@ -210,6 +211,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
       agentApi.getCloneSessionRunning(TASK_AUTHOR_CLONE, id),
   }), [])
   const chat = useAgentChat(activeSessionId, { api: apiOverrides })
+  /** v49 token 角标：本会话账本（llm_calls 派生），轮次收尾沿重拉。 */
+  const sessionUsage = useSessionUsage(activeSessionId, chat.streaming)
 
   // ── #53 batch-tree（磁盘直扫）单一状态源 ──────────────────────────
   // 「草稿批次」区 + Phase 行内展开 + 入队清单磁盘判定 三处吃同一份数据；
@@ -673,6 +676,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               hideEmptyState
               commands={commands}
               contextUsage={chat.contextUsage}
+              sessionUsage={sessionUsage}
               currentModel={model}
               onModelChange={setModel}
               tui

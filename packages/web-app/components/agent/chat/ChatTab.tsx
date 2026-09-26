@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAgentSessions } from '@/hooks/useAgentSessions'
 import { useAgentChat } from '@/hooks/useAgentChat'
+import { useSessionUsage } from '@/hooks/useSessionUsage'
 import { SessionList } from './SessionList'
 import { ChatArea } from './ChatArea'
 import { ToolCallPanel } from './ToolCallPanel'
@@ -27,6 +28,7 @@ export function ChatTab() {
     error: chatError, statusMessage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
   } = useAgentChat(activeSessionId, { onTitleUpdate: handleTitleUpdate })
+  const sessionUsage = useSessionUsage(activeSessionId, streaming)
 
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -131,6 +133,7 @@ export function ChatTab() {
           onStop={stopGenerate}
           onConfirm={handleConfirm}
           hasSession={!!activeSessionId}
+          sessionUsage={sessionUsage}
         />
       </div>
 

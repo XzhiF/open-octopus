@@ -11,6 +11,7 @@ import {
   acceptanceRunbookSchema,
   pathSafeSlugSchema,
 } from "./scheduler-job"
+import type { LlmUsageSummary } from "../ledger"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
 /** draft → ready → running → (done | failed | aborted).
@@ -546,4 +547,7 @@ export interface Task {
   execution?: TaskExecutionBadge | null
   /** 所有轮次的实际跑时合计（见 TaskRunStats）。Undefined = never ran. */
   run_stats?: TaskRunStats | null
+  /** 该任务花掉的账本用量：作者会话（草稿）+ 各轮 execution（已跑）合并。
+   *  读模型（GET /api/tasks、GET /:id）填充；Undefined = 无账本行（从未产生调用）。 */
+  ai_usage?: LlmUsageSummary | null
 }

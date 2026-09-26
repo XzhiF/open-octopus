@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react'
 import { Send, Square, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { LlmUsageAggregates } from '@octopus/shared'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
+import { SessionCostChip } from './session-cost-chip'
 import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
@@ -82,6 +84,8 @@ interface ChatAreaProps {
   commands?: SlashCommand[]
   /** Context window usage breakdown (from SDK getContextUsage). */
   contextUsage?: ContextUsageData | null
+  /** 本会话账本用量（v49 token 角标）；null = 无账本/未取到 → 角标不渲染。 */
+  sessionUsage?: LlmUsageAggregates | null
   /** Current model name (e.g. 'pro', 'pro-max', 'se'). */
   currentModel?: string
   /** Callback when user switches model. */
@@ -112,7 +116,7 @@ export function ChatArea({
   error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName, streamSource,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
-  commands, contextUsage, currentModel, onModelChange,
+  commands, contextUsage, sessionUsage, currentModel, onModelChange,
   composerLeading, composerPlaceholder,
   tui, onSteer, steerActiveRef, resumeTailing,
 }: ChatAreaProps) {
@@ -646,6 +650,7 @@ export function ChatArea({
                   </button>
                 </>
               )}
+              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
               <span className="ml-auto flex min-w-0 items-center justify-end gap-2 text-[10.5px]">
                 {streaming && (
                   <span className="shrink-0 text-pop-amber" data-tui-busy>
@@ -757,6 +762,7 @@ export function ChatArea({
                   {contextExpanded ? <ChevronDown className="size-2.5" /> : <ChevronUp className="size-2.5" />}
                 </button>
               )}
+              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
               {/* Model selector */}
               {currentModel && onModelChange && (
                 <div className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">

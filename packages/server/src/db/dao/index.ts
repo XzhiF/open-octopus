@@ -4,7 +4,7 @@
 export { BaseDAO } from "./base"
 export { WorkspaceDAO } from "./workspace-dao"
 export { ExecutionDAO } from "./execution-dao"
-export { TokenUsageDAO } from "./token-usage-dao"
+export { TokenUsageDAO, toLedgerRows } from "./token-usage-dao"
 export { ScheduleConfigDAO } from "./schedule-config-dao"
 export { ScheduleRunDAO } from "./schedule-run-dao"
 export { TaskDAO } from "./task-dao"

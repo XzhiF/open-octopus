@@ -13,6 +13,7 @@ import {
   phaseBudgetMs,
   overBudgetRoundOf,
   parseTaskTriggerFailed,
+  sumTaskUsage,
   PHASE_BUDGET_DEFAULT_MS,
   type TaskBoardStatus,
 } from "../task-board"
@@ -352,5 +353,52 @@ describe("parseTaskTriggerFailed", () => {
     expect(parseTaskTriggerFailed(JSON.stringify({ task_id: "t1", reason: "", trigger_mode: "cron" }))).toBeNull()
     expect(parseTaskTriggerFailed(JSON.stringify({ task_id: "t1", reason: "x", trigger_mode: "queued" }))).toBeNull()
     expect(parseTaskTriggerFailed("not json")).toBeNull()
+  })
+})
+
+// ── 列成本统计 (v49) ────────────────────────────────────────────────
+
+function usage(inputTokens: number, cacheRead: number, usd: number | null, complete = true) {
+  return {
+    totalCalls: 1,
+    usage: { inputTokens, outputTokens: 100, cacheReadTokens: cacheRead, cacheCreationTokens: 10 },
+    totals: {
+      tokens: inputTokens + 100 + cacheRead + 10,
+      cost: { usd, complete },
+      cacheHitRate: cacheRead / (inputTokens + cacheRead),
+    },
+  }
+}
+
+describe("sumTaskUsage — 列/看板用量合并", () => {
+  it("全空（草稿没聊过 / 读模型未带）→ null，渲染成「—」而非 0", () => {
+    expect(sumTaskUsage([makeTask({ id: "a" }), makeTask({ id: "b" })])).toBeNull()
+  })
+
+  it("逐字段相加，命中率用合并后 usage 重算（不是各组比率取平均）", () => {
+    const merged = sumTaskUsage([
+      makeTask({ id: "a", ai_usage: usage(1000, 3000, 0.01) }),   // 75%
+      makeTask({ id: "b", ai_usage: usage(9000, 1000, 0.02) }),   // ~10%
+    ])!
+    expect(merged.totalCalls).toBe(2)
+    expect(merged.usage.inputTokens).toBe(10000)
+    expect(merged.totals.tokens).toBe(10000 + 200 + 4000 + 20)
+    expect(merged.totals.cacheHitRate).toBeCloseTo(4000 / 14000, 10)
+    expect(merged.totals.cost.usd).toBeCloseTo(0.03, 10)
+    expect(merged.totals.cost.complete).toBe(true)
+  })
+
+  it("任一组部分定价 → 合并 cost 标 incomplete（≈ 前缀），usd 仍是已知部分和", () => {
+    const merged = sumTaskUsage([
+      makeTask({ id: "a", ai_usage: usage(1000, 0, 0.01) }),
+      makeTask({ id: "b", ai_usage: usage(1000, 0, 0.02, false) }),
+    ])!
+    expect(merged.totals.cost.usd).toBeCloseTo(0.03, 10)
+    expect(merged.totals.cost.complete).toBe(false)
+  })
+
+  it("全未定价 → usd null（不焊 0）", () => {
+    const merged = sumTaskUsage([makeTask({ id: "a", ai_usage: usage(1000, 0, null) })])!
+    expect(merged.totals.cost.usd).toBeNull()
   })
 })

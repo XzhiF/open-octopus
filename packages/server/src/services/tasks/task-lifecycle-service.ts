@@ -1185,8 +1185,10 @@ export class TaskLifecycleService {
   }
 
   /** Timing rows of all instance runs of the given tasks — the 「实际用时」aggregate
-   *  source (TasksService.runStats folds them into a TaskRunStats per task). */
+   *  source (TasksService.runStats folds them into a TaskRunStats per task).
+   *  v49: 行上的 `id` 同时喂逐任务账本用量（TasksService.aiUsageFor）。 */
   runTimings(taskIds: readonly string[]): Array<{
+    id: string
     task_id: string
     status: string
     started_at: string | null

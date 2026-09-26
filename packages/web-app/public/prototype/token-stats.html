@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE — 任务草稿 / 对话的 token 统计（可删，勿当生产代码读）
+
+  问题：token 统计放在哪、点开长什么样、草稿怎么进看板统计。
+  三个结构不同的变体，浮标切换：
+    A 贴角标 + 悬浮明细   —— 最小侵入：ctx 后追加三枚 chip，点击弹 popover 账目表
+    B 抽屉面板 + 双口径   —— 最重：点击 ◎ 开右抽屉，会话/任务两个口径 + 按轮次条形 + 命中环
+    C 终端状态行 + 就地展开 —— 最贴 TUI：composer 下常驻一行账，点击原地展开 ASCII 表格
+
+  数据形状取自真实账本（不是编的字段名）：
+    llm_calls.input_tokens / output_tokens / cache_read_tokens / cache_creation_tokens / model / session_id
+    node_token_usages 同源；成本恒由 billing_price_config 现算（单价 = 每 1M token），
+    usd_to_cny 默认 7.0；cacheHitRate = cacheRead/(input+cacheRead)；未定价调用 → cost.complete=false
+    ctx% 来自 SDK context_usage SSE（ContextUsageData.percentage / totalTokens / maxTokens / categories）
+  落地要接的口子：GET /api/executions/:id/llm-calls（aggregates.totals.cost / cacheHitRate / modelBreakdown）
+                  GET /api/system/billing/calls?session_id=（会话口径 + 分页明细）
+                  context_usage SSE（已存在于 useAgentChat，勿新造）
+
+  跑法：http://localhost:3000/prototype/token-stats.html
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROTOTYPE · 草稿 token 统计（三变体）</title>
+<style>
+:root{
+  --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --pop-bg:#0A0A0C;--pop-paper:#1C1C22;--pop-ink:#F5F5F2;--pop-dim:#9698A3;--pop-bd:#32323B;
+  --pop-pink:#FF855C;--pop-pink-soft:#2A1B19;
+  --pop-yellow:#FFC857;--pop-yellow-soft:#231E17;
+  --pop-purple:#D2A8FF;--pop-purple-soft:#221E29;
+  --pop-green:#7EE787;--pop-green-soft:#18211A;
+  --pop-cyan:#4FD1D9;--pop-cyan-soft:#151F21;
+  --pop-red:#FF5C5C;--pop-navy:#4C79BF;
+  --pop-idle:#131318;--pop-inset:#020202;
+  --shadow:0 2px 8px rgba(0,0,0,.35);--shadow-lg:0 18px 48px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--pop-bg);color:var(--ink,initial);color:var(--pop-ink);overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#32323b;border-radius:5px;border:2px solid transparent;background-clip:content-box}
+html{scrollbar-width:thin;scrollbar-color:#32323b transparent}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+.num{font-variant-numeric:tabular-nums}
+.dim{color:var(--pop-dim)}
+.bdt{border:1.5px solid var(--pop-bd)}
+.soft{box-shadow:var(--shadow)}
+h4{font-size:10px;font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:var(--pop-dim)}
+
+/* ── 舞台：左看板 / 右草稿对话，三变体共用外层，内部结构各写各的 ── */
+#stage{height:100%;display:flex;flex-direction:column;padding-bottom:54px}
+.vr{flex:1;min-height:0;display:flex}
+.vr[hidden]{display:none}
+
+/* ═════════ A · 贴角标 + 悬浮明细 ═════════ */
+.a-wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+.a-board{border-right:1.5px solid var(--pop-bd);padding:14px 14px 60px;overflow:auto;background:var(--pop-bg)}
+.a-cols{display:flex;flex-direction:column;gap:7px}
+.a-hd,.a-col{display:grid;grid-template-columns:1fr 46px 56px 74px 86px;align-items:center;gap:8px}
+.a-hd{padding:0 10px 4px;font-size:9.5px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:var(--pop-dim)}
+.a-col{padding:7px 10px;border-radius:8px;background:var(--pop-idle);font-size:11.5px}
+.a-col .nm{font-weight:900}
+.a-col .r{text-align:right}
+.costchip{border:1.5px solid var(--pop-bd);border-radius:999px;padding:1px 7px;font-size:10px;font-weight:900;color:var(--pop-yellow);background:var(--pop-yellow-soft)}
+.a-total{margin-top:12px;padding-top:10px;border-top:1.5px dashed var(--pop-bd);display:flex;align-items:baseline;gap:10px;font-size:11px}
+.a-total b{font-size:16px;font-weight:900;color:var(--pop-yellow)}
+.a-note{margin-left:auto;font-size:10px;color:var(--pop-dim)}
+.a-chat{display:flex;flex-direction:column;min-width:0;background:var(--pop-paper);position:relative}
+.winbar{display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-bottom:1.5px solid var(--pop-bd);background:var(--pop-idle);font-size:10.5px;color:var(--pop-dim);flex-shrink:0}
+.winbar .dots{display:flex;gap:5px}
+.winbar .dots i{width:8px;height:8px;border-radius:50%;background:#ffffff2a;display:block}
+.msgs{flex:1;min-height:0;overflow:auto;padding:12px 14px 4px;display:flex;flex-direction:column;gap:9px}
+.msg{max-width:88%;padding:6px 9px;border-radius:8px;font-size:12px}
+.msg.user{align-self:flex-end;background:var(--pop-idle);border:1.5px solid var(--pop-bd)}
+.msg.bot{align-self:flex-start;background:#ffffff07;border:1.5px solid transparent}
+.msg .who{display:block;font-size:9px;font-weight:900;letter-spacing:.08em;color:var(--pop-dim);margin-bottom:2px}
+.composer{border-top:1.5px solid var(--pop-bd);padding:8px 10px 10px;flex-shrink:0;position:relative}
+.cbar{display:flex;align-items:center;gap:8px;font-size:10.5px;white-space:nowrap;overflow:hidden}
+.mchip{border:1.5px solid var(--pop-bd);border-radius:6px;padding:1px 6px;font-weight:900;font-size:9.5px;color:var(--pop-purple);background:var(--pop-purple-soft)}
+.sep{color:#ffffff20;flex-shrink:0}
+.txline{margin:8px 0 0;border:1.5px solid var(--pop-bd);border-radius:8px;background:var(--pop-inset);padding:7px 9px;color:var(--pop-dim);font-size:11.5px}
+.tokchip{border:1.5px solid var(--pop-bd);background:var(--pop-bg);border-radius:999px;padding:1px 8px;font-size:10px;font-weight:900;color:var(--pop-ink);display:inline-flex;align-items:center;gap:5px}
+.tokchip:hover{border-color:var(--pop-pink);color:var(--pop-pink)}
+.tokchip.on{border-color:var(--pop-pink);color:var(--pop-pink);background:var(--pop-pink-soft)}
+.tokchip .k{color:var(--pop-dim);font-weight:700}
+.pop{position:absolute;left:10px;bottom:calc(100% - 2px);width:344px;z-index:40;
+  background:var(--pop-paper);border:1.5px solid var(--pop-bd);border-radius:12px;box-shadow:var(--shadow-lg);padding:11px 12px}
+.pop[hidden]{display:none}
+.pop .hd{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.pop .hd b{font-size:11.5px;font-weight:900}
+.pop .hd .x{margin-left:auto;color:var(--pop-dim);font-size:11px}
+.kv{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:3px 0;font-size:11.5px}
+.kv .l{color:var(--pop-dim);display:flex;align-items:center;gap:6px}
+.kv .l i{width:7px;height:7px;border-radius:2px;display:block;background:var(--pop-cyan)}
+.kv .v{font-weight:900}
+.hr{height:1.5px;background:var(--pop-bd);margin:8px 0}
+.mrows{display:flex;flex-direction:column;gap:3px;font-size:11px}
+.mrow{display:grid;grid-template-columns:1fr auto auto;gap:0 14px;align-items:baseline;white-space:nowrap}
+.mrow .mn{color:var(--pop-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .mt{color:var(--pop-dim);text-align:right}
+.mrow .mc{font-weight:900;text-align:right}
+.pop .ft{margin-top:9px;padding-top:8px;border-top:1.5px dashed var(--pop-bd);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--pop-dim)}
+.pop .ft a{color:var(--pop-cyan);text-decoration:none}
+
+/* ═════════ B · 抽屉面板 + 双口径 ═════════ */
+.b-wrap{flex:1;min-height:0;display:flex;position:relative;overflow:hidden;padding-right:0;transition:padding-right .18s ease}
+.b-wrap.dr{padding-right:456px}
+.b-board{flex:1;min-width:0;overflow:auto;padding:14px 14px 60px}
+.b-ledger{border:1.5px solid var(--pop-bd);border-radius:10px;overflow:hidden}
+.b-ledger table{width:100%;border-collapse:collapse;font-size:11.5px}
+.b-ledger th{background:var(--pop-idle);color:var(--pop-dim);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;text-align:right;padding:6px 10px;font-weight:900}
+.b-ledger th:first-child,.b-ledger td:first-child{text-align:left}
+.b-ledger td{padding:7px 10px;text-align:right;border-top:1.5px solid #ffffff0d}
+.b-ledger tr.draft td:first-child span{color:var(--pop-dim)}
+.b-ledger tr.tot{background:var(--pop-inset);font-weight:900}
+.b-ledger tr.tot td{border-top:1.5px solid var(--pop-bd)}
+.b-ledger .badge-d{display:inline-block;margin-left:6px;border:1.5px solid var(--pop-bd);border-radius:4px;padding:0 4px;font-size:9px;font-weight:900;color:var(--pop-purple);background:var(--pop-purple-soft);text-transform:none;letter-spacing:0}
+.b-trend{display:flex;align-items:flex-end;gap:5px;height:118px;margin-top:16px;padding:10px 10px 8px;border:1.5px solid var(--pop-bd);border-radius:10px;background:var(--pop-idle)}
+.b-trend i{flex:1;background:linear-gradient(180deg,var(--pop-pink),var(--pop-pink-soft));border-radius:3px 3px 0 0;display:block;min-height:4px}
+.b-chat{width:392px;flex-shrink:0;border-left:1.5px solid var(--pop-bd);display:flex;flex-direction:column;background:var(--pop-paper)}
+.b-usage-btn{margin-left:auto;border:1.5px solid var(--pop-bd);border-radius:999px;padding:1px 9px;font-size:10px;font-weight:900;color:var(--pop-cyan);background:var(--pop-cyan-soft)}
+.b-usage-btn:hover{border-color:var(--pop-cyan)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:456px;max-width:92%;z-index:50;
+  background:var(--pop-paper);border-left:1.5px solid var(--pop-bd);box-shadow:var(--shadow-lg);
+  display:flex;flex-direction:column;transform:translateX(102%);transition:transform .18s ease}
+.drawer.open{transform:none}
+.drawer .dh{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1.5px solid var(--pop-bd)}
+.drawer .dh b{font-size:12px;font-weight:900}
+.tabs{margin-left:auto;display:flex;border:1.5px solid var(--pop-bd);border-radius:999px;overflow:hidden}
+.tabs button{padding:2px 11px;font-size:10px;font-weight:900;color:var(--pop-dim)}
+.tabs button.on{background:var(--pop-cyan-soft);color:var(--pop-cyan)}
+.db{flex:1;min-height:0;overflow:auto;padding:13px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.kpi{border:1.5px solid var(--pop-bd);border-radius:10px;padding:9px 11px;background:var(--pop-inset)}
+.kpi .l{font-size:9.5px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:var(--pop-dim)}
+.kpi .v{font-size:21px;font-weight:900;line-height:1.25}
+.kpi .s{font-size:10px;color:var(--pop-dim)}
+.kpi.money .v{color:var(--pop-yellow)}
+.kpi.tok .v{color:var(--pop-cyan)}
+.sect{margin-top:15px}
+.rounds{display:flex;flex-direction:column;gap:6px}
+.round{display:grid;grid-template-columns:38px 1fr 62px;align-items:center;gap:9px;font-size:10.5px}
+.round .tr{height:8px;border-radius:4px;background:#ffffff0d;overflow:hidden}
+.round .tr i{display:block;height:100%;background:linear-gradient(90deg,var(--pop-cyan),var(--pop-pink))}
+.round .c{text-align:right;font-weight:900}
+.ring{display:flex;align-items:center;gap:12px}
+.ring .d{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;
+  background:conic-gradient(var(--pop-green) 0 68.5%, #ffffff12 68.5% 100%);position:relative}
+.ring .d::after{content:"";position:absolute;inset:7px;border-radius:50%;background:var(--pop-paper)}
+.ring .d b{position:relative;font-size:15px;font-weight:900;color:var(--pop-green)}
+.warn{margin-top:13px;border:1.5px solid #ff5c5c66;border-radius:8px;background:#ff5c5c14;padding:7px 9px;font-size:10.5px;color:var(--pop-red)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px}
+
+/* ═════════ C · 终端状态行 + 就地展开 ═════════ */
+.c-wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr)}
+.c-board{border-right:1.5px solid var(--pop-bd);display:flex;flex-direction:column;min-height:0;background:var(--pop-bg)}
+.c-status{padding:9px 13px;border-bottom:1.5px solid var(--pop-bd);background:var(--pop-inset);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-status b{color:var(--pop-yellow);font-weight:900}
+.c-board .body{flex:1;min-height:0;overflow:auto;padding:10px 13px 60px}
+.c-acct{display:flex;flex-direction:column;gap:0;border:1.5px solid var(--pop-bd);border-radius:8px;overflow:hidden}
+.c-arow{display:grid;grid-template-columns:1fr 44px 78px 78px;gap:10px;align-items:baseline;padding:7px 11px;font-size:11px;border-top:1.5px solid #ffffff0d}
+.c-arow:first-child{border-top:none;background:var(--pop-idle);color:var(--pop-dim);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase}
+.c-arow .nm{font-weight:900}
+.c-arow .r{text-align:right}
+.c-arow.self{background:var(--pop-pink-soft)}
+.c-stack{display:flex;height:9px;border-radius:5px;overflow:hidden;margin-top:12px;border:1.5px solid var(--pop-bd)}
+.c-stack i{display:block;height:100%}
+.c-legend{display:flex;flex-wrap:wrap;gap:11px;margin-top:7px;font-size:10px;color:var(--pop-dim)}
+.c-legend span{display:inline-flex;align-items:center;gap:5px}
+.c-legend i{width:8px;height:8px;border-radius:2px;display:block}
+.c-chat{display:flex;flex-direction:column;min-height:0;background:var(--pop-paper);position:relative}
+.c-sline{border-top:1.5px solid var(--pop-bd);padding:6px 12px;font-size:11px;display:flex;align-items:center;gap:9px;cursor:pointer;white-space:nowrap;overflow:hidden;flex-shrink:0}
+.c-sline:hover{background:var(--pop-idle)}
+.c-sline .g{color:var(--pop-dim)}
+.c-sline b{font-weight:900}
+.c-sline .caret{margin-left:auto;color:var(--pop-dim)}
+.c-drawer{border-top:1.5px solid var(--pop-bd);background:var(--pop-inset);padding:10px 12px 12px;flex-shrink:0;overflow:auto;max-height:42%}
+.c-drawer[hidden]{display:none}
+pre.tbl{font-family:var(--mono);font-size:11px;line-height:1.65;white-space:pre;overflow-x:auto;color:var(--pop-ink);margin:0}
+pre.tbl .hd{color:var(--pop-dim)}
+pre.tbl .tot{color:var(--pop-yellow);font-weight:900}
+pre.tbl .sep{color:#ffffff20}
+
+/* ── 浮标切换器（原型专用，明显不属于页面设计） ── */
+#psw{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:90;
+  display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:999px;
+  background:var(--pop-yellow);color:#0A0A0C;border:1.5px solid #0A0A0C;box-shadow:var(--shadow-lg);font-size:11px;font-weight:900}
+#psw button{width:24px;height:24px;border-radius:50%;background:#0A0A0C18;font-weight:900}
+#psw button:hover{background:#0A0A0C33}
+#psw .replay{width:auto;border-radius:999px;padding:2px 10px;background:#0A0A0C;color:var(--pop-yellow);font-size:10px}
+#psw .lbl{min-width:150px;text-align:center}
+#psw .keys{font-weight:400;opacity:.72;font-size:9.5px}
+#tag{position:fixed;left:12px;bottom:18px;z-index:90;border:1.5px dashed var(--pop-yellow);color:var(--pop-yellow);
+  border-radius:6px;padding:2px 8px;font-size:9.5px;font-weight:900;letter-spacing:.08em}
+</style>
+</head>
+<body>
+<div id="tag">PROTOTYPE · 数据为真账本形状，非实连</div>
+
+<div id="stage">
+
+<!-- ════════════════════ A · 贴角标 + 悬浮明细 ════════════════════ -->
+<section class="vr" data-v="A" hidden>
+<div class="a-wrap">
+  <div class="a-board">
+    <h4>看板 · 列头即带成本</h4>
+    <div class="a-cols" id="aCols"></div>
+    <div class="a-total">
+      合计 <b>¥22.88</b> <span class="num dim">1.29M tok · 462 次请求</span>
+      <span class="a-note">草稿 <b style="color:var(--pop-ink)">¥0.78</b> 已并入 · 与「执行中/待验收」同口径</span>
+    </div>
+  </div>
+
+  <div class="a-chat">
+    <div class="winbar"><span class="dots"><i></i><i></i><i></i></span> 草稿 · Token 计量与预算告警 <span class="sep">│</span> task-author</div>
+    <div class="msgs">
+      <div class="msg user"><span class="who">你</span>把 phase2 的预算告警做成只读面板，别动计费写入。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>明白。先确认结构：告警阈值落在 phase 还是票？我只读 <span class="dim num">billing_price_config</span> 的现算成本，不写账。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>拆出 4 张功能票 + 末张走查票。phase2 spec 初版已落到 <span class="dim num">.scratch/token-metering/budget-alert/spec.md</span>。</div>
+    </div>
+    <div class="composer">
+      <div class="pop" id="aPop" hidden>
+        <div class="hd"><b>本会话 token 账</b><span class="dim num" style="font-size:10px">session 8f2a… · 30 次请求</span><button class="x" onclick="toggleA(false)">✕</button></div>
+        <div class="grid2">
+          <div class="kv"><span class="l"><i style="background:var(--pop-cyan)"></i>输入</span><span class="v num" data-n="in">45.2K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-pink)"></i>输出</span><span class="v num" data-n="out">18.7K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-green)"></i>缓存读</span><span class="v num" data-n="cr">98.4K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-navy)"></i>缓存写</span><span class="v num" data-n="cw">12.3K</span></div>
+        </div>
+        <div class="hr"></div>
+        <div class="kv"><span class="l">总和</span><span class="v num" data-n="total">174.6K</span></div>
+        <div class="kv"><span class="l">缓存命中率</span><span class="v num" style="color:var(--pop-green)" data-n="hit">68.5%</span></div>
+        <div class="kv"><span class="l">ctx 占用</span><span class="v num" style="color:var(--pop-pink)"><span data-n="ctxPct">43%</span> · <span data-n="ctxUsed">86.1K</span> / <span data-n="ctxMax">200K</span></span></div>
+        <div class="kv"><span class="l">预估费用</span><span class="v num" style="color:var(--pop-yellow);font-size:14px" data-n="cost">¥3.21</span></div>
+        <div class="hr"></div>
+        <div class="mrows" id="aModels"></div>
+        <div class="ft"><span>单价 = 每 1M token · 现算不落库</span><a href="#" onclick="return false">完整台账 →</a></div>
+      </div>
+      <div class="txline">▸ 继续拆 phase3，或者告诉我要砍哪张票…</div>
+      <div class="cbar" style="margin-top:8px">
+        <span class="mchip">sonnet</span>
+        <span class="dim num">ctx <span data-n="ctxPct">43%</span></span>
+        <span class="sep">│</span>
+        <button class="tokchip on" id="aBtn" onclick="toggleA()">
+          <span class="k">tok</span><span class="num" data-n="total">174.6K</span>
+          <span class="k">cache</span><span class="num" style="color:var(--pop-green)" data-n="hit">68.5%</span>
+          <span class="num" style="color:var(--pop-yellow)" data-n="cost">¥3.21</span> <span class="dim">▾</span>
+        </button>
+        <span class="dim" style="margin-left:auto">◐ thinking 2.4s</span>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ════════════════════ B · 抽屉面板 + 双口径 ════════════════════ -->
+<section class="vr" data-v="B" hidden>
+<div class="b-wrap">
+  <div class="b-board">
+    <h4>看板 · 用量台账带（草稿成行）</h4>
+    <div class="b-ledger" style="margin-top:9px">
+      <table>
+        <thead><tr><th>状态列</th><th>任务</th><th>请求</th><th>token</th><th>缓存命中</th><th>预估费用</th></tr></thead>
+        <tbody>
+          <tr class="draft"><td><span>草稿</span><span class="badge-d">计入</span></td><td class="num">4</td><td class="num">58</td><td class="num">41.2K</td><td class="num">71.0%</td><td class="num">¥0.78</td></tr>
+          <tr><td>待执行</td><td class="num">2</td><td class="num">19</td><td class="num">12.4K</td><td class="num">66.0%</td><td class="num">¥0.24</td></tr>
+          <tr><td>执行中</td><td class="num">3</td><td class="num">141</td><td class="num">268.4K</td><td class="num">64.5%</td><td class="num">¥4.92</td></tr>
+          <tr><td>待验收</td><td class="num">1</td><td class="num">77</td><td class="num">152.1K</td><td class="num">70.2%</td><td class="num">¥2.83</td></tr>
+          <tr><td>完成</td><td class="num">6</td><td class="num">167</td><td class="num">812.6K</td><td class="num">69.8%</td><td class="num">¥14.11</td></tr>
+          <tr class="tot"><td>合计</td><td class="num">16</td><td class="num">462</td><td class="num">1.29M</td><td class="num">68.9%</td><td class="num">¥22.88</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="dim" style="margin-top:10px;font-size:10.5px">
+      口径 = 各任务全部 round 的 <span class="num">llm_calls</span> 汇总；草稿列此前无统计，现按 <span class="num">source_chat_session_id</span> 串到作者会话。
+    </div>
+    <div class="b-trend" id="bTrend"></div>
+    <div class="dim" style="margin-top:6px;font-size:10px">近 14 天日成本（含草稿会话）—— 草稿纳入后曲线整体抬高约 3%</div>
+  </div>
+
+  <div class="b-chat">
+    <div class="winbar"><span class="dots"><i></i><i></i><i></i></span> 草稿 · Token 计量与预算告警
+      <button class="b-usage-btn" onclick="toggleB(true)">◎ 用量</button></div>
+    <div class="msgs">
+      <div class="msg user"><span class="who">你</span>把 phase2 的预算告警做成只读面板，别动计费写入。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>明白。告警阈值落 phase 还是票？我只读现算成本，不写账。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>拆出 4 张功能票 + 末张走查票，spec 初版已落批次目录。</div>
+      <div class="msg user"><span class="who">你</span>这一轮花了多少？</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>见右侧 ◎ 用量面板 —— 会话/任务两个口径都在那里。</div>
+    </div>
+    <div class="composer">
+      <div class="txline">▸ 要我按「票」阈值继续，就回一句「票」…</div>
+      <div class="cbar" style="margin-top:8px">
+        <span class="mchip">sonnet</span><span class="dim num">ctx <span data-n="ctxPct">43%</span></span>
+        <span class="sep">│</span><span class="dim num">tok <b style="color:var(--pop-ink)" data-n="total">174.6K</b> · <b style="color:var(--pop-yellow)" data-n="cost">¥3.21</b></span>
+        <button class="b-usage-btn" style="margin-left:auto" onclick="toggleB(true)">◎ 明细</button>
+      </div>
+    </div>
+
+    <aside class="drawer open" id="bDrawer">
+      <div class="dh"><b>Token 统计</b><span class="dim num" id="bScopeLbl" style="font-size:10px">本会话</span>
+        <div class="tabs"><button class="on" onclick="tabB('s',this)">本会话</button><button onclick="tabB('t',this)">本任务</button></div>
+        <button onclick="toggleB(false)" style="margin-left:10px;color:var(--pop-dim)">✕</button></div>
+      <div class="db">
+        <div class="kpis">
+          <div class="kpi money"><div class="l">预估费用</div><div class="v num" data-b="cost">¥3.21</div><div class="s num" data-b="usd">$0.458 · ×7.0</div></div>
+          <div class="kpi tok"><div class="l">总 token</div><div class="v num" data-b="total">174.6K</div><div class="s num" data-b="calls">30 次请求</div></div>
+        </div>
+        <div class="sect ring">
+          <div class="d" id="bRing"><b class="num" data-b="hit">68.5%</b></div>
+          <div>
+            <div style="font-size:11px;font-weight:900">缓存命中率</div>
+            <div class="dim num" style="font-size:10.5px" data-b="hitline">cache_read 98.4K / (in 45.2K + cache_read)</div>
+            <div class="dim num" style="font-size:10.5px">ctx <span data-b="ctxPct">43%</span> · <span data-b="ctxUsed">86.1K</span> / <span data-b="ctxMax">200K</span>（SDK 实时值）</div>
+          </div>
+        </div>
+        <div class="sect">
+          <div class="kv" style="padding-bottom:5px"><span class="l"><i style="background:var(--pop-cyan)"></i>输入</span><span class="v num" data-b="in">45.2K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-pink)"></i>输出</span><span class="v num" data-b="out">18.7K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-green)"></i>缓存读</span><span class="v num" data-b="cr">98.4K</span></div>
+          <div class="kv"><span class="l"><i style="background:var(--pop-navy)"></i>缓存写</span><span class="v num" data-b="cw">12.3K</span></div>
+        </div>
+        <div class="sect">
+          <h4 style="margin-bottom:7px">按轮次</h4>
+          <div class="rounds" id="bRounds"></div>
+        </div>
+        <div class="sect">
+          <h4 style="margin-bottom:7px">按模型</h4>
+          <div class="mrows" id="bModels"></div>
+        </div>
+        <div class="warn" id="bWarn"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+</section>
+
+<!-- ════════════════════ C · 终端状态行 + 就地展开 ════════════════════ -->
+<section class="vr" data-v="C" hidden>
+<div class="c-wrap">
+  <div class="c-board">
+    <div class="c-status">
+      <span class="g">账目</span> <span class="g">│</span> 全部任务 <b>16</b> <span class="g">│</span> tok <b>1.29M</b>
+      <span class="g">│</span> 请求 <b>462</b> <span class="g">│</span> 缓存 <b>68.9%</b> <span class="g">│</span> 费用 <b>¥22.88</b>
+    </div>
+    <div class="body">
+      <div class="c-acct">
+        <div class="c-arow"><span class="nm">状态</span><span class="r">任务</span><span class="r">tok</span><span class="r">费用</span></div>
+        <div class="c-arow self"><span class="nm">草稿</span><span class="r num">4</span><span class="r num">41.2K</span><span class="r num">¥0.78</span></div>
+        <div class="c-arow"><span class="nm">待执行</span><span class="r num">2</span><span class="r num">12.4K</span><span class="r num">¥0.24</span></div>
+        <div class="c-arow"><span class="nm">执行中</span><span class="r num">3</span><span class="r num">268.4K</span><span class="r num">¥4.92</span></div>
+        <div class="c-arow"><span class="nm">待验收</span><span class="r num">1</span><span class="r num">152.1K</span><span class="r num">¥2.83</span></div>
+        <div class="c-arow"><span class="nm">完成</span><span class="r num">6</span><span class="r num">812.6K</span><span class="r num">¥14.11</span></div>
+      </div>
+      <div class="c-stack">
+        <i style="width:3.2%;background:var(--pop-dim)"></i>
+        <i style="width:1%;background:var(--pop-navy)"></i>
+        <i style="width:20.8%;background:var(--pop-amber)"></i>
+        <i style="width:11.8%;background:var(--pop-yellow)"></i>
+        <i style="width:63.2%;background:var(--pop-green)"></i>
+      </div>
+      <div class="c-legend">
+        <span><i style="background:var(--pop-dim)"></i>草稿 ¥0.78</span>
+        <span><i style="background:var(--pop-navy)"></i>待执行 ¥0.24</span>
+        <span><i style="background:var(--pop-amber)"></i>执行中 ¥4.92</span>
+        <span><i style="background:var(--pop-yellow)"></i>待验收 ¥2.83</span>
+        <span><i style="background:var(--pop-green)"></i>完成 ¥14.11</span>
+      </div>
+      <div class="dim" style="margin-top:14px;font-size:10.5px;line-height:1.7">
+        堆叠条 = 费用按状态分布。草稿一段以前是 0：作者会话的钱没进过账；<br>
+        现按 <span class="num">source_chat_session_id</span> 归到该任务，与执行轮次同一张 <span class="num">llm_calls</span> 口径。
+      </div>
+    </div>
+  </div>
+
+  <div class="c-chat">
+    <div class="winbar"><span class="dots"><i></i><i></i><i></i></span> 草稿 · Token 计量与预算告警 <span class="sep">│</span> task-author</div>
+    <div class="msgs">
+      <div class="msg user"><span class="who">你</span>把 phase2 的预算告警做成只读面板，别动计费写入。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>明白。告警阈值落 phase 还是票？我只读现算成本，不写账。</div>
+      <div class="msg bot"><span class="who">TASK-AUTHOR</span>拆出 4 张功能票 + 末张走查票，spec 初版已落批次目录。</div>
+    </div>
+    <div class="composer" style="border-top:1.5px solid var(--pop-bd)">
+      <div class="cbar">
+        <span class="mchip">sonnet</span><span class="dim num">ctx <span data-n="ctxPct">43%</span></span>
+        <span class="sep">│</span><span class="dim" style="margin-left:auto">◐ thinking 2.4s</span>
+      </div>
+      <div class="txline">▸ 要我按「票」阈值继续，就回一句「票」…</div>
+    </div>
+    <div class="c-sline" onclick="toggleC()">
+      <span class="g">tok</span><span class="g">│</span>
+      <span class="dim">in</span> <b class="num" data-n="in">45.2K</b>
+      <span class="dim">out</span> <b class="num" data-n="out">18.7K</b>
+      <span class="dim">ca_r</span> <b class="num" data-n="cr">98.4K</b>
+      <span class="dim">ca_w</span> <b class="num" data-n="cw">12.3K</b>
+      <span class="g">│</span><span class="dim">Σ</span> <b class="num" data-n="total">174.6K</b>
+      <span class="dim">hit</span> <b class="num" style="color:var(--pop-green)" data-n="hit">68.5%</b>
+      <span class="g">│</span><b class="num" style="color:var(--pop-yellow)" data-n="cost">¥3.21</b>
+      <span class="caret" id="cCaret">▾ 展开账本</span>
+    </div>
+    <div class="c-drawer" id="cDrawer" hidden>
+<pre class="tbl" id="cTbl"></pre>
+    </div>
+  </div>
+</div>
+</section>
+
+<footer id="psw">
+  <button onclick="cyc(-1)" aria-label="上一变体">‹</button>
+  <span class="lbl" id="pswLbl">A — 贴角标 + 悬浮明细</span>
+  <button onclick="cyc(1)" aria-label="下一变体">›</button>
+  <button class="replay" onclick="replay()">▶ 模拟一轮请求</button>
+  <span class="keys">← →</span>
+</footer>
+</div>
+
+<script>
+/* ── 一份假数据，形状照 llm_calls / /api/executions/:id/llm-calls aggregates 真字段。
+      成本恒由单价（每 1M token）现算，单价表 = billing_price_config；usd_to_cny 默认 7.0 ── */
+const RATE = 7.0;
+const PS = { in:3, out:15, cr:0.30, cw:3.75 }, PH = { in:1, out:5, cr:0.10, cw:1.25 };
+/* 两个口径：会话 = 作者对话本身；任务 = 作者会话 + 各 phase 执行轮次（同一张 llm_calls，不同 where） */
+const SC = {
+  s:{ label:'本会话 · session 8f2a…', unpriced:2, ctx:{used:86100,max:200000},
+      models:[{name:'claude-sonnet-4.5',calls:24,in:41000,out:16200,cr:98400,cw:12300,p:PS},
+              {name:'claude-haiku-4.5',calls:6,in:4200,out:2500,cr:0,cw:0,p:PH}],
+      rounds:[['r1',0.71],['r2',1.86],['r3',0.64]] },
+  t:{ label:'本任务 · 3 phase / 5 round', unpriced:4, ctx:{used:132400,max:200000},
+      models:[{name:'claude-sonnet-4.5',calls:97,in:148200,out:64300,cr:512400,cw:71800,p:PS},
+              {name:'claude-haiku-4.5',calls:14,in:9800,out:5200,cr:0,cw:0,p:PH}],
+      rounds:[['r1',2.14],['r2',3.02],['r3',1.88],['r4',4.11],['r5',1.92]] },
+};
+let BSC = 's';
+const usdOf = m => (m.in*m.p.in + m.out*m.p.out + m.cw*m.p.cw + m.cr*m.p.cr)/1e6;
+const fmtK = n => n<1000 ? String(Math.round(n)) : n<1e6 ? (n/1000).toFixed(1)+'K' : (n/1e6).toFixed(2)+'M';
+function view(k){
+  const s = SC[k];
+  const t = s.models.reduce((a,m)=>({calls:a.calls+m.calls,in:a.in+m.in,out:a.out+m.out,cr:a.cr+m.cr,cw:a.cw+m.cw,usd:a.usd+usdOf(m)}),
+    {calls:0,in:0,out:0,cr:0,cw:0,usd:0});
+  const total = t.in+t.out+t.cr+t.cw;
+  return { total:fmtK(total), in:fmtK(t.in), out:fmtK(t.out), cr:fmtK(t.cr), cw:fmtK(t.cw),
+    hit:(t.cr/(t.in+t.cr)*100).toFixed(1)+'%',
+    hitline:`cache_read ${fmtK(t.cr)} / (in ${fmtK(t.in)} + cache_read)`,
+    cost:'¥'+(t.usd*RATE).toFixed(2), usd:'$'+t.usd.toFixed(3)+' · ×'+RATE.toFixed(1),
+    calls:t.calls+' 次请求', label:s.label,
+    ctxPct:(s.ctx.used/s.ctx.max*100).toFixed(0)+'%', ctxUsed:fmtK(s.ctx.used), ctxMax:fmtK(s.ctx.max),
+    models:s.models.map(m=>({ name:m.name, meta:`${m.calls} 次 · ${fmtK(m.in+m.out+m.cr+m.cw)}`, cost:'¥'+(usdOf(m)*RATE).toFixed(2) })),
+    rounds:s.rounds };
+}
+const NAMES = {A:'A — 贴角标 + 悬浮明细', B:'B — 抽屉面板 + 双口径', C:'C — 终端状态行 + 就地展开'};
+const mrowHtml = v => v.models.map(m=>`<div class="mrow"><span class="mn">${m.name}</span><span class="mt num">${m.meta}</span><span class="mc num">${m.cost}</span></div>`).join('');
+function render(){
+  const s = view('s'), b = view(BSC);
+  document.querySelectorAll('[data-n]').forEach(el=>{ const t=s[el.dataset.n]; if(t!=null) el.textContent=t; });
+  document.querySelectorAll('[data-b]').forEach(el=>{ const t=b[el.dataset.b]; if(t!=null) el.textContent=t; });
+  document.getElementById('aModels').innerHTML = mrowHtml(s);
+  document.getElementById('bModels').innerHTML = mrowHtml(b);
+  document.getElementById('bScopeLbl').textContent = b.label;
+  const hit = parseFloat(b.hit);
+  document.getElementById('bRing').style.background = `conic-gradient(var(--pop-green) 0 ${hit}%, #ffffff12 ${hit}% 100%)`;
+  const top = Math.max(...b.rounds.map(r=>r[1]));
+  document.getElementById('bRounds').innerHTML = b.rounds.map(([r,c])=>
+    `<div class="round"><span class="dim">${r}</span><span class="tr"><i style="width:${(c/top*100).toFixed(0)}%"></i></span><span class="c num">¥${c.toFixed(2)}</span></div>`).join('');
+  document.getElementById('bWarn').innerHTML = `${SC[BSC].unpriced} 次调用命中不到单价（<span class="num">price_status=missing</span>）—— 费用为部分和，不是全量。`;
+  document.getElementById('cTbl').innerHTML = tbl(s);
+}
+/* C 的 ASCII 账本：定宽对齐，逐模型 → TOTAL */
+function tbl(v){
+  const W=[21,7,9,9,8,8,9], pad=(x,i)=>String(x).padEnd(W[i]).slice(0,W[i]);
+  const out = ['MODEL                 CALLS       IN      OUT    CA_R    CA_W      COST', '─'.repeat(85)];
+  for(const m of SC.s.models)
+    out.push([pad(m.name,0),pad(m.calls,1),pad(fmtK(m.in),2),pad(fmtK(m.out),3),
+      pad(m.cr?fmtK(m.cr):'—',4),pad(m.cw?fmtK(m.cw):'—',5),pad('¥'+(usdOf(m)*RATE).toFixed(2),6)].join(' '));
+  out.push('─'.repeat(85));
+  out.push([pad('TOTAL',0),pad(v.calls.replace(' 次请求',''),1),pad(v.in,2),pad(v.out,3),pad(v.cr,4),pad(v.cw,5),pad(v.cost,6)].join(' '));
+  out.push(`cache_hit ${v.hit}   ctx ${v.ctxPct} (${v.ctxUsed}/${v.ctxMax})   Σ ${v.total}   ${v.usd}   ${SC.s.unpriced} calls 未定价`);
+  const cls = ['hd','','','','sep','tot','hd'];
+  return out.map((l,i)=>cls[i]?`<span class="${cls[i]}">${l}</span>`:l).join('\n');
+}
+
+/* A 变体的看板列（形状 = task-board.ts 列序 + 每列 llm_calls 聚合） */
+const COLS = [
+  {label:'草稿',n:4,calls:58,tok:'41.2K',cost:'0.78',w:3.2,c:'var(--pop-dim)'},
+  {label:'待执行',n:2,calls:19,tok:'12.4K',cost:'0.24',w:1.0,c:'var(--pop-navy)'},
+  {label:'执行中',n:3,calls:141,tok:'268.4K',cost:'4.92',w:21.5,c:'var(--pop-amber)'},
+  {label:'待验收',n:1,calls:77,tok:'152.1K',cost:'2.83',w:12.4,c:'var(--pop-yellow)'},
+  {label:'完成',n:6,calls:167,tok:'812.6K',cost:'14.11',w:61.7,c:'var(--pop-green)'},
+];
+document.getElementById('aCols').innerHTML = `
+  <div class="a-hd"><span>状态列</span><span class="r">任务</span><span class="r">请求</span><span class="r">token</span><span class="r">预估费用</span></div>` +
+  COLS.map(c=>`
+  <div class="a-col">
+    <span class="nm" style="color:${c.c}">${c.label}</span>
+    <span class="r num">${c.n}</span>
+    <span class="r num dim">${c.calls}</span>
+    <span class="r num">${c.tok}</span>
+    <span class="r"><span class="costchip num">¥${c.cost}</span></span>
+  </div>`).join('');
+/* B 变体的近 14 天日成本柱（假数据，只为看形态） */
+const TREND = [42,55,38,61,74,49,30,22,68,81,77,59,64,71];
+document.getElementById('bTrend').innerHTML =
+  TREND.map(h=>`<i style="height:${h}%"></i>`).join('');
+let CUR = new URLSearchParams(location.search).get('variant') || 'A';
+function show(k){
+  CUR = k;
+  document.querySelectorAll('.vr').forEach(s=>s.hidden = s.dataset.v!==k);
+  document.getElementById('pswLbl').textContent = NAMES[k]||k;
+  const u = new URL(location.href); u.searchParams.set('variant',k); history.replaceState(null,'',u);
+}
+function cyc(d){ const ks=Object.keys(NAMES); show(ks[(ks.indexOf(CUR)+d+ks.length)%ks.length]); }
+function toggleA(force){ const p=document.getElementById('aPop'), b=document.getElementById('aBtn');
+  const open = force!=null? force : p.hidden; p.hidden=!open; b.classList.toggle('on',open); }
+function toggleB(open){ const on = open!==false;
+  document.getElementById('bDrawer').classList.toggle('open',on);
+  document.querySelector('[data-v="B"] .b-wrap').classList.toggle('dr',on); }
+function tabB(kind,el){ BSC=kind; el.parentNode.querySelectorAll('button').forEach(x=>x.classList.remove('on')); el.classList.add('on'); render(); }
+function toggleC(){ const d=document.getElementById('cDrawer'); d.hidden=!d.hidden;
+  document.getElementById('cCaret').textContent = d.hidden? '▾ 展开账本' : '▴ 收起账本'; }
+function replay(){
+  const dIn = 4200+Math.round(Math.random()*2600), dOut = 900+Math.round(Math.random()*700);
+  const dCr = 18000+Math.round(Math.random()*6000), dCw = 1400+Math.round(Math.random()*900);
+  for(const k of ['s','t']){
+    const m = SC[k].models[0];
+    m.in+=dIn; m.out+=dOut; m.cr+=dCr; m.cw+=dCw; m.calls+=1;
+    SC[k].ctx.used = Math.min(SC[k].ctx.max*0.95, SC[k].ctx.used + dIn + dOut);
+    const dCost = (dIn*m.p.in + dOut*m.p.out + dCr*m.p.cr + dCw*m.p.cw)/1e6*RATE;
+    const r = SC[k].rounds.at(-1); r[1] = +(r[1]+dCost).toFixed(2);
+  }
+  render();
+  const b=document.getElementById('pswLbl'); b.style.background='#0A0A0C22'; setTimeout(()=>b.style.background='',260);
+}
+addEventListener('keydown',e=>{ if(/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if(e.key==='ArrowLeft')cyc(-1); if(e.key==='ArrowRight')cyc(1); });
+if(!NAMES[CUR]) CUR='A'; show(CUR); render(); toggleA(true); toggleB(true); toggleC();
+</script>
+</body>
+</html>

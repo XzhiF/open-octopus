@@ -64,7 +64,8 @@ describe("DB Schema", () => {
     //   (The single-instance latch is ux_exec_task_active — outside this idx_%
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
     // + schema v46 (billing-coverage-2 票01): idx_llm_calls_source_ts = 98.
-    expect(rows.length).toBe(98)
+    // + schema v49 (会话口径账本聚合): idx_llm_calls_session = 99.
+    expect(rows.length).toBe(99)
   })
 
   it("workspaces table has correct columns", () => {

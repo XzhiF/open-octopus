@@ -50,11 +50,14 @@ import {
   TERMINAL_EXECUTION_STATUSES,
   validateSpecFieldValue,
   TaskSpecFieldError,
+  mergeLlmUsageSummaries,
+  type LlmUsageSummary,
 } from "@octopus/shared"
 import {
   TaskDAO,
   AgentSessionDAO,
   AcceptanceDAO,
+  TokenUsageDAO,
 } from "../../db/dao"
 import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
@@ -454,6 +457,8 @@ export class TasksService {
    *  same DAO-per-handle pattern as the constructor below). */
   private db: Database.Database
   private taskDAO: TaskDAO
+  /** v49: 账本用量只读口（看板逐任务花费）。同一 handle，DAO-per-handle 惯例。 */
+  private tokenUsage: TokenUsageDAO
   /** ADR-0021 票03: the ONLY way this domain starts, stops or watches a run. Built on
    *  the same handle as everything else here (no new ctor param — SW-BP15), and it is
    *  the task-domain half of the built-in job: the scheduler reaches the same object
@@ -517,6 +522,7 @@ export class TasksService {
   ) {
     this.db = db
     this.taskDAO = new TaskDAO(db)
+    this.tokenUsage = new TokenUsageDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -721,10 +727,16 @@ export class TasksService {
     const history = this.lifecycle.history(id)
     const byParent = groupChildren(this.lifecycle.childRuns(id))
     const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
+    const aiUsage = this.aiUsageFor([{
+      id,
+      authorSessionId: row.source_chat_session_id,
+      executionIds: history.map((h) => h.id),
+    }]).get(id)
     const dto: TaskDTO = {
       ...toDTO(row),
       execution: history[0] ? badge(history[0]) : null,
       run_stats: this.runStats([id]).get(id),
+      ...(aiUsage ? { ai_usage: aiUsage } : {}),
     }
     return {
       ...dto,
@@ -968,13 +980,63 @@ export class TasksService {
     const byId = new Map(
       this.lifecycle.latestInstances(ids).map((e) => [e.task_id as string, e]),
     )
-    const stats = this.runStats(ids)
+    // 一趟 timings 行喂两个读模型：跑时合计 + 逐任务账本用量的 execution 键集（v49）。
+    const timings = this.lifecycle.runTimings(ids)
+    const stats = this.runStatsFrom(timings)
+    const execIdsByTask = new Map<string, string[]>()
+    for (const t of timings) {
+      const list = execIdsByTask.get(t.task_id)
+      if (list) list.push(t.id)
+      else execIdsByTask.set(t.task_id, [t.id])
+    }
+    const usage = this.aiUsageFor(
+      rows.map((r) => ({
+        id: r.id,
+        authorSessionId: r.source_chat_session_id,
+        executionIds: execIdsByTask.get(r.id) ?? [],
+      })),
+    )
     return dtos.map((d) => {
       const inst = byId.get(d.id)
       const rs = stats.get(d.id)
-      if (!inst && !rs) return d
-      return { ...d, ...(inst ? { execution: toExecutionBadge(inst) } : {}), ...(rs ? { run_stats: rs } : {}) }
+      const u = usage.get(d.id)
+      if (!inst && !rs && !u) return d
+      return {
+        ...d,
+        ...(inst ? { execution: toExecutionBadge(inst) } : {}),
+        ...(rs ? { run_stats: rs } : {}),
+        ...(u ? { ai_usage: u } : {}),
+      }
     })
+  }
+
+  /**
+   * 逐任务账本用量（v49）—— 两段来源合并：作者会话（草稿唯一的钱挂在
+   * tasks.source_chat_session_id 上）+ 各实例 execution。会话段带
+   * `execution_id IS NULL` 护栏：clone/interaction 会话的行可能同时带执行归属，
+   * 不护栏就会被两段各计一次。合并公式不在此重写 —— shared
+   * mergeLlmUsageSummaries（mergeLedgerParts 的摘要层）是跨组合并唯一源。
+   */
+  private aiUsageFor(
+    tasks: readonly { id: string; authorSessionId: string | null; executionIds: readonly string[] }[],
+  ): Map<string, LlmUsageSummary> {
+    const out = new Map<string, LlmUsageSummary>()
+    const execIds = tasks.flatMap((t) => [...t.executionIds])
+    const sessionIds = tasks.map((t) => t.authorSessionId).filter((s): s is string => !!s)
+    const byExec = this.tokenUsage.aggregateLlmCallsBy("execution_id", execIds)
+    const bySession = this.tokenUsage.aggregateLlmCallsBy("session_id", sessionIds, ["l.execution_id IS NULL"])
+    for (const t of tasks) {
+      const parts: LlmUsageSummary[] = []
+      const s = t.authorSessionId ? bySession.get(t.authorSessionId) : undefined
+      if (s) parts.push(s)
+      for (const e of t.executionIds) {
+        const u = byExec.get(e)
+        if (u) parts.push(u)
+      }
+      const merged = mergeLlmUsageSummaries(parts)
+      if (merged) out.set(t.id, merged)
+    }
+    return out
   }
 
   /** Fold the timing rows into one TaskRunStats per task. 墙钟不算 —— created_at→now
@@ -982,9 +1044,15 @@ export class TasksService {
    *  只加 started_at→completed_at 的实跑段。未终态行：running 计到本刻（看板轮询会
    *  刷新它），pending/paused 不计 —— 暂停期本就不该算工时。 */
   private runStats(taskIds: readonly string[]): Map<string, TaskRunStats> {
+    return this.runStatsFrom(this.lifecycle.runTimings(taskIds))
+  }
+
+  private runStatsFrom(
+    timings: readonly { task_id: string; status: string; started_at: string | null; completed_at: string | null }[],
+  ): Map<string, TaskRunStats> {
     const now = Date.now()
     const out = new Map<string, TaskRunStats>()
-    for (const t of this.lifecycle.runTimings(taskIds)) {
+    for (const t of timings) {
       if (!t.started_at) continue
       const start = Date.parse(t.started_at)
       if (Number.isNaN(start)) continue

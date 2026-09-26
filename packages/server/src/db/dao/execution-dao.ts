@@ -91,8 +91,12 @@ export class ExecutionDAO extends BaseDAO {
    *  findLatestTaskInstances (roots + chained v4 rounds; fan-out arms live inside their
    *  root's span and are excluded). Rows never started (armed, queued) carry no
    *  started_at and are filtered out; the sum itself is done in JS so the
-   *  running-until-now term uses the server clock, not julianday parsing. */
+   *  running-until-now term uses the server clock, not julianday parsing.
+   *  v49: 顺带带出 `id` —— 同一批实例行也是「逐任务账本用量」的 execution 键源
+   *  （TasksService.aiUsageFor），不再多跑一趟查询。未启动的行本就无 llm_calls，
+   *  被 started_at 过滤掉不影响用量口径。 */
   listTaskRunTimings(taskIds: readonly string[]): Array<{
+    id: string
     task_id: string
     status: string
     started_at: string | null
@@ -101,10 +105,11 @@ export class ExecutionDAO extends BaseDAO {
     if (taskIds.length === 0) return []
     const ph = taskIds.map(() => "?").join(",")
     return this.stmt(
-      `SELECT task_id, status, started_at, completed_at FROM executions
+      `SELECT id, task_id, status, started_at, completed_at FROM executions
        WHERE (parent_id = '0' OR phase_index IS NOT NULL) AND task_id IN (${ph})
          AND started_at IS NOT NULL`,
     ).all(...taskIds) as Array<{
+      id: string
       task_id: string
       status: string
       started_at: string | null

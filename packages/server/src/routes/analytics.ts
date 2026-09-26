@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import {
-  emptyTokenUsage, addTokenUsage, costSummary, cacheHitRateOf, ledgerTotals,
+  emptyTokenUsage, addTokenUsage, costSummary, cacheHitRateOf, ledgerTotals, llmUsageAggregates,
   type TokenUsage, type LedgerRow,
 } from '@octopus/shared'
 import { existsSync, readdirSync, readFileSync } from 'fs'
@@ -10,7 +10,7 @@ import os from 'os'
 import { getFlag, loadFeatureFlags } from '../config/feature-flags'
 import { SuggestionEngine } from '../services/suggestion-engine'
 import { getLogAnalysisService } from '../services/log-analysis'
-import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO } from '../db/dao'
+import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO, toLedgerRows } from '../db/dao'
 import { buildTurnBoundaries, deriveTurnForTs, toEpochMs, type TurnBoundary } from '../turn-index'
 import type { LogAnalysisService } from '../services/log-analysis'
 
@@ -495,6 +495,25 @@ export function createAnalyticsRoutes(
         totals: ledgerAgg.totals,
         modelBreakdown,
       },
+      _degraded: false,
+      _message: null,
+    })
+  })
+
+  /**
+   * 会话口径账本（v49）—— 聊天 composer 的 token 角标 / 明细 popover 的数据源。
+   * 与执行版孪生的两处不同：① 无 toolCalls（工具调用计数挂在 agent_events 的
+   * node 维度，会话没有）；② **不按 message_id 去重** —— 去重是给「并行票共享会话
+   * 各记一行」那个执行侧 bug 生的，会话行是每 modelUsage 一行的真实拆分，去重会
+   * 吞掉混合模型轮次的第二个模型。聚合算法在 shared llmUsageAggregates（单源）。
+   */
+  router.get('/sessions/:id/llm-calls', (c: Context) => {
+    const sessionId = c.req.param('id')
+    if (!sessionId) return c.json({ error: 'session id required' }, 400)
+    const calls = tokenUsageDAO.findLlmCallsBySession(sessionId)
+    return c.json({
+      data: calls,
+      aggregates: llmUsageAggregates(toLedgerRows(calls)),
       _degraded: false,
       _message: null,
     })
