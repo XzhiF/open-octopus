@@ -1,12 +1,24 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
+import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary } from "@octopus/shared"
 import { type NodeUsageSource } from "./usage-ledger"
 import { pricedCallsSql, PRICED_AGG } from "../price-sql"
 
 /** llm_calls_costed 视图行 = 账本全列 + 查询时派生的 cost_usd(USD 基准)/vendor。 */
 export type LlmCallCostedRow = LlmCallRow & { cost_usd: number | null; vendor: string | null }
+
+/** 账本行的 snake→camel 列名映射（唯一一处），喂给 ledger 公式层。 */
+export function toLedgerRows(rows: readonly LlmCallCostedRow[]): LlmUsageRow[] {
+  return rows.map((r) => ({
+    inputTokens: r.input_tokens,
+    outputTokens: r.output_tokens,
+    cacheReadTokens: r.cache_read_tokens,
+    cacheCreationTokens: r.cache_creation_tokens,
+    costUsd: r.cost_usd,
+    model: r.model,
+  }))
+}
 
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -148,6 +160,19 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   /**
+   * 会话口径的逐 call 行（v49：聊天角标 / 会话明细）。**不做 message 去重** ——
+   * 执行端点的去重是给「并行票共享会话、同一条消息被多个在跑节点各记一行」那个
+   * bug 生的（写侧 insertLlmCallBatch 同样显式豁免 execution_id 为空的行）；
+   * 聊天行是 recordProviderResultUsage「每 modelUsage 一行」的真实拆分，
+   * 按 message_id 去重会把混合模型轮次的第二个模型吞掉。
+   */
+  findLlmCallsBySession(sessionId: string): LlmCallCostedRow[] {
+    return this.stmt(
+      `SELECT * FROM llm_calls_costed WHERE session_id = ? ORDER BY timestamp, id`,
+    ).all(sessionId) as LlmCallCostedRow[]
+  }
+
+  /**
    * 执行级总量 —— token 总量仍以 ntu 为账（运行中逐轮累加，与 steps/REST 终态同源，
    * C3/Q4 的「运行中↔完成跳变根除」结论不变）；NEW-r2 起 **cost 改从 llm_calls
    * 按 execution_id 派生**（与 billing 报表同源，节点完成时随 persist 到位）。
@@ -218,6 +243,60 @@ export class TokenUsageDAO extends BaseDAO {
     if (executionIds.length === 0) return { usd: null, complete: true }
     const marks = executionIds.map(() => '?').join(',')
     return this.derivedCost([`l.execution_id IN (${marks})`], [...executionIds])
+  }
+
+  /**
+   * 按归属键分组的账本用量摘要（v49：看板逐任务花费 = 逐 execution + 逐 session 两趟）。
+   * 一次 GROUP BY 扫完一组键；聚合表达式全部取自 LEDGER_SQL / PRICED_AGG 单源，
+   * 禁手写公式。`extraRawWhere` 只允许原生 llm_calls 列（视图谓词下推吃索引）——
+   * 会话侧传 `['l.execution_id IS NULL']` 把带执行归属的行让给 execution 趟，防双计。
+   */
+  aggregateLlmCallsBy(
+    keyCol: 'execution_id' | 'session_id',
+    ids: readonly string[],
+    extraRawWhere: readonly string[] = [],
+  ): Map<string, LlmUsageSummary> {
+    const out = new Map<string, LlmUsageSummary>()
+    const uniq = [...new Set(ids)].filter((v): v is string => typeof v === 'string' && v.length > 0)
+    if (uniq.length === 0) return out
+    // 分片避开 SQLite 变量上限；动态占位符数量不走 stmtCache（防缓存被变体灌爆）。
+    const CHUNK = 400
+    for (let i = 0; i < uniq.length; i += CHUNK) {
+      const slice = uniq.slice(i, i + CHUNK)
+      const marks = slice.map(() => '?').join(',')
+      const { sql, params } = pricedCallsSql([`l.${keyCol} IN (${marks})`, ...extraRawWhere], [...slice])
+      const rows = this.db.prepare(`
+        SELECT q.${keyCol} AS k,
+               SUM(q.input_tokens) AS i,
+               SUM(q.output_tokens) AS o,
+               SUM(q.cache_read_tokens) AS cr,
+               SUM(q.cache_creation_tokens) AS cc,
+               ${LEDGER_SQL.sumTokens('q.')} AS tokens,
+               ${LEDGER_SQL.cacheHitRate('q.')} AS hit,
+               ${PRICED_AGG.sumCost('q')} AS usd,
+               COUNT(*) AS total,
+               ${PRICED_AGG.countPriced('q')} AS priced,
+               ${PRICED_AGG.complete('q')} AS complete
+        FROM (${sql}) q
+        GROUP BY q.${keyCol}
+      `).all(...params) as Array<{
+        k: string | null; i: number; o: number; cr: number; cc: number
+        tokens: number | null; hit: number | null
+        usd: number | null; total: number; priced: number; complete: number
+      }>
+      for (const r of rows) {
+        if (r.k == null) continue
+        const usage: TokenUsage = {
+          inputTokens: r.i, outputTokens: r.o, cacheReadTokens: r.cr, cacheCreationTokens: r.cc,
+        }
+        out.set(r.k, {
+          totalCalls: r.total,
+          usage,
+          totals: { tokens: r.tokens ?? 0, cost: { usd: r.usd ?? null, complete: r.complete === 1 }, cacheHitRate: r.hit },
+        })
+      }
+    }
+    return out
   }
 
   /** 单节点（node_id 语义）的逐 call 费用行 → LedgerRow（JS 镜像公式消费方，NEW-r2：源 = llm_calls 派生）。 */

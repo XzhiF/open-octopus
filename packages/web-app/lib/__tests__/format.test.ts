@@ -23,6 +23,24 @@ describe("formatCost — 三态 + 自适应精度", () => {
   ])("formatCost(%s, %s) === %s", (usd, complete, expected) => {
     expect(formatCost(usd as number | null, complete as boolean)).toBe(expected)
   })
+
+  it("不传 display = 恒 USD（既有调用点逐字不变）", () => {
+    expect(formatCost(0.4583)).toBe("$0.4583")
+  })
+
+  it("display=CNY → 按汇率折算换 ¥，三态与自适应精度不变", () => {
+    const cny = { currency: "CNY" as const, rate: 7 }
+    expect(formatCost(0.4583, true, cny)).toBe("¥3.21")
+    expect(formatCost(0.03, true, cny)).toBe("¥0.21")      // CNY 恒 2 位（最小实用单位是分）
+    expect(formatCost(12.8, true, cny)).toBe("¥89.60")
+    expect(formatCost(0.4583, false, cny)).toBe("≈¥3.21") // 部分定价仍带 ≈
+    expect(formatCost(0, true, cny)).toBe("¥0")
+    expect(formatCost(null, true, cny)).toBe("—")         // 未定价仍是 —
+  })
+
+  it("display=USD → 等价于不传", () => {
+    expect(formatCost(0.4583, true, { currency: "USD", rate: 7 })).toBe("$0.4583")
+  })
 })
 
 describe("formatTokenCount — 十进制 1000", () => {

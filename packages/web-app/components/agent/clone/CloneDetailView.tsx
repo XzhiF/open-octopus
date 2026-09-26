@@ -11,6 +11,7 @@ import { ChatArea } from '../chat/ChatArea'
 import { SessionHeader } from './SessionHeader'
 import { CloneVersionsTab } from './CloneVersionsTab'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
+import { useSessionUsage } from '@/hooks/useSessionUsage'
 import {
   listCloneFiles,
   updateCloneFile,
@@ -78,6 +79,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     handleConfirm,
     loadMessages,
   } = useAgentChat(activeSessionId, { api: chatApiOverrides, onTitleUpdate: handleTitleUpdate })
+  const sessionUsage = useSessionUsage(activeSessionId, streaming)
 
   // ── Load file tree ──
   const loadFiles = useCallback(async () => {
@@ -291,6 +293,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
                         onStop={stopGenerate}
                         onConfirm={handleConfirm}
                         hasSession={!!activeSessionId}
+                        sessionUsage={sessionUsage}
                         currentCloneName={clone.name}
                       />
                     </div>

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
+import { TokenUsageDAO, toLedgerRows } from "../db/dao/token-usage-dao"
 import {
-  LEDGER_SQL, ledgerTotals, costSummary, cacheHitRateOf, addTokenUsage,
+  LEDGER_SQL, ledgerTotals, costSummary, cacheHitRateOf, addTokenUsage, llmUsageAggregates,
   emptyTokenUsage, totalTokens, type LedgerRow,
 } from "@octopus/shared"
 
@@ -138,5 +139,29 @@ describe('LEDGER_SQL ≡ JS 镜像（金表，NEW-r2：钱 = 派生视图）', (
   it('costSummary 的已知和语义 == 视图 SUM（部分定价）', () => {
     const costs = FIXTURES.map(f => f.costUsd)
     expect(costSummary(costs).usd).toBeCloseTo(sqlCost(allIds).cost_usd as number, 12)
+  })
+
+  // v49: aggregateLlmCallsBy 是新增的 GROUP BY 级 SQL 聚合（看板逐任务花费），
+  // 金表义务同样成立 —— 它与 JS 侧（llmUsageAggregates / ledgerTotals）必须逐位相等。
+  it('aggregateLlmCallsBy(execution_id) ≡ JS ledgerTotals（含三态与 hitRate）', () => {
+    const dao = new TokenUsageDAO(db)
+    const got = dao.aggregateLlmCallsBy('execution_id', ['e-1']).get('e-1')!
+    const js = ledgerTotals(FIXTURES)
+    expect(got.totalCalls).toBe(FIXTURES.length)
+    expect(got.usage).toEqual(FIXTURES.reduce((acc, f) => addTokenUsage(acc, f), emptyTokenUsage()))
+    expect(got.totals.tokens).toBe(js.tokens)
+    expect(got.totals.cost.usd).toBeCloseTo(js.cost.usd as number, 12)
+    expect(got.totals.cost.complete).toBe(js.cost.complete)
+    expect(got.totals.cacheHitRate).toBeCloseTo(js.cacheHitRate as number, 12)
+  })
+
+  it('aggregateLlmCallsBy(session_id) ≡ llmUsageAggregates（会话口径同一批行）', () => {
+    db.prepare(`UPDATE llm_calls SET session_id = 's-mirror'`).run()
+    const dao = new TokenUsageDAO(db)
+    const got = dao.aggregateLlmCallsBy('session_id', ['s-mirror']).get('s-mirror')!
+    const js = llmUsageAggregates(toLedgerRows(dao.findLlmCallsBySession('s-mirror')))
+    expect(got.totals).toEqual(js.totals)
+    expect(got.usage).toEqual(js.usage)
+    expect(got.totalCalls).toBe(js.totalCalls)
   })
 })

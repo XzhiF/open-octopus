@@ -23,7 +23,7 @@
 // the Record<TaskStatus, …> exhaustiveness point that forces new states to be
 // handled, 票 07 发现的 web typecheck 红线); the column layer folds buckets.
 
-import { taskTriggerFailedPayloadSchema, type Task, type TaskStatus, type TaskTriggerFailedSsePayload } from "@octopus/shared"
+import { mergeLlmUsageSummaries, taskTriggerFailedPayloadSchema, type Task, type TaskStatus, type TaskTriggerFailedSsePayload, type LlmUsageSummary } from "@octopus/shared"
 import type { TaskDerivedView, TaskDisplayStatus, TaskPhaseView } from "@/lib/tasks-api"
 
 /** All persisted/displayable task states (v4 K3: + awaiting_review/archiving). */
@@ -228,4 +228,13 @@ export function parseTaskTriggerFailed(data: string): TaskTriggerFailedSsePayloa
   } catch {
     return null
   }
+}
+
+// ── 列成本统计（v49）──────────────────────────────────────────────────
+
+/** 一列任务的账本用量合计（草稿列也算 —— 草稿的钱挂在作者会话上，读模型已带
+ *  ai_usage）。合并公式不在这里重写：shared mergeLlmUsageSummaries 是跨组合并
+ *  唯一源（旧「按组加权」把命中率算错的病根就治在这）。全空 → null（渲染「—」）。 */
+export function sumTaskUsage(tasks: readonly Pick<Task, "ai_usage">[]): LlmUsageSummary | null {
+  return mergeLlmUsageSummaries(tasks.map((t) => t.ai_usage ?? null))
 }

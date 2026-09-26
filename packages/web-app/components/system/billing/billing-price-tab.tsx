@@ -14,6 +14,7 @@ import {
   type BillingPrice, type BillingPriceInput, type BillingSettings, type BillingCurrency,
   type BillingPricePreview,
 } from "@/lib/billing-api"
+import { invalidateBillingCurrency } from "@/lib/billing-currency"
 
 /**
  * 配价 Tab（billing NEW-r2 · 规则账）。
@@ -155,6 +156,8 @@ export function BillingPriceTab() {
     setSavingSettings(true)
     try {
       const effective = await updateSettings({ usd_to_cny: rateDraft.trim(), display_currency: currencyDraft })
+      // 全站角标/看板 chip 的展示币种即时换币（lib/billing-currency 单飞缓存）
+      invalidateBillingCurrency()
       setSettings(effective)
       setRateDraft(effective.usd_to_cny)
       setCurrencyDraft(effective.display_currency)

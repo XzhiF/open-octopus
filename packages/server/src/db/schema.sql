@@ -764,6 +764,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_workspace_workflow ON llm_calls(workspace_id, workflow_ref);
 -- billing-coverage-2 票01: 来源筛选 + 各来源小计（(source_path, timestamp)）。
 CREATE INDEX IF NOT EXISTS idx_llm_calls_source_ts ON llm_calls(source_path, timestamp);
+-- v49: 会话口径账本聚合（聊天角标 GET /api/sessions/:id/llm-calls + 草稿任务的作者会话花费）。
+CREATE INDEX IF NOT EXISTS idx_llm_calls_session ON llm_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_suggestions_workspace ON optimization_suggestions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON optimization_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_summaries_workflow ON execution_summaries(workflow_ref, workspace_id);
