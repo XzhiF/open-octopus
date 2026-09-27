@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { EvolutionLogRow, ExperienceRow, ExperienceRowV2, InsightMarkRow } from "../types"
+import { segIndex, buildFtsMatch } from "../../cjk-segmenter"
 
 /**
  * EvolutionDAO — skill evolution and experience management.
@@ -77,11 +78,12 @@ export class EvolutionDAO extends BaseDAO {
     `).run(row.skill_name, row.content, row.source_session_id ?? null, row.org, row.created_at)
 
     // Also insert into FTS index (non-fatal on failure)
+    // FTS 面存 jieba 预分词串（与 rebuildSearchIndexes 对称），原文留在 experiences.content。
     try {
       this.stmt(`
         INSERT INTO experiences_fts (rowid, skill_name, content, scope, scope_ref, pattern_tags)
         VALUES (?, ?, ?, 'agent', NULL, '[]')
-      `).run(result.lastInsertRowid, row.skill_name, row.content)
+      `).run(result.lastInsertRowid, segIndex(row.skill_name), segIndex(row.content))
     } catch {
       // FTS insert failure is non-fatal
     }
@@ -89,18 +91,35 @@ export class EvolutionDAO extends BaseDAO {
     return result
   }
 
+  /**
+   * v1 experiences search. Returns ORIGINAL content (joined from experiences),
+   * not the segmented FTS column, so REST consumers never see tokenized text.
+   * Query goes through segmented MATCH (Chinese-usable); explicit empty when no
+   * usable token — no more "legal FTS syntax that silently matches nothing".
+   */
   searchExperiences(query: string, limit: number = 10): Array<{ skill_name: string; content: string }> {
-    try {
-      return this.stmt(`
-        SELECT skill_name, content FROM experiences_fts
-        WHERE experiences_fts MATCH ? LIMIT ?
-      `).all(query, limit) as Array<{ skill_name: string; content: string }>
-    } catch {
-      return this.stmt(`
-        SELECT skill_name, content FROM experiences_fts
-        WHERE content LIKE ? LIMIT ?
-      `).all(`%${query}%`, limit) as Array<{ skill_name: string; content: string }>
+    const and = buildFtsMatch(query, 'and')
+    const or = buildFtsMatch(query, 'or')
+    const sql = `
+      SELECT e.skill_name AS skill_name, e.content AS content
+      FROM experiences_fts
+      JOIN experiences e ON e.id = experiences_fts.rowid
+      WHERE experiences_fts MATCH ?
+      ORDER BY bm25(experiences_fts) LIMIT ?
+    `
+    if (and) {
+      try {
+        const rows = this.stmt(sql).all(and, limit) as Array<{ skill_name: string; content: string }>
+        if (rows.length > 0 || !or || or === and) return rows
+        return this.stmt(sql).all(or, limit) as Array<{ skill_name: string; content: string }>
+      } catch {
+        // genuine FTS error → LIKE on original content
+      }
     }
+    const escaped = query.replace(/[%_\\]/g, '\\$&')
+    return this.stmt(
+      `SELECT skill_name, content FROM experiences WHERE content LIKE ? LIMIT ?`,
+    ).all(`%${escaped}%`, limit) as Array<{ skill_name: string; content: string }>
   }
 
   // ── Additional methods for evolution-service migration ─────────────
@@ -161,7 +180,7 @@ export class EvolutionDAO extends BaseDAO {
       this.stmt(`
         INSERT INTO experiences_fts (rowid, skill_name, content, scope, scope_ref, pattern_tags)
         VALUES (?, ?, ?, 'agent', NULL, '[]')
-      `).run(result.lastInsertRowid, row.skill_name, row.content)
+      `).run(result.lastInsertRowid, segIndex(row.skill_name), segIndex(row.content))
     } catch {
       // FTS insert failure is non-fatal
     }
@@ -188,8 +207,8 @@ export class EvolutionDAO extends BaseDAO {
         INSERT INTO experiences_fts (rowid, skill_name, content, scope, scope_ref, pattern_tags)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(
-        result.lastInsertRowid, row.skill_name, row.content,
-        row.scope, row.scope_ref ?? null, row.pattern_tags,
+        result.lastInsertRowid, segIndex(row.skill_name), segIndex(row.content),
+        row.scope, row.scope_ref ?? null, segIndex(row.pattern_tags ?? '[]'),
       )
     } catch {
       // FTS insert failure is non-fatal
@@ -220,8 +239,8 @@ export class EvolutionDAO extends BaseDAO {
   }
 
   /**
-   * Scope-aware FTS5 search with LIKE fallback.
-   * Searches skill_name, content, scope, scope_ref, and pattern_tags.
+   * Scope-aware FTS5 search. Query goes through segmented MATCH (Chinese-usable).
+   * Returns ORIGINAL content via join to experiences (never the segmented column).
    */
   searchByScope(
     query: string,
@@ -229,9 +248,12 @@ export class EvolutionDAO extends BaseDAO {
     limit: number = 10,
   ): Array<{ id: number; skill_name: string; content: string; scope: string; scope_ref: string | null; pattern_tags: string; outcome: string | null }> {
     const safeLimit = Math.min(limit, 100)
-    try {
+    const and = buildFtsMatch(query, 'and')
+    const or = buildFtsMatch(query, 'or')
+
+    const runMatch = (match: string) => {
       let sql: string
-      const params: unknown[] = []
+      const params: unknown[] = [match]
       if (scope) {
         sql = `
           SELECT e.id, e.skill_name, e.content, e.scope, e.scope_ref, e.pattern_tags, e.outcome
@@ -241,7 +263,7 @@ export class EvolutionDAO extends BaseDAO {
           ORDER BY rank
           LIMIT ?
         `
-        params.push(query, scope, safeLimit)
+        params.push(scope)
       } else {
         sql = `
           SELECT e.id, e.skill_name, e.content, e.scope, e.scope_ref, e.pattern_tags, e.outcome
@@ -251,31 +273,39 @@ export class EvolutionDAO extends BaseDAO {
           ORDER BY rank
           LIMIT ?
         `
-        params.push(query, safeLimit)
       }
-      return this.stmt(sql).all(...params) as Array<{
-        id: number; skill_name: string; content: string; scope: string;
-        scope_ref: string | null; pattern_tags: string; outcome: string | null
-      }>
-    } catch {
-      // FTS MATCH failed — fallback to LIKE search
-      const escaped = query.replace(/[%_\\]/g, '\\$&')
-      let sql = `
-        SELECT id, skill_name, content, scope, scope_ref, pattern_tags, outcome
-        FROM experiences WHERE content LIKE ?
-      `
-      const params: unknown[] = [`%${escaped}%`]
-      if (scope) {
-        sql += ` AND scope = ?`
-        params.push(scope)
-      }
-      sql += ` ORDER BY created_at DESC LIMIT ?`
       params.push(safeLimit)
       return this.stmt(sql).all(...params) as Array<{
         id: number; skill_name: string; content: string; scope: string;
         scope_ref: string | null; pattern_tags: string; outcome: string | null
       }>
     }
+
+    if (and) {
+      try {
+        const rows = runMatch(and)
+        if (rows.length > 0 || !or || or === and) return rows
+        return runMatch(or)
+      } catch {
+        // genuine FTS error (missing/corrupt table) → LIKE on original content
+      }
+    }
+    const escaped = query.replace(/[%_\\]/g, '\\$&')
+    let sql = `
+      SELECT id, skill_name, content, scope, scope_ref, pattern_tags, outcome
+      FROM experiences WHERE content LIKE ?
+    `
+    const params: unknown[] = [`%${escaped}%`]
+    if (scope) {
+      sql += ` AND scope = ?`
+      params.push(scope)
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ?`
+    params.push(safeLimit)
+    return this.stmt(sql).all(...params) as Array<{
+      id: number; skill_name: string; content: string; scope: string;
+      scope_ref: string | null; pattern_tags: string; outcome: string | null
+    }>
   }
 
   /**

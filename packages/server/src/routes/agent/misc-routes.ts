@@ -21,6 +21,7 @@ import {
   getExperiencesDir,
 } from '../../services/agent/paths'
 import { getAgentService } from '../../services/agent/agent-service'
+import { rebuildSearchIndexes } from '../../services/agent/recall-service'
 import type { SafetyDAO } from '../../db/dao'
 
 // ── 501 stub for unimplemented routes ────────────────────────
@@ -39,12 +40,19 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   const app = new Hono()
 
   // ── Memory — rebuild-fts ─────────────────────────────────────────
+  // 存量 FTS 索引重建入口（显式，绝不上启动路径）。jieba 预分词改造后，
+  // 旧库里的 experiences_fts / session_memory_fts 需经此端点一次性重灌才可中文命中。
   app.post('/memory/rebuild-fts', (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      // FTS rebuild is a no-op for now — memory search uses file-based grep
-      return c.json({ ok: true, rebuilt: true, indexed_count: 0 })
+      const result = rebuildSearchIndexes()
+      return c.json({
+        ok: true,
+        rebuilt: true,
+        indexed_count: result.session_indexed + result.experience_indexed,
+        ...result,
+      })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

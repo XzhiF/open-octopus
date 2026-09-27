@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { SessionRow, MessageRow, PaginatedResult } from "../types"
+import { segIndex, buildFtsMatch, bm25ToScore } from "../../cjk-segmenter"
 
 /**
  * AgentSessionDAO — agent session and message management.
@@ -142,57 +143,90 @@ export class AgentSessionDAO extends BaseDAO {
 
   // ── session_memory_fts ──────────────────────────────────────────
 
-  searchSessionMemory(query: string, limit: number = 3, source?: string): Array<{
-    session_id: string; summary: string; session_title: string; created_at: string; source: string
+  /**
+   * FTS5 search over session summaries (jieba 预分词后中文可命中)。
+   *
+   * 语义（KB P0 静默路径修复）：
+   * - MATCH 表达式由 buildFtsMatch 逐 token 转义构造 —— 中文/引号/NEAR 等一律
+   *   是字符串字面量，语法永远合法；不再有「不命中也不报错」的降级。
+   * - AND 无结果时 OR 兜底（切词歧义腿）。
+   * - 空/纯标点查询 → 显式空数组。
+   * - 真正的 DB 异常（表缺失/索引损坏）直接上抛，由调用方（REST 层）决定
+   *   rebuild + 重试，不在这里吞。
+   * - score 为 bm25() 映射出的 (0,1) 真实相关度。
+   * - summary 经 rowid 关联回 messages 原文（索引里存的是切词串，展示必须
+   *   是原文）；session_title 同理回连 sessions。
+   */
+  searchSessionMemory(query: string, limit: number = 3, source?: string, org?: string): Array<{
+    session_id: string; summary: string; session_title: string; created_at: string; source: string; score: number
   }> {
-    try {
-      let sql = `SELECT session_id, summary, session_title, created_at, source FROM session_memory_fts WHERE session_memory_fts MATCH ?`
-      const params: unknown[] = [query]
+    const andMatch = buildFtsMatch(query, 'and', 'summary')
+    if (!andMatch) return []
 
-      if (source) {
-        sql += ` AND source = ?`
-        params.push(source)
-      }
+    const rows = this.runSessionFts(andMatch, limit, source, org)
+    if (rows.length > 0) return rows
 
-      sql += ` ORDER BY rank LIMIT ?`
-      params.push(limit)
-
-      return this.stmt(sql).all(...params) as Array<{
-        session_id: string; summary: string; session_title: string; created_at: string; source: string
-      }>
-    } catch {
-      // FTS degraded: fallback to LIKE
-      let sql = `SELECT session_id, summary, session_title, created_at, source FROM session_memory_fts WHERE summary LIKE ?`
-      const params: unknown[] = [`%${query}%`]
-
-      if (source) {
-        sql += ` AND source = ?`
-        params.push(source)
-      }
-
-      sql += ` LIMIT ?`
-      params.push(limit)
-
-      return this.stmt(sql).all(...params) as Array<{
-        session_id: string; summary: string; session_title: string; created_at: string; source: string
-      }>
-    }
+    const orMatch = buildFtsMatch(query, 'or', 'summary')
+    if (!orMatch || orMatch === andMatch) return []
+    return this.runSessionFts(orMatch, limit, source, org)
   }
 
+  private runSessionFts(match: string, limit: number, source?: string, org?: string): Array<{
+    session_id: string; summary: string; session_title: string; created_at: string; source: string; score: number
+  }> {
+    let sql = `
+      SELECT session_memory_fts.session_id AS session_id,
+             COALESCE(m.content, session_memory_fts.summary) AS summary,
+             COALESCE(s.title, session_memory_fts.session_title) AS session_title,
+             session_memory_fts.created_at AS created_at,
+             session_memory_fts.source AS source,
+             bm25(session_memory_fts) AS rank
+      FROM session_memory_fts
+      LEFT JOIN messages m ON m.rowid = session_memory_fts.rowid
+      LEFT JOIN sessions s ON s.id = session_memory_fts.session_id
+      WHERE session_memory_fts MATCH ?`
+    const params: unknown[] = [match]
+
+    if (source) {
+      sql += ` AND session_memory_fts.source = ?`
+      params.push(source)
+    }
+    if (org) {
+      sql += ` AND s.org = ?`
+      params.push(org)
+    }
+
+    sql += ` ORDER BY rank LIMIT ?`
+    params.push(limit)
+
+    const rows = this.stmt(sql).all(...params) as Array<{
+      session_id: string; summary: string; session_title: string; created_at: string; source: string; rank: number
+    }>
+    return rows.map(({ rank, ...rest }) => ({ ...rest, score: bm25ToScore(rank) }))
+  }
+
+  /**
+   * Rebuild session_memory_fts from messages(is_summary=1).
+   * 索引内容为 jieba 预分词串；rowid 显式对齐 messages.rowid 供查询侧回连原文。
+   */
   rebuildFtsIndex(): number {
     this.stmt("DELETE FROM session_memory_fts").run()
     const summaryMessages = this.stmt(`
-      SELECT m.rowid, m.session_id, m.content, m.created_at, m.source, s.title
+      SELECT m.rowid AS msg_rowid, m.session_id, m.content, m.created_at, m.source, s.title
       FROM messages m JOIN sessions s ON s.id = m.session_id
       WHERE m.is_summary = 1
       ORDER BY m.created_at
-    `).all() as Array<{ rowid: number; session_id: string; content: string; created_at: string; source: string; title: string }>
+    `).all() as Array<{ msg_rowid: number; session_id: string; content: string; created_at: string; source: string; title: string }>
 
     const insertFts = this.stmt(
-      "INSERT INTO session_memory_fts (session_id, summary, session_title, created_at, source) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO session_memory_fts (rowid, session_id, summary, session_title, created_at, source) VALUES (?, ?, ?, ?, ?, ?)"
     )
     for (const msg of summaryMessages) {
-      insertFts.run(msg.session_id, msg.content, msg.title, msg.created_at, msg.source || 'main')
+      insertFts.run(
+        msg.msg_rowid, msg.session_id,
+        segIndex(msg.content), segIndex(msg.title ?? ''),
+        msg.created_at, msg.source || 'main',
+      )
     }
     return summaryMessages.length
   }

@@ -18,6 +18,7 @@ import { registerActiveStream, unregisterActiveStream } from '../../services/age
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
 import { getMemoryService } from '../../services/agent/memory-service'
+import { buildRecallMcpServer, RECALL_MCP_SERVER_NAME, RECALL_TOOL_PROMPT } from '../../services/agent/recall-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
@@ -319,7 +320,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
-    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}\n\n${RECALL_TOOL_PROMPT}`
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -332,6 +333,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
         const chunks = provider.sendQuery(body.message!, cwd, undefined, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+          // 系统 agent 的第一个读工具：真实进程内 MCP 工具（结果回灌模型循环），
+          // 区别于 record_daily 等事后拦截的写侧伪工具。
+          mcpServers: { [RECALL_MCP_SERVER_NAME]: buildRecallMcpServer(org) },
         })
 
         let fullContent = ''

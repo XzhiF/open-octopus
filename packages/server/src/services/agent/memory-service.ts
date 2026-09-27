@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { AgentSessionDAO } from '../../db/dao'
+import { segTokens } from '../../cjk-segmenter'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -155,22 +156,24 @@ export class MemoryService {
   searchMemory(org: string, query: string, topK: number = 3, source?: string): MemorySearchResult[] {
     const results: MemorySearchResult[] = []
 
-    // ── 1. FTS5 search on session_memory_fts (PRD C3) ────────────
+    // ── 1. FTS5 search on session_memory_fts（jieba 预分词后中文可命中；
+    //       score 为 bm25 映射的真实相关度，见 agent-session-dao）──
     try {
-      const ftsRows = this.dao.searchSessionMemory(query, topK, source)
+      const ftsRows = this.dao.searchSessionMemory(query, topK, source, org)
 
       for (const row of ftsRows) {
         results.push({
           session_id: row.session_id,
           summary: row.summary,
-          score: 0,
+          score: row.score,
           session_title: row.session_title,
           created_at: row.created_at,
           source: row.source,
         })
       }
     } catch {
-      // FTS degraded: fallback handled inside searchSessionMemory
+      // FTS genuinely broken (missing/corrupt table) — file layers still answer.
+      // 注意：这不是中文不命中的旧静默路径；查询语法错误已在 DAO 层根除。
     }
 
     // ── 2. Text search on long-term + daily memory files ─────────
@@ -234,11 +237,12 @@ export class MemoryService {
       // Search long-term
       if (fs.existsSync(ltPath)) {
         const content = fs.readFileSync(ltPath, 'utf-8')
-        if (content.toLowerCase().includes(query.toLowerCase())) {
+        const score = this.fileScore(content, query)
+        if (score > 0) {
           results.push({
             session_id: `long-term-${dirSource}`,
             summary: this.extractMatchingSnippet(content, query),
-            score: 0,
+            score,
             session_title: dirSource === 'main' ? '长期记忆' : `${dirSource} 长期记忆`,
             created_at: fs.statSync(ltPath).mtime.toISOString(),
             source: dirSource,
@@ -252,11 +256,12 @@ export class MemoryService {
         for (const file of files) {
           const filePath = path.join(dailyDir, file)
           const content = fs.readFileSync(filePath, 'utf-8')
-          if (content.toLowerCase().includes(query.toLowerCase())) {
+          const score = this.fileScore(content, query)
+          if (score > 0) {
             results.push({
               session_id: `daily-${dirSource}-${file}`,
               summary: this.extractMatchingSnippet(content, query),
-              score: 0,
+              score,
               session_title: dirSource === 'main'
                 ? `工作记忆 (${file.replace('.md', '')})`
                 : `${dirSource} 工作记忆 (${file.replace('.md', '')})`,
@@ -268,7 +273,29 @@ export class MemoryService {
       }
     }
 
+    results.sort((a, b) => b.score - a.score)
     return results
+  }
+
+  /**
+   * 文件层（long-term/daily markdown）相关度打分：整串命中给高分（强相关，
+   * 至少不低于 FTS bm25 映射分的中位数），否则按 jieba 切词 token 覆盖率
+   * 折算为小数。返回 0 表示不相关 —— 取代过去「命中即 score:0」的死分。
+   *
+   * 注意：与 FTS 的 bm25ToScore 同为 (0,1)，但不同源不可直接比较绝对值；
+   * 全串命中此处给 1.0 是有意为之（文件层是精确实体匹配，可信度高）。
+   */
+  private fileScore(content: string, query: string): number {
+    const lower = content.toLowerCase()
+    const q = query.trim().toLowerCase()
+    if (q && lower.includes(q)) return 1.0
+
+    const tokens = segTokens(query)
+    if (tokens.length === 0) return 0
+    const hit = tokens.filter((t) => lower.includes(t.toLowerCase())).length
+    if (hit === 0) return 0
+    // token 覆盖率折算，上限压到 0.8 以免超过全串命中
+    return Math.min(0.8, hit / tokens.length)
   }
 
   /**
