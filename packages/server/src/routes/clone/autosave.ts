@@ -62,13 +62,13 @@ export interface AutosaveInput {
  * (so the caller can include it in the done SSE if desired), or null on
  * failure. Failures are non-fatal — the chat reply is unaffected.
  */
-export function autosaveTaskDraft(
+export async function autosaveTaskDraft(
   deps: AutosaveDeps,
   input: AutosaveInput,
-): string | null {
+): Promise<string | null> {
   const { taskDAO, sessionDAO } = deps
   try {
-    const existing = taskDAO.getBySourceChatSession(input.sessionId)
+    const existing = await taskDAO.getBySourceChatSession(input.sessionId)
     if (existing) {
       // Subsequent turn: refresh updated_at (SG8). Name policy:
       //   - user-set name (header rename / POST name) → PRESERVED (bugfix
@@ -92,13 +92,13 @@ export function autosaveTaskDraft(
         existing.name === DEFAULT_TASK_NAME && meaningfulTitle
           ? input.autoTitle
           : existing.name
-      taskDAO.updateAutosave(existing.id, name)
+      await taskDAO.updateAutosave(existing.id, name)
       return existing.id
     }
     // First turn: create draft row + link scope_id (SG3).
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
-    taskDAO.insert({
+    await taskDAO.insert({
       id,
       org: input.org,
       name: input.autoTitle,

@@ -1,4 +1,3 @@
-import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -69,11 +68,11 @@ export function migrateOrgDirs(): number {
   return migrated
 }
 
-export function syncOrgsFromFilesystem(dao: OrgDAO, baseDir?: string): number {
+export async function syncOrgsFromFilesystem(dao: OrgDAO, baseDir?: string): Promise<number> {
   return syncOrgsFromFilesystemWithDao(dao, baseDir)
 }
 
-export function syncOrgsFromFilesystemWithDao(dao: OrgDAO, baseDir?: string): number {
+export async function syncOrgsFromFilesystemWithDao(dao: OrgDAO, baseDir?: string): Promise<number> {
   const homeDir = baseDir ?? path.join(os.homedir(), ".octopus", "orgs")
   if (!fs.existsSync(homeDir)) return 0
 
@@ -101,17 +100,17 @@ export function syncOrgsFromFilesystemWithDao(dao: OrgDAO, baseDir?: string): nu
     }
 
     const orgPath = `~/.octopus/orgs/${entry.name}`
-    const result = dao.insert({ name: entry.name, path: orgPath, created_at: now })
+    const result = await dao.insert({ name: entry.name, path: orgPath, created_at: now })
     if (result.changes > 0) inserted++
   }
 
   return inserted
 }
 
-export function listOrgs(dao: OrgDAO): OrgRow[] {
+export async function listOrgs(dao: OrgDAO): Promise<OrgRow[]> {
   return dao.findAll()
 }
 
-export function orgExists(dao: OrgDAO, name: string): boolean {
+export async function orgExists(dao: OrgDAO, name: string): Promise<boolean> {
   return dao.exists(name)
 }

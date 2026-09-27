@@ -97,12 +97,12 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     fs.rmSync(MOCK_HOME, { recursive: true, force: true })
   })
 
-  it('refreshes an untouched old default (v1b) to the new default and logs', () => {
+  it('refreshes an untouched old default (v1b) to the new default and logs', async () => {
     seedExistingFile(PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML)
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
       expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
@@ -115,15 +115,15 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
-  it('preserves a hand-edited catalog and warns exactly once per instance', () => {
+  it('preserves a hand-edited catalog and warns exactly once per instance', async () => {
     const handEdited = PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML + '\n# my customization\n'
     seedExistingFile(handEdited)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const service = new CloneInitService()
-      service.initBuiltInClones('test-org', fakeDAO)
-      service.initBuiltInClones('test-org', fakeDAO) // second init must not re-warn
+      await service.initBuiltInClones('test-org', fakeDAO)
+      await service.initBuiltInClones('test-org', fakeDAO) // second init must not re-warn
 
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(handEdited)
       expect(presetsWarns(warnSpy)).toHaveLength(1)
@@ -132,19 +132,19 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
-  it('writes the new default when the file is missing', () => {
-    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('writes the new default when the file is missing', async () => {
+    const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
     expect(result.filesCreated).toContain(PRESETS_RESULT_KEY)
   })
 
-  it('leaves an already-current catalog untouched without warn (idempotent)', () => {
+  it('leaves an already-current catalog untouched without warn (idempotent)', async () => {
     seedExistingFile(DEFAULT_WORKFLOW_PRESETS_YAML)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
       expect(result.filesSkipped).toContain(PRESETS_RESULT_KEY)
@@ -155,7 +155,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
-  it('refreshes an install seeded from the EARLIER v1a literal (pre-superpowers) — code-review c1', () => {
+  it('refreshes an install seeded from the EARLIER v1a literal (pre-superpowers) — code-review c1', async () => {
     // v1a shipped before the superpowers preset was appended mid-life. A single
     // PREV baseline would hash-miss it → false "user-modified" → never
     // refreshed. Every historical default must be recognized.
@@ -164,7 +164,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
       expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
@@ -175,7 +175,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
-  it('refreshes even when the editor appended a trailing blank line to the old default', () => {
+  it('refreshes even when the editor appended a trailing blank line to the old default', async () => {
     // Normalization (trimEnd + version-header strip) must not let whitespace
     // drift flip an unmodified seed into "user-modified" — otherwise every
     // editor-touching user silently opts out of future seed migrations.
@@ -183,7 +183,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
@@ -192,7 +192,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
-  it('refreshes an untouched v2 seed to the v3 binding catalog', () => {
+  it('refreshes an untouched v2 seed to the v3 binding catalog', async () => {
     // binding-catalog redesign (2026-09-06): v2 (skills_group shape) joins the
     // PREV baselines — an untouched v2 install must land on the new catalog
     // (spec-dev → built-in/matt-spec-dev), not keep offering retired flows.
@@ -200,7 +200,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
       expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
@@ -257,12 +257,12 @@ describe('CloneInitService — task-author clone assets seed', () => {
     fs.rmSync(SRC, { recursive: true, force: true })
   })
 
-  it('honours the source override so tests never read the real fork', () => {
+  it('honours the source override so tests never read the real fork', async () => {
     expect(findTaskAuthorSeedDir()).toBe(SRC)
   })
 
-  it('seeds persona.md and the whole skills/ tree, aux files included', () => {
-    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('seeds persona.md and the whole skills/ tree, aux files included', async () => {
+    const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.readFileSync(destOf('persona.md'), 'utf-8')).toBe('# Task-Author\n\nv1\n')
     expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8')).toBe('# grilling v1\n')
@@ -272,8 +272,8 @@ describe('CloneInitService — task-author clone assets seed', () => {
     expect(result.filesCreated).toContain('built-in/task-author/skills/grilling/SKILL.md')
   })
 
-  it('writes the manifest so the NEXT run can tell edits from staleness', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('writes the manifest so the NEXT run can tell edits from staleness', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath(), 'utf-8'))
     expect(Object.keys(manifest.files).sort()).toEqual([
@@ -285,31 +285,31 @@ describe('CloneInitService — task-author clone assets seed', () => {
     expect(manifest.files['persona.md']).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  it('is idempotent — a second run with an unchanged source rewrites nothing', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
-    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('is idempotent — a second run with an unchanged source rewrites nothing', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(result.filesCreated).not.toContain('built-in/task-author/persona.md')
     expect(result.filesRefreshed).not.toContain('built-in/task-author/persona.md')
     expect(result.filesSkipped).toContain('built-in/task-author/persona.md')
   })
 
-  it('UPGRADES an untouched file when the source moves forward', () => {
+  it('UPGRADES an untouched file when the source moves forward', async () => {
     // The whole point of the manifest: a file the user never touched must pick
     // up upstream changes. This is the bug that stranded installs on stale
     // skills — the regression guard for it.
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     writeSource('skills/grilling/SKILL.md', '# grilling v2 — new discipline\n')
-    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8'))
       .toBe('# grilling v2 — new discipline\n')
     expect(result.filesRefreshed).toContain('built-in/task-author/skills/grilling/SKILL.md')
   })
 
-  it('PRESERVES a hand-edited file and warns once per process', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('PRESERVES a hand-edited file and warns once per process', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
     const edit = '# my own grilling notes\n'
     fs.writeFileSync(destOf('skills/grilling/SKILL.md'), edit, 'utf-8')
 
@@ -317,8 +317,8 @@ describe('CloneInitService — task-author clone assets seed', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const service = new CloneInitService()
-      service.initBuiltInClones('test-org', fakeDAO)
-      service.initBuiltInClones('test-org', fakeDAO) // must not re-warn
+      await service.initBuiltInClones('test-org', fakeDAO)
+      await service.initBuiltInClones('test-org', fakeDAO) // must not re-warn
 
       expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8')).toBe(edit)
       const own = warnSpy.mock.calls.filter(
@@ -330,7 +330,7 @@ describe('CloneInitService — task-author clone assets seed', () => {
     }
   })
 
-  it('backs up pre-versioning assets before the first managed seed', () => {
+  it('backs up pre-versioning assets before the first managed seed', async () => {
     // An install seeded before the manifest existed cannot tell a stale seed
     // from a hand-edit. It gets taken over wholesale — with a backup, which is
     // the only safety net for whatever the user had.
@@ -340,7 +340,7 @@ describe('CloneInitService — task-author clone assets seed', () => {
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       const backup = fs.readdirSync(cloneDir()).find((n) => n.startsWith('seed.bak-'))
       expect(backup, 'a seed.bak-<ts>/ dir must exist').toBeDefined()
@@ -358,11 +358,11 @@ describe('CloneInitService — task-author clone assets seed', () => {
     }
   })
 
-  it('restores a deleted file (delete-to-re-seed is the documented escape)', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('restores a deleted file (delete-to-re-seed is the documented escape)', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
     fs.rmSync(destOf('skills/grilling/SKILL.md'))
 
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.existsSync(destOf('skills/grilling/SKILL.md'))).toBe(true)
   })
@@ -373,14 +373,14 @@ describe('CloneInitService — task-author clone assets seed', () => {
   // the retired name (SDK reads frontmatter `name` across the whole tree),
   // colliding with the project-level skill it was forked away from.
 
-  it('removes an untouched orphan whose source is gone, prunes its empty dirs', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('removes an untouched orphan whose source is gone, prunes its empty dirs', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     // The fork renames the skill (grilling retires, author-verified-requirement
     // takes over).
     buildSource({ 'skills/author-verified-requirement/SKILL.md': '# author-verified-requirement v1\n' })
     retireFromSource('grilling')
-    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.existsSync(destOf('skills/grilling/SKILL.md'))).toBe(false)
     expect(fs.existsSync(destOf('skills/grilling'))).toBe(false) // no empty shell
@@ -393,15 +393,15 @@ describe('CloneInitService — task-author clone assets seed', () => {
     expect(Object.keys(manifest.files)).not.toContain('skills/grilling/SKILL.md')
   })
 
-  it('keeps a hand-edited orphan and warns once; removes its untouched sibling', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('keeps a hand-edited orphan and warns once; removes its untouched sibling', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
     fs.writeFileSync(destOf('skills/grilling/SKILL.md'), '# my own grilling notes\n', 'utf-8')
 
     buildSource()
     retireFromSource('grilling')
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       // hand-edited orphan → user's file, kept + warned exactly once
       expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8'))
@@ -418,15 +418,15 @@ describe('CloneInitService — task-author clone assets seed', () => {
     }
   })
 
-  it('forgets an orphan the user already deleted (no warn, nothing recreated)', () => {
+  it('forgets an orphan the user already deleted (no warn, nothing recreated)', async () => {
     buildSource({ 'skills/wayfinder/SKILL.md': '# wayfinder v1\n' })
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
     fs.rmSync(destOf('skills/wayfinder/SKILL.md'))
 
     retireFromSource('wayfinder') // fork retires it
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+      const result = await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
       expect(fs.existsSync(destOf('skills/wayfinder/SKILL.md'))).toBe(false)
       expect(result.filesCreated).not.toContain('built-in/task-author/skills/wayfinder/SKILL.md')
@@ -439,7 +439,7 @@ describe('CloneInitService — task-author clone assets seed', () => {
     }
   })
 
-  it('never deletes on a pre-versioning takeover — the backup is the safety net', () => {
+  it('never deletes on a pre-versioning takeover — the backup is the safety net', async () => {
     // No manifest → no recorded sha → cannot tell stale seed from hand-edit,
     // so the sweep is inert; the old copy is taken over, not removed (and
     // preserved in seed.bak-<ts>/).
@@ -448,13 +448,13 @@ describe('CloneInitService — task-author clone assets seed', () => {
 
     buildSource({ 'skills/wayfinder/SKILL.md': '# wayfinder v1\n' })
     retireFromSource('grilling') // retired in the fork — but sweep stays inert without a manifest
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.readFileSync(destOf('skills/grilling/SKILL.md'), 'utf-8')).toBe('# pre-versioning copy\n')
   })
 
-  it('does NOT touch assets for other clones', () => {
-    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+  it('does NOT touch assets for other clones', async () => {
+    await new CloneInitService().initBuiltInClones('test-org', fakeDAO)
 
     expect(fs.existsSync(path.join(MOCK_HOME, 'agent', 'built-in', 'scheduler', 'skills', 'grilling')))
       .toBe(false)
@@ -466,12 +466,12 @@ describe('task-author fork — shape of the shipped source', () => {
   // so the checked-in asset tree cannot silently drift out of contract.
   const realFork = path.resolve(__dirname, '../../../../../core-pack/clones/task-author')
 
-  it('resolves the repo fork when no override is set', () => {
+  it('resolves the repo fork when no override is set', async () => {
     delete process.env.OCTOPUS_TASK_AUTHOR_SEED_DIR
     expect(findTaskAuthorSeedDir()).toBe(realFork)
   })
 
-  it('ships exactly the declared skill family', () => {
+  it('ships exactly the declared skill family', async () => {
     const dirs = fs
       .readdirSync(path.join(realFork, 'skills'), { withFileTypes: true })
       .filter((e) => e.isDirectory())
@@ -480,7 +480,7 @@ describe('task-author fork — shape of the shipped source', () => {
     expect(dirs).toEqual([...MATT_SKILL_FAMILY].sort())
   })
 
-  it('ships a SKILL.md in every family dir, plus the aux files that ride along', () => {
+  it('ships a SKILL.md in every family dir, plus the aux files that ride along', async () => {
     for (const skill of MATT_SKILL_FAMILY) {
       expect(
         fs.existsSync(path.join(realFork, 'skills', skill, 'SKILL.md')),
@@ -493,7 +493,7 @@ describe('task-author fork — shape of the shipped source', () => {
     expect(fs.existsSync(path.join(realFork, 'skills/domain-modeling/ADR-FORMAT.md'))).toBe(true)
   })
 
-  it('collectSeedFiles walks the tree and covers persona + skills', () => {
+  it('collectSeedFiles walks the tree and covers persona + skills', async () => {
     const files = collectSeedFiles(realFork, ['persona.md', 'skills'])
     expect(files).toContain('persona.md')
     expect(files).toContain('skills/grilling/SKILL.md')
@@ -501,7 +501,7 @@ describe('task-author fork — shape of the shipped source', () => {
     expect(files.every((f) => !f.includes('\\'))).toBe(true)
   })
 
-  it('the fork carries NO execution-pipeline exits (the reason it is a fork)', () => {
+  it('the fork carries NO execution-pipeline exits (the reason it is a fork)', async () => {
     // If the shared copies gain something that must not reach the author view,
     // this is where it should fail rather than in a live drafting session.
     const requirement = fs.readFileSync(
@@ -525,7 +525,7 @@ describe('persona.md ↔ builtin-clones.ts consistency', () => {
   // TASK_AUTHOR_PERSONA constant is the fallback when the file is missing.
   // Two copies that can drift is exactly the bug this whole change fixes, so
   // pin them together rather than trusting discipline.
-  it('the fork persona and the inline fallback are identical (modulo platform EOLs)', () => {
+  it('the fork persona and the inline fallback are identical (modulo platform EOLs)', async () => {
     const realFork = path.resolve(__dirname, '../../../../../core-pack/clones/task-author')
     // autocrlf checkouts hand Windows devs a CRLF persona.md while the .ts
     // source keeps its committed LF — that is git checkout noise, not the

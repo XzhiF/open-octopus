@@ -21,8 +21,10 @@ import { HarnessConfigService } from "../services/harness/config-service"
 import type { HarnessEvent } from "@octopus/shared"
 import harnessRoutes, { setHarnessDependencies } from "../routes/harness"
 import { Hono } from "hono"
+import { describePg, setupPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 let db: Database.Database
+let pg: PgFixture
 let harnessDAO: HarnessDAO
 let execDAO: ExecutionDAO
 let sse: SSEService
@@ -52,7 +54,8 @@ function makeEvent(overrides: Partial<HarnessEvent> = {}): HarnessEvent {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  pg = await setupPgSchema()
   workspacePath = path.join(os.tmpdir(), `test-harness-dev-${Date.now()}`)
   fs.mkdirSync(path.join(workspacePath, "workflows"), { recursive: true })
   fs.mkdirSync(path.join(workspacePath, "projects"), { recursive: true })
@@ -73,7 +76,7 @@ beforeEach(() => {
     "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(workspaceId, "test-ws", ORG, workspacePath, now, now)
 
-  harnessDAO = new HarnessDAO(db)
+  harnessDAO = new HarnessDAO(pg.sql)
   execDAO = new ExecutionDAO(db)
   sse = new SSEService()
 
@@ -82,6 +85,7 @@ beforeEach(() => {
     dao: harnessDAO,
     sse,
     configService,
+    tokenUsageDao: {} as any, // B1: 缺省回退走模块级 getDb()，本文件不初始化全局连接
   })
 
   setHarnessDependencies(harnessDAO)
@@ -89,11 +93,12 @@ beforeEach(() => {
   app.route("/api/workspaces/:id/harness", harnessRoutes)
 })
 
-afterEach(() => {
+afterEach(async () => {
   try {
     harnessController.destroyAll()
   } catch { /* ignore */ }
   db.close()
+  await pg.close()
   if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
   if (fs.existsSync(workspacePath)) fs.rmSync(workspacePath, { recursive: true, force: true })
 })
@@ -108,9 +113,9 @@ async function request(method: string, urlPath: string, body?: unknown): Promise
   return app.fetch(new Request(url, init))
 }
 
-describe("R2-02 Harness Dev Integration", () => {
+describePg("R2-02 Harness Dev Integration", () => {
   describe("AC1: autoResume harness cleanup", () => {
-    it("HarnessController cleans up after onExecutionEnd is called", () => {
+    it("HarnessController cleans up after onExecutionEnd is called", async () => {
       const executionId = randomUUID()
       const mockCallbacks = {
         onNodeStart: vi.fn(),
@@ -118,7 +123,7 @@ describe("R2-02 Harness Dev Integration", () => {
       }
 
       // Start execution in harness
-      harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
       expect(harnessController.isActive(executionId)).toBe(true)
 
       // Simulate what autoResume should do: call onExecutionEnd after completion
@@ -136,7 +141,7 @@ describe("R2-02 Harness Dev Integration", () => {
   })
 
   describe("AC2: runInteractionCompleteInBackground harness cleanup", () => {
-    it("HarnessController cleans up after interaction completion", () => {
+    it("HarnessController cleans up after interaction completion", async () => {
       const executionId = randomUUID()
       const mockCallbacks = {
         onNodeStart: vi.fn(),
@@ -144,7 +149,7 @@ describe("R2-02 Harness Dev Integration", () => {
       }
 
       // Start execution in harness
-      harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
       expect(harnessController.isActive(executionId)).toBe(true)
 
       // Simulate what runInteractionCompleteInBackground should do after completion
@@ -263,12 +268,12 @@ describe("R2-02 Harness Dev Integration", () => {
         report_json: JSON.stringify({ detector: "timeout_cascade" }),
       })
 
-      harnessDAO.insertEvent(event1)
-      harnessDAO.insertEvent(event2)
-      harnessDAO.insertEvent(event3)
+      await harnessDAO.insertEvent(event1)
+      await harnessDAO.insertEvent(event2)
+      await harnessDAO.insertEvent(event3)
 
       // Verify events are in DB
-      expect(harnessDAO.countEvents(executionId)).toBe(3)
+      expect(await harnessDAO.countEvents(executionId)).toBe(3)
 
       // Call GET /harness/events/:execId via route handler
       const res = await request("GET", `/api/workspaces/${workspaceId}/harness/events/${executionId}`)
@@ -316,9 +321,9 @@ describe("R2-02 Harness Dev Integration", () => {
         updated_at: new Date().toISOString(),
       })
 
-      harnessDAO.insertEvent(makeEvent({ id: "e1", execution_id: executionId, event_type: "diagnosis" }))
-      harnessDAO.insertEvent(makeEvent({ id: "e2", execution_id: executionId, event_type: "intervention" }))
-      harnessDAO.insertEvent(makeEvent({ id: "e3", execution_id: executionId, event_type: "diagnosis" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e1", execution_id: executionId, event_type: "diagnosis" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e2", execution_id: executionId, event_type: "intervention" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e3", execution_id: executionId, event_type: "diagnosis" }))
 
       const res = await request("GET", `/api/workspaces/${workspaceId}/harness/events/${executionId}?type=diagnosis`)
       expect(res.status).toBe(200)
@@ -350,9 +355,9 @@ describe("R2-02 Harness Dev Integration", () => {
         updated_at: new Date().toISOString(),
       })
 
-      harnessDAO.insertEvent(makeEvent({ id: "e1", execution_id: executionId, severity: "warning" }))
-      harnessDAO.insertEvent(makeEvent({ id: "e2", execution_id: executionId, severity: "critical" }))
-      harnessDAO.insertEvent(makeEvent({ id: "e3", execution_id: executionId, severity: "info" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e1", execution_id: executionId, severity: "warning" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e2", execution_id: executionId, severity: "critical" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "e3", execution_id: executionId, severity: "info" }))
 
       const res = await request("GET", `/api/workspaces/${workspaceId}/harness/events/${executionId}?severity=critical`)
       expect(res.status).toBe(200)
@@ -416,9 +421,9 @@ describe("R2-02 Harness Dev Integration", () => {
         })
       }
 
-      harnessDAO.insertEvent(makeEvent({ id: "a1", execution_id: exec1, event_type: "diagnosis" }))
-      harnessDAO.insertEvent(makeEvent({ id: "a2", execution_id: exec1, event_type: "diagnosis" }))
-      harnessDAO.insertEvent(makeEvent({ id: "b1", execution_id: exec2, event_type: "intervention" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "a1", execution_id: exec1, event_type: "diagnosis" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "a2", execution_id: exec1, event_type: "diagnosis" }))
+      await harnessDAO.insertEvent(makeEvent({ id: "b1", execution_id: exec2, event_type: "intervention" }))
 
       const res1 = await request("GET", `/api/workspaces/${workspaceId}/harness/events/${exec1}`)
       const data1 = await res1.json() as any

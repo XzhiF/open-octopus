@@ -26,31 +26,31 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const workspaceId = c.req.param("id")!
     let title: string | undefined
     try { title = (await c.req.json<{ title?: string }>()).title } catch { /* no body */ }
-    const session = chatService.createSession(workspaceId, title)
+    const session = await chatService.createSession(workspaceId, title)
     return c.json(session, 201)
   })
 
-  chatRoutes.get("/sessions", (c) => {
+  chatRoutes.get("/sessions", async (c) => {
     const workspaceId = c.req.param("id")!
-    const sessions = chatService.listSessions(workspaceId)
+    const sessions = await chatService.listSessions(workspaceId)
     return c.json(sessions)
   })
 
-  chatRoutes.get("/sessions/:sessionId", (c) => {
+  chatRoutes.get("/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId")
     const limit = Number(c.req.query("limit") ?? "0") || undefined
     const before = c.req.query("before") || undefined  // cursor timestamp for "load more"
-    const session = chatService.getSession(sessionId, limit, before)
+    const session = await chatService.getSession(sessionId, limit, before)
     if (!session) return c.json({ error: "not found" }, 404)
     return c.json(session)
   })
 
-  chatRoutes.delete("/sessions/:sessionId", (c) => {
+  chatRoutes.delete("/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId")
 
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: "not found" }, 404)
-    chatService.deleteSession(sessionId)
+    await chatService.deleteSession(sessionId)
     return c.json({ ok: true })
   })
 
@@ -59,9 +59,9 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const body = await c.req.json<{ title?: string }>()
     if (!body.title) return c.json({ error: "title required" }, 400)
 
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: "not found" }, 404)
-    chatService.updateSessionTitle(sessionId, body.title)
+    await chatService.updateSessionTitle(sessionId, body.title)
     return c.json({ ok: true })
   })
 
@@ -72,7 +72,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 
 
 
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: "session not found" }, 404)
 
     const workspace = workspaceService.getById(session.workspaceId)
@@ -80,7 +80,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const cwd = workspace.path.replace(/^~/, os.homedir())
 
     // Store user message
-    chatService.addMessage(sessionId, {
+    await chatService.addMessage(sessionId, {
       role: "user",
       content: body.content,
       metadata: JSON.stringify({ displayType: "user" }),
@@ -174,7 +174,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
               : undefined
             thinkingDurationValue = thinkingDuration
             if (thinkingContent) {
-              chatService.addMessage(sessionId, {
+              await chatService.addMessage(sessionId, {
                 role: "assistant",
                 type: "thinking",
                 content: "",
@@ -206,7 +206,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
             const entry = toolCallMap.get(chunk.toolCallId)
             if (entry) {
               entry.toolInput = chunk.toolInput
-              const msg = chatService.addMessage(sessionId, {
+              const msg = await chatService.addMessage(sessionId, {
                 role: "assistant",
                 type: "tool_call",
                 content: "",
@@ -227,7 +227,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
             if (entry && entry.dbMessageId) {
               const durationMs = Date.now() - entry.startTime
               entry.toolStatus = chunk.isError ? "error" : "done"
-              chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
+              await chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
                 displayType: "tool_call",
                 toolCallId: entry.toolCallId,
                 toolName: entry.toolName,
@@ -241,7 +241,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 
           if (chunk.type === 'result') {
             if (chunk.sessionId) {
-              chatService.updateProviderSession(sessionId, chunk.sessionId)
+              await chatService.updateProviderSession(sessionId, chunk.sessionId)
             }
             currentTokens = chunk.usage
             currentCostUsd = chunk.costUsd
@@ -277,7 +277,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 
         // Persist full response text with metadata
         if (!aborted) {
-          chatService.addMessage(sessionId, {
+          await chatService.addMessage(sessionId, {
             role: "assistant",
             content: fullText,
             type: "text",
@@ -315,7 +315,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
   chatRoutes.post("/sessions/:sessionId/generate-title", async (c) => {
     const sessionId = c.req.param("sessionId")
 
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: "session not found" }, 404)
 
     if (session.title) return c.json({ title: session.title })
@@ -337,7 +337,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
       }
       title = title.trim().slice(0, 20)
       if (title) {
-        chatService.updateSessionTitle(sessionId, title)
+        await chatService.updateSessionTitle(sessionId, title)
       }
       return c.json({ title: title || null })
     } catch {

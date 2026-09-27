@@ -256,7 +256,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   // not the clone chatbot. Without this filter, opening e.g. task-author
   // auto-loads the newest unrelated task's conversation (CloneDetailView
   // selects items[0]) — users mistook it for "the current draft's chat".
-  app.get('/:name/sessions', (c) => {
+  app.get('/:name/sessions', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
     const cloneName = c.req.param('name')
     const limit = parseInt(c.req.query('limit') ?? '20', 10)
@@ -266,7 +266,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     let items = result.items
     if (taskDAO && items.length > 0) {
       const linked = new Set(
-        taskDAO.getLinksBySourceChatSessions(items.map((s) => s.id)).map((l) => l.session_id),
+        (await taskDAO.getLinksBySourceChatSessions(items.map((s) => s.id))).map((l) => l.session_id),
       )
       if (linked.size > 0) items = items.filter((s) => !linked.has(s.id))
     }
@@ -404,7 +404,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // autosave seam writes at turn-end. No overlap.
     const noticeTaskId =
       cloneName === 'task-author' && taskDAO
-        ? taskDAO.getBySourceChatSession(sessionId)?.id ?? null
+        ? (await taskDAO.getBySourceChatSession(sessionId))?.id ?? null
         : null
     const specUpdateNotice = noticeTaskId
       ? getSpecNotice(noticeTaskId)
@@ -428,7 +428,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     let authoringResourcesContent: string | undefined
     if (noticeTaskId && taskDAO) {
       try {
-        const taskRow = taskDAO.getById(noticeTaskId)
+        const taskRow = await taskDAO.getById(noticeTaskId)
         const authoringResources: ResourceRef[] = taskRow?.authoring_resources
           ? JSON.parse(taskRow.authoring_resources) as ResourceRef[]
           : []
@@ -491,7 +491,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // since it only happens when taskHomePath exists (task-author sessions).
     if (noticeTaskId && taskHomePath && taskDAO) {
       try {
-        const ctxRow = taskDAO.getById(noticeTaskId)
+        const ctxRow = await taskDAO.getById(noticeTaskId)
         const ctxSpec = ctxRow?.task_spec
           ? JSON.parse(ctxRow.task_spec) as { skill_groups?: string[]; format?: string }
           : null
@@ -802,7 +802,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
           if (cloneName === 'task-author' && taskDAO) {
             const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
-            autosaveTaskDraft(
+            await autosaveTaskDraft(
               { taskDAO, sessionDAO },
               { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
             )

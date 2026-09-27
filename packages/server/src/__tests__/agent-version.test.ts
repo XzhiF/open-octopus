@@ -1,3 +1,7 @@
+// P1 B1: AgentVersionDAO/AgentVersionService 已 postgres.js/async —— 原 :memory: +
+// 手工 DDL fixture 切 PG 随机测试库（applyPgSchema 统一建表；clones.current_version_id
+// 已正式进 PG DDL，见 db/pg/schema.sql）。用例语义与条数逐条不变；
+// 抛错断言 toThrow → rejects.toThrow（async 化后的同判据形态）。
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
@@ -8,7 +12,7 @@ import {
   AgentVersionService,
 } from '../services/agent/agent-version-service'
 import { AgentVersionDAO } from '../db/dao/agent-version-dao'
-import Database from 'better-sqlite3'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
 // ── Test helpers ──────────────────────────────────────────────────
 
@@ -51,70 +55,38 @@ function createTestClone(name: string): string {
   return cloneDir
 }
 
-function setupTestDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS agent_versions (
-      id TEXT PRIMARY KEY,
-      agent_name TEXT NOT NULL,
-      version TEXT NOT NULL,
-      major INTEGER NOT NULL,
-      minor INTEGER NOT NULL,
-      patch INTEGER NOT NULL,
-      stage TEXT NOT NULL DEFAULT 'stable',
-      status TEXT NOT NULL DEFAULT 'draft',
-      snapshot TEXT NOT NULL,
-      changelog TEXT,
-      published_at TEXT,
-      published_by TEXT,
-      created_at TEXT NOT NULL,
-      UNIQUE(agent_name, version)
-    );
-    CREATE TABLE IF NOT EXISTS clones (
-      name TEXT PRIMARY KEY,
-      org TEXT NOT NULL DEFAULT 'default',
-      type TEXT NOT NULL DEFAULT 'user',
-      status TEXT NOT NULL DEFAULT 'active',
-      persona TEXT NOT NULL DEFAULT '',
-      skills TEXT NOT NULL DEFAULT '[]',
-      workspace_ref TEXT NOT NULL DEFAULT '{}',
-      memory_scope TEXT NOT NULL DEFAULT 'isolated',
-      last_active_at TEXT,
-      current_version_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `)
-  // Insert a test clone row
-  db.prepare(`
+async function setupTestDb(): Promise<PgFixture> {
+  const pg = await setupPgSchema()
+  // 旧 fixture 的 test-clone 行等价物（timestamptz 用 now()，jsonb 用字面量）
+  await pg.sql.unsafe(`
     INSERT INTO clones (name, org, type, status, persona, skills, workspace_ref, memory_scope, created_at, updated_at)
-    VALUES (?, 'default', 'user', 'active', '', '[]', '{}', 'isolated', datetime('now'), datetime('now'))
-  `).run('test-clone')
-  return db
+    VALUES ($1, 'default', 'user', 'active', '', '[]'::jsonb, '{}'::jsonb, 'isolated', now(), now())
+  `, ['test-clone'])
+  return pg
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
 
-describe('AgentVersionService', () => {
-  let db: Database.Database
+describePg('AgentVersionService', () => {
+  let pg: PgFixture
   let dao: AgentVersionDAO
   let service: AgentVersionService
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setOctopusHome()
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'clones'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'versions'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'skills'), { recursive: true })
 
-    db = setupTestDb()
-    dao = new AgentVersionDAO(db)
+    pg = await setupTestDb()
+    dao = new AgentVersionDAO(pg.sql)
     service = new AgentVersionService(dao)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.OCTOPUS_HOME
     try {
-      db.close()
+      await pg.close()
     } catch {
       // Non-fatal
     }
@@ -166,10 +138,10 @@ describe('AgentVersionService', () => {
   })
 
   describe('publish', () => {
-    it('creates a version with DB + FS dual write', () => {
+    it('creates a version with DB + FS dual write', async () => {
       createTestClone('test-clone')
 
-      const version = service.publish('test-clone', {
+      const version = await service.publish('test-clone', {
         version: '1.0.0',
         stage: 'stable',
         changelog: 'Initial release',
@@ -190,28 +162,28 @@ describe('AgentVersionService', () => {
       expect(fs.existsSync(path.join(versionDir, 'config.json'))).toBe(true)
     })
 
-    it('rejects duplicate version numbers', () => {
+    it('rejects duplicate version numbers', async () => {
       createTestClone('test-clone')
 
-      service.publish('test-clone', { version: '1.0.0' })
+      await service.publish('test-clone', { version: '1.0.0' })
 
-      expect(() => {
-        service.publish('test-clone', { version: '1.0.0' })
-      }).toThrow('already exists')
+      await expect(async () => {
+        await service.publish('test-clone', { version: '1.0.0' })
+      }).rejects.toThrow('already exists')
     })
 
-    it('rejects invalid version format', () => {
+    it('rejects invalid version format', async () => {
       createTestClone('test-clone')
 
-      expect(() => {
-        service.publish('test-clone', { version: 'invalid' })
-      }).toThrow('Invalid version format')
+      await expect(async () => {
+        await service.publish('test-clone', { version: 'invalid' })
+      }).rejects.toThrow('Invalid version format')
     })
 
-    it('parses Maven-style version with stage qualifier', () => {
+    it('parses Maven-style version with stage qualifier', async () => {
       createTestClone('test-clone')
 
-      const version = service.publish('test-clone', {
+      const version = await service.publish('test-clone', {
         version: '1.2.0-beta.1',
       })
 
@@ -221,65 +193,65 @@ describe('AgentVersionService', () => {
       expect(version.stage).toBe('beta.1')
     })
 
-    it('throws when clone directory does not exist', () => {
-      expect(() => {
-        service.publish('nonexistent', { version: '1.0.0' })
-      }).toThrow('not found')
+    it('throws when clone directory does not exist', async () => {
+      await expect(async () => {
+        await service.publish('nonexistent', { version: '1.0.0' })
+      }).rejects.toThrow('not found')
     })
   })
 
   describe('list', () => {
-    it('returns versions for an agent', () => {
+    it('returns versions for an agent', async () => {
       createTestClone('test-clone')
 
-      service.publish('test-clone', { version: '1.0.0', changelog: 'v1' })
-      service.publish('test-clone', { version: '1.1.0', changelog: 'v1.1' })
+      await service.publish('test-clone', { version: '1.0.0', changelog: 'v1' })
+      await service.publish('test-clone', { version: '1.1.0', changelog: 'v1.1' })
 
-      const result = service.list('test-clone')
+      const result = await service.list('test-clone')
 
       expect(result.versions).toHaveLength(2)
       expect(result.total).toBe(2)
     })
 
-    it('filters by status', () => {
+    it('filters by status', async () => {
       createTestClone('test-clone')
 
-      service.publish('test-clone', { version: '1.0.0' })
-      service.archive('test-clone', '1.0.0')
-      service.publish('test-clone', { version: '1.1.0' })
+      await service.publish('test-clone', { version: '1.0.0' })
+      await service.archive('test-clone', '1.0.0')
+      await service.publish('test-clone', { version: '1.1.0' })
 
-      const published = service.list('test-clone', { status: 'published' })
+      const published = await service.list('test-clone', { status: 'published' })
       expect(published.versions).toHaveLength(1)
       expect(published.versions[0].version).toBe('1.1.0')
 
-      const archived = service.list('test-clone', { status: 'archived' })
+      const archived = await service.list('test-clone', { status: 'archived' })
       expect(archived.versions).toHaveLength(1)
       expect(archived.versions[0].version).toBe('1.0.0')
     })
   })
 
   describe('get', () => {
-    it('returns a specific version', () => {
+    it('returns a specific version', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0', changelog: 'first' })
+      await service.publish('test-clone', { version: '1.0.0', changelog: 'first' })
 
-      const version = service.get('test-clone', '1.0.0')
+      const version = await service.get('test-clone', '1.0.0')
 
       expect(version).not.toBeNull()
       expect(version!.version).toBe('1.0.0')
       expect(version!.changelog).toBe('first')
     })
 
-    it('returns null for nonexistent version', () => {
-      const version = service.get('test-clone', '9.9.9')
+    it('returns null for nonexistent version', async () => {
+      const version = await service.get('test-clone', '9.9.9')
       expect(version).toBeNull()
     })
   })
 
   describe('diff', () => {
-    it('compares two versions', () => {
+    it('compares two versions', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0' })
+      await service.publish('test-clone', { version: '1.0.0' })
 
       // Modify clone and publish v2
       const cloneDir = path.join(TEST_DIR, 'agent', 'clones', 'test-clone')
@@ -288,9 +260,9 @@ describe('AgentVersionService', () => {
         '# Updated persona\n\nNew content',
         'utf-8',
       )
-      service.publish('test-clone', { version: '1.1.0' })
+      await service.publish('test-clone', { version: '1.1.0' })
 
-      const diff = service.diff('test-clone', '1.0.0', '1.1.0')
+      const diff = await service.diff('test-clone', '1.0.0', '1.1.0')
 
       expect(diff.persona_diff.from).toContain('test-clone')
       expect(diff.persona_diff.to).toContain('Updated persona')
@@ -299,40 +271,40 @@ describe('AgentVersionService', () => {
       expect(diff.skills_diff).toHaveProperty('unchanged')
     })
 
-    it('throws when version not found', () => {
+    it('throws when version not found', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0' })
+      await service.publish('test-clone', { version: '1.0.0' })
 
-      expect(() => {
-        service.diff('test-clone', '1.0.0', '9.9.9')
-      }).toThrow('not found')
+      await expect(async () => {
+        await service.diff('test-clone', '1.0.0', '9.9.9')
+      }).rejects.toThrow('not found')
     })
   })
 
   describe('archive', () => {
-    it('sets status to archived', () => {
+    it('sets status to archived', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0' })
+      await service.publish('test-clone', { version: '1.0.0' })
 
-      const archived = service.archive('test-clone', '1.0.0')
+      const archived = await service.archive('test-clone', '1.0.0')
       expect(archived.status).toBe('archived')
     })
 
-    it('throws when already archived', () => {
+    it('throws when already archived', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0' })
-      service.archive('test-clone', '1.0.0')
+      await service.publish('test-clone', { version: '1.0.0' })
+      await service.archive('test-clone', '1.0.0')
 
-      expect(() => {
-        service.archive('test-clone', '1.0.0')
-      }).toThrow('already archived')
+      await expect(async () => {
+        await service.archive('test-clone', '1.0.0')
+      }).rejects.toThrow('already archived')
     })
   })
 
   describe('rollback', () => {
-    it('restores clone directory to target version snapshot', () => {
+    it('restores clone directory to target version snapshot', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0', changelog: 'original' })
+      await service.publish('test-clone', { version: '1.0.0', changelog: 'original' })
 
       // Modify clone
       const cloneDir = path.join(TEST_DIR, 'agent', 'clones', 'test-clone')
@@ -343,7 +315,7 @@ describe('AgentVersionService', () => {
       )
 
       // Rollback to v1.0.0
-      const result = service.rollback('test-clone', '1.0.0')
+      const result = await service.rollback('test-clone', '1.0.0')
 
       expect(result.success).toBe(true)
 
@@ -356,78 +328,78 @@ describe('AgentVersionService', () => {
       expect(restoredPersona).not.toContain('Modified')
     })
 
-    it('throws when target version not found', () => {
+    it('throws when target version not found', async () => {
       createTestClone('test-clone')
 
-      expect(() => {
-        service.rollback('test-clone', '9.9.9')
-      }).toThrow('not found')
+      await expect(async () => {
+        await service.rollback('test-clone', '9.9.9')
+      }).rejects.toThrow('not found')
     })
 
-    it('throws when target version is archived', () => {
+    it('throws when target version is archived', async () => {
       createTestClone('test-clone')
-      service.publish('test-clone', { version: '1.0.0' })
-      service.archive('test-clone', '1.0.0')
+      await service.publish('test-clone', { version: '1.0.0' })
+      await service.archive('test-clone', '1.0.0')
 
-      expect(() => {
-        service.rollback('test-clone', '1.0.0')
-      }).toThrow('Cannot rollback')
+      await expect(async () => {
+        await service.rollback('test-clone', '1.0.0')
+      }).rejects.toThrow('Cannot rollback')
     })
   })
 })
 
-describe('AgentVersionDAO', () => {
-  let db: Database.Database
+describePg('AgentVersionDAO', () => {
+  let pg: PgFixture
   let dao: AgentVersionDAO
 
-  beforeEach(() => {
-    db = setupTestDb()
-    dao = new AgentVersionDAO(db)
+  beforeEach(async () => {
+    pg = await setupTestDb()
+    dao = new AgentVersionDAO(pg.sql)
   })
 
-  afterEach(() => {
-    try { db.close() } catch { /* non-fatal */ }
+  afterEach(async () => {
+    try { await pg.close() } catch { /* non-fatal */ }
   })
 
   describe('findLatestPublished', () => {
-    it('returns the latest published stable version', () => {
+    it('returns the latest published stable version', async () => {
       const now = new Date().toISOString()
-      dao.insert({
+      await dao.insert({
         id: 'v1', agent_name: 'test-clone', version: '1.0.0',
         major: 1, minor: 0, patch: 0, stage: 'stable', status: 'published',
         snapshot: '{}', changelog: null, published_at: now, published_by: null, created_at: now,
       })
-      dao.insert({
+      await dao.insert({
         id: 'v2', agent_name: 'test-clone', version: '1.1.0',
         major: 1, minor: 1, patch: 0, stage: 'stable', status: 'published',
         snapshot: '{}', changelog: null, published_at: now, published_by: null, created_at: now,
       })
 
-      const latest = dao.findLatestPublished('test-clone')
+      const latest = await dao.findLatestPublished('test-clone')
       expect(latest).not.toBeNull()
       expect(latest!.version).toBe('1.1.0')
     })
 
-    it('filters by minimum stage', () => {
+    it('filters by minimum stage', async () => {
       const now = new Date().toISOString()
-      dao.insert({
+      await dao.insert({
         id: 'v1', agent_name: 'test-clone', version: '1.0.0-alpha',
         major: 1, minor: 0, patch: 0, stage: 'alpha', status: 'published',
         snapshot: '{}', changelog: null, published_at: now, published_by: null, created_at: now,
       })
-      dao.insert({
+      await dao.insert({
         id: 'v2', agent_name: 'test-clone', version: '1.0.0',
         major: 1, minor: 0, patch: 0, stage: 'stable', status: 'published',
         snapshot: '{}', changelog: null, published_at: now, published_by: null, created_at: now,
       })
 
-      const latest = dao.findLatestPublished('test-clone', 'stable')
+      const latest = await dao.findLatestPublished('test-clone', 'stable')
       expect(latest).not.toBeNull()
       expect(latest!.stage).toBe('stable')
     })
 
-    it('returns null when no published versions exist', () => {
-      const latest = dao.findLatestPublished('test-clone')
+    it('returns null when no published versions exist', async () => {
+      const latest = await dao.findLatestPublished('test-clone')
       expect(latest).toBeNull()
     })
   })

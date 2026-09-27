@@ -3,6 +3,7 @@ import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { AgentVersionDAO } from "../../db/dao/agent-version-dao"
+import { pgSql } from "../../db/dao/registry"
 import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
@@ -73,7 +74,7 @@ export class EngineFactory implements IEngineFactory {
    * @param callbacks - optional EngineCallbacks (if not provided, engine is created without callbacks)
    * @param signal - optional AbortSignal
    */
-  createEngine(execution: ExecutionRow, workflow: any, callbacks?: EngineCallbacks, signal?: AbortSignal): WorkflowEngine {
+  async createEngine(execution: ExecutionRow, workflow: any, callbacks?: EngineCallbacks, signal?: AbortSignal): Promise<WorkflowEngine> {
     const pipelineConfig = this.pipelineConfigLoader.getConfig()
 
     const promptInjector = pipelineConfig?.prompts
@@ -144,9 +145,11 @@ export class EngineFactory implements IEngineFactory {
     engine.setWorkflowResolver(workflowResolver)
 
     // Set version resolver for octopus_agent nodes
+    // P1 B1: AgentVersionDAO 已迁 PG（agent_versions 表单引擎 = postgres.js）。
+    // 池未注册时 pgSql() 抛错 → 走空 VersionResolver 兜底（与原 catch 语义一致）。
     try {
-      const versionDao = new AgentVersionDAO(this.ctx.db)
-      const rows = versionDao.listAllPublished()
+      const versionDao = new AgentVersionDAO(pgSql())
+      const rows = await versionDao.listAllPublished()
       const versions: AgentVersionInfo[] = rows.map((r) => ({
         id: r.id,
         agent_name: r.agent_name,
@@ -179,11 +182,11 @@ export class EngineFactory implements IEngineFactory {
    * Reconstruct an engine from persisted state (snapshot + var_pool).
    * Does NOT restore node results or session context — caller must do that.
    */
-  reconstructEngine(execution: ExecutionRow, callbacks: EngineCallbacks, signal: AbortSignal): WorkflowEngine {
+  async reconstructEngine(execution: ExecutionRow, callbacks: EngineCallbacks, signal: AbortSignal): Promise<WorkflowEngine> {
     const wf = this.resolveWorkflowWithSnapshot(execution.id, execution.workflow_ref)
     if (!wf) throw new Error(`Workflow not found: ${execution.workflow_ref}`)
 
-    const engine = this.createEngine(execution, wf.parsed, callbacks, signal)
+    const engine = await this.createEngine(execution, wf.parsed, callbacks, signal)
 
     const poolSnapshot = execution.var_pool ? JSON.parse(execution.var_pool) : {}
     engine.updateVarPool(poolSnapshot)

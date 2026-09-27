@@ -66,32 +66,32 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
   router.post('/sessions', async (c) => {
     const body = await c.req.json().catch(() => ({})) as { title?: string }
-    const session = chatService.createSession(GLOBAL_SCOPE_ID, body.title)
+    const session = await chatService.createSession(GLOBAL_SCOPE_ID, body.title)
     return c.json(session, 201)
   })
 
-  router.get('/sessions', (c) => {
-    const sessions = chatService.listSessions(GLOBAL_SCOPE_ID)
+  router.get('/sessions', async (c) => {
+    const sessions = await chatService.listSessions(GLOBAL_SCOPE_ID)
     return c.json(sessions)
   })
 
-  router.get('/sessions/:sessionId', (c) => {
+  router.get('/sessions/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId')
     const limit = parseInt(c.req.query('limit') ?? '100', 10)
     const before = c.req.query('before')
-    const session = chatService.getSession(sessionId, limit, before ?? undefined)
+    const session = await chatService.getSession(sessionId, limit, before ?? undefined)
     if (!session) return c.json({ error: 'Session not found' }, 404)
     return c.json(session)
   })
 
-  router.delete('/sessions/:sessionId', (c) => {
-    chatService.deleteSession(c.req.param('sessionId'))
+  router.delete('/sessions/:sessionId', async (c) => {
+    await chatService.deleteSession(c.req.param('sessionId'))
     return c.json({ success: true })
   })
 
   router.patch('/sessions/:sessionId', async (c) => {
     const { title } = await c.req.json() as { title: string }
-    chatService.updateSessionTitle(c.req.param('sessionId'), title)
+    await chatService.updateSessionTitle(c.req.param('sessionId'), title)
     return c.json({ success: true })
   })
 
@@ -101,14 +101,14 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
     const sessionId = c.req.param('sessionId')
     const body = await c.req.json<{ content: string }>()
 
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: 'session not found' }, 404)
 
     // Scheduler clone CWD: its own directory (~/.octopus/agent/built-in/scheduler/)
     const cwd = getBuiltInCloneDir('scheduler')
 
     // Store user message
-    chatService.addMessage(sessionId, {
+    await chatService.addMessage(sessionId, {
       role: 'user',
       content: body.content,
       metadata: JSON.stringify({ displayType: 'user' }),
@@ -203,7 +203,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
               : undefined
             thinkingDurationValue = thinkingDuration
             if (thinkingContent) {
-              chatService.addMessage(sessionId, {
+              await chatService.addMessage(sessionId, {
                 role: 'assistant',
                 type: 'thinking',
                 content: '',
@@ -235,7 +235,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             const entry = toolCallMap.get(chunk.toolCallId)
             if (entry) {
               entry.toolInput = chunk.toolInput
-              const msg = chatService.addMessage(sessionId, {
+              const msg = await chatService.addMessage(sessionId, {
                 role: 'assistant',
                 type: 'tool_call',
                 content: '',
@@ -256,7 +256,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             if (entry && entry.dbMessageId) {
               const durationMs = Date.now() - entry.startTime
               entry.toolStatus = chunk.isError ? 'error' : 'done'
-              chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
+              await chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
                 displayType: 'tool_call',
                 toolCallId: entry.toolCallId,
                 toolName: entry.toolName,
@@ -272,7 +272,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             const entry = toolCallMap.get(chunk.toolCallId)
             if (entry && entry.dbMessageId) {
               entry.toolStatus = 'done'
-              chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
+              await chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
                 displayType: 'ask_user_question',
                 toolCallId: entry.toolCallId,
                 toolName: entry.toolName,
@@ -284,7 +284,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
           if (chunk.type === 'result') {
             if (chunk.sessionId) {
-              chatService.updateProviderSession(sessionId, chunk.sessionId)
+              await chatService.updateProviderSession(sessionId, chunk.sessionId)
             }
             currentTokens = chunk.usage
             currentCostUsd = chunk.costUsd
@@ -335,7 +335,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
         // Persist full response text with metadata
         if (!aborted) {
-          chatService.addMessage(sessionId, {
+          await chatService.addMessage(sessionId, {
             role: 'assistant',
             content: fullText,
             type: 'text',
@@ -371,7 +371,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
   router.post('/sessions/:sessionId/generate-title', async (c) => {
     const sessionId = c.req.param('sessionId')
-    const session = chatService.getSession(sessionId)
+    const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: 'session not found' }, 404)
 
     if (session.title) return c.json({ title: session.title })
@@ -393,7 +393,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
       }
       title = title.trim().slice(0, 20)
       if (title) {
-        chatService.updateSessionTitle(sessionId, title)
+        await chatService.updateSessionTitle(sessionId, title)
       }
       return c.json({ title: title || null })
     } catch {

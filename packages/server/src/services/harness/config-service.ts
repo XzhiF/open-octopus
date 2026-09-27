@@ -112,8 +112,8 @@ export class HarnessConfigService {
    * Return the raw YAML for the current config.
    * If a DB override exists, return it; otherwise return the shipped defaults.
    */
-  getConfig(): { config: string; version: number; source: "db" | "defaults" } {
-    const row = this.dao.getConfig()
+  async getConfig(): Promise<{ config: string; version: number; source: "db" | "defaults" }> {
+    const row = await this.dao.getConfig()
     if (row) {
       return { config: row.config_yaml, version: row.version, source: "db" }
     }
@@ -126,7 +126,7 @@ export class HarnessConfigService {
    * Returns the new version number.
    * Throws if the YAML is invalid.
    */
-  saveConfig(yamlContent: string): { success: true; version: number } {
+  async saveConfig(yamlContent: string): Promise<{ success: true; version: number }> {
     // Parse YAML
     const raw = yamlLoad(yamlContent)
     if (typeof raw !== "object" || raw === null) {
@@ -139,7 +139,7 @@ export class HarnessConfigService {
     // Re-dump to normalize the YAML (removes comments, ensures consistent format)
     const normalized = yamlDump(parsed, { lineWidth: 120 })
 
-    const row = this.dao.saveConfig(normalized)
+    const row = await this.dao.saveConfig(normalized)
     return { success: true, version: row.version }
   }
 
@@ -148,8 +148,8 @@ export class HarnessConfigService {
    * Only detector/strategy entries present in the DB override replace defaults;
    * missing entries fall through to defaults.
    */
-  loadMergedConfig(): HarnessSystemConfigParsed {
-    const row = this.dao.getConfig()
+  async loadMergedConfig(): Promise<HarnessSystemConfigParsed> {
+    const row = await this.dao.getConfig()
     if (!row) return this.defaultsParsed
 
     try {

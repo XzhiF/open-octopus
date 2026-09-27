@@ -1,36 +1,28 @@
+// P1 B1: HarnessDAO 已 postgres.js —— :memory: fixture 切 PG 随机测试库；用例语义/条数不变。
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import Database from "better-sqlite3"
-import fs from "fs"
-import path from "path"
-import os from "os"
-import { applySchema } from "../../db/schema"
 import { HarnessDAO } from "../../db/dao/harness-dao"
 import harnessRoutes, { setHarnessDependencies } from "../harness"
 import type { HarnessEvent } from "@octopus/shared"
+import { describePg, setupPgSchema, type PgFixture } from "../../db/pg/__tests__/dao-fixture"
 
-let db: Database.Database
+let pg: PgFixture
 let dao: HarnessDAO
-let dbPath: string
 
 // Create a Hono app to test routes
 import { Hono } from "hono"
 let app: Hono
 
-beforeEach(() => {
-  dbPath = path.join(os.tmpdir(), `test-harness-routes-${Date.now()}.db`)
-  db = new Database(dbPath)
-  db.pragma("foreign_keys = ON")
-  applySchema(db)
-  dao = new HarnessDAO(db)
+beforeEach(async () => {
+  pg = await setupPgSchema()
+  dao = new HarnessDAO(pg.sql)
   setHarnessDependencies(dao)
 
   app = new Hono()
   app.route("/api/workspaces/:id/harness", harnessRoutes)
 })
 
-afterEach(() => {
-  db.close()
-  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+afterEach(async () => {
+  await pg.close()
 })
 
 function makeEvent(overrides: Partial<HarnessEvent> = {}): HarnessEvent {
@@ -61,7 +53,7 @@ async function request(method: string, path: string, body?: unknown): Promise<Re
   return app.fetch(new Request(url, init))
 }
 
-describe("Harness API Routes", () => {
+describePg("Harness API Routes", () => {
   describe("GET /api/workspaces/:id/harness/config", () => {
     it("returns default config when no DB config exists", async () => {
       const res = await request("GET", "/api/workspaces/ws-1/harness/config")
@@ -133,9 +125,9 @@ strategies: []
     })
 
     it("returns events for a specific execution", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", execution_id: "exec-001" }))
-      dao.insertEvent(makeEvent({ id: "e2", execution_id: "exec-001" }))
-      dao.insertEvent(makeEvent({ id: "e3", execution_id: "exec-002" }))
+      await dao.insertEvent(makeEvent({ id: "e1", execution_id: "exec-001" }))
+      await dao.insertEvent(makeEvent({ id: "e2", execution_id: "exec-001" }))
+      await dao.insertEvent(makeEvent({ id: "e3", execution_id: "exec-002" }))
 
       const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001")
       const data = await res.json() as any
@@ -143,8 +135,8 @@ strategies: []
     })
 
     it("filters events by type query param", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", event_type: "diagnosis" }))
-      dao.insertEvent(makeEvent({ id: "e2", event_type: "intervention" }))
+      await dao.insertEvent(makeEvent({ id: "e1", event_type: "diagnosis" }))
+      await dao.insertEvent(makeEvent({ id: "e2", event_type: "intervention" }))
 
       const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001?type=intervention")
       const data = await res.json() as any
@@ -153,8 +145,8 @@ strategies: []
     })
 
     it("filters events by severity query param", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", severity: "warning" }))
-      dao.insertEvent(makeEvent({ id: "e2", severity: "critical" }))
+      await dao.insertEvent(makeEvent({ id: "e1", severity: "warning" }))
+      await dao.insertEvent(makeEvent({ id: "e2", severity: "critical" }))
 
       const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001?severity=critical")
       const data = await res.json() as any

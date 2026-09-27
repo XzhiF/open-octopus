@@ -9,6 +9,9 @@ import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
+// P1 B1: HarnessDAO 已迁 PG；本文件对 executions 的直写属 B5 域表，显式走 SQLite 连接
+// （单引擎纪律，见 db/README B1 注记），随 B5 再迁 postgres.js。
+import { getDb } from "../../db/connection"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
@@ -67,7 +70,8 @@ export class HarnessController {
     this.repairService = deps.repairService
     this.evolutionDao = deps.evolutionDao
     this.memoryService = deps.memoryService
-    this.tokenUsageDao = deps.tokenUsageDao ?? new TokenUsageDAO(deps.dao.getDb())
+    // B1: TokenUsageDAO 属 B4 域（SQLite 池根连接）；不再借 HarnessDAO 的句柄。
+    this.tokenUsageDao = deps.tokenUsageDao ?? new TokenUsageDAO(getDb())
   }
 
   /**
@@ -86,7 +90,7 @@ export class HarnessController {
    *
    * @returns the wrapped callbacks to pass to the engine
    */
-  onExecutionStart(
+  async onExecutionStart(
     executionId: string,
     workspaceId: string,
     originalCallbacks: EngineCallbacks,
@@ -99,11 +103,11 @@ export class HarnessController {
       dependencyGraph?: Record<string, string[]>
       varpoolSnapshot?: Record<string, any>
     },
-  ): EngineCallbacks {
+  ): Promise<EngineCallbacks> {
     // Clean up any existing pipeline for this execution (defensive)
     this.onExecutionEnd(executionId)
 
-    const config = this.configService.loadMergedConfig()
+    const config = await this.configService.loadMergedConfig()
 
     // Create HarnessAgentSession if session context is provided (AC1, AC2)
     if (opts?.workflowContent && opts?.nodeList && opts?.dependencyGraph) {
@@ -281,7 +285,7 @@ export class HarnessController {
     summary: { totalInterventions: number; decisions: any[]; harnessStatus: string },
   ): void {
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（executions.harness_summary）—— SQLite 单引擎
       db.prepare(`
         UPDATE executions
         SET harness_status = ?, harness_summary = ?

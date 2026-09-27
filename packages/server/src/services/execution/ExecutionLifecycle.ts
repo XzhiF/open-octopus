@@ -39,6 +39,7 @@ import { PipelineConfigLoader } from "../pipeline-config"
 import { HarnessController } from "../harness/harness-controller"
 import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
+import { pgSql } from "../../db/dao/registry"
 import { TaskDispatchService } from "../scheduler/task-dispatch-service"
 import { WorkspaceService } from "../workspace"
 import { WorkspaceDAO } from "../../db/dao"
@@ -145,7 +146,9 @@ export class ExecutionLifecycle {
       // The constructor `db` param may reference a different object due to
       // tsup bundling variable renaming (db → db3 collision).
       const realDb = this.dao.getDb()
-      const harnessDAO = new HarnessDAO(realDb)
+      // P1 B1: HarnessDAO 已迁 PG（harness_events/harness_config）——句柄走池；
+      // TokenUsageDAO 属 B4 域，仍 SQLite。池未注册时 pgSql() 抛错 → 下方 catch 降级（非致命）。
+      const harnessDAO = new HarnessDAO(pgSql())
       const harnessConfigService = new HarnessConfigService(harnessDAO)
       this.harnessController = new HarnessController({
         dao: harnessDAO,
@@ -315,7 +318,7 @@ export class ExecutionLifecycle {
         for (const n of (wf.parsed.nodes ?? [])) {
           dependencyGraph[n.id] = n.depends_on ?? []
         }
-        callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks, {
+        callbacks = await this.harnessController.onExecutionStart(id, this.workspaceId, callbacks, {
           hostPid: process.env.OCTOPUS_HOST_PID,
           hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
           workspacePath: this.workspacePath,
@@ -329,7 +332,7 @@ export class ExecutionLifecycle {
       }
     }
 
-    const engine = this.engineFactory.createEngine(
+    const engine = await this.engineFactory.createEngine(
       updatedExec as any, wf.parsed, callbacks, abortController.signal,
     )
 
@@ -614,7 +617,7 @@ export class ExecutionLifecycle {
             ),
             poolSnapshot: result.poolSnapshot,
           }
-          const tracked = this.knowledgeService.trackExecutionEffectiveness(execResult)
+          const tracked = await this.knowledgeService.trackExecutionEffectiveness(execResult)
           if (tracked > 0) {
             console.log(`[ExecutionLifecycle] Tracked effectiveness for ${tracked} rules in execution ${id}`)
           }
@@ -625,7 +628,7 @@ export class ExecutionLifecycle {
           if (now - this.lastRetireAt >= ExecutionLifecycle.RETIRE_INTERVAL_MS) {
             this.lastRetireAt = now
             try {
-              const retired = this.knowledgeService.retireStaleRules()
+              const retired = await this.knowledgeService.retireStaleRules()
               if (retired > 0) {
                 console.log(`[ExecutionLifecycle] Retired ${retired} stale rules`)
               }
@@ -788,7 +791,7 @@ export class ExecutionLifecycle {
 
     try {
       if (!inst) {
-        inst = this.reconstructEngine(exec)
+        inst = await this.reconstructEngine(exec)
         this.enginePool.create(id, inst.engine, inst.abortController)
       }
 
@@ -946,7 +949,7 @@ export class ExecutionLifecycle {
 
         let inst = this.enginePool.get(id)
         if (!inst) {
-          inst = this.reconstructEngine(exec)
+          inst = await this.reconstructEngine(exec)
           this.enginePool.create(id, inst.engine, inst.abortController)
         }
 
@@ -978,7 +981,7 @@ export class ExecutionLifecycle {
 
     let inst = this.enginePool.get(id)
     if (!inst) {
-      inst = this.reconstructEngine(exec)
+      inst = await this.reconstructEngine(exec)
       this.enginePool.create(id, inst.engine, inst.abortController)
     }
 
@@ -1080,7 +1083,7 @@ export class ExecutionLifecycle {
 
     let inst = this.enginePool.get(id)
     if (!inst) {
-      inst = this.reconstructEngine(exec)
+      inst = await this.reconstructEngine(exec)
       this.enginePool.create(id, inst.engine, inst.abortController)
     }
 
@@ -1197,7 +1200,7 @@ export class ExecutionLifecycle {
 
     let inst = this.enginePool.get(id)
     if (!inst) {
-      inst = this.reconstructEngine(exec)
+      inst = await this.reconstructEngine(exec)
       this.enginePool.create(id, inst.engine, inst.abortController)
     }
 
@@ -1347,7 +1350,7 @@ export class ExecutionLifecycle {
 
     let inst = this.enginePool.get(executionId)
     if (!inst) {
-      inst = this.reconstructEngine(exec)
+      inst = await this.reconstructEngine(exec)
       this.enginePool.create(executionId, inst.engine, inst.abortController)
     } else {
       inst.abortController = new AbortController()
@@ -1471,7 +1474,7 @@ export class ExecutionLifecycle {
 
     if (lastFailed) {
       this.dao.updateExecution(execId, { status: "running" })
-      const inst = this.reconstructEngine(exec)
+      const inst = await this.reconstructEngine(exec)
       this.enginePool.create(execId, inst.engine, inst.abortController)
 
       const wfForHook = this.getWorkflow(exec.workflow_ref)
@@ -1843,7 +1846,7 @@ export class ExecutionLifecycle {
 
   // ==================== Engine reconstruction ====================
 
-  private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
+  private async reconstructEngine(exec: ExecutionRow): Promise<{ engine: WorkflowEngine; abortController: AbortController }> {
     const abortController = new AbortController()
 
     const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)
@@ -1858,7 +1861,7 @@ export class ExecutionLifecycle {
         for (const n of (wf.parsed.nodes ?? [])) {
           dependencyGraph[n.id] = n.depends_on ?? []
         }
-        callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks, {
+        callbacks = await this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks, {
           hostPid: process.env.OCTOPUS_HOST_PID,
           hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
           workspacePath: this.workspacePath,
@@ -1871,7 +1874,7 @@ export class ExecutionLifecycle {
       }
     }
 
-    const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
+    const engine = await this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {

@@ -707,7 +707,7 @@ describe("DetectorPipeline", () => {
     expect(p.detectorCount).toBe(4)
   })
 
-  it("routes nodeRetry events to StupidRetryDetector and persists + emits on trigger", () => {
+  it("routes nodeRetry events to StupidRetryDetector and persists + emits on trigger", async () => {
     const result = {
       logLines: ["error: Cannot find module 'xyz'"],
       error: "exit code 1",
@@ -715,7 +715,7 @@ describe("DetectorPipeline", () => {
     }
 
     // First attempt — no trigger
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-build",
       attempt: 1,
@@ -728,7 +728,7 @@ describe("DetectorPipeline", () => {
     expect(mockSse.emit).not.toHaveBeenCalled()
 
     // Second attempt — triggers
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-build",
       attempt: 2,
@@ -747,8 +747,8 @@ describe("DetectorPipeline", () => {
     expect(sseCall[1].data.report.detector).toBe("stupid_retry")
   })
 
-  it("routes agentEvent errors to ModelMismatchDetector", () => {
-    pipeline.routeEvent({
+  it("routes agentEvent errors to ModelMismatchDetector", async () => {
+    await pipeline.routeEvent({
       type: "agentEvent",
       nodeId: "agent-read",
       event: {
@@ -762,8 +762,8 @@ describe("DetectorPipeline", () => {
     expect(mockSse.emit).toHaveBeenCalledTimes(1)
   })
 
-  it("routes beforeNode events to ProcessConflictDetector", () => {
-    pipeline.routeEvent({
+  it("routes beforeNode events to ProcessConflictDetector", async () => {
+    await pipeline.routeEvent({
       type: "beforeNode",
       nodeId: "bash-test",
       nodeType: "bash",
@@ -776,9 +776,9 @@ describe("DetectorPipeline", () => {
     expect(mockSse.emit).toHaveBeenCalledTimes(1)
   })
 
-  it("routes nodeEnd events to TimeoutCascadeDetector", () => {
+  it("routes nodeEnd events to TimeoutCascadeDetector", async () => {
     for (const nodeId of ["bash-a", "bash-b", "bash-c"]) {
-      pipeline.routeEvent({
+      await pipeline.routeEvent({
         type: "nodeEnd",
         nodeId,
         status: "failed",

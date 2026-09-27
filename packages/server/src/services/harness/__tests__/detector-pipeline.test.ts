@@ -9,6 +9,17 @@ import { DetectorPipeline } from "../detector-pipeline"
 import type { HarnessSystemConfigParsed, StrategyConfig, DiagnosisReport } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 
+// P1 B1: detector-pipeline 对 B5 域表（node_executions/executions/agent_events）的直写
+// 不再经 dao.getDb()，改走 db/connection 的模块级 getDb()。这里把该模块 mock 成可注入的
+// mockDb —— 断言口径（prepare/run 调用序列）逐条保持。
+const dbRef = vi.hoisted(() => ({ current: null as unknown }))
+vi.mock("../../../db/connection", () => ({
+  getDb: () => {
+    if (!dbRef.current) throw new Error("Database not initialized. Call initDb() first.")
+    return dbRef.current
+  },
+}))
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const minimalConfig: HarnessSystemConfigParsed = {
@@ -482,9 +493,9 @@ describe("DetectorPipeline — decision execution (AC1-AC8)", () => {
 
   function makePipelineWithDb(overrides: Record<string, any> = {}) {
     const mockDb = makeMockDb()
+    dbRef.current = mockDb // B1: 直写经 db/connection getDb()（见文件头 mock）
     const dao = {
       insertEvent: vi.fn(),
-      getDb: vi.fn(() => mockDb),
     }
     return {
       pipeline: new DetectorPipeline({

@@ -41,7 +41,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.post("/", async (c) => {
     const body = await c.req.json<{ name: string; org: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
-    if (!orgExists(orgDAO, body.org)) {
+    if (!(await orgExists(orgDAO, body.org))) {
       return c.json({ error: `Org '${body.org}' not found` }, 400)
     }
     // 禁中文命名 (2026-09-20)：name 直接进目录名/分支名，web dialog 早已拦，

@@ -22,6 +22,7 @@ import fs from "fs"
 import path from "path"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -121,31 +122,48 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-td-05"
 
+// P1 B2 双引擎 fixture：tasks（及配方 §5 的 sessions 父行）落这座随机 PG 库。
+let pg: PgFixture | null = null
+
 function newDb(): Database.Database {
   const db = new Database(":memory:")
   applySchema(db)
   return db
 }
 
-describe("05: reverse context msg — [save] → store → next chat → CloneRuntime.chat (integration)", () => {
+// P1 B2 配方 §5：PG tasks.source_chat_session_id 有 FK → PG sessions 需要父行。
+async function seedPgSession(id: string, org: string): Promise<void> {
+  const now = new Date().toISOString()
+  await pg!.sql`
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (${id}, ${org}, 'e2e', 'main', true, false, ${now}, ${now})
+    ON CONFLICT (id) DO NOTHING`
+}
+
+describePg("05: reverse context msg — [save] → store → next chat → CloneRuntime.chat (integration)", () => {
   let db: Database.Database
   let app: Hono
   let sessionDAO: AgentSessionDAO
   let taskDAO: TaskDAO
   let tasksService: TasksService
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-05-${Date.now()}`
+    // P1 B2 双引擎：tasks 在 PG（注册全局池 —— TasksService 内部自动走 PG），
+    // sessions/messages 仍在 SQLite（B3 域）。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     sessionDAO = new AgentSessionDAO(db)
-    taskDAO = new TaskDAO(db)
+    taskDAO = new TaskDAO(pg.sql)
     const sse = new SSEService()
     tasksService = new TasksService(db, sse, sessionDAO)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     delete process.env.OCTOPUS_HOME
   })
@@ -161,23 +179,25 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
 
   // ── AC3a: [save] sets a transient notice keyed by task_id ──────────────
 
-  it("AC3a: TasksService.updateTask ([保存草稿]) sets @@spec_updated notice in the store", () => {
+  it("AC3a: TasksService.updateTask ([保存草稿]) sets @@spec_updated notice in the store", async () => {
     // Seed a draft task (no session link needed for this case — it only
     // exercises updateTask→store. source_chat_session_id is nullable.)
     const now = new Date().toISOString()
     const taskId = `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
-    db.prepare(
+    // P1 B2: tasks 表已迁 PG —— 造数落 PG。
+    await pg!.sql.unsafe(
       `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, 'draft', NULL, '{}', '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)`,
-    ).run(taskId, ORG, "E2E_TD draft", now, now)
+       VALUES ($1, $2, $3, 'draft', NULL, '{}', '[]', '[]', '[]', '[]', NULL, 1, NULL, $4, $5, NULL)`,
+      [taskId, ORG, "E2E_TD draft", now, now],
+    )
 
     // No notice pending before the save
     expect(getSpecNotice(taskId)).toBeUndefined()
 
     // [保存草稿]: user edits goal + skills via the SpecPanel
-    tasksService.updateTask(
+    await tasksService.updateTask(
       taskId,
       {
         task_spec: {
@@ -213,6 +233,9 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     })
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
+    // P1 B2 配方 §5：autosave seam 写的 tasks 行带 source_chat_session_id FK，
+    // 需 PG sessions 父行。
+    await seedPgSession(session.id, ORG)
 
     // Turn 1 — establishes the task row (autosave, version=1)
     const r1 = await app.request(
@@ -226,7 +249,7 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     expect(r1.status).toBe(200)
     await r1.text() // drain SSE so the autosave seam runs
 
-    const taskRow = taskDAO.getBySourceChatSession(session.id)
+    const taskRow = await taskDAO.getBySourceChatSession(session.id)
     expect(taskRow).not.toBeNull()
     const taskId = taskRow!.id
     // Sanity: turn 1 had no pending notice
@@ -235,7 +258,7 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
 
     // ── User edits the SpecPanel + [保存草稿] → PUT /api/tasks path
     // (exercised via the service method the route calls; same code path).
-    tasksService.updateTask(
+    await tasksService.updateTask(
       taskId,
       {
         task_spec: {
@@ -290,6 +313,8 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    // P1 B2 配方 §5：turn 1 的 autosave 会插 tasks（FK→PG sessions），补父行。
+    await seedPgSession(session.id, ORG)
 
     // Turn 1 — no save happened, no notice pending
     const r1 = await app.request(
@@ -343,6 +368,8 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     })
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
+    // P1 B2 配方 §5：turn 1 的 autosave 会插 tasks（FK→PG sessions），补父行。
+    await seedPgSession(session.id, ORG)
     const r1 = await app.request(
       `/api/clones/task-author/sessions/${session.id}/chat`,
       {
@@ -354,11 +381,14 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     expect(r1.status).toBe(200)
     await r1.text() // drain SSE so autosave creates the draft
 
-    const taskRow = taskDAO.getBySourceChatSession(session.id)
+    const taskRow = await taskDAO.getBySourceChatSession(session.id)
     expect(taskRow).not.toBeNull()
     const taskId = taskRow!.id
-    db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?")
-      .run(JSON.stringify(spec), taskId)
+    // P1 B2: tasks 已迁 PG —— 原地改写 task_spec 落 PG。
+    await pg!.sql.unsafe(
+      `UPDATE tasks SET task_spec = $1 WHERE id = $2`,
+      [JSON.stringify(spec), taskId],
+    )
 
     const home = path.join(homeTmp, "tasks", taskId)
     if (makeHome) fs.mkdirSync(home, { recursive: true })

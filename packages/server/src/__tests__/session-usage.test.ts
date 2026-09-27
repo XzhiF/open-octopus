@@ -6,8 +6,13 @@
 //   ① 会话口径**不做 message 去重**（去重属执行口径，见 DAO 注释）；
 //   ② 钱是查询时派生的三态（未定价 → usd null + complete false，绝不焊 0）；
 //   ③ 任务合并段不双计 —— 作者会话里带 execution 归属的行只归 execution 段。
+//
+// P1 B2 双引擎 fixture：tasks 落在 PG（每文件一座随机库，注册为全局池 ——
+// TasksService 的 taskDAO getter 经 pgSql() 取）；llm_calls/executions/workspaces/
+// sessions/billing_price_config 仍在 SQLite `db`。PG `tasks.source_chat_session_id`
+// 有 FK → PG `sessions`：任务绑会话时按配方在 PG 侧复制最小父行。
 
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
@@ -17,10 +22,14 @@ import { WorkspaceDAO } from "../db/dao/workspace-dao"
 import { createAnalyticsRoutes } from "../routes/analytics"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { llmUsageAggregates } from "@octopus/shared"
 import type { LlmCallRow } from "../db/types"
 
 const ORG = "session-usage"
+
+// P1 B2：本文件的 tasks 造数/读路径全部走这座 PG 库（见 beforeAll）。
+let pg: PgFixture | null = null
 
 function newDb(): Database.Database {
   const db = new Database(":memory:")
@@ -28,6 +37,17 @@ function newDb(): Database.Database {
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   return db
 }
+
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
 
 function seedWs(db: Database.Database, id = "ws-1") {
   const now = new Date().toISOString()
@@ -45,14 +65,23 @@ function seedSession(db: Database.Database, id: string) {
   ).run(id, ORG, now, now)
 }
 
-function seedTask(db: Database.Database, id: string, status: string, sessionId: string | null) {
+/** P1 B2: tasks 表已迁 PG —— 造数落 PG；FK 要求 PG 侧有最小父 sessions 行（配方第 5 条）。 */
+async function seedTask(id: string, status: string, sessionId: string | null) {
   const now = new Date().toISOString()
-  db.prepare(`
+  if (sessionId) {
+    await pg!.sql.unsafe(
+      `INSERT INTO sessions (id, org, title, clone_name, session_type, created_at, updated_at)
+       VALUES ($1, $2, '作者会话', 'task-author', 'clone_direct', $3, $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [sessionId, ORG, now],
+    )
+  }
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, ?, '{"goal":"g","ac":[]}', '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-  `).run(id, ORG, `t-${id}`, status, sessionId, now, now)
+    VALUES ($1, $2, $3, $4, $5, '{"goal":"g","ac":[]}', '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, NULL)
+  `, [id, ORG, `t-${id}`, status, sessionId, now, now])
 }
 
 function seedExec(db: Database.Database, id: string, taskId: string) {
@@ -105,14 +134,16 @@ function call(over: Partial<LlmCallRow> & { id: string }): LlmCallRow {
 let db: Database.Database
 let dao: TokenUsageDAO
 
-beforeEach(() => {
+beforeEach(async () => {
   db = newDb()
   seedWs(db)
   seedPrice(db, "claude-sonnet-4.5")
   dao = new TokenUsageDAO(db)
+  // PG 侧每用例清 tasks（连同 FK 父行 sessions），与 :memory: SQLite 同生命周期。
+  await pg!.truncate("tasks", "sessions")
 })
 
-describe("findLlmCallsBySession — 会话口径不去重", () => {
+describePg("findLlmCallsBySession — 会话口径不去重", () => {
   it("同 message_id 的双模型行都保留（去重会吞掉第二个模型）", () => {
     dao.insertLlmCallBatch([call({ id: "c1", message_id: "msg-A", model: "claude-sonnet-4.5" })])
     dao.insertLlmCallBatch([call({ id: "c2", message_id: "msg-A", model: "claude-haiku-4.5" })])
@@ -143,7 +174,7 @@ describe("findLlmCallsBySession — 会话口径不去重", () => {
   })
 })
 
-describe("GET /api/sessions/:id/llm-calls", () => {
+describePg("GET /api/sessions/:id/llm-calls", () => {
   function app(): Hono {
     const r = createAnalyticsRoutes(new ExecutionDAO(db), dao, new WorkspaceDAO(db))
     const root = new Hono()
@@ -172,7 +203,7 @@ describe("GET /api/sessions/:id/llm-calls", () => {
   })
 })
 
-describe("aggregateLlmCallsBy — 分组账本摘要", () => {
+describePg("aggregateLlmCallsBy — 分组账本摘要", () => {
   it("按 execution / session 各自成组，会话段带 execution_id IS NULL 护栏不双计", () => {
     // 作者会话里两行：一行纯聊天，一行带 execution 归属（interaction 类）
     dao.insertLlmCallBatch([
@@ -195,23 +226,24 @@ describe("aggregateLlmCallsBy — 分组账本摘要", () => {
   })
 })
 
-describe("Task.ai_usage — 草稿进统计 + 两段合并", () => {
-  it("草稿只有作者会话段", () => {
+describePg("Task.ai_usage — 草稿进统计 + 两段合并", () => {
+  it("草稿只有作者会话段", async () => {
     seedSession(db, "s-1")
-    seedTask(db, "t-draft", "draft", "s-1")
+    await seedTask("t-draft", "draft", "s-1")
     dao.insertLlmCallBatch([call({ id: "c1", session_id: "s-1" })])
 
     const service = new TasksService(db, new SSEService())
-    const item = service.listTasks().items.find(t => t.id === "t-draft")!
+    const { items } = await service.listTasks()
+    const item = items.find(t => t.id === "t-draft")!
     expect(item.ai_usage?.totalCalls).toBe(1)
     expect(item.ai_usage!.totals.tokens).toBe(9700)
     expect(item.ai_usage!.totals.cost.complete).toBe(true)
-    expect(service.getTask("t-draft").ai_usage?.totalCalls).toBe(1)
+    expect((await service.getTask("t-draft")).ai_usage?.totalCalls).toBe(1)
   })
 
-  it("跑过的任务 = 会话段 + execution 段相加，带归属的行不重复计", () => {
+  it("跑过的任务 = 会话段 + execution 段相加，带归属的行不重复计", async () => {
     seedSession(db, "s-1")
-    seedTask(db, "t-run", "awaiting_review", "s-1")
+    await seedTask("t-run", "awaiting_review", "s-1")
     seedExec(db, "e1", "t-run")
     dao.insertLlmCallBatch([
       call({ id: "c1", session_id: "s-1" }),                                  // 作者段
@@ -220,20 +252,23 @@ describe("Task.ai_usage — 草稿进统计 + 两段合并", () => {
     ])
 
     const service = new TasksService(db, new SSEService())
-    const item = service.listTasks().items.find(t => t.id === "t-run")!
+    const { items } = await service.listTasks()
+    const item = items.find(t => t.id === "t-run")!
     expect(item.ai_usage?.totalCalls).toBe(3)
     expect(item.ai_usage!.usage.inputTokens).toBe(1000 + 1000 + 2000)
     // 从未跑过、也没有会话行的任务不带该字段
-    seedTask(db, "t-idle", "ready", null)
-    expect(service.listTasks().items.find(t => t.id === "t-idle")!.ai_usage).toBeUndefined()
+    await seedTask("t-idle", "ready", null)
+    const { items: after } = await service.listTasks()
+    expect(after.find(t => t.id === "t-idle")!.ai_usage).toBeUndefined()
   })
 
-  it("作者会话存在但一行账本都没落（空草稿）→ 不带 ai_usage，读模型不炸", () => {
+  it("作者会话存在但一行账本都没落（空草稿）→ 不带 ai_usage，读模型不炸", async () => {
     seedSession(db, "s-1")
     seedSession(db, "s-gone")
-    seedTask(db, "t-orphan", "draft", "s-gone")
+    await seedTask("t-orphan", "draft", "s-gone")
     dao.insertLlmCallBatch([call({ id: "c1", session_id: "s-1" })])
     const service = new TasksService(db, new SSEService())
-    expect(service.listTasks().items.find(t => t.id === "t-orphan")!.ai_usage).toBeUndefined()
+    const { items } = await service.listTasks()
+    expect(items.find(t => t.id === "t-orphan")!.ai_usage).toBeUndefined()
   })
 })

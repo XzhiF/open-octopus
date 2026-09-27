@@ -33,6 +33,7 @@ import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createCloneSessionRoutes } from "../routes/clone"
 import { clearAllSpecNotices } from "../services/tasks/spec-notice-store"
 
@@ -109,29 +110,46 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-td-07"
 
+// P1 B2：tasks 表已迁 postgres.js —— taskDAO 吃 PG；sessions 仍在 SQLite。
+// PG tasks.source_chat_session_id → PG sessions 的 FK 需要 PG 侧父行（见 §5 配方）。
+let pg: PgFixture | null = null
+
 function newDb(): Database.Database {
   const db = new Database(":memory:")
   applySchema(db)
   return db
 }
 
-describe("07 SG6: authoring_resources[] → task-author chat (route integration)", () => {
+/** 镜像最小 sessions 父行到 PG —— 让 autosave 的任务行过 FK。 */
+async function mirrorSessionToPg(sessionId: string): Promise<void> {
+  const now = new Date().toISOString()
+  await pg!.sql.unsafe(
+    `INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ($1, $2, 'e2e-07', $3, $4)`,
+    [sessionId, ORG, now, now],
+  )
+}
+
+describePg("07 SG6: authoring_resources[] → task-author chat (route integration)", () => {
   let db: Database.Database
   let app: Hono
   let sessionDAO: AgentSessionDAO
   let taskDAO: TaskDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池）；sessions 仍在 SQLite `db`。
+    pg = await setupRegisteredPgSchema()
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-07-${Date.now()}`
     db = newDb()
     sessionDAO = new AgentSessionDAO(db)
-    taskDAO = new TaskDAO(db)
+    taskDAO = new TaskDAO(pg.sql)
     const sse = new SSEService()
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     delete process.env.OCTOPUS_HOME
   })
@@ -154,6 +172,8 @@ describe("07 SG6: authoring_resources[] → task-author chat (route integration)
     })
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
+    // P1 B2 跨引擎 FK 父行：PG tasks.source_chat_session_id → PG sessions。
+    await mirrorSessionToPg(session.id)
 
     // Turn 1 — autosave seam (04) creates the draft task row linked to session
     const r1 = await app.request(
@@ -167,7 +187,7 @@ describe("07 SG6: authoring_resources[] → task-author chat (route integration)
     expect(r1.status).toBe(200)
     await r1.text() // drain SSE so autosave fires
 
-    const taskRow = taskDAO.getBySourceChatSession(session.id)
+    const taskRow = await taskDAO.getBySourceChatSession(session.id)
     expect(taskRow).not.toBeNull()
     const taskId = taskRow!.id
     // Turn 1: no authoring_resources set yet → no content passed
@@ -177,13 +197,11 @@ describe("07 SG6: authoring_resources[] → task-author chat (route integration)
     // POST /api/tasks/:id/spec-field field='authoring_resources'). Here we
     // write the column directly to isolate the route wiring from the
     // spec-field endpoint (tested in 03).
+    // P1 B2: tasks 表在 PG —— 直写走 pg.sql。
     const now = new Date().toISOString()
-    db.prepare(
-      "UPDATE tasks SET authoring_resources = ?, version = version + 1, updated_at = ? WHERE id = ?",
-    ).run(
-      JSON.stringify([{ type: "skill", name: "octo-fake-skill" }]),
-      now,
-      taskId,
+    await pg!.sql.unsafe(
+      "UPDATE tasks SET authoring_resources = $1, version = version + 1, updated_at = $2 WHERE id = $3",
+      [JSON.stringify([{ type: "skill", name: "octo-fake-skill" }]), now, taskId],
     )
 
     // ── Turn 2: the route resolves authoring_resources[] → calls augmenter
@@ -217,6 +235,8 @@ describe("07 SG6: authoring_resources[] → task-author chat (route integration)
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    // P1 B2 跨引擎 FK 父行：autosave 建的任务行 source_chat_session_id 要能在 PG 过 FK。
+    await mirrorSessionToPg(session.id)
 
     // Turn 1 — autosave creates the task row; authoring_resources is '[]'
     // (default from the schema). The route resolves [] → augmenter returns ""

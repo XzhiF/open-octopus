@@ -111,7 +111,7 @@ export async function agentAuthMiddleware(c: Context, next: Next): Promise<void>
   const orgHeader = c.req.header('X-Octopus-Org')
   if (orgHeader && orgHeader.trim() !== '') {
     try {
-      if (_orgDAO && !_orgDAO.exists(orgHeader)) {
+      if (_orgDAO && !(await _orgDAO.exists(orgHeader))) {
         c.res = c.json(createAgentError('ORG_NOT_FOUND', `Organization "${orgHeader}" not found`), 403)
         return
       }

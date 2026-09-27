@@ -590,7 +590,7 @@ export class AgentDelegationService {
       }
 
       // Persist failure event
-      this.persistDelegationEvent({
+      await this.persistDelegationEvent({
         id: delegationId,
         executionId,
         nodeId,
@@ -643,7 +643,7 @@ export class AgentDelegationService {
     }
 
     // Persist delegation event
-    this.persistDelegationEvent({
+    await this.persistDelegationEvent({
       id: delegationId,
       executionId,
       nodeId,
@@ -903,13 +903,13 @@ export class AgentDelegationService {
   /**
    * Persist a delegation event to the harness_events table.
    */
-  private persistDelegationEvent(params: {
+  private async persistDelegationEvent(params: {
     id: string
     executionId: string
     nodeId: string
     report: DiagnosisReport
     result: DelegationResult
-  }): void {
+  }): Promise<void> {
     const { id, executionId, nodeId, report, result } = params
 
     const row: HarnessEvent = {
@@ -928,7 +928,7 @@ export class AgentDelegationService {
     }
 
     try {
-      this.dao.insertEvent(row)
+      await this.dao.insertEvent(row)
     } catch (err) {
       console.error(
         "[AgentDelegationService] Failed to persist delegation event:",

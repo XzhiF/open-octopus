@@ -11,6 +11,11 @@ import type { HarnessEvent, StrategyAction } from "@octopus/shared"
 import { appendFileSync, mkdirSync, existsSync } from "fs"
 import { join } from "path"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+// P1 B1: 本文件 14 处直写全部打 node_executions / executions / agent_events ——
+// B5 域表（现行引擎仍是 better-sqlite3）。HarnessDAO 迁 PG 后不再暴露 getDb()，
+// 这里改为显式取 SQLite 连接，保证每张表单一引擎写路径；随 B5 再迁 postgres.js
+// （届时 :553 的 PRAGMA table_info → information_schema.columns，见 p1-batch-plan §3 S10）。
+import { getDb } from "../../db/connection"
 import type { SSEService } from "../sse"
 import { BaseDetector } from "./base-detector"
 import type { HarnessCallbackEvent } from "./base-detector"
@@ -213,9 +218,12 @@ export class DetectorPipeline {
 
   /**
    * Route an event to all detectors and handle any DiagnosisReports.
-   * Returns the list of reports produced (for synchronous post-processing).
+   * Returns the list of reports produced (for post-processing).
+   * P1 B1: handleDiagnosis 变 async（harness_events 写走 PG），本方法随之 async；
+   * 同步观察回调（onNodeStart 等）以 void fire-and-forget 消费 —— 与旧行为一致的
+   * 最佳努力持久化，错误在 handleDiagnosis 内部捕获。
    */
-  routeEvent(event: HarnessCallbackEvent, skipStrategy: boolean = false): DiagnosisReport[] {
+  async routeEvent(event: HarnessCallbackEvent, skipStrategy: boolean = false): Promise<DiagnosisReport[]> {
     const reports: DiagnosisReport[] = []
     for (const detector of this.detectors) {
       try {
@@ -226,7 +234,7 @@ export class DetectorPipeline {
             report.executionId = this.executionId
           }
           reports.push(report)
-          this.handleDiagnosis(report, skipStrategy)
+          await this.handleDiagnosis(report, skipStrategy)
         }
       } catch (err) {
         console.error(
@@ -243,7 +251,7 @@ export class DetectorPipeline {
    * Then route the report to the StrategyEngine (Layer 2) if available.
    * Returns the delegation promise (if any) so callers can await it.
    */
-  private handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): Promise<void> | undefined {
+  private async handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): Promise<void | undefined> {
     // Inject current iteration into the report for UI display
     const iteration = this.currentLoopIteration.get(report.nodeId)
     if (iteration != null) {
@@ -267,7 +275,7 @@ export class DetectorPipeline {
     }
 
     try {
-      this.dao.insertEvent(row)
+      await this.dao.insertEvent(row)
     } catch (err) {
       console.error("[DetectorPipeline] Failed to persist harness event:", err)
     }
@@ -547,7 +555,7 @@ export class DetectorPipeline {
     overrideResult: { status: string; outputs?: Record<string, unknown>; exitCode?: number },
   ): void {
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（node_executions）—— SQLite 单引擎，见文件头
       const neId = `${this.executionId}-${nodeId}`
       // Check if override_result column exists (may not in older schemas)
       const cols = db.prepare("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>
@@ -573,7 +581,7 @@ export class DetectorPipeline {
    */
   private updateExecutionHarnessStatus(status: "intervened" | "blocked" | "delegated"): void {
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（executions）—— SQLite 单引擎
       // Only update if the new status is more severe than the current one
       // Hierarchy: NULL < intervened < blocked < delegated
       db.prepare(
@@ -607,7 +615,7 @@ export class DetectorPipeline {
     }
 
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（executions/agent_events/node_executions 读侧）—— SQLite 单引擎
 
       // 1b. Fallback: VarPool snapshot from DB if not provided by engine
       if (!this.currentPoolSnapshot) {
@@ -749,17 +757,17 @@ export class DetectorPipeline {
                   if (innerNodeId) {
                     report.displayNodeId = innerNodeId
                   }
-                  // handleDiagnosis persists + starts delegation, returns promise.
+                  // handleDiagnosis persists + starts delegation.
                   // Await the delegation directly — no timeout.
                   // Rationale: if detection fired, we NEED the harness decision.
                   // Retrying without the fix wastes a retry attempt.
                   // The LLM provider has its own internal timeout (60-120s)
                   // which handles hangs. The delegation promise never rejects
                   // (errors are caught internally in handleDiagnosis).
-                  const delegationPromise = pipeline.handleDiagnosis(report)
-                  if (delegationPromise) {
-                    await delegationPromise
-                  }
+                  // B1: handleDiagnosis 现为 async（内部把 delegation promise 作为返回值
+                  // 展平）—— 直接 await 即覆盖「持久化 + 委托」完成点，语义等价于旧的
+                  // 「有委托则 await 委托」。
+                  await pipeline.handleDiagnosis(report)
                 }
               } catch (err) {
                 console.error(
@@ -830,7 +838,7 @@ export class DetectorPipeline {
             nodeType: string,
             nodeConfig: any,
           ) {
-            const reports = pipeline.routeEvent({
+            const reports = await pipeline.routeEvent({
               type: "beforeNode",
               nodeId,
               nodeType,
@@ -929,7 +937,7 @@ export class DetectorPipeline {
                 evidence: [{ command, matchedPattern: match.pattern }],
                 context: { retryCount: 0, nodeDurationMs: 0, workflowProgress: 0 },
               }
-              pipeline.handleDiagnosis(report)
+              void pipeline.handleDiagnosis(report)
 
               // Return block with guidance
               return {
@@ -954,7 +962,7 @@ export class DetectorPipeline {
         switch (prop) {
           case "onNodeStart":
             return function (nodeId: string, nodeType: string) {
-              pipeline.routeEvent({ type: "nodeStart", nodeId, nodeType })
+              void pipeline.routeEvent({ type: "nodeStart", nodeId, nodeType })
               return original.call(target, nodeId, nodeType)
             }
 
@@ -966,7 +974,7 @@ export class DetectorPipeline {
               result?: any,
               nodeType?: string,
             ) {
-              pipeline.routeEvent({
+              void pipeline.routeEvent({
                 type: "nodeEnd",
                 nodeId,
                 status,
@@ -1002,13 +1010,13 @@ export class DetectorPipeline {
 
           case "onAgentEvent":
             return function (nodeId: string, event: any) {
-              pipeline.routeEvent({ type: "agentEvent", nodeId, event })
+              void pipeline.routeEvent({ type: "agentEvent", nodeId, event })
               return original.call(target, nodeId, event)
             }
 
           case "onError":
             return function (nodeId: string, error: string) {
-              pipeline.routeEvent({ type: "error", nodeId, error })
+              void pipeline.routeEvent({ type: "error", nodeId, error })
               return original.call(target, nodeId, error)
             }
 
@@ -1094,7 +1102,7 @@ export class DetectorPipeline {
   private updateContainerHarnessStatus(nodeId: string, status: string): void {
     const neId = `${this.executionId}-${nodeId}`
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（node_executions）—— SQLite 单引擎
       db.prepare(`UPDATE node_executions SET harness_status = ? WHERE id = ?`).run(status, neId)
     } catch (err) {
       console.error(`[DetectorPipeline] Failed to update container harness_status for ${neId}:`, err)
@@ -1115,12 +1123,13 @@ export class DetectorPipeline {
     const neId = `${this.executionId}-${nodeId}`
     const eventType = `harness_${report.detector}`
 
-    let db: ReturnType<typeof this.dao.getDb>
+    // B5 域表（node_executions/agent_events）—— SQLite 单引擎。未初始化连接（纯 mock 测试）时跳过。
+    let db: ReturnType<typeof getDb>
     try {
-      db = this.dao.getDb()
+      db = getDb()
     } catch {
-      // DAO doesn't expose getDb (e.g. test mocks) — skip agent_event persistence
-      console.log(`[DetectorPipeline] updateNodeHarnessStatus: DAO getDb not available, skipping`)
+      // SQLite connection unavailable (e.g. test mocks) — skip agent_event persistence
+      console.log(`[DetectorPipeline] updateNodeHarnessStatus: SQLite getDb not available, skipping`)
       return
     }
 

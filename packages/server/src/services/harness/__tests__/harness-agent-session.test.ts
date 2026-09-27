@@ -5,6 +5,16 @@
 // close + summary generation, and integration with HarnessController.
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
+
+// P1 B1: HarnessController 的 B5 域直写（executions.harness_summary）与
+// TokenUsageDAO 兜底构造改走 db/connection getDb()；这里 mock 模块注入 mockDb。
+const dbRef = vi.hoisted(() => ({ current: null as unknown }))
+vi.mock("../../../db/connection", () => ({
+  getDb: () => {
+    if (!dbRef.current) throw new Error("Database not initialized. Call initDb() first.")
+    return dbRef.current
+  },
+}))
 import {
   HarnessAgentSession,
   type HarnessSessionContext,
@@ -387,16 +397,18 @@ describe("HarnessController — session lifecycle integration", () => {
   })
 
   function makeControllerMocks() {
+    const mockDb = {
+      prepare: vi.fn().mockReturnValue({
+        run: vi.fn(),
+        get: vi.fn(),
+        all: vi.fn().mockReturnValue([]),
+      }),
+    }
+    dbRef.current = mockDb // B1: controller 直写经 db/connection getDb()
     const dao = {
       insertEvent: vi.fn(),
       findEvents: vi.fn().mockReturnValue([]),
-      getDb: vi.fn().mockReturnValue({
-        prepare: vi.fn().mockReturnValue({
-          run: vi.fn(),
-          get: vi.fn(),
-          all: vi.fn().mockReturnValue([]),
-        }),
-      }),
+      getDb: vi.fn().mockReturnValue(mockDb),
     }
 
     const sse = {
@@ -433,7 +445,7 @@ describe("HarnessController — session lifecycle integration", () => {
       onNodeEnd: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -458,7 +470,7 @@ describe("HarnessController — session lifecycle integration", () => {
       onNodeEnd: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -500,7 +512,7 @@ describe("HarnessController — session lifecycle integration", () => {
       onNodeEnd: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -540,7 +552,7 @@ describe("HarnessController — session lifecycle integration", () => {
       onNodeEnd: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks)
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks)
 
     // Pipeline should exist
     expect(controller.isActive("exec-1")).toBe(true)

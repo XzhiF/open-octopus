@@ -17,6 +17,7 @@ import path from "path"
 import os from "os"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { createCloneSessionRoutes } from "../routes/clone"
@@ -85,27 +86,44 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-aq-09"
 
+// P1 B2 双引擎 fixture：tasks（及配方 §5 的 sessions 父行）落这座随机 PG 库。
+let pg: PgFixture | null = null
+
 function newDb(): Database.Database {
   const db = new Database(":memory:")
   applySchema(db)
   return db
 }
 
-describe("clone chat — ask_user_question SSE + 持久化", () => {
+// P1 B2 配方 §5：PG tasks.source_chat_session_id 有 FK → PG sessions 需要父行
+//（task-author turn 1 的 autosave seam 会插 tasks 行）。
+async function seedPgSession(id: string, org: string): Promise<void> {
+  const now = new Date().toISOString()
+  await pg!.sql`
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (${id}, ${org}, 'e2e', 'main', true, false, ${now}, ${now})
+    ON CONFLICT (id) DO NOTHING`
+}
+
+describePg("clone chat — ask_user_question SSE + 持久化", () => {
   let db: Database.Database
   let app: Hono
   let sessionDAO: AgentSessionDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.OCTOPUS_HOME = path.join(os.tmpdir(), `octopus-aq-test-${Date.now()}`)
+    // P1 B2 双引擎：tasks 在 PG（注册全局池），sessions/messages 仍在 SQLite。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     sessionDAO = new AgentSessionDAO(db)
-    const taskDAO = new TaskDAO(db)
+    const taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     delete process.env.OCTOPUS_HOME
     if (fs.existsSync(process.env.OCTOPUS_HOME ?? "")) fs.rmSync(process.env.OCTOPUS_HOME as string, { recursive: true, force: true })
@@ -119,6 +137,7 @@ describe("clone chat — ask_user_question SSE + 持久化", () => {
     })
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG)
     const r = await app.request(
       `/api/clones/task-author/sessions/${session.id}/chat`,
       {
