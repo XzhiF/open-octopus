@@ -61,6 +61,10 @@ export class ResourceManager extends EventEmitter {
     this.audit = new AuditWriter(this.basePath)
     this.builtin = new BuiltinProvider({ corePackBase: config.corePackBase })
     this.local = new LocalProvider()
+    // 自定义 basePath 必须进 LocalProvider 白名单——默认 allowlist 只有
+    // homedir，非家目录资源根（测试 tmp、OCTOPUS 定制路径）会在 validatePath
+    // 全灭（addAllowedBase 此前零调用方 = 该接线从未存在）。
+    this.local.addAllowedBase(this.basePath)
     this.installVerifier = new PostInstallVerifier()
     this.uninstallVerifier = new PostUninstallVerifier()
     this.sourceManager = new SourceManager({ basePath: this.basePath })

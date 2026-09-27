@@ -44,8 +44,18 @@ export class LocalProvider {
     }
 
     // B5 fix: allowlist must be checked — no early return for empty list
+    // 两侧同尺：source 走了 realpath，base 也必须走——macOS /var→/private/var
+    // 等符号链下混用 resolve/realpath 会把合法路径误判 PATH_TRAVERSAL。
+    // base 不存在时退回 resolve 值（保持旧的「允许未来路径」行为）。
     const withinBase = this.allowedBases.some((base) => {
-      return isPathWithinBase(realResolved, path.resolve(base))
+      const resolvedBase = path.resolve(base)
+      let realBase = resolvedBase
+      try {
+        realBase = fs.realpathSync(resolvedBase)
+      } catch {
+        // base 尚不存在：用未解析值比较
+      }
+      return isPathWithinBase(realResolved, realBase)
     })
 
     if (!withinBase) {
