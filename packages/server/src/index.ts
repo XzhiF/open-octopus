@@ -104,6 +104,8 @@ import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
 import { getDomainEventBus } from "./services/agent/domain-event-bus"
+import { isPgConfigured } from "./db/pg/config"
+import { initPgPool } from "./db/pg/pool"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -171,6 +173,17 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
 }
 
 const db = process.env.VITEST ? null : initDb()
+
+// P1 KB 单引擎迁移 — PG 池接线（opt-in：OCTOPUS_PG_URL 存在才连）。
+// 刻意不预热失败即崩：DAO 异步票完成前，PG 不可用绝不影响 SQLite 主路径启动；
+// 连接池上限/查询级超时全在 db/pg/config.ts，池占用与排队经 actuator /api/actuator/pg 暴露。
+if (db && isPgConfigured()) {
+  void initPgPool().then(
+    (h) => console.log(`[pg] pool wired (max=${h.config.poolMax}, statement_timeout=${h.config.statementTimeoutMs}ms)`),
+    (err: unknown) => console.warn(`[pg] pool init deferred (SQLite unaffected): ${err instanceof Error ? err.message : String(err)}`),
+  )
+}
+
 let daos: AllDAOs | null = null
 if (db) {
   applySchema(db)

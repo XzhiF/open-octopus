@@ -68,6 +68,12 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
     return c.json(actuatorService.getScheduler())
   })
 
+  // GET /pg — PG 池可观测面（P1 驱动接线；未接线时 status=disabled，不报错）
+  router.get('/pg', async (c) => {
+    const info = await actuatorService.getPgPool()
+    return c.json(info, info.status === 'error' ? 503 : 200)
+  })
+
   // ponytail: global error handler returns unified { error, message }
   router.onError((err, c) => {
     const status = (err as any).statusCode || 500

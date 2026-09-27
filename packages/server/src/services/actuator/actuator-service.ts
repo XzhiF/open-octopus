@@ -17,6 +17,7 @@ import { ErrorResolver, type ErrorsResponse } from './error-resolver'
 import { SystemResolver, type SystemResponse } from './system-resolver'
 import { RecoveryResolver, type RecoveryResponse } from './recovery-resolver'
 import { SchedulerResolver, type SchedulerResponse } from './scheduler-resolver'
+import { PgResolver, type PgPoolResponse } from './pg-resolver'
 
 // ── Types for future resolvers (P2/P3 will implement) ──────────────
 
@@ -55,6 +56,7 @@ export class ActuatorService {
   private systemResolver: SystemResolver
   private recoveryResolver: RecoveryResolver
   private schedulerResolver: SchedulerResolver
+  private pgResolver: PgResolver
   private deps: ActuatorDeps
 
   constructor(deps: ActuatorDeps) {
@@ -79,6 +81,7 @@ export class ActuatorService {
     this.systemResolver = new SystemResolver(deps.executionDAO, deps.eventLoopMonitor)
     this.recoveryResolver = new RecoveryResolver(deps.executionDAO, deps.getRecoveryService)
     this.schedulerResolver = new SchedulerResolver(deps.schedulerService, deps.schedulerEngine, deps.scheduleRunDAO)
+    this.pgResolver = new PgResolver()
   }
 
   getHealth(): Promise<HealthResponse> {
@@ -113,6 +116,10 @@ export class ActuatorService {
     return this.schedulerResolver.getScheduler()
   }
 
+  getPgPool(): Promise<PgPoolResponse> {
+    return this.pgResolver.resolve()
+  }
+
   getIndex(): Record<string, unknown> {
     return {
       _links: {
@@ -125,6 +132,7 @@ export class ActuatorService {
         scheduler: { href: '/api/actuator/scheduler' },
         errors: { href: '/api/actuator/errors' },
         system: { href: '/api/actuator/system' },
+        pg: { href: '/api/actuator/pg' },
       },
     }
   }
