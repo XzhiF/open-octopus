@@ -108,11 +108,11 @@ describePg("04: task-author autosave seam + scope_id writer (integration)", () =
     // Hermetic OCTOPUS_HOME so paths.getBuiltInCloneDir points to an empty
     // temp dir (resolveCloneDefFromFs falls through to mocked info.persona).
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-${Date.now()}`
-    // P1 B2 双引擎：sessions 在 SQLite（B3 域），tasks 在 PG —— autosave seam
-    // 写的任务行带 source_chat_session_id FK，需把会话父行同步进 PG（配方 §5）。
+    // P1 B3 双引擎：tasks 与 sessions/messages 都落这座注册 PG 库 —— autosave seam
+    // 写的任务行 source_chat_session_id FK 直接对 PG sessions（配方 §5 已同库化）。
     pg = await setupRegisteredPgSchema()
     db = newDb()
-    sessionDAO = new AgentSessionDAO(db)
+    sessionDAO = new AgentSessionDAO(pg.sql)
     taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
@@ -171,9 +171,9 @@ describePg("04: task-author autosave seam + scope_id writer (integration)", () =
     expect(taskRow.task_spec).toBe("{}") // SG8: autosave never touches task_spec
 
     // DB assert (SG3): sessions.scope_id = tasks.id
-    const sessionRow = db
-      .prepare("SELECT scope_id FROM sessions WHERE id = ?")
-      .get(session.id) as { scope_id: string | null }
+    // P1 B3: sessions 已迁 PG —— 直读这座随机库。
+    const sessionRow = (await pg!.sql`
+      SELECT scope_id FROM sessions WHERE id = ${session.id}`)[0] as { scope_id: string | null }
     expect(sessionRow.scope_id).toBe(taskRow.id)
   })
 
@@ -206,7 +206,8 @@ describePg("04: task-author autosave seam + scope_id writer (integration)", () =
     const renamedTitle = "E2E_TD user-renamed task title"
     // P1 B2: user-rename seam writes PG tasks.
     await pg!.sql`UPDATE tasks SET name = ${renamedTitle} WHERE id = ${beforeRow.id}`
-    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(renamedTitle, session.id)
+    // P1 B3: sessions 已迁 PG —— 标题同步也落这座库。
+    await pg!.sql`UPDATE sessions SET title = ${renamedTitle} WHERE id = ${session.id}`
 
     // Ensure updated_at advances (ISO millisecond precision)
     await new Promise((r) => setTimeout(r, 5))
@@ -258,10 +259,8 @@ describePg("04: task-author autosave seam + scope_id writer (integration)", () =
 
     // Session renamed in the sidebar (no task sync — this is NOT a header
     // rename). The autosave must not propagate it into the task name.
-    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(
-      "E2E_TD sidebar-only rename",
-      session.id,
-    )
+    // P1 B3: sessions 已迁 PG。
+    await pg!.sql`UPDATE sessions SET title = ${"E2E_TD sidebar-only rename"} WHERE id = ${session.id}`
 
     await new Promise((r) => setTimeout(r, 5))
     const r2 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
@@ -318,7 +317,8 @@ describePg("04: task-author autosave seam + scope_id writer (integration)", () =
     // session title is derived from the first message for the sidebar. The
     // derived title must NOT leak into the user-set task name (asserted
     // above) — the two stores are allowed to diverge here.
-    const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(session.id) as {
+    // P1 B3: sessions 已迁 PG —— 标题直读这座库。
+    const s = (await pg!.sql`SELECT title FROM sessions WHERE id = ${session.id}`)[0] as {
       title: string
     }
     expect(s.title).toBe("E2E_TD first message")

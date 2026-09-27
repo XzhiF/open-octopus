@@ -145,7 +145,7 @@ describePg("Harness Integration Tests", () => {
       await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
       expect(harnessController.isActive(executionId)).toBe(true)
 
-      harnessController.onExecutionEnd(executionId)
+      await harnessController.onExecutionEnd(executionId)
       expect(harnessController.isActive(executionId)).toBe(false)
       expect(harnessController.activePipelineCount).toBe(0)
     })

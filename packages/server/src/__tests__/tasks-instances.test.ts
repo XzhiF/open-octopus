@@ -93,7 +93,7 @@ beforeAll(async () => {
     .run(WS_ID, "in-ws", ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   const taskHome = new TaskHomeService(path.join(tmp, "home"))
-  const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
+  const ts = new TasksService(db, sse, new AgentSessionDAO(pg!.sql), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   instances = new TestInstanceRegistry(path.join(tmp, "instances"), path.join(tmp, "ports"))
   const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome, instances)

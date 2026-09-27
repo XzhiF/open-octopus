@@ -76,7 +76,7 @@ export class MemoryService {
    *   memory/daily/ directory instead of main agent's. Source field is derived
    *   from the clone directory name.
    */
-  recordDaily(org: string, content: string, sessionId: string, cloneDir?: string): { ok: boolean; date: string } {
+  async recordDaily(org: string, content: string, sessionId: string, cloneDir?: string): Promise<{ ok: boolean; date: string }> {
     const today = new Date().toISOString().split('T')[0]
     const dailyDir = cloneDir
       ? path.join(cloneDir, 'memory', 'daily')
@@ -97,11 +97,11 @@ export class MemoryService {
     try {
       const summaryId = crypto.randomUUID()
       const now = new Date().toISOString()
-      this.dao.insertSummaryMessage(summaryId, sessionId, content, now, source)
+      await this.dao.insertSummaryMessage(summaryId, sessionId, content, now, source)
 
-      // 3. Rebuild FTS index to include the new summary
+      // 3. Rebuild FTS index to include the new summary（PG 面 = 幂等计数，索引自动维护）
       try {
-        this.dao.rebuildFtsIndex()
+        await this.dao.rebuildFtsIndex()
       } catch {
         // FTS rebuild failure is non-fatal — daily file is the primary store
       }
@@ -153,13 +153,13 @@ export class MemoryService {
    * @param source Optional source filter. When provided, only returns results
    *   from the specified source ('main' or clone-name).
    */
-  searchMemory(org: string, query: string, topK: number = 3, source?: string): MemorySearchResult[] {
+  async searchMemory(org: string, query: string, topK: number = 3, source?: string): Promise<MemorySearchResult[]> {
     const results: MemorySearchResult[] = []
 
-    // ── 1. FTS5 search on session_memory_fts（jieba 预分词后中文可命中；
-    //       score 为 bm25 映射的真实相关度，见 agent-session-dao）──
+    // ── 1. 会话摘要检索（P1 B3：原 session_memory_fts 虚表 → messages 真表检索面，
+    //       score 为 BM25 归一/分层常数，见 agent-session-dao）──
     try {
-      const ftsRows = this.dao.searchSessionMemory(query, topK, source, org)
+      const ftsRows = await this.dao.searchSessionMemory(query, topK, source, org)
 
       for (const row of ftsRows) {
         results.push({
@@ -302,9 +302,9 @@ export class MemoryService {
    * Rebuild FTS indexes from source data.
    * Maps to PRD P2.2 rebuildFtsIndex.
    */
-  rebuildFtsIndex(org: string): { indexed_count: number } {
+  async rebuildFtsIndex(org: string): Promise<{ indexed_count: number }> {
     try {
-      const indexedCount = this.dao.rebuildFtsIndex()
+      const indexedCount = await this.dao.rebuildFtsIndex()
       return { indexed_count: indexedCount }
     } catch {
       // Table may not exist yet
@@ -410,10 +410,10 @@ export class MemoryService {
    * Check if agent should auto-enter safe mode due to inactivity (PRD H2).
    * Compares last activity date against config inactive_days_threshold.
    */
-  checkInactivitySafeMode(org: string): { should_enable: boolean; last_active: string | null; days_inactive: number } {
+  async checkInactivitySafeMode(org: string): Promise<{ should_enable: boolean; last_active: string | null; days_inactive: number }> {
     let lastActive: string | null = null
     try {
-      const row = this.dao.findLatestMessageTimestamp()
+      const row = await this.dao.findLatestMessageTimestamp()
       lastActive = row?.last_at ?? null
     } catch {
       // Table may not exist

@@ -110,8 +110,8 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-td-07"
 
-// P1 B2：tasks 表已迁 postgres.js —— taskDAO 吃 PG；sessions 仍在 SQLite。
-// PG tasks.source_chat_session_id → PG sessions 的 FK 需要 PG 侧父行（见 §5 配方）。
+// P1 B3：sessions/messages 也已迁 PG —— sessionDAO 吃注册池句柄，会话行由
+// POST /sessions 路由经 DAO 直接落 PG（autosave 的任务行 FK 同库天然满足）。
 let pg: PgFixture | null = null
 
 function newDb(): Database.Database {
@@ -120,11 +120,11 @@ function newDb(): Database.Database {
   return db
 }
 
-/** 镜像最小 sessions 父行到 PG —— 让 autosave 的任务行过 FK。 */
+/** P1 B3：sessions 迁 PG 后路由 POST 已直接写 PG —— 保留幂等补种仅作兜底。 */
 async function mirrorSessionToPg(sessionId: string): Promise<void> {
   const now = new Date().toISOString()
   await pg!.sql.unsafe(
-    `INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ($1, $2, 'e2e-07', $3, $4)`,
+    `INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ($1, $2, 'e2e-07', $3, $4) ON CONFLICT (id) DO NOTHING`,
     [sessionId, ORG, now, now],
   )
 }
@@ -136,11 +136,11 @@ describePg("07 SG6: authoring_resources[] → task-author chat (route integratio
   let taskDAO: TaskDAO
 
   beforeAll(async () => {
-    // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池）；sessions 仍在 SQLite `db`。
+    // P1 B3 双引擎 fixture：tasks/sessions/messages 都落 PG（注册全局池）。
     pg = await setupRegisteredPgSchema()
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-07-${Date.now()}`
     db = newDb()
-    sessionDAO = new AgentSessionDAO(db)
+    sessionDAO = new AgentSessionDAO(pg.sql)
     taskDAO = new TaskDAO(pg.sql)
     const sse = new SSEService()
     app = new Hono()

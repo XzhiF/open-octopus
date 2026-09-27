@@ -149,11 +149,10 @@ describePg("05: reverse context msg — [save] → store → next chat → Clone
 
   beforeAll(async () => {
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-05-${Date.now()}`
-    // P1 B2 双引擎：tasks 在 PG（注册全局池 —— TasksService 内部自动走 PG），
-    // sessions/messages 仍在 SQLite（B3 域）。
+    // P1 B3 双引擎：tasks + sessions/messages 都落这座注册 PG 库（父行同库，配方 §5 已收敛）。
     pg = await setupRegisteredPgSchema()
     db = newDb()
-    sessionDAO = new AgentSessionDAO(db)
+    sessionDAO = new AgentSessionDAO(pg.sql)
     taskDAO = new TaskDAO(pg.sql)
     const sse = new SSEService()
     tasksService = new TasksService(db, sse, sessionDAO)

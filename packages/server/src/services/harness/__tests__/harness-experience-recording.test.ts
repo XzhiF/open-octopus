@@ -175,7 +175,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.recordDecision("test", decision2)
 
     // End execution
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify experiences were recorded
     expect(mocks.evolutionDao.insertExperienceV2).toHaveBeenCalledTimes(2)
@@ -236,7 +236,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify daily memory was written
     expect(mocks.memoryService.recordDaily).toHaveBeenCalledTimes(1)
@@ -274,7 +274,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     })
 
     // End execution without any interventions
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify no experiences were recorded
     expect(mocks.evolutionDao.insertExperienceV2).not.toHaveBeenCalled()
@@ -321,7 +321,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const experienceRow = mocks.evolutionDao.insertExperienceV2.mock.calls[0][0]
     // Content should be searchable and contain key information
@@ -368,7 +368,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const experienceRow = mocks.evolutionDao.insertExperienceV2.mock.calls[0][0]
     const patternTags = JSON.parse(experienceRow.pattern_tags)
@@ -410,7 +410,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const cloneDir = mocks.memoryService.recordDaily.mock.calls[0][3]
     expect(cloneDir).toContain("harness-agent")
@@ -492,7 +492,7 @@ describe("HarnessController — AC-7: existing harness_summary behavior unchange
     })
     ;(mocks.dao.getDb() as any).prepare = prepareMock
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify the UPDATE to executions table was called
     expect(prepareMock).toHaveBeenCalledWith(

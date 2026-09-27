@@ -42,11 +42,11 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Memory — rebuild-fts ─────────────────────────────────────────
   // 存量 FTS 索引重建入口（显式，绝不上启动路径）。jieba 预分词改造后，
   // 旧库里的 experiences_fts / session_memory_fts 需经此端点一次性重灌才可中文命中。
-  app.post('/memory/rebuild-fts', (c) => {
+  app.post('/memory/rebuild-fts', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      const result = rebuildSearchIndexes()
+      const result = await rebuildSearchIndexes()
       return c.json({
         ok: true,
         rebuilt: true,

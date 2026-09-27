@@ -100,7 +100,8 @@ describePg("clone session list — task-owned session filter", () => {
     process.env.OCTOPUS_HOME = `/tmp/octopus-csl-test-${Date.now()}`
     pg = await setupRegisteredPgSchema()
     db = newDb()
-    const sessionDAO = new AgentSessionDAO(db)
+    // P1 B3: AgentSessionDAO 已迁 PG —— sessions/messages 读写都落这座库。
+    const sessionDAO = new AgentSessionDAO(pg.sql)
     taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))

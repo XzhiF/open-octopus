@@ -11,11 +11,11 @@ export class SessionService {
   /**
    * Create a new session.
    */
-  createSession(org: string, opts?: { clone_name?: string }): AgentSession {
+  async createSession(org: string, opts?: { clone_name?: string }): Promise<AgentSession> {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
-    this.dao.insertSession({
+    await this.dao.insertSession({
       id,
       org,
       title: '新会话',
@@ -25,7 +25,7 @@ export class SessionService {
       updated_at: now,
     })
 
-    const row = this.dao.findSessionById(id)
+    const row = await this.dao.findSessionById(id)
     if (!row) throw new Error('Session creation failed')
     return this.rowToSession(row)
   }
@@ -33,11 +33,11 @@ export class SessionService {
   /**
    * List sessions for an org.
    */
-  listSessions(
+  async listSessions(
     org: string,
     query?: { clone?: string; session_type?: string; limit?: number; cursor?: string },
-  ): AgentPaginatedResponse<AgentSession> {
-    const result = this.dao.findByOrg(org, {
+  ): Promise<AgentPaginatedResponse<AgentSession>> {
+    const result = await this.dao.findByOrg(org, {
       clone: query?.clone,
       session_type: query?.session_type,
       limit: query?.limit,
@@ -55,8 +55,8 @@ export class SessionService {
   /**
    * Get a single session with messages.
    */
-  getSession(org: string, id: string): AgentSession | null {
-    const row = this.dao.findSessionById(id)
+  async getSession(org: string, id: string): Promise<AgentSession | null> {
+    const row = await this.dao.findSessionById(id)
     if (!row || row.org !== org || row.is_deleted) return null
     return this.rowToSession(row)
   }
@@ -64,23 +64,23 @@ export class SessionService {
   /**
    * Update session title.
    */
-  updateSession(org: string, id: string, data: { title: string }): boolean {
-    const result = this.dao.updateSessionByOrg(id, org, { title: data.title })
+  async updateSession(org: string, id: string, data: { title: string }): Promise<boolean> {
+    const result = await this.dao.updateSessionByOrg(id, org, { title: data.title })
     return result.changes > 0
   }
 
   /**
    * Soft-delete a session.
    */
-  deleteSession(org: string, id: string): boolean {
-    const result = this.dao.softDeleteByOrg(id, org)
+  async deleteSession(org: string, id: string): Promise<boolean> {
+    const result = await this.dao.softDeleteByOrg(id, org)
     return result.changes > 0
   }
 
   /**
    * Get message count for a session.
    */
-  getMessageCount(org: string, sessionId: string): number {
+  async getMessageCount(org: string, sessionId: string): Promise<number> {
     return this.dao.countMessages(sessionId)
   }
 

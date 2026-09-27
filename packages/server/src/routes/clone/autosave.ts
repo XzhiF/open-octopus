@@ -124,7 +124,7 @@ export async function autosaveTaskDraft(
     // SG3: link the bound chat session's scope_id to the new task id (implicit
     // autosave path — mirrors TasksService.createTask's explicit POST path).
     try {
-      sessionDAO.updateSession(input.sessionId, { scope_id: id })
+      await sessionDAO.updateSession(input.sessionId, { scope_id: id })
     } catch (err: unknown) {
       // Non-fatal — task row exists; scope_id link is best-effort. Mirrors
       // the swallow+log pattern in TasksService.createTask (03).

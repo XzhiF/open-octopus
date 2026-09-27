@@ -26,7 +26,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
       if (!enabled) {
         try {
           const threshold = config.safe_mode.inactive_days_threshold ?? 14
-          const lastSession = sessionDAO.findLatestMessageTimestamp()
+          const lastSession = await sessionDAO.findLatestMessageTimestamp()
 
           if (lastSession?.last_at) {
             const lastActive = new Date(lastSession.last_at).getTime()

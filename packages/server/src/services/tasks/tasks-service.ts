@@ -665,7 +665,7 @@ export class TasksService {
     // POST path). The autosave seam (04) does the same for the implicit path.
     if (input.source_chat_session_id && this.agentSessionDAO) {
       try {
-        this.agentSessionDAO.updateSession(input.source_chat_session_id, { scope_id: id })
+        await this.agentSessionDAO.updateSession(input.source_chat_session_id, { scope_id: id })
       } catch (err: unknown) {
         console.error(
           "[TasksService] createTask: failed to link session scope_id (non-fatal — task row created):",
@@ -1188,7 +1188,7 @@ export class TasksService {
       const linked = existing.source_chat_session_id
       if (linked && this.agentSessionDAO) {
         try {
-          this.agentSessionDAO.updateSession(linked, { title: input.name })
+          await this.agentSessionDAO.updateSession(linked, { title: input.name })
         } catch (err: unknown) {
           // eslint-disable-next-line no-console
           console.error(

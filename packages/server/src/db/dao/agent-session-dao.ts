@@ -1,89 +1,199 @@
-import type Database from "better-sqlite3"
-import { BaseDAO } from "./base"
-import type { SessionRow, MessageRow, PaginatedResult } from "../types"
-import { segIndex, buildFtsMatch, bm25ToScore } from "../../cjk-segmenter"
+import { BasePgDAO, type PgSql } from "./base-pg"
+import type { SessionRow, MessageRow } from "../types"
+import { bool, flag, iso, isoOrNull, jsonStr, num } from "./pg-mappers"
+import { segTokens } from "../../cjk-segmenter"
 
 /**
  * AgentSessionDAO — agent session and message management.
- * Covers: sessions, messages, session_memory_fts tables.
+ * Covers: sessions, messages tables (P1 B3: better-sqlite3 → postgres.js).
+ *
+ * 行形态契约（pg-mappers 出口归一，旧 Row 接口不动直到 B6）：
+ *   - sessions.is_active/is_deleted、messages.is_summary/is_compressed/is_edited
+ *     PG boolean ↔ 旧 0/1 number（写侧必须显式 bool() —— postgres.js 把 JS number
+ *     0/1 绑进 boolean 列会静默存 false）。
+ *   - created_at/updated_at/last_message_at: PG timestamptz(Date) ↔ 旧 ISO 文本。
+ *   - metadata/tool_calls: PG jsonb(解析后 object) ↔ 旧 JSON 文本
+ *     （读回是 jsonb 规范化文本：键序/空白与写入串可能不同）。
+ *   - messages.metadata 的 `"streaming":true` 探测由旧 LIKE 子串改为
+ *     `metadata->>'streaming' = 'true'`（jsonb::text 会把冒号后补空格，LIKE 形态
+ *     在 PG 不可移植；JSON 语义判定等价）。
+ *
+ * FTS 面（P1 B3 重设计）：SQLite 侧 session_memory_fts 虚表 + jieba 预分词影子列
+ *   整体退役 —— PG 侧不再有影子表；检索直接打在 messages.content（is_summary=true）
+ *   真表上（段1 粗实现 ILIKE，段2 pg_search BM25，见 db/pg/README.md B3 节）。
+ *   rebuildFtsIndex() 语义随之前置为「幂等计数」（BM25 索引由 PG 引擎自动维护）。
  */
-export class AgentSessionDAO extends BaseDAO {
-  constructor(db: Database.Database) { super(db) }
+
+/** ILIKE 模式串转义（% _ 与反斜杠 —— PG LIKE 默认转义符是反斜杠）。 */
+function likePattern(token: string): string {
+  return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+/** sessions 表的 boolean 列（动态 SET 时需要 0/1 → bool 翻面）。 */
+const SESSION_BOOL_COLS = new Set(["is_active", "is_deleted"])
+const MSG_BOOL_COLS = new Set(["is_summary", "is_compressed", "is_edited"])
+/**
+ * messages 表的 jsonb 列。postgres.js 实测（octopus-pg / jsonb probe）：JS string
+ * 绑进 jsonb 参数（含 `?::jsonb` 显式转换 —— PG 把参数类型推断为 jsonb 本身）会被
+ * 再 JSON.stringify 成 **jsonb 字符串标量**（jsonb_typeof='string'），`metadata->>
+ * 'streaming'` 等算子全瞎。唯一正确姿势：绑前 JSON.parse 成对象。读侧 jsonStr 归一
+ * 回旧契约（键序/空白为 jsonb 规范化文本，调用方本就 JSON.parse）。
+ */
+const MSG_JSON_COLS = new Set(["metadata", "tool_calls"])
+
+/** JSON 文本 → 对象（jsonb 参数专用）；非文本原样透传，解析失败退回原文。 */
+function jsonbParam(v: unknown): unknown {
+  if (typeof v !== "string") return v
+  try { return JSON.parse(v) } catch { return v }
+}
+
+interface SessionPgRow {
+  id: string
+  org: string
+  title: string
+  clone_name: string | null
+  perspective_clone_name: string | null
+  session_type: string
+  is_active: boolean | number
+  is_deleted: boolean | number
+  scope_id: string | null
+  provider_session_id: string | null
+  last_message_at: Date | string | null
+  created_at: Date | string
+  updated_at: Date | string
+}
+
+interface MessagePgRow {
+  id: string
+  session_id: string
+  role: string
+  content: string
+  type: string
+  metadata: unknown
+  tool_calls: unknown
+  is_summary: boolean | number
+  is_compressed: boolean | number
+  is_edited: boolean | number
+  source: string
+  created_at: Date | string
+}
+
+function fromSession(r: SessionPgRow): SessionRow {
+  return {
+    id: r.id,
+    org: r.org,
+    title: r.title,
+    clone_name: r.clone_name,
+    perspective_clone_name: r.perspective_clone_name,
+    session_type: r.session_type,
+    is_active: flag(r.is_active),
+    is_deleted: flag(r.is_deleted),
+    scope_id: r.scope_id,
+    provider_session_id: r.provider_session_id,
+    last_message_at: isoOrNull(r.last_message_at),
+    created_at: iso(r.created_at),
+    updated_at: iso(r.updated_at),
+  }
+}
+
+function fromMessage(r: MessagePgRow): MessageRow {
+  return {
+    id: r.id,
+    session_id: r.session_id,
+    role: r.role,
+    content: r.content,
+    type: r.type,
+    metadata: jsonStr(r.metadata),
+    tool_calls: jsonStr(r.tool_calls),
+    is_summary: flag(r.is_summary),
+    is_compressed: flag(r.is_compressed),
+    is_edited: flag(r.is_edited),
+    source: r.source,
+    created_at: iso(r.created_at),
+  }
+}
+
+export class AgentSessionDAO extends BasePgDAO {
+  constructor(db: PgSql) { super(db) }
 
   // ── sessions ────────────────────────────────────────────────────
 
-  findById(id: string): SessionRow | null {
-    return (this.stmt("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow) ?? null
+  async findById(id: string): Promise<SessionRow | null> {
+    const r = await this.q1<SessionPgRow>("SELECT * FROM sessions WHERE id = ?", [id])
+    return r ? fromSession(r) : null
   }
 
-  findByOrg(org: string, filters?: {
+  async findByOrg(org: string, filters?: {
     clone?: string; session_type?: string; limit?: number; cursor?: string
-  }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
+  }): Promise<{ items: SessionRow[]; has_more: boolean; next_cursor: string | null }> {
     const limit = filters?.limit ?? 20
-    let sql = `SELECT * FROM sessions WHERE org = ? AND is_deleted = 0`
+    let sql = `SELECT * FROM sessions WHERE org = ? AND is_deleted = false`
     const params: unknown[] = [org]
     if (filters?.clone) { sql += ` AND clone_name = ?`; params.push(filters.clone) }
     if (filters?.session_type) { sql += ` AND session_type = ?`; params.push(filters.session_type) }
     if (filters?.cursor) { sql += ` AND created_at < ?`; params.push(filters.cursor) }
-    sql += ` ORDER BY last_message_at DESC, created_at DESC LIMIT ?`
+    // NULLS LAST：SQLite 把 NULL 当最小值排 DESC 末位；PG DESC 默认 NULL 首位
+    sql += ` ORDER BY last_message_at DESC NULLS LAST, created_at DESC LIMIT ?`
     params.push(limit + 1)
 
-    const rows = this.stmt(sql).all(...params) as SessionRow[]
+    const rows = (await this.q<SessionPgRow>(sql, params)).map(fromSession)
     const hasMore = rows.length > limit
     const items = hasMore ? rows.slice(0, limit) : rows
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
-  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id"> & {
+  async insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id"> & {
     is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
     scope_id?: string | null; provider_session_id?: string | null
-  }): Database.RunResult {
-    return this.stmt(`
+  }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.org, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
-      row.is_active ?? 1, row.is_deleted ?? 0,
+      bool(row.is_active ?? 1), bool(row.is_deleted ?? 0),
       row.scope_id ?? null, row.provider_session_id ?? null,
       null,
       row.created_at, row.updated_at,
-    )
+    ])
   }
 
-  updateSession(id: string, fields: Partial<SessionRow>): Database.RunResult {
+  async updateSession(id: string, fields: Partial<SessionRow>): Promise<{ changes: number }> {
     const sets: string[] = []
     const vals: unknown[] = []
     for (const [k, v] of Object.entries(fields)) {
       if (k === "id") continue
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(SESSION_BOOL_COLS.has(k) ? bool(v as number) : v)
     }
-    if (sets.length === 0) return { changes: 0, lastInsertRowid: 0 }
+    if (sets.length === 0) return { changes: 0 }
     sets.push("updated_at = ?")
     vals.push(new Date().toISOString())
     vals.push(id)
-    return this.stmt(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    return this.exec(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`, vals)
   }
 
-  softDelete(id: string): Database.RunResult {
+  async softDelete(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE sessions SET is_deleted = 1, is_active = 0, updated_at = ? WHERE id = ?"
-    ).run(now, id)
+    return this.exec(
+      "UPDATE sessions SET is_deleted = true, is_active = false, updated_at = ? WHERE id = ?",
+      [now, id],
+    )
   }
 
-  updateLastMessageAt(id: string, timestamp: string): Database.RunResult {
-    return this.stmt(
-      "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?"
-    ).run(timestamp, timestamp, id)
+  async updateLastMessageAt(id: string, timestamp: string): Promise<{ changes: number }> {
+    return this.exec(
+      "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      [timestamp, timestamp, id],
+    )
   }
 
   // ── messages ────────────────────────────────────────────────────
 
-  findMessagesBySession(sessionId: string, filters?: {
+  async findMessagesBySession(sessionId: string, filters?: {
     limit?: number; cursor?: string
-  }): { items: MessageRow[]; has_more: boolean; next_cursor: string | null } {
+  }): Promise<{ items: MessageRow[]; has_more: boolean; next_cursor: string | null }> {
     const limit = filters?.limit ?? 50
     let sql = `SELECT * FROM messages WHERE session_id = ?`
     const params: unknown[] = [sessionId]
@@ -91,104 +201,101 @@ export class AgentSessionDAO extends BaseDAO {
     sql += ` ORDER BY created_at DESC LIMIT ?`
     params.push(limit + 1)
 
-    const rows = this.stmt(sql).all(...params) as MessageRow[]
+    const rows = (await this.q<MessagePgRow>(sql, params)).map(fromMessage)
     const hasMore = rows.length > limit
     const items = (hasMore ? rows.slice(0, limit) : rows).reverse()
     return { items, has_more: hasMore, next_cursor: hasMore ? rows[limit - 1]?.created_at : null }
   }
 
-  findAllMessages(sessionId: string): MessageRow[] {
-    return this.stmt(
-      "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC"
-    ).all(sessionId) as MessageRow[]
+  async findAllMessages(sessionId: string): Promise<MessageRow[]> {
+    const rows = await this.q<MessagePgRow>(
+      "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+      [sessionId],
+    )
+    return rows.map(fromMessage)
   }
 
-  countMessages(sessionId: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as count FROM messages WHERE session_id = ?"
-    ).get(sessionId) as { count: number }).count
+  async countMessages(sessionId: string): Promise<number> {
+    const r = await this.q1<{ count: number | string }>(
+      "SELECT COUNT(*)::int AS count FROM messages WHERE session_id = ?",
+      [sessionId],
+    )
+    return num(r?.count)
   }
 
-  insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls" | "type" | "metadata" | "source"> & {
+  async insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls" | "type" | "metadata" | "source"> & {
     is_summary?: number; is_compressed?: number; is_edited?: number; tool_calls?: string | null;
     type?: string; metadata?: string | null; source?: string
-  }): Database.RunResult {
-    return this.stmt(`
+  }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, source, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.session_id, row.role, row.content,
-      row.type ?? 'text', row.metadata ?? null,
-      row.tool_calls ?? null, row.is_summary ?? 0,
-      row.is_compressed ?? 0, row.is_edited ?? 0, row.source ?? 'main', row.created_at,
-    )
+      row.type ?? 'text', jsonbParam(row.metadata) ?? null,
+      jsonbParam(row.tool_calls) ?? null, bool(row.is_summary ?? 0),
+      bool(row.is_compressed ?? 0), bool(row.is_edited ?? 0), row.source ?? 'main', row.created_at,
+    ])
   }
 
-  findMessageById(id: string): MessageRow | null {
-    return (this.stmt("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow) ?? null
+  async findMessageById(id: string): Promise<MessageRow | null> {
+    const r = await this.q1<MessagePgRow>("SELECT * FROM messages WHERE id = ?", [id])
+    return r ? fromMessage(r) : null
   }
 
-  updateMessage(id: string, fields: Partial<MessageRow>): Database.RunResult {
+  async updateMessage(id: string, fields: Partial<MessageRow>): Promise<{ changes: number }> {
     const sets: string[] = []
     const vals: unknown[] = []
     for (const [k, v] of Object.entries(fields)) {
       if (k === "id") continue
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(MSG_BOOL_COLS.has(k) ? bool(v as number) : MSG_JSON_COLS.has(k) ? jsonbParam(v) : v)
     }
-    if (sets.length === 0) return { changes: 0, lastInsertRowid: 0 }
+    if (sets.length === 0) return { changes: 0 }
     vals.push(id)
-    return this.stmt(`UPDATE messages SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    return this.exec(`UPDATE messages SET ${sets.join(", ")} WHERE id = ?`, vals)
   }
 
-  // ── session_memory_fts ──────────────────────────────────────────
+  // ── 会话记忆检索（原 session_memory_fts 面） ────────────────────
 
   /**
-   * FTS5 search over session summaries (jieba 预分词后中文可命中)。
-   *
-   * 语义（KB P0 静默路径修复）：
-   * - MATCH 表达式由 buildFtsMatch 逐 token 转义构造 —— 中文/引号/NEAR 等一律
-   *   是字符串字面量，语法永远合法；不再有「不命中也不报错」的降级。
-   * - AND 无结果时 OR 兜底（切词歧义腿）。
-   * - 空/纯标点查询 → 显式空数组。
-   * - 真正的 DB 异常（表缺失/索引损坏）直接上抛，由调用方（REST 层）决定
-   *   rebuild + 重试，不在这里吞。
-   * - score 为 bm25() 映射出的 (0,1) 真实相关度。
-   * - summary 经 rowid 关联回 messages 原文（索引里存的是切词串，展示必须
-   *   是原文）；session_title 同理回连 sessions。
+   * 会话摘要检索（原 FTS5 session_memory_fts.summary 列的替身）。
+   * 段1（B3）粗实现：查询侧 jieba token + content ILIKE（AND 优先/OR 兜底），
+   * score 为分层常数（AND=0.9 / OR=0.4，保持 (0,1) 契约）；
+   * 段2（B3）换 pg_search BM25（idx_messages_bm25）+ ILIKE 兜底，score 走
+   * paradedb.score 的 s/(1+s) 归一。语义锚点：
+   *   - 空/纯标点查询 → 显式空数组；真 DB 异常上抛由 REST 层决定重试。
+   *   - summary/session_title 返回原文（真表列，不存在切词串泄漏）。
+   *   - source 过滤打在 messages.source；org 过滤经 sessions.org 回连。
    */
-  searchSessionMemory(query: string, limit: number = 3, source?: string, org?: string): Array<{
+  async searchSessionMemory(query: string, limit: number = 3, source?: string, org?: string): Promise<Array<{
     session_id: string; summary: string; session_title: string; created_at: string; source: string; score: number
-  }> {
-    const andMatch = buildFtsMatch(query, 'and', 'summary')
-    if (!andMatch) return []
+  }>> {
+    const tokens = segTokens(query)
+    if (tokens.length === 0) return []
 
-    const rows = this.runSessionFts(andMatch, limit, source, org)
-    if (rows.length > 0) return rows
-
-    const orMatch = buildFtsMatch(query, 'or', 'summary')
-    if (!orMatch || orMatch === andMatch) return []
-    return this.runSessionFts(orMatch, limit, source, org)
+    const andRows = await this.runSessionSearch(tokens, 'and', 0.9, limit, source, org)
+    if (andRows.length > 0) return andRows
+    return this.runSessionSearch(tokens, 'or', 0.4, limit, source, org)
   }
 
-  private runSessionFts(match: string, limit: number, source?: string, org?: string): Array<{
+  private async runSessionSearch(tokens: string[], mode: 'and' | 'or', score: number, limit: number, source?: string, org?: string): Promise<Array<{
     session_id: string; summary: string; session_title: string; created_at: string; source: string; score: number
-  }> {
+  }>> {
+    const joiner = mode === 'and' ? ' AND ' : ' OR '
     let sql = `
-      SELECT session_memory_fts.session_id AS session_id,
-             COALESCE(m.content, session_memory_fts.summary) AS summary,
-             COALESCE(s.title, session_memory_fts.session_title) AS session_title,
-             session_memory_fts.created_at AS created_at,
-             session_memory_fts.source AS source,
-             bm25(session_memory_fts) AS rank
-      FROM session_memory_fts
-      LEFT JOIN messages m ON m.rowid = session_memory_fts.rowid
-      LEFT JOIN sessions s ON s.id = session_memory_fts.session_id
-      WHERE session_memory_fts MATCH ?`
-    const params: unknown[] = [match]
+      SELECT m.session_id AS session_id,
+             m.content AS summary,
+             s.title AS session_title,
+             m.created_at AS created_at,
+             m.source AS source
+      FROM messages m
+      JOIN sessions s ON s.id = m.session_id
+      WHERE m.is_summary = true AND (${tokens.map(() => `m.content ILIKE ?`).join(joiner)})`
+    const params: unknown[] = tokens.map(likePattern)
 
     if (source) {
-      sql += ` AND session_memory_fts.source = ?`
+      sql += ` AND m.source = ?`
       params.push(source)
     }
     if (org) {
@@ -196,198 +303,194 @@ export class AgentSessionDAO extends BaseDAO {
       params.push(org)
     }
 
-    sql += ` ORDER BY rank LIMIT ?`
+    sql += ` ORDER BY m.created_at DESC LIMIT ?`
     params.push(limit)
 
-    const rows = this.stmt(sql).all(...params) as Array<{
-      session_id: string; summary: string; session_title: string; created_at: string; source: string; rank: number
-    }>
-    return rows.map(({ rank, ...rest }) => ({ ...rest, score: bm25ToScore(rank) }))
+    const rows = await this.q<{ session_id: string; summary: string; session_title: string; created_at: Date | string; source: string }>(sql, params)
+    return rows.map((r) => ({ ...r, created_at: iso(r.created_at), score }))
   }
 
   /**
-   * Rebuild session_memory_fts from messages(is_summary=1).
-   * 索引内容为 jieba 预分词串；rowid 显式对齐 messages.rowid 供查询侧回连原文。
+   * 摘要索引维护入口（原 FTS5 影子表重灌）。PG 侧 BM25 索引由引擎自动维护，
+   * 本方法退化为「is_summary 消息计数」—— 保持返回条数与幂等语义
+   * （chinese-recall-regression / memory 路由 rebuild 端点依赖）。
    */
-  rebuildFtsIndex(): number {
-    this.stmt("DELETE FROM session_memory_fts").run()
-    const summaryMessages = this.stmt(`
-      SELECT m.rowid AS msg_rowid, m.session_id, m.content, m.created_at, m.source, s.title
-      FROM messages m JOIN sessions s ON s.id = m.session_id
-      WHERE m.is_summary = 1
-      ORDER BY m.created_at
-    `).all() as Array<{ msg_rowid: number; session_id: string; content: string; created_at: string; source: string; title: string }>
-
-    const insertFts = this.stmt(
-      "INSERT INTO session_memory_fts (rowid, session_id, summary, session_title, created_at, source) VALUES (?, ?, ?, ?, ?, ?)"
+  async rebuildFtsIndex(): Promise<number> {
+    const r = await this.q1<{ cnt: number | string }>(
+      "SELECT COUNT(*)::int AS cnt FROM messages WHERE is_summary = true",
     )
-    for (const msg of summaryMessages) {
-      insertFts.run(
-        msg.msg_rowid, msg.session_id,
-        segIndex(msg.content), segIndex(msg.title ?? ''),
-        msg.created_at, msg.source || 'main',
-      )
-    }
-    return summaryMessages.length
+    return num(r?.cnt)
   }
 
   // ── Additional methods for service migrations ────────────────────
 
-  findSessionById(id: string): SessionRow | null {
-    return (this.stmt("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow) ?? null
+  async findSessionById(id: string): Promise<SessionRow | null> {
+    return this.findById(id)
   }
 
-  countUncompressedMessages(sessionId: string): { count: number; total_chars: number } {
-    return this.stmt(`
-      SELECT COUNT(*) as count,
-             COALESCE(SUM(LENGTH(content)), 0) as total_chars
+  async countUncompressedMessages(sessionId: string): Promise<{ count: number; total_chars: number }> {
+    const r = await this.q1<{ count: number | string; total_chars: number | string }>(`
+      SELECT COUNT(*)::int AS count,
+             COALESCE(SUM(LENGTH(content)), 0)::int AS total_chars
       FROM messages
       WHERE session_id = ?
-        AND is_compressed = 0
-    `).get(sessionId) as { count: number; total_chars: number }
+        AND is_compressed = false
+    `, [sessionId])
+    return { count: num(r?.count), total_chars: num(r?.total_chars) }
   }
 
-  findUncompressedMessagesOrdered(sessionId: string): Array<{ id: string; role: string; content: string; created_at: string }> {
-    return this.stmt(`
+  async findUncompressedMessagesOrdered(sessionId: string): Promise<Array<{ id: string; role: string; content: string; created_at: string }>> {
+    const rows = await this.q<{ id: string; role: string; content: string; created_at: Date | string }>(`
       SELECT id, role, content, created_at
       FROM messages
       WHERE session_id = ?
-        AND is_compressed = 0
+        AND is_compressed = false
       ORDER BY created_at ASC
-    `).all(sessionId) as Array<{ id: string; role: string; content: string; created_at: string }>
+    `, [sessionId])
+    return rows.map((r) => ({ ...r, created_at: iso(r.created_at) }))
   }
 
-  markMessagesCompressed(ids: string[]): Database.RunResult {
-    if (ids.length === 0) return { changes: 0, lastInsertRowid: 0 }
+  async markMessagesCompressed(ids: string[]): Promise<{ changes: number }> {
+    if (ids.length === 0) return { changes: 0 }
     const placeholders = ids.map(() => "?").join(",")
-    return this.stmt(`
-      UPDATE messages SET is_compressed = 1 WHERE id IN (${placeholders})
-    `).run(...ids)
+    return this.exec(`
+      UPDATE messages SET is_compressed = true WHERE id IN (${placeholders})
+    `, ids)
   }
 
-  insertSummaryMessage(id: string, sessionId: string, content: string, createdAt: string, source: string = 'main'): Database.RunResult {
-    return this.stmt(`
+  async insertSummaryMessage(id: string, sessionId: string, content: string, createdAt: string, source: string = 'main'): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO messages (id, session_id, role, content, created_at, is_summary, is_compressed, source)
-      VALUES (?, ?, 'system', ?, ?, 1, 0, ?)
-    `).run(id, sessionId, content, createdAt, source)
+      VALUES (?, ?, 'system', ?, ?, true, false, ?)
+    `, [id, sessionId, content, createdAt, source])
   }
 
-  findSummaryMessage(sessionId: string): { content: string } | null {
-    return (this.stmt(`
+  async findSummaryMessage(sessionId: string): Promise<{ content: string } | null> {
+    const r = await this.q1<{ content: string }>(`
       SELECT content FROM messages
-      WHERE session_id = ? AND is_summary = 1
+      WHERE session_id = ? AND is_summary = true
       ORDER BY created_at DESC LIMIT 1
-    `).get(sessionId) as { content: string }) ?? null
+    `, [sessionId])
+    return r ?? null
   }
 
-  findRecentActiveMessages(sessionId: string, limit: number): Array<{ role: string; content: string }> {
-    return this.stmt(`
+  async findRecentActiveMessages(sessionId: string, limit: number): Promise<Array<{ role: string; content: string }>> {
+    return this.q<{ role: string; content: string }>(`
       SELECT role, content FROM messages
-      WHERE session_id = ? AND is_compressed = 0 AND is_summary = 0
+      WHERE session_id = ? AND is_compressed = false AND is_summary = false
       ORDER BY created_at DESC LIMIT ?
-    `).all(sessionId, limit) as Array<{ role: string; content: string }>
+    `, [sessionId, limit])
   }
 
-  countActiveSessions(org: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as count FROM sessions WHERE is_active = 1 AND is_deleted = 0 AND org = ?"
-    ).get(org) as { count: number }).count
+  async countActiveSessions(org: string): Promise<number> {
+    const r = await this.q1<{ count: number | string }>(
+      "SELECT COUNT(*)::int AS count FROM sessions WHERE is_active = true AND is_deleted = false AND org = ?",
+      [org],
+    )
+    return num(r?.count)
   }
 
-  findLatestMessageTimestamp(): { last_at: string | null } | null {
-    return (this.stmt("SELECT MAX(created_at) as last_at FROM messages").get() as { last_at: string | null }) ?? null
+  async findLatestMessageTimestamp(): Promise<{ last_at: string | null } | null> {
+    const r = await this.q1<{ last_at: Date | string | null }>("SELECT MAX(created_at) AS last_at FROM messages")
+    if (!r) return null
+    return { last_at: isoOrNull(r.last_at) }
   }
 
-  findMessagesBySessionWithCursor(sessionId: string, limit: number, cursor?: string): Array<{
+  async findMessagesBySessionWithCursor(sessionId: string, limit: number, cursor?: string): Promise<Array<{
     id: string; session_id: string; role: string; content: string;
     type: string; metadata: string | null;
     tool_calls: string | null; is_summary: number; is_compressed: number; created_at: string;
-  }> {
+  }>> {
     let sql = `SELECT * FROM messages WHERE session_id = ?`
     const params: unknown[] = [sessionId]
     if (cursor) { sql += ` AND created_at < ?`; params.push(cursor) }
     sql += ` ORDER BY created_at DESC LIMIT ?`
     params.push(limit)
-    return this.stmt(sql).all(...params) as Array<{
-      id: string; session_id: string; role: string; content: string;
-      type: string; metadata: string | null;
-      tool_calls: string | null; is_summary: number; is_compressed: number; created_at: string;
-    }>
+    const rows = (await this.q<MessagePgRow>(sql, params)).map(fromMessage)
+    return rows.map((r) => ({
+      id: r.id, session_id: r.session_id, role: r.role, content: r.content,
+      type: r.type, metadata: r.metadata, tool_calls: r.tool_calls,
+      is_summary: r.is_summary, is_compressed: r.is_compressed, created_at: r.created_at,
+    }))
   }
 
-  updateSessionByOrg(id: string, org: string, fields: Record<string, unknown>): Database.RunResult {
+  async updateSessionByOrg(id: string, org: string, fields: Record<string, unknown>): Promise<{ changes: number }> {
     const sets: string[] = ["updated_at = ?"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(SESSION_BOOL_COLS.has(k) ? bool(v as number) : v)
     }
     vals.push(id, org)
-    return this.stmt(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ? AND org = ? AND is_deleted = 0`).run(...vals)
+    return this.exec(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ? AND org = ? AND is_deleted = false`, vals)
   }
 
-  softDeleteByOrg(id: string, org: string): Database.RunResult {
+  async softDeleteByOrg(id: string, org: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE sessions SET is_deleted = 1, is_active = 0, updated_at = ? WHERE id = ? AND org = ? AND is_deleted = 0"
-    ).run(now, id, org)
+    return this.exec(
+      "UPDATE sessions SET is_deleted = true, is_active = false, updated_at = ? WHERE id = ? AND org = ? AND is_deleted = false",
+      [now, id, org],
+    )
   }
 
   // ── Clone session methods ────────────────────────────────────────
 
   /** Update provider_session_id for SDK resume */
-  updateProviderSession(id: string, providerSessionId: string): Database.RunResult {
-    return this.stmt(
-      "UPDATE sessions SET provider_session_id = ?, updated_at = ? WHERE id = ?"
-    ).run(providerSessionId, new Date().toISOString(), id)
+  async updateProviderSession(id: string, providerSessionId: string): Promise<{ changes: number }> {
+    return this.exec(
+      "UPDATE sessions SET provider_session_id = ?, updated_at = ? WHERE id = ?",
+      [providerSessionId, new Date().toISOString(), id],
+    )
   }
 
   /** Insert message with type + metadata (clone-specific) */
-  insertCloneMessage(row: {
+  async insertCloneMessage(row: {
     id: string; session_id: string; role: string;
     type: string; content: string; metadata: string | null;
     created_at: string;
-  }): Database.RunResult {
-    return this.stmt(`
+  }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO messages (id, session_id, role, type, content, metadata, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.session_id, row.role, row.type,
-      row.content, row.metadata, row.created_at,
-    )
+      row.content, jsonbParam(row.metadata), row.created_at,
+    ])
   }
 
   /** Whether the session has an unfinished streaming assistant partial
    *  (metadata JSON written by the clone chat route with streaming:true).
-   *  LIKE substring is acceptable here: the flag key is only ever written by
-   *  that route's own JSON.stringify of a controlled object shape. */
-  hasStreamingMessage(sessionId: string): boolean {
-    const row = this.stmt(
-      `SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE '%"streaming":true%' LIMIT 1`,
-    ).get(sessionId)
+   *  PG jsonb 面用 `metadata->>'streaming'` 语义判定 —— 旧 LIKE 子串在 PG 不可
+   *  移植（jsonb::text 冒号后会补空格）。 */
+  async hasStreamingMessage(sessionId: string): Promise<boolean> {
+    const row = await this.q1(
+      `SELECT 1 AS one FROM messages WHERE session_id = ? AND metadata->>'streaming' = 'true' LIMIT 1`,
+      [sessionId],
+    )
     return row !== undefined
   }
 
   /** All streaming partial rows across sessions (server-startup orphan sweep). */
-  findStreamingMessages(): Array<{ id: string; metadata: string }> {
-    return this.stmt(
-      `SELECT id, metadata FROM messages WHERE metadata LIKE '%"streaming":true%'`,
-    ).all() as Array<{ id: string; metadata: string }>
+  async findStreamingMessages(): Promise<Array<{ id: string; metadata: string }>> {
+    const rows = await this.q<{ id: string; metadata: unknown }>(
+      `SELECT id, metadata FROM messages WHERE metadata->>'streaming' = 'true'`,
+    )
+    return rows.map((r) => ({ id: r.id, metadata: jsonStr(r.metadata) ?? '{}' }))
   }
 
   /** Find sessions by clone_name */
-  findByClone(cloneName: string, filters?: {
+  async findByClone(cloneName: string, filters?: {
     org?: string; limit?: number; cursor?: string
-  }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
+  }): Promise<{ items: SessionRow[]; has_more: boolean; next_cursor: string | null }> {
     const limit = filters?.limit ?? 20
-    let sql = `SELECT * FROM sessions WHERE clone_name = ? AND is_deleted = 0`
+    let sql = `SELECT * FROM sessions WHERE clone_name = ? AND is_deleted = false`
     const params: unknown[] = [cloneName]
     if (filters?.org) { sql += ` AND org = ?`; params.push(filters.org) }
     if (filters?.cursor) { sql += ` AND created_at < ?`; params.push(filters.cursor) }
-    sql += ` ORDER BY last_message_at DESC, created_at DESC LIMIT ?`
+    sql += ` ORDER BY last_message_at DESC NULLS LAST, created_at DESC LIMIT ?`
     params.push(limit + 1)
 
-    const rows = this.stmt(sql).all(...params) as SessionRow[]
+    const rows = (await this.q<SessionPgRow>(sql, params)).map(fromSession)
     const hasMore = rows.length > limit
     const items = hasMore ? rows.slice(0, limit) : rows
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }

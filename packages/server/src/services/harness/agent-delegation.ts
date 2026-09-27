@@ -565,7 +565,7 @@ export class AgentDelegationService {
     this.emitDelegationSSE(executionId, displayNodeId, delegationId, "start")
 
     // Build the prompt (includes conversation history if session exists)
-    const prompt = this.buildPromptWithHistory(report, context)
+    const prompt = await this.buildPromptWithHistory(report, context)
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
@@ -673,10 +673,10 @@ export class AgentDelegationService {
    * Otherwise, falls back to the standard buildDelegationPrompt.
    * Also injects success rate statistics when available (ticket 04 — AC-5).
    */
-  private buildPromptWithHistory(
+  private async buildPromptWithHistory(
     report: DiagnosisReport,
     context: DelegationContext,
-  ): string {
+  ): Promise<string> {
     // Build the base prompt (with or without session history)
     let prompt: string
     if (!this.session) {
@@ -700,7 +700,7 @@ export class AgentDelegationService {
     }
 
     // Inject success rate statistics (ticket 04 — AC-5, AC-6)
-    const statsSection = this.buildStatsSectionForReport(report)
+    const statsSection = await this.buildStatsSectionForReport(report)
     if (statsSection) {
       // Insert stats section before the final task instructions
       // Look for the task instructions marker and insert before it
@@ -723,14 +723,14 @@ export class AgentDelegationService {
    * Returns empty string if no DAO configured or not enough data.
    * Ticket 04 — AC-5, AC-6.
    */
-  private buildStatsSectionForReport(report: DiagnosisReport): string {
+  private async buildStatsSectionForReport(report: DiagnosisReport): Promise<string> {
     if (!this.evolutionDao) {
       return ""
     }
 
     try {
       const org = "default" // Harness agent uses default org
-      const stats = this.evolutionDao.getSuccessStats(org, "harness", report.detector)
+      const stats = await this.evolutionDao.getSuccessStats(org, "harness", report.detector)
       return buildStatsSection(stats)
     } catch (err) {
       // Stats injection failure is non-fatal

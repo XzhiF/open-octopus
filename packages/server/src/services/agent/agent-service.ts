@@ -132,7 +132,7 @@ export class AgentService {
     id: string,
     query?: { limit?: number; cursor?: string },
   ): Promise<{ session: AgentSession; messages: AgentPaginatedResponse<AgentMessage> }> {
-    const session = getSessionService().getSession(org, id)
+    const session = await getSessionService().getSession(org, id)
     if (!session) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
@@ -141,7 +141,7 @@ export class AgentService {
     const limit = Math.min(query?.limit ?? 50, 200)
     const cursor = query?.cursor
 
-    const rows = dao.findMessagesBySessionWithCursor(id, limit + 1, cursor)
+    const rows = await dao.findMessagesBySessionWithCursor(id, limit + 1, cursor)
 
     const hasMore = rows.length > limit
     const slicedRows = hasMore ? rows.slice(0, limit) : rows
@@ -168,14 +168,14 @@ export class AgentService {
   }
 
   async updateSession(org: string, id: string, data: { title: string }): Promise<void> {
-    const updated = getSessionService().updateSession(org, id, data)
+    const updated = await getSessionService().updateSession(org, id, data)
     if (!updated) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
   }
 
   async deleteSession(org: string, id: string): Promise<void> {
-    const deleted = getSessionService().deleteSession(org, id)
+    const deleted = await getSessionService().deleteSession(org, id)
     if (!deleted) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
@@ -424,14 +424,14 @@ export class AgentService {
   // ── Evolution ─────────────────────────────────────────────────
 
   async getChangelog(org: string, query?: { skill?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<EvolutionLogEntry>> {
-    const entries = getEvolutionService().listChangelog(org, { skill_name: query?.skill, limit: query?.limit })
+    const entries = await getEvolutionService().listChangelog(org, { skill_name: query?.skill, limit: query?.limit })
     return { items: entries, total: entries.length, has_more: false, next_cursor: null }
   }
 
   async getExperiences(org: string, query?: { skill?: string; q?: string }): Promise<Experience[]> {
     if (query?.q) {
       // Use FTS5 scope-aware search when query text is provided
-      const results = getEvolutionService().searchExperiences(query.q, undefined, 50)
+      const results = await getEvolutionService().searchExperiences(query.q, undefined, 50)
       return results.map(r => ({
         id: r.id,
         skill_name: r.skill_name,
@@ -444,7 +444,7 @@ export class AgentService {
   }
 
   async rollbackEvolution(org: string, id: number): Promise<{ rolled_back_skill: string; new_changelog_id: number }> {
-    const success = getEvolutionService().rollback(org, id)
+    const success = await getEvolutionService().rollback(org, id)
     if (!success) throw Object.assign(new Error(`Entry #${id} not found`), { code: 'NOT_FOUND' })
     return { rolled_back_skill: '', new_changelog_id: 0 }
   }
@@ -630,7 +630,7 @@ export class AgentService {
 
     // Auto-check inactivity (PRD H2: auto-trigger based on inactive_days_threshold)
     if (!config.safe_mode.enabled) {
-      const inactivity = getMemoryService().checkInactivitySafeMode(org)
+      const inactivity = await getMemoryService().checkInactivitySafeMode(org)
       if (inactivity.should_enable) {
         // Auto-enable safe mode due to inactivity
         getConfigManager().updateConfig(org, {

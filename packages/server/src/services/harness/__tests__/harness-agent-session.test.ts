@@ -483,7 +483,8 @@ describe("HarnessController — session lifecycle integration", () => {
     session.recordDecision("build", makeDecision({ decision: "fix_and_retry", reasoning: "test" }))
 
     // End execution
-    controller.onExecutionEnd("exec-1")
+    // P1 B3：onExecutionEnd 已 async（EvolutionDAO/PG 化）—— 必须 await 到收尾完成。
+    await controller.onExecutionEnd("exec-1")
 
     // Session should be gone
     expect(controller.getSession("exec-1")).toBeUndefined()

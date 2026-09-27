@@ -58,7 +58,7 @@ export class RecoveryService {
 
     try {
       // Step 1: Verify DB integrity
-      result.sessions_restored = this.recoverSessions()
+      result.sessions_restored = await this.recoverSessions()
 
       // Step 2: Recover clone provider sessions
       result.provider_sessions_recreated = this.recoverCloneSessions()
@@ -88,9 +88,9 @@ export class RecoveryService {
    * Verify all sessions in DB are consistent.
    * Mark active sessions that were mid-stream as inactive.
    */
-  private recoverSessions(): number {
+  private async recoverSessions(): Promise<number> {
     try {
-      return this.sessionDao.countActiveSessions(this.org)
+      return await this.sessionDao.countActiveSessions(this.org)
     } catch {
       return 0
     }

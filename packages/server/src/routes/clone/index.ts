@@ -230,7 +230,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = crypto.randomUUID()
     const title = body.title ?? `${cloneName} 会话`
 
-    sessionDAO.insertSession({
+    await sessionDAO.insertSession({
       id: sessionId,
       org,
       title,
@@ -241,7 +241,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       updated_at: now,
     })
 
-    const session = sessionDAO.findById(sessionId)
+    const session = await sessionDAO.findById(sessionId)
     return c.json({
       ...session,
       clone_name: cloneName,
@@ -262,7 +262,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const limit = parseInt(c.req.query('limit') ?? '20', 10)
     const cursor = c.req.query('cursor')
 
-    const result = sessionDAO.findByClone(cloneName, { org, limit, cursor })
+    const result = await sessionDAO.findByClone(cloneName, { org, limit, cursor })
     let items = result.items
     if (taskDAO && items.length > 0) {
       const linked = new Set(
@@ -278,18 +278,18 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   })
 
   // ── Get session with messages ────────────────────────────────────
-  app.get('/:name/sessions/:id', (c) => {
+  app.get('/:name/sessions/:id', async (c) => {
     const cloneName = c.req.param('name')
     const sessionId = c.req.param('id')
     const limit = parseInt(c.req.query('limit') ?? '50', 10)
     const before = c.req.query('before')
 
-    const session = sessionDAO.findById(sessionId)
+    const session = await sessionDAO.findById(sessionId)
     if (!session || session.is_deleted || session.clone_name !== cloneName) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
 
-    const messagesResult = sessionDAO.findMessagesBySession(sessionId, { limit, cursor: before })
+    const messagesResult = await sessionDAO.findMessagesBySession(sessionId, { limit, cursor: before })
     return c.json({
       session: {
         ...session,
@@ -308,16 +308,16 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   // `partial` reports whether a streaming assistant row exists in the DB —
   // it lets the frontend finalize leftover partials after a server restart
   // (running=false but the row was never finalized).
-  app.get('/:name/sessions/:id/running', (c) => {
+  app.get('/:name/sessions/:id/running', async (c) => {
     const cloneName = c.req.param('name')
     const sessionId = c.req.param('id')
-    const session = sessionDAO.findById(sessionId)
+    const session = await sessionDAO.findById(sessionId)
     if (!session || session.is_deleted || session.clone_name !== cloneName) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
     return c.json({
       running: isStreamActive(sessionId),
-      partial: sessionDAO.hasStreamingMessage(sessionId),
+      partial: await sessionDAO.hasStreamingMessage(sessionId),
     })
   })
 
@@ -344,7 +344,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const subagents = resolveExpertSubagents(body.subagents ?? [])
 
     // Verify session exists and belongs to clone
-    const session = sessionDAO.findById(sessionId)
+    const session = await sessionDAO.findById(sessionId)
     if (!session || session.is_deleted || session.clone_name !== cloneName) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
@@ -373,11 +373,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // Store user message
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
-    sessionDAO.insertCloneMessage({
+    await sessionDAO.insertCloneMessage({
       id: userMsgId, session_id: sessionId, role: 'user',
       type: 'text', content: body.message, metadata: null, created_at: now,
     })
-    sessionDAO.updateLastMessageAt(sessionId, now)
+    await sessionDAO.updateLastMessageAt(sessionId, now)
 
     // Instantiate CloneRuntime
     const runtime = new CloneRuntime(cloneDef, org)
@@ -571,7 +571,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         // as-is here (a live 'start' should keep spinning in the UI); the
         // fail-normalization happens at finalization. Non-fatal: a DB hiccup
         // must never kill the turn.
-        const maybeFlushPartial = () => {
+        const maybeFlushPartial = async () => {
           try {
             if (Date.now() - lastFlushAt < partialFlushMs) return
             if (!fullContent && !fullThinking && toolCalls.length === 0) return
@@ -583,14 +583,14 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               streaming: true,
             })
             if (!partialRowId) {
-              sessionDAO.insertCloneMessage({
+              await sessionDAO.insertCloneMessage({
                 id: assistantMsgId, session_id: sessionId, role: 'assistant',
                 type: 'text', content: fullContent, metadata,
                 created_at: new Date().toISOString(),
               })
               partialRowId = assistantMsgId
             } else {
-              sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
+              await sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
             }
           } catch (err: unknown) {
             console.error(
@@ -693,7 +693,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }
-          maybeFlushPartial()
+          await maybeFlushPartial()
         }
 
         // 05 — the provider has now received the system-prompt append
@@ -718,7 +718,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               const cloneDir = cloneDef.type === 'built-in'
                 ? getBuiltInCloneDir(cloneName)
                 : getCloneDir(cloneName)
-              const result = memoryService.recordDaily(org, content, sessionId, cloneDir)
+              const result = await memoryService.recordDaily(org, content, sessionId, cloneDir)
               await stream.writeSSE({
                 event: 'tool_call',
                 data: JSON.stringify({
@@ -767,18 +767,18 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           if (partialRowId) {
             // "关闭不丢失": finalize the row the partial-flush loop already
             // wrote — same id, so resume-polling clients merge it in place.
-            sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
+            await sessionDAO.updateMessage(assistantMsgId, { content: fullContent, metadata })
           } else {
-            sessionDAO.insertCloneMessage({
+            await sessionDAO.insertCloneMessage({
               id: assistantMsgId, session_id: sessionId, role: 'assistant',
               type: 'text', content: fullContent, metadata, created_at: assistantNow,
             })
           }
-          sessionDAO.updateLastMessageAt(sessionId, assistantNow)
+          await sessionDAO.updateLastMessageAt(sessionId, assistantNow)
 
           // Update provider_session_id for future resume
           if (resultSessionId) {
-            sessionDAO.updateProviderSession(sessionId, resultSessionId)
+            await sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
 
           // Auto-generate title on first message (title still placeholder).
@@ -791,7 +791,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // to the new name, so the placeholder check below skips re-deriving.
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
             const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
-            sessionDAO.updateSession(sessionId, { title: autoTitle })
+            await sessionDAO.updateSession(sessionId, { title: autoTitle })
           }
 
           // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).
@@ -801,7 +801,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // session.scope_id (SG3). Subsequent turns → targeted UPDATE
           // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
           if (cloneName === 'task-author' && taskDAO) {
-            const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
+            const autoTitle = (await sessionDAO.findById(sessionId))?.title ?? `${cloneName} 会话`
             await autosaveTaskDraft(
               { taskDAO, sessionDAO },
               { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
@@ -813,7 +813,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             data: JSON.stringify({
               session_id: sessionId,
               message_id: assistantMsgId,
-              session_title: sessionDAO.findById(sessionId)?.title,
+              session_title: (await sessionDAO.findById(sessionId))?.title,
               model: body.model ?? cloneDef.config.model ?? undefined,
             }),
           })
@@ -825,9 +825,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         // until running=false; a leftover row would look stuck forever).
         if (partialRowId) {
           try {
-            const row = sessionDAO.findMessageById(assistantMsgId)
+            const row = await sessionDAO.findMessageById(assistantMsgId)
             const meta = row?.metadata ? finalizePartialMeta(row.metadata) : null
-            if (meta) sessionDAO.updateMessage(assistantMsgId, { metadata: meta })
+            if (meta) await sessionDAO.updateMessage(assistantMsgId, { metadata: meta })
           } catch { /* non-fatal — startup sweep is the backstop */ }
         }
         await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })

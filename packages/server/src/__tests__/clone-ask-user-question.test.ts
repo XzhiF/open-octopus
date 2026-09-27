@@ -112,10 +112,10 @@ describePg("clone chat — ask_user_question SSE + 持久化", () => {
 
   beforeAll(async () => {
     process.env.OCTOPUS_HOME = path.join(os.tmpdir(), `octopus-aq-test-${Date.now()}`)
-    // P1 B2 双引擎：tasks 在 PG（注册全局池），sessions/messages 仍在 SQLite。
+    // P1 B3 双引擎：tasks + sessions/messages 都落这座注册 PG 库（SQLite 仅剩非迁移域表）。
     pg = await setupRegisteredPgSchema()
     db = newDb()
-    sessionDAO = new AgentSessionDAO(db)
+    sessionDAO = new AgentSessionDAO(pg!.sql)
     const taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
@@ -167,7 +167,7 @@ describePg("clone chat — ask_user_question SSE + 持久化", () => {
   it("S2: 回合落库行 metadata.tool_calls 含 AskUserQuestion + questions（刷新恢复源）", async () => {
     const { sessionId, sse } = await createSessionAndChat()
     expect(sse).toContain("event: tool_call") // start/input 照发（流内 QuestionCard）
-    const msgs = sessionDAO.findAllMessages(sessionId)
+    const msgs = await sessionDAO.findAllMessages(sessionId)
     const assistant = msgs.find((m) => m.role === "assistant")
     expect(assistant).toBeDefined()
     const meta = JSON.parse(assistant!.metadata ?? "{}") as {

@@ -48,7 +48,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     }
 
     // Verify session exists
-    const session = sessionDao.findSessionById(id)
+    const session = await sessionDao.findSessionById(id)
     if (!session || session.org !== org || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
@@ -56,11 +56,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // Store user message
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
-    sessionDao.insertMessage({
+    await sessionDao.insertMessage({
       id: userMsgId, session_id: id, role: 'user',
       content: body.message, created_at: now,
     })
-    sessionDao.updateLastMessageAt(id, now)
+    await sessionDao.updateLastMessageAt(id, now)
 
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
     try {
@@ -168,7 +168,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   async function autoCompressSession(id: string, org: string, stream: any): Promise<void> {
     try {
       const compressService = getSessionCompressService(org)
-      if (compressService.needsCompression(id)) {
+      if (await compressService.needsCompression(id)) {
         await compressService.compressSession(id)
         await stream.writeSSE({
           event: 'status',
@@ -247,13 +247,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           thinking: fullThinking || undefined,
           tool_calls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
         })
-        sessionDao.insertMessage({
+        await sessionDao.insertMessage({
           id: assistantMsgId, session_id: sessionId, role: 'assistant',
           content: fullContent, tool_calls: toolCallsJson, created_at: assistantNow,
         })
-        sessionDao.updateLastMessageAt(sessionId, assistantNow)
+        await sessionDao.updateLastMessageAt(sessionId, assistantNow)
 
-        autoGenerateTitle(sessionId, org, message, sessionDao)
+        await autoGenerateTitle(sessionId, org, message, sessionDao)
         recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult)
 
         await stream.writeSSE({
@@ -261,7 +261,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           data: JSON.stringify({
             session_id: sessionId, message_id: assistantMsgId,
             orchestration: orchestrationResult,
-            session_title: sessionDao.findById(sessionId)?.title,
+            session_title: (await sessionDao.findById(sessionId))?.title,
           }),
         })
       }
@@ -272,9 +272,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     return { generated }
   }
 
-  function autoGenerateTitle(sessionId: string, org: string, message: string, dao: AgentSessionDAO): void {
+  async function autoGenerateTitle(sessionId: string, org: string, message: string, dao: AgentSessionDAO): Promise<void> {
     try {
-      const sessionRow = dao.findById(sessionId)
+      const sessionRow = await dao.findById(sessionId)
       if (sessionRow && sessionRow.title === '新会话') {
         const rawMsg = message.replace(/\n/g, ' ').trim()
         const stripped = rawMsg
@@ -285,7 +285,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         if (cutPoint > 4) autoTitle = autoTitle.slice(0, cutPoint)
         if (autoTitle.length > 40) autoTitle = autoTitle.slice(0, 37) + '...'
         autoTitle = autoTitle.trim() || rawMsg.slice(0, 30)
-        dao.updateSession(sessionId, { title: autoTitle || '新会话' })
+        await dao.updateSession(sessionId, { title: autoTitle || '新会话' })
 
         // Fire-and-forget LLM title refinement
         setImmediate(async () => {
@@ -302,7 +302,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             if (titleContent) {
               const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
               if (llmTitle && llmTitle !== autoTitle) {
-                dao.updateSessionByOrg(sessionId, org, { title: llmTitle })
+                await dao.updateSessionByOrg(sessionId, org, { title: llmTitle })
               }
             }
           } catch { /* non-fatal */ }
@@ -353,14 +353,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
     const assistantMsgId = crypto.randomUUID()
     const assistantNow = new Date().toISOString()
-    dao.insertMessage({ id: assistantMsgId, session_id: sessionId, role: 'assistant', content: fullContent, created_at: assistantNow })
-    dao.updateLastMessageAt(sessionId, assistantNow)
+    await dao.insertMessage({ id: assistantMsgId, session_id: sessionId, role: 'assistant', content: fullContent, created_at: assistantNow })
+    await dao.updateLastMessageAt(sessionId, assistantNow)
 
     try {
-      const sessionRow = dao.findById(sessionId)
+      const sessionRow = await dao.findById(sessionId)
       if (sessionRow && sessionRow.title === '新会话') {
         const autoTitle = message.slice(0, 50).replace(/\n/g, ' ').trim()
-        dao.updateSession(sessionId, { title: autoTitle || '新会话' })
+        await dao.updateSession(sessionId, { title: autoTitle || '新会话' })
       }
     } catch { /* non-fatal */ }
 
@@ -371,7 +371,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       data: JSON.stringify({
         session_id: sessionId, message_id: assistantMsgId,
         orchestration: orchestrationResult, mode: 'fallback',
-        session_title: dao.findById(sessionId)?.title,
+        session_title: (await dao.findById(sessionId))?.title,
       }),
     })
   }

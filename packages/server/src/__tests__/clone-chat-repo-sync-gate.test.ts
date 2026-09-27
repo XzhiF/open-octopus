@@ -135,11 +135,11 @@ beforeAll(async () => {
   fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "rsync-gate-home-"))
   process.env.HOME = fakeHome
   process.env.USERPROFILE = fakeHome
-  // P1 B2 双引擎：tasks/safety_events 在 PG（注册全局池），sessions/messages 仍在 SQLite。
+  // P1 B3 双引擎：tasks/safety_events/sessions/messages 都落这座注册 PG 库。
   pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
-  sessionDAO = new AgentSessionDAO(db)
+  sessionDAO = new AgentSessionDAO(pg!.sql)
   taskDAO = new TaskDAO(pg.sql)
   initAgentService(sessionDAO, new SafetyDAO(pg.sql))
   appWithGate = new Hono()

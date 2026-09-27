@@ -77,8 +77,8 @@ export function createAllDAOs(db: DatabaseDb): AllDAOs {
     scheduleRun: new ScheduleRunDAO(db),
     chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
     org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
-    agentSession: new AgentSessionDAO(db),
-    evolution: new EvolutionDAO(db),
+    agentSession: lazyDAO(() => new AgentSessionDAO(pgSql())), // B3: PG
+    evolution: lazyDAO(() => new EvolutionDAO(pgSql())), // B3: PG
     clone: lazyDAO(() => new CloneDAO(pgSql())), // B1: PG
     safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
     pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG
@@ -118,8 +118,8 @@ export function createLazyDAOs(): AllDAOs {
     scheduleRun: lazyDAO((db) => new ScheduleRunDAO(db as DatabaseDb)),
     chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
     org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
-    agentSession: lazyDAO((db) => new AgentSessionDAO(db as DatabaseDb)),
-    evolution: lazyDAO((db) => new EvolutionDAO(db as DatabaseDb)),
+    agentSession: lazyDAO(() => new AgentSessionDAO(pgSql())), // B3: PG
+    evolution: lazyDAO(() => new EvolutionDAO(pgSql())), // B3: PG
     clone: lazyDAO(() => new CloneDAO(pgSql())), // B1: PG
     safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
     pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG

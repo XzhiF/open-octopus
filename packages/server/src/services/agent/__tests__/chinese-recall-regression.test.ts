@@ -12,8 +12,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import crypto from 'crypto'
-import { initDb, closeDb, getDb } from '../../../db/connection'
 import { AgentSessionDAO, EvolutionDAO } from '../../../db/dao'
+import { describePg, setupRegisteredPgSchema, type PgFixture } from '../../../db/pg/__tests__/dao-fixture'
 import { recall, rebuildSearchIndexes } from '../recall-service'
 
 const ORG = 'kb-regression-org'
@@ -63,13 +63,14 @@ const KNOWN_FAILS: Array<{ query: string; reason: string }> = [
 
 // ── Fixture 装载 ───────────────────────────────────────────────────
 
-function seedFixtures(): void {
-  const db = getDb()
-  const dao = new AgentSessionDAO(db)
-  const evo = new EvolutionDAO(db)
+let pg: PgFixture
+
+async function seedFixtures(): Promise<void> {
+  const dao = new AgentSessionDAO(pg.sql)
+  const evo = new EvolutionDAO(pg.sql)
 
   for (const exp of EXPERIENCE_FIXTURES) {
-    evo.insertExperienceV2({
+    await evo.insertExperienceV2({
       skill_name: exp.skill,
       content: exp.content,
       source_session_id: null,
@@ -88,33 +89,35 @@ function seedFixtures(): void {
   for (let i = 0; i < SESSION_FIXTURES.length; i++) {
     const f = SESSION_FIXTURES[i]
     const sessionId = `reg-sess-${i}`
-    db.prepare(
-      "INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, 'chat', 1, 0, ?, ?)",
-    ).run(sessionId, ORG, f.title, 'main', NOW, NOW)
-    dao.insertSummaryMessage(crypto.randomUUID(), sessionId, f.summary, NOW, f.source)
+    await pg.sql.unsafe(
+      "INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at) VALUES ($1, $2, $3, $4, 'chat', true, false, $5, $6)",
+      [sessionId, ORG, f.title, 'main', NOW, NOW],
+    )
+    await dao.insertSummaryMessage(crypto.randomUUID(), sessionId, f.summary, NOW, f.source)
   }
 
-  // 存量重建入口 — 回归集本身同时验证 rebuild 生效
-  rebuildSearchIndexes(db)
+  // 检索面重建入口 — 回归集本身同时验证 rebuild 生效
+  await rebuildSearchIndexes()
 }
 
-describe('中文检索回归集 (KB P0)', () => {
-  beforeEach(() => {
-    initDb(':memory:')
-    seedFixtures()
+// P1 B3: 检索链路已迁 postgres.js（FTS5 → messages/experiences 真表检索面）。
+describePg('中文检索回归集 (KB P0)', () => {
+  beforeEach(async () => {
+    pg = await setupRegisteredPgSchema()
+    await seedFixtures()
   })
 
-  afterEach(() => {
-    closeDb()
+  afterEach(async () => {
+    await pg?.close()
   })
 
-  it('回归规模 ≥30 条查询', () => {
+  it('回归规模 ≥30 条查询', async () => {
     expect(CHINESE_QUERIES.length).toBeGreaterThanOrEqual(30)
   })
 
   for (const q of CHINESE_QUERIES) {
-    it(`recall("${q}") 命中 > 0`, () => {
-      const hits = recall(q, { org: ORG, topK: 5 })
+    it(`recall("${q}") 命中 > 0`, async () => {
+      const hits = await recall(q, { org: ORG, topK: 5 })
       const known = KNOWN_FAILS.find((k) => k.query === q)
       if (hits.length === 0) {
         // 只有列入 known-fail 且附理由的查询允许 0 命中
@@ -126,15 +129,16 @@ describe('中文检索回归集 (KB P0)', () => {
     })
   }
 
-  it('known-fail 名单与实际未命中集合相等（不许偷偷删用例）', () => {
-    const missed = CHINESE_QUERIES.filter(
-      (q) => recall(q, { org: ORG, topK: 5 }).length === 0,
-    )
+  it('known-fail 名单与实际未命中集合相等（不许偷偷删用例）', async () => {
+    const missed: string[] = []
+    for (const q of CHINESE_QUERIES) {
+      if ((await recall(q, { org: ORG, topK: 5 })).length === 0) missed.push(q)
+    }
     expect(missed.sort()).toEqual(KNOWN_FAILS.map((k) => k.query).sort())
   })
 
-  it('命中结果带来源标注与真实分数（score 不再恒 0）', () => {
-    const hits = recall('检索', { org: ORG, topK: 5 })
+  it('命中结果带来源标注与真实分数（score 不再恒 0）', async () => {
+    const hits = await recall('检索', { org: ORG, topK: 5 })
     expect(hits.length).toBeGreaterThan(0)
     for (const h of hits) {
       expect(h.score, `hit ${h.kind}:${h.id} 的 score 必须 > 0`).toBeGreaterThan(0)
@@ -146,8 +150,8 @@ describe('中文检索回归集 (KB P0)', () => {
     }
   })
 
-  it('BM25 排序：与「检索」最相关的条目排在最前', () => {
-    const hits = recall('检索', { org: ORG, topK: 5 })
+  it('BM25 排序：与「检索」最相关的条目排在最前', async () => {
+    const hits = await recall('检索', { org: ORG, topK: 5 })
     // 分数降序稳定
     for (let i = 1; i < hits.length; i++) {
       expect(hits[i - 1].score).toBeGreaterThanOrEqual(hits[i].score)
@@ -157,8 +161,8 @@ describe('中文检索回归集 (KB P0)', () => {
     expect(skills).toContain('octo-search')
   })
 
-  it('会话记忆面中文命中（session_memory_fts 走 jieba 重建）', () => {
-    const hits = recall('归档', { org: ORG, topK: 5 })
+  it('会话记忆面中文命中（session_memory_fts 走 jieba 重建）', async () => {
+    const hits = await recall('归档', { org: ORG, topK: 5 })
     const sess = hits.find((h) => h.kind === 'session')
     expect(sess, '「归档」应命中会话摘要 fixture').toBeDefined()
     expect(sess!.content).toContain('归档')

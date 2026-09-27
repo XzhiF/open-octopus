@@ -304,9 +304,9 @@ export class SubsystemAdapter {
    * Search experiences for historical patterns.
    * Delegates to EvolutionDAO.searchByScope() (DB-backed FTS5 search).
    */
-  searchExperiences(query: string, topK: number = 3): Array<{ name: string; content: string; score: number }> {
+  async searchExperiences(query: string, topK: number = 3): Promise<Array<{ name: string; content: string; score: number }>> {
     try {
-      const results = getEvolutionService().searchExperiences(query, undefined, topK)
+      const results = await getEvolutionService().searchExperiences(query, undefined, topK)
       return results.map(r => ({
         name: r.skill_name,
         content: r.content,

@@ -64,14 +64,16 @@ describe('SubsystemAdapter — Dual Store Cleanup', () => {
 
   // ── AC-2: searchExperiences delegates to EvolutionDAO ─────────────
 
-  it('searchExperiences delegates to EvolutionService.searchExperiences', () => {
-    mockSearchExperiences.mockReturnValue([
+  // P1 B3：EvolutionService.searchExperiences 已 async（PG DAO）—— mock 侧同步转
+  // resolved rejection，断言侧 await 传导。
+  it('searchExperiences delegates to EvolutionService.searchExperiences', async () => {
+    mockSearchExperiences.mockResolvedValue([
       { id: 1, skill_name: 'skill-a', content: 'timeout error', scope: 'agent', scope_ref: null, pattern_tags: '[]', outcome: null },
       { id: 2, skill_name: 'skill-b', content: 'timeout handling', scope: 'agent', scope_ref: null, pattern_tags: '[]', outcome: null },
     ])
 
     const adapter = new SubsystemAdapter(testOrg)
-    const results = adapter.searchExperiences('timeout', 5)
+    const results = await adapter.searchExperiences('timeout', 5)
 
     expect(mockSearchExperiences).toHaveBeenCalledWith('timeout', undefined, 5)
     expect(results).toHaveLength(2)
@@ -80,20 +82,20 @@ describe('SubsystemAdapter — Dual Store Cleanup', () => {
     expect(results[1].name).toBe('skill-b')
   })
 
-  it('searchExperiences returns empty array when EvolutionService throws', () => {
-    mockSearchExperiences.mockImplementation(() => { throw new Error('DB error') })
+  it('searchExperiences returns empty array when EvolutionService throws', async () => {
+    mockSearchExperiences.mockRejectedValue(new Error('DB error'))
 
     const adapter = new SubsystemAdapter(testOrg)
-    const results = adapter.searchExperiences('anything')
+    const results = await adapter.searchExperiences('anything')
 
     expect(results).toEqual([])
   })
 
-  it('searchExperiences returns empty array when no results', () => {
-    mockSearchExperiences.mockReturnValue([])
+  it('searchExperiences returns empty array when no results', async () => {
+    mockSearchExperiences.mockResolvedValue([])
 
     const adapter = new SubsystemAdapter(testOrg)
-    const results = adapter.searchExperiences('nonexistent')
+    const results = await adapter.searchExperiences('nonexistent')
 
     expect(results).toEqual([])
   })

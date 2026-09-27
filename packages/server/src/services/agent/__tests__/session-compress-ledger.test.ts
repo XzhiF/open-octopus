@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
 import { applySchema } from "../../../db/schema"
 import { AgentSessionDAO } from "../../../db/dao"
 import { TokenUsageDAO } from "../../../db/dao/token-usage-dao"
 import { BillingDAO } from "../../../db/dao/billing-dao"
+import { describePg, pgTestEnabledOn, setupPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import {
   SessionCompressService,
   type CompressionLlmCall,
@@ -28,21 +29,22 @@ const LLM_USAGE = { inputTokens: 1234, outputTokens: 99, cacheReadTokens: 7, cac
 let db: Database.Database
 let dao: AgentSessionDAO
 let tokenDao: TokenUsageDAO
+// P1 B3: sessions/messages 已迁 PG —— 双引擎：账本/计费仍走 SQLite，会话造数走 PG。
+let pg: PgFixture | null = null
 const ORG = "t04-org"
 
-function seedSession(messageCount: number): string {
+async function seedSession(messageCount: number): Promise<string> {
   const sid = randomUUID()
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
-    VALUES (?, ?, 'E2E_TEST_t04', 'main', 1, 0, ?, ?)
-  `).run(sid, ORG, now, now)
-  const ins = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `)
+    VALUES ($1, $2, 'E2E_TEST_t04', 'main', true, false, $3, $4)
+  `, [sid, ORG, now, now])
   for (let i = 0; i < messageCount; i++) {
-    ins.run(`m-${sid}-${i}`, sid, i % 2 === 0 ? "user" : "assistant", `第${i}条消息，内容是给 add billing 的实现细节说明，完成压缩验证。已记录在案。`, `2026-09-${String((i % 28) + 1).padStart(2, "0")}T00:00:0${i % 9}.000Z`)
+    await pg!.sql.unsafe(`
+      INSERT INTO messages (id, session_id, role, content, created_at)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [`m-${sid}-${i}`, sid, i % 2 === 0 ? "user" : "assistant", `第${i}条消息，内容是给 add billing 的实现细节说明，完成压缩验证。已记录在案。`, `2026-09-${String((i % 28) + 1).padStart(2, "0")}T00:00:0${i % 9}.000Z`])
   }
   return sid
 }
@@ -66,10 +68,13 @@ function viewCost(id: unknown): number | null {
   return r.cost_usd
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new Database(":memory:")
   applySchema(db)
-  dao = new AgentSessionDAO(db)
+  if (pgTestEnabledOn()) {
+    pg = await setupPgSchema()
+    dao = new AgentSessionDAO(pg.sql)
+  }
   tokenDao = new TokenUsageDAO(db)
   new BillingDAO(db).createPrice({
     id: "OC-t04", vendor: "e2e", model_id: "E2E_TEST_comp",
@@ -117,9 +122,15 @@ describe("v47 迁移：老库 llm_calls（NOT NULL 归属列）blue-green rebuil
   })
 })
 
-describe("session 压缩入账（票04/KD24/US3）", () => {
+afterEach(async () => {
+  await pg?.close()
+  pg = null
+  db.close()
+})
+
+describePg("session 压缩入账（票04/KD24/US3）", () => {
   it("LLM seam 成功 → 恰一条 session_compress 行，token=厂商真值，cost 手算一致，归属会话如实", async () => {
-    const sid = seedSession(8)
+    const sid = await seedSession(8)
     const llm: CompressionLlmCall = async () =>
       ({ text: "【LLM 摘要】压缩了早期话题。", model: "E2E_TEST_comp", usage: LLM_USAGE } satisfies CompressionLlmResult)
 
@@ -145,20 +156,20 @@ describe("session 压缩入账（票04/KD24/US3）", () => {
   })
 
   it("入账值 = chunk 真值 ≠ tokenEstimate（证明非抄估算，AC2）", async () => {
-    const sid = seedSession(8)
+    const sid = await seedSession(8)
     const llm: CompressionLlmCall = async () =>
       ({ text: "s", model: "E2E_TEST_comp", usage: LLM_USAGE } satisfies CompressionLlmResult)
     await service(llm).compressSession(sid)
     const r = ledgerRows(sid)[0]
     expect(r.input_tokens).toBe(1234) // 厂商真值逐字段相等（来源 = 注入 seam 的 chunk usage）
     expect(r.output_tokens).toBe(99)
-    const estimate = service().getCompressedContext(sid).total_tokens_estimate // 估算仍在预算口径
+    const estimate = (await service().getCompressedContext(sid)).total_tokens_estimate // 估算仍在预算口径
     expect(estimate).toBeGreaterThan(0)
     expect([1234, 99, 1234 + 99 + 7 + 3]).not.toContain(estimate) // 换数据也不巧合
   })
 
   it("LLM seam 抛错 → 不落半行，压缩走确定性摘要回退（AC3）", async () => {
-    const sid = seedSession(8)
+    const sid = await seedSession(8)
     const llm: CompressionLlmCall = async () => { throw new Error("provider down") }
     const result = await service(llm).compressSession(sid)
     expect(result.compressed_count).toBe(6)
@@ -167,17 +178,17 @@ describe("session 压缩入账（票04/KD24/US3）", () => {
   })
 
   it("LLM seam 返回 null / 缺 usage → 不落半行，回退摘要", async () => {
-    const s1 = seedSession(8)
+    const s1 = await seedSession(8)
     await service(async () => null).compressSession(s1)
     expect(ledgerRows(s1)).toHaveLength(0)
 
-    const s2 = seedSession(8)
+    const s2 = await seedSession(8)
     await service(async () => ({ text: "t", model: null, usage: undefined }) as unknown as CompressionLlmResult).compressSession(s2)
     expect(ledgerRows(s2)).toHaveLength(0)
   })
 
   it("未配价模型 → 行仍入账，视图 cost NULL（NEW-r2：unpriced 不焊 0、不估算）", async () => {
-    const sid = seedSession(8)
+    const sid = await seedSession(8)
     const llm: CompressionLlmCall = async () =>
       ({ text: "s", model: "E2E_TEST_noprice-t04", usage: LLM_USAGE } satisfies CompressionLlmResult)
     await service(llm).compressSession(sid)
@@ -191,7 +202,7 @@ describe("session 压缩入账（票04/KD24/US3）", () => {
   })
 
   it("消息数不足以压缩 → 零调用零行（不造数）", async () => {
-    const sid = seedSession(2)
+    const sid = await seedSession(2)
     let called = 0
     const llm: CompressionLlmCall = async () => { called++; return { text: "s", model: "E2E_TEST_comp", usage: LLM_USAGE } }
     const result = await service(llm).compressSession(sid)
@@ -201,7 +212,7 @@ describe("session 压缩入账（票04/KD24/US3）", () => {
   })
 
   it("无 seam（构造兼容）→ 行为与改造前等价：确定性摘要，无 llm_calls 行", async () => {
-    const sid = seedSession(8)
+    const sid = await seedSession(8)
     const svc = new SessionCompressService(ORG, dao, { threshold_messages: 5, retain_recent: 2 })
     const result = await svc.compressSession(sid)
     expect(result.compressed_count).toBe(6)

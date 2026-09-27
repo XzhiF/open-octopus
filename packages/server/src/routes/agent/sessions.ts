@@ -24,7 +24,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         // Empty body is fine
       }
 
-      const session = getSessionService().createSession(org, {
+      const session = await getSessionService().createSession(org, {
         clone_name: body.clone_name,
       })
 
@@ -39,7 +39,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   /**
    * GET /sessions — List sessions
    */
-  sessions.get('/sessions', (c) => {
+  sessions.get('/sessions', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) {
@@ -51,7 +51,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       const clone = c.req.query('clone')
       const session_type = c.req.query('session_type')
 
-      const result = getSessionService().listSessions(org, {
+      const result = await getSessionService().listSessions(org, {
         limit: Math.min(limit, 100),
         cursor,
         clone,
@@ -77,7 +77,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       }
 
       const id = c.req.param('id')
-      const session = getSessionService().getSession(org, id)
+      const session = await getSessionService().getSession(org, id)
       if (!session) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -86,7 +86,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200)
       const cursor = c.req.query('cursor')
 
-      const msgRows = sessionDAO.findMessagesBySessionWithCursor(id, limit + 1, cursor)
+      const msgRows = await sessionDAO.findMessagesBySessionWithCursor(id, limit + 1, cursor)
       const hasMore = msgRows.length > limit
       const messages = (hasMore ? msgRows.slice(0, limit) : msgRows).reverse().map((r) => {
         // Parse tool_calls column — may be new format { thinking, tool_calls } or old format (plain array)
@@ -154,7 +154,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       const id = c.req.param('id')
       const body = await c.req.json<{ title: string }>()
 
-      const updated = getSessionService().updateSession(org, id, { title: body.title })
+      const updated = await getSessionService().updateSession(org, id, { title: body.title })
       if (!updated) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -178,7 +178,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       }
 
       const id = c.req.param('id')
-      const deleted = getSessionService().deleteSession(org, id)
+      const deleted = await getSessionService().deleteSession(org, id)
       if (!deleted) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }

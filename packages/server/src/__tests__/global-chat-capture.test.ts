@@ -15,6 +15,7 @@ import path from "path"
 import os from "os"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO } from "../db/dao"
 import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { BillingDAO } from "../db/dao/billing-dao"
@@ -37,9 +38,13 @@ function resultChunk(model: string, usage = USAGE_P): Record<string, unknown> {
   }
 }
 
+// P1 B3：sessions/messages 已迁 PG —— Main Agent 域的会话造数走随机 PG 库；
+// llm_calls/账本视图仍在 SQLite（B4 域），global_chat 两例保持双模式可跑。
 let db: Database.Database
+let pg: PgFixture | null = null
 let tokenDao: TokenUsageDAO
-let sessionDAO: AgentSessionDAO
+// P1 B3：AgentSessionDAO 是 postgres.js DAO —— 仅 PG 模式（Main Agent 域用例）注入。
+let sessionDAO: AgentSessionDAO = null as unknown as AgentSessionDAO
 let sendQueryCalls: number
 let streamQueue: Array<Array<Record<string, unknown>>>
 
@@ -69,7 +74,6 @@ beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
   tokenDao = new TokenUsageDAO(db)
-  sessionDAO = new AgentSessionDAO(db)
   const billing = new BillingDAO(db)
   billing.createPrice({
     id: "OC-gp", vendor: "e2e", model_id: PRIMARY,
@@ -103,7 +107,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-afterAll(() => {
+afterAll(async () => {
+  await pg?.close()
+  pg = null
   try { fs.rmSync(TEST_DIR, { recursive: true, force: true }) } catch { /* non-fatal */ }
   db.close()
 })
@@ -172,9 +178,9 @@ function mainApp() {
   return app
 }
 
-function makeSession(id: string, cloneName: string | null) {
+async function makeSession(id: string, cloneName: string | null) {
   const now = new Date().toISOString()
-  sessionDAO.insertSession({
+  await sessionDAO.insertSession({
     id, org: ORG, title: "T", clone_name: cloneName, session_type: "main",
     created_at: now, updated_at: now,
   })
@@ -190,9 +196,16 @@ async function mainChat(app: Hono, body: Record<string, unknown>) {
   return res
 }
 
-describe("Main Agent 入账与委托去重（US2/KD23）", () => {
+describePg("Main Agent 入账与委托去重（US2/KD23）", () => {
+  beforeAll(async () => {
+    // P1 B3: sessions/messages 走 PG —— 注册全局池供路由内部经 pgSql() 的懒 DAO 使用。
+    if (!pgTestEnabledOn()) return
+    pg = await setupRegisteredPgSchema()
+    sessionDAO = new AgentSessionDAO(pg.sql)
+  })
+
   it("统一入口直答（无委托）→ 恰一条 global_chat 行", async () => {
-    makeSession("ma-1", null)
+    await makeSession("ma-1", null)
     installProvider([[{ type: "text_delta", content: "direct answer" }, resultChunk(PRIMARY)]])
     await mainChat(mainApp(), { message: "E2E_TEST direct", session_id: "ma-1" })
 
@@ -206,7 +219,7 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
   })
 
   it("@@mention 委托（无自引用）→ Main 不产生路由调用，恰一条 clone_chat 行归分身（node_id=clone）", async () => {
-    makeSession("ma-2", "workspace")
+    await makeSession("ma-2", "workspace")
     installProvider([[{ type: "text_delta", content: "clone answer" }, resultChunk(SECONDARY, USAGE_S)]])
     await mainChat(mainApp(), { message: "E2E_TEST @scheduler do it", session_id: "ma-2", delegate_to: "scheduler" })
 
@@ -221,7 +234,7 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
   })
 
   it("工具化委托（delegate_to_*）→ Main 路由轮 + 分身应答轮各一行，行数=真实调用数=2，无双计", async () => {
-    makeSession("ma-3", null)
+    await makeSession("ma-3", null)
     installProvider([
       [ // main 路由轮：发起 delegate 工具调用 + 自身 result（真实调用 #1）
         { type: "tool_call_start", toolCallId: "tc1", toolName: "delegate_to_scheduler" },
@@ -248,7 +261,7 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
   })
 
   it("多轮：同一会话两轮各一次直答 → 两行，一 chunk 一行不叠写", async () => {
-    makeSession("ma-4", null)
+    await makeSession("ma-4", null)
     installProvider([[resultChunk(PRIMARY)]])
     await mainChat(mainApp(), { message: "E2E_TEST r1", session_id: "ma-4" })
     installProvider([[resultChunk(SECONDARY)]])

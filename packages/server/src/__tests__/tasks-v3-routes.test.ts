@@ -82,18 +82,13 @@ function installSkill(
 }
 
 /** Insert a sessions row directly (bypass the DAO) to seed a source_chat_session_id.
- *  P1 B2: sessions 行仍在 SQLite（AgentSessionDAO 域），但 PG 的 tasks→sessions FK 要求
- *  PG 侧也有父行 —— 最小裸 INSERT 复制过去（配方第 5 条）。 */
+ *  P1 B3: sessions 已迁 PG —— 路由/服务读写都认 PG 行；SQLite 侧仅留非迁移域表。
+ *  （tasks.source_chat_session_id FK 与 scope_id/title 断言全部对 PG。） */
 async function insertSession(db: Database.Database, sessionId: string, org: string): Promise<void> {
   const now = new Date().toISOString()
-  db.prepare(`
-    INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type,
-      is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
-    VALUES (?, ?, ?, NULL, NULL, ?, 1, 0, NULL, NULL, NULL, ?, ?)
-  `).run(sessionId, org, "E2E_TD session", "task-author", now, now)
   await pg!.sql.unsafe(`
-    INSERT INTO sessions (id, org, title, session_type, created_at, updated_at)
-    VALUES ($1, $2, $3, 'task-author', $4, $5)
+    INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES ($1, $2, $3, NULL, 'task-author', true, false, $4, $5)
   `, [sessionId, org, "E2E_TD session", now, now])
 }
 
@@ -109,8 +104,9 @@ async function readAuthoringResources(db: Database.Database, id: string): Promis
   return JSON.parse(row.authoring_resources)
 }
 
-function readScopeId(db: Database.Database, sessionId: string): string | null {
-  const row = db.prepare("SELECT scope_id FROM sessions WHERE id = ?").get(sessionId) as
+// P1 B3: sessions 已迁 PG —— scope_id 断言直读随机库。
+async function readScopeId(db: Database.Database, sessionId: string): Promise<string | null> {
+  const row = (await pg!.sql`SELECT scope_id FROM sessions WHERE id = ${sessionId}`)[0] as
     { scope_id: string | null }
   return row.scope_id
 }
@@ -157,7 +153,7 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
     rm = new ResourceManager({ basePath: rmBase })
     taskHome = new TaskHomeService(homeBase)
     const materializer = new PluginMaterializer(rm)
-    agentSessionDAO = new AgentSessionDAO(db)
+    agentSessionDAO = new AgentSessionDAO(pg!.sql)
     const sse = new SSEService()
     const service = new TasksService(
       db,
@@ -273,7 +269,7 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
     ).toContain("Body A.")
 
     // R3 DB cross-validation: sessions.scope_id == task.id (D15/SG3).
-    expect(readScopeId(db, sessionId)).toBe(task.id)
+    expect(await readScopeId(db, sessionId)).toBe(task.id)
   })
 
   it("AC2b: POST with task_type + default group only → home created, no skills materialized (D17 empty marker)", async () => {
@@ -325,7 +321,7 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
     expect(drafts).toHaveLength(1)
     expect(drafts[0]!.id).toBe(task.id)
     // scope_id writeback is bidirectional (SG3).
-    expect(readScopeId(db, sessionId)).toBe(task.id)
+    expect(await readScopeId(db, sessionId)).toBe(task.id)
   })
 
   // ── AC4: PUT lock — skill_groups/task_type immutable post-create (SW-BP9) ──
@@ -561,7 +557,7 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
     })
     expect(res.status).toBe(201)
     const task = await json<{ id: string; version: number }>(res)
-    expect(readScopeId(db, sessionId)).toBe(task.id)
+    expect(await readScopeId(db, sessionId)).toBe(task.id)
 
     // Header rename (the EditableTitle flow) → PUT {name}.
     const putRes = await app.request(`/api/tasks/${task.id}`, {
@@ -573,7 +569,8 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
 
     // The bound session title follows — so the autosave seam (which writes
     // session.title → tasks.name) can never clobber the manual rename.
-    const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionId) as {
+    // P1 B3: sessions 已迁 PG —— 标题断言直读随机库。
+    const s = (await pg!.sql`SELECT title FROM sessions WHERE id = ${sessionId}`)[0] as {
       title: string
     }
     expect(s.title).toBe("E2E_TD after-rename")

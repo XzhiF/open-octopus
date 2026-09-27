@@ -181,7 +181,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       const now = new Date().toISOString()
-      sessionDAO.insertSession({
+      await sessionDAO.insertSession({
         id: sessionId,
         org,
         title: 'Main Agent 会话',
@@ -191,7 +191,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         updated_at: now,
       })
     } else {
-      const existing = sessionDAO.findById(sessionId)
+      const existing = await sessionDAO.findById(sessionId)
       if (!existing || existing.is_deleted) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
       }
@@ -200,11 +200,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // Store user message
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
-    sessionDAO.insertMessage({
+    await sessionDAO.insertMessage({
       id: userMsgId, session_id: sessionId, role: 'user',
       content: body.message, created_at: now,
     })
-    sessionDAO.updateLastMessageAt(sessionId, now)
+    await sessionDAO.updateLastMessageAt(sessionId, now)
 
     // ══════════════════════════════════════════════════════════════
     // Deterministic delegation (@@mention)
@@ -213,7 +213,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       const targetClone = body.delegate_to
 
       // Self-reference check: if session belongs to same clone, treat as normal message
-      const session = sessionDAO.findById(sessionId)
+      const session = await sessionDAO.findById(sessionId)
       if (session?.clone_name === targetClone) {
         // Self-reference → fall through to normal LLM routing
       } else {
@@ -279,25 +279,25 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               const assistantNow = new Date().toISOString()
               const metadata = JSON.stringify({ source: targetClone, delegation: true })
 
-              sessionDAO.insertMessage({
+              await sessionDAO.insertMessage({
                 id: assistantMsgId, session_id: sessionId!, role: 'assistant',
                 content: fullContent, metadata, created_at: assistantNow,
               })
-              sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+              await sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
 
               await stream.writeSSE({
                 event: 'done',
                 data: JSON.stringify({
                   session_id: sessionId,
                   message_id: assistantMsgId,
-                  session_title: sessionDAO.findById(sessionId!)?.title,
+                  session_title: (await sessionDAO.findById(sessionId!))?.title,
                 }),
               })
 
               // P4: Auto-trigger process-marks after delegation response
               try {
                 const evolutionService = getEvolutionService()
-                evolutionService.processUnprocessedMarks(org, sessionId!)
+                await evolutionService.processUnprocessedMarks(org, sessionId!)
               } catch {
                 // process-marks failure is non-fatal
               }
@@ -460,17 +460,17 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             delegation: delegationDetected,
           })
 
-          sessionDAO.insertMessage({
+          await sessionDAO.insertMessage({
             id: assistantMsgId, session_id: sessionId!, role: 'assistant',
             content: fullContent, metadata, created_at: assistantNow,
           })
-          sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+          await sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
 
           // Auto-generate title
-          const sessionRow = sessionDAO.findById(sessionId!)
+          const sessionRow = await sessionDAO.findById(sessionId!)
           if (sessionRow && (sessionRow.title === 'Main Agent 会话' || sessionRow.title === '新会话')) {
             const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || 'Main Agent 会话'
-            sessionDAO.updateSession(sessionId!, { title: autoTitle })
+            await sessionDAO.updateSession(sessionId!, { title: autoTitle })
           }
 
           await stream.writeSSE({
@@ -478,14 +478,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             data: JSON.stringify({
               session_id: sessionId,
               message_id: assistantMsgId,
-              session_title: sessionDAO.findById(sessionId!)?.title,
+              session_title: (await sessionDAO.findById(sessionId!))?.title,
             }),
           })
 
           // P4: Auto-trigger process-marks after chat response
           try {
             const evolutionService = getEvolutionService()
-            evolutionService.processUnprocessedMarks(org, sessionId!)
+            await evolutionService.processUnprocessedMarks(org, sessionId!)
           } catch {
             // process-marks failure is non-fatal — don't disrupt the response
           }
@@ -528,7 +528,7 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            const markResult = evolutionService.markInsight(skillName, insight, sessionId, org)
+            const markResult = await evolutionService.markInsight(skillName, insight, sessionId, org)
             resultContent = `Insight marked (id: ${markResult.id}) for skill "${skillName}"`
           } catch {
             resultContent = `Failed to mark insight for "${skillName}"`
@@ -560,7 +560,7 @@ async function executeEvolutionTools(
               const current = fs.existsSync(skillPath) ? fs.readFileSync(skillPath, 'utf-8') : ''
               fs.writeFileSync(skillPath, current + `\n\n> Evolution (${new Date().toISOString().split('T')[0]}): ${summary}`, 'utf-8')
             }
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: skillName, change_type: changeType, level, summary,
             })
             resultContent = `Skill "${skillName}" evolved (${changeType}): ${summary}`
@@ -579,7 +579,7 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            const result = evolutionService.recordExperience(org, {
+            const result = await evolutionService.recordExperience(org, {
               skill_name: skillName, content, session_id: sessionId,
             })
             resultContent = `Experience recorded (id: ${result.id}) for skill "${skillName}"`
@@ -634,7 +634,7 @@ async function executeEvolutionTools(
             }
 
             // Record evolution log
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: targetSkill,
               change_type: 'major',
               level: 'major',
@@ -642,7 +642,7 @@ async function executeEvolutionTools(
             })
 
             // Record experience
-            evolutionService.recordExperience(org, {
+            await evolutionService.recordExperience(org, {
               skill_name: targetSkill,
               content: `Skill merge: "${sourceSkill}" merged into "${targetSkill}" — source content integrated, original archived.`,
               session_id: sessionId,
@@ -664,11 +664,11 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: skillName, change_type: 'minor', level: 'minor',
               summary: `Issue noted: ${reason}`,
             })
-            evolutionService.recordExperience(org, {
+            await evolutionService.recordExperience(org, {
               skill_name: skillName,
               content: `Skill issue flagged: ${reason}`,
               session_id: sessionId,
@@ -739,7 +739,7 @@ async function executeMemoryTools(
               }
             }
 
-            const result = memoryService.recordDaily(org, content, sessionId, cloneDir)
+            const result = await memoryService.recordDaily(org, content, sessionId, cloneDir)
             resultContent = JSON.stringify(result)
           } catch (e) {
             resultContent = `Failed to record daily memory: ${e instanceof Error ? e.message : String(e)}`

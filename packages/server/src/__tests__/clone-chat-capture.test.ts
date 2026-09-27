@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO } from "../db/dao"
 import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { BillingDAO } from "../db/dao/billing-dao"
@@ -51,6 +52,9 @@ const ORG = "E2E_TEST_clone-chat"
 const PRIMARY = "E2E_TEST_clone-primary"
 const SECONDARY = "E2E_TEST_clone-secondary"
 
+// P1 B3：sessions/messages 已迁 PG —— 会话与落库行走随机 PG 库；
+// llm_calls/账本视图仍在 SQLite（B4 域）。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let sessionDAO: AgentSessionDAO
@@ -99,10 +103,11 @@ function resultChunk(over: Record<string, unknown> = {}): Record<string, unknown
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
-  sessionDAO = new AgentSessionDAO(db)
+  sessionDAO = new AgentSessionDAO(pg!.sql)
   tokenDao = new TokenUsageDAO(db)
   app = new Hono()
   app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, tokenUsageDao: tokenDao, partialFlushMs: 0 }))
@@ -119,14 +124,18 @@ beforeAll(() => {
   })
 })
 
-afterAll(() => { db.close() })
+afterAll(async () => {
+  await pg?.close()
+  pg = null
+  db.close()
+})
 
 beforeEach(() => {
   db.prepare("DELETE FROM llm_calls").run()
   control.chunks = []
 })
 
-describe("分身聊天入账（票02 / US1）", () => {
+describePg("分身聊天入账（票02 / US1）", () => {
   it("一轮对话 result chunk → 恰一行：source_path=clone_chat、session_id=会话、四类 token；视图 cost 与手算一致", async () => {
     const sessionId = await createSession()
     control.chunks = [{ type: "text_delta", content: "hello" }, resultChunk()]
@@ -201,11 +210,12 @@ describe("分身聊天入账（票02 / US1）", () => {
     await chatOnce(sessionId, "E2E_TEST msg-error")
     expect(llmRows()).toHaveLength(0)
     // 纯旁路：消息行照常落库（finalized，无 streaming 残留）
-    const msg = db.prepare(
-      "SELECT content, metadata FROM messages WHERE session_id = ? AND role='assistant'",
-    ).get(sessionId) as { content: string; metadata: string }
+    // P1 B3: messages 已迁 PG —— 直读随机库；jsonb::text 冒号后有空白，改语义判定。
+    const msg = (await pg!.sql`
+      SELECT content, metadata::text AS metadata FROM messages
+      WHERE session_id = ${sessionId} AND role='assistant'`)[0] as { content: string; metadata: string }
     expect(msg.content).toBe("half")
-    expect(msg.metadata).not.toContain('"streaming":true')
+    expect((JSON.parse(msg.metadata) as { streaming?: unknown }).streaming).toBeUndefined()
   })
 
   it("token/usage 全零的 result → 不记行（真值为空不造数）", async () => {

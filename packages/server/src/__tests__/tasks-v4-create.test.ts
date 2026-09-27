@@ -70,8 +70,8 @@ async function readTaskRow(id: string): Promise<{
 }
 
 beforeAll(async () => {
-  // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
-  // sessions/workspaces/executions/schedules 仍在 SQLite `db`（B5 域）。
+  // P1 B3 双引擎 fixture：tasks + sessions 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
+  // workspaces/executions/schedules 仍在 SQLite `db`（B5 域）。
   pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
@@ -86,7 +86,7 @@ beforeAll(async () => {
     },
   } as any
   const service = new TasksService(
-    db, sse, new AgentSessionDAO(db), taskHome, undefined, stubBuiltIn,
+    db, sse, new AgentSessionDAO(pg!.sql), taskHome, undefined, stubBuiltIn,
   )
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(service, sse))
@@ -161,18 +161,14 @@ describePg("A. POST 直建 v4 draft（契约修复主案）", () => {
 
   it("A3: session 绑定（D15 会话优先）→ scope_id 反链生效，autosave 命中不另建", async () => {
     const now = new Date().toISOString()
-    const session = db
-      .prepare(
-        `INSERT INTO sessions (id, org, clone_name, title, scope_id, created_at, updated_at)
-         VALUES ('e2e-td-s1', ?, 'task-author', '', NULL, ?, ?)`,
-      )
-      .run(ORG, now, now)
-    expect(session.changes).toBe(1)
-    // P1 B2 跨引擎 FK：PG tasks.source_chat_session_id → PG sessions —— 最小父行复制过去。
-    await pg!.sql.unsafe(
-      `INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ($1, $2, '', $3, $4)`,
-      ["e2e-td-s1", ORG, now, now],
+    // P1 B3: sessions 已迁 PG —— 造数直接落随机库（旧 SQLite 双写与跨引擎 FK 镜像退役；
+    // anti-fake-run：受影响行数 = 1 独立确认真写入了行）。
+    const seeded = await pg!.sql.unsafe(
+      `INSERT INTO sessions (id, org, clone_name, title, scope_id, created_at, updated_at)
+       VALUES ('e2e-td-s1', $1, 'task-author', '', NULL, $2, $3)`,
+      [ORG, now, now],
     )
+    expect(seeded.count).toBe(1)
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -185,7 +181,7 @@ describePg("A. POST 直建 v4 draft（契约修复主案）", () => {
     })
     expect(res.status).toBe(201)
     const dto = (await res.json()) as { id: string }
-    const linked = db.prepare("SELECT scope_id FROM sessions WHERE id = 'e2e-td-s1'").get() as {
+    const linked = (await pg!.sql`SELECT scope_id FROM sessions WHERE id = 'e2e-td-s1'`)[0] as {
       scope_id: string
     }
     expect(linked.scope_id).toBe(dto.id)

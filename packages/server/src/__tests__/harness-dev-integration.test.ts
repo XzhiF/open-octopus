@@ -127,16 +127,14 @@ describePg("R2-02 Harness Dev Integration", () => {
       expect(harnessController.isActive(executionId)).toBe(true)
 
       // Simulate what autoResume should do: call onExecutionEnd after completion
-      harnessController.onExecutionEnd(executionId)
+      await harnessController.onExecutionEnd(executionId)
       expect(harnessController.isActive(executionId)).toBe(false)
       expect(harnessController.activePipelineCount).toBe(0)
     })
 
-    it("onExecutionEnd is safe to call for unknown execution", () => {
+    it("onExecutionEnd is safe to call for unknown execution", async () => {
       // Should not throw even if execution was never started
-      expect(() => {
-        harnessController.onExecutionEnd("nonexistent-exec-id")
-      }).not.toThrow()
+      await expect(harnessController.onExecutionEnd("nonexistent-exec-id")).resolves.not.toThrow()
     })
   })
 
@@ -153,7 +151,7 @@ describePg("R2-02 Harness Dev Integration", () => {
       expect(harnessController.isActive(executionId)).toBe(true)
 
       // Simulate what runInteractionCompleteInBackground should do after completion
-      harnessController.onExecutionEnd(executionId)
+      await harnessController.onExecutionEnd(executionId)
       expect(harnessController.isActive(executionId)).toBe(false)
     })
   })
