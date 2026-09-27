@@ -1,0 +1,6 @@
+{
+  "note": "per-package @typescript-eslint/no-floating-promises violation counts; ratchet: only decreases allowed",
+  "packages": {
+    "server": 26
+  }
+}
