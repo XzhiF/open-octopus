@@ -65,7 +65,13 @@ describe('resolveModelAlias', () => {
 
 describe('loadModelAliasConfig', () => {
   it('returns defaults when no file exists', () => {
-    const config = loadModelAliasConfig({ orgDir: '/nonexistent', globalDir: '/nonexistent2' })
+    // includeHomeFallback: false → full isolation; otherwise the machine's real
+    // ~/.octopus/models.yaml would leak in and override the built-in defaults.
+    const config = loadModelAliasConfig({
+      orgDir: '/nonexistent',
+      globalDir: '/nonexistent2',
+      includeHomeFallback: false,
+    })
     expect(config).toEqual(DEFAULT_MODEL_ALIASES)
   })
 })

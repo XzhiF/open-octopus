@@ -20,6 +20,7 @@ import { HarnessController } from "../services/harness/harness-controller"
 import { HarnessConfigService } from "../services/harness/config-service"
 import { DetectorPipeline } from "../services/harness/detector-pipeline"
 import type { HarnessEvent } from "@octopus/shared"
+import type { NodeExecutionResult } from "@octopus/engine"
 
 // Load test workflow fixtures
 const STUPID_RETRY_WF = fs.readFileSync(
@@ -136,7 +137,7 @@ describe("Harness Integration Tests", () => {
   })
 
   describe("AC4: Stupid Retry Auto-Correction", () => {
-    it("detects repeated errors and generates diagnosis report", () => {
+    it("detects repeated errors and generates diagnosis report", async () => {
       const executionId = randomUUID()
       const nodeId = "bash-fail"
       const mockCallbacks = {
@@ -147,23 +148,27 @@ describe("Harness Integration Tests", () => {
 
       const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Cannot find module 'xyz'",
         exitCode: 1,
         logLines: ["error: Cannot find module 'xyz'"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // First attempt fails → onNodeEnd
+      // Current contract: detection fires in onBeforeRetry (awaited, runs BEFORE
+      // the onNodeRetry notification). Engine order per failed attempt N:
+      //   onNodeEnd(N) → onBeforeRetry(N) → onNodeRetry(N)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-
-      // Engine decides to retry → onNodeRetry (carries the result for detectors)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
 
-      // Second attempt fails with same error → onNodeEnd
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-
-      // Second retry → this should trigger the detector (threshold=2)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
       wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
+
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Verify harness_events table has diagnosis record
       const events = harnessDAO.findEvents(executionId)
@@ -196,17 +201,22 @@ describe("Harness Integration Tests", () => {
 
       const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Cannot find module 'xyz'",
         exitCode: 1,
         logLines: ["error: Cannot find module 'xyz'"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Simulate repeated failures through onNodeRetry (which carries result)
+      // Simulate repeated failures through onBeforeRetry (current detection hook)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
 
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
       wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
 
       // Wait a bit for async operations (strategy engine is async)
@@ -377,17 +387,20 @@ describe("Harness Integration Tests", () => {
 
       const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Same error",
         exitCode: 1,
         logLines: ["Same error"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Trigger stupid retry detection (threshold=2)
+      // Trigger stupid retry detection (threshold=2) via onBeforeRetry hook
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
 
       await new Promise(resolve => setTimeout(resolve, 200))
 
@@ -416,17 +429,20 @@ describe("Harness Integration Tests", () => {
       const emitSpy = vi.spyOn(sse, "emit")
       const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Test error for detection",
         exitCode: 1,
         logLines: ["Test error for detection"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Trigger detection
+      // Trigger detection via onBeforeRetry hook
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
 
       await new Promise(resolve => setTimeout(resolve, 200))
 
