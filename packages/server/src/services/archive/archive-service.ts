@@ -58,8 +58,9 @@ export class ArchiveService {
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
     ).get(executionId) as { cnt: number }).cnt
 
-    // C3/Q8-1: 归档单源 = node_token_usages 账本（旧 tokens 取 ntu 而 cost 取
-    // llm_calls 的交叉口径废除）；calls 是明细计数，仍归 llm_calls 管辖。
+    // C3/Q8-1 + v48（billing NEW-r2）：tokens 账本 = node_token_usages（四字段，
+    // 钱不落账本）；cost 单源 = llm_calls_costed 视图的查询时派生列 —— 旧的
+    // 「ntu.cost_usd 存储列」已被 schema v48 删除，直接 SUM 物理列会 SqliteError。
     const tokenAgg = this.db.prepare(`
       SELECT
         COALESCE(SUM(input_tokens), 0) as input,
@@ -70,28 +71,37 @@ export class ArchiveService {
       WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)
     `).get(executionId) as Record<string, number>
 
-    const modelRows = this.db.prepare(`
+    const modelTokenRows = this.db.prepare(`
       SELECT ntu.model as model,
-             ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
-             ${LEDGER_SQL.sumCost('ntu.')} as cost
+             ${LEDGER_SQL.sumTokens('ntu.')} as tokens
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       WHERE ne.execution_id = ?
       GROUP BY ntu.model
-    `).all(executionId) as Array<{ model: string | null; tokens: number; cost: number | null }>
+    `).all(executionId) as Array<{ model: string | null; tokens: number | null }>
 
-    const callCounts = new Map<string, number>((this.db.prepare(`
-      SELECT model, COUNT(*) as calls FROM llm_calls WHERE execution_id = ? GROUP BY model
-    `).all(executionId) as Array<{ model: string | null; calls: number }>)
-      .map(r => [r.model ?? "unknown", r.calls] as [string, number]))
+    const modelCostRows = this.db.prepare(`
+      SELECT model,
+             COUNT(*) as calls,
+             ${LEDGER_SQL.sumCost('')} as cost
+      FROM llm_calls_costed
+      WHERE execution_id = ?
+      GROUP BY model
+    `).all(executionId) as Array<{ model: string | null; calls: number; cost: number | null }>
 
     const modelBreakdown: Record<string, { calls: number; tokens: number; cost: number | null }> = {}
-    for (const row of modelRows) {
+    for (const row of modelTokenRows) {
+      modelBreakdown[row.model ?? "unknown"] = { calls: 0, tokens: row.tokens ?? 0, cost: null }
+    }
+    for (const row of modelCostRows) {
       const key = row.model ?? "unknown"
-      modelBreakdown[key] = { calls: callCounts.get(key) ?? 0, tokens: row.tokens, cost: row.cost }
+      const entry = modelBreakdown[key] ?? { calls: 0, tokens: 0, cost: null }
+      entry.calls = row.calls
+      entry.cost = row.cost
+      modelBreakdown[key] = entry
     }
     // 全未定价 → NULL（不再 COALESCE 焊 0）；部分定价 → 已知和
-    const totalCost = costSummary(modelRows.map(r => r.cost)).usd
+    const totalCost = costSummary(modelCostRows.map(r => r.cost)).usd
 
     const nodeSummary = this.db.prepare(`
       SELECT node_id, node_type, status, duration
@@ -125,14 +135,20 @@ export class ArchiveService {
     }
   }
 
-  // ── P1.2: archiveWorkspace (two-phase) ──────────────────────────────
+  // ── P1.2: archiveWorkspaceForDelete — 删除路径专用（两阶段 + 事务回滚）──
+  //
+  // 与下方 `archiveWorkspace`（对外全功能入口，吞错返回 success 标志）的分工：
+  // 本方法服务「先归档再级联删除」的破坏性流程（DELETE workspace / archive
+  // retry），任何失败**必须抛错**，让调用方的 catch 拦住级联删除 —— 曾因为
+  // 同名双定义（TS2393）被全功能版覆盖，异常被吞成 {success:false} 后照常
+  // 删用户数据。「归档失败 → 不删数据」是这里的不变量。
 
-  async archiveWorkspace(
+  async archiveWorkspaceForDelete(
     workspaceId: string,
     workspaceDAO: WorkspaceDAO,
   ): Promise<{ archived: boolean; execution_count: number }> {
     const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return { archived: false, execution_count: 0 }
+    if (!ws) throw new Error(`workspace_not_found: ${workspaceId}`)
 
     const execRows = this.db.prepare(
       "SELECT id FROM executions WHERE workspace_id = ?",
@@ -357,7 +373,9 @@ export class ArchiveService {
     return { archived_count: archivedCount }
   }
 
-  // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
+  // ── P2.4: archiveWorkspace — 对外全功能入口（知识循环 + 清理 + SSE 步进）──
+  // 失败不抛错而是返回 success:false —— 消费方（routes/archive.ts）必须检查
+  // 返回值再放行任何破坏性操作。删除路径请用上方 archiveWorkspaceForDelete。
 
   async archiveWorkspace(
     workspaceId: string,
@@ -579,80 +597,6 @@ export class ArchiveService {
         fileDeleted: false,
         error: err instanceof Error ? err.message : String(err),
       }
-    }
-  }
-
-  private async extractExperiences(
-    workspaceId: string,
-    org: string,
-    _executionIds: string[]
-  ): Promise<number> {
-    try {
-      const { buildArchiveContext } = await import("./context-builder")
-      const { buildExperiencePrompt } = await import("./prompts")
-      const { getProvider } = await import("@octopus/providers")
-      const { PendingReviewDAO } = await import("../../db/dao/pending-review-dao")
-      const { WorkspaceDAO } = await import("../../db/dao/workspace-dao")
-      const { ExecutionDAO } = await import("../../db/dao/execution-dao")
-
-      const pendingReviewDAO = new PendingReviewDAO(this.db)
-      const workspaceDAO = new WorkspaceDAO(this.db)
-      const executionDAO = new ExecutionDAO(this.db)
-
-      const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, this.db, org)
-      if (!ctx) {
-        logError("extractExperiences: workspace not found", new Error("workspace not found"), { workspaceId })
-        return 0
-      }
-
-      const prompt = buildExperiencePrompt(ctx)
-      const systemPrompt = "You are a knowledge extraction engine. Respond with only the JSON array."
-
-      const provider = getProvider('claude')
-      const chunks: string[] = []
-      const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
-      for await (const chunk of stream) {
-        if (chunk.type === "text_delta") chunks.push(chunk.content)
-      }
-      const raw = chunks.join("")
-
-      if (!raw) {
-        logError("extractExperiences: empty LLM response", new Error("empty LLM response"), { workspaceId })
-        return 0
-      }
-
-      const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim()
-      const arr = JSON.parse(cleaned)
-      if (!Array.isArray(arr)) {
-        logError("extractExperiences: LLM response is not an array", new Error("invalid response"), { workspaceId })
-        return 0
-      }
-
-      let extractedCount = 0
-      for (const exp of arr) {
-        const id = exp.id || `exp-${workspaceId}-${extractedCount}-${Date.now()}`
-        pendingReviewDAO.insert({
-          id,
-          type: "experience",
-          source: "archive",
-          source_ref: workspaceId,
-          source_label: ctx.workspace.name,
-          content: exp.text || "",
-          target_file: "",
-          scope: exp.scope || "workspace",
-          conflicts: null,
-          confidence: typeof exp.confidence === "number" ? exp.confidence : 0.5,
-          auto_approve: 0,
-          status: "pending",
-          user_notes: null,
-        })
-        extractedCount++
-      }
-
-      return extractedCount
-    } catch (err) {
-      logError("extractExperiences failed", err, { workspaceId })
-      return 0
     }
   }
 

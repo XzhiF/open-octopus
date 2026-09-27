@@ -172,7 +172,8 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     try {
       const archiveSvc = getArchiveService()
       if (!archiveSvc) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
-      await archiveSvc.archiveWorkspace(id, workspaceDAO)
+      // 删除路径专用事务版：失败抛错 → catch 拦住，绝不 cascadeDelete 未归档成功的数据
+      await archiveSvc.archiveWorkspaceForDelete(id, workspaceDAO)
       workspaceDAO.cascadeDeleteByWorkspace(id)
       return c.json({ ok: true })
     } catch (err) {

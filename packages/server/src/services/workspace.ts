@@ -485,11 +485,12 @@ export class WorkspaceService {
     const ws = this.getById(id)
     if (!ws) return false
 
-    // Two-phase archive before cascade delete
+    // Two-phase archive before cascade delete — archiveWorkspaceForDelete 失败
+    // 抛错（事务版语义），catch 里 rethrow 拦住级联删除：归档失败 → 不删数据。
     const archiveSvc = getArchiveService()
     if (archiveSvc) {
       try {
-        await archiveSvc.archiveWorkspace(id, this.dao)
+        await archiveSvc.archiveWorkspaceForDelete(id, this.dao)
       } catch (err) {
         logError("workspace archive during delete failed", err, { workspaceId: id })
         // Don't cascade delete if archive failed — data preservation
