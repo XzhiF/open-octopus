@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { useState } from "react"
 
 // Mock the harness events hook
@@ -32,6 +32,13 @@ vi.stubGlobal("fetch", mockFetch)
 // Mock sonner toast
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}))
+
+// HarnessChatbot subscribes to intervention_result via EventSource (#48 起)，
+// jsdom 无 EventSource — mock 为 noop 订阅，返回 unsubscribe。
+vi.mock("@/lib/sse-manager", () => ({
+  subscribeSSE: vi.fn(() => () => {}),
+  subscribeSSEStatus: vi.fn(() => () => {}),
 }))
 
 // Mock observability panel (avoids API calls in tests)
@@ -213,12 +220,20 @@ describe("HarnessFloatingPanel", () => {
     fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
     fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
 
-    // Expanded panel should show tabs
+    // Expanded panel should show tabs. 原 Workflow/Harness/Events/Chatbot 4 tab
+    // 已合并为 2 tab（事件手风琴 + 内联干预对话并入 Harness tab）。
     await waitFor(() => {
-      expect(screen.getByText("Workflow")).toBeDefined()
-      expect(screen.getByText("Harness")).toBeDefined()
-      expect(screen.getByText("Events")).toBeDefined()
-      expect(screen.getByText("Chatbot")).toBeDefined()
+      expect(screen.getByRole("tab", { name: "Workflow" })).toBeDefined()
+      expect(screen.getByRole("tab", { name: "Harness" })).toBeDefined()
+    })
+    const tablist = screen.getByRole("tablist")
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(2)
+
+    // 旧 Chatbot tab 的入口 = Harness tab 内的「干预对话」toggle
+    // （Radix Tabs 在 mousedown 上选中 trigger，fireEvent.click 不触发）
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Harness" }), { button: 0 })
+    await waitFor(() => {
+      expect(screen.getByText("干预对话")).toBeDefined()
     })
   })
 
