@@ -281,6 +281,7 @@ export function rebuildIndex(org: string): { ruleCount: number; fileCount: numbe
   const files = [
     ...readSubDir("projects"),
     ...readSubDir("workflows"),
+    ...readSubDir("experiences"),
   ]
 
   const allRules: Array<{ id: string; file: string; text: string; source: string; date: string; status: string }> = []
@@ -363,8 +364,14 @@ export interface FileRule {
 }
 
 /**
- * Scan all knowledge files (projects/ + workflows/) and return all rules
- * (both active and retired). Replaces knowledgeRuleDAO.listActive() + getById().
+ * Scan all knowledge files (projects/ + workflows/ + experiences/) and return
+ * all rules (both active and retired). Replaces knowledgeRuleDAO.listActive()
+ * + getById().
+ *
+ * experiences/ holds archive-extracted org-level experiences (see
+ * ExperienceMerger). They map to scope "global" because the engine's
+ * KnowledgeInjector drops unknown scopes and "global" = always-inject —
+ * org experiences are org-wide by definition.
  */
 export function listAllRules(org: string): FileRule[] {
   const knowledgeDir = getKnowledgeDir(org)
@@ -416,6 +423,7 @@ export function listAllRules(org: string): FileRule[] {
 
   scanSubDir("projects", "project")
   scanSubDir("workflows", "workflow")
+  scanSubDir("experiences", "global")
 
   return rules
 }

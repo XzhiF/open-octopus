@@ -15,6 +15,8 @@ import {
   getKnowledgeFileInfo,
   readUserPreference,
   getEffectiveUserPreference,
+  listAllRules,
+  listAllActiveRules,
   getProjectKnowledgeDir,
   getWorkflowKnowledgeDir,
 } from "../file-ops"
@@ -378,6 +380,37 @@ describe("file-ops", () => {
       } finally {
         delete process.env.OCTOPUS_KNOWLEDGE_DIR
         fs.rmSync(testDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  // B 修复配套：归档经验落 experiences/，扫描面必须覆盖（scope=global 供注入器消费）
+  describe("experiences/ scan coverage", () => {
+    it("listAllRules scans experiences/ with scope global", () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+      try {
+        appendToKnowledgeFile(path.join(tmpDir, "experiences", "org.md"), "Org-level lesson", "org-exp-1", "archive")
+        const rules = listAllRules("test-org")
+        const found = rules.find(r => r.rule_id === "org-exp-1")
+        expect(found).toBeDefined()
+        expect(found!.scope).toBe("global")
+        expect(found!.file_name).toBe("experiences/org.md")
+        expect(listAllActiveRules("test-org").some(r => r.rule_id === "org-exp-1")).toBe(true)
+      } finally {
+        delete process.env.OCTOPUS_KNOWLEDGE_DIR
+      }
+    })
+
+    it("rebuildIndex includes experiences/ rules", () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+      try {
+        appendToKnowledgeFile(path.join(tmpDir, "experiences", "org.md"), "Indexed org lesson", "org-exp-2", "archive")
+        const result = rebuildIndex("test-org")
+        expect(result.ruleCount).toBe(1)
+        const index = readKnowledgeFile(path.join(tmpDir, "index.md"))
+        expect(index).toContain("org-exp-2")
+      } finally {
+        delete process.env.OCTOPUS_KNOWLEDGE_DIR
       }
     })
   })
