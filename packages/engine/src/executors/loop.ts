@@ -497,6 +497,11 @@ export class LoopExecutor implements NodeExecutor {
           workflowEngine: this.config.workflowEngine,
           agentResolver: this.config.agentResolver,
           engineHookFn: this.config.hookExecutor,
+          // KB-P0: swarm experts inside a loop get the same injection as top-level
+          // agent nodes (promptInjector + knowledgeInjector, prepended at runExpert).
+          promptInjector: this.config.promptInjector,
+          knowledgeInjectorFactory: this.config.knowledgeInjectorFactory,
+          workflowName: this.config.workflowName,
         })
       case "bash":
         return new BashExecutor(node, p, {
@@ -571,6 +576,12 @@ export class LoopExecutor implements NodeExecutor {
           resolvedModel,
           modelAliasConfig: this.config.modelAliasConfig,
           providerKey,
+          // KB-P0: inner agent nodes run the same AgentExecutor as top-level nodes —
+          // they just never received the injector trio. Bind the knowledge injector to
+          // this node's pool (mirrors executor-factory's agent branch).
+          promptInjector: this.config.promptInjector,
+          knowledgeInjector: this.config.knowledgeInjectorFactory?.(p),
+          workflowName: this.config.workflowName ?? this.pool.get("workflow_name") ?? undefined,
         })
       }
       case "loop":
@@ -598,6 +609,12 @@ export class LoopExecutor implements NodeExecutor {
           workflowResolver: (this.config as any).workflowResolver,
           visitedWorkflows: (this.config as any).visitedWorkflows,
           iterationIndex: this.iterations - 1, // 0-based iteration index
+          // KB-P0: forward injection services to the child engine (mirrors the
+          // dynamic_sub_workflow branch below) — loop → sub_workflow → agent was a
+          // second dead link in the injection chain.
+          promptInjector: this.config.promptInjector,
+          precomputeHook: this.config.precomputeHook,
+          knowledgeInjectorFactory: this.config.knowledgeInjectorFactory,
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             // Inject iteration context from this loop (0-based iteration index)
             this.config.ensureNodeExecution?.(scopedNodeId, nodeType, {

@@ -296,6 +296,7 @@ export class WorkflowEngine {
       agentResolver: this.agentResolver,
       knowledgeInjectorFactory: this.knowledgeInjectorFactory,
       promptInjector: this.promptInjector,
+      precomputeHook: this.precomputeHook,
       resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
       executeHooks: (event, context) => this.executeHooks(event, context),
       workflowResolver: this.workflowResolver,
@@ -545,6 +546,13 @@ export class WorkflowEngine {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.agentResolver,
+          // KB-P0: the factory's loop branch forwards the injection trio + workflowName;
+          // this resume-constructed LoopExecutor (retryFrom path D) must mirror it,
+          // otherwise post-resume iterations lose knowledge/prompt injection.
+          promptInjector: this.promptInjector,
+          precomputeHook: this.precomputeHook,
+          knowledgeInjectorFactory: this.knowledgeInjectorFactory,
+          workflowName: this.workflow.name,
           // G1: thread the port so a task_dispatch node inside this loop can fan out
           // child schedules on every iteration (incl. iterations after the resume one).
           taskDispatchPort: this.taskDispatchPort,
@@ -2144,6 +2152,9 @@ export class WorkflowEngine {
       globalAutoAnswers: this.workflow.auto_answers,
       signal: this.signal,
       promptInjector: this.promptInjector,
+      // KB-P0: hook agent nodes previously got promptInjector only — no knowledge
+      // injection. Bind to this.pool like the factory's top-level agent branch.
+      knowledgeInjector: this.knowledgeInjectorFactory?.(this.pool),
       workflowName: this.workflow.name,
       modelAliasConfig: this.modelAliasConfig,
       providerKey,

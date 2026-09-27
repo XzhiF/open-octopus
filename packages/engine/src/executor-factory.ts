@@ -49,6 +49,10 @@ export interface ExecutorFactoryContext {
   agentResolver?: (topic: string, maxExperts: number) => Promise<any>
   knowledgeInjectorFactory?: (pool: VarPool) => any
   promptInjector?: PromptInjector
+  /** Knowledge precompute hook — populates VarPool before node execution. Forwarded to
+   *  child engines (sub_workflow / dynamic_sub_workflow) so nested agents get injection too.
+   *  (Was missing on this context, making `this.ctx.precomputeHook` a dead 2× tsc error.) */
+  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Callbacks to engine methods
   resolvePreviousSessionId: (node: NodeDef) => string | undefined
   executeHooks: (event: keyof WorkflowHooks, context: Record<string, unknown>) => Promise<void>
@@ -177,6 +181,9 @@ export class ExecutorFactory {
           promptInjector: this.ctx.promptInjector,
           precomputeHook: this.ctx.precomputeHook,
           knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
+          // inner agent/swarm nodes build prompts with the same workflow scope key
+          // the top-level agent branch uses (this.ctx.workflow.name)
+          workflowName: this.ctx.workflow.name,
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
@@ -240,6 +247,10 @@ export class ExecutorFactory {
           workflowEngine: this.ctx.workflow.engine,
           agentResolver: this.ctx.agentResolver,
           globalSessionId: this.ctx.globalSessionId,
+          // KB-P0: expert LLM calls get the same injection as top-level agent nodes
+          promptInjector: this.ctx.promptInjector,
+          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
+          workflowName: this.ctx.workflow.name,
           engineHookFn: async (event: string, context: Record<string, unknown>) => {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
@@ -282,6 +293,11 @@ export class ExecutorFactory {
           engineNodeResults: this.ctx.nodeResults,
           workflowResolver: this.ctx.workflowResolver,
           visitedWorkflows: this.ctx.visitedWorkflows,
+          // KB-P0: forward injection services to the child WorkflowEngine (previously
+          // hardcoded undefined — inner agent nodes of sub-workflows got no injection)
+          promptInjector: this.ctx.promptInjector,
+          precomputeHook: this.ctx.precomputeHook,
+          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
           ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },

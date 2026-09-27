@@ -169,9 +169,14 @@ export class SubWorkflowExecutor implements NodeExecutor {
         this.config.inputs,
         undefined, // executionName
         undefined, // crossExecResolver — child does not inherit parent's cross-exec resolver
-        undefined, // promptInjector
-        undefined, // precomputeHook
-        undefined, // knowledgeInjectorFactory
+        // KB-P0: injection trio previously hardcoded undefined — child agent nodes
+        // got no knowledge/prompt injection ("injection nominally exists, actually
+        // only covers top-level agent nodes"). Forward parent's services; the child
+        // engine re-runs precomputeHook against the CHILD workflow name, so scope
+        // matching (workflow rules) is evaluated per child, not inherited stale.
+        this.config.promptInjector,
+        this.config.precomputeHook,
+        this.config.knowledgeInjectorFactory,
         this.config.agentResolver,
       )
 

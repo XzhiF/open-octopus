@@ -200,6 +200,12 @@ export interface SwarmConfig {
   workflowEngine?: string
   agentResolver?: AgentResolver
   engineHookFn?: HookExecutor
+  /** Knowledge/prompt injection for expert agent calls — same contract as top-level agent
+   *  nodes: at the runExpert seam, promptInjector + knowledgeInjector sections are prepended. */
+  promptInjector?: PromptInjector
+  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  /** Owning workflow name — required by both injectors for targeted/scope matching */
+  workflowName?: string
   /** Workflow's global session ID — host agent continues this session */
   globalSessionId?: string
   // Note: signal removed (was DEAD — 0 refs, accessed only as this.signal which doesn't exist)
@@ -223,6 +229,8 @@ export interface LoopConfig extends CoreConfig {
   promptInjector?: PromptInjector
   precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  /** Owning workflow name — injectors' targeted/scope matching key for inner agent/swarm nodes */
+  workflowName?: string
   /** G1: TaskDispatchPort injected by the server (createSessionFn precedent). Threaded to inner
    *  task_dispatch nodes so a composition Loop can fan out child schedules via the port.
    *  Without this, an inner task_dispatch node would fail ("no TaskDispatchPort injected"). */
@@ -249,6 +257,11 @@ export interface SubWorkflowConfig extends CoreConfig {
   /** Current loop iteration index (0-based) — set by LoopExecutor when this sub-workflow is inside a loop.
    *  Used to scope child node IDs per iteration, preventing DB record collisions across iterations. */
   iterationIndex?: number
+  /** Skill/knowledge injection (forwarded to the child engine — mirrors DynamicSubWorkflowConfig).
+   *  KB-P0: without these the child engine hardcodes undefined and inner agent nodes get no injection. */
+  promptInjector?: PromptInjector
+  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
+  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
 }
 
 /** DynamicSubWorkflowExecutor — agent-generated DAG with validation harness */
