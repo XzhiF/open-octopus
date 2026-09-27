@@ -16,6 +16,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type PreviewSummary } from "../services/tasks/round-evidence-service"
@@ -25,6 +26,8 @@ import { TASK_PREVIEW_EVENT } from "@octopus/shared"
 const ORG = "e2e-td-preview"
 const WS_ID = "ws-pv-1"
 const BATCH_REL = ".scratch/20260917/p-1"
+// P1 B2：tasks 落 PG（service 内部 pgSql()）；executions/workspaces 仍 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmp: string
@@ -88,7 +91,9 @@ async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => b
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-preview-"))
@@ -106,7 +111,10 @@ beforeAll(() => {
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
 })
 afterAll(async () => {
-  unSub?.(); db.close()
+  unSub?.()
+  await pg?.close()
+  pg = null
+  db.close()
   // Windows: a just-exited BashExecutor child may momentarily hold a dir handle → EPERM;
   // retry best-effort so teardown never flakes the suite.
   for (let i = 0; i < 50; i++) {
@@ -124,7 +132,7 @@ async function pollInstances(taskId: string, want: (e: TestInstanceEntry[]) => b
   }
 }
 
-describe("preview — 生命周期", () => {
+describePg("preview — 生命周期", () => {
   it("PV1: 起 node http server → ready → stop → 端口释放", async () => {
     const taskId = await newAwaitingTask()
     const port = await freePort()

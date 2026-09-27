@@ -6,6 +6,7 @@ import os from "os"
 import { applySchema, SCHEMA_VERSION } from "../../schema"
 import { AcceptanceDAO } from "../acceptance-dao"
 import { ExecutionDAO } from "../execution-dao"
+import { describePg, setupPgSchema, type PgFixture } from "../../pg/__tests__/dao-fixture"
 
 let db: Database.Database
 let dbPath: string
@@ -160,24 +161,32 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
   })
 })
 
-describe("AcceptanceDAO (append-only ledger)", () => {
+// P1 B2: AcceptanceDAO 已迁 postgres.js —— 本 describe 走 PG 随机测试库
+// （dao-fixture 快路径）。上面两个 schema/迁移 describe 与下面 ExecutionDAO
+// describe 仍属 SQLite 侧（schema.ts / ExecutionDAO 活到 B5/B6），保持原样。
+describePg("AcceptanceDAO (append-only ledger)", () => {
   let dao: AcceptanceDAO
+  let pg: PgFixture
 
-  beforeEach(() => {
-    applySchema(db)
-    dao = new AcceptanceDAO(db)
+  beforeEach(async () => {
+    pg = await setupPgSchema()
+    dao = new AcceptanceDAO(pg.sql)
   })
 
-  it("inserts accepted/rejected rows and round-trips all fields", () => {
-    const r1 = dao.insert({ id: "acc-1", task_id: "task-A", phase_index: 0, round_index: 1, decision: "accepted" })
+  afterEach(async () => {
+    await pg.close()
+  })
+
+  it("inserts accepted/rejected rows and round-trips all fields", async () => {
+    const r1 = await dao.insert({ id: "acc-1", task_id: "task-A", phase_index: 0, round_index: 1, decision: "accepted" })
     expect(r1.changes).toBe(1)
-    const r2 = dao.insert({
+    const r2 = await dao.insert({
       id: "acc-2", task_id: "task-A", phase_index: 1, round_index: 1,
       decision: "rejected", feedback: "E2E_TEST_ fix the flaky test",
     })
     expect(r2.changes).toBe(1)
 
-    const rows = dao.listByTask("task-A")
+    const rows = await dao.listByTask("task-A")
     expect(rows).toHaveLength(2)
     const a1 = rows.find(r => r.id === "acc-1")!
     expect(a1.task_id).toBe("task-A")
@@ -185,30 +194,30 @@ describe("AcceptanceDAO (append-only ledger)", () => {
     expect(a1.round_index).toBe(1)
     expect(a1.decision).toBe("accepted")
     expect(a1.feedback).toBeNull()
-    // decided_at defaults to a parseable ISO timestamp
+    // decided_at defaults to a parseable ISO timestamp (PG to_char 投影后仍是 …Z 文本)
     expect(() => new Date(a1.decided_at).toISOString()).not.toThrow()
     const a2 = rows.find(r => r.id === "acc-2")!
     expect(a2.decision).toBe("rejected")
     expect(a2.feedback).toBe("E2E_TEST_ fix the flaky test")
   })
 
-  it("insert rejects a decision outside accepted|rejected (CHECK)", () => {
-    expect(() =>
+  it("insert rejects a decision outside accepted|rejected (CHECK)", async () => {
+    await expect(
       dao.insert({ id: "acc-bad", task_id: "task-A", phase_index: 0, round_index: 1, decision: "maybe" as "accepted" }),
-    ).toThrow()
+    ).rejects.toThrow()
   })
 
-  it("list is scoped: by task, by (task, phase), by (task, phase, round)", () => {
+  it("list is scoped: by task, by (task, phase), by (task, phase, round)", async () => {
     const base = { task_id: "task-A", decision: "accepted" as const }
-    dao.insert({ ...base, id: "p0r1", phase_index: 0, round_index: 1 })
-    dao.insert({ ...base, id: "p0r2", phase_index: 0, round_index: 2 })
-    dao.insert({ ...base, id: "p1r1", phase_index: 1, round_index: 1 })
-    dao.insert({ ...base, id: "other-task", task_id: "task-B", phase_index: 0, round_index: 1 })
+    await dao.insert({ ...base, id: "p0r1", phase_index: 0, round_index: 1 })
+    await dao.insert({ ...base, id: "p0r2", phase_index: 0, round_index: 2 })
+    await dao.insert({ ...base, id: "p1r1", phase_index: 1, round_index: 1 })
+    await dao.insert({ ...base, id: "other-task", task_id: "task-B", phase_index: 0, round_index: 1 })
 
-    expect(dao.listByTask("task-A").map(r => r.id)).toEqual(["p0r1", "p0r2", "p1r1"]) // (phase, round, decided_at) order
-    expect(dao.listByPhase("task-A", 0).map(r => r.id)).toEqual(["p0r1", "p0r2"])
-    expect(dao.listByRound("task-A", 0, 2).map(r => r.id)).toEqual(["p0r2"])
-    expect(dao.listByRound("task-A", 5, 5)).toEqual([])
+    expect((await dao.listByTask("task-A")).map(r => r.id)).toEqual(["p0r1", "p0r2", "p1r1"]) // (phase, round, decided_at) order
+    expect((await dao.listByPhase("task-A", 0)).map(r => r.id)).toEqual(["p0r1", "p0r2"])
+    expect((await dao.listByRound("task-A", 0, 2)).map(r => r.id)).toEqual(["p0r2"])
+    expect(await dao.listByRound("task-A", 5, 5)).toEqual([])
   })
 
   it("AC2 append-only: DAO exposes no update/delete/decide-mutation surface", () => {
@@ -220,16 +229,16 @@ describe("AcceptanceDAO (append-only ledger)", () => {
     expect(methods.sort()).toEqual(["insert", "listByPhase", "listByRound", "listByTask"])
   })
 
-  it("AC2 append-only: DB triggers reject raw UPDATE/DELETE", () => {
-    dao.insert({ id: "acc-imm", task_id: "task-A", phase_index: 0, round_index: 1, decision: "rejected", feedback: "v1" })
-    expect(() =>
-      db.prepare("UPDATE task_phase_acceptances SET feedback='tampered' WHERE id='acc-imm'").run(),
-    ).toThrow(/append-only/)
-    expect(() =>
-      db.prepare("DELETE FROM task_phase_acceptances WHERE id='acc-imm'").run(),
-    ).toThrow(/append-only/)
+  it("AC2 append-only: DB triggers reject raw UPDATE/DELETE", async () => {
+    await dao.insert({ id: "acc-imm", task_id: "task-A", phase_index: 0, round_index: 1, decision: "rejected", feedback: "v1" })
+    // PG 侧守卫 = octopus_assert_append_only 触发器 RAISE（消息含 append-only，
+    // 但别锁引擎文案细节 —— 只断「抛错 + 行未动」）。
+    await expect(pg.sql`UPDATE task_phase_acceptances SET feedback='tampered' WHERE id='acc-imm'`)
+      .rejects.toThrow(/append-only/)
+    await expect(pg.sql`DELETE FROM task_phase_acceptances WHERE id='acc-imm'`)
+      .rejects.toThrow(/append-only/)
     // row untouched
-    expect(dao.listByRound("task-A", 0, 1)[0].feedback).toBe("v1")
+    expect((await dao.listByRound("task-A", 0, 1))[0].feedback).toBe("v1")
   })
 })
 

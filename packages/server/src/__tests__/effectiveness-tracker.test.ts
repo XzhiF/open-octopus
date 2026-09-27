@@ -23,6 +23,7 @@ import { HarnessConfigService } from "../services/harness/config-service"
 import { HarnessAgentSession } from "../services/harness/harness-agent-session"
 import { buildDelegationPromptWithStats, buildColdStartPlaceholder } from "../services/harness/effectiveness-tracker"
 import { applySchema } from "../db/schema"
+import { describePg, setupPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import type { ExperienceRowV2 } from "../db/types"
 import type { DiagnosisReport } from "@octopus/shared"
 
@@ -163,18 +164,21 @@ describe("EvolutionDAO.listByExecutionId", () => {
 
 // ─── 2. Outcome tracking via HarnessController ──────────────────────────────
 
-describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
+describePg("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
+  // P1 B1: HarnessDAO 走 PG 随机测试库；EvolutionDAO（B3 域）仍 :memory: SQLite。
   let db: Database.Database
   let dao: EvolutionDAO
   let harnessDao: HarnessDAO
   let controller: HarnessController
+  let pg: PgFixture
 
   const EXECUTION_ID = "exec-outcome-test"
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb()
+    pg = await setupPgSchema()
     dao = new EvolutionDAO(db)
-    harnessDao = new HarnessDAO(db)
+    harnessDao = new HarnessDAO(pg.sql)
     const configService = new HarnessConfigService(harnessDao)
 
     controller = new HarnessController({
@@ -182,6 +186,9 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       sse: { emit: vi.fn() } as any,
       configService,
       evolutionDao: dao,
+      // B1: controller 缺省回退改为模块级 getDb()（本文件不初始化全局连接）→ 显式注入 stub。
+      // 本 suite 不触 ledger 写路径（agent-delegation 才用），构造无副作用。
+      tokenUsageDao: {} as any,
     })
 
     // Create a minimal execution row with required columns
@@ -191,15 +198,16 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     `).run(EXECUTION_ID)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     controller.destroyAll()
     db.close()
+    await pg.close()
   })
 
-  it("AC-2: completed execution → all interventions marked as success", () => {
+  it("AC-2: completed execution → all interventions marked as success", async () => {
     // Simulate: 2 interventions in the session, execution completes
     // First, start an execution and create a session
-    controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+    await controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [{ id: "node-a", type: "bash" }, { id: "node-b", type: "bash" }],
       dependencyGraph: { "node-a": [], "node-b": ["node-a"] },
@@ -242,8 +250,8 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     }
   })
 
-  it("AC-3: failed execution → last failed node = 'failed', others = 'success'", () => {
-    controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+  it("AC-3: failed execution → last failed node = 'failed', others = 'success'", async () => {
+    await controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [{ id: "node-a", type: "bash" }, { id: "node-b", type: "bash" }, { id: "node-c", type: "bash" }],
       dependencyGraph: { "node-a": [], "node-b": ["node-a"], "node-c": ["node-b"] },
@@ -283,7 +291,7 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     expect(JSON.parse(nodeBExp.outcome!).label).toBe("success")
   })
 
-  it("skips outcome update when no evolutionDao configured", () => {
+  it("skips outcome update when no evolutionDao configured", async () => {
     // Controller without evolutionDao should not crash
     const configService = new HarnessConfigService(harnessDao)
     const controllerNoDao = new HarnessController({
@@ -291,9 +299,10 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       sse: { emit: vi.fn() } as any,
       configService,
       // no evolutionDao
+      tokenUsageDao: {} as any, // B1: 缺省回退走模块级 getDb()，本文件不初始化全局连接
     })
 
-    controllerNoDao.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+    await controllerNoDao.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [],
       dependencyGraph: {},

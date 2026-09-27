@@ -5,17 +5,29 @@ import { WorkspaceDAO } from '../db/dao'
 import path from "path"
 import os from "os"
 import fs from "fs"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 // Initialize isolated test database BEFORE importing index.ts
 // This prevents inheriting OCTOPUS_DB_PATH from parent process
 const TEST_DB = path.join(os.tmpdir(), `server-test-${Date.now()}.db`)
-beforeAll(() => {
+// P1 B1/B2：全 app 路由的 lazyDAO 现在横跨 PG 域（orgs/chat/tasks/safety…）与
+// SQLite 域 —— 注册随机 PG 池 + 种子 org 'xzf'（workspaces 路由的 org 存在性校验走 OrgDAO=PG）。
+let pg: PgFixture | null = null
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   const db = initDb(TEST_DB)
   applySchema(db)
   // Initialize registry for tests (normally done in index.ts non-VITEST path)
   initExecutionServiceRegistry(db, new SSEService(), undefined)
+  await pg!.sql.unsafe(
+    "INSERT INTO orgs (name, path, created_at) VALUES ('xzf', '/tmp/e2e-xzf', '2026-01-01T00:00:00.000Z') ON CONFLICT (name) DO NOTHING",
+  )
 })
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   closeDb()
   if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB)
 })
@@ -45,7 +57,7 @@ vi.mock("@octopus/providers", async () => {
   }
 })
 
-describe("Server API", () => {
+describePg("Server API", () => {
   let existingIds: Set<string>
 
   beforeAll(() => {

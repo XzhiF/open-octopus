@@ -8,7 +8,7 @@ export function createSafetyRoutes(safetyDAO: SafetyDAO): Hono {
   /**
    * GET /safety/events — List safety events
    */
-  safety.get('/safety/events', (c) => {
+  safety.get('/safety/events', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) {
@@ -17,7 +17,7 @@ export function createSafetyRoutes(safetyDAO: SafetyDAO): Hono {
 
       const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200)
 
-      const events = safetyDAO.findSafetyEventsWithFilters(org, { limit })
+      const events = await safetyDAO.findSafetyEventsWithFilters(org, { limit })
 
       return c.json({
         items: events.map((e) => ({

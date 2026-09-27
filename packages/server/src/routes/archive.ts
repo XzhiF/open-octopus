@@ -115,8 +115,8 @@ export function createArchiveRoutes(
       )
 
       // Get proposed rules from pending_review
-      const pendingRules = pendingReviewDAO.listBySource("workspace_archive")
-        .filter(item => item.source_ref === id && item.status === "pending")
+      const pendingRules = (await pendingReviewDAO.listBySource("workspace_archive"))
+        .filter((item: { source_ref: string; status: string }) => item.source_ref === id && item.status === "pending")
         .map(item => ({
           text: item.content,
           scope: item.scope,

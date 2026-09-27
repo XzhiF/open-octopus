@@ -29,6 +29,7 @@ import { TASK_EXECUTION_EVENT } from "@octopus/shared"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { ScheduleRunDAO } from "../../db/dao/schedule-run-dao"
 import { TaskDAO } from "../../db/dao/task-dao"
+import { pgSql } from "../../db/dao/registry"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { WorkspaceService } from "../workspace"
 import type { SSEService } from "../sse"
@@ -55,7 +56,7 @@ function errMessage(err: unknown): string {
  * the shared gate has room. Resolves once the child EXISTS — never on its completion (the
  * parent pauses persistently, so there is no in-memory Promise to lose across a restart).
  */
-export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): ChildHandle {
+export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Promise<ChildHandle> {
   const execDAO = new ExecutionDAO(deps.db)
   const parent = resolveParentRun(execDAO, deps.workspaceId)
   if (!parent) {
@@ -72,7 +73,7 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
 
   const parentTaskId = parent.task_id ?? resolveParentTaskId(deps.db, deps.workspaceId)
   const branchSuffix = formatBranchSuffix(new Date())
-  const taskRow = parentTaskId ? new TaskDAO(deps.db).getById(parentTaskId) : null
+  const taskRow = parentTaskId ? await new TaskDAO(pgSql()).getById(parentTaskId) : null
   const workspaceName = taskRow
     ? taskWorkspaceName({ name: taskRow.name, task_spec: taskRow.task_spec }, { subName: subunit.name })
     : null

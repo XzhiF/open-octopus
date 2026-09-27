@@ -25,7 +25,7 @@
 // E2E_AL_ data prefix; all fs assertions under mkdtemp tmp dirs (cleaned; HOME and
 // USERPROFILE restored with `delete` so no later file in this worker inherits them).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import os from "os"
 import path from "path"
@@ -33,6 +33,7 @@ import fs from "fs"
 import { applySchema } from "../db/schema"
 import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { WorkspaceService } from "../services/workspace"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -40,6 +41,9 @@ import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-al"
 const DATE = "20260903"
+
+// P1 B2：本文件的 tasks 造数/读写走这座 PG 库；executions/workspaces 仍 SQLite（B5 域）。
+let pg: PgFixture | null = null
 
 // ── ExecutionService registry stub (ws-reuse 同款) ────────────────────
 // A real 'pending' root row (so task_id / (phase,round) / the latch are the real
@@ -105,6 +109,18 @@ let realUserProfile: string | undefined
 let artifactsEvents: Array<Record<string, unknown>>
 let seq = 0
 
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取）；
+  // SQLite db 仍按用例新建（B5 域）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
 function writeBatchDir(dir: string, files: Record<string, string>): void {
   for (const [rel, content] of Object.entries(files)) {
     const p = path.join(dir, rel)
@@ -120,8 +136,9 @@ function seedHomeBatch(taskId: string, slug: string, files: Record<string, strin
   return dir
 }
 
-/** A v4 task whose phases[] point at those batch dirs (relative = home register). */
-function insertV4Task(taskId: string, slugs: string[]): string {
+/** A v4 task whose phases[] point at those batch dirs (relative = home register).
+ *  P1 B2: tasks 表已迁 postgres.js —— 造数落 PG。 */
+async function insertV4Task(taskId: string, slugs: string[]): Promise<string> {
   const now = new Date().toISOString()
   const phases = slugs.map((slug, i) => ({
     index: i + 1,
@@ -131,17 +148,19 @@ function insertV4Task(taskId: string, slugs: string[]): string {
     workflowRef: `built-in/flow-${slug}`,
     inputValues: {},
   }))
-  db.prepare(
+  await pg!.sql.unsafe(
     `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-     VALUES (?, ?, ?, 'ready', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)`,
-  ).run(taskId, ORG, `E2E_AL ${taskId}`, JSON.stringify({ format: "v4", task_type: "coding", phases }), now, now)
+     VALUES ($1, $2, $3, 'ready', NULL, $4, '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL, NULL)`,
+    [taskId, ORG, `E2E_AL ${taskId}`, JSON.stringify({ format: "v4", task_type: "coding", phases }), now, now],
+  )
   return taskId
 }
 
-function boundWs(taskId: string): { wsId: string; wsPath: string } {
-  const { workspace_id: wsId } = db.prepare("SELECT workspace_id FROM tasks WHERE id = ?").get(taskId) as
+/** tasks.workspace_id 在 PG，workspaces.path 在 SQLite —— 按表分流读。 */
+async function boundWs(taskId: string): Promise<{ wsId: string; wsPath: string }> {
+  const { workspace_id: wsId } = (await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
     { workspace_id: string }
   const { path: wsPath } = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
     { path: string }
@@ -149,16 +168,23 @@ function boundWs(taskId: string): { wsId: string; wsPath: string } {
 }
 
 /** 一轮收尾的现实形状：行进终态（终态回调已经跑过或手动落），人重新入队。 */
-function endRoundAndRequeue(taskId: string): void {
+async function endRoundAndRequeue(taskId: string): Promise<void> {
   db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE task_id=?")
     .run(taskId)
-  db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(taskId)
+  await pg!.sql.unsafe("UPDATE tasks SET status='ready' WHERE id=$1", [taskId])
 }
 
-/** Fire the terminal callback the way the engine does, and await the async tail. */
+/** Fire the terminal callback the way the engine does, and await the async tail.
+ *  P1 B2: finalizeLaunch 的尾巴现在含真 PG 往返（taskDAO/phaseSpecDir/mirror），
+ *  单个 setImmediate 接不住 —— 以 finalize 末端的 clearExternalCallbacks 为
+ *  确定性 join 点（collect/待验收/SSE 都在它之前发生）。 */
 async function complete(execId: string, status = "completed"): Promise<void> {
   stub.callbacks.get(execId)?.(status)
-  await new Promise((r) => setImmediate(r))
+  const deadline = Date.now() + 10_000
+  while (stub.callbacks.has(execId)) {
+    if (Date.now() > deadline) break
+    await new Promise((r) => setTimeout(r, 5))
+  }
 }
 
 beforeEach(() => {
@@ -209,10 +235,10 @@ afterEach(() => {
   db.close()
 })
 
-describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 job 里）", () => {
+describePg("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 job 里）", () => {
   // ── AC1 (part 1) — 首轮 arm: seed home→ws ───────────────────────────
   it("AC1: 首轮 arm 把 {home}/.scratch/<date>/<slug>/ 逐文件复制进 ws", async () => {
-    const taskId = insertV4Task("e2e-al-task-1", ["p1"])
+    const taskId = await insertV4Task("e2e-al-task-1", ["p1"])
     seedHomeBatch(taskId, "p1", {
       "spec.md": "# spec p1 v1\n",
       "issues/01-x.md": "Status: ready-for-agent\n",
@@ -220,7 +246,7 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
 
     await service.triggerTask(taskId)
 
-    const { wsPath } = boundWs(taskId)
+    const { wsPath } = await boundWs(taskId)
     const wsBatch = path.join(wsPath, ".scratch", DATE, "p1")
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p1 v1\n")
     expect(fs.readFileSync(path.join(wsBatch, "issues/01-x.md"), "utf-8")).toBe("Status: ready-for-agent\n")
@@ -231,15 +257,16 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
   })
 
   it("AC1b: v3 任务（无 format/phases）一行都不 seed（字节不变底线）", async () => {
-    const taskId = insertV4Task("e2e-al-task-v3", ["p1"])
+    const taskId = await insertV4Task("e2e-al-task-v3", ["p1"])
     seedHomeBatch(taskId, "p1", { "spec.md": "# spec p1\n" })
     // v3 shape: no format, no phases — same spec shape the v3 flow materializes.
-    db.prepare("UPDATE tasks SET task_spec = ?, workflow_ref = 'built-in/flow-p1' WHERE id = ?")
-      .run(JSON.stringify({ goal: "g", ac: ["a"], task_type: "generic" }), taskId)
+    // P1 B2: tasks 读写走 PG。
+    await pg!.sql.unsafe("UPDATE tasks SET task_spec = $1, workflow_ref = 'built-in/flow-p1' WHERE id = $2",
+      [JSON.stringify({ goal: "g", ac: ["a"], task_type: "generic" }), taskId])
 
     await service.triggerTask(taskId)
 
-    const { wsPath } = boundWs(taskId)
+    const { wsPath } = await boundWs(taskId)
     expect(fs.existsSync(path.join(wsPath, ".scratch"))).toBe(false)
     // 未打标 ⇒ collect 上行同样不触发（终态回调后 home 一字未改）。
     const execId = new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id
@@ -250,14 +277,14 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
 
   // ── AC2 (首触终态回调) — collect 上行 + SSE ────────────────────────────
   it("AC2: 首轮终态回调把执行侧改动收回 home + 发 task_artifacts_update", async () => {
-    const taskId = insertV4Task("e2e-al-task-2", ["p1"])
+    const taskId = await insertV4Task("e2e-al-task-2", ["p1"])
     const p1 = seedHomeBatch(taskId, "p1", {
       "spec.md": "# spec p1\n",
       "issues/01-x.md": "Status: ready-for-agent\n",
     })
     await service.triggerTask(taskId)
     const execId = new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id
-    const { wsPath } = boundWs(taskId)
+    const { wsPath } = await boundWs(taskId)
 
     // Simulated execution side: edit the issues status, add a report, and
     // REVIEW/UPDATE spec.md in the ws (AC3 — ws is the final spec authority,
@@ -286,7 +313,7 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
 
   // ── AC1c + AC2/AC3 (后续轮) — dispatch seed / finalize collect / 再 seed
   it("后续轮：dispatch 种子到目标批次；执行侧改动在 finalize 收回；两轮之间改 home 下一次 seed 覆盖", async () => {
-    const taskId = insertV4Task("e2e-al-task-3", ["p1", "p2"])
+    const taskId = await insertV4Task("e2e-al-task-3", ["p1", "p2"])
     seedHomeBatch(taskId, "p1", { "spec.md": "# spec p1\n" })
     const p2 = seedHomeBatch(taskId, "p2", {
       "spec.md": "# spec p2 v1\n",
@@ -294,13 +321,13 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
     })
     await service.triggerTask(taskId) // phase 1
     await complete(new ExecutionDAO(db).findLatestTaskInstance(taskId)!.id) // 收轮
-    endRoundAndRequeue(taskId)
+    await endRoundAndRequeue(taskId)
 
     // ── round 1 of phase 2: seed puts the p2 batch into the ws (home 版内容) ──
     const dispatched = await service.dispatchPhaseRound(taskId, 2, 1, "go")
-    const { wsPath } = boundWs(taskId)
+    const { wsPath } = await boundWs(taskId)
     const wsBatch = path.join(wsPath, ".scratch", DATE, "p2")
-    expect(dispatched.workspaceId).toBe(boundWs(taskId).wsId) // 一 task 一 ws，轮次不换支
+    expect(dispatched.workspaceId).toBe((await boundWs(taskId)).wsId) // 一 task 一 ws，轮次不换支
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p2 v1\n")
     expect(fs.readFileSync(path.join(wsBatch, "issues/02-y.md"), "utf-8")).toBe("Status: needs-info\n")
     // 打回反馈走的是 input_values 通道，不落批次目录（产物化是 acceptance 的职责）。
@@ -323,9 +350,9 @@ describe("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 j
 
     // ── round 2: home spec edited between rounds → next seed 覆盖 ws 同名 ──
     fs.writeFileSync(path.join(p2, "spec.md"), "# spec p2 v2\n")
-    endRoundAndRequeue(taskId)
+    await endRoundAndRequeue(taskId)
     const r2 = await service.dispatchPhaseRound(taskId, 2, 2)
-    expect(r2.workspaceId).toBe(boundWs(taskId).wsId)
+    expect(r2.workspaceId).toBe((await boundWs(taskId)).wsId)
     expect(fs.readFileSync(path.join(wsBatch, "spec.md"), "utf-8")).toBe("# spec p2 v2\n")
 
     // AC4: ws 被带外删除 — home 产物完整（防丢兜底），且 collect 退化为 no-op。

@@ -30,7 +30,7 @@
 // E2E_WR_ data prefix; fs assertions all under mkdtemp tmp HOMEs (cleaned, and
 // HOME/USERPROFILE are restored with `delete` — assigning undefined stringifies).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import os from "os"
 import path from "path"
@@ -44,9 +44,14 @@ import { WorkspaceService } from "../services/workspace"
 import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 const ORG = "e2e-wr"
 const BATCH = "20260908"
+
+// P1 B2：tasks 落 PG（每用例 truncate 隔离）；executions/workspaces/schedules 仍
+// SQLite（beforeEach 重建 :memory:）。ux_exec_task_active 闩锁断言留在 SQLite 侧。
+let pg: PgFixture | null = null
 
 // ── ExecutionService registry stub ────────────────────────────────────
 // service.create writes a REAL armed ('pending') root row, so the claim loop, the
@@ -107,8 +112,9 @@ let db: Database.Database
 
 /** A v4 task with TWO phases whose batch spec.md files exist under the home —
  *  票03 re-checks the v4 contract at every arm (there is no frozen envelope copy
- *  to fall back on), so the home layout is part of the fixture, not optional. */
-function insertV4Task(status = "ready"): string {
+ *  to fall back on), so the home layout is part of the fixture, not optional.
+ *  P1 B2: tasks 落 PG。 */
+async function insertV4Task(status = "ready"): Promise<string> {
   const id = `e2e-wr-task-${seq++}`
   const now = new Date().toISOString()
   const phases = [1, 2].map((n) => ({
@@ -124,16 +130,12 @@ function insertV4Task(status = "ready"): string {
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, "spec.md"), `# ${p.name}\n`)
   }
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-  `).run(
-    id, ORG, `E2E_WR ${id}`, status,
-    JSON.stringify({ format: "v4", task_type: "coding", phases }),
-    now, now,
-  )
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, NULL)
+  `, [id, ORG, `E2E_WR ${id}`, status, JSON.stringify({ format: "v4", task_type: "coding", phases }), now, now])
   return id
 }
 
@@ -147,14 +149,28 @@ function latestRoot(db: Database.Database, taskId: string) {
 }
 
 /** Free the task's slot the way reality does: the round reached a terminal status
- *  and a human re-enqueued it (`readyTask` is draft-only, so the row is nudged). */
-function endRoundAndRequeue(db: Database.Database, taskId: string, status = "completed"): void {
+ *  and a human re-enqueued it (`readyTask` is draft-only, so the row is nudged).
+ *  P1 B2: executions 仍 SQLite；tasks 状态改写落 PG。 */
+async function endRoundAndRequeue(db: Database.Database, taskId: string, status = "completed"): Promise<void> {
   db.prepare("UPDATE executions SET status=?, completed_at=datetime('now') WHERE task_id=?")
     .run(status, taskId)
-  db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(taskId)
+  await pg!.sql`UPDATE tasks SET status = 'ready' WHERE id = ${taskId}`
 }
 
-describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound", () => {
+/** P1 B2 生产疑点：armNow（tasks-service.ts:2013）对 lifecycle.armAndLaunch 不 await
+ *  （dispatchPhaseRound 同批加了 await，这里漏了）—— PG 化之后 arm 链真异步，
+ *  triggerTask 返回时 ws 绑定/实例行还没落地。测试侧先等链收敛再继续断言
+ *  （语义不变：「触发 ⇒ 首建绑定 + 起一行实例」仍是断言目标，只是读点挪到收敛后）。 */
+async function drainArmChain(taskId: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const t = ((await pg!.sql`SELECT workspace_id, status FROM tasks WHERE id = ${taskId}`)[0]) as
+      { workspace_id: string | null; status: string }
+    expect(t.workspace_id).toBeTruthy()
+    expect(t.status).toBe("running")
+  }, { timeout: 5_000 })
+}
+
+describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound", () => {
   let fakeHome: string
   let realHome: string | undefined
   let realUserProfile: string | undefined
@@ -163,11 +179,22 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
   let sse: SSEService
   let service: TasksService
 
-  beforeEach(() => {
+  beforeAll(async () => {
+    // P1 B2: PG 随机测试库每文件一座、注册为全局池（service/job 内部 pgSql() 取用）。
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("tasks", "task_phase_acceptances")
     db = newDb()
     mockHooks.db = db
-    execSeq = 0
-    seq = 0
+    // 不重置 seq/execSeq：id 每用例全局唯一，杜绝「上一用例残留的异步写」
+    // 别名命中本用例刚重新插入的同 id 行（PG 跨用例不 close，泄漏只可能来自这里）。
     vi.clearAllMocks()
     realHome = process.env.HOME
     realUserProfile = process.env.USERPROFILE
@@ -198,7 +225,10 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     )
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // startRow 里 `service.start(...)` 是 fire-and-forget（生产代码，不动）：
+    // 让它的 microtask 在关库前落地，避免对已 close 的 sqlite 句柄操作。
+    await new Promise((r) => setTimeout(r, 0))
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
     if (realUserProfile === undefined) delete process.env.USERPROFILE
@@ -240,15 +270,16 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
   // ── AC1 — first arm creates+binds+tags; a later round reuses ──────────
   describe("AC1: 首建绑定 / 后续轮复用（job 的 prepareWorkspace）", () => {
     it("first trigger: createFromSpec + tasks.workspace_id write-back + workspaces.task_id + 行标 (1,1)", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       const spy = vi.spyOn(workspaceService, "createFromSpec")
 
       await service.triggerTask(taskId)
+      await drainArmChain(taskId)
       expect(spy).toHaveBeenCalledTimes(1)
       expect(wsCount(db)).toBe(1)
 
-      // tasks.workspace_id binding (系统事件写法 — version 不 bump).
-      const task = db.prepare("SELECT workspace_id, version FROM tasks WHERE id = ?").get(taskId) as
+      // tasks.workspace_id binding (系统事件写法 — version 不 bump). P1 B2: 读 PG。
+      const task = ((await pg!.sql`SELECT workspace_id, version::int AS version FROM tasks WHERE id = ${taskId}`)[0]) as
         { workspace_id: string | null; version: number }
       expect(task.workspace_id).toBeTruthy()
       expect(task.version).toBe(1)
@@ -275,9 +306,10 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     })
 
     it("re-claim with tasks.workspace_id set: NO second createFromSpec — same ws dir, round 2 tags (1,2)", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       await service.triggerTask(taskId)
-      const boundId = (db.prepare("SELECT workspace_id FROM tasks WHERE id = ?").get(taskId) as
+      await drainArmChain(taskId)
+      const boundId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id!
       const wsPath = (db.prepare("SELECT path FROM workspaces WHERE id = ?").get(boundId) as
         { path: string }).path
@@ -287,9 +319,9 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
       fs.writeFileSync(marker, "phase 1 evidence")
       const inoBefore = fs.statSync(wsPath).ino
 
-      endRoundAndRequeue(db, taskId)
+      await endRoundAndRequeue(db, taskId)
       const spy = vi.spyOn(workspaceService, "createFromSpec")
-      const execId = service.taskLifecycle.armTask(taskId, { phaseIndex: 1, roundIndex: 2 })
+      const execId = await service.taskLifecycle.armTask(taskId, { phaseIndex: 1, roundIndex: 2 })
       expect(spy).not.toHaveBeenCalled()
       expect(wsCount(db)).toBe(1)
       // 目录未被重建 — 同 inode、marker 存活。
@@ -304,18 +336,19 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     })
 
     it("复用不换绑：绑定行被带外改成不存在的 ws 时，arm 明确拒绝而不是悄悄建第二个", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       await service.triggerTask(taskId)
-      const boundId = (db.prepare("SELECT workspace_id FROM tasks WHERE id=?").get(taskId) as
+      await drainArmChain(taskId)
+      const boundId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id
       expect(boundId).toBeTruthy()
-      endRoundAndRequeue(db, taskId)
+      await endRoundAndRequeue(db, taskId)
       // 带外改写绑定（≙ 旧数据 / 手工清库）：绑定指向查无此行的 ws。
-      db.prepare("UPDATE tasks SET workspace_id='ws-gone' WHERE id=?").run(taskId)
+      await pg!.sql`UPDATE tasks SET workspace_id = 'ws-gone' WHERE id = ${taskId}`
 
       let message = "<no throw>"
       try {
-        service.taskLifecycle.armTask(taskId)
+        await service.taskLifecycle.armTask(taskId)
       } catch (err: unknown) {
         message = (err as Error).message
       }
@@ -328,10 +361,11 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
   // ── AC1 (part 2) + AC2 — dispatchPhaseRound on the bound ws ──────────
   describe("AC1/AC2: dispatchPhaseRound — 同一 ws、同一任务、按轮打标", () => {
     it("dispatches phase 2 on the BOUND ws: ws count=1, dir untouched, row tagged (2,1)", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       await service.triggerTask(taskId) // phase 1 round 1
-      endRoundAndRequeue(db, taskId)
-      const boundWsId = (db.prepare("SELECT workspace_id FROM tasks WHERE id=?").get(taskId) as
+      await drainArmChain(taskId)
+      await endRoundAndRequeue(db, taskId)
+      const boundWsId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id!
       const wsPath = (db.prepare("SELECT path FROM workspaces WHERE id=?").get(boundWsId) as
         { path: string }).path
@@ -376,9 +410,9 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     })
 
     it("AC2: concurrent second dispatch → explainable conflict; ux_exec_task_active itself rejects the raw insert too", async () => {
-      const taskId = insertV4Task()
-      service.taskLifecycle.armTask(taskId) // live (armed) root on the bound ws
-      const boundWsId = (db.prepare("SELECT workspace_id FROM tasks WHERE id=?").get(taskId) as
+      const taskId = await insertV4Task()
+      await service.taskLifecycle.armTask(taskId) // live (armed) root on the bound ws
+      const boundWsId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id!
 
       // Still live — a parallel second dispatch must be refused by the latch, not
@@ -418,7 +452,7 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     // 且不打轮次标 —— 那条行会永久占住闩锁，derive 与账本又看不见它）。所以 armTask
     // 必须在解析步骤之前先校验 phase index，这条就是钉住那个前置校验。
     it("guards: 未知 phase index → 明确拒绝（不许静默跑 phase 1 且不带轮次标）", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       let message = "<no throw>"
       try {
         await service.dispatchPhaseRound(taskId, 3, 1)
@@ -451,7 +485,7 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     }
 
     it("作业自己的 completed ws 照常回收；任务 ws 从来不是候选", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       // NOTE: name doubles as the dir name here (test seeds the fs directly) —
       // no `:` (illegal on Windows); the retention logic keys off the DB row.
       seedSchedulerWs("ws-free-a", "taskpool-free-a")
@@ -467,7 +501,8 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
 
       // 任务 ws 走真实首建路径 ⇒ 它带 task_id，且**不在** schedule_workspaces 里。
       await service.triggerTask(taskId)
-      const taskWsId = (db.prepare("SELECT workspace_id FROM tasks WHERE id=?").get(taskId) as
+      await drainArmChain(taskId)
+      const taskWsId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id
       expect(
         db.prepare("SELECT COUNT(*) c FROM schedule_workspaces WHERE workspace_id=?").get(taskWsId),
@@ -485,19 +520,19 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
   // ── ⑥ — abort keeps the scene: binding + ws survive, next round reuses ──
   describe("⑥ abortTask × ws reuse semantics", () => {
     it("abort releases the latch but KEEPS the binding; the next round runs on the same ws", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       await service.dispatchPhaseRound(taskId, 1, 1)
-      const boundWsId = (db.prepare("SELECT workspace_id FROM tasks WHERE id=?").get(taskId) as
+      const boundWsId = ((await pg!.sql`SELECT workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
         { workspace_id: string }).workspace_id!
       const wsPath = (db.prepare("SELECT path FROM workspaces WHERE id=?").get(boundWsId) as
         { path: string }).path
       const marker = path.join(wsPath, "half-done-work.md")
       fs.writeFileSync(marker, "round scene")
 
-      service.abortTask(taskId)
+      await service.abortTask(taskId)
 
       // Binding + ws row + files SURVIVE the abort (round 打回现场不作废).
-      const task = db.prepare("SELECT workspace_id, status FROM tasks WHERE id = ?").get(taskId) as
+      const task = ((await pg!.sql`SELECT workspace_id, status FROM tasks WHERE id = ${taskId}`)[0]) as
         { workspace_id: string | null; status: string }
       expect(task.workspace_id).toBe(boundWsId)
       expect(task.status).toBe("aborted")
@@ -507,7 +542,7 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
       expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
 
       // And the mechanism-level promise: a fresh round reuses the SAME ws (人重新入队)。
-      db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(taskId)
+      await pg!.sql`UPDATE tasks SET status = 'ready' WHERE id = ${taskId}`
       const res = await service.dispatchPhaseRound(taskId, 2, 1)
       expect(res.workspaceId).toBe(boundWsId)
       expect(wsCount(db)).toBe(1)
@@ -519,13 +554,13 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
     // statuses — so the engine execution was never cancelled and kept burning
     // tokens until stopped by hand. Capture must happen BEFORE the mutation.
     it("abortTask cancels the IN-FLIGHT engine execution, not just the DB row", async () => {
-      const taskId = insertV4Task()
+      const taskId = await insertV4Task()
       await service.dispatchPhaseRound(taskId, 1, 1)
       const live = latestRoot(db, taskId)!
       expect(live.status).toBe("running")
       stubService.cancel.mockClear()
 
-      service.abortTask(taskId)
+      await service.abortTask(taskId)
       await new Promise((r) => setImmediate(r))
 
       expect(stubService.cancel).toHaveBeenCalledWith(live.id)
@@ -534,12 +569,12 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
       })
     })
 
-    it("abort of a QUEUED (pending) instance retires the row without touching the engine", () => {
-      const taskId = insertV4Task()
-      const execId = service.taskLifecycle.armTask(taskId) // armed, not started
+    it("abort of a QUEUED (pending) instance retires the row without touching the engine", async () => {
+      const taskId = await insertV4Task()
+      const execId = await service.taskLifecycle.armTask(taskId) // armed, not started
       stubService.cancel.mockClear()
 
-      const { cancelled, retired } = service.taskLifecycle.abortTask(taskId)
+      const { cancelled, retired } = await service.taskLifecycle.abortTask(taskId)
       expect(retired).toEqual([execId])
       expect(cancelled).toEqual([])
       expect(stubService.cancel).not.toHaveBeenCalled()

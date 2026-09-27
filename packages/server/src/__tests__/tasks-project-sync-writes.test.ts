@@ -15,6 +15,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import type { RepoSyncService } from "../services/tasks/repo-sync-service"
@@ -22,6 +23,8 @@ import type { RepoSyncService } from "../services/tasks/repo-sync-service"
 const ORG = "e2e-td-psync"
 
 let db: Database.Database
+// P1 B2：tasks 经 service 落 PG（全局池注册）；本文件 SQLite 侧只留 sessions 等表。
+let pg: PgFixture | null = null
 let app: Hono
 let tmpDir: string
 let taskHome: TaskHomeService
@@ -50,7 +53,9 @@ async function postJson(url: string, body: unknown): Promise<{ status: number; j
   return { status: res.status, json: await res.json().catch(() => null) }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池 —— service 经 pgSql() 取）。
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   const sse = new SSEService()
@@ -64,12 +69,15 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe("v4 写路径 → 镜像同步触发", () => {
+describePg("v4 写路径 → 镜像同步触发", () => {
   it("POST 直建 v4 带 project_ids → syncProjectsForTask(taskId, org, names)", async () => {
     const { status, json } = await postJson("/api/tasks", {
       org: ORG, name: "E2E_TD psync-create", task_spec: { format: "v4" }, project_ids: ["p-alpha"],

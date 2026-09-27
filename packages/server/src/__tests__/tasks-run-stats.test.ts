@@ -5,15 +5,20 @@
 // 排队 (started NULL)、暂停未闭、composite fan-out 臂（parent 行，root 跨度已含它）
 // 都不进和。墙钟口径（created→now 把待验收挂的那一夜算成跑时）已废 —— 见 TaskRunStats。
 
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 const ORG = "run-stats"
 const HOUR = 3_600_000
 const MIN = 60_000
+
+// P1 B2：tasks 表已迁 postgres.js —— seedTask 落 PG（注册全局池后 service 的
+// taskDAO 经 pgSql() 取到它）；executions/workspaces 仍在 SQLite。
+let pg: PgFixture | null = null
 
 function newDb(): Database.Database {
   const db = new Database(":memory:")
@@ -22,14 +27,14 @@ function newDb(): Database.Database {
   return db
 }
 
-function seedTask(db: Database.Database, id: string, status: string) {
+async function seedTask(id: string, status: string) {
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, '{"goal":"g","ac":[]}', '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-  `).run(id, ORG, `t-${id}`, status, now, now)
+    VALUES ($1, $2, $3, $4, NULL, '{"goal":"g","ac":[]}', '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL, NULL)
+  `, [id, ORG, `t-${id}`, status, now, now])
 }
 
 function seedWs(db: Database.Database, id: string) {
@@ -70,16 +75,29 @@ function seedExec(
 let db: Database.Database
 let service: TasksService
 
-beforeEach(() => {
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池），executions/workspaces 留 SQLite。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
   db = newDb()
+  // PG 库整文件共享 —— 逐用例清 tasks，避免跨用例残留行进 listTasks。
+  await pg!.sql`DELETE FROM tasks`
   service = new TasksService(db, new SSEService())
 })
 
-describe("run_stats — 实跑用时聚合", () => {
-  it("Σ 已闭轮 + running 计到读取刻；排队/暂停未闭/子臂不进和", () => {
+describePg("run_stats — 实跑用时聚合", () => {
+  it("Σ 已闭轮 + running 计到读取刻；排队/暂停未闭/子臂不进和", async () => {
     const base = Date.now()
     seedWs(db, "ws-1")
-    seedTask(db, "t-a", "running")
+    await seedTask("t-a", "running")
     // 2h 成功轮
     seedExec(db, "e1", { ws: "ws-1", task: "t-a", status: "completed", started: base - 4 * HOUR, completed: base - 2 * HOUR })
     // 30min 失败轮（终态也实打实跑了）
@@ -94,22 +112,22 @@ describe("run_stats — 实跑用时聚合", () => {
     // composite 子臂：parent 置位 + phase NULL → 跨度已含在 root 里，不双计
     seedExec(db, "e6", { ws: "ws-1", task: "t-a", status: "completed", started: base - 3 * HOUR, completed: base - 170 * MIN, parent: "e1", phaseIndex: null })
 
-    const item = service.listTasks().items.find((t) => t.id === "t-a")!
+    const item = (await service.listTasks()).items.find((t) => t.id === "t-a")!
     expect(item.run_stats?.count).toBe(3)
     expect(item.run_stats!.duration_ms).toBeCloseTo(2 * HOUR + 30 * MIN + 10 * MIN, -3)
 
     // detail 同一口径
-    const detail = service.getTask("t-a")
+    const detail = await service.getTask("t-a")
     expect(detail.run_stats?.count).toBe(3)
     // 徽章回归：attachInstances 改写后最新 instance 仍上卡（rowid 最大的 instance 行）
     expect(item.execution?.id).toBe("e5")
   })
 
-  it("从未跑过的任务不带 run_stats", () => {
-    seedTask(db, "t-b", "ready")
-    const item = service.listTasks().items.find((t) => t.id === "t-b")!
+  it("从未跑过的任务不带 run_stats", async () => {
+    await seedTask("t-b", "ready")
+    const item = (await service.listTasks()).items.find((t) => t.id === "t-b")!
     expect(item.run_stats).toBeUndefined()
     expect(item.execution).toBeNull()
-    expect(service.getTask("t-b").run_stats).toBeUndefined()
+    expect((await service.getTask("t-b")).run_stats).toBeUndefined()
   })
 })

@@ -468,8 +468,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   cron_timezone text NOT NULL DEFAULT 'Asia/Shanghai',
   trigger_enabled boolean NOT NULL DEFAULT true,    -- [port] 0/1 → bool
   next_fire_at timestamptz,
-  last_fired_at timestamptz,
-  FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
+  last_fired_at timestamptz
+  -- [B1-B5 混合期] FK 待 B6 恢复：sessions 迁 PG 后
+  --   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
+  -- 撤除理由：sessions 写路径仍在 SQLite（B5/B6 批），PG 的 sessions 恒空 =
+  -- 任何带 source_chat_session_id 的 tasks 行被 PG 拒写（恢复清单见 README）
 );
 
 -- 21c. Task Phase Acceptances (v4 验收 Gate 台账, append-only — trigger-guarded)
@@ -517,6 +520,7 @@ CREATE TABLE IF NOT EXISTS clones (
   skills jsonb NOT NULL DEFAULT '[]'::jsonb,
   workspace_ref jsonb NOT NULL DEFAULT '{}'::jsonb,
   memory_scope text NOT NULL DEFAULT '[]',
+  current_version_id text,                            -- [port] SQLite 侧 ensureColumn(schema.ts:537) 动态列，B1 核对补齐
   last_active_at timestamptz,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL
@@ -569,6 +573,12 @@ CREATE TABLE IF NOT EXISTS safety_events (
 -- 27. Reports
 -- [port] date 保持 text：'YYYY-MM-DD' 日期串非时间戳，且无时区语义；
 --   本表与 reports_fts 一起在 pg_search 票重新设计。
+-- P1 B2（p1-batch-plan §3 S8 缩微版，首战趟路）：检索面直接建在真表上 ——
+--   SQLite 侧 reports_fts 是「外部内容 FTS5 虚表」且仓内零写路径（从未被填充，
+--   旧 searchReports 实际恒空），不存在存量数据要搬；不再造影子占位表。
+--   BM25 索引列 = 全部文本列（key_field=id 必须是第一列）；CJK 默认按字符切
+--   （单字可命中，见 db/pg/README.md「pg_search 第一趟」差异清单），
+--   jieba 词级切分可经 text_fields 选项开启（B3 的坑）。
 CREATE TABLE IF NOT EXISTS reports (
   id text PRIMARY KEY,
   task_name text NOT NULL,
@@ -578,6 +588,13 @@ CREATE TABLE IF NOT EXISTS reports (
   org text NOT NULL,
   created_at timestamptz NOT NULL
 );
+
+-- pg_search BM25（幂等重放：CREATE INDEX IF NOT EXISTS；扩展随 octopus_template
+--   预装，CREATE 语句依赖 pg_search 已在 search_path —— migrate.ts 对缺扩展库
+--   先行报错，不静默跳表）。
+CREATE INDEX IF NOT EXISTS idx_reports_bm25 ON reports
+  USING bm25 (id, task_name, date, file_path, status, org)
+  WITH (key_field = 'id');
 
 -- 28. Scheduled Job Executions
 -- [port] metadata 保持 text：safety-dao 透传 row.metadata，无 stringify 证据。
@@ -776,8 +793,11 @@ CREATE TABLE IF NOT EXISTS interaction_messages (
   type text NOT NULL DEFAULT 'text',
   content text NOT NULL,
   metadata jsonb,                                   -- [port] live 库 66/66 json_valid
-  created_at timestamptz NOT NULL,
-  FOREIGN KEY (execution_id) REFERENCES executions(id)
+  created_at timestamptz NOT NULL
+  -- [B1-B5 混合期] FK 待 B6 恢复：executions 迁 PG 后
+  --   FOREIGN KEY (execution_id) REFERENCES executions(id)
+  -- 撤除理由：executions 属 B5 事务簇（终批才迁 PG），混合期 PG 的 executions
+  -- 恒空 = interaction_messages 根本无法造数（恢复清单见 README）
 );
 
 CREATE INDEX IF NOT EXISTS idx_interaction_msgs_exec_node

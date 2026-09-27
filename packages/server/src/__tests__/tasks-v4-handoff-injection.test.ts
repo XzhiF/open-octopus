@@ -29,7 +29,7 @@
 //
 // E2E_HO_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import os from "os"
 import path from "path"
@@ -41,10 +41,15 @@ import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 
 const ORG = "e2e-ho"
 const BATCH_DATE = "20260905"
+
+// P1 B2：tasks / task_phase_acceptances 落 PG（每用例 truncate 还原「每测试一座新库」
+// 的旧语义）；executions/workspaces 仍 SQLite（beforeEach 重建 :memory:）。
+let pg: PgFixture | null = null
 
 // ── ExecutionService registry stub (mirrors tasks-v4-acceptance.test.ts) ──
 // A REAL 'pending' root row: the built-in job's claim loop, the one-instance latch
@@ -131,7 +136,7 @@ let taskSeq = 0
  * 轮次坐标），deriveView 读的就是它；启动计划每次 arm 从 task_spec + home 现算，
  * 所以批次 spec.md 必须真在盘上（arm 会重查 v4 契约）。
  */
-function seed(opts: {
+async function seed(opts: {
   phases?: PhaseDef[]
   autoAdvance?: boolean
   status?: string
@@ -178,12 +183,13 @@ function seed(opts: {
       inputValues: {},
     })),
   }
-  db.prepare(`
+  // P1 B2: tasks 落 PG；workspaces/executions 仍 SQLite `db`。
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_HO ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId)
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, $8)
+  `, [taskId, ORG, `E2E_HO ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId])
 
   // Seeded terminal rounds — 票03 起这就是全部的读模型（task_id + parent_id='0' +
   // (phase_index, round_index)）；终态行既不挡闩锁也不占算力槽。
@@ -208,9 +214,11 @@ function seed(opts: {
   }
 
   for (const row of opts.ledger ?? []) {
-    db.prepare(
-      "INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))",
-    ).run(`e2e-ho-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision)
+    // P1 B2: task_phase_acceptances 落 PG（append-only 台账 —— 只插不改）。
+    await pg!.sql.unsafe(`
+      INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+      VALUES ($1, $2, $3, $4, $5, NULL, now())
+    `, [`e2e-ho-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision])
   }
 
   return { db, taskId, workspaceId, home, specDirs, execIds }
@@ -230,10 +238,9 @@ function launchedRow(taskId: string) {
   return row
 }
 
-function specPhasesOf(taskId: string): Array<Record<string, unknown>> {
-  const { task_spec } = mockHooks.db!
-    .prepare("SELECT task_spec FROM tasks WHERE id = ?")
-    .get(taskId) as { task_spec: string }
+async function specPhasesOf(taskId: string): Promise<Array<Record<string, unknown>>> {
+  const { task_spec } = ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${taskId}`)[0]) as
+    { task_spec: string }
   return (JSON.parse(task_spec) as { phases: Array<Record<string, unknown>> }).phases
 }
 
@@ -259,7 +266,20 @@ function postAcceptance(taskId: string, body: Record<string, unknown>) {
   })
 }
 
-beforeEach(() => {
+beforeAll(async () => {
+  // P1 B2: PG 随机测试库每文件一座、注册为全局池（service/job 内部 pgSql() 取用）；
+  // 用例隔离靠 beforeEach truncate（等价旧「每测试新建 :memory:」）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
+  await pg!.truncate("tasks", "task_phase_acceptances")
   db = newDb()
   mockHooks.db = db
   execSeq = 0
@@ -293,9 +313,9 @@ afterEach(() => {
   db.close()
 })
 
-describe("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API↔DB↔fs 四方）", () => {
+describePg("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API↔DB↔fs 四方）", () => {
   it("phase1 accepted（预置 handoff.md）→ phase2 首轮的执行行带 home 绝对路径", async () => {
-    const { taskId, specDirs } = seed({ handoffs: { 1: "# handoff p1\n" } })
+    const { taskId, specDirs } = await seed({ handoffs: { 1: "# handoff p1\n" } })
 
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
@@ -322,12 +342,12 @@ describe("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API�
   })
 
   it("注入不重写作者的绑定：task_spec.phases[] 逐字段原样", async () => {
-    const { taskId, specDirs } = seed({ handoffs: { 1: "h" } })
-    const before = specPhasesOf(taskId)
+    const { taskId, specDirs } = await seed({ handoffs: { 1: "h" } })
+    const before = await specPhasesOf(taskId)
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     // 先确认派发真的发生了 —— 否则「绑定没被改写」会因为什么都没做而空过。
     expect(res.status, await res.clone().text()).toBe(200)
-    const after = specPhasesOf(taskId)
+    const after = await specPhasesOf(taskId)
     // 票03 之后 phases[] 是绑定的唯一存放处 —— 旧版「信封冻结面不被改写」的同一条
     // K16 纪律，换了对象：派发（含注入）绝不回写 task_spec。
     expect(after).toEqual(before)
@@ -337,9 +357,9 @@ describe("AC1 — accepted→下 phase round 1 注入 prev_handoff_paths（API�
   })
 })
 
-describe("AC2 — 存在性过滤 / 全空不注入键", () => {
+describePg("AC2 — 存在性过滤 / 全空不注入键", () => {
   it("前序无 handoff.md → 键完全不出现，input_values 与基线键集一致", async () => {
-    const { taskId } = seed()
+    const { taskId } = await seed()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     const iv = launchedIV(taskId)
@@ -368,7 +388,7 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
   it("多前序中缺 handoff 的被静默跳过，存在的那条仍注入（不 fail）", async () => {
     // phase1 accepted 但无 handoff；phase2 待验收且带 handoff → accepted 后
     // phase3 首轮只见 phase2 一行。
-    const { taskId, specDirs } = seed({
+    const { taskId, specDirs } = await seed({
       phases: THREE_PHASES,
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
       roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
@@ -382,9 +402,9 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
   })
 })
 
-describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () => {
+describePg("AC3 — rerun 不注入；多前序按 index 升序换行连接", () => {
   it("打回 rerun 同 phase 不注入（即便存在带 handoff 的 accepted 前序）", async () => {
-    const { taskId } = seed({
+    const { taskId } = await seed({
       phases: THREE_PHASES,
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
       roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
@@ -404,7 +424,7 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
   })
 
   it("两个 accepted 前序（1+2）→ 开 phase3 首轮见两行、index 升序", async () => {
-    const { taskId, specDirs } = seed({
+    const { taskId, specDirs } = await seed({
       phases: THREE_PHASES,
       status: "ready", // autoAdvance=false 的合法落点：人在人工闸前，卡片就是已入队
       autoAdvance: false, // phase1/2 已 accepted ⇒ 停在人工闸，由 advance 起 phase3
@@ -423,10 +443,10 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
 })
 
 // review-cycle-1（Completeness-C8）：存在性过滤的两个边界 —— 目录形态与同批次去重。
-describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重", () => {
+describePg("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重", () => {
   it("前序 handoff.md 位是目录（异常形态）→ isFile 过滤，键不出现", async () => {
     // 卡片 ready + phase1 已 accepted（人工闸后的世界）⇒ advance 起 phase2 首轮。
-    const { taskId, specDirs } = seed({
+    const { taskId, specDirs } = await seed({
       status: "ready",
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
     })
@@ -444,7 +464,7 @@ describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重
       { index: 2, name: "Phase 2", slug: "p1", workflowRef: "built-in/flow-p2" },
       { index: 3, name: "Phase 3", slug: "p3", workflowRef: "built-in/flow-p3" },
     ]
-    const { taskId, specDirs } = seed({
+    const { taskId, specDirs } = await seed({
       phases: shared,
       status: "ready",
       autoAdvance: false, // 同上：accepted×2 ∧ phase3 pending ⇒ 人工 advance 起轮
@@ -462,9 +482,9 @@ describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重
   })
 })
 
-describe("AC4 — 手动推进与 autoAdvance 行为一致", () => {
+describePg("AC4 — 手动推进与 autoAdvance 行为一致", () => {
   it("autoAdvance=false 停闸 → /advance 起 phase2 首轮，注入值与 auto 路径同形", async () => {
-    const { taskId, specDirs } = seed({ autoAdvance: false, handoffs: { 1: "h1" } })
+    const { taskId, specDirs } = await seed({ autoAdvance: false, handoffs: { 1: "h1" } })
     const parked = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(parked.status, await parked.clone().text()).toBe(200)
     expect(((await parked.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
@@ -481,16 +501,17 @@ describe("AC4 — 手动推进与 autoAdvance 行为一致", () => {
   })
 })
 
-describe("AC5 — v3 任务零影响（回归）", () => {
+describePg("AC5 — v3 任务零影响（回归）", () => {
   it("v3 任务 acceptance/advance 双双 409，注入面无泄漏，无新执行", async () => {
     const now = new Date().toISOString()
     const id = `e2e-ho-v3-${taskSeq++}`
-    db.prepare(`
+    // P1 B2: tasks 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'running', NULL, ?, '[]', '[]', '[]', '[]', 'built-in/task-dev', 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, `E2E_HO v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now)
+      VALUES ($1, $2, $3, 'running', NULL, $4, '[]', '[]', '[]', '[]', 'built-in/task-dev', 1, NULL, $5, $6, NULL)
+    `, [id, ORG, `E2E_HO v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now])
 
     const acc = await postAcceptance(id, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(acc.status).toBe(409)
@@ -500,7 +521,7 @@ describe("AC5 — v3 任务零影响（回归）", () => {
   })
 
   it("v4 首 phase 派发不经 dispatchPhaseRound（trigger 域零改动）：accept 末 phase 无派发无注入", async () => {
-    const { taskId } = seed({ phases: [TWO_PHASES[0]], handoffs: { 1: "h" } })
+    const { taskId } = await seed({ phases: [TWO_PHASES[0]], handoffs: { 1: "h" } })
     // Stub the 票 08 hook so the built-in archiver (git/fs) never runs here.
     service.setArchivingHook(() => {})
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
@@ -520,9 +541,9 @@ describe("AC5 — v3 任务零影响（回归）", () => {
 // 恒注入是刻意的：引擎对「未解析引用」原样保留字面量，若像 prev_handoff_paths
 // 那样空则不注入，工作流读到的会是 `$inputs.is_final_phase` 这个裸词而非 "false"，
 // 而 ship-pr 要在提示词里按它分支（末站跳过 handoff.md）。
-describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）", () => {
+describePg("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）", () => {
   it("被派发的是末 phase → \"true\"（TWO_PHASES 里 accept 1 → 派发 2）", async () => {
-    const { taskId } = seed({ handoffs: { 1: "h" } })
+    const { taskId } = await seed({ handoffs: { 1: "h" } })
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { dispatch?: Record<string, unknown> }).dispatch)
@@ -536,7 +557,7 @@ describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）"
   })
 
   it("后面还有 phase → \"false\"（THREE_PHASES 里 accept 1 → 派发 2）", async () => {
-    const { taskId } = seed({ phases: THREE_PHASES, handoffs: { 1: "h" } })
+    const { taskId } = await seed({ phases: THREE_PHASES, handoffs: { 1: "h" } })
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { dispatch?: Record<string, unknown> }).dispatch)
@@ -546,7 +567,7 @@ describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）"
   })
 
   it("手动推进同行为（/advance 与 autoAdvance 两路不许分叉）", async () => {
-    const { taskId } = seed({ phases: THREE_PHASES, autoAdvance: false, handoffs: { 1: "h" } })
+    const { taskId } = await seed({ phases: THREE_PHASES, autoAdvance: false, handoffs: { 1: "h" } })
     const parked = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(((await parked.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
 
@@ -559,7 +580,7 @@ describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）"
     // 打回 rerun 是「同 phase 开下一轮」：prev_handoff_paths 按设计不注入（那是给
     // 跨 phase 的），但末站标记仍须在场，否则 ship-pr 那段提示词读到的会是未解析的
     // 字面量 `$inputs.is_final_phase` 而不是 "false" —— 恒注入的全部意义在此。
-    const { taskId } = seed({
+    const { taskId } = await seed({
       phases: THREE_PHASES,
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
       roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },

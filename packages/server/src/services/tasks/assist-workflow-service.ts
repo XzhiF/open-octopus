@@ -30,6 +30,7 @@ import {
   type AssistWorkflowRun,
 } from "@octopus/shared"
 import { TaskDAO } from "../../db/dao/task-dao"
+import { pgSql } from "../../db/dao/registry"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { SSEService } from "../sse"
@@ -95,7 +96,9 @@ export interface AssistWorkflowTriggerResult {
 // ── Service ──────────────────────────────────────────────────────
 
 export class AssistWorkflowService {
-  private taskDAO: TaskDAO
+  // P1 B2: tasks 表已迁 PG（pgSql() 按访问解析，同 tasks-service 接线）；
+  // execDAO/workspaceDAO 仍 SQLite（B5）。
+  private get taskDAO(): TaskDAO { return new TaskDAO(pgSql()) }
   private execDAO: ExecutionDAO
   private workspaceDAO: WorkspaceDAO
   private taskHome: TaskHomeService
@@ -105,7 +108,6 @@ export class AssistWorkflowService {
     private sse: SSEService,
     taskHome?: TaskHomeService,
   ) {
-    this.taskDAO = new TaskDAO(db)
     this.execDAO = new ExecutionDAO(db)
     this.workspaceDAO = new WorkspaceDAO(db)
     this.taskHome = taskHome ?? new TaskHomeService()
@@ -113,11 +115,11 @@ export class AssistWorkflowService {
 
   // ── Trigger (AC2/AC3/AC7) ─────────────────────────────────────────
 
-  trigger(
+  async trigger(
     taskId: string,
     template: string,
     input?: AssistWorkflowTriggerInput,
-  ): AssistWorkflowTriggerResult {
+  ): Promise<AssistWorkflowTriggerResult> {
     if (!ALL_TEMPLATES.includes(template)) {
       throw new AssistWorkflowError(
         `Unknown assist-workflow template: ${template}. Allowed: ${ALL_TEMPLATES.join(", ")}`,
@@ -125,7 +127,7 @@ export class AssistWorkflowService {
       )
     }
 
-    const task = this.taskDAO.getById(taskId)
+    const task = await this.taskDAO.getById(taskId)
     if (!task) {
       throw new AssistWorkflowError(`Task not found: ${taskId}`, "TASK_NOT_FOUND")
     }

@@ -14,6 +14,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type LedgerSnapshot } from "../services/tasks/round-evidence-service"
@@ -22,6 +23,9 @@ import { renderChecksMd } from "../services/tasks/playbook-compile"
 const ORG = "e2e-td-ledger"
 const WS_ID = "ws-lg-1"
 const BATCH_REL = ".scratch/20260917/p-1"
+// P1 B2：tasks + task_phase_acceptances 落 PG（service 内部 pgSql()）；
+// executions/workspaces 仍 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmp: string
@@ -57,7 +61,8 @@ async function newAwaiting(twoPhase = false, autoAdvance?: boolean): Promise<str
   const id = ((await r.json()) as { id: string }).id
   // real flow flips draft→running on dispatch; we insert the exec row directly,
   // so mirror the status here (acceptance route requires ready|running, not draft).
-  db.prepare(`UPDATE tasks SET status='running' WHERE id=?`).run(id)
+  // P1 B2: tasks 行在 PG。
+  await pg!.sql.unsafe(`UPDATE tasks SET status='running' WHERE id = $1`, [id])
   const now = new Date().toISOString()
   db.prepare(`INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status, task_id, phase_index, round_index, start_commit_id, end_commit_id, started_at, completed_at, created_at, updated_at) VALUES (?,?,?,'task-dev','lg','completed',?,1,1,'{}','{}',?,?,?,?)`)
     .run(`exec-lg-${seq}`, WS_ID, ORG, id, now, now, now, now)
@@ -66,7 +71,9 @@ async function newAwaiting(twoPhase = false, autoAdvance?: boolean): Promise<str
 
 const PLAN = `## 测试步骤\n\n### Step 1: 剧本渲染 (spec-001)\n- 页面: http://h/tasks\n- 操作: 开验收台\n- 断言: 剧本 ≥3 步\n- 反假跑: 有预期\n\n### Step 2: 预览起停 (spec-002)\n- 操作: 起预览\n- 断言: ready\n- 反假跑: curl 命中\n\n### Step 3: 通过写台账 (spec-003)\n- 操作: 点通过\n- 断言: ledger 落盘\n`
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-ledger-"))
@@ -80,9 +87,15 @@ beforeAll(() => {
   evidence = new RoundEvidenceService(db, sse, ts, wss, taskHome)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, evidence))
 })
-afterAll(() => { db.close(); fs.rmSync(tmp, { recursive: true, force: true }) })
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+  db.close()
+  fs.rmSync(tmp, { recursive: true, force: true })
+})
 
-describe("T04 ledger + reopen", () => {
+describePg("T04 ledger + reopen", () => {
   it("L1: writeLedger(accepted) 聚合四事实落 .md", async () => {
     const taskId = await newAwaiting()
     wb(taskId, "e2e-test-plan.md", PLAN)
@@ -151,16 +164,18 @@ describe("T04 ledger + reopen", () => {
 })
 
 // ── S1 (2026-09-20): 走查 ✗ 服务端硬闸 —— 前端 disabled 不再是唯一防线 ──
-describe("S1 acceptance 硬闸", () => {
+describePg("S1 acceptance 硬闸", () => {
   async function postAccepted(taskId: string): Promise<Response> {
     return app.request(`/api/tasks/${taskId}/acceptance`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
     })
   }
-  function decisionRows(taskId: string): number {
-    return (db.prepare("SELECT COUNT(*) AS n FROM task_phase_acceptances WHERE task_id = ?")
-      .get(taskId) as { n: number }).n
+  async function decisionRows(taskId: string): Promise<number> {
+    // P1 B2: task_phase_acceptances 在 PG —— COUNT 裸读回 string，::int 投影成 number。
+    return ((await pg!.sql`SELECT COUNT(*)::int AS n FROM task_phase_acceptances WHERE task_id = ${taskId}`)[0] as {
+      n: number
+    }).n
   }
 
   it("G1: checks 有 ✗ → 409 硬闸，决策表零行、台账不写", async () => {
@@ -174,7 +189,7 @@ describe("S1 acceptance 硬闸", () => {
     const r = await postAccepted(taskId)
     expect(r.status).toBe(409)
     expect(((await r.json()) as { error: string }).error).toContain("走查存在 2 项 ✗ —— 服务端硬闸拦截，请改走打回")
-    expect(decisionRows(taskId)).toBe(0)
+    expect(await decisionRows(taskId)).toBe(0)
     expect(has(taskId, "acceptance-ledger-r1.md")).toBe(false)
   })
 
@@ -188,7 +203,7 @@ describe("S1 acceptance 硬闸", () => {
     const r = await postAccepted(taskId)
     expect(r.status).toBe(200)
     expect(((await r.json()) as { ledger_written: boolean }).ledger_written).toBe(true)
-    expect(decisionRows(taskId)).toBe(1)
+    expect(await decisionRows(taskId)).toBe(1)
   })
 
   it("G3: 无 checks 文件 / 文件解析失败 → 放行（诚实降级，绝不误伤）", async () => {

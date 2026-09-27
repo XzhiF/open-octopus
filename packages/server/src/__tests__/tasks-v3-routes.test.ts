@@ -23,7 +23,7 @@
 // Anti-fake-run: real DB + applySchema (R1/R3/R5), Hono app.request (R3 API↔DB↔fs),
 // data prefix E2E_TD_ (R7), assert response body + SQL + readdir (R4).
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
@@ -33,6 +33,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { createSkillGroupsRoutes } from "../routes/skill-groups"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -40,6 +41,10 @@ import { PluginMaterializer, DEFAULT_SKILL_GROUP } from "../services/tasks/plugi
 import { ResourceManager } from "@octopus/shared"
 
 const ORG = "e2e-td-04"
+
+// P1 B2：tasks 落 PG（service 经注册的全局池读写）；sessions 仍 SQLite，
+// 但 PG 的 tasks.source_chat_session_id→sessions 是硬 FK ⇒ 绑会话的造数需 PG 侧父行。
+let pg: PgFixture | null = null
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -76,24 +81,30 @@ function installSkill(
   rm.registerInstalled({ name, type: "skill", group })
 }
 
-/** Insert a sessions row directly (bypass the DAO) to seed a source_chat_session_id. */
-function insertSession(db: Database.Database, sessionId: string, org: string): void {
+/** Insert a sessions row directly (bypass the DAO) to seed a source_chat_session_id.
+ *  P1 B2: sessions 行仍在 SQLite（AgentSessionDAO 域），但 PG 的 tasks→sessions FK 要求
+ *  PG 侧也有父行 —— 最小裸 INSERT 复制过去（配方第 5 条）。 */
+async function insertSession(db: Database.Database, sessionId: string, org: string): Promise<void> {
   const now = new Date().toISOString()
   db.prepare(`
     INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type,
       is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
     VALUES (?, ?, ?, NULL, NULL, ?, 1, 0, NULL, NULL, NULL, ?, ?)
   `).run(sessionId, org, "E2E_TD session", "task-author", now, now)
+  await pg!.sql.unsafe(`
+    INSERT INTO sessions (id, org, title, session_type, created_at, updated_at)
+    VALUES ($1, $2, $3, 'task-author', $4, $5)
+  `, [sessionId, org, "E2E_TD session", now, now])
 }
 
-function readTaskSpec(db: Database.Database, id: string): Record<string, unknown> {
-  const row = db.prepare("SELECT task_spec, version FROM tasks WHERE id = ?").get(id) as
+async function readTaskSpec(db: Database.Database, id: string): Promise<Record<string, unknown>> {
+  const row = (await pg!.sql`SELECT task_spec #>> '{}' AS task_spec, version FROM tasks WHERE id = ${id}`)[0] as
     { task_spec: string; version: number }
   return { ...JSON.parse(row.task_spec), _version: row.version }
 }
 
-function readAuthoringResources(db: Database.Database, id: string): unknown[] {
-  const row = db.prepare("SELECT authoring_resources FROM tasks WHERE id = ?").get(id) as
+async function readAuthoringResources(db: Database.Database, id: string): Promise<unknown[]> {
+  const row = (await pg!.sql`SELECT authoring_resources #>> '{}' AS authoring_resources FROM tasks WHERE id = ${id}`)[0] as
     { authoring_resources: string }
   return JSON.parse(row.authoring_resources)
 }
@@ -108,9 +119,26 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** P1 B2: writeManifestSnapshot 是 fire-and-forget（HTTP 返回时不 await）——
+ *  tasks.getById 同步时代它事实上同步落盘；PG 之后变成真异步。内容断言改为
+ *  轮询等文件收敛（语义不变：写 spec 后快照必须跟上）。 */
+interface ManifestSnapshot {
+  task_id?: string
+  version: number
+  spec: Record<string, unknown>
+}
+async function readManifestWhen(specPath: string, ready: (m: ManifestSnapshot) => boolean): Promise<ManifestSnapshot> {
+  let last: ManifestSnapshot | null = null
+  await vi.waitFor(() => {
+    last = JSON.parse(fs.readFileSync(specPath, "utf-8")) as ManifestSnapshot
+    expect(ready(last)).toBe(true)
+  })
+  return last as ManifestSnapshot
+}
+
 // ── Suite ──────────────────────────────────────────────────────────
 
-describe("04: task create extension + skill-groups route (integration)", () => {
+describePg("04: task create extension + skill-groups route (integration)", () => {
   let db: Database.Database
   let app: Hono
   let rm: ResourceManager
@@ -119,7 +147,10 @@ describe("04: task create extension + skill-groups route (integration)", () => {
   let taskHome: TaskHomeService
   let agentSessionDAO: AgentSessionDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取），
+    // sessions/home 仍在 SQLite `db`。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     rmBase = mkdtemp("v3-routes-rm-")
     homeBase = mkdtemp("v3-routes-home-")
@@ -157,7 +188,9 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     )
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     cleanupDir(rmBase)
     cleanupDir(homeBase)
@@ -193,7 +226,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
 
   it("AC2: POST /api/tasks with task_type+skill_groups+preset → task_spec has fields ∧ home exists ∧ skills/ materialized ∧ scope_id linked", async () => {
     const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 10)}`
-    insertSession(db, sessionId, ORG)
+    await insertSession(db, sessionId, ORG)
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -222,7 +255,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     expect(task.task_spec.skill_groups).toEqual(["e2e-td-grp1", "e2e-td-grp2"])
 
     // R3 DB cross-validation: task_spec.skill_groups/task_type persisted.
-    const spec = readTaskSpec(db, task.id)
+    const spec = await readTaskSpec(db, task.id)
     expect(spec.task_type).toBe("coding")
     expect(spec.skill_groups).toEqual(["e2e-td-grp1", "e2e-td-grp2"])
 
@@ -270,7 +303,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
 
   it("AC3: POST with source_chat_session_id → exactly one draft bound to that session", async () => {
     const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 10)}`
-    insertSession(db, sessionId, ORG)
+    await insertSession(db, sessionId, ORG)
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -285,11 +318,10 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     expect(res.status).toBe(201)
     const task = await json<{ id: string }>(res)
     // Exactly one active draft bound to this session (D15 regression lock).
-    const drafts = db
-      .prepare(
-        "SELECT id FROM tasks WHERE source_chat_session_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
-      )
-      .all(sessionId) as Array<{ id: string }>
+    const drafts = (await pg!.sql`
+      SELECT id FROM tasks WHERE source_chat_session_id = ${sessionId} AND deleted_at IS NULL
+      ORDER BY created_at ASC
+    `) as Array<{ id: string }>
     expect(drafts).toHaveLength(1)
     expect(drafts[0]!.id).toBe(task.id)
     // scope_id writeback is bidirectional (SG3).
@@ -362,7 +394,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       body: JSON.stringify({ task_spec: { goal: "new goal", ac: ["ac1"] } }),
     })
     expect(res.status).toBe(200)
-    const spec = readTaskSpec(db, task.id)
+    const spec = await readTaskSpec(db, task.id)
     expect(spec.skill_groups).toEqual(["e2e-td-grp1", "e2e-td-grp2"])
     expect(spec.task_type).toBe("coding")
     expect(spec.goal).toBe("new goal")
@@ -510,14 +542,14 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     // R5: skill_groups must NOT leak into authoring_resources (D4 — that would
     // trigger the augmenter's full-text injection, double-loading skills already
     // exposed via the per-task plugin dir).
-    expect(readAuthoringResources(db, task.id)).toEqual([])
+    expect(await readAuthoringResources(db, task.id)).toEqual([])
   })
 
   // ── 06: header rename syncs the bound session title (bugfix 2026-08-21) ──
 
   it("06: PUT {name} syncs the bound task-author session title (bugfix 2026-08-21)", async () => {
     const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 10)}`
-    insertSession(db, sessionId, ORG)
+    await insertSession(db, sessionId, ORG)
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -577,11 +609,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
 
     const specPath = path.join(taskHome.homePath(task.id), "manifest.json")
     expect(fs.existsSync(specPath)).toBe(true)
-    const initial = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
-      task_id: string
-      version: number
-      spec: { goal: string }
-    }
+    const initial = await readManifestWhen(specPath, (m) => m.spec.goal === "")
     expect(initial.task_id).toBe(task.id)
     expect(initial.spec.goal).toBe("")
 
@@ -593,10 +621,10 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     })
     expect(sf.status).toBe(200)
 
-    const refreshed = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
-      version: number
-      spec: { goal: string; ac: string[] }
-    }
+    const refreshed = await readManifestWhen(
+      specPath,
+      (m) => m.version === 2 && m.spec.goal === "E2E_TD 给服务加健康检查",
+    )
     expect(refreshed.version).toBe(2)
     expect(refreshed.spec.goal).toBe("E2E_TD 给服务加健康检查")
   })
@@ -616,9 +644,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     })
     expect(putRes.status).toBe(200)
     const specPath = path.join(taskHome.homePath(task.id), "manifest.json")
-    const snap = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
-      spec: { goal: string; ac: string[] }
-    }
+    const snap = await readManifestWhen(specPath, (m) => m.spec.goal === "E2E_TD PUT goal")
     expect(snap.spec.goal).toBe("E2E_TD PUT goal")
     expect(snap.spec.ac).toEqual(["a1"])
 

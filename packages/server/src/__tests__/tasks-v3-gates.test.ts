@@ -26,6 +26,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import {
   SPEC_FIELD_UPDATE_EVENT,
@@ -37,6 +38,10 @@ import {
 } from "../services/tasks/spec-notice-store"
 
 const ORG = "e2e-td-05"
+
+// P1 B2：tasks 表已迁 postgres.js —— 本文件的造数/读断言落 PG（service 经全局池写），
+// sessions/executions 等仍 SQLite。
+let pg: PgFixture | null = null
 
 type SpecFieldEvent = { task_id: string; field: string; value: unknown; version: number }
 type ArtifactsEvent = { task_id: string }
@@ -62,8 +67,9 @@ function newDb(): Database.Database {
   return db
 }
 
-/** Insert a task row directly (bypass the service) to control task_spec state. */
-function insertTask(
+/** Insert a task row directly (bypass the service) to control task_spec state.
+ *  P1 B2: tasks 表已迁 postgres.js —— 造数落 PG（_db 形参保留仅为少动调用点）。 */
+async function insertTask(
   db: Database.Database,
   overrides: Partial<{
     id: string
@@ -77,12 +83,12 @@ function insertTask(
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
   const spec = overrides.task_spec ?? { goal: "E2E_TD goal", ac: ["E2E_TD ac1"] }
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', ?, ?, NULL, ?, ?, NULL)
-  `).run(
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', $6, $7, NULL, $8, $9, NULL)
+  `, [
     id,
     ORG,
     overrides.name ?? "E2E_TD task",
@@ -92,21 +98,25 @@ function insertTask(
     overrides.version ?? 1,
     now,
     now,
-  )
+  ])
   return id
 }
 
-function readTaskSpec(db: Database.Database, id: string): Record<string, unknown> {
-  const row = db.prepare("SELECT task_spec, version FROM tasks WHERE id = ?").get(id) as
+async function readTaskSpec(db: Database.Database, id: string): Promise<Record<string, unknown>> {
+  const row = (await pg!.sql`SELECT task_spec #>> '{}' AS task_spec, version FROM tasks WHERE id = ${id}`)[0] as
     { task_spec: string; version: number }
   return { ...JSON.parse(row.task_spec), _version: row.version }
+}
+
+async function readTaskStatus(id: string): Promise<string> {
+  return ((await pg!.sql`SELECT status FROM tasks WHERE id = ${id}`)[0] as { status: string }).status
 }
 
 async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
-describe("05: spec-field source + confirmation persistence + ready gate (integration)", () => {
+describePg("05: spec-field source + confirmation persistence + ready gate (integration)", () => {
   let db: Database.Database
   let app: Hono
   let sse: SSEService
@@ -114,13 +124,16 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   let artifactEvents: ArtifactsEvent[]
   let taskDAO: TaskDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
+    // sessions 仍在 SQLite `db`。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     const collector = makeSSECollector()
     sse = collector.sse
     specEvents = collector.specEvents
     artifactEvents = collector.artifactEvents
-    taskDAO = new TaskDAO(db)
+    taskDAO = new TaskDAO(pg.sql)
     // task-workflow-handoff (ADR-0013): inject a stub BuiltInWorkflowService that
     // recognizes any ref whose group or bare-name matches the e2e-td-* test prefix.
     // This lets the ready-gate resolver find "e2e-td-XX/simple" without touching
@@ -139,7 +152,9 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     app.route("/api/tasks", createTasksRoutes(service, sse))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
   })
 
@@ -153,7 +168,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   // ── AC1: source flag ───────────────────────────────────────────────────
 
   it("AC1a: spec-field(goal, source=user) → version+1 ∧ spec notice pending with field name", async () => {
-    const id = insertTask(db, { name: "E2E_TD_src_user" })
+    const id = await insertTask(db, { name: "E2E_TD_src_user" })
     expect(getSpecNotice(id)).toBeUndefined()
 
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
@@ -174,7 +189,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC1b: spec-field(goal, source=agent) → version+1 ∧ NO spec notice (agent edits don't echo back)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_src_agent" })
+    const id = await insertTask(db, { name: "E2E_TD_src_agent" })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -188,7 +203,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC1c/AC5: spec-field(goal, source omitted) → default agent, NO notice (existing callers unchanged)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_src_default" })
+    const id = await insertTask(db, { name: "E2E_TD_src_default" })
     // No `source` in body — existing agent curl recipes / E2E helpers behave
     // exactly as before (default agent, no @@spec_updated nudge).
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
@@ -204,7 +219,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   // ── AC2: bindable confirmation + decisions fields ─────────────────────
 
   it("AC2a: spec-field(goal_confirmed=true) persists into task_spec + emits SSE", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_goal_conf",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -216,7 +231,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect(res.status).toBe(200)
     expect((await json<{ version: number }>(res)).version).toBe(2)
     // DB cross-validation (R3)
-    const spec = readTaskSpec(db, id)
+    const spec = await readTaskSpec(db, id)
     expect(spec.goal_confirmed).toBe(true)
     // SSE broadcast (R3)
     expect(specEvents).toContainEqual({
@@ -228,7 +243,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("D19: every spec-field update also emits companion task_artifacts_update (same taskpool stream, no polling)", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_artifacts_evt",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -243,7 +258,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC2b: spec-field(ac_confirmed=[...]) persists into task_spec + emits SSE", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_ac_conf",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1", "E2E_TD ac2"], task_type: "coding" },
     })
@@ -254,7 +269,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     })
     expect(res.status).toBe(200)
     expect((await json<{ version: number }>(res)).version).toBe(2)
-    const spec = readTaskSpec(db, id)
+    const spec = await readTaskSpec(db, id)
     expect(spec.ac_confirmed).toEqual(["E2E_TD ac1", "E2E_TD ac2"])
     expect(specEvents).toContainEqual({
       task_id: id,
@@ -265,7 +280,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC2c: spec-field(decisions=[...]) persists into task_spec + emits SSE", async () => {
-    const id = insertTask(db, { name: "E2E_TD_decisions", task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"] } })
+    const id = await insertTask(db, { name: "E2E_TD_decisions", task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"] } })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -273,7 +288,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     })
     expect(res.status).toBe(200)
     expect((await json<{ version: number }>(res)).version).toBe(2)
-    const spec = readTaskSpec(db, id)
+    const spec = await readTaskSpec(db, id)
     expect(spec.decisions).toEqual(["E2E_TD adopt suggestion A"])
     expect(specEvents).toContainEqual({
       task_id: id,
@@ -284,7 +299,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC2d: spec-field(goal_confirmed=<non-boolean>) → 400", async () => {
-    const id = insertTask(db, { name: "E2E_TD_bad_gc" })
+    const id = await insertTask(db, { name: "E2E_TD_bad_gc" })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -294,7 +309,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC2e: spec-field(ac_confirmed=[<non-string>]) → 400", async () => {
-    const id = insertTask(db, { name: "E2E_TD_bad_ac" })
+    const id = await insertTask(db, { name: "E2E_TD_bad_ac" })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -306,7 +321,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   // ── AC3: ready gate (D18) ─────────────────────────────────────────────
 
   it("AC3a: ready on v3 task with empty goal → 409 + missing contains 'goal'", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_nogoal",
       task_spec: { goal: "", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -317,7 +332,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC3b: ready with goal+ac but no goal_confirmed → 409 + missing contains 'goal_confirmed' & 'ac_confirmed'", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_unconfirmed",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -332,7 +347,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC3c: ready with goal_confirmed=true but ac unconfirmed → 409 + missing contains 'ac_confirmed' only", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_aconly",
       workflow_ref: "e2e-td-04/simple", // satisfy the option-A gate → isolate ac_confirmed
       task_spec: {
@@ -351,7 +366,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC3d: ready with all confirmed + simple workflow_ref → 200 ∧ status=ready", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_pass",
       workflow_ref: "e2e-td-04/simple", // simple task requires a dispatch workflow_ref
       task_spec: {
@@ -367,14 +382,13 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     const task = await json<{ id: string; status: string }>(res)
     expect(task.status).toBe("ready")
     // DB cross-validation (R3)
-    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
-    expect(row.status).toBe("ready")
+    expect(await readTaskStatus(id)).toBe("ready")
   })
 
   it("AC3e: ready on v2 task (no task_type) with goal+ac but no confirmation → 200 (gate N/A)", async () => {
     // Legacy/v2 tasks predate the v3 confirmation flow; the gate must not
     // reject them (preserves the 22 passing tasks-routes.test.ts ready cases).
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_v2_no_gate",
       task_spec: { goal: "E2E_TD v2 goal", ac: ["E2E_TD ac1"] },
     })
@@ -387,7 +401,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     // Option-A gate (2026-08-23): a simple v3 task (subunits < 2) materializes
     // workflow_chain[0].workflow_ref from tasks.workflow_ref; an empty ref fails at
     // runtime ("Workflow not found"), so enqueue must be rejected up-front.
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_noref",
       task_spec: {
         goal: "E2E_TD goal",
@@ -405,14 +419,13 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     // Everything else IS satisfied → only workflow_ref missing
     expect(body.missing).toEqual(["workflow_ref"])
     // Task stays draft (not a partial flip)
-    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
-    expect(row.status).toBe("draft")
+    expect(await readTaskStatus(id)).toBe("draft")
   })
 
   it("AC3g: ready on v3 COMPOSITE task (2+ subunits) with no task-level workflow_ref → 200 (built-in composition-task)", async () => {
     // Composite materializes to the built-in 'composition-task' ref, so a
     // task-level workflow_ref is NOT required by the option-A gate.
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_comp",
       task_spec: {
         goal: "E2E_TD goal",
@@ -439,7 +452,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC4: confirming goal_confirmed/ac_confirmed via spec-field survives a fresh GET (DB-backed, not UI temp)", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_persist",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -468,7 +481,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   // ── task-workflow-handoff (ADR-0013): workflow_ref spec-field bind + view ──
 
   it("AC7: spec-field(workflow_ref=<resolvable>) → 200 + version bump + SSE + column set", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_wf_bind",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -488,12 +501,12 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect(event!.value).toBe("e2e-td/my-flow")
 
     // DB column set
-    const row = db.prepare("SELECT workflow_ref FROM tasks WHERE id = ?").get(id) as { workflow_ref: string | null }
+    const row = (await pg!.sql`SELECT workflow_ref FROM tasks WHERE id = ${id}`)[0] as { workflow_ref: string | null }
     expect(row.workflow_ref).toBe("e2e-td/my-flow")
   })
 
   it("AC7: spec-field(workflow_ref=<UNRESOLVABLE>) → 400 + column unchanged", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_wf_reject",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -508,12 +521,12 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect(body.error).toContain("workflow not resolvable")
 
     // Column remains null
-    const row = db.prepare("SELECT workflow_ref FROM tasks WHERE id = ?").get(id) as { workflow_ref: string | null }
+    const row = (await pg!.sql`SELECT workflow_ref FROM tasks WHERE id = ${id}`)[0] as { workflow_ref: string | null }
     expect(row.workflow_ref).toBeNull()
   })
 
   it("AC7: spec-field(workflow_ref=<empty>) → 400 (shared validator)", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_wf_empty",
       task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
     })
@@ -529,7 +542,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     // S3 gate upgrade: non-empty alone is no longer enough. The ref must be
     // resolvable against the resolution set. A non-empty but unresolvable ref
     // is treated the same as empty.
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_gate_unresolvable",
       workflow_ref: "unknown/flow", // not in stub builtin; no task-home file
       task_spec: {
@@ -545,14 +558,13 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     const body = await json<{ error: string; missing: string[] }>(res)
     expect(body.missing).toContain("workflow_ref")
     // Task stays draft
-    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
-    expect(row.status).toBe("draft")
+    expect(await readTaskStatus(id)).toBe("draft")
   })
 
   // ── GET /:id/workflow-ref (AC8 view endpoint) ─────────────────────────
 
   it("AC8: GET /workflow-ref on unbound task → {ref,content,source}=null", async () => {
-    const id = insertTask(db, { name: "E2E_TD_wf_unbound" })
+    const id = await insertTask(db, { name: "E2E_TD_wf_unbound" })
     const res = await app.request(`/api/tasks/${id}/workflow-ref`)
     expect(res.status).toBe(200)
     const body = await json<{ ref: string | null; content: string | null; source: string | null }>(res)
@@ -562,7 +574,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC8: GET /workflow-ref on bound (resolvable) task → {ref,content,source}", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_wf_bound",
       workflow_ref: "e2e-td/my-flow",
     })
@@ -575,7 +587,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   })
 
   it("AC8: GET /workflow-ref on bound but unresolvable ref → 400", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_wf_stale",
       workflow_ref: "unknown/stale",
     })

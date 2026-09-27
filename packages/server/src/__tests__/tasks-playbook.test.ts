@@ -13,6 +13,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService } from "../services/tasks/round-evidence-service"
@@ -23,6 +24,8 @@ const WS_ID = "ws-pb-1"
 const BATCH_REL = ".scratch/20260917/p-1"
 
 let db: Database.Database
+// P1 B2：tasks 经 service 落 PG（全局池注册）；executions/workspaces 留在 SQLite `db`。
+let pg: PgFixture | null = null
 let app: Hono
 let tmp: string
 let taskHome: TaskHomeService
@@ -62,7 +65,10 @@ async function getPlaybook(taskId: string): Promise<{ status: number; body: Play
   return { status: r.status, body: (await r.json()) as PlaybookPayload }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池 —— service 经 pgSql() 取），
+  // executions/workspaces 仍在 SQLite `db`。
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-playbook-"))
@@ -76,12 +82,15 @@ beforeAll(() => {
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(tasksService, sse, undefined, evidence))
 })
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
-describe("GET /:id/playbook", () => {
+describePg("GET /:id/playbook", () => {
   it("P1: full契约 → compiled steps over HTTP", async () => {
     const taskId = await newAwaitingTask()
     writeBatch(taskId, "spec.md", "# 剧本 Spec\n\n## Acceptance Criteria\n- AC1: x\n")

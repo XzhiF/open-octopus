@@ -25,10 +25,14 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
 
 const ORG = "e2e-td-03"
+
+// P1 B2：本文件的 tasks 造数/读断言全部走这座 PG 库（见 beforeAll）。
+let pg: PgFixture | null = null
 
 type TaskStatusEvent = { task_id: string; status: string; schedule_id?: string }
 type SpecFieldEvent = { task_id: string; field: string; value: unknown; version: number }
@@ -53,8 +57,9 @@ function newDb(): Database.Database {
   return db
 }
 
-/** Insert a task row directly (bypass the service) to set up non-draft states. */
-function insertTask(
+/** Insert a task row directly (bypass the service) to set up non-draft states.
+ *  P1 B2: tasks 表已迁 postgres.js —— 造数落 PG（_db 形参保留仅为少动调用点）。 */
+async function insertTask(
   db: Database.Database,
   overrides: Partial<{
     id: string
@@ -68,12 +73,12 @@ function insertTask(
 ) {
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', ?, ?, NULL, ?, NULL, ?, ?, NULL)
-  `).run(
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', $6, $7, NULL, $8, NULL, $9, $10, NULL)
+  `, [
     id,
     ORG,
     overrides.name ?? "E2E_TD task",
@@ -84,12 +89,14 @@ function insertTask(
     overrides.version ?? 1,
     now,
     now,
-  )
+  ])
   return id
 }
 
-function readTaskStatus(db: Database.Database, id: string) {
-  return db.prepare("SELECT status, version, completed_at FROM tasks WHERE id = ?").get(id) as
+async function readTaskStatus(_db: Database.Database, id: string) {
+  return (await pg!.sql`SELECT status, version::int AS version,
+      to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS completed_at
+    FROM tasks WHERE id = ${id}`)[0] as
     { status: string; version: number; completed_at: string | null }
 }
 
@@ -133,7 +140,7 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
-describe("03: /api/tasks routes + TasksService (integration)", () => {
+describePg("03: /api/tasks routes + TasksService (integration)", () => {
   let db: Database.Database
   let app: Hono
   let sse: SSEService
@@ -141,19 +148,24 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   let specEvents: SpecFieldEvent[]
   let taskDAO: TaskDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
+    // executions/workspaces/schedules 仍在 SQLite `db`（B5 域）。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     const collector = makeSSECollector()
     sse = collector.sse
     taskEvents = collector.taskEvents
     specEvents = collector.specEvents
-    taskDAO = new TaskDAO(db)
+    taskDAO = new TaskDAO(pg.sql)
     const service = new TasksService(db, sse, new AgentSessionDAO(db))
     app = new Hono()
     app.route("/api/tasks", createTasksRoutes(service, sse))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
   })
 
@@ -177,7 +189,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(task.name).toBe("E2E_TD_crud")
     expect(task.version).toBe(1)
     // DB assert (R3/R4)
-    const row = readTaskStatus(db, task.id)
+    const row = await readTaskStatus(db, task.id)
     expect(row.status).toBe("draft")
   })
 
@@ -190,7 +202,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("GET /api/tasks/:id returns task detail with executions[] (children[] is gone)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_detail" })
+    const id = await insertTask(db, { name: "E2E_TD_detail" })
     seedInstanceRow(db, id, "completed")
     const res = await app.request(`/api/tasks/${id}`)
     expect(res.status).toBe(200)
@@ -212,7 +224,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
 
   // ── 票05 (ADR-0021): the run read model — fan-out labels + a red run's reason ──
   it("detail + history project the composite fan-out and the failure reason (票05 read model)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_readmodel" })
+    const id = await insertTask(db, { name: "E2E_TD_readmodel" })
     const rootId = seedInstanceRow(db, id, "failed")
     // The reason a failure writer leaves on the row (var_pool.error) — setLaunchStatus /
     // retireLaunch both write this key, which is what error_summary reads.
@@ -269,7 +281,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("a green run never surfaces a stale error key (error_summary is terminal-failure only)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_greenreason" })
+    const id = await insertTask(db, { name: "E2E_TD_greenreason" })
     const rootId = seedInstanceRow(db, id, "completed")
     db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?")
       .run(JSON.stringify({ error: "上一轮遗留" }), rootId)
@@ -280,7 +292,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("PUT /api/tasks/:id updates with If-Match (save draft) + bumps version", async () => {
-    const id = insertTask(db, { name: "E2E_TD_put" })
+    const id = await insertTask(db, { name: "E2E_TD_put" })
     const res = await app.request(`/api/tasks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", "If-Match": "1" },
@@ -293,7 +305,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("PUT rejects stale If-Match with 409", async () => {
-    const id = insertTask(db, { name: "E2E_TD_stale", version: 2 })
+    const id = await insertTask(db, { name: "E2E_TD_stale", version: 2 })
     const res = await app.request(`/api/tasks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", "If-Match": "1" },
@@ -303,17 +315,17 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("DELETE /api/tasks/:id soft-deletes (discard draft)", async () => {
-    const id = insertTask(db, { name: "E2E_TD_del" })
+    const id = await insertTask(db, { name: "E2E_TD_del" })
     const res = await app.request(`/api/tasks/${id}`, { method: "DELETE" })
     expect(res.status).toBe(200)
     // getById excludes soft-deleted
-    expect(taskDAO.getById(id)).toBeNull()
+    expect(await taskDAO.getById(id)).toBeNull()
   })
 
   // ── AC1: spec-field ─────────────────────────────────────────────────
 
   it("POST /:id/spec-field merges field + bumps version + emits spec_field_update SSE", async () => {
-    const id = insertTask(db, { name: "E2E_TD_spec" })
+    const id = await insertTask(db, { name: "E2E_TD_spec" })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -324,7 +336,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(result.version).toBe(2)
     // DB assert: task_spec.goal updated (R3/R4)
     const spec = JSON.parse(
-      (db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(id) as { task_spec: string }).task_spec,
+      ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${id}`)[0]).task_spec,
     ) as { goal: string }
     expect(spec.goal).toBe("E2E_TD new goal")
     // SSE assert (R3)
@@ -337,7 +349,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/spec-field rejects invalid field value with 400", async () => {
-    const id = insertTask(db, { name: "E2E_TD_invalid" })
+    const id = await insertTask(db, { name: "E2E_TD_invalid" })
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -347,7 +359,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/spec-field maps skills→skills column, projects→project_ids", async () => {
-    const id = insertTask(db, { name: "E2E_TD_skills" })
+    const id = await insertTask(db, { name: "E2E_TD_skills" })
     // skills
     let res = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
@@ -363,9 +375,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     })
     expect(res.status).toBe(200)
     // DB assert
-    const row = db
-      .prepare("SELECT skills, project_ids FROM tasks WHERE id = ?")
-      .get(id) as { skills: string; project_ids: string }
+    const row = (await pg!.sql`SELECT skills #>> '{}' AS skills, project_ids #>> '{}' AS project_ids FROM tasks WHERE id = ${id}`)[0] as { skills: string; project_ids: string }
     expect(JSON.parse(row.skills)).toEqual(["octo-backend", "octo-frontend"])
     expect(JSON.parse(row.project_ids)).toEqual(["proj-A", "proj-B"])
   })
@@ -373,7 +383,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   // ── AC2 (票03): ready 是纯状态动作 ──────────────────────────────────
 
   it("POST /:id/ready (simple) → draft→ready 且三张 schedule 表零行", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_ready_simple",
       task_spec: JSON.stringify({ goal: "simple task", ac: ["ac1"] }),
       project_ids: JSON.stringify(["proj-A"]),
@@ -382,12 +392,12 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(res.status).toBe(200)
     const task = await json<{ status: string }>(res)
     expect(task.status).toBe("ready")
-    expect(readTaskStatus(db, id).status).toBe("ready")
+    expect((await readTaskStatus(db, id)).status).toBe("ready")
     // v39 的「停放信封」不存在了：入队既不建 schedules 行，也就没有 draft 停放态、
     // 没有 orphan 可漏、没有 status='queued' 的领取入口。
     expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
     // 「何时跑」是任务自己的列，入队不写游标（等人工触发或 setCronTrigger）。
-    const trig = db.prepare("SELECT trigger_mode, next_fire_at FROM tasks WHERE id = ?").get(id) as {
+    const trig = (await pg!.sql`SELECT trigger_mode, to_char(next_fire_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS next_fire_at FROM tasks WHERE id = ${id}`)[0] as {
       trigger_mode: string
       next_fire_at: string | null
     }
@@ -395,7 +405,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/ready (composite, 2+ subunits) → 同样零信封（子单元是运行时执行行）", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_ready_composite",
       task_spec: JSON.stringify({
         goal: "composite task",
@@ -439,7 +449,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/ready rejects non-draft with 409", async () => {
-    const id = insertTask(db, { name: "E2E_TD_ready_reject", status: "ready" })
+    const id = await insertTask(db, { name: "E2E_TD_ready_reject", status: "ready" })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
   })
@@ -447,14 +457,14 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   // ── AC4 (票03): abort ────────────────────────────────────────────────
 
   it("POST /:id/abort (running) → 实例行 aborted + tasks.status=aborted + SSE，不碰 schedule 表", async () => {
-    const id = insertTask(db, { name: "E2E_TD_abort", status: "running" })
+    const id = await insertTask(db, { name: "E2E_TD_abort", status: "running" })
     // 该任务的活实例（票03：一次运行就是一行 executions，parent_id='0' 即根）。
     const execId = seedInstanceRow(db, id, "running")
     const res = await app.request(`/api/tasks/${id}/abort`, { method: "POST" })
     expect(res.status).toBe(200)
     const task = await json<{ status: string }>(res)
     expect(task.status).toBe("aborted")
-    expect(readTaskStatus(db, id).status).toBe("aborted")
+    expect((await readTaskStatus(db, id)).status).toBe("aborted")
     // 闩锁自己松开：行进入终态即不再占这个任务的槽位。
     expect(
       db.prepare("SELECT status FROM executions WHERE id = ?").get(execId),
@@ -465,7 +475,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/abort — 排队中(pending)的实例被 retire，不是被 engine cancel", async () => {
-    const id = insertTask(db, { name: "E2E_TD_abort_queued", status: "ready" })
+    const id = await insertTask(db, { name: "E2E_TD_abort_queued", status: "ready" })
     const execId = seedInstanceRow(db, id, "pending")
     const res = await app.request(`/api/tasks/${id}/abort`, { method: "POST" })
     expect(res.status).toBe(200)
@@ -475,7 +485,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("POST /:id/abort rejects non-running/non-ready with 409", async () => {
-    const id = insertTask(db, { name: "E2E_TD_abort_reject", status: "done" })
+    const id = await insertTask(db, { name: "E2E_TD_abort_reject", status: "done" })
     const res = await app.request(`/api/tasks/${id}/abort`, { method: "POST" })
     expect(res.status).toBe(409)
   })
@@ -488,11 +498,11 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   // 软删而留存」这条新事实。
 
   it("DELETE /:id 软删任务；它的运行历史留在 executions（没有信封可级联清）", async () => {
-    const id = insertTask(db, { name: "E2E_TD_reap", status: "ready" })
+    const id = await insertTask(db, { name: "E2E_TD_reap", status: "ready" })
     const execId = seedInstanceRow(db, id, "completed")
     const res = await app.request(`/api/tasks/${id}`, { method: "DELETE" })
     expect(res.status).toBe(200)
-    expect(taskDAO.getById(id)).toBeNull()
+    expect(await taskDAO.getById(id)).toBeNull()
     expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE id = ?").get(execId)).toEqual({ c: 1 })
     expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
   })

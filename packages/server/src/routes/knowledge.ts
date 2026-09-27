@@ -201,11 +201,11 @@ export function createKnowledgeRoutes(
   })
 
   // GET /api/knowledge/effectiveness — effect tracking data
-  routes.get("/effectiveness", (c) => {
+  routes.get("/effectiveness", async (c) => {
     try {
       const ruleId = c.req.query("ruleId")
       if (ruleId) {
-        const row = effectivenessDAO.getByRuleId(ruleId)
+        const row = await effectivenessDAO.getByRuleId(ruleId)
         const org = c.req.query("org") || undefined
         const rule = org ? findRuleById(org, ruleId) : undefined
         return c.json({
@@ -221,7 +221,7 @@ export function createKnowledgeRoutes(
         })
       }
 
-      const all = effectivenessDAO.listAll()
+      const all = await effectivenessDAO.listAll()
       const org = c.req.query("org") || undefined
       const items = all.map(row => {
         const rule = org ? findRuleById(org, row.rule_id) : undefined

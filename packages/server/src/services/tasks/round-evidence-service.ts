@@ -234,14 +234,14 @@ export class RoundEvidenceService {
   /** The derived view (tasks-service.getTask → derived.phaseViews) picks the
    *  awaiting phase/round — 票03 single-authority, re-read here, never
    *  recomputed. TaskNotFoundError → 404; TaskStatusConflictError → 409. */
-  private resolveAwaiting(taskId: string): {
+  private async resolveAwaiting(taskId: string): Promise<{
     execRow: ExecutionRow
     phaseIndex: number
     roundIndex: number
     /** home-relative posix batch dir; null on absolute-specPath bypass. */
     batchRelDir: string | null
-  } {
-    const detail = this.tasksService.getTask(taskId) // 404 first
+  }> {
+    const detail = await this.tasksService.getTask(taskId) // 404 first
     const awaiting: TaskPhaseView | undefined = detail.derived.phaseViews.find(
       (p) => p.status === "awaiting_review" && p.awaitingRound !== null,
     )
@@ -281,7 +281,7 @@ export class RoundEvidenceService {
    *  首轮行缺失时回落本轮口径（诚实降级，payload 形状不变）。某仓在首轮 start
    *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。 */
   async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex } = this.resolveAwaiting(taskId)
+    const { execRow, phaseIndex } = await this.resolveAwaiting(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative") {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
@@ -400,7 +400,7 @@ export class RoundEvidenceService {
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
    *  resolveAwaiting (exec belongs to this task); repo must exist in the map. */
   async getFilePatch(taskId: string, repo: string, filePath: string): Promise<{ patch: string; truncated: boolean }> {
-    const { execRow } = this.resolveAwaiting(taskId)
+    const { execRow } = await this.resolveAwaiting(taskId)
     const starts = parseCommitMap(execRow.start_commit_id)
     const ends = parseCommitMap(execRow.end_commit_id)
     const start = starts[repo]
@@ -423,8 +423,8 @@ export class RoundEvidenceService {
    *  the (alive) task workspace. Gates: awaiting round exists (409) → command
    *  configured (400) → no session running (409) → ws dir alive (409). */
   async startVerify(taskId: string): Promise<VerifySummary> {
-    const { execRow, phaseIndex, roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
-    const detail = this.tasksService.getTask(taskId)
+    const { execRow, phaseIndex, roundIndex, batchRelDir } = await this.resolveAwaiting(taskId)
+    const detail = await this.tasksService.getTask(taskId)
     const cfg = (detail.task_spec as TaskSpec | undefined)?.acceptance_verify as AcceptanceVerify | undefined
     if (!cfg?.command?.trim()) {
       throw new TaskSpecFieldError("未配置复检命令 — 在验收面板写下验证命令再跑（随任务持久化，全 phase 复用）")
@@ -534,12 +534,12 @@ export class RoundEvidenceService {
   /** Terminal classification + durable verdict .md (writeHomeFile wrapper →
    *  SSE task_artifacts_update fires for free — 验货台批次文件列表 re-fetches it；
    *  「叙述」tab 已退役 2026-09-20) */
-  private settleVerify(
+  private async settleVerify(
     taskId: string,
     session: VerifySession,
     batchRelDir: string | null,
     r: { status: string; exitCode?: number; durationMs: number; logLines: string[] },
-  ): void {
+  ): Promise<void> {
     const s = session.summary
     s.state = classifyVerifyResult(session.userAborted, r)
     s.ended_at = new Date().toISOString()
@@ -552,7 +552,7 @@ export class RoundEvidenceService {
       const ts = s.ended_at.replace(/[:.]/g, "-")
       const relPath = `${batchRelDir}/verify-r${s.round_index}-${ts}.md`
       try {
-        this.tasksService.writeHomeFile(taskId, relPath, buildVerdictMd(s, session.lines))
+        await this.tasksService.writeHomeFile(taskId, relPath, buildVerdictMd(s, session.lines))
         s.verdict_path = relPath
       } catch (err: unknown) {
         // Non-fatal: a racing accept/archive can flip the edit window shut —
@@ -606,12 +606,12 @@ export class RoundEvidenceService {
    *  probe/claim checklist (ADR-0022). Pure read + {@link compilePlaybook};
    *  missing sources degrade into coverage.missing, never throw (200 with
    *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
-  getPlaybook(taskId: string): PlaybookPayload {
-    const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+  async getPlaybook(taskId: string): Promise<PlaybookPayload> {
+    const { roundIndex, batchRelDir } = await this.resolveAwaiting(taskId)
     // ③ 管道步过滤前提（判据两级，2026-09-22）：本任务有没有「跑起来看」可用
     // （runbook 两级任一命中）。有 → 起服/就绪/收尾类票步折给预览按钮；
     // 无 → 它们留在剧本里可跑（否则没人起服务）。
-    const hasRunbook = !!this.resolveRunbook(taskId)
+    const hasRunbook = Boolean(await this.resolveRunbook(taskId))
     if (!batchRelDir) {
       // absolute specPath bypass — no batch dir to read, honest empty state.
       return compilePlaybook({ roundIndex, hasRunbook })
@@ -682,7 +682,7 @@ export class RoundEvidenceService {
 
   /** @throws TaskStatusConflictError 无 awaiting 轮 / ws 目录已不在。 */
   async runProbe(taskId: string, command: string, timeoutS = 120): Promise<ProbeRunResult> {
-    const { execRow } = this.resolveAwaiting(taskId)
+    const { execRow } = await this.resolveAwaiting(taskId)
     const cmd = command.trim()
     if (!cmd) throw new TaskSpecFieldError("探针命令为空")
     const ws = this.workspaceService.getById(execRow.workspace_id)
@@ -739,8 +739,8 @@ export class RoundEvidenceService {
    *  下，两者永不相交（PV7 当年靠手工往工作区根塞脚本才命中，是测试自证假象）；
    *  且企业侧起法已由 author 经「长期记忆 → spec-field」预设（task-author SKILL
    *  §启动 Runbook 记忆），运行期不再自动探测文件系统。 */
-  private resolveRunbook(taskId: string): AcceptanceRunbook | null {
-    const spec = this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined
+  private async resolveRunbook(taskId: string): Promise<AcceptanceRunbook | null> {
+    const spec = (await this.tasksService.getTask(taskId)).task_spec as TaskSpec | undefined
     const rb = spec?.acceptance_runbook as AcceptanceRunbook | undefined
     if (rb?.up?.command?.trim() && rb?.ready?.command?.trim()) return rb
     const legacy = spec?.acceptance_preview as AcceptancePreview | undefined
@@ -792,12 +792,12 @@ export class RoundEvidenceService {
    *  detached `docker compose -d` / a Jenkins trigger) — both handled: readiness is
    *  decoupled from up's lifetime. NEVER auto-runs (explicit button only). */
   async startPreview(taskId: string): Promise<PreviewSummary> {
-    const { execRow } = this.resolveAwaiting(taskId)
+    const { execRow } = await this.resolveAwaiting(taskId)
     const prev = this.previewSessions.get(taskId)
     if (prev && !prev.done) throw new TaskStatusConflictError("预览已在跑 — 先停止")
     const ws = this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) throw new TaskStatusConflictError("工作区目录不在了 — 预览不可用")
-    const rb = this.resolveRunbook(taskId)
+    const rb = await this.resolveRunbook(taskId)
     if (!rb) {
       throw new TaskSpecFieldError("未配置预览 — 写 acceptance_preview(单服务) 或 acceptance_runbook(多服务/远端部署)；task-author 起草时应按「启动 Runbook 记忆」预设")
     }
@@ -963,8 +963,8 @@ export class RoundEvidenceService {
   async getPreview(taskId: string): Promise<PreviewSummary | null> {
     const session = this.previewSessions.get(taskId)
     if (session) return { ...session.summary, tail: session.lines.slice(-VERIFY_TAIL_LINES) }
-    this.resolveAwaiting(taskId) // 409 first (no awaiting → null-safe external probe only on live tasks)
-    const url = this.resolveRunbook(taskId)?.views?.[0]?.url
+    await this.resolveAwaiting(taskId) // 409 first (no awaiting → null-safe external probe only on live tasks)
+    const url = (await this.resolveRunbook(taskId))?.views?.[0]?.url
     if (!url) return null
     if (await this.probeUrl(url)) {
       return { task_id: taskId, url, views: [{ url }], state: "ready", external: true }
@@ -1080,11 +1080,11 @@ export class RoundEvidenceService {
    *  —— 该任务 branch 的端口文件 (~/.octopus/ports/{safe}.json) 里有端口在听、
    *  但不在注册表也不属宿主 → 多半是用户在 worktree 手动 `pnpm dev` 起的
    *  （正是"3888/3889 没人收尸"的原型场景），UI 给"按端口关闭"逃生门。 */
-  listInstances(taskId: string): { entries: TestInstanceEntry[]; external: Array<{ port: number; role: string; branch: string | null }> } {
+  async listInstances(taskId: string): Promise<{ entries: TestInstanceEntry[]; external: Array<{ port: number; role: string; branch: string | null }> }> {
     const entries = this.instances.listEntries(taskId)
     const known = new Set(entries.filter((e) => e.status !== "stopped").flatMap((e) => e.ports))
     const external: Array<{ port: number; role: string; branch: string | null }> = []
-    const fp = this.branchPortsFile(taskId)
+    const fp = await this.branchPortsFile(taskId)
     if (fp) {
       for (const role of ["web", "server"] as const) {
         const p = fp[role]
@@ -1098,11 +1098,11 @@ export class RoundEvidenceService {
 
   /** 该任务 branch 的端口登记文件（dev.mjs 协议，读取委托给注册表）；
    *  execRow.branch 优先，回落 task_spec.branch。无 branch / 无文件 → null。 */
-  private branchPortsFile(taskId: string): { branch?: string; server?: number; web?: number } | null {
+  private async branchPortsFile(taskId: string): Promise<{ branch?: string; server?: number; web?: number } | null> {
     let branch: string | null | undefined
-    try { branch = this.resolveAwaiting(taskId).execRow.branch } catch { /* 无 awaiting 轮 */ }
+    try { branch = (await this.resolveAwaiting(taskId)).execRow.branch } catch { /* 无 awaiting 轮 */ }
     if (!branch) {
-      try { branch = (this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined)?.branch } catch { /* 404 由路由兜 */ }
+      try { branch = ((await this.tasksService.getTask(taskId)).task_spec as TaskSpec | undefined)?.branch } catch { /* 404 由路由兜 */ }
     }
     return this.instances.branchPorts(branch)
   }
@@ -1120,11 +1120,11 @@ export class RoundEvidenceService {
     if (hostProtectedPorts().has(port)) {
       throw new InstanceGateError(`:${port} 是当前 Octopus 宿主在用的端口，拒绝终止`, 400)
     }
-    const { entries, external } = this.listInstances(taskId)
+    const { entries, external } = await this.listInstances(taskId)
     const whitelisted =
       entries.some((e) => e.status !== "stopped" && e.ports.includes(port)) ||
       external.some((x) => x.port === port) ||
-      (this.resolveRunbook(taskId)?.views ?? []).some((v) => portFromUrl(v.url) === port)
+      ((await this.resolveRunbook(taskId))?.views ?? []).some((v: { url: string }) => portFromUrl(v.url) === port)
     if (!whitelisted) {
       throw new InstanceGateError(`端口 :${port} 与本任务无登记关联（不在注册表 / runbook / 分支端口文件中）— 如确需终止请手动处理`, 403)
     }
@@ -1153,9 +1153,9 @@ export class RoundEvidenceService {
    *  it, resolveAwaiting 409s — the ledger/reopen must be built from a still-
    *  awaiting view). Throws like resolveAwaiting; route wraps best-effort. */
   async snapshotEvidence(taskId: string): Promise<LedgerSnapshot> {
-    const { execRow, phaseIndex, roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
-    const detail = this.tasksService.getTask(taskId)
-    const playbook = this.getPlaybook(taskId)
+    const { execRow, phaseIndex, roundIndex, batchRelDir } = await this.resolveAwaiting(taskId)
+    const detail = await this.tasksService.getTask(taskId)
+    const playbook = await this.getPlaybook(taskId)
     const diff = await this.getRoundDiff(taskId)
     const verify = this.sessions.get(taskId)?.summary ?? null
     const preview = this.previewSessions.get(taskId)?.summary ?? null

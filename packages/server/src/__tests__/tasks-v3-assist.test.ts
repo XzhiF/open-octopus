@@ -13,7 +13,7 @@
 // Anti-fake-run: real better-sqlite3 + applySchema (R1/R3/R4), data prefix
 // E2E_TD_ (R7), assert response + SQL + filesystem (R3/R4/R5).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
@@ -24,6 +24,7 @@ import { TaskDAO } from "../db/dao/task-dao"
 import { ExecutionDAO } from "../db/dao/execution-dao"
 import { WorkspaceDAO } from "../db/dao/workspace-dao"
 import { SSEService } from "../services/sse"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import {
   AssistWorkflowService,
@@ -36,6 +37,10 @@ import { TasksService } from "../services/tasks/tasks-service"
 import { AgentSessionDAO } from "../db/dao"
 
 const ORG = "e2e-td-07"
+
+// P1 B2：本文件的 tasks 造数全部走这座 PG 库（每文件一座，beforeAll 注册全局池；
+// SQLite db 仍按用例新建 —— executions/workspaces/node_executions 是 B5 域）。
+let pg: PgFixture | null = null
 
 // ── Mock getExecutionService (mirrors composite-dispatch.test.ts) ──────
 // The engine isn't really run; create/start/registerExternalCallbacks are
@@ -90,19 +95,20 @@ function newDb(): Database.Database {
   return db
 }
 
-/** Insert a task row directly with a given task_spec. */
-function insertTask(
-  db: Database.Database,
+/** Insert a task row directly with a given task_spec.
+ *  P1 B2: tasks 表已迁 postgres.js —— 造数落 PG（db 形参保留仅为少动调用点）。 */
+async function insertTask(
+  _db: Database.Database,
   overrides: { id?: string; task_spec?: Record<string, unknown>; project_ids?: string[]; org?: string } = {},
-): string {
+): Promise<string> {
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', ?, NULL, 1, NULL, ?, ?, NULL)
-  `).run(
+    VALUES ($1, $2, $3, 'draft', NULL, $4, '[]', '[]', '[]', $5, NULL, 1, NULL, $6, $7, NULL)
+  `, [
     id,
     overrides.org ?? ORG,
     "E2E_TD assist task",
@@ -110,7 +116,7 @@ function insertTask(
     JSON.stringify(overrides.project_ids ?? ["E2E_TD_proj"]),
     now,
     now,
-  )
+  ])
   return id
 }
 
@@ -178,7 +184,7 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
-describe("07: AssistWorkflowService + routes (integration)", () => {
+describePg("07: AssistWorkflowService + routes (integration)", () => {
   let db: Database.Database
   let sse: SSEService
   let taskHome: TaskHomeService
@@ -187,6 +193,16 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   let app: Hono
   let execDAO: ExecutionDAO
   let workspaceDAO: WorkspaceDAO
+
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取）。
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
 
   beforeEach(() => {
     db = newDb()
@@ -222,7 +238,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── AC3: trigger legal template → 200; illegal template → 400 ──────────
 
   it("POST /:id/assist-workflows with legal template → 200 + {run_id, execution_id, workspace_id, template}", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const res = await app.request(`/api/tasks/${taskId}/assist-workflows`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -236,7 +252,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("POST /:id/assist-workflows with illegal template → 400", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const res = await app.request(`/api/tasks/${taskId}/assist-workflows`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -257,7 +273,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── AC2: temp workspace (source='task-assist') + pipeline_config ──────
 
   it("trigger creates a temp workspace with source='task-assist' + path=task home (D16)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const body = await assistService.trigger(taskId, "spec-review-swarm")
     // Workspace row (R3/R4 — SQL cross-check).
     const ws = workspaceDAO.findById(body.workspace_id)!
@@ -266,7 +282,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("trigger records {task_id, template} on executions.pipeline_config (AC2)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const body = await assistService.trigger(taskId, "clarify-debate")
     expect(createSpy).toHaveBeenCalledTimes(1)
     expect(startSpy).toHaveBeenCalledTimes(1)
@@ -280,7 +296,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("trigger passes goal/ac/projects as input_values to ExecutionService.create (AC7)", async () => {
-    const taskId = insertTask(db, {
+    const taskId = await insertTask(db, {
       task_spec: { goal: "E2E_TD goal G", ac: ["E2E_TD ac1", "E2E_TD ac2"] },
       project_ids: ["E2E_TD_proj_a", "E2E_TD_proj_b"],
     })
@@ -294,7 +310,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("trigger registers an onComplete callback that reaps the temp workspace (AC2/AC6)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     // Create the home so the "home preserved" assertion is meaningful (trigger
     // does not createHome — that's POST /api/tasks' job, ticket 02).
     taskHome.createHome(taskId)
@@ -315,7 +331,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── AC4/AC5: getRun output parsing ─────────────────────────────────────
 
   it("getRun parses valid aggregator JSON into three-part output (AC4/AC5)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     // Create the temp workspace row (so workspace_id is valid) + execution with synthesis.
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
@@ -341,7 +357,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("getRun on broken JSON → output_raw non-empty + output_parse_error=true (SW-BP10, AC5)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -362,7 +378,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("getRun tolerates markdown ```json fences around the aggregator output", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -384,7 +400,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── AC4: logs from JSONL ────────────────────────────────────────────────
 
   it("getRun surfaces process logs from {home}/logs/{execId}/ (AC4)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -417,8 +433,8 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── Run ownership guard ────────────────────────────────────────────────
 
   it("GET /:id/assist-workflows/:runId for a run belonging to another task → 403", async () => {
-    const taskA = insertTask(db, { id: "e2e-td-task-a" })
-    const taskB = insertTask(db, { id: "e2e-td-task-b" })
+    const taskA = await insertTask(db, { id: "e2e-td-task-a" })
+    const taskB = await insertTask(db, { id: "e2e-td-task-b" })
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -433,7 +449,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   })
 
   it("GET /:id/assist-workflows/:runId for missing run → 404", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const res = await app.request(`/api/tasks/${taskId}/assist-workflows/no-such-run`)
     expect(res.status).toBe(404)
   })
@@ -441,7 +457,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
   // ── SSE: assist_run_update emitted (D19) ───────────────────────────────
 
   it("trigger emits assist_run_update SSE on the taskpool channel (D19)", async () => {
-    const taskId = insertTask(db)
+    const taskId = await insertTask(db)
     const events: { event: string; data: unknown }[] = []
     sse.subscribe("taskpool", (e) => events.push({ event: e.event, data: e.data }))
     await assistService.trigger(taskId, "moa-requirements-review")

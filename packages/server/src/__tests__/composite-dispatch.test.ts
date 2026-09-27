@@ -30,7 +30,7 @@
 // here the engine is stubbed at the ExecutionService seam (anti-fake-run: the DB writes,
 // the arming, the claim, the correlation and the resume wiring all run for real).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import os from "os"
@@ -120,6 +120,7 @@ import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { TaskDAO } from "../db/dao/task-dao"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
 import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -144,8 +145,11 @@ function makeSubunit(name: string): SubunitSpec {
   }
 }
 
-describe("composite task dispatch — coordinator arm + child run + parent resume (票03/票04)", () => {
+describePg("composite task dispatch — coordinator arm + child run + parent resume (票03/票04)", () => {
   let db: Database.Database
+  // P1 B2 双引擎：tasks 落 PG（TaskDAO(pg.sql) + 注册全局池供 service 的 pgSql() 取）；
+  // executions/workspaces/node_executions 仍在 SQLite `db`。
+  let pg: PgFixture | null = null
   let svc: TaskLifecycleService
   let dispatch: TaskDispatchService
   let execs: ExecutionDAO
@@ -155,6 +159,16 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
   let realHome: string | undefined
   let realUserProfile: string | undefined
   let taskHome: TaskHomeService
+
+  beforeAll(async () => {
+    // 全局池注册 —— TaskLifecycleService 内部 taskDAO 经 pgSql() 取同一座库。
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
 
   beforeEach(() => {
     db = new Database(":memory:")
@@ -208,7 +222,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     // The port the engine calls from inside the coordinator's task_dispatch node.
     // Its workspaceId is the coordinator ws — resolved per test after arming.
     dispatch = null as never
-    tasks = new TaskDAO(db)
+    tasks = new TaskDAO(pg!.sql)
     execs = new ExecutionDAO(db)
   })
 
@@ -222,7 +236,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     fs.rmSync(homeDir, { recursive: true, force: true })
   })
 
-  function insertCompositeTask(id: string, subunitNames: string[]): TaskRow {
+  async function insertCompositeTask(id: string, subunitNames: string[]): Promise<TaskRow> {
     const now = new Date().toISOString()
     const spec = {
       goal: "E2E_TP_composite_goal",
@@ -238,9 +252,9 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
       workflow_ref: null, version: 1, source_chat_session_id: null,
       deleted_at: null, created_at: now, updated_at: now, completed_at: null, workspace_id: null,
       trigger_mode: "manual", trigger_at: null, cron_expression: null,
-      cron_timezone: "Asia/Shanghai", trigger_enabled: 1, next_fire_at: null, last_fired_at: null,
+      cron_timezone: "Asia/Shanghai", trigger_enabled: true, next_fire_at: null, last_fired_at: null,
     } as unknown as TaskRow
-    tasks.insert(row as never)
+    await tasks.insert(row as never)
     return row
   }
 
@@ -268,9 +282,9 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
   }
 
   // ── AC: arming a composite builds a COORDINATOR ws (no projects) + composition wf ──
-  it("arms a composite task as a coordinator workspace with NO projects + the composition-task ref + composite input_values", () => {
-    insertCompositeTask("t-comp-1", ["a", "b", "c"])
-    const execId = svc.armTask("t-comp-1")
+  it("arms a composite task as a coordinator workspace with NO projects + the composition-task ref + composite input_values", async () => {
+    await insertCompositeTask("t-comp-1", ["a", "b", "c"])
+    const execId = await svc.armTask("t-comp-1")
 
     // Coordinator ws: projects=[] is the load-bearing distinction from a simple arm
     // (spec D4 — orchestration only; each subunit gets its own ws at dispatch).
@@ -299,8 +313,8 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
 
   // ── AC: 父在 task_dispatch 处持久暂停,子完成后被唤醒并拿到子的 var_pool 输出 ──
   it("the paused parent is woken with the child's var_pool output when the child run finalizes", async () => {
-    insertCompositeTask("t-comp-2", ["a", "b"])
-    const rootId = svc.armTask("t-comp-2")
+    await insertCompositeTask("t-comp-2", ["a", "b"])
+    const rootId = await svc.armTask("t-comp-2")
     // The composition wf is dispatched on the coordinator → the engine marks the root
     // RUNNING and pauses INSIDE the task_dispatch node (a running node row is what the
     // pause persists — that is the whole restart-safety argument of 票03).
@@ -326,7 +340,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     // The ONLY two resume paths are the completion callback and the job's finalize —
     // here the job side: finalizeLaunch sees a CHILD row and hands the result to the
     // parent's waiting node instead of writing the task card.
-    svc.finalizeLaunch(handle.child_id, "completed")
+    await svc.finalizeLaunch(handle.child_id, "completed")
     await new Promise((r) => setImmediate(r))
     await new Promise((r) => setImmediate(r))
 
@@ -340,12 +354,12 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     expect(execs.findById(handle.child_id)!.status).toBe("completed")
     // A subunit's outcome is NOT the task's outcome: no done/failed mirror for
     // children (task-lifecycle finalizeLaunch returns before the task write).
-    expect(tasks.getById("t-comp-2")!.status).toBe("ready")
+    expect((await tasks.getById("t-comp-2"))!.status).toBe("ready")
   })
 
   it("a FAILED child still wakes the paused parent (empty output), never leaves it stalled", async () => {
-    insertCompositeTask("t-comp-3", ["a", "b"])
-    const rootId = svc.armTask("t-comp-3")
+    await insertCompositeTask("t-comp-3", ["a", "b"])
+    const rootId = await svc.armTask("t-comp-3")
     db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
     const coordinatorWsId = execs.findById(rootId)!.workspace_id
     db.prepare(
@@ -377,8 +391,8 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
   // contract (§新行为 11 "超并发时留 pending 由 job 领取"); it goes green when the
   // double-claim is collapsed.
   it("an over-cap child parks as pending; the job's claim starts it with the parent-resume wiring", async () => {
-    insertCompositeTask("t-comp-4", ["a", "b"])
-    const rootId = svc.armTask("t-comp-4")
+    await insertCompositeTask("t-comp-4", ["a", "b"])
+    const rootId = await svc.armTask("t-comp-4")
     db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
     const coordinatorWsId = execs.findById(rootId)!.workspace_id
     db.prepare(
@@ -400,7 +414,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     // Free a slot; the built-in job's claim loop starts the parked child — the SAME
     // queue a root launch uses, so composite fan-out inherits the cap for free.
     db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE id='exec-busy'").run()
-    const { launched } = svc.launchQueued()
+    const { launched } = await svc.launchQueued()
     expect(launched).toBeGreaterThanOrEqual(1)
     expect(execs.findById(handle.child_id)!.status).toBe("running")
     expect(stub.started).toContain(handle.child_id)
@@ -425,8 +439,8 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     // waiter that no longer exists. So nothing else in the system ever tells it, and the
     // round hangs holding a slot. What makes the question askable at all is 票03's row
     // shape: 「这个暂停节点还欠着子执行吗」 is a parent_id query, not a config-marker scan.
-    insertCompositeTask("t-comp-5", ["a", "b"])
-    const rootId = svc.armTask("t-comp-5")
+    await insertCompositeTask("t-comp-5", ["a", "b"])
+    const rootId = await svc.armTask("t-comp-5")
     db.prepare("UPDATE executions SET status='pending_task_dispatch' WHERE id=?").run(rootId)
     const coordinatorWsId = execs.findById(rootId)!.workspace_id
     db.prepare(
@@ -440,7 +454,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
          datetime('now','-3 minutes'), datetime('now','-2 minutes'), datetime('now','-3 minutes'), datetime('now','-2 minutes'), ?)`,
     ).run(coordinatorWsId, rootId, ORG, "t-comp-5")
 
-    const { resynced } = svc.reconcile()
+    const { resynced } = await svc.reconcile()
     expect(resynced).toBeGreaterThanOrEqual(1)
     expect(stub.resumes).toContainEqual({
       parentId: rootId,
@@ -457,12 +471,12 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     //      past the stale threshold instead of reporting a wake-up that cannot happen).
     stub.resumes.length = 0
     db.prepare("UPDATE executions SET status='pending' WHERE id='child-done'").run()
-    svc.reconcile()
+    await svc.reconcile()
     expect(stub.resumes).toHaveLength(0)
 
     db.prepare("UPDATE executions SET status='completed' WHERE id='child-done'").run()
     stub.dead.push(rootId)
-    const after = svc.reconcile()
+    const after = await svc.reconcile()
     expect(stub.resumes).toHaveLength(0)
     expect(after.resynced).toBe(0)
     expect(after.reaped).toBe(0) // still inside the stale window — left alone, not killed early

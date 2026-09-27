@@ -605,6 +605,7 @@ CREATE TABLE IF NOT EXISTS clones (
   skills TEXT NOT NULL DEFAULT '[]',
   workspace_ref TEXT NOT NULL DEFAULT '{}',
   memory_scope TEXT NOT NULL DEFAULT '[]',
+  current_version_id TEXT,
   last_active_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

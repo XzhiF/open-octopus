@@ -3,7 +3,8 @@
 // 输出区磁盘直扫（2026-09-24「完整路径 + 目录如实显示」拍板）：
 //   GET /:id/home-tree     → { dir(绝对路径), entries(原始递归列表，空目录在列) }
 //   GET /:id/home-content  → home 下任意常规文件（403/404/413 同 home-file 码）
-// harness 抄 tasks-batch-tree.test.ts：真路由 + in-memory DB + tmpDir 注入。
+// harness 抄 tasks-batch-tree.test.ts：真路由 + 双引擎 fixture（P1 B2：tasks 走 PG
+// 全局池，其余表仍 in-memory SQLite）+ tmpDir 注入。
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import Database from "better-sqlite3"
@@ -12,6 +13,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService, MAX_HOME_FILE_READ_BYTES } from "../services/tasks/task-home-service"
 import path from "path"
@@ -20,6 +22,9 @@ import fs from "fs"
 
 const ORG = "e2e-td-hometree"
 
+// P1 B2：tasks 落 PG（setupRegisteredPgSchema 注册全局池 —— service 内部 pgSql() 取），
+// workspaces/executions 仍在 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmpDir: string
@@ -56,7 +61,9 @@ async function getTree(id: string): Promise<{ status: number; body: TreeResp }> 
   return { status: r.status, body: (await r.json()) as TreeResp }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   const sse = new SSEService()
@@ -70,12 +77,15 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe("GET /:id/home-tree — 如实磁盘视图", () => {
+describePg("GET /:id/home-tree — 如实磁盘视图", () => {
   it("T1: dir = 任务 home 绝对路径；文件/目录（含空目录、dot 目录）全在列", async () => {
     const id = await newV4Task()
     seed(id, "artifacts/report.md", "# R\n")
@@ -124,7 +134,7 @@ describe("GET /:id/home-tree — 如实磁盘视图", () => {
   })
 })
 
-describe("GET /:id/home-content — home 内任意常规文件", () => {
+describePg("GET /:id/home-content — home 内任意常规文件", () => {
   const get = (id: string, p: string | null) =>
     app.request(`/api/tasks/${id}/home-content${p === null ? "" : `?path=${encodeURIComponent(p)}`}`)
 

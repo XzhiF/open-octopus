@@ -58,7 +58,7 @@ Return ONLY the JSON array.`
 
   // Create a pending item with the compacted rules
   const pendingId = generateRuleId("compact")
-  pendingReviewDAO.insert({
+  await pendingReviewDAO.insert({
     id: pendingId,
     type: "rule",
     source: "system" as PendingSource,
@@ -125,23 +125,23 @@ Output the final markdown directly. Do NOT output JSON or explanations.`
  * system PendingItem suggesting compaction. Idempotent: skips if a threshold
  * warning already exists for the same file.
  */
-export function checkCompactThreshold(
+export async function checkCompactThreshold(
   org: string,
   fileName: string,
   threshold: number,
   pendingReviewDAO: PendingReviewDAO,
-): void {
+): Promise<void> {
   const knowledgeDir = getKnowledgeDir(org)
   const filePath = path.join(knowledgeDir, fileName)
   const content = readKnowledgeFile(filePath)
   const lineCount = content ? content.split("\n").length : 0
 
   if (lineCount >= threshold) {
-    const existingCheck = pendingReviewDAO.listBySource("system")
+    const existingCheck = (await pendingReviewDAO.listBySource("system"))
       .find(item => item.source_ref === `compact-threshold:${fileName}`)
     if (existingCheck) return // already flagged
 
-    pendingReviewDAO.insert({
+    await pendingReviewDAO.insert({
       id: generateRuleId("threshold"),
       type: "rule",
       source: "system" as PendingSource,
@@ -172,12 +172,12 @@ export function checkCompactThreshold(
  *
  * Returns the number of items merged.
  */
-export function mergeCloneKnowledge(
+export async function mergeCloneKnowledge(
   cloneId: string,
   pendingReviewDAO: PendingReviewDAO,
-): number {
+): Promise<number> {
   // Find rules from clone executions (source_ref contains clone:{cloneId}:)
-  const allPending = pendingReviewDAO.listBySource("workspace_archive")
+  const allPending = await pendingReviewDAO.listBySource("workspace_archive")
   const cloneItems = allPending.filter(item =>
     item.source_ref.includes(`clone:${cloneId}:`)
   )
@@ -185,7 +185,7 @@ export function mergeCloneKnowledge(
   let count = 0
   for (const item of cloneItems) {
     // Create new pending items in the main agent's queue
-    pendingReviewDAO.insert({
+    await pendingReviewDAO.insert({
       id: generateRuleId("clone"),
       type: "rule",
       source: "clone_merge" as PendingSource,

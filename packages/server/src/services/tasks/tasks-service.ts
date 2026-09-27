@@ -59,6 +59,7 @@ import {
   AcceptanceDAO,
   TokenUsageDAO,
 } from "../../db/dao"
+import { pgSql } from "../../db/dao/registry"
 import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 // task-phase-redesign (ticket 07): the acceptance API and the GET /:id view read
@@ -456,7 +457,13 @@ export class TasksService {
   /** ticket 08: the shared handle (the archiver is built lazily against it —
    *  same DAO-per-handle pattern as the constructor below). */
   private db: Database.Database
-  private taskDAO: TaskDAO
+  // P1 B2: task/acceptance DAOs are postgres.js-backed — resolved lazily against
+  // the registered PG pool (registry pgSql()), built per access so a test that
+  // swaps the pool between cases never sees a stale handle, and initPgPool may
+  // resolve after this service is constructed. The SQLite `db` field stays for
+  // TokenUsageDAO (B4) + the executions raw query in deriveView (B5).
+  private get taskDAO(): TaskDAO { return new TaskDAO(pgSql()) }
+  private get acceptanceDAO(): AcceptanceDAO { return new AcceptanceDAO(pgSql()) }
   /** v49: 账本用量只读口（看板逐任务花费）。同一 handle，DAO-per-handle 惯例。 */
   private tokenUsage: TokenUsageDAO
   /** ADR-0021 票03: the ONLY way this domain starts, stops or watches a run. Built on
@@ -481,7 +488,6 @@ export class TasksService {
   /** task-phase-redesign (ticket 07): the append-only 验收 ledger (schema v40).
    *  Constructed from the same handle as the other DAOs — no new ctor param
    *  (SW-BP15 discipline: tail-appended params only). */
-  private acceptanceDAO: AcceptanceDAO
 
   /** repo-sync (2026-09-08): v4 draft 创建/项目变更时把选中项目主 clone 强制
    *  对齐 origin 默认分支的进程内状态机（A3 触发点 + B2 trigger 预建前的
@@ -521,14 +527,12 @@ export class TasksService {
     workspaceService?: WorkspaceService | null,
   ) {
     this.db = db
-    this.taskDAO = new TaskDAO(db)
     this.tokenUsage = new TokenUsageDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
     this.pluginMaterializer = pluginMaterializer ?? null
     this.builtInWorkflowService = builtInWorkflowService ?? null
-    this.acceptanceDAO = new AcceptanceDAO(db)
     this.repoSyncService = repoSyncService ?? null
     this.workspaceService = workspaceService ?? null
     this.lifecycle = new TaskLifecycleService({
@@ -607,7 +611,7 @@ export class TasksService {
    *  home creation (v4's gate/seed/snapshot all resolve specPath relative to the
    *  home — a homeless v4 draft is a dead end), even without task_type. Absent
    *  task_spec → the old unparsed baseline, byte-identical to pre-v4 behavior. */
-  createTask(input: CreateTaskInput): TaskDTO {
+  async createTask(input: CreateTaskInput): Promise<TaskDTO> {
     const id = randomUUID()
     const now = new Date().toISOString()
     const name = input.name?.trim() || DEFAULT_TASK_NAME
@@ -640,7 +644,7 @@ export class TasksService {
     }
     const isV4 = taskSpecObj.format === "v4"
 
-    this.taskDAO.insert({
+    await this.taskDAO.insert({
       id,
       org,
       name,
@@ -708,21 +712,21 @@ export class TasksService {
       }
     }
 
-    const row = this.taskDAO.getById(id)
+    const row = await this.taskDAO.getById(id)
     if (!row) {
       throw new Error(`TasksService.createTask: inserted task ${id} not found`)
     }
     // 06: the POST body may carry spec fields — overwrite the baseline
     // manifest.json (written empty by createHome) with the real task_spec.
-    this.writeManifestSnapshot(id)
+    await this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
   // ── Read ──────────────────────────────────────────────────────────
 
   /** GET /api/tasks/:id — the task, its run history, and the derived phase view. */
-  getTask(id: string): TaskDetailDTO {
-    const row = this.taskDAO.getById(id)
+  async getTask(id: string): Promise<TaskDetailDTO> {
+    const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id)
     const byParent = groupChildren(this.lifecycle.childRuns(id))
@@ -741,7 +745,7 @@ export class TasksService {
     return {
       ...dto,
       executions: history.map(badge),
-      derived: this.deriveView(row),
+      derived: await this.deriveView(row),
     }
   }
 
@@ -757,9 +761,12 @@ export class TasksService {
    *  v3/generic rows) out; derive ignores anything untagged anyway. It is ALSO the
    *  round's identity since task-exec-tree (v44): a chained round is not a root, so no
    *  parent filter may appear here — the tag says 「instance」 at any tree depth. */
-  private deriveView(row: TaskRow): TaskView {
-    const executions: DeriveExecutionInput[] = this.taskDAO
-      .getDb()
+  private async deriveView(row: TaskRow): Promise<TaskView> {
+    // B2 dual-engine note: the round instances live in `executions` — still
+    // better-sqlite3 (B5). The old escape hatch reached them through
+    // taskDAO.getDb(); with TaskDAO on PG that handle is gone, so read them
+    // through this service's own SQLite handle (same physical db pre-split).
+    const executions: DeriveExecutionInput[] = this.db
       .prepare(
         `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
            FROM executions e
@@ -771,7 +778,7 @@ export class TasksService {
     return deriveTaskView(
       { id: row.id, status: row.status, task_spec: row.task_spec },
       executions,
-      this.acceptanceDAO.listByTask(row.id),
+      await this.acceptanceDAO.listByTask(row.id),
     )
   }
 
@@ -786,8 +793,8 @@ export class TasksService {
    *  from time here — the history is already ordered by the same key the latch and the
    *  badge read, so index 0 is the answer.
    */
-  listRunHistory(id: string, limit = 50): Array<TaskExecutionBadge & { current: boolean }> {
-    const row = this.taskDAO.getById(id)
+  async listRunHistory(id: string, limit = 50): Promise<Array<TaskExecutionBadge & { current: boolean }>> {
+    const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id, limit)
     const byParent = groupChildren(this.lifecycle.childRuns(id))
@@ -808,8 +815,8 @@ export class TasksService {
    *  task-exists check runs FIRST so a missing task is a 404, not a silent []
    *  (a [] response means "task has no artifacts yet", which is wrong for a
    *  task that doesn't exist). */
-  listArtifacts(taskId: string): ArtifactIndexEntry[] {
-    const row = this.taskDAO.getById(taskId)
+  async listArtifacts(taskId: string): Promise<ArtifactIndexEntry[]> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readArtifacts(taskId)
   }
@@ -822,11 +829,11 @@ export class TasksService {
    *  throws {@link ArtifactAccessError} (FORBIDDEN→403 / NOT_FOUND→404). The
    *  route validates the `path` query param is a non-empty string (→ 400)
    *  before calling this — so this method receives a non-empty path. */
-  readArtifactContent(
+  async readArtifactContent(
     taskId: string,
     requestedPath: string,
-  ): { path: string; content: string } {
-    const row = this.taskDAO.getById(taskId)
+  ): Promise<{ path: string; content: string }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readArtifactContent(taskId, requestedPath)
   }
@@ -838,11 +845,11 @@ export class TasksService {
    *  stray home on the write side). Whitelist / escape guards live in
    *  TaskHomeService (→403/404/413 via ArtifactAccessError, same classification
    *  as artifacts/content). */
-  readHomeFile(
+  async readHomeFile(
     taskId: string,
     requestedPath: string,
-  ): { path: string; content: string } {
-    const row = this.taskDAO.getById(taskId)
+  ): Promise<{ path: string; content: string }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readHomeFile(taskId, requestedPath)
   }
@@ -852,8 +859,8 @@ export class TasksService {
    *  Default `.md`-only; `all=1` (includeAll) admits every regular file — the
    *  v4 acceptance evidence面 needs e2e-data/*.txt、probe/*.json 等。Guard is the
    *  dir-mode home whitelist (`.scratch/**`, no escape), depth ≤2 / cap 200. */
-  listHomeDir(taskId: string, requestedDir: string, includeAll = false): Array<{ path: string; mtime: string; bytes: number }> {
-    const row = this.taskDAO.getById(taskId)
+  async listHomeDir(taskId: string, requestedDir: string, includeAll = false): Promise<Array<{ path: string; mtime: string; bytes: number }>> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.listHomeDir(taskId, requestedDir, includeAll)
   }
@@ -863,16 +870,16 @@ export class TasksService {
    *  Read-only, no edit-window gate (mirrors listHomeDir). Unknown task → 404
    *  BEFORE any fs action (no stray homes); missing `.scratch/` → `[]` — an
    *  empty tree is the normal drafting state, deliberately NOT a 404. */
-  batchTree(taskId: string): BatchTreeEntry[] {
-    const row = this.taskDAO.getById(taskId)
+  async batchTree(taskId: string): Promise<BatchTreeEntry[]> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.batchTree(taskId)
   }
 
   /** GET /api/tasks/:id/home-tree — 输出区磁盘直扫（2026-09-24 拍板）：
    *  任务 home 原始目录树 + 绝对路径。未知任务 404 先于任何 fs 动作。 */
-  homeTree(taskId: string): { dir: string; entries: HomeTreeEntry[] } {
-    const row = this.taskDAO.getById(taskId)
+  async homeTree(taskId: string): Promise<{ dir: string; entries: HomeTreeEntry[] }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return {
       dir: this.taskHomeService.homePath(taskId),
@@ -882,8 +889,8 @@ export class TasksService {
 
   /** GET /api/tasks/:id/home-content?path= — 读 home 下任意常规文件
    *  （目录树查看器）。守卫在 home service（相对路径不出 home + 512KB 上限）。 */
-  readHomeAnyFile(taskId: string, requestedPath: string): { path: string; content: string } {
-    const row = this.taskDAO.getById(taskId)
+  async readHomeAnyFile(taskId: string, requestedPath: string): Promise<{ path: string; content: string }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readHomeAnyFile(taskId, requestedPath)
   }
@@ -898,12 +905,12 @@ export class TasksService {
    *  `.scratch` files are not indexed, the event is a benign nudge). No version
    *  bump: the file is not the task row (write-vs-write is last-writer-wins,
    *  reconciled by the agent's re-read discipline). */
-  writeHomeFile(
+  async writeHomeFile(
     taskId: string,
     requestedPath: string,
     content: string,
-  ): { path: string; bytes: number } {
-    const row = this.taskDAO.getById(taskId)
+  ): Promise<{ path: string; bytes: number }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     if (!this.isSpecEditable(row)) {
       throw new TaskStatusConflictError(
@@ -927,8 +934,8 @@ export class TasksService {
    *  unresolvable (e.g. the builtin was uninstalled between bind and view),
    *  throws {@link TaskSpecFieldError} (→ 400 via classifyError). The task-exist
    *  check runs FIRST so a missing task is a 404 (not a misleading 400/empty). */
-  viewWorkflowRef(taskId: string): { ref: string | null; content: string | null; source: string | null } {
-    const row = this.taskDAO.getById(taskId)
+  async viewWorkflowRef(taskId: string): Promise<{ ref: string | null; content: string | null; source: string | null }> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     const ref = row.workflow_ref?.trim() ?? ""
     if (!ref) {
@@ -944,14 +951,14 @@ export class TasksService {
   }
 
   /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
-  listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
+  async listTasks(params: ListTasksParams = {}): Promise<{ items: TaskDTO[] }> { let rows: TaskRow[]
     if (params.status && params.org) {
       // listByStatus doesn't filter by org — filter in memory (small N).
-      rows = this.taskDAO.listByStatus(params.status).filter((r) => r.org === params.org)
+      rows = (await this.taskDAO.listByStatus(params.status)).filter((r) => r.org === params.org)
     } else if (params.status) {
-      rows = this.taskDAO.listByStatus(params.status)
+      rows = await this.taskDAO.listByStatus(params.status)
     } else if (params.org) {
-      rows = this.taskDAO.listByOrg(params.org)
+      rows = await this.taskDAO.listByOrg(params.org)
     } else {
       // No filter — union of all active. listByOrg requires an org, so scan
       // all statuses (the kanban shows draft/ready/running/done/failed/aborted).
@@ -960,11 +967,13 @@ export class TasksService {
       // previous list (a v4 task would otherwise vanish from the unfiltered
       // board between rounds).
       rows = (
-        [
-          "draft", "ready", "running", "awaiting_review", "archiving",
-          "done", "failed", "aborted",
-        ] as TaskStatus[]
-      ).flatMap((st) => this.taskDAO.listByStatus(st))
+        await Promise.all(
+          ([
+            "draft", "ready", "running", "awaiting_review", "archiving",
+            "done", "failed", "aborted",
+          ] as TaskStatus[]).map((st) => this.taskDAO.listByStatus(st)),
+        )
+      ).flat()
     }
     return { items: this.attachInstances(rows) }
   }
@@ -1072,8 +1081,8 @@ export class TasksService {
   /** PUT /api/tasks/:id — update with If-Match optimistic locking. Only
    *  draft/ready tasks are editable (a running/done/failed/aborted task is
    *  immutable — the spec is frozen at dispatch time). */
-  updateTask(id: string, input: UpdateTaskInput, expectedVersion: number): TaskDTO {
-    const existing = this.taskDAO.getById(id)
+  async updateTask(id: string, input: UpdateTaskInput, expectedVersion: number): Promise<TaskDTO> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (!this.isSpecEditable(existing)) {
       throw new TaskStatusConflictError(
@@ -1167,7 +1176,7 @@ export class TasksService {
     }
     if (input.workflow_ref !== undefined) fields.workflow_ref = input.workflow_ref
 
-    const result = this.taskDAO.updateWithVersion(id, fields, expectedVersion)
+    const result = await this.taskDAO.updateWithVersion(id, fields, expectedVersion)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
     // 04 (bugfix 2026-08-21): a manual title rename (PUT {name}) is user-owned —
@@ -1215,7 +1224,7 @@ export class TasksService {
     )
     if (contextFields.length > 0) {
       try {
-        const row = this.taskDAO.getById(id)
+        const row = await this.taskDAO.getById(id)
         if (row) {
           const ctxSpec = row.task_spec
             ? JSON.parse(row.task_spec) as { skill_groups?: string[]; format?: string }
@@ -1245,11 +1254,11 @@ export class TasksService {
       }
     }
 
-    const row = this.taskDAO.getById(id)
+    const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     // 06: task_spec may have changed — keep the structured manifest.json
     // snapshot current.
-    this.writeManifestSnapshot(id)
+    await this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
@@ -1262,8 +1271,8 @@ export class TasksService {
    *  next chat turn (the clone send path delivers + clears it); `source="agent"`
    *  (default) does NOT, so the agent never echoes its own edit back. Returns
    *  the new version. Stale version → 409 → agent re-GET + retry (v2-D12). */
-  updateSpecField(id: string, input: UpdateSpecFieldInput): { version: number } {
-    const existing = this.taskDAO.getById(id)
+  async updateSpecField(id: string, input: UpdateSpecFieldInput): Promise<{ version: number }> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (!this.isSpecEditable(existing)) {
       throw new TaskStatusConflictError(
@@ -1350,10 +1359,10 @@ export class TasksService {
         break
     }
 
-    const result = this.taskDAO.updateWithVersion(id, fields, existing.version)
+    const result = await this.taskDAO.updateWithVersion(id, fields, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
-    const updated = this.taskDAO.getById(id)!
+    const updated = (await this.taskDAO.getById(id))!
     // Emit spec_field_update SSE so the SpecPanel applies the field locally +
     // bumps its tracked version (avoids a subsequent [save] 409, v2-D12).
     this.sse.emit("taskpool", {
@@ -1419,7 +1428,7 @@ export class TasksService {
     // read). For user-source, also append @@context_updated to the notice.
     if (input.field === "projects" || input.field === "skills") {
       try {
-        const row = this.taskDAO.getById(id)
+        const row = await this.taskDAO.getById(id)
         if (row) {
           const ctxSpec = row.task_spec
             ? JSON.parse(row.task_spec) as { skill_groups?: string[]; format?: string }
@@ -1452,7 +1461,7 @@ export class TasksService {
 
     // 06: every spec-field write (any field, any source) refreshes the
     // structured task_spec snapshot (manifest.json) the task-author agent reads.
-    this.writeManifestSnapshot(id)
+    await this.writeManifestSnapshot(id)
 
     return { version: updated.version }
   }
@@ -1464,9 +1473,9 @@ export class TasksService {
    *  legacy/v2 tasks have no home dir (writeManifestFile is a silent no-op).
    *  Called on every spec write (create / PUT / spec-field) so the file always
    *  reflects the current task_spec. */
-  private writeManifestSnapshot(id: string): void {
+  private async writeManifestSnapshot(id: string): Promise<void> {
     try {
-      const row = this.taskDAO.getById(id)
+      const row = await this.taskDAO.getById(id)
       if (!row) return
       const spec = parseJSON<Record<string, unknown>>(row.task_spec, {})
       this.taskHomeService.writeManifestFile(id, {
@@ -1536,8 +1545,8 @@ export class TasksService {
    * goal/ac/confirmations and the bound workflow_ref. A miss is a 409 with the missing
    * keys, never a half-enqueued task.
    */
-  readyTask(id: string): TaskDTO {
-    const existing = this.taskDAO.getById(id)
+  async readyTask(id: string): Promise<TaskDTO> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "draft") {
       throw new TaskStatusConflictError(
@@ -1676,10 +1685,10 @@ export class TasksService {
     // is armed by the built-in job from those.
     // Flip the task to 'ready'. Nothing else happens: an explicit trigger (or the job,
     // for a task carrying a due cursor) is what creates a run from here on.
-    const result = this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
+    const result = await this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return toDTO(row)
   }
 
@@ -1698,11 +1707,11 @@ export class TasksService {
    *  草稿"）。warnings：spec 的 input_values 里出现源 task id 字面量（绝对路径
    *  指向源 home，执行时不会自动重映射）时告警。home 相对 specPath 无需改写
    *  （home 按 id 隔离，天然不撞）。 */
-  duplicateTask(
+  async duplicateTask(
     id: string,
     opts: { ready?: boolean } = {},
-  ): { task: TaskDTO; gate_missing?: string[]; warnings?: string[] } {
-    const src = this.taskDAO.getById(id)
+  ): Promise<{ task: TaskDTO; gate_missing?: string[]; warnings?: string[] }> {
+    const src = await this.taskDAO.getById(id)
     if (!src) throw new TaskNotFoundError()
 
     const srcSpec = parseJSON<Record<string, unknown>>(src.task_spec, {})
@@ -1726,7 +1735,7 @@ export class TasksService {
     const baseName = (src.name ?? "").trim() || DEFAULT_TASK_NAME
     const copyName = baseName.endsWith("(copy)") ? baseName : `${baseName} (copy)`
 
-    const created = this.createTask({
+    const created = await this.createTask({
       org: src.org,
       name: copyName,
       task_spec: specForInput,
@@ -1746,7 +1755,7 @@ export class TasksService {
       this.taskHomeService.copyDraftArtifacts(id, created.id)
     } catch (err: unknown) {
       try {
-        this.deleteTask(created.id)
+        await this.deleteTask(created.id)
       } catch {
         /* 回滚尽力而为：行/目录残留可被废弃草稿操作再清 */
       }
@@ -1756,8 +1765,8 @@ export class TasksService {
     // v3 顶层 workflow_ref 列：createTask 不收，这里照抄一次（v4 用不到，仅保
     // v3 复制完整）。
     if (src.workflow_ref) {
-      const fresh = this.taskDAO.getById(created.id)
-      if (fresh) this.taskDAO.updateWithVersion(created.id, { workflow_ref: src.workflow_ref }, fresh.version)
+      const fresh = await this.taskDAO.getById(created.id)
+      if (fresh) await this.taskDAO.updateWithVersion(created.id, { workflow_ref: src.workflow_ref }, fresh.version)
     }
 
     // 字面绝对路径指向源 home 的告警（${task.home} 占位符安全 —— launch 时按
@@ -1778,15 +1787,15 @@ export class TasksService {
       )
     }
 
-    const finish = (): TaskDTO => toDTO(this.taskDAO.getById(created.id)!)
-    if (opts.ready === false) return { task: finish(), warnings: warnings.length ? warnings : undefined }
+    const finish = async (): Promise<TaskDTO> => toDTO((await this.taskDAO.getById(created.id))!)
+    if (opts.ready === false) return { task: await finish(), warnings: warnings.length ? warnings : undefined }
 
     try {
-      return { task: this.readyTask(created.id), warnings: warnings.length ? warnings : undefined }
+      return { task: await this.readyTask(created.id), warnings: warnings.length ? warnings : undefined }
     } catch (err: unknown) {
       if (err instanceof TaskReadyGateError) {
         // 副本已创建且留在草稿 —— gate 的缺项原样回传给 UI。
-        return { task: finish(), gate_missing: err.missing, warnings: warnings.length ? warnings : undefined }
+        return { task: await finish(), gate_missing: err.missing, warnings: warnings.length ? warnings : undefined }
       }
       throw err
     }
@@ -1806,8 +1815,8 @@ export class TasksService {
    *  Status write is a system event (direct UPDATE, no version bump) so the authoring
    *  agent's optimistic concurrency is unaffected. Synchronous = atomic w.r.t. the job's
    *  claim loop on this event loop. */
-  reopenTask(id: string): TaskDTO {
-    const existing = this.taskDAO.getById(id)
+  async reopenTask(id: string): Promise<TaskDTO> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "ready") {
       throw new TaskStatusConflictError(
@@ -1824,11 +1833,9 @@ export class TasksService {
     // A finished round leaves its row behind as history: reopen only unlocks the spec.
 
     const nowIso = new Date().toISOString()
-    const flipped = this.taskDAO
-      .getDb()
-      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND status = 'ready' AND deleted_at IS NULL")
-      .run("draft", nowIso, id)
-    if (flipped.changes === 0) {
+    // B2: 收编 prepare 逃生口 → TaskDAO.revertReadyToDraft（PG，条件更新保 409 语义）。
+    const flipped = await this.taskDAO.revertReadyToDraft(id, nowIso)
+    if (!flipped) {
       throw new TaskStatusConflictError("任务状态已变化，请刷新后重试")
     }
 
@@ -1837,7 +1844,7 @@ export class TasksService {
       data: { task_id: id, status: "draft" },
     })
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return toDTO(row)
   }
 
@@ -1858,7 +1865,7 @@ export class TasksService {
    * synchronously here, so a task that CANNOT get a worktree 409s to the user who pressed
    * the button instead of failing a minute later inside a cron tick. */
   async triggerTask(id: string, at?: string): Promise<TaskDTO> {
-    const existing = this.taskDAO.getById(id)
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "ready") {
       throw new TaskStatusConflictError(
@@ -1881,14 +1888,14 @@ export class TasksService {
       // Timed: disarm any stale cursor and arm the task's own one-shot due time. The
       // status stays 'ready' — a scheduled task has not started, and the badge reads the
       // due cursor, not a mirrored status.
-      this.taskDAO.armOnce(id, dueAt.toISOString())
+      await this.taskDAO.armOnce(id, dueAt.toISOString())
       this.sse.emit("taskpool", {
         event: TASK_TRIGGER_EVENT,
         data: { task_id: id, action: "scheduled", next_fire_at: dueAt.toISOString() },
       })
     }
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
@@ -1902,8 +1909,8 @@ export class TasksService {
    *  started. 票03: two things to take back, in this order — the queued instance if the
    *  job already armed one (retired only while still 'pending'; if the engine started,
    *  the caller must abort), then the due cursor itself. */
-  cancelTaskTrigger(id: string): TaskDTO {
-    const existing = this.taskDAO.getById(id)
+  async cancelTaskTrigger(id: string): Promise<TaskDTO> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "running" && existing.status !== "ready") {
       throw new TaskStatusConflictError(
@@ -1918,24 +1925,22 @@ export class TasksService {
       throw new TaskStatusConflictError("定时触发已开始执行，无法取消 — 请改用中止")
     }
     if (armedButNotStarted) {
-      this.lifecycle.abortTask(id)
+      await this.lifecycle.abortTask(id)
     } else if (!hasPendingFire && !armedButNotStarted) {
       throw new TaskStatusConflictError("没有可取消的定时触发")
     }
 
-    this.taskDAO.disarmTrigger(id)
+    await this.taskDAO.disarmTrigger(id)
     // Back to a plain enqueued task with no run in flight.
-    this.taskDAO
-      .getDb()
-      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL")
-      .run("ready", new Date().toISOString(), id)
+    // B2: prepare 逃生口 → TaskDAO.setStatusDirect（PG，无 version bump 同前）。
+    await this.taskDAO.setStatusDirect(id, "ready", new Date().toISOString(), null)
 
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
       data: { task_id: id, action: "cancelled", next_fire_at: null },
     })
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
@@ -1953,11 +1958,11 @@ export class TasksService {
    * computed here so the job's scan never has to parse cron at all — it reads one column
    * and compares it to the clock.
    */
-  setCronTrigger(id: string, cron: string | null, timezone?: string): void {
-    const existing = this.taskDAO.getById(id)
+  async setCronTrigger(id: string, cron: string | null, timezone?: string): Promise<void> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (cron === null || cron.trim() === "") {
-      this.taskDAO.disarmTrigger(id)
+      await this.taskDAO.disarmTrigger(id)
       this.sse.emit("taskpool", {
         event: TASK_TRIGGER_EVENT,
         data: { task_id: id, action: "unscheduled", next_fire_at: null },
@@ -1966,7 +1971,7 @@ export class TasksService {
     }
     const next = TaskLifecycleService.nextCronFireAt(cron, timezone || "Asia/Shanghai")
     if (!next) throw new TaskStatusConflictError(`cron 表达式无法解析: ${cron}`)
-    this.taskDAO.armCron(id, cron, timezone || "Asia/Shanghai", next)
+    await this.taskDAO.armCron(id, cron, timezone || "Asia/Shanghai", next)
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
       data: { task_id: id, action: "scheduled", next_fire_at: next },
@@ -1975,10 +1980,10 @@ export class TasksService {
 
   /** Pause / resume a task's own triggers (the master switch on the card, and the
    *  built-in job's row is a separate switch for the whole system). */
-  setTriggerEnabled(id: string, enabled: boolean): void {
-    const existing = this.taskDAO.getById(id)
+  async setTriggerEnabled(id: string, enabled: boolean): Promise<void> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
-    this.taskDAO.setTriggerEnabled(id, enabled)
+    await this.taskDAO.setTriggerEnabled(id, enabled)
     this.sse.emit("taskpool", {
       event: TASK_TRIGGER_EVENT,
       data: { task_id: id, action: enabled ? "resumed" : "paused", next_fire_at: existing.next_fire_at },
@@ -1988,8 +1993,8 @@ export class TasksService {
   /** A single task's list-row shape (trigger columns + current instance) — what the
    *  trigger/schedule endpoints return so the caller re-reads one number instead of the
    *  whole detail payload. */
-  getTaskSummary(id: string): TaskDTO {
-    const row = this.taskDAO.getById(id)
+  async getTaskSummary(id: string): Promise<TaskDTO> {
+    const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     return this.attachInstances([row])[0]
   }
@@ -1998,14 +2003,14 @@ export class TasksService {
    *  minute. A trigger that cannot arm (契约已破 / ws 建不出来) surfaces as the 409 the
    *  user needs, not as a task stuck in 排队中. */
   private async armNow(id: string): Promise<void> {
-    const existing = this.taskDAO.getById(id)
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     // Mirror-safety: an in-flight repo sync must finish before a worktree is cut from
     // main (same discipline as the pre-票03 预建 path, 45s wait then proceed).
     if (isV4TaskSpec(existing.task_spec)) {
       await this.repoSyncService?.waitUntilIdle(id, 45_000)
     }
-    this.lifecycle.armAndLaunch(id, { triggeredBy: "manual" })
+    await this.lifecycle.armAndLaunch(id, { triggeredBy: "manual" })
   }
 
   /** TaskLifecycleError → the conflict the route already knows how to render. The
@@ -2054,7 +2059,7 @@ export class TasksService {
       triggeredBy: "task-dispatch",
     }
     try {
-      const executionId = this.lifecycle.armAndLaunch(taskId, arm)
+      const executionId = await this.lifecycle.armAndLaunch(taskId, arm)
       // currentInstance is the row we just armed (the latch guarantees it is the newest
       // root), so this is a read-back for the caller's deep link, not a lookup by time.
       const inst = this.lifecycle.currentInstance(taskId)
@@ -2101,7 +2106,7 @@ export class TasksService {
    *  is historical fact; the phase derives to 'pending' and the retry is a
    *  human action (K6 重试永远人工发起). */
   async acceptance(taskId: string, input: AcceptanceInput): Promise<AcceptanceResult> {
-    const row = this.taskDAO.getById(taskId)
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     const spec = parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
     if (spec.format !== "v4") {
@@ -2119,7 +2124,7 @@ export class TasksService {
       )
     }
 
-    const view = this.deriveView(row)
+    const view = await this.deriveView(row)
 
     // A suspended round must not be reviewable anywhere on the task. The per-phase check
     // below cannot catch the cross-phase case (phase 1 awaiting_review while phase 2's
@@ -2137,7 +2142,7 @@ export class TasksService {
         `phase ${input.phase_index} 不在任务 phases[] 中（共 ${view.phaseViews.length} 个）`,
       )
     }
-    if (this.acceptanceDAO.listByRound(taskId, pv.index, input.round_index).length > 0) {
+    if ((await this.acceptanceDAO.listByRound(taskId, pv.index, input.round_index)).length > 0) {
       throw new TaskStatusConflictError(
         `phase ${pv.index} round ${input.round_index} 已验收，不可重复提交（账本 append-only，一次决定）`,
       )
@@ -2156,7 +2161,7 @@ export class TasksService {
     const nextPhaseIndex = isLast ? null : view.phaseViews[pos + 1].index
     const acceptanceId = randomUUID()
     const feedback = (input.feedback ?? "").trim()
-    this.acceptanceDAO.insert({
+    await this.acceptanceDAO.insert({
       id: acceptanceId,
       task_id: taskId,
       phase_index: pv.index,
@@ -2171,10 +2176,9 @@ export class TasksService {
     if (input.decision === "rejected") {
       // K7: 反馈产物化进 phase 批次目录（下一 round 的 seed 会把它带进 ws，
       // 与 input_values.feedback 双通道；N = 被打回的那一轮）。
-      this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, input.round_index, feedback)
+      await this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, input.round_index, feedback)
       // 轮号规则（票 07）: 同一 phase 的 rejected 行数 + 1 —— 打完一轮长一轮。
-      const rejectedCount = this.acceptanceDAO
-        .listByPhase(taskId, pv.index)
+      const rejectedCount = (await this.acceptanceDAO.listByPhase(taskId, pv.index))
         .filter((r) => r.decision === "rejected").length
       const nextRound = rejectedCount + 1
       // ADR-0018 二分路由：缺省 rerun（现行为，绑定流自己再审 spec）；
@@ -2188,8 +2192,8 @@ export class TasksService {
       const fixHomeDir = this.taskHomeService.homePath(taskId)
       const fixBatchRel =
         flow === "fix"
-          ? (() => {
-              const d = this.phaseSpecDir(taskId, pv.index) ?? ""
+          ? await (async () => {
+              const d = (await this.phaseSpecDir(taskId, pv.index)) ?? ""
               const rel = d ? batchRelPath(fixHomeDir, d) : null
               return rel ? rel.split(path.sep).join("/") : d
             })()
@@ -2213,18 +2217,18 @@ export class TasksService {
         round_index: nextRound,
       }
       next_action = "dispatched"
-      this.setPersistedTaskStatus(taskId, "running")
+      await this.setPersistedTaskStatus(taskId, "running")
       this.emitPhaseStatus(taskId, pv.index, "running", nextRound)
     } else {
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
       this.emitPhaseStatus(taskId, pv.index, "accepted", input.round_index)
       if (isLast) {
         next_action = "archiving"
-        this.beginArchiving(taskId)
+        await this.beginArchiving(taskId)
       } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
         // 阶段衔接信道 (ticket 01): 刚 accepted 的本 phase 也在前序集内
         // (deriveView 重读账本) — 下 phase 首轮开跑即带 handoff 路径。
-        const prevHandoffPaths = this.collectPrevHandoffPaths(row, nextPhaseIndex)
+        const prevHandoffPaths = await this.collectPrevHandoffPaths(row, nextPhaseIndex)
         const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1, undefined, { prevHandoffPaths })
         dispatch = {
           execution_id: d.executionId,
@@ -2233,16 +2237,16 @@ export class TasksService {
           round_index: 1,
         }
         next_action = "dispatched"
-        this.setPersistedTaskStatus(taskId, "running")
+        await this.setPersistedTaskStatus(taskId, "running")
         this.emitPhaseStatus(taskId, nextPhaseIndex, "running", 1)
       } else {
         // K6/US11: 每个 phase 都停在人的 gate，下一 phase 等人工起。
         next_action = "awaiting_manual_trigger"
-        this.setPersistedTaskStatus(taskId, "ready")
+        await this.setPersistedTaskStatus(taskId, "ready")
       }
     }
 
-    return { task: this.getTask(taskId), next_action, ...(dispatch ? { dispatch } : {}), acceptance_id: acceptanceId }
+    return { task: await this.getTask(taskId), next_action, ...(dispatch ? { dispatch } : {}), acceptance_id: acceptanceId }
   }
 
   /** Flip the persisted status into 'archiving' and hand off to 票 08.
@@ -2252,8 +2256,8 @@ export class TasksService {
    *  归并面 (ADR 顺延 / 术语 append / commit+push+PR → endArchiving=done).
    *  Fire-and-forget: a failed archive leaves the task parked in 'archiving',
    *  retryable via POST /:id/archive/retry (K3/US15). */
-  private beginArchiving(taskId: string): void {
-    this.setPersistedTaskStatus(taskId, "archiving")
+  private async beginArchiving(taskId: string): Promise<void> {
+    await this.setPersistedTaskStatus(taskId, "archiving")
     if (this.archivingHook) {
       try {
         const maybe = this.archivingHook(taskId)
@@ -2294,7 +2298,7 @@ export class TasksService {
       this.archiver = createTaskArchiver({
         db: this.db,
         taskHomeService: this.taskHomeService,
-        onComplete: (taskId) => this.endArchiving(taskId),
+        onComplete: async (taskId) => this.endArchiving(taskId),
       })
     }
     return this.archiver
@@ -2337,8 +2341,8 @@ export class TasksService {
    *  unknown). Validates synchronously, then fires the run WITHOUT awaiting
    *  (the route answers 202; completion flips the task to done asynchronously).
    *  A retry while a run is still in flight reuses that run (idempotent). */
-  retryArchive(taskId: string): TaskDTO {
-    const row = this.taskDAO.getById(taskId)
+  async retryArchive(taskId: string): Promise<TaskDTO> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     if (row.status !== "archiving") {
       throw new TaskStatusConflictError(
@@ -2350,7 +2354,7 @@ export class TasksService {
       throw new TaskStatusConflictError("归档重试仅适用于 v4 任务（task_spec.format === 'v4'）")
     }
     void this.startArchiveRun(taskId)
-    const fresh = this.taskDAO.getById(taskId) ?? row
+    const fresh = await this.taskDAO.getById(taskId) ?? row
     return toDTO(fresh)
   }
 
@@ -2358,14 +2362,11 @@ export class TasksService {
    *  writer; K3 归档全绿才算 done). Sets completed_at and emits task_status
    *  so the board card leaves 「归档中」. Belt: only fires from 'archiving' —
    *  an out-of-band abort meanwhile is never resurrected. */
-  private endArchiving(taskId: string): void {
-    const row = this.taskDAO.getById(taskId)
+  private async endArchiving(taskId: string): Promise<void> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row || row.status !== "archiving") return
     const nowIso = new Date().toISOString()
-    this.taskDAO
-      .getDb()
-      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = ? WHERE id = ? AND deleted_at IS NULL")
-      .run("done", nowIso, nowIso, taskId)
+    await this.taskDAO.setStatusDirect(taskId, "done", nowIso, nowIso)
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status: "done" },
@@ -2385,13 +2386,13 @@ export class TasksService {
     next_action: "dispatched"
     dispatch: AcceptanceDispatch
   }> {
-    const row = this.taskDAO.getById(taskId)
+    const row = await this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     const spec = parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
     if (spec.format !== "v4") {
       throw new TaskStatusConflictError("advance 仅适用于 v4 任务（task_spec.format === 'v4'）")
     }
-    const view = this.deriveView(row)
+    const view = await this.deriveView(row)
     let target: TaskPhaseView | null = null
     for (let pos = 1; pos < view.phaseViews.length; pos++) {
       const prev = view.phaseViews[pos - 1]
@@ -2408,12 +2409,12 @@ export class TasksService {
       )
     }
     // 阶段衔接信道 (ticket 01): 手动推进与 autoAdvance 同注入 (AC4)。
-    const prevHandoffPaths = this.collectPrevHandoffPaths(row, target.index)
+    const prevHandoffPaths = await this.collectPrevHandoffPaths(row, target.index)
     const d = await this.dispatchPhaseRound(taskId, target.index, 1, undefined, { prevHandoffPaths })
-    this.setPersistedTaskStatus(taskId, "running")
+    await this.setPersistedTaskStatus(taskId, "running")
     this.emitPhaseStatus(taskId, target.index, "running", 1)
     return {
-      task: this.getTask(taskId),
+      task: await this.getTask(taskId),
       next_action: "dispatched",
       dispatch: {
         execution_id: d.executionId,
@@ -2430,15 +2431,15 @@ export class TasksService {
    *  it is unresolvable the write is skipped with a warning — the `feedback` input
    *  value still reaches the round (dispatchPhaseRound), so the failure
    *  degrades the traceability artifact, never the retry itself. */
-  private writeFixFeedbackArtifact(
+  private async writeFixFeedbackArtifact(
     taskId: string,
     phaseIndex: number,
     phaseName: string,
     slug: string,
     roundIndex: number,
     feedback: string,
-  ): void {
-    const specDir = this.phaseSpecDir(taskId, phaseIndex)
+  ): Promise<void> {
+    const specDir = await this.phaseSpecDir(taskId, phaseIndex)
     if (!specDir) {
       console.warn(
         `[TasksService] acceptance: cannot resolve phase ${phaseIndex} spec dir for task ${taskId} — fix-feedback-r${roundIndex}.md skipped`,
@@ -2474,14 +2475,19 @@ export class TasksService {
    *  (目录/断链) and duplicates (两 phase 同 specDir) are silently filtered
    *  alongside missing files (R2: 失败轮缺一角不烧派发).
    *  Result ascending by phase index; empty ⇒ caller omits the key. */
-  private collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): string[] {
-    const view = this.deriveView(row)
+  private async collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): Promise<string[]> {
+    const view = await this.deriveView(row)
     const seen = new Set<string>()
-    return view.phaseViews
+    const specDirs: string[] = []
+    for (const p of view.phaseViews
       .filter((p) => p.index < targetPhaseIndex && p.status === "accepted")
-      .sort((a, b) => a.index - b.index)
-      .map((p) => this.phaseSpecDir(row.id, p.index))
-      .filter((d): d is string => !!d)
+      .sort((a, b) => a.index - b.index)) {
+      // B2: phaseSpecDir 已异步（读 PG 账本派生的 view 不变，目录解析是纯 fs）——
+      // 顺序 await 保留原 map 的 phase 升序语义。
+      const d = await this.phaseSpecDir(row.id, p.index)
+      if (d) specDirs.push(d)
+    }
+    return specDirs
       .map((d) => path.join(d, "handoff.md"))
       .filter((f) => {
         if (seen.has(f)) return false
@@ -2499,8 +2505,8 @@ export class TasksService {
    *  K10), derived from task_spec — which after 票03 is the ONLY place the binding lives
    *  (the envelope used to be consulted first because it held a materialized copy that
    *  seed/collect mounted; that copy is gone, so there is nothing to disagree with). */
-  private phaseSpecDir(taskId: string, phaseIndex: number): string | null {
-    const task = this.taskDAO.getById(taskId)
+  private async phaseSpecDir(taskId: string, phaseIndex: number): Promise<string | null> {
+    const task = await this.taskDAO.getById(taskId)
     if (!task) return null
     const spec = parseJSON<TaskSpec>(task.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
     const p = (spec.phases ?? []).find((x) => x.index === phaseIndex)
@@ -2543,16 +2549,11 @@ export class TasksService {
    *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
    *  re-derivation of an unchanged state). */
-  private setPersistedTaskStatus(taskId: string, status: TaskStatus): void {
-    const row = this.taskDAO.getById(taskId)
+  private async setPersistedTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
+    const row = await this.taskDAO.getById(taskId)
     if (!row || row.status === status) return
     const nowIso = new Date().toISOString()
-    this.taskDAO
-      .getDb()
-      .prepare(
-        "UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL",
-      )
-      .run(status, nowIso, taskId)
+    await this.taskDAO.setStatusDirect(taskId, status, nowIso, null)
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status },
@@ -2578,8 +2579,8 @@ export class TasksService {
    * ws while the task is not 'done' (enforceRetention exempts it, K12), and 'done' never
    * arrives via abort.
    */
-  abortTask(id: string): TaskDTO {
-    const existing = this.taskDAO.getById(id)
+  async abortTask(id: string): Promise<TaskDTO> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "running" && existing.status !== "ready") {
       throw new TaskStatusConflictError(
@@ -2587,7 +2588,7 @@ export class TasksService {
       )
     }
 
-    const { cancelled, retired } = this.lifecycle.abortTask(id)
+    const { cancelled, retired } = await this.lifecycle.abortTask(id)
     if (cancelled.length + retired.length === 0) {
       // Legitimate (it parks the card) but worth a line: this is the shape of a
       // double-click, or of aborting a task whose timed fire never armed.
@@ -2595,12 +2596,7 @@ export class TasksService {
     }
 
     const now = new Date().toISOString()
-    this.taskDAO
-      .getDb()
-      .prepare(
-        "UPDATE tasks SET status = ?, updated_at = ?, completed_at = ? WHERE id = ? AND deleted_at IS NULL",
-      )
-      .run("aborted", now, now, id)
+    await this.taskDAO.setStatusDirect(id, "aborted", now, now)
 
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
@@ -2610,7 +2606,7 @@ export class TasksService {
     // repo-sync 内存回收（2026-09-08）：任务中止后快照/watcher 不再有消费者。
     this.repoSyncService?.forget(id)
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
@@ -2663,7 +2659,7 @@ export class TasksService {
    * real to-do («需要你审批»). The messages above say so instead.
    */
   async pauseTask(id: string): Promise<TaskDTO> {
-    const existing = this.taskDAO.getById(id)
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
 
     const inst = this.liveInstance(id)
@@ -2688,7 +2684,7 @@ export class TasksService {
     // fold on (both re-fetch, so the derived 已暂停 lands with it).
     this.emitRunTransition(existing.id, inst, "paused")
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
@@ -2704,7 +2700,7 @@ export class TasksService {
    * the 待验收 SSE frame and the red round's error reason, silently and only after a pause.
    */
   async resumeTask(id: string, intervention?: string): Promise<TaskDTO> {
-    const existing = this.taskDAO.getById(id)
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
 
     const inst = this.liveInstance(id)
@@ -2726,7 +2722,7 @@ export class TasksService {
 
     this.emitRunTransition(existing.id, inst, "running")
 
-    const row = this.taskDAO.getById(id)!
+    const row = (await this.taskDAO.getById(id))!
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
@@ -2759,8 +2755,8 @@ export class TasksService {
    *  that source into the void. A non-draft task (ready/done/failed/aborted)
    *  PRESERVES its home (artifacts are the record of what ran; kept until a
    *  future hard-delete). Idempotent on a missing home (v2 tasks have none). */
-  deleteTask(id: string): { ok: true } {
-    const existing = this.taskDAO.getById(id)
+  async deleteTask(id: string): Promise<{ ok: true }> {
+    const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status === "running") {
       throw new TaskStatusConflictError(
@@ -2783,7 +2779,7 @@ export class TasksService {
     // 票03: nothing to cascade — a task's runs are executions rows (they outlive it as
     // history, like any other run) and there is no private definition row to reap. That
     // absence is why the orphan reaper dies with this ticket.
-    this.taskDAO.softDelete(id)
+    await this.taskDAO.softDelete(id)
     return { ok: true }
   }
 }

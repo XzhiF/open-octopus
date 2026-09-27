@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import Database from "better-sqlite3"
+// P1 B2：pending_review / knowledge_effectiveness 已迁 postgres.js（BasePgDAO）——
+// 本文件造数/读断言全部走 PG。每文件一座随机测试库（beforeAll 建 / afterAll DROP），
+// 用例间 TRUNCATE 清表。
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema } from "../../../db/schema"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import { appendToKnowledgeFile, generateRuleId } from "../file-ops"
 import { precomputeRelevantRules } from "../precompute"
 import { trackEffectiveness, applyEffectivenessUpdates, computeEffectivenessUpdates } from "../effectiveness"
@@ -16,23 +18,30 @@ import { VarPool } from "@octopus/shared"
  * TC-039: End-to-end knowledge loop integration test.
  * Verifies the 7-step pipeline: archive → extract → review → write → inject → execute → track.
  */
-describe("US-28: knowledge loop integration", () => {
-  let db: Database.Database
+describePg("US-28: knowledge loop integration", () => {
+  let pg: PgFixture | null = null
   let effectivenessDAO: KnowledgeEffectivenessDAO
   let pendingReviewDAO: PendingReviewDAO
   let tmpDir: string
 
-  beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    effectivenessDAO = new KnowledgeEffectivenessDAO(db)
-    pendingReviewDAO = new PendingReviewDAO(db)
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("pending_review", "knowledge_effectiveness")
+    effectivenessDAO = new KnowledgeEffectivenessDAO(pg!.sql)
+    pendingReviewDAO = new PendingReviewDAO(pg!.sql)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-loop-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
-    db?.close()
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
@@ -58,7 +67,7 @@ describe("US-28: knowledge loop integration", () => {
     }
 
     // Step 3: Review — rule enters pending review queue
-    pendingReviewDAO.insert({
+    await pendingReviewDAO.insert({
       id: proposedRule.id,
       type: "rule",
       source: proposedRule.source,
@@ -74,7 +83,7 @@ describe("US-28: knowledge loop integration", () => {
       user_notes: null,
     })
 
-    const pending = pendingReviewDAO.listBySource("manual")
+    const pending = await pendingReviewDAO.listBySource("manual")
     expect(pending).toHaveLength(1)
     expect(pending[0].content).toBe("Always run tests before merging")
 
@@ -90,8 +99,8 @@ describe("US-28: knowledge loop integration", () => {
     expect(content).toContain(ruleId)
 
     // Update pending status to approved
-    pendingReviewDAO.updateStatus(proposedRule.id, "approved")
-    const approved = pendingReviewDAO.getById(proposedRule.id)
+    await pendingReviewDAO.updateStatus(proposedRule.id, "approved")
+    const approved = await pendingReviewDAO.getById(proposedRule.id)
     expect(approved?.status).toBe("approved")
 
     // Step 5: Inject — precompute + inject rules into agent prompt
@@ -124,10 +133,10 @@ describe("US-28: knowledge loop integration", () => {
       },
     }
 
-    const tracked = trackEffectiveness(postExecResult, effectivenessDAO, "test-org")
+    const tracked = await trackEffectiveness(postExecResult, effectivenessDAO, "test-org")
     expect(tracked).toBe(1)
 
-    const effectiveness = effectivenessDAO.getByRuleId(ruleId)
+    const effectiveness = await effectivenessDAO.getByRuleId(ruleId)
     expect(effectiveness).toBeDefined()
     expect(effectiveness?.injected_count).toBe(1)
   })
@@ -154,9 +163,9 @@ describe("US-28: knowledge loop integration", () => {
       new Map([[ruleId, "Use prepared statements for SQL queries"]]),
     )
     expect(updates[0].helpful).toBe(true)
-    applyEffectivenessUpdates(effectivenessDAO, updates)
+    await applyEffectivenessUpdates(effectivenessDAO, updates)
 
-    const row = effectivenessDAO.getByRuleId(ruleId)
+    const row = await effectivenessDAO.getByRuleId(ruleId)
     expect(row?.helpful_count).toBe(1)
     expect(row?.confidence).toBe(1)
   })

@@ -87,7 +87,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
 
       // ── Record safety event (B5 fix) ──────────────────────────
       try {
-        safetyDAO?.insertSafetyEvent({
+        await safetyDAO?.insertSafetyEvent({
           type: 'safe_mode_toggle',
           operation: 'Enable safe mode',
           decision: 'intercept',
@@ -118,7 +118,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
   /**
    * POST /safe-mode/disable — Disable safe mode
    */
-  safeMode.post('/safe-mode/disable', (c) => {
+  safeMode.post('/safe-mode/disable', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) {
@@ -132,7 +132,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
 
       // ── Record safety event (B5 fix) ──────────────────────────
       try {
-        safetyDAO?.insertSafetyEvent({
+        await safetyDAO?.insertSafetyEvent({
           type: 'safe_mode_toggle',
           operation: 'Disable safe mode',
           decision: 'intercept',

@@ -609,13 +609,13 @@ export class AgentService {
   async confirmSafety(org: string, eventId: string, decision: 'accept' | 'reject'): Promise<{ decision_applied: string }> {
     const dao = this.safetyDao
     const normalizedDecision = decision === 'accept' ? 'allow' : 'block'
-    dao.updateSafetyEventDecision(Number(eventId), normalizedDecision)
+    await dao.updateSafetyEventDecision(Number(eventId), normalizedDecision)
     return { decision_applied: normalizedDecision }
   }
 
   async getSafetyEvents(org: string, query?: { type?: string; actor?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<SafetyEvent>> {
     const dao = this.safetyDao
-    const rows = dao.findSafetyEventsWithFilters(org, {
+    const rows = await dao.findSafetyEventsWithFilters(org, {
       type: query?.type,
       actor: query?.actor,
       limit: query?.limit,

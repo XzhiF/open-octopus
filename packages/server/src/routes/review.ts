@@ -24,13 +24,13 @@ export function createReviewRoutes(
   const routes = new Hono()
 
   // GET /api/review/pending — list pending items with filtering + pagination
-  routes.get("/pending", (c) => {
+  routes.get("/pending", async (c) => {
     const type = c.req.query("type") as string | undefined
     const status = c.req.query("status") as string | undefined
     const page = parseInt(c.req.query("page") ?? "1", 10)
     const pageSize = Math.min(100, parseInt(c.req.query("pageSize") ?? "20", 10))
 
-    const result = pendingReviewDAO.listPending(type, status, page, pageSize)
+    const result = await pendingReviewDAO.listPending(type, status, page, pageSize)
 
     const data = result.data.map(item => ({
       id: item.id,
@@ -115,10 +115,10 @@ export function createReviewRoutes(
 
     try {
       if (action === "approve") {
-        const result = reviewService.batchApprove(ids, org)
+        const result = await reviewService.batchApprove(ids, org)
         return c.json({ ok: true, succeeded: result.succeeded, failed: result.failed, details: result.details })
       } else {
-        reviewService.batchReject(ids)
+        await reviewService.batchReject(ids)
         return c.json({ ok: true, succeeded: ids.length, failed: 0, details: ids.map((id: string) => ({ id, status: "ok" })) })
       }
     } catch (err) {
@@ -128,10 +128,10 @@ export function createReviewRoutes(
   })
 
   // GET /api/review/summary — pending counts for Agent system prompt + status counts for UI
-  routes.get("/summary", (c) => {
+  routes.get("/summary", async (c) => {
     try {
-      const summary = reviewService.getPendingSummary()
-      const statusCounts = pendingReviewDAO.countByStatus()
+      const summary = await reviewService.getPendingSummary()
+      const statusCounts = await pendingReviewDAO.countByStatus()
       return c.json({ ...summary, statusCounts })
     } catch (err) {
       const { body, status } = errorResponse(err, "review.summary")

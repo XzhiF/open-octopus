@@ -17,6 +17,7 @@
 
 import type { Sql } from "postgres"
 import { getDb } from "../connection"
+import { getPgPool } from "../pg/pool"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
@@ -29,6 +30,19 @@ import {
 export type DbHandle = ReturnType<typeof getDb> | Sql
 
 type DatabaseDb = ReturnType<typeof getDb>
+
+/**
+ * B1+ 已迁 PG 的 DAO（extends BasePgDAO）的句柄源 —— postgres.js 池。
+ * 池未注册（OCTOPUS_PG_URL 未配 / initPgPool 未完成）时**抛错**：
+ * lazyDAO 的 Proxy 在每次属性访问时构造，抛错则保持未构造态，下次访问自动重试
+ * （自愈窗口 = initPgPool 的连接往返）。启动路径 eager 位点同样走 lazyDAO，
+ * 不会因池晚到而崩启动。
+ */
+export function pgSql(): Sql {
+  const h = getPgPool()
+  if (!h) throw new Error("[registry] PG pool not registered — set OCTOPUS_PG_URL (or registerPgPool in tests)")
+  return h.sql
+}
 
 export interface AllDAOs {
   workspace: WorkspaceDAO
@@ -61,20 +75,20 @@ export function createAllDAOs(db: DatabaseDb): AllDAOs {
     tokenUsage: new TokenUsageDAO(db),
     scheduleConfig: new ScheduleConfigDAO(db),
     scheduleRun: new ScheduleRunDAO(db),
-    chat: new ChatDAO(db),
-    org: new OrgDAO(db),
+    chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
+    org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
     agentSession: new AgentSessionDAO(db),
     evolution: new EvolutionDAO(db),
-    clone: new CloneDAO(db),
-    safety: new SafetyDAO(db),
-    pendingReview: new PendingReviewDAO(db),
-    knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
+    clone: lazyDAO(() => new CloneDAO(pgSql())), // B1: PG
+    safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
+    pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG
+    knowledgeEffectiveness: lazyDAO(() => new KnowledgeEffectivenessDAO(pgSql())), // B2: PG
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
-    interactionMessage: new InteractionMessageDAO(db),
-    agentVersion: new AgentVersionDAO(db),
-    harness: new HarnessDAO(db),
-    task: new TaskDAO(db),
+    interactionMessage: lazyDAO(() => new InteractionMessageDAO(pgSql())), // B2: PG
+    agentVersion: lazyDAO(() => new AgentVersionDAO(pgSql())), // B1: PG
+    harness: lazyDAO(() => new HarnessDAO(pgSql())), // B1: PG
+    task: lazyDAO(() => new TaskDAO(pgSql())), // B2: PG
   }
 }
 
@@ -102,22 +116,22 @@ export function createLazyDAOs(): AllDAOs {
     tokenUsage: lazyDAO((db) => new TokenUsageDAO(db as DatabaseDb)),
     scheduleConfig: lazyDAO((db) => new ScheduleConfigDAO(db as DatabaseDb)),
     scheduleRun: lazyDAO((db) => new ScheduleRunDAO(db as DatabaseDb)),
-    chat: lazyDAO((db) => new ChatDAO(db as DatabaseDb)),
-    org: lazyDAO((db) => new OrgDAO(db as DatabaseDb)),
+    chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
+    org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
     agentSession: lazyDAO((db) => new AgentSessionDAO(db as DatabaseDb)),
     evolution: lazyDAO((db) => new EvolutionDAO(db as DatabaseDb)),
-    clone: lazyDAO((db) => new CloneDAO(db as DatabaseDb)),
-    safety: lazyDAO((db) => new SafetyDAO(db as DatabaseDb)),
-    pendingReview: lazyDAO((db) => new PendingReviewDAO(db as DatabaseDb)),
-    knowledgeEffectiveness: lazyDAO((db) => new KnowledgeEffectivenessDAO(db as DatabaseDb)),
+    clone: lazyDAO(() => new CloneDAO(pgSql())), // B1: PG
+    safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
+    pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG
+    knowledgeEffectiveness: lazyDAO(() => new KnowledgeEffectivenessDAO(pgSql())), // B2: PG
     archive: lazyDAO((db) => new ArchiveDAO(db as DatabaseDb)),
     archiveDraft: lazyDAO((db) => new ArchiveDraftDAO(db as DatabaseDb)),
-    interactionMessage: lazyDAO((db) => new InteractionMessageDAO(db as DatabaseDb)),
-    agentVersion: lazyDAO((db) => new AgentVersionDAO(db as DatabaseDb)),
-    harness: lazyDAO((db) => new HarnessDAO(db as DatabaseDb)),
+    interactionMessage: lazyDAO(() => new InteractionMessageDAO(pgSql())), // B2: PG
+    agentVersion: lazyDAO(() => new AgentVersionDAO(pgSql())), // B1: PG
+    harness: lazyDAO(() => new HarnessDAO(pgSql())), // B1: PG
     // 03 (v2-D1): tasks table DAO. Added to the lazy fallback so `d.task` works
     // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
     // 04's task-author autosave seam + TasksService both consume it.
-    task: lazyDAO((db) => new TaskDAO(db as DatabaseDb)),
+    task: lazyDAO(() => new TaskDAO(pgSql())), // B2: PG
   }
 }

@@ -17,6 +17,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type RoundDiffPayload } from "../services/tasks/round-evidence-service"
@@ -24,6 +25,8 @@ import { RoundEvidenceService, type RoundDiffPayload } from "../services/tasks/r
 const ORG = "e2e-td-rounddiff"
 const WS_ID = "ws-rd-1"
 
+// P1 B2：tasks 落 PG（service 内部 pgSql()）；executions/workspaces 仍 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmp: string
@@ -90,7 +93,9 @@ async function newAwaitingTask(opts: {
   return [taskId, execId]
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-rounddiff-"))
@@ -132,7 +137,10 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(tasksService, sse, undefined, evidence))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -143,7 +151,7 @@ async function diffOf(taskId: string): Promise<RoundDiffPayload> {
   return (await r.json()) as RoundDiffPayload
 }
 
-describe("round-diff — 实物 numstat / 分组 / 汇总", () => {
+describePg("round-diff — 实物 numstat / 分组 / 汇总", () => {
   it("R1: 真区间 → 提交数/+−行/文件数/首段分组/interventions 全对", async () => {
     const [taskId] = await newAwaitingTask()
     const d = await diffOf(taskId)
@@ -226,7 +234,7 @@ describe("round-diff — 实物 numstat / 分组 / 汇总", () => {
 })
 
 // ── S3 (2026-09-20): scope=cumulative — 本 phase 首轮 start 锚 .. 本轮 end 锚 ──
-describe("round-diff — cumulative 口径", () => {
+describePg("round-diff — cumulative 口径", () => {
   /** 独立新仓（projects/<name>）三提交 k0<k1<k2，互不干扰 R3 的 app 仓突变。 */
   function freshRepo(name: string): [string, string, string] {
     const dir = path.join(wsDir, "projects", name)

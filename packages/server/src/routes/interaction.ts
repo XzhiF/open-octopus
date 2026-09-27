@@ -146,13 +146,13 @@ export function createInteractionRoutes(
    * GET /:execId/:nodeId/messages — Get message history.
    * Supports cursor-based pagination via ?limit and ?before query params.
    */
-  router.get("/:execId/:nodeId/messages", (c) => {
+  router.get("/:execId/:nodeId/messages", async (c) => {
     const { execId, nodeId } = c.req.param()
     const limit = Number(c.req.query("limit") ?? 100)
     const before = c.req.query("before") ?? undefined
 
     try {
-      const messages = interactionService.getMessages({
+      const messages = await interactionService.getMessages({
         executionId: execId,
         nodeId,
         limit,
@@ -181,7 +181,7 @@ export function createInteractionRoutes(
       const varsUpdate = body.vars_update as Record<string, unknown> | undefined
 
       // Force complete: persist completion data and clean up session
-      const result = interactionService.forceComplete({
+      const result = await interactionService.forceComplete({
         executionId: execId,
         nodeId,
         summary,

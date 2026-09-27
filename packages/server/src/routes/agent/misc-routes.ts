@@ -273,14 +273,14 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const safetyDao = safetyDAO
 
       // Find the safety event
-      const event = safetyDao.findSafetyEventByIdAndOrg(Number(body.event_id), org)
+      const event = await safetyDao.findSafetyEventByIdAndOrg(Number(body.event_id), org)
 
       if (!event) {
         return c.json(createAgentError('NOT_FOUND', `Safety event ${body.event_id} not found`), 404)
       }
 
       // Update the decision
-      safetyDao.updateDecision(Number(body.event_id), normalizedDecision)
+      await safetyDao.updateDecision(Number(body.event_id), normalizedDecision)
 
       return c.json({
         ok: true,

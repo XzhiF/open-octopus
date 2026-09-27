@@ -18,6 +18,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { getSpecNotice } from "../services/tasks/spec-notice-store"
@@ -27,6 +28,9 @@ import fs from "fs"
 
 const ORG = "e2e-td-homefile"
 
+// P1 B2：tasks 落 PG（setupRegisteredPgSchema 注册全局池 —— service 内部 pgSql() 取），
+// 本文件 W5/W7 的 tasks 直读直写也走这座库。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmpDir: string
@@ -56,7 +60,9 @@ function put(id: string, rel: string, content: string) {
   })
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   const sse = new SSEService()
@@ -70,12 +76,15 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe("GET home-file — 读路径与守卫", () => {
+describePg("GET home-file — 读路径与守卫", () => {
   it("G1: 读回 PUT 写过的 .scratch spec.md（live disk content）", async () => {
     const id = await newV4Task()
     const w = await put(id, ".scratch/20260905/p1/spec.md", "# Phase 1\n")
@@ -129,7 +138,7 @@ describe("GET home-file — 读路径与守卫", () => {
   })
 })
 
-describe("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
+describePg("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
   it("W1: 新建深层文件（mkdir -p）+ slug 目录连号 + 覆写幂等", async () => {
     const id = await newV4Task()
     const rel = ".scratch/20260905/phase-2/spec.md"
@@ -167,7 +176,8 @@ describe("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
   it("W5: 非可编辑窗口 → 409（done 拒写；draft 放行）", async () => {
     const id = await newV4Task()
     expect((await put(id, ".scratch/live.md", "# ok\n")).status).toBe(200)
-    db.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(id)
+    // P1 B2: tasks 行在 PG —— done 翻转直写 PG。
+    await pg!.sql.unsafe(`UPDATE tasks SET status = 'done' WHERE id = $1`, [id])
     const r = await put(id, ".scratch/live.md", "# blocked\n")
     expect(r.status).toBe(409)
     expect(fs.readFileSync(path.join(taskHome.homePath(id), ".scratch/live.md"), "utf-8")).toBe("# ok\n")
@@ -184,9 +194,11 @@ describe("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
 
   it("W7: 写回不动 tasks.version（文件不是行；乐观锁不参与）", async () => {
     const id = await newV4Task()
-    const before = (db.prepare("SELECT version FROM tasks WHERE id = ?").get(id) as { version: number }).version
+    const readVersion = async () =>
+      ((await pg!.sql`SELECT version::int AS version FROM tasks WHERE id = ${id}`)[0] as { version: number }).version
+    const before = await readVersion()
     expect((await put(id, ".scratch/nov-bump.md", "x\n")).status).toBe(200)
-    const after = (db.prepare("SELECT version FROM tasks WHERE id = ?").get(id) as { version: number }).version
+    const after = await readVersion()
     expect(after).toBe(before)
   })
 })
@@ -195,7 +207,7 @@ describe("PUT home-file — 写路径（骨架/覆写/守卫/联动）", () => {
 // round 终态 collect 把执行侧改动回流批次目录，其中大量证据不是 .md（e2e 快照
 // *.txt、结构化断言 *.json、探针 *.cjs）。旧读门 `.md` only → 这些证据 403，
 // 验收中列只能显示半个事实。放宽只开在读侧（带 512KB 上限）；写门（PUT）原样。
-describe("GET home-file — 证据读（非 .md / 413 上限）", () => {
+describePg("GET home-file — 证据读（非 .md / 413 上限）", () => {
   /** 直写 home 下的文件（模拟 collect 回流；PUT 门只收 .md，绕不开）。 */
   function seedFile(id: string, rel: string, content: string): void {
     const full = path.join(taskHome.homePath(id), rel)
@@ -236,7 +248,7 @@ describe("GET home-file — 证据读（非 .md / 413 上限）", () => {
 })
 
 // ── list 模式此前零覆盖（G3 只测读单文件）；md-only 默认 + all=1 扩面各钉一发 ──
-describe("GET home-file?list — 默认 md-only / all=1 证据全量", () => {
+describePg("GET home-file?list — 默认 md-only / all=1 证据全量", () => {
   function seedFile(id: string, rel: string, content = "x\n"): void {
     const full = path.join(taskHome.homePath(id), rel)
     fs.mkdirSync(path.dirname(full), { recursive: true })

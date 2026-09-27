@@ -2,8 +2,8 @@
   "note": "per-package, per-rule eslint violation counts; ratchet: only decreases allowed",
   "packages": {
     "server": {
-      "@typescript-eslint/no-floating-promises": 26,
-      "@typescript-eslint/await-thenable": 19,
+      "@typescript-eslint/no-floating-promises": 24,
+      "@typescript-eslint/await-thenable": 17,
       "@typescript-eslint/no-misused-promises": 8
     }
   }

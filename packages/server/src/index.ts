@@ -144,7 +144,9 @@ if (db) {
 
   ExecutionService.recoverInterruptedExecutions(db)
   migrateOrgDirs()
-  syncOrgsFromFilesystem(daos.org)
+  // B1 await 传播（OrgDAO→PG 异步），语义不变：启动期后台同步，失败仅告警。
+  void syncOrgsFromFilesystem(daos.org).catch((err: unknown) =>
+    console.warn('[startup] syncOrgsFromFilesystem failed:', err instanceof Error ? err.message : String(err)))
   const cleanupRetention = setupDataRetention(db)
   // Store cleanup for graceful shutdown
   ;(global as any).__octopus_cleanupRetention = cleanupRetention
@@ -207,17 +209,21 @@ if (!process.env.VITEST && daos) {
   initAgentVersionService(daos.agentVersion)
 
   // Auto-init built-in clones (filesystem + DB registration)
-  try {
+  // B1 await 传播（OrgDAO/CloneDAO→PG 异步），语义不变：仍尽力而为、失败仅告警。
+  {
     const { getCloneInitService } = require('./services/agent/clone-init-service')
     const cloneInitService = getCloneInitService()
-    const defaultOrg = daos.org.findAll()[0]?.name ?? 'default'
-    const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
-    if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
-      console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Built-in clone init failed: ${msg}`)
+    void (async () => {
+      const orgs = await daos.org.findAll()
+      const defaultOrg = orgs[0]?.name ?? 'default'
+      const initResult = await cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
+      if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
+        console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+      }
+    })().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] Built-in clone init failed: ${msg}`)
+    })
   }
 
   // Initialize archive service singleton

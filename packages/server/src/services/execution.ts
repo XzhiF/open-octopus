@@ -9,6 +9,7 @@ import { PrivacyFilter } from "./privacy-filter"
 import { ExecutionDAO } from "../db/dao/execution-dao"
 import { KnowledgeEffectivenessDAO } from "../db/dao/knowledge-effectiveness-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
+import { pgSql } from "../db/dao/registry"
 import { createKnowledgeService } from "./knowledge"
 import { ExecutionLifecycle } from "./execution/ExecutionLifecycle"
 import { RecoveryManager } from "./execution/RecoveryManager"
@@ -61,8 +62,9 @@ export class ExecutionService {
 
     // Wire up knowledge injection pipeline
     try {
-      const effectivenessDAO = new KnowledgeEffectivenessDAO(db)
-      const pendingReviewDAO = new PendingReviewDAO(db)
+      // P1 B2: knowledge 两 DAO 已迁 postgres.js —— 走注册池，不再吃 SQLite 句柄。
+      const effectivenessDAO = new KnowledgeEffectivenessDAO(pgSql())
+      const pendingReviewDAO = new PendingReviewDAO(pgSql())
       const knowledgeService = createKnowledgeService(effectivenessDAO, pendingReviewDAO, org)
       this.lifecycle.setKnowledgeService(knowledgeService)
     } catch (err) {

@@ -24,11 +24,16 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import type { ArtifactIndexEntry } from "@octopus/shared"
 
 const ORG = "e2e-td-06"
+
+// P1 B2：tasks 表已迁 postgres.js —— 本文件的任务行落 PG（经 setupRegisteredPgSchema
+// 注册全局池后 TasksService 内部 pgSql() 取用）；workspaces/executions 等仍 SQLite。
+let pg: PgFixture | null = null
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -115,14 +120,17 @@ async function json<T>(res: Response): Promise<T> {
 
 // ── Suite ──────────────────────────────────────────────────────────
 
-describe("06: artifacts routes — index + content whitelist (integration)", () => {
+describePg("06: artifacts routes — index + content whitelist (integration)", () => {
   let db: Database.Database
   let app: Hono
   let homeBase: string
   let taskHome: TaskHomeService
   let warnSpy: ReturnType<typeof vi.spyOn>
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取），
+    // workspaces/executions 仍在 SQLite `db`。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     homeBase = mkdtemp("v3-artifacts-home-")
     taskHome = new TaskHomeService(homeBase)
@@ -133,7 +141,9 @@ describe("06: artifacts routes — index + content whitelist (integration)", () 
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     warnSpy.mockRestore()
     db.close()
     cleanupDir(homeBase)

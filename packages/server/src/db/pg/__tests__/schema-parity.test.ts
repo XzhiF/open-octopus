@@ -300,6 +300,17 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
     }
   })
 
+  /**
+   * B1-B5 混合期刻意撤除的 PG FK（pg/schema.sql 注释撤除，恢复清单见 README「B6 FK 恢复清单」）。
+   * SQLite 侧不撤（真值库保持约束原样）。本清单双向钉死：
+   *   · B6 前 PG 若擅自恢复这两条 FK → 下面的 toEqual 红；
+   *   · B6（sessions/executions 迁 PG + 数据灌满）后 → 删除对应条目，FK 自然回归。
+   */
+  const HYBRID_DROPPED_FKS: ReadonlyMap<string, string[]> = new Map([
+    ['tasks', ['source_chat_session_id->sessions(id)']],
+    ['interaction_messages', ['execution_id->executions(id)']],
+  ])
+
   it('per-table: foreign keys match (columns, target, ON DELETE)', async () => {
     const sFks = new Map<string, string[]>()
     for (const table of sqliteTables()) {
@@ -309,6 +320,12 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
         fks.push(`${m[1]}->${m[2]}(${m[3]})${m[5] ? ':' + m[5].toUpperCase() : ''}`)
       }
       sFks.set(table, fks.sort())
+    }
+    // 撤除条目必须仍是 SQLite 真值里的 FK（防止清单名写错后 filter 静默放行）
+    for (const [table, fks] of HYBRID_DROPPED_FKS) {
+      for (const fk of fks) {
+        expect(sFks.get(table) ?? [], `hybrid-dropped FK ${table}:${fk} must still exist in SQLite (source of truth)`).toContain(fk)
+      }
     }
     const pFks = new Map<string, string[]>()
     const rows = (await pg.sql`
@@ -328,7 +345,9 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
       pFks.set(r.table, list)
     }
     for (const table of sFks.keys()) {
-      expect([...(pFks.get(table) ?? [])].sort(), `${table}: FKs`).toEqual(sFks.get(table))
+      const dropped = HYBRID_DROPPED_FKS.get(table) ?? []
+      const expected = (sFks.get(table) ?? []).filter((f) => !dropped.includes(f))
+      expect([...(pFks.get(table) ?? [])].sort(), `${table}: FKs`).toEqual(expected)
     }
   })
 
@@ -350,6 +369,7 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
              pg_get_indexdef(i.indexrelid) AS fulldef
       FROM pg_index i
       JOIN pg_class ic ON ic.oid = i.indexrelid
+      JOIN pg_am am ON am.oid = ic.relam
       JOIN pg_class t  ON t.oid  = i.indrelid
       JOIN pg_namespace n ON n.oid = ic.relnamespace
       WHERE n.nspname = 'public'
@@ -357,6 +377,10 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
           SELECT 1 FROM pg_constraint pc WHERE pc.conindid = ic.oid
         )
         AND ic.relname NOT LIKE '%_key'      -- UNIQUE 约束的支撑索引（如 agent_versions）
+        -- P1 B2：pg_search BM25 索引（am=bm25）是检索面，SQLite 对位物是
+        -- reports_fts FTS5 虚表（下方 isFtsFamily 同款过滤理由）—— 不进 B-tree
+        -- 索引名对账；判据 = 本查询返回集与 SQLite 显式索引 102 条双向相等。
+        AND am.amname <> 'bm25'
       ORDER BY ic.relname
     `) as unknown as Array<{ name: string; tbl: string; unique: boolean; partial: boolean; cols: string; fulldef: string }>
 

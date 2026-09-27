@@ -56,16 +56,18 @@ export function computeEffectivenessUpdates(
  * For each injected rule: increment the injected counter, then increment
  * either the helpful or not_helpful counter based on the tracking result.
  */
-export function applyEffectivenessUpdates(
+export async function applyEffectivenessUpdates(
   effectivenessDAO: KnowledgeEffectivenessDAO,
   updates: Array<{ ruleId: string; helpful: boolean }>,
-): void {
+): Promise<void> {
+  // P1 B2: knowledge_effectiveness 已迁 postgres.js —— 逐条 await（顺序保持：
+  // injected 先于 helpful/not_helpful，confidence 派生依赖注入计数）。
   for (const { ruleId, helpful } of updates) {
-    effectivenessDAO.incrementInjected(ruleId)
+    await effectivenessDAO.incrementInjected(ruleId)
     if (helpful) {
-      effectivenessDAO.incrementHelpful(ruleId)
+      await effectivenessDAO.incrementHelpful(ruleId)
     } else {
-      effectivenessDAO.incrementNotHelpful(ruleId)
+      await effectivenessDAO.incrementNotHelpful(ruleId)
     }
   }
 }
@@ -79,11 +81,11 @@ export function applyEffectivenessUpdates(
  *
  * Returns the number of rules tracked, or 0 if no injected rules were found.
  */
-export function trackEffectiveness(
+export async function trackEffectiveness(
   execResult: ExecResult,
   effectivenessDAO: KnowledgeEffectivenessDAO,
   org: string,
-): number {
+): Promise<number> {
   // Read injected rule IDs from execution (set by KnowledgeInjector)
   const injectedIdsRaw = execResult.poolSnapshot?.__injected_rule_ids
   if (!injectedIdsRaw) return 0
@@ -116,7 +118,7 @@ export function trackEffectiveness(
 
   // Compute and apply updates
   const updates = computeEffectivenessUpdates(injectedIds, problemText, ruleTexts)
-  applyEffectivenessUpdates(effectivenessDAO, updates)
+  await applyEffectivenessUpdates(effectivenessDAO, updates)
 
   return updates.length
 }
@@ -131,14 +133,14 @@ export function trackEffectiveness(
  *
  * Returns the number of rules retired.
  */
-export function retireStaleRules(
+export async function retireStaleRules(
   effectivenessDAO: KnowledgeEffectivenessDAO,
   org: string,
   minInjected = 3,
   maxConfidence = 0.2,
   daysSinceLastInjected = 30,
-): number {
-  const staleRules = effectivenessDAO.listStale(minInjected, maxConfidence, daysSinceLastInjected)
+): Promise<number> {
+  const staleRules = await effectivenessDAO.listStale(minInjected, maxConfidence, daysSinceLastInjected)
   let retiredCount = 0
 
   for (const row of staleRules) {

@@ -67,7 +67,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       const interceptor = getSafetyInterceptor()
       if (interceptor.isDangerousCommand(body.message)) {
         const reason = interceptor.getDangerReason(body.message)
-        safetyDAO.insertSafetyEvent({
+        // SafetyDAO 已在 P1-B2 异步化：await 后失败仍被外层 catch 吞（保持
+        // 「安全事件落库失败非致命」原语义），但不再退化成 unhandled rejection
+        await safetyDAO.insertSafetyEvent({
           type: 'dangerous_command',
           operation: body.message.slice(0, 200),
           decision: 'intercept',

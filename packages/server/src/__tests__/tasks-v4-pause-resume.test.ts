@@ -25,7 +25,7 @@
 //
 // E2E_PR_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import os from "os"
 import path from "path"
@@ -36,12 +36,17 @@ import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { WorkspaceService } from "../services/workspace"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TASK_EXECUTION_EVENT } from "@octopus/shared"
 import { WorkspaceDAO } from "../db/dao"
 
 const ORG = "e2e-pr"
 const BATCH_DATE = "20260903"
+
+// P1 B2：tasks / task_phase_acceptances 落 PG（每用例 truncate 隔离）；
+// executions/workspaces 仍 SQLite（beforeEach 重建 :memory:）。
+let pg: PgFixture | null = null
 
 // ── ExecutionService registry stub ───────────────────────────────────
 // pause/resume mirror the REAL contract where it matters for this suite: pause flips the
@@ -104,7 +109,7 @@ let realUserProfile: string | undefined
 /** A v4 task with `phaseCount` phases, a bound workspace row, and one round per
  *  (phase, round, status) triple laid down as REAL executions rows — the read model
  *  deriveTaskView consumes. */
-function seed(opts: {
+async function seed(opts: {
   rounds?: Array<{ phase: number; round: number; status: string }>
   phaseCount?: number
   taskStatus?: string
@@ -152,12 +157,13 @@ function seed(opts: {
       inputValues: {},
     })),
   }
-  db.prepare(`
+  // P1 B2: tasks 落 PG；workspaces/executions 仍 SQLite `db`。
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_PR ${taskId}`, opts.taskStatus ?? "running", JSON.stringify(spec), now, now, workspaceId)
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, $8)
+  `, [taskId, ORG, `E2E_PR ${taskId}`, opts.taskStatus ?? "running", JSON.stringify(spec), now, now, workspaceId])
 
   const execIds: Record<string, string> = {}
   for (const r of opts.rounds ?? [{ phase: 1, round: 1, status: "running" }]) {
@@ -171,9 +177,11 @@ function seed(opts: {
   }
 
   for (const l of opts.ledger ?? []) {
-    db.prepare(
-      "INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))",
-    ).run(`e2e-pr-acc-${taskSeq}-${l.phase}-${l.round}`, taskId, l.phase, l.round, l.decision)
+    // P1 B2: task_phase_acceptances 落 PG（append-only 台账 —— 只插不改）。
+    await pg!.sql.unsafe(`
+      INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+      VALUES ($1, $2, $3, $4, $5, NULL, now())
+    `, [`e2e-pr-acc-${taskSeq}-${l.phase}-${l.round}`, taskId, l.phase, l.round, l.decision])
   }
 
   return { taskId, workspaceId, wsPath, home, execIds }
@@ -183,12 +191,13 @@ function execStatus(execId: string): string {
   return (mockHooks.db!.prepare("SELECT status FROM executions WHERE id = ?").get(execId) as { status: string }).status
 }
 
-function taskStatus(taskId: string): string {
-  return (mockHooks.db!.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string }).status
+/** P1 B2: tasks.status 读 PG。 */
+async function taskStatus(taskId: string): Promise<string> {
+  return ((await pg!.sql`SELECT status FROM tasks WHERE id = ${taskId}`)[0] as { status: string }).status
 }
 
-function derivedStatus(taskId: string): string {
-  const dto = service.getTask(taskId) as unknown as { derived: { taskStatus: string } }
+async function derivedStatus(taskId: string): Promise<string> {
+  const dto = (await service.getTask(taskId)) as unknown as { derived: { taskStatus: string } }
   return dto.derived.taskStatus
 }
 
@@ -213,7 +222,19 @@ function post(path: string, body?: Record<string, unknown>) {
 
 const builtInStub = { get: () => null } as never
 
-beforeEach(() => {
+beforeAll(async () => {
+  // P1 B2: PG 随机测试库每文件一座、注册为全局池（service/job 内部 pgSql() 取用）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
+  await pg!.truncate("tasks", "task_phase_acceptances")
   db = newDb()
   mockHooks.db = db
   taskSeq = 0
@@ -245,13 +266,13 @@ afterEach(() => {
   db.close()
 })
 
-describe("AC1 — pause delegates to the run and the task reflects it", () => {
+describePg("AC1 — pause delegates to the run and the task reflects it", () => {
   it("pauses the bound execution, derives 已暂停, and does NOT mirror a task status", async () => {
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
     const execId = execIds["1:1"]
 
     // Before: the round is live, so the task reads 执行中 (persisted status is 'running').
-    expect(derivedStatus(taskId)).toBe("running")
+    expect(await derivedStatus(taskId)).toBe("running")
 
     const res = await post(`${taskId}/pause`)
     expect(res.status).toBe(200)
@@ -260,9 +281,9 @@ describe("AC1 — pause delegates to the run and the task reflects it", () => {
     expect(execStatus(execId)).toBe("paused")
     expect(stubCalls).toContain(`pause:${execId}`)
     // … and the task's 已暂停 is purely derived from it.
-    expect(derivedStatus(taskId)).toBe("paused")
+    expect(await derivedStatus(taskId)).toBe("paused")
     // The persisted task status is untouched: no paused task row exists, by design.
-    expect(taskStatus(taskId)).toBe("running")
+    expect(await taskStatus(taskId)).toBe("running")
 
     // One run-transition event, on the channel both the board and the console fold.
     const execs = sseEvents.filter((e) => e.event === TASK_EXECUTION_EVENT)
@@ -273,7 +294,7 @@ describe("AC1 — pause delegates to the run and the task reflects it", () => {
   })
 
   it("pauses only the live round, leaving earlier terminal rounds alone", async () => {
-    const { taskId, execIds } = seed({
+    const { taskId, execIds } = await seed({
       rounds: [
         { phase: 1, round: 1, status: "completed" },
         { phase: 2, round: 1, status: "running" },
@@ -282,20 +303,20 @@ describe("AC1 — pause delegates to the run and the task reflects it", () => {
     await post(`${taskId}/pause`)
     expect(execStatus(execIds["1:1"])).toBe("completed")
     expect(execStatus(execIds["2:1"])).toBe("paused")
-    expect(derivedStatus(taskId)).toBe("paused")
+    expect(await derivedStatus(taskId)).toBe("paused")
   })
 })
 
-describe("AC2 — the 409 ladder names the actual situation", () => {
+describePg("AC2 — the 409 ladder names the actual situation", () => {
   it("409 when nothing is in flight", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "completed" }] })
+    const { taskId } = await seed({ rounds: [{ phase: 1, round: 1, status: "completed" }] })
     const res = await post(`${taskId}/pause`)
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("没有进行中的执行")
   })
 
   it("409 when the round is queued but not started", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "pending" }] })
+    const { taskId } = await seed({ rounds: [{ phase: 1, round: 1, status: "pending" }] })
     const res = await post(`${taskId}/pause`)
     expect(res.status).toBe(409)
     const msg = (await res.json()).error
@@ -307,20 +328,20 @@ describe("AC2 — the 409 ladder names the actual situation", () => {
   it("409 when the round is parked at an approval node — and the to-do is not buried", async () => {
     // A run waiting for a human is the engine ALIVE, not paused. Calling it 已暂停 would
     // hide the real to-do («需要你审批»), so it must be refused with a message that says so.
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "pending_approval" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "pending_approval" }] })
     const res = await post(`${taskId}/pause`)
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("审批")
     expect(execStatus(execIds["1:1"])).toBe("pending_approval")
     // And it must NOT display as paused.
-    expect(derivedStatus(taskId)).toBe("running")
+    expect(await derivedStatus(taskId)).toBe("running")
   })
 
   it("relays a refusal from the execution service instead of inventing a success", async () => {
     // The between-nodes window: ExecutionLifecycle.pause refuses rather than leaving a
     // 'paused' row that resume() could never take back. The task route must surface that
     // reason verbatim and stay 409 — not report a pause that did not happen.
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
     stubService.pause.mockImplementationOnce(async () => ({
       success: false,
       error: "执行当前没有运行中的节点，无法暂停",
@@ -330,7 +351,7 @@ describe("AC2 — the 409 ladder names the actual situation", () => {
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("没有运行中的节点")
     expect(execStatus(execIds["1:1"])).toBe("running")
-    expect(derivedStatus(taskId)).toBe("running")
+    expect(await derivedStatus(taskId)).toBe("running")
     expect(sseEvents.filter((e) => e.event === TASK_EXECUTION_EVENT)).toHaveLength(0)
   })
 
@@ -340,17 +361,17 @@ describe("AC2 — the 409 ladder names the actual situation", () => {
   })
 })
 
-describe("AC3 — resume re-registers the callbacks before delegating", () => {
+describePg("AC3 — resume re-registers the callbacks before delegating", () => {
   it("restores the round and hands the intervention through", async () => {
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
     const execId = execIds["1:1"]
-    expect(derivedStatus(taskId)).toBe("paused")
+    expect(await derivedStatus(taskId)).toBe("paused")
 
     const res = await post(`${taskId}/resume`, { intervention: "跳过迁移脚本" })
     expect(res.status).toBe(200)
     expect(execStatus(execId)).toBe("running")
     expect(stubCalls).toContain(`resume:${execId}:跳过迁移脚本`)
-    expect(derivedStatus(taskId)).toBe("running")
+    expect(await derivedStatus(taskId)).toBe("running")
 
     const execs = sseEvents.filter((e) => e.event === TASK_EXECUTION_EVENT)
     expect(execs).toHaveLength(1)
@@ -364,7 +385,7 @@ describe("AC3 — resume re-registers the callbacks before delegating", () => {
     // engine from persisted state — if the re-register came after, the round would later
     // complete with nobody listening and silently lose collectRound / 待验收 / the red
     // round's reason. Order is the only thing that makes the re-register work.
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
     const execId = execIds["1:1"]
 
     const order: string[] = []
@@ -385,14 +406,14 @@ describe("AC3 — resume re-registers the callbacks before delegating", () => {
   })
 
   it("409 when the round is not paused", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
+    const { taskId } = await seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
     const res = await post(`${taskId}/resume`)
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("无法恢复")
   })
 
   it("400 on a non-string or oversized intervention", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
+    const { taskId } = await seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
     expect((await post(`${taskId}/resume`, { intervention: 42 })).status).toBe(400)
     expect((await post(`${taskId}/resume`, { intervention: "x".repeat(4001) })).status).toBe(400)
     // A body-less resume is the normal case, not an error.
@@ -400,18 +421,18 @@ describe("AC3 — resume re-registers the callbacks before delegating", () => {
   })
 })
 
-describe("AC4 — 暂停期间不可验收，但中止仍然可用", () => {
+describePg("AC4 — 暂停期间不可验收，但中止仍然可用", () => {
   it("409s an acceptance targeting a round on another phase while the task is suspended", async () => {
     // The per-phase gate alone cannot catch this: phase 1's round is genuinely
     // awaiting_review and phase 1 is the requested phase. Only the task-level
     // suspension check stops it.
-    const { taskId } = seed({
+    const { taskId } = await seed({
       rounds: [
         { phase: 1, round: 1, status: "completed" },
         { phase: 2, round: 1, status: "paused" },
       ],
     })
-    expect(derivedStatus(taskId)).toBe("paused")
+    expect(await derivedStatus(taskId)).toBe("paused")
 
     const res = await post(`${taskId}/acceptance`, {
       phase_index: 1, round_index: 1, decision: "accepted",
@@ -419,14 +440,14 @@ describe("AC4 — 暂停期间不可验收，但中止仍然可用", () => {
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("已暂停")
     // Nothing was appended to the ledger.
-    const rows = db.prepare("SELECT COUNT(*) AS n FROM task_phase_acceptances WHERE task_id = ?").get(taskId) as { n: number }
+    const rows = (await pg!.sql`SELECT COUNT(*)::int AS n FROM task_phase_acceptances WHERE task_id = ${taskId}`)[0] as { n: number }
     expect(rows.n).toBe(0)
   })
 
   it("still allows an acceptance once the round is resumed", async () => {
     // Guards the test above against a false green: the same request must SUCCEED when the
     // task is not suspended.
-    const { taskId } = seed({
+    const { taskId } = await seed({
       autoAdvance: false,
       rounds: [
         { phase: 1, round: 1, status: "completed" },
@@ -440,10 +461,10 @@ describe("AC4 — 暂停期间不可验收，但中止仍然可用", () => {
   })
 
   it("keeps abort available while paused — it is the only other exit", async () => {
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
+    const { taskId, execIds } = await seed({ rounds: [{ phase: 1, round: 1, status: "paused" }] })
     const res = await post(`${taskId}/abort`)
     expect(res.status).toBe(200)
-    expect(taskStatus(taskId)).toBe("aborted")
+    expect(await taskStatus(taskId)).toBe("aborted")
     expect(execStatus(execIds["1:1"])).toBe("aborted")
   })
 })

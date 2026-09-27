@@ -25,11 +25,12 @@
 // `assocBranchSuffix` reference that made every cron fire throw) that was caught during
 // this rewrite and fixed in the source.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
 import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../db/dao"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
 import { TaskDAO } from "../db/dao/task-dao"
 import { buildTaskLaunchConfig } from "../services/tasks/task-materialize"
@@ -53,6 +54,20 @@ vi.mock("../services/execution-service-registry", () => ({
 const mockSSE = { emit: vi.fn() } as any
 const ORG = "E2E_TD_org"
 
+// P1 B2：tasks 表已迁 postgres.js —— taskRow() 造数/读回走这座 PG 库
+// （注册全局池供 TaskLifecycleService 的 pgSql() 取）；executions/schedules 等留 SQLite。
+let pg: PgFixture | null = null
+
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
 function makeSubunit(name: string) {
   return {
     name,
@@ -64,7 +79,7 @@ function makeSubunit(name: string) {
   }
 }
 
-describe("WorkflowExecutor is task-agnostic after 票03", () => {
+describePg("WorkflowExecutor is task-agnostic after 票03", () => {
   let db: Database.Database
   beforeEach(() => {
     db = new Database(":memory:")
@@ -91,7 +106,7 @@ describe("WorkflowExecutor is task-agnostic after 票03", () => {
   })
 })
 
-describe("票03 — the simple/composite dispatch decision (relocated off the executor)", () => {
+describePg("票03 — the simple/composite dispatch decision (relocated off the executor)", () => {
   // ── AC1: simple task → its OWN workflow_ref + REAL projects (no coordinator) ──
   it("AC1: a simple (0/1-subunit) plan is NOT composite — the task's own ref, real projects", () => {
     // 0 subunits.
@@ -127,7 +142,7 @@ describe("票03 — the simple/composite dispatch decision (relocated off the ex
   })
 })
 
-describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordinator (projects=[])", () => {
+describePg("票03 — TaskLifecycleService.prepareWorkspace: composite → coordinator (projects=[])", () => {
   let db: Database.Database
   let svc: TaskLifecycleService
   let createFromSpecMock: ReturnType<typeof vi.fn>
@@ -164,24 +179,26 @@ describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordin
     db.close()
   })
 
-  function taskRow(id: string): TaskRow {
+  async function taskRow(id: string): Promise<TaskRow> {
     const now = new Date().toISOString()
-    db.prepare(
-      `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills,
+    // P1 B2: tasks 落 PG（占位符 ?→$n；列语义同 TaskDAO）。
+    await pg!.sql.unsafe(`
+      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills,
         project_ids, workflow_ref, version, created_at, updated_at)
-       VALUES (?, ?, ?, 'ready', '{}', '[]', '[]', '[]', '[]', 'w', 1, ?, ?)`,
-    ).run(id, ORG, `T_${id}`, now, now)
-    return new TaskDAO(db).getById(id)! as unknown as TaskRow
+      VALUES ($1, $2, $3, 'ready', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+        '[]'::jsonb, 'w', 1, $4, $5)
+    `, [id, ORG, `T_${id}`, now, now])
+    return (await new TaskDAO(pg!.sql).getById(id))! as unknown as TaskRow
   }
 
-  it("AC1: a simple plan builds a workspace with the REAL projects", () => {
+  it("AC1: a simple plan builds a workspace with the REAL projects", async () => {
     const plan: WorkflowConfig = {
       schema_version: "3.0", type: "workflow",
       workspace_spec: { org: ORG, branch_prefix: "e2e-td-simple", projects: [{ name: "E2E_TD_real_proj", source_path: "", group: "" }] },
       workflow_chain: [{ workflow_ref: "e2e-td/simple-wf", input_values: {} }],
       max_retain: 10,
     }
-    svc.prepareWorkspace(taskRow("pw-simple"), plan)
+    await svc.prepareWorkspace(await taskRow("pw-simple"), plan)
 
     expect(createFromSpecMock).toHaveBeenCalledTimes(1)
     const arg = createFromSpecMock.mock.calls[0][0]
@@ -192,7 +209,7 @@ describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordin
     expect(arg.task_id).toBe("pw-simple")
   })
 
-  it("AC2: a composite plan builds a COORDINATOR workspace with NO projects", () => {
+  it("AC2: a composite plan builds a COORDINATOR workspace with NO projects", async () => {
     const plan: WorkflowConfig = {
       schema_version: "3.0", type: "workflow",
       // The plan's own workspace_spec carries a default project, but a composite run is
@@ -201,7 +218,7 @@ describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordin
       workflow_chain: [{ workflow_ref: "composition-task", input_values: {} }],
       max_retain: 10,
     }
-    svc.prepareWorkspace(taskRow("pw-comp"), plan)
+    await svc.prepareWorkspace(await taskRow("pw-comp"), plan)
 
     expect(createFromSpecMock).toHaveBeenCalledTimes(1)
     const arg = createFromSpecMock.mock.calls[0][0]
@@ -222,7 +239,7 @@ describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordin
 //  schedule_workspace insert. Green today; it would go red the moment that insert
 //  regresses again.
 // ──────────────────────────────────────────────────────────────────────
-describe("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
+describePg("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
   let db: Database.Database
   let executor: WorkflowExecutor
   let createFromSpecMock: ReturnType<typeof vi.fn>

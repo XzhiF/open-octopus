@@ -17,6 +17,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, buildPerRepoVerifyBash, type VerifySummary } from "../services/tasks/round-evidence-service"
@@ -26,6 +27,8 @@ const ORG = "e2e-td-verify"
 const WS_ID = "ws-vf-1"
 const BATCH_REL = ".scratch/20260916/p-1"
 
+// P1 B2：tasks 落 PG（service 内部 pgSql()）；executions/workspaces 仍 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let sse: SSEService
@@ -89,7 +92,9 @@ function batchHomeFiles(taskId: string): string[] {
   return fs.existsSync(dir) ? fs.readdirSync(dir) : []
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-verify-"))
@@ -114,13 +119,15 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(tasksService, sse, undefined, evidence))
 })
 
-afterAll(() => {
+afterAll(async () => {
   unSub?.()
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
-describe("verify — 门链与终态", () => {
+describePg("verify — 门链与终态", () => {
   it("V1: echo → running→passed；exit 0；verdict .md 落批次目录；SSE 三事件齐", async () => {
     const taskId = await newAwaitingTask()
     expect((await setVerify(taskId, { command: "echo hello-verify", timeoutS: 30 })).status).toBe(200)
@@ -221,7 +228,8 @@ describe("verify — 门链与终态", () => {
     const taskId = await newAwaitingTask()
     expect((await setVerify(taskId, { command: "echo ok", timeoutS: 30 })).status).toBe(200)
     expect((await setVerify(taskId, null)).status).toBe(200)
-    const spec = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as { task_spec: string }
+    // P1 B2: task_spec 是 PG jsonb —— #>> '{}' 读回规范化文本再 parse。
+    const spec = ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${taskId}`)[0] as { task_spec: string })
     const parsed = JSON.parse(spec.task_spec) as Record<string, unknown>
     expect("acceptance_verify" in parsed).toBe(false)
   })
@@ -286,7 +294,7 @@ describe("verify — 门链与终态", () => {
 })
 
 // ── 剧本探针单发执行 (POST /:id/playbook/run) ───────────────────────────
-describe("playbook probe — 同步单发,就地盖章", () => {
+describePg("playbook probe — 同步单发,就地盖章", () => {
   it("PR1: echo → passed, exit 0, tail 带回显;工作区根为 cwd", async () => {
     const taskId = await newAwaitingTask()
     const res = await app.request(`/api/tasks/${taskId}/playbook/run`, {

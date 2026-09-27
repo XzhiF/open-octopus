@@ -415,7 +415,7 @@ export async function detectRecurringPitfalls(
 
       appendToKnowledgeFile(filePath, rule.text, ruleId, rule.source)
 
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: ruleId,
         type: "rule",
         source: rule.source,
@@ -512,7 +512,7 @@ export async function proposeRulesForReview(
         Array.isArray(proposed.conflicts) && proposed.conflicts.length > 0
       const confidence = hasConflicts ? 0.6 : 0.8
 
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id,
         type: "rule",
         source: proposed.source,

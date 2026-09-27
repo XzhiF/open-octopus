@@ -23,6 +23,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import path from "path"
@@ -30,6 +31,9 @@ import os from "os"
 import fs from "fs"
 
 const ORG = "e2e-td-v4dup"
+
+// P1 B2：本文件的 tasks/task_phase_acceptances 造数与读断言全部走这座 PG 库。
+let pg: PgFixture | null = null
 
 const stub = vi.hoisted(() => ({ db: null as Database.Database | null }))
 
@@ -57,15 +61,16 @@ let taskHome: TaskHomeService
 let service: TasksService
 let nextTaskSeq = 0
 
-function insertTask(spec: Record<string, unknown>): string {
+/** P1 B2: tasks 表已迁 postgres.js —— 造数落 PG。 */
+async function insertTask(spec: Record<string, unknown>): Promise<string> {
   const id = `e2e-td-v4dup-${nextTaskSeq++}`
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-  `).run(id, ORG, `E2E_TD dup task ${id}`, JSON.stringify(spec), now, now)
+    VALUES ($1, $2, $3, 'draft', NULL, $4, '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL)
+  `, [id, ORG, `E2E_TD dup task ${id}`, JSON.stringify(spec), now, now])
   return id
 }
 
@@ -92,7 +97,7 @@ function writeHomeFile(taskId: string, rel: string, content: string, backdateMti
 
 /** A fully-valid v4 draft: spec.md + issue file under .scratch, one self-written
  *  workflow YAML, both backdated so mtime preservation is observable. */
-function insertValidV4Task(): { id: string; phases: PhaseInput[] } {
+async function insertValidV4Task(): Promise<{ id: string; phases: PhaseInput[] }> {
   const specPath = path.join(".scratch", "dupd", "p1", "spec.md")
   const phases: PhaseInput[] = [{
     index: 1, name: "Phase 1", slug: "p1", specPath,
@@ -100,7 +105,7 @@ function insertValidV4Task(): { id: string; phases: PhaseInput[] } {
     inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
     bindingConfirmed: true, // 入队加严闸 ⑤（人工确认）
   }]
-  const id = insertTask({
+  const id = await insertTask({
     format: "v4", task_type: "coding", skill_groups: [],
     decisions: [], resources: [], authoring_resources: [], phases,
     // runbook 硬闸（2026-09-22）：happy 源必须能过闸 —— 预带合法 preview。
@@ -112,7 +117,10 @@ function insertValidV4Task(): { id: string; phases: PhaseInput[] } {
   return { id, phases }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks/task_phase_acceptances 落 PG（注册为全局池 ——
+  // service/DAO 经 pgSql() 取），workspaces/executions 仍在 SQLite `db`（B5 域）。
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   stub.db = db
@@ -134,7 +142,10 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
@@ -148,9 +159,9 @@ async function postJson(url: string, body?: unknown): Promise<{ status: number; 
   return { status: res.status, json: await res.json() }
 }
 
-describe("happy path — ready 源整单复制，副本直达待执行", () => {
+describePg("happy path — ready 源整单复制，副本直达待执行", () => {
   it("201 + status='ready' + spec 原样 + 目录/会话/游标全新", async () => {
-    const { id, phases } = insertValidV4Task()
+    const { id, phases } = await insertValidV4Task()
     expect((await postJson(`/api/tasks/${id}/ready`)).status).toBe(200)
 
     const res = await postJson(`/api/tasks/${id}/duplicate`)
@@ -164,7 +175,10 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
     expect(dup.task_spec.format).toBe("v4")
     expect(dup.task_spec.phases[0].specPath).toBe(phases[0].specPath)
 
-    const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(dup.id) as Record<string, unknown>
+    // P1 B2: tasks 读断言直读 PG（NULL 读回即 null；timestamptz NULL 同理）。
+    const row = (await pg!.sql`SELECT workspace_id, source_chat_session_id, trigger_mode,
+        next_fire_at, completed_at FROM tasks WHERE id = ${dup.id}`)[0] as
+      Record<string, unknown>
     expect(row.workspace_id).toBeNull()
     expect(row.source_chat_session_id).toBeNull()
     expect(row.trigger_mode).toBe("manual")
@@ -173,7 +187,7 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
   })
 
   it("新 home：.scratch 批次与 workflows 全量到位，mtime 保留，skills junction 不拷", async () => {
-    const { id } = insertValidV4Task()
+    const { id } = await insertValidV4Task()
     const dupId = (await postJson(`/api/tasks/${id}/duplicate`)).json.task.id as string
 
     for (const rel of [
@@ -192,7 +206,7 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
   })
 
   it("隔离：源的 executions/验收账本不指向副本；重复复制各自独立", async () => {
-    const { id } = insertValidV4Task()
+    const { id } = await insertValidV4Task()
     const now = new Date().toISOString()
     db.prepare(`
       INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
@@ -203,10 +217,11 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
         status, input_values, var_pool, org, created_at, updated_at, task_id)
       VALUES ('e2e-td-dup-exec', 'e2e-td-dup-ws', '0', 0, 'r', 'n', 'completed', '{}', '{}', ?, ?, ?, ?)
     `).run(ORG, now, now, id)
-    db.prepare(`
+    // P1 B2: task_phase_acceptances 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
-      VALUES ('e2e-td-dup-acc', ?, 1, 1, 'accepted', '', ?)
-    `).run(id, now)
+      VALUES ($1, $2, 1, 1, 'accepted', '', $3)
+    `, ["e2e-td-dup-acc", id, now])
 
     const dup1 = (await postJson(`/api/tasks/${id}/duplicate`)).json.task
     const dup2 = (await postJson(`/api/tasks/${id}/duplicate`)).json.task
@@ -214,16 +229,16 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
 
     const orphanExecs = db.prepare("SELECT COUNT(*) c FROM executions WHERE task_id IN (?, ?)").get(dup1.id, dup2.id) as { c: number }
     expect(orphanExecs.c).toBe(0)
-    const accs = db.prepare("SELECT COUNT(*) c FROM task_phase_acceptances WHERE task_id IN (?, ?)").get(dup1.id, dup2.id) as { c: number }
+    const accs = (await pg!.sql`SELECT COUNT(*)::int AS c FROM task_phase_acceptances WHERE task_id IN (${dup1.id}, ${dup2.id})`)[0] as { c: number }
     expect(accs.c).toBe(0)
     // 副本名已含 (copy) → 再复制不叠加
     expect(dup2.name).toBe(`E2E_TD dup task ${id} (copy)`)
   })
 })
 
-describe("gate-fail / ready:false — 副本绝不半途而入", () => {
+describePg("gate-fail / ready:false — 副本绝不半途而入", () => {
   it("源 spec 引用缺失文件（半草稿）→ 201，副本留 draft + gate_missing", async () => {
-    const id = insertTask({
+    const id = await insertTask({
       format: "v4", task_type: "coding", skill_groups: [],
       phases: [{
         index: 1, name: "P1", slug: "gone",
@@ -239,7 +254,7 @@ describe("gate-fail / ready:false — 副本绝不半途而入", () => {
   })
 
   it("ready:false → 只复制，不跑 gate", async () => {
-    const { id } = insertValidV4Task()
+    const { id } = await insertValidV4Task()
     const res = await postJson(`/api/tasks/${id}/duplicate`, { ready: false })
     expect(res.status).toBe(201)
     expect(res.json.task.status).toBe("draft")
@@ -247,7 +262,7 @@ describe("gate-fail / ready:false — 副本绝不半途而入", () => {
   })
 
   it("ready 传非布尔 → 400", async () => {
-    const { id } = insertValidV4Task()
+    const { id } = await insertValidV4Task()
     const res = await postJson(`/api/tasks/${id}/duplicate`, { ready: "yes" })
     expect(res.status).toBe(400)
   })
@@ -259,15 +274,16 @@ describe("gate-fail / ready:false — 副本绝不半途而入", () => {
   })
 })
 
-describe("warnings — 指向源 home 的字面路径", () => {
+describePg("warnings — 指向源 home 的字面路径", () => {
   it("phase inputValues 里写死源 task id → 副本带回告警", async () => {
     const specPath = path.join(".scratch", "dupw", "p1", "spec.md")
-    const base = insertValidV4Task()
+    const base = await insertValidV4Task()
     // 直接改源 spec 的一个 inputValue 指向源 home（绝对路径字面量）
-    const dirty = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(base.id) as { task_spec: string }
+    // （P1 B2: tasks 读写走 PG；jsonb 经 #>> '{}' 归 text 后 JSON.parse）
+    const dirty = (await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${base.id}`)[0] as { task_spec: string }
     const spec = JSON.parse(dirty.task_spec)
     spec.phases[0].inputValues.idea = path.join(tmpDir, "tasks", base.id, "notes.md")
-    db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(JSON.stringify(spec), base.id)
+    await pg!.sql.unsafe(`UPDATE tasks SET task_spec = $1 WHERE id = $2`, [JSON.stringify(spec), base.id])
 
     const res = await postJson(`/api/tasks/${base.id}/duplicate`)
     expect(res.status).toBe(201)

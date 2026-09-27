@@ -30,7 +30,7 @@
 //   new shape's analogous guarantees — "child with no parent is a no-op" and "parent
 //   workspace unavailable stays paused for its own recovery" — are asserted instead.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
@@ -38,6 +38,7 @@ import os from "os"
 import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
 import type { SubunitSpec } from "@octopus/shared"
 
@@ -123,11 +124,23 @@ function makeSubunit(name = "E2E_TP_subunit_a"): SubunitSpec {
   }
 }
 
-describe("TaskDispatchService — child run + parent-resume correlation (票03/票04)", () => {
+describePg("TaskDispatchService — child run + parent-resume correlation (票03/票04)", () => {
   let db: Database.Database
+  // P1 B2：dispatchChildRun 读父任务行经 new TaskDAO(pgSql()) —— 全局池必须先注册。
+  // 本文件父行 task_id 在 PG 无任务（getById → null → 走 taskpool-* 兜底命名），
+  // 与旧语义一致；executions/workspaces 仍在 SQLite `db`。
+  let pg: PgFixture | null = null
   let service: TaskDispatchService
   let execs: ExecutionDAO
   let wsSeq = 0
+
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
 
   beforeEach(() => {
     db = new Database(":memory:")

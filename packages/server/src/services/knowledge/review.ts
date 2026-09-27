@@ -20,8 +20,8 @@ export class ReviewService {
    * `org` is passed per-request so a single ReviewService instance can
    * serve multiple orgs; an undefined value means "global" scope.
    */
-  approveItem(id: string, org?: string): { ok: true; ruleId: string } {
-    const item = this.pendingReviewDAO.getById(id)
+  async approveItem(id: string, org?: string): Promise<{ ok: true; ruleId: string }> {
+    const item = await this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
     if (item.status === "approved") return { ok: true, ruleId: id } // idempotent
 
@@ -44,40 +44,40 @@ export class ReviewService {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
 
     appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
-    this.pendingReviewDAO.updateStatus(id, "approved")
+    await this.pendingReviewDAO.updateStatus(id, "approved")
 
     return { ok: true, ruleId }
   }
 
-  rejectItem(id: string, userNotes?: string): { ok: true } {
-    const item = this.pendingReviewDAO.getById(id)
+  async rejectItem(id: string, userNotes?: string): Promise<{ ok: true }> {
+    const item = await this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
-    this.pendingReviewDAO.updateStatus(id, "rejected", userNotes)
+    await this.pendingReviewDAO.updateStatus(id, "rejected", userNotes)
     return { ok: true }
   }
 
-  deferItem(id: string): { ok: true } {
-    const item = this.pendingReviewDAO.getById(id)
+  async deferItem(id: string): Promise<{ ok: true }> {
+    const item = await this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
-    this.pendingReviewDAO.updateStatus(id, "deferred")
+    await this.pendingReviewDAO.updateStatus(id, "deferred")
     return { ok: true }
   }
 
-  editItem(id: string, newContent: string): { ok: true } {
-    const item = this.pendingReviewDAO.getById(id)
+  async editItem(id: string, newContent: string): Promise<{ ok: true }> {
+    const item = await this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
-    this.pendingReviewDAO.updateContent(id, newContent)
+    await this.pendingReviewDAO.updateContent(id, newContent)
     // Keep status as-is (pending) — editing content doesn't change review state
     return { ok: true }
   }
 
-  batchApprove(ids: string[], org?: string): { succeeded: number; failed: number; details: Array<{ id: string; status: string; error?: string }> } {
+  async batchApprove(ids: string[], org?: string): Promise<{ succeeded: number; failed: number; details: Array<{ id: string; status: string; error?: string }> }> {
     const details: Array<{ id: string; status: string; error?: string }> = []
     let succeeded = 0
     let failed = 0
     for (const id of ids) {
       try {
-        this.approveItem(id, org)
+        await this.approveItem(id, org)
         details.push({ id, status: "ok" })
         succeeded++
       } catch (err) {
@@ -88,12 +88,12 @@ export class ReviewService {
     return { succeeded, failed, details }
   }
 
-  batchReject(ids: string[]): void {
-    this.pendingReviewDAO.batchUpdateStatus(ids, "rejected")
+  async batchReject(ids: string[]): Promise<void> {
+    await this.pendingReviewDAO.batchUpdateStatus(ids, "rejected")
   }
 
-  getPendingSummary(): { rules: number; skills: number; total: number } {
-    return this.pendingReviewDAO.countPendingByType()
+  async getPendingSummary(): Promise<{ rules: number; skills: number; total: number }> {
+    return await this.pendingReviewDAO.countPendingByType()
   }
 
   /**

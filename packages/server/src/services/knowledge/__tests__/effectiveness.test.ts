@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+// P1 B2：knowledge_effectiveness 已迁 postgres.js（BasePgDAO）—— 本文件造数/读断言全部走 PG。
+// 每文件一座随机测试库（beforeAll 建 / afterAll DROP），用例间 TRUNCATE 清表。
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import Database from "better-sqlite3"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
-import { applySchema } from "../../../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import {
   computeEffectivenessUpdates,
   applyEffectivenessUpdates,
@@ -20,21 +21,28 @@ import {
   findRuleById,
 } from "../file-ops"
 
-describe("effectiveness", () => {
-  let db: Database.Database
+describePg("effectiveness", () => {
+  let pg: PgFixture | null = null
   let effectivenessDAO: KnowledgeEffectivenessDAO
   let tmpDir: string
 
-  beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    effectivenessDAO = new KnowledgeEffectivenessDAO(db)
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("knowledge_effectiveness")
+    effectivenessDAO = new KnowledgeEffectivenessDAO(pg!.sql)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "effectiveness-test-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
-    db?.close()
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
@@ -68,26 +76,26 @@ describe("effectiveness", () => {
   })
 
   describe("applyEffectivenessUpdates", () => {
-    it("increments counters correctly", () => {
-      applyEffectivenessUpdates(effectivenessDAO, [
+    it("increments counters correctly", async () => {
+      await applyEffectivenessUpdates(effectivenessDAO, [
         { ruleId: "rule-1", helpful: true },
         { ruleId: "rule-1", helpful: false },
         { ruleId: "rule-2", helpful: true },
       ])
 
-      const row1 = effectivenessDAO.getByRuleId("rule-1")
+      const row1 = await effectivenessDAO.getByRuleId("rule-1")
       expect(row1?.injected_count).toBe(2)
       expect(row1?.helpful_count).toBe(1)
       expect(row1?.not_helpful_count).toBe(1)
 
-      const row2 = effectivenessDAO.getByRuleId("rule-2")
+      const row2 = await effectivenessDAO.getByRuleId("rule-2")
       expect(row2?.injected_count).toBe(1)
       expect(row2?.helpful_count).toBe(1)
     })
   })
 
   describe("trackEffectiveness", () => {
-    it("tracks effectiveness from execution result", () => {
+    it("tracks effectiveness from execution result", async () => {
       const filePath = path.join(tmpDir, "projects", "test.md")
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
       appendToKnowledgeFile(filePath, "Always validate inputs", "rule-1", "system")
@@ -103,14 +111,14 @@ describe("effectiveness", () => {
         },
       }
 
-      const tracked = trackEffectiveness(execResult, effectivenessDAO, "test-org")
+      const tracked = await trackEffectiveness(execResult, effectivenessDAO, "test-org")
       expect(tracked).toBe(1)
 
-      const row = effectivenessDAO.getByRuleId("rule-1")
+      const row = await effectivenessDAO.getByRuleId("rule-1")
       expect(row?.injected_count).toBe(1)
     })
 
-    it("returns 0 when no injected rules", () => {
+    it("returns 0 when no injected rules", async () => {
       const execResult = {
         id: "exec-1",
         status: "completed",
@@ -118,24 +126,24 @@ describe("effectiveness", () => {
         poolSnapshot: {},
       }
 
-      const tracked = trackEffectiveness(execResult, effectivenessDAO, "test-org")
+      const tracked = await trackEffectiveness(execResult, effectivenessDAO, "test-org")
       expect(tracked).toBe(0)
     })
   })
 
   describe("retireStaleRules", () => {
-    it("retires rules with low confidence", () => {
+    it("retires rules with low confidence", async () => {
       const filePath = path.join(tmpDir, "projects", "test.md")
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
       appendToKnowledgeFile(filePath, "Bad rule", "stale-rule", "system")
 
       // Simulate 3 injections, all not helpful (confidence = 0)
       for (let i = 0; i < 3; i++) {
-        effectivenessDAO.incrementInjected("stale-rule")
-        effectivenessDAO.incrementNotHelpful("stale-rule")
+        await effectivenessDAO.incrementInjected("stale-rule")
+        await effectivenessDAO.incrementNotHelpful("stale-rule")
       }
 
-      const retired = retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
+      const retired = await retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
       expect(retired).toBe(1)
 
       const rule = findRuleById("test-org", "stale-rule")
@@ -145,7 +153,7 @@ describe("effectiveness", () => {
 
   // TC-041: File-level retirement and restore assertions
   describe("file-level retirement/restore (TC-041)", () => {
-    it("retireStaleRules marks knowledge file with <!-- retired -->", () => {
+    it("retireStaleRules marks knowledge file with <!-- retired -->", async () => {
       // Create knowledge file with a rule (must be in projects/ subdirectory)
       const filePath = path.join(tmpDir, "projects", "test.md")
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
@@ -153,12 +161,12 @@ describe("effectiveness", () => {
 
       // Simulate low confidence
       for (let i = 0; i < 3; i++) {
-        effectivenessDAO.incrementInjected("stale-file-001")
-        effectivenessDAO.incrementNotHelpful("stale-file-001")
+        await effectivenessDAO.incrementInjected("stale-file-001")
+        await effectivenessDAO.incrementNotHelpful("stale-file-001")
       }
 
       // Retire with org parameter to trigger file-level marking
-      const retired = retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
+      const retired = await retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
       expect(retired).toBe(1)
 
       // File should contain <!-- retired --> annotation

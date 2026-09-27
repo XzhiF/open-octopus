@@ -300,7 +300,7 @@ export class InteractionService {
     }
 
     // Save user message
-    this.messageDao.insertMessage({
+    await this.messageDao.insertMessage({
       id: randomUUID(),
       execution_id: params.executionId,
       node_id: params.nodeId,
@@ -314,7 +314,7 @@ export class InteractionService {
     const acc = new StreamAccumulator()
 
     // Create assistant message placeholder
-    this.messageDao.insertMessage({
+    await this.messageDao.insertMessage({
       id: acc.assistantMessageId,
       execution_id: params.executionId,
       node_id: params.nodeId,
@@ -347,7 +347,7 @@ export class InteractionService {
       })
 
       for await (const chunk of chunkStream) {
-        const events = this.processChunk(chunk, session, acc)
+        const events = await this.processChunk(chunk, session, acc)
         for (const event of events) {
           yield event
         }
@@ -362,7 +362,7 @@ export class InteractionService {
     }
 
     // Finalize: save assistant text, write token usage + llm_calls
-    this.finalizeAssistantMessage(acc, session)
+    await this.finalizeAssistantMessage(acc, session)
     this.writeTokenUsage(acc, session)
     this.writeLlmCall(acc, session)
 
@@ -425,7 +425,7 @@ export class InteractionService {
     nodeId: string
     limit?: number
     before?: string
-  }): InteractionMessageRow[] {
+  }): Promise<InteractionMessageRow[]> {
     return this.messageDao.findMessages(params.executionId, params.nodeId, {
       limit: params.limit,
       before: params.before,
@@ -444,18 +444,18 @@ export class InteractionService {
    * Persists a completion message, writes an agent event, and returns
    * completion data for the route handler to call completeInteraction.
    */
-  forceComplete(params: {
+  async forceComplete(params: {
     executionId: string
     nodeId: string
     summary: string
     varsUpdate?: Record<string, unknown>
-  }): { ok: boolean; summary: string; vars_update?: Record<string, unknown> } {
+  }): Promise<{ ok: boolean; summary: string; vars_update?: Record<string, unknown> }> {
     const k = this.key(params.executionId, params.nodeId)
     const session = this.sessions.get(k)
     const nodeExecId = session?.nodeExecutionId ?? `${params.executionId}-${params.nodeId}`
 
     // Persist completion message to interaction_messages
-    this.messageDao.insertMessage({
+    await this.messageDao.insertMessage({
       id: randomUUID(),
       execution_id: params.executionId,
       node_id: params.nodeId,
@@ -492,26 +492,26 @@ export class InteractionService {
    * Process a single MessageChunk into SSE events and side effects.
    * Dispatches to type-specific handler methods.
    */
-  private processChunk(
+  private async processChunk(
     chunk: MessageChunk,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     switch (chunk.type) {
-      case "text_delta":       return this.handleTextDelta(chunk, session, acc)
-      case "message_start":    return this.handleMessageStart(chunk, session)
-      case "thinking_start":   return this.handleThinkingStart(chunk, session, acc)
-      case "thinking":         return this.handleThinking(chunk, session, acc)
-      case "thinking_done":    return this.handleThinkingDone(chunk, session, acc)
-      case "tool_call_start":  return this.handleToolCallStart(chunk, session, acc)
-      case "tool_call":        return this.handleToolCall(chunk, session, acc)
-      case "tool_result":      return this.handleToolResult(chunk, session, acc)
-      case "ask_user_question": return this.handleAskUserQuestion(chunk, session, acc)
-      case "complete_interaction": return this.handleCompleteInteraction(chunk, session, acc)
-      case "result":           return this.handleResult(chunk, session, acc)
-      case "error":            return this.handleError(chunk, session)
-      case "local_command_output": return this.handleLocalCommandOutput(chunk, session, acc)
-      default:                 return this.handleDefault(chunk, session)
+      case "text_delta":       return await this.handleTextDelta(chunk, session, acc)
+      case "message_start":    return await this.handleMessageStart(chunk, session)
+      case "thinking_start":   return await this.handleThinkingStart(chunk, session, acc)
+      case "thinking":         return await this.handleThinking(chunk, session, acc)
+      case "thinking_done":    return await this.handleThinkingDone(chunk, session, acc)
+      case "tool_call_start":  return await this.handleToolCallStart(chunk, session, acc)
+      case "tool_call":        return await this.handleToolCall(chunk, session, acc)
+      case "tool_result":      return await this.handleToolResult(chunk, session, acc)
+      case "ask_user_question": return await this.handleAskUserQuestion(chunk, session, acc)
+      case "complete_interaction": return await this.handleCompleteInteraction(chunk, session, acc)
+      case "result":           return await this.handleResult(chunk, session, acc)
+      case "error":            return await this.handleError(chunk, session)
+      case "local_command_output": return await this.handleLocalCommandOutput(chunk, session, acc)
+      default:                 return await this.handleDefault(chunk, session)
     }
   }
 
@@ -546,11 +546,11 @@ export class InteractionService {
     return [{ type: "message_start", messageId: chunk.messageId, sessionId: session.sessionId }]
   }
 
-  private handleThinkingStart(
+  private async handleThinkingStart(
     _chunk: MessageChunk,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     // Suppress duplicate thinking after AskUserQuestion on round 1
     // (SDK agentic loop retries cause multiple thinking blocks)
     if (session.currentRound === 1 && acc.askUserQuestionCalled) {
@@ -559,7 +559,7 @@ export class InteractionService {
     }
     acc.thinkingStartTime = Date.now()
     acc.thinkingMessageId = randomUUID()
-    this.messageDao.insertMessage({
+    await this.messageDao.insertMessage({
       id: acc.thinkingMessageId,
       execution_id: session.executionId,
       node_id: session.nodeId,
@@ -582,15 +582,15 @@ export class InteractionService {
     return [{ type: "thinking", content: chunk.content, sessionId: session.sessionId }]
   }
 
-  private handleThinkingDone(
+  private async handleThinkingDone(
     chunk: MessageChunk,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     if (!acc.thinkingMessageId) return [] // Suppressed
     const duration = chunk.thinkingDuration ?? `${Date.now() - acc.thinkingStartTime}ms`
     if (acc.thinkingMessageId && acc.thinkingContent) {
-      this.messageDao.updateMessageContentAndMetadata(
+      await this.messageDao.updateMessageContentAndMetadata(
         acc.thinkingMessageId,
         acc.thinkingContent,
         JSON.stringify({ thinkingDuration: duration }),
@@ -599,11 +599,11 @@ export class InteractionService {
     return [{ type: "thinking_done", thinkingDuration: duration, sessionId: session.sessionId }]
   }
 
-  private handleToolCallStart(
+  private async handleToolCallStart(
     chunk: MessageChunk,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     // Suppress duplicate AskUserQuestion tool calls from SDK agentic loop retries
     if (chunk.toolName === 'AskUserQuestion' && acc.askUserQuestionCalled) {
       // Still track in toolCallMap (handleAskUserQuestion won't fire, so no double-processing)
@@ -612,7 +612,7 @@ export class InteractionService {
     }
     const toolDbId = randomUUID()
     acc.toolCallMap.set(chunk.toolCallId, { dbId: toolDbId, toolName: chunk.toolName, startTime: Date.now() })
-    this.messageDao.insertMessage({
+    await this.messageDao.insertMessage({
       id: toolDbId,
       execution_id: session.executionId,
       node_id: session.nodeId,
@@ -630,16 +630,16 @@ export class InteractionService {
     return [{ type: "tool_call_start", toolCallId: chunk.toolCallId, toolName: chunk.toolName, sessionId: session.sessionId }]
   }
 
-  private handleToolCall(
+  private async handleToolCall(
     chunk: MessageChunk,
     _session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     const info = acc.toolCallMap.get(chunk.toolCallId)
     if (info) {
-      const existing = this.messageDao.findMessageById(info.dbId)
+      const existing = await this.messageDao.findMessageById(info.dbId)
       if (existing) {
-        this.messageDao.updateMessageMetadata(
+        await this.messageDao.updateMessageMetadata(
           info.dbId,
           mergeMetadata(existing.metadata, { toolInput: chunk.toolInput }),
         )
@@ -648,16 +648,16 @@ export class InteractionService {
     return [{ type: "tool_call", toolCallId: chunk.toolCallId, toolInput: chunk.toolInput, sessionId: _session.sessionId }]
   }
 
-  private handleToolResult(
+  private async handleToolResult(
     chunk: MessageChunk,
     _session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     const info = acc.toolCallMap.get(chunk.toolCallId)
     if (info) {
-      const existing = this.messageDao.findMessageById(info.dbId)
+      const existing = await this.messageDao.findMessageById(info.dbId)
       if (existing) {
-        this.messageDao.updateMessageMetadata(
+        await this.messageDao.updateMessageMetadata(
           info.dbId,
           mergeMetadata(existing.metadata, {
             toolStatus: chunk.isError ? "error" : "done",
@@ -670,11 +670,11 @@ export class InteractionService {
     return [{ type: "tool_result", toolCallId: chunk.toolCallId, result: chunk.result, isError: chunk.isError, sessionId: _session.sessionId }]
   }
 
-  private handleAskUserQuestion(
+  private async handleAskUserQuestion(
     chunk: MessageChunk,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
-  ): InteractionSSEEvent[] {
+  ): Promise<InteractionSSEEvent[]> {
     // SDK agentic loop may retry AskUserQuestion after PreToolUse deny.
     // Only process the FIRST call — subsequent retries are duplicates.
     if (acc.askUserQuestionCalled) {
@@ -683,9 +683,9 @@ export class InteractionService {
 
     const info = acc.toolCallMap.get(chunk.toolCallId)
     if (info) {
-      const existing = this.messageDao.findMessageById(info.dbId)
+      const existing = await this.messageDao.findMessageById(info.dbId)
       if (existing) {
-        this.messageDao.updateMessageMetadata(
+        await this.messageDao.updateMessageMetadata(
           info.dbId,
           mergeMetadata(existing.metadata, {
             displayType: "ask_user_question",
@@ -759,9 +759,9 @@ export class InteractionService {
   // ── Private: Finalization helpers ─────────────────────────────────
 
   /** Save the final assistant text if non-empty. */
-  private finalizeAssistantMessage(acc: StreamAccumulator, _session: InteractionSessionInfo): void {
+  private async finalizeAssistantMessage(acc: StreamAccumulator, _session: InteractionSessionInfo): Promise<void> {
     if (acc.fullText) {
-      this.messageDao.updateMessageContentAndMetadata(
+      await this.messageDao.updateMessageContentAndMetadata(
         acc.assistantMessageId,
         acc.fullText,
         JSON.stringify({

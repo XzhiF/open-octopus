@@ -29,7 +29,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   // reading it saw a task as a cron entry. After v42 there are no such rows: every row
   // here is a real job, and the task board has its own endpoint (GET /api/tasks, whose
   // `execution` badge is the same executions rows this list already shows).
-  app.get('/tasks', (c) => {
+  app.get('/tasks', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -77,7 +77,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
     }
   })
 
-  app.post('/tasks/:id/cancel', (c) => {
+  app.post('/tasks/:id/cancel', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -98,13 +98,13 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
 
-  app.get('/tasks/reports', (c) => {
+  app.get('/tasks/reports', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       // Query reports table if exists, fallback to file scan
       try {
-        const rows = safetyDAO.listReportsByOrg(org)
+        const rows = await safetyDAO.listReportsByOrg(org)
         return c.json({ items: rows, total: rows.length })
       } catch {
         // Table may not exist — return empty
@@ -116,7 +116,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
     }
   })
 
-  app.get('/tasks/reports/:id', (c) => {
+  app.get('/tasks/reports/:id', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -124,7 +124,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
 
       // Try to find report in DB
       try {
-        const report = safetyDAO.findReportById(id)
+        const report = await safetyDAO.findReportById(id)
 
         if (report && report.org === org) {
           // Check if file exists
@@ -155,7 +155,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
   // ── B2: Task progress polling (supplements SSE in chat) ────────────
-  app.get('/tasks/progress', (c) => {
+  app.get('/tasks/progress', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -215,7 +215,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
   // ── E3: Scheduler execution history (click job → timeline) ──────────
-  app.get('/tasks/history', (c) => {
+  app.get('/tasks/history', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -232,7 +232,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       }> = []
 
       try {
-        const jobExecutions = safetyDAO.listJobExecutionsByOrg(org, { job_name: jobName, limit })
+        const jobExecutions = await safetyDAO.listJobExecutionsByOrg(org, { job_name: jobName, limit })
         executions = jobExecutions.map(je => ({
           id: je.id, job_name: je.job_name, status: je.status,
           started_at: je.started_at, finished_at: je.finished_at,
@@ -243,7 +243,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       } catch {
         // Table may not exist yet — fall back to reports table
         try {
-          const reports = safetyDAO.listReportsByOrg(org, { task_name: jobName })
+          const reports = await safetyDAO.listReportsByOrg(org, { task_name: jobName })
           executions = reports.map(r => ({
             id: r.id, task_name: r.task_name,
             status: r.status === 'ok' ? 'success' : r.status === 'missing' ? 'failure' : r.status,
