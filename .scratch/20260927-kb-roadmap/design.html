@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 · 完整设计 — 本体 / schema / 契约 / 门禁</title>
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<header class="top"><div class="topin">
+  <b>open-octopus · 知识/经验/决策体系</b>
+  <nav>
+    <a href="index.html">00 故事线</a>
+    <a href="architecture.html">01 技术架构</a>
+    <a class="cur" href="design.html">02 完整设计</a>
+    <a href="plan.html">03 实现计划</a>
+    <a href="evidence.html">04 证据账本</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+<h1>完整设计：本体、schema、契约，和<span>会拒绝的门</span></h1>
+<p class="sub">这一页是能被直接实现的那一层。所有设计服从一句话：<b style="color:var(--ink)">一条知识如果没有「挂在哪个节点」和「从哪次执行长出来」，它就不允许存在。</b>今天系统的病根就是这两个问题可以跳过。<br><span style="color:var(--mut)">第二个「从哪次执行长出来」在单引擎下才真正可做到：它从一个字符串约定变成一条 <code>REFERENCES</code> + 一次 join（见 §2 的 <code>evidence.x_*</code>）。</span></p>
+<div class="meta">
+  <i>schema 分区 <b>6</b>（同库，另加执行分区）</i>
+  <i>核心表 <b>21</b>（含 2 张闭环可证性表）</i>
+  <i>生命周期状态 <b>6</b></i>
+  <i>门禁不变量 <b>12</b>（4 类实现手段）</i>
+  <i>收编现有表 <b>experiences / experiences_fts</b>（原地升级）</i>
+</div>
+
+<section>
+<h2><em>1</em>本体与 URN：所有对账的前提</h2>
+<table>
+<thead><tr><th>实体 kind</th><th>URN 形状</th><th>为什么必须稳定</th></tr></thead>
+<tbody>
+<tr><td class="k n">repo</td><td><code>repo:&lt;git-host&gt;/&lt;org&gt;/&lt;name&gt;</code></td><td>仓库改名/迁移要留 alias 表，否则历史经验全部失联</td></tr>
+<tr><td class="k n">module</td><td><code>module:&lt;repo&gt;/&lt;maven-artifactId|pkg-path&gt;</code></td><td>Maven reactor 模块是天然的<b>增量失效单元</b></td></tr>
+<tr><td class="k n">service</td><td><code>service:&lt;ns&gt;/&lt;name&gt;</code></td><td>与 SkyWalking 的 service 命名<b>必须对齐</b>，否则 runtime 边接不上</td></tr>
+<tr><td class="k n">api_endpoint</td><td><code>endpoint:&lt;METHOD&gt;+&lt;归一化path&gt;</code></td><td>path 归一化（去数字段、去版本尾缀）决定 <code>calls</code> 边能不能对上；<b>这是最脏的活</b></td></tr>
+<tr><td class="k n">db_table</td><td><code>table:&lt;datasource&gt;/&lt;schema&gt;/&lt;table&gt;</code></td><td><code>shares_schema_of</code> 边的锚点（两仓共用一张表 = 强耦合信号）</td></tr>
+<tr><td class="k n">env / config / owner</td><td><code>env:&lt;name&gt;</code> · <code>config:&lt;repo&gt;/&lt;key&gt;</code> · <code>owner:&lt;team|person&gt;</code></td><td>owner 是<b>矛盾知识的仲裁锚点</b>（企业内三大死因之一）</td></tr>
+</tbody></table>
+<div class="callout cyan"><b>边类型注册表是 schema 的一部分，不是常量字符串</b>：<code>edge_type(kind, symmetric, transitive, max_depth_hint, requires_owner_confirm)</code>。算子层从这张表读语义，新增边类型必须同时声明它参与哪些算子、是否可传递——否则「影响面」会静默漏掉一类关系，这类 bug 今天已经存在（英文反义词表永不命中中文就是同一种错）。</div>
+</section>
+
+<section>
+<h2><em>2</em>知识分区 schema（六分区 · 19 表）</h2>
+<div class="callout cyan"><b>本节的两条前提</b>：① 这六张分区与<b>执行分区（executions / node_executions / <code>llm_calls</code> 账本 / tasks / 验收）在同一座库里</b>，因此下面所有 <code>REFERENCES</code> 可以直达执行表——「这条经验来自哪次执行的哪个节点、那次花了多少钱」是<b>一条 join</b>，不是应用层拼接。② 因此本节的 DDL 是<b>迁移之后的目标态</b>，不是新增一个外部库；类型与 SQLite 现状的映射规则见 <a href="architecture.html">01 架构 §2</a>。<br>上一版此节还含 <code>outbox</code> + <code>replay_cursor</code> 两张跨引擎投影表，单引擎下整对删除（21 → 19）。<b>后来又加回两张，但用途完全不同</b>：那两张搬的是<b>数据</b>（可被 join 免费替代），这两张（<code>proposal_outcome</code> / <code>injection_arm</code>）搬的是<b>可证性</b>——没有它们，整套体系只能证明「没变坏」，永远无法证明「变好了是因为它」。</div>
+<h3>topology —— 地图</h3>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>CREATE TABLE t_node (
+  urn text PRIMARY KEY, kind text NOT NULL CHECK (kind IN ('repo','module','service','api_endpoint',
+    'rpc_consumer','db_table','config','env','owner')),
+  props jsonb NOT NULL DEFAULT '{}', label text,
+  valid_from timestamptz NOT NULL DEFAULT now(), valid_until timestamptz,   -- bitemporal
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','retracted','disputed','unknown'))
+);
+CREATE TABLE t_edge (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  type text NOT NULL REFERENCES edge_type(kind),
+  from_urn text NOT NULL REFERENCES t_node(urn), to_urn text NOT NULL REFERENCES t_node(urn),
+  props jsonb NOT NULL DEFAULT '{}',
+  source text NOT NULL CHECK (source IN ('static','runtime','manual')),
+  observed_at timestamptz NOT NULL, valid_until timestamptz,
+  UNIQUE (type, from_urn, to_urn, source)
+);
+CREATE TABLE t_edge_evidence (edge_id bigint REFERENCES t_edge(id) ON DELETE CASCADE,
+  collector text, repo text, commit text, path text, span int4range, window text,
+  noted_at timestamptz DEFAULT now());
+CREATE TABLE t_urn_alias (old_urn text, new_urn text, since timestamptz, reason text);
+CREATE TABLE repo_pin (repo text PRIMARY KEY, commit text, pinned_at timestamptz, dirty bool);
+CREATE TABLE collector_run (id bigint PK, collector text, collector_version text, schema_version int,
+  repo text, started_at timestamptz, finished_at timestamptz, outcome text, findings int, error text);</code></pre>
+<h3>contract —— 怎么测、在哪测、流程长什么样</h3>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>CREATE TABLE c_doc (           -- 分层 sidecar：检索先回 abstract，命中才 read detail
+  id uuid PK, urn text REFERENCES t_node(urn), kind text,   -- build|test|release|flow|env|nav
+  l0_abstract text NOT NULL, l1_overview text, l2_detail text,
+  owner_confirm_required bool DEFAULT false,                -- 人写内容：机器只可提议不可覆盖
+  source text CHECK (source IN ('generated','human','imported')),
+  updated_at timestamptz, revision int NOT NULL DEFAULT 1
+);
+CREATE TABLE c_test_env (id uuid PK, urn text, name text, how_to_reach text, data_prep text,
+  is_ephemeral bool, notes text, evidence_id uuid REFERENCES evidence(id));</code></pre>
+<h3>experience —— 血肉（收编现有 <code>experiences</code> 表）</h3>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>CREATE TABLE e_item (
+  id uuid PK,
+  kind text NOT NULL CHECK (kind IN ('pitfall','best_practice','constraint','fact','procedure')),
+  statement text NOT NULL,                     -- 一句可执行的话，禁自由长文
+  scope text NOT NULL CHECK (scope IN ('org','repo','module','service','workflow','task')),
+  support_n int NOT NULL DEFAULT 0, refute_n int NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'quarantine'
+    CHECK (status IN ('quarantine','candidate','active','superseded','retracted','archived')),
+  valid_from timestamptz NOT NULL DEFAULT now(), valid_until timestamptz, recorded_at timestamptz DEFAULT now(),
+  l0_abstract text, l1_overview text, l2_detail text,
+  tokens_jieba tsvector,                       -- doc 侧 cutForSearch；另有 ngram 兜底列
+  embedding halfvec(512),                      -- 本地通道 512；远端 1024 走另一列，禁混用
+  embedding_channel text, embedding_rev int,
+  source text NOT NULL CHECK (source IN ('archive','acceptance','manual','runtime_diag')),
+  owner text, visibility text DEFAULT 'org',   -- 单用户也要有：协作接缝从第一天在
+  CHECK (source = 'manual' OR EXISTS (SELECT 1 FROM evidence ev WHERE ev.item_id = e_item.id))
+);                                                  -- ↑ 硬约束：非人工条目必须带证据
+CREATE TABLE e_link (item_id uuid REFERENCES e_item(id) ON DELETE CASCADE,
+  urn text REFERENCES t_node(urn), role text DEFAULT 'about',
+  PRIMARY KEY (item_id, urn, role));            -- 不挂节点的经验不可能被邻域召回 → 禁止存在
+CREATE TABLE evidence (id uuid PK, item_id uuid REFERENCES e_item(id) ON DELETE CASCADE,
+  origin text NOT NULL,                          -- 人类可读出处：commit:path:span / 描述
+  snapshot jsonb NOT NULL,                       -- 记录时冻结的原文摘录（<b>这才是真源</b>）
+  -- ↓ 单引擎白拿的能力：出处从"字符串"升级成"可 join 的键"。
+  -- SET NULL 不是疏忽：workspace 删除会物理 DELETE executions（已实测）。
+  -- 指针可以断，snapshot 不能断 —— 断了的指针留痕，信息无损。
+  x_execution_id text REFERENCES executions(id) ON DELETE SET NULL,
+  x_node_execution_id text REFERENCES node_executions(id) ON DELETE SET NULL,
+  x_llm_call_id bigint REFERENCES llm_calls(id) ON DELETE SET NULL,
+  x_workspace_id text, x_task_id text,
+  x_dangling bool NOT NULL DEFAULT false,        -- SET NULL 发生过 → 看板可统计"回链已悬空"
+  captured_at timestamptz DEFAULT now());
+CREATE TABLE e_review (id bigint PK, item_id uuid, actor text, action text,   -- approve|reject|defer|helpful|harmful
+  note text, at timestamptz DEFAULT now());      -- 反馈边 E1/E2/E5 的落点
+CREATE TABLE source_reputation (source text, collector text, credibility numeric NOT NULL DEFAULT 0.5,
+  resolved_wins int DEFAULT 0, resolved_losses int DEFAULT 0, updated_at timestamptz);</code></pre>
+<h3>decision · eval · ops</h3>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>CREATE TABLE d_ledger (id uuid PK, ctx_key text,        -- 同类决策的匹配键（precedent 检索用）
+  question text, verdict text NOT NULL, options jsonb, confidence numeric NOT NULL,
+  tier_used text NOT NULL CHECK (tier_used IN ('rule','retrieval','cheap_model','llm')),
+  evidence_items uuid[], cost_call_id uuid,             -- 关联 llm_calls（沿用三态成本纪律）
+  outcome text, outcome_at timestamptz, decided_at timestamptz);
+CREATE TABLE d_causal (from_decision uuid, to_decision uuid, rel text, note text);
+CREATE TABLE eval_case (id uuid PK, kind text,          -- recall|proposal|merge|skill|decision
+  input jsonb, expect jsonb, fixture_facts text[],      -- Fxx 不可变事实标记
+  holdout bool NOT NULL DEFAULT false, created_from text);
+CREATE TABLE eval_run (id bigint PK, suite text, at timestamptz, metrics jsonb, passed bool, gate text);
+CREATE TABLE integrity_fact (item_id uuid, marker text, present bool, checked_at timestamptz);
+-- ↓↓ 闭环可证性的两张表。没有它们，本体系只能证明「没变坏」，无法证明「变好了是因为它」。
+CREATE TABLE proposal_outcome (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  task_id text REFERENCES tasks(id), proposal_kind text NOT NULL,
+  proposed_repos text[] NOT NULL, actual_repos text[] NOT NULL, -- 最终真产生 commit 的仓库集（硬事实）
+  missed text[] NOT NULL,    -- actual − proposed：漏报
+  spurious text[] NOT NULL,  -- proposed − actual：误报
+  accepted bool, closed_at timestamptz);
+  -- ★ 漏报原本不可观测：人不会回来说「你上次拒绝错了」。
+  --   但两个集合都在库里，差集是算得出的事实。PG 无数组差内置运算符，
+  --   故由写入侧用 UNNEST + ARRAY_AGG 求差后落列（不写成 GENERATED 表达式，那是假 DDL）。
+CREATE TABLE injection_arm (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  x_node_execution_id text REFERENCES node_executions(id) ON DELETE SET NULL,
+  item_id uuid REFERENCES e_item(id) ON DELETE SET NULL,
+  arm text NOT NULL CHECK (arm IN ('on','off_holdout')),   -- 随机 10% 的注入位走 off
+  held bool NOT NULL DEFAULT false,                        -- 真被抽中留空
+  injected_tokens int, outcome text, decided_at timestamptz);
+-- 跨区直连：经验出处可 join 到执行表与账本（见 experience 分区 evidence.x_*）。
+-- 上一版此处还有 outbox + replay_cursor 两张跨引擎投影表，单引擎下整对删除。
+CREATE TABLE audit_log (id bigint PK, actor text, action text, target text, before jsonb, after jsonb, at timestamptz);</code></pre>
+<h3>索引与检索</h3>
+<table>
+<thead><tr><th>索引</th><th>用途</th><th>实测/注意</th></tr></thead>
+<tbody>
+<tr><td class="k n">pg_search BM25 on <code>tokens_jieba</code></td><td>中文关键词腿</td><td>实测 jieba 分词器 BM25 命中正确（'高铁'→2/2，AND 正确）；<code>new Jieba()</code> 类坑：<b>必须显式带词典</b></td></tr>
+<tr><td class="k n">HNSW on <code>embedding halfvec</code></td><td>语义腿</td><td>20万×1024 实测 p50 5.8ms/p99 11.9ms；halfvec 索引体积 521MB vs 1563MB；<b>vector&gt;2KB 进 TOAST</b> → 独立表或半精度</td></tr>
+<tr><td class="k">trgm / ngram 兜底列</td><td>分词粒度错配（「锁竞争」实测 0 命中）</td><td class="no">pg_trgm 中文实测 similarity 0.143 &lt; 0.3 阈值 → 只能当 LIKE 加速，<b>不能当召回腿</b>；用 ngram 列</td></tr>
+<tr><td class="k">btree <code>(status, scope, valid_until)</code> · GIN <code>props</code></td><td>算子前置过滤</td><td class="no">⚠ 实测：高选择性过滤（0.1%）时 planner 会<b>放弃 HNSW 改并行全表扫</b> → 混合过滤拆两段查询</td></tr>
+<tr><td class="k">递归 CTE（无图扩展）</td><td>7 个图算子</td><td>深度有界 + 扇出上限 + 已访去重；AGE 留作后端可替换位</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2><em>3</em>算子的实现形状（以一个为例）</h2>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>-- impact_of(x, depth)：改动 x 后 N 跳内波及的节点 + 传播路径
+WITH RECURSIVE fan AS (
+  SELECT t.to_urn AS node, ARRAY[t.from_urn] AS path, 1 AS depth
+  FROM t_edge t JOIN t_node n ON n.urn = t.to_urn AND n.urn = $1
+  WHERE t.type = ANY($2) AND t.status &lt;&gt; 'retracted'
+    AND (t.valid_until IS NULL OR t.valid_until &gt; now())
+  UNION ALL
+  SELECT t.to_urn, f.path || f.node, f.depth + 1
+  FROM fan f JOIN t_edge t ON t.from_urn = f.node
+  WHERE f.depth &lt; $3 AND t.type = ANY($2)
+    AND NOT f.path &amp;&amp; ARRAY[t.to_urn]                      -- 防环
+    AND array_length(f.path,1) &lt; 8                          -- 路径长度上限
+)
+SELECT node, min(depth) depth, (array_agg(path ORDER BY array_length(path,1)))[1] sample_path
+FROM fan GROUP BY node ORDER BY depth LIMIT $4;             -- 扇出上限，可解释截断</code></pre>
+<p>要点：<b>边类型集合是入参且来自注册表</b>（不是硬编码 SQL）、<b>路径本身返回</b>（提案的影响面解释直接来自这里）、<b>截断是显式的</b>（LIMIT 参数由预算层给，不是随手 10 条）。</p>
+<h3>召回融合与派生 tier</h3>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>score_fused = Σ_legs  w_leg / (RRF_K + rank_leg)            -- RRF_K = 60（借 TencentDB 实测值）
+w_graph = 1.0 | w_bm25 = 0.9 | w_vec = 0.8                  -- 缺腿时该腿权重不摊分，显式标 degraded
+tier = derive(  -- 查询时派生，永不落库
+  support = support_n - refute_n,                           -- 净证据
+  corroboration = count(distinct evidence.origin_repo),     -- 佐证源数
+  freshness = exp(-ln2/HEALTH_HALF_LIFE * age_days),        -- 7 天半衰期（借 OpenViking）
+  ungraded  = (confidence IS NULL OR confidence = 1.0))     -- 1.0 视为未打分 → 降一档
+  → 'gold' | 'silver' | 'bronze' | 'quarantine'             -- quarantine 不注入</code></pre>
+</section>
+
+<section>
+<h2><em>4</em>生命周期与裁决：会拒绝的那部分</h2>
+<div class="fig">
+<svg viewBox="0 0 1140 250" width="1140" height="250" role="img" aria-label="经验条目状态机"><defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4a4d52"/></marker><marker id="ahg" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5dd97c"/></marker><marker id="aha" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#e8b33c"/></marker></defs>
+<defs><marker id="c1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4a4d52"/></marker>
+<marker id="c2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5dd97c"/></marker>
+<marker id="c3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#ff6b5e"/></marker></defs>
+<g><rect class="box stop" x="20" y="40" width="150" height="54" rx="8"/><text class="t" x="34" y="62">quarantine</text><text class="ts" x="34" y="80">默认入口 · 不注入</text></g>
+<g><rect class="box" x="220" y="40" width="150" height="54" rx="8"/><text class="t" x="234" y="62">candidate</text><text class="ts" x="234" y="80">过结构门</text></g>
+<g><rect class="box new" x="430" y="40" width="150" height="54" rx="8"/><text class="t" x="444" y="62">active</text><text class="ts" x="444" y="80">参与召回与注入</text></g>
+<g><rect class="box" x="650" y="40" width="160" height="54" rx="8"/><text class="t" x="664" y="62">superseded</text><text class="ts" x="664" y="80">被更优条目取代</text></g>
+<g><rect class="box" x="860" y="40" width="150" height="54" rx="8"/><text class="t" x="874" y="62">retracted</text><text class="ts" x="874" y="80">留痕不删</text></g>
+<g><rect class="box" x="860" y="150" width="150" height="54" rx="8"/><text class="t" x="874" y="172">archived</text><text class="ts" x="874" y="190">冷存 · 可查不注入</text></g>
+<path class="ln" d="M170,67 L220,67"/><text class="lt" x="176" y="60">审</text>
+<path class="ln fb" d="M370,67 L430,67"/><text class="lt h" x="372" y="60">净分不降</text>
+<path class="ln" d="M580,67 L650,67"/><path class="ln" d="M810,67 L860,67"/>
+<path class="ln" d="M935,94 L935,150"/>
+<path class="ln fb" d="M470,94 C458,132 552,132 540,94"/><text class="lt h" x="418" y="146">E1 验收印证 · E2 命中采纳 → support_n++ / 维持 active</text>
+<path class="ln" d="M505,94 C505,172 295,172 295,94" style="stroke:#3a3d40"/><text class="lt" x="330" y="186">回滚：净分跌破门 → 退回 candidate 重审</text>
+<path class="ln" d="M400,80 C400,208 95,208 95,94" style="stroke:#ff6b5e"/><text class="lt" x="150" y="222" style="fill:#ff6b5e">E5 被拒提案 / refute_n 超阈 → 回 quarantine 复审（拒绝必须有去处）</text>
+</svg>
+<div class="figcap"><b>关键</b>：默认入口是 <code>quarantine</code> 而不是 <code>active</code>——今天的问题是 LLM 一产出就直接进人写文件。任何状态迁移都必须写 <code>e_review</code> + <code>audit_log</code>，所以「为什么它变成 active」永远可回答。</div>
+</div>
+<h3>裁决（一次 LLM 调用判一批）</h3>
+<table>
+<thead><tr><th>动作</th><th>触发条件</th><th>落库效果</th></tr></thead>
+<tbody>
+<tr><td class="k n">store</td><td>与库内既有条目无同一性可证关系</td><td>新条目 candidate</td></tr>
+<tr><td class="k n">skip</td><td>与既有条目同一（dedupKey 命中或语义同一性可证）</td><td>只 <code>support_n++</code> + 追加 evidence，<b>不新增条目</b></td></tr>
+<tr><td class="k n">update</td><td>同一主题、新事实更精确/更新</td><td>旧条目 <code>valid_until</code> 闭合 + 新条目 <code>supersedes</code> 指向它</td></tr>
+<tr><td class="k n">merge</td><td>两条互补且可无损合一</td><td><b>仅同一性可证才合并；每条事实恰保留一次；宁拆勿丢</b>（借 OpenViking 合并安全策略）</td></tr>
+</tbody></table>
+<div class="callout red"><b>四条不可商量的裁决纪律</b>：① <b>去重必须与库内既有条目比对</b>——今天只比对本批次内部（<code>analysis-assembler.ts:121-135</code>），所以每批都会「新」一遍；② <b>置信度来自证据计数，不信 LLM 自报</b>——今天 <code>extract.ts:509</code> 硬编码 0.6/0.8、<code>effectiveness.ts:48</code> 文本缺失时恒 helpful；③ <b>经验候选必须来自外部诊断的失败簇</b>，Critic 与 Synthesizer 分离——一手证据：LLM 自产 skill 主聚合无收益（curated +16.6pp 对照），critic 噪声会固化成永久条目；④ <b>自报条目不得靠自报计数晋升</b>——热路径 L0 就是 agent 自报的，它<b>必然</b>与纪律③冲突，所以补一条硬规则：<code>source='archive'</code> 的条目，其 <code>support_n</code> 只有来自<b>外部信号</b>（验收通过、提案被采纳、<code>proposal_outcome</code> 未漏报）时才计分；<b>同一 agent 的自我复现不计票</b>，否则 20 次同类任务 = 20 倍置信，那是习惯不是知识。</div>
+</section>
+
+<section>
+<h2><em>5</em>提案契约：检索的终点是动作，不是文本</h2>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:11.8px;overflow-x:auto;color:#cfcfca"><code>interface KnowledgeProposal {
+  kind: 'add_repo_to_workspace' | 'attach_contract' | 'apply_pitfall_guard' | 'route_model' | 'gate_decision'
+  target: { urn: string; repo?: string }
+  confidence: number            // 派生 tier 映射，非模型自报
+  impact: { path: string[]; depth: number; fanout: number }   // 来自算子的真实路径
+  evidence: { itemId: uuid; origin: string; quote: string }[] // 可点开的证据
+  abstain?: boolean             // ★ 允许「不知道」：低置信直接不提议，而不是硬猜
+  execute?: { plan: string[]; reversible: boolean; dryRunFirst: true }
+}</code></pre>
+<table>
+<thead><tr><th>纪律</th><th>为什么</th></tr></thead>
+<tbody>
+<tr><td class="k n">必须可逆 + 默认 dry-run</td><td>把仓库拉进 workspace 是改用户环境；不可逆动作（删除、覆盖人写文件）<b>禁止由提案触发</b></td></tr>
+<tr><td class="k n">必须带 impact.path</td><td>「我觉得还要改 X」不可审计；「A→B(calls)→C(exposes)→X」可核对、可否决、可回灌</td></tr>
+<tr><td class="k n">允许 abstain</td><td>这是打破冷启动死循环的唯一办法：<b>宁可不说，也不要说错一次让人不再信</b></td></tr>
+<tr><td class="k n">采纳/拒绝都入 <code>e_review</code></td><td>E2/E5 反馈边的数据源。被拒不删，进 quarantine 复审——拒绝必须改变系统行为，否则闭环是假的</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2><em>6</em>门禁不变量：12 条，按能落地的手段分四类</h2>
+<table>
+<thead><tr><th>#</th><th>不变量</th><th>实现手段</th><th>为什么用这个手段</th></tr></thead>
+<tbody>
+<tr><td class="k n">G1</td><td>非人工经验必带 evidence</td><td class="yes">DB <code>CHECK</code> + 子查询约束</td><td>数据层最硬，绕过代码也绕不过库</td></tr>
+<tr><td class="k n">G2</td><td>经验必挂 ≥1 个拓扑节点</td><td class="yes"><code>e_link</code> NOT NULL + 入库后断言</td><td>同上</td></tr>
+<tr><td class="k n">G3</td><td><code>INSERT INTO e_item</code> 只许出现在指定 DAO</td><td class="yes">源码扫描门禁（复用 <code>ledger-revival-gate</code> 第三式「单写入口」）</td><td>仓库已有这套模式，成本最低</td></tr>
+<tr><td class="k n">G4</td><td>上层不得直查 T/S/E 表（必经算子层）</td><td class="yes">源码扫描 + PG 权限（应用角色只授 <code>SELECT</code> on 视图）</td><td>权限比正则可靠</td></tr>
+<tr><td class="k n">G5</td><td>投影 markdown 每行必带可反查 id</td><td class="mid">确定性单函数生成器 + <b>性质测试</b></td><td>内容不变量，扫源码扫不出</td></tr>
+<tr><td class="k n">G6</td><td>机器投影永不覆盖人写文件</td><td class="mid">路径白名单断言 + 生成头校验</td><td>同上</td></tr>
+<tr><td class="k n">G7</td><td>决策必为 typed verdict</td><td class="mid">zod 单入口 parse + 单入口扫描</td><td>语义不变量走入口约束</td></tr>
+<tr><td class="k n">G8</td><td>注入必过 recall 排序（禁止全量装填 + 顺序截断）</td><td class="yes">源码扫描（<code>pool.set("__relevant_rule_ids")</code> 只许出现在 recall 模块）+ 注入条目缺理由即红</td><td>直接治今天的病</td></tr>
+<tr><td class="k n">G9</td><td>知识召回抛错时任务必须仍可完成（<b>措辞随单引擎改过：不再是「PG 不可用时执行面可继续」，那条在单库下物理上不成立</b>）</td><td class="mid">故障注入测试：mock <code>recall()</code> 抛错 + 超时，断言执行链路跑通且上下文里出现「未获知识加持」标注</td><td>这类约束只能测出来。物理隔离没了，它就从「架构白送的」变成「必须有测试守着的」——这正是本节从"能测的只有 4 条"里挑出来单列的原因</td></tr>
+<tr><td class="k n">G10</td><td><b>（单引擎新增）禁止绕过 <code>x_*</code> 外键去 parse <code>origin</code> 字符串取执行 id</b></td><td class="yes">源码扫描（复用 G3 那套）</td><td>既然 join 免费了，就要防止有人继续用字符串拼接把断链风险留在应用层</td></tr>
+<tr><td class="k n">G11</td><td><b>每条提案必须有关闭态</b>：归档时 <code>proposal_outcome</code> 落一行，含 <code>missed</code> / <code>spurious</code> 两个差集</td><td class="yes">DB <code>NOT NULL</code> + 归档路径断言（无 outcome 的 open 提案 → 归档报错）</td><td>漏报原本<b>结构性不可观测</b>（人不会回来说「你上次拒错了」）。不强制关闭，就永远只有误报这一侧的数据，而误报好看</td></tr>
+<tr><td class="k n">G12</td><td><b>对照臂不得被关掉</b>：<code>injection_arm</code> 中 <code>arm='off_holdout'</code> 占比长期 &gt; 5%</td><td class="mid">定时统计 + 低于阈值即告警（不是 DB 约束，是<b>运行期不变量</b>）</td><td>这是唯一能回答「知识库到底有没有用」的机制。<b>它会在最难看的时候被人关掉</b>——所以它必须是门禁，不是可选项</td></tr>
+</tbody></table>
+<div class="callout"><b>诚实的边界</b>：12 条里只有 7 条能写成源码扫描/DB 约束，5 条必须靠性质测试、故障注入或运行期统计。<b>不要为了「看起来有门禁」去写验证不了的正则</b>——那正是把 demo 当产品的做法。</div>
+<div class="callout red"><b>G1 必须与 <code>x_*</code> 的 <code>SET NULL</code> 同时读</b>：workspace 删除会物理 DELETE 执行行（已实测），所以"证据行一定还在"不等于"它能被解析"。因此 G1 的约束对象是 <code>snapshot</code> 非空，<b>不是</b> <code>x_execution_id</code> 非空。把后者写成不变量会直接和现有删除路径打架，那才是真的把体系做成阻塞项。</div>
+</section>
+
+<section>
+<h2><em>7</em>与现有代码的接缝：收编映射，不另起炉灶</h2>
+<div class="scroller"><table>
+<thead><tr><th>现有</th><th>处置</th><th>迁移动作</th></tr></thead>
+<tbody>
+<tr><td class="k n"><code>experiences</code>（现 SQLite schema.sql:627，P1 后已在 PG）+ <code>experiences_fts</code> + evolution-dao</td><td><b>原地升级</b>为 <code>e_item</code>（同库，不是跨引擎搬迁）</td><td>列映射：scope→scope、pattern_tags→props.tags、outcome→support/refute 初值、source_type→source、<b>execution_id/node_id→<code>evidence.x_*</code> 外键</b>（这正是单引擎买到的东西：原来只能塞进 origin 字符串）；<b>无证据的存量条目一律落 quarantine</b>（不假装它们可信）</td></tr>
+<tr><td class="k n"><code>knowledge/*.md</code> + <code>&lt;!-- id --&gt;</code> 注释身份</td><td>降级为<b>投影</b>；人写内容豁免</td><td>机器投影只写 <code>knowledge/_generated/</code>；<code>listAllRules</code> 扫描范围扩到该目录；<b>SKILL.md / core-pack / ADR-术语 append-only 三条腿明文豁免</b></td></tr>
+<tr><td class="k n"><code>experience-merger.ts</code> 整文件 LLM 重写</td><td><b>删除该路径</b></td><td>改为「裁决 → 落 e_item → 投影生成器重算」；LLM 返回空必须报错不得 continue</td></tr>
+<tr><td class="k n"><code>precompute.ts</code> 全量装填 + <code>knowledge-injector.ts</code> 10/4000 截断</td><td>替换为 recall + 预算装配</td><td>保留其 project/workflow <b>硬 scope 过滤</b>（这部分是有用的，别一起扔），去掉顺序截断</td></tr>
+<tr><td class="k n"><code>effectiveness.ts</code> 关键词重合 / <code>analysis-assembler.ts</code> 英文反义词表</td><td><b>删除</b></td><td>由 E1/E2 反馈边 + 派生 tier 取代</td></tr>
+<tr><td class="k n"><code>evolution-service</code> 无限追加 blockquote 到 SKILL.md</td><td>改为提案 + 门</td><td>insight 先成 e_item（quarantine），过 do-no-harm 才允许改人写文件</td></tr>
+<tr><td class="k n"><code>optimization_suggestions</code> / <code>reports</code> 孤儿表</td><td>收编为决策台账与评估报告的落点</td><td>不再新建同义表；<code>generate()</code> 返回值必须被消费（今天 <code>analytics.ts:672</code> 直接丢弃）</td></tr>
+<tr><td class="k n"><code>error-tracker</code> 进程内 1000 条</td><td>落 <code>ops</code> 分区</td><td>重启即失的可观测数据不算证据。<b>单引擎下顺带解掉一个老问题：它现在连"跨进程重启"都做不到，而同库意味着写表就是持久化，不需要另找存储</b></td></tr>
+<tr><td class="k n"><b>（新增一行）全部 42 张现有执行表</b></td><td>P1 平移到 PG，<b>表名与语义不变</b></td><td>只有类型与驱动变（映射表见 01 架构 §2）。这一行的意义是划清边界：<b>迁移不改业务语义</b>；任何"顺手改一下 schema"的冲动都属越界，须单独立项并过 §6 门禁</td></tr>
+</tbody></table></div>
+<div class="pager">
+  <a href="index.html">00 故事线</a>
+  <a href="architecture.html">01 技术架构</a>
+  <a class="cur" href="design.html">02 完整设计</a>
+  <a href="plan.html">→ 03 实现计划</a>
+  <a href="evidence.html">04 证据账本</a>
+  <span>下一页：每阶段的目标、交付物、可测退出判据、工作量与风险</span>
+</div>
+</section>
+</div>
+
+<footer class="bot"><div class="botin">
+  <span>02 完整设计</span><span>DDL 为设计意图表达，落地时须过 PG 语法与迁移评审；证据强度见 <a href="evidence.html">04</a></span>
+</div></footer>
+</body>
+</html>

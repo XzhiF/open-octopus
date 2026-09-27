@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · 证据账本 — 实测数据 / 被推翻的表述 / 一手来源</title>
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<header class="top"><div class="topin">
+  <b>open-octopus · 知识/经验/决策体系</b>
+  <nav>
+    <a href="index.html">00 故事线</a>
+    <a href="architecture.html">01 技术架构</a>
+    <a href="design.html">02 完整设计</a>
+    <a href="plan.html">03 实现计划</a>
+    <a class="cur" href="evidence.html">04 证据账本</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+<h1>证据账本：每条承重结论<span>核到了哪一步</span></h1>
+<p class="sub">这一页是给「以后维护这套体系的人」看的——<b style="color:var(--ink)">哪些数字可以直接依赖、哪些不能、我错过什么、被推翻什么</b>。原始说法一律保留，不粉饰。调研过程的完整报告另存于 <a href="research-v1.html">research-v1.html（存档）</a>。</p>
+<div class="meta">
+  <i>并行 agent <b>8</b> · 轮次 <b>8</b></i>
+  <i>clone 分析 <b>4</b> 框架 / <b>328MB · 8103 文件</b></i>
+  <i>本机实测 <b>19</b> 项（含容器、库与耦合度计量）</i>
+  <i>被推翻/改写 <b>16</b> 处（含基座决策，以及「闭环已完成」这句话）</i>
+  <i>一手文档 <b>30+</b></i>
+</div>
+
+<section>
+<h2><em>1</em>调研执行链与自我推翻</h2>
+<table>
+<thead><tr><th>轮</th><th>做了什么</th><th>关键产出</th></tr></thead>
+<tbody>
+<tr><td class="k n">R1</td><td>现状审计 + Jev 一手 + 2026 记忆/检索/归因全景（3 agent 并行）</td><td>12 条现状结论；Jev 定性为闭源 API 无论文无权重；反面清单 13 条</td></tr>
+<tr><td class="k n">R2</td><td>四框架逐个七轴深挖（4 agent 并行，全部读代码不读 README）</td><td>每家的机制定位 + 移植判断 + 「四家共同缺闭环」的结论</td></tr>
+<tr><td class="k n">R3</td><td>对抗复核：现状 12 条逐条 CONFIRM/REFUTE + 外部数字与本机实测复现（2 agent）</td><td>4 条判 PARTLY、新发现 5 条更严重问题、复现 7/7 并修正 2 处</td></tr>
+<tr><td class="k n">R4</td><td>检索地基可行性实测（内存库 + 容器）</td><td>jieba / trigram / sqlite-vec / JS cosine / DashScope / transformers.js 全量数字</td></tr>
+<tr><td class="k n">R5</td><td>设计草案攻击：工程可行性 + 证据链审计（2 agent）</td><td><b>推翻 12 处表述</b>，含「另起表」「factory 加参」「不可变证据层」三刀</td></tr>
+<tr><td class="k n">R6</td><td>基座选型验证（真起 docker 容器）+ 多语言静态抽取工具链盘查（2 agent）</td><td>ParadeDB/AGE/pgvector/pg_search 实测；Kuzu 停维护确认；采集器 SPI 契约与自研量</td></tr>
+<tr><td class="k n">R7</td><td><b>SQLite→PG 耦合度计量</b>（用户问「去 SQLite 如何」后做的量化，不是先给结论再找理由）</td><td><b>推翻本方案上一版的基座决策</b>：166 文件全锁在 packages/server、542 stmt、42 表/102 索引/3 FTS5/8 触发器、88 个 <code>:memory:</code> 测试、PRAGMA 62 处可整类删除 → <b>双平面改判单引擎</b>（见 §2 末尾与 §4 第 15 条）</td></tr>
+<tr><td class="k n">R8</td><td><b>闭环断路审计</b>（用户问「全部实现完能完成闭环吗」→ 逐条追因果链，不追机制链）</td><td>机制上 6 步主干 + 5 条反馈边是闭合的，但查出 <b>4 处硬断路 + 2 处自相矛盾 + 1 个未检验前提</b>。已核词表确认这些概念<b>在 R8 之前的五页里完全没出现过</b>：对照臂、漏报、召回率、主动检索使用率、信源独立性、任务重复度。<b>6 处已补进文档，1 处（单一信源）由用户裁决接受</b>（见 §4 第 16 条）</td></tr>
+</tbody></table>
+<div class="callout red"><b>我（主 agent）被复核推翻的三处，写在最前面</b>：
+① 我说「全库无任何 embedding 能力」→ <b>被证伪</b>：<code>core-pack/scripts/skill_search/skill_searcher.py:477-489</code> 用 DashScope text-embedding-v4 建 1024 维缓存（Python 侧，不在 TS 平台内）；
+② 我说「注入端无相关性计算」→ <b>过头</b>：<code>knowledge-injector.ts:122-161</code> 确有 project/workflow 硬 scope 过滤，准确说法是「有硬 scope、无排序、同 scope 内按文件顺序截断」；
+③ 我报 <code>tsc --noEmit</code> 691 个错误 → <b>也不准，真值 690</b>（另一 agent 报的 1057 是把续行解释句按行数计入的假口径）。三处都是「方向对、口径错」，正是这类体系最容易犯的病。</div>
+</section>
+
+<section>
+<h2><em>2</em>本机实测清单 · 检索与存储地基</h2>
+<p class="h2sub">环境：macOS arm64 / Node 24.15 / better-sqlite3 12.10.0（内联 SQLite 3.53.1）/ Docker。第二轮由独立 agent 复现，标注了差异。</p>
+<div class="scroller"><table>
+<thead><tr><th>项</th><th>实测结果</th><th>独立复现</th><th>结论影响</th></tr></thead>
+<tbody>
+<tr><td class="k n">FTS5 unicode61 · 中文</td><td>5 个词全部 <b>0 命中</b></td><td class="yes">✅ 一致</td><td>「检索不存在」成立；这是最硬的一条现状证据</td></tr>
+<tr><td class="k n">FTS5 trigram · 中文</td><td>≥3 字命中（'经验沉淀'→1）；<b>双字 0 命中</b></td><td class="yes">✅ 一致</td><td>trigram 不能当中文主腿</td></tr>
+<tr><td class="k n">jieba 预分词 + unicode61</td><td>登录/排查/缓存 命中；<b>「经验」需 cutForSearch</b>；<b>「锁竞争」两种切法都 0</b>（切成 锁/竞争）；trigram 对照 0</td><td class="yes">✅ 一致</td><td>中文方案成立但有盲区 → 必须留 ngram/别名兜底腿</td></tr>
+<tr><td class="k n"><code>@node-rs/jieba</code> 2.0.3</td><td>darwin-arm64 预编译免编译装完；主包 11.3MB + 原生 2.4MB；<b><code>new Jieba()</code> 是空词典</b>，必须 <code>Jieba.withDict(dict)</code>；1500字×200 次 = 19ms</td><td class="mid">✅ 一致（安装 5s vs 18s，缓存差异）</td><td>可用；两个坑必须写进实现说明</td></tr>
+<tr><td class="k n">sqlite-vec 0.1.9</td><td>dylib <b>161,896B≈162KB</b> 免编译；<code>db.loadExtension</code> 在 better-sqlite3 上可用（<code>enableLoadExtension</code> 不是函数、SQL 侧 <code>load_extension()</code> not authorized）；vec0 KNN(k=10) 10k×1024 = <b>2.64ms</b>；<b>主键 <code>?</code> 绑定报 "Only integers are allows"</b>，BigInt 或字面量可过</td><td class="yes">✅ 一致（草案 3.1ms 同量级）</td><td>可行但有 bug 与打包风险 → 后置为可选</td></tr>
+<tr><td class="k n">纯 JS 向量（无扩展）</td><td>Float32Array 常驻全扫 10k×1024 = <b>9.8ms</b>；BLOB 物化 20.8ms；含 SQLite 读 33.8ms</td><td class="yes">✅ 一致</td><td>5–10 万行内根本不需要向量索引</td></tr>
+<tr><td class="k n">DashScope embeddings</td><td>本机 env 已有 <code>DASHSCOPE_API_KEY</code>；compatible-mode <code>/v1/embeddings</code> 返回 <b>1024 维</b>；<b>仅 v4 可用，v3/v2 AccessDenied</b>；原生端点才有 dense&amp;sparse</td><td class="yes">✅ 一致</td><td>远端语义腿零依赖可行，但必须点名模型与维度</td></tr>
+<tr><td class="k n">本地 embedding（transformers.js 4.3.0）</td><td><code>Xenova/bge-small-zh-v1.5</code> quantized <b>24.01MB / 512 维</b>；热加载 110ms、单句 <b>3.10–3.15ms</b>；10k 串行重建 ≈31s（推算）；onnxruntime-node 270MB</td><td class="yes">✅ 一致 + 修正：<b>512 维非 1024</b></td><td>离线兜底可行；<b>向量列必须按通道定维，禁止混用</b></td></tr>
+<tr><td class="k n">pg_trgm 中文</td><td><code>similarity('高铁')</code> = 0.143 &lt; 默认阈值 0.3 → <b>漏检</b></td><td class="yes">✅（R6 实测）</td><td>pg_trgm 只能当 LIKE 加速，不能当召回腿</td></tr>
+</tbody></table></div>
+
+<h3>基座实测（R6 · 真起容器）</h3>
+<table>
+<thead><tr><th>候选</th><th>实测事实</th><th>判定</th></tr></thead>
+<tbody>
+<tr><td class="k n">ParadeDB <code>0.25.10-pg18</code></td><td>PG 18.6 / arm64；内置 <b>pgvector 0.8.4 + pg_search 0.25.10 + pg_trgm</b>；<b>BM25 + jieba 中文命中正确</b>（'高铁'→2/2，'北京 上海' AND 正确）；20万×1024：COPY ~2min、HNSW 构建 <b>59.9s</b>、索引 <b>1563MB</b>（halfvec 521MB / 40.9s）、<b>p50 5.8ms / p99 11.9ms</b></td><td><span class="sev ok">采用</span> 一个容器给齐 关系+向量+中文全文</td></tr>
+<tr><td class="k n">Apache AGE <code>release_pg18</code></td><td>AGE 1.8.0 on PG18.6；分支覆盖 PG13–18；<code>*1..3</code> ✓ MERGE ✓ 聚合 ✓ WHERE ✓ EXPLAIN ✓；单点 <code>*1..3</code> <b>4.6ms</b>。<b>短板（实测）</b>：<code>MATCH</code> 属性等值走 Seq Scan（表达式索引不命中 <code>@&gt;</code>）、VLE 是 <code>age_vle</code> Function Scan、10k点/100k边全量 <code>*1..2</code> <b>1.17s（110 万路径）</b>、批量造边需手算 <code>_graphid()</code>、须 <code>LOAD 'age'</code> + search_path</td><td><span class="sev p2">本期不上</span> 见 <a href="index.html">00 第五幕</a>三条理由</td></tr>
+<tr><td class="k n">三扩展共存</td><td>AGE 镜像<b>无</b> vector/pg_search，ParadeDB 镜像<b>无</b> AGE（均实测 <code>pg_available_extensions</code>）；三合一官方镜像零先例。<b>实测可行路径</b>：FROM apache/age + <code>apt install postgresql-18-pgvector</code>（PGDG 零编译，构建 &lt;1min），双扩展同库 cypher + <code>&lt;-&gt;</code> 全通过。<b>未验证</b>：pg_search 装入 AGE 镜像（Rust/pgrx 锁 PG minor）</td><td class="mid">自建镜像成本可接受但不为零</td></tr>
+<tr><td class="k n">Kuzu</td><td><b>repo archived</b>，最后 v0.11.3（2025-10-10），官方声明停止支持；FalkorDB / ArcadeDB 已出迁移指南</td><td class="no">排除</td></tr>
+<tr><td class="k n">SurrealDB 3.2.4</td><td>冒烟：<code>DEFINE ANALYZER ... ngram</code> 语法连续报错（tokenizers 不接受该字面量）、文档 404、镜像无 shell；<b>无 jieba 中文分词</b>；2026 年两个中危 DoS CVE（3.1.5 修复）</td><td class="no">不作唯一真源</td></tr>
+<tr><td class="k n">FalkorDB v4.20.7</td><td>活跃（2026-09-24）、单机 Cypher + 向量；license 为 <b>SSPL 条款</b>（内部使用无碍，禁止托管分发）</td><td class="mid">AGE 的退路 / 离线图副本候选</td></tr>
+<tr><td class="k n">运维事实</td><td>2.6GB 库 pg_dump 分钟级 + 卷快照足够；<b>逻辑复制对 agtype 兼容性未验证</b> → 不上逻辑复制；<b>Docker 默认 shm=64MB 会炸 HNSW 的 DSM，须 <code>--shm-size≥1g</code></b>；<b>高选择性过滤（0.1%）时 planner 放弃向量索引改并行全表扫</b></td><td class="no">两条必须进部署文档</td></tr>
+</tbody></table>
+
+<h3>R7 · 执行面耦合度实测（这一组数字直接决定了基座决策）</h3>
+<p class="h2sub">问题不是「Postgres 好不好」，是<b style="color:var(--ink)">把 SQLite 换掉到底要碰多少东西、这些东西是不是封住了</b>。计量方式：全仓 grep + 逐类归档，不做抽样估计。</p>
+<div class="scroller"><table>
+<thead><tr><th>计量项</th><th>数值</th><th>含义 / 迁移处置</th></tr></thead>
+<tbody>
+<tr><td class="k n">引用 <code>better-sqlite3</code> 的文件</td><td><b>166</b></td><td class="yes"><b>全部落在 <code>packages/server</code> 内</b>。engine / providers / web-app / cli / shared 均不直连 DB → <b>迁移面是封闭的</b>。这一条是决策的关键：如果耦合散布在 5 个包里，双平面就是对的</td></tr>
+<tr><td class="k n"><code>this.stmt(…)</code> 调用点</td><td><b>542</b>（25 个 DAO）</td><td class="no">逐处加 <code>await</code> 的主体工作量来源；同步 API 是「批量重建会冻结 HTTP/SSE」那条硬约束的<b>根因</b></td></tr>
+<tr><td class="k n">表 / 索引 / FTS5 虚表 / 触发器</td><td><b>42 / 102 / 3 / 8</b></td><td>DDL 平移面。3 张 FTS5 是<b>白拿收益</b>的机会（现 unicode61 → 中文 0 命中，换 pg_search+jieba 顺手修）</td></tr>
+<tr><td class="k n"><code>PRAGMA</code> 出现处</td><td><b>62</b></td><td class="yes"><b>整类删除</b>（journal / WAL / foreign_keys / busy_timeout 全是 SQLite 概念）。这是「删代码」型的收益，最实在</td></tr>
+<tr><td class="k n"><code>INSERT OR IGNORE</code> / <code>ON CONFLICT</code></td><td><b>33 / 13</b></td><td class="yes">PG 有直接对应写法，语义不变 → 这一类<b>不是风险</b>，实测里最让人放心的一行</td></tr>
+<tr><td class="k n"><code>MATCH</code> 查询</td><td><b>27</b></td><td>改写为 pg_search BM25 语法；与 FTS5 那个「中文不抛异常也不命中、所以 LIKE 兜底永不触发」的 bug 一起解决</td></tr>
+<tr><td class="k n">用 <code>:memory:</code> 的测试文件</td><td><b>88</b></td><td class="no"><b>最难估的一项</b>。它们隐含「同步 + 事务里随便 roll」的契约，异步化后要统一重建 harness（template 库 + 事务回滚）。P1 估时的上界全花在这</td></tr>
+<tr><td class="k n">现有数据量</td><td><b>74MB</b></td><td>一次 <code>COPY</code> 搬迁，分钟级；不需要在线双写迁移，也不需要 CDC</td></tr>
+<tr><td class="k n">类型错误基线</td><td><b>690</b>（根 tsconfig 口径 785）</td><td class="no">且构建走 tsup 全绕 → <b>类型系统当前不参与 CI</b>。这是「能不能安全做 166 文件重构」的唯一真问题，也是 P0 必须先落 ratchet 门的全部理由</td></tr>
+</tbody></table></div>
+<div class="callout green"><b>这组数字如何改变结论</b>：上一版我写「全搬 PG 的风险与本体系价值不成比例」——那是在<b>没量过耦合面</b>的情况下说的，一句听上去稳妥、其实是回避判断的话。量完之后的事实是：耦合面 166 文件<b>且封闭在一个包里</b>，其中 PRAGMA 62 处是纯删除、<code>INSERT OR IGNORE</code> 33 与 <code>ON CONFLICT</code> 13 是直译；真成本集中在<b>一处</b>（88 个测试的 harness），不是分散的。所以正确结论从「不换」翻成「<b>换，但把风险说清楚：全平台单点 + 690 类型错误环境下的静默漂移</b>」。见 <a href="architecture.html">01 架构 §2</a>。</div>
+</section>
+
+<section>
+<h2><em>3</em>现状代码事实（复核后口径）</h2>
+<table>
+<thead><tr><th>结论</th><th>复核判定</th><th>证据</th></tr></thead>
+<tbody>
+<tr><td>归档 merger 整文件重写不写 id，读侧只认 id 行</td><td class="yes">CONFIRMED</td><td><code>experience-merger.ts:48-53</code>（且 prompt 要求「append as bullet points」、通篇未提 id）vs <code>file-ops.ts:181-185</code></td></tr>
+<tr><td>org 经验写进不被扫描的 index.md</td><td class="yes">CONFIRMED</td><td><code>experience-merger.ts:84</code> vs <code>file-ops.ts:369-421</code>；且 <code>rebuildIndex</code> 全库零调用</td></tr>
+<tr><td>中文记忆搜索「双重死」</td><td class="yes">CONFIRMED（新发现）</td><td>LIKE 兜底只在 MATCH 抛异常时触发（<code>agent-session-dao.ts:148-175</code>）；中文是合法 FTS 语法 → 不命中也不抛异常，兜底不执行</td></tr>
+<tr><td>知识注入实际只覆盖顶层节点</td><td class="yes">CONFIRMED（新发现）</td><td>swarm 无 injector（<code>executor-config.ts:190-207</code> + <code>executor-factory.ts:231-246</code>）、sub-workflow 三连 undefined（<code>:172-174</code>）、loop 内建 AgentExecutor 无 injector（<code>loop.ts:564-575</code>）、hook 只有 promptInjector（<code>engine.ts:2142-2150</code>）</td></tr>
+<tr><td>归档失败仍物理删除数据</td><td class="yes">CONFIRMED（新发现·事故级）</td><td><code>archive-service.ts:130</code> 与 <code>:362</code> 同名（TS2393 双报，<b>:130 事务版是死码</b>）；异常被吞成 <code>{success:false}</code>（<code>:570-582</code>）；调用方不检查返回值（<code>routes/workspace.ts:175</code>、<code>services/workspace.ts:492</code>）→ 照常 cascadeDelete + 删目录；<code>ArchivePartialFailure</code> 409 分支成死码；<b>旧路径测试零覆盖</b>（<code>archive-service.test.ts:147-236</code> 全按新签名）</td></tr>
+<tr><td>merger 静默丢经验且不可回滚</td><td class="yes">CONFIRMED（新发现）</td><td><code>experience-merger.ts:52-58</code>：LLM 返回空只 log 后 continue，pending 已消费</td></tr>
+<tr><td>「不可变证据层」是假前提</td><td class="yes">CONFIRMED（新发现）</td><td><code>data-retention.ts:34-47</code>（events 30 天截 50 字符 / 90 天删、llm_calls 365 天删）+ <code>index.ts:190</code> 已接线 + <code>execution-dao.ts:595-613</code> 物理删；归档只存聚合 JSON（<code>execution_archive:1051</code>）无节点级原文</td></tr>
+<tr><td>类型检查形同虚设是根因</td><td class="yes">CONFIRMED</td><td>实报 <b>690</b>（两次复跑一致；根 tsconfig 全仓 785），构建走 tsup/esbuild 绕类型 → 同名方法覆盖能进主干</td></tr>
+<tr><td>效果回流与冲突消解是假的</td><td class="mid">PARTLY</td><td>关键词重合与英文反义词表成立（<code>effectiveness.ts:42-48</code>、<code>analysis-assembler.ts:204-211</code>）；但「与库内零比对」<b>不成立</b>——<code>detectConflicts</code> 确实比对库内规则，只有 <code>deduplicateExperiences(:121-135)</code> 是批内精确去重</td></tr>
+<tr><td>孤儿与半死码</td><td class="mid">PARTLY</td><td><code>extractExperiences</code> 零调用、<code>generate()</code> 返回值被弃（<code>analytics.ts:672</code>）→ <code>optimization_suggestions</code> 永不写入，均成立；但 <code>reports</code> 是<b>只读从不写</b>（读侧 <code>task-routes.ts:107/127/246</code> 有消费者），非「两端零调用」</td></tr>
+<tr><td>sessions/messages 可当 L0 原始语料</td><td class="yes">CONFIRMED</td><td><code>messages.content NOT NULL</code>（<code>schema.sql:582</code>）；压缩仅打标不删（<code>agent-session-dao.ts:226-231</code>）；sessions 不随 workspace 级联 → <b>「抽取无米下锅」是伪前提</b></td></tr>
+<tr><td>机器经验表早已存在</td><td class="yes">CONFIRMED</td><td><code>experiences</code>（<code>schema.sql:627</code>：scope/scope_ref/pattern_tags/outcome/source_type/execution_id/node_id）+ <code>experiences_fts</code>（:729）+ evolution-dao → 新体系<b>收编</b>而非另起</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2><em>4</em>被推翻 / 必须改写的表述（16 条）</h2>
+<table>
+<thead><tr><th>原表述</th><th>问题</th><th>现写法</th></tr></thead>
+<tbody>
+<tr><td>另起 <code>experience_items</code> 表</td><td>已有 <code>experiences</code> + fts + evolution-dao，会造第三真源岛</td><td class="yes">收编迁移现有表</td></tr>
+<tr><td>给 <code>knowledgeInjectorFactory</code> 加 node/query/budget 入参，「兼容成本低」</td><td>类型声明散布 6 处、<code>loop.ts:636</code> 还在 <code>as any</code> 裸转；sub-workflow 三连 undefined 就是位参漂移的实证</td><td class="yes">recall 回调进 <code>InjectorConfig</code>（<code>knowledge-injector.ts:16-18</code>），engine 类型零改动</td></tr>
+<tr><td>markdown 降级为投影</td><td>人写真源有<b>三条腿</b>（SKILL.md 安装、ADR/术语 append-only + git、core-pack lock），草案只砍一条</td><td class="yes">投影只进 <code>_generated/</code>；三条腿明文豁免</td></tr>
+<tr><td>executions 等是<b>不可变唯一事实源</b></td><td>retention 与 workspace 删除会物理清理/截断</td><td class="yes">证据快照随条目落库；ref 只指不删目标</td></tr>
+<tr><td>借鉴 semantica <code>tiers.py</code>「查询时派生」</td><td>模块真实且有单测，但<b>全仓零生产调用者</b></td><td class="mid">标注「自研，非已验证机制」</td></tr>
+<tr><td>semantica「retract 留 tombstone」</td><td><code>retract_node</code> 只闭合 valid_until；tombstone 实际在 <code>purge_node(:2939)</code>；且 <code>query()</code> 不按有效窗过滤</td><td class="mid">检索 SQL 自己加 status 过滤</td></tr>
+<tr><td>「do-no-harm：净分不降才换 activeVersion」（agent-insight）</td><td>它只产出告警 + repair 提示（<code>bridge:410-420</code>），切版本走 apply 结构门（<code>apply/route.ts:146</code>）</td><td class="mid">「硬门是我们新加的，无参考实现先例」</td></tr>
+<tr><td>prevalence 阈值 ≥3 / ≥5</td><td>漏 ≥10→high；且抬级发生在<b>读侧聚合</b>（<code>skill-issues/index.ts:122</code>），不落库</td><td class="mid">补 ≥10 并注明读侧</td></tr>
+<tr><td>TencentDB「jieba+FTS5+sqlite-vec 三路混合」</td><td>RRF 实为<b>两腿</b>（<code>l1-candidate-recall.ts:107</code>）；另有 <code>:62-68</code> 原生 dense+sparse 单调用腿；「只有两腿」仅指 fallback</td><td class="mid">按代码写清两腿 + 一单调用</td></tr>
+<tr><td>semantica「eval 主链路未接通」</td><td>CHANGELOG 只自认 graph_store 已接、context_graph 为 known follow-up；钩子 <code>decision_recorder.py:135</code> 真在跑且有测试</td><td class="mid">改为「graph_store 侧已接、context_graph 侧待接」</td></tr>
+<tr><td>SkillsBench「自产 skill −8.1~−11.5pp」</td><td>出自 <b>Table 6 的 3 个 dedicated-harness 配置</b>，作者明示「retained as a diagnostic，不计入主聚合」，且含 4 种非知识性成因（包未被读 / creator 抢占 / confident error / leakage）；v1 只说 no benefit</td><td class="no">主聚合 curated +16.6pp；负值只作诊断，<b>不写普适负收益</b></td></tr>
+<tr><td>The Replay Gap ⇒ 不能用历史数据验证知识/技能改动</td><td>该文范围是 <b>per-step 模型替换/路由评估</b>（6 配对 ~900 rollouts SWE-bench）</td><td class="mid">「方法迁移（分叉 + 同模型对照臂），非该文证据」</td></tr>
+<tr><td>DCFA「22.41% / 全列均值 20.69」</td><td>20.69 是 DCFA 那一列在 Hand-crafted 的 <b>6 模型均值</b>；最高单点 24.14%（GPT-5）；DCFA 本身主张全自动</td><td class="mid">「手工轨迹 step-level 普遍 &lt;25%；候选根因+人工确认是<b>我们的保守选择</b>」</td></tr>
+<tr><td>Ratchet「有界 cap + 退役阈值 ⇒ 不保证提升」</td><td>命题原文自称 <b>"a floor, not a convergence rate"</b>；A7 段自陈 cap 在该规模 non-binding；参考实现仍保留 0.85 余弦显式去重；v3 已改题为 judge 可靠性</td><td class="mid">「显式去重<b>非承重</b>」而非「不必要」</td></tr>
+<tr><td><b>（第 15 条 · 本方案自己的基座决策）</b>「全搬 PG 的风险与本体系价值不成比例 → 采用双平面（SQLite 执行面 + PG 知识面 + outbox 投影）」</td><td>结论<b>没有经过计量</b>就下了：把「执行面不动」当成免费的前提，而它其实有价——outbox + 幂等重放 + 版本对账 + <code>knowledge_asof</code> 是一整层<b>永久</b>子系统。另外把 <code>better-sqlite3</code> 同步 API 造成的「批量重建必须走 worker，否则主线程万级循环冻结 HTTP/SSE 30s」当成了业务约束，其实是引擎症状</td><td class="no">计量后翻案（数据见 §2 R7）：<b>单引擎 ParadeDB，SQLite 退场</b>；双平面写进被否决方案；一致性那一整节删除。<b>但必须同时记下退步</b>：全平台单点 + 连接池耗尽是新故障模式 + 166 文件重构的静默漂移风险，且 G9 从「物理白送」降级为「靠测试守着」</td></tr>
+<tr><td><b>（第 16 条 · R8 闭环审计）</b>「6 步主干 + 5 条反馈边 = 闭环完成」</td><td>那是<b>机制闭合</b>，不是<b>因果闭合</b>。逐条追因果后查出：① <b>无对照臂</b> → 只能证明「没变坏」，永远证明不了「变好了是因为它」（<code>support_n</code> 无法把功劳分给某条经验）；② <b>漏报结构性不可观测</b> → 提案被拒≠提案错，漏掉一个仓库没有信号会回来，于是<b>地图变烂是静默的</b>；③ <code>difficulty</code> 是<b>悬空入参</b>（无生产者）；④ <b>无「agent 主动 recall 使用率」观测</b> → 若为 0，E2 边天然为 0；⑤ <b>自相矛盾</b>：纪律③禁止模型自证，但热路径 L0 就是自报的；⑥ <b>cascade 第一层冷启动空转</b>，前 4–8 周比现在更贵；⑦ <b>「任务会重复」这个前提从没检验过</b></td><td class="no">①–⑥ 已补进文档（G11 提案关闭纪律、G12 对照臂不得关、<code>proposal_outcome</code> / <code>injection_arm</code> 两表、difficulty 四元生产者、主动检索率指标、自报不计数 + cascade 冷启动预告）；⑦ 补成 <b>P-1 半天前提盘点</b>，判据是「继续 / 不继续」而非「做好没做好」。<b>单一信源那条由用户裁决接受</b>：本期正当性来源就是「我自己先裁决、先用好」，但改两条不撒谎的处置——<code>support_n</code> 按任务簇去重、本期它叫「个人记忆 + 待验证候选」不叫组织知识库</td></tr>
+</tbody></table>
+<div class="callout red"><b>两条被彻底删除的说法</b>：
+① <b>「LoCoMo 口径摆动 25pp（zep-papers#5）+ mem0#2800」作为选型依据</b> —— 25.56pp 是 Mem0 CTO 单方口径，Zep 官方反驳并自改 75.14%（≈9pp），两 issue 均已 closed 且内容与「摆动 25pp」不是一回事（mem0#2800 实为「开源 SDK 复现不出平台版分数，因平台版加了 contextual-add/自定义指令」）。
+② <b>「jieba 预分词解决中文失效」的无条件表述</b> —— 实测「经验」需 cutForSearch、「锁竞争」两种切法都 0 命中，改为「仍需 ngram / 别名词表兜底」。
+另：所有绝对秒数与精确 ms 一律改「量级成立、随缓存与机器漂移」。</div>
+</section>
+
+<section>
+<h2><em>5</em>四框架 × 七轴对照</h2>
+<p class="h2sub">「成熟度」按<b style="color:var(--ink)">代码与测试事实</b>评，不按 star。★=机制真实且核到生产调用者；◐=模块真实但零生产调用者/默认关闭；✗=不存在。</p>
+<div class="scroller"><table>
+<thead><tr><th>轴</th><th>semantica<br><span style="font-weight:400;text-transform:none">Python · MIT</span></th><th>agent-insight<br><span style="font-weight:400;text-transform:none">TS+Prisma/SQLite · MIT</span></th><th>TencentDB-Agent-Memory<br><span style="font-weight:400;text-transform:none">TS/Node · MIT</span></th><th>OpenViking<br><span style="font-weight:400;text-transform:none">Py 607K + Rust 107K · AGPL</span></th></tr></thead>
+<tbody>
+<tr><td class="k">真实成熟度</td><td>~900 py / 39.5万行、416 测试、PR 至 #1757，但 breadth≫depth（35 种 ingestor 独占 2.8万行）</td><td>与我们架构同型（SQLite+Prisma）、99 单测、活跃至 2026-07；无 CI、无 migrations 靠 db push；自己不跑被测 agent</td><td>27.3k★ 但<b>全仓 0 测试文件</b>（5 个 vitest 配置指向不存在的文件）、npm 停 1.0.0-beta.1（源码已 2.0.2）、837 open issues</td><td>工程真实（Python 主体、Rust 做文件系统与 CLI）、真接主检索、README 自陈哪些旧 artifacts 不得作证据（诚实度高）；<b>部署必需 Rust AGFS</b></td></tr>
+<tr><td class="k">存储后端</td><td>默认 Neo4j；向量 faiss/qdrant/milvus/pgvector/<b>sqlite-vec</b> 全 optional，可纯内存跑</td><td>单机 SQLite（<code>schema.prisma:7</code>）；Execution 带 parent/root 拆多 agent 树、TraceEvaluation 一行一指标 + hash 幂等</td><td><b>默认本地 SQLite</b>（sqlite-vec+FTS5，<code>store/factory.ts:6</code>）；TCVDB/Mongo/COS 仅可选 → 云绑定只在适配层</td><td>自研 vectordb（local 目录即可）+ Rust AGFS，内容/向量/元数据<b>强耦合同一 server，组件不可拆用</b></td></tr>
+<tr><td class="k">写入 / 冲突 / 时效</td><td>★bitemporal（真被 temporal_query/context_retriever 消费）；4 策略消解 + <b>来源信誉回写</b>（初始 0.5）；retract 留痕◐；<b>无时间衰减遗忘</b></td><td>◐ SkillIssue 不可变 + dedupKey；<b>prevalence 抬级在读侧聚合</b>、不落库</td><td>★L0→L1 单次 LLM 场景切分 + <b>批量 4 动作裁决</b>；warm-up 倍增阈值；priority 默认 50；<b>无衰减/遗忘/驱逐</b></td><td>★Schema 驱动（experiences.yaml：Situation/Approach/Reflect + merge_op）；合并安全策略「仅同一性可证才合并、宁拆勿丢」；<b>时效=hotness 软降权不删</b></td></tr>
+<tr><td class="k">检索 / 装配</td><td>三路召回 + 归一化/双源同现 +20%/语义 rerank + TruthMaintenance 失效过滤；查询改写是<b>30 个硬编码关系动词的正则</b>；token 预算<b>仅 DRIFT 引擎</b></td><td><b>无向量召回</b>；LLM 分批语义匹配（阈值 0.75）、dedupKey 聚合、skill@version 精确反查</td><td>★FTS5(jieba) + vec0 <b>两腿 RRF</b>（RRF_K=60）；另有原生 dense+sparse 单调用腿；字符预算截断 + 每轮限 3 次工具</td><td><b>★最有含金量</b>：L0/L1/L2 sidecar + 父分数 α 传播下钻(≤3 轮) + rerank 失败回退向量分 + <b>预算广度优先→加深、超档回退不硬截</b>（真进主检索）；hotness α <b>默认 0.0=关</b></td></tr>
+<tr><td class="k">闭环 / 评估</td><td>◐ record 时评估钩子真实有测试（graph_store 侧已接、context_graph 侧待接）；<b>检索结果被用后无任何强化/惩罚信号</b></td><td>◐ judge 加权逐条 0-1 + 控制流语义；<b>锚定数据集 ground truth 而非 skill 自证</b>；负例 + 兄弟竞争；A/B 取 min(能力,成本,稳定) + Welch t；<b>但 do-no-harm 只告警</b></td><td><b>✗ 基本没有</b>：无 usage_count/helpful 列；召回指标只上报 Kafka <b>不回流改 priority</b>；防自我强化仅乐观锁 + 审计</td><td>★ experience_lineage（被读经验 → trajectory outcome）→ 训练环 analyze→semantic-gradient→policy-apply；benchmark 全自报需自跑</td></tr>
+<tr><td class="k">接口面</td><td>MCP 19 tool + CLI×4 + HTTP；全 Python → TS 只能服务化</td><td>Next.js API/SSE（fault diagnosis stream、agent-debug、analyze-match 执行流 vs 静态流、灰度 A/B、infra/diagnose）</td><td><b>★最贴近我们</b>：<code>register(api)</code> → 3 工具 + 2 钩子（before-turn auto-recall / after-turn auto-capture）；MemoryProxy prompt 改写；HTTP v3 + <code>/tools/list|call</code> 自发现 + MCP stdio</td><td>agent-plugins.org 规范 + MCP 全套 14 工具（find/search/read/remember/write/tree/grep/forget…）+ SKILL.md 教宿主「执行型任务前搜 Experience root」</td></tr>
+<tr><td class="k">对我们可用性</td><td class="n">机制库</td><td class="n">骨架库</td><td class="n">管线 + 接口范本</td><td class="n">思想库 + 验收口径</td></tr>
+</tbody></table></div>
+<div class="legend"><span>★ 机制真实且核到生产调用者</span><span class="b">◐ 存在但零生产调用者或默认关闭</span><span class="d">✗ 该轴不存在</span><span class="c">四家共同缺口：经验使用后的真实效果回流</span></div>
+</section>
+
+<section>
+<h2><em>6</em>一手来源清单</h2>
+<div class="grid2">
+  <div class="card"><h4>参考框架<em>全部读代码</em></h4><ul>
+    <li><a href="https://github.com/semantica-agi/semantica">semantica</a>（MIT）· <a href="https://gitee.com/deepseek-1108/agent-insight">agent-insight</a>（MIT）</li>
+    <li><a href="https://github.com/TencentCloud/TencentDB-Agent-Memory">TencentDB-Agent-Memory</a>（MIT）· <a href="https://github.com/volcengine/OpenViking">OpenViking</a>（AGPL-3.0，crates/ 为 Apache-2.0）</li>
+    <li>本地 clone：<code>/Users/xzf/Projects/ai/XzhiF/_kb-research/</code>（仓库外，未入库）</li></ul></div>
+  <div class="card"><h4>文献与实现<em>逐条点开</em></h4><ul>
+    <li><a href="https://arxiv.org/abs/2605.22148">Ratchet</a> + <a href="https://github.com/amazon-science/Self-Evolving-Agents-Ratchet">amazon-science 实现</a>（Apache-2.0，skillevo/ + 39 测试）</li>
+    <li><a href="https://arxiv.org/abs/2602.12670v1">SkillsBench</a>（v1 与 v4 口径差异见上）· <a href="https://arxiv.org/html/2608.08239v1">The Replay Gap</a> · <a href="https://arxiv.org/html/2609.04749v1">DCFA</a> · <a href="https://arxiv.org/html/2606.06003v1">Beyond Vector Similarity</a> · <a href="https://arxiv.org/html/2608.26530v1">PILOT</a></li>
+    <li><a href="https://github.com/asg017/sqlite-vec">sqlite-vec</a>（上游停滞）· <a href="https://github.com/sqliteai/sqlite-vector">sqlite-vector</a> · <a href="https://github.com/apache/age">Apache AGE</a> · ParadeDB pg_search</li>
+    <li>代码情报：<a href="https://github.com/jqassistant/jqassistant">jQAssistant</a>（GPL-3.0，仅 Neo4j 后端）· <a href="https://github.com/TNG/ArchUnit">ArchUnit</a> · <a href="https://github.com/CycloneDX/cdxgen">cdxgen</a> · <a href="https://maven.apache.org/plugins/maven-dependency-plugin/tree-mojo.html">mvn dependency:tree json</a> · <a href="https://skywalking.apache.org/docs/main/next/en/api/query-protocol/">SkyWalking Query Protocol</a></li></ul></div>
+  <div class="card"><h4>Jev / System One<em>闭源，只借方法论</em></h4><ul>
+    <li><a href="https://tonybai.com/2026/09/22/jev-engineering-the-decision-layer-for-agentic-systems/">JEV 工程学（Tony Bai）</a> — 原 URL 404/403，<b>全文未核实</b></li>
+    <li><a href="https://www.firecrawl.dev/blog/what-is-jev">firecrawl 技术长文</a>（确认无权重无论文）· <a href="https://www.cnblogs.com/shanyou/p/23096117.html">TensorSharp Jev 模式</a>（开源侧 diffusion 直读）</li>
+    <li>开源替身：<a href="https://github.com/NandhaKishorM/laya">Laya</a> · <a href="https://github.com/nokia-applied-research/AnyJev">AnyJev</a> · <a href="https://github.com/vllm-project/vllm/pull/57250">vLLM #57250</a> · <a href="https://www.requesty.ai/blog/jev-week-two-four-gateways-open-clones-what-builders-shipped">requesty 生态盘点</a></li></ul></div>
+  <div class="card"><h4>反面声音<em>踩坑证据</em></h4><ul>
+    <li><a href="https://segmentfault.com/a/1190000048319118">开源 Agent 记忆系统多维对比</a>（各家是否需图库 / AGPL 风险 / mem0 图记忆转付费）</li>
+    <li><a href="https://cloud.tencent.com/developer/article/2739552">Agent Wiki 火了五个月：它在企业里死在哪</a>（ACL 成本量级错误、幻觉污染复利、矛盾知识无 Owner）</li>
+    <li><a href="https://github.com/getzep/zep-papers/issues/5">zep-papers#5</a> · <a href="https://github.com/mem0ai/mem0/issues/2800">mem0#2800</a>（基准不可信；引用已按 §4 修正）</li>
+    <li><a href="https://docs.openclaw.ai/reference/token-use">OpenClaw token use</a>（MEMORY.md + memory/*.md、<b>不用向量索引</b>、20k/60k 上限——与我们同型的克制选择）· <a href="https://langfuse.com/docs/opentelemetry/get-started">Langfuse OTel</a>（MIT，2026-01 被 ClickHouse 收购）</li></ul></div>
+</div>
+<div class="pager">
+  <a href="index.html">00 故事线</a>
+  <a href="architecture.html">01 技术架构</a>
+  <a href="design.html">02 完整设计</a>
+  <a href="plan.html">03 实现计划</a>
+  <a class="cur" href="evidence.html">04 证据账本</a>
+  <a href="research-v1.html">↳ 调研原始报告存档</a>
+  <span>凡标 UNVERIFIED 的，请勿直接依赖</span>
+</div>
+</section>
+</div>
+
+<footer class="bot"><div class="botin">
+  <span>04 证据账本</span><span>实测脚本与原始输出：<code>/tmp/pg-verify/</code> <code>/tmp/evidence-audit/</code> <code>/tmp/probe-retrieval/</code>（临时，可能被清理）</span>
+  <span>调研副作用：Docker Desktop 守护进程曾被强制重启（既有容器未删除）</span>
+</div></footer>
+</body>
+</html>
