@@ -1,0 +1,70 @@
+name: Test Suite
+
+# P1 分批迁移的每批门禁：全量 vitest + PG 测试面（OCTOPUS_PG_TEST_URL）。
+# 用例数不降的基线记录在 .scratch/20260927-kb-roadmap/p1-batch-plan.md
+# （server 219 文件 / 2653 用例 + engine/shared 常量）。
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      pg:
+        # 与 deploy/docker-compose.pg.yml 同一 digest：PG 18.6 /
+        # pg_search 0.25.10 / pgvector 0.8.4，性能与分词实测只在该组合成立
+        image: paradedb/paradedb@sha256:188591a0bc317beb2c6d6d3f9ef0cb3e859d09ecc15a71dda5e9a027876686cf
+        env:
+          POSTGRES_USER: octopus
+          POSTGRES_PASSWORD: octopus
+          POSTGRES_DB: octopus
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U octopus -d octopus"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    env:
+      OCTOPUS_PG_TEST_URL: postgres://octopus:octopus@127.0.0.1:5432/octopus
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # workspace 包互引 dist 产物，测试前必须 build（与本地一致）
+      - run: pnpm -r --filter '!@octopus/web-app' build
+
+      - name: CI 侧初始化（service 容器不吃 compose 的 initdb.d，幂等补装）
+        run: |
+          sudo apt-get install -y -q postgresql-client
+          psql "$OCTOPUS_PG_TEST_URL" -v ON_ERROR_STOP=1 \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector' \
+            -c 'CREATE EXTENSION IF NOT EXISTS pg_search CASCADE' \
+            -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'
+          # harness 契约的 template 库（本地 compose 走 initdb.d，CI 走这里）
+          psql "$OCTOPUS_PG_TEST_URL" -tAc \
+            "SELECT 1 FROM pg_database WHERE datname='octopus_template'" | grep -q 1 \
+            || psql "$OCTOPUS_PG_TEST_URL" -c 'CREATE DATABASE octopus_template TEMPLATE octopus'
+        env:
+          PGPASSWORD: octopus
+
+      # 全量套件当前含 19 个既有红文件（HEAD 基线，清单见 p1-batch-plan.md 与
+      # issues/01）。收敛它们之前设 continue-on-error：本 job 先做「新增失败
+      # 可见性」，P1 B 批「全量绿+用例数不降」的门禁以本地为准。
+      # 既有红清零后翻成硬门（删 continue-on-error 即成）。
+      - run: pnpm test
+        continue-on-error: true
