@@ -62,9 +62,6 @@ jobs:
         env:
           PGPASSWORD: octopus
 
-      # 全量套件当前含 19 个既有红文件（HEAD 基线，清单见 p1-batch-plan.md 与
-      # issues/01）。收敛它们之前设 continue-on-error：本 job 先做「新增失败
-      # 可见性」，P1 B 批「全量绿+用例数不降」的门禁以本地为准。
-      # 既有红清零后翻成硬门（删 continue-on-error 即成）。
+      # P1 遗留接线：B1/B2 合流后双模式全量 0 failed（19 个既有红已在 P1 清零），
+      # continue-on-error 摘除 —— 本 job 自此为硬门。
       - run: pnpm test
-        continue-on-error: true

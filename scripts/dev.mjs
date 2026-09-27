@@ -12,6 +12,10 @@
  *   pnpm dev --kill                   # same as -k
  *   node scripts/dev.mjs              # same as above
  *
+ * Environment:
+ *   OCTOPUS_PG_URL  — set to wire the PG pool at server startup (opt-in);
+ *                     unset keeps the pure SQLite legacy behavior.
+ *
  * Port conflict behavior:
  *   By default, if target ports are occupied, startup FAILS with an error.
  *   Use -k / --kill to force-kill existing processes on those ports.
@@ -421,6 +425,16 @@ async function main() {
     OCTOPUS_DB_PATH: dbPath,
   }
   if (branch) serverEnv.OCTOPUS_BRANCH = branch
+
+  // P1 遗留接线：OCTOPUS_PG_URL 环境变量面（显式透传 + 模式可见性）。
+  // 设置 → server 启动时经 db/pg/config.ts isPgConfigured() 初始化 PG 池（src/index.ts 现有接线）；
+  // 未设置 → 纯 SQLite 旧行为完全不变。URI 含密码，日志不回显。
+  if (process.env.OCTOPUS_PG_URL?.trim()) {
+    serverEnv.OCTOPUS_PG_URL = process.env.OCTOPUS_PG_URL.trim()
+    console.log("[dev] pg:     OCTOPUS_PG_URL set — server will wire PG pool at startup")
+  } else {
+    console.log("[dev] pg:     OCTOPUS_PG_URL not set — SQLite only (legacy behavior)")
+  }
 
   startProcess(
     process.execPath,

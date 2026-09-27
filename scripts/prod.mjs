@@ -7,6 +7,10 @@
  *   pnpm prod --skip-build       # skip build, use existing stable copy
  *   pnpm prod --port 3098,3099   # explicit web,server pair (web first)
  *
+ * Environment:
+ *   OCTOPUS_PG_URL  — set to wire the PG pool at server startup (opt-in);
+ *                     unset keeps the pure SQLite legacy behavior.
+ *
  * Port allocation (fully isolated from dev):
  *   dev (main):     Server 3001, Web 3000, DB octopus.db
  *   dev (worktree): Server 3100-3598 (hash), Web +1, DB octopus-{branch}.db
@@ -444,6 +448,16 @@ async function main() {
     PORT: String(SERVER_PORT),
     OCTOPUS_DB_PATH: DB_PATH,
     OCTOPUS_BRANCH: "prod",
+  }
+
+  // P1 遗留接线：OCTOPUS_PG_URL 环境变量面（显式透传 + 模式可见性）。
+  // 设置 → server 启动时经 db/pg/config.ts isPgConfigured() 初始化 PG 池（src/index.ts 现有接线）；
+  // 未设置 → 纯 SQLite 旧行为完全不变。URI 含密码，日志不回显。
+  if (process.env.OCTOPUS_PG_URL?.trim()) {
+    serverEnv.OCTOPUS_PG_URL = process.env.OCTOPUS_PG_URL.trim()
+    console.log("[prod] pg:     OCTOPUS_PG_URL set — server will wire PG pool at startup")
+  } else {
+    console.log("[prod] pg:     OCTOPUS_PG_URL not set — SQLite only (legacy behavior)")
   }
 
   console.log("\n[prod] Starting server from stable copy...")
