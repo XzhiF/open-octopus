@@ -1,7 +1,9 @@
-// Minimal ESLint config — ONE rule only: @typescript-eslint/no-floating-promises.
+// Minimal ESLint config — async-correctness rules ONLY (B0.5 起三条):
+//   no-floating-promises / await-thenable / no-misused-promises
 // Do NOT add style rules: the codebase has no prior lint, a full ruleset would explode.
-// The rule needs type information (docs: typeChecked), hence parserOptions.project.
-// Violation count is ratcheted (only-down) by scripts/eslint-ratchet.mjs vs .eslint-baseline.json.
+// All three rules need type information (docs: typeChecked), hence parserOptions.project.
+// Violation counts are ratcheted per-rule (only-down) by scripts/eslint-ratchet.mjs
+// vs .eslint-baseline.json.
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -22,6 +24,11 @@ export default tseslint.config(
     },
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
+      // P1 B0.5 (§8 漏 await 探测网②): 双引擎混迁期 (B1-B5) 的两条 type-checked 兜底 ——
+      // await-thenable 抓对非 Promise 的多余 await (互调面), no-misused-promises 抓
+      // setImmediate/setTimeout/scheduler 等同步回调位传 async (重灾区)。
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
     },
   },
 );

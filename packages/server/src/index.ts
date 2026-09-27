@@ -9,17 +9,7 @@ import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
-import {
-  WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
-  ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO,
-  PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO,
-} from "./db/dao"
-import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
-import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
-import { AgentVersionDAO } from "./db/dao/agent-version-dao"
-import { HarnessDAO } from "./db/dao/harness-dao"
+import { createAllDAOs, createLazyDAOs, type AllDAOs } from "./db/dao/registry"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -124,53 +114,8 @@ if (!process.env.OCTOPUS_HOST_PORTS) {
   process.env.OCTOPUS_HOST_PORTS = `${_serverPort},${_serverPort - 1}`
 }
 
-// ── DAO Factory: Create all 11 DAOs from DB connection ─────────────────────
-interface AllDAOs {
-  workspace: WorkspaceDAO
-  execution: ExecutionDAO
-  tokenUsage: TokenUsageDAO
-  scheduleConfig: ScheduleConfigDAO
-  scheduleRun: ScheduleRunDAO
-  chat: ChatDAO
-  org: OrgDAO
-  agentSession: AgentSessionDAO
-  evolution: EvolutionDAO
-  clone: CloneDAO
-  safety: SafetyDAO
-  pendingReview: PendingReviewDAO
-  knowledgeEffectiveness: KnowledgeEffectivenessDAO
-  archive: ArchiveDAO
-  archiveDraft: ArchiveDraftDAO
-  interactionMessage: InteractionMessageDAO
-  agentVersion: AgentVersionDAO
-  harness: HarnessDAO
-  // 03: first-class tasks table DAO (v2-D1).
-  task: TaskDAO
-}
-
-function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
-  return {
-    workspace: new WorkspaceDAO(db),
-    execution: new ExecutionDAO(db),
-    tokenUsage: new TokenUsageDAO(db),
-    scheduleConfig: new ScheduleConfigDAO(db),
-    scheduleRun: new ScheduleRunDAO(db),
-    chat: new ChatDAO(db),
-    org: new OrgDAO(db),
-    agentSession: new AgentSessionDAO(db),
-    evolution: new EvolutionDAO(db),
-    clone: new CloneDAO(db),
-    safety: new SafetyDAO(db),
-    pendingReview: new PendingReviewDAO(db),
-    knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
-    archive: new ArchiveDAO(db),
-    archiveDraft: new ArchiveDraftDAO(db),
-    interactionMessage: new InteractionMessageDAO(db),
-    agentVersion: new AgentVersionDAO(db),
-    harness: new HarnessDAO(db),
-    task: new TaskDAO(db),
-  }
-}
+// ── DAO Factory ─────────────────────────────────────────────────────────
+// AllDAOs 类型与 createAllDAOs 工厂已外提至 db/dao/registry.ts（B0.5 §5 方案1）。
 
 const db = process.env.VITEST ? null : initDb()
 
@@ -372,45 +317,10 @@ app.use("*", async (c, next) => {
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
 })
 
-// ── Route Registration ─────────────────────────────────────────
-// Routes are always registered. In test mode (VITEST), daos is null
-// but getDb() works at request time (tests init DB in beforeAll).
-// We use Proxy DAOs that lazily create the real DAO on first method call.
-function lazyDAO<T>(Ctor: new (db: any) => T): T {
-  let real: T | null = null
-  return new Proxy({} as any, {
-    get(_, prop) {
-      if (!real) real = new Ctor(getDb())
-      const val = (real as any)[prop]
-      return typeof val === 'function' ? val.bind(real) : val
-    },
-  }) as T
-}
+// ── DAO 注册表（B0.5 §5 方案1 外提）─────────────────────────────────────
+// 注册表内容/懒构造时序原样保留，见 db/dao/registry.ts。
 
-const d = daos ?? {
-  workspace: lazyDAO(WorkspaceDAO),
-  execution: lazyDAO(ExecutionDAO),
-  tokenUsage: lazyDAO(TokenUsageDAO),
-  scheduleConfig: lazyDAO(ScheduleConfigDAO),
-  scheduleRun: lazyDAO(ScheduleRunDAO),
-  chat: lazyDAO(ChatDAO),
-  org: lazyDAO(OrgDAO),
-  agentSession: lazyDAO(AgentSessionDAO),
-  evolution: lazyDAO(EvolutionDAO),
-  clone: lazyDAO(CloneDAO),
-  safety: lazyDAO(SafetyDAO),
-  pendingReview: lazyDAO(PendingReviewDAO),
-  knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
-  archive: lazyDAO(ArchiveDAO),
-  archiveDraft: lazyDAO(ArchiveDraftDAO),
-  interactionMessage: lazyDAO(InteractionMessageDAO),
-  agentVersion: lazyDAO(AgentVersionDAO),
-  harness: lazyDAO(HarnessDAO),
-  // 03 (v2-D1): tasks table DAO. Added to the lazy fallback so `d.task` works
-  // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
-  // 04's task-author autosave seam + TasksService both consume it.
-  task: lazyDAO(TaskDAO),
-}
+const d = daos ?? createLazyDAOs()
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
