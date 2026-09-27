@@ -19,7 +19,9 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # lockfile 由 pnpm 11 生成；pnpm 9 会对 overrides 报
+          # ERR_PNPM_LOCKFILE_CONFIG_MISMATCH（pi-compat-check 周周因此秒红）
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
