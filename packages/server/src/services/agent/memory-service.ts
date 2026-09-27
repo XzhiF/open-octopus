@@ -4,7 +4,7 @@ import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { AgentSessionDAO } from '../../db/dao'
-import { segTokens } from '../../cjk-segmenter'
+import { queryTokens } from '../../db/dao/query-tokens'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -279,10 +279,10 @@ export class MemoryService {
 
   /**
    * 文件层（long-term/daily markdown）相关度打分：整串命中给高分（强相关，
-   * 至少不低于 FTS bm25 映射分的中位数），否则按 jieba 切词 token 覆盖率
+   * 至少不低于检索面归一分的中位数），否则按 queryTokens token 覆盖率
    * 折算为小数。返回 0 表示不相关 —— 取代过去「命中即 score:0」的死分。
    *
-   * 注意：与 FTS 的 bm25ToScore 同为 (0,1)，但不同源不可直接比较绝对值；
+   * 注意：与 pg_search BM25 归一分同为 (0,1)，但不同源不可直接比较绝对值；
    * 全串命中此处给 1.0 是有意为之（文件层是精确实体匹配，可信度高）。
    */
   private fileScore(content: string, query: string): number {
@@ -290,7 +290,7 @@ export class MemoryService {
     const q = query.trim().toLowerCase()
     if (q && lower.includes(q)) return 1.0
 
-    const tokens = segTokens(query)
+    const tokens = queryTokens(query)
     if (tokens.length === 0) return 0
     const hit = tokens.filter((t) => lower.includes(t.toLowerCase())).length
     if (hit === 0) return 0

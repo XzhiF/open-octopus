@@ -14,7 +14,7 @@ if (!pgTestEnabled) {
 }
 const describePg = pgTestEnabled ? describe : describe.skip
 
-const TRACKED_TABLES = 45 // 42 平移表 + 3 FTS5 占位表
+const TRACKED_TABLES = 42 // 42 平移表（3 张 FTS5 占位表已由 P1 B3 段2 退役 DROP，检索面 = 真表 bm25 索引）
 
 async function snapshot(db: PgTestDatabase) {
 const [columns, indexes, triggers, sequences, versionRow, seedCounts] = await Promise.all([

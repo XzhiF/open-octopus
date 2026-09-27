@@ -10,8 +10,11 @@
 // SDK MCP 工具（经 providers 的 createInProcessMcpServer 注入），返回值回灌
 // 模型上下文，模型可基于命中内容继续推理。
 //
-// 分数语义：DAO 检索面统一给 (0,1)（BM25 归一或分层常数），越大越相关；
-// 结果按分数降序。
+// 分数语义：DAO 检索面统一给 (0,1)，越大越相关；结果按分数降序。
+// B3 段2：两 DAO 主路径均为 pg_search BM25（idx_messages_bm25 /
+// idx_experiences_bm25，paradedb.score s/(1+s) 归一），ILIKE 两段式只在
+// tantivy 抛错或零命中时兜底（分层常数 0.9/0.4）。中文链路不再经 jieba
+// 预分词 —— 文档侧 CJK 单字切由 tantivy 完成，召回口径见 db/pg/README。
 
 import { z } from 'zod'
 import {

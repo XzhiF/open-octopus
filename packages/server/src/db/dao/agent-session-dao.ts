@@ -1,7 +1,7 @@
 import { BasePgDAO, type PgSql } from "./base-pg"
 import type { SessionRow, MessageRow } from "../types"
 import { bool, flag, iso, isoOrNull, jsonStr, num } from "./pg-mappers"
-import { segTokens } from "../../cjk-segmenter"
+import { queryTokens, scoreNorm } from "./query-tokens"
 
 /**
  * AgentSessionDAO — agent session and message management.
@@ -18,10 +18,12 @@ import { segTokens } from "../../cjk-segmenter"
  *     `metadata->>'streaming' = 'true'`（jsonb::text 会把冒号后补空格，LIKE 形态
  *     在 PG 不可移植；JSON 语义判定等价）。
  *
- * FTS 面（P1 B3 重设计）：SQLite 侧 session_memory_fts 虚表 + jieba 预分词影子列
- *   整体退役 —— PG 侧不再有影子表；检索直接打在 messages.content（is_summary=true）
- *   真表上（段1 粗实现 ILIKE，段2 pg_search BM25，见 db/pg/README.md B3 节）。
- *   rebuildFtsIndex() 语义随之前置为「幂等计数」（BM25 索引由 PG 引擎自动维护）。
+ * FTS 面（P1 B3 段2 终态）：SQLite 侧 session_memory_fts 虚表 + jieba 预分词影子列
+ *   整体退役 —— PG 侧不再有影子表；检索打在 messages.content（is_summary=true）
+ *   真表的 pg_search BM25 索引 idx_messages_bm25 上（&&& 全 token 命中 +
+ *   paradedb.score 降序）；tantivy 解析器抛错（a:b/括号等语法 token）或零命中时
+ *   退回 ILIKE 两段式（AND 保精度 → OR 保召回，见 db/pg/README.md B3 节）。
+ *   rebuildFtsIndex() 语义为「幂等计数」（BM25 索引由 PG 引擎自动维护）。
  */
 
 /** ILIKE 模式串转义（% _ 与反斜杠 —— PG LIKE 默认转义符是反斜杠）。 */
@@ -259,11 +261,13 @@ export class AgentSessionDAO extends BasePgDAO {
   // ── 会话记忆检索（原 session_memory_fts 面） ────────────────────
 
   /**
-   * 会话摘要检索（原 FTS5 session_memory_fts.summary 列的替身）。
-   * 段1（B3）粗实现：查询侧 jieba token + content ILIKE（AND 优先/OR 兜底），
-   * score 为分层常数（AND=0.9 / OR=0.4，保持 (0,1) 契约）；
-   * 段2（B3）换 pg_search BM25（idx_messages_bm25）+ ILIKE 兜底，score 走
-   * paradedb.score 的 s/(1+s) 归一。语义锚点：
+   * 会话摘要检索（原 FTS5 session_memory_fts.summary 列的替身 · B3 段2 BM25 终态）。
+   * 主路径：idx_messages_bm25 上 `content &&& 原查询串`（tantivy 逐 token AND，
+   * CJK 文档侧单字切 —— 旧 jieba 词面命中必被字符面覆盖，召回只增不减），
+   * 排序 paradedb.score DESC（越大越相关）+ created_at 兜平，score 归一 s/(1+s) 进 (0,1)。
+   * 兜底路径：BM25 抛错（`a:b`/括号等 tantivy 语法）或零命中 → ILIKE 两段式
+   *   （AND 保精度 → OR 保召回，token 用 queryTokens —— 非 jieba，CJK 整段子串）。
+   * 语义锚点：
    *   - 空/纯标点查询 → 显式空数组；真 DB 异常上抛由 REST 层决定重试。
    *   - summary/session_title 返回原文（真表列，不存在切词串泄漏）。
    *   - source 过滤打在 messages.source；org 过滤经 sessions.org 回连。
@@ -271,8 +275,39 @@ export class AgentSessionDAO extends BasePgDAO {
   async searchSessionMemory(query: string, limit: number = 3, source?: string, org?: string): Promise<Array<{
     session_id: string; summary: string; session_title: string; created_at: string; source: string; score: number
   }>> {
-    const tokens = segTokens(query)
+    const tokens = queryTokens(query)
     if (tokens.length === 0) return []
+
+    try {
+      let sql = `
+        SELECT m.session_id AS session_id,
+               m.content AS summary,
+               s.title AS session_title,
+               m.created_at AS created_at,
+               m.source AS source,
+               paradedb.score(m.id) AS score
+        FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE m.is_summary = true AND m.content &&& ?`
+      const params: unknown[] = [query]
+      if (source) { sql += ` AND m.source = ?`; params.push(source) }
+      if (org) { sql += ` AND s.org = ?`; params.push(org) }
+      sql += ` ORDER BY paradedb.score(m.id) DESC, m.created_at DESC LIMIT ?`
+      params.push(limit)
+
+      const rows = await this.q<{
+        session_id: string; summary: string; session_title: string;
+        created_at: Date | string; source: string; score: unknown
+      }>(sql, params)
+      if (rows.length > 0) {
+        return rows.map((r) => ({
+          session_id: r.session_id, summary: r.summary, session_title: r.session_title,
+          created_at: iso(r.created_at), source: r.source, score: scoreNorm(r.score),
+        }))
+      }
+    } catch {
+      // tantivy 解析失败 —— 走与零命中同一条 ILIKE 兜底腿
+    }
 
     const andRows = await this.runSessionSearch(tokens, 'and', 0.9, limit, source, org)
     if (andRows.length > 0) return andRows

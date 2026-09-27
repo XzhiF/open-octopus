@@ -408,18 +408,25 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
     }
   })
 
-  it('FTS5 placeholders: the 3 virtual tables became plain annotated tables', async () => {
+  it('FTS5 placeholders retired (B3): dropped, bm25 indexes live on the real tables', async () => {
     const names = ['session_memory_fts', 'experiences_fts', 'reports_fts']
     for (const t of names) {
       const row = (await pg.sql`
-        SELECT count(*)::int AS n FROM information_schema.columns
+        SELECT count(*)::int AS n FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = ${t}
       `)[0]
-      expect(row.n, `${t}: placeholder exists with columns`).toBeGreaterThan(0)
+      expect(row.n, `${t}: placeholder dropped at B3 段2`).toBe(0)
     }
-    // 显式 row_id 列 = FTS5 隐式 rowid 的手工同步契约
-    const exp = (await pgCols('experiences_fts')).map(c => c.column_name)
-    expect(exp).toEqual(['row_id', 'skill_name', 'content', 'scope', 'scope_ref', 'pattern_tags'])
+    // 检索面判据：三张真表上的 bm25 索引存在且 am=bm25（reports 为 B2 首例）
+    const idx = (await pg.sql`
+      SELECT c.relname AS name, am.amname AS am
+      FROM pg_class c JOIN pg_am am ON am.oid = c.relam
+      WHERE c.relname IN ('idx_messages_bm25', 'idx_experiences_bm25', 'idx_reports_bm25')
+    `) as unknown as Array<{ name: string; am: string }>
+    expect(idx.map(r => r.name).sort()).toEqual(
+      ['idx_experiences_bm25', 'idx_messages_bm25', 'idx_reports_bm25'],
+    )
+    for (const r of idx) expect(r.am, `${r.name}: access method`).toBe('bm25')
   })
 
   it('triggers: 6 append-only guards kept, 2 FTS-sync triggers dropped', async () => {

@@ -506,6 +506,17 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+-- P1 B3 段2：会话记忆检索面（原 SQLite session_memory_fts 虚表 + jieba 预分词退役）。
+-- BM25 直接建在 messages 真表 content 列（检索链路只查 is_summary=true 行，bm25 不
+-- 支持部分索引谓词 —— 非摘要行入索引只付体积，不影响结果正确性）。
+-- CJK 默认按单字切（召回 ≥ 旧 jieba 词面，README「pg_search 第一趟」差异清单），
+-- 未配 jieba text_fields：单字 AND 在 BM25 排序下精度可接受，jieba 留作召回调优后门。
+-- 存量数据：搬迁器灌入的 messages.content 是原文（预分词串只进过 SQLite 影子表），
+-- CREATE INDEX 回填即可检索，无需读侧兼容层。
+CREATE INDEX IF NOT EXISTS idx_messages_bm25 ON messages
+  USING bm25 (id, content)
+  WITH (key_field = 'id');
+
 -- 23. Clones
 -- [port] ⚠ memory_scope 保持 text：SQLite DDL 默认 '[]' 是谎话 —— live 库存的是
 --   'shared'/'isolated' 枚举串（clone-dao 直接透传 row.memory_scope）。映成 jsonb
@@ -555,6 +566,13 @@ CREATE TABLE IF NOT EXISTS experiences (
   execution_id text,
   node_id text
 );
+
+-- P1 B3 段2：经验库检索面（原 SQLite experiences_fts 虚表退役）。列集合 = 旧 FTS
+-- MATCH 面对位（skill_name/content/scope/scope_ref/pattern_tags），pattern_tags
+-- 的 jsonb 已实测可入 bm25（值与键一并分词，容器探针）。key_field=id（bigint 亦可）。
+CREATE INDEX IF NOT EXISTS idx_experiences_bm25 ON experiences
+  USING bm25 (id, skill_name, content, scope, scope_ref, pattern_tags)
+  WITH (key_field = 'id');
 
 -- 26. Safety Events
 -- [port] context 保持 text：写入点是调用方给的自由文本（safety-dao 透传），
@@ -644,39 +662,19 @@ CREATE TABLE IF NOT EXISTS billing_setting (
 );
 
 -- =============================================================================
--- FTS5 虚表 → 普通占位表（P1 本票）。
--- ⚠ 下一票（pg_search BM25 + jieba）会替换这三张：session_memory_fts 的
---   「触发器同步」语义届时改为 pg_search 索引 + messages 表内联投影；
---   row_id 列刻意显式建模 FTS5 的隐式 rowid（手工同步契约：experiences 用
---   experiences.id 当 rowid，见 SQLite schema.ts 的 migrateExperiencesFtsV2）。
---   占位表当前无消费者（DAO 仍走 SQLite），不建触发器 —— 8 触发器判定见
---   migrate.ts 顶部注记表。
+-- FTS5 占位表 —— P1 B3 段2 退役（三张全部 DROP）。
+-- 检索面已按 README 施工图直接建在真表：
+--   session_memory_fts → idx_messages_bm25（messages.content）
+--   experiences_fts    → idx_experiences_bm25（skill_name/content/scope/scope_ref/pattern_tags）
+--   reports_fts        → idx_reports_bm25（B2 首战，reports 真表）
+-- 占位表零读零写（搬迁器 TRUNCATE 但不搬迁数据，见 migrate-data.mjs
+-- loadPgMeta placeholders），无存量数据损失。SQLite 侧 FTS5 虚表原样保留
+-- （只读退路活到 B6）。8 触发器判定见 migrate.ts 顶部注记表。
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS session_memory_fts (
-  row_id bigint PRIMARY KEY,      -- = messages.rowid（FTS5 隐式 rowid 的显式化）
-  session_id text,
-  summary text,
-  session_title text,
-  created_at timestamptz,
-  source text
-);
-
-CREATE TABLE IF NOT EXISTS experiences_fts (
-  row_id bigint PRIMARY KEY,      -- = experiences.id（v2 blue-green 同步语义）
-  skill_name text,
-  content text,
-  scope text,
-  scope_ref text,
-  pattern_tags text               -- 注意：FTS 列保持 text —— pattern_tags 在此是
-                                  -- 「供检索的序列化标签」，不是结构化 jsonb
-);
-
-CREATE TABLE IF NOT EXISTS reports_fts (
-  row_id bigint PRIMARY KEY,
-  task_name text,
-  content text
-);
+DROP TABLE IF EXISTS session_memory_fts;
+DROP TABLE IF EXISTS experiences_fts;
+DROP TABLE IF EXISTS reports_fts;
 
 -- =============================================================================
 -- Indexes — Core Tables（102 条与 SQLite schema.sql 一一对应，布尔谓词改写）

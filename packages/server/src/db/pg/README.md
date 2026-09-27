@@ -7,7 +7,7 @@ DDL、迁移器、驱动接线、比对测试。DAO 异步化是下一票，今�
 
 | 文件 | 职责 |
 |---|---|
-| `schema.sql` | 42 表 + 102 索引 + 3 FTS 占位表 + 6 触发器的 PG DDL（幂等重放式，全 `IF NOT EXISTS` / `CREATE OR REPLACE` / `ON CONFLICT DO NOTHING`） |
+| `schema.sql` | 42 表 + 102 B-tree 索引 + 3 bm25 检索索引（B3 段2 起 FTS 占位表退役）+ 6 触发器的 PG DDL（幂等重放式，全 `IF NOT EXISTS` / `CREATE OR REPLACE` / `ON CONFLICT DO NOTHING` / `DROP TABLE IF EXISTS`） |
 | `migrate.ts` | `applyPgSchema()` —— 全量重放 + IDENTITY `setval` 同步 + `octopus_schema_version` stamp（等价 `user_version`） |
 | `config.ts` | 环境变量 → `PgPoolConfig`（池上限/查询级超时全可配） |
 | `pool.ts` | postgres.js 池 + 查询计数 + `getPgPoolStats()`（pg_stat_activity 占用 + 排队估算） |
@@ -218,3 +218,40 @@ B6（sessions/executions 迁 PG + 数据搬迁灌满）时按下述步骤恢复�
    现有 PG FK 中指向 sessions/executions 的其余条目（`messages.session_id`、
    `node_executions/execution_summaries/schedule_*.execution_id` 等）属「同批成对迁移」型，
    刻意未撤 —— B5 若改变成对假设，须回本节重新裁决。
+
+## B3 段2 增补 —— pg_search BM25 第二趟（messages/experiences 检索面 · 占位表退役）
+
+实测环境同 B2（parade/paradedb：PG 18.6 + pg_search 0.25.10）。
+
+### 本趟落地
+
+- `idx_messages_bm25 (id, content)` / `idx_experiences_bm25 (id, skill_name, content,
+  scope, scope_ref, pattern_tags)`；三张 FTS 占位表 **DROP 退役**（migrator-idempotency
+  `TRACKED_TABLES` 45→42；schema-parity 占位表用例改为「已退役 + 三 bm25 索引 am=bm25」断言）。
+- 检索主路径 = `col &&& 原查询串`（tantivy 逐 token AND，CJK 文档侧单字切）跨列自 OR；
+  `paradedb.score` 经 `query-tokens.ts scoreNorm` 归一到 (0,1) 保持 DAO 契约。
+  抛错或零命中 → ILIKE 两段式兜底（token 提取 = `queryTokens`，非 jieba —— cjk-segmenter
+  整体退役，P0 预分词链路终结；历史数据无需兼容层：预分词串从未进过 messages.content 本体）。
+
+### B4-B6 要读的实测雷区
+
+- **jsonb 列可直接进 bm25**（值+键一并分词，`pattern_tags &&& '检索优化'` 命中实测）——
+  experiences 旧 MATCH 面五列全覆盖，无检索面缩水。
+- **key_field 允许 bigint**（experiences.id IDENTITY）；text id（messages）同样可做 key。
+- **JOIN 检索警告**：`messages JOIN sessions` 上跑 bm25 谓词，若对侧表（sessions）无 bm25
+  索引，PG 打 WARNING「Aggregate Scan not used: all tables in the join must have BM25
+  indexes」—— 结果正确、走普通执行计划。数据量大后若成为热点，考虑给 sessions 建 bm25
+  或两段式查询（先取 messages id 再回连），**别误读成错误**。
+- `unsafe()` 参数个数必须与占位符逐一对应：`$4, $4` 复用写法传两个值会报
+  `could not determine data type of parameter $5`（B3 探针踩过，测试侧笔误而非引擎坑）。
+- 真数据建索引实测：真库只读 dump（sessions 110 / messages 138 / experiences 0）灌入克隆库
+  后 DROP+CREATE 重建，messages 13ms / experiences 3ms / reports 3ms —— 回填无痛。
+  真库当前 **is_summary=0 行**（会话压缩未跑过），检索链路对存量是「建得起、查得空」状态，
+  随 P2 采集/压缩写入自然填充。
+
+### 遗留
+
+- `jieba-wasm` 依赖已无人引用（cjk-segmenter 退役），package.json 摘除留给 B6 收口
+  （避免并行期碰依赖面）。
+- tantivy 语法炸串 → ILIKE 兜底是**降级路径**：ILIKE token 是字母/数字连续段（CJK 整段
+  子串匹配），精度低于 BM25 字符面 AND —— 只保证兜底不空转。

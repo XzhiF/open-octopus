@@ -1,7 +1,7 @@
 import { BasePgDAO, type PgSql } from "./base-pg"
 import type { EvolutionLogRow, ExperienceRow, ExperienceRowV2, InsightMarkRow } from "../types"
 import { bool, flag, iso, jsonStr, num } from "./pg-mappers"
-import { segTokens } from "../../cjk-segmenter"
+import { queryTokens, scoreNorm } from "./query-tokens"
 
 /**
  * EvolutionDAO — skill evolution and experience management.
@@ -17,9 +17,10 @@ import { segTokens } from "../../cjk-segmenter"
  *     outcome 列保持 text，写入侧全部是 JSON.stringify 产物；非 JSON 脏行会抛
  *     22P02（SQLite json_extract 静默 NULL），归属见 B3 报告。
  *
- * FTS 面（P1 B3 重设计）：experiences_fts 虚表 + jieba 预分词影子列退役 ——
- *   段1 ILIKE 粗实现守回归，段2 pg_search BM25（idx_experiences_bm25，jieba
- *   tokenizer）+ ILIKE 兜底。返回原文 content/skill_name 的契约不变。
+ * FTS 面（P1 B3 段2 终态）：experiences_fts 虚表 + jieba 预分词影子列退役 ——
+ *   检索走 experiences 真表 pg_search BM25 索引 idx_experiences_bm25
+ *   （列面 = 旧 MATCH 面：skill_name/content/scope/scope_ref/pattern_tags），
+ *   tantivy 抛错或零命中退回 ILIKE 两段式。返回原文 content/skill_name 的契约不变。
  */
 
 /** ILIKE 模式串转义。 */
@@ -204,11 +205,23 @@ export class EvolutionDAO extends BasePgDAO {
 
   /**
    * v1 experiences search. Returns ORIGINAL content, never a tokenized blob.
-   * 段1 粗实现：token ILIKE（skill_name/content 面）AND→OR；无 token → 全文
-   * LIKE 兜底（与旧「buildFtsMatch null → LIKE」同构）。段2 换 BM25。
+   * B3 段2：主路径 BM25（idx_experiences_bm25，逐列 &&& 自 OR —— key 列 |||
+   * 只查 key 本身，跨列没有快捷式）；tantivy 抛错（语法 token/空串）退回
+   * ILIKE 两段式（AND→OR + 无 token 全文 LIKE，与段1 同构）。
    */
   async searchExperiences(query: string, limit: number = 10): Promise<Array<{ skill_name: string; content: string }>> {
-    const tokens = segTokens(query)
+    try {
+      const rows = await this.q<{ skill_name: string; content: string }>(
+        `SELECT skill_name, content FROM experiences
+         WHERE skill_name &&& ? OR content &&& ?
+         ORDER BY paradedb.score(id) DESC, created_at DESC LIMIT ?`,
+        [query, query, limit],
+      )
+      if (rows.length > 0) return rows
+    } catch {
+      // tantivy 解析失败 → ILIKE 兜底
+    }
+    const tokens = queryTokens(query)
     const run = async (terms: string[], mode: 'and' | 'or'): Promise<Array<{ skill_name: string; content: string }>> => {
       const joiner = mode === 'and' ? ' AND ' : ' OR '
       const legs = terms.map(() => `(skill_name ILIKE ? OR content ILIKE ?)`)
@@ -297,7 +310,9 @@ export class EvolutionDAO extends BasePgDAO {
   /**
    * recall 面检索（原 experiences_fts BM25 + org/scope 过滤 + rank 的替身）。
    * 与 searchByScope 同构但带 org 隔离，且返回归一 score（(0,1)，与会场面同尺）。
-   * 段2 换 BM25 后 score = paradedb.score 的 s/(1+s) 归一。
+   * B3 段2：主路径 BM25（skill_name/content 面 &&&），score = paradedb.score
+   * 的 s/(1+s) 归一（越大越相关方向）；抛错或零命中 → ILIKE 两段式分层常数分。
+   * 空/纯标点查询 → 显式空数组（与段1 同）。
    */
   async searchExperiencesForRecall(
     query: string,
@@ -305,8 +320,30 @@ export class EvolutionDAO extends BasePgDAO {
     scope: string | undefined,
     limit: number,
   ): Promise<Array<{ id: number; skill_name: string; content: string; scope: string | null; created_at: string; score: number }>> {
-    const tokens = segTokens(query)
+    const tokens = queryTokens(query)
     if (tokens.length === 0) return []
+    try {
+      let sql = `
+        SELECT id, skill_name, content, scope, created_at, paradedb.score(id) AS score
+        FROM experiences
+        WHERE (skill_name &&& ? OR content &&& ?) AND org = ?`
+      const params: unknown[] = [query, query, org]
+      if (scope) { sql += ` AND scope = ?`; params.push(scope) }
+      sql += ` ORDER BY paradedb.score(id) DESC, created_at DESC LIMIT ?`
+      params.push(limit)
+      const rows = await this.q<{
+        id: string | number; skill_name: string; content: string;
+        scope: string; created_at: Date | string; score: unknown
+      }>(sql, params)
+      if (rows.length > 0) {
+        return rows.map((r) => ({
+          id: num(r.id), skill_name: r.skill_name, content: r.content,
+          scope: r.scope ?? null, created_at: iso(r.created_at), score: scoreNorm(r.score),
+        }))
+      }
+    } catch {
+      // tantivy 解析失败 → ILIKE 兜底
+    }
     const run = async (mode: 'and' | 'or', score: number) => {
       const joiner = mode === 'and' ? ' AND ' : ' OR '
       const legs = tokens.map(() => `(skill_name ILIKE ? OR content ILIKE ?)`)
@@ -374,9 +411,10 @@ export class EvolutionDAO extends BasePgDAO {
 
   /**
    * Scope-aware search（原 experiences_fts MATCH 面的替身）。
-   * 段1 粗实现：token ILIKE 覆盖 skill_name/content/scope_ref/pattern_tags
-   * （旧虚表这些列全部进 MATCH 面，保持召回口径），AND→OR；无 token → ILIKE
-   * 全文兜底。段2 换 BM25。返回原文。
+   * B3 段2：主路径 BM25，逐列 &&& 自 OR 覆盖旧 MATCH 面
+   * （skill_name/content/scope_ref/pattern_tags —— pattern_tags 为 jsonb，
+   * bm25 已实测支持）；抛错或零命中 → ILIKE 两段式（token queryTokens，
+   * AND→OR；无 token → ILIKE 全文兜底）。返回原文。
    */
   async searchByScope(
     query: string,
@@ -388,7 +426,24 @@ export class EvolutionDAO extends BasePgDAO {
       id: num(r.id), skill_name: r.skill_name, content: r.content, scope: r.scope,
       scope_ref: r.scope_ref, pattern_tags: jsonStr(r.pattern_tags) ?? '[]', outcome: r.outcome,
     })
-    const tokens = segTokens(query)
+    const tokens = queryTokens(query)
+
+    try {
+      let sql = `
+        SELECT * FROM experiences
+        WHERE (skill_name &&& ? OR content &&& ? OR scope_ref &&& ? OR pattern_tags &&& ?)`
+      const params: unknown[] = [query, query, query, query]
+      if (scope) {
+        sql += ` AND scope = ?`
+        params.push(scope)
+      }
+      sql += ` ORDER BY paradedb.score(id) DESC, created_at DESC LIMIT ?`
+      params.push(safeLimit)
+      const rows = await this.q<ExperiencePgRow>(sql, params)
+      if (rows.length > 0) return rows.map(pick)
+    } catch {
+      // tantivy 解析失败 → ILIKE 兜底
+    }
 
     const run = async (terms: string[], mode: 'and' | 'or'): Promise<Array<ExperiencePgRow>> => {
       const joiner = mode === 'and' ? ' AND ' : ' OR '

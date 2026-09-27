@@ -40,8 +40,9 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   const app = new Hono()
 
   // ── Memory — rebuild-fts ─────────────────────────────────────────
-  // 存量 FTS 索引重建入口（显式，绝不上启动路径）。jieba 预分词改造后，
-  // 旧库里的 experiences_fts / session_memory_fts 需经此端点一次性重灌才可中文命中。
+  // 检索面「重建」历史入口（显式，绝不上启动路径）。P1 B3 段2 后 PG 侧 bm25
+  // 索引由引擎自动维护，本端点语义收缩为幂等计数（两面可检索行数，见
+  // recall-service.rebuildSearchIndexes）。
   app.post('/memory/rebuild-fts', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
