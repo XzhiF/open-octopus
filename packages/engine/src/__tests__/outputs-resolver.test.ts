@@ -85,11 +85,12 @@ describe("resolveOutputsExpression", () => {
     expect(result).toBe("Alice is great")
   })
 
-  it("returns literal strings not starting with $ as-is", () => {
+  it("substitutes embedded $-references in template strings (rule 6 broadened in #37)", () => {
     const pool = new VarPool({ name: "Alice" })
-    // Strings not starting with $ are literals — no substitution performed
+    // Since sub_workflow I/O mapping support, any expression CONTAINING $
+    // (not just $-prefixed ones) goes through substituteVars template interpolation.
     const result = resolveOutputsExpression("Hello $vars.name!", pool, undefined, undefined)
-    expect(result).toBe("Hello $vars.name!")
+    expect(result).toBe("Hello Alice!")
   })
 
   it("returns literal strings as-is", () => {

@@ -3,8 +3,8 @@
   "packages": {
     "shared": 15,
     "cli": 1,
-    "engine": 70,
-    "providers": 6,
+    "engine": 67,
+    "providers": 3,
     "server": 690,
     "web-app": 78
   }
