@@ -96,8 +96,9 @@ describePg("WorkflowExecutor is task-agnostic after 票03", () => {
     // throw at arity. (Runtime Function.length counts declared params.)
     const executor = new WorkflowExecutor(
       mockSSE,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
+      // P1 B5 票4：config/run DAO 已 BasePgDAO 化 —— 句柄只吃 PG Sql（票1）
+      new ScheduleConfigDAO(pg!.sql),
+      new ScheduleRunDAO(pg!.sql),
       new ExecutionDAO(db),
       { createFromSpec: vi.fn(), delete: vi.fn() } as never,
     )
@@ -247,7 +248,7 @@ describePg("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
   const execId = "e2e-td-exec"
   const wsId = "e2e-td-ws"
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF")
@@ -255,11 +256,23 @@ describePg("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
       `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
        VALUES (?, 'E2E_TD_ws', ?, '/tmp/e2e-td', datetime('now'), datetime('now'))`,
     ).run(wsId, ORG)
+    await pg!.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+       VALUES ($1, 'E2E_TD_ws', $2, '/tmp/e2e-td', now(), now())`,
+      [wsId, ORG],
+    )
     createFromSpecMock = vi.fn(() => ({ id: "ws-new-1" }))
+    // 混窗：schedules/schedule_executions 读端已 PG；ws-new-1 由 mock 造出，
+    // PG 侧补一行给 schedule_workspaces 的 FK 用（票5 ExecutionDAO/WorkspaceDAO 迁移后归一）。
+    await pg!.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+       VALUES ('ws-new-1', 'E2E_TD_ws_new', $1, '/tmp/e2e-td-new', now(), now()) ON CONFLICT (id) DO NOTHING`,
+      [ORG],
+    )
     executor = new WorkflowExecutor(
       mockSSE,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
+      new ScheduleConfigDAO(pg!.sql),
+      new ScheduleRunDAO(pg!.sql),
       new ExecutionDAO(db),
       { createFromSpec: createFromSpecMock, delete: vi.fn() } as never,
     )
@@ -275,17 +288,19 @@ describePg("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
       max_retain: 10,
     } as unknown as WorkflowConfig
     const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds,
         notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version,
         consecutive_failures, max_retain, status)
-       VALUES (?, ?, ?, NULL, 'UTC', 1, 3600, 0, ?, ?, 'workflow', ?, 'skip', 1, 0, 10, 'running')`,
-    ).run(schedId, ORG, "E2E_TD_task", now, now, JSON.stringify(config))
-    db.prepare(
+       VALUES ($1, $2, $3, NULL, 'UTC', true, 3600, false, now(), now(), 'workflow', $4::jsonb, 'skip', 1, 0, 10, 'running')`,
+      [schedId, ORG, "E2E_TD_task", JSON.stringify(config)],
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
         timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-    ).run(execId, schedId)
+       VALUES ($1, $2, 'triggered', 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+      [execId, schedId],
+    )
     const job = {
       id: schedId, name: "E2E_TD_task", job_type: "workflow", cron_expression: "0 9 * * *", timezone: "UTC",
       enabled: true, org: ORG, config, parallel_policy: "skip", timeout_seconds: 3600, notify_on_failure: false,

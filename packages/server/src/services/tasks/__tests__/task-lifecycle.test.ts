@@ -151,6 +151,37 @@ async function updateTask(id: string, sets: Record<string, string | number | nul
   await pg!.sql.unsafe(text, [...cols.map((c) => sets[c] as never), id])
 }
 
+// 混窗计量镜像（B5 票4）：ExecutionDAO 仍 SQLite（票5 迁），而 countActiveWork
+// 已随 ScheduleRunDAO 读 PG —— 计量前把 SQLite 的 workspaces/executions 行镜像进 PG，
+// 让闸读到「真实在飞工作」（与迁移前语义一致）。票5 单引擎收口后删除。
+const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
+
+async function mirrorExecsToPg(): Promise<void> {
+  const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
+    .all() as Array<{ id: string; name: string; org: string; path: string }>
+  for (const w of wss) {
+    await pg!.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, now(), now()) ON CONFLICT (id) DO NOTHING`,
+      [w.id, w.name, w.org, w.path],
+    )
+  }
+  const exs = db.prepare(
+    `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+            status, org, task_id, phase_index, round_index FROM executions`,
+  ).all() as Array<Record<string, string | number | null>>
+  for (const e of exs) {
+    await pg!.sql.unsafe(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, org, task_id, phase_index, round_index, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),now())
+       ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
+      [e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0, e.workflow_ref, e.workflow_name,
+        e.status, e.org, e.task_id, e.phase_index, e.round_index],
+    )
+  }
+}
+
 beforeAll(async () => {
   if (!pgTestEnabledOn()) return
   pg = await setupRegisteredPgSchema()
@@ -167,8 +198,9 @@ beforeEach(async () => {
   db.pragma("foreign_keys = ON")
   applySchema(db)
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
-  // PG 侧每用例清 tasks（本文件唯一的 PG 表），与 :memory: SQLite 同生命周期。
-  await pg!.truncate("tasks")
+  // PG 侧每用例清 tasks + 镜像表（executions/workspaces/schedules/schedule_executions），
+  // 与 :memory: SQLite 同生命周期（B5 票4：混窗镜像会写这些表，用例间必须清零）。
+  await pg!.truncate("tasks", "schedule_executions", "schedules", "executions", "workspaces")
   stub.db = db
   stub.started = []
   stub.live = new Set()
@@ -561,18 +593,25 @@ describePg("task-lifecycle — the claim queue and the concurrency gate", () => 
       await svc.armTask(id)
     }
     // One cron job fire in flight occupies a slot: cap is 2, so only ONE task may start.
+    // （计量表读 PG —— fire 行落 PG 侧；任务行的在飞状态经镜像同步，见上。）
     const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-       VALUES ('s-job', 'xzf', 'S', '* * * * *', 'UTC', 1, 'workflow', '{}', ?, ?)`,
-    ).run(now, now)
-    db.prepare(
+       VALUES ('s-job', 'xzf', 'S', '* * * * *', 'UTC', true, 'workflow', '{}'::jsonb, now(), now())`,
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
          timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES ('f1', 's-job', 'running', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    ).run(now, now)
+       VALUES ('f1', 's-job', 'running', 'scheduled', $1, '+00:00', 'UTC', $1, 'scheduler')`,
+      [now],
+    )
 
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+      await mirrorExecsToPg()
+      return ORIGINAL_METER.call(this, opts)
+    })
     const { launched, capped } = await svc.launchQueued()
+    vi.restoreAllMocks()
     expect(launched).toBe(1)
     expect(capped).toBe(true)
     expect(latestRoot("c2")!.status).toBe("running")
@@ -584,16 +623,15 @@ describePg("task-lifecycle — the claim queue and the concurrency gate", () => 
     // Two armed tasks, cap 2, one task-lifecycle fire running → both must still launch.
     await insertTask("c5"); await insertTask("c6")
     await svc.armTask("c5"); await svc.armTask("c6")
-    const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-       VALUES ('builtin-task-lifecycle', 'xzf', '系统', '* * * * *', 'UTC', 1, 'job', '{}', ?, ?)`,
-    ).run(now, now)
-    db.prepare(
+       VALUES ('builtin-task-lifecycle', 'xzf', '系统', '* * * * *', 'UTC', true, 'job', '{}'::jsonb, now(), now())`,
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
          timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES ('f2', 'builtin-task-lifecycle', 'running', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    ).run(now, now)
+       VALUES ('f2', 'builtin-task-lifecycle', 'running', 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+    )
     expect((await svc.launchQueued()).launched).toBe(2)
   })
 
@@ -1029,12 +1067,14 @@ describePg("task-lifecycle — tick (what the cron cadence drives)", () => {
   })
 
   it("the tick's own fire is not counted as work by the gate", async () => {
-    const run = new ScheduleRunDAO(db)
+    const run = new ScheduleRunDAO(pg!.sql)
     await insertTask("f6"); await svc.armTask("f6")
-    const before = run.countActiveWork()
+    await mirrorExecsToPg()
+    const before = await run.countActiveWork()
     expect(before).toBe(0) // pending holds no compute slot
     await svc.launchQueued()
-    expect(run.countActiveWork()).toBe(1)
+    await mirrorExecsToPg()
+    expect(await run.countActiveWork()).toBe(1)
   })
 })
 
@@ -1058,7 +1098,8 @@ describePg("task-lifecycle — abort", () => {
     expect(cancelled).toEqual([])
     expect(execs.findById(execId)!.status).toBe("aborted")
     // Queue retirement must not disturb a live sibling: nothing else is running here.
-    expect(new ScheduleRunDAO(db).countActiveWork()).toBe(0)
+    await mirrorExecsToPg()
+    expect(await new ScheduleRunDAO(pg!.sql).countActiveWork()).toBe(0)
   })
 
   it("an abort frees the slot and the queue drains in the same breath (票05)", async () => {
