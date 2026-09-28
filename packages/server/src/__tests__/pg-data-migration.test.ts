@@ -158,7 +158,9 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
 
     // 逐表行数：隔离位精确命中（级联孤儿：n2/(n2,0)/l2 引用被隔离的 e2/n2）
     await expect(counts('workspaces')).resolves.toBe(2)
-    await expect(counts('executions')).resolves.toBe(1)
+    // [B5 混合期撤 FK] executions→workspaces FK 已撤（票5 裁决 c）→ e3（引用 ghost-ws）
+    // 不再是 fk-orphan，随 e1 一并进表：2 行（e2 非法 JSON / e4 布尔域外仍隔离）。
+    await expect(counts('executions')).resolves.toBe(2)
     await expect(counts('node_executions')).resolves.toBe(1)
     // agent_events 在 PG schema 无 FK→node_executions（B0 原样）→ 级联不覆盖：3 行全进（含 (n2,0)）
     await expect(counts('agent_events')).resolves.toBe(3)
@@ -192,10 +194,11 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
     expect(Number(ev[0].timestamp)).toBe(1759000000123)
     expect(String(ev[0].content)).toBe('line1\nline2\ttabbed back\\slash 🎯')
 
-    // 隔离清单 JSON：6 行脏（e2 json / e3、e4、n2、n3 各一 / l4 int 越界）。
+    // 隔离清单 JSON：5 行脏（e2 json / e4、n2、n3 各一 / l4 int 越界）。
     // [B4 混合期撤 FK] l2/l3 的 fk-orphan 检测随 llm_calls→node_executions FK 撤除而消失。
+    // [B5 混合期撤 FK] e3 的 fk-orphan 检测随 executions→workspaces FK 撤除而消失。
     const jq = JSON.parse(fs.readFileSync(path.join(reportDir, 'run1.quarantine.json'), 'utf8'))
-    expect(jq.problems.length).toBe(6)
+    expect(jq.problems.length).toBe(5)
     expect(jq.problems.some((p: { kind: string }) => p.kind === 'json-col-unparseable')).toBe(true)
     expect(jq.problems.some((p: { kind: string; table: string; pk: string }) =>
       p.kind === 'fk-orphan' && p.table === 'node_executions' && p.pk === 'n2')).toBe(true) // 级联孤儿
@@ -207,7 +210,7 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
       '--report', path.join(reportDir, 'run2.md')])
     expect(r.code).toBe(2)
     await expect(counts('workspaces')).resolves.toBe(2)
-    await expect(counts('executions')).resolves.toBe(1)
+    await expect(counts('executions')).resolves.toBe(2)
     await expect(counts('node_executions')).resolves.toBe(1)
     // agent_events 在 PG schema 无 FK→node_executions（B0 原样）→ 级联不覆盖：3 行全进（含 (n2,0)）
     await expect(counts('agent_events')).resolves.toBe(3)

@@ -127,9 +127,14 @@ async function loadPgMeta(sql) {
     SELECT table_name FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name LIKE '%\\_fts%' ESCAPE '\\'`
   const tables = new Map()
+  const identSet = new Set(identRows.map((r) => `${r.t}.${r.c}`))
   for (const r of colRows) {
     if (!tables.has(r.table_name)) tables.set(r.table_name, [])
-    tables.get(r.table_name).push({ name: r.column_name, type: r.data_type, notnull: r.notnull, hasdefault: r.hasdefault })
+    // IDENTITY 列（attidentity='d'）column_default 为空但有自动发号 —— 视作有默认，
+    // 否则 tableShape 的 pgOnlyNotNull 判定会把「SQLite 无源的 IDENTITY 列」（如
+    // P1 B5 票5 新增的 executions.seq）当成每行必脏，整表被隔离。
+    const hasdefault = r.hasdefault || identSet.has(`${r.table_name}.${r.column_name}`)
+    tables.get(r.table_name).push({ name: r.column_name, type: r.data_type, notnull: r.notnull, hasdefault })
   }
   const fks = fkRows
     .filter((r) => r.child !== r.parent && tables.has(r.child) && tables.has(r.parent))
