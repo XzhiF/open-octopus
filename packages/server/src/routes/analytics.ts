@@ -293,11 +293,13 @@ export default createAnalyticsLogRoutes
  */
 export function assignTurnsToEvents(
   events: Array<Record<string, unknown>>,
-  calls: Array<{ node_execution_id: string; turn_index: number; timestamp: number }>,
+  calls: Array<{ node_execution_id: string | null; turn_index: number; timestamp: number }>,
 ): Array<Record<string, unknown>> {
   const boundsByNode = new Map<string, TurnBoundary[]>()
   const callsByNode = new Map<string, Array<{ turn_index: number; timestamp: number }>>()
   for (const c of calls) {
+    // v47/KD17: 聊天/压缩类行无执行链路，node_execution_id 可空 —— 无回合可派生，跳过。
+    if (c.node_execution_id == null) continue
     const arr = callsByNode.get(c.node_execution_id) ?? []
     arr.push({ turn_index: c.turn_index, timestamp: c.timestamp })
     callsByNode.set(c.node_execution_id, arr)
@@ -420,7 +422,7 @@ export function createAnalyticsRoutes(
     const executionId = c.req.param('id') ?? ''
     const nodeId = c.req.query('nodeId')
 
-    const events = execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
+    const events = await execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
     const calls = await tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
     // 词汇归一（merged → 可渲染形状）先于回合派生：tool_call 折叠后回合窗口取起始行。
@@ -434,7 +436,7 @@ export function createAnalyticsRoutes(
   })
 
   router.get('/executions/:id/llm-calls', async (c: Context) => {
-    const executionId = c.req.param('id')
+    const executionId = c.req.param('id') ?? ''
     const nodeId = c.req.query('nodeId')
 
     const calls = await tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
@@ -528,18 +530,18 @@ export function createAnalyticsRoutes(
 
   // --- Workspace Analytics ---
   router.get('/workspaces/:id/analytics', async (c: Context) => {
-    const workspaceId = c.req.param('id')
+    const workspaceId = c.req.param('id') ?? ''
     const range = c.req.query('range') ?? '7d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : 7
     const cutoff = new Date(Date.now() - days * 86400000).toISOString()
     const tsCutoff = Date.now() - days * 86400000
 
-    const totalExecutions = execDAO.countByWorkspaceSince(workspaceId, cutoff)
-    const successRate = execDAO.successRateByWorkspaceSince(workspaceId, cutoff)
+    const totalExecutions = await execDAO.countByWorkspaceSince(workspaceId, cutoff)
+    const successRate = await execDAO.successRateByWorkspaceSince(workspaceId, cutoff)
     const totalCost = await tokenUsageDAO.costForWorkspaceSince(workspaceId, cutoff)
-    const avgDurationMs = execDAO.avgDurationByWorkspaceSince(workspaceId, cutoff)
-    const workflowStats = execDAO.workflowStatsByWorkspace(workspaceId, cutoff)
-    const dailyTrend = execDAO.dailyTrendByWorkspace(workspaceId, cutoff)
+    const avgDurationMs = await execDAO.avgDurationByWorkspaceSince(workspaceId, cutoff)
+    const workflowStats = await execDAO.workflowStatsByWorkspace(workspaceId, cutoff)
+    const dailyTrend = await execDAO.dailyTrendByWorkspace(workspaceId, cutoff)
 
     return c.json({
       data: {
@@ -556,14 +558,14 @@ export function createAnalyticsRoutes(
 
   // --- Per-Workflow Analytics ---
   router.get('/workspaces/:id/analytics/workflows/:ref', async (c: Context) => {
-    const workspaceId = c.req.param('id')
+    const workspaceId = c.req.param('id') ?? ''
     const ref = c.req.param('ref')
     const range = c.req.query('range') ?? '7d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : 7
     const cutoff = new Date(Date.now() - days * 86400000).toISOString()
     const tsCutoff = Date.now() - days * 86400000
 
-    const executions = execDAO.findExecutionsByWorkflow(workspaceId, ref, cutoff, 100)
+    const executions = await execDAO.findExecutionsByWorkflow(workspaceId, ref, cutoff, 100)
 
     const llmCalls = await tokenUsageDAO.findLlmCallsByWorkflowSince(workspaceId, ref, tsCutoff)
 
@@ -636,7 +638,7 @@ export function createAnalyticsRoutes(
 
   // --- Cost Analysis ---
   router.get('/workspaces/:id/analytics/cost', async (c: Context) => {
-    const workspaceId = c.req.param('id')
+    const workspaceId = c.req.param('id') ?? ''
     const range = c.req.query('range') ?? '30d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : range === '7d' ? 7 : 1
     const tsCutoff = Date.now() - days * 86400000
@@ -663,7 +665,7 @@ export function createAnalyticsRoutes(
   const suggestionEngine = new SuggestionEngine()
 
   router.get('/workspaces/:id/suggestions', async (c: Context) => {
-    const workspaceId = c.req.param('id')
+    const workspaceId = c.req.param('id') ?? ''
     const status = c.req.query('status')
 
     // Build RuleContext from injected DAOs
@@ -679,7 +681,7 @@ export function createAnalyticsRoutes(
 
   // --- SuggestionEngine POST (apply) ---
   router.post('/workspaces/:id/suggestions/:sid/apply', (c: Context) => {
-    const workspaceId = c.req.param('id')
+    const workspaceId = c.req.param('id') ?? ''
     const suggestionId = c.req.param('sid')
 
     return c.req.json().then((changes: Record<string, unknown>) => {
