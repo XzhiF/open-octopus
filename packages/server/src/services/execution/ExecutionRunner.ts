@@ -14,14 +14,14 @@ export interface RunnerDeps {
   sse: SSEService
   workspaceId: string
   // Callbacks to the lifecycle for cross-cutting concerns
-  updateStatus: (id: string, status: string, extra?: Record<string, unknown>) => void
-  cleanupOrphanedNodes: (id: string, finalStatus: string) => void
+  updateStatus: (id: string, status: string, extra?: Record<string, unknown>) => Promise<void>
+  cleanupOrphanedNodes: (id: string, finalStatus: string) => Promise<void>
   executeWorkflowHooks: (event: keyof WorkflowHooks, context: Record<string, unknown>, wf: { parsed: any }, executionId: string) => Promise<void>
   getWorkflow: (ref: string) => { ref: string; content: string; parsed: any } | undefined
-  findFailedNode: (executionId: string) => string
-  findFailedNodeError: (executionId: string) => string
+  findFailedNode: (executionId: string) => Promise<string>
+  findFailedNodeError: (executionId: string) => Promise<string>
   findNodeDef: (nodes: any[], nodeId: string) => any | null
-  syncStateJson: () => void
+  syncStateJson: () => Promise<void>
   approve: (id: string, nodeId: string, answer: string, comment?: string) => Promise<any>
   recordEndCommits: () => Promise<string>
   abortAndWait: (abortController: AbortController, executionId?: string, timeoutMs?: number) => Promise<void>
@@ -63,7 +63,7 @@ export class ExecutionRunner {
       }
 
       if (result.status === "pending_approval") {
-        dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
+        await dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
         const nextPausedNodeId = Object.entries(result.nodeResults).find(([, r]: [string, any]) => r.status === "paused")?.[0]
         if (nextPausedNodeId) {
           const wf = this.deps.getWorkflow(workflowRef)
@@ -80,19 +80,19 @@ export class ExecutionRunner {
         }
       }
 
-      this.deps.updateStatus(executionId, result.status, {
+      await this.deps.updateStatus(executionId, result.status, {
         completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
         var_pool: JSON.stringify(result.poolSnapshot),
         gate_status: result.status === "pending_approval" ? "pending" : (result.status === "completed" ? "open" : "closed"),
       })
 
-      this.deps.cleanupOrphanedNodes(executionId, result.status)
+      await this.deps.cleanupOrphanedNodes(executionId, result.status)
 
       const wfForHook = this.deps.getWorkflow(workflowRef)
       if (wfForHook) {
         if (result.status === "failed") {
           await this.deps.executeWorkflowHooks("on_workflow_failure", {
-            failed_node_id: this.deps.findFailedNode(executionId), error: this.deps.findFailedNodeError(executionId), duration_ms: result.durationMs,
+            failed_node_id: await this.deps.findFailedNode(executionId), error: await this.deps.findFailedNodeError(executionId), duration_ms: result.durationMs,
           }, wfForHook, executionId)
         }
         if (result.status === "completed") {
@@ -102,7 +102,7 @@ export class ExecutionRunner {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[ExecutionRunner] Resume failed for ${executionId}:`, msg)
-      dao.updateExecution(executionId, { status: "failed", var_pool: JSON.stringify({ error: msg }) })
+      await dao.updateExecution(executionId, { status: "failed", var_pool: JSON.stringify({ error: msg }) })
       enginePool.remove(executionId)
     }
   }
@@ -131,7 +131,7 @@ export class ExecutionRunner {
       }
 
       if (result.status === "pending_approval") {
-        dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
+        await dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
         const nextPausedEntry = Object.entries(result.nodeResults).find(([, r]: [string, any]) => r.status === "paused" || r.status === "pending_approval")
         const nextPausedNodeId = nextPausedEntry?.[0]
         if (nextPausedNodeId) {
@@ -149,34 +149,34 @@ export class ExecutionRunner {
         }
       }
 
-      const currentExec = dao.findById(executionId)
+      const currentExec = await dao.findById(executionId)
       if (currentExec?.status === "paused") {
-        const nodeStats = dao.findNodeStatsForExecution(executionId)
+        const nodeStats = await dao.findNodeStatsForExecution(executionId)
         if (nodeStats.running_or_pending === 0) {
           console.log(`[ExecutionRunner] Execution ${executionId} was paused but all nodes completed during approve`)
         } else {
           console.log(`[ExecutionRunner] Execution ${executionId} paused, ${nodeStats.running_or_pending} nodes still running`)
-          this.deps.syncStateJson()
+          await this.deps.syncStateJson()
           return
         }
       }
 
       const endCommitId = await this.deps.recordEndCommits()
-      dao.updateExecution(executionId, { end_commit_id: endCommitId })
+      await dao.updateExecution(executionId, { end_commit_id: endCommitId })
 
-      this.deps.updateStatus(executionId, result.status, {
+      await this.deps.updateStatus(executionId, result.status, {
         completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
         var_pool: JSON.stringify(result.poolSnapshot),
         gate_status: result.status === "completed" ? "open" : "closed",
       })
 
-      this.deps.cleanupOrphanedNodes(executionId, result.status)
+      await this.deps.cleanupOrphanedNodes(executionId, result.status)
 
       const wfForHook = this.deps.getWorkflow(workflowRef)
       if (wfForHook) {
         if (result.status === "failed") {
           await this.deps.executeWorkflowHooks("on_workflow_failure", {
-            failed_node_id: this.deps.findFailedNode(executionId), error: this.deps.findFailedNodeError(executionId), duration_ms: result.durationMs,
+            failed_node_id: await this.deps.findFailedNode(executionId), error: await this.deps.findFailedNodeError(executionId), duration_ms: result.durationMs,
           }, wfForHook, executionId)
         }
         if (result.status === "completed") {
@@ -185,21 +185,21 @@ export class ExecutionRunner {
         await this.deps.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wfForHook, executionId)
       }
 
-      this.deps.syncStateJson()
+      await this.deps.syncStateJson()
       sse.emit(workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[ExecutionRunner] Approve continuation failed for ${executionId}:`, msg)
       enginePool.remove(executionId)
 
-      this.deps.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
-      dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending"], { error: `Approve failed: ${msg}` })
-      this.deps.syncStateJson()
+      await this.deps.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
+      await dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending"], { error: `Approve failed: ${msg}` })
+      await this.deps.syncStateJson()
 
       try {
         const wfForHook = this.deps.getWorkflow(workflowRef)
         if (wfForHook) {
-          await this.deps.executeWorkflowHooks("on_workflow_failure", { failed_node_id: this.deps.findFailedNode(executionId), error: msg }, wfForHook, executionId)
+          await this.deps.executeWorkflowHooks("on_workflow_failure", { failed_node_id: await this.deps.findFailedNode(executionId), error: msg }, wfForHook, executionId)
           await this.deps.executeWorkflowHooks("on_complete", { final_status: "failed" }, wfForHook, executionId)
         }
       } catch { /* non-fatal */ }
@@ -233,17 +233,19 @@ export class ExecutionRunner {
       }
 
       const endCommitId = await this.deps.recordEndCommits()
-      dao.updateExecution(executionId, { end_commit_id: endCommitId })
+      await dao.updateExecution(executionId, { end_commit_id: endCommitId })
 
       const finalStatus = result.status === "failed" ? "failed" : "rejected"
 
-      this.deps.updateStatus(executionId, finalStatus, {
+      await this.deps.updateStatus(executionId, finalStatus, {
         completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
         var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: finalStatus === "completed" ? "open" : "closed",
+        // [P1 B5 票5B] 旧 `finalStatus === "completed"` 恒 false（finalStatus 只有 failed/rejected），
+        // on_reject 收尾门恒关 —— 保持原运行时行为（"closed"），死分支清理。
+        gate_status: "closed",
       })
 
-      this.deps.cleanupOrphanedNodes(executionId, result.status)
+      await this.deps.cleanupOrphanedNodes(executionId, result.status)
 
       if (wf) {
         try {
@@ -256,21 +258,21 @@ export class ExecutionRunner {
         } catch { /* non-fatal */ }
       }
 
-      this.deps.syncStateJson()
+      await this.deps.syncStateJson()
       sse.emit(workspaceId, { event: "complete", data: { executionId, finalStatus } })
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[ExecutionRunner] on_reject handler failed for ${executionId}:`, msg)
       enginePool.remove(executionId)
-      this.deps.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
-      dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending", "paused"])
+      await this.deps.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
+      await dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending", "paused"])
       if (wf) {
         try {
           await this.deps.executeWorkflowHooks("on_workflow_failure", { failed_node_id: approvalNodeId, error: msg, duration_ms: 0 }, wf, executionId)
           await this.deps.executeWorkflowHooks("on_complete", { final_status: "failed" }, wf, executionId)
         } catch { /* non-fatal */ }
       }
-      this.deps.syncStateJson()
+      await this.deps.syncStateJson()
       sse.emit(workspaceId, { event: "complete", data: { executionId, finalStatus: "failed", error: msg } })
     }
   }

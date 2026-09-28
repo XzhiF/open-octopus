@@ -31,20 +31,20 @@ export function findNodeDef(nodes: any[], nodeId: string): any | null {
 }
 
 /** Find the first paused node's ID for an execution. */
-export function findPausedNode(dao: ExecutionDAO, executionId: string): string | null {
-  const row = dao.findFirstNodeByStatus(executionId, "paused")
+export async function findPausedNode(dao: ExecutionDAO, executionId: string): Promise<string | null> {
+  const row = await dao.findFirstNodeByStatus(executionId, "paused")
   return row?.node_id ?? null
 }
 
 /** Find the first failed node's ID for an execution. */
-export function findFailedNode(dao: ExecutionDAO, executionId: string): string {
-  const row = dao.findFirstNodeByStatus(executionId, "failed")
+export async function findFailedNode(dao: ExecutionDAO, executionId: string): Promise<string> {
+  const row = await dao.findFirstNodeByStatus(executionId, "failed")
   return row?.node_id ?? "unknown"
 }
 
 /** Find the error message of the first failed node. */
-export function findFailedNodeError(dao: ExecutionDAO, executionId: string): string {
-  const row = dao.findFirstNodeErrorByStatus(executionId, "failed")
+export async function findFailedNodeError(dao: ExecutionDAO, executionId: string): Promise<string> {
+  const row = await dao.findFirstNodeErrorByStatus(executionId, "failed")
   return row?.error ?? "Unknown error"
 }
 
@@ -60,11 +60,11 @@ export function isWorkflowNodeId(
 }
 
 /** Ensure all workflow nodes have corresponding node_execution rows. */
-export function ensureNodeExecutions(
+export async function ensureNodeExecutions(
   dao: ExecutionDAO, executionId: string, wf: { nodes: any[] },
-): void {
+): Promise<void> {
   for (const node of collectAllNodes(wf.nodes)) {
-    dao.insertNodeExecutionOrIgnore({
+    await dao.insertNodeExecutionOrIgnore({
       id: `${executionId}-${node.id}`, execution_id: executionId,
       node_id: node.id, node_type: node.type, status: "pending",
     })
@@ -72,15 +72,15 @@ export function ensureNodeExecutions(
 }
 
 /** Ensure all dependency and condition edges are recorded. */
-export function ensureNodeEdges(
+export async function ensureNodeEdges(
   dao: ExecutionDAO,
   executionId: string,
   wf: { nodes: { id: string; type: string; depends_on?: string[]; cases?: { when: string; then: string }[] }[] },
-): void {
+): Promise<void> {
   for (const node of wf.nodes) {
     if (node.depends_on) {
       for (const dep of node.depends_on) {
-        dao.insertNodeEdgeOrIgnore({
+        await dao.insertNodeEdgeOrIgnore({
           id: randomUUID(), execution_id: executionId,
           from_node_id: dep, to_node_id: node.id, edge_type: "dependency",
         })
@@ -88,7 +88,7 @@ export function ensureNodeEdges(
     }
     if (node.type === "condition" && node.cases) {
       for (const c of node.cases) {
-        dao.insertNodeEdgeOrIgnore({
+        await dao.insertNodeEdgeOrIgnore({
           id: randomUUID(), execution_id: executionId,
           from_node_id: node.id, to_node_id: c.then, edge_type: "condition_true", label: c.then,
         })

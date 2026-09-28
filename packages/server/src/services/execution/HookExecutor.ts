@@ -34,7 +34,7 @@ export class HookExecutor implements IHookExecutor {
     const hooks = wf.parsed.hooks?.[event as keyof WorkflowHooks]
     if (!hooks || hooks.length === 0) return
 
-    const exec = this.dao.findById(executionId)
+    const exec = await this.dao.findById(executionId)
     let poolSnapshot: Record<string, string> = {}
     if (exec?.var_pool) {
       try { poolSnapshot = JSON.parse(exec.var_pool) } catch { /* use empty pool */ }
@@ -81,11 +81,14 @@ export class HookExecutor implements IHookExecutor {
       id: hook.id ?? `hook-bash-${Date.now()}`, type: "bash",
       bash: hook.bash!, timeout: hook.timeout ?? 60,
     }
-    const executor = new BashExecutor(bashNode, pool, undefined,
-      (line, stream) => {
+    // [P1 B5 票5B] engine executor API 已 config-object 化（B1 期），调用点随 dist 刷新对齐
+    const executor = new BashExecutor(bashNode, pool, {
+      onLog: (line, stream) => {
         const label = `[Hook:${hook.id ?? "bash"}${stream === "stderr" ? ":err" : ""}]`
         process.stderr.write(`${label} ${line}\n`)
-      }, this.ctx.workspacePath)
+      },
+      cwd: this.ctx.workspacePath,
+    })
     await executor.execute()
   }
 
@@ -102,7 +105,7 @@ export class HookExecutor implements IHookExecutor {
       timeout: hook.timeout ?? 120, context: "new",
     }
     const runner = new AgentNodeRunner(provider, this.ctx.workspacePath, () => {})
-    const executor = new AgentExecutor(agentNode, pool, runner, undefined, wf.auto_answers, undefined)
+    const executor = new AgentExecutor(agentNode, pool, { runner, globalAutoAnswers: wf.auto_answers })
     await executor.execute()
   }
 }

@@ -9,6 +9,7 @@ import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
 import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
+import { primeCrossExecLookup } from "./cross-exec-primer"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
@@ -81,13 +82,9 @@ export class EngineFactory implements IEngineFactory {
       ? new PromptInjector(pipelineConfig.prompts)
       : undefined
 
-    const lookup = {
-      getById: (eid: string) => {
-        const row = this.dao.findExecutionForLookup(eid)
-        return row ? { parent_id: row.parent_id ?? undefined, var_pool: row.var_pool ?? undefined, input_values: row.input_values ?? undefined } : null
-      },
-      getNodeOutputs: (executionId: string, nodeId: string) => this.dao.findNodeOutputs(executionId, nodeId),
-    }
+    // [P1 B5 票5B §9 人判] shared ExecutionLookup/CrossExecResolver 是 engine 同步替换接缝，
+    // 全链 async 化留票6/B6；此处改引擎创建期预取（PG 异步读 → 同步缓存喂旧接口）。
+    const lookup = await primeCrossExecLookup(this.dao, execution.id, [JSON.stringify(workflow ?? {})])
     const crossExecResolver = new CrossExecResolver(lookup)
 
     // Resolve providers from workflow node engines

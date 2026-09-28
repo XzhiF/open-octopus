@@ -142,7 +142,9 @@ if (db) {
     process.exit(1)
   }
 
-  ExecutionService.recoverInterruptedExecutions(db)
+  // [P1 B5 票5B] ExecutionDAO→PG 后启动清扫为异步（票6 专项收紧前保持「不阻塞启动」语义：void+catch）。
+  void ExecutionService.recoverInterruptedExecutions(db).catch((err: unknown) =>
+    console.warn("[server] recoverInterruptedExecutions failed:", err instanceof Error ? err.message : String(err)))
   migrateOrgDirs()
   // B1 await 传播（OrgDAO→PG 异步），语义不变：启动期后台同步，失败仅告警。
   void syncOrgsFromFilesystem(daos.org).catch((err: unknown) =>
@@ -227,7 +229,7 @@ if (!process.env.VITEST && daos) {
   }
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+  initArchiveService(daos.archive, daos.execution, db!, getDomainEventBus())
 
   // ── Scheduler seed + one-time archive_cron_hour migration ─────────────
   // system:daily-archive: idempotent seed (insert only if absent), then migrate its
@@ -648,13 +650,13 @@ if (shouldServe) {
       }
 
       // Consume deferred agent hooks now that providers are fully initialized
-      ExecutionService.consumePendingHooks(db).catch((err: unknown) => {
+      ExecutionService.consumePendingHooks(db!).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[server] Failed to consume pending hooks: ${msg}`)
       })
 
       // ★ Auto-resume any pending_resume executions (crash recovery)
-      ExecutionService.resumePendingExecutions(db).catch((err: unknown) => {
+      ExecutionService.resumePendingExecutions(db!).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[server] Failed to resume pending executions: ${msg}`)
       })
@@ -691,15 +693,15 @@ if (shouldServe) {
       // the resolution set = installed built-ins ∪ task-home workflows/.
       const builtInWorkflowService = new BuiltInWorkflowService(resourceRegistry.get())
       const tasksService = new TasksService(
-        db, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
+        db!, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
         // repo-sync + trigger-prebuild (2026-09-08): 尾参装配 —— 镜像同步状态机
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
-      const assistService = new AssistWorkflowService(db, sse)
+      const assistService = new AssistWorkflowService(db!, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
-      const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
+      const roundEvidence = new RoundEvidenceService(db!, sse, tasksService, workspaceService!, taskHomeService)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()

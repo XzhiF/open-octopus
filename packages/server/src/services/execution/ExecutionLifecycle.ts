@@ -41,6 +41,7 @@ import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
 import { ScheduleConfigDAO } from "../../db/dao/schedule-config-dao"
 import { lazyDAO, pgSql } from "../../db/dao/registry"
+import { primeCrossExecLookup, primeRefResolver } from "./cross-exec-primer"
 import { TaskDispatchService } from "../scheduler/task-dispatch-service"
 import { WorkspaceService } from "../workspace"
 import { WorkspaceDAO } from "../../db/dao"
@@ -204,7 +205,7 @@ export class ExecutionLifecycle {
     syncMainBranch?: boolean,
     claimedLease?: string,
   ): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     // Two ways a row arrives here. The normal one: a human or a chain starts a 'pending'
     // row and this method performs the transition. The task one (ADR-0021 票03): the
@@ -227,7 +228,7 @@ export class ExecutionLifecycle {
       process.stderr.write(`[start()] drainPendingHooks failed (non-fatal): ${msg}\n`)
     }
 
-    const runningLeaf = this.dao.findFirstRunningLeaf(exec.workspace_id)
+    const runningLeaf = await this.dao.findFirstRunningLeaf(exec.workspace_id)
     if (runningLeaf && runningLeaf.id !== id) {
       throw Object.assign(new Error("已有叶子节点正在执行，请等待其完成"), { status: 409 })
     }
@@ -235,10 +236,10 @@ export class ExecutionLifecycle {
     const now = new Date().toISOString()
     // A claimed row is already 'running' with the claim's started_at — rewriting it would
     // move the launch instant the queue and the duration math both read.
-    if (!claimedLease) this.updateStatus(id, "running", { started_at: now })
+    if (!claimedLease) await this.updateStatus(id, "running", { started_at: now })
 
     if (inputValues) {
-      this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
+      await this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
     }
 
     const wf = this.getWorkflow(exec.workflow_ref)
@@ -249,8 +250,8 @@ export class ExecutionLifecycle {
     const snapshotName = `${id}-${WorkflowRef.sanitize(exec.workflow_ref)}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")
 
-    ensureNodeExecutions(this.dao, id, wf.parsed)
-    ensureNodeEdges(this.dao, id, wf.parsed)
+    await ensureNodeExecutions(this.dao, id, wf.parsed)
+    await ensureNodeEdges(this.dao, id, wf.parsed)
 
     const abortController = new AbortController()
 
@@ -261,13 +262,9 @@ export class ExecutionLifecycle {
     // must start byte-identically to how it started as a root. The phase tag is the
     // instance marker: a parented row with one is an instance, not a child.
     if (exec.parent_id && exec.parent_id !== "0" && exec.phase_index == null) {
-      const lookup: ExecutionLookup = {
-        getById: (eid: string) => {
-          const row = this.dao.findExecutionForLookup(eid)
-          return row ? { parent_id: row.parent_id ?? undefined, var_pool: row.var_pool ?? undefined, input_values: row.input_values ?? undefined } : null
-        },
-        getNodeOutputs: (executionId: string, nodeId: string) => this.dao.findNodeOutputs(executionId, nodeId),
-      }
+      // [P1 B5 票5B §9 人判] ExecutionLookup 是 shared/engine 同步替换接缝（全链 async 化留票6/B6），
+      // 改为启动期预取：PG 异步读祖先链行+节点输出 → 同步缓存喂 CrossExecResolver。
+      const lookup = await primeCrossExecLookup(this.dao, id, [wf.content])
       const resolver = new CrossExecResolver(lookup)
 
       const yamlInputDefaults: Record<string, string> = {}
@@ -298,13 +295,13 @@ export class ExecutionLifecycle {
 
     // Update input_values in DB before creating engine (factory reads from exec row)
     if (resolvedInputValues) {
-      this.dao.updateExecution(id, { input_values: JSON.stringify(resolvedInputValues) })
+      await this.dao.updateExecution(id, { input_values: JSON.stringify(resolvedInputValues) })
     }
-    const updatedExec = this.dao.findById(id)!
+    const updatedExec = (await this.dao.findById(id))!
 
     // Write budget snapshot from parsed workflow YAML (KD-8: after getWorkflow(), before engine creation)
     if (wf.parsed.budget) {
-      this.dao.updateExecution(id, { budget_snapshot: JSON.stringify(wf.parsed.budget) })
+      await this.dao.updateExecution(id, { budget_snapshot: JSON.stringify(wf.parsed.budget) })
     }
 
     // Build callbacks and optionally wrap through HarnessController
@@ -341,7 +338,7 @@ export class ExecutionLifecycle {
     try {
       if (exec.node_type === "fork" && exec.branch) {
         await this.ensureCleanWorkspace()
-        const parent = this.dao.findParentEndCommit(exec.parent_id)
+        const parent = await this.dao.findParentEndCommit(exec.parent_id)
         const baseCommit = parent?.end_commit_id ? JSON.parse(parent.end_commit_id) : {}
         await this.createForkBranch(exec.branch, baseCommit)
       }
@@ -351,17 +348,17 @@ export class ExecutionLifecycle {
       }
 
       startCommitId = await this.recordStartCommits()
-      this.dao.updateExecution(id, { start_commit_id: startCommitId })
+      await this.dao.updateExecution(id, { start_commit_id: startCommitId })
 
       const pipelineConfig = this.loadPipelineConfig()
-      this.dao.updateExecution(id, { pipeline_config: JSON.stringify(pipelineConfig) })
+      await this.dao.updateExecution(id, { pipeline_config: JSON.stringify(pipelineConfig) })
       const checkpointDir = join(this.workspacePath, ".octopus", "checkpoints")
       const checkpointStore = new FilesystemCheckpointStore(checkpointDir, pipelineConfig.checkpoint)
       const pipelinePath = join(this.workspacePath, "pipeline.yaml")
       engine.setPipelineConfig(pipelineConfig, checkpointStore, pipelinePath)
 
       try {
-        const recentSummaries = this.dao.findRecentSummariesForInjection(exec.workflow_ref, this.workspaceDbId)
+        const recentSummaries = await this.dao.findRecentSummariesForInjection(exec.workflow_ref, this.workspaceDbId)
         if (recentSummaries.length > 0) {
           const historyText = recentSummaries.map((s, i) =>
             `### Run ${i + 1} (${s.created_at}, ${s.status}, ${formatDuration(s.duration_ms)})\n${s.summary}`
@@ -370,13 +367,13 @@ export class ExecutionLifecycle {
         }
       } catch { /* best-effort */ }
 
-      engine.setRefResolver(this.createRefResolver())
+      engine.setRefResolver(await this.createRefResolver(wf.content))
 
       // ── engine_init virtual phase ──────────────────────────
       // Injects a virtual node that copies skills/agents and optionally syncs git
       // before the real workflow nodes execute. Reuses existing EngineCallbacks.
       const initNodeExecutionId = `${id}-__engine_init__`
-      this.dao.insertNodeExecutionOrIgnore({
+      await this.dao.insertNodeExecutionOrIgnore({
         id: initNodeExecutionId,
         execution_id: id,
         node_id: "__engine_init__",
@@ -405,8 +402,8 @@ export class ExecutionLifecycle {
       })
 
       if (initResult.status === "failed") {
-        this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
-        this.syncStateJson()
+        await this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+        await this.syncStateJson()
 
         // Build detailed error message for SSE event
         let errorDetail = "engine_init phase failed"
@@ -419,7 +416,7 @@ export class ExecutionLifecycle {
           data: { executionId: id, nodeId: "__engine_init__", error: errorDetail, cloneErrors: initResult.cloneErrors },
         })
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       // Track the in-flight run so pause/abort can wait for it to actually settle
@@ -437,8 +434,8 @@ export class ExecutionLifecycle {
       }
 
       if (result.status === "pending_approval") {
-        this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
-        const pausedNodeId = this.findPausedNode(id)
+        await this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
+        const pausedNodeId = await this.findPausedNode(id)
         if (pausedNodeId) {
           const nodeDef = this.findNodeDef(wf.parsed.nodes, pausedNodeId)
           const timeout = nodeDef?.approval_timeout
@@ -455,8 +452,8 @@ export class ExecutionLifecycle {
       }
 
       if (result.status === "pending_interaction") {
-        this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
-        const pausedNodeId = this.findPausedNode(id)
+        await this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
+        const pausedNodeId = await this.findPausedNode(id)
         if (pausedNodeId) {
           const nodeDef = this.findNodeDef(wf.parsed.nodes, pausedNodeId)
           const timeout = nodeDef?.interaction_timeout
@@ -475,34 +472,34 @@ export class ExecutionLifecycle {
       }
 
       if (abortController.signal.aborted) {
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       if (result.status === "paused") {
-        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
-        this.syncStateJson()
+        await this.updateStatus(id, result.status, { progress: (result as { progress?: number }).progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        await this.syncStateJson()
         if (result.pauseReason === "harness_delegate") {
           this.sse.emit(this.workspaceId, { event: "harness_delegation", data: { executionId: id, source: "harness_delegate" } })
         } else {
           this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId: id } })
         }
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       if (result.status === "pending_approval") {
-        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
-        this.syncStateJson()
+        await this.updateStatus(id, result.status, { progress: (result as { progress?: number }).progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        await this.syncStateJson()
         const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_approval" || r.status === "paused")
         const approval = pausedNode?.approvalMetadata ?? undefined
         this.sse.emit(this.workspaceId, { event: "execution_pending_approval", data: { executionId: id, approval } })
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       if (result.status === "pending_interaction") {
-        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
-        this.syncStateJson()
+        await this.updateStatus(id, result.status, { progress: (result as { progress?: number }).progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        await this.syncStateJson()
         const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_interaction")
         const interactionMeta = pausedNode?.interactionMetadata
         this.sse.emit(this.workspaceId, {
@@ -515,7 +512,7 @@ export class ExecutionLifecycle {
           },
         })
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       // G1 task_dispatch pause: composition-wf node awaiting a child schedule.
@@ -526,8 +523,8 @@ export class ExecutionLifecycle {
       // schedule correlation (parent execution_id + task_dispatch node_id) is recorded
       // by the TaskDispatchPort on the child schedule's config at dispatch time.
       if (result.status === "pending_task_dispatch") {
-        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
-        this.syncStateJson()
+        await this.updateStatus(id, result.status, { progress: (result as { progress?: number }).progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        await this.syncStateJson()
         const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_task_dispatch")
         const taskDispatchMeta = pausedNode?.taskDispatchMetadata
         this.sse.emit(this.workspaceId, {
@@ -541,23 +538,23 @@ export class ExecutionLifecycle {
           },
         })
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
-      const currentExec = this.dao.findById(id)
+      const currentExec = await this.dao.findById(id)
       if (currentExec?.status === "paused") {
-        const nodeStats = this.dao.findNodeStatsForExecution(id)
+        const nodeStats = await this.dao.findNodeStatsForExecution(id)
         if (nodeStats.running_or_pending === 0) {
           console.log(`[ExecutionLifecycle] Execution ${id} was paused but all nodes completed, updating to ${result.status}`)
         } else {
           console.log(`[ExecutionLifecycle] Execution ${id} was paused and ${nodeStats.running_or_pending} nodes still running/pending, keeping paused status`)
-          this.syncStateJson()
-          return this.dao.findById(id)!
+          await this.syncStateJson()
+          return (await this.dao.findById(id))!
         }
       }
 
       const endCommitId = await this.recordEndCommits()
-      this.dao.updateExecution(id, { end_commit_id: endCommitId })
+      await this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
       // ── Harness status adjustment ──
       // If all real nodes were skipped by harness, the workflow didn't achieve
@@ -576,7 +573,7 @@ export class ExecutionLifecycle {
         }
       }
 
-      this.updateStatus(id, finalStatus, {
+      await this.updateStatus(id, finalStatus, {
         completed_at: new Date().toISOString(),
         duration: result.durationMs,
         progress: 100,
@@ -584,15 +581,15 @@ export class ExecutionLifecycle {
         gate_status: finalStatus === "completed" ? "open" : "closed",
       })
 
-      this.cleanupOrphanedNodes(id, finalStatus)
+      await this.cleanupOrphanedNodes(id, finalStatus)
 
       if (finalStatus === "failed") {
-        this.errorTracker?.capture('execution', this.findFailedNodeError(id) ?? 'workflow execution failed', {
-          execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: wf.parsed.name,
+        this.errorTracker?.capture('execution', await this.findFailedNodeError(id) ?? 'workflow execution failed', {
+          execution_id: id, node_id: await this.findFailedNode(id) ?? undefined, workflow_name: wf.parsed.name,
         })
         await this.executeWorkflowHooks("on_workflow_failure", {
-          failed_node_id: this.findFailedNode(id),
-          error: this.findFailedNodeError(id),
+          failed_node_id: await this.findFailedNode(id),
+          error: await this.findFailedNodeError(id),
           duration_ms: result.durationMs,
         }, wf, id)
       }
@@ -643,7 +640,7 @@ export class ExecutionLifecycle {
       try {
         const summary = generateSummary(wf.parsed.name, result.status, result.nodeResults, result.durationMs)
         const failedNodeIds = Object.entries(result.nodeResults).filter(([_, r]) => r.status === "failed").map(([nodeId]) => nodeId)
-        this.dao.insertSummary({
+        await this.dao.insertSummary({
           id: randomUUID(), execution_id: id, workflow_ref: exec.workflow_ref,
           workspace_id: this.workspaceDbId, summary, status: result.status,
           duration_ms: result.durationMs, failed_nodes: JSON.stringify(failedNodeIds),
@@ -653,7 +650,7 @@ export class ExecutionLifecycle {
         console.error(`[ExecutionLifecycle] Summary generation failed for ${id}: ${msg}`)
       }
 
-      this.syncStateJson()
+      await this.syncStateJson()
       this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
 
       // Clean up harness detectors for this execution
@@ -672,13 +669,13 @@ export class ExecutionLifecycle {
       }
     } catch (err: any) {
       this.errorTracker?.capture('execution', err.message ?? 'execution error', {
-        execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,
+        execution_id: id, node_id: await this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,
       })
       this.clearExternalCallbacks(id)
 
       if (abortController.signal.aborted) {
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
 
       await this.abortAndWait(abortController, id)
@@ -690,20 +687,20 @@ export class ExecutionLifecycle {
           })
           console.error(`[ExecutionLifecycle] Rollback failed for ${id}:`, rollbackErr.message)
         }
-        this.dao.updateExecution(id, { end_commit_id: startCommitId })
+        await this.dao.updateExecution(id, { end_commit_id: startCommitId })
       } else {
         const endCommitId = await this.recordEndCommits()
-        this.dao.updateExecution(id, { end_commit_id: endCommitId })
+        await this.dao.updateExecution(id, { end_commit_id: endCommitId })
       }
 
-      this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
-      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: err.message })
-      this.syncStateJson()
+      await this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+      await this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: err.message })
+      await this.syncStateJson()
       this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, error: err.message } })
 
       try {
         await this.executeWorkflowHooks("on_workflow_failure", {
-          failed_node_id: this.findFailedNode(id), error: err.message, duration_ms: 0,
+          failed_node_id: await this.findFailedNode(id), error: err.message, duration_ms: 0,
         }, wf, id)
         await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wf, id)
       } catch { /* hook errors silently ignored */ }
@@ -714,7 +711,7 @@ export class ExecutionLifecycle {
           // Ticket 04: pass failed status with last failed node
           await this.harnessController.onExecutionEnd(id, {
             status: "failed",
-            lastFailedNodeId: this.findFailedNode(id) ?? undefined,
+            lastFailedNodeId: await this.findFailedNode(id) ?? undefined,
           })
         } catch (harnessErr) {
           console.warn("[ExecutionLifecycle] Harness cleanup failed in error path (non-fatal):", harnessErr)
@@ -722,26 +719,26 @@ export class ExecutionLifecycle {
       }
     }
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   // ==================== Cancel ====================
 
   async cancel(id: string): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (!["running", "paused", "pending_approval", "pending_interaction", "pending_resume"].includes(exec.status))
       throw Object.assign(new Error("Cannot cancel in current status"), { status: 400 })
 
     const now = new Date().toISOString()
     this.enginePool.cancel(id)
-    this.updateStatus(id, "cancelled", { completed_at: now })
+    await this.updateStatus(id, "cancelled", { completed_at: now })
     this.clearExternalCallbacks(id)
-    this.syncStateJson()
+    await this.syncStateJson()
 
-    const runningNodes = this.dao.findRunningNodeExecutionsByStatus(id, ["running", "pending", "paused"])
+    const runningNodes = await this.dao.findRunningNodeExecutionsByStatus(id, ["running", "pending", "paused"])
     for (const ne of runningNodes) {
-      this.updateNodeStatus(ne.id, "cancelled")
+      await this.updateNodeStatus(ne.id, "cancelled")
     }
 
     const wf = this.getWorkflow(exec.workflow_ref)
@@ -762,25 +759,25 @@ export class ExecutionLifecycle {
       }
     }
 
-    const children = this.dao.findChildren(id).filter(
+    const children = (await this.dao.findChildren(id)).filter(
       (c) => ["pending", "running", "paused", "pending_approval"].includes(c.status)
     )
     for (const child of children) {
       try { await this.cancel(child.id) } catch { /* may already be cancelled */ }
     }
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   // ==================== Retry ====================
 
   async retry(id: string, failedNodeId: string, inputValues?: Record<string, string>, intervention?: string): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "failed") throw Object.assign(new Error("Only failed executions can be retried"), { status: 400 })
 
     if (!failedNodeId || !this.isWorkflowNodeId(exec.workflow_ref, failedNodeId)) {
-      const failedNode = this.dao.findFirstNodeByStatus(id, "failed")
+      const failedNode = await this.dao.findFirstNodeByStatus(id, "failed")
       if (failedNode) failedNodeId = failedNode.node_id
     }
     console.log(`[ExecutionLifecycle] Retry ${id}: failedNodeId="${failedNodeId}"`)
@@ -794,21 +791,21 @@ export class ExecutionLifecycle {
         this.enginePool.create(id, inst.engine, inst.abortController)
       }
 
-      this.updateStatus(id, "running", { started_at: new Date().toISOString() })
+      await this.updateStatus(id, "running", { started_at: new Date().toISOString() })
 
       // Clean up orphaned node_executions (stuck "running"/"pending" from crash)
-      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: "重试前清理: 孤立节点" })
+      await this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: "重试前清理: 孤立节点" })
 
       if (inputValues) {
-        this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
+        await this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
         inst.engine.updateVarPool(inputValues)
       }
 
       retryStartCommitId = await this.recordStartCommits()
-      this.dao.updateExecution(id, { start_commit_id: retryStartCommitId })
+      await this.dao.updateExecution(id, { start_commit_id: retryStartCommitId })
 
-      this.dao.incrementRetryCount(id)
-      const retryCount = this.dao.getRetryCount(id)
+      await this.dao.incrementRetryCount(id)
+      const retryCount = await this.dao.getRetryCount(id)
 
       const wfForHook = this.getWorkflow(exec.workflow_ref)
       if (wfForHook) {
@@ -830,37 +827,37 @@ export class ExecutionLifecycle {
       }
 
       if (result.status === "pending_approval") {
-        this.updateStatus(id, result.status, { var_pool: JSON.stringify(result.poolSnapshot) })
-        this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+        await this.updateStatus(id, result.status, { var_pool: JSON.stringify(result.poolSnapshot) })
+        await this.syncStateJson()
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
       } else {
-        const currentExec = this.dao.findById(id)
+        const currentExec = await this.dao.findById(id)
         if (currentExec?.status === "paused") {
-          const nodeStats = this.dao.findNodeStatsForExecution(id)
+          const nodeStats = await this.dao.findNodeStatsForExecution(id)
           if (nodeStats.running_or_pending === 0) {
             console.log(`[ExecutionLifecycle] Execution ${id} was paused but all nodes completed during retry, updating to ${result.status}`)
           } else {
             console.log(`[ExecutionLifecycle] Execution ${id} was paused and ${nodeStats.running_or_pending} nodes still running/pending during retry, keeping paused status`)
-            this.syncStateJson()
-            return this.dao.findById(id)!
+            await this.syncStateJson()
+            return (await this.dao.findById(id))!
           }
         }
 
         const endCommitId = await this.recordEndCommits()
-        this.dao.updateExecution(id, { end_commit_id: endCommitId })
+        await this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
-        this.updateStatus(id, result.status, {
+        await this.updateStatus(id, result.status, {
           completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
           var_pool: JSON.stringify(result.poolSnapshot),
           gate_status: result.status === "completed" ? "open" : "closed",
         })
 
-        this.cleanupOrphanedNodes(id, result.status)
+        await this.cleanupOrphanedNodes(id, result.status)
 
         if (wfForHook) {
           if (result.status === "failed") {
             await this.executeWorkflowHooks("on_workflow_failure", {
-              failed_node_id: this.findFailedNode(id), error: this.findFailedNodeError(id), duration_ms: result.durationMs,
+              failed_node_id: await this.findFailedNode(id), error: await this.findFailedNodeError(id), duration_ms: result.durationMs,
             }, wfForHook, id)
           }
           if (result.status === "completed") {
@@ -869,13 +866,13 @@ export class ExecutionLifecycle {
           await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wfForHook, id)
         }
 
-        this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+        await this.syncStateJson()
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
 
         // Clean up harness detectors for this execution (retry completion path)
         if (this.harnessController) {
           try {
-            await this.harnessController.onExecutionEnd(id, { status: finalStatus as string })
+            await this.harnessController.onExecutionEnd(id, { status: result.status as "completed" | "failed" | "cancelled" })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in retry completion (non-fatal):", err)
           }
@@ -889,26 +886,26 @@ export class ExecutionLifecycle {
         try { await this.rollbackToStart(retryStartCommitId) } catch (rollbackErr: any) {
           console.error(`[ExecutionLifecycle] Rollback failed for ${id}:`, rollbackErr.message)
         }
-        this.dao.updateExecution(id, { end_commit_id: retryStartCommitId || exec.start_commit_id || "{}" })
+        await this.dao.updateExecution(id, { end_commit_id: retryStartCommitId || exec.start_commit_id || "{}" })
       } else {
         try {
           const endCommitId = await this.recordEndCommits()
-          this.dao.updateExecution(id, { end_commit_id: endCommitId })
+          await this.dao.updateExecution(id, { end_commit_id: endCommitId })
         } catch (commitErr: any) {
           console.error(`[ExecutionLifecycle] recordEndCommits failed for ${id}:`, commitErr.message)
         }
       }
 
-      this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
-      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: `Retry failed: ${err.message}` })
-      this.syncStateJson()
+      await this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+      await this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: `Retry failed: ${err.message}` })
+      await this.syncStateJson()
       console.error(`[ExecutionLifecycle] Retry failed for ${id}:`, err.message)
       this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, error: err.message } })
 
       try {
         const wfForHook = this.getWorkflow(exec.workflow_ref)
         if (wfForHook) {
-          await this.executeWorkflowHooks("on_workflow_failure", { failed_node_id: this.findFailedNode(id), error: err.message }, wfForHook, id)
+          await this.executeWorkflowHooks("on_workflow_failure", { failed_node_id: await this.findFailedNode(id), error: err.message }, wfForHook, id)
           await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wfForHook, id)
         }
       } catch { /* non-fatal */ }
@@ -916,25 +913,25 @@ export class ExecutionLifecycle {
       // Clean up harness detectors for this execution (retry error path)
       if (this.harnessController) {
         try {
-          await this.harnessController.onExecutionEnd(id, { status: "failed", lastFailedNodeId: this.findFailedNode(id) ?? undefined })
+          await this.harnessController.onExecutionEnd(id, { status: "failed", lastFailedNodeId: await this.findFailedNode(id) ?? undefined })
         } catch (harnessErr) {
           console.warn("[ExecutionLifecycle] Harness cleanup failed in retry error path (non-fatal):", harnessErr)
         }
       }
     }
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   // ==================== Approve ====================
 
   async approve(id: string, nodeId: string, answer: string, comment?: string): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_approval") throw Object.assign(new Error("执行不在待审批状态"), { status: 400 })
 
     const neId = `${id}-${nodeId}`
-    const ne = this.dao.findNodeExecutionById(neId)
+    const ne = await this.dao.findNodeExecutionById(neId)
     if (!ne) throw Object.assign(new Error("Node execution not found"), { status: 404 })
 
     if (answer === "reject") {
@@ -952,27 +949,27 @@ export class ExecutionLifecycle {
           this.enginePool.create(id, inst.engine, inst.abortController)
         }
 
-        this.updateNodeStatus(neId, "rejected", { completed_at: new Date().toISOString() })
-        this.updateStatus(id, "running")
-        this.dao.updateExecution(id, { approval_metadata: null as any })
+        await this.updateNodeStatus(neId, "rejected", { completed_at: new Date().toISOString() })
+        await this.updateStatus(id, "running")
+        await this.dao.updateExecution(id, { approval_metadata: null as any })
 
         if (comment) inst.engine.updateVarPool({ APPROVAL_COMMENT: comment })
 
         this.runRejectInBackground(id, nodeId, onRejectNodeId, inst.abortController.signal, comment, exec.workflow_ref)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       } else {
-        this.updateNodeStatus(neId, "rejected", { error: "Rejected by user" })
-        this.updateStatus(id, "rejected", { completed_at: new Date().toISOString() })
-        this.dao.updateExecution(id, { approval_metadata: null as any })
-        this.dao.updateNodeExecutionsByStatus(id, "skipped", ["pending"])
-        this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["paused"])
+        await this.updateNodeStatus(neId, "rejected", { error: "Rejected by user" })
+        await this.updateStatus(id, "rejected", { completed_at: new Date().toISOString() })
+        await this.dao.updateExecution(id, { approval_metadata: null as any })
+        await this.dao.updateNodeExecutionsByStatus(id, "skipped", ["pending"])
+        await this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["paused"])
         if (wf) {
           try { await this.executeWorkflowHooks("on_complete", { final_status: "rejected" }, wf, id) } catch { /* non-fatal */ }
         }
-        this.syncStateJson()
+        await this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: "rejected" } })
         this.enginePool.remove(id)
-        return this.dao.findById(id)!
+        return (await this.dao.findById(id))!
       }
     }
 
@@ -984,15 +981,15 @@ export class ExecutionLifecycle {
       this.enginePool.create(id, inst.engine, inst.abortController)
     }
 
-    this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString() })
-    this.updateStatus(id, "running")
-    this.dao.updateExecution(id, { approval_metadata: null as any })
+    await this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString() })
+    await this.updateStatus(id, "running")
+    await this.dao.updateExecution(id, { approval_metadata: null as any })
 
     this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status: "running" } })
 
     this.runApproveInBackground(id, nodeId, inst.abortController.signal, answer, comment, exec.workflow_ref)
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   // ==================== Interaction Start ====================
@@ -1006,12 +1003,12 @@ export class ExecutionLifecycle {
     nodeId: string,
     workspaceId: string,
   ): Promise<{ sessionId: string; initialPrompt?: string }> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
 
     // Read workflow YAML and find the interaction node's prompt
-    const workflowContent = this.getWorkflowContent(id)
+    const workflowContent = await this.getWorkflowContent(id)
     let nodeDef: any = null
     let initialPrompt: string | undefined
     if (workflowContent) {
@@ -1032,7 +1029,7 @@ export class ExecutionLifecycle {
         try {
           const inputs = JSON.parse(exec.input_values)
           for (const [k, v] of Object.entries(inputs)) {
-            initialPrompt = initialPrompt.replace(new RegExp(`\\$inputs\\.${k}`, "g"), String(v))
+            initialPrompt = initialPrompt!.replace(new RegExp(`\\$inputs\\.${k}`, "g"), String(v))
           }
         } catch { /* ignore */ }
       }
@@ -1040,7 +1037,7 @@ export class ExecutionLifecycle {
         try {
           const vars = JSON.parse(exec.var_pool)
           for (const [k, v] of Object.entries(vars)) {
-            initialPrompt = initialPrompt.replace(new RegExp(`\\$vars\\.${k}`, "g"), String(v))
+            initialPrompt = initialPrompt!.replace(new RegExp(`\\$vars\\.${k}`, "g"), String(v))
           }
         } catch { /* ignore */ }
       }
@@ -1049,7 +1046,7 @@ export class ExecutionLifecycle {
     const sessionId = randomUUID()
 
     // Persist interaction metadata for frontend polling
-    this.dao.updateExecution(id, {
+    await this.dao.updateExecution(id, {
       interaction_metadata: JSON.stringify({ nodeId, sessionId, maxRounds: nodeDef?.interaction_max_rounds ?? 20 }),
     })
 
@@ -1067,18 +1064,18 @@ export class ExecutionLifecycle {
     summary: string,
     varsUpdate?: Record<string, any>,
   ): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
 
     const neId = `${id}-${nodeId}`
-    const ne = this.dao.findNodeExecutionById(neId)
+    const ne = await this.dao.findNodeExecutionById(neId)
     if (!ne) throw Object.assign(new Error("Node execution not found"), { status: 404 })
 
     this.enginePool.clearApprovalTimer(id) // reuse approval timer mechanism
 
     // Clear interaction metadata from DB (same pattern as approval_metadata clearing)
-    this.dao.updateExecution(id, { interaction_metadata: null as any })
+    await this.dao.updateExecution(id, { interaction_metadata: null as any })
 
     let inst = this.enginePool.get(id)
     if (!inst) {
@@ -1089,8 +1086,8 @@ export class ExecutionLifecycle {
     // Compute duration from started_at to now
     const startedAt = ne.started_at ? new Date(ne.started_at).getTime() : Date.now()
     const durationMs = Date.now() - startedAt
-    this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString(), duration: durationMs })
-    this.updateStatus(id, "running")
+    await this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString(), duration: durationMs })
+    await this.updateStatus(id, "running")
 
     this.sse.emit(this.workspaceId, {
       event: "execution_interaction_completed",
@@ -1100,7 +1097,7 @@ export class ExecutionLifecycle {
 
     this.runInteractionCompleteInBackground(id, nodeId, inst.abortController.signal, summary, varsUpdate, exec.workflow_ref)
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   private runInteractionCompleteInBackground(
@@ -1124,34 +1121,34 @@ export class ExecutionLifecycle {
         if (signal.aborted) return
 
         // Process the result similar to normal execution completion
-        const currentExec = this.dao.findById(executionId)
+        const currentExec = await this.dao.findById(executionId)
         if (currentExec?.status === "paused") {
-          this.syncStateJson()
+          await this.syncStateJson()
           return
         }
 
-        this.updateStatus(executionId, result.status, {
+        await this.updateStatus(executionId, result.status, {
           completed_at: new Date().toISOString(),
           duration: Date.now() - (currentExec?.started_at ? new Date(currentExec.started_at).getTime() : Date.now()),
           var_pool: JSON.stringify(result.poolSnapshot),
           gate_status: result.status === "completed" ? "open" : "closed",
         } as any)
 
-        this.syncStateJson()
+        await this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
         this.enginePool.remove(executionId)
 
         // Clean up harness detectors for this execution (interaction completion path)
         if (this.harnessController) {
           try {
-            await this.harnessController.onExecutionEnd(executionId, { status: result.status as string })
+            await this.harnessController.onExecutionEnd(executionId, { status: result.status as "completed" | "failed" | "cancelled" })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction completion (non-fatal):", err)
           }
         }
       } catch (err) {
         console.error(`[ExecutionLifecycle] Interaction complete failed for ${executionId}/${nodeId}`, err)
-        this.updateStatus(executionId, "failed", { error: `Interaction complete failed: ${err instanceof Error ? err.message : String(err)}` })
+        await this.updateStatus(executionId, "failed", { error: `Interaction complete failed: ${err instanceof Error ? err.message : String(err)}` })
 
         // Clean up harness detectors for this execution (interaction completion error path)
         if (this.harnessController) {
@@ -1185,14 +1182,14 @@ export class ExecutionLifecycle {
     nodeId: string,
     childOutput: Record<string, unknown>,
   ): Promise<ExecutionRow> {
-    const exec = this.dao.findById(id)
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_task_dispatch") {
       throw Object.assign(new Error(`执行不在 task_dispatch 等待状态 (current: ${exec.status})`), { status: 400 })
     }
 
     const neId = `${id}-${nodeId}`
-    const ne = this.dao.findNodeExecutionById(neId)
+    const ne = await this.dao.findNodeExecutionById(neId)
     if (!ne) throw Object.assign(new Error("Node execution not found"), { status: 404 })
 
     this.enginePool.clearApprovalTimer(id) // reuse the approval-timer mechanism for any future timeout
@@ -1207,8 +1204,8 @@ export class ExecutionLifecycle {
     // the resume (same as completeInteraction marking the interaction node completed).
     const startedAt = ne.started_at ? new Date(ne.started_at).getTime() : Date.now()
     const durationMs = Date.now() - startedAt
-    this.updateNodeStatus(neId, "running", { completed_at: null, duration: durationMs })
-    this.updateStatus(id, "running")
+    await this.updateNodeStatus(neId, "running", { completed_at: null, duration: durationMs })
+    await this.updateStatus(id, "running")
 
     this.sse.emit(this.workspaceId, {
       event: "execution_task_dispatch_resumed",
@@ -1218,7 +1215,7 @@ export class ExecutionLifecycle {
 
     this.runTaskDispatchResumeInBackground(id, nodeId, inst.abortController.signal, childOutput)
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   private runTaskDispatchResumeInBackground(
@@ -1243,12 +1240,12 @@ export class ExecutionLifecycle {
         // A resumed task_dispatch that pauses again (e.g. a Loop dispatching the
         // next subunit) returns pending_task_dispatch — leave the execution paused
         // for the next child-complete callback (mirrors the interaction paused check).
-        const currentExec = this.dao.findById(executionId)
+        const currentExec = await this.dao.findById(executionId)
         if (result.status === "pending_task_dispatch" || currentExec?.status === "pending_task_dispatch") {
-          this.updateStatus(executionId, "pending_task_dispatch", {
+          await this.updateStatus(executionId, "pending_task_dispatch", {
             var_pool: JSON.stringify(result.poolSnapshot),
           } as any)
-          this.syncStateJson()
+          await this.syncStateJson()
           // Emit awaited SSE + remove from pool — the next child completion reconstructs.
           this.sse.emit(this.workspaceId, {
             event: "execution_task_dispatch_awaited",
@@ -1261,31 +1258,31 @@ export class ExecutionLifecycle {
           return
         }
         if (currentExec?.status === "paused") {
-          this.syncStateJson()
+          await this.syncStateJson()
           return
         }
 
-        this.updateStatus(executionId, result.status, {
+        await this.updateStatus(executionId, result.status, {
           completed_at: new Date().toISOString(),
           duration: Date.now() - (currentExec?.started_at ? new Date(currentExec.started_at).getTime() : Date.now()),
           var_pool: JSON.stringify(result.poolSnapshot),
           gate_status: result.status === "completed" ? "open" : "closed",
         } as any)
 
-        this.syncStateJson()
+        await this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
         this.enginePool.remove(executionId)
 
         if (this.harnessController) {
           try {
-            await this.harnessController.onExecutionEnd(executionId, { status: result.status as string })
+            await this.harnessController.onExecutionEnd(executionId, { status: result.status as "completed" | "failed" | "cancelled" })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in task_dispatch resume (non-fatal):", err)
           }
         }
       } catch (err) {
         console.error(`[ExecutionLifecycle] Task dispatch resume failed for ${executionId}/${nodeId}`, err)
-        this.updateStatus(executionId, "failed", { error: `Task dispatch resume failed: ${err instanceof Error ? err.message : String(err)}` })
+        await this.updateStatus(executionId, "failed", { error: `Task dispatch resume failed: ${err instanceof Error ? err.message : String(err)}` })
 
         if (this.harnessController) {
           try {
@@ -1301,11 +1298,11 @@ export class ExecutionLifecycle {
   // ==================== Pause / Resume ====================
 
   async pause(executionId: string): Promise<{ success: boolean; error?: string }> {
-    const exec = this.dao.findById(executionId)
+    const exec = await this.dao.findById(executionId)
     if (!exec) return { success: false, error: "执行不存在" }
     if (exec.status !== "running") return { success: false, error: "执行未在运行中" }
 
-    const runningNode = this.dao.findFirstRunningNode(executionId)
+    const runningNode = await this.dao.findFirstRunningNode(executionId)
 
     // Refuse rather than half-pause. In the window BETWEEN two nodes there is nothing to
     // freeze, and writing 'paused' without a paused node yields a row resume() can never
@@ -1318,8 +1315,8 @@ export class ExecutionLifecycle {
       return { success: false, error: "执行当前没有运行中的节点，无法暂停" }
     }
 
-    this.dao.updateNodeExecution(runningNode.id, { status: "paused" })
-    this.dao.updateExecution(executionId, { status: "paused" })
+    await this.dao.updateNodeExecution(runningNode.id, { status: "paused" })
+    await this.dao.updateExecution(executionId, { status: "paused" })
 
     const inst = this.enginePool.get(executionId)
     if (inst) {
@@ -1332,18 +1329,18 @@ export class ExecutionLifecycle {
   }
 
   async resume(executionId: string, intervention?: string): Promise<{ success: boolean; error?: string }> {
-    const exec = this.dao.findById(executionId)
+    const exec = await this.dao.findById(executionId)
     if (!exec) return { success: false, error: "执行不存在" }
 
     // pending_resume → triage interrupted nodes to paused, then fall through to normal resume
     if (exec.status === "pending_resume") {
-      this.dao.updateNodeExecutionsByStatus(executionId, "paused", ["running", "pending", "failed"])
-      this.dao.updateExecution(executionId, { status: "paused" })
+      await this.dao.updateNodeExecutionsByStatus(executionId, "paused", ["running", "pending", "failed"])
+      await this.dao.updateExecution(executionId, { status: "paused" })
     }
 
     if (exec.status !== "paused" && exec.status !== "pending_resume") return { success: false, error: "执行未处于暂停状态" }
 
-    const pausedNodes = this.dao.findRunningNodeExecutionsByStatus(executionId, ["paused"])
+    const pausedNodes = await this.dao.findRunningNodeExecutionsByStatus(executionId, ["paused"])
     const pausedNode = pausedNodes.length > 0 ? pausedNodes[0] : null
     if (!pausedNode) return { success: false, error: "未找到暂停节点" }
 
@@ -1356,8 +1353,8 @@ export class ExecutionLifecycle {
       inst.engine.updateSignal(inst.abortController.signal)
     }
 
-    this.dao.updateExecution(executionId, { status: "running" })
-    this.dao.updateNodeExecution(pausedNode.id, { status: "running" })
+    await this.dao.updateExecution(executionId, { status: "running" })
+    await this.dao.updateNodeExecution(pausedNode.id, { status: "running" })
 
     this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId, status: "running" } })
 
@@ -1384,17 +1381,17 @@ export class ExecutionLifecycle {
     return this.enginePool.has(executionId)
   }
 
-  skip(id: string): boolean {
-    const exec = this.dao.findById(id)
+  async skip(id: string): Promise<boolean> {
+    const exec = await this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    this.dao.updateExecution(id, { gate_status: "bypassed" })
-    this.syncStateJson()
+    await this.dao.updateExecution(id, { gate_status: "bypassed" })
+    await this.syncStateJson()
     return true
   }
 
   // ==================== Branch computation ====================
 
-  computeBranch(workspaceId: string, parentId: string | null | undefined, nodeType: string, newExecId: string): string | null {
+  async computeBranch(workspaceId: string, parentId: string | null | undefined, nodeType: string, newExecId: string): Promise<string | null> {
     const isRoot = !parentId || parentId === "0"
     if (isRoot) {
       const configPath = join(this.workspacePath, "config.json")
@@ -1405,7 +1402,7 @@ export class ExecutionLifecycle {
         return "main"
       }
     }
-    const parent = this.dao.findById(parentId!)
+    const parent = await this.dao.findById(parentId!)
     if (!parent || parent.workspace_id !== workspaceId) {
       throw new Error(`parent_id "${parentId}" not found in workspace "${workspaceId}".`)
     }
@@ -1426,25 +1423,25 @@ export class ExecutionLifecycle {
   // ==================== Pending Hooks / Auto-resume ====================
 
   async drainPendingHooks(): Promise<void> {
-    const pendingRows = this.dao.findPendingHooksForWorkspace(this.workspaceDbId)
+    const pendingRows = await this.dao.findPendingHooksForWorkspace(this.workspaceDbId)
     if (pendingRows.length === 0) return
 
     for (const row of pendingRows) {
       let hooks: HookDef[] = []
       try { hooks = JSON.parse(row.pending_hooks) as HookDef[] } catch {
-        this.dao.updateExecution(row.id, { pending_hooks: "[]" })
+        await this.dao.updateExecution(row.id, { pending_hooks: "[]" })
         continue
       }
 
       if (!Array.isArray(hooks) || hooks.length === 0) {
-        this.dao.updateExecution(row.id, { pending_hooks: "[]" })
+        await this.dao.updateExecution(row.id, { pending_hooks: "[]" })
         continue
       }
 
       const wf = this.getWorkflow(row.workflow_ref)
       if (!wf) {
         process.stderr.write(`[DrainPendingHooks] Workflow not found for ${row.id}: ${row.workflow_ref}, discarding ${hooks.length} deferred hooks\n`)
-        this.dao.updateExecution(row.id, { pending_hooks: "[]" })
+        await this.dao.updateExecution(row.id, { pending_hooks: "[]" })
         continue
       }
 
@@ -1461,18 +1458,18 @@ export class ExecutionLifecycle {
         process.stderr.write(`[DrainPendingHooks] Hook execution failed for ${row.id}: ${msg}\n`)
       }
 
-      this.dao.updateExecution(row.id, { pending_hooks: "[]" })
+      await this.dao.updateExecution(row.id, { pending_hooks: "[]" })
     }
   }
 
   async autoResume(execId: string): Promise<void> {
-    const exec = this.dao.findById(execId)
+    const exec = await this.dao.findById(execId)
     if (!exec || exec.status !== "pending_resume") return
 
-    const lastFailed = this.dao.findFirstNodeByStatus(execId, "failed")
+    const lastFailed = await this.dao.findFirstNodeByStatus(execId, "failed")
 
     if (lastFailed) {
-      this.dao.updateExecution(execId, { status: "running" })
+      await this.dao.updateExecution(execId, { status: "running" })
       const inst = await this.reconstructEngine(exec)
       this.enginePool.create(execId, inst.engine, inst.abortController)
 
@@ -1492,16 +1489,16 @@ export class ExecutionLifecycle {
 
         try {
           const endCommitId = await this.recordEndCommits()
-          this.dao.updateExecution(execId, { end_commit_id: endCommitId })
+          await this.dao.updateExecution(execId, { end_commit_id: endCommitId })
         } catch { /* non-fatal */ }
 
-        this.updateStatus(execId, result.status, {
+        await this.updateStatus(execId, result.status, {
           completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
           var_pool: JSON.stringify(result.poolSnapshot),
           gate_status: result.status === "completed" ? "open" : "closed",
         })
 
-        this.cleanupOrphanedNodes(execId, result.status)
+        await this.cleanupOrphanedNodes(execId, result.status)
 
         if (wfForHook) {
           if (result.status === "completed") {
@@ -1510,13 +1507,13 @@ export class ExecutionLifecycle {
           await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wfForHook, execId)
         }
 
-        this.syncStateJson()
+        await this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: execId, finalStatus: result.status } })
 
         // Clean up harness detectors for this execution (autoResume completion path)
         if (this.harnessController) {
           try {
-            await this.harnessController.onExecutionEnd(execId, { status: result.status as string })
+            await this.harnessController.onExecutionEnd(execId, { status: result.status as "completed" | "failed" | "cancelled" })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume completion (non-fatal):", err)
           }
@@ -1524,8 +1521,8 @@ export class ExecutionLifecycle {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         this.enginePool.remove(execId)
-        this.dao.updateExecution(execId, { status: "failed" })
-        this.dao.updateNodeExecutionsByStatus(execId, "failed", ["running", "pending"], { error: `Auto-resume failed: ${msg}` })
+        await this.dao.updateExecution(execId, { status: "failed" })
+        await this.dao.updateNodeExecutionsByStatus(execId, "failed", ["running", "pending"], { error: `Auto-resume failed: ${msg}` })
         console.error(`[Recovery] Auto-resume execution failed for ${execId}: ${msg}`)
 
         // Clean up harness detectors for this execution (autoResume error path)
@@ -1538,17 +1535,17 @@ export class ExecutionLifecycle {
         }
       }
     } else {
-      const lastRunning = this.dao.findFirstNodeByStatus(execId, "running") ||
-        this.dao.findFirstNodeByStatus(execId, "pending")
+      const lastRunning = await this.dao.findFirstNodeByStatus(execId, "running") ||
+        await this.dao.findFirstNodeByStatus(execId, "pending")
       if (lastRunning) {
-        const pausedNodes = this.dao.findRunningNodeExecutionsByStatus(execId, ["running", "pending"])
+        const pausedNodes = await this.dao.findRunningNodeExecutionsByStatus(execId, ["running", "pending"])
         for (const n of pausedNodes) {
-          this.dao.updateNodeExecution(n.id, { status: "paused" })
+          await this.dao.updateNodeExecution(n.id, { status: "paused" })
         }
-        this.dao.updateExecution(execId, { status: "paused" })
+        await this.dao.updateExecution(execId, { status: "paused" })
         await this.resume(execId)
       } else {
-        this.dao.updateExecution(execId, { status: "failed" })
+        await this.dao.updateExecution(execId, { status: "failed" })
         console.log(`[Recovery] ${execId} has no resumable nodes → failed`)
       }
     }
@@ -1577,10 +1574,10 @@ export class ExecutionLifecycle {
 
   // ==================== Helpers ====================
 
-  private updateStatus(id: string, status: string, extra: Record<string, unknown> = {}): void {
+  private async updateStatus(id: string, status: string, extra: Record<string, unknown> = {}): Promise<void> {
     try {
       const fields: Record<string, unknown> = { status, ...extra }
-      this.dao.updateExecution(id, fields)
+      await this.dao.updateExecution(id, fields)
       this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status } })
     } catch (err: any) {
       console.error(`[ExecutionLifecycle] updateStatus failed: ${id} → ${status}:`, err.message)
@@ -1588,19 +1585,19 @@ export class ExecutionLifecycle {
     }
   }
 
-  private updateNodeStatus(neId: string, status: string, extra: Record<string, unknown> = {}): void {
+  private async updateNodeStatus(neId: string, status: string, extra: Record<string, unknown> = {}): Promise<void> {
     const fields: Record<string, unknown> = { status, ...extra }
-    this.dao.updateNodeExecution(neId, fields)
+    await this.dao.updateNodeExecution(neId, fields)
   }
 
-  private cleanupOrphanedNodes(id: string, finalStatus: string): void {
+  private async cleanupOrphanedNodes(id: string, finalStatus: string): Promise<void> {
     if (finalStatus === "failed" || finalStatus === "budget_exceeded") {
-      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending", "paused"])
+      await this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending", "paused"])
     } else if (finalStatus === "completed" || finalStatus === "completed_with_failures" || finalStatus === "rejected") {
-      this.dao.updateNodeExecutionsByStatus(id, "skipped", ["pending"])
-      this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["paused"])
+      await this.dao.updateNodeExecutionsByStatus(id, "skipped", ["pending"])
+      await this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["paused"])
     } else if (finalStatus === "cancelled") {
-      this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["running", "pending", "paused"])
+      await this.dao.updateNodeExecutionsByStatus(id, "cancelled", ["running", "pending", "paused"])
     }
   }
 
@@ -1625,15 +1622,15 @@ export class ExecutionLifecycle {
     return this.runner.abortAndWait(abortController, executionId, timeoutMs)
   }
 
-  private findPausedNode(executionId: string): string | null {
+  private async findPausedNode(executionId: string): Promise<string | null> {
     return findPausedNode(this.dao, executionId)
   }
 
-  private findFailedNode(executionId: string): string {
+  private async findFailedNode(executionId: string): Promise<string> {
     return findFailedNode(this.dao, executionId)
   }
 
-  private findFailedNodeError(executionId: string): string {
+  private async findFailedNodeError(executionId: string): Promise<string> {
     return findFailedNodeError(this.dao, executionId)
   }
 
@@ -1693,13 +1690,13 @@ export class ExecutionLifecycle {
     return isWorkflowNodeId((ref) => this.getWorkflow(ref), workflowRef, nodeId)
   }
 
-  syncStateJson(): void {
-    this.stateManager.syncStateJson()
+  async syncStateJson(): Promise<void> {
+    await this.stateManager.syncStateJson()
   }
 
   // ==================== CRUD delegation (from Facade) ====================
 
-  create(
+  async create(
     workspaceId: string,
     input: {
       workflow_ref: string; name?: string; parent_id?: string | null;
@@ -1711,7 +1708,7 @@ export class ExecutionLifecycle {
       task_id?: string | null; phase_index?: number | null; round_index?: number | null;
     },
     org: string,
-  ): ExecutionRow {
+  ): Promise<ExecutionRow> {
     const id = randomUUID()
     const now = new Date().toISOString()
     const isRootRequest = !input.parent_id || input.parent_id === "0"
@@ -1728,17 +1725,17 @@ export class ExecutionLifecycle {
     // remembers to pass the flag; generic/cron launches (task_id null) keep the invariant
     // byte-identically.
     if (isRootRequest && !input.allow_existing_root && !input.task_id) {
-      const existingRoot = this.dao.findRootExecutionId(workspaceId)
+      const existingRoot = await this.dao.findRootExecutionId(workspaceId)
       if (existingRoot) throw new Error(`Workspace already has a root execution (${existingRoot.id}).`)
     }
 
-    const branch = this.computeBranch(workspaceId, input.parent_id, nodeType, id)
+    const branch = await this.computeBranch(workspaceId, input.parent_id, nodeType, id)
     const workflowName = this.resolveWorkflowName(input.workflow_ref)
 
     const varPoolJson = input.initial_var_pool ? JSON.stringify(input.initial_var_pool) : "{}"
     const inputValuesJson = JSON.stringify(input.input_values ?? {})
 
-    this.dao.insertExecution({
+    await this.dao.insertExecution({
       id, workspace_id: workspaceId, parent_id: input.parent_id ?? "0",
       child_index: input.child_index ?? 0, workflow_ref: input.workflow_ref,
       workflow_name: workflowName, name: input.name || workflowName,
@@ -1757,14 +1754,14 @@ export class ExecutionLifecycle {
       created_at: now, updated_at: now,
     })
 
-    const exec = this.dao.findById(id)!
+    const exec = (await this.dao.findById(id))!
     this.sse.emit(workspaceId, { event: "execution_created", data: { executionId: id, treeNodeId: id } })
-    this.syncStateJson()
+    await this.syncStateJson()
     return exec as ExecutionRow
   }
 
-  delete(executionId: string): boolean {
-    this.dao.cascadeDeleteExecution(executionId)
+  async delete(executionId: string): Promise<boolean> {
+    await this.dao.cascadeDeleteExecution(executionId)
     this.sse.emit(this.workspaceId, {
       event: "execution_deleted", data: { executionId },
     })
@@ -1773,7 +1770,7 @@ export class ExecutionLifecycle {
 
   // ==================== Logs / Events delegation (from Facade) ====================
 
-  getLogEvents(executionId: string): { type: string; timestamp: string; data: Record<string, unknown> }[] {
+  async getLogEvents(executionId: string): Promise<{ type: string; timestamp: string; data: Record<string, unknown> }[]> {
     return this.queryService.getLogEvents(executionId)
   }
 
@@ -1785,7 +1782,7 @@ export class ExecutionLifecycle {
     return this.queryService.getLoopIterationSummary(executionId)
   }
 
-  getWorkflowContent(executionId: string): string | null {
+  async getWorkflowContent(executionId: string): Promise<string | null> {
     return this.queryService.getWorkflowContent(executionId)
   }
 
@@ -1803,7 +1800,7 @@ export class ExecutionLifecycle {
 
   setupResumeListener(): void {
     this._resumeListener = async (execId: string) => {
-      const exec = this.dao.findById(execId)
+      const exec = await this.dao.findById(execId)
       if (!exec || exec.status !== "pending_resume") return
       if (exec.workspace_id !== this.workspaceDbId) return
       await this.autoResume(execId)
@@ -1876,13 +1873,13 @@ export class ExecutionLifecycle {
 
     const engine = await this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
-    const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
+    const completedNodes = await this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {
       // Restore skippedByCondition: skipped nodes with execute_when were intentional skips,
       // downstream dependents should NOT cascade-skip from them.
       const nodeDef = node.status === "skipped" ? this.findNodeDef(wf.parsed.nodes, node.node_id) : null
       engine.setNodeResult(node.node_id, {
-        status: node.status,
+        status: node.status as any, // [票5B] DB 行状态域含 skipped_failed 等未入 shared 枚举的运行态
         outputs: JSON.parse(node.outputs || "{}"),
         durationMs: node.duration ?? 0,
         logLines: [], error: node.error ?? undefined,
@@ -1891,7 +1888,7 @@ export class ExecutionLifecycle {
       })
     }
 
-    const sessionNodes = this.dao.findSessionNodes(exec.id)
+    const sessionNodes = await this.dao.findSessionNodes(exec.id)
     let globalSessionId: string | undefined
     const branchSessionIds = new Map<string, string>()
 
@@ -1919,40 +1916,17 @@ export class ExecutionLifecycle {
     }
 
     engine.restoreSessionContext(globalSessionId, branchSessionIds)
-    engine.setRefResolver(this.createRefResolver())
+    engine.setRefResolver(await this.createRefResolver(wf.content))
 
     return { engine, abortController }
   }
 
   // ==================== Cross-execution resolver ====================
 
-  createRefResolver(): (refPath: string) => any {
-    const cache = new Map<string, Record<string, any>>()
-
-    return (refPath: string): any => {
-      const lastDot = refPath.lastIndexOf(".")
-      if (lastDot === -1) return undefined
-      const outputKey = refPath.slice(lastDot + 1)
-      const rest = refPath.slice(0, lastDot)
-      const secondLastDot = rest.lastIndexOf(".")
-      if (secondLastDot === -1) return undefined
-      const nodeId = rest.slice(secondLastDot + 1)
-      const workflowRef = rest.slice(0, secondLastDot)
-
-      if (!workflowRef || !nodeId || !outputKey) return undefined
-
-      const cacheKey = `${workflowRef}.${nodeId}`
-      let outputs = cache.get(cacheKey)
-
-      if (!outputs) {
-        const row = this.dao.findCrossExecOutputs(workflowRef, nodeId, this.workspaceDbId)
-        if (!row?.outputs) return undefined
-        try { outputs = JSON.parse(row.outputs) } catch { return undefined }
-        cache.set(cacheKey, outputs!)
-      }
-
-      return outputs![outputKey]
-    }
+  // [P1 B5 票5B §9 人判] engine VarPool.resolveRef 为同步接缝（全链 async 化留票6/B6）：
+  // 引擎创建期扫描 workflow 文本中的 $ref: token，异步预取交叉输出进同步缓存。
+  async createRefResolver(workflowContent: string): Promise<(refPath: string) => any> {
+    return primeRefResolver(this.dao, this.workspaceDbId, [workflowContent])
   }
 
   // ==================== Engine callbacks ====================
@@ -1968,15 +1942,15 @@ export class ExecutionLifecycle {
 
   // ==================== Token usages ====================
 
-  getTokenUsagesPerStep(executionId: string) {
+  async getTokenUsagesPerStep(executionId: string) {
     return this.queryService.getTokenUsagesPerStep(executionId)
   }
 
-  getTokenUsagesForExecution(executionId: string) {
+  async getTokenUsagesForExecution(executionId: string) {
     return this.queryService.getTokenUsagesForExecution(executionId)
   }
 
-  llmCallCountsByNode(executionId: string): Record<string, number> {
+  async llmCallCountsByNode(executionId: string): Promise<Record<string, number>> {
     return this.queryService.llmCallCountsByNode(executionId)
   }
 

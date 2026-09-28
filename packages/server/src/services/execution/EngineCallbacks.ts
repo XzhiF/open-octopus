@@ -31,7 +31,7 @@ export interface EngineCallbacksDeps {
   org: string
   workspaceDbId: string
   externalCallbacks: Map<string, Partial<EngineCallbackType>>
-  syncStateJson: () => void
+  syncStateJson: () => Promise<void>
 }
 
 export class EngineCallbacks implements IEngineCallbacks {
@@ -44,7 +44,7 @@ export class EngineCallbacks implements IEngineCallbacks {
   private org: string
   private workspaceDbId: string
   private externalCallbacks: Map<string, Partial<EngineCallbackType>>
-  private syncStateJson: () => void
+  private syncStateJson: () => Promise<void>
 
   /**
    * F1（2026-09-21「token 时隐时现」）：运行中 agent 节点的 turn_usage 实时累计，
@@ -120,7 +120,7 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       // Load workflow definition to get hooks/providers/channels
       try {
-        const exec = dao.findById(id)
+        const exec = await dao.findById(id)
         if (!exec?.workflow_ref) return
 
         const wfDetail = this.ctx.workflowService.get(
@@ -196,7 +196,7 @@ export class EngineCallbacks implements IEngineCallbacks {
       metricsTimer = setTimeout(() => { void (async () => {
         metricsTimer = null
         try {
-          const exec = dao.findById(id)
+          const exec = await dao.findById(id)
           // B4: TokenUsageDAO 已迁 PG —— metrics 聚合读为 async。
           const metrics = await tokenUsageDao.aggregateByExecution(id)
 
@@ -258,7 +258,7 @@ export class EngineCallbacks implements IEngineCallbacks {
                 `[EngineCallbacks] Budget warning: execution ${id} has consumed ${consumedTokens}/${budgetSnapshot.max_tokens} tokens (${pct}%, threshold ${threshold * 100}%)`,
               )
               // Dispatch on_budget_warning hooks + SSE
-              dispatchBudgetHook("on_budget_warning", {
+              await dispatchBudgetHook("on_budget_warning", {
                 total_tokens: String(consumedTokens),
                 max_tokens: String(budgetSnapshot.max_tokens),
                 tokens_percent: pct,
@@ -282,7 +282,7 @@ export class EngineCallbacks implements IEngineCallbacks {
       // KD-16: only fires for top-level nodes (not loop inner nodes).
       onBeforeNode: async (nodeId: string, nodeType: string, _nodeConfig: any) => {
         try {
-          const exec = dao.findById(id)
+          const exec = await dao.findById(id)
           if (!exec?.budget_snapshot) return { action: "proceed" as const }
 
           let budgetSnapshot: { max_tokens?: number; alert_threshold?: number; token_counting_mode?: string }
@@ -299,7 +299,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           if (consumedTokens > budgetSnapshot.max_tokens) {
             // Budget exceeded: block this node and abort execution
             const now = new Date().toISOString()
-            dao.updateExecution(id, {
+            await dao.updateExecution(id, {
               status: "budget_exceeded",
               completed_at: now,
             })
@@ -321,7 +321,7 @@ export class EngineCallbacks implements IEngineCallbacks {
             if (!budgetExceededSent) {
               budgetExceededSent = true
               const pct = (consumedTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
-              dispatchBudgetHook("on_budget_exceeded", {
+              await dispatchBudgetHook("on_budget_exceeded", {
                 total_tokens: String(consumedTokens),
                 max_tokens: String(budgetSnapshot.max_tokens),
                 tokens_percent: pct,
@@ -349,11 +349,11 @@ export class EngineCallbacks implements IEngineCallbacks {
         return { action: "proceed" as const }
       },
 
-      onNodeStart: (nodeId, nodeType) => {
+      onNodeStart: async (nodeId, nodeType) => {
         const neId = `${id}-${nodeId}`
         // Clear old agent events for this node to prevent PRIMARY KEY collision
         // on event_order when retrying/restarting a node (e.g. after server restart).
-        try { dao.deleteAgentEventsByNode(neId) } catch { /* non-fatal */ }
+        try { await dao.deleteAgentEventsByNode(neId) } catch { /* non-fatal */ }
         // Reset observability buffer ordering so the next flush starts from 0,
         // matching the cleared DB state. Without this, INSERT OR IGNORE would
         // silently drop events whose event_order conflicts with preserved harness events.
@@ -362,20 +362,23 @@ export class EngineCallbacks implements IEngineCallbacks {
         obs.resetDegraded()
         // F1: 重试/重跑归零实时累计（DB 行同理被重置）
         this.liveUsageByExec.get(id)?.delete(nodeId)
-        dao.updateNodeExecution(neId, { status: "running", started_at: new Date().toISOString() })
+        // [P1 B5 票5B] engine 观察回调为 fire-and-forget（接口返回 void|Promise<void>），
+        // 体内 DAO 写必须自带 catch，防未处理拒绝。
+        try { await dao.updateNodeExecution(neId, { status: "running", started_at: new Date().toISOString() }) }
+        catch (err) { console.error("[EngineCallbacks] onNodeStart updateNodeExecution failed:", err) }
         sse.emit(wsId, {
           event: "node_start", data: { executionId: id, nodeId, nodeType, executorType: nodeType },
         })
-        this.syncStateJson()
+        await this.syncStateJson()
       },
 
-      onOutputsUpdate: (nodeId, outputs) => {
+      onOutputsUpdate: async (nodeId, outputs) => {
         // Mid-execution outputs (e.g. dynamic_sub_workflow generated_workflow,
         // persisted when the DAG is generated — before node_end) so consumers can
         // render the child workflow while the node is still running.
         const neId = `${id}-${nodeId}`
         try {
-          dao.updateNodeExecution(neId, { outputs: JSON.stringify(outputs) })
+          await dao.updateNodeExecution(neId, { outputs: JSON.stringify(outputs) })
         } catch { /* non-fatal: node row may not exist yet */ }
         sse.emit(wsId, {
           event: "node_outputs_update",
@@ -394,7 +397,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         const nodeError = isFailed
           ? (result?.logLines?.join("\n") ?? result?.error ?? null)
           : (status === "completed" ? null : undefined)
-        dao.updateNodeExecution(neId, {
+        await dao.updateNodeExecution(neId, {
           status,
           completed_at: new Date().toISOString(), duration: durationMs,
           ...(result?.sessionId ? { session_id: result.sessionId } : {}),
@@ -403,7 +406,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         })
         const inst = enginePool.get(id)
         const globalSid = inst?.engine.getGlobalSessionId()
-        if (globalSid) dao.updateExecution(id, { global_session_id: globalSid })
+        if (globalSid) await dao.updateExecution(id, { global_session_id: globalSid })
 
         if (result?.modelUsages && result.modelUsages.length > 0) {
           const now = new Date().toISOString()
@@ -421,7 +424,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         }
 
         if (status === "pending_approval" && result?.approvalMetadata) {
-          dao.updateExecution(id, { approval_metadata: JSON.stringify(result.approvalMetadata) })
+          await dao.updateExecution(id, { approval_metadata: JSON.stringify(result.approvalMetadata) })
           sse.emit(wsId, {
             event: "execution_pending_approval",
             data: { executionId: id, nodeId, approval: result.approvalMetadata },
@@ -429,7 +432,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         }
 
         if (status === "pending_interaction" && result?.interactionMetadata) {
-          dao.updateExecution(id, { interaction_metadata: JSON.stringify(result.interactionMetadata) })
+          await dao.updateExecution(id, { interaction_metadata: JSON.stringify(result.interactionMetadata) })
         }
 
         const nodeUsage = result?.usage
@@ -444,7 +447,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         // 唯一事实源，被 flag 掐掉 = 钱凭空消失。llm_calls_persist 就此退役。
         if (llmCalls.length > 0) {
           try {
-            const exec = dao.findById(id)
+            const exec = await dao.findById(id)
             const calls = llmCalls.map((call: any, i: number) => ({ ...call, turnIndex: call.turnIndex || 1 }))
             await obs.persistLLMCalls(neId, id, calls, exec?.instance_id ?? `inst-${process.env.PORT ?? "3001"}-${exec?.branch ?? "main"}`)
           } catch { /* silent */ }
@@ -471,10 +474,10 @@ export class EngineCallbacks implements IEngineCallbacks {
         // Throttled to max 1 emit per 500ms (KD-6 / R1)
         scheduleMetricsEmit()
 
-        this.syncStateJson()
+        await this.syncStateJson()
       })() },
 
-      onNodeLog: (nodeId, logLine) => {
+      onNodeLog: async (nodeId, logLine) => {
         sse.emit(wsId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
         // Persist logs that bypass the JSONL logger → compact → persist pipeline:
         // - Virtual nodes (e.g. __engine_init__)
@@ -484,7 +487,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (isVirtualNode || isSubWorkflowChild) {
           try {
             const neId = `${id}-${nodeId}`
-            dao.insertAgentEvent({
+            await dao.insertAgentEvent({
               node_execution_id: neId,
               event_order: Date.now(),
               turn_index: 0,
@@ -506,20 +509,20 @@ export class EngineCallbacks implements IEngineCallbacks {
         }
       },
 
-      onNodeCompacted: (nodeId, mergedEvents) => {
-        try { dao.replaceMergedEvents(id, nodeId, mergedEvents) } catch { /* non-fatal */ }
+      onNodeCompacted: async (nodeId, mergedEvents) => {
+        try { await dao.replaceMergedEvents(id, nodeId, mergedEvents) } catch { /* non-fatal */ }
       },
 
-      onStatusChange: (status, progress) => {
-        dao.updateExecutionProgress(id, progress)
+      onStatusChange: async (status, progress) => {
+        try { await dao.updateExecutionProgress(id, progress) } catch (err) { console.error("[EngineCallbacks] onStatusChange persist failed:", err) }
         sse.emit(wsId, { event: "execution_progress", data: { executionId: id, progress } })
-        this.syncStateJson()
+        await this.syncStateJson()
       },
 
-      onError: (nodeId, error) => {
-        dao.updateNodeExecution(`${id}-${nodeId}`, { status: "failed", error })
+      onError: async (nodeId, error) => {
+        try { await dao.updateNodeExecution(`${id}-${nodeId}`, { status: "failed", error }) } catch (err) { console.error("[EngineCallbacks] onError persist failed:", err) }
         sse.emit(wsId, { event: "error", data: { executionId: id, nodeId, error } })
-        this.syncStateJson()
+        await this.syncStateJson()
       },
 
       // goal-task-dev T6 fix: engine.ts:431 fires onComplete INSIDE run(), before
@@ -550,7 +553,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         sse.emit(wsId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status, durationMs, nodeResults } })
       },
 
-      onAgentEvent: (nodeId, event) => {
+      onAgentEvent: async (nodeId, event) => {
         sse.emit(wsId, { event: "agent_event", data: { executionId: id, nodeId, event } })
 
         // F1: 镜像实时累计进内存（子流节点事件到达这里时 nodeId 已是 scoped id，
@@ -615,8 +618,10 @@ export class EngineCallbacks implements IEngineCallbacks {
         }
 
         // ── Intervention Result: persist to agent_events + dedicated SSE ──
-        if (event.type === "intervention_result") {
-          const data = event.data as Record<string, unknown> | undefined
+        // [P1 B5 票5B] engine AgentEvent 联合类型未收录 intervention_result 变体（engine.ts:824 实际发射），
+        // 字符串域比较 + data 本地取窄，防 TS2367 误判 never。
+        if ((event.type as string) === "intervention_result") {
+          const data = (event as { data?: unknown }).data as Record<string, unknown> | undefined
           const resultText = typeof data?.result === "string" ? data.result : JSON.stringify(data ?? {})
           sse.emit(wsId, {
             event: "intervention_result",
@@ -624,7 +629,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           })
           try {
             const neId = `${id}-${nodeId}`
-            dao.insertAgentEvent({
+            await dao.insertAgentEvent({
               node_execution_id: neId,
               event_order: Date.now(),
               turn_index: 0,
@@ -649,7 +654,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           try {
             const neId = `${id}-${nodeId}`
             if (workflowRefCache === undefined) {
-              const exec = dao.findById(id)
+              const exec = await dao.findById(id)
               workflowRefCache = exec?.workflow_ref ?? "unknown"
             }
             obs.bufferEvent(neId, event, {
@@ -660,14 +665,14 @@ export class EngineCallbacks implements IEngineCallbacks {
         }
       },
 
-      onSwarmEvent: (nodeId, event) => {
+      onSwarmEvent: async (nodeId, event) => {
         sse.emit(wsId, {
           event: event.type,
-          data: { executionId: id, nodeId, ...(event.data ?? {}) },
+          data: { executionId: id, ...(event.data ?? {}), nodeId },
         })
         try {
           const neId = `${id}-${nodeId}`
-          dao.insertAgentEvent({
+          await dao.insertAgentEvent({
             node_execution_id: neId,
             event_order: Date.now(),
             turn_index: 0,
@@ -688,8 +693,8 @@ export class EngineCallbacks implements IEngineCallbacks {
         } catch { /* silent — swarm event persistence is best-effort */ }
       },
 
-      onNodeRetry: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => {
-        dao.updateNodeRetryInfo(id, nodeId, attempt, new Date().toISOString())
+      onNodeRetry: async (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => {
+        try { await dao.updateNodeRetryInfo(id, nodeId, attempt, new Date().toISOString()) } catch (err) { console.error("[EngineCallbacks] onNodeRetry persist failed:", err) }
         sse.emit(wsId, {
           event: "node_retry", data: { executionId: id, nodeId, attempt, maxAttempts, delayMs },
         })
@@ -699,14 +704,14 @@ export class EngineCallbacks implements IEngineCallbacks {
         sse.emit(wsId, { event: "pipeline_reloaded", data: { executionId: id, config } })
       },
 
-      onRuntimeNodeAdded: (nodeId: string, nodeType: string, meta?: { parentNodeId?: string; iterationIndex?: number }) => {
+      onRuntimeNodeAdded: async (nodeId: string, nodeType: string, meta?: { parentNodeId?: string; iterationIndex?: number }) => {
         const neId = `${id}-${nodeId}`
-        dao.insertNodeExecutionOrIgnore({
+        try { await dao.insertNodeExecutionOrIgnore({
           id: neId, execution_id: id, node_id: nodeId, node_type: nodeType,
           status: "pending", started_at: new Date().toISOString(),
           parent_node_id: meta?.parentNodeId ?? null,
           iteration_index: meta?.iterationIndex ?? null,
-        })
+        }) } catch (err) { console.error("[EngineCallbacks] onRuntimeNodeAdded persist failed:", err) }
         sse.emit(wsId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType, parentNodeId: meta?.parentNodeId, iterationIndex: meta?.iterationIndex } })
       },
     }

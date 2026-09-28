@@ -4,6 +4,7 @@ import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
 import { composeLlmCallRow } from "./llm-call-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
+import { pgSql } from "../db/dao/registry"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
 interface FilteredAgentEvent {
@@ -63,7 +64,8 @@ export class SQLiteSink implements ObservabilitySink {
     if (execDaoOrDb instanceof ExecutionDAO) {
       this.execDao = execDaoOrDb
     } else {
-      this.execDao = new ExecutionDAO(execDaoOrDb)
+      // [P1 B5 票5B] ExecutionDAO 迁 PG 后 SQLite 句柄分支改池句柄（兼容位点保留签名）。
+      this.execDao = new ExecutionDAO(pgSql())
     }
   }
 

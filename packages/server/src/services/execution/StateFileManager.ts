@@ -58,12 +58,12 @@ export class StateFileManager implements IStateFileManager {
    * Write aggregated executions.json for the workspace.
    * Used by the frontend for the execution tree view.
    */
-  syncStateJson(): void {
+  async syncStateJson(): Promise<void> {
     const timingOn = process.env.OCTOPUS_EXEC_TIMING === "1"
     const t0 = timingOn ? Date.now() : 0
     if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true })
 
-    const rows = this.dao.findExecutionsForStateSync(this.workspaceDbId)
+    const rows = await this.dao.findExecutionsForStateSync(this.workspaceDbId)
     const t1 = timingOn ? Date.now() : 0
 
     const safeJsonParse = (v: string | null | undefined): Record<string, string> | null => {

@@ -52,25 +52,25 @@ export interface RuntimeNodeMeta {
 }
 
 export interface EngineCallbacks {
-  onNodeStart?: (nodeId: string, nodeType: string) => void
-  onNodeEnd?: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => void
-  onNodeLog?: (nodeId: string, logLine: string) => void
-  onStatusChange?: (status: string, progress: number) => void
-  onError?: (nodeId: string, error: string) => void
-  onComplete?: (finalStatus: string) => void
-  onBranchStart?: (nodeExecutionId: string, iteration: number) => void
-  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void
-  onAgentEvent?: (nodeId: string, event: AgentEvent) => void
-  onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void
-  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number, result?: NodeExecutionResult) => void
-  onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void
-  onCheckpoint?: (checkpoint: unknown) => void
-  onPipelineReloaded?: (config: PipelineConfig) => void
-  onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  onNodeStart?: (nodeId: string, nodeType: string) => void | Promise<void>
+  onNodeEnd?: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => void | Promise<void>
+  onNodeLog?: (nodeId: string, logLine: string) => void | Promise<void>
+  onStatusChange?: (status: string, progress: number) => void | Promise<void>
+  onError?: (nodeId: string, error: string) => void | Promise<void>
+  onComplete?: (finalStatus: string) => void | Promise<void>
+  onBranchStart?: (nodeExecutionId: string, iteration: number) => void | Promise<void>
+  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void | Promise<void>
+  onAgentEvent?: (nodeId: string, event: AgentEvent) => void | Promise<void>
+  onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void | Promise<void>
+  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number, result?: NodeExecutionResult) => void | Promise<void>
+  onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void | Promise<void>
+  onCheckpoint?: (checkpoint: unknown) => void | Promise<void>
+  onPipelineReloaded?: (config: PipelineConfig) => void | Promise<void>
+  onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void | Promise<void>
   /** Mid-execution outputs update. Lets executors surface outputs before node_end
    *  (e.g. dynamic_sub_workflow persists generated_workflow when the DAG is generated,
    *  so consumers can render the child workflow while the node is still running). */
-  onOutputsUpdate?: (nodeId: string, outputs: Record<string, any>) => void
+  onOutputsUpdate?: (nodeId: string, outputs: Record<string, any>) => void | Promise<void>
   /** Tool interceptor hook — called before agent tool execution. Return { allow: false } to block. */
   onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
 

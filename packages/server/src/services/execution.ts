@@ -7,7 +7,7 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { ObservabilityService } from "./observability"
 import { PrivacyFilter } from "./privacy-filter"
 import { ExecutionDAO } from "../db/dao/execution-dao"
-import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
+import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { KnowledgeEffectivenessDAO } from "../db/dao/knowledge-effectiveness-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { pgSql } from "../db/dao/registry"
@@ -56,8 +56,9 @@ export class ExecutionService {
     // 在 fire-and-forget 里升级成 unhandled rejection —— execution-lifecycle 样板。
     tokenUsageDao?: TokenUsageDAO,
   ) {
-    this.dao = execDAO ?? new ExecutionDAO(db)
-    const obs = observability ?? new ObservabilityService(db, new PrivacyFilter(), this.dao)
+    // [P1 B5 票5B] ExecutionDAO 已迁 PG：直构位点走池句柄（db 参数保留给混簇 SQLite 消费者）。
+    this.dao = execDAO ?? new ExecutionDAO(pgSql())
+    const obs = observability ?? new ObservabilityService(this.dao, tokenUsageDao ?? new TokenUsageDAO(pgSql()), new PrivacyFilter())
     const workspaceId = org + ":" + workspacePath
 
     this.lifecycle = new ExecutionLifecycle(
@@ -115,7 +116,7 @@ export class ExecutionService {
 
   // ==================== CRUD ====================
 
-  list(workspaceId: string): ExecutionRow[] {
+  async list(workspaceId: string): Promise<ExecutionRow[]> {
     return this.dao.listByWorkspace(workspaceId)
   }
 
@@ -132,18 +133,18 @@ export class ExecutionService {
     // ux_exec_task_active does not apply to it — the latch only protects rows that
     // already carry task_id, so the arming side must never insert it in two steps.
     task_id?: string | null; phase_index?: number | null; round_index?: number | null;
-  }): ExecutionRow {
-    return this.lifecycle.create(workspaceId, input, this.org) as ExecutionRow
+  }): Promise<ExecutionRow> {
+    return this.lifecycle.create(workspaceId, input, this.org)
   }
 
-  getById(id: string): ExecutionRow | undefined {
-    const row = this.dao.findById(id)
+  async getById(id: string): Promise<ExecutionRow | undefined> {
+    const row = await this.dao.findById(id)
     return row ? row as ExecutionRow : undefined
   }
 
-  getByIdWithSteps(id: string): (ExecutionRow & { steps: NodeExecutionRow[] }) | undefined {
-    const exec = this.dao.findById(id)
-    return exec ? { ...exec, steps: this.dao.findNodeExecutions(id) } as ExecutionRow & { steps: NodeExecutionRow[] } : undefined
+  async getByIdWithSteps(id: string): Promise<(ExecutionRow & { steps: NodeExecutionRow[] }) | undefined> {
+    const exec = await this.dao.findById(id)
+    return exec ? { ...exec, steps: await this.dao.findNodeExecutions(id) } as ExecutionRow & { steps: NodeExecutionRow[] } : undefined
   }
 
   /** F1（2026-09-21）: 该执行 running 节点的 turn_usage 实时累计（内存活投影，
@@ -153,16 +154,16 @@ export class ExecutionService {
     return this.lifecycle.liveUsageFor(executionId)
   }
 
-  getTokenUsagesForExecution(executionId: string): TokenUsageEntry[] {
+  async getTokenUsagesForExecution(executionId: string): Promise<TokenUsageEntry[]> {
     return this.lifecycle.getTokenUsagesForExecution(executionId)
   }
 
-  getTokenUsagesPerStep(executionId: string): TokenUsageEntry[] {
+  async getTokenUsagesPerStep(executionId: string): Promise<TokenUsageEntry[]> {
     return this.lifecycle.getTokenUsagesPerStep(executionId)
   }
 
   /** 每节点 LLM 请求次数（供节点主行「总请求次数」）。 */
-  llmCallCountsByNode(executionId: string): Record<string, number> {
+  async llmCallCountsByNode(executionId: string): Promise<Record<string, number>> {
     return this.lifecycle.llmCallCountsByNode(executionId)
   }
 
@@ -192,7 +193,7 @@ export class ExecutionService {
     return this.lifecycle.approve(id, nodeId, answer, comment)
   }
 
-  async startInteraction(id: string, nodeId: string, workspaceId: string): Promise<{ sessionId: string; display: string }> {
+  async startInteraction(id: string, nodeId: string, workspaceId: string): Promise<{ sessionId: string; initialPrompt?: string }> {
     return this.lifecycle.startInteraction(id, nodeId, workspaceId)
   }
 
@@ -224,7 +225,7 @@ export class ExecutionService {
     return this.lifecycle.hasLiveEngine(executionId)
   }
 
-  skip(id: string): boolean {
+  async skip(id: string): Promise<boolean> {
     return this.lifecycle.skip(id)
   }
 
@@ -236,7 +237,7 @@ export class ExecutionService {
     executionId: string,
     input: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } },
   ): Promise<{ success: boolean; directive_applied?: string; error?: string }> {
-    const exec = this.dao.findById(executionId)
+    const exec = await this.dao.findById(executionId)
     if (!exec) return { success: false, error: "Execution not found" }
 
     const intervenableStatuses = ["running", "paused", "pending_approval", "pending_interaction", "pending_resume"]
@@ -258,13 +259,13 @@ export class ExecutionService {
     return { success: false, error: `Unknown directive type: ${(input.directive as any).type}` }
   }
 
-  delete(id: string): boolean {
+  async delete(id: string): Promise<boolean> {
     return this.lifecycle.delete(id)
   }
 
   // ==================== Logs / Branches ====================
 
-  getLogEvents(executionId: string): { type: string; timestamp: string; data: Record<string, unknown> }[] {
+  async getLogEvents(executionId: string): Promise<{ type: string; timestamp: string; data: Record<string, unknown> }[]> {
     return this.lifecycle.getLogEvents(executionId)
   }
 
@@ -276,11 +277,11 @@ export class ExecutionService {
     return this.lifecycle.getLoopIterationSummary(executionId)
   }
 
-  getBranches(executionId: string): BranchExecutionRow[] {
+  async getBranches(executionId: string): Promise<BranchExecutionRow[]> {
     return this.dao.findBranchExecutions(executionId)
   }
 
-  getWorkflowContent(executionId: string): string | null {
+  async getWorkflowContent(executionId: string): Promise<string | null> {
     return this.lifecycle.getWorkflowContent(executionId)
   }
 
@@ -298,12 +299,12 @@ export class ExecutionService {
 
   // ==================== Backward-compat helpers ====================
 
-  syncStateJson(): void {
-    this.lifecycle.syncStateJson()
+  async syncStateJson(): Promise<void> {
+    await this.lifecycle.syncStateJson()
   }
 
-  createRefResolver(): (refPath: string) => any {
-    return this.lifecycle.createRefResolver()
+  async createRefResolver(workflowContent: string): Promise<(refPath: string) => any> {
+    return this.lifecycle.createRefResolver(workflowContent)
   }
 
   buildCallbacks(executionId: string): EngineCallbacks {
@@ -313,17 +314,17 @@ export class ExecutionService {
   // ==================== Static backward-compat ====================
 
   static async consumePendingHooks(db: Database.Database): Promise<void> {
-    const dao = new ExecutionDAO(db)
+    const dao = new ExecutionDAO(pgSql())
     await RecoveryManager.consumePendingHooks(dao)
   }
 
-  static recoverInterruptedExecutions(db: Database.Database): void {
-    const dao = new ExecutionDAO(db)
-    RecoveryManager.recoverInterruptedExecutions(dao)
+  static async recoverInterruptedExecutions(db: Database.Database): Promise<void> {
+    const dao = new ExecutionDAO(pgSql())
+    await RecoveryManager.recoverInterruptedExecutions(dao)
   }
 
   static async resumePendingExecutions(db: Database.Database): Promise<void> {
-    const dao = new ExecutionDAO(db)
+    const dao = new ExecutionDAO(pgSql())
     await RecoveryManager.resumePendingExecutions(dao)
   }
 }
