@@ -1,8 +1,7 @@
 // packages/server/src/__tests__/execution-lifecycle.test.ts
 // Characterization tests for ExecutionLifecycle — lock behavior before refactoring.
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
-import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -12,7 +11,7 @@ import { SSEService } from "../services/sse"
 import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { ExecutionDAO } from "../db/dao/execution-dao"
-import { TokenUsageDAO } from "../db/dao/token-usage-dao"
+import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { ExecutionLifecycle } from "../services/execution/ExecutionLifecycle"
 import { ObservabilityService } from "../services/observability"
 import { PrivacyFilter } from "../services/privacy-filter"
@@ -88,20 +87,30 @@ let dbPath: string
 
 const ORG = "test-org"
 
-// P1 B4 票2B-2：账本写侧（onNodeEnd → TokenUsageDAO）已迁 PG —— 注册文件级测试池；
-// 无 env 模式不注册，lazyDAO 路径按生产代码 catch 降级，仅 PG 门住的用例会用到它。
-let pg: PgFixture | null = null
-
-beforeAll(async () => {
-  if (!pgTestEnabledOn()) return
-  pg = await setupRegisteredPgSchema()
-})
-
-afterAll(async () => {
-  if (!pg) return
-  await pg.close()
-  pg = null
-})
+// P1 B4 票2B-2R：账本写侧（onNodeEnd → TokenUsageDAO）已迁 PG —— 生产 registry 走
+// pgSql()（未注册池时同步抛，被 cb.onNodeEnd 的 fire-and-forget async 体升级为
+// unhandled rejection）。本文件钉的是 lifecycle 编排 + 读模型投影（仍 SQLite），
+// 因此在依赖注入点塞一个「写 SQLite、读 SQLite」的桩，把跨引擎的空 join 关在
+// 测试边界之外。生产侧 TokenUsageDAO 直写 PG 由账本簇测试单独钉
+// （llm-call-ledger / ledger-e2e-consistency / observability-persist-cost 等）。
+function makeStubTokenUsageDao(handle: Database.Database): TokenUsageDAO {
+  return {
+    recordNodeUsage: vi.fn(async (input: any) => {
+      handle.prepare(
+        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+          cache_read_tokens, cache_creation_tokens, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        input.id, input.nodeExecutionId, input.model,
+        input.usage?.inputTokens ?? 0, input.usage?.outputTokens ?? 0,
+        input.usage?.cacheReadTokens ?? 0, input.usage?.cacheCreationTokens ?? 0,
+        input.source ?? 'node', input.createdAt ?? new Date().toISOString(),
+      )
+    }),
+    costForNodeExecution: vi.fn(async () => ({ usd: 0 })),
+    aggregateByExecution: vi.fn(async () => null),
+    insertLlmCallBatch: vi.fn(async () => undefined),
+  } as unknown as TokenUsageDAO
+}
 
 beforeEach(() => {
   workspacePath = path.join(os.tmpdir(), `test-lifecycle-${Date.now()}`)
@@ -139,6 +148,7 @@ beforeEach(() => {
   lifecycle = new ExecutionLifecycle(
     db, dao, sse, wfService, builtInWfService,
     ORG, workspacePath, workspaceDbId, sseWorkspaceId, obs,
+    undefined, makeStubTokenUsageDao(db),
   )
 })
 
@@ -671,7 +681,7 @@ describe("ExecutionLifecycle.buildCallbacks", () => {
     expect(externalComplete).toHaveBeenCalledOnce()
   })
 
-  it("onNodeEnd persists token usage when modelUsages present", () => {
+  it("onNodeEnd persists token usage when modelUsages present", async () => {
     const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
     dao.insertNodeExecutionOrIgnore({
       id: `${exec.id}-step1`, execution_id: exec.id,
@@ -687,8 +697,15 @@ describe("ExecutionLifecycle.buildCallbacks", () => {
       }],
     }, "agent")
 
+    // cb.onNodeEnd 是引擎接口的 void 同步槽位（生产 EngineCallbacks:389 内 fire-and-forget），
+    // 落账在微任务里跑 —— 用 vi.waitFor 让「写 SQLite」稳定完成后再断言读模型投影，
+    // 避免与 worker 调度抢时序（本用例钉的是 lifecycle 编排+读模型契约）。
+    await vi.waitFor(() => {
+      const usages = lifecycle.getTokenUsagesPerStep(exec.id)
+      expect(usages.length).toBe(1)
+    }, { timeout: 1500 })
+
     const usages = lifecycle.getTokenUsagesPerStep(exec.id)
-    expect(usages.length).toBe(1)
     expect(usages[0].model).toBe("claude-sonnet-4-20250514")
     expect(usages[0].inputTokens).toBe(500)
   })
