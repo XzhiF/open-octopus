@@ -26,11 +26,11 @@
 // USERPROFILE restored with `delete` so no later file in this worker inherits them).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -188,9 +188,8 @@ async function complete(execId: string, status = "completed"): Promise<void> {
 }
 
 beforeEach(() => {
-  db = new Database(":memory:")
+  db = initDb(":memory:")
   db.pragma("foreign_keys = ON")
-  applySchema(db)
   db.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
@@ -232,7 +231,7 @@ afterEach(() => {
   if (realUserProfile === undefined) delete process.env.USERPROFILE
   else process.env.USERPROFILE = realUserProfile
   fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 describePg("ticket 06 — 产物单向环 seed/collect/SSE（票03: 两半都在 job 里）", () => {

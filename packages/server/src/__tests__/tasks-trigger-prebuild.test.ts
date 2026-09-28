@@ -22,12 +22,12 @@
 // executions 行」的 stub（真引擎要 provider）。
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { execFileSync } from "child_process"
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, mkdtempSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -210,9 +210,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   order = []
-  db = new Database(":memory:")
+  db = initDb(":memory:")
   db.pragma("foreign_keys = ON")
-  applySchema(db)
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   stub.db = db
   stub.started = []
@@ -250,7 +249,7 @@ afterEach(() => {
   else process.env.USERPROFILE = realUserProfile
   rmSync(fakeHome, { recursive: true, force: true })
   rmSync(repoDir, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 /** P1 B2: tasks 读断言直读 PG。 */

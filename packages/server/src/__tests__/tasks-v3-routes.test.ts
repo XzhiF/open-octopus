@@ -24,12 +24,12 @@
 // data prefix E2E_TD_ (R7), assert response body + SQL + readdir (R4).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -49,8 +49,7 @@ let pg: PgFixture | null = null
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  const db = initDb(":memory:")
   return db
 }
 
@@ -187,7 +186,7 @@ describePg("04: task create extension + skill-groups route (integration)", () =>
   afterAll(async () => {
     await pg?.close()
     pg = null
-    db.close()
+    closeDb()
     cleanupDir(rmBase)
     cleanupDir(homeBase)
   })

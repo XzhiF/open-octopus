@@ -11,13 +11,13 @@
 // E2E_AR_ prefix, tmp dirs cleaned after.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
 import { execFileSync } from "child_process"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { WorkspaceDAO } from "../db/dao"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
@@ -82,8 +82,7 @@ vi.mock("../services/execution-service-registry", () => ({
 }))
 
 function newDb(): Database.Database {
-  const d = new Database(":memory:")
-  applySchema(d)
+  const d = initDb(":memory:")
   d.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   return d
 }
@@ -428,7 +427,7 @@ afterEach(() => {
   else process.env.USERPROFILE = realUserProfile
   for (const d of tracked) fs.rmSync(d, { recursive: true, force: true })
   if (fakeHome) fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 describePg("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {

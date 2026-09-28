@@ -9,14 +9,14 @@
 // 本身（= 宿主 PID 集成员），三闸按设计拒绝 —— 这正是 409 用例要钉的行为；
 // 成功树杀路径由 reclaim 用例覆盖。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import net from "net"
 import { spawn, type ChildProcess } from "child_process"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -85,8 +85,7 @@ beforeAll(async () => {
   // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取），
   // executions/workspaces 仍在 SQLite `db`。
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-instances-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
   db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
@@ -104,7 +103,7 @@ afterAll(async () => {
   if (!pgTestEnabledOn()) return
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   for (const c of children) { try { c.kill() } catch { /* dead */ } }
   for (let i = 0; i < 50; i++) {
     try { fs.rmSync(tmp, { recursive: true, force: true }); return } catch { setTimeout(() => {}, 50) }

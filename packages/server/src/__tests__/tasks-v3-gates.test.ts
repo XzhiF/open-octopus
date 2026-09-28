@@ -20,9 +20,9 @@
 // covered by clone-spec-notice.test.ts (already passing).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -62,8 +62,7 @@ function makeSSECollector() {
 }
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  const db = initDb(":memory:")
   return db
 }
 
@@ -155,7 +154,7 @@ describePg("05: spec-field source + confirmation persistence + ready gate (integ
   afterAll(async () => {
     await pg?.close()
     pg = null
-    db.close()
+    closeDb()
   })
 
   beforeEach(() => {

@@ -4,12 +4,12 @@
 // 目录:往批次目录写 spec/e2e票/plan/report,GET /:id/playbook 断言编译产物 +
 // 缺 awaiting→409 + 缺文件降级 200。编译器纯逻辑另见 playbook-compile.test.ts。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -69,8 +69,7 @@ beforeAll(async () => {
   // P1 B2 双引擎 fixture：tasks 落 PG（注册全局池 —— service 经 pgSql() 取），
   // executions/workspaces 仍在 SQLite `db`。
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-playbook-"))
   db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'pb-ws', ?, ?, ?, ?)`)
     .run(WS_ID, ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
@@ -86,7 +85,7 @@ afterAll(async () => {
   if (!pgTestEnabledOn()) return
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 

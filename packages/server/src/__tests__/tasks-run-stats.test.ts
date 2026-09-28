@@ -6,8 +6,8 @@
 // 都不进和。墙钟口径（created→now 把待验收挂的那一夜算成跑时）已废 —— 见 TaskRunStats。
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
-import Database from "better-sqlite3"
-import { applySchema } from "../db/schema"
+import type Database from "better-sqlite3"
+import { closeDb, initDb } from "../db/connection"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -21,8 +21,7 @@ const MIN = 60_000
 let pg: PgFixture | null = null
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  const db = initDb(":memory:")
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   return db
 }
