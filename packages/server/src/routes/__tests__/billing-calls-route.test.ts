@@ -2,9 +2,12 @@
 // Seam: GET /api/system/billing/calls —— 分页流水 + model/时间/price_status/workspace 筛选。
 // NEW-r2：llm_calls 只存事实行，cost_usd/price_status 为查询时按价行派生
 // （原 cost_native/cost_currency 快照列已从契约移除）；钱不落账本，配价即回算。
-// Hono app.request() 进程内真实路由栈 + 真实 SQLite；行经 TokenUsageDAO.insertLlmCall
-// 落库；期望费用 = 价行手算。数据 E2E_TEST_ 前缀，尾部清理。
+// Hono app.request() 进程内真实路由栈；行经 TokenUsageDAO.insertLlmCall 落库
+// （P1 B4 票2B-1：llm_calls/billing_price_config 已迁 PG —— dao 直构吃 pg.sql，
+// 全局池经 setupRegisteredPgSchema 注册供路由侧 lazyDAO；SQLite 全局连接仍需 initDb
+// 供 lazyDAO 代理首访）。期望费用 = 价行手算。数据 E2E_TEST_ 前缀，尾部清理。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from '../../db/pg/__tests__/dao-fixture'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -19,6 +22,7 @@ const system = createSystemRoutes()
 const app = new Hono().route('/api/system', system)
 
 let dbPath: string
+let pg: PgFixture | null = null
 
 const CALLS_URL = '/api/system/billing/calls'
 
@@ -34,7 +38,9 @@ function row(id: string, model: string, ts: number, ws: string, input_tokens: nu
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   dbPath = path.join(os.tmpdir(), `test-billing-calls-${process.pid}-${Date.now()}.db`)
   initDb(dbPath)
   const db = getDb()
@@ -48,27 +54,30 @@ beforeAll(() => {
   // 价行（查询时派生的算钱依据）：
   //   A 只配一条时间段价 [c1, c2) —— c1 命中，c2 在 to 之外（半开区间）→ 派生 unpriced；
   //   B 配兜底价（CNY）—— c3/c4 全时段命中，USD = native ÷ 默认汇率 7.0。
-  const billing = new BillingDAO(db)
-  billing.createPrice({ id: 'p-call-a', vendor: 'E2E_TEST_VA', model_id: 'E2E_TEST_A', input_unit_price: 22050, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD', valid_from: T.c1, valid_to: T.c2 })
-  billing.createPrice({ id: 'p-call-b', vendor: 'E2E_TEST_VB', model_id: 'E2E_TEST_B', input_unit_price: 154000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'CNY' })
+  const billing = new BillingDAO(pg!.sql)
+  await billing.createPrice({ id: 'p-call-a', vendor: 'E2E_TEST_VA', model_id: 'E2E_TEST_A', input_unit_price: 22050, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD', valid_from: T.c1, valid_to: T.c2 })
+  await billing.createPrice({ id: 'p-call-b', vendor: 'E2E_TEST_VB', model_id: 'E2E_TEST_B', input_unit_price: 154000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'CNY' })
 
-  const dao = new TokenUsageDAO(db)
+  const dao = new TokenUsageDAO(pg!.sql)
   // c1: ws-1 A 命中窗口价 22.05 | c2: ws-1 A 窗口外 unpriced | c3: ws-1 B 154CNY→22USD | c4: ws-2 B 7.7CNY→1.1USD（时间乱序插入验证倒序）
-  dao.insertLlmCall(row('c4', 'E2E_TEST_B', T.base, 'ws-2', 50))
-  dao.insertLlmCall(row('c1', 'E2E_TEST_A', T.c1, 'ws-1', 1000))
-  dao.insertLlmCall(row('c3', 'E2E_TEST_B', T.c3, 'ws-1', 1000))
-  dao.insertLlmCall(row('c2', 'E2E_TEST_A', T.c2, 'ws-1', 1000))
+  await dao.insertLlmCall(row('c4', 'E2E_TEST_B', T.base, 'ws-2', 50))
+  await dao.insertLlmCall(row('c1', 'E2E_TEST_A', T.c1, 'ws-1', 1000))
+  await dao.insertLlmCall(row('c3', 'E2E_TEST_B', T.c3, 'ws-1', 1000))
+  await dao.insertLlmCall(row('c2', 'E2E_TEST_A', T.c2, 'ws-1', 1000))
 })
 
-afterAll(() => {
-  getDb().prepare("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'").run()
-  getDb().prepare("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'").run()
-  const left = (getDb().prepare("SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_%'").get() as { n: number }).n
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg!.sql.unsafe("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'")
+  await pg!.sql.unsafe("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'")
+  const left = Number((await pg!.sql`SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_%'`)[0].n)
   expect(left).toBe(0) // 清理复核
   closeDb()
   for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
     if (fs.existsSync(f)) fs.unlinkSync(f)
   }
+  await pg!.close()
+  pg = null
 })
 
 async function get(params = ''): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -79,12 +88,15 @@ function callIds(body: Record<string, unknown>): string[] {
   return (body.calls as Array<{ id: string }>).map(c => c.id)
 }
 
-/** SQL 直查交叉（独立真相源；派生列走视图，事实列走 llm_calls）。 */
-function sqlIds(where: string, args: unknown[] = []): string[] {
-  return (getDb().prepare(`SELECT id FROM llm_calls WHERE model LIKE 'E2E_TEST_%' ${where} ORDER BY timestamp DESC`).all(...args) as { id: string }[]).map(r => r.id)
+/** SQL 直查交叉（独立真相源；派生列走视图，事实列走 llm_calls）。P1 B4：直读 PG。 */
+async function sqlIds(where: string, args: unknown[] = []): Promise<string[]> {
+  let n = 0
+  const pgSqlText = where.replace(/\?/g, () => `$${++n}`)
+  const rows = await pg!.sql.unsafe(`SELECT id FROM llm_calls WHERE model LIKE 'E2E_TEST_%' ${pgSqlText} ORDER BY timestamp DESC`, args)
+  return (rows as unknown as { id: string }[]).map(r => r.id)
 }
 
-describe('GET /api/system/billing/calls — 默认流水（钱 = 查询时派生）', () => {
+describePg('GET /api/system/billing/calls — 默认流水（钱 = 查询时派生）', () => {
   it('按 timestamp 倒序、派生 cost_usd/price_status、无 cost_native/cost_currency 字段、分页默认 50、含 models 候选与 total', async () => {
     const { status, body } = await get()
     expect(status).toBe(200)
@@ -128,7 +140,7 @@ describe('GET /api/system/billing/calls — 默认流水（钱 = 查询时派生
   })
 })
 
-describe('筛选组合 = SQL 直查（AC2；price_status = 派生条件）', () => {
+describePg('筛选组合 = SQL 直查（AC2；price_status = 派生条件）', () => {
   it('price_status=unpriced 只回未命中价行的行', async () => {
     const { body } = await get('?price_status=unpriced')
     expect(callIds(body)).toEqual(['c2']) // 手钉：c2 在 A 的窗口价 to 界之外
@@ -140,12 +152,12 @@ describe('筛选组合 = SQL 直查（AC2；price_status = 派生条件）', () 
   it('model 精确筛选', async () => {
     const { body } = await get('?model=E2E_TEST_A')
     expect(callIds(body)).toEqual(['c2', 'c1'])
-    expect(callIds(body)).toEqual(sqlIds("AND model = 'E2E_TEST_A'"))
+    expect(callIds(body)).toEqual(await sqlIds("AND model = 'E2E_TEST_A'"))
   })
 
   it('时间区间 from/to（含界）', async () => {
     const { body } = await get(`?from=${T.c2}&to=${T.c3}`)
-    expect(callIds(body)).toEqual(sqlIds('AND timestamp >= ? AND timestamp <= ?', [T.c2, T.c3]))
+    expect(callIds(body)).toEqual(await sqlIds('AND timestamp >= ? AND timestamp <= ?', [T.c2, T.c3]))
     expect(callIds(body)).toEqual(['c3', 'c2'])
   })
 
@@ -157,7 +169,7 @@ describe('筛选组合 = SQL 直查（AC2；price_status = 派生条件）', () 
   })
 })
 
-describe('非法参数 400', () => {
+describePg('非法参数 400', () => {
   it('price_status 枚举外 / page_size 越界 / from 非数值 → 400 带 code', async () => {
     for (const q of ['?price_status=whatever', '?page_size=9999', '?from=abc', '?page=0']) {
       const { status, body } = await get(q)

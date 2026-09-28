@@ -342,10 +342,10 @@ export class TokenUsageDAO extends BasePgDAO {
       cache_hit_rate: number | null
     }>(`
       SELECT
-        COALESCE(SUM(ntu.input_tokens), 0) as totalInputTokens,
-        COALESCE(SUM(ntu.output_tokens), 0) as totalOutputTokens,
-        COALESCE(SUM(ntu.cache_read_tokens), 0) as totalCacheReadTokens,
-        COALESCE(SUM(ntu.cache_creation_tokens), 0) as totalCacheCreationTokens,
+        COALESCE(SUM(ntu.input_tokens), 0) as "totalInputTokens",
+        COALESCE(SUM(ntu.output_tokens), 0) as "totalOutputTokens",
+        COALESCE(SUM(ntu.cache_read_tokens), 0) as "totalCacheReadTokens",
+        COALESCE(SUM(ntu.cache_creation_tokens), 0) as "totalCacheCreationTokens",
         ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
         ${LEDGER_SQL.cacheHitRate('ntu.')} as cache_hit_rate
       FROM node_token_usages ntu
@@ -979,7 +979,7 @@ export class TokenUsageDAO extends BasePgDAO {
       )
       SELECT ne.execution_id, ne.node_id, ne.duration as current_duration,
         ns.mean_duration, ns.stddev_duration,
-        ROUND((ne.duration - ns.mean_duration) / ns.stddev_duration, 1) as z_score,
+        ROUND(((ne.duration - ns.mean_duration) / ns.stddev_duration)::numeric, 1) as z_score,
         CASE WHEN (ne.duration - ns.mean_duration) / ns.stddev_duration > 3 THEN 'critical' ELSE 'warning' END as severity
       FROM node_executions ne
       JOIN node_stats ns ON ne.node_id = ns.node_id

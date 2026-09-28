@@ -4,35 +4,46 @@
 // NEW-r2：窗口边界以 "YYYY-MM-DD" 进（服务端换本地零点 epoch ms）、以 epoch 出；
 // 违例统一 400 + code（旧 409 DUPLICATE_MODEL_ID 已退役）；model_id 保存前归一化；
 // 改价立即重算全部历史（查询时派生，钱不落账本）。
-// 验证走 Hono app.request()（进程内真实路由栈 + 真实 SQLite），每步 API↔DB 交叉断言；
+// 验证走 Hono app.request()（进程内真实路由栈），每步 API↔DB 交叉断言；
 // 期望值手写在测试里。测试数据 E2E_TEST_ 前缀，尾部清理并复核。
+//
+// P1 B4 票2B-1：billing_price_config / billing_setting / llm_calls 已迁 PG ——
+// 交叉断言 DAO 直构吃 pg.sql，全局池经 setupRegisteredPgSchema 注册（路由侧 lazyDAO）；
+// SQLite 全局连接仍 initDb（lazyDAO 代理首访读 getDb，B5 前不可缺）。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { Hono } from 'hono'
-import { initDb, closeDb, getDb } from '../../db/connection'
+import { initDb, closeDb } from '../../db/connection'
 import { createSystemRoutes } from '../system'
 import { BillingDAO } from '../../db/dao/billing-dao'
 import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from '../../db/pg/__tests__/dao-fixture'
 
 let dbPath: string
+let pg: PgFixture | null = null
 const system = createSystemRoutes()
 // 与 index.ts 相同挂载：路由全路径 = /api/system/...
 const app = new Hono().route('/api/system', system)
 
-const dao = () => new BillingDAO(getDb())
+const dao = () => new BillingDAO(pg!.sql)
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return // 顶层 hook 在 describe.skip 下仍会执行 —— 必须门住
+  pg = await setupRegisteredPgSchema()
   dbPath = path.join(os.tmpdir(), `test-billing-routes-${process.pid}-${Date.now()}.db`)
   initDb(dbPath)
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
   closeDb()
   for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
     if (fs.existsSync(f)) fs.unlinkSync(f)
   }
+  await pg?.close()
+  pg = null
 })
 
 function jsonReq(method: string, url: string, body: unknown) {
@@ -68,7 +79,7 @@ function localMidnight(dateStr: string): number {
   return new Date(y, m - 1, d).getTime()
 }
 
-describe('GET /api/system/billing/prices + settings (初始态)', () => {
+describePg('GET /api/system/billing/prices + settings (初始态)', () => {
   it('prices 初始为空列表；settings 返回默认值兜底（票 01 口径）', async () => {
     const prices = await (await app.request('/api/system/billing/prices')).json()
     expect(prices).toEqual({ prices: [] })
@@ -80,7 +91,7 @@ describe('GET /api/system/billing/prices + settings (初始态)', () => {
   })
 })
 
-describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价；写入必验副作用 API↔DB）', () => {
+describePg('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价；写入必验副作用 API↔DB）', () => {
   let aCatchallId = ''
   let aWindowId = ''
 
@@ -104,7 +115,7 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
     aCatchallId = price.id
 
     // DB 交叉：行存在且窗口字段一致
-    const row = dao().getPrice(price.id)!
+    const row = (await dao().getPrice(price.id))!
     expect(row).not.toBeNull()
     expect(row.id).toBe(price.id)
     expect(row.input_unit_price).toBe(21)
@@ -118,7 +129,7 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
 
   it('POST 第二条兜底价 → 400 PRICE_CATCHALL_DUPLICATE（每模型至多一条兜底），DB 不增行', async () => {
     await expect400('POST', '/api/system/billing/prices', { ...VALID_A, vendor: 'E2E_TEST_vendor_2' }, 'PRICE_CATCHALL_DUPLICATE')
-    expect(dao().getPrice(aCatchallId)!.vendor).toBe('E2E_TEST_vendor') // 未被覆盖
+    expect((await dao().getPrice(aCatchallId))!.vendor).toBe('E2E_TEST_vendor') // 未被覆盖
     expect(await listPrices()).toHaveLength(1)
   })
 
@@ -156,7 +167,7 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
     const del = await app.request(`/api/system/billing/prices/${adjId}`, { method: 'DELETE' })
     expect(del.status).toBe(200)
     expect(await del.json()).toMatchObject({ success: true })
-    expect(dao().getPrice(adjId)).toBeNull()
+    expect(await dao().getPrice(adjId)).toBeNull()
     const again = await app.request(`/api/system/billing/prices/${adjId}`, { method: 'DELETE' })
     expect(again.status).toBe(404)
     expect((await again.json()).error.code).toBe('NOT_FOUND')
@@ -187,7 +198,7 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
     expect(res.status).toBe(201)
     const { price } = await res.json()
     expect(price.model_id).toBe('E2E_TEST_NORM')
-    expect(dao().getPrice(price.id)!.model_id).toBe('E2E_TEST_NORM')
+    expect((await dao().getPrice(price.id))!.model_id).toBe('E2E_TEST_NORM')
     // 归一后为空串 → 拒
     await expect400('POST', '/api/system/billing/prices', { ...VALID_A, model_id: ' ] ', vendor: 'E2E_TEST_vendor_n2' }, 'PRICE_MODEL_INVALID')
     expect(await listPrices()).toHaveLength(3)
@@ -210,21 +221,21 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
     expect(price.currency).toBe('USD')
     expect(price.output_unit_price).toBe(105) // 未传的不动
     expect(price.valid_from).toBeNull()
-    const dbRow = dao().getPrice(aCatchallId)!
+    const dbRow = (await dao().getPrice(aCatchallId))!
     expect(dbRow.input_unit_price).toBe(22)
     expect(dbRow.currency).toBe('USD')
   })
 
   it('PUT 撞他人兜底价 → 400 PRICE_CATCHALL_DUPLICATE（旧 409 语义退役）；失败写不改 DB', async () => {
-    const norm = dao().listPrices().find(p => p.model_id === 'E2E_TEST_NORM')!
+    const norm = (await dao().listPrices()).find(p => p.model_id === 'E2E_TEST_NORM')!
     const clash = await jsonReq('PUT', `/api/system/billing/prices/${norm.id}`, { model_id: 'E2E_TEST_MODEL_A' })
     expect(clash.status).toBe(400)
     expect((await clash.json()).error.code).toBe('PRICE_CATCHALL_DUPLICATE')
-    expect(dao().getPrice(norm.id)!.model_id).toBe('E2E_TEST_NORM')
+    expect((await dao().getPrice(norm.id))!.model_id).toBe('E2E_TEST_NORM')
   })
 
   it('PUT 窗口边界：日期串设界 → epoch；valid_from:null 拆界回兜底（缺省 = 不动）', async () => {
-    const norm = dao().listPrices().find(p => p.model_id === 'E2E_TEST_NORM')!
+    const norm = (await dao().listPrices()).find(p => p.model_id === 'E2E_TEST_NORM')!
     const setWin = await jsonReq('PUT', `/api/system/billing/prices/${norm.id}`, { valid_from: '2026-09-01' })
     expect(setWin.status).toBe(200)
     const { price } = await setWin.json()
@@ -235,13 +246,13 @@ describe('/api/system/billing/prices CRUD（规则表：兜底价 + 时间段价
     expect(unbind.status).toBe(200)
     const back = (await unbind.json()).price
     expect([back.valid_from, back.valid_to]).toEqual([null, null])
-    expect(dao().getPrice(norm.id)!.valid_from).toBeNull()
+    expect((await dao().getPrice(norm.id))!.valid_from).toBeNull()
   })
 })
 
-describe('改价即回算（NEW-r2 语义翻转：账本不落钱，历史随规则重算）', () => {
+describePg('改价即回算（NEW-r2 语义翻转：账本不落钱，历史随规则重算）', () => {
   it('事实行配价立即出钱 → 改价即时换值 → 删价回落 NULL/unpriced', async () => {
-    new TokenUsageDAO(getDb()).insertLlmCall({
+    await new TokenUsageDAO(pg!.sql).insertLlmCall({
       id: 'live-1', node_execution_id: null, execution_id: null, turn_index: 0, call_index: 0,
       message_id: null, model: 'E2E_TEST_LIVE', stop_reason: null, timestamp: 1_700_000_000_000,
       duration_ms: 100, ttft_ms: null, input_tokens: 1000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
@@ -266,13 +277,11 @@ describe('改价即回算（NEW-r2 语义翻转：账本不落钱，历史随规
     expect(del.status).toBe(200)
     const reverted = (await (await app.request('/api/system/billing/calls?model=E2E_TEST_LIVE')).json()).calls[0]
     expect(reverted).toMatchObject({ id: 'live-1', cost_usd: null, price_status: 'unpriced' }) // 删价 = 账目回落 NULL（不焊 0）
-    getDb().prepare("DELETE FROM llm_calls WHERE id = 'live-1'").run()
+    await pg!.sql.unsafe("DELETE FROM llm_calls WHERE id = 'live-1'")
   })
 })
 
-describe('POST /api/system/billing/price-preview — 试算器', () => {
-  // 注：生产码 price-sql.ts pricePreviewSql() 引用未定义的 q.cost_usd/q.vendor，
-  // 本组当前必红（500 READ_FAILED）—— 按契约断言，不绕过；详见交付报告。
+describePg('POST /api/system/billing/price-preview — 试算器', () => {
   const PREVIEW = {
     vendor: 'E2E_TEST_vendor', model_id: 'E2E_TEST_PREVIEW', input_unit_price: 2, output_unit_price: 4,
     cache_write_unit_price: 6, cache_read_unit_price: 8, currency: 'USD',
@@ -325,13 +334,13 @@ describe('POST /api/system/billing/price-preview — 试算器', () => {
   })
 })
 
-describe('/api/system/billing/settings GET/PUT', () => {
+describePg('/api/system/billing/settings GET/PUT', () => {
   it('PUT {usd_to_cny:"6.5",display_currency:"USD"} → 200，GET 立即回新值；DB 双键各仅一行', async () => {
     const res = await jsonReq('PUT', '/api/system/billing/settings', { usd_to_cny: '6.5', display_currency: 'USD' })
     expect(res.status).toBe(200)
     const get = await app.request('/api/system/billing/settings')
     expect(await get.json()).toEqual({ usd_to_cny: '6.5', display_currency: 'USD' })
-    const raw = getDb().prepare("SELECT key, value FROM billing_setting ORDER BY key").all() as { key: string; value: string }[]
+    const raw = (await pg!.sql`SELECT key, value FROM billing_setting ORDER BY key`) as Array<{ key: string; value: string }>
     expect(raw).toEqual([
       { key: 'display_currency', value: 'USD' },
       { key: 'usd_to_cny', value: '6.5' },
@@ -365,13 +374,13 @@ describe('/api/system/billing/settings GET/PUT', () => {
   })
 })
 
-describe('清理（Verification Method 步骤 7）', () => {
+describePg('清理（Verification Method 步骤 7）', () => {
   it('删除全部 E2E_TEST_ 价格行 + 恢复 settings 默认，复核行数为初始值', async () => {
-    getDb().prepare("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'").run()
-    getDb().prepare("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'").run()
-    expect(dao().listPrices()).toHaveLength(0)
+    await pg!.sql.unsafe("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'")
+    await pg!.sql.unsafe("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'")
+    expect(await dao().listPrices()).toHaveLength(0)
     // 恢复默认（写回默认等价物 = 删除行，回落 DAO 兜底）
-    getDb().prepare('DELETE FROM billing_setting').run()
+    await pg!.sql.unsafe('DELETE FROM billing_setting')
     expect(await listPrices()).toHaveLength(0)
     expect(await (await app.request('/api/system/billing/settings')).json()).toEqual({ usd_to_cny: '7.0', display_currency: 'CNY' })
   })

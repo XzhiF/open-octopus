@@ -98,7 +98,7 @@ export function pricePreviewSql(): string {
                  ${matchSubquery("p.id", "q")} AS price_id,
                  ${matchSubquery("p.currency", "q")} AS cost_currency,
                  ${matchSubquery(costNativeExpr("q"), "q")} AS cost_native
-          FROM (SELECT CAST(? AS TEXT) AS model, CAST(? AS INTEGER) AS timestamp,
+          FROM (SELECT CAST(? AS TEXT) AS model, CAST(? AS BIGINT) AS timestamp,
                        CAST(? AS INTEGER) AS input_tokens,
                        CAST(? AS INTEGER) AS output_tokens,
                        CAST(? AS INTEGER) AS cache_creation_tokens,

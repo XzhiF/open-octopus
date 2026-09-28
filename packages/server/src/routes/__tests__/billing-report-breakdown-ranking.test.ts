@@ -3,29 +3,35 @@
 //       GET /api/system/billing/report/ranking?by=workspace|session&limit=N
 // NEW-r2：行只存事实；报表费用/厂商 = 查询时按价行窗口匹配派生。本夹具用「时间段价」构造
 // 同模型不同时刻有无价格的差异（r3/r6 窗口外 → unpriced NULL，不焊 0，KD4/KD21）。
-// Hono app.request() 进程内真实路由栈 + 真实 SQLite；聚合值与 SQL 直查交叉 + 手算字面值
+// Hono app.request() 进程内真实路由栈；聚合值与 SQL 直查交叉 + 手算字面值
 // （禁从被测 API 推导 —— R1-R8 Tautological 禁令）。
 // 厂商经 model→命中价行.vendor 关联，无命中归 unknown（KD23）；本地时区日界含首尾（KD24）。
+//
+// P1 B4 票2B-1：llm_calls/价表/reportRanking 的 workspaces·sessions·chat_sessions JOIN 全部
+// 经 PG（DAO 已迁）—— 造数落 PG 随机库，路由侧池经 setupRegisteredPgSchema 注册。
+// 本文件无逐日分桶断言（KD24 校验纯 epoch 窗口两侧同式），无需钉进程时区。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { Hono } from 'hono'
-import { initDb, closeDb, getDb } from '../../db/connection'
+import { initDb, closeDb } from '../../db/connection'
 import { createSystemRoutes } from '../system'
 import { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import { BillingDAO } from '../../db/dao/billing-dao'
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from '../../db/pg/__tests__/dao-fixture'
 import type { LlmCallRow } from '../../db/types'
 
 const system = createSystemRoutes()
 const app = new Hono().route('/api/system', system)
 
 let dbPath: string
+let pg: PgFixture | null = null
 
 const BREAKDOWN = '/api/system/billing/report/breakdown'
 const RANKING = '/api/system/billing/report/ranking'
 
-// 本地时区日期锚点（KD24：日界 = 本地 0 点）
+// 本地时区日期锚点（KD24：日界 = 本地 0 点 —— 造数与路由换算同用进程时区，自洽）
 const D = {
   day1: new Date(2026, 8, 15, 12, 0, 0).getTime(),  // 区间外（早于 from）
   day2a: new Date(2026, 8, 16, 0, 0, 0).getTime(),  // from 日本地 0 点 = 含
@@ -46,44 +52,48 @@ function row(id: string, over: Partial<LlmCallRow> & { model: string | null; tim
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return // 顶层 hook 在 describe.skip 下仍会执行 —— 必须门住
+  pg = await setupRegisteredPgSchema()
   dbPath = path.join(os.tmpdir(), `test-billing-report-02-${process.pid}-${Date.now()}.db`)
-  initDb(dbPath)
-  const db = getDb()
+  initDb(dbPath) // lazyDAO 代理首访读全局 getDb（B5 前不可缺）
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS Alpha','/tmp/1','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-2','WS Beta','/tmp/2','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-3','WS Gamma','/tmp/3','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ('s-1','default','Agent会话一',?,?)").run(t, t)
-  db.prepare("INSERT INTO chat_sessions (id, workspace_id, title, created_at, updated_at) VALUES ('cs-1','ws-1','聊天甲',?,?)").run(t, t)
+  await pg.sql.unsafe("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS Alpha','/tmp/1','default',$1,$2)", [t, t])
+  await pg.sql.unsafe("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-2','WS Beta','/tmp/2','default',$1,$2)", [t, t])
+  await pg.sql.unsafe("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-3','WS Gamma','/tmp/3','default',$1,$2)", [t, t])
+  await pg.sql.unsafe("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ('s-1','default','Agent会话一',$1,$2)", [t, t])
+  await pg.sql.unsafe("INSERT INTO chat_sessions (id, workspace_id, title, created_at, updated_at) VALUES ('cs-1','ws-1','聊天甲',$1,$2)", [t, t])
 
   // 时间段价（NEW-r2 夹具核心）：
   //   M1 USD input 10000/1M，窗口 [9/16, 9/17)：r1=10、r2(250 token)=2.5；r3 在窗口外 → unpriced；
   //   M2 CNY input 280000/1M，窗口 [9/17, 9/18)：r4 = 280 CNY ÷7 = 40 USD；r6 恰在 to 界（半开=排除）→ unpriced。
   //   M3 故意永不配价 → 厂商未知（KD23）。
-  const billing = new BillingDAO(db)
-  billing.createPrice({ id: 'p-m1', vendor: 'E2E_TEST_V1', model_id: 'E2E_TEST_M1', input_unit_price: 10000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD', valid_from: D.day2a, valid_to: new Date(2026, 8, 17).getTime() })
-  billing.createPrice({ id: 'p-m2', vendor: 'E2E_TEST_V2', model_id: 'E2E_TEST_M2', input_unit_price: 280000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'CNY', valid_from: new Date(2026, 8, 17).getTime(), valid_to: D.day4 })
+  const billing = new BillingDAO(pg.sql)
+  await billing.createPrice({ id: 'p-m1', vendor: 'E2E_TEST_V1', model_id: 'E2E_TEST_M1', input_unit_price: 10000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD', valid_from: D.day2a, valid_to: new Date(2026, 8, 17).getTime() })
+  await billing.createPrice({ id: 'p-m2', vendor: 'E2E_TEST_V2', model_id: 'E2E_TEST_M2', input_unit_price: 280000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'CNY', valid_from: new Date(2026, 8, 17).getTime(), valid_to: D.day4 })
 
-  const dao = new TokenUsageDAO(db)
+  const dao = new TokenUsageDAO(pg.sql)
   //            id    model  ts      workspace session  source      input
-  dao.insertLlmCall(row('r1', { model: 'E2E_TEST_M1', timestamp: D.day2b, workspace_id: 'ws-1', session_id: 's-1', source_path: 'workflow' })) // 10
-  dao.insertLlmCall(row('r2', { model: 'E2E_TEST_M1', timestamp: D.day2a, workspace_id: 'ws-2', session_id: 's-1', source_path: 'workflow', input_tokens: 250 })) // 2.5
-  dao.insertLlmCall(row('r3', { model: 'E2E_TEST_M1', timestamp: D.day3, workspace_id: 'ws-1', session_id: 'cs-1', source_path: 'interaction' })) // 窗口外 → unpriced
-  dao.insertLlmCall(row('r4', { model: 'E2E_TEST_M2', timestamp: D.day3, workspace_id: 'ws-2', session_id: 'cs-1', source_path: 'interaction' })) // 280CNY→40
-  dao.insertLlmCall(row('r5', { model: 'E2E_TEST_M3', timestamp: D.day1, workspace_id: 'ws-1', session_id: 's-1', source_path: 'unknown' })) // 无价模型
-  dao.insertLlmCall(row('r6', { model: 'E2E_TEST_M2', timestamp: D.day4, workspace_id: 'ws-3', session_id: null, source_path: 'harness' })) // to 界外 → unpriced
+  await dao.insertLlmCall(row('r1', { model: 'E2E_TEST_M1', timestamp: D.day2b, workspace_id: 'ws-1', session_id: 's-1', source_path: 'workflow' })) // 10
+  await dao.insertLlmCall(row('r2', { model: 'E2E_TEST_M1', timestamp: D.day2a, workspace_id: 'ws-2', session_id: 's-1', source_path: 'workflow', input_tokens: 250 })) // 2.5
+  await dao.insertLlmCall(row('r3', { model: 'E2E_TEST_M1', timestamp: D.day3, workspace_id: 'ws-1', session_id: 'cs-1', source_path: 'interaction' })) // 窗口外 → unpriced
+  await dao.insertLlmCall(row('r4', { model: 'E2E_TEST_M2', timestamp: D.day3, workspace_id: 'ws-2', session_id: 'cs-1', source_path: 'interaction' })) // 280CNY→40
+  await dao.insertLlmCall(row('r5', { model: 'E2E_TEST_M3', timestamp: D.day1, workspace_id: 'ws-1', session_id: 's-1', source_path: 'unknown' })) // 无价模型
+  await dao.insertLlmCall(row('r6', { model: 'E2E_TEST_M2', timestamp: D.day4, workspace_id: 'ws-3', session_id: null, source_path: 'harness' })) // to 界外 → unpriced
 })
 
-afterAll(() => {
-  getDb().prepare("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'").run()
-  getDb().prepare("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'").run()
-  const left = (getDb().prepare("SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_%'").get() as { n: number }).n
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg!.sql.unsafe("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_%'")
+  await pg!.sql.unsafe("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_%'")
+  const left = Number((await pg!.sql`SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_%'`)[0].n)
   expect(left).toBe(0) // 清理复核
   closeDb()
   for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
     if (fs.existsSync(f)) fs.unlinkSync(f)
   }
+  await pg!.close()
+  pg = null
 })
 
 async function get(url: string, params = ''): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -98,7 +108,7 @@ function itemsOf(body: Record<string, unknown>): BreakdownItem[] {
 
 interface RankingItem { id: string; name: string; cost_usd: number | null; cost_display: number | null; calls: number }
 
-describe('GET /report/ranking', () => {
+describePg('GET /report/ranking', () => {
   it('by=workspace：TOP 序 = 视图 SUM(cost_usd) DESC，name 取 workspaces.name（AC2/US4）', async () => {
     const { status, body } = await get(RANKING, '?by=workspace')
     expect(status).toBe(200)
@@ -110,14 +120,14 @@ describe('GET /report/ranking', () => {
     expect(items[1]).toMatchObject({ cost_usd: expect.closeTo(10, 10), calls: 3 }) // unpriced 计数量不计费用（KD21）
     expect(items[2]).toMatchObject({ cost_usd: null, cost_display: null, calls: 1 })
     // SQL ORDER BY LIMIT 交叉（派生钱走视图）
-    const sqlRows = getDb().prepare(`
+    const sqlRows = await pg!.sql.unsafe(`
       SELECT COALESCE(workspace_id, 'unknown') AS id,
-             SUM(cost_usd) AS c, COUNT(*) AS calls
+             SUM(cost_usd) AS c, COUNT(*)::int AS calls
       FROM llm_calls_costed WHERE model LIKE 'E2E_TEST_%'
       GROUP BY COALESCE(workspace_id, 'unknown')
       ORDER BY COALESCE(SUM(cost_usd), -1) DESC, id ASC
       LIMIT 50
-    `).all() as { id: string; c: number | null; calls: number }[]
+    `) as unknown as { id: string; c: number | null; calls: number }[]
     expect(items.map(i => i.id)).toEqual(sqlRows.map(r => r.id))
     items.forEach((i, n) => {
       if (i.cost_usd === null) expect(sqlRows[n].c).toBeNull()
@@ -159,7 +169,7 @@ describe('GET /report/ranking', () => {
   })
 })
 
-describe('GET /report/breakdown — group_by=vendor / source / 非法参数', () => {
+describePg('GET /report/breakdown — group_by=vendor / source / 非法参数', () => {
   it('vendor = model→命中价行 vendor 关联（KD23），窗口未命中/无价模型归 unknown（全区间）', async () => {
     const { status, body } = await get(BREAKDOWN, '?group_by=vendor')
     expect(status).toBe(200)
@@ -171,11 +181,11 @@ describe('GET /report/breakdown — group_by=vendor / source / 非法参数', ()
     expect(items[1]).toMatchObject({ key: 'E2E_TEST_V1', cost_usd: expect.closeTo(12.5, 10), calls: 2 })
     expect(items[2]).toMatchObject({ key: 'unknown', cost_usd: null, cost_display: null, calls: 3, share: 0 })
     // SQL 直查交叉（视图 vendor 列 + LEFT JOIN 价格表窗口匹配的独立复算）
-    const sqlRows = getDb().prepare(`
-      SELECT COALESCE(vendor, 'unknown') AS key, SUM(cost_usd) AS cost_usd, COUNT(*) AS calls
+    const sqlRows = await pg!.sql.unsafe(`
+      SELECT COALESCE(vendor, 'unknown') AS key, SUM(cost_usd) AS cost_usd, COUNT(*)::int AS calls
       FROM llm_calls_costed WHERE model LIKE 'E2E_TEST_%'
       GROUP BY COALESCE(vendor, 'unknown')
-    `).all() as { key: string; cost_usd: number | null; calls: number }[]
+    `) as unknown as { key: string; cost_usd: number | null; calls: number }[]
     for (const s of sqlRows) {
       const it = items.find(i => i.key === s.key)!
       if (s.cost_usd === null) expect(it.cost_usd, s.key).toBeNull()
@@ -205,7 +215,7 @@ describe('GET /report/breakdown — group_by=vendor / source / 非法参数', ()
   })
 })
 
-describe('GET /report/breakdown — group_by=model', () => {
+describePg('GET /report/breakdown — group_by=model', () => {
   it('费用降序 + 数量含 unpriced 费用仅 priced + share 之和=1（AC1/US3/US5）', async () => {
     const { status, body } = await get(BREAKDOWN, `?group_by=model&from=${FROM}&to=${TO}`)
     expect(status).toBe(200)
@@ -221,12 +231,12 @@ describe('GET /report/breakdown — group_by=model', () => {
 
   it('与 SQL 直查交叉：GROUP BY model + 派生费用 + 全行计数（独立真相源）', async () => {
     const { body } = await get(BREAKDOWN, `?group_by=model&from=${FROM}&to=${TO}`)
-    const sqlRows = getDb().prepare(`
-      SELECT model AS key, SUM(cost_usd) AS cost_usd, COUNT(*) AS calls
+    const sqlRows = await pg!.sql.unsafe(`
+      SELECT model AS key, SUM(cost_usd) AS cost_usd, COUNT(*)::int AS calls
       FROM llm_calls_costed
-      WHERE model LIKE 'E2E_TEST_%' AND timestamp >= ? AND timestamp <= ?
+      WHERE model LIKE 'E2E_TEST_%' AND timestamp >= $1 AND timestamp <= $2
       GROUP BY model
-    `).all(D.day2a, D.day3 + 999) as { key: string; cost_usd: number | null; calls: number }[]
+    `, [D.day2a, D.day3 + 999]) as unknown as { key: string; cost_usd: number | null; calls: number }[]
     const items = itemsOf(body)
     for (const s of sqlRows) {
       const it = items.find(i => i.key === s.key)
@@ -256,31 +266,31 @@ describe('GET /report/breakdown — group_by=model', () => {
     expect(items[1].cost_display).toBeCloseTo(87.5, 10) // 12.5 USD × 7
     // 改汇率 → CNY 价行的派生 USD 立即重算（280/8 = 35），展示值乘回来恒为原币 280；
     // USD 价行不受汇率影响，仅展示换算随动（12.5 × 8 = 100）。同一汇率驱动报表与明细。
-    new BillingDAO(getDb()).setSetting('usd_to_cny', '8')
+    await new BillingDAO(pg!.sql).setSetting('usd_to_cny', '8')
     const { body: b2 } = await get(BREAKDOWN, `?group_by=model&from=${FROM}&to=${TO}`)
     const it2 = itemsOf(b2)
     expect(it2[0]).toMatchObject({ key: 'E2E_TEST_M2', cost_usd: expect.closeTo(35, 10) })
     expect(it2[0].cost_display).toBeCloseTo(280, 10)
     expect(it2[1].cost_display).toBeCloseTo(100, 10)
     // 展示币种 USD → cost_display 恒等 cost_usd
-    const bd = new BillingDAO(getDb())
-    bd.setSetting('usd_to_cny', '7')
-    bd.setSetting('display_currency', 'USD')
+    const bd = new BillingDAO(pg!.sql)
+    await bd.setSetting('usd_to_cny', '7')
+    await bd.setSetting('display_currency', 'USD')
     const { body: b3 } = await get(BREAKDOWN, `?group_by=model&from=${FROM}&to=${TO}`)
     expect(b3.display_currency).toBe('USD')
     expect(itemsOf(b3)[0].cost_display).toBe(itemsOf(b3)[0].cost_usd)
-    bd.setSetting('display_currency', 'CNY')
+    await bd.setSetting('display_currency', 'CNY')
   })
 
   it('改价即回算：给 r3/r6 补兜底价 → 费用立变；删价回落（NEW-r2 语义）', async () => {
-    const billing = new BillingDAO(getDb())
+    const billing = new BillingDAO(pg!.sql)
     const before = itemsOf((await get(BREAKDOWN, '?group_by=model')).body)
     expect(before.find(i => i.key === 'E2E_TEST_M1')!.cost_usd).toBeCloseTo(12.5, 10)
     // M1 补全时段兜底价（窗口价对 r1/r2 仍优先：兜底 1 ≠ 窗口 10）
-    billing.createPrice({ id: 'p-m1-cat', vendor: 'E2E_TEST_V1', model_id: 'E2E_TEST_M1', input_unit_price: 1, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
+    await billing.createPrice({ id: 'p-m1-cat', vendor: 'E2E_TEST_V1', model_id: 'E2E_TEST_M1', input_unit_price: 1, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
     const mid = itemsOf((await get(BREAKDOWN, '?group_by=model')).body)
     expect(mid.find(i => i.key === 'E2E_TEST_M1')!.cost_usd).toBeCloseTo(12.5 + 1000 / 1e6, 10) // r3 由 NULL → 0.001
-    expect(billing.deletePrice('p-m1-cat')).toBe(true)
+    expect(await billing.deletePrice('p-m1-cat')).toBe(true)
     const after = itemsOf((await get(BREAKDOWN, '?group_by=model')).body)
     expect(after.find(i => i.key === 'E2E_TEST_M1')!.cost_usd).toBeCloseTo(12.5, 10)
   })
