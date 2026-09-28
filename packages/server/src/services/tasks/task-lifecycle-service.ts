@@ -1093,7 +1093,7 @@ export class TaskLifecycleService {
       const registry = this.safeRegistry(row.workspace_id)
       if (registry) {
         try {
-          registry.service.cancel(row.id)
+          await registry.service.cancel(row.id)
         } catch (err: unknown) {
           // The engine may already be gone (restart) — the row still has to stop
           // holding the task's slot, so fall through to the direct write.

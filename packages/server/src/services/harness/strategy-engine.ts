@@ -130,7 +130,7 @@ export class StrategyEngine {
         const errorResult: InterventionResult = {
           success: false,
           action: typeof actionDef === 'string' ? actionDef : actionDef.type,
-          error: err instanceof Error ? err.message : String(err),
+          message: err instanceof Error ? err.message : String(err),
         }
         results.push(errorResult)
       }

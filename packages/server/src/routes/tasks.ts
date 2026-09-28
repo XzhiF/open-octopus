@@ -163,11 +163,13 @@ export function createTasksRoutes(
         event: "heartbeat",
         data: JSON.stringify({ ts: new Date().toISOString(), hello: true }),
       })
+      // B5 票5B2: writeSSE 变异步 —— SSE 帧写出为刻意 fire-and-forget（流内部自有写队列），
+      // 显式 void 丢弃 Promise，禁默认漂浮。
       const unsub = sse.subscribe("taskpool", (event) => {
-        stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
+        void stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
       })
       const interval = setInterval(() => {
-        stream.writeSSE({
+        void stream.writeSSE({
           event: "heartbeat",
           data: JSON.stringify({ ts: new Date().toISOString() }),
         })
