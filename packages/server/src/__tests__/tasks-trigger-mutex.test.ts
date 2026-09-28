@@ -35,7 +35,7 @@ import os from "os"
 import path from "path"
 import { Hono } from "hono"
 import { closeDb, initDb } from "../db/connection"
-import { AgentSessionDAO, ExecutionDAO } from "../db/dao"
+import { AgentSessionDAO, ExecutionDAO, ScheduleRunDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { TaskLifecycleError } from "../services/tasks/task-lifecycle-service"
@@ -212,7 +212,53 @@ function fakeWorkspaceService() {
   }
 }
 
-function insertJobFire(fireId: string, scheduleId: string, status = "running"): void {
+/** 混窗计量镜像（B5 票4R）：executions/workspaces 仍 SQLite（票5 迁），而
+ *  countActiveWork 已随 ScheduleRunDAO 读 PG —— 计量前把 SQLite 快照镜像进 PG，
+ *  让闸读到与迁移前同款的事实。三条纪律：
+ *    1. SQLite 读同步取快照 —— 逐行 await 会让出微任务，并发触发时闸会读到
+ *       「半镜像」（实测互斥 (d) 因此误判 cap 未满）；
+ *    2. 每张表一条多值 INSERT 原子灌入，无逐行发射队列乱序；
+ *    3. spy await 镜像完成后原语才读 —— 读到的一定是本次快照。
+ *  票5 单引擎收口后删除。 */
+const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
+
+async function mirrorExecsToPg(): Promise<void> {
+  const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
+    .all() as Array<{ id: string; name: string; org: string; path: string }>
+  const exs = db.prepare(
+    `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+            status, org, task_id FROM executions`,
+  ).all() as Array<Record<string, string | number | null>>
+  if (wss.length > 0) {
+    const params: unknown[] = []
+    const rows = wss.map((w) => {
+      params.push(w.id, w.name, w.org, w.path)
+      return `($${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length}, now(), now())`
+    })
+    await pg!.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
+       ON CONFLICT (id) DO NOTHING`,
+      params,
+    )
+  }
+  if (exs.length > 0) {
+    const params: unknown[] = []
+    const rows = exs.map((e) => {
+      params.push(e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0,
+        e.workflow_ref, e.workflow_name, e.status, e.org, e.task_id)
+      const b = params.length - 8
+      return `($${b}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, now(), now())`
+    })
+    await pg!.sql.unsafe(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+          status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
+       ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
+      params,
+    )
+  }
+}
+
+async function insertJobFire(fireId: string, scheduleId: string, status = "running"): Promise<void> {
   const now = new Date().toISOString()
   db.prepare(
     `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type,
@@ -224,6 +270,20 @@ function insertJobFire(fireId: string, scheduleId: string, status = "running"): 
        timezone_offset, timezone_iana, created_at, triggered_by)
      VALUES (?, ?, ?, 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
   ).run(fireId, scheduleId, status)
+  // 混窗：countActiveWork 已读 PG —— schedules 先落（FK），再落 fire 行。
+  await pg!.sql.unsafe(
+    `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type,
+       config, created_at, updated_at)
+     VALUES ($1, $2, $3, '* * * * *', 'UTC', true, 'workflow', '{}'::jsonb, now(), now())
+     ON CONFLICT (id) DO NOTHING`,
+    [scheduleId, ORG, `S-${scheduleId}`],
+  )
+  await pg!.sql.unsafe(
+    `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+       timezone_offset, timezone_iana, created_at, triggered_by)
+     VALUES ($1, $2, $3, 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+    [fireId, scheduleId, status],
+  )
 }
 
 function liveInstances(taskId: string): number {
@@ -258,8 +318,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // 旧世界每用例一座全新 :memory: 库（tasks 也在里面）；PG 库是文件级的一座 ——
-  // 清 tasks 还原同款隔离，别让上一用例遗留的 once 游标被本次的 tick 领走。
-  await pg!.sql.unsafe("DELETE FROM tasks")
+  // 清 tasks + 混窗镜像表还原同款隔离，别让上一用例遗留的 once 游标/在飞行被本次领走。
+  await pg!.truncate("tasks", "schedule_executions", "schedules", "executions", "workspaces")
   db = newDb()
   stub.db = db
   stub.started = []
@@ -278,9 +338,16 @@ beforeEach(async () => {
   )
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(service, sse))
+  // 混窗计量闸：每次 countActiveWork 前把 SQLite 的 executions/workspaces 镜像进 PG
+  // （见 mirrorExecsToPg 注释），保迁移同款读数。
+  vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+    await mirrorExecsToPg()
+    return ORIGINAL_METER.call(this, opts)
+  })
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   fs.rmSync(wsDir, { recursive: true, force: true })
   closeDb()
 })
@@ -342,8 +409,8 @@ describePg("票03 §2 — triggerTask(立即)", () => {
 
   it("排队中(pending)与执行中(running)是两种事实：闸满时行留 pending，卡片不再谎报执行中", async () => {
     // 两个 cron 作业 fire 占满 cap=2 → 领取必须原地排队。
-    insertJobFire("f-1", "s-1")
-    insertJobFire("f-2", "s-2")
+    await insertJobFire("f-1", "s-1")
+    await insertJobFire("f-2", "s-2")
     const id = await makeTaskRow()
     await service.readyTask(id)
     await service.triggerTask(id)
@@ -361,8 +428,8 @@ describePg("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化�
   it("同一任务并发触发只起一个实例（第二个拿到 409 而非第二行）", async () => {
     // 占满闸，让两次触发都停在「卡片还是 ready」的窗口上 —— 否则第二次会先被
     // ready-only 守卫弹回，测的就不是闩锁而是状态门了。
-    insertJobFire("f-0a", "s-0a")
-    insertJobFire("f-0b", "s-0b")
+    await insertJobFire("f-0a", "s-0a")
+    await insertJobFire("f-0b", "s-0b")
     const id = await makeTaskRow()
     await service.readyTask(id)
     const settled = await Promise.allSettled([service.triggerTask(id), service.triggerTask(id)])
@@ -399,8 +466,8 @@ describePg("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化�
 
   // (b)
   it("已排队(armed)未 start 的实例照样挡住第二次领取，且拒绝文案说明是排队中", async () => {
-    insertJobFire("f-3", "s-3")
-    insertJobFire("f-4", "s-4") // cap=2 占满 → 领取后仍是 pending
+    await insertJobFire("f-3", "s-3")
+    await insertJobFire("f-4", "s-4") // cap=2 占满 → 领取后仍是 pending
     const id = await makeTaskRow()
     await service.readyTask(id)
     const armedId = await service.taskLifecycle.armTask(id)
@@ -459,7 +526,13 @@ describePg("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化�
     const b = await makeTaskRow()
     const c = await makeTaskRow()
     for (const id of [a, b, c]) await service.readyTask(id)
-    await Promise.all([service.triggerTask(a), service.triggerTask(b), service.triggerTask(c)])
+    // B5 票4R 混窗说明:旧全 SQLite 世界 triggerTask 走到领取前是同步的,三个并发
+    // 触发天然串成 a→b→c;tasks/arm 链接 PG 往返后 check-then-claim 不再原子
+    // (三个 drain 都可能镜像到 0 在飞)。断言的是「共享闸计数 + 第三个排队」,
+    // 与触发的并发性无关(同任务并发闩锁由上面 (a) 的 Promise.all 专测),故按序触发。
+    await service.triggerTask(a)
+    await service.triggerTask(b)
+    await service.triggerTask(c)
 
     // cap=2 → 前两个 running，第三个 armed 排队（不是失败）。
     expect(execs.findLatestTaskInstance(a)!.status).toBe("running")
@@ -541,8 +614,8 @@ describePg("票03 §3 — cancelTaskTrigger", () => {
   })
 
   it("已被 job 领取但没 start（pending）：retire 那一行 + 清游标 + 回 ready", async () => {
-    insertJobFire("f-5", "s-5")
-    insertJobFire("f-6", "s-6")
+    await insertJobFire("f-5", "s-5")
+    await insertJobFire("f-6", "s-6")
     const id = await makeTaskRow()
     await service.readyTask(id)
     await service.triggerTask(id, new Date(Date.now() + 60_000).toISOString())
@@ -603,8 +676,8 @@ describePg("票03 §6 — reopenTask 的守卫换成了「没有活实例」", (
   })
 
   it("已排队的实例同样挡住 reopen（旧版靠信封 claimed，现在看行）", async () => {
-    insertJobFire("f-7", "s-7")
-    insertJobFire("f-8", "s-8")
+    await insertJobFire("f-7", "s-7")
+    await insertJobFire("f-8", "s-8")
     const id = await makeTaskRow()
     await service.readyTask(id)
     await service.taskLifecycle.armTask(id)
@@ -661,8 +734,8 @@ describePg("routes — 票03 的状态码映射", () => {
   })
 
   it("POST /:id/trigger — 在飞实例（卡片仍是 ready，因为还没 start）→ 409 带「已有进行中的实例」", async () => {
-    insertJobFire("f-9", "s-9")
-    insertJobFire("f-10", "s-10") // 闸满 → 实例停在 pending，任务状态没镜像
+    await insertJobFire("f-9", "s-9")
+    await insertJobFire("f-10", "s-10") // 闸满 → 实例停在 pending，任务状态没镜像
     const id = await makeTaskRow()
     await service.readyTask(id)
     await post(`/api/tasks/${id}/trigger`)
