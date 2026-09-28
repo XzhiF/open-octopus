@@ -3,6 +3,7 @@
 #   docker compose -f infra/docker-compose.yml up -d
 #   Neo4j  Browser http://localhost:7474 · bolt://localhost:7687 · neo4j / $NEO4J_PASSWORD
 #   Milvus gRPC localhost:19530（无鉴权） · 健康检查 http://localhost:9091/healthz
+#   Attu   Milvus Web 客户端 http://localhost:8000（免登录，连接已预置）
 #
 # 数据落在 ~/.octopus/infra/ 下（compose 自行展开 ~，不依赖 HOME 环境变量）：
 #   milvus/       进程内 etcd 元数据 + segment + woodpecker WAL
@@ -71,3 +72,26 @@ services:
       start_period: 60s
       timeout: 10s
       retries: 5
+
+  # Milvus 的 Web 客户端（平台本体不带 UI）。宿主端口用 8000：3000/3001 是本仓库 dev 的
+  # web/server，3100-3598 是 worktree 分配段，都让开。
+  # 浏览器开 http://localhost:8000，选中连接 milvus 即可看集合/数据/检索。
+  # Attu 3.x 认 MILVUS_ADDRESS（旧 MILVUS_URI 无效），且 Docker 部署默认开启本地登录，
+  # 不设 ATTU_AUTH_MODE=none 时所有页面接口一律 401 Authentication required。
+  # 代价是局域网内可免登录管理向量库；要收紧就删掉 ATTU_AUTH_MODE，改用
+  # ATTU_ADMIN_USER/ATTU_ADMIN_PASSWORD 建管理员，并把端口写成 "127.0.0.1:8000:3000"。
+  attu:
+    image: zilliz/attu:v3.0.1
+    container_name: octopus-attu
+    restart: unless-stopped
+    environment:
+      MILVUS_ADDRESS: milvus:19530
+      MILVUS_NAME: local-milvus
+      ATTU_AUTH_MODE: none
+    ports:
+      - "8000:3000"
+    volumes:
+      - ${OCTOPUS_INFRA_HOME:-~/.octopus/infra}/attu:/data
+    depends_on:
+      milvus:
+        condition: service_healthy
