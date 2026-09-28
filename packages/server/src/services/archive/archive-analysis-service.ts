@@ -41,12 +41,14 @@ export class ArchiveAnalysisService {
     const { pgSql } = await import('../../db/dao/registry')
     const { discoverSkillsFromWorkspace, discoverWorkflowsFromWorkspace, discoverAgentsFromWorkspace } = await import('../archive/skill-discovery')
 
+    // 票6a：archive 域 exec 读簇收口 —— WorkspaceDAO/直读面句柄源换 PG 池
+    // （executions/node_executions/llm_calls_costed 票5 起单引擎在 PG）。
+    // ArchiveDraftDAO 仍 SQLite 直构（archive_drafts 未迁，B6 成员，登记票6b 红面清单）。
     const db = getDb()
-    const workspaceDAO = new WorkspaceDAO(db)
-    // B5 票5B4：ExecutionDAO 已 PG 化（票1），句柄源换池 —— archive 域 exec 读簇的 SQLite 混用面登记票6，
-    // 本票只修断点（原 SQLite 直构是运行时断点，WorkspaceDAO 本体迁移不动）。
-    const executionDAO = new ExecutionDAO(pgSql())
-    const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, db, this.org)
+    const pdb = pgSql()
+    const workspaceDAO = new WorkspaceDAO(pdb)
+    const executionDAO = new ExecutionDAO(pdb)
+    const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, pdb, this.org)
 
     if (!ctx) {
       await emitter.stepError("build_context", "工作空间未找到")
@@ -58,7 +60,7 @@ export class ArchiveAnalysisService {
 
     // Phase 1.5: Auto-discover skills
     await emitter.stepStart("discover_skills", "扫描 .claude/skills/ 自动发现...")
-    const rawPath = workspaceDAO.findPathById(workspaceId)
+    const rawPath = await workspaceDAO.findPathById(workspaceId)
     const workspacePath = rawPath?.replace(/^~/, os.homedir()) ?? null
     const rawDiscoveredSkills = workspacePath ? discoverSkillsFromWorkspace(workspacePath) : []
 

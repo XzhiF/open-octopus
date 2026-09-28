@@ -32,9 +32,12 @@ function initWorkspaceRoom(roomName: string, doc: Y.Doc): void {
   if (!roomName.startsWith(wsPrefix)) return
 
   const workspaceId = roomName.slice(wsPrefix.length)
-  try {
+  // 票6a：findPathById 已 PG 异步，而本函数挂在同步 getRoom 钩子上（WS 连接即建
+  // room，不可 await）—— 保持 void 槽位：异步体 fire-and-forget + catch 兜底。
+  // 语义变化 = fileTree 填充/目录监听晚一个 PG 读往返（room 本身照常立即可用）。
+  void (async () => {
     if (!_workspaceDAO) return
-    const wsPath = _workspaceDAO.findPathById(workspaceId)
+    const wsPath = await _workspaceDAO.findPathById(workspaceId)
     if (!wsPath) return
 
     const resolvedPath = wsPath.replace(/^~/, os.homedir())
@@ -43,9 +46,9 @@ function initWorkspaceRoom(roomName: string, doc: Y.Doc): void {
       populateFromDisk(resolvedPath, tree)
     }
     startWatch(workspaceId, resolvedPath, doc)
-  } catch {
+  })().catch(() => {
     // DB may not be ready during startup
-  }
+  })
 }
 
 function getRoom(roomName: string): Room {

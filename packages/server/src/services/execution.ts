@@ -321,6 +321,13 @@ export class ExecutionService {
   static async recoverInterruptedExecutions(db: Database.Database): Promise<void> {
     const dao = new ExecutionDAO(pgSql())
     await RecoveryManager.recoverInterruptedExecutions(dao)
+    // 票6a 启动清扫兜底（判据：running 孤儿 → interrupted）。必须排在
+    // RecoveryManager 之后：先按其规则翻面（failed/pending_resume 语义优先），
+    // 剩余仍 running 的（updated_at IS NULL 两支都抓不到的行）统一 interrupted。
+    const swept = await dao.sweepRunningToInterrupted(new Date().toISOString())
+    if (swept > 0) {
+      console.log(`[Recovery] startup sweep: ${swept} residual running execution(s) → interrupted`)
+    }
   }
 
   static async resumePendingExecutions(db: Database.Database): Promise<void> {

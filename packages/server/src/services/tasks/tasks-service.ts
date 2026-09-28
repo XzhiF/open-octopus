@@ -2669,7 +2669,7 @@ export class TasksService {
       throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "暂停"))
     }
 
-    const registry = getExecutionService(inst.workspace_id)
+    const registry = await getExecutionService(inst.workspace_id)
     if (!registry) {
       throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法暂停`)
     }
@@ -2710,7 +2710,7 @@ export class TasksService {
       throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "恢复"))
     }
 
-    const registry = getExecutionService(inst.workspace_id)
+    const registry = await getExecutionService(inst.workspace_id)
     if (!registry) {
       throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法恢复`)
     }

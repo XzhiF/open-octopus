@@ -94,7 +94,7 @@ export class ExecutionResolver {
     const rows = await this.executionDAO.findAllActiveExecutions()
 
     const executions: ActiveExecution[] = await Promise.all(rows.map(async row => {
-      const ws = this.workspaceDAO.findById(row.workspace_id)
+      const ws = await this.workspaceDAO.findById(row.workspace_id)
       const currentNode = await this.resolveCurrentNode(row.id)
       const nodeSummary = await this.resolveNodeSummary(row.id)
 

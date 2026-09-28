@@ -97,7 +97,7 @@ export interface AssistWorkflowTriggerResult {
 
 export class AssistWorkflowService {
   // P1 B2: tasks 表已迁 PG（pgSql() 按访问解析，同 tasks-service 接线）；
-  // execDAO/workspaceDAO 仍 SQLite（B5）。
+  // execDAO/workspaceDAO 已迁 PG（B5 票5/票6a），构造收口 pgSql()。
   private get taskDAO(): TaskDAO { return new TaskDAO(pgSql()) }
   private execDAO: ExecutionDAO
   private workspaceDAO: WorkspaceDAO
@@ -109,7 +109,7 @@ export class AssistWorkflowService {
     taskHome?: TaskHomeService,
   ) {
     this.execDAO = new ExecutionDAO(pgSql())
-    this.workspaceDAO = new WorkspaceDAO(db)
+    this.workspaceDAO = new WorkspaceDAO(pgSql()) // 票6a: WorkspaceDAO→PG（池按访问解析）
     this.taskHome = taskHome ?? new TaskHomeService()
   }
 
@@ -144,7 +144,7 @@ export class AssistWorkflowService {
     const homePath = this.taskHome.homePath(taskId)
     const now = new Date().toISOString()
     const workspaceId = randomUUID()
-    this.workspaceDAO.insert({
+    await this.workspaceDAO.insert({
       id: workspaceId,
       name: `task-assist-${taskId.slice(0, 8)}-${template}`,
       org: task.org,
@@ -158,9 +158,9 @@ export class AssistWorkflowService {
       archive_status: null,
     })
 
-    const registry = getExecutionService(workspaceId)
+    const registry = await getExecutionService(workspaceId)
     if (!registry) {
-      this.workspaceDAO.deleteById(workspaceId)
+      await this.workspaceDAO.deleteById(workspaceId)
       throw new Error(`ExecutionService unavailable for assist workspace ${workspaceId}`)
     }
 
@@ -284,12 +284,12 @@ export class AssistWorkflowService {
 
   // ── Reap (AC6) ───────────────────────────────────────────────────
 
-  reapWorkspace(workspaceId: string): void {
+  async reapWorkspace(workspaceId: string): Promise<void> {
     try {
-      this.workspaceDAO.deleteById(workspaceId)
+      await this.workspaceDAO.deleteById(workspaceId)
     } catch (err: unknown) {
       try {
-        this.workspaceDAO.softArchive(workspaceId)
+        await this.workspaceDAO.softArchive(workspaceId)
       } catch (archiveErr: unknown) {
         // eslint-disable-next-line no-console
         console.warn(

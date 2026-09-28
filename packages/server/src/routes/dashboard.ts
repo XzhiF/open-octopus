@@ -18,7 +18,7 @@ export function createDashboardRoutes(
   const dashboardRoutes = new Hono()
 
   dashboardRoutes.get("/stats", async (c) => {
-    const allWorkspaces = workspaceService.list()
+    const allWorkspaces = await workspaceService.list()
     const workspaces = allWorkspaces.filter(ws => ws.status !== "archived")
     const totalWorkflows = workspaces.reduce(
       (sum, ws) => sum + workflowService.list(ws.path).length,
@@ -35,7 +35,7 @@ export function createDashboardRoutes(
     let archivedCost: LedgerCost = { usd: null, complete: true }
     if (archiveDAO) {
       try {
-        const archived = archiveDAO.getArchivedWorkspaces()
+        const archived = await archiveDAO.getArchivedWorkspaces()
         archivedWorkspaces = archived.length
         archivedExecutions = archived.reduce((sum, ws) => sum + ws.execution_count, 0)
         archivedCost = costSummary(archived.map(ws => ws.total_cost))

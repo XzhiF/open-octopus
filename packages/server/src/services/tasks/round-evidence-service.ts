@@ -300,7 +300,7 @@ export class RoundEvidenceService {
       }
     }
 
-    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const ws = await this.workspaceService.getById(execRow.workspace_id)
     const repos: RepoDiff[] = []
     for (const name of names) {
       const start = starts[name]
@@ -409,7 +409,7 @@ export class RoundEvidenceService {
     if (!start || !end) {
       throw new TaskStatusConflictError(`本轮提交区间不含仓库 ${repo}`)
     }
-    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const ws = await this.workspaceService.getById(execRow.workspace_id)
     const dir = this.resolveRepoDir(ws?.path, repo)
     if (!dir) throw new TaskStatusConflictError(`仓库 ${repo} 的工作区目录已不存在`)
     if (filePath.includes("\0") || path.isAbsolute(filePath)) {
@@ -434,7 +434,7 @@ export class RoundEvidenceService {
     if (prev && !prev.done) {
       throw new TaskStatusConflictError("复检进行中 — 中止或等它跑完")
     }
-    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const ws = await this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) {
       throw new TaskStatusConflictError("工作区目录不在了 — 实物复检不可用（复检历史与 verdict 文件仍可查看）")
     }
@@ -686,7 +686,7 @@ export class RoundEvidenceService {
     const { execRow } = await this.resolveAwaiting(taskId)
     const cmd = command.trim()
     if (!cmd) throw new TaskSpecFieldError("探针命令为空")
-    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const ws = await this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) {
       throw new TaskStatusConflictError("工作区目录不在了 — 探针不可执行（剧本仍可人工勾选）")
     }
@@ -796,7 +796,7 @@ export class RoundEvidenceService {
     const { execRow } = await this.resolveAwaiting(taskId)
     const prev = this.previewSessions.get(taskId)
     if (prev && !prev.done) throw new TaskStatusConflictError("预览已在跑 — 先停止")
-    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const ws = await this.workspaceService.getById(execRow.workspace_id)
     if (!ws || !existsSync(ws.path)) throw new TaskStatusConflictError("工作区目录不在了 — 预览不可用")
     const rb = await this.resolveRunbook(taskId)
     if (!rb) {

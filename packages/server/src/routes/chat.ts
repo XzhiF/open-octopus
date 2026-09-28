@@ -75,7 +75,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const session = await chatService.getSession(sessionId)
     if (!session) return c.json({ error: "session not found" }, 404)
 
-    const workspace = workspaceService.getById(session.workspaceId)
+    const workspace = await workspaceService.getById(session.workspaceId)
     if (!workspace) return c.json({ error: "workspace not found" }, 404)
     const cwd = workspace.path.replace(/^~/, os.homedir())
 

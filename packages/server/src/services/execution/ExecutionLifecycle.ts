@@ -101,7 +101,7 @@ export class ExecutionLifecycle {
       workspaceId,
       workspacePath,
       org,
-      workspaceService: new WorkspaceService(new WorkspaceDAO(db)),
+      workspaceService: new WorkspaceService(new WorkspaceDAO(pgSql())), // 票6a: WorkspaceDAO→PG 池
       sse,
     })
     this.engineFactory.setTaskDispatchPort(this.taskDispatchService)

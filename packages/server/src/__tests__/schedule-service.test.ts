@@ -51,7 +51,11 @@ describePg("WorkspaceScheduleService (PG)", () => {
       sse,
       new ScheduleConfigDAO(pg.sql),
       new ScheduleRunDAO(pg.sql),
-      new ExecutionDAO(db),
+      // 票6a：schedule.ts:699 container 写恢复 await（T2 拆簇遗留销账）——
+      // ExecutionDAO 句柄必须真 PG（票5 起 executions 单引擎在 PG），
+      // 原 SQLite 句柄下 insertContainerExecution 的 rejected promise 此前因缺
+      // await 被静默吞掉，恢复 await 后即暴露。
+      new ExecutionDAO(pg.sql),
     )
   })
 

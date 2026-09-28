@@ -300,7 +300,7 @@ export class TaskLifecycleService {
    * resume — the engine is reconstructed during resume, so ordering is load-bearing).
    */
   registerLaunchCallbacks(row: ExecutionRow): void {
-    const registry = getExecutionService(row.workspace_id)
+    const registry = await getExecutionService(row.workspace_id)
     if (!registry) return // workspace gone — startRow raises its own error for that
     // The `as never` pair below is the engine-callback arity mismatch the pre-票03
     // dispatchPhaseRound had too: ExecutionService takes Partial<EngineCallbacks>, whose
@@ -324,7 +324,7 @@ export class TaskLifecycleService {
    *  claim consumed; without the handoff every task launch dies at "Execution is not
    *  pending" (票05 真机实测:the stubbed create/start in the unit tests hid exactly this). */
   private async startRow(row: ExecutionRow, claimedLease?: string): Promise<void> {
-    const registry = getExecutionService(row.workspace_id)
+    const registry = await getExecutionService(row.workspace_id)
     if (!registry) throw new Error(`workspace ${row.workspace_id} 不可用（行缺失或路径失效）`)
     const inputValues = parseJSON<Record<string, string>>(row.input_values, {})
 
@@ -475,7 +475,7 @@ export class TaskLifecycleService {
       : step.inputValues
 
     const workspaceId = await this.prepareWorkspace(task, plan)
-    const registry = getExecutionService(workspaceId)
+    const registry = await getExecutionService(workspaceId)
     if (!registry) {
       throw new TaskLifecycleError("workspace", `工作区 ${workspaceId} 不可用（行缺失或路径失效）`)
     }
@@ -792,7 +792,7 @@ export class TaskLifecycleService {
       if (!specDir) return
       const rel = batchRelPath(this.home.homePath(taskId), specDir)
       if (!rel) return
-      const registry = getExecutionService(row.workspace_id)
+      const registry = await getExecutionService(row.workspace_id)
       if (!registry) return // ws gone out of band — home already holds the last collect
       const collected = collectFromWorkspace(path.join(registry.wsPath, rel), specDir)
       if (collected.length === 0) return

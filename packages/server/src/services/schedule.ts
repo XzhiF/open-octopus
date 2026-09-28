@@ -382,7 +382,7 @@ export class WorkspaceScheduleService {
     }
 
     // 2. Get ExecutionService for this workspace and start the workflow
-    const registry = getExecutionService(workspaceId)
+    const registry = await getExecutionService(workspaceId)
     if (!registry) {
       await this.runDAO.updateExecutionStatusSimple(schedExecId, 'failed', 'Workspace ExecutionService unavailable')
 
@@ -499,7 +499,7 @@ export class WorkspaceScheduleService {
     })
 
     // 2. Get ExecutionService and start retry execution
-    const registry = getExecutionService(workspaceId)
+    const registry = await getExecutionService(workspaceId)
     if (!registry) {
       await this.runDAO.updateExecutionStatusSimple(retryId, 'failed', 'Workspace ExecutionService unavailable')
 
@@ -696,7 +696,10 @@ export class WorkspaceScheduleService {
     const now = new Date().toISOString()
     const org = (await this.configDAO.findWorkspaceOrg(workspaceId)) ?? "unknown"
 
-    this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
+    // 票6a（T2 拆簇遗留销账）：insertContainerExecution 已 PG 异步 —— 恢复 await。
+    // 调用方全部在 sql.begin 事务体内、经 tx 构造的 execDAO 执行（5B4 回退的
+    // 缺 await 姿势不再需要：await 传导链已收官，tsc 生产 0）。
+    await this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
 
     return containerId
   }

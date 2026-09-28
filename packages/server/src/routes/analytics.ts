@@ -54,7 +54,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/health-summary", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     return c.json(await logAnalysisService.getHealthSummary(workspaceId, days))
@@ -62,7 +62,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/alerts", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     const limit = parseLimit(c)
@@ -71,7 +71,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/failure-patterns", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     return c.json(await logAnalysisService.getFailurePatterns(workspaceId, days))
@@ -79,7 +79,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/anomalies", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     return c.json(await logAnalysisService.getAnomalies(workspaceId, days))
@@ -87,7 +87,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/cost-analysis", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     return c.json(await logAnalysisService.getCostAnalysis(workspaceId, days))
@@ -95,7 +95,7 @@ export function createAnalyticsLogRoutes(
 
   analyticsRoutes.get("/execution/:executionId/logs", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const executionId = c.req.param("executionId")
     if (!executionId) return c.json({ error: "executionId required" }, 400)
@@ -105,9 +105,9 @@ export function createAnalyticsLogRoutes(
   })
 
   // Swarm node events — returns historical JSONL events for a specific node
-  analyticsRoutes.get("/swarm-events/:executionId", (c) => {
+  analyticsRoutes.get("/swarm-events/:executionId", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "Workspace not found" }, 404)
 
     const executionId = c.req.param("executionId")
@@ -143,9 +143,9 @@ export function createAnalyticsLogRoutes(
     }
   })
 
-  analyticsRoutes.get("/swarm-stats", (c) => {
+  analyticsRoutes.get("/swarm-stats", async (c) => {
     const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
+    const ws = await workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "Workspace not found" }, 404)
 
     const fromStr = c.req.query("from")

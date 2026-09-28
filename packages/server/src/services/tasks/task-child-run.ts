@@ -72,7 +72,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
     )
   }
 
-  const parentTaskId = parent.task_id ?? resolveParentTaskId(deps.db, deps.workspaceId)
+  const parentTaskId = parent.task_id ?? await resolveParentTaskId(deps.workspaceId)
   const branchSuffix = formatBranchSuffix(new Date())
   const taskRow = parentTaskId ? await new TaskDAO(pgSql()).getById(parentTaskId) : null
   const workspaceName = taskRow
@@ -106,7 +106,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
     throw new Error(`task_dispatch: 子单元工作区创建失败: ${errMessage(err)}`)
   }
 
-  const registry = getExecutionService(workspaceId)
+  const registry = await getExecutionService(workspaceId)
   if (!registry) {
     throw new Error(`task_dispatch: 子单元工作区 ${workspaceId} 的 ExecutionService 不可用`)
   }
@@ -167,7 +167,7 @@ export async function startChildRun(
   const execDAO = new ExecutionDAO(pgSql())
   const leaseAt = claimedLease ?? new Date().toISOString()
   if (!claimedLease && (await execDAO.claimLaunch(childId, leaseAt)).changes === 0) return false
-  const registry = getExecutionService(workspaceId)
+  const registry = await getExecutionService(workspaceId)
   if (!registry) {
     await execDAO.setLaunchStatus(childId, "failed", {
       completedAt: new Date().toISOString(),
@@ -251,7 +251,7 @@ export async function resumeParentFromChild(
     }
   }
 
-  const registry = getExecutionService(parent.workspace_id)
+  const registry = await getExecutionService(parent.workspace_id)
   if (!registry) {
     console.warn(
       `[task-child-run] parent ${parent.id} workspace unavailable — it stays paused until its own recovery picks it up`,
@@ -269,8 +269,9 @@ function resolveParentRun(execDAO: ExecutionDAO, workspaceId: string): Promise<E
 
 /** Fallback parent-task lookup for a row that did not carry task_id: the workspace's own
  *  task binding (v41 `workspaces.task_id`), which is the direct column that replaced the
- *  `source_schedule_id → schedules.origin_id` join bridge. */
-function resolveParentTaskId(db: Database.Database, workspaceId: string): string | null {
-  const row = new WorkspaceDAO(db).findById(workspaceId)
+ *  `source_schedule_id → schedules.origin_id` join bridge.
+ *  票6a：WorkspaceDAO→PG（findById 异步），句柄经 pgSql() 按访问解析。 */
+async function resolveParentTaskId(workspaceId: string): Promise<string | null> {
+  const row = await new WorkspaceDAO(pgSql()).findById(workspaceId)
   return row?.task_id ?? null
 }

@@ -9,7 +9,7 @@ import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
-import { createAllDAOs, createLazyDAOs, type AllDAOs } from "./db/dao/registry"
+import { createAllDAOs, createLazyDAOs, pgSql, type AllDAOs } from "./db/dao/registry"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -229,7 +229,9 @@ if (!process.env.VITEST && daos) {
   }
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db!, getDomainEventBus())
+  // 票6a：archive 域随 WorkspaceDAO/ArchiveDAO 翻池 —— 传 pgSql 惰性取源
+  // （initPgPool 是 fire-and-forget，启动早期立即取句柄会炸，服务内首次使用时才解析）。
+  initArchiveService(daos.archive, daos.execution, pgSql, getDomainEventBus())
 
   // ── Scheduler seed + one-time archive_cron_hour migration ─────────────
   // system:daily-archive: idempotent seed (insert only if absent), then migrate its
@@ -339,7 +341,7 @@ const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
 const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun, sse)
 const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate, providerSessionId) => {
-  const entry = getExecutionService(workspaceId)
+  const entry = await getExecutionService(workspaceId)
   if (entry) {
     // Save provider session ID to execution's global_session_id for context continuity
     if (providerSessionId) {
@@ -361,7 +363,7 @@ if (!daos) {
     try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
-    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
+    try { initArchiveService(d.archive, d.execution, pgSql, getDomainEventBus()) } catch { /* db not ready yet */ }
     try { setHarnessDependencies(d.harness) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
@@ -465,7 +467,8 @@ try {
         scheduler_service: false, notify_subsystem: false, claude_provider: false,
       }
       try { probes.workflow_engine = typeof require('@octopus/engine').WorkflowEngine === 'function' } catch {}
-      try { probes.workspace_service = d.workspace.countAll() >= 0 } catch {}
+      // 票6a：WorkspaceDAO→PG —— 旧 countAll()>=0 探测改为池可达性（pgSql 未注册即抛）。
+      try { pgSql(); probes.workspace_service = true } catch {}
       try { probes.scheduler_service = typeof schedSvc.listJobs === 'function' } catch {}
       try { probes.notify_subsystem = typeof require('./services/notification').getNotificationService().sendNotification === 'function' } catch {}
       try { probes.claude_provider = typeof require('@octopus/providers').getProvider('claude')?.sendQuery === 'function' } catch {}
@@ -506,8 +509,15 @@ if (shouldServe) {
   // Lazy workspace initialization: workspaces are initialized on-demand when
   // the user opens them via WebSocket (yjs-ws.ts initWorkspaceRoom).
   // This avoids opening ~1000 FDs per workspace at startup.
-  const activeWorkspaceIds = daos!.workspace.findActiveIds()
-  console.log(`[yjs] ${activeWorkspaceIds.length} active workspaces (lazy init on first access)`)
+  // 票6a：workspace findActiveIds 已 PG 异步 —— 该行只是信息日志，
+  // void async 包裹保持「不阻塞启动」语义（真 fire-and-forget + catch 兜底）。
+  void daos!.workspace.findActiveIds()
+    .then((activeWorkspaceIds) => {
+      console.log(`[yjs] ${activeWorkspaceIds.length} active workspaces (lazy init on first access)`)
+    })
+    .catch((err: unknown) => {
+      console.warn("[yjs] active workspace count failed:", err instanceof Error ? err.message : String(err))
+    })
 
   const portArg = process.argv.find(a => a.startsWith("--port="))
   const port = parseInt(portArg?.split("=")[1] ?? process.env.PORT ?? "3001", 10)

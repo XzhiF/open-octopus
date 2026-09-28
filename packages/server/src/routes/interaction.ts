@@ -109,7 +109,7 @@ export function createInteractionRoutes(
 
           // If interaction completed, trigger workflow resume
           if (event.type === "interaction_complete") {
-            const execSvc = getExecutionService(workspaceId)
+            const execSvc = await getExecutionService(workspaceId)
             if (execSvc) {
               // Trigger workflow completion asynchronously
               execSvc.service.completeInteraction(
@@ -189,7 +189,7 @@ export function createInteractionRoutes(
       })
 
       // Trigger workflow completion via ExecutionService
-      const execSvc = getExecutionService(workspaceId)
+      const execSvc = await getExecutionService(workspaceId)
       if (execSvc) {
         await execSvc.service.completeInteraction(execId, nodeId, result.summary, result.vars_update)
       }

@@ -70,7 +70,7 @@ export interface AllDAOs {
 /** 启动路径（非 VITEST）用：db 已就绪，全部立即构造 —— fail-fast。 */
 export function createAllDAOs(db: DatabaseDb): AllDAOs {
   return {
-    workspace: new WorkspaceDAO(db),
+    workspace: lazyDAO(() => new WorkspaceDAO(pgSql())), // B5 票6a: PG
     execution: lazyDAO(() => new ExecutionDAO(pgSql())), // B5 票5: PG
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
     scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
@@ -83,7 +83,7 @@ export function createAllDAOs(db: DatabaseDb): AllDAOs {
     safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
     pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG
     knowledgeEffectiveness: lazyDAO(() => new KnowledgeEffectivenessDAO(pgSql())), // B2: PG
-    archive: new ArchiveDAO(db),
+    archive: lazyDAO(() => new ArchiveDAO(pgSql())), // B5 票6a: PG
     archiveDraft: new ArchiveDraftDAO(db),
     interactionMessage: lazyDAO(() => new InteractionMessageDAO(pgSql())), // B2: PG
     agentVersion: lazyDAO(() => new AgentVersionDAO(pgSql())), // B1: PG
@@ -111,7 +111,7 @@ export function lazyDAO<T>(make: (db: DbHandle) => T): T {
 /** lazy 兜底注册表 —— 内容与 createAllDAOs 一一对应。 */
 export function createLazyDAOs(): AllDAOs {
   return {
-    workspace: lazyDAO((db) => new WorkspaceDAO(db as DatabaseDb)),
+    workspace: lazyDAO(() => new WorkspaceDAO(pgSql())), // B5 票6a: PG
     execution: lazyDAO(() => new ExecutionDAO(pgSql())), // B5 票5: PG
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
     scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
@@ -124,7 +124,7 @@ export function createLazyDAOs(): AllDAOs {
     safety: lazyDAO(() => new SafetyDAO(pgSql())), // B2: PG
     pendingReview: lazyDAO(() => new PendingReviewDAO(pgSql())), // B2: PG
     knowledgeEffectiveness: lazyDAO(() => new KnowledgeEffectivenessDAO(pgSql())), // B2: PG
-    archive: lazyDAO((db) => new ArchiveDAO(db as DatabaseDb)),
+    archive: lazyDAO(() => new ArchiveDAO(pgSql())), // B5 票6a: PG
     archiveDraft: lazyDAO((db) => new ArchiveDraftDAO(db as DatabaseDb)),
     interactionMessage: lazyDAO(() => new InteractionMessageDAO(pgSql())), // B2: PG
     agentVersion: lazyDAO(() => new AgentVersionDAO(pgSql())), // B1: PG

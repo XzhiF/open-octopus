@@ -68,14 +68,14 @@ function handleError(err: unknown) {
 
 executionRoutes.get("/", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   return c.json(await svc.service.list(workspaceId))
 })
 
 executionRoutes.post("/", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   let body: {
@@ -127,7 +127,7 @@ executionRoutes.post("/", async (c) => {
 
 executionRoutes.get("/tree", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   const allExecs = await svc.service.list(workspaceId)
@@ -175,7 +175,7 @@ executionRoutes.get("/tree", async (c) => {
 
 executionRoutes.get("/events", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   return await svc.service.streamEvents(c.req.raw)
@@ -184,7 +184,7 @@ executionRoutes.get("/events", async (c) => {
 executionRoutes.get("/:executionId", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const execution = await svc.service.getByIdWithSteps(executionId)
   if (!execution) return c.json({ error: "not found" }, 404)
@@ -262,10 +262,10 @@ executionRoutes.get("/:executionId", async (c) => {
   })
 })
 
-executionRoutes.get("/:executionId/state", (c) => {
+executionRoutes.get("/:executionId/state", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const state = svc.service.getStateJson(executionId)
   if (!state) return c.json({ error: "state not found" }, 404)
@@ -275,7 +275,7 @@ executionRoutes.get("/:executionId/state", (c) => {
 executionRoutes.post("/:executionId/start", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const body = await c.req.json<{ inputValues?: Record<string, string>; syncMainBranch?: boolean }>().catch((): { inputValues?: Record<string, string>; syncMainBranch?: boolean } => ({}))
 
@@ -291,7 +291,7 @@ executionRoutes.post("/:executionId/start", async (c) => {
 executionRoutes.post("/:executionId/retry", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   const body = await c.req.json<{ failedNodeId: string; inputValues?: Record<string, string>; intervention?: string }>().catch((): { failedNodeId: string; inputValues?: Record<string, string>; intervention?: string } => ({ failedNodeId: "" }))
@@ -314,7 +314,7 @@ executionRoutes.post("/:executionId/retry", async (c) => {
 executionRoutes.post("/:executionId/cancel", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
     const result = await svc.service.cancel(executionId)
@@ -327,7 +327,7 @@ executionRoutes.post("/:executionId/cancel", async (c) => {
 executionRoutes.post("/:executionId/skip", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
     const result = await svc.service.skip(executionId)
@@ -340,7 +340,7 @@ executionRoutes.post("/:executionId/skip", async (c) => {
 executionRoutes.delete("/:executionId", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
     const result = await svc.service.delete(executionId)
@@ -353,7 +353,7 @@ executionRoutes.delete("/:executionId", async (c) => {
 executionRoutes.post("/:executionId/approve", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   const body = await c.req.json<{ nodeId: string; answer: string; comment?: string }>()
@@ -368,7 +368,7 @@ executionRoutes.post("/:executionId/approve", async (c) => {
 executionRoutes.post("/:executionId/pause", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const result = await svc.service.pause(executionId)
   if (!result.success) {
@@ -381,7 +381,7 @@ executionRoutes.post("/:executionId/pause", async (c) => {
 executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   let body: {
@@ -413,7 +413,7 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
       return c.json({ error: "inject directive requires 'message'" }, 400)
     }
     try {
-      const repairService = createRepairServiceForWorkspace(workspaceId)
+      const repairService = await createRepairServiceForWorkspace(workspaceId)
       if (!repairService) {
         return c.json({ error: "repair service not available" }, 503)
       }
@@ -486,7 +486,7 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
 executionRoutes.post("/:executionId/resume", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   // Parse optional intervention prompt from request body
@@ -513,7 +513,7 @@ executionRoutes.get("/:executionId/agent-events", async (c) => {
   const loopId = c.req.query("loopId") || undefined
   const iterationParam = c.req.query("iteration")
   const iteration = iterationParam ? parseInt(iterationParam, 10) : undefined
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   // Verify execution exists
@@ -816,16 +816,16 @@ executionRoutes.get("/:executionId/agent-events", async (c) => {
 executionRoutes.get("/:executionId/branches", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const branches = await svc.service.getBranches(executionId)
   return c.json(branches)
 })
 
-executionRoutes.get("/:executionId/logs", (c) => {
+executionRoutes.get("/:executionId/logs", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   return streamSSE(c, async (stream) => {
@@ -845,7 +845,7 @@ executionRoutes.get("/:executionId/logs", (c) => {
 executionRoutes.get("/:executionId/observability", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   if (!_executionDAO || !_tokenUsageDAO) {

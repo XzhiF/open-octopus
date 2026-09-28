@@ -490,7 +490,7 @@ export class SchedulerEngine {
         if (exec.job_type !== 'agent' && exec.execution_id && exec.workspace_id) {
           try {
             const { getExecutionService } = await import('../execution-service-registry')
-            const registry = getExecutionService(exec.workspace_id)
+            const registry = await getExecutionService(exec.workspace_id)
             if (registry) {
               await registry.service.cancel(exec.execution_id)
               console.log(

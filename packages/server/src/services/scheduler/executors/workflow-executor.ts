@@ -226,7 +226,7 @@ export class WorkflowExecutor implements Executor {
     await this.runDAO.updateExecutionWorkspace(executionId, workspace.id)
 
     // 9. Get ExecutionService for the new workspace
-    const registry = getExecutionService(workspace.id)
+    const registry = await getExecutionService(workspace.id)
     if (!registry) {
       const errMsg = 'ExecutionService unavailable for new workspace'
       await this.runDAO.updateExecutionStatusSimple(executionId, 'failed', errMsg)
@@ -502,7 +502,7 @@ export class WorkflowExecutor implements Executor {
     // Clean up callback
     const wsRow = await this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
     if (wsRow) {
-      const registry = getExecutionService(wsRow.workspace_id)
+      const registry = await getExecutionService(wsRow.workspace_id)
       if (registry) {
         registry.service.clearExternalCallbacks(opts.executionId)
       }
@@ -599,7 +599,7 @@ export class WorkflowExecutor implements Executor {
       )
       return
     }
-    const parentRegistry = getExecutionService(parentExec.workspace_id)
+    const parentRegistry = await getExecutionService(parentExec.workspace_id)
     if (!parentRegistry) {
       console.error(
         `[WorkflowExecutor] task_dispatch resume: ExecutionService unavailable for parent workspace ${parentExec.workspace_id}`,
@@ -628,7 +628,7 @@ export class WorkflowExecutor implements Executor {
   private async resolveNextChainStep(schedWsId: string, executionId: string): Promise<WorkflowChainItem | null> {
     const wsRow = await this.configDAO.findScheduleWorkspaceById(schedWsId)
     if (!wsRow) return null
-    const registry = getExecutionService(wsRow.workspace_id)
+    const registry = await getExecutionService(wsRow.workspace_id)
     if (!registry) return null
     try {
       const config = JSON.parse(readFileSync(join(registry.wsPath, 'config.json'), 'utf-8')) as {
@@ -663,7 +663,7 @@ export class WorkflowExecutor implements Executor {
   ): Promise<void> {
     const wsRow = await this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
     if (!wsRow) return
-    const registry = getExecutionService(wsRow.workspace_id)
+    const registry = await getExecutionService(wsRow.workspace_id)
     if (!registry) return
 
     const completed = await this.execDAO.findById(opts.executionId)

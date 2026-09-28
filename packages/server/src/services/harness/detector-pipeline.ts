@@ -123,6 +123,35 @@ export class DetectorPipeline {
   private pendingDelegationPromises = new Map<string, Promise<void>>()
 
   /**
+   * 票6a void 收紧 —— 同步观察回调 fire-and-forget 的 inflight 台账。
+   *
+   * 为什么不能直接 await：onNodeStart/onNodeEnd/onAgentEvent/onError 与
+   * tool-interceptor 诊断是**引擎回调契约的同步槽**（EngineCallbacks 属 engine
+   * 包接口，async 化 ripple = 跨包改契约，不属本票作业面）。保持接口槽姿势，
+   * 但一切派生 promise 必须过 observeAsync 收口：
+   *   1. **错误日志兜底**：失败统一 console.error 收编 —— 消除 unhandled
+   *      rejection 串扰（B3 起 tasks-trigger-mutex/IN1/PV8 移动靶 flake 根因 =
+   *      orphan promise 被 vitest worker 复用串记到别的测试文件）。
+   *   2. **flush 屏障**：flushObservations() 等待全部派生工作落定，测试或
+   *      shutdown 需要「持久化序」时 await 它即可（§8 网③ 收紧要求）。
+   */
+  private inflightObservations = new Set<Promise<unknown>>()
+
+  observeAsync(promise: Promise<unknown>): void {
+    const tracked = promise
+      .catch((err: unknown) => console.error("[DetectorPipeline] observation callback failed:", err))
+      .finally(() => { this.inflightObservations.delete(tracked) })
+    this.inflightObservations.add(tracked)
+  }
+
+  /** flush 屏障：等空 inflight 观察派生工作（routeEvent/handleDiagnosis 链路）。 */
+  async flushObservations(): Promise<void> {
+    while (this.inflightObservations.size > 0) {
+      await Promise.allSettled([...this.inflightObservations])
+    }
+  }
+
+  /**
    * Current VarPool snapshot passed from engine's onBeforeRetry callback.
    * Used by buildDelegationContext to provide real-time variable state to the LLM.
    */
@@ -937,7 +966,9 @@ export class DetectorPipeline {
                 evidence: [{ command, matchedPattern: match.pattern }],
                 context: { retryCount: 0, nodeDurationMs: 0, workflowProgress: 0 },
               }
-              void pipeline.handleDiagnosis(report)
+              // 票6a：同步拦截槽内诊断走 observeAsync（错误兜底 + flush 台账），
+              // 块后立即返回 block 决定 —— 判定逻辑零变更（先记账后 return）。
+              pipeline.observeAsync(pipeline.handleDiagnosis(report))
 
               // Return block with guidance
               return {
@@ -962,7 +993,8 @@ export class DetectorPipeline {
         switch (prop) {
           case "onNodeStart":
             return function (nodeId: string, nodeType: string) {
-              void pipeline.routeEvent({ type: "nodeStart", nodeId, nodeType })
+              // 票6a void 收紧：同步观察槽保持 void，promise 经 observeAsync 兜底+台账（flush 屏障）
+              pipeline.observeAsync(pipeline.routeEvent({ type: "nodeStart", nodeId, nodeType }))
               return original.call(target, nodeId, nodeType)
             }
 
@@ -974,14 +1006,14 @@ export class DetectorPipeline {
               result?: any,
               nodeType?: string,
             ) {
-              void pipeline.routeEvent({
+              pipeline.observeAsync(pipeline.routeEvent({
                 type: "nodeEnd",
                 nodeId,
                 status,
                 durationMs,
                 result,
                 nodeType,
-              })
+              }))
               // BP-10: Clean up ALL pending decisions to prevent memory leaks
               pipeline.pendingActions.delete(nodeId)
               pipeline.pendingFailureActions.delete(nodeId)
@@ -1010,13 +1042,13 @@ export class DetectorPipeline {
 
           case "onAgentEvent":
             return function (nodeId: string, event: any) {
-              void pipeline.routeEvent({ type: "agentEvent", nodeId, event })
+              pipeline.observeAsync(pipeline.routeEvent({ type: "agentEvent", nodeId, event }))
               return original.call(target, nodeId, event)
             }
 
           case "onError":
             return function (nodeId: string, error: string) {
-              void pipeline.routeEvent({ type: "error", nodeId, error })
+              pipeline.observeAsync(pipeline.routeEvent({ type: "error", nodeId, error }))
               return original.call(target, nodeId, error)
             }
 

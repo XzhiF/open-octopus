@@ -15,15 +15,15 @@ export function createWorkflowRoutes(
 ): Hono {
   const router = new Hono()
 
-  function getWorkspace(id: string) {
-    const ws = workspaceDAO.findById(id)
+  async function getWorkspace(id: string) {
+    const ws = await workspaceDAO.findById(id)
     if (!ws) return undefined
     return { path: ws.path.replace(/^~/, os.homedir()) }
   }
 
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const local = service.list(ws.path)
@@ -33,7 +33,7 @@ export function createWorkflowRoutes(
 
   router.post("/", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const body = await c.req.json<{ ref: string; content: string }>()
@@ -50,7 +50,7 @@ export function createWorkflowRoutes(
   // three entry points can never disagree.
   router.post("/validate", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const body = await c.req.json<{ yaml?: string }>().catch(() => ({}) as { yaml?: string })
@@ -80,9 +80,9 @@ export function createWorkflowRoutes(
     }
   })
 
-  router.get("/:ref", (c) => {
+  router.get("/:ref", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")
@@ -118,7 +118,7 @@ export function createWorkflowRoutes(
 
   router.put("/:ref", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")
@@ -130,9 +130,9 @@ export function createWorkflowRoutes(
     return c.json(workflow)
   })
 
-  router.delete("/:ref", (c) => {
+  router.delete("/:ref", async (c) => {
     const workspaceId = c.req.param("id")!
-    const ws = getWorkspace(workspaceId)
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")

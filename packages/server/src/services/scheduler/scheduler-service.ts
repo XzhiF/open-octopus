@@ -689,7 +689,7 @@ export class SchedulerService {
     if (executionId && workspaceId) {
       try {
         const { getExecutionService } = await import('../execution-service-registry')
-        const registry = getExecutionService(workspaceId)
+        const registry = await getExecutionService(workspaceId)
         if (registry) {
           await registry.service.cancel(executionId)
         }

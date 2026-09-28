@@ -1801,6 +1801,22 @@ export class ExecutionDAO extends BasePgDAO {
     return result.changes
   }
 
+  /**
+   * 票6a · 启动清扫全局兜底（plan.html P1 判据「启动清扫把 running 孤儿执行
+   * 标记 interrupted」）。RecoveryManager 的 stale/recent 两支都按
+   * `updated_at < ?` / `>= ?` 筛 —— status='running' 且 updated_at IS NULL 的
+   * 孤儿行两支都抓不到，异步化后永不翻面。本方法在 RecoveryManager 跑完后
+   * 于同一启动钩子里收尾：全 org 清扫一切仍在 running 的行 → interrupted
+   * （completed_at/updated_at 落时间戳；pending_resume 已离开 running，不受影响）。
+   */
+  async sweepRunningToInterrupted(nowIso: string): Promise<number> {
+    const result = await this.exec(
+      "UPDATE executions SET status = 'interrupted', completed_at = ?, updated_at = ? WHERE status = 'running'",
+      [nowIso, nowIso],
+    )
+    return result.changes
+  }
+
   // ── Data retention methods ────────────────────────────────────────
 
   async truncateOldAgentEventContent(cutoffTimestamp: number): Promise<{ changes: number }> {
