@@ -1,5 +1,5 @@
-import type Database from "better-sqlite3"
-import { BaseDAO } from "./base"
+import { BasePgDAO, type PgSql } from "./base-pg"
+import { iso, isoOrNull, jsonStr, num, flag, bool } from "./pg-mappers"
 import type { ScheduleRow, ScheduleWorkspaceRow, SchedulerStateRow } from "../types"
 
 /** A `schedules` row plus its most recent fire, as the job list/get read model needs it.
@@ -15,18 +15,82 @@ export type ScheduleRowWithLastExec = ScheduleRow & {
 /**
  * ScheduleConfigDAO — CRUD for schedule definitions and scheduler state.
  * Covers: schedules, schedule_workspaces, scheduler_state tables.
+ *
+ * P1 B5 票1：BaseDAO → BasePgDAO。布尔列（enabled/notify_on_failure/
+ * missed_alert_pending）写侧经 bool() 显式转换（postgres.js number→boolean
+ * 静默存 false 雷区）、读侧经 flag() 归一回 0/1；jsonb（input_values/config）
+ * 出口归一 JSON 串；`enabled = 1` 谓词 → `= true`；datetime('now')→now()；
+ * INSTR→strpos；json_extract→#>>；julianday→EXTRACT(EPOCH)；LIMIT -1→OFFSET。
  */
-export class ScheduleConfigDAO extends BaseDAO {
-  constructor(db: Database.Database) { super(db) }
+
+/** schedules 的 PG 原始行（经 fromSchedule 归一回 ScheduleRow 旧契约）。 */
+interface ScPg {
+  id: string
+  org: string
+  name: string
+  cron_expression: string | null
+  timezone: string
+  workspace_id: string | null
+  workflow_ref: string | null
+  input_values: unknown
+  enabled: boolean | number
+  timeout_seconds: number
+  notify_on_failure: boolean | number
+  notify_channel: string | null
+  notify_target: string | null
+  container_execution_id: string | null
+  missed_alert_dismissed_at: Date | string | null
+  deleted_at: Date | string | null
+  created_at: Date | string
+  updated_at: Date | string
+  next_trigger_at: Date | string | null
+  job_type: string
+  config: unknown
+  parallel_policy: string
+  description: string | null
+  version: number
+  consecutive_failures: number
+  max_retain: number
+  status: string
+  claimed_at: Date | string | null
+}
+
+function fromSchedule(r: ScPg): ScheduleRow {
+  return {
+    ...r,
+    input_values: jsonStr(r.input_values) ?? "{}",
+    config: jsonStr(r.config) ?? "{}",
+    enabled: flag(r.enabled),
+    notify_on_failure: flag(r.notify_on_failure),
+    missed_alert_dismissed_at: isoOrNull(r.missed_alert_dismissed_at),
+    deleted_at: isoOrNull(r.deleted_at),
+    created_at: iso(r.created_at),
+    updated_at: iso(r.updated_at),
+    next_trigger_at: isoOrNull(r.next_trigger_at),
+    claimed_at: isoOrNull(r.claimed_at),
+  }
+}
+
+/** 动态 SET 里需要 0/1→boolean 显式转换的列（postgres.js number→bool 静默 false 雷区）。 */
+const SCHEDULE_BOOL_COLS = new Set(["enabled", "notify_on_failure"])
+
+function normScheduleField(k: string, v: unknown): unknown {
+  return SCHEDULE_BOOL_COLS.has(k) && typeof v === "number" ? bool(v) : v
+}
+
+export class ScheduleConfigDAO extends BasePgDAO {
+  constructor(db: PgSql) { super(db) }
 
   // ── schedules ───────────────────────────────────────────────────
 
-  findById(id: string): ScheduleRow | null {
-    return (this.stmt("SELECT * FROM schedules WHERE id = ? AND deleted_at IS NULL").get(id) as ScheduleRow) ?? null
+  async findById(id: string): Promise<ScheduleRow | null> {
+    const row = await this.q1<ScPg>("SELECT * FROM schedules WHERE id = ? AND deleted_at IS NULL", [id])
+    return row ? fromSchedule(row) : null
   }
 
-  findByIdRaw(id: string): ScheduleRow | null {
-    return (this.stmt("SELECT * FROM schedules WHERE id = ?").get(id) as ScheduleRow) ?? null
+  async findByIdRaw(id: string): Promise<ScheduleRow | null> {
+    const row = await this.q1<ScPg>("SELECT * FROM schedules WHERE id = ?", [id])
+    return row ? fromSchedule(row) : null
   }
 
 
@@ -37,41 +101,45 @@ export class ScheduleConfigDAO extends BaseDAO {
    * returns children of every status (draft/queued/claimed/running/done/failed/aborted)
    * so GET /jobs/:id can render the composite kanban's children[] regardless of state.
    */
-  findChildSchedules(parentExecutionId: string): ScheduleRow[] {
-    return this.stmt(
+  async findChildSchedules(parentExecutionId: string): Promise<ScheduleRow[]> {
+    const rows = await this.q<ScPg>(
       `SELECT * FROM schedules
        WHERE deleted_at IS NULL
-         AND json_extract(config, '$.parent_task_dispatch.execution_id') = ?
+         AND config #>> '{parent_task_dispatch,execution_id}' = ?
        ORDER BY created_at ASC`,
-    ).all(parentExecutionId) as ScheduleRow[]
+      [parentExecutionId],
+    )
+    return rows.map(fromSchedule)
   }
 
 
-  findByName(name: string): ScheduleRow | null {
-    return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
+  async findByName(name: string): Promise<ScheduleRow | null> {
+    const row = await this.q1<ScPg>("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL", [name])
+    return row ? fromSchedule(row) : null
   }
 
-  listByWorkspace(workspaceId: string, filters?: { search?: string; status?: string }): ScheduleRow[] {
+  async listByWorkspace(workspaceId: string, filters?: { search?: string; status?: string }): Promise<ScheduleRow[]> {
     let sql = "SELECT * FROM schedules WHERE workspace_id = ? AND deleted_at IS NULL AND (job_type = 'workflow' OR job_type IS NULL)"
     const params: unknown[] = [workspaceId]
-    if (filters?.search) { sql += " AND INSTR(name, ?) > 0"; params.push(filters.search.slice(0, 200)) }
-    if (filters?.status === "enabled") { sql += " AND enabled = 1" }
-    else if (filters?.status === "disabled") { sql += " AND enabled = 0" }
+    if (filters?.search) { sql += " AND strpos(name, ?) > 0"; params.push(filters.search.slice(0, 200)) }
+    if (filters?.status === "enabled") { sql += " AND enabled = true" }
+    else if (filters?.status === "disabled") { sql += " AND enabled = false" }
     sql += " ORDER BY created_at DESC"
-    return this.stmt(sql).all(...params) as ScheduleRow[]
+    const rows = await this.q<ScPg>(sql, params)
+    return rows.map(fromSchedule)
   }
 
-  listGlobal(params?: {
+  async listGlobal(params?: {
     search?: string; status?: string; job_type?: string; org?: string;
     workspace_id?: string; sort?: string; order?: string;
     page?: number; limit?: number;
-  }): { data: ScheduleRow[]; total: number; page: number; pageSize: number } {
+  }): Promise<{ data: ScheduleRow[]; total: number; page: number; pageSize: number }> {
     const conditions: string[] = ["s.deleted_at IS NULL"]
     const queryParams: unknown[] = []
-    if (params?.search) { conditions.push("INSTR(s.name, ?) > 0"); queryParams.push(params.search.slice(0, 200)) }
-    if (params?.status === "enabled") { conditions.push("s.enabled = 1") }
-    else if (params?.status === "disabled") { conditions.push("s.enabled = 0") }
-    else if (params?.status === "failed") { conditions.push("s.enabled = 1 AND s.consecutive_failures > 0") }
+    if (params?.search) { conditions.push("strpos(s.name, ?) > 0"); queryParams.push(params.search.slice(0, 200)) }
+    if (params?.status === "enabled") { conditions.push("s.enabled = true") }
+    else if (params?.status === "disabled") { conditions.push("s.enabled = false") }
+    else if (params?.status === "failed") { conditions.push("s.enabled = true AND s.consecutive_failures > 0") }
     if (params?.job_type) { conditions.push("s.job_type = ?"); queryParams.push(params.job_type) }
     if (params?.org) { conditions.push("s.org = ?"); queryParams.push(params.org) }
     if (params?.workspace_id) { conditions.push("s.org = (SELECT org FROM workspaces WHERE id = ?)"); queryParams.push(params.workspace_id) }
@@ -79,37 +147,40 @@ export class ScheduleConfigDAO extends BaseDAO {
     const where = conditions.join(" AND ")
     const page = params?.page ?? 1
     const limit = params?.limit ?? 20
-    const offset = (page - 1) * limit
 
     const countSql = `SELECT COUNT(*) as cnt FROM schedules s WHERE ${where}`
-    const dataSql = `SELECT s.* FROM schedules s WHERE ${where} ORDER BY s.next_trigger_at LIMIT ? OFFSET ?`
+    // NULLS FIRST 对齐 SQLite ASC 的 NULL 前置语义（next_trigger_at 可空）
+    const dataSql = `SELECT s.* FROM schedules s WHERE ${where} ORDER BY s.next_trigger_at NULLS FIRST LIMIT ? OFFSET ?`
 
-    return this.paginate<ScheduleRow>(dataSql, countSql, queryParams, page, limit)
+    const r = await this.paginate<ScPg>(dataSql, countSql, queryParams, page, limit)
+    return { ...r, data: r.data.map(fromSchedule) }
   }
 
-  checkNameConflict(org: string, name: string, excludeId?: string): boolean {
+  async checkNameConflict(org: string, name: string, excludeId?: string): Promise<boolean> {
     if (excludeId) {
-      const row = this.stmt(
-        "SELECT id FROM schedules WHERE org = ? AND name = ? AND id != ? AND deleted_at IS NULL"
-      ).get(org, name, excludeId) as { id: string } | undefined
+      const row = await this.q1<{ id: string }>(
+        "SELECT id FROM schedules WHERE org = ? AND name = ? AND id != ? AND deleted_at IS NULL",
+        [org, name, excludeId],
+      )
       return !!row
     }
-    const row = this.stmt(
-      "SELECT id FROM schedules WHERE org = ? AND name = ? AND deleted_at IS NULL"
-    ).get(org, name) as { id: string } | undefined
+    const row = await this.q1<{ id: string }>(
+      "SELECT id FROM schedules WHERE org = ? AND name = ? AND deleted_at IS NULL",
+      [org, name],
+    )
     return !!row
   }
 
-  insertSchedule(row: Partial<ScheduleRow> & {
+  async insertSchedule(row: Partial<ScheduleRow> & {
     id: string; org: string; name: string;
     cron_expression: string | null; timezone: string;
-  }): Database.RunResult {
+  }): Promise<{ changes: number }> {
     const now = new Date().toISOString()
     // v42 (ADR-0021 票03): origin_type / origin_id / origin_role / assoc_meta and
     // scheduled_at are dropped from the INSERT along with the columns. Callers that used
     // to bind a schedule to a task through them (readyTask's envelope, task-dispatch
     // children) no longer create schedule rows at all, so there is nothing to pass.
-    return this.stmt(`
+    return this.exec(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone, workspace_id, workflow_ref,
         input_values, enabled, timeout_seconds, notify_on_failure,
@@ -118,11 +189,11 @@ export class ScheduleConfigDAO extends BaseDAO {
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
         status, claimed_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
-      row.input_values ?? "{}", row.enabled ?? 1,
-      row.timeout_seconds ?? 3600, row.notify_on_failure ?? 0,
+      row.input_values ?? "{}", bool(row.enabled ?? 1),
+      row.timeout_seconds ?? 3600, bool(row.notify_on_failure ?? 0),
       row.notify_channel ?? null, row.notify_target ?? null,
       row.container_execution_id ?? null, row.next_trigger_at ?? null,
       row.created_at ?? now, row.updated_at ?? now,
@@ -131,57 +202,58 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.version ?? 1, row.consecutive_failures ?? 0, row.max_retain ?? 10,
       row.status ?? "queued",
       row.claimed_at ?? null,
-    )
+    ])
   }
 
-  updateSchedule(id: string, fields: Record<string, unknown>): Database.RunResult {
+  async updateSchedule(id: string, fields: Record<string, unknown>): Promise<{ changes: number }> {
     const sets: string[] = ["updated_at = ?"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(normScheduleField(k, v))
     }
     vals.push(id)
-    return this.stmt(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    return this.exec(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ?`, vals)
   }
 
-  updateScheduleWithVersion(id: string, fields: Record<string, unknown>, expectedVersion: number): Database.RunResult {
+  async updateScheduleWithVersion(id: string, fields: Record<string, unknown>, expectedVersion: number): Promise<{ changes: number }> {
     const sets: string[] = ["updated_at = ?", "version = version + 1"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(normScheduleField(k, v))
     }
     vals.push(id, expectedVersion)
-    return this.stmt(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND version = ?`).run(...vals)
+    return this.exec(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND version = ?`, vals)
   }
 
   /** Clear a soft delete. Used by the built-in job seed: a row the operator deleted
    *  stays deleted, but a built-in whose row got soft-deleted (by API, by hand, by an
    *  older build that lacked the guard) must come back at next boot — see the WHY in
    *  seedBuiltinCodeJobs. */
-  undelete(id: string): Database.RunResult {
+  async undelete(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt("UPDATE schedules SET deleted_at = NULL, updated_at = ? WHERE id = ?").run(now, id)
+    return this.exec("UPDATE schedules SET deleted_at = NULL, updated_at = ? WHERE id = ?", [now, id])
   }
 
-  softDelete(id: string): Database.RunResult {
+  async softDelete(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, id)
+    return this.exec("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ?", [now, now, id])
   }
 
-  findEnabledDue(): ScheduleRow[] {
-    return this.stmt(
-      "SELECT * FROM schedules WHERE enabled = 1 AND deleted_at IS NULL AND next_trigger_at IS NOT NULL AND next_trigger_at <= datetime('now')"
-    ).all() as ScheduleRow[]
+  async findEnabledDue(): Promise<ScheduleRow[]> {
+    const rows = await this.q<ScPg>(
+      "SELECT * FROM schedules WHERE enabled = true AND deleted_at IS NULL AND next_trigger_at IS NOT NULL AND next_trigger_at <= now()"
+    )
+    return rows.map(fromSchedule)
   }
 
-  findEnabledSchedules(): ScheduleRow[] {
-    return this.stmt(
-      "SELECT * FROM schedules WHERE enabled = 1 AND deleted_at IS NULL"
-    ).all() as ScheduleRow[]
+  async findEnabledSchedules(): Promise<ScheduleRow[]> {
+    const rows = await this.q<ScPg>(
+      "SELECT * FROM schedules WHERE enabled = true AND deleted_at IS NULL"
+    )
+    return rows.map(fromSchedule)
   }
-
 
 
 
@@ -189,16 +261,19 @@ export class ScheduleConfigDAO extends BaseDAO {
   // T-5 AC11: stale claimed/running — claimed_at older than cutoff ISO string.
   // Includes 'running' so a task that crashed mid-execution (status advanced past
   // 'claimed' but the process died) also rolls back to queued for re-dispatch.
-  findStaleClaimed(cutoffIso: string): ScheduleRow[] {
-    return this.stmt(
-      "SELECT * FROM schedules WHERE status IN ('claimed', 'running') AND claimed_at IS NOT NULL AND claimed_at < ? AND deleted_at IS NULL"
-    ).all(cutoffIso) as ScheduleRow[]
+  async findStaleClaimed(cutoffIso: string): Promise<ScheduleRow[]> {
+    const rows = await this.q<ScPg>(
+      "SELECT * FROM schedules WHERE status IN ('claimed', 'running') AND claimed_at IS NOT NULL AND claimed_at < ? AND deleted_at IS NULL",
+      [cutoffIso],
+    )
+    return rows.map(fromSchedule)
   }
 
-  findActiveExecutions(scheduleId: string): { id: string }[] {
-    return this.stmt(
-      "SELECT id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running') LIMIT 1"
-    ).all(scheduleId) as { id: string }[]
+  async findActiveExecutions(scheduleId: string): Promise<{ id: string }[]> {
+    return this.q<{ id: string }>(
+      "SELECT id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running') LIMIT 1",
+      [scheduleId],
+    )
   }
 
   /** Execution + workspace links of the schedule's ACTIVE runs. Callers that
@@ -207,19 +282,20 @@ export class ScheduleConfigDAO extends BaseDAO {
    *  findActiveExecutions would return nothing and the engine cancel would be
    *  silently skipped (2026-09-08 task-abort regression; mirrors the capture
    *  discipline documented in SchedulerService.abortJob). */
-  findActiveExecutionLinks(scheduleId: string): { execution_id: string; workspace_id: string }[] {
-    return this.stmt(
-      "SELECT execution_id, workspace_id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running') AND execution_id IS NOT NULL AND workspace_id IS NOT NULL"
-    ).all(scheduleId) as { execution_id: string; workspace_id: string }[]
+  async findActiveExecutionLinks(scheduleId: string): Promise<{ execution_id: string; workspace_id: string }[]> {
+    return this.q<{ execution_id: string; workspace_id: string }>(
+      "SELECT execution_id, workspace_id FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running') AND execution_id IS NOT NULL AND workspace_id IS NOT NULL",
+      [scheduleId],
+    )
   }
 
-  deleteByWorkspace(workspaceId: string): Database.RunResult {
-    return this.stmt("DELETE FROM schedules WHERE workspace_id = ?").run(workspaceId)
+  async deleteByWorkspace(workspaceId: string): Promise<{ changes: number }> {
+    return this.exec("DELETE FROM schedules WHERE workspace_id = ?", [workspaceId])
   }
 
   // ── schedule_workspaces ─────────────────────────────────────────
 
-  findScheduleWorkspaces(scheduleId: string, filters?: { status?: string; page?: number; limit?: number }): { data: ScheduleWorkspaceRow[]; total: number; page: number; pageSize: number } {
+  async findScheduleWorkspaces(scheduleId: string, filters?: { status?: string; page?: number; limit?: number }): Promise<{ data: ScheduleWorkspaceRow[]; total: number; page: number; pageSize: number }> {
     const conditions = ["sw.schedule_id = ?"]
     const params: unknown[] = [scheduleId]
     if (filters?.status) { conditions.push("sw.status = ?"); params.push(filters.status) }
@@ -232,268 +308,296 @@ export class ScheduleConfigDAO extends BaseDAO {
       FROM schedule_workspaces sw LEFT JOIN workspaces w ON sw.workspace_id = w.id
       WHERE ${where} ORDER BY sw.started_at DESC LIMIT ? OFFSET ?`
 
-    return this.paginate<ScheduleWorkspaceRow & { workspace_name?: string; workspace_status?: string }>(dataSql, countSql, params, page, limit) as { data: ScheduleWorkspaceRow[]; total: number; page: number; pageSize: number }
+    const r = await this.paginate<SwPg & { workspace_name?: string; workspace_status?: string }>(dataSql, countSql, params, page, limit)
+    return { ...r, data: r.data.map(fromSw) } as { data: ScheduleWorkspaceRow[]; total: number; page: number; pageSize: number }
   }
 
-  findScheduleWorkspace(scheduleId: string, workspaceId: string): (ScheduleWorkspaceRow & { workspace_name?: string; workspace_status?: string }) | null {
-    return (this.stmt(`
+  async findScheduleWorkspace(scheduleId: string, workspaceId: string): Promise<(ScheduleWorkspaceRow & { workspace_name?: string; workspace_status?: string }) | null> {
+    const row = await this.q1<SwPg & { workspace_name?: string; workspace_status?: string }>(`
       SELECT sw.*, w.name as workspace_name, w.status as workspace_status
       FROM schedule_workspaces sw LEFT JOIN workspaces w ON sw.workspace_id = w.id
       WHERE sw.schedule_id = ? AND sw.id = ?
-    `).get(scheduleId, workspaceId) as (ScheduleWorkspaceRow & { workspace_name?: string; workspace_status?: string })) ?? null
+    `, [scheduleId, workspaceId])
+    return row ? fromSw(row) : null
   }
 
   // ── scheduler_state ─────────────────────────────────────────────
 
-  getSchedulerState(): SchedulerStateRow | null {
-    return (this.stmt("SELECT * FROM scheduler_state WHERE id = 1").get() as SchedulerStateRow) ?? null
+  async getSchedulerState(): Promise<SchedulerStateRow | null> {
+    const row = await this.q1<SchedulerStateRow & { last_heartbeat: Date | string | null; missed_alert_pending: boolean | number }>(
+      "SELECT * FROM scheduler_state WHERE id = 1",
+    )
+    if (!row) return null
+    return { ...row, last_heartbeat: isoOrNull(row.last_heartbeat), missed_alert_pending: flag(row.missed_alert_pending) }
   }
 
-  updateSchedulerState(fields: Partial<SchedulerStateRow>): Database.RunResult {
+  async updateSchedulerState(fields: Partial<SchedulerStateRow>): Promise<{ changes: number }> {
     const sets: string[] = []
     const vals: unknown[] = []
     for (const [k, v] of Object.entries(fields)) {
       if (k === "id") continue
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(k === "missed_alert_pending" && typeof v === "number" ? bool(v) : v)
     }
-    if (sets.length === 0) return { changes: 0, lastInsertRowid: 0 }
-    return this.stmt(`UPDATE scheduler_state SET ${sets.join(", ")} WHERE id = 1`).run(...vals)
+    if (sets.length === 0) return { changes: 0 }
+    return this.exec(`UPDATE scheduler_state SET ${sets.join(", ")} WHERE id = 1`, vals)
   }
 
   // ── Workspace-scoped queries (for V1 WorkspaceScheduleService) ──
 
-  findWorkspaceOrg(workspaceId: string): string | null {
-    const row = this.stmt("SELECT org FROM workspaces WHERE id = ?").get(workspaceId) as { org: string } | undefined
+  async findWorkspaceOrg(workspaceId: string): Promise<string | null> {
+    const row = await this.q1<{ org: string }>("SELECT org FROM workspaces WHERE id = ?", [workspaceId])
     return row?.org ?? null
   }
 
-  findScheduleByWorkspace(id: string, workspaceId: string): ScheduleRow | null {
-    return (this.stmt("SELECT * FROM schedules WHERE id = ? AND workspace_id = ?").get(id, workspaceId) as ScheduleRow) ?? null
+  async findScheduleByWorkspace(id: string, workspaceId: string): Promise<ScheduleRow | null> {
+    const row = await this.q1<ScPg>("SELECT * FROM schedules WHERE id = ? AND workspace_id = ?", [id, workspaceId])
+    return row ? fromSchedule(row) : null
   }
 
-  findScheduleByWorkspaceNotDeleted(id: string, workspaceId: string): ScheduleRow | null {
-    return (this.stmt("SELECT * FROM schedules WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL").get(id, workspaceId) as ScheduleRow) ?? null
+  async findScheduleByWorkspaceNotDeleted(id: string, workspaceId: string): Promise<ScheduleRow | null> {
+    const row = await this.q1<ScPg>("SELECT * FROM schedules WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL", [id, workspaceId])
+    return row ? fromSchedule(row) : null
   }
 
-  insertWorkspaceSchedule(row: {
+  async insertWorkspaceSchedule(row: {
     id: string; org: string; workspace_id: string; name: string; workflow_ref: string;
     cron_expression: string; timezone: string; input_values: string;
     timeout_seconds: number; notify_on_failure: number;
     notify_channel: string | null; notify_target: string | null;
     container_execution_id: string; next_trigger_at: string | null;
     created_at: string; updated_at: string;
-  }): Database.RunResult {
-    return this.stmt(`
+  }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedules (
         id, org, workspace_id, name, workflow_ref, cron_expression, timezone,
         input_values, enabled, timeout_seconds, notify_on_failure,
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
       row.id, row.org, row.workspace_id, row.name, row.workflow_ref,
       row.cron_expression, row.timezone, row.input_values,
-      row.timeout_seconds, row.notify_on_failure,
+      row.timeout_seconds, bool(row.notify_on_failure),
       row.notify_channel, row.notify_target, row.container_execution_id,
       row.next_trigger_at, row.created_at, row.updated_at,
-    )
+    ])
   }
 
-  updateScheduleByWorkspace(id: string, workspaceId: string, fields: Record<string, unknown>): Database.RunResult {
+  async updateScheduleByWorkspace(id: string, workspaceId: string, fields: Record<string, unknown>): Promise<{ changes: number }> {
     const sets: string[] = ["updated_at = ?"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
-      vals.push(v)
+      vals.push(normScheduleField(k, v))
     }
     vals.push(id, workspaceId)
-    return this.stmt(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND workspace_id = ?`).run(...vals)
+    return this.exec(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ? AND workspace_id = ?`, vals)
   }
 
-  softDeleteByWorkspace(id: string, workspaceId: string): Database.RunResult {
+  async softDeleteByWorkspace(id: string, workspaceId: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?").run(now, now, id, workspaceId)
+    return this.exec("UPDATE schedules SET deleted_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?", [now, now, id, workspaceId])
   }
 
-  updateEnabledByWorkspace(id: string, workspaceId: string, enabled: number, nextTrigger: string | null): Database.RunResult {
+  async updateEnabledByWorkspace(id: string, workspaceId: string, enabled: number, nextTrigger: string | null): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE schedules SET enabled = ?, next_trigger_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
-    ).run(enabled, nextTrigger, now, id, workspaceId)
+    return this.exec(
+      "UPDATE schedules SET enabled = ?, next_trigger_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+      [bool(enabled), nextTrigger, now, id, workspaceId],
+    )
   }
 
-  updateDismissAlert(id: string, workspaceId: string): Database.RunResult {
+  async updateDismissAlert(id: string, workspaceId: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE schedules SET missed_alert_dismissed_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
-    ).run(now, now, id, workspaceId)
+    return this.exec(
+      "UPDATE schedules SET missed_alert_dismissed_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+      [now, now, id, workspaceId],
+    )
   }
 
-  emergencyStopByWorkspace(workspaceId: string): number {
+  async emergencyStopByWorkspace(workspaceId: string): Promise<number> {
     const now = new Date().toISOString()
-    const result = this.stmt(
-      "UPDATE schedules SET enabled = 0, updated_at = ? WHERE workspace_id = ? AND enabled = 1 AND deleted_at IS NULL"
-    ).run(now, workspaceId)
-    return result.changes ?? 0
+    const result = await this.exec(
+      "UPDATE schedules SET enabled = false, updated_at = ? WHERE workspace_id = ? AND enabled = true AND deleted_at IS NULL",
+      [now, workspaceId],
+    )
+    return result.changes
   }
 
-  checkNameConflictByWorkspace(workspaceId: string, name: string, excludeId: string): boolean {
-    const row = this.stmt(
-      "SELECT id FROM schedules WHERE workspace_id = ? AND name = ? AND id != ? AND deleted_at IS NULL"
-    ).get(workspaceId, name, excludeId) as { id: string } | undefined
+  async checkNameConflictByWorkspace(workspaceId: string, name: string, excludeId: string): Promise<boolean> {
+    const row = await this.q1<{ id: string }>(
+      "SELECT id FROM schedules WHERE workspace_id = ? AND name = ? AND id != ? AND deleted_at IS NULL",
+      [workspaceId, name, excludeId],
+    )
     return !!row
   }
 
-  updateNextTriggerAt(id: string, nextTrigger: string | null): Database.RunResult {
-    return this.stmt("UPDATE schedules SET next_trigger_at = ? WHERE id = ?").run(nextTrigger, id)
+  async updateNextTriggerAt(id: string, nextTrigger: string | null): Promise<{ changes: number }> {
+    return this.exec("UPDATE schedules SET next_trigger_at = ? WHERE id = ?", [nextTrigger, id])
   }
 
-  incrementConsecutiveFailures(id: string): Database.RunResult {
+  async incrementConsecutiveFailures(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE id = ?"
-    ).run(now, id)
+    return this.exec(
+      "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE id = ?",
+      [now, id],
+    )
   }
 
-  getConsecutiveFailuresAndEnabled(id: string): { consecutive_failures: number; enabled: number } | null {
-    return (this.stmt("SELECT consecutive_failures, enabled FROM schedules WHERE id = ?")
-      .get(id) as { consecutive_failures: number; enabled: number }) ?? null
+  async getConsecutiveFailuresAndEnabled(id: string): Promise<{ consecutive_failures: number; enabled: number } | null> {
+    const row = await this.q1<{ consecutive_failures: number; enabled: boolean | number }>(
+      "SELECT consecutive_failures, enabled FROM schedules WHERE id = ?", [id],
+    )
+    return row ? { consecutive_failures: row.consecutive_failures, enabled: flag(row.enabled) } : null
   }
 
-  autoDisableSchedule(id: string): Database.RunResult {
+  async autoDisableSchedule(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE schedules SET enabled = 0, next_trigger_at = NULL, updated_at = ? WHERE id = ?"
-    ).run(now, id)
+    return this.exec(
+      "UPDATE schedules SET enabled = false, next_trigger_at = NULL, updated_at = ? WHERE id = ?",
+      [now, id],
+    )
   }
 
-  resetConsecutiveFailures(id: string): Database.RunResult {
+  async resetConsecutiveFailures(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt("UPDATE schedules SET consecutive_failures = 0, updated_at = ? WHERE id = ?").run(now, id)
+    return this.exec("UPDATE schedules SET consecutive_failures = 0, updated_at = ? WHERE id = ?", [now, id])
   }
 
   // ── Schedule workspace queries (for WorkflowExecutor) ───────────
 
-  insertScheduleWorkspace(row: {
+  async insertScheduleWorkspace(row: {
     id: string; schedule_id: string; workspace_id: string; status: string;
     branch_suffix: string; started_at: string;
-  }): Database.RunResult {
-    return this.stmt(`
+  }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(row.id, row.schedule_id, row.workspace_id, row.status, row.branch_suffix, row.started_at)
+    `, [row.id, row.schedule_id, row.workspace_id, row.status, row.branch_suffix, row.started_at])
   }
 
-  updateScheduleWorkspaceStatus(id: string, fields: Record<string, unknown>): Database.RunResult {
+  async updateScheduleWorkspaceStatus(id: string, fields: Record<string, unknown>): Promise<{ changes: number }> {
     const sets: string[] = []
     const vals: unknown[] = []
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
       vals.push(v)
     }
-    if (sets.length === 0) return { changes: 0, lastInsertRowid: 0 }
+    if (sets.length === 0) return { changes: 0 }
     vals.push(id)
-    return this.stmt(`UPDATE schedule_workspaces SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    return this.exec(`UPDATE schedule_workspaces SET ${sets.join(", ")} WHERE id = ?`, vals)
   }
 
-  findScheduleWorkspaceById(id: string): { workspace_id: string } | null {
-    return (this.stmt("SELECT workspace_id FROM schedule_workspaces WHERE id = ?").get(id) as { workspace_id: string }) ?? null
+  async findScheduleWorkspaceById(id: string): Promise<{ workspace_id: string } | null> {
+    return (await this.q1<{ workspace_id: string }>("SELECT workspace_id FROM schedule_workspaces WHERE id = ?", [id])) ?? null
   }
 
-  findRetainedWorkspaces(scheduleId: string, maxRetain: number): Array<{ workspace_id: string }> {
-    return this.stmt(`
+  async findRetainedWorkspaces(scheduleId: string, maxRetain: number): Promise<Array<{ workspace_id: string }>> {
+    // 旧 `LIMIT -1 OFFSET ?`（SQLite 取尾语法）→ PG 直接 OFFSET，LIMIT 缺省即无上限
+    return this.q<{ workspace_id: string }>(`
       SELECT sw.workspace_id
       FROM schedule_workspaces sw
       WHERE sw.schedule_id = ?
         AND sw.status IN ('completed', 'failed')
       ORDER BY sw.started_at DESC
-      LIMIT -1 OFFSET ?
-    `).all(scheduleId, maxRetain) as Array<{ workspace_id: string }>
+      OFFSET ?
+    `, [scheduleId, maxRetain])
   }
 
   // ── Dashboard queries ───────────────────────────────────────────
 
-  countActiveSchedules(): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedules WHERE enabled = 1 AND deleted_at IS NULL"
-    ).get() as { cnt: number }).cnt
+  async countActiveSchedules(): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedules WHERE enabled = true AND deleted_at IS NULL",
+    )
+    return num(row?.cnt)
   }
 
-  countFailedSchedules(): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedules WHERE consecutive_failures > 0 AND enabled = 1 AND deleted_at IS NULL"
-    ).get() as { cnt: number }).cnt
+  async countFailedSchedules(): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedules WHERE consecutive_failures > 0 AND enabled = true AND deleted_at IS NULL",
+    )
+    return num(row?.cnt)
   }
 
-  findNextTrigger(): { id: string; name: string; next_trigger_at: string } | null {
-    return (this.stmt(`
+  async findNextTrigger(): Promise<{ id: string; name: string; next_trigger_at: string } | null> {
+    const row = await this.q1<{ id: string; name: string; next_trigger_at: Date | string }>(`
       SELECT id, name, next_trigger_at FROM schedules
-      WHERE enabled = 1 AND deleted_at IS NULL AND next_trigger_at IS NOT NULL
+      WHERE enabled = true AND deleted_at IS NULL AND next_trigger_at IS NOT NULL
       ORDER BY next_trigger_at ASC LIMIT 1
-    `).get() as { id: string; name: string; next_trigger_at: string }) ?? null
+    `)
+    return row ? { id: row.id, name: row.name, next_trigger_at: iso(row.next_trigger_at) } : null
   }
 
   // ── Scheduler engine queries ────────────────────────────────────
 
-  updateSchedulerHeartbeat(): Database.RunResult {
-    return this.stmt("UPDATE scheduler_state SET last_heartbeat = datetime('now') WHERE id = 1").run()
+  async updateSchedulerHeartbeat(): Promise<{ changes: number }> {
+    return this.exec("UPDATE scheduler_state SET last_heartbeat = now() WHERE id = 1")
   }
 
-  setMissedAlertPending(): Database.RunResult {
-    return this.stmt("UPDATE scheduler_state SET missed_alert_pending = 1 WHERE id = 1").run()
+  async setMissedAlertPending(): Promise<{ changes: number }> {
+    return this.exec("UPDATE scheduler_state SET missed_alert_pending = true WHERE id = 1")
   }
 
-  findEnabledSchedulesForMissed(): ScheduleRow[] {
-    return this.stmt(
-      "SELECT * FROM schedules WHERE enabled = 1 AND deleted_at IS NULL"
-    ).all() as ScheduleRow[]
+  async findEnabledSchedulesForMissed(): Promise<ScheduleRow[]> {
+    const rows = await this.q<ScPg>(
+      "SELECT * FROM schedules WHERE enabled = true AND deleted_at IS NULL"
+    )
+    return rows.map(fromSchedule)
   }
 
-  findLastNonMissedExecution(scheduleId: string): { triggered_at: string } | null {
-    return (this.stmt(`
+  async findLastNonMissedExecution(scheduleId: string): Promise<{ triggered_at: string } | null> {
+    const row = await this.q1<{ triggered_at: Date | string }>(`
       SELECT triggered_at FROM schedule_executions
       WHERE schedule_id = ? AND status != 'missed'
       ORDER BY triggered_at DESC LIMIT 1
-    `).get(scheduleId) as { triggered_at: string }) ?? null
+    `, [scheduleId])
+    return row ? { triggered_at: iso(row.triggered_at) } : null
   }
 
-  findExecutionNearTime(scheduleId: string, triggeredAt: string): unknown | undefined {
-    return this.stmt(`
+  async findExecutionNearTime(scheduleId: string, triggeredAt: string): Promise<unknown | undefined> {
+    // 旧 julianday 秒差 → PG EXTRACT(EPOCH FROM ...)；±60s 容差语义不变
+    return this.q1(`
       SELECT 1 FROM schedule_executions
       WHERE schedule_id = ?
-        AND ABS(CAST((julianday(triggered_at) - julianday(?)) * 86400 AS INTEGER)) < 60
-    `).get(scheduleId, triggeredAt)
+        AND ABS(EXTRACT(EPOCH FROM (triggered_at - (?::timestamptz)))) < 60
+    `, [scheduleId, triggeredAt])
   }
 
-  findRunningExecutionsWithScheduleInfo(): Array<{
+  async findRunningExecutionsWithScheduleInfo(): Promise<Array<{
     id: string; schedule_id: string; status: string; triggered_at: string;
     execution_id: string | null; timeout_seconds: number; notify_on_failure: number;
     schedule_name: string; notify_channel: string | null; notify_target: string | null;
     job_type: string; workspace_id: string | null;
-  }> {
-    return this.stmt(`
+  }>> {
+    const rows = await this.q<{
+      id: string; schedule_id: string; status: string; triggered_at: Date | string;
+      execution_id: string | null; timeout_seconds: number; notify_on_failure: boolean | number;
+      schedule_name: string; notify_channel: string | null; notify_target: string | null;
+      job_type: string; workspace_id: string | null;
+    }>(`
       SELECT se.*, s.timeout_seconds, s.notify_on_failure, s.name as schedule_name,
              s.notify_channel, s.notify_target, s.job_type
       FROM schedule_executions se
       JOIN schedules s ON se.schedule_id = s.id
       WHERE se.status = 'running'
-    `).all() as Array<{
-      id: string; schedule_id: string; status: string; triggered_at: string;
-      execution_id: string | null; timeout_seconds: number; notify_on_failure: number;
-      schedule_name: string; notify_channel: string | null; notify_target: string | null;
-      job_type: string; workspace_id: string | null;
-    }>
+    `)
+    return rows.map(r => ({ ...r, triggered_at: iso(r.triggered_at), notify_on_failure: flag(r.notify_on_failure) }))
   }
 
   // ── Export queries ──────────────────────────────────────────────
 
-  findAllSchedulesWithWorkspaceInfo(): Array<{
+  async findAllSchedulesWithWorkspaceInfo(): Promise<Array<{
     name: string; workspace_name: string; job_type: string; cron_expression: string;
     enabled: number; consecutive_failures: number;
     last_execution_at: string | null; last_execution_status: string | null;
-  }> {
-    return this.stmt(`
+  }>> {
+    const rows = await this.q<{
+      name: string; workspace_name: string; job_type: string; cron_expression: string;
+      enabled: boolean | number; consecutive_failures: number;
+      last_execution_at: Date | string | null; last_execution_status: string | null;
+    }>(`
       SELECT
         s.name,
         COALESCE(w.name, '') as workspace_name,
@@ -501,17 +605,18 @@ export class ScheduleConfigDAO extends BaseDAO {
         s.cron_expression,
         s.enabled,
         s.consecutive_failures,
-        (SELECT se.triggered_at FROM schedule_executions se WHERE se.schedule_id = s.id ORDER BY se.triggered_at DESC LIMIT 1) as last_execution_at,
-        (SELECT se.status FROM schedule_executions se WHERE se.schedule_id = s.id ORDER BY se.triggered_at DESC LIMIT 1) as last_execution_status
+        (SELECT triggered_at FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) as last_execution_at,
+        (SELECT status FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) as last_execution_status
       FROM schedules s
       LEFT JOIN workspaces w ON s.workspace_id = w.id
       WHERE s.deleted_at IS NULL
       ORDER BY s.name ASC
-    `).all() as Array<{
-      name: string; workspace_name: string; job_type: string; cron_expression: string;
-      enabled: number; consecutive_failures: number;
-      last_execution_at: string | null; last_execution_status: string | null;
-    }>
+    `)
+    return rows.map(r => ({
+      ...r,
+      enabled: flag(r.enabled),
+      last_execution_at: isoOrNull(r.last_execution_at),
+    }))
   }
 
   // ── Scheduler-service queries (global job list with last-exec subqueries) ──
@@ -525,13 +630,14 @@ export class ScheduleConfigDAO extends BaseDAO {
         (SELECT error_summary FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_error_summary,
         (SELECT duration_ms FROM schedule_executions WHERE schedule_id = s.id ORDER BY triggered_at DESC LIMIT 1) AS last_exec_duration_ms`
 
-  listJobsQuery(params: {
+  async listJobsQuery(params: {
     conditions: string[]; queryParams: unknown[];
     orderClause: string; limit: number; offset: number;
-  }): { rows: ScheduleRowWithLastExec[]; total: number } {
+  }): Promise<{ rows: ScheduleRowWithLastExec[]; total: number }> {
     const whereClause = params.conditions.join(' AND ')
     const countSql = `SELECT COUNT(*) as cnt FROM schedules s WHERE ${whereClause}`
-    const total = (this.stmt(countSql).get(...params.queryParams) as { cnt: number }).cnt
+    const countRow = await this.q1<{ cnt: string | number }>(countSql, params.queryParams)
+    const total = num(countRow?.cnt)
 
     const querySql = `
       SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
@@ -540,63 +646,106 @@ export class ScheduleConfigDAO extends BaseDAO {
       ORDER BY ${params.orderClause}
       LIMIT ? OFFSET ?
     `
-    const rows = this.stmt(querySql).all(...params.queryParams, params.limit, params.offset) as ScheduleRowWithLastExec[]
-    return { rows, total }
+    const rows = await this.q<ScPg & LastExecPg>(querySql, [...params.queryParams, params.limit, params.offset])
+    return { rows: rows.map(fromScheduleWithLastExec), total }
   }
 
-  getJobWithLastExec(id: string): ScheduleRowWithLastExec | null {
-    return (this.stmt(`
+  async getJobWithLastExec(id: string): Promise<ScheduleRowWithLastExec | null> {
+    const row = await this.q1<ScPg & LastExecPg>(`
       SELECT s.*, ${ScheduleConfigDAO.LAST_EXEC_SELECT}
       FROM schedules s
       WHERE s.id = ? AND s.deleted_at IS NULL
-    `).get(id) as ScheduleRowWithLastExec | undefined) ?? null
+    `, [id])
+    return row ? fromScheduleWithLastExec(row) : null
   }
 
   // ── Agent route queries ────────────────────────────────────────────
 
-  insertAgentSchedule(id: string, org: string, name: string, cronExpression: string, jobType: string, config: string, now: string): Database.RunResult {
-    return this.stmt(`
+  async insertAgentSchedule(id: string, org: string, name: string, cronExpression: string, jobType: string, config: string, now: string): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-    `).run(id, org, name, cronExpression, 'Asia/Shanghai', jobType, config, now, now)
+      VALUES (?, ?, ?, ?, ?, true, ?, ?, ?, ?)
+    `, [id, org, name, cronExpression, 'Asia/Shanghai', jobType, config, now, now])
   }
 
-  listSchedulesByOrg(org: string): Array<{ id: string; name: string; cron_expression: string; enabled: number }> {
+  async listSchedulesByOrg(org: string): Promise<Array<{ id: string; name: string; cron_expression: string; enabled: number }>> {
     try {
-      return this.stmt(
-        'SELECT id, name, cron_expression, enabled FROM schedules WHERE org = ? AND deleted_at IS NULL ORDER BY created_at DESC'
-      ).all(org) as Array<{ id: string; name: string; cron_expression: string; enabled: number }>
+      const rows = await this.q<Array<{ id: string; name: string; cron_expression: string; enabled: boolean | number }>>(
+        'SELECT id, name, cron_expression, enabled FROM schedules WHERE org = ? AND deleted_at IS NULL ORDER BY created_at DESC',
+        [org],
+      )
+      return rows.map(r => ({ ...r, enabled: flag(r.enabled) }))
     } catch {
       return []
     }
   }
 
-  findScheduleConfigByIdAndOrg(id: string, org: string): { name: string; config: string } | null {
+  async findScheduleConfigByIdAndOrg(id: string, org: string): Promise<{ name: string; config: string } | null> {
     try {
-      return (this.stmt('SELECT name, config FROM schedules WHERE id = ? AND org = ?').get(id, org) as { name: string; config: string }) ?? null
+      const row = await this.q1<{ name: string; config: unknown }>('SELECT name, config FROM schedules WHERE id = ? AND org = ?', [id, org])
+      return row ? { name: row.name, config: jsonStr(row.config) ?? "{}" } : null
     } catch {
       return null
     }
   }
 
-  updateScheduleWorkspacesCleaned(workspaceId: string, completedAt: string): Database.RunResult {
+  async updateScheduleWorkspacesCleaned(workspaceId: string, completedAt: string): Promise<{ changes: number }> {
     try {
-      return this.stmt("UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE workspace_id = ?")
-        .run(completedAt, workspaceId)
+      return await this.exec("UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE workspace_id = ?", [completedAt, workspaceId])
     } catch {
-      return { changes: 0, lastInsertRowid: 0 }
+      return { changes: 0 }
     }
   }
 
   // T-5 AC11: mark all incomplete schedule_workspaces for a schedule as cleaned
   // (used when rolling back stale claimed tasks; workspace dir cleanup is deferred to the retain loop)
-  markScheduleWorkspacesCleanedBySchedule(scheduleId: string, completedAt: string): Database.RunResult {
+  async markScheduleWorkspacesCleanedBySchedule(scheduleId: string, completedAt: string): Promise<{ changes: number }> {
     try {
-      return this.stmt(
-        "UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE schedule_id = ? AND status IN ('running', 'started')"
-      ).run(completedAt, scheduleId)
+      return await this.exec(
+        "UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE schedule_id = ? AND status IN ('running', 'started')",
+        [completedAt, scheduleId],
+      )
     } catch {
-      return { changes: 0, lastInsertRowid: 0 }
+      return { changes: 0 }
     }
+  }
+}
+
+/** schedule_workspaces 的 PG 原始行（started_at/completed_at timestamptz）。 */
+interface SwPg {
+  id: string
+  schedule_id: string
+  workspace_id: string
+  execution_id: string | null
+  status: string
+  branch_suffix: string
+  started_at: Date | string
+  completed_at: Date | string | null
+  error: string | null
+}
+
+function fromSw(r: SwPg & { workspace_name?: string; workspace_status?: string }): ScheduleWorkspaceRow & { workspace_name?: string; workspace_status?: string } {
+  return {
+    ...r,
+    started_at: iso(r.started_at),
+    completed_at: isoOrNull(r.completed_at),
+  }
+}
+
+/** LAST_EXEC_SELECT 四列的 PG 原始形态（triggered_at timestamptz、duration_ms bigint）。 */
+interface LastExecPg {
+  last_exec_status?: string | null
+  last_exec_triggered_at?: Date | string | null
+  last_exec_error_summary?: string | null
+  last_exec_duration_ms?: string | number | null
+}
+
+function fromScheduleWithLastExec(r: ScPg & LastExecPg): ScheduleRowWithLastExec {
+  return {
+    ...fromSchedule(r),
+    last_exec_status: r.last_exec_status ?? null,
+    last_exec_triggered_at: isoOrNull(r.last_exec_triggered_at),
+    last_exec_error_summary: r.last_exec_error_summary ?? null,
+    last_exec_duration_ms: r.last_exec_duration_ms == null ? null : num(r.last_exec_duration_ms),
   }
 }

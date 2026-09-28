@@ -1,24 +1,72 @@
-import type Database from "better-sqlite3"
+import { BasePgDAO, type PgSql } from "./base-pg"
+import { iso, isoOrNull, jsonStr, num, numOrNull } from "./pg-mappers"
 import { TERMINAL_EXECUTION_STATUSES } from "@octopus/shared"
-import { BaseDAO } from "./base"
 import type { ScheduleExecutionRow, ScheduleAuditLogRow, SchedulerAuditLogRow, PaginatedResult } from "../types"
 
 /**
  * ScheduleRunDAO — execution records and audit logs for schedules.
  * Covers: schedule_executions, schedule_audit_logs, scheduler_audit_logs tables.
+ *
+ * P1 B5 票1：BaseDAO → BasePgDAO。出口经 pg-mappers 归一回旧 SQLite 行契约
+ * （timestamptz→ISO、jsonb→JSON 串、bigint→number）；`datetime('now')` → `now()`。
  */
-export class ScheduleRunDAO extends BaseDAO {
-  constructor(db: Database.Database) { super(db) }
+
+/** schedule_executions 的 PG 原始行（经 fromSe 归一，契约列类型不动）。 */
+interface SePg {
+  id: string
+  schedule_id: string
+  execution_id: string | null
+  status: string
+  trigger_type: string
+  triggered_at: Date | string
+  timezone_offset: string
+  timezone_iana: string
+  duration_ms: string | number | null
+  skip_reason: string | null
+  missed_reason: string | null
+  retry_of: string | null
+  error_summary: string | null
+  exit_code: number | null
+  agent_output: string | null
+  model_used: string | null
+  token_usage: unknown
+  metadata: unknown
+  triggered_by: string | null
+  workspace_id: string | null
+  created_at: Date | string
+  completed_at: Date | string | null
+}
+
+function fromSe(r: SePg): ScheduleExecutionRow {
+  return {
+    ...r,
+    triggered_at: iso(r.triggered_at),
+    created_at: iso(r.created_at),
+    completed_at: isoOrNull(r.completed_at),
+    duration_ms: numOrNull(r.duration_ms),
+    token_usage: jsonStr(r.token_usage) ?? "{}",
+    metadata: jsonStr(r.metadata) ?? "{}",
+  }
+}
+
+/** schedule_audit_logs / scheduler_audit_logs 的 created_at 归一。 */
+function auditIso<T extends { created_at: Date | string }>(r: T): T {
+  return { ...r, created_at: iso(r.created_at) }
+}
+
+export class ScheduleRunDAO extends BasePgDAO {
+  constructor(db: PgSql) { super(db) }
 
   // ── schedule_executions ─────────────────────────────────────────
 
-  findExecutionById(id: string): ScheduleExecutionRow | null {
-    return (this.stmt("SELECT * FROM schedule_executions WHERE id = ?").get(id) as ScheduleExecutionRow) ?? null
+  async findExecutionById(id: string): Promise<ScheduleExecutionRow | null> {
+    const row = await this.q1<SePg>("SELECT * FROM schedule_executions WHERE id = ?", [id])
+    return row ? fromSe(row) : null
   }
 
-  listExecutions(scheduleId: string, filters?: {
+  async listExecutions(scheduleId: string, filters?: {
     status?: string; page?: number; limit?: number
-  }): PaginatedResult<ScheduleExecutionRow> {
+  }): Promise<PaginatedResult<ScheduleExecutionRow>> {
     const conditions: string[] = ["schedule_id = ?"]
     const params: unknown[] = [scheduleId]
     if (filters?.status) {
@@ -30,33 +78,35 @@ export class ScheduleRunDAO extends BaseDAO {
     const page = filters?.page ?? 1
     const limit = filters?.limit ?? 20
     const countSql = `SELECT COUNT(*) as cnt FROM schedule_executions WHERE ${where}`
-    const dataSql = `SELECT * FROM schedule_executions WHERE ${where} ORDER BY triggered_at DESC LIMIT ? OFFSET ?`
-    return this.paginate<ScheduleExecutionRow>(dataSql, countSql, params, page, limit)
+    const dataSql = `SELECT * FROM schedule_executions WHERE ${where} ORDER BY triggered_at DESC NULLS LAST LIMIT ? OFFSET ?`
+    const r = await this.paginate<SePg>(dataSql, countSql, params, page, limit)
+    return { ...r, data: r.data.map(fromSe) }
   }
 
-  findExecutionByJobAndId(jobId: string, executionId: string): ScheduleExecutionRow | null {
-    return (this.stmt(
-      "SELECT * FROM schedule_executions WHERE id = ? AND schedule_id = ?"
-    ).get(executionId, jobId) as ScheduleExecutionRow) ?? null
+  async findExecutionByJobAndId(jobId: string, executionId: string): Promise<ScheduleExecutionRow | null> {
+    const row = await this.q1<SePg>(
+      "SELECT * FROM schedule_executions WHERE id = ? AND schedule_id = ?", [executionId, jobId],
+    )
+    return row ? fromSe(row) : null
   }
 
-  insertExecution(row: Partial<ScheduleExecutionRow> & { id: string; schedule_id: string }): Database.RunResult {
+  async insertExecution(row: Partial<ScheduleExecutionRow> & { id: string; schedule_id: string }): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(`
+    return this.exec(`
       INSERT INTO schedule_executions (
         id, schedule_id, execution_id, status, trigger_type,
         triggered_at, timezone_offset, timezone_iana, created_at, triggered_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.schedule_id, row.execution_id ?? null,
       row.status ?? "triggered", row.trigger_type ?? "scheduled",
       row.triggered_at ?? now, row.timezone_offset ?? "+00:00",
       row.timezone_iana ?? "UTC", row.created_at ?? now,
       row.triggered_by ?? null,
-    )
+    ])
   }
 
-  updateExecution(id: string, fields: Partial<ScheduleExecutionRow>): Database.RunResult {
+  async updateExecution(id: string, fields: Partial<ScheduleExecutionRow>): Promise<{ changes: number }> {
     const sets: string[] = []
     const vals: unknown[] = []
     for (const [k, v] of Object.entries(fields)) {
@@ -64,26 +114,30 @@ export class ScheduleRunDAO extends BaseDAO {
       sets.push(`${k} = ?`)
       vals.push(v)
     }
-    if (sets.length === 0) return { changes: 0, lastInsertRowid: 0 }
+    if (sets.length === 0) return { changes: 0 }
     vals.push(id)
-    return this.stmt(`UPDATE schedule_executions SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    return this.exec(`UPDATE schedule_executions SET ${sets.join(", ")} WHERE id = ?`, vals)
   }
 
-  markExecutionComplete(id: string, status: "completed" | "failed", durationMs: number, errorSummary?: string): Database.RunResult {
+  async markExecutionComplete(id: string, status: "completed" | "failed", durationMs: number, errorSummary?: string): Promise<{ changes: number }> {
     if (status === "completed") {
-      return this.stmt(
-        "UPDATE schedule_executions SET status = 'completed', duration_ms = ?, completed_at = datetime('now') WHERE id = ?"
-      ).run(durationMs, id)
+      return this.exec(
+        "UPDATE schedule_executions SET status = 'completed', duration_ms = ?, completed_at = now() WHERE id = ?",
+        [durationMs, id],
+      )
     }
-    return this.stmt(
-      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?"
-    ).run(errorSummary ?? "Execution failed", durationMs, id)
+    return this.exec(
+      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, duration_ms = ?, completed_at = now() WHERE id = ?",
+      [errorSummary ?? "Execution failed", durationMs, id],
+    )
   }
 
-  countRunningBySchedule(scheduleId: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running')"
-    ).get(scheduleId) as { cnt: number }).cnt
+  async countRunningBySchedule(scheduleId: string): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND status IN ('triggered', 'running')",
+      [scheduleId],
+    )
+    return num(row?.cnt)
   }
 
   /**
@@ -93,25 +147,28 @@ export class ScheduleRunDAO extends BaseDAO {
    * releases — otherwise the next dispatch's insertTriggeredExecution collides
    * with the orphaned row and the task can never be re-dispatched (Issue 3).
    */
-  markStaleExecutionsFailed(scheduleId: string, reason: string): Database.RunResult {
-    return this.stmt(
+  async markStaleExecutionsFailed(scheduleId: string, reason: string): Promise<{ changes: number }> {
+    return this.exec(
       `UPDATE schedule_executions
-       SET status = 'failed', error_summary = ?, completed_at = datetime('now')
-       WHERE schedule_id = ? AND status IN ('triggered', 'running')`
-    ).run(reason, scheduleId)
+       SET status = 'failed', error_summary = ?, completed_at = now()
+       WHERE schedule_id = ? AND status IN ('triggered', 'running')`,
+      [reason, scheduleId],
+    )
   }
 
-  countMissedBySchedule(scheduleId: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND status = 'missed'"
-    ).get(scheduleId) as { cnt: number }).cnt
+  async countMissedBySchedule(scheduleId: string): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND status = 'missed'",
+      [scheduleId],
+    )
+    return num(row?.cnt)
   }
 
   // ── schedule_audit_logs ─────────────────────────────────────────
 
-  listScheduleAuditLogs(workspaceId: string, filters?: {
+  async listScheduleAuditLogs(workspaceId: string, filters?: {
     scheduleId?: string; page?: number; limit?: number
-  }): PaginatedResult<ScheduleAuditLogRow> {
+  }): Promise<PaginatedResult<ScheduleAuditLogRow>> {
     const conditions: string[] = ["workspace_id = ?"]
     const params: unknown[] = [workspaceId]
     if (filters?.scheduleId) { conditions.push("schedule_id = ?"); params.push(filters.scheduleId) }
@@ -119,30 +176,34 @@ export class ScheduleRunDAO extends BaseDAO {
     const page = filters?.page ?? 1
     const limit = filters?.limit ?? 20
     const countSql = `SELECT COUNT(*) as cnt FROM schedule_audit_logs WHERE ${where}`
-    const dataSql = `SELECT * FROM schedule_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-    return this.paginate<ScheduleAuditLogRow>(dataSql, countSql, params, page, limit)
+    const dataSql = `SELECT * FROM schedule_audit_logs WHERE ${where} ORDER BY created_at DESC NULLS LAST LIMIT ? OFFSET ?`
+    const r = await this.paginate<ScheduleAuditLogRow & { created_at: Date | string; changes: unknown }>(dataSql, countSql, params, page, limit)
+    return {
+      ...r,
+      data: r.data.map(row => ({ ...auditIso(row), changes: jsonStr(row.changes) })) as ScheduleAuditLogRow[],
+    }
   }
 
-  insertScheduleAuditLog(row: Omit<ScheduleAuditLogRow, "actor_name"> & { actor_name?: string }): Database.RunResult {
-    return this.stmt(`
+  async insertScheduleAuditLog(row: Omit<ScheduleAuditLogRow, "actor_name"> & { actor_name?: string }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_audit_logs (id, action, actor_id, actor_name, schedule_id, schedule_name, workspace_id, changes, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.action, row.actor_id, row.actor_name ?? "system",
       row.schedule_id, row.schedule_name, row.workspace_id,
       row.changes, row.created_at,
-    )
+    ])
   }
 
-  deleteScheduleAuditLogsByWorkspace(workspaceId: string): Database.RunResult {
-    return this.stmt("DELETE FROM schedule_audit_logs WHERE workspace_id = ?").run(workspaceId)
+  async deleteScheduleAuditLogsByWorkspace(workspaceId: string): Promise<{ changes: number }> {
+    return this.exec("DELETE FROM schedule_audit_logs WHERE workspace_id = ?", [workspaceId])
   }
 
   // ── scheduler_audit_logs ────────────────────────────────────────
 
-  listSchedulerAuditLogs(scheduleId: string, filters?: {
+  async listSchedulerAuditLogs(scheduleId: string, filters?: {
     action?: string; page?: number; limit?: number
-  }): PaginatedResult<SchedulerAuditLogRow> {
+  }): Promise<PaginatedResult<SchedulerAuditLogRow>> {
     const conditions: string[] = ["schedule_id = ?"]
     const params: unknown[] = [scheduleId]
     if (filters?.action) { conditions.push("action = ?"); params.push(filters.action) }
@@ -150,30 +211,37 @@ export class ScheduleRunDAO extends BaseDAO {
     const page = filters?.page ?? 1
     const limit = filters?.limit ?? 20
     const countSql = `SELECT COUNT(*) as cnt FROM scheduler_audit_logs WHERE ${where}`
-    const dataSql = `SELECT * FROM scheduler_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-    return this.paginate<SchedulerAuditLogRow>(dataSql, countSql, params, page, limit)
+    const dataSql = `SELECT * FROM scheduler_audit_logs WHERE ${where} ORDER BY created_at DESC NULLS LAST LIMIT ? OFFSET ?`
+    const r = await this.paginate<SchedulerAuditLogRow & { created_at: Date | string; changes: unknown }>(dataSql, countSql, params, page, limit)
+    return {
+      ...r,
+      data: r.data.map(row => ({ ...auditIso(row), changes: jsonStr(row.changes) })) as SchedulerAuditLogRow[],
+    }
   }
 
-  insertSchedulerAuditLog(row: Omit<SchedulerAuditLogRow, "actor"> & { actor?: string }): Database.RunResult {
-    return this.stmt(`
+  async insertSchedulerAuditLog(row: Omit<SchedulerAuditLogRow, "actor"> & { actor?: string }): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO scheduler_audit_logs (id, schedule_id, action, actor, changes, ip_address, workspace_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.schedule_id, row.action, row.actor ?? "system",
       row.changes, row.ip_address, row.workspace_id, row.created_at,
-    )
+    ])
   }
 
   // ── Additional methods for service migrations ────────────────────
 
-  findExecutionByIdSimple(id: string): ScheduleExecutionRow | null {
-    return (this.stmt("SELECT * FROM schedule_executions WHERE id = ?").get(id) as ScheduleExecutionRow) ?? null
+  async findExecutionByIdSimple(id: string): Promise<ScheduleExecutionRow | null> {
+    const row = await this.q1<SePg>("SELECT * FROM schedule_executions WHERE id = ?", [id])
+    return row ? fromSe(row) : null
   }
 
-  countRunningByScheduleExcluding(scheduleId: string, excludeId: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND id != ? AND status IN ('triggered', 'running')"
-    ).get(scheduleId, excludeId) as { cnt: number }).cnt
+  async countRunningByScheduleExcluding(scheduleId: string, excludeId: string): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND id != ? AND status IN ('triggered', 'running')",
+      [scheduleId, excludeId],
+    )
+    return num(row?.cnt)
   }
 
   /**
@@ -204,9 +272,9 @@ export class ScheduleRunDAO extends BaseDAO {
    * read as "cap reached" and freeze every other launch behind rows that are, by
    * design, waiting for this exact meter to free up.
    */
-  countActiveWork(opts?: { excludeFireId?: string; excludeTaskExecutionId?: string }): number {
+  async countActiveWork(opts?: { excludeFireId?: string; excludeTaskExecutionId?: string }): Promise<number> {
     const excludeFire = opts?.excludeFireId
-    const jobs = (this.stmt(
+    const jobsRow = await this.q1<{ cnt: string | number }>(
       excludeFire
         ? `SELECT COUNT(DISTINCT se.schedule_id) AS cnt
            FROM schedule_executions se
@@ -216,232 +284,256 @@ export class ScheduleRunDAO extends BaseDAO {
            FROM schedule_executions se
            JOIN schedules s ON s.id = se.schedule_id
            WHERE se.status IN ('triggered', 'running') AND s.job_type != 'job'`,
-    ).get(...(excludeFire ? [excludeFire] : [])) as { cnt: number }).cnt
+      excludeFire ? [excludeFire] : [],
+    )
+    const jobs = num(jobsRow?.cnt)
 
     const excludeTask = opts?.excludeTaskExecutionId
-    const tasks = (this.stmt(
+    const tasksRow = await this.q1<{ cnt: string | number }>(
       `SELECT COUNT(*) AS cnt FROM executions
        WHERE task_id IS NOT NULL
          AND status NOT IN (${TERMINAL_EXECUTION_STATUSES.map(() => "?").join(", ")})
          AND status != 'pending'
          ${excludeTask ? "AND id != ?" : ""}`,
-    ).get(
-      ...TERMINAL_EXECUTION_STATUSES,
-      ...(excludeTask ? [excludeTask] : []),
-    ) as { cnt: number }).cnt
+      [
+        ...TERMINAL_EXECUTION_STATUSES,
+        ...(excludeTask ? [excludeTask] : []),
+      ],
+    )
+    const tasks = num(tasksRow?.cnt)
 
     return jobs + tasks
   }
 
   /** Terminal bookends for a `job` fire (the ops row: what ran, what it said, how long). */
-  markCodeJobComplete(id: string, handler: string, summary: string, durationMs: number): Database.RunResult {
-    return this.stmt(
+  async markCodeJobComplete(id: string, handler: string, summary: string, durationMs: number): Promise<{ changes: number }> {
+    return this.exec(
       `UPDATE schedule_executions
        SET status = 'completed', agent_output = ?, model_used = ?, exit_code = 0,
-           duration_ms = ?, completed_at = datetime('now')
+           duration_ms = ?, completed_at = now()
        WHERE id = ?`,
-    ).run(summary, `job:${handler}`, durationMs, id)
+      [summary, `job:${handler}`, durationMs, id],
+    )
   }
 
-  markCodeJobFailed(id: string, errorSummary: string, durationMs: number, exitCode: number): Database.RunResult {
-    return this.stmt(
+  async markCodeJobFailed(id: string, errorSummary: string, durationMs: number, exitCode: number): Promise<{ changes: number }> {
+    return this.exec(
       `UPDATE schedule_executions
        SET status = 'failed', error_summary = ?, exit_code = ?,
-           duration_ms = ?, completed_at = datetime('now')
+           duration_ms = ?, completed_at = now()
        WHERE id = ?`,
-    ).run(errorSummary, exitCode, durationMs, id)
+      [errorSummary, exitCode, durationMs, id],
+    )
   }
 
-  countDistinctActiveSchedules(excludeId?: string): number {
+  async countDistinctActiveSchedules(excludeId?: string): Promise<number> {
     if (excludeId) {
-      return (this.stmt(
+      const row = await this.q1<{ count: string | number }>(
         `SELECT COUNT(DISTINCT se.schedule_id) as count
          FROM schedule_executions se
-         WHERE se.status IN ('triggered', 'running') AND se.id != ?`
-      ).get(excludeId) as { count: number }).count
+         WHERE se.status IN ('triggered', 'running') AND se.id != ?`,
+        [excludeId],
+      )
+      return num(row?.count)
     }
-    return (this.stmt(
+    const row = await this.q1<{ count: string | number }>(
       `SELECT COUNT(DISTINCT se.schedule_id) as count
        FROM schedule_executions se
-       WHERE se.status IN ('triggered', 'running')`
-    ).get() as { count: number }).count
+       WHERE se.status IN ('triggered', 'running')`,
+    )
+    return num(row?.count)
   }
 
-  updateExecutionStatus(id: string, status: string): Database.RunResult {
-    return this.stmt("UPDATE schedule_executions SET status = ? WHERE id = ?").run(status, id)
+  async updateExecutionStatus(id: string, status: string): Promise<{ changes: number }> {
+    return this.exec("UPDATE schedule_executions SET status = ? WHERE id = ?", [status, id])
   }
 
-  markExecutionRunning(id: string): Database.RunResult {
-    return this.stmt("UPDATE schedule_executions SET status = 'running' WHERE id = ?").run(id)
+  async markExecutionRunning(id: string): Promise<{ changes: number }> {
+    return this.exec("UPDATE schedule_executions SET status = 'running' WHERE id = ?", [id])
   }
 
-  markExecutionFailed(id: string, errorSummary: string, statusFilter?: string[]): Database.RunResult {
+  async markExecutionFailed(id: string, errorSummary: string, statusFilter?: string[]): Promise<{ changes: number }> {
     if (statusFilter && statusFilter.length > 0) {
       const placeholders = statusFilter.map(() => "?").join(", ")
-      return this.stmt(
-        `UPDATE schedule_executions SET status = 'failed', error_summary = ?, completed_at = datetime('now') WHERE id = ? AND status IN (${placeholders})`
-      ).run(errorSummary, id, ...statusFilter)
+      return this.exec(
+        `UPDATE schedule_executions SET status = 'failed', error_summary = ?, completed_at = now() WHERE id = ? AND status IN (${placeholders})`,
+        [errorSummary, id, ...statusFilter],
+      )
     }
-    return this.stmt(
-      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, completed_at = datetime('now') WHERE id = ?"
-    ).run(errorSummary, id)
+    return this.exec(
+      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, completed_at = now() WHERE id = ?",
+      [errorSummary, id],
+    )
   }
 
-  markExecutionCompleteWithDuration(id: string, status: "completed" | "failed", durationMs: number, errorSummary?: string): Database.RunResult {
+  async markExecutionCompleteWithDuration(id: string, status: "completed" | "failed", durationMs: number, errorSummary?: string): Promise<{ changes: number }> {
     if (status === "completed") {
-      return this.stmt(
-        "UPDATE schedule_executions SET status = 'completed', duration_ms = ?, completed_at = datetime('now') WHERE id = ?"
-      ).run(durationMs, id)
+      return this.exec(
+        "UPDATE schedule_executions SET status = 'completed', duration_ms = ?, completed_at = now() WHERE id = ?",
+        [durationMs, id],
+      )
     }
-    return this.stmt(
-      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?"
-    ).run(errorSummary ?? "Execution failed", durationMs, id)
+    return this.exec(
+      "UPDATE schedule_executions SET status = 'failed', error_summary = ?, duration_ms = ?, completed_at = now() WHERE id = ?",
+      [errorSummary ?? "Execution failed", durationMs, id],
+    )
   }
 
-  updateExecutionWorkspace(id: string, workspaceId: string): Database.RunResult {
-    return this.stmt("UPDATE schedule_executions SET workspace_id = ? WHERE id = ?").run(workspaceId, id)
+  async updateExecutionWorkspace(id: string, workspaceId: string): Promise<{ changes: number }> {
+    return this.exec("UPDATE schedule_executions SET workspace_id = ? WHERE id = ?", [workspaceId, id])
   }
 
-  updateExecutionLinkId(id: string, executionId: string): Database.RunResult {
-    return this.stmt("UPDATE schedule_executions SET execution_id = ? WHERE id = ?").run(executionId, id)
+  async updateExecutionLinkId(id: string, executionId: string): Promise<{ changes: number }> {
+    return this.exec("UPDATE schedule_executions SET execution_id = ? WHERE id = ?", [executionId, id])
   }
 
-  updateExecutionStatusSimple(id: string, status: string, errorSummary?: string): Database.RunResult {
+  async updateExecutionStatusSimple(id: string, status: string, errorSummary?: string): Promise<{ changes: number }> {
     if (errorSummary !== undefined) {
-      return this.stmt(
-        "UPDATE schedule_executions SET status = ?, error_summary = ?, completed_at = datetime('now') WHERE id = ?"
-      ).run(status, errorSummary, id)
+      return this.exec(
+        "UPDATE schedule_executions SET status = ?, error_summary = ?, completed_at = now() WHERE id = ?",
+        [status, errorSummary, id],
+      )
     }
-    return this.stmt(
-      "UPDATE schedule_executions SET status = ?, completed_at = datetime('now') WHERE id = ?"
-    ).run(status, id)
+    return this.exec(
+      "UPDATE schedule_executions SET status = ?, completed_at = now() WHERE id = ?",
+        [status, id],
+    )
   }
 
-  setAgentResult(id: string, agentOutput: string, modelUsed: string, tokenUsage: string, durationMs: number): Database.RunResult {
-    return this.stmt(`
+  async setAgentResult(id: string, agentOutput: string, modelUsed: string, tokenUsage: string, durationMs: number): Promise<{ changes: number }> {
+    return this.exec(`
       UPDATE schedule_executions
       SET status = 'completed',
           agent_output = ?,
           model_used = ?,
           token_usage = ?,
           duration_ms = ?,
-          completed_at = datetime('now'),
+          completed_at = now(),
           exit_code = 0
       WHERE id = ?
-    `).run(agentOutput, modelUsed, tokenUsage, durationMs, id)
+    `, [agentOutput, modelUsed, tokenUsage, durationMs, id])
   }
 
-  setExecutionResult(id: string, status: string, errorSummary: string, durationMs: number): Database.RunResult {
-    return this.stmt(`
+  async setExecutionResult(id: string, status: string, errorSummary: string, durationMs: number): Promise<{ changes: number }> {
+    return this.exec(`
       UPDATE schedule_executions
       SET status = ?,
           error_summary = ?,
           duration_ms = ?,
-          completed_at = datetime('now')
+          completed_at = now()
       WHERE id = ?
-    `).run(status, errorSummary, durationMs, id)
+    `, [status, errorSummary, durationMs, id])
   }
 
-  countExecutionsBySchedule(scheduleId: string): number {
-    return (this.stmt(
-      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ?"
-    ).get(scheduleId) as { cnt: number }).cnt
+  async countExecutionsBySchedule(scheduleId: string): Promise<number> {
+    const row = await this.q1<{ cnt: string | number }>(
+      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ?", [scheduleId],
+    )
+    return num(row?.cnt)
   }
 
-  countExecutionStatsInRange(start: string, end: string): { total: number; success: number } {
-    const row = this.stmt(`
+  async countExecutionStatsInRange(start: string, end: string): Promise<{ total: number; success: number }> {
+    const row = await this.q1<{ total: string | number; success: string | number | null }>(`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN status IN ('success', 'completed') THEN 1 ELSE 0 END) as success
        FROM schedule_executions
        WHERE triggered_at >= ? AND triggered_at < ?
-    `).get(start, end) as { total: number; success: number }
-    return { total: row.total, success: row.success ?? 0 }
+    `, [start, end])
+    return { total: num(row?.total), success: numOrNull(row?.success) ?? 0 }
   }
 
   // ── Data retention ──────────────────────────────────────────────
 
-  deleteOldScheduleExecutions(cutoffIso: string): Database.RunResult {
-    return this.stmt(
-      "DELETE FROM schedule_executions WHERE created_at < ? AND status NOT IN ('triggered', 'running')"
-    ).run(cutoffIso)
+  async deleteOldScheduleExecutions(cutoffIso: string): Promise<{ changes: number }> {
+    return this.exec(
+      "DELETE FROM schedule_executions WHERE created_at < ? AND status NOT IN ('triggered', 'running')",
+      [cutoffIso],
+    )
   }
 
   // ── Insert methods for engine/executors ─────────────────────────
 
-  insertSkippedExecution(id: string, scheduleId: string, triggeredAt: string, timezone: string, skipReason: string): Database.RunResult {
-    return this.stmt(`
+  async insertSkippedExecution(id: string, scheduleId: string, triggeredAt: string, timezone: string, skipReason: string): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, skip_reason, created_at, triggered_by)
-      VALUES (?, ?, 'skipped', 'scheduled', ?, '+00:00', ?, ?, datetime('now'), 'scheduler')
-    `).run(id, scheduleId, triggeredAt, timezone, skipReason)
+      VALUES (?, ?, 'skipped', 'scheduled', ?, '+00:00', ?, ?, now(), 'scheduler')
+    `, [id, scheduleId, triggeredAt, timezone, skipReason])
   }
 
-  insertMissedExecution(id: string, scheduleId: string, triggeredAt: string, timezone: string): Database.RunResult {
-    return this.stmt(`
+  async insertMissedExecution(id: string, scheduleId: string, triggeredAt: string, timezone: string): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_executions (
         id, schedule_id, status, trigger_type, triggered_at,
         timezone_offset, timezone_iana, missed_reason, created_at, triggered_by
-      ) VALUES (?, ?, 'missed', 'scheduled', ?, '+00:00', ?, '服务不可用期间错过', datetime('now'), 'scheduler')
-    `).run(id, scheduleId, triggeredAt, timezone)
+      ) VALUES (?, ?, 'missed', 'scheduled', ?, '+00:00', ?, '服务不可用期间错过', now(), 'scheduler')
+    `, [id, scheduleId, triggeredAt, timezone])
   }
 
-  insertTriggeredExecution(id: string, scheduleId: string, triggerType: string, triggeredAt: string, tzOffset: string, timezone: string, triggeredBy: string): Database.RunResult {
-    return this.stmt(`
+  async insertTriggeredExecution(id: string, scheduleId: string, triggerType: string, triggeredAt: string, tzOffset: string, timezone: string, triggeredBy: string): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_executions (
         id, schedule_id, status, trigger_type, triggered_at,
         timezone_offset, timezone_iana, created_at, triggered_by
       ) VALUES (?, ?, 'triggered', ?, ?, ?, ?, ?, ?)
-    `).run(id, scheduleId, triggerType, triggeredAt, tzOffset, timezone, triggeredAt, triggeredBy)
+    `, [id, scheduleId, triggerType, triggeredAt, tzOffset, timezone, triggeredAt, triggeredBy])
   }
 
-  insertTriggeredExecutionForManual(id: string, scheduleId: string, triggeredAt: string, tzOffset: string, timezone: string): Database.RunResult {
-    return this.stmt(`
+  async insertTriggeredExecutionForManual(id: string, scheduleId: string, triggeredAt: string, tzOffset: string, timezone: string): Promise<{ changes: number }> {
+    return this.exec(`
       INSERT INTO schedule_executions (
         id, schedule_id, execution_id, status, trigger_type,
         triggered_at, timezone_offset, timezone_iana, created_at, triggered_by
       ) VALUES (?, ?, NULL, 'triggered', 'manual', ?, ?, ?, ?, 'user')
-    `).run(id, scheduleId, triggeredAt, tzOffset, timezone, triggeredAt)
+    `, [id, scheduleId, triggeredAt, tzOffset, timezone, triggeredAt])
   }
 
-  findExecutionsBySchedulePaginated(scheduleId: string, limit: number, offset: number): ScheduleExecutionRow[] {
-    return this.stmt(
-      `SELECT * FROM schedule_executions WHERE schedule_id = ? ORDER BY triggered_at DESC LIMIT ? OFFSET ?`
-    ).all(scheduleId, limit, offset) as ScheduleExecutionRow[]
+  async findExecutionsBySchedulePaginated(scheduleId: string, limit: number, offset: number): Promise<ScheduleExecutionRow[]> {
+    const rows = await this.q<SePg>(
+      `SELECT * FROM schedule_executions WHERE schedule_id = ? ORDER BY triggered_at DESC NULLS LAST LIMIT ? OFFSET ?`,
+      [scheduleId, limit, offset],
+    )
+    return rows.map(fromSe)
   }
 
-  markExecutionTimedOut(id: string, errorSummary: string, jobType: string): Database.RunResult {
+  async markExecutionTimedOut(id: string, errorSummary: string, jobType: string): Promise<{ changes: number }> {
     if (jobType === 'agent') {
-      return this.stmt(`
+      return this.exec(`
         UPDATE schedule_executions
-        SET status = 'timeout', error_summary = ?, completed_at = datetime('now')
+        SET status = 'timeout', error_summary = ?, completed_at = now()
         WHERE id = ?
-      `).run(errorSummary, id)
+      `, [errorSummary, id])
     }
-    return this.stmt(`
+    return this.exec(`
       UPDATE schedule_executions
-      SET status = 'failed', error_summary = ?, completed_at = datetime('now')
+      SET status = 'failed', error_summary = ?, completed_at = now()
       WHERE id = ?
-    `).run(errorSummary, id)
+    `, [errorSummary, id])
   }
 
-  findExecutionWithJobType(executionId: string): (ScheduleExecutionRow & { job_type: string }) | null {
-    return (this.stmt(
-      'SELECT se.*, s.job_type FROM schedule_executions se JOIN schedules s ON se.schedule_id = s.id WHERE se.id = ?'
-    ).get(executionId) as (ScheduleExecutionRow & { job_type: string })) ?? null
+  async findExecutionWithJobType(executionId: string): Promise<(ScheduleExecutionRow & { job_type: string }) | null> {
+    const row = await this.q1<SePg & { job_type: string }>(
+      'SELECT se.*, s.job_type FROM schedule_executions se JOIN schedules s ON se.schedule_id = s.id WHERE se.id = ?',
+      [executionId],
+    )
+    return row ? { ...fromSe(row), job_type: row.job_type } : null
   }
 
-  findExecutionVarPool(executionId: string): { var_pool: string } | null {
-    return (this.stmt('SELECT var_pool FROM executions WHERE id = ?').get(executionId) as { var_pool: string }) ?? null
+  async findExecutionVarPool(executionId: string): Promise<{ var_pool: string } | null> {
+    const row = await this.q1<{ var_pool: unknown }>('SELECT var_pool FROM executions WHERE id = ?', [executionId])
+    if (!row) return null
+    return { var_pool: jsonStr(row.var_pool) ?? "{}" }
   }
 
-  getTodayStats(): { total: number; failed: number } {
+  async getTodayStats(): Promise<{ total: number; failed: number }> {
     const today = new Date().toISOString().slice(0, 10)
-    return this.stmt(`
+    const row = await this.q1<{ total: string | number; failed: string | number | null }>(`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
       FROM schedule_executions
       WHERE triggered_at >= ?
-    `).get(today + 'T00:00:00') as { total: number; failed: number }
+    `, [today + 'T00:00:00'])
+    return { total: num(row?.total), failed: numOrNull(row?.failed) ?? 0 }
   }
 }
