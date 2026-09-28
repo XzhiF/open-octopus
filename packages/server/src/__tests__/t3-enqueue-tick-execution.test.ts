@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
+import DatabaseLib from 'better-sqlite3'
 import { Hono } from 'hono'
 import fs from 'fs'
 import os from 'os'
@@ -9,6 +10,7 @@ import { SchedulerService } from '../services/scheduler/scheduler-service'
 import { SchedulerEngine } from '../services/scheduler/scheduler-engine'
 import { createSchedulerRoutes, resetSchedulerRateLimitersForTests } from '../routes/scheduler'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 import type { Executor, ExecutionResult } from '../services/scheduler/executors/executor-interface'
 import type { SchedulerJob } from '@octopus/shared'
 
@@ -24,6 +26,9 @@ import type { SchedulerJob } from '@octopus/shared'
 //   AC7  - cron 到点 (triggerSchedule) → schedule_executions('triggered','scheduled') + executor 收到
 //   AC7-  - enabled=0 → 到点不派发，也不留执行行（负向）
 //   AC3  - 手动触发路由 → 执行行 + onTrigger 把作业交给引擎（enqueue 路由下线后的唯一手动入口）
+//
+// P1 B5 票4：schedules/schedule_executions 已落 PG（B5 票1 DAO 迁移）—— 造数/断言
+// 改吃 pg.sql；SQLite 模式下 describePg 门控 skip（计数不减）。
 
 const ORG = 'task-pool-t3'
 
@@ -57,31 +62,26 @@ const WORKFLOW_CONFIG = JSON.stringify({
   max_retain: 10,
 })
 
-function newDb(): Database.Database {
-  const db = new Database(':memory:')
+// 本地 SQLite 占位库：仅钉住 schema 不漂移；本域数据面已全部走 PG。
+function newLocalSqlite(): Database {
+  const db = new DatabaseLib(':memory:')
   applySchema(db)
-  db.prepare(`
-    INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))
-  `).run()
   return db
 }
 
-function insertJob(
-  db: Database.Database,
+async function insertJob(
+  pg: PgFixture,
   id: string,
-  opts: { enabled?: number; nextTriggerAt?: string | null } = {},
-): void {
-  db.prepare(`
+  opts: { enabled?: boolean; nextTriggerAt?: string | null } = {},
+): Promise<void> {
+  await pg.sql.unsafe(`
     INSERT INTO schedules (
       id, org, name, cron_expression, timezone,
       enabled, timeout_seconds, notify_on_failure,
       created_at, updated_at, job_type, config, parallel_policy,
       version, consecutive_failures, max_retain, status, next_trigger_at
-    ) VALUES (?, ?, ?, '0 9 * * *', 'Asia/Shanghai', ?, 3600, 0, ?, ?, 'workflow', ?, 'skip', 1, 0, 10, 'queued', ?)
-  `).run(
-    id, ORG, `name-${id}`, opts.enabled ?? 1,
-    new Date().toISOString(), new Date().toISOString(), WORKFLOW_CONFIG,
-    opts.nextTriggerAt ?? null,
+    ) VALUES ($1, $2, $3, '0 9 * * *', 'Asia/Shanghai', $4, 3600, false, now(), now(), 'workflow', $5::jsonb, 'skip', 1, 0, 10, 'queued', $6::timestamptz)`,
+    [id, ORG, `name-${id}`, opts.enabled ?? true, WORKFLOW_CONFIG, opts.nextTriggerAt ?? null],
   )
 }
 
@@ -109,117 +109,132 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true })
 })
 
-describe('T-3: 到点触发 → 执行', () => {
+describePg('T-3: 到点触发 → 执行', () => {
   // ── AC7: cron 到点 → 执行行 + 派发 ──────────────────────────────
 
   it('AC7: 到点触发写入 triggered 执行行并把作业交给 executor（next_trigger_at 前移）', async () => {
-    const db = newDb()
-    insertJob(db, 't3-cron-1')
-    const { executor, calls } = makeMockExecutor()
-    const executors = new Map<string, Executor>([['workflow', executor]])
-    const engine = new SchedulerEngine(
-      new ScheduleConfigDAO(db), new ScheduleRunDAO(db), mockWorkspaceScheduleService, executors,
-    )
-    engine.start()
+    const pg = await setupPgSchema()
+    const db = newLocalSqlite()
+    try {
+      await insertJob(pg, 't3-cron-1')
+      const { executor, calls } = makeMockExecutor()
+      const executors = new Map<string, Executor>([['workflow', executor]])
+      const engine = new SchedulerEngine(
+        new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql), mockWorkspaceScheduleService, executors,
+      )
+      await engine.start()
 
-    // 反假跑: 直接走 cron 回调的那条私有路径（等价于 node-cron 到点）
-    await (engine as unknown as { triggerSchedule: (id: string) => void }).triggerSchedule('t3-cron-1')
-    await new Promise((r) => setTimeout(r, 50))
+      // 反假跑: 直接走 cron 回调的那条私有路径（等价于 node-cron 到点）
+      await (engine as unknown as { triggerSchedule: (id: string) => Promise<void> }).triggerSchedule('t3-cron-1')
+      await vi.waitFor(async () => {
+        expect(calls.length).toBe(1)
+      })
 
-    // 执行行真的落库，且带的是「定时」来源（不是 manual）
-    const exec = db.prepare(
-      'SELECT status, trigger_type, triggered_by FROM schedule_executions WHERE schedule_id = ?',
-    ).get('t3-cron-1') as { status: string; trigger_type: string; triggered_by: string | null }
-    expect(exec.status).toBe('triggered')
-    expect(exec.trigger_type).toBe('scheduled')
-    expect(exec.triggered_by).toBe('scheduler')
+      // 执行行真的落库，且带的是「定时」来源（不是 manual）
+      const exec = (await pg.sql<{ status: string; trigger_type: string; triggered_by: string | null }[]>
+        `SELECT status, trigger_type, triggered_by FROM schedule_executions WHERE schedule_id = 't3-cron-1'`)[0]!
+      expect(exec.status).toBe('triggered')
+      expect(exec.trigger_type).toBe('scheduled')
+      expect(exec.triggered_by).toBe('scheduler')
 
-    // 反假跑 AC7: executor 真被调用，且拿到的是这条作业（DTO 由 schedules 行组装）
-    expect(calls.length).toBe(1)
-    expect(calls[0].job.id).toBe('t3-cron-1')
-    expect(calls[0].job.config).toMatchObject({ type: 'workflow' })
+      // 反假跑 AC7: executor 真被调用，且拿到的是这条作业（DTO 由 schedules 行组装）
+      expect(calls[0].job.id).toBe('t3-cron-1')
+      expect(calls[0].job.config).toMatchObject({ type: 'workflow' })
 
-    // 游标前移到未来（否则面板与 missed 检测都会说谎）
-    const row = db.prepare('SELECT next_trigger_at FROM schedules WHERE id = ?').get('t3-cron-1') as
-      { next_trigger_at: string | null }
-    expect(row.next_trigger_at).not.toBeNull()
-    expect(Date.parse(row.next_trigger_at!) > Date.now()).toBe(true)
+      // 游标前移到未来（否则面板与 missed 检测都会说谎）
+      const row = (await pg.sql<{ next_trigger_at: Date | null }[]>
+        `SELECT next_trigger_at FROM schedules WHERE id = 't3-cron-1'`)[0]!
+      expect(row.next_trigger_at).not.toBeNull()
+      expect(new Date(row.next_trigger_at!).getTime() > Date.now()).toBe(true)
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      db.close()
+      await pg.close()
+    }
   })
 
   it('AC7 负向: enabled=0 的作业到点不派发，也不留执行行', async () => {
-    const db = newDb()
-    insertJob(db, 't3-cron-off', { enabled: 0 })
-    const { executor, calls } = makeMockExecutor()
-    const executors = new Map<string, Executor>([['workflow', executor]])
-    const engine = new SchedulerEngine(
-      new ScheduleConfigDAO(db), new ScheduleRunDAO(db), mockWorkspaceScheduleService, executors,
-    )
-    engine.start()
+    const pg = await setupPgSchema()
+    const db = newLocalSqlite()
+    try {
+      await insertJob(pg, 't3-cron-off', { enabled: false })
+      const { executor, calls } = makeMockExecutor()
+      const executors = new Map<string, Executor>([['workflow', executor]])
+      const engine = new SchedulerEngine(
+        new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql), mockWorkspaceScheduleService, executors,
+      )
+      await engine.start()
 
-    await (engine as unknown as { triggerSchedule: (id: string) => void }).triggerSchedule('t3-cron-off')
-    await new Promise((r) => setTimeout(r, 30))
+      await (engine as unknown as { triggerSchedule: (id: string) => Promise<void> }).triggerSchedule('t3-cron-off')
+      await new Promise((r) => setTimeout(r, 30))
 
-    expect(calls.length).toBe(0)
-    const cnt = db.prepare('SELECT COUNT(*) c FROM schedule_executions WHERE schedule_id = ?')
-      .get('t3-cron-off') as { c: number }
-    expect(cnt.c).toBe(0)
+      expect(calls.length).toBe(0)
+      const cnt = Number((await pg.sql`SELECT COUNT(*)::int AS c FROM schedule_executions WHERE schedule_id = 't3-cron-off'`)[0]!.c)
+      expect(cnt).toBe(0)
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      db.close()
+      await pg.close()
+    }
   })
 
   // ── AC3: 手动触发（enqueue 路由下线后唯一的手动入口）──────────────
 
   it('AC3: POST /jobs/:id/trigger 写 manual 执行行并经引擎派发', async () => {
-    const db = newDb()
-    const configDAO = new ScheduleConfigDAO(db)
-    const runDAO = new ScheduleRunDAO(db)
-    const service = new SchedulerService(configDAO, runDAO)
-    const { executor, calls } = makeMockExecutor()
-    const executors = new Map<string, Executor>([['workflow', executor]])
-    const engine = new SchedulerEngine(configDAO, runDAO, mockWorkspaceScheduleService, executors)
-    // 路由 → service.triggerJob → onTrigger 回调 → engine.triggerManual：这条线在 index.ts
-    // 里接线，测试把它接一遍，证明「手动触发」和「到点触发」共用同一次派发。
-    service.setCallbacks({ onTrigger: (id, schedExecId) => engine.triggerManual(id, schedExecId) })
-    engine.start()
+    const pg = await setupPgSchema()
+    const db = newLocalSqlite()
+    try {
+      const configDAO = new ScheduleConfigDAO(pg.sql)
+      const runDAO = new ScheduleRunDAO(pg.sql)
+      const service = new SchedulerService(configDAO, runDAO)
+      const { executor, calls } = makeMockExecutor()
+      const executors = new Map<string, Executor>([['workflow', executor]])
+      const engine = new SchedulerEngine(configDAO, runDAO, mockWorkspaceScheduleService, executors)
+      // 路由 → service.triggerJob → onTrigger 回调 → engine.triggerManual：这条线在 index.ts
+      // 里接线，测试把它接一遍，证明「手动触发」和「到点触发」共用同一次派发。
+      service.setCallbacks({ onTrigger: (id, schedExecId) => engine.triggerManual(id, schedExecId) })
+      await engine.start()
 
-    const app = new Hono()
-    app.route('/api/scheduler', createSchedulerRoutes(service))
+      const app = new Hono()
+      app.route('/api/scheduler', createSchedulerRoutes(service))
 
-    const created = await app.request('/api/scheduler/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 't3-manual',
-        job_type: 'workflow',
-        cron_expression: '0 9 * * *',
-        timezone: 'Asia/Shanghai',
-        org: ORG,
-        config: JSON.parse(WORKFLOW_CONFIG),
-      }),
-    })
-    expect(created.status).toBe(201)
-    const { id } = await created.json() as { id: string }
+      const created = await app.request('/api/scheduler/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 't3-manual',
+          job_type: 'workflow',
+          cron_expression: '0 9 * * *',
+          timezone: 'Asia/Shanghai',
+          org: ORG,
+          config: JSON.parse(WORKFLOW_CONFIG),
+        }),
+      })
+      expect(created.status).toBe(201)
+      const { id } = await created.json() as { id: string }
 
-    const res = await app.request(`/api/scheduler/jobs/${id}/trigger`, { method: 'POST' })
-    expect(res.status).toBe(200)
-    const body = await res.json() as { execution_id: string; status: string; trigger_type: string }
-    expect(body.status).toBe('triggered')
-    expect(body.trigger_type).toBe('manual')
+      const res = await app.request(`/api/scheduler/jobs/${id}/trigger`, { method: 'POST' })
+      expect(res.status).toBe(200)
+      const body = await res.json() as { execution_id: string; status: string; trigger_type: string }
+      expect(body.status).toBe('triggered')
+      expect(body.trigger_type).toBe('manual')
 
-    await new Promise((r) => setTimeout(r, 50))
+      await vi.waitFor(async () => {
+        expect(calls.map((c) => c.job.id)).toEqual([id])
+      })
 
-    // 反假跑: 执行行在 DB 里，且就是响应里那个 id
-    const exec = db.prepare('SELECT status, trigger_type FROM schedule_executions WHERE id = ?')
-      .get(body.execution_id) as { status: string; trigger_type: string }
-    expect(exec.trigger_type).toBe('manual')
-    expect(['triggered', 'running']).toContain(exec.status)
-    expect(calls.map((c) => c.job.id)).toEqual([id])
+      // 反假跑: 执行行在 DB 里，且就是响应里那个 id
+      const exec = (await pg.sql<{ status: string; trigger_type: string }[]>
+        `SELECT status, trigger_type FROM schedule_executions WHERE id = ${body.execution_id}`)[0]!
+      expect(exec.trigger_type).toBe('manual')
+      expect(['triggered', 'running']).toContain(exec.status)
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      db.close()
+      await pg.close()
+    }
   })
 })

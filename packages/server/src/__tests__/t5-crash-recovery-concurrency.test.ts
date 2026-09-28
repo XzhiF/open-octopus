@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { applySchema } from '../db/schema'
 import { SchedulerEngine } from '../services/scheduler/scheduler-engine'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 import type { Executor, ExecutionResult } from '../services/scheduler/executors/executor-interface'
 
 // T-5: 崩溃恢复 —— 泵的滞留回收（cron 作业版）
@@ -25,6 +24,9 @@ import type { Executor, ExecutionResult } from '../services/scheduler/executors/
 // 注意：schedules.status/claimed_at 在 v42 后**没有生产方**了（见报告），所以这几条按
 // 「给定一个 claimed/running 且 claim 已过期的行，扫描逻辑怎么做」来断言 —— 这是该职责
 // 本身，不是对上游写入时序的假设。
+//
+// P1 B5 票4：schedules/schedule_executions/schedule_workspaces 已落 PG（B5 票1）——
+// 造数与断言改吃 pg.sql；claimed_at 断言用 DAO 同款 UTC ISO 投影。
 
 const ORG = 'task-pool-t5'
 
@@ -42,70 +44,76 @@ const mockWorkspaceScheduleService = {
   trigger: vi.fn(),
 } as any
 
-function newDb(): Database.Database {
-  const db = new Database(':memory:')
-  applySchema(db)
-  db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
-    VALUES ('t5-ws', 't5ws', '${ORG}', '/tmp', datetime('now'), datetime('now'))
-  `).run()
-  db.prepare(`INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))`).run()
-  return db
-}
-
 /** A job row sitting in the pump's own run-state (status + claimed_at). */
-function insertClaimedSchedule(
-  db: Database.Database,
+async function insertClaimedSchedule(
+  pg: PgFixture,
   id: string,
   claimedAtIso: string,
   status: 'claimed' | 'running' = 'claimed',
-): void {
-  const now = new Date().toISOString()
-  db.prepare(`
+): Promise<void> {
+  await pg.sql.unsafe(`
     INSERT INTO schedules (
       id, org, name, cron_expression, timezone,
       enabled, timeout_seconds, notify_on_failure,
       created_at, updated_at, job_type, config, parallel_policy,
       version, consecutive_failures, max_retain,
       status, claimed_at
-    ) VALUES (?, ?, ?, '0 9 * * *', 'Asia/Shanghai', 1, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, ?, ?)
-  `).run(id, ORG, `t5-${id}`, now, now, status, claimedAtIso)
+    ) VALUES ($1, $2, $3, '0 9 * * *', 'Asia/Shanghai', true, 3600, false, now(), now(), 'workflow', '{}'::jsonb, 'skip', 1, 0, 10, $4, $5::timestamptz)`,
+    [id, ORG, `t5-${id}`, status, claimedAtIso],
+  )
 }
 
-function insertScheduleExecution(
-  db: Database.Database,
+async function insertScheduleExecution(
+  pg: PgFixture,
   id: string,
   scheduleId: string,
   status: 'triggered' | 'running',
   triggeredAtIso: string,
-): void {
-  db.prepare(`
+): Promise<void> {
+  await pg.sql.unsafe(`
     INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
       timezone_offset, timezone_iana, created_at)
-    VALUES (?, ?, ?, 'scheduled', ?, '+00:00', 'UTC', ?)
-  `).run(id, scheduleId, status, triggeredAtIso, triggeredAtIso)
+    VALUES ($1, $2, $3, 'scheduled', $4, '+00:00', 'UTC', $4)`,
+    [id, scheduleId, status, triggeredAtIso],
+  )
 }
 
-function insertScheduleWorkspaceRow(db: Database.Database, id: string, scheduleId: string, status: string): void {
+async function insertScheduleWorkspaceRow(pg: PgFixture, id: string, scheduleId: string, status: string): Promise<void> {
   // schedule_workspaces has FK on workspace_id → workspaces; insert a stub row first
-  db.prepare(`
+  await pg.sql.unsafe(`
     INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(`ws-${id}`, `ws-${id}`, ORG, '/tmp', new Date().toISOString(), new Date().toISOString())
-  db.prepare(`
+    VALUES ($1, $1, $2, '/tmp', now(), now())`,
+    [`ws-${id}`, ORG],
+  )
+  await pg.sql.unsafe(`
     INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, scheduleId, `ws-${id}`, status, 'suffix', new Date().toISOString())
+    VALUES ($1, $2, $3, $4, 'suffix', now())`,
+    [id, scheduleId, `ws-${id}`, status],
+  )
 }
 
-function makeEngine(db: Database.Database) {
+async function makeEngine(pg: PgFixture): Promise<SchedulerEngine> {
   const engine = new SchedulerEngine(
-    new ScheduleConfigDAO(db), new ScheduleRunDAO(db),
+    new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql),
     mockWorkspaceScheduleService,
     new Map<string, Executor>([['workflow', makeOkExecutor()]]),
   )
-  engine.start()
+  await engine.start()
   return engine
+}
+
+async function schedStatus(pg: PgFixture, id: string) {
+  const rows = await pg.sql<{ status: string; claimed_at: string | null }[]>`
+    SELECT status,
+           to_char(claimed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS claimed_at
+    FROM schedules WHERE id = ${id}`
+  return rows[0]!
+}
+
+async function fireStatus(pg: PgFixture, id: string) {
+  const rows = await pg.sql<{ status: string; error_summary: string | null }[]>`
+    SELECT status, error_summary FROM schedule_executions WHERE id = ${id}`
+  return rows[0]!
 }
 
 let realHome: string | undefined
@@ -130,145 +138,157 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true })
 })
 
-describe('T-5: 崩溃后的 stale 回收', () => {
+describePg('T-5: 崩溃后的 stale 回收', () => {
   // ── AC11: stale claimed → status='queued' + workspace cleaned ──
 
   it('AC11: stale claimed (claimed_at 20min 前) 回滚 queued + claimed_at 清空 + workspace 标 cleaned', async () => {
-    const db = newDb()
-    const engine = makeEngine(db)
+    const pg = await setupPgSchema()
+    try {
+      const engine = await makeEngine(pg)
 
-    const scheduleId = 't5-ac11-stale'
-    const staleIso = new Date(Date.now() - 20 * 60 * 1000).toISOString() // 20 min ago
-    insertClaimedSchedule(db, scheduleId, staleIso)
-    insertScheduleWorkspaceRow(db, 'sw-1', scheduleId, 'running')
+      const scheduleId = 't5-ac11-stale'
+      const staleIso = new Date(Date.now() - 20 * 60 * 1000).toISOString() // 20 min ago
+      await insertClaimedSchedule(pg, scheduleId, staleIso)
+      await insertScheduleWorkspaceRow(pg, 'sw-1', scheduleId, 'running')
 
-    await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
+      await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
 
-    // 反假跑 AC11: status 真回退到 queued (查表), claimed_at 真清空 (不是仅 status 改了)
-    const schedRow = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(scheduleId) as
-      { status: string; claimed_at: string | null }
-    expect(schedRow.status).toBe('queued')
-    expect(schedRow.claimed_at).toBeNull()
+      // 反假跑 AC11: status 真回退到 queued (查表), claimed_at 真清空 (不是仅 status 改了)
+      const schedRow = await schedStatus(pg, scheduleId)
+      expect(schedRow.status).toBe('queued')
+      expect(schedRow.claimed_at).toBeNull()
 
-    // 反假跑 AC11: workspace 真清理 — schedule_workspaces.status='cleaned' + completed_at 非空
-    const swRow = db.prepare('SELECT status, completed_at FROM schedule_workspaces WHERE id = ?').get('sw-1') as
-      { status: string; completed_at: string | null }
-    expect(swRow.status).toBe('cleaned')
-    expect(swRow.completed_at).not.toBeNull()
+      // 反假跑 AC11: workspace 真清理 — schedule_workspaces.status='cleaned' + completed_at 非空
+      const swRow = (await pg.sql<{ status: string; completed_at: Date | null }[]>
+        `SELECT status, completed_at FROM schedule_workspaces WHERE id = 'sw-1'`)[0]!
+      expect(swRow.status).toBe('cleaned')
+      expect(swRow.completed_at).not.toBeNull()
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 
   it('AC11+: 崩溃在派发确认之后（status=running）同样回滚 —— findStaleClaimed 匹配 claimed 与 running', async () => {
     // story-walker #1: 查询原来只匹配 status='claimed'，于是崩溃在 running 的行永远滞留。
-    const db = newDb()
-    const engine = makeEngine(db)
-    const scheduleId = 't5-running-stale'
-    insertClaimedSchedule(db, scheduleId, new Date(Date.now() - 20 * 60 * 1000).toISOString(), 'running')
+    const pg = await setupPgSchema()
+    try {
+      const engine = await makeEngine(pg)
+      const scheduleId = 't5-running-stale'
+      await insertClaimedSchedule(pg, scheduleId, new Date(Date.now() - 20 * 60 * 1000).toISOString(), 'running')
 
-    await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
+      await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
 
-    const row = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(scheduleId) as
-      { status: string; claimed_at: string | null }
-    expect(row.status).toBe('queued')
-    expect(row.claimed_at).toBeNull()
+      const row = await schedStatus(pg, scheduleId)
+      expect(row.status).toBe('queued')
+      expect(row.claimed_at).toBeNull()
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 
   it('AC11+: 回滚同时把孤儿执行行改 failed —— 松开 partial UNIQUE，下一次派发才插得进去', async () => {
-    const db = newDb()
-    const engine = makeEngine(db)
-    const scheduleId = 't5-ac11-orphan-exec'
-    const staleIso = new Date(Date.now() - 20 * 60 * 1000).toISOString()
-    insertClaimedSchedule(db, scheduleId, staleIso)
-    insertScheduleExecution(db, 'se-orphan', scheduleId, 'running', staleIso)
+    const pg = await setupPgSchema()
+    try {
+      const engine = await makeEngine(pg)
+      const scheduleId = 't5-ac11-orphan-exec'
+      const staleIso = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+      await insertClaimedSchedule(pg, scheduleId, staleIso)
+      await insertScheduleExecution(pg, 'se-orphan', scheduleId, 'running', staleIso)
 
-    await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
+      await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
 
-    const exec = db.prepare('SELECT status, error_summary FROM schedule_executions WHERE id = ?').get('se-orphan') as
-      { status: string; error_summary: string | null }
-    expect(exec.status).toBe('failed')
-    expect(exec.error_summary).toMatch(/stale/i)
+      const exec = await fireStatus(pg, 'se-orphan')
+      expect(exec.status).toBe('failed')
+      expect(exec.error_summary).toMatch(/stale/i)
 
-    // 反假跑: UNIQUE 真的松了 —— 再插一条 triggered 不冲突
-    expect(() => insertScheduleExecution(
-      db, 'se-next', scheduleId, 'triggered', new Date().toISOString(),
-    )).not.toThrow()
+      // 反假跑: UNIQUE 真的松了 —— 再插一条 triggered 不冲突
+      await expect(insertScheduleExecution(
+        pg, 'se-next', scheduleId, 'triggered', new Date().toISOString(),
+      )).resolves.toBeUndefined()
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 
   // ── AC11 反假跑: fresh claimed (claimed_at recent) is NOT rolled back ──
 
   it('AC11 反假跑: fresh claimed (claimed_at 1min 前) 不回退', async () => {
-    const db = newDb()
-    const engine = makeEngine(db)
+    const pg = await setupPgSchema()
+    try {
+      const engine = await makeEngine(pg)
 
-    const scheduleId = 't5-ac11-fresh'
-    const freshIso = new Date(Date.now() - 60 * 1000).toISOString() // 1 minute ago
-    insertClaimedSchedule(db, scheduleId, freshIso)
+      const scheduleId = 't5-ac11-fresh'
+      const freshIso = new Date(Date.now() - 60 * 1000).toISOString() // 1 minute ago
+      await insertClaimedSchedule(pg, scheduleId, freshIso)
 
-    await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
+      await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
 
-    // 反假跑: fresh claimed 不该被回退（否则一次慢启动会被自己判定为崩溃）
-    const schedRow = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(scheduleId) as
-      { status: string; claimed_at: string | null }
-    expect(schedRow.status).toBe('claimed')
-    expect(schedRow.claimed_at).toBe(freshIso)
+      // 反假跑: fresh claimed 不该被回退（否则一次慢启动会被自己判定为崩溃）
+      const schedRow = await schedStatus(pg, scheduleId)
+      expect(schedRow.status).toBe('claimed')
+      expect(schedRow.claimed_at).toBe(freshIso)
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 })
 
-describe('T-5: 超时回收（同属「回收滞留」，此前无用例）', () => {
+describePg('T-5: 超时回收（同属「回收滞留」，此前无用例）', () => {
   it('running 执行行超过 timeout_seconds → failed 并写明超时；未到点的不动', async () => {
-    const db = newDb()
-    // 两条作业各挂一条 running（同一 schedule 只能有一条 active ——
-    // idx_sched_execs_unique_active），一条 2 小时前（超 3600s），一条 5 分钟前（未超）。
-    insertClaimedSchedule(db, 't5-to-old', new Date().toISOString(), 'running')
-    insertClaimedSchedule(db, 't5-to-young', new Date().toISOString(), 'running')
-    const old = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-    const young = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    insertScheduleExecution(db, 'se-old', 't5-to-old', 'running', old)
-    insertScheduleExecution(db, 'se-young', 't5-to-young', 'running', young)
+    const pg = await setupPgSchema()
+    try {
+      // 两条作业各挂一条 running（同一 schedule 只能有一条 active ——
+      // idx_sched_execs_unique_active），一条 2 小时前（超 3600s），一条 5 分钟前（未超）。
+      await insertClaimedSchedule(pg, 't5-to-old', new Date().toISOString(), 'running')
+      await insertClaimedSchedule(pg, 't5-to-young', new Date().toISOString(), 'running')
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const young = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      await insertScheduleExecution(pg, 'se-old', 't5-to-old', 'running', old)
+      await insertScheduleExecution(pg, 'se-young', 't5-to-young', 'running', young)
 
-    const engine = makeEngine(db)
-    await (engine as unknown as { checkTimeouts: () => Promise<void> }).checkTimeouts()
+      const engine = await makeEngine(pg)
+      await (engine as unknown as { checkTimeouts: () => Promise<void> }).checkTimeouts()
 
-    const aged = db.prepare('SELECT status, error_summary FROM schedule_executions WHERE id = ?').get('se-old') as
-      { status: string; error_summary: string | null }
-    expect(aged.status).toBe('failed')
-    expect(aged.error_summary).toMatch(/超时/)
-    expect(db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get('se-young')).toEqual({ status: 'running' })
+      const aged = await fireStatus(pg, 'se-old')
+      expect(aged.status).toBe('failed')
+      expect(aged.error_summary).toMatch(/超时/)
+      expect(await fireStatus(pg, 'se-young')).toMatchObject({ status: 'running' })
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 
   it('agent 作业超时记 timeout（不是 failed），与 workflow 分叉', async () => {
-    const db = newDb()
-    const now = new Date().toISOString()
-    db.prepare(`
-      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds,
-        notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status)
-      VALUES ('t5-to-agent', ?, 'agent job', '0 9 * * *', 'Asia/Shanghai', 1, 3600, 0, ?, ?, 'agent', '{}', 'skip', 1, 0, 10, 'queued')
-    `).run(ORG, now, now)
-    insertScheduleExecution(db, 'se-agent', 't5-to-agent', 'running',
-      new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+    const pg = await setupPgSchema()
+    try {
+      await pg.sql.unsafe(`
+        INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds,
+          notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version,
+          consecutive_failures, max_retain, status)
+        VALUES ('t5-to-agent', $1, 'agent job', '0 9 * * *', 'Asia/Shanghai', true, 3600, false, now(), now(), 'agent', '{}'::jsonb, 'skip', 1, 0, 10, 'queued')`,
+        [ORG],
+      )
+      await insertScheduleExecution(pg, 'se-agent', 't5-to-agent', 'running',
+        new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
 
-    const engine = makeEngine(db)
-    await (engine as unknown as { checkTimeouts: () => Promise<void> }).checkTimeouts()
+      const engine = await makeEngine(pg)
+      await (engine as unknown as { checkTimeouts: () => Promise<void> }).checkTimeouts()
 
-    expect(db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get('se-agent'))
-      .toEqual({ status: 'timeout' })
+      expect(await fireStatus(pg, 'se-agent')).toMatchObject({ status: 'timeout' })
 
-    engine.stop()
-    db.close()
+      engine.stop()
+    } finally {
+      await pg.close()
+    }
   })
 })
