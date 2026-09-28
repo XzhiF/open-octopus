@@ -39,7 +39,7 @@
  *   PG FK 即时生效（SQLite 侧该 FK 同为 ON，删除序此前只是恰好没踩到）。
  *
  * 混合期（B5→B6）：workspaces 行生产者仍 SQLite —— JOIN workspaces 的读路径
- * （findWorkspacePath*/getQueueItems/findByOrgWithWorkspace 等）读 PG 快照表，
+ * （findWorkspacePath、getQueueItems、findByOrgWithWorkspace 等）读 PG 快照表，
  * 与 B4 账本读侧同一已裁决过渡态。executions/pipeline_state/schedules/
  * schedule_workspaces → workspaces(id) 四条 FK 已在 pg/schema.sql 注释撤除
  * （README「B6 FK 恢复清单」登记，schema-parity HYBRID_DROPPED_FKS 同步）。
