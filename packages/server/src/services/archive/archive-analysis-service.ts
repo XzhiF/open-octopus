@@ -124,7 +124,8 @@ export class ArchiveAnalysisService {
     let tokenStats: any = { total: { inputTokens: 0, outputTokens: 0, cost: 0 }, byModel: [], byWorkflow: [], nodes: [] }
     try {
       const { TokenUsageDAO } = await import('../../db/dao/token-usage-dao')
-      const tokenDAO = new TokenUsageDAO(db)
+      const { pgSql } = await import('../../db/dao/registry')
+      const tokenDAO = new TokenUsageDAO(pgSql())
       const wsStats = tokenDAO.getWorkspaceTokenStats(workspaceId)
       const nodes = tokenDAO.getNodeTokenStats(workspaceId)
       tokenStats = { ...wsStats, nodes }

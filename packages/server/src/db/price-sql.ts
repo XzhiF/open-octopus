@@ -16,8 +16,10 @@
  * 与代码同源 —— 除此之外任何地方不得再写价格匹配公式（含 TS）。
  */
 
-/** 汇率的 SQL 侧形态：实时读 billing_setting，非法/缺失回退 7.0（与 SETTING_DEFAULTS 同值）。 */
-export const RATE_SQL = `COALESCE((SELECT CASE WHEN CAST(r.value AS REAL) > 0 THEN CAST(r.value AS REAL) END FROM billing_setting r WHERE r.key = 'usd_to_cny'), 7.0)`
+/** 汇率的 SQL 侧形态：实时读 billing_setting，非法/缺失回退 7.0（与 SETTING_DEFAULTS 同值）。
+ *  B4：CAST 目标 REAL → DOUBLE PRECISION（PG 的 REAL 是 f4，SQLite 按 DOUB 落 REAL affinity）——
+ *  视图 DDL 双引擎共用同一条生成串，f8 是 gold 逐位相等的前提。 */
+export const RATE_SQL = `COALESCE((SELECT CASE WHEN CAST(r.value AS DOUBLE PRECISION) > 0 THEN CAST(r.value AS DOUBLE PRECISION) END FROM billing_setting r WHERE r.key = 'usd_to_cny'), 7.0)`
 
 /** 命中匹配相关子查询的公共外壳：selectExpr 决定取价格行的哪个字段（组）。 */
 function matchSubquery(selectExpr: string, l: string): string {
@@ -53,8 +55,9 @@ export function callVendorSql(l: string): string {
 }
 
 /**
- * 视图 DDL —— applySchema 每次 DROP+CREATE（幂等且与代码同源）。
- * 列 = llm_calls 全列 + cost_usd + vendor。
+ * 视图 DDL —— applySchema（SQLite）/ applyPgSchema（PG，migrate.ts）每次 DROP+CREATE
+ * 重建，幂等且与代码同源。**B4 起同一条生成串喂两个引擎**（方言全部取双端等价写法）——
+ * 除此之外任何地方不得再写价格匹配公式（含 TS）。
  */
 export function llmCallsCostedViewSql(): string {
   return `CREATE VIEW llm_calls_costed AS
@@ -85,6 +88,8 @@ export function priceStatusExpr(q = "q"): string {
 /**
  * 试算（配价页「这笔钱是怎么算出来的」解释器）：把输入拼成一行虚拟账本行，
  * 喂给与视图**同一批** matchSubquery 构造函数 —— 公式零复制。
+ * B4：named 参数 @col → 位置 `?`（better-sqlite3 与 BasePgDAO 的 ?→$n 共用；
+ * 绑定顺序 = 出现顺序 model, timestamp, in, out, cacheWrite, cacheRead）。
  */
 export function pricePreviewSql(): string {
   return `SELECT q.model, q.timestamp,
@@ -93,19 +98,21 @@ export function pricePreviewSql(): string {
                  ${matchSubquery("p.id", "q")} AS price_id,
                  ${matchSubquery("p.currency", "q")} AS cost_currency,
                  ${matchSubquery(costNativeExpr("q"), "q")} AS cost_native
-          FROM (SELECT CAST(@model AS TEXT) AS model, CAST(@timestamp AS INTEGER) AS timestamp,
-                       CAST(@inputTokens AS INTEGER) AS input_tokens,
-                       CAST(@outputTokens AS INTEGER) AS output_tokens,
-                       CAST(@cacheCreationTokens AS INTEGER) AS cache_creation_tokens,
-                       CAST(@cacheReadTokens AS INTEGER) AS cache_read_tokens) q`
+          FROM (SELECT CAST(? AS TEXT) AS model, CAST(? AS INTEGER) AS timestamp,
+                       CAST(? AS INTEGER) AS input_tokens,
+                       CAST(? AS INTEGER) AS output_tokens,
+                       CAST(? AS INTEGER) AS cache_creation_tokens,
+                       CAST(? AS INTEGER) AS cache_read_tokens) q`
 }
 
-/** 账本费用三态聚合（USD 基准）：全 NULL 组 → NULL 不焊 0（KD4 同源语义）。 */
+/** 账本费用三态聚合（USD 基准）：全 NULL 组 → NULL 不焊 0（KD4 同源语义）。
+ *  B4：complete 改 CASE 1/0 —— PG 裸等式返回 boolean（驱动给 true/false），
+ *  SQLite 返回 0/1；CASE 写法两侧同出整数，旧契约 `=== 1` 判定零漂移。 */
 export const PRICED_AGG = {
   /** SUM(cost) 天然忽略 NULL；全未定价组 → NULL。空组 → NULL。 */
   sumCost: (q = "q") => `SUM(${q}.cost_usd)`,
   /** 已定价行数（COUNT(col) 忽略 NULL）。 */
   countPriced: (q = "q") => `COUNT(${q}.cost_usd)`,
   /** 组内是否全部有价（空组 vacuous true，对齐 LEDGER_SQL.costComplete）。 */
-  complete: (q = "q") => `COUNT(*) = COUNT(${q}.cost_usd)`,
+  complete: (q = "q") => `CASE WHEN COUNT(${q}.cost_usd) = COUNT(*) THEN 1 ELSE 0 END`,
 } as const

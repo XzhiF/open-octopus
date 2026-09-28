@@ -9,6 +9,7 @@ import { testConnectivity, resetProviderInstances, listProviders } from '@octopu
 import type { ConnectivityResult } from '@octopus/providers'
 import { getDb } from '../db/connection'
 import { BillingDAO, BillingPriceValidationError } from '../db/dao/billing-dao'
+import { pgSql } from '../db/dao/registry'
 import type { BillingPricePatch, BillingReportGroupBy, BillingReportRankBy } from '../db/dao/billing-dao'
 
 const DEFAULT_TEMPLATE = `# Octopus 模型配置
@@ -223,7 +224,7 @@ export function createSystemRoutes(): Hono {
   // 错误形状沿用本文件 { error: { code, message } } 惯例。
   // ============================================================================
 
-  const billingDao = () => new BillingDAO(getDb())
+  const billingDao = () => new BillingDAO(pgSql()) // B4: BillingDAO 迁 PG（注册池句柄）
 
   const billingCurrencySchema = z.enum(['USD', 'CNY'])
   /** 窗口边界：YYYY-MM-DD 日期串（服务端换本地零点 epoch ms）；null = 拆界；缺省 = 不动。 */
@@ -288,9 +289,9 @@ export function createSystemRoutes(): Hono {
   }
 
   // GET /billing/prices — 列表（含 vendor 分组所需字段）
-  router.get('/billing/prices', (c) => {
+  router.get('/billing/prices', async (c) => {
     try {
-      return c.json({ prices: billingDao().listPrices() })
+      return c.json({ prices: await billingDao().listPrices() })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
@@ -313,7 +314,7 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const { valid_from: _sf, valid_to: _st, ...fields } = parsed.data
-      const price = billingDao().createPrice({ ...fields, ...window })
+      const price = await billingDao().createPrice({ ...fields, ...window })
       return c.json({ price }, 201)
     } catch (err: unknown) {
       const mapped = billingWriteErrorResponse(c, err)
@@ -342,7 +343,7 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const { valid_from: _uf, valid_to: _ut, ...fields } = parsed.data
-      const price = billingDao().updatePrice(c.req.param('id'), { ...(fields as BillingPricePatch), ...window })
+      const price = await billingDao().updatePrice(c.req.param('id'), { ...(fields as BillingPricePatch), ...window })
       if (!price) return c.json({ error: { code: 'NOT_FOUND', message: 'price config not found' } }, 404)
       return c.json({ price })
     } catch (err: unknown) {
@@ -354,9 +355,9 @@ export function createSystemRoutes(): Hono {
   })
 
   // DELETE /billing/prices/:id
-  router.delete('/billing/prices/:id', (c) => {
+  router.delete('/billing/prices/:id', async (c) => {
     try {
-      const deleted = billingDao().deletePrice(c.req.param('id'))
+      const deleted = await billingDao().deletePrice(c.req.param('id'))
       if (!deleted) return c.json({ error: { code: 'NOT_FOUND', message: 'price config not found' } }, 404)
       return c.json({ success: true, id: c.req.param('id') })
     } catch (err: unknown) {
@@ -366,9 +367,9 @@ export function createSystemRoutes(): Hono {
   })
 
   // GET /billing/settings — 全局计费设置（内置键含默认值兜底）
-  router.get('/billing/settings', (c) => {
+  router.get('/billing/settings', async (c) => {
     try {
-      return c.json(billingDao().getAllSettings())
+      return c.json(await billingDao().getAllSettings())
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'READ_FAILED', message: msg } }, 500)
@@ -404,12 +405,12 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      const result = dao.previewCost(q.model, q.timestamp ?? dateMs ?? 0, {
+      const result = await dao.previewCost(q.model, q.timestamp ?? dateMs ?? 0, {
         inputTokens: q.input_tokens, outputTokens: q.output_tokens,
         cacheCreationTokens: q.cache_creation_tokens, cacheReadTokens: q.cache_read_tokens,
       })
-      const rate = dao.getUsdToCny()
-      const currency = dao.getDisplayCurrency()
+      const rate = await dao.getUsdToCny()
+      const currency = await dao.getDisplayCurrency()
       const factor = currency === 'CNY' ? rate : 1
       return c.json({
         ...result,
@@ -446,9 +447,9 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      if (parsed.data.usd_to_cny !== undefined) dao.setSetting('usd_to_cny', String(parsed.data.usd_to_cny))
-      if (parsed.data.display_currency !== undefined) dao.setSetting('display_currency', parsed.data.display_currency)
-      return c.json(dao.getAllSettings())
+      if (parsed.data.usd_to_cny !== undefined) await dao.setSetting('usd_to_cny', String(parsed.data.usd_to_cny))
+      if (parsed.data.display_currency !== undefined) await dao.setSetting('display_currency', parsed.data.display_currency)
+      return c.json(await dao.getAllSettings())
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'WRITE_FAILED', message: msg } }, 500)
@@ -476,7 +477,7 @@ export function createSystemRoutes(): Hono {
     page_size: z.coerce.number().int().min(1).max(200).default(50),
   })
 
-  router.get('/billing/calls', (c) => {
+  router.get('/billing/calls', async (c) => {
     const parsed = callsQuerySchema.safeParse(c.req.query())
     if (!parsed.success) {
       return c.json({
@@ -487,10 +488,10 @@ export function createSystemRoutes(): Hono {
     try {
       const dao = billingDao()
       const filters = { model: q.model, priceStatus: q.price_status, workspaceId: q.workspace_id, sessionId: q.session_id, vendor: q.vendor, sourcePath: q.source_path, fromTs: q.from, toTs: q.to }
-      const { rows, total } = dao.listCalls(filters, q.page_size, (q.page - 1) * q.page_size)
+      const { rows, total } = await dao.listCalls(filters, q.page_size, (q.page - 1) * q.page_size)
       return c.json({
-        calls: rows, total, page: q.page, pageSize: q.page_size, models: dao.listCallModels(),
-        source_subtotals: dao.sourceSubtotals(filters),
+        calls: rows, total, page: q.page, pageSize: q.page_size, models: await dao.listCallModels(),
+        source_subtotals: await dao.sourceSubtotals(filters),
       })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -536,7 +537,7 @@ export function createSystemRoutes(): Hono {
   })
 
   // GET /billing/report/breakdown — 费用分布（share 之和 = 1；无费用基准时全部记 0）
-  router.get('/billing/report/breakdown', (c) => {
+  router.get('/billing/report/breakdown', async (c) => {
     const parsed = breakdownQuerySchema.safeParse(c.req.query())
     if (!parsed.success) {
       return c.json({
@@ -553,9 +554,9 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      const groups = dao.reportBreakdown(q.group_by as BillingReportGroupBy, bounds.fromTs, bounds.toTs)
-      const rate = dao.getUsdToCny()
-      const currency = dao.getDisplayCurrency()
+      const groups = await dao.reportBreakdown(q.group_by as BillingReportGroupBy, bounds.fromTs, bounds.toTs)
+      const rate = await dao.getUsdToCny()
+      const currency = await dao.getDisplayCurrency()
       const total = groups.reduce((s, g) => s + (g.cost_usd ?? 0), 0) // ledger-ok: share 分母专用 —— 全未定价组不贡献分母；各条目 cost_usd 仍保 NULL（KD4 不焊 0 仅限出参）
       const items = groups.map(g => ({
         key: g.key,
@@ -580,7 +581,7 @@ export function createSystemRoutes(): Hono {
   })
 
   // GET /billing/report/ranking — 费用排行 Top N（口径同 breakdown）
-  router.get('/billing/report/ranking', (c) => {
+  router.get('/billing/report/ranking', async (c) => {
     const parsed = rankingQuerySchema.safeParse(c.req.query())
     if (!parsed.success) {
       return c.json({
@@ -597,9 +598,9 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      const rows = dao.reportRanking(q.by as BillingReportRankBy, bounds.fromTs, bounds.toTs, q.limit)
-      const rate = dao.getUsdToCny()
-      const currency = dao.getDisplayCurrency()
+      const rows = await dao.reportRanking(q.by as BillingReportRankBy, bounds.fromTs, bounds.toTs, q.limit)
+      const rate = await dao.getUsdToCny()
+      const currency = await dao.getDisplayCurrency()
       const items = rows.map(r => ({
         id: r.id,
         name: r.name,
@@ -658,7 +659,7 @@ export function createSystemRoutes(): Hono {
   }
 
   // GET /billing/report/summary — 区间汇总卡数据源（US1）
-  router.get('/billing/report/summary', (c) => {
+  router.get('/billing/report/summary', async (c) => {
     const parsed = reportRangeSchema.safeParse(c.req.query())
     if (!parsed.success) {
       return c.json({
@@ -674,9 +675,9 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      const s = dao.reportSummary(r.fromTs, r.toTs)
-      const rate = dao.getUsdToCny()
-      const currency = dao.getDisplayCurrency()
+      const s = await dao.reportSummary(r.fromTs, r.toTs)
+      const rate = await dao.getUsdToCny()
+      const currency = await dao.getDisplayCurrency()
       const factor = currency === 'CNY' ? rate : 1
       return c.json({
         from: r.fromStr,
@@ -704,7 +705,7 @@ export function createSystemRoutes(): Hono {
   })
 
   // GET /billing/report/trend — 逐日费用/调用数（US2；尖峰可辨识 = 数据本身，图表侧渲染）
-  router.get('/billing/report/trend', (c) => {
+  router.get('/billing/report/trend', async (c) => {
     const parsed = reportRangeSchema.safeParse(c.req.query())
     if (!parsed.success) {
       return c.json({
@@ -720,10 +721,10 @@ export function createSystemRoutes(): Hono {
     }
     try {
       const dao = billingDao()
-      const rows = dao.reportTrend(r.fromTs, r.toTs)
+      const rows = await dao.reportTrend(r.fromTs, r.toTs)
       const byDay = new Map(rows.map(x => [x.day, x]))
-      const rate = dao.getUsdToCny()
-      const currency = dao.getDisplayCurrency()
+      const rate = await dao.getUsdToCny()
+      const currency = await dao.getDisplayCurrency()
       const factor = currency === 'CNY' ? rate : 1
       const days: Array<{ date: string; cost_usd: number | null; cost_display: number | null; calls: number }> = []
       for (let cur = r.fromStr; ; cur = shiftLocalDay(cur, 1)) {

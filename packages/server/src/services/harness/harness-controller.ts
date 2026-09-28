@@ -9,8 +9,9 @@ import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
+import { lazyDAO, pgSql } from "../../db/dao/registry"
 // P1 B1: HarnessDAO 已迁 PG；本文件对 executions 的直写属 B5 域表，显式走 SQLite 连接
-// （单引擎纪律，见 db/README B1 注记），随 B5 再迁 postgres.js。
+// （单引擎纪律，见 db/README B1 注记），随 B5 再迁 postgres.js。（B4 后 getDb 仅剩该用途。）
 import { getDb } from "../../db/connection"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
@@ -70,8 +71,9 @@ export class HarnessController {
     this.repairService = deps.repairService
     this.evolutionDao = deps.evolutionDao
     this.memoryService = deps.memoryService
-    // B1: TokenUsageDAO 属 B4 域（SQLite 池根连接）；不再借 HarnessDAO 的句柄。
-    this.tokenUsageDao = deps.tokenUsageDao ?? new TokenUsageDAO(getDb())
+    // P1 B4：TokenUsageDAO 已迁 PG —— 借注册表 lazyDAO 的池路径（B0.5 §5 方案3，
+    // 禁止 new XxxDAO(getDb()) 直构）；池未注册时保持未构造态自愈，不炸构造方。
+    this.tokenUsageDao = deps.tokenUsageDao ?? lazyDAO(() => new TokenUsageDAO(pgSql()))
   }
 
   /**

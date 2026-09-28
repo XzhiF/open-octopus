@@ -33,6 +33,16 @@ export interface LedgerTotals {
 export type LedgerRow = TokenUsage & { costUsd?: number | null }
 
 // —— SQL 镜像（唯一允许出现在 DAO 里的聚合表达式来源）——
+//
+// P1 B4 起 LEDGER_SQL 被两个引擎共用（SQLite 侧 archive/execution 域活到 B5，
+// TokenUsageDAO 已迁 PG）—— 所有片段必须双引擎逐位等价：
+//   · costComplete/costCompleteOf 从裸 `COUNT(*) = COUNT(x)` 改为 CASE 1/0 ——
+//     PG 布尔出 true/false 与旧契约 0/1 断裂，CASE 在两侧同出整数 0/1；
+//   · cacheHitRate 的 CAST 目标 REAL → DOUBLE PRECISION —— PG 的 REAL 是 f4
+//     （精度腰斩），SQLite 的 DOUBLE PRECISION 按名字含 DOUB 落 REAL affinity，
+//     两侧同为 IEEE-754 f8，gold 逐位相等的前提；
+//   · SUM(int 列) PG 返回 numeric（驱动侧成 string）、SQLite 返回 number ——
+//     表达式本身不动，归一在 DAO 出口 pg-mappers.num() 完成。
 
 /** 表/别名前缀写法：如 'ntu.' 或 ''。输出列名与 JS 侧字段对应。 */
 export const LEDGER_SQL = {
@@ -42,18 +52,18 @@ export const LEDGER_SQL = {
   /** 已定价部分和；全 NULL 组 → NULL（配合 costComplete 使用） */
   sumCost: (p = '') =>
     `CASE WHEN COUNT(${p}cost_usd) = 0 THEN NULL ELSE COALESCE(SUM(${p}cost_usd), 0) END`,
-  /** 每组是否全部有价（空组 0=0 → 1，vacuous true，与 JS costSummary([]) 对齐） */
+  /** 每组是否全部有价（空组 0=0 → 1，vacuous true，与 JS costSummary([]) 对齐）。B4：CASE 双引擎出 0/1。 */
   costComplete: (p = '') =>
-    `COUNT(*) = COUNT(${p}cost_usd)`,
+    `CASE WHEN COUNT(${p}cost_usd) = COUNT(*) THEN 1 ELSE 0 END`,
   /** 任意「可空 cost 列」的通用版（冻结聚合表等非账本表用），col 传全限定列名 */
   sumCostOf: (col: string) =>
     `CASE WHEN COUNT(${col}) = 0 THEN NULL ELSE COALESCE(SUM(${col}), 0) END`,
   costCompleteOf: (col: string) =>
-    `COUNT(*) = COUNT(${col})`,
+    `CASE WHEN COUNT(${col}) = COUNT(*) THEN 1 ELSE 0 END`,
   /** cache 命中率 0–1；input+cacheRead 为 0 → NULL */
   cacheHitRate: (p = '') =>
     `CASE WHEN SUM(${p}input_tokens + ${p}cache_read_tokens) > 0 ` +
-    `THEN CAST(SUM(${p}cache_read_tokens) AS REAL) / SUM(${p}input_tokens + ${p}cache_read_tokens) ` +
+    `THEN CAST(SUM(${p}cache_read_tokens) AS DOUBLE PRECISION) / SUM(${p}input_tokens + ${p}cache_read_tokens) ` +
     `ELSE NULL END`,
 } as const
 

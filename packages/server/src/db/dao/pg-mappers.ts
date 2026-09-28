@@ -27,9 +27,15 @@ export function jsonStr(v: unknown): string | null {
   return JSON.stringify(v)
 }
 
-/** int8/COUNT 的 string 表示 → JS number。 */
+/** int8/COUNT/numeric 的 string 表示 → JS number；null/undefined → 0。 */
 export function num(v: string | number | null | undefined): number {
   if (v === null || v === undefined) return 0
+  return typeof v === "number" ? v : Number(v)
+}
+
+/** num 的可空版（B4 账本：AVG/ROUND 的 NULL 分支必须透传 null，不焊 0）。 */
+export function numOrNull(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined) return null
   return typeof v === "number" ? v : Number(v)
 }
 

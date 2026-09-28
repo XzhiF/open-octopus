@@ -59,7 +59,7 @@ import {
   AcceptanceDAO,
   TokenUsageDAO,
 } from "../../db/dao"
-import { pgSql } from "../../db/dao/registry"
+import { lazyDAO, pgSql } from "../../db/dao/registry"
 import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 // task-phase-redesign (ticket 07): the acceptance API and the GET /:id view read
@@ -527,7 +527,8 @@ export class TasksService {
     workspaceService?: WorkspaceService | null,
   ) {
     this.db = db
-    this.tokenUsage = new TokenUsageDAO(db)
+    // P1 B4：TokenUsageDAO 迁 PG —— 注册池路径（DbHandle 的 db 仍供本服务其余 SQLite 用法）。
+    this.tokenUsage = lazyDAO(() => new TokenUsageDAO(pgSql()))
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()

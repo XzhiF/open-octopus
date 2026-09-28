@@ -309,6 +309,10 @@ describePg('PG schema parity — per-table/per-column vs SQLite', () => {
   const HYBRID_DROPPED_FKS: ReadonlyMap<string, string[]> = new Map([
     ['tasks', ['source_chat_session_id->sessions(id)']],
     ['interaction_messages', ['execution_id->executions(id)']],
+    // P1 B4：llm_calls / node_token_usages 由 PG 直写（账本唯一写入口），
+    // 但 node_executions 行生产者 ExecutionDAO 属 B5 —— 混合期撤这两条跨引擎 FK。
+    ['llm_calls', ['node_execution_id->node_executions(id)']],
+    ['node_token_usages', ['node_execution_id->node_executions(id)']],
   ])
 
   it('per-table: foreign keys match (columns, target, ON DELETE)', async () => {

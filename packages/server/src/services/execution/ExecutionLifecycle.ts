@@ -39,7 +39,7 @@ import { PipelineConfigLoader } from "../pipeline-config"
 import { HarnessController } from "../harness/harness-controller"
 import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
-import { pgSql } from "../../db/dao/registry"
+import { lazyDAO, pgSql } from "../../db/dao/registry"
 import { TaskDispatchService } from "../scheduler/task-dispatch-service"
 import { WorkspaceService } from "../workspace"
 import { WorkspaceDAO } from "../../db/dao"
@@ -111,7 +111,7 @@ export class ExecutionLifecycle {
     this.callbacksBuilder = new EngineCallbacksBuilder({
       ctx: { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
       dao,
-      tokenUsageDao: tokenUsageDao ?? new TokenUsageDAO(dao.getDb()),
+      tokenUsageDao: tokenUsageDao ?? lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG（注册池路径）
       enginePool: this.enginePool,
       observability,
       workspaceId,
@@ -147,14 +147,14 @@ export class ExecutionLifecycle {
       // tsup bundling variable renaming (db → db3 collision).
       const realDb = this.dao.getDb()
       // P1 B1: HarnessDAO 已迁 PG（harness_events/harness_config）——句柄走池；
-      // TokenUsageDAO 属 B4 域，仍 SQLite。池未注册时 pgSql() 抛错 → 下方 catch 降级（非致命）。
+      // P1 B4: TokenUsageDAO 亦迁 PG（经注册池路径）。池未注册时 pgSql() 抛错 → 下方 catch 降级（非致命）。
       const harnessDAO = new HarnessDAO(pgSql())
       const harnessConfigService = new HarnessConfigService(harnessDAO)
       this.harnessController = new HarnessController({
         dao: harnessDAO,
         sse,
         configService: harnessConfigService,
-        tokenUsageDao: this.tokenUsageDao ?? new TokenUsageDAO(realDb),
+        tokenUsageDao: this.tokenUsageDao ?? lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG（注册池路径）
       })
     } catch (err) {
       console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)

@@ -52,45 +52,45 @@ export function createAnalyticsLogRoutes(
 ): Hono {
   const analyticsRoutes = new Hono()
 
-  analyticsRoutes.get("/health-summary", (c) => {
+  analyticsRoutes.get("/health-summary", async (c) => {
     const workspaceId = getWorkspaceId(c)
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
-    return c.json(logAnalysisService.getHealthSummary(workspaceId, days))
+    return c.json(await logAnalysisService.getHealthSummary(workspaceId, days))
   })
 
-  analyticsRoutes.get("/alerts", (c) => {
+  analyticsRoutes.get("/alerts", async (c) => {
     const workspaceId = getWorkspaceId(c)
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
     const limit = parseLimit(c)
-    return c.json(logAnalysisService.getAlerts(workspaceId, days, limit))
+    return c.json(await logAnalysisService.getAlerts(workspaceId, days, limit))
   })
 
-  analyticsRoutes.get("/failure-patterns", (c) => {
+  analyticsRoutes.get("/failure-patterns", async (c) => {
     const workspaceId = getWorkspaceId(c)
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
-    return c.json(logAnalysisService.getFailurePatterns(workspaceId, days))
+    return c.json(await logAnalysisService.getFailurePatterns(workspaceId, days))
   })
 
-  analyticsRoutes.get("/anomalies", (c) => {
+  analyticsRoutes.get("/anomalies", async (c) => {
     const workspaceId = getWorkspaceId(c)
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
-    return c.json(logAnalysisService.getAnomalies(workspaceId, days))
+    return c.json(await logAnalysisService.getAnomalies(workspaceId, days))
   })
 
-  analyticsRoutes.get("/cost-analysis", (c) => {
+  analyticsRoutes.get("/cost-analysis", async (c) => {
     const workspaceId = getWorkspaceId(c)
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
     const days = parseDays(c)
-    return c.json(logAnalysisService.getCostAnalysis(workspaceId, days))
+    return c.json(await logAnalysisService.getCostAnalysis(workspaceId, days))
   })
 
   analyticsRoutes.get("/execution/:executionId/logs", async (c) => {
@@ -416,12 +416,12 @@ export function createAnalyticsRoutes(
 ): Hono {
   const router = new Hono()
 
-  router.get('/executions/:id/traces', (c: Context) => {
+  router.get('/executions/:id/traces', async (c: Context) => {
     const executionId = c.req.param('id') ?? ''
     const nodeId = c.req.query('nodeId')
 
     const events = execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
-    const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
+    const calls = await tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
     // 词汇归一（merged → 可渲染形状）先于回合派生：tool_call 折叠后回合窗口取起始行。
     const turns = assignTurnsToEvents(normalizeTraceEvents(events), calls)
@@ -433,24 +433,24 @@ export function createAnalyticsRoutes(
     })
   })
 
-  router.get('/executions/:id/llm-calls', (c: Context) => {
+  router.get('/executions/:id/llm-calls', async (c: Context) => {
     const executionId = c.req.param('id')
     const nodeId = c.req.query('nodeId')
 
-    const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
+    const calls = await tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
     // C3: aggregates 的总量走 ledger（execution 级 = ntu 单源；nodeId 过滤 = 该节点
     // ntu 行经同一 JS 公式），旧 cacheHitRate V1（cache/total）与两字段 total 口径废除。
     const ledgerAgg = nodeId
-      ? (() => {
-          const rows = tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
+      ? await (async () => {
+          const rows = await tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
           return {
             usage: rows.reduce<TokenUsage>((a, r) => addTokenUsage(a, r), emptyTokenUsage()),
             totals: ledgerTotals(rows),
           }
         })()
-      : (() => {
-          const m = tokenUsageDAO.aggregateByExecution(executionId as string)
+      : await (async () => {
+          const m = await tokenUsageDAO.aggregateByExecution(executionId as string)
           return { usage: m.usage, totals: m.totals }
         })()
 
@@ -507,10 +507,10 @@ export function createAnalyticsRoutes(
    * 各记一行」那个执行侧 bug 生的，会话行是每 modelUsage 一行的真实拆分，去重会
    * 吞掉混合模型轮次的第二个模型。聚合算法在 shared llmUsageAggregates（单源）。
    */
-  router.get('/sessions/:id/llm-calls', (c: Context) => {
+  router.get('/sessions/:id/llm-calls', async (c: Context) => {
     const sessionId = c.req.param('id')
     if (!sessionId) return c.json({ error: 'session id required' }, 400)
-    const calls = tokenUsageDAO.findLlmCallsBySession(sessionId)
+    const calls = await tokenUsageDAO.findLlmCallsBySession(sessionId)
     return c.json({
       data: calls,
       aggregates: llmUsageAggregates(toLedgerRows(calls)),
@@ -527,7 +527,7 @@ export function createAnalyticsRoutes(
   })
 
   // --- Workspace Analytics ---
-  router.get('/workspaces/:id/analytics', (c: Context) => {
+  router.get('/workspaces/:id/analytics', async (c: Context) => {
     const workspaceId = c.req.param('id')
     const range = c.req.query('range') ?? '7d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : 7
@@ -536,7 +536,7 @@ export function createAnalyticsRoutes(
 
     const totalExecutions = execDAO.countByWorkspaceSince(workspaceId, cutoff)
     const successRate = execDAO.successRateByWorkspaceSince(workspaceId, cutoff)
-    const totalCost = tokenUsageDAO.costForWorkspaceSince(workspaceId, cutoff)
+    const totalCost = await tokenUsageDAO.costForWorkspaceSince(workspaceId, cutoff)
     const avgDurationMs = execDAO.avgDurationByWorkspaceSince(workspaceId, cutoff)
     const workflowStats = execDAO.workflowStatsByWorkspace(workspaceId, cutoff)
     const dailyTrend = execDAO.dailyTrendByWorkspace(workspaceId, cutoff)
@@ -555,7 +555,7 @@ export function createAnalyticsRoutes(
   })
 
   // --- Per-Workflow Analytics ---
-  router.get('/workspaces/:id/analytics/workflows/:ref', (c: Context) => {
+  router.get('/workspaces/:id/analytics/workflows/:ref', async (c: Context) => {
     const workspaceId = c.req.param('id')
     const ref = c.req.param('ref')
     const range = c.req.query('range') ?? '7d'
@@ -565,7 +565,7 @@ export function createAnalyticsRoutes(
 
     const executions = execDAO.findExecutionsByWorkflow(workspaceId, ref, cutoff, 100)
 
-    const llmCalls = tokenUsageDAO.findLlmCallsByWorkflowSince(workspaceId, ref, tsCutoff)
+    const llmCalls = await tokenUsageDAO.findLlmCallsByWorkflowSince(workspaceId, ref, tsCutoff)
 
     const completedCount = executions.filter((e) => e.status === 'completed').length
     const failedCount = executions.filter((e) => e.status === 'failed').length
@@ -579,7 +579,7 @@ export function createAnalyticsRoutes(
     const speedStability = Math.max(0, 1 - (Math.sqrt(durationVariance) / (avgDuration || 1)))
 
     // C3: 打分输入走 ledger —— cost 源 = ntu（costForExecutions），命中率 = 规范公式
-    const ledgerCost = tokenUsageDAO.costForExecutions(executions.map(e => e.id as string))
+    const ledgerCost = await tokenUsageDAO.costForExecutions(executions.map(e => e.id as string))
     const avgCostPerRun = ledgerCost.usd !== null && executions.length > 0
       ? ledgerCost.usd / executions.length : null
     // 启发式：单次执行 $10 为满分线（与 ledger 无关的产品参数，C2 移交项具名化）
@@ -635,17 +635,17 @@ export function createAnalyticsRoutes(
   })
 
   // --- Cost Analysis ---
-  router.get('/workspaces/:id/analytics/cost', (c: Context) => {
+  router.get('/workspaces/:id/analytics/cost', async (c: Context) => {
     const workspaceId = c.req.param('id')
     const range = c.req.query('range') ?? '30d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : range === '7d' ? 7 : 1
     const tsCutoff = Date.now() - days * 86400000
 
-    const costByModel = tokenUsageDAO.costByModelSince(workspaceId, tsCutoff)
+    const costByModel = await tokenUsageDAO.costByModelSince(workspaceId, tsCutoff)
 
-    const costByWorkflow = tokenUsageDAO.costByWorkflowSince(workspaceId, tsCutoff)
+    const costByWorkflow = await tokenUsageDAO.costByWorkflowSince(workspaceId, tsCutoff)
 
-    const dailyCost = tokenUsageDAO.dailyCostSince(workspaceId, tsCutoff)
+    const dailyCost = await tokenUsageDAO.dailyCostSince(workspaceId, tsCutoff)
 
     return c.json({
       data: {

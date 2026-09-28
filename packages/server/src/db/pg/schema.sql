@@ -191,8 +191,10 @@ CREATE TABLE IF NOT EXISTS node_token_usages (
   cache_read_tokens integer NOT NULL DEFAULT 0,
   cache_creation_tokens integer NOT NULL DEFAULT 0,
   source text DEFAULT 'node',
-  created_at timestamptz NOT NULL,
-  FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+  created_at timestamptz NOT NULL
+  -- [B4 混合期撤 FK] FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+  -- 行生产者 ExecutionDAO.recordNodeUsage 旧路径属 B5 事务簇（仍 SQLite）——
+  -- 跨引擎 FK 会拒掉一切指向未迁 executions 的新行。恢复见 README「B6 FK 恢复清单」。
 );
 
 -- 10. Agent Events
@@ -243,7 +245,10 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   session_id            text,
   instance_id           text,
   source_path           text,                       -- v46 (KD20/KD21)
-  FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+  -- [B4 混合期撤 FK] FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+  -- 同上：llm_calls 自 B4 起由 PG 侧直写（llm-call-ledger 唯一写入口），而
+  -- node_executions 行生产者（ExecutionDAO）仍 SQLite —— 保留 FK 会拒掉一切
+  -- 指向新执行的非空 node_execution_id。恢复见 README「B6 FK 恢复清单」。
 );
 
 -- 12. Optimization Suggestions
