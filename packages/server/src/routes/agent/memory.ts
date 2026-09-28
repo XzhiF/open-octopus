@@ -1,13 +1,13 @@
 import { Hono } from 'hono'
 import { getMemoryService, type MemoryLayer } from '../../services/agent/memory-service'
 import { getConfigManager } from '../../services/agent/config-manager'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath } from '../../services/agent/paths'
 
 const VALID_LAYERS: MemoryLayer[] = ['long-term', 'daily', 'session']
 
-export function createMemoryRoutes(): Hono {
-  const memory = new Hono()
+export function createMemoryRoutes(): AgentHono {
+  const memory = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /memory/search — Search across memory files

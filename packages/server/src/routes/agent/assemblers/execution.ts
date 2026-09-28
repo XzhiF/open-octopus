@@ -6,8 +6,9 @@ import type { Hono } from 'hono'
 import { createCloneRoutes } from '../clone-routes'
 import { createTaskRoutes } from '../task-routes'
 import type { AgentRouteDeps } from './deps'
+import type { AgentHono } from '../middleware'
 
-export function registerExecutionDomain(agent: Hono, deps: AgentRouteDeps): void {
+export function registerExecutionDomain(agent: AgentHono, deps: AgentRouteDeps): void {
   // 相对次序沿用拆分前：clone(12) → task(13)
   agent.route('/', createCloneRoutes({}))
   agent.route('/', createTaskRoutes(deps))

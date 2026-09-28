@@ -6,8 +6,9 @@ import type { Hono } from 'hono'
 import { createEvolutionRoutes } from '../evolution-routes'
 import { createMemoryRoutes } from '../memory'
 import type { AgentRouteDeps } from './deps'
+import type { AgentHono } from '../middleware'
 
-export function registerMemoryDomain(agent: Hono, deps: AgentRouteDeps): void {
+export function registerMemoryDomain(agent: AgentHono, deps: AgentRouteDeps): void {
   const { evolutionDAO } = deps
   // 相对次序沿用拆分前：evolution(3) → memory(9)
   agent.route('/', createEvolutionRoutes({ evolutionDAO }))

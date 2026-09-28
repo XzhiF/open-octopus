@@ -1,4 +1,5 @@
 import type { Context, Next } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { AgentErrorResponse } from '@octopus/shared'
 import { NotImplementedError } from '../../services/agent/agent-service'
 import { OrgDAO } from '../../db/dao'
@@ -12,7 +13,7 @@ export function setAgentAuthOrgDAO(dao: OrgDAO): void {
 
 // ── Error code → HTTP status mapping ─────────────────────────────
 
-const ERROR_STATUS_MAP: Record<string, number> = {
+const ERROR_STATUS_MAP: Record<string, ContentfulStatusCode> = {
   INVALID_PARAM: 400,
   INVALID_CRON: 400,
   INVALID_ORG_NAME: 400,
@@ -37,7 +38,12 @@ const ERROR_STATUS_MAP: Record<string, number> = {
   NOT_IMPLEMENTED: 501,
 }
 
-export function mapErrorToStatus(code: string): number {
+import { Hono } from 'hono'
+
+/** B5 票5B2: agent 子路由统一类型 —— Variables.org 由 index.ts 中间件注入。 */
+export type AgentHono = Hono<{ Variables: { org: string } }>
+
+export function mapErrorToStatus(code: string): ContentfulStatusCode {
   return ERROR_STATUS_MAP[code] ?? 500
 }
 

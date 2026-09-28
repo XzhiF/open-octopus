@@ -9,7 +9,7 @@ import type { Context } from 'hono'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getTracer } from '../../services/agent/tracer'
 import { getMetrics } from '../../services/agent/metrics'
@@ -35,9 +35,9 @@ export interface MiscRouteDeps {
   safetyDAO: SafetyDAO
 }
 
-export function createMiscRoutes(deps: MiscRouteDeps): Hono {
+export function createMiscRoutes(deps: MiscRouteDeps): AgentHono {
   const { safetyDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // ── Memory — rebuild-fts ─────────────────────────────────────────
   // 检索面「重建」历史入口（显式，绝不上启动路径）。P1 B3 段2 后 PG 侧 bm25
@@ -77,7 +77,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         )
       }
 
-      const body = await c.req.json<{ layer?: string; content?: string; date?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ layer?: string; content?: string; date?: string }>().catch(() => ({} as never))
 
       const memoryDir = getAgentMemoryDir()
       const dailyDir = path.join(memoryDir, 'daily')
@@ -154,7 +154,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
-      const body = await c.req.json<{ layer?: string; content?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ layer?: string; content?: string }>().catch(() => ({} as never))
       const layer = body.layer ?? 'long-term'
 
       // Validate layer to prevent path traversal
@@ -252,7 +252,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         event_id?: number | string
         decision?: 'allow' | 'block' | 'accept' | 'reject'
         reason?: string
-      }>().catch(() => ({}))
+      }>().catch(() => ({} as never))
 
       if (!body.event_id) {
         return c.json(createAgentError('INVALID_PARAM', 'event_id is required'), 400)
@@ -377,7 +377,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         return c.json({ ok: false, detail: '通知目标未配置' })
       }
 
-      const body = await c.req.json<{ message?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ message?: string }>().catch(() => ({} as never))
       const message = body.message ?? '通知测试成功'
 
       const notifyService = getNotificationService()

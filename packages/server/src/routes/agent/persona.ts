@@ -4,10 +4,10 @@ import {
   PersonaTooLongError,
   PersonaEmptyError,
 } from '../../services/agent/persona-service'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createPersonaRoutes(): Hono {
-  const persona = new Hono()
+export function createPersonaRoutes(): AgentHono {
+  const persona = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /config/persona — Read persona.md content

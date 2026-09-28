@@ -10,7 +10,7 @@ import { getProvider } from '@octopus/providers'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { createAgentError } from './middleware'
+import { createAgentError, type AgentHono } from './middleware'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
@@ -25,9 +25,9 @@ export interface ChatRouteDeps {
   scheduleConfigDAO: ScheduleConfigDAO
 }
 
-export function createChatRoutes(deps: ChatRouteDeps): Hono {
+export function createChatRoutes(deps: ChatRouteDeps): AgentHono {
   const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
   app.post('/sessions/:id/chat', async (c) => {
@@ -254,7 +254,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         await sessionDao.updateLastMessageAt(sessionId, assistantNow)
 
         await autoGenerateTitle(sessionId, org, message, sessionDao)
-        recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult)
+        recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult, org)
 
         await stream.writeSSE({
           event: 'done',
@@ -314,6 +314,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   function recordDebugLog(
     chatId: string, sessionId: string, timestamp: string, contentLength: number,
     source: string, orchestration: string | undefined, orchestrationFullResult: any,
+    org: string,
   ): void {
     try {
       // Check debug.enabled config — skip if disabled
@@ -364,7 +365,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       }
     } catch { /* non-fatal */ }
 
-    recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat_fallback', orchestrationResult, undefined)
+    recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat_fallback', orchestrationResult, undefined, org)
 
     await stream.writeSSE({
       event: 'done',

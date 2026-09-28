@@ -5,7 +5,7 @@
 //
 import { Hono } from 'hono'
 import crypto from 'crypto'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getSchedulerAdapter } from '../../services/agent/scheduler-adapter'
 import type { ScheduleConfigDAO } from '../../db/dao'
 
@@ -13,9 +13,9 @@ export interface ScheduleRouteDeps {
   scheduleConfigDAO: ScheduleConfigDAO
 }
 
-export function createScheduleRoutes(deps: ScheduleRouteDeps): Hono {
+export function createScheduleRoutes(deps: ScheduleRouteDeps): AgentHono {
   const { scheduleConfigDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // M3: Cron job registration
   app.post('/schedules/register', async (c) => {

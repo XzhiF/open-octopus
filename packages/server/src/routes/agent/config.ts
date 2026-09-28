@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { getConfigManager } from '../../services/agent/config-manager'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createConfigRoutes(): Hono {
-  const config = new Hono()
+export function createConfigRoutes(): AgentHono {
+  const config = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /config — Read agent config

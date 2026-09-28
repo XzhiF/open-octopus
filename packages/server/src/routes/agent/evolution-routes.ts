@@ -6,7 +6,7 @@
 import { Hono } from 'hono'
 import fs from 'fs'
 import path from 'path'
-import { createAgentError } from './middleware'
+import { createAgentError, type AgentHono } from './middleware'
 import { getEvolutionService } from '../../services/agent/evolution-service'
 import { getConfigManager } from '../../services/agent/config-manager'
 import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
@@ -16,9 +16,9 @@ export interface EvolutionRouteDeps {
   evolutionDAO: EvolutionDAO
 }
 
-export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
+export function createEvolutionRoutes(deps: EvolutionRouteDeps): AgentHono {
   const { evolutionDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // F5: User feedback-driven evolution
   app.post('/evolution/feedback', async (c) => {
@@ -38,7 +38,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
 
       const body = await c.req.json<{
         content: string; skill_name?: string; session_id?: string; type?: string
-      }>().catch(() => ({}))
+      }>().catch(() => ({} as never))
       if (!body.content) return c.json(createAgentError('INVALID_PARAM', 'content is required'), 400)
 
       const evolutionService = getEvolutionService()
@@ -302,7 +302,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         )
       }
 
-      const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ session_id?: string }>().catch(() => ({} as never))
       const evolutionService = getEvolutionService()
 
       const result = await evolutionService.processUnprocessedMarks(org, body.session_id)

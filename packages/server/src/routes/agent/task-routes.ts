@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execFileSync } from 'child_process'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { WorkspaceDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { getWorkspaceLifecycleService } from '../../services/agent/workspace-lifecycle'
@@ -17,9 +17,9 @@ export interface TaskRouteDeps {
   schedulerService: SchedulerService
 }
 
-export function createTaskRoutes(deps: TaskRouteDeps): Hono {
+export function createTaskRoutes(deps: TaskRouteDeps): AgentHono {
   const { workspaceDAO, safetyDAO, scheduleConfigDAO, executionDAO, schedulerService } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // Tasks — includes workflow executions + scheduler jobs
   //

@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import { getSessionService } from '../../services/agent/session-service'
 import { AgentSessionDAO } from '../../db/dao'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
-  const sessions = new Hono()
+export function createSessionRoutes(sessionDAO: AgentSessionDAO): AgentHono {
+  const sessions = new Hono<{ Variables: { org: string } }>()
 
   /**
    * POST /sessions — Create a new session

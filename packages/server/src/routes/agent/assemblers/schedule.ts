@@ -5,7 +5,8 @@
 import type { Hono } from 'hono'
 import { createScheduleRoutes } from '../schedule-routes'
 import type { AgentRouteDeps } from './deps'
+import type { AgentHono } from '../middleware'
 
-export function registerScheduleDomain(agent: Hono, deps: AgentRouteDeps): void {
+export function registerScheduleDomain(agent: AgentHono, deps: AgentRouteDeps): void {
   agent.route('/', createScheduleRoutes({ scheduleConfigDAO: deps.scheduleConfigDAO }))
 }

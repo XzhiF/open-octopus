@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { SafetyDAO } from '../../db/dao'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createSafetyRoutes(safetyDAO: SafetyDAO): Hono {
-  const safety = new Hono()
+export function createSafetyRoutes(safetyDAO: SafetyDAO): AgentHono {
+  const safety = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /safety/events — List safety events

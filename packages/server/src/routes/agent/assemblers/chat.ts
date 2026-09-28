@@ -10,8 +10,9 @@ import { createSessionRoutes } from '../sessions'
 import { createChatRoutes } from '../chat-routes'
 import { createMainAgentRoute } from '../main-agent-route'
 import type { AgentRouteDeps } from './deps'
+import type { AgentHono } from '../middleware'
 
-export function registerChatDomain(agent: Hono, deps: AgentRouteDeps): void {
+export function registerChatDomain(agent: AgentHono, deps: AgentRouteDeps): void {
   const { sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao } = deps
   // 相对次序沿用拆分前：skill(2) → persona(5) → config(6) → sessions(8) → chat(11) → main-agent(14)
   agent.route('/', createSkillRoutes())

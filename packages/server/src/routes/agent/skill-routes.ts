@@ -8,7 +8,7 @@ import fs from 'fs'
 import os from 'node:os'
 import path from 'path'
 import { execSync } from 'node:child_process'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getSubsystemAdapter } from '../../services/agent/subsystem-adapter'
 
@@ -25,8 +25,8 @@ export interface SkillRouteDeps {
   // No DAO deps needed — skill routes are filesystem-based
 }
 
-export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
-  const app = new Hono()
+export function createSkillRoutes(_deps: SkillRouteDeps = {}): AgentHono {
+  const app = new Hono<{ Variables: { org: string } }>()
 
 
   // ── Skills list ─────────────────────────────────────────────────
@@ -193,7 +193,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
 
-      const body = await c.req.json<{ content?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ content?: string }>().catch(() => ({} as never))
       if (typeof body.content !== 'string') {
         return c.json(createAgentError('INVALID_PARAM', 'content is required'), 400)
       }

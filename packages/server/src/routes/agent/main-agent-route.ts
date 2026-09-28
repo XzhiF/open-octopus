@@ -26,6 +26,7 @@ import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import fs from 'fs'
 import path from 'path'
+import type { AgentHono } from './middleware'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -157,9 +158,9 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
 
 // ── Route factory ──────────────────────────────────────────────────
 
-export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
+export function createMainAgentRoute(deps: MainAgentRouteDeps): AgentHono {
   const { sessionDAO, tokenUsageDao } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   app.post('/chat', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'

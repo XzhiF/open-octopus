@@ -11,7 +11,7 @@
 //     memory 域只有 GET /memory/:layer 与它们共前缀 —— Hono 静态段优先，且
 //     /memory/search vs /memory/:layer 这对真正敏感的组合同在 memory.ts 内部，次序未动）。
 import { Hono } from 'hono'
-import { agentErrorMiddleware, agentAuthMiddleware } from './middleware'
+import { agentErrorMiddleware, agentAuthMiddleware, type AgentHono } from './middleware'
 import type { AgentRouteDeps } from './assemblers/deps'
 import { registerScheduleDomain } from './assemblers/schedule'
 import { registerMemoryDomain } from './assemblers/memory'
@@ -24,8 +24,8 @@ import os from 'os'
 
 export type { AgentRouteDeps }
 
-export function createAgentRoutes(deps: AgentRouteDeps): Hono {
-  const agent = new Hono()
+export function createAgentRoutes(deps: AgentRouteDeps): AgentHono {
+  const agent = new Hono<{ Variables: { org: string } }>()
 
   // ── Middleware ───────────────────────────────────────────────────────
   agent.use('*', agentErrorMiddleware)

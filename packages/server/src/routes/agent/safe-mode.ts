@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import { getConfigManager } from '../../services/agent/config-manager'
 import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: SafetyDAO): Hono {
-  const safeMode = new Hono()
+export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: SafetyDAO): AgentHono {
+  const safeMode = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /safe-mode — Check safe mode status
