@@ -679,7 +679,7 @@ export function createAnalyticsRoutes(
     // B4: TokenUsageDAO 读已 async —— 生成先落账再读，语义不变。
     await suggestionEngine.generate(ctx)
 
-    const suggestions = suggestionEngine.getSuggestions(workspaceDAO, workspaceId, status ?? undefined)
+    const suggestions = await suggestionEngine.getSuggestions(workspaceDAO, workspaceId, status ?? undefined)
 
     return c.json({ data: suggestions })
   })
@@ -689,8 +689,8 @@ export function createAnalyticsRoutes(
     const workspaceId = c.req.param('id') ?? ''
     const suggestionId = c.req.param('sid')!
 
-    return c.req.json().then((changes: Record<string, unknown>) => {
-      const success = suggestionEngine.applySuggestion(workspaceDAO, suggestionId, changes)
+    return c.req.json().then(async (changes: Record<string, unknown>) => {
+      const success = await suggestionEngine.applySuggestion(workspaceDAO, suggestionId, changes)
       if (!success) return c.json({ success: false, error: 'Suggestion not found' }, 404)
       return c.json({ success: true })
     })

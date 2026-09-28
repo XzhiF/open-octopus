@@ -142,10 +142,10 @@ export class SuggestionEngine {
     return all
   }
 
-  persistSuggestion(dao: WorkspaceDAO, workspaceId: string, workflowRef: string, suggestion: Suggestion): string {
+  async persistSuggestion(dao: WorkspaceDAO, workspaceId: string, workflowRef: string, suggestion: Suggestion): Promise<string> {
     const id = randomUUID()
     const now = new Date().toISOString()
-    dao.insertSuggestion({
+    await dao.insertSuggestion({
       id, workspace_id: workspaceId, workflow_ref: workflowRef,
       rule_name: suggestion.ruleName, node_id: suggestion.nodeId ?? null,
       severity: suggestion.severity, title: suggestion.title,
@@ -157,10 +157,10 @@ export class SuggestionEngine {
     return id
   }
 
-  applySuggestion(dao: WorkspaceDAO, suggestionId: string, changes: Record<string, unknown>): boolean {
-    const row = dao.findSuggestionById(suggestionId)
+  async applySuggestion(dao: WorkspaceDAO, suggestionId: string, changes: Record<string, unknown>): Promise<boolean> {
+    const row = await dao.findSuggestionById(suggestionId)
     if (!row) return false
-    dao.applySuggestion(suggestionId, JSON.stringify(changes))
+    await dao.applySuggestion(suggestionId, JSON.stringify(changes))
     return true
   }
 

@@ -182,7 +182,7 @@ export class AssistWorkflowService {
     registry.service.registerExternalCallbacks(
       {
         onComplete: (async (_args?: unknown) => {
-          this.reapWorkspace(workspaceId)
+          await this.reapWorkspace(workspaceId)
           this.emitRunUpdate(taskId, execId, "complete")
           try {
             await this.writeAnalysisArtifact(taskId, execId, capturedTask, capturedInput, capturedMode)
@@ -194,19 +194,19 @@ export class AssistWorkflowService {
             )
           }
         }) as never,
-        onError: ((_args?: unknown) => {
-          this.reapWorkspace(workspaceId)
+        onError: (async (_args?: unknown) => {
+          await this.reapWorkspace(workspaceId)
           this.emitRunUpdate(taskId, execId, "error")
         }) as never,
       },
       execution.id,
     )
 
-    registry.service.start(execution.id, inputValues as Record<string, string>).catch((err: unknown) => {
+    registry.service.start(execution.id, inputValues as Record<string, string>).catch(async (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       // eslint-disable-next-line no-console
       console.error(`[assist-workflow] start failed for run ${execution.id}:`, msg)
-      this.reapWorkspace(workspaceId)
+      await this.reapWorkspace(workspaceId)
       this.emitRunUpdate(taskId, execId, "error")
     })
 
