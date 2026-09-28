@@ -39,6 +39,7 @@ import { PipelineConfigLoader } from "../pipeline-config"
 import { HarnessController } from "../harness/harness-controller"
 import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
+import { ScheduleConfigDAO } from "../../db/dao/schedule-config-dao"
 import { lazyDAO, pgSql } from "../../db/dao/registry"
 import { TaskDispatchService } from "../scheduler/task-dispatch-service"
 import { WorkspaceService } from "../workspace"
@@ -142,12 +143,10 @@ export class ExecutionLifecycle {
 
     // Initialize HarnessController for agentic supervision
     try {
-      // Use dao.getDb() to get the real better-sqlite3 Database instance.
-      // The constructor `db` param may reference a different object due to
-      // tsup bundling variable renaming (db → db3 collision).
-      const realDb = this.dao.getDb()
       // P1 B1: HarnessDAO 已迁 PG（harness_events/harness_config）——句柄走池；
       // P1 B4: TokenUsageDAO 亦迁 PG（经注册池路径）。池未注册时 pgSql() 抛错 → 下方 catch 降级（非致命）。
+      // P1 B5 票5R：原 `const realDb = this.dao.getDb()` 取 better-sqlite3 真句柄的写法
+      // 随 ExecutionDAO 迁 PG 消失；realDb 在 B1/B4 后已无消费者，整行删除。
       const harnessDAO = new HarnessDAO(pgSql())
       const harnessConfigService = new HarnessConfigService(harnessDAO)
       this.harnessController = new HarnessController({
@@ -402,7 +401,7 @@ export class ExecutionLifecycle {
         // .claude/skills|agents|commands|rules. Lookup is best-effort: a
         // missing schedule (manual execution) or malformed config falls back
         // to workflow.requires alone (unchanged behavior).
-        configRequires: this.resolveScheduleConfigRequires(id),
+        configRequires: await this.resolveScheduleConfigRequires(id),
       })
 
       if (initResult.status === "failed") {
@@ -1654,21 +1653,22 @@ export class ExecutionLifecycle {
    * EngineInitPhase falls back to workflow.requires alone (unchanged behavior).
    * Non-fatal: provisioning is not blocked by a lookup failure.
    */
-  private resolveScheduleConfigRequires(
+  private async resolveScheduleConfigRequires(
     executionId: string,
-  ): { skills?: string[]; agent_files?: string[]; commands?: string[]; rules?: string[] } | undefined {
+  ): Promise<{ skills?: string[]; agent_files?: string[]; commands?: string[]; rules?: string[] } | undefined> {
     try {
-      const row = this.dao.getDb()
-        .prepare(`
-          SELECT s.config AS config
-          FROM executions e
-          JOIN workspaces w ON w.id = e.workspace_id
-          LEFT JOIN schedules s ON s.id = w.source_schedule_id AND s.deleted_at IS NULL
-          WHERE e.id = ?
-        `)
-        .get(executionId) as { config: string | null } | undefined
-      if (!row?.config) return undefined
-      const parsed = JSON.parse(row.config) as {
+      // [P1 B5 票5R 混簇改写·登记] 旧单条 JOIN executions→workspaces→schedules 已跨引擎：
+      // executions/schedules 在 PG（票5/票1），workspaces 行生产者仍 SQLite（票6）
+      // → 拆三段读（T2 混簇姿势：每段走各自行生产者的句柄；best-effort 语义不变）。
+      const exec = await this.dao.findById(executionId)
+      if (!exec) return undefined
+      const w = this.db
+        .prepare("SELECT source_schedule_id FROM workspaces WHERE id = ?")
+        .get(exec.workspace_id) as { source_schedule_id: string | null } | undefined
+      if (!w?.source_schedule_id) return undefined
+      const sched = await new ScheduleConfigDAO(pgSql()).findById(w.source_schedule_id) // findById 已滤 deleted_at（同旧 JOIN 谓词）
+      if (!sched?.config) return undefined
+      const parsed = JSON.parse(sched.config) as {
         requires?: {
           skills?: string[]
           agent_files?: string[]
