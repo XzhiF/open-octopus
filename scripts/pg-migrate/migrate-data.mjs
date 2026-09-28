@@ -102,6 +102,12 @@ async function loadPgMeta(sql) {
       AND table_name <> 'octopus_schema_version'
       AND table_name NOT LIKE 'pg\\_%' ESCAPE '\\'
       AND table_name NOT LIKE '%\\_fts%' ESCAPE '\\'
+      -- P1 B4 票2B-2: information_schema.columns 同样列出视图列（如 llm_calls_costed
+      -- 派生视图）—— 视图不可 TRUNCATE/COPY，枚举只认 BASE TABLE。
+      AND table_name IN (
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      )
     ORDER BY table_name, ordinal_position`
   const fkRows = await sql`
     SELECT src.relname AS child, tgt.relname AS parent,

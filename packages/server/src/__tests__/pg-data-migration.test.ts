@@ -162,7 +162,9 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
     await expect(counts('node_executions')).resolves.toBe(1)
     // agent_events 在 PG schema 无 FK→node_executions（B0 原样）→ 级联不覆盖：3 行全进（含 (n2,0)）
     await expect(counts('agent_events')).resolves.toBe(3)
-    await expect(counts('llm_calls')).resolves.toBe(1)
+    // [B4 混合期撤 FK] llm_calls→node_executions FK 已撤（55f9d41b 生产侧）→
+    // l2/l3 不再是孤儿（同 agent_events 待遇），仅 l4 int 越域被隔离：3 行进。
+    await expect(counts('llm_calls')).resolves.toBe(3)
     await expect(counts('orgs')).resolves.toBe(3)
 
     // 带原 id + setval：max(id)=42 → 下一条自动生成 43
@@ -190,9 +192,10 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
     expect(Number(ev[0].timestamp)).toBe(1759000000123)
     expect(String(ev[0].content)).toBe('line1\nline2\ttabbed back\\slash 🎯')
 
-    // 隔离清单 JSON：8 行脏（e2 json / e3,e4,n2,n3,l2,l3 各一 / l4 int 越界）
+    // 隔离清单 JSON：6 行脏（e2 json / e3、e4、n2、n3 各一 / l4 int 越界）。
+    // [B4 混合期撤 FK] l2/l3 的 fk-orphan 检测随 llm_calls→node_executions FK 撤除而消失。
     const jq = JSON.parse(fs.readFileSync(path.join(reportDir, 'run1.quarantine.json'), 'utf8'))
-    expect(jq.problems.length).toBe(8)
+    expect(jq.problems.length).toBe(6)
     expect(jq.problems.some((p: { kind: string }) => p.kind === 'json-col-unparseable')).toBe(true)
     expect(jq.problems.some((p: { kind: string; table: string; pk: string }) =>
       p.kind === 'fk-orphan' && p.table === 'node_executions' && p.pk === 'n2')).toBe(true) // 级联孤儿
@@ -208,7 +211,9 @@ describePg('P1-B1 migrate-data.mjs — 全链路：灌 → 对账 → 重灌幂�
     await expect(counts('node_executions')).resolves.toBe(1)
     // agent_events 在 PG schema 无 FK→node_executions（B0 原样）→ 级联不覆盖：3 行全进（含 (n2,0)）
     await expect(counts('agent_events')).resolves.toBe(3)
-    await expect(counts('llm_calls')).resolves.toBe(1)
+    // [B4 混合期撤 FK] llm_calls→node_executions FK 已撤（55f9d41b 生产侧）→
+    // l2/l3 不再是孤儿（同 agent_events 待遇），仅 l4 int 越域被隔离：3 行进。
+    await expect(counts('llm_calls')).resolves.toBe(3)
     await expect(counts('orgs')).resolves.toBe(3) // 上一用例插入的 auto 行被 TRUNCATE 清掉 → 回到 3
   }, 120_000)
 

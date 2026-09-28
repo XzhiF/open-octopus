@@ -1,7 +1,8 @@
 // packages/server/src/__tests__/execution-lifecycle.test.ts
 // Characterization tests for ExecutionLifecycle — lock behavior before refactoring.
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -86,6 +87,21 @@ let workspaceDbId: string
 let dbPath: string
 
 const ORG = "test-org"
+
+// P1 B4 票2B-2：账本写侧（onNodeEnd → TokenUsageDAO）已迁 PG —— 注册文件级测试池；
+// 无 env 模式不注册，lazyDAO 路径按生产代码 catch 降级，仅 PG 门住的用例会用到它。
+let pg: PgFixture | null = null
+
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pg) return
+  await pg.close()
+  pg = null
+})
 
 beforeEach(() => {
   workspacePath = path.join(os.tmpdir(), `test-lifecycle-${Date.now()}`)
@@ -419,9 +435,15 @@ describe("ExecutionLifecycle.getTokenUsagesForExecution", () => {
       node_id: "step2", node_type: "agent", status: "completed",
     })
     const now = new Date().toISOString()
-    const tokenDao = new TokenUsageDAO(dao.getDb())
-    tokenDao.recordNodeUsage({ id: `${exec.id}-step1-token-claude`, nodeExecutionId: `${exec.id}-step1`, model: "claude", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, cacheCreationTokens: 10 }, costUsd: 0.01, source: 'node', createdAt: now })
-    tokenDao.recordNodeUsage({ id: `${exec.id}-step2-token-claude`, nodeExecutionId: `${exec.id}-step2`, model: "claude", usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 30, cacheCreationTokens: 15 }, costUsd: 0.02, source: 'node', createdAt: now })
+    // P1 B4 票2B-2：TokenUsageDAO 写侧已迁 PG（await），而本用例钉的是 lifecycle
+    // 读模型（聚合投影），读侧 ExecutionDAO 仍 SQLite（B5 域）—— 造数直落读侧表，
+    // 避免跨引擎空 join；recordNodeUsage 写链由账本簇测试单独钉。
+    const seed = dao.getDb().prepare(
+      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_creation_tokens, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    )
+    seed.run(`${exec.id}-step1-token-claude`, `${exec.id}-step1`, "claude", 100, 50, 20, 10, 'node', now)
+    seed.run(`${exec.id}-step2-token-claude`, `${exec.id}-step2`, "claude", 200, 80, 30, 15, 'node', now)
 
     const usages = lifecycle.getTokenUsagesForExecution(exec.id)
     expect(usages.length).toBe(1)
@@ -443,7 +465,10 @@ describe("ExecutionLifecycle.getTokenUsagesPerStep", () => {
       node_id: "step1", node_type: "agent", status: "completed",
     })
     const now = new Date().toISOString()
-    new TokenUsageDAO(dao.getDb()).recordNodeUsage({ id: `${exec.id}-step1-token-claude`, nodeExecutionId: `${exec.id}-step1`, model: "claude", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, cacheCreationTokens: 10 }, costUsd: 0.01, source: 'node', createdAt: now })
+    dao.getDb().prepare(
+      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_creation_tokens, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(`${exec.id}-step1-token-claude`, `${exec.id}-step1`, "claude", 100, 50, 20, 10, 'node', now)
 
     const usages = lifecycle.getTokenUsagesPerStep(exec.id)
     expect(usages.length).toBe(1)
