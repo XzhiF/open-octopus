@@ -109,9 +109,11 @@ describe('SubsystemAdapter — Dual Store Cleanup', () => {
 
   it('does not import getExperiencesDir', async () => {
     // Verify the module source does not reference getExperiencesDir
+    // P1-B5 票4R: 读源码路径改为模块相对（process.cwd() 在 vitest 根目录跑时指向
+    // repo root 而非 packages/server,导致 ENOENT 红;import.meta.url 恒定）。
     const adapterSource = await import('fs').then(fs =>
       fs.promises.readFile(
-        path.join(process.cwd(), 'src/services/agent/subsystem-adapter.ts'),
+        new URL('../subsystem-adapter.ts', import.meta.url),
         'utf-8',
       ),
     )

@@ -189,7 +189,9 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
   })
 
   beforeEach(async () => {
-    await pg!.truncate("tasks", "task_phase_acceptances")
+    // PG 侧每用例清 tasks + 混窗镜像表（AC4 造数写 schedules/schedule_workspaces/workspaces，
+    // 固定 id 's-job' 跨用例会撞，必须与 :memory: SQLite 同生命周期清零）。
+    await pg!.truncate("tasks", "task_phase_acceptances", "schedule_workspaces", "schedules", "workspaces", "executions")
     db = newDb()
     mockHooks.db = db
     // 不重置 seq/execSeq：id 每用例全局唯一，杜绝「上一用例残留的异步写」
@@ -211,8 +213,9 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
     // 票03 removed its task branches, not its workspace lifecycle).
     executor = new WorkflowExecutor(
       sse,
-      new ScheduleConfigDAO(db),
-      new ScheduleRunDAO(db),
+      // P1 B5 票4R：config/run DAO 已 BasePgDAO 化 —— 句柄只吃 PG Sql（票1）。
+      new ScheduleConfigDAO(pg!.sql),
+      new ScheduleRunDAO(pg!.sql),
       new ExecutionDAO(db),
       workspaceService,
     )
@@ -466,18 +469,30 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
 
   // ── AC4 — a task workspace is out of retention's reach ────────────────
   describe("AC4: retention 够不到任务 ws（K12 由结构保证）", () => {
-    function seedSchedulerWs(id: string, name: string): string {
+    // 混窗（B5 票4R）：enforceRetention 已读 PG（ScheduleConfigDAO 票1 迁移），
+    // 候选链 schedules/schedule_workspaces/workspaces 必须双引擎镜像；
+    // 删除动作走 WorkspaceService（仍 SQLite，票5）⇒ wsExists 读 SQLite 不变。
+    async function seedSchedulerWs(id: string, name: string): Promise<string> {
       const p = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", name)
       fs.mkdirSync(p, { recursive: true })
       db.prepare(
         "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
       ).run(id, name, ORG, p)
+      await pg!.sql.unsafe(
+        "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now()) ON CONFLICT (id) DO NOTHING",
+        [id, name, ORG, p],
+      )
       return p
     }
-    function seedCompletedAssoc(scheduleId: string, wsId: string): void {
+    async function seedCompletedAssoc(scheduleId: string, wsId: string): Promise<void> {
+      const assocId = `sws-${wsId}-${seq++}`
       db.prepare(
         "INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at) VALUES (?, ?, ?, 'completed', 'bs', datetime('now'))",
-      ).run(`sws-${wsId}-${seq++}`, scheduleId, wsId)
+      ).run(assocId, scheduleId, wsId)
+      await pg!.sql.unsafe(
+        "INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at) VALUES ($1, $2, $3, 'completed', 'bs', now()) ON CONFLICT (id) DO NOTHING",
+        [assocId, scheduleId, wsId],
+      )
     }
     function wsExists(id: string): boolean {
       return !!db.prepare("SELECT id FROM workspaces WHERE id = ?").get(id)
@@ -487,16 +502,23 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
       const taskId = await insertV4Task()
       // NOTE: name doubles as the dir name here (test seeds the fs directly) —
       // no `:` (illegal on Windows); the retention logic keys off the DB row.
-      seedSchedulerWs("ws-free-a", "taskpool-free-a")
-      seedSchedulerWs("ws-free-b", "taskpool-free-b")
+      await seedSchedulerWs("ws-free-a", "taskpool-free-a")
+      await seedSchedulerWs("ws-free-b", "taskpool-free-b")
       const now = new Date().toISOString()
       db.prepare(
         `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type,
            config, created_at, updated_at, status)
          VALUES ('s-job', ?, 'S-job', '* * * * *', 'UTC', 1, 'workflow', '{}', ?, ?, 'queued')`,
       ).run(ORG, now, now)
-      seedCompletedAssoc("s-job", "ws-free-a")
-      seedCompletedAssoc("s-job", "ws-free-b")
+      await pg!.sql.unsafe(
+        `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type,
+           config, created_at, updated_at, status)
+         VALUES ('s-job', $1, 'S-job', '* * * * *', 'UTC', true, 'workflow', '{}'::jsonb, now(), now(), 'queued')
+         ON CONFLICT (id) DO NOTHING`,
+        [ORG],
+      )
+      await seedCompletedAssoc("s-job", "ws-free-a")
+      await seedCompletedAssoc("s-job", "ws-free-b")
 
       // 任务 ws 走真实首建路径 ⇒ 它带 task_id，且**不在** schedule_workspaces 里。
       await service.triggerTask(taskId)
@@ -508,10 +530,13 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
       ).toEqual({ c: 0 })
 
       // maxRetain=0 → every completed association is an eviction candidate.
-      ;(executor as unknown as { enforceRetention(id: string, max: number): void }).enforceRetention("s-job", 0)
-
-      expect(wsExists("ws-free-a")).toBe(false) // job ws → reclaimed
-      expect(wsExists("ws-free-b")).toBe(false)
+      // enforceRetention 已 async（PG 往返）；delete 是生产 fire-and-forget（票5 收紧），
+      // 用 waitFor 等「回收必然到达的事实」落地。
+      await (executor as unknown as { enforceRetention(id: string, max: number): Promise<void> }).enforceRetention("s-job", 0)
+      await vi.waitFor(() => {
+        expect(wsExists("ws-free-a")).toBe(false) // job ws → reclaimed
+        expect(wsExists("ws-free-b")).toBe(false)
+      }, { timeout: 5_000 })
       expect(wsExists(taskWsId)).toBe(true) // 任务 ws：结构上不在候选集里（K12）
     })
   })
