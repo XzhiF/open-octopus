@@ -71,7 +71,7 @@ export interface AllDAOs {
 export function createAllDAOs(db: DatabaseDb): AllDAOs {
   return {
     workspace: new WorkspaceDAO(db),
-    execution: new ExecutionDAO(db),
+    execution: lazyDAO(() => new ExecutionDAO(pgSql())), // B5 票5: PG
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
     scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
     scheduleRun: lazyDAO(() => new ScheduleRunDAO(pgSql())), // B5: PG
@@ -112,7 +112,7 @@ export function lazyDAO<T>(make: (db: DbHandle) => T): T {
 export function createLazyDAOs(): AllDAOs {
   return {
     workspace: lazyDAO((db) => new WorkspaceDAO(db as DatabaseDb)),
-    execution: lazyDAO((db) => new ExecutionDAO(db as DatabaseDb)),
+    execution: lazyDAO(() => new ExecutionDAO(pgSql())), // B5 票5: PG
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
     scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
     scheduleRun: lazyDAO(() => new ScheduleRunDAO(pgSql())), // B5: PG
