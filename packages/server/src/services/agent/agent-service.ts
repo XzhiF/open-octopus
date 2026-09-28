@@ -453,13 +453,13 @@ export class AgentService {
 
   async getTasks(org: string, history?: boolean): Promise<{ active: TaskInfo[]; scheduled: ScheduledJob[] }> {
     if (!this.schedulerService) return { active: [], scheduled: [] }
-    const result = this.schedulerService.listJobs({ org })
+    const result = await this.schedulerService.listJobs({ org })
     return { active: [], scheduled: result.items as unknown as ScheduledJob[] }
   }
 
   async cancelTask(org: string, id: string): Promise<void> {
     if (!this.schedulerService) throw new Error('Scheduler service not available')
-    this.schedulerService.toggleJob(id)
+    await this.schedulerService.toggleJob(id)
   }
 
   async getReports(org: string, query?: { task?: string; date?: string; q?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<ReportInfo>> {

@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
 import { ExecutionDAO, ScheduleRunDAO } from "../db/dao"
+import { pgSql } from "../db/dao/registry"
 import { DataRetentionService } from "./data-retention"
 
 export interface ErrorRecord {
@@ -51,7 +52,7 @@ export const globalErrorTracker = new ErrorTracker()
 
 export function setupDataRetention(db: Database.Database): () => void {
   const execDAO = new ExecutionDAO(db)
-  const runDAO = new ScheduleRunDAO(db)
+  const runDAO = new ScheduleRunDAO(pgSql()) // B5 票2：ScheduleRunDAO 已 PG 化，句柄源换池（原 deps SQLite 直构是票1 漏网的运行时断点）
   const service = new DataRetentionService(execDAO, runDAO)
   return service.start()
 }

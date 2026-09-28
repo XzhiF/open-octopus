@@ -187,7 +187,7 @@ export class TaskLifecycleService {
     taskHomeService?: TaskHomeService
   }) {
     this.execDAO = new ExecutionDAO(deps.db)
-    this.runDAO = new ScheduleRunDAO(deps.db)
+    this.runDAO = new ScheduleRunDAO(pgSql())
     this.builtIn = deps.builtInWorkflows ?? null
     this.home = deps.taskHomeService ?? new TaskHomeService()
   }
@@ -247,7 +247,7 @@ export class TaskLifecycleService {
   async launchQueued(limit = MAX_PARALLEL_WORKSPACES * 2): Promise<{ launched: number; capped: boolean }> {
     let launched = 0
     for (const row of this.execDAO.listClaimableTaskLaunches(limit)) {
-      if (this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
+      if (await this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
         return { launched, capped: true }
       }
       // Guarded flip: two overlapping rounds can both see the same queued row, and only

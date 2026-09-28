@@ -34,12 +34,12 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
-      const result = schedulerService.listJobs({ org })
+      const result = await schedulerService.listJobs({ org })
 
       // Also check schedules table for scheduled tasks (TC-041)
       let scheduled: Array<{ id: string; name: string; cron_expression: string; enabled: number }> = []
       try {
-        scheduled = scheduleConfigDAO.listSchedulesByOrg(org)
+        scheduled = await scheduleConfigDAO.listSchedulesByOrg(org)
       } catch { /* schedules table may not exist */ }
 
       // Query workflow executions for task status (TC-009, TC-014)
@@ -84,7 +84,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       const id = c.req.param('id')
 
       // Use toggleJob to disable — pauseJob was never a SchedulerService method
-      const job = schedulerService.toggleJob(id)
+      const job = await schedulerService.toggleJob(id)
       return c.json({ ok: true, job })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))

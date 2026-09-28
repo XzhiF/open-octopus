@@ -41,7 +41,7 @@ export class AgentExecutor implements Executor {
     const config = this.parseConfig(job)
 
     // 1. Update execution record to 'running'
-    this.runDAO.markExecutionRunning(executionId)
+    await this.runDAO.markExecutionRunning(executionId)
 
     // 2. Execute with retry logic. max_attempts === 0 means "no retry, one shot".
     const retryPolicy: AgentRetryPolicy = config.retry_policy ?? {
@@ -76,7 +76,7 @@ export class AgentExecutor implements Executor {
     const errorMessage = lastError?.message ?? 'Agent execution failed'
     const isTimeout = lastError instanceof AgentTimeoutError
 
-    this.runDAO.setExecutionResult(
+    await this.runDAO.setExecutionResult(
       executionId,
       isTimeout ? 'timeout' : 'failed',
       errorMessage,
@@ -167,7 +167,7 @@ export class AgentExecutor implements Executor {
     const finalTokens = tokenUsage ?? emptyTokenUsage()
     const durationMs = Date.now() - startTime
 
-    this.runDAO.setAgentResult(
+    await this.runDAO.setAgentResult(
       executionId,
       agentOutput.length > MAX_OUTPUT_LENGTH
         ? agentOutput.substring(0, MAX_OUTPUT_LENGTH)

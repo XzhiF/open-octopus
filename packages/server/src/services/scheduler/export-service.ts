@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import { ScheduleConfigDAO } from '../../db/dao'
 
 interface ExportRow {
@@ -19,9 +18,9 @@ export class ExportService {
     this.configDAO = configDAO
   }
 
-  exportCSV(range: string, scope: 'all' | 'failed', from?: string, to?: string): string {
+  async exportCSV(range: string, scope: 'all' | 'failed', from?: string, to?: string): Promise<string> {
     const { start, end } = this.resolveTimeRange(range, from, to)
-    const rows = this.getExportData(scope, start, end)
+    const rows = await this.getExportData(scope, start, end)
 
     // CSV header
     const headers = ['Name', 'Workspace', 'Type', 'Cron', 'Status', 'Failures', 'Last Execution', 'Last Status']
@@ -65,8 +64,8 @@ export class ExportService {
     return { start: start.toISOString(), end: now.toISOString() }
   }
 
-  private getExportData(scope: 'all' | 'failed', start: string, end: string): ExportRow[] {
-    const allRows = this.configDAO.findAllSchedulesWithWorkspaceInfo()
+  private async getExportData(scope: 'all' | 'failed', start: string, end: string): Promise<ExportRow[]> {
+    const allRows = await this.configDAO.findAllSchedulesWithWorkspaceInfo()
 
     return allRows.filter(row => {
       // Time range filter

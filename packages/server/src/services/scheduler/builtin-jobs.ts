@@ -84,7 +84,7 @@ export interface SeedResult {
  * leaves the seed reporting "untouched" while no tick ever runs again: every 定时/周期 task
  * silently stops launching, and the recovery is a manual DB edit.
  */
-export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResult {
+export async function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): Promise<SeedResult> {
   const result: SeedResult = { created: [], repaired: [], untouched: [] }
 
   for (const job of BUILTIN_CODE_JOBS) {
@@ -96,10 +96,10 @@ export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResul
       timeout_seconds: job.timeoutSeconds,
       args: {},
     })
-    const existing = dao.findByIdRaw(id)
+    const existing = await dao.findByIdRaw(id)
 
     if (!existing) {
-      dao.insertSchedule({
+      await dao.insertSchedule({
         id,
         org,
         name: job.name,
@@ -118,12 +118,12 @@ export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResul
     }
 
     if (existing.deleted_at) {
-      dao.undelete(id)
+      await dao.undelete(id)
       // Re-point the row as well: a deleted-then-revived row is also the case where a
       // hand-edited or clobbered config is most likely, and one UPDATE is cheaper than a
       // second opinion.
       if (existing.job_type !== "job" || parseHandler(existing.config) !== job.handler) {
-        dao.updateSchedule(id, { job_type: "job", config: JSON.stringify(config) })
+        await dao.updateSchedule(id, { job_type: "job", config: JSON.stringify(config) })
       }
       result.repaired.push(id)
       continue
@@ -189,11 +189,11 @@ export async function unboundTaskLifecycleHandler(_ctx: CodeJobContext): Promise
  * Without it the row still seeds and still fires, and reports that nothing is wired
  * rather than pretending to work.
  */
-export function registerAndSeedBuiltinCodeJobs(
+export async function registerAndSeedBuiltinCodeJobs(
   dao: ScheduleConfigDAO,
   org = "",
   taskLifecycle?: CodeJobHandler,
-): SeedResult {
+): Promise<SeedResult> {
   rebindCodeJobHandler(TASK_LIFECYCLE_HANDLER, taskLifecycle ?? unboundTaskLifecycleHandler)
   return seedBuiltinCodeJobs(dao, org)
 }

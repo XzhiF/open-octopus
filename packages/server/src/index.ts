@@ -265,10 +265,10 @@ if (!process.env.VITEST && daos) {
       const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
       const archiveHour = raw?.memory?.archive_cron_hour
       if (archiveHour !== undefined && archiveHour !== 3) {
-        const existingJob = daos.scheduleConfig.findByName('system:daily-archive')
+        const existingJob = await daos.scheduleConfig.findByName('system:daily-archive')
         if (existingJob) {
           const newCron = `0 ${archiveHour} * * *`
-          daos.scheduleConfig.updateSchedule(existingJob.id, {
+          await daos.scheduleConfig.updateSchedule(existingJob.id, {
             cron_expression: newCron,
             version: existingJob.version + 1,
           })
@@ -705,6 +705,9 @@ if (shouldServe) {
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {
+        // P1 B5 票2：seed/start 已 async 化；listen 回调仍是同步 —— 块体挪进
+        // async IIFE，失败形态与本文件 consumePendingHooks 的 .catch 模式一致。
+        void (async () => {
         const scheduleService = new WorkspaceScheduleService(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution,
         )
@@ -725,7 +728,7 @@ if (shouldServe) {
         // The composition root is the ONLY place the two domains meet: it hands the
         // built-in job's handler (task domain) to the scheduler's registry, so the
         // scheduler fires task lifecycle code without ever importing the task domain.
-        const seeded = registerAndSeedBuiltinCodeJobs(
+        const seeded = await registerAndSeedBuiltinCodeJobs(
           daos!.scheduleConfig,
           '',
           taskLifecycleHandlerFor(tasksService.taskLifecycle),
@@ -739,17 +742,25 @@ if (shouldServe) {
         const schedulerEngine = new SchedulerEngine(
           daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
         )
-        scheduleService.setOnScheduleChange(() => schedulerEngine.reload())
+        scheduleService.setOnScheduleChange(() => {
+          schedulerEngine.reload().catch((err: unknown) =>
+            console.error('[scheduler] reload after schedule change failed:', err instanceof Error ? err.message : String(err)),
+          )
+        })
 
         // Wire service → engine: reload on CRUD, dispatch on manual trigger.
         // Late-bound via setCallbacks so the service can be constructed before
         // the engine exists.
         schedulerService.setCallbacks({
-          onScheduleChange: () => schedulerEngine.reload(),
+          onScheduleChange: () => {
+            schedulerEngine.reload().catch((err: unknown) =>
+              console.error('[scheduler] reload after job edit failed:', err instanceof Error ? err.message : String(err)),
+            )
+          },
           onTrigger: (scheduleId, executionId) => schedulerEngine.triggerManual(scheduleId, executionId),
         })
 
-        schedulerEngine.start()
+        await schedulerEngine.start()
         // 票03: the task domain no longer needs the engine's wake() — triggering a task
         // arms and claims through the lifecycle job synchronously, so a user pressing
         // 触发 never waits on a cron minute. wake() stays for the scheduler's own rows.
@@ -759,6 +770,9 @@ if (shouldServe) {
         // Three types now, and the parenthetical used to name two — which read as "the
         // built-in task-lifecycle row isn't one of these" to whoever debugs a boot.
         console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow / agent / job)`)
+        })().catch((err: unknown) =>
+          console.error('[scheduler] init failed:', err instanceof Error ? err.message : String(err)),
+        )
       } else {
         // Engine not running — manual triggers and cron won't execute.
         // Surface this clearly so users don't see perpetual 'triggered' rows.

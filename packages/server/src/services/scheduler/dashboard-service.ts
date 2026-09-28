@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import type { DashboardSummary, TrendDirection } from '@octopus/shared'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 
@@ -19,7 +18,7 @@ export class DashboardService {
     this.runDAO = runDAO
   }
 
-  getSummary(range: 'all' | '24h' | '7d' | '30d' | 'custom', from?: string, to?: string): DashboardSummary {
+  async getSummary(range: 'all' | '24h' | '7d' | '30d' | 'custom', from?: string, to?: string): Promise<DashboardSummary> {
     // Validate custom range
     if (range === 'custom' && (!from || !to)) {
       throw new Error("from and to are required when range is 'custom'")
@@ -34,11 +33,11 @@ export class DashboardService {
     const { startDate, endDate, previousStart, previousEnd } = this.calculateTimeRange(range, from, to)
 
     // 1. Total active schedules (enabled and not deleted)
-    const totalActive = this.configDAO.countActiveSchedules()
+    const totalActive = await this.configDAO.countActiveSchedules()
 
     // 2. Success rate for current period
-    const currentStats = this.runDAO.countExecutionStatsInRange(startDate, endDate)
-    const previousStats = this.runDAO.countExecutionStatsInRange(previousStart, previousEnd)
+    const currentStats = await this.runDAO.countExecutionStatsInRange(startDate, endDate)
+    const previousStats = await this.runDAO.countExecutionStatsInRange(previousStart, previousEnd)
 
     let successRate: DashboardSummary['success_rate'] = null
     if (currentStats.total > 0) {
@@ -61,10 +60,10 @@ export class DashboardService {
     }
 
     // 3. Failed count (schedules with consecutive_failures > 0 and enabled)
-    const failedCount = this.configDAO.countFailedSchedules()
+    const failedCount = await this.configDAO.countFailedSchedules()
 
     // 4. Next trigger
-    const nextTriggerRow = this.configDAO.findNextTrigger()
+    const nextTriggerRow = await this.configDAO.findNextTrigger()
 
     let nextTrigger: DashboardSummary['next_trigger'] = null
     if (nextTriggerRow) {

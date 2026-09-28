@@ -113,7 +113,7 @@ export class ActuatorService {
     return this.recoveryResolver.getRecovery(org)
   }
 
-  getScheduler(): SchedulerResponse {
+  async getScheduler(): Promise<SchedulerResponse> {
     return this.schedulerResolver.getScheduler()
   }
 

@@ -433,7 +433,7 @@ export class WorkspaceScheduleService {
       // 7. Start execution (async — catch both sync and async errors)
       let startPromise: Promise<unknown>
       try {
-        startPromise = registry.service.start(execution.id, inputValues) as Promise<void>
+        startPromise = registry.service.start(execution.id, inputValues)
       } catch (syncErr: unknown) {
         const message = syncErr instanceof Error ? syncErr.message : String(syncErr)
         console.error(`[WorkspaceScheduleService] trigger() synchronous start error for ${execution.id}:`, message)

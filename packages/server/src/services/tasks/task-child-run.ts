@@ -140,7 +140,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
   // Cap gate. Over cap, the child stays 'pending' and the built-in job claims it when a
   // slot frees — the SAME queue a root task launch uses. Previously it was a 'queued'
   // schedule row that only the pump's task-claim loop could pick up.
-  if (new ScheduleRunDAO(deps.db).countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
+  if (await new ScheduleRunDAO(pgSql()).countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
     return { child_id: child.id, workspace_id: workspaceId }
   }
   startChildRun(deps.db, child.id, workspaceId, subunit.input_values as Record<string, string>)

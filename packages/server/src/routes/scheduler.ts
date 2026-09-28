@@ -213,13 +213,13 @@ export function createSchedulerRoutes(
   // ── Job CRUD ────────────────────────────────────────────────────
 
   // GET /jobs — list with pagination, filtering, sorting
-  router.get('/jobs', rateLimitDefault, (c) => {
+  router.get('/jobs', rateLimitDefault, async (c) => {
     try {
       // 票03 (ADR-0021): ?trigger_source= and ?origin= are gone with the columns. The
       // 2026-08-29 note here explained why the list must NOT default to cron-only —
       // because task envelopes were mixed into the same table. They no longer are, so
       // every row listed is a job and there is nothing left to filter task-ness out of.
-      const result = service.listJobs({
+      const result = await service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
         search: c.req.query('search'),
@@ -247,7 +247,7 @@ export function createSchedulerRoutes(
     // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
     // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
-      const job = service.createJob(body as CreateJobInput)
+      const job = await service.createJob(body as CreateJobInput)
       return c.json(job, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -256,9 +256,9 @@ export function createSchedulerRoutes(
   })
 
   // GET /jobs/:id — detail
-  router.get('/jobs/:id', rateLimitDefault, (c) => {
+  router.get('/jobs/:id', rateLimitDefault, async (c) => {
     try {
-      const job = service.getJob(c.req.param('id'))
+      const job = await service.getJob(c.req.param("id")!)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -282,7 +282,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.updateJob(c.req.param('id'), body as UpdateJobInput, version)
+      const job = await service.updateJob(c.req.param('id')!, body as UpdateJobInput, version)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -291,9 +291,9 @@ export function createSchedulerRoutes(
   })
 
   // DELETE /jobs/:id — soft delete
-  router.delete('/jobs/:id', rateLimitDelete, (c) => {
+  router.delete('/jobs/:id', rateLimitDelete, async (c) => {
     try {
-      service.deleteJob(c.req.param('id'))
+      await service.deleteJob(c.req.param("id")!)
       return c.json({ success: true })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -304,9 +304,9 @@ export function createSchedulerRoutes(
   // ── Job Actions ─────────────────────────────────────────────────
 
   // POST /jobs/:id/toggle — enable/disable
-  router.post('/jobs/:id/toggle', rateLimitDefault, (c) => {
+  router.post('/jobs/:id/toggle', rateLimitDefault, async (c) => {
     try {
-      const job = service.toggleJob(c.req.param('id'))
+      const job = await service.toggleJob(c.req.param("id")!)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -315,9 +315,9 @@ export function createSchedulerRoutes(
   })
 
   // POST /jobs/:id/trigger — manual trigger
-  router.post('/jobs/:id/trigger', rateLimitTrigger, (c) => {
+  router.post('/jobs/:id/trigger', rateLimitTrigger, async (c) => {
     try {
-      const result = service.triggerJob(c.req.param('id'))
+      const result = await service.triggerJob(c.req.param("id")!)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -341,9 +341,9 @@ export function createSchedulerRoutes(
   // ── Executions ──────────────────────────────────────────────────
 
   // GET /jobs/:id/executions — execution history
-  router.get('/jobs/:id/executions', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/executions', rateLimitDefault, async (c) => {
     try {
-      const result = service.getExecutions(c.req.param('id'), {
+      const result = await service.getExecutions(c.req.param('id')!, {
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
         status: c.req.query('status') as 'success' | 'failure' | 'skipped' | 'running' | undefined,
@@ -356,9 +356,9 @@ export function createSchedulerRoutes(
   })
 
   // GET /jobs/:id/executions/:eid — single execution detail
-  router.get('/jobs/:id/executions/:eid', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/executions/:eid', rateLimitDefault, async (c) => {
     try {
-      const execution = service.getExecution(c.req.param('id'), c.req.param('eid'))
+      const execution = await service.getExecution(c.req.param('id')!, c.req.param('eid')!)
       return c.json(execution)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -367,11 +367,11 @@ export function createSchedulerRoutes(
   })
 
   // GET /jobs/:id/executions/:eid/log — execution log with offset/limit
-  router.get('/jobs/:id/executions/:eid/log', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/executions/:eid/log', rateLimitDefault, async (c) => {
     try {
       const offset = parseIntParam(c.req.query('offset'), 0)
       const limit = Math.min(parseIntParam(c.req.query('limit'), 102400), 200_000)
-      const log = service.getExecutionLog(c.req.param('eid'), offset, limit)
+      const log = await service.getExecutionLog(c.req.param('eid')!, offset, limit)
       return c.json(log)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -382,9 +382,9 @@ export function createSchedulerRoutes(
   // ── Audit Logs ──────────────────────────────────────────────────
 
   // GET /jobs/:id/audit-logs — audit history
-  router.get('/jobs/:id/audit-logs', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/audit-logs', rateLimitDefault, async (c) => {
     try {
-      const result = service.getAuditLogs(c.req.param('id'), {
+      const result = await service.getAuditLogs(c.req.param('id')!, {
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
         action: c.req.query('action'),
@@ -399,9 +399,9 @@ export function createSchedulerRoutes(
   // ── Schedule Workspaces ──────────────────────────────────────────
 
   // GET /jobs/:id/workspaces — list workspaces created by a schedule
-  router.get('/jobs/:id/workspaces', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/workspaces', rateLimitDefault, async (c) => {
     try {
-      const result = service.getScheduleWorkspaces(c.req.param('id'), {
+      const result = await service.getScheduleWorkspaces(c.req.param('id')!, {
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
         status: c.req.query('status'),
@@ -414,9 +414,9 @@ export function createSchedulerRoutes(
   })
 
   // GET /jobs/:id/workspaces/:wsId — single schedule workspace detail
-  router.get('/jobs/:id/workspaces/:wsId', rateLimitDefault, (c) => {
+  router.get('/jobs/:id/workspaces/:wsId', rateLimitDefault, async (c) => {
     try {
-      const ws = service.getScheduleWorkspace(c.req.param('id'), c.req.param('wsId'))
+      const ws = await service.getScheduleWorkspace(c.req.param('id')!, c.req.param('wsId')!)
       if (!ws) return c.json({ error: 'Schedule workspace not found' }, 404)
       return c.json(ws)
     } catch (err: unknown) {
@@ -491,7 +491,7 @@ export function createSchedulerRoutes(
   // ── Dashboard ───────────────────────────────────────────────────
 
   // GET /dashboard
-  router.get('/dashboard', rateLimitDefault, (c) => {
+  router.get('/dashboard', rateLimitDefault, async (c) => {
     if (!dashboardService) {
       return c.json({ error: 'Dashboard service not available' }, 503)
     }
@@ -502,7 +502,7 @@ export function createSchedulerRoutes(
         : 'all'
       const from = c.req.query('from')
       const to = c.req.query('to')
-      const summary = dashboardService.getSummary(range, from, to)
+      const summary = await dashboardService.getSummary(range, from, to)
       return c.json(summary)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -512,7 +512,7 @@ export function createSchedulerRoutes(
   })
 
   // GET /dashboard/export
-  router.get('/dashboard/export', rateLimitDefault, (c) => {
+  router.get('/dashboard/export', rateLimitDefault, async (c) => {
     if (!exportService) {
       return c.json({ error: 'Export service not available' }, 503)
     }
@@ -525,7 +525,7 @@ export function createSchedulerRoutes(
     const to = c.req.query('to')
 
     if (format === 'csv') {
-      const csv = exportService.exportCSV(range, scope, from, to)
+      const csv = await exportService.exportCSV(range, scope, from, to)
       const date = new Date().toISOString().split('T')[0]
       c.header('Content-Type', 'text/csv; charset=utf-8')
       c.header('Content-Disposition', `attachment; filename="scheduler-export-${date}.csv"`)

@@ -106,7 +106,7 @@ class SchedulerIndicator implements HealthIndicator {
 
   async health(): Promise<HealthIndicatorResult> {
     try {
-      const jobs = this.schedulerService.listJobs({ limit: 1 })
+      const jobs = await this.schedulerService.listJobs({ limit: 1 })
       const active = jobs.total
       const circuitBroken = this.schedulerEngine
         ? (this.schedulerEngine.getCircuitBreakerSummary().state === 'open' ? 1 : 0)

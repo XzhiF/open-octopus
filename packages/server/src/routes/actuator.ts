@@ -64,8 +64,8 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   })
 
   // GET /scheduler — scheduler health (jobs, circuit breaker, next fires)
-  router.get('/scheduler', (c) => {
-    return c.json(actuatorService.getScheduler())
+  router.get('/scheduler', async (c) => {
+    return c.json(await actuatorService.getScheduler())
   })
 
   // GET /pg — PG 池可观测面（P1 驱动接线；未接线时 status=disabled，不报错）
