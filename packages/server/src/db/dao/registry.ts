@@ -73,8 +73,8 @@ export function createAllDAOs(db: DatabaseDb): AllDAOs {
     workspace: new WorkspaceDAO(db),
     execution: new ExecutionDAO(db),
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
-    scheduleConfig: new ScheduleConfigDAO(db),
-    scheduleRun: new ScheduleRunDAO(db),
+    scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
+    scheduleRun: lazyDAO(() => new ScheduleRunDAO(pgSql())), // B5: PG
     chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
     org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
     agentSession: lazyDAO(() => new AgentSessionDAO(pgSql())), // B3: PG
@@ -114,8 +114,8 @@ export function createLazyDAOs(): AllDAOs {
     workspace: lazyDAO((db) => new WorkspaceDAO(db as DatabaseDb)),
     execution: lazyDAO((db) => new ExecutionDAO(db as DatabaseDb)),
     tokenUsage: lazyDAO(() => new TokenUsageDAO(pgSql())), // B4: PG
-    scheduleConfig: lazyDAO((db) => new ScheduleConfigDAO(db as DatabaseDb)),
-    scheduleRun: lazyDAO((db) => new ScheduleRunDAO(db as DatabaseDb)),
+    scheduleConfig: lazyDAO(() => new ScheduleConfigDAO(pgSql())), // B5: PG
+    scheduleRun: lazyDAO(() => new ScheduleRunDAO(pgSql())), // B5: PG
     chat: lazyDAO(() => new ChatDAO(pgSql())), // B1: PG
     org: lazyDAO(() => new OrgDAO(pgSql())), // B1: PG
     agentSession: lazyDAO(() => new AgentSessionDAO(pgSql())), // B3: PG

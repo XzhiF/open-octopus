@@ -670,7 +670,7 @@ export class ScheduleConfigDAO extends BasePgDAO {
 
   async listSchedulesByOrg(org: string): Promise<Array<{ id: string; name: string; cron_expression: string; enabled: number }>> {
     try {
-      const rows = await this.q<Array<{ id: string; name: string; cron_expression: string; enabled: boolean | number }>>(
+      const rows = await this.q<{ id: string; name: string; cron_expression: string; enabled: boolean | number }>(
         'SELECT id, name, cron_expression, enabled FROM schedules WHERE org = ? AND deleted_at IS NULL ORDER BY created_at DESC',
         [org],
       )

@@ -256,7 +256,7 @@ export interface SchedulerCallbacks {
   onScheduleChange?: () => void
   /** Fired after a manual trigger INSERTs the schedule_execution row;
    *  the engine dispatches the actual executor. */
-  onTrigger?: (scheduleId: string, executionId: string) => void
+  onTrigger?: (scheduleId: string, executionId: string) => void | Promise<void>
 }
 
 export class SchedulerService {
@@ -293,7 +293,7 @@ export class SchedulerService {
 
   // ── List Jobs (global, cross-workspace) ───────────────────────────
 
-  listJobs(params: ListJobsParams = {}): PaginatedResponse<SchedulerJob> {
+  async listJobs(params: ListJobsParams = {}): Promise<PaginatedResponse<SchedulerJob>> {
     const page = Math.max(1, params.page ?? 1)
     const limit = Math.min(100, Math.max(1, params.limit ?? 20))
     const offset = (page - 1) * limit
@@ -303,16 +303,16 @@ export class SchedulerService {
 
     if (params.search) {
       const raw = params.search.slice(0, 200)
-      conditions.push('INSTR(s.name, ?) > 0')
+      conditions.push('strpos(s.name, ?) > 0')
       queryParams.push(raw)
     }
 
     if (params.status === 'enabled') {
-      conditions.push('s.enabled = 1')
+      conditions.push('s.enabled = true')
     } else if (params.status === 'disabled') {
-      conditions.push('s.enabled = 0')
+      conditions.push('s.enabled = false')
     } else if (params.status === 'failed') {
-      conditions.push('s.enabled = 1 AND s.consecutive_failures > 0')
+      conditions.push('s.enabled = true AND s.consecutive_failures > 0')
     }
 
     if (params.job_type) {
@@ -345,18 +345,18 @@ export class SchedulerService {
       ? `CASE WHEN ${sortColumn} IS NULL THEN 1 ELSE 0 END ${sortDirection}, ${sortColumn} ${sortDirection}`
       : `${sortColumn} ${sortDirection}`
 
-    const { rows, total } = this.configDAO.listJobsQuery({
+    const { rows, total } = await this.configDAO.listJobsQuery({
       conditions, queryParams, orderClause, limit, offset,
     })
 
-    const items = rows.map((row) => this.enrichJobRow(row))
+    const items = rows.map((row: ScheduleRow) => this.enrichJobRow(row))
 
     return { items, total, page, limit }
   }
 
   // ── Create Job ────────────────────────────────────────────────────
 
-  createJob(input: CreateJobInput): SchedulerJob {
+  async createJob(input: CreateJobInput): Promise<SchedulerJob> {
     const validated = createJobSchema.parse(input)
 
     const validatedConfig = validateConfig(validated.job_type, validated.config)
@@ -368,7 +368,7 @@ export class SchedulerService {
 
     // Check name uniqueness within org
     if (org) {
-      if (this.configDAO.checkNameConflict(org, validated.name)) {
+      if (await this.configDAO.checkNameConflict(org, validated.name)) {
         throw new SchedulerJobConflictError(`调度名称 "${validated.name}" 已存在`)
       }
     }
@@ -385,8 +385,9 @@ export class SchedulerService {
     // Derive max_retain from config for workflow jobs
     const maxRetain = validatedConfig.type === 'workflow' ? validatedConfig.max_retain : 10
 
-    this.configDAO.transaction(() => {
-      this.configDAO.insertSchedule({
+    await this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
+      await cfg.insertSchedule({
         id, org, name: validated.name,
         cron_expression: cronExpression, timezone: validated.timezone,
         timeout_seconds: validated.timeout_seconds,
@@ -399,7 +400,7 @@ export class SchedulerService {
         max_retain: maxRetain,
       })
 
-      this.writeAuditLog({
+      await this.writeAuditLog({
         schedule_id: id,
         action: 'created',
         changes: {
@@ -409,7 +410,7 @@ export class SchedulerService {
           timezone: { before: null, after: validated.timezone },
           org: { before: null, after: org },
         },
-      })
+      }, new ScheduleRunDAO(tx))
     })
 
     this.notifyScheduleChange()
@@ -418,8 +419,8 @@ export class SchedulerService {
 
   // ── Get Job ───────────────────────────────────────────────────────
 
-  getJob(id: string): JobDetail {
-    const row = this.configDAO.getJobWithLastExec(id)
+  async getJob(id: string): Promise<JobDetail> {
+    const row = await this.configDAO.getJobWithLastExec(id)
 
     if (!row) {
       throw new SchedulerJobNotFoundError()
@@ -432,8 +433,8 @@ export class SchedulerService {
 
   // ── Update Job (optimistic locking) ──────────────────────────────
 
-  updateJob(id: string, input: UpdateJobInput, version: number): SchedulerJob {
-    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+  async updateJob(id: string, input: UpdateJobInput, version: number): Promise<SchedulerJob> {
+    const existing = (await this.configDAO.findByIdRaw(id)) as unknown as ScheduleRow | undefined
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
@@ -463,7 +464,7 @@ export class SchedulerService {
 
     // Check name uniqueness if changing
     if (validated.name !== undefined && validated.name !== existing.name && existing.org) {
-      if (this.configDAO.checkNameConflict(existing.org, validated.name, id)) {
+      if (await this.configDAO.checkNameConflict(existing.org, validated.name, id)) {
         throw new SchedulerJobConflictError(`调度名称 "${validated.name}" 已存在`)
       }
     }
@@ -511,7 +512,8 @@ export class SchedulerService {
       : validated.cron_expression
     const effectiveTz = validated.timezone ?? existing.timezone
 
-    this.configDAO.transaction(() => {
+    await this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
       // Build the fields object for updateScheduleWithVersion
       const updateFields: Record<string, unknown> = {}
       for (const [key, col] of fieldMap) {
@@ -534,16 +536,16 @@ export class SchedulerService {
         updateFields.next_trigger_at = nextTrigger
       }
 
-      const vr = this.configDAO.updateScheduleWithVersion(id, updateFields, version)
+      const vr = await cfg.updateScheduleWithVersion(id, updateFields, version)
       if (vr.changes === 0) {
         throw new SchedulerVersionConflictError()
       }
 
-      this.writeAuditLog({
+      await this.writeAuditLog({
         schedule_id: id,
         action: 'updated',
         changes,
-      })
+      }, new ScheduleRunDAO(tx))
     })
 
     this.notifyScheduleChange()
@@ -552,8 +554,8 @@ export class SchedulerService {
 
   // ── Delete Job (soft delete) ──────────────────────────────────────
 
-  deleteJob(id: string): void {
-    const existing = this.configDAO.findByIdRaw(id)
+  async deleteJob(id: string): Promise<void> {
+    const existing = await this.configDAO.findByIdRaw(id)
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
@@ -570,13 +572,14 @@ export class SchedulerService {
       )
     }
 
-    this.configDAO.transaction(() => {
-      this.configDAO.softDelete(id)
+    await this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
+      await cfg.softDelete(id)
 
-      this.writeAuditLog({
+      await this.writeAuditLog({
         schedule_id: id,
         action: 'deleted',
-      })
+      }, new ScheduleRunDAO(tx))
     })
 
     this.notifyScheduleChange()
@@ -584,8 +587,8 @@ export class SchedulerService {
 
   // ── Toggle Job (enable/disable) ───────────────────────────────────
 
-  toggleJob(id: string): SchedulerJob {
-    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+  async toggleJob(id: string): Promise<SchedulerJob> {
+    const existing = (await this.configDAO.findByIdRaw(id)) as unknown as ScheduleRow | undefined
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
@@ -597,17 +600,18 @@ export class SchedulerService {
       ? this.calculateNextTrigger(existing.cron_expression, existing.timezone)
       : null
 
-    this.configDAO.transaction(() => {
-      this.configDAO.updateScheduleWithVersion(id, {
+    await this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
+      await cfg.updateScheduleWithVersion(id, {
         enabled: newEnabled,
         next_trigger_at: nextTrigger,
       }, existing.version)
 
-      this.writeAuditLog({
+      await this.writeAuditLog({
         schedule_id: id,
         action: newEnabled === 1 ? 'enabled' : 'disabled',
         changes: { enabled: { before: existing.enabled === 1, after: newEnabled === 1 } },
-      })
+      }, new ScheduleRunDAO(tx))
     })
 
     this.notifyScheduleChange()
@@ -620,7 +624,7 @@ export class SchedulerService {
   // queued, breaking the stale→rollback→redispatch loop. The running-execution
   // cancel is best-effort.
   async abortJob(id: string): Promise<SchedulerJob> {
-    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+    const existing = (await this.configDAO.findByIdRaw(id)) as unknown as ScheduleRow | undefined
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
@@ -638,16 +642,18 @@ export class SchedulerService {
     // Capture the in-flight execution's links BEFORE mutating schedule_executions.
     // markStaleExecutionsFailed (below) flips the row to 'failed'; we need the
     // execution_id + workspace_id to cancel the running workflow execution (if any).
-    const activeExec = this.configDAO.findActiveExecutions(id)[0]
-    const activeExecRow = activeExec ? this.runDAO.findExecutionById(activeExec.id) : null
+    const activeExec = (await this.configDAO.findActiveExecutions(id))[0]
+    const activeExecRow = activeExec ? await this.runDAO.findExecutionById(activeExec.id) : null
     const executionId = activeExecRow?.execution_id ?? null
     const workspaceId = activeExecRow?.workspace_id ?? null
 
     const now = new Date().toISOString()
     const reason = `Aborted by user at ${now}`
 
-    this.configDAO.transaction(() => {
-      this.configDAO.updateSchedule(id, {
+    await this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
+      const run = new ScheduleRunDAO(tx)
+      await cfg.updateSchedule(id, {
         status: 'aborted',
         claimed_at: null,
       })
@@ -655,17 +661,17 @@ export class SchedulerService {
       // Release the partial unique index idx_sched_execs_unique_active
       // (status IN triggered/running) so the schedule can be re-dispatched /
       // no longer blocks. Same primitive the stale-claimed rollback uses.
-      this.runDAO.markStaleExecutionsFailed(id, reason)
+      await run.markStaleExecutionsFailed(id, reason)
 
       // Mark any in-flight schedule_workspaces as cleaned. Workspace dir
       // cleanup is deferred to the retain loop (matches checkStaleClaimed).
-      this.configDAO.markScheduleWorkspacesCleanedBySchedule(id, now)
+      await cfg.markScheduleWorkspacesCleanedBySchedule(id, now)
 
-      this.writeAuditLog({
+      await this.writeAuditLog({
         schedule_id: id,
         action: 'aborted',
         changes: { status: { before: currentStatus, after: 'aborted' } },
-      })
+      }, run)
     })
 
     // 07 (G5): emit claimed/running→aborted so the kanban moves the card to the
@@ -701,14 +707,14 @@ export class SchedulerService {
 
   // ── Trigger Job ───────────────────────────────────────────────────
 
-  triggerJob(id: string): {
+  async triggerJob(id: string): Promise<{
     execution_id: string
     schedule_id: string
     status: string
     trigger_type: string
     triggered_at: string
-  } {
-    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+  }> {
+    const existing = (await this.configDAO.findByIdRaw(id)) as unknown as ScheduleRow | undefined
 
     if (!existing) {
       throw new SchedulerJobNotFoundError()
@@ -716,7 +722,7 @@ export class SchedulerService {
 
     // Check parallel policy: skip if there's an active execution
     if (existing.parallel_policy === 'skip') {
-      const activeCount = this.runDAO.countRunningBySchedule(id)
+      const activeCount = await this.runDAO.countRunningBySchedule(id)
       if (activeCount > 0) {
         throw new SchedulerTriggerConflictError()
       }
@@ -726,15 +732,15 @@ export class SchedulerService {
     const now = new Date().toISOString()
     const tzOffset = this.getTimezoneOffset(existing.timezone)
 
-    this.runDAO.insertTriggeredExecutionForManual(schedExecId, id, now, tzOffset, existing.timezone)
+    await this.runDAO.insertTriggeredExecutionForManual(schedExecId, id, now, tzOffset, existing.timezone)
 
     // Dispatch the actual executor via the engine callback.
     if (this.callbacks.onTrigger) {
       try {
-        this.callbacks.onTrigger(id, schedExecId)
+        await this.callbacks.onTrigger(id, schedExecId)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
-        this.runDAO.updateExecutionStatusSimple(schedExecId, 'failed', `手动触发派发失败: ${msg}`)
+        await this.runDAO.updateExecutionStatusSimple(schedExecId, 'failed', `手动触发派发失败: ${msg}`)
         throw err
       }
     }
@@ -750,12 +756,12 @@ export class SchedulerService {
 
   // ── List Executions ───────────────────────────────────────────────
 
-  getExecutions(
+  async getExecutions(
     jobId: string,
     params: ListExecutionsParams = {},
-  ): PaginatedResponse<SchedulerExecution> {
+  ): Promise<PaginatedResponse<SchedulerExecution>> {
     // Verify job exists
-    const job = this.configDAO.findByIdRaw(jobId)
+    const job = await this.configDAO.findByIdRaw(jobId)
     if (!job) {
       throw new SchedulerJobNotFoundError()
     }
@@ -763,7 +769,7 @@ export class SchedulerService {
     const page = Math.max(1, params.page ?? 1)
     const limit = Math.min(100, Math.max(1, params.limit ?? 20))
 
-    const result = this.runDAO.listExecutions(jobId, {
+    const result = await this.runDAO.listExecutions(jobId, {
       status: params.status,
       page,
       limit,
@@ -776,8 +782,8 @@ export class SchedulerService {
 
   // ── Get Single Execution ──────────────────────────────────────────
 
-  getExecution(jobId: string, executionId: string): SchedulerExecution {
-    const row = this.runDAO.findExecutionByJobAndId(jobId, executionId)
+  async getExecution(jobId: string, executionId: string): Promise<SchedulerExecution> {
+    const row = await this.runDAO.findExecutionByJobAndId(jobId, executionId)
 
     if (!row) {
       throw new Error('Execution not found')
@@ -788,18 +794,18 @@ export class SchedulerService {
 
   // ── Get Execution Log ─────────────────────────────────────────────
 
-  getExecutionLog(
+  async getExecutionLog(
     executionId: string,
     offset = 0,
     limit = 1000,
-  ): {
+  ): Promise<{
     content: string
     offset: number
     length: number
     total_size: number
     has_more: boolean
-  } {
-    const row = this.runDAO.findExecutionWithJobType(executionId)
+  }> {
+    const row = await this.runDAO.findExecutionWithJobType(executionId)
 
     if (!row) {
       throw new Error('Execution not found')
@@ -812,7 +818,7 @@ export class SchedulerService {
     } else {
       // Workflow type: read from linked execution's var_pool
       if (row.execution_id) {
-        const execRow = this.runDAO.findExecutionVarPool(row.execution_id)
+        const execRow = await this.runDAO.findExecutionVarPool(row.execution_id)
         fullContent = execRow?.var_pool ?? ''
       }
     }
@@ -831,11 +837,11 @@ export class SchedulerService {
 
   // ── Audit Logs ────────────────────────────────────────────────────
 
-  getAuditLogs(
+  async getAuditLogs(
     jobId: string,
     params: ListAuditLogsParams = {},
-  ): PaginatedResponse<SchedulerAuditLog> {
-    const result = this.runDAO.listSchedulerAuditLogs(jobId, {
+  ): Promise<PaginatedResponse<SchedulerAuditLog>> {
+    const result = await this.runDAO.listSchedulerAuditLogs(jobId, {
       action: params.action,
       page: params.page,
       limit: params.limit,
@@ -856,47 +862,47 @@ export class SchedulerService {
 
   // ── Schedule Workspaces ──────────────────────────────────────────
 
-  getScheduleWorkspaces(
+  async getScheduleWorkspaces(
     scheduleId: string,
     params: { page?: number; limit?: number; status?: string } = {},
-  ): { items: ScheduleWorkspaceRow[]; total: number; page: number; limit: number } {
+  ): Promise<{ items: ScheduleWorkspaceRow[]; total: number; page: number; limit: number }> {
     // Verify schedule exists
-    const schedule = this.configDAO.findByIdRaw(scheduleId)
+    const schedule = await this.configDAO.findByIdRaw(scheduleId)
     if (!schedule) throw new SchedulerJobNotFoundError()
 
-    const result = this.configDAO.findScheduleWorkspaces(scheduleId, {
+    const result = await this.configDAO.findScheduleWorkspaces(scheduleId, {
       status: params.status,
       page: params.page,
       limit: params.limit,
     })
 
     return {
-      items: result.data,
+      items: result.data as unknown as ScheduleWorkspaceRow[],
       total: result.total,
       page: result.page,
       limit: result.pageSize,
     }
   }
 
-  getScheduleWorkspace(scheduleId: string, workspaceId: string): ScheduleWorkspaceRow | undefined {
-    const row = this.configDAO.findScheduleWorkspace(scheduleId, workspaceId)
-    return row ?? undefined
+  async getScheduleWorkspace(scheduleId: string, workspaceId: string): Promise<ScheduleWorkspaceRow | undefined> {
+    const row = await this.configDAO.findScheduleWorkspace(scheduleId, workspaceId)
+    return (row ?? undefined) as unknown as ScheduleWorkspaceRow | undefined
   }
 
   // ── Private Helpers ───────────────────────────────────────────────
 
-  private writeAuditLog(opts: {
+  private async writeAuditLog(opts: {
     schedule_id: string
     action: string
     workspace_id?: string
     changes?: Record<string, unknown>
     actor?: string
     ip_address?: string
-  }): void {
+  }, runDAO: ScheduleRunDAO = this.runDAO): Promise<void> {
     const id = randomUUID()
     const now = new Date().toISOString()
 
-    this.runDAO.insertSchedulerAuditLog({
+    await runDAO.insertSchedulerAuditLog({
       id,
       schedule_id: opts.schedule_id,
       action: opts.action,
