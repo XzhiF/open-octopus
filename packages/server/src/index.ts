@@ -256,30 +256,34 @@ if (!process.env.VITEST && daos) {
 
   // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
   // update the system:daily-archive cron expression
-  try {
-    const fs = require('fs')
-    const yaml = require('js-yaml')
-    const { getAgentConfigPath } = require('./services/agent/paths')
-    const configPath = getAgentConfigPath()
-    if (fs.existsSync(configPath)) {
-      const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
-      const archiveHour = raw?.memory?.archive_cron_hour
-      if (archiveHour !== undefined && archiveHour !== 3) {
-        const existingJob = await daos.scheduleConfig.findByName('system:daily-archive')
-        if (existingJob) {
-          const newCron = `0 ${archiveHour} * * *`
-          await daos.scheduleConfig.updateSchedule(existingJob.id, {
-            cron_expression: newCron,
-            version: existingJob.version + 1,
-          })
-          console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
+  // fire-and-forget：scheduleConfig 已 async 化，顶层 await 会破坏 CJS 构建，
+  // 与上方 clone-init 同姿势用 void IIFE 包裹（尽力而为、失败仅告警）。
+  void (async () => {
+    try {
+      const fs = require('fs')
+      const yaml = require('js-yaml')
+      const { getAgentConfigPath } = require('./services/agent/paths')
+      const configPath = getAgentConfigPath()
+      if (fs.existsSync(configPath)) {
+        const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
+        const archiveHour = raw?.memory?.archive_cron_hour
+        if (archiveHour !== undefined && archiveHour !== 3) {
+          const existingJob = await daos!.scheduleConfig.findByName('system:daily-archive')
+          if (existingJob) {
+            const newCron = `0 ${archiveHour} * * *`
+            await daos!.scheduleConfig.updateSchedule(existingJob.id, {
+              cron_expression: newCron,
+              version: existingJob.version + 1,
+            })
+            console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
+          }
         }
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
-  }
+  })()
 
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
