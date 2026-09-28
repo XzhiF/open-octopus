@@ -180,7 +180,7 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
       await pg!.sql.unsafe(
         `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
          ON CONFLICT (id) DO NOTHING`,
-        params,
+        params as never,
       )
     }
     if (exs.length > 0) {
@@ -195,7 +195,7 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
         `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
             status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
          ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
-        params,
+        params as never,
       )
     }
   }
@@ -270,7 +270,7 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     // 混窗计量闸（B5 票4R）：executions/workspaces 仍 SQLite（票5 迁），countActiveWork
     // 已读 PG —— 计量前同步取 SQLite 快照、单条多值 INSERT 原子镜像，保闸读数与
     // 迁移前同款。票5 单引擎收口后删除。
-    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (this: ScheduleRunDAO, opts) {
       await mirrorExecsToPg()
       return ORIGINAL_METER.call(this, opts)
     })

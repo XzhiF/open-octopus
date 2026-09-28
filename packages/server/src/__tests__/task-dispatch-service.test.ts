@@ -154,7 +154,7 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
       await pg!.sql.unsafe(
         `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
          ON CONFLICT (id) DO NOTHING`,
-        params,
+        params as never,
       )
     }
     if (exs.length > 0) {
@@ -169,7 +169,7 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
         `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
             status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
          ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
-        params,
+        params as never,
       )
     }
   }
@@ -219,7 +219,7 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
     })
     execs = new ExecutionDAO(db)
     // 混窗计量闸：见 mirrorExecsToPg 注释。票5 单引擎收口后删除。
-    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (this: ScheduleRunDAO, opts) {
       await mirrorExecsToPg()
       return ORIGINAL_METER.call(this, opts)
     })

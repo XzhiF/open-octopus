@@ -238,7 +238,7 @@ async function mirrorExecsToPg(): Promise<void> {
     await pg!.sql.unsafe(
       `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
        ON CONFLICT (id) DO NOTHING`,
-      params,
+      params as never,
     )
   }
   if (exs.length > 0) {
@@ -253,7 +253,7 @@ async function mirrorExecsToPg(): Promise<void> {
       `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
           status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
        ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
-      params,
+      params as never,
     )
   }
 }
@@ -340,7 +340,7 @@ beforeEach(async () => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
   // 混窗计量闸：每次 countActiveWork 前把 SQLite 的 executions/workspaces 镜像进 PG
   // （见 mirrorExecsToPg 注释），保迁移同款读数。
-  vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+  vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (this: ScheduleRunDAO, opts) {
     await mirrorExecsToPg()
     return ORIGINAL_METER.call(this, opts)
   })
