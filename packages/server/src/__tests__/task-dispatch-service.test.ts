@@ -38,6 +38,7 @@ import os from "os"
 import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { ScheduleRunDAO } from "../db/dao/schedule-run-dao"
 import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
 import type { SubunitSpec } from "@octopus/shared"
@@ -134,6 +135,45 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
   let execs: ExecutionDAO
   let wsSeq = 0
 
+  const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
+
+  /** SQLite 快照 → PG 镜像（B5 票4R 混窗计量闸，与 tasks-trigger-mutex 同款）。 */
+  async function mirrorExecsToPg(): Promise<void> {
+    const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
+      .all() as Array<{ id: string; name: string; org: string; path: string }>
+    const exs = db.prepare(
+      `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+              status, org, task_id FROM executions`,
+    ).all() as Array<Record<string, string | number | null>>
+    if (wss.length > 0) {
+      const params: unknown[] = []
+      const rows = wss.map((w) => {
+        params.push(w.id, w.name, w.org, w.path)
+        return `($${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length}, now(), now())`
+      })
+      await pg!.sql.unsafe(
+        `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
+         ON CONFLICT (id) DO NOTHING`,
+        params,
+      )
+    }
+    if (exs.length > 0) {
+      const params: unknown[] = []
+      const rows = exs.map((e) => {
+        params.push(e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0,
+          e.workflow_ref, e.workflow_name, e.status, e.org, e.task_id)
+        const b = params.length - 8
+        return `($${b}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, now(), now())`
+      })
+      await pg!.sql.unsafe(
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+            status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
+         ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
+        params,
+      )
+    }
+  }
+
   beforeAll(async () => {
     pg = await setupRegisteredPgSchema()
   })
@@ -142,7 +182,8 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
     pg = null
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await pg!.truncate("executions", "workspaces", "schedule_executions", "schedules")
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF") // the coordinator/child ws are seeded by SQL, not real dirs
@@ -177,9 +218,15 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
       sse: new SSEService(),
     })
     execs = new ExecutionDAO(db)
+    // 混窗计量闸：见 mirrorExecsToPg 注释。票5 单引擎收口后删除。
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+      await mirrorExecsToPg()
+      return ORIGINAL_METER.call(this, opts)
+    })
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     db.close()
     if (fs.existsSync(WORKSPACE_PATH)) fs.rmSync(WORKSPACE_PATH, { recursive: true, force: true })
   })

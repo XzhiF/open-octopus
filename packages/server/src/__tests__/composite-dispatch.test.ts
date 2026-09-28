@@ -120,6 +120,7 @@ import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { TaskDAO } from "../db/dao/task-dao"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { ScheduleRunDAO } from "../db/dao/schedule-run-dao"
 import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
 import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
@@ -160,6 +161,45 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
   let realUserProfile: string | undefined
   let taskHome: TaskHomeService
 
+  const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
+
+  /** SQLite 快照 → PG 镜像（与 tasks-trigger-mutex 票4R 同款，勿逐行 await —— 会读到半镜像）。 */
+  async function mirrorExecsToPg(): Promise<void> {
+    const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
+      .all() as Array<{ id: string; name: string; org: string; path: string }>
+    const exs = db.prepare(
+      `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+              status, org, task_id FROM executions`,
+    ).all() as Array<Record<string, string | number | null>>
+    if (wss.length > 0) {
+      const params: unknown[] = []
+      const rows = wss.map((w) => {
+        params.push(w.id, w.name, w.org, w.path)
+        return `($${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length}, now(), now())`
+      })
+      await pg!.sql.unsafe(
+        `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
+         ON CONFLICT (id) DO NOTHING`,
+        params,
+      )
+    }
+    if (exs.length > 0) {
+      const params: unknown[] = []
+      const rows = exs.map((e) => {
+        params.push(e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0,
+          e.workflow_ref, e.workflow_name, e.status, e.org, e.task_id)
+        const b = params.length - 8
+        return `($${b}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, now(), now())`
+      })
+      await pg!.sql.unsafe(
+        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+            status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
+         ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
+        params,
+      )
+    }
+  }
+
   beforeAll(async () => {
     // 全局池注册 —— TaskLifecycleService 内部 taskDAO 经 pgSql() 取同一座库。
     pg = await setupRegisteredPgSchema()
@@ -170,7 +210,10 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     pg = null
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // 混窗镜像表每用例清零（executions/workspaces 会被下方 countActiveWork 镜像写入 PG，
+    // 残留会让闸读数在用例间膨胀；tasks 用固定 id 但各用例互不重叠，保留旧语义不清）。
+    await pg!.truncate("executions", "workspaces", "schedule_executions", "schedules")
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF")
@@ -224,9 +267,17 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     dispatch = null as never
     tasks = new TaskDAO(pg!.sql)
     execs = new ExecutionDAO(db)
+    // 混窗计量闸（B5 票4R）：executions/workspaces 仍 SQLite（票5 迁），countActiveWork
+    // 已读 PG —— 计量前同步取 SQLite 快照、单条多值 INSERT 原子镜像，保闸读数与
+    // 迁移前同款。票5 单引擎收口后删除。
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+      await mirrorExecsToPg()
+      return ORIGINAL_METER.call(this, opts)
+    })
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
     if (realUserProfile === undefined) delete process.env.USERPROFILE
