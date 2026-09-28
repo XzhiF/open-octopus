@@ -39,12 +39,12 @@
 // E2E_AC_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { describePg, setupRegisteredPgSchema, pgTestEnabledOn, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -123,8 +123,9 @@ vi.mock("../services/execution-service-registry", () => ({
 // ── Fixture helpers ──────────────────────────────────────────────────
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  // P1 B4: registry lazyDAO (TokenUsageDAO 等) 首个访问要 getDb() —— initDb
+  // 点亮全局句柄；schema/pragma 由 initDb 内部完成。
+  const db = initDb(":memory:")
   db.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
@@ -395,7 +396,7 @@ afterEach(() => {
   if (realUserProfile === undefined) delete process.env.USERPROFILE
   else process.env.USERPROFILE = realUserProfile
   fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 describePg("AC1 — accepted: ledger + advance", () => {

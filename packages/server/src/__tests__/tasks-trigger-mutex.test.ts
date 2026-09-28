@@ -34,7 +34,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, ExecutionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
@@ -129,9 +129,9 @@ let wsSeq = 0
 let events: Array<Record<string, unknown>>
 
 function newDb(): Database.Database {
-  const d = new Database(":memory:")
-  d.pragma("foreign_keys = ON")
-  applySchema(d)
+  // P1 B4: TasksService.tokenUsage 走 registry lazyDAO —— 首个访问会 getDb()，
+  // 全局句柄必须先经 initDb 点亮（库仍按旧世界每用例一座 :memory:）。
+  const d = initDb(":memory:")
   d.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
@@ -282,7 +282,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   fs.rmSync(wsDir, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 // ── 1. enqueue ───────────────────────────────────────────────────────

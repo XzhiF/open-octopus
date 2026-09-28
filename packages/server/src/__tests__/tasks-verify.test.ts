@@ -7,13 +7,13 @@
 // BashExecutor 走真 spawn（darwin/linux bash；Windows 由 OCTOPUS_BASH_PATH 兜底，
 // 与引擎 bash 节点同路），故本套是真集成测试而非 mock 演练。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import { execFileSync } from "node:child_process"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -95,8 +95,7 @@ function batchHomeFiles(taskId: string): string[] {
 beforeAll(async () => {
   if (!pgTestEnabledOn()) return
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-verify-"))
   wsDir = path.join(tmp, "ws1", "projects")
   fs.mkdirSync(wsDir, { recursive: true })
@@ -123,7 +122,7 @@ afterAll(async () => {
   unSub?.()
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 

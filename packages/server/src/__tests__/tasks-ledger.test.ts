@@ -5,12 +5,12 @@
 // archiving 重链:accepted 走两-phase + autoAdvance=false → awaiting_manual_trigger
 // (不开下一轮、不起工作流),ledger 仍能落盘。checks 走 .md 门。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -74,8 +74,7 @@ const PLAN = `## 测试步骤\n\n### Step 1: 剧本渲染 (spec-001)\n- 页面: 
 beforeAll(async () => {
   if (!pgTestEnabledOn()) return
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-ledger-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
   db.prepare(`INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
@@ -91,7 +90,7 @@ afterAll(async () => {
   if (!pgTestEnabledOn()) return
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 

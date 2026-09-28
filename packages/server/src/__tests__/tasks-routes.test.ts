@@ -19,9 +19,9 @@
 // request (R3 API↔DB), data prefix E2E_TD_ (R7), assert response+SQL (R4).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -52,9 +52,9 @@ function makeSSECollector() {
 }
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
-  return db
+  // P1 B4: registry lazyDAO (TokenUsageDAO 等) 在首个访问前需要全局 SQLite 已 initDb ——
+  // 用 initDb 建库并同时成为全局句柄，本地引用与全局指向同一座库。
+  return initDb(":memory:")
 }
 
 /** Insert a task row directly (bypass the service) to set up non-draft states.
@@ -166,7 +166,7 @@ describePg("03: /api/tasks routes + TasksService (integration)", () => {
   afterAll(async () => {
     await pg?.close()
     pg = null
-    db.close()
+    closeDb()
   })
 
   beforeEach(() => {

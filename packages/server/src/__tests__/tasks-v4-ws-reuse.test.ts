@@ -31,11 +31,11 @@
 // HOME/USERPROFILE are restored with `delete` — assigning undefined stringifies).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import {
   ExecutionDAO, ScheduleConfigDAO, ScheduleRunDAO, WorkspaceDAO,
 } from "../db/dao"
@@ -95,9 +95,8 @@ vi.mock("../services/execution-service-registry", () => ({
 // ── Fixture helpers ───────────────────────────────────────────────────
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
+  const db = initDb(":memory:")
   db.pragma("foreign_keys = ON")
-  applySchema(db)
   db.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
@@ -234,7 +233,7 @@ describePg("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound
     if (realUserProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = realUserProfile
     fs.rmSync(fakeHome, { recursive: true, force: true })
-    db.close()
+    closeDb()
   })
 
   // ── AC3 — same-name dir is an ERROR, not a silent rmSync rebuild ─────

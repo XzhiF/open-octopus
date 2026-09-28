@@ -26,12 +26,12 @@
 // E2E_PR_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -95,8 +95,7 @@ vi.mock("../services/execution-service-registry", () => ({
 // ── Fixtures ─────────────────────────────────────────────────────────
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  const db = initDb(":memory:")
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   return db
 }
@@ -263,7 +262,7 @@ afterEach(() => {
   if (realUserProfile === undefined) delete process.env.USERPROFILE
   else process.env.USERPROFILE = realUserProfile
   fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 describePg("AC1 — pause delegates to the run and the task reflects it", () => {

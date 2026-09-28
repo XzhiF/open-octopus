@@ -4,7 +4,7 @@
 // ready → stop 释放端口;外部进程占 url → 无会话 GET 报 external;秒退命令 →
 // exited;未配置/非法url/$vars./无awaiting 门链。端口用 net 抢 ephemeral 避免撞车。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
@@ -12,7 +12,7 @@ import os from "os"
 import net from "net"
 import http from "http"
 import { execFileSync } from "child_process"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -94,8 +94,7 @@ async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => b
 beforeAll(async () => {
   if (!pgTestEnabledOn()) return
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-preview-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
   db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
@@ -114,7 +113,7 @@ afterAll(async () => {
   unSub?.()
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   // Windows: a just-exited BashExecutor child may momentarily hold a dir handle → EPERM;
   // retry best-effort so teardown never flakes the suite.
   for (let i = 0; i < 50; i++) {

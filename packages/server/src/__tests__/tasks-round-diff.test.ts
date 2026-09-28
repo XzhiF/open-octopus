@@ -8,12 +8,12 @@
 // tasks-batch-tree harness）。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import { execFileSync } from "child_process"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
@@ -96,8 +96,7 @@ async function newAwaitingTask(opts: {
 beforeAll(async () => {
   if (!pgTestEnabledOn()) return
   pg = await setupRegisteredPgSchema()
-  db = new Database(":memory:")
-  applySchema(db)
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-rounddiff-"))
   wsDir = path.join(tmp, "ws1")
   repoDir = path.join(wsDir, "projects", "app")
@@ -141,7 +140,7 @@ afterAll(async () => {
   if (!pgTestEnabledOn()) return
   await pg?.close()
   pg = null
-  db.close()
+  closeDb()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
