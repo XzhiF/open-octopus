@@ -55,15 +55,16 @@ function service(llm?: CompressionLlmCall): SessionCompressService {
   })
 }
 
-function ledgerRows(sid: string) {
-  return db.prepare(
-    "SELECT * FROM llm_calls WHERE source_path = 'session_compress' AND session_id = ?",
-  ).all(sid) as Array<Record<string, unknown>>
+async function ledgerRows(sid: string): Promise<Array<Record<string, unknown>>> {
+  return await pg!.sql`
+    SELECT * FROM llm_calls WHERE source_path = 'session_compress' AND session_id = ${sid}
+  ` as unknown as Array<Record<string, unknown>>
 }
 
 /** NEW-r2：钱不落账本 —— 按行 id 查视图派生 cost_usd（无价 → NULL，不焊 0）。 */
-function viewCost(id: unknown): number | null {
-  const r = db.prepare("SELECT cost_usd FROM llm_calls_costed WHERE id = ?").get(String(id)) as { cost_usd: number | null } | undefined
+async function viewCost(id: unknown): Promise<number | null> {
+  const rows = await pg!.sql`SELECT cost_usd::float8 AS cost_usd FROM llm_calls_costed WHERE id = ${String(id)}`
+  const r = (rows as unknown as Array<{ cost_usd: number | null }>)[0]
   if (!r) throw new Error(`视图行缺失: id=${String(id)}`)
   return r.cost_usd
 }
@@ -75,8 +76,8 @@ beforeEach(async () => {
     pg = await setupPgSchema()
     dao = new AgentSessionDAO(pg.sql)
   }
-  tokenDao = new TokenUsageDAO(db)
-  new BillingDAO(db).createPrice({
+  if (pg) tokenDao = new TokenUsageDAO(pg.sql)
+  if (pg) await new BillingDAO(pg.sql).createPrice({
     id: "OC-t04", vendor: "e2e", model_id: "E2E_TEST_comp",
     input_unit_price: 2, output_unit_price: 10, cache_write_unit_price: 2.5, cache_read_unit_price: 0.5,
     currency: "USD",
@@ -137,7 +138,7 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const result = await service(llm).compressSession(sid)
 
     expect(result.compressed_count).toBe(6)
-    const rows = ledgerRows(sid)
+    const rows = await ledgerRows(sid)
     expect(rows).toHaveLength(1)
     const r = rows[0]
     expect(r).toMatchObject({
@@ -152,7 +153,7 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     // LLM 摘要进正文（非估算路径）
     expect(result.summary_content).toContain("LLM 摘要")
     // 钱 = 视图派生；兜底价命中 → 手算 3469/1e6
-    expect(viewCost(r.id)).toBeCloseTo(0.003469, 12)
+    expect(await viewCost(r.id)).toBeCloseTo(0.003469, 12)
   })
 
   it("入账值 = chunk 真值 ≠ tokenEstimate（证明非抄估算，AC2）", async () => {
@@ -160,7 +161,7 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const llm: CompressionLlmCall = async () =>
       ({ text: "s", model: "E2E_TEST_comp", usage: LLM_USAGE } satisfies CompressionLlmResult)
     await service(llm).compressSession(sid)
-    const r = ledgerRows(sid)[0]
+    const r = (await ledgerRows(sid))[0]
     expect(r.input_tokens).toBe(1234) // 厂商真值逐字段相等（来源 = 注入 seam 的 chunk usage）
     expect(r.output_tokens).toBe(99)
     const estimate = (await service().getCompressedContext(sid)).total_tokens_estimate // 估算仍在预算口径
@@ -173,18 +174,18 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const llm: CompressionLlmCall = async () => { throw new Error("provider down") }
     const result = await service(llm).compressSession(sid)
     expect(result.compressed_count).toBe(6)
-    expect(ledgerRows(sid)).toHaveLength(0)
+    expect(await ledgerRows(sid)).toHaveLength(0)
     expect(result.summary_content).toContain("会话摘要") // 回退到既有 extraction 摘要
   })
 
   it("LLM seam 返回 null / 缺 usage → 不落半行，回退摘要", async () => {
     const s1 = await seedSession(8)
     await service(async () => null).compressSession(s1)
-    expect(ledgerRows(s1)).toHaveLength(0)
+    expect(await ledgerRows(s1)).toHaveLength(0)
 
     const s2 = await seedSession(8)
     await service(async () => ({ text: "t", model: null, usage: undefined }) as unknown as CompressionLlmResult).compressSession(s2)
-    expect(ledgerRows(s2)).toHaveLength(0)
+    expect(await ledgerRows(s2)).toHaveLength(0)
   })
 
   it("未配价模型 → 行仍入账，视图 cost NULL（NEW-r2：unpriced 不焊 0、不估算）", async () => {
@@ -192,13 +193,13 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const llm: CompressionLlmCall = async () =>
       ({ text: "s", model: "E2E_TEST_noprice-t04", usage: LLM_USAGE } satisfies CompressionLlmResult)
     await service(llm).compressSession(sid)
-    const rows = ledgerRows(sid)
+    const rows = await ledgerRows(sid)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       model: "E2E_TEST_noprice-t04",
       input_tokens: 1234,
     })
-    expect(viewCost(rows[0].id)).toBeNull()
+    expect(await viewCost(rows[0].id)).toBeNull()
   })
 
   it("消息数不足以压缩 → 零调用零行（不造数）", async () => {
@@ -208,7 +209,7 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const result = await service(llm).compressSession(sid)
     expect(result.compressed_count).toBe(0)
     expect(called).toBe(0)
-    expect(ledgerRows(sid)).toHaveLength(0)
+    expect(await ledgerRows(sid)).toHaveLength(0)
   })
 
   it("无 seam（构造兼容）→ 行为与改造前等价：确定性摘要，无 llm_calls 行", async () => {
@@ -217,6 +218,6 @@ describePg("session 压缩入账（票04/KD24/US3）", () => {
     const result = await svc.compressSession(sid)
     expect(result.compressed_count).toBe(6)
     expect(result.summary_content).toContain("会话摘要")
-    expect(db.prepare("SELECT COUNT(*) c FROM llm_calls").get()).toEqual({ c: 0 })
+    expect(Number((await pg!.sql`SELECT COUNT(*) c FROM llm_calls`)[0].c)).toBe(0)
   })
 })

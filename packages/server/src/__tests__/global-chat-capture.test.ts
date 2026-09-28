@@ -38,8 +38,8 @@ function resultChunk(model: string, usage = USAGE_P): Record<string, unknown> {
   }
 }
 
-// P1 B3：sessions/messages 已迁 PG —— Main Agent 域的会话造数走随机 PG 库；
-// llm_calls/账本视图仍在 SQLite（B4 域），global_chat 两例保持双模式可跑。
+// P1 B3：sessions/messages 已迁 PG；P1 B4 票2B-1：llm_calls/账本视图/价行亦迁 PG ——
+// 全文件切随机 PG 库（global_chat 两例同批门控）。cost numeric → ::float8。用例语义与条数不变。
 let db: Database.Database
 let pg: PgFixture | null = null
 let tokenDao: TokenUsageDAO
@@ -59,38 +59,44 @@ function installProvider(chunks: Array<Array<Record<string, unknown>>>) {
   })) as never)
 }
 
-function llmRows(): Array<Record<string, unknown>> {
-  return db.prepare("SELECT * FROM llm_calls ORDER BY timestamp, call_index").all() as Array<Record<string, unknown>>
+async function llmRows(): Promise<Array<Record<string, unknown>>> {
+  return await pg!.sql`SELECT * FROM llm_calls ORDER BY timestamp, call_index` as unknown as Array<Record<string, unknown>>
 }
 
 /** NEW-r2：钱不落账本 —— 按行 id 查视图派生 cost_usd（无价 → NULL，不焊 0）。 */
-function viewCost(id: unknown): number | null {
-  const r = db.prepare("SELECT cost_usd FROM llm_calls_costed WHERE id = ?").get(String(id)) as { cost_usd: number | null } | undefined
+async function viewCost(id: unknown): Promise<number | null> {
+  const rows = await pg!.sql`SELECT cost_usd::float8 AS cost_usd FROM llm_calls_costed WHERE id = ${String(id)}`
+  const r = (rows as unknown as Array<{ cost_usd: number | null }>)[0]
   if (!r) throw new Error(`视图行缺失: id=${String(id)}`)
   return r.cost_usd
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+  sessionDAO = new AgentSessionDAO(pg.sql)
   db = new Database(":memory:")
   applySchema(db)
-  tokenDao = new TokenUsageDAO(db)
-  const billing = new BillingDAO(db)
-  billing.createPrice({
+  tokenDao = new TokenUsageDAO(pg.sql)
+  const billing = new BillingDAO(pg.sql)
+  await billing.createPrice({
     id: "OC-gp", vendor: "e2e", model_id: PRIMARY,
     input_unit_price: 3, output_unit_price: 15, cache_write_unit_price: 3.75, cache_read_unit_price: 0.3,
     currency: "USD",
   })
-  billing.createPrice({
+  await billing.createPrice({
     id: "OC-gs", vendor: "e2e", model_id: SECONDARY,
     input_unit_price: 1, output_unit_price: 2, cache_write_unit_price: 0.5, cache_read_unit_price: 0.1,
     currency: "USD",
   })
 })
 
-beforeEach(() => {
-  db.prepare("DELETE FROM llm_calls").run()
-  db.prepare("DELETE FROM messages").run()
-  db.prepare("DELETE FROM sessions").run()
+beforeEach(async () => {
+  if (pg) {
+    await pg.sql.unsafe("DELETE FROM llm_calls")
+    await pg.sql.unsafe("DELETE FROM messages")
+    await pg.sql.unsafe("DELETE FROM sessions")
+  }
   sendQueryCalls = 0
   // Main Agent 委托链需要 built-in clone 在盘可解析（同 delegate-mention 惯例）
   process.env.OCTOPUS_HOME = TEST_DIR
@@ -111,7 +117,7 @@ afterAll(async () => {
   await pg?.close()
   pg = null
   try { fs.rmSync(TEST_DIR, { recursive: true, force: true }) } catch { /* non-fatal */ }
-  db.close()
+  db?.close()
 })
 
 // ── 全局聊天（routes/global-chat.ts） ─────────────────────────────
@@ -127,7 +133,7 @@ function globalChatApp() {
   return app
 }
 
-describe("全局聊天入账（global_chat）", () => {
+describePg("全局聊天入账（global_chat）", () => {
   it("直发一轮（无委托）→ 恰一条 global_chat 行，session/org 归属正确，cost 手算一致", async () => {
     installProvider([[{ type: "text_delta", content: "ok" }, resultChunk(PRIMARY)]])
     const app = globalChatApp()
@@ -139,7 +145,7 @@ describe("全局聊天入账（global_chat）", () => {
     await res.text()
 
     expect(sendQueryCalls).toBe(1)
-    const rows = llmRows()
+    const rows = await llmRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       source_path: "global_chat",
@@ -154,7 +160,7 @@ describe("全局聊天入账（global_chat）", () => {
     expect(rows[0].execution_id).toBeNull()
     // NEW-r2：行 = 纯事实；钱查视图，兜底价命中 → 手算 10935/1e6
     expect(rows[0]).not.toHaveProperty("cost_usd")
-    expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
+    expect(await viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
   it("error-only 流（无 result）→ 零行（有真值才记）", async () => {
@@ -166,7 +172,7 @@ describe("全局聊天入账（global_chat）", () => {
       body: JSON.stringify({ content: "E2E_TEST err" }),
     })
     await res.text()
-    expect(llmRows()).toHaveLength(0)
+    expect(await llmRows()).toHaveLength(0)
   })
 })
 
@@ -197,25 +203,18 @@ async function mainChat(app: Hono, body: Record<string, unknown>) {
 }
 
 describePg("Main Agent 入账与委托去重（US2/KD23）", () => {
-  beforeAll(async () => {
-    // P1 B3: sessions/messages 走 PG —— 注册全局池供路由内部经 pgSql() 的懒 DAO 使用。
-    if (!pgTestEnabledOn()) return
-    pg = await setupRegisteredPgSchema()
-    sessionDAO = new AgentSessionDAO(pg.sql)
-  })
-
   it("统一入口直答（无委托）→ 恰一条 global_chat 行", async () => {
     await makeSession("ma-1", null)
     installProvider([[{ type: "text_delta", content: "direct answer" }, resultChunk(PRIMARY)]])
     await mainChat(mainApp(), { message: "E2E_TEST direct", session_id: "ma-1" })
 
     expect(sendQueryCalls).toBe(1)
-    const rows = llmRows()
+    const rows = await llmRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       source_path: "global_chat", session_id: "ma-1", org: ORG, model: PRIMARY,
     })
-    expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
+    expect(await viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
   it("@@mention 委托（无自引用）→ Main 不产生路由调用，恰一条 clone_chat 行归分身（node_id=clone）", async () => {
@@ -224,13 +223,13 @@ describePg("Main Agent 入账与委托去重（US2/KD23）", () => {
     await mainChat(mainApp(), { message: "E2E_TEST @scheduler do it", session_id: "ma-2", delegate_to: "scheduler" })
 
     expect(sendQueryCalls).toBe(1) // Main Agent 路由轮未发起 provider 调用 → 不该有 global_chat 行
-    const rows = llmRows()
+    const rows = await llmRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       source_path: "clone_chat", session_id: "ma-2", org: ORG,
       node_id: "scheduler", model: SECONDARY,
     })
-    expect(viewCost(rows[0].id)).toBeCloseTo(0.0008275, 6)
+    expect(await viewCost(rows[0].id)).toBeCloseTo(0.0008275, 6)
   })
 
   it("工具化委托（delegate_to_*）→ Main 路由轮 + 分身应答轮各一行，行数=真实调用数=2，无双计", async () => {
@@ -250,12 +249,14 @@ describePg("Main Agent 入账与委托去重（US2/KD23）", () => {
     await mainChat(mainApp(), { message: "E2E_TEST delegate via tool", session_id: "ma-3" })
 
     expect(sendQueryCalls).toBe(2) // 独立计数：两次真实 provider 调用（KD23）
-    const rows = llmRows()
+    const rows = await llmRows()
     expect(rows).toHaveLength(2)
     expect(rows.filter(r => r.source_path === "global_chat")).toHaveLength(1)
     expect(rows.filter(r => r.source_path === "clone_chat")).toHaveLength(1)
     expect(rows.every(r => r.session_id === "ma-3" && r.org === ORG)).toBe(true)
-    const costs = rows.map(r => viewCost(r.id) ?? NaN).sort((a, b) => a - b) // 视图派生,每行各算
+    const costs: number[] = [] // 视图派生,每行各算
+    for (const r of rows) costs.push((await viewCost(r.id)) ?? NaN)
+    costs.sort((a, b) => a - b)
     expect(costs[0]).toBeCloseTo(0.0008275, 6)
     expect(costs[1]).toBeCloseTo(0.010935, 6)
   })
@@ -266,7 +267,7 @@ describePg("Main Agent 入账与委托去重（US2/KD23）", () => {
     await mainChat(mainApp(), { message: "E2E_TEST r1", session_id: "ma-4" })
     installProvider([[resultChunk(SECONDARY)]])
     await mainChat(mainApp(), { message: "E2E_TEST r2", session_id: "ma-4" })
-    const rows = llmRows()
+    const rows = await llmRows()
     expect(rows).toHaveLength(2)
     expect(new Set(rows.map(r => r.id)).size).toBe(2)
     expect(rows.every(r => r.source_path === "global_chat" && r.session_id === "ma-4")).toBe(true)
