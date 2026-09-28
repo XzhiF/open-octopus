@@ -229,36 +229,36 @@ if (!process.env.VITEST && daos) {
   // Initialize archive service singleton
   initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
 
-  // ── Scheduler seed: auto-create system:daily-archive task ────────────
-  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
-  try {
-    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
-    if (!existingSeed) {
-      daos.scheduleConfig.insertSchedule({
-        id: 'system:daily-archive',
-        org: 'system',
-        name: 'system:daily-archive',
-        cron_expression: '0 3 * * *',
-        timezone: 'Asia/Shanghai',
-        job_type: 'agent',
-        config: JSON.stringify({
-          prompt: 'Archive yesterday daily memory and refine long-term memory',
-        }),
-        enabled: 1,
-        description: 'System-seeded daily archive task (auto-created on server startup)',
-      })
-      console.log('[server] Scheduler seed: system:daily-archive task created')
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Scheduler seed failed: ${msg}`)
-  }
-
-  // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
-  // update the system:daily-archive cron expression
-  // fire-and-forget：scheduleConfig 已 async 化，顶层 await 会破坏 CJS 构建，
-  // 与上方 clone-init 同姿势用 void IIFE 包裹（尽力而为、失败仅告警）。
+  // ── Scheduler seed + one-time archive_cron_hour migration ─────────────
+  // system:daily-archive: idempotent seed (insert only if absent), then migrate its
+  // cron from config.yaml archive_cron_hour when it differs from the default 3.
+  // scheduleConfig 已 async 化（返回 Promise）：顶层 await 会破坏 CJS 构建，
+  // 与上方 clone-init 同姿势用 void async IIFE 包裹并逐个 await（保留 seed→migration 顺序，
+  // 尽力而为、失败仅告警）。此前票2 遗留未 await 使 findByName 恒真、seed 永不插入。
   void (async () => {
+    try {
+      const existingSeed = await daos!.scheduleConfig.findByName('system:daily-archive')
+      if (!existingSeed) {
+        await daos!.scheduleConfig.insertSchedule({
+          id: 'system:daily-archive',
+          org: 'system',
+          name: 'system:daily-archive',
+          cron_expression: '0 3 * * *',
+          timezone: 'Asia/Shanghai',
+          job_type: 'agent',
+          config: JSON.stringify({
+            prompt: 'Archive yesterday daily memory and refine long-term memory',
+          }),
+          enabled: 1,
+          description: 'System-seeded daily archive task (auto-created on server startup)',
+        })
+        console.log('[server] Scheduler seed: system:daily-archive task created')
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] Scheduler seed failed: ${msg}`)
+    }
+
     try {
       const fs = require('fs')
       const yaml = require('js-yaml')

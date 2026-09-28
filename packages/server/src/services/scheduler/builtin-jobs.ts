@@ -132,7 +132,7 @@ export async function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): Pro
     const pointsAtTheRightHandler =
       existing.job_type === "job" && parseHandler(existing.config) === job.handler
     if (!pointsAtTheRightHandler) {
-      dao.updateSchedule(id, { job_type: "job", config: JSON.stringify(config) })
+      await dao.updateSchedule(id, { job_type: "job", config: JSON.stringify(config) })
       result.repaired.push(id)
       continue
     }
