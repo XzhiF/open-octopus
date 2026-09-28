@@ -673,7 +673,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               // 'clone_chat'。NEW-r2：只落事实行，钱查询时派生）。
               // 纯旁路 + 无真值不记，收敛在票01 helper（recordProviderResultUsage）。
               if (tokenUsageDao) {
-                recordProviderResultUsage({
+                await recordProviderResultUsage({
                   sourcePath: 'clone_chat',
                   nodeExecutionId: null,
                   executionId: null,

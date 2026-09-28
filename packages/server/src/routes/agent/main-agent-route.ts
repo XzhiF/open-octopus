@@ -251,7 +251,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               // 分身侧（CloneRuntime 流），一行 clone_chat 归本会话、node_id=分身名；
               // Main Agent 本路径不发起路由调用 → 不多记 global_chat 行，绝不双计。
               if (tokenUsageDao && chunk.type === 'result') {
-                recordProviderResultUsage({
+                await recordProviderResultUsage({
                   sourcePath: 'clone_chat',
                   nodeExecutionId: null,
                   executionId: null,
@@ -414,7 +414,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
               // 调用 → 单独入账 global_chat（一 chunk 一行，重试=新调用=新行，KD23）。
               if (tokenUsageDao) {
-                recordProviderResultUsage({
+                await recordProviderResultUsage({
                   sourcePath: 'global_chat',
                   nodeExecutionId: null,
                   executionId: null,
@@ -812,7 +812,7 @@ async function executeDelegation(
       // billing-coverage-2 票03 (KD23)：工具化委托 —— 分身应答轮是另一次真实 provider
       // 调用 → 一行 clone_chat（node_id=分身名）；与路由轮的 global_chat 行各归各的调用。
       if (tokenUsageDao && chunk.type === 'result') {
-        recordProviderResultUsage({
+        await recordProviderResultUsage({
           sourcePath: 'clone_chat',
           nodeExecutionId: null,
           executionId: null,

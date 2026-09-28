@@ -92,7 +92,8 @@ export class ActuatorService {
     return this.executionResolver.getActiveExecutions()
   }
 
-  getExecutionProgress(id: string): ExecutionProgressResponse | null {
+  // B4: resolver 聚合读经 TokenUsageDAO(PG) 后为 async。
+  async getExecutionProgress(id: string): Promise<ExecutionProgressResponse | null> {
     return this.executionResolver.getExecutionProgress(id)
   }
 

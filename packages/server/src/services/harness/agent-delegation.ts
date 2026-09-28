@@ -639,7 +639,7 @@ export class AgentDelegationService {
 
     // Record token usage with source="harness"
     if (tokenInfo && tokenInfo.inputTokens + tokenInfo.outputTokens > 0) {
-      this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
+      await this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
     }
 
     // Persist delegation event
@@ -872,19 +872,20 @@ export class AgentDelegationService {
   /**
    * Record token usage for this delegation in the node_token_usages table.
    */
-  private recordTokenUsage(
+  // B4: TokenUsageDAO 已迁 PG —— 落账 async；try/catch 语义保持（await 后异常照旧出声）。
+  private async recordTokenUsage(
     delegationId: string,
     executionId: string,
     nodeId: string,
     tokenInfo: ModelUsage,
-  ): void {
+  ): Promise<void> {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
       // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
       // （SDK 上报价 tokenInfo.costUsd 不再传入 —— KD2 不作账；未配价 NULL —— KD4 不估算）。
-      this.tokenUsageDao.recordNodeUsage({
+      await this.tokenUsageDao.recordNodeUsage({
         id: tokenId,
         nodeExecutionId: nodeExecId,
         model: tokenInfo.model,

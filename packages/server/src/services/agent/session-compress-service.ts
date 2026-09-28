@@ -164,7 +164,7 @@ export class SessionCompressService {
     // 记账异常不反噬压缩结果（旁路记账），但必须出声。
     if (llmOutcome) {
       try {
-        this.recordCompressionCall(sessionId, llmOutcome, llmStartedAt)
+        await this.recordCompressionCall(sessionId, llmOutcome, llmStartedAt)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[SessionCompress] billing ledger write failed for ${sessionId}: ${msg}`)
@@ -198,9 +198,10 @@ export class SessionCompressService {
    * 归属被压缩会话（KD17：session_id + org 如实；无执行链路 → node/execution NULL，v47 列
    * 可空）。token 用厂商真值（result chunk usage），cost 走 phase 1 同一计费链路（KD25）。
    */
-  private recordCompressionCall(sessionId: string, outcome: CompressionLlmResult, startedAt: number): void {
+  // B4: recordLlmCall 走 TokenUsageDAO(PG) 后为 async；调用方 await（旁路语义不变，异常仍由调用侧 catch）。
+  private async recordCompressionCall(sessionId: string, outcome: CompressionLlmResult, startedAt: number): Promise<void> {
     if (!this.tokenDao || !outcome.usage) return
-    recordLlmCall({
+    await recordLlmCall({
       id: crypto.randomUUID(),
       sourcePath: 'session_compress',
       nodeExecutionId: null,

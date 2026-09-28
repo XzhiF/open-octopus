@@ -841,7 +841,7 @@ executionRoutes.get("/:executionId/logs", (c) => {
   })
 })
 
-executionRoutes.get("/:executionId/observability", (c) => {
+executionRoutes.get("/:executionId/observability", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
   const svc = getService(workspaceId)
@@ -853,7 +853,7 @@ executionRoutes.get("/:executionId/observability", (c) => {
 
   try {
     const queryService = new ObservabilityQueryService(_executionDAO, _tokenUsageDAO)
-    const data = queryService.getObservabilityData(executionId)
+    const data = await queryService.getObservabilityData(executionId)
     return c.json(data)
   } catch (err: unknown) {
     if (err && typeof err === "object" && "status" in err) {

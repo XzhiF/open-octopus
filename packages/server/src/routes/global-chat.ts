@@ -293,7 +293,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             // recordProviderResultUsage 内部吞异常，记账失败不断聊天流。归属如实：
             // 无执行链路 → node_execution_id/execution_id = NULL（KD17/v47）。
             if (tokenUsageDao) {
-              recordProviderResultUsage({
+              await recordProviderResultUsage({
                 sourcePath: 'global_chat',
                 nodeExecutionId: null,
                 executionId: null,

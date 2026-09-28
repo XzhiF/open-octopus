@@ -126,8 +126,8 @@ export class ArchiveAnalysisService {
       const { TokenUsageDAO } = await import('../../db/dao/token-usage-dao')
       const { pgSql } = await import('../../db/dao/registry')
       const tokenDAO = new TokenUsageDAO(pgSql())
-      const wsStats = tokenDAO.getWorkspaceTokenStats(workspaceId)
-      const nodes = tokenDAO.getNodeTokenStats(workspaceId)
+      const wsStats = await tokenDAO.getWorkspaceTokenStats(workspaceId)
+      const nodes = await tokenDAO.getNodeTokenStats(workspaceId)
       tokenStats = { ...wsStats, nodes }
     } catch { /* non-fatal */ }
 

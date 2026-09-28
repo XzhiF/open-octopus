@@ -192,11 +192,13 @@ export class EngineCallbacks implements IEngineCallbacks {
       if (metricsTimer) {
         clearTimeout(metricsTimer)
       }
-      metricsTimer = setTimeout(() => {
+      // B4: 回调转 async —— 计时器回调返回的 Promise 显式 void 化吞弃（emit 失败走下方 catch）。
+      metricsTimer = setTimeout(() => { void (async () => {
         metricsTimer = null
         try {
           const exec = dao.findById(id)
-          const metrics = tokenUsageDao.aggregateByExecution(id)
+          // B4: TokenUsageDAO 已迁 PG —— metrics 聚合读为 async。
+          const metrics = await tokenUsageDao.aggregateByExecution(id)
 
           // Parse budget snapshot
           let budgetSnapshot: { max_tokens?: number; max_duration?: number; max_cost_usd?: number; alert_threshold?: number; token_counting_mode?: string } | null = null
@@ -269,7 +271,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         } catch (err) {
           console.error("[EngineCallbacks] Failed to emit execution_metrics:", err)
         }
-      }, 500)
+      })() }, 500)
     }
 
     return {
@@ -288,7 +290,7 @@ export class EngineCallbacks implements IEngineCallbacks {
 
           if (!budgetSnapshot.max_tokens) return { action: "proceed" as const }
 
-          const metrics = tokenUsageDao.aggregateByExecution(id)
+          const metrics = await tokenUsageDao.aggregateByExecution(id)
           const mode = budgetSnapshot.token_counting_mode ?? "all"
           const consumedTokens = mode === "no_cache"
             ? metrics.usage.inputTokens + metrics.usage.outputTokens
@@ -381,7 +383,10 @@ export class EngineCallbacks implements IEngineCallbacks {
         })
       },
 
-      onNodeEnd: (nodeId, status, durationMs, result, nodeType) => {
+      // B4: TokenUsageDAO 迁 PG 后写读皆 async —— 引擎接口 onNodeEnd 仍是 void 同步槽位，
+      // 实现转 async 后显式 void 化（真 fire-and-forget，与旧同步语义等宽：
+      // 内部保持 落账→cost 派生→node_end emit 的先后序）。
+      onNodeEnd: (nodeId, status, durationMs, result, nodeType) => { void (async () => {
         const neId = `${id}-${nodeId}`
         // F1: 落库即权威——实时投影退场（recordNodeUsage 在下面写 modelUsages）
         this.liveUsageByExec.get(id)?.delete(nodeId)
@@ -404,7 +409,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           const now = new Date().toISOString()
           for (const mu of result.modelUsages) {
             // ledger 唯一写入口；NEW-r2 起本表纯记 token（钱从 llm_calls 派生）。
-            tokenUsageDao.recordNodeUsage({
+            await tokenUsageDao.recordNodeUsage({
               id: `${neId}-token-${mu.model}`,
               nodeExecutionId: neId,
               model: mu.model,
@@ -441,12 +446,12 @@ export class EngineCallbacks implements IEngineCallbacks {
           try {
             const exec = dao.findById(id)
             const calls = llmCalls.map((call: any, i: number) => ({ ...call, turnIndex: call.turnIndex || 1 }))
-            obs.persistLLMCalls(neId, id, calls, exec?.instance_id ?? `inst-${process.env.PORT ?? "3001"}-${exec?.branch ?? "main"}`)
+            await obs.persistLLMCalls(neId, id, calls, exec?.instance_id ?? `inst-${process.env.PORT ?? "3001"}-${exec?.branch ?? "main"}`)
           } catch { /* silent */ }
         }
 
         // NEW-r2：节点费用 = DB 派生（与报表同源同规则；SDK 上报价不作账，KD2 延续）。
-        const costUsd = tokenUsageDao.costForNodeExecution(neId).usd
+        const costUsd = (await tokenUsageDao.costForNodeExecution(neId)).usd
         const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
         const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
 
@@ -467,7 +472,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         scheduleMetricsEmit()
 
         this.syncStateJson()
-      },
+      })() },
 
       onNodeLog: (nodeId, logLine) => {
         sse.emit(wsId, { event: "node_log", data: { executionId: id, nodeId, logLine } })

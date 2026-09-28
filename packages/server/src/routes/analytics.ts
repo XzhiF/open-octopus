@@ -662,14 +662,15 @@ export function createAnalyticsRoutes(
   // --- SuggestionEngine GET (generate + fetch) ---
   const suggestionEngine = new SuggestionEngine()
 
-  router.get('/workspaces/:id/suggestions', (c: Context) => {
+  router.get('/workspaces/:id/suggestions', async (c: Context) => {
     const workspaceId = c.req.param('id')
     const status = c.req.query('status')
 
     // Build RuleContext from injected DAOs
     const ctx = { tokenDao: tokenUsageDAO, execDAO, workspaceId, workflowRef: '' }
     // Generate new suggestions from live data before returning
-    suggestionEngine.generate(ctx)
+    // B4: TokenUsageDAO 读已 async —— 生成先落账再读，语义不变。
+    await suggestionEngine.generate(ctx)
 
     const suggestions = suggestionEngine.getSuggestions(workspaceDAO, workspaceId, status ?? undefined)
 

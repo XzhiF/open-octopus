@@ -363,8 +363,8 @@ export class InteractionService {
 
     // Finalize: save assistant text, write token usage + llm_calls
     await this.finalizeAssistantMessage(acc, session)
-    this.writeTokenUsage(acc, session)
-    this.writeLlmCall(acc, session)
+    await this.writeTokenUsage(acc, session)
+    await this.writeLlmCall(acc, session)
 
     // Round 1 buffer flush: if AskUserQuestion was NOT called, yield buffered text now.
     // If it WAS called, buffer was already cleared in handleAskUserQuestion.
@@ -774,11 +774,12 @@ export class InteractionService {
   }
 
   /** Write aggregated token usage to node_token_usages. */
-  private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
+  // B4: TokenUsageDAO 已迁 PG，落账为 async —— 调用方 await。
+  private async writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): Promise<void> {
     if (!acc.usage) return
     // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
     // （SDK 上报价不再传入 —— KD2）。每轮新 uuid 不冲突。
-    this.tokenDao.recordNodeUsage({
+    await this.tokenDao.recordNodeUsage({
       id: randomUUID(),
       nodeExecutionId: session.nodeExecutionId,
       model: acc.model ?? "unknown",
@@ -789,13 +790,13 @@ export class InteractionService {
   }
 
   /** Write per-call details to llm_calls table. */
-  private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
+  private async writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): Promise<void> {
     if (!acc.usage) return
     const now = Date.now()
     // billing-coverage-2 票01：interaction 路径收敛到共用落账 helper（行为等价 ——
     // SDK 上报价不作账 KD2 延续；钱查询时派生），
-    // 来源标记 source_path='interaction'。
-    recordLlmCall({
+    // 来源标记 source_path='interaction'。B4：helper 走 PG，await。
+    await recordLlmCall({
       id: randomUUID(),
       sourcePath: 'interaction',
       nodeExecutionId: session.nodeExecutionId,

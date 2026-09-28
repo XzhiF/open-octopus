@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   node_id               text,
   session_id            text,
   instance_id           text,
-  source_path           text,                       -- v46 (KD20/KD21)
+  source_path           text                        -- v46 (KD20/KD21)
   -- [B4 混合期撤 FK] FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
   -- 同上：llm_calls 自 B4 起由 PG 侧直写（llm-call-ledger 唯一写入口），而
   -- node_executions 行生产者（ExecutionDAO）仍 SQLite —— 保留 FK 会拒掉一切

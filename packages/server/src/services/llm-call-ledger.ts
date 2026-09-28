@@ -46,7 +46,8 @@ export interface LlmCallLedgerInput {
 }
 
 /** 纯函数部分：组行（批量落库路径用，如 observability 的 flush）。NEW-r2 起无副作用、无算价。 */
-export function composeLlmCallRow(input: LlmCallLedgerInput): LlmCallRow {  if (!isLlmCallSourcePath(input.sourcePath)) {
+export function composeLlmCallRow(input: LlmCallLedgerInput): LlmCallRow {
+  if (!isLlmCallSourcePath(input.sourcePath)) {
     throw new Error(`[llm-call-ledger] 非法 source_path: ${String(input.sourcePath)}（必须是 shared LLM_CALL_SOURCE_PATHS 枚举值，KD20）`)
   }
   return {

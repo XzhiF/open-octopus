@@ -181,12 +181,14 @@ export class ObservabilityService {
     }
   }
 
-  persistLLMCalls(
+  // B4: TokenUsageDAO.insertLlmCallBatch 迁 PG 后为 async —— 本方法转 async。
+  // 调用方（EngineCallbacks.onNodeEnd）await 之，保持 落账→查询派生 的先后序。
+  async persistLLMCalls(
     nodeExecId: string,
     executionId: string,
     calls: LLMCallRecord[],
     instanceId: string
-  ): void {
+  ): Promise<void> {
     const meta = this.buffers.get(nodeExecId)?.meta
     if (!meta) return
 
@@ -221,7 +223,7 @@ export class ObservabilityService {
         instanceId,
       }))
 
-      this.tokenDao.insertLlmCallBatch(rows)
+      await this.tokenDao.insertLlmCallBatch(rows)
     } catch {
       // silent — observability never blocks execution
     }

@@ -34,9 +34,9 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   })
 
   // GET /executions/:id/progress — single execution detail
-  router.get('/executions/:id/progress', (c) => {
+  router.get('/executions/:id/progress', async (c) => {
     const id = c.req.param('id')
-    const result = actuatorService.getExecutionProgress(id)
+    const result = await actuatorService.getExecutionProgress(id)
     if (!result) {
       return c.json({ error: 'not_found', message: 'execution not found' }, 404)
     }

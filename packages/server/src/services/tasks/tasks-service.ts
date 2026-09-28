@@ -732,11 +732,11 @@ export class TasksService {
     const history = this.lifecycle.history(id)
     const byParent = groupChildren(this.lifecycle.childRuns(id))
     const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
-    const aiUsage = this.aiUsageFor([{
+    const aiUsage = (await this.aiUsageFor([{
       id,
       authorSessionId: row.source_chat_session_id,
       executionIds: history.map((h) => h.id),
-    }]).get(id)
+    }])).get(id)
     const dto: TaskDTO = {
       ...toDTO(row),
       execution: history[0] ? badge(history[0]) : null,
@@ -976,14 +976,14 @@ export class TasksService {
         )
       ).flat()
     }
-    return { items: this.attachInstances(rows) }
+    return { items: await this.attachInstances(rows) }
   }
 
   /** Attach each task's current instance with ONE batched query (a task has at most one
    *  LIVE root by the latch, but the newest root may well be a finished round — which is
    *  what the card shows: 「上一轮 completed」, not an empty badge). Pre-票03 this joined
    *  the root schedule row instead; the row it read was a stand-in for exactly this. */
-  private attachInstances(rows: TaskRow[]): TaskDTO[] {
+  private async attachInstances(rows: TaskRow[]): Promise<TaskDTO[]> {
     const dtos = rows.map(toDTO)
     if (dtos.length === 0) return dtos
     const ids = rows.map((r) => r.id)
@@ -999,7 +999,7 @@ export class TasksService {
       if (list) list.push(t.id)
       else execIdsByTask.set(t.task_id, [t.id])
     }
-    const usage = this.aiUsageFor(
+    const usage = await this.aiUsageFor(
       rows.map((r) => ({
         id: r.id,
         authorSessionId: r.source_chat_session_id,
@@ -1027,14 +1027,15 @@ export class TasksService {
    * 不护栏就会被两段各计一次。合并公式不在此重写 —— shared
    * mergeLlmUsageSummaries（mergeLedgerParts 的摘要层）是跨组合并唯一源。
    */
-  private aiUsageFor(
+  private async aiUsageFor(
     tasks: readonly { id: string; authorSessionId: string | null; executionIds: readonly string[] }[],
-  ): Map<string, LlmUsageSummary> {
+  ): Promise<Map<string, LlmUsageSummary>> {
     const out = new Map<string, LlmUsageSummary>()
     const execIds = tasks.flatMap((t) => [...t.executionIds])
     const sessionIds = tasks.map((t) => t.authorSessionId).filter((s): s is string => !!s)
-    const byExec = this.tokenUsage.aggregateLlmCallsBy("execution_id", execIds)
-    const bySession = this.tokenUsage.aggregateLlmCallsBy("session_id", sessionIds, ["l.execution_id IS NULL"])
+    // B4: TokenUsageDAO 已迁 PG —— 账本聚合读为 async。
+    const byExec = await this.tokenUsage.aggregateLlmCallsBy("execution_id", execIds)
+    const bySession = await this.tokenUsage.aggregateLlmCallsBy("session_id", sessionIds, ["l.execution_id IS NULL"])
     for (const t of tasks) {
       const parts: LlmUsageSummary[] = []
       const s = t.authorSessionId ? bySession.get(t.authorSessionId) : undefined
@@ -1897,7 +1898,7 @@ export class TasksService {
     }
 
     const row = (await this.taskDAO.getById(id))!
-    return this.attachInstances([row])[0] ?? toDTO(row)
+    return (await this.attachInstances([row]))[0] ?? toDTO(row)
   }
 
   /** The production entry point kept as a distinct name for the route (the
@@ -1942,7 +1943,7 @@ export class TasksService {
     })
 
     const row = (await this.taskDAO.getById(id))!
-    return this.attachInstances([row])[0] ?? toDTO(row)
+    return (await this.attachInstances([row]))[0] ?? toDTO(row)
   }
 
   /**
@@ -1997,7 +1998,7 @@ export class TasksService {
   async getTaskSummary(id: string): Promise<TaskDTO> {
     const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    return this.attachInstances([row])[0]
+    return (await this.attachInstances([row]))[0]
   }
 
   /** Arm + launch through the job, then wake it so the claim does not wait for the cron
@@ -2608,7 +2609,7 @@ export class TasksService {
     this.repoSyncService?.forget(id)
 
     const row = (await this.taskDAO.getById(id))!
-    return this.attachInstances([row])[0] ?? toDTO(row)
+    return (await this.attachInstances([row]))[0] ?? toDTO(row)
   }
 
   // ── Pause / Resume (the RUN is the host; the task only reflects it) ────
@@ -2686,7 +2687,7 @@ export class TasksService {
     this.emitRunTransition(existing.id, inst, "paused")
 
     const row = (await this.taskDAO.getById(id))!
-    return this.attachInstances([row])[0] ?? toDTO(row)
+    return (await this.attachInstances([row]))[0] ?? toDTO(row)
   }
 
   /**
@@ -2724,7 +2725,7 @@ export class TasksService {
     this.emitRunTransition(existing.id, inst, "running")
 
     const row = (await this.taskDAO.getById(id))!
-    return this.attachInstances([row])[0] ?? toDTO(row)
+    return (await this.attachInstances([row]))[0] ?? toDTO(row)
   }
 
   /** Announce a run transition on the taskpool channel. Mirrors the payload shape of

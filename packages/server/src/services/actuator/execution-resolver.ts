@@ -140,7 +140,7 @@ export class ExecutionResolver {
     }
   }
 
-  getExecutionProgress(id: string): ExecutionProgressResponse | null {
+  async getExecutionProgress(id: string): Promise<ExecutionProgressResponse | null> {
     const exec = this.executionDAO.findById(id)
     if (!exec) return null
 
@@ -162,7 +162,7 @@ export class ExecutionResolver {
       ...(n.node_type === 'agent' ? { session_id: n.session_id ?? undefined } : {}),
     }))
 
-    const tokens = this.aggregateTokens(id)
+    const tokens = await this.aggregateTokens(id)
     const recentErrors = this.getRecentErrors(id)
 
     // waiting_for: check if any node is pending_approval
@@ -184,11 +184,12 @@ export class ExecutionResolver {
     }
   }
 
-  private aggregateTokens(executionId: string): ExecutionProgressResponse['tokens'] {
+  private async aggregateTokens(executionId: string): Promise<ExecutionProgressResponse['tokens']> {
     if (!this.tokenUsageDAO) return null
     try {
       // C3: 走 ledger 单源（旧实现丢 cache_creation 整列 + ??0 焊 cost）
-      const m = this.tokenUsageDAO.aggregateByExecution(executionId)
+      // B4: TokenUsageDAO 已迁 PG，聚合读为 async。
+      const m = await this.tokenUsageDAO.aggregateByExecution(executionId)
       if (m.totals.tokens === 0) return null
       return {
         input: m.usage.inputTokens,

@@ -140,17 +140,18 @@ export class ObservabilityQueryService {
     this.tokenDao = tokenDao
   }
 
-  getObservabilityData(executionId: string): ObservabilityData {
+  async getObservabilityData(executionId: string): Promise<ObservabilityData> {
     const execution = this.execDao.findById(executionId)
     if (!execution) {
       throw Object.assign(new Error("Execution not found"), { status: 404 })
     }
 
-    const llmCalls = this.tokenDao.findLlmCallsByExecution(executionId)
+    // B4: TokenUsageDAO 已迁 PG，明细/汇总读均为 async。
+    const llmCalls = await this.tokenDao.findLlmCallsByExecution(executionId)
     const nodeExecutions = this.execDao.findNodeExecutions(executionId)
     const toolErrors = this.execDao.findToolErrors(executionId)
 
-    const tokens = this.computeTokenSummary(executionId)
+    const tokens = await this.computeTokenSummary(executionId)
     const byModel = this.computeByModel(llmCalls)
     const timeSeries = this.computeTimeSeries(llmCalls)
     const byNode = this.computeByNode(llmCalls, nodeExecutions)
@@ -171,10 +172,10 @@ export class ObservabilityQueryService {
     }
   }
 
-  private computeTokenSummary(executionId: string): ObservabilityTokenSummary {
+  private async computeTokenSummary(executionId: string): Promise<ObservabilityTokenSummary> {
     // C3/Q4: 总量唯一账本 = node_token_usages（aggregateByExecution 单源，与
     // steps/SSE 同源不跳变；llm_calls 只供下方明细分解）
-    const m = this.tokenDao.aggregateByExecution(executionId)
+    const m = await this.tokenDao.aggregateByExecution(executionId)
     return { usage: m.usage, totals: m.totals }
   }
 
