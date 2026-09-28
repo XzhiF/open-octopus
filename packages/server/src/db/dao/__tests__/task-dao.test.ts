@@ -10,8 +10,6 @@ import { describePg, setupPgSchema, type PgFixture } from "../../pg/__tests__/da
 import type { TaskRow } from "../../types"
 
 let db: Database.Database
-let taskDao: TaskDAO
-let schedDao: ScheduleConfigDAO
 let dbPath: string
 
 beforeEach(() => {
@@ -19,8 +17,6 @@ beforeEach(() => {
   db = new Database(dbPath)
   db.pragma("foreign_keys = ON")
   applySchema(db)
-  taskDao = new TaskDAO(db)
-  schedDao = new ScheduleConfigDAO(db)
 })
 
 afterEach(() => {
@@ -147,34 +143,47 @@ describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
     })
   })
 
-  describe("ScheduleConfigDAO — a definition row, and nothing else", () => {
-    it("insertSchedule writes a job definition without any task back-reference", () => {
-      const now = new Date().toISOString()
-      const result = schedDao.insertSchedule({
-        id: "sched-def-1", org: "xzf", name: "E2E_TD_def",
-        cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
-        config: JSON.stringify({ schema_version: "3.0", type: "workflow" }),
-        created_at: now, updated_at: now,
-      } as any)
-      expect(result.changes).toBe(1)
-      const got = schedDao.findById("sched-def-1")!
-      expect(got.name).toBe("E2E_TD_def")
-      // The columns are gone from the row type too — asserting the SHAPE here is what
-      // keeps a future caller from quietly reintroducing one through `as any`.
-      expect(Object.keys(got)).not.toContain("origin_type")
-      expect(Object.keys(got)).not.toContain("origin_id")
-    })
+  // P1 B5 票4：ScheduleConfigDAO 已迁 BasePgDAO（B5 票1）—— insertSchedule/findById
+  // 走 PG 随机测试库（见下方 describePg），SQLite 句柄喂它必炸
+  // "this.sql(...).unsafe is not a function"。shape 断言（方法删除线）随块同迁。
+})
 
-    it("the task-walking finders are gone from the DAO", () => {
-      // These four existed solely to answer 「这个任务的内在哪」 from the scheduler side.
-      for (const gone of [
-        "findSchedulesByOrigin", "findRootSchedulesByTaskIds",
-        "findQueuedSchedules", "claimParkedTaskSchedule", "cancelTriggeredTaskSchedule",
-        "findFailedChildSchedules",
-      ]) {
-        expect(typeof (schedDao as any)[gone]).not.toBe("function")
-      }
-    })
+describePg("ScheduleConfigDAO — a definition row, and nothing else (PG)", () => {
+  let pg: PgFixture
+  let schedDao: ScheduleConfigDAO
+
+  beforeEach(async () => {
+    pg = await setupPgSchema()
+    schedDao = new ScheduleConfigDAO(pg.sql)
+  })
+  afterEach(async () => { await pg.close() })
+
+  it("insertSchedule writes a job definition without any task back-reference", async () => {
+    const now = new Date().toISOString()
+    const result = await schedDao.insertSchedule({
+      id: "sched-def-1", org: "xzf", name: "E2E_TD_def",
+      cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
+      config: JSON.stringify({ schema_version: "3.0", type: "workflow" }),
+      created_at: now, updated_at: now,
+    } as never)
+    expect(result.changes).toBe(1)
+    const got = await schedDao.findById("sched-def-1")
+    expect(got!.name).toBe("E2E_TD_def")
+    // The columns are gone from the row type too — asserting the SHAPE here is what
+    // keeps a future caller from quietly reintroducing one through `as any`.
+    expect(Object.keys(got!)).not.toContain("origin_type")
+    expect(Object.keys(got!)).not.toContain("origin_id")
+  })
+
+  it("the task-walking finders are gone from the DAO", () => {
+    // These four existed solely to answer 「这个任务的内在哪」 from the scheduler side.
+    for (const gone of [
+      "findSchedulesByOrigin", "findRootSchedulesByTaskIds",
+      "findQueuedSchedules", "claimParkedTaskSchedule", "cancelTriggeredTaskSchedule",
+      "findFailedChildSchedules",
+    ]) {
+      expect(typeof (schedDao as unknown as Record<string, unknown>)[gone]).not.toBe("function")
+    }
   })
 })
 
