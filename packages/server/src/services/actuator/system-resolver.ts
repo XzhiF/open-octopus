@@ -47,11 +47,11 @@ export class SystemResolver {
     private eventLoopMonitor: EventLoopMonitor,
   ) {}
 
-  getSystem(): SystemResponse {
+  async getSystem(): Promise<SystemResponse> {
     const mem = process.memoryUsage()
     const loadAvg = os.loadavg()
 
-    const stats = this.executionDAO.getOverallStats()
+    const stats = await this.executionDAO.getOverallStats()
 
     return {
       process: {

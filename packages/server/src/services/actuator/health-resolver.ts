@@ -89,7 +89,7 @@ class EnginePoolIndicator implements HealthIndicator {
 
   async health(): Promise<HealthIndicatorResult> {
     try {
-      const active = this.executionDAO.findAllActiveExecutions()
+      const active = await this.executionDAO.findAllActiveExecutions()
       return { status: 'ok', details: { active_executions: active.length } }
     } catch {
       return { status: 'ok', details: { active_executions: 0 } }

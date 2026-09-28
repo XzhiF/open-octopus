@@ -90,13 +90,13 @@ export class ExecutionResolver {
     private errorTracker?: ErrorTracker,
   ) {}
 
-  getActiveExecutions(): ActiveExecutionsResponse {
-    const rows = this.executionDAO.findAllActiveExecutions()
+  async getActiveExecutions(): Promise<ActiveExecutionsResponse> {
+    const rows = await this.executionDAO.findAllActiveExecutions()
 
-    const executions: ActiveExecution[] = rows.map(row => {
+    const executions: ActiveExecution[] = await Promise.all(rows.map(async row => {
       const ws = this.workspaceDAO.findById(row.workspace_id)
-      const currentNode = this.resolveCurrentNode(row.id)
-      const nodeSummary = this.resolveNodeSummary(row.id)
+      const currentNode = await this.resolveCurrentNode(row.id)
+      const nodeSummary = await this.resolveNodeSummary(row.id)
 
       return {
         id: row.id,
@@ -113,13 +113,13 @@ export class ExecutionResolver {
         current_node: currentNode,
         node_summary: nodeSummary,
       }
-    })
+    }))
 
     return { count: executions.length, executions }
   }
 
-  private resolveCurrentNode(executionId: string): ActiveExecution['current_node'] {
-    const node = this.executionDAO.findFirstRunningNode(executionId)
+  private async resolveCurrentNode(executionId: string): Promise<ActiveExecution['current_node']> {
+    const node = await this.executionDAO.findFirstRunningNode(executionId)
     if (!node) return null
     return {
       id: node.node_id,
@@ -131,9 +131,9 @@ export class ExecutionResolver {
     }
   }
 
-  private resolveNodeSummary(executionId: string): ActiveExecution['node_summary'] {
+  private async resolveNodeSummary(executionId: string): Promise<ActiveExecution['node_summary']> {
     try {
-      const stats = this.executionDAO.findNodeStatsForExecutionSplit(executionId)
+      const stats = await this.executionDAO.findNodeStatsForExecutionSplit(executionId)
       return stats
     } catch {
       return { total: 0, completed: 0, running: 0, pending: 0 }
@@ -141,10 +141,10 @@ export class ExecutionResolver {
   }
 
   async getExecutionProgress(id: string): Promise<ExecutionProgressResponse | null> {
-    const exec = this.executionDAO.findById(id)
+    const exec = await this.executionDAO.findById(id)
     if (!exec) return null
 
-    const nodeRows = this.executionDAO.findNodeExecutions(id)
+    const nodeRows = await this.executionDAO.findNodeExecutions(id)
     const now = Date.now()
 
     const nodes = nodeRows.map(n => ({

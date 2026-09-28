@@ -37,20 +37,20 @@ export class RecoveryResolver {
     private getRecoveryService: (org: string) => { needsRecovery(): boolean; getStatus(): any },
   ) {}
 
-  getRecovery(org?: string): RecoveryResponse {
+  async getRecovery(org?: string): Promise<RecoveryResponse> {
     return {
-      stale_executions: this.findStaleExecutions(),
+      stale_executions: await this.findStaleExecutions(),
       pending_resume: { count: 0, items: [] },
-      pending_hooks: this.findPendingHooks(),
+      pending_hooks: await this.findPendingHooks(),
       orphaned_nodes: { last_fixed_count: 0, last_fixed_at: null },
       agent_recovery: this.getAgentRecovery(org ?? 'default'),
     }
   }
 
-  private findStaleExecutions(): RecoveryResponse['stale_executions'] {
+  private async findStaleExecutions(): Promise<RecoveryResponse['stale_executions']> {
     try {
       const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString()
-      const rows = this.executionDAO.findAllActiveExecutions()
+      const rows = (await this.executionDAO.findAllActiveExecutions())
         .filter(r => r.status === 'running' && r.updated_at && r.updated_at < cutoff)
 
       const items = rows.map(r => ({
@@ -67,9 +67,9 @@ export class RecoveryResolver {
     }
   }
 
-  private findPendingHooks(): RecoveryResponse['pending_hooks'] {
+  private async findPendingHooks(): Promise<RecoveryResponse['pending_hooks']> {
     try {
-      const rows = this.executionDAO.findAllActiveExecutions()
+      const rows = (await this.executionDAO.findAllActiveExecutions())
         .filter(r => r.status === 'pending_hooks' || r.status === 'pending')
       return { count: rows.length, items: rows.map(r => ({ id: r.id, workflow_name: r.workflow_name })) }
     } catch {

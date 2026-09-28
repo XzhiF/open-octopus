@@ -17,7 +17,7 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   const router = new Hono()
 
   // GET / — endpoint index (HAL+JSON)
-  router.get('/', (c) => {
+  router.get('/', async (c) => {
     return c.json(actuatorService.getIndex())
   })
 
@@ -29,8 +29,8 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   })
 
   // GET /executions/active — active execution list
-  router.get('/executions/active', (c) => {
-    return c.json(actuatorService.getActiveExecutions())
+  router.get('/executions/active', async (c) => {
+    return c.json(await actuatorService.getActiveExecutions())
   })
 
   // GET /executions/:id/progress — single execution detail
@@ -49,18 +49,18 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   })
 
   // GET /errors — error tracking with execution context
-  router.get('/errors', (c) => {
+  router.get('/errors', async (c) => {
     return c.json(actuatorService.getErrors())
   })
 
   // GET /system — system resources (CPU, memory, event loop)
-  router.get('/system', (c) => {
-    return c.json(actuatorService.getSystem())
+  router.get('/system', async (c) => {
+    return c.json(await actuatorService.getSystem())
   })
 
   // GET /recovery — recovery status (stale executions, agent recovery)
-  router.get('/recovery', (c) => {
-    return c.json(actuatorService.getRecovery())
+  router.get('/recovery', async (c) => {
+    return c.json(await actuatorService.getRecovery())
   })
 
   // GET /scheduler — scheduler health (jobs, circuit breaker, next fires)

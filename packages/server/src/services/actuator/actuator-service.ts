@@ -88,7 +88,7 @@ export class ActuatorService {
     return this.healthResolver.resolve()
   }
 
-  getActiveExecutions(): ActiveExecutionsResponse {
+  async getActiveExecutions(): Promise<ActiveExecutionsResponse> {
     return this.executionResolver.getActiveExecutions()
   }
 
@@ -105,11 +105,11 @@ export class ActuatorService {
     return this.errorResolver.getErrors()
   }
 
-  getSystem(): SystemResponse {
+  async getSystem(): Promise<SystemResponse> {
     return this.systemResolver.getSystem()
   }
 
-  getRecovery(org?: string): RecoveryResponse {
+  async getRecovery(org?: string): Promise<RecoveryResponse> {
     return this.recoveryResolver.getRecovery(org)
   }
 
