@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { applySchema } from '../db/schema'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
+
+// P1 B5 票4：schedules/schedule_executions 已落 PG（DAO 于 B5 票1 迁 BasePgDAO）；
+// executions/workspaces 仍 SQLite（ExecutionDAO 未迁，票5 域）。seed 分两侧，断言跟表走。
 import { WorkflowExecutor } from '../services/scheduler/executors/workflow-executor'
 import { AgentExecutor } from '../services/scheduler/executors/agent-executor'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, WorkspaceDAO } from '../db/dao'
@@ -30,8 +34,9 @@ vi.mock('../services/execution-service-registry', () => ({
 // marked schedule_executions + schedule_workspaces, leaving schedules.status stuck at
 // 'running' → stale rollback → infinite re-dispatch loop. This block verifies the
 // failed writer mirrors the done writer.
-describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
+describePg('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
   let db: Database.Database
+  let pg: PgFixture
   let executor: WorkflowExecutor
   const wsId = 'g2-ws'
   const schedId = 'g2-sched'
@@ -40,24 +45,25 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
   const mockSSE = { emit: vi.fn() } as any
   const mockWorkspaceService = { delete: vi.fn() } as any
 
-  function seedSchedule(opts: { status?: string } = {}) {
+  async function seedSchedule(opts: { status?: string } = {}): Promise<void> {
     const status = opts.status ?? 'running'
     // 票03: no origin_type column any more (and no isRequirement branch in the
     // executor) — a schedule row is a job definition plus its run-state.
     const claimedAt = new Date(Date.now() - 5 * 60_000).toISOString()
-    db.prepare(`
+    await pg.sql.unsafe(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
         consecutive_failures, max_retain, status, claimed_at
-      ) VALUES (?, 'test', 'g2-task', NULL, 'UTC',
-        1, 3600, 0, datetime('now'), datetime('now'),
-        'workflow', ?, 'skip', 1, 0, 10, ?, ?)
-    `).run(
-      schedId,
-      JSON.stringify({ schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 'b', projects: [{ name: 'p', source_path: '', group: '' }] }, workflow_chain: [{ workflow_ref: 'wf', input_values: {} }] }),
-      status, claimedAt,
+      ) VALUES ($1, 'test', 'g2-task', NULL, 'UTC',
+        true, 3600, false, now(), now(),
+        'workflow', $2::jsonb, 'skip', 1, 0, 10, $3, $4::timestamptz)`,
+      [
+        schedId,
+        JSON.stringify({ schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 'b', projects: [{ name: 'p', source_path: '', group: '' }] }, workflow_chain: [{ workflow_ref: 'wf', input_values: {} }] }),
+        status, claimedAt,
+      ],
     )
   }
 
@@ -70,29 +76,31 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
     `).run(execId, wsId, status)
   }
 
-  function seedSchedExecution(status: string) {
-    db.prepare(`
+  async function seedSchedExecution(status: string): Promise<void> {
+    await pg.sql.unsafe(`
       INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
         timezone_offset, timezone_iana, created_at, triggered_by)
-      VALUES (?, ?, ?, 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')
-    `).run(schedExecId, schedId, status)
+      VALUES ($1, $2, $3, 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+      [schedExecId, schedId, status],
+    )
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    pg = await setupPgSchema()
     db = new Database(':memory:')
     applySchema(db)
     db.pragma('foreign_keys = ON')
     db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'g2-ws', 'test', '/tmp', datetime('now'), datetime('now'))`).run(wsId)
-    executor = new WorkflowExecutor(mockSSE, new ScheduleConfigDAO(db), new ScheduleRunDAO(db), new ExecutionDAO(db), mockWorkspaceService)
+    executor = new WorkflowExecutor(mockSSE, new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql), new ExecutionDAO(db), mockWorkspaceService)
     mockSSE.emit.mockClear()
   })
 
-  afterEach(() => { db.close() })
+  afterEach(async () => { db.close(); await pg.close() })
 
   // Helper: call the private chain-completion handler with a failed root execution.
-  function fireChainComplete() {
-    const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
-    ;(executor as any).handleChainComplete({
+  async function fireChainComplete() {
+    const schedule = (await new ScheduleConfigDAO(pg.sql).findById(schedId))! as any
+    await (executor as any).handleChainComplete({
       executionId: execId,
       schedExecId,
       schedWsId: 'sw-nonexistent',  // findScheduleWorkspaceById → null → cleanup block skipped
@@ -104,30 +112,31 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
     })
   }
 
-  it('a failed fire finalizes the FIRE, and leaves the definition alone (票03)', () => {
+  it('a failed fire finalizes the FIRE, and leaves the definition alone (票03)', async () => {
     // The old pair of tests here split on isRequirement: a task-shaped schedule flipped
     // schedules.status to 'failed' (terminal, so the stale sweep would not re-queue it)
     // while a cron schedule kept its status out of the lifecycle entirely. After 票03
     // there is only the cron shape — and it is worth pinning that a failing fire does NOT
     // write the definition row, because that is what keeps enabled/disabled the single
     // source of "should this job run again".
-    seedSchedule({ status: 'queued' })
+    await seedSchedule({ status: 'queued' })
     seedExecutionRow('failed')
-    seedSchedExecution('running')
+    await seedSchedExecution('running')
 
-    fireChainComplete(false)
+    await fireChainComplete()
 
-    const sched = db.prepare('SELECT status FROM schedules WHERE id = ?').get(schedId) as { status: string }
+    const sched = (await pg.sql<{ status: string }[]>`SELECT status FROM schedules WHERE id = ${schedId}`)[0]!
     expect(sched.status).toBe('queued')
-    const se = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(schedExecId) as { status: string }
+    const se = (await pg.sql<{ status: string }[]>`SELECT status FROM schedule_executions WHERE id = ${schedExecId}`)[0]!
     expect(se.status).toBe('failed')
     const failedEmits = mockSSE.emit.mock.calls.filter((c: any[]) => c[1]?.data?.status === 'failed')
     expect(failedEmits).toHaveLength(0)
   })
 })
 
-describe('AgentExecutor', () => {
+describePg('AgentExecutor', () => {
   let db: Database.Database
+  let pg: PgFixture
   const wsId = 'ws-2'
   const schedId = 's-2'
   const execId = 'e-2'
@@ -178,37 +187,41 @@ describe('AgentExecutor', () => {
     }
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    pg = await setupPgSchema()
     db = new Database(':memory:')
     applySchema(db)
     db.prepare(`
       INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
       VALUES (?, 'test', 'test', '/tmp', datetime('now'), datetime('now'))
     `).run(wsId)
-    db.prepare(`
+    await pg.sql.unsafe(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure, created_at, updated_at,
         job_type, config, parallel_policy, version, consecutive_failures, max_retain
-      ) VALUES (?, 'test', 'agent-test', '0 9 * * *', 'UTC', 1, 30, 0,
-        datetime('now'), datetime('now'), 'agent',
-        '{"schema_version":"1.0","type":"agent","prompt":"Say hello"}', 'skip', 1, 0, 10)
-    `).run(schedId)
-    db.prepare(`
+      ) VALUES ($1, 'test', 'agent-test', '0 9 * * *', 'UTC', true, 30, false,
+        now(), now(), 'agent',
+        '{"schema_version":"1.0","type":"agent","prompt":"Say hello"}'::jsonb, 'skip', 1, 0, 10)`,
+      [schedId],
+    )
+    await pg.sql.unsafe(`
       INSERT INTO schedule_executions (
         id, schedule_id, status, trigger_type, triggered_at,
         timezone_offset, timezone_iana, created_at, triggered_by
-      ) VALUES (?, ?, 'triggered', 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')
-    `).run(execId, schedId)
+      ) VALUES ($1, $2, 'triggered', 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+      [execId, schedId],
+    )
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     db.close()
+    await pg.close()
   })
 
   it('A3: executes via provider and persists real token usage', async () => {
     const provider = createMockProvider('Hello world', { input: 100, output: 200 })
-    const agentExec = new AgentExecutor(new ScheduleRunDAO(db), new ExecutionDAO(db), provider)
+    const agentExec = new AgentExecutor(new ScheduleRunDAO(pg.sql), new ExecutionDAO(db), provider)
 
     const job = buildAgentJob()
     const result = await agentExec.execute(job, execId)
@@ -217,11 +230,14 @@ describe('AgentExecutor', () => {
     expect(result.modelUsed).toBe('claude-sonnet-4-5-20250514')
     expect(result.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 })
 
-    const row = db.prepare('SELECT agent_output, model_used, token_usage, status FROM schedule_executions WHERE id = ?').get(execId) as any
+    const row = (await pg.sql<{ agent_output: string; model_used: string; token_usage: unknown; status: string }[]>
+      `SELECT agent_output, model_used, token_usage, status FROM schedule_executions WHERE id = ${execId}`)[0]!
     expect(row.status).toBe('completed')
     expect(row.agent_output).toBe('Hello world')
     expect(row.model_used).toBe('claude-sonnet-4-5-20250514')
-    expect(JSON.parse(row.token_usage)).toEqual({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    // jsonb 裸读回是对象；DAO 出口才是 JSON 串 —— 语义 deep-equal
+    expect(typeof row.token_usage === 'string' ? JSON.parse(row.token_usage) : row.token_usage)
+      .toEqual({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 })
   })
 
   it('A3: retries on failure and respects max_attempts', async () => {
@@ -243,7 +259,7 @@ describe('AgentExecutor', () => {
       jitter: false,
     }
 
-    const agentExec = new AgentExecutor(new ScheduleRunDAO(db), new ExecutionDAO(db), failingProvider)
+    const agentExec = new AgentExecutor(new ScheduleRunDAO(pg.sql), new ExecutionDAO(db), failingProvider)
     const result = await agentExec.execute(job, execId)
 
     expect(result.success).toBe(false)
@@ -268,19 +284,19 @@ describe('AgentExecutor', () => {
     const job = buildAgentJob()
     ;(job.config as AgentConfig).timeout_seconds = 0.1 // 100ms timeout
 
-    const agentExec = new AgentExecutor(new ScheduleRunDAO(db), new ExecutionDAO(db), slowProvider)
+    const agentExec = new AgentExecutor(new ScheduleRunDAO(pg.sql), new ExecutionDAO(db), slowProvider)
     const result = await agentExec.execute(job, execId)
 
     expect(result.success).toBe(false)
     expect(result.status).toBe('timeout')
 
-    const row = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(execId) as { status: string }
+    const row = (await pg.sql<{ status: string }[]>`SELECT status FROM schedule_executions WHERE id = ${execId}`)[0]!
     expect(row.status).toBe('timeout')
   })
 
   it('falls back to tmpdir for execution without workspace', async () => {
     const provider = createMockProvider('no-workspace test')
-    const agentExec = new AgentExecutor(new ScheduleRunDAO(db), new ExecutionDAO(db), provider)
+    const agentExec = new AgentExecutor(new ScheduleRunDAO(pg.sql), new ExecutionDAO(db), provider)
 
     // The execution seeded in beforeEach has no workspace_id on schedule_executions,
     // so the executor should fall back to a temp directory.
