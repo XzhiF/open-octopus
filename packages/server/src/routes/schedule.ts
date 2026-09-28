@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { ZodError } from "zod"
 import { WorkspaceScheduleService } from "../services/schedule"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 const scheduleRoutes = new Hono()
 
@@ -26,7 +27,7 @@ class ScheduleValidationError extends Error {
 }
 
 /** Classify service errors into proper HTTP status codes */
-function classifyError(err: unknown): { status: number; message: string } {
+function classifyError(err: unknown): { status: ContentfulStatusCode; message: string } {
   // Zod validation errors → 400
   if (err instanceof ZodError) {
     const details = err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')

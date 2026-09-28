@@ -1,3 +1,4 @@
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 // packages/server/src/services/knowledge/validators.ts
 //
 // Shared validation helpers for knowledge routes. Centralizes the rules
@@ -116,7 +117,7 @@ export interface ErrorResponse {
 export function errorResponse(
   err: unknown,
   context: string,
-): { body: ErrorResponse; status: number } {
+): { body: ErrorResponse; status: ContentfulStatusCode } {
   const raw = err instanceof Error ? err.message : String(err)
 
   // Server-side log retains the full message for debugging.

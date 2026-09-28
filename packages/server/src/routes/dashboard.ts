@@ -25,7 +25,7 @@ export function createDashboardRoutes(
       0,
     )
 
-    const execRow = execDAO.getDashboardStats()
+    const execRow = await execDAO.getDashboardStats()
     // C3: 全局费用走 ledger 规范 —— LedgerCost 三态（全未定价=null，部分=已知和+false）
     const liveCost = await tokenUsageDAO.totalCost()
 
@@ -73,8 +73,8 @@ export function createDashboardRoutes(
     return c.json(stats)
   })
 
-  dashboardRoutes.get("/queue", (c) => {
-    const active = execDAO.getQueueItems()
+  dashboardRoutes.get("/queue", async (c) => {
+    const active = await execDAO.getQueueItems()
 
     const mapped = active.map(row => ({
       id: row.id as string,
@@ -94,8 +94,8 @@ export function createDashboardRoutes(
     return c.json(mapped)
   })
 
-  dashboardRoutes.get("/recent", (c) => {
-    const recent = execDAO.getRecentCompleted(10)
+  dashboardRoutes.get("/recent", async (c) => {
+    const recent = await execDAO.getRecentCompleted(10)
 
     const mapped = recent.map(row => ({
       id: row.id as string,
@@ -115,8 +115,8 @@ export function createDashboardRoutes(
     return c.json(mapped)
   })
 
-  dashboardRoutes.get("/workflow-health", (c) => {
-    const workflows = execDAO.getWorkflowHealth(10)
+  dashboardRoutes.get("/workflow-health", async (c) => {
+    const workflows = await execDAO.getWorkflowHealth(10)
     return c.json(workflows)
   })
 

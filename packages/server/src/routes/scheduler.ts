@@ -18,6 +18,7 @@ import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
 import { type CreateJobInput, type UpdateJobInput, type JobType, jobTypeSchema } from '@octopus/shared'
 import type { AgentSessionDAO } from '../db/dao'
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 // G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
 // fake workspace_id in chat_sessions. Instead, createJob auto-creates a REAL task-author
@@ -147,7 +148,7 @@ export function resetSchedulerRateLimitersForTests(): void {
 
 // ── Error Classification ────────────────────────────────────────────
 
-function classifyError(err: unknown): { status: number; message: string } {
+function classifyError(err: unknown): { status: ContentfulStatusCode; message: string } {
   if (err instanceof ZodError) {
     const details = err.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
