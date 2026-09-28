@@ -269,6 +269,15 @@ describePg("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
        VALUES ('ws-new-1', 'E2E_TD_ws_new', $1, '/tmp/e2e-td-new', now(), now()) ON CONFLICT (id) DO NOTHING`,
       [ORG],
     )
+    // 同上混窗镜像：updateExecutionLinkId 会把 stub 的 'exec-root' 写进 PG
+    // schedule_executions.execution_id，FK 指 PG executions —— executions 仍 SQLite（票5），
+    // 此处补一行占位满足外键。
+    await pg!.sql.unsafe(
+      `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
+       VALUES ('exec-root', 'ws-new-1', 'e2e-td/simple-wf', 'E2E_TD_wf', 'running', $1, now(), now())
+       ON CONFLICT (id) DO NOTHING`,
+      [ORG],
+    )
     executor = new WorkflowExecutor(
       mockSSE,
       new ScheduleConfigDAO(pg!.sql),
