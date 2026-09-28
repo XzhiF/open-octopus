@@ -1,32 +1,31 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import Database from 'better-sqlite3'
-import { applySchema } from '../db/schema'
 import { SchedulerService } from '../services/scheduler/scheduler-service'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
+// P1 B5 票4：schedules 域 DAO 已迁 BasePgDAO（B5 票1）—— 整块转 PG 随机测试库；
+// SchedulerService 全 DI，不再需要 SQLite 句柄。SQLite 模式下 describePg 门控 skip。
 const ORG = 'test'
 
-describe('SchedulerService', () => {
-  let db: Database.Database
+describePg('SchedulerService (PG)', () => {
+  let pg: PgFixture
   let service: SchedulerService
 
-  beforeAll(() => {
-    db = new Database(':memory:')
-    applySchema(db)
-
-    service = new SchedulerService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
+  beforeAll(async () => {
+    pg = await setupPgSchema()
+    service = new SchedulerService(new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql))
   })
 
-  afterAll(() => {
-    db.close()
+  afterAll(async () => {
+    await pg.close()
   })
 
-  it('instantiates with database', () => {
+  it('instantiates with database', async () => {
     expect(service).toBeDefined()
   })
 
-  it('creates a workflow job', () => {
-    const job = service.createJob({
+  it('creates a workflow job', async () => {
+    const job = await service.createJob({
       name: 'test-workflow',
       org: ORG,
       job_type: 'workflow',
@@ -52,8 +51,8 @@ describe('SchedulerService', () => {
     expect(job.version).toBe(1)
   })
 
-  it('creates an agent job', () => {
-    const job = service.createJob({
+  it('creates an agent job', async () => {
+    const job = await service.createJob({
       name: 'test-agent',
       org: ORG,
       job_type: 'agent',
@@ -72,9 +71,9 @@ describe('SchedulerService', () => {
     expect(job.name).toBe('test-agent')
   })
 
-  it('rejects duplicate name in same org', () => {
-    expect(() => {
-      service.createJob({
+  it('rejects duplicate name in same org', async () => {
+    {
+      await expect(service.createJob({
         name: 'test-workflow',
         org: ORG,
         job_type: 'workflow',
@@ -91,28 +90,28 @@ describe('SchedulerService', () => {
           workflow_chain: [{ workflow_ref: 'other.yaml', input_values: {} }],
           max_retain: 10,
         },
-      })
-    }).toThrow()
+      })).rejects.toThrow()
+    }
   })
 
-  it('lists jobs for org', () => {
-    const result = service.listJobs({ org: ORG })
+  it('lists jobs for org', async () => {
+    const result = await service.listJobs({ org: ORG })
     expect(result.items).toBeDefined()
     expect(Array.isArray(result.items)).toBe(true)
     expect(result.total).toBeGreaterThanOrEqual(2)
   })
 
-  it('toggles job enabled status', () => {
-    const result = service.listJobs({ org: ORG })
+  it('toggles job enabled status', async () => {
+    const result = await service.listJobs({ org: ORG })
     const job = result.items[0]
-    const toggled = service.toggleJob(job.id)
+    const toggled = await service.toggleJob(job.id)
     expect(toggled.enabled).toBe(!job.enabled)
   })
 
-  it('updates job with correct version', () => {
-    const result = service.listJobs({ org: ORG })
+  it('updates job with correct version', async () => {
+    const result = await service.listJobs({ org: ORG })
     const job = result.items[0]
-    const updated = service.updateJob(job.id, {
+    const updated = await service.updateJob(job.id, {
       name: job.name,
       cron_expression: '0 10 * * *',
       timezone: 'Asia/Shanghai',
@@ -121,35 +120,33 @@ describe('SchedulerService', () => {
     expect(updated.version).toBe(job.version + 1)
   })
 
-  it('rejects update with stale version (409 Conflict)', () => {
-    const result = service.listJobs({ org: ORG })
+  it('rejects update with stale version (409 Conflict)', async () => {
+    const result = await service.listJobs({ org: ORG })
     const job = result.items[0]
-    expect(() => {
-      service.updateJob(job.id, {
-        name: job.name,
-        cron_expression: '0 11 * * *',
-        timezone: 'Asia/Shanghai',
-        config: job.config,
-      }, 1) // stale version
-    }).toThrow()
+    await expect(service.updateJob(job.id, {
+      name: job.name,
+      cron_expression: '0 11 * * *',
+      timezone: 'Asia/Shanghai',
+      config: job.config,
+    }, 1)).rejects.toThrow() // stale version
   })
 
-  it('records audit logs for operations', () => {
-    const result = service.listJobs({ org: ORG })
+  it('records audit logs for operations', async () => {
+    const result = await service.listJobs({ org: ORG })
     const job = result.items[0]
-    const logs = service.getAuditLogs(job.id)
+    const logs = await service.getAuditLogs(job.id)
     expect(logs).toBeDefined()
     expect(logs.items).toBeDefined()
     expect(Array.isArray(logs.items)).toBe(true)
     expect(logs.items.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('soft deletes job', () => {
-    const result = service.listJobs({ org: ORG })
+  it('soft deletes job', async () => {
+    const result = await service.listJobs({ org: ORG })
     const countBefore = result.total
     const lastJob = result.items[result.items.length - 1]
-    service.deleteJob(lastJob.id)
-    const after = service.listJobs({ org: ORG })
+    await service.deleteJob(lastJob.id)
+    const after = await service.listJobs({ org: ORG })
     expect(after.total).toBe(countBefore - 1)
   })
 })
