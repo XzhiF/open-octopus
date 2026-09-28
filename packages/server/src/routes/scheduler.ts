@@ -248,7 +248,9 @@ export function createSchedulerRoutes(
     // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
     // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
-      const job = await service.createJob(body as CreateJobInput)
+      // body 运行时闸门在 service 内 createJobSchema.parse（classifyError 把 ZodError 映射 400），
+      // 路由层类型面经 unknown 收敛（5B2 姿势，不在入口复制校验）。
+      const job = await service.createJob(body as unknown as CreateJobInput)
       return c.json(job, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -331,7 +333,7 @@ export function createSchedulerRoutes(
   // Non-claimable states (draft/queued/done/failed/aborted) → 400.
   router.post('/jobs/:id/abort', rateLimitDefault, async (c) => {
     try {
-      const job = await service.abortJob(c.req.param('id'))
+      const job = await service.abortJob(c.req.param('id')!)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

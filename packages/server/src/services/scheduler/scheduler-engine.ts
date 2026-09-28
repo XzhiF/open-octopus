@@ -487,10 +487,10 @@ export class SchedulerEngine {
 
         await this.runDAO.markExecutionTimedOut(exec.id, summary, exec.job_type)
 
-        if (exec.job_type !== 'agent' && exec.execution_id) {
+        if (exec.job_type !== 'agent' && exec.execution_id && exec.workspace_id) {
           try {
             const { getExecutionService } = await import('../execution-service-registry')
-            const registry = getExecutionService(exec.workspace_id ?? undefined)
+            const registry = getExecutionService(exec.workspace_id)
             if (registry) {
               await registry.service.cancel(exec.execution_id)
               console.log(
@@ -616,13 +616,16 @@ export class SchedulerEngine {
     try {
       config = JSON.parse(schedule.config) as import('@octopus/shared').JobConfig
     } catch {
+      // 坏 config 行的内存态兜底：workspace_spec 缺 branch_prefix（WorkflowConfig 契约必填），
+      // 运行时消费方（triggerSchedule→WorkspaceService）对空 chain 直接失败回写 error_summary；
+      // 类型面经 unknown 收敛，不落地伪造值（原 as JobConfig 因重叠不足报错）。
       config = {
         schema_version: '2.0',
         type: 'workflow',
         workspace_spec: { org: schedule.org, projects: [] },
         workflow_chain: [],
         max_retain: schedule.max_retain,
-      } as import('@octopus/shared').JobConfig
+      } as unknown as import('@octopus/shared').JobConfig
     }
 
     return {

@@ -1683,7 +1683,7 @@ export class ExecutionDAO extends BasePgDAO {
     return rows.map(r => ({ date: r.date, executions: num(r.executions), success_rate: numOrNull(r.success_rate) }))
   }
 
-  async findExecutionsByWorkflow(workspaceId: string, workflowRef: string, cutoff: string, limit: number = 100): Promise<Array<Record<string, unknown>>> {
+  async findExecutionsByWorkflow(workspaceId: string, workflowRef: string, cutoff: string, limit: number = 100): Promise<ExecutionRow[]> {
     const rows = await this.q<ExecPg>(
       "SELECT * FROM executions WHERE workspace_id = ? AND workflow_ref = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
       [workspaceId, workflowRef, cutoff, limit],

@@ -104,7 +104,9 @@ export class AgentExecutor implements Executor {
     const timeoutSeconds = config.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS
     const timeoutMs = timeoutSeconds * 1000
     const provider = this.provider ?? getProvider('claude')
-    const cwd = this.resolveCwd(job.workspace_id)
+    // SchedulerJob 自 ADR-0021 v42 起无 workspace 列（enrichJobRow/buildSchedulerJob 均不产出该字段），
+    // 此前 job.workspace_id 运行时恒 undefined → 恒 tmpdir。固化为显式 undefined，零行为差。
+    const cwd = await this.resolveCwd(undefined)
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -208,9 +210,9 @@ export class AgentExecutor implements Executor {
     }
   }
 
-  private resolveCwd(workspaceId: string | null | undefined): string {
+  private async resolveCwd(workspaceId: string | null | undefined): Promise<string> {
     if (!workspaceId) return os.tmpdir()
-    const wsPath = this.execDAO.findWorkspacePath(workspaceId)
+    const wsPath = await this.execDAO.findWorkspacePath(workspaceId)
     if (!wsPath) return os.tmpdir()
     return wsPath.replace(/^~/, os.homedir())
   }

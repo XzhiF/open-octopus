@@ -172,6 +172,8 @@ export class EvolutionService {
       change_type: 'rollback',
       level: entry.change_type,
       summary: `Rollback of evolution entry #${id}`,
+      // 回滚条目无 diff 工件（SQL 侧 row.diff_path ?? null，与此前运行时 undefined 等值）。
+      diff_path: null,
       org,
       timestamp,
     })

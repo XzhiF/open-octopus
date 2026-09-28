@@ -261,6 +261,9 @@ export class WorkspaceService {
       id, name: input.name, org: input.org,
       description: input.description ?? null,
       status: "active", path: input.path,
+      // WorkspaceRow.archive_status 必填列（DAO insert SQL 不写此列，落库走 schema 默认 NULL；
+      // 5B3 姿势：契约字段显式化，行为不动）。
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 
@@ -402,6 +405,8 @@ export class WorkspaceService {
       status: "active", path: wsDir,
       source: input.source, source_schedule_id: input.source_schedule_id ?? null,
       task_id: input.task_id ?? null,
+      // 同上：archive_status 显式 null（SQL 不写列，落库默认 NULL）。
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 

@@ -19,7 +19,7 @@ export class WorkflowService {
 
     return fs.readdirSync(dir)
       .filter(f => f.endsWith(".yaml") || f.endsWith(".yml"))
-      .map(filename => {
+      .map((filename): WorkflowInfo | null => {
         const filePath = path.join(dir, filename)
         const content = fs.readFileSync(filePath, "utf-8")
         if (!isOctopusWorkflow(content)) return null

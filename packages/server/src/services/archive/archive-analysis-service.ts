@@ -38,11 +38,14 @@ export class ArchiveAnalysisService {
     const { WorkspaceDAO } = await import('../../db/dao/workspace-dao')
     const { ExecutionDAO } = await import('../../db/dao/execution-dao')
     const { getDb } = await import('../../db')
+    const { pgSql } = await import('../../db/dao/registry')
     const { discoverSkillsFromWorkspace, discoverWorkflowsFromWorkspace, discoverAgentsFromWorkspace } = await import('../archive/skill-discovery')
 
     const db = getDb()
     const workspaceDAO = new WorkspaceDAO(db)
-    const executionDAO = new ExecutionDAO(db)
+    // B5 票5B4：ExecutionDAO 已 PG 化（票1），句柄源换池 —— archive 域 exec 读簇的 SQLite 混用面登记票6，
+    // 本票只修断点（原 SQLite 直构是运行时断点，WorkspaceDAO 本体迁移不动）。
+    const executionDAO = new ExecutionDAO(pgSql())
     const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, db, this.org)
 
     if (!ctx) {
@@ -118,7 +121,10 @@ export class ArchiveAnalysisService {
 
     // Merge auto-discovered + LLM skills
     const autoNames = new Set(autoDiscoveredSkills.map(s => s.name))
-    const mergedSkills = [...autoDiscoveredSkills, ...llmSkills.filter(s => !autoNames.has(s.name))]
+    // 归档域 skills 簇（票6 迁移债）：autoDiscoveredSkills 保持既有 Record 松形态
+    // （status/existingGroup 是无人读取的历史附加键，evidence_* 缺省即 undefined——
+    // 序列化行为与修复前逐键相等），仅类型面在装配口收敛。
+    const mergedSkills = [...autoDiscoveredSkills, ...llmSkills.filter(s => !autoNames.has(s.name))] as unknown as SkillCandidate[]
 
     // Phase 2.5: Token stats
     let tokenStats: any = { total: { inputTokens: 0, outputTokens: 0, cost: 0 }, byModel: [], byWorkflow: [], nodes: [] }

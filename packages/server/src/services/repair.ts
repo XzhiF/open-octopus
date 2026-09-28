@@ -175,7 +175,7 @@ export class RepairService {
     if (!exec) throw new RepairError("Execution not found", 404)
 
     // Load workflow definition to compute topological order
-    const workflowContent = this.getWorkflowContent(executionId)
+    const workflowContent = await this.getWorkflowContent(executionId)
     if (!workflowContent) throw new RepairError("Workflow definition not found", 404)
 
     const workflow = parseWorkflow(workflowContent)
@@ -270,7 +270,7 @@ export class RepairService {
     const diff: string[] = []
 
     // Compare with current definition
-    const currentContent = this.getWorkflowContent(executionId)
+    const currentContent = await this.getWorkflowContent(executionId)
     if (currentContent) {
       try {
         const currentWorkflow = parseWorkflow(currentContent)
@@ -673,8 +673,8 @@ export class RepairService {
     }
   }
 
-  private getWorkflowContent(executionId: string): string | null {
-    return this.executionService.getWorkflowContent(executionId)
+  private async getWorkflowContent(executionId: string): Promise<string | null> {
+    return await this.executionService.getWorkflowContent(executionId)
   }
 
   private topologicalSort(nodes: NodeDef[]): NodeDef[] {

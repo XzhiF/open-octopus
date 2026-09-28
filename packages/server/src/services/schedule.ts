@@ -164,7 +164,9 @@ export class WorkspaceScheduleService {
 
   // ── CRUD ──────────────────────────────────────────────────────────
 
-  async create(workspaceId: string, data: z.input<typeof createScheduleSchema>): Promise<ScheduleView> {
+  async create(workspaceId: string, data: unknown): Promise<ScheduleView> {
+    // 入口 body 为 Record<string, unknown>（safeJson），运行时闸门就是这里的 schema.parse
+    // （ZodError 由 routes/schedule.ts classifyError 映射 400）——参数收为 unknown，杜绝路由层伪类型直传。
     const validated = createScheduleSchema.parse(data)
 
     // Look up org from workspace for v23 org-scoped uniqueness
@@ -694,7 +696,9 @@ export class WorkspaceScheduleService {
     const now = new Date().toISOString()
     const org = (await this.configDAO.findWorkspaceOrg(workspaceId)) ?? "unknown"
 
-    this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
+    // 缺 await 链（5B3 簇A 形态）：container 写入必须先于后续 schedule 事务落库，
+    // 此前 floating 让 ensureContainerExecution 可能带未完成的 insert 直接返回。
+    await this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
 
     return containerId
   }

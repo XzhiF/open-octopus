@@ -135,7 +135,7 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
 
   fileRoutes.post("/refresh", async (c) => {
     const id = c.req.param("id")
-    const wsPath = workspaceDAO.findPathById(id)
+    const wsPath = workspaceDAO.findPathById(id ?? "")
     if (!wsPath) return c.json({ error: "Workspace not found" }, 404)
 
     try {

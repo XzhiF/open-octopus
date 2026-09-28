@@ -128,7 +128,10 @@ function parseCodeJobConfig(job: SchedulerJob): CodeJobConfig {
     schema_version: '1.0',
     type: 'job',
     handler,
-    timeout_seconds: typeof obj.timeout_seconds === 'number' ? obj.timeout_seconds : undefined,
+    // codeJobConfigSchema 的 timeout_seconds 是 optional().default(300)（output 型必填），
+    // 但此处手工旁路保持 undefined 语义：executor 消费端 `config.timeout_seconds ?? job.timeout_seconds ?? DEFAULT`
+    // 依赖 undefined 才能落到 job 级超时（票2 姿势：不动行为，只收类型）。
+    timeout_seconds: obj.timeout_seconds as number,
     args: (obj.args ?? {}) as Record<string, unknown>,
   }
 }

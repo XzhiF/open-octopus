@@ -11,9 +11,9 @@ import { getArchiveService, ArchivePartialFailure } from "../services/archive/ar
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO, executionDAO?: ExecutionDAO): Hono {
   const workspaceRoutes = new Hono()
 
-  workspaceRoutes.get("/", (c) => {
+  workspaceRoutes.get("/", async (c) => {
     const workspaces = workspaceService.list()
-    const runningCounts = executionDAO?.countRunningGroupedByWorkspace() ?? {}
+    const runningCounts = (await executionDAO?.countRunningGroupedByWorkspace()) ?? {}
     const resolved = workspaces.map(w => ({
       ...w,
       path: w.path.replace(/^~/, os.homedir()),

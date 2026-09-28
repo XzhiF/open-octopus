@@ -941,12 +941,14 @@ export class SchedulerService {
 
   private enrichJobRow(row: ScheduleRow): SchedulerJob {
     const config = safeJsonParse<JobConfig>(row.config, {
+      // 坏 config 行的内存态兜底（与 scheduler-engine.buildSchedulerJob 同姿势）：
+      // 缺 branch_prefix 不落地伪造空串，类型面经 unknown 收敛。
       schema_version: '2.0',
       type: 'workflow',
       workspace_spec: { org: row.org, projects: [] },
       workflow_chain: [],
       max_retain: row.max_retain,
-    } as JobConfig)
+    } as unknown as JobConfig)
 
     const lastExecution: SchedulerExecutionSummary | null = row.last_exec_status
       ? {

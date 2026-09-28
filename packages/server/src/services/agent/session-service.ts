@@ -90,6 +90,8 @@ export class SessionService {
     return {
       id: row.id,
       title: row.title,
+      // shared AgentSession 契约要求 org（行上恒有列）——补齐，JSON 输出新增 org 键。
+      org: row.org,
       // shared AgentSession 契约这三列是 `string | null`（非可选）——归一到 null，
       // JSON 输出从键缺省变为显式 null，消费方（web-app/cli）均按 falsy 判定，无行为面影响。
       clone_name: row.clone_name ?? null,

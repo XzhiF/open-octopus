@@ -116,7 +116,7 @@ export async function buildArchiveContext(
   const workspace = workspaceDAO.findById(workspaceId)
   if (!workspace) return null
 
-  const executions = executionDAO.listByWorkspace(workspaceId)
+  const executions = await executionDAO.listByWorkspace(workspaceId)
   const sampled = sampleExecutions(executions, db)
 
   const [executionSummaries, workflowProfiles, errorCatalog, costProfile, nodePatterns, existingKnowledge, totalCounts] =

@@ -65,15 +65,17 @@ export class PipelineConfigLoader {
 
     // 检测版本
     if (raw.apiVersion === "octopus/v1") {
-      // v1 自动升级为 v2
+      // v1 自动升级为 v2：经 v2 schema 重解析（execution/retry/checkpoint 在 v1 为可选、
+      // v2 契约必填 —— .default({}) 补齐缺省，替代原先把 undefined 谎报为必填的直传；
+      // 字段结构 v1/v2 共用同一子 schema，重解析不会拒绝 v1 已放行内容）
       const v1 = PipelineConfigV1Schema.parse(raw)
-      this.config = {
+      this.config = PipelineConfigSchema.parse({
         apiVersion: "octopus/v2",
         kind: "Pipeline",
         execution: v1.execution,
         retry: v1.retry,
         checkpoint: v1.checkpoint,
-      }
+      })
     } else {
       // v2 直接解析
       this.config = PipelineConfigSchema.parse(raw)

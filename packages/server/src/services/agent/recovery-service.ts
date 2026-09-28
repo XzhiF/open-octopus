@@ -65,7 +65,7 @@ export class RecoveryService {
       result.clones_recovered = result.provider_sessions_recreated
 
       // Step 3: Detect and mark interrupted workflows
-      result.interrupted_workflows = this.recoverInterruptedWorkflows()
+      result.interrupted_workflows = await this.recoverInterruptedWorkflows()
 
       // Step 4: Verify memory files exist
       this.verifyMemoryFiles()
@@ -148,9 +148,9 @@ export class RecoveryService {
    * Detect and mark interrupted workflow executions.
    * Executions with status 'running' at restart time are marked as interrupted.
    */
-  private recoverInterruptedWorkflows(): number {
+  private async recoverInterruptedWorkflows(): Promise<number> {
     try {
-      return this.execDao.markInterruptedExecutions(this.org, new Date().toISOString())
+      return await this.execDao.markInterruptedExecutions(this.org, new Date().toISOString())
     } catch {
       // executions table may not exist
       return 0

@@ -1,5 +1,5 @@
 import http from "http"
-import WebSocket, { Server as WsServer } from "ws"
+import WebSocket, { WebSocketServer } from "ws"
 import * as Y from "yjs"
 import * as encoding from "lib0/encoding"
 import * as decoding from "lib0/decoding"
@@ -110,7 +110,7 @@ function send(conn: WebSocket, msg: Uint8Array): void {
 }
 
 export function createYjsWebSocketServer(server: http.Server): void {
-  const wss = new WsServer({ server, maxPayload: 100 * 1024 * 1024 })
+  const wss = new WebSocketServer({ server, maxPayload: 100 * 1024 * 1024 })
 
   wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url ?? "/", "http://localhost")

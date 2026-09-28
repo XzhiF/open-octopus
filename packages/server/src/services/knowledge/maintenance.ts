@@ -1,5 +1,5 @@
 import path from "path"
-import type { PendingReviewDAO, KnowledgeRuleDAO } from "../../db/dao"
+import type { PendingReviewDAO } from "../../db/dao"
 import {
   getKnowledgeDir,
   readKnowledgeFile,

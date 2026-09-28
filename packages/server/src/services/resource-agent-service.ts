@@ -72,7 +72,9 @@ export async function selectAndInstallAgents(
   if (!allAgents.resources || allAgents.resources.length === 0) return []
 
   const candidates = allAgents.resources.map(a => ({
-    name: a.name, description: a.description || '', group: a.group || '',
+    // ResourceEntry 契约（zod schema）无 description 列；此处经窄化 cast 读取 registry.json
+    // 可能残留的遗留键 —— 有则用、无则 ''，与修复前运行时行为逐键相等。
+    name: a.name, description: (a as { description?: string }).description || '', group: a.group || '',
   }))
 
   const maxCandidates = 50
