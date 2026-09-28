@@ -64,7 +64,9 @@ export function waitForPort(port: number, timeoutMs = 5000): Promise<boolean> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs
     const check = () => {
-      isPortInUse(port).then((inUse) => {
+      // 真 fire-and-forget：轮询发射器，结果经 resolve/下一跳 setTimeout 送达，await 会锁死递归。
+      // isPortInUse 内部已 catch（恒 resolve bool），无 rejection 面。
+      void isPortInUse(port).then((inUse) => {
         if (!inUse) { resolve(true); return }
         if (Date.now() >= deadline) { resolve(false); return }
         setTimeout(check, 200)

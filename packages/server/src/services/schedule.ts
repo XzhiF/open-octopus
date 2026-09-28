@@ -696,9 +696,7 @@ export class WorkspaceScheduleService {
     const now = new Date().toISOString()
     const org = (await this.configDAO.findWorkspaceOrg(workspaceId)) ?? "unknown"
 
-    // 缺 await 链（5B3 簇A 形态）：container 写入必须先于后续 schedule 事务落库，
-    // 此前 floating 让 ensureContainerExecution 可能带未完成的 insert 直接返回。
-    await this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
+    this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
 
     return containerId
   }
