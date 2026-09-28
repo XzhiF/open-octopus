@@ -7,6 +7,7 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { ObservabilityService } from "./observability"
 import { PrivacyFilter } from "./privacy-filter"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { KnowledgeEffectivenessDAO } from "../db/dao/knowledge-effectiveness-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { pgSql } from "../db/dao/registry"
@@ -50,6 +51,10 @@ export class ExecutionService {
     workspaceDbId: string,
     observability?: ObservabilityService,
     execDAO?: ExecutionDAO,
+    // P1 B4 票2B-3：账本写侧（EngineCallbacks.onNodeEnd → TokenUsageDAO）已迁 PG，
+    // 测试侧可在 DI 点注入桩（ExecutionLifecycle 第 12 参透传），避免跨引擎空 join
+    // 在 fire-and-forget 里升级成 unhandled rejection —— execution-lifecycle 样板。
+    tokenUsageDao?: TokenUsageDAO,
   ) {
     this.dao = execDAO ?? new ExecutionDAO(db)
     const obs = observability ?? new ObservabilityService(db, new PrivacyFilter(), this.dao)
@@ -58,6 +63,7 @@ export class ExecutionService {
     this.lifecycle = new ExecutionLifecycle(
       db, this.dao, sse, workflowService, builtInWorkflowService,
       org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker,
+      tokenUsageDao,
     )
 
     // Wire up knowledge injection pipeline
