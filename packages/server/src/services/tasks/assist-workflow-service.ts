@@ -108,7 +108,7 @@ export class AssistWorkflowService {
     private sse: SSEService,
     taskHome?: TaskHomeService,
   ) {
-    this.execDAO = new ExecutionDAO(db)
+    this.execDAO = new ExecutionDAO(pgSql())
     this.workspaceDAO = new WorkspaceDAO(db)
     this.taskHome = taskHome ?? new TaskHomeService()
   }
@@ -171,7 +171,7 @@ export class AssistWorkflowService {
       input_values: inputValues,
     })
 
-    this.execDAO.updateExecution(execution.id, {
+    await this.execDAO.updateExecution(execution.id, {
       pipeline_config: JSON.stringify({ task_id: taskId, template }),
     })
 
@@ -223,7 +223,7 @@ export class AssistWorkflowService {
   // ── Query (AC4/AC5) ──────────────────────────────────────────────
 
   getRun(taskId: string, runId: string): AssistWorkflowRun {
-    const exec = this.execDAO.findById(runId)
+    const exec = await this.execDAO.findById(runId)
     if (!exec) {
       throw new AssistWorkflowError(`Assist run not found: ${runId}`, "RUN_NOT_FOUND")
     }
@@ -239,7 +239,7 @@ export class AssistWorkflowService {
     const homePath = this.taskHome.homePath(taskId)
     const logs = this.readLogs(homePath, runId)
 
-    const nodeOutputs = this.execDAO.findNodeOutputs(runId, SWARM_NODE_ID)
+    const nodeOutputs = await this.execDAO.findNodeOutputs(runId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
 
     const run: AssistWorkflowRun = {
@@ -426,7 +426,7 @@ export class AssistWorkflowService {
     inputValues: Record<string, unknown>,
     mode: string,
   ): void {
-    const nodeOutputs = this.execDAO.findNodeOutputs(executionId, SWARM_NODE_ID)
+    const nodeOutputs = await this.execDAO.findNodeOutputs(executionId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
     if (!synthesis) return
 

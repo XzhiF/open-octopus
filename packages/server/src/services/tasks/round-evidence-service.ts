@@ -31,6 +31,7 @@
 // the batch dir + derived view already own its bookkeeping.
 
 import { existsSync, readFileSync } from "fs"
+import { pgSql } from "../../db/dao/registry" // [P1 B5 票5B] ExecutionDAO 迁 PG：直构位点走池句柄
 import os from "os"
 import path from "path"
 import type Database from "better-sqlite3"
@@ -226,7 +227,7 @@ export class RoundEvidenceService {
     private readonly taskHome: TaskHomeService,
     readonly instances: TestInstanceRegistry = new TestInstanceRegistry(),
   ) {
-    this.execDao = new ExecutionDAO(db)
+    this.execDao = new ExecutionDAO(pgSql())
   }
 
   // ── awaiting-round resolution (the ONLY round this service serves) ─────
@@ -250,7 +251,7 @@ export class RoundEvidenceService {
     if (!awaiting || roundIndex == null || !execId) {
       throw new TaskStatusConflictError("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货")
     }
-    const execRow = this.execDao.findById(execId)
+    const execRow = await this.execDao.findById(execId)
     if (!execRow || execRow.task_id !== taskId) {
       throw new TaskStatusConflictError(`待验收轮 ${execId} 的执行行缺失`)
     }
@@ -284,7 +285,7 @@ export class RoundEvidenceService {
     const { execRow, phaseIndex } = await this.resolveAwaiting(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative") {
-      const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const first = await this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
       const firstStarts = parseCommitMap(first?.start_commit_id)
       if (Object.keys(firstStarts).length > 0) starts = firstStarts
     }

@@ -57,14 +57,14 @@ function errMessage(err: unknown): string {
  * parent pauses persistently, so there is no in-memory Promise to lose across a restart).
  */
 export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Promise<ChildHandle> {
-  const execDAO = new ExecutionDAO(deps.db)
+  const execDAO = new ExecutionDAO(pgSql())
   const parent = resolveParentRun(execDAO, deps.workspaceId)
   if (!parent) {
     throw new Error(
       "task_dispatch: 找不到本工作区内正在运行的父执行,无法关联子单元(父执行可能已结束)",
     )
   }
-  const node = execDAO.findFirstRunningNode(parent.id)
+  const node = await execDAO.findFirstRunningNode(parent.id)
   if (!node) {
     throw new Error(
       `task_dispatch: 父执行 ${parent.id} 没有进行中的节点,无法回填子单元结果`,
@@ -122,7 +122,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
     // of the dispatching run and belongs to the same task. child_index keeps the fan-out
     // order stable for the parent's aggregation.
     parent_id: parent.id,
-    child_index: execDAO.findChildren(parent.id).length,
+    child_index: (await execDAO.findChildren(parent.id)).length,
     task_id: parentTaskId,
   })
 
@@ -163,12 +163,12 @@ export function startChildRun(
    *  start needs the token for the same reason the root path does (票05 真机实测). */
   claimedLease?: string,
 ): boolean {
-  const execDAO = new ExecutionDAO(db)
+  const execDAO = new ExecutionDAO(pgSql())
   const leaseAt = claimedLease ?? new Date().toISOString()
-  if (!claimedLease && execDAO.claimLaunch(childId, leaseAt).changes === 0) return false
+  if (!claimedLease && (await execDAO.claimLaunch(childId, leaseAt)).changes === 0) return false
   const registry = getExecutionService(workspaceId)
   if (!registry) {
-    execDAO.setLaunchStatus(childId, "failed", {
+    await execDAO.setLaunchStatus(childId, "failed", {
       completedAt: new Date().toISOString(),
       error: "子单元工作区不可用（行缺失或路径失效）",
     })
@@ -191,7 +191,7 @@ export function startChildRun(
   registry.service.start(childId, inputValues, undefined, leaseAt).catch((err: unknown) => {
     const message = errMessage(err)
     console.error(`[task-child-run] child start failed for ${childId}:`, message)
-    execDAO.setLaunchStatus(childId, "failed", {
+    await execDAO.setLaunchStatus(childId, "failed", {
       completedAt: new Date().toISOString(),
       error: `子单元启动失败: ${message}`,
     })
@@ -224,16 +224,16 @@ export async function resumeParentFromChild(
    *  child's var_pool is the fallback, used by the completion callback and the job. */
   outputOverride?: Record<string, unknown>,
 ): Promise<void> {
-  const execDAO = new ExecutionDAO(db)
-  const child = execDAO.findById(childExecId)
+  const execDAO = new ExecutionDAO(pgSql())
+  const child = await execDAO.findById(childExecId)
   if (!child || !child.parent_id || child.parent_id === "0") return
 
-  const parent = execDAO.findById(child.parent_id)
+  const parent = await execDAO.findById(child.parent_id)
   if (!parent) {
     console.warn(`[task-child-run] child ${childExecId} points at a missing parent ${child.parent_id}`)
     return
   }
-  const node = execDAO.findFirstRunningNode(parent.id)
+  const node = await execDAO.findFirstRunningNode(parent.id)
   if (!node) {
     // The parent already moved on (its own recovery resumed it, or it was aborted). Not
     // an error worth a stack trace — the child's result is on disk either way.
@@ -263,7 +263,7 @@ export async function resumeParentFromChild(
 /** The dispatching run: the deepest still-running execution in this workspace (a child
  *  dispatching a grandchild must find ITSELF, not the root). */
 function resolveParentRun(execDAO: ExecutionDAO, workspaceId: string) {
-  const leaves = execDAO.findRunningLeaves(workspaceId)
+  const leaves = await execDAO.findRunningLeaves(workspaceId)
   return leaves[0] ?? null
 }
 
