@@ -37,7 +37,6 @@ import os from "os"
 import path from "path"
 
 const stub = vi.hoisted(() => ({
-  db: null as Database.Database | null,
   wsDir: "",
   started: [] as string[],
   created: [] as Array<Record<string, unknown>>,
@@ -50,29 +49,31 @@ const stub = vi.hoisted(() => ({
 }))
 
 vi.mock("../services/execution-service-registry", () => ({
-  getExecutionService: (wsId: string) => {
-    const ws = stub.db!.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
-      { path: string } | undefined
+  // [P1 B5 票6b-1] 单引擎归一：workspaces/executions 均为 PG —— 镜像删除，桩直写注册池。
+  getExecutionService: async (wsId: string) => {
+    const wsRows = await pg!.sql`SELECT path FROM workspaces WHERE id = ${wsId}`
+    const ws = wsRows[0] as { path: string } | undefined
     if (!ws) return undefined
     return {
       wsPath: ws.path,
       service: {
-        create: (workspaceId: string, input: Record<string, unknown>) => {
+        create: async (workspaceId: string, input: Record<string, unknown>) => {
           const id = `comp-exec-${stub.seq++}`
           // Real INSERT: ux_exec_task_active + the claim queue behave as in production.
-          stub.db!.prepare(
+          await pg!.sql.unsafe(
             `INSERT INTO executions
                (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
                 input_values, var_pool, org, triggered_by, created_at, updated_at, task_id, phase_index, round_index)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '{}', ?, ?, datetime('now'), datetime('now'), ?, ?, ?)`,
-          ).run(
-            id, workspaceId,
-            String(input.parent_id ?? "0"), Number(input.child_index ?? 0),
-            String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
-            JSON.stringify(input.input_values ?? {}),
-            "e2e-tp-org", String(input.triggered_by ?? "manual"),
-            (input.task_id as string) ?? null,
-            (input.phase_index as number) ?? null, (input.round_index as number) ?? null,
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7::jsonb, '{}'::jsonb, $8, $9, now(), now(), $10, $11, $12)`,
+            [
+              id, workspaceId,
+              String(input.parent_id ?? "0"), Number(input.child_index ?? 0),
+              String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+              JSON.stringify(input.input_values ?? {}),
+              "e2e-tp-org", String(input.triggered_by ?? "manual"),
+              (input.task_id as string) ?? null,
+              (input.phase_index as number) ?? null, (input.round_index as number) ?? null,
+            ],
           )
           stub.created.push({ id, workspaceId, ...input })
           return { id }
@@ -80,10 +81,12 @@ vi.mock("../services/execution-service-registry", () => ({
         // Same precondition as the real engine — including the claimedLease handoff, so a
         // launcher that claims and then starts cannot drift from production again (票05).
         start: async (id: string, _iv?: unknown, _sync?: unknown, claimedLease?: string) => {
-          const row = stub.db!.prepare("SELECT status, started_at FROM executions WHERE id=?").get(id) as
-            { status: string; started_at: string | null } | undefined
+          const rowRows = await pg!.sql`SELECT status, started_at FROM executions WHERE id = ${id}`
+          const row = rowRows[0] as { status: string; started_at: string | Date | null } | undefined
+          // [票6b-1] PG timestamptz 读回 Date —— 与 claimedLease(ISO 串) 比较前按 DAO 同款归一。
+          const leaseAt = row?.started_at instanceof Date ? row.started_at.toISOString() : row?.started_at ?? null
           if (claimedLease) {
-            if (!row || row.status !== "running" || row.started_at !== claimedLease) {
+            if (!row || row.status !== "running" || leaseAt !== claimedLease) {
               throw new Error("Execution is not claimed by this launcher")
             }
           } else if (!row || row.status !== "pending") {
@@ -91,8 +94,8 @@ vi.mock("../services/execution-service-registry", () => ({
           }
           stub.started.push(id)
           if (!claimedLease) {
-            stub.db!.prepare("UPDATE executions SET status='running', started_at=? WHERE id=?")
-              .run(new Date().toISOString(), id)
+            await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=$1 WHERE id=$2",
+              [new Date().toISOString(), id])
           }
         },
         registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
@@ -146,11 +149,13 @@ function makeSubunit(name: string): SubunitSpec {
   }
 }
 
+// [P1 B5 票6b-1] 单引擎：tasks/executions/workspaces/node_executions 全落 PG；
+// SQLite `db` 仅保留 TaskLifecycleService/TaskDispatchService 构造签名。
+// pg 模块级 —— vi.mock 桩闭包需要（与 tasks-trigger-mutex 同款）。
+let pg: PgFixture | null = null
+
 describePg("composite task dispatch — coordinator arm + child run + parent resume (票03/票04)", () => {
   let db: Database.Database
-  // P1 B2 双引擎：tasks 落 PG（TaskDAO(pg.sql) + 注册全局池供 service 的 pgSql() 取）；
-  // executions/workspaces/node_executions 仍在 SQLite `db`。
-  let pg: PgFixture | null = null
   let svc: TaskLifecycleService
   let dispatch: TaskDispatchService
   let execs: ExecutionDAO
@@ -161,44 +166,8 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
   let realUserProfile: string | undefined
   let taskHome: TaskHomeService
 
-  const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
-
-  /** SQLite 快照 → PG 镜像（与 tasks-trigger-mutex 票4R 同款，勿逐行 await —— 会读到半镜像）。 */
-  async function mirrorExecsToPg(): Promise<void> {
-    const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
-      .all() as Array<{ id: string; name: string; org: string; path: string }>
-    const exs = db.prepare(
-      `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-              status, org, task_id FROM executions`,
-    ).all() as Array<Record<string, string | number | null>>
-    if (wss.length > 0) {
-      const params: unknown[] = []
-      const rows = wss.map((w) => {
-        params.push(w.id, w.name, w.org, w.path)
-        return `($${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length}, now(), now())`
-      })
-      await pg!.sql.unsafe(
-        `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
-         ON CONFLICT (id) DO NOTHING`,
-        params as never,
-      )
-    }
-    if (exs.length > 0) {
-      const params: unknown[] = []
-      const rows = exs.map((e) => {
-        params.push(e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0,
-          e.workflow_ref, e.workflow_name, e.status, e.org, e.task_id)
-        const b = params.length - 8
-        return `($${b}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, now(), now())`
-      })
-      await pg!.sql.unsafe(
-        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-            status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
-         ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
-        params as never,
-      )
-    }
-  }
+  // [P1 B5 票6b-1] mirrorExecsToPg 混窗镜像与计量闸 spy 已删 —— 单引擎归一（票5/票6a），
+  // countActiveWork 直读同库。
 
   beforeAll(async () => {
     // 全局池注册 —— TaskLifecycleService 内部 taskDAO 经 pgSql() 取同一座库。
@@ -211,13 +180,10 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
   })
 
   beforeEach(async () => {
-    // 混窗镜像表每用例清零（executions/workspaces 会被下方 countActiveWork 镜像写入 PG，
-    // 残留会让闸读数在用例间膨胀；tasks 用固定 id 但各用例互不重叠，保留旧语义不清）。
-    await pg!.truncate("executions", "workspaces", "schedule_executions", "schedules")
+    await pg!.truncate("node_executions", "executions", "workspaces", "schedule_executions", "schedules")
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF")
-    stub.db = db
     stub.started = []
     stub.created = []
     stub.wsSpecs = []
@@ -238,17 +204,19 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     taskHome = new TaskHomeService(path.join(homeDir, ".octopus"))
 
     const workspaceService = {
-      getById: (id: string) =>
-        (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+      // [票6b-1] workspaces 已 PG；消费面 await（票6a）。
+      getById: async (id: string) =>
+        ((await pg!.sql`SELECT id, name, org, status, path, source, task_id FROM workspaces WHERE id = ${id}`)[0] as never) ?? undefined,
       ensureWorktreesForReuse: () => ({ rebuilt: [] }),
-      createFromSpec: (input: Record<string, unknown>) => {
+      createFromSpec: async (input: Record<string, unknown>) => {
         const id = `comp-ws-${stub.wsSpecs.length}`
         const p = path.join(wsDir, id)
         fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
-        db.prepare(
+        await pg!.sql.unsafe(
           `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
-        ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+           VALUES ($1, $2, $3, 'active', $4, 'task', $5, now(), now())`,
+          [id, String(input.name), ORG, p, (input.task_id as string) ?? null],
+        )
         stub.wsSpecs.push({ id, ...input })
         return { id, name: input.name, org: ORG, status: "active", path: p }
       },
@@ -266,14 +234,7 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     // Its workspaceId is the coordinator ws — resolved per test after arming.
     dispatch = null as never
     tasks = new TaskDAO(pg!.sql)
-    execs = new ExecutionDAO(db)
-    // 混窗计量闸（B5 票4R）：executions/workspaces 仍 SQLite（票5 迁），countActiveWork
-    // 已读 PG —— 计量前同步取 SQLite 快照、单条多值 INSERT 原子镜像，保闸读数与
-    // 迁移前同款。票5 单引擎收口后删除。
-    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (this: ScheduleRunDAO, opts) {
-      await mirrorExecsToPg()
-      return ORIGINAL_METER.call(this, opts)
-    })
+    execs = new ExecutionDAO(pg!.sql)
   })
 
   afterEach(() => {
@@ -316,14 +277,15 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
       workspacePath: path.join(wsDir, coordinatorWsId),
       org: ORG,
       workspaceService: {
-        createFromSpec: (input: Record<string, unknown>) => {
+        createFromSpec: async (input: Record<string, unknown>) => {
           const id = `child-ws-${stub.wsSpecs.length}`
           const p = path.join(wsDir, id)
           fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
-          db.prepare(
+          await pg!.sql.unsafe(
             `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
-             VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
-          ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+             VALUES ($1, $2, $3, 'active', $4, 'task', $5, now(), now())`,
+            [id, String(input.name), ORG, p, (input.task_id as string) ?? null],
+          )
           stub.wsSpecs.push({ id, ...input })
           return { id }
         },
@@ -345,7 +307,7 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
 
     // The root execution carries the task binding and runs the composition wf with the
     // synthesized inputs the Loop consumes ($iteration.subunit / break_when count).
-    const row = execs.findById(execId)!
+    const row = (await execs.findById(execId))!
     expect(row.task_id).toBe("t-comp-1")
     expect(row.parent_id).toBe("0")
     expect(row.workflow_ref).toBe(COMPOSITION_WF_REF)
@@ -359,7 +321,8 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir("t-comp-1"))
 
     // No schedule row anywhere — the composite no longer borrows the pump's tables.
-    expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
+    const schedRows = await pg!.sql`SELECT COUNT(*)::int AS c FROM schedules`
+    expect((schedRows[0] as { c: number }).c).toBe(0)
   })
 
   // ── AC: 父在 task_dispatch 处持久暂停,子完成后被唤醒并拿到子的 var_pool 输出 ──
@@ -369,40 +332,40 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     // The composition wf is dispatched on the coordinator → the engine marks the root
     // RUNNING and pauses INSIDE the task_dispatch node (a running node row is what the
     // pause persists — that is the whole restart-safety argument of 票03).
-    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
-    const coordinatorWsId = execs.findById(rootId)!.workspace_id
-    db.prepare(
-      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
-    ).run(`${rootId}-dispatch-child`, rootId)
+    await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=now() WHERE id=$1", [rootId])
+    const coordinatorWsId = (await execs.findById(rootId))!.workspace_id
+    await pg!.sql.unsafe(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES ($1, $2, 'dispatch-child', 'task_dispatch', 'running', now())",
+      [`${rootId}-dispatch-child`, rootId],
+    )
 
     // The engine's port dispatches one subunit → a CHILD executions row correlated to
     // the paused root (parent_id) and to the same task (task_id).
     dispatch = makeDispatch(coordinatorWsId)
     const handle = await dispatch.dispatchChild(makeSubunit("a"))
-    const child = execs.findById(handle.child_id)!
+    const child = (await execs.findById(handle.child_id))!
     expect(child.parent_id).toBe(rootId)
     expect(child.task_id).toBe("t-comp-2")
 
     // The child ran and put its result in its var_pool; the engine's terminal callback
     // now fires (row still 'running' — the persist lands after the callback, which is
     // exactly why finalize resolves the status from the engine's report).
-    db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?").run(JSON.stringify({ result: "E2E_TP_subunit_a_out" }), handle.child_id)
+    await pg!.sql.unsafe("UPDATE executions SET var_pool = $1::jsonb WHERE id = $2", [JSON.stringify({ result: "E2E_TP_subunit_a_out" }), handle.child_id])
 
     // The ONLY two resume paths are the completion callback and the job's finalize —
     // here the job side: finalizeLaunch sees a CHILD row and hands the result to the
     // parent's waiting node instead of writing the task card.
     await svc.finalizeLaunch(handle.child_id, "completed")
-    await new Promise((r) => setImmediate(r))
-    await new Promise((r) => setImmediate(r))
-
-    expect(stub.resumes).toHaveLength(1)
+    // [票6b-1] finalize→resume 链是 fire-and-forget 跨多次 PG 往返 —— 屏障等事实落地
+    // （vi.waitFor=四板斧之一，语义不变：只有这一条 resume 路径会填 stub.resumes）。
+    await vi.waitFor(() => expect(stub.resumes).toHaveLength(1), { timeout: 5_000 })
     expect(stub.resumes[0]).toMatchObject({
       parentId: rootId,
       nodeId: "dispatch-child",
       output: { result: "E2E_TP_subunit_a_out" },
     })
     // Finalized as terminal, and the row — not the card — carries the outcome.
-    expect(execs.findById(handle.child_id)!.status).toBe("completed")
+    expect((await execs.findById(handle.child_id))!.status).toBe("completed")
     // A subunit's outcome is NOT the task's outcome: no done/failed mirror for
     // children (task-lifecycle finalizeLaunch returns before the task write).
     expect((await tasks.getById("t-comp-2"))!.status).toBe("ready")
@@ -411,11 +374,12 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
   it("a FAILED child still wakes the paused parent (empty output), never leaves it stalled", async () => {
     await insertCompositeTask("t-comp-3", ["a", "b"])
     const rootId = await svc.armTask("t-comp-3")
-    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
-    const coordinatorWsId = execs.findById(rootId)!.workspace_id
-    db.prepare(
-      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
-    ).run(`${rootId}-dispatch-child`, rootId)
+    await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=now() WHERE id=$1", [rootId])
+    const coordinatorWsId = (await execs.findById(rootId))!.workspace_id
+    await pg!.sql.unsafe(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES ($1, $2, 'dispatch-child', 'task_dispatch', 'running', now())",
+      [`${rootId}-dispatch-child`, rootId],
+    )
 
     dispatch = makeDispatch(coordinatorWsId)
     const handle = await dispatch.dispatchChild(makeSubunit("a"))
@@ -423,12 +387,11 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     // The dispatch path registered its own completion callback (startChildRun). The
     // child died with nothing in its pool — the callback still forwards, empty.
     stub.callbacks.get(handle.child_id)?.("failed")
-    await new Promise((r) => setImmediate(r))
-    await new Promise((r) => setImmediate(r))
+    // [票6b-1] 同上：终态回调→父回填链 PG 化，屏障等待。
+    await vi.waitFor(() => expect(stub.resumes).toHaveLength(1), { timeout: 5_000 })
 
     // The composition workflow's own aggregation decides what a missing subunit means;
     // the parent is NOT left paused forever.
-    expect(stub.resumes).toHaveLength(1)
     expect(stub.resumes[0]).toMatchObject({ parentId: rootId, nodeId: "dispatch-child", output: {} })
   })
 
@@ -444,37 +407,39 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
   it("an over-cap child parks as pending; the job's claim starts it with the parent-resume wiring", async () => {
     await insertCompositeTask("t-comp-4", ["a", "b"])
     const rootId = await svc.armTask("t-comp-4")
-    db.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(rootId)
-    const coordinatorWsId = execs.findById(rootId)!.workspace_id
-    db.prepare(
-      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'running', datetime('now'))",
-    ).run(`${rootId}-dispatch-child`, rootId)
+    await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=now() WHERE id=$1", [rootId])
+    const coordinatorWsId = (await execs.findById(rootId))!.workspace_id
+    await pg!.sql.unsafe(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES ($1, $2, 'dispatch-child', 'task_dispatch', 'running', now())",
+      [`${rootId}-dispatch-child`, rootId],
+    )
 
     // Fill the shared gate (cap 2): the coordinator root is 1; one more live task row
     // puts countActiveWork at the cap, so the child cannot start now.
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, started_at, created_at, updated_at, task_id)
-       VALUES ('exec-busy', ?, '0', 'w', 'w', ?, 'running', datetime('now'), datetime('now'), datetime('now'), 't-busy')`,
-    ).run(coordinatorWsId, ORG)
+       VALUES ('exec-busy', $1, '0', 'w', 'w', $2, 'running', now(), now(), now(), 't-busy')`,
+      [coordinatorWsId, ORG],
+    )
 
     dispatch = makeDispatch(coordinatorWsId)
     const handle = await dispatch.dispatchChild(makeSubunit("a"))
-    expect(execs.findById(handle.child_id)!.status).toBe("pending")
+    expect((await execs.findById(handle.child_id))!.status).toBe("pending")
     expect(stub.started).not.toContain(handle.child_id)
 
     // Free a slot; the built-in job's claim loop starts the parked child — the SAME
     // queue a root launch uses, so composite fan-out inherits the cap for free.
-    db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE id='exec-busy'").run()
+    await pg!.sql.unsafe("UPDATE executions SET status='completed', completed_at=now() WHERE id='exec-busy'")
     const { launched } = await svc.launchQueued()
     expect(launched).toBeGreaterThanOrEqual(1)
-    expect(execs.findById(handle.child_id)!.status).toBe("running")
+    expect((await execs.findById(handle.child_id))!.status).toBe("running")
     expect(stub.started).toContain(handle.child_id)
 
     // The claim wired the child's completion to the parent: fire it, expect the resume.
-    db.prepare("UPDATE executions SET var_pool='{\"result\":\"E2E_TP_claimed_out\"}', status='completed', completed_at=datetime('now') WHERE id=?").run(handle.child_id)
+    await pg!.sql.unsafe("UPDATE executions SET var_pool='{\"result\":\"E2E_TP_claimed_out\"}'::jsonb, status='completed', completed_at=now() WHERE id=$1", [handle.child_id])
     stub.callbacks.get(handle.child_id)?.("completed")
-    await new Promise((r) => setImmediate(r))
-    await new Promise((r) => setImmediate(r))
+    // [票6b-1] PG 化屏障（四板斧 vi.waitFor）。
+    await vi.waitFor(() => expect(stub.resumes.length).toBeGreaterThan(0), { timeout: 5_000 })
     expect(stub.resumes).toContainEqual({
       parentId: rootId,
       nodeId: "dispatch-child",
@@ -492,18 +457,20 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     // shape: 「这个暂停节点还欠着子执行吗」 is a parent_id query, not a config-marker scan.
     await insertCompositeTask("t-comp-5", ["a", "b"])
     const rootId = await svc.armTask("t-comp-5")
-    db.prepare("UPDATE executions SET status='pending_task_dispatch' WHERE id=?").run(rootId)
-    const coordinatorWsId = execs.findById(rootId)!.workspace_id
-    db.prepare(
+    await pg!.sql.unsafe("UPDATE executions SET status='pending_task_dispatch' WHERE id=$1", [rootId])
+    const coordinatorWsId = (await execs.findById(rootId))!.workspace_id
+    await pg!.sql.unsafe(
       `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at)
-       VALUES (?, ?, 'dispatch-child', 'task_dispatch', 'pending_task_dispatch', datetime('now'))`,
-    ).run(`${rootId}-dispatch-child`, rootId)
-    db.prepare(
+       VALUES ($1, $2, 'dispatch-child', 'task_dispatch', 'pending_task_dispatch', now())`,
+      [`${rootId}-dispatch-child`, rootId],
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
          org, status, var_pool, started_at, completed_at, created_at, updated_at, task_id)
-       VALUES ('child-done', ?, ?, 0, 'wf/a', 'a', ?, 'completed', '{"result":"E2E_TP_orphan"}',
-         datetime('now','-3 minutes'), datetime('now','-2 minutes'), datetime('now','-3 minutes'), datetime('now','-2 minutes'), ?)`,
-    ).run(coordinatorWsId, rootId, ORG, "t-comp-5")
+       VALUES ('child-done', $1, $2, 0, 'wf/a', 'a', $3, 'completed', '{"result":"E2E_TP_orphan"}'::jsonb,
+         now() - INTERVAL '3 minutes', now() - INTERVAL '2 minutes', now() - INTERVAL '3 minutes', now() - INTERVAL '2 minutes', $4)`,
+      [coordinatorWsId, rootId, ORG, "t-comp-5"],
+    )
 
     const { resynced } = await svc.reconcile()
     expect(resynced).toBeGreaterThanOrEqual(1)
@@ -521,16 +488,16 @@ describePg("composite task dispatch — coordinator arm + child run + parent res
     //      nothing to receive the resume, and the strand reap owns that row (it ends it
     //      past the stale threshold instead of reporting a wake-up that cannot happen).
     stub.resumes.length = 0
-    db.prepare("UPDATE executions SET status='pending' WHERE id='child-done'").run()
+    await pg!.sql.unsafe("UPDATE executions SET status='pending' WHERE id='child-done'")
     await svc.reconcile()
     expect(stub.resumes).toHaveLength(0)
 
-    db.prepare("UPDATE executions SET status='completed' WHERE id='child-done'").run()
+    await pg!.sql.unsafe("UPDATE executions SET status='completed' WHERE id='child-done'")
     stub.dead.push(rootId)
     const after = await svc.reconcile()
     expect(stub.resumes).toHaveLength(0)
     expect(after.resynced).toBe(0)
     expect(after.reaped).toBe(0) // still inside the stale window — left alone, not killed early
-    expect(execs.findById(rootId)!.status).toBe("pending_task_dispatch")
+    expect((await execs.findById(rootId))!.status).toBe("pending_task_dispatch")
   })
 })

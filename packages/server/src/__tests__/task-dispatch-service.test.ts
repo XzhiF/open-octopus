@@ -38,7 +38,6 @@ import os from "os"
 import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { ExecutionDAO } from "../db/dao/execution-dao"
-import { ScheduleRunDAO } from "../db/dao/schedule-run-dao"
 import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskDispatchService } from "../services/scheduler/task-dispatch-service"
 import type { SubunitSpec } from "@octopus/shared"
@@ -57,8 +56,11 @@ vi.mock("../services/scheduler/concurrency", () => ({
 // with a real INSERT so the child row exists for claimLaunch/resume to read, and so a
 // parent-workspace lookup can hand back resumeTaskDispatch. Backed by the per-test DB
 // the stub reads from `stub.db` (set in beforeEach).
+// [P1 B5 票6b-1] 单引擎归一：executions/workspaces/node_executions 均为 PG ——
+// 票4R 的 mirrorExecsToPg 混窗镜像删除，桩直写注册池（pg 模块级供 vi.mock 闭包）。
+let pg: PgFixture | null = null
+
 const stub = vi.hoisted(() => ({
-  db: null as Database.Database | null,
   seq: 0,
   started: [] as string[],
   callbacks: new Map<string, (status?: string) => void>(),
@@ -66,33 +68,34 @@ const stub = vi.hoisted(() => ({
 }))
 
 vi.mock("../services/execution-service-registry", () => ({
-  getExecutionService: (wsId: string) => {
-    const ws = stub.db!.prepare("SELECT path FROM workspaces WHERE id = ?").get(wsId) as
-      { path: string } | undefined
+  getExecutionService: async (wsId: string) => {
+    const wsRows = await pg!.sql`SELECT path FROM workspaces WHERE id = ${wsId}`
+    const ws = wsRows[0] as { path: string } | undefined
     if (!ws) return undefined
     return {
       wsPath: ws.path,
       service: {
-        create: (workspaceId: string, input: Record<string, unknown>) => {
+        create: async (workspaceId: string, input: Record<string, unknown>) => {
           const id = `child-exec-${stub.seq++}`
-          stub.db!.prepare(
+          await pg!.sql.unsafe(
             `INSERT INTO executions
                (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
                 input_values, var_pool, org, triggered_by, created_at, updated_at, task_id)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '{}', ?, ?, datetime('now'), datetime('now'), ?)`,
-          ).run(
-            id, workspaceId,
-            String(input.parent_id ?? "0"), Number(input.child_index ?? 0),
-            String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
-            JSON.stringify(input.input_values ?? {}),
-            String(input.org ?? "e2e-tp-org"), String(input.triggered_by ?? "task_dispatch"),
-            (input.task_id as string) ?? null,
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7::jsonb, '{}'::jsonb, $8, $9, now(), now(), $10)`,
+            [
+              id, workspaceId,
+              String(input.parent_id ?? "0"), Number(input.child_index ?? 0),
+              String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
+              JSON.stringify(input.input_values ?? {}),
+              String(input.org ?? "e2e-tp-org"), String(input.triggered_by ?? "task_dispatch"),
+              (input.task_id as string) ?? null,
+            ],
           )
           return { id }
         },
         start: async (id: string) => {
           stub.started.push(id)
-          stub.db!.prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?").run(id)
+          await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=now() WHERE id=$1", [id])
         },
         registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
           if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
@@ -128,51 +131,10 @@ function makeSubunit(name = "E2E_TP_subunit_a"): SubunitSpec {
 describePg("TaskDispatchService — child run + parent-resume correlation (票03/票04)", () => {
   let db: Database.Database
   // P1 B2：dispatchChildRun 读父任务行经 new TaskDAO(pgSql()) —— 全局池必须先注册。
-  // 本文件父行 task_id 在 PG 无任务（getById → null → 走 taskpool-* 兜底命名），
-  // 与旧语义一致；executions/workspaces 仍在 SQLite `db`。
-  let pg: PgFixture | null = null
+  // 本文件父行 task_id 在 PG 无任务（getById → null → 走 taskpool-* 兜底命名），与旧语义一致。
   let service: TaskDispatchService
   let execs: ExecutionDAO
   let wsSeq = 0
-
-  const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
-
-  /** SQLite 快照 → PG 镜像（B5 票4R 混窗计量闸，与 tasks-trigger-mutex 同款）。 */
-  async function mirrorExecsToPg(): Promise<void> {
-    const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
-      .all() as Array<{ id: string; name: string; org: string; path: string }>
-    const exs = db.prepare(
-      `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-              status, org, task_id FROM executions`,
-    ).all() as Array<Record<string, string | number | null>>
-    if (wss.length > 0) {
-      const params: unknown[] = []
-      const rows = wss.map((w) => {
-        params.push(w.id, w.name, w.org, w.path)
-        return `($${params.length - 3}, $${params.length - 2}, $${params.length - 1}, $${params.length}, now(), now())`
-      })
-      await pg!.sql.unsafe(
-        `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ${rows.join(",")}
-         ON CONFLICT (id) DO NOTHING`,
-        params as never,
-      )
-    }
-    if (exs.length > 0) {
-      const params: unknown[] = []
-      const rows = exs.map((e) => {
-        params.push(e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0,
-          e.workflow_ref, e.workflow_name, e.status, e.org, e.task_id)
-        const b = params.length - 8
-        return `($${b}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, now(), now())`
-      })
-      await pg!.sql.unsafe(
-        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-            status, org, task_id, created_at, updated_at) VALUES ${rows.join(",")}
-         ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
-        params as never,
-      )
-    }
-  }
 
   beforeAll(async () => {
     pg = await setupRegisteredPgSchema()
@@ -183,21 +145,20 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
   })
 
   beforeEach(async () => {
-    await pg!.truncate("executions", "workspaces", "schedule_executions", "schedules")
+    await pg!.truncate("node_executions", "executions", "workspaces", "schedule_executions", "schedules")
     db = new Database(":memory:")
     applySchema(db)
     db.pragma("foreign_keys = OFF") // the coordinator/child ws are seeded by SQL, not real dirs
-    stub.db = db
     stub.seq = 0
     stub.started = []
     stub.callbacks = new Map()
     stub.resumes = []
     wsSeq = 0
 
-    const now = new Date().toISOString()
-    db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(WORKSPACE_ID, "e2e-tp-coordinator", ORG, WORKSPACE_PATH, now, now)
+    await pg!.sql.unsafe(
+      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
+      [WORKSPACE_ID, "e2e-tp-coordinator", ORG, WORKSPACE_PATH],
+    )
 
     service = new TaskDispatchService({
       db,
@@ -207,22 +168,19 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
       // Only createFromSpec is reached on the dispatch path; hand back a fresh,
       // registered child workspace so the registry stub resolves it.
       workspaceService: {
-        createFromSpec: (input: Record<string, unknown>) => {
+        createFromSpec: async (input: Record<string, unknown>) => {
           const id = `ws-child-${wsSeq++}`
-          db.prepare(
-            "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
-          ).run(id, String(input.name ?? id), ORG, path.join(os.tmpdir(), `e2e-tp-child-${id}`))
+          await pg!.sql.unsafe(
+            "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
+            [id, String(input.name ?? id), ORG, path.join(os.tmpdir(), `e2e-tp-child-${id}`)],
+          )
           return { id }
         },
       } as never,
       sse: new SSEService(),
     })
-    execs = new ExecutionDAO(db)
-    // 混窗计量闸：见 mirrorExecsToPg 注释。票5 单引擎收口后删除。
-    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (this: ScheduleRunDAO, opts) {
-      await mirrorExecsToPg()
-      return ORIGINAL_METER.call(this, opts)
-    })
+    execs = new ExecutionDAO(pg!.sql)
+    // [票6b-1] 计量闸镜像 spy 已删 —— countActiveWork 直读同库（单引擎归一）。
   })
 
   afterEach(() => {
@@ -233,20 +191,21 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
 
   /** Seed the dispatching PARENT: a running execution in the coordinator workspace,
    *  with a running task_dispatch node. task_id links it to the parent task. */
-  function seedRunningParent(parentExecId: string, nodeId: string, taskId: string | null = "task-parent-1"): void {
-    const now = new Date().toISOString()
-    db.prepare(
+  async function seedRunningParent(parentExecId: string, nodeId: string, taskId: string | null = "task-parent-1"): Promise<void> {
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, started_at, created_at, updated_at, task_id)
-       VALUES (?, ?, '0', 'composition-wf', 'composition-wf', ?, 'running', ?, ?, ?, ?)`,
-    ).run(parentExecId, WORKSPACE_ID, ORG, now, now, now, taskId)
-    db.prepare(
-      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES (?, ?, ?, 'task_dispatch', 'running', ?)",
-    ).run(`${parentExecId}-${nodeId}`, parentExecId, nodeId, now)
+       VALUES ($1, $2, '0', 'composition-wf', 'composition-wf', $3, 'running', now(), now(), now(), $4)`,
+      [parentExecId, WORKSPACE_ID, ORG, taskId],
+    )
+    await pg!.sql.unsafe(
+      "INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at) VALUES ($1, $2, $3, 'task_dispatch', 'running', now())",
+      [`${parentExecId}-${nodeId}`, parentExecId, nodeId],
+    )
   }
 
   // ── dispatchChild → child executions row + ChildHandle ──────────────
   it("dispatchChild creates a distinct CHILD execution row (parent_id + task_id), not a schedule", async () => {
-    seedRunningParent("exec-parent-1", "dispatch-node-1", "task-parent-1")
+    await seedRunningParent("exec-parent-1", "dispatch-node-1", "task-parent-1")
 
     const handle = await service.dispatchChild(makeSubunit())
 
@@ -257,12 +216,12 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
 
     // The load-bearing correlation: the child is an executions row whose parent_id is
     // the dispatching run and whose task_id is the parent task. No schedules row exists.
-    const child = execs.findById(handle.child_id)!
+    const child = (await execs.findById(handle.child_id))!
     expect(child.parent_id).toBe("exec-parent-1")
     expect(child.task_id).toBe("task-parent-1")
     expect(child.workflow_ref).toBe("e2e-tp/simple-spec-workflow")
-    const schedCount = (db.prepare("SELECT COUNT(*) AS c FROM schedules").get() as { c: number }).c
-    expect(schedCount).toBe(0)
+    const schedRows = await pg!.sql`SELECT COUNT(*)::int AS c FROM schedules`
+    expect((schedRows[0] as { c: number }).c).toBe(0)
 
     // Under the shared cap the child is claimed + started immediately.
     expect(stub.started).toContain(handle.child_id)
@@ -279,20 +238,20 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
     // This assertion is the contract (each subunit fans out independently, ordered);
     // it goes green when the leaf filter is scoped to same-workspace children or the
     // parent lookup stops excluding completed/foreign-workspace children.
-    seedRunningParent("exec-parent-2", "dispatch-node-2")
+    await seedRunningParent("exec-parent-2", "dispatch-node-2")
 
     const a = await service.dispatchChild(makeSubunit("a"))
     const b = await service.dispatchChild(makeSubunit("b"))
 
     expect(a.workspace_id).not.toBe(b.workspace_id)
     // child_index keeps the fan-out order for the parent's aggregation.
-    expect(execs.findById(a.child_id)!.child_index).toBe(0)
-    expect(execs.findById(b.child_id)!.child_index).toBe(1)
+    expect((await execs.findById(a.child_id))!.child_index).toBe(0)
+    expect((await execs.findById(b.child_id))!.child_index).toBe(1)
   })
 
   // ── resumeOnCompletion derives parent + running node, then resumes ─
   it("resumeOnCompletion resumes the parent's RUNNING task_dispatch node with the child output (derived, restart-safe)", async () => {
-    seedRunningParent("exec-parent-3", "dispatch-node-3")
+    await seedRunningParent("exec-parent-3", "dispatch-node-3")
     const handle = await service.dispatchChild(makeSubunit())
 
     const childOutput = { result: "E2E_TP_synthesis_body", meta: { ok: true } }
@@ -319,35 +278,36 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
   })
 
   it("an over-cap child stays PENDING and the built-in job's claim starts it", async () => {
-    seedRunningParent("exec-parent-4", "dispatch-node-4")
+    await seedRunningParent("exec-parent-4", "dispatch-node-4")
     // Occupy the cap: the parent itself counts as 1 live task run, so one more live
     // row (any task execution) pushes countActiveWork to the pinned cap of 2.
-    const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, started_at, created_at, updated_at, task_id)
-       VALUES ('exec-busy', ?, '0', 'w', 'w', ?, 'running', ?, ?, ?, 'task-busy')`,
-    ).run(WORKSPACE_ID, ORG, now, now, now)
+       VALUES ('exec-busy', $1, '0', 'w', 'w', $2, 'running', now(), now(), now(), 'task-busy')`,
+      [WORKSPACE_ID, ORG],
+    )
 
     const handle = await service.dispatchChild(makeSubunit())
 
     // Parked, not started: it waits on the SAME queue a root launch uses.
-    expect(execs.findById(handle.child_id)!.status).toBe("pending")
+    expect((await execs.findById(handle.child_id))!.status).toBe("pending")
     expect(stub.started).not.toContain(handle.child_id)
   })
 
   // ── failed / empty child: resume with an EMPTY output, never stall ─
   it("resumeOnCompletion with a child that has no var_pool resumes the parent with {}", async () => {
-    seedRunningParent("exec-parent-5", "dispatch-node-5")
+    await seedRunningParent("exec-parent-5", "dispatch-node-5")
     const childId = "exec-child-empty"
-    const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, var_pool, created_at, updated_at, task_id)
-       VALUES (?, ?, 'exec-parent-5', 'w', 'w', ?, 'failed', '{}', ?, ?, 'task-parent-5')`,
-    ).run(childId, "ws-child-x", ORG, now, now)
+       VALUES ($1, 'ws-child-x', 'exec-parent-5', 'w', 'w', $2, 'failed', '{}'::jsonb, now(), now(), 'task-parent-5')`,
+      [childId, ORG],
+    )
     // The child's workspace row must resolve for the resume path to reach the parent.
-    db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-x', 'c', ?, '/tmp/x', datetime('now'), datetime('now'))",
-    ).run(ORG)
+    await pg!.sql.unsafe(
+      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-x', 'c', $1, '/tmp/x', now(), now())",
+      [ORG],
+    )
 
     // No outputOverride → resumeParentFromChild reads the child's var_pool. Empty pool
     // (a failed child) → the parent is resumed with {} so the composition wf decides.
@@ -361,11 +321,11 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
   // ── the two "throws" tests replaced by the new shape's guarantees ─
   it("a child with no parent is a no-op (does not throw, does not fabricate a resume)", async () => {
     const childId = "exec-orphan"
-    const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, var_pool, created_at, updated_at)
-       VALUES (?, ?, '0', 'w', 'w', ?, 'completed', '{}', ?, ?)`,
-    ).run(childId, WORKSPACE_ID, ORG, now, now)
+       VALUES ($1, $2, '0', 'w', 'w', $3, 'completed', '{}'::jsonb, now(), now())`,
+      [childId, WORKSPACE_ID, ORG],
+    )
 
     const { resumeParentFromChild } = await import("../services/tasks/task-child-run")
     await expect(resumeParentFromChild(db, childId)).resolves.toBeUndefined()
@@ -377,17 +337,18 @@ describePg("TaskDispatchService — child run + parent-resume correlation (票03
     // returns undefined → the child result is not forwarded; the parent's own
     // recovery picks it up. The old "resumeParent callback not wired → throws" path
     // has no equivalent failure now — a missing engine is expected, not fatal.
-    seedRunningParent("exec-parent-6", "dispatch-node-6")
-    db.prepare("DELETE FROM workspaces WHERE id = ?").run(WORKSPACE_ID)
+    await seedRunningParent("exec-parent-6", "dispatch-node-6")
+    await pg!.sql.unsafe("DELETE FROM workspaces WHERE id = $1", [WORKSPACE_ID])
     const childId = "exec-child-6"
-    const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, org, status, var_pool, created_at, updated_at, task_id)
-       VALUES (?, ?, 'exec-parent-6', 'w', 'w', ?, 'completed', '{"result":"x"}', ?, ?, 'task-parent-6')`,
-    ).run(childId, "ws-child-6", ORG, now, now)
-    db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-6', 'c', ?, '/tmp/x6', datetime('now'), datetime('now'))",
-    ).run(ORG)
+       VALUES ($1, 'ws-child-6', 'exec-parent-6', 'w', 'w', $2, 'completed', '{"result":"x"}'::jsonb, now(), now(), 'task-parent-6')`,
+      [childId, ORG],
+    )
+    await pg!.sql.unsafe(
+      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-6', 'c', $1, '/tmp/x6', now(), now())",
+      [ORG],
+    )
 
     const { resumeParentFromChild } = await import("../services/tasks/task-child-run")
     await expect(resumeParentFromChild(db, childId)).resolves.toBeUndefined()

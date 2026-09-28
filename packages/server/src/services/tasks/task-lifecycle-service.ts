@@ -927,12 +927,10 @@ export class TaskLifecycleService {
    */
   private async recoverStuckDispatchParents(): Promise<number> {
     let recovered = 0
-    const paused = this.deps.db
-      .prepare(
-        `SELECT id, workspace_id FROM executions
-         WHERE task_id IS NOT NULL AND status = 'pending_task_dispatch'`,
-      )
-      .all() as Array<{ id: string; workspace_id: string }>
+    // [P1 B5 票6b-1 单引擎归一漏网] executions 已随票5 迁 PG —— 旧 this.deps.db 直读
+    // 是混簇尾巴（SQLite 永远看不见 pending_task_dispatch 行）→ 改读注册池。
+    const paused = (await pgSql()`SELECT id, workspace_id FROM executions
+         WHERE task_id IS NOT NULL AND status = 'pending_task_dispatch'`) as Array<{ id: string; workspace_id: string }>
     for (const parent of paused) {
       try {
         const children = await this.execDAO.findChildren(parent.id)
