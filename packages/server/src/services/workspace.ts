@@ -276,7 +276,7 @@ export class WorkspaceService {
       worktreeStatus = this.git.initWorktreesSync(resolvedPath, input.repos, input.org, input.name, branchName)
     }
 
-    const workspace = this.getById(id)!
+    const workspace = (await this.getById(id))!
     return { ...workspace, worktreeStatus }
   }
 

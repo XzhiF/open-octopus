@@ -86,7 +86,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
   // is the one part of the old shape that was already right, so it carries over verbatim.
   let workspaceId: string
   try {
-    const created = deps.workspaceService.createFromSpec({
+    const created = await deps.workspaceService.createFromSpec({
       org: subunit.workspace_spec.org || deps.org,
       name: workspaceName ?? `${branchPrefix}-${branchSuffix}`,
       // task-board-title 改版: 同主工作区 —— 任务标题映射到描述字段。

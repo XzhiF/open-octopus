@@ -187,7 +187,7 @@ export class WorkflowExecutor implements Executor {
     // (v4's one-ws-per-task), and it is the task-lifecycle job's to do now.
     let workspace
     try {
-      workspace = this.workspaceService.createFromSpec({
+      workspace = await this.workspaceService.createFromSpec({
         org: config.workspace_spec.org,
         name: workspaceName,
         projects: config.workspace_spec.projects,

@@ -51,6 +51,7 @@ import { ScheduleRunDAO } from "../../db/dao/schedule-run-dao"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
 import { getExecutionService } from "../execution-service-registry"
+import type { ExecutionService } from "../execution"
 import { getResourceRegistry } from "../resource-registry"
 import { BuiltInWorkflowService } from "../builtin-workflow"
 import { TaskHomeService } from "./task-home-service"
@@ -584,7 +585,7 @@ export class TaskLifecycleService {
     const ws = this.deps.workspaceService
     if (!ws) throw new TaskLifecycleError("workspace", "WorkspaceService 未注入，无法准备工作区")
 
-    const bound = task.workspace_id ? ws.getById(task.workspace_id) : undefined
+    const bound = task.workspace_id ? await ws.getById(task.workspace_id) : undefined
     if (bound) {
       try {
         ws.ensureWorktreesForReuse(bound)
@@ -619,7 +620,7 @@ export class TaskLifecycleService {
       (p) => p.name && p.name !== "default",
     )
     try {
-      const created = ws.createFromSpec({
+      const created = await ws.createFromSpec({
         org: plan.workspace_spec?.org ?? task.org ?? "",
         name: workspaceName,
         // task-board-title 改版: 任务标题映射到工作区描述字段。
@@ -635,14 +636,12 @@ export class TaskLifecycleService {
       })
       // Binding is a system event: no version bump, or an armed task would 409 the
       // authoring agent's next spec-field write.
-      // B2: 逃生口收编 —— tasks 绑定写走 TaskDAO（PG）；workspaces 反向指针
-      // 仍在 SQLite（B5 域），走本服务自己的 deps.db 句柄。
+      // B2: 逃生口收编 —— tasks 绑定写走 TaskDAO（PG）。
+      // 票6a：workspaces 已翻 PG —— 反向指针 task_id 随 createFromSpec 的
+      // dao.insert 同写落库（input.task_id 已在 SQL 列内），旧 SQLite 裸写
+      // `UPDATE workspaces SET task_id` 是 split-brain 残留（读 PG 写 SQLite
+      // 会永远看不见），删除。
       await this.taskDAO.setWorkspaceId(task.id, created.id, new Date().toISOString())
-      // v41: the reverse pointer, so 「这个工作区属于哪个任务」 is a column read instead
-      // of the old workspaces → schedules.origin_id join bridge.
-      this.deps.db
-        .prepare("UPDATE workspaces SET task_id = ? WHERE id = ?")
-        .run(task.id, created.id)
       console.log(
         `[task-lifecycle] workspace ${created.id} (${workspaceName}) built for task ${task.id} — ${composite ? "coordinator" : `${projects.length} worktree(s)`}`,
       )
@@ -776,7 +775,8 @@ export class TaskLifecycleService {
         console.error(`[task-lifecycle] queue drain after ${executionId} failed:`, errMessage(err))
       }
       try {
-        getExecutionService(row.workspace_id)?.service.clearExternalCallbacks(executionId)
+        const registry = await getExecutionService(row.workspace_id)
+        registry?.service.clearExternalCallbacks(executionId)
       } catch { /* registry gone — the engine drops stale callbacks after terminal anyway */ }
     } catch (err: unknown) {
       console.error(
@@ -849,7 +849,7 @@ export class TaskLifecycleService {
 
         if (isTerminal(full.status)) continue // flipped between the scan and now
 
-        const registry = this.safeRegistry(row.workspace_id)
+        const registry = await this.safeRegistry(row.workspace_id)
         const engineAlive = registry?.service.hasLiveEngine?.(row.id) ?? false
         if (engineAlive) continue
 
@@ -950,7 +950,7 @@ export class TaskLifecycleService {
         } catch {
           output = {}
         }
-        const registry = this.safeRegistry(parent.workspace_id)
+        const registry = await this.safeRegistry(parent.workspace_id)
         // Only a parent with an engine still in THIS process can take the resume.
         if (!registry?.service.hasLiveEngine?.(parent.id)) continue
         // Counted on ISSUE, not on completion: the metric answers "how many stuck parents
@@ -1090,7 +1090,7 @@ export class TaskLifecycleService {
         }
         continue
       }
-      const registry = this.safeRegistry(row.workspace_id)
+      const registry = await this.safeRegistry(row.workspace_id)
       if (registry) {
         try {
           await registry.service.cancel(row.id)
@@ -1204,11 +1204,14 @@ export class TaskLifecycleService {
     })
   }
 
-  private safeRegistry(workspaceId: string) {
+  private safeRegistry(workspaceId: string): Promise<{ service: ExecutionService; wsPath: string } | undefined> {
+    // 票6a：getExecutionService 已 async（workspace 注册表查 PG）—— 同步 throw 兜底
+    // 只对「注册表未初始化」的单测场景保留，异步 reject 由调用方 await 处的
+    // try/catch 收口（姿势与 5B 一致）。
     try {
       return getExecutionService(workspaceId)
     } catch {
-      return undefined // registry not initialized (unit-test context) — treat as gone
+      return Promise.resolve(undefined) // registry not initialized (unit-test context) — treat as gone
     }
   }
 
