@@ -70,8 +70,8 @@ const CUM = { inputTokens: 10, outputTokens: 42, cacheReadTokens: 100, cacheCrea
 describe("EngineCallbacks — F1 liveUsage 实时累计投影", () => {
   it("turn_usage → cumulative 落表（含 scoped 子节点 id 直穿）", () => {
     const { builder, cb } = build(makeMocks())
-    cb.onAgentEvent("n1", { type: "turn_usage", turn: 3, delta: { outputTokens: 7 }, cumulative: CUM } as any)
-    cb.onAgentEvent("ticket-dag:ticket-01", { type: "turn_usage", turn: 1, delta: {}, cumulative: { ...CUM, outputTokens: 9 } } as any)
+    cb.onAgentEvent?.("n1", { type: "turn_usage", turn: 3, delta: { outputTokens: 7 }, cumulative: CUM } as any)
+    cb.onAgentEvent?.("ticket-dag:ticket-01", { type: "turn_usage", turn: 1, delta: {}, cumulative: { ...CUM, outputTokens: 9 } } as any)
     const m = builder.liveUsageFor("exec-1")
     expect(m?.get("n1")?.usage).toEqual(CUM)
     expect(m?.get("n1")?.turn).toBe(3)
@@ -80,28 +80,28 @@ describe("EngineCallbacks — F1 liveUsage 实时累计投影", () => {
 
   it("非 turn_usage 事件不写表", () => {
     const { builder, cb } = build(makeMocks())
-    cb.onAgentEvent("n1", { type: "text_delta", content: "hi" } as any)
+    cb.onAgentEvent?.("n1", { type: "text_delta", content: "hi" } as any)
     expect(builder.liveUsageFor("exec-1")?.get("n1")).toBeUndefined()
   })
 
   it("node_start（重试/重跑）→ 该节点归零", () => {
     const { builder, cb } = build(makeMocks())
-    cb.onAgentEvent("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
-    cb.onNodeStart("n1", "agent")
+    cb.onAgentEvent?.("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
+    cb.onNodeStart?.("n1", "agent")
     expect(builder.liveUsageFor("exec-1")?.get("n1")).toBeUndefined()
   })
 
   it("node_end → 投影退场（recordNodeUsage 已是权威）", () => {
     const { builder, cb } = build(makeMocks())
-    cb.onAgentEvent("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
+    cb.onAgentEvent?.("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
     cb.onNodeEnd("n1", "completed", 1000, { status: "completed", durationMs: 1000, outputs: {}, logLines: [] })
     expect(builder.liveUsageFor("exec-1")?.get("n1")).toBeUndefined()
   })
 
   it("onComplete → 整张执行表作废", () => {
     const { builder, cb } = build(makeMocks())
-    cb.onAgentEvent("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
-    cb.onAgentEvent("n2", { type: "turn_usage", turn: 1, delta: {}, cumulative: CUM } as any)
+    cb.onAgentEvent?.("n1", { type: "turn_usage", turn: 2, delta: {}, cumulative: CUM } as any)
+    cb.onAgentEvent?.("n2", { type: "turn_usage", turn: 1, delta: {}, cumulative: CUM } as any)
     cb.onComplete("completed")
     expect(builder.liveUsageFor("exec-1")).toBeUndefined()
   })

@@ -102,7 +102,7 @@ async function get(params: string): Promise<{ status: number; body: { calls: Cal
 /** SQL 直查交叉（独立真相源）。P1 B4：直读 PG，COUNT bigint → ::int。 */
 async function sqlCount(where: string, ...args: unknown[]): Promise<number> {
   let i = 0
-  const rows = await pg!.sql.unsafe(`SELECT COUNT(*)::int AS n FROM llm_calls WHERE ${where.replace(/\?/g, () => `$${++i}`)}`, args)
+  const rows = await pg!.sql.unsafe(`SELECT COUNT(*)::int AS n FROM llm_calls WHERE ${where.replace(/\?/g, () => `$${++i}`)}`, args as never[])
   return Number((rows as unknown as { n: number }[])[0].n)
 }
 

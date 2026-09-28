@@ -92,7 +92,7 @@ function callIds(body: Record<string, unknown>): string[] {
 async function sqlIds(where: string, args: unknown[] = []): Promise<string[]> {
   let n = 0
   const pgSqlText = where.replace(/\?/g, () => `$${++n}`)
-  const rows = await pg!.sql.unsafe(`SELECT id FROM llm_calls WHERE model LIKE 'E2E_TEST_%' ${pgSqlText} ORDER BY timestamp DESC`, args)
+  const rows = await pg!.sql.unsafe(`SELECT id FROM llm_calls WHERE model LIKE 'E2E_TEST_%' ${pgSqlText} ORDER BY timestamp DESC`, args as never[])
   return (rows as unknown as { id: string }[]).map(r => r.id)
 }
 
