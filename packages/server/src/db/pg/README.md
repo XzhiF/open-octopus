@@ -220,6 +220,10 @@ B6（sessions/executions 迁 PG + 数据搬迁灌满）时按下述步骤恢复�
    - `pipeline_state.workspace_id → workspaces(id) ON DELETE CASCADE`（B5 票5 撤，同上）
    - `schedules.workspace_id → workspaces(id)`（B5 票1 生产者已迁 PG，票5 统一撤登记）
    - `schedule_workspaces.workspace_id → workspaces(id) ON DELETE CASCADE`（同上）
+   **票6aR 状态备注（2026-09-28）：workspaces 表已迁 PG**（WorkspaceDAO/ArchiveDAO
+   经 BasePgDAO + registry 翻池，票6a 半程 + 票6aR 收口）。上列四条指向 workspaces 的
+   FK 混合期**保持撤除**（恢复属 B6 严格动作，且需先做第 3 步真库验脏）；
+   archive/workspace_archive 侧无新增跨引擎 FK（workspaces↔archive 同池）。
    注意 **executions.seq 不在恢复之列**：它是 PG 永驻设计列（SQLite rowid tiebreak 的
    显式对应物，schema-parity `PG_ONLY_COLS` 登记），B6 后仍保留。
 2. 删除 `schema-parity.test.ts` 中 `HYBRID_DROPPED_FKS` 的对应条目。
