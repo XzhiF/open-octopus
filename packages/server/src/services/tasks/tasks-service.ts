@@ -347,7 +347,7 @@ function toDTO(row: TaskRow): TaskDTO {
     resources: parseJSON<ResourceRef[]>(row.resources, []),
     skills: parseJSON<string[]>(row.skills, []),
     project_ids: parseJSON<string[]>(row.project_ids, []),
-    workflow_ref: row.workflow_ref,
+    workflow_ref: row.workflow_ref ?? undefined,
     version: row.version,
     source_chat_session_id: row.source_chat_session_id,
     deleted_at: row.deleted_at,
@@ -729,8 +729,8 @@ export class TasksService {
   async getTask(id: string): Promise<TaskDetailDTO> {
     const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    const history = this.lifecycle.history(id)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
+    const history = await this.lifecycle.history(id)
+    const byParent = groupChildren(await this.lifecycle.childRuns(id))
     const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
     const aiUsage = (await this.aiUsageFor([{
       id,
@@ -740,7 +740,7 @@ export class TasksService {
     const dto: TaskDTO = {
       ...toDTO(row),
       execution: history[0] ? badge(history[0]) : null,
-      run_stats: this.runStats([id]).get(id),
+      run_stats: (await this.runStats([id])).get(id),
       ...(aiUsage ? { ai_usage: aiUsage } : {}),
     }
     return {
@@ -797,8 +797,8 @@ export class TasksService {
   async listRunHistory(id: string, limit = 50): Promise<Array<TaskExecutionBadge & { current: boolean }>> {
     const row = await this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    const history = this.lifecycle.history(id, limit)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
+    const history = await this.lifecycle.history(id, limit)
+    const byParent = groupChildren(await this.lifecycle.childRuns(id))
     const currentId = history.length > 0 ? history[0].id : null
     // `error_summary` is on the badge now (票05): the board's badge and the history list
     // are the same projection of the same row, and an error field that only the history
@@ -988,10 +988,10 @@ export class TasksService {
     if (dtos.length === 0) return dtos
     const ids = rows.map((r) => r.id)
     const byId = new Map(
-      this.lifecycle.latestInstances(ids).map((e) => [e.task_id as string, e]),
+      (await this.lifecycle.latestInstances(ids)).map((e) => [e.task_id as string, e]),
     )
     // 一趟 timings 行喂两个读模型：跑时合计 + 逐任务账本用量的 execution 键集（v49）。
-    const timings = this.lifecycle.runTimings(ids)
+    const timings = await this.lifecycle.runTimings(ids)
     const stats = this.runStatsFrom(timings)
     const execIdsByTask = new Map<string, string[]>()
     for (const t of timings) {
@@ -1054,8 +1054,8 @@ export class TasksService {
    *  会把「创建后挂了一天没人触发」「待验收等人」记成跑时（17h36m 之误的根源）；这里
    *  只加 started_at→completed_at 的实跑段。未终态行：running 计到本刻（看板轮询会
    *  刷新它），pending/paused 不计 —— 暂停期本就不该算工时。 */
-  private runStats(taskIds: readonly string[]): Map<string, TaskRunStats> {
-    return this.runStatsFrom(this.lifecycle.runTimings(taskIds))
+  private async runStats(taskIds: readonly string[]): Promise<Map<string, TaskRunStats>> {
+    return this.runStatsFrom(await this.lifecycle.runTimings(taskIds))
   }
 
   private runStatsFrom(
@@ -1826,7 +1826,7 @@ export class TasksService {
       )
     }
 
-    const inst = this.lifecycle.currentInstance(id)
+    const inst = await this.lifecycle.currentInstance(id)
     if (inst && !TERMINAL_INSTANCES.has(inst.status)) {
       throw new TaskStatusConflictError(
         "任务已进入排队领取/执行，无法退回草稿 — 请改用中止",
@@ -1921,7 +1921,7 @@ export class TasksService {
     }
     const hasPendingFire = existing.trigger_mode === "once" && !!existing.next_fire_at
 
-    const inst = this.lifecycle.currentInstance(id)
+    const inst = await this.lifecycle.currentInstance(id)
     const armedButNotStarted = !!inst && inst.status === "pending"
     if (inst && !armedButNotStarted && !TERMINAL_INSTANCES.has(inst.status)) {
       throw new TaskStatusConflictError("定时触发已开始执行，无法取消 — 请改用中止")
@@ -2064,7 +2064,7 @@ export class TasksService {
       const executionId = await this.lifecycle.armAndLaunch(taskId, arm)
       // currentInstance is the row we just armed (the latch guarantees it is the newest
       // root), so this is a read-back for the caller's deep link, not a lookup by time.
-      const inst = this.lifecycle.currentInstance(taskId)
+      const inst = await this.lifecycle.currentInstance(taskId)
       return { executionId, workspaceId: inst?.workspace_id ?? "" }
     } catch (err: unknown) {
       throw this.asConflict(err)
@@ -2625,8 +2625,8 @@ export class TasksService {
    * with no caller. Returns null for a terminal/no instance row so callers can 409 with a
    * message that matches the actual situation.
    */
-  private liveInstance(id: string): ExecutionRow | null {
-    const inst = this.lifecycle.currentInstance(id)
+  private async liveInstance(id: string): Promise<ExecutionRow | null> {
+    const inst = await this.lifecycle.currentInstance(id)
     if (!inst || TERMINAL_INSTANCES.has(inst.status)) return null
     return inst
   }
@@ -2664,7 +2664,7 @@ export class TasksService {
     const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
 
-    const inst = this.liveInstance(id)
+    const inst = await this.liveInstance(id)
     if (!inst || inst.status !== "running") {
       throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "暂停"))
     }
@@ -2705,7 +2705,7 @@ export class TasksService {
     const existing = await this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
 
-    const inst = this.liveInstance(id)
+    const inst = await this.liveInstance(id)
     if (!inst || (inst.status !== "paused" && inst.status !== "pending_resume")) {
       throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "恢复"))
     }

@@ -9,6 +9,7 @@
 
 import { Hono } from "hono"
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { streamSSE } from "hono/streaming"
 import { z, ZodError } from "zod"
 import fs from "fs"
@@ -40,7 +41,7 @@ import { InstanceGateError } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
-function classifyError(err: unknown): { status: number; message: string } {
+function classifyError(err: unknown): { status: ContentfulStatusCode; message: string } {
   if (err instanceof ZodError) {
     const details = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
     return { status: 400, message: details }
@@ -54,7 +55,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
   // 实例关闭安全闸（2026-09-24）：status 由闸侧裁定（400 非法/宿主端口、
   // 403 未登记端口、409 进程树涉宿主）。
-  if (err instanceof InstanceGateError) return { status: err.status, message: err.message }
+  if (err instanceof InstanceGateError) return { status: err.status as ContentfulStatusCode, message: err.message }
   // 06 (US7): artifact content whitelist + missing-file classification. The
   // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
   // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4) vs
@@ -999,7 +1000,7 @@ export function createTasksRoutes(
   router.get("/:id/assist-workflows/:runId", async (c) => {
     if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
     try {
-      const run = assistService.getRun(c.req.param("id"), c.req.param("runId"))
+      const run = await assistService.getRun(c.req.param("id"), c.req.param("runId"))
       return c.json(run)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

@@ -27,6 +27,7 @@ import type Database from "better-sqlite3"
 import type { SubunitSpec, ChildHandle } from "@octopus/shared"
 import { TASK_EXECUTION_EVENT } from "@octopus/shared"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
+import type { ExecutionRow } from "../../db/types"
 import { ScheduleRunDAO } from "../../db/dao/schedule-run-dao"
 import { TaskDAO } from "../../db/dao/task-dao"
 import { pgSql } from "../../db/dao/registry"
@@ -58,7 +59,7 @@ function errMessage(err: unknown): string {
  */
 export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Promise<ChildHandle> {
   const execDAO = new ExecutionDAO(pgSql())
-  const parent = resolveParentRun(execDAO, deps.workspaceId)
+  const parent = await resolveParentRun(execDAO, deps.workspaceId)
   if (!parent) {
     throw new Error(
       "task_dispatch: 找不到本工作区内正在运行的父执行,无法关联子单元(父执行可能已结束)",
@@ -110,7 +111,7 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
     throw new Error(`task_dispatch: 子单元工作区 ${workspaceId} 的 ExecutionService 不可用`)
   }
 
-  const child = registry.service.create(workspaceId, {
+  const child = await registry.service.create(workspaceId, {
     workflow_ref: subunit.workflow_ref,
     // 票05: the subunit's name IS the row now. Under the envelope the arm's identity was
     // a schedules row tagged origin_role='subunit'; a child execution says which arm it
@@ -143,14 +144,14 @@ export async function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec)
   if (await new ScheduleRunDAO(pgSql()).countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
     return { child_id: child.id, workspace_id: workspaceId }
   }
-  startChildRun(deps.db, child.id, workspaceId, subunit.input_values as Record<string, string>)
+  await startChildRun(deps.db, child.id, workspaceId, subunit.input_values as Record<string, string>)
   return { child_id: child.id, workspace_id: workspaceId }
 }
 
 /** Claim + start an armed child and wire its completion back to the parent. Shared by the
  *  immediate path and the job's claim loop, so a child that waited behind the cap behaves
  *  exactly like one that did not. */
-export function startChildRun(
+export async function startChildRun(
   db: Database.Database,
   childId: string,
   workspaceId: string,
@@ -162,7 +163,7 @@ export function startChildRun(
    *  engine and a parent that is never resumed (票03 复核抓到的形状) — and the engine's
    *  start needs the token for the same reason the root path does (票05 真机实测). */
   claimedLease?: string,
-): boolean {
+): Promise<boolean> {
   const execDAO = new ExecutionDAO(pgSql())
   const leaseAt = claimedLease ?? new Date().toISOString()
   if (!claimedLease && (await execDAO.claimLaunch(childId, leaseAt)).changes === 0) return false
@@ -188,7 +189,7 @@ export function startChildRun(
     } as never,
     childId,
   )
-  registry.service.start(childId, inputValues, undefined, leaseAt).catch((err: unknown) => {
+  registry.service.start(childId, inputValues, undefined, leaseAt).catch(async (err: unknown) => {
     const message = errMessage(err)
     console.error(`[task-child-run] child start failed for ${childId}:`, message)
     await execDAO.setLaunchStatus(childId, "failed", {
@@ -262,9 +263,8 @@ export async function resumeParentFromChild(
 
 /** The dispatching run: the deepest still-running execution in this workspace (a child
  *  dispatching a grandchild must find ITSELF, not the root). */
-function resolveParentRun(execDAO: ExecutionDAO, workspaceId: string) {
-  const leaves = await execDAO.findRunningLeaves(workspaceId)
-  return leaves[0] ?? null
+function resolveParentRun(execDAO: ExecutionDAO, workspaceId: string): Promise<ExecutionRow | null> {
+  return execDAO.findRunningLeaves(workspaceId).then((leaves) => leaves[0] ?? null)
 }
 
 /** Fallback parent-task lookup for a row that did not carry task_id: the workspace's own

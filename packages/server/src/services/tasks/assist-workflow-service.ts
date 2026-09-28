@@ -164,7 +164,7 @@ export class AssistWorkflowService {
       throw new Error(`ExecutionService unavailable for assist workspace ${workspaceId}`)
     }
 
-    const execution = registry.service.create(workspaceId, {
+    const execution = await registry.service.create(workspaceId, {
       workflow_ref: effectiveTemplate,
       name: `assist-${template}`,
       triggered_by: "task-assist",
@@ -181,11 +181,11 @@ export class AssistWorkflowService {
     const capturedMode = input?.mode ?? "moa"
     registry.service.registerExternalCallbacks(
       {
-        onComplete: ((_args?: unknown) => {
+        onComplete: (async (_args?: unknown) => {
           this.reapWorkspace(workspaceId)
           this.emitRunUpdate(taskId, execId, "complete")
           try {
-            this.writeAnalysisArtifact(taskId, execId, capturedTask, capturedInput, capturedMode)
+            await this.writeAnalysisArtifact(taskId, execId, capturedTask, capturedInput, capturedMode)
           } catch (err: unknown) {
             // eslint-disable-next-line no-console
             console.warn(
@@ -222,7 +222,7 @@ export class AssistWorkflowService {
 
   // ── Query (AC4/AC5) ──────────────────────────────────────────────
 
-  getRun(taskId: string, runId: string): AssistWorkflowRun {
+  async getRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
     const exec = await this.execDAO.findById(runId)
     if (!exec) {
       throw new AssistWorkflowError(`Assist run not found: ${runId}`, "RUN_NOT_FOUND")
@@ -264,7 +264,7 @@ export class AssistWorkflowService {
     return run
   }
 
-  listRuns(taskId: string): AssistWorkflowRun[] {
+  async listRuns(taskId: string): Promise<AssistWorkflowRun[]> {
     const escaped = taskId.replace(/[%_\\]/g, "\\$&")
     const rows = this.db
       .prepare(
@@ -274,7 +274,7 @@ export class AssistWorkflowService {
     const runs: AssistWorkflowRun[] = []
     for (const row of rows) {
       try {
-        runs.push(this.getRun(taskId, row.id))
+        runs.push(await this.getRun(taskId, row.id))
       } catch {
         // Stale/inconsistent row — skip
       }
@@ -419,13 +419,13 @@ export class AssistWorkflowService {
 
   /** Write the analysis report as a markdown artifact. Works for both MoA and
    *  Debate modes. */
-  private writeAnalysisArtifact(
+  private async writeAnalysisArtifact(
     taskId: string,
     executionId: string,
     task: { id: string; name: string; project_ids: string; task_spec: string },
     inputValues: Record<string, unknown>,
     mode: string,
-  ): void {
+  ): Promise<void> {
     const nodeOutputs = await this.execDAO.findNodeOutputs(executionId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
     if (!synthesis) return
@@ -520,13 +520,13 @@ export class AssistWorkflowService {
 
   // ── Legacy artifact (kept for backward compat with old templates) ─
 
-  private writeMoaArtifact(
+  private async writeMoaArtifact(
     taskId: string,
     executionId: string,
     task: { id: string; name: string; project_ids: string; task_spec: string },
     inputValues: Record<string, unknown>,
-  ): void {
-    this.writeAnalysisArtifact(taskId, executionId, task, inputValues, "moa")
+  ): Promise<void> {
+    await this.writeAnalysisArtifact(taskId, executionId, task, inputValues, "moa")
   }
 
   // ── Internals ────────────────────────────────────────────────────

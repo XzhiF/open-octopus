@@ -48,7 +48,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         started_at: string | null; completed_at: string | null; workspace_name?: string
       }> = []
       try {
-        executions = executionDAO.findByOrgWithWorkspace(org, 50)
+        executions = await executionDAO.findByOrgWithWorkspace(org, 50)
       } catch { /* executions table may not exist */ }
 
       // Merge executions into items as task entries
@@ -63,7 +63,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         type: 'execution' as const,
       }))
 
-      const allItems = [...executionItems, ...result.items.map((item: Record<string, unknown>) => ({ ...item, type: 'scheduler' as const }))]
+      const allItems = [...executionItems, ...result.items.map((item) => ({ ...item, type: 'scheduler' as const }))]
 
       return c.json({
         items: allItems,
@@ -167,7 +167,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         workspace_name?: string
       }> = []
       try {
-        activeExecutions = executionDAO.findActiveExecutionsByOrg(org)
+        activeExecutions = await executionDAO.findActiveExecutionsByOrg(org)
       } catch { /* executions table may not exist */ }
 
       // Also check active clone delegations

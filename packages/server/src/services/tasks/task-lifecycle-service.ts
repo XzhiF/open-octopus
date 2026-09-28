@@ -256,7 +256,7 @@ export class TaskLifecycleService {
       // gated on. The token is the started_at this claim wrote; it goes to the engine's
       // start so the launcher can prove WHICH claim it holds (see ExecutionLifecycle.start).
       const leaseAt = new Date().toISOString()
-      if (await this.(await execDAO.claimLaunch(row.id, leaseAt)).changes === 0) continue
+      if ((await this.execDAO.claimLaunch(row.id, leaseAt)).changes === 0) continue
       try {
         // A composite child needs the PARENT-resume wiring, not the task finalize — the
         // parent is what decides what a finished subunit means. Claimed here rather than
@@ -268,7 +268,7 @@ export class TaskLifecycleService {
           const iv = parseJSON<Record<string, string>>(row.input_values, {})
           // alreadyClaimed=true: this loop moved the row pending→running just above,
           // under the guarded claim that keeps two owners from both starting it.
-          if (!startChildRun(this.deps.db, row.id, row.workspace_id, iv, leaseAt)) continue
+          if (!(await startChildRun(this.deps.db, row.id, row.workspace_id, iv, leaseAt))) continue
         } else {
           await this.startRow(row, leaseAt)
         }
@@ -330,7 +330,7 @@ export class TaskLifecycleService {
 
     this.registerLaunchCallbacks(row)
 
-    registry.service.start(row.id, inputValues, undefined, claimedLease).catch((err: unknown) => {
+    registry.service.start(row.id, inputValues, undefined, claimedLease).catch(async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[task-lifecycle] start failed for execution ${row.id}:`, message)
       await this.execDAO.setLaunchStatus(row.id, "failed", {
@@ -525,7 +525,7 @@ export class TaskLifecycleService {
     // a different declaration from db/types' ExecutionRow; only the id is needed here.
     let executionId: string
     try {
-      executionId = registry.service.create(workspaceId, {
+      executionId = (await registry.service.create(workspaceId, {
         workflow_ref: step.workflowRef,
         triggered_by: opts.triggeredBy ?? "task-lifecycle",
         input_values: inputValues,
@@ -546,7 +546,7 @@ export class TaskLifecycleService {
           "execution.trigger_type": step.phaseIndex != null ? "phase_round" : "task_launch",
           "task.triggered_at": nowIso,
         },
-      }).id
+      })).id
     } catch (err: unknown) {
       // ux_exec_task_active is the answer to "is this task already running?"; a
       // SQLITE_CONSTRAINT_UNIQUE here is that answer arriving as an exception. Narrowed
@@ -706,7 +706,7 @@ export class TaskLifecycleService {
       // 会显示「完成」。只查根(子没有子),且读子行自己的终态,重启后仍然成立。
       let failedChildren = 0
       if (ok && !isChild) {
-        failedChildren = await this.(await execDAO.findChildren(executionId)).filter((c) =>
+        failedChildren = (await this.execDAO.findChildren(executionId)).filter((c) =>
           ["failed", "aborted", "cancelled", "rejected"].includes(c.status),
         ).length
         if (failedChildren > 0) {
@@ -719,7 +719,7 @@ export class TaskLifecycleService {
       }
       // A red run carries its reason on the row (var_pool.error), which is what the
       // badge's error_summary reads — see failureReason.
-      const errorSummary = ok ? null : this.failureReason(row, executionId, failedChildren)
+      const errorSummary = ok ? null : await this.failureReason(row, executionId, failedChildren)
       await this.execDAO.setLaunchStatus(executionId, status, {
         completedAt: new Date().toISOString(),
         duration: row.started_at ? Date.now() - dbTimeMs(row.started_at) : undefined,
@@ -879,7 +879,7 @@ export class TaskLifecycleService {
           ? `执行已失去引擎进程（崩溃或重启），超过 ${Math.round(STALE_CLAIMED_THRESHOLD_MS / 60000)} 分钟未归位`
           : "工作区已不可用（行缺失或路径失效）"
         await this.execDAO.setLaunchStatus(row.id, "aborted", { completedAt: nowIso, error: reason })
-        this.emitExecutionTransition(row, "aborted", reason)
+        this.emitExecutionTransition(full, "aborted", reason)
         await this.finishTaskOutcome(row.task_id as string, "aborted")
         reaped++
         console.warn(`[task-lifecycle] reaped stranded execution ${row.id}: ${reason}`)
@@ -898,7 +898,7 @@ export class TaskLifecycleService {
       resynced++
     }
 
-    resynced += this.recoverStuckDispatchParents()
+    resynced += await this.recoverStuckDispatchParents()
 
     return { resynced, reaped }
   }
@@ -925,7 +925,7 @@ export class TaskLifecycleService {
    *     otherwise would report a recovery that did not happen. That row belongs to the
    *     strand reap above, which ends it once it is past the stale threshold.
    */
-  private recoverStuckDispatchParents(): number {
+  private async recoverStuckDispatchParents(): Promise<number> {
     let recovered = 0
     const paused = this.deps.db
       .prepare(
@@ -1084,7 +1084,7 @@ export class TaskLifecycleService {
       if (isTerminal(row.status)) continue
       if (row.status === "pending") {
         const reason = "任务被中止（排队中）"
-        if (await this.(await execDAO.retireLaunch(row.id, "aborted", reason)).changes > 0) {
+        if ((await this.execDAO.retireLaunch(row.id, "aborted", reason)).changes > 0) {
           retired.push(row.id)
           this.emitExecutionTransition(row, "aborted", reason)
         }
@@ -1145,11 +1145,11 @@ export class TaskLifecycleService {
   }
 
   /** The one row a human is looking at: the task's current instance. */
-  currentInstance(taskId: string): ExecutionRow | null {
+  async currentInstance(taskId: string): Promise<ExecutionRow | null> {
     return await this.execDAO.findLatestTaskInstance(taskId)
   }
 
-  history(taskId: string, limit = 50): ExecutionRow[] {
+  async history(taskId: string, limit = 50): Promise<ExecutionRow[]> {
     return await this.execDAO.listTaskInstances(taskId, limit)
   }
 
@@ -1160,35 +1160,35 @@ export class TaskLifecycleService {
    * list is where the detail page looks, and inventing a generic string here would put
    * words on the badge that nothing can unsay later.
    */
-  private failureReason(row: ExecutionRow, executionId: string, failedChildren: number): string | null {
+  private async failureReason(row: ExecutionRow, executionId: string, failedChildren: number): Promise<string | null> {
     const stored = parseJSON<Record<string, unknown>>(row.var_pool, {}).error
     if (typeof stored === "string" && stored.trim()) return stored
     if (failedChildren > 0) return `${failedChildren} 个子单元执行失败`
-    return await this.execDAO.findFirstNodeErrorByStatus(executionId, "failed")?.error ?? null
+    return (await this.execDAO.findFirstNodeErrorByStatus(executionId, "failed"))?.error ?? null
   }
 
   /** The task's subunit runs (composite fan-out), for the detail/history read model.
    *  This is where 票05 sends the UI instead of the envelope's `origin_role='subunit'`
    *  rows: the arms of a fan-out are child executions of the round that dispatched them. */
-  childRuns(taskId: string): ExecutionRow[] {
+  async childRuns(taskId: string): Promise<ExecutionRow[]> {
     return await this.execDAO.listTaskChildRuns(taskId)
   }
 
   /** The board's badge source: the newest instance of each task, one query. */
-  latestInstances(taskIds: readonly string[]): ExecutionRow[] {
+  async latestInstances(taskIds: readonly string[]): Promise<ExecutionRow[]> {
     return await this.execDAO.findLatestTaskInstances(taskIds)
   }
 
   /** Timing rows of all instance runs of the given tasks — the 「实际用时」aggregate
    *  source (TasksService.runStats folds them into a TaskRunStats per task).
    *  v49: 行上的 `id` 同时喂逐任务账本用量（TasksService.aiUsageFor）。 */
-  runTimings(taskIds: readonly string[]): Array<{
+  async runTimings(taskIds: readonly string[]): Promise<Array<{
     id: string
     task_id: string
     status: string
     started_at: string | null
     completed_at: string | null
-  }> {
+  }>> {
     return await this.execDAO.listTaskRunTimings(taskIds)
   }
 
