@@ -1,0 +1,73 @@
+# Octopus 本地依赖：图数据库 Neo4j + 向量库 Milvus（均单机模式）
+#
+#   docker compose -f infra/docker-compose.yml up -d
+#   Neo4j  Browser http://localhost:7474 · bolt://localhost:7687 · neo4j / $NEO4J_PASSWORD
+#   Milvus gRPC localhost:19530（无鉴权） · 健康检查 http://localhost:9091/healthz
+#
+# 数据落在 ~/.octopus/infra/ 下（compose 自行展开 ~，不依赖 HOME 环境变量）：
+#   milvus/       进程内 etcd 元数据 + segment + woodpecker WAL
+#   neo4j/data/   图库数据
+#   neo4j/logs/   查询/调试日志
+# 换机器或挪盘：设 OCTOPUS_INFRA_HOME=<绝对路径> 覆盖根目录，或放进 infra/.env。
+# 注意：绑挂不是卷，`down -v` 删不掉这些数据，要清库得手动删这些目录。
+#
+# Milvus 走 embedded 单机：进程内 etcd + 本地磁盘存储 + woodpecker WAL 落本地，不依赖外部
+# etcd/MinIO/S3 容器。官方 standalone compose 依赖 MinIO，而 MinIO 公开镜像已全部撤除
+# （Docker Hub 仓库不存在、quay.io/minio 与 ghcr.io 拒匿名拉取、bitnami/minio 无镜像、
+# dl.min.io Windows 二进制 410），故改用这条路。
+#
+# 配置用 env 覆盖镜像自带 milvus.yaml（键名点号转下划线大写），保留镜像的组件端口默认值 ——
+# 换掉整份 yaml 会让 MixCoord 抢注 19530 导致 Proxy 绑定失败。
+# DEPLOY_MODE=STANDALONE 是硬要求：etcd.use.embed=true 时它不是 STANDALONE，进程在
+# EtcdConfig.Init 直接 panic("embedded etcd can not be used under distributed mode")。
+
+name: octopus-infra
+
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: octopus-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-octopus_dev_only}
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 1G
+    volumes:
+      - ${OCTOPUS_INFRA_HOME:-~/.octopus/infra}/neo4j/data:/data
+      - ${OCTOPUS_INFRA_HOME:-~/.octopus/infra}/neo4j/logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1"]
+      interval: 20s
+      start_period: 40s
+      timeout: 10s
+      retries: 5
+
+  milvus:
+    image: milvusdb/milvus:v3.0.2
+    container_name: octopus-milvus
+    command: ["milvus", "run", "standalone"]
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      DEPLOY_MODE: STANDALONE
+      ETCD_USE_EMBED: "true"
+      ETCD_AUTH_ENABLED: "false"
+      ETCD_DATA_DIR: /var/lib/milvus/etcdData
+      COMMON_STORAGETYPE: local
+      LOCALSTORAGE_PATH: /var/lib/milvus/data
+      WOODPECKER_STORAGE_TYPE: local
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - ${OCTOPUS_INFRA_HOME:-~/.octopus/infra}/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 60s
+      timeout: 10s
+      retries: 5
