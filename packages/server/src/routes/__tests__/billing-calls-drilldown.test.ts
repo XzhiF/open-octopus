@@ -7,7 +7,11 @@
 // 期望值 SQL 逐行独立复算（禁自推 —— Tautological 禁令）。
 // vendor 口径：model→billing_price_config 关联（KD9 全等，语义同 breakdown/KD23）；
 // 归属 NULL 的 'unknown' 组下钻由前端降级为仅区间，不经 id 精确筛选（本票组件测试断言）。
+// P1 B4 票2B-1：llm_calls/billing_price_config 已迁 PG —— dao 直构吃 pg.sql，全局池经
+// setupRegisteredPgSchema 注册供路由侧 lazyDAO；SQLite 全局连接保留供父表（workspaces/sessions）。
+// SQL 直查交叉切 PG（COUNT bigint → ::int）。用例语义与条数不变。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from '../../db/pg/__tests__/dao-fixture'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -22,6 +26,7 @@ const system = createSystemRoutes()
 const app = new Hono().route('/api/system', system)
 
 let dbPath: string
+let pg: PgFixture | null = null
 const CALLS = '/api/system/billing/calls'
 
 /** 出参行形状（事实列 + 派生钱列；NEW-r2 起无 cost_native/cost_currency）。 */
@@ -49,7 +54,9 @@ function row(id: string, over: Partial<LlmCallRow> & { model: string | null; tim
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   dbPath = path.join(os.tmpdir(), `test-billing-drill-04-${process.pid}-${Date.now()}.db`)
   initDb(dbPath)
   const db = getDb()
@@ -58,47 +65,53 @@ beforeAll(() => {
   db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ('sess-drill-a','default','下钻会话A',?,?)").run(t, t)
 
   // DM1/DM2 兜底价：input 1000/1M、其余 0 → 每行（input=1000）派生 1 USD；DM3 不配价。
-  const billing = new BillingDAO(db)
-  billing.createPrice({ id: 'p-drill-m1', vendor: 'E2E_TEST_DV1', model_id: 'E2E_TEST_DM1', input_unit_price: 1000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
-  billing.createPrice({ id: 'p-drill-m2', vendor: 'E2E_TEST_DV2', model_id: 'E2E_TEST_DM2', input_unit_price: 1000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
+  const billing = new BillingDAO(pg.sql)
+  await billing.createPrice({ id: 'p-drill-m1', vendor: 'E2E_TEST_DV1', model_id: 'E2E_TEST_DM1', input_unit_price: 1000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
+  await billing.createPrice({ id: 'p-drill-m2', vendor: 'E2E_TEST_DV2', model_id: 'E2E_TEST_DM2', input_unit_price: 1000, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
   // E2E_TEST_DM3 故意不配价 → 厂商 unknown（组件测试断言其点击降级）
 
-  const dao = new TokenUsageDAO(db)
+  const dao = new TokenUsageDAO(pg.sql)
   // sess-drill-a 3 行（最新 d5 = DM2/priced）、sess-drill-b 2 行、NULL session 1 行
-  dao.insertLlmCall(row('dr-1', { model: 'E2E_TEST_DM1', timestamp: T.d1, workspace_id: 'ws-drill-1', session_id: 'sess-drill-a', source_path: 'workflow' }))
-  dao.insertLlmCall(row('dr-2', { model: 'E2E_TEST_DM2', timestamp: T.d2, workspace_id: 'ws-drill-1', session_id: 'sess-drill-b', source_path: 'interaction' }))
-  dao.insertLlmCall(row('dr-3', { model: 'E2E_TEST_DM3', timestamp: T.d3, workspace_id: 'ws-other', session_id: 'sess-drill-a', source_path: 'harness' }))
-  dao.insertLlmCall(row('dr-4', { model: 'E2E_TEST_DM1', timestamp: T.d4, workspace_id: null, session_id: null, source_path: 'global_chat' }))
-  dao.insertLlmCall(row('dr-5', { model: 'E2E_TEST_DM2', timestamp: T.d5, workspace_id: 'ws-drill-1', session_id: 'sess-drill-a', source_path: 'interaction' }))
+  await dao.insertLlmCall(row('dr-1', { model: 'E2E_TEST_DM1', timestamp: T.d1, workspace_id: 'ws-drill-1', session_id: 'sess-drill-a', source_path: 'workflow' }))
+  await dao.insertLlmCall(row('dr-2', { model: 'E2E_TEST_DM2', timestamp: T.d2, workspace_id: 'ws-drill-1', session_id: 'sess-drill-b', source_path: 'interaction' }))
+  await dao.insertLlmCall(row('dr-3', { model: 'E2E_TEST_DM3', timestamp: T.d3, workspace_id: 'ws-other', session_id: 'sess-drill-a', source_path: 'harness' }))
+  await dao.insertLlmCall(row('dr-4', { model: 'E2E_TEST_DM1', timestamp: T.d4, workspace_id: null, session_id: null, source_path: 'global_chat' }))
+  await dao.insertLlmCall(row('dr-5', { model: 'E2E_TEST_DM2', timestamp: T.d5, workspace_id: 'ws-drill-1', session_id: 'sess-drill-a', source_path: 'interaction' }))
   // 非本票数据（同库其他行）不应被筛选命中 —— 时间/归属均不同
-  dao.insertLlmCall(row('dr-x', { model: 'E2E_TEST_DM1', timestamp: T.d5, workspace_id: 'ws-noise', session_id: 'sess-noise', source_path: 'workflow' }))
+  await dao.insertLlmCall(row('dr-x', { model: 'E2E_TEST_DM1', timestamp: T.d5, workspace_id: 'ws-noise', session_id: 'sess-noise', source_path: 'workflow' }))
 })
 
-afterAll(() => {
-  getDb().prepare("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_D%'").run()
-  getDb().prepare("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_D%'").run()
-  const left = (getDb().prepare("SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_D%'").get() as { n: number }).n
+afterAll(async () => {
+  if (!pg) return
+  await pg.sql.unsafe("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_D%'")
+  await pg.sql.unsafe("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_D%'")
+  const left = Number((await pg.sql`SELECT COUNT(*) AS n FROM llm_calls WHERE model LIKE 'E2E_TEST_D%'`)[0].n)
   expect(left).toBe(0) // 清理复核
   closeDb()
   for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
     if (fs.existsSync(f)) fs.unlinkSync(f)
   }
+  await pg.close()
+  pg = null
 })
 
 async function get(params: string): Promise<{ status: number; body: { calls: CallOut[]; total: number } }> {
   const res = await app.request(`${CALLS}${params}`)
   return { status: res.status, body: await res.json() }
 }
-function sqlCount(where: string, ...args: unknown[]): number {
-  return (getDb().prepare(`SELECT COUNT(*) AS n FROM llm_calls WHERE ${where}`).get(...args) as { n: number }).n
+/** SQL 直查交叉（独立真相源）。P1 B4：直读 PG，COUNT bigint → ::int。 */
+async function sqlCount(where: string, ...args: unknown[]): Promise<number> {
+  let i = 0
+  const rows = await pg!.sql.unsafe(`SELECT COUNT(*)::int AS n FROM llm_calls WHERE ${where.replace(/\?/g, () => `$${++i}`)}`, args)
+  return Number((rows as unknown as { n: number }[])[0].n)
 }
 
-describe('下钻筛选注入 → GET /calls（票04 验证步骤3）', () => {
+describePg('下钻筛选注入 → GET /calls（票04 验证步骤3）', () => {
   it('session 排行第 1 点击注入 session_id → 首行归属正确、行数 = SQL 直查', async () => {
     const { status, body } = await get('?session_id=sess-drill-a')
     expect(status).toBe(200)
     // SQL 交叉：sess-drill-a = dr-1(d1) + dr-3(d3) + dr-5(d5) = 3 行
-    expect(body.total).toBe(sqlCount("session_id = 'sess-drill-a' AND model LIKE 'E2E_TEST_D%'"))
+    expect(body.total).toBe(await sqlCount("session_id = 'sess-drill-a' AND model LIKE 'E2E_TEST_D%'"))
     expect(body.total).toBe(3)
     // timestamp 倒序 → 首行 = dr-5（归属 session 正确、模型正确）
     expect(body.calls[0].id).toBe('dr-5')
@@ -113,7 +126,7 @@ describe('下钻筛选注入 → GET /calls（票04 验证步骤3）', () => {
   it('厂商分布点击注入 vendor → 行数 = SQL（model→价行关联），未配价行不入', async () => {
     const { status, body } = await get('?vendor=E2E_TEST_DV1')
     expect(status).toBe(200)
-    const sql = sqlCount("model IN (SELECT model_id FROM billing_price_config WHERE vendor = 'E2E_TEST_DV1') AND model LIKE 'E2E_TEST_D%'")
+    const sql = await sqlCount("model IN (SELECT model_id FROM billing_price_config WHERE vendor = 'E2E_TEST_DV1') AND model LIKE 'E2E_TEST_D%'")
     expect(body.total).toBe(sql)
     expect(body.total).toBe(3) // dr-1 + dr-4 + dr-x（DM1 全部行，含 NULL 归属）
     expect(body.calls.every(r => r.model === 'E2E_TEST_DM1')).toBe(true)
@@ -130,7 +143,7 @@ describe('下钻筛选注入 → GET /calls（票04 验证步骤3）', () => {
     const { status, body } = await get(`?workspace_id=ws-drill-1&from=${from}&to=${to}`)
     expect(status).toBe(200)
     // ws-drill-1 行：dr-1(d1=9/10,界外) dr-2(d2=9/11) dr-5(d5=9/14) → 区间内 = 2
-    expect(body.total).toBe(sqlCount(`workspace_id = 'ws-drill-1' AND timestamp >= ${from} AND timestamp <= ${to} AND model LIKE 'E2E_TEST_D%'`))
+    expect(body.total).toBe(await sqlCount(`workspace_id = 'ws-drill-1' AND timestamp >= ${from} AND timestamp <= ${to} AND model LIKE 'E2E_TEST_D%'`))
     expect(body.total).toBe(2)
     expect(body.calls[0].id).toBe('dr-5')
     expect(body.calls[1].id).toBe('dr-2')
@@ -138,7 +151,7 @@ describe('下钻筛选注入 → GET /calls（票04 验证步骤3）', () => {
 
   it('来源分布点击注入 source_path（含 unknown 兜 NULL 口径不变）', async () => {
     const interaction = await get('?source_path=interaction')
-    expect(interaction.body.total).toBe(sqlCount("source_path = 'interaction' AND model LIKE 'E2E_TEST_D%'"))
+    expect(interaction.body.total).toBe(await sqlCount("source_path = 'interaction' AND model LIKE 'E2E_TEST_D%'"))
     expect(interaction.body.total).toBe(2) // dr-2 + dr-5
     // 模型分布 'unknown'（model NULL）明细端点无对应可筛值 —— 但具名模型下钻照常精确匹配
     const m = await get('?model=E2E_TEST_DM3')
