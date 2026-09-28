@@ -34,7 +34,7 @@ afterAll(async () => {
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
+// [B5 票6b-1] getDb 移除：本文件 WorkspaceDAO 直构位点已全部改吃注册池（票6a）。
 import { initExecutionServiceRegistry } from "../services/execution-service-registry"
 import { SSEService } from "../services/sse"
 
@@ -60,14 +60,15 @@ vi.mock("@octopus/providers", async () => {
 describePg("Server API", () => {
   let existingIds: Set<string>
 
-  beforeAll(() => {
-    const service = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingIds = new Set(service.list().map(ws => ws.id))
+  beforeAll(async () => {
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃注册池（文件级 beforeAll 已建）。
+    const service = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    existingIds = new Set((await service.list()).map(ws => ws.id))
   })
 
   afterAll(async () => {
-    const service = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = service.list().map(ws => ws.id)
+    const service = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    const currentIds = (await service.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingIds.has(id)) {
         await service.delete(id)
@@ -284,8 +285,8 @@ describePg("Server API", () => {
   })
 
   it("POST /api/workspaces/:id/chat/sessions/:sid/messages sends message", async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const ws = wsService.create({ name: "ws-msg-test", org: "xzf", path: "/tmp/ws-msg-test" })
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    const ws = await wsService.create({ name: "ws-msg-test", org: "xzf", path: "/tmp/ws-msg-test" })
 
     const sessionRes = await app.request(`/api/workspaces/${ws.id}/chat/sessions`, {
       method: "POST",

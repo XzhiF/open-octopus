@@ -54,7 +54,6 @@ afterAll(() => {
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
 import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -129,10 +128,11 @@ describePg('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpo
   beforeAll(async () => {
     // B1: ChatDAO 走 PG（注册当前池 → 整 app 的 d.chat 与测试侧构造同库）
     pg = await setupRegisteredPgSchema()
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingWsIds = new Set(wsService.list().map(ws => ws.id))
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃本文件注册池，不再 getDb()。
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    existingWsIds = new Set((await wsService.list()).map(ws => ws.id))
 
-    const ws = wsService.create({ name: "t2-chatpanel-test", org: "xzf", path: "/tmp/octopus-t2-test" })
+    const ws = await wsService.create({ name: "t2-chatpanel-test", org: "xzf", path: "/tmp/octopus-t2-test" })
     workspaceId = ws.id
 
     const chatService = new ChatService(new ChatDAO(pg.sql), new SSEService())
@@ -141,8 +141,8 @@ describePg('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpo
   }, 30000)
 
   afterAll(async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = wsService.list().map(ws => ws.id)
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    const currentIds = (await wsService.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingWsIds.has(id)) {
         await wsService.delete(id)

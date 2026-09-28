@@ -24,7 +24,7 @@ afterAll(() => {
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
+// [B5 票6b-1] getDb 不再使用：WorkspaceDAO 已迁 PG（票6a），服务侧构造吃注册池。
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
 import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
@@ -57,10 +57,11 @@ describePg("Chat Route with LLM", () => {
 
   beforeAll(async () => {
     pg = await setupRegisteredPgSchema() // 注册为当前池：整 app 的 d.chat(lazyDAO→pgSql) 用同座库
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingWsIds = new Set(wsService.list().map(ws => ws.id))
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃本文件注册池，不再 getDb()。
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    existingWsIds = new Set((await wsService.list()).map(ws => ws.id))
 
-    const ws = wsService.create({ name: "chat-test", org: "xzf", path: "/tmp/octopus-chat-test" })
+    const ws = await wsService.create({ name: "chat-test", org: "xzf", path: "/tmp/octopus-chat-test" })
     workspaceId = ws.id
 
     const session = await chatService().createSession(workspaceId, "Test Chat")
@@ -68,8 +69,8 @@ describePg("Chat Route with LLM", () => {
   }, 30000)
 
   afterAll(async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = wsService.list().map(ws => ws.id)
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    const currentIds = (await wsService.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingWsIds.has(id)) {
         await wsService.delete(id)
