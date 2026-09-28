@@ -2715,7 +2715,7 @@ export class TasksService {
       throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法恢复`)
     }
 
-    this.lifecycle.registerLaunchCallbacks(inst)
+    await this.lifecycle.registerLaunchCallbacks(inst)
 
     const result = await registry.service.resume(inst.id, intervention)
     if (!result.success) {

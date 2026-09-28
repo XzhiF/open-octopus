@@ -299,7 +299,7 @@ export class TaskLifecycleService {
    * Callers: startRow (fresh launch) and TasksService.resumeTask (before delegating
    * resume — the engine is reconstructed during resume, so ordering is load-bearing).
    */
-  registerLaunchCallbacks(row: ExecutionRow): void {
+  async registerLaunchCallbacks(row: ExecutionRow): Promise<void> {
     const registry = await getExecutionService(row.workspace_id)
     if (!registry) return // workspace gone — startRow raises its own error for that
     // The `as never` pair below is the engine-callback arity mismatch the pre-票03
@@ -328,7 +328,7 @@ export class TaskLifecycleService {
     if (!registry) throw new Error(`workspace ${row.workspace_id} 不可用（行缺失或路径失效）`)
     const inputValues = parseJSON<Record<string, string>>(row.input_values, {})
 
-    this.registerLaunchCallbacks(row)
+    await this.registerLaunchCallbacks(row)
 
     registry.service.start(row.id, inputValues, undefined, claimedLease).catch(async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)

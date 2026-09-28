@@ -99,7 +99,7 @@ function handleRepairError(err: unknown): Response {
 
 // ── GET /diagnose ──────────────────────────────────────────────────
 
-repairRoutes.get("/diagnose", (c) => {
+repairRoutes.get("/diagnose", async (c) => {
   try {
     const service = await getRepairService(c)
     const executionId = getExecutionId(c)
