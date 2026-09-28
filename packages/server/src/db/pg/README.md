@@ -215,6 +215,13 @@ B6（sessions/executions 迁 PG + 数据搬迁灌满）时按下述步骤恢复�
    - `llm_calls.node_execution_id → node_executions(id)`（B4 撤 —— 账本直写迁 PG，
      node_executions 行生产者仍 SQLite）
    - `node_token_usages.node_execution_id → node_executions(id)`（B4 撤，同上）
+   - `executions.workspace_id → workspaces(id)`（B5 票5 撤 —— ExecutionDAO 迁 PG，
+     WorkspaceDAO 仍 SQLite；WorkspaceDAO 属票6/B6 成员，票6 合入即具备恢复条件）
+   - `pipeline_state.workspace_id → workspaces(id) ON DELETE CASCADE`（B5 票5 撤，同上）
+   - `schedules.workspace_id → workspaces(id)`（B5 票1 生产者已迁 PG，票5 统一撤登记）
+   - `schedule_workspaces.workspace_id → workspaces(id) ON DELETE CASCADE`（同上）
+   注意 **executions.seq 不在恢复之列**：它是 PG 永驻设计列（SQLite rowid tiebreak 的
+   显式对应物，schema-parity `PG_ONLY_COLS` 登记），B6 后仍保留。
 2. 删除 `schema-parity.test.ts` 中 `HYBRID_DROPPED_FKS` 的对应条目。
 3. 恢复前先验脏：真库 `SELECT … LEFT JOIN … WHERE parent IS NULL` 两条各跑一遍
    （搬迁后 PG 内孤儿引用会让 `ADD CONSTRAINT` 直接失败）；有孤儿先裁决再上约束。

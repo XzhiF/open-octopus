@@ -302,8 +302,11 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
   config_change_strategy text NOT NULL DEFAULT 'snapshot',
   last_execution_id text,
   started_at timestamptz,
-  updated_at timestamptz NOT NULL,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  updated_at timestamptz NOT NULL
+  -- [B5 混合期撤 FK] FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  -- pipeline_state 行生产者 = ExecutionDAO（B5 票5 迁 PG），workspaces 行生产者
+  -- WorkspaceDAO 仍 SQLite（票6）—— 跨引擎 FK 拒掉指向 PG 空 workspaces 的新行。
+  -- 恢复见 README「B6 FK 恢复清单」。
 );
 
 -- 15. Schedules — A JOB DEFINITION, nothing else. (v42 语义同 SQLite 版)
@@ -335,8 +338,10 @@ CREATE TABLE IF NOT EXISTS schedules (
   consecutive_failures integer NOT NULL DEFAULT 0,
   max_retain integer NOT NULL DEFAULT 10,
   status text NOT NULL DEFAULT 'queued',
-  claimed_at timestamptz,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+  claimed_at timestamptz
+  -- [B5 混合期撤 FK] FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+  -- schedules 行生产者 ScheduleConfigDAO 已迁 PG（B5 票1），workspaces 仍 SQLite。
+  -- 恢复见 README「B6 FK 恢复清单」。
 );
 
 -- 16. Schedule Executions
@@ -412,7 +417,8 @@ CREATE TABLE IF NOT EXISTS schedule_workspaces (
   completed_at timestamptz,
   error text,
   FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- [B5 混合期撤 FK] FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  -- schedule_workspaces 行生产者 ScheduleRunDAO 已迁 PG（B5 票1），workspaces 仍 SQLite。
   FOREIGN KEY (execution_id) REFERENCES executions(id)
 );
 
