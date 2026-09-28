@@ -54,7 +54,7 @@ export function loadFeatureFlags(configPath?: string): ObservabilityFlags {
       const configStr = fs.readFileSync(configPath, 'utf-8')
       const yaml = parseSimpleYaml(configStr)
       if (yaml.observability) {
-        flags = mergeFlags(flags, yaml.observability)
+        flags = mergeFlags(flags, yaml.observability as Record<string, unknown>)
       }
     } catch {
       // config file not found or invalid — use defaults
@@ -69,8 +69,9 @@ export function loadFeatureFlags(configPath?: string): ObservabilityFlags {
         const typedKey = flagKey as keyof ObservabilityFlags
         if (flagKey === 'privacy') continue
         if (typeof (flags as Record<string, unknown>)[typedKey] !== 'boolean') continue
-        if (value === 'true') (flags as Record<string, boolean>)[typedKey] = true
-        else if (value === 'false') (flags as Record<string, boolean>)[typedKey] = false
+        // 动态写布尔槽位经 unknown 视图（privacy 为嵌套对象，直转 Record<string,boolean> 不重叠）
+        if (value === 'true') (flags as Record<string, unknown>)[typedKey] = true
+        else if (value === 'false') (flags as Record<string, unknown>)[typedKey] = false
       }
     }
   }
@@ -94,7 +95,8 @@ function mergeFlags(base: ObservabilityFlags, overrides: Record<string, unknown>
     if (key === 'privacy' && typeof value === 'object' && value) {
       result.privacy = { ...result.privacy, ...(value as Record<string, unknown>) } as ObservabilityFlags['privacy']
     } else if (typeof value === 'boolean') {
-      (result as Record<string, boolean>)[key] = value
+      // 同上：嵌套 privacy 使字面量直转不重叠，经 unknown 视图写槽位。
+      (result as Record<string, unknown>)[key] = value
     }
   }
   return result

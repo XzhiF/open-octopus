@@ -22,7 +22,7 @@ export function createWorkflowRoutes(
   }
 
   router.get("/", (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
@@ -32,7 +32,7 @@ export function createWorkflowRoutes(
   })
 
   router.post("/", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
@@ -49,7 +49,7 @@ export function createWorkflowRoutes(
   // parse+validate pipeline with `octopus workflow validate` (cli) so the
   // three entry points can never disagree.
   router.post("/validate", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
@@ -67,8 +67,11 @@ export function createWorkflowRoutes(
         warnings: warnings.map((w) => ({ path: [], message: w, severity: "warning" as const })),
         parsed: {
           mode: wf.execution_mode,
-          expertCount: swarm?.swarm?.experts?.length,
-          hasAggregator: Boolean(swarm?.swarm?.aggregator),
+          // B5-5B3 真 bug 根修：swarm 的 experts/aggregator 是 NodeDef 平铺字段
+          // （见 shared/types/workflow.ts swarm 段），此前读 swarm.swarm.* 恒
+          // undefined → MOA 配置面板校验拿到的 expertCount/hasAggregator 恒空。
+          expertCount: swarm?.experts?.length,
+          hasAggregator: Boolean(swarm?.aggregator),
         },
       })
     } catch (err: unknown) {
@@ -78,7 +81,7 @@ export function createWorkflowRoutes(
   })
 
   router.get("/:ref", (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
@@ -114,7 +117,7 @@ export function createWorkflowRoutes(
   })
 
   router.put("/:ref", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
@@ -128,7 +131,7 @@ export function createWorkflowRoutes(
   })
 
   router.delete("/:ref", (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const ws = getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 

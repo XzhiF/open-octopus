@@ -38,6 +38,10 @@ export interface AgentPaginatedResponse<T> {
   items: T[]
   next_cursor?: string | null
   total: number
+  // B5-5B3 收口：服务端多处（debug-log/evolution/reports/safety）实际返回
+  // has_more，web-app lib/agent/api.ts 亦按 `raw.has_more ?? false` 消费
+  // —— 类型欠描述而非实现越界，补可选字段。
+  has_more?: boolean
 }
 
 // ===== Sessions =====

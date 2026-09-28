@@ -404,7 +404,7 @@ export class WorkspaceScheduleService {
       }
 
       // 3. Create actual execution via ExecutionService
-      const execution = registry.service.create(workspaceId, {
+      const execution = await registry.service.create(workspaceId, {
         workflow_ref: schedule.workflow_ref,
         parent_id: schedule.container_execution_id ?? undefined,
         triggered_by: 'scheduler',
@@ -516,7 +516,7 @@ export class WorkspaceScheduleService {
         'execution.retry_of': executionId,
       }
 
-      const execution = registry.service.create(workspaceId, {
+      const execution = await registry.service.create(workspaceId, {
         workflow_ref: schedule.workflow_ref,
         parent_id: schedule.container_execution_id ?? undefined,
         triggered_by: 'scheduler',
@@ -643,13 +643,13 @@ export class WorkspaceScheduleService {
   // ── Private Helpers ───────────────────────────────────────────────
 
   private async completeScheduleExecution(schedExecId: string, executionId: string, durationMs: number): Promise<void> {
-    const statusRow = this.execDAO.findExecutionStatus(executionId)
+    const statusRow = await this.execDAO.findExecutionStatus(executionId)
     const status = statusRow?.status ?? 'completed'
 
     if (status === 'completed') {
       await this.runDAO.markExecutionCompleteWithDuration(schedExecId, 'completed', durationMs)
     } else {
-      const errorSummary = this.execDAO.findFirstNodeError(executionId) ?? 'Execution failed'
+      const errorSummary = await this.execDAO.findFirstNodeError(executionId) ?? 'Execution failed'
       await this.runDAO.markExecutionCompleteWithDuration(schedExecId, 'failed', durationMs, errorSummary)
     }
   }

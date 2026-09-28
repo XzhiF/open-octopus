@@ -29,7 +29,7 @@ export class ArchiveService {
   private static TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
 
   async archiveExecution(executionId: string): Promise<{ archived: boolean; reason?: string }> {
-    const exec = this.executionDAO.findById(executionId)
+    const exec = await this.executionDAO.findById(executionId)
     if (!exec) return { archived: false, reason: "execution_not_found" }
 
     if (!ArchiveService.TERMINAL_STATUSES.has(exec.status)) {
@@ -156,6 +156,20 @@ export class ArchiveService {
 
     const failures: Array<{ execId: string; error: string }> = []
 
+    // B5-5B3：executionDAO.findById 已 async（PG 引擎）而 archiveDAO.transaction 体是
+    // 同步回调（archive/workspace DAO 本体迁移=票6）——执行行改为事务外预取。
+    // 事务原子性不受影响：executions 读本来就不在 sqlite 事务视图内（跨引擎），
+    // 失败仍汇入同一 failures，事务体内首查照旧抛 ArchivePartialFailure 回滚。
+    const execsById = new Map<string, ExecutionRow>()
+    for (const { id } of execRows) {
+      try {
+        const exec = await this.executionDAO.findById(id)
+        if (exec) execsById.set(id, exec)
+      } catch (e) {
+        failures.push({ execId: id, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+
     try {
       this.archiveDAO.transaction(() => {
         // Phase 1: mark archiving
@@ -164,7 +178,7 @@ export class ArchiveService {
         // Phase 2: archive all executions inline (sync, inside transaction)
         for (const { id } of execRows) {
           try {
-            const exec = this.executionDAO.findById(id)
+            const exec = execsById.get(id)
             if (!exec) continue
             const row = this.buildExecutionArchiveRow(id, exec)
             this.archiveDAO.insertExecutionArchive(row)
@@ -427,7 +441,7 @@ export class ArchiveService {
       }
 
       // Step 2: Archive all executions in this workspace
-      const executions = this.executionDAO.listByWorkspace(workspaceId)
+      const executions = await this.executionDAO.listByWorkspace(workspaceId)
       let archivedExecutions = 0
       await emitter.stepStart("archive_executions", `归档 ${executions.length} 条执行记录...`)
       for (const exec of executions) {
@@ -659,6 +673,8 @@ export class ArchiveService {
               ref: `builtin:${finalName}`,
               type: "skill",
               group: finalGroup,
+              // 审计归属：归档流程由用户面操作触发 → ui
+              caller: "ui",
             })
           }
 

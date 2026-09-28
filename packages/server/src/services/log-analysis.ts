@@ -439,7 +439,7 @@ export class LogAnalysisService {
     }
 
     // R3-B-1 修复：仅从 executions + workspaces 获取 workspace_path
-    const workspacePathRaw = this.execDao.findWorkspacePathByExecution(executionId, workspaceId)
+    const workspacePathRaw = await this.execDao.findWorkspacePathByExecution(executionId, workspaceId)
 
     if (!workspacePathRaw) {
       return { executionId, nodeId: nodeId ?? "unknown", error: null, exitCode: null, contextLines: [], totalLines: 0 }
@@ -447,7 +447,7 @@ export class LogAnalysisService {
 
     // 从 node_executions 获取 error 和 exit_code（当指定了 nodeId 时）
     const nodeExec = nodeId
-      ? this.execDao.findNodeErrorAndExitCode(executionId, nodeId)
+      ? await this.execDao.findNodeErrorAndExitCode(executionId, nodeId)
       : null
 
     const workspacePath = workspacePathRaw.replace(/^~/, os.homedir())

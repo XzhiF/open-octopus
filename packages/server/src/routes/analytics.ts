@@ -492,7 +492,9 @@ export function createAnalyticsRoutes(
       aggregates: {
         totalCalls: aggCalls.length,
         // 工具调用总数 = 不同 tool_call_id 数（raw 三行/merged 两行同 id 自动去重）。
-        toolCalls: execDAO.countToolCalls(executionId as string, nodeId || undefined),
+        // B5-5B3 真 bug 根修：countToolCalls 已 async，此前未 await → JSON.stringify
+        // 把 Promise 序列化成 {}，toolCalls 字段恒空。
+        toolCalls: await execDAO.countToolCalls(executionId as string, nodeId || undefined),
         usage: ledgerAgg.usage,
         totals: ledgerAgg.totals,
         modelBreakdown,
@@ -559,7 +561,7 @@ export function createAnalyticsRoutes(
   // --- Per-Workflow Analytics ---
   router.get('/workspaces/:id/analytics/workflows/:ref', async (c: Context) => {
     const workspaceId = c.req.param('id') ?? ''
-    const ref = c.req.param('ref')
+    const ref = c.req.param('ref')!
     const range = c.req.query('range') ?? '7d'
     const days = range === '30d' ? 30 : range === '14d' ? 14 : 7
     const cutoff = new Date(Date.now() - days * 86400000).toISOString()
@@ -669,7 +671,10 @@ export function createAnalyticsRoutes(
     const status = c.req.query('status')
 
     // Build RuleContext from injected DAOs
-    const ctx = { tokenDao: tokenUsageDAO, execDAO, workspaceId, workflowRef: '' }
+    // B5-5B3 真 bug 根修：RuleContext 契约字段名是 execDao，此前传 execDAO →
+    // 规则内 ctx.execDao.* 抛 TypeError 被 generate 的 try/catch 吞掉，
+    // RedundantCondition/FlakyNode 两条规则恒静默失效。
+    const ctx = { tokenDao: tokenUsageDAO, execDao: execDAO, workspaceId, workflowRef: '' }
     // Generate new suggestions from live data before returning
     // B4: TokenUsageDAO 读已 async —— 生成先落账再读，语义不变。
     await suggestionEngine.generate(ctx)
@@ -682,7 +687,7 @@ export function createAnalyticsRoutes(
   // --- SuggestionEngine POST (apply) ---
   router.post('/workspaces/:id/suggestions/:sid/apply', (c: Context) => {
     const workspaceId = c.req.param('id') ?? ''
-    const suggestionId = c.req.param('sid')
+    const suggestionId = c.req.param('sid')!
 
     return c.req.json().then((changes: Record<string, unknown>) => {
       const success = suggestionEngine.applySuggestion(workspaceDAO, suggestionId, changes)

@@ -90,11 +90,13 @@ export class SessionService {
     return {
       id: row.id,
       title: row.title,
-      clone_name: row.clone_name ?? undefined,
-      perspective_clone_name: row.perspective_clone_name ?? undefined,
+      // shared AgentSession 契约这三列是 `string | null`（非可选）——归一到 null，
+      // JSON 输出从键缺省变为显式 null，消费方（web-app/cli）均按 falsy 判定，无行为面影响。
+      clone_name: row.clone_name ?? null,
+      perspective_clone_name: row.perspective_clone_name ?? null,
       session_type: row.session_type as 'main' | 'delegate' | 'clone_direct',
       is_active: row.is_active === 1,
-      last_message_at: row.last_message_at ?? undefined,
+      last_message_at: row.last_message_at ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }

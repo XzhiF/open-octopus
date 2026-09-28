@@ -28,22 +28,22 @@ export function createInteractionRoutes(
    * Called by frontend when it receives execution_interaction_started SSE.
    */
   router.post("/:execId/:nodeId/start", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const { execId, nodeId } = c.req.param()
 
     // Resolve workspace path for YAML reading
-    const ws = workspaceDao.findById(workspaceId)
+    const ws = await workspaceDao.findById(workspaceId)
     if (!ws) {
       return c.json({ error: "Workspace not found" }, 404)
     }
 
     // Look up execution for globalSessionId
-    const exec = executionDao.findById(execId)
+    const exec = await executionDao.findById(execId)
     const globalSessionId = exec?.global_session_id ?? undefined
 
     try {
       const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
-      const result = interactionService.startInteraction({
+      const result = await interactionService.startInteraction({
         workspaceId,
         workspacePath: ws.path,
         executionId: execId,
@@ -68,7 +68,7 @@ export function createInteractionRoutes(
    * The main conversation endpoint. Returns an SSE stream.
    */
   router.post("/:execId/:nodeId/messages", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const { execId, nodeId } = c.req.param()
 
     let body: { content?: string }
@@ -83,7 +83,7 @@ export function createInteractionRoutes(
     }
 
     // Resolve workspace path for cwd
-    const ws = workspaceDao.findById(workspaceId)
+    const ws = await workspaceDao.findById(workspaceId)
     if (!ws) {
       return c.json({ error: "Workspace not found" }, 404)
     }
@@ -172,7 +172,7 @@ export function createInteractionRoutes(
    * Used for admin intervention or timeout.
    */
   router.post("/:execId/:nodeId/complete", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const { execId, nodeId } = c.req.param()
 
     try {
@@ -218,7 +218,8 @@ export function createInteractionRoutes(
       sessionId: status.sessionId,
       currentRound: status.currentRound,
       maxRounds: status.maxRounds,
-      display: status.display,
+      // B5-5B3：原 status.display 读取 InteractionSessionInfo 不存在的字段（恒 undefined），
+      // 全仓无消费方（web-app/cli 均未读 /status 的 display）→ 删除死槽位。
       startedAt: status.startedAt,
     })
   })

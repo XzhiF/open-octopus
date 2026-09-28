@@ -287,7 +287,7 @@ export class WorkflowExecutor implements Executor {
 
     let execution
     try {
-      execution = registry.service.create(workspace.id, {
+      execution = await registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
         // ADR-0021: one root per workspace, the v1 invariant, holds again — the only
@@ -419,7 +419,7 @@ export class WorkflowExecutor implements Executor {
     //   2. engine's in-flight reported status (the race case: DB still 'running');
     //   3. legacy fallback (previous behavior).
     const FINAL_STATUSES = new Set(['completed', 'completed_with_failures', 'failed', 'cancelled', 'rejected'])
-    const dbStatus = this.execDAO.findExecutionStatusSimple(opts.executionId)
+    const dbStatus = await this.execDAO.findExecutionStatusSimple(opts.executionId)
     let status = dbStatus && FINAL_STATUSES.has(dbStatus)
       ? dbStatus
       : (opts.engineFinalStatus ?? dbStatus ?? 'completed')
@@ -429,12 +429,12 @@ export class WorkflowExecutor implements Executor {
       // been persisted): completed with zero real completed nodes but some
       // skipped → the workflow achieved nothing → failed. (0 real nodes at all
       // stays completed — same as the lifecycle rule's length>0 guard.)
-      const outcomes = this.execDAO.countRealNodeOutcomes(opts.executionId)
+      const outcomes = await this.execDAO.countRealNodeOutcomes(opts.executionId)
       if (outcomes.completed === 0 && outcomes.skipped > 0) status = 'failed'
     }
 
     // Find the last execution in the chain (deepest child)
-    const lastExec = this.execDAO.findLastChildExecution(opts.executionId)
+    const lastExec = await this.execDAO.findLastChildExecution(opts.executionId)
     const lastExecutionId = lastExec?.id ?? opts.executionId
 
     if (status === 'completed') {
@@ -466,7 +466,7 @@ export class WorkflowExecutor implements Executor {
         completed_at: new Date().toISOString(),
       })
     } else {
-      const errorSummary = this.execDAO.findChainNodeErrors(opts.executionId)?.error ?? 'Execution chain failed'
+      const errorSummary = (await this.execDAO.findChainNodeErrors(opts.executionId))?.error ?? 'Execution chain failed'
 
       // Update schedule_execution
       await this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'failed', durationMs, errorSummary)
@@ -516,7 +516,7 @@ export class WorkflowExecutor implements Executor {
     // a child queued at the concurrency cap, later claimed). The under-cap path
     // runs the child directly via TaskDispatchService, which registers its own
     // onComplete and resumes the parent without going through WorkflowExecutor.
-    this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
+    await this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
 
     // task-phase-redesign (ticket 06, K9): v4 collect 上行 — BEFORE retention
     // (which may reclaim the ws once the task hits 'done'), recover whatever the
@@ -563,10 +563,10 @@ export class WorkflowExecutor implements Executor {
    * with taskDispatchChildOutput. The parent correlation (execution_id + node_id)
    * is read from the child schedule's persisted config marker (restart-safe).
    */
-  private maybeResumeParentTaskDispatch(
+  private async maybeResumeParentTaskDispatch(
     opts: { schedule: ScheduleRow; scheduleId: string },
     lastExecutionId: string,
-  ): void {
+  ): Promise<void> {
     if (!this.hasParentTaskDispatchMarker(opts.schedule)) return
 
     let marker: { execution_id: string; node_id: string } | undefined
@@ -581,7 +581,7 @@ export class WorkflowExecutor implements Executor {
     if (!marker) return
 
     // Read the child's var_pool snapshot (the deepest execution in the chain).
-    const childExec = this.execDAO.findById(lastExecutionId)
+    const childExec = await this.execDAO.findById(lastExecutionId)
     const varPoolRaw = childExec?.var_pool ?? "{}"
     let childOutput: Record<string, unknown>
     try {
@@ -592,7 +592,7 @@ export class WorkflowExecutor implements Executor {
 
     // Locate the PARENT composition-wf execution + its workspace's ExecutionService.
     // The parent lives in the coordinator workspace (distinct from this child's ws).
-    const parentExec = this.execDAO.findById(marker.execution_id)
+    const parentExec = await this.execDAO.findById(marker.execution_id)
     if (!parentExec) {
       console.error(
         `[WorkflowExecutor] task_dispatch resume: parent execution ${marker.execution_id} not found`,
@@ -635,7 +635,7 @@ export class WorkflowExecutor implements Executor {
         workflow_chain?: WorkflowChainItem[]
       }
       const remaining = config.workflow_chain ?? []
-      const completed = this.execDAO.findById(executionId)
+      const completed = await this.execDAO.findById(executionId)
       const childIndex = completed?.child_index ?? 0
       return remaining[childIndex] ?? null
     } catch {
@@ -666,12 +666,12 @@ export class WorkflowExecutor implements Executor {
     const registry = getExecutionService(wsRow.workspace_id)
     if (!registry) return
 
-    const completed = this.execDAO.findById(opts.executionId)
+    const completed = await this.execDAO.findById(opts.executionId)
     const nextChildIndex = (completed?.child_index ?? 0) + 1
 
     let child
     try {
-      child = registry.service.create(wsRow.workspace_id, {
+      child = await registry.service.create(wsRow.workspace_id, {
         workflow_ref: nextStep.workflow_ref,
         parent_id: opts.executionId,
         child_index: nextChildIndex,
@@ -731,7 +731,7 @@ export class WorkflowExecutor implements Executor {
         // 「never reclaim a bound task ws」 exemption is structural now, not a check one
         // call site could forget. Data retention keeps its own task-aware guard.
         try {
-          this.workspaceService.delete(row.workspace_id)
+          await this.workspaceService.delete(row.workspace_id)
         } catch (err: unknown) {
           console.error(
             `[WorkflowExecutor] Failed to delete workspace ${row.workspace_id}:`,

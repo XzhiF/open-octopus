@@ -126,10 +126,12 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 
 // ── Route factory ──────────────────────────────────────────────────
 
-export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
+// B5-5B3（同 T5B2 d6896ef1 姿势）：c.get('org') 需要 Variables.org 类型化，
+// 否则 Hono 通用推断为 never → c.json 重载全炸。
+export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono<{ Variables: { org: string } }> {
   const { sessionDAO, taskDAO, repoSyncService, tokenUsageDao } = deps
   const partialFlushMs = deps.partialFlushMs ?? 1000
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // ══════════════════════════════════════════════════════════════════
   // Clone Management (filesystem-backed)

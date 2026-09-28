@@ -133,7 +133,7 @@ export class InteractionService {
    * Called when frontend receives execution_interaction_started SSE.
    * Idempotent — returns existing session if already active.
    */
-  startInteraction(params: StartParams): { sessionId: string; initialPrompt?: string } {
+  async startInteraction(params: StartParams): Promise<{ sessionId: string; initialPrompt?: string }> {
     const k = this.key(params.executionId, params.nodeId)
 
     // Return existing session if already tracked (e.g., page refresh)
@@ -143,13 +143,13 @@ export class InteractionService {
     }
 
     // Look up the real node execution ID from DB
-    const nodeExecRow = this.execDao.findNodeExecution(params.executionId, params.nodeId)
+    const nodeExecRow = await this.execDao.findNodeExecution(params.executionId, params.nodeId)
     const nodeExecId = nodeExecRow?.id ?? `${params.executionId}-${params.nodeId}`
 
     // Always read the interaction node config from the workflow YAML. engine+model
     // must be inherited (not defaulted to claude/sonnet) so resuming the
     // globalSession requests the same model the agent nodes established it with.
-    const extracted = this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
+    const extracted = await this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
     let initialPrompt = params.initialPrompt
     let maxRounds = params.maxRounds ?? 20
 
@@ -189,7 +189,7 @@ export class InteractionService {
     this.sessions.set(k, session)
 
     // Record interaction_started event
-    this.insertAgentEvent(nodeExecId, "interaction_started", {
+    await this.insertAgentEvent(nodeExecId, "interaction_started", {
       maxRounds: session.maxRounds,
     })
 
@@ -200,12 +200,12 @@ export class InteractionService {
    * Extract interaction_agent.prompt from the workflow YAML file.
    * Performs variable substitution for $inputs.* and $vars.* references.
    */
-  private extractPromptFromWorkflow(
+  private async extractPromptFromWorkflow(
     workspacePath: string,
     executionId: string,
     nodeId: string,
-  ): { prompt?: string; maxRounds?: number; context?: "continue" | "new"; engine?: string; model?: string } | null {
-    const exec = this.execDao.findById(executionId)
+  ): Promise<{ prompt?: string; maxRounds?: number; context?: "continue" | "new"; engine?: string; model?: string } | null> {
+    const exec = await this.execDao.findById(executionId)
     if (!exec) return null
 
     // Read workflow YAML from disk
@@ -391,7 +391,7 @@ export class InteractionService {
       : null
     if (completion) {
       // Record interaction_completed event
-      this.insertAgentEvent(session.nodeExecutionId, "interaction_completed", {
+      await this.insertAgentEvent(session.nodeExecutionId, "interaction_completed", {
         summary: completion.summary,
       })
 
@@ -467,7 +467,7 @@ export class InteractionService {
     })
 
     // Write agent event for the completion
-    this.insertAgentEvent(nodeExecId, "interaction_completed", {
+    await this.insertAgentEvent(nodeExecId, "interaction_completed", {
       summary: params.summary,
       vars_update: params.varsUpdate,
       source: "force_complete",
@@ -518,7 +518,7 @@ export class InteractionService {
   // ── Private: Chunk type handlers ──────────────────────────────────
 
   private handleTextDelta(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "text_delta" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
@@ -540,7 +540,7 @@ export class InteractionService {
   }
 
   private handleMessageStart(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "message_start" }>,
     session: InteractionSessionInfo,
   ): InteractionSSEEvent[] {
     return [{ type: "message_start", messageId: chunk.messageId, sessionId: session.sessionId }]
@@ -573,7 +573,7 @@ export class InteractionService {
   }
 
   private handleThinking(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "thinking" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
@@ -583,7 +583,7 @@ export class InteractionService {
   }
 
   private async handleThinkingDone(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "thinking_done" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): Promise<InteractionSSEEvent[]> {
@@ -600,7 +600,7 @@ export class InteractionService {
   }
 
   private async handleToolCallStart(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "tool_call_start" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): Promise<InteractionSSEEvent[]> {
@@ -631,7 +631,7 @@ export class InteractionService {
   }
 
   private async handleToolCall(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "tool_call" }>,
     _session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): Promise<InteractionSSEEvent[]> {
@@ -649,7 +649,7 @@ export class InteractionService {
   }
 
   private async handleToolResult(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "tool_result" }>,
     _session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): Promise<InteractionSSEEvent[]> {
@@ -661,17 +661,21 @@ export class InteractionService {
           info.dbId,
           mergeMetadata(existing.metadata, {
             toolStatus: chunk.isError ? "error" : "done",
-            toolResult: chunk.result,
+            // B5-5B3 真 bug 根修：providers MessageChunk.tool_result 契约字段是
+            // content（claude/pi provider 实际 emit content），此前读 chunk.result
+            // 恒 undefined → interaction_messages.metadata.toolResult 永不落盘，
+            // 前端历史回读 meta.toolResult 恒空。SSE 出口字段名保持 result 不变。
+            toolResult: chunk.content,
             toolDuration: `${Date.now() - info.startTime}ms`,
           }),
         )
       }
     }
-    return [{ type: "tool_result", toolCallId: chunk.toolCallId, result: chunk.result, isError: chunk.isError, sessionId: _session.sessionId }]
+    return [{ type: "tool_result", toolCallId: chunk.toolCallId, result: chunk.content, isError: chunk.isError, sessionId: _session.sessionId }]
   }
 
   private async handleAskUserQuestion(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "ask_user_question" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): Promise<InteractionSSEEvent[]> {
@@ -694,7 +698,7 @@ export class InteractionService {
         )
       }
     }
-    this.insertAgentEvent(session.nodeExecutionId, "interaction_ask_user_question", {
+    await this.insertAgentEvent(session.nodeExecutionId, "interaction_ask_user_question", {
       questions: chunk.questions,
     })
     acc.askUserQuestionCalled = true
@@ -707,7 +711,7 @@ export class InteractionService {
   }
 
   private handleCompleteInteraction(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "complete_interaction" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
@@ -734,14 +738,14 @@ export class InteractionService {
   }
 
   private handleError(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "error" }>,
     session: InteractionSessionInfo,
   ): InteractionSSEEvent[] {
     return [{ type: "error", code: chunk.code, message: chunk.message, sessionId: session.sessionId }]
   }
 
   private handleLocalCommandOutput(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "local_command_output" }>,
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
@@ -753,7 +757,9 @@ export class InteractionService {
     chunk: MessageChunk,
     session: InteractionSessionInfo,
   ): InteractionSSEEvent[] {
-    return [{ type: chunk.type, sessionId: session.sessionId, ...chunk } as InteractionSSEEvent]
+    // chunk 自带 type（判别键），spread 即可；此前 {type,...chunk} 会触发
+    // TS2783（type 被 spread 覆盖）。
+    return [{ ...chunk, sessionId: session.sessionId } as InteractionSSEEvent]
   }
 
   // ── Private: Finalization helpers ─────────────────────────────────
@@ -824,7 +830,7 @@ export class InteractionService {
   // ── Private: Agent event helper ───────────────────────────────────
 
   /** Insert an agent event for interaction milestones. */
-  private insertAgentEvent(nodeExecutionId: string, eventType: string, content: unknown): void {
+  private async insertAgentEvent(nodeExecutionId: string, eventType: string, content: unknown): Promise<void> {
     try {
       const contentStr = JSON.stringify(content)
       const row: AgentEventRow = {
@@ -845,7 +851,7 @@ export class InteractionService {
         error_code: null,
         error_message: null,
       }
-      this.execDao.insertAgentEvent(row)
+      await this.execDao.insertAgentEvent(row)
     } catch {
       // Non-fatal — agent events are supplementary
     }

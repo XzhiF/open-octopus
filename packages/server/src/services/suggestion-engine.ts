@@ -66,8 +66,8 @@ export class SuggestionEngine {
       },
       {
         name: 'RedundantCondition',
-        check: (ctx) => {
-          const rows = ctx.execDao.findNodeExecStatsByWorkflow(ctx.workspaceId, 36500)
+        check: async (ctx) => {
+          const rows = await ctx.execDao.findNodeExecStatsByWorkflow(ctx.workspaceId, 36500)
 
           const byNode = new Map<string, Array<{ status: string; count: number }>>()
           for (const r of rows) {
@@ -96,8 +96,8 @@ export class SuggestionEngine {
       },
       {
         name: 'FlakyNode',
-        check: (ctx) => {
-          const rows = ctx.execDao.findFlakyNodeStats(ctx.workspaceId, 36500)
+        check: async (ctx) => {
+          const rows = await ctx.execDao.findFlakyNodeStats(ctx.workspaceId, 36500)
 
           return rows.filter(r => r.total > 2 && r.failures / r.total > 0.3).map(r => ({
             ruleName: 'FlakyNode',
