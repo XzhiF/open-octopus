@@ -22,6 +22,7 @@
 //
 // 无 OCTOPUS_PG_TEST_URL 时 ②③ 随 describePg skip（① 照跑），全量用例数不减。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
+// @ts-expect-error better-sqlite3 无类型声明（基线 128 枚同族 TS7016，此处不新增）
 import Database from "better-sqlite3"
 import Postgres from "postgres"
 import { applySchema } from "../db/schema"
@@ -294,7 +295,7 @@ async function seedPg(fx: PgFixture, meta: Meta, prices: PriceRow[], calls: Call
   for (let i = 0; i < calls.length; i += 400) {
     const chunk = calls.slice(i, i + 400)
     const placeholders = chunk.map((_, row) => `(${Array(CALL_PARAMS_PER_ROW).fill(0).map((_, j) => `$${row * CALL_PARAMS_PER_ROW + j + 1}`).join(",")})`).join(",")
-    await sql.unsafe(`INSERT INTO llm_calls (${CALL_COLS}) VALUES ${placeholders}`, chunk.flatMap(callParams))
+    await sql.unsafe(`INSERT INTO llm_calls (${CALL_COLS}) VALUES ${placeholders}`, chunk.flatMap(callParams) as never[])
   }
 }
 
@@ -515,7 +516,7 @@ async function runGoldParity(label: string, calls: CallRow[], prices: PriceRow[]
     const newByWf = (await dao.costByWorkflowSince(ws, 0) as Array<Record<string, unknown>>)
       .map((r) => ({ workflow_ref: r.workflow_ref == null ? null : r.workflow_ref, executions: Number(r.executions), total_cost: r.total_cost === null ? null : Number(r.total_cost) }))
       .sort((a, b) => String(a.workflow_ref).localeCompare(String(b.workflow_ref)))
-    const noWfUsd = (r: { workflow_ref: string | null; executions: number }) => ({ workflow_ref: r.workflow_ref, executions: r.executions })
+    const noWfUsd = (r: { workflow_ref: unknown; executions: number }) => ({ workflow_ref: r.workflow_ref, executions: r.executions })
     expect(newByWf.map(noWfUsd)).toStrictEqual(oldByWf.map(noWfUsd))
     oldByWf.forEach((r, i) => assertUsdSum(r.total_cost, newByWf[i]!.total_cost, `${label}:byWf:${ws}:${r.workflow_ref}`, st))
   }
