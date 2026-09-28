@@ -359,8 +359,10 @@ export class TokenUsageDAO extends BasePgDAO {
       "SELECT COUNT(*) as n FROM llm_calls WHERE execution_id = ?", [executionId],
     )
 
+    // gold 逐位相等总验（票2B-3）抓出的迁移真 bug：裸 camelCase 别名 PG 小写化
+    // （errorCount→errorcount），出口按旧契约 camelCase 读键必双引号 —— 2B-1 同族。
     const errors = await this.q1<{ errorCount: string | number }>(`
-      SELECT COUNT(*) as errorCount FROM node_executions
+      SELECT COUNT(*) as "errorCount" FROM node_executions
       WHERE execution_id = ? AND status = 'failed'
     `, [executionId])
 
