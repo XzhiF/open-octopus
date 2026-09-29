@@ -3,6 +3,12 @@
 // Integration tests for the Harness system.
 // Tests the complete flow from ExecutionLifecycle through HarnessController,
 // DetectorPipeline, and StrategyEngine.
+//
+// P1 B1: HarnessDAO/HarnessConfigService/HarnessController 已 postgres.js ——
+// harness 域切随机 PG 测试库（setupRegisteredPgSchema 同时注册当前池，供
+// ExecutionLifecycle 内部 HarnessDAO(pgSql()) 使用）；workspaces/executions 等
+// B5 域表仍 SQLite 文件库。用例语义与条数不变；onExecutionStart/findEvents
+// async 化后调用点补 await（断言不动）。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
@@ -20,6 +26,8 @@ import { HarnessController } from "../services/harness/harness-controller"
 import { HarnessConfigService } from "../services/harness/config-service"
 import { DetectorPipeline } from "../services/harness/detector-pipeline"
 import type { HarnessEvent } from "@octopus/shared"
+import type { NodeExecutionResult } from "@octopus/engine"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 // Load test workflow fixtures
 const STUPID_RETRY_WF = fs.readFileSync(
@@ -35,72 +43,80 @@ const TIMEOUT_CASCADE_WF = fs.readFileSync(
   "utf-8"
 )
 
-let db: Database.Database
-let sse: SSEService
-let wfService: WorkflowService
-let builtInWfService: BuiltInWorkflowService
-let execService: ExecutionService
-let harnessDAO: HarnessDAO
-let harnessController: HarnessController
-let workspacePath: string
-let workspaceId: string
-let dbPath: string
+describePg("Harness Integration Tests", () => {
+  let db: Database.Database
+  let pg: PgFixture
+  let sse: SSEService
+  let wfService: WorkflowService
+  let builtInWfService: BuiltInWorkflowService
+  let execService: ExecutionService
+  let harnessDAO: HarnessDAO
+  let harnessController: HarnessController
+  let workspacePath: string
+  let workspaceId: string
+  let dbPath: string
 
-const ORG = "test-org"
+  const ORG = "test-org"
 
-beforeEach(() => {
-  workspacePath = path.join(os.tmpdir(), `test-harness-integration-${Date.now()}`)
-  fs.mkdirSync(path.join(workspacePath, "workflows"), { recursive: true })
-  fs.mkdirSync(path.join(workspacePath, "projects"), { recursive: true })
-  fs.mkdirSync(path.join(workspacePath, "state"), { recursive: true })
+  beforeEach(async () => {
+    workspacePath = path.join(os.tmpdir(), `test-harness-integration-${Date.now()}`)
+    fs.mkdirSync(path.join(workspacePath, "workflows"), { recursive: true })
+    fs.mkdirSync(path.join(workspacePath, "projects"), { recursive: true })
+    fs.mkdirSync(path.join(workspacePath, "state"), { recursive: true })
 
-  // Write test workflow files
-  fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-stupid-retry.yaml"), STUPID_RETRY_WF)
-  fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-process-conflict.yaml"), PROCESS_CONFLICT_WF)
-  fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-timeout-cascade.yaml"), TIMEOUT_CASCADE_WF)
+    // Write test workflow files
+    fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-stupid-retry.yaml"), STUPID_RETRY_WF)
+    fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-process-conflict.yaml"), PROCESS_CONFLICT_WF)
+    fs.writeFileSync(path.join(workspacePath, "workflows", "harness-test-timeout-cascade.yaml"), TIMEOUT_CASCADE_WF)
 
-  fs.writeFileSync(
-    path.join(workspacePath, "config.json"),
-    JSON.stringify({ name: "test-ws", init_branch_name: "main", repos: [], created: new Date().toISOString() })
-  )
+    fs.writeFileSync(
+      path.join(workspacePath, "config.json"),
+      JSON.stringify({ name: "test-ws", init_branch_name: "main", repos: [], created: new Date().toISOString() })
+    )
 
-  dbPath = path.join(os.tmpdir(), `test-harness-integration-db-${Date.now()}.db`)
-  db = new Database(dbPath)
-  db.pragma("foreign_keys = ON")
-  applySchema(db)
+    dbPath = path.join(os.tmpdir(), `test-harness-integration-db-${Date.now()}.db`)
+    db = new Database(dbPath)
+    db.pragma("foreign_keys = ON")
+    applySchema(db)
 
-  workspaceId = randomUUID()
-  const now = new Date().toISOString()
-  db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(workspaceId, "test-ws", ORG, workspacePath, now, now)
+    // B1: harness 域 PG 库 + 注册当前池（ExecutionLifecycle 内部构造 HarnessDAO(pgSql()) 共用）
+    pg = await setupRegisteredPgSchema()
 
-  sse = new SSEService()
-  wfService = new WorkflowService()
-  builtInWfService = new BuiltInWorkflowService()
-  execService = new ExecutionService(db, sse, wfService, builtInWfService, ORG, workspacePath, workspaceId)
+    workspaceId = randomUUID()
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(workspaceId, "test-ws", ORG, workspacePath, now, now)
 
-  harnessDAO = new HarnessDAO(db)
-  const configService = new HarnessConfigService(harnessDAO)
-  harnessController = new HarnessController({
-    dao: harnessDAO,
-    sse,
-    configService,
+    sse = new SSEService()
+    wfService = new WorkflowService()
+    builtInWfService = new BuiltInWorkflowService()
+    execService = new ExecutionService(db, sse, wfService, builtInWfService, ORG, workspacePath, workspaceId)
+
+    harnessDAO = new HarnessDAO(pg.sql)
+    const configService = new HarnessConfigService(harnessDAO)
+    harnessController = new HarnessController({
+      dao: harnessDAO,
+      sse,
+      configService,
+      // B1: controller 的 TokenUsageDAO 缺省回退走模块级 getDb()（本文件用局部库，
+      // 不初始化全局连接）→ 显式 stub；本 suite 不触 node_token_usages 账本写路径。
+      tokenUsageDao: {} as any,
+    })
+  }, 30000)
+
+  afterEach(async () => {
+    try {
+      harnessController.destroyAll()
+    } catch { /* ignore */ }
+    db.close()
+    await pg.close()
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+    if (fs.existsSync(workspacePath)) fs.rmSync(workspacePath, { recursive: true, force: true })
   })
-})
 
-afterEach(() => {
-  try {
-    harnessController.destroyAll()
-  } catch { /* ignore */ }
-  db.close()
-  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
-  if (fs.existsSync(workspacePath)) fs.rmSync(workspacePath, { recursive: true, force: true })
-})
-
-describe("Harness Integration Tests", () => {
   describe("HarnessController Integration", () => {
-    it("AC1 & AC2: creates per-execution pipeline with fresh detectors", () => {
+    it("AC1 & AC2: creates per-execution pipeline with fresh detectors", async () => {
       const executionId = randomUUID()
       const mockCallbacks = {
         onNodeStart: vi.fn(),
@@ -108,7 +124,7 @@ describe("Harness Integration Tests", () => {
         onNodeRetry: vi.fn(),
       }
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
       expect(harnessController.isActive(executionId)).toBe(true)
       expect(harnessController.activePipelineCount).toBe(1)
@@ -122,21 +138,21 @@ describe("Harness Integration Tests", () => {
       expect(pipeline!.detectorCount).toBeGreaterThan(0)
     })
 
-    it("AC3: cleans up detectors when execution ends", () => {
+    it("AC3: cleans up detectors when execution ends", async () => {
       const executionId = randomUUID()
       const mockCallbacks = { onNodeStart: vi.fn(), onNodeEnd: vi.fn() }
 
-      harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
       expect(harnessController.isActive(executionId)).toBe(true)
 
-      harnessController.onExecutionEnd(executionId)
+      await harnessController.onExecutionEnd(executionId)
       expect(harnessController.isActive(executionId)).toBe(false)
       expect(harnessController.activePipelineCount).toBe(0)
     })
   })
 
   describe("AC4: Stupid Retry Auto-Correction", () => {
-    it("detects repeated errors and generates diagnosis report", () => {
+    it("detects repeated errors and generates diagnosis report", async () => {
       const executionId = randomUUID()
       const nodeId = "bash-fail"
       const mockCallbacks = {
@@ -145,28 +161,32 @@ describe("Harness Integration Tests", () => {
         onNodeRetry: vi.fn(),
       }
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Cannot find module 'xyz'",
         exitCode: 1,
         logLines: ["error: Cannot find module 'xyz'"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // First attempt fails → onNodeEnd
+      // Current contract: detection fires in onBeforeRetry (awaited, runs BEFORE
+      // the onNodeRetry notification). Engine order per failed attempt N:
+      //   onNodeEnd(N) → onBeforeRetry(N) → onNodeRetry(N)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-
-      // Engine decides to retry → onNodeRetry (carries the result for detectors)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
 
-      // Second attempt fails with same error → onNodeEnd
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-
-      // Second retry → this should trigger the detector (threshold=2)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
       wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
 
+      await new Promise(resolve => setTimeout(resolve, 100))
+
       // Verify harness_events table has diagnosis record
-      const events = harnessDAO.findEvents(executionId)
+      const events = await harnessDAO.findEvents(executionId)
       expect(events.length).toBeGreaterThan(0)
 
       const diagnosisEvents = events.filter(e => e.event_type === "diagnosis")
@@ -194,19 +214,24 @@ describe("Harness Integration Tests", () => {
       // Spy on SSE emit
       const emitSpy = vi.spyOn(sse, "emit")
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Cannot find module 'xyz'",
         exitCode: 1,
         logLines: ["error: Cannot find module 'xyz'"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Simulate repeated failures through onNodeRetry (which carries result)
+      // Simulate repeated failures through onBeforeRetry (current detection hook)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
 
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
       wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
 
       // Wait a bit for async operations (strategy engine is async)
@@ -226,7 +251,7 @@ describe("Harness Integration Tests", () => {
   })
 
   describe("AC5: Process Conflict Blocking", () => {
-    it("detects kill command targeting host process", () => {
+    it("detects kill command targeting host process", async () => {
       const executionId = randomUUID()
       const nodeId = "bash-kill-host"
       const hostPid = String(process.pid)
@@ -236,7 +261,7 @@ describe("Harness Integration Tests", () => {
         onBeforeNode: vi.fn().mockResolvedValue({ action: "proceed" }),
       }
 
-      const wrapped = harnessController.onExecutionStart(
+      const wrapped = await harnessController.onExecutionStart(
         executionId,
         workspaceId,
         mockCallbacks as any,
@@ -255,9 +280,10 @@ describe("Harness Integration Tests", () => {
         type: "bash",
         script: dangerousScript,
       })
+      await result
 
       // The process conflict detector should detect this
-      const events = harnessDAO.findEvents(executionId)
+      const events = await harnessDAO.findEvents(executionId)
       const conflictEvents = events.filter(e => e.detector === "process_conflict")
 
       // Note: The detector may or may not catch this depending on implementation
@@ -266,7 +292,7 @@ describe("Harness Integration Tests", () => {
       expect(typeof process.pid).toBe("number")
     })
 
-    it("host process remains alive after process conflict detection", () => {
+    it("host process remains alive after process conflict detection", async () => {
       const executionId = randomUUID()
       const nodeId = "bash-kill-host"
       const hostPid = String(process.pid)
@@ -275,7 +301,7 @@ describe("Harness Integration Tests", () => {
         onNodeEnd: vi.fn(),
       }
 
-      harnessController.onExecutionStart(
+      await harnessController.onExecutionStart(
         executionId,
         workspaceId,
         mockCallbacks as any,
@@ -295,7 +321,7 @@ describe("Harness Integration Tests", () => {
         onNodeEnd: vi.fn(),
       }
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
       // Simulate 3 consecutive timeouts (status doesn't need to be "timeout",
       // the detector checks for "timeout" in error or logLines)
@@ -312,7 +338,7 @@ describe("Harness Integration Tests", () => {
       await new Promise(resolve => setTimeout(resolve, 200))
 
       // Verify harness_events has critical diagnosis
-      const events = harnessDAO.findEvents(executionId)
+      const events = await harnessDAO.findEvents(executionId)
       const timeoutEvents = events.filter(e => e.detector === "timeout_cascade")
 
       expect(timeoutEvents.length).toBeGreaterThan(0)
@@ -334,7 +360,7 @@ describe("Harness Integration Tests", () => {
         onNodeEnd: vi.fn(),
       }
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
       // Simulate 2 timeouts
       wrapped.onNodeStart!("timeout-1", "bash")
@@ -357,7 +383,7 @@ describe("Harness Integration Tests", () => {
       await new Promise(resolve => setTimeout(resolve, 200))
 
       // Should not have critical timeout_cascade event yet (only 2 consecutive after reset)
-      const events = harnessDAO.findEvents(executionId)
+      const events = await harnessDAO.findEvents(executionId)
       const criticalEvents = events.filter(
         e => e.detector === "timeout_cascade" && e.severity === "critical"
       )
@@ -375,24 +401,27 @@ describe("Harness Integration Tests", () => {
         onNodeRetry: vi.fn(),
       }
 
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Same error",
         exitCode: 1,
         logLines: ["Same error"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Trigger stupid retry detection (threshold=2)
+      // Trigger stupid retry detection (threshold=2) via onBeforeRetry hook
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
 
       await new Promise(resolve => setTimeout(resolve, 200))
 
       // Query harness_events
-      const events = harnessDAO.findEvents(executionId)
+      const events = await harnessDAO.findEvents(executionId)
       expect(events.length).toBeGreaterThan(0)
 
       // Verify event structure
@@ -414,19 +443,22 @@ describe("Harness Integration Tests", () => {
       }
 
       const emitSpy = vi.spyOn(sse, "emit")
-      const wrapped = harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
+      const wrapped = await harnessController.onExecutionStart(executionId, workspaceId, mockCallbacks as any)
 
-      const errorResult = {
+      const errorResult: NodeExecutionResult = {
         error: "Test error for detection",
         exitCode: 1,
         logLines: ["Test error for detection"],
+        status: "failed",
+        outputs: {},
+        durationMs: 100,
       }
 
-      // Trigger detection
+      // Trigger detection via onBeforeRetry hook
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 1, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 1, errorResult)
       wrapped.onNodeEnd!(nodeId, "failed", 100, errorResult, "bash")
-      wrapped.onNodeRetry!(nodeId, 2, 3, 1000, errorResult)
+      await wrapped.onBeforeRetry!(nodeId, 2, errorResult)
 
       await new Promise(resolve => setTimeout(resolve, 200))
 

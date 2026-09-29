@@ -42,19 +42,21 @@ const sampleAiResponse = '```json\n' + JSON.stringify(sampleWorkflowConfig, null
 // Initialize isolated test database BEFORE importing index.ts
 const TEST_DB = path.join(os.tmpdir(), `t2-chatpanel-test-${Date.now()}.db`)
 beforeAll(() => {
+  if (!pgTestEnabledOn()) return
   const db = initDb(TEST_DB)
   applySchema(db)
 })
 afterAll(() => {
+  if (!pgTestEnabledOn()) return
   closeDb()
   if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB)
 })
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 vi.mock("@octopus/providers", async () => {
   const actual = await vi.importActual("@octopus/providers")
@@ -117,31 +119,36 @@ describe('T-2: taskPoolSystemPrompt 内容', () => {
 
 // ── AC2 集成 (mock provider): POST 消息 with purpose='requirement' ──────
 
-describe('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpose=requirement', () => {
+describePg('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpose=requirement', () => {
+  let pg: PgFixture
   let workspaceId: string
   let sessionId: string
   let existingWsIds: Set<string>
 
-  beforeAll(() => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingWsIds = new Set(wsService.list().map(ws => ws.id))
+  beforeAll(async () => {
+    // B1: ChatDAO 走 PG（注册当前池 → 整 app 的 d.chat 与测试侧构造同库）
+    pg = await setupRegisteredPgSchema()
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃本文件注册池，不再 getDb()。
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    existingWsIds = new Set((await wsService.list()).map(ws => ws.id))
 
-    const ws = wsService.create({ name: "t2-chatpanel-test", org: "xzf", path: "/tmp/octopus-t2-test" })
+    const ws = await wsService.create({ name: "t2-chatpanel-test", org: "xzf", path: "/tmp/octopus-t2-test" })
     workspaceId = ws.id
 
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const session = chatService.createSession(workspaceId, "T-2 Hatch")
+    const chatService = new ChatService(new ChatDAO(pg.sql), new SSEService())
+    const session = await chatService.createSession(workspaceId, "T-2 Hatch")
     sessionId = session.id
-  })
+  }, 30000)
 
   afterAll(async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = wsService.list().map(ws => ws.id)
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    const currentIds = (await wsService.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingWsIds.has(id)) {
         await wsService.delete(id)
       }
     }
+    await pg.close() // B1: 注销当前池 + DROP 随机测试库
   })
 
   it('AC2 反假跑: 响应含 AI 文本 + workflow_config JSON 片段 + 系统提示词真传递', async () => {
@@ -160,8 +167,8 @@ describe('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpose
     await res.text() // drain SSE
 
     // 反假跑 AC2: 不只 200，必须验证 AI 文本 + workflow_config JSON 真持久化
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const updated = chatService.getSession(sessionId)
+    const chatService = new ChatService(new ChatDAO(pg.sql), new SSEService())
+    const updated = await chatService.getSession(sessionId)
     expect(updated).toBeDefined()
     const aiMessages = updated!.messages.filter(m => m.role === 'assistant' && m.type === 'text')
     expect(aiMessages.length, '必须有 assistant text 消息').toBeGreaterThan(0)

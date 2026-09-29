@@ -27,9 +27,11 @@
     "cron-parser": "^4.9.0",
     "cronstrue": "^2.59.0",
     "hono": "^4.0",
+    "jieba-wasm": "^2.4.0",
     "js-yaml": "^4.1.1",
     "lib0": "^0.2.117",
     "node-cron": "^3.0.3",
+    "postgres": "^3.4.9",
     "ws": "^8.20.1",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.30",
@@ -39,6 +41,8 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22",
     "@types/ws": "^8.18.1",
-    "typescript": "5.7.3"
+    "eslint": "^9.39.4",
+    "typescript": "5.7.3",
+    "typescript-eslint": "^8.70.1"
   }
 }

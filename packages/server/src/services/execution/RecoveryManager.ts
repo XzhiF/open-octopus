@@ -15,7 +15,7 @@ export class RecoveryManager {
   ) {}
 
   static async consumePendingHooks(dao: ExecutionDAO): Promise<void> {
-    const rows = dao.findPendingHooksExecutions()
+    const rows = await dao.findPendingHooksExecutions()
     if (rows.length === 0) return
 
     process.stderr.write(`[ExecutionService] Consuming pending hooks for ${rows.length} execution(s)\n`)
@@ -27,12 +27,12 @@ export class RecoveryManager {
           hooks = JSON.parse(row.pending_hooks) as HookDef[]
         } catch {
           process.stderr.write(`[ExecutionService] Malformed pending_hooks JSON for ${row.id}, clearing\n`)
-          dao.updateExecution(row.id, { pending_hooks: "[]" })
+          await dao.updateExecution(row.id, { pending_hooks: "[]" })
           continue
         }
         const workspacePath = row.workspace_path.replace(/^~/, process.env.HOME || process.env.USERPROFILE || "~")
 
-        const exec = dao.findById(row.id)
+        const exec = await dao.findById(row.id)
         let poolSnapshot: Record<string, string> = {}
         if (exec?.var_pool) {
           try { poolSnapshot = JSON.parse(exec.var_pool) } catch { /* use empty pool */ }
@@ -46,11 +46,13 @@ export class RecoveryManager {
                 id: hook.id ?? `hook-pending-bash-${Date.now()}`,
                 type: "bash", bash: hook.bash!, timeout: hook.timeout ?? 60,
               }
-              const executor = new BashExecutor(bashNode, pool, undefined,
-                (line, stream) => {
+              const executor = new BashExecutor(bashNode, pool, {
+                onLog: (line, stream) => {
                   const label = `[Hook:${hook.id ?? "pending-bash"}${stream === "stderr" ? ":err" : ""}]`
                   process.stderr.write(`${label} ${line}\n`)
-                }, workspacePath)
+                },
+                cwd: workspacePath,
+              })
               await executor.execute()
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err)
@@ -65,7 +67,7 @@ export class RecoveryManager {
                 type: "agent", prompt: hook.prompt!, timeout: hook.timeout ?? 120,
               }
               const runner = new AgentNodeRunner(provider, workspacePath)
-              const executor = new AgentExecutor(agentNode, pool, runner)
+              const executor = new AgentExecutor(agentNode, pool, { runner })
               await executor.execute()
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err)
@@ -74,7 +76,7 @@ export class RecoveryManager {
           }
         }
 
-        dao.updateExecution(row.id, { pending_hooks: "[]" })
+        await dao.updateExecution(row.id, { pending_hooks: "[]" })
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         process.stderr.write(`[ExecutionService] Failed to consume pending hooks for ${row.id}: ${msg}\n`)
@@ -82,54 +84,54 @@ export class RecoveryManager {
     }
   }
 
-  static recoverInterruptedExecutions(dao: ExecutionDAO): void {
+  static async recoverInterruptedExecutions(dao: ExecutionDAO): Promise<void> {
     const STALE_THRESHOLD_MS = 10 * 60 * 1000
     const now = new Date()
     const nowISO = now.toISOString()
     const staleCutoff = new Date(now.getTime() - STALE_THRESHOLD_MS).toISOString()
 
-    const runningExecs = dao.findRunningExecutionIds()
+    const runningExecs = await dao.findRunningExecutionIds()
 
-    const staleExecs = dao.findStaleRunningExecutions(staleCutoff)
+    const staleExecs = await dao.findStaleRunningExecutions(staleCutoff)
     for (const exec of staleExecs) {
       let config: any = {}
       try { config = JSON.parse(exec.pipeline_config || "{}") } catch { /* ignore */ }
       const isAutoResume = config?.execution?.resume_on_interrupt === "auto"
       if (isAutoResume) {
-        dao.updateExecution(exec.id, { status: "pending_resume" })
+        await dao.updateExecution(exec.id, { status: "pending_resume" })
         console.log(`[Recovery] Stale execution ${exec.id} (last updated: ${exec.updated_at}) → pending_resume (auto-resume)`)
       } else {
-        dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
-        dao.updateNodeExecutionsByStatus(exec.id, "failed", ["running", "pending"], { error: "服务重启中断（运行超过10分钟）" })
+        await dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
+        await dao.updateNodeExecutionsByStatus(exec.id, "failed", ["running", "pending"], { error: "服务重启中断（运行超过10分钟）" })
         console.log(`[Recovery] Stale execution ${exec.id} (last updated: ${exec.updated_at}) → failed`)
       }
     }
 
-    const recentExecs = dao.findRecentRunningExecutions(staleCutoff)
+    const recentExecs = await dao.findRecentRunningExecutions(staleCutoff)
     for (const exec of recentExecs) {
       let config: any = {}
       try { config = JSON.parse(exec.pipeline_config || "{}") } catch { /* ignore */ }
       const isAutoResume = config?.execution?.resume_on_interrupt === "auto"
       if (isAutoResume) {
-        dao.updateExecution(exec.id, { status: "pending_resume" })
+        await dao.updateExecution(exec.id, { status: "pending_resume" })
         console.log(`[Recovery] Recent execution ${exec.id} (last updated: ${exec.updated_at}) → pending_resume (auto-resume)`)
       } else {
-        dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
-        dao.updateNodeExecutionsByStatus(exec.id, "failed", ["running", "pending"], { error: "服务重启中断" })
+        await dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
+        await dao.updateNodeExecutionsByStatus(exec.id, "failed", ["running", "pending"], { error: "服务重启中断" })
         console.log(`[Recovery] Recent execution ${exec.id} (last updated: ${exec.updated_at}) → failed`)
       }
     }
 
-    const orphanCount = dao.fixOrphanedNodes()
+    const orphanCount = await dao.fixOrphanedNodes()
 
-    const staleResumes = dao.findPendingResumeExecutions()
+    const staleResumes = await dao.findPendingResumeExecutions()
     let expiredResumes = 0
     for (const exec of staleResumes) {
       let config: any = {}
       try { config = JSON.parse(exec.pipeline_config || "{}") } catch { /* ignore */ }
       const timeout = config?.execution?.pending_resume_timeout ?? 600
       if (Date.now() - new Date(exec.updated_at ?? 0).getTime() > timeout * 1000) {
-        dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
+        await dao.updateExecution(exec.id, { status: "failed", completed_at: nowISO })
         expiredResumes++
       }
     }
@@ -146,7 +148,7 @@ export class RecoveryManager {
     // Execute on_interrupt hooks for recovered executions
     for (const exec of runningExecs) {
       try {
-        const wsPath = dao.findWorkspacePath(exec.workspace_id)
+        const wsPath = await dao.findWorkspacePath(exec.workspace_id)
         if (!wsPath) continue
 
         const workspacePath = wsPath.replace(/^~/, process.env.HOME || process.env.USERPROFILE || "~")
@@ -177,7 +179,7 @@ export class RecoveryManager {
         const interruptHooks = parsed.hooks?.on_interrupt
         if (!interruptHooks || interruptHooks.length === 0) continue
 
-        const execRow = dao.findById(exec.id)
+        const execRow = await dao.findById(exec.id)
         const poolSnapshot: Record<string, string> = (() => {
           try { return JSON.parse(execRow?.var_pool || "{}") } catch { return {} }
         })()
@@ -199,11 +201,13 @@ export class RecoveryManager {
                 id: hook.id ?? `hook-interrupt-bash-${Date.now()}`,
                 type: "bash", bash: hook.bash!, timeout: hook.timeout ?? 60,
               }
-              const executor = new BashExecutor(bashNode, pool, undefined,
-                (line, stream) => {
+              const executor = new BashExecutor(bashNode, pool, {
+                onLog: (line, stream) => {
                   const label = `[Hook:${hook.id ?? "interrupt-bash"}${stream === "stderr" ? ":err" : ""}]`
                   process.stderr.write(`${label} ${line}\n`)
-                }, workspacePath)
+                },
+                cwd: workspacePath,
+              })
               executor.execute().catch((err: unknown) => {
                 const msg = err instanceof Error ? err.message : String(err)
                 process.stderr.write(`[Hook] on_interrupt/${hook.id ?? "anonymous"} failed during recovery: ${msg}\n`)
@@ -218,7 +222,7 @@ export class RecoveryManager {
         }
 
         if (agentHooksToDefer.length > 0) {
-          dao.updateExecution(exec.id, { pending_hooks: JSON.stringify(agentHooksToDefer) })
+          await dao.updateExecution(exec.id, { pending_hooks: JSON.stringify(agentHooksToDefer) })
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -228,7 +232,7 @@ export class RecoveryManager {
   }
 
   static async resumePendingExecutions(dao: ExecutionDAO): Promise<void> {
-    const pending = dao.findPendingResumeExecutions()
+    const pending = await dao.findPendingResumeExecutions()
     if (pending.length === 0) return
     console.log(`[Recovery] Found ${pending.length} execution(s) pending auto-resume`)
 
@@ -239,17 +243,17 @@ export class RecoveryManager {
       const maxAttempts = config?.execution?.auto_resume_max_attempts ?? 3
 
       if (exec.resume_attempts >= maxAttempts) {
-        dao.updateExecution(exec.id, { status: "failed" })
+        await dao.updateExecution(exec.id, { status: "failed" })
         console.log(`[Recovery] ${exec.id} exceeded max resume attempts → failed`)
         continue
       }
 
-      dao.incrementResumeAttempts(exec.id)
+      await dao.incrementResumeAttempts(exec.id)
 
       const delay = (config?.execution?.auto_resume_delay ?? 10) * 1000
       const execId = exec.id
       const timer = setTimeout(() => {
-        process.emit("octopus:resume-execution" as any, execId)
+        ;(process as any).emit("octopus:resume-execution", execId)
       }, delay)
       timer.unref()
     }

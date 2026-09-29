@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import fs, { readFileSync } from 'fs'
 import path, { join } from 'path'
@@ -101,7 +100,7 @@ export class WorkflowExecutor implements Executor {
     const startTime = Date.now()
 
     // 1. Look up the full schedule row from DB
-    const schedule = this.configDAO.findById(job.id)
+    const schedule = await this.configDAO.findById(job.id)
 
     if (!schedule) {
       return {
@@ -115,10 +114,10 @@ export class WorkflowExecutor implements Executor {
 
     // 2. Same-schedule concurrency check (skip policy)
     if (job.parallel_policy === 'skip') {
-      const runningCount = this.runDAO.countRunningByScheduleExcluding(job.id, executionId)
+      const runningCount = await this.runDAO.countRunningByScheduleExcluding(job.id, executionId)
 
       if (runningCount > 0) {
-        this.createSkippedExecution(schedule, '已有执行正在运行')
+        await this.createSkippedExecution(schedule, '已有执行正在运行')
         return {
           success: true,
           exitCode: 0,
@@ -131,8 +130,8 @@ export class WorkflowExecutor implements Executor {
 
     // 3. Cross-schedule concurrency check — the shared meter (job fires + task launches),
     // excluding this fire, which is itself active.
-    if (this.runDAO.countActiveWork({ excludeFireId: executionId }) >= MAX_PARALLEL_WORKSPACES) {
-      this.createSkippedExecution(schedule, '全局并发上限已达')
+    if (await this.runDAO.countActiveWork({ excludeFireId: executionId }) >= MAX_PARALLEL_WORKSPACES) {
+      await this.createSkippedExecution(schedule, '全局并发上限已达')
       return {
         success: true,
         exitCode: 0,
@@ -147,7 +146,7 @@ export class WorkflowExecutor implements Executor {
 
     if (config.type !== 'workflow' || !config.workspace_spec || !config.workflow_chain?.length) {
       const errMsg = 'Invalid workflow config: missing workspace_spec or workflow_chain'
-      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', errMsg)
+      await this.runDAO.updateExecutionStatusSimple(executionId, 'failed', errMsg)
 
       return {
         success: false,
@@ -188,7 +187,7 @@ export class WorkflowExecutor implements Executor {
     // (v4's one-ws-per-task), and it is the task-lifecycle job's to do now.
     let workspace
     try {
-      workspace = this.workspaceService.createFromSpec({
+      workspace = await this.workspaceService.createFromSpec({
         org: config.workspace_spec.org,
         name: workspaceName,
         projects: config.workspace_spec.projects,
@@ -201,7 +200,7 @@ export class WorkflowExecutor implements Executor {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[WorkflowExecutor] workspace creation failed`, { scheduleId: schedule.id, error: message })
-      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
+      await this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
       return {
         success: false,
         exitCode: 1,
@@ -214,7 +213,7 @@ export class WorkflowExecutor implements Executor {
     // 7. Record the association (the suffix this run established — there is no reuse
     // path left to look an older one up through).
     const schedWsId = randomUUID()
-    this.configDAO.insertScheduleWorkspace({
+    await this.configDAO.insertScheduleWorkspace({
       id: schedWsId,
       schedule_id: schedule.id,
       workspace_id: workspace.id,
@@ -224,13 +223,13 @@ export class WorkflowExecutor implements Executor {
     })
 
     // 8. Link schedule_execution to workspace
-    this.runDAO.updateExecutionWorkspace(executionId, workspace.id)
+    await this.runDAO.updateExecutionWorkspace(executionId, workspace.id)
 
     // 9. Get ExecutionService for the new workspace
-    const registry = getExecutionService(workspace.id)
+    const registry = await getExecutionService(workspace.id)
     if (!registry) {
       const errMsg = 'ExecutionService unavailable for new workspace'
-      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', errMsg)
+      await this.runDAO.updateExecutionStatusSimple(executionId, 'failed', errMsg)
 
       return {
         success: false,
@@ -288,7 +287,7 @@ export class WorkflowExecutor implements Executor {
 
     let execution
     try {
-      execution = registry.service.create(workspace.id, {
+      execution = await registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
         // ADR-0021: one root per workspace, the v1 invariant, holds again — the only
@@ -299,7 +298,7 @@ export class WorkflowExecutor implements Executor {
       })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
-      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Execution creation failed: ${message}`)
+      await this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Execution creation failed: ${message}`)
 
       return {
         success: false,
@@ -311,7 +310,7 @@ export class WorkflowExecutor implements Executor {
     }
 
     // 11. Link schedule_execution to root execution
-    this.runDAO.updateExecutionLinkId(executionId, execution.id)
+    await this.runDAO.updateExecutionLinkId(executionId, execution.id)
 
     // 11b. removed (票03): phase/round tagging belonged to the v4 envelope path; task
     // rounds are tagged at insert by the task-lifecycle job, which is the only writer of
@@ -320,8 +319,8 @@ export class WorkflowExecutor implements Executor {
     // 12. Register chain completion callback
     const triggeredAt = now.getTime()
     registry.service.registerExternalCallbacks({
-      onComplete: ((engineFinalStatus?: string) => {
-        this.handleChainComplete({
+      onComplete: (async (engineFinalStatus?: string) => {
+        await this.handleChainComplete({
           executionId: execution.id,
           schedExecId: executionId,
           schedWsId,
@@ -339,12 +338,12 @@ export class WorkflowExecutor implements Executor {
     // run-state columns): a fire in flight is a live schedule_executions row, which is
     // what countActiveWork and the parallel policy already read. The kanban's per-task
     // status is now written by the task-lifecycle job, not mirrored off a schedule.
-    this.runDAO.markExecutionRunning(executionId)
+    await this.runDAO.markExecutionRunning(executionId)
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
     try {
       // Fire and forget — don't await, let the chain run in background
-      registry.service.start(execution.id, firstStep.input_values).catch((err: unknown) => {
+      registry.service.start(execution.id, firstStep.input_values).catch(async (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
         console.error(`[WorkflowExecutor] root execution start failed`, {
           executionId: execution.id,
@@ -352,13 +351,13 @@ export class WorkflowExecutor implements Executor {
           error: message,
         })
 
-        this.runDAO.markExecutionFailed(executionId, message, ['triggered', 'running'])
+        await this.runDAO.markExecutionFailed(executionId, message, ['triggered', 'running'])
 
         registry.service.clearExternalCallbacks(execution.id)
       })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
-      this.runDAO.markExecutionFailed(executionId, message, ['triggered', 'running'])
+      await this.runDAO.markExecutionFailed(executionId, message, ['triggered', 'running'])
 
       registry.service.clearExternalCallbacks(execution.id)
 
@@ -372,7 +371,7 @@ export class WorkflowExecutor implements Executor {
     }
 
     // 15. Update next_trigger_at
-    this.updateNextTrigger(schedule)
+    await this.updateNextTrigger(schedule)
 
     // Broadcast SSE
     this.sse.emit(`schedule:${schedule.id}`, {
@@ -395,7 +394,7 @@ export class WorkflowExecutor implements Executor {
 
   // ── Chain completion handler ─────────────────────────────────────
 
-  private handleChainComplete(opts: {
+  private async handleChainComplete(opts: {
     executionId: string
     schedExecId: string
     schedWsId: string
@@ -409,7 +408,7 @@ export class WorkflowExecutor implements Executor {
      *  a pure DB read here observes a stale 'running' and misfinalizes a
      *  SUCCEEDED chain as failed; goal-task-dev E2E T6). */
     engineFinalStatus?: string
-  }): void {
+  }): Promise<void> {
     const durationMs = Date.now() - opts.triggeredAt
 
     // Check the root execution's final status.
@@ -420,7 +419,7 @@ export class WorkflowExecutor implements Executor {
     //   2. engine's in-flight reported status (the race case: DB still 'running');
     //   3. legacy fallback (previous behavior).
     const FINAL_STATUSES = new Set(['completed', 'completed_with_failures', 'failed', 'cancelled', 'rejected'])
-    const dbStatus = this.execDAO.findExecutionStatusSimple(opts.executionId)
+    const dbStatus = await this.execDAO.findExecutionStatusSimple(opts.executionId)
     let status = dbStatus && FINAL_STATUSES.has(dbStatus)
       ? dbStatus
       : (opts.engineFinalStatus ?? dbStatus ?? 'completed')
@@ -430,12 +429,12 @@ export class WorkflowExecutor implements Executor {
       // been persisted): completed with zero real completed nodes but some
       // skipped → the workflow achieved nothing → failed. (0 real nodes at all
       // stays completed — same as the lifecycle rule's length>0 guard.)
-      const outcomes = this.execDAO.countRealNodeOutcomes(opts.executionId)
+      const outcomes = await this.execDAO.countRealNodeOutcomes(opts.executionId)
       if (outcomes.completed === 0 && outcomes.skipped > 0) status = 'failed'
     }
 
     // Find the last execution in the chain (deepest child)
-    const lastExec = this.execDAO.findLastChildExecution(opts.executionId)
+    const lastExec = await this.execDAO.findLastChildExecution(opts.executionId)
     const lastExecutionId = lastExec?.id ?? opts.executionId
 
     if (status === 'completed') {
@@ -445,14 +444,14 @@ export class WorkflowExecutor implements Executor {
       // remaining chain (createFromSpec stores slice(1)); the completed
       // execution's child_index selects the next step. Single-step chains
       // (length 1) have an empty remaining chain → nextStep null → finalize.
-      const nextStep = this.resolveNextChainStep(opts.schedWsId, opts.executionId)
+      const nextStep = await this.resolveNextChainStep(opts.schedWsId, opts.executionId)
       if (nextStep) {
-        this.triggerChildStep(opts, nextStep)
+        await this.triggerChildStep(opts, nextStep)
         return // child's onComplete re-enters handleChainComplete; don't finalize yet
       }
 
       // Chain fully complete → finalize schedule_execution + schedule + workspace
-      this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
+      await this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
 
       // 票03: the requirement branch is gone — flipping a schedule's done/failed status,
       // aggregating composite child failures out of child schedules, and mirroring onto
@@ -461,19 +460,19 @@ export class WorkflowExecutor implements Executor {
       // task (if any) a run served is no longer this file's business.
 
       // Update schedule_workspace
-      this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+      await this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
         status: 'completed',
         execution_id: lastExecutionId,
         completed_at: new Date().toISOString(),
       })
     } else {
-      const errorSummary = this.execDAO.findChainNodeErrors(opts.executionId)?.error ?? 'Execution chain failed'
+      const errorSummary = (await this.execDAO.findChainNodeErrors(opts.executionId))?.error ?? 'Execution chain failed'
 
       // Update schedule_execution
-      this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'failed', durationMs, errorSummary)
+      await this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'failed', durationMs, errorSummary)
 
       // Update schedule_workspace
-      this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+      await this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
         status: 'failed',
         execution_id: lastExecutionId,
         completed_at: new Date().toISOString(),
@@ -501,9 +500,9 @@ export class WorkflowExecutor implements Executor {
     }
 
     // Clean up callback
-    const wsRow = this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
+    const wsRow = await this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
     if (wsRow) {
-      const registry = getExecutionService(wsRow.workspace_id)
+      const registry = await getExecutionService(wsRow.workspace_id)
       if (registry) {
         registry.service.clearExternalCallbacks(opts.executionId)
       }
@@ -517,7 +516,7 @@ export class WorkflowExecutor implements Executor {
     // a child queued at the concurrency cap, later claimed). The under-cap path
     // runs the child directly via TaskDispatchService, which registers its own
     // onComplete and resumes the parent without going through WorkflowExecutor.
-    this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
+    await this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
 
     // task-phase-redesign (ticket 06, K9): v4 collect 上行 — BEFORE retention
     // (which may reclaim the ws once the task hits 'done'), recover whatever the
@@ -527,7 +526,7 @@ export class WorkflowExecutor implements Executor {
     // 票03: v4 collect 上行 moved into the task-lifecycle job — it needs the task home,
     // the phase binding and the artifact index, none of which a cron job has.
     // Enforce retention policy
-    this.enforceRetention(opts.scheduleId, opts.maxRetain)
+    await this.enforceRetention(opts.scheduleId, opts.maxRetain)
   }
 
   // ── Composite helpers: removed with 票03 (ADR-0021) ─────────────────────
@@ -564,10 +563,10 @@ export class WorkflowExecutor implements Executor {
    * with taskDispatchChildOutput. The parent correlation (execution_id + node_id)
    * is read from the child schedule's persisted config marker (restart-safe).
    */
-  private maybeResumeParentTaskDispatch(
+  private async maybeResumeParentTaskDispatch(
     opts: { schedule: ScheduleRow; scheduleId: string },
     lastExecutionId: string,
-  ): void {
+  ): Promise<void> {
     if (!this.hasParentTaskDispatchMarker(opts.schedule)) return
 
     let marker: { execution_id: string; node_id: string } | undefined
@@ -582,7 +581,7 @@ export class WorkflowExecutor implements Executor {
     if (!marker) return
 
     // Read the child's var_pool snapshot (the deepest execution in the chain).
-    const childExec = this.execDAO.findById(lastExecutionId)
+    const childExec = await this.execDAO.findById(lastExecutionId)
     const varPoolRaw = childExec?.var_pool ?? "{}"
     let childOutput: Record<string, unknown>
     try {
@@ -593,14 +592,14 @@ export class WorkflowExecutor implements Executor {
 
     // Locate the PARENT composition-wf execution + its workspace's ExecutionService.
     // The parent lives in the coordinator workspace (distinct from this child's ws).
-    const parentExec = this.execDAO.findById(marker.execution_id)
+    const parentExec = await this.execDAO.findById(marker.execution_id)
     if (!parentExec) {
       console.error(
         `[WorkflowExecutor] task_dispatch resume: parent execution ${marker.execution_id} not found`,
       )
       return
     }
-    const parentRegistry = getExecutionService(parentExec.workspace_id)
+    const parentRegistry = await getExecutionService(parentExec.workspace_id)
     if (!parentRegistry) {
       console.error(
         `[WorkflowExecutor] task_dispatch resume: ExecutionService unavailable for parent workspace ${parentExec.workspace_id}`,
@@ -626,17 +625,17 @@ export class WorkflowExecutor implements Executor {
   // columns on its own row from the moment the job arms it, so there is nothing left to
   // reconstruct out of a chain stamp.
 
-  private resolveNextChainStep(schedWsId: string, executionId: string): WorkflowChainItem | null {
-    const wsRow = this.configDAO.findScheduleWorkspaceById(schedWsId)
+  private async resolveNextChainStep(schedWsId: string, executionId: string): Promise<WorkflowChainItem | null> {
+    const wsRow = await this.configDAO.findScheduleWorkspaceById(schedWsId)
     if (!wsRow) return null
-    const registry = getExecutionService(wsRow.workspace_id)
+    const registry = await getExecutionService(wsRow.workspace_id)
     if (!registry) return null
     try {
       const config = JSON.parse(readFileSync(join(registry.wsPath, 'config.json'), 'utf-8')) as {
         workflow_chain?: WorkflowChainItem[]
       }
       const remaining = config.workflow_chain ?? []
-      const completed = this.execDAO.findById(executionId)
+      const completed = await this.execDAO.findById(executionId)
       const childIndex = completed?.child_index ?? 0
       return remaining[childIndex] ?? null
     } catch {
@@ -649,7 +648,7 @@ export class WorkflowExecutor implements Executor {
    * The child's completion re-enters handleChainComplete (recursive) until the
    * chain is exhausted, at which point the schedule finalizes to 'done'.
    */
-  private triggerChildStep(
+  private async triggerChildStep(
     opts: {
       executionId: string
       schedExecId: string
@@ -661,18 +660,18 @@ export class WorkflowExecutor implements Executor {
       maxRetain: number
     },
     nextStep: WorkflowChainItem,
-  ): void {
-    const wsRow = this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
+  ): Promise<void> {
+    const wsRow = await this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
     if (!wsRow) return
-    const registry = getExecutionService(wsRow.workspace_id)
+    const registry = await getExecutionService(wsRow.workspace_id)
     if (!registry) return
 
-    const completed = this.execDAO.findById(opts.executionId)
+    const completed = await this.execDAO.findById(opts.executionId)
     const nextChildIndex = (completed?.child_index ?? 0) + 1
 
     let child
     try {
-      child = registry.service.create(wsRow.workspace_id, {
+      child = await registry.service.create(wsRow.workspace_id, {
         workflow_ref: nextStep.workflow_ref,
         parent_id: opts.executionId,
         child_index: nextChildIndex,
@@ -685,11 +684,11 @@ export class WorkflowExecutor implements Executor {
         parentExec: opts.executionId, error: msg,
       })
       // Child creation failed → finalize the chain as failed so it doesn't hang.
-      this.runDAO.markExecutionCompleteWithDuration(
+      await this.runDAO.markExecutionCompleteWithDuration(
         opts.schedExecId, 'failed', Date.now() - opts.triggeredAt,
         `Child creation failed: ${msg}`,
       )
-      this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+      await this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
         status: 'failed', execution_id: opts.executionId,
         completed_at: new Date().toISOString(), error: msg,
       })
@@ -698,27 +697,27 @@ export class WorkflowExecutor implements Executor {
 
     // Child's completion re-enters handleChainComplete with the child's id.
     registry.service.registerExternalCallbacks({
-      onComplete: (() => {
-        this.handleChainComplete({ ...opts, executionId: child.id })
+      onComplete: (async () => {
+        await this.handleChainComplete({ ...opts, executionId: child.id })
       }) as any,
     }, child.id)
 
     // Fire and forget — explicit error capture (Issue 1 lesson: no silent failures).
-    registry.service.start(child.id, nextStep.input_values).catch((err: unknown) => {
+    registry.service.start(child.id, nextStep.input_values).catch(async (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[WorkflowExecutor] child execution start failed', {
         executionId: child.id, error: msg,
       })
-      this.runDAO.markExecutionFailed(opts.schedExecId, msg, ['triggered', 'running'])
+      await this.runDAO.markExecutionFailed(opts.schedExecId, msg, ['triggered', 'running'])
       registry.service.clearExternalCallbacks(child.id)
     })
   }
 
   // ── Retention enforcement ────────────────────────────────────────
 
-  private enforceRetention(scheduleId: string, maxRetain: number): void {
+  private async enforceRetention(scheduleId: string, maxRetain: number): Promise<void> {
     try {
-      const completed = this.configDAO.findRetainedWorkspaces(scheduleId, maxRetain)
+      const completed = await this.configDAO.findRetainedWorkspaces(scheduleId, maxRetain)
 
       for (const row of completed) {
         // task-phase-redesign (ticket 05, K12 / 票03清单#5): a workspace bound
@@ -732,7 +731,7 @@ export class WorkflowExecutor implements Executor {
         // 「never reclaim a bound task ws」 exemption is structural now, not a check one
         // call site could forget. Data retention keeps its own task-aware guard.
         try {
-          this.workspaceService.delete(row.workspace_id)
+          await this.workspaceService.delete(row.workspace_id)
         } catch (err: unknown) {
           console.error(
             `[WorkflowExecutor] Failed to delete workspace ${row.workspace_id}:`,
@@ -751,12 +750,12 @@ export class WorkflowExecutor implements Executor {
 
   // ── Private helpers ──────────────────────────────────────────────
 
-  private createSkippedExecution(schedule: ScheduleRow, reason: string): void {
+  private async createSkippedExecution(schedule: ScheduleRow, reason: string): Promise<void> {
     const now = new Date()
-    this.runDAO.insertSkippedExecution(randomUUID(), schedule.id, now.toISOString(), schedule.timezone, reason)
+    await this.runDAO.insertSkippedExecution(randomUUID(), schedule.id, now.toISOString(), schedule.timezone, reason)
   }
 
-  private updateNextTrigger(schedule: ScheduleRow): void {
+  private async updateNextTrigger(schedule: ScheduleRow): Promise<void> {
     // Drafts (trigger_source='requirement') have no cron_expression — skip next-trigger update.
     if (!schedule.cron_expression) return
     try {
@@ -765,7 +764,7 @@ export class WorkflowExecutor implements Executor {
         currentDate: new Date(),
       })
       const next = interval.next()
-      this.configDAO.updateNextTriggerAt(schedule.id, next.toISOString())
+      await this.configDAO.updateNextTriggerAt(schedule.id, next.toISOString())
     } catch {
       // Ignore invalid cron
     }

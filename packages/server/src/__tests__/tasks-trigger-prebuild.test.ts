@@ -21,15 +21,16 @@
 // repo-sync-service.test.ts 单独锁），以及 ExecutionService registry 用「写真实
 // executions 行」的 stub（真引擎要 provider）。
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
+import type Database from "better-sqlite3"
 import { execFileSync } from "child_process"
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, mkdtempSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { WorkspaceService } from "../services/workspace"
@@ -38,6 +39,9 @@ import type { RepoSyncService } from "../services/tasks/repo-sync-service"
 
 const ORG = "prebuild-org"
 const REPO = "demo-repo"
+
+// P1 B2：本文件的 tasks 造数与读断言全部走这座 PG 库（见 beforeAll）。
+let pg: PgFixture | null = null
 
 // ── ExecutionService registry stub: real INSERT so ux_exec_task_active is real ──
 const stub = vi.hoisted(() => ({
@@ -145,7 +149,8 @@ function v4Spec(withPhase = true): string {
   return JSON.stringify(spec)
 }
 
-function insertTask(
+/** P1 B2: tasks 表已迁 postgres.js —— 造数落 PG（writePhaseSpec 的 fs 半边不变）。 */
+async function insertTask(
   id: string,
   projectIds: string[],
   overrides: Partial<{
@@ -157,18 +162,19 @@ function insertTask(
      *  for the bundled v4 spec, false for hand-written specs. */
     writePhaseSpec: boolean
   }> = {},
-): void {
+): Promise<void> {
   const now = new Date().toISOString()
   const spec = overrides.task_spec ?? v4Spec()
-  db.prepare(
+  await pg!.sql.unsafe(
     `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', ?, ?, 1, NULL, ?, ?, NULL)`,
-  ).run(
-    id, ORG, `E2E_TD prebuild ${id}`, overrides.status ?? "ready", spec, JSON.stringify(projectIds),
-    overrides.workflow_ref === undefined ? null : overrides.workflow_ref,
-    now, now,
+     VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', $6, $7, 1, NULL, $8, $9, NULL)`,
+    [
+      id, ORG, `E2E_TD prebuild ${id}`, overrides.status ?? "ready", spec, JSON.stringify(projectIds),
+      overrides.workflow_ref === undefined ? null : overrides.workflow_ref,
+      now, now,
+    ],
   )
   if (overrides.writePhaseSpec ?? spec.includes('"p1"')) writePhaseSpec(id)
 }
@@ -190,11 +196,22 @@ const stubRepoSync = (): RepoSyncService =>
     isBusy: () => false,
   }) as unknown as RepoSyncService
 
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取）；
+  // executions/workspaces/schedules 仍按用例建 SQLite（B5 域）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
 beforeEach(() => {
   order = []
-  db = new Database(":memory:")
+  db = initDb(":memory:")
   db.pragma("foreign_keys = ON")
-  applySchema(db)
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   stub.db = db
   stub.started = []
@@ -232,11 +249,12 @@ afterEach(() => {
   else process.env.USERPROFILE = realUserProfile
   rmSync(fakeHome, { recursive: true, force: true })
   rmSync(repoDir, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
-function taskRow(id: string): { status: string; workspace_id: string | null } {
-  return db.prepare("SELECT status, workspace_id FROM tasks WHERE id = ?").get(id) as {
+/** P1 B2: tasks 读断言直读 PG。 */
+async function taskRow(id: string): Promise<{ status: string; workspace_id: string | null }> {
+  return (await pg!.sql`SELECT status, workspace_id FROM tasks WHERE id = ${id}`)[0] as {
     status: string
     workspace_id: string | null
   }
@@ -246,9 +264,9 @@ function scheduleRowCount(): number {
   return (db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c
 }
 
-describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask）", () => {
+describePg("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask）", () => {
   it("v4 成功链：wait 先行 → 预建 → 绑定 → 起执行行并 start，worktree 真实存在", async () => {
-    insertTask("t-ok", [REPO])
+    await insertTask("t-ok", [REPO])
     const spy = vi.spyOn(wsService, "createFromSpec")
 
     const dto = await service.triggerTask("t-ok")
@@ -257,7 +275,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     expect(order[0]).toBe("wait")
     expect(spy).toHaveBeenCalledTimes(1)
 
-    const row = taskRow("t-ok")
+    const row = await taskRow("t-ok")
     expect(row.workspace_id).toBeTruthy()
     const ws = wsService.getById(row.workspace_id!)!
     expect(ws.name).toMatch(/^task-E2E_TD-prebuild.*-\d{4}-\d{6}$/) // 禁中文命名 (2026-09-20)：展示名＝合法英文名，空格→连字符
@@ -285,19 +303,19 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
   })
 
   it("镜像路径删除 → 409：任务仍 ready、零实例、wake 语义不存在（没有信封可翻）", async () => {
-    insertTask("t-409", [REPO])
+    await insertTask("t-409", [REPO])
     rmSync(repoDir, { recursive: true, force: true }) // 镜像消失 → resolveRepoPath throw
 
     await expect(service.triggerTask("t-409")).rejects.toThrow(TaskStatusConflictError)
     await expect(service.triggerTask("t-409")).rejects.toThrow(/预建工作区失败/)
-    expect(taskRow("t-409").status).toBe("ready")
+    expect((await taskRow("t-409")).status).toBe("ready")
     expect(execs.findLatestTaskInstance("t-409")).toBeNull()
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces").get()).toEqual({ c: 0 })
     expect(scheduleRowCount()).toBe(0)
   })
 
   it("第二项目不可解析 → 回滚：ws 目录与 DB 行都不留", async () => {
-    insertTask("t-rb", [REPO, "ghost-repo"])
+    await insertTask("t-rb", [REPO, "ghost-repo"])
     const wsCountBefore = (db.prepare("SELECT COUNT(*) n FROM workspaces").get() as { n: number }).n
 
     await expect(service.triggerTask("t-rb")).rejects.toThrow(/预建工作区失败/)
@@ -307,26 +325,26 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     const wsRoot = join(fakeHome, ".octopus", "orgs", ORG, "workspaces")
     const lingering = existsSync(wsRoot) ? readdirSync(wsRoot) : []
     expect(lingering).toEqual([])
-    expect(taskRow("t-rb").workspace_id).toBeNull()
+    expect((await taskRow("t-rb")).workspace_id).toBeNull()
   })
 
   it("已绑定复用：createFromSpec 0 调用；worktree 手删 → 下一轮自愈重建且不换绑", async () => {
-    insertTask("t-re", [REPO])
+    await insertTask("t-re", [REPO])
     await service.triggerTask("t-re")
-    const boundId = taskRow("t-re").workspace_id!
+    const boundId = (await taskRow("t-re")).workspace_id!
     const ws = wsService.getById(boundId)!
     rmSync(join(ws.path, "projects", REPO), { recursive: true, force: true }) // 带外删 worktree
 
     // 上一轮收尾 + 人重新入队（票03：释放槽位的唯一方式是行走终态）
     db.prepare("UPDATE executions SET status='completed' WHERE task_id='t-re'").run()
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='t-re'").run()
+    await pg!.sql.unsafe("UPDATE tasks SET status='ready' WHERE id=$1", ["t-re"])
 
     const spy = vi.spyOn(wsService, "createFromSpec")
     await service.triggerTask("t-re")
     expect(spy).not.toHaveBeenCalled()
-    expect(taskRow("t-re").workspace_id).toBe(boundId) // 不换绑
+    expect((await taskRow("t-re")).workspace_id).toBe(boundId) // 不换绑
     expect(existsSync(join(ws.path, "projects", REPO, ".git"))).toBe(true) // 自愈重建
-    expect(taskRow("t-re").status).toBe("running")
+    expect((await taskRow("t-re")).status).toBe("running")
     // 复用路径零新建目录：只有一个 ws 行
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces WHERE task_id='t-re'").get()).toEqual({ c: 1 })
     spy.mockRestore()
@@ -334,7 +352,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
 
   it("形状：预建无条件 —— v3 任务也当场建 ws；composite 建 coordinator（projects 剥空）", async () => {
     // v3（无 format）：旧版这里断言「预建跳过」，票03 之后预建没有闸门了。
-    insertTask("t-v3", [REPO], {
+    await insertTask("t-v3", [REPO], {
       status: "ready",
       task_spec: JSON.stringify({ goal: "g", ac: ["a"], task_type: "generic" }),
       workflow_ref: "built-in/demo",
@@ -342,12 +360,12 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     const spyV3 = vi.spyOn(wsService, "createFromSpec")
     await service.triggerTask("t-v3")
     expect(spyV3).toHaveBeenCalledTimes(1)
-    expect(taskRow("t-v3").status).toBe("running")
+    expect((await taskRow("t-v3")).status).toBe("running")
     expect(execs.findLatestTaskInstance("t-v3")!.phase_index).toBeNull() // v3 不打 phase/round 标
     spyV3.mockRestore()
 
     // composite（subunits≥2）：协调工作区按设计不带项目（spec D4），扇出由 composition 自己建
-    insertTask("t-co", [REPO], {
+    await insertTask("t-co", [REPO], {
       task_spec: JSON.stringify({
         goal: "g",
         ac: ["a"],
@@ -383,28 +401,29 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     spyCo.mockRestore()
 
     // project_ids 为空 → materialize 只给 `default` 占位项 → 被过滤 ⇒ 零 worktree
-    insertTask("t-df", [])
+    await insertTask("t-df", [])
     const spyDf = vi.spyOn(wsService, "createFromSpec")
     await service.triggerTask("t-df")
     expect((spyDf.mock.calls[0][0] as { projects: unknown[] }).projects).toEqual([])
-    expect(taskRow("t-df").status).toBe("running")
+    expect((await taskRow("t-df")).status).toBe("running")
     spyDf.mockRestore()
   })
 })
 
-describe("ready gate 项目预检（B1）", () => {
-  it("v4 + 不可解析 project_ids → TaskReadyGateError missing 含 project:<name>", () => {
-    insertTask("t-gate", ["ghost-repo"], { status: "draft" })
-    expect(() => service.readyTask("t-gate")).toThrow(/project:ghost-repo/)
+describePg("ready gate 项目预检（B1）", () => {
+  it("v4 + 不可解析 project_ids → TaskReadyGateError missing 含 project:<name>", async () => {
+    await insertTask("t-gate", ["ghost-repo"], { status: "draft" })
+    // readyTask 已 async（PG DAO）—— 同步 throw 语义变 Promise rejection。
+    await expect(service.readyTask("t-gate")).rejects.toThrow(/project:ghost-repo/)
     // 预检发生在入队，不等触发：一行都不该被建出来
     expect(execs.findLatestTaskInstance("t-gate")).toBeNull()
   })
 
-  it("v4 + 可解析项目 → missing 不含 project:（phase 缺陷照常报，不误伤仓库）", () => {
-    insertTask("t-gate2", [REPO], { status: "draft", task_spec: v4Spec(false) })
+  it("v4 + 可解析项目 → missing 不含 project:（phase 缺陷照常报，不误伤仓库）", async () => {
+    await insertTask("t-gate2", [REPO], { status: "draft", task_spec: v4Spec(false) })
     let missing: string[] = []
     try {
-      service.readyTask("t-gate2")
+      await service.readyTask("t-gate2")
     } catch (e: unknown) {
       missing = (e as { missing?: string[] }).missing ?? []
     }

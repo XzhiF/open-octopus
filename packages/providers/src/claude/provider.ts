@@ -354,6 +354,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
       plugins: resolvePlugins(options),
       tools: options?.tools,
       disallowedTools: options?.disallowedTools,
+      // 进程内 MCP 工具（recall 等）— 由 createInProcessMcpServer 构造，实例随 query 生命周期存活
+      ...(options?.mcpServers ? { mcpServers: options.mcpServers as unknown as Options['mcpServers'] } : {}),
       maxTurns: options?.maxTurns,
       maxBudgetUsd: options?.maxBudgetUsd,
       ...(typeof options?.effort === 'string' ? { effort: options.effort as Options['effort'] } : {}),

@@ -29,7 +29,7 @@ function makeConfig(overrides: Partial<HostAgentConfig> = {}): HostAgentConfig {
 
 describe("HostAgent", () => {
   describe("TC-037: LLM fails -> fallback model -> degrade to concatenation", () => {
-    it("tries primary model, then fallback sonnet, then degrades", async () => {
+    it("tries primary model, then fallback pro, then degrades", async () => {
       const callLog: string[] = []
       const llmCall = vi.fn().mockImplementation(async (_prompt: string, model?: string) => {
         callLog.push(model ?? "default")
@@ -42,37 +42,37 @@ describe("HostAgent", () => {
         makeExpertResult("expert-b"),
       ]
 
-      // opus primary → sonnet fallback → degradation
-      const config = makeConfig({ host: { role: "host", prompt: "test", model: "opus" } })
+      // pro-max primary → pro fallback → degradation
+      const config = makeConfig({ host: { role: "host", prompt: "test", model: "pro-max" } })
       const result = await agent.synthesize(experts, [], config)
 
-      // Should have tried: opus (1 attempt), sonnet (1 attempt)
-      expect(callLog).toEqual(["opus", "sonnet"])
+      // Should have tried: pro-max (1 attempt), pro (1 attempt)
+      expect(callLog).toEqual(["pro-max", "pro"])
       // Should degrade to concatenation
       expect(result.degraded).toBe(true)
       expect(result.synthesis).toContain("expert-a")
       expect(result.synthesis).toContain("expert-b")
     })
 
-    it("succeeds on fallback sonnet after primary opus fails", async () => {
+    it("succeeds on fallback pro after primary pro-max fails", async () => {
       const llmCall = vi.fn().mockImplementation(async (_prompt: string, model?: string) => {
-        if (model === "sonnet") {
-          return JSON.stringify({ synthesis: "Sonnet synthesis result" })
+        if (model === "pro") {
+          return JSON.stringify({ synthesis: "Pro synthesis result" })
         }
-        throw new Error("Opus unavailable")
+        throw new Error("Pro-max unavailable")
       })
 
       const agent = new HostAgent(llmCall)
       const experts = [makeExpertResult("expert-a")]
 
-      const config = makeConfig({ host: { role: "host", prompt: "test", model: "opus" } })
+      const config = makeConfig({ host: { role: "host", prompt: "test", model: "pro-max" } })
       const result = await agent.synthesize(experts, [], config)
 
       expect(result.degraded).toBeUndefined()
-      expect(result.synthesis).toBe("Sonnet synthesis result")
+      expect(result.synthesis).toBe("Pro synthesis result")
     })
 
-    it("skips sonnet fallback when primary model is already sonnet", async () => {
+    it("skips pro fallback when primary model is already pro", async () => {
       const callLog: string[] = []
       const llmCall = vi.fn().mockImplementation(async (_prompt: string, model?: string) => {
         callLog.push(model ?? "default")
@@ -82,11 +82,11 @@ describe("HostAgent", () => {
       const agent = new HostAgent(llmCall)
       const experts = [makeExpertResult("expert-a")]
 
-      const config = makeConfig({ host: { role: "host", prompt: "test", model: "sonnet" } })
+      const config = makeConfig({ host: { role: "host", prompt: "test", model: "pro" } })
       const result = await agent.synthesize(experts, [], config)
 
-      // Only sonnet attempt (no double-fallback when primary IS sonnet)
-      expect(callLog).toEqual(["sonnet"])
+      // Only pro attempt (no double-fallback when primary IS pro)
+      expect(callLog).toEqual(["pro"])
       expect(result.degraded).toBe(true)
     })
   })

@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import * as cron from 'node-cron'
 import { parseExpression } from 'cron-parser'
 import { randomUUID } from 'crypto'
@@ -102,21 +101,26 @@ export class SchedulerEngine {
     return { state: this.agentCircuitBreaker.getState() }
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.running) return
     this.running = true
 
-    const enabledSchedules = this.configDAO.findEnabledSchedules() as ScheduleRow[]
+    const enabledSchedules = (await this.configDAO.findEnabledSchedules()) as unknown as ScheduleRow[]
 
     for (const schedule of enabledSchedules) {
       this.registerCronJob(schedule)
     }
 
     this.tickInterval = setInterval(() => {
-      this.auxiliaryTick()
+      this.auxiliaryTick().catch((err: unknown) =>
+        console.error(
+          '[SchedulerEngine] auxiliaryTick error:',
+          err instanceof Error ? err.message : String(err),
+        ),
+      )
     }, AUXILIARY_TICK_INTERVAL)
 
-    this.detectMissed()
+    await this.detectMissed()
   }
 
   stop(): void {
@@ -131,13 +135,13 @@ export class SchedulerEngine {
     this.cronJobs.clear()
   }
 
-  reload(): void {
+  async reload(): Promise<void> {
     for (const [, task] of this.cronJobs) {
       task.stop()
     }
     this.cronJobs.clear()
 
-    const enabledSchedules = this.configDAO.findEnabledSchedules() as ScheduleRow[]
+    const enabledSchedules = (await this.configDAO.findEnabledSchedules()) as unknown as ScheduleRow[]
 
     for (const schedule of enabledSchedules) {
       this.registerCronJob(schedule)
@@ -155,7 +159,12 @@ export class SchedulerEngine {
       const task = cron.schedule(
         schedule.cron_expression,
         () => {
-          this.triggerSchedule(schedule.id)
+          this.triggerSchedule(schedule.id).catch((err: unknown) =>
+            console.error(
+              `[SchedulerEngine] triggerSchedule ${schedule.id} error:`,
+              err instanceof Error ? err.message : String(err),
+            ),
+          )
         },
         { timezone: schedule.timezone },
       )
@@ -170,10 +179,10 @@ export class SchedulerEngine {
 
   // ── Private: Trigger Dispatch ──────────────────────────────────────
 
-  private triggerSchedule(scheduleId: string): void {
+  private async triggerSchedule(scheduleId: string): Promise<void> {
     if (!this.running) return
 
-    const schedule = this.configDAO.findByIdRaw(scheduleId) as ScheduleRow | undefined
+    const schedule = (await this.configDAO.findByIdRaw(scheduleId)) as ScheduleRow | null
 
     if (!schedule || schedule.enabled === 0) return
 
@@ -201,15 +210,15 @@ export class SchedulerEngine {
     const schedExecId = randomUUID()
     const tzOffset = this.getTimezoneOffset(schedule.timezone)
 
-    this.runDAO.insertTriggeredExecution(
+    await this.runDAO.insertTriggeredExecution(
       schedExecId, scheduleId, 'scheduled',
       now.toISOString(), tzOffset, schedule.timezone, 'scheduler',
     )
 
-    this.dispatchExecution(schedule, schedExecId)
+    await this.dispatchExecution(schedule, schedExecId)
 
     // Update next_trigger_at
-    this.updateNextTrigger(schedule)
+    await this.updateNextTrigger(schedule)
   }
 
   /**
@@ -217,18 +226,18 @@ export class SchedulerEngine {
    * INSERTed by SchedulerService.triggerJob (with trigger_type='manual');
    * we only run the executor here.
    */
-  triggerManual(scheduleId: string, executionId: string): void {
-    const schedule = this.configDAO.findByIdRaw(scheduleId) as ScheduleRow | undefined
+  async triggerManual(scheduleId: string, executionId: string): Promise<void> {
+    const schedule = (await this.configDAO.findByIdRaw(scheduleId)) as ScheduleRow | null
 
     if (!schedule) {
-      this.runDAO.markExecutionFailed(executionId, 'Schedule not found')
+      await this.runDAO.markExecutionFailed(executionId, 'Schedule not found')
       return
     }
 
-    this.dispatchExecution(schedule, executionId)
+    await this.dispatchExecution(schedule, executionId)
   }
 
-  private dispatchExecution(schedule: ScheduleRow, schedExecId: string): void {
+  private async dispatchExecution(schedule: ScheduleRow, schedExecId: string): Promise<void> {
     const jobType = schedule.job_type ?? 'workflow'
     const executor = this.executors.get(jobType)
 
@@ -236,7 +245,7 @@ export class SchedulerEngine {
       console.error(
         `[SchedulerEngine] No executor registered for job_type: ${jobType}`,
       )
-      this.runDAO.markExecutionFailed(schedExecId, `No executor for job_type: ${jobType}`)
+      await this.runDAO.markExecutionFailed(schedExecId, `No executor for job_type: ${jobType}`)
       return
     }
 
@@ -245,7 +254,7 @@ export class SchedulerEngine {
     // 「只有 in-flight 可中止」 guard and checkStaleClaimed's 10-minute sweep able to match
     // anything at all: the sweep reads claimed_at, and both were unreachable for cron jobs
     // once the queued-claim loop (their last writer) went away with the task envelopes.
-    this.configDAO.updateSchedule(schedule.id, {
+    await this.configDAO.updateSchedule(schedule.id, {
       status: 'running',
       claimed_at: new Date().toISOString(),
     })
@@ -273,21 +282,21 @@ export class SchedulerEngine {
         const result = await this.agentCircuitBreaker.execute(() =>
           executor.execute(job, schedExecId),
         )
-        this.onExecutionComplete(schedule, schedExecId, result)
+        await this.onExecutionComplete(schedule, schedExecId, result)
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err)
         const isCircuitOpen = err instanceof CircuitBreakerOpenError
 
         if (isCircuitOpen) {
-          this.runDAO.updateExecutionStatusSimple(
+          await this.runDAO.updateExecutionStatusSimple(
             schedExecId, 'failed',
             'Agent circuit breaker open — requests temporarily rejected',
           )
         } else {
-          this.runDAO.markExecutionFailed(schedExecId, message, ['triggered', 'running'])
+          await this.runDAO.markExecutionFailed(schedExecId, message, ['triggered', 'running'])
         }
 
-        const trackerResult = this.failureTracker.recordFailure(schedule.id)
+        const trackerResult = await this.failureTracker.recordFailure(schedule.id)
         if (trackerResult.autoDisabled) {
           console.warn(
             `[SchedulerEngine] Auto-disabled schedule ${schedule.id} after consecutive failures`,
@@ -329,14 +338,14 @@ export class SchedulerEngine {
   ): void {
     executor
       .execute(job, schedExecId)
-      .then((result: ExecutionResult) => {
-        this.onExecutionComplete(schedule, schedExecId, result)
+      .then(async (result: ExecutionResult) => {
+        await this.onExecutionComplete(schedule, schedExecId, result)
       })
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
-        this.runDAO.markExecutionFailed(schedExecId, message, ['triggered', 'running'])
+        await this.runDAO.markExecutionFailed(schedExecId, message, ['triggered', 'running'])
 
-        const trackerResult = this.failureTracker.recordFailure(schedule.id)
+        const trackerResult = await this.failureTracker.recordFailure(schedule.id)
         if (trackerResult.autoDisabled) {
           console.warn(
             `[SchedulerEngine] Auto-disabled schedule ${schedule.id} after consecutive failures`,
@@ -350,23 +359,23 @@ export class SchedulerEngine {
       })
   }
 
-  private onExecutionComplete(
+  private async onExecutionComplete(
     schedule: ScheduleRow,
     schedExecId: string,
     result: ExecutionResult,
-  ): void {
+  ): Promise<void> {
     // Settle the run-state (the counterpart of the write in dispatchExecution). Terminal
     // statuses are what keep checkStaleClaimed from rolling a finished fire back to
     // 'queued' — the invariant the G2 comments in this file have always described.
-    this.configDAO.updateSchedule(schedule.id, {
+    await this.configDAO.updateSchedule(schedule.id, {
       status: result.success || result.status === 'skipped' ? 'done' : 'failed',
       claimed_at: null,
     })
 
     if (result.success || result.status === 'skipped') {
-      this.failureTracker.recordSuccess(schedule.id)
+      await this.failureTracker.recordSuccess(schedule.id)
     } else {
-      const trackerResult = this.failureTracker.recordFailure(schedule.id)
+      const trackerResult = await this.failureTracker.recordFailure(schedule.id)
       if (trackerResult.autoDisabled) {
         console.warn(
           `[SchedulerEngine] Auto-disabled schedule ${schedule.id} after consecutive failures`,
@@ -403,9 +412,9 @@ export class SchedulerEngine {
 
   // ── Private: Auxiliary Tick ────────────────────────────────────────
 
-  private auxiliaryTick(): void {
+  private async auxiliaryTick(): Promise<void> {
     if (!this.running) return
-    this.configDAO.updateSchedulerHeartbeat()
+    await this.configDAO.updateSchedulerHeartbeat()
 
     this.checkTimeouts().catch((err: unknown) =>
       console.error(
@@ -440,11 +449,11 @@ export class SchedulerEngine {
   // handleChainComplete (failed writer) + onExecutionComplete (retry cap) above.
   private async checkStaleClaimed(): Promise<void> {
     const cutoff = new Date(Date.now() - STALE_CLAIMED_THRESHOLD_MS).toISOString()
-    const stale = this.configDAO.findStaleClaimed(cutoff) as ScheduleRow[]
+    const stale = (await this.configDAO.findStaleClaimed(cutoff)) as unknown as ScheduleRow[]
 
     const now = new Date().toISOString()
     for (const schedule of stale) {
-      this.configDAO.updateSchedule(schedule.id, {
+      await this.configDAO.updateSchedule(schedule.id, {
         status: 'queued',
         claimed_at: null,
       })
@@ -456,16 +465,16 @@ export class SchedulerEngine {
       // (status IN triggered/running). Without this the orphaned execution row
       // blocks the next dispatch's insertTriggeredExecution and the task can
       // never be re-dispatched after a worker crash.
-      this.runDAO.markStaleExecutionsFailed(
+      await this.runDAO.markStaleExecutionsFailed(
         schedule.id,
         `Stale claimed rolled back to queued at ${now}`,
       )
-      this.configDAO.markScheduleWorkspacesCleanedBySchedule(schedule.id, now)
+      await this.configDAO.markScheduleWorkspacesCleanedBySchedule(schedule.id, now)
     }
   }
 
   private async checkTimeouts(): Promise<void> {
-    const runningExecs = this.configDAO.findRunningExecutionsWithScheduleInfo()
+    const runningExecs = await this.configDAO.findRunningExecutionsWithScheduleInfo()
 
     const now = Date.now()
 
@@ -476,12 +485,12 @@ export class SchedulerEngine {
       if (now - triggeredAt > timeoutMs) {
         const summary = `执行超时（${exec.timeout_seconds ?? 3600}s）`
 
-        this.runDAO.markExecutionTimedOut(exec.id, summary, exec.job_type)
+        await this.runDAO.markExecutionTimedOut(exec.id, summary, exec.job_type)
 
-        if (exec.job_type !== 'agent' && exec.execution_id) {
+        if (exec.job_type !== 'agent' && exec.execution_id && exec.workspace_id) {
           try {
             const { getExecutionService } = await import('../execution-service-registry')
-            const registry = getExecutionService(exec.workspace_id ?? undefined)
+            const registry = await getExecutionService(exec.workspace_id)
             if (registry) {
               await registry.service.cancel(exec.execution_id)
               console.log(
@@ -516,15 +525,15 @@ export class SchedulerEngine {
             )
         }
 
-        this.failureTracker.recordFailure(exec.schedule_id)
+        await this.failureTracker.recordFailure(exec.schedule_id)
       }
     }
   }
 
   // ── Private: Missed Detection ──────────────────────────────────────
 
-  private detectMissed(): void {
-    const enabledSchedules = this.configDAO.findEnabledSchedulesForMissed() as ScheduleRow[]
+  private async detectMissed(): Promise<void> {
+    const enabledSchedules = (await this.configDAO.findEnabledSchedulesForMissed()) as unknown as ScheduleRow[]
 
     let totalMissed = 0
     const MAX_MISSED = 100
@@ -534,7 +543,7 @@ export class SchedulerEngine {
     for (const schedule of enabledSchedules) {
       if (totalMissed >= MAX_MISSED || Date.now() - startTime > TIMEOUT_MS) break
 
-      const lastExec = this.configDAO.findLastNonMissedExecution(schedule.id)
+      const lastExec = await this.configDAO.findLastNonMissedExecution(schedule.id)
 
       const fromDate = lastExec
         ? new Date(lastExec.triggered_at)
@@ -561,10 +570,10 @@ export class SchedulerEngine {
         for (const expectedTime of expectedTimes) {
           if (totalMissed >= MAX_MISSED) break
 
-          const exists = this.configDAO.findExecutionNearTime(schedule.id, expectedTime.toISOString())
+          const exists = await this.configDAO.findExecutionNearTime(schedule.id, expectedTime.toISOString())
 
           if (!exists) {
-            this.runDAO.insertMissedExecution(
+            await this.runDAO.insertMissedExecution(
               randomUUID(), schedule.id,
               expectedTime.toISOString(), schedule.timezone,
             )
@@ -577,7 +586,7 @@ export class SchedulerEngine {
     }
 
     if (totalMissed > 0) {
-      this.configDAO.setMissedAlertPending()
+      await this.configDAO.setMissedAlertPending()
     }
   }
 
@@ -607,13 +616,16 @@ export class SchedulerEngine {
     try {
       config = JSON.parse(schedule.config) as import('@octopus/shared').JobConfig
     } catch {
+      // 坏 config 行的内存态兜底：workspace_spec 缺 branch_prefix（WorkflowConfig 契约必填），
+      // 运行时消费方（triggerSchedule→WorkspaceService）对空 chain 直接失败回写 error_summary；
+      // 类型面经 unknown 收敛，不落地伪造值（原 as JobConfig 因重叠不足报错）。
       config = {
         schema_version: '2.0',
         type: 'workflow',
         workspace_spec: { org: schedule.org, projects: [] },
         workflow_chain: [],
         max_retain: schedule.max_retain,
-      } as import('@octopus/shared').JobConfig
+      } as unknown as import('@octopus/shared').JobConfig
     }
 
     return {
@@ -645,14 +657,14 @@ export class SchedulerEngine {
     }
   }
 
-  private updateNextTrigger(schedule: ScheduleRow): void {
+  private async updateNextTrigger(schedule: ScheduleRow): Promise<void> {
     try {
       const interval = parseExpression(schedule.cron_expression, {
         tz: schedule.timezone,
         currentDate: new Date(),
       })
       const next = interval.next()
-      this.configDAO.updateNextTriggerAt(schedule.id, next.toISOString())
+      await this.configDAO.updateNextTriggerAt(schedule.id, next.toISOString())
     } catch {
       // Ignore invalid cron
     }

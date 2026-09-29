@@ -58,14 +58,14 @@ export class RecoveryService {
 
     try {
       // Step 1: Verify DB integrity
-      result.sessions_restored = this.recoverSessions()
+      result.sessions_restored = await this.recoverSessions()
 
       // Step 2: Recover clone provider sessions
       result.provider_sessions_recreated = this.recoverCloneSessions()
       result.clones_recovered = result.provider_sessions_recreated
 
       // Step 3: Detect and mark interrupted workflows
-      result.interrupted_workflows = this.recoverInterruptedWorkflows()
+      result.interrupted_workflows = await this.recoverInterruptedWorkflows()
 
       // Step 4: Verify memory files exist
       this.verifyMemoryFiles()
@@ -88,9 +88,9 @@ export class RecoveryService {
    * Verify all sessions in DB are consistent.
    * Mark active sessions that were mid-stream as inactive.
    */
-  private recoverSessions(): number {
+  private async recoverSessions(): Promise<number> {
     try {
-      return this.sessionDao.countActiveSessions(this.org)
+      return await this.sessionDao.countActiveSessions(this.org)
     } catch {
       return 0
     }
@@ -148,9 +148,9 @@ export class RecoveryService {
    * Detect and mark interrupted workflow executions.
    * Executions with status 'running' at restart time are marked as interrupted.
    */
-  private recoverInterruptedWorkflows(): number {
+  private async recoverInterruptedWorkflows(): Promise<number> {
     try {
-      return this.execDao.markInterruptedExecutions(this.org, new Date().toISOString())
+      return await this.execDao.markInterruptedExecutions(this.org, new Date().toISOString())
     } catch {
       // executions table may not exist
       return 0

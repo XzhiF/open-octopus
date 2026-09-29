@@ -5,23 +5,26 @@
 // 膨胀（phase-2 实测 547 行 vs 320 真消息）。insertLlmCallBatch 按
 // (execution_id, message_id) 批内 + 跨批去重；null message_id 不去重；
 // 跨 execution 同消息（理论上不存在）互不影响。
-import { describe, it, expect, beforeEach } from "vitest"
-import Database from "better-sqlite3"
-import { applySchema } from "../db/schema"
+//
+// P1 B4 票2B-1：TokenUsageDAO 已迁 postgres.js —— 本文件切 PG 随机库（逐例一座），
+// 批量入口 await 化（顺带清掉 forEach/await 的 floating 违例）。用例语义与条数保持。
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { TokenUsageDAO } from "../db/dao/token-usage-dao"
+import { describePg, setupPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import type { LlmCallRow } from "../db/types"
 
-let db: Database.Database
+let pg: PgFixture
 let dao: TokenUsageDAO
 
-/** FK 链种子：workspaces → executions → node_executions。 */
-function seed(execId: string, neIds: string[]): void {
+/** FK 链种子（PG：executions→workspaces、node_executions→executions FK 保留）：
+ *  workspaces → executions → node_executions。 */
+async function seed(execId: string, neIds: string[]): Promise<void> {
   const t = new Date().toISOString()
-  db.prepare("INSERT OR IGNORE INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS','/tmp/w','o',?,?)").run(t, t)
-  const insExec = db.prepare("INSERT OR IGNORE INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, org, created_at, updated_at) VALUES (?,'ws-1','0','t.yaml','T','running',?,'o',?,?)")
-  insExec.run(execId, t, t, t)
-  const insNe = db.prepare("INSERT OR IGNORE INTO node_executions (id, execution_id, node_id, node_type, status, retry_count) VALUES (?,?,'n','agent','running',0)")
-  for (const id of neIds) insNe.run(id, execId)
+  await pg.sql.unsafe("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS','/tmp/w','o',$1,$2) ON CONFLICT (id) DO NOTHING", [t, t])
+  await pg.sql.unsafe("INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, org, created_at, updated_at) VALUES ($1,'ws-1','0','t.yaml','T','running',$2,'o',$3,$4) ON CONFLICT (id) DO NOTHING", [execId, t, t, t])
+  for (const id of neIds) {
+    await pg.sql.unsafe("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count) VALUES ($1,$2,'n','agent','running',0) ON CONFLICT (id) DO NOTHING", [id, execId])
+  }
 }
 
 function row(over: Partial<LlmCallRow> & { message_id?: string | null }): LlmCallRow {
@@ -40,7 +43,6 @@ function row(over: Partial<LlmCallRow> & { message_id?: string | null }): LlmCal
     output_tokens: 42,
     cache_read_tokens: 100000,
     cache_creation_tokens: 10,
-    cost_usd: 0.01,
     org: "o",
     workspace_id: "ws-1",
     workflow_ref: "wf",
@@ -51,59 +53,63 @@ function row(over: Partial<LlmCallRow> & { message_id?: string | null }): LlmCal
   } as LlmCallRow
 }
 
-const count = () =>
-  (db.prepare("SELECT COUNT(*) c FROM llm_calls").get() as { c: number }).c
+async function count(): Promise<number> {
+  return Number((await pg.sql`SELECT COUNT(*) c FROM llm_calls`)[0].c)
+}
 
-beforeEach(() => {
-  db = new Database(":memory:")
-  applySchema(db)
-  seed("e-1", ["e-1-n1", "e-1-t02", "e-1-t04", "e-1-t05"])
-  seed("e-2", ["e-2-n1"])
-  dao = new TokenUsageDAO(db)
+beforeEach(async () => {
+  pg = await setupPgSchema()
+  await seed("e-1", ["e-1-n1", "e-1-t02", "e-1-t04", "e-1-t05"])
+  await seed("e-2", ["e-2-n1"])
+  dao = new TokenUsageDAO(pg.sql)
 })
 
-describe("insertLlmCallBatch — 按 (execution_id, message_id) 去重", () => {
-  it("批内重复：一条消息挂三个并行节点 → 只落一行", () => {
-    dao.insertLlmCallBatch([
+afterEach(async () => {
+  await pg.close()
+})
+
+describePg("insertLlmCallBatch — 按 (execution_id, message_id) 去重", () => {
+  it("批内重复：一条消息挂三个并行节点 → 只落一行", async () => {
+    await dao.insertLlmCallBatch([
       row({ message_id: "msg-A", node_execution_id: "e-1-t02", node_id: "t02" }),
       row({ message_id: "msg-A", node_execution_id: "e-1-t04", node_id: "t04" }),
       row({ message_id: "msg-A", node_execution_id: "e-1-t05", node_id: "t05" }),
     ])
-    expect(count()).toBe(1)
+    expect(await count()).toBe(1)
     // 首见行胜出（归属第一个 flush 到的节点）
-    const kept = db.prepare("SELECT node_id FROM llm_calls").get() as { node_id: string }
+    const kept = (await pg.sql`SELECT node_id FROM llm_calls`)[0] as { node_id: string }
     expect(kept.node_id).toBe("t02")
   })
 
-  it("跨批重复：第二节点稍后 flush 同消息 → 跳过", () => {
-    dao.insertLlmCallBatch([row({ message_id: "msg-B" })])
-    dao.insertLlmCallBatch([row({ message_id: "msg-B", node_execution_id: "e-1-t04" })])
-    expect(count()).toBe(1)
+  it("跨批重复：第二节点稍后 flush 同消息 → 跳过", async () => {
+    await dao.insertLlmCallBatch([row({ message_id: "msg-B" })])
+    await dao.insertLlmCallBatch([row({ message_id: "msg-B", node_execution_id: "e-1-t04" })])
+    expect(await count()).toBe(1)
   })
 
-  it("null message_id 不参与去重（逐条保留）", () => {
-    dao.insertLlmCallBatch([
+  it("null message_id 不参与去重（逐条保留）", async () => {
+    await dao.insertLlmCallBatch([
       row({ message_id: null }),
       row({ message_id: null }),
     ])
-    expect(count()).toBe(2)
+    expect(await count()).toBe(2)
   })
 
-  it("跨 execution 互不影响：同消息不同 execution 各留一行", () => {
-    dao.insertLlmCallBatch([
+  it("跨 execution 互不影响：同消息不同 execution 各留一行", async () => {
+    await dao.insertLlmCallBatch([
       row({ message_id: "msg-C", execution_id: "e-1" }),
       row({ message_id: "msg-C", execution_id: "e-2", node_execution_id: "e-2-n1" }),
     ])
-    expect(count()).toBe(2)
+    expect(await count()).toBe(2)
   })
 
-  it("混合批：重复 + 新增 + null → 只落应有的", () => {
-    dao.insertLlmCallBatch([row({ message_id: "msg-D" })])
-    dao.insertLlmCallBatch([
+  it("混合批：重复 + 新增 + null → 只落应有的", async () => {
+    await dao.insertLlmCallBatch([row({ message_id: "msg-D" })])
+    await dao.insertLlmCallBatch([
       row({ message_id: "msg-D", node_execution_id: "e-1-t04" }), // 重复 → 跳
       row({ message_id: "msg-E" }),                                 // 新 → 留
       row({ message_id: null }),                                    // null → 留
     ])
-    expect(count()).toBe(3)
+    expect(await count()).toBe(3)
   })
 })

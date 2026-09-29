@@ -3,7 +3,11 @@
 // NEW-r2：行只存事实，费用查询时按价行派生（视图 llm_calls_costed 无 price_status 列，
 // 「priced」= cost_usd IS NOT NULL）；unpriced 计行不计费（KD4）；NULL 老行按 unknown 可筛（AC3）。
 // 数据 E2E_TEST_SRC_ 前缀，尾部清理。
+// P1 B4 票2B-1：llm_calls/billing_price_config 已迁 PG —— dao 直构吃 pg.sql，全局池经
+// setupRegisteredPgSchema 注册供路由侧 lazyDAO；SQLite 全局连接保留供父表。SQL 直查交叉切 PG
+// （COUNT/SUM bigint/numeric → ::int/::float8）。用例语义与条数不变。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from '../../db/pg/__tests__/dao-fixture'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -19,6 +23,7 @@ const system = createSystemRoutes()
 const app = new Hono().route('/api/system', system)
 
 let dbPath: string
+let pg: PgFixture | null = null
 const CALLS_URL = '/api/system/billing/calls'
 const T0 = 1_700_000_100_000
 
@@ -48,7 +53,9 @@ const FIXTURES: Array<[string, LlmCallSourcePath | null, number, boolean]> = [
   ['x-nu1', null, 800, true],                // 回填前 NULL 老行：按 unknown 筛出（AC3）
 ]
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   dbPath = path.join(os.tmpdir(), `test-billing-source-${process.pid}-${Date.now()}.db`)
   initDb(dbPath)
   const db = getDb()
@@ -57,24 +64,28 @@ beforeAll(() => {
   db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('e-5','ws-5','0','wf.yaml','WF','completed',?,?,?,?,?)`).run(t, t, 'default', t, t)
   db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at) VALUES ('e5-n1','e-5','n1','agent','completed',0,1,?,?)").run(t, t)
-  new BillingDAO(db).createPrice({ id: 'p-src-m', vendor: 'E2E_TEST_SRC_V', model_id: 'E2E_TEST_SRC_M', input_unit_price: 500, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
-  const dao = new TokenUsageDAO(db)
-  FIXTURES.forEach(([id, source, inTok, mup], i) => {
+  await new BillingDAO(pg.sql).createPrice({ id: 'p-src-m', vendor: 'E2E_TEST_SRC_V', model_id: 'E2E_TEST_SRC_M', input_unit_price: 500, output_unit_price: 0, cache_write_unit_price: 0, cache_read_unit_price: 0, currency: 'USD' })
+  const dao = new TokenUsageDAO(pg.sql)
+  for (let i = 0; i < FIXTURES.length; i++) {
+    const [id, source, inTok, mup] = FIXTURES[i]
     const r = row(id, {
       model: mup ? 'E2E_TEST_SRC_MUP' : 'E2E_TEST_SRC_M',
       source_path: source, input_tokens: inTok, timestamp: T0 + i,
     })
     if (source === null) delete (r as { source_path?: string }).source_path // 模拟老行不带列值
-    dao.insertLlmCall(r)
-  })
+    await dao.insertLlmCall(r)
+  }
 })
 
-afterAll(() => {
-  getDb().prepare("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_SRC_%'").run()
-  getDb().prepare("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_SRC_%'").run()
-  expect((getDb().prepare("SELECT COUNT(*) n FROM llm_calls WHERE model LIKE 'E2E_TEST_SRC_%'").get() as { n: number }).n).toBe(0)
+afterAll(async () => {
+  if (!pg) return
+  await pg.sql.unsafe("DELETE FROM llm_calls WHERE model LIKE 'E2E_TEST_SRC_%'")
+  await pg.sql.unsafe("DELETE FROM billing_price_config WHERE model_id LIKE 'E2E_TEST_SRC_%'")
+  expect(Number((await pg.sql`SELECT COUNT(*) n FROM llm_calls WHERE model LIKE 'E2E_TEST_SRC_%'`)[0].n)).toBe(0)
   closeDb()
   for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) if (fs.existsSync(f)) fs.unlinkSync(f)
+  await pg.close()
+  pg = null
 })
 
 async function get(params = ''): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -83,20 +94,22 @@ async function get(params = ''): Promise<{ status: number; body: Record<string, 
 }
 
 /** SQL 直查交叉（独立真相源；事实列走 llm_calls，派生列走视图）。 */
-function sqlIds(source: LlmCallSourcePath): string[] {
-  const w = source === 'unknown' ? "(source_path = 'unknown' OR source_path IS NULL)" : 'source_path = ?'
+async function sqlIds(source: LlmCallSourcePath): Promise<string[]> {
+  const w = source === 'unknown' ? "(source_path = 'unknown' OR source_path IS NULL)" : 'source_path = $1'
   const args = source === 'unknown' ? [] : [source]
-  return (getDb().prepare(
+  const rows = await pg!.sql.unsafe(
     `SELECT id FROM llm_calls WHERE model LIKE 'E2E_TEST_SRC_%' AND ${w} ORDER BY timestamp DESC`,
-  ).all(...args) as { id: string }[]).map(r => r.id)
+    args,
+  )
+  return (rows as unknown as { id: string }[]).map(r => r.id)
 }
 
-describe('source_path 筛选 = SQL 直查（AC1/AC3）', () => {
+describePg('source_path 筛选 = SQL 直查（AC1/AC3）', () => {
   it('逐来源筛选行集一致', async () => {
     for (const source of ['workflow', 'interaction', 'harness', 'clone_chat', 'global_chat', 'session_compress', 'unknown'] as const) {
       const { status, body } = await get(`?source_path=${source}`)
       expect(status, source).toBe(200)
-      expect((body.calls as Array<{ id: string }>).map(c => c.id), source).toEqual(sqlIds(source))
+      expect((body.calls as Array<{ id: string }>).map(c => c.id), source).toEqual(await sqlIds(source))
     }
   })
 
@@ -120,20 +133,22 @@ describe('source_path 筛选 = SQL 直查（AC1/AC3）', () => {
   })
 })
 
-describe('source_subtotals 小计块（AC2 / KD26 同筛选口径；费用 = 派生）', () => {
+describePg('source_subtotals 小计块（AC2 / KD26 同筛选口径；费用 = 派生）', () => {
   it('各来源：条数 = SQL COUNT，费用 = 视图 SUM(cost_usd)；unpriced 计行不计费；全未定价 → NULL 不焊 0', async () => {
     const { body } = await get()
     const subs = body.source_subtotals as Array<{ source: string; count: number; priced_count: number; cost_usd: number | null }>
     const bySource = Object.fromEntries(subs.map(s => [s.source, s]))
     for (const src of ['workflow', 'interaction', 'harness', 'clone_chat', 'global_chat', 'session_compress', 'unknown']) {
-      const sql = getDb().prepare(
-        `SELECT COUNT(*) count,
-                SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END) priced_count,
-                SUM(cost_usd) cost_usd
+      const sqlRows = (await pg!.sql.unsafe(
+        `SELECT COUNT(*)::int count,
+                SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END)::int priced_count,
+                SUM(cost_usd)::float8 cost_usd
          FROM llm_calls_costed WHERE model LIKE 'E2E_TEST_SRC_%' AND ${
-           src === 'unknown' ? "(source_path = 'unknown' OR source_path IS NULL)" : "source_path = ?"
+           src === 'unknown' ? "(source_path = 'unknown' OR source_path IS NULL)" : "source_path = $1"
          }`,
-      ).get(...(src === 'unknown' ? [] : [src])) as { count: number; priced_count: number; cost_usd: number | null }
+        src === 'unknown' ? [] : [src],
+      )) as unknown as { count: number; priced_count: number; cost_usd: number | null }[]
+      const sql = sqlRows[0]
       expect(bySource[src], src).toEqual({ source: src, ...sql })
     }
     // 手算钉值（不只靠 SQL 自证；M 价 = in×500/1M）：workflow = 0.5+0.25=0.75（3 行含 1 未定价）；global_chat 全未定价 → NULL

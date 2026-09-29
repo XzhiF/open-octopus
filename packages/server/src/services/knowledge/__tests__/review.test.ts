@@ -1,37 +1,46 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+// P1 B2：pending_review 已迁 postgres.js（BasePgDAO）—— 本文件造数/读断言全部走 PG。
+// 每文件一座随机测试库（beforeAll 建 / afterAll  DROP），用例间 TRUNCATE 清表；
+// 不再需要 SQLite（本域只碰 pending_review 一张表 + 知识文件）。
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
-import { applySchema } from "../../../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import { ReviewService } from "../review"
 import { readKnowledgeFile } from "../file-ops"
 
-describe("review", () => {
-  let db: Database.Database
+describePg("review", () => {
+  let pg: PgFixture | null = null
   let pendingReviewDAO: PendingReviewDAO
   let reviewService: ReviewService
   let tmpDir: string
 
-  beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    pendingReviewDAO = new PendingReviewDAO(db)
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("pending_review")
+    pendingReviewDAO = new PendingReviewDAO(pg!.sql)
     reviewService = new ReviewService(pendingReviewDAO)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-test-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
-    db?.close()
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  function insertPendingRule(overrides: Partial<Parameters<typeof pendingReviewDAO.insert>[0]> = {}) {
+  async function insertPendingRule(overrides: Partial<Parameters<typeof pendingReviewDAO.insert>[0]> = {}) {
     const id = overrides.id ?? "rule-pending-001"
-    pendingReviewDAO.insert({
+    await pendingReviewDAO.insert({
       id,
       type: "rule",
       source: "workspace_archive",
@@ -54,10 +63,10 @@ describe("review", () => {
   // TC-002: approveItem writes to Org-level knowledge directory
   // =========================================================================
   describe("approveItem (TC-002)", () => {
-    it("writes rule to org knowledge directory, not global", () => {
-      const id = insertPendingRule()
+    it("writes rule to org knowledge directory, not global", async () => {
+      const id = await insertPendingRule()
 
-      const result = reviewService.approveItem(id, "test-org")
+      const result = await reviewService.approveItem(id, "test-org")
       expect(result.ok).toBe(true)
       expect(result.ruleId).toBeDefined()
 
@@ -68,21 +77,21 @@ describe("review", () => {
       expect(content).toContain(result.ruleId)
 
       // Verify pending status updated
-      const pending = pendingReviewDAO.getById(id)
+      const pending = await pendingReviewDAO.getById(id)
       expect(pending?.status).toBe("approved")
     })
 
-    it("is idempotent — approving twice returns same ruleId", () => {
-      const id = insertPendingRule()
+    it("is idempotent — approving twice returns same ruleId", async () => {
+      const id = await insertPendingRule()
 
-      const first = reviewService.approveItem(id, "test-org")
-      const second = reviewService.approveItem(id, "test-org")
+      await reviewService.approveItem(id, "test-org") // first approval
+      const second = await reviewService.approveItem(id, "test-org")
       expect(second.ok).toBe(true)
       expect(second.ruleId).toBe(id) // Already approved, returns original id
     })
 
-    it("throws NOT_FOUND for nonexistent item", () => {
-      expect(() => reviewService.approveItem("nonexistent", "test-org")).toThrow("NOT_FOUND")
+    it("throws NOT_FOUND for nonexistent item", async () => {
+      await expect(reviewService.approveItem("nonexistent", "test-org")).rejects.toThrow("NOT_FOUND")
     })
   })
 
@@ -123,34 +132,34 @@ describe("review", () => {
   // Additional review operations
   // =========================================================================
   describe("rejectItem", () => {
-    it("rejects with optional user notes", () => {
-      const id = insertPendingRule()
-      const result = reviewService.rejectItem(id, "Not applicable")
+    it("rejects with optional user notes", async () => {
+      const id = await insertPendingRule()
+      const result = await reviewService.rejectItem(id, "Not applicable")
       expect(result.ok).toBe(true)
 
-      const pending = pendingReviewDAO.getById(id)
+      const pending = await pendingReviewDAO.getById(id)
       expect(pending?.status).toBe("rejected")
       expect(pending?.user_notes).toBe("Not applicable")
     })
   })
 
   describe("deferItem", () => {
-    it("defers a pending item", () => {
-      const id = insertPendingRule()
-      const result = reviewService.deferItem(id)
+    it("defers a pending item", async () => {
+      const id = await insertPendingRule()
+      const result = await reviewService.deferItem(id)
       expect(result.ok).toBe(true)
 
-      const pending = pendingReviewDAO.getById(id)
+      const pending = await pendingReviewDAO.getById(id)
       expect(pending?.status).toBe("deferred")
     })
   })
 
   describe("batchApprove", () => {
-    it("approves multiple items and reports results", () => {
-      const id1 = insertPendingRule({ id: "batch-1" })
-      const id2 = insertPendingRule({ id: "batch-2" })
+    it("approves multiple items and reports results", async () => {
+      const id1 = await insertPendingRule({ id: "batch-1" })
+      const id2 = await insertPendingRule({ id: "batch-2" })
 
-      const result = reviewService.batchApprove([id1, id2, "nonexistent"], "test-org")
+      const result = await reviewService.batchApprove([id1, id2, "nonexistent"], "test-org")
       expect(result.succeeded).toBe(2)
       expect(result.failed).toBe(1)
       expect(result.details).toHaveLength(3)
@@ -158,11 +167,11 @@ describe("review", () => {
   })
 
   describe("getPendingSummary", () => {
-    it("returns rule count", () => {
-      insertPendingRule({ id: "r1" })
-      insertPendingRule({ id: "r2" })
+    it("returns rule count", async () => {
+      await insertPendingRule({ id: "r1" })
+      await insertPendingRule({ id: "r2" })
 
-      const summary = reviewService.getPendingSummary()
+      const summary = await reviewService.getPendingSummary()
       expect(summary.rules).toBe(2)
     })
   })

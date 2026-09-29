@@ -120,8 +120,8 @@ export class StrategyEngine {
         const result = await this.executeOneAction(report, actionDef)
         results.push(result)
 
-        // Persist intervention event
-        this.persistIntervention(report, actionDef, result)
+        // Persist intervention event (B1: harness_events → PG，await 保执行序；内部 try/catch 语义不变)
+        await this.persistIntervention(report, actionDef, result)
 
         // Emit SSE event
         this.emitInterventionSSE(report, actionDef, result)
@@ -130,7 +130,7 @@ export class StrategyEngine {
         const errorResult: InterventionResult = {
           success: false,
           action: typeof actionDef === 'string' ? actionDef : actionDef.type,
-          error: err instanceof Error ? err.message : String(err),
+          message: err instanceof Error ? err.message : String(err),
         }
         results.push(errorResult)
       }
@@ -320,11 +320,11 @@ export class StrategyEngine {
   /**
    * Persist an intervention result to the harness_events table.
    */
-  private persistIntervention(
+  private async persistIntervention(
     report: DiagnosisReport,
     actionDef: StrategyAction,
     result: InterventionResult,
-  ): void {
+  ): Promise<void> {
     const eventId = `intervention-${report.id}-${actionDef.type}-${Date.now()}`
     const row: HarnessEvent = {
       id: eventId,
@@ -342,7 +342,7 @@ export class StrategyEngine {
     }
 
     try {
-      this.dao.insertEvent(row)
+      await this.dao.insertEvent(row)
     } catch (err) {
       console.error("[StrategyEngine] Failed to persist intervention event:", err)
     }
@@ -380,11 +380,11 @@ export class StrategyEngine {
    * Emit harness_blocked SSE event and persist to harness_events when
    * a process_conflict diagnosis at critical severity executes an abort action.
    */
-  private emitBlockedIfNeeded(
+  private async emitBlockedIfNeeded(
     report: DiagnosisReport,
     strategy: StrategyConfig,
     actionResults: InterventionResult[],
-  ): void {
+  ): Promise<void> {
     const isProcessConflict = report.detector === "process_conflict"
     const isCritical = report.severity === "critical"
     const hasAbortAction = strategy.actions.some((a) => a.type === "abort")
@@ -433,7 +433,7 @@ export class StrategyEngine {
         created_at: Math.floor(Date.now() / 1000),
       }
 
-      this.dao.insertEvent(row)
+      await this.dao.insertEvent(row)
     } catch (err) {
       console.error("[StrategyEngine] Failed to persist blocked event:", err)
     }

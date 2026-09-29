@@ -30,6 +30,7 @@ import {
   type AssistWorkflowRun,
 } from "@octopus/shared"
 import { TaskDAO } from "../../db/dao/task-dao"
+import { pgSql } from "../../db/dao/registry"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { SSEService } from "../sse"
@@ -95,7 +96,9 @@ export interface AssistWorkflowTriggerResult {
 // ── Service ──────────────────────────────────────────────────────
 
 export class AssistWorkflowService {
-  private taskDAO: TaskDAO
+  // P1 B2: tasks 表已迁 PG（pgSql() 按访问解析，同 tasks-service 接线）；
+  // execDAO/workspaceDAO 已迁 PG（B5 票5/票6a），构造收口 pgSql()。
+  private get taskDAO(): TaskDAO { return new TaskDAO(pgSql()) }
   private execDAO: ExecutionDAO
   private workspaceDAO: WorkspaceDAO
   private taskHome: TaskHomeService
@@ -105,19 +108,18 @@ export class AssistWorkflowService {
     private sse: SSEService,
     taskHome?: TaskHomeService,
   ) {
-    this.taskDAO = new TaskDAO(db)
-    this.execDAO = new ExecutionDAO(db)
-    this.workspaceDAO = new WorkspaceDAO(db)
+    this.execDAO = new ExecutionDAO(pgSql())
+    this.workspaceDAO = new WorkspaceDAO(pgSql()) // 票6a: WorkspaceDAO→PG（池按访问解析）
     this.taskHome = taskHome ?? new TaskHomeService()
   }
 
   // ── Trigger (AC2/AC3/AC7) ─────────────────────────────────────────
 
-  trigger(
+  async trigger(
     taskId: string,
     template: string,
     input?: AssistWorkflowTriggerInput,
-  ): AssistWorkflowTriggerResult {
+  ): Promise<AssistWorkflowTriggerResult> {
     if (!ALL_TEMPLATES.includes(template)) {
       throw new AssistWorkflowError(
         `Unknown assist-workflow template: ${template}. Allowed: ${ALL_TEMPLATES.join(", ")}`,
@@ -125,7 +127,7 @@ export class AssistWorkflowService {
       )
     }
 
-    const task = this.taskDAO.getById(taskId)
+    const task = await this.taskDAO.getById(taskId)
     if (!task) {
       throw new AssistWorkflowError(`Task not found: ${taskId}`, "TASK_NOT_FOUND")
     }
@@ -142,7 +144,7 @@ export class AssistWorkflowService {
     const homePath = this.taskHome.homePath(taskId)
     const now = new Date().toISOString()
     const workspaceId = randomUUID()
-    this.workspaceDAO.insert({
+    await this.workspaceDAO.insert({
       id: workspaceId,
       name: `task-assist-${taskId.slice(0, 8)}-${template}`,
       org: task.org,
@@ -156,20 +158,20 @@ export class AssistWorkflowService {
       archive_status: null,
     })
 
-    const registry = getExecutionService(workspaceId)
+    const registry = await getExecutionService(workspaceId)
     if (!registry) {
-      this.workspaceDAO.deleteById(workspaceId)
+      await this.workspaceDAO.deleteById(workspaceId)
       throw new Error(`ExecutionService unavailable for assist workspace ${workspaceId}`)
     }
 
-    const execution = registry.service.create(workspaceId, {
+    const execution = await registry.service.create(workspaceId, {
       workflow_ref: effectiveTemplate,
       name: `assist-${template}`,
       triggered_by: "task-assist",
       input_values: inputValues,
     })
 
-    this.execDAO.updateExecution(execution.id, {
+    await this.execDAO.updateExecution(execution.id, {
       pipeline_config: JSON.stringify({ task_id: taskId, template }),
     })
 
@@ -179,11 +181,11 @@ export class AssistWorkflowService {
     const capturedMode = input?.mode ?? "moa"
     registry.service.registerExternalCallbacks(
       {
-        onComplete: ((_args?: unknown) => {
-          this.reapWorkspace(workspaceId)
+        onComplete: (async (_args?: unknown) => {
+          await this.reapWorkspace(workspaceId)
           this.emitRunUpdate(taskId, execId, "complete")
           try {
-            this.writeAnalysisArtifact(taskId, execId, capturedTask, capturedInput, capturedMode)
+            await this.writeAnalysisArtifact(taskId, execId, capturedTask, capturedInput, capturedMode)
           } catch (err: unknown) {
             // eslint-disable-next-line no-console
             console.warn(
@@ -192,19 +194,19 @@ export class AssistWorkflowService {
             )
           }
         }) as never,
-        onError: ((_args?: unknown) => {
-          this.reapWorkspace(workspaceId)
+        onError: (async (_args?: unknown) => {
+          await this.reapWorkspace(workspaceId)
           this.emitRunUpdate(taskId, execId, "error")
         }) as never,
       },
       execution.id,
     )
 
-    registry.service.start(execution.id, inputValues as Record<string, string>).catch((err: unknown) => {
+    registry.service.start(execution.id, inputValues as Record<string, string>).catch(async (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       // eslint-disable-next-line no-console
       console.error(`[assist-workflow] start failed for run ${execution.id}:`, msg)
-      this.reapWorkspace(workspaceId)
+      await this.reapWorkspace(workspaceId)
       this.emitRunUpdate(taskId, execId, "error")
     })
 
@@ -220,8 +222,8 @@ export class AssistWorkflowService {
 
   // ── Query (AC4/AC5) ──────────────────────────────────────────────
 
-  getRun(taskId: string, runId: string): AssistWorkflowRun {
-    const exec = this.execDAO.findById(runId)
+  async getRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
+    const exec = await this.execDAO.findById(runId)
     if (!exec) {
       throw new AssistWorkflowError(`Assist run not found: ${runId}`, "RUN_NOT_FOUND")
     }
@@ -237,7 +239,7 @@ export class AssistWorkflowService {
     const homePath = this.taskHome.homePath(taskId)
     const logs = this.readLogs(homePath, runId)
 
-    const nodeOutputs = this.execDAO.findNodeOutputs(runId, SWARM_NODE_ID)
+    const nodeOutputs = await this.execDAO.findNodeOutputs(runId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
 
     const run: AssistWorkflowRun = {
@@ -262,7 +264,7 @@ export class AssistWorkflowService {
     return run
   }
 
-  listRuns(taskId: string): AssistWorkflowRun[] {
+  async listRuns(taskId: string): Promise<AssistWorkflowRun[]> {
     const escaped = taskId.replace(/[%_\\]/g, "\\$&")
     const rows = this.db
       .prepare(
@@ -272,7 +274,7 @@ export class AssistWorkflowService {
     const runs: AssistWorkflowRun[] = []
     for (const row of rows) {
       try {
-        runs.push(this.getRun(taskId, row.id))
+        runs.push(await this.getRun(taskId, row.id))
       } catch {
         // Stale/inconsistent row — skip
       }
@@ -282,12 +284,12 @@ export class AssistWorkflowService {
 
   // ── Reap (AC6) ───────────────────────────────────────────────────
 
-  reapWorkspace(workspaceId: string): void {
+  async reapWorkspace(workspaceId: string): Promise<void> {
     try {
-      this.workspaceDAO.deleteById(workspaceId)
+      await this.workspaceDAO.deleteById(workspaceId)
     } catch (err: unknown) {
       try {
-        this.workspaceDAO.softArchive(workspaceId)
+        await this.workspaceDAO.softArchive(workspaceId)
       } catch (archiveErr: unknown) {
         // eslint-disable-next-line no-console
         console.warn(
@@ -417,14 +419,14 @@ export class AssistWorkflowService {
 
   /** Write the analysis report as a markdown artifact. Works for both MoA and
    *  Debate modes. */
-  private writeAnalysisArtifact(
+  private async writeAnalysisArtifact(
     taskId: string,
     executionId: string,
     task: { id: string; name: string; project_ids: string; task_spec: string },
     inputValues: Record<string, unknown>,
     mode: string,
-  ): void {
-    const nodeOutputs = this.execDAO.findNodeOutputs(executionId, SWARM_NODE_ID)
+  ): Promise<void> {
+    const nodeOutputs = await this.execDAO.findNodeOutputs(executionId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
     if (!synthesis) return
 
@@ -518,13 +520,13 @@ export class AssistWorkflowService {
 
   // ── Legacy artifact (kept for backward compat with old templates) ─
 
-  private writeMoaArtifact(
+  private async writeMoaArtifact(
     taskId: string,
     executionId: string,
     task: { id: string; name: string; project_ids: string; task_spec: string },
     inputValues: Record<string, unknown>,
-  ): void {
-    this.writeAnalysisArtifact(taskId, executionId, task, inputValues, "moa")
+  ): Promise<void> {
+    await this.writeAnalysisArtifact(taskId, executionId, task, inputValues, "moa")
   }
 
   // ── Internals ────────────────────────────────────────────────────

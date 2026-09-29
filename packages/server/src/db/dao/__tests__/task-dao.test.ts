@@ -6,11 +6,10 @@ import os from "os"
 import { applySchema, SCHEMA_VERSION } from "../../schema"
 import { TaskDAO } from "../task-dao"
 import { ScheduleConfigDAO } from "../schedule-config-dao"
+import { describePg, setupPgSchema, type PgFixture } from "../../pg/__tests__/dao-fixture"
 import type { TaskRow } from "../../types"
 
 let db: Database.Database
-let taskDao: TaskDAO
-let schedDao: ScheduleConfigDAO
 let dbPath: string
 
 beforeEach(() => {
@@ -18,8 +17,6 @@ beforeEach(() => {
   db = new Database(dbPath)
   db.pragma("foreign_keys = ON")
   applySchema(db)
-  taskDao = new TaskDAO(db)
-  schedDao = new ScheduleConfigDAO(db)
 })
 
 afterEach(() => {
@@ -146,11 +143,67 @@ describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
     })
   })
 
-  describe("TaskDAO round-trip", () => {
-    it("inserts and retrieves a task by id", () => {
+  // P1 B5 票4：ScheduleConfigDAO 已迁 BasePgDAO（B5 票1）—— insertSchedule/findById
+  // 走 PG 随机测试库（见下方 describePg），SQLite 句柄喂它必炸
+  // "this.sql(...).unsafe is not a function"。shape 断言（方法删除线）随块同迁。
+})
+
+describePg("ScheduleConfigDAO — a definition row, and nothing else (PG)", () => {
+  let pg: PgFixture
+  let schedDao: ScheduleConfigDAO
+
+  beforeEach(async () => {
+    pg = await setupPgSchema()
+    schedDao = new ScheduleConfigDAO(pg.sql)
+  })
+  afterEach(async () => { await pg.close() })
+
+  it("insertSchedule writes a job definition without any task back-reference", async () => {
+    const now = new Date().toISOString()
+    const result = await schedDao.insertSchedule({
+      id: "sched-def-1", org: "xzf", name: "E2E_TD_def",
+      cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
+      config: JSON.stringify({ schema_version: "3.0", type: "workflow" }),
+      created_at: now, updated_at: now,
+    } as never)
+    expect(result.changes).toBe(1)
+    const got = await schedDao.findById("sched-def-1")
+    expect(got!.name).toBe("E2E_TD_def")
+    // The columns are gone from the row type too — asserting the SHAPE here is what
+    // keeps a future caller from quietly reintroducing one through `as any`.
+    expect(Object.keys(got!)).not.toContain("origin_type")
+    expect(Object.keys(got!)).not.toContain("origin_id")
+  })
+
+  it("the task-walking finders are gone from the DAO", () => {
+    // These four existed solely to answer 「这个任务的内在哪」 from the scheduler side.
+    for (const gone of [
+      "findSchedulesByOrigin", "findRootSchedulesByTaskIds",
+      "findQueuedSchedules", "claimParkedTaskSchedule", "cancelTriggeredTaskSchedule",
+      "findFailedChildSchedules",
+    ]) {
+      expect(typeof (schedDao as unknown as Record<string, unknown>)[gone]).not.toBe("function")
+    }
+  })
+})
+
+  // P1 B2: TaskDAO 已迁 postgres.js —— round-trip/AC3 走 PG 随机测试库。
+  // 注意 jsonb 语义：task_spec 读出为 PG 规范化 JSON（键序/空白随 canonical 输出），
+  // 「读出串 === 写入串」型断言已改语义比对（JSON.parse 后 deep-equal）。
+describePg("TaskDAO round-trip (PG)", () => {
+  let pg: PgFixture
+  let taskDao: TaskDAO
+
+  beforeEach(async () => {
+      pg = await setupPgSchema()
+      taskDao = new TaskDAO(pg.sql)
+    })
+  afterEach(async () => { await pg.close() })
+
+    it("inserts and retrieves a task by id", async () => {
       const row = makeTaskRow({ id: "task-ins-1", org: "xzf", name: "E2E_TD_ins" })
-      taskDao.insert(row)
-      const got = taskDao.getById("task-ins-1")
+      await taskDao.insert(row)
+      const got = await taskDao.getById("task-ins-1")
       expect(got).not.toBeNull()
       expect(got!.id).toBe("task-ins-1")
       expect(got!.org).toBe("xzf")
@@ -158,147 +211,115 @@ describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
       expect(got!.status).toBe("draft")
       expect(got!.version).toBe(1)
       expect(got!.deleted_at).toBeNull()
-      expect(got!.task_spec).toBe(JSON.stringify({ goal: "build X", ac: ["ac1"] }))
-    })
+      expect(JSON.parse(got!.task_spec)).toEqual(JSON.parse(JSON.stringify({ goal: "build X", ac: ["ac1"] })))
+  })
 
-    it("getById returns null for missing or soft-deleted task", () => {
-      expect(taskDao.getById("nope")).toBeNull()
+    it("getById returns null for missing or soft-deleted task", async () => {
+      expect(await taskDao.getById("nope")).toBeNull()
       const row = makeTaskRow({ id: "task-del", org: "xzf", name: "E2E_TD_del" })
-      taskDao.insert(row)
-      taskDao.softDelete("task-del")
+      await taskDao.insert(row)
+      await taskDao.softDelete("task-del")
       // getById (active) excludes soft-deleted
-      expect(taskDao.getById("task-del")).toBeNull()
+      expect(await taskDao.getById("task-del")).toBeNull()
       // getByIdRaw includes soft-deleted
-      const raw = taskDao.getByIdRaw("task-del")
+      const raw = await taskDao.getByIdRaw("task-del")
       expect(raw).not.toBeNull()
       expect(raw!.deleted_at).not.toBeNull()
-    })
+  })
 
-    it("updates task fields and bumps version", () => {
+    it("updates task fields and bumps version", async () => {
       const row = makeTaskRow({ id: "task-upd", org: "xzf", name: "E2E_TD_upd" })
-      taskDao.insert(row)
-      const result = taskDao.updateWithVersion("task-upd", {
+      await taskDao.insert(row)
+      const result = await taskDao.updateWithVersion("task-upd", {
         status: "ready",
         name: "E2E_TD_upd-renamed",
         workflow_ref: "built-in/composition-task",
       }, 1)
       expect(result.changes).toBe(1)
-      const got = taskDao.getById("task-upd")
+      const got = await taskDao.getById("task-upd")
       expect(got!.status).toBe("ready")
       expect(got!.name).toBe("E2E_TD_upd-renamed")
       expect(got!.workflow_ref).toBe("built-in/composition-task")
       expect(got!.version).toBe(2)
-    })
+  })
 
-    it("updateWithVersion rejects stale version (optimistic concurrency)", () => {
+    it("updateWithVersion rejects stale version (optimistic concurrency)", async () => {
       const row = makeTaskRow({ id: "task-occ", org: "xzf", name: "E2E_TD_occ" })
-      taskDao.insert(row)
+      await taskDao.insert(row)
       // Bump to v2
-      taskDao.updateWithVersion("task-occ", { status: "ready" }, 1)
+      await taskDao.updateWithVersion("task-occ", { status: "ready" }, 1)
       // Stale update against v1 should affect 0 rows
-      const result = taskDao.updateWithVersion("task-occ", { status: "running" }, 1)
+      const result = await taskDao.updateWithVersion("task-occ", { status: "running" }, 1)
       expect(result.changes).toBe(0)
-      const got = taskDao.getById("task-occ")
+      const got = await taskDao.getById("task-occ")
       expect(got!.status).toBe("ready")
       expect(got!.version).toBe(2)
-    })
+  })
 
-    it("lists tasks by status, excluding soft-deleted", () => {
+    it("lists tasks by status, excluding soft-deleted", async () => {
       const now = new Date().toISOString()
-      taskDao.insert(makeTaskRow({ id: "ls-draft-1", org: "xzf", name: "E2E_TD_d1", status: "draft", created_at: now }))
-      taskDao.insert(makeTaskRow({ id: "ls-draft-2", org: "xzf", name: "E2E_TD_d2", status: "draft", created_at: now }))
-      taskDao.insert(makeTaskRow({ id: "ls-ready-1", org: "xzf", name: "E2E_TD_r1", status: "ready", created_at: now }))
-      taskDao.insert(makeTaskRow({ id: "ls-done-1", org: "xzf", name: "E2E_TD_done", status: "done", created_at: now, completed_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "ls-draft-1", org: "xzf", name: "E2E_TD_d1", status: "draft", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "ls-draft-2", org: "xzf", name: "E2E_TD_d2", status: "draft", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "ls-ready-1", org: "xzf", name: "E2E_TD_r1", status: "ready", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "ls-done-1", org: "xzf", name: "E2E_TD_done", status: "done", created_at: now, completed_at: now }))
 
-      const drafts = taskDao.listByStatus("draft")
+      const drafts = await taskDao.listByStatus("draft")
       expect(drafts.map(t => t.id)).toEqual(["ls-draft-1", "ls-draft-2"])
 
-      const ready = taskDao.listByStatus("ready")
+      const ready = await taskDao.listByStatus("ready")
       expect(ready.map(t => t.id)).toEqual(["ls-ready-1"])
 
-      const done = taskDao.listByStatus("done")
+      const done = await taskDao.listByStatus("done")
       expect(done.map(t => t.id)).toEqual(["ls-done-1"])
-    })
+  })
 
-    it("lists by org across all non-terminal statuses (kanban)", () => {
+    it("lists by org across all non-terminal statuses (kanban)", async () => {
       const now = new Date().toISOString()
-      taskDao.insert(makeTaskRow({ id: "kb-d", org: "xzf", name: "E2E_TD_kd", status: "draft", created_at: now }))
-      taskDao.insert(makeTaskRow({ id: "kb-r", org: "xzf", name: "E2E_TD_kr", status: "ready", created_at: now }))
-      taskDao.insert(makeTaskRow({ id: "kb-x", org: "other", name: "E2E_TD_kx", status: "draft", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "kb-d", org: "xzf", name: "E2E_TD_kd", status: "draft", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "kb-r", org: "xzf", name: "E2E_TD_kr", status: "ready", created_at: now }))
+      await taskDao.insert(makeTaskRow({ id: "kb-x", org: "other", name: "E2E_TD_kx", status: "draft", created_at: now }))
       // soft-deleted should be excluded
-      taskDao.insert(makeTaskRow({ id: "kb-del", org: "xzf", name: "E2E_TD_kdel", status: "draft", created_at: now }))
-      taskDao.softDelete("kb-del")
+      await taskDao.insert(makeTaskRow({ id: "kb-del", org: "xzf", name: "E2E_TD_kdel", status: "draft", created_at: now }))
+      await taskDao.softDelete("kb-del")
 
-      const items = taskDao.listByOrg("xzf")
+      const items = await taskDao.listByOrg("xzf")
       const ids = items.map(t => t.id)
       expect(ids).toContain("kb-d")
       expect(ids).toContain("kb-r")
       expect(ids).not.toContain("kb-x")
       expect(ids).not.toContain("kb-del")
-    })
-
-    it("softDelete sets deleted_at (active row hidden, raw row kept)", () => {
-      const row = makeTaskRow({ id: "task-sd", org: "xzf", name: "E2E_TD_sd" })
-      taskDao.insert(row)
-      expect(taskDao.getById("task-sd")).not.toBeNull() // active before
-      const result = taskDao.softDelete("task-sd")
-      expect(result.changes).toBe(1)
-      // active lookup now hides it
-      expect(taskDao.getById("task-sd")).toBeNull()
-      // raw lookup still returns the row, with deleted_at set
-      const raw = taskDao.getByIdRaw("task-sd")!
-      expect(raw.deleted_at).not.toBeNull()
-      // re-soft-deleting a deleted row is a no-op (changes=0 — idempotent)
-      expect(taskDao.softDelete("task-sd").changes).toBe(0)
-    })
   })
 
-  describe("AC3: tasks.workspace_id round-trip (v40, K4 ws reuse)", () => {
-    it("insert writes workspace_id; NULL when not provided (never triggered)", () => {
-      taskDao.insert(makeTaskRow({ id: "ws-1", org: "xzf", name: "E2E_TD_ws1", workspace_id: "ws-abc" }))
-      taskDao.insert(makeTaskRow({ id: "ws-2", org: "xzf", name: "E2E_TD_ws2" }))
-      expect(taskDao.getById("ws-1")!.workspace_id).toBe("ws-abc")
-      expect(taskDao.getById("ws-2")!.workspace_id).toBeNull()
-    })
+    it("softDelete sets deleted_at (active row hidden, raw row kept)", async () => {
+      const row = makeTaskRow({ id: "task-sd", org: "xzf", name: "E2E_TD_sd" })
+      await taskDao.insert(row)
+      expect(await taskDao.getById("task-sd")).not.toBeNull() // active before
+      const result = await taskDao.softDelete("task-sd")
+      expect(result.changes).toBe(1)
+      // active lookup now hides it
+      expect(await taskDao.getById("task-sd")).toBeNull()
+      // raw lookup still returns the row, with deleted_at set
+      const raw = (await taskDao.getByIdRaw("task-sd"))!
+      expect(raw.deleted_at).not.toBeNull()
+      // re-soft-deleting a deleted row is a no-op (changes=0 — idempotent)
+      expect((await taskDao.softDelete("task-sd")).changes).toBe(0)
+  })
 
-    it("updateWithVersion binds workspace_id (first-trigger write-back, 票 05 pattern)", () => {
-      taskDao.insert(makeTaskRow({ id: "ws-3", org: "xzf", name: "E2E_TD_ws3", status: "ready" }))
-      const r = taskDao.updateWithVersion("ws-3", { status: "running", workspace_id: "ws-new" }, 1)
+    it("insert writes workspace_id; NULL when not provided (never triggered)", async () => {
+      await taskDao.insert(makeTaskRow({ id: "ws-1", org: "xzf", name: "E2E_TD_ws1", workspace_id: "ws-abc" }))
+      await taskDao.insert(makeTaskRow({ id: "ws-2", org: "xzf", name: "E2E_TD_ws2" }))
+      expect((await taskDao.getById("ws-1"))!.workspace_id).toBe("ws-abc")
+      expect((await taskDao.getById("ws-2"))!.workspace_id).toBeNull()
+  })
+
+    it("updateWithVersion binds workspace_id (first-trigger write-back, 票 05 pattern)", async () => {
+      await taskDao.insert(makeTaskRow({ id: "ws-3", org: "xzf", name: "E2E_TD_ws3", status: "ready" }))
+      const r = await taskDao.updateWithVersion("ws-3", { status: "running", workspace_id: "ws-new" }, 1)
       expect(r.changes).toBe(1)
-      const got = taskDao.getById("ws-3")!
+      const got = (await taskDao.getById("ws-3"))!
       expect(got.workspace_id).toBe("ws-new")
       expect(got.status).toBe("running")
       expect(got.version).toBe(2)
     })
-  })
-
-  describe("ScheduleConfigDAO — a definition row, and nothing else", () => {
-    it("insertSchedule writes a job definition without any task back-reference", () => {
-      const now = new Date().toISOString()
-      const result = schedDao.insertSchedule({
-        id: "sched-def-1", org: "xzf", name: "E2E_TD_def",
-        cron_expression: "0 0 * * *", timezone: "Asia/Shanghai",
-        config: JSON.stringify({ schema_version: "3.0", type: "workflow" }),
-        created_at: now, updated_at: now,
-      } as any)
-      expect(result.changes).toBe(1)
-      const got = schedDao.findById("sched-def-1")!
-      expect(got.name).toBe("E2E_TD_def")
-      // The columns are gone from the row type too — asserting the SHAPE here is what
-      // keeps a future caller from quietly reintroducing one through `as any`.
-      expect(Object.keys(got)).not.toContain("origin_type")
-      expect(Object.keys(got)).not.toContain("origin_id")
-    })
-
-    it("the task-walking finders are gone from the DAO", () => {
-      // These four existed solely to answer 「这个任务的内在哪」 from the scheduler side.
-      for (const gone of [
-        "findSchedulesByOrigin", "findRootSchedulesByTaskIds",
-        "findQueuedSchedules", "claimParkedTaskSchedule", "cancelTriggeredTaskSchedule",
-        "findFailedChildSchedules",
-      ]) {
-        expect(typeof (schedDao as any)[gone]).not.toBe("function")
-      }
-    })
-  })
 })
+

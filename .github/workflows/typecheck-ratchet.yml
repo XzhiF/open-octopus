@@ -1,0 +1,39 @@
+name: Typecheck Ratchet
+
+# Gates the repo's two type-discipline baselines (both "only shrink, never grow"):
+#   1. .tsc-baseline.json    — per-package `tsc --noEmit` error counts
+#   2. .eslint-baseline.json — @typescript-eslint/no-floating-promises counts (packages/server)
+# Builds run through tsup (transpile-only), so type errors never fail CI any other way.
+# Any increase fails the check; decreases are locked in with `pnpm typecheck:update`.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # lockfile 由 pnpm 11 生成；pnpm 9 会对 overrides 报
+          # ERR_PNPM_LOCKFILE_CONFIG_MISMATCH（pi-compat-check 周周因此秒红）
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Both gates resolve workspace types via packages/*/dist dts (tsc -p per package
+      # and the eslint type-checked rule both need it). Build everything except web-app
+      # (next build is not needed for tsc/eslint).
+      - run: pnpm -r --filter '!@octopus/web-app' build
+
+      - name: tsc + no-floating-promises ratchet check
+        run: pnpm typecheck

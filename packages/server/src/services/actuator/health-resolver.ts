@@ -89,7 +89,7 @@ class EnginePoolIndicator implements HealthIndicator {
 
   async health(): Promise<HealthIndicatorResult> {
     try {
-      const active = this.executionDAO.findAllActiveExecutions()
+      const active = await this.executionDAO.findAllActiveExecutions()
       return { status: 'ok', details: { active_executions: active.length } }
     } catch {
       return { status: 'ok', details: { active_executions: 0 } }
@@ -106,7 +106,7 @@ class SchedulerIndicator implements HealthIndicator {
 
   async health(): Promise<HealthIndicatorResult> {
     try {
-      const jobs = this.schedulerService.listJobs({ limit: 1 })
+      const jobs = await this.schedulerService.listJobs({ limit: 1 })
       const active = jobs.total
       const circuitBroken = this.schedulerEngine
         ? (this.schedulerEngine.getCircuitBreakerSummary().state === 'open' ? 1 : 0)

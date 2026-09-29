@@ -65,7 +65,7 @@ export class KnowledgeService {
    * Track effectiveness of injected rules after execution completes.
    * Called by ExecutionLifecycle after each execution.
    */
-  trackExecutionEffectiveness(execResult: ExecResult): number {
+  async trackExecutionEffectiveness(execResult: ExecResult): Promise<number> {
     return trackEffectiveness(execResult, this.effectivenessDAO, this.org)
   }
 
@@ -73,9 +73,9 @@ export class KnowledgeService {
    * Check if a knowledge file needs compacting after rules are added.
    * Called after approveItem adds new rules to a file.
    */
-  checkFileCompactThreshold(fileName: string, threshold = 100): void {
+  async checkFileCompactThreshold(fileName: string, threshold = 100): Promise<void> {
     try {
-      checkCompactThreshold(this.org, fileName, threshold, this.pendingReviewDAO)
+      await checkCompactThreshold(this.org, fileName, threshold, this.pendingReviewDAO)
     } catch (err) {
       console.warn("[knowledge] checkCompactThreshold failed:", err)
     }
@@ -85,7 +85,7 @@ export class KnowledgeService {
    * Retire stale rules that have low confidence and haven't been helpful.
    * Called periodically or after execution completes.
    */
-  retireStaleRules(minInjected = 3, maxConfidence = 0.2, daysSinceLastInjected = 30): number {
+  async retireStaleRules(minInjected = 3, maxConfidence = 0.2, daysSinceLastInjected = 30): Promise<number> {
     return retireStaleRules(this.effectivenessDAO, this.org, minInjected, maxConfidence, daysSinceLastInjected)
   }
 }

@@ -9,7 +9,7 @@ import type { Context } from 'hono'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getTracer } from '../../services/agent/tracer'
 import { getMetrics } from '../../services/agent/metrics'
@@ -21,6 +21,7 @@ import {
   getExperiencesDir,
 } from '../../services/agent/paths'
 import { getAgentService } from '../../services/agent/agent-service'
+import { rebuildSearchIndexes } from '../../services/agent/recall-service'
 import type { SafetyDAO } from '../../db/dao'
 
 // ── 501 stub for unimplemented routes ────────────────────────
@@ -34,17 +35,25 @@ export interface MiscRouteDeps {
   safetyDAO: SafetyDAO
 }
 
-export function createMiscRoutes(deps: MiscRouteDeps): Hono {
+export function createMiscRoutes(deps: MiscRouteDeps): AgentHono {
   const { safetyDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // ── Memory — rebuild-fts ─────────────────────────────────────────
-  app.post('/memory/rebuild-fts', (c) => {
+  // 检索面「重建」历史入口（显式，绝不上启动路径）。P1 B3 段2 后 PG 侧 bm25
+  // 索引由引擎自动维护，本端点语义收缩为幂等计数（两面可检索行数，见
+  // recall-service.rebuildSearchIndexes）。
+  app.post('/memory/rebuild-fts', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      // FTS rebuild is a no-op for now — memory search uses file-based grep
-      return c.json({ ok: true, rebuilt: true, indexed_count: 0 })
+      const result = await rebuildSearchIndexes()
+      return c.json({
+        ok: true,
+        rebuilt: true,
+        indexed_count: result.session_indexed + result.experience_indexed,
+        ...result,
+      })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
@@ -68,7 +77,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         )
       }
 
-      const body = await c.req.json<{ layer?: string; content?: string; date?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ layer?: string; content?: string; date?: string }>().catch(() => ({} as never))
 
       const memoryDir = getAgentMemoryDir()
       const dailyDir = path.join(memoryDir, 'daily')
@@ -145,7 +154,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
-      const body = await c.req.json<{ layer?: string; content?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ layer?: string; content?: string }>().catch(() => ({} as never))
       const layer = body.layer ?? 'long-term'
 
       // Validate layer to prevent path traversal
@@ -243,7 +252,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         event_id?: number | string
         decision?: 'allow' | 'block' | 'accept' | 'reject'
         reason?: string
-      }>().catch(() => ({}))
+      }>().catch(() => ({} as never))
 
       if (!body.event_id) {
         return c.json(createAgentError('INVALID_PARAM', 'event_id is required'), 400)
@@ -265,14 +274,14 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const safetyDao = safetyDAO
 
       // Find the safety event
-      const event = safetyDao.findSafetyEventByIdAndOrg(Number(body.event_id), org)
+      const event = await safetyDao.findSafetyEventByIdAndOrg(Number(body.event_id), org)
 
       if (!event) {
         return c.json(createAgentError('NOT_FOUND', `Safety event ${body.event_id} not found`), 404)
       }
 
       // Update the decision
-      safetyDao.updateDecision(Number(body.event_id), normalizedDecision)
+      await safetyDao.updateDecision(Number(body.event_id), normalizedDecision)
 
       return c.json({
         ok: true,
@@ -368,7 +377,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
         return c.json({ ok: false, detail: '通知目标未配置' })
       }
 
-      const body = await c.req.json<{ message?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ message?: string }>().catch(() => ({} as never))
       const message = body.message ?? '通知测试成功'
 
       const notifyService = getNotificationService()

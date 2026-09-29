@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 · 技术架构 — open-octopus 知识 / 经验 / 决策体系</title>
+<link rel="stylesheet" href="assets/base.css">
+</head>
+<body>
+<header class="top"><div class="topin">
+  <b>open-octopus · 知识/经验/决策体系</b>
+  <nav>
+    <a href="index.html">00 故事线</a>
+    <a class="cur" href="architecture.html">01 技术架构</a>
+    <a href="design.html">02 完整设计</a>
+    <a href="plan.html">03 实现计划</a>
+    <a href="evidence.html">04 证据账本</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+<h1>技术架构：<span>单引擎</span>、一个唯一出口、五条反馈边</h1>
+<p class="sub">三条不可协商的架构约束：<b style="color:var(--ink)">① 知识召回失败只降级，绝不中断任务执行；② 所有知识消费只经算子层这一个出口；③ 任何判断都必须产出可执行提案并留下被采纳/拒绝的记录。</b>下面每一块都服从这三条。<br><span style="color:var(--mut)">注意①的措辞变了：上一版它写作「执行面永不被知识面的可用性绑架」，那是一条<b>靠物理隔离兑现</b>的约束。单引擎下物理隔离没了，它必须改成一条<b>靠代码兑现</b>的约束——召回路径全部 try/catch 到 last-known-good，且这条要有测试守着（见 §7）。</span></p>
+<div class="meta">
+  <i>常驻存储 <b>1 个</b>（ParadeDB 容器 · 全平台唯一真源）</i>
+  <i>执行面迁移 <b>166 文件 / 542 stmt</b></i>
+  <i>同库分区 <b>执行 + 知识 6 区</b></i>
+  <i>图算子 <b>7</b> · 召回腿 <b>3</b></i>
+  <i>消费者 <b>5 类</b> · 反馈边 <b>5 条</b></i>
+</div>
+
+<section>
+<h2><em>1</em>部署拓扑</h2>
+<div class="fig">
+<svg viewBox="0 0 1140 640" width="1140" height="640" role="img" aria-label="部署拓扑"><defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4a4d52"/></marker><marker id="ahg" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5dd97c"/></marker><marker id="aha" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#e8b33c"/></marker></defs>
+<defs>
+<marker id="b1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4a4d52"/></marker>
+<marker id="b2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#e8b33c"/></marker>
+<marker id="b3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5dd97c"/></marker>
+</defs>
+<text class="ta" x="20" y="24">消费者</text>
+<g><rect class="box" x="20" y="34" width="260" height="52" rx="8"/><text class="t" x="34" y="56">任务草稿工作台</text><text class="ts" x="34" y="72">需求讨论 · 跨仓候选提案</text></g>
+<g><rect class="box" x="300" y="34" width="260" height="52" rx="8"/><text class="t" x="314" y="56">Workflow 引擎节点</text><text class="ts" x="314" y="72">agent · swarm · octopus_agent</text></g>
+<g><rect class="box" x="580" y="34" width="260" height="52" rx="8"/><text class="t" x="594" y="56">系统 agent / clone 分身</text><text class="ts" x="594" y="72">读工具 recall() · MCP</text></g>
+<g><rect class="box" x="860" y="34" width="256" height="52" rx="8"/><text class="t" x="874" y="56">归档反思 / 验收台</text><text class="ts" x="874" y="72">经验候选 · 反馈边源头</text></g>
+<path class="ln" d="M150,86 L150,152"/><path class="ln" d="M430,86 L430,152"/><path class="ln" d="M710,86 L710,152"/><path class="ln" d="M988,86 L988,152"/>
+
+<text class="ta" x="20" y="146">open-octopus server（Hono · 单进程）</text>
+<rect class="box" x="20" y="154" width="1096" height="168" rx="10" style="fill:#0d0e0f;stroke:#2a2c2e"/>
+<g><rect class="box" x="40" y="196" width="238" height="106" rx="8"/><text class="t" x="54" y="218">执行 / 编排</text><text class="ts" x="54" y="236">ExecutionLifecycle</text><text class="ts" x="54" y="250">tasks · phases · 验收</text><text class="ts" x="54" y="264">SSE · actuator</text><text class="ts" x="54" y="286" style="fill:#e8b33c">召回失败 → 降级，不中断</text></g>
+<g><rect class="box new" x="296" y="196" width="238" height="106" rx="8"/><text class="t" x="310" y="218">知识 API（4 动词）</text><text class="ts" x="310" y="236">recall · record</text><text class="ts" x="310" y="250">adjudicate · evaluate</text><text class="ts" x="310" y="264">REST + 进程内 + MCP</text><text class="ts" x="310" y="286" style="fill:#9b9b96">唯一对外契约</text></g>
+<g><rect class="box store" x="552" y="196" width="252" height="106" rx="8"/><text class="t" x="566" y="218">G 算子层（唯一出口）</text><text class="ts" x="566" y="236">7 图算子 · 3 召回腿</text><text class="ts" x="566" y="250">RRF · tier · 预算装配</text><text class="ts" x="566" y="264">决策 cascade · 提案生成</text><text class="ts" x="566" y="286" style="fill:#e8b33c">上层不得直查 T/S/E</text></g>
+<g><rect class="box" x="822" y="196" width="276" height="106" rx="8"/><text class="t" x="836" y="218">门与投影</text><text class="ts" x="836" y="236">do-no-harm · 回链完整率</text><text class="ts" x="836" y="250">信息完整性 · quarantine</text><text class="ts" x="836" y="264">markdown 投影生成器</text><text class="ts" x="836" y="286" style="fill:#9b9b96">拒绝留档 · 可统计</text></g>
+
+<path class="ln" d="M160,322 L160,382"/><text class="lt" x="168" y="356">读写（同库同事务）</text>
+<path class="ln" d="M680,322 L680,382"/><text class="lt" x="688" y="356">算子查询</text>
+<g><rect class="box store" x="40" y="384" width="1058" height="90" rx="8"/><text class="t" x="54" y="406">ParadeDB(PG18) 容器 · 全平台唯一真源 · 唯一一处持久化</text><text class="ts" x="54" y="424">执行分区：executions · node_executions · events · llm_calls 账本 · sessions/messages · tasks/phases · 验收</text><text class="ts" x="54" y="440">知识分区：topology · contract · experience · decision · eval · ops　｜　pgvector 0.8.4(halfvec) · pg_search BM25+jieba · 递归 CTE</text><text class="ts" x="54" y="462" style="fill:#ff6b5e">⚠ 单点：容器挂 = 平台不可用（§2 缓解）　·　⚠ retention 仍会截断/删除 → 证据必须快照</text></g>
+
+<text class="ta" x="20" y="504">采集面（后台作业，可暂停可重跑，不进任何在线请求路径）</text>
+<g><rect class="box ext" x="20" y="514" width="200" height="76" rx="8"/><text class="t" x="34" y="536">100+ 内部仓库</text><text class="ts" x="34" y="554">pom.xml · package.json</text><text class="ts" x="34" y="568">go.mod · pubspec · Swift</text></g>
+<g><rect class="box ext" x="240" y="514" width="170" height="76" rx="8"/><text class="t" x="254" y="536">契约源</text><text class="ts" x="254" y="554">proto / IDL</text><text class="ts" x="254" y="568">网关·ingress 表</text></g>
+<g><rect class="box new" x="430" y="514" width="300" height="76" rx="8"/><text class="t" x="444" y="536">Collector SPI（可插拔）</text><text class="ts" x="444" y="554">Finding{entities,edges,evidence}</text><text class="ts" x="444" y="568">URN 规范 · collectorVersion · schemaVersion</text></g>
+<g><rect class="box ext" x="750" y="514" width="180" height="76" rx="8"/><text class="t" x="764" y="536">SkyWalking</text><text class="ts" x="764" y="554">GraphQL topology</text><text class="ts" x="764" y="568" style="fill:#e8b33c">本期留位不实现</text></g>
+<g><rect class="box" x="950" y="514" width="166" height="76" rx="8"/><text class="t" x="964" y="536">人工登记</text><text class="ts" x="964" y="554">owner / env /</text><text class="ts" x="964" y="568">tested_by 声明</text></g>
+<path class="ln" d="M120,590 L120,614 L580,614 L580,594"/><path class="ln" d="M410,552 L430,552"/>
+<path class="ln" d="M580,514 L580,474"/>
+<path class="ln dim" d="M750,552 L730,552"/>
+<path class="ln" d="M1033,514 L1033,474"/>
+<text class="lt" x="600" y="496">Finding → 对账 → 边/节点 upsert（同库，无跨引擎投影）</text>
+<path class="ln fb" d="M960,322 C960,350 900,350 900,382"/><text class="lt h" x="906" y="344">E4 归档反哺拓扑</text>
+</svg>
+<div class="figcap"><b>读法</b>：自上而下是消费→API→算子→存储→采集四段。两个关键设计：<b>存储只有一个</b>，执行分区与知识分区同库同事务，跨区 join 免费（这是砍掉 outbox/重放/对账整路子系统的直接原因）；<b>采集面是纯后台</b>，可暂停可重放，不进入任何在线请求路径。灰色虚线 = 本期不实现但接口已留。<b>红字是退步</b>：单引擎换来单点，缓解见 §2。</div>
+</div>
+</section>
+
+<section>
+<h2><em>2</em>单引擎存储拓扑：一次迁移，换掉一整类跨引擎 bug</h2>
+<p class="h2sub">上一版这一节叫「双平面与一致性」，内容是 outbox → 幂等重放 → 版本对账 → 漂移告警 → <code>knowledge_asof</code>。它的<b>存在理由只有一条：执行面不动</b>。一旦允许执行面动，这一整节就是净负债——所以本版把它删掉，改成一次性迁移。</p>
+<table>
+<thead><tr><th>方案</th><th>做法</th><th>为什么选 / 不选</th></tr></thead>
+<tbody>
+<tr><td class="k n">单引擎 ParadeDB(PG18) <span class="sev ok">采用</span></td><td>全平台落到一座库：执行分区 + 知识分区同 schema 不同前缀，<b>同一条连接、同一个事务</b></td><td>跨区 join 免费（「这条经验来自哪次执行的哪个节点，那次跑了多久花了多少钱」不再需要应用层拼）；<b>删除一类永久 bug</b>（重放落后、投影被误写、对账窗口内的读到旧地图）；<code>better-sqlite3</code> 的<b>同步 API</b> 一并消失——「批量重建必须走 worker，否则主线程万级循环让 HTTP/SSE 全冻 30s」这条硬约束本来就是它的症状，不是我们的业务需求</td></tr>
+<tr><td class="k">双平面：SQLite 执行面 + PG 知识面 <span class="sev p1">否决（上一版采用）</span></td><td>执行面零迁移，领域事件经 outbox 单向投影进 PG</td><td class="no">零迁移是<b>假收益</b>：实测耦合面 166 个文件<b>全部锁在 <code>packages/server</code></b>，DAO 层之外没有泄漏（engine/providers/web 都不直连 DB），迁移面是封闭的。而双平面的代价是<b>永久</b>的：1–2 周工时买一个一直在跑的子系统，外加一个必须永远显示的 <code>knowledge_asof</code></td></tr>
+<tr><td class="k">双写</td><td>同一请求同时写两座库</td><td class="no">必漂。任一侧失败即永久不一致，且没有仲裁者</td></tr>
+<tr><td class="k">CDC（Debezium / pglogical）</td><td>订阅 WAL 同步</td><td class="no">给双平面续命的方案，双平面本身被否决后无意义</td></tr>
+</tbody></table>
+
+<h3>类型映射规则（迁移唯一需要"翻译"的地方）</h3>
+<div class="scroller"><table>
+<thead><tr><th>SQLite 现状</th><th>Postgres 目标</th><th>为什么这样映 / 坑在哪</th></tr></thead>
+<tbody>
+<tr><td class="k n">TEXT 存 ISO 时间戳</td><td class="n">timestamptz</td><td>范围比较与索引变成语义正确。<b>坑</b>：旧值是 UTC 还是本地未标注，必须在搬迁脚本里定死一个时区并抽样人工核</td></tr>
+<tr><td class="k n">INTEGER 存 epoch 毫秒</td><td class="n">bigint</td><td>int4 会溢出。这决定 <code>run_stats</code> 一类耗时字段将来不炸</td></tr>
+<tr><td class="k n">TEXT 存 JSON 字符串</td><td class="n">jsonb</td><td>可以直接 <code>@></code> / GIN 索引，替掉现在应用层 parse 一遍的写法；<b>坑</b>：jsonb 不保留 key 顺序，任何依赖顺序的指纹/hash 要先改</td></tr>
+<tr><td class="k n">INTEGER 0/1 当布尔</td><td class="n">boolean</td><td>DAO 边界要同时改：<code>row.done === 1</code> 全变 <code>row.done === true</code>，这类改动<b>正是 tsc 能抓、tsup 绕过</b>的那种</td></tr>
+<tr><td class="k n">INTEGER PRIMARY KEY AUTOINCREMENT</td><td class="n">GENERATED ALWAYS AS IDENTITY</td><td>行为等价；<b>坑</b>：搬迁后要 <code>setval</code> 序列，否则新插入撞主键</td></tr>
+<tr><td class="k n"><code>INSERT OR IGNORE</code> 33 处 / <code>ON CONFLICT</code> 13 处</td><td class="n"><code>ON CONFLICT DO NOTHING</code> / <code>DO UPDATE</code></td><td>直接对应，语义不变——这是实测里最让人放心的一行</td></tr>
+<tr><td class="k n">FTS5 虚表 3 张 + <code>MATCH</code> 27 处</td><td class="n">pg_search BM25 + jieba</td><td><b>顺手修掉一个老 bug</b>：现 FTS5 用 unicode61 分词，中文 sessions/messages 搜索是 0 命中。这条属于迁移的白拿收益</td></tr>
+<tr><td class="k n">PRAGMA 62 处</td><td class="n">整类删除</td><td>journal/WAL/foreign_keys/busy_timeout 都是 SQLite 概念；PG 侧外键默认就是开的，只剩 <code>statement_timeout</code> 一类会话参数</td></tr>
+</tbody></table></div>
+
+<h3>单点故障的缓解（这一节不许跳过）</h3>
+<div class="flow">
+  <div class="node"><b>进程层</b><span><code>restart: unless-stopped</code> + healthcheck；本地 NVMe 卷</span></div><div class="arrow">→</div>
+  <div class="node"><b>备份层</b><span>每日 <code>pg_dump</code> + 卷快照；恢复演练要做一次，不做演练的备份不算备份</span></div><div class="arrow">→</div>
+  <div class="node"><b>连接层</b><span>池上限与 <code>statement_timeout</code> 从第一天配；慢查询日志 + 池占用是 actuator 指标</span></div><div class="arrow">→</div>
+  <div class="node gate"><b>代码层（唯一真防线）</b><span>召回路径失败 → last-known-good 缓存 + 显式标注「未获知识加持」；<b>有测试</b>：注入 recall 抛错，任务仍完成</span></div>
+</div>
+<div class="callout red"><b>诚实的账单</b>：单引擎是一次<b>可用性净下降</b>。今天 SQLite 没有「宕机」这个状态；PG 有，且并发执行多时<b>连接池耗尽是全新故障模式</b>。这规模不上 HA、不上 pgbouncer（单机单用户，它们解决的不是我们的问题），我们用「<b>接受一次容器重启的 RTO</b>」换掉整个双平面子系统 + 同步 API 带来的事件循环约束。这是一笔该做的买卖，但<b>别把它说成收益</b>。</div>
+<div class="callout"><b>不可协商的顺序</b>：<code>packages/server</code> 现有 <b>690 个类型错误</b>且构建走 tsup 全绕。上面这张映射表里每一行都是靠类型系统才能批量改对的操作（尤其 0/1→bool 与 stmt→await），所以在<b> tsc ratchet 门落地之前，一行都不许动</b>。这条顺序写进 <a href="plan.html">03 实现计划</a> 的 P0→P1 边界。</div>
+</section>
+
+<section>
+<h2><em>3</em>算子层：唯一出口，也是「技术含量」真正所在</h2>
+<p class="h2sub">一手调研的核心结论在这里落地：<b style="color:var(--ink)">结构题的瓶颈不是查询语言表达力，是有没有可调用、可组合、可解释的类型化算子</b>（同一批 11 道结构题：标准 RAG 0 题、纯 dense 1 题、LLM-GraphRAG 1 题、自研算子方案 5 题）。所以我们不追求通用图语言，追求<b>算子目录的完备与可解释</b>。</p>
+<div class="scroller"><table>
+<thead><tr><th>算子</th><th>语义</th><th>实现形状</th><th>复杂度控制</th><th>典型消费者</th></tr></thead>
+<tbody>
+<tr><td class="k n">impact_of(x, depth)</td><td>改动 x 后 N 跳内波及的仓库/服务集合 + 传播路径</td><td>递归 CTE 沿 <code>depends_on ∪ calls</code> 反向</td><td>depth≤3、扇出上限、已访去重</td><td>草稿工作台 · 验收</td></tr>
+<tr><td class="k n">repos_for(concepts[])</td><td>业务词/接口名 → 候选仓库（含排序与命中理由）</td><td>BM25 + 向量命中节点 → 邻域聚合到 repo</td><td>top-k 后截断，低置信不提议</td><td>草稿工作台（提案源）</td></tr>
+<tr><td class="k n">contract_of(svc)</td><td>暴露接口、消费依赖、数据表、部署与环境</td><td>1 跳类型化邻域</td><td>—</td><td>执行期注入</td></tr>
+<tr><td class="k n">tests_for(svc|repo)</td><td>测试环境、数据准备、测试方法、流程链路</td><td><code>tested_by</code> + S 层文档检索</td><td>预算内装配</td><td>执行期（swarm/agent 节点）</td></tr>
+<tr><td class="k n">pitfalls_for(node, difficulty)</td><td>相似任务簇的历史踩坑与最佳实践</td><td>向量近邻 + 节点邻域过滤 + tier 门槛</td><td><b>困难度决定检索深度与预算</b></td><td>动手前预检</td></tr>
+<tr><td class="k n">precedents_for(decision)</td><td>同类历史决策 + 当时的证据与结果</td><td>决策台账键匹配 + 因果链遍历</td><td>时间窗</td><td>门禁 · 路由</td></tr>
+<tr><td class="k n">path_between(a,b, kinds)</td><td>两节点间的耦合路径（可指定边类型集合）</td><td>双向 BFS 递归 CTE，相遇即止</td><td>depth≤4、路径数上限</td><td>影响面解释 · 排障</td></tr>
+</tbody></table></div>
+<div class="callout red"><b><code>difficulty</code> 必须有生产者，否则它是装饰</b>：一个没有来源的入参比没有这个入参更糟——它让算子签名看起来完整，实际永远走默认档。<b>本方案定的生产者</b>（全部是库里已有的硬事实，不需要新模型）：<code>difficulty = f(草稿涉及的 t_node 数, 跨仓数, 同类历史任务的 run_stats 耗时中位数, 该节点历史重试数)</code>，四元归一后查表分 3 档（浅 / 标 / 深）。冷启动（无历史同类任务）时<b>一律落「标」档并显式记 <code>difficulty_source='default'</code></b> —— 禁止在没数据时装作是算出来的。</div>
+<h3>召回装配（算子之上的三段）</h3>
+<div class="flow">
+  <div class="node"><b>多腿召回</b><span>图算子扩展 · pg_search BM25(jieba) · pgvector halfvec ANN</span></div><div class="arrow">→</div>
+  <div class="node"><b>RRF 融合 + rerank</b><span>RRF_K=60；双源同现加权；可选轻量语义 rerank</span></div><div class="arrow">→</div>
+  <div class="node gate"><b>派生信任 tier</b><span>查询时算、不落库；quarantine 直接剔除</span></div><div class="arrow">→</div>
+  <div class="node gate"><b>预算装配</b><span>L0 abstract→L1 overview→L2 detail；广度优先再加深；<b>超档回退不硬截</b></span></div><div class="arrow">→</div>
+  <div class="node new"><b>结果必带</b><span>命中理由 · 分数 · 证据 ref · <code>topology_asof</code> · <code>degraded</code> 标记</span></div>
+</div>
+<div class="callout cyan"><b>为什么「超档回退不硬截」是硬要求</b>：今天的实现是 <code>MAX_RULES=10 / MAX_CHARS=4000</code> 按文件顺序截断——截掉的是<b>随机质量分布</b>的条目。预算装配的语义是「装不满就降一层精度（detail→overview→abstract），而不是丢掉条目」，这样每条被注入的内容都有完整身份，反馈边才知道该给谁计分。</div>
+</section>
+
+<section>
+<h2><em>4</em>采集器 SPI：让静态分析、真实链路、人工登记在同一张图上对账</h2>
+<pre style="background:#0d0e0f;border:1px solid var(--bd);border-radius:9px;padding:14px 16px;font-size:12px;overflow-x:auto;color:#cfcfca"><code>interface Finding {
+  entities: { urn: string; kind: 'repo|module|service|api_endpoint|rpc_consumer|db_table|config|env|owner'
+              props: Record&lt;string, unknown&gt; }[]
+  edges:    { type: 'depends_on|calls|exposes|consumes|owned_by|tested_by|deployed_with|shares_schema_of'
+              from: string; to: string; props?: Record&lt;string, unknown&gt; }[]
+  evidence: { edgeIdx: number; source: 'static|runtime|manual'
+              origin: { repo?: string; commit?: string; path?: string; span?: [number, number]
+                        window?: string } }          // runtime 用观测窗，static 用 文件:行
+}
+interface Collector {
+  id: string; collectorVersion: string; schemaVersion: number
+  run(ctx: { pins: RepoPin[]; sinceCommit?: string }): AsyncIterable&lt;Finding&gt;
+}</code></pre>
+<p>三条对账要素：<b style="color:var(--ink)">稳定 URN</b>（<code>service:&lt;ns&gt;/&lt;name&gt;</code>、<code>endpoint:&lt;METHOD&gt;+&lt;归一化path&gt;</code>）、<b>source 标签</b>、<b>evidence 溯源</b>。<b>置信度不由 adapter 自报</b>——平台从 <code>(source, evidence_count, observed_at)</code> 三元组派生，避免「采集器自己给自己打 0.99」。</p>
+<div class="scroller"><table>
+<thead><tr><th>采集器</th><th>产出</th><th>复用 / 自研</th><th>量</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td class="k n">maven-deps</td><td><code>depends_on</code>（含 parent/BOM/reactor 继承）</td><td><code>mvn dependency:tree -DoutputType=json</code>（3.7.0+ 官方支持）+ cdxgen</td><td>S</td><td class="yes">绝不自写 pom 解析</td></tr>
+<tr><td class="k n">pkg-deps</td><td>Go/Node/Python/Dart/Swift 依赖</td><td><code>go list -m -json all</code> · arborist · <code>dart pub deps</code> · <code>swift package dump-package</code></td><td>S</td><td>官方入口最可靠</td></tr>
+<tr><td class="k n">spring-endpoints</td><td><code>exposes</code> + <code>calls</code>(Feign/Dubbo/RestTemplate)</td><td><b>自研：字节码读注解常量</b>（无现成静态库；springdoc 是运行时路线）</td><td class="mid">M</td><td>准确率最高路线；ArchUnit 可作查询层</td></tr>
+<tr><td class="k n">http-edges（多语言）</td><td>跨仓 <code>calls</code></td><td>配置级（网关/ingress/feign 服务名）打底 + tree-sitter 源码级补 + 环境变量域名→服务映射表</td><td class="no">L</td><td>最难；CodeQL 许可证受限只借「库模型登记表」设计</td></tr>
+<tr><td class="k n">idl-contract</td><td>proto/Thrift/OpenAPI 契约边</td><td>protoc 插件 / antlr</td><td>S-M</td><td class="yes">契约级边最可靠</td></tr>
+<tr><td class="k n">manual-register</td><td><code>owned_by</code> · <code>tested_by</code> · <code>deployed_with</code> · env</td><td>UI + API</td><td>S</td><td><b>声明型边人工最高优先</b>，不要指望静态推出来</td></tr>
+<tr><td class="k n">skywalking</td><td>高置信 <code>calls</code> / <code>exposes</code></td><td>GraphQL <code>getGlobalTopology / getServiceTopology / getEndpointTopology</code>（一手文档确认）</td><td>S</td><td><b>本期留位不实现</b>；接口与冲突规则先落库</td></tr>
+</tbody></table></div>
+<h3>三源冲突规则（现在就定，不等 SkyWalking）</h3>
+<table>
+<thead><tr><th>情形</th><th>裁决</th></tr></thead>
+<tbody>
+<tr><td>同一 <code>(caller,callee,endpoint)</code> 上 runtime 观测到、static 也推出</td><td class="yes">confirmed，evidence_count=2</td></tr>
+<tr><td>static-only 且落在观测窗内未出现</td><td class="mid">保留但标 <code>unobserved</code>，<b>不删</b>（可能是低频/异常路径）</td></tr>
+<tr><td>runtime-only（动态路由、配置中心下发）</td><td class="yes">新边 + 触发静态规则补齐告警</td></tr>
+<tr><td>manual 与任一自动源冲突（多为 owner/env）</td><td class="n">manual 覆盖，自动源降级为 <code>disputed</code> 并进待审</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2><em>5</em>接口面：四类消费者，一个契约</h2>
+<table>
+<thead><tr><th>消费者</th><th>调用形态</th><th>落点（现有代码接缝）</th><th>约束</th></tr></thead>
+<tbody>
+<tr><td class="k">Workflow 引擎节点<br><span class="tag">agent / swarm / octopus_agent / loop / sub</span></td><td>执行前 <code>recall(scope,node,budget)</code> → 注入</td><td><b>不给 factory 加参数</b>：把 recall 回调塞进 <code>InjectorConfig</code>（<code>knowledge-injector.ts:16-18</code>）由 server 工厂闭包注入，engine 类型零改动、只动 2 文件；<code>getInjectedPrompts(workflowName,nodeId)</code> 已有 nodeId</td><td>swarm / loop / sub-workflow / hook 的接线必须本期补齐（今天是断的）</td></tr>
+<tr><td class="k">任务草稿工作台</td><td><code>recall</code> + <b><code>propose</code></b>（跨仓候选）</td><td>现有 <code>task-author-session-augmenter.ts</code> 的 append 槽升级为结构化提案通道（今天只有字符串拼接）</td><td>提案必须带影响面解释与「不知道」出口</td></tr>
+<tr><td class="k">系统 agent / clone 分身</td><td><b>读工具</b> <code>recall</code> / <code>impact_of</code> / <code>pitfalls_for</code>（今天 6 个伪工具全是写侧）</td><td><code>main-agent-route.ts</code> 工具声明与派发 switch</td><td>每轮调用次数上限 + 降级提示（借 TencentDB 的「每轮限 3 次」）</td></tr>
+<tr><td class="k">归档反思 / 验收台</td><td><code>record</code> + <code>adjudicate</code> + <code>evaluate</code></td><td><code>archiving-service.ts</code> 与 <code>archive-analysis-service.ts</code>；复用其 <b>ADR/术语 append-only 合并纪律</b></td><td>反思必须产出「印证/反驳/新增」三态之一，不得只产文本</td></tr>
+<tr><td class="k">外部与技能</td><td>MCP 工具面（<code>/tools/list|call</code> 自发现）</td><td>新增，照 TencentDB / OpenViking 的插件接口形状</td><td>与进程内调用同一套权限与预算</td></tr>
+</tbody></table>
+<div class="callout"><b>四动词是唯一契约</b>：<code>recall</code>（读+装配+解释）、<code>record</code>（带证据入库）、<code>adjudicate</code>（批量裁决）、<code>evaluate</code>（变更前后净分）。任何新消费者都必须复用这四个，不允许再开第五个「绕过算子层直查」的口子——这条会写成门禁测试。</div>
+</section>
+
+<section>
+<h2><em>6</em>决策层：判断与生成解耦，且留得下台账</h2>
+<div class="flow">
+  <div class="node"><b>① 规则 / 检索</b><span>硬事实、枚举、已有先例命中</span></div><div class="arrow">→</div>
+  <div class="node"><b>② 廉价判别</b><span>小模型 / 校准头 / 结构化打分</span></div><div class="arrow">→</div>
+  <div class="node gate"><b>③ 置信门</b><span>低于阈值才升级</span></div><div class="arrow">→</div>
+  <div class="node"><b>④ LLM 判定</b><span>带证据上下文，输出 typed verdict</span></div><div class="arrow">→</div>
+  <div class="node new"><b>⑤ 入账 + 台账</b><span>llm_calls 新 source_path · 决策/先例/因果链</span></div>
+</div>
+<table>
+<thead><tr><th>要点</th><th>决定</th><th>依据</th></tr></thead>
+<tbody>
+<tr><td class="k">Jev / System One 权重</td><td class="no">不引入</td><td>闭源 API-only、无论文无权重、200x/400x 自报无对照；「零幻觉」实为 schema 限死合法选项（仍可选错）</td></tr>
+<tr><td class="k">可搬的部分</td><td class="yes">全部搬：typed verdict schema + 置信阈值回退 + 成本分层</td><td>与模型无关的方法论；80% 例行决策不碰大模型这条收益不需要任何新模型</td></tr>
+<tr><td class="k">真要小模型时</td><td class="mid">Laya（Apache-2.0 含权重）或 Nokia AnyJev（免训练校准头，可套现有 providers）</td><td>均为开源可自托管；DiffusionGemma 路线需 GPU 推理栈，与我们不匹配</td></tr>
+<tr><td class="k">决策的可审计性</td><td class="yes">决策台账 + <code>precedents_for</code> + 因果链</td><td>借 semantica 最被低估的一块（<code>record_decision</code>/<code>find_precedents</code>/<code>get_causal_chain</code>）</td></tr>
+<tr><td class="k">成本口径</td><td class="yes">沿用账本三态：NULL=未定价 → <code>—</code>，部分定价 → <code>≈</code></td><td>ADR-0016 单源纪律不破；决策成本直接出现在刚上线的角标与看板 chip 上</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2><em>7</em>故障与降级：单引擎下，这条约束只能靠代码兑现</h2>
+<div class="callout red"><b>本节的前提变了</b>：上一版第一条「PG 不可用 → 执行面照常跑」是靠<b>物理分离</b>白拿的。单引擎下 PG 不可用 = <b>平台不可用</b>，那条承诺不再成立，所以这里删掉了它。留下来的降级承诺是<b>更窄但可兑现</b>的那一条：<b>知识层出错（召回抛错、缺腿、地图不新鲜）绝不使任务失败</b>——它只让任务失去加持。这条必须有测试，见 §7 最后一行。</div>
+<table>
+<thead><tr><th>故障</th><th>影响面</th><th>降级行为</th><th>告警</th></tr></thead>
+<tbody>
+<tr><td class="k n">PG 容器不可用</td><td class="no"><b>全平台停摆</b>（执行、SSE、看板、账本一起）</td><td class="mid">这是单引擎的<b>已定价退步</b>，不做假的降级承诺。缓解：healthcheck + <code>restart: unless-stopped</code> 自动拉起；每日 <code>pg_dump</code> + 卷快照；重启后 <code>executions</code> 里 status=running 的孤儿行由启动清扫标记为 interrupted（<b>同步 API 时代不需要这条，异步化后必须有</b>）</td><td>critical</td></tr>
+<tr><td class="k n">连接池耗尽（并发执行多）</td><td>请求排队，表现为整体变慢而非报错——<b>最容易误诊</b></td><td class="mid"><code>statement_timeout</code> + 池上限 + 队列深度指标；批量作业用<b>独立小池</b>，不与在线请求争抢</td><td>warning→critical</td></tr>
+<tr><td class="k n">召回路径抛错（非连接问题：SQL 错、超时、算子 bug）</td><td>该次注入失去知识加持</td><td class="yes"><b>这条才是真降级</b>：捕获 → last-known-good 缓存（带 TTL）→ 显式标注「未获知识加持」→ 任务继续。<b>架构级要求：注入点不得让知识异常冒泡到执行链路</b></td><td>warning</td></tr>
+<tr><td class="k n">embedding 通道失败（远端 key 失效/限流）</td><td>向量腿缺失</td><td class="yes">自动降为 BM25 + 图算子两腿；结果标 <code>degraded:vector</code>；<b>禁止把缺腿当 0 分</b>（会静默改变排序语义）</td><td>warning</td></tr>
+<tr><td class="k">采集器滞后 / 单仓解析失败</td><td>地图不新鲜（<b>同库，所以是"新鲜度"问题而不是"一致性"问题</b>）</td><td class="mid">召回结果带 <code>topology_asof</code>；UI 显示地图新鲜度；按仓隔离，失败记进 <code>collector_run</code>；缺图节点标 <code>unknown</code> 而非猜测</td><td>info→warning</td></tr>
+<tr><td class="k">LLM 裁决超时</td><td>经验入库受阻</td><td class="mid">规则腿已判的部分先落 <code>quarantine</code>；整批不阻塞热路径（热路径只落 L0）</td><td>info</td></tr>
+<tr><td class="k n">主线程被批量重建卡住</td><td>同步驱动下 HTTP/SSE 全冻（实测万级 embedding 重建 ≈31s）</td><td class="yes"><b>异步驱动后这条约束的性质变了</b>：不再是"必须分片让出事件循环"，而是"必须 <code>await</code>"。反过来它引入了<b>新</b>风险——漏 <code>await</code> 的 promise 静默不执行，TS 不报错。所以 <code>no-floating-promises</code> lint 与 tsc ratchet 是迁移的前置门，不是可选项</td><td>lint 门 + code review</td></tr>
+</tbody></table>
+<div class="flow">
+  <div class="node"><b>注入点调用 recall()</b><span>执行期 / 草稿期 / 动手前预检</span></div><div class="arrow">→</div>
+  <div class="node gate"><b>超时或抛错</b><span>不重试、不冒泡；只记一次降级事件</span></div><div class="arrow">→</div>
+  <div class="node"><b>last-known-good</b><span>TTL 内的上一次成功装配结果</span></div><div class="arrow">→</div>
+  <div class="node stop"><b>显式标注</b><span>「未获知识加持」进上下文与留痕，<b>不静默</b></span></div>
+</div>
+</section>
+
+<section>
+<h2><em>8</em>容量模型：所有数字都有实测支撑</h2>
+<table>
+<thead><tr><th>维度</th><th>3 个月</th><th>1 年</th><th>依据 / 实测</th></tr></thead>
+<tbody>
+<tr><td class="k">拓扑节点</td><td>~3×10³</td><td>~10⁴</td><td>100+ 仓库 × module/service/endpoint 展开</td></tr>
+<tr><td class="k">边</td><td>~2×10⁴</td><td>~10⁵</td><td>实测 AGE 全量 <code>*1..2</code>（10k/100k）1.17s → 递归 CTE 有界查询远低于此；<b>深度有界是前提</b></td></tr>
+<tr><td class="k">经验条目</td><td>~2×10³</td><td>~10⁵</td><td>每次归档 1–5 条 + 人工登记</td></tr>
+<tr><td class="k">向量</td><td>~5×10³</td><td>~10⁶</td><td class="yes">实测 20万×1024：HNSW 构建 59.9s、索引 1563MB、halfvec 521MB、p50 5.8ms / p99 11.9ms → 10⁶ 量级仍在舒适区</td></tr>
+<tr><td class="k">单次 recall 预算</td><td colspan="2">4k–12k token（按消费者档位）</td><td>现状是 10 条/4000 字符硬截；预算化后必须<b>可解释每条为何入选</b></td></tr>
+<tr><td class="k">批量 embedding 重建</td><td colspan="2">10⁴ 条 ≈31s（串行推算，远端 embedding 才是瓶颈，不是 DB）</td><td class="mid">异步驱动下不再冻结事件循环；仍走<b>分片 + 独立小连接池</b>，避免与在线请求争池</td></tr>
+<tr><td class="k">执行分区写入</td><td>现 74MB 全量</td><td>~10⁶ 行/年 <code>llm_calls</code> + 事件</td><td class="yes">单用户 + 单机 NVMe：PG 远未到此规模瓶颈。这一维<b>不再是选型的约束</b>（SQLite 那边它才是）</td></tr>
+<tr><td class="k">备份</td><td colspan="2">2.6GB 库 pg_dump 分钟级 + 卷快照</td><td>实测；<b>恢复演练一次</b>，没演练过的备份不算备份。逻辑复制对 agtype 兼容性未验证 → 不上逻辑复制</td></tr>
+</tbody></table>
+<div class="callout"><b>什么时候必须重新评估基座</b>（写进 ADR 的触发条件，不靠临场争论）：边规模 &gt; 10⁶ 或有界遍历 p99 &gt; 200ms → 评估 AGE / 离线图副本；向量 &gt; 5×10⁶ 或过滤后 ANN 选择率长期 &lt; 1% → 评估独立向量引擎；出现不可预知的模式探索需求 → 评估 Cypher；<b>并发写入或可用性要求超出单机单点可接受范围</b> → 那时谈的是<b>复制与 HA</b>，不是回退 SQLite。</div>
+</section>
+
+<section>
+<h2><em>9</em>可观测与安全边界</h2>
+<div class="grid2">
+  <div class="card"><h4>可观测 <em>新增 actuator 面</em></h4><ul>
+    <li>经验健康度：条目数 / 活跃比 / quarantine 占比 / <b>回链完整率</b> / 信誉分布 / 平均年龄</li>
+    <li>检索质量：中文双字回归集命中率、预算符合率、注入条目「被采纳/被忽略」比</li>
+    <li>闭环活性：五条反馈边各自的<b>日触发次数</b>（一条长期为 0 的边就是假闭环——这是本体系最容易自欺的地方）</li>
+    <li><b>三条「体系是否真的在转」的硬指标（缺一条整方案就是自证）</b>：
+      <ul style="margin:4px 0 0">
+        <li><b>主动检索率</b> = <code>recall_calls / eligible_node_executions</code>。长期 &lt; 5% 说明「agent 自己检索」没落地，全靠平台硬塞，那 E2 边天然为 0</li>
+        <li><b>提案漏报率</b> = <code>‖最终产生 commit 的仓库集 − 提案候选集‖ / ‖最终仓库集‖</code>。<b>误报可测、漏报原本不可测</b>，这条把漏报变成可测（见 02 设计 §2 <code>proposal_outcome</code>）</li>
+        <li><b>注入对照差</b> = 随机 10% 注入位走「关闭」臂后的 <code>organization_action_success</code> 差值。<b>没有它，本体系只能证明「没变坏」，永远无法证明「变好了是因为它」</b></li>
+      </ul></li>
+    <li>成本：决策层「不碰大模型占比」、每次 recall 的 token 与延迟分布</li>
+    <li>新鲜度：<code>topology_asof</code>、各采集器最近成功运行与滞后、召回降级次数</li>
+    <li><b>存储层（单引擎后新增的必看法项）</b>：连接池占用与队列深度、<code>statement_timeout</code> 触发次数、慢查询 top-N、容器重启次数、<b>最近一次恢复演练的日期</b></li>
+  </ul></div>
+  <div class="card"><h4>安全边界 <em>四条硬约束</em></h4><ul>
+    <li><b>SQL 面</b>：算子层是唯一构造 SQL 的地方，边类型/实体 kind 走<b>枚举字面量</b>，只有值进占位符（沿用账本 DAO 的既有做法）</li>
+    <li><b>Prompt 注入面</b>：知识条目是<b>不可信输入</b>——注入必须包成带来源标记的引用块，禁止拼进指令位；quarantine 条目永不注入</li>
+    <li><b>密钥</b>：embedding 通道 key 只从服务端 env/secret 读，不进知识条目、不进日志</li>
+    <li><b>仓库内容</b>：采集器只存<b>摘要与坐标</b>（文件:行、pom 坐标、接口签名），不整段复制源码进知识分区</li>
+  </ul><div class="note">单用户不等于无边界：owner / visibility / audit 三处字段与写入点从第一天就在，将来加协作不用返工。</div></div>
+</div>
+<div class="pager">
+  <a href="index.html">00 故事线</a>
+  <a class="cur" href="architecture.html">01 技术架构</a>
+  <a href="design.html">→ 02 完整设计</a>
+  <a href="plan.html">03 实现计划</a>
+  <a href="evidence.html">04 证据账本</a>
+  <span>下一页：本体、schema、契约与门禁不变量的完整定义</span>
+</div>
+</section>
+</div>
+
+<footer class="bot"><div class="botin">
+  <span>01 技术架构</span><span>所有实测数字的复现命令与原始输出见 <a href="evidence.html">04 证据账本</a></span>
+</div></footer>
+</body>
+</html>

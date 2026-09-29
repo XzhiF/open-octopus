@@ -41,7 +41,7 @@ export class AgentExecutor implements Executor {
     const config = this.parseConfig(job)
 
     // 1. Update execution record to 'running'
-    this.runDAO.markExecutionRunning(executionId)
+    await this.runDAO.markExecutionRunning(executionId)
 
     // 2. Execute with retry logic. max_attempts === 0 means "no retry, one shot".
     const retryPolicy: AgentRetryPolicy = config.retry_policy ?? {
@@ -76,7 +76,7 @@ export class AgentExecutor implements Executor {
     const errorMessage = lastError?.message ?? 'Agent execution failed'
     const isTimeout = lastError instanceof AgentTimeoutError
 
-    this.runDAO.setExecutionResult(
+    await this.runDAO.setExecutionResult(
       executionId,
       isTimeout ? 'timeout' : 'failed',
       errorMessage,
@@ -104,7 +104,9 @@ export class AgentExecutor implements Executor {
     const timeoutSeconds = config.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS
     const timeoutMs = timeoutSeconds * 1000
     const provider = this.provider ?? getProvider('claude')
-    const cwd = this.resolveCwd(job.workspace_id)
+    // SchedulerJob 自 ADR-0021 v42 起无 workspace 列（enrichJobRow/buildSchedulerJob 均不产出该字段），
+    // 此前 job.workspace_id 运行时恒 undefined → 恒 tmpdir。固化为显式 undefined，零行为差。
+    const cwd = await this.resolveCwd(undefined)
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -167,7 +169,7 @@ export class AgentExecutor implements Executor {
     const finalTokens = tokenUsage ?? emptyTokenUsage()
     const durationMs = Date.now() - startTime
 
-    this.runDAO.setAgentResult(
+    await this.runDAO.setAgentResult(
       executionId,
       agentOutput.length > MAX_OUTPUT_LENGTH
         ? agentOutput.substring(0, MAX_OUTPUT_LENGTH)
@@ -208,9 +210,9 @@ export class AgentExecutor implements Executor {
     }
   }
 
-  private resolveCwd(workspaceId: string | null | undefined): string {
+  private async resolveCwd(workspaceId: string | null | undefined): Promise<string> {
     if (!workspaceId) return os.tmpdir()
-    const wsPath = this.execDAO.findWorkspacePath(workspaceId)
+    const wsPath = await this.execDAO.findWorkspacePath(workspaceId)
     if (!wsPath) return os.tmpdir()
     return wsPath.replace(/^~/, os.homedir())
   }

@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+// P1 B2：pending_review 已迁 postgres.js（BasePgDAO）—— 本文件造数/读断言全部走 PG。
+// 每文件一座随机测试库（beforeAll 建 / afterAll DROP），用例间 TRUNCATE 清表。
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
-import { applySchema } from "../../../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import {
   checkCompactThreshold,
   mergeCloneKnowledge,
@@ -12,26 +13,33 @@ import {
 } from "../maintenance"
 import { appendToKnowledgeFile, readKnowledgeFile } from "../file-ops"
 
-describe("maintenance", () => {
-  let db: Database.Database
+describePg("maintenance", () => {
+  let pg: PgFixture | null = null
   let pendingReviewDAO: PendingReviewDAO
   let tmpDir: string
 
-  beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    pendingReviewDAO = new PendingReviewDAO(db)
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("pending_review")
+    pendingReviewDAO = new PendingReviewDAO(pg!.sql)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "maintenance-test-"))
   })
 
   afterEach(() => {
-    db?.close()
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   describe("checkCompactThreshold", () => {
-    it("creates pending item when file exceeds threshold", () => {
+    it("creates pending item when file exceeds threshold", async () => {
       // Create a file with many lines
       const filePath = path.join(tmpDir, "large.md")
       const lines = Array(150).fill("- Rule line").join("\n")
@@ -42,9 +50,9 @@ describe("maintenance", () => {
       process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
 
       try {
-        checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
+        await checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
 
-        const pending = pendingReviewDAO.listBySource("system")
+        const pending = await pendingReviewDAO.listBySource("system")
         expect(pending.length).toBeGreaterThanOrEqual(1)
         const thresholdItem = pending.find(p => p.source_ref === "compact-threshold:large.md")
         expect(thresholdItem).toBeDefined()
@@ -58,7 +66,7 @@ describe("maintenance", () => {
       }
     })
 
-    it("is idempotent - does not create duplicate pending items", () => {
+    it("is idempotent - does not create duplicate pending items", async () => {
       const filePath = path.join(tmpDir, "large.md")
       const lines = Array(150).fill("- Rule line").join("\n")
       fs.writeFileSync(filePath, lines)
@@ -67,10 +75,10 @@ describe("maintenance", () => {
       process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
 
       try {
-        checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
-        checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
+        await checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
+        await checkCompactThreshold("test-org", "large.md", 100, pendingReviewDAO)
 
-        const pending = pendingReviewDAO.listBySource("system")
+        const pending = await pendingReviewDAO.listBySource("system")
         const thresholdItems = pending.filter(p => p.source_ref === "compact-threshold:large.md")
         expect(thresholdItems).toHaveLength(1)
       } finally {
@@ -82,7 +90,7 @@ describe("maintenance", () => {
       }
     })
 
-    it("does not create pending item when file is under threshold", () => {
+    it("does not create pending item when file is under threshold", async () => {
       const filePath = path.join(tmpDir, "small.md")
       const lines = Array(50).fill("- Rule line").join("\n")
       fs.writeFileSync(filePath, lines)
@@ -91,9 +99,9 @@ describe("maintenance", () => {
       process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
 
       try {
-        checkCompactThreshold("test-org", "small.md", 100, pendingReviewDAO)
+        await checkCompactThreshold("test-org", "small.md", 100, pendingReviewDAO)
 
-        const pending = pendingReviewDAO.listBySource("system")
+        const pending = await pendingReviewDAO.listBySource("system")
         const thresholdItems = pending.filter(p => p.source_ref === "compact-threshold:small.md")
         expect(thresholdItems).toHaveLength(0)
       } finally {
@@ -110,9 +118,9 @@ describe("maintenance", () => {
   // TC-026: mergeCloneKnowledge
   // =========================================================================
   describe("mergeCloneKnowledge (TC-026)", () => {
-    it("creates clone_merge items from workspace_archive clone items", () => {
+    it("creates clone_merge items from workspace_archive clone items", async () => {
       // Insert items that look like they came from a clone execution
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: "clone-rule-001",
         type: "rule",
         source: "workspace_archive",
@@ -128,7 +136,7 @@ describe("maintenance", () => {
         user_notes: null,
       })
 
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: "clone-rule-002",
         type: "rule",
         source: "workspace_archive",
@@ -145,7 +153,7 @@ describe("maintenance", () => {
       })
 
       // Also insert a non-clone item that should NOT be merged
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: "normal-rule-001",
         type: "rule",
         source: "workspace_archive",
@@ -161,19 +169,19 @@ describe("maintenance", () => {
         user_notes: null,
       })
 
-      const merged = mergeCloneKnowledge("abc-123", pendingReviewDAO)
+      const merged = await mergeCloneKnowledge("abc-123", pendingReviewDAO)
       expect(merged).toBe(2)
 
       // Verify clone_merge items were created
-      const cloneMergeItems = pendingReviewDAO.listBySource("clone_merge")
+      const cloneMergeItems = await pendingReviewDAO.listBySource("clone_merge")
       expect(cloneMergeItems).toHaveLength(2)
       expect(cloneMergeItems[0].source).toBe("clone_merge")
       expect(cloneMergeItems.some(i => i.content === "Always use TypeScript strict mode")).toBe(true)
       expect(cloneMergeItems.some(i => i.content === "Use connection pooling")).toBe(true)
     })
 
-    it("returns 0 when no clone items found", () => {
-      const merged = mergeCloneKnowledge("nonexistent-clone", pendingReviewDAO)
+    it("returns 0 when no clone items found", async () => {
+      const merged = await mergeCloneKnowledge("nonexistent-clone", pendingReviewDAO)
       expect(merged).toBe(0)
     })
   })
@@ -194,7 +202,7 @@ describe("maintenance", () => {
       expect(result.pendingItemId).toBeDefined()
 
       // Pending item should exist
-      const pending = pendingReviewDAO.getById(result.pendingItemId)
+      const pending = await pendingReviewDAO.getById(result.pendingItemId)
       expect(pending).toBeDefined()
       expect(pending?.source_ref).toBe("compact:compact-test.md")
 

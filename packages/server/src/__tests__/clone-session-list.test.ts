@@ -17,6 +17,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
 
@@ -40,20 +41,33 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-csl"
 
+// P1 B2 双引擎 fixture：tasks/sessions(PG 父行) 落这座随机库。
+let pg: PgFixture | null = null
+
 function newDb(): Database.Database {
   const db = new Database(":memory:")
   applySchema(db)
   return db
 }
 
-function insertTask(db: Database.Database, id: string, sessionId: string, deletedAt: string | null = null): void {
+// P1 B2: tasks 已迁 PG —— 造数落 PG。
+async function insertTask(_db: Database.Database, id: string, sessionId: string, deletedAt: string | null = null): Promise<void> {
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, 'draft', ?, '{}', '[]', '[]', '[]', '[]', NULL, 1, ?, ?, ?, NULL)
-  `).run(id, ORG, `E2E_CSL ${id}`, sessionId, deletedAt, now, now)
+    VALUES ($1, $2, $3, 'draft', $4, '{}', '[]', '[]', '[]', '[]', NULL, 1, $5, $6, $7, NULL)
+  `, [id, ORG, `E2E_CSL ${id}`, sessionId, deletedAt, now, now])
+}
+
+// P1 B2 配方 §5：PG tasks FK → PG sessions 父行。
+async function seedPgSession(id: string, org: string): Promise<void> {
+  const now = new Date().toISOString()
+  await pg!.sql`
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (${id}, ${org}, 'e2e', 'main', true, false, ${now}, ${now})
+    ON CONFLICT (id) DO NOTHING`
 }
 
 async function createSession(app: Hono): Promise<string> {
@@ -63,7 +77,9 @@ async function createSession(app: Hono): Promise<string> {
     body: JSON.stringify({}),
   })
   expect(res.status).toBe(201)
-  return ((await res.json()) as { id: string }).id
+  const id = ((await res.json()) as { id: string }).id
+  await seedPgSession(id, ORG)
+  return id
 }
 
 async function listSessionIds(app: Hono): Promise<string[]> {
@@ -75,21 +91,25 @@ async function listSessionIds(app: Hono): Promise<string[]> {
   return body.sessions.map((s) => s.id)
 }
 
-describe("clone session list — task-owned session filter", () => {
+describePg("clone session list — task-owned session filter", () => {
   let db: Database.Database
   let app: Hono
   let taskDAO: TaskDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.OCTOPUS_HOME = `/tmp/octopus-csl-test-${Date.now()}`
+    pg = await setupRegisteredPgSchema()
     db = newDb()
-    const sessionDAO = new AgentSessionDAO(db)
-    taskDAO = new TaskDAO(db)
+    // P1 B3: AgentSessionDAO 已迁 PG —— sessions/messages 读写都落这座库。
+    const sessionDAO = new AgentSessionDAO(pg.sql)
+    taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     delete process.env.OCTOPUS_HOME
   })
@@ -98,8 +118,8 @@ describe("clone session list — task-owned session filter", () => {
     const sTask = await createSession(app)
     const sDirect = await createSession(app)
     const sDeleted = await createSession(app)
-    insertTask(db, "e2e-csl-t1", sTask)
-    insertTask(db, "e2e-csl-t2", sDeleted, new Date().toISOString())
+    await insertTask(db, "e2e-csl-t1", sTask)
+    await insertTask(db, "e2e-csl-t2", sDeleted, new Date().toISOString())
 
     const listed = await listSessionIds(app)
     expect(listed).toContain(sDirect)
@@ -108,12 +128,12 @@ describe("clone session list — task-owned session filter", () => {
     expect(listed).toContain(sDeleted)
 
     // DAO batch lookup mirrors the same semantics
-    const links = taskDAO.getLinksBySourceChatSessions([sTask, sDirect, sDeleted])
+    const links = await taskDAO.getLinksBySourceChatSessions([sTask, sDirect, sDeleted])
     expect(links).toHaveLength(1)
     expect(links[0]).toMatchObject({ session_id: sTask, task_id: "e2e-csl-t1" })
   })
 
-  it("empty session id list returns no links (no SQL with empty IN)", () => {
-    expect(taskDAO.getLinksBySourceChatSessions([])).toEqual([])
+  it("empty session id list returns no links (no SQL with empty IN)", async () => {
+    expect(await taskDAO.getLinksBySourceChatSessions([])).toEqual([])
   })
 })

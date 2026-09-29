@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 
 /**
  * 票03 (ADR-0021) — the built-in `task-lifecycle` job.
@@ -19,6 +20,10 @@ import path from "path"
  *     exercised for real, and records start() calls so double-launch is observable.
  *   - the concurrency cap — pinned to 2 here rather than read from env, because what is
  *     under test is that the job RESPECTS the meter, not what the number is.
+ *
+ * P1 B2 双引擎 fixture：`tasks` 表落在 PG（每文件一座随机库，注册为全局池 ——
+ * service 内部 taskDAO getter 经 pgSql() 取）；executions/workspaces/schedules/
+ * node_executions/scheduler_state 仍在 SQLite `db`（B5 域）。用例间 truncate tasks。
  */
 
 const stub = vi.hoisted(() => ({
@@ -109,6 +114,9 @@ import { TaskLifecycleService, TaskLifecycleError } from "../task-lifecycle-serv
 import { TaskHomeService } from "../task-home-service"
 import { TASK_TRIGGER_FAILED_EVENT, taskTriggerFailedPayloadSchema } from "@octopus/shared"
 
+// P1 B2：tasks 造数/读断言全部走这座 PG 库（beforeAll 注册为全局池）。
+let pg: PgFixture | null = null
+
 let db: Database.Database
 let sse: SSEService
 let svc: TaskLifecycleService
@@ -124,11 +132,75 @@ let wsSeq = 0
 
 const ORG = "xzf"
 
-beforeEach(() => {
+// finalizeLaunch 是引擎回调里的 fire-and-forget 调用（registerLaunchCallbacks 不 await 它），
+// 其尾巴含多次 PG 往返（状态镜像、产物回收、队列 drain）—— 单个 setImmediate 等不到落地。
+// 实例级 wrapper 收集在飞的 Promise，complete()/settleFinalizers() 确定性等待。
+let finalizePending = new Set<Promise<void>>()
+
+async function settleFinalizers(): Promise<void> {
+  while (finalizePending.size > 0) {
+    await Promise.allSettled([...finalizePending])
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
+/** P1 B2: tasks 表已迁 PG —— 用例里「重新入队/游标/绑定」的直写走这里（语义同旧 prepare UPDATE）。 */
+async function updateTask(id: string, sets: Record<string, string | number | null>): Promise<void> {
+  const cols = Object.keys(sets)
+  const text = `UPDATE tasks SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(", ")} WHERE id = $${cols.length + 1}`
+  await pg!.sql.unsafe(text, [...cols.map((c) => sets[c] as never), id])
+}
+
+// 混窗计量镜像（B5 票4）：ExecutionDAO 仍 SQLite（票5 迁），而 countActiveWork
+// 已随 ScheduleRunDAO 读 PG —— 计量前把 SQLite 的 workspaces/executions 行镜像进 PG，
+// 让闸读到「真实在飞工作」（与迁移前语义一致）。票5 单引擎收口后删除。
+const ORIGINAL_METER = ScheduleRunDAO.prototype.countActiveWork
+
+async function mirrorExecsToPg(): Promise<void> {
+  const wss = db.prepare("SELECT id, name, org, path FROM workspaces")
+    .all() as Array<{ id: string; name: string; org: string; path: string }>
+  for (const w of wss) {
+    await pg!.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, now(), now()) ON CONFLICT (id) DO NOTHING`,
+      [w.id, w.name, w.org, w.path],
+    )
+  }
+  const exs = db.prepare(
+    `SELECT id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+            status, org, task_id, phase_index, round_index FROM executions`,
+  ).all() as Array<Record<string, string | number | null>>
+  for (const e of exs) {
+    await pg!.sql.unsafe(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, org, task_id, phase_index, round_index, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),now())
+       ON CONFLICT (id) DO UPDATE SET status = excluded.status`,
+      [e.id, e.workspace_id, e.parent_id ?? "0", e.child_index ?? 0, e.workflow_ref, e.workflow_name,
+        e.status, e.org, e.task_id, e.phase_index, e.round_index],
+    )
+  }
+}
+
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
   db = new Database(":memory:")
   db.pragma("foreign_keys = ON")
   applySchema(db)
   db.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
+  // PG 侧每用例清 tasks + 镜像表（executions/workspaces/schedules/schedule_executions），
+  // 与 :memory: SQLite 同生命周期（B5 票4：混窗镜像会写这些表，用例间必须清零）。
+  await pg!.truncate("tasks", "schedule_executions", "schedules", "executions", "workspaces")
   stub.db = db
   stub.started = []
   stub.live = new Set()
@@ -138,7 +210,8 @@ beforeEach(() => {
   stub.seq = 0
   wsSeq = 0
   events = []
-  tasks = new TaskDAO(db)
+  finalizePending = new Set()
+  tasks = new TaskDAO(pg!.sql)
   execs = new ExecutionDAO(db)
   homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "lc-home-"))
   wsDir = fs.mkdtempSync(path.join(os.tmpdir(), "lc-ws-"))
@@ -163,6 +236,13 @@ beforeEach(() => {
     builtInWorkflows: fakeBuiltIn() as never,
     taskHomeService: taskHome,
   })
+  const realFinalize = svc.finalizeLaunch.bind(svc)
+  svc.finalizeLaunch = (executionId: string, engineFinalStatus?: string): Promise<void> => {
+    const p = realFinalize(executionId, engineFinalStatus)
+    finalizePending.add(p)
+    void p.finally(() => finalizePending.delete(p))
+    return p
+  }
 })
 
 afterEach(() => {
@@ -205,7 +285,7 @@ function fakeBuiltIn() {
   }
 }
 
-function insertTask(id: string, overrides: Partial<TaskRow> = {}, spec?: Partial<TaskSpec>): TaskRow {
+async function insertTask(id: string, overrides: Partial<TaskRow> = {}, spec?: Partial<TaskSpec>): Promise<TaskRow> {
   const now = new Date().toISOString()
   const row = {
     id, org: ORG, name: `T_${id}`, status: "ready",
@@ -218,12 +298,12 @@ function insertTask(id: string, overrides: Partial<TaskRow> = {}, spec?: Partial
     cron_timezone: "Asia/Shanghai", trigger_enabled: 1, next_fire_at: null, last_fired_at: null,
     ...overrides,
   } as TaskRow
-  tasks.insert(row)
+  await tasks.insert(row)
   return row
 }
 
 /** A v4 task whose phase 1 spec file exists under the home (the gate checks the disk). */
-function insertV4Task(id: string, opts: { phases?: number; deleteSpec?: boolean } = {}): TaskRow {
+async function insertV4Task(id: string, opts: { phases?: number; deleteSpec?: boolean } = {}): Promise<TaskRow> {
   const n = opts.phases ?? 2
   const batchDir = path.join(taskHome.homePath(id), ".scratch", "2026-09-10")
   const phases = Array.from({ length: n }, (_, i) => ({
@@ -242,7 +322,7 @@ function insertV4Task(id: string, opts: { phases?: number; deleteSpec?: boolean 
   return insertTask(id, {}, { format: "v4", phases } as never)
 }
 
-function bindWorkspace(taskId: string): string {
+async function bindWorkspace(taskId: string): Promise<string> {
   const id = `lc-ws-${wsSeq++}`
   const p = path.join(wsDir, id)
   fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
@@ -250,7 +330,7 @@ function bindWorkspace(taskId: string): string {
     `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
      VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
   ).run(id, `ws-${taskId}`, ORG, p, taskId)
-  db.prepare("UPDATE tasks SET workspace_id = ? WHERE id = ?").run(id, taskId)
+  await updateTask(taskId, { workspace_id: id })
   return id
 }
 
@@ -262,14 +342,15 @@ function latestRoot(taskId: string) {
 async function complete(execId: string, status?: string): Promise<void> {
   stub.callbacks.get(execId)?.(status)
   await new Promise((r) => setImmediate(r))
+  await settleFinalizers()
 }
 
 // ── ① arm ────────────────────────────────────────────────────────────
 
-describe("task-lifecycle — arming creates the instance row", () => {
-  it("arms a v3 task as a PENDING root row carrying task_id", () => {
-    insertTask("a1")
-    const execId = svc.armTask("a1")
+describePg("task-lifecycle — arming creates the instance row", () => {
+  it("arms a v3 task as a PENDING root row carrying task_id", async () => {
+    await insertTask("a1")
+    const execId = await svc.armTask("a1")
     const row = execs.findById(execId)!
     expect(row.task_id).toBe("a1")
     expect(row.status).toBe("pending")
@@ -279,9 +360,9 @@ describe("task-lifecycle — arming creates the instance row", () => {
     expect([row.phase_index, row.round_index]).toEqual([null, null])
   })
 
-  it("arms a v4 task at phase 1 round 1 and stamps the round coordinates", () => {
-    insertV4Task("a2")
-    const execId = svc.armTask("a2")
+  it("arms a v4 task at phase 1 round 1 and stamps the round coordinates", async () => {
+    await insertV4Task("a2")
+    const execId = await svc.armTask("a2")
     const row = execs.findById(execId)!
     expect([row.phase_index, row.round_index]).toEqual([1, 1])
     const iv = JSON.parse(row.input_values) as Record<string, string>
@@ -289,20 +370,20 @@ describe("task-lifecycle — arming creates the instance row", () => {
     expect(iv._round_index).toBe("1")
   })
 
-  it("arms a later phase/round when asked (验收打回 → 新一轮)", () => {
-    insertV4Task("a3", { phases: 3 })
-    const execId = svc.armTask("a3", { phaseIndex: 2, roundIndex: 3, feedback: "重做" })
+  it("arms a later phase/round when asked (验收打回 → 新一轮)", async () => {
+    await insertV4Task("a3", { phases: 3 })
+    const execId = await svc.armTask("a3", { phaseIndex: 2, roundIndex: 3, feedback: "重做" })
     const row = execs.findById(execId)!
     expect([row.phase_index, row.round_index]).toEqual([2, 3])
     expect(JSON.parse(row.input_values).feedback).toBe("重做")
   })
 
-  it("refuses to arm a second instance while one is live — and the refusal is the LATCH", () => {
-    insertTask("a4")
-    svc.armTask("a4")
+  it("refuses to arm a second instance while one is live — and the refusal is the LATCH", async () => {
+    await insertTask("a4")
+    await svc.armTask("a4")
     let caught: unknown
     try {
-      svc.armTask("a4")
+      await svc.armTask("a4")
     } catch (err) {
       caught = err
     }
@@ -315,81 +396,81 @@ describe("task-lifecycle — arming creates the instance row", () => {
     expect(live.c).toBe(1)
   })
 
-  it("the latch itself blocks a row inserted without going through the pre-check", () => {
-    insertTask("a5")
-    const wsId = bindWorkspace("a5")
+  it("the latch itself blocks a row inserted without going through the pre-check", async () => {
+    await insertTask("a5")
+    const wsId = await bindWorkspace("a5")
     // Written straight to SQL, bypassing armTask entirely: what is under test is that the
     // index — not the pre-check — is the serializer.
     db.prepare(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id)
        VALUES ('x1', ?, '0', 'w', 'w', 'pending', 'xzf', datetime('now'), datetime('now'), 'a5')`,
     ).run(wsId)
-    expect(() => svc.armTask("a5")).toThrow(TaskLifecycleError)
+    await expect(svc.armTask("a5")).rejects.toThrow(TaskLifecycleError)
   })
 
-  it("two DIFFERENT tasks arm independently (the latch is per task, not global)", () => {
-    insertTask("a6"); insertTask("a7")
-    svc.armTask("a6")
-    svc.armTask("a7")
+  it("two DIFFERENT tasks arm independently (the latch is per task, not global)", async () => {
+    await insertTask("a6"); await insertTask("a7")
+    await svc.armTask("a6")
+    await svc.armTask("a7")
     expect(stub.created).toHaveLength(2)
   })
 
-  it("refuses a task that is not enqueued, and one that is gone", () => {
-    insertTask("a8", { status: "draft" })
-    expect(() => svc.armTask("a8")).toThrow(/ready/)
-    expect(() => svc.armTask("nope")).toThrow(/不存在/)
+  it("refuses a task that is not enqueued, and one that is gone", async () => {
+    await insertTask("a8", { status: "draft" })
+    await expect(svc.armTask("a8")).rejects.toThrow(/ready/)
+    await expect(svc.armTask("nope")).rejects.toThrow(/不存在/)
   })
 
-  it("refuses when nothing is bound to run (rather than launching an empty workflow)", () => {
-    insertTask("a9", { workflow_ref: null })
+  it("refuses when nothing is bound to run (rather than launching an empty workflow)", async () => {
+    await insertTask("a9", { workflow_ref: null })
     let caught: TaskLifecycleError | undefined
     try {
-      svc.armTask("a9")
+      await svc.armTask("a9")
     } catch (err) { caught = err as TaskLifecycleError }
     expect(caught?.reason).toBe("no-workflow")
   })
 
-  it("re-checks the v4 contract at launch: a deleted phase spec refuses instead of running blind", () => {
-    insertV4Task("a10", { deleteSpec: true })
+  it("re-checks the v4 contract at launch: a deleted phase spec refuses instead of running blind", async () => {
+    await insertV4Task("a10", { deleteSpec: true })
     let caught: TaskLifecycleError | undefined
     try {
-      svc.armTask("a10")
+      await svc.armTask("a10")
     } catch (err) { caught = err as TaskLifecycleError }
     expect(caught?.reason).toBe("gate")
     expect(caught?.message).toContain("phase:1:spec-missing")
   })
 
-  it("reuses the bound workspace instead of building a second one per round", () => {
-    insertTask("b1")
-    const wsId = bindWorkspace("b1")
-    svc.armTask("b1")
+  it("reuses the bound workspace instead of building a second one per round", async () => {
+    await insertTask("b1")
+    const wsId = await bindWorkspace("b1")
+    await svc.armTask("b1")
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces WHERE task_id='b1'").get()).toEqual({ c: 1 })
     expect(execs.findLatestTaskInstance("b1")!.workspace_id).toBe(wsId)
   })
 
-  it("builds and binds a workspace on first arm (task_id written, no schedule anywhere)", () => {
-    insertTask("b2")
-    const execId = svc.armTask("b2")
+  it("builds and binds a workspace on first arm (task_id written, no schedule anywhere)", async () => {
+    await insertTask("b2")
+    const execId = await svc.armTask("b2")
     const ws = db.prepare("SELECT * FROM workspaces WHERE task_id='b2'").get() as { id: string }
     expect(ws).toBeTruthy()
     expect(execs.findById(execId)!.workspace_id).toBe(ws.id)
-    expect(tasks.getById("b2")!.workspace_id).toBe(ws.id)
+    expect((await tasks.getById("b2"))!.workspace_id).toBe(ws.id)
   })
 })
 
 // ── ①b execution tree (task-exec-tree, schema v44) ───────────────────
 
-describe("task-lifecycle — the run history is one tree (v44)", () => {
+describePg("task-lifecycle — the run history is one tree (v44)", () => {
   /** arm → launch → complete one round, returning its row. */
   async function round(taskId: string, opts?: Parameters<TaskLifecycleService["armTask"]>[1]) {
-    const execId = svc.armTask(taskId, opts)
-    svc.launchQueued()
+    const execId = await svc.armTask(taskId, opts)
+    await svc.launchQueued()
     await complete(execId, "completed")
     return execs.findById(execId)!
   }
 
   it("the first round is a root; every later TAGGED round chains under the previous instance", async () => {
-    insertV4Task("t1", { phases: 3 })
+    await insertV4Task("t1", { phases: 3 })
     const r1 = await round("t1")
     expect(r1.parent_id).toBe("0")
     const r2 = await round("t1", { phaseIndex: 2, roundIndex: 1 })
@@ -399,17 +480,17 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
   })
 
   it("an UNTAGGED launch (v3) stays a root — the chain belongs to tagged rounds only", async () => {
-    insertTask("t2")
+    await insertTask("t2")
     await round("t2")
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='t2'").run()
+    await updateTask("t2", { status: "ready" })
     const again = await round("t2")
     expect(again.parent_id).toBe("0")
   })
 
   it("the badge/currentInstance follows the CHAIN TIP, not the newest root", async () => {
-    insertV4Task("t3", { phases: 3 })
+    await insertV4Task("t3", { phases: 3 })
     const r1 = await round("t3")
-    const execId = svc.armTask("t3", { phaseIndex: 2 })
+    const execId = await svc.armTask("t3", { phaseIndex: 2 })
     expect(execs.findLatestTaskInstance("t3")!.id).toBe(execId)
     expect(execs.findLatestTaskInstances(["t3"])[0].id).toBe(execId)
     // History is both instances, newest first.
@@ -417,9 +498,9 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
   })
 
   it("a chained round still holds the single-instance latch (phase tag is enough)", async () => {
-    insertV4Task("t4")
+    await insertV4Task("t4")
     const r1 = await round("t4")
-    const r2 = svc.armTask("t4", { phaseIndex: 2 }) // chained, pending — instance row
+    const r2 = await svc.armTask("t4", { phaseIndex: 2 }) // chained, pending — instance row
     // Direct SQL, bypassing every pre-check: the index itself must refuse a second live
     // instance even though neither row may any longer be found by a roots-only probe.
     expect(() =>
@@ -431,10 +512,10 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
   })
 
   it("a chained round launches through the TASK path (startRow), not the arm path", async () => {
-    insertV4Task("t5", { phases: 3 })
+    await insertV4Task("t5", { phases: 3 })
     await round("t5")
-    const r2 = svc.armTask("t5", { phaseIndex: 2 })
-    expect(svc.launchQueued().launched).toBe(1)
+    const r2 = await svc.armTask("t5", { phaseIndex: 2 })
+    expect((await svc.launchQueued()).launched).toBe(1)
     expect(stub.started).toContain(r2) // startChildRun would have failed on a completed parent
     await complete(r2, "completed")
     // Only the instance finalize emits the round's 待验收 + task_execution — the child
@@ -446,20 +527,20 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
   })
 
   it("arms under a rebuilt workspace start a NEW tree (no cross-ws parent)", async () => {
-    insertV4Task("t6")
+    await insertV4Task("t6")
     const r1 = await round("t6")
     // Simulate the ws-rebuild branch of prepareWorkspace: the previous instance lives in
     // a workspace that is gone. Arm must not hand create() a cross-ws parent.
     db.pragma("foreign_keys = OFF")
     db.prepare("UPDATE executions SET workspace_id = 'ws-from-a-deleted-world' WHERE id = ?").run(r1.id)
-    const r2 = svc.armTask("t6", { phaseIndex: 2 })
+    const r2 = await svc.armTask("t6", { phaseIndex: 2 })
     db.pragma("foreign_keys = ON")
     expect(execs.findById(r2)!.parent_id).toBe("0")
   })
 
-  it("listTaskChildRuns keeps ARMS (untagged children); chained rounds are instances", () => {
-    insertTask("t7")
-    const ws = bindWorkspace("t7")
+  it("listTaskChildRuns keeps ARMS (untagged children); chained rounds are instances", async () => {
+    await insertTask("t7")
+    const ws = await bindWorkspace("t7")
     db.prepare(
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id, phase_index, round_index)
        VALUES ('c-r1', ?, '0', 'w', 'w', 'completed', 'xzf', datetime('now'), datetime('now'), 't7', 1, 1)`,
@@ -496,34 +577,41 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
 
 // ── ② claim + the shared cap (hard gate) ─────────────────────────────
 
-describe("task-lifecycle — the claim queue and the concurrency gate", () => {
-  it("launches armed rows and flips them pending → running", () => {
-    insertTask("c1")
-    svc.armTask("c1")
-    const { launched } = svc.launchQueued()
+describePg("task-lifecycle — the claim queue and the concurrency gate", () => {
+  it("launches armed rows and flips them pending → running", async () => {
+    await insertTask("c1")
+    await svc.armTask("c1")
+    const { launched } = await svc.launchQueued()
     expect(launched).toBe(1)
     expect(stub.started).toHaveLength(1)
     expect(latestRoot("c1")!.status).toBe("running")
   })
 
-  it("never launches past the shared cap — job fires count against it too", () => {
+  it("never launches past the shared cap — job fires count against it too", async () => {
     for (const id of ["c2", "c3", "c4"]) {
-      insertTask(id)
-      svc.armTask(id)
+      await insertTask(id)
+      await svc.armTask(id)
     }
     // One cron job fire in flight occupies a slot: cap is 2, so only ONE task may start.
+    // （计量表读 PG —— fire 行落 PG 侧；任务行的在飞状态经镜像同步，见上。）
     const now = new Date().toISOString()
-    db.prepare(
+    await pg!.sql.unsafe(
       `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-       VALUES ('s-job', 'xzf', 'S', '* * * * *', 'UTC', 1, 'workflow', '{}', ?, ?)`,
-    ).run(now, now)
-    db.prepare(
+       VALUES ('s-job', 'xzf', 'S', '* * * * *', 'UTC', true, 'workflow', '{}'::jsonb, now(), now())`,
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
          timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES ('f1', 's-job', 'running', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    ).run(now, now)
+       VALUES ('f1', 's-job', 'running', 'scheduled', $1, '+00:00', 'UTC', $1, 'scheduler')`,
+      [now],
+    )
 
-    const { launched, capped } = svc.launchQueued()
+    vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockImplementation(async function (opts) {
+      await mirrorExecsToPg()
+      return ORIGINAL_METER.call(this, opts)
+    })
+    const { launched, capped } = await svc.launchQueued()
+    vi.restoreAllMocks()
     expect(launched).toBe(1)
     expect(capped).toBe(true)
     expect(latestRoot("c2")!.status).toBe("running")
@@ -531,108 +619,108 @@ describe("task-lifecycle — the claim queue and the concurrency gate", () => {
     expect(latestRoot("c3")!.status).toBe("pending")
   })
 
-  it("the built-in job's OWN fire does not eat a slot", () => {
+  it("the built-in job's OWN fire does not eat a slot", async () => {
     // Two armed tasks, cap 2, one task-lifecycle fire running → both must still launch.
-    insertTask("c5"); insertTask("c6")
-    svc.armTask("c5"); svc.armTask("c6")
-    const now = new Date().toISOString()
-    db.prepare(
+    await insertTask("c5"); await insertTask("c6")
+    await svc.armTask("c5"); await svc.armTask("c6")
+    await pg!.sql.unsafe(
       `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-       VALUES ('builtin-task-lifecycle', 'xzf', '系统', '* * * * *', 'UTC', 1, 'job', '{}', ?, ?)`,
-    ).run(now, now)
-    db.prepare(
+       VALUES ('builtin-task-lifecycle', 'xzf', '系统', '* * * * *', 'UTC', true, 'job', '{}'::jsonb, now(), now())`,
+    )
+    await pg!.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
          timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES ('f2', 'builtin-task-lifecycle', 'running', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    ).run(now, now)
-    expect(svc.launchQueued().launched).toBe(2)
+       VALUES ('f2', 'builtin-task-lifecycle', 'running', 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+    )
+    expect((await svc.launchQueued()).launched).toBe(2)
   })
 
-  it("re-entering the claim loop never starts a row twice (guarded claim)", () => {
-    insertTask("c7")
-    svc.armTask("c7")
-    svc.launchQueued()
-    svc.launchQueued()
-    svc.launchQueued()
+  it("re-entering the claim loop never starts a row twice (guarded claim)", async () => {
+    await insertTask("c7")
+    await svc.armTask("c7")
+    await svc.launchQueued()
+    await svc.launchQueued()
+    await svc.launchQueued()
     expect(stub.started).toHaveLength(1)
   })
 
-  it("two overlapping owners: the loser of the claim sees changes===0", () => {
-    insertTask("c8")
-    const execId = svc.armTask("c8")
+  it("two overlapping owners: the loser of the claim sees changes===0", async () => {
+    await insertTask("c8")
+    const execId = await svc.armTask("c8")
     expect(execs.claimLaunch(execId).changes).toBe(1)
     expect(execs.claimLaunch(execId).changes).toBe(0)
   })
 
-  it("a row whose workspace vanished fails loudly and releases the task slot", () => {
-    insertTask("c9")
-    const execId = svc.armTask("c9")
+  it("a row whose workspace vanished fails loudly and releases the task slot", async () => {
+    await insertTask("c9")
+    const execId = await svc.armTask("c9")
     db.pragma("foreign_keys = OFF") // a ws deleted out of band ≡ a row pointing at a gone ws
     db.prepare("UPDATE executions SET workspace_id = 'ws-deleted-out-of-band' WHERE id = ?").run(execId)
     db.pragma("foreign_keys = ON")
-    const { launched } = svc.launchQueued()
+    const { launched } = await svc.launchQueued()
     expect(launched).toBe(0)
     expect(execs.findById(execId)!.status).toBe("failed")
-    expect(tasks.getById("c9")!.status).toBe("failed")
+    expect((await tasks.getById("c9"))!.status).toBe("failed")
     // Released: re-enqueued, the same task can be armed again (the latch let go).
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='c9'").run()
-    expect(() => svc.armTask("c9")).not.toThrow()
+    await updateTask("c9", { status: "ready" })
+    await expect(svc.armTask("c9")).resolves.toBeTruthy()
   })
 
   it("an engine that refuses to start does not leave the row running forever", async () => {
-    insertTask("c10")
-    const execId = svc.armTask("c10")
+    await insertTask("c10")
+    const execId = await svc.armTask("c10")
     stub.failStart = true
-    svc.launchQueued()
+    await svc.launchQueued()
     await new Promise((r) => setImmediate(r))
+    await settleFinalizers()
     expect(execs.findById(execId)!.status).toBe("failed")
   })
 })
 
 // ── ③ finalize ───────────────────────────────────────────────────────
 
-describe("task-lifecycle — a round ending", () => {
+describePg("task-lifecycle — a round ending", () => {
   it("mirrors done onto a v3 task and releases the slot", async () => {
-    insertTask("d1")
-    const execId = svc.armAndLaunch("d1", { triggeredBy: "manual" })
+    await insertTask("d1")
+    const execId = await svc.armAndLaunch("d1", { triggeredBy: "manual" })
     await complete(execId, "completed")
     expect(execs.findById(execId)!.status).toBe("completed")
-    expect(tasks.getById("d1")!.status).toBe("done")
+    expect((await tasks.getById("d1"))!.status).toBe("done")
     // The slot is released (the latch no longer holds it) — proven by re-arming once the
     // task is enqueued again, which is what a human does after a run finishes.
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='d1'").run()
-    expect(() => svc.armTask("d1")).not.toThrow()
+    await updateTask("d1", { status: "ready" })
+    await expect(svc.armTask("d1")).resolves.toBeTruthy()
   })
 
   it("a v4 round ending does NOT decide the task — 待验收 is derived, not stored", async () => {
-    insertV4Task("d2")
-    const execId = svc.armAndLaunch("d2")
+    await insertV4Task("d2")
+    const execId = await svc.armAndLaunch("d2")
     await complete(execId, "completed")
-    expect(tasks.getById("d2")!.status).toBe("running")
+    expect((await tasks.getById("d2"))!.status).toBe("running")
     const awaiting = events.filter((e) => String(e.event).includes("phase_status_update"))
     expect(awaiting.length).toBeGreaterThan(0)
     expect(awaiting.at(-1)!.data).toMatchObject({ task_id: "d2", phase_index: 1, status: "awaiting_review" })
   })
 
   it("a failed round mirrors failed", async () => {
-    insertTask("d3")
-    const execId = svc.armAndLaunch("d3")
+    await insertTask("d3")
+    const execId = await svc.armAndLaunch("d3")
     await complete(execId, "failed")
-    expect(tasks.getById("d3")!.status).toBe("failed")
+    expect((await tasks.getById("d3"))!.status).toBe("failed")
   })
 
   it("an approval/interaction pause is not an ending", async () => {
-    insertTask("d4")
-    const execId = svc.armAndLaunch("d4")
+    await insertTask("d4")
+    const execId = await svc.armAndLaunch("d4")
     db.prepare("UPDATE executions SET status='pending_approval' WHERE id=?").run(execId)
     await complete(execId, "completed")
     expect(execs.findById(execId)!.status).toBe("pending_approval")
-    expect(tasks.getById("d4")!.status).toBe("running")
+    expect((await tasks.getById("d4"))!.status).toBe("running")
   })
 
   it("the persisted status is not overwritten by the engine's later opinion", async () => {
-    insertTask("d5")
-    const execId = svc.armAndLaunch("d5")
+    await insertTask("d5")
+    const execId = await svc.armAndLaunch("d5")
     db.prepare("UPDATE executions SET status='cancelled' WHERE id=?").run(execId)
     await complete(execId, "completed")
     expect(execs.findById(execId)!.status).toBe("cancelled")
@@ -641,37 +729,37 @@ describe("task-lifecycle — a round ending", () => {
   it("a task whose run ended out of band is resynced by the tick, not the callback", async () => {
     // Cancelled through the generic execution UI (no task-side abort involved): the row
     // is terminal, the card is still 执行中, and nothing calls finalize for it.
-    insertTask("d5b")
-    const execId = svc.armAndLaunch("d5b")
+    await insertTask("d5b")
+    const execId = await svc.armAndLaunch("d5b")
     db.prepare("UPDATE executions SET status='cancelled' WHERE id=?").run(execId)
-    db.prepare("UPDATE tasks SET status='running' WHERE id='d5b'").run()
-    svc.tick()
-    expect(tasks.getById("d5b")!.status).toBe("failed")
+    await updateTask("d5b", { status: "running" })
+    await svc.tick()
+    expect((await tasks.getById("d5b"))!.status).toBe("failed")
     // The slot is free — proven once a human re-enqueues (a one-shot task's run ending IS
     // its outcome; only a cron task returns to 已入队 by itself, see the cron test).
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='d5b'").run()
-    expect(svc.armTask("d5b")).toBeTruthy()
+    await updateTask("d5b", { status: "ready" })
+    expect(await svc.armTask("d5b")).toBeTruthy()
   })
 
   it("finalize is idempotent — the callback and the tick can both arrive", async () => {
-    insertTask("d6")
-    const execId = svc.armAndLaunch("d6")
+    await insertTask("d6")
+    const execId = await svc.armAndLaunch("d6")
     await complete(execId, "completed")
     const first = events.filter((e) => String(e.event) === "task_execution").length
-    svc.finalizeLaunch(execId, "completed")
-    await new Promise((r) => setImmediate(r))
+    await svc.finalizeLaunch(execId, "completed")
+    await settleFinalizers()
     expect(events.filter((e) => String(e.event) === "task_execution").length).toBe(first)
   })
 })
 
-describe("task-lifecycle — finalize resolves the way the executor used to", () => {
+describePg("task-lifecycle — finalize resolves the way the executor used to", () => {
   it("goal-task-dev T6 parity: an engine 'completed' over zero completed nodes is a failure", async () => {
     // The rule the executor used to own (and the reason this file exists): onComplete
     // fires inside run(), BEFORE the lifecycle persists the final status, so a pure DB
     // read sees a stale 'running'. Trusting the engine then needs the allSkipped guard —
     // a run that completed nothing but skipped everything achieved nothing.
-    insertTask("d7")
-    const execId = svc.armAndLaunch("d7")
+    await insertTask("d7")
+    const execId = await svc.armAndLaunch("d7")
     const addNode = (id: string, status: string) =>
       db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status) VALUES (?, ?, ?, 'agent', ?)")
         .run(`n-${id}`, execId, id, status)
@@ -682,23 +770,23 @@ describe("task-lifecycle — finalize resolves the way the executor used to", ()
 
     // And the guard's own boundary: zero node rows at all stays completed (the lifecycle
     // rule has a length>0 guard; without it an empty workflow would fail).
-    insertTask("d8")
-    const bare = svc.armAndLaunch("d8")
+    await insertTask("d8")
+    const bare = await svc.armAndLaunch("d8")
     await complete(bare, "completed")
     expect(execs.findById(bare)!.status).toBe("completed")
   })
 
   it("a completed_with_failures round counts as done for the card", async () => {
-    insertTask("d9")
-    const execId = svc.armAndLaunch("d9")
+    await insertTask("d9")
+    const execId = await svc.armAndLaunch("d9")
     await complete(execId, "completed_with_failures")
     expect(execs.findById(execId)!.status).toBe("completed_with_failures")
-    expect(tasks.getById("d9")!.status).toBe("done")
+    expect((await tasks.getById("d9"))!.status).toBe("done")
   })
 
   it("an unknown engine status is never written verbatim onto the task", async () => {
-    insertTask("d10")
-    const execId = svc.armAndLaunch("d10")
+    await insertTask("d10")
+    const execId = await svc.armAndLaunch("d10")
     await complete(execId, "waiting_for_luck" as never)
     expect(execs.findById(execId)!.status).toBe("completed")
   })
@@ -713,15 +801,15 @@ describe("task-lifecycle — finalize resolves the way the executor used to", ()
 // column. The read model can only surface what a writer stored, so the storage rule is
 // pinned here: every path that ends a run red puts one line under var_pool.error, and the
 // SSE event carries the same line.
-describe("task-lifecycle — every red run carries its reason (票05)", () => {
+describePg("task-lifecycle — every red run carries its reason (票05)", () => {
   const reasonOn = (execId: string): unknown =>
     JSON.parse(execs.findById(execId)!.var_pool).error
 
-  it("a reap stores why it reaped, on the row and in the event", () => {
-    const execId = armRunning("r1")
+  it("a reap stores why it reaped, on the row and in the event", async () => {
+    const execId = await armRunning("r1")
     age(execId, 30)
     stub.live.delete(execId)
-    const { reaped } = svc.reconcile()
+    const { reaped } = await svc.reconcile()
     expect(reaped).toBe(1)
     expect(String(reasonOn(execId))).toContain("失去引擎进程")
     const ev = events.filter((e) => e.event === "task_execution").at(-1)
@@ -729,9 +817,9 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     expect((ev?.data as Record<string, unknown>).reason).toContain("失去引擎进程")
   })
 
-  it("a user abort says 用户中止, not nothing", () => {
-    const execId = armRunning("r2")
-    svc.abortTask("r2")
+  it("a user abort says 用户中止, not nothing", async () => {
+    const execId = await armRunning("r2")
+    await svc.abortTask("r2")
     expect(String(reasonOn(execId))).toBe("用户中止")
     // The row is not the whole story: the board reads task_execution, so an abort that
     // only writes the row leaves the card showing 'running' until the next poll — and
@@ -741,36 +829,37 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     expect((ev?.data as Record<string, unknown>).reason).toBe("用户中止")
   })
 
-  it("a queued abort announces the retirement too", () => {
+  it("a queued abort announces the retirement too", async () => {
     // 排队中 rows never started, so there is no engine event for them from anywhere else —
     // if this path stays silent the badge sits on 'pending' and the user has no idea their
     // 中止 landed.
-    insertTask("r2b")
-    const execId = svc.armTask("r2b")
+    await insertTask("r2b")
+    const execId = await svc.armTask("r2b")
     events.length = 0
-    expect(svc.abortTask("r2b").retired).toEqual([execId])
+    expect((await svc.abortTask("r2b")).retired).toEqual([execId])
     const ev = events.filter((e) => e.event === "task_execution")
     expect(ev).toHaveLength(1)
     expect((ev[0].data as Record<string, unknown>).reason).toContain("排队中")
     // Idempotence holds on the wire as well as in the table: a second abort is terminal
     // and emits nothing.
     events.length = 0
-    svc.abortTask("r2b")
+    await svc.abortTask("r2b")
     expect(events.filter((e) => e.event === "task_execution")).toHaveLength(0)
   })
 
   it("an engine that refuses to start puts its message on the row", async () => {
-    insertTask("r3")
+    await insertTask("r3")
     stub.failStart = true
-    const execId = svc.armTask("r3")
-    svc.launchQueued()
+    const execId = await svc.armTask("r3")
+    await svc.launchQueued()
     await new Promise((r) => setImmediate(r))
+    await settleFinalizers()
     expect(execs.findById(execId)!.status).toBe("failed")
     expect(String(reasonOn(execId))).toContain("provider 挂了")
   })
 
   it("a run the engine failed with no stored reason lifts the failing node's error", async () => {
-    const execId = armRunning("r4")
+    const execId = await armRunning("r4")
     execs.insertNodeExecutionOrIgnore({
       id: `${execId}-n1`, execution_id: execId, node_id: "build",
       node_type: "bash", status: "failed", error: "pnpm build 退出码 1",
@@ -784,7 +873,7 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     // The coordinator's own workflow completes green even when an arm died (票04), so the
     // only truthful line available here is the count — and it must reach the row, or the
     // card flips red with nothing to point at.
-    const execId = armRunning("r5")
+    const execId = await armRunning("r5")
     const wsId = execs.findById(execId)!.workspace_id
     db.prepare(
       `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
@@ -800,7 +889,7 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     // The writer's rule is "only a red ending writes a reason". The badge's rule is
     // "only a terminal-failure row shows one" (errorSummaryOf, tasks-routes covers that);
     // pinning both halves is what keeps a stale key from ever reaching a green card.
-    const execId = armRunning("r6")
+    const execId = await armRunning("r6")
     db.prepare("UPDATE executions SET var_pool = ? WHERE id = ?")
       .run(JSON.stringify({ error: "上一轮遗留" }), execId)
     await complete(execId, "completed")
@@ -811,9 +900,9 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
 
 /** Arm + launch a task and return its live root execution (the shape a run has when it
  *  can be ended red). */
-function armRunning(taskId: string): string {
-  insertTask(taskId)
-  const execId = svc.armAndLaunch(taskId)
+async function armRunning(taskId: string): Promise<string> {
+  await insertTask(taskId)
+  const execId = await svc.armAndLaunch(taskId)
   stub.live.add(execId)
   return execId
 }
@@ -826,45 +915,45 @@ function age(execId: string, minutes: number): void {
     .run(at, at, at, execId)
 }
 
-describe("task-lifecycle — reconciliation (the orphan path, now task-side)", () => {
-  function stranded(taskId: string, ageMinutes: number, status = "running") {
-    insertTask(taskId)
-    const execId = svc.armTask(taskId)
+describePg("task-lifecycle — reconciliation (the orphan path, now task-side)", () => {
+  async function stranded(taskId: string, ageMinutes: number, status = "running") {
+    await insertTask(taskId)
+    const execId = await svc.armTask(taskId)
     db.prepare("UPDATE executions SET status=?, started_at=?, updated_at=? WHERE id=?")
       .run(status, new Date(Date.now() - ageMinutes * 60_000).toISOString(),
         new Date(Date.now() - ageMinutes * 60_000).toISOString(), execId)
     return execId
   }
 
-  it("reaps a stale running row whose engine is gone", () => {
-    const execId = stranded("e1", 30)
-    const { reaped } = svc.reconcile()
+  it("reaps a stale running row whose engine is gone", async () => {
+    const execId = await stranded("e1", 30)
+    const { reaped } = await svc.reconcile()
     expect(reaped).toBe(1)
     expect(execs.findById(execId)!.status).toBe("aborted")
-    expect(tasks.getById("e1")!.status).toBe("aborted")
+    expect((await tasks.getById("e1"))!.status).toBe("aborted")
   })
 
-  it("leaves a young row alone — another tick may still be starting it", () => {
-    const execId = stranded("e2", 1)
-    expect(svc.reconcile().reaped).toBe(0)
+  it("leaves a young row alone — another tick may still be starting it", async () => {
+    const execId = await stranded("e2", 1)
+    expect((await svc.reconcile()).reaped).toBe(0)
     expect(execs.findById(execId)!.status).toBe("running")
   })
 
-  it("leaves an alive engine alone", () => {
-    const execId = stranded("e3", 30)
+  it("leaves an alive engine alone", async () => {
+    const execId = await stranded("e3", 30)
     stub.live.add(execId)
-    expect(svc.reconcile().reaped).toBe(0)
+    expect((await svc.reconcile()).reaped).toBe(0)
   })
 
-  it("never reaps a QUEUED row — waiting for a slot is the queue working", () => {
-    insertTask("e4")
-    const execId = svc.armTask("e4")
+  it("never reaps a QUEUED row — waiting for a slot is the queue working", async () => {
+    await insertTask("e4")
+    const execId = await svc.armTask("e4")
     db.prepare("UPDATE executions SET created_at=datetime('now','-90 minutes') WHERE id=?").run(execId)
-    expect(svc.reconcile().reaped).toBe(0)
+    expect((await svc.reconcile()).reaped).toBe(0)
     expect(execs.findById(execId)!.status).toBe("pending")
   })
 
-  it("never reaps a PAUSED row — a pause is a human decision, not a strand", () => {
+  it("never reaps a PAUSED row — a pause is a human decision, not a strand", async () => {
     // ⚠️ This is not an edge case. ExecutionLifecycle.pause() calls
     // enginePool.remove() when the engine returns 'paused', so hasLiveEngine() is
     // ALREADY false when pause() returns — the engineAlive guard above cannot save
@@ -872,85 +961,88 @@ describe("task-lifecycle — reconciliation (the orphan path, now task-side)", (
     // from the pause. So without the paused exemption a round that had been running
     // 30 minutes gets reaped to 'aborted' on the very next tick: the pause silently
     // undoes itself within a minute.
-    const execId = stranded("e7", 30, "paused")
-    const before = tasks.getById("e7")!.status
-    expect(svc.reconcile().reaped).toBe(0)
+    const execId = await stranded("e7", 30, "paused")
+    const before = (await tasks.getById("e7"))!.status
+    expect((await svc.reconcile()).reaped).toBe(0)
     expect(execs.findById(execId)!.status).toBe("paused")
     // The task's row is untouched too — no reap means no finishTaskOutcome mirror.
-    expect(tasks.getById("e7")!.status).toBe(before)
+    expect((await tasks.getById("e7"))!.status).toBe(before)
   })
 
-  it("resyncs a task whose row finished but whose status never mirrored (died callback)", () => {
-    insertTask("e5")
-    const execId = svc.armAndLaunch("e5")
+  it("resyncs a task whose row finished but whose status never mirrored (died callback)", async () => {
+    await insertTask("e5")
+    const execId = await svc.armAndLaunch("e5")
     // Simulate the crash window: the execution row is terminal, tasks.status is stuck.
     db.prepare("UPDATE executions SET status='completed' WHERE id=?").run(execId)
-    db.prepare("UPDATE tasks SET status='running' WHERE id='e5'").run()
-    const { resynced } = svc.reconcile()
+    await updateTask("e5", { status: "running" })
+    const { resynced } = await svc.reconcile()
     expect(resynced).toBe(1)
-    expect(tasks.getById("e5")!.status).toBe("done")
+    expect((await tasks.getById("e5"))!.status).toBe("done")
   })
 
-  it("after a reap the slot is free — the task can be armed again", () => {
-    stranded("e6", 30)
-    svc.reconcile()
-    db.prepare("UPDATE tasks SET status='ready' WHERE id='e6'").run()
-    expect(() => svc.armTask("e6")).not.toThrow()
+  it("after a reap the slot is free — the task can be armed again", async () => {
+    await stranded("e6", 30)
+    await svc.reconcile()
+    await updateTask("e6", { status: "ready" })
+    await expect(svc.armTask("e6")).resolves.toBeTruthy()
   })
 })
 
 // ── the tick: due-scan, cursor, suppression ──────────────────────────
 
-describe("task-lifecycle — tick (what the cron cadence drives)", () => {
-  it("arms a due once-task, launches it, and retires the cursor permanently", () => {
-    insertTask("f1", { trigger_mode: "once", trigger_at: "2020-01-01T00:00:00.000Z", next_fire_at: "2020-01-01T00:00:00.000Z" })
-    const m = svc.tick()
+describePg("task-lifecycle — tick (what the cron cadence drives)", () => {
+  it("arms a due once-task, launches it, and retires the cursor permanently", async () => {
+    await insertTask("f1", { trigger_mode: "once", trigger_at: "2020-01-01T00:00:00.000Z", next_fire_at: "2020-01-01T00:00:00.000Z" })
+    const m = await svc.tick()
     expect(m.armed).toBe(1)
     expect(m.launched).toBe(1)
-    const t = tasks.getById("f1")!
+    const t = (await tasks.getById("f1"))!
     expect(t.next_fire_at).toBeNull()
     expect(t.last_fired_at).not.toBeNull()
     // A second tick must not arm it again.
-    expect(svc.tick().armed).toBe(0)
+    expect((await svc.tick()).armed).toBe(0)
   })
 
   it("a cron task keeps firing, but only one round at a time", async () => {
-    insertTask("f2", {
+    await insertTask("f2", {
       trigger_mode: "cron", cron_expression: "* * * * *", cron_timezone: "UTC",
       next_fire_at: "2020-01-01T00:00:00.000Z",
     })
-    const execId1 = svc.tick() && latestRoot("f2")!.id
-    const t1 = tasks.getById("f2")!
+    await svc.tick()
+    const execId1 = latestRoot("f2")!.id
+    const t1 = (await tasks.getById("f2"))!
     expect(t1.next_fire_at).not.toBeNull()
     expect(Date.parse(t1.next_fire_at!) > Date.now()).toBe(true)
 
     // Round 1 is live: an overdue cursor must not queue a second instance.
-    db.prepare("UPDATE tasks SET next_fire_at='2020-01-01T00:00:00.000Z' WHERE id='f2'").run()
-    expect(svc.tick().armed).toBe(0)
+    await updateTask("f2", { next_fire_at: "2020-01-01T00:00:00.000Z" })
+    expect((await svc.tick()).armed).toBe(0)
     expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE task_id='f2'").get()).toEqual({ c: 1 })
 
     // Ending the round returns a periodic task to 已入队 with the cursor jumped ahead —
     // 完成 is not a state a scheduled task parks in, or the schedule would be dead.
     await complete(execId1, "completed")
-    const after = tasks.getById("f2")!
+    const after = (await tasks.getById("f2"))!
     expect(after.status).toBe("ready")
     expect(Date.parse(after.next_fire_at!) > Date.now()).toBe(true)
 
     // Next occurrence due → a fresh instance, so this is a real repeating task.
-    db.prepare("UPDATE tasks SET next_fire_at='2020-01-01T00:00:00.000Z' WHERE id='f2'").run()
-    expect(svc.tick().armed).toBe(1)
+    await updateTask("f2", { next_fire_at: "2020-01-01T00:00:00.000Z" })
+    expect((await svc.tick()).armed).toBe(1)
     expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE task_id='f2'").get()).toEqual({ c: 2 })
   })
 
-  it("an arm that cannot happen (broken contract) retires the cursor and reports why", () => {
-    insertV4Task("f3", { deleteSpec: true })
-    db.prepare(
-      "UPDATE tasks SET trigger_mode='once', trigger_at='2020-01-01T00:00:00.000Z', next_fire_at='2020-01-01T00:00:00.000Z' WHERE id='f3'",
-    ).run()
-    const m = svc.tick()
+  it("an arm that cannot happen (broken contract) retires the cursor and reports why", async () => {
+    await insertV4Task("f3", { deleteSpec: true })
+    await updateTask("f3", {
+      trigger_mode: "once",
+      trigger_at: "2020-01-01T00:00:00.000Z",
+      next_fire_at: "2020-01-01T00:00:00.000Z",
+    })
+    const m = await svc.tick()
     expect(m.armed).toBe(0)
     expect(m.refused).toBe(1)
-    expect(tasks.getById("f3")!.next_fire_at).toBeNull()
+    expect((await tasks.getById("f3"))!.next_fire_at).toBeNull()
     const failed = events.find((e) => String(e.event) === TASK_TRIGGER_FAILED_EVENT)
     const payload = failed!.data as Record<string, unknown>
     expect(payload.reason).toContain("phase:1:spec-missing")
@@ -961,67 +1053,70 @@ describe("task-lifecycle — tick (what the cron cadence drives)", () => {
     expect(payload).not.toHaveProperty("action")
   })
 
-  it("a manual task with no cursor is invisible to the tick", () => {
-    insertTask("f4")
-    expect(svc.tick().armed).toBe(0)
+  it("a manual task with no cursor is invisible to the tick", async () => {
+    await insertTask("f4")
+    expect((await svc.tick()).armed).toBe(0)
   })
 
-  it("a disabled trigger is skipped even when due", () => {
-    insertTask("f5", {
+  it("a disabled trigger is skipped even when due", async () => {
+    await insertTask("f5", {
       trigger_mode: "once", trigger_at: "2020-01-01T00:00:00.000Z",
       next_fire_at: "2020-01-01T00:00:00.000Z", trigger_enabled: 0,
     })
-    expect(svc.tick().armed).toBe(0)
+    expect((await svc.tick()).armed).toBe(0)
   })
 
-  it("the tick's own fire is not counted as work by the gate", () => {
-    const run = new ScheduleRunDAO(db)
-    insertTask("f6"); svc.armTask("f6")
-    const before = run.countActiveWork()
+  it("the tick's own fire is not counted as work by the gate", async () => {
+    const run = new ScheduleRunDAO(pg!.sql)
+    await insertTask("f6"); await svc.armTask("f6")
+    await mirrorExecsToPg()
+    const before = await run.countActiveWork()
     expect(before).toBe(0) // pending holds no compute slot
-    svc.launchQueued()
-    expect(run.countActiveWork()).toBe(1)
+    await svc.launchQueued()
+    await mirrorExecsToPg()
+    expect(await run.countActiveWork()).toBe(1)
   })
 })
 
 // ── abort ────────────────────────────────────────────────────────────
 
-describe("task-lifecycle — abort", () => {
+describePg("task-lifecycle — abort", () => {
   it("cancels a running instance through the engine", async () => {
-    insertTask("g1")
-    const execId = svc.armAndLaunch("g1")
-    const { cancelled } = svc.abortTask("g1")
+    await insertTask("g1")
+    const execId = await svc.armAndLaunch("g1")
+    const { cancelled } = await svc.abortTask("g1")
     expect(cancelled).toEqual([execId])
     expect(execs.findById(execId)!.status).toBe("aborted")
-    expect(tasks.getById("g1")!.status).toBe("running") // the caller owns the task status
+    expect((await tasks.getById("g1"))!.status).toBe("running") // the caller owns the task status
   })
 
-  it("retires a queued instance without touching the engine", () => {
-    insertTask("g2")
-    const execId = svc.armTask("g2")
-    const { retired, cancelled } = svc.abortTask("g2")
+  it("retires a queued instance without touching the engine", async () => {
+    await insertTask("g2")
+    const execId = await svc.armTask("g2")
+    const { retired, cancelled } = await svc.abortTask("g2")
     expect(retired).toEqual([execId])
     expect(cancelled).toEqual([])
     expect(execs.findById(execId)!.status).toBe("aborted")
     // Queue retirement must not disturb a live sibling: nothing else is running here.
-    expect(new ScheduleRunDAO(db).countActiveWork()).toBe(0)
+    await mirrorExecsToPg()
+    expect(await new ScheduleRunDAO(pg!.sql).countActiveWork()).toBe(0)
   })
 
   it("an abort frees the slot and the queue drains in the same breath (票05)", async () => {
     // Contract §1c applies to a slot freed by 中止 as much as to one freed by a finished
     // run: otherwise a hand-stopped task leaves its successor waiting up to a cron minute.
-    insertTask("g-drain-a")
-    insertTask("g-drain-b")
-    const a = svc.armAndLaunch("g-drain-a")
+    await insertTask("g-drain-a")
+    await insertTask("g-drain-b")
+    const a = await svc.armAndLaunch("g-drain-a")
     // cap is 2 here; pin the meter just below it so B arms but cannot launch yet.
-    const b = svc.armTask("g-drain-b")
+    const b = await svc.armTask("g-drain-b")
     expect(execs.findById(b)!.status).toBe("pending")
     vi.spyOn(ScheduleRunDAO.prototype, "countActiveWork").mockReturnValue(2)
-    expect(svc.launchQueued()).toEqual({ launched: 0, capped: true })
+    expect(await svc.launchQueued()).toEqual({ launched: 0, capped: true })
     vi.restoreAllMocks()
 
-    svc.abortTask("g-drain-a")
-    await new Promise((r) => setImmediate(r))
+    await svc.abortTask("g-drain-a")
+    await settleFinalizers()
     expect(execs.findById(a)!.status).toBe("aborted")
     expect(JSON.parse(execs.findById(a)!.var_pool).error).toBe("用户中止")
     // The freed slot was used immediately — not on the next tick.
@@ -1029,11 +1124,11 @@ describe("task-lifecycle — abort", () => {
     expect(execs.findById(b)!.status).toBe("running")
   })
 
-  it("aborting twice is a no-op, not an error", () => {
-    insertTask("g3")
-    svc.armTask("g3")
-    expect(svc.abortTask("g3").retired).toHaveLength(1)
-    const again = svc.abortTask("g3")
+  it("aborting twice is a no-op, not an error", async () => {
+    await insertTask("g3")
+    await svc.armTask("g3")
+    expect((await svc.abortTask("g3")).retired).toHaveLength(1)
+    const again = await svc.abortTask("g3")
     expect(again.retired).toHaveLength(0)
     expect(again.cancelled).toHaveLength(0)
   })
@@ -1041,20 +1136,20 @@ describe("task-lifecycle — abort", () => {
 
 // ── the boundary itself ──────────────────────────────────────────────
 
-describe("task-lifecycle — the scheduler is not consulted", () => {
-  it("arming writes nothing to any schedule table", () => {
-    insertTask("h1")
-    svc.armAndLaunch("h1")
+describePg("task-lifecycle — the scheduler is not consulted", () => {
+  it("arming writes nothing to any schedule table", async () => {
+    await insertTask("h1")
+    await svc.armAndLaunch("h1")
     for (const table of ["schedules", "schedule_executions", "schedule_workspaces"]) {
       expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
     }
   })
 
-  it("the history read model comes from executions, newest first", () => {
-    insertTask("h2")
-    const first = svc.armTask("h2")
+  it("the history read model comes from executions, newest first", async () => {
+    await insertTask("h2")
+    const first = await svc.armTask("h2")
     db.prepare("UPDATE executions SET status='completed', completed_at=datetime('now') WHERE id=?").run(first)
-    const second = svc.armTask("h2", { triggeredBy: "manual" })
+    const second = await svc.armTask("h2", { triggeredBy: "manual" })
     const hist = svc.history("h2")
     expect(hist.map((r) => r.id)).toEqual([second, first])
   })

@@ -195,7 +195,7 @@ export class WorkspaceService {
     this.dao = dao!
   }
 
-  create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
+  async create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): Promise<WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } }> {
     // 禁中文命名 (2026-09-20)：name 直接进目录名 + git 分支名（branchName 兜底），
     // route 层已 400，这里挡住内部新调用方漏网。
     if (!WORKSPACE_NAME_PATTERN.test(input.name)) {
@@ -257,10 +257,13 @@ export class WorkspaceService {
     // Copy core agents (devil-advocate, architecture-explorer) to workspace
     this.scaffold.copyAgents(resolvedPath)
 
-    this.dao.insert({
+    await this.dao.insert({
       id, name: input.name, org: input.org,
       description: input.description ?? null,
       status: "active", path: input.path,
+      // WorkspaceRow.archive_status 必填列（DAO insert SQL 不写此列，落库走 schema 默认 NULL；
+      // 5B3 姿势：契约字段显式化，行为不动）。
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 
@@ -273,7 +276,7 @@ export class WorkspaceService {
       worktreeStatus = this.git.initWorktreesSync(resolvedPath, input.repos, input.org, input.name, branchName)
     }
 
-    const workspace = this.getById(id)!
+    const workspace = (await this.getById(id))!
     return { ...workspace, worktreeStatus }
   }
 
@@ -281,7 +284,7 @@ export class WorkspaceService {
    * Create a workspace from a scheduler spec.
    * Each scheduler execution creates a fresh workspace with new worktrees.
    */
-  createFromSpec(input: {
+  async createFromSpec(input: {
     org: string
     name: string
     /** task-board-title 改版: task 触发起工作区时把任务标题写进描述字段。 */
@@ -297,7 +300,7 @@ export class WorkspaceService {
     source_schedule_id?: string | null
     task_id?: string | null
     workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
-  }): WorkspaceRow {
+  }): Promise<WorkspaceRow> {
     const id = randomUUID()
     const now = new Date().toISOString()
 
@@ -396,16 +399,18 @@ export class WorkspaceService {
     }
 
     // DB INSERT with source tracking (after worktrees — see rollback note above)
-    this.dao.insert({
+    await this.dao.insert({
       id, name: input.name, org: input.org,
       description: input.description ?? null,
       status: "active", path: wsDir,
       source: input.source, source_schedule_id: input.source_schedule_id ?? null,
       task_id: input.task_id ?? null,
+      // 同上：archive_status 显式 null（SQL 不写列，落库默认 NULL）。
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 
-    return this.getById(id)!
+    return (await this.getById(id))!
   }
 
   /**
@@ -457,16 +462,16 @@ export class WorkspaceService {
     return { rebuilt }
   }
 
-  list(org?: string, source?: 'user' | 'scheduler' | 'all'): WorkspaceRow[] {
-    return this.dao.findAll(org, source)
+  async list(org?: string, source?: 'user' | 'scheduler' | 'all'): Promise<WorkspaceRow[]> {
+    return await this.dao.findAll(org, source)
   }
 
-  getById(id: string): WorkspaceRow | undefined {
-    return this.dao.findById(id) ?? undefined
+  async getById(id: string): Promise<WorkspaceRow | undefined> {
+    return (await this.dao.findById(id)) ?? undefined
   }
 
-  update(id: string, input: { name?: string; org?: string; description?: string; status?: string }): WorkspaceRow | undefined {
-    const existing = this.getById(id)
+  async update(id: string, input: { name?: string; org?: string; description?: string; status?: string }): Promise<WorkspaceRow | undefined> {
+    const existing = await this.getById(id)
     if (!existing) return undefined
 
     const fields: Record<string, unknown> = {}
@@ -477,19 +482,20 @@ export class WorkspaceService {
 
     if (Object.keys(fields).length === 0) return existing
 
-    this.dao.update(id, fields)
-    return this.getById(id)!
+    await this.dao.update(id, fields)
+    return (await this.getById(id))!
   }
 
   async delete(id: string): Promise<boolean> {
-    const ws = this.getById(id)
+    const ws = await this.getById(id)
     if (!ws) return false
 
-    // Two-phase archive before cascade delete
+    // Two-phase archive before cascade delete — archiveWorkspaceForDelete 失败
+    // 抛错（事务版语义），catch 里 rethrow 拦住级联删除：归档失败 → 不删数据。
     const archiveSvc = getArchiveService()
     if (archiveSvc) {
       try {
-        await archiveSvc.archiveWorkspace(id, this.dao)
+        await archiveSvc.archiveWorkspaceForDelete(id, this.dao)
       } catch (err) {
         logError("workspace archive during delete failed", err, { workspaceId: id })
         // Don't cascade delete if archive failed — data preservation
@@ -498,7 +504,7 @@ export class WorkspaceService {
     }
 
     // Cascade delete: workspace + all related records (executions, chat, etc.)
-    this.dao.cascadeDeleteByWorkspace(id)
+    await this.dao.cascadeDeleteByWorkspace(id)
 
     // ── 文件系统异步删除（不阻塞事件循环） ──
     const resolvedPath = ws.path.replace(/^~/, os.homedir())

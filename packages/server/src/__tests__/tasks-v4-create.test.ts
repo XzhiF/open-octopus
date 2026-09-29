@@ -27,6 +27,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import path from "path"
@@ -34,6 +35,9 @@ import os from "os"
 import fs from "fs"
 
 const ORG = "e2e-td-v4create"
+
+// P1 B2：本文件的 tasks 造数/读断言全部走这座 PG 库（见 beforeAll）。
+let pg: PgFixture | null = null
 
 const WORKFLOW_YAML = `
 apiVersion: octopus/v1
@@ -53,18 +57,22 @@ let app: Hono
 let tmpDir: string
 let taskHome: TaskHomeService
 
-function readTaskRow(id: string): {
+/** P1 B2: tasks 表已迁 postgres.js —— 读断言直读 PG（jsonb 经 #>> '{}' 归 text）。 */
+async function readTaskRow(id: string): Promise<{
   task_spec: string
   project_ids: string
   status: string
   name: string
-} {
-  return db
-    .prepare(`SELECT task_spec, project_ids, status, name FROM tasks WHERE id = ?`)
-    .get(id) as { task_spec: string; project_ids: string; status: string; name: string }
+}> {
+  return (await pg!.sql`SELECT task_spec #>> '{}' AS task_spec, project_ids #>> '{}' AS project_ids,
+      status, name FROM tasks WHERE id = ${id}`)[0] as
+    { task_spec: string; project_ids: string; status: string; name: string }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // P1 B3 双引擎 fixture：tasks + sessions 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
+  // workspaces/executions/schedules 仍在 SQLite `db`（B5 域）。
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   const sse = new SSEService()
@@ -78,20 +86,23 @@ beforeAll(() => {
     },
   } as any
   const service = new TasksService(
-    db, sse, new AgentSessionDAO(db), taskHome, undefined, stubBuiltIn,
+    db, sse, new AgentSessionDAO(pg!.sql), taskHome, undefined, stubBuiltIn,
   )
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
 // ── A. POST 直建 v4 ────────────────────────────────────────────────
 
-describe("A. POST 直建 v4 draft（契约修复主案）", () => {
+describePg("A. POST 直建 v4 draft（契约修复主案）", () => {
   it("A1: {task_spec:{format:'v4'}, project_ids} → 201；spec 带旗标、无 task_type 键、project_ids 落列、home+快照+context.md 全就位", async () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
@@ -112,7 +123,7 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
     expect("task_type" in dto.task_spec).toBe(false) // 无 v3 壳
     expect(dto.project_ids).toEqual(["p-alpha"])
 
-    const row = readTaskRow(dto.id)
+    const row = await readTaskRow(dto.id)
     expect(JSON.parse(row.task_spec).format).toBe("v4")
     expect(JSON.parse(row.project_ids)).toEqual(["p-alpha"])
 
@@ -145,17 +156,19 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
     expect(dto.task_spec.format).toBe("v4")
     expect(dto.task_spec.task_type).toBe("coding")
     expect(fs.existsSync(taskHome.homePath(dto.id))).toBe(true)
-    expect(JSON.parse(readTaskRow(dto.id).project_ids)).toEqual(["p-beta"])
+    expect(JSON.parse((await readTaskRow(dto.id)).project_ids)).toEqual(["p-beta"])
   })
 
   it("A3: session 绑定（D15 会话优先）→ scope_id 反链生效，autosave 命中不另建", async () => {
-    const session = db
-      .prepare(
-        `INSERT INTO sessions (id, org, clone_name, title, scope_id, created_at, updated_at)
-         VALUES ('e2e-td-s1', ?, 'task-author', '', NULL, ?, ?)`,
-      )
-      .run(ORG, new Date().toISOString(), new Date().toISOString())
-    expect(session.changes).toBe(1)
+    const now = new Date().toISOString()
+    // P1 B3: sessions 已迁 PG —— 造数直接落随机库（旧 SQLite 双写与跨引擎 FK 镜像退役；
+    // anti-fake-run：受影响行数 = 1 独立确认真写入了行）。
+    const seeded = await pg!.sql.unsafe(
+      `INSERT INTO sessions (id, org, clone_name, title, scope_id, created_at, updated_at)
+       VALUES ('e2e-td-s1', $1, 'task-author', '', NULL, $2, $3)`,
+      [ORG, now, now],
+    )
+    expect(seeded.count).toBe(1)
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -168,7 +181,7 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
     })
     expect(res.status).toBe(201)
     const dto = (await res.json()) as { id: string }
-    const linked = db.prepare("SELECT scope_id FROM sessions WHERE id = 'e2e-td-s1'").get() as {
+    const linked = (await pg!.sql`SELECT scope_id FROM sessions WHERE id = 'e2e-td-s1'`)[0] as {
       scope_id: string
     }
     expect(linked.scope_id).toBe(dto.id)
@@ -177,7 +190,7 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
 
 // ── B. POST 校验 ───────────────────────────────────────────────────
 
-describe("B. POST 校验（body 缺陷 = 400）", () => {
+describePg("B. POST 校验（body 缺陷 = 400）", () => {
   it("B1: task_spec.phases=[] 违反 min(1) → 400", async () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
@@ -250,7 +263,7 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
 
 // ── C. 向后兼容 ────────────────────────────────────────────────────
 
-describe("C. 向后兼容（带 name 的旧调用零变化；name 本身已必填）", () => {
+describePg("C. 向后兼容（带 name 的旧调用零变化；name 本身已必填）", () => {
   it("C1: 无 task_spec 的 v2 POST → 基线 {goal:'',ac:[]}、无 home", async () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
@@ -281,16 +294,17 @@ describe("C. 向后兼容（带 name 的旧调用零变化；name 本身已必�
 
 // ── D. format-stamp ────────────────────────────────────────────────
 
-describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", () => {
+describePg("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", () => {
   it("D1: 无旗标无 task_type 的壳（autosave 形状）写 phases → format 盖章 + home 补建", async () => {
     // 模拟 autosave 隐式建 draft：直插一行 task_spec='{}' 且无 home
+    // （P1 B2: tasks 表在 PG —— 直插走 pg.sql）
     const id = "e2e-td-d1-shell"
     const now = new Date().toISOString()
-    db.prepare(
-      `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
+    await pg!.sql.unsafe(`
+      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
         skills, project_ids, version, created_at, updated_at)
-       VALUES (?, ?, 'E2E_TD shell', 'draft', '{}', '[]', '[]', '[]', '[]', 1, ?, ?)`,
-    ).run(id, ORG, now, now)
+      VALUES ($1, $2, 'E2E_TD shell', 'draft', '{}', '[]', '[]', '[]', '[]', 1, $3, $4)
+    `, [id, ORG, now, now])
     expect(fs.existsSync(taskHome.homePath(id))).toBe(false)
 
     const res = await app.request(`/api/tasks/${id}/spec-field`, {
@@ -311,7 +325,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
       }),
     })
     expect(res.status).toBe(200)
-    const spec = JSON.parse(readTaskRow(id).task_spec)
+    const spec = JSON.parse((await readTaskRow(id)).task_spec)
     expect(spec.format).toBe("v4")
     expect(spec.phases).toHaveLength(1)
     // 补建的 home 立即可承接批次文件
@@ -347,7 +361,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
       }),
     })
     expect(put.status).toBe(200)
-    const spec = JSON.parse(readTaskRow(dto.id).task_spec)
+    const spec = JSON.parse((await readTaskRow(dto.id)).task_spec)
     expect(spec.format).toBe("v4")
     expect(spec.phases).toHaveLength(1)
   })
@@ -355,7 +369,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
 
 // ── E. 黄金链 ──────────────────────────────────────────────────────
 
-describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物化", () => {
+describePg("E. 黄金链：直建 → home-file 写 spec → phases → ready 物化", () => {
   it("E1: 全链贯通 —— 直建 → 写 spec → phases → ready 过闸，且入队不产生任何信封", async () => {
     // ① POST 直建 v4（UI 形状，无 task_type）
     const created = await app.request("/api/tasks", {
@@ -421,7 +435,7 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     //    每一轮的 executions 行上，由 tasks-v4-gate.test.ts AC4 钉住。
     const ready = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(ready.status).toBe(200)
-    expect(readTaskRow(id).status).toBe("ready")
+    expect((await readTaskRow(id)).status).toBe("ready")
     for (const table of ["schedules", "schedule_executions", "schedule_workspaces"]) {
       expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
     }

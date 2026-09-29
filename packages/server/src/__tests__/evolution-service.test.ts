@@ -5,8 +5,9 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { classifyLevel, EvolutionService, getEvolutionService, initEvolutionService } from '../services/agent/evolution-service'
-import { initDb, closeDb, getDb } from '../db/connection'
+import { initDb, closeDb } from '../db/connection'
 import { EvolutionDAO } from '../db/dao'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
 const TEST_ORG = 'test-evo-org'
 
@@ -164,18 +165,23 @@ describe('classifyLevel', () => {
   })
 })
 
-describe('EvolutionService', () => {
+// P1 B3: EvolutionDAO 已迁 postgres.js —— 服务级用例落 PG 随机库（每例一座）。
+describePg('EvolutionService', () => {
   let service: EvolutionService
-  beforeEach(() => {
-    initDb(':memory:')
-    service = initEvolutionService(new EvolutionDAO(getDb()))
+  let pg: PgFixture
+  beforeEach(async () => {
+    pg = await setupPgSchema()
+    service = initEvolutionService(new EvolutionDAO(pg.sql))
+  })
+  afterEach(async () => {
+    await pg.close()
   })
 
   // ── reflect ────────────────────────────────────────────────
 
   describe('reflect', () => {
-    it('detects user correction patterns in feedback', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('detects user correction patterns in feedback', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'user_feedback',
         content: '不要这样做了，以后先检查再执行',
         skill_name: 'octo-agent-orchestrator',
@@ -185,8 +191,8 @@ describe('EvolutionService', () => {
       expect(result.candidate?.summary).toContain('User feedback correction')
     })
 
-    it('detects English correction patterns', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('detects English correction patterns', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'user_feedback',
         content: "Don't do that, always check first",
         skill_name: 'test-skill',
@@ -194,24 +200,24 @@ describe('EvolutionService', () => {
       expect(result.identified).toBe(true)
     })
 
-    it('detects "from now on" pattern', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('detects "from now on" pattern', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'user_feedback',
         content: 'from now on, validate inputs before processing',
       })
       expect(result.identified).toBe(true)
     })
 
-    it('returns not identified for neutral feedback', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('returns not identified for neutral feedback', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'user_feedback',
         content: 'This looks great, thanks!',
       })
       expect(result.identified).toBe(false)
     })
 
-    it('returns not identified for execution with no patterns', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('returns not identified for execution with no patterns', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'execution',
         content: 'Task completed successfully',
         result_summary: 'All good',
@@ -219,8 +225,8 @@ describe('EvolutionService', () => {
       expect(result.identified).toBe(false)
     })
 
-    it('detects improvable execution results', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('detects improvable execution results', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'execution',
         content: 'Task done',
         skill_name: 'test-skill',
@@ -230,8 +236,8 @@ describe('EvolutionService', () => {
       expect(result.level).toBe('minor')
     })
 
-    it('uses classifyLevel for user feedback level', () => {
-      const result = service.reflect(TEST_ORG, {
+    it('uses classifyLevel for user feedback level', async () => {
+      const result = await service.reflect(TEST_ORG, {
         type: 'user_feedback',
         content: '不要再跳过权限检查',
         skill_name: 'test-skill',

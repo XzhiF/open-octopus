@@ -38,15 +38,16 @@
 //
 // E2E_AC_ data prefix; fs assertions under mkdtemp tmp HOME (cleaned after).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, pgTestEnabledOn, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { WorkspaceService } from "../services/workspace"
 import { createTasksRoutes } from "../routes/tasks"
@@ -55,6 +56,10 @@ import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
 
 const ORG = "e2e-ac"
 const BATCH_DATE = "20260903"
+
+// P1 B2：tasks / task_phase_acceptances 落 PG（每用例 truncate 隔离）；
+// workspaces/executions/schedules 仍 SQLite（beforeEach 重建 :memory:）。
+let pg: PgFixture | null = null
 
 /** The refs this suite's fixtures bind phases to. armTask re-materializes the launch
  *  plan from task_spec + home on EVERY round (票03), so a v4 dispatch now has to be
@@ -118,8 +123,9 @@ vi.mock("../services/execution-service-registry", () => ({
 // ── Fixture helpers ──────────────────────────────────────────────────
 
 function newDb(): Database.Database {
-  const db = new Database(":memory:")
-  applySchema(db)
+  // P1 B4: registry lazyDAO (TokenUsageDAO 等) 首个访问要 getDb() —— initDb
+  // 点亮全局句柄；schema/pragma 由 initDb 内部完成。
+  const db = initDb(":memory:")
   db.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
@@ -156,7 +162,7 @@ let taskSeq = 0
  * bridge through. The batch spec.md files must exist on disk because armTask re-checks
  * the v4 contract on every round it starts.
  */
-function seedAwaitingReview(opts: {
+async function seedAwaitingReview(opts: {
   phases?: PhaseDef[]
   autoAdvance?: boolean
   /** Persisted tasks.status — 'running' is what the lifecycle job leaves between
@@ -206,12 +212,13 @@ function seedAwaitingReview(opts: {
       inputValues: {},
     })),
   }
-  db.prepare(`
+  // P1 B2: tasks 落 PG；workspaces/executions 仍 SQLite `db`。
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_AC ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId)
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, $8)
+  `, [taskId, ORG, `E2E_AC ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, workspaceId])
 
   // round executions — 票03 起这就是全部的读模型：task_id 直连 + parent_id='0' +
   // 轮次坐标在列上（deriveView/账本/历史都读它，不再有 join 桥）。
@@ -231,23 +238,31 @@ function seedAwaitingReview(opts: {
   }
 
   for (const row of opts.ledger ?? []) {
-    db.prepare(
-      "INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
-    ).run(`e2e-ac-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision, row.feedback ?? null)
+    // P1 B2: task_phase_acceptances 落 PG（append-only 台账 —— 只插不改）。
+    await pg!.sql.unsafe(`
+      INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+      VALUES ($1, $2, $3, $4, $5, $6, now())
+    `, [`e2e-ac-acc-${taskSeq}-${row.phase_index}-${row.round_index}`, taskId, row.phase_index, row.round_index, row.decision, row.feedback ?? null])
   }
 
   return { db, taskId, workspaceId, wsPath, home, specDirs, execIds }
 }
 
-function ledgerRows(db: Database.Database, taskId: string) {
-  return db
-    .prepare("SELECT phase_index, round_index, decision, feedback FROM task_phase_acceptances WHERE task_id = ? ORDER BY phase_index, round_index, id")
-    .all(taskId) as Array<{ phase_index: number; round_index: number; decision: string; feedback: string | null }>
+async function ledgerRows(_db: Database.Database, taskId: string) {
+  // P1 B2: 账本读 PG。
+  return (await pg!.sql`
+    SELECT phase_index, round_index, decision, feedback FROM task_phase_acceptances
+    WHERE task_id = ${taskId} ORDER BY phase_index, round_index, id
+  `) as Array<{ phase_index: number; round_index: number; decision: string; feedback: string | null }>
 }
 
-function taskRow(db: Database.Database, taskId: string) {
-  return db.prepare("SELECT status, workspace_id, version, completed_at FROM tasks WHERE id = ?").get(taskId) as
-    { status: string; workspace_id: string | null; version: number; completed_at: string | null }
+async function taskRow(_db: Database.Database, taskId: string) {
+  // P1 B2: tasks 读 PG（version int；completed_at 用 DAO 同款 ISO 投影）。
+  return ((await pg!.sql`
+    SELECT status, workspace_id, version,
+      to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS completed_at
+    FROM tasks WHERE id = ${taskId}
+  `)[0]) as { status: string; workspace_id: string | null; version: number; completed_at: string | null }
 }
 
 /** The row the run actually ate — replaces reading the envelope's materialized
@@ -263,11 +278,16 @@ function launchedIV(taskId: string): Record<string, string> {
   return JSON.parse(launchedRow(taskId).input_values) as Record<string, string>
 }
 
-function specPhasesOf(taskId: string): Array<Record<string, unknown>> {
-  const { task_spec } = mockHooks.db!
-    .prepare("SELECT task_spec FROM tasks WHERE id = ?")
-    .get(taskId) as { task_spec: string }
+async function specPhasesOf(taskId: string): Promise<Array<Record<string, unknown>>> {
+  // P1 B2: task_spec 读 PG（jsonb #>> 读出规范化 JSON 文本）。
+  const { task_spec } = ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${taskId}`)[0]) as { task_spec: string }
   return (JSON.parse(task_spec) as { phases: Array<Record<string, unknown>> }).phases
+}
+
+/** P1 B2: 读整份 task_spec（PG jsonb → 规范化 JSON 文本 → parse）。 */
+async function readSpecJson(taskId: string): Promise<Record<string, unknown>> {
+  const { task_spec } = ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${taskId}`)[0]) as { task_spec: string }
+  return JSON.parse(task_spec) as Record<string, unknown>
 }
 
 function phaseOf(view: { phaseViews: Array<{ index: number }> }, index: number) {
@@ -286,8 +306,10 @@ function phaseOf(view: { phaseViews: Array<{ index: number }> }, index: number) 
 /** Fire a dispatched round's terminal callback (what the engine would do). The row's
  *  terminal status is written by the lifecycle job (finalizeLaunch → setLaunchStatus),
  *  so the fixture verifies it instead of UPDATE-ing it by hand — a hand-written status
- *  would hide a broken finalize the same way the deleted listener used to. */
-function completeDispatchedRound(execId: string, status = "completed"): void {
+ *  would hide a broken finalize the same way the deleted listener used to.
+ *  P1 B2: finalizeLaunch 是 `void`（回调不 await），且它在 getById(PG) 之后才发
+ *  awaiting_review 帧 → 测试必须等它落地（drain 到该 exec 的 task_execution 尾帧）。 */
+async function completeDispatchedRound(execId: string, status = "completed"): Promise<void> {
   const cb = capturedCallbacks.get(execId)
   expect(cb, `no terminal callback captured for ${execId}`).toBeTruthy()
   cb!(status)
@@ -295,6 +317,15 @@ function completeDispatchedRound(execId: string, status = "completed"): void {
     .prepare("SELECT status FROM executions WHERE id = ?")
     .get(execId) as { status: string }
   expect(row.status, `finalizeLaunch did not land '${status}' on ${execId}`).toBe(status)
+  // finalizeLaunch 的 tail 真异步（PG）—— 等它的**终态** task_execution 帧
+  // （派发链路会先 emit pending + running 两帧，故只认 completed/failed/cancelled）。
+  await vi.waitFor(() => {
+    expect(
+      sseEvents.some((e) => e.event === "task_execution"
+        && (e.data as { execution_id?: string; status?: string }).execution_id === execId
+        && ["completed", "failed", "cancelled"].includes((e.data as { status?: string }).status ?? "")),
+    ).toBe(true)
+  }, { timeout: 5_000 })
 }
 
 // ── Suite ────────────────────────────────────────────────────────────
@@ -321,11 +352,23 @@ function sseOf(event: string) {
   return sseEvents.filter((e) => e.event === event)
 }
 
-beforeEach(() => {
+beforeAll(async () => {
+  // P1 B2: PG 随机测试库每文件一座、注册为全局池（service/job 内部 pgSql() 取用）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
+  await pg!.truncate("tasks", "task_phase_acceptances")
   db = newDb()
   mockHooks.db = db
-  execSeq = 0
-  taskSeq = 0
+  // 不重置 execSeq/taskSeq：id 全局唯一，杜绝「上一用例游离的异步续作」
+  // （startRow 里 fire-and-forget 的 service.start）别名命中本用例重建的同 id 行。
   capturedCallbacks.clear()
   vi.clearAllMocks()
   realHome = process.env.HOME
@@ -353,12 +396,12 @@ afterEach(() => {
   if (realUserProfile === undefined) delete process.env.USERPROFILE
   else process.env.USERPROFILE = realUserProfile
   fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
-describe("AC1 — accepted: ledger + advance", () => {
+describePg("AC1 — accepted: ledger + advance", () => {
   it("mid-phase accepted appends the ledger row and dispatches phase i+1 round 1 on the bound ws", async () => {
-    const { taskId, workspaceId } = seedAwaitingReview()
+    const { taskId, workspaceId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as {
@@ -368,7 +411,7 @@ describe("AC1 — accepted: ledger + advance", () => {
     }
 
     // 账本一行 (append-only, feedback NULL for accepted).
-    expect(ledgerRows(db, taskId)).toEqual([
+    expect(await ledgerRows(db, taskId)).toEqual([
       { phase_index: 1, round_index: 1, decision: "accepted", feedback: null },
     ])
 
@@ -406,7 +449,7 @@ describe("AC1 — accepted: ledger + advance", () => {
     // decision, and after it acceptance has to realign the row with what the human just
     // authorized — otherwise abortTask (ready/running only) would 409 a task that IS
     // running.
-    const { taskId } = seedAwaitingReview({ status: "ready" })
+    const { taskId } = await seedAwaitingReview({ status: "ready" })
     await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
 
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
@@ -415,16 +458,17 @@ describe("AC1 — accepted: ledger + advance", () => {
     ])
     // A round is in flight again → the persisted status mirrors that (abortTask
     // must stay legal: it only accepts ready/running).
-    expect(taskRow(db, taskId).status).toBe("running")
+    expect((await taskRow(db, taskId)).status).toBe("running")
     expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "running" } })
-    expect(() => service.abortTask(taskId)).not.toThrow()
-    expect(taskRow(db, taskId).status).toBe("aborted")
+    // abortTask 已 async（TaskDAO 走 PG）：旧「同步不抛」→ 断 Promise 不 reject（同义）。
+    await expect(service.abortTask(taskId)).resolves.toBeDefined()
+    expect((await taskRow(db, taskId)).status).toBe("aborted")
   })
 
   it("last-phase accepted → persisted archiving + 票 08 hook, no dispatch, no auto-done", async () => {
     let hookTaskId: string | null = null
     service.setArchivingHook((id) => { hookTaskId = id })
-    const { taskId } = seedAwaitingReview({ phases: [TWO_PHASES[0]] })
+    const { taskId } = await seedAwaitingReview({ phases: [TWO_PHASES[0]] })
 
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
@@ -432,7 +476,7 @@ describe("AC1 — accepted: ledger + advance", () => {
 
     expect(body.next_action).toBe("archiving")
     expect(stubService.create).not.toHaveBeenCalled()
-    const row = taskRow(db, taskId)
+    const row = await taskRow(db, taskId)
     expect(row.status).toBe("archiving")
     // archiving is NOT terminal — completed_at stays NULL (done is 票 08's writer).
     expect(row.completed_at).toBeNull()
@@ -443,16 +487,16 @@ describe("AC1 — accepted: ledger + advance", () => {
     ])
     expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "archiving" } })
     // Ledger still exactly one row.
-    expect(ledgerRows(db, taskId)).toHaveLength(1)
+    expect(await ledgerRows(db, taskId)).toHaveLength(1)
     // 票03: enqueueing/accepting never touches the scheduler's tables — a task has no
     // definition row of its own any more.
     expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
   })
 })
 
-describe("AC3 — rejected: feedback artefact + next round on the same phase", () => {
+describePg("AC3 — rejected: feedback artefact + next round on the same phase", () => {
   it("writes fix-feedback-r{N}.md into the batch dir and dispatches round N+1 (same phase, same ws)", async () => {
-    const { taskId, home, wsPath, workspaceId } = seedAwaitingReview()
+    const { taskId, home, wsPath, workspaceId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session，补 E2E",
     })
@@ -464,7 +508,7 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
     expect(body.dispatch).toMatchObject({ phase_index: 1, round_index: 2, workspace_id: workspaceId })
 
     // 账本一行：rejected + feedback 全文（可追溯）。
-    expect(ledgerRows(db, taskId)).toEqual([
+    expect(await ledgerRows(db, taskId)).toEqual([
       { phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session，补 E2E" },
     ])
 
@@ -497,18 +541,18 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
   })
 
   it("round index follows the ledger (rejects+1) and the whole rejection chain stays traceable", async () => {
-    const { taskId, home } = seedAwaitingReview()
+    const { taskId, home } = await seedAwaitingReview()
     // r1 rejected → round 2 dispatches.
     const r1 = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "first" })
     const d1 = ((await r1.json()) as { dispatch: { execution_id: string } }).dispatch
-    completeDispatchedRound(d1.execution_id, "completed")
+    await completeDispatchedRound(d1.execution_id, "completed")
 
     // r2 rejected → round 3 (2 rejected rows + 1).
     const r2 = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "rejected", feedback: "second" })
     const d2 = ((await r2.json()) as { dispatch: { round_index: number } }).dispatch
     expect(d2.round_index).toBe(3)
     expect(fs.existsSync(path.join(home, batchRel("p1"), "fix-feedback-r2.md"))).toBe(true)
-    completeDispatchedRound((
+    await completeDispatchedRound((
       db.prepare("SELECT id FROM executions WHERE round_index = 3 AND phase_index = 1").get() as { id: string }
     ).id, "failed")
 
@@ -522,7 +566,7 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
     }
     expect(body.next_action).toBe("dispatched")
     expect(body.dispatch.phase_index).toBe(2)
-    expect(ledgerRows(db, taskId).map((r) => [r.phase_index, r.round_index, r.decision])).toEqual([
+    expect((await ledgerRows(db, taskId)).map((r) => [r.phase_index, r.round_index, r.decision])).toEqual([
       [1, 1, "rejected"],
       [1, 2, "rejected"],
       [1, 3, "accepted"],
@@ -539,18 +583,18 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
   })
 })
 
-describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
+describePg("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
   const posix = (p: string): string => p.split(path.sep).join("/")
 
   it("default (no next_flow) = rerun: 这一轮跑 phase 绑定流，行为与基线一致", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "范围没做全",
     })
     expect(res.status, await res.clone().text()).toBe(200)
     // 票03 之后没有信封可读：本轮实际跑的流就是行上的 workflow_ref。
     expect(launchedRow(taskId).workflow_ref).toBe("built-in/flow-p1")
-    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // K16 绑定不被改写
+    expect((await specPhasesOf(taskId))[0].workflowRef).toBe("built-in/flow-p1") // K16 绑定不被改写
     // 派生轮次视图带上实际执行流（round 徽标数据源 — ADR-0018 审计线）。
     const body = (await res.json()) as { task: { derived: never } }
     const p1 = phaseOf(body.task.derived, 1)
@@ -558,14 +602,14 @@ describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
   })
 
   it("next_flow=fix: 本轮行上换成 built-in/task-fix + server 合成输入（home 绑定不变）", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修", next_flow: "fix",
     })
     expect(res.status, await res.clone().text()).toBe(200)
     const row = launchedRow(taskId)
     expect(row.workflow_ref).toBe("built-in/task-fix")
-    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
+    expect((await specPhasesOf(taskId))[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
     // 合成输入长在这一轮的行上（旧断言读的是信封 chain[0].input_values）。
     const iv = launchedIV(taskId)
     // ws 同构相对位（执行侧在 ws 操作，collect 回流 home — ADR-0018）
@@ -580,58 +624,59 @@ describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
   })
 
   it("非法 next_flow → 400（zod enum 拦截，账本不脏）", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "x", next_flow: "yolo",
     })
     expect(res.status).toBe(400)
-    expect(ledgerRows(db, taskId)).toHaveLength(0)
+    expect(await ledgerRows(db, taskId)).toHaveLength(0)
   })
 })
 
-describe("AC4 — guards (409/404/400)", () => {
+describePg("AC4 — guards (409/404/400)", () => {
   it("round_index that is not the awaiting round → 409, nothing written", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "accepted" })
     expect(res.status).toBe(409)
     expect(await res.json()).toMatchObject({ error: expect.stringMatching(/不匹配/) })
-    expect(ledgerRows(db, taskId)).toEqual([])
+    expect(await ledgerRows(db, taskId)).toEqual([])
     expect(stubService.create).not.toHaveBeenCalled()
   })
 
   it("a phase that is not awaiting_review (not yet started) → 409", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 2, round_index: 1, decision: "accepted" })
     expect(res.status).toBe(409)
-    expect(ledgerRows(db, taskId)).toEqual([])
+    expect(await ledgerRows(db, taskId)).toEqual([])
   })
 
   it("a phase index outside spec.phases → 409", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 9, round_index: 1, decision: "accepted" })
     expect(res.status).toBe(409)
-    expect(ledgerRows(db, taskId)).toEqual([])
+    expect(await ledgerRows(db, taskId)).toEqual([])
   })
 
   it("re-submitting an already-decided round → 409 (一次决定)", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     expect((await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })).status).toBe(200)
     const dup = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(dup.status).toBe(409)
     expect(await dup.json()).toMatchObject({ error: expect.stringMatching(/已验收/) })
     // Still ONE row (append-only + one decision per round).
-    expect(ledgerRows(db, taskId)).toHaveLength(1)
+    expect(await ledgerRows(db, taskId)).toHaveLength(1)
   })
 
   it("non-v4 (v3) task → 409 with an explainable message", async () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3-${taskSeq++}`
-    db.prepare(`
+    // P1 B2: tasks 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, `E2E_AC v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now)
+      VALUES ($1, $2, $3, 'running', NULL, $4, '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL)
+    `, [id, ORG, `E2E_AC v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now])
     const res = await postAcceptance(id, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status).toBe(409)
     expect(await res.json()).toMatchObject({ error: expect.stringMatching(/v4/) })
@@ -643,7 +688,7 @@ describe("AC4 — guards (409/404/400)", () => {
   })
 
   it("malformed bodies → 400 (bad decision, 0-based index, rejected without feedback)", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     expect((await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "maybe" })).status).toBe(400)
     expect((await postAcceptance(taskId, { phase_index: 0, round_index: 1, decision: "accepted" })).status).toBe(400)
     const noFb = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected" })
@@ -651,11 +696,11 @@ describe("AC4 — guards (409/404/400)", () => {
     expect(await noFb.json()).toMatchObject({ error: expect.stringMatching(/feedback/) })
     // and the white-space-only variant
     expect((await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "   " })).status).toBe(400)
-    expect(ledgerRows(db, taskId)).toEqual([])
+    expect(await ledgerRows(db, taskId)).toEqual([])
   })
 
   it("a rejected decision is STILL recorded when the retry dispatch fails (contract broke out of band)", async () => {
-    const { taskId, specDirs } = seedAwaitingReview()
+    const { taskId, specDirs } = await seedAwaitingReview()
     // 票03 换了失败面：deriveView 按 executions.task_id 取轮次（不再 join 工作区/信封），
     // 所以工作区消失也照样看得见轮次、闸门照开；而 arm 每次都从 task_spec + home 现算
     // 启动计划 ⇒ 带外删掉批次的 spec.md 就是「决定能落、派发被拒」的现实来源。
@@ -664,18 +709,18 @@ describe("AC4 — guards (409/404/400)", () => {
     expect(res.status, await res.clone().text()).toBe(409)
     expect(((await res.json()) as { error: string }).error).toMatch(/phase:1:spec-missing/)
     // 人的决定是历史事实：账本保留，只是没有新轮次。
-    expect(ledgerRows(db, taskId)).toHaveLength(1)
+    expect(await ledgerRows(db, taskId)).toHaveLength(1)
     expect((db.prepare("SELECT COUNT(*) c FROM executions WHERE round_index = 2").get() as { c: number }).c).toBe(0)
     // 派生态退到 pending（无在跑 round、最新轮已 rejected）— 重试由人发起。
-    const detail = service.getTask(taskId)
+    const detail = await service.getTask(taskId)
     expect(phaseOf(detail.derived, 1).status).toBe("pending")
   })
 })
 
-describe("derived view on GET /:id + board visibility", () => {
+describePg("derived view on GET /:id + board visibility", () => {
   it("embeds deriveTaskView's output (rounds, currentRound, awaitingRound)", async () => {
-    const { taskId, execIds } = seedAwaitingReview()
-    const detail = service.getTask(taskId)
+    const { taskId, execIds } = await seedAwaitingReview()
+    const detail = await service.getTask(taskId)
     expect(detail.derived.isV4).toBe(true)
     expect(detail.derived.taskStatus).toBe("awaiting_review")
     const p1 = phaseOf(detail.derived, 1)
@@ -690,53 +735,55 @@ describe("derived view on GET /:id + board visibility", () => {
     expect(((await res.json()) as { derived: { isV4: boolean } }).derived.isV4).toBe(true)
   })
 
-  it("rounds of ANOTHER task never leak into the view (task_id scoping replaces the envelope join)", () => {
-    const a = seedAwaitingReview()
-    const b = seedAwaitingReview()
-    expect(phaseOf(service.getTask(a.taskId).derived, 1).rounds.map((r) => r.exec.id))
+  it("rounds of ANOTHER task never leak into the view (task_id scoping replaces the envelope join)", async () => {
+    const a = await seedAwaitingReview()
+    const b = await seedAwaitingReview()
+    expect(phaseOf((await service.getTask(a.taskId)).derived, 1).rounds.map((r) => r.exec.id))
       .toEqual([a.execIds[0]])
-    expect(phaseOf(service.getTask(b.taskId).derived, 1).rounds.map((r) => r.exec.id))
+    expect(phaseOf((await service.getTask(b.taskId)).derived, 1).rounds.map((r) => r.exec.id))
       .toEqual([b.execIds[0]])
   })
 
-  it("a v3 task keeps the verbatim mirror (isV4 false, no phases, 'failed' legal — K13)", () => {
+  it("a v3 task keeps the verbatim mirror (isV4 false, no phases, 'failed' legal — K13)", async () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3view-${taskSeq++}`
-    db.prepare(`
+    // P1 B2: tasks 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'failed', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, `E2E_AC v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now)
-    const detail = service.getTask(id)
+      VALUES ($1, $2, $3, 'failed', NULL, $4, '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL)
+    `, [id, ORG, `E2E_AC v3 ${id}`, JSON.stringify({ goal: "g", ac: ["a"], task_type: "coding" }), now, now])
+    const detail = await service.getTask(id)
     expect(detail.derived).toEqual({ taskStatus: "failed", isV4: false, phaseViews: [] })
   })
 
-  it("the unfiltered board scan surfaces v4-only statuses (awaiting_review / archiving)", () => {
-    const { taskId } = seedAwaitingReview({ status: "awaiting_review" })
-    const { taskId: archivingId } = seedAwaitingReview({ status: "archiving", phases: [TWO_PHASES[0]] })
-    const items = service.listTasks({ org: ORG }).items.map((t) => t.id)
+  it("the unfiltered board scan surfaces v4-only statuses (awaiting_review / archiving)", async () => {
+    const { taskId } = await seedAwaitingReview({ status: "awaiting_review" })
+    const { taskId: archivingId } = await seedAwaitingReview({ status: "archiving", phases: [TWO_PHASES[0]] })
+    const items = (await service.listTasks({ org: ORG })).items.map((t) => t.id)
     expect(items).toContain(taskId)
     expect(items).toContain(archivingId)
-    expect(service.listTasks({ status: "archiving", org: ORG }).items.map((t) => t.id)).toEqual([archivingId])
+    expect((await service.listTasks({ status: "archiving", org: ORG })).items.map((t) => t.id)).toEqual([archivingId])
   })
 })
 
-describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", () => {
-  function seedDraftV4(): string {
+describePg("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", () => {
+  async function seedDraftV4(): Promise<string> {
     const now = new Date().toISOString()
     const id = `e2e-ac-draft-${taskSeq++}`
-    db.prepare(`
+    // P1 B2: tasks 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, `E2E_AC draft ${id}`, JSON.stringify({
+      VALUES ($1, $2, $3, 'draft', NULL, $4, '[]', '[]', '[]', '[]', NULL, 1, NULL, $5, $6, NULL)
+    `, [id, ORG, `E2E_AC draft ${id}`, JSON.stringify({
       format: "v4", task_type: "coding",
       // runbook 硬闸（2026-09-22）：模板带合法 preview，让本文件测的 phase 契约
       // 闸口不被新键污染（round-trip 的 exact missing 断言据此保持逐字不变）。
       acceptance_preview: { command: "echo up", url: "http://localhost:3100/" },
-    }), now, now)
+    }), now, now])
     return id
   }
 
@@ -755,14 +802,12 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
   }
 
   it("writes the whole phases array, bumps version, emits spec_field_update", async () => {
-    const taskId = seedDraftV4()
+    const taskId = await seedDraftV4()
     const res = await postSpecField(taskId, "phases", [phaseBody(1, "p1"), phaseBody(2, "p2")])
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { version: number }).version).toBe(2)
 
-    const specJson = (db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as
-      { task_spec: string }).task_spec
-    const parsed = JSON.parse(specJson).phases as Array<Record<string, unknown>>
+    const parsed = ((await readSpecJson(taskId)).phases) as Array<Record<string, unknown>>
     expect(parsed.map((p) => p.slug)).toEqual(["p1", "p2"])
     expect(parsed[0].inputValues).toEqual({ idea: "${phase.slug}" })
 
@@ -771,30 +816,28 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
   })
 
   it("re-setting phases REPLACES the list (PUT semantics, not per-phase merge)", async () => {
-    const taskId = seedDraftV4()
+    const taskId = await seedDraftV4()
     await postSpecField(taskId, "phases", [phaseBody(1, "p1"), phaseBody(2, "p2")])
     await postSpecField(taskId, "phases", [phaseBody(1, "solo")])
-    const spec = JSON.parse((db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as
-      { task_spec: string }).task_spec)
-    expect(spec.phases.map((p: { slug: string }) => p.slug)).toEqual(["solo"])
+    const spec = await readSpecJson(taskId)
+    expect((spec.phases as Array<{ slug: string }>).map((p) => p.slug)).toEqual(["solo"])
     // other task_spec keys survive the merge (format is untouched).
     expect(spec.format).toBe("v4")
-    expect(taskRow(db, taskId).version).toBe(3)
+    expect((await taskRow(db, taskId)).version).toBe(3)
   })
 
   it("rejects malformed phase payloads with 400 (empty array, path-unsafe slug)", async () => {
-    const taskId = seedDraftV4()
+    const taskId = await seedDraftV4()
     expect((await postSpecField(taskId, "phases", [])).status).toBe(400)
     expect((await postSpecField(taskId, "phases", [phaseBody(1, "../escape")])).status).toBe(400)
     // unchanged
-    const spec = JSON.parse((db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as
-      { task_spec: string }).task_spec)
+    const spec = await readSpecJson(taskId)
     expect(spec.phases).toBeUndefined()
-    expect(taskRow(db, taskId).version).toBe(1)
+    expect((await taskRow(db, taskId)).version).toBe(1)
   })
 
   it("a draft's phases round-trip through the ready gate (v4 contract holds end-to-end)", async () => {
-    const taskId = seedDraftV4()
+    const taskId = await seedDraftV4()
     // bindingConfirmed = 入队加严闸 ⑤（人工确认）—— 本用例锁定 workflow-ref 单因。
     await postSpecField(taskId, "phases", [{ ...phaseBody(1, "p1"), bindingConfirmed: true }])
     fs.mkdirSync(path.join(taskHome.homePath(taskId), batchRel("p1")), { recursive: true })
@@ -809,9 +852,9 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
   })
 })
 
-describe("AC2 — autoAdvance=false parks at the human gate", () => {
+describePg("AC2 — autoAdvance=false parks at the human gate", () => {
   it("accepted does not start the next phase and reports awaiting_manual_trigger", async () => {
-    const { taskId } = seedAwaitingReview({ autoAdvance: false })
+    const { taskId } = await seedAwaitingReview({ autoAdvance: false })
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as { next_action: string; dispatch?: unknown; task: { derived: never } }
@@ -820,13 +863,13 @@ describe("AC2 — autoAdvance=false parks at the human gate", () => {
     expect(body.dispatch).toBeUndefined()
     expect(stubService.create).not.toHaveBeenCalled()
     // 账本仍落行（人的决定是历史事实）。
-    expect(ledgerRows(db, taskId)).toEqual([
+    expect(await ledgerRows(db, taskId)).toEqual([
       { phase_index: 1, round_index: 1, decision: "accepted", feedback: null },
     ])
     // phase 2 保持 pending；派生 task 态 = ready（derive 的「accepted 中段等待
     // 下一轮」），持久态与之对齐（可 abort）。
     expect(phaseOf(body.task.derived as never, 2).status).toBe("pending")
-    expect(taskRow(db, taskId).status).toBe("ready")
+    expect((await taskRow(db, taskId)).status).toBe("ready")
     // 只发 accepted 一帧（没有派发就不发 running）。
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toHaveLength(1)
   })
@@ -844,38 +887,38 @@ describe("AC2 — autoAdvance=false parks at the human gate", () => {
 // （"a v4 round ending does NOT decide the task"）。本文件不再重造那个 listener，只在
 // 真实派发路径上验它的可观察面（见 P3 的 failed 用例）。
 
-describe("review P3 — dispatched round terminal fires awaiting_review", () => {
+describePg("review P3 — dispatched round terminal fires awaiting_review", () => {
   it("rejected → round 2 dispatches → round completes → awaiting_review frame (1,2)", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
     const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
-    completeDispatchedRound(dispatch.execution_id, "completed")
+    await completeDispatchedRound(dispatch.execution_id, "completed")
     const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
     expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review"
       && (f.data as { phase_index?: number }).phase_index === 1
       && (f.data as { round_index?: number }).round_index === 2)).toBe(true)
     // 卡片进「待验收」是派生态：没有新行被持久化成终态。
-    expect(taskRow(db, taskId).status).toBe("running")
-    expect(service.getTask(taskId).derived.taskStatus).toBe("awaiting_review")
+    expect((await taskRow(db, taskId)).status).toBe("running")
+    expect((await service.getTask(taskId)).derived.taskStatus).toBe("awaiting_review")
   })
 
   it("failed round also fires awaiting_review (terminal ≠ success)", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
     const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
-    completeDispatchedRound(dispatch.execution_id, "failed")
+    await completeDispatchedRound(dispatch.execution_id, "failed")
     const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
     expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review")).toBe(true)
     // K3（原 C1 的规则，换了写者）：一轮失败不是机器可以写进 tasks.status 的事实，
     // 否则卡片离开「待验收」列，acceptance 就再也点不动了。
-    expect(taskRow(db, taskId).status).toBe("running")
+    expect((await taskRow(db, taskId)).status).toBe("running")
     expect(sseOf(TASK_STATUS_EVENT).filter((e) => e.data.status === "failed")).toHaveLength(0)
     const res2 = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "accepted" })
     expect(res2.status, await res2.clone().text()).toBe(200)
   })
 })
 
-describe("review M2 — K16 v4 spec edit window (running editable, terminal frozen)", () => {
+describePg("review M2 — K16 v4 spec edit window (running editable, terminal frozen)", () => {
   const putPhases = (taskId: string) =>
     app.request(`/api/tasks/${taskId}/spec-field`, {
       method: "POST",
@@ -887,25 +930,26 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
     })
 
   it("v4 running (mid-review): phases PUT accepted, version bumps", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     const res = await putPhases(taskId)
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { version: number }).version).toBe(2)
   })
 
   it("v4 done: frozen (409)", async () => {
-    const { taskId } = seedAwaitingReview({ status: "done" })
+    const { taskId } = await seedAwaitingReview({ status: "done" })
     expect((await putPhases(taskId)).status).toBe(409)
   })
 
   it("v3 running: still frozen (K13 byte-stable)", async () => {
     const now = new Date().toISOString()
-    db.prepare(`
+    // P1 B2: tasks 落 PG。
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at, workspace_id)
-      VALUES (?, ?, 'E2E_AC v3-edit', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
-    `).run("e2e-ac-v3-edit", ORG, JSON.stringify({ goal: "g", ac: ["a"] }), now, now)
+      VALUES ($1, $2, 'E2E_AC v3-edit', 'running', NULL, $3, '[]', '[]', '[]', '[]', NULL, 1, NULL, $4, $5, NULL, NULL)
+    `, ["e2e-ac-v3-edit", ORG, JSON.stringify({ goal: "g", ac: ["a"] }), now, now])
     const res = await app.request(`/api/tasks/e2e-ac-v3-edit/spec-field`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -915,7 +959,7 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
   })
 
   it("cycle-2 belt: whole-spec PUT cannot strip or empty the v4 discriminant/ledger", async () => {
-    const { taskId } = seedAwaitingReview()
+    const { taskId } = await seedAwaitingReview()
     // Omitted format/phases → merge-preserved (the PUT's legit edit path).
     const om = await app.request(`/api/tasks/${taskId}`, {
       method: "PUT",
@@ -923,8 +967,7 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
       body: JSON.stringify({ task_spec: { goal: "g2", ac: ["a"] } }),
     })
     expect(om.status, await om.clone().text()).toBe(200)
-    const row = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as { task_spec: string }
-    const specNow = JSON.parse(row.task_spec) as { format?: string; phases?: unknown[] }
+    const specNow = (await readSpecJson(taskId)) as { format?: string; phases?: unknown[] }
     expect(specNow.format).toBe("v4")
     expect(specNow.phases).toHaveLength(2)
     // Explicitly emptying phases → 400 (taskPhaseSchema min(1)).

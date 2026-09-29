@@ -20,14 +20,16 @@
 // real route + streamSSE via app.request, controllable mocked CloneRuntime
 // generator (gate between chunks). Only CloneRuntime + clone-resolver mocked.
 
+// P1 B3：AgentSessionDAO 迁 PG —— 本文件 sessions/messages 读写都落随机 PG 库。
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO, SafetyDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
 import { initAgentService } from "../services/agent/agent-service"
-import { finalizeOrphanStreamPartials } from "../routes/clone/stream-partials"
+import { finalizePartialMeta, sweepOrphanStreamPartials } from "../routes/clone/stream-partials"
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -84,29 +86,50 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 const ORG = "e2e-td-resume"
 
 let db: Database.Database
+let pg: PgFixture | null = null
 let app: Hono
 let sessionDAO: AgentSessionDAO
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
 
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 3000) {
+async function waitFor(cond: () => boolean | Promise<boolean>, what: string, timeoutMs = 3000) {
   const t0 = Date.now()
-  while (!cond()) {
+  while (!(await cond())) {
     if (Date.now() - t0 > timeoutMs) throw new Error(`timeout waiting for: ${what}`)
     await sleep(10)
   }
 }
 
-function assistantRows(sessionId: string) {
-  return db.prepare(
-    `SELECT id, content, metadata FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY created_at ASC`,
-  ).all(sessionId) as Array<{ id: string; content: string; metadata: string }>
+// P1 B3: messages 已迁 PG —— 断言侧直读随机库（metadata jsonb → ::text 归一）。
+async function assistantRows(sessionId: string): Promise<Array<{ id: string; content: string; metadata: string | null }>> {
+  return await pg!.sql`
+    SELECT id, content, metadata::text AS metadata FROM messages
+    WHERE session_id = ${sessionId} AND role = 'assistant' ORDER BY created_at ASC` as
+    Array<{ id: string; content: string; metadata: string | null }>
 }
 
-function userMsgCount(sessionId: string): number {
-  return (db.prepare(
-    `SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND role = 'user'`,
-  ).get(sessionId) as { n: number }).n
+function isStreamingRow(r: { metadata: string | null }): boolean {
+  try {
+    return r.metadata !== null && (JSON.parse(r.metadata) as { streaming?: boolean }).streaming === true
+  } catch {
+    return false
+  }
+}
+
+/** 旧断言 `!metadata.includes('"streaming"')` 的 PG 等价：finalized 行不带 streaming 键
+ *  （jsonb::text 冒号后有空白，子串判定不可移植）。 */
+function hasNoStreamingKey(r: { metadata: string | null }): boolean {
+  if (r.metadata === null) return true
+  try {
+    return (JSON.parse(r.metadata) as { streaming?: unknown }).streaming === undefined
+  } catch {
+    return false
+  }
+}
+
+async function userMsgCount(sessionId: string): Promise<number> {
+  const rows = await pg!.sql`SELECT COUNT(*)::int AS n FROM messages WHERE session_id = ${sessionId} AND role = 'user'`
+  return (rows[0] as { n: number }).n
 }
 
 async function createSession(): Promise<string> {
@@ -131,7 +154,7 @@ function chatRequest(sessionId: string, message: string) {
 async function startChatUntilPartial(sessionId: string, message: string) {
   const p = chatRequest(sessionId, message)
   await waitFor(
-    () => assistantRows(sessionId).some((r) => r.metadata?.includes('"streaming":true')),
+    async () => (await assistantRows(sessionId)).some(isStreamingRow),
     "streaming partial row",
   )
   return await p
@@ -143,17 +166,22 @@ function releaseGate() {
   g.resolve()
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
-  sessionDAO = new AgentSessionDAO(db)
+  sessionDAO = new AgentSessionDAO(pg!.sql)
   // The stop endpoint goes through the AgentService singleton (stopChat).
-  initAgentService(sessionDAO, new SafetyDAO(db))
+  initAgentService(sessionDAO, new SafetyDAO(pg!.sql))
   app = new Hono()
   app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, partialFlushMs: 0 }))
 })
 
-afterAll(() => { db.close() })
+afterAll(async () => {
+  await pg?.close()
+  pg = null
+  db.close()
+})
 
 beforeEach(() => {
   control.gates = []
@@ -163,15 +191,15 @@ beforeEach(() => {
 
 // ── 1+2+3: partial persistence, finalize on same row, running probe ─────
 
-describe("stream-resume: partial persistence + finalize + running probe", () => {
+describePg("stream-resume: partial persistence + finalize + running probe", () => {
   it("mid-turn: streaming partial row visible; turn-end: finalized on SAME row id, done.message_id matches, single row", async () => {
     const sid = await createSession()
     const res = await startChatUntilPartial(sid, "E2E_TD resume turn")
 
     // Mid-turn state
-    const mid = assistantRows(sid)
+    const mid = await assistantRows(sid)
     expect(mid.length).toBe(1)
-    const midMeta = JSON.parse(mid[0].metadata)
+    const midMeta = JSON.parse(mid[0].metadata!)
     expect(midMeta.streaming).toBe(true)
     expect(mid[0].content).toBe("part-1 ")
     expect(midMeta.interrupted).toBeUndefined()
@@ -184,10 +212,10 @@ describe("stream-resume: partial persistence + finalize + running probe", () => 
     releaseGate()
     const sse = await res.text()
 
-    const rows = assistantRows(sid)
+    const rows = await assistantRows(sid)
     expect(rows.length).toBe(1) // single row — finalize reused the partial id
     expect(rows[0].id).toBe(mid[0].id)
-    const finalMeta = JSON.parse(rows[0].metadata)
+    const finalMeta = JSON.parse(rows[0].metadata!)
     expect(finalMeta.streaming).toBeUndefined()
     expect(finalMeta.interrupted).toBeUndefined()
     expect(rows[0].content).toBe("part-1 part-2")
@@ -198,7 +226,7 @@ describe("stream-resume: partial persistence + finalize + running probe", () => 
     )
     expect(doneData.message_id).toBe(rows[0].id)
     // provider_session_id persisted for resume
-    const sess = db.prepare(`SELECT provider_session_id FROM sessions WHERE id = ?`).get(sid) as { provider_session_id: string }
+    const sess = (await pg!.sql`SELECT provider_session_id FROM sessions WHERE id = ${sid}`)[0] as { provider_session_id: string }
     expect(sess.provider_session_id).toBe("E2E_TD_provider-sess-1")
 
     const runEnd = await app.request(`/api/clones/task-author/sessions/${sid}/running`)
@@ -213,7 +241,7 @@ describe("stream-resume: partial persistence + finalize + running probe", () => 
 
 // ── 1: disconnect ≠ stop ──────────────────────────────────────────────────
 
-describe("stream-resume: closing the connection does not stop the turn", () => {
+describePg("stream-resume: closing the connection does not stop the turn", () => {
   it("client cancels the SSE body mid-turn → generator still completes, row finalized (no interrupted)", async () => {
     const sid = await createSession()
     const res = await startChatUntilPartial(sid, "E2E_TD disconnect turn")
@@ -223,16 +251,16 @@ describe("stream-resume: closing the connection does not stop the turn", () => {
 
     releaseGate()
     // The handler runs detached — poll until the row is finalized.
-    await waitFor(() => {
-      const rows = assistantRows(sid)
-      return rows.length === 1 && !rows[0].metadata.includes('"streaming"')
+    await waitFor(async () => {
+      const rows = await assistantRows(sid)
+      return rows.length === 1 && hasNoStreamingKey(rows[0])
     }, "finalized row after disconnect")
 
-    const rows = assistantRows(sid)
-    const meta = JSON.parse(rows[0].metadata)
+    const rows = await assistantRows(sid)
+    const meta = JSON.parse(rows[0].metadata!)
     expect(rows[0].content).toBe("part-1 part-2") // full turn, not a half
     expect(meta.interrupted).toBeUndefined()      // disconnect ≠ stop
-    const sess = db.prepare(`SELECT provider_session_id FROM sessions WHERE id = ?`).get(sid) as { provider_session_id: string }
+    const sess = (await pg!.sql`SELECT provider_session_id FROM sessions WHERE id = ${sid}`)[0] as { provider_session_id: string }
     expect(sess.provider_session_id).toBe("E2E_TD_provider-sess-1")
 
     const run = await app.request(`/api/clones/task-author/sessions/${sid}/running`)
@@ -242,18 +270,18 @@ describe("stream-resume: closing the connection does not stop the turn", () => {
 
 // ── 4: 409 concurrency guard ─────────────────────────────────────────────
 
-describe("stream-resume: 409 while a turn is running", () => {
+describePg("stream-resume: 409 while a turn is running", () => {
   it("second chat while first is generating → 409 STREAM_IN_PROGRESS, user message NOT stored", async () => {
     const sid = await createSession()
     const res = await startChatUntilPartial(sid, "E2E_TD first turn")
-    expect(userMsgCount(sid)).toBe(1)
+    expect(await userMsgCount(sid)).toBe(1)
 
     const second = await chatRequest(sid, "E2E_TD concurrent resend")
     expect(second.status).toBe(409)
     const body = (await second.json()) as { error: { code: string } }
     expect(body.error.code).toBe("STREAM_IN_PROGRESS")
     // The bounced send left no trace in the transcript
-    expect(userMsgCount(sid)).toBe(1)
+    expect(await userMsgCount(sid)).toBe(1)
 
     releaseGate()
     await res.text()
@@ -263,7 +291,7 @@ describe("stream-resume: 409 while a turn is running", () => {
 
 // ── 5: explicit stop finalizes with interrupted ──────────────────────────
 
-describe("stream-resume: explicit stop", () => {
+describePg("stream-resume: explicit stop", () => {
   it("POST stop mid-turn → row finalized with interrupted:true, streaming dropped", async () => {
     const sid = await createSession()
     const res = await startChatUntilPartial(sid, "E2E_TD stop turn")
@@ -280,9 +308,9 @@ describe("stream-resume: explicit stop", () => {
     releaseGate()
     await res.text()
 
-    const rows = assistantRows(sid)
+    const rows = await assistantRows(sid)
     expect(rows.length).toBe(1)
-    const meta = JSON.parse(rows[0].metadata)
+    const meta = JSON.parse(rows[0].metadata!)
     expect(meta.streaming).toBeUndefined()
     expect(meta.interrupted).toBe(true)
 
@@ -293,7 +321,7 @@ describe("stream-resume: explicit stop", () => {
 
 // ── 6: provider throw finalizes the partial ──────────────────────────────
 
-describe("stream-resume: provider error", () => {
+describePg("stream-resume: provider error", () => {
   it("generator throws after partials → row finalized interrupted, no lingering streaming flag", async () => {
     const sid = await createSession()
     control.throwMode = true
@@ -302,9 +330,9 @@ describe("stream-resume: provider error", () => {
     releaseGate() // generator throws here → route catch finalizes the row
     await res.text()
 
-    const rows = assistantRows(sid)
+    const rows = await assistantRows(sid)
     expect(rows.length).toBe(1)
-    const meta = JSON.parse(rows[0].metadata)
+    const meta = JSON.parse(rows[0].metadata!)
     expect(meta.streaming).toBeUndefined()
     expect(meta.interrupted).toBe(true)
   })
@@ -312,17 +340,17 @@ describe("stream-resume: provider error", () => {
 
 // ── 7: startup orphan sweep ──────────────────────────────────────────────
 
-describe("stream-resume: finalizeOrphanStreamPartials (startup sweep)", () => {
-  it("valid streaming row → interrupted + non-terminal tools failed; malformed row skipped untouched", () => {
+describePg("stream-resume: finalizeOrphanStreamPartials (startup sweep)", () => {
+  it("valid streaming row → interrupted + non-terminal tools failed; malformed row skipped untouched", async () => {
     const now = new Date().toISOString()
     const goodId = "E2E_TD_orphan_good"
     const badId = "E2E_TD_orphan_bad"
-    sessionDAO.insertSession({
+    await sessionDAO.insertSession({
       id: "E2E_TD_orphan_sess", org: ORG, title: "E2E_TD orphan",
       clone_name: "task-author", session_type: "clone",
       created_at: now, updated_at: now,
     })
-    sessionDAO.insertCloneMessage({
+    await sessionDAO.insertCloneMessage({
       id: goodId, session_id: "E2E_TD_orphan_sess", role: "assistant", type: "text",
       content: "half", created_at: now,
       metadata: JSON.stringify({
@@ -333,28 +361,38 @@ describe("stream-resume: finalizeOrphanStreamPartials (startup sweep)", () => {
         ],
       }),
     })
-    // Unparseable but LIKE-matching metadata (contains "streaming":true)
-    sessionDAO.insertCloneMessage({
+    // P1 B3：PG metadata 是 jsonb —— 旧「LIKE 命中但 JSON 不可解析」的行物理上无法
+    // 入库（INSERT 即被 22P02 拒掉）。同语义的 PG 面替身：`metadata->>'streaming'`
+    // 文本判定命中（值为字符串 "true"），但 finalizePartialMeta 对非 boolean 旗标
+    // 返回 null → sweep 跳过、原样不动（tool_calls 状态可证未被改写）。
+    await sessionDAO.insertCloneMessage({
       id: badId, session_id: "E2E_TD_orphan_sess", role: "assistant", type: "text",
       content: "half", created_at: now,
-      metadata: `{"streaming":true,"tool_calls":[`,
+      metadata: JSON.stringify({
+        streaming: "true",
+        tool_calls: [{ id: "t3", name: "Bash", status: "start" }],
+      }),
     })
 
-    const n = finalizeOrphanStreamPartials(sessionDAO)
+    const n = await sweepOrphanStreamPartials(sessionDAO)
     expect(n).toBe(1)
 
-    const good = (db.prepare(`SELECT metadata FROM messages WHERE id = ?`).get(goodId) as { metadata: string }).metadata
-    const meta = JSON.parse(good)
+    const good = (await pg!.sql`SELECT metadata::text AS metadata FROM messages WHERE id = ${goodId}`)[0] as { metadata: string }
+    const meta = JSON.parse(good.metadata)
     expect(meta.streaming).toBeUndefined()
     expect(meta.interrupted).toBe(true)
     expect(meta.tool_calls[0].status).toBe("result")     // terminal untouched
     expect(meta.tool_calls[1].status).toBe("fail")       // non-terminal failed
     expect(meta.tool_calls[1].ended_at).toBeTypeOf("number")
 
-    const bad = (db.prepare(`SELECT metadata FROM messages WHERE id = ?`).get(badId) as { metadata: string }).metadata
-    expect(bad).toBe(`{"streaming":true,"tool_calls":[`) // malformed skipped, no throw
+    const bad = (await pg!.sql`SELECT metadata::text AS metadata FROM messages WHERE id = ${badId}`)[0] as { metadata: string }
+    const badMeta = JSON.parse(bad.metadata)
+    expect(badMeta.streaming).toBe("true")               // skipped, no rewrite
+    expect(badMeta.tool_calls[0].status).toBe("start")   // untouched
+    // 不可解析输入的防御腿（sweep catch 跳过）—— jsonb 已挡住入库，纯函数级钉住
+    expect(() => finalizePartialMeta(`{"streaming":true,"tool_calls":[`)).toThrow()
 
     // Idempotent: second sweep finds nothing new to finalize
-    expect(finalizeOrphanStreamPartials(sessionDAO)).toBe(0)
+    expect(await sweepOrphanStreamPartials(sessionDAO)).toBe(0)
   })
 })

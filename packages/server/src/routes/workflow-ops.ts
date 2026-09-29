@@ -6,14 +6,14 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO): Hono {
   const router = new Hono()
 
   // GET /executions — List executions with optional status filter
-  router.get("/executions", (c) => {
-    const workspaceId = c.req.param("id")
+  router.get("/executions", async (c) => {
+    const workspaceId = c.req.param("id")!
     const status = c.req.query("status")
 
-    const svc = getService(workspaceId)
+    const svc = await getService(workspaceId)
     if (!svc) return c.json({ error: "Workspace not found" }, 404)
 
-    let executions = svc.service.list(workspaceId)
+    let executions = await svc.service.list(workspaceId)
     if (status) {
       executions = executions.filter((e) => e.status === status)
     }
@@ -22,18 +22,18 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO): Hono {
   })
 
   // GET /executions/:execId/status — Execution status overview
-  router.get("/executions/:execId/status", (c) => {
-    const workspaceId = c.req.param("id")
+  router.get("/executions/:execId/status", async (c) => {
+    const workspaceId = c.req.param("id")!
     const execId = c.req.param("execId")
     if (!execId) return c.json({ error: "Execution id required" }, 400)
 
-    const svc = getService(workspaceId)
+    const svc = await getService(workspaceId)
     if (!svc) return c.json({ error: "Workspace not found" }, 404)
 
-    const execution = svc.service.getById(execId)
+    const execution = await svc.service.getById(execId)
     if (!execution) return c.json({ error: "Execution not found" }, 404)
 
-    const withSteps = svc.service.getByIdWithSteps(execId)
+    const withSteps = await svc.service.getByIdWithSteps(execId)
 
     return c.json({
       status: execution.status,
@@ -49,11 +49,11 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO): Hono {
 
   // POST /executions/:execId/abort — Abort execution
   router.post("/executions/:execId/abort", async (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     const execId = c.req.param("execId")
     if (!execId) return c.json({ error: "Execution id required" }, 400)
 
-    const svc = getService(workspaceId)
+    const svc = await getService(workspaceId)
     if (!svc) return c.json({ error: "Workspace not found" }, 404)
 
     try {
@@ -66,14 +66,14 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO): Hono {
   })
 
   // GET /executions/:execId/nodes/:nodeId/events — Node events
-  router.get("/executions/:execId/nodes/:nodeId/events", (c) => {
-    const workspaceId = c.req.param("id")
+  router.get("/executions/:execId/nodes/:nodeId/events", async (c) => {
+    const workspaceId = c.req.param("id")!
     const execId = c.req.param("execId")
     const nodeId = c.req.param("nodeId")
     if (!execId) return c.json({ error: "Execution id required" }, 400)
     if (!nodeId) return c.json({ error: "Node id required" }, 400)
 
-    const svc = getService(workspaceId)
+    const svc = await getService(workspaceId)
     if (!svc) return c.json({ error: "Workspace not found" }, 404)
 
     const events = svc.service.getAgentEvents(execId, nodeId)

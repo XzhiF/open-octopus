@@ -18,6 +18,7 @@ import { registerActiveStream, unregisterActiveStream } from '../../services/age
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
 import { getMemoryService } from '../../services/agent/memory-service'
+import { buildRecallMcpServer, RECALL_MCP_SERVER_NAME, RECALL_TOOL_PROMPT } from '../../services/agent/recall-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
@@ -25,6 +26,7 @@ import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import fs from 'fs'
 import path from 'path'
+import type { AgentHono } from './middleware'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -156,9 +158,9 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
 
 // ── Route factory ──────────────────────────────────────────────────
 
-export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
+export function createMainAgentRoute(deps: MainAgentRouteDeps): AgentHono {
   const { sessionDAO, tokenUsageDao } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   app.post('/chat', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
@@ -180,7 +182,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       const now = new Date().toISOString()
-      sessionDAO.insertSession({
+      await sessionDAO.insertSession({
         id: sessionId,
         org,
         title: 'Main Agent 会话',
@@ -190,7 +192,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         updated_at: now,
       })
     } else {
-      const existing = sessionDAO.findById(sessionId)
+      const existing = await sessionDAO.findById(sessionId)
       if (!existing || existing.is_deleted) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
       }
@@ -199,11 +201,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // Store user message
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
-    sessionDAO.insertMessage({
+    await sessionDAO.insertMessage({
       id: userMsgId, session_id: sessionId, role: 'user',
       content: body.message, created_at: now,
     })
-    sessionDAO.updateLastMessageAt(sessionId, now)
+    await sessionDAO.updateLastMessageAt(sessionId, now)
 
     // ══════════════════════════════════════════════════════════════
     // Deterministic delegation (@@mention)
@@ -212,7 +214,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       const targetClone = body.delegate_to
 
       // Self-reference check: if session belongs to same clone, treat as normal message
-      const session = sessionDAO.findById(sessionId)
+      const session = await sessionDAO.findById(sessionId)
       if (session?.clone_name === targetClone) {
         // Self-reference → fall through to normal LLM routing
       } else {
@@ -250,7 +252,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               // 分身侧（CloneRuntime 流），一行 clone_chat 归本会话、node_id=分身名；
               // Main Agent 本路径不发起路由调用 → 不多记 global_chat 行，绝不双计。
               if (tokenUsageDao && chunk.type === 'result') {
-                recordProviderResultUsage({
+                await recordProviderResultUsage({
                   sourcePath: 'clone_chat',
                   nodeExecutionId: null,
                   executionId: null,
@@ -278,25 +280,25 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               const assistantNow = new Date().toISOString()
               const metadata = JSON.stringify({ source: targetClone, delegation: true })
 
-              sessionDAO.insertMessage({
+              await sessionDAO.insertMessage({
                 id: assistantMsgId, session_id: sessionId!, role: 'assistant',
                 content: fullContent, metadata, created_at: assistantNow,
               })
-              sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+              await sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
 
               await stream.writeSSE({
                 event: 'done',
                 data: JSON.stringify({
                   session_id: sessionId,
                   message_id: assistantMsgId,
-                  session_title: sessionDAO.findById(sessionId!)?.title,
+                  session_title: (await sessionDAO.findById(sessionId!))?.title,
                 }),
               })
 
               // P4: Auto-trigger process-marks after delegation response
               try {
                 const evolutionService = getEvolutionService()
-                evolutionService.processUnprocessedMarks(org, sessionId!)
+                await evolutionService.processUnprocessedMarks(org, sessionId!)
               } catch {
                 // process-marks failure is non-fatal
               }
@@ -319,7 +321,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
-    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}\n\n${RECALL_TOOL_PROMPT}`
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -332,6 +334,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
         const chunks = provider.sendQuery(body.message!, cwd, undefined, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+          // 系统 agent 的第一个读工具：真实进程内 MCP 工具（结果回灌模型循环），
+          // 区别于 record_daily 等事后拦截的写侧伪工具。
+          mcpServers: { [RECALL_MCP_SERVER_NAME]: buildRecallMcpServer(org) },
         })
 
         let fullContent = ''
@@ -410,7 +415,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
               // 调用 → 单独入账 global_chat（一 chunk 一行，重试=新调用=新行，KD23）。
               if (tokenUsageDao) {
-                recordProviderResultUsage({
+                await recordProviderResultUsage({
                   sourcePath: 'global_chat',
                   nodeExecutionId: null,
                   executionId: null,
@@ -456,17 +461,17 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             delegation: delegationDetected,
           })
 
-          sessionDAO.insertMessage({
+          await sessionDAO.insertMessage({
             id: assistantMsgId, session_id: sessionId!, role: 'assistant',
             content: fullContent, metadata, created_at: assistantNow,
           })
-          sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+          await sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
 
           // Auto-generate title
-          const sessionRow = sessionDAO.findById(sessionId!)
+          const sessionRow = await sessionDAO.findById(sessionId!)
           if (sessionRow && (sessionRow.title === 'Main Agent 会话' || sessionRow.title === '新会话')) {
             const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || 'Main Agent 会话'
-            sessionDAO.updateSession(sessionId!, { title: autoTitle })
+            await sessionDAO.updateSession(sessionId!, { title: autoTitle })
           }
 
           await stream.writeSSE({
@@ -474,14 +479,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             data: JSON.stringify({
               session_id: sessionId,
               message_id: assistantMsgId,
-              session_title: sessionDAO.findById(sessionId!)?.title,
+              session_title: (await sessionDAO.findById(sessionId!))?.title,
             }),
           })
 
           // P4: Auto-trigger process-marks after chat response
           try {
             const evolutionService = getEvolutionService()
-            evolutionService.processUnprocessedMarks(org, sessionId!)
+            await evolutionService.processUnprocessedMarks(org, sessionId!)
           } catch {
             // process-marks failure is non-fatal — don't disrupt the response
           }
@@ -524,7 +529,7 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            const markResult = evolutionService.markInsight(skillName, insight, sessionId, org)
+            const markResult = await evolutionService.markInsight(skillName, insight, sessionId, org)
             resultContent = `Insight marked (id: ${markResult.id}) for skill "${skillName}"`
           } catch {
             resultContent = `Failed to mark insight for "${skillName}"`
@@ -556,7 +561,7 @@ async function executeEvolutionTools(
               const current = fs.existsSync(skillPath) ? fs.readFileSync(skillPath, 'utf-8') : ''
               fs.writeFileSync(skillPath, current + `\n\n> Evolution (${new Date().toISOString().split('T')[0]}): ${summary}`, 'utf-8')
             }
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: skillName, change_type: changeType, level, summary,
             })
             resultContent = `Skill "${skillName}" evolved (${changeType}): ${summary}`
@@ -575,7 +580,7 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            const result = evolutionService.recordExperience(org, {
+            const result = await evolutionService.recordExperience(org, {
               skill_name: skillName, content, session_id: sessionId,
             })
             resultContent = `Experience recorded (id: ${result.id}) for skill "${skillName}"`
@@ -630,7 +635,7 @@ async function executeEvolutionTools(
             }
 
             // Record evolution log
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: targetSkill,
               change_type: 'major',
               level: 'major',
@@ -638,7 +643,7 @@ async function executeEvolutionTools(
             })
 
             // Record experience
-            evolutionService.recordExperience(org, {
+            await evolutionService.recordExperience(org, {
               skill_name: targetSkill,
               content: `Skill merge: "${sourceSkill}" merged into "${targetSkill}" — source content integrated, original archived.`,
               session_id: sessionId,
@@ -660,11 +665,11 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            evolutionService.recordEvolution(org, {
+            await evolutionService.recordEvolution(org, {
               skill_name: skillName, change_type: 'minor', level: 'minor',
               summary: `Issue noted: ${reason}`,
             })
-            evolutionService.recordExperience(org, {
+            await evolutionService.recordExperience(org, {
               skill_name: skillName,
               content: `Skill issue flagged: ${reason}`,
               session_id: sessionId,
@@ -735,7 +740,7 @@ async function executeMemoryTools(
               }
             }
 
-            const result = memoryService.recordDaily(org, content, sessionId, cloneDir)
+            const result = await memoryService.recordDaily(org, content, sessionId, cloneDir)
             resultContent = JSON.stringify(result)
           } catch (e) {
             resultContent = `Failed to record daily memory: ${e instanceof Error ? e.message : String(e)}`
@@ -808,7 +813,7 @@ async function executeDelegation(
       // billing-coverage-2 票03 (KD23)：工具化委托 —— 分身应答轮是另一次真实 provider
       // 调用 → 一行 clone_chat（node_id=分身名）；与路由轮的 global_chat 行各归各的调用。
       if (tokenUsageDao && chunk.type === 'result') {
-        recordProviderResultUsage({
+        await recordProviderResultUsage({
           sourcePath: 'clone_chat',
           nodeExecutionId: null,
           executionId: null,

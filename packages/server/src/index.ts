@@ -9,17 +9,7 @@ import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
-import {
-  WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
-  ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO,
-  PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO,
-} from "./db/dao"
-import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
-import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
-import { AgentVersionDAO } from "./db/dao/agent-version-dao"
-import { HarnessDAO } from "./db/dao/harness-dao"
+import { createAllDAOs, createLazyDAOs, pgSql, type AllDAOs } from "./db/dao/registry"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -104,6 +94,8 @@ import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
 import { getDomainEventBus } from "./services/agent/domain-event-bus"
+import { isPgConfigured } from "./db/pg/config"
+import { initPgPool } from "./db/pg/pool"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -122,55 +114,21 @@ if (!process.env.OCTOPUS_HOST_PORTS) {
   process.env.OCTOPUS_HOST_PORTS = `${_serverPort},${_serverPort - 1}`
 }
 
-// ── DAO Factory: Create all 11 DAOs from DB connection ─────────────────────
-interface AllDAOs {
-  workspace: WorkspaceDAO
-  execution: ExecutionDAO
-  tokenUsage: TokenUsageDAO
-  scheduleConfig: ScheduleConfigDAO
-  scheduleRun: ScheduleRunDAO
-  chat: ChatDAO
-  org: OrgDAO
-  agentSession: AgentSessionDAO
-  evolution: EvolutionDAO
-  clone: CloneDAO
-  safety: SafetyDAO
-  pendingReview: PendingReviewDAO
-  knowledgeEffectiveness: KnowledgeEffectivenessDAO
-  archive: ArchiveDAO
-  archiveDraft: ArchiveDraftDAO
-  interactionMessage: InteractionMessageDAO
-  agentVersion: AgentVersionDAO
-  harness: HarnessDAO
-  // 03: first-class tasks table DAO (v2-D1).
-  task: TaskDAO
-}
-
-function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
-  return {
-    workspace: new WorkspaceDAO(db),
-    execution: new ExecutionDAO(db),
-    tokenUsage: new TokenUsageDAO(db),
-    scheduleConfig: new ScheduleConfigDAO(db),
-    scheduleRun: new ScheduleRunDAO(db),
-    chat: new ChatDAO(db),
-    org: new OrgDAO(db),
-    agentSession: new AgentSessionDAO(db),
-    evolution: new EvolutionDAO(db),
-    clone: new CloneDAO(db),
-    safety: new SafetyDAO(db),
-    pendingReview: new PendingReviewDAO(db),
-    knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
-    archive: new ArchiveDAO(db),
-    archiveDraft: new ArchiveDraftDAO(db),
-    interactionMessage: new InteractionMessageDAO(db),
-    agentVersion: new AgentVersionDAO(db),
-    harness: new HarnessDAO(db),
-    task: new TaskDAO(db),
-  }
-}
+// ── DAO Factory ─────────────────────────────────────────────────────────
+// AllDAOs 类型与 createAllDAOs 工厂已外提至 db/dao/registry.ts（B0.5 §5 方案1）。
 
 const db = process.env.VITEST ? null : initDb()
+
+// P1 KB 单引擎迁移 — PG 池接线（opt-in：OCTOPUS_PG_URL 存在才连）。
+// 刻意不预热失败即崩：DAO 异步票完成前，PG 不可用绝不影响 SQLite 主路径启动；
+// 连接池上限/查询级超时全在 db/pg/config.ts，池占用与排队经 actuator /api/actuator/pg 暴露。
+if (db && isPgConfigured()) {
+  void initPgPool().then(
+    (h) => console.log(`[pg] pool wired (max=${h.config.poolMax}, statement_timeout=${h.config.statementTimeoutMs}ms)`),
+    (err: unknown) => console.warn(`[pg] pool init deferred (SQLite unaffected): ${err instanceof Error ? err.message : String(err)}`),
+  )
+}
+
 let daos: AllDAOs | null = null
 if (db) {
   applySchema(db)
@@ -184,9 +142,13 @@ if (db) {
     process.exit(1)
   }
 
-  ExecutionService.recoverInterruptedExecutions(db)
+  // [P1 B5 票5B] ExecutionDAO→PG 后启动清扫为异步（票6 专项收紧前保持「不阻塞启动」语义：void+catch）。
+  void ExecutionService.recoverInterruptedExecutions(db).catch((err: unknown) =>
+    console.warn("[server] recoverInterruptedExecutions failed:", err instanceof Error ? err.message : String(err)))
   migrateOrgDirs()
-  syncOrgsFromFilesystem(daos.org)
+  // B1 await 传播（OrgDAO→PG 异步），语义不变：启动期后台同步，失败仅告警。
+  void syncOrgsFromFilesystem(daos.org).catch((err: unknown) =>
+    console.warn('[startup] syncOrgsFromFilesystem failed:', err instanceof Error ? err.message : String(err)))
   const cleanupRetention = setupDataRetention(db)
   // Store cleanup for graceful shutdown
   ;(global as any).__octopus_cleanupRetention = cleanupRetention
@@ -249,73 +211,83 @@ if (!process.env.VITEST && daos) {
   initAgentVersionService(daos.agentVersion)
 
   // Auto-init built-in clones (filesystem + DB registration)
-  try {
+  // B1 await 传播（OrgDAO/CloneDAO→PG 异步），语义不变：仍尽力而为、失败仅告警。
+  {
     const { getCloneInitService } = require('./services/agent/clone-init-service')
     const cloneInitService = getCloneInitService()
-    const defaultOrg = daos.org.findAll()[0]?.name ?? 'default'
-    const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
-    if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
-      console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Built-in clone init failed: ${msg}`)
+    void (async () => {
+      const orgs = await daos.org.findAll()
+      const defaultOrg = orgs[0]?.name ?? 'default'
+      const initResult = await cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
+      if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
+        console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+      }
+    })().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] Built-in clone init failed: ${msg}`)
+    })
   }
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+  // 票6a：archive 域随 WorkspaceDAO/ArchiveDAO 翻池 —— 传 pgSql 惰性取源
+  // （initPgPool 是 fire-and-forget，启动早期立即取句柄会炸，服务内首次使用时才解析）。
+  initArchiveService(daos.archive, daos.execution, pgSql, getDomainEventBus())
 
-  // ── Scheduler seed: auto-create system:daily-archive task ────────────
-  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
-  try {
-    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
-    if (!existingSeed) {
-      daos.scheduleConfig.insertSchedule({
-        id: 'system:daily-archive',
-        org: 'system',
-        name: 'system:daily-archive',
-        cron_expression: '0 3 * * *',
-        timezone: 'Asia/Shanghai',
-        job_type: 'agent',
-        config: JSON.stringify({
-          prompt: 'Archive yesterday daily memory and refine long-term memory',
-        }),
-        enabled: 1,
-        description: 'System-seeded daily archive task (auto-created on server startup)',
-      })
-      console.log('[server] Scheduler seed: system:daily-archive task created')
+  // ── Scheduler seed + one-time archive_cron_hour migration ─────────────
+  // system:daily-archive: idempotent seed (insert only if absent), then migrate its
+  // cron from config.yaml archive_cron_hour when it differs from the default 3.
+  // scheduleConfig 已 async 化（返回 Promise）：顶层 await 会破坏 CJS 构建，
+  // 与上方 clone-init 同姿势用 void async IIFE 包裹并逐个 await（保留 seed→migration 顺序，
+  // 尽力而为、失败仅告警）。此前票2 遗留未 await 使 findByName 恒真、seed 永不插入。
+  void (async () => {
+    try {
+      const existingSeed = await daos!.scheduleConfig.findByName('system:daily-archive')
+      if (!existingSeed) {
+        await daos!.scheduleConfig.insertSchedule({
+          id: 'system:daily-archive',
+          org: 'system',
+          name: 'system:daily-archive',
+          cron_expression: '0 3 * * *',
+          timezone: 'Asia/Shanghai',
+          job_type: 'agent',
+          config: JSON.stringify({
+            prompt: 'Archive yesterday daily memory and refine long-term memory',
+          }),
+          enabled: 1,
+          description: 'System-seeded daily archive task (auto-created on server startup)',
+        })
+        console.log('[server] Scheduler seed: system:daily-archive task created')
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] Scheduler seed failed: ${msg}`)
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Scheduler seed failed: ${msg}`)
-  }
 
-  // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
-  // update the system:daily-archive cron expression
-  try {
-    const fs = require('fs')
-    const yaml = require('js-yaml')
-    const { getAgentConfigPath } = require('./services/agent/paths')
-    const configPath = getAgentConfigPath()
-    if (fs.existsSync(configPath)) {
-      const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
-      const archiveHour = raw?.memory?.archive_cron_hour
-      if (archiveHour !== undefined && archiveHour !== 3) {
-        const existingJob = daos.scheduleConfig.findByName('system:daily-archive')
-        if (existingJob) {
-          const newCron = `0 ${archiveHour} * * *`
-          daos.scheduleConfig.updateSchedule(existingJob.id, {
-            cron_expression: newCron,
-            version: existingJob.version + 1,
-          })
-          console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
+    try {
+      const fs = require('fs')
+      const yaml = require('js-yaml')
+      const { getAgentConfigPath } = require('./services/agent/paths')
+      const configPath = getAgentConfigPath()
+      if (fs.existsSync(configPath)) {
+        const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
+        const archiveHour = raw?.memory?.archive_cron_hour
+        if (archiveHour !== undefined && archiveHour !== 3) {
+          const existingJob = await daos!.scheduleConfig.findByName('system:daily-archive')
+          if (existingJob) {
+            const newCron = `0 ${archiveHour} * * *`
+            await daos!.scheduleConfig.updateSchedule(existingJob.id, {
+              cron_expression: newCron,
+              version: existingJob.version + 1,
+            })
+            console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
+          }
         }
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
-  }
+  })()
 
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
@@ -359,52 +331,17 @@ app.use("*", async (c, next) => {
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
 })
 
-// ── Route Registration ─────────────────────────────────────────
-// Routes are always registered. In test mode (VITEST), daos is null
-// but getDb() works at request time (tests init DB in beforeAll).
-// We use Proxy DAOs that lazily create the real DAO on first method call.
-function lazyDAO<T>(Ctor: new (db: any) => T): T {
-  let real: T | null = null
-  return new Proxy({} as any, {
-    get(_, prop) {
-      if (!real) real = new Ctor(getDb())
-      const val = (real as any)[prop]
-      return typeof val === 'function' ? val.bind(real) : val
-    },
-  }) as T
-}
+// ── DAO 注册表（B0.5 §5 方案1 外提）─────────────────────────────────────
+// 注册表内容/懒构造时序原样保留，见 db/dao/registry.ts。
 
-const d = daos ?? {
-  workspace: lazyDAO(WorkspaceDAO),
-  execution: lazyDAO(ExecutionDAO),
-  tokenUsage: lazyDAO(TokenUsageDAO),
-  scheduleConfig: lazyDAO(ScheduleConfigDAO),
-  scheduleRun: lazyDAO(ScheduleRunDAO),
-  chat: lazyDAO(ChatDAO),
-  org: lazyDAO(OrgDAO),
-  agentSession: lazyDAO(AgentSessionDAO),
-  evolution: lazyDAO(EvolutionDAO),
-  clone: lazyDAO(CloneDAO),
-  safety: lazyDAO(SafetyDAO),
-  pendingReview: lazyDAO(PendingReviewDAO),
-  knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
-  archive: lazyDAO(ArchiveDAO),
-  archiveDraft: lazyDAO(ArchiveDraftDAO),
-  interactionMessage: lazyDAO(InteractionMessageDAO),
-  agentVersion: lazyDAO(AgentVersionDAO),
-  harness: lazyDAO(HarnessDAO),
-  // 03 (v2-D1): tasks table DAO. Added to the lazy fallback so `d.task` works
-  // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
-  // 04's task-author autosave seam + TasksService both consume it.
-  task: lazyDAO(TaskDAO),
-}
+const d = daos ?? createLazyDAOs()
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
 const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun, sse)
 const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate, providerSessionId) => {
-  const entry = getExecutionService(workspaceId)
+  const entry = await getExecutionService(workspaceId)
   if (entry) {
     // Save provider session ID to execution's global_session_id for context continuity
     if (providerSessionId) {
@@ -426,7 +363,7 @@ if (!daos) {
     try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
-    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
+    try { initArchiveService(d.archive, d.execution, pgSql, getDomainEventBus()) } catch { /* db not ready yet */ }
     try { setHarnessDependencies(d.harness) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
@@ -530,7 +467,8 @@ try {
         scheduler_service: false, notify_subsystem: false, claude_provider: false,
       }
       try { probes.workflow_engine = typeof require('@octopus/engine').WorkflowEngine === 'function' } catch {}
-      try { probes.workspace_service = d.workspace.countAll() >= 0 } catch {}
+      // 票6a：WorkspaceDAO→PG —— 旧 countAll()>=0 探测改为池可达性（pgSql 未注册即抛）。
+      try { pgSql(); probes.workspace_service = true } catch {}
       try { probes.scheduler_service = typeof schedSvc.listJobs === 'function' } catch {}
       try { probes.notify_subsystem = typeof require('./services/notification').getNotificationService().sendNotification === 'function' } catch {}
       try { probes.claude_provider = typeof require('@octopus/providers').getProvider('claude')?.sendQuery === 'function' } catch {}
@@ -571,8 +509,15 @@ if (shouldServe) {
   // Lazy workspace initialization: workspaces are initialized on-demand when
   // the user opens them via WebSocket (yjs-ws.ts initWorkspaceRoom).
   // This avoids opening ~1000 FDs per workspace at startup.
-  const activeWorkspaceIds = daos!.workspace.findActiveIds()
-  console.log(`[yjs] ${activeWorkspaceIds.length} active workspaces (lazy init on first access)`)
+  // 票6a：workspace findActiveIds 已 PG 异步 —— 该行只是信息日志，
+  // void async 包裹保持「不阻塞启动」语义（真 fire-and-forget + catch 兜底）。
+  void daos!.workspace.findActiveIds()
+    .then((activeWorkspaceIds) => {
+      console.log(`[yjs] ${activeWorkspaceIds.length} active workspaces (lazy init on first access)`)
+    })
+    .catch((err: unknown) => {
+      console.warn("[yjs] active workspace count failed:", err instanceof Error ? err.message : String(err))
+    })
 
   const portArg = process.argv.find(a => a.startsWith("--port="))
   const port = parseInt(portArg?.split("=")[1] ?? process.env.PORT ?? "3001", 10)
@@ -715,13 +660,13 @@ if (shouldServe) {
       }
 
       // Consume deferred agent hooks now that providers are fully initialized
-      ExecutionService.consumePendingHooks(db).catch((err: unknown) => {
+      ExecutionService.consumePendingHooks(db!).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[server] Failed to consume pending hooks: ${msg}`)
       })
 
       // ★ Auto-resume any pending_resume executions (crash recovery)
-      ExecutionService.resumePendingExecutions(db).catch((err: unknown) => {
+      ExecutionService.resumePendingExecutions(db!).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[server] Failed to resume pending executions: ${msg}`)
       })
@@ -758,15 +703,15 @@ if (shouldServe) {
       // the resolution set = installed built-ins ∪ task-home workflows/.
       const builtInWorkflowService = new BuiltInWorkflowService(resourceRegistry.get())
       const tasksService = new TasksService(
-        db, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
+        db!, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
         // repo-sync + trigger-prebuild (2026-09-08): 尾参装配 —— 镜像同步状态机
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
-      const assistService = new AssistWorkflowService(db, sse)
+      const assistService = new AssistWorkflowService(db!, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
-      const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
+      const roundEvidence = new RoundEvidenceService(db!, sse, tasksService, workspaceService!, taskHomeService)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
@@ -776,6 +721,9 @@ if (shouldServe) {
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {
+        // P1 B5 票2：seed/start 已 async 化；listen 回调仍是同步 —— 块体挪进
+        // async IIFE，失败形态与本文件 consumePendingHooks 的 .catch 模式一致。
+        void (async () => {
         const scheduleService = new WorkspaceScheduleService(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution,
         )
@@ -796,7 +744,7 @@ if (shouldServe) {
         // The composition root is the ONLY place the two domains meet: it hands the
         // built-in job's handler (task domain) to the scheduler's registry, so the
         // scheduler fires task lifecycle code without ever importing the task domain.
-        const seeded = registerAndSeedBuiltinCodeJobs(
+        const seeded = await registerAndSeedBuiltinCodeJobs(
           daos!.scheduleConfig,
           '',
           taskLifecycleHandlerFor(tasksService.taskLifecycle),
@@ -810,17 +758,25 @@ if (shouldServe) {
         const schedulerEngine = new SchedulerEngine(
           daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
         )
-        scheduleService.setOnScheduleChange(() => schedulerEngine.reload())
+        scheduleService.setOnScheduleChange(() => {
+          schedulerEngine.reload().catch((err: unknown) =>
+            console.error('[scheduler] reload after schedule change failed:', err instanceof Error ? err.message : String(err)),
+          )
+        })
 
         // Wire service → engine: reload on CRUD, dispatch on manual trigger.
         // Late-bound via setCallbacks so the service can be constructed before
         // the engine exists.
         schedulerService.setCallbacks({
-          onScheduleChange: () => schedulerEngine.reload(),
+          onScheduleChange: () => {
+            schedulerEngine.reload().catch((err: unknown) =>
+              console.error('[scheduler] reload after job edit failed:', err instanceof Error ? err.message : String(err)),
+            )
+          },
           onTrigger: (scheduleId, executionId) => schedulerEngine.triggerManual(scheduleId, executionId),
         })
 
-        schedulerEngine.start()
+        await schedulerEngine.start()
         // 票03: the task domain no longer needs the engine's wake() — triggering a task
         // arms and claims through the lifecycle job synchronously, so a user pressing
         // 触发 never waits on a cron minute. wake() stays for the scheduler's own rows.
@@ -830,6 +786,9 @@ if (shouldServe) {
         // Three types now, and the parenthetical used to name two — which read as "the
         // built-in task-lifecycle row isn't one of these" to whoever debugs a boot.
         console.log(`[scheduler] Started with ${jobCount} active cron jobs (workflow / agent / job)`)
+        })().catch((err: unknown) =>
+          console.error('[scheduler] init failed:', err instanceof Error ? err.message : String(err)),
+        )
       } else {
         // Engine not running — manual triggers and cron won't execute.
         // Surface this clearly so users don't see perpetual 'triggered' rows.

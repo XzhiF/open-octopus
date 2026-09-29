@@ -11,9 +11,9 @@ import { getArchiveService, ArchivePartialFailure } from "../services/archive/ar
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO, executionDAO?: ExecutionDAO): Hono {
   const workspaceRoutes = new Hono()
 
-  workspaceRoutes.get("/", (c) => {
-    const workspaces = workspaceService.list()
-    const runningCounts = executionDAO?.countRunningGroupedByWorkspace() ?? {}
+  workspaceRoutes.get("/", async (c) => {
+    const workspaces = await workspaceService.list()
+    const runningCounts = (await executionDAO?.countRunningGroupedByWorkspace()) ?? {}
     const resolved = workspaces.map(w => ({
       ...w,
       path: w.path.replace(/^~/, os.homedir()),
@@ -41,7 +41,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.post("/", async (c) => {
     const body = await c.req.json<{ name: string; org: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
-    if (!orgExists(orgDAO, body.org)) {
+    if (!(await orgExists(orgDAO, body.org))) {
       return c.json({ error: `Org '${body.org}' not found` }, 400)
     }
     // 禁中文命名 (2026-09-20)：name 直接进目录名/分支名，web dialog 早已拦，
@@ -51,7 +51,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
     }
     const workoutPath = body.path || `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
-    const workspace = workspaceService.create({
+    const workspace = await workspaceService.create({
       name: body.name,
       org: body.org,
       description: body.description,
@@ -81,12 +81,12 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }, 201)
   })
 
-  workspaceRoutes.get("/importable", (c) => {
+  workspaceRoutes.get("/importable", async (c) => {
     const org = c.req.query("org") || "xzf"
     const workspacesDir = join(os.homedir(), ".octopus", "orgs", org, "workspaces")
     if (!existsSync(workspacesDir)) return c.json({ workspaces: [] })
 
-    const allDbWorkspaces = workspaceService.list(org)
+    const allDbWorkspaces = await workspaceService.list(org)
     const dbPaths = new Set(allDbWorkspaces.map(w => w.path))
 
     const importable: { name: string; path: string; repoCount: number; branch: string | null }[] = []
@@ -128,14 +128,14 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       return c.json({ error: "config.json not found for this workspace" }, 404)
     }
 
-    const existing = workspaceDAO.findByPath(wsPath)
+    const existing = await workspaceDAO.findByPath(wsPath)
     if (existing) {
       return c.json({ error: "workspace already imported", id: existing.id }, 409)
     }
 
     try {
       const config = JSON.parse(readFileSync(configPath, "utf-8"))
-      const workspace = workspaceService.create({
+      const workspace = await workspaceService.create({
         name: body.name,
         org: body.org,
         description: config.description,
@@ -157,14 +157,14 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     return c.json({ providers: config.providers })
   })
 
-  workspaceRoutes.get("/archive/status", (c) => {
-    const stuck = workspaceDAO.listByArchiveStatus("archiving")
+  workspaceRoutes.get("/archive/status", async (c) => {
+    const stuck = await workspaceDAO.listByArchiveStatus("archiving")
     return c.json({ data: stuck })
   })
 
   workspaceRoutes.post("/:id/archive/retry", async (c) => {
     const id = c.req.param("id")
-    const ws = workspaceDAO.findById(id)
+    const ws = await workspaceDAO.findById(id)
     if (!ws) return c.json({ error: { code: "NOT_FOUND", message: "Workspace not found" } }, 404)
     if (ws.archive_status !== "archiving" && ws.archive_status !== "archive_failed") {
       return c.json({ error: { code: "INVALID_STATE", message: `Workspace not in retryable state (current: ${ws.archive_status})` } }, 409)
@@ -172,8 +172,9 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     try {
       const archiveSvc = getArchiveService()
       if (!archiveSvc) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
-      await archiveSvc.archiveWorkspace(id, workspaceDAO)
-      workspaceDAO.cascadeDeleteByWorkspace(id)
+      // 删除路径专用事务版：失败抛错 → catch 拦住，绝不 cascadeDelete 未归档成功的数据
+      await archiveSvc.archiveWorkspaceForDelete(id, workspaceDAO)
+      await workspaceDAO.cascadeDeleteByWorkspace(id)
       return c.json({ ok: true })
     } catch (err) {
       if (err instanceof ArchivePartialFailure) {
@@ -183,9 +184,9 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }
   })
 
-  workspaceRoutes.get("/:id", (c) => {
+  workspaceRoutes.get("/:id", async (c) => {
     const id = c.req.param("id")
-    const workspace = workspaceService.getById(id)
+    const workspace = await workspaceService.getById(id)
     if (!workspace) return c.json({ error: "not found" }, 404)
     return c.json({ ...workspace, path: workspace.path.replace(/^~/, os.homedir()) })
   })
@@ -199,7 +200,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
         return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
       }
     }
-    const workspace = workspaceService.update(id, body)
+    const workspace = await workspaceService.update(id, body)
     if (!workspace) return c.json({ error: "not found" }, 404)
     return c.json(workspace)
   })

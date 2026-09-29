@@ -96,11 +96,11 @@ export class EvolutionService {
   /**
    * List evolution changelog entries.
    */
-  listChangelog(
+  async listChangelog(
     org: string,
     query?: { skill_name?: string; limit?: number },
-  ): EvolutionEntry[] {
-    const rows = this.dao.listChangelog(org, query)
+  ): Promise<EvolutionEntry[]> {
+    const rows = await this.dao.listChangelog(org, query)
 
     return rows.map((r) => ({
       id: r.id,
@@ -118,7 +118,7 @@ export class EvolutionService {
   /**
    * Record a new evolution entry.
    */
-  recordEvolution(
+  async recordEvolution(
     org: string,
     entry: {
       skill_name: string
@@ -127,10 +127,10 @@ export class EvolutionService {
       summary: string
       diff_path?: string
     },
-  ): EvolutionEntry {
+  ): Promise<EvolutionEntry> {
     const timestamp = new Date().toISOString()
 
-    const result = this.dao.insertEvolution({
+    const result = await this.dao.insertEvolution({
       skill_name: entry.skill_name,
       change_type: entry.change_type,
       level: entry.level,
@@ -141,7 +141,7 @@ export class EvolutionService {
     })
 
     return {
-      id: result.lastInsertRowid as number,
+      id: result.id,
       skill_name: entry.skill_name,
       change_type: entry.change_type,
       level: entry.level,
@@ -156,22 +156,24 @@ export class EvolutionService {
   /**
    * Rollback an evolution entry.
    */
-  rollback(org: string, id: number): boolean {
+  async rollback(org: string, id: number): Promise<boolean> {
     const timestamp = new Date().toISOString()
 
     // Check if entry exists
-    const entry = this.dao.findEvolutionByIdAndOrg(id, org)
+    const entry = await this.dao.findEvolutionByIdAndOrg(id, org)
     if (!entry) return false
 
     // Mark as rolled back
-    this.dao.markRolledBack(id)
+    await this.dao.markRolledBack(id)
 
     // Create rollback entry
-    this.dao.insertEvolution({
+    await this.dao.insertEvolution({
       skill_name: entry.skill_name,
       change_type: 'rollback',
       level: entry.change_type,
       summary: `Rollback of evolution entry #${id}`,
+      // 回滚条目无 diff 工件（SQL 侧 row.diff_path ?? null，与此前运行时 undefined 等值）。
+      diff_path: null,
       org,
       timestamp,
     })
@@ -191,7 +193,7 @@ export class EvolutionService {
    * Identified insights are written as experience rows with source_type='reflection'
    * so they become searchable via FTS5.
    */
-  reflect(
+  async reflect(
     org: string,
     input: {
       type: 'execution' | 'user_feedback' | 'self_check'
@@ -201,7 +203,7 @@ export class EvolutionService {
       result_summary?: string
       scope?: string
     },
-  ): {
+  ): Promise<{
     identified: boolean
     level: 'minor' | 'major'
     candidate?: {
@@ -211,15 +213,15 @@ export class EvolutionService {
       proposed_diff?: string
     }
     reasoning: string
-  } {
+  }> {
     const scope = input.scope
 
     // ── Execution-based reflection (F1) ─────────────────────────
     if (input.type === 'execution') {
       // Look for repeated failure patterns in recent experiences
       const recentFailures = scope
-        ? this.dao.findExperiencesWithFailurePatternByScope(org, scope)
-        : this.dao.findExperiencesWithFailurePattern(org)
+        ? await this.dao.findExperiencesWithFailurePatternByScope(org, scope)
+        : await this.dao.findExperiencesWithFailurePattern(org)
 
       if (recentFailures.length > 0) {
         const target = recentFailures[0]
@@ -235,7 +237,7 @@ export class EvolutionService {
             ? `Scope "${scope}": skill "${target.skill_name}" had ${target.count} failure-related experiences in the past week.`
             : `Skill "${target.skill_name}" had ${target.count} failure-related experiences in the past week.`,
         }
-        this.writeReflectionExperience(org, scope, result)
+        await this.writeReflectionExperience(org, scope, result)
         return result
       }
 
@@ -255,7 +257,7 @@ export class EvolutionService {
               ? `Scope "${scope}": execution result contains improvement indicators.`
               : 'Execution result contains improvement indicators.',
           }
-          this.writeReflectionExperience(org, scope, result)
+          await this.writeReflectionExperience(org, scope, result)
           return result
         }
       }
@@ -290,7 +292,7 @@ export class EvolutionService {
           },
           reasoning: 'User explicitly corrected Agent behavior, converted to SKILL improvement.',
         }
-        this.writeReflectionExperience(org, scope, result)
+        await this.writeReflectionExperience(org, scope, result)
         return result
       }
     }
@@ -299,11 +301,11 @@ export class EvolutionService {
     if (input.type === 'self_check') {
       if (scope) {
         // Scope-aware self-check: use listByScope and getSuccessStats
-        const result = this.reflectWithScope(org, scope)
+        const result = await this.reflectWithScope(org, scope)
         if (result) return result
       } else {
         // Original path: analyze recent work memory for repeated patterns
-        const recentExperiences = this.dao.findRecentExperiencesForReflection(org, 20)
+        const recentExperiences = await this.dao.findRecentExperiencesForReflection(org, 20)
 
         if (recentExperiences.length >= 5) {
           // Simple frequency analysis: find most common skill with experiences
@@ -324,7 +326,7 @@ export class EvolutionService {
               },
               reasoning: `Skill "${sorted[0][0]}" has the highest experience frequency (${sorted[0][1]} in 7 days).`,
             }
-            this.writeReflectionExperience(org, scope, result)
+            await this.writeReflectionExperience(org, scope, result)
             return result
           }
         }
@@ -343,10 +345,10 @@ export class EvolutionService {
    * Analyzes decision success rates, detector accuracy, and pattern frequency.
    * Returns a reflection result if insights are found, null otherwise.
    */
-  private reflectWithScope(
+  private async reflectWithScope(
     org: string,
     scope: string,
-  ): {
+  ): Promise<{
     identified: boolean
     level: 'minor' | 'major'
     candidate?: {
@@ -355,16 +357,16 @@ export class EvolutionService {
       summary: string
     }
     reasoning: string
-  } | null {
+  } | null> {
     // Get scope-specific experiences
-    const recentExperiences = this.dao.findRecentExperiencesForReflectionByScope(org, scope, 20)
+    const recentExperiences = await this.dao.findRecentExperiencesForReflectionByScope(org, scope, 20)
 
     if (recentExperiences.length < 3) {
       return null
     }
 
     // Get success stats for this scope
-    const stats = this.dao.getSuccessStats(org, scope)
+    const stats = await this.dao.getSuccessStats(org, scope)
 
     // Analyze: find decisions with low success rates (potential insights)
     const lowSuccessDecisions: Array<{ decision: string; rate: number; total: number }> = []
@@ -407,7 +409,7 @@ export class EvolutionService {
         },
         reasoning: `Scope "${scope}": analyzed ${recentExperiences.length} experiences. ${low.decision} has ${lowPct}% success rate vs ${high.decision} at ${highPct}%.`,
       }
-      this.writeReflectionExperience(org, scope, result, low, high)
+      await this.writeReflectionExperience(org, scope, result, low, high)
       return result
     }
 
@@ -427,7 +429,7 @@ export class EvolutionService {
         },
         reasoning: `Scope "${scope}": analyzed ${recentExperiences.length} experiences. ${low.decision} has low success rate at ${lowPct}%.`,
       }
-      this.writeReflectionExperience(org, scope, result, low)
+      await this.writeReflectionExperience(org, scope, result, low)
       return result
     }
 
@@ -450,7 +452,7 @@ export class EvolutionService {
           },
           reasoning: `Scope "${scope}": skill "${sorted[0][0]}" has the highest experience frequency (${sorted[0][1]} in 7 days).`,
         }
-        this.writeReflectionExperience(org, scope, result)
+        await this.writeReflectionExperience(org, scope, result)
         return result
       }
     }
@@ -468,7 +470,7 @@ export class EvolutionService {
    * @param lowSuccess - optional low success decision info for pattern tags
    * @param highSuccess - optional high success decision info for pattern tags
    */
-  private writeReflectionExperience(
+  private async writeReflectionExperience(
     org: string,
     scope: string | undefined,
     result: {
@@ -478,7 +480,7 @@ export class EvolutionService {
     },
     lowSuccess?: { decision: string; rate: number },
     highSuccess?: { decision: string; rate: number },
-  ): void {
+  ): Promise<void> {
     if (!result.identified || !result.candidate) return
 
     const effectiveScope = scope ?? 'agent'
@@ -500,7 +502,7 @@ export class EvolutionService {
     ].join('\n')
 
     try {
-      this.dao.insertExperienceV2({
+      await this.dao.insertExperienceV2({
         skill_name: result.candidate.skill_name,
         content,
         source_session_id: null,
@@ -522,31 +524,31 @@ export class EvolutionService {
   /**
    * Record an insight mark for a skill (I4 encapsulation — replaces direct DAO access).
    */
-  markInsight(
+  async markInsight(
     skillName: string,
     insight: string,
     sessionId: string,
     org: string,
-  ): { id: number } {
-    const result = this.dao.insertMark({
+  ): Promise<{ id: number }> {
+    const result = await this.dao.insertMark({
       skill_name: skillName,
       insight,
       session_id: sessionId,
       org,
     })
-    return { id: result.lastInsertRowid as number }
+    return { id: result.id }
   }
 
   /**
    * Record an experience for a skill (I4 file-level reuse).
    */
-  recordExperience(
+  async recordExperience(
     org: string,
     entry: { skill_name: string; content: string; session_id?: string },
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     const timestamp = new Date().toISOString()
 
-    const result = this.dao.insertExperienceWithFts({
+    const result = await this.dao.insertExperienceWithFts({
       skill_name: entry.skill_name,
       content: entry.content,
       source_session_id: entry.session_id ?? null,
@@ -554,35 +556,35 @@ export class EvolutionService {
       created_at: timestamp,
     })
 
-    return { id: result.lastInsertRowid as number }
+    return { id: result.id }
   }
 
   /**
    * Search experiences using FTS5 with scope filtering.
    * Delegates to EvolutionDAO.searchByScope().
    */
-  searchExperiences(
+  async searchExperiences(
     query: string,
     scope?: string,
     limit: number = 10,
-  ): Array<{
+  ): Promise<Array<{
     id: number; skill_name: string; content: string; scope: string;
     scope_ref: string | null; pattern_tags: string; outcome: string | null
-  }> {
+  }>> {
     return this.dao.searchByScope(query, scope, limit)
   }
 
   /**
    * List experiences for a skill.
    */
-  listExperiences(org: string, skillName?: string): Array<{
+  async listExperiences(org: string, skillName?: string): Promise<Array<{
     id: number
     skill_name: string
     content: string
     source_session_id: string | null
     org: string
     created_at: string
-  }> {
+  }>> {
     return this.dao.listExperiences(org, skillName)
   }
 
@@ -590,11 +592,11 @@ export class EvolutionService {
    * Process unprocessed insight marks — reflect on each, optionally evolve skills.
    * Called automatically at session end (P4 auto-trigger).
    */
-  processUnprocessedMarks(
+  async processUnprocessedMarks(
     org: string,
     sessionId?: string,
-  ): { processed: number; total: number; results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> } {
-    const marks = this.dao.listUnprocessedMarks(org, 50)
+  ): Promise<{ processed: number; total: number; results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> }> {
+    const marks = await this.dao.listUnprocessedMarks(org, 50)
     if (marks.length === 0) {
       return { processed: 0, total: 0, results: [] }
     }
@@ -603,7 +605,7 @@ export class EvolutionService {
 
     for (const mark of marks) {
       try {
-        const reflection = this.reflect(org, {
+        const reflection = await this.reflect(org, {
           type: 'user_feedback',
           skill_name: mark.skill_name,
           content: mark.insight,
@@ -611,7 +613,7 @@ export class EvolutionService {
         })
 
         if (reflection.identified && reflection.candidate) {
-          this.recordExperience(org, {
+          await this.recordExperience(org, {
             skill_name: mark.skill_name,
             content: `Insight: ${mark.insight}`,
             session_id: sessionId ?? mark.session_id ?? undefined,
@@ -628,7 +630,7 @@ export class EvolutionService {
                 'utf-8',
               )
             }
-            this.recordEvolution(org, {
+            await this.recordEvolution(org, {
               skill_name: mark.skill_name,
               change_type: 'minor',
               level: 'minor',
@@ -644,7 +646,7 @@ export class EvolutionService {
           mark_id: mark.id,
         })
 
-        this.dao.markProcessed(mark.id)
+        await this.dao.markProcessed(mark.id)
       } catch {
         // Individual mark failure is non-fatal — continue processing
         results.push({

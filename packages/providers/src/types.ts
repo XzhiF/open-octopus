@@ -1,5 +1,6 @@
 import type { LLMCallRecord } from './llm-call-tracker'
 import type { EffortLevel } from '@octopus/shared'
+import type { InProcessMcpServer } from './mcp'
 // TokenUsage / ModelUsage / TokenUsageDelta 全站规范形状定义在 @octopus/shared（C1 口径统一）。
 // provider 的职责：在 SDK seam 把 snake_case 原始事件转成规范形状，其余各层不再换形。
 import type { TokenUsage, ModelUsage, TokenUsageDelta } from '@octopus/shared'
@@ -48,6 +49,12 @@ export interface SendQueryOptions {
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]
   disallowedTools?: string[]
+  /**
+   * In-process MCP servers (see ./mcp.ts) — real tools whose results flow
+   * back into the model's loop (unlike post-stream pseudo-tools).
+   * Key = server name; model-visible tool name = mcp__{key}__{tool}.
+   */
+  mcpServers?: Record<string, InProcessMcpServer>
   effort?: EffortLevel
   /**
    * When true, AskUserQuestion tool calls are intercepted via canUseTool callback.

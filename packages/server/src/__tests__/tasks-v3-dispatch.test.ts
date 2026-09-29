@@ -26,12 +26,13 @@
 // WorkflowEngine for AC3 (deterministic edges not mocked); real TaskHomeService path
 // computation cross-checked (R3).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import { buildTaskLaunchConfig } from "../services/tasks/task-materialize"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskLifecycleService } from "../services/tasks/task-lifecycle-service"
@@ -43,6 +44,21 @@ import { WorkflowEngine } from "@octopus/engine"
 import type { TaskSpec, SubunitSpec, WorkflowDef, NodeDef, TaskDispatchPort, ChildHandle } from "@octopus/shared"
 
 const ORG = "e2e-td-08"
+
+// P1 B2：本文件的 tasks 造数/读全部走这座 PG 库（beforeAll 注册全局池；
+// TaskLifecycleService/TasksService 内部 pgSql() 取同一座）。
+let pg: PgFixture | null = null
+
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
 
 // ── Mock getExecutionService ───────────────────────────────────────────
 // The armed paths stub the engine at the ExecutionService seam: create INSERTS a real
@@ -87,7 +103,7 @@ vi.mock("../services/execution-service-registry", () => ({
 //  AC1 + AC4: buildTaskLaunchConfig (pure function, no DB)
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC1/AC4: buildTaskLaunchConfig task_artifacts_dir injection", () => {
+describePg("08 AC1/AC4: buildTaskLaunchConfig task_artifacts_dir injection", () => {
   const tmpBase = path.join(os.tmpdir(), `octopus-08-${Date.now()}`)
   const home = new TaskHomeService(tmpBase)
   const TASK_ID = "e2e-td-08-task-ac1"
@@ -188,7 +204,7 @@ describe("08 AC1/AC4: buildTaskLaunchConfig task_artifacts_dir injection", () =>
 //  schedules envelope; 票03 moved the composition to the lifecycle job)
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC2: composite arm — buildCompositeInputValues preserves task_artifacts_dir", () => {
+describePg("08 AC2: composite arm — buildCompositeInputValues preserves task_artifacts_dir", () => {
   let db: Database.Database
   let svc: TaskLifecycleService
   let tasks: TaskDAO
@@ -213,7 +229,7 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
     process.env.HOME = homeDir
     process.env.USERPROFILE = homeDir
     taskHome = new TaskHomeService(path.join(homeDir, ".octopus"))
-    tasks = new TaskDAO(db)
+    tasks = new TaskDAO(pg!.sql) // P1 B2: tasks 表在 PG
     execs = new ExecutionDAO(db)
     svc = new TaskLifecycleService({
       db,
@@ -257,9 +273,9 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
     }
   }
 
-  function insertCompositeTask(id: string, subunits: SubunitSpec[]): void {
+  async function insertCompositeTask(id: string, subunits: SubunitSpec[]): Promise<void> {
     const now = new Date().toISOString()
-    tasks.insert({
+    await tasks.insert({
       id, org: ORG, name: `T_${id}`, status: "ready",
       task_spec: JSON.stringify({
         goal: "E2E_TD_08_goal", ac: ["ac1"], task_type: "coding", subunits,
@@ -273,10 +289,10 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
     } as never)
   }
 
-  it("AC2: the armed composite execution carries task_artifacts_dir (not dropped by the replacement)", () => {
+  it("AC2: the armed composite execution carries task_artifacts_dir (not dropped by the replacement)", async () => {
     const subunits = [makeSubunit("a"), makeSubunit("b"), makeSubunit("c")]
-    insertCompositeTask("td08-ac2", subunits)
-    const execId = svc.armTask("td08-ac2")
+    await insertCompositeTask("td08-ac2", subunits)
+    const execId = await svc.armTask("td08-ac2")
     const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
 
     // AC2 core: the injected dir SURVIVES buildCompositeInputValues's wholesale
@@ -307,7 +323,7 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
 //  AC3: composition subunit — input_mapping forwards $vars.task_artifacts_dir
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_dir", () => {
+describePg("08 AC3: composition subunit — input_mapping forwards task_artifacts_dir", () => {
   const ARTIFACTS_DIR = "/tmp/e2e-td-08/home/tasks/e2e-td-08-task/artifacts"
 
   function makeSubunit(name: string): SubunitSpec {
@@ -496,7 +512,7 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
 //  the injected home base into the armed execution's input_values.
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 injection-seam: readyTask creates no envelope; armTask uses the injected TaskHomeService baseDir", () => {
+describePg("08 injection-seam: readyTask creates no envelope; armTask uses the injected TaskHomeService baseDir", () => {
   let db: Database.Database
   let tempBase: string
   let svc: TasksService
@@ -560,37 +576,38 @@ describe("08 injection-seam: readyTask creates no envelope; armTask uses the inj
     try { fs.rmSync(tempBase, { recursive: true, force: true }) } catch { /* */ }
   })
 
-  function insertDraftTask(id: string, spec: Record<string, unknown>, workflowRef: string | null = null): void {
+  // P1 B2: tasks 表已迁 postgres.js —— 造数落 PG。
+  async function insertDraftTask(id: string, spec: Record<string, unknown>, workflowRef: string | null = null): Promise<void> {
     const now = new Date().toISOString()
-    db.prepare(`
+    await pg!.sql.unsafe(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, "r2-05-task", JSON.stringify(spec), workflowRef, now, now)
+      VALUES ($1, $2, 'r2-05-task', 'draft', NULL, $3, '[]', '[]', '[]', '[]', $4, 1, NULL, $5, $6, NULL)
+    `, [id, ORG, JSON.stringify(spec), workflowRef, now, now])
   }
 
-  it("AC1/§1: readyTask flips status to ready and creates NO schedules row (contract §新行为 1)", () => {
+  it("AC1/§1: readyTask flips status to ready and creates NO schedules row (contract §新行为 1)", async () => {
     const id = "e2e-td-08-seam-nosched"
-    insertDraftTask(id, {
+    await insertDraftTask(id, {
       goal: "E2E_TD goal", ac: ["E2E_TD ac1"],
       task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
     }, "e2e-td-08/wf")
 
-    const dto = svc.readyTask(id)
+    const dto = await svc.readyTask(id)
     expect(dto.status).toBe("ready")
     // The envelope is dead: enqueuing touches no schedule table at all.
     expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
   })
 
-  it("AC1-seam: v3 task arm → input_values.task_artifacts_dir carries injected tempBase (not default homedir)", () => {
+  it("AC1-seam: v3 task arm → input_values.task_artifacts_dir carries injected tempBase (not default homedir)", async () => {
     const id = "e2e-td-08-seam-v3"
-    insertDraftTask(id, {
+    await insertDraftTask(id, {
       goal: "E2E_TD r2-05 goal", ac: ["E2E_TD ac1"],
       task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
     }, "e2e-td-08/wf")
-    svc.readyTask(id)
-    const execId = lifecycle.armTask(id)
+    await svc.readyTask(id)
+    const execId = await lifecycle.armTask(id)
     const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
     const expected = path.join(tempBase, "tasks", id, "artifacts")
     // The injected base threaded through the per-launch materializer.
@@ -600,14 +617,14 @@ describe("08 injection-seam: readyTask creates no envelope; armTask uses the inj
     expect(iv).not.toHaveProperty("task_spec")
   })
 
-  it("AC1-seam: v3 task arm → input_values carries task_workflows_dir (ADR-0013 injection seam)", () => {
+  it("AC1-seam: v3 task arm → input_values carries task_workflows_dir (ADR-0013 injection seam)", async () => {
     const id = "e2e-td-08-seam-wf"
-    insertDraftTask(id, {
+    await insertDraftTask(id, {
       goal: "E2E_TD r2-05 wf", ac: ["E2E_TD ac1"],
       task_type: "coding", goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
     }, "e2e-td-08/wf")
-    svc.readyTask(id)
-    const execId = lifecycle.armTask(id)
+    await svc.readyTask(id)
+    const execId = await lifecycle.armTask(id)
     const iv = JSON.parse(execs.findById(execId)!.input_values) as Record<string, unknown>
     expect(iv.task_workflows_dir).toBe(path.join(tempBase, "tasks", id, "workflows"))
   })
@@ -617,7 +634,7 @@ describe("08 injection-seam: readyTask creates no envelope; armTask uses the inj
 //  AC10: dispatch copy — {home}/workflows/*.yaml → ws workflows/ (ADR-0013)
 // ──────────────────────────────────────────────────────────────────────
 
-describe("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws workflows/", () => {
+describePg("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws workflows/", () => {
   let tmpHome: string
   let tmpWs: string
 

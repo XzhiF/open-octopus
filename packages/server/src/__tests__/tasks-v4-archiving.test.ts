@@ -10,17 +10,18 @@
 // origin, real worktrees under a fake ~/.octopus) — R1-R7 honest fixtures,
 // E2E_AR_ prefix, tmp dirs cleaned after.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import Database from "better-sqlite3"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
+import type Database from "better-sqlite3"
 import os from "os"
 import path from "path"
 import fs from "fs"
 import { execFileSync } from "child_process"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { WorkspaceDAO } from "../db/dao"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { createTasksRoutes } from "../routes/tasks"
@@ -35,6 +36,10 @@ import {
 // ── Harness ──────────────────────────────────────────────────────────
 
 const ORG = "e2e-archive"
+
+// P1 B2：本文件的 tasks/task_phase_acceptances 造数与读断言全部走这座 PG 库；
+// workspaces/executions 仍在 SQLite mockHooks.db（B5 域）。
+let pg: PgFixture | null = null
 
 // ExecutionService registry stub — the archiver never touches it (it resolves
 // worktrees through the workspaces row + ws config.json); only the advance/dispatch
@@ -77,15 +82,14 @@ vi.mock("../services/execution-service-registry", () => ({
 }))
 
 function newDb(): Database.Database {
-  const d = new Database(":memory:")
-  applySchema(d)
+  const d = initDb(":memory:")
   d.prepare("INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))").run()
   return d
 }
 
 // ── Pure-function units ──────────────────────────────────────────────
 
-describe("ADR 顺延（纯函数）", () => {
+describePg("ADR 顺延（纯函数）", () => {
   it("parses numbered ADR file names, 3 or 4 digits, rejects junk", () => {
     expect(parseAdrFileName("0003-use-sqlite.md")).toEqual({ num: 3, slug: "use-sqlite" })
     expect(parseAdrFileName("07-legacy.md")).toEqual({ num: 7, slug: "legacy" })
@@ -124,7 +128,7 @@ describe("ADR 顺延（纯函数）", () => {
   })
 })
 
-describe("context-notes 分节与术语解析（纯函数）", () => {
+describePg("context-notes 分节与术语解析（纯函数）", () => {
   it("splits by '## ' headings and attributes sections by project name", () => {
     const sections = parseContextNotesSections(
       [" preamble ", "## repo-a", "| Term | Definition |", "| **Foo** | foo-def |", "", "## Repo B (附属)", "- **Bar** — bar-def"].join("\n"),
@@ -153,7 +157,7 @@ describe("context-notes 分节与术语解析（纯函数）", () => {
   })
 })
 
-describe("CONTEXT 术语 append-only（纯函数）", () => {
+describePg("CONTEXT 术语 append-only（纯函数）", () => {
   it("appends new terms, keeps existing lines byte-stable, flags same-term-different-def as conflict", () => {
     const target = [
       "# Context", "", "## Glossary", "", "| Term | Definition |", "|------|-----------|",
@@ -261,13 +265,13 @@ const REPO_A_CONTEXT = [
  *  retry seam); AC3 instead seeds an awaitable acceptance state (a tagged terminal
  *  execution row for phase 1, ledger-free) so the LAST-phase acceptance path drives
  *  the built-in archiver end to end. 票03: 没有信封，也没有 schedule_executions 链接。*/
-function seedArchiveFixture(opts: {
+async function seedArchiveFixture(opts: {
   projects?: Array<{ name: string; fx: RepoFixture }>
   homeAdrs: Array<{ rel: string; content: string }>
   notes?: string
   /** 'archiving' (retry seam) | 'awaiting' (acceptance end-to-end) */
   mode?: "archiving" | "awaiting"
-}): { taskId: string; wsPath: string; home: string; wts: Record<string, string> } {
+}): Promise<{ taskId: string; wsPath: string; home: string; wts: Record<string, string> }> {
   const projects = opts.projects ?? [{ name: "repo-a", fx: repoA }]
   const db = mockHooks.db!
   const taskId = `e2e-ar-task-${seq++}`
@@ -312,12 +316,13 @@ function seedArchiveFixture(opts: {
   fs.mkdirSync(specDir, { recursive: true })
   fs.writeFileSync(path.join(specDir, "spec.md"), "# p1\n")
   const now = new Date().toISOString()
-  db.prepare(`
+  // P1 B2: tasks 表在 PG（workspace_id 无 FK，直接落 sqlite 的 wsId）。
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', ?, NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_AR ${taskId}`, mode === "awaiting" ? "running" : "archiving", JSON.stringify(spec), JSON.stringify(projects.map((p) => p.name)), now, now, wsId)
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', $6, NULL, 1, NULL, $7, $8, NULL, $9)
+  `, [taskId, ORG, `E2E_AR ${taskId}`, mode === "awaiting" ? "running" : "archiving", JSON.stringify(spec), JSON.stringify(projects.map((p) => p.name)), now, now, wsId])
 
   if (mode === "awaiting") {
     // 票03: 一轮 = 一行 executions(task_id, parent_id='0', 带轮次坐标)。derive 看到
@@ -344,10 +349,10 @@ function commitCount(wt: string, regex: RegExp): number {
   return archiveCommitSubjects(wt).filter((s) => regex.test(s)).length
 }
 
-function taskRowOf(taskId: string) {
-  return mockHooks.db!
-    .prepare("SELECT status, completed_at, workspace_id FROM tasks WHERE id = ?")
-    .get(taskId) as { status: string; completed_at: string | null; workspace_id: string }
+/** P1 B2: tasks 读断言直读 PG（completed_at 以 IS NOT NULL 布尔投影回原 truthy 语义）。 */
+async function taskRowOf(taskId: string) {
+  return (await pg!.sql`SELECT status, (completed_at IS NOT NULL) AS completed_at, workspace_id FROM tasks WHERE id = ${taskId}`)[0] as
+    { status: string; completed_at: boolean; workspace_id: string }
 }
 
 function postRetry(taskId: string) {
@@ -376,10 +381,22 @@ let realHome: string | undefined
 let realUserProfile: string | undefined
 let seq = 0
 
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks/task_phase_acceptances 落 PG（注册为全局池 ——
+  // service 经 pgSql() 取）；SQLite db 仍按用例新建（B5 域）。
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
 beforeEach(() => {
   db = newDb()
   mockHooks.db = db
-  seq = 0
+  // P1 B2: seq 不再按用例归零 —— PG 库整文件共享，tasks PK 跨用例必须唯一。
   vi.clearAllMocks()
   realHome = process.env.HOME
   realUserProfile = process.env.USERPROFILE
@@ -410,12 +427,12 @@ afterEach(() => {
   else process.env.USERPROFILE = realUserProfile
   for (const d of tracked) fs.rmSync(d, { recursive: true, force: true })
   if (fakeHome) fs.rmSync(fakeHome, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
-describe("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {
+describePg("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {
   it("home 0001/0002 归档后在目标从 0004 起编号、slug 保留、尾行含 task id", async () => {
-    const { taskId, wts } = seedArchiveFixture({
+    const { taskId, wts } = await seedArchiveFixture({
       homeAdrs: [
         { rel: "0001-pick-db.md", content: "# 选 SQLite\n正文\n" },
         { rel: "0002-adr-flow.md", content: "# ADR 流程\n" },
@@ -438,9 +455,9 @@ describe("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {
   })
 })
 
-describe("AC2 — 术语 append-only + 冲突只报不写", () => {
+describePg("AC2 — 术语 append-only + 冲突只报不写", () => {
   it("新术语 append、同名不同义不写且进报告、既有条目原样", async () => {
-    const { taskId, wts, home } = seedArchiveFixture({
+    const { taskId, wts, home } = await seedArchiveFixture({
       homeAdrs: [],
       notes: [
         "## repo-a",
@@ -465,10 +482,10 @@ describe("AC2 — 术语 append-only + 冲突只报不写", () => {
   })
 })
 
-describe("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted 全链路）", () => {
+describePg("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted 全链路）", () => {
   it("acceptance(末 phase) 自动编排：两仓库各 1 归档 commit、push 成功、task done；未归属 ADR 进报告不阻塞", async () => {
     const repoB = makeProjectRepo("repo-b", { adrs: ["0001-x.md"] })
-    const { taskId, wts } = seedArchiveFixture({
+    const { taskId, wts } = await seedArchiveFixture({
       mode: "awaiting",
       projects: [
         { name: "repo-a", fx: repoA },
@@ -504,17 +521,17 @@ describe("AC3 — 双 project：各自归档 commit/push → done（末 phase ac
     expect(commitCount(wts["repo-a"], /^chore\(archive\): .+ syncback \d{8}$/)).toBe(1)
     expect(commitCount(wts["repo-b"], /^chore\(archive\): .+ syncback \d{8}$/)).toBe(1)
     expect(archiveCommitSubjects(repoA.bare, BRANCH)[0]).toMatch(/^chore\(archive\): .+ syncback \d{8}$/)
-    const row = taskRowOf(taskId)
+    const row = await taskRowOf(taskId)
     expect(row.status).toBe("done")
     expect(row.completed_at).toBeTruthy()
     expect(events.filter((e) => e.event === "task_status").at(-1)?.data).toMatchObject({ task_id: taskId, status: "done" })
   })
 })
 
-describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", () => {
+describePg("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", () => {
   it("B push 失败 → A done B 挂；retry 后 A 不重复 commit、B 续跑 → done", async () => {
     const repoB = makeProjectRepo("repo-b")
-    const { taskId, wts, home } = seedArchiveFixture({
+    const { taskId, wts, home } = await seedArchiveFixture({
       projects: [
         { name: "repo-a", fx: repoA },
         { name: "repo-b", fx: repoB },
@@ -536,7 +553,7 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
     const b = report.projects.find((p) => p.project === "repo-b")!
     expect(b.ok).toBe(false)
     expect(b.error).toMatch(/push origin .+ failed/)
-    expect(taskRowOf(taskId).status).toBe("archiving")
+    expect((await taskRowOf(taskId)).status).toBe("archiving")
     const state = JSON.parse(fs.readFileSync(path.join(home, "archive", "state.json"), "utf-8"))
     expect(state.projects["repo-a"].status).toBe("done")
     expect(state.projects["repo-b"]).toBeUndefined()
@@ -550,13 +567,13 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
     expect(commitCount(wts["repo-a"], /^chore\(archive\): /)).toBe(1)
     expect(commitCount(wts["repo-b"], /^chore\(archive\): /)).toBe(1)
     expect(archiveCommitSubjects(repoB.bare, BRANCH)[0]).toMatch(/^chore\(archive\): E2E_AR .+ syncback \d{8}$/)
-    expect(taskRowOf(taskId).status).toBe("done")
-    expect(taskRowOf(taskId).completed_at).toBeTruthy()
+    expect((await taskRowOf(taskId)).status).toBe("done")
+    expect((await taskRowOf(taskId)).completed_at).toBeTruthy()
   })
 
   it("retry 前置校验：非 archiving → 409；未知任务 → 404", async () => {
-    const { taskId } = seedArchiveFixture({ homeAdrs: [] })
-    mockHooks.db!.prepare("UPDATE tasks SET status = 'running' WHERE id = ?").run(taskId)
+    const { taskId } = await seedArchiveFixture({ homeAdrs: [] })
+    await pg!.sql.unsafe("UPDATE tasks SET status = 'running' WHERE id = $1", [taskId])
     const res = await postRetry(taskId)
     expect(res.status).toBe(409)
     const missing = await postRetry("e2e-ar-nope")
@@ -575,12 +592,12 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
 
 /** Two-phase v4 task. `p1`: phase-1 round-1 terminal execution row, optionally with
  *  the accepted ledger row; `p2Terminal`: give phase 2 a terminal (2,1) row. */
-function seedTwoPhase(opts: {
+async function seedTwoPhase(opts: {
   autoAdvance?: boolean
   p1?: "none" | "awaiting" | "accepted"
   p2Terminal?: boolean
   status?: string
-}): { taskId: string; wsId: string } {
+}): Promise<{ taskId: string; wsId: string }> {
   const d = mockHooks.db!
   const taskId = `e2e-ar-adv-${seq++}`
   const wsId = `e2e-ar-advws-${seq}`
@@ -603,12 +620,13 @@ function seedTwoPhase(opts: {
       workflowRef: p.workflowRef, inputValues: {},
     })),
   }
-  d.prepare(`
+  // P1 B2: tasks 表在 PG（workspace_id 无 FK）。
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_AR ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, wsId)
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', NULL, 1, NULL, $6, $7, NULL, $8)
+  `, [taskId, ORG, `E2E_AR ${taskId}`, opts.status ?? "running", JSON.stringify(spec), now, now, wsId])
   // 票03: arm 时重查 v4 契约（信封里那份冻结副本没了）⇒ 每个 phase 的批次 spec.md 必须真在 home 上。
   for (const p of defs) {
     const dir = path.join(taskHome.homePath(taskId), ".scratch", "20260903", p.slug)
@@ -628,18 +646,20 @@ function seedTwoPhase(opts: {
   if (opts.p1 && opts.p1 !== "none") {
     layExec(1, "completed")
     if (opts.p1 === "accepted") {
-      d.prepare(
-        "INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?, ?, 1, 1, 'accepted', NULL, datetime('now'))",
-      ).run(`e2e-ar-advacc-${seq}`, taskId)
+      // P1 B2: 验收台账在 PG。
+      await pg!.sql.unsafe(
+        "INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES ($1, $2, 1, 1, 'accepted', NULL, now())",
+        [`e2e-ar-advacc-${seq}`, taskId],
+      )
     }
   }
   if (opts.p2Terminal) layExec(2, "completed")
   return { taskId, wsId }
 }
 
-describe("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", () => {
+describePg("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", () => {
   it("autoAdvance=false 全旅程：acceptance→awaiting_manual_trigger→advance 派发 (2,1)", async () => {
-    const { taskId } = seedTwoPhase({ autoAdvance: false, p1: "awaiting" })
+    const { taskId } = await seedTwoPhase({ autoAdvance: false, p1: "awaiting" })
     const acc = await app.request(`/api/tasks/${taskId}/acceptance`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -647,7 +667,7 @@ describe("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", ()
     })
     expect(acc.status).toBe(200)
     expect(((await acc.json()) as { next_action: string }).next_action).toBe("awaiting_manual_trigger")
-    expect(taskRowOf(taskId).status).toBe("ready")
+    expect((await taskRowOf(taskId)).status).toBe("ready")
 
     const before = stubService.create.mock.calls.length
     const res = await advance(taskId)
@@ -660,7 +680,7 @@ describe("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", ()
     expect(body.next_action).toBe("dispatched")
     expect(body.dispatch).toMatchObject({ phase_index: 2, round_index: 1 })
     expect(stubService.create.mock.calls.length).toBe(before + 1)
-    expect(taskRowOf(taskId).status).toBe("running")
+    expect((await taskRowOf(taskId)).status).toBe("running")
     expect(body.task.derived.phaseViews.find((p) => p.index === 2)!.status).toBe("running")
   })
 
@@ -671,20 +691,20 @@ describe("POST /:id/advance — 人工起下一 phase (票 07 移交裁决)", ()
   it("派发失败后的窗口（phase1 accepted ∧ phase2 pending）advance 续跑成功", async () => {
     // ledger accepted without dispatch ever happening == the exact observable
     // world after 「上 phase 已 accepted 未派发」.
-    const { taskId } = seedTwoPhase({ p1: "accepted" })
+    const { taskId } = await seedTwoPhase({ p1: "accepted" })
     const res = await advance(taskId)
     expect(res.status, await res.clone().text()).toBe(200)
     expect(((await res.json()) as { dispatch: Record<string, unknown> }).dispatch).toMatchObject({ phase_index: 2, round_index: 1 })
   })
 
   it("负例：phase1 未 accepted → 409；phase2 已 awaiting_review → 409；v3 → 409；未知 → 404", async () => {
-    const a = seedTwoPhase({ p1: "awaiting" })
+    const a = await seedTwoPhase({ p1: "awaiting" })
     expect(((await (await advance(a.taskId)).json()) as { error: string }).error).toMatch(/无可推进的 phase/)
     // 卡片回 ready 才测得到「派生态」这道守卫本身（否则先被 ready 门弹回，见上条 bug）。
-    const b = seedTwoPhase({ p1: "accepted", p2Terminal: true, status: "ready" })
+    const b = await seedTwoPhase({ p1: "accepted", p2Terminal: true, status: "ready" })
     expect(((await (await advance(b.taskId)).json()) as { error: string }).error).toMatch(/无可推进的 phase/) // phase2 是 awaiting_review 非 pending
-    const c = seedTwoPhase({})
-    mockHooks.db!.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(JSON.stringify({ goal: "g", ac: ["x"] }), c.taskId)
+    const c = await seedTwoPhase({})
+    await pg!.sql.unsafe("UPDATE tasks SET task_spec = $1 WHERE id = $2", [JSON.stringify({ goal: "g", ac: ["x"] }), c.taskId])
     expect(((await (await advance(c.taskId)).json()) as { error: string }).error).toMatch(/advance 仅适用于 v4/)
     expect((await advance("e2e-ar-adv-missing")).status).toBe(404)
   })

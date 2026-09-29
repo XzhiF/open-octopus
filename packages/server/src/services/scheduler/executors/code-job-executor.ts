@@ -43,7 +43,7 @@ export class CodeJobExecutor implements Executor {
 
   async execute(job: SchedulerJob, executionId: string): Promise<ExecutionResult> {
     const startTime = Date.now()
-    this.runDAO.markExecutionRunning(executionId)
+    await this.runDAO.markExecutionRunning(executionId)
 
     // Parsing lives INSIDE the try: a malformed config must land as a failed fire with a
     // terminal row, not escape execute() and leave the fire stuck in 'running'.
@@ -81,7 +81,7 @@ export class CodeJobExecutor implements Executor {
       }
 
       const summary = summarize(outcome)
-      this.runDAO.markCodeJobComplete(executionId, config.handler, summary, durationMs)
+      await this.runDAO.markCodeJobComplete(executionId, config.handler, summary, durationMs)
       return { success: true, exitCode: 0, durationMs, status: 'success', agentOutput: summary }
     } catch (err: unknown) {
       const durationMs = Date.now() - startTime
@@ -94,13 +94,13 @@ export class CodeJobExecutor implements Executor {
     }
   }
 
-  private fail(
+  private async fail(
     executionId: string,
     durationMs: number,
     errorSummary: string,
     exitCode: number,
-  ): ExecutionResult {
-    this.runDAO.markCodeJobFailed(executionId, errorSummary, durationMs, exitCode)
+  ): Promise<ExecutionResult> {
+    await this.runDAO.markCodeJobFailed(executionId, errorSummary, durationMs, exitCode)
     return {
       success: false,
       exitCode,
@@ -128,7 +128,10 @@ function parseCodeJobConfig(job: SchedulerJob): CodeJobConfig {
     schema_version: '1.0',
     type: 'job',
     handler,
-    timeout_seconds: typeof obj.timeout_seconds === 'number' ? obj.timeout_seconds : undefined,
+    // codeJobConfigSchema 的 timeout_seconds 是 optional().default(300)（output 型必填），
+    // 但此处手工旁路保持 undefined 语义：executor 消费端 `config.timeout_seconds ?? job.timeout_seconds ?? DEFAULT`
+    // 依赖 undefined 才能落到 job 级超时（票2 姿势：不动行为，只收类型）。
+    timeout_seconds: obj.timeout_seconds as number,
     args: (obj.args ?? {}) as Record<string, unknown>,
   }
 }

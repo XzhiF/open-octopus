@@ -5,24 +5,36 @@ import { WorkspaceDAO } from '../db/dao'
 import path from "path"
 import os from "os"
 import fs from "fs"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 // Initialize isolated test database BEFORE importing index.ts
 // This prevents inheriting OCTOPUS_DB_PATH from parent process
 const TEST_DB = path.join(os.tmpdir(), `server-test-${Date.now()}.db`)
-beforeAll(() => {
+// P1 B1/B2：全 app 路由的 lazyDAO 现在横跨 PG 域（orgs/chat/tasks/safety…）与
+// SQLite 域 —— 注册随机 PG 池 + 种子 org 'xzf'（workspaces 路由的 org 存在性校验走 OrgDAO=PG）。
+let pg: PgFixture | null = null
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   const db = initDb(TEST_DB)
   applySchema(db)
   // Initialize registry for tests (normally done in index.ts non-VITEST path)
   initExecutionServiceRegistry(db, new SSEService(), undefined)
+  await pg!.sql.unsafe(
+    "INSERT INTO orgs (name, path, created_at) VALUES ('xzf', '/tmp/e2e-xzf', '2026-01-01T00:00:00.000Z') ON CONFLICT (name) DO NOTHING",
+  )
 })
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   closeDb()
   if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB)
 })
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
+// [B5 票6b-1] getDb 移除：本文件 WorkspaceDAO 直构位点已全部改吃注册池（票6a）。
 import { initExecutionServiceRegistry } from "../services/execution-service-registry"
 import { SSEService } from "../services/sse"
 
@@ -45,17 +57,18 @@ vi.mock("@octopus/providers", async () => {
   }
 })
 
-describe("Server API", () => {
+describePg("Server API", () => {
   let existingIds: Set<string>
 
-  beforeAll(() => {
-    const service = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingIds = new Set(service.list().map(ws => ws.id))
+  beforeAll(async () => {
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃注册池（文件级 beforeAll 已建）。
+    const service = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    existingIds = new Set((await service.list()).map(ws => ws.id))
   })
 
   afterAll(async () => {
-    const service = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = service.list().map(ws => ws.id)
+    const service = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    const currentIds = (await service.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingIds.has(id)) {
         await service.delete(id)
@@ -272,8 +285,8 @@ describe("Server API", () => {
   })
 
   it("POST /api/workspaces/:id/chat/sessions/:sid/messages sends message", async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const ws = wsService.create({ name: "ws-msg-test", org: "xzf", path: "/tmp/ws-msg-test" })
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg!.sql))
+    const ws = await wsService.create({ name: "ws-msg-test", org: "xzf", path: "/tmp/ws-msg-test" })
 
     const sessionRes = await app.request(`/api/workspaces/${ws.id}/chat/sessions`, {
       method: "POST",

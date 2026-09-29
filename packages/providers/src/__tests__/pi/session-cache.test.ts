@@ -1,8 +1,27 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SessionCache } from '../../pi/session-cache'
 
+// b810036e changed the cache contract: getOrCreate WITHOUT resumeSessionId
+// always creates a fresh session (prevents cross-workflow conversation
+// history contamination). Cache reuse/eviction now only applies to
+// resume-keyed entries (key = cwd:resumeSessionId).
+
 describe('SessionCache', () => {
-  it('creates session on first call, reuses on second (TC-021)', async () => {
+  it('reuses cached session for same cwd + resumeSessionId (TC-021)', async () => {
+    let createCount = 0
+    const mockFactory = async (cwd: string) => {
+      createCount++
+      return { session: { id: `session-${createCount}` }, sessionId: `session-${createCount}`, modelRegistry: null }
+    }
+    const cache = new SessionCache(mockFactory)
+
+    const result1 = await cache.getOrCreate('/project-a', 'resume-1')
+    const result2 = await cache.getOrCreate('/project-a', 'resume-1')
+    expect(result1).toBe(result2)
+    expect(createCount).toBe(1)
+  })
+
+  it('without resumeSessionId always creates a fresh session (b810036e)', async () => {
     let createCount = 0
     const mockFactory = async (cwd: string) => {
       createCount++
@@ -12,8 +31,8 @@ describe('SessionCache', () => {
 
     const result1 = await cache.getOrCreate('/project-a')
     const result2 = await cache.getOrCreate('/project-a')
-    expect(result1).toBe(result2)
-    expect(createCount).toBe(1)
+    expect(result1).not.toBe(result2)
+    expect(createCount).toBe(2)
   })
 
   it('different resumeSessionId creates new session (TC-022)', async () => {
@@ -62,8 +81,8 @@ describe('SessionCache', () => {
       modelRegistry: null,
     })
     const cache = new SessionCache(mockFactory)
-    await cache.getOrCreate('/a')
-    await cache.getOrCreate('/b')
+    await cache.getOrCreate('/a', 'r-a')
+    await cache.getOrCreate('/b', 'r-b')
     cache.dispose()
     expect(disposed).toContain('/a')
     expect(disposed).toContain('/b')
@@ -77,9 +96,9 @@ describe('SessionCache', () => {
       modelRegistry: null,
     })
     const cache = new SessionCache(mockFactory, { maxSessions: 2 })
-    await cache.getOrCreate('/a')
-    await cache.getOrCreate('/b')
-    await cache.getOrCreate('/c')
+    await cache.getOrCreate('/a', 'r-a')
+    await cache.getOrCreate('/b', 'r-b')
+    await cache.getOrCreate('/c', 'r-c')
     expect(disposed).toContain('/a')
     expect(disposed).not.toContain('/b')
     expect(disposed).not.toContain('/c')
@@ -94,7 +113,7 @@ describe('SessionCache', () => {
       modelRegistry: null,
     })
     const cache = new SessionCache(mockFactory, { idleTimeoutMs: 1000 })
-    await cache.getOrCreate('/idle')
+    await cache.getOrCreate('/idle', 'r-idle')
     vi.advanceTimersByTime(1500)
     cache.evictIdle()
     expect(disposed).toContain('/idle')
@@ -112,10 +131,10 @@ describe('SessionCache', () => {
     }
     const cache = new SessionCache(mockFactory)
 
-    const p1 = cache.getOrCreate('/concurrent')
-    const p2 = cache.getOrCreate('/concurrent')
+    const p1 = cache.getOrCreate('/concurrent', 'r-conc')
+    const p2 = cache.getOrCreate('/concurrent', 'r-conc')
 
-    // Resolve the factory
+    // Resolve the (single) factory invocation
     resolveFactory!()
 
     const [r1, r2] = await Promise.all([p1, p2])

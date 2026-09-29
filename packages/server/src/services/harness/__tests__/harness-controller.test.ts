@@ -8,11 +8,24 @@ import type { HarnessDAO } from "../../../db/dao/harness-dao"
 import type { SSEService } from "../../sse"
 import type { HarnessConfigService } from "../config-service"
 
+// P1 B1: controller 构造回退（缺 tokenUsageDao 时经 db/connection getDb() 自建）与
+// harness_summary 直写都走模块级 getDb()；测试环境无 SQLite 连接 → mock 成空句柄
+// （构造无副作用，语义同旧 dao.getDb() mock）。
+const dbRef = vi.hoisted(() => ({ current: undefined as unknown }))
+vi.mock("../../../db/connection", () => ({
+  getDb: () => {
+    if (!dbRef.current) throw new Error("Database not initialized. Call initDb() first.")
+    return dbRef.current
+  },
+}))
+
 function makeMocks() {
+  const mockDb = {} // 构造 TokenUsageDAO 无副作用（同旧 getDb() mock 语义）
+  dbRef.current = mockDb
   const dao = {
     insertEvent: vi.fn(),
     findEvents: vi.fn().mockReturnValue([]),
-    getDb: vi.fn(() => ({})), // C3: controller 缺省自建 TokenUsageDAO 用（构造无副作用）
+    getDb: vi.fn(() => mockDb),
   } as unknown as HarnessDAO
 
   const sse = {
@@ -53,7 +66,7 @@ describe("HarnessController — repairService wiring", () => {
     expect(controller.isActive("any-exec")).toBe(false)
   })
 
-  it("allows repairService to be set after construction via setRepairService", () => {
+  it("allows repairService to be set after construction via setRepairService", async () => {
     const mocks = makeMocks()
 
     // Create WITHOUT repairService
@@ -82,7 +95,7 @@ describe("HarnessController — repairService wiring", () => {
       onLLMCall: vi.fn(),
     } as any
 
-    const wrapped = controller.onExecutionStart("exec-1", "ws-1", baseCallbacks)
+    const wrapped = await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks)
     expect(wrapped).toBeDefined()
     expect(controller.isActive("exec-1")).toBe(true)
   })

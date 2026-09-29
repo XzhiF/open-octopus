@@ -1,0 +1,11 @@
+{
+  "note": "per-package tsc --noEmit error counts; ratchet: only decreases allowed",
+  "packages": {
+    "shared": 15,
+    "cli": 1,
+    "engine": 68,
+    "providers": 3,
+    "server": 785,
+    "web-app": 78
+  }
+}

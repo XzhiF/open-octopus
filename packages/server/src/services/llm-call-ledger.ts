@@ -15,7 +15,6 @@
  *
  * source_path 枚举校验保留在这里（shared 定义，KD20）：非法值直接抛，不落库。
  */
-import type Database from "better-sqlite3"
 import type { LlmCallRow } from "../db/types"
 import type { TokenUsage } from "@octopus/shared"
 import { isLlmCallSourcePath, normalizeModelId, type LlmCallSourcePath } from "@octopus/shared"
@@ -77,8 +76,8 @@ export function composeLlmCallRow(input: LlmCallLedgerInput): LlmCallRow {
   }
 }
 
-/** 单条落库入口：compose + insertLlmCall（DAO 内 INSERT OR IGNORE 幂等）。 */
-export function recordLlmCall(input: LlmCallLedgerInput, tokenDao: TokenUsageDAO): Database.RunResult {
+/** 单条落库入口：compose + insertLlmCall（DAO 内 ON CONFLICT DO NOTHING 幂等；B4 起 async）。 */
+export function recordLlmCall(input: LlmCallLedgerInput, tokenDao: TokenUsageDAO): Promise<{ changes: number }> {
   return tokenDao.insertLlmCall(composeLlmCallRow(input))
 }
 
@@ -121,7 +120,7 @@ const sumTokens = (u?: { inputTokens?: number; outputTokens?: number; cacheReadT
  * 一行 = 一次实际到达的 result chunk（KD23 防双计：chunk 到达即写，
  * 重试是新的真实调用 → 新的真实行）。
  */
-export function recordProviderResultUsage(input: ProviderResultUsageInput, tokenDao: TokenUsageDAO): void {
+export async function recordProviderResultUsage(input: ProviderResultUsageInput, tokenDao: TokenUsageDAO): Promise<void> {
   try {
     const perModel = (input.modelUsages ?? []).filter(mu => sumTokens(mu) > 0)
     const entries = perModel.length > 0
@@ -130,8 +129,9 @@ export function recordProviderResultUsage(input: ProviderResultUsageInput, token
         ? [{ model: input.fallbackModel ?? null, usage: input.usage }]
         : []
     const nowMs = Date.now()
-    entries.forEach((e, i) => {
-      recordLlmCall({
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!
+      await recordLlmCall({
         id: randomUUID(),
         sourcePath: input.sourcePath,
         nodeExecutionId: input.nodeExecutionId,
@@ -155,7 +155,7 @@ export function recordProviderResultUsage(input: ProviderResultUsageInput, token
         sessionId: input.sessionId ?? null,
         instanceId: input.instanceId ?? null,
       }, tokenDao)
-    })
+    }
   } catch (err) {
     console.error(
       `[llm-call-ledger] ${input.sourcePath} 入账失败 (non-fatal):`,

@@ -1,5 +1,4 @@
-import type Database from "better-sqlite3"
-import { BaseDAO } from "./base"
+import { BasePgDAO, type PgSql } from "./base-pg"
 import type { TaskRow } from "../types"
 
 /**
@@ -17,14 +16,49 @@ import type { TaskRow } from "../types"
  * return 409 → agent re-GET + retry (v2-D12). The autosave seam writes ONLY
  * name+updated_at via {@link updateAutosave} — it does NOT bump version or touch
  * task_spec/resources (SG8), avoiding races with the spec-field tool.
+ *
+ * P1 B2 (better-sqlite3 → postgres.js) 行形态契约 —— 读出全部保持 SQLite 时代的
+ * string/number 语义（types.ts TaskRow 不动）：
+ *   - timestamptz 列经 to_char(… AT TIME ZONE 'UTC') 投影回 `…Z` ISO 文本
+ *     （p1-batch-plan §3 S4 的「B 期保留 text 降风险」裁决；写入仍收 ISO 串）。
+ *   - trigger_enabled 列 PG 为 boolean：读出 ::int 归 0/1；写入侧 SQL 里
+ *     裸 `=1` 字面量全部改 `= true`（PG 无 int→bool 表达式杆面）。
+ *     ⚠ 参数面同坑（实测）：postgres.js unsafe 把 JS number 1/0 绑成 int8 送进
+ *     boolean 列会**静默存成 false**（不报错）—— 旧行契约的 0/1 必须先转真 boolean
+ *     （toBool）。这是 B2 实测出的最大语义地雷，B3-B5 凡 0/1→bool 列都要过 toBool。
+ *   - jsonb 列（task_spec/…）经 `#>> '{}'` 归一为 TEXT 返回：postgres.js 对 jsonb
+ *     直读会在 string（未命中解析器）/ object（命中）间漂移，且 PG 输出是规范化
+ *     JSON（键按长度重排、冒号后带空格）—— 行契约锁 string，调用方 JSON.parse
+ *     零改动；「读出串 === 写入串」断言一律改语义比对（键序/空白会变）。
  */
-export class TaskDAO extends BaseDAO {
-  constructor(db: Database.Database) { super(db) }
+/** 旧 0/1（或已是 boolean）→ PG boolean 列参数；undefined = DDL 默认 (true)。 */
+const toBool = (v: unknown): boolean | undefined =>
+  v === undefined || v === null ? undefined : (typeof v === "boolean" ? v : Number(v) !== 0)
+
+const TS = (col: string) =>
+  `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
+
+const TASK_COLS = `id, org, name, status, source_chat_session_id,
+  -- jsonb 读出经 #>> '{}' 归 text：postgres.js 对 jsonb 的返回型在 string/object 间
+  -- 随解析路径漂移（实测两种都有），且 PG 会按长度重排键序 + 规范化空白 ——
+  -- 行契约锁定「紧凑无关的 JSON 文本」：调用方 JSON.parse 链路不变，
+  -- 但「读出串 === 写入串」式断言必须改语义比对（键序会变）。
+  task_spec #>> '{}' AS task_spec, authoring_resources #>> '{}' AS authoring_resources,
+  resources #>> '{}' AS resources, skills #>> '{}' AS skills, project_ids #>> '{}' AS project_ids,
+  workflow_ref, version,
+  ${TS("deleted_at")} AS deleted_at, ${TS("created_at")} AS created_at,
+  ${TS("updated_at")} AS updated_at, ${TS("completed_at")} AS completed_at,
+  workspace_id, trigger_mode, ${TS("trigger_at")} AS trigger_at,
+  cron_expression, cron_timezone, trigger_enabled::int AS trigger_enabled,
+  ${TS("next_fire_at")} AS next_fire_at, ${TS("last_fired_at")} AS last_fired_at`
+
+export class TaskDAO extends BasePgDAO {
+  constructor(db: PgSql) { super(db) }
 
   /** Insert a new task row. JSON columns default to their empty shapes. */
-  insert(row: Partial<TaskRow> & { id: string; org: string; name: string }): Database.RunResult {
+  insert(row: Partial<TaskRow> & { id: string; org: string; name: string }): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(`
+    return this.exec(`
       INSERT INTO tasks (
         id, org, name, status, source_chat_session_id,
         task_spec, authoring_resources, resources, skills, project_ids,
@@ -33,7 +67,7 @@ export class TaskDAO extends BaseDAO {
         trigger_mode, trigger_at, cron_expression, cron_timezone,
         trigger_enabled, next_fire_at, last_fired_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.org, row.name,
       row.status ?? "draft",
       row.source_chat_session_id ?? null,
@@ -52,24 +86,25 @@ export class TaskDAO extends BaseDAO {
       // v41 (ADR-0021): a caller that hands us a full row keeps its trigger fields. Before
       // this, insert() wrote 17 columns and the 7 new ones silently took their DDL
       // defaults — so a restore/import path carrying an armed schedule lost the arming.
+      // trigger_enabled：PG bool 列 —— 0/1 必须经 toBool 转真 boolean（见头注地雷）。
       row.trigger_mode ?? "manual",
       row.trigger_at ?? null,
       row.cron_expression ?? null,
       row.cron_timezone ?? "Asia/Shanghai",
-      row.trigger_enabled ?? 1,
+      toBool(row.trigger_enabled) ?? true,
       row.next_fire_at ?? null,
       row.last_fired_at ?? null,
-    )
+    ])
   }
 
   /** Active task (deleted_at IS NULL). Null if missing or soft-deleted. */
-  getById(id: string): TaskRow | null {
-    return (this.stmt("SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL").get(id) as TaskRow | undefined) ?? null
+  async getById(id: string): Promise<TaskRow | null> {
+    return (await this.q1<TaskRow>(`SELECT ${TASK_COLS} FROM tasks WHERE id = ? AND deleted_at IS NULL`, [id])) ?? null
   }
 
   /** Raw row including soft-deleted (for reaper / audit / restore flows). */
-  getByIdRaw(id: string): TaskRow | null {
-    return (this.stmt("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined) ?? null
+  async getByIdRaw(id: string): Promise<TaskRow | null> {
+    return (await this.q1<TaskRow>(`SELECT ${TASK_COLS} FROM tasks WHERE id = ?`, [id])) ?? null
   }
 
   /**
@@ -77,10 +112,11 @@ export class TaskDAO extends BaseDAO {
    * autosave seam (clone/index.ts:406) to decide whether to create a new draft
    * row or update the title of the existing one (v2-D6/D11/SG3).
    */
-  getBySourceChatSession(sessionId: string): TaskRow | null {
-    return (this.stmt(
-      "SELECT * FROM tasks WHERE source_chat_session_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
-    ).get(sessionId) as TaskRow | undefined) ?? null
+  async getBySourceChatSession(sessionId: string): Promise<TaskRow | null> {
+    return (await this.q1<TaskRow>(
+      `SELECT ${TASK_COLS} FROM tasks WHERE source_chat_session_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+      [sessionId],
+    )) ?? null
   }
 
   /** Batch variant of getBySourceChatSession — returns (session_id, task_id,
@@ -89,13 +125,14 @@ export class TaskDAO extends BaseDAO {
    *  clone's own chat pool). Used by GET /api/clones/:name/sessions to hide
    *  task-owned sessions from the clone chatbot (the task modal fetches them
    *  by id directly). */
-  getLinksBySourceChatSessions(sessionIds: string[]): { session_id: string; task_id: string; name: string; status: string }[] {
-    if (sessionIds.length === 0) return []
+  getLinksBySourceChatSessions(sessionIds: string[]): Promise<{ session_id: string; task_id: string; name: string; status: string }[]> {
+    if (sessionIds.length === 0) return Promise.resolve([])
     const placeholders = sessionIds.map(() => "?").join(", ")
-    return this.stmt(
+    return this.q<{ session_id: string; task_id: string; name: string; status: string }>(
       `SELECT source_chat_session_id AS session_id, id AS task_id, name, status
        FROM tasks WHERE source_chat_session_id IN (${placeholders}) AND deleted_at IS NULL`,
-    ).all(...sessionIds) as { session_id: string; task_id: string; name: string; status: string }[]
+      sessionIds,
+    )
   }
 
   /**
@@ -104,7 +141,7 @@ export class TaskDAO extends BaseDAO {
    * match `expectedVersion` (or the task is soft-deleted). Callers (spec-field
    * tool, [save draft]) detect 0 changes → 409 → re-GET + retry (v2-D12).
    */
-  updateWithVersion(id: string, fields: Record<string, unknown>, expectedVersion: number): Database.RunResult {
+  updateWithVersion(id: string, fields: Record<string, unknown>, expectedVersion: number): Promise<{ changes: number }> {
     const sets: string[] = ["updated_at = ?", "version = version + 1"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
@@ -112,9 +149,10 @@ export class TaskDAO extends BaseDAO {
       vals.push(v)
     }
     vals.push(id, expectedVersion)
-    return this.stmt(
+    return this.exec(
       `UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND version = ? AND deleted_at IS NULL`,
-    ).run(...vals)
+      vals,
+    )
   }
 
   /**
@@ -123,32 +161,36 @@ export class TaskDAO extends BaseDAO {
    * so it cannot race with the spec-field tool on the same turn (autosave fires
    * at turn-end, after tool calls have already landed).
    */
-  updateAutosave(id: string, name: string): Database.RunResult {
-    return this.stmt(
+  updateAutosave(id: string, name: string): Promise<{ changes: number }> {
+    return this.exec(
       "UPDATE tasks SET name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-    ).run(name, new Date().toISOString(), id)
+      [name, new Date().toISOString(), id],
+    )
   }
 
   /** List active tasks by status (kanban columns), ordered by created_at ASC then id. */
-  listByStatus(status: string): TaskRow[] {
-    return this.stmt(
-      "SELECT * FROM tasks WHERE status = ? AND deleted_at IS NULL ORDER BY created_at ASC, id ASC",
-    ).all(status) as TaskRow[]
+  listByStatus(status: string): Promise<TaskRow[]> {
+    return this.q<TaskRow>(
+      `SELECT ${TASK_COLS} FROM tasks WHERE status = ? AND deleted_at IS NULL ORDER BY created_at ASC, id ASC`,
+      [status],
+    )
   }
 
   /** List active tasks for an org (kanban board), most recently updated first. */
-  listByOrg(org: string): TaskRow[] {
-    return this.stmt(
-      "SELECT * FROM tasks WHERE org = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
-    ).all(org) as TaskRow[]
+  listByOrg(org: string): Promise<TaskRow[]> {
+    return this.q<TaskRow>(
+      `SELECT ${TASK_COLS} FROM tasks WHERE org = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC`,
+      [org],
+    )
   }
 
   /** Soft-delete (discard draft/ready). Sets deleted_at; does NOT change status. */
-  softDelete(id: string): Database.RunResult {
+  softDelete(id: string): Promise<{ changes: number }> {
     const now = new Date().toISOString()
-    return this.stmt(
+    return this.exec(
       "UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-    ).run(now, now, id)
+      [now, now, id],
+    )
   }
 
   // ── schema v41 (ADR-0021): 触发意图 = 任务自己的数据 ──────────────────
@@ -161,45 +203,56 @@ export class TaskDAO extends BaseDAO {
   //
   // None of these bump `version` — a trigger write is not a spec edit, and it must not
   // 409 against a concurrent autosave/spec-field write (updateAutosave precedent).
+  //
+  // B2 note: `trigger_enabled=1` 裸字面量在 PG 下非法（int 表达式不能进 bool 列），
+  // 全部改 `= true`；读出侧 ::int 归一（TASK_COLS）。
 
   /** Arm a one-shot fire. `atIso` = now for 立即触发, a future ISO for 定时触发. */
-  armOnce(id: string, atIso: string): boolean {
+  async armOnce(id: string, atIso: string): Promise<boolean> {
     const now = new Date().toISOString()
-    return this.stmt(
+    const r = await this.exec(
       `UPDATE tasks
-       SET trigger_mode='once', trigger_at=?, next_fire_at=?, trigger_enabled=1, updated_at=?
+       SET trigger_mode='once', trigger_at=?, next_fire_at=?, trigger_enabled=true, updated_at=?
        WHERE id=? AND deleted_at IS NULL`,
-    ).run(atIso, atIso, now, id).changes > 0
+      [atIso, atIso, now, id],
+    )
+    return r.changes > 0
   }
 
   /** Arm a recurring fire. `nextFireAt` is computed by the caller (cron-utils). */
-  armCron(id: string, cronExpression: string, timezone: string, nextFireAt: string): boolean {
+  async armCron(id: string, cronExpression: string, timezone: string, nextFireAt: string): Promise<boolean> {
     const now = new Date().toISOString()
-    return this.stmt(
+    const r = await this.exec(
       `UPDATE tasks
        SET trigger_mode='cron', cron_expression=?, cron_timezone=?, trigger_at=NULL,
-           next_fire_at=?, trigger_enabled=1, updated_at=?
+           next_fire_at=?, trigger_enabled=true, updated_at=?
        WHERE id=? AND deleted_at IS NULL`,
-    ).run(cronExpression, timezone, nextFireAt, now, id).changes > 0
+      [cronExpression, timezone, nextFireAt, now, id],
+    )
+    return r.changes > 0
   }
 
   /** Withdraw any armed trigger → back to 人工触发 (no due cursor). */
-  disarmTrigger(id: string): boolean {
+  async disarmTrigger(id: string): Promise<boolean> {
     const now = new Date().toISOString()
-    return this.stmt(
+    const r = await this.exec(
       `UPDATE tasks
        SET trigger_mode='manual', trigger_at=NULL, cron_expression=NULL,
            next_fire_at=NULL, updated_at=?
        WHERE id=? AND deleted_at IS NULL`,
-    ).run(now, id).changes > 0
+      [now, id],
+    )
+    return r.changes > 0
   }
 
   /** Pause/resume a recurring task without losing its cron expression. */
-  setTriggerEnabled(id: string, enabled: boolean): boolean {
+  async setTriggerEnabled(id: string, enabled: boolean): Promise<boolean> {
     const now = new Date().toISOString()
-    return this.stmt(
+    const r = await this.exec(
       "UPDATE tasks SET trigger_enabled=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
-    ).run(enabled ? 1 : 0, now, id).changes > 0
+      [enabled, now, id],
+    )
+    return r.changes > 0
   }
 
   /**
@@ -208,13 +261,14 @@ export class TaskDAO extends BaseDAO {
    * one-directional (ADR-0021 §5). `status='ready'` is the task's own precondition for
    * "allowed to run", stated here rather than in the pump.
    */
-  findDueTriggers(nowIso: string, limit = 20): TaskRow[] {
-    return this.stmt(
-      `SELECT * FROM tasks
-       WHERE status = 'ready' AND deleted_at IS NULL AND trigger_enabled = 1
+  findDueTriggers(nowIso: string, limit = 20): Promise<TaskRow[]> {
+    return this.q<TaskRow>(
+      `SELECT ${TASK_COLS} FROM tasks
+       WHERE status = 'ready' AND deleted_at IS NULL AND trigger_enabled = true
          AND next_fire_at IS NOT NULL AND next_fire_at <= ?
        ORDER BY next_fire_at ASC, created_at ASC LIMIT ?`,
-    ).all(nowIso, limit) as TaskRow[]
+      [nowIso, limit],
+    )
   }
 
   /**
@@ -222,12 +276,77 @@ export class TaskDAO extends BaseDAO {
    * once/manual → `nextFireAt = NULL` (fires exactly once; leaving the cursor set would
    * make the pump re-enqueue after the run finishes). cron → the next computed time.
    */
-  markFired(id: string, nextFireAt: string | null, firedAtIso: string): boolean {
-    return this.stmt(
+  async markFired(id: string, nextFireAt: string | null, firedAtIso: string): Promise<boolean> {
+    const r = await this.exec(
       `UPDATE tasks
        SET last_fired_at=?, next_fire_at=?, trigger_at=CASE WHEN trigger_mode='once' THEN NULL ELSE trigger_at END,
            updated_at=?
        WHERE id=? AND deleted_at IS NULL`,
-    ).run(firedAtIso, nextFireAt, firedAtIso, id).changes > 0
+      [firedAtIso, nextFireAt, firedAtIso, id],
+    )
+    return r.changes > 0
+  }
+
+  // ── P1 B2：吸收 tasks-service.ts 的 4 个 tasks 表直写逃生口 ──────────────
+  //
+  // 这些 UPDATE 此前以 `taskDAO.getDb().prepare(...)` 直写 SQLite；TaskDAO 迁 PG 后
+  // 直写句柄不复存在（BasePgDAO 无 getDb()），收编为显式 DAO 方法。语义保持：
+  // 不 bump version（系统事件写不是规格编辑，updateAutosave 纪律同源），
+  // 返回 changes>0 供调用方做冲突判定（仅 revertReadyToDraft 用）。
+
+  /** reopen：ready（未被领取）→ draft。条件更新，changes=0 = 状态已变，调用方 409。 */
+  async revertReadyToDraft(id: string, nowIso: string): Promise<boolean> {
+    const r = await this.exec(
+      "UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND status = 'ready' AND deleted_at IS NULL",
+      ["draft", nowIso, id],
+    )
+    return r.changes > 0
+  }
+
+  /**
+   * 系统事件状态写：status + updated_at (+ completed_at 覆写或清空)，无 version bump。
+   * 覆盖 cancelScheduled 回 ready / endArchiving 落 done / setPersistedTaskStatus /
+   * abortTask 落 aborted 四类直写（B2 前它们是 service 层 prepare 逃生口）。
+   */
+  setStatusDirect(id: string, status: string, nowIso: string, completedAt: string | null): Promise<{ changes: number }> {
+    return this.exec(
+      "UPDATE tasks SET status = ?, updated_at = ?, completed_at = ? WHERE id = ? AND deleted_at IS NULL",
+      [status, nowIso, completedAt, id],
+    )
+  }
+
+  /** armTask 绑定位：workspace 首建后把 id 钉到任务上（系统事件，不 bump version）。 */
+  setWorkspaceId(id: string, workspaceId: string, nowIso: string): Promise<{ changes: number }> {
+    return this.exec(
+      "UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+      [workspaceId, nowIso, id],
+    )
+  }
+
+  /** cron 任务跑完一轮后的续命：回 ready + 推进 next_fire_at（trigger_enabled 复位）。
+   *  B2 收编自 task-lifecycle 的 prepare 逃生口；`trigger_enabled=1` 裸字面量 → true。 */
+  rearmCronAsReady(id: string, nextFireAt: string, nowIso: string): Promise<{ changes: number }> {
+    return this.exec(
+      `UPDATE tasks SET status = 'ready', next_fire_at = ?, trigger_enabled = true,
+         completed_at = NULL, updated_at = ?
+       WHERE id = ? AND deleted_at IS NULL`,
+      [nextFireAt, nowIso, id],
+    )
+  }
+
+  /** 引擎态镜像（running/done/failed/aborted）：仅当状态真的变了才写 + 返回 changes
+   *  （changes=0 = 未变，调用方据此抑制 SSE）。completed_at 终态盖 now，非终态清空。 */
+  async mirrorStatus(
+    id: string,
+    status: string,
+    nowIso: string,
+    completedAt: string | null,
+  ): Promise<boolean> {
+    const r = await this.exec(
+      `UPDATE tasks SET status = ?, updated_at = ?, completed_at = ?
+       WHERE id = ? AND deleted_at IS NULL AND status <> ?`,
+      [status, nowIso, completedAt, id, status],
+    )
+    return r.changes > 0
   }
 }

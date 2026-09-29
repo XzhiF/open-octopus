@@ -4,6 +4,7 @@ import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
 import { composeLlmCallRow } from "./llm-call-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
+import { pgSql } from "../db/dao/registry"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
 interface FilteredAgentEvent {
@@ -63,7 +64,8 @@ export class SQLiteSink implements ObservabilitySink {
     if (execDaoOrDb instanceof ExecutionDAO) {
       this.execDao = execDaoOrDb
     } else {
-      this.execDao = new ExecutionDAO(execDaoOrDb)
+      // [P1 B5 票5B] ExecutionDAO 迁 PG 后 SQLite 句柄分支改池句柄（兼容位点保留签名）。
+      this.execDao = new ExecutionDAO(pgSql())
     }
   }
 
@@ -134,6 +136,12 @@ export class ObservabilityService {
   }
 
   flushNode(nodeExecId: string): void {
+    // [P1 B5 票5B] 观测缓冲 flush 是事件回调 fire-and-forget 位点：async 化后统一 void 吞接
+    // （B5 三规则姿势；严格持久化序收紧留票6 void 专项）。
+    void this.flushNodeAsync(nodeExecId)
+  }
+
+  private async flushNodeAsync(nodeExecId: string): Promise<void> {
     const buf = this.buffers.get(nodeExecId)
     if (!buf || buf.events.length === 0) return
 
@@ -162,7 +170,7 @@ export class ObservabilityService {
         error_message: event.errorMessage ?? null,
       }))
 
-      this.execDao.insertAgentEventBatch(rows)
+      await this.execDao.insertAgentEventBatch(rows)
       this.consecutiveErrors = 0
     } catch (error) {
       this.consecutiveErrors++
@@ -181,12 +189,14 @@ export class ObservabilityService {
     }
   }
 
-  persistLLMCalls(
+  // B4: TokenUsageDAO.insertLlmCallBatch 迁 PG 后为 async —— 本方法转 async。
+  // 调用方（EngineCallbacks.onNodeEnd）await 之，保持 落账→查询派生 的先后序。
+  async persistLLMCalls(
     nodeExecId: string,
     executionId: string,
     calls: LLMCallRecord[],
     instanceId: string
-  ): void {
+  ): Promise<void> {
     const meta = this.buffers.get(nodeExecId)?.meta
     if (!meta) return
 
@@ -221,7 +231,7 @@ export class ObservabilityService {
         instanceId,
       }))
 
-      this.tokenDao.insertLlmCallBatch(rows)
+      await this.tokenDao.insertLlmCallBatch(rows)
     } catch {
       // silent — observability never blocks execution
     }
@@ -269,8 +279,8 @@ export class ObservabilityService {
     }
 
     // Intervention results: extract the result text for chat history persistence
-    if (event.type === "intervention_result") {
-      const data = event.data as Record<string, unknown> | undefined
+    if ((event.type as string) === "intervention_result") { // [票5B] engine 运行态变体未入 shared AgentEvent 联合（跨包扩面留票6）
+      const data = (event as { data?: unknown }).data as Record<string, unknown> | undefined
       return {
         type: event.type,
         timestamp: Date.now(),
@@ -328,7 +338,7 @@ export class ObservabilityService {
         break
       }
       case 'status':
-        base.statusValue = event.status
+        base.statusValue = event.status ?? undefined
         break
       case 'error':
         base.errorCode = event.code

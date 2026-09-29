@@ -25,6 +25,10 @@ export interface CoordinatorDeps {
   checkBudget?: () => BudgetStatus
   isTimedOut?: () => boolean
   nodeId: string
+  /** KB-P0: knowledge/prompt-injection sections precomputed by SwarmExecutor, prepended
+   *  to every EXPERT prompt in runExpert (parity with top-level agent nodes). Deliberately
+   *  not applied to host/consensus meta-prompts — those are engine machinery calls. */
+  expertPromptPrefix?: string
 }
 
 /**
@@ -71,7 +75,12 @@ export class SwarmCoordinator implements SwarmServices {
     })
 
     try {
-      const result = await this.deps.llmCall(prompt, model, expert.engine, expert.skills, expert.tools, expert.disallowed_tools)
+      // KB-P0: prepend knowledge/prompt-injection sections to expert prompts, matching the
+      // divider style of AgentExecutor.buildPrompt so injected context is visually delimited.
+      const finalPrompt = this.deps.expertPromptPrefix
+        ? `${this.deps.expertPromptPrefix}\n\n---\n\n${prompt}`
+        : prompt
+      const result = await this.deps.llmCall(finalPrompt, model, expert.engine, expert.skills, expert.tools, expert.disallowed_tools)
 
       this.emit({
         type: "expert_complete",

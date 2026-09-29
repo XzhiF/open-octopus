@@ -1,8 +1,11 @@
-import type Database from "better-sqlite3"
+import type { Sql, TransactionSql } from "postgres"
 import { LEDGER_SQL, costSummary } from "@octopus/shared"
-import type { ArchiveDAO } from "../../db/dao/archive-dao"
+import { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
+import { convertPlaceholders, type PgSql } from "../../db/dao/base-pg"
+import { num, numOrNull } from "../../db/dao/pg-mappers"
+import { getDb } from "../../db/connection"
 import type { DomainEventBus } from "../agent/domain-event-bus"
 import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../../db/types"
 import { logError, logInfo } from "../../file-logger"
@@ -16,12 +19,32 @@ export class ArchivePartialFailure extends Error {
   }
 }
 
+/** 票6a 直读 seam：与 BasePgDAO.q/q1 同源（?→$n 引号感知）。 */
+async function pgRows<T>(db: PgSql, sql: string, params: unknown[] = []): Promise<T[]> {
+  return await (db as Sql).unsafe(convertPlaceholders(sql), params as never) as unknown as T[]
+}
+async function pgRow1<T>(db: PgSql, sql: string, params: unknown[] = []): Promise<T | undefined> {
+  return (await pgRows<T>(db, sql, params))[0]
+}
+
 export class ArchiveService {
   constructor(
     private archiveDAO: ArchiveDAO,
     private executionDAO: ExecutionDAO,
-    private db: Database.Database,
+    /**
+     * PG 池句柄**惰性取源**（票6a）：initPgPool 是 fire-and-forget，接线早于连接
+     * 往返完成；启动钩子里立即 pgSql() 会炸启动，故只存 getter 不存句柄。
+     * 本服务直读面（executions/node_executions/ntu/llm_calls_costed/execution_archive）
+     * 全部已在 PG 单引擎（B4/B5票5），SQLite 混读终结。
+     */
+    private pg: () => PgSql,
     private domainEventBus?: DomainEventBus,
+    /**
+     * §8 网③ 失败注入缝：事务体内 execution_archive 写经此工厂构造
+     * （红线：体内禁 this.archiveDAO —— 池根句柄写入会逃逸出事务）。
+     * 默认 = 真 ArchiveDAO(tx)；测试注入包装实例断言 savepoint 语义。
+     */
+    private archiveDaoForTx: (tx: PgSql) => ArchiveDAO = (tx) => new ArchiveDAO(tx),
   ) {}
 
   // ── P1.1: archiveExecution ──────────────────────────────────────────
@@ -29,17 +52,17 @@ export class ArchiveService {
   private static TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
 
   async archiveExecution(executionId: string): Promise<{ archived: boolean; reason?: string }> {
-    const exec = this.executionDAO.findById(executionId)
+    const exec = await this.executionDAO.findById(executionId)
     if (!exec) return { archived: false, reason: "execution_not_found" }
 
     if (!ArchiveService.TERMINAL_STATUSES.has(exec.status)) {
       return { archived: false, reason: "execution_not_terminal" }
     }
 
-    const row = this.buildExecutionArchiveRow(executionId, exec)
+    const row = await this.buildExecutionArchiveRow(executionId, exec)
 
     try {
-      const { inserted } = this.archiveDAO.insertExecutionArchive(row)
+      const { inserted } = await this.archiveDAO.insertExecutionArchive(row)
       return { archived: inserted, reason: inserted ? undefined : "already_archived" }
     } catch (err) {
       logError("archive execution failed", err, { executionId })
@@ -49,18 +72,27 @@ export class ArchiveService {
 
   // ── Shared: build ExecutionArchiveRow from source tables ─────────
 
-  private buildExecutionArchiveRow(executionId: string, exec: ExecutionRow): ExecutionArchiveRow {
-    const nodeCount = (this.db.prepare(
+  private async buildExecutionArchiveRow(executionId: string, exec: ExecutionRow): Promise<ExecutionArchiveRow> {
+    const db = this.pg()
+
+    const nodeCountRow = await pgRow1<{ cnt: string | number }>(
+      db,
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ?",
-    ).get(executionId) as { cnt: number }).cnt
+      [executionId],
+    )
+    const nodeCount = num(nodeCountRow?.cnt)
 
-    const successNodes = (this.db.prepare(
+    const successRow = await pgRow1<{ cnt: string | number }>(
+      db,
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
-    ).get(executionId) as { cnt: number }).cnt
+      [executionId],
+    )
+    const successNodes = num(successRow?.cnt)
 
-    // C3/Q8-1: 归档单源 = node_token_usages 账本（旧 tokens 取 ntu 而 cost 取
-    // llm_calls 的交叉口径废除）；calls 是明细计数，仍归 llm_calls 管辖。
-    const tokenAgg = this.db.prepare(`
+    // C3/Q8-1 + v48（billing NEW-r2）：tokens 账本 = node_token_usages（四字段，
+    // 钱不落账本）；cost 单源 = llm_calls_costed 视图的查询时派生列 —— 旧的
+    // 「ntu.cost_usd 存储列」已被 schema v48 删除，直接 SUM 物理列会报错。
+    const tokenAgg = await pgRow1<Record<string, string | number>>(db, `
       SELECT
         COALESCE(SUM(input_tokens), 0) as input,
         COALESCE(SUM(output_tokens), 0) as output,
@@ -68,40 +100,57 @@ export class ArchiveService {
         COALESCE(SUM(cache_creation_tokens), 0) as cache_creation
       FROM node_token_usages
       WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)
-    `).get(executionId) as Record<string, number>
+    `, [executionId]).then(r => r ?? {})
 
-    const modelRows = this.db.prepare(`
+    const modelTokenRows = await pgRows<{ model: string | null; tokens: string | number | null }>(db, `
       SELECT ntu.model as model,
-             ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
-             ${LEDGER_SQL.sumCost('ntu.')} as cost
+             ${LEDGER_SQL.sumTokens('ntu.')} as tokens
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       WHERE ne.execution_id = ?
       GROUP BY ntu.model
-    `).all(executionId) as Array<{ model: string | null; tokens: number; cost: number | null }>
+    `, [executionId])
 
-    const callCounts = new Map<string, number>((this.db.prepare(`
-      SELECT model, COUNT(*) as calls FROM llm_calls WHERE execution_id = ? GROUP BY model
-    `).all(executionId) as Array<{ model: string | null; calls: number }>)
-      .map(r => [r.model ?? "unknown", r.calls] as [string, number]))
+    const modelCostRows = await pgRows<{ model: string | null; calls: string | number; cost: number | string | null }>(db, `
+      SELECT model,
+             COUNT(*) as calls,
+             ${LEDGER_SQL.sumCost('')} as cost
+      FROM llm_calls_costed
+      WHERE execution_id = ?
+      GROUP BY model
+    `, [executionId])
 
     const modelBreakdown: Record<string, { calls: number; tokens: number; cost: number | null }> = {}
-    for (const row of modelRows) {
+    for (const row of modelTokenRows) {
+      modelBreakdown[row.model ?? "unknown"] = { calls: 0, tokens: numOrNull(row.tokens) ?? 0, cost: null }
+    }
+    for (const row of modelCostRows) {
       const key = row.model ?? "unknown"
-      modelBreakdown[key] = { calls: callCounts.get(key) ?? 0, tokens: row.tokens, cost: row.cost }
+      const entry = modelBreakdown[key] ?? { calls: 0, tokens: 0, cost: null }
+      entry.calls = num(row.calls)
+      entry.cost = numOrNull(row.cost)
+      modelBreakdown[key] = entry
     }
     // 全未定价 → NULL（不再 COALESCE 焊 0）；部分定价 → 已知和
-    const totalCost = costSummary(modelRows.map(r => r.cost)).usd
+    const totalCost = costSummary(modelCostRows.map(r => numOrNull(r.cost))).usd
 
-    const nodeSummary = this.db.prepare(`
+    // duration 是 PG bigint → 出口 string；JSON.stringify 前归一 number（旧契约形状）。
+    const nodeSummary = (await pgRows<{ node_id: string; node_type: string; status: string; duration: string | number | null }>(db, `
       SELECT node_id, node_type, status, duration
       FROM node_executions WHERE execution_id = ?
       ORDER BY started_at ASC
-    `).all(executionId)
+    `, [executionId])).map(r => ({ node_id: r.node_id, node_type: r.node_type, status: r.status, duration: numOrNull(r.duration) }))
 
-    const children = this.db.prepare(
+    const children = await pgRows<{ id: string }>(
+      db,
       "SELECT id FROM executions WHERE parent_id = ?",
-    ).all(executionId) as Array<{ id: string }>
+      [executionId],
+    )
+
+    // PG SUM(bigint) 出口是 string —— JSON.stringify 前归一为 number，
+    // 保持 token_breakdown JSON 数值形状与 SQLite 时代逐键相等。
+    const tokenAggNum: Record<string, number> = {}
+    for (const [k, v] of Object.entries(tokenAgg)) tokenAggNum[k] = num(v)
 
     return {
       execution_id: exec.id,
@@ -112,7 +161,7 @@ export class ArchiveService {
       total_duration_ms: exec.duration ?? 0,
       node_count: nodeCount,
       success_rate: nodeCount > 0 ? successNodes / nodeCount : 0,
-      token_breakdown: JSON.stringify(tokenAgg),
+      token_breakdown: JSON.stringify(tokenAggNum),
       model_breakdown: JSON.stringify(modelBreakdown),
       node_summary: JSON.stringify(nodeSummary),
       chain_info: JSON.stringify({
@@ -125,33 +174,68 @@ export class ArchiveService {
     }
   }
 
-  // ── P1.2: archiveWorkspace (two-phase) ──────────────────────────────
+  // ── P1.2: archiveWorkspaceForDelete — 删除路径专用（两阶段 + 事务回滚）──
+  //
+  // 与下方 `archiveWorkspace`（对外全功能入口，吞错返回 success 标志）的分工：
+  // 本方法服务「先归档再级联删除」的破坏性流程（DELETE workspace / archive
+  // retry），任何失败**必须抛错**，让调用方的 catch 拦住级联删除 —— 曾因为
+  // 同名双定义（TS2393）被全功能版覆盖，异常被吞成 {success:false} 后照常
+  // 删用户数据。「归档失败 → 不删数据」是这里的不变量。
 
-  async archiveWorkspace(
+  async archiveWorkspaceForDelete(
     workspaceId: string,
     workspaceDAO: WorkspaceDAO,
   ): Promise<{ archived: boolean; execution_count: number }> {
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return { archived: false, execution_count: 0 }
+    const ws = await workspaceDAO.findById(workspaceId)
+    if (!ws) throw new Error(`workspace_not_found: ${workspaceId}`)
 
-    const execRows = this.db.prepare(
+    const db = this.pg()
+
+    const execRows = await pgRows<{ id: string }>(
+      db,
       "SELECT id FROM executions WHERE workspace_id = ?",
-    ).all(workspaceId) as Array<{ id: string }>
+      [workspaceId],
+    )
 
     const failures: Array<{ execId: string; error: string }> = []
 
-    try {
-      this.archiveDAO.transaction(() => {
-        // Phase 1: mark archiving
-        workspaceDAO.setArchiveStatus(workspaceId, "archiving")
+    // B5-5B3：executionDAO.findById 已 async（PG 引擎）。票6a：archive/workspace
+    // DAO 已同池（PG 单引擎）—— 执行行仍保持事务外预取：读的是已提交数据、
+    // 不依赖事务快照，且 findById 走池句柄不得进事务体（红线：体内禁池根句柄）。
+    // 失败仍汇入同一 failures，事务体内首查照旧抛 ArchivePartialFailure 回滚。
+    const execsById = new Map<string, ExecutionRow>()
+    for (const { id } of execRows) {
+      try {
+        const exec = await this.executionDAO.findById(id)
+        if (exec) execsById.set(id, exec)
+      } catch (e) {
+        failures.push({ execId: id, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
 
-        // Phase 2: archive all executions inline (sync, inside transaction)
+    try {
+      await this.archiveDAO.transaction(async (tx) => {
+        // 红线姿势（base-pg 对拍钉桩）：事务体内一切读写经 tx 构造的 DAO；
+        // this.archiveDAO/this.db 是池根句柄 = 写会逃逸出事务。
+        const archiveTx = this.archiveDaoForTx(tx)
+        const wsTx = new WorkspaceDAO(tx)
+
+        // Phase 1: mark archiving
+        await wsTx.setArchiveStatus(workspaceId, "archiving")
+
+        // Phase 2: archive all executions — 票6a savepoint 化（§6 最高危行）：
+        // 旧 sqlite 体内 try/catch 在 PG 会把第一条失败语句炸成整事务 25P02
+        // （后续全部语句报 aborted，failures 收集逻辑全毁）。改为逐条
+        // tx.savepoint：失败只回滚该 savepoint，事务保持可用，后续成功写入
+        // 不被第一条失败带走；failures 语义与 sqlite 时代逐字对齐。
         for (const { id } of execRows) {
           try {
-            const exec = this.executionDAO.findById(id)
+            const exec = execsById.get(id)
             if (!exec) continue
-            const row = this.buildExecutionArchiveRow(id, exec)
-            this.archiveDAO.insertExecutionArchive(row)
+            const row = await this.buildExecutionArchiveRow(id, exec)
+            await (tx as TransactionSql).savepoint(async (sp) => {
+              await this.archiveDaoForTx(sp as PgSql).insertExecutionArchive(row)
+            })
           } catch (e) {
             failures.push({ execId: id, error: e instanceof Error ? e.message : String(e) })
           }
@@ -162,7 +246,8 @@ export class ArchiveService {
           throw new ArchivePartialFailure(failures)
         }
 
-        // Phase 3: workspace metadata snapshot
+        // Phase 3: workspace metadata snapshot —— 聚合读必须走 tx（可见本事务
+        // 内尚未提交的 execution_archive 行；池句柄另连接，看不到）。
         const wsRow: WorkspaceArchiveRow = {
           workspace_id: ws.id,
           org: ws.org,
@@ -170,12 +255,8 @@ export class ArchiveService {
           description: ws.description,
           source: ws.source,
           execution_count: execRows.length,
-          total_cost: (this.db.prepare(
-            `SELECT ${LEDGER_SQL.sumCostOf('total_cost')} as total FROM execution_archive WHERE workspace_id = ?`,
-          ).get(workspaceId) as { total: number | null }).total,
-          total_duration_ms: execRows.length > 0 ? (this.db.prepare(
-            "SELECT COALESCE(SUM(total_duration_ms), 0) as total FROM execution_archive WHERE workspace_id = ?",
-          ).get(workspaceId) as { total: number }).total : 0,
+          total_cost: await archiveTx.sumCostByWorkspace(workspaceId),
+          total_duration_ms: execRows.length > 0 ? await archiveTx.sumDurationByWorkspace(workspaceId) : 0,
           created_at: ws.created_at,
           archived_at: new Date().toISOString(),
           metadata: null,
@@ -186,10 +267,10 @@ export class ArchiveService {
           analysis_report: null,
           file_deleted: 0,
         }
-        this.archiveDAO.insertWorkspaceArchive(wsRow)
+        await archiveTx.insertWorkspaceArchive(wsRow)
 
         // Phase 4: mark archived
-        workspaceDAO.setArchiveStatus(workspaceId, "archived")
+        await wsTx.setArchiveStatus(workspaceId, "archived")
       })
 
       logInfo("workspace archived", { workspaceId, execution_count: execRows.length })
@@ -198,7 +279,7 @@ export class ArchiveService {
       logError("workspace archive failed", err, { workspaceId })
       // Transaction rolled back — mark as archive_failed for diagnostics
       try {
-        workspaceDAO.setArchiveStatus(workspaceId, "archive_failed")
+        await workspaceDAO.setArchiveStatus(workspaceId, "archive_failed")
         logInfo("workspace marked as archive_failed", { workspaceId, error: err instanceof Error ? err.message : String(err) })
       } catch (statusErr) {
         // If even status update fails, log it but don't swallow the original error
@@ -357,7 +438,9 @@ export class ArchiveService {
     return { archived_count: archivedCount }
   }
 
-  // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
+  // ── P2.4: archiveWorkspace — 对外全功能入口（知识循环 + 清理 + SSE 步进）──
+  // 失败不抛错而是返回 success:false —— 消费方（routes/archive.ts）必须检查
+  // 返回值再放行任何破坏性操作。删除路径请用上方 archiveWorkspaceForDelete。
 
   async archiveWorkspace(
     workspaceId: string,
@@ -402,14 +485,14 @@ export class ArchiveService {
   }> {
     try {
       // Step 1: Get workspace details
-      const workspaceDAO = new WorkspaceDAO(this.db)
-      const workspace = workspaceDAO.findById(workspaceId)
+      const workspaceDAO = new WorkspaceDAO(this.pg())
+      const workspace = await workspaceDAO.findById(workspaceId)
       if (!workspace) {
         return { success: false, archivedExecutions: 0, extractedExperiences: 0, installedSkills: 0, installedAgents: 0, fileDeleted: false, error: "workspace_not_found" }
       }
 
       // Step 2: Archive all executions in this workspace
-      const executions = this.executionDAO.listByWorkspace(workspaceId)
+      const executions = await this.executionDAO.listByWorkspace(workspaceId)
       let archivedExecutions = 0
       await emitter.stepStart("archive_executions", `归档 ${executions.length} 条执行记录...`)
       for (const exec of executions) {
@@ -458,7 +541,7 @@ export class ArchiveService {
         workspaceArchiveRow.analysis_report = JSON.stringify(options.analysisReport)
       }
 
-      this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
+      await this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
       await emitter.stepDone("create_record")
 
       // Step 4: Merge experiences via Agent
@@ -524,13 +607,13 @@ export class ArchiveService {
 
       // Step 7: Update workspace archive with extraction stats
       await emitter.stepStart("update_stats", "更新统计...")
-      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills, installedWorkflows, installedAgents)
-      this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
+      await this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills, installedWorkflows, installedAgents)
+      await this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
       await emitter.stepDone("update_stats")
 
       // Step 8: Soft-archive workspace (mark as archived, preserve DB row)
       await emitter.stepStart("soft_archive", "软归档...")
-      workspaceDAO.softArchive(workspaceId)
+      await workspaceDAO.softArchive(workspaceId)
       await emitter.stepDone("soft_archive")
 
       logInfo("workspace archived successfully", {
@@ -545,7 +628,7 @@ export class ArchiveService {
       await emitter.stepStart("cleanup_draft", "清理草稿...")
       try {
         const { ArchiveDraftDAO } = await import("../../db/dao/archive-draft-dao")
-        const draftDAO = new ArchiveDraftDAO(this.db)
+        const draftDAO = new ArchiveDraftDAO(getDb()) // archive_drafts 未迁（B6 成员）—— 仍 SQLite 引擎
         draftDAO.delete(workspaceId)
       } catch { /* non-fatal */ }
       await emitter.stepDone("cleanup_draft")
@@ -579,80 +662,6 @@ export class ArchiveService {
         fileDeleted: false,
         error: err instanceof Error ? err.message : String(err),
       }
-    }
-  }
-
-  private async extractExperiences(
-    workspaceId: string,
-    org: string,
-    _executionIds: string[]
-  ): Promise<number> {
-    try {
-      const { buildArchiveContext } = await import("./context-builder")
-      const { buildExperiencePrompt } = await import("./prompts")
-      const { getProvider } = await import("@octopus/providers")
-      const { PendingReviewDAO } = await import("../../db/dao/pending-review-dao")
-      const { WorkspaceDAO } = await import("../../db/dao/workspace-dao")
-      const { ExecutionDAO } = await import("../../db/dao/execution-dao")
-
-      const pendingReviewDAO = new PendingReviewDAO(this.db)
-      const workspaceDAO = new WorkspaceDAO(this.db)
-      const executionDAO = new ExecutionDAO(this.db)
-
-      const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, this.db, org)
-      if (!ctx) {
-        logError("extractExperiences: workspace not found", new Error("workspace not found"), { workspaceId })
-        return 0
-      }
-
-      const prompt = buildExperiencePrompt(ctx)
-      const systemPrompt = "You are a knowledge extraction engine. Respond with only the JSON array."
-
-      const provider = getProvider('claude')
-      const chunks: string[] = []
-      const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
-      for await (const chunk of stream) {
-        if (chunk.type === "text_delta") chunks.push(chunk.content)
-      }
-      const raw = chunks.join("")
-
-      if (!raw) {
-        logError("extractExperiences: empty LLM response", new Error("empty LLM response"), { workspaceId })
-        return 0
-      }
-
-      const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim()
-      const arr = JSON.parse(cleaned)
-      if (!Array.isArray(arr)) {
-        logError("extractExperiences: LLM response is not an array", new Error("invalid response"), { workspaceId })
-        return 0
-      }
-
-      let extractedCount = 0
-      for (const exp of arr) {
-        const id = exp.id || `exp-${workspaceId}-${extractedCount}-${Date.now()}`
-        pendingReviewDAO.insert({
-          id,
-          type: "experience",
-          source: "archive",
-          source_ref: workspaceId,
-          source_label: ctx.workspace.name,
-          content: exp.text || "",
-          target_file: "",
-          scope: exp.scope || "workspace",
-          conflicts: null,
-          confidence: typeof exp.confidence === "number" ? exp.confidence : 0.5,
-          auto_approve: 0,
-          status: "pending",
-          user_notes: null,
-        })
-        extractedCount++
-      }
-
-      return extractedCount
-    } catch (err) {
-      logError("extractExperiences failed", err, { workspaceId })
-      return 0
     }
   }
 
@@ -715,6 +724,8 @@ export class ArchiveService {
               ref: `builtin:${finalName}`,
               type: "skill",
               group: finalGroup,
+              // 审计归属：归档流程由用户面操作触发 → ui
+              caller: "ui",
             })
           }
 
@@ -893,10 +904,10 @@ let _instance: ArchiveService | null = null
 export function initArchiveService(
   dao: ArchiveDAO,
   execDAO: ExecutionDAO,
-  db: Database.Database,
+  pg: () => PgSql,
   bus?: DomainEventBus,
 ): ArchiveService {
-  _instance = new ArchiveService(dao, execDAO, db, bus)
+  _instance = new ArchiveService(dao, execDAO, pg, bus)
   return _instance
 }
 

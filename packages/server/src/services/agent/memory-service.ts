@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { AgentSessionDAO } from '../../db/dao'
+import { queryTokens } from '../../db/dao/query-tokens'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ export class MemoryService {
    *   memory/daily/ directory instead of main agent's. Source field is derived
    *   from the clone directory name.
    */
-  recordDaily(org: string, content: string, sessionId: string, cloneDir?: string): { ok: boolean; date: string } {
+  async recordDaily(org: string, content: string, sessionId: string, cloneDir?: string): Promise<{ ok: boolean; date: string }> {
     const today = new Date().toISOString().split('T')[0]
     const dailyDir = cloneDir
       ? path.join(cloneDir, 'memory', 'daily')
@@ -96,11 +97,11 @@ export class MemoryService {
     try {
       const summaryId = crypto.randomUUID()
       const now = new Date().toISOString()
-      this.dao.insertSummaryMessage(summaryId, sessionId, content, now, source)
+      await this.dao.insertSummaryMessage(summaryId, sessionId, content, now, source)
 
-      // 3. Rebuild FTS index to include the new summary
+      // 3. Rebuild FTS index to include the new summary（PG 面 = 幂等计数，索引自动维护）
       try {
-        this.dao.rebuildFtsIndex()
+        await this.dao.rebuildFtsIndex()
       } catch {
         // FTS rebuild failure is non-fatal — daily file is the primary store
       }
@@ -152,25 +153,27 @@ export class MemoryService {
    * @param source Optional source filter. When provided, only returns results
    *   from the specified source ('main' or clone-name).
    */
-  searchMemory(org: string, query: string, topK: number = 3, source?: string): MemorySearchResult[] {
+  async searchMemory(org: string, query: string, topK: number = 3, source?: string): Promise<MemorySearchResult[]> {
     const results: MemorySearchResult[] = []
 
-    // ── 1. FTS5 search on session_memory_fts (PRD C3) ────────────
+    // ── 1. 会话摘要检索（P1 B3：原 session_memory_fts 虚表 → messages 真表检索面，
+    //       score 为 BM25 归一/分层常数，见 agent-session-dao）──
     try {
-      const ftsRows = this.dao.searchSessionMemory(query, topK, source)
+      const ftsRows = await this.dao.searchSessionMemory(query, topK, source, org)
 
       for (const row of ftsRows) {
         results.push({
           session_id: row.session_id,
           summary: row.summary,
-          score: 0,
+          score: row.score,
           session_title: row.session_title,
           created_at: row.created_at,
           source: row.source,
         })
       }
     } catch {
-      // FTS degraded: fallback handled inside searchSessionMemory
+      // FTS genuinely broken (missing/corrupt table) — file layers still answer.
+      // 注意：这不是中文不命中的旧静默路径；查询语法错误已在 DAO 层根除。
     }
 
     // ── 2. Text search on long-term + daily memory files ─────────
@@ -234,11 +237,12 @@ export class MemoryService {
       // Search long-term
       if (fs.existsSync(ltPath)) {
         const content = fs.readFileSync(ltPath, 'utf-8')
-        if (content.toLowerCase().includes(query.toLowerCase())) {
+        const score = this.fileScore(content, query)
+        if (score > 0) {
           results.push({
             session_id: `long-term-${dirSource}`,
             summary: this.extractMatchingSnippet(content, query),
-            score: 0,
+            score,
             session_title: dirSource === 'main' ? '长期记忆' : `${dirSource} 长期记忆`,
             created_at: fs.statSync(ltPath).mtime.toISOString(),
             source: dirSource,
@@ -252,11 +256,12 @@ export class MemoryService {
         for (const file of files) {
           const filePath = path.join(dailyDir, file)
           const content = fs.readFileSync(filePath, 'utf-8')
-          if (content.toLowerCase().includes(query.toLowerCase())) {
+          const score = this.fileScore(content, query)
+          if (score > 0) {
             results.push({
               session_id: `daily-${dirSource}-${file}`,
               summary: this.extractMatchingSnippet(content, query),
-              score: 0,
+              score,
               session_title: dirSource === 'main'
                 ? `工作记忆 (${file.replace('.md', '')})`
                 : `${dirSource} 工作记忆 (${file.replace('.md', '')})`,
@@ -268,16 +273,38 @@ export class MemoryService {
       }
     }
 
+    results.sort((a, b) => b.score - a.score)
     return results
+  }
+
+  /**
+   * 文件层（long-term/daily markdown）相关度打分：整串命中给高分（强相关，
+   * 至少不低于检索面归一分的中位数），否则按 queryTokens token 覆盖率
+   * 折算为小数。返回 0 表示不相关 —— 取代过去「命中即 score:0」的死分。
+   *
+   * 注意：与 pg_search BM25 归一分同为 (0,1)，但不同源不可直接比较绝对值；
+   * 全串命中此处给 1.0 是有意为之（文件层是精确实体匹配，可信度高）。
+   */
+  private fileScore(content: string, query: string): number {
+    const lower = content.toLowerCase()
+    const q = query.trim().toLowerCase()
+    if (q && lower.includes(q)) return 1.0
+
+    const tokens = queryTokens(query)
+    if (tokens.length === 0) return 0
+    const hit = tokens.filter((t) => lower.includes(t.toLowerCase())).length
+    if (hit === 0) return 0
+    // token 覆盖率折算，上限压到 0.8 以免超过全串命中
+    return Math.min(0.8, hit / tokens.length)
   }
 
   /**
    * Rebuild FTS indexes from source data.
    * Maps to PRD P2.2 rebuildFtsIndex.
    */
-  rebuildFtsIndex(org: string): { indexed_count: number } {
+  async rebuildFtsIndex(org: string): Promise<{ indexed_count: number }> {
     try {
-      const indexedCount = this.dao.rebuildFtsIndex()
+      const indexedCount = await this.dao.rebuildFtsIndex()
       return { indexed_count: indexedCount }
     } catch {
       // Table may not exist yet
@@ -383,10 +410,10 @@ export class MemoryService {
    * Check if agent should auto-enter safe mode due to inactivity (PRD H2).
    * Compares last activity date against config inactive_days_threshold.
    */
-  checkInactivitySafeMode(org: string): { should_enable: boolean; last_active: string | null; days_inactive: number } {
+  async checkInactivitySafeMode(org: string): Promise<{ should_enable: boolean; last_active: string | null; days_inactive: number }> {
     let lastActive: string | null = null
     try {
-      const row = this.dao.findLatestMessageTimestamp()
+      const row = await this.dao.findLatestMessageTimestamp()
       lastActive = row?.last_at ?? null
     } catch {
       // Table may not exist

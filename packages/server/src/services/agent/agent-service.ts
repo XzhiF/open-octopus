@@ -24,6 +24,7 @@ import { getMemoryService } from './memory-service'
 import { getEvolutionService } from './evolution-service'
 import { getSubsystemAdapter } from './subsystem-adapter'
 import { getConfigManager } from './config-manager'
+import type { AgentConfigYaml } from './config-schema'
 import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
@@ -132,7 +133,7 @@ export class AgentService {
     id: string,
     query?: { limit?: number; cursor?: string },
   ): Promise<{ session: AgentSession; messages: AgentPaginatedResponse<AgentMessage> }> {
-    const session = getSessionService().getSession(org, id)
+    const session = await getSessionService().getSession(org, id)
     if (!session) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
@@ -141,18 +142,20 @@ export class AgentService {
     const limit = Math.min(query?.limit ?? 50, 200)
     const cursor = query?.cursor
 
-    const rows = dao.findMessagesBySessionWithCursor(id, limit + 1, cursor)
+    const rows = await dao.findMessagesBySessionWithCursor(id, limit + 1, cursor)
 
     const hasMore = rows.length > limit
     const slicedRows = hasMore ? rows.slice(0, limit) : rows
     const messages = slicedRows.reverse().map((r) => ({
       id: r.id,
       session_id: r.session_id,
-      role: r.role,
+      role: r.role as AgentMessage['role'],
       content: r.content,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       is_summary: r.is_summary === 1,
       is_compressed: r.is_compressed === 1,
+      // messages 表无 is_edited 列（shared AgentMessage 契约字段）—— 恒 false 补槽。
+      is_edited: false,
       created_at: r.created_at,
     }))
 
@@ -168,14 +171,14 @@ export class AgentService {
   }
 
   async updateSession(org: string, id: string, data: { title: string }): Promise<void> {
-    const updated = getSessionService().updateSession(org, id, data)
+    const updated = await getSessionService().updateSession(org, id, data)
     if (!updated) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
   }
 
   async deleteSession(org: string, id: string): Promise<void> {
-    const deleted = getSessionService().deleteSession(org, id)
+    const deleted = await getSessionService().deleteSession(org, id)
     if (!deleted) {
       throw Object.assign(new Error(`Session ${id} not found`), { code: 'NOT_FOUND' })
     }
@@ -205,14 +208,17 @@ export class AgentService {
   ): Promise<MemoryContent | MemoryContent[]> {
     const memService = getMemoryService()
     if (layer === 'long-term') {
-      const content = memService.readLongTerm(org)
+      // B5-5B3：memService.readLongTerm 不存在（历史漂移）→ 走真实 API readMemory。
+      const content = memService.readMemory(org, 'long-term').content
       return { layer: 'long-term', content, token_count: Math.ceil(content.length / 4) }
     }
+    // 注：'work' 层不在 shared MemoryLayer 契约内（legacy 死门面，票6 处置删除）；
+    // 保持响应形状，类型处收口。
     if (layer === 'work') {
       const content = memService.readRecentWorkMemory(org, 3)
-      return { layer: 'work', content, token_count: Math.ceil(content.length / 4) }
+      return { layer: 'work', content, token_count: Math.ceil(content.length / 4) } as unknown as MemoryContent
     }
-    return { layer, content: '', token_count: 0 }
+    return { layer, content: '', token_count: 0 } as unknown as MemoryContent
   }
 
   async addMemory(
@@ -235,7 +241,8 @@ export class AgentService {
   ): Promise<{ results: MemorySearchResult[]; degraded: boolean }> {
     const memService = getMemoryService()
     try {
-      const results = memService.searchSessionMemory(org, q, limit ?? 3)
+      // B5-5B3：searchSessionMemory 不存在（历史漂移）→ 走真实异步 searchMemory。
+      const results = await memService.searchMemory(org, q, limit ?? 3)
       return { results, degraded: false }
     } catch {
       return { results: [], degraded: true }
@@ -306,10 +313,13 @@ export class AgentService {
     }
     fs.writeFileSync(path.join(cloneDir, 'meta.json'), JSON.stringify(meta, null, 2))
 
+    // legacy 死门面（真实 clone 流程在 routes/clone + clone-routes）：返回体是
+    // 旧 wire 形状（workspace_name/last_active_at:null），不满足新 CloneInfo 契约
+    // —— 保持运行时形状，类型处收口（票6 处置删除）。
     return {
       name: data.name, status: 'idle', workspace_name: null, workspace_exists: true,
       last_active_at: null, created_at: meta.created_at,
-    }
+    } as unknown as CloneInfo
   }
 
   async listClones(org: string): Promise<CloneInfo[]> {
@@ -325,11 +335,12 @@ export class AgentService {
             try {
               const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'))
               const wsPath = meta.workspace_path ?? meta.workspace_id
+              // legacy wire 形状收口（同 createClone，票6 处置）
               clones.push({
                 name: meta.name, status: meta.status, workspace_name: null,
                 workspace_exists: wsPath ? fs.existsSync(wsPath) : true,
                 last_active_at: meta.completed_at ?? null, created_at: meta.created_at,
-              })
+              } as unknown as CloneInfo)
             } catch { /* skip */ }
           }
         }
@@ -382,9 +393,10 @@ export class AgentService {
   async listSkills(org: string): Promise<SkillInfo[]> {
     const adapter = getSubsystemAdapter(org)
     const skills = adapter.searchSkills('', 100)
+    // legacy wire 形状（has_backup）不满足 SkillInfo 契约 —— 类型收口，票6 处置。
     return skills.map(s => ({
       name: s.name, source: s.source, has_backup: false,
-    }))
+    })) as unknown as SkillInfo[]
   }
 
   async getSkill(org: string, name: string): Promise<{
@@ -424,14 +436,14 @@ export class AgentService {
   // ── Evolution ─────────────────────────────────────────────────
 
   async getChangelog(org: string, query?: { skill?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<EvolutionLogEntry>> {
-    const entries = getEvolutionService().listChangelog(org, { skill_name: query?.skill, limit: query?.limit })
+    const entries = await getEvolutionService().listChangelog(org, { skill_name: query?.skill, limit: query?.limit })
     return { items: entries, total: entries.length, has_more: false, next_cursor: null }
   }
 
   async getExperiences(org: string, query?: { skill?: string; q?: string }): Promise<Experience[]> {
     if (query?.q) {
       // Use FTS5 scope-aware search when query text is provided
-      const results = getEvolutionService().searchExperiences(query.q, undefined, 50)
+      const results = await getEvolutionService().searchExperiences(query.q, undefined, 50)
       return results.map(r => ({
         id: r.id,
         skill_name: r.skill_name,
@@ -444,7 +456,7 @@ export class AgentService {
   }
 
   async rollbackEvolution(org: string, id: number): Promise<{ rolled_back_skill: string; new_changelog_id: number }> {
-    const success = getEvolutionService().rollback(org, id)
+    const success = await getEvolutionService().rollback(org, id)
     if (!success) throw Object.assign(new Error(`Entry #${id} not found`), { code: 'NOT_FOUND' })
     return { rolled_back_skill: '', new_changelog_id: 0 }
   }
@@ -453,13 +465,13 @@ export class AgentService {
 
   async getTasks(org: string, history?: boolean): Promise<{ active: TaskInfo[]; scheduled: ScheduledJob[] }> {
     if (!this.schedulerService) return { active: [], scheduled: [] }
-    const result = this.schedulerService.listJobs({ org })
+    const result = await this.schedulerService.listJobs({ org })
     return { active: [], scheduled: result.items as unknown as ScheduledJob[] }
   }
 
   async cancelTask(org: string, id: string): Promise<void> {
     if (!this.schedulerService) throw new Error('Scheduler service not available')
-    this.schedulerService.toggleJob(id)
+    await this.schedulerService.toggleJob(id)
   }
 
   async getReports(org: string, query?: { task?: string; date?: string; q?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<ReportInfo>> {
@@ -600,7 +612,9 @@ export class AgentService {
   }
 
   async updateConfig(org: string, data: Partial<AgentRuntimeConfig>): Promise<{ config_degraded: boolean }> {
-    getConfigManager().updateConfig(org, data)
+    // shared AgentRuntimeConfig（对外契约）与 server 侧 AgentConfigYaml（存储 schema）
+    // 双源漂移：门面按契约收，进入 config-manager 前收口为存储类型（票6 并源）。
+    getConfigManager().updateConfig(org, data as unknown as Partial<AgentConfigYaml>)
     return { config_degraded: false }
   }
 
@@ -609,18 +623,28 @@ export class AgentService {
   async confirmSafety(org: string, eventId: string, decision: 'accept' | 'reject'): Promise<{ decision_applied: string }> {
     const dao = this.safetyDao
     const normalizedDecision = decision === 'accept' ? 'allow' : 'block'
-    dao.updateSafetyEventDecision(Number(eventId), normalizedDecision)
+    await dao.updateSafetyEventDecision(Number(eventId), normalizedDecision)
     return { decision_applied: normalizedDecision }
   }
 
   async getSafetyEvents(org: string, query?: { type?: string; actor?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<SafetyEvent>> {
     const dao = this.safetyDao
-    const rows = dao.findSafetyEventsWithFilters(org, {
+    const rows = await dao.findSafetyEventsWithFilters(org, {
       type: query?.type,
       actor: query?.actor,
       limit: query?.limit,
     })
-    return { items: rows, total: rows.length, has_more: false, next_cursor: null }
+    // Row 判别列是 string（DB 无枚举）→ DAO 出口归一到 shared 契约。
+    const items: SafetyEvent[] = rows.map(r => ({
+      id: r.id,
+      type: r.type as SafetyEvent['type'],
+      operation: r.operation,
+      decision: r.decision as SafetyEvent['decision'],
+      actor: r.actor,
+      timestamp: r.timestamp,
+      context: r.context,
+    }))
+    return { items, total: items.length, has_more: false, next_cursor: null }
   }
 
   // ── Safe Mode ─────────────────────────────────────────────────
@@ -630,12 +654,12 @@ export class AgentService {
 
     // Auto-check inactivity (PRD H2: auto-trigger based on inactive_days_threshold)
     if (!config.safe_mode.enabled) {
-      const inactivity = getMemoryService().checkInactivitySafeMode(org)
+      const inactivity = await getMemoryService().checkInactivitySafeMode(org)
       if (inactivity.should_enable) {
         // Auto-enable safe mode due to inactivity
         getConfigManager().updateConfig(org, {
           safe_mode: { enabled: true, inactive_days_threshold: 14 },
-        } as Partial<AgentRuntimeConfig>)
+        } as Partial<AgentConfigYaml>)
         return {
           enabled: true,
           reason: `Auto-triggered: ${inactivity.days_inactive} days inactive (threshold: 14 days)`,
@@ -646,19 +670,21 @@ export class AgentService {
 
     return {
       enabled: config.safe_mode.enabled,
-      reason: config.safe_mode.enabled ? 'Manually enabled or auto-triggered by inactivity' : null,
-      triggered_at: null,
+      // SafeModeStatus.reason/triggered_at 可选：null → undefined（JSON 键省略，
+      // shared 契约不接受 null；全仓无消费方读到此端点的 null 值）。
+      reason: config.safe_mode.enabled ? 'Manually enabled or auto-triggered by inactivity' : undefined,
+      triggered_at: undefined,
     }
   }
 
   async enableSafeMode(org: string): Promise<SafeModeStatus> {
-    getConfigManager().updateConfig(org, { safe_mode: { enabled: true, inactive_days_threshold: 14 } } as Partial<AgentRuntimeConfig>)
+    getConfigManager().updateConfig(org, { safe_mode: { enabled: true, inactive_days_threshold: 14 } } as Partial<AgentConfigYaml>)
     return { enabled: true, reason: 'Manually enabled', triggered_at: new Date().toISOString() }
   }
 
   async disableSafeMode(org: string): Promise<SafeModeStatus> {
-    getConfigManager().updateConfig(org, { safe_mode: { enabled: false, inactive_days_threshold: 14 } } as Partial<AgentRuntimeConfig>)
-    return { enabled: false, reason: null, triggered_at: null }
+    getConfigManager().updateConfig(org, { safe_mode: { enabled: false, inactive_days_threshold: 14 } } as Partial<AgentConfigYaml>)
+    return { enabled: false, reason: undefined, triggered_at: undefined }
   }
 
   // ── Debug ─────────────────────────────────────────────────────
@@ -799,9 +825,11 @@ export class AgentService {
         claude_provider: true,
       },
       safe_mode: false,
+      // recovery_needed 不在 shared HealthStatus 契约（全仓无消费方）——legacy 形状
+      // 保留运行时输出，类型处收口（票6 处置）。
       recovery_needed: recovery.needsRecovery(),
       version: '1.0.0',
-    }
+    } as HealthStatus
   }
 }
 

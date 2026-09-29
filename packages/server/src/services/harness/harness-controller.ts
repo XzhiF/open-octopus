@@ -9,6 +9,10 @@ import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
+import { lazyDAO, pgSql } from "../../db/dao/registry"
+// P1 B1: HarnessDAO 已迁 PG；本文件对 executions 的直写属 B5 域表，显式走 SQLite 连接
+// （单引擎纪律，见 db/README B1 注记），随 B5 再迁 postgres.js。（B4 后 getDb 仅剩该用途。）
+import { getDb } from "../../db/connection"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
@@ -67,7 +71,9 @@ export class HarnessController {
     this.repairService = deps.repairService
     this.evolutionDao = deps.evolutionDao
     this.memoryService = deps.memoryService
-    this.tokenUsageDao = deps.tokenUsageDao ?? new TokenUsageDAO(deps.dao.getDb())
+    // P1 B4：TokenUsageDAO 已迁 PG —— 借注册表 lazyDAO 的池路径（B0.5 §5 方案3，
+    // 禁止 new XxxDAO(getDb()) 直构）；池未注册时保持未构造态自愈，不炸构造方。
+    this.tokenUsageDao = deps.tokenUsageDao ?? lazyDAO(() => new TokenUsageDAO(pgSql()))
   }
 
   /**
@@ -86,7 +92,7 @@ export class HarnessController {
    *
    * @returns the wrapped callbacks to pass to the engine
    */
-  onExecutionStart(
+  async onExecutionStart(
     executionId: string,
     workspaceId: string,
     originalCallbacks: EngineCallbacks,
@@ -99,11 +105,11 @@ export class HarnessController {
       dependencyGraph?: Record<string, string[]>
       varpoolSnapshot?: Record<string, any>
     },
-  ): EngineCallbacks {
+  ): Promise<EngineCallbacks> {
     // Clean up any existing pipeline for this execution (defensive)
-    this.onExecutionEnd(executionId)
+    await this.onExecutionEnd(executionId)
 
-    const config = this.configService.loadMergedConfig()
+    const config = await this.configService.loadMergedConfig()
 
     // Create HarnessAgentSession if session context is provided (AC1, AC2)
     if (opts?.workflowContent && opts?.nodeList && opts?.dependencyGraph) {
@@ -169,10 +175,10 @@ export class HarnessController {
    * @param executionId The execution that ended.
    * @param opts Optional execution outcome info for updating experience outcomes.
    */
-  onExecutionEnd(
+  async onExecutionEnd(
     executionId: string,
     opts?: { status: "completed" | "failed" | "cancelled"; lastFailedNodeId?: string },
-  ): void {
+  ): Promise<void> {
     const pipeline = this.pipelines.get(executionId)
     if (pipeline) {
       pipeline.destroy()
@@ -190,15 +196,15 @@ export class HarnessController {
         }
 
         // Ticket 03: Record experiences for all interventions
-        this.recordSessionExperiences(session, executionId)
+        await this.recordSessionExperiences(session, executionId)
 
         // Ticket 04: Update pending experience outcomes based on execution status
         if (opts) {
-          this.updateExperienceOutcomes(executionId, opts)
+          await this.updateExperienceOutcomes(executionId, opts)
         }
 
         // Ticket 03: Write clone daily memory
-        this.writeCloneDailyMemory(session, executionId)
+        await this.writeCloneDailyMemory(session, executionId)
       } catch (err) {
         console.error(
           `[HarnessController] Error closing session for ${executionId}:`,
@@ -281,7 +287,7 @@ export class HarnessController {
     summary: { totalInterventions: number; decisions: any[]; harnessStatus: string },
   ): void {
     try {
-      const db = this.dao.getDb()
+      const db = getDb() // B5 域表（executions.harness_summary）—— SQLite 单引擎
       db.prepare(`
         UPDATE executions
         SET harness_status = ?, harness_summary = ?
@@ -300,10 +306,10 @@ export class HarnessController {
    * Each intervention becomes an experience row with scope='harness'.
    * Ticket 03 — AC-1, AC-2, AC-3, AC-6.
    */
-  private recordSessionExperiences(
+  private async recordSessionExperiences(
     session: HarnessAgentSession,
     executionId: string,
-  ): void {
+  ): Promise<void> {
     if (!this.evolutionDao) {
       // No DAO configured — skip experience recording (non-fatal)
       return
@@ -320,7 +326,7 @@ export class HarnessController {
     for (const intervention of interventions) {
       try {
         const experienceRow = this.buildExperienceRow(intervention, executionId, org, timestamp)
-        this.evolutionDao.insertExperienceV2(experienceRow)
+        await this.evolutionDao.insertExperienceV2(experienceRow)
       } catch (err) {
         console.error(
           `[HarnessController] Failed to record experience for node ${intervention.nodeId}:`,
@@ -413,10 +419,10 @@ export class HarnessController {
    * - failed → last failed node's intervention gets 'failed', all others get 'success'
    * - cancelled → all interventions stay as 'pending' (no update)
    */
-  private updateExperienceOutcomes(
+  private async updateExperienceOutcomes(
     executionId: string,
     opts: { status: "completed" | "failed" | "cancelled"; lastFailedNodeId?: string },
-  ): void {
+  ): Promise<void> {
     if (!this.evolutionDao) {
       return // No DAO — skip (non-fatal)
     }
@@ -428,7 +434,7 @@ export class HarnessController {
 
     try {
       // Find all pending experiences for this execution
-      const pendingExperiences = this.evolutionDao.listByExecutionId(executionId, {
+      const pendingExperiences = await this.evolutionDao.listByExecutionId(executionId, {
         outcomeLabel: "pending",
       })
 
@@ -439,7 +445,7 @@ export class HarnessController {
       if (opts.status === "completed") {
         // AC-2: All interventions marked as success
         for (const exp of pendingExperiences) {
-          this.evolutionDao.updateOutcome(
+          await this.evolutionDao.updateOutcome(
             exp.id,
             JSON.stringify({ label: "success" }),
           )
@@ -450,7 +456,7 @@ export class HarnessController {
         for (const exp of pendingExperiences) {
           const isLastFailed = exp.node_id === lastFailedNodeId
           const outcomeLabel = isLastFailed ? "failed" : "success"
-          this.evolutionDao.updateOutcome(
+          await this.evolutionDao.updateOutcome(
             exp.id,
             JSON.stringify({ label: outcomeLabel }),
           )
@@ -468,10 +474,10 @@ export class HarnessController {
    * Write clone daily memory summarizing all interventions.
    * Ticket 03 — AC-4.
    */
-  private writeCloneDailyMemory(
+  private async writeCloneDailyMemory(
     session: HarnessAgentSession,
     executionId: string,
-  ): void {
+  ): Promise<void> {
     if (!this.memoryService) {
       // No memory service configured — skip daily memory write (non-fatal)
       return
@@ -487,7 +493,7 @@ export class HarnessController {
       const sessionId = `harness-${executionId}`
       const cloneDir = getBuiltInCloneDir("harness-agent")
 
-      this.memoryService.recordDaily("default", content, sessionId, cloneDir)
+      await this.memoryService.recordDaily("default", content, sessionId, cloneDir)
     } catch (err) {
       console.error(
         `[HarnessController] Failed to write clone daily memory for ${executionId}:`,

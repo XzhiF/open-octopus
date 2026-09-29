@@ -23,6 +23,7 @@ import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -68,30 +69,58 @@ vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
 
 const ORG = "e2e-td-04"
 
+let pg: PgFixture | null = null
+
 function newDb(): Database.Database {
   const db = new Database(":memory:")
   applySchema(db)
   return db
 }
 
-describe("04: task-author autosave seam + scope_id writer (integration)", () => {
+// P1 B2 配方 §5：PG tasks.source_chat_session_id 有 FK → PG sessions 需要父行。
+async function seedPgSession(id: string, org: string, title: string) {
+  const now = new Date().toISOString()
+  await pg!.sql`
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (${id}, ${org}, ${title}, 'main', true, false, ${now}, ${now})
+    ON CONFLICT (id) DO NOTHING`
+}
+
+async function readTasksBySession(sessionId: string) {
+  return (await pg!.sql`
+    SELECT id, status, source_chat_session_id, name, version::int AS version,
+      task_spec #>> '{}' AS task_spec,
+      to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
+    FROM tasks WHERE source_chat_session_id = ${sessionId}`)[0]
+}
+
+async function readTaskNameById(id: string): Promise<{ name: string }> {
+  return (await pg!.sql`SELECT name FROM tasks WHERE id = ${id}`)[0]
+}
+
+describePg("04: task-author autosave seam + scope_id writer (integration)", () => {
   let db: Database.Database
   let app: Hono
   let sessionDAO: AgentSessionDAO
   let taskDAO: TaskDAO
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // Hermetic OCTOPUS_HOME so paths.getBuiltInCloneDir points to an empty
     // temp dir (resolveCloneDefFromFs falls through to mocked info.persona).
     process.env.OCTOPUS_HOME = `/tmp/octopus-test-${Date.now()}`
+    // P1 B3 双引擎：tasks 与 sessions/messages 都落这座注册 PG 库 —— autosave seam
+    // 写的任务行 source_chat_session_id FK 直接对 PG sessions（配方 §5 已同库化）。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
-    sessionDAO = new AgentSessionDAO(db)
-    taskDAO = new TaskDAO(db)
+    sessionDAO = new AgentSessionDAO(pg.sql)
+    taskDAO = new TaskDAO(pg.sql)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg!.close()
+    pg = null
     db.close()
     delete process.env.OCTOPUS_HOME
   })
@@ -112,6 +141,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string; title: string }
     expect(session.id).toBeTruthy()
+    await seedPgSession(session.id, ORG, session.title)
 
     // First chat turn
     const firstMessage = "E2E_TD 早上好，帮我做一个后端服务"
@@ -127,18 +157,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     await chatRes.text() // drain SSE body so the seam runs
 
     // DB assert (R3/R4): tasks row created
-    const taskRow = db
-      .prepare(
-        "SELECT id, status, source_chat_session_id, name, version, task_spec FROM tasks WHERE source_chat_session_id = ?",
-      )
-      .get(session.id) as {
-        id: string
-        status: string
-        source_chat_session_id: string | null
-        name: string
-        version: number
-        task_spec: string
-      }
+    const taskRow = (await readTasksBySession(session.id)) as any
     expect(taskRow).toBeDefined()
     expect(taskRow.status).toBe("draft")
     expect(taskRow.source_chat_session_id).toBe(session.id)
@@ -152,9 +171,9 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(taskRow.task_spec).toBe("{}") // SG8: autosave never touches task_spec
 
     // DB assert (SG3): sessions.scope_id = tasks.id
-    const sessionRow = db
-      .prepare("SELECT scope_id FROM sessions WHERE id = ?")
-      .get(session.id) as { scope_id: string | null }
+    // P1 B3: sessions 已迁 PG —— 直读这座随机库。
+    const sessionRow = (await pg!.sql`
+      SELECT scope_id FROM sessions WHERE id = ${session.id}`)[0] as { scope_id: string | null }
     expect(sessionRow.scope_id).toBe(taskRow.id)
   })
 
@@ -168,6 +187,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG, "e2e")
 
     // First turn — establishes the task row
     const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
@@ -177,25 +197,17 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     })
     await r1.text()
 
-    const beforeRow = db
-      .prepare(
-        "SELECT id, name, version, task_spec, updated_at FROM tasks WHERE source_chat_session_id = ?",
-      )
-      .get(session.id) as {
-        id: string
-        name: string
-        version: number
-        task_spec: string
-        updated_at: string
-      }
+    const beforeRow = (await readTasksBySession(session.id)) as any
 
     // Simulate the user renaming the task header. In the product this goes
     // through PUT /api/tasks/:id {name} which ALSO syncs the bound session
     // title (TasksService.updateTask) — replicate both here so the two stores
     // stay equal, exactly as the header rename does.
     const renamedTitle = "E2E_TD user-renamed task title"
-    db.prepare("UPDATE tasks SET name = ? WHERE id = ?").run(renamedTitle, beforeRow.id)
-    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(renamedTitle, session.id)
+    // P1 B2: user-rename seam writes PG tasks.
+    await pg!.sql`UPDATE tasks SET name = ${renamedTitle} WHERE id = ${beforeRow.id}`
+    // P1 B3: sessions 已迁 PG —— 标题同步也落这座库。
+    await pg!.sql`UPDATE sessions SET title = ${renamedTitle} WHERE id = ${session.id}`
 
     // Ensure updated_at advances (ISO millisecond precision)
     await new Promise((r) => setTimeout(r, 5))
@@ -208,16 +220,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     })
     await r2.text()
 
-    const afterRow = db
-      .prepare(
-        "SELECT name, version, task_spec, updated_at FROM tasks WHERE source_chat_session_id = ?",
-      )
-      .get(session.id) as {
-        name: string
-        version: number
-        task_spec: string
-        updated_at: string
-      }
+    const afterRow = (await readTasksBySession(session.id)) as any
 
     // SG8: version UNCHANGED (no bump)
     expect(afterRow.version).toBe(beforeRow.version) // still 1
@@ -241,6 +244,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG, "e2e")
 
     // Turn 1 — establishes the task row with the auto-title.
     const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
@@ -249,18 +253,14 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({ message: "E2E_TD establish title" }),
     })
     await r1.text()
-    const before = db
-      .prepare("SELECT name FROM tasks WHERE source_chat_session_id = ?")
-      .get(session.id) as { name: string }
+    const before = (await readTasksBySession(session.id)) as { name: string }
     // Auto-title = first 20 chars of the first message (truncated).
     expect(before.name).toBe("E2E_TD establish tit")
 
     // Session renamed in the sidebar (no task sync — this is NOT a header
     // rename). The autosave must not propagate it into the task name.
-    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(
-      "E2E_TD sidebar-only rename",
-      session.id,
-    )
+    // P1 B3: sessions 已迁 PG。
+    await pg!.sql`UPDATE sessions SET title = ${"E2E_TD sidebar-only rename"} WHERE id = ${session.id}`
 
     await new Promise((r) => setTimeout(r, 5))
     const r2 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
@@ -270,9 +270,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     })
     await r2.text()
 
-    const after = db
-      .prepare("SELECT name FROM tasks WHERE source_chat_session_id = ?")
-      .get(session.id) as { name: string }
+    const after = (await readTasksBySession(session.id)) as { name: string }
     // Task title wins — the session rename stays in the chat sidebar only.
     expect(after.name).toBe(before.name)
   })
@@ -286,11 +284,12 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG, "e2e")
 
     // Pre-bind a task the way POST /api/tasks does (source_chat_session_id).
     const taskId = "e2e-td-prebound-task"
     const now = new Date().toISOString()
-    taskDAO.insert({
+    await taskDAO.insert({
       id: taskId,
       org: ORG,
       name: "E2E_TD manual POST title",
@@ -311,16 +310,15 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     // The POST-created (user-set) name is preserved — autosave's existing
     // branch only adopts the session title while the name is still the
     // default, never a user-set name.
-    const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
-      name: string
-    }
+    const row = (await readTaskNameById(taskId))
     expect(row.name).toBe("E2E_TD manual POST title")
 
     // The auto-title block DID fire (title was still the placeholder): the
     // session title is derived from the first message for the sidebar. The
     // derived title must NOT leak into the user-set task name (asserted
     // above) — the two stores are allowed to diverge here.
-    const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(session.id) as {
+    // P1 B3: sessions 已迁 PG —— 标题直读这座库。
+    const s = (await pg!.sql`SELECT title FROM sessions WHERE id = ${session.id}`)[0] as {
       title: string
     }
     expect(s.title).toBe("E2E_TD first message")
@@ -335,12 +333,13 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({}),
     })
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG, "e2e")
 
     // Pre-bind a draft the way POST /api/tasks does when the caller sends no
     // name → DEFAULT_TASK_NAME ("Untitled task").
     const taskId = "e2e-td-default-name-task"
     const now = new Date().toISOString()
-    taskDAO.insert({
+    await taskDAO.insert({
       id: taskId,
       org: ORG,
       name: "Untitled task",
@@ -360,9 +359,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
 
     // The default name is NOT user-owned → autosave adopts the smart session
     // title (first 20 chars of the first message).
-    const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
-      name: string
-    }
+    const row = (await readTaskNameById(taskId))
     const expectedTitle =
       "E2E_TD 给 workflow 执行增加监控 context 功能".slice(0, 20).replace(/\n/g, " ").trim()
     expect(row.name).toBe(expectedTitle)
@@ -377,9 +374,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
       body: JSON.stringify({ message: "E2E_TD 第二条消息完全不同" }),
     })
     await r2.text()
-    const after = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
-      name: string
-    }
+    const after = (await readTaskNameById(taskId))
     expect(after.name).toBe(expectedTitle)
   })
 
@@ -393,6 +388,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     })
     expect(createRes.status).toBe(201)
     const session = (await createRes.json()) as { id: string }
+    await seedPgSession(session.id, ORG, "e2e")
 
     const r3 = await app.request(`/api/clones/workspace/sessions/${session.id}/chat`, {
       method: "POST",
@@ -402,9 +398,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     await r3.text()
 
     // No task row should exist for this session (cloneName !== 'task-author')
-    const taskRow = db
-      .prepare("SELECT id FROM tasks WHERE source_chat_session_id = ?")
-      .get(session.id)
+    const taskRow = (await readTasksBySession(session.id))
     expect(taskRow).toBeUndefined()
   })
 })

@@ -37,13 +37,13 @@ export class RepairService {
 
   // ── Diagnose ─────────────────────────────────────────────────────
 
-  diagnose(executionId: string): DiagnoseReport {
-    const exec = this.dao.findById(executionId)
+  async diagnose(executionId: string): Promise<DiagnoseReport> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
-    const nodeExecutions = this.dao.findNodeExecutions(executionId)
+    const nodeExecutions = await this.dao.findNodeExecutions(executionId)
     const varPool = this.parseJson(exec.var_pool, {})
-    const nodes = nodeExecutions.map(ne => this.buildNodeReport(ne, executionId))
+    const nodes = await Promise.all(nodeExecutions.map(ne => this.buildNodeReport(ne, executionId)))
     const anomalies = this.detectAnomalies(exec, nodeExecutions, nodes)
     const checkpoints = this.loadCheckpoints(executionId)
     const recentErrors = this.collectRecentErrors(nodeExecutions)
@@ -77,18 +77,18 @@ export class RepairService {
 
   // ── VarPool Patch ────────────────────────────────────────────────
 
-  patchVarPool(
+  async patchVarPool(
     executionId: string,
     updates: Record<string, unknown>,
-  ): VarPoolUpdateResponse {
-    const exec = this.dao.findById(executionId)
+  ): Promise<VarPoolUpdateResponse> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
     const current = this.parseJson(exec.var_pool, {})
     const merged = { ...current, ...updates }
     const updated = Object.keys(updates).length
 
-    this.dao.updateExecution(executionId, {
+    await this.dao.updateExecution(executionId, {
       var_pool: JSON.stringify(merged),
     })
 
@@ -105,16 +105,16 @@ export class RepairService {
 
   // ── Node Reset ───────────────────────────────────────────────────
 
-  resetNode(
+  async resetNode(
     executionId: string,
     nodeId: string,
     targetStatus: "pending" | "completed",
     outputs?: Record<string, unknown>,
-  ): NodeResetResponse {
-    const exec = this.dao.findById(executionId)
+  ): Promise<NodeResetResponse> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
-    const nodeExecutions = this.dao.findNodeExecutions(executionId)
+    const nodeExecutions = await this.dao.findNodeExecutions(executionId)
     const nodeExec = nodeExecutions.find(ne => ne.node_id === nodeId)
     if (!nodeExec) throw new RepairError(`Node not found: ${nodeId}`, 404)
 
@@ -140,7 +140,7 @@ export class RepairService {
       updateFields.outputs = JSON.stringify(mergedOutputs)
     }
 
-    this.dao.updateNodeExecution(nodeExec.id, updateFields as any)
+    await this.dao.updateNodeExecution(nodeExec.id, updateFields as any)
 
     // If engine is live, update in-memory nodeResults
     const enginePool = this.executionService.getEnginePool()
@@ -166,16 +166,16 @@ export class RepairService {
 
   // ── Restore Point ────────────────────────────────────────────────
 
-  restorePoint(
+  async restorePoint(
     executionId: string,
     nodeId: string,
     resetVarPool?: boolean,
-  ): RestorePointResponse {
-    const exec = this.dao.findById(executionId)
+  ): Promise<RestorePointResponse> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
     // Load workflow definition to compute topological order
-    const workflowContent = this.getWorkflowContent(executionId)
+    const workflowContent = await this.getWorkflowContent(executionId)
     if (!workflowContent) throw new RepairError("Workflow definition not found", 404)
 
     const workflow = parseWorkflow(workflowContent)
@@ -188,12 +188,12 @@ export class RepairService {
     const downstreamNodes = sorted.slice(targetIdx)
     const resetNodeIds: string[] = []
 
-    const nodeExecutions = this.dao.findNodeExecutions(executionId)
+    const nodeExecutions = await this.dao.findNodeExecutions(executionId)
 
     for (const node of downstreamNodes) {
       const ne = nodeExecutions.find(n => n.node_id === node.id)
       if (ne && ne.status !== "pending") {
-        this.dao.updateNodeExecution(ne.id, {
+        await this.dao.updateNodeExecution(ne.id, {
           status: "pending",
           completed_at: null,
           duration: null,
@@ -207,7 +207,7 @@ export class RepairService {
     // Also reset the target node itself
     const targetNe = nodeExecutions.find(n => n.node_id === nodeId)
     if (targetNe && targetNe.status !== "pending" && !resetNodeIds.includes(nodeId)) {
-      this.dao.updateNodeExecution(targetNe.id, {
+      await this.dao.updateNodeExecution(targetNe.id, {
         status: "pending",
         completed_at: null,
         duration: null,
@@ -222,7 +222,7 @@ export class RepairService {
       // Load the closest checkpoint's pool snapshot, or reset to initial
       const checkpoint = this.findClosestCheckpoint(executionId, nodeId)
       if (checkpoint) {
-        this.dao.updateExecution(executionId, {
+        await this.dao.updateExecution(executionId, {
           var_pool: JSON.stringify(checkpoint.poolSnapshot ?? {}),
         })
       }
@@ -244,7 +244,7 @@ export class RepairService {
 
     // Update execution status back to running if it was failed/completed
     if (["failed", "completed", "completed_with_failures", "cancelled"].includes(exec.status)) {
-      this.dao.updateExecution(executionId, { status: "running" })
+      await this.dao.updateExecution(executionId, { status: "running" })
     }
 
     this.emitSSE("repair_restore_point", {
@@ -258,11 +258,11 @@ export class RepairService {
 
   // ── Reload Workflow ──────────────────────────────────────────────
 
-  reloadWorkflow(
+  async reloadWorkflow(
     executionId: string,
     content: string,
-  ): ReloadWorkflowResponse {
-    const exec = this.dao.findById(executionId)
+  ): Promise<ReloadWorkflowResponse> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
     // Validate YAML parses correctly
@@ -270,7 +270,7 @@ export class RepairService {
     const diff: string[] = []
 
     // Compare with current definition
-    const currentContent = this.getWorkflowContent(executionId)
+    const currentContent = await this.getWorkflowContent(executionId)
     if (currentContent) {
       try {
         const currentWorkflow = parseWorkflow(currentContent)
@@ -321,7 +321,7 @@ export class RepairService {
     nodeId: string,
     message: string,
   ): Promise<InterveneResponse> {
-    const exec = this.dao.findById(executionId)
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
     const enginePool = this.executionService.getEnginePool()
@@ -351,37 +351,37 @@ export class RepairService {
 
   // ── Clear Retry ──────────────────────────────────────────────────
 
-  clearRetry(
+  async clearRetry(
     executionId: string,
     nodeIds?: string[],
-  ): ClearRetryResponse {
-    const exec = this.dao.findById(executionId)
+  ): Promise<ClearRetryResponse> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
 
     const cleared: string[] = []
 
     if (nodeIds && nodeIds.length > 0) {
       // Clear specific nodes
-      const nodeExecutions = this.dao.findNodeExecutions(executionId)
+      const nodeExecutions = await this.dao.findNodeExecutions(executionId)
       for (const nodeId of nodeIds) {
         const ne = nodeExecutions.find(n => n.node_id === nodeId)
         if (ne && ne.retry_count > 0) {
-          this.dao.updateNodeExecution(ne.id, { retry_count: 0 })
+          await this.dao.updateNodeExecution(ne.id, { retry_count: 0 })
           cleared.push(nodeId)
         }
       }
     } else {
       // Clear all nodes
-      const nodeExecutions = this.dao.findNodeExecutions(executionId)
+      const nodeExecutions = await this.dao.findNodeExecutions(executionId)
       for (const ne of nodeExecutions) {
         if (ne.retry_count > 0) {
-          this.dao.updateNodeExecution(ne.id, { retry_count: 0 })
+          await this.dao.updateNodeExecution(ne.id, { retry_count: 0 })
           cleared.push(ne.node_id)
         }
       }
       // Also reset execution-level retry count
       if (exec.retry_count > 0) {
-        this.dao.updateExecution(executionId, { retry_count: 0 })
+        await this.dao.updateExecution(executionId, { retry_count: 0 })
       }
     }
 
@@ -391,11 +391,11 @@ export class RepairService {
 
   // ── Private Helpers ──────────────────────────────────────────────
 
-  private buildNodeReport(
+  private async buildNodeReport(
     ne: { node_id: string; node_type: string; status: string; duration: number | null; retry_count: number; error: string | null; outputs: string | null; session_id: string | null },
     executionId: string,
-  ): DiagnoseNodeReport {
-    const events = this.getNodeEvents(ne, executionId)
+  ): Promise<DiagnoseNodeReport> {
+    const events = await this.getNodeEvents(ne, executionId)
     let lastOutput: string | undefined
     if (ne.outputs) {
       try {
@@ -422,13 +422,13 @@ export class RepairService {
     }
   }
 
-  private getNodeEvents(
+  private async getNodeEvents(
     ne: { node_id: string },
     executionId: string,
-  ): { total: number; recent: Array<{ type: string; content: string; timestamp: string }> } {
+  ): Promise<{ total: number; recent: Array<{ type: string; content: string; timestamp: string }> }> {
     try {
       const nodeExecutionId = `${executionId}-${ne.node_id}`
-      const events = this.dao.findAgentEvents(nodeExecutionId)
+      const events = await this.dao.findAgentEvents(nodeExecutionId)
       const recent = events
         .slice(-RECENT_EVENTS_LIMIT)
         .map(e => ({
@@ -647,11 +647,13 @@ export class RepairService {
     targetStatus: "pending" | "completed",
   ): void {
     if (targetStatus === "pending") {
-      const allowed = new Set<NodeExecutionStatus>([
+      // [P1 B5 票5B] engine 运行态含 skipped_failed 等未入 shared NodeExecutionStatus 枚举的
+      // 状态（跨包枚举扩面留票6），此处按字符串域校验，防 TS2769。
+      const allowed = new Set<string>([
         "completed", "failed", "skipped", "skipped_failed",
         "paused", "cancelled", "rejected", "pending_approval",
       ])
-      if (!allowed.has(currentStatus)) {
+      if (!allowed.has(currentStatus as string)) {
         throw new RepairError(
           `Invalid transition: ${currentStatus} → pending (allowed from: ${[...allowed].join(", ")})`,
           400,
@@ -671,8 +673,8 @@ export class RepairService {
     }
   }
 
-  private getWorkflowContent(executionId: string): string | null {
-    return this.executionService.getWorkflowContent(executionId)
+  private async getWorkflowContent(executionId: string): Promise<string | null> {
+    return await this.executionService.getWorkflowContent(executionId)
   }
 
   private topologicalSort(nodes: NodeDef[]): NodeDef[] {

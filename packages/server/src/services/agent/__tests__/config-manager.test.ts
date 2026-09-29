@@ -54,18 +54,19 @@ describe('ConfigManager', () => {
 
   it('returns defaults when config file does not exist', () => {
     const result = manager.loadConfig(testOrg)
-    expect(result.config.model).toBe('opus[1m]')
+    expect(result.config.model).toBe('pro-max')
     expect(result.config.timeout).toBe(300)
     expect(result.degraded).toBe(true)
     expect(result.warnings.length).toBeGreaterThan(0)
   })
 
   it('loads valid config.yaml', () => {
-    const config = { model: 'sonnet', timeout: 120, max_clones: 3 }
+    // Model tiers unified in 445be279: sonnet → pro, haiku → se, opus[1m] → pro-max
+    const config = { model: 'pro', timeout: 120, max_clones: 3 }
     fs.writeFileSync(configPath, yaml.dump(config), 'utf-8')
 
     const result = manager.loadConfig(testOrg)
-    expect(result.config.model).toBe('sonnet')
+    expect(result.config.model).toBe('pro')
     expect(result.config.timeout).toBe(120)
     expect(result.config.max_clones).toBe(3)
     expect(result.degraded).toBe(false)
@@ -75,13 +76,13 @@ describe('ConfigManager', () => {
     fs.writeFileSync(configPath, '{ invalid yaml [[', 'utf-8')
 
     const result = manager.loadConfig(testOrg)
-    expect(result.config.model).toBe('opus[1m]')
+    expect(result.config.model).toBe('pro-max')
     expect(result.degraded).toBe(true)
     expect(result.warnings.some(w => w.includes('YAML parse error'))).toBe(true)
   })
 
   it('updates config and writes to file', () => {
-    fs.writeFileSync(configPath, yaml.dump({ model: 'haiku' }), 'utf-8')
+    fs.writeFileSync(configPath, yaml.dump({ model: 'se' }), 'utf-8')
     manager.clearCache(testOrg)
 
     manager.updateConfig(testOrg, { timeout: 600 })
@@ -89,6 +90,6 @@ describe('ConfigManager', () => {
 
     const result = manager.loadConfig(testOrg)
     expect(result.config.timeout).toBe(600)
-    expect(result.config.model).toBe('haiku')
+    expect(result.config.model).toBe('se')
   })
 })

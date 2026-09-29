@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
@@ -9,14 +9,39 @@ import { SSEService } from "../services/sse"
 import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { ExecutionService } from "../services/execution"
+import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 
 const ORG = "test-org"
+
+// P1 B4 票2B-3：onNodeEnd 的落账尾段（recordNodeUsage/costForNodeExecution）已迁 PG，
+// 且跑在 fire-and-forget async 体里 —— 本文件钉的是 outputs 持久化与 $ref 解析（纯
+// SQLite 读模型），套用 execution-lifecycle 已验证的桩注入配方（ExecutionService
+// 第 10 参 → ExecutionLifecycle 第 12 参），把跨引擎空 join 关在测试边界之外。
+function makeStubTokenUsageDao(handle: Database.Database): TokenUsageDAO {
+  return {
+    recordNodeUsage: vi.fn(async (input: any) => {
+      handle.prepare(
+        `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+          cache_read_tokens, cache_creation_tokens, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        input.id, input.nodeExecutionId, input.model,
+        input.usage?.inputTokens ?? 0, input.usage?.outputTokens ?? 0,
+        input.usage?.cacheReadTokens ?? 0, input.usage?.cacheCreationTokens ?? 0,
+        input.source ?? 'node', input.createdAt ?? new Date().toISOString(),
+      )
+    }),
+    costForNodeExecution: vi.fn(async () => ({ usd: 0 })),
+    aggregateByExecution: vi.fn(async () => null),
+    insertLlmCallBatch: vi.fn(async () => undefined),
+  } as unknown as TokenUsageDAO
+}
 
 let db: Database.Database
 let sse: SSEService
 let wfService: WorkflowService
 let builtInWfService: BuiltInWorkflowService
 let execService: ExecutionService
+let stubTokenUsage: TokenUsageDAO
 let workspacePath: string
 let workspaceId: string
 let dbPath: string
@@ -54,7 +79,9 @@ nodes:
   sse = new SSEService()
   wfService = new WorkflowService()
   builtInWfService = new BuiltInWorkflowService()
-  execService = new ExecutionService(db, sse, wfService, builtInWfService, ORG, workspacePath, workspaceId)
+  stubTokenUsage = makeStubTokenUsageDao(db)
+  execService = new ExecutionService(db, sse, wfService, builtInWfService, ORG, workspacePath, workspaceId,
+    undefined, undefined, stubTokenUsage)
 })
 
 afterEach(() => {
@@ -64,7 +91,7 @@ afterEach(() => {
 })
 
 describe("node_executions.outputs persistence", () => {
-  it("writes outputs to node_executions table via onNodeEnd callback", () => {
+  it("writes outputs to node_executions table via onNodeEnd callback", async () => {
     const exec = execService.create(workspaceId, { workflow_ref: "test.yaml" })
     const neId = `${exec.id}-step1`
 
@@ -90,9 +117,12 @@ describe("node_executions.outputs persistence", () => {
     const parsed = JSON.parse(row.outputs!)
     expect(parsed.last_output).toBe("hello world")
     expect(parsed.exit_code).toBe(0)
+
+    // 落账尾段是微任务 —— 等桩被调用后断言，确保 async 体在 afterEach 关库前收尾。
+    await vi.waitFor(() => expect(stubTokenUsage.costForNodeExecution).toHaveBeenCalled(), { timeout: 1500 })
   })
 
-  it("stores empty outputs object when result has no outputs", () => {
+  it("stores empty outputs object when result has no outputs", async () => {
     const exec = execService.create(workspaceId, { workflow_ref: "test.yaml" })
     const neId = `${exec.id}-step1`
 
@@ -113,6 +143,8 @@ describe("node_executions.outputs persistence", () => {
     }
     // No outputs property on result → outputs column stays null (no spread)
     expect(row.outputs).toBeNull()
+
+    await vi.waitFor(() => expect(stubTokenUsage.costForNodeExecution).toHaveBeenCalled(), { timeout: 1500 })
   })
 })
 

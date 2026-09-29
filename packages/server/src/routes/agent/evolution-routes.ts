@@ -6,7 +6,7 @@
 import { Hono } from 'hono'
 import fs from 'fs'
 import path from 'path'
-import { createAgentError } from './middleware'
+import { createAgentError, type AgentHono } from './middleware'
 import { getEvolutionService } from '../../services/agent/evolution-service'
 import { getConfigManager } from '../../services/agent/config-manager'
 import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
@@ -16,9 +16,9 @@ export interface EvolutionRouteDeps {
   evolutionDAO: EvolutionDAO
 }
 
-export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
+export function createEvolutionRoutes(deps: EvolutionRouteDeps): AgentHono {
   const { evolutionDAO } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // F5: User feedback-driven evolution
   app.post('/evolution/feedback', async (c) => {
@@ -38,16 +38,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
 
       const body = await c.req.json<{
         content: string; skill_name?: string; session_id?: string; type?: string
-      }>().catch(() => ({}))
+      }>().catch(() => ({} as never))
       if (!body.content) return c.json(createAgentError('INVALID_PARAM', 'content is required'), 400)
 
       const evolutionService = getEvolutionService()
-      const reflection = evolutionService.reflect(org, {
+      const reflection = await evolutionService.reflect(org, {
         type: 'user_feedback', skill_name: body.skill_name, content: body.content, session_id: body.session_id,
       })
 
       if (reflection.identified && reflection.candidate) {
-        evolutionService.recordExperience(org, {
+        await evolutionService.recordExperience(org, {
           skill_name: reflection.candidate.skill_name, content: `User feedback: ${body.content}`, session_id: body.session_id,
         })
         if (reflection.level === 'minor') {
@@ -57,10 +57,10 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
             const current = fs.readFileSync(skillPath, 'utf-8')
             fs.writeFileSync(skillPath, current + `\n\n> 改进 (${new Date().toISOString().split('T')[0]}): ${body.content.slice(0, 200)}`, 'utf-8')
           }
-          evolutionService.recordEvolution(org, { skill_name: reflection.candidate.skill_name, change_type: 'minor', level: 'minor', summary: `User feedback: ${body.content.slice(0, 200)}` })
+          await evolutionService.recordEvolution(org, { skill_name: reflection.candidate.skill_name, change_type: 'minor', level: 'minor', summary: `User feedback: ${body.content.slice(0, 200)}` })
         }
         if (reflection.level === 'major') {
-          evolutionService.recordEvolution(org, { skill_name: reflection.candidate.skill_name, change_type: 'major', level: 'major', summary: `User feedback (pending confirmation): ${body.content.slice(0, 200)}` })
+          await evolutionService.recordEvolution(org, { skill_name: reflection.candidate.skill_name, change_type: 'major', level: 'major', summary: `User feedback (pending confirmation): ${body.content.slice(0, 200)}` })
         }
       }
 
@@ -88,10 +88,10 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       }
 
       const evolutionService = getEvolutionService()
-      const reflection = evolutionService.reflect(org, { type: 'self_check', content: 'Periodic self-check triggered' })
+      const reflection = await evolutionService.reflect(org, { type: 'self_check', content: 'Periodic self-check triggered' })
 
       if (reflection.identified && reflection.candidate) {
-        evolutionService.recordEvolution(org, {
+        await evolutionService.recordEvolution(org, {
           skill_name: reflection.candidate.skill_name, change_type: reflection.candidate.change_type,
           level: reflection.level, summary: reflection.candidate.summary,
         })
@@ -105,13 +105,13 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   })
 
   // Evolution changelog
-  app.get('/evolution/changelog', (c) => {
+  app.get('/evolution/changelog', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       const skill_name = c.req.query('skill')
       const limit = parseInt(c.req.query('limit') ?? '50', 10)
-      const items = getEvolutionService().listChangelog(org, { skill_name, limit })
+      const items = await getEvolutionService().listChangelog(org, { skill_name, limit })
       return c.json({ items, total: items.length })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
@@ -120,7 +120,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   })
 
   // Evolution experiences list
-  app.get('/evolution/experiences', (c) => {
+  app.get('/evolution/experiences', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -130,7 +130,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       // When search query provided, use FTS search; otherwise list
       if (q) {
         const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 50)
-        const searchResults = evolutionDAO.searchExperiences(q, limit)
+        const searchResults = await evolutionDAO.searchExperiences(q, limit)
         const items = searchResults.map((r, i) => ({
           id: -(i + 1), // FTS results don't have stable IDs
           skill_name: r.skill_name,
@@ -142,7 +142,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         return c.json({ items, total: items.length })
       }
 
-      const items = getEvolutionService().listExperiences(org, skill)
+      const items = await getEvolutionService().listExperiences(org, skill)
       return c.json({ items, total: items.length })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
@@ -151,7 +151,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   })
 
   // Evolution rollback
-  app.post('/evolution/rollback/:id', (c) => {
+  app.post('/evolution/rollback/:id', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -160,7 +160,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
 
       // Check if entry exists and get skill_name for .bak check
       const dao = evolutionDAO
-      const entryRow = dao.findEvolutionByIdAndOrg(id, org)
+      const entryRow = await dao.findEvolutionByIdAndOrg(id, org)
 
       if (!entryRow) return c.json(createAgentError('NOT_FOUND', `Evolution entry #${id} not found`), 404)
       if (entryRow.rolled_back) return c.json(createAgentError('NOT_FOUND', `Evolution entry #${id} already rolled back`), 404)
@@ -172,7 +172,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         return c.json(createAgentError('BACKUP_MISSING', `Backup file for skill "${entry.skill_name}" not found`), 409)
       }
 
-      const success = getEvolutionService().rollback(org, id)
+      const success = await getEvolutionService().rollback(org, id)
       if (!success) return c.json(createAgentError('NOT_FOUND', `Evolution entry #${id} not found`), 404)
 
       // Restore from .bak
@@ -204,7 +204,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       if (!body.skill_name || !body.change_type || !body.level || !body.summary) {
         return c.json(createAgentError('INVALID_PARAM', 'Missing required fields: skill_name, change_type, level, summary'), 400)
       }
-      const entry = getEvolutionService().recordEvolution(org, {
+      const entry = await getEvolutionService().recordEvolution(org, {
         skill_name: body.skill_name,
         change_type: body.change_type,
         level: body.level,
@@ -234,7 +234,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
 
       const now = new Date().toISOString()
       const dao = evolutionDAO
-      const result = dao.insertExperienceWithFts({
+      const result = await dao.insertExperienceWithFts({
         skill_name: body.skill_name,
         content: body.content,
         source_session_id: body.source_session_id ?? null,
@@ -244,7 +244,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       return c.json({
         ok: true,
         entry: {
-          id: result.lastInsertRowid,
+          id: result.id,
           skill_name: body.skill_name,
           content: body.content,
           source_session_id: body.source_session_id ?? null,
@@ -272,14 +272,14 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         return c.json(createAgentError('INVALID_PARAM', 'skill_name and insight are required'), 400)
       }
 
-      const result = evolutionDAO.insertMark({
+      const result = await evolutionDAO.insertMark({
         skill_name: body.skill_name,
         insight: body.insight,
         session_id: body.session_id,
         org,
       })
 
-      return c.json({ ok: true, id: result.lastInsertRowid })
+      return c.json({ ok: true, id: result.id })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
@@ -302,10 +302,10 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         )
       }
 
-      const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
+      const body = await c.req.json<{ session_id?: string }>().catch(() => ({} as never))
       const evolutionService = getEvolutionService()
 
-      const result = evolutionService.processUnprocessedMarks(org, body.session_id)
+      const result = await evolutionService.processUnprocessedMarks(org, body.session_id)
 
       return c.json(result)
     } catch (err: unknown) {

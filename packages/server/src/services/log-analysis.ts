@@ -164,11 +164,16 @@ export class LogAnalysisService {
     this.execDao = execDao
   }
 
-  private cached<T>(key: string, compute: () => T): T {
+  // P1 B4：TokenUsageDAO 迁 PG 后计算体是异步的 —— cached 改缓存 Promise
+  // （并发同键共享同一 in-flight 查询；失败即逐出，不缓存 rejected）。
+  private async cached<T>(key: string, compute: () => Promise<T>): Promise<T> {
     const hit = this.cache.get(key)
-    if (hit && hit.expiresAt > Date.now()) return hit.data as T
-    const data = compute()
-    this.cache.set(key, { data, expiresAt: Date.now() + this.CACHE_TTL_MS })
+    if (hit && hit.expiresAt > Date.now()) return await (hit.data as Promise<T>)
+    const pending = compute().catch((err: unknown) => {
+      this.cache.delete(key)
+      throw err
+    })
+    this.cache.set(key, { data: pending, expiresAt: Date.now() + this.CACHE_TTL_MS })
     // R2-H-2: 每 100 次操作或超过容量上限时清理过期条目
     if (++this.cacheOps % 100 === 0 || this.cache.size > this.MAX_CACHE_SIZE) {
       const now = Date.now()
@@ -176,7 +181,7 @@ export class LogAnalysisService {
         if (v.expiresAt <= now) this.cache.delete(k)
       }
     }
-    return data
+    return await pending
   }
 
   /**
@@ -190,19 +195,19 @@ export class LogAnalysisService {
     }
   }
 
-  getHealthSummary(workspaceId: string, days: number): HealthSummary {
-    return this.cached(`health:${workspaceId}:${days}`, () => {
-      const stats = this.tokenDao.getHealthStats(workspaceId, days)
+  async getHealthSummary(workspaceId: string, days: number): Promise<HealthSummary> {
+    return this.cached(`health:${workspaceId}:${days}`, async () => {
+      const stats = await this.tokenDao.getHealthStats(workspaceId, days)
 
       const total = stats.total || 0
       const success = stats.success_count || 0
       const failure = stats.failure_count || 0
 
       // Daily trend
-      const trendRows = this.tokenDao.getDailyTrend(workspaceId, days)
+      const trendRows = await this.tokenDao.getDailyTrend(workspaceId, days)
 
       // Active alerts count
-      const alertCount = this.tokenDao.getActiveAlertCount(workspaceId, days)
+      const alertCount = await this.tokenDao.getActiveAlertCount(workspaceId, days)
 
       return {
         totalExecutions: total,
@@ -222,12 +227,12 @@ export class LogAnalysisService {
     })
   }
 
-  getAlerts(workspaceId: string, days: number, limit: number): Alert[] {
-    return this.cached(`alerts:${workspaceId}:${days}:${limit}`, () => {
+  async getAlerts(workspaceId: string, days: number, limit: number): Promise<Alert[]> {
+    return this.cached(`alerts:${workspaceId}:${days}:${limit}`, async () => {
       const alerts: Alert[] = []
 
       // 1. Consecutive failures
-      const streaks = this.tokenDao.getConsecutiveFailureAlerts(workspaceId, days)
+      const streaks = await this.tokenDao.getConsecutiveFailureAlerts(workspaceId, days)
 
       for (const s of streaks) {
         alerts.push({
@@ -243,7 +248,7 @@ export class LogAnalysisService {
       }
 
       // 2. High failure rate nodes
-      const fragileNodes = this.tokenDao.getHighFailureRateAlerts(workspaceId, days)
+      const fragileNodes = await this.tokenDao.getHighFailureRateAlerts(workspaceId, days)
 
       for (const n of fragileNodes) {
         alerts.push({
@@ -260,7 +265,7 @@ export class LogAnalysisService {
       }
 
       // 3. Cost spikes
-      const costSpikes = this.tokenDao.getCostSpikeAlerts(workspaceId, days)
+      const costSpikes = await this.tokenDao.getCostSpikeAlerts(workspaceId, days)
 
       for (const c of costSpikes) {
         if (c.exec_cost === null) continue // SQL 谓词已滤 NULL，此为类型守卫
@@ -288,14 +293,14 @@ export class LogAnalysisService {
     })
   }
 
-  getFailurePatterns(workspaceId: string, days: number): {
+  async getFailurePatterns(workspaceId: string, days: number): Promise<{
     errorCategories: ErrorCategory[]
     fragilityRanking: FragilityScore[]
     failureChains: FailureChain[]
-  } {
-    return this.cached(`failures:${workspaceId}:${days}`, () => {
+  }> {
+    return this.cached(`failures:${workspaceId}:${days}`, async () => {
       // Error categories
-      const catRows = this.tokenDao.getErrorCategories(workspaceId, days)
+      const catRows = await this.tokenDao.getErrorCategories(workspaceId, days)
 
       const totalErrors = catRows.reduce((sum, r) => sum + r.count, 0)
       const errorCategories: ErrorCategory[] = catRows.map(r => ({
@@ -307,7 +312,7 @@ export class LogAnalysisService {
       }))
 
       // Fragility ranking
-      const fragRows = this.tokenDao.getFragilityRanking(workspaceId, days)
+      const fragRows = await this.tokenDao.getFragilityRanking(workspaceId, days)
 
       const fragilityRanking: FragilityScore[] = fragRows.map(r => ({
         nodeId: r.node_id,
@@ -322,7 +327,7 @@ export class LogAnalysisService {
       }))
 
       // Failure chains
-      const chainRows = this.tokenDao.getFailureChains(workspaceId, days)
+      const chainRows = await this.tokenDao.getFailureChains(workspaceId, days)
 
       const failureChains: FailureChain[] = chainRows.map(r => ({
         failedNode: r.failed_node,
@@ -335,14 +340,14 @@ export class LogAnalysisService {
     })
   }
 
-  getAnomalies(workspaceId: string, days: number): {
+  async getAnomalies(workspaceId: string, days: number): Promise<{
     durationAnomalies: DurationAnomaly[]
     consecutiveFailures: ConsecutiveFailure[]
     costAnomalies: CostAnomaly[]
-  } {
-    return this.cached(`anomalies:${workspaceId}:${days}`, () => {
+  }> {
+    return this.cached(`anomalies:${workspaceId}:${days}`, async () => {
       // Duration anomalies (Z-Score with Bessel correction)
-      const durRows = this.tokenDao.getDurationAnomalies(workspaceId, days)
+      const durRows = await this.tokenDao.getDurationAnomalies(workspaceId, days)
 
       const durationAnomalies: DurationAnomaly[] = durRows.map(r => ({
         executionId: r.execution_id,
@@ -355,7 +360,7 @@ export class LogAnalysisService {
       }))
 
       // Consecutive failures
-      const streakRows = this.tokenDao.getConsecutiveFailureAlerts(workspaceId, days)
+      const streakRows = await this.tokenDao.getConsecutiveFailureAlerts(workspaceId, days)
 
       const consecutiveFailures: ConsecutiveFailure[] = streakRows.map(r => ({
         workflowRef: r.workflow_ref,
@@ -365,7 +370,7 @@ export class LogAnalysisService {
       }))
 
       // Cost anomalies
-      const costRows = this.tokenDao.getCostAnomalies(workspaceId, days)
+      const costRows = await this.tokenDao.getCostAnomalies(workspaceId, days)
 
       const costAnomalies: CostAnomaly[] = costRows
         .filter(r => r.severity !== "normal" && r.exec_cost !== null)
@@ -382,13 +387,13 @@ export class LogAnalysisService {
     })
   }
 
-  getCostAnalysis(workspaceId: string, days: number): {
+  async getCostAnalysis(workspaceId: string, days: number): Promise<{
     costTrend: CostTrendPoint[]
     tokenDistribution: TokenDistribution[]
     costByWorkflow: WorkflowCost[]
-  } {
-    return this.cached(`cost:${workspaceId}:${days}`, () => {
-      const trendRows = this.tokenDao.getCostTrend(workspaceId, days)
+  }> {
+    return this.cached(`cost:${workspaceId}:${days}`, async () => {
+      const trendRows = await this.tokenDao.getCostTrend(workspaceId, days)
 
       // C3: 趋势点 = 已知消费曲线（null = 当日全部未定价，图上不画假 0）
       const costTrend: CostTrendPoint[] = trendRows.map(r => ({
@@ -397,7 +402,7 @@ export class LogAnalysisService {
         executionCount: r.exec_count,
       }))
 
-      const tokenRows = this.tokenDao.getTokenDistribution(workspaceId, days)
+      const tokenRows = await this.tokenDao.getTokenDistribution(workspaceId, days)
 
       const tokenDistribution: TokenDistribution[] = tokenRows.map(r => ({
         model: r.model,
@@ -408,7 +413,7 @@ export class LogAnalysisService {
         cacheHitRate: r.cache_hit_rate,
       }))
 
-      const wfRows = this.tokenDao.getCostByWorkflow(workspaceId, days)
+      const wfRows = await this.tokenDao.getCostByWorkflow(workspaceId, days)
 
       const costByWorkflow: WorkflowCost[] = wfRows.map(r => ({
         workflowRef: r.workflow_ref,
@@ -434,7 +439,7 @@ export class LogAnalysisService {
     }
 
     // R3-B-1 修复：仅从 executions + workspaces 获取 workspace_path
-    const workspacePathRaw = this.execDao.findWorkspacePathByExecution(executionId, workspaceId)
+    const workspacePathRaw = await this.execDao.findWorkspacePathByExecution(executionId, workspaceId)
 
     if (!workspacePathRaw) {
       return { executionId, nodeId: nodeId ?? "unknown", error: null, exitCode: null, contextLines: [], totalLines: 0 }
@@ -442,7 +447,7 @@ export class LogAnalysisService {
 
     // 从 node_executions 获取 error 和 exit_code（当指定了 nodeId 时）
     const nodeExec = nodeId
-      ? this.execDao.findNodeErrorAndExitCode(executionId, nodeId)
+      ? await this.execDao.findNodeErrorAndExitCode(executionId, nodeId)
       : null
 
     const workspacePath = workspacePathRaw.replace(/^~/, os.homedir())

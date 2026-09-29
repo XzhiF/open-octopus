@@ -6,7 +6,7 @@ export function eventRoutes(sse: SSEService): Hono {
   const app = new Hono()
 
   app.get("/", (c) => {
-    const workspaceId = c.req.param("id")
+    const workspaceId = c.req.param("id")!
     return streamSSE(c, async (stream) => {
       const unsub = sse.subscribe(workspaceId, (event) => {
         stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })

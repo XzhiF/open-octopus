@@ -9,6 +9,7 @@
 
 import { Hono } from "hono"
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { streamSSE } from "hono/streaming"
 import { z, ZodError } from "zod"
 import fs from "fs"
@@ -40,7 +41,7 @@ import { InstanceGateError } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
-function classifyError(err: unknown): { status: number; message: string } {
+function classifyError(err: unknown): { status: ContentfulStatusCode; message: string } {
   if (err instanceof ZodError) {
     const details = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
     return { status: 400, message: details }
@@ -54,7 +55,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
   // 实例关闭安全闸（2026-09-24）：status 由闸侧裁定（400 非法/宿主端口、
   // 403 未登记端口、409 进程树涉宿主）。
-  if (err instanceof InstanceGateError) return { status: err.status, message: err.message }
+  if (err instanceof InstanceGateError) return { status: err.status as ContentfulStatusCode, message: err.message }
   // 06 (US7): artifact content whitelist + missing-file classification. The
   // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
   // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4) vs
@@ -150,7 +151,7 @@ export function createTasksRoutes(
   // GET /events — task_status + spec_field_update on the 'taskpool' channel.
   // Mirrors taskpoolEventRoutes (routes/events.ts) so the /tasks kanban can
   // subscribe at /api/tasks/events without coupling to the scheduler path.
-  router.get("/events", (c) => {
+  router.get("/events", async (c) => {
     return streamSSE(c, async (stream) => {
       // Immediate heartbeat so the client's fetch/EventSource resolves within
       // milliseconds instead of waiting up to 30s for the first periodic
@@ -162,11 +163,13 @@ export function createTasksRoutes(
         event: "heartbeat",
         data: JSON.stringify({ ts: new Date().toISOString(), hello: true }),
       })
+      // B5 票5B2: writeSSE 变异步 —— SSE 帧写出为刻意 fire-and-forget（流内部自有写队列），
+      // 显式 void 丢弃 Promise，禁默认漂浮。
       const unsub = sse.subscribe("taskpool", (event) => {
-        stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
+        void stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
       })
       const interval = setInterval(() => {
-        stream.writeSSE({
+        void stream.writeSSE({
           event: "heartbeat",
           data: JSON.stringify({ ts: new Date().toISOString() }),
         })
@@ -239,7 +242,7 @@ export function createTasksRoutes(
       if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
       if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
       if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)
-      const task = service.createTask(input)
+      const task = await service.createTask(input)
       return c.json(task, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -248,11 +251,11 @@ export function createTasksRoutes(
   })
 
   // GET / — list (kanban); ?status=&org=
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     try {
       const statusParam = c.req.query("status") as TaskStatus | undefined
       const orgParam = c.req.query("org")
-      const result = service.listTasks({
+      const result = await service.listTasks({
         status: statusParam,
         org: orgParam,
       })
@@ -264,9 +267,9 @@ export function createTasksRoutes(
   })
 
   // GET /:id — detail (task + children schedules)
-  router.get("/:id", (c) => {
+  router.get("/:id", async (c) => {
     try {
-      const task = service.getTask(c.req.param("id"))
+      const task = await service.getTask(c.req.param("id"))
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -279,12 +282,12 @@ export function createTasksRoutes(
   // 弹窗 drill-down read this instead of the retired envelope's children[]: one row per
   // run (v4 round / composite dispatch), with the phase/round coordinates the acceptance
   // ledger uses and the workspace to deep-link into.
-  router.get("/:id/executions", (c) => {
+  router.get("/:id/executions", async (c) => {
     try {
       const limitParam = c.req.query("limit")
       const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 200) : 50
       const id = c.req.param("id")
-      const rows = service.listRunHistory(id, limit)
+      const rows = await service.listRunHistory(id, limit)
       return c.json({ items: rows, total: rows.length })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -296,9 +299,9 @@ export function createTasksRoutes(
   // GET /:id/artifacts — the artifact index (artifacts.json). Missing file →
   // []; corrupted JSON → [] + warn (SW-BP12); missing task → 404. The index
   // is the single source of truth for "what did this task produce" (ADR-0011).
-  router.get("/:id/artifacts", (c) => {
+  router.get("/:id/artifacts", async (c) => {
     try {
-      const entries = service.listArtifacts(c.req.param("id"))
+      const entries = await service.listArtifacts(c.req.param("id"))
       return c.json(entries)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -311,13 +314,13 @@ export function createTasksRoutes(
   // the service then whitelists it (AC2: relative-inside-artifacts no-escape
   // OR registered external=true absolute; else 403) and reads live disk
   // content (AC3) or 404 when the whitelisted file is missing (AC4).
-  router.get("/:id/artifacts/content", (c) => {
+  router.get("/:id/artifacts/content", async (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
       return c.json({ error: "Query param 'path' is required" }, 400)
     }
     try {
-      const result = service.readArtifactContent(c.req.param("id"), requestedPath)
+      const result = await service.readArtifactContent(c.req.param("id"), requestedPath)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -334,7 +337,7 @@ export function createTasksRoutes(
   // content/manifestContent may be null if the file hasn't been created yet.
   // Read fallback: pre-rename homes that never got a snapshot write still have
   // only spec.json on disk — serve it as manifestContent (read-only, never writes).
-  router.get("/:id/context", (c) => {
+  router.get("/:id/context", async (c) => {
     try {
       const homeService = new TaskHomeService()
       const homePath = homeService.homePath(c.req.param("id"))
@@ -372,7 +375,7 @@ export function createTasksRoutes(
   // no-escape / no absolute / task-exists→404 / edit-window→409) live in the
   // service+home service; a body over 512_000 chars → 400 via homeFileBodySchema.
   // Errors classify through ArtifactAccessError (403 / 404 / TOO_LARGE→413).
-  router.get("/:id/home-file", (c) => {
+  router.get("/:id/home-file", async (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
       return c.json({ error: "Query param 'path' is required" }, 400)
@@ -380,9 +383,9 @@ export function createTasksRoutes(
     try {
       if (c.req.query("list")) {
         const all = ["1", "true"].includes(c.req.query("all") ?? "")
-        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath, all) })
+        return c.json({ files: await service.listHomeDir(c.req.param("id"), requestedPath, all) })
       }
-      const result = service.readHomeFile(c.req.param("id"), requestedPath)
+      const result = await service.readHomeFile(c.req.param("id"), requestedPath)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -394,9 +397,9 @@ export function createTasksRoutes(
   // the `.scratch/` batch dirs (落盘即现, decoupled from phases[]). No path param
   // (the scan roots from the home layout — no escape surface). Empty `.scratch/`
   // → `{ batches: [] }` 200; only an unknown task 404s.
-  router.get("/:id/batch-tree", (c) => {
+  router.get("/:id/batch-tree", async (c) => {
     try {
-      const batches = service.batchTree(c.req.param("id"))
+      const batches = await service.batchTree(c.req.param("id"))
       return c.json({ batches })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -406,9 +409,9 @@ export function createTasksRoutes(
 
   // GET /:id/home-tree — 输出区磁盘直扫（2026-09-24 拍板）：任务 home 的原始
   // 目录树（空目录/全部文件如实呈现）+ 绝对路径。{ dir, entries }。
-  router.get("/:id/home-tree", (c) => {
+  router.get("/:id/home-tree", async (c) => {
     try {
-      return c.json(service.homeTree(c.req.param("id")))
+      return c.json(await service.homeTree(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -417,13 +420,13 @@ export function createTasksRoutes(
 
   // GET /:id/home-content?path= — 读任务 home 下任意常规文件（目录树查看器；
   // 守卫 = 相对路径不出 home + 512KB 上限，403/404/413 与 home-file 同码）。
-  router.get("/:id/home-content", (c) => {
+  router.get("/:id/home-content", async (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
       return c.json({ error: "Query param 'path' is required" }, 400)
     }
     try {
-      return c.json(service.readHomeAnyFile(c.req.param("id"), requestedPath))
+      return c.json(await service.readHomeAnyFile(c.req.param("id"), requestedPath))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -466,10 +469,10 @@ export function createTasksRoutes(
 
   // 验收剧本：把 awaiting 轮的契约文件编译成走查清单（派生视图，不入库）。
   // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
-  router.get("/:id/playbook", (c) => {
+  router.get("/:id/playbook", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     try {
-      return c.json(evidence.getPlaybook(c.req.param("id")))
+      return c.json(await evidence.getPlaybook(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -508,7 +511,7 @@ export function createTasksRoutes(
   // ?since=<n> 增量补拉 —— n = 客户端已收 task_verify_log 行数（0 基全局序号），
   // 响应附 lines_after（自第 n 行起）；SSE 断线重连后找回错过的行。非法/缺省
   // since = 现行为不变（无该字段）。
-  router.get("/:id/verify", (c) => {
+  router.get("/:id/verify", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const sinceRaw = c.req.query("since")
     const since = sinceRaw !== undefined && sinceRaw !== "" ? Number(sinceRaw) : undefined
@@ -520,7 +523,7 @@ export function createTasksRoutes(
     }
   })
 
-  router.post("/:id/verify/abort", (c) => {
+  router.post("/:id/verify/abort", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     try {
       return c.json(evidence.abortVerify(c.req.param("id")))
@@ -550,7 +553,7 @@ export function createTasksRoutes(
       return c.json({ error: message }, status)
     }
   })
-  router.post("/:id/preview/stop", (c) => {
+  router.post("/:id/preview/stop", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     try {
       return c.json(evidence.stopPreview(c.req.param("id")))
@@ -565,10 +568,10 @@ export function createTasksRoutes(
   // 读时端口复核（reconcile）；两个 POST 都会真杀进程 —— UI 侧必须过确认框，
   // 服务端另有 host-guard 三重闸兜底（绝不碰宿主 PID/端口/祖先链）。
 
-  router.get("/:id/instances", (c) => {
+  router.get("/:id/instances", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     try {
-      return c.json(evidence.listInstances(c.req.param("id")))
+      return c.json(await evidence.listInstances(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -614,7 +617,7 @@ export function createTasksRoutes(
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
       const parsed = homeFileBodySchema.parse(body)
-      const result = service.writeHomeFile(c.req.param("id"), parsed.path, parsed.content)
+      const result = await service.writeHomeFile(c.req.param("id"), parsed.path, parsed.content)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -650,7 +653,7 @@ export function createTasksRoutes(
       if (body.workflow_ref !== undefined) {
         input.workflow_ref = typeof body.workflow_ref === "string" ? body.workflow_ref : null
       }
-      const task = service.updateTask(c.req.param("id"), input, version)
+      const task = await service.updateTask(c.req.param("id"), input, version)
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -660,9 +663,9 @@ export function createTasksRoutes(
 
   // DELETE /:id — soft-delete. 票03: nothing cascades (a task's runs are executions rows);
   // only a running task is refused, everything else is discardable.
-  router.delete("/:id", (c) => {
+  router.delete("/:id", async (c) => {
     try {
-      const result = service.deleteTask(c.req.param("id"))
+      const result = await service.deleteTask(c.req.param("id"))
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -751,9 +754,9 @@ export function createTasksRoutes(
   // PR → done) continues ASYNC — the board reflects completion via the
   // task_status SSE ('done'), not this response. A retry while a run is still
   // in flight is idempotent (the in-flight run is reused).
-  router.post("/:id/archive/retry", (c) => {
+  router.post("/:id/archive/retry", async (c) => {
     try {
-      const task = service.retryArchive(c.req.param("id"))
+      const task = await service.retryArchive(c.req.param("id"))
       return c.json({ ok: true, task_id: task.id, status: task.status }, 202)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -790,7 +793,7 @@ export function createTasksRoutes(
       // no notice. Lenient default-to-agent keeps backward compat.
       const source = body.source === "user" || body.source === "agent" ? body.source : "agent"
       const input: UpdateSpecFieldInput = { field, value: body.value, source }
-      const result = service.updateSpecField(c.req.param("id"), input)
+      const result = await service.updateSpecField(c.req.param("id"), input)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -802,9 +805,9 @@ export function createTasksRoutes(
   // row; 票03: no schedule row is created, the built-in job starts it).
   // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
   // list so the UI can show exactly what to confirm before enqueue (US6).
-  router.post("/:id/ready", (c) => {
+  router.post("/:id/ready", async (c) => {
     try {
-      const task = service.readyTask(c.req.param("id"))
+      const task = await service.readyTask(c.req.param("id"))
       return c.json(task)
     } catch (err: unknown) {
       if (err instanceof TaskReadyGateError) {
@@ -825,7 +828,7 @@ export function createTasksRoutes(
     }
     const ready = body && typeof body.ready === "boolean" ? body.ready : true
     try {
-      const result = service.duplicateTask(c.req.param("id"), { ready })
+      const result = await service.duplicateTask(c.req.param("id"), { ready })
       return c.json(result, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -835,9 +838,9 @@ export function createTasksRoutes(
 
   // POST /:id/reopen — the enqueue undo (ready→draft): reaps the not-yet-
   // started envelope and unlocks structural editing. Claimed/running ⇒ 409.
-  router.post("/:id/reopen", (c) => {
+  router.post("/:id/reopen", async (c) => {
     try {
-      const task = service.reopenTask(c.req.param("id"))
+      const task = await service.reopenTask(c.req.param("id"))
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -871,9 +874,9 @@ export function createTasksRoutes(
 
   // POST /:id/trigger/cancel — withdraw a not-yet-started fire (the queued instance
   // and/or the armed cursor); the task returns to ready. Already started → 409.
-  router.post("/:id/trigger/cancel", (c) => {
+  router.post("/:id/trigger/cancel", async (c) => {
     try {
-      const task = service.cancelTaskTrigger(c.req.param("id"))
+      const task = await service.cancelTaskTrigger(c.req.param("id"))
       return c.json(task)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -893,13 +896,13 @@ export function createTasksRoutes(
     const id = c.req.param("id")
     try {
       if (typeof body.enabled === "boolean" && body.cron === undefined) {
-        service.setTriggerEnabled(id, body.enabled)
+        await service.setTriggerEnabled(id, body.enabled)
       } else {
         const cron = typeof body.cron === "string" ? body.cron : null
         const timezone = typeof body.timezone === "string" ? body.timezone : "Asia/Shanghai"
-        service.setCronTrigger(id, cron, timezone)
+        await service.setCronTrigger(id, cron, timezone)
       }
-      return c.json(service.getTaskSummary(id))
+      return c.json(await service.getTaskSummary(id))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -907,10 +910,10 @@ export function createTasksRoutes(
   })
 
   // POST /:id/trigger/unschedule — drop the schedule, keep the task.
-  router.post("/:id/trigger/unschedule", (c) => {
+  router.post("/:id/trigger/unschedule", async (c) => {
     try {
-      service.setCronTrigger(c.req.param("id"), null, undefined)
-      return c.json(service.getTaskSummary(c.req.param("id")))
+      await service.setCronTrigger(c.req.param("id"), null, undefined)
+      return c.json(await service.getTaskSummary(c.req.param("id")))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -985,7 +988,7 @@ export function createTasksRoutes(
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     const template = typeof body.template === "string" ? body.template : ""
     try {
-      const result = assistService.trigger(c.req.param("id"), template, body.input as never)
+      const result = await assistService.trigger(c.req.param("id"), template, body.input as never)
       return c.json(result, 200)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -996,10 +999,10 @@ export function createTasksRoutes(
   // GET /:id/assist-workflows/:runId — run status + process logs + structured
   // output (AC4). Parse failure → output_raw + output_parse_error (SW-BP10),
   // surfaced as fields on the 200 response, not an error status.
-  router.get("/:id/assist-workflows/:runId", (c) => {
+  router.get("/:id/assist-workflows/:runId", async (c) => {
     if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
     try {
-      const run = assistService.getRun(c.req.param("id"), c.req.param("runId"))
+      const run = await assistService.getRun(c.req.param("id"), c.req.param("runId"))
       return c.json(run)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -1012,9 +1015,9 @@ export function createTasksRoutes(
   // content: null, source: null }` when unbound; 400 when the bound ref is no
   // longer resolvable (uninstalled builtin / missing task-home file); 404 when
   // the task doesn't exist.
-  router.get("/:id/workflow-ref", (c) => {
+  router.get("/:id/workflow-ref", async (c) => {
     try {
-      const result = service.viewWorkflowRef(c.req.param("id"))
+      const result = await service.viewWorkflowRef(c.req.param("id"))
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

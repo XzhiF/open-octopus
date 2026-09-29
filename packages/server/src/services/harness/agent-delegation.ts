@@ -565,7 +565,7 @@ export class AgentDelegationService {
     this.emitDelegationSSE(executionId, displayNodeId, delegationId, "start")
 
     // Build the prompt (includes conversation history if session exists)
-    const prompt = this.buildPromptWithHistory(report, context)
+    const prompt = await this.buildPromptWithHistory(report, context)
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
@@ -590,7 +590,7 @@ export class AgentDelegationService {
       }
 
       // Persist failure event
-      this.persistDelegationEvent({
+      await this.persistDelegationEvent({
         id: delegationId,
         executionId,
         nodeId,
@@ -639,11 +639,11 @@ export class AgentDelegationService {
 
     // Record token usage with source="harness"
     if (tokenInfo && tokenInfo.inputTokens + tokenInfo.outputTokens > 0) {
-      this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
+      await this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
     }
 
     // Persist delegation event
-    this.persistDelegationEvent({
+    await this.persistDelegationEvent({
       id: delegationId,
       executionId,
       nodeId,
@@ -673,10 +673,10 @@ export class AgentDelegationService {
    * Otherwise, falls back to the standard buildDelegationPrompt.
    * Also injects success rate statistics when available (ticket 04 — AC-5).
    */
-  private buildPromptWithHistory(
+  private async buildPromptWithHistory(
     report: DiagnosisReport,
     context: DelegationContext,
-  ): string {
+  ): Promise<string> {
     // Build the base prompt (with or without session history)
     let prompt: string
     if (!this.session) {
@@ -700,7 +700,7 @@ export class AgentDelegationService {
     }
 
     // Inject success rate statistics (ticket 04 — AC-5, AC-6)
-    const statsSection = this.buildStatsSectionForReport(report)
+    const statsSection = await this.buildStatsSectionForReport(report)
     if (statsSection) {
       // Insert stats section before the final task instructions
       // Look for the task instructions marker and insert before it
@@ -723,14 +723,14 @@ export class AgentDelegationService {
    * Returns empty string if no DAO configured or not enough data.
    * Ticket 04 — AC-5, AC-6.
    */
-  private buildStatsSectionForReport(report: DiagnosisReport): string {
+  private async buildStatsSectionForReport(report: DiagnosisReport): Promise<string> {
     if (!this.evolutionDao) {
       return ""
     }
 
     try {
       const org = "default" // Harness agent uses default org
-      const stats = this.evolutionDao.getSuccessStats(org, "harness", report.detector)
+      const stats = await this.evolutionDao.getSuccessStats(org, "harness", report.detector)
       return buildStatsSection(stats)
     } catch (err) {
       // Stats injection failure is non-fatal
@@ -872,19 +872,20 @@ export class AgentDelegationService {
   /**
    * Record token usage for this delegation in the node_token_usages table.
    */
-  private recordTokenUsage(
+  // B4: TokenUsageDAO 已迁 PG —— 落账 async；try/catch 语义保持（await 后异常照旧出声）。
+  private async recordTokenUsage(
     delegationId: string,
     executionId: string,
     nodeId: string,
     tokenInfo: ModelUsage,
-  ): void {
+  ): Promise<void> {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
       // ledger 唯一写入口；NEW-r2：只落 token 事实，钱查询时派生
       // （SDK 上报价 tokenInfo.costUsd 不再传入 —— KD2 不作账；未配价 NULL —— KD4 不估算）。
-      this.tokenUsageDao.recordNodeUsage({
+      await this.tokenUsageDao.recordNodeUsage({
         id: tokenId,
         nodeExecutionId: nodeExecId,
         model: tokenInfo.model,
@@ -903,13 +904,13 @@ export class AgentDelegationService {
   /**
    * Persist a delegation event to the harness_events table.
    */
-  private persistDelegationEvent(params: {
+  private async persistDelegationEvent(params: {
     id: string
     executionId: string
     nodeId: string
     report: DiagnosisReport
     result: DelegationResult
-  }): void {
+  }): Promise<void> {
     const { id, executionId, nodeId, report, result } = params
 
     const row: HarnessEvent = {
@@ -928,7 +929,7 @@ export class AgentDelegationService {
     }
 
     try {
-      this.dao.insertEvent(row)
+      await this.dao.insertEvent(row)
     } catch (err) {
       console.error(
         "[AgentDelegationService] Failed to persist delegation event:",

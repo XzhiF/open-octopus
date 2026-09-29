@@ -39,18 +39,28 @@ vi.mock('../services/agent/paths', async () => {
 import fs from 'fs'
 import { MemoryService, getMemoryService, initMemoryService } from '../services/agent/memory-service'
 import { getAgentMemoryDir } from '../services/agent/paths'
-import { initDb, closeDb, getDb } from '../db/connection'
 import { AgentSessionDAO } from '../db/dao'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
 const TEST_ORG = 'test-mem-org'
 
-describe('MemoryService', () => {
+// P1 B3: AgentSessionDAO 已迁 postgres.js —— DB 相关用例落 PG 随机库。
+describePg('MemoryService', () => {
   let service: MemoryService
+  let pg: PgFixture
   const memDir = getAgentMemoryDir()
 
-  beforeEach(() => {
-    initDb(':memory:')
-    service = initMemoryService(new AgentSessionDAO(getDb()))
+  async function insertSession(id: string, org: string, title: string): Promise<void> {
+    const now = new Date().toISOString()
+    await pg.sql.unsafe(
+      "INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)",
+      [id, org, title, now, now],
+    )
+  }
+
+  beforeEach(async () => {
+    pg = await setupPgSchema()
+    service = initMemoryService(new AgentSessionDAO(pg.sql))
     // Ensure clean test directory
     if (fs.existsSync(MOCK_AGENT_DIR)) {
       fs.rmSync(MOCK_AGENT_DIR, { recursive: true, force: true })
@@ -59,6 +69,7 @@ describe('MemoryService', () => {
   })
 
   afterEach(async () => {
+    await pg.close()
     // Cleanup test files — remove the entire mock agent directory
     if (fs.existsSync(MOCK_AGENT_DIR)) {
       fs.rmSync(MOCK_AGENT_DIR, { recursive: true, force: true })
@@ -68,14 +79,14 @@ describe('MemoryService', () => {
   // ── readMemory ───────────────────────────────────────────────
 
   describe('readMemory', () => {
-    it('returns empty content when file does not exist', () => {
+    it('returns empty content when file does not exist', async () => {
       const result = service.readMemory(TEST_ORG, 'long-term')
       expect(result.content).toBe('')
       expect(result.layer).toBe('long-term')
       expect(result.token_count).toBe(0)
     })
 
-    it('reads existing long-term memory file', () => {
+    it('reads existing long-term memory file', async () => {
       const longTermDir = path.join(memDir, 'long-term.md')
       fs.writeFileSync(longTermDir, '# Long term memory\nTest content', 'utf-8')
 
@@ -85,7 +96,7 @@ describe('MemoryService', () => {
       expect(result.last_modified).toBeTruthy()
     })
 
-    it('reads daily memory for today', () => {
+    it('reads daily memory for today', async () => {
       const today = new Date().toISOString().split('T')[0]
       const dailyDir = path.join(memDir, 'daily')
       fs.mkdirSync(dailyDir, { recursive: true })
@@ -95,7 +106,7 @@ describe('MemoryService', () => {
       expect(result.content).toBe('Daily test')
     })
 
-    it('reads session memory file', () => {
+    it('reads session memory file', async () => {
       fs.writeFileSync(path.join(memDir, 'session-memory.md'), 'Session data', 'utf-8')
 
       const result = service.readMemory(TEST_ORG, 'session')
@@ -106,7 +117,7 @@ describe('MemoryService', () => {
   // ── writeMemory ──────────────────────────────────────────────
 
   describe('writeMemory', () => {
-    it('writes content to long-term memory', () => {
+    it('writes content to long-term memory', async () => {
       const result = service.writeMemory(TEST_ORG, 'long-term', 'New memory content')
       expect(result.ok).toBe(true)
       expect(result.token_count).toBeGreaterThan(0)
@@ -116,7 +127,7 @@ describe('MemoryService', () => {
       expect(fs.readFileSync(filePath, 'utf-8')).toBe('New memory content')
     })
 
-    it('creates directory structure if missing', () => {
+    it('creates directory structure if missing', async () => {
       if (fs.existsSync(MOCK_AGENT_DIR)) {
         fs.rmSync(MOCK_AGENT_DIR, { recursive: true, force: true })
       }
@@ -142,7 +153,7 @@ describe('MemoryService', () => {
       expect(content).toContain('Test entry')
     })
 
-    it('appends to existing content', () => {
+    it('appends to existing content', async () => {
       service.appendDaily(TEST_ORG, 'First entry')
       service.appendDaily(TEST_ORG, 'Second entry')
 
@@ -156,12 +167,12 @@ describe('MemoryService', () => {
   // ── readRecentWorkMemory ─────────────────────────────────────
 
   describe('readRecentWorkMemory', () => {
-    it('returns empty string when no daily files exist', () => {
+    it('returns empty string when no daily files exist', async () => {
       const result = service.readRecentWorkMemory(TEST_ORG, 3)
       expect(result).toBe('')
     })
 
-    it('reads daily files from last N days', () => {
+    it('reads daily files from last N days', async () => {
       const dailyDir = path.join(memDir, 'daily')
       fs.mkdirSync(dailyDir, { recursive: true })
 
@@ -180,7 +191,7 @@ describe('MemoryService', () => {
       expect(result).toContain('Day 2 content')
     })
 
-    it('limits to requested number of days', () => {
+    it('limits to requested number of days', async () => {
       const dailyDir = path.join(memDir, 'daily')
       fs.mkdirSync(dailyDir, { recursive: true })
 
@@ -202,7 +213,7 @@ describe('MemoryService', () => {
   // ── appendWorkMemory ─────────────────────────────────────────
 
   describe('appendWorkMemory', () => {
-    it('writes structured task entry to daily file', () => {
+    it('writes structured task entry to daily file', async () => {
       const result = service.appendWorkMemory(TEST_ORG, {
         timestamp: '2025-01-15T10:30:00.000Z',
         task: 'Code review',
@@ -221,7 +232,7 @@ describe('MemoryService', () => {
   // ── Singleton ────────────────────────────────────────────────
 
   describe('singleton', () => {
-    it('returns same instance from getMemoryService', () => {
+    it('returns same instance from getMemoryService', async () => {
       const a = getMemoryService()
       const b = getMemoryService()
       expect(a).toBe(b)
@@ -231,30 +242,11 @@ describe('MemoryService', () => {
   // ── recordDaily clone routing (CMA-02) ─────────────────────
 
   describe('recordDaily with cloneDir', () => {
-    it('writes to main agent daily dir when cloneDir omitted', () => {
+    it('writes to main agent daily dir when cloneDir omitted', async () => {
       // Create a session first (for FTS foreign key)
-      const db = getDb()
-      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
-        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
-        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
-        last_message_at TEXT, created_at TEXT, updated_at TEXT
-      )`)
-      db.exec(`CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
-        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
-        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
-        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
-      )`)
-      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
-        session_id, summary, session_title, created_at, source
-      )`)
+      await insertSession('sess-1', TEST_ORG, 'Test')
 
-      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-        'sess-1', TEST_ORG, 'Test', new Date().toISOString(), new Date().toISOString()
-      )
-
-      const result = service.recordDaily(TEST_ORG, 'Main agent memory', 'sess-1')
+      const result = await service.recordDaily(TEST_ORG, 'Main agent memory', 'sess-1')
       expect(result.ok).toBe(true)
 
       const today = new Date().toISOString().split('T')[0]
@@ -263,30 +255,11 @@ describe('MemoryService', () => {
       expect(fs.readFileSync(mainDailyPath, 'utf-8')).toContain('Main agent memory')
     })
 
-    it('writes to clone daily dir when cloneDir provided', () => {
-      const db = getDb()
-      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
-        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
-        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
-        last_message_at TEXT, created_at TEXT, updated_at TEXT
-      )`)
-      db.exec(`CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
-        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
-        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
-        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
-      )`)
-      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
-        session_id, summary, session_title, created_at, source
-      )`)
-
-      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-        'sess-2', TEST_ORG, 'Clone Session', new Date().toISOString(), new Date().toISOString()
-      )
+    it('writes to clone daily dir when cloneDir provided', async () => {
+      await insertSession('sess-2', TEST_ORG, 'Clone Session')
 
       const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'test-clone')
-      const result = service.recordDaily(TEST_ORG, 'Clone memory entry', 'sess-2', cloneDir)
+      const result = await service.recordDaily(TEST_ORG, 'Clone memory entry', 'sess-2', cloneDir)
       expect(result.ok).toBe(true)
 
       const today = new Date().toISOString().split('T')[0]
@@ -301,37 +274,19 @@ describe('MemoryService', () => {
       }
 
       // Verify FTS source is clone name
-      const ftsRows = db.prepare("SELECT source FROM session_memory_fts WHERE summary MATCH 'Clone'").all() as Array<{ source: string }>
+      // PG 检索面 = messages 真表（is_summary 行携带 source）—— 原 FTS MATCH 'Clone' 等价断言
+      const ftsRows = await pg.sql`SELECT source FROM messages WHERE is_summary = true AND content ILIKE '%Clone%'` as unknown as Array<{ source: string }>
       expect(ftsRows.length).toBeGreaterThan(0)
       expect(ftsRows[0].source).toBe('test-clone')
     })
 
-    it('creates clone daily directory if not exists', () => {
-      const db = getDb()
-      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
-        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
-        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
-        last_message_at TEXT, created_at TEXT, updated_at TEXT
-      )`)
-      db.exec(`CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
-        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
-        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
-        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
-      )`)
-      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
-        session_id, summary, session_title, created_at, source
-      )`)
-
-      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-        'sess-3', TEST_ORG, 'Session', new Date().toISOString(), new Date().toISOString()
-      )
+    it('creates clone daily directory if not exists', async () => {
+      await insertSession('sess-3', TEST_ORG, 'Session')
 
       const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'new-clone')
       expect(fs.existsSync(cloneDir)).toBe(false)
 
-      service.recordDaily(TEST_ORG, 'New clone memory', 'sess-3', cloneDir)
+      await service.recordDaily(TEST_ORG, 'New clone memory', 'sess-3', cloneDir)
 
       const today = new Date().toISOString().split('T')[0]
       expect(fs.existsSync(path.join(cloneDir, 'memory', 'daily', `${today}.md`))).toBe(true)
@@ -341,13 +296,13 @@ describe('MemoryService', () => {
   // ── refineLongTerm (PRD J5) ─────────────────────────────────
 
   describe('refineLongTerm', () => {
-    it('returns refined=false when no long-term memory exists', () => {
+    it('returns refined=false when no long-term memory exists', async () => {
       const result = service.refineLongTerm(TEST_ORG)
       expect(result.refined).toBe(false)
       expect(result.before_tokens).toBe(0)
     })
 
-    it('deduplicates entries and creates backup', () => {
+    it('deduplicates entries and creates backup', async () => {
       const longTermPath = path.join(memDir, 'long-term.md')
       const content = `## 人格
 - 你是一个智能助手
@@ -377,7 +332,7 @@ describe('MemoryService', () => {
       expect(lines.length).toBe(uniqueLines.length)
     })
 
-    it('refines clone long-term memory when cloneDir provided (CMA-06)', () => {
+    it('refines clone long-term memory when cloneDir provided (CMA-06)', async () => {
       const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'refine-clone')
       const cloneMemDir = path.join(cloneDir, 'memory')
       fs.mkdirSync(cloneMemDir, { recursive: true })
@@ -406,41 +361,33 @@ describe('MemoryService', () => {
   // ── checkInactivitySafeMode (PRD H2) ────────────────────────
 
   describe('checkInactivitySafeMode', () => {
-    beforeEach(() => {
-      initDb(':memory:')
-    })
-
-    afterEach(() => {
-      closeDb()
-    })
-
-    it('returns should_enable=false when no activity data exists', () => {
-      const result = service.checkInactivitySafeMode(TEST_ORG)
+    it('returns should_enable=false when no activity data exists', async () => {
+      const result = await service.checkInactivitySafeMode(TEST_ORG)
       expect(result.should_enable).toBe(false)
       expect(result.last_active).toBeNull()
       expect(result.days_inactive).toBe(0)
     })
 
-    it('detects recent daily memory as active', () => {
+    it('detects recent daily memory as active', async () => {
       const dailyDir = path.join(memDir, 'daily')
       fs.mkdirSync(dailyDir, { recursive: true })
       const today = new Date().toISOString().split('T')[0]
       fs.writeFileSync(path.join(dailyDir, `${today}.md`), 'Some activity', 'utf-8')
 
-      const result = service.checkInactivitySafeMode(TEST_ORG)
+      const result = await service.checkInactivitySafeMode(TEST_ORG)
       expect(result.should_enable).toBe(false)
       expect(result.last_active).toBeTruthy()
       expect(result.days_inactive).toBeLessThan(1)
     })
 
-    it('detects old daily memory as inactive', () => {
+    it('detects old daily memory as inactive', async () => {
       const dailyDir = path.join(memDir, 'daily')
       fs.mkdirSync(dailyDir, { recursive: true })
       // Create a file dated 30 days ago
       const oldDate = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
       fs.writeFileSync(path.join(dailyDir, `${oldDate}.md`), 'Old activity', 'utf-8')
 
-      const result = service.checkInactivitySafeMode(TEST_ORG)
+      const result = await service.checkInactivitySafeMode(TEST_ORG)
       expect(result.should_enable).toBe(true)
       expect(result.days_inactive).toBeGreaterThanOrEqual(29)
     })

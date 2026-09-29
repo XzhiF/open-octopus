@@ -115,8 +115,8 @@ export function createArchiveRoutes(
       )
 
       // Get proposed rules from pending_review
-      const pendingRules = pendingReviewDAO.listBySource("workspace_archive")
-        .filter(item => item.source_ref === id && item.status === "pending")
+      const pendingRules = (await pendingReviewDAO.listBySource("workspace_archive"))
+        .filter((item: { source_ref: string; status: string }) => item.source_ref === id && item.status === "pending")
         .map(item => ({
           text: item.content,
           scope: item.scope,
@@ -245,7 +245,7 @@ export function createArchiveRoutes(
   })
 
   // GET /api/archive/workspaces/:id — Get single archived workspace
-  routes.get("/workspaces/:id", (c) => {
+  routes.get("/workspaces/:id", async (c) => {
     const id = c.req.param("id")
 
     // Security: validate UUID format
@@ -258,7 +258,7 @@ export function createArchiveRoutes(
     }
 
     try {
-      const archive = archiveDAO.findByWorkspaceId(id)
+      const archive = await archiveDAO.findByWorkspaceId(id)
       if (!archive) {
         return c.json({ error: { code: "NOT_FOUND", message: "Archived workspace not found" } }, 404)
       }

@@ -4,7 +4,7 @@
 // ready → stop 释放端口;外部进程占 url → 无会话 GET 报 external;秒退命令 →
 // exited;未配置/非法url/$vars./无awaiting 门链。端口用 net 抢 ephemeral 避免撞车。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
@@ -12,10 +12,11 @@ import os from "os"
 import net from "net"
 import http from "http"
 import { execFileSync } from "child_process"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type PreviewSummary } from "../services/tasks/round-evidence-service"
@@ -25,6 +26,8 @@ import { TASK_PREVIEW_EVENT } from "@octopus/shared"
 const ORG = "e2e-td-preview"
 const WS_ID = "ws-pv-1"
 const BATCH_REL = ".scratch/20260917/p-1"
+// P1 B2：tasks 落 PG（service 内部 pgSql()）；executions/workspaces 仍 SQLite `db`。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmp: string
@@ -88,9 +91,10 @@ async function pollPreview(taskId: string, want: (s: PreviewSummary | null) => b
   }
 }
 
-beforeAll(() => {
-  db = new Database(":memory:")
-  applySchema(db)
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-preview-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
   db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
@@ -106,7 +110,10 @@ beforeAll(() => {
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
 })
 afterAll(async () => {
-  unSub?.(); db.close()
+  unSub?.()
+  await pg?.close()
+  pg = null
+  closeDb()
   // Windows: a just-exited BashExecutor child may momentarily hold a dir handle → EPERM;
   // retry best-effort so teardown never flakes the suite.
   for (let i = 0; i < 50; i++) {
@@ -124,7 +131,7 @@ async function pollInstances(taskId: string, want: (e: TestInstanceEntry[]) => b
   }
 }
 
-describe("preview — 生命周期", () => {
+describePg("preview — 生命周期", () => {
   it("PV1: 起 node http server → ready → stop → 端口释放", async () => {
     const taskId = await newAwaitingTask()
     const port = await freePort()

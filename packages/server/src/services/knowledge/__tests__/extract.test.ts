@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+// P1 B2：pending_review 已迁 postgres.js（BasePgDAO）—— 本文件造数/读断言全部走 PG。
+// 每文件一座随机测试库（beforeAll 建 / afterAll DROP），用例间 TRUNCATE 清表。
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import crypto from "crypto"
-import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
-import { applySchema } from "../../../db/schema"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../../../db/pg/__tests__/dao-fixture"
 import {
   shouldExtractRules,
   extractAndCheckRules,
@@ -40,23 +41,30 @@ function makeExecResult(overrides: Partial<ExecResult> = {}): ExecResult {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("extract", () => {
-  let db: Database.Database
+describePg("extract", () => {
+  let pg: PgFixture | null = null
   let pendingReviewDAO: PendingReviewDAO
   let tmpDir: string
   let stateDir: string
 
-  beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    pendingReviewDAO = new PendingReviewDAO(db)
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
+  })
+
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
+  })
+
+  beforeEach(async () => {
+    await pg!.truncate("pending_review")
+    pendingReviewDAO = new PendingReviewDAO(pg!.sql)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-test-"))
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-state-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
-    db?.close()
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
     fs.rmSync(stateDir, { recursive: true, force: true })
@@ -270,7 +278,7 @@ describe("extract", () => {
       expect(content).toContain("recurring failure")
 
       // Verify pendingReviewDAO has approved entry
-      const approved = pendingReviewDAO.listBySource("recurring_pitfall")
+      const approved = await pendingReviewDAO.listBySource("recurring_pitfall")
       expect(approved.length).toBeGreaterThanOrEqual(1)
       expect(approved[0].status).toBe("approved")
       expect(approved[0].auto_approve).toBe(1)
@@ -293,7 +301,7 @@ describe("extract", () => {
   describe("proposeRulesForReview — cross-source (TC-023)", () => {
     it("handles workspace_archive and scheduler sources via pendingReviewDAO", async () => {
       // Insert items from two different sources
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: "rule-ws-001",
         type: "rule",
         source: "workspace_archive",
@@ -308,7 +316,7 @@ describe("extract", () => {
         status: "pending",
         user_notes: null,
       })
-      pendingReviewDAO.insert({
+      await pendingReviewDAO.insert({
         id: "rule-sc-001",
         type: "rule",
         source: "scheduler",
@@ -324,8 +332,8 @@ describe("extract", () => {
         user_notes: null,
       })
 
-      const wsItems = pendingReviewDAO.listBySource("workspace_archive")
-      const scItems = pendingReviewDAO.listBySource("scheduler")
+      const wsItems = await pendingReviewDAO.listBySource("workspace_archive")
+      const scItems = await pendingReviewDAO.listBySource("scheduler")
       expect(wsItems.length).toBeGreaterThanOrEqual(1)
       expect(scItems.length).toBeGreaterThanOrEqual(1)
       expect(wsItems[0].source).toBe("workspace_archive")

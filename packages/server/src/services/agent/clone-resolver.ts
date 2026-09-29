@@ -6,6 +6,7 @@
 //
 import fs from 'fs'
 import path from 'path'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { getBuiltInClonesDir, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
 import { BUILTIN_CLONES, isBuiltinClone } from './builtin-clones'
 
@@ -24,6 +25,9 @@ export interface CloneInfo {
   status: 'active' | 'idle' | 'executing'
   created_at?: string
   last_active?: string
+  // B5-5B3 收口：legacy 用户分身 config.json 可带 workspace 绑定（现世 task ws 走
+  // workspaces.task_id，此字段仅历史兼容）——补类型描述而非删运行时输出（零 wire 变化）。
+  workspace?: { name: string; path: string }
 }
 
 /**
@@ -38,6 +42,8 @@ export interface CloneConfig {
   config?: Record<string, unknown>
   created_at?: string
   last_active?: string
+  // legacy 磁盘形状兼容（见 CloneInfo.workspace 注释）
+  workspace?: { name?: string; path?: string }
 }
 
 // ── Safe name validation ───────────────────────────────────────────
@@ -159,7 +165,7 @@ export function createUserClone(params: {
  * Delete a user clone from the filesystem.
  * Returns error for built-in clones.
  */
-export function deleteUserClone(name: string): { ok: true } | { ok: false; error: string; status?: number } {
+export function deleteUserClone(name: string): { ok: true } | { ok: false; error: string; status?: ContentfulStatusCode } {
   if (isBuiltinClone(name)) {
     return { ok: false, error: `Built-in clone "${name}" cannot be deleted`, status: 403 }
   }

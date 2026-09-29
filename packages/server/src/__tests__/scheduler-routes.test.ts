@@ -8,23 +8,34 @@ import { ExportService } from '../services/scheduler/export-service'
 import { createSchedulerRoutes, resetSchedulerRateLimitersForTests } from '../routes/scheduler'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
 import { registerCodeJobHandler } from '../services/scheduler/code-job-registry'
+import { describePg, setupRegisteredPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
-describe('Scheduler Routes (integration)', () => {
+// P1 B5 票4：schedules / schedule_executions / schedule_workspaces / scheduler_audit_logs
+// 已随 ScheduleConfigDAO/ScheduleRunDAO 落 PG（B5 票1）—— DAO 改吃 pg.sql，
+// 本文件对这些表的直读直写全部改 PG 裸 sql；workspaces 父行两侧各一份。
+describePg('Scheduler Routes (integration)', () => {
   let db: Database.Database
+  let pg: PgFixture
   let app: Hono
   const wsId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema()
     db = new Database(':memory:')
     applySchema(db)
     db.prepare(`
       INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
       VALUES (?, 'test-ws', 'test', '/tmp/test', datetime('now'), datetime('now'))
     `).run(wsId)
+    await pg.sql.unsafe(
+      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+       VALUES ($1, 'test-ws', 'test', '/tmp/test', now(), now())`,
+      [wsId],
+    )
 
-    const service = new SchedulerService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
-    const dashboard = new DashboardService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
-    const exportService = new ExportService(new ScheduleConfigDAO(db))
+    const service = new SchedulerService(new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql))
+    const dashboard = new DashboardService(new ScheduleConfigDAO(pg.sql), new ScheduleRunDAO(pg.sql))
+    const exportService = new ExportService(new ScheduleConfigDAO(pg.sql))
     // 票03 (ADR-0021): 这里原来还挂了一份 clone-session 路由 + AgentSessionDAO，为的是
     // G7「POST /jobs(requirement) 自动建 task-author 会话」。那条分支随 requirement 载荷
     // 一起从路由里删了（POST /api/scheduler/jobs 现在只做 createJob），夹具跟着撤。
@@ -38,8 +49,9 @@ describe('Scheduler Routes (integration)', () => {
     registerCodeJobHandler('task-lifecycle', async () => {})
   })
 
-  afterAll(() => {
+  afterAll(async () => {
     db.close()
+    await pg.close()
   })
 
   // Reset rate-limiter buckets before each test. The suite shares one app, so
@@ -146,9 +158,9 @@ describe('Scheduler Routes (integration)', () => {
     expect(res.status).toBe(400)
     const body = await json<{ error: string }>(res)
     expect(body.error).toMatch(/cron_expression/i)
-    // 反假跑: 没有偷偷建出一行草稿
-    const cnt = db.prepare("SELECT COUNT(*) as c FROM schedules WHERE name = 'no-cron'").get() as { c: number }
-    expect(cnt.c).toBe(0)
+    // 反假跑: 没有偷偷建出一行草稿（schedules 已落 PG）
+    const cnt = Number((await pg.sql`SELECT COUNT(*)::int AS c FROM schedules WHERE name = 'no-cron'`)[0]!.c)
+    expect(cnt).toBe(0)
   })
 
   it('GET /jobs/:id returns 404 for unknown', async () => {
@@ -353,15 +365,18 @@ describe('Scheduler Routes (integration)', () => {
     // 走真路由而不是单测 enrichJobRow：这一列的形状是「DAO 的相关子查询 → service 映射 →
     // wire」三段接起来的，之前正是因为本地又抄了一遍行类型，第四段子查询加了也没人发现。
     const id = await createCronJob('t05-dur')
-    const insert = db.prepare(
-      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
-         timezone_offset, timezone_iana, created_at, duration_ms)
-       VALUES (?, ?, ?, 'scheduled', ?, '+00:00', 'UTC', ?, ?)`,
-    )
+    const insert = async (eId: string, status: string, triggeredAt: string, durationMs: number | null) => {
+      await pg.sql.unsafe(
+        `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+           timezone_offset, timezone_iana, created_at, duration_ms)
+         VALUES ($1, $2, $3, 'scheduled', $4, '+00:00', 'UTC', $4, $5)`,
+        [eId, id, status, triggeredAt, durationMs],
+      )
+    }
     const older = new Date(Date.now() - 3600_000).toISOString()
     const newer = new Date().toISOString()
-    insert.run(`${id}-e1`, id, 'failed', older, older, 9000)
-    insert.run(`${id}-e2`, id, 'completed', newer, newer, 1234)
+    await insert(`${id}-e1`, 'failed', older, 9000)
+    await insert(`${id}-e2`, 'completed', newer, 1234)
 
     const res = await app.request('/api/scheduler/jobs')
     const mine = (await json<{ items: Array<Record<string, unknown>> }>(res)).items.find(j => j.id === id)
@@ -370,7 +385,7 @@ describe('Scheduler Routes (integration)', () => {
     expect(mine!.last_execution).toMatchObject({ status: 'success', duration_ms: 1234 })
 
     // skip 行没有引擎可计时 → 是 null，不是 0：0 会被 UI 念成「跑了 0ms」，那是假话
-    insert.run(`${id}-e3`, id, 'skipped', new Date(Date.now() + 1000).toISOString(), newer, null)
+    await insert(`${id}-e3`, 'skipped', new Date(Date.now() + 1000).toISOString(), null)
     const after = (await json<{ items: Array<Record<string, unknown>> }>(
       await app.request('/api/scheduler/jobs'),
     )).items.find(j => j.id === id)
@@ -388,21 +403,29 @@ describe('Scheduler Routes (integration)', () => {
   ): Promise<{ id: string; execId: string; wsRowId: string }> {
     const id = await createCronJob('g4')
     const now = new Date().toISOString()
-    db.prepare('UPDATE schedules SET status = ?, claimed_at = ? WHERE id = ?').run(status, now, id)
+    await pg.sql.unsafe('UPDATE schedules SET status = $1, claimed_at = $2 WHERE id = $3', [status, now, id])
 
     const execId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    db.prepare(
+    await pg.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, execution_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, NULL, ?, 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    ).run(execId, id, status === 'running' ? 'running' : 'triggered', now, now)
+       VALUES ($1, $2, NULL, $3, 'scheduled', $4, '+00:00', 'UTC', $4, 'scheduler')`,
+      [execId, id, status === 'running' ? 'running' : 'triggered', now],
+    )
 
     const wsRowId = `sw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    db.prepare(
+    await pg.sql.unsafe(
       `INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at)
-       VALUES (?, ?, ?, 'running', 'abort-test', ?)`,
-    ).run(wsRowId, id, wsId, now)
+       VALUES ($1, $2, $3, 'running', 'abort-test', $4)`,
+      [wsRowId, id, wsId, now],
+    )
 
     return { id, execId, wsRowId }
+  }
+
+  // Helper: 单行读 PG（本域表已落 PG；列类型按 PG 原生返回 Date/boolean 等）。
+  async function pgRow<T>(query: string, ...params: unknown[]): Promise<T | undefined> {
+    const rows = await pg!.sql.unsafe(query, params as never[])
+    return (rows as T[])[0]
   }
 
   it('G4/AC15: POST /jobs/:id/abort on claimed → aborted + executions failed + ws cleaned + audit', async () => {
@@ -412,36 +435,36 @@ describe('Scheduler Routes (integration)', () => {
     expect(res.status).toBe(200)
 
     // schedules.status = 'aborted', claimed_at cleared (terminal)
-    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(id) as
-      { status: string; claimed_at: string | null }
-    expect(sched.status).toBe('aborted')
-    expect(sched.claimed_at).toBeNull()
+    const sched = await pgRow<{ status: string; claimed_at: Date | null }>(
+      'SELECT status, claimed_at FROM schedules WHERE id = $1', id)
+    expect(sched!.status).toBe('aborted')
+    expect(sched!.claimed_at).toBeNull()
 
     // unique_active released: the active schedule_execution is now 'failed'
-    const exec = db.prepare('SELECT status, error_summary FROM schedule_executions WHERE id = ?').get(execId) as
-      { status: string; error_summary: string | null }
-    expect(exec.status).toBe('failed')
-    expect(exec.error_summary).toMatch(/abort/i)
+    const exec = await pgRow<{ status: string; error_summary: string | null }>(
+      'SELECT status, error_summary FROM schedule_executions WHERE id = $1', execId)
+    expect(exec!.status).toBe('failed')
+    expect(exec!.error_summary).toMatch(/abort/i)
 
     // unique_active truly released: a NEW triggered execution inserts without conflict
     // (idx_sched_execs_unique_active is a partial index on status IN triggered/running)
     const newExecId = `exec2-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const insertNew = db.prepare(
+    await expect(pg.sql.unsafe(
       `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
-       VALUES (?, ?, 'triggered', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
-    )
-    expect(() => insertNew.run(newExecId, id, new Date().toISOString(), new Date().toISOString())).not.toThrow()
-    db.prepare('DELETE FROM schedule_executions WHERE id = ?').run(newExecId)
+       VALUES ($1, $2, 'triggered', 'scheduled', $3, '+00:00', 'UTC', $3, 'scheduler')`,
+      [newExecId, id, new Date().toISOString()],
+    )).resolves.toBeTruthy()
+    await pg.sql.unsafe('DELETE FROM schedule_executions WHERE id = $1', [newExecId])
 
     // ws marked cleaned
-    const sw = db.prepare('SELECT status FROM schedule_workspaces WHERE id = ?').get(wsRowId) as { status: string }
-    expect(sw.status).toBe('cleaned')
+    const sw = await pgRow<{ status: string }>(
+      'SELECT status FROM schedule_workspaces WHERE id = $1', wsRowId)
+    expect(sw!.status).toBe('cleaned')
 
     // audit log action='aborted' (filter by action — created_at ties with the prior
     // 'created' audit and makes ORDER BY created_at DESC nondeterministic)
-    const audit = db.prepare(
-      "SELECT action FROM scheduler_audit_logs WHERE schedule_id = ? AND action = 'aborted'",
-    ).get(id) as { action: string } | undefined
+    const audit = await pgRow<{ action: string }>(
+      "SELECT action FROM scheduler_audit_logs WHERE schedule_id = $1 AND action = 'aborted'", id)
     expect(audit, 'aborted audit log must exist').toBeDefined()
     expect(audit?.action).toBe('aborted')
   })
@@ -452,12 +475,12 @@ describe('Scheduler Routes (integration)', () => {
     const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
     expect(res.status).toBe(200)
 
-    const sched = db.prepare('SELECT status FROM schedules WHERE id = ?').get(id) as { status: string }
-    expect(sched.status).toBe('aborted')
+    const sched = await pgRow<{ status: string }>('SELECT status FROM schedules WHERE id = $1', id)
+    expect(sched!.status).toBe('aborted')
 
     // markStaleExecutionsFailed covers status IN ('triggered','running') → 'running' too
-    const exec = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(execId) as { status: string }
-    expect(exec.status).toBe('failed')
+    const exec = await pgRow<{ status: string }>('SELECT status FROM schedule_executions WHERE id = $1', execId)
+    expect(exec!.status).toBe('failed')
   })
 
   it('G4/AC: POST /jobs/:id/abort on a never-fired job → 400 (nothing in flight, status unchanged)', async () => {
@@ -471,10 +494,10 @@ describe('Scheduler Routes (integration)', () => {
     expect(body.error).toMatch(/status/i)
 
     // 反假跑: status unchanged (still queued, no partial mutation)
-    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(id) as
-      { status: string; claimed_at: string | null }
-    expect(sched.status).toBe('queued')
-    expect(sched.claimed_at).toBeNull()
+    const sched = await pgRow<{ status: string; claimed_at: Date | null }>(
+      'SELECT status, claimed_at FROM schedules WHERE id = $1', id)
+    expect(sched!.status).toBe('queued')
+    expect(sched!.claimed_at).toBeNull()
   })
 
   it('G4/AC: POST /jobs/:id/abort on unknown → 404', async () => {
@@ -484,7 +507,7 @@ describe('Scheduler Routes (integration)', () => {
   // ── 票05: the built-in job is protected at the API, not just in the menu ──
   it('DELETE /jobs/builtin-* → 400,PUT 改 config → 400,但改 cron 仍可用', async () => {
     const { seedBuiltinCodeJobs } = await import('../services/scheduler/builtin-jobs')
-    seedBuiltinCodeJobs(new ScheduleConfigDAO(db), 'test')
+    await seedBuiltinCodeJobs(new ScheduleConfigDAO(pg.sql), 'test')
     const id = 'builtin-task-lifecycle'
 
     const del = await app.request(`/api/scheduler/jobs/${id}`, { method: 'DELETE' })

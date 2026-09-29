@@ -63,16 +63,29 @@ function makeDecision(
   }
 }
 
+// P1 B1: HarnessController 构造回退（TokenUsageDAO）与 writeHarnessSummary 都走
+// db/connection 模块级 getDb()；测试不初始化全局连接 → mock 成 dao.getDb() 返回的同一
+// 个 mockDb（AC-7 覆写 prepare 仍生效，语义同旧 dao.getDb() 路径）。
+const dbRef = vi.hoisted(() => ({ current: undefined as unknown }))
+vi.mock("../../../db/connection", () => ({
+  getDb: () => {
+    if (!dbRef.current) throw new Error("Database not initialized. Call initDb() first.")
+    return dbRef.current
+  },
+}))
+
 function makeMocks() {
+  const mockDb = {
+    prepare: vi.fn().mockReturnValue({
+      run: vi.fn(),
+      all: vi.fn().mockReturnValue([]),
+    }),
+  }
+  dbRef.current = mockDb // B1: 模块级 getDb() 与 dao.getDb() 同一对象
   const dao = {
     insertEvent: vi.fn(),
     findEvents: vi.fn().mockReturnValue([]),
-    getDb: vi.fn().mockReturnValue({
-      prepare: vi.fn().mockReturnValue({
-        run: vi.fn(),
-        all: vi.fn().mockReturnValue([]),
-      }),
-    }),
+    getDb: vi.fn().mockReturnValue(mockDb),
   } as unknown as HarnessDAO
 
   const sse = {
@@ -114,7 +127,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     vi.clearAllMocks()
   })
 
-  it("records experiences for all interventions when execution ends", () => {
+  it("records experiences for all interventions when execution ends", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -134,7 +147,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test\nnodes:\n  - id: build\n    type: bash",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -162,7 +175,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.recordDecision("test", decision2)
 
     // End execution
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify experiences were recorded
     expect(mocks.evolutionDao.insertExperienceV2).toHaveBeenCalledTimes(2)
@@ -192,7 +205,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     expect(secondCall.pattern_tags).toContain("node_timeout")
   })
 
-  it("writes clone daily memory when interventions occurred", () => {
+  it("writes clone daily memory when interventions occurred", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -211,7 +224,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -223,7 +236,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify daily memory was written
     expect(mocks.memoryService.recordDaily).toHaveBeenCalledTimes(1)
@@ -235,7 +248,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     expect(cloneDir).toContain("harness-agent")
   })
 
-  it("does not record experiences when no interventions occurred", () => {
+  it("does not record experiences when no interventions occurred", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -254,21 +267,21 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
     })
 
     // End execution without any interventions
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify no experiences were recorded
     expect(mocks.evolutionDao.insertExperienceV2).not.toHaveBeenCalled()
     expect(mocks.memoryService.recordDaily).not.toHaveBeenCalled()
   })
 
-  it("includes structured summary in content field", () => {
+  it("includes structured summary in content field", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -287,7 +300,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -308,7 +321,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const experienceRow = mocks.evolutionDao.insertExperienceV2.mock.calls[0][0]
     // Content should be searchable and contain key information
@@ -319,7 +332,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     expect(experienceRow.content).toContain("build") // node
   })
 
-  it("sets pattern_tags as JSON array with decision, pattern, nodeType, severity", () => {
+  it("sets pattern_tags as JSON array with decision, pattern, nodeType, severity", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -338,7 +351,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -355,7 +368,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const experienceRow = mocks.evolutionDao.insertExperienceV2.mock.calls[0][0]
     const patternTags = JSON.parse(experienceRow.pattern_tags)
@@ -366,7 +379,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     expect(patternTags).toContain("critical") // severity
   })
 
-  it("uses harness-agent clone directory for daily memory", () => {
+  it("uses harness-agent clone directory for daily memory", async () => {
     const controller = new HarnessController({
       dao: mocks.dao,
       sse: mocks.sse,
@@ -385,7 +398,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -397,7 +410,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
     session!.appendIntervention(report, { varpoolSnapshot: {} })
     session!.recordDecision("build", decision)
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     const cloneDir = mocks.memoryService.recordDaily.mock.calls[0][3]
     expect(cloneDir).toContain("harness-agent")
@@ -407,7 +420,7 @@ describe("HarnessController — AC-1: experience recording on execution end", ()
 // ─── AC-5: HarnessAgentSession.close() extended ─────────────────────────────
 
 describe("HarnessAgentSession — AC-5: close() returns intervention summary", () => {
-  it("returns structured intervention data on close", () => {
+  it("returns structured intervention data on close", async () => {
     const ctx = makeSessionContext()
     const session = new HarnessAgentSession(ctx)
 
@@ -427,7 +440,7 @@ describe("HarnessAgentSession — AC-5: close() returns intervention summary", (
     expect(summary!.decisions[0].decision).toBe("fix_and_retry")
   })
 
-  it("returns null summary when no interventions occurred", () => {
+  it("returns null summary when no interventions occurred", async () => {
     const ctx = makeSessionContext()
     const session = new HarnessAgentSession(ctx)
 
@@ -441,7 +454,7 @@ describe("HarnessAgentSession — AC-5: close() returns intervention summary", (
 // ─── AC-7: Existing harness_events behavior unchanged ───────────────────────
 
 describe("HarnessController — AC-7: existing harness_summary behavior unchanged", () => {
-  it("still writes harness_summary to executions table", () => {
+  it("still writes harness_summary to executions table", async () => {
     const mocks = makeMocks()
     const controller = new HarnessController({
       dao: mocks.dao,
@@ -461,7 +474,7 @@ describe("HarnessController — AC-7: existing harness_summary behavior unchange
       onLLMCall: vi.fn(),
     } as any
 
-    controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
+    await controller.onExecutionStart("exec-1", "ws-1", baseCallbacks, {
       workflowContent: "name: test",
       nodeList: [{ id: "build", type: "bash" }],
       dependencyGraph: { build: [] },
@@ -479,7 +492,7 @@ describe("HarnessController — AC-7: existing harness_summary behavior unchange
     })
     ;(mocks.dao.getDb() as any).prepare = prepareMock
 
-    controller.onExecutionEnd("exec-1")
+    await controller.onExecutionEnd("exec-1")
 
     // Verify the UPDATE to executions table was called
     expect(prepareMock).toHaveBeenCalledWith(

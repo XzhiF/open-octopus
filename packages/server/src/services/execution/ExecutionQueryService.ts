@@ -38,8 +38,8 @@ export class ExecutionQueryService {
     this.workspaceId = deps.workspaceId
   }
 
-  getLogEvents(executionId: string): { type: string; timestamp: string; data: Record<string, unknown> }[] {
-    const nodeExecs = this.dao.findNodeExecutions(executionId)
+  async getLogEvents(executionId: string): Promise<{ type: string; timestamp: string; data: Record<string, unknown> }[]> {
+    const nodeExecs = await this.dao.findNodeExecutions(executionId)
     return nodeExecs.map(ne => ({
       type: ne.status === "completed" ? "node_end" : "node_start",
       timestamp: ne.started_at ?? "",
@@ -143,8 +143,8 @@ export class ExecutionQueryService {
     return summary
   }
 
-  getWorkflowContent(executionId: string): string | null {
-    const exec = this.dao.findById(executionId)
+  async getWorkflowContent(executionId: string): Promise<string | null> {
+    const exec = await this.dao.findById(executionId)
     if (!exec) return null
 
     const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
@@ -175,8 +175,8 @@ export class ExecutionQueryService {
     })
   }
 
-  getTokenUsagesPerStep(executionId: string): Array<{ stepId?: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }> {
-    const dbRows = this.dao.findNodeTokenUsages(executionId)
+  async getTokenUsagesPerStep(executionId: string): Promise<Array<{ stepId?: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>> {
+    const dbRows = await this.dao.findNodeTokenUsages(executionId)
     return dbRows.map(r => ({
       stepId: r.node_id, model: r.model,
       inputTokens: r.input_tokens, outputTokens: r.output_tokens,
@@ -186,15 +186,15 @@ export class ExecutionQueryService {
   }
 
   /** 每节点 LLM 请求次数（llm_calls 行数）——供节点主行「总请求次数」。 */
-  llmCallCountsByNode(executionId: string): Record<string, number> {
-    const rows = this.dao.llmCallCountsByNode(executionId)
+  async llmCallCountsByNode(executionId: string): Promise<Record<string, number>> {
+    const rows = await this.dao.llmCallCountsByNode(executionId)
     const out: Record<string, number> = {}
     for (const r of rows) out[r.node_id] = r.count
     return out
   }
 
-  getTokenUsagesForExecution(executionId: string): Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }> {
-    const perStep = this.getTokenUsagesPerStep(executionId)
+  async getTokenUsagesForExecution(executionId: string): Promise<Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>> {
+    const perStep = await this.getTokenUsagesPerStep(executionId)
     const modelTotals = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>()
     for (const entry of perStep) {
       const existing = modelTotals.get(entry.model)

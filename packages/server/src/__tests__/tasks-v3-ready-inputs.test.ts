@@ -17,6 +17,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import path from "path"
 import os from "os"
@@ -24,6 +25,9 @@ import fs from "fs"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 
 const ORG = "e2e-td-t5"
+
+// P1 B2：本文件的 tasks 造数全部走这座 PG 库（见 beforeAll）。
+let pg: PgFixture | null = null
 
 // A workflow YAML with required + optional inputs for testing
 const WORKFLOW_WITH_REQUIRED_INPUTS = `
@@ -57,8 +61,9 @@ function newDb(): Database.Database {
   return db
 }
 
-function insertTask(
-  db: Database.Database,
+/** P1 B2: tasks 表已迁 postgres.js —— 造数落 PG（db 形参保留仅为少动调用点）。 */
+async function insertTask(
+  _db: Database.Database,
   overrides: Partial<{
     id: string
     name: string
@@ -67,7 +72,7 @@ function insertTask(
     version: number
     workflow_ref: string | null
   }> = {},
-) {
+): Promise<string> {
   const id = overrides.id ?? `e2e-td-t5-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
   const spec = overrides.task_spec ?? {
@@ -81,12 +86,12 @@ function insertTask(
     resources: [],
     authoring_resources: [],
   }
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', ?, ?, NULL, ?, ?, NULL)
-  `).run(
+    VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', $6, $7, NULL, $8, $9, NULL)
+  `, [
     id,
     ORG,
     overrides.name ?? "E2E_TD task",
@@ -96,16 +101,19 @@ function insertTask(
     overrides.version ?? 1,
     now,
     now,
-  )
+  ])
   return id
 }
 
-describe("T5: ready-gate required inputs validation (integration)", () => {
+describePg("T5: ready-gate required inputs validation (integration)", () => {
   let db: Database.Database
   let app: Hono
   let tmpDir: string
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service/DAO 经 pgSql() 取），
+    // executions/workspaces/schedules 仍在 SQLite `db`（B5 域）。
+    pg = await setupRegisteredPgSchema()
     db = newDb()
     const sse = new SSEService()
 
@@ -135,13 +143,15 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
     app.route("/api/tasks", createTasksRoutes(service, sse))
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    await pg?.close()
+    pg = null
     db.close()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it("AC1: missing required input → 409 with input:idea in missing", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_missing_input",
       task_spec: {
         goal: "Build something",
@@ -168,7 +178,7 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
     // Review fix 2026-08-27: a stray/unknown placeholder must surface as a
     // missing item in the gate (like any other missing input), not a raw throw
     // that 500s the ready request.
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_unknown_placeholder",
       task_spec: {
         goal: "Build something",
@@ -194,7 +204,7 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
   })
 
   it("AC2: ${goal} in input_values resolves → passes input check", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_goal_resolved",
       task_spec: {
         goal: "Build a widget",
@@ -222,7 +232,7 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
   })
 
   it("AC3: literal input_values → passes input check", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_literal",
       task_spec: {
         goal: "Build something",
@@ -249,7 +259,7 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
   })
 
   it("AC4: composite task skips input check", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_composite",
       task_spec: {
         goal: "Big task",
@@ -293,7 +303,7 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
   })
 
   it("AC5: workflow with no required inputs → no input: missing", async () => {
-    const id = insertTask(db, {
+    const id = await insertTask(db, {
       name: "E2E_TD_no_required",
       task_spec: {
         goal: "Simple task",

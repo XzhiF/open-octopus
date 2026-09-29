@@ -27,6 +27,8 @@ import type { ContextTier } from "./swarm/context-tier-resolver"
 import { DEFAULT_CONTEXT_TIER } from "./swarm/swarm-constants"
 import type { EngineCallbacks } from "../engine"
 import type { JsonlLogger } from "../logger"
+import type { PromptInjector } from "../prompt-injector"
+import type { KnowledgeInjector } from "../knowledge-injector"
 import type { SwarmConfig } from "./executor-config"
 
 /**
@@ -48,6 +50,9 @@ export class SwarmExecutor implements NodeExecutor {
   private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>
   private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>
   private globalSessionId?: string
+  private promptInjector?: PromptInjector
+  private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  private workflowName?: string
 
   constructor(
     private node: NodeDef,
@@ -65,6 +70,28 @@ export class SwarmExecutor implements NodeExecutor {
     this.agentResolver = config.agentResolver
     this.engineHookFn = config.engineHookFn
     this.globalSessionId = config.globalSessionId
+    this.promptInjector = config.promptInjector
+    this.knowledgeInjectorFactory = config.knowledgeInjectorFactory
+    this.workflowName = config.workflowName
+  }
+
+  /**
+   * Build the injected-prompt prefix for expert LLM calls (KB-P0: swarm parity with
+   * top-level agent nodes). Mirrors AgentExecutor.buildPrompt ordering: knowledge
+   * sections prepend on top of promptInjector sections, joined by the same divider.
+   * Returns "" when neither injector is configured.
+   */
+  private buildInjectedPrefix(): string {
+    if (!this.workflowName) return ""
+    const sections: string[] = []
+    if (this.promptInjector) {
+      sections.push(...this.promptInjector.getInjectedPrompts(this.workflowName, this.node.id))
+    }
+    if (this.knowledgeInjectorFactory) {
+      const knowledgeInjector = this.knowledgeInjectorFactory(this.pool)
+      sections.unshift(...knowledgeInjector.getInjectedPrompts(this.workflowName, this.node.id))
+    }
+    return sections.join("\n\n---\n\n")
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -289,10 +316,16 @@ export class SwarmExecutor implements NodeExecutor {
         }
       }
 
+      // KB-P0: precompute the injected-prompt prefix once per swarm execution so every
+      // expert call (review/debate/dispatch/moa — all go through runExpert) sees the same
+      // knowledge/prompt sections a top-level agent node would get.
+      const expertPromptPrefix = this.buildInjectedPrefix()
+
       const coordinator = new SwarmCoordinator({
         llmCall,
         hostAgent,
         nodeId: this.node.id,
+        expertPromptPrefix: expertPromptPrefix || undefined,
         emitSSE: event => {
           // Wire swarm events to engine callbacks for SSE emission
           this.callbacks?.onSwarmEvent?.(this.node.id, event)

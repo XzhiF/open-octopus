@@ -1,3 +1,8 @@
+// P1 B4 票2B-1：TokenUsageDAO 已迁 postgres.js —— 日志分析各聚合（health / failure
+// patterns / anomalies / cost）经 TokenUsageDAO 全部读 PG；ExecutionDAO（B5 批）仍 SQLite，
+// getExecutionLogs 的 workspace 路径 / node error 回查走 sqlite db。故本文件双引擎：
+// PG 随机库喂分析聚合（dao-fixture 姿势），:memory: SQLite 喂 execDao 读路径。
+// 断言语义与条数逐条保持。
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import Database from "better-sqlite3"
 import path from "path"
@@ -6,13 +11,61 @@ import fs from "fs"
 import { applySchema } from "../../db/schema"
 import { LogAnalysisService } from "../log-analysis"
 import { TokenUsageDAO, ExecutionDAO } from "../../db/dao"
+import { describePg, setupPgSchema, type PgFixture } from "../../db/pg/__tests__/dao-fixture"
 
+let pg: PgFixture
 let db: Database.Database
-let dbPath: string
 let service: LogAnalysisService
 const WORKSPACE_ID = "ws-test-001"
 const ORG = "xzf"
 
+// ── PG 侧造数（分析聚合读路径）────────────────────────────────────
+async function pgSeedWorkspace(id: string, name = "test-ws") {
+  await pg.sql.unsafe(
+    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
+    [id, name, ORG, id === WORKSPACE_ID ? "/tmp/test-ws" : `/tmp/${id}`],
+  )
+}
+
+async function pgSeedExecution(opts: {
+  id: string
+  workspaceId?: string
+  workflowRef: string
+  status: string
+  daysAgo?: number
+  duration?: number | null
+  parentId?: string
+}) {
+  const daysAgo = opts.daysAgo ?? 0
+  const date = new Date(Date.now() - daysAgo * 86400000).toISOString()
+  await pg.sql.unsafe(
+    `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, duration)
+     VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $7, $8)`,
+    [opts.id, opts.workspaceId ?? WORKSPACE_ID, opts.parentId ?? "0", opts.workflowRef, opts.status, ORG, date, opts.duration ?? null],
+  )
+}
+
+async function pgSeedNodeExecution(opts: {
+  id: string
+  executionId: string
+  nodeId: string
+  nodeType: string
+  status: string
+  duration?: number | null
+  error?: string | null
+  exitCode?: number | null
+  daysAgo?: number
+}) {
+  const daysAgo = opts.daysAgo ?? 0
+  const date = new Date(Date.now() - daysAgo * 86400000).toISOString()
+  await pg.sql.unsafe(
+    `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at, completed_at, duration, error, exit_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9)`,
+    [opts.id, opts.executionId, opts.nodeId, opts.nodeType, opts.status, date, opts.duration ?? null, opts.error ?? null, opts.exitCode ?? null],
+  )
+}
+
+// ── SQLite 侧造数（仅 execDao：getExecutionLogs 读路径）────────────
 function seedWorkspace() {
   const now = new Date().toISOString()
   db.prepare(
@@ -20,88 +73,46 @@ function seedWorkspace() {
   ).run(WORKSPACE_ID, "test-ws", ORG, "/tmp/test-ws", now, now)
 }
 
-function seedExecution(opts: {
-  id: string
-  workflowRef: string
-  status: string
-  daysAgo?: number
-  duration?: number
-  parentId?: string
-}) {
-  const daysAgo = opts.daysAgo ?? 0
-  const date = new Date(Date.now() - daysAgo * 86400000).toISOString()
-  db.prepare(
-    `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, duration)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    opts.id, WORKSPACE_ID, opts.parentId ?? "0",
-    opts.workflowRef, opts.workflowRef, opts.status,
-    ORG, date, date, opts.duration ?? null
-  )
-}
-
-function seedNodeExecution(opts: {
-  id: string
-  executionId: string
-  nodeId: string
-  nodeType: string
-  status: string
-  duration?: number
-  error?: string
-  exitCode?: number
-  daysAgo?: number
-}) {
-  const daysAgo = opts.daysAgo ?? 0
-  const date = new Date(Date.now() - daysAgo * 86400000).toISOString()
-  db.prepare(
-    `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at, completed_at, duration, error, exit_code)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    opts.id, opts.executionId, opts.nodeId, opts.nodeType, opts.status,
-    date, date, opts.duration ?? null, opts.error ?? null, opts.exitCode ?? null
-  )
-}
-
-beforeEach(() => {
-  dbPath = path.join(os.tmpdir(), `test-analytics-${Date.now()}.db`)
-  db = new Database(dbPath)
-  db.pragma("foreign_keys = ON")
+beforeEach(async () => {
+  pg = await setupPgSchema()
+  db = new Database(":memory:")
   applySchema(db)
-  service = new LogAnalysisService(new TokenUsageDAO(db), new ExecutionDAO(db))
+  service = new LogAnalysisService(new TokenUsageDAO(pg.sql), new ExecutionDAO(db))
+  await pgSeedWorkspace(WORKSPACE_ID)
   seedWorkspace()
 })
 
-afterEach(() => {
+afterEach(async () => {
   db.close()
-  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+  await pg.close()
 })
 
-describe("getHealthSummary", () => {
-  it("返回空数据的摘要", () => {
-    const result = service.getHealthSummary(WORKSPACE_ID, 30)
+describePg("getHealthSummary", () => {
+  it("返回空数据的摘要", async () => {
+    const result = await service.getHealthSummary(WORKSPACE_ID, 30)
     expect(result.totalExecutions).toBe(0)
     expect(result.successRate).toBe(0)
     expect(result.failureRate).toBe(0)
     expect(result.dailyTrend).toEqual([])
   })
 
-  it("计算成功率和失败率", () => {
-    seedExecution({ id: "e1", workflowRef: "wf-a", status: "completed", daysAgo: 1 })
-    seedExecution({ id: "e2", workflowRef: "wf-a", status: "completed", daysAgo: 2 })
-    seedExecution({ id: "e3", workflowRef: "wf-a", status: "failed", daysAgo: 3 })
+  it("计算成功率和失败率", async () => {
+    await pgSeedExecution({ id: "e1", workflowRef: "wf-a", status: "completed", daysAgo: 1 })
+    await pgSeedExecution({ id: "e2", workflowRef: "wf-a", status: "completed", daysAgo: 2 })
+    await pgSeedExecution({ id: "e3", workflowRef: "wf-a", status: "failed", daysAgo: 3 })
 
-    const result = service.getHealthSummary(WORKSPACE_ID, 30)
+    const result = await service.getHealthSummary(WORKSPACE_ID, 30)
     expect(result.totalExecutions).toBe(3)
     expect(result.successRate).toBeCloseTo(66.7, 0)
     expect(result.failureRate).toBeCloseTo(33.3, 0)
   })
 
-  it("生成每日趋势数据", () => {
-    seedExecution({ id: "e1", workflowRef: "wf-a", status: "completed", daysAgo: 1 })
-    seedExecution({ id: "e2", workflowRef: "wf-a", status: "failed", daysAgo: 1 })
-    seedExecution({ id: "e3", workflowRef: "wf-a", status: "completed", daysAgo: 3 })
+  it("生成每日趋势数据", async () => {
+    await pgSeedExecution({ id: "e1", workflowRef: "wf-a", status: "completed", daysAgo: 1 })
+    await pgSeedExecution({ id: "e2", workflowRef: "wf-a", status: "failed", daysAgo: 1 })
+    await pgSeedExecution({ id: "e3", workflowRef: "wf-a", status: "completed", daysAgo: 3 })
 
-    const result = service.getHealthSummary(WORKSPACE_ID, 7)
+    const result = await service.getHealthSummary(WORKSPACE_ID, 7)
     expect(result.dailyTrend.length).toBeGreaterThan(0)
     const today = result.dailyTrend.find(d => d.successCount + d.failedCount === 2)
     expect(today).toBeDefined()
@@ -109,47 +120,42 @@ describe("getHealthSummary", () => {
     expect(today!.failedCount).toBe(1)
   })
 
-  it("只统计指定 workspace 的数据", () => {
+  it("只统计指定 workspace 的数据", async () => {
     const otherWs = "ws-other"
-    const now = new Date().toISOString()
-    db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(otherWs, "other", ORG, "/tmp/other", now, now)
-    seedExecution({ id: "e1", workflowRef: "wf-a", status: "completed" })
-    db.prepare(
-      "INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run("e-other", otherWs, "0", "wf-b", "wf-b", "failed", ORG, now, now)
+    await pgSeedWorkspace(otherWs, "other")
+    await pgSeedExecution({ id: "e1", workflowRef: "wf-a", status: "completed" })
+    await pgSeedExecution({ id: "e-other", workspaceId: otherWs, workflowRef: "wf-b", status: "failed" })
 
-    const result = service.getHealthSummary(WORKSPACE_ID, 30)
+    const result = await service.getHealthSummary(WORKSPACE_ID, 30)
     expect(result.totalExecutions).toBe(1)
   })
 })
 
-describe("getFailurePatterns", () => {
-  it("返回空数据的失败模式", () => {
-    const result = service.getFailurePatterns(WORKSPACE_ID, 30)
+describePg("getFailurePatterns", () => {
+  it("返回空数据的失败模式", async () => {
+    const result = await service.getFailurePatterns(WORKSPACE_ID, 30)
     expect(result.errorCategories).toEqual([])
     expect(result.fragilityRanking).toEqual([])
     expect(result.failureChains).toEqual([])
   })
 
-  it("按 exit_code 分类错误", () => {
-    seedExecution({ id: "e1", workflowRef: "wf-a", status: "failed", daysAgo: 1 })
-    seedNodeExecution({ id: "ne1", executionId: "e1", nodeId: "step-1", nodeType: "bash", status: "failed", exitCode: 124, error: "timeout", daysAgo: 1 })
-    seedNodeExecution({ id: "ne2", executionId: "e1", nodeId: "step-2", nodeType: "bash", status: "failed", exitCode: 1, error: "script error", daysAgo: 1 })
+  it("按 exit_code 分类错误", async () => {
+    await pgSeedExecution({ id: "e1", workflowRef: "wf-a", status: "failed", daysAgo: 1 })
+    await pgSeedNodeExecution({ id: "ne1", executionId: "e1", nodeId: "step-1", nodeType: "bash", status: "failed", exitCode: 124, error: "timeout", daysAgo: 1 })
+    await pgSeedNodeExecution({ id: "ne2", executionId: "e1", nodeId: "step-2", nodeType: "bash", status: "failed", exitCode: 1, error: "script error", daysAgo: 1 })
 
-    const result = service.getFailurePatterns(WORKSPACE_ID, 30)
+    const result = await service.getFailurePatterns(WORKSPACE_ID, 30)
     expect(result.errorCategories.length).toBeGreaterThan(0)
     const timeoutCat = result.errorCategories.find(c => c.category === "timeout")
     expect(timeoutCat).toBeDefined()
     expect(timeoutCat!.count).toBe(1)
   })
 
-  it("计算节点脆弱度排行", () => {
+  it("计算节点脆弱度排行", async () => {
     // Create a fragile node (high failure rate)
     for (let i = 0; i < 5; i++) {
-      seedExecution({ id: `e-frag-${i}`, workflowRef: "wf-fragile", status: "failed", daysAgo: i })
-      seedNodeExecution({
+      await pgSeedExecution({ id: `e-frag-${i}`, workflowRef: "wf-fragile", status: "failed", daysAgo: i })
+      await pgSeedNodeExecution({
         id: `ne-frag-${i}`,
         executionId: `e-frag-${i}`,
         nodeId: "fragile-step",
@@ -161,7 +167,7 @@ describe("getFailurePatterns", () => {
       })
     }
 
-    const result = service.getFailurePatterns(WORKSPACE_ID, 30)
+    const result = await service.getFailurePatterns(WORKSPACE_ID, 30)
     expect(result.fragilityRanking.length).toBeGreaterThan(0)
     const fragileNode = result.fragilityRanking.find(n => n.nodeId === "fragile-step")
     expect(fragileNode).toBeDefined()
@@ -170,29 +176,29 @@ describe("getFailurePatterns", () => {
   })
 })
 
-describe("getAnomalies", () => {
-  it("返回空数据的异常检测", () => {
-    const result = service.getAnomalies(WORKSPACE_ID, 30)
+describePg("getAnomalies", () => {
+  it("返回空数据的异常检测", async () => {
+    const result = await service.getAnomalies(WORKSPACE_ID, 30)
     expect(result.durationAnomalies).toEqual([])
     expect(result.consecutiveFailures).toEqual([])
     expect(result.costAnomalies).toEqual([])
   })
 
-  it("检测连续失败", () => {
+  it("检测连续失败", async () => {
     for (let i = 0; i < 4; i++) {
-      seedExecution({ id: `e-streak-${i}`, workflowRef: "wf-streak", status: "failed", daysAgo: i })
+      await pgSeedExecution({ id: `e-streak-${i}`, workflowRef: "wf-streak", status: "failed", daysAgo: i })
     }
-    const result = service.getAnomalies(WORKSPACE_ID, 30)
+    const result = await service.getAnomalies(WORKSPACE_ID, 30)
     expect(result.consecutiveFailures.length).toBe(1)
     expect(result.consecutiveFailures[0].streakLength).toBe(4)
     expect(result.consecutiveFailures[0].workflowRef).toBe("wf-streak")
   })
 
-  it("检测耗时异常（Z-Score）", () => {
+  it("检测耗时异常（Z-Score）", async () => {
     // Create 15 normal executions
     for (let i = 0; i < 15; i++) {
-      seedExecution({ id: `e-normal-${i}`, workflowRef: "wf-anomaly", status: "completed", daysAgo: i, duration: 1000 })
-      seedNodeExecution({
+      await pgSeedExecution({ id: `e-normal-${i}`, workflowRef: "wf-anomaly", status: "completed", daysAgo: i, duration: 1000 })
+      await pgSeedNodeExecution({
         id: `ne-normal-${i}`,
         executionId: `e-normal-${i}`,
         nodeId: "normal-step",
@@ -203,8 +209,8 @@ describe("getAnomalies", () => {
       })
     }
     // Create 1 anomalous execution (10x duration)
-    seedExecution({ id: "e-anomaly", workflowRef: "wf-anomaly", status: "completed", daysAgo: 0, duration: 10000 })
-    seedNodeExecution({
+    await pgSeedExecution({ id: "e-anomaly", workflowRef: "wf-anomaly", status: "completed", daysAgo: 0, duration: 10000 })
+    await pgSeedNodeExecution({
       id: "ne-anomaly",
       executionId: "e-anomaly",
       nodeId: "normal-step",
@@ -214,7 +220,7 @@ describe("getAnomalies", () => {
       daysAgo: 0
     })
 
-    const result = service.getAnomalies(WORKSPACE_ID, 30)
+    const result = await service.getAnomalies(WORKSPACE_ID, 30)
     expect(result.durationAnomalies.length).toBeGreaterThan(0)
     const anomaly = result.durationAnomalies.find(a => a.executionId === "e-anomaly")
     expect(anomaly).toBeDefined()
@@ -222,15 +228,15 @@ describe("getAnomalies", () => {
   })
 })
 
-describe("getCostAnalysis", () => {
-  it("返回空数据的成本分析", () => {
-    const result = service.getCostAnalysis(WORKSPACE_ID, 30)
+describePg("getCostAnalysis", () => {
+  it("返回空数据的成本分析", async () => {
+    const result = await service.getCostAnalysis(WORKSPACE_ID, 30)
     expect(result.costTrend).toEqual([])
     expect(result.tokenDistribution).toEqual([])
     expect(result.costByWorkflow).toEqual([])
   })
 
-  it("计算成本趋势", () => {
+  it("计算成本趋势", async () => {
     // Create executions with token usage
     for (let i = 0; i < 3; i++) {
       const daysAgo = i
@@ -238,8 +244,8 @@ describe("getCostAnalysis", () => {
       const execId = `e-cost-${i}`
       const nodeId = `ne-cost-${i}`
 
-      seedExecution({ id: execId, workflowRef: "wf-cost", status: "completed", daysAgo })
-      seedNodeExecution({
+      await pgSeedExecution({ id: execId, workflowRef: "wf-cost", status: "completed", daysAgo })
+      await pgSeedNodeExecution({
         id: nodeId,
         executionId: execId,
         nodeId: "cost-step",
@@ -249,24 +255,26 @@ describe("getCostAnalysis", () => {
       })
 
       // Add token usage（NEW-r2:ntu 纯 token;钱的 0.05/笔 由事实行 × 兜底价派生）
-      db.prepare(
+      await pg.sql.unsafe(
         `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(`tu-${i}`, nodeId, "claude-3", 1000, 500, date)
-      db.prepare(
+         VALUES ($1, $2, 'claude-3', 1000, 500, $3)`,
+        [`tu-${i}`, nodeId, date],
+      )
+      await pg.sql.unsafe(
         `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, model,
            timestamp, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, workspace_id, source_path)
-         VALUES (?, ?, ?, 1, 0, 'claude-3', ?, 1, 1000, 500, 0, 0, ?, 'workflow')`
-      ).run(`lc-${i}`, nodeId, execId, new Date(date).getTime(), WORKSPACE_ID)
+         VALUES ($1, $2, $3, 1, 0, 'claude-3', $4, 1, 1000, 500, 0, 0, $5, 'workflow')`,
+        [`lc-${i}`, nodeId, execId, new Date(date).getTime(), WORKSPACE_ID],
+      )
     }
 
     // 兜底价 USD:1000×50/1e6 = 0.05/笔
     const t = new Date().toISOString()
-    db.prepare(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
+    await pg.sql.unsafe(`INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price,
         output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, valid_from, valid_to, created_at, updated_at)
-      VALUES ('pp-claude3', 'v', 'claude-3', 50, 0, 0, 0, 'USD', NULL, NULL, ?, ?)`).run(t, t)
+      VALUES ('pp-claude3', 'v', 'claude-3', 50, 0, 0, 0, 'USD', NULL, NULL, $1, $2)`, [t, t])
 
-    const result = service.getCostAnalysis(WORKSPACE_ID, 30)
+    const result = await service.getCostAnalysis(WORKSPACE_ID, 30)
     expect(result.costTrend.length).toBeGreaterThan(0)
     expect(result.costByWorkflow.length).toBe(1)
     expect(result.costByWorkflow[0].workflowRef).toBe("wf-cost")
@@ -274,7 +282,17 @@ describe("getCostAnalysis", () => {
   })
 })
 
-describe("getExecutionLogs", () => {
+describePg("getExecutionLogs", () => {
+  // execDao（ExecutionDAO，B5 批）仍读 SQLite —— 该 describe 的造数落 sqlite db。
+  function seedExecution(id: string, workspaceId: string, workflowRef: string, status: string) {
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, workspaceId, "0", workflowRef, workflowRef, status, ORG, now, now)
+    return now
+  }
+
   it("execution 不存在时返回空", async () => {
     const result = await service.getExecutionLogs(WORKSPACE_ID, "nonexistent")
     expect(result.contextLines).toEqual([])
@@ -282,7 +300,7 @@ describe("getExecutionLogs", () => {
   })
 
   it("日志文件不存在时返回空 contextLines", async () => {
-    seedExecution({ id: "e-nolog", workflowRef: "wf-a", status: "failed" })
+    seedExecution("e-nolog", WORKSPACE_ID, "wf-a", "failed")
     const result = await service.getExecutionLogs(WORKSPACE_ID, "e-nolog", "step-1")
     expect(result.executionId).toBe("e-nolog")
     expect(result.contextLines).toEqual([])
@@ -336,23 +354,23 @@ describe("getExecutionLogs", () => {
   })
 })
 
-describe("缓存机制", () => {
-  it("相同参数返回缓存结果", () => {
-    const result1 = service.getHealthSummary(WORKSPACE_ID, 30)
-    const result2 = service.getHealthSummary(WORKSPACE_ID, 30)
+describePg("缓存机制", () => {
+  it("相同参数返回缓存结果", async () => {
+    const result1 = await service.getHealthSummary(WORKSPACE_ID, 30)
+    const result2 = await service.getHealthSummary(WORKSPACE_ID, 30)
     expect(result1).toBe(result2) // Same reference (cached)
   })
 
-  it("不同参数返回不同结果", () => {
-    const result1 = service.getHealthSummary(WORKSPACE_ID, 30)
-    const result2 = service.getHealthSummary(WORKSPACE_ID, 7)
+  it("不同参数返回不同结果", async () => {
+    const result1 = await service.getHealthSummary(WORKSPACE_ID, 30)
+    const result2 = await service.getHealthSummary(WORKSPACE_ID, 7)
     expect(result1).not.toBe(result2)
   })
 
-  it("invalidateWorkspaceCache 清除缓存", () => {
-    const result1 = service.getHealthSummary(WORKSPACE_ID, 30)
+  it("invalidateWorkspaceCache 清除缓存", async () => {
+    const result1 = await service.getHealthSummary(WORKSPACE_ID, 30)
     service.invalidateWorkspaceCache(WORKSPACE_ID)
-    const result2 = service.getHealthSummary(WORKSPACE_ID, 30)
+    const result2 = await service.getHealthSummary(WORKSPACE_ID, 30)
     expect(result1).not.toBe(result2) // Different reference (cache cleared)
   })
 })

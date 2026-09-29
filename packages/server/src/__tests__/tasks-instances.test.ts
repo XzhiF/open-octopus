@@ -9,17 +9,18 @@
 // 本身（= 宿主 PID 集成员），三闸按设计拒绝 —— 这正是 409 用例要钉的行为；
 // 成功树杀路径由 reclaim 用例覆盖。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import net from "net"
 import { spawn, type ChildProcess } from "child_process"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService } from "../services/tasks/round-evidence-service"
@@ -29,6 +30,9 @@ const ORG = "e2e-td-instances"
 const WS_ID = "ws-in-1"
 const BATCH_REL = ".scratch/20260924/p-1"
 let db: Database.Database
+// P1 B2：tasks 造数经 service 落 PG（注册全局池后 TasksService/pgSql() 自动取池）；
+// executions/workspaces 仍在 SQLite `db`。
+let pg: PgFixture | null = null
 let app: Hono
 let tmp: string
 let instances: TestInstanceRegistry
@@ -77,30 +81,36 @@ async function newAwaitingTask(branch?: string): Promise<string> {
   return id
 }
 
-beforeAll(() => {
-  db = new Database(":memory:")
-  applySchema(db)
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service 经 pgSql() 取），
+  // executions/workspaces 仍在 SQLite `db`。
+  pg = await setupRegisteredPgSchema()
+  db = initDb(":memory:")
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-instances-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
   db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
     .run(WS_ID, "in-ws", ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   const taskHome = new TaskHomeService(path.join(tmp, "home"))
-  const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
+  const ts = new TasksService(db, sse, new AgentSessionDAO(pg!.sql), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   instances = new TestInstanceRegistry(path.join(tmp, "instances"), path.join(tmp, "ports"))
   const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome, instances)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+  closeDb()
   for (const c of children) { try { c.kill() } catch { /* dead */ } }
   for (let i = 0; i < 50; i++) {
     try { fs.rmSync(tmp, { recursive: true, force: true }); return } catch { setTimeout(() => {}, 50) }
   }
 })
 
-describe("GET /:id/instances", () => {
+describePg("GET /:id/instances", () => {
   it("IN1: 空注册表 → 空 entries；分支端口文件里有 listener → external 候选", async () => {
     const taskId = await newAwaitingTask("feat-inst-ext")
     let g = (await (await app.request(`/api/tasks/${taskId}/instances`)).json()) as { entries: unknown[]; external: unknown[] }
@@ -119,7 +129,7 @@ describe("GET /:id/instances", () => {
   }, 30_000)
 })
 
-describe("POST /:id/instances/reclaim", () => {
+describePg("POST /:id/instances/reclaim", () => {
   it("IN2: 登记 entry → reclaim 树杀 listener、端口释放、注册表文件删除", async () => {
     const taskId = await newAwaitingTask()
     const port = await freePort()
@@ -147,7 +157,7 @@ describe("POST /:id/instances/reclaim", () => {
   }, 30_000)
 })
 
-describe("POST /:id/instances/close-dev — 安全闸", () => {
+describePg("POST /:id/instances/close-dev — 安全闸", () => {
   const closeDev = async (taskId: string, port: unknown) =>
     app.request(`/api/tasks/${taskId}/instances/close-dev`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ port }),

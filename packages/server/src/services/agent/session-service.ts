@@ -11,11 +11,11 @@ export class SessionService {
   /**
    * Create a new session.
    */
-  createSession(org: string, opts?: { clone_name?: string }): AgentSession {
+  async createSession(org: string, opts?: { clone_name?: string }): Promise<AgentSession> {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
-    this.dao.insertSession({
+    await this.dao.insertSession({
       id,
       org,
       title: '新会话',
@@ -25,7 +25,7 @@ export class SessionService {
       updated_at: now,
     })
 
-    const row = this.dao.findSessionById(id)
+    const row = await this.dao.findSessionById(id)
     if (!row) throw new Error('Session creation failed')
     return this.rowToSession(row)
   }
@@ -33,11 +33,11 @@ export class SessionService {
   /**
    * List sessions for an org.
    */
-  listSessions(
+  async listSessions(
     org: string,
     query?: { clone?: string; session_type?: string; limit?: number; cursor?: string },
-  ): AgentPaginatedResponse<AgentSession> {
-    const result = this.dao.findByOrg(org, {
+  ): Promise<AgentPaginatedResponse<AgentSession>> {
+    const result = await this.dao.findByOrg(org, {
       clone: query?.clone,
       session_type: query?.session_type,
       limit: query?.limit,
@@ -55,8 +55,8 @@ export class SessionService {
   /**
    * Get a single session with messages.
    */
-  getSession(org: string, id: string): AgentSession | null {
-    const row = this.dao.findSessionById(id)
+  async getSession(org: string, id: string): Promise<AgentSession | null> {
+    const row = await this.dao.findSessionById(id)
     if (!row || row.org !== org || row.is_deleted) return null
     return this.rowToSession(row)
   }
@@ -64,23 +64,23 @@ export class SessionService {
   /**
    * Update session title.
    */
-  updateSession(org: string, id: string, data: { title: string }): boolean {
-    const result = this.dao.updateSessionByOrg(id, org, { title: data.title })
+  async updateSession(org: string, id: string, data: { title: string }): Promise<boolean> {
+    const result = await this.dao.updateSessionByOrg(id, org, { title: data.title })
     return result.changes > 0
   }
 
   /**
    * Soft-delete a session.
    */
-  deleteSession(org: string, id: string): boolean {
-    const result = this.dao.softDeleteByOrg(id, org)
+  async deleteSession(org: string, id: string): Promise<boolean> {
+    const result = await this.dao.softDeleteByOrg(id, org)
     return result.changes > 0
   }
 
   /**
    * Get message count for a session.
    */
-  getMessageCount(org: string, sessionId: string): number {
+  async getMessageCount(org: string, sessionId: string): Promise<number> {
     return this.dao.countMessages(sessionId)
   }
 
@@ -90,11 +90,15 @@ export class SessionService {
     return {
       id: row.id,
       title: row.title,
-      clone_name: row.clone_name ?? undefined,
-      perspective_clone_name: row.perspective_clone_name ?? undefined,
+      // shared AgentSession 契约要求 org（行上恒有列）——补齐，JSON 输出新增 org 键。
+      org: row.org,
+      // shared AgentSession 契约这三列是 `string | null`（非可选）——归一到 null，
+      // JSON 输出从键缺省变为显式 null，消费方（web-app/cli）均按 falsy 判定，无行为面影响。
+      clone_name: row.clone_name ?? null,
+      perspective_clone_name: row.perspective_clone_name ?? null,
       session_type: row.session_type as 'main' | 'delegate' | 'clone_direct',
       is_active: row.is_active === 1,
-      last_message_at: row.last_message_at ?? undefined,
+      last_message_at: row.last_message_at ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }

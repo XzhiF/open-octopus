@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import { getConfigManager } from '../../services/agent/config-manager'
 import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 
-export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: SafetyDAO): Hono {
-  const safeMode = new Hono()
+export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: SafetyDAO): AgentHono {
+  const safeMode = new Hono<{ Variables: { org: string } }>()
 
   /**
    * GET /safe-mode — Check safe mode status
@@ -26,7 +26,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
       if (!enabled) {
         try {
           const threshold = config.safe_mode.inactive_days_threshold ?? 14
-          const lastSession = sessionDAO.findLatestMessageTimestamp()
+          const lastSession = await sessionDAO.findLatestMessageTimestamp()
 
           if (lastSession?.last_at) {
             const lastActive = new Date(lastSession.last_at).getTime()
@@ -87,7 +87,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
 
       // ── Record safety event (B5 fix) ──────────────────────────
       try {
-        safetyDAO?.insertSafetyEvent({
+        await safetyDAO?.insertSafetyEvent({
           type: 'safe_mode_toggle',
           operation: 'Enable safe mode',
           decision: 'intercept',
@@ -118,7 +118,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
   /**
    * POST /safe-mode/disable — Disable safe mode
    */
-  safeMode.post('/safe-mode/disable', (c) => {
+  safeMode.post('/safe-mode/disable', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) {
@@ -132,7 +132,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
 
       // ── Record safety event (B5 fix) ──────────────────────────
       try {
-        safetyDAO?.insertSafetyEvent({
+        await safetyDAO?.insertSafetyEvent({
           type: 'safe_mode_toggle',
           operation: 'Disable safe mode',
           decision: 'intercept',

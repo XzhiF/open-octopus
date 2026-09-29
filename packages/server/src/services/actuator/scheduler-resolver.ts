@@ -25,7 +25,7 @@ export class SchedulerResolver {
     private scheduleRunDAO: ScheduleRunDAO,
   ) {}
 
-  getScheduler(): SchedulerResponse {
+  async getScheduler(): Promise<SchedulerResponse> {
     if (!this.schedulerEngine) {
       return {
         status: 'disabled',
@@ -39,31 +39,35 @@ export class SchedulerResolver {
     }
 
     try {
-      const jobs = this.schedulerService.listJobs({ limit: 100 })
-      const rows = jobs.rows ?? []
+      const jobs = await this.schedulerService.listJobs({ limit: 100 })
+      // 票2 现场修复（疑似生产 bug 单列）：listJobs 返回 PaginatedResponse，字段是
+      // items 不是 rows —— 旧代码 jobs.rows ?? [] 恒取到 undefined→[]，actuator
+      // 的 active/paused/next_fires 一直是 0/空。await 传导时一并修正。
+      const rows = jobs.items
 
       let active = 0
       let paused = 0
       for (const job of rows) {
-        if (job.enabled === 0) paused++
+        if (job.enabled === false) paused++
         else active++
       }
 
       const cbSummary = this.schedulerEngine.getCircuitBreakerSummary()
       const circuitBroken = cbSummary.state === 'open' ? 1 : 0
 
-      const todayStats = this.scheduleRunDAO.getTodayStats()
+      const todayStats = await this.scheduleRunDAO.getTodayStats()
 
       const nextFires = rows
-        .filter(j => j.next_trigger_at && j.enabled !== 0)
+        .filter(j => j.next_trigger_at && j.enabled !== false)
         .sort((a, b) => (a.next_trigger_at ?? '').localeCompare(b.next_trigger_at ?? ''))
         .slice(0, 10)
         .map(j => ({
           job_id: j.id,
           job_name: j.name,
-          workflow_name: j.config ? (JSON.parse(j.config).workflow_ref ?? j.name) : j.name,
+          // config 是 enrichJobRow 解析后的对象（旧代码 JSON.parse(对象) 恒抛→status:error，一并修正）
+          workflow_name: (j.config as { workflow_ref?: string } | undefined)?.workflow_ref ?? j.name,
           next_fire_at: j.next_trigger_at ?? '',
-          cron: j.cron_expression,
+          cron: j.cron_expression ?? '',
         }))
 
       return {

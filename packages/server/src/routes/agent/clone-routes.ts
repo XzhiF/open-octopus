@@ -7,7 +7,7 @@
 import { Hono } from 'hono'
 import fs from 'fs'
 import path from 'path'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { getAgentDir, getClonesDir } from '../../services/agent/paths'
 
 export interface CloneRouteDeps {
@@ -21,8 +21,8 @@ const validateNameParam = (name: string): boolean => SAFE_NAME_RE.test(name) && 
 // ── Filesystem base directory for clone storage ──────────────────
 const clonesBaseDir = () => getClonesDir()
 
-export function createCloneRoutes(deps: CloneRouteDeps): Hono {
-  const app = new Hono()
+export function createCloneRoutes(deps: CloneRouteDeps): AgentHono {
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // ── Clone merge (archive memory + cleanup) ────────────────────────
   app.post('/clones/:name/merge', async (c) => {

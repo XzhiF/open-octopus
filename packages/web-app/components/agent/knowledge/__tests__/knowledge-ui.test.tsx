@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type PropsWithChildren } from 'react'
 
@@ -30,6 +30,16 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/agent',
   useSearchParams: () => new URLSearchParams(),
 }))
+
+// next/link needs app-router context in jsdom; render a plain anchor for the
+// header nav test (TC-027 knowledge entry lives in header nav since 55b86682).
+vi.mock('next/link', () => {
+  const React = require('react')
+  return {
+    default: ({ href, children }: { href: string; children: unknown }) =>
+      React.createElement('a', { href }, children),
+  }
+})
 
 // ── API mocks ─────────────────────────────────────────────────────────
 
@@ -123,6 +133,8 @@ import { BatchActionBar } from '../review/BatchActionBar'
 import { ConflictBadge } from '../shared/badges'
 import { KnowledgeTabBadge } from '../shared/KnowledgeTabBadge'
 import { AgentTabs } from '../../layout/AgentTabs'
+import { Header } from '@/components/layout/header'
+import { KnowledgeTab } from '../KnowledgeTab'
 import { ChatArea } from '../../chat/ChatArea'
 import { ExperienceList } from '../ExperienceList'
 import { KnowledgeAssistantPanel } from '../assistant/KnowledgeAssistantPanel'
@@ -193,30 +205,47 @@ describe('TC-022: ReviewCard in chat', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// TC-027: 知识 Tab 渲染与 badge
+// TC-027: 知识入口与 badge
+//
+// 几何迁移说明（55b86682 + ADR-0021）：知识/任务不再作为 AgentTabs 子 tab，
+// 分别上移为顶级路由 —— Header「工作经验」→ /experience（宿主 KnowledgeTab）、
+// 「任务看板」→ /tasks。AgentTabs 现行几何 = 5 tab。
+// pending badge 从旧知识 tab 迁至 KnowledgeTab「审核队列」子按钮
+// （useReviewQueue → getReviewSummary().statusCounts.all）。
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('TC-027: Knowledge Tab with badge', () => {
-  it('renders 7 tabs with 知识 between 记忆 and SKILL', () => {
+  it('AgentTabs renders 5 tabs: 对话/记忆/SKILL/分身/配置', () => {
     render(<AgentTabs activeTab="chat" onTabChange={vi.fn()} />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(7)
+    expect(tabs).toHaveLength(5)
 
     const labels = tabs.map(t => t.textContent?.trim())
-    expect(labels).toEqual(['对话', '记忆', '知识', 'SKILL', '分身', '任务', '配置'])
-
-    const ki = labels.indexOf('知识')
-    expect(labels[ki - 1]).toBe('记忆')
-    expect(labels[ki + 1]).toBe('SKILL')
+    expect(labels).toEqual(['对话', '记忆', 'SKILL', '分身', '配置'])
   })
 
-  it('shows badge with pending count on knowledge tab', async () => {
-    mockApi.getReviewSummary.mockResolvedValueOnce({ rules: 2, skills: 1, total: 3 })
-    render(<AgentTabs activeTab="chat" onTabChange={vi.fn()} />)
+  it('知识入口在顶级导航（Header 工作经验 → /experience）', () => {
+    render(<Header />)
+
+    const link = screen.getByRole('link', { name: '工作经验' })
+    expect(link).toHaveAttribute('href', '/experience')
+  })
+
+  it('shows badge with pending count on review sub-tab', async () => {
+    mockApi.getReviewSummary.mockResolvedValueOnce({
+      rules: 2, skills: 1, total: 3,
+      statusCounts: { all: 3, pending: 3, deferred: 0, approved: 0, rejected: 0, edited: 0 },
+    })
+    render(<KnowledgeTab />)
 
     await waitFor(() => {
-      expect(screen.getByText('3')).toBeInTheDocument()
+      // desktop + mobile sub-nav both render in jsdom; each review button carries the badge
+      const reviewBtns = screen.getAllByRole('button', { name: /审核队列/ })
+      expect(reviewBtns.length).toBeGreaterThanOrEqual(1)
+      for (const btn of reviewBtns) {
+        expect(within(btn).getByText('3')).toBeInTheDocument()
+      }
     })
   })
 
@@ -224,8 +253,8 @@ describe('TC-027: Knowledge Tab with badge', () => {
     const onChange = vi.fn()
     render(<AgentTabs activeTab="chat" onTabChange={onChange} />)
 
-    await userEvent.click(screen.getByRole('tab', { name: '知识' }))
-    expect(onChange).toHaveBeenCalledWith('knowledge')
+    await userEvent.click(screen.getByRole('tab', { name: '记忆' }))
+    expect(onChange).toHaveBeenCalledWith('memory')
   })
 })
 

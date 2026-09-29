@@ -44,14 +44,16 @@ export function finalizePartialMeta(raw: string): string | null {
 }
 
 /** Sweep all streaming partial rows → interrupted. Returns the count
- *  finalized. Malformed metadata rows are skipped (logged), never fatal. */
-export function finalizeOrphanStreamPartials(sessionDAO: AgentSessionDAO): number {
+ *  finalized. Malformed metadata rows are skipped (logged), never fatal.
+ *  P1 B3：PG 句柄下天然异步；启动接线（index.ts 的同步 try/catch 位点）经
+ *  finalizeOrphanStreamPartials 的 fire-and-forget 包装调用本函数。 */
+export async function sweepOrphanStreamPartials(sessionDAO: AgentSessionDAO): Promise<number> {
   let finalized = 0
-  for (const row of sessionDAO.findStreamingMessages()) {
+  for (const row of await sessionDAO.findStreamingMessages()) {
     try {
       const meta = finalizePartialMeta(row.metadata)
       if (meta === null) continue
-      sessionDAO.updateMessage(row.id, { metadata: meta })
+      await sessionDAO.updateMessage(row.id, { metadata: meta })
       finalized++
     } catch (err: unknown) {
       console.error(
@@ -64,4 +66,12 @@ export function finalizeOrphanStreamPartials(sessionDAO: AgentSessionDAO): numbe
     console.log(`[clone-stream-partials] finalized ${finalized} orphan streaming partial(s) at startup`)
   }
   return finalized
+}
+
+/** 启动位点包装（index.ts 调用面保持同步签名 —— 该文件属 B6 前禁区）。
+ *  清扫转为启动后台任务：任何失败都只告警，绝不 unhandled rejection。 */
+export function finalizeOrphanStreamPartials(sessionDAO: AgentSessionDAO): void {
+  void sweepOrphanStreamPartials(sessionDAO).catch((err: unknown) => {
+    console.error('[clone-stream-partials] orphan partial sweep failed (non-fatal):', err)
+  })
 }

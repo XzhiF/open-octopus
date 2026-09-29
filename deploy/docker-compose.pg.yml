@@ -1,0 +1,42 @@
+# Octopus 单引擎数据库（ADR-0024 · P1）— ParadeDB(PG18) 承载执行分区 + 知识分区
+#
+# 一条命令起：  docker compose -f deploy/docker-compose.pg.yml up -d
+# 备份：        deploy/pg-backup.sh          恢复演练：deploy/pg-restore-drill.sh
+#
+# 镜像按 digest 钉死：latest-pg18 是浮动 tag，本机 registry 探测 pinned tag 不可用；
+# 此 digest = 2026-09-27 解析的 PG 18.6 / pg_search 0.25.10 / pgvector 0.8.4，
+# 与 .scratch/20260927-kb-roadmap/evidence.html 的实测基线同版（HNSW p50 5.8ms 等
+# 性能数字只在这个版本组合上成立）。升级需重跑证据页的基准。
+name: octopus-pg
+
+services:
+  pg:
+    image: paradedb/paradedb@sha256:188591a0bc317beb2c6d6d3f9ef0cb3e859d09ecc15a71dda5e9a027876686cf
+    container_name: octopus-pg
+    # 实测坑②：Docker 默认 shm=64MB 会炸 HNSW 构建的 DSM（20万×1024维实测）
+    shm_size: 1g
+    environment:
+      POSTGRES_USER: octopus
+      POSTGRES_PASSWORD: octopus # dev-only：端口只绑 127.0.0.1，密码无安全含义
+      POSTGRES_DB: octopus
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # PG18 起官方镜像 PGDATA=/var/lib/postgresql/18/docker，推荐单挂载点
+      # /var/lib/postgresql（pg_upgrade --link 不再跨挂载边界）。挂旧路
+      # .../data 会把数据写进容器层——首启即静默丢数据。
+      - octopus-pgdata:/var/lib/postgresql
+      - ./pg-init:/docker-entrypoint-initdb.d:ro
+    # 慢查询可观测（R4 缓解，第一天就配）。
+    # 刻意不设 server 级 statement_timeout——会杀死 HNSW 构建（实测 59.9s）与
+    # COPY 搬迁这类合法长语句；超时归连接池在查询级设（P1 驱动选型交付物）。
+    command: ["postgres", "-c", "log_min_duration_statement=100"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U octopus -d octopus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped # R4：全平台单点，容器级自动重启是已裁决接受的缓解
+
+volumes:
+  octopus-pgdata:

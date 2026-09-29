@@ -36,6 +36,7 @@ import path from "path"
 import { spawnSync } from "child_process"
 import type Database from "better-sqlite3"
 import { TaskDAO } from "../../db/dao"
+import { pgSql } from "../../db/dao/registry"
 import type { TaskHomeService } from "./task-home-service"
 
 // ── Pure helpers (unit-tested, no fs) ────────────────────────────────
@@ -411,8 +412,10 @@ export interface ArchiveReport {
 export interface ArchivingDeps {
   db: Database.Database
   taskHomeService: TaskHomeService
-  /** tasks-service.endArchiving — the ONLY writer of 'done' (K3). */
-  onComplete: (taskId: string) => void
+  /** tasks-service.endArchiving — the ONLY writer of 'done' (K3).
+   *  B2: endArchiving 变异步（PG 写）—— 联合返回 Promise，archiveTask await 之，
+   *  保住「report resolve 时 done 已落地」的 join 契约。 */
+  onComplete: (taskId: string) => void | Promise<void>
   now?: () => Date
   pr?: PrHandler
   run?: CommandRunner
@@ -555,10 +558,11 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
   const run = deps.run ?? defaultRun
   const pr = deps.pr ?? defaultPrHandler
   const now = deps.now ?? (() => new Date())
-  const taskDAO = new TaskDAO(deps.db)
+  // P1 B2: tasks 表已迁 PG —— archiver 用 PG 池；workspaces 直读仍走 deps.db（B5）。
+  const taskDAO = new TaskDAO(pgSql())
 
   const archiveTask = async (taskId: string): Promise<ArchiveReport> => {
-    const row = taskDAO.getById(taskId)
+    const row = await taskDAO.getById(taskId)
     if (!row) throw new Error(`archiveTask: task ${taskId} not found`)
     const spec = parseJSONSafe<{ format?: string }>(row.task_spec, {})
     if (spec.format !== "v4") throw new Error(`archiveTask: task ${taskId} is not v4 (format='${spec.format ?? ""}')`)
@@ -725,7 +729,7 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
     } catch (err: unknown) {
       console.error(`[Archiving] writing archive report failed (non-fatal):`, err instanceof Error ? err.message : String(err))
     }
-    if (ok) deps.onComplete(taskId)
+    if (ok) await deps.onComplete(taskId)
     return report
   }
 

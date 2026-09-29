@@ -1,4 +1,3 @@
-import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
 import { SSEService } from "./sse"
 import { ChatDAO } from "../db/dao"
@@ -63,74 +62,74 @@ export class ChatService {
     this.sse = sse
   }
 
-  updateProviderSession(sessionId: string, providerSessionId: string): void {
-    this.dao.updateProviderSession(sessionId, providerSessionId)
+  async updateProviderSession(sessionId: string, providerSessionId: string): Promise<void> {
+    await this.dao.updateProviderSession(sessionId, providerSessionId)
   }
 
-  updateSessionTitle(sessionId: string, title: string): void {
-    this.dao.updateSession(sessionId, { title })
+  async updateSessionTitle(sessionId: string, title: string): Promise<void> {
+    await this.dao.updateSession(sessionId, { title })
   }
 
-  createSession(workspaceId: string, title?: string): ChatSession {
+  async createSession(workspaceId: string, title?: string): Promise<ChatSession> {
     const id = randomUUID()
     const now = new Date().toISOString()
-    this.dao.insertSession({
+    await this.dao.insertSession({
       id, workspace_id: workspaceId,
       title: title ?? null,
       created_at: now, updated_at: now,
     })
-    return this.getSession(id)!
+    return (await this.getSession(id))!
   }
 
-  listSessions(workspaceId: string): ChatSession[] {
-    const rows = this.dao.listSessions(workspaceId)
+  async listSessions(workspaceId: string): Promise<ChatSession[]> {
+    const rows = await this.dao.listSessions(workspaceId)
     return rows.map(r => toSession(r))
   }
 
-  getSession(sessionId: string, limit?: number, beforeCreatedAt?: string): ChatSession | undefined {
-    const row = this.dao.findSessionById(sessionId)
+  async getSession(sessionId: string, limit?: number, beforeCreatedAt?: string): Promise<ChatSession | undefined> {
+    const row = await this.dao.findSessionById(sessionId)
     if (!row) return undefined
-    const totalMessageCount = this.getMessageCount(sessionId)
+    const totalMessageCount = await this.getMessageCount(sessionId)
 
     let messages: ChatMessage[]
     if (limit !== undefined && beforeCreatedAt) {
       // "Load more" — get messages older than the given timestamp (cursor-based)
-      messages = this.getOlderMessages(sessionId, limit, beforeCreatedAt)
+      messages = await this.getOlderMessages(sessionId, limit, beforeCreatedAt)
     } else if (limit !== undefined) {
       // Initial load — get the latest N messages using DESC order
-      messages = this.getLatestMessages(sessionId, limit)
+      messages = await this.getLatestMessages(sessionId, limit)
     } else {
       // Full history (for title generation etc.)
-      messages = this.getAllMessages(sessionId)
+      messages = await this.getAllMessages(sessionId)
     }
     return toSession(row, messages, totalMessageCount)
   }
 
-  getMessageCount(sessionId: string): number {
+  async getMessageCount(sessionId: string): Promise<number> {
     return this.dao.countMessages(sessionId)
   }
 
-  getAllMessages(sessionId: string): ChatMessage[] {
-    const rows = this.dao.findMessagesBySession(sessionId)
+  async getAllMessages(sessionId: string): Promise<ChatMessage[]> {
+    const rows = await this.dao.findMessagesBySession(sessionId)
     return rows.map(toMessage)
   }
 
-  getLatestMessages(sessionId: string, limit: number): ChatMessage[] {
+  async getLatestMessages(sessionId: string, limit: number): Promise<ChatMessage[]> {
     // DESC order gets the newest messages first, then reverse for display
-    const rows = this.dao.findLatestMessages(sessionId, limit)
+    const rows = await this.dao.findLatestMessages(sessionId, limit)
     return rows.reverse().map(toMessage)
   }
 
-  getOlderMessages(sessionId: string, limit: number, beforeCreatedAt: string): ChatMessage[] {
+  async getOlderMessages(sessionId: string, limit: number, beforeCreatedAt: string): Promise<ChatMessage[]> {
     // Get messages older than the cursor timestamp
-    const rows = this.dao.findOlderMessages(sessionId, limit, beforeCreatedAt)
+    const rows = await this.dao.findOlderMessages(sessionId, limit, beforeCreatedAt)
     return rows.reverse().map(toMessage)
   }
 
-addMessage(sessionId: string, input: { role: string; type?: string; content: string; metadata?: string | null }): ChatMessage {
+  async addMessage(sessionId: string, input: { role: string; type?: string; content: string; metadata?: string | null }): Promise<ChatMessage> {
     const id = randomUUID()
     const now = new Date().toISOString()
-    this.dao.insertMessage({
+    await this.dao.insertMessage({
       id, session_id: sessionId,
       role: input.role,
       type: input.type ?? "text",
@@ -138,21 +137,21 @@ addMessage(sessionId: string, input: { role: string; type?: string; content: str
       metadata: input.metadata ?? null,
       created_at: now,
     })
-    this.dao.updateSession(sessionId, { updated_at: now })
+    await this.dao.updateSession(sessionId, { updated_at: now })
 
-    const msg = this.dao.findMessageById(id)!
+    const msg = (await this.dao.findMessageById(id))!
 
     // SSE emit moved to chat route — streamSSE handles real-time events directly
-return toMessage(msg)
+    return toMessage(msg)
   }
 
-  updateMessageMetadata(messageId: string, metadata: string): void {
-    this.dao.updateMessageMetadata(messageId, metadata)
+  async updateMessageMetadata(messageId: string, metadata: string): Promise<void> {
+    await this.dao.updateMessageMetadata(messageId, metadata)
   }
 
-  deleteSession(sessionId: string): void {
-    this.dao.deleteMessagesBySession(sessionId)
-    this.dao.deleteSession(sessionId)
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.dao.deleteMessagesBySession(sessionId)
+    await this.dao.deleteSession(sessionId)
   }
 
 }

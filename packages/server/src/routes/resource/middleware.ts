@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { ResourceError, SAFE_NAME_RE } from "@octopus/shared"
 
 // ── requireJsonContentType ─────────────────────────────────────────────────
@@ -19,16 +20,16 @@ export async function requireJsonContentType(c: Context, next: Next): Promise<vo
 
 const VALID_TYPES = new Set(["skill", "agent", "workflow", "rule", "command", "clone"])
 
-export function validateTypeParam(type: string): void {
-  if (!VALID_TYPES.has(type)) {
+export function validateTypeParam(type: string | undefined): asserts type is string {
+  if (type === undefined || !VALID_TYPES.has(type)) {
     throw new ResourceError("INVALID_TYPE", `Invalid type: ${type}`, {
       suggestion: "Type must be one of: skill, agent, workflow, rule, command, clone",
     })
   }
 }
 
-export function validateNameParam(name: string): void {
-  if (!SAFE_NAME_RE.test(name)) {
+export function validateNameParam(name: string | undefined): asserts name is string {
+  if (name === undefined || !SAFE_NAME_RE.test(name)) {
     throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`, {
       suggestion: "Name must match ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
     })
@@ -81,7 +82,8 @@ export function withErrorCatch(handler: (c: Context) => Promise<Response>) {
       return await handler(c)
     } catch (err) {
       if (err instanceof ResourceError) {
-        return c.json(err.toJSON(), err.status)
+        // STATUS_MAP 值域为固定 HTTP 状态码，shared 无 hono 依赖 → 出口处收口类型
+        return c.json(err.toJSON(), err.status as ContentfulStatusCode)
       }
       // Password oracle prevention: never leak internal details
       return c.json(

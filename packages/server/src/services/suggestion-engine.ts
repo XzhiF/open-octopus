@@ -1,4 +1,3 @@
-import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
 import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
 
@@ -22,7 +21,8 @@ interface RuleContext {
 
 interface SuggestionRule {
   name: string
-  check: (ctx: RuleContext) => Suggestion[]
+  // B4: TokenUsageDAO 已迁 PG（读为 async），规则检查联合允许 Promise。
+  check: (ctx: RuleContext) => Suggestion[] | Promise<Suggestion[]>
 }
 
 export class SuggestionEngine {
@@ -32,8 +32,8 @@ export class SuggestionEngine {
     this.rules = [
       {
         name: 'OverpoweredModel',
-        check: (ctx) => {
-          const rows = ctx.tokenDao.findLlmCallStatsByNode(ctx.workspaceId, ctx.workflowRef)
+        check: async (ctx) => {
+          const rows = await ctx.tokenDao.findLlmCallStatsByNode(ctx.workspaceId, ctx.workflowRef)
 
           return rows.filter(r => r.avg_out < 200 && r.tool_ratio < 0.3).map(r => ({
             ruleName: 'OverpoweredModel',
@@ -49,8 +49,8 @@ export class SuggestionEngine {
       },
       {
         name: 'ThinkingOutputRatio',
-        check: (ctx) => {
-          const rows = ctx.tokenDao.findThinkingOutputRatio(ctx.workspaceId, ctx.workflowRef)
+        check: async (ctx) => {
+          const rows = await ctx.tokenDao.findThinkingOutputRatio(ctx.workspaceId, ctx.workflowRef)
 
           return rows.filter(r => r.output_total > 0 && r.thinking_total > 5 * r.output_total).map(r => ({
             ruleName: 'ThinkingOutputRatio',
@@ -66,8 +66,8 @@ export class SuggestionEngine {
       },
       {
         name: 'RedundantCondition',
-        check: (ctx) => {
-          const rows = ctx.execDao.findNodeExecStatsByWorkflow(ctx.workspaceId, 36500)
+        check: async (ctx) => {
+          const rows = await ctx.execDao.findNodeExecStatsByWorkflow(ctx.workspaceId, 36500)
 
           const byNode = new Map<string, Array<{ status: string; count: number }>>()
           for (const r of rows) {
@@ -96,8 +96,8 @@ export class SuggestionEngine {
       },
       {
         name: 'FlakyNode',
-        check: (ctx) => {
-          const rows = ctx.execDao.findFlakyNodeStats(ctx.workspaceId, 36500)
+        check: async (ctx) => {
+          const rows = await ctx.execDao.findFlakyNodeStats(ctx.workspaceId, 36500)
 
           return rows.filter(r => r.total > 2 && r.failures / r.total > 0.3).map(r => ({
             ruleName: 'FlakyNode',
@@ -112,8 +112,8 @@ export class SuggestionEngine {
       },
       {
         name: 'OutputOverproduction',
-        check: (ctx) => {
-          const rows = ctx.tokenDao.findOutputOverproduction(ctx.workspaceId, ctx.workflowRef)
+        check: async (ctx) => {
+          const rows = await ctx.tokenDao.findOutputOverproduction(ctx.workspaceId, ctx.workflowRef)
 
           return rows.filter(r => r.avg_out > 2000).map(r => ({
             ruleName: 'OutputOverproduction',
@@ -130,11 +130,11 @@ export class SuggestionEngine {
     ]
   }
 
-  generate(ctx: RuleContext): Suggestion[] {
+  async generate(ctx: RuleContext): Promise<Suggestion[]> {
     const all: Suggestion[] = []
     for (const rule of this.rules) {
       try {
-        all.push(...rule.check(ctx))
+        all.push(...(await rule.check(ctx)))
       } catch {
         // 单条规则失败不影响其他规则
       }
@@ -142,10 +142,10 @@ export class SuggestionEngine {
     return all
   }
 
-  persistSuggestion(dao: WorkspaceDAO, workspaceId: string, workflowRef: string, suggestion: Suggestion): string {
+  async persistSuggestion(dao: WorkspaceDAO, workspaceId: string, workflowRef: string, suggestion: Suggestion): Promise<string> {
     const id = randomUUID()
     const now = new Date().toISOString()
-    dao.insertSuggestion({
+    await dao.insertSuggestion({
       id, workspace_id: workspaceId, workflow_ref: workflowRef,
       rule_name: suggestion.ruleName, node_id: suggestion.nodeId ?? null,
       severity: suggestion.severity, title: suggestion.title,
@@ -157,10 +157,10 @@ export class SuggestionEngine {
     return id
   }
 
-  applySuggestion(dao: WorkspaceDAO, suggestionId: string, changes: Record<string, unknown>): boolean {
-    const row = dao.findSuggestionById(suggestionId)
+  async applySuggestion(dao: WorkspaceDAO, suggestionId: string, changes: Record<string, unknown>): Promise<boolean> {
+    const row = await dao.findSuggestionById(suggestionId)
     if (!row) return false
-    dao.applySuggestion(suggestionId, JSON.stringify(changes))
+    await dao.applySuggestion(suggestionId, JSON.stringify(changes))
     return true
   }
 

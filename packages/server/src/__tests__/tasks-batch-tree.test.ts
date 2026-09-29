@@ -2,7 +2,8 @@
 //
 // #53 draft-artifact-visibility — GET /api/tasks/:id/batch-tree（磁盘直扫，
 // 绕开 phases[] 的「落盘即现」端点）+ v4 manifest 写侧空键噪音过滤（K3）。
-// harness 抄 tasks-home-file.test.ts：真路由 + in-memory DB + tmpDir 注入
+// harness 抄 tasks-home-file.test.ts：真路由 + 双引擎 fixture（P1 B2：tasks 走 PG
+// 全局池，其余表仍 in-memory SQLite）+ tmpDir 注入
 // TaskHomeService。批次识别 = 直接含 .md 的 .scratch 子树目录（约定日期层 +
 // 扁平层双支持）；批内递归 depth ≤2；全局 cap 300；latest_mtime 降序；缺
 // .scratch → batches:[] 200；未知任务 404 且不建野 home。
@@ -14,6 +15,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import path from "path"
@@ -22,6 +24,8 @@ import fs from "fs"
 
 const ORG = "e2e-td-batchtree"
 
+// P1 B2：tasks 落 PG（setupRegisteredPgSchema 注册全局池 —— service 内部 pgSql() 取）。
+let pg: PgFixture | null = null
 let db: Database.Database
 let app: Hono
 let tmpDir: string
@@ -63,7 +67,9 @@ interface BatchTreeResp {
   }>
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
   const sse = new SSEService()
@@ -77,12 +83,15 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe("GET /:id/batch-tree — 布局识别与守卫", () => {
+describePg("GET /:id/batch-tree — 布局识别与守卫", () => {
   it("AC1: 约定日期层两批，files 计数正确，latest_mtime 新者在前", async () => {
     const id = await newV4Task()
     // alpha 三文件（spec + 两票），beta 单 spec。beta 更新 → 排前。
@@ -165,7 +174,7 @@ describe("GET /:id/batch-tree — 布局识别与守卫", () => {
   })
 })
 
-describe("manifest v4 写侧空键噪音过滤 (K3)", () => {
+describePg("manifest v4 写侧空键噪音过滤 (K3)", () => {
   function readManifest(id: string): { spec: Record<string, unknown> } {
     return JSON.parse(
       fs.readFileSync(path.join(taskHome.homePath(id), "manifest.json"), "utf-8"),

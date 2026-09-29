@@ -17,17 +17,17 @@ export function createDashboardRoutes(
 ): Hono {
   const dashboardRoutes = new Hono()
 
-  dashboardRoutes.get("/stats", (c) => {
-    const allWorkspaces = workspaceService.list()
+  dashboardRoutes.get("/stats", async (c) => {
+    const allWorkspaces = await workspaceService.list()
     const workspaces = allWorkspaces.filter(ws => ws.status !== "archived")
     const totalWorkflows = workspaces.reduce(
       (sum, ws) => sum + workflowService.list(ws.path).length,
       0,
     )
 
-    const execRow = execDAO.getDashboardStats()
+    const execRow = await execDAO.getDashboardStats()
     // C3: 全局费用走 ledger 规范 —— LedgerCost 三态（全未定价=null，部分=已知和+false）
-    const liveCost = tokenUsageDAO.totalCost()
+    const liveCost = await tokenUsageDAO.totalCost()
 
     // Get archived workspace stats
     let archivedWorkspaces = 0
@@ -35,7 +35,7 @@ export function createDashboardRoutes(
     let archivedCost: LedgerCost = { usd: null, complete: true }
     if (archiveDAO) {
       try {
-        const archived = archiveDAO.getArchivedWorkspaces()
+        const archived = await archiveDAO.getArchivedWorkspaces()
         archivedWorkspaces = archived.length
         archivedExecutions = archived.reduce((sum, ws) => sum + ws.execution_count, 0)
         archivedCost = costSummary(archived.map(ws => ws.total_cost))
@@ -73,8 +73,8 @@ export function createDashboardRoutes(
     return c.json(stats)
   })
 
-  dashboardRoutes.get("/queue", (c) => {
-    const active = execDAO.getQueueItems()
+  dashboardRoutes.get("/queue", async (c) => {
+    const active = await execDAO.getQueueItems()
 
     const mapped = active.map(row => ({
       id: row.id as string,
@@ -94,8 +94,8 @@ export function createDashboardRoutes(
     return c.json(mapped)
   })
 
-  dashboardRoutes.get("/recent", (c) => {
-    const recent = execDAO.getRecentCompleted(10)
+  dashboardRoutes.get("/recent", async (c) => {
+    const recent = await execDAO.getRecentCompleted(10)
 
     const mapped = recent.map(row => ({
       id: row.id as string,
@@ -115,17 +115,17 @@ export function createDashboardRoutes(
     return c.json(mapped)
   })
 
-  dashboardRoutes.get("/workflow-health", (c) => {
-    const workflows = execDAO.getWorkflowHealth(10)
+  dashboardRoutes.get("/workflow-health", async (c) => {
+    const workflows = await execDAO.getWorkflowHealth(10)
     return c.json(workflows)
   })
 
-  dashboardRoutes.get("/leaderboard", (c) => {
+  dashboardRoutes.get("/leaderboard", async (c) => {
     const limitParam = c.req.query("limit")
     const parsed = limitParam ? parseInt(limitParam, 10) : 6
     const limit = Number.isNaN(parsed) ? 6 : parsed
 
-    const result = leaderboardService.getLeaderboard(limit)
+    const result = await leaderboardService.getLeaderboard(limit)
     return c.json(result)
   })
 

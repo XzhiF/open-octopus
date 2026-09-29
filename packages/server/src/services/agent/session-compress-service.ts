@@ -86,9 +86,9 @@ export class SessionCompressService {
   /**
    * Check if a session needs compression.
    */
-  needsCompression(sessionId: string): boolean {
+  async needsCompression(sessionId: string): Promise<boolean> {
     try {
-      const result = this.dao.countUncompressedMessages(sessionId)
+      const result = await this.dao.countUncompressedMessages(sessionId)
 
       const messageCount = result.count
       const tokenEstimate = Math.ceil(result.total_chars / CHARS_PER_TOKEN)
@@ -110,7 +110,7 @@ export class SessionCompressService {
    */
   async compressSession(sessionId: string): Promise<CompressionResult> {
     // Get all non-compressed messages ordered by creation time
-    const messages = this.dao.findUncompressedMessagesOrdered(sessionId)
+    const messages = await this.dao.findUncompressedMessagesOrdered(sessionId)
 
     if (messages.length <= this.config.retain_recent) {
       return {
@@ -153,18 +153,18 @@ export class SessionCompressService {
 
     // Mark early messages as compressed
     const compressIds = toCompress.map(m => m.id)
-    this.dao.markMessagesCompressed(compressIds)
+    await this.dao.markMessagesCompressed(compressIds)
 
     // Insert summary message
     const summaryId = crypto.randomUUID()
     const now = new Date().toISOString()
-    this.dao.insertSummaryMessage(summaryId, sessionId, summary, now)
+    await this.dao.insertSummaryMessage(summaryId, sessionId, summary, now)
 
     // 入账恰在压缩落定之后：一条真实 LLM 调用 = 一行 session_compress（KD23 一行一调用）。
     // 记账异常不反噬压缩结果（旁路记账），但必须出声。
     if (llmOutcome) {
       try {
-        this.recordCompressionCall(sessionId, llmOutcome, llmStartedAt)
+        await this.recordCompressionCall(sessionId, llmOutcome, llmStartedAt)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[SessionCompress] billing ledger write failed for ${sessionId}: ${msg}`)
@@ -198,9 +198,10 @@ export class SessionCompressService {
    * 归属被压缩会话（KD17：session_id + org 如实；无执行链路 → node/execution NULL，v47 列
    * 可空）。token 用厂商真值（result chunk usage），cost 走 phase 1 同一计费链路（KD25）。
    */
-  private recordCompressionCall(sessionId: string, outcome: CompressionLlmResult, startedAt: number): void {
+  // B4: recordLlmCall 走 TokenUsageDAO(PG) 后为 async；调用方 await（旁路语义不变，异常仍由调用侧 catch）。
+  private async recordCompressionCall(sessionId: string, outcome: CompressionLlmResult, startedAt: number): Promise<void> {
     if (!this.tokenDao || !outcome.usage) return
-    recordLlmCall({
+    await recordLlmCall({
       id: crypto.randomUUID(),
       sourcePath: 'session_compress',
       nodeExecutionId: null,
@@ -313,16 +314,16 @@ export class SessionCompressService {
    * Get the compressed context for a session (summary + recent messages).
    * Used when sending context to the Claude SDK.
    */
-  getCompressedContext(sessionId: string): {
+  async getCompressedContext(sessionId: string): Promise<{
     summary: string | null
     recent_messages: Array<{ role: string; content: string }>
     total_tokens_estimate: number
-  } {
+  }> {
     // Get the most recent summary
-    const summaryRow = this.dao.findSummaryMessage(sessionId)
+    const summaryRow = await this.dao.findSummaryMessage(sessionId)
 
     // Get recent non-compressed messages
-    const recentMessages = this.dao.findRecentActiveMessages(sessionId, this.config.retain_recent)
+    const recentMessages = await this.dao.findRecentActiveMessages(sessionId, this.config.retain_recent)
 
     const summary = summaryRow?.content ?? null
     const totalChars = (summary?.length ?? 0) + recentMessages.reduce((sum, m) => sum + m.content.length, 0)
@@ -337,8 +338,8 @@ export class SessionCompressService {
   /**
    * Check if the compressed context fits within the target usage percentage.
    */
-  fitsWithinBudget(sessionId: string): boolean {
-    const context = this.getCompressedContext(sessionId)
+  async fitsWithinBudget(sessionId: string): Promise<boolean> {
+    const context = await this.getCompressedContext(sessionId)
     const targetTokens = this.config.model_context_window * (this.config.target_usage_percent / 100)
     return context.total_tokens_estimate <= targetTokens
   }

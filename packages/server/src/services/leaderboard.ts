@@ -82,7 +82,9 @@ export class LeaderboardService {
     this.cache = null
   }
 
-  getLeaderboard(limit: number = 6): LeaderboardResponse {
+  // P1 B4：DAO 迁 PG 后本服务整链 async（缓存语义保留：TTL 命中同步返回，
+  // 未命中 await 三条 ranking 后回填）。
+  async getLeaderboard(limit: number = 6): Promise<LeaderboardResponse> {
     const clampedLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
 
     if (this.cache && Date.now() < this.cache.expiresAt) {
@@ -90,17 +92,17 @@ export class LeaderboardService {
     }
 
     const data: LeaderboardResponse = {
-      byWorkspace: this.getByWorkspace(clampedLimit),
-      byWorkflow: this.getByExecution(clampedLimit),
-      byModel: this.getByModel(clampedLimit),
+      byWorkspace: await this.getByWorkspace(clampedLimit),
+      byWorkflow: await this.getByExecution(clampedLimit),
+      byModel: await this.getByModel(clampedLimit),
     }
 
     this.cache = { data, expiresAt: Date.now() + this.CACHE_TTL_MS }
     return data
   }
 
-  private getByWorkspace(limit: number): WorkspaceRanking[] {
-    const rows = this.dao.getWorkspaceRanking(limit)
+  private async getByWorkspace(limit: number): Promise<WorkspaceRanking[]> {
+    const rows = await this.dao.getWorkspaceRanking(limit)
 
     const workspaceMap = new Map<string, WorkspaceRanking>()
     for (const row of rows) {
@@ -131,13 +133,14 @@ export class LeaderboardService {
     return Array.from(workspaceMap.values())
   }
 
-  private getByExecution(limit: number): ExecutionRanking[] {
-    const rows = this.dao.getExecutionRanking(limit)
+  private async getByExecution(limit: number): Promise<ExecutionRanking[]> {
+    const rows = await this.dao.getExecutionRanking(limit)
 
-    return rows.map(row => {
-      const models = this.dao.getExecutionModelBreakdown(row.execution_id)
+    const out: ExecutionRanking[] = []
+    for (const row of rows) {
+      const models = await this.dao.getExecutionModelBreakdown(row.execution_id)
 
-      return {
+      out.push({
         executionId: row.execution_id,
         workflowRef: row.workflow_ref,
         workflowName: row.workflow_name ?? row.workflow_ref,
@@ -160,12 +163,13 @@ export class LeaderboardService {
           costUsd: m.model_cost_usd,
           costComplete: m.cost_complete === 1,
         })),
-      }
-    })
+      })
+    }
+    return out
   }
 
-  private getByModel(limit: number): ModelRanking[] {
-    const rows = this.dao.getModelRanking(limit)
+  private async getByModel(limit: number): Promise<ModelRanking[]> {
+    const rows = await this.dao.getModelRanking(limit)
 
     return rows.map(row => ({
       model: row.model,

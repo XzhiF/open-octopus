@@ -7,6 +7,7 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { SSEService } from "./sse"
 import { ObservabilityService } from "./observability"
 import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import { pgSql } from "../db/dao/registry"
 import { getResourceRegistry } from "./resource-registry"
 
 let _db: Database.Database | null = null
@@ -30,9 +31,9 @@ export function initExecutionServiceRegistry(
   _wsDAO = daos?.workspaceDAO ?? null
 }
 
-export function getExecutionService(
+export async function getExecutionService(
   workspaceId: string,
-): { service: ExecutionService; wsPath: string } | undefined {
+): Promise<{ service: ExecutionService; wsPath: string } | undefined> {
   if (!_db || !_sse) {
     throw new Error("ExecutionServiceRegistry not initialized. Call initExecutionServiceRegistry() first.")
   }
@@ -40,7 +41,8 @@ export function getExecutionService(
   const cached = serviceCache.get(workspaceId)
   if (cached) return cached
 
-  const ws = (_wsDAO ?? new WorkspaceDAO(_db)).findById(workspaceId) ?? undefined
+  // 票6a：WorkspaceDAO 已迁 PG —— 兜底直构造换 pgSql()；查找走异步池句柄。
+  const ws = (await (_wsDAO ?? new WorkspaceDAO(pgSql())).findById(workspaceId)) ?? undefined
   if (!ws) return undefined
 
   const resolvedPath = ws.path.replace(/^~/, os.homedir())

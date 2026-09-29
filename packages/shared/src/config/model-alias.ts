@@ -159,11 +159,16 @@ export function resolveModelAlias(
 export function loadModelAliasConfig(opts?: {
   orgDir?: string
   globalDir?: string
+  /**
+   * Test isolation: skip the hardcoded $HOME/.octopus/models.yaml fallback.
+   * Production callers leave this undefined (fallback = global layer).
+   */
+  includeHomeFallback?: boolean
 }): ModelAliasConfig {
   const searchPaths = [
     opts?.orgDir && path.join(opts.orgDir, 'models.yaml'),
     opts?.globalDir && path.join(opts.globalDir, 'models.yaml'),
-    path.join(process.env.HOME ?? '~', '.octopus', 'models.yaml'),
+    opts?.includeHomeFallback !== false && path.join(process.env.HOME ?? '~', '.octopus', 'models.yaml'),
   ].filter(Boolean) as string[]
 
   for (const filePath of searchPaths) {

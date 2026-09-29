@@ -19,6 +19,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { applySchema } from "../db/schema"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { AgentSessionDAO, SafetyDAO, TaskDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
 import { initAgentService } from "../services/agent/agent-service"
@@ -74,6 +75,8 @@ function makeStub(opts: { hasSnapshot?: boolean; notes?: Record<string, string> 
 // ── harness ───────────────────────────────────────────────────────────
 
 const ORG = "e2e-td-rsync"
+// P1 B2 双引擎 fixture：tasks（及配方 §5 的 sessions 父行）落这座随机 PG 库。
+let pg: PgFixture | null = null
 let fakeHome: string
 let db: Database.Database
 let appWithGate: Hono
@@ -81,13 +84,24 @@ let appNoGate: Hono
 let sessionDAO: AgentSessionDAO
 let taskDAO: TaskDAO
 
-function insertTask(id: string, sessionId: string, spec: Record<string, unknown>, projectIds: string[]): void {
+// P1 B2: tasks 表已迁 PG —— 造数落 PG；source_chat_session_id 有 FK → PG sessions。
+async function insertTask(id: string, sessionId: string, spec: Record<string, unknown>, projectIds: string[]): Promise<void> {
   const now = new Date().toISOString()
-  db.prepare(
+  await pg!.sql.unsafe(
     `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
       skills, project_ids, version, created_at, updated_at, source_chat_session_id)
-     VALUES (?, ?, 'E2E_TD gate', 'draft', ?, '[]', '[]', '[]', ?, 1, ?, ?, ?)`,
-  ).run(id, ORG, JSON.stringify(spec), JSON.stringify(projectIds), now, now, sessionId)
+     VALUES ($1, $2, 'E2E_TD gate', 'draft', $3, '[]', '[]', '[]', $4, 1, $5, $6, $7)`,
+    [id, ORG, JSON.stringify(spec), JSON.stringify(projectIds), now, now, sessionId],
+  )
+}
+
+// P1 B2 配方 §5：PG tasks FK → PG sessions 父行。
+async function seedPgSession(id: string, org: string): Promise<void> {
+  const now = new Date().toISOString()
+  await pg!.sql`
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (${id}, ${org}, 'e2e', 'main', true, false, ${now}, ${now})
+    ON CONFLICT (id) DO NOTHING`
 }
 
 async function createSession(): Promise<string> {
@@ -97,7 +111,9 @@ async function createSession(): Promise<string> {
     body: JSON.stringify({}),
   })
   expect(res.status).toBe(201)
-  return ((await res.json()) as { id: string }).id
+  const id = ((await res.json()) as { id: string }).id
+  await seedPgSession(id, ORG)
+  return id
 }
 
 async function chat(app: Hono, sessionId: string): Promise<number> {
@@ -115,15 +131,17 @@ function contextFile(taskId: string): string {
   return fs.readFileSync(path.join(fakeHome, ".octopus", "tasks", taskId, "context.md"), "utf-8")
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "rsync-gate-home-"))
   process.env.HOME = fakeHome
   process.env.USERPROFILE = fakeHome
+  // P1 B3 双引擎：tasks/safety_events/sessions/messages 都落这座注册 PG 库。
+  pg = await setupRegisteredPgSchema()
   db = new Database(":memory:")
   applySchema(db)
-  sessionDAO = new AgentSessionDAO(db)
-  taskDAO = new TaskDAO(db)
-  initAgentService(sessionDAO, new SafetyDAO(db))
+  sessionDAO = new AgentSessionDAO(pg!.sql)
+  taskDAO = new TaskDAO(pg.sql)
+  initAgentService(sessionDAO, new SafetyDAO(pg.sql))
   appWithGate = new Hono()
   appWithGate.route("/api/clones", createCloneSessionRoutes({
     sessionDAO, taskDAO, repoSyncService: makeStub(),
@@ -132,7 +150,10 @@ beforeAll(() => {
   appNoGate.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(fakeHome, { recursive: true, force: true })
 })
@@ -141,10 +162,10 @@ beforeEach(() => {
   calls.length = 0
 })
 
-describe("clone chat repo-sync 门", () => {
+describePg("clone chat repo-sync 门", () => {
   it("v4 有项目：先补触发 sync + await wait（chat 前），context.md 带新鲜度行", async () => {
     const sid = await createSession()
-    insertTask("e2e-td-g1", sid, { format: "v4" }, ["demo-repo"])
+    await insertTask("e2e-td-g1", sid, { format: "v4" }, ["demo-repo"])
     // route 的 taskHomePath 存在性检查 → 预建 home 目录
     fs.mkdirSync(path.join(fakeHome, ".octopus", "tasks", "e2e-td-g1"), { recursive: true })
 
@@ -164,7 +185,7 @@ describe("clone chat repo-sync 门", () => {
 
   it("已有快照 → 不重复补触发 sync，仍 await wait", async () => {
     const sid = await createSession()
-    insertTask("e2e-td-g2", sid, { format: "v4" }, ["demo-repo"])
+    await insertTask("e2e-td-g2", sid, { format: "v4" }, ["demo-repo"])
     fs.mkdirSync(path.join(fakeHome, ".octopus", "tasks", "e2e-td-g2"), { recursive: true })
 
     // hasSnapshot stub 恒 false 会重复触发；这里用第二实例验证 true 分支
@@ -178,7 +199,7 @@ describe("clone chat repo-sync 门", () => {
 
   it("v3 行（无 v4 旗标）→ 门整体跳过，context.md 无新鲜度行", async () => {
     const sid = await createSession()
-    insertTask("e2e-td-g3", sid, { task_type: "coding" }, ["demo-repo"])
+    await insertTask("e2e-td-g3", sid, { task_type: "coding" }, ["demo-repo"])
     fs.mkdirSync(path.join(fakeHome, ".octopus", "tasks", "e2e-td-g3"), { recursive: true })
 
     expect(await chat(appWithGate, sid)).toBe(200)
@@ -188,7 +209,7 @@ describe("clone chat repo-sync 门", () => {
 
   it("deps 缺省 repoSyncService（旧调用方形态）→ turn 正常，无门", async () => {
     const sid = await createSession()
-    insertTask("e2e-td-g4", sid, { format: "v4" }, ["demo-repo"])
+    await insertTask("e2e-td-g4", sid, { format: "v4" }, ["demo-repo"])
     fs.mkdirSync(path.join(fakeHome, ".octopus", "tasks", "e2e-td-g4"), { recursive: true })
 
     expect(await chat(appNoGate, sid)).toBe(200)

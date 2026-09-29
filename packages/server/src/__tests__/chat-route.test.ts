@@ -1,3 +1,6 @@
+// P1 B1: ChatDAO 已 postgres.js —— 本文件保持 SQLite(:memory:) 承接未迁域
+// （workspace 等 B5 表），同时注册随机 PG 测试库给 chat 链路（整 app 经 registry
+// 的 pgSql() 取池；测试侧直接构造 ChatService 用 pg.sql）。用例语义与条数不变。
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest"
 import { initDb, closeDb } from "../db/connection"
 import { applySchema } from "../db/schema"
@@ -9,19 +12,22 @@ import fs from "fs"
 // Initialize isolated test database BEFORE importing index.ts
 const TEST_DB = path.join(os.tmpdir(), `chat-route-test-${Date.now()}.db`)
 beforeAll(() => {
+  if (!pgTestEnabledOn()) return
   const db = initDb(TEST_DB)
   applySchema(db)
 })
 afterAll(() => {
+  if (!pgTestEnabledOn()) return
   closeDb()
   if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB)
 })
 
 import app from "../index"
 import { WorkspaceService } from "../services/workspace"
-import { getDb } from "../db/connection"
+// [B5 票6b-1] getDb 不再使用：WorkspaceDAO 已迁 PG（票6a），服务侧构造吃注册池。
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 vi.mock("@octopus/providers", async () => {
   const actual = await vi.importActual("@octopus/providers")
@@ -41,31 +47,36 @@ vi.mock("@octopus/providers", async () => {
   }
 })
 
-describe("Chat Route with LLM", () => {
+describePg("Chat Route with LLM", () => {
+  let pg: PgFixture
   let workspaceId: string
   let sessionId: string
   let existingWsIds: Set<string>
 
-  beforeAll(() => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    existingWsIds = new Set(wsService.list().map(ws => ws.id))
+  const chatService = () => new ChatService(new ChatDAO(pg.sql), new SSEService())
 
-    const ws = wsService.create({ name: "chat-test", org: "xzf", path: "/tmp/octopus-chat-test" })
+  beforeAll(async () => {
+    pg = await setupRegisteredPgSchema() // 注册为当前池：整 app 的 d.chat(lazyDAO→pgSql) 用同座库
+    // [B5 票6a] WorkspaceDAO 已迁 PG —— 服务侧构造直接吃本文件注册池，不再 getDb()。
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    existingWsIds = new Set((await wsService.list()).map(ws => ws.id))
+
+    const ws = await wsService.create({ name: "chat-test", org: "xzf", path: "/tmp/octopus-chat-test" })
     workspaceId = ws.id
 
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const session = chatService.createSession(workspaceId, "Test Chat")
+    const session = await chatService().createSession(workspaceId, "Test Chat")
     sessionId = session.id
-  })
+  }, 30000)
 
   afterAll(async () => {
-    const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const currentIds = wsService.list().map(ws => ws.id)
+    const wsService = new WorkspaceService(new WorkspaceDAO(pg.sql))
+    const currentIds = (await wsService.list()).map(ws => ws.id)
     for (const id of currentIds) {
       if (!existingWsIds.has(id)) {
         await wsService.delete(id)
       }
     }
+    await pg.close()
   })
 
   it("POST /messages returns 200 and creates AI response", async () => {
@@ -83,8 +94,7 @@ describe("Chat Route with LLM", () => {
     // Consume SSE stream to ensure stream completes
     await res.text()
 
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const updated = chatService.getSession(sessionId)
+    const updated = await chatService().getSession(sessionId)
     expect(updated).toBeDefined()
     const aiMessages = updated!.messages.filter(m => m.role === 'assistant')
     expect(aiMessages.length).toBeGreaterThan(0)
@@ -104,8 +114,7 @@ describe("Chat Route with LLM", () => {
   })
 
   it("POST /messages stores user message first", async () => {
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const session = chatService.createSession(workspaceId, "User Message Test")
+    const session = await chatService().createSession(workspaceId, "User Message Test")
 
     const res = await app.request(
       `/api/workspaces/${workspaceId}/chat/sessions/${session.id}/messages`,
@@ -119,15 +128,14 @@ describe("Chat Route with LLM", () => {
     // Consume SSE stream
     await res.text()
 
-    const updated = chatService.getSession(session.id)
+    const updated = await chatService().getSession(session.id)
     const userMessages = updated!.messages.filter(m => m.role === 'user')
     expect(userMessages.length).toBeGreaterThan(0)
     expect(userMessages[0].content).toBe('test input')
   })
 
   it("updates provider_session_id after first AI response", async () => {
-    const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())
-    const session = chatService.createSession(workspaceId, "Session ID Test")
+    const session = await chatService().createSession(workspaceId, "Session ID Test")
 
     const res = await app.request(
       `/api/workspaces/${workspaceId}/chat/sessions/${session.id}/messages`,
@@ -143,7 +151,7 @@ describe("Chat Route with LLM", () => {
     // Consume SSE stream to ensure stream completes
     await res.text()
 
-    const updated = chatService.getSession(session.id)
+    const updated = await chatService().getSession(session.id)
     expect(updated!.providerSessionId).toBe('test-session-1')
   })
 })

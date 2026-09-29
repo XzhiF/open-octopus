@@ -15,15 +15,15 @@ export function createWorkflowRoutes(
 ): Hono {
   const router = new Hono()
 
-  function getWorkspace(id: string) {
-    const ws = workspaceDAO.findById(id)
+  async function getWorkspace(id: string) {
+    const ws = await workspaceDAO.findById(id)
     if (!ws) return undefined
     return { path: ws.path.replace(/^~/, os.homedir()) }
   }
 
-  router.get("/", (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+  router.get("/", async (c) => {
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const local = service.list(ws.path)
@@ -32,8 +32,8 @@ export function createWorkflowRoutes(
   })
 
   router.post("/", async (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const body = await c.req.json<{ ref: string; content: string }>()
@@ -49,8 +49,8 @@ export function createWorkflowRoutes(
   // parse+validate pipeline with `octopus workflow validate` (cli) so the
   // three entry points can never disagree.
   router.post("/validate", async (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const body = await c.req.json<{ yaml?: string }>().catch(() => ({}) as { yaml?: string })
@@ -67,8 +67,11 @@ export function createWorkflowRoutes(
         warnings: warnings.map((w) => ({ path: [], message: w, severity: "warning" as const })),
         parsed: {
           mode: wf.execution_mode,
-          expertCount: swarm?.swarm?.experts?.length,
-          hasAggregator: Boolean(swarm?.swarm?.aggregator),
+          // B5-5B3 真 bug 根修：swarm 的 experts/aggregator 是 NodeDef 平铺字段
+          // （见 shared/types/workflow.ts swarm 段），此前读 swarm.swarm.* 恒
+          // undefined → MOA 配置面板校验拿到的 expertCount/hasAggregator 恒空。
+          expertCount: swarm?.experts?.length,
+          hasAggregator: Boolean(swarm?.aggregator),
         },
       })
     } catch (err: unknown) {
@@ -77,9 +80,9 @@ export function createWorkflowRoutes(
     }
   })
 
-  router.get("/:ref", (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+  router.get("/:ref", async (c) => {
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")
@@ -114,8 +117,8 @@ export function createWorkflowRoutes(
   })
 
   router.put("/:ref", async (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")
@@ -127,9 +130,9 @@ export function createWorkflowRoutes(
     return c.json(workflow)
   })
 
-  router.delete("/:ref", (c) => {
-    const workspaceId = c.req.param("id")
-    const ws = getWorkspace(workspaceId)
+  router.delete("/:ref", async (c) => {
+    const workspaceId = c.req.param("id")!
+    const ws = await getWorkspace(workspaceId)
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")

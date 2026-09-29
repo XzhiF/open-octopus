@@ -38,12 +38,17 @@ export class ArchiveAnalysisService {
     const { WorkspaceDAO } = await import('../../db/dao/workspace-dao')
     const { ExecutionDAO } = await import('../../db/dao/execution-dao')
     const { getDb } = await import('../../db')
+    const { pgSql } = await import('../../db/dao/registry')
     const { discoverSkillsFromWorkspace, discoverWorkflowsFromWorkspace, discoverAgentsFromWorkspace } = await import('../archive/skill-discovery')
 
+    // 票6a：archive 域 exec 读簇收口 —— WorkspaceDAO/直读面句柄源换 PG 池
+    // （executions/node_executions/llm_calls_costed 票5 起单引擎在 PG）。
+    // ArchiveDraftDAO 仍 SQLite 直构（archive_drafts 未迁，B6 成员，登记票6b 红面清单）。
     const db = getDb()
-    const workspaceDAO = new WorkspaceDAO(db)
-    const executionDAO = new ExecutionDAO(db)
-    const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, db, this.org)
+    const pdb = pgSql()
+    const workspaceDAO = new WorkspaceDAO(pdb)
+    const executionDAO = new ExecutionDAO(pdb)
+    const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, pdb, this.org)
 
     if (!ctx) {
       await emitter.stepError("build_context", "工作空间未找到")
@@ -55,7 +60,7 @@ export class ArchiveAnalysisService {
 
     // Phase 1.5: Auto-discover skills
     await emitter.stepStart("discover_skills", "扫描 .claude/skills/ 自动发现...")
-    const rawPath = workspaceDAO.findPathById(workspaceId)
+    const rawPath = await workspaceDAO.findPathById(workspaceId)
     const workspacePath = rawPath?.replace(/^~/, os.homedir()) ?? null
     const rawDiscoveredSkills = workspacePath ? discoverSkillsFromWorkspace(workspacePath) : []
 
@@ -118,15 +123,19 @@ export class ArchiveAnalysisService {
 
     // Merge auto-discovered + LLM skills
     const autoNames = new Set(autoDiscoveredSkills.map(s => s.name))
-    const mergedSkills = [...autoDiscoveredSkills, ...llmSkills.filter(s => !autoNames.has(s.name))]
+    // 归档域 skills 簇（票6 迁移债）：autoDiscoveredSkills 保持既有 Record 松形态
+    // （status/existingGroup 是无人读取的历史附加键，evidence_* 缺省即 undefined——
+    // 序列化行为与修复前逐键相等），仅类型面在装配口收敛。
+    const mergedSkills = [...autoDiscoveredSkills, ...llmSkills.filter(s => !autoNames.has(s.name))] as unknown as SkillCandidate[]
 
     // Phase 2.5: Token stats
     let tokenStats: any = { total: { inputTokens: 0, outputTokens: 0, cost: 0 }, byModel: [], byWorkflow: [], nodes: [] }
     try {
       const { TokenUsageDAO } = await import('../../db/dao/token-usage-dao')
-      const tokenDAO = new TokenUsageDAO(db)
-      const wsStats = tokenDAO.getWorkspaceTokenStats(workspaceId)
-      const nodes = tokenDAO.getNodeTokenStats(workspaceId)
+      const { pgSql } = await import('../../db/dao/registry')
+      const tokenDAO = new TokenUsageDAO(pgSql())
+      const wsStats = await tokenDAO.getWorkspaceTokenStats(workspaceId)
+      const nodes = await tokenDAO.getNodeTokenStats(workspaceId)
       tokenStats = { ...wsStats, nodes }
     } catch { /* non-fatal */ }
 

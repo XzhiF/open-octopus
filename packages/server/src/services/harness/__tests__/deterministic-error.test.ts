@@ -667,7 +667,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(pipeline.detectorCount).toBe(4)
   })
 
-  it("routes nodeStart events for nodeType tracking then fires on syntax error", () => {
+  it("routes nodeStart events for nodeType tracking then fires on syntax error", async () => {
     const pipeline = new DetectorPipeline({
       config: configWithDeterministicError,
       executionId: "exec-1",
@@ -677,14 +677,14 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     })
 
     // First: nodeStart registers nodeType
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeStart",
       nodeId: "bash-build",
       nodeType: "bash",
     })
 
     // Then: nodeRetry at attempt 1 with deterministic error
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-build",
       attempt: 1,
@@ -707,7 +707,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(sseCall[1].data.report.severity).toBe("critical")
   })
 
-  it("coexistence: deterministic_error at attempt 1, stupid_retry fires at attempt 2 as fallback", () => {
+  it("coexistence: deterministic_error at attempt 1, stupid_retry fires at attempt 2 as fallback", async () => {
     const pipeline = new DetectorPipeline({
       config: configWithDeterministicError,
       executionId: "exec-1",
@@ -723,7 +723,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     }
 
     // Register nodeType
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeStart",
       nodeId: "bash-build",
       nodeType: "bash",
@@ -731,7 +731,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
 
     // Attempt 1: deterministic_error fires (attempt===1)
     // stupid_retry tracks state (retryCount=1) but doesn't fire yet
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-build",
       attempt: 1,
@@ -748,7 +748,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     // Attempt 2: deterministic_error ignores (attempt≠1),
     // stupid_retry fires (threshold=2, same error) — acts as fallback
     // when the deterministic_error fix didn't resolve the issue
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-build",
       attempt: 2,
@@ -763,7 +763,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(secondReport.detector).toBe("stupid_retry")
   })
 
-  it("stupid_retry still fires for agent nodes (not handled by deterministic_error)", () => {
+  it("stupid_retry still fires for agent nodes (not handled by deterministic_error)", async () => {
     const pipeline = new DetectorPipeline({
       config: configWithDeterministicError,
       executionId: "exec-1",
@@ -777,14 +777,14 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
       outputs: { exitCode: 1 },
     }
 
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeStart",
       nodeId: "agent-node",
       nodeType: "agent",
     })
 
     // Attempt 1: deterministic_error skips (agent node)
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "agent-node",
       attempt: 1,
@@ -795,7 +795,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(mockDao.insertEvent).toHaveBeenCalledTimes(0)
 
     // Attempt 2: stupid_retry fires (threshold=2, no suppression)
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "agent-node",
       attempt: 2,
@@ -808,7 +808,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(report.detector).toBe("stupid_retry")
   })
 
-  it("stupid_retry fires for bash nodes with non-deterministic errors (not suppressed)", () => {
+  it("stupid_retry fires for bash nodes with non-deterministic errors (not suppressed)", async () => {
     const pipeline = new DetectorPipeline({
       config: configWithDeterministicError,
       executionId: "exec-1",
@@ -823,14 +823,14 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
       outputs: { exitCode: 1 },
     }
 
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeStart",
       nodeId: "bash-flaky",
       nodeType: "bash",
     })
 
     // Attempt 1: deterministic_error does NOT match (non-deterministic pattern)
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-flaky",
       attempt: 1,
@@ -841,7 +841,7 @@ describe("DeterministicErrorDetector — DetectorPipeline integration", () => {
     expect(mockDao.insertEvent).toHaveBeenCalledTimes(0)
 
     // Attempt 2: stupid_retry fires (threshold=2, no suppression since det_error never fired)
-    pipeline.routeEvent({
+    await pipeline.routeEvent({
       type: "nodeRetry",
       nodeId: "bash-flaky",
       attempt: 2,

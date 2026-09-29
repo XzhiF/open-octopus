@@ -127,7 +127,7 @@ export class CloneInitService {
    * Creates directory structure, writes default persona.md,
    * and registers in clones table with type='built-in'.
    */
-  initBuiltInClones(org: string, cloneDAO: CloneDAO): CloneInitResult {
+  async initBuiltInClones(org: string, cloneDAO: CloneDAO): Promise<CloneInitResult> {
     const result: CloneInitResult = {
       dirsCreated: [],
       filesCreated: [],
@@ -138,7 +138,7 @@ export class CloneInitService {
     }
 
     for (const cloneDef of BUILTIN_CLONES) {
-      this.initSingleClone(cloneDef, org, cloneDAO, result)
+      await this.initSingleClone(cloneDef, org, cloneDAO, result)
     }
 
     return result
@@ -342,12 +342,12 @@ export class CloneInitService {
     )
   }
 
-  private initSingleClone(
+  private async initSingleClone(
     cloneDef: CloneDef,
     org: string,
     cloneDAO: CloneDAO,
     result: CloneInitResult,
-  ): void {
+  ): Promise<void> {
     const name = cloneDef.name
     const cloneDir = getBuiltInCloneDir(name)
     const memoryDir = getBuiltInCloneMemoryDir(name)
@@ -464,10 +464,10 @@ export class CloneInitService {
 
     // 6. Register in DB (skip if exists)
     try {
-      const existing = cloneDAO.findByName(name)
+      const existing = await cloneDAO.findByName(name)
       if (!existing) {
         const now = new Date().toISOString()
-        cloneDAO.insert({
+        await cloneDAO.insert({
           name: cloneDef.name,
           org,
           type: 'built-in',

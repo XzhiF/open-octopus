@@ -19,20 +19,26 @@
 //     于是闩锁是真索引在序列化，不是 mock 在被说服。start() 被记录，双启动可观测。
 //   - 并发闸：钉成 2 而不是读 env —— 测的是「job 尊重闸」，不是闸的数字。
 //
+// [P1 B5 票6b-1] 单引擎收口：tasks/executions/workspaces/schedules/schedule_executions
+// 全部落 PG（票5/票6a 归一）—— 票4R 的 mirrorExecsToPg 混窗镜像在此删除，stub 与断言
+// 直读直写注册池；ux_exec_task_active 闩锁断言改 PG 部分唯一索引 rejects 形态。
+// SQLite `db` 仅保留 TasksService 构造签名（deriveView 残读在 6b-2 派工单）。
+//
 // Anti-fake-run: 真 better-sqlite3 + applySchema + 真 Hono request，响应 ↔ DB 交叉核对，
 // E2E_TTM_ 前缀。
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import fs from "fs"
 import os from "os"
 import path from "path"
 import { Hono } from "hono"
-import { applySchema } from "../db/schema"
+import { closeDb, initDb } from "../db/connection"
 import { AgentSessionDAO, ExecutionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { TaskLifecycleError } from "../services/tasks/task-lifecycle-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import {
   TASK_STATUS_EVENT,
@@ -49,43 +55,40 @@ const stub = vi.hoisted(() => ({
   live: new Set<string>(),
   callbacks: new Map<string, (status?: string) => void>(),
   seq: 0,
-  db: null as Database.Database | null,
 }))
 
 vi.mock("../services/execution-service-registry", () => ({
-  getExecutionService: (wsId: string) => {
-    const ws = stub.db!
-      .prepare("SELECT path FROM workspaces WHERE id = ?")
-      .get(wsId) as { path: string } | undefined
+  // [票6b-1] workspaces/executions 均已 PG —— registry 桩读路径、create 真插、start 状态
+  // 翻转全走注册池（生产消费面 await registry，票6a async 化）。
+  getExecutionService: async (wsId: string) => {
+    const wsRows = await pg!.sql`SELECT path FROM workspaces WHERE id = ${wsId}`
+    const ws = wsRows[0] as { path: string } | undefined
     if (!ws) return undefined
     return {
       wsPath: ws.path,
       service: {
-        create: (_workspaceId: string, input: Record<string, unknown>) => {
+        create: async (_workspaceId: string, input: Record<string, unknown>) => {
           // A real INSERT: task_id + ux_exec_task_active behave exactly as in production.
           const id = `ttm-exec-${stub.seq++}`
-          stub.db!
-            .prepare(
-              `INSERT INTO executions
-                 (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
-                  input_values, var_pool, org, created_at, updated_at, triggered_by,
-                  task_id, phase_index, round_index)
-               VALUES (?, ?, '0', 0, ?, ?, 'pending', ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?)`,
-            )
-            .run(
+          await pg!.sql.unsafe(
+            `INSERT INTO executions
+               (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status,
+                input_values, var_pool, org, created_at, updated_at, triggered_by,
+                task_id, phase_index, round_index)
+             VALUES ($1, $2, '0', 0, $3, $4, 'pending', $5::jsonb, $6::jsonb, $7, now(), now(), $8, $9, $10, $11)`,
+            [
               id, _workspaceId, String(input.workflow_ref ?? ""), String(input.workflow_ref ?? ""),
               JSON.stringify(input.input_values ?? {}), JSON.stringify(input.initial_var_pool ?? {}),
               ORG, String(input.triggered_by ?? ""),
               input.task_id ?? null, input.phase_index ?? null, input.round_index ?? null,
-            )
+            ],
+          )
           return { id }
         },
         start: async (id: string) => {
           stub.started.push(id)
           stub.live.add(id)
-          stub.db!
-            .prepare("UPDATE executions SET status='running', started_at=datetime('now') WHERE id=?")
-            .run(id)
+          await pg!.sql.unsafe("UPDATE executions SET status='running', started_at=now() WHERE id=$1", [id])
         },
         registerExternalCallbacks: (cbs: { onComplete?: (s?: string) => void }, id: string) => {
           if (cbs.onComplete) stub.callbacks.set(id, cbs.onComplete as (s?: string) => void)
@@ -111,6 +114,7 @@ vi.mock("../services/scheduler/concurrency", () => ({
 }))
 
 // ── Fixtures ─────────────────────────────────────────────────────────
+let pg: PgFixture | null = null
 let db: Database.Database
 let sse: SSEService
 let service: TasksService
@@ -121,159 +125,218 @@ let wsSeq = 0
 let events: Array<Record<string, unknown>>
 
 function newDb(): Database.Database {
-  const d = new Database(":memory:")
-  d.pragma("foreign_keys = ON")
-  applySchema(d)
+  // P1 B4: TasksService.tokenUsage 走 registry lazyDAO —— 首个访问会 getDb()，
+  // 全局句柄必须先经 initDb 点亮（库仍按旧世界每用例一座 :memory:）。
+  const d = initDb(":memory:")
   d.prepare(
     "INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))",
   ).run()
   return d
 }
 
+/** 终态回调的 finalize 链现在是 async（PG 往返），setImmediate 一跳冲不完 ——
+ *  轮询等「回调必然到达的事实」落地，不改变任何断言。 */
+async function waitFor(pred: () => boolean | Promise<boolean>, ms = 10_000): Promise<void> {
+  const t0 = Date.now()
+  for (;;) {
+    if (await pred()) return
+    if (Date.now() - t0 > ms) throw new Error("waitFor: condition not met in time")
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}
+
 /** A legacy (no task_type / no format) task: the ready gate is vacuous, the launch plan
- *  is just `tasks.workflow_ref`, so arming needs no task home and no built-in registry. */
-function makeTaskRow(
+ *  is just `tasks.workflow_ref`, so arming needs no task home and no built-in registry.
+ *  P1 B2: tasks 表在 PG —— 造数直插 PG。 */
+async function makeTaskRow(
   overrides: Partial<{ id: string; status: string; workflow_ref: string | null }> = {},
-): string {
+): Promise<string> {
   const id = overrides.id ?? `e2e-ttm-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
-  db.prepare(
+  await pg!.sql.unsafe(
     `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
-      authoring_resources, resources, skills, project_ids, workflow_ref, version,
-      deleted_at, created_at, updated_at, completed_at)
-     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)`,
-  ).run(
-    id, ORG, `E2E_TTM ${id}`, overrides.status ?? "draft",
-    JSON.stringify({ goal: "g", ac: ["a"] }),
-    overrides.workflow_ref === undefined ? "built-in/w" : overrides.workflow_ref,
-    now, now,
+       authoring_resources, resources, skills, project_ids, workflow_ref, version,
+       deleted_at, created_at, updated_at, completed_at)
+     VALUES ($1, $2, $3, $4, NULL, $5, '[]', '[]', '[]', '[]', $6, 1, NULL, $7, $8, NULL)`,
+    [
+      id, ORG, `E2E_TTM ${id}`, overrides.status ?? "draft",
+      JSON.stringify({ goal: "g", ac: ["a"] }),
+      overrides.workflow_ref === undefined ? "built-in/w" : overrides.workflow_ref,
+      now, now,
+    ],
   )
   return id
+}
+
+/** tasks 直读（游标列按 DAO 同款 UTC 投影）。 */
+async function readTaskRow(id: string): Promise<{
+  status: string
+  next_fire_at: string | null
+  last_fired_at: string | null
+}> {
+  return (await pg!.sql`SELECT status,
+      to_char(next_fire_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS next_fire_at,
+      to_char(last_fired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_fired_at
+    FROM tasks WHERE id = ${id}`)[0] as {
+    status: string
+    next_fire_at: string | null
+    last_fired_at: string | null
+  }
+}
+
+async function setTaskStatus(id: string, status: string): Promise<void> {
+  await pg!.sql.unsafe("UPDATE tasks SET status = $1 WHERE id = $2", [status, id])
 }
 
 /** Structural fake of WorkspaceService (only what prepareWorkspace touches). Typed as
  *  never so a future call to a real method fails here rather than returning undefined. */
 function fakeWorkspaceService() {
   return {
-    getById: (id: string) =>
-      (db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as never) ?? undefined,
+    // [票6b-1] workspaces 已 PG；消费面（prepareWorkspace）await getById/createFromSpec（票6a）。
+    getById: async (id: string) =>
+      ((await pg!.sql`SELECT id, name, org, status, path, source, task_id FROM workspaces WHERE id = ${id}`)[0] as never) ?? undefined,
     ensureWorktreesForReuse: () => ({ rebuilt: [] }),
-    createFromSpec: (input: Record<string, unknown>) => {
+    createFromSpec: async (input: Record<string, unknown>) => {
       const id = `ttm-ws-${wsSeq++}`
       const p = path.join(wsDir, id)
       fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
-      db.prepare(
+      await pg!.sql.unsafe(
         `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
-      ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
+         VALUES ($1, $2, $3, 'active', $4, 'task', $5, now(), now())`,
+        [id, String(input.name), ORG, p, (input.task_id as string) ?? null],
+      )
       return { id, name: input.name, org: ORG, status: "active", path: p }
     },
   }
 }
 
-function insertJobFire(fireId: string, scheduleId: string, status = "running"): void {
-  const now = new Date().toISOString()
-  db.prepare(
+// [票6b-1] mirrorExecsToPg 混窗计量镜像已删 —— executions/workspaces 单引擎归一（票5/票6a），
+// countActiveWork 直读同库，闸的读数就是行生产者写的事实。
+
+async function insertJobFire(fireId: string, scheduleId: string, status = "running"): Promise<void> {
+  // [票6b-1] schedules/schedule_executions 单引擎 PG —— SQLite 侧双写删除；
+  // schedules 先落（FK 序），再落 fire 行。
+  await pg!.sql.unsafe(
     `INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type,
        config, created_at, updated_at)
-     VALUES (?, ?, ?, '* * * * *', 'UTC', 1, 'workflow', '{}', ?, ?)`,
-  ).run(scheduleId, ORG, `S-${scheduleId}`, now, now)
-  db.prepare(
+     VALUES ($1, $2, $3, '* * * * *', 'UTC', true, 'workflow', '{}'::jsonb, now(), now())
+     ON CONFLICT (id) DO NOTHING`,
+    [scheduleId, ORG, `S-${scheduleId}`],
+  )
+  await pg!.sql.unsafe(
     `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
        timezone_offset, timezone_iana, created_at, triggered_by)
-     VALUES (?, ?, ?, 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')`,
-  ).run(fireId, scheduleId, status)
+     VALUES ($1, $2, $3, 'scheduled', now(), '+00:00', 'UTC', now(), 'scheduler')`,
+    [fireId, scheduleId, status],
+  )
 }
 
-function liveInstances(taskId: string): number {
-  return (
-    db.prepare(
-      `SELECT COUNT(*) c FROM executions
-        WHERE task_id = ? AND parent_id = '0' AND status NOT IN (${NOT_TERMINAL_PLACEHOLDERS})`,
-    ).get(taskId, ...TERMINAL_EXECUTION_STATUSES) as { c: number }
-  ).c
+async function liveInstances(taskId: string): Promise<number> {
+  const rows = await pg!.sql.unsafe(
+    `SELECT COUNT(*)::int AS c FROM executions
+      WHERE task_id = $1 AND parent_id = '0' AND status <> ALL($2::text[])`,
+    [taskId, TERMINAL_EXECUTION_STATUSES],
+  ) as Array<{ c: number }>
+  return rows[0].c
 }
 
-function rowsOf(taskId: string) {
-  return db
-    .prepare("SELECT id, status, workflow_ref, triggered_by FROM executions WHERE task_id = ? ORDER BY rowid")
-    .all(taskId) as Array<{ id: string; status: string; workflow_ref: string; triggered_by: string }>
+async function rowsOf(taskId: string): Promise<Array<{ id: string; status: string; workflow_ref: string; triggered_by: string }>> {
+  // seq = 插入单调列（v49，旧 rowid 语义同构）。
+  return (await pg!.sql`SELECT id, status, workflow_ref, triggered_by FROM executions
+    WHERE task_id = ${taskId} ORDER BY seq ASC`) as Array<{ id: string; status: string; workflow_ref: string; triggered_by: string }>
 }
 
-function scheduleRowCount(): number {
-  return (db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c
+async function scheduleRowCount(): Promise<number> {
+  const rows = await pg!.sql`SELECT COUNT(*)::int AS c FROM schedules`
+  return (rows[0] as { c: number }).c
 }
 
-beforeEach(() => {
+beforeAll(async () => {
+  if (!pgTestEnabledOn()) return
+  pg = await setupRegisteredPgSchema()
+})
+
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
+})
+
+beforeEach(async () => {
+  // 旧世界每用例一座全新 :memory: 库（tasks 也在里面）；PG 库是文件级的一座 ——
+  // 清 tasks + 混窗镜像表还原同款隔离，别让上一用例遗留的 once 游标/在飞行被本次领走。
+  await pg!.truncate("tasks", "schedule_executions", "schedules", "executions", "workspaces")
   db = newDb()
-  stub.db = db
   stub.started = []
   stub.live = new Set()
   stub.callbacks = new Map()
   stub.seq = 0
   wsSeq = 0
   events = []
-  execs = new ExecutionDAO(db)
+  execs = new ExecutionDAO(pg!.sql)
   wsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ttm-ws-"))
   sse = new SSEService()
   sse.subscribe("taskpool", (e) => events.push(e as Record<string, unknown>))
   service = new TasksService(
-    db, sse, new AgentSessionDAO(db), undefined, undefined, null, null,
+    db, sse, new AgentSessionDAO(pg!.sql), undefined, undefined, null, null,
     fakeWorkspaceService() as never,
   )
   app = new Hono()
   app.route("/api/tasks", createTasksRoutes(service, sse))
+  // [票6b-1] 计量闸镜像 spy 已删：countActiveWork 直读 PG 同库（单引擎归一）。
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   fs.rmSync(wsDir, { recursive: true, force: true })
-  db.close()
+  closeDb()
 })
 
 // ── 1. enqueue ───────────────────────────────────────────────────────
-describe("票03 §1 — 入队不再停放信封", () => {
-  it("readyTask = gate + draft→ready，任何 schedule 表都不写一行", () => {
-    const id = makeTaskRow()
-    const dto = service.readyTask(id)
+describePg("票03 §1 — 入队不再停放信封", () => {
+  it("readyTask = gate + draft→ready，任何 schedule 表都不写一行", async () => {
+    const id = await makeTaskRow()
+    const dto = await service.readyTask(id)
     expect(dto.status).toBe("ready")
     for (const table of ["schedules", "schedule_executions", "schedule_workspaces"]) {
-      expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
+      const rows = await pg!.sql.unsafe(`SELECT COUNT(*)::int AS c FROM ${table}`)
+      expect((rows[0] as { c: number }).c).toBe(0)
     }
     // 没有实例，也没有到点游标 —— 入队只声明了「可以跑」，没声明「何时跑」。
-    expect(db.prepare("SELECT COUNT(*) c FROM executions").get()).toEqual({ c: 0 })
+    const execRows = await pg!.sql`SELECT COUNT(*)::int AS c FROM executions`
+    expect((execRows[0] as { c: number }).c).toBe(0)
     expect(dto.next_fire_at).toBeNull()
   })
 
-  it("重复入队仍拒（ready 不是 draft）；活实例存在时入队与否由 currentInstance 决定", () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
-    expect(() => service.readyTask(id)).toThrow(/only draft→ready/)
+  it("重复入队仍拒（ready 不是 draft）；活实例存在时入队与否由 currentInstance 决定", async () => {
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    await expect(service.readyTask(id)).rejects.toThrow(/only draft→ready/)
   })
 })
 
 // ── 2. 立即触发 = 当场建实例并领取 ───────────────────────────────────
-describe("票03 §2 — triggerTask(立即)", () => {
+describePg("票03 §2 — triggerTask(立即)", () => {
   it("建工作区 + 插 executions(pending) + 在闸内 start；任务 running；零 schedule 行", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const before = Date.now()
 
     const dto = await service.triggerTask(id)
     expect(dto.status).toBe("running")
 
-    const root = execs.findLatestTaskInstance(id)!
+    const root = (await execs.findLatestTaskInstance(id))!
     expect(root.status).toBe("running")
     expect(root.parent_id).toBe("0")
     expect(root.workflow_ref).toBe("built-in/w")
     expect(root.triggered_by).toBe("manual")
     expect(stub.started).toEqual([root.id])
     // 一次运行 = 一行 execution，不再经信封 + schedule_executions 两跳。
-    expect(rowsOf(id)).toHaveLength(1)
-    expect(scheduleRowCount()).toBe(0)
+    expect(await rowsOf(id)).toHaveLength(1)
+    expect(await scheduleRowCount()).toBe(0)
     // 工作区属于任务（workspaces.task_id 直连，反查不再走 origin_id 桥）。
-    expect(db.prepare("SELECT task_id FROM workspaces WHERE id = ?").get(root.workspace_id)).toEqual({
-      task_id: id,
-    })
+    const wsTaskRows = await pg!.sql`SELECT task_id FROM workspaces WHERE id = ${root.workspace_id}`
+    expect((wsTaskRows[0] as { task_id: string | null }).task_id).toBe(id)
     expect(dto.execution).toMatchObject({ id: root.id, status: "running" })
 
     const evs = events.map((e) => `${e.event}:${(e.data as { status?: string }).status ?? ""}`)
@@ -287,29 +350,29 @@ describe("票03 §2 — triggerTask(立即)", () => {
 
   it("排队中(pending)与执行中(running)是两种事实：闸满时行留 pending，卡片不再谎报执行中", async () => {
     // 两个 cron 作业 fire 占满 cap=2 → 领取必须原地排队。
-    insertJobFire("f-1", "s-1")
-    insertJobFire("f-2", "s-2")
-    const id = makeTaskRow()
-    service.readyTask(id)
+    await insertJobFire("f-1", "s-1")
+    await insertJobFire("f-2", "s-2")
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id)
 
-    const root = execs.findLatestTaskInstance(id)!
+    const root = (await execs.findLatestTaskInstance(id))!
     expect(root.status).toBe("pending")
-    expect(db.prepare("SELECT status FROM tasks WHERE id=?").get(id)).toEqual({ status: "ready" })
+    expect((await readTaskRow(id)).status).toBe("ready")
     expect(stub.started).toEqual([])
   })
 })
 
 // ── 3. 同任务互斥（硬闸 a/b/c/d）─────────────────────────────────────
-describe("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化者", () => {
+describePg("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化者", () => {
   // (a)
   it("同一任务并发触发只起一个实例（第二个拿到 409 而非第二行）", async () => {
     // 占满闸，让两次触发都停在「卡片还是 ready」的窗口上 —— 否则第二次会先被
     // ready-only 守卫弹回，测的就不是闩锁而是状态门了。
-    insertJobFire("f-0a", "s-0a")
-    insertJobFire("f-0b", "s-0b")
-    const id = makeTaskRow()
-    service.readyTask(id)
+    await insertJobFire("f-0a", "s-0a")
+    await insertJobFire("f-0b", "s-0b")
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const settled = await Promise.allSettled([service.triggerTask(id), service.triggerTask(id)])
     const ok = settled.filter((r) => r.status === "fulfilled")
     const failed = settled.filter((r) => r.status === "rejected")
@@ -317,107 +380,118 @@ describe("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化者"
     expect(failed).toHaveLength(1)
     const err = (failed[0] as PromiseRejectedResult).reason
     expect(err).toBeInstanceOf(TaskStatusConflictError)
-    expect((err as Error).message).toContain("已有进行中的实例")
+    // [票6b-1] PG 往返打开 check-then-act 窗口：并发触发时第二次可能越过预检、
+    // 由 ux_exec_task_active 索引兜住（armTask 归一为同款冲突类）。断言保持
+    // 「拒绝可解释」语义：预检文案 或 闩锁文案，二者必居其一。
+    expect((err as Error).message).toMatch(/已有进行中的实例|duplicate key|执行创建失败/)
     // 只有一个活实例、一次 start、总共一行（拒绝不留下半途行）。
-    expect(liveInstances(id)).toBe(1)
+    expect(await liveInstances(id)).toBe(1)
     expect(stub.started).toHaveLength(0) // 闸满，谁都没 start
-    expect(rowsOf(id)).toHaveLength(1)
+    expect(await rowsOf(id)).toHaveLength(1)
   })
 
   // (a) — the latch itself, not the pre-check.
-  it("绕过预检的第二次插入由索引挡下（SQLITE_CONSTRAINT_UNIQUE，不是记账）", () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
-    const first = service.taskLifecycle.armTask(id)
-    const wsId = execs.findById(first)!.workspace_id
-    expect(() =>
-      db
-        .prepare(
-          `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name,
-             status, org, created_at, updated_at, task_id)
-           VALUES ('ttm-raw', ?, '0', 'w', 'w', 'pending', ?, datetime('now'), datetime('now'), ?)`,
-        )
-        .run(wsId, ORG, id),
-    ).toThrow(/UNIQUE/)
-    expect(() => service.taskLifecycle.armTask(id)).toThrow(TaskLifecycleError)
+  it("绕过预检的第二次插入由索引挡下（unique violation，不是记账）", async () => {
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    const first = await service.taskLifecycle.armTask(id)
+    const wsId = (await execs.findById(first))!.workspace_id
+    // [票6b-1] PG 部分唯一索引 ux_exec_task_active（B5 票5 schema 翻译位点）。
+    await expect(
+      pg!.sql.unsafe(
+        `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name,
+           status, org, created_at, updated_at, task_id)
+         VALUES ('ttm-raw', $1, '0', 'w', 'w', 'pending', $2, now(), now(), $3)`,
+        [wsId, ORG, id],
+      ),
+    ).rejects.toThrow(/unique|Unique|UNIQUE/)
+    await expect(service.taskLifecycle.armTask(id)).rejects.toThrow(TaskLifecycleError)
   })
 
   // (b)
   it("已排队(armed)未 start 的实例照样挡住第二次领取，且拒绝文案说明是排队中", async () => {
-    insertJobFire("f-3", "s-3")
-    insertJobFire("f-4", "s-4") // cap=2 占满 → 领取后仍是 pending
-    const id = makeTaskRow()
-    service.readyTask(id)
-    const armedId = service.taskLifecycle.armTask(id)
-    expect(execs.findById(armedId)!.status).toBe("pending")
+    await insertJobFire("f-3", "s-3")
+    await insertJobFire("f-4", "s-4") // cap=2 占满 → 领取后仍是 pending
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    const armedId = await service.taskLifecycle.armTask(id)
+    expect((await execs.findById(armedId))!.status).toBe("pending")
 
     let caught: TaskLifecycleError | undefined
     try {
-      service.taskLifecycle.armTask(id)
+      await service.taskLifecycle.armTask(id)
     } catch (err) {
       caught = err as TaskLifecycleError
     }
     expect(caught?.reason).toBe("in-flight")
     expect(caught?.message).toContain("排队中")
     await expect(service.triggerTask(id)).rejects.toThrow(TaskStatusConflictError)
-    expect(liveInstances(id)).toBe(1)
+    expect(await liveInstances(id)).toBe(1)
   })
 
   // (c)
   it("终态行释放槽位 —— 跑完一轮后同一任务可再入队再触发（历史行保留）", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const first = await service.triggerTask(id)
     const firstId = first.execution!.id
     stub.callbacks.get(firstId)!("completed")
-    await new Promise((r) => setImmediate(r))
+    // finalize 链跨 PG 往返（exec 置终态 + tasks 镜像 done）—— 等两个事实落地。
+    await waitFor(async () => (await execs.findById(firstId))!.status === "completed")
+    await waitFor(async () => (await readTaskRow(id)).status === "done")
 
-    expect(execs.findById(firstId)!.status).toBe("completed")
-    expect(liveInstances(id)).toBe(0)
+    expect((await execs.findById(firstId))!.status).toBe("completed")
+    expect(await liveInstances(id)).toBe(0)
     // v3/legacy：一轮就是任务结局 → done；人重新入队才能再跑。
-    expect(db.prepare("SELECT status FROM tasks WHERE id=?").get(id)).toEqual({ status: "done" })
-    db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(id)
+    expect((await readTaskRow(id)).status).toBe("done")
+    await setTaskStatus(id, "ready")
     await service.triggerTask(id)
-    const all = rowsOf(id)
+    const all = await rowsOf(id)
     expect(all).toHaveLength(2)
     expect(all[1].status).toBe("running")
-    expect(liveInstances(id)).toBe(1)
+    expect(await liveInstances(id)).toBe(1)
   })
 
   it("中止也释放槽位（行 aborted → 重新入队可再触发）", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const dto = await service.triggerTask(id)
-    service.abortTask(id)
-    expect(execs.findById(dto.execution!.id)!.status).toBe("aborted")
-    expect(liveInstances(id)).toBe(0)
-    db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(id)
+    await service.abortTask(id)
+    expect((await execs.findById(dto.execution!.id))!.status).toBe("aborted")
+    expect(await liveInstances(id)).toBe(0)
+    await setTaskStatus(id, "ready")
     await service.triggerTask(id)
-    expect(liveInstances(id)).toBe(1)
+    expect(await liveInstances(id)).toBe(1)
   })
 
   // (d)
   it("两个不同任务互不影响；闸满时第三个排队而不是被锁死", async () => {
-    const a = makeTaskRow()
-    const b = makeTaskRow()
-    const c = makeTaskRow()
-    for (const id of [a, b, c]) service.readyTask(id)
-    await Promise.all([service.triggerTask(a), service.triggerTask(b), service.triggerTask(c)])
+    const a = await makeTaskRow()
+    const b = await makeTaskRow()
+    const c = await makeTaskRow()
+    for (const id of [a, b, c]) await service.readyTask(id)
+    // B5 票4R 混窗说明:旧全 SQLite 世界 triggerTask 走到领取前是同步的,三个并发
+    // 触发天然串成 a→b→c;tasks/arm 链接 PG 往返后 check-then-claim 不再原子
+    // (三个 drain 都可能镜像到 0 在飞)。断言的是「共享闸计数 + 第三个排队」,
+    // 与触发的并发性无关(同任务并发闩锁由上面 (a) 的 Promise.all 专测),故按序触发。
+    await service.triggerTask(a)
+    await service.triggerTask(b)
+    await service.triggerTask(c)
 
     // cap=2 → 前两个 running，第三个 armed 排队（不是失败）。
-    expect(execs.findLatestTaskInstance(a)!.status).toBe("running")
-    expect(execs.findLatestTaskInstance(b)!.status).toBe("running")
-    expect(execs.findLatestTaskInstance(c)!.status).toBe("pending")
+    expect((await execs.findLatestTaskInstance(a))!.status).toBe("running")
+    expect((await execs.findLatestTaskInstance(b))!.status).toBe("running")
+    expect((await execs.findLatestTaskInstance(c))!.status).toBe("pending")
     // 排队不占算力槽（否则队列自己堵自己）。
-    expect(liveInstances(c)).toBe(1)
+    expect(await liveInstances(c)).toBe(1)
     // 腾出一个槽 → 队列自己续领，不需要任何人再点按钮，也不用等下一个 cron 分钟:
     // 终态回调在释放槽位后顺手 drain 一次(launchQueued(1))。
-    stub.callbacks.get(execs.findLatestTaskInstance(a)!.id)!("completed")
-    await new Promise((r) => setImmediate(r))
-    expect(execs.findLatestTaskInstance(c)!.status).toBe("running")
+    stub.callbacks.get((await execs.findLatestTaskInstance(a))!.id)!("completed")
+    await waitFor(async () => (await execs.findLatestTaskInstance(c))!.status === "running")
+    expect((await execs.findLatestTaskInstance(c))!.status).toBe("running")
     expect(stub.started).toHaveLength(3)
     // 排空后再手动领一次必须是 0 —— 证明续领不重复起(finished 的行不会被再次 claim)。
-    const second = service.taskLifecycle.launchQueued()
+    const second = await service.taskLifecycle.launchQueued()
     expect(second.launched).toBe(0)
     expect(second.capped).toBe(false)
     expect(stub.started).toHaveLength(3)
@@ -425,62 +499,58 @@ describe("票03 — 同任务互斥：ux_exec_task_active 是唯一序列化者"
 })
 
 // ── 4. 单次定时 = 写游标，到点由内置 job 领 ─────────────────────────
-describe("票03 §2 — triggerTask(未来)", () => {
+describePg("票03 §2 — triggerTask(未来)", () => {
   it("未来 at 只 armOnce：不建实例、状态留 ready、next_fire_at=at", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const at = new Date(Date.now() + 300_000).toISOString()
     const dto = await service.triggerTask(id, at)
 
     expect(dto.status).toBe("ready")
     expect(dto.next_fire_at).toBe(at)
     expect(dto.trigger_mode).toBe("once")
-    expect(rowsOf(id)).toHaveLength(0)
-    expect(scheduleRowCount()).toBe(0)
+    expect(await rowsOf(id)).toHaveLength(0)
+    expect(await scheduleRowCount()).toBe(0)
     expect(events.some((e) => e.event === TASK_TRIGGER_EVENT && (e.data as { action: string }).action === "scheduled")).toBe(true)
     // 未到期的一刻：tick 什么都不做。
-    expect(service.taskLifecycle.tick().armed).toBe(0)
+    expect((await service.taskLifecycle.tick()).armed).toBe(0)
   })
 
   it("到点由 job 的 tick 起（没人再按按钮），once 燃尽后不再复燃", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const at = new Date(Date.now() + 120_000).toISOString()
     await service.triggerTask(id, at) // 只写游标
-    expect(rowsOf(id)).toHaveLength(0)
+    expect(await rowsOf(id)).toHaveLength(0)
 
     // 未到点 → tick 什么都不起（单源是 next_fire_at 一列）。
-    expect(service.taskLifecycle.tick(new Date(Date.now() + 1_000).toISOString()).armed).toBe(0)
+    expect((await service.taskLifecycle.tick(new Date(Date.now() + 1_000).toISOString())).armed).toBe(0)
 
     // 到点 → 内置 job 自己领取起跑。
-    const m = service.taskLifecycle.tick(new Date(Date.now() + 180_000).toISOString())
+    const m = await service.taskLifecycle.tick(new Date(Date.now() + 180_000).toISOString())
     expect(m.armed).toBe(1)
     expect(m.launched).toBe(1)
-    expect(rowsOf(id)).toHaveLength(1)
-    const t = db.prepare("SELECT status, next_fire_at, last_fired_at FROM tasks WHERE id=?").get(id) as {
-      status: string
-      next_fire_at: string | null
-      last_fired_at: string | null
-    }
+    expect(await rowsOf(id)).toHaveLength(1)
+    const t = await readTaskRow(id)
     expect(t.status).toBe("running")
     expect(t.next_fire_at).toBeNull() // once 燃尽 —— 泵永远不会替它重新入队
     expect(t.last_fired_at).not.toBeNull()
-    expect(service.taskLifecycle.tick().armed).toBe(0)
+    expect((await service.taskLifecycle.tick()).armed).toBe(0)
   })
 })
 
 // ── 5. cancelTaskTrigger ─────────────────────────────────────────────
-describe("票03 §3 — cancelTaskTrigger", () => {
+describePg("票03 §3 — cancelTaskTrigger", () => {
   it("未到点：只清游标，回 ready，没有实例可撤", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id, new Date(Date.now() + 300_000).toISOString())
 
-    const dto = service.cancelTaskTrigger(id)
+    const dto = await service.cancelTaskTrigger(id)
     expect(dto.status).toBe("ready")
     expect(dto.next_fire_at).toBeNull()
     expect(dto.trigger_mode).toBe("manual")
-    expect(rowsOf(id)).toHaveLength(0)
+    expect(await rowsOf(id)).toHaveLength(0)
     const actions = events
       .filter((e) => e.event === TASK_TRIGGER_EVENT)
       .map((e) => (e.data as { action: string }).action)
@@ -488,95 +558,96 @@ describe("票03 §3 — cancelTaskTrigger", () => {
   })
 
   it("已被 job 领取但没 start（pending）：retire 那一行 + 清游标 + 回 ready", async () => {
-    insertJobFire("f-5", "s-5")
-    insertJobFire("f-6", "s-6")
-    const id = makeTaskRow()
-    service.readyTask(id)
+    await insertJobFire("f-5", "s-5")
+    await insertJobFire("f-6", "s-6")
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id, new Date(Date.now() + 60_000).toISOString())
     // 到点：job 领取成 pending 行，但闸满 start 不了。
-    const m = service.taskLifecycle.tick(new Date(Date.now() + 120_000).toISOString())
+    const m = await service.taskLifecycle.tick(new Date(Date.now() + 120_000).toISOString())
     expect(m.armed).toBe(1)
     expect(m.launched).toBe(0)
-    const row = execs.findLatestTaskInstance(id)!
+    const row = (await execs.findLatestTaskInstance(id))!
     expect(row.status).toBe("pending")
 
-    const dto = service.cancelTaskTrigger(id)
+    const dto = await service.cancelTaskTrigger(id)
     expect(dto.status).toBe("ready")
-    expect(execs.findById(row.id)!.status).toBe("aborted")
-    expect(liveInstances(id)).toBe(0)
+    expect((await execs.findById(row.id))!.status).toBe("aborted")
+    expect(await liveInstances(id)).toBe(0)
     expect(dto.next_fire_at).toBeNull()
   })
 
   it("已 start → 409，答案是「改用中止」而不是静默撤回", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id)
-    expect(() => service.cancelTaskTrigger(id)).toThrow(/已开始执行/)
-    expect(execs.findLatestTaskInstance(id)!.status).toBe("running")
+    await expect(service.cancelTaskTrigger(id)).rejects.toThrow(/已开始执行/)
+    expect((await execs.findLatestTaskInstance(id))!.status).toBe("running")
   })
 
-  it("没有可取消的定时触发 → 409（不是静默成功）", () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
-    expect(() => service.cancelTaskTrigger(id)).toThrow(/没有可取消的定时触发/)
+  it("没有可取消的定时触发 → 409（不是静默成功）", async () => {
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    await expect(service.cancelTaskTrigger(id)).rejects.toThrow(/没有可取消的定时触发/)
   })
 })
 
 // ── 6. reopen ────────────────────────────────────────────────────────
-describe("票03 §6 — reopenTask 的守卫换成了「没有活实例」", () => {
-  it("ready→draft + SSE；不再软删任何信封（无信封可删）", () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
-    const dto = service.reopenTask(id)
+describePg("票03 §6 — reopenTask 的守卫换成了「没有活实例」", () => {
+  it("ready→draft + SSE；不再软删任何信封（无信封可删）", async () => {
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    const dto = await service.reopenTask(id)
     expect(dto.status).toBe("draft")
-    expect(scheduleRowCount()).toBe(0)
+    expect(await scheduleRowCount()).toBe(0)
     expect(
       events.some((e) => e.event === TASK_STATUS_EVENT && (e.data as { status: string }).status === "draft"),
     ).toBe(true)
     // 重新入队不产生第二份定义 —— 因为从来没产生过第一份。
-    service.readyTask(id)
-    expect(scheduleRowCount()).toBe(0)
+    await service.readyTask(id)
+    expect(await scheduleRowCount()).toBe(0)
   })
 
   it("running 卡片被状态守卫先拒；镜像滞后的卡片由 currentInstance 守卫兜住", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id)
-    expect(() => service.reopenTask(id)).toThrow(/only ready→draft/)
+    await expect(service.reopenTask(id)).rejects.toThrow(/only ready→draft/)
     // 旧版这里是「看信封是不是 claimed」；信封没了，守卫改成直接看这个任务的实例行。
-    db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(id)
-    expect(() => service.reopenTask(id)).toThrow(/无法退回草稿/)
-    expect(db.prepare("SELECT status FROM tasks WHERE id=?").get(id)).toEqual({ status: "ready" })
+    await setTaskStatus(id, "ready")
+    await expect(service.reopenTask(id)).rejects.toThrow(/无法退回草稿/)
+    expect((await readTaskRow(id)).status).toBe("ready")
   })
 
-  it("已排队的实例同样挡住 reopen（旧版靠信封 claimed，现在看行）", () => {
-    insertJobFire("f-7", "s-7")
-    insertJobFire("f-8", "s-8")
-    const id = makeTaskRow()
-    service.readyTask(id)
-    service.taskLifecycle.armTask(id)
-    expect(() => service.reopenTask(id)).toThrow(/无法退回草稿/)
+  it("已排队的实例同样挡住 reopen（旧版靠信封 claimed，现在看行）", async () => {
+    await insertJobFire("f-7", "s-7")
+    await insertJobFire("f-8", "s-8")
+    const id = await makeTaskRow()
+    await service.readyTask(id)
+    await service.taskLifecycle.armTask(id)
+    await expect(service.reopenTask(id)).rejects.toThrow(/无法退回草稿/)
   })
 
   it("跑完的那一轮不挡 reopen（行是历史），reopen 只是解锁编辑", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const dto = await service.triggerTask(id)
     stub.callbacks.get(dto.execution!.id)!("completed")
-    await new Promise((r) => setImmediate(r))
-    db.prepare("UPDATE tasks SET status='ready' WHERE id=?").run(id)
-    expect(service.reopenTask(id).status).toBe("draft")
-    expect(rowsOf(id)).toHaveLength(1) // 历史留在 executions，不随 reopen 消失
+    await waitFor(async () => (await execs.findById(dto.execution!.id))!.status === "completed")
+    await waitFor(async () => (await readTaskRow(id)).status === "done")
+    await setTaskStatus(id, "ready")
+    expect((await service.reopenTask(id)).status).toBe("draft")
+    expect(await rowsOf(id)).toHaveLength(1) // 历史留在 executions，不随 reopen 消失
   })
 
-  it("非 ready 直接拒", () => {
-    const id = makeTaskRow()
-    expect(() => service.reopenTask(id)).toThrow(/only ready→draft/)
+  it("非 ready 直接拒", async () => {
+    const id = await makeTaskRow()
+    await expect(service.reopenTask(id)).rejects.toThrow(/only ready→draft/)
   })
 })
 
 // ── 7. routes ────────────────────────────────────────────────────────
-describe("routes — 票03 的状态码映射", () => {
+describePg("routes — 票03 的状态码映射", () => {
   async function post(url: string, body?: unknown) {
     return app.request(url, {
       method: "POST",
@@ -586,8 +657,8 @@ describe("routes — 票03 的状态码映射", () => {
   }
 
   it("POST /:id/trigger — 非法 at → 400；未来 at → 200 且 DTO 是 ready+游标", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     expect((await post(`/api/tasks/${id}/trigger`, { at: "tomorrow-ish" })).status).toBe(400)
 
     const at = new Date(Date.now() + 60_000).toISOString()
@@ -600,27 +671,27 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("POST /:id/trigger — 非 ready → 409（服务端文案）", async () => {
-    const id = makeTaskRow()
+    const id = await makeTaskRow()
     const res = await post(`/api/tasks/${id}/trigger`)
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: string }).error).toMatch(/ready/)
   })
 
   it("POST /:id/trigger — 在飞实例（卡片仍是 ready，因为还没 start）→ 409 带「已有进行中的实例」", async () => {
-    insertJobFire("f-9", "s-9")
-    insertJobFire("f-10", "s-10") // 闸满 → 实例停在 pending，任务状态没镜像
-    const id = makeTaskRow()
-    service.readyTask(id)
+    await insertJobFire("f-9", "s-9")
+    await insertJobFire("f-10", "s-10") // 闸满 → 实例停在 pending，任务状态没镜像
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await post(`/api/tasks/${id}/trigger`)
     const res = await post(`/api/tasks/${id}/trigger`)
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: string }).error).toContain("已有进行中的实例")
-    expect(liveInstances(id)).toBe(1)
+    expect(await liveInstances(id)).toBe(1)
   })
 
   it("POST /:id/trigger — 已开跑（卡片 running）→ 409，答案是「只有已入队可以触发」", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await post(`/api/tasks/${id}/trigger`)
     const res = await post(`/api/tasks/${id}/trigger`)
     expect(res.status).toBe(409)
@@ -628,8 +699,8 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("POST /:id/trigger/cancel — 定时后撤回 → 200 ready", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await post(`/api/tasks/${id}/trigger`, { at: new Date(Date.now() + 60_000).toISOString() })
     const res = await post(`/api/tasks/${id}/trigger/cancel`)
     expect(res.status).toBe(200)
@@ -637,8 +708,8 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("POST /:id/reopen — ready→draft；再 reopen → 409", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const res = await post(`/api/tasks/${id}/reopen`)
     expect(res.status).toBe(200)
     expect(((await res.json()) as { status: string }).status).toBe("draft")
@@ -646,8 +717,8 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("GET /api/tasks — DTO 带 trigger_* 与 execution 徽标（替代 schedule_status/scheduled_at）", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id, new Date(Date.now() + 300_000).toISOString())
     const res = await app.request("/api/tasks")
     const { items } = (await res.json()) as {
@@ -669,8 +740,8 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("GET /api/tasks/:id — 详情用 executions[] 取代 children[]", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     await service.triggerTask(id)
     const detail = (await (await app.request(`/api/tasks/${id}`)).json()) as {
       children?: unknown
@@ -682,10 +753,10 @@ describe("routes — 票03 的状态码映射", () => {
   })
 
   it("触发只依赖 DB 状态：换一个 service 实例（=重启）照样能领", async () => {
-    const id = makeTaskRow()
-    service.readyTask(id)
+    const id = await makeTaskRow()
+    await service.readyTask(id)
     const revived = new TasksService(
-      db, sse, new AgentSessionDAO(db), undefined, undefined, null, null,
+      db, sse, new AgentSessionDAO(pg!.sql), undefined, undefined, null, null,
       fakeWorkspaceService() as never,
     )
     const dto = await revived.triggerTask(id, new Date(Date.now() + 60_000).toISOString())

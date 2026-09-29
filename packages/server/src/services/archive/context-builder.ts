@@ -1,9 +1,11 @@
-import type Database from "better-sqlite3"
 import { LEDGER_SQL } from "@octopus/shared"
 import type { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { ExecutionRow } from "../../db/types"
-import { logError, logInfo } from "../../file-logger"
+import type { Sql } from "postgres"
+import { convertPlaceholders, type PgSql } from "../../db/dao/base-pg"
+import { isoOrNull, num, numOrNull } from "../../db/dao/pg-mappers"
+import { logError } from "../../file-logger"
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -104,24 +106,49 @@ export interface ExistingRule {
   scope: string
 }
 
+// ── Raw-SQL seam（票6a：archive 域 exec 读混用面收口）────────────────
+//
+// 本文件的直读面（executions/node_executions/node_token_usages/llm_calls_costed）
+// 在票5/B4 后全部是 PG 表 —— 句柄源从 better-sqlite3 换成 PG 池。
+// 姿势与 BasePgDAO.q/q1 同源（convertPlaceholders `?`→`$n`，引号感知）。
+
+async function pgRows<T>(db: PgSql, sql: string, params: unknown[] = []): Promise<T[]> {
+  return await (db as Sql).unsafe(convertPlaceholders(sql), params as never) as unknown as T[]
+}
+
+async function pgRow1<T>(db: PgSql, sql: string, params: unknown[] = []): Promise<T | undefined> {
+  return (await pgRows<T>(db, sql, params))[0]
+}
+
+/** PG date/Date → 'YYYY-MM-DD'（SQLite date() 输出契约）。 */
+function dateStr(v: Date | string): string {
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  return typeof v === "string" && v.length > 10 ? v.slice(0, 10) : v
+}
+
+/** PG timestamptz/Date → ISO 串；无行/NULL 透传空串（旧契约 lastOccurred 恒有值场景）。 */
+function tsStr(v: Date | string | null): string {
+  return v === null ? "" : v instanceof Date ? v.toISOString() : v
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 export async function buildArchiveContext(
   workspaceId: string,
   workspaceDAO: WorkspaceDAO,
   executionDAO: ExecutionDAO,
-  db: Database.Database,
+  db: PgSql,
   org: string,
 ): Promise<ArchiveContext | null> {
-  const workspace = workspaceDAO.findById(workspaceId)
+  const workspace = await workspaceDAO.findById(workspaceId)
   if (!workspace) return null
 
-  const executions = executionDAO.listByWorkspace(workspaceId)
-  const sampled = sampleExecutions(executions, db)
+  const executions = await executionDAO.listByWorkspace(workspaceId)
+  const sampled = await sampleExecutions(executions, db)
 
   const [executionSummaries, workflowProfiles, errorCatalog, costProfile, nodePatterns, existingKnowledge, totalCounts] =
     await Promise.all([
-      buildExecutionSummaries(sampled, executionDAO, db),
+      buildExecutionSummaries(sampled, db),
       buildWorkflowProfiles(executions, db),
       buildErrorCatalog(workspaceId, db),
       buildCostProfile(workspaceId, db),
@@ -162,50 +189,46 @@ export async function buildArchiveContext(
 
 function fetchTotalCounts(
   workspaceId: string,
-  db: Database.Database,
+  db: PgSql,
 ): Promise<{ total: number; success: number }> {
-  const row = db
-    .prepare(
-      `SELECT
-         COUNT(*) as total,
-         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success
-       FROM executions
-       WHERE workspace_id = ?`,
-    )
-    .get(workspaceId) as { total: number; success: number }
-  return Promise.resolve({
-    total: row?.total ?? 0,
-    success: row?.success ?? 0,
-  })
-}
-
-function buildFailedNodes(executionId: string, db: Database.Database): FailedNode[] {
-  const rows = db
-    .prepare(
-      `SELECT node_id, node_type, error
-       FROM node_executions
-       WHERE execution_id = ? AND status = 'failed'`,
-    )
-    .all(executionId) as Array<{ node_id: string; node_type: string; error: string | null }>
-
-  return rows.map((row) => ({
-    node_id: row.node_id,
-    node_type: row.node_type,
-    errorSnippet: truncate(row.error ?? "", MAX_ERROR_SNIPPET),
+  return pgRow1<{ total: string | number; success: string | number }>(
+    db,
+    `SELECT
+       COUNT(*) as total,
+       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success
+     FROM executions
+     WHERE workspace_id = ?`,
+    [workspaceId],
+  ).then((row) => ({
+    total: num(row?.total),
+    success: num(row?.success),
   }))
 }
 
-function getExecutionCost(executionId: string, db: Database.Database): number | null {
-  // NEW-r2:钱不落账本 —— 从 llm_calls_costed 派生视图按执行聚合(全未定价 SUM=NULL 不焊 0)。
-  const row = db
-    .prepare(
-      `SELECT SUM(cost_usd) as cost FROM llm_calls_costed WHERE execution_id = ?`,
-    )
-    .get(executionId) as { cost: number | null }
-  return row.cost
+function buildFailedNodes(executionId: string, db: PgSql): Promise<FailedNode[]> {
+  return pgRows<{ node_id: string; node_type: string; error: string | null }>(
+    db,
+    `SELECT node_id, node_type, error
+     FROM node_executions
+     WHERE execution_id = ? AND status = 'failed'`,
+    [executionId],
+  ).then((rows) => rows.map((row) => ({
+    node_id: row.node_id,
+    node_type: row.node_type,
+    errorSnippet: truncate(row.error ?? "", MAX_ERROR_SNIPPET),
+  })))
 }
 
-function sampleExecutions(executions: ExecutionRow[], db: Database.Database): ExecutionRow[] {
+// NEW-r2:钱不落账本 —— 从 llm_calls_costed 派生视图按执行聚合(全未定价 SUM=NULL 不焊 0)。
+function getExecutionCost(executionId: string, db: PgSql): Promise<number | null> {
+  return pgRow1<{ cost: number | string | null }>(
+    db,
+    `SELECT SUM(cost_usd) as cost FROM llm_calls_costed WHERE execution_id = ?`,
+    [executionId],
+  ).then((row) => numOrNull(row?.cost))
+}
+
+async function sampleExecutions(executions: ExecutionRow[], db: PgSql): Promise<ExecutionRow[]> {
   if (executions.length <= MAX_EXECUTIONS) return executions
 
   const failures = executions.filter((e) => e.status === "failed")
@@ -215,7 +238,7 @@ function sampleExecutions(executions: ExecutionRow[], db: Database.Database): Ex
   const recentIds = new Set(nonFailures.slice(0, 20).map((e) => e.id))
 
   // Top 10 by cost (compute in JS to include executions with no llm_calls)
-  const execCosts = executions.map((e) => ({ id: e.id, cost: getExecutionCost(e.id, db) }))
+  const execCosts = await Promise.all(executions.map(async (e) => ({ id: e.id, cost: await getExecutionCost(e.id, db) })))
   execCosts.sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
   const topCostIds = new Set(execCosts.slice(0, 10).map((c) => c.id))
 
@@ -239,15 +262,15 @@ function sampleExecutions(executions: ExecutionRow[], db: Database.Database): Ex
 
 async function buildExecutionSummaries(
   executions: ExecutionRow[],
-  executionDAO: ExecutionDAO,
-  db: Database.Database,
+  db: PgSql,
 ): Promise<ExecutionSummary[]> {
-  return executions.map((exec, index) => {
+  const summaries: ExecutionSummary[] = []
+  for (const [index, exec] of executions.entries()) {
     const duration_s = (exec.duration ?? 0) / 1000
-    const cost = getExecutionCost(exec.id, db) ?? 0
-    const failedNodes = buildFailedNodes(exec.id, db)
+    const cost = (await getExecutionCost(exec.id, db)) ?? 0
+    const failedNodes = await buildFailedNodes(exec.id, db)
 
-    return {
+    summaries.push({
       index,
       workflow_name: exec.workflow_name || "(unnamed)",
       status: exec.status,
@@ -255,14 +278,15 @@ async function buildExecutionSummaries(
       cost,
       started_at: exec.started_at ?? exec.created_at,
       failedNodes,
-    }
-  })
+    })
+  }
+  return summaries
 }
 
-function buildWorkflowProfiles(
+async function buildWorkflowProfiles(
   executions: ExecutionRow[],
-  db: Database.Database,
-): WorkflowProfile[] {
+  db: PgSql,
+): Promise<WorkflowProfile[]> {
   const grouped = new Map<string, ExecutionRow[]>()
   for (const exec of executions) {
     const name = exec.workflow_name || "(unnamed)"
@@ -281,21 +305,14 @@ function buildWorkflowProfiles(
     const durations = execs.map((e) => e.duration ?? 0)
     const avgDuration_s = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length / 1000 : 0
 
-    const costs = execs.map((e) => getExecutionCost(e.id, db))
+    const costs = await Promise.all(execs.map((e) => getExecutionCost(e.id, db)))
     const knownCosts = costs.filter((c): c is number => c !== null)
     const avgCost = knownCosts.length > 0 ? knownCosts.reduce((a, b) => a + b, 0) / knownCosts.length : 0
 
-    const nodeTypes = [
-      ...new Set(
-        execs.flatMap((e) =>
-          (
-            db
-              .prepare("SELECT DISTINCT node_type FROM node_executions WHERE execution_id = ?")
-              .all(e.id) as Array<{ node_type: string }>
-          ).map((r) => r.node_type),
-        ),
-      ),
-    ]
+    const nodeTypeRowsPerExec = await Promise.all(execs.map((e) =>
+      pgRows<{ node_type: string }>(db, "SELECT DISTINCT node_type FROM node_executions WHERE execution_id = ?", [e.id]),
+    ))
+    const nodeTypes = [...new Set(nodeTypeRowsPerExec.flat().map((r) => r.node_type))]
 
     // Cost trend: first half vs second half average (ordered by started_at)
     const sorted = [...execs].sort((a, b) =>
@@ -305,14 +322,10 @@ function buildWorkflowProfiles(
     const firstHalf = sorted.slice(0, mid)
     const secondHalf = sorted.slice(mid)
 
-    const firstAvg =
-      firstHalf.length > 0
-        ? firstHalf.reduce((sum, e) => sum + (getExecutionCost(e.id, db) ?? 0), 0) / firstHalf.length
-        : 0
-    const secondAvg =
-      secondHalf.length > 0
-        ? secondHalf.reduce((sum, e) => sum + (getExecutionCost(e.id, db) ?? 0), 0) / secondHalf.length
-        : 0
+    const firstHalfCosts = await Promise.all(firstHalf.map((e) => getExecutionCost(e.id, db)))
+    const secondHalfCosts = await Promise.all(secondHalf.map((e) => getExecutionCost(e.id, db)))
+    const firstAvg = firstHalf.length > 0 ? firstHalfCosts.reduce((sum: number, c) => sum + (c ?? 0), 0) / firstHalf.length : 0
+    const secondAvg = secondHalf.length > 0 ? secondHalfCosts.reduce((sum: number, c) => sum + (c ?? 0), 0) / secondHalf.length : 0
 
     let costTrendDirection: "increasing" | "decreasing" | "stable" = "stable"
     let costTrend = "stable"
@@ -350,73 +363,78 @@ function buildWorkflowProfiles(
   return profiles.sort((a, b) => b.count - a.count)
 }
 
-function buildErrorCatalog(workspaceId: string, db: Database.Database): ErrorEntry[] {
-  const rows = db
-    .prepare(
-      `SELECT
-         ne.node_id,
-         e.workflow_name,
-         SUBSTR(ne.error, 1, ${MAX_ERROR_SNIPPET}) as errorSnippet,
-         COUNT(*) as frequency,
-         MAX(ne.completed_at) as lastOccurred,
-         COUNT(DISTINCT e.id) as workflowCount
-       FROM node_executions ne
-       JOIN executions e ON ne.execution_id = e.id
-       WHERE e.workspace_id = ?
-         AND ne.status = 'failed'
-         AND ne.error IS NOT NULL
-       GROUP BY ne.node_id, SUBSTR(ne.error, 1, ${MAX_ERROR_SNIPPET})
-       ORDER BY frequency DESC
-       LIMIT ${MAX_ERRORS}`,
-    )
-    .all(workspaceId) as Array<{
+async function buildErrorCatalog(workspaceId: string, db: PgSql): Promise<ErrorEntry[]> {
+  // 票6a 方言闸：
+  //  - PG 不允许 SELECT 裸列 e.workflow_name 不在 GROUP BY —— 改 MAX() 取代表值
+  //    （SQLite 时代该列本就是组内任意值，语义等价且更确定）。
+  //  - camelCase 别名必须双引号（PG 裸别名小写化 → row.errorSnippet 恒 undefined，
+  //    B4 errorCount 恒 0 同款雷）。
+  const rows = await pgRows<{
     node_id: string
-    workflow_name: string
+    workflow_name: string | null
     errorSnippet: string
-    frequency: number
-    lastOccurred: string
-    workflowCount: number
-  }>
+    frequency: string | number
+    lastOccurred: Date | string | null
+    workflowCount: string | number
+  }>(
+    db,
+    `SELECT
+       ne.node_id,
+       MAX(e.workflow_name) as workflow_name,
+       SUBSTR(ne.error, 1, ${MAX_ERROR_SNIPPET}) as "errorSnippet",
+       COUNT(*) as frequency,
+       MAX(ne.completed_at) as "lastOccurred",
+       COUNT(DISTINCT e.id) as "workflowCount"
+     FROM node_executions ne
+     JOIN executions e ON ne.execution_id = e.id
+     WHERE e.workspace_id = ?
+       AND ne.status = 'failed'
+       AND ne.error IS NOT NULL
+     GROUP BY ne.node_id, SUBSTR(ne.error, 1, ${MAX_ERROR_SNIPPET})
+     ORDER BY frequency DESC NULLS LAST
+     LIMIT ${MAX_ERRORS}`,
+    [workspaceId],
+  )
 
   return rows.map((row) => ({
     node_id: row.node_id,
     workflow_name: row.workflow_name || "(unnamed)",
-    frequency: row.frequency,
+    frequency: num(row.frequency),
     errorSnippet: row.errorSnippet,
-    lastOccurred: row.lastOccurred,
-    workflowCount: row.workflowCount,
+    lastOccurred: tsStr(row.lastOccurred),
+    workflowCount: num(row.workflowCount),
   }))
 }
 
-function buildCostProfile(
+async function buildCostProfile(
   workspaceId: string,
-  db: Database.Database,
-): CostProfile {
+  db: PgSql,
+): Promise<CostProfile> {
   // NEW-r2:钱的单一来源 = llm_calls_costed 派生视图(全未定价 SUM=NULL 不焊 0);
   // ntu 只贡献 tokens/date-range(非钱路径)。
-  const totalRow = db
-    .prepare(
-      `SELECT SUM(cost_usd) as total FROM llm_calls_costed WHERE workspace_id = ?`,
-    )
-    .get(workspaceId) as { total: number | null }
-  const total_cost = totalRow.total
+  const totalRow = await pgRow1<{ total: number | string | null }>(
+    db,
+    `SELECT SUM(cost_usd) as total FROM llm_calls_costed WHERE workspace_id = ?`,
+    [workspaceId],
+  )
+  const total_cost = numOrNull(totalRow?.total)
 
   // Daily average: use execution started_at for date range
-  const dateRangeRow = db
-    .prepare(
-      `SELECT MIN(e.started_at) as min_ts, MAX(e.started_at) as max_ts
-       FROM node_token_usages ntu
-       JOIN node_executions ne ON ntu.node_execution_id = ne.id
-       JOIN executions e ON ne.execution_id = e.id
-       WHERE e.workspace_id = ?`,
-    )
-    .get(workspaceId) as { min_ts: string | null; max_ts: string | null }
+  const dateRangeRow = await pgRow1<{ min_ts: Date | string | null; max_ts: Date | string | null }>(
+    db,
+    `SELECT MIN(e.started_at) as min_ts, MAX(e.started_at) as max_ts
+     FROM node_token_usages ntu
+     JOIN node_executions ne ON ntu.node_execution_id = ne.id
+     JOIN executions e ON ne.execution_id = e.id
+     WHERE e.workspace_id = ?`,
+    [workspaceId],
+  )
 
   let daily_avg: number | null = 0
   let trend_direction: "increasing" | "decreasing" | "stable" = "stable"
   let trend_pct = 0
 
-  if (dateRangeRow.min_ts != null && dateRangeRow.max_ts != null) {
+  if (dateRangeRow?.min_ts != null && dateRangeRow?.max_ts != null) {
     const minMs = new Date(dateRangeRow.min_ts).getTime()
     const maxMs = new Date(dateRangeRow.max_ts).getTime()
     const days = Math.max(1, Math.ceil((maxMs - minMs) / (1000 * 60 * 60 * 24)))
@@ -426,27 +444,27 @@ function buildCostProfile(
   }
 
   // Cost trend from daily costs (group by execution date)
-  const dailyRows = db
-    .prepare(
-      `SELECT DATE(e.started_at) as day, SUM(v.c) as cost
-       FROM executions e
-       LEFT JOIN (
-         SELECT execution_id, SUM(cost_usd) as c
-         FROM llm_calls_costed GROUP BY execution_id
-       ) v ON v.execution_id = e.id
-       WHERE e.workspace_id = ?
-       GROUP BY day
-       ORDER BY day ASC`,
-    )
-    .all(workspaceId) as Array<{ day: string; cost: number | null }>
+  const dailyRows = await pgRows<{ day: Date | string; cost: number | string | null }>(
+    db,
+    `SELECT e.started_at::date as day, SUM(v.c) as cost
+     FROM executions e
+     LEFT JOIN (
+       SELECT execution_id, SUM(cost_usd) as c
+       FROM llm_calls_costed GROUP BY execution_id
+     ) v ON v.execution_id = e.id
+     WHERE e.workspace_id = ?
+     GROUP BY day
+     ORDER BY day ASC`,
+    [workspaceId],
+  )
 
   if (dailyRows.length >= 2) {
     const mid = Math.floor(dailyRows.length / 2)
     const firstHalf = dailyRows.slice(0, mid)
     const secondHalf = dailyRows.slice(mid)
 
-    const firstAvg = firstHalf.reduce((s, r) => s + (r.cost ?? 0), 0) / firstHalf.length
-    const secondAvg = secondHalf.reduce((s, r) => s + (r.cost ?? 0), 0) / secondHalf.length
+    const firstAvg = firstHalf.reduce((s, r) => s + (numOrNull(r.cost) ?? 0), 0) / firstHalf.length
+    const secondAvg = secondHalf.reduce((s, r) => s + (numOrNull(r.cost) ?? 0), 0) / secondHalf.length
 
     if (firstAvg > 0) {
       trend_pct = ((secondAvg - firstAvg) / firstAvg) * 100
@@ -459,69 +477,72 @@ function buildCostProfile(
   }
 
   // Model breakdown —— tokens 源 ntu,钱源派生视图,JS 按 model 合流(NEW-r2)
-  const modelRows = db
-    .prepare(
-      `SELECT ntu.model,
-              COUNT(*) as calls,
-              ${LEDGER_SQL.sumTokens('ntu.')} as tokens
-       FROM node_token_usages ntu
-       JOIN node_executions ne ON ntu.node_execution_id = ne.id
-       JOIN executions e ON ne.execution_id = e.id
-       WHERE e.workspace_id = ?
-       GROUP BY ntu.model
-       ORDER BY tokens DESC`,
-    )
-    .all(workspaceId) as Array<{ model: string; calls: number; tokens: number }>
-  const modelCostRows = db
-    .prepare(
-      `SELECT model, SUM(cost_usd) as cost
-       FROM llm_calls_costed WHERE workspace_id = ? GROUP BY model`,
-    )
-    .all(workspaceId) as Array<{ model: string; cost: number | null }>
-  const costByModel = new Map(modelCostRows.map(r => [r.model, r.cost]))
+  const modelRows = await pgRows<{ model: string | null; calls: string | number; tokens: string | number | null }>(
+    db,
+    `SELECT ntu.model,
+            COUNT(*) as calls,
+            ${LEDGER_SQL.sumTokens('ntu.')} as tokens
+     FROM node_token_usages ntu
+     JOIN node_executions ne ON ntu.node_execution_id = ne.id
+     JOIN executions e ON ne.execution_id = e.id
+     WHERE e.workspace_id = ?
+     GROUP BY ntu.model
+     ORDER BY tokens DESC NULLS LAST`,
+    [workspaceId],
+  )
+  const modelCostRows = await pgRows<{ model: string | null; cost: number | string | null }>(
+    db,
+    `SELECT model, SUM(cost_usd) as cost
+     FROM llm_calls_costed WHERE workspace_id = ? GROUP BY model`,
+    [workspaceId],
+  )
+  const costByModel = new Map(modelCostRows.map(r => [r.model, numOrNull(r.cost)]))
 
   const modelBreakdown: ModelBreakdown[] = modelRows.map((row) => ({
     model: row.model ?? "unknown",
-    calls: row.calls,
-    tokens: Number(row.tokens) || 0,
-    cost: Number(costByModel.get(row.model)) || 0,
+    calls: num(row.calls),
+    tokens: num(row.tokens) || 0,
+    cost: num(costByModel.get(row.model)) || 0,
   }))
 
   return { total_cost, daily_avg, trend_direction, trend_pct, modelBreakdown }
 }
 
-function buildNodePatterns(
+async function buildNodePatterns(
   workspaceId: string,
-  db: Database.Database,
-): NodePattern[] {
-  const rows = db
-    .prepare(
-      `SELECT
-         ne.node_type,
-         ne.node_id,
-         COUNT(*) as frequency,
-         CAST(SUM(CASE WHEN ne.status = 'completed' THEN 1 ELSE 0 END) AS REAL) / COUNT(*) as successRate,
-         AVG(ne.duration) as avgDuration_ms,
-         GROUP_CONCAT(DISTINCT e.workflow_name) as workflowNames
-       FROM node_executions ne
-       JOIN executions e ON ne.execution_id = e.id
-       WHERE e.workspace_id = ?
-       GROUP BY ne.node_type, ne.node_id
-       ORDER BY frequency DESC`,
-    )
-    .all(workspaceId) as Array<{
+  db: PgSql,
+): Promise<NodePattern[]> {
+  // 票6a 方言闸：GROUP_CONCAT→string_agg（分隔符 ',' 对齐旧 ',' split）、
+  // CAST AS REAL→DOUBLE PRECISION（PG REAL=float4 且整数除法截断雷）、
+  // camel 别名双引号。
+  const rows = await pgRows<{
     node_type: string
     node_id: string
-    frequency: number
-    successRate: number
-    avgDuration_ms: number
-    workflowNames: string
-  }>
+    frequency: string | number
+    successRate: number | string
+    avgDuration_ms: number | string | null
+    workflowNames: string | null
+  }>(
+    db,
+    `SELECT
+       ne.node_type,
+       ne.node_id,
+       COUNT(*) as frequency,
+       CAST(SUM(CASE WHEN ne.status = 'completed' THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / COUNT(*) as "successRate",
+       AVG(ne.duration) as "avgDuration_ms",
+       string_agg(DISTINCT e.workflow_name, ',') as "workflowNames"
+     FROM node_executions ne
+     JOIN executions e ON ne.execution_id = e.id
+     WHERE e.workspace_id = ?
+     GROUP BY ne.node_type, ne.node_id
+     ORDER BY frequency DESC NULLS LAST`,
+    [workspaceId],
+  )
 
   return rows.map((row) => ({
     node_type: row.node_type,
     node_id: row.node_id,
-    frequency: row.frequency,
+    frequency: num(row.frequency),
     successRate: Number(row.successRate) || 0,
     avgDuration_s: (Number(row.avgDuration_ms) || 0) / 1000,
     workflowNames: row.workflowNames ? row.workflowNames.split(",").filter(Boolean) : [],

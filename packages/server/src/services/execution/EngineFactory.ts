@@ -3,11 +3,13 @@ import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { AgentVersionDAO } from "../../db/dao/agent-version-dao"
+import { pgSql } from "../../db/dao/registry"
 import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
 import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
+import { primeCrossExecLookup } from "./cross-exec-primer"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
@@ -73,20 +75,16 @@ export class EngineFactory implements IEngineFactory {
    * @param callbacks - optional EngineCallbacks (if not provided, engine is created without callbacks)
    * @param signal - optional AbortSignal
    */
-  createEngine(execution: ExecutionRow, workflow: any, callbacks?: EngineCallbacks, signal?: AbortSignal): WorkflowEngine {
+  async createEngine(execution: ExecutionRow, workflow: any, callbacks?: EngineCallbacks, signal?: AbortSignal): Promise<WorkflowEngine> {
     const pipelineConfig = this.pipelineConfigLoader.getConfig()
 
     const promptInjector = pipelineConfig?.prompts
       ? new PromptInjector(pipelineConfig.prompts)
       : undefined
 
-    const lookup = {
-      getById: (eid: string) => {
-        const row = this.dao.findExecutionForLookup(eid)
-        return row ? { parent_id: row.parent_id ?? undefined, var_pool: row.var_pool ?? undefined, input_values: row.input_values ?? undefined } : null
-      },
-      getNodeOutputs: (executionId: string, nodeId: string) => this.dao.findNodeOutputs(executionId, nodeId),
-    }
+    // [P1 B5 票5B §9 人判] shared ExecutionLookup/CrossExecResolver 是 engine 同步替换接缝，
+    // 全链 async 化留票6/B6；此处改引擎创建期预取（PG 异步读 → 同步缓存喂旧接口）。
+    const lookup = await primeCrossExecLookup(this.dao, execution.id, [JSON.stringify(workflow ?? {})])
     const crossExecResolver = new CrossExecResolver(lookup)
 
     // Resolve providers from workflow node engines
@@ -144,9 +142,11 @@ export class EngineFactory implements IEngineFactory {
     engine.setWorkflowResolver(workflowResolver)
 
     // Set version resolver for octopus_agent nodes
+    // P1 B1: AgentVersionDAO 已迁 PG（agent_versions 表单引擎 = postgres.js）。
+    // 池未注册时 pgSql() 抛错 → 走空 VersionResolver 兜底（与原 catch 语义一致）。
     try {
-      const versionDao = new AgentVersionDAO(this.ctx.db)
-      const rows = versionDao.listAllPublished()
+      const versionDao = new AgentVersionDAO(pgSql())
+      const rows = await versionDao.listAllPublished()
       const versions: AgentVersionInfo[] = rows.map((r) => ({
         id: r.id,
         agent_name: r.agent_name,
@@ -179,11 +179,11 @@ export class EngineFactory implements IEngineFactory {
    * Reconstruct an engine from persisted state (snapshot + var_pool).
    * Does NOT restore node results or session context — caller must do that.
    */
-  reconstructEngine(execution: ExecutionRow, callbacks: EngineCallbacks, signal: AbortSignal): WorkflowEngine {
+  async reconstructEngine(execution: ExecutionRow, callbacks: EngineCallbacks, signal: AbortSignal): Promise<WorkflowEngine> {
     const wf = this.resolveWorkflowWithSnapshot(execution.id, execution.workflow_ref)
     if (!wf) throw new Error(`Workflow not found: ${execution.workflow_ref}`)
 
-    const engine = this.createEngine(execution, wf.parsed, callbacks, signal)
+    const engine = await this.createEngine(execution, wf.parsed, callbacks, signal)
 
     const poolSnapshot = execution.var_pool ? JSON.parse(execution.var_pool) : {}
     engine.updateVarPool(poolSnapshot)

@@ -39,6 +39,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO, ExecutionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
+import { describePg, pgTestEnabledOn, setupRegisteredPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { resolveInputValues } from "../services/scheduler/template-resolver"
@@ -47,6 +48,10 @@ import os from "os"
 import fs from "fs"
 
 const ORG = "e2e-td-v4gate"
+
+// P1 B2：tasks 表已迁 postgres.js —— 造数落 PG（注册全局池后 service/job 经 pgSql() 取），
+// executions/workspaces/schedules 仍 SQLite。
+let pg: PgFixture | null = null
 
 const stub = vi.hoisted(() => ({
   db: null as Database.Database | null,
@@ -148,9 +153,10 @@ function fakeWorkspaceService() {
   }
 }
 
-/** ready → arm through the real job → read the row the run actually eats. */
-function launchRow(taskId: string): { input: Record<string, string>; ref: string; phase: number | null; round: number | null } {
-  const execId = service.taskLifecycle.armTask(taskId)
+/** ready → arm through the real job → read the row the run actually eats.
+ *  P1 B2: armTask 已是 async（TaskDAO 走 PG）。 */
+async function launchRow(taskId: string): Promise<{ input: Record<string, string>; ref: string; phase: number | null; round: number | null }> {
+  const execId = await service.taskLifecycle.armTask(taskId)
   const row = execs.findById(execId)!
   return {
     input: JSON.parse(row.input_values) as Record<string, string>,
@@ -171,16 +177,17 @@ function newDb(): Database.Database {
  *  想测硬闸本体：spec 里显式置 null 摘除（见文末 runbook 块）。 */
 const OK_PREVIEW = { command: "pnpm dev", url: "http://localhost:3100/" }
 
-/** Insert a draft task row directly (bypass the service) — full spec control. */
-function insertTask(spec: Record<string, unknown>, workflowRef: string | null = null): string {
+/** Insert a draft task row directly (bypass the service) — full spec control.
+ *  P1 B2: tasks 落 PG。 */
+async function insertTask(spec: Record<string, unknown>, workflowRef: string | null = null): Promise<string> {
   const id = `e2e-td-v4gate-${nextTaskSeq++}`
   const now = new Date().toISOString()
-  db.prepare(`
+  await pg!.sql.unsafe(`
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)
-  `).run(id, ORG, `E2E_TD v4 task ${id}`, JSON.stringify({ acceptance_preview: OK_PREVIEW, ...spec }), workflowRef, now, now)
+    VALUES ($1, $2, $3, 'draft', NULL, $4, '[]', '[]', '[]', '[]', $5, 1, NULL, $6, $7, NULL)
+  `, [id, ORG, `E2E_TD v4 task ${id}`, JSON.stringify({ acceptance_preview: OK_PREVIEW, ...spec }), workflowRef, now, now])
   return id
 }
 
@@ -204,14 +211,14 @@ function writeSpecFile(taskId: string, rel: string): void {
 }
 
 /** Assemble a v4 task whose phases are given as authored objects. `extra`
- *  合并进最终 spec（摘除/替换默认 preview 用）。 */
-function insertV4Task(
+ *  合并进最终 spec（摘除/替换默认 preview 用）。P1 B2: tasks 落 PG（UPDATE 非账本表，允许）。 */
+async function insertV4Task(
   id: string,
   phases: PhaseInput[],
   extra: Record<string, unknown> = {},
-): void {
-  db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(
-    JSON.stringify({
+): Promise<void> {
+  await pg!.sql`
+    UPDATE tasks SET task_spec = ${JSON.stringify({
       acceptance_preview: OK_PREVIEW,
       format: "v4",
       task_type: "coding",
@@ -221,9 +228,8 @@ function insertV4Task(
       authoring_resources: [],
       phases,
       ...extra,
-    }),
-    id,
-  )
+    })}::jsonb WHERE id = ${id}
+  `
 }
 
 /** A fully-valid phase for task `id`: spec file written under the home,
@@ -249,7 +255,10 @@ function validPhase(id: string, n: number): PhaseInput {
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // P1 B2 双引擎 fixture：tasks 落 PG（注册为全局池 —— service/job 经 pgSql() 取），
+  // executions/workspaces/schedules 仍在 SQLite `db`。
+  pg = await setupRegisteredPgSchema()
   db = newDb()
   stub.db = db
   execs = new ExecutionDAO(db)
@@ -277,15 +286,18 @@ beforeAll(() => {
   app.route("/api/tasks", createTasksRoutes(service, sse))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (!pgTestEnabledOn()) return
+  await pg?.close()
+  pg = null
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
   fs.rmSync(wsTmpDir, { recursive: true, force: true })
 })
 
-describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)", () => {
+describePg("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)", () => {
   it("AC1a: v4 task with empty phases → 409 missing=['phase:0:no-phases']", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
     const body = (await res.json()) as { error: string; missing: string[] }
@@ -293,7 +305,7 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1a2: v4 task missing the phases key entirely → same no-phases key", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding" })
+    const id = await insertTask({ format: "v4", task_type: "coding" })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
     const body = (await res.json()) as { missing: string[] }
@@ -301,8 +313,8 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1b: phase specPath file absent under home → 'phase:1:spec-missing' only", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [
       {
         index: 1, name: "P1", slug: "p1",
         specPath: path.join(".scratch", "gone", "p1", "spec.md"),
@@ -318,8 +330,8 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1c: unresolvable workflow_ref (spec exists) → 'phase:1:workflow-ref' only", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "unknown/flow" }])
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "unknown/flow" }])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
     const body = (await res.json()) as { missing: string[] }
@@ -327,8 +339,8 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1d: required inputs unsatisfied → 'phase:1:input:idea'+'phase:1:input:spec_dir'", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), inputValues: {} }])
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [{ ...validPhase(id, 1), inputValues: {} }])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
     const body = (await res.json()) as { missing: string[] }
@@ -336,9 +348,9 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1e: per-phase indexing — phase 2 broken, phase 1 clean → only 'phase:2:*'", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p2 = validPhase(id, 2)
-    insertV4Task(id, [
+    await insertV4Task(id, [
       validPhase(id, 1),
       {
         ...p2,
@@ -356,8 +368,8 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
   })
 
   it("AC1f: all phases clean + workflow without required inputs → 200 ready", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }])
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(200)
     const task = (await res.json()) as { status: string }
@@ -373,7 +385,7 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
 // case (integration-gate) was dead code under the convention and has been
 // deleted, so the convention had to become a real gate. These are the
 // HTTP-level cases for the layer a user actually hits.
-describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:no-final-verification）", () => {
+describePg("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:no-final-verification）", () => {
   /** Write a ticket into the batch dir that owns `phase.specPath`. */
   function writeTicket(id: string, specRel: string, filename: string): void {
     const dir = path.join(taskHome.homePath(id), path.dirname(specRel), "issues")
@@ -384,9 +396,9 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
   const BATCH_FLOW = "built-in/matt-spec-dev"
 
   it("misses with the exact key when issues/ has no *-e2e-* ticket", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p = { ...validPhase(id, 1), workflowRef: BATCH_FLOW }
-    insertV4Task(id, [p])
+    await insertV4Task(id, [p])
     writeTicket(id, p.specPath, "01-functional.md")
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
@@ -397,9 +409,9 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
   })
 
   it("passes once the final acceptance ticket is present", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p = { ...validPhase(id, 1), workflowRef: BATCH_FLOW }
-    insertV4Task(id, [p])
+    await insertV4Task(id, [p])
     writeTicket(id, p.specPath, "01-functional.md")
     writeTicket(id, p.specPath, "02-e2e-acceptance.md")
 
@@ -412,8 +424,8 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
   it("does not apply to a flow that does not consume the batch", async () => {
     // A self-built or non-batch flow has its own verification story; demanding
     // a ticket it will never read would block legitimate work.
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }])
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }])
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
@@ -424,10 +436,10 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
 // ── 入队加严闸 ⑤/⑥（chat-draft-v4 原型拍板，2026-09-24）──────────────
 // ⑤ bindingConfirmed：绑定必须经人工确认（弹窗保存）；⑥ issues/ 产物基线：
 // 所有绑定流统一 ≥1 张 .md 票。两闸只在 readyTask（enqueueChecks）生效。
-describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)", () => {
+describePg("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)", () => {
   it("⑤ 全绿产物但未确认绑定 → 409 missing=['phase:1:binding-unconfirmed']", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), bindingConfirmed: false }])
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [{ ...validPhase(id, 1), bindingConfirmed: false }])
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
@@ -437,11 +449,11 @@ describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)",
   })
 
   it("⑥ spec 在盘 + 已确认，但 issues/ 无票（非批次流也拦）→ 409 issues-missing", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p = { ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }
     // validPhase 写过 01-plan.md —— 清空 issues/ 还原「无票」现场
     fs.rmSync(path.join(taskHome.homePath(id), path.dirname(p.specPath), "issues"), { recursive: true, force: true })
-    insertV4Task(id, [p])
+    await insertV4Task(id, [p])
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
@@ -451,11 +463,11 @@ describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)",
   })
 
   it("多 phase 逐一点名：P1 缺票 + P2 未确认 → 两条键各归其位", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p1 = validPhase(id, 1)
     const p2 = validPhase(id, 2)
     fs.rmSync(path.join(taskHome.homePath(id), path.dirname(p1.specPath), "issues"), { recursive: true, force: true })
-    insertV4Task(id, [p1, { ...p2, bindingConfirmed: false }])
+    await insertV4Task(id, [p1, { ...p2, bindingConfirmed: false }])
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
@@ -465,9 +477,9 @@ describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)",
   })
 })
 
-describe("ticket 04 AC2: v3 branch untouched (fork keyed on format only)", () => {
+describePg("ticket 04 AC2: v3 branch untouched (fork keyed on format only)", () => {
   it("AC2a: task_type set, NO format → old confirm-gate rules; never 'phase:' keys", async () => {
-    const id = insertTask(
+    const id = await insertTask(
       { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
       "built-in/v4-no-required-flow",
     )
@@ -479,7 +491,7 @@ describe("ticket 04 AC2: v3 branch untouched (fork keyed on format only)", () =>
 
   it("AC2b: format=v4 takes over even when the v3 confirmations are all set", async () => {
     // A spec that WOULD pass the v3 gate but has no phases → v4 gate rejects.
-    const id = insertTask({
+    const id = await insertTask({
       format: "v4",
       goal: "E2E_TD goal",
       ac: ["E2E_TD ac1"],
@@ -499,23 +511,23 @@ describe("ticket 04 AC2: v3 branch untouched (fork keyed on format only)", () =>
 // （acceptance_runbook ∧ acceptance_preview 皆无）且没配当场复检（acceptance_verify，
 // unit-only 薄切片的逃生门）时拦下。模板默认带合法 preview，所以既有 exact-keys
 // 用例逐字不变；这一组显式摘除 preview 来单测新键。
-describe("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () => {
+describePg("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () => {
   /** 一条只差 runbook 的干净 v4：spec 就位、v4-required-flow 非批次消费流。 */
-  function cleanTaskMinusRunbook(extra: Record<string, unknown>): string {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [validPhase(id, 1)], { acceptance_preview: null, ...extra })
+  async function cleanTaskMinusRunbook(extra: Record<string, unknown>): Promise<string> {
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [validPhase(id, 1)], { acceptance_preview: null, ...extra })
     return id
   }
 
   it("三缺（无 runbook/preview/verify）→ 409 missing=['runbook'] only", async () => {
-    const id = cleanTaskMinusRunbook({})
+    const id = await cleanTaskMinusRunbook({})
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(409)
     expect(((await res.json()) as { missing: string[] }).missing).toEqual(["runbook"])
   })
 
   it("半配 runbook（有 up 无 ready，与 resolveRunbook ① 判据对齐）→ 仍拦", async () => {
-    const id = cleanTaskMinusRunbook({
+    const id = await cleanTaskMinusRunbook({
       acceptance_runbook: { up: { command: "docker compose up -d" } },
     })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
@@ -523,7 +535,7 @@ describe("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () =
   })
 
   it("配了 acceptance_verify（unit-only 逃生门）→ 200 放行", async () => {
-    const id = cleanTaskMinusRunbook({
+    const id = await cleanTaskMinusRunbook({
       acceptance_verify: { command: "echo x", timeoutS: 5 },
     })
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
@@ -531,7 +543,7 @@ describe("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () =
   })
 
   it("配了完整 runbook（up∧ready）→ 200 放行", async () => {
-    const id = cleanTaskMinusRunbook({
+    const id = await cleanTaskMinusRunbook({
       acceptance_runbook: {
         up: { command: "docker compose up -d" },
         ready: { command: "curl -sf http://localhost:8080/health" },
@@ -542,10 +554,10 @@ describe("runbook 硬闸: 缺起法且无复检 → missing 含 'runbook'", () =
   })
 })
 
-describe("ticket 04 AC3: unknown placeholder → missing entry, never 500", () => {
+describePg("ticket 04 AC3: unknown placeholder → missing entry, never 500", () => {
   it("AC3a: phase inputValues '${nope}' → 409 'phase:1:input:idea' (not 500)", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [
       {
         ...validPhase(id, 1),
         inputValues: { idea: "${nope}", spec_dir: "${phase.spec_dir}" },
@@ -559,10 +571,10 @@ describe("ticket 04 AC3: unknown placeholder → missing entry, never 500", () =
   })
 })
 
-describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型流绑定用）", () => {
+describePg("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型流绑定用）", () => {
   it("home-relative specPath → 这一轮吃到的 batch_dir 是 posix 相对批次目录", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
+    await insertV4Task(id, [
       {
         ...validPhase(id, 1),
         workflowRef: "built-in/v4-no-required-flow",
@@ -573,7 +585,7 @@ describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型�
     expect(res.status, await res.clone().text()).toBe(200)
     // 票03：没有冻结的信封 config 可读，启动计划每次 arm 现算 —— 所以断言读**行上的**
     // input_values（seed 下行用的正是同一个 batchRelPath，两者必须一字不差）。
-    const launched = launchRow(id)
+    const launched = await launchRow(id)
     expect(launched.input.batch_dir).toBe(".scratch/v4d/p1")
     const wsPath = (db
       .prepare("SELECT path FROM workspaces WHERE task_id=?")
@@ -582,11 +594,11 @@ describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型�
   })
 
   it("specPath 落在 home 外（agent 绝对路径直写）→ batch_rel 解析空 → 409 input，不 500", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const outside = path.join(tmpDir, "outside-batch", "spec.md")
     fs.mkdirSync(path.dirname(outside), { recursive: true })
     fs.writeFileSync(outside, "# outside\n")
-    insertV4Task(id, [
+    await insertV4Task(id, [
       {
         index: 1, name: "P1", slug: "p1",
         specPath: outside, // gate ① 存在性 OK（绝对路径 verbatim）
@@ -601,12 +613,12 @@ describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型�
   })
 })
 
-describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结果落在启动行上", () => {
+describePg("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结果落在启动行上", () => {
   it("AC4a: ready 200 → 零 schedule 行；arm 出的 executions 行带 phase1 解析后的 input_values", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p1 = validPhase(id, 1)
     const p2 = validPhase(id, 2)
-    insertV4Task(id, [
+    await insertV4Task(id, [
       {
         ...p1,
         slug: "alpha-phase",
@@ -626,7 +638,7 @@ describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结
       expect(db.prepare(`SELECT COUNT(*) c FROM ${table}`).get()).toEqual({ c: 0 })
     }
 
-    const launched = launchRow(id)
+    const launched = await launchRow(id)
     // 首触就是 phase 1 那一轮 —— 不再有「把 chain[0] 预载成 phase 1」这一步。
     expect(launched.ref).toBe("built-in/v4-required-flow")
     expect([launched.phase, launched.round]).toEqual([1, 1])
@@ -639,17 +651,17 @@ describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结
   })
 
   it("AC4b: 后续轮按 (phase,round) 现算 —— 轮次坐标建行即带，不再改写任何定义", async () => {
-    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const id = await insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p1 = validPhase(id, 1)
     const p2 = validPhase(id, 2)
-    insertV4Task(id, [
+    await insertV4Task(id, [
       p1,
       { ...p2, workflowRef: "built-in/v4-no-required-flow", inputValues: { art: "${task_artifacts_dir}" } },
     ])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
     expect(res.status).toBe(200)
 
-    const launched = service.taskLifecycle.armTask(id, { phaseIndex: 2, roundIndex: 2, feedback: "重做" })
+    const launched = await service.taskLifecycle.armTask(id, { phaseIndex: 2, roundIndex: 2, feedback: "重做" })
     const row = execs.findById(launched)!
     expect(row.workflow_ref).toBe("built-in/v4-no-required-flow")
     expect([row.phase_index, row.round_index]).toEqual([2, 2])
@@ -660,13 +672,13 @@ describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结
     expect(iv.feedback).toBe("重做")
     // 定义层零写入：task_spec.phases[] 还是作者写的那份。
     const spec = JSON.parse(
-      (db.prepare("SELECT task_spec FROM tasks WHERE id=?").get(id) as { task_spec: string }).task_spec,
+      ((await pg!.sql`SELECT task_spec #>> '{}' AS task_spec FROM tasks WHERE id = ${id}`)[0] as { task_spec: string }).task_spec,
     ) as { phases: Array<{ inputValues: Record<string, string> }> }
     expect(Object.keys(spec.phases[1].inputValues)).toEqual(["art"])
   })
 
   it("AC4c: v3 任务的一轮 = 绑定的 workflow_ref，且不打 phase/round 标（回归）", async () => {
-    const id = insertTask(
+    const id = await insertTask(
       {
         goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding",
         goal_confirmed: true, ac_confirmed: ["E2E_TD ac1"],
@@ -677,7 +689,7 @@ describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结
     expect(res.status).toBe(200)
     expect(db.prepare("SELECT COUNT(*) c FROM schedules").get()).toEqual({ c: 0 })
 
-    const launched = launchRow(id)
+    const launched = await launchRow(id)
     expect(launched.ref).toBe("built-in/v4-no-required-flow")
     expect([launched.phase, launched.round]).toEqual([null, null])
     // v3 没有 phases[] 可解析 —— 不该冒出轮次键，但管理键同规则注入。
@@ -686,7 +698,7 @@ describe("ticket 04 AC4 (票03 重写): 过闸不建信封，per-phase 解析结
   })
 })
 
-describe("ticket 04 vocab: resolveInputValues ctx overload (unit)", () => {
+describePg("ticket 04 vocab: resolveInputValues ctx overload (unit)", () => {
   it("resolves the four v4 placeholders from ctx", () => {
     const { values, unresolved } = resolveInputValues(
       { a: "${phase.slug}", b: "${phase.spec_dir}", c: "${task.home}", d: "${task_artifacts_dir}" },

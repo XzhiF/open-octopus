@@ -21,12 +21,12 @@ import type { ExecutionService } from "../services/execution"
 
 let _dao: ExecutionDAO | null = null
 let _sse: SSEService | null = null
-let _getExecService: ((wsId: string) => { service: ExecutionService; wsPath: string } | undefined) | null = null
+let _getExecService: ((wsId: string) => Promise<{ service: ExecutionService; wsPath: string } | undefined>) | null = null
 
 export function setRepairDependencies(
   dao: ExecutionDAO,
   sse: SSEService,
-  getExecService: (wsId: string) => { service: ExecutionService; wsPath: string } | undefined,
+  getExecService: (wsId: string) => Promise<{ service: ExecutionService; wsPath: string } | undefined>,
 ): void {
   _dao = dao
   _sse = sse
@@ -37,9 +37,9 @@ export function setRepairDependencies(
  * Create a RepairService for a given workspace.
  * Used by harness-intervene route to delegate "inject" directives.
  */
-export function createRepairServiceForWorkspace(workspaceId: string): RepairService | null {
+export async function createRepairServiceForWorkspace(workspaceId: string): Promise<RepairService | null> {
   if (!_dao || !_sse || !_getExecService) return null
-  const svcEntry = _getExecService(workspaceId)
+  const svcEntry = await _getExecService(workspaceId)
   if (!svcEntry) return null
   const resourceManager = getResourceRegistry().get()
   return new RepairService(
@@ -55,14 +55,14 @@ export function createRepairServiceForWorkspace(workspaceId: string): RepairServ
 
 const repairRoutes = new Hono()
 
-function getRepairService(c: { req: { param: (name: string) => string | undefined } }): RepairService {
+async function getRepairService(c: { req: { param: (name: string) => string | undefined } }): Promise<RepairService> {
   if (!_dao || !_sse || !_getExecService) {
     throw new RepairError("repair service not initialized", 503)
   }
   const workspaceId = c.req.param("id")
   if (!workspaceId) throw new RepairError("workspace id required", 400)
 
-  const svcEntry = _getExecService(workspaceId)
+  const svcEntry = await _getExecService(workspaceId)
   if (!svcEntry) throw new RepairError("workspace not found", 404)
 
   const resourceManager = getResourceRegistry().get()
@@ -99,9 +99,9 @@ function handleRepairError(err: unknown): Response {
 
 // ── GET /diagnose ──────────────────────────────────────────────────
 
-repairRoutes.get("/diagnose", (c) => {
+repairRoutes.get("/diagnose", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const report = service.diagnose(executionId)
     return c.json(report)
@@ -114,7 +114,7 @@ repairRoutes.get("/diagnose", (c) => {
 
 repairRoutes.post("/varpool", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json()
     const parsed = VarPoolUpdateRequestSchema.parse(body)
@@ -129,7 +129,7 @@ repairRoutes.post("/varpool", async (c) => {
 
 repairRoutes.post("/node/:nodeId/reset", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const nodeId = c.req.param("nodeId")
     if (!nodeId) return c.json({ error: "nodeId required" }, 400)
@@ -147,7 +147,7 @@ repairRoutes.post("/node/:nodeId/reset", async (c) => {
 
 repairRoutes.post("/restore-point", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json()
     const parsed = RestorePointRequestSchema.parse(body)
@@ -162,7 +162,7 @@ repairRoutes.post("/restore-point", async (c) => {
 
 repairRoutes.post("/reload-workflow", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json()
     const parsed = ReloadWorkflowRequestSchema.parse(body)
@@ -177,7 +177,7 @@ repairRoutes.post("/reload-workflow", async (c) => {
 
 repairRoutes.post("/intervene", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json()
     const parsed = InterveneRequestSchema.parse(body)
@@ -192,7 +192,7 @@ repairRoutes.post("/intervene", async (c) => {
 
 repairRoutes.post("/clear-retry", async (c) => {
   try {
-    const service = getRepairService(c)
+    const service = await getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json().catch(() => ({}))
     const parsed = ClearRetryRequestSchema.parse(body)

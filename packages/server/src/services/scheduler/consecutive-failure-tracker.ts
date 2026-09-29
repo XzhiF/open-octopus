@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import { ScheduleConfigDAO } from '../../db/dao'
 
 const MAX_CONSECUTIVE_FAILURES = 5
@@ -18,23 +17,22 @@ export class ConsecutiveFailureTracker {
     this.configDAO = configDAO
   }
 
-  recordSuccess(scheduleId: string): void {
-    this.configDAO.resetConsecutiveFailures(scheduleId)
+  async recordSuccess(scheduleId: string): Promise<void> {
+    await this.configDAO.resetConsecutiveFailures(scheduleId)
   }
 
-  recordFailure(scheduleId: string): { autoDisabled: boolean } {
-    const txn = this.configDAO.transaction(() => {
-      this.configDAO.incrementConsecutiveFailures(scheduleId)
+  async recordFailure(scheduleId: string): Promise<{ autoDisabled: boolean }> {
+    return this.configDAO.transaction(async (tx) => {
+      const cfg = new ScheduleConfigDAO(tx)
+      await cfg.incrementConsecutiveFailures(scheduleId)
 
-      const row = this.configDAO.getConsecutiveFailuresAndEnabled(scheduleId)
+      const row = await cfg.getConsecutiveFailuresAndEnabled(scheduleId)
 
       if (row && row.consecutive_failures >= MAX_CONSECUTIVE_FAILURES && row.enabled === 1) {
-        this.configDAO.autoDisableSchedule(scheduleId)
+        await cfg.autoDisableSchedule(scheduleId)
         return { autoDisabled: true } as const
       }
       return { autoDisabled: false } as const
     })
-
-    return txn
   }
 }

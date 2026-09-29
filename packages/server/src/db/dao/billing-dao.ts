@@ -1,11 +1,6 @@
-import type Database from "better-sqlite3"
-import { randomUUID } from "crypto"
-import { normalizeModelId } from "@octopus/shared"
-import { BaseDAO } from "./base"
-import { pricedCallsSql, pricePreviewSql, priceStatusExpr, PRICED_AGG } from "../price-sql"
-
 /**
  * BillingDAO — 计费数据层（billing NEW-r2：快照账 → 规则账）。
+ * P1 B4：better-sqlite3 → postgres.js（BasePgDAO）。
  *
  * 两张表：
  *   - billing_price_config：价格**规则表**。每模型至多一条兜底价（valid_from/valid_to
@@ -16,7 +11,23 @@ import { pricedCallsSql, pricePreviewSql, priceStatusExpr, PRICED_AGG } from "..
  *
  * 一切费用查询的算价 SQL 只来自 ../price-sql（全库唯一实现，Q7）——本 DAO 不出现
  * 第二份公式；TS 侧也不逐行算钱（报表必须 SQL 内聚合，KD22 保留）。
+ *
+ * B4 方言/契约注记：
+ *   - valid_from/valid_to 与 llm_calls.timestamp 是 PG bigint（驱动侧 string）→
+ *     出口 num()/numOrNull() 归一旧 number 契约；created_at/updated_at 为
+ *     timestamptz(Date) → iso() 归一旧 ISO 文本。
+ *   - COUNT → int8 string → num()；SUM(cost_usd) → float8（同 SQLite REAL 族）。
+ *   - reportTrend 的 `date(ts,'unixepoch','localtime')` → 会话时区版
+ *     `to_timestamp(...) AT TIME ZONE current_setting('TimeZone')` ——
+ *     SQLite 'localtime' = 进程时区，PG 走连接会话时区（池未覆写 = 服务端默认），
+ *     日界语义在混合期按引擎本地口径各自成立（B6 统一裁决日历源）。
+ *   - ORDER BY DESC 的可空列补 NULLS LAST 对齐 SQLite（NULL 最小 → DESC 殿后）。
  */
+import { randomUUID } from "crypto"
+import { normalizeModelId } from "@octopus/shared"
+import { BasePgDAO, type PgSql } from "./base-pg"
+import { pricedCallsSql, pricePreviewSql, priceStatusExpr, PRICED_AGG } from "../price-sql"
+import { iso, num, numOrNull } from "./pg-mappers"
 
 export type BillingCurrency = "USD" | "CNY"
 export type BillingSettingKey = "usd_to_cny" | "display_currency"
@@ -35,6 +46,22 @@ export class BillingPriceValidationError extends Error {
   }
 }
 
+/** 价格窗口行（epoch ms bigint 的 PG 原始形态）。 */
+interface BillingPricePgRow {
+  id: string
+  vendor: string
+  model_id: string
+  input_unit_price: number
+  output_unit_price: number
+  cache_write_unit_price: number
+  cache_read_unit_price: number
+  currency: BillingCurrency
+  valid_from: string | number | null
+  valid_to: string | number | null
+  created_at: Date | string
+  updated_at: Date | string
+}
+
 /** billing_price_config 行 —— 单价语义 = 金额 / 1M tokens；窗口 NULL 界 = ±∞。 */
 export interface BillingPriceRow {
   id: string
@@ -49,6 +76,23 @@ export interface BillingPriceRow {
   valid_to: number | null
   created_at: string
   updated_at: string
+}
+
+function fromPrice(r: BillingPricePgRow): BillingPriceRow {
+  return {
+    id: r.id,
+    vendor: r.vendor,
+    model_id: r.model_id,
+    input_unit_price: r.input_unit_price,
+    output_unit_price: r.output_unit_price,
+    cache_write_unit_price: r.cache_write_unit_price,
+    cache_read_unit_price: r.cache_read_unit_price,
+    currency: r.currency,
+    valid_from: numOrNull(r.valid_from),
+    valid_to: numOrNull(r.valid_to),
+    created_at: iso(r.created_at),
+    updated_at: iso(r.updated_at),
+  }
 }
 
 /** createPrice 入参：id 缺省自动生成；currency 缺省 CNY；窗口缺省 = 兜底价（双 NULL）。 */
@@ -84,27 +128,29 @@ function windowsOverlap(a1: number | null, a2: number | null, b1: number | null,
 const isCatchall = (from: number | null | undefined, to: number | null | undefined): boolean =>
   (from ?? null) === null && (to ?? null) === null
 
-export class BillingDAO extends BaseDAO {
-  constructor(db: Database.Database) { super(db) }
+export class BillingDAO extends BasePgDAO {
+  constructor(db: PgSql) { super(db) }
 
   // ── billing_price_config（规则表 CRUD，写入侧 = SQL 命中去重之前的第一道闸）──
 
-  listPrices(): BillingPriceRow[] {
-    return this.stmt(`
+  async listPrices(): Promise<BillingPriceRow[]> {
+    const rows = await this.q<BillingPricePgRow>(`
       SELECT * FROM billing_price_config
       ORDER BY model_id ASC,
                (valid_from IS NULL AND valid_to IS NULL) DESC,
                COALESCE(valid_from, -1) ASC, id ASC
-    `).all() as BillingPriceRow[]
+    `)
+    return rows.map(fromPrice)
   }
 
-  getPrice(id: string): BillingPriceRow | null {
-    return (this.stmt("SELECT * FROM billing_price_config WHERE id = ?").get(id) as BillingPriceRow | undefined) ?? null
+  async getPrice(id: string): Promise<BillingPriceRow | null> {
+    const row = await this.q1<BillingPricePgRow>("SELECT * FROM billing_price_config WHERE id = ?", [id])
+    return row ? fromPrice(row) : null
   }
 
   /** 时刻 ts 的命中价行（窗口优先、多命中取 valid_from 最大）—— 与 price-sql 同序。 */
-  getPriceAtModel(modelId: string, ts: number): BillingPriceRow | null {
-    return (this.stmt(`
+  async getPriceAtModel(modelId: string, ts: number): Promise<BillingPriceRow | null> {
+    const row = await this.q1<BillingPricePgRow>(`
       SELECT * FROM billing_price_config
       WHERE model_id = ?
         AND (valid_from IS NULL OR valid_from <= ?)
@@ -112,19 +158,20 @@ export class BillingDAO extends BaseDAO {
       ORDER BY (valid_from IS NULL AND valid_to IS NULL) ASC,
                COALESCE(valid_from, -1) DESC, id ASC
       LIMIT 1
-    `).get(modelId, ts, ts) as BillingPriceRow | undefined) ?? null
+    `, [modelId, ts, ts])
+    return row ? fromPrice(row) : null
   }
 
   /**
    * 新增价格行。model_id 保存前归一化（双端规范名，Q9）；窗口校验：
    * 空区间/倒序 400、同模型第二条兜底价拒绝、与既有时间段行交叠拒绝。
    */
-  createPrice(input: BillingPriceInput): BillingPriceRow {
+  async createPrice(input: BillingPriceInput): Promise<BillingPriceRow> {
     const modelId = normalizeModelId(input.model_id)
     if (!modelId) throw new BillingPriceValidationError("PRICE_MODEL_INVALID", `model_id 无效: ${input.model_id}`)
     const from = input.valid_from ?? null
     const to = input.valid_to ?? null
-    this.validateWindow(modelId, from, to, null)
+    await this.validateWindow(modelId, from, to, null)
     const now = new Date().toISOString()
     const row: BillingPriceRow = {
       id: input.id ?? randomUUID(),
@@ -140,31 +187,31 @@ export class BillingDAO extends BaseDAO {
       created_at: now,
       updated_at: now,
     }
-    this.stmt(`
+    await this.exec(`
       INSERT INTO billing_price_config (
         id, vendor, model_id,
         input_unit_price, output_unit_price, cache_write_unit_price, cache_read_unit_price,
         currency, valid_from, valid_to, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       row.id, row.vendor, row.model_id,
       row.input_unit_price, row.output_unit_price, row.cache_write_unit_price, row.cache_read_unit_price,
       row.currency, row.valid_from, row.valid_to, row.created_at, row.updated_at,
-    )
+    ])
     return row
   }
 
   /**
    * 就地改价（Q6-A：规则表无审计）。改后按最终窗口重新校验（排除自身）。
    */
-  updatePrice(id: string, patch: BillingPricePatch): BillingPriceRow | null {
-    const existing = this.getPrice(id)
+  async updatePrice(id: string, patch: BillingPricePatch): Promise<BillingPriceRow | null> {
+    const existing = await this.getPrice(id)
     if (!existing) return null
     const modelId = patch.model_id !== undefined ? (normalizeModelId(patch.model_id) ?? "") : existing.model_id
     if (!modelId) throw new BillingPriceValidationError("PRICE_MODEL_INVALID", `model_id 无效: ${patch.model_id}`)
     const from = patch.valid_from !== undefined ? patch.valid_from : existing.valid_from
     const to = patch.valid_to !== undefined ? patch.valid_to : existing.valid_to
-    this.validateWindow(modelId, from, to, id)
+    await this.validateWindow(modelId, from, to, id)
 
     const sets: string[] = ["updated_at = ?"]
     const vals: unknown[] = [new Date().toISOString()]
@@ -178,35 +225,36 @@ export class BillingDAO extends BaseDAO {
     if (patch.valid_from !== undefined) { sets.push("valid_from = ?"); vals.push(patch.valid_from) }
     if (patch.valid_to !== undefined) { sets.push("valid_to = ?"); vals.push(patch.valid_to) }
     vals.push(id)
-    this.stmt(`UPDATE billing_price_config SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
+    await this.exec(`UPDATE billing_price_config SET ${sets.join(", ")} WHERE id = ?`, vals)
     return this.getPrice(id)
   }
 
-  deletePrice(id: string): boolean {
-    return this.stmt("DELETE FROM billing_price_config WHERE id = ?").run(id).changes > 0
+  async deletePrice(id: string): Promise<boolean> {
+    const r = await this.exec("DELETE FROM billing_price_config WHERE id = ?", [id])
+    return r.changes > 0
   }
 
   /**
    * 列表页去重后的规范模型名 —— 配价下拉的真相源 = 账本上出现过的名字（Q8，
    * 落账前已归一，所见即所配）。
    */
-  listCallModels(): string[] {
-    return (this.stmt(
+  async listCallModels(): Promise<string[]> {
+    return (await this.q<{ model: string }>(
       "SELECT DISTINCT model FROM llm_calls WHERE model IS NOT NULL ORDER BY model",
-    ).all() as { model: string }[]).map(r => r.model)
+    )).map(r => r.model)
   }
 
   // ── 写入侧窗口校验 ───────────────────────────────────────────────
 
-  private validateWindow(modelId: string, from: number | null, to: number | null, excludeId: string | null): void {
+  private async validateWindow(modelId: string, from: number | null, to: number | null, excludeId: string | null): Promise<void> {
     if (from !== null && to !== null && from >= to) {
       throw new BillingPriceValidationError("PRICE_WINDOW_ORDER", `时间窗口无效: valid_from(${from}) 必须早于 valid_to(${to})（贴边需 from < to）`)
     }
     const rows = (excludeId !== null
-      ? this.stmt("SELECT id, valid_from, valid_to FROM billing_price_config WHERE model_id = ? AND id != ?").all(modelId, excludeId)
-      : this.stmt("SELECT id, valid_from, valid_to FROM billing_price_config WHERE model_id = ?").all(modelId)) as Array<{ id: string; valid_from: number | null; valid_to: number | null }>
+      ? await this.q<{ id: string; valid_from: string | number | null; valid_to: string | number | null }>("SELECT id, valid_from, valid_to FROM billing_price_config WHERE model_id = ? AND id != ?", [modelId, excludeId])
+      : await this.q<{ id: string; valid_from: string | number | null; valid_to: string | number | null }>("SELECT id, valid_from, valid_to FROM billing_price_config WHERE model_id = ?", [modelId]))
     for (const r of rows) {
-      const rCatchall = isCatchall(r.valid_from, r.valid_to)
+      const rCatchall = isCatchall(numOrNull(r.valid_from), numOrNull(r.valid_to))
       if (isCatchall(from, to)) {
         if (rCatchall) {
           throw new BillingPriceValidationError("PRICE_CATCHALL_DUPLICATE", `模型 ${modelId} 已存在兜底价(${r.id})，每模型至多一条`)
@@ -214,7 +262,7 @@ export class BillingDAO extends BaseDAO {
         continue // 兜底价与任何窗口行天然共存（窗口优先命中）
       }
       if (rCatchall) continue // 新窗口行 vs 既有兜底价：共存
-      if (windowsOverlap(from, to, r.valid_from, r.valid_to)) {
+      if (windowsOverlap(from, to, numOrNull(r.valid_from), numOrNull(r.valid_to))) {
         throw new BillingPriceValidationError("PRICE_WINDOW_OVERLAP", `时间窗口与模型 ${modelId} 的既有价格行(${r.id}) 重叠`)
       }
     }
@@ -222,44 +270,55 @@ export class BillingDAO extends BaseDAO {
 
   // ── billing_setting ──────────────────────────────────────────────
 
-  getSetting(key: BillingSettingKey): string {
-    const row = this.stmt("SELECT value FROM billing_setting WHERE key = ?").get(key) as { value: string } | undefined
+  async getSetting(key: BillingSettingKey): Promise<string> {
+    const row = await this.q1<{ value: string }>("SELECT value FROM billing_setting WHERE key = ?", [key])
     return row?.value ?? SETTING_DEFAULTS[key]
   }
 
-  getAllSettings(): Record<BillingSettingKey, string> {
+  async getAllSettings(): Promise<Record<BillingSettingKey, string>> {
     return {
-      usd_to_cny: this.getSetting("usd_to_cny"),
-      display_currency: this.getSetting("display_currency"),
+      usd_to_cny: await this.getSetting("usd_to_cny"),
+      display_currency: await this.getSetting("display_currency"),
     }
   }
 
   /** 手工汇率 1 USD = N CNY（KD7）。规则账语义：改汇率 → 全局折价重算。 */
-  getUsdToCny(): number {
-    return Number(this.getSetting("usd_to_cny"))
+  async getUsdToCny(): Promise<number> {
+    return Number(await this.getSetting("usd_to_cny"))
   }
 
-  getDisplayCurrency(): BillingCurrency {
-    return this.getSetting("display_currency") as BillingCurrency
+  async getDisplayCurrency(): Promise<BillingCurrency> {
+    return await this.getSetting("display_currency") as BillingCurrency
   }
 
-  setSetting(key: BillingSettingKey, value: string): void {
-    this.stmt(`
+  async setSetting(key: BillingSettingKey, value: string): Promise<void> {
+    await this.exec(`
       INSERT INTO billing_setting (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(key, value)
+    `, [key, value])
   }
 
   // ── 试算器（配价页的解释器：模型+时刻+token → 命中行与钱） ─────────
   // 与账本查询共用同一片段（pricePreviewSql），永不存在第二份公式。
 
-  previewCost(model: string | null, ts: number, usage: { inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number }): BillingPricePreview {
-    const row = this.stmt(pricePreviewSql()).get({
-      model: model ? normalizeModelId(model) : null, timestamp: ts,
-      inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-      cacheCreationTokens: usage.cacheCreationTokens, cacheReadTokens: usage.cacheReadTokens,
-    }) as Omit<BillingPricePreview, "price_status">
-    return { ...row, price_status: row.cost_usd !== null ? "priced" : "unpriced" }
+  async previewCost(model: string | null, ts: number, usage: { inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number }): Promise<BillingPricePreview> {
+    const row = await this.q1<Omit<BillingPricePreview, "price_status"> & { timestamp: string | number }>(pricePreviewSql(), [
+      model ? normalizeModelId(model) : null, ts,
+      usage.inputTokens, usage.outputTokens,
+      usage.cacheCreationTokens, usage.cacheReadTokens,
+    ])
+    if (!row) throw new Error("[billing] pricePreviewSql 必须恰好返回一行")
+    const cost_usd = numOrNull(row.cost_usd)
+    return {
+      model: row.model,
+      timestamp: num(row.timestamp),
+      cost_usd,
+      cost_native: numOrNull(row.cost_native),
+      cost_currency: row.cost_currency,
+      vendor: row.vendor,
+      price_id: row.price_id,
+      price_status: cost_usd !== null ? "priced" : "unpriced",
+    }
   }
 
   // ── llm_calls 流水读模型（钱 = 查询时派生） ────────────────────────
@@ -269,10 +328,15 @@ export class BillingDAO extends BaseDAO {
    * 工作区 / session / 厂商(命中价行) / 来源。price_status 与 vendor 是派生列，
    * 在内层子查询里算好后外层筛。
    */
-  listCalls(filters: BillingCallFilters, limit: number, offset: number): { rows: BillingCallRow[]; total: number } {
+  async listCalls(filters: BillingCallFilters, limit: number, offset: number): Promise<{ rows: BillingCallRow[]; total: number }> {
     const { inner, innerParams, outerConds, outerParams } = buildCallFilter(filters)
     const outer = outerConds.length > 0 ? `WHERE ${outerConds.join(" AND ")}` : ""
-    const rows = this.stmt(`
+    const rows = await this.q<Omit<BillingCallRow, "turn_index" | "call_index" | "timestamp" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_creation_tokens" | "cost_usd"> & {
+      turn_index: number; call_index: number
+      timestamp: string | number
+      input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number
+      cost_usd: number | null
+    }>(`
       SELECT id, node_execution_id, execution_id, turn_index, call_index, model, timestamp,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
              cost_usd, ${priceStatusExpr("q")} AS price_status,
@@ -281,21 +345,25 @@ export class BillingDAO extends BaseDAO {
       ${outer}
       ORDER BY timestamp DESC, id DESC
       LIMIT ? OFFSET ?
-    `).all(...innerParams, ...outerParams, limit, offset) as BillingCallRow[]
-    const total = (this.stmt(
+    `, [...innerParams, ...outerParams, limit, offset])
+    const totalRow = await this.q1<{ cnt: string | number }>(
       `SELECT COUNT(*) AS cnt FROM (${inner}) q ${outer}`,
-    ).get(...innerParams, ...outerParams) as { cnt: number }).cnt
-    return { rows, total }
+      [...innerParams, ...outerParams],
+    )
+    return {
+      rows: rows.map(r => ({ ...r, timestamp: num(r.timestamp), cost_usd: numOrNull(r.cost_usd) })),
+      total: num(totalRow?.cnt),
+    }
   }
 
   /**
    * 各来源费用小计（当前筛选口径下）。priced_count = 命中价行数；
    * cost_usd = SUM(派生费用)，全未定价组 → NULL 不焊 0（KD4 聚合语义保留）。
    */
-  sourceSubtotals(filters: BillingCallFilters): BillingSourceSubtotal[] {
+  async sourceSubtotals(filters: BillingCallFilters): Promise<BillingSourceSubtotal[]> {
     const { inner, innerParams, outerConds, outerParams } = buildCallFilter(filters)
     const outer = outerConds.length > 0 ? `WHERE ${outerConds.join(" AND ")}` : ""
-    return this.stmt(`
+    const rows = await this.q<{ source: string; count: string | number; priced_count: string | number; cost_usd: number | null }>(`
       SELECT COALESCE(q.source_path, 'unknown') AS source,
              COUNT(*) AS count,
              ${PRICED_AGG.countPriced()} AS priced_count,
@@ -304,7 +372,8 @@ export class BillingDAO extends BaseDAO {
       ${outer}
       GROUP BY COALESCE(q.source_path, 'unknown')
       ORDER BY COALESCE(${PRICED_AGG.sumCost()}, -1) DESC, source ASC
-    `).all(...innerParams, ...outerParams) as BillingSourceSubtotal[]
+    `, [...innerParams, ...outerParams])
+    return rows.map(r => ({ source: r.source, count: num(r.count), priced_count: num(r.priced_count), cost_usd: numOrNull(r.cost_usd) }))
   }
 
   // ── 报表聚合（单一真相源 llm_calls + SQL 内 GROUP BY，KD20/KD22 保留；
@@ -314,9 +383,14 @@ export class BillingDAO extends BaseDAO {
    * 区间汇总。数量类含 unpriced、费用类仅命中价行；空区间费用 = 0，
    * 有行但全无价 = NULL（不焊 0）。
    */
-  reportSummary(fromTs: number, toTs: number): BillingReportSummary {
+  async reportSummary(fromTs: number, toTs: number): Promise<BillingReportSummary> {
     const { sql, params } = pricedCallsSql(["l.timestamp >= ?", "l.timestamp <= ?"], [fromTs, toTs])
-    const row = this.stmt(`
+    const row = await this.q1<Omit<BillingReportSummary, "unpriced_calls" | "total_calls" | "priced_calls" | "input_tokens" | "output_tokens" | "cache_creation_tokens" | "cache_read_tokens"> & {
+      total_calls: string | number; priced_calls: string | number
+      total_cost_usd: number | null
+      input_tokens: string | number; output_tokens: string | number
+      cache_creation_tokens: string | number; cache_read_tokens: string | number
+    }>(`
       SELECT
         COUNT(*) AS total_calls,
         ${PRICED_AGG.countPriced()} AS priced_calls,
@@ -326,29 +400,41 @@ export class BillingDAO extends BaseDAO {
         COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
       FROM (${sql}) q
-    `).get(...params) as Omit<BillingReportSummary, "unpriced_calls">
-    return { ...row, unpriced_calls: row.total_calls - row.priced_calls }
+    `, params)
+    const total_calls = num(row?.total_calls)
+    const priced_calls = num(row?.priced_calls)
+    return {
+      total_calls,
+      priced_calls,
+      unpriced_calls: total_calls - priced_calls,
+      total_cost_usd: numOrNull(row?.total_cost_usd),
+      input_tokens: num(row?.input_tokens),
+      output_tokens: num(row?.output_tokens),
+      cache_creation_tokens: num(row?.cache_creation_tokens),
+      cache_read_tokens: num(row?.cache_read_tokens),
+    }
   }
 
   /** 按日趋势（KD24 本地日界）。当日全无价 → cost_usd NULL（不焊 0）。 */
-  reportTrend(fromTs: number, toTs: number): BillingReportTrendDay[] {
+  async reportTrend(fromTs: number, toTs: number): Promise<BillingReportTrendDay[]> {
     const { sql, params } = pricedCallsSql(["l.timestamp >= ?", "l.timestamp <= ?"], [fromTs, toTs])
-    return this.stmt(`
-      SELECT date(q.timestamp / 1000.0, 'unixepoch', 'localtime') AS day,
+    const rows = await this.q<{ day: string; calls: string | number; priced_calls: string | number; cost_usd: number | null }>(`
+      SELECT to_char(to_timestamp(q.timestamp / 1000.0) AT TIME ZONE current_setting('TimeZone'), 'YYYY-MM-DD') AS day,
              COUNT(*) AS calls,
              ${PRICED_AGG.countPriced()} AS priced_calls,
              ${PRICED_AGG.sumCost()} AS cost_usd
       FROM (${sql}) q
       GROUP BY day
       ORDER BY day ASC
-    `).all(...params) as BillingReportTrendDay[]
+    `, params)
+    return rows.map(r => ({ day: r.day, calls: num(r.calls), priced_calls: num(r.priced_calls), cost_usd: numOrNull(r.cost_usd) }))
   }
 
   /**
    * 费用/数量分布。vendor 键 = 账本行**命中价行**的厂商（NEW-r2：不再是"该模型
    * 有条价就行"，而是这笔账实际用哪条价算的 —— 解释力更强）。
    */
-  reportBreakdown(groupBy: BillingReportGroupBy, fromTs?: number, toTs?: number): BillingReportGroup[] {
+  async reportBreakdown(groupBy: BillingReportGroupBy, fromTs?: number, toTs?: number): Promise<BillingReportGroup[]> {
     const rawWhere: string[] = []
     const params: unknown[] = []
     if (fromTs !== undefined) { rawWhere.push("l.timestamp >= ?"); params.push(fromTs) }
@@ -360,18 +446,19 @@ export class BillingDAO extends BaseDAO {
       source: "COALESCE(q.source_path, 'unknown')",
     }
     const k = key[groupBy]
-    return this.stmt(`
+    const rows = await this.q<{ key: string; cost_usd: number | null; calls: string | number }>(`
       SELECT ${k} AS key,
              ${PRICED_AGG.sumCost()} AS cost_usd,
              COUNT(*) AS calls
       FROM (${sql}) q
       GROUP BY ${k}
       ORDER BY COALESCE(${PRICED_AGG.sumCost()}, -1) DESC, key ASC
-    `).all(...params) as BillingReportGroup[]
+    `, params)
+    return rows.map(r => ({ key: r.key, cost_usd: numOrNull(r.cost_usd), calls: num(r.calls) }))
   }
 
   /** 费用排行 Top N。by=workspace/session；归属 NULL 归 'unknown' 组。 */
-  reportRanking(by: BillingReportRankBy, fromTs: number | undefined, toTs: number | undefined, limit: number): BillingReportRankRow[] {
+  async reportRanking(by: BillingReportRankBy, fromTs: number | undefined, toTs: number | undefined, limit: number): Promise<BillingReportRankRow[]> {
     const rawWhere: string[] = []
     const params: unknown[] = []
     if (fromTs !== undefined) { rawWhere.push("l.timestamp >= ?"); params.push(fromTs) }
@@ -387,7 +474,7 @@ export class BillingDAO extends BaseDAO {
       ? "COALESCE(MAX(w.name), COALESCE(q.workspace_id, 'unknown'))"
       : "COALESCE(MAX(s.title), MAX(cs.title), COALESCE(q.session_id, 'unknown'))"
     params.push(limit)
-    return this.stmt(`
+    const rows = await this.q<{ id: string; name: string; cost_usd: number | null; calls: string | number }>(`
       SELECT ${idExpr} AS id,
              ${nameExpr} AS name,
              ${PRICED_AGG.sumCost()} AS cost_usd,
@@ -397,7 +484,8 @@ export class BillingDAO extends BaseDAO {
       GROUP BY ${idExpr}
       ORDER BY COALESCE(${PRICED_AGG.sumCost()}, -1) DESC, id ASC
       LIMIT ?
-    `).all(...params) as BillingReportRankRow[]
+    `, params)
+    return rows.map(r => ({ id: r.id, name: r.name, cost_usd: numOrNull(r.cost_usd), calls: num(r.calls) }))
   }
 }
 

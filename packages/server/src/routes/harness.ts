@@ -41,10 +41,10 @@ const harnessRoutes = new Hono()
 
 // ── GET /config — return current harness config YAML + version ──────────────
 
-harnessRoutes.get("/config", (c) => {
+harnessRoutes.get("/config", async (c) => {
   try {
     const service = getConfigService()
-    const result = service.getConfig()
+    const result = await service.getConfig()
     return c.json(result)
   } catch (err: unknown) {
     return handleHarnessError(err)
@@ -60,7 +60,7 @@ harnessRoutes.put("/config", async (c) => {
     if (!body || typeof body.config !== "string") {
       return c.json({ error: "body must include 'config' string" }, 400)
     }
-    const result = service.saveConfig(body.config)
+    const result = await service.saveConfig(body.config)
     return c.json(result)
   } catch (err: unknown) {
     return handleHarnessError(err)
@@ -69,7 +69,7 @@ harnessRoutes.put("/config", async (c) => {
 
 // ── GET /events/:execId — return harness_events list ────────────────────────
 
-harnessRoutes.get("/events/:execId", (c) => {
+harnessRoutes.get("/events/:execId", async (c) => {
   try {
     if (!_harnessDAO) throw new HarnessConfigError("harness service not initialized", 503)
     const execId = c.req.param("execId")
@@ -78,10 +78,10 @@ harnessRoutes.get("/events/:execId", (c) => {
     const typeFilter = c.req.query("type") || undefined
     const severityFilter = c.req.query("severity") || undefined
 
-    const events = _harnessDAO.findEvents(execId, {
+    const events = (await _harnessDAO.findEvents(execId, {
       type: typeFilter,
       severity: severityFilter,
-    }).map(e => ({ ...e, token_usage_json: normalizeHarnessTokenJson(e) }))
+    })).map(e => ({ ...e, token_usage_json: normalizeHarnessTokenJson(e) }))
     return c.json({ events })
   } catch (err: unknown) {
     return handleHarnessError(err)

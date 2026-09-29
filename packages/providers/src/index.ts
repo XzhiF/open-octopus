@@ -14,6 +14,9 @@ export type { ProviderError } from './errors'
 export type { OctopusAgentDef, ProviderPolicy } from './types'
 export { testConnectivity } from './connectivity'
 export type { ConnectivityResult } from './connectivity'
+// 进程内 MCP 工具桥（KB P0: recall 读工具）— SDK 依赖封在 mcp.ts 内，不泄漏给 server
+export { createInProcessMcpServer } from './mcp'
+export type { InProcessMcpServer, InProcessToolDef, InProcessToolResult } from './mcp'
 
 // 07 (SG11): prompt-enhancer — resurrected from dead code. Used by
 // TaskAuthorSessionAugmenter (server) to format authoring_resources[]

@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { ZodError } from "zod"
 import { WorkspaceScheduleService } from "../services/schedule"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 const scheduleRoutes = new Hono()
 
@@ -26,7 +27,7 @@ class ScheduleValidationError extends Error {
 }
 
 /** Classify service errors into proper HTTP status codes */
-function classifyError(err: unknown): { status: number; message: string } {
+function classifyError(err: unknown): { status: ContentfulStatusCode; message: string } {
   // Zod validation errors → 400
   if (err instanceof ZodError) {
     const details = err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
@@ -62,11 +63,11 @@ async function safeJson(c: any): Promise<Record<string, unknown> | null> {
 }
 
 // GET / — list schedules
-scheduleRoutes.get("/", (c) => {
+scheduleRoutes.get("/", async (c) => {
   const wsId = getWsId(c)
   const search = c.req.query("search")
   const status = c.req.query("status")
-  return c.json(getSvc().list(wsId, { search, status }))
+  return c.json(await getSvc().list(wsId, { search, status }))
 })
 
 // POST / — create schedule
@@ -75,7 +76,7 @@ scheduleRoutes.post("/", async (c) => {
   const body = await safeJson(c)
   if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
   try {
-    const schedule = getSvc().create(wsId, body)
+    const schedule = await getSvc().create(wsId, body)
     return c.json(schedule, 201)
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
@@ -84,13 +85,13 @@ scheduleRoutes.post("/", async (c) => {
 })
 
 // GET /audit-logs — must be before /:sid
-scheduleRoutes.get("/audit-logs", (c) => {
+scheduleRoutes.get("/audit-logs", async (c) => {
   const wsId = getWsId(c)
   const rawPage = parseInt(c.req.query("page") ?? "1")
   const rawLimit = parseInt(c.req.query("pageSize") ?? c.req.query("limit") ?? "20")
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20
-  return c.json(getSvc().listAuditLogs(wsId, { page, limit }))
+  return c.json(await getSvc().listAuditLogs(wsId, { page, limit }))
 })
 
 // GET /permissions — must be before /:sid
@@ -99,16 +100,16 @@ scheduleRoutes.get("/permissions", (c) => {
 })
 
 // POST /emergency-stop — must be before /:sid to avoid matching as schedule ID
-scheduleRoutes.post("/emergency-stop", (c) => {
+scheduleRoutes.post("/emergency-stop", async (c) => {
   const wsId = getWsId(c)
-  const result = getSvc().emergencyStop(wsId)
+  const result = await getSvc().emergencyStop(wsId)
   // Return both keys for backward compatibility
   return c.json({ ...result, stopped: result.disabled_count })
 })
 
 // GET /:sid — get schedule
-scheduleRoutes.get("/:sid", (c) => {
-  const schedule = getSvc().getById(getWsId(c), c.req.param("sid"))
+scheduleRoutes.get("/:sid", async (c) => {
+  const schedule = await getSvc().getById(getWsId(c), c.req.param("sid"))
   if (!schedule) return c.json({ error: "Not found" }, 404)
   if (schedule.deleted_at) return c.json({ error: "调度已被删除" }, 410)
   return c.json(schedule)
@@ -119,7 +120,7 @@ scheduleRoutes.patch("/:sid", async (c) => {
   const body = await safeJson(c)
   if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
   try {
-    return c.json(getSvc().update(getWsId(c), c.req.param("sid"), body))
+    return c.json(await getSvc().update(getWsId(c), c.req.param("sid"), body))
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
     return c.json({ error: message }, status)
@@ -127,9 +128,9 @@ scheduleRoutes.patch("/:sid", async (c) => {
 })
 
 // DELETE /:sid — soft delete
-scheduleRoutes.delete("/:sid", (c) => {
+scheduleRoutes.delete("/:sid", async (c) => {
   try {
-    getSvc().delete(getWsId(c), c.req.param("sid"))
+    await getSvc().delete(getWsId(c), c.req.param("sid"))
     return c.json({ success: true })
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
@@ -138,9 +139,9 @@ scheduleRoutes.delete("/:sid", (c) => {
 })
 
 // POST /:sid/enable
-scheduleRoutes.post("/:sid/enable", (c) => {
+scheduleRoutes.post("/:sid/enable", async (c) => {
   try {
-    return c.json(getSvc().enable(getWsId(c), c.req.param("sid")))
+    return c.json(await getSvc().enable(getWsId(c), c.req.param("sid")))
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
     return c.json({ error: message }, status)
@@ -148,9 +149,9 @@ scheduleRoutes.post("/:sid/enable", (c) => {
 })
 
 // POST /:sid/disable
-scheduleRoutes.post("/:sid/disable", (c) => {
+scheduleRoutes.post("/:sid/disable", async (c) => {
   try {
-    return c.json(getSvc().disable(getWsId(c), c.req.param("sid")))
+    return c.json(await getSvc().disable(getWsId(c), c.req.param("sid")))
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
     return c.json({ error: message }, status)
@@ -158,9 +159,9 @@ scheduleRoutes.post("/:sid/disable", (c) => {
 })
 
 // POST /:sid/trigger — manual trigger
-scheduleRoutes.post("/:sid/trigger", (c) => {
+scheduleRoutes.post("/:sid/trigger", async (c) => {
   try {
-    const result = getSvc().trigger(getWsId(c), c.req.param("sid"), 'manual')
+    const result = await getSvc().trigger(getWsId(c), c.req.param("sid"), 'manual')
     if (result === null) {
       return c.json({ error: "调度正在运行中，跳过本次触发" }, 409)
     }
@@ -172,12 +173,12 @@ scheduleRoutes.post("/:sid/trigger", (c) => {
 })
 
 // POST /:sid/dismiss-alert
-scheduleRoutes.post("/:sid/dismiss-alert", (c) => {
+scheduleRoutes.post("/:sid/dismiss-alert", async (c) => {
   const wsId = getWsId(c)
   const sid = c.req.param("sid")
   try {
-    getSvc().dismissAlert(wsId, sid)
-    const schedule = getSvc().getById(wsId, sid)
+    await getSvc().dismissAlert(wsId, sid)
+    const schedule = await getSvc().getById(wsId, sid)
     if (!schedule) return c.json({ success: true })
     return c.json(schedule)
   } catch (err: unknown) {
@@ -187,18 +188,18 @@ scheduleRoutes.post("/:sid/dismiss-alert", (c) => {
 })
 
 // GET /:sid/executions — execution history
-scheduleRoutes.get("/:sid/executions", (c) => {
+scheduleRoutes.get("/:sid/executions", async (c) => {
   const rawPage = parseInt(c.req.query("page") ?? "1")
   const rawLimit = parseInt(c.req.query("pageSize") ?? c.req.query("limit") ?? "20")
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20
-  return c.json(getSvc().listExecutions(getWsId(c), c.req.param("sid"), { page, limit }))
+  return c.json(await getSvc().listExecutions(getWsId(c), c.req.param("sid"), { page, limit }))
 })
 
 // POST /:sid/executions/:eid/retry
-scheduleRoutes.post("/:sid/executions/:eid/retry", (c) => {
+scheduleRoutes.post("/:sid/executions/:eid/retry", async (c) => {
   try {
-    return c.json(getSvc().retryExecution(getWsId(c), c.req.param("sid"), c.req.param("eid")))
+    return c.json(await getSvc().retryExecution(getWsId(c), c.req.param("sid"), c.req.param("eid")))
   } catch (err: unknown) {
     const { status, message } = classifyError(err)
     return c.json({ error: message }, status)

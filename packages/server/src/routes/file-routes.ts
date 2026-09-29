@@ -9,15 +9,15 @@ import * as Y from "yjs"
 export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
   const fileRoutes = new Hono()
 
-  function getFileService(c: any): FileService | null {
+  async function getFileService(c: any): Promise<FileService | null> {
     const id = c.req.param("id")
-    const wsPath = workspaceDAO.findPathById(id)
+    const wsPath = await workspaceDAO.findPathById(id)
     if (!wsPath) return null
     return new FileService(wsPath.replace(/^~/, os.homedir()))
   }
 
   fileRoutes.post("/", async (c) => {
-    const fsvc = getFileService(c)
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const body = await c.req.json<{ path: string; type: "file" | "directory"; content?: string }>()
@@ -36,7 +36,7 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
   })
 
   fileRoutes.put("/", async (c) => {
-    const fsvc = getFileService(c)
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const body = await c.req.json<{ path: string; content: string; originalContent?: string; force?: boolean }>()
@@ -69,7 +69,7 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
   })
 
   fileRoutes.delete("/", async (c) => {
-    const fsvc = getFileService(c)
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const body = await c.req.json<{ path: string }>()
@@ -84,8 +84,8 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
     }
   })
 
-  fileRoutes.get("/", (c) => {
-    const fsvc = getFileService(c)
+  fileRoutes.get("/", async (c) => {
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const filePath = c.req.query("path")
@@ -98,8 +98,8 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
     }
   })
 
-  fileRoutes.get("/raw", (c) => {
-    const fsvc = getFileService(c)
+  fileRoutes.get("/raw", async (c) => {
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const filePath = c.req.query("path")
@@ -118,7 +118,7 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
   })
 
   fileRoutes.patch("/", async (c) => {
-    const fsvc = getFileService(c)
+    const fsvc = await getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
 
     const body = await c.req.json<{ path: string; newName: string }>()
@@ -135,7 +135,7 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
 
   fileRoutes.post("/refresh", async (c) => {
     const id = c.req.param("id")
-    const wsPath = workspaceDAO.findPathById(id)
+    const wsPath = await workspaceDAO.findPathById(id ?? "")
     if (!wsPath) return c.json({ error: "Workspace not found" }, 404)
 
     try {

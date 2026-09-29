@@ -49,7 +49,6 @@ function makePipelineConfig(overrides: Partial<PipelineConfig> = {}): PipelineCo
       },
       overrides: {},
     },
-    fork: { path_strategy: "all", merge_strategy: "wait_all", failure_handling: "fail_all" },
     checkpoint: { enabled: false, save_on: "per-node", max_checkpoints: 10, ttl: 86400, max_size_bytes: 1048576 },
     runtime_nodes: [],
     providers: {},

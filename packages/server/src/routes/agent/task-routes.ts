@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execFileSync } from 'child_process'
-import { createAgentError, mapErrorToStatus } from './middleware'
+import { createAgentError, mapErrorToStatus, type AgentHono } from './middleware'
 import { WorkspaceDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { getWorkspaceLifecycleService } from '../../services/agent/workspace-lifecycle'
@@ -17,9 +17,9 @@ export interface TaskRouteDeps {
   schedulerService: SchedulerService
 }
 
-export function createTaskRoutes(deps: TaskRouteDeps): Hono {
+export function createTaskRoutes(deps: TaskRouteDeps): AgentHono {
   const { workspaceDAO, safetyDAO, scheduleConfigDAO, executionDAO, schedulerService } = deps
-  const app = new Hono()
+  const app = new Hono<{ Variables: { org: string } }>()
 
   // Tasks — includes workflow executions + scheduler jobs
   //
@@ -29,17 +29,17 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   // reading it saw a task as a cron entry. After v42 there are no such rows: every row
   // here is a real job, and the task board has its own endpoint (GET /api/tasks, whose
   // `execution` badge is the same executions rows this list already shows).
-  app.get('/tasks', (c) => {
+  app.get('/tasks', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
-      const result = schedulerService.listJobs({ org })
+      const result = await schedulerService.listJobs({ org })
 
       // Also check schedules table for scheduled tasks (TC-041)
       let scheduled: Array<{ id: string; name: string; cron_expression: string; enabled: number }> = []
       try {
-        scheduled = scheduleConfigDAO.listSchedulesByOrg(org)
+        scheduled = await scheduleConfigDAO.listSchedulesByOrg(org)
       } catch { /* schedules table may not exist */ }
 
       // Query workflow executions for task status (TC-009, TC-014)
@@ -48,7 +48,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         started_at: string | null; completed_at: string | null; workspace_name?: string
       }> = []
       try {
-        executions = executionDAO.findByOrgWithWorkspace(org, 50)
+        executions = await executionDAO.findByOrgWithWorkspace(org, 50)
       } catch { /* executions table may not exist */ }
 
       // Merge executions into items as task entries
@@ -63,7 +63,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         type: 'execution' as const,
       }))
 
-      const allItems = [...executionItems, ...result.items.map((item: Record<string, unknown>) => ({ ...item, type: 'scheduler' as const }))]
+      const allItems = [...executionItems, ...result.items.map((item) => ({ ...item, type: 'scheduler' as const }))]
 
       return c.json({
         items: allItems,
@@ -77,14 +77,14 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
     }
   })
 
-  app.post('/tasks/:id/cancel', (c) => {
+  app.post('/tasks/:id/cancel', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       const id = c.req.param('id')
 
       // Use toggleJob to disable — pauseJob was never a SchedulerService method
-      const job = schedulerService.toggleJob(id)
+      const job = await schedulerService.toggleJob(id)
       return c.json({ ok: true, job })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
@@ -98,13 +98,13 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
 
-  app.get('/tasks/reports', (c) => {
+  app.get('/tasks/reports', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       // Query reports table if exists, fallback to file scan
       try {
-        const rows = safetyDAO.listReportsByOrg(org)
+        const rows = await safetyDAO.listReportsByOrg(org)
         return c.json({ items: rows, total: rows.length })
       } catch {
         // Table may not exist — return empty
@@ -116,7 +116,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
     }
   })
 
-  app.get('/tasks/reports/:id', (c) => {
+  app.get('/tasks/reports/:id', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -124,7 +124,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
 
       // Try to find report in DB
       try {
-        const report = safetyDAO.findReportById(id)
+        const report = await safetyDAO.findReportById(id)
 
         if (report && report.org === org) {
           // Check if file exists
@@ -155,7 +155,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
   // ── B2: Task progress polling (supplements SSE in chat) ────────────
-  app.get('/tasks/progress', (c) => {
+  app.get('/tasks/progress', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -167,7 +167,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
         workspace_name?: string
       }> = []
       try {
-        activeExecutions = executionDAO.findActiveExecutionsByOrg(org)
+        activeExecutions = await executionDAO.findActiveExecutionsByOrg(org)
       } catch { /* executions table may not exist */ }
 
       // Also check active clone delegations
@@ -215,7 +215,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
   })
 
   // ── E3: Scheduler execution history (click job → timeline) ──────────
-  app.get('/tasks/history', (c) => {
+  app.get('/tasks/history', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
@@ -232,7 +232,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       }> = []
 
       try {
-        const jobExecutions = safetyDAO.listJobExecutionsByOrg(org, { job_name: jobName, limit })
+        const jobExecutions = await safetyDAO.listJobExecutionsByOrg(org, { job_name: jobName, limit })
         executions = jobExecutions.map(je => ({
           id: je.id, job_name: je.job_name, status: je.status,
           started_at: je.started_at, finished_at: je.finished_at,
@@ -243,7 +243,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): Hono {
       } catch {
         // Table may not exist yet — fall back to reports table
         try {
-          const reports = safetyDAO.listReportsByOrg(org, { task_name: jobName })
+          const reports = await safetyDAO.listReportsByOrg(org, { task_name: jobName })
           executions = reports.map(r => ({
             id: r.id, task_name: r.task_name,
             status: r.status === 'ok' ? 'success' : r.status === 'missing' ? 'failure' : r.status,

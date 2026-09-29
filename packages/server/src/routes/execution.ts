@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { streamSSE } from "hono/streaming"
 import { ExecutionService } from "../services/execution"
 import { WorkspaceService } from "../services/workspace"
@@ -65,16 +66,16 @@ function handleError(err: unknown) {
   throw err
 }
 
-executionRoutes.get("/", (c) => {
+executionRoutes.get("/", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  return c.json(svc.service.list(workspaceId))
+  return c.json(await svc.service.list(workspaceId))
 })
 
 executionRoutes.post("/", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   let body: {
@@ -99,7 +100,7 @@ executionRoutes.post("/", async (c) => {
   }
 
   try {
-    const execution = svc.service.create(workspaceId, {
+    const execution = await svc.service.create(workspaceId, {
       workflow_ref: workflowRef,
       name: body.name,
       node_type: body.node_type,
@@ -124,15 +125,15 @@ executionRoutes.post("/", async (c) => {
   }
 })
 
-executionRoutes.get("/tree", (c) => {
+executionRoutes.get("/tree", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
-  const allExecs = svc.service.list(workspaceId)
-  const nodes = allExecs.map(e => {
+  const allExecs = await svc.service.list(workspaceId)
+  const nodes = await Promise.all(allExecs.map(async e => {
     const children = allExecs.filter(child => child.parent_id === e.id)
-    const tokenUsages = svc.service.getTokenUsagesForExecution(e.id)
+    const tokenUsages = await svc.service.getTokenUsagesForExecution(e.id)
     const approvalMetadata = e.approval_metadata
       ? JSON.parse(e.approval_metadata)
       : null
@@ -168,31 +169,31 @@ executionRoutes.get("/tree", (c) => {
       harness_status: e.harness_status ?? null,
       harness_summary: e.harness_summary ? JSON.parse(e.harness_summary) : null,
     }
-  })
+  }))
   return c.json({ workspace_id: workspaceId, nodes })
 })
 
 executionRoutes.get("/events", async (c) => {
   const workspaceId = getWorkspaceId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
-  return svc.service.streamEvents(c.req.raw)
+  return await svc.service.streamEvents(c.req.raw)
 })
 
 executionRoutes.get("/:executionId", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  const execution = svc.service.getByIdWithSteps(executionId)
+  const execution = await svc.service.getByIdWithSteps(executionId)
   if (!execution) return c.json({ error: "not found" }, 404)
-  const workflowContent = svc.service.getWorkflowContent(executionId)
-  const allTokenUsages = svc.service.getTokenUsagesForExecution(executionId)
-  const perStepTokenUsages = svc.service.getTokenUsagesPerStep(executionId)
-  const reqCounts = svc.service.llmCallCountsByNode(executionId)
+  const workflowContent = await svc.service.getWorkflowContent(executionId)
+  const allTokenUsages = await svc.service.getTokenUsagesForExecution(executionId)
+  const perStepTokenUsages = await svc.service.getTokenUsagesPerStep(executionId)
+  const reqCounts = await svc.service.llmCallCountsByNode(executionId)
   // F1: 运行中节点的 turn_usage 实时累计（内存活投影）——running 步骤附 liveUsage/liveTurns
-  const liveUsage = svc.service.getLiveUsage(executionId)
+  const liveUsage = await svc.service.getLiveUsage(executionId)
   // Map node_executions to frontend StepExecution format
   const steps = execution.steps.map(ne => {
     const stepTokens = perStepTokenUsages.filter(t => t.stepId === ne.node_id)
@@ -261,10 +262,10 @@ executionRoutes.get("/:executionId", async (c) => {
   })
 })
 
-executionRoutes.get("/:executionId/state", (c) => {
+executionRoutes.get("/:executionId/state", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const state = svc.service.getStateJson(executionId)
   if (!state) return c.json({ error: "state not found" }, 404)
@@ -274,9 +275,9 @@ executionRoutes.get("/:executionId/state", (c) => {
 executionRoutes.post("/:executionId/start", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  const body = await c.req.json<{ inputValues?: Record<string, string>; syncMainBranch?: boolean }>().catch(() => ({}))
+  const body = await c.req.json<{ inputValues?: Record<string, string>; syncMainBranch?: boolean }>().catch((): { inputValues?: Record<string, string>; syncMainBranch?: boolean } => ({}))
 
   try {
     const result = await svc.service.start(executionId, body.inputValues, body.syncMainBranch)
@@ -290,30 +291,30 @@ executionRoutes.post("/:executionId/start", async (c) => {
 executionRoutes.post("/:executionId/retry", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
-  const body = await c.req.json<{ failedNodeId: string; inputValues?: Record<string, string>; intervention?: string }>().catch(() => ({ failedNodeId: "" }))
+  const body = await c.req.json<{ failedNodeId: string; inputValues?: Record<string, string>; intervention?: string }>().catch((): { failedNodeId: string; inputValues?: Record<string, string>; intervention?: string } => ({ failedNodeId: "" }))
 
   // Pre-validate synchronously so errors return as HTTP responses (not unhandled rejections).
   // retry() itself re-validates, but the early checks must pass before the void call.
-  const exec = svc.service.getById(executionId)
+  const exec = await svc.service.getById(executionId)
   if (!exec) return c.json({ error: "Execution not found" }, 404)
   if (exec.status !== "failed") return c.json({ error: "Only failed executions can be retried" }, 400)
 
   // Fire-and-forget: retry() runs synchronous setup (status → "running", commit, on_retry hook)
   // before its first await, then continues engine execution in the background.
   // The HTTP response returns immediately — SSE events report progress/completion.
-  svc.service.retry(executionId, body.failedNodeId, body.inputValues, body.intervention)
+  await svc.service.retry(executionId, body.failedNodeId, body.inputValues, body.intervention)
     .catch((err: unknown) => console.error(`[retry] ${executionId} background error:`, err))
 
-  return c.json(svc.service.getById(executionId) ?? exec)
+  return c.json(await svc.service.getById(executionId) ?? exec)
 })
 
 executionRoutes.post("/:executionId/cancel", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
     const result = await svc.service.cancel(executionId)
@@ -326,10 +327,10 @@ executionRoutes.post("/:executionId/cancel", async (c) => {
 executionRoutes.post("/:executionId/skip", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
-    const result = svc.service.skip(executionId)
+    const result = await svc.service.skip(executionId)
     return c.json({ success: result })
   } catch (err: unknown) {
     return handleError(err)
@@ -339,10 +340,10 @@ executionRoutes.post("/:executionId/skip", async (c) => {
 executionRoutes.delete("/:executionId", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   try {
-    const result = svc.service.delete(executionId)
+    const result = await svc.service.delete(executionId)
     return c.json({ success: result })
   } catch (err: unknown) {
     return handleError(err)
@@ -352,7 +353,7 @@ executionRoutes.delete("/:executionId", async (c) => {
 executionRoutes.post("/:executionId/approve", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   const body = await c.req.json<{ nodeId: string; answer: string; comment?: string }>()
@@ -367,7 +368,7 @@ executionRoutes.post("/:executionId/approve", async (c) => {
 executionRoutes.post("/:executionId/pause", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const result = await svc.service.pause(executionId)
   if (!result.success) {
@@ -380,7 +381,7 @@ executionRoutes.post("/:executionId/pause", async (c) => {
 executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   let body: {
@@ -412,7 +413,7 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
       return c.json({ error: "inject directive requires 'message'" }, 400)
     }
     try {
-      const repairService = createRepairServiceForWorkspace(workspaceId)
+      const repairService = await createRepairServiceForWorkspace(workspaceId)
       if (!repairService) {
         return c.json({ error: "repair service not available" }, 503)
       }
@@ -429,7 +430,7 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
             tool_result: null, tool_is_error: 0, tool_duration_ms: null,
             status_value: null, error_code: null, error_message: null,
           }
-          _executionDAO.insertAgentEvent({
+          await _executionDAO.insertAgentEvent({
             ...baseEvent,
             event_order: now,
             event_type: "harness_user_message",
@@ -453,7 +454,7 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
             tool_result: null, tool_is_error: 0, tool_duration_ms: null,
             status_value: null, error_code: null, error_message: null,
           }
-          _executionDAO.insertAgentEvent({
+          await _executionDAO.insertAgentEvent({
             ...baseEvent,
             event_order: now + 1,
             event_type: "harness_system_response",
@@ -485,13 +486,13 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
 executionRoutes.post("/:executionId/resume", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   // Parse optional intervention prompt from request body
   let intervention: string | undefined
   try {
-    const body = await c.req.json().catch(() => ({}))
+    const body = (await c.req.json()).catch(() => ({}))
     intervention = body.intervention
   } catch {
     // No body or invalid JSON, proceed without intervention
@@ -505,20 +506,20 @@ executionRoutes.post("/:executionId/resume", async (c) => {
   return c.json({ success: true })
 })
 
-executionRoutes.get("/:executionId/agent-events", (c) => {
+executionRoutes.get("/:executionId/agent-events", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
   const nodeId = c.req.query("nodeId")
   const loopId = c.req.query("loopId") || undefined
   const iterationParam = c.req.query("iteration")
   const iteration = iterationParam ? parseInt(iterationParam, 10) : undefined
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   // Verify execution exists
   try {
     if (!_executionDAO) return c.json({ error: "database not available" }, 503)
-    if (!_executionDAO.exists(executionId)) return c.json({ error: "execution not found" }, 404)
+    if (!(await _executionDAO.exists(executionId))) return c.json({ error: "execution not found" }, 404)
   } catch {
     return c.json({ error: "execution not found" }, 404)
   }
@@ -529,7 +530,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   // SQLite-first: query agent_events joined with node_executions
   try {
     const dao = _executionDAO!
-    const sqliteEvents = dao.findAgentEventsWithNode(executionId, nodeId || undefined)
+    const sqliteEvents = await dao.findAgentEventsWithNode(executionId, nodeId || undefined)
     if (sqliteEvents.length > 0) {
       // Event types produced by compaction merge — pass through as top-level, not agent_event
       const MERGED_BLOCK_TYPES = new Set([
@@ -815,20 +816,20 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
 executionRoutes.get("/:executionId/branches", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  const branches = svc.service.getBranches(executionId)
+  const branches = await svc.service.getBranches(executionId)
   return c.json(branches)
 })
 
-executionRoutes.get("/:executionId/logs", (c) => {
+executionRoutes.get("/:executionId/logs", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   return streamSSE(c, async (stream) => {
-    const events = svc.service.getLogEvents(executionId)
+    const events = await svc.service.getLogEvents(executionId)
     for (const event of events) {
       stream.writeSSE({
         event: event.type,
@@ -841,10 +842,10 @@ executionRoutes.get("/:executionId/logs", (c) => {
   })
 })
 
-executionRoutes.get("/:executionId/observability", (c) => {
+executionRoutes.get("/:executionId/observability", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
-  const svc = getService(workspaceId)
+  const svc = await getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
   if (!_executionDAO || !_tokenUsageDAO) {
@@ -853,12 +854,12 @@ executionRoutes.get("/:executionId/observability", (c) => {
 
   try {
     const queryService = new ObservabilityQueryService(_executionDAO, _tokenUsageDAO)
-    const data = queryService.getObservabilityData(executionId)
+    const data = await queryService.getObservabilityData(executionId)
     return c.json(data)
   } catch (err: unknown) {
     if (err && typeof err === "object" && "status" in err) {
       const e = err as { status: number; message?: string }
-      return c.json({ error: e.message ?? "not found" }, e.status)
+      return c.json({ error: e.message ?? "not found" }, e.status as ContentfulStatusCode)
     }
     throw err
   }

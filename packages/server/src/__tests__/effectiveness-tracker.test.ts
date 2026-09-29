@@ -23,6 +23,7 @@ import { HarnessConfigService } from "../services/harness/config-service"
 import { HarnessAgentSession } from "../services/harness/harness-agent-session"
 import { buildDelegationPromptWithStats, buildColdStartPlaceholder } from "../services/harness/effectiveness-tracker"
 import { applySchema } from "../db/schema"
+import { describePg, setupPgSchema, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 import type { ExperienceRowV2 } from "../db/types"
 import type { DiagnosisReport } from "@octopus/shared"
 
@@ -57,21 +58,25 @@ function makeDiagnosisReport(overrides: Partial<DiagnosisReport> = {}): Diagnosi
 
 // ─── 1. EvolutionDAO.listByExecutionId ──────────────────────────────────────
 
-describe("EvolutionDAO.listByExecutionId", () => {
+// P1 B3：EvolutionDAO 已迁 postgres.js —— experiences 造数/读取落 PG 随机库。
+describePg("EvolutionDAO.listByExecutionId", () => {
   let db: Database.Database
+  let pg: PgFixture
   let dao: EvolutionDAO
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb()
-    dao = new EvolutionDAO(db)
+    pg = await setupPgSchema()
+    dao = new EvolutionDAO(pg.sql)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await pg.close()
     db.close()
   })
 
-  it("returns experiences for a given execution_id", () => {
-    dao.insertExperienceV2({
+  it("returns experiences for a given execution_id", async () => {
+    await dao.insertExperienceV2({
       skill_name: "harness-det1",
       content: "intervention 1",
       source_session_id: null,
@@ -85,7 +90,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       execution_id: "exec-001",
       node_id: "node-a",
     })
-    dao.insertExperienceV2({
+    await dao.insertExperienceV2({
       skill_name: "harness-det1",
       content: "intervention 2",
       source_session_id: null,
@@ -100,7 +105,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       node_id: "node-b",
     })
     // Different execution — should not appear
-    dao.insertExperienceV2({
+    await dao.insertExperienceV2({
       skill_name: "harness-det1",
       content: "other exec",
       source_session_id: null,
@@ -115,18 +120,18 @@ describe("EvolutionDAO.listByExecutionId", () => {
       node_id: "node-c",
     })
 
-    const results = dao.listByExecutionId("exec-001")
+    const results = await dao.listByExecutionId("exec-001")
     expect(results).toHaveLength(2)
     expect(results.every(r => r.execution_id === "exec-001")).toBe(true)
   })
 
-  it("returns empty array for non-existent execution", () => {
-    const results = dao.listByExecutionId("nonexistent-exec")
+  it("returns empty array for non-existent execution", async () => {
+    const results = await dao.listByExecutionId("nonexistent-exec")
     expect(results).toHaveLength(0)
   })
 
-  it("can filter by pending outcome only", () => {
-    dao.insertExperienceV2({
+  it("can filter by pending outcome only", async () => {
+    await dao.insertExperienceV2({
       skill_name: "harness-det1",
       content: "pending one",
       source_session_id: null,
@@ -140,7 +145,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       execution_id: "exec-001",
       node_id: "node-a",
     })
-    dao.insertExperienceV2({
+    await dao.insertExperienceV2({
       skill_name: "harness-det1",
       content: "success one",
       source_session_id: null,
@@ -155,7 +160,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       node_id: "node-b",
     })
 
-    const pendingResults = dao.listByExecutionId("exec-001", { outcomeLabel: "pending" })
+    const pendingResults = await dao.listByExecutionId("exec-001", { outcomeLabel: "pending" })
     expect(pendingResults).toHaveLength(1)
     expect(pendingResults[0].node_id).toBe("node-a")
   })
@@ -163,18 +168,21 @@ describe("EvolutionDAO.listByExecutionId", () => {
 
 // ─── 2. Outcome tracking via HarnessController ──────────────────────────────
 
-describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
+describePg("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
+  // P1 B3: EvolutionDAO 与 HarnessDAO 同落 PG 随机库；executions 仍 SQLite（B5 域）。
   let db: Database.Database
   let dao: EvolutionDAO
   let harnessDao: HarnessDAO
   let controller: HarnessController
+  let pg: PgFixture
 
   const EXECUTION_ID = "exec-outcome-test"
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb()
-    dao = new EvolutionDAO(db)
-    harnessDao = new HarnessDAO(db)
+    pg = await setupPgSchema()
+    dao = new EvolutionDAO(pg.sql)
+    harnessDao = new HarnessDAO(pg.sql)
     const configService = new HarnessConfigService(harnessDao)
 
     controller = new HarnessController({
@@ -182,6 +190,9 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       sse: { emit: vi.fn() } as any,
       configService,
       evolutionDao: dao,
+      // B1: controller 缺省回退改为模块级 getDb()（本文件不初始化全局连接）→ 显式注入 stub。
+      // 本 suite 不触 ledger 写路径（agent-delegation 才用），构造无副作用。
+      tokenUsageDao: {} as any,
     })
 
     // Create a minimal execution row with required columns
@@ -191,15 +202,16 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     `).run(EXECUTION_ID)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     controller.destroyAll()
     db.close()
+    await pg.close()
   })
 
-  it("AC-2: completed execution → all interventions marked as success", () => {
+  it("AC-2: completed execution → all interventions marked as success", async () => {
     // Simulate: 2 interventions in the session, execution completes
     // First, start an execution and create a session
-    controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+    await controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [{ id: "node-a", type: "bash" }, { id: "node-b", type: "bash" }],
       dependencyGraph: { "node-a": [], "node-b": ["node-a"] },
@@ -230,10 +242,11 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     })
 
     // End the execution — should record experiences + update outcomes
-    controller.onExecutionEnd(EXECUTION_ID, { status: "completed" })
+    // P1 B3：onExecutionEnd 已 async —— await 至收尾三步（record/outcomes/daily）全部落地。
+    await controller.onExecutionEnd(EXECUTION_ID, { status: "completed" })
 
     // Verify: both experiences should have outcome.label = 'success'
-    const experiences = dao.listByExecutionId(EXECUTION_ID)
+    const experiences = await dao.listByExecutionId(EXECUTION_ID)
     expect(experiences).toHaveLength(2)
 
     for (const exp of experiences) {
@@ -242,8 +255,8 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     }
   })
 
-  it("AC-3: failed execution → last failed node = 'failed', others = 'success'", () => {
-    controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+  it("AC-3: failed execution → last failed node = 'failed', others = 'success'", async () => {
+    await controller.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [{ id: "node-a", type: "bash" }, { id: "node-b", type: "bash" }, { id: "node-c", type: "bash" }],
       dependencyGraph: { "node-a": [], "node-b": ["node-a"], "node-c": ["node-b"] },
@@ -267,9 +280,9 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     session.recordDecision("node-c", { success: true, decision: "agent_takeover", reasoning: "takeover", tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" } })
 
     // End execution with failed status, lastFailedNodeId = "node-c"
-    controller.onExecutionEnd(EXECUTION_ID, { status: "failed", lastFailedNodeId: "node-c" })
+    await controller.onExecutionEnd(EXECUTION_ID, { status: "failed", lastFailedNodeId: "node-c" })
 
-    const experiences = dao.listByExecutionId(EXECUTION_ID)
+    const experiences = await dao.listByExecutionId(EXECUTION_ID)
     expect(experiences).toHaveLength(3)
 
     // node-c (last failed) → 'failed'
@@ -283,7 +296,7 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     expect(JSON.parse(nodeBExp.outcome!).label).toBe("success")
   })
 
-  it("skips outcome update when no evolutionDao configured", () => {
+  it("skips outcome update when no evolutionDao configured", async () => {
     // Controller without evolutionDao should not crash
     const configService = new HarnessConfigService(harnessDao)
     const controllerNoDao = new HarnessController({
@@ -291,9 +304,10 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       sse: { emit: vi.fn() } as any,
       configService,
       // no evolutionDao
+      tokenUsageDao: {} as any, // B1: 缺省回退走模块级 getDb()，本文件不初始化全局连接
     })
 
-    controllerNoDao.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
+    await controllerNoDao.onExecutionStart(EXECUTION_ID, "ws-1", {} as any, {
       workflowContent: "name: test",
       nodeList: [],
       dependencyGraph: {},
@@ -308,23 +322,27 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
 
 // ─── 3. Cold start protection (AC-6) ────────────────────────────────────────
 
-describe("Cold start protection (AC-6)", () => {
+// P1 B3：EvolutionDAO（experiences）已迁 PG —— 造数与统计都落随机库。
+describePg("Cold start protection (AC-6)", () => {
   let db: Database.Database
+  let pg: PgFixture
   let dao: EvolutionDAO
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb()
-    dao = new EvolutionDAO(db)
+    pg = await setupPgSchema()
+    dao = new EvolutionDAO(pg.sql)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await pg.close()
     db.close()
   })
 
-  it("returns cold start placeholder when < 5 data points", () => {
+  it("returns cold start placeholder when < 5 data points", async () => {
     // Insert only 3 experiences (below threshold)
     for (let i = 0; i < 3; i++) {
-      dao.insertExperienceV2({
+      await dao.insertExperienceV2({
         skill_name: `harness-det-${i}`,
         content: `intervention ${i}`,
         source_session_id: null,
@@ -340,7 +358,7 @@ describe("Cold start protection (AC-6)", () => {
       })
     }
 
-    const stats = dao.getSuccessStats("default", "harness", "deterministic_error")
+    const stats = await dao.getSuccessStats("default", "harness", "deterministic_error")
     const totalDataPoints = Object.values(stats.decisionStats).reduce((sum, s) => sum + s.total, 0)
 
     expect(totalDataPoints).toBe(3)
@@ -351,10 +369,10 @@ describe("Cold start protection (AC-6)", () => {
     expect(placeholder).toContain("经验积累中")
   })
 
-  it("provides stats when ≥ 5 data points", () => {
+  it("provides stats when ≥ 5 data points", async () => {
     // Insert 6 experiences (above threshold)
     for (let i = 0; i < 6; i++) {
-      dao.insertExperienceV2({
+      await dao.insertExperienceV2({
         skill_name: `harness-det-${i}`,
         content: `intervention ${i}`,
         source_session_id: null,
@@ -370,7 +388,7 @@ describe("Cold start protection (AC-6)", () => {
       })
     }
 
-    const stats = dao.getSuccessStats("default", "harness", "deterministic_error")
+    const stats = await dao.getSuccessStats("default", "harness", "deterministic_error")
     const totalDataPoints = Object.values(stats.decisionStats).reduce((sum, s) => sum + s.total, 0)
 
     expect(totalDataPoints).toBe(6)

@@ -174,12 +174,14 @@ export class AgentVersionService {
   /**
    * Publish a new version of an agent.
    * Dual-write: DB + filesystem with compensating transaction.
+   * P1 B1 (§6): dao.transaction → BasePgDAO.transaction（sql.begin）。
+   * 事务红线：体内改经 `new AgentVersionDAO(tx)` 走事务句柄，不再吃 this.dao 的池根句柄。
    */
-  publish(agentName: string, params: PublishParams): AgentVersionRow {
+  async publish(agentName: string, params: PublishParams): Promise<AgentVersionRow> {
     const { version, stage: paramStage, changelog, published_by } = params
 
     // Check if version already exists
-    const existing = this.dao.findByAgentAndVersion(agentName, version)
+    const existing = await this.dao.findByAgentAndVersion(agentName, version)
     if (existing) {
       throw new Error(`Version "${version}" already exists for agent "${agentName}"`)
     }
@@ -205,8 +207,8 @@ export class AgentVersionService {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
-    this.dao.transaction(() => {
-      this.dao.insert({
+    await this.dao.transaction(async (tx) => {
+      await new AgentVersionDAO(tx).insert({
         id,
         agent_name: agentName,
         version,
@@ -229,42 +231,42 @@ export class AgentVersionService {
       snapshotToFiles(snapshot, versionDir)
     } catch (err) {
       // Compensating transaction: rollback DB entry
-      this.dao.deleteById(id)
+      await this.dao.deleteById(id)
       const msg = err instanceof Error ? err.message : String(err)
       throw new Error(`Publish failed: FS copy error — ${msg}. DB rolled back.`)
     }
 
     // Step 4: Update clone's current_version_id
     try {
-      this.dao.updateCloneVersionId(agentName, id)
+      await this.dao.updateCloneVersionId(agentName, id)
     } catch {
       // Non-fatal: clone table update failure doesn't invalidate the version
     }
 
-    return this.dao.findById(id)!
+    return (await this.dao.findById(id))!
   }
 
   /**
    * List versions for an agent with optional filters.
    */
-  list(agentName: string, filters?: ListFilters): { versions: AgentVersionRow[]; total: number } {
-    const versions = this.dao.listByAgent(agentName, filters)
+  async list(agentName: string, filters?: ListFilters): Promise<{ versions: AgentVersionRow[]; total: number }> {
+    const versions = await this.dao.listByAgent(agentName, filters)
     return { versions, total: versions.length }
   }
 
   /**
    * Get a single version by agent name and version string.
    */
-  get(agentName: string, version: string): AgentVersionRow | null {
+  async get(agentName: string, version: string): Promise<AgentVersionRow | null> {
     return this.dao.findByAgentAndVersion(agentName, version)
   }
 
   /**
    * Compare two versions and return their diff.
    */
-  diff(agentName: string, fromVersion: string, toVersion: string): VersionDiff {
-    const from = this.dao.findByAgentAndVersion(agentName, fromVersion)
-    const to = this.dao.findByAgentAndVersion(agentName, toVersion)
+  async diff(agentName: string, fromVersion: string, toVersion: string): Promise<VersionDiff> {
+    const from = await this.dao.findByAgentAndVersion(agentName, fromVersion)
+    const to = await this.dao.findByAgentAndVersion(agentName, toVersion)
 
     if (!from) throw new Error(`Version "${fromVersion}" not found for agent "${agentName}"`)
     if (!to) throw new Error(`Version "${toVersion}" not found for agent "${agentName}"`)
@@ -296,8 +298,8 @@ export class AgentVersionService {
    * Rollback to a specific version.
    * Uses atomic replace: temp dir → clone dir.
    */
-  rollback(agentName: string, targetVersion: string): { success: boolean; previous_version: string | null } {
-    const target = this.dao.findByAgentAndVersion(agentName, targetVersion)
+  async rollback(agentName: string, targetVersion: string): Promise<{ success: boolean; previous_version: string | null }> {
+    const target = await this.dao.findByAgentAndVersion(agentName, targetVersion)
     if (!target) {
       throw new Error(`Version "${targetVersion}" not found for agent "${agentName}"`)
     }
@@ -338,7 +340,7 @@ export class AgentVersionService {
       copyDirOverwrite(tempDir, cloneDir)
 
       // Step 4: Update DB pointer
-      this.dao.updateCloneVersionId(agentName, target.id)
+      await this.dao.updateCloneVersionId(agentName, target.id)
     } catch (err) {
       // Keep temp dir for diagnosis
       const msg = err instanceof Error ? err.message : String(err)
@@ -358,8 +360,8 @@ export class AgentVersionService {
   /**
    * Archive a version (set status to 'archived').
    */
-  archive(agentName: string, version: string): AgentVersionRow {
-    const row = this.dao.findByAgentAndVersion(agentName, version)
+  async archive(agentName: string, version: string): Promise<AgentVersionRow> {
+    const row = await this.dao.findByAgentAndVersion(agentName, version)
     if (!row) {
       throw new Error(`Version "${version}" not found for agent "${agentName}"`)
     }
@@ -367,8 +369,8 @@ export class AgentVersionService {
       throw new Error(`Version "${version}" is already archived`)
     }
 
-    this.dao.updateStatus(row.id, 'archived')
-    return this.dao.findById(row.id)!
+    await this.dao.updateStatus(row.id, 'archived')
+    return (await this.dao.findById(row.id))!
   }
 }
 

@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
-import { applySchema } from '../db/schema'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { CircuitBreaker, CircuitBreakerOpenError } from '../services/scheduler/circuit-breaker'
 import { Semaphore } from '../services/scheduler/semaphore'
 import { ScheduleConfigDAO } from '../db/dao'
 import { ConsecutiveFailureTracker } from '../services/scheduler/consecutive-failure-tracker'
+import { describePg, setupPgSchema, type PgFixture } from '../db/pg/__tests__/dao-fixture'
 
 describe('Scheduler Reliability', () => {
   // ── CircuitBreaker ──────────────────────────────────────────────
@@ -152,60 +151,64 @@ describe('Scheduler Reliability', () => {
   })
 
   // ── ConsecutiveFailureTracker ───────────────────────────────────
+  // P1 B5 票4：ScheduleConfigDAO 已迁 BasePgDAO（B5 票1）—— schedules 行落 PG。
+  // CircuitBreaker/Semaphore 两块不依赖 DB，保持双模式常跑。
 
-  describe('ConsecutiveFailureTracker', () => {
-    let db: Database.Database
+  describePg('ConsecutiveFailureTracker (PG)', () => {
+    let pg: PgFixture
     let tracker: ConsecutiveFailureTracker
 
-    beforeEach(() => {
-      db = new Database(':memory:')
-      applySchema(db)
-      db.prepare(`
+    beforeEach(async () => {
+      pg = await setupPgSchema()
+      await pg.sql.unsafe(`
         INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
-        VALUES ('ws-1', 'test', 'test', '/tmp', datetime('now'), datetime('now'))
-      `).run()
-      db.prepare(`
+        VALUES ('ws-1', 'test', 'test', '/tmp', now(), now())
+      `)
+      await pg.sql.unsafe(`
         INSERT INTO schedules (
           id, org, name, cron_expression, timezone,
           enabled, timeout_seconds, notify_on_failure,
           next_trigger_at, created_at, updated_at,
           job_type, config, parallel_policy, version, consecutive_failures, max_retain
         ) VALUES ('s-1', 'test', 'test', '0 9 * * *', 'UTC',
-          1, 3600, 0, NULL, datetime('now'), datetime('now'),
-          'workflow', '{"schema_version":"1.0","type":"workflow","workspace_spec":{},"workflow_chain":[]}', 'skip', 1, 0, 10)
-      `).run()
-      tracker = new ConsecutiveFailureTracker(new ScheduleConfigDAO(db))
+          true, 3600, false, NULL, now(), now(),
+          'workflow', '{"schema_version":"1.0","type":"workflow","workspace_spec":{},"workflow_chain":[]}'::jsonb, 'skip', 1, 0, 10)
+      `)
+      tracker = new ConsecutiveFailureTracker(new ScheduleConfigDAO(pg.sql))
     })
 
-    it('increments failure count', () => {
-      tracker.recordFailure('s-1')
-      const row = db.prepare('SELECT consecutive_failures FROM schedules WHERE id = ?').get('s-1') as { consecutive_failures: number }
+    afterEach(async () => { await pg.close() })
+
+    it('increments failure count', async () => {
+      await tracker.recordFailure('s-1')
+      const row = (await pg.sql<{ consecutive_failures: number }[]>`SELECT consecutive_failures FROM schedules WHERE id = 's-1'`)[0]!
       expect(row.consecutive_failures).toBe(1)
     })
 
-    it('resets on success', () => {
-      tracker.recordFailure('s-1')
-      tracker.recordFailure('s-1')
-      tracker.recordSuccess('s-1')
-      const row = db.prepare('SELECT consecutive_failures FROM schedules WHERE id = ?').get('s-1') as { consecutive_failures: number }
+    it('resets on success', async () => {
+      await tracker.recordFailure('s-1')
+      await tracker.recordFailure('s-1')
+      await tracker.recordSuccess('s-1')
+      const row = (await pg.sql<{ consecutive_failures: number }[]>`SELECT consecutive_failures FROM schedules WHERE id = 's-1'`)[0]!
       expect(row.consecutive_failures).toBe(0)
     })
 
-    it('auto-disables after 5 consecutive failures', () => {
+    it('auto-disables after 5 consecutive failures', async () => {
       for (let i = 0; i < 4; i++) {
-        const result = tracker.recordFailure('s-1')
+        const result = await tracker.recordFailure('s-1')
         expect(result.autoDisabled).toBe(false)
       }
-      const result = tracker.recordFailure('s-1')
+      const result = await tracker.recordFailure('s-1')
       expect(result.autoDisabled).toBe(true)
 
-      const row = db.prepare('SELECT enabled FROM schedules WHERE id = ?').get('s-1') as { enabled: number }
+      // bool 列裸读回是 boolean —— ::int 对齐旧 0/1 契约
+      const row = (await pg.sql<{ enabled: number }[]>`SELECT enabled::int AS enabled FROM schedules WHERE id = 's-1'`)[0]!
       expect(row.enabled).toBe(0)
     })
 
-    it('B1: recordFailure is atomic (no race between increment and check)', () => {
+    it('B1: recordFailure is atomic (no race between increment and check)', async () => {
       // Simulate concurrent failures — all 5 should see correct state
-      const results = Array.from({ length: 5 }, () => tracker.recordFailure('s-1'))
+      const results = await Promise.all(Array.from({ length: 5 }, () => tracker.recordFailure('s-1')))
       const autoDisabledCount = results.filter(r => r.autoDisabled).length
       // Exactly one should auto-disable (the 5th), not multiple
       expect(autoDisabledCount).toBe(1)

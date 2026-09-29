@@ -121,7 +121,7 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     vi.useRealTimers()
   })
 
-  it("emits execution_metrics after node_end", () => {
+  it("emits execution_metrics after node_end", async () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 1500, outputTokens: 800, cacheReadTokens: 0, cacheCreationTokens: 0 },
             totals: { tokens: 0, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
@@ -132,7 +132,8 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "agent")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     const metricsEvents = mocks.sseEmit.mock.calls.filter(
       (call: any[]) => call[1]?.event === "execution_metrics"
@@ -147,7 +148,7 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     })
   })
 
-  it("throttles execution_metrics to max 1 per 500ms", () => {
+  it("throttles execution_metrics to max 1 per 500ms", async () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
             totals: { tokens: 0, cost: { usd: 0.001, complete: true }, cacheHitRate: null },
@@ -161,7 +162,8 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     callbacks.onNodeEnd!("node-b", "completed", 300, defaultNodeResult, "bash")
     callbacks.onNodeEnd!("node-c", "completed", 200, defaultNodeResult, "bash")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     const metricsEvents = mocks.sseEmit.mock.calls.filter(
       (call: any[]) => call[1]?.event === "execution_metrics"
@@ -183,7 +185,7 @@ describe("EngineCallbacks — budget progress", () => {
     vi.useRealTimers()
   })
 
-  it("computes tokensPercent from budget_snapshot", () => {
+  it("computes tokensPercent from budget_snapshot", async () => {
     setMock(mocks.dao, "findById", {
       id: "exec-1",
       status: "running",
@@ -203,7 +205,8 @@ describe("EngineCallbacks — budget progress", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "agent")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     const metricsEvents = mocks.sseEmit.mock.calls.filter(
       (call: any[]) => call[1]?.event === "execution_metrics"
@@ -214,7 +217,7 @@ describe("EngineCallbacks — budget progress", () => {
     expect(budgetProgress.tokensPercent).toBe(80)
   })
 
-  it("returns null budgetProgress when no budget_snapshot", () => {
+  it("returns null budgetProgress when no budget_snapshot", async () => {
     setMock(mocks.dao, "findById", {
       id: "exec-1",
       status: "running",
@@ -234,7 +237,8 @@ describe("EngineCallbacks — budget progress", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "bash")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     const metricsEvents = mocks.sseEmit.mock.calls.filter(
       (call: any[]) => call[1]?.event === "execution_metrics"
@@ -246,7 +250,7 @@ describe("EngineCallbacks — budget progress", () => {
     expect(budgetProgress.durationPercent).toBeNull()
   })
 
-  it("computes durationPercent from started_at and max_duration", () => {
+  it("computes durationPercent from started_at and max_duration", async () => {
     // Use fake timers: set system time to 10 seconds after the started_at
     vi.setSystemTime(new Date("2026-08-12T00:00:10.000Z"))
 
@@ -269,7 +273,8 @@ describe("EngineCallbacks — budget progress", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "bash")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     const metricsEvents = mocks.sseEmit.mock.calls.filter(
       (call: any[]) => call[1]?.event === "execution_metrics"
@@ -296,7 +301,7 @@ describe("EngineCallbacks — budget warning", () => {
     vi.useRealTimers()
   })
 
-  it("logs warning when tokens exceed alert_threshold", () => {
+  it("logs warning when tokens exceed alert_threshold", async () => {
     setMock(mocks.dao, "findById", {
       id: "exec-1",
       status: "running",
@@ -316,7 +321,8 @@ describe("EngineCallbacks — budget warning", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "agent")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     // total = 8500 > 10000 * 0.8 = 8000 → warning
     const warningCalls = consoleWarnSpy.mock.calls.filter(
@@ -325,7 +331,7 @@ describe("EngineCallbacks — budget warning", () => {
     expect(warningCalls.length).toBeGreaterThan(0)
   })
 
-  it("does NOT log warning when tokens are below alert_threshold", () => {
+  it("does NOT log warning when tokens are below alert_threshold", async () => {
     setMock(mocks.dao, "findById", {
       id: "exec-1",
       status: "running",
@@ -345,7 +351,8 @@ describe("EngineCallbacks — budget warning", () => {
     const callbacks = buildCallbacks(mocks)
     callbacks.onNodeEnd!("node-a", "completed", 1000, defaultNodeResult, "agent")
 
-    vi.advanceTimersByTime(600)
+    // B4：metrics timer 回调已 async 化（await DAO 后异步落地）—— 推进 timer 时同步 flush microtask 队列
+    await vi.advanceTimersByTimeAsync(600)
 
     // total = 3000 < 10000 * 0.8 = 8000 → no warning
     const warningCalls = consoleWarnSpy.mock.calls.filter(

@@ -7,6 +7,8 @@
 //
 // 正向 201 会真建目录 + 铺 scaffold（对测试环境敏感），故正向只验「名字过关」
 // 这一层（用不存在的 org 触发下一道 400）；成功链路归 dev 手测。
+// P1 B1: OrgDAO 已 postgres.js（routes 的 orgExists 校验查 PG orgs 表）——
+// fixture 拆两半：workspaces 仍 SQLite(:memory: B5 前)，orgs 走 PG 随机测试库。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
@@ -15,27 +17,33 @@ import { OrgDAO, WorkspaceDAO } from "../db/dao"
 import { WorkspaceService } from "../services/workspace"
 import { createWorkspaceRoutes } from "../routes/workspace"
 import { WorkspaceNameSchema, WORKSPACE_NAME_PATTERN } from "@octopus/shared"
+import { describePg, setupPgSchema, pgTestEnabledOn, type PgFixture } from "../db/pg/__tests__/dao-fixture"
 
 const ORG = "e2e-td-wsname"
 
 let db: Database.Database
+let pg: PgFixture | undefined
 let app: Hono
 let service: WorkspaceService
 
-beforeAll(() => {
+beforeAll(async () => {
   db = new Database(":memory:")
   applySchema(db)
-  db.prepare(`INSERT INTO orgs (name, path, created_at) VALUES (?, ?, datetime('now'))`).run(
-    ORG, `~/.octopus/orgs/${ORG}`,
-  )
   const wsDAO = new WorkspaceDAO(db)
   service = new WorkspaceService(wsDAO)
   app = new Hono()
-  app.route("/api/workspaces", createWorkspaceRoutes(service, new OrgDAO(db), wsDAO))
+  // PG 可用（OCTOPUS_PG_TEST_URL）时 OrgDAO 走真 PG orgs 表；否则本 app 不被门住的
+  // describePg 用例使用（skip），传未初始化的 pg.sql 也无害 —— 顶层纯 schema 用例不触 org。
+  if (pgTestEnabledOn()) {
+    pg = await setupPgSchema()
+    await pg.sql`INSERT INTO orgs (name, path, created_at) VALUES (${ORG}, ${`~/.octopus/orgs/${ORG}`}, now())`
+    app.route("/api/workspaces", createWorkspaceRoutes(service, new OrgDAO(pg.sql), wsDAO))
+  }
 })
 
-afterAll(() => {
+afterAll(async () => {
   db.close()
+  await pg?.close()
 })
 
 describe("schema 本身", () => {
@@ -48,7 +56,7 @@ describe("schema 本身", () => {
   })
 })
 
-describe("POST /api/workspaces — 手动创建", () => {
+describePg("POST /api/workspaces — 手动创建", () => {
   it("中文 name → 400，错误信息说明合法字符集", async () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
@@ -81,7 +89,7 @@ describe("POST /api/workspaces — 手动创建", () => {
   })
 })
 
-describe("POST /api/workspaces/import + PUT /:id — import 与改名同规矩", () => {
+describePg("POST /api/workspaces/import + PUT /:id — import 与改名同规矩", () => {
   it("import 中文名 → 400（先于 fs 检查）", async () => {
     const res = await app.request("/api/workspaces/import", {
       method: "POST",

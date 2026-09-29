@@ -23,7 +23,7 @@ export function createVersionRoutes(): Hono {
   const app = new Hono()
 
   // ── List versions ────────────────────────────────────────────────
-  app.get('/:name/versions', (c) => {
+  app.get('/:name/versions', async (c) => {
     const name = c.req.param('name')
     const status = c.req.query('status')
     const stage = c.req.query('stage')
@@ -31,7 +31,7 @@ export function createVersionRoutes(): Hono {
 
     try {
       const service = getAgentVersionService()
-      const result = service.list(name, { status, stage, limit })
+      const result = await service.list(name, { status, stage, limit })
       return c.json(result)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -40,7 +40,7 @@ export function createVersionRoutes(): Hono {
   })
 
   // ── Diff versions ────────────────────────────────────────────────
-  app.get('/:name/versions/diff', (c) => {
+  app.get('/:name/versions/diff', async (c) => {
     const name = c.req.param('name')
     const from = c.req.query('from')
     const to = c.req.query('to')
@@ -51,7 +51,7 @@ export function createVersionRoutes(): Hono {
 
     try {
       const service = getAgentVersionService()
-      const diff = service.diff(name, from, to)
+      const diff = await service.diff(name, from, to)
       return c.json(diff)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -61,13 +61,13 @@ export function createVersionRoutes(): Hono {
   })
 
   // ── Get version detail ───────────────────────────────────────────
-  app.get('/:name/versions/:version', (c) => {
+  app.get('/:name/versions/:version', async (c) => {
     const name = c.req.param('name')
     const version = c.req.param('version')
 
     try {
       const service = getAgentVersionService()
-      const row = service.get(name, version)
+      const row = await service.get(name, version)
       if (!row) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Version "${version}" not found` } }, 404)
       }
@@ -94,7 +94,7 @@ export function createVersionRoutes(): Hono {
       }
 
       const service = getAgentVersionService()
-      const row = service.publish(name, {
+      const row = await service.publish(name, {
         version: body.version,
         stage: body.stage,
         changelog: body.changelog,
@@ -119,7 +119,7 @@ export function createVersionRoutes(): Hono {
 
       if (body.status === 'archived') {
         const service = getAgentVersionService()
-        const row = service.archive(name, version)
+        const row = await service.archive(name, version)
         return c.json({ version: row })
       }
 
@@ -134,13 +134,13 @@ export function createVersionRoutes(): Hono {
   })
 
   // ── Rollback to version ──────────────────────────────────────────
-  app.post('/:name/versions/:version/rollback', (c) => {
+  app.post('/:name/versions/:version/rollback', async (c) => {
     const name = c.req.param('name')
     const version = c.req.param('version')
 
     try {
       const service = getAgentVersionService()
-      const result = service.rollback(name, version)
+      const result = await service.rollback(name, version)
       return c.json(result)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -163,14 +163,14 @@ export function createMainAgentVersionRoutes(): Hono {
   const MAIN_AGENT = '__main__'
 
   // ── List versions ────────────────────────────────────────────────
-  app.get('/versions', (c) => {
+  app.get('/versions', async (c) => {
     const status = c.req.query('status')
     const stage = c.req.query('stage')
     const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!, 10) : undefined
 
     try {
       const service = getAgentVersionService()
-      const result = service.list(MAIN_AGENT, { status, stage, limit })
+      const result = await service.list(MAIN_AGENT, { status, stage, limit })
       return c.json(result)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -179,7 +179,7 @@ export function createMainAgentVersionRoutes(): Hono {
   })
 
   // ── Diff versions ────────────────────────────────────────────────
-  app.get('/versions/diff', (c) => {
+  app.get('/versions/diff', async (c) => {
     const from = c.req.query('from')
     const to = c.req.query('to')
 
@@ -189,7 +189,7 @@ export function createMainAgentVersionRoutes(): Hono {
 
     try {
       const service = getAgentVersionService()
-      const diff = service.diff(MAIN_AGENT, from, to)
+      const diff = await service.diff(MAIN_AGENT, from, to)
       return c.json(diff)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -199,12 +199,12 @@ export function createMainAgentVersionRoutes(): Hono {
   })
 
   // ── Get version detail ───────────────────────────────────────────
-  app.get('/versions/:version', (c) => {
+  app.get('/versions/:version', async (c) => {
     const version = c.req.param('version')
 
     try {
       const service = getAgentVersionService()
-      const row = service.get(MAIN_AGENT, version)
+      const row = await service.get(MAIN_AGENT, version)
       if (!row) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Version "${version}" not found` } }, 404)
       }
@@ -229,7 +229,7 @@ export function createMainAgentVersionRoutes(): Hono {
       }
 
       const service = getAgentVersionService()
-      const row = service.publish(MAIN_AGENT, {
+      const row = await service.publish(MAIN_AGENT, {
         version: body.version,
         stage: body.stage,
         changelog: body.changelog,
@@ -253,7 +253,7 @@ export function createMainAgentVersionRoutes(): Hono {
 
       if (body.status === 'archived') {
         const service = getAgentVersionService()
-        const row = service.archive(MAIN_AGENT, version)
+        const row = await service.archive(MAIN_AGENT, version)
         return c.json({ version: row })
       }
 
@@ -268,12 +268,12 @@ export function createMainAgentVersionRoutes(): Hono {
   })
 
   // ── Rollback to version ──────────────────────────────────────────
-  app.post('/versions/:version/rollback', (c) => {
+  app.post('/versions/:version/rollback', async (c) => {
     const version = c.req.param('version')
 
     try {
       const service = getAgentVersionService()
-      const result = service.rollback(MAIN_AGENT, version)
+      const result = await service.rollback(MAIN_AGENT, version)
       return c.json(result)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)

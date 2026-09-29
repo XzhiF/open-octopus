@@ -19,5 +19,14 @@ export default defineConfig({
     if (existsSync(src)) {
       cpSync(src, dest)
     }
+    // P1 遗留接线：PG 迁移器同款拷贝 —— db/pg/migrate.ts readPgSchemaSql() 在打包态
+    // 先试 dist/pg/schema.sql（dist/schema.sql 是 SQLite 那份，重名不同内容，
+    // migrate.ts 内置 PG 方言标记校验防误读）。
+    const pgSrc = join("src", "db", "pg", "schema.sql")
+    const pgDestDir = join("dist", "pg")
+    if (existsSync(pgSrc)) {
+      mkdirSync(pgDestDir, { recursive: true })
+      cpSync(pgSrc, join(pgDestDir, "schema.sql"))
+    }
   },
 })
