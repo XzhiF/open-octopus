@@ -12,7 +12,7 @@ import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/t
 const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
   mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
-  pushSpy, mockFetchAgentEvents, mockFetchExecutionDetail,
+  pushSpy, mockFetchAgentEvents, mockGetRoundDiff, mockGetRoundPatch, mockFetchExecutionDetail,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -26,6 +26,8 @@ const {
   mockResume: vi.fn(),
   pushSpy: vi.fn(),
   mockFetchAgentEvents: vi.fn(),
+  mockGetRoundDiff: vi.fn(),
+  mockGetRoundPatch: vi.fn(),
   mockFetchExecutionDetail: vi.fn(),
 }))
 
@@ -53,6 +55,8 @@ vi.mock("@/lib/tasks-api", () => ({
   WorkflowRefViewError: class extends Error {},
   getArtifactContent: vi.fn(), getWorkflowRefView: vi.fn(),
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
+  // 票03「≡ 变更」接线：壳的 round-diff 单源节拍 + FilesTab 懒拉 patch
+  getRoundDiff: mockGetRoundDiff, getRoundPatch: mockGetRoundPatch,
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
 vi.mock("@/lib/sse-manager", () => ({
@@ -169,6 +173,13 @@ beforeEach(() => {
   mockGetBatchTree.mockResolvedValue([])
   mockFetchAgentEvents.mockReset()
   mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-x", events: [], source: "sqlite", _degraded: false, _message: null })
+  // 票03 默认面：无轮可供（running/awaiting fixture 会撞 409 → FilesTab 错误面，
+  // 不与任何既有断言争 DOM；需要看变更内容的用例自行覆盖 mock）。
+  mockGetRoundDiff.mockReset()
+  mockGetRoundDiff.mockRejectedValue(Object.assign(new Error("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货"), { status: 409 }))
+  mockGetRoundPatch.mockReset()
+  mockGetRoundPatch.mockRejectedValue(new Error("patch n/a in console tests"))
+  // 票04 默认面：节点页签读取执行详情（空快照；个案各自覆盖）。
   mockFetchExecutionDetail.mockReset()
   mockFetchExecutionDetail.mockResolvedValue({})
 })
@@ -885,7 +896,16 @@ describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
 })
 
 describe("票 02 — 页签装配 + 键盘", () => {
-  it("running v4：变更·节点·控制台，默认落「变更」（占位挂票 03）", async () => {
+  it("running v4：变更·节点·控制台，默认落「变更」且出真实内容（票 03 已落地）", async () => {
+    mockGetRoundDiff.mockResolvedValue({
+      available: true,
+      aggregate: { commits: 3, additions: 40, dels: 6, files: 2 },
+      interventions: null,
+      repos: [{
+        name: "octopus", commits: 3, additions: 40, dels: 6, files: 1, truncated: false,
+        groups: [{ dir: "packages", additions: 40, dels: 6, files: [{ path: "packages/x.ts", status: "M", adds: 40, dels: 6 }] }],
+      }],
+    })
     const t = makeTask("running")
     renderConsole(t, {
       ...t,
@@ -898,9 +918,34 @@ describe("票 02 — 页签装配 + 键盘", () => {
     expect(screen.queryByTestId("console-tab-chat")).toBeNull() // 对话页签不进 running 装配
     expect(screen.queryByTestId("console-tab-review")).toBeNull()
     expect(filesTab.getAttribute("aria-selected")).toBe("true")
+    // 票 03：占位纸退位，GitHub 式实物面板在场（统计条 + 文件行 + 数据源标注）。
     const host = document.querySelector('[data-tab-host="files"]')
     expect(host).toBeTruthy()
-    expect(host!.textContent).toContain("票 03")
+    expect(host!.textContent).not.toContain("票 03")
+    expect(await screen.findByTestId("round-diff-strip")).toBeTruthy()
+    expect(await waitFor(() => {
+      const row = host!.querySelector('[data-acceptance-diff-row="octopus:packages/x.ts"]')
+      if (!row) throw new Error("file row not fed yet")
+      return true
+    })).toBe(true)
+    expect(host!.textContent).toContain("与走查面同源")
+  })
+
+  it("票03→02 契约：顶栏 [data-head-commits] 由变更页签的 round-diff aggregate 喂数", async () => {
+    mockGetRoundDiff.mockResolvedValue({
+      available: true,
+      aggregate: { commits: 3, additions: 40, dels: 6, files: 2 },
+      interventions: null,
+      repos: [{ name: "octopus", commits: 3, additions: 40, dels: 6, files: 2, truncated: false, groups: [] }],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    await waitFor(() => expect(document.querySelector("[data-head-commits]")?.textContent).toContain("3 commits"))
+    expect(document.querySelector("[data-head-commits]")?.getAttribute("data-head-commits")).toBe("3")
   })
 
   it("awaiting_review：对话·变更·走查·日志，默认落「对话」（占位挂票 07）", async () => {

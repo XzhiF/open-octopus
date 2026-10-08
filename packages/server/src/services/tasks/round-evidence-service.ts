@@ -229,7 +229,8 @@ export class RoundEvidenceService {
     this.execDao = new ExecutionDAO(db)
   }
 
-  // ── awaiting-round resolution (the ONLY round this service serves) ─────
+  // ── awaiting-round resolution（验货面的供货闸；diff 两端点票03 起另走
+  //    resolveRoundForDiff 的 live 回落，其余端点恒严 awaiting）──────────
 
   /** The derived view (tasks-service.getTask → derived.phaseViews) picks the
    *  awaiting phase/round — 票03 single-authority, re-read here, never
@@ -279,17 +280,19 @@ export class RoundEvidenceService {
 
   /** scope="cumulative"（S3）：起点换成同 phase 首轮 exec 的 start 锚 ——
    *  首轮行缺失时回落本轮口径（诚实降级，payload 形状不变）。某仓在首轮 start
-   *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。 */
+   *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。
+   *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
+   *  end 锚 = 各仓当前 HEAD —— 端点/payload 形状逐字不变，仅供货窗口扩大。 */
   async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex } = this.resolveAwaiting(taskId)
+    const { execRow, phaseIndex, live: isLive } = this.resolveRoundForDiff(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
-    if (scope === "cumulative") {
+    if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
       const firstStarts = parseCommitMap(first?.start_commit_id)
       if (Object.keys(firstStarts).length > 0) starts = firstStarts
     }
-    const ends = parseCommitMap(execRow.end_commit_id)
-    const names = [...new Set([...Object.keys(starts), ...Object.keys(ends)])]
+    const storedEnds = parseCommitMap(execRow.end_commit_id)
+    const names = [...new Set([...Object.keys(starts), ...Object.keys(storedEnds)])]
     const interventions = parseInterventions(execRow.harness_summary)
     if (names.length === 0) {
       return {
@@ -303,14 +306,21 @@ export class RoundEvidenceService {
     const repos: RepoDiff[] = []
     for (const name of names) {
       const start = starts[name]
-      const end = ends[name]
-      if (!start || !end) {
+      const storedEnd = storedEnds[name]
+      // awaiting 现行为逐字保留：锚缺失先于目录判定。
+      if (!start || (!isLive && !storedEnd)) {
         repos.push(expiredRepo(name, "no_commits"))
         continue
       }
       const dir = this.resolveRepoDir(ws?.path, name)
       if (!dir) {
         repos.push(expiredRepo(name, ws ? "worktree_gone" : "no_workspace"))
+        continue
+      }
+      // live 轮 end 锚 = 当前 HEAD；空仓/无提交（getHeadCommit 抛）→ 诚实 no_commits。
+      const end = isLive ? await this.liveHeadCommit(dir) : storedEnd
+      if (!end) {
+        repos.push(expiredRepo(name, "no_commits"))
         continue
       }
       repos.push(await this.statRepo(dir, name, start, end))
@@ -398,23 +408,59 @@ export class RoundEvidenceService {
   }
 
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
-   *  resolveAwaiting (exec belongs to this task); repo must exist in the map. */
+   *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
+   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。 */
   async getFilePatch(taskId: string, repo: string, filePath: string): Promise<{ patch: string; truncated: boolean }> {
-    const { execRow } = this.resolveAwaiting(taskId)
+    const { execRow, live } = this.resolveRoundForDiff(taskId)
     const starts = parseCommitMap(execRow.start_commit_id)
-    const ends = parseCommitMap(execRow.end_commit_id)
+    const storedEnds = parseCommitMap(execRow.end_commit_id)
     const start = starts[repo]
-    const end = ends[repo]
-    if (!start || !end) {
+    if (!start || (!live && !storedEnds[repo])) {
       throw new TaskStatusConflictError(`本轮提交区间不含仓库 ${repo}`)
     }
     const ws = this.workspaceService.getById(execRow.workspace_id)
     const dir = this.resolveRepoDir(ws?.path, repo)
     if (!dir) throw new TaskStatusConflictError(`仓库 ${repo} 的工作区目录已不存在`)
+    const end = live ? await this.liveHeadCommit(dir) : storedEnds[repo]
+    if (!end) throw new TaskStatusConflictError(`本轮提交区间不含仓库 ${repo}`)
     if (filePath.includes("\0") || path.isAbsolute(filePath)) {
       throw new TaskSpecFieldError(`非法文件路径: ${filePath}`)
     }
     return gitOps.diffPatchFor(dir, start, end, filePath)
+  }
+
+  /** 票03 diff 端点专用轮次解析（**只**供 getRoundDiff/getFilePatch）：
+   *  awaiting 优先 —— 命中即逐字现行为；无 awaiting 时回落任务当前 live 轮
+   *  （running/paused/停在审批口的已启动行），由调用方把 end 锚降级为各仓当前
+   *  HEAD —— 新 commit 落库即出现在下一次 GET（「≡ 变更」≤10s 观测口径的服务端
+   *  底座）。verify/playbook/preview/snapshotEvidence 不经这里，恒严 awaiting。
+   *  错误语义不变：未知任务 404（getTask 先抛）；既无 awaiting 也无 live 轮 →
+   *  原 409 如实上抛。 */
+  private resolveRoundForDiff(taskId: string): {
+    execRow: ExecutionRow
+    phaseIndex: number | null
+    roundIndex: number
+    live: boolean
+  } {
+    try {
+      const a = this.resolveAwaiting(taskId)
+      return { execRow: a.execRow, phaseIndex: a.phaseIndex, roundIndex: a.roundIndex, live: false }
+    } catch (err) {
+      if (!(err instanceof TaskStatusConflictError)) throw err
+      const execRow = this.execDao.findLiveRoundForTask(taskId)
+      if (!execRow) throw err
+      return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
+    }
+  }
+
+  /** live 端锚：仓当前 HEAD；目录坏/空仓（rev-parse 抛）→ null，调用方按
+   *  expired/no_commits 诚实处理，绝不 500。 */
+  private async liveHeadCommit(dir: string): Promise<string | null> {
+    try {
+      return await gitOps.getHeadCommit(dir)
+    } catch {
+      return null
+    }
   }
 
   // ── 当场复检 (live re-verification) ────────────────────────────────────
