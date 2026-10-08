@@ -349,6 +349,8 @@ function toDTO(row: TaskRow): TaskDTO {
     workflow_ref: row.workflow_ref,
     version: row.version,
     source_chat_session_id: row.source_chat_session_id,
+    // ADR-0025 票01: the doer session pointer.
+    doer_session_id: row.doer_session_id ?? null,
     deleted_at: row.deleted_at,
     created_at: row.created_at,
     updated_at: row.updated_at,

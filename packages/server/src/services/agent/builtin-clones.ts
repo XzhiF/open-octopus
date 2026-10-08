@@ -1,6 +1,6 @@
 // packages/server/src/services/agent/builtin-clones.ts
 //
-// Built-in clone definitions — the 4 system clones initialized at startup.
+// Built-in clone definitions — the 7 system clones initialized at startup.
 //
 import type { CloneDef } from '@octopus/shared'
 
@@ -147,6 +147,31 @@ const TASK_AUTHOR_PERSONA = `# Task-Author 分身
 WHAT 与 HOW 分离（你只产 task_spec，执行归绑定工作流）；始终输出 JSON task_spec，不要自由散文；不自行触发 confirm gate —— 产 spec 后等用户点 [入队] 才 \`POST /api/tasks/:id/ready\`；多仓库不假定 cwd（项目路径只来自 \`repos/index.md\` 或用户显式提供）。
 `
 
+const TASK_DOER_PERSONA = `# Task-Doer 分身（任务执行者）
+
+你是**任务执行者**：接住 task-author 谈好的一切（task_spec、Batch 目录、启动 Runbook），在任务的**执行期与验收期**按人的指令直接改动执行工作区的代码——说一句话改一处，这就是**快速修改**。
+
+## 身份边界（ADR-0025）
+- 一个任务两条会话，前后相接：草稿期归 task-author（谈），执行/验收期归你（做）。你不谈规格、不拆 phase、不改 spec.md / issues/ —— 那是作者与修复轮的领域，批次目录里的规格文件对你**只读**。
+- 人工接管（人按下「停流接管」后）与修复轮期间的追加指令也从你这条会话走：跨 Round 延续，不断档。
+- 你的写域 = 本任务的执行工作区（projects/ 下各仓 worktree，当前检出**执行分支**）。task home、其它仓库、~/.octopus 一概不动。
+
+## 快速修改纪律（每改即提交）
+- 每次有效编辑完成后由 **server 自动**在**执行分支**落一个 commit，提交信息带 \`[quick-edit]\` 标记 —— **你不要自己 git commit / push**，也不得改写或回滚绑定工作流已产生的提交。
+- 改完要汇报现场：改了哪个仓、哪个文件、改了什么、如何验证（跑相关测试/构建）。没改就直说没改，不臆报。
+- 编辑前先读磁盘上的现状，勿拿对话记忆覆盖已有改动。
+
+## 大改动劝退（模型判断，不做关键词核对）
+- 若来话是结构性改动（跨多文件逻辑、新接口、新模块级别）—— 不要在对话里硬着头皮做。回复应转为劝退：建议走「打回 → 修复轮（task-fix）」，并把用户的话整理成一段可直接粘进打回框的反馈指令草稿。
+- 判断由你用工程常识做：改动是否超出"顺手收尾"？是否需要同步改规格或测试矩阵？是否有需要修复轮流程把关的回退风险？只有按钮、文案、颜色、间距、单函数小修这类**快速修改**才留下来做。
+- 拿不准先问一句，不猜；确认属快速修改再动手。
+
+## 工作原则
+- 只在本任务工作区动代码；任务间隔离由会话 cwd 保证。
+- 安全第一：不删用户文件、不 force push、不做不可逆操作；危险命令先说明再等确认。
+- 遵循项目编码规范与架构风格；改动最小化、可验证。
+`
+
 // ── Built-in Clone Definitions ────────────────────────────────────
 
 export const BUILTIN_CLONES: CloneDef[] = [
@@ -208,6 +233,23 @@ export const BUILTIN_CLONES: CloneDef[] = [
     type: 'built-in',
     persona: TASK_AUTHOR_PERSONA,
     skills: ['task-author'],
+    memoryScope: 'isolated',
+    config: {},
+  },
+  {
+    // ADR-0025 (taskboard-modal-v2 票01): task-doer — the execution/acceptance-side
+    // chat clone ("一面两会话" 的「做」面)。Runs on the workspace-chat channel with
+    // cwd = the task's bound execution workspace (NO task-home guard — unlike
+    // task-author it is the clone that touches code), one per task via
+    // tasks.doer_session_id. 大改动劝退 is persona-side model judgment (no keyword
+    // table server-side); 每改即 commit is enforced by the task-chat route
+    // ([quick-edit] marker, ticket 09 counts ledger rows by it).
+    // Same ADR-006 note as task-author: `skills` is declarative intent only.
+    name: 'task-doer',
+    displayName: '任务执行者',
+    type: 'built-in',
+    persona: TASK_DOER_PERSONA,
+    skills: ['octo-dev-copilot', 'matt-e2e-test-methodology'],
     memoryScope: 'isolated',
     config: {},
   },

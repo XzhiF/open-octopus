@@ -391,6 +391,11 @@ export interface TaskRow {
   /** v40 (K4): bound workspace — NULL = never triggered; first trigger creates +
    *  binds, later phase rounds reuse (dispatchPhaseRound, 票 05). */
   workspace_id: string | null
+  /** schema v50 (ADR-0025, taskboard-modal-v2 票01): the task's single task-doer
+   *  chat session (→chat_sessions.id, workspace-chat channel, cwd = the bound
+   *  workspace). Lazy-created + idempotent via GET/POST /api/tasks/:id/chat;
+   *  persists across Rounds (一面两会话的「做」面 — 「谈」面是 source_chat_session_id). */
+  doer_session_id: string | null
   // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
   // Before v41 the due time lived on a private `schedules` row that readyTask
   // pre-created and parked ('draft'); arming a task meant flipping that row, which
