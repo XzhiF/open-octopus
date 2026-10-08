@@ -88,6 +88,31 @@ export interface RepoDiff {
   groups: DirGroup[]
 }
 
+/** 票09 台账「人工干预」列的行：来自 agent_events event_type='intervention'
+ *  （06 权威源），非 harness 自动干预。node/time/prompt 首行 = ⚑ 行三要素。 */
+export interface LedgerInterventionEntry {
+  node: string
+  time: string
+  summary: string
+}
+
+/** 票09 台账「快速修改」列的行：轮区间内 subject 带 `[quick-edit] ` 标记的提交
+ *  （01 契约 / git 权威源），files = 该提交触及的文件清单（可溯）。 */
+export interface LedgerQuickEditEntry {
+  repo: string
+  sha: string
+  subject: string
+  files: string[]
+}
+
+/** 票09 台账「接管标记」列：executions.takeover_at/takeover_delivered_at（08/
+ *  ADR-0025）。delivered_at 非空 = 已交付的接管件（进 Gate 待验收）；为空但 at
+ *  非空 = 停流未交付的接管进行中轮（正常不会走到决策）。 */
+export interface LedgerTakeoverMark {
+  at: string
+  deliveredAt: string | null
+}
+
 export interface RoundDiffPayload {
   /** false when NO repo resolved a live commit pair. */
   available: boolean
@@ -96,6 +121,14 @@ export interface RoundDiffPayload {
   /** executions.harness_summary.totalInterventions — 「干预 K」 tile; null = no harness data. */
   interventions: number | null
   repos: RepoDiff[]
+  /** 票09 三本账三源 —— 与 ledger 文件同 payload（buildLedgerMd 吃这份，web
+   *  决策前预览也吃这份）。均可选：旧 server 无键 = 未统计，UI/台账出「—」/0。 */
+  /** 人工干预逐条摘要（agent_events 权威，独立于上面的 harness interventions）。 */
+  manualInterventions?: LedgerInterventionEntry[]
+  /** 快速修改提交清单（git [quick-edit] 标记权威）。 */
+  quickEdits?: LedgerQuickEditEntry[]
+  /** 人工接管标记（executions.takeover_*）。 */
+  takeover?: LedgerTakeoverMark | null
 }
 
 /** diff 区间口径（S3，2026-09-20）：
@@ -294,16 +327,25 @@ export class RoundEvidenceService {
     const storedEnds = parseCommitMap(execRow.end_commit_id)
     const names = [...new Set([...Object.keys(starts), ...Object.keys(storedEnds)])]
     const interventions = parseInterventions(execRow.harness_summary)
+    // 票09 三本账三源 —— 干预(agent_events)/快改(git 标记)/接管(executions 两列)
+    // 逐源独立读，随 diff 一起进 payload（ledger 写面 + web 决策前预览同吃这份，
+    // 不另开端点、不互抄）。best-effort：任一源读失败按「无」呈现，diff 绝不因
+    // 台账附加面而 500（实物区间是主叙事）。
+    const takeover = readTakeoverMark(execRow)
     if (names.length === 0) {
       return {
         available: false, reason: "no_commits",
         aggregate: { commits: 0, additions: 0, dels: 0, files: 0 },
         interventions, repos: [],
+        manualInterventions: this.collectInterventions(execRow.id),
+        quickEdits: [],
+        takeover,
       }
     }
 
     const ws = this.workspaceService.getById(execRow.workspace_id)
     const repos: RepoDiff[] = []
+    const quickEdits: LedgerQuickEditEntry[] = []
     for (const name of names) {
       const start = starts[name]
       const storedEnd = storedEnds[name]
@@ -324,6 +366,13 @@ export class RoundEvidenceService {
         continue
       }
       repos.push(await this.statRepo(dir, name, start, end))
+      // 快改统计与实物同区间（start..end）—— 交付轮 end=快照锚，交付后新提交
+      // 不入本件（票08 实物区间权威）。git 读失败 → 该仓无快改行（不拖垮 diff）。
+      try {
+        for (const c of await gitOps.quickEditCommits(dir, start, end)) {
+          quickEdits.push({ repo: name, sha: c.sha, subject: c.subject, files: c.files })
+        }
+      } catch { /* best-effort —— 快改面缺席优于整份 diff 报错 */ }
     }
 
     const live = repos.filter((r) => !r.expired)
@@ -342,6 +391,34 @@ export class RoundEvidenceService {
       aggregate,
       interventions,
       repos,
+      manualInterventions: this.collectInterventions(execRow.id),
+      quickEdits,
+      takeover,
+    }
+  }
+
+  /** 票09「人工干预」列的读取（06 权威 SQL 的行级形态）：执行下所有
+   *  event_type='intervention' 的 agent_events 行 → {node,time,summary}。
+   *  content 携 {nodeId,nodeName,prompt}（ExecutionLifecycle.resume 当下写），
+   *  旧纯文本行落 prompt。best-effort：查询抛 → 空数组（无干预，如实归零）。 */
+  private collectInterventions(executionId: string): LedgerInterventionEntry[] {
+    try {
+      return this.execDao.listInterventionsForExecution(executionId).map((r) => {
+        let node = r.node_id
+        let prompt = ""
+        if (r.content) {
+          try {
+            const o = JSON.parse(r.content) as { nodeId?: string; nodeName?: string; prompt?: string }
+            node = o.nodeName || o.nodeId || r.node_id
+            prompt = typeof o.prompt === "string" ? o.prompt : ""
+          } catch {
+            prompt = r.content // 旧纯文本干预行
+          }
+        }
+        return { node, time: new Date(r.timestamp).toISOString(), summary: firstLine(prompt) }
+      })
+    } catch {
+      return []
     }
   }
 
@@ -1349,6 +1426,59 @@ function parseInterventions(summary: string | null | undefined): number | null {
   }
 }
 
+/** ⚑ 干预摘要 = prompt 首行（截 80 字符）—— 台账逐条列一行,原文全文看 agent_events。 */
+function firstLine(text: string): string {
+  const line = (text.replace(/\r/g, "").split("\n")[0] ?? "").trim()
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line
+}
+
+/** 票09 接管标记：executions.takeover_at/takeover_delivered_at（08/ADR-0025）。
+ *  takeover_at 空 = 从未接管（机器轮）→ null；有 at 即接管件,delivered 随两列。
+ *  派生态 phaseViews[].status==='takeover' 只是显示层,台账认这两列权威(§08)。 */
+function readTakeoverMark(execRow: ExecutionRow): LedgerTakeoverMark | null {
+  if (!execRow.takeover_at) return null
+  return { at: execRow.takeover_at, deliveredAt: execRow.takeover_delivered_at ?? null }
+}
+
+/** 台账「人工干预」段（纯函数：行→markdown）。与上「实物」段的 harness 干预数
+ *  并列不混称 —— 这里是 agent_events 的人工 ⚑,不是引擎自动干预。 */
+export function buildInterventionSection(rows: LedgerInterventionEntry[]): string[] {
+  if (rows.length === 0) return ["## 人工干预", "- 人工干预 ×0（无）", ""]
+  const lines = ["## 人工干预", `- 人工干预 ×${rows.length}（agent_events · 与 harness 干预分列）`]
+  for (const r of rows) {
+    lines.push(`  - ⚑ ${r.node} · ${r.time} · ${r.summary || "（空指令）"}`)
+  }
+  lines.push("")
+  return lines
+}
+
+/** 台账「快速修改」段（纯函数：行→markdown）。计数 + 文件清单可溯。 */
+export function buildQuickEditSection(rows: LedgerQuickEditEntry[]): string[] {
+  if (rows.length === 0) return ["## 快速修改", "- 快速修改 ×0（无）", ""]
+  const fileTotal = new Set(rows.flatMap((r) => r.files)).size
+  const lines = ["## 快速修改", `- 快速修改 ×${rows.length}（[quick-edit] 提交）· ${fileTotal} 文件`]
+  for (const r of rows) {
+    const files = r.files.length ? r.files.join("、") : "（无文件清单）"
+    lines.push(`  - ${r.repo} ${r.sha.slice(0, 7)} ${r.subject} — ${files}`)
+  }
+  lines.push("")
+  return lines
+}
+
+/** 台账「接管标记」段（纯函数）。接管件如实标「人工交付 · 自动复检未跑（接管件）」；
+ *  复检有真结果则真结果优先（08 语义：标注不覆盖实况,不新设闸 —— ADR-0025）。
+ *  verifyReal = snap.verify 存在且跑出终态（passed/failed/timeout/aborted）。 */
+export function buildTakeoverSection(mark: LedgerTakeoverMark | null | undefined, verifyReal: boolean): string[] {
+  if (!mark) return ["## 人工接管", "- 接管 · 无（绑定流机器轮交付）", ""]
+  const head = mark.deliveredAt
+    ? verifyReal
+      ? "接管 · 人工交付（接管件）· 自动复检已跑，真结果为准"
+      : "接管 · 人工交付 · 自动复检未跑（接管件）"
+    : "接管 · 进行中（停流未交付 —— 正常不经此决策）"
+  return ["## 人工接管", `- ${head}`, `  - takeover_at ${mark.at}${mark.deliveredAt ? ` · delivered_at ${mark.deliveredAt}` : ""}`, ""]
+}
+
+
 function expiredRepo(name: string, reason: "no_workspace" | "no_commits" | "worktree_gone"): RepoDiff {
   return { name, expired: true, reason, commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }
 }
@@ -1456,6 +1586,11 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     }),
   )
   const stamp = decision === "accepted" ? "✅ 通过" : "↩ 打回"
+  // 接管件的复检真结果优先：verify 有终态（非 running）才算「跑过」。
+  const verifyReal = !!snap.verify && snap.verify.state !== "running"
+  const interventionSec = buildInterventionSection(d.manualInterventions ?? [])
+  const quickEditSec = buildQuickEditSection(d.quickEdits ?? [])
+  const takeoverSec = buildTakeoverSection(d.takeover ?? null, verifyReal)
   return [
     `# 验收台账 · Phase ${snap.phaseIndex} Round ${snap.roundIndex} · ${stamp}`,
     "",
@@ -1467,6 +1602,9 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
       ? `- ${d.repos.filter((r) => !r.expired).length}/${d.repos.length} repos 有效 · ${agg.commits} commits · +${agg.additions}/−${agg.dels} · ${agg.files} 文件 · 干预 ${d.interventions ?? "—"}`
       : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 复检历史与 verdict 文件仍可参考`,
     "",
+    ...interventionSec,
+    ...quickEditSec,
+    ...takeoverSec,
     "## 自动复检",
     verifyLine,
     "",

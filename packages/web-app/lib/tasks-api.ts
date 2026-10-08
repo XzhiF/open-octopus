@@ -891,6 +891,25 @@ export interface RepoDiff {
   groups: DiffGroup[]
 }
 
+/** 票09 台账三列（人工介入度）的 web 镜像 —— 与 server
+ *  round-evidence-service.ts 的 LedgerInterventionEntry/LedgerQuickEditEntry/
+ *  LedgerTakeoverMark 逐字同形（mirror 纪律同 RoundDiffPayload）。 */
+export interface LedgerInterventionEntry {
+  node: string
+  time: string
+  summary: string
+}
+export interface LedgerQuickEditEntry {
+  repo: string
+  sha: string
+  subject: string
+  files: string[]
+}
+export interface LedgerTakeoverMark {
+  at: string
+  deliveredAt: string | null
+}
+
 export interface RoundDiffPayload {
   available: boolean
   reason?: string
@@ -898,6 +917,11 @@ export interface RoundDiffPayload {
   /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
   interventions: number | null
   repos: RepoDiff[]
+  /** 票09 —— 决策后台账预览 + server ledger 同吃这份 payload。旧 server 无键时
+   *  undefined（UI 如实归零/显示无），与 0 是两回事但此处统一按「无」渲染。 */
+  manualInterventions?: LedgerInterventionEntry[]
+  quickEdits?: LedgerQuickEditEntry[]
+  takeover?: LedgerTakeoverMark | null
 }
 
 export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"

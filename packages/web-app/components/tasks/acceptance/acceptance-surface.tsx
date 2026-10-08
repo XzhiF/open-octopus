@@ -79,6 +79,8 @@ import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
 // 票08 接管件判据单源（与对话页 hint 同一函数 —— 两本账不各写各的）。
 import { isTakeoverDeliveredRound } from "../run-console/chat/chat-model"
+// 票09 台账预览统计口径复用 03 的 files-tab-model（scopeTotals 单源，勿另算）。
+import { scopeTotals } from "../files-tab/files-tab-model"
 import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
@@ -371,6 +373,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // 头部粉 chip + 「自动复检」行写明未跑。纯只读 —— gate/blocked/硬闸逻辑零触碰
   // （AC5：既有 ✗ 硬闸行为逐字不变，接管件不加任何新闸）。
   const isTakeoverArtifact = isTakeoverDeliveredRound(roundRun ?? undefined)
+
+  // 票09 台账预览统计口径 = 03 files-tab-model::scopeTotals 单源（勿另算，与走查页同源）。
+  const diffStats = useMemo(() => scopeTotals(roundDiff), [roundDiff])
 
   // ── 中列证据面：本 phase 批次目录直读（盘上真相,登记语义已退役） ──────────
   // 定位：specPath 优先（server 权威 phaseSpecDir = dirname(specPath),同语义零
@@ -1160,8 +1165,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           <div className="space-y-2 text-[11.5px]">
             {playbook?.goal && <p className="font-semibold text-pop-ink">{playbook.goal}</p>}
             <div className="rounded-md border border-pop-bd bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
-              <div>实物 · {roundDiff?.available ? `${roundDiff.aggregate.commits} commits · +${roundDiff.aggregate.additions}/−${roundDiff.aggregate.dels} · ${roundDiff.aggregate.files} 文件` : "无有效 diff"}</div>
-              <div>自动复检 · {verify ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : "未跑（≠失败）"}</div>
+              <div>实物 · {roundDiff?.available ? `${diffStats.commits} commits · +${diffStats.additions}/−${diffStats.dels} · ${diffStats.files} 文件` : "无有效 diff"}</div>
+              {/* 票09 三本账三源，与走查页/台账逐字同源：数字取自 getRoundDiff 附带
+                  的 manualInterventions/quickEdits/takeover（server ledger 写面吃同一
+                  payload），实物统计走 scopeTotals 单源，绝不另算口径。 */}
+              <div data-testid="ledger-preview-intervention">人工干预 · ×{roundDiff?.manualInterventions?.length ?? 0}（agent_events · harness 干预另计 {diffStats.interventions ?? "—"}）</div>
+              <div data-testid="ledger-preview-quick-edit">快速修改 · ×{roundDiff?.quickEdits?.length ?? 0}（[quick-edit] 提交）{roundDiff?.quickEdits?.length ? ` · ${new Set(roundDiff.quickEdits.flatMap((e) => e.files)).size} 文件` : ""}</div>
+              <div data-testid="ledger-preview-takeover">接管标记 · {isTakeoverArtifact ? (verify?.state ? "人工交付（接管件）· 复检真结果为准" : "人工交付 · 自动复检未跑（接管件）") : "无（绑定流机器轮）"}</div>
+              <div>自动复检 · {verify?.state ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : isTakeoverArtifact ? "未跑（接管件）" : "未跑（≠失败）"}</div>
               <div>跑起来看 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
               <div>人工走查 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
             </div>

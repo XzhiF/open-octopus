@@ -358,6 +358,49 @@ export class GitOps {
     }
     return { patch: stdout, truncated: false }
   }
+
+  /** commits in (from..to] whose subject starts with `prefix` (default the
+   *  quick-edit marker 「[quick-edit] 」, 票01 契约), newest-first within the
+   *  range, each with its touched files. 票09 台账「快速修改」列的权威统计源 ——
+   *  读的是提交标记本身（subject/trailer），与前端会话尾帧计数不互抄。
+   *
+   *  单趟 `git log --name-only`：record = `%x1e`(记录界) + `%H`(field1) + `%s`
+   *  (field2，单行 subject，控制字符安全)。record 之后的非空行即该提交的文件；
+   *  git 在 header 与文件名之间、提交与提交之间都插空行，解析时按空行分块。
+   *  坏仓/不可达 SHA → runGit 抛 → 这里吞成 []（best-effort，台账绝不因一次
+   *  git 抖动 500，与实物区间 statRepo 的诚实降级同律）。 */
+  async quickEditCommits(
+    projectPath: string,
+    from: string,
+    to: string,
+    prefix = "[quick-edit] ",
+  ): Promise<Array<{ sha: string; subject: string; files: string[] }>> {
+    if (!from || !to || from === to) return []
+    let stdout: string
+    try {
+      const r = await runGit(
+        projectPath,
+        ["log", "--no-merges", "--name-only", "--format=%x1e%H\x1f%s", `${from}..${to}`],
+        GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+      )
+      stdout = r.stdout
+    } catch {
+      return []
+    }
+    const out: Array<{ sha: string; subject: string; files: string[] }> = []
+    for (const chunk of stdout.split("\x1e")) {
+      const lines = chunk.split("\n")
+      const header = lines.shift() // 记录首行 "<sha>\x1f<subject>"（首块 split 后为 "" → 跳过）
+      if (!header || !header.includes("\x1f")) continue
+      const sep = header.indexOf("\x1f")
+      const sha = header.slice(0, sep)
+      const subject = header.slice(sep + 1)
+      if (!subject.startsWith(prefix)) continue
+      const files = lines.map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0)
+      out.push({ sha, subject, files })
+    }
+    return out
+  }
 }
 
 /** One row of a range-diff stat (验货台 实物 tab). */

@@ -1121,6 +1121,22 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt(query).all(...params) as Array<Record<string, unknown>>
   }
 
+  /** 票09 台账「人工干预」列的权威读取（§06 计数 SQL 的行级孪生）：一次执行下
+   *  所有 event_type='intervention' 的 agent_events 行（join node_executions 定
+   *  执行归属），按时间升序。content 携 {nodeId,nodeName,prompt}（ExecutionLifecycle
+   *  .resume 当下写），node_id 兜底旧纯文本行。 */
+  listInterventionsForExecution(executionId: string): Array<{
+    node_id: string; content: string | null; timestamp: number
+  }> {
+    return this.stmt(`
+      SELECT ne.node_id, ae.content, ae.timestamp
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.event_type = 'intervention'
+      ORDER BY ae.timestamp ASC
+    `).all(executionId) as Array<{ node_id: string; content: string | null; timestamp: number }>
+  }
+
   /**
    * 工具调用总数 = 不同 tool_call_id 数。两代词汇（raw 的 tool_start/tool_input/tool_result
    * 三行、merged 的 tool_call 两行）共享同一 id，DISTINCT 天然去重。

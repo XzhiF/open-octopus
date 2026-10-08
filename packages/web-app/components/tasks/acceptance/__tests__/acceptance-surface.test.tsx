@@ -1337,3 +1337,104 @@ describe("验货台 — 修复轮上下文（B 档）", () => {
     await waitFor(() => expect(screen.getByTestId("round-diff-scope-label").textContent).toContain("全 phase 累计"))
   })
 })
+
+// ── 票09 台账预览三列（人工干预 / 快速修改 / 接管标记）──────────────────
+describe("AcceptanceSurface — 票09 台账预览分列（放行前展示三本账 · 与走查页同源）", () => {
+  /** round-diff payload 附带票09 三列（server 与 ledger 写面同吃这份）。 */
+  const DIFF_WITH_COLUMNS = {
+    available: true,
+    aggregate: { commits: 3, additions: 40, dels: 8, files: 5 },
+    interventions: 2, // harness 干预（另计，不与人工干预混称）
+    repos: ROUND_DIFF.repos,
+    manualInterventions: [
+      { node: "实现节点", time: "2026-10-08T03:00:00.000Z", summary: "别动 Dialog 尺寸" },
+      { node: "评审节点", time: "2026-10-08T03:01:00.000Z", summary: "再看 AC4" },
+    ],
+    quickEdits: [
+      { repo: "open-octopus", sha: "abcdef1234567890", subject: "[quick-edit] 收口按钮圆角", files: ["packages/web-app/ui/button.tsx", "packages/web-app/ui/dialog.tsx"] },
+    ],
+  }
+
+  /** 打开通过确认弹层（点验收通过 → ledger-dialog）。 */
+  async function openLedgerPreview() {
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+  }
+
+  it("人工干预 ×2 + harness 另计 2（两数并存不混称）", async () => {
+    mockGetRoundDiff.mockResolvedValue(DIFF_WITH_COLUMNS)
+    await openLedgerPreview()
+    const cell = screen.getByTestId("ledger-preview-intervention")
+    expect(cell.textContent).toContain("人工干预 · ×2")
+    expect(cell.textContent).toContain("agent_events")
+    expect(cell.textContent).toContain("harness 干预另计 2")
+  })
+
+  it("快速修改 ×1 + 去重文件数 2（[quick-edit] 清单可溯）", async () => {
+    mockGetRoundDiff.mockResolvedValue(DIFF_WITH_COLUMNS)
+    await openLedgerPreview()
+    const cell = screen.getByTestId("ledger-preview-quick-edit")
+    expect(cell.textContent).toContain("快速修改 · ×1")
+    expect(cell.textContent).toContain("2 文件")
+  })
+
+  it("实物统计口径走 scopeTotals（与「≡ 变更」页签同源，非另算 aggregate）", async () => {
+    // scopeTotals 只算在场仓：ROUND_DIFF.repos 单仓 commits=2 → 预览用 2，不是 DIFF_WITH_COLUMNS.aggregate.commits 的 3。
+    mockGetRoundDiff.mockResolvedValue({ ...DIFF_WITH_COLUMNS, aggregate: { commits: 99, additions: 99, dels: 99, files: 99 } })
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    const dialog = screen.getByTestId("ledger-dialog")
+    expect(dialog.textContent).toContain("实物 · 2 commits")
+    expect(dialog.textContent).not.toContain("99")
+  })
+
+  it("无介入的轮 → 三列如实归零/显示无（绑定流机器轮）", async () => {
+    mockGetRoundDiff.mockResolvedValue(ROUND_DIFF) // 无 manualInterventions/quickEdits/takeover 键
+    await openLedgerPreview()
+    expect(screen.getByTestId("ledger-preview-intervention").textContent).toContain("人工干预 · ×0")
+    expect(screen.getByTestId("ledger-preview-quick-edit").textContent).toContain("快速修改 · ×0")
+    expect(screen.getByTestId("ledger-preview-takeover").textContent).toContain("无（绑定流机器轮）")
+  })
+
+  it("接管件（未跑复检）→ 接管标记「人工交付 · 自动复检未跑（接管件）」，与走查页 chip 同源", async () => {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    mockGetTask.mockResolvedValue(d)
+    mockGetVerifyStatus.mockResolvedValue(null)
+    mockGetRoundDiff.mockResolvedValue({
+      ...DIFF_WITH_COLUMNS,
+      takeover: { at: "2026-09-03T01:00:00Z", deliveredAt: "2026-09-03T02:00:00Z" },
+    })
+    render(<AcceptanceSurface task={d as unknown as Task} onMutated={() => {}} />)
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    expect(screen.getByTestId("ledger-preview-takeover").textContent).toContain("人工交付 · 自动复检未跑（接管件）")
+    // 走查页顶部 chip 同源在场（票08 既有）。
+    expect(screen.getByTestId("acceptance-takeover-chip")).toBeTruthy()
+  })
+
+  it("接管件但复检有真结果 → 真结果优先，不谎报未跑（ADR-0025 不设新闸）", async () => {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    mockGetTask.mockResolvedValue(d)
+    mockGetVerifyStatus.mockResolvedValue({ state: "passed", exit_code: 0, tail: [] })
+    mockGetRoundDiff.mockResolvedValue({
+      ...DIFF_WITH_COLUMNS,
+      takeover: { at: "2026-09-03T01:00:00Z", deliveredAt: "2026-09-03T02:00:00Z" },
+    })
+    render(<AcceptanceSurface task={d as unknown as Task} onMutated={() => {}} />)
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    const cell = screen.getByTestId("ledger-preview-takeover")
+    expect(cell.textContent).toContain("复检真结果为准")
+    expect(cell.textContent).not.toContain("未跑")
+  })
+})
