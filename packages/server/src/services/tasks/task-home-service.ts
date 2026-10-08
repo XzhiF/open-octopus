@@ -102,10 +102,13 @@ export interface HomeTreeEntry {
  *  server does a cheap existence check so the agent's domain-reading step
  *  starts from the probe RESULT, not a blind ls — reads are unrestricted in
  *  draft sessions (decisions/06 §1). All four missing ⇒ the project is
- *  annotated 「无领域文档 project」 and the skill degrades (US2). */
-const CONVENTION_PROBES: ReadonlyArray<{ label: string; rel: string }> = [
-  { label: "CONTEXT-MAP.md", rel: "CONTEXT-MAP.md" },
-  { label: "CONTEXT.md", rel: "CONTEXT.md" },
+ *  annotated 「无领域文档 project」 and the skill degrades (US2).
+ *  GLOSSARY-first with legacy-CONTEXT fallback (upstream v1.3.0 rename): a
+ *  repo still carrying CONTEXT-MAP.md/CONTEXT.md is marked as the equivalent
+ *  legacy file rather than counted missing. */
+const CONVENTION_PROBES: ReadonlyArray<{ label: string; rel: string; legacyRel?: string }> = [
+  { label: "GLOSSARY-MAP.md", rel: "GLOSSARY-MAP.md", legacyRel: "CONTEXT-MAP.md" },
+  { label: "GLOSSARY.md", rel: "GLOSSARY.md", legacyRel: "CONTEXT.md" },
   { label: "docs/adr/", rel: path.join("docs", "adr") },
   { label: ".scratch/index.md", rel: path.join(".scratch", "index.md") },
 ]
@@ -113,14 +116,17 @@ const CONVENTION_PROBES: ReadonlyArray<{ label: string; rel: string }> = [
 /** One-line existence summary for a project dir. Any error (unreadable dir)
  *  degrades to "all missing" — the probe is advisory, never fatal. */
 function probeProjectConventions(projectPath: string): { line: string; allMissing: boolean } {
-  const marks = CONVENTION_PROBES.map(({ label, rel }) => {
-    let found = false
+  const exists = (rel: string) => {
     try {
-      found = fs.existsSync(path.join(projectPath, rel))
+      return fs.existsSync(path.join(projectPath, rel))
     } catch {
-      found = false
+      return false
     }
-    return `${label} ${found ? "✓" : "—"}`
+  }
+  const marks = CONVENTION_PROBES.map(({ label, rel, legacyRel }) => {
+    if (exists(rel)) return `${label} ✓`
+    if (legacyRel && exists(legacyRel)) return `${legacyRel} ✓（legacy，等同 ${label}）`
+    return `${label} —`
   })
   const allMissing = marks.every((m) => m.endsWith("—"))
   return {
@@ -315,8 +321,8 @@ export class TaskHomeService {
         lines.push('## 领域阅读指引（matt 惯例 — 起草前逐 project 执行）')
         lines.push('')
         lines.push('- 惯例四件套（绝对路径 = 上方各 project 路径 + 下列相对路径）：')
-        lines.push('  1. `CONTEXT-MAP.md` — 全局术语表 / 包索引')
-        lines.push('  2. `CONTEXT.md` — 包级领域语言（monorepo 亦见 `packages/*/CONTEXT.md`）')
+        lines.push('  1. `GLOSSARY-MAP.md` — 全局术语表 / 包索引（存量 `CONTEXT-MAP.md` 为 legacy，probe 已标注）')
+        lines.push('  2. `GLOSSARY.md` — 包级领域语言（monorepo 亦见 `packages/*/GLOSSARY.md`；存量 `CONTEXT.md` 视同 legacy）')
         lines.push('  3. `docs/adr/` — 决策记录（编号递增，新决策须顺延）')
         lines.push('  4. `.scratch/index.md` — 历史需求批次（`.scratch/<date>/<slug>/`）')
         lines.push('- 上方每个 project 已标注 server 写入时刻的 probe 结果（✓ 存在 / — 缺失）；agent 可直接按绝对路径 Read 全文。')

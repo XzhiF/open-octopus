@@ -824,7 +824,7 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     expect(adrA).toContain("0004-pick-db.md") // 0001..0003 既有 → 顺延 0004
     const adrContent = fs.readFileSync(path.join(wtA, "docs", "adr", "0004-pick-db.md"), "utf-8")
     expect(adrContent).toContain(`Synced from task ${taskId}`) // 尾行溯源
-    const ctxA = fs.readFileSync(path.join(wtA, "CONTEXT.md"), "utf-8")
+    const ctxA = fs.readFileSync(path.join(wtA, "CONTEXT.md"), "utf-8") // 存量 legacy CONTEXT.md → 回退续写，不分裂词表
     expect(ctxA).toContain("Gizmo") // 新词 append
     expect(ctxA).toContain("仓库既有定义（旧义，冲突时不得覆盖）") // Widget 旧行原样
     expect(ctxA).not.toContain("冲突的新定义") // 冲突不写入
@@ -841,10 +841,10 @@ test.describe("票14 主故事：phase 全生命周期（新建→入队→触�
     expect(git(["ls-remote", bareA, branch], FIX_ROOT)).toContain(branch) // push 落地 bare
     expect(git(["log", "--oneline", branch], bareA)).toContain("chore(archive)")
 
-    // projB（无 CONTEXT.md → 模板新建）
+    // projB（无 GLOSSARY 也无存量 CONTEXT → bootstrap 新建 GLOSSARY.md）
     const wtB = path.join(wsDir, "projects", PROJ_B)
     expect(fs.readdirSync(path.join(wtB, "docs", "adr"))).toContain("0004-add-cache.md")
-    const ctxB = fs.readFileSync(path.join(wtB, "CONTEXT.md"), "utf-8")
+    const ctxB = fs.readFileSync(path.join(wtB, "GLOSSARY.md"), "utf-8")
     expect(ctxB).toContain("Sprocket")
     const branchB = git(["rev-parse", "--abbrev-ref", "HEAD"], wtB)
     expect(git(["ls-remote", bareB, branchB], FIX_ROOT)).toContain(branchB)

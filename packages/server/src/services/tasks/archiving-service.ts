@@ -13,7 +13,8 @@
 //                                  (文件名 NNNN-slug.md, 尾行 `> Synced from
 //                                  task <id> (<date>)` 溯源)
 //   - {home}/context-notes.md    → per-project 分节术语 append 进目标
-//                                  CONTEXT.md 术语表 (append-only; 同名不同义
+//                                  GLOSSARY.md 术语表 (存量 CONTEXT.md 回退续用;
+//                                  append-only; 同名不同义
 //                                  不写, 记入冲突报告 — K11 人工冲突不阻塞
 //                                  状态机, PR review 是它的裁决 gate)
 //
@@ -261,10 +262,18 @@ export interface GlossaryAppendPlan {
 
 const GLOSSARY_HEADING_RE = /^#{1,4}\s+.*(glossary|术语表|術語表)/i
 
+/** 术语表落点 (GLOSSARY 迁移的兼容规则): 已有 GLOSSARY.md 用之; 否则存量
+ *  CONTEXT.md 回退续用 —— 不另起文件分裂词表; 两者皆无 → 新建 GLOSSARY.md。 */
+export function resolveGlossaryRel(dir: string): "GLOSSARY.md" | "CONTEXT.md" {
+  if (fs.existsSync(path.join(dir, "GLOSSARY.md"))) return "GLOSSARY.md"
+  if (fs.existsSync(path.join(dir, "CONTEXT.md"))) return "CONTEXT.md"
+  return "GLOSSARY.md"
+}
+
 /**
  * append-only 术语合并 (K11): NEVER touches an existing line. New terms go
  * into the glossary table (created when missing — `targetMd === null`
- * bootstraps a minimal CONTEXT.md). Same term + same def → unchanged; same
+ * bootstraps a minimal GLOSSARY.md). Same term + same def → unchanged; same
  * term + different def → conflict (NOT written, the caller reports it into
  * the archive report / PR body — 人的裁决 gate = 既有 PR review).
  */
@@ -273,7 +282,7 @@ export function planGlossaryAppend(targetMd: string | null, entries: TermEntry[]
   if (!targetMd) {
     const rows = entries.map((e) => `| **${e.term}** | ${normDef(e.definition)} |`)
     result.output = [
-      "# Context",
+      "# Glossary",
       "",
       "## Glossary",
       "",
@@ -659,18 +668,19 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
           r.adrMerged += 1
         }
 
-        // 术语 append (CONTEXT.md 术语表, append-only)
+        // 术语 append (GLOSSARY.md 优先, 存量 CONTEXT.md 回退续用, append-only)
         const noteBodies = notesByProject[projectName] ?? []
         const terms = noteBodies.flatMap((b) => parseTermEntries(b))
         if (terms.length > 0) {
-          const ctxAbs = path.join(wt.dir, "CONTEXT.md")
-          const targetMd = fs.existsSync(ctxAbs) ? fs.readFileSync(ctxAbs, "utf-8") : null
+          const glossRel = resolveGlossaryRel(wt.dir)
+          const glossAbs = path.join(wt.dir, glossRel)
+          const targetMd = fs.existsSync(glossAbs) ? fs.readFileSync(glossAbs, "utf-8") : null
           const gloss = planGlossaryAppend(targetMd, terms)
           r.termConflicts = gloss.conflicts
           r.termsAppended = gloss.appended.length
           if (gloss.appended.length > 0) {
-            fs.writeFileSync(ctxAbs, gloss.output, "utf-8")
-            writtenRel.push("CONTEXT.md")
+            fs.writeFileSync(glossAbs, gloss.output, "utf-8")
+            writtenRel.push(glossRel)
           }
         }
 

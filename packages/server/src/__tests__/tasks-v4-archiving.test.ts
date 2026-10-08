@@ -30,6 +30,7 @@ import {
   parseContextNotesSections,
   parseTermEntries,
   planGlossaryAppend,
+  resolveGlossaryRel,
 } from "../services/tasks/archiving-service"
 
 // ── Harness ──────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ describe("context-notes 分节与术语解析（纯函数）", () => {
   })
 })
 
-describe("CONTEXT 术语 append-only（纯函数）", () => {
+describe("GLOSSARY 术语 append-only（纯函数）", () => {
   it("appends new terms, keeps existing lines byte-stable, flags same-term-different-def as conflict", () => {
     const target = [
       "# Context", "", "## Glossary", "", "| Term | Definition |", "|------|-----------|",
@@ -195,6 +196,21 @@ describe("CONTEXT 术语 append-only（纯函数）", () => {
   })
 })
 
+describe("GLOSSARY 落点解析（兼容回退）", () => {
+  it("GLOSSARY 优先；仅存量 CONTEXT 则回退续用；两者皆无 bootstrap GLOSSARY", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gloss-target-"))
+    try {
+      expect(resolveGlossaryRel(dir)).toBe("GLOSSARY.md") // 皆无 → 新建 GLOSSARY
+      fs.writeFileSync(path.join(dir, "CONTEXT.md"), "# c\n")
+      expect(resolveGlossaryRel(dir)).toBe("CONTEXT.md") // 存量回退续用，不另起文件分裂词表
+      fs.writeFileSync(path.join(dir, "GLOSSARY.md"), "# g\n")
+      expect(resolveGlossaryRel(dir)).toBe("GLOSSARY.md") // GLOSSARY 优先于存量 CONTEXT
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 // ── Integration: real git fixtures + TasksService archiver ───────────
 
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_DATE: "2026-09-03T00:00:00+00:00", GIT_COMMITTER_DATE: "2026-09-03T00:00:00+00:00" }
@@ -203,7 +219,7 @@ function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", env: GIT_ENV }).toString()
 }
 
-/** A bare origin + a clone seeded with docs/adr + optional CONTEXT.md. */
+/** A bare origin + a clone seeded with docs/adr + optional legacy CONTEXT.md. */
 interface RepoFixture {
   name: string
   bare: string

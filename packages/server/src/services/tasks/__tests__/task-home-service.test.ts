@@ -45,16 +45,16 @@ describe("TaskHomeService", () => {
   describe("ticket 09 AC3 — context.md project paths + convention probe", () => {
     it("probes the matt conventions per resolved project and marks present/missing", () => {
       const id = "t-probe-1"
-      // Fake project A: only CONTEXT-MAP.md + docs/adr/ exist.
+      // Fake project A: legacy-only — CONTEXT-MAP.md + docs/adr/ exist.
       const projA = path.join(base, "projA")
       fs.mkdirSync(path.join(projA, "docs", "adr"), { recursive: true })
       fs.writeFileSync(path.join(projA, "CONTEXT-MAP.md"), "# map\n")
-      // Fake project B: all four conventions present.
+      // Fake project B: all four conventions present (GLOSSARY names).
       const projB = path.join(base, "projB")
       fs.mkdirSync(path.join(projB, "docs", "adr"), { recursive: true })
       fs.mkdirSync(path.join(projB, ".scratch"), { recursive: true })
-      fs.writeFileSync(path.join(projB, "CONTEXT-MAP.md"), "# map\n")
-      fs.writeFileSync(path.join(projB, "CONTEXT.md"), "# ctx\n")
+      fs.writeFileSync(path.join(projB, "GLOSSARY-MAP.md"), "# map\n")
+      fs.writeFileSync(path.join(projB, "GLOSSARY.md"), "# ctx\n")
       fs.writeFileSync(path.join(projB, ".scratch", "index.md"), "# idx\n")
 
       svc.createHome(id, {
@@ -71,12 +71,13 @@ describe("TaskHomeService", () => {
       expect(ctx).toContain(`- project: projB  →  ${projB}`)
       // …plus probe RESULT lines (✓ present / — missing) for the four conventions.
       const projABlock = ctx.slice(ctx.indexOf("project: projA"), ctx.indexOf("project: projB"))
-      expect(projABlock).toContain("CONTEXT-MAP.md ✓")
-      expect(projABlock).toContain("CONTEXT.md —")
+      // Legacy CONTEXT-MAP.md is found and labelled as the GLOSSARY-MAP equivalent.
+      expect(projABlock).toContain("CONTEXT-MAP.md ✓（legacy，等同 GLOSSARY-MAP.md）")
+      expect(projABlock).toContain("GLOSSARY.md —")
       expect(projABlock).toContain("docs/adr/ ✓")
       expect(projABlock).toContain(".scratch/index.md —")
       const projBBlock = ctx.slice(ctx.indexOf("project: projB"))
-      for (const c of ["CONTEXT-MAP.md ✓", "CONTEXT.md ✓", "docs/adr/ ✓", ".scratch/index.md ✓"]) {
+      for (const c of ["GLOSSARY-MAP.md ✓", "GLOSSARY.md ✓", "docs/adr/ ✓", ".scratch/index.md ✓"]) {
         expect(projBBlock).toContain(c)
       }
       // Guidance for the agent (US2): what to read, and the degradation rule.
