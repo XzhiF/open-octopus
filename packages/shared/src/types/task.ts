@@ -521,6 +521,12 @@ export interface Task {
   version: number
   /** sessions.scope_id retargets to tasks.id (SG3); this is the back-ref. */
   source_chat_session_id?: string | null
+  /** ADR-0025 / taskboard-modal-v2 票01: the task's single task-doer chat session
+   *  (→chat_sessions.id on the task's bound workspace — the 「做」 face of
+   *  一面两会话; lazy-created + idempotent via GET/POST /api/tasks/:id/chat,
+   *  persists across Rounds). Null/undefined = never opened. The 「谈」 face
+   *  (draft-era task-author session) stays on source_chat_session_id. */
+  doer_session_id?: string | null
   /** Soft-delete marker (discard draft/ready = soft delete, not status). */
   deleted_at: string | null
   created_at: string

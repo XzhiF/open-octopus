@@ -12,7 +12,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 49
+export const SCHEMA_VERSION = 50
 
 /**
  * Apply the complete unified schema to the given database.
@@ -134,6 +134,13 @@ function handleSchemaMigrations(db: Database.Database): void {
   // llm_calls/ntu 的 cost 快照列全部移除、billing_price_config 加时间窗口、
   // 模型名统一归一化（normalizeModelId）。幂等：全部按列存在性/差异检测。
   migrateBillingV48(db)
+
+  // schema v50 (taskboard-modal-v2 票01, ADR-0025): tasks.doer_session_id —
+  // 一 task 唯一的 task-doer 会话指针（chat_sessions.id）。ADDITIVE only，
+  // 走 ensureColumn（幂等，跑在 schema.sql 之后对既有表生效；新库由 schema.sql
+  // 的 CREATE 直接带上）。刻意不做 FK：chat_sessions 属 workspace 域，生命周期
+  // 独立（同 tasks.workspace_id 先例），删会话不应牵连任务行。
+  ensureColumn(db, "tasks", "doer_session_id", "TEXT DEFAULT NULL")
 }
 
 /**
