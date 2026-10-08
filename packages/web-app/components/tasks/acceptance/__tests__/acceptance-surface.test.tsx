@@ -5,7 +5,7 @@
 // （叙述 tab 已于 2026-09-20 用户裁决退役，批次清单只剩 round-report 定位一职）；
 // 复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDetail, TaskDerivedView } from "@/lib/tasks-api"
 
@@ -1153,6 +1153,29 @@ function fireSseStatus(s: { connected: boolean; reconnected: boolean }): void {
 }
 
 describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
+  it("票 02 统一壳接线：onActionApi 注册决策句柄 —— requestAccept/openReject 与动作列同效（行为单源），卸载交还 null", async () => {
+    const registrations: Array<{ requestAccept: () => void; openReject: () => void; blocked: boolean } | null> = []
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
+    const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+    const { unmount } = render(
+      <AcceptanceSurface task={task} onMutated={() => {}} onActionApi={(api) => { registrations.push(api) }} />,
+    )
+    await screen.findByTestId("acceptance-approve")
+    const api = registrations[registrations.length - 1]
+    expect(api).toBeTruthy()
+    expect(api!.blocked).toBe(false)
+    // 句柄 = 动作列同一条路：requestAccept 只开台账预览，不直通提交
+    await act(async () => { api!.requestAccept() })
+    expect(await screen.findByTestId("ledger-dialog")).toBeTruthy()
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
+    // openReject = 打开反馈弹窗（reject-dialog 在场）
+    await act(async () => { api!.openReject() })
+    expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
+    // 宿主卸载方向：交还 null，壳层按钮随之失能（不留悬挂句柄）
+    unmount()
+    expect(registrations[registrations.length - 1]).toBeNull()
+  })
+
   it("ledger_written:false → toast 不再谎报「台账已写」", async () => {
     renderModal()
     mockPostAcceptance.mockResolvedValueOnce({

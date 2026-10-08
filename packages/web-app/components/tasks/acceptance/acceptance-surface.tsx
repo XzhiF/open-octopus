@@ -89,6 +89,18 @@ import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 
 // ── Props ────────────────────────────────────────────────────────────
 
+/** 票 02 统一壳接线契约：右栏底部「通过/打回」不复制决策逻辑，只拿这组句柄调
+ *  本面既有入口（requestAccept 仍走台账预览确认、openReject 仍走反馈弹窗）。
+ *  本面自身动作列照旧在场（票 05/07 改版时收口），两处按钮行为单源。 */
+export interface AcceptanceActionApi {
+  /** = 动作区「验收通过」按钮：gate ✗ 时内部 toast 拦截，否则开台账预览。 */
+  requestAccept: () => void
+  /** = 动作区「打回（写反馈）」：开反馈弹窗（✗ 票预填照旧）。 */
+  openReject: () => void
+  /** 通过是否被拦（✗ 未决硬闸 / 决策在飞）—— 外层按钮据此置灰。 */
+  blocked: boolean
+}
+
 export interface AcceptanceSurfaceProps {
   task: Task | null
   /** 看板刷新钩子（决策成功后让外层列表重拉）。 */
@@ -101,6 +113,8 @@ export interface AcceptanceSurfaceProps {
   detailOverride?: TaskDetail | null
   /** 配套 detailOverride 的重拉钩子（409 恢复、spec-field 保存后走它）。 */
   onRefetch?: () => void
+  /** 票 02 统一壳：向宿主注册决策入口句柄（右栏底部 通过/打回 的接线柱）。 */
+  onActionApi?: (api: AcceptanceActionApi | null) => void
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -108,7 +122,7 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch }: AcceptanceSurfaceProps) {
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
   const embedded = detailOverride !== undefined
   const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
@@ -736,6 +750,18 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   }, [task, awaitingPhase, feedback, nextFlow, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
 
   const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
+
+  // 票 02 统一壳：把决策入口注册给宿主（右栏底部 通过/打回 按钮）。只是句柄注册
+  // ——台账预览/反馈弹窗/硬闸拦截/409 恢复全部仍是本面这套函数，行为单源。
+  useEffect(() => {
+    if (!onActionApi) return
+    onActionApi({
+      requestAccept,
+      openReject,
+      blocked: busy !== null || gate.fail > 0 || checksSaving,
+    })
+    return () => onActionApi(null)
+  }, [onActionApi, requestAccept, openReject, busy, gate.fail, checksSaving])
 
   const handleAbort = useCallback(async () => {
     if (!task || busy) return

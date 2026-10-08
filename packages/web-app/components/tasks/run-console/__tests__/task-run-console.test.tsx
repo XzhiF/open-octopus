@@ -74,6 +74,7 @@ vi.mock("../../trigger-dialog", () => ({
   TriggerDialog: () => null,
   TriggerActions: () => null,
 }))
+vi.mock("../../authoring/authoring-workspace", () => ({ AuthoringWorkspace: () => <div data-testid="authoring-stub" /> }))
 
 import { TaskRunConsole } from "../task-run-console"
 import { TaskModal } from "../../task-modal"
@@ -183,7 +184,7 @@ const renderConsole = (task: Task, detail: Record<string, unknown>) => {
 describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", () => {
   it("ready + 3 pending phase → 3 个 phase-row 节点，「未开始」恰出现 3 次（全 UI 唯一状态位）", async () => {
     const t = makeTask("ready")
-    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending"), pv(3, "票11阶段3", "pending")]) })
+    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending"), pv(3, "票11阶段3", "pending")], true, "ready") })
     expect(await screen.findByTestId("phase-timeline")).toBeTruthy()
     expect(screen.getByTestId("phase-row-1")).toBeTruthy()
     expect(screen.getByTestId("phase-row-2")).toBeTruthy()
@@ -252,7 +253,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
       { dir: ".scratch/20260912/p1", slug: "p1", latest_mtime: "2026-09-21T09:00:00Z", files: [{ path: ".scratch/20260912/p1/spec.md", mtime: "2026-09-21T09:00:00Z", bytes: 2048 }] },
     ])
     const t = makeTask("ready")
-    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending")]) })
+    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending")], true, "ready") })
     expect(await screen.findByText(/发射门禁/)).toBeTruthy()
     expect(screen.getByText(/每个 Phase 已绑定工作流（3\/3）/)).toBeTruthy()
     expect(screen.getByText(/spec\.md 落盘（1\/3）/)).toBeTruthy()
@@ -269,7 +270,10 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
   it("awaiting_review：交付报告在位，但决策入口撤出控制台（ADR-0022）→「去验货台」CTA 切 tab，不打 postAcceptance", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views, true, "awaiting_review") })
+    // 票 02：待验收默认落「对话」占位页 —— 交付报告在「▶ 控制台」页签内
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
     // 旧的 ✓通过/✕打回 判决条已撤 → 控制台不再直通 postAcceptance
     expect(screen.queryByTestId("acceptance-approve")).toBeNull()
@@ -285,11 +289,13 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
   it("流程图入口（V2 定稿）：卡头/行内章均 window.open 新 tab，不再 router.push 顶走弹窗", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1, workspace_id: "ws-e1" })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1, workspace_id: "ws-e1" })], derived: derivedOf(views, true, "awaiting_review") })
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     await screen.findByTestId("console-acceptance-card")
     fireEvent.click(screen.getByTestId("console-open-acceptance"))
-    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
     fireEvent.click(screen.getByTestId("console-tab-console"))
     await screen.findByTestId("console-acceptance-card")
@@ -312,7 +318,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     }])
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     await screen.findByText(/R1 交付报告/)
     const filesBox = () => document.querySelector('[data-fold-box="files"]') as HTMLElement
     const card = () => document.querySelector('[data-fold-box="deliver"]') as HTMLElement
@@ -345,32 +353,29 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(localStorage.getItem("octopus-fold:task-1")).toContain('"mode":0')
   })
 
-  it("验货台 = 控制台 tab（2026-09-16 收编）：证据链接/条内钮切 tab 内嵌 surface，可切回；startOnAcceptance 直达", async () => {
+  it("走查 = 统一壳页签（票 02 装配 + 2026-09-16 keep-mounted 收编）：CTA/页签条切页内嵌 surface，可切回；startOnAcceptance 直达", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
-    // 有待验收轮 → tab 条亮出两档；surface 预挂但藏着（keep-mounted）
-    const acceptTab = await screen.findByTestId("console-tab-accept")
-    expect(acceptTab.textContent).toContain("P1·R1")
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
+    // 有待验收轮 → 装配出 对话·变更·走查·日志；surface 预挂但藏着（keep-mounted）
+    const reviewTab = await screen.findByTestId("console-tab-review")
+    expect(reviewTab.textContent).toContain("P1·R1")
     expect(acceptanceSurfaceVisible()).toBe(false)
-    // 单入口定稿：旧「验货台核对实物 →」链与卡外绿横幅已删；点整卡 = 切 tab
+    // 单入口定稿：旧「验货台核对实物 →」链与卡外绿横幅已删
     expect(screen.queryByText(/验货台核对实物/)).toBeNull()
-    expect(screen.queryByText(/去验货台验收（实物/)).toBeNull()
-    fireEvent.click(screen.getByTestId("console-acceptance-card"))
+    // 点页签进走查
+    fireEvent.click(reviewTab)
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
-    // 切回执行控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）
+    // 切回控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）
     fireEvent.click(screen.getByTestId("console-tab-console"))
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(false))
     expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
-    // 导航条「🔍 验货台」也走切 tab（chip 直接文本同为 🔍 验货台，取条内钮的锚点）
-    fireEvent.click(document.querySelector("[data-acceptance-open-bar]") as HTMLElement)
-    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
   })
 
-  it("startOnAcceptance（看板「验收」按钮）：挂载即落验货台 tab", async () => {
+  it("startOnAcceptance（看板「验收」按钮）：挂载即落走查页签", async () => {
     const t = makeTask("awaiting_review")
-    mockGetTask.mockResolvedValue({ ...t, derived: derivedOf([pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]) } as never)
+    mockGetTask.mockResolvedValue({ ...t, derived: derivedOf([pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")], true, "awaiting_review") } as never)
     render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} startOnAcceptance />)
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
@@ -392,7 +397,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     })
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     // ✗ 行：聚合计数 + 自愈判定 + result 首行详情（glyph 与文本同节，textContent 整取）
     await waitFor(() => expect(document.querySelector('[data-signal="bad"]')?.textContent).toMatch(/挂过 1 次 Bash（均已自愈）/))
     // 全绿履历一个字不占：没有节点清单、没有起收、没有 spec-resolve
@@ -415,7 +422,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     })
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     await screen.findByText(/R1 交付报告/) // 交付卡在位（说明盘面渲染完整）
     await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalled())
     expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
@@ -462,7 +471,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     }])
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views) })
+    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-console"))
     expect(await screen.findByTestId("file-bucket-issues")).toBeTruthy()
     expect(screen.getByTestId("file-bucket-issues").textContent).toContain("×3")
     expect(screen.getByTestId("file-bucket-reports").textContent).toContain("×2")
@@ -499,7 +510,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
       ],
       derived: derivedOf([
         { ...pv(1, "票11阶段1", "accepted"), rounds: [{ roundIndex: 1, state: "failed" as const, decision: null, exec: { id: "exec-1", status: "failed", workflow_ref: "wf", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:59:00Z" } }] },
-      ]),
+      ], true, "failed"),
     })
     expect(await screen.findByText("对账回收：引擎进程已丢失")).toBeTruthy()
     expect(screen.queryByText("上一轮遗留键")).toBeNull()
@@ -564,7 +575,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     mockCancelTrigger.mockResolvedValue({})
     const future = new Date(Date.now() + 3600_000).toISOString()
     const t = makeTask("ready", { next_fire_at: future, trigger_mode: "once" } as Partial<Task>)
-    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending")]) })
+    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending")], true, "ready") })
     expect(await screen.findByText(/⏰ 已定时/)).toBeTruthy()
     expect(screen.queryByText(/⚡ 触发执行/)).toBeNull()
     fireEvent.click(screen.getByText(/✕ 取消触发/))
@@ -599,5 +610,197 @@ describe("TaskModal 接线（新壳）", () => {
     expect(await screen.findByText("任务战报")).toBeTruthy()
     expect(document.querySelector('[data-task-modal-status="done"]')).toBeTruthy()
     expect(screen.queryByText(/^任务完成 ·/)).toBeNull()
+  })
+})
+
+// ═════════════════ 票 02 · 统一弹窗壳 ═════════════════
+// 断言的期望逐条来自 spec.md 统一壳条目 + 原型 taskboard-v2.html 壳结构：
+// 顶栏只剩 标题+pill+元信息+⛶/✕（无动作、无红绿灯）；动作区 = 右栏底部
+// [data-rail-acts]；页签按装配表；←/→ 切页；Esc 关 console 壳（草稿不关）。
+describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
+  const runningView = {
+    executions: [badge("exec-1", "running", { completed_at: null })],
+    derived: derivedOf([pv(1, "票11阶段1", "running")]),
+  }
+
+  it("顶栏导航条内不再有任何动作锚点（pause/abort/trigger/duplicate），红绿灯 <i> 圆点绝迹", async () => {
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...runningView })
+    const bar = await waitFor(() => {
+      const el = document.querySelector("[data-terminal-bar]")
+      if (!el) throw new Error("header not mounted")
+      return el
+    })
+    for (const anchor of ["data-task-pause", "data-task-resume", "data-task-abort", "data-task-trigger", "data-task-trigger-cancel", "data-task-reopen", "data-task-duplicate", "data-acceptance-open-bar"]) {
+      expect(bar.querySelector(`[${anchor}]`)).toBeNull()
+    }
+    expect(bar.querySelector("i[style], i.bg-pop-pink, i")).toBeNull() // 红绿灯装饰圆点已删
+    // 保留：状态 pill + 关闭
+    expect(bar.querySelector('[data-task-modal-status="running"]')).toBeTruthy()
+    expect(bar.querySelector('button[aria-label="关闭"]')).toBeTruthy()
+  })
+
+  it("running：动作锚点全部在右栏底部 [data-rail-acts] 内（暂停/中止/复制）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...runningView })
+    await screen.findByTestId("phase-timeline")
+    const acts = document.querySelector("[data-rail-acts]")
+    expect(acts).toBeTruthy()
+    expect(acts!.querySelector("[data-task-pause]")).toBeTruthy()
+    expect(acts!.querySelector("[data-task-abort]")).toBeTruthy()
+    expect(acts!.querySelector("[data-task-duplicate]")).toBeTruthy()
+    expect(acts!.querySelector("[data-task-resume]")).toBeNull() // paused 才给恢复
+  })
+
+  it("paused：右栏底部给「▶ 恢复 · ■ 中止」（既有 handler 不回退）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    await screen.findByTestId("phase-timeline")
+    const acts = document.querySelector("[data-rail-acts]")!
+    expect(acts.querySelector("[data-task-resume]")).toBeTruthy()
+    expect(acts.querySelector("[data-task-abort]")).toBeTruthy()
+    // 点恢复仍打 resumeTask —— 动作只是位置搬家，接线不变
+    mockResume.mockResolvedValue({})
+    fireEvent.click(acts.querySelector("[data-task-resume]")!)
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
+  })
+
+  it("awaiting_review：右栏底部装配 通过/打回（走查 tab 保持挂载供接线）", async () => {
+    const t = makeTask("awaiting_review")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review")], true, "awaiting_review"),
+    })
+    await screen.findByTestId("phase-timeline")
+    const acts = document.querySelector("[data-rail-acts]")
+    expect(acts).toBeTruthy()
+    expect(acts!.querySelector("[data-rail-accept]")).toBeTruthy()
+    expect(acts!.querySelector("[data-rail-reject]")).toBeTruthy()
+    expect(acts!.querySelector("[data-task-pause]")).toBeNull()
+    // 验货台 surface keep-mounted（hidden 壳内，挂载闸随 awaiting 轮亮起）；走查页签在场
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(screen.getByTestId("console-tab-review")).toBeTruthy()
+  })
+})
+
+describe("票 02 — 页签装配 + 键盘", () => {
+  it("running v4：变更·节点·控制台，默认落「变更」（占位挂票 03）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    const filesTab = await screen.findByTestId("console-tab-files")
+    expect(screen.getByTestId("console-tab-nodes")).toBeTruthy()
+    expect(screen.getByTestId("console-tab-console")).toBeTruthy()
+    expect(screen.queryByTestId("console-tab-chat")).toBeNull() // 对话页签不进 running 装配
+    expect(screen.queryByTestId("console-tab-review")).toBeNull()
+    expect(filesTab.getAttribute("aria-selected")).toBe("true")
+    const host = document.querySelector('[data-tab-host="files"]')
+    expect(host).toBeTruthy()
+    expect(host!.textContent).toContain("票 03")
+  })
+
+  it("awaiting_review：对话·变更·走查·日志，默认落「对话」（占位挂票 07）", async () => {
+    const t = makeTask("awaiting_review")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review")], true, "awaiting_review"),
+    })
+    const chatTab = await screen.findByTestId("console-tab-chat")
+    expect(chatTab.getAttribute("aria-selected")).toBe("true")
+    for (const key of ["files", "review", "console"]) expect(screen.getByTestId(`console-tab-${key}`)).toBeTruthy()
+    expect(document.querySelector('[data-tab-host="chat"]')?.textContent).toContain("票 07")
+  })
+
+  it("startOnAcceptance：默认落「✓ 走查」且 surface 可见", async () => {
+    const t = makeTask("awaiting_review")
+    mockGetTask.mockResolvedValue({
+      ...t,
+      executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review")], true, "awaiting_review"),
+    } as never)
+    render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} startOnAcceptance />)
+    expect((await screen.findByTestId("console-tab-review")).getAttribute("aria-selected")).toBe("true")
+    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
+  })
+
+  it("→ 顺序切页并回卷；← 反向；输入框聚焦时忽略", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    await screen.findByTestId("console-tab-files")
+    const selected = () => document.querySelector('[data-console-tab][aria-selected="true"]')?.getAttribute("data-console-tab")
+    expect(selected()).toBe("files")
+    fireEvent.keyDown(window.document, { key: "ArrowRight" })
+    expect(selected()).toBe("nodes")
+    fireEvent.keyDown(window.document, { key: "ArrowRight" })
+    expect(selected()).toBe("console")
+    fireEvent.keyDown(window.document, { key: "ArrowRight" }) // 末位回卷
+    expect(selected()).toBe("files")
+    fireEvent.keyDown(window.document, { key: "ArrowLeft" })
+    expect(selected()).toBe("console")
+    // 输入聚焦 → 吞掉方向键（不劫持光标）
+    const ta = document.createElement("textarea")
+    document.body.appendChild(ta)
+    fireEvent.keyDown(ta, { key: "ArrowRight", bubbles: true })
+    expect(selected()).toBe("console")
+    ta.remove()
+  })
+
+  it("v3 legacy：derived.isV4=false → 只剩「▶ 控制台」一页（占位页签不压旧任务）", async () => {
+    const t = makeTask("running", { task_spec: { ...SPEC, format: undefined } as TaskSpec })
+    renderConsole(t, { ...t, executions: [badge("exec-9", "running", { phase_index: null, round_index: null })], derived: { taskStatus: "running", isV4: false, phaseViews: [] } })
+    await screen.findByTestId("console-tab-console")
+    expect(screen.queryByTestId("console-tab-files")).toBeNull()
+    expect(screen.queryByTestId("console-tab-nodes")).toBeNull()
+  })
+})
+
+describe("票 02 — TaskModal 三态同壳 + Esc", () => {
+  it("running / awaiting_review / done 三卡打开同一 [data-run-console] 壳", async () => {
+    for (const [status, dv] of [
+      ["running", derivedOf([pv(1, "票11阶段1", "running")])],
+      ["awaiting_review", derivedOf([pv(1, "票11阶段1", "awaiting_review")], true, "awaiting_review")],
+      ["done", derivedOf([pv(1, "票11阶段1", "accepted")], true, "done")],
+    ] as const) {
+      const t = makeTask(status)
+      mockGetTask.mockResolvedValue({ ...t, executions: [badge(`exec-${status}`, status === "running" ? "running" : "completed", { completed_at: status === "running" ? null : "2026-09-21T09:10:00Z" })], derived: dv })
+      const { unmount } = render(<TaskModal open onOpenChange={() => {}} task={t} onMutated={() => {}} />)
+      await waitFor(() => expect(document.querySelector("[data-run-console]")).toBeTruthy())
+      // 同一壳：标题在顶栏（sr-only DialogTitle 之外只有条内一处可及文本）
+      const bar = document.querySelector("[data-terminal-bar]")!
+      expect(bar.textContent).toContain("控制台任务")
+      expect(document.querySelector('[data-task-modal-status]')).toBeTruthy()
+      unmount()
+    }
+  })
+
+  it("Esc：console 壳关窗（onOpenChange(false)）；草稿窗不关（2026-09-24 旧裁决保留在 authoring）", async () => {
+    const onClose = vi.fn()
+    const t = makeTask("running")
+    mockGetTask.mockResolvedValue({ ...t, executions: [badge("exec-1", "running", { completed_at: null })], derived: derivedOf([pv(1, "票11阶段1", "running")]) })
+    render(<TaskModal open onOpenChange={onClose} task={t} onMutated={() => {}} />)
+    await screen.findByTestId("phase-timeline")
+    fireEvent.keyDown(window.document, { key: "Escape" })
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith(false))
+
+    const onCloseDraft = vi.fn()
+    const d = makeTask("draft")
+    mockGetTask.mockResolvedValue({ ...d, executions: [], derived: undefined })
+    render(<TaskModal open onOpenChange={onCloseDraft} task={d} onMutated={() => {}} />)
+    await screen.findByTestId("authoring-stub")
+    fireEvent.keyDown(window.document, { key: "Escape" })
+    expect(onCloseDraft).not.toHaveBeenCalled()
   })
 })
