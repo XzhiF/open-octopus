@@ -91,7 +91,7 @@ export function cycleTab(keys: ConsoleTabKey[], current: ConsoleTabKey, delta: 1
 // 票 02 铁律：动作只是「接线柱」——每个动作 id 在 TaskRunConsole 里连回它现有的
 // handler（pause/resume/abort/reopen/trigger/duplicate）或 AcceptanceSurface 的
 // 决策入口（accept/reject），行为零回退。「✋ 有问题」三分支（branch）归票 08，
-// 「▶ 恢复·注入」输入框归票 06 —— 此处不预留空按钮。
+// 「resume」已升级为「▶ 恢复 · 可注入干预」弹框（票 06 · resume-intervention-dialog）。
 
 export type RailActionId =
   | "trigger" | "trigger-cancel" | "reopen"

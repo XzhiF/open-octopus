@@ -5,7 +5,7 @@
 //   • ready 门禁/触发、awaiting 判决条、done 战报、红行 error_summary 状态门控
 //   • TaskModal 接线：三模式走新壳（terminal bar + 无 ModalHeader/悬浮 X）
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/tasks-api"
 
@@ -58,7 +58,7 @@ vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:30
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
 // 重组件桩（只测控制台盘面编排，弹窗本体各有自己的测试）
 vi.mock("../../authoring/artifact-viewer-dialog", () => ({ ArtifactViewerDialog: () => null }))
@@ -548,7 +548,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(document.querySelector("[data-task-resume]")).toBeNull()
   })
 
-  it("运行中：点「暂停」打 pauseTask；点「恢复」打 resumeTask（不带 body，与工作流页一致）", async () => {
+  it("运行中：点「暂停」打 pauseTask；暂停盘面「▶ 恢复」经注入弹框落 resumeTask（票 06 接线）", async () => {
     mockPause.mockResolvedValue({})
     mockResume.mockResolvedValue({})
     const t = makeTask("running")
@@ -568,6 +568,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
       derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
     })
     fireEvent.click(await screen.findByText(/▶ 恢复/))
+    expect(mockResume).not.toHaveBeenCalled() // 先弹框，不直接放行（票 06）
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.click(within(dlg).getByTestId("inject-plain"))
     await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
   })
 
@@ -580,6 +583,190 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     expect(screen.queryByText(/⚡ 触发执行/)).toBeNull()
     fireEvent.click(screen.getByText(/✕ 取消触发/))
     await waitFor(() => expect(mockCancelTrigger).toHaveBeenCalledWith("task-1"))
+  })
+})
+
+// ═════════════════ 票 06 · 干预接线（⏸ → 注入 → 恢复）════════════════
+// 交互真相源 = 原型 taskboard-v2.html openInject/resume(withInj)：
+// 暂停后 rail 钮变「▶ 恢复 · 可注入干预」→ 弹「恢复执行 — 注入干预」三分支框
+// （取消（保持暂停）/ 直接继续 ▶ / ⚑ 注入干预并继续）；注入行 = 原文逐字走
+// resumeTask(id, intervention)；⚑ 高亮行与 LIVE 卡 ⚑ 干预×N 从既有 agent-events
+// 读取面渲染；执行盘面除弹框内外接输入口为零（不打扰模式）。
+describe("票 06 — 恢复弹框三分支（⏸→注入→恢复）", () => {
+  const pausedView = {
+    executions: [badge("exec-1", "paused", { completed_at: null })],
+    derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+  }
+
+  it("暂停后 rail 钮 =「▶ 恢复 · 可注入干预」；点击只弹框，一次 API 都不打", async () => {
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    const btn = await screen.findByText(/▶ 恢复 · 可注入干预/)
+    expect(document.querySelector("[data-task-resume]")).toBeTruthy()
+    fireEvent.click(btn)
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    expect(dlg.textContent).toContain("恢复执行 — 注入干预")
+    // 三键逐字（原型）：
+    expect(within(dlg).getByTestId("inject-cancel").textContent).toContain("取消（保持暂停）")
+    expect(within(dlg).getByTestId("inject-plain").textContent).toContain("直接继续")
+    expect(within(dlg).getByTestId("inject-confirm").textContent).toContain("⚑ 注入干预并继续")
+    expect(mockResume).not.toHaveBeenCalled()
+    // 不打扰铁律的另一面：盘面本身此刻唯一的 textarea 就是这个弹框里的。
+    expect(document.querySelectorAll("textarea")).toHaveLength(1)
+  })
+
+  it("取消（保持暂停）= 关窗零调用，暂停盘面原样还在", async () => {
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.click(within(dlg).getByTestId("inject-cancel"))
+    await waitFor(() => expect(document.querySelector('[data-testid="resume-intervene-dialog"]')).toBeNull())
+    expect(mockResume).not.toHaveBeenCalled()
+    // 状态没被动过：暂停盘面（派生 paused + 恢复钮）依旧。
+    expect(document.querySelector('[data-task-modal-status="paused"]')).toBeTruthy()
+    expect(document.querySelector("[data-task-resume]")).toBeTruthy()
+  })
+
+  it("直接继续 ▶ = resumeTask(id) 不带干预（textarea 写了字也不带）", async () => {
+    mockResume.mockResolvedValue({})
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    const ta = within(dlg).getByTestId("inject-textarea") as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: "其实想注入但按了直接继续" } })
+    fireEvent.click(within(dlg).getByTestId("inject-plain"))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
+    expect(mockResume.mock.calls[0].length).toBe(1)
+  })
+
+  it("⚑ 注入干预并继续 = resumeTask(id, 原文逐字)", async () => {
+    mockResume.mockResolvedValue({})
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.change(within(dlg).getByTestId("inject-textarea"), { target: { value: "  不要动 Dialog 尺寸逻辑，直接换固定壳  " } })
+    fireEvent.click(within(dlg).getByTestId("inject-confirm"))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1", "不要动 Dialog 尺寸逻辑，直接换固定壳"))
+  })
+
+  it("空文本点注入 = 按原样继续 + 提示，不硬拦", async () => {
+    mockResume.mockResolvedValue({})
+    const { toast } = await import("sonner")
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.click(within(dlg).getByTestId("inject-confirm"))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
+    expect(mockResume.mock.calls[0].length).toBe(1)
+    expect(toast.warning).toHaveBeenCalledWith("没写干预内容 — 按原样继续")
+  })
+
+  it("超 4000 字符：注入键禁用 + 计数提示（上限与服务端 400 同额）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.change(within(dlg).getByTestId("inject-textarea"), { target: { value: "x".repeat(4001) } })
+    const injectBtn = within(dlg).getByTestId("inject-confirm") as HTMLButtonElement
+    expect(injectBtn.disabled).toBe(true)
+    expect(dlg.textContent).toContain("4000")
+  })
+
+  it("注入失败：恢复失败原样透出，弹框关闭不误报成功", async () => {
+    mockResume.mockRejectedValue(new Error("执行未处于暂停状态"))
+    const { toast } = await import("sonner")
+    const t = makeTask("running")
+    renderConsole(t, { ...t, ...pausedView })
+    fireEvent.click(await screen.findByText(/▶ 恢复 · 可注入干预/))
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.change(within(dlg).getByTestId("inject-textarea"), { target: { value: "纠偏" } })
+    fireEvent.click(within(dlg).getByTestId("inject-confirm"))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("执行未处于暂停状态"))
+  })
+
+  it("⏸ 拒绝透传：引擎「没有运行中的节点」原话进 toast（状态不变的友好错误）", async () => {
+    mockPause.mockRejectedValue(new Error("执行当前没有运行中的节点，无法暂停"))
+    const { toast } = await import("sonner")
+    const t = makeTask("running")
+    renderConsole(t, { ...t, executions: [badge("exec-1", "running", { completed_at: null })], derived: derivedOf([pv(1, "票11阶段1", "running")]) })
+    fireEvent.click(await screen.findByText(/⏸ 暂停/))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("执行当前没有运行中的节点，无法暂停"))
+    // 按钮态不骗人：没暂停成功就还是暂停钮，不出现恢复钮。
+    expect(document.querySelector("[data-task-pause]")).toBeTruthy()
+    expect(document.querySelector("[data-task-resume]")).toBeNull()
+  })
+})
+
+describe("票 06 — ⚑ 行进日志 + LIVE 卡计数 + 无游离输入", () => {
+  const ivEvent = {
+    nodeId: "dev", event: "intervention", timestamp: "2026-10-08T02:00:00.000Z",
+    data: { nodeId: "dev", nodeName: "开发/修复", prompt: "别动 Dialog 尺寸逻辑，直接换固定壳" },
+  }
+
+  it("agent-events 里的 ⚑ 行渲染进控制台页签：节点名 + 原文 + 高亮", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-1", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { nodeId: "dev", event: "start", timestamp: "2026-10-08T01:59:00.000Z" },
+        ivEvent,
+      ],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    // paused 默认落「▶ 控制台」；⚑ 行来自 replayTarget 的事件拉取
+    const log = await screen.findByTestId("intervention-log")
+    const line = within(log).getAllByTestId("intervention-line")[0]
+    expect(line.textContent).toContain("⚑ 人工干预")
+    expect(line.textContent).toContain("节点「开发/修复」")
+    expect(line.textContent).toContain("别动 Dialog 尺寸逻辑，直接换固定壳")
+    // 高亮 = 粉色语义（spec：干预高亮=pink 行）
+    expect(line.className).toContain("pop-pink")
+  })
+
+  it("LIVE 卡 ⚑ 干预×N：当前节点每次注入 +1（同节点累计）", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-1", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { ...ivEvent, timestamp: "2026-10-08T01:50:00.000Z" },
+        { ...ivEvent, timestamp: "2026-10-08T02:00:00.000Z" },
+      ],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    const chip = await screen.findByTestId("rail-intervention-chip")
+    expect(chip.textContent).toContain("⚑ 干预×2")
+  })
+
+  it("无干预的盘面：⚑ 区整块不存在，且整个执行壳零游离 textarea/input（不打扰模式）", async () => {
+    mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-1", events: [], source: "sqlite", _degraded: false, _message: null })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    await screen.findByTestId("phase-timeline")
+    expect(screen.queryByTestId("intervention-log")).toBeNull()
+    expect(screen.queryByTestId("rail-intervention-chip")).toBeNull()
+    // running 默认「变更」页 + 切到控制台页：两处都摸不着一枚输入框
+    expect(document.querySelectorAll("textarea")).toHaveLength(0)
+    fireEvent.click(screen.getByTestId("console-tab-console"))
+    await screen.findByText(/P1 · 票11阶段1/)
+    expect(document.querySelectorAll("textarea")).toHaveLength(0)
+    // rail 恢复钮也不在场（只有 ⏸ 暂停）—— 注入口只在「▶ 恢复 · 可注入干预」之后
+    expect(document.querySelector("[data-task-resume]")).toBeNull()
   })
 })
 
@@ -663,9 +850,11 @@ describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
     const acts = document.querySelector("[data-rail-acts]")!
     expect(acts.querySelector("[data-task-resume]")).toBeTruthy()
     expect(acts.querySelector("[data-task-abort]")).toBeTruthy()
-    // 点恢复仍打 resumeTask —— 动作只是位置搬家，接线不变
+    // 点恢复 = 弹「注入干预」三分支框（票 06），确认「直接继续」才打 resumeTask —— 行为单源不旁路。
     mockResume.mockResolvedValue({})
     fireEvent.click(acts.querySelector("[data-task-resume]")!)
+    const dlg = await screen.findByTestId("resume-intervene-dialog")
+    fireEvent.click(within(dlg).getByTestId("inject-plain"))
     await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
   })
 

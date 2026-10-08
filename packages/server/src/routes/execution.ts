@@ -650,6 +650,23 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             ...(iteration != null ? { iteration } : {}),
           }
         }
+        // ⚑ 干预原文（票 06）：resume(intervention) 落库的 event_type='intervention' 行，
+        // content 是 {nodeId,nodeName,prompt} JSON —— 暴露成一等事件供任务控制台渲染
+        // ⚑ 高亮行 / 计 ⚑ 干预×N（与 intervention_result 的孪生映射配成完整一问一答）。
+        if (row.event_type === "intervention") {
+          let data: Record<string, unknown> | null = null
+          try {
+            const parsed = JSON.parse(row.content ?? "{}")
+            if (parsed && typeof parsed === "object") data = parsed as Record<string, unknown>
+          } catch { /* 非 JSON（纯文本）走兜底 */ }
+          if (!data) data = { prompt: row.content ?? "" }
+          return {
+            event: "intervention",
+            nodeId: row.node_id,
+            data,
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
         // Intervention results: content is the result text
         if (row.event_type === "intervention_result") {
           return {

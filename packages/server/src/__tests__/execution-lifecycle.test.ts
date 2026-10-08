@@ -331,6 +331,72 @@ describe("ExecutionLifecycle.pause", () => {
   })
 })
 
+// ==================== resume() — ⚑ 干预留痕（票 06）====================
+
+describe("ExecutionLifecycle.resume — intervention persistence", () => {
+  // A paused execution with a paused node — the shape pause() guarantees and resume()
+  // consumes. The pool is pre-armed with a fake engine (process-boundary stand-in,
+  // same precedent as the stubbed registry in tasks-v4-pause-resume): resume keeps
+  // every real step (validation, row flips, background settle), we simply don't let
+  // real node execution race afterEach's db.close().
+  function pausedExec() {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    dao.updateExecution(exec.id, { status: "paused" })
+    dao.insertNodeExecution({
+      id: `${exec.id}-step1`, execution_id: exec.id,
+      node_id: "step1", node_type: "bash", status: "paused",
+    })
+    lifecycle.getEnginePool().create(exec.id, {
+      updateSignal: () => {},
+      async retryFrom() {
+        return { workflowName: "test", status: "completed", nodeResults: {}, poolSnapshot: {}, durationMs: 1 } as never
+      },
+    } as never, new AbortController())
+    return exec
+  }
+  async function drain(execId: string) {
+    await lifecycle.getEnginePool().waitForSettled(execId, 15_000)
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  const interventionRows = (execId: string) =>
+    db.prepare("SELECT * FROM agent_events WHERE node_execution_id = ? AND event_type = 'intervention'").all(`${execId}-step1`) as Array<{ content: string }>
+
+  it("resume with an intervention leaves an ⚑ event (node + verbatim prompt) in agent_events", async () => {
+    const exec = pausedExec()
+    const res = await lifecycle.resume(exec.id, "别动 Dialog 尺寸逻辑，直接换固定壳")
+    expect(res.success).toBe(true)
+
+    // The UI renders ⚑ 高亮行 from this row via the existing GET agent-events path.
+    // Expected shape comes from the ticket, not from the implementation: prompt rides
+    // through VERBATIM, node identified, name falls back to the id (test.yaml step1
+    // carries no `name:` field — independent fact from the YAML above).
+    const rows = interventionRows(exec.id)
+    expect(rows).toHaveLength(1)
+    expect(JSON.parse(rows[0].content)).toEqual({
+      nodeId: "step1",
+      nodeName: "step1",
+      prompt: "别动 Dialog 尺寸逻辑，直接换固定壳",
+    })
+
+    await drain(exec.id)
+  })
+
+  it("resume without an intervention writes no ⚑ event", async () => {
+    const exec = pausedExec()
+    const res = await lifecycle.resume(exec.id)
+    expect(res.success).toBe(true)
+    expect(interventionRows(exec.id)).toHaveLength(0)
+    await drain(exec.id)
+  })
+
+  it("refused resume (not paused) writes no ⚑ event either — the trace means it happened", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG) // still 'pending'
+    const res = await lifecycle.resume(exec.id, "幽灵注入")
+    expect(res.success).toBe(false)
+    expect(interventionRows(exec.id)).toHaveLength(0)
+  })
+})
+
 // ==================== computeBranch() ====================
 
 describe("ExecutionLifecycle.computeBranch", () => {

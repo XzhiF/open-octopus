@@ -54,6 +54,11 @@ import {
   assembleRailActions, assembleTabs, cycleTab, tabLabel,
   type ConsoleShellMode, type ConsoleShellStatus, type ConsoleTabKey, type RailActionId,
 } from "./tab-assembly"
+import {
+  decideResume, extractInterventions, interventionLineText, interventionStats,
+  type InterventionRow, type InterventionStats, type ResumeDialogAction,
+} from "./intervention"
+import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 
 export interface RunConsoleChrome {
   isFullscreen: boolean
@@ -78,6 +83,8 @@ const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAcceptance }: TaskRunConsoleProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [triggerOpen, setTriggerOpen] = useState(false)
+  // 票 06 · 「▶ 恢复 · 可注入干预」三分支弹框（openInject 的 React 化）。
+  const [injectOpen, setInjectOpen] = useState(false)
   // ── 票 02 页签态 ──
   // tabSel = 用户显式选过的页签；undefined = 未交互，跟随装配表默认（与 phase 选择
   // 的 sel/autoView 双轨同一手法）。keep-mounted 挂载闸保留（2026-09-20 定版）：
@@ -95,6 +102,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     setSel(undefined)
     setTabSel(undefined)
     setAcceptMounted(!!startOnAcceptance)
+    setInjectOpen(false)
   }, [task.id, startOnAcceptance])
 
   const isLive =
@@ -216,6 +224,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [detail, view, phaseViews])
 
   const [signals, setSignals] = useState<SignalLine[]>([])
+  // 票 06 · ⚑ 干预行（同一发 agent-events 拉取榨出 —— 事件流持久化即留痕真相）。
+  const [interventionRows, setInterventionRows] = useState<InterventionRow[]>([])
   const targetId = replayTarget?.id ?? null
   const targetWs = replayTarget?.workspace_id ?? null
   const targetLive = !!replayTarget && LIVE_RUN_STATUSES.has(replayTarget.status)
@@ -224,8 +234,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     let cancelled = false
     const pull = () => {
       fetchAgentEvents(targetWs, targetId)
-        .then((res) => { if (!cancelled) setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations })) })
-        .catch(() => { /* 信号不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
+        .then((res) => {
+          if (cancelled) return
+          setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations }))
+          setInterventionRows(extractInterventions(res.events))
+        })
+        .catch(() => { /* 信号/⚑ 不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
     }
     pull()
     const timer = targetLive && isLive ? setInterval(pull, 5000) : null
@@ -307,6 +321,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     canPause, canResume, canAbort, canReopen,
     armedFuture, canTrigger: !waitingForSlot,
   })
+  // LIVE 卡 ⚑ 干预×N（票 06）：口径 = 最近一次干预的目标节点及其累计（纯函数单源）。
+  const ivStats = useMemo(() => interventionStats(interventionRows), [interventionRows])
 
   const handleAbort = async () => {
     setBusy("abort")
@@ -370,17 +386,25 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       toast.error(err instanceof Error ? err.message : "暂停失败")
     } finally { setBusy(null) }
   }
-  // 恢复不带输入框 —— 票 06 把这里升级成「▶ 恢复 · 可注入干预」（弹框走
-  // resumeTask(id, intervention)），接线函数与判据不变。
-  const handleResume = async () => {
+  // 票 06 · 恢复升级为「▶ 恢复 · 可注入干预」：rail 钮只开框，放行由三分支弹框决定 ——
+  // 取消=纯关窗（暂停原样）；直接继续=不带干预；注入并继续=原文逐字走 resume(intervention)
+  // （≤4000 契约不变，留痕由 ExecutionLifecycle 落 agent_events，⚑ 行走既有事件面回来）。
+  const handleResume = async (intervention?: string) => {
     setBusy("resume")
     try {
-      await resumeTask(task.id)
-      toast.success("已恢复运行")
+      await (intervention ? resumeTask(task.id, intervention) : resumeTask(task.id))
+      toast.success(intervention ? "⚑ 干预已注入 · 日志见 ⚑ 高亮行" : "已恢复运行")
       onMutated(); refetch()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "恢复失败")
     } finally { setBusy(null) }
+  }
+  const handleResumeAction = (action: ResumeDialogAction, text: string) => {
+    const decision = decideResume(action, text)
+    setInjectOpen(false)
+    if (decision.kind === "close") return
+    if (decision.notice) toast.warning(decision.notice)
+    void handleResume(decision.intervention)
   }
 
   // ── 顶栏元信息（原型 .m-meta：⏱ 用时 · $ 成本 · commits · P·R）──
@@ -527,6 +551,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                     const pv = phaseViews.find((p) => p.index === view)
                     return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
                   })()}
+                <InterventionStream rows={interventionRows} />
               </div>
             )}
             {(tab === "files" || tab === "nodes" || tab === "chat") && (
@@ -553,6 +578,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               awaitingPv={awaitingPv}
               costText={costText}
               durText={liveDurText}
+              interventions={ivStats}
             />
           </div>
           <div className="flex shrink-0 flex-col gap-2 border-t-[1.5px] border-pop-bd p-3" data-rail-acts>
@@ -567,7 +593,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   triggerCancel: handleCancelTrigger,
                   reopen: handleReopen,
                   pause: handlePause,
-                  resume: handleResume,
+                  resume: () => setInjectOpen(true), // 票 06：只开注入弹框，放行在框里
                   abort: handleAbort,
                   duplicate: handleDuplicate,
                 }}
@@ -608,6 +634,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
       {/* 对话框宿主（单实例）—— 走查面已收编为页签，不再挂弹窗。 */}
       <TriggerDialog open={triggerOpen} onOpenChange={setTriggerOpen} task={task} onTriggered={() => { onMutated(); refetch() }} />
+      {/* 票 06 · 恢复注入三分支框（Esc 由 Radix 层序先关框再关窗，同 02 裁决）。 */}
+      <ResumeInterventionDialog
+        open={injectOpen}
+        onOpenChange={setInjectOpen}
+        targetNodeLabel={(pausedRun ?? liveRun)?.name || (pausedRun ?? liveRun)?.workflow_ref.replace(/^built-in\//, "") || "当前节点"}
+        busy={busy === "resume"}
+        onAction={handleResumeAction}
+      />
     </div>
     </FoldProvider>
   )
@@ -669,10 +703,10 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
       )
     case "resume":
       return (
-        <button onClick={() => void handlers.resume()} disabled={busy !== null} data-task-resume
+        <button onClick={() => handlers.resume()} disabled={busy !== null} data-task-resume
           className={`${RAIL_BTN} border-pop-amber bg-pop-amber text-pop-bg hover:brightness-110`}
-          title="恢复运行（从被打断的节点继续；干预注入框由票 06 接入）">
-          {spin("resume")}▶ 恢复
+          title="弹出「恢复执行 — 注入干预」：取消（保持暂停）/ 直接继续 / ⚑ 注入并继续">
+          {spin("resume")}▶ 恢复 · 可注入干预
         </button>
       )
     case "abort":
@@ -720,14 +754,15 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
 
 type TaskRunConsoleBusy = "abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null
 
-// ── LIVE / 验收状态卡（原型 .live-card；⚑ 干预计数位留给票 06 点亮）──────
+// ── LIVE / 验收状态卡（原型 .live-card；⚑ 干预×N = 票 06 注入留痕计数）──────
 
-function RailStatusCard({ derivedStatus, liveRun, awaitingPv, costText, durText }: {
+function RailStatusCard({ derivedStatus, liveRun, awaitingPv, costText, durText, interventions }: {
   derivedStatus: string
   liveRun: TaskExecutionBadge | null
   awaitingPv: TaskPhaseView | null
   costText: string
   durText: string
+  interventions: InterventionStats
 }) {
   const running = derivedStatus === "running" && liveRun
   const paused = derivedStatus === "paused"
@@ -751,13 +786,42 @@ function RailStatusCard({ derivedStatus, liveRun, awaitingPv, costText, durText 
       </div>
       <div className="flex flex-col gap-1 bg-pop-paper px-3 py-2 font-mono text-[10.5px] text-pop-dim">
         {(running || paused) && liveRun && (
-          <span>节点 <b className="text-pop-ink">{liveRun.name || liveRun.workflow_ref.replace(/^built-in\//, "")}</b>{liveRun.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}</span>
+          <span>节点 <b className="text-pop-ink">{liveRun.name || liveRun.workflow_ref.replace(/^built-in\//, "")}</b>{liveRun.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}{interventions.currentNodeCount > 0 && (
+            <span className="font-black text-pop-pink" data-testid="rail-intervention-chip"> · ⚑ 干预×{interventions.currentNodeCount}</span>
+          )}</span>
         )}
         {awaiting && <span>执行结果 <b className="text-pop-ink">等你放行</b></span>}
         {derivedStatus === "ready" && <span>等触发 · 发射门禁见「控制台」页签</span>}
         <span>成本 <b className="text-pop-ink">{costText}</b> / 变更 <b className="text-pop-ink">≡ 见「变更」页签</b></span>
-        {paused && <span className="text-pop-amber">暂停中 —— 恢复或中止（干预注入框由票 06 接入）</span>}
+        {paused && <span className="text-pop-amber">暂停中 —— 点下方恢复钮：可注入 ⚑ 干预纠偏，或直接继续</span>}
       </div>
+    </div>
+  )
+}
+
+// ── ⚑ 人工干预流水（票 06：高亮行 = pink，原型 .cl.iv 语调）────────────
+// 数据面 = agent_events 'intervention' 行（ExecutionLifecycle.resume(intervention)
+// 留痕）经 extractInterventions 榨出 —— 没有干预时整块不存在（不打扰模式的呈现面）。
+
+function InterventionStream({ rows }: { rows: InterventionRow[] }) {
+  if (rows.length === 0) return null
+  return (
+    <div className="mt-2.5 space-y-1" data-testid="intervention-log">
+      <div className="px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-pink/80">⚑ 人工干预 / INTERVENTION</div>
+      {rows.map((r, i) => {
+        const line = interventionLineText(r)
+        return (
+          <div
+            key={`${r.at}-${i}`}
+            data-testid="intervention-line"
+            title={line}
+            className="truncate rounded-lg border-[1.5px] border-pop-pink/50 bg-pop-pink-soft px-2 py-1 font-mono text-[11px] text-pop-pink"
+          >
+            {line}
+            {r.at && <span className="ml-1.5 text-[9.5px] text-pop-dim">{clockShort(r.at)}</span>}
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -1363,6 +1363,37 @@ export class ExecutionLifecycle {
     const signal = inst.abortController.signal
     const workflowRef = exec.workflow_ref
 
+    // ⚑ 干预留痕（票 06）：引擎把干预 prompt 只写进 intervention.jsonl（文件），
+    // onAgentEvent 回调只带 intervention_result —— prompt 原文在 DB 读取面是瞎的。
+    // 任务控制台的 ⚑ 高亮行（节点 · 原文 · 时间）经既有 GET agent-events 路径渲染，
+    // 所以在 resume 接受干预的当下落一行 event_type='intervention'。best-effort：
+    // 写失败照常继续（引擎照样收到 prompt），与 intervention_result 同纪律。
+    if (intervention && intervention.trim()) {
+      try {
+        const wf = this.getWorkflow(workflowRef)
+        const nodeName = findNodeDef(wf?.parsed.nodes ?? [], nodeId)?.name || nodeId
+        const content = JSON.stringify({ nodeId, nodeName, prompt: intervention })
+        this.dao.insertAgentEvent({
+          node_execution_id: pausedNode.id,
+          event_order: Date.now(),
+          turn_index: 0,
+          event_type: "intervention",
+          timestamp: Date.now(),
+          content,
+          content_length: intervention.length,
+          tool_call_id: null,
+          tool_name: null,
+          tool_input: null,
+          tool_result: null,
+          tool_is_error: 0,
+          tool_duration_ms: null,
+          status_value: null,
+          error_code: null,
+          error_message: null,
+        })
+      } catch { /* 留痕失败不拦恢复 */ }
+    }
+
     this.runResumeInBackground(executionId, nodeId, signal, intervention, workflowRef)
 
     return { success: true }
