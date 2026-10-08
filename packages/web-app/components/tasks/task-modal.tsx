@@ -3,8 +3,8 @@
 // TaskModal — the unified task modal for the first-class `tasks` domain
 // (v2-D1, SG14 — reads `Task`, NOT `SchedulerJob`). One modal, modes:
 // authoring-template ([+新建] 模板页) / authoring-workspace (draft 对话创作) /
-// simple-execution / composite / done / terminal. v4-only UI 改版后旧的
-// SpecPanel-based AuthoringMode 与其 re-export 已删除；创作走
+// console (票 02 统一壳 — 执行中/待验收/终态同壳同组件) / composite. v4-only UI
+// 改版后旧的 SpecPanel-based AuthoringMode 与其 re-export 已删除；创作走
 // AuthoringWorkspace（task-author 对话 + v4 产出面板）。
 //
 // Drill-down (票03, ADR-0021): a task's runs ARE executions rows, each carrying its
@@ -67,10 +67,11 @@ interface TaskModalProps {
 type ModalMode =
   | "authoring-template"
   | "authoring-workspace"
-  | "simple-execution"
+  // 票 02 统一弹窗壳：旧 simple-execution / done / terminal 三模式收敛为单一
+  // console —— 执行中 / 待验收 / 终态 三类卡片打开同一个 TaskRunConsole 壳，
+  // 差异只在页签装配与右栏（tab-assembly.ts 状态表）。
+  | "console"
   | "composite"
-  | "done"
-  | "terminal"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
@@ -96,19 +97,12 @@ function resolveMode(task: Task | null): ModalMode {
     // 409 兜底。
     return "authoring-workspace"
   }
-  if (task.status === "ready" || task.status === "running") {
-    return isComposite(task) ? "composite" : "simple-execution"
-  }
-  // task-phase-redesign 票 11 双态分流：v4 的 awaiting_review / archiving 是
-  // 「执行期的人机窗口」（验收/归档中），不是终态 — 走执行视图（TaskRunConsole
-  // 的 rail+控制台；验收三栏证据面由控制台判决条拉起）。旧逻辑会把它们误入
-  // terminal（渲染成「任务已中止」横幅）。
-  if (task.status === "awaiting_review" || task.status === "archiving") {
-    return isComposite(task) ? "composite" : "simple-execution"
-  }
-  // done / failed / aborted
-  if (task.status === "done") return isComposite(task) ? "composite" : "done"
-  return isComposite(task) ? "composite" : "terminal"
+  // 票 02：ready/running、awaiting_review/archiving（执行期人机窗口）、
+  // done/failed/aborted（终态只读壳）—— 非 composite 一律落同一个 console 壳。
+  // 旧逻辑在此处分 simple-execution/done/terminal 三模式，壳组件早已统一为
+  // TaskRunConsole，模式名只是历史包袱 —— 收敛掉。
+  if (isComposite(task)) return "composite"
+  return "console"
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -291,10 +285,14 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
           }
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
-            // 2026-09-24 用户改判：任务窗（草稿/执行）不随 Esc 关闭 —— 误触即丢工作区
-            // 太伤；关闭只走 ✕ / 废弃。Esc 仍保留两件事：全屏退出 + 内层弹层/排队自行消费。
+            // 全屏优先：Esc 先退全屏（此时不关窗）。
+            if (isFullscreen) { e.preventDefault(); setIsFullscreen(false); return }
+            // 票 02 统一壳（spec 故事4）：console 壳 Esc 逐层关窗 —— 内层 Radix
+            // 对话框（打回/台账/触发/确认…）在场时先自行消费 Esc，轮到弹窗时再关。
+            if (mode === "console") return
+            // 草稿/复合/模板窗维持 2026-09-24 裁决：不随 Esc 关闭（误触即丢工作区
+            // 太伤；关闭只走 ✕ / 废弃）。
             e.preventDefault()
-            if (isFullscreen) setIsFullscreen(false)
           }}
           onInteractOutside={(e) => e.preventDefault()}
           onPointerDownOutside={(e) => e.preventDefault()}
@@ -309,8 +307,8 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             // term 变体，不挂 DialogTitle），这里补一个 sr-only 标题兜底。
             <DialogTitle className="sr-only">{task?.name ?? "任务草稿"}</DialogTitle>
           )}
-          {(mode === "simple-execution" || mode === "done" || mode === "terminal") && (
-            // 执行态控制台同款：条内标题是纯样式 span，sr-only 兜底。
+          {(mode === "console") && (
+            // 统一壳（票 02）：条内标题是纯样式 span，sr-only 兜底。
             <DialogTitle className="sr-only">{task?.name ?? "任务"}</DialogTitle>
           )}
           {(mode === "composite" || mode === "authoring-template") && (
@@ -345,9 +343,9 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
                 }}
               />
             )}
-            {(mode === "simple-execution" || mode === "done" || mode === "terminal") && task && (
-              // 执行态控制台（2026-09-21 改版）：terminal 导航条 + Phase 流水线
-              // rail + 当前 phase 控制台，done/terminal 默认落「任务战报」。
+            {mode === "console" && task && (
+              // 票 02 统一任务控制台壳：瘦身顶栏 + 页签装配 + 右栏（Pipeline/LIVE +
+              // 底部动作区）；done/terminal 的「任务战报」由「▶ 控制台」页签承接。
               <TaskRunConsole
                 task={task}
                 onMutated={onMutated}
@@ -440,13 +438,9 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
   const subtitle =
     mode === "composite"
       ? "复合任务"
-      : mode === "done"
-        ? "结果"
-        : mode === "terminal"
-          ? "终态"
-          : mode === "authoring-template" || mode === "authoring-workspace"
-            ? "创作"
-            : "执行"
+      : mode === "authoring-template" || mode === "authoring-workspace"
+        ? "创作"
+        : "执行"
   return (
     <DialogHeader
       onPointerDown={onHeaderPointerDown}

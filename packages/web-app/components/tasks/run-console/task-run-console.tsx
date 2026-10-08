@@ -1,13 +1,18 @@
 // packages/web-app/components/tasks/run-console/task-run-console.tsx
 //
-// TaskRunConsole —— 待执行/执行中/待验收/完成（含失败/中止）弹窗的统一壳
-// （2026-09-12 执行弹窗改版·方案已拍板 tmp/exec-modal-proto）。
+// TaskRunConsole —— 统一任务控制台壳（票 02 · taskboard-modal-v2）。
+// 待执行/执行中/待验收/终态 三类卡片点开的是同一个壳（旧 simple-execution/done/
+// terminal 三模式在本壳收敛为单一 "console" ModalMode；composite/authoring 不动）。
 //
-//   ┌ terminal 导航条（28px，与草稿窗同款壳）：红绿灯 + 标题 + 状态 pill +
-//   │   语境 token（秒表/AI 账目/已等时长）+ 动作簇（触发/退回草稿/中止/⛶/关闭方糖）
-//   ├ 左 rail：Phase 流水线 —— 唯一的状态呈现与导航（吸收 PhaseTimeline，
-//   │   票 11 testid 钉点 phase-timeline/phase-row-*/phase-round-*/legacy 全保）
-//   ├ 右 surface：选中 Phase 的控制台（PhaseSurface）/ 总战报（ReportSurface）
+//   ┌ 顶栏（票 02 瘦身，原型 .m-head）：标题 + 状态 pill + ⏱/成本/commits/P·R 元信息
+//   │   + ⛶/✕ —— 不再有动作按钮，红黄蓝「红绿灯」装饰删除（消除误点错觉）。
+//   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·控制台 /
+//   │     awaiting_review 对话·变更·走查·日志 …；←/→ 切页，输入聚焦不劫持）
+//   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted；控制台 = 原
+//   │     Phase/Report 面；变更/节点/对话 = 票 03/04/07 挂载位，当前占位）。
+//   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
+//   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
+//   │   全部接既有 handler，通过/打回接 AcceptanceSurface 决策入口，行为零回退）。
 //   └ footer 状态条（24px）：创建/工作区/v4·N phases + SSE 心跳
 //
 // 数据纪律：derived（票 03 唯一真相）只读不重算；运行账目 = executions[] +
@@ -24,32 +29,36 @@ import {
   PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
-import { effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
+import { computePhaseBadge, effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
 import { EditableTitle } from "../editable-title"
-import { AcceptanceSurface } from "../acceptance/acceptance-surface"
+import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, AggInline, TaskAiUsageCard, execLabel,
+  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
-import { FoldMasterBar, FoldMasterChip, FoldProvider } from "../fold-context"
+import { FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone, sumRunMs,
 } from "./phase-status"
+import {
+  assembleRailActions, assembleTabs, cycleTab, tabLabel,
+  type ConsoleShellMode, type ConsoleShellStatus, type ConsoleTabKey, type RailActionId,
+} from "./tab-assembly"
 
 export interface RunConsoleChrome {
   isFullscreen: boolean
   onToggleFullscreen: () => void
-  /** 🎪 按住导航条空白拖窗（与草稿窗 chrome 同契约）。 */
+  /** 🎪 按住顶栏空白拖窗（与草稿窗 chrome 同契约）。 */
   onHeaderPointerDown?: (e: React.PointerEvent) => void
 }
 
@@ -58,7 +67,7 @@ interface TaskRunConsoleProps {
   onMutated: () => void
   onClose: () => void
   chrome?: RunConsoleChrome
-  /** 看板「验收」按钮直开时：落地即选中「验货台」tab。 */
+  /** 看板「验收」按钮直开时：落地即选中「✓ 走查」页签。 */
   startOnAcceptance?: boolean
 }
 
@@ -69,19 +78,22 @@ const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAcceptance }: TaskRunConsoleProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [triggerOpen, setTriggerOpen] = useState(false)
-  // 验货台 = 本控制台的 tab（2026-09-16 改版：原三栏弹窗 AcceptanceModal 收编
-  // 内嵌，父窗自带拖拽/缩放/全屏；打回回显留在 tab 里，不随派生态变化弹出）。
-  const [surfaceTab, setSurfaceTab] = useState<"console" | "accept">("console")
-  // keep-mounted 挂载闸（2026-09-20）：点过验货台或出现待验收轮后**常挂载**，
-  // tab 切换只切 hidden —— 三元卸载会把在飞的复检会话打回服务端尾 200 行、
-  // gate/编辑草稿归零、重拉 5-6 个请求（「切走再回来失忆」）。换任务时复位。
+  // ── 票 02 页签态 ──
+  // tabSel = 用户显式选过的页签；undefined = 未交互，跟随装配表默认（与 phase 选择
+  // 的 sel/autoView 双轨同一手法）。keep-mounted 挂载闸保留（2026-09-20 定版）：
+  // 点过走查或出现待验收轮后常挂载，切页只切 hidden —— 三元卸载会把在飞的复检
+  // 会话打回服务端尾 200 行、gate/编辑草稿归零。换任务时复位。
+  const [tabSel, setTabSel] = useState<ConsoleTabKey | undefined>(undefined)
   const [acceptMounted, setAcceptMounted] = useState(!!startOnAcceptance)
+  // AcceptanceSurface 决策入口句柄（右栏底部 通过/打回 的接线柱；走查面自己的
+  // 动作列保持原样，两处按钮调同一组函数，行为单源）。
+  const [acceptApi, setAcceptApi] = useState<AcceptanceActionApi | null>(null)
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
     setSel(undefined)
-    setSurfaceTab(startOnAcceptance ? "accept" : "console")
+    setTabSel(undefined)
     setAcceptMounted(!!startOnAcceptance)
   }, [task.id, startOnAcceptance])
 
@@ -223,11 +235,43 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const ctx: RunCtx = {
     task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
     now, isLive, events, signals, refetch, onMutated,
-    openAcceptance: () => setSurfaceTab("accept"),
+    openAcceptance: () => setTabSel("review"),
     openTrigger: () => setTriggerOpen(true),
   }
 
-  // ── 导航条动作 ─────────────────────────────────────────────────────
+  // ── 页签装配（票 02 · tab-assembly 纯函数单源）────────────────────────
+  // takeover/fixing 形态由 05/08 在执行推导落地后传入；壳层现在恒 flow。
+  const shellMode: ConsoleShellMode = "flow"
+  const tabs = useMemo(
+    () => assembleTabs({
+      status: derivedStatus as ConsoleShellStatus,
+      mode: shellMode,
+      v4: !!derived?.isV4,
+      startOnAcceptance,
+    }),
+    [derivedStatus, shellMode, derived?.isV4, startOnAcceptance],
+  )
+  const tab: ConsoleTabKey = tabSel && tabs.keys.includes(tabSel) ? tabSel : tabs.defaultKey
+
+  // ←/→ 切页：输入焦点（input/textarea/select/编辑区）与弹层内不劫持光标。
+  useEffect(() => {
+    if (tabs.keys.length < 2) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return
+      if (t?.closest?.('[role="dialog"], [role="listbox"], [role="combobox"], [role="menu"]')) return
+      e.preventDefault()
+      setTabSel((prev) => {
+        const cur = prev && tabs.keys.includes(prev) ? prev : tabs.defaultKey
+        return cycleTab(tabs.keys, cur, e.key === "ArrowRight" ? 1 : -1)
+      })
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [tabs])
+
+  // ── 右栏底部动作判据（与导航条旧判据逐字一致，只是位置搬家）───────────
   // canAbort / canReopen 读**持久**态，刻意不切派生态：暂停期间持久态仍是 running，
   // 这正是中止这条逃生口要保持畅通的原因（暂停的退出只有恢复与中止）。canAbort 因
   // 此在暂停时天然为真 —— 已由 server 侧测试钉住。
@@ -249,10 +293,20 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     : null
   const waitedMs = awaitingRun?.completed_at ? Math.max(0, now - Date.parse(awaitingRun.completed_at)) : null
 
-  // keep-mounted 触发：待验收轮一出现（或用户点过验货台）即常挂载，此后不随派生态消失而卸载。
+  // keep-mounted 触发：待验收轮一出现（或用户点过走查）即常挂载，此后不随派生态消失而卸载。
   useEffect(() => {
     if (awaitingPv) setAcceptMounted(true)
   }, [awaitingPv])
+  useEffect(() => {
+    if (tab === "review") setAcceptMounted(true)
+  }, [tab])
+
+  const railActions = assembleRailActions({
+    status: derivedStatus as ConsoleShellStatus,
+    mode: shellMode,
+    canPause, canResume, canAbort, canReopen,
+    armedFuture, canTrigger: !waitingForSlot,
+  })
 
   const handleAbort = async () => {
     setBusy("abort")
@@ -316,9 +370,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       toast.error(err instanceof Error ? err.message : "暂停失败")
     } finally { setBusy(null) }
   }
-  // 恢复不带输入框 —— 与工作流页完全一致（workflow-flow-panel.resumeExecution 也只在
-  // 调用方能给时才带 intervention；execution-panel 干脆不带 body）。intervention 是
-  // API 能力，不是这里的必经步骤；想要的是一模一样的操作手感。
+  // 恢复不带输入框 —— 票 06 把这里升级成「▶ 恢复 · 可注入干预」（弹框走
+  // resumeTask(id, intervention)），接线函数与判据不变。
   const handleResume = async () => {
     setBusy("resume")
     try {
@@ -330,52 +383,59 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     } finally { setBusy(null) }
   }
 
-  const barBtn = "rounded border-[1.5px] border-pop-bd px-1.5 py-px text-[9.5px] font-black text-pop-ink transition-colors hover:border-pop-yellow hover:text-pop-yellow"
+  // ── 顶栏元信息（原型 .m-meta：⏱ 用时 · $ 成本 · commits · P·R）──
+  const { ms: runMs, count: runCount } = sumRunMs(runs, now)
+  const liveDurText = liveRun && LIVE_RUN_STATUSES.has(liveRun.status) && liveRun.status !== "paused"
+    ? liveDur(liveRun, now)
+    : runCount > 0 ? shortDur(runMs) : "—"
+  const costText = totalAgg && totalAgg.totalCalls > 0
+    ? formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)
+    : "—"
+  const prBadge = computePhaseBadge(derived ?? undefined)
+  // commits 元信息：数据源 = 票 03 的 round-diff aggregate（壳内 [data-head-commits]
+  // 挂载位；03 落地前如实显示 —，不臆造）。
+  const headCommits: number | null = null
 
   return (
     <FoldProvider taskId={task.id}>
     <div className="flex h-full min-h-0 flex-col" data-run-console={task.status}>
-      {/* ── terminal 导航条 ──（与草稿窗同壳：28px 深色 mono） */}
+      {/* ── 顶栏（票 02 瘦身）：标题 + pill + 元信息 + ⛶/✕，别无其它按钮 ── */}
       <div
         data-terminal-bar
         onPointerDown={chrome?.onHeaderPointerDown}
         title={chrome ? "按住空白处拖拽移动窗口" : undefined}
         className={
-          "flex h-7 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[1.5px] border-pop-bd bg-pop-idle px-2.5 font-mono text-[11px] text-pop-ink " +
+          "flex h-9 shrink-0 select-none items-center gap-2 overflow-hidden whitespace-nowrap border-b-[1.5px] border-pop-bd bg-pop-idle px-3 font-mono text-[11px] text-pop-ink " +
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
-        <span aria-hidden className="flex shrink-0 items-center gap-[5px]">
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-pink" />
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-yellow" />
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-cyan" />
-        </span>
-        <span aria-hidden className="shrink-0 text-pop-dim/40">│</span>
+        <span aria-hidden className="shrink-0 font-black text-pop-pink">❯</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
-        <span aria-hidden className="shrink-0 text-pop-dim/40">│</span>
         <span
           data-task-modal-status={derivedStatus}
           className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[derivedStatus] ?? "border-pop-bd text-pop-dim"}`}
         >
           {derivedStatus === "awaiting_review" && awaitingPv
             ? `◆ 待验收 · P${awaitingPv.index}`
-            : `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`}
+            : derivedStatus === "running"
+              ? `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
+              : `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`}
         </span>
-        {/* 语境 token：一条把「现在最该知道的数」说完 */}
+        {/* 元信息区：只读数字，零按钮（用时/成本/commits/P·R） */}
+        <span className="ml-2 flex shrink-0 items-center gap-3 text-[10.5px] text-pop-dim" data-head-meta>
+          <span title={runCount > 0 ? `实跑 ${runCount} 轮 —— 只计 workflow 运行段` : undefined}>⏱ <b className="font-semibold text-pop-ink tabular-nums">{liveDurText}</b></span>
+          <span className="text-pop-yellow">$ <b className="tabular-nums">{costText.replace(/^\$\s*/, "")}</b></span>
+          <span data-head-commits={headCommits ?? "pending"} title="commits 计数随「≡ 变更」页签接入（票 03）">{headCommits ?? "—"} commits</span>
+          {prBadge && (
+            <span className="tabular-nums">P {prBadge.phase}/{prBadge.total}{prBadge.round != null ? ` · R${prBadge.round}` : ""}</span>
+          )}
+        </span>
+        {/* 语境 token（就绪/暂停/等待放行等「现在最该知道的一句话」，只读） */}
         {derivedStatus === "ready" && (armedFuture
           ? <span className="shrink-0 text-pop-dim">⏰ 已定时 <b className="text-pop-ink">{clockShort(dueAt)}</b> 触发</span>
           : waitingForSlot
             ? <span className="shrink-0 text-pop-amber">⏳ 已到点，等并发闸…</span>
             : <span className="shrink-0 text-pop-dim">⚡ 待触发 · {specPhases.length || phaseViews.length} phases</span>)}
-        {derivedStatus === "running" && liveRun && (
-          <>
-            <span className="shrink-0 text-pop-dim">⏱ <b className="text-pop-ink tabular-nums">{liveDur(liveRun, now)}</b>{liveRun.phase_index != null ? `（P${liveRun.phase_index}·R${liveRun.round_index ?? 1}）` : ""}</span>
-            {totalAgg && totalAgg.totalCalls > 0 && (
-              <AggInline agg={totalAgg} className="shrink-0 font-mono text-pop-dim" dim="text-pop-dim" />
-            )}
-          </>
-        )}
-        {/* 暂停：不显秒表（时间不在走），只说「等你恢复」 */}
         {derivedStatus === "paused" && (
           <span className="shrink-0 text-pop-dim">⏸ 已暂停{pausedRun?.phase_index != null ? `（P${pausedRun.phase_index}·R${pausedRun.round_index ?? 1}）` : ""} · 恢复后从该节点重跑</span>
         )}
@@ -388,172 +448,133 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         )}
 
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          {canReopen && (
-            <button onClick={() => void handleReopen()} disabled={busy !== null} data-task-reopen className={barBtn} title="退回草稿继续修改">
-              ↺ 退回草稿
-            </button>
-          )}
-          {task.status === "awaiting_review" && (
-            <button onClick={() => setSurfaceTab("accept")} data-acceptance-open-bar className={barBtn} title="切到验货台 tab（摘要/实物·核对/动作）">
-              🔍 验货台
-            </button>
-          )}
-          {task.status === "ready" && !armedFuture && !waitingForSlot && (
-            <button
-              onClick={() => setTriggerOpen(true)}
-              disabled={busy !== null}
-              data-task-trigger
-              className="flex shrink-0 items-center gap-1 rounded-[7px] border-[1.5px] border-pop-bd bg-pop-green px-2.5 py-1 text-[10px] font-black text-pop-bg shadow-pop-sm transition-colors pop-press hover:brightness-110"
-            >
-              ⚡ 触发
-            </button>
-          )}
-          {task.status === "ready" && armedFuture && (
-            <button onClick={() => void handleCancelTrigger()} disabled={busy !== null} data-task-trigger-cancel className="rounded border-[1.5px] border-pop-amber/60 px-1.5 py-px text-[9.5px] font-black text-pop-amber transition-colors hover:bg-pop-amber hover:text-pop-bg">
-              ✕ 取消触发
-            </button>
-          )}
-          {/* task-pause: 暂停/恢复 —— 委派给绑定执行，与工作流页同操作。
-              只有真有一轮 running 时才给「暂停」（服务端同样只认 running：停在审批
-              节点的运行是引擎活着在等人，标成已暂停会把「需要你审批」盖掉）。 */}
-          {canPause && (
-            <button
-              onClick={() => void handlePause()}
-              disabled={busy !== null}
-              data-task-pause
-              className={barBtn}
-              title="暂停这一轮（中断当前节点；恢复时从该节点重跑）"
-            >
-              {busy === "pause" ? <Spinner className="size-2.5" /> : "⏸ 暂停"}
-            </button>
-          )}
-          {canResume && (
-            <button
-              onClick={() => void handleResume()}
-              disabled={busy !== null}
-              data-task-resume
-              className="rounded border-[1.5px] border-pop-green/60 px-1.5 py-px text-[9.5px] font-black text-pop-green transition-colors hover:bg-pop-green hover:text-pop-bg"
-              title="恢复运行（从被打断的节点继续）"
-            >
-              {busy === "resume" ? <Spinner className="size-2.5" /> : "▶ 恢复"}
-            </button>
-          )}
-          {canAbort && (
-            <button
-              onClick={() => void handleAbort()}
-              disabled={busy !== null}
-              data-task-abort
-              className="rounded border-[1.5px] border-pop-red/60 px-1.5 py-px text-[9.5px] font-black text-pop-red transition-colors hover:bg-pop-red hover:text-pop-ink"
-              title="中止任务（工作区将清理）"
-            >
-              {busy === "abort" ? <Spinner className="size-2.5" /> : "■ 中止"}
-            </button>
-          )}
-          {/* duplicate: 任意状态可用 —— 实现不满意 → 整单复制再跑一单。 */}
-          <button
-            onClick={() => void handleDuplicate()}
-            disabled={busy !== null}
-            data-task-duplicate
-            className={barBtn}
-            title="复制整单（spec/issues/自写 workflows 全量）→ 新任务直入待执行"
-          >
-            {busy === "duplicate" ? <Spinner className="size-2.5" /> : "⧉ 复制"}
-          </button>
           {chrome && (
             <button
               onClick={chrome.onToggleFullscreen}
               title={chrome.isFullscreen ? "退出全屏 (Esc)" : "全屏"}
-              className="rounded border-[1.5px] border-transparent p-0.5 text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-yellow"
+              aria-label="全屏"
+              className="rounded border-[1.5px] border-transparent p-1 text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-yellow"
             >
-              {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+              {chrome.isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
             </button>
           )}
           <button
             onClick={onClose}
             aria-label="关闭"
-            title="关闭（Esc 同效）"
-            className="grid size-[19px] shrink-0 place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-[10px] font-black leading-none text-pop-ink shadow-pop-sm transition-colors pop-press hover:brightness-110"
+            title="关闭"
+            className="grid size-[22px] shrink-0 place-items-center rounded-[8px] border-[1.5px] border-pop-bd bg-pop-red text-[11px] font-black leading-none text-pop-ink shadow-pop-sm transition-colors pop-press hover:brightness-110"
           >
             <span aria-hidden>✕</span>
           </button>
         </span>
       </div>
 
-      {/* ── 主体：rail + surface ── */}
+      {/* ── 主体：左（页签+内容）· 右 rail（原型 .m-body / .m-rail）── */}
       <div className="flex min-h-0 flex-1">
-        <PipelineRail
-          ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel}
-          isV4={isV4} aggLoaded={aggLoaded}
-          showMaster={!(awaitingPv || surfaceTab === "accept")}
-        />
         <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
-          {/* ── surface tabs（2026-09-16）：有待验收轮时亮出「执行控制台 | 验货台」
-              二档 —— 验货台从独立弹窗收编为 tab，继承父窗拖拽/缩放/全屏。
-              打回后派生态暂无 awaiting（修复轮在跑），若用户正停在验货台看
-              回显卡，条不撤（撤了就等于把 seam 踢没）。 ── */}
-          {(awaitingPv || surfaceTab === "accept") && (
-            <div className="flex shrink-0 items-center gap-1.5 border-b-[2px] border-pop-bd bg-pop-paper px-3 py-1.5" data-console-tabs>
+          {/* 页签条（装配表驱动；count 徽标随 03/04 填充） */}
+          <div className="flex shrink-0 items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-paper py-1.5 pl-3 pr-2.5" data-console-tabs>
+            {tabs.keys.map((k) => (
               <button
-                onClick={() => setSurfaceTab("console")}
-                aria-selected={surfaceTab === "console"}
-                data-console-tab="console" data-testid="console-tab-console"
-                className={`rounded-full border-[1.5px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
-                  surfaceTab === "console"
+                key={k}
+                onClick={() => setTabSel(k)}
+                aria-selected={tab === k}
+                data-console-tab={k}
+                data-testid={`console-tab-${k}`}
+                className={`flex items-center gap-1 rounded-full border-[1.5px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
+                  tab === k
                     ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm"
                     : "border-pop-bd text-pop-dim hover:border-pop-bd/60"
                 }`}
               >
-                ▶ 执行控制台
+                {tabLabel(k, { status: derivedStatus as ConsoleShellStatus, mode: shellMode })}
+                {k === "review" && awaitingPv && (
+                  <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>
+                )}
               </button>
-              <button
-                onClick={() => setSurfaceTab("accept")}
-                aria-selected={surfaceTab === "accept"}
-                data-console-tab="accept" data-testid="console-tab-accept"
-                className={`flex items-center gap-1 rounded-full border-[1.5px] px-2.5 py-px font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
-                  surfaceTab === "accept"
-                    ? "border-pop-bd bg-pop-amber text-pop-bg shadow-pop-sm"
-                    : "border-pop-amber/50 bg-pop-amber-soft text-pop-amber hover:border-pop-bd/60"
-                }`}
-              >
-                🔍 验货台
-                {awaitingPv && <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>}
-              </button>
-              <FoldMasterChip className="ml-auto" />
-            </div>
-          )}
-          {/* keep-mounted：见 acceptMounted 声明处注释。hidden 切换而非三元卸载，
-              复检会话/走查 gate/编辑草稿活过 tab 往返；e2e 的 [data-acceptance-modal]
-              可见性断言不受影响（Radix 之外，hidden 属性即 Playwright 不可见）。 */}
-          {acceptMounted && (
-            <div className={`min-h-0 flex-1 bg-pop-paper ${surfaceTab !== "accept" ? "hidden" : ""}`}>
-              {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入（嵌入式
-                  AcceptanceSurface 不再自养第三份副本 / 重复订 phase 事件）。 */}
-              <AcceptanceSurface
-                task={task}
-                detailOverride={detail}
-                onRefetch={refetch}
-                onMutated={() => { onMutated(); refetch() }}
-                onDecided={() => setSurfaceTab("console")}
-              />
-            </div>
-          )}
-          {surfaceTab !== "accept" && (
-            <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
-              {view !== "report" && derived && runs.length > 0 && (
-                <TaskAiUsageCard
-                  agg={totalAgg} loading={!aggLoaded} runCount={runs.length}
-                  rounds={runs.map((r) => ({ key: r.id, label: execLabel(r), agg: aggMap[r.id] ?? null }))}
+            ))}
+            <FoldMasterChip className="ml-auto" />
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            {/* keep-mounted：hidden 切换而非卸载 —— 复检会话/走查 gate/编辑草稿
+                活过页签往返；[data-acceptance-modal] 锚点在 surface 内原样。 */}
+            {acceptMounted && (
+              <div className={`min-h-0 flex-1 bg-pop-paper ${tab !== "review" ? "hidden" : ""}`}>
+                {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入；
+                    onActionApi = 右栏底部 通过/打回 的接线柱（行为单源在 surface）。 */}
+                <AcceptanceSurface
+                  task={task}
+                  detailOverride={detail}
+                  onRefetch={refetch}
+                  onMutated={() => { onMutated(); refetch() }}
+                  onDecided={() => setTabSel("console")}
+                  onActionApi={setAcceptApi}
                 />
-              )}
-              {view === "report" || !derived
-                ? <ReportSurface ctx={ctx} />
-                : (() => {
-                  const pv = phaseViews.find((p) => p.index === view)
-                  return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
-                })()}
-            </div>
-          )}
+              </div>
+            )}
+            {tab === "console" && (
+              <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+                {view !== "report" && derived && runs.length > 0 && (
+                  <TaskAiUsageCard
+                    agg={totalAgg} loading={!aggLoaded} runCount={runs.length}
+                    rounds={runs.map((r) => ({ key: r.id, label: execLabel(r), agg: aggMap[r.id] ?? null }))}
+                  />
+                )}
+                {view === "report" || !derived
+                  ? <ReportSurface ctx={ctx} />
+                  : (() => {
+                    const pv = phaseViews.find((p) => p.index === view)
+                    return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
+                  })()}
+              </div>
+            )}
+            {(tab === "files" || tab === "nodes" || tab === "chat") && (
+              // 票间挂载位契约（03 变更 / 04 节点 / 07 对话）：内容组件替换这块
+              // placeholder 即可，页签装配、键盘、右栏、keep-mounted 都已就位。
+              <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host={tab}>
+                <div className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim">
+                  {tab === "files" && <>≡ 变更页签 —— GitHub 式文件列表 + unified diff 与统计条由<b className="text-pop-ink">票 03</b> 挂载。数据源 = 既有 GET /api/tasks/:id/round-diff（本轮/累计口径、无新后端）。</>}
+                  {tab === "nodes" && <>◆ 节点页签 —— 工作流节点任务清单（状态/类型/用时/成本 + 节点事件 + 深链执行详情）由<b className="text-pop-ink">票 04</b> 挂载。数据源 = 既有执行详情/节点事件端点。</>}
+                  {tab === "chat" && <>💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。</>}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* 右 rail：Pipeline + LIVE/验收卡（滚动） + 底部动作区（钉底） */}
+        <aside className="flex w-[296px] shrink-0 min-h-0 flex-col border-l-[1.5px] border-pop-bd bg-pop-idle">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <PipelineRail ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel} isV4={isV4} aggLoaded={aggLoaded} />
+            <RailStatusCard
+              derivedStatus={derivedStatus}
+              liveRun={liveRun}
+              awaitingPv={awaitingPv}
+              costText={costText}
+              durText={liveDurText}
+            />
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 border-t-[1.5px] border-pop-bd p-3" data-rail-acts>
+            {railActions.map((id) => (
+              <RailActionButton
+                key={id}
+                id={id}
+                busy={busy}
+                acceptApi={acceptApi}
+                handlers={{
+                  trigger: () => setTriggerOpen(true),
+                  triggerCancel: handleCancelTrigger,
+                  reopen: handleReopen,
+                  pause: handlePause,
+                  resume: handleResume,
+                  abort: handleAbort,
+                  duplicate: handleDuplicate,
+                }}
+              />
+            ))}
+          </div>
+        </aside>
       </div>
 
       {/* ── footer 状态条 ── */}
@@ -585,19 +606,167 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         )}
       </div>
 
-      {/* 对话框宿主（单实例）—— 验货台已收编为上方 tab，不再挂弹窗。 */}
+      {/* 对话框宿主（单实例）—— 走查面已收编为页签，不再挂弹窗。 */}
       <TriggerDialog open={triggerOpen} onOpenChange={setTriggerOpen} task={task} onTriggered={() => { onMutated(); refetch() }} />
     </div>
     </FoldProvider>
   )
 }
 
-// ── 左 rail：Phase 流水线（唯一状态位）──────────────────────────────
+// ── 右栏底部动作钮（票 02：动作区按状态装配，仍接既有实现）────────────
 
-function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMaster }: {
+const RAIL_BTN = "w-full rounded-xl border-[1.5px] px-2.5 py-1.5 text-center font-mono text-[11px] font-black shadow-pop-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+
+interface RailActionHandlers {
+  trigger: () => void
+  triggerCancel: () => void
+  reopen: () => void
+  pause: () => void
+  resume: () => void
+  abort: () => void
+  duplicate: () => void
+}
+
+function RailActionButton({ id, busy, acceptApi, handlers }: {
+  id: RailActionId
+  busy: TaskRunConsoleBusy
+  acceptApi: AcceptanceActionApi | null
+  handlers: RailActionHandlers
+}) {
+  const spin = (k: Exclude<TaskRunConsoleBusy, null>) => busy === k ? <Spinner className="mr-1 inline size-3" /> : null
+  switch (id) {
+    case "trigger":
+      return (
+        <button onClick={handlers.trigger} disabled={busy !== null} data-task-trigger
+          className={`${RAIL_BTN} border-pop-green bg-pop-green text-pop-bg hover:brightness-110`}
+          title="打开触发对话框（发射门禁在「控制台」页签）">
+          ⚡ 触发
+        </button>
+      )
+    case "trigger-cancel":
+      return (
+        <button onClick={() => void handlers.triggerCancel()} disabled={busy !== null} data-task-trigger-cancel
+          className={`${RAIL_BTN} border-pop-amber/60 text-pop-amber hover:bg-pop-amber hover:text-pop-bg`}
+          title="取消定时触发">
+          {spin("cancel")}✕ 取消触发
+        </button>
+      )
+    case "reopen":
+      return (
+        <button onClick={() => void handlers.reopen()} disabled={busy !== null} data-task-reopen
+          className={`${RAIL_BTN} border-pop-bd bg-pop-paper text-pop-ink hover:border-pop-yellow hover:text-pop-yellow`}
+          title="退回草稿继续修改">
+          {spin("reopen")}↺ 退回草稿
+        </button>
+      )
+    case "pause":
+      return (
+        <button onClick={() => void handlers.pause()} disabled={busy !== null} data-task-pause
+          className={`${RAIL_BTN} border-pop-bd bg-pop-paper text-pop-ink hover:border-pop-amber hover:text-pop-amber`}
+          title="暂停这一轮（中断当前节点；恢复时从该节点重跑）">
+          {spin("pause")}⏸ 暂停
+        </button>
+      )
+    case "resume":
+      return (
+        <button onClick={() => void handlers.resume()} disabled={busy !== null} data-task-resume
+          className={`${RAIL_BTN} border-pop-amber bg-pop-amber text-pop-bg hover:brightness-110`}
+          title="恢复运行（从被打断的节点继续；干预注入框由票 06 接入）">
+          {spin("resume")}▶ 恢复
+        </button>
+      )
+    case "abort":
+      return (
+        <button onClick={() => void handlers.abort()} disabled={busy !== null} data-task-abort
+          className={`${RAIL_BTN} border-pop-red/60 bg-pop-paper text-pop-red hover:bg-pop-red hover:text-pop-ink`}
+          title="中止任务（工作区将清理）">
+          {spin("abort")}■ 中止
+        </button>
+      )
+    case "accept":
+      return (
+        <button
+          onClick={() => acceptApi?.requestAccept()}
+          disabled={acceptApi === null || acceptApi.blocked}
+          title={acceptApi?.blocked ? "存在 ✗ 未过项 —— 通过被拦，请改走打回" : "先弹台账预览确认（既有 D8 流程），确认才落决策"}
+          data-rail-accept
+          className={`${RAIL_BTN} border-pop-green bg-pop-green text-pop-bg hover:brightness-110`}
+        >
+          ✓ 验收通过
+        </button>
+      )
+    case "reject":
+      return (
+        <button
+          onClick={() => acceptApi?.openReject()}
+          disabled={acceptApi === null}
+          title="打开打回反馈框（既有表单与弹窗，行为单源在走查面）"
+          data-rail-reject
+          className={`${RAIL_BTN} border-pop-bd bg-pop-paper text-pop-dim hover:text-pop-pink hover:border-pop-pink/50`}
+        >
+          ↩ 打回 · 写反馈
+        </button>
+      )
+    case "duplicate":
+      return (
+        <button onClick={() => void handlers.duplicate()} disabled={busy !== null} data-task-duplicate
+          className="w-full rounded-lg border-[1.5px] border-pop-bd bg-pop-paper px-2 py-1 text-center font-mono text-[10px] font-black text-pop-dim transition-colors hover:text-pop-ink"
+          title="复制整单（spec/issues/自写 workflows 全量）→ 新任务直入待执行">
+          {spin("duplicate")}⧉ 复制整单
+        </button>
+      )
+  }
+}
+
+type TaskRunConsoleBusy = "abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null
+
+// ── LIVE / 验收状态卡（原型 .live-card；⚑ 干预计数位留给票 06 点亮）──────
+
+function RailStatusCard({ derivedStatus, liveRun, awaitingPv, costText, durText }: {
+  derivedStatus: string
+  liveRun: TaskExecutionBadge | null
+  awaitingPv: TaskPhaseView | null
+  costText: string
+  durText: string
+}) {
+  const running = derivedStatus === "running" && liveRun
+  const paused = derivedStatus === "paused"
+  const awaiting = derivedStatus === "awaiting_review" && awaitingPv
+  const hd = awaiting
+    ? `◔ 验收 · P${awaitingPv!.index}·R${awaitingPv!.awaitingRound ?? "?"}`
+    : paused
+      ? `⏸ PAUSED${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
+      : running
+        ? `▶ LIVE ROUND · R${liveRun.round_index ?? 1}`
+        : derivedStatus === "ready"
+          ? "⚡ READY"
+          : derivedStatus === "archiving"
+            ? "🗄 归档中"
+            : `■ ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`
+  return (
+    <div className="mx-2.5 mb-2.5 overflow-hidden rounded-xl border-[1.5px] border-pop-purple/60" data-testid="rail-live-card">
+      <div className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5 font-mono text-[10px] font-black text-pop-purple">
+        {hd}
+        <span className="ml-auto tabular-nums text-pop-ink">{durText}</span>
+      </div>
+      <div className="flex flex-col gap-1 bg-pop-paper px-3 py-2 font-mono text-[10.5px] text-pop-dim">
+        {(running || paused) && liveRun && (
+          <span>节点 <b className="text-pop-ink">{liveRun.name || liveRun.workflow_ref.replace(/^built-in\//, "")}</b>{liveRun.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}</span>
+        )}
+        {awaiting && <span>执行结果 <b className="text-pop-ink">等你放行</b></span>}
+        {derivedStatus === "ready" && <span>等触发 · 发射门禁见「控制台」页签</span>}
+        <span>成本 <b className="text-pop-ink">{costText}</b> / 变更 <b className="text-pop-ink">≡ 见「变更」页签</b></span>
+        {paused && <span className="text-pop-amber">暂停中 —— 恢复或中止（干预注入框由票 06 接入）</span>}
+      </div>
+    </div>
+  )
+}
+
+// ── 右 rail：Phase 流水线（唯一状态位）──────────────────────────────
+// 票 02：从左侧搬进右栏（原型 .m-rail 语义）；票 11 钉点 testid 原样保留。
+
+function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
   ctx: RunCtx; budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean; aggLoaded: boolean
-  /** tab 条缺席（非待验收）时，一键盘落 rail 头部；有 tab 条则让位，绝不同时出两枚。 */
-  showMaster: boolean
 }) {
   const { task, detail, phaseViews, now, totalAgg } = ctx
   const derived = detail?.derived
@@ -606,10 +775,9 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
   const { ms: runMs, count: runCount } = sumRunMs(runs, now)
 
   return (
-    <div className="w-[230px] shrink-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-paper px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
+    <div className="min-h-0 px-2.5 py-2.5" data-testid="phase-timeline" data-run-rail>
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
-        {showMaster && <span className="ml-auto"><FoldMasterBar /></span>}
       </div>
 
       {terminal && isV4 && phaseViews.length > 0 && (
@@ -623,7 +791,7 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded, showMast
           onClick={() => onSelect("report")}
           data-testid="phase-row-legacy"
           data-phase-status={derived.taskStatus}
-          className={`flex w-full items-center gap-2 rounded-xl border-[1.5px] bg-pop-bg px-2 py-1.5 text-left shadow-pop-sm transition-transform ${view === "report" ? "border-[1.5px] border-pop-bd outline outline-[2px] outline-pop-yellow outline-offset-[1.5px]" : "border-pop-bd/70 hover:-translate-y-px"}`}
+          className={`mb-1 flex w-full items-center gap-2 rounded-xl border-[1.5px] bg-pop-bg px-2 py-1.5 text-left shadow-pop-sm transition-transform ${view === "report" ? "border-[1.5px] border-pop-bd outline outline-[2px] outline-pop-yellow outline-offset-[1.5px]" : "border-pop-bd/70 hover:-translate-y-px"}`}
         >
           <span className="grid size-[18px] shrink-0 place-items-center rounded-[6px] border-[1.5px] border-pop-bd bg-pop-idle font-mono text-[9px] font-black text-pop-dim">V3</span>
           <span className="min-w-0">

@@ -5,7 +5,7 @@
 // （叙述 tab 已于 2026-09-20 用户裁决退役，批次清单只剩 round-report 定位一职）；
 // 复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDetail, TaskDerivedView } from "@/lib/tasks-api"
 
@@ -853,45 +853,37 @@ describe("AcceptanceSurface — 批次定位（specPath 回退 / idle）", () =>
   })
 })
 
-describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
-  it("反馈为空时打回确认 disabled；缺省路由=修订重跑；选轻量修复后 body 带 next_flow=fix", async () => {
+describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（ADR-0024：无路由选项）", () => {
+  it("反馈为空/全空白 → 确认 disabled；弹窗无路由二选一；body 恒不带 next_flow；确认文案=派 task-fix 开 R{m+1}", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     const confirm = screen.getByTestId("reject-confirm") as HTMLButtonElement
     expect(confirm.disabled).toBe(true)
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "   " } })
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "路由没接上" } })
-    expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
-    // 路由二选一默认 = 修订重跑
-    expect((document.querySelector('[data-reject-flow="rerun"] input') as HTMLInputElement).checked).toBe(true)
-    expect((document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement).checked).toBe(false)
+    // ADR-0024 打回单路径：路由二选一（修订重跑/轻量修复）已删除 —— 只剩一个指令输入框。
+    expect(screen.queryByTestId("reject-flow-group")).toBeNull()
+    expect(document.querySelector('[data-reject-flow]')).toBeNull()
+    // 反馈即修复指令的提示在位（空反馈不可提交的第二重语义）。
+    expect(screen.getByTestId("reject-feedback").getAttribute("placeholder")).toContain("以此为输入")
+
+    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "登录跳转丢了 session" } })
+    const confirm2 = screen.getByTestId("reject-confirm") as HTMLButtonElement
+    expect(confirm2.disabled).toBe(false)
+    expect(confirm2.textContent).toContain("确认打回 · 派 task-fix 开 R2")
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
       dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
+    // 契约 = server strict schema 的合法集：不含 next_flow（携带即 400）。
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上", next_flow: "rerun",
-    }))
-
-    // 切到轻量修复再打一枪 → body 换轨
-    mockPostAcceptance.mockClear()
-    fireEvent.click(screen.getByTestId("acceptance-reject"))
-    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "错别字" } })
-    fireEvent.click(document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement)
-    mockPostAcceptance.mockResolvedValueOnce({
-      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "dispatched",
-      dispatch: { execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
-    })
-    fireEvent.click(screen.getByTestId("reject-confirm"))
-    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "错别字", next_flow: "fix",
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session",
     }))
   })
 
-  it("提交成功后显示路由回显卡（活的，非 disabled 占位）", async () => {
+  it("提交成功后回显卡显示 task-fix 修复轮（单一去向，无二分文案）", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
@@ -901,8 +893,10 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     const card = await screen.findByTestId("agent-recommend-card")
-    expect(card.textContent).toContain("修订重跑")
-    expect(card.querySelector("input[disabled]")).toBeNull() // D13① disabled 假卡已兑现为回显
+    expect(card.textContent).toContain("task-fix")
+    expect(card.textContent).toContain("修复轮")
+    expect(card.textContent).not.toContain("修订重跑")
+    expect(card.textContent).toContain("fix-feedback-r1.md")
     // D14 空卡已摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）
     expect(screen.queryByTestId("impact-list-empty")).toBeNull()
   })
@@ -1153,6 +1147,29 @@ function fireSseStatus(s: { connected: boolean; reconnected: boolean }): void {
 }
 
 describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
+  it("票 02 统一壳接线：onActionApi 注册决策句柄 —— requestAccept/openReject 与动作列同效（行为单源），卸载交还 null", async () => {
+    const registrations: Array<{ requestAccept: () => void; openReject: () => void; blocked: boolean } | null> = []
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
+    const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+    const { unmount } = render(
+      <AcceptanceSurface task={task} onMutated={() => {}} onActionApi={(api) => { registrations.push(api) }} />,
+    )
+    await screen.findByTestId("acceptance-approve")
+    const api = registrations[registrations.length - 1]
+    expect(api).toBeTruthy()
+    expect(api!.blocked).toBe(false)
+    // 句柄 = 动作列同一条路：requestAccept 只开台账预览，不直通提交
+    await act(async () => { api!.requestAccept() })
+    expect(await screen.findByTestId("ledger-dialog")).toBeTruthy()
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
+    // openReject = 打开反馈弹窗（reject-dialog 在场）
+    await act(async () => { api!.openReject() })
+    expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
+    // 宿主卸载方向：交还 null，壳层按钮随之失能（不留悬挂句柄）
+    unmount()
+    expect(registrations[registrations.length - 1]).toBeNull()
+  })
+
   it("ledger_written:false → toast 不再谎报「台账已写」", async () => {
     renderModal()
     mockPostAcceptance.mockResolvedValueOnce({

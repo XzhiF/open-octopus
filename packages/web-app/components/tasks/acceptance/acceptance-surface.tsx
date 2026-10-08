@@ -89,6 +89,18 @@ import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 
 // ── Props ────────────────────────────────────────────────────────────
 
+/** 票 02 统一壳接线契约：右栏底部「通过/打回」不复制决策逻辑，只拿这组句柄调
+ *  本面既有入口（requestAccept 仍走台账预览确认、openReject 仍走反馈弹窗）。
+ *  本面自身动作列照旧在场（票 05/07 改版时收口），两处按钮行为单源。 */
+export interface AcceptanceActionApi {
+  /** = 动作区「验收通过」按钮：gate ✗ 时内部 toast 拦截，否则开台账预览。 */
+  requestAccept: () => void
+  /** = 动作区「打回（写反馈）」：开反馈弹窗（✗ 票预填照旧）。 */
+  openReject: () => void
+  /** 通过是否被拦（✗ 未决硬闸 / 决策在飞）—— 外层按钮据此置灰。 */
+  blocked: boolean
+}
+
 export interface AcceptanceSurfaceProps {
   task: Task | null
   /** 看板刷新钩子（决策成功后让外层列表重拉）。 */
@@ -101,6 +113,8 @@ export interface AcceptanceSurfaceProps {
   detailOverride?: TaskDetail | null
   /** 配套 detailOverride 的重拉钩子（409 恢复、spec-field 保存后走它）。 */
   onRefetch?: () => void
+  /** 票 02 统一壳：向宿主注册决策入口句柄（右栏底部 通过/打回 的接线柱）。 */
+  onActionApi?: (api: AcceptanceActionApi | null) => void
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -108,7 +122,7 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch }: AcceptanceSurfaceProps) {
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
   const embedded = detailOverride !== undefined
   const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
@@ -120,13 +134,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const [homeViewing, setHomeViewing] = useState<HomeViewEntry | null>(null)
   const [roundReport, setRoundReport] = useState<string | null>(null)
 
-  // 打回子块（右列展开）+ 提交后的路由回显/D14 接缝卡。
+  // 打回子块（右列展开）+ 提交后的去向回显（ADR-0024 单路径：恒派 task-fix）。
   const [rejectOpen, setRejectOpen] = useState(false)
   const [feedback, setFeedback] = useState("")
-  // ADR-0018 打回二分路由：rerun=修订重跑（缺省，重跑绑定流）；fix=轻量修复(task-fix)。
-  const [nextFlow, setNextFlow] = useState<"rerun" | "fix">("rerun")
   const [busy, setBusy] = useState<"accept" | "reject" | "abort" | null>(null)
-  const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string; flow: "rerun" | "fix" } | null>(null)
+  const [rejectedSeam, setRejectedSeam] = useState<{ phaseIndex: number; roundIndex: number; feedback: string } | null>(null)
   // specPath 绝对/缺失（gateV4 容忍 agent 旁路直写）时的批次定位回退位：
   // getBatchTree 按 slug 取 latest_mtime 最新 dir（specPath 优先,正常 v4 恒命中）。
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
@@ -176,7 +188,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     if (!embedded) setInternalDetail(null)
     setRejectOpen(false)
     setFeedback("")
-    setNextFlow("rerun")
     setRejectedSeam(null)
     setFiles(null)
     setRoundReport(null)
@@ -700,23 +711,20 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
         round_index: awaitingPhase.awaitingRound,
         decision: "rejected",
         feedback: trimmed,
-        next_flow: nextFlow, // ADR-0018 二分路由（round 级，只作用下一轮）
         ...(gate.failTickets.length ? { reopen_tickets: gate.failTickets } : {}), // ADR-0022 ✗→票重开
       })
       setRejectedSeam({
         phaseIndex: awaitingPhase.index,
         roundIndex: awaitingPhase.awaitingRound,
         feedback: trimmed,
-        flow: nextFlow,
       })
       setRejectOpen(false)
       setFeedback("")
       onMutated()
-      // server 已写 fix-feedback-rN.md + 按所选路由即时开轮（票 07 AC3 / ADR-0018）。
+      // server 已写 fix-feedback-rN.md 并恒派 task-fix 修复轮即时开跑
+      //（ADR-0024 打回单路径 —— 反馈即修复指令，绑定流不重跑）。
       const dispatched = result.next_action === "dispatched"
-        ? nextFlow === "fix"
-          ? `轻量修复 Round ${result.dispatch?.round_index ?? "?"} 已按 task-fix 开跑`
-          : `修订重跑 Round ${result.dispatch?.round_index ?? "?"} 已按绑定流开跑（流内先再审 spec）`
+        ? `修复轮 Round ${result.dispatch?.round_index ?? "?"} 已按 task-fix 开跑（反馈即指令）`
         : "反馈已落账（fix-feedback-rN.md）"
       toast.success(`Phase ${awaitingPhase.index} Round ${awaitingPhase.awaitingRound} 已打回 — ${dispatched}`)
       // 决策响应自带新 task 快照 —— 独立挂载直接吸收；嵌入态交还给父级重拉
@@ -733,9 +741,21 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     } finally {
       setBusy(null)
     }
-  }, [task, awaitingPhase, feedback, nextFlow, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
+  }, [task, awaitingPhase, feedback, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
 
   const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
+
+  // 票 02 统一壳：把决策入口注册给宿主（右栏底部 通过/打回 按钮）。只是句柄注册
+  // ——台账预览/反馈弹窗/硬闸拦截/409 恢复全部仍是本面这套函数，行为单源。
+  useEffect(() => {
+    if (!onActionApi) return
+    onActionApi({
+      requestAccept,
+      openReject,
+      blocked: busy !== null || gate.fail > 0 || checksSaving,
+    })
+    return () => onActionApi(null)
+  }, [onActionApi, requestAccept, openReject, busy, gate.fail, checksSaving])
 
   const handleAbort = useCallback(async () => {
     if (!task || busy) return
@@ -914,23 +934,20 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             </>
           ) : (
             <p className="text-xs text-muted-foreground" data-acceptance-idle>
-              {rejectedSeam ? "已打回 — 修复轮在跑（下方为路由回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
+              {rejectedSeam ? "已打回 — 修复轮在跑（下方为去向回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
             </p>
           )}
 
-          {/* ── 打回提交后：本轮路由回显（ADR-0018，D13① 接缝已兑现） ── */}
+          {/* ── 打回提交后：本轮去向回显（ADR-0024 单路径 —— 恒 task-fix 修复轮） ── */}
           {rejectedSeam && (
             <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2.5" data-agent-recommend-card data-testid="agent-recommend-card">
               <div className="flex items-center gap-1.5 text-[11px] font-semibold">
-                <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 下一轮路由：
-                {rejectedSeam.flow === "fix" ? "轻量修复（task-fix）" : "修订重跑（绑定流先再审 spec）"}
+                <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 已派 task-fix 修复轮
               </div>
               <p className="text-[10px] text-muted-foreground">
-                反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md。
-                {rejectedSeam.flow === "fix"
-                  ? " task-fix 定点修复后会产 fix-report-rN.md 回批次目录。"
-                  : " 执行侧在 workspace 里就地维护 spec 终态，collect 回流 task home（round-report 含 Spec 修订节）。"}
-                路由仅作用本轮 — phase 绑定不变。
+                反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md，
+                即 task-fix 修复指令（解析→开发/修复→回归→补产物→自动回待验收）。
+                覆盖仅作用本轮 — phase 绑定不变（K16）。
               </p>
             </div>
           )}
@@ -1053,7 +1070,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       </div>
 
       {/* 打回反馈弹窗（v2.4 用户裁决：右列内联展开别扭 → 独立弹窗输入；
-          皮肤 = 全站贴纸 Dialog，与任务草稿窗同风格。路由二分（ADR-0018）照旧。 */}
+          皮肤 = 全站贴纸 Dialog，与任务草稿窗同风格。ADR-0024 打回单路径：
+          无路由二选一 —— 反馈即 task-fix 修复指令，确认即派修复轮。 */}
       <Dialog
         open={rejectOpen}
         onOpenChange={(o) => { if (!o && busy !== "reject") setRejectOpen(false) }}
@@ -1066,7 +1084,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           </DialogHeader>
           <div className="space-y-3" data-reject-panel>
             <label className="text-[11px] font-medium text-pop-ink">
-              打回反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md）
+              打回反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md，即修复指令）
             </label>
             <Textarea
               rows={6}
@@ -1077,33 +1095,6 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               className="min-h-[120px] text-xs"
               data-reject-feedback data-testid="reject-feedback"
             />
-            {/* ADR-0018 打回二分路由 — 下一 round 用哪条流（仅作用本轮，
-                信封 phases[] 绑定冻结不破） */}
-            <div className="space-y-1" data-reject-flow-group data-testid="reject-flow-group">
-              <div className="text-[11px] font-medium text-pop-ink">下一轮路由</div>
-              <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="rerun">
-                <input
-                  type="radio" name="reject-flow" className="mt-0.5"
-                  checked={nextFlow === "rerun"}
-                  onChange={() => setNextFlow("rerun")}
-                />
-                <span>
-                  <b>修订重跑</b>（重跑绑定流 · 默认）
-                  <span className="block text-[10px] text-muted-foreground">绑定 matt-spec-dev 时流内先按反馈就地审查更新 spec，再整轮重执行</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-1.5 text-[11px] cursor-pointer" data-reject-flow="fix">
-                <input
-                  type="radio" name="reject-flow" className="mt-0.5"
-                  checked={nextFlow === "fix"}
-                  onChange={() => setNextFlow("fix")}
-                />
-                <span>
-                  <b>轻量修复</b>（task-fix）
-                  <span className="block text-[10px] text-muted-foreground">按反馈定点修 + fix-report，不重跑整个里程碑；规格级问题请改选修订重跑</span>
-                </span>
-              </label>
-            </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setRejectOpen(false)}>
                 取消
@@ -1116,7 +1107,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 data-reject-confirm data-testid="reject-confirm"
               >
                 {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
-                打回确认（开 Round {awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"} · {nextFlow === "fix" ? "轻量修复" : "修订重跑"}）
+                确认打回 · 派 task-fix 开 R{awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"}
               </Button>
             </div>
           </div>

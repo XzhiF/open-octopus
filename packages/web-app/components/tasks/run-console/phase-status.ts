@@ -37,6 +37,17 @@ export const TASK_PILL: Record<string, string> = {
   done: "border-pop-green/45 bg-pop-green-soft text-pop-green",
   failed: "border-pop-red/45 bg-pop-pink-soft text-pop-red",
   aborted: "border-pop-bd bg-pop-idle text-pop-dim",
+  // ── 票 02 皮肤预留（spec：takeover=pink、fixing=cyan 两个新语义色）──
+  // 不是 TaskStatusSchema 的新枚举（铁律：不加状态）——是 05/08 由执行推导出的
+  // 壳层形态色。上层的 mode 判定落地后，pill/pill 文案从这里取色。
+  takeover: "border-pop-pink/50 bg-pop-pink-soft text-pop-pink",
+  fixing: "border-pop-cyan/50 bg-pop-cyan-soft text-pop-cyan animate-pulse",
+}
+
+/** 预留形态词（与 TASK_PILL.takeover/fixing 成对；05/08 接线时消费）。 */
+export const SHELL_MODE_LABEL: Record<string, string> = {
+  takeover: "✋ 已接管 · chat 驱动",
+  fixing: "⚙ task-fix 推进中",
 }
 
 /** rail 节点 P# 瓷砖色。accent 整面填充上的字统一走 --pop-bg（暖黑盘上

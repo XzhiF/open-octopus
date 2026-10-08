@@ -93,26 +93,28 @@ async function safeJson(c: Context): Promise<Record<string, unknown> | null> {
 // rejections are TaskStatusConflictError → 409 (state defect) — the two are
 // deliberately different so 票 12 can tell "fix the form" from "someone else
 // decided first".
+// ADR-0024 打回单路径：原 ADR-0018 的 next_flow 枚举已【干净删除】——不留隐藏档、
+// 不留兼容读法。schema 以 .strict() 明示未知字段策略：仍携带 next_flow（或任何
+// 未知键）的请求 → 400 响亮报错，老客户端得到改契约的信号而非静默行为切换。
 const acceptanceBodySchema = z
   .object({
     phase_index: z.number().int().min(1),
     round_index: z.number().int().min(1),
     decision: z.enum(["accepted", "rejected"]),
     feedback: z.string().max(20000).optional(),
-    // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
-    // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
-    next_flow: z.enum(["fix", "rerun"]).optional(),
     // ADR-0022 验收台 ✗ 闭环：rejected 时打回的票名基（`NN-e2e-*`），server 把
     // 对应 issues/<name>.md 的 Status done→reopened。路径安全：仅文件名基。
     reopen_tickets: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)).max(20).optional(),
   })
+  .strict()
   .superRefine((b, ctx) => {
-    // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
+    // K7/US10: 打回必填反馈文本 —— ADR-0024 起反馈【就是】task-fix 修复轮的指令
+    // （落 fix-feedback-r{N}.md + 注入 input_values.feedback），空指令 = 无修复轮可派。
     if (b.decision === "rejected" && !(b.feedback ?? "").trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["feedback"],
-        message: "decision='rejected' 必须携带非空 feedback",
+        message: "decision='rejected' 必须携带非空 feedback（反馈即 task-fix 修复指令）",
       })
     }
   })
@@ -673,13 +675,14 @@ export function createTasksRoutes(
   // ── Actions ───────────────────────────────────────────────────
 
   // POST /:id/acceptance — the v4 phase 验收 Gate (task-phase-redesign ticket
-  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?, next_flow?}:
+  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?} — 严格
+  // 对象：未知字段（含已删除的 next_flow，ADR-0024）一律 400:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
   //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
-  //   rejected (feedback 必填)      → fix-feedback-r{N}.md 进批次目录 + 同 phase
-  //     新 round 开跑；next_flow(ADR-0018)：缺省 'rerun'=重跑绑定流（流内再审
-  //     spec），'fix'=override built-in/task-fix + server 合成输入（轻量修复轮）
+  //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 + 同
+  //     phase 新 round 恒派 built-in/task-fix 修复轮（ADR-0024 打回单路径：
+  //     server override + 合成输入；绑定流再执行只剩 authoring 侧改 spec 重入队）
   // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
@@ -696,7 +699,6 @@ export function createTasksRoutes(
         round_index: parsed.round_index,
         decision: parsed.decision,
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
-        ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
       // ADR-0022: freeze the round's evidence BEFORE the decision lands (after
       // it, the awaiting view is gone), and stop any live preview. The
