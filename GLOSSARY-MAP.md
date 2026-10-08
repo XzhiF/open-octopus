@@ -27,7 +27,7 @@
 | **Diagnose Report** | 对执行现场的结构化分析，包含节点状态、异常识别（stuck/exhausted/false_completion/infinite_retry）、修复建议。 | server |
 | **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
 | **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。4 个内置：workspace / scheduler / archive / resource。 | server, shared |
-| **内置分身 (Built-in Clone)** | 系统预定义的 4 个分身，存储于 `~/.octopus/agent/built-in/{name}/`。不可删除。 | server |
+| **内置分身 (Built-in Clone)** | 系统预定义的 7 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer），存储于 `~/.octopus/agent/built-in/{name}/`。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入）。 | server |
 | **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
 | **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |
