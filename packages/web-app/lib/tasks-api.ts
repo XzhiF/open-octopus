@@ -471,17 +471,14 @@ export class TaskApiError extends Error {
 
 /** Body of POST /api/tasks/:id/acceptance (票 07 契约). Indices are 1-based,
  *  matching TaskPhase.index / executions.phase_index. rejected 必填 feedback
- *  (缺 → 400). */
+ *  (缺 → 400)。ADR-0024 打回单路径：原 next_flow 枚举已删除，server schema 为
+ *  严格对象 —— 携带 next_flow（或任何未知字段）的请求 → 400。rejected 恒由
+ *  server 派 built-in/task-fix 修复轮（反馈即修复指令）。 */
 export interface AcceptanceInput {
   phase_index: number
   round_index: number
   decision: "accepted" | "rejected"
   feedback?: string
-  /** ADR-0018 打回二分路由（rejected 生效）：
-   *  "rerun"（缺省）= 重跑绑定流（matt-spec-dev 绑定时即「修订重跑」——流内
-   *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
-   *  built-in/task-fix + 合成输入）。 */
-  next_flow?: "fix" | "rerun"
   /** ADR-0022 打回 ✗ 闭环：被重开的票名基（如 "11-e2e-story"），server 把对应
    *  issues/<name>.md 的 Status done→reopened。 */
   reopen_tickets?: string[]

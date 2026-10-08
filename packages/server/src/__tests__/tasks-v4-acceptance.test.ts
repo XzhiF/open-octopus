@@ -539,50 +539,55 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
   })
 })
 
-describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
+describe("AC3.5 — ADR-0024 打回单路径（rejected 恒派 task-fix 修复轮；next_flow 已删除）", () => {
   const posix = (p: string): string => p.split(path.sep).join("/")
 
-  it("default (no next_flow) = rerun: 这一轮跑 phase 绑定流，行为与基线一致", async () => {
+  it("rejected（无路由字段）→ 本轮行上是 built-in/task-fix + server 合成输入；K16 spec.phases[] 绑定冻结不动", async () => {
     const { taskId } = seedAwaitingReview()
     const res = await postAcceptance(taskId, {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "范围没做全",
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修",
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    // 票03 之后没有信封可读：本轮实际跑的流就是行上的 workflow_ref。
-    expect(launchedRow(taskId).workflow_ref).toBe("built-in/flow-p1")
-    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // K16 绑定不被改写
-    // 派生轮次视图带上实际执行流（round 徽标数据源 — ADR-0018 审计线）。
-    const body = (await res.json()) as { task: { derived: never } }
-    const p1 = phaseOf(body.task.derived, 1)
-    expect(p1.rounds.at(-1)!.exec).toMatchObject({ workflow_ref: "built-in/flow-p1" })
-  })
-
-  it("next_flow=fix: 本轮行上换成 built-in/task-fix + server 合成输入（home 绑定不变）", async () => {
-    const { taskId } = seedAwaitingReview()
-    const res = await postAcceptance(taskId, {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修", next_flow: "fix",
-    })
-    expect(res.status, await res.clone().text()).toBe(200)
+    // 票03 之后没有信封可读：本轮实际跑的流就是行上的 workflow_ref —— 单路径后恒 task-fix。
     const row = launchedRow(taskId)
     expect(row.workflow_ref).toBe("built-in/task-fix")
-    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
-    // 合成输入长在这一轮的行上（旧断言读的是信封 chain[0].input_values）。
+    // K16 回归（ADR-0024 Consequences）：路由覆盖只落本轮 launch step，spec phases[] 绑定不改写。
+    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1")
+    // 合成输入长在这一轮的行上（ws 同构相对位 —— 执行侧在 ws 操作，collect 回流 home）。
     const iv = launchedIV(taskId)
-    // ws 同构相对位（执行侧在 ws 操作，collect 回流 home — ADR-0018）
     expect(iv.phase_spec_dir).toBe(posix(batchRel("p1")))
     expect(iv.feedback_path).toBe(posix(path.join(batchRel("p1"), "fix-feedback-r1.md")))
     expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir(taskId))
+    // 反馈即修复指令：同时走 input_values.feedback（task-fix 的指令信道）。
     expect(iv.feedback).toBe("小错直接修")
     expect(iv._phase_index).toBe("1")
     expect(iv._round_index).toBe("2")
     // 行上的轮次坐标与 input_values 的 stamps 同段共存。
     expect([row.phase_index, row.round_index]).toEqual([1, 2])
+    // 派生视图末轮带上实际执行流 = task-fix（round 徽标数据源 — 修复轮审计线）。
+    const body = (await res.json()) as { task: { derived: never } }
+    const p1 = phaseOf(body.task.derived, 1)
+    expect(p1.rounds.at(-1)!.exec).toMatchObject({ workflow_ref: "built-in/task-fix" })
   })
 
-  it("非法 next_flow → 400（zod enum 拦截，账本不脏）", async () => {
+  it("请求仍携带 next_flow（旧客户端残留）→ 400 响亮拒收；账本不脏、零派发（ADR-0024 干净删除，无隐藏档）", async () => {
+    // 严格策略 = schema .strict()：未知字段一律 ZodError→400。next_flow 取值「合法」
+    // （fix/rerun）也一样被拒 —— 半死枚举不留后门，老调用方必须改契约而不是静默换轨。
+    for (const stale of ["fix", "rerun", "yolo"]) {
+      const { taskId } = seedAwaitingReview()
+      const res = await postAcceptance(taskId, {
+        phase_index: 1, round_index: 1, decision: "rejected", feedback: "x", next_flow: stale,
+      })
+      expect(res.status, `next_flow=${stale}`).toBe(400)
+      expect(ledgerRows(db, taskId), `next_flow=${stale}`).toHaveLength(0)
+    }
+    expect(stubService.create).not.toHaveBeenCalled()
+  })
+
+  it("accepted 决策带 next_flow 同样 400（严格策略不分决策）", async () => {
     const { taskId } = seedAwaitingReview()
     const res = await postAcceptance(taskId, {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "x", next_flow: "yolo",
+      phase_index: 1, round_index: 1, decision: "accepted", next_flow: "rerun",
     })
     expect(res.status).toBe(400)
     expect(ledgerRows(db, taskId)).toHaveLength(0)
