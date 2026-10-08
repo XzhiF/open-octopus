@@ -122,7 +122,7 @@ test("流④ running → ✋ 接管 → 对话改一处（真 commit）→ 交�
     const sha = gitHead(repoDir)
     const subj = gitAt(["log", "-1", "--pretty=%s"], repoDir)
     return subj.startsWith("[takeover-edit] ") ? sha : null
-  }, 20_000, "no [takeover-edit] commit after the takeover turn")
+  }, 120_000, "no [takeover-edit] commit after the takeover turn") // commit 落 onTurnComplete；慢模型回合（Edit 自愈重试）可超 20s（终tip复验 run2 截图实锤），窗口对齐工具卡级 240s 量
   expect(gitAt(["show", `${qeSha}:tbv2-note.md`], repoDir)).toContain(marker)
 
   // 真实副作用③（UI=实时实物）：接管轮 end 锚=HEAD →「≡ 变更」统计随 HEAD 真增长
