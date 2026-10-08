@@ -5,14 +5,14 @@
 //   • ready 门禁/触发、awaiting 判决条、done 战报、红行 error_summary 状态门控
 //   • TaskModal 接线：三模式走新壳（terminal bar + 无 ModalHeader/悬浮 X）
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/tasks-api"
 
 const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
   mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
-  pushSpy, mockFetchAgentEvents,
+  pushSpy, mockFetchAgentEvents, mockFetchExecutionDetail,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -26,9 +26,14 @@ const {
   mockResume: vi.fn(),
   pushSpy: vi.fn(),
   mockFetchAgentEvents: vi.fn(),
+  mockFetchExecutionDetail: vi.fn(),
 }))
 
-vi.mock("@/lib/api-client", () => ({ fetchAgentEvents: mockFetchAgentEvents }))
+vi.mock("@/lib/api-client", () => ({
+  fetchAgentEvents: mockFetchAgentEvents,
+  // 票 04：节点页签挂载后壳内会真调执行详情读取（默认空快照，个案各自覆盖）。
+  fetchExecutionDetail: mockFetchExecutionDetail,
+}))
 
 vi.mock("@/lib/tasks-api", () => ({
   getTask: mockGetTask,
@@ -164,6 +169,8 @@ beforeEach(() => {
   mockGetBatchTree.mockResolvedValue([])
   mockFetchAgentEvents.mockReset()
   mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-x", events: [], source: "sqlite", _degraded: false, _message: null })
+  mockFetchExecutionDetail.mockReset()
+  mockFetchExecutionDetail.mockResolvedValue({})
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -802,5 +809,45 @@ describe("票 02 — TaskModal 三态同壳 + Esc", () => {
     await screen.findByTestId("authoring-stub")
     fireEvent.keyDown(window.document, { key: "Escape" })
     expect(onCloseDraft).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ 票 04 · ◆ 节点页签挂载 ═════════════════
+// 壳侧只钉接线两件事：占位被真组件替换 + 绑定执行取当前面轮次（含深链上下文）。
+// 清单/事件/符号的丰富断言在 nodes-tab.test.tsx / nodes-model.test.ts（组件自有 seam）。
+describe("票 04 — NodesTab 挂进 [data-tab-host=\"nodes\"]", () => {
+  it("running 切到 ◆ 节点：绑定 exec-1 的节点清单出现在宿主内，占位话术绝迹，深链带 P/R 语境", async () => {
+    mockFetchExecutionDetail.mockResolvedValue({
+      id: "exec-1", status: "running", workflow_ref: "built-in/matt-spec-dev",
+      workflow_content: "nodes:\n  - id: resolve\n    name: 需求解析\n    type: agent\n  - id: dev\n    name: 开发流水线\n    type: agent\n",
+      steps: [
+        { stepId: "resolve", stepName: "resolve", status: "completed", duration: 40 },
+        { stepId: "dev", stepName: "dev", status: "running", startedAt: "2026-09-21T09:01:00Z" },
+      ],
+    })
+    const t = makeTask("running")
+    renderConsole(t, { ...t, executions: [badge("exec-1", "running", { completed_at: null })], derived: derivedOf([pv(1, "票11阶段1", "running")]) })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-nodes"))
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement | null
+    expect(host).toBeTruthy()
+    expect(await within(host!).findByTestId("node-row-dev")).toBeTruthy()
+    expect(host!.textContent).toContain("需求解析")
+    expect(host!.textContent).toContain("1/2") // 汇总条：resolve ✓ 计入，dev 在跑不计
+    expect(host!.querySelector('[data-testid="nodes-deeplink"]')).toBeTruthy()
+    expect(host!.textContent).toContain("P1·R1")
+    // 票 02 占位话术已被真组件替换
+    expect(host!.textContent).not.toContain("票 04")
+  })
+
+  it("ready 未触发（executions 空）：宿主内如实空态，不编造清单", async () => {
+    const t = makeTask("ready")
+    renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending")], true, "ready") })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-nodes"))
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement | null
+    expect(await within(host!).findByTestId("nodes-empty")).toBeTruthy()
+    expect(host!.textContent).toContain("尚无绑定执行")
+    expect(mockFetchExecutionDetail).not.toHaveBeenCalled()
   })
 })

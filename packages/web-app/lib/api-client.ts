@@ -171,6 +171,26 @@ export async function fetchExecutionTree(workspaceId: string) {
   return res.json()
 }
 
+/** GET /:executionId 的线形（execution.ts）：execution 行 + steps（node_executions
+ *  映射的 StepExecution[]）+ workflow_content（YAML 原文）。票 04「◆ 节点」页签
+ *  的唯一数据源 —— 既有端点，零新增后端面。 */
+export interface ExecutionDetailWire {
+  id: string
+  status: string
+  workflow_ref: string
+  name?: string | null
+  workspace_id?: string
+  started_at?: string | null
+  completed_at?: string | null
+  workflow_content?: string | null
+  steps?: import("@/lib/types").StepExecution[]
+}
+
+export async function fetchExecutionDetail(workspaceId: string, executionId: string): Promise<ExecutionDetailWire> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}`)
+  return handleResponse(res)
+}
+
 export async function createExecution(workspaceId: string, data: {
   workflow_ref: string
   name?: string
