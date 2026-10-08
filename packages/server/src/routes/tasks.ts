@@ -433,9 +433,10 @@ export function createTasksRoutes(
   })
 
   // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
-  // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
-  // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
-  // 未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
+  // 服务端按 task id 解析轮次（web 永不见 SHA）：awaiting 优先；票03 起 diff 两端点
+  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货。
+  // 无 evidence 注入（如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经
+  // classifyError：未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
   // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的
   // start 锚 .. 本轮 exec 的 end 锚（放行判的是 phase 终态，修复轮不再只见
   // delta）；缺省/其他值 = round（本轮区间，现行为逐字不变）。payload 形状

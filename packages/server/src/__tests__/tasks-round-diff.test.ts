@@ -39,16 +39,8 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8" }).trim()
 }
 
-/** v4 任务 + completed phase1/round1 exec 行（awaiting_review 态）。返回 [taskId, execId]。 */
-async function newAwaitingTask(opts: {
-  start?: Record<string, string>
-  end?: Record<string, string>
-  status?: string
-  harnessSummary?: string
-  /** S3 fixture：多轮各插一行 (phase1,round_n)，awaiting 落最高轮；给定时
-   *  覆盖 start/end/status 的单轮形状。 */
-  rounds?: Array<{ round: number; start: Record<string, string>; end: Record<string, string> }>
-} = {}): Promise<[string, string]> {
+/** v4 任务行（draft，无 exec 行）——「无任何轮可供货」的 409 对照组。 */
+async function newBareTask(): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -66,7 +58,22 @@ async function newAwaitingTask(opts: {
     }),
   })
   expect(res.status).toBe(201)
-  const taskId = ((await res.json()) as { id: string }).id
+  return ((await res.json()) as { id: string }).id
+}
+
+/** v4 任务 + completed phase1/round1 exec 行（awaiting_review 态）。返回 [taskId, execId]。
+ *  票03：status 可给 'running'/'paused'（live 轮），end 显式 null = 未终态行形状。 */
+async function newAwaitingTask(opts: {
+  start?: Record<string, string>
+  end?: Record<string, string> | null
+  status?: string
+  /** undefined = 默认 '{"totalInterventions":2}'；显式 null = 在跑行尚无账目。 */
+  harnessSummary?: string | null
+  /** S3 fixture：多轮各插一行 (phase1,round_n)，awaiting 落最高轮；给定时
+   *  覆盖 start/end/status 的单轮形状。 */
+  rounds?: Array<{ round: number; start: Record<string, string>; end: Record<string, string> }>
+} = {}): Promise<[string, string]> {
+  const taskId = await newBareTask()
   const execId = `exec-rd-${seq}`
   const now = new Date().toISOString()
   const insert = db.prepare(`
@@ -83,11 +90,37 @@ async function newAwaitingTask(opts: {
   } else {
     insert.run(execId, WS_ID, ORG, opts.status ?? "completed", taskId, 1,
       JSON.stringify(opts.start ?? { app: c1 }),
-      JSON.stringify(opts.end ?? { app: c2 }),
-      opts.harnessSummary ?? '{"totalInterventions":2}',
-      now, now, now, now)
+      opts.end === null ? null : JSON.stringify(opts.end ?? { app: c2 }),
+      opts.harnessSummary === undefined ? '{"totalInterventions":2}' : opts.harnessSummary,
+      now, opts.status === "running" || opts.status === "paused" ? null : now, now, now)
   }
   return [taskId, execId]
+}
+
+/** 独立新仓（projects/<name>）三提交 k0<k1<k2。 */
+function freshRepo(name: string): [string, string, string] {
+  const dir = path.join(wsDir, "projects", name)
+  fs.mkdirSync(dir, { recursive: true })
+  git(dir, "init", "-b", "main")
+  git(dir, "config", "user.email", "t@t.io")
+  git(dir, "config", "user.name", "T")
+  fs.writeFileSync(path.join(dir, "seed.txt"), "s\n")
+  git(dir, "add", "-A"); git(dir, "commit", "-m", "k0")
+  const k0 = git(dir, "rev-parse", "HEAD")
+  fs.writeFileSync(path.join(dir, "r1.txt"), "1a\n1b\n1c\n")
+  git(dir, "add", "-A"); git(dir, "commit", "-m", "k1")
+  const k1 = git(dir, "rev-parse", "HEAD")
+  fs.writeFileSync(path.join(dir, "r2.txt"), "2a\n")
+  git(dir, "add", "-A"); git(dir, "commit", "-m", "k2")
+  const k2 = git(dir, "rev-parse", "HEAD")
+  return [k0, k1, k2]
+}
+
+function commitMore(repoName: string, file: string, content: string): string {
+  const dir = path.join(wsDir, "projects", repoName)
+  fs.writeFileSync(path.join(dir, file), content)
+  git(dir, "add", "-A"); git(dir, "commit", "-m", `+${file}`)
+  return git(dir, "rev-parse", "HEAD")
 }
 
 beforeAll(() => {
@@ -211,9 +244,17 @@ describe("round-diff — 实物 numstat / 分组 / 汇总", () => {
     expect(d.repos[0]!.reason).toBe("no_commits")
   })
 
-  it("R5: 无 awaiting（exec running）→ 409；未知任务 → 404", async () => {
+  it("R5(票03 改判): running 轮（无 awaiting）→ live 口径 200，锚不可达时诚实 expired 绝不 500；无任何轮 → 409；未知任务 → 404", async () => {
     const [taskId] = await newAwaitingTask({ status: "running" })
-    expect((await app.request(`/api/tasks/${taskId}/round-diff`)).status).toBe(409)
+    const r = await app.request(`/api/tasks/${taskId}/round-diff`)
+    expect(r.status).toBe(200)
+    const d = (await r.json()) as RoundDiffPayload
+    // 此刻 app 仓已被 R3 重建：start 锚 c1 不可达 → 诚实过期，端点不崩。
+    expect(d.available).toBe(false)
+    expect(d.repos[0]?.expired).toBe(true)
+    // 无 exec 行的任务 —— 既无 awaiting 也无 live 轮 → 409 依旧。
+    const bare = await newBareTask()
+    expect((await app.request(`/api/tasks/${bare}/round-diff`)).status).toBe(409)
     expect((await app.request(`/api/tasks/e2e-td-no-such/round-diff`)).status).toBe(404)
   })
 
@@ -227,25 +268,6 @@ describe("round-diff — 实物 numstat / 分组 / 汇总", () => {
 
 // ── S3 (2026-09-20): scope=cumulative — 本 phase 首轮 start 锚 .. 本轮 end 锚 ──
 describe("round-diff — cumulative 口径", () => {
-  /** 独立新仓（projects/<name>）三提交 k0<k1<k2，互不干扰 R3 的 app 仓突变。 */
-  function freshRepo(name: string): [string, string, string] {
-    const dir = path.join(wsDir, "projects", name)
-    fs.mkdirSync(dir, { recursive: true })
-    git(dir, "init", "-b", "main")
-    git(dir, "config", "user.email", "t@t.io")
-    git(dir, "config", "user.name", "T")
-    fs.writeFileSync(path.join(dir, "seed.txt"), "s\n")
-    git(dir, "add", "-A"); git(dir, "commit", "-m", "k0")
-    const k0 = git(dir, "rev-parse", "HEAD")
-    fs.writeFileSync(path.join(dir, "r1.txt"), "1a\n1b\n1c\n")
-    git(dir, "add", "-A"); git(dir, "commit", "-m", "k1")
-    const k1 = git(dir, "rev-parse", "HEAD")
-    fs.writeFileSync(path.join(dir, "r2.txt"), "2a\n")
-    git(dir, "add", "-A"); git(dir, "commit", "-m", "k2")
-    const k2 = git(dir, "rev-parse", "HEAD")
-    return [k0, k1, k2]
-  }
-
   it("C1: 两轮 fixture → cumulative=2 commits ⊇ 本轮=1；显式 scope=round 与缺省逐字一致（回归）", async () => {
     const [k0, k1, k2] = freshRepo("acc")
     const [taskId] = await newAwaitingTask({ rounds: [
@@ -278,5 +300,85 @@ describe("round-diff — cumulative 口径", () => {
     const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
     expect(cum).toEqual(round)
     expect(cum.aggregate.commits).toBe(1)
+  })
+})
+
+// ── 票03 (taskboard-modal-v2「≡ 变更」): 执行中轮 live 供货 ──────────────────
+// 同一端点（/round-diff、/round-diff/patch）、同一 payload 形状：awaiting 优先
+// （上面所有用例即回归），无 awaiting 时回落任务当前 live 轮（running/paused），
+// end 锚 = 各仓当前 HEAD。端点无状态 → 「新 commit 落库即出现在下一次 GET」
+// 就是 web 端 ≤10s 观测口径的服务端保证；不新增任何路由。
+describe("round-diff — 票03 执行中轮 live 供货", () => {
+  it("L1: running 轮 start..HEAD — 零变更也是答案；新 commit 落库，下次 GET 立现（无需任何状态变更）", async () => {
+    const [k0, , k2] = freshRepo("live1")
+    void k0
+    // start 锚 = 当前 HEAD（刚起跑，还没有新提交）。
+    const [taskId] = await newAwaitingTask({ status: "running", start: { live1: k2 }, end: null, harnessSummary: null })
+    // HEAD 仍停在 start 锚：available + 全零（不是 409，也不谎报）。
+    const d0 = await diffOf(taskId)
+    expect(d0.available).toBe(true)
+    expect(d0.aggregate).toEqual({ commits: 0, additions: 0, dels: 0, files: 0 })
+    expect(d0.interventions).toBeNull()
+    // agent 落了第一个 commit → 下一次拉取即见（AC4 的服务端口径）。
+    commitMore("live1", "r3.txt", "3a\n3b\n")
+    const d1 = await diffOf(taskId)
+    expect(d1.aggregate.commits).toBe(1)
+    const paths = d1.repos.find((r) => r.name === "live1")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(paths).toEqual(["r3.txt"]) // 本轮口径只看 start 之后的实物
+    // 再落一 commit（例：💬 快改每改即提交）→ 再拉再新，端点无状态天然跟随 HEAD。
+    commitMore("live1", "r4.txt", "4a\n")
+    const d2 = await diffOf(taskId)
+    expect(d2.aggregate.commits).toBe(2)
+    expect(d2.aggregate.files).toBe(2)
+  })
+
+  it("L2: live 轮 patch 懒取同口径；不在 start map 的仓 → 409（所有权闸不变）", async () => {
+    const [k0] = freshRepo("live2")
+    const [taskId] = await newAwaitingTask({ status: "running", start: { live2: k0 }, end: null })
+    const pr = await app.request(
+      `/api/tasks/${taskId}/round-diff/patch?repo=live2&path=${encodeURIComponent("r2.txt")}`,
+    )
+    expect(pr.status).toBe(200)
+    const body = (await pr.json()) as { patch: string; truncated: boolean }
+    expect(body.patch).toContain("+2a")
+    expect((await app.request(`/api/tasks/${taskId}/round-diff/patch?repo=nope&path=x`)).status).toBe(409)
+  })
+
+  it("L3: paused 轮同供（暂停不打断实物）", async () => {
+    const [k0] = freshRepo("live3")
+    const [taskId] = await newAwaitingTask({ status: "paused", start: { live3: k0 }, end: null })
+    const d = await diffOf(taskId) // 无 awaiting → live：k0..HEAD(k2) = 2 提交
+    expect(d.available).toBe(true)
+    expect(d.aggregate.commits).toBe(2)
+  })
+
+  it("L4: awaiting 优先律不变 —— 有 awaiting 轮时绝不偷读 live HEAD（存储锚收口即定格）", async () => {
+    const [k0, k1] = freshRepo("live4")
+    const [taskId] = await newAwaitingTask({ start: { live4: k0 }, end: { live4: k1 } }) // completed → awaiting_review
+    commitMore("live4", "r9.txt", "9\n") // 工作区继续前进（HEAD 已越过 end 锚）
+    const d = await diffOf(taskId)
+    expect(d.aggregate.commits).toBe(1) // 存储锚 k0..k1，r9 不在本轮实物里
+    const paths = d.repos.find((r) => r.name === "live4")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(paths).not.toContain("r9.txt")
+  })
+
+  it("L5: live 轮 cumulative 口径 = 首轮 start 锚..HEAD（累计与本轮同源变化）", async () => {
+    const [k0, k1] = freshRepo("live5")
+    // 首轮已收口（completed k0..k1），当前轮 running start=k1 end=null，HEAD=k2。
+    const [taskId] = await newAwaitingTask({ status: "running", start: { live5: k1 }, end: null })
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
+        task_id, phase_index, round_index, start_commit_id, end_commit_id,
+        started_at, completed_at, created_at, updated_at)
+      VALUES ('exec-live5-r1', ?, ?, 'task-dev', 'rd', 'completed', ?, 1, 1, ?, ?, ?, ?, ?, ?)
+    `).run(WS_ID, ORG, taskId, JSON.stringify({ live5: k0 }), JSON.stringify({ live5: k1 }),
+      now, now, now, now)
+    const round = await diffOf(taskId)
+    expect(round.aggregate.commits).toBe(1) // 本轮 start(k1)..HEAD(k2)
+    const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
+    expect(cum.aggregate.commits).toBe(2) // 首轮 start(k0)..HEAD(k2)
+    // payload 形状零新字段（web 解析面不变）
+    expect(Object.keys(cum).sort()).toEqual(Object.keys(round).sort())
   })
 })

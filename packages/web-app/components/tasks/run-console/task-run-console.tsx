@@ -9,7 +9,8 @@
 //   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·控制台 /
 //   │     awaiting_review 对话·变更·走查·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted；控制台 = 原
-//   │     Phase/Report 面；变更/节点/对话 = 票 03/04/07 挂载位，当前占位）。
+//   │     Phase/Report 面；变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
+//   │     节点/对话 = 票 04/07 挂载位，当前占位）。
 //   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
 //   │   全部接既有 handler，通过/打回接 AcceptanceSurface 决策入口，行为零回退）。
@@ -26,7 +27,8 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
 import {
-  PHASE_STATUS_UPDATE_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT,
+  PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_EXECUTION_EVENT,
+  TASK_STATUS_EVENT, TASK_VERIFY_EVENT,
   type Task,
 } from "@octopus/shared"
 import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
@@ -44,6 +46,9 @@ import {
   RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
+import { FilesTab } from "../files-tab/files-tab"
+import { useRoundDiffFeed } from "../files-tab/use-round-diff-feed"
+import { canServeRoundDiff, scopeTotals } from "../files-tab/files-tab-model"
 import { FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
@@ -120,7 +125,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [])
 
   // ── SSE：状态即时重拉（与退役前 TaskRunDetailView 同四路）+ 活动流采集 ──
+  // diffSignal（票 03）：任务类事件每来一发 bump 一次，useRoundDiffFeed 用它做
+  // 事件触发路（自带节流；真值来自既有 task_status/task_execution/phase/
+  // artifacts/verify 事件，无新事件类型）。
   const [events, setEvents] = useState<StreamEvent[]>([])
+  const [diffSignal, setDiffSignal] = useState(0)
   useEffect(() => {
     const url = `${getServerUrl()}/api/tasks/events`
     const mine = (e: MessageEvent): Record<string, unknown> | null => {
@@ -134,7 +143,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     const unStatus = subscribeSSE(url, TASK_STATUS_EVENT, (e) => {
       const p = mine(e); if (!p) return
       push("◆", "text-pop-cyan", `task → ${TASK_STATUS_LABEL[String(p.status)] ?? String(p.status)}`)
-      refetch()
+      refetch(); setDiffSignal((v) => v + 1)
     })
     const unExec = subscribeSSE(url, TASK_EXECUTION_EVENT, (e) => {
       const p = mine(e); if (!p) return
@@ -144,14 +153,23 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       push(LIVE_RUN_STATUSES.has(st) ? "▶" : st === "completed" || st === "done" || st === "success" ? "✓" : "✗",
         LIVE_RUN_STATUSES.has(st) ? "text-pop-purple" : "text-pop-green",
         `${tag} ${RUN_STATUS_LABEL[st] ?? st}${reason}`)
-      refetch()
+      refetch(); setDiffSignal((v) => v + 1)
     })
     const unPhase = subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => {
       const p = mine(e); if (!p) return
       push("■", "text-pop-amber", `P${p.phase_index ?? "?"} → ${PHASE_STATUS_LABEL[String(p.status)] ?? String(p.status)}`)
-      refetch()
+      refetch(); setDiffSignal((v) => v + 1)
     })
-    return () => { unStatus(); unExec(); unPhase() }
+    // 票03 刷新动线：产物落盘（轮报告写完）与复检终态也是「现场变了」的信号。
+    const unArt = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => {
+      if (!mine(e)) return
+      setDiffSignal((v) => v + 1)
+    })
+    const unVerify = subscribeSSE(url, TASK_VERIFY_EVENT, (e) => {
+      if (!mine(e)) return
+      setDiffSignal((v) => v + 1)
+    })
+    return () => { unStatus(); unExec(); unPhase(); unArt(); unVerify() }
   }, [task.id, refetch])
 
   const tree = useBatchTree(task.id, { versionKey: detail?.version })
@@ -392,9 +410,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     ? formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)
     : "—"
   const prBadge = computePhaseBadge(derived ?? undefined)
-  // commits 元信息：数据源 = 票 03 的 round-diff aggregate（壳内 [data-head-commits]
-  // 挂载位；03 落地前如实显示 —，不臆造）。
-  const headCommits: number | null = null
+  // ── 票 03「≡ 变更」单源节拍 ────────────────────────────────────────────
+  // 壳是 round-diff 的唯一轮询者（SSE 事件 + 节流 + ≤10s 兜底）：FilesTab 吃这份
+  // 载荷，顶栏 [data-head-commits] 也吃它 —— 头栏与页签永不两话。
+  // 数据 = 既有 GET /round-diff（票03 起 live 轮也供货），零新端点。
+  const filesServing = !!derived?.isV4 && canServeRoundDiff(derivedStatus)
+  const diffFeed = useRoundDiffFeed(task.id, filesServing, diffSignal)
+  // commits 元信息：aggregate 与「≡ 变更」统计条同源（scopeTotals）；无快照如实 —。
+  const headCommits = diffFeed.data?.available ? scopeTotals(diffFeed.data).commits : null
 
   return (
     <FoldProvider taskId={task.id}>
@@ -425,7 +448,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <span className="ml-2 flex shrink-0 items-center gap-3 text-[10.5px] text-pop-dim" data-head-meta>
           <span title={runCount > 0 ? `实跑 ${runCount} 轮 —— 只计 workflow 运行段` : undefined}>⏱ <b className="font-semibold text-pop-ink tabular-nums">{liveDurText}</b></span>
           <span className="text-pop-yellow">$ <b className="tabular-nums">{costText.replace(/^\$\s*/, "")}</b></span>
-          <span data-head-commits={headCommits ?? "pending"} title="commits 计数随「≡ 变更」页签接入（票 03）">{headCommits ?? "—"} commits</span>
+          <span data-head-commits={headCommits ?? "pending"} title="本轮实物提交数 —— 与「≡ 变更」统计条同源（round-diff）">{headCommits ?? "—"} commits</span>
           {prBadge && (
             <span className="tabular-nums">P {prBadge.phase}/{prBadge.total}{prBadge.round != null ? ` · R${prBadge.round}` : ""}</span>
           )}
@@ -529,14 +552,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   })()}
               </div>
             )}
-            {(tab === "files" || tab === "nodes" || tab === "chat") && (
-              // 票间挂载位契约（03 变更 / 04 节点 / 07 对话）：内容组件替换这块
-              // placeholder 即可，页签装配、键盘、右栏、keep-mounted 都已就位。
+            {tab === "files" && (
+              // 票 03 落地：GitHub Files-changed 视图（统计条/口径切换/行内双行号 diff）。
+              // 票 07 契约：需要给文件行挂 💬chat 徽标时，把 rowDecor/toolbarExtra 传进来。
+              <div className="flex min-h-0 flex-1 flex-col" data-tab-host="files">
+                <FilesTab
+                  taskId={task.id}
+                  feed={diffFeed}
+                  serving={filesServing}
+                  isLive={isLive}
+                  costText={costText}
+                />
+              </div>
+            )}
+            {(tab === "nodes" || tab === "chat") && (
+              // 票间挂载位契约（04 节点 / 07 对话）：内容组件替换这块 placeholder 即可，
+              // 页签装配、键盘、右栏、keep-mounted、变更取数节拍都已就位。
               <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host={tab}>
                 <div className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim">
-                  {tab === "files" && <>≡ 变更页签 —— GitHub 式文件列表 + unified diff 与统计条由<b className="text-pop-ink">票 03</b> 挂载。数据源 = 既有 GET /api/tasks/:id/round-diff（本轮/累计口径、无新后端）。</>}
                   {tab === "nodes" && <>◆ 节点页签 —— 工作流节点任务清单（状态/类型/用时/成本 + 节点事件 + 深链执行详情）由<b className="text-pop-ink">票 04</b> 挂载。数据源 = 既有执行详情/节点事件端点。</>}
-                  {tab === "chat" && <>💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。</>}
+                  {tab === "chat" && <>💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。快改徽标接线：FilesTab 的 rowDecor/toolbarExtra 即 07 的挂载钩子。</>}
                 </div>
               </div>
             )}

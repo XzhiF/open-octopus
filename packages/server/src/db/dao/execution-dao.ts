@@ -154,6 +154,21 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId, phaseIndex, taskId, phaseIndex) as ExecutionRow) ?? null
   }
 
+  /** 票03（taskboard-modal-v2「≡ 变更」）：任务当前 **live 轮**的 exec 行 —— 已起跑、
+   *  未终态（running/paused/停在审批口的 pending_approval/pending_resume）的最近一条
+   *  实例行。start_commit_id 必须已落（launch 即捕获；排队未起动的行没有可圈的区间）。
+   *  与 findLatestTaskInstance 同 instance 谓词（roots + chained v4 rounds，扇出臂不
+   *  算轮）。无命中 = 任务当前没有在飞的轮 → null（diff 端点据此回原 409）。 */
+  findLiveRoundForTask(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND status IN ('running', 'paused', 'pending_approval', 'pending_resume')
+         AND start_commit_id IS NOT NULL
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId) as ExecutionRow) ?? null
+  }
+
   /** The claim queue, FIFO, over a task's roots AND its composite children (partial
    *  index idx_exec_pending_claimable). A child that overflowed the cap is parked here
    *  exactly like an armed root, so claiming only roots would strand it forever. */
