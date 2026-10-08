@@ -5,9 +5,11 @@
 // 真链路（零 mock、零 skip；R1/R5/R7）：真实 v4 任务 + 真实触发轮（bash 落 commit 后
 // sleep 停驻 —— takeover 需真引擎可 abort）。✋ 三分支框真点击选② →
 // POST /takeover（abort+标记+doer 会话一发）→ 派生 phase='takeover' → 壳形态翻
-// takeover（默认「💬 对话接管」）→ 真 task-doer 回合改一处（真 provider；server 自动
-// [quick-edit] commit）→「≡ 变更」实时随 HEAD 增长（票08 第三级解析：接管轮 end 锚=
-// 当前 HEAD，快改 commit 进本轮区间 —— 这条流的「统计变化」是真增长，非前端计数）。
+// takeover（默认「💬 对话接管」）→ 真 task-doer 回合改一处（真 provider；接管轮
+// = takeover_at∧¬delivered，server 自动落 [takeover-edit] commit —— 票10 review-fix
+// form-aware 标记；awaiting/ready 快改仍 [quick-edit] 见流②）→「≡ 变更」实时随
+// HEAD 增长（票08 第三级解析：接管轮 end 锚=当前 HEAD，接管件 commit 进本轮区间 ——
+// 这条流的「统计变化」是真增长，非前端计数）。
 // 「✓ 确认本 Round 交付」真点击 → POST /takeover/deliver：takeover_delivered_at +
 // 逐仓 HEAD 快照进 end_commit_id → 派生落回 awaiting_review → 卡片进待验收列 →
 // 走查面头部「✋ 接管件 · 自动复检未跑」chip（票08 契约，不加闸）。
@@ -106,19 +108,21 @@ test("流④ running → ✋ 接管 → 对话改一处（真 commit）→ 交�
   // 头栏接管态 pill
   await expect(page.locator(SEL.statusPill())).toHaveAttribute("data-task-modal-status", "takeover", { timeout: 20_000 })
 
-  // ── 对话改一处：真 task-doer 回合 → 真 [quick-edit] commit ──
+  // ── 对话改一处：真 task-doer 回合 → 真 [takeover-edit] commit（接管轮形态标记）──
   const commitsBefore = gitCommitCount(repoDir, startSha, gitHead(repoDir))
   const marker = `E2E_TBV2_TAKEOVER_${handles.run}`
   await chatInput.fill(`把 projects/${handles.projName}/tbv2-note.md 的内容改成一行：${marker}。只改这一个文件，不要 git commit。`)
   await page.locator(SEL.chatSend()).click()
   await expect(page.locator(SEL.chatToolCard()).first()).toBeVisible({ timeout: 240_000 })
 
-  // 真实副作用②（git 直读）：快改 commit 落执行分支，内容真的变了
+  // 真实副作用②（git 直读）：接管件 commit 落执行分支，内容真的变了
+  // （review-fix 6abe16a7 分形态：接管轮 takeover_at∧¬delivered → [takeover-edit]；
+  //  SSE 尾帧名 quick_edit_commit 不变 —— 下方 ×1 chip / 💬chat 行徽标断言两版语义同立）
   const qeSha = await tbv2Until(() => {
     const sha = gitHead(repoDir)
     const subj = gitAt(["log", "-1", "--pretty=%s"], repoDir)
-    return subj.startsWith("[quick-edit] ") ? sha : null
-  }, 20_000, "no [quick-edit] commit after the takeover turn")
+    return subj.startsWith("[takeover-edit] ") ? sha : null
+  }, 20_000, "no [takeover-edit] commit after the takeover turn")
   expect(gitAt(["show", `${qeSha}:tbv2-note.md`], repoDir)).toContain(marker)
 
   // 真实副作用③（UI=实时实物）：接管轮 end 锚=HEAD →「≡ 变更」统计随 HEAD 真增长
@@ -126,7 +130,7 @@ test("流④ running → ✋ 接管 → 对话改一处（真 commit）→ 交�
   await expect(page.locator(SEL.filesTab())).toBeVisible({ timeout: 20_000 })
   await expect(page.locator(SEL.quickEditChip())).toContainText("×1", { timeout: 30_000 })
   const commitsAfter = gitCommitCount(repoDir, startSha, qeSha)
-  expect(commitsAfter, "the quick-edit commit is inside the takeover round range").toBeGreaterThan(commitsBefore)
+  expect(commitsAfter, "the takeover-edit commit is inside the takeover round range").toBeGreaterThan(commitsBefore)
   await expect
     .poll(
       async () => {
