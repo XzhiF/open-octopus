@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { BaseDAO } from "./base"
 import { buildTurnBoundaries, deriveTurnForTs, toEpochMs } from "../../turn-index"
 import type {
@@ -155,18 +156,21 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   /** 票03（taskboard-modal-v2「≡ 变更」）：任务当前 **live 轮**的 exec 行 —— 已起跑、
-   *  未终态（running/paused/停在审批口的 pending_approval/pending_resume）的最近一条
-   *  实例行。start_commit_id 必须已落（launch 即捕获；排队未起动的行没有可圈的区间）。
+   *  未终态（running/paused/停在审批或交互节点的 pending_approval/
+   *  pending_interaction/pending_resume —— 词表单源 shared
+   *  {@link LIVE_ROUND_STATUSES}，review-2 收口：停在交互节点的轮也是 live，
+   *  旧内联字面量漏过它）的最近一条实例行。start_commit_id 必须已落（launch 即捕获；
+   *  排队未起动的行没有可圈的区间）。
    *  与 findLatestTaskInstance 同 instance 谓词（roots + chained v4 rounds，扇出臂不
    *  算轮）。无命中 = 任务当前没有在飞的轮 → null（diff 端点据此回原 409）。 */
   findLiveRoundForTask(taskId: string): ExecutionRow | null {
     return (this.stmt(
       `SELECT * FROM executions
        WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
-         AND status IN ('running', 'paused', 'pending_approval', 'pending_resume')
+         AND status IN (${LIVE_ROUND_STATUSES.map(() => "?").join(", ")})
          AND start_commit_id IS NOT NULL
        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    ).get(taskId) as ExecutionRow) ?? null
+    ).get(taskId, ...LIVE_ROUND_STATUSES) as ExecutionRow) ?? null
   }
 
   /** 票08（taskboard-modal-v2 人工接管）：**停流未交付**的接管轮 —— 行已终态

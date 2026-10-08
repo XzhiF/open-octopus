@@ -385,4 +385,14 @@ describe("round-diff — 票03 执行中轮 live 供货", () => {
     // payload 形状零新字段（web 解析面不变）
     expect(Object.keys(cum).sort()).toEqual(Object.keys(round).sort())
   })
+
+  it("L6: 停在交互节点的轮（pending_interaction）同供 —— 词表单源 LIVE_ROUND_STATUSES（票10 review-2）", async () => {
+    // 03 报告口径：审批/交互等待也是 live 轮。旧 findLiveRoundForTask 内联字面量
+    // 漏了 'pending_interaction'，这一款会假 409 —— 词表收口后必须供货。
+    const [k0] = freshRepo("live6")
+    const [taskId] = await newAwaitingTask({ status: "pending_interaction", start: { live6: k0 }, end: null })
+    const d = await diffOf(taskId)
+    expect(d.available).toBe(true)
+    expect(d.aggregate.commits).toBe(2)
+  })
 })

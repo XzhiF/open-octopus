@@ -557,6 +557,57 @@ describe("S1: 快速修改每改即 commit — [quick-edit] 落在执行分支",
     expect(msgs.some((m) => m.role === "assistant" && m.content.includes("修复轮"))).toBe(true)
   })
 
+  it("接管回合的有效编辑落 [takeover-edit]（不双计快改列），尾帧名与 awaiting 契约逐字不变", async () => {
+    // 票10 review-1（spec US30 / ADR-0025）：接管中（takeover_at 已写、未交付）
+    // 的对话回合落 [takeover-edit] —— 台账「快速修改」列只数 [quick-edit]，
+    // 接管列认 executions.takeover_* DB 源，三本账不互抄、不双计。
+    const { taskId, repoPath } = seedV4Task({ kind: "running" })
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoPath, encoding: "utf-8" }).trim()
+    db.prepare("UPDATE executions SET takeover_at = ? WHERE task_id = ?")
+      .run(new Date().toISOString(), taskId)
+    const before = gitLogSubjects(repoPath)
+
+    h.queue.push(editTurn("接管改一处。", path.join("app", "src", "tk.ts"), "export const tk = 1\n"))
+    const res = await app.request(`/api/tasks/${taskId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "按钮圆角从 8px 收到 6px" }),
+    })
+    expect(res.status).toBe(200)
+    const sseText = await res.text()
+    // 尾帧事件名不变（票07/10 契约）；payload 的 message 换成接管标记。
+    expect(sseText).toContain("event: quick_edit_commit")
+
+    const after = gitLogSubjects(repoPath)
+    expect(after.length).toBe(before.length + 1)
+    expect(after[0].startsWith("[takeover-edit]")).toBe(true)
+    expect(after[0]).not.toMatch(/^\[quick-edit\]/)
+    expect(after[0]).toContain("按钮圆角从 8px 收到 6px")
+    expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoPath, encoding: "utf-8" }).trim()).toBe(branch)
+
+    // 注入的写纪律同步换词 —— 模型看到的每回合纪律与 server 实际落的标记一致。
+    const call = h.calls[0]
+    const append = (call.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+    expect(append).toContain("[takeover-edit]")
+  })
+
+  it("接管交付后的回合回到 [quick-edit]（待验收小改 = 快速修改，票01 契约字符串）", async () => {
+    const { taskId, repoPath } = seedV4Task({ kind: "awaiting_review" })
+    const now = new Date().toISOString()
+    db.prepare("UPDATE executions SET takeover_at = ?, takeover_delivered_at = ? WHERE task_id = ?")
+      .run(now, now, taskId)
+
+    h.queue.push(editTurn("交付后再小改。", path.join("app", "src", "post.ts"), "export const p = 1\n"))
+    const res = await app.request(`/api/tasks/${taskId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "文案再收一下" }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(gitLogSubjects(repoPath)[0].startsWith("[quick-edit]")).toBe(true)
+  })
+
   it("task isolation: chatting on A never touches B's workspace or session", async () => {
     const a = seedV4Task({ kind: "awaiting_review" })
     const b = seedV4Task({ kind: "awaiting_review" })

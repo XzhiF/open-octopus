@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Boxes, Bot, FileText } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
-import { mergeLedgerParts } from "@octopus/shared"
+import { mergeLedgerParts, LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { listArtifacts, type TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates, UsageWire } from "@/lib/types"
@@ -43,8 +43,11 @@ export const RUN_STATUS_LABEL: Record<string, string> = {
   success: "成功", done: "已完成", triggered: "已触发",
 }
 
-/** 还没跑完的状态 —— 驱动「实时耗时」的每秒一跳。pending = 武装后在并发闸后排队。 */
-export const LIVE_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
+/** 还没跑完的状态 —— 驱动「实时耗时」的每秒一跳。pending = 武装后在并发闸后排队。
+ *  在飞轮词表单源 = shared {@link LIVE_ROUND_STATUSES}（停在审批/交互节点的轮
+ *  也是 live —— 票10 review-2；旧内联副本漏 pending_interaction 且三处手抄漂移）。
+ *  消费方（nodes-tab / task-run-console 的 live 判定）一律 import 这份，勿再抄。 */
+export const LIVE_STATUSES: ReadonlySet<string> = new Set<string>(["pending", ...LIVE_ROUND_STATUSES])
 
 /** 红行词表 (票05 契约 §新事实-2)：error_summary 只在这些状态露出。绿行即便带着
  *  遗留键也绝不显示 —— 读侧按状态门控，不按字段有没有值门控。 */

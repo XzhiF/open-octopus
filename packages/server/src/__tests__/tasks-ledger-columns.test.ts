@@ -49,8 +49,10 @@ function rb(taskId: string, rel: string): string {
 }
 
 // ── 真 git 仓（每次独立目录，避免跨用例复用同仓触发 nothing-to-commit）：
-//    k0（基线）→ 轮次产物 → 两枚 [quick-edit] 快改。返回 map key 名 = repo。
-function buildRepo(repo: string): { start: string; end: string; quickEditShas: string[] } {
+//    k0（基线）→ 轮次产物 → 两枚 [quick-edit] 快改 → 一枚 [takeover-edit]
+//    （人工接管回合的提交，票10 review-1 —— 绝不进「快速修改」列，三本账不双计）。
+//    返回 map key 名 = repo。
+function buildRepo(repo: string): { start: string; end: string; quickEditShas: string[]; takeoverEditSha: string } {
   const dir = path.join(wsDir, "projects", repo)
   fs.mkdirSync(dir, { recursive: true })
   git(dir, "init", "-b", "main")
@@ -73,7 +75,13 @@ function buildRepo(repo: string): { start: string; end: string; quickEditShas: s
   git(dir, "add", "-A")
   git(dir, "commit", "-m", "[quick-edit] 对话窄化 + hover 描边\n\ntask: T1\ndoer_session: S1\nrepo: " + repo)
   quickEditShas.push(git(dir, "rev-parse", "HEAD"))
-  return { start, end: git(dir, "rev-parse", "HEAD"), quickEditShas }
+  // 一枚 [takeover-edit] 提交（接管回合有效编辑 —— 落区间内但只归接管账，
+  // 快改列按 [quick-edit] 前缀判据必须把它挡在外面）。
+  fs.writeFileSync(path.join(dir, "ui-takeover.tsx"), "manual\n")
+  git(dir, "add", "-A")
+  git(dir, "commit", "-m", "[takeover-edit] 接管中手改按钮态\n\ntask: T1\ndoer_session: S1\nrepo: " + repo)
+  const takeoverEditSha = git(dir, "rev-parse", "HEAD")
+  return { start, end: git(dir, "rev-parse", "HEAD"), quickEditShas, takeoverEditSha }
 }
 
 /** v4 任务 + 一条 completed P1/R1 exec 行（awaiting_review），start/end 指向真仓区间。 */
@@ -164,6 +172,11 @@ describe("票09 台账分列 — 三本账三源文件内容级（真 git + 真 
     // payload 三列在 diff 上（ledger + web 预览同吃这份）。
     expect(snap.diff.manualInterventions).toHaveLength(2)
     expect(snap.diff.quickEdits).toHaveLength(quickEditShas.length) // 2 枚 [quick-edit]
+    // 三本账不双计（票10 review-1）：区间里那枚 [takeover-edit] 提交绝不进快改列 ——
+    // 接管留痕的权威是上面那两列 DB 值（接管列 ×1 由 takeover 段表达）。
+    for (const q of snap.diff.quickEdits ?? []) {
+      expect(q.subject.startsWith("[takeover-edit]")).toBe(false)
+    }
     expect(snap.diff.takeover).toMatchObject({ at: "2026-10-08T02:00:00.000Z", deliveredAt: "2026-10-08T03:00:00.000Z" })
 
     const rel = evidence.writeLedger(snap, "accepted")

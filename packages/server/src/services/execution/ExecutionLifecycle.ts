@@ -22,7 +22,7 @@ import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
-import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef } from "@octopus/shared"
+import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef, LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
@@ -728,7 +728,9 @@ export class ExecutionLifecycle {
   async cancel(id: string): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (!["running", "paused", "pending_approval", "pending_interaction", "pending_resume"].includes(exec.status))
+    // 接受集单源 shared LIVE_ROUND_STATUSES（停在审批/交互节点的轮引擎还活着，
+    // 人停得动；'pending' 排队行不在列 —— 票10 review-2 与任务侧闸同一词表）。
+    if (!LIVE_ROUND_STATUSES.includes(exec.status))
       throw Object.assign(new Error("Cannot cancel in current status"), { status: 400 })
 
     const now = new Date().toISOString()

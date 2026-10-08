@@ -240,7 +240,9 @@ export class TaskReadyGateError extends Error {
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    // TaskApiError extends Error（name/status 多带两层信息）—— 老 catch(err: Error)
+    // 逐字兼容；带 status 的调用方（409 决策闸等）本就按 TaskApiError 消费。
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }
@@ -589,21 +591,13 @@ export interface FixRoundResultWire {
 /** 分支②：停流 · 人工接管。409 = 无在飞轮/排队中/abort 失败（接管未产生）。 */
 export async function takeoverTask(taskId: string): Promise<TakeoverResultWire> {
   const res = await fetch(buildUrl(`/${taskId}/takeover`), { method: "POST" })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
-  }
-  return res.json()
+  return handleResponse<TakeoverResultWire>(res)
 }
 
 /** 「✓ 确认本 Round 交付 · 转待验收」。409 = 无接管中轮/重复交付/已被改派。 */
 export async function deliverTakeover(taskId: string): Promise<DeliverTakeoverResultWire> {
   const res = await fetch(buildUrl(`/${taskId}/takeover/deliver`), { method: "POST" })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
-  }
-  return res.json()
+  return handleResponse<DeliverTakeoverResultWire>(res)
 }
 
 /** 分支③：改派通用修复流 task-fix（指令必填）。409 = 待验收轮（走打回）/ 无进行中
@@ -614,11 +608,7 @@ export async function postFixRound(taskId: string, instruction: string): Promise
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ instruction }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
-  }
-  return res.json()
+  return handleResponse<FixRoundResultWire>(res)
 }
 
 /** POST /api/tasks/:id/archive/retry — 票 08 归档幂等续跑（仅 archiving 态，
@@ -1326,11 +1316,7 @@ export interface TaskDoerChatBinding {
 
 export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBinding> {
   const res = await fetch(buildUrl(`/${taskId}/chat`))
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
-  }
-  return res.json()
+  return handleResponse<TaskDoerChatBinding>(res)
 }
 
 /** 会话历史（ws-chat GET 的 raw 行 → ChatMessage，映射单源 fromDBMessage）。 */

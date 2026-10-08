@@ -44,7 +44,7 @@ import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/accep
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, mergeAggregates, useRunsAggregates, TaskAiUsageCard, execLabel,
+  RUN_STATUS_LABEL, LIVE_STATUSES, mergeAggregates, useRunsAggregates, TaskAiUsageCard, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
 import { FilesTab } from "../files-tab/files-tab"
@@ -88,7 +88,8 @@ interface TaskRunConsoleProps {
   startOnAcceptance?: boolean
 }
 
-const LIVE_RUN_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
+// 在飞轮词表单源 execution-summary.LIVE_STATUSES（票10 review-2：曾在此文件
+// 与 nodes-tab 各存一份逐字副本 —— 实时一跳/⚑ 计数/fixing 判定全切这一份）。
 const ERROR_RUN_STATUSES = new Set(["failed", "aborted", "completed_with_failures"])
 const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 
@@ -190,8 +191,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       const tag = p.phase_index != null ? `P${p.phase_index}·R${p.round_index ?? 1}` : (p.subunit ? `子单元 ${p.subunit}` : "run")
       const st = String(p.status)
       const reason = ERROR_RUN_STATUSES.has(st) && p.reason ? ` — ${String(p.reason)}` : ""
-      push(LIVE_RUN_STATUSES.has(st) ? "▶" : st === "completed" || st === "done" || st === "success" ? "✓" : "✗",
-        LIVE_RUN_STATUSES.has(st) ? "text-pop-purple" : "text-pop-green",
+      push(LIVE_STATUSES.has(st) ? "▶" : st === "completed" || st === "done" || st === "success" ? "✓" : "✗",
+        LIVE_STATUSES.has(st) ? "text-pop-purple" : "text-pop-green",
         `${tag} ${RUN_STATUS_LABEL[st] ?? st}${reason}`)
       refetch(); setDiffSignal((v) => v + 1)
     })
@@ -221,7 +222,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const runsById = useMemo(() => new Map(runs.map((r) => [r.id, r])), [runs])
 
   // 秒表：live 且确有活轮时 1s 一跳（数据刷新仍归轮询/SSE）。
-  const anyLiveRun = runs.some((r) => LIVE_RUN_STATUSES.has(r.status))
+  const anyLiveRun = runs.some((r) => LIVE_STATUSES.has(r.status))
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!isLive || !anyLiveRun) return
@@ -288,18 +289,25 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const [signals, setSignals] = useState<SignalLine[]>([])
   // 票 06 · ⚑ 干预行（同一发 agent-events 拉取榨出 —— 事件流持久化即留痕真相）。
   const [interventionRows, setInterventionRows] = useState<InterventionRow[]>([])
+  // US16（票10 review-7）：⚑ 干预×N 的「当前节点」= 事件流尾部节点（引擎现在
+  // 在往哪个节点吐事件），不是「最近一次干预打到的节点」。执行推进到没挨过
+  // 干预的新节点 → 计数归 0（卡片按 >0 才挂 chip，即「0/不显示」）。
+  const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
   const targetId = replayTarget?.id ?? null
   const targetWs = replayTarget?.workspace_id ?? null
-  const targetLive = !!replayTarget && LIVE_RUN_STATUSES.has(replayTarget.status)
+  const targetLive = !!replayTarget && LIVE_STATUSES.has(replayTarget.status)
   useEffect(() => {
     if (!targetId || !targetWs) return
     let cancelled = false
+    setLiveNodeId(null)
     const pull = () => {
       fetchAgentEvents(targetWs, targetId)
         .then((res) => {
           if (cancelled) return
           setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations }))
           setInterventionRows(extractInterventions(res.events))
+          const tail = res.events.length > 0 ? res.events[res.events.length - 1] : null
+          setLiveNodeId(tail && tail.nodeId ? tail.nodeId : null)
         })
         .catch(() => { /* 信号/⚑ 不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
     }
@@ -321,7 +329,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   //   takeover = 派生 phase 存在 'takeover'（票 08：绑定流被停、接管件未交付 ——
   //     服务端 takeover_at 标记经 deriveTaskView 补支翻出此态，交付后自动翻假）；
   //   其余一切形态恒 flow。
-  const fixingLive = runs.some((r) => LIVE_RUN_STATUSES.has(r.status) && r.workflow_ref === "built-in/task-fix")
+  const fixingLive = runs.some((r) => LIVE_STATUSES.has(r.status) && r.workflow_ref === "built-in/task-fix")
   const takeoverPv = phaseViews.find((p) => p.status === "takeover") ?? null
   const shellMode: ConsoleShellMode = deriveShellMode({ fixingLive, takeoverActive: !!takeoverPv })
   const tabs = useMemo(
@@ -364,7 +372,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const dueAt = task.next_fire_at
   const armedFuture = !!dueAt && new Date(dueAt).getTime() > Date.now()
   const waitingForSlot = task.execution?.status === "pending"
-  const liveRun = runs.find((r) => LIVE_RUN_STATUSES.has(r.status)) ?? null
+  const liveRun = runs.find((r) => LIVE_STATUSES.has(r.status)) ?? null
   const awaitingPv = phaseViews.find((p) => p.status === "awaiting_review") ?? null
   // 暂停/恢复只在「真有一轮在跑/被按住」时出现 —— 与工作流页同判据（服务端也要求
   // 执行确实 running 才接受暂停；停在审批节点的运行不在其列）。
@@ -393,8 +401,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     canPause, canResume, canAbort, canReopen,
     armedFuture, canTrigger: !waitingForSlot,
   })
-  // LIVE 卡 ⚑ 干预×N（票 06）：口径 = 最近一次干预的目标节点及其累计（纯函数单源）。
-  const ivStats = useMemo(() => interventionStats(interventionRows), [interventionRows])
+  // LIVE 卡 ⚑ 干预×N（票 06 / US16）：口径 = **当前节点**的累计（纯函数单源
+  // interventionStats；执行推进到零干预的新节点即归 0 —— 票10 review-7）。
+  const ivStats = useMemo(() => interventionStats(interventionRows, liveNodeId), [interventionRows, liveNodeId])
 
   const handleAbort = async () => {
     setBusy("abort")
@@ -569,7 +578,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
   // ── 顶栏元信息（原型 .m-meta：⏱ 用时 · $ 成本 · commits · P·R）──
   const { ms: runMs, count: runCount } = sumRunMs(runs, now)
-  const liveDurText = liveRun && LIVE_RUN_STATUSES.has(liveRun.status) && liveRun.status !== "paused"
+  const liveDurText = liveRun && LIVE_STATUSES.has(liveRun.status) && liveRun.status !== "paused"
     ? liveDur(liveRun, now)
     : runCount > 0 ? shortDur(runMs) : "—"
   const costText = totalAgg && totalAgg.totalCalls > 0

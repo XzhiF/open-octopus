@@ -19,14 +19,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { TaskExecutionBadge } from "@octopus/shared"
 import { fetchAgentEvents, fetchExecutionDetail, type ExecutionDetailWire } from "@/lib/api-client"
 import type { AgentEvent } from "@/lib/types"
-import { deepLinkTarget } from "../execution-summary"
+import { deepLinkTarget, LIVE_STATUSES } from "../execution-summary"
 import type { ConsoleShellMode } from "./tab-assembly"
 import {
   buildEventLines, buildNodeRows, execStateLine, extractNodeDefs,
   filterEventsForNode, nodeSummary, type NodeRow,
 } from "./nodes-model"
-
-const LIVE_RUN_STATUSES = new Set(["pending", "running", "paused", "pending_approval", "pending_resume"])
 
 export interface NodesTabProps {
   /** 当前面相位的绑定执行（执行中=在跑轮；接管/中止=被打断的轮；修复轮=task-fix 轮）。 */
@@ -68,7 +66,7 @@ const STATE_TONE: Record<string, string> = {
 export function NodesTab({ run, mode, live }: NodesTabProps) {
   const runId = run?.id ?? null
   const ws = run?.workspace_id || null
-  const runLive = !!run && LIVE_RUN_STATUSES.has(run.status)
+  const runLive = !!run && LIVE_STATUSES.has(run.status)
 
   const [detail, setDetail] = useState<ExecutionDetailWire | null>(null)
   const [err, setErr] = useState<string | null>(null)

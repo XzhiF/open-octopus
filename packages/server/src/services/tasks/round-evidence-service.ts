@@ -42,7 +42,6 @@ import {
   TASK_ARTIFACTS_UPDATE_EVENT,
   TaskSpecFieldError,
   type AcceptanceVerify,
-  type AcceptancePreview,
   type AcceptanceRunbook,
   type RunbookView,
   type TaskSpec,
@@ -58,6 +57,7 @@ import type { TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
 import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
+import { runbookFromSpec } from "./runbook-spec"
 import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState } from "./playbook-types"
 import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
 import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
@@ -265,6 +265,24 @@ export class RoundEvidenceService {
   // ── awaiting-round resolution（验货面的供货闸；diff 两端点票03 起另走
   //    resolveRoundForDiff 的 live 回落，其余端点恒严 awaiting）──────────
 
+  /** awaiting 轮的派生选取（纯读不抛）：awaiting_review ∧ awaitingRound ∧
+   *  轮行 exec.id —— resolveAwaiting 与 resolveRoundForDiff 共用这一份判据
+   *  （票10 review-8：diff 回落不再靠「吞 TaskStatusConflictError」当控制流）。
+   *  null = 派生面没有可锚定的待验收轮。 */
+  private pickAwaitingSelection(detail: ReturnType<TasksService["getTask"]>): {
+    phaseIndex: number
+    roundIndex: number
+    execId: string
+  } | null {
+    const awaiting: TaskPhaseView | undefined = detail.derived.phaseViews.find(
+      (p) => p.status === "awaiting_review" && p.awaitingRound !== null,
+    )
+    const roundIndex = awaiting?.awaitingRound ?? null
+    const execId = awaiting?.rounds.find((r) => r.roundIndex === roundIndex)?.exec.id
+    if (!awaiting || roundIndex == null || !execId) return null
+    return { phaseIndex: awaiting.index, roundIndex, execId }
+  }
+
   /** The derived view (tasks-service.getTask → derived.phaseViews) picks the
    *  awaiting phase/round — 票03 single-authority, re-read here, never
    *  recomputed. TaskNotFoundError → 404; TaskStatusConflictError → 409. */
@@ -276,23 +294,19 @@ export class RoundEvidenceService {
     batchRelDir: string | null
   } {
     const detail = this.tasksService.getTask(taskId) // 404 first
-    const awaiting: TaskPhaseView | undefined = detail.derived.phaseViews.find(
-      (p) => p.status === "awaiting_review" && p.awaitingRound !== null,
-    )
-    const roundIndex = awaiting?.awaitingRound ?? null
-    const execId = awaiting?.rounds.find((r) => r.roundIndex === roundIndex)?.exec.id
-    if (!awaiting || roundIndex == null || !execId) {
+    const sel = this.pickAwaitingSelection(detail)
+    if (!sel) {
       throw new TaskStatusConflictError("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货")
     }
-    const execRow = this.execDao.findById(execId)
+    const execRow = this.execDao.findById(sel.execId)
     if (!execRow || execRow.task_id !== taskId) {
-      throw new TaskStatusConflictError(`待验收轮 ${execId} 的执行行缺失`)
+      throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
     }
     return {
       execRow,
-      phaseIndex: awaiting.index,
-      roundIndex,
-      batchRelDir: this.batchRelDirOf(detail.task_spec as TaskSpec, awaiting.index),
+      phaseIndex: sel.phaseIndex,
+      roundIndex: sel.roundIndex,
+      batchRelDir: this.batchRelDirOf(detail.task_spec as TaskSpec, sel.phaseIndex),
     }
   }
 
@@ -508,29 +522,40 @@ export class RoundEvidenceService {
 
   /** 票03 diff 端点专用轮次解析（**只**供 getRoundDiff/getFilePatch）：
    *  awaiting 优先 —— 命中即逐字现行为；无 awaiting 时回落任务当前 live 轮
-   *  （running/paused/停在审批口的已启动行），由调用方把 end 锚降级为各仓当前
+   *  （running/paused/停在审批或交互节点的已启动行，词表 = shared
+   *  {@link LIVE_ROUND_STATUSES}），由调用方把 end 锚降级为各仓当前
    *  HEAD —— 新 commit 落库即出现在下一次 GET（「≡ 变更」≤10s 观测口径的服务端
    *  底座）。verify/playbook/preview/snapshotEvidence 不经这里，恒严 awaiting。
    *  票08 补第三级：live 也没有时认**停流未交付的接管轮**（takeover_at 有、
    *  delivered 无）—— 机器轮已停但轮还在人手里跑（对话快改持续落 commit，
    *  AC3「接管对话内改动实时进 ≡ 变更」），与 live 同口径 end 锚 = 当前 HEAD。
    *  错误语义不变：未知任务 404（getTask 先抛）；awaiting/live/takeover 皆无 →
-   *  原 409 如实上抛。 */
+   *  原 409 如实上抛。票10 review-8：awaiting 判据走显式选取探针
+   *  （{@link pickAwaitingSelection}），不再靠 resolveAwaiting 抛异常当控制流。 */
   private resolveRoundForDiff(taskId: string): {
     execRow: ExecutionRow
     phaseIndex: number | null
     roundIndex: number
     live: boolean
   } {
-    try {
-      const a = this.resolveAwaiting(taskId)
-      return { execRow: a.execRow, phaseIndex: a.phaseIndex, roundIndex: a.roundIndex, live: false }
-    } catch (err) {
-      if (!(err instanceof TaskStatusConflictError)) throw err
-      const execRow = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
-      if (!execRow) throw err
-      return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
+    const detail = this.tasksService.getTask(taskId) // 404 first
+    const sel = this.pickAwaitingSelection(detail)
+    if (sel) {
+      const awaitingRow = this.execDao.findById(sel.execId)
+      if (awaitingRow && awaitingRow.task_id === taskId) {
+        return { execRow: awaitingRow, phaseIndex: sel.phaseIndex, roundIndex: sel.roundIndex, live: false }
+      }
+      // 病态边（派生认 awaiting 但执行行没了/归属不符）：旧语义 = 先试 live/接管
+      // 回落，皆无才抛「执行行缺失」原文。
+      const fb = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
+      if (!fb) throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
+      return { execRow: fb, phaseIndex: fb.phase_index, roundIndex: fb.round_index ?? 1, live: true }
     }
+    const execRow = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
+    if (!execRow) {
+      throw new TaskStatusConflictError("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货")
+    }
+    return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
   }
 
   /** live 端锚：仓当前 HEAD；目录坏/空仓（rev-parse 抛）→ null，调用方按
@@ -859,7 +884,8 @@ export class RoundEvidenceService {
 
   /** Resolve the effective runbook（两级，2026-09-22 起）：优先级
    *  ① 显式 `acceptance_runbook`；② legacy `acceptance_preview` 合成（单服务，
-   *  旧面板零改动）。两者皆无 → null。
+   *  旧面板零改动）。两者皆无 → null。判据/合成单源在 {@link runbookFromSpec}
+   *  （ready-gate 与 task-doer 注入同吃一份，票10 review-6 收口三处副本）。
    *  历史第③级「项目自带 `.octopus/acceptance/{up,health,down}.sh` 约定脚本」
    *  已摘除 —— 它探的是工作区根，而任务仓库 worktree 实际落在 `projects/<repo>/`
    *  下，两者永不相交（PV7 当年靠手工往工作区根塞脚本才命中，是测试自证假象）；
@@ -867,19 +893,7 @@ export class RoundEvidenceService {
    *  §启动 Runbook 记忆），运行期不再自动探测文件系统。 */
   private resolveRunbook(taskId: string): AcceptanceRunbook | null {
     const spec = this.tasksService.getTask(taskId).task_spec as TaskSpec | undefined
-    const rb = spec?.acceptance_runbook as AcceptanceRunbook | undefined
-    if (rb?.up?.command?.trim() && rb?.ready?.command?.trim()) return rb
-    const legacy = spec?.acceptance_preview as AcceptancePreview | undefined
-    if (legacy?.command?.trim() && legacy?.url) {
-      return {
-        up: { command: legacy.command, cwd: legacy.cwd },
-        // rc0 = got any HTTP response (conn refused → rc7 → not ready); mirrors
-        // the old "any response = port up" probe under the unified exit-code rule.
-        ready: { command: `curl -s -o /dev/null ${JSON.stringify(legacy.url)}` },
-        views: [{ url: legacy.url }],
-      }
-    }
-    return null
+    return runbookFromSpec(spec)
   }
 
   /** Run one readiness probe: exit code 0 = ready. Short-bounded, never throws. */

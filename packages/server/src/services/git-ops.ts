@@ -13,6 +13,22 @@ const GIT_MAX_BUFFER = 1024 * 1024
 export const GIT_DIFF_MAX_BUFFER = 16 * 1024 * 1024
 export const GIT_PATCH_CHAR_CAP = 512_000
 
+/**
+ * 票01/票09 提交标记单源（taskboard-modal-v2, ADR-0025）—— 快改留痕的 subject
+ * 前缀词。写侧 task-doer-service（对话回合落 commit）与读侧 {@link
+ * GitOps.quickEditCommits}（台账「快速修改」列统计）共用这两枚：
+ *   - QUICK_EDIT_MARKER   = 待验收/ready 的快速修改轮（票01 契约字符串，逐字
+ *     不变 —— 票10 E2E 在飞断言认它）。
+ *   - TAKEOVER_EDIT_MARKER = 人工接管回合（executions.takeover_at 已停未交付）
+ *     的编辑。接管留痕的台账权威是 executions.takeover_*（票08/票09 三本账
+ *     三源不互抄），若接管件也盖 [quick-edit] 就会被「快速修改」列双计 ——
+ *     所以接管回合换盖这枚，快改列的默认前缀天然把它挡在外面。
+ */
+export const QUICK_EDIT_MARKER = "[quick-edit]"
+export const TAKEOVER_EDIT_MARKER = "[takeover-edit]"
+/** commit subject 前缀 = 标记 + 空格（读侧默认判据）。 */
+export const QUICK_EDIT_SUBJECT_PREFIX = `${QUICK_EDIT_MARKER} `
+
 function gitError(projectPath: string, args: string[], cause: unknown): Error {
   const message = cause instanceof Error ? cause.message : String(cause)
   return new Error(
@@ -373,7 +389,7 @@ export class GitOps {
     projectPath: string,
     from: string,
     to: string,
-    prefix = "[quick-edit] ",
+    prefix = QUICK_EDIT_SUBJECT_PREFIX,
   ): Promise<Array<{ sha: string; subject: string; files: string[] }>> {
     if (!from || !to || from === to) return []
     let stdout: string

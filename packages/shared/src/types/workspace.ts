@@ -75,6 +75,29 @@ export const WAITING_EXECUTION_STATUSES: readonly string[] = [
   "paused", "pending_approval", "pending_resume",
 ]
 
+/**
+ * 「在飞的轮」(live round) — the ALIVE-and-STARTED half of the execution-status
+ * split (taskboard-modal-v2 票03/票08, review-2 单源). One vocabulary, consumed by:
+ *
+ *   - `ExecutionDAO.findLiveRoundForTask`（≡ 变更 live 回落：停在审批/交互节点的轮
+ *     仍是 live —— 03 报告认「审批等待」在列，SQL 曾漏 'pending_interaction'）
+ *   - `TasksService` takeover/fix-round 的「可被人停掉的轮」判定
+ *   - `ExecutionLifecycle.cancel` / harnessIntervene 的接受集
+ *   - web 弹窗的 LIVE 判据（`execution-summary.LIVE_STATUSES` = 这份 + 'pending'
+ *     排队行，驱动实时耗时一跳与 5s 轮询）
+ *
+ * Semantic (settled by review-2): a round parked at an approval/interaction node
+ * IS live — the engine is alive and waiting, the workspace is held, a human can
+ * still stop it. 'pending' (armed but queued behind the concurrency cap, nothing
+ * started, no commit anchor) is deliberately NOT here: cancel refuses it and a
+ * diff over it would be a lie. Complement of {@link TERMINAL_EXECUTION_STATUSES}
+ * minus 'pending' — 'aborted'/'pending_task_dispatch' follow the terminal/other
+ * axes exactly as documented there.
+ */
+export const LIVE_ROUND_STATUSES: readonly string[] = [
+  "running", "paused", "pending_approval", "pending_interaction", "pending_resume",
+]
+
 export const GateStatusSchema = z.enum(["open", "closed", "bypassed"])
 export type GateStatus = z.infer<typeof GateStatusSchema>
 

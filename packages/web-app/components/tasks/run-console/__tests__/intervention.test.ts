@@ -101,16 +101,25 @@ describe("isOverLimit — ≤4000 契约（服务端 routes/tasks.ts resume 同�
 
 // ── ③ LIVE 卡 ⚑ 干预×N ─────────────────────────────────────────────
 
-describe("interventionStats — 当前节点累计口径", () => {
+describe("interventionStats — 当前节点累计口径（US16，票10 review-7 定版）", () => {
   const rows = [
     { nodeId: "a", nodeName: "节点A", text: "1", at: "2026-10-08T01:00:00.000Z" },
     { nodeId: "a", nodeName: "节点A", text: "2", at: "2026-10-08T01:10:00.000Z" },
     { nodeId: "b", nodeName: "节点B", text: "3", at: "2026-10-08T01:20:00.000Z" },
   ]
-  it("current node = the latest injection's target; count = that node's accumulated injections", () => {
+  it("给了当前节点 → ×N = 该节点的累计（同节点多次注入全部计入）", () => {
+    expect(interventionStats(rows, "a")).toEqual({ total: 3, currentNodeName: "节点A", currentNodeCount: 2 })
+    expect(interventionStats(rows, "b")).toEqual({ total: 3, currentNodeName: "节点B", currentNodeCount: 1 })
+  })
+  it("执行推进到零干预的新节点 → 当前节点计数归 0（卡片按 >0 才挂 chip，即 0/不显示）", () => {
+    expect(interventionStats(rows, "c")).toEqual({ total: 3, currentNodeName: null, currentNodeCount: 0 })
+    expect(interventionStats(rows, null)).toEqual({ total: 3, currentNodeName: null, currentNodeCount: 0 })
+  })
+  it("省略当前节点（调用方无节点现场知识）→ 兜底旧口径：最近一次干预的目标节点", () => {
     expect(interventionStats(rows)).toEqual({ total: 3, currentNodeName: "节点B", currentNodeCount: 1 })
   })
   it("empty rows render nothing", () => {
+    expect(interventionStats([], "a")).toEqual({ total: 0, currentNodeName: null, currentNodeCount: 0 })
     expect(interventionStats([])).toEqual({ total: 0, currentNodeName: null, currentNodeCount: 0 })
   })
 })

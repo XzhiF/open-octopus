@@ -39,7 +39,8 @@ export interface ChatTurnParams {
   /**
    * Called once at the very end of the turn — after persistence, BEFORE the
    * stream closes, so the caller can still push trailing SSE frames (the doer
-   * chat uses this for the [quick-edit] auto-commit announcement, 票01).
+   * chat uses this for the quick-edit/takeover-edit auto-commit announcement,
+   * 票01 + 票10 review-1).
    * Runs on abort and on provider error too: a half-landed edit is still an
    * edit; the engine must not swallow现场 facts on those paths.
    */

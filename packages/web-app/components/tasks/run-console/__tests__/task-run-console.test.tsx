@@ -806,6 +806,29 @@ describe("票 06 — ⚑ 行进日志 + LIVE 卡计数 + 无游离输入", () =>
     expect(chip.textContent).toContain("⚑ 干预×2")
   })
 
+  it("US16（票10 review-7）：执行推进到零干预的新节点 → ⚑ chip 消失（不再黏旧节点累计）", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-1", source: "sqlite", _degraded: false, _message: null,
+      events: [
+        { ...ivEvent, timestamp: "2026-10-08T01:50:00.000Z" },
+        { ...ivEvent, timestamp: "2026-10-08T02:00:00.000Z" },
+        // 恢复后引擎推进到下一节点 —— 事件流尾部换了节点（当前节点 = verify）。
+        { nodeId: "verify", event: "start", timestamp: "2026-10-08T02:05:00.000Z" },
+      ],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "paused", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
+    })
+    // 日志区照旧看得见两条历史 ⚑（留痕不删）……
+    const log = await screen.findByTestId("intervention-log")
+    expect(within(log).getAllByTestId("intervention-line")).toHaveLength(2)
+    // ……但 LIVE 卡的当前节点计数归 0 → chip 整枚不渲染。
+    expect(screen.queryByTestId("rail-intervention-chip")).toBeNull()
+  })
+
   it("无干预的盘面：⚑ 区整块不存在，且整个执行壳零游离 textarea/input（不打扰模式）", async () => {
     mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-1", events: [], source: "sqlite", _degraded: false, _message: null })
     const t = makeTask("running")

@@ -49,6 +49,7 @@ import {
   type TaskPhaseStatus,
   taskSpecSchema,
   TERMINAL_EXECUTION_STATUSES,
+  LIVE_ROUND_STATUSES,
   validateSpecFieldValue,
   TaskSpecFieldError,
   mergeLlmUsageSummaries,
@@ -90,6 +91,7 @@ import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
+import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
 import { PluginMaterializer } from "./plugin-materializer"
@@ -370,14 +372,10 @@ function parseJSON<T>(raw: string | null | undefined, fallback: T): T {
 const TERMINAL_INSTANCES = new Set<string>(TERMINAL_EXECUTION_STATUSES)
 
 /** 票08: 可被人停掉的轮状态 = ExecutionLifecycle.cancel 的接受集（'pending' 排队
- *  行不算现场 —— cancel 会拒它，noLiveRoundMessage 的排队文案才是人话）。 */
-const CANCELLABLE_ROUND_STATUSES = new Set([
-  "running",
-  "paused",
-  "pending_approval",
-  "pending_interaction",
-  "pending_resume",
-])
+ *  行不算现场 —— cancel 会拒它，noLiveRoundMessage 的排队文案才是人话）。词表
+ *  单源 shared {@link LIVE_ROUND_STATUSES}（票10 review-2：与 findLiveRoundForTask
+ *  / diff live 回落 / web LIVE_STATUSES 同一份，漂移由词汇表测试钉死）。 */
+const CANCELLABLE_ROUND_STATUSES = new Set<string>(LIVE_ROUND_STATUSES)
 
 function toDTO(row: TaskRow): TaskDTO {
   return {
@@ -1634,12 +1632,10 @@ export class TasksService {
       // unit-only 薄切片验收面不需要起服务。author「记忆命中→确认 / 无→问一次」
       // 是 SKILL 纪律（task-author §启动 Runbook 记忆），这里是机器兜底，防漏写
       // 到待验收才暴露「跑起来看」空面板。
-      // 命中判据与 resolveRunbook ①② 级对齐：runbook 要 up∧ready 齐、preview 要
-      // command（url 由 schema 保证）；verify 是 unit-only 逃生门。
-      const rb = taskSpec.acceptance_runbook
-      const hasRunbook = !!(rb?.up?.command?.trim() && rb?.ready?.command?.trim())
-      const hasPreview = !!taskSpec.acceptance_preview?.command?.trim()
-      if (!hasRunbook && !hasPreview && !taskSpec.acceptance_verify?.command?.trim()) {
+      // 命中判据单源 specRunbookLevel（与 resolveRunbook / task-doer 注入同函数，
+      // 票10 review-6）：runbook 要 up∧ready 齐、preview 要 command+url（url 本就
+      // 由 acceptancePreviewSchema 必填保证）；verify 是 unit-only 逃生门。
+      if (!specRunbookLevel(taskSpec) && !taskSpec.acceptance_verify?.command?.trim()) {
         missing.push("runbook")
       }
       if (missing.length > 0) {
@@ -2762,6 +2758,43 @@ export class TasksService {
 
   // ── 人工接管 / 改派修复轮 (taskboard-modal-v2 票08, ADR-0025) ──────────
 
+  /**
+   * 共用停流件（票10 review-5，票08 的 ②/③ 两支原为逐字重复）：cancellable
+   * 判定 → 执行注册表 → cancel → 失败包 409（原文透出，绝不先写状态再补刀）→
+   * beforeEmit（被停轮的留痕写点，如 takeover_at —— 必须赶在转场事件之前，
+   * 否则订阅方会先看见 'cancelled' 而派生瞬时误读 awaiting_review）→
+   * emitRunTransition。文案参数保留两处历史原句：
+   *   - verb 进 noLiveRoundMessage（「停流接管」/「改派 task-fix」）；
+   *   - registryVerb 进注册表缺失句（「无法停流接管」/「无法改派」）；
+   *   - cancelFailLabel 进停流失败包（「接管未产生」/「未派发修复轮」）。
+   * 'pending' 排队行与终态行都走 noLiveRoundMessage 的分状态文案。
+   */
+  private async stopLiveRound(
+    taskId: string,
+    inst: ExecutionRow | null,
+    labels: { verb: string; registryVerb: string; cancelFailLabel: string },
+    beforeEmit?: (inst: ExecutionRow) => void,
+  ): Promise<ExecutionRow> {
+    if (!inst || !CANCELLABLE_ROUND_STATUSES.has(inst.status)) {
+      throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, labels.verb))
+    }
+    const registry = getExecutionService(inst.workspace_id)
+    if (!registry) {
+      throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法${labels.registryVerb}`)
+    }
+    try {
+      await registry.service.cancel(inst.id)
+    } catch (err: unknown) {
+      // 停流不成 = 动作不成。原文透出，绝不留半程。
+      throw new TaskStatusConflictError(
+        `停流失败，${labels.cancelFailLabel}：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    beforeEmit?.(inst)
+    this.emitRunTransition(taskId, inst, "cancelled")
+    return inst
+  }
+
   /** POST /api/tasks/:id/takeover — 分支②「停流 · 我接管」。
    *
    *  ADR-0025 的三条后果在这一个动作里落地：
@@ -2785,36 +2818,28 @@ export class TasksService {
         `任务当前不在执行中（'${row.status}'）—— 人工接管只在有进行中的 Round 时成立`,
       )
     }
-    const inst = this.liveInstance(id)
-    if (!inst || !CANCELLABLE_ROUND_STATUSES.has(inst.status)) {
-      throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "停流接管"))
-    }
-    const registry = getExecutionService(inst.workspace_id)
-    if (!registry) {
-      throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法停流接管`)
-    }
-    try {
-      await registry.service.cancel(inst.id)
-    } catch (err: unknown) {
-      // 停流不成 = 接管不成。原文透出，绝不先写标记再补刀。
-      throw new TaskStatusConflictError(
-        `停流失败，接管未产生：${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
     const now = new Date().toISOString()
-    this.taskDAO
-      .getDb()
-      .prepare("UPDATE executions SET takeover_at = ?, updated_at = ? WHERE id = ? AND takeover_at IS NULL")
-      .run(now, now, inst.id)
-    this.emitRunTransition(id, inst, "cancelled")
+    // 停流不成 = 接管不成：stopLiveRound 抛错时 beforeEmit 还没跑，takeover_at
+    // 一个字都不会写（AC1 原子性），转场事件也只随成功发。
+    const stopped = await this.stopLiveRound(
+      id,
+      this.liveInstance(id),
+      { verb: "停流接管", registryVerb: "停流接管", cancelFailLabel: "接管未产生" },
+      (inst) => {
+        this.taskDAO
+          .getDb()
+          .prepare("UPDATE executions SET takeover_at = ?, updated_at = ? WHERE id = ? AND takeover_at IS NULL")
+          .run(now, now, inst.id)
+      },
+    )
     const view = this.deriveView(row)
     const pv = view.phaseViews.find((p) => p.status === "takeover")
     return {
       task: this.getTask(id),
       takeover: {
-        execution_id: inst.id,
-        phase_index: pv?.index ?? inst.phase_index ?? 1,
-        round_index: pv?.currentRound ?? inst.round_index ?? 1,
+        execution_id: stopped.id,
+        phase_index: pv?.index ?? stopped.phase_index ?? 1,
+        round_index: pv?.currentRound ?? stopped.round_index ?? 1,
         taken_over_at: now,
       },
     }
@@ -2906,21 +2931,11 @@ export class TasksService {
     // abort 当前轮 —— 仅当还有活轮可停（接管中改派 = 轮已 cancelled，不再补刀）。
     const inst = this.liveInstance(id)
     if (inst) {
-      if (!CANCELLABLE_ROUND_STATUSES.has(inst.status)) {
-        throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "改派 task-fix"))
-      }
-      const registry = getExecutionService(inst.workspace_id)
-      if (!registry) {
-        throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法改派`)
-      }
-      try {
-        await registry.service.cancel(inst.id)
-      } catch (err: unknown) {
-        throw new TaskStatusConflictError(
-          `停流失败，未派发修复轮：${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
-      this.emitRunTransition(id, inst, "cancelled")
+      await this.stopLiveRound(id, inst, {
+        verb: "改派 task-fix",
+        registryVerb: "改派",
+        cancelFailLabel: "未派发修复轮",
+      })
     }
 
     const d = await this.dispatchFixRound(id, pv, nextRound, instruction)

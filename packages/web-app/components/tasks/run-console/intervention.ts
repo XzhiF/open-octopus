@@ -80,8 +80,12 @@ export function isOverLimit(text: string): boolean {
 }
 
 // ── LIVE 卡 ⚑ 干预×N 口径 ───────────────────────────────────────────
-// 「当前节点」= 最近一次干预的目标节点（注入即针对当时挂起的节点，与原型
-// live.ivCount 的时序一致）；count 只算该节点的累计。total 供日志区标题。
+// US16（spec v2，票10 review-7 定版）：LIVE 卡的 ×N = **当前节点**的累计。
+// 「当前节点」由调用方传入（= 事件流尾部节点 —— 引擎此刻在往哪个节点吐事件）；
+// 执行推进到一个没挨过干预的新节点 → 计数归 0（卡片 >0 才挂 chip，即 0/不显示），
+// 不再像旧口径那样黏在「最近一次干预的目标节点」上。
+// currentNodeId 省略 = 调用方没有节点现场知识 → 兜底旧口径（最近干预的目标节点）。
+// total 供日志区标题（全程累计），与卡片口径正交。
 
 export interface InterventionStats {
   total: number
@@ -89,9 +93,21 @@ export interface InterventionStats {
   currentNodeCount: number
 }
 
-export function interventionStats(rows: readonly InterventionRow[]): InterventionStats {
+export function interventionStats(
+  rows: readonly InterventionRow[],
+  currentNodeId?: string | null,
+): InterventionStats {
   if (rows.length === 0) return { total: 0, currentNodeName: null, currentNodeCount: 0 }
-  const latest = rows[rows.length - 1]
-  const same = rows.filter((r) => r.nodeId === latest.nodeId).length
-  return { total: rows.length, currentNodeName: latest.nodeName, currentNodeCount: same }
+  if (currentNodeId === undefined) {
+    const latest = rows[rows.length - 1]
+    const same = rows.filter((r) => r.nodeId === latest.nodeId).length
+    return { total: rows.length, currentNodeName: latest.nodeName, currentNodeCount: same }
+  }
+  if (!currentNodeId) return { total: rows.length, currentNodeName: null, currentNodeCount: 0 }
+  const mine = rows.filter((r) => r.nodeId === currentNodeId)
+  return {
+    total: rows.length,
+    currentNodeName: mine.length > 0 ? mine[mine.length - 1].nodeName : null,
+    currentNodeCount: mine.length,
+  }
 }
