@@ -18,7 +18,7 @@ import { useEffect, useState, type ReactNode } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { getRoundDiff, type RoundDiffPayload } from "@/lib/tasks-api"
 import type { RoundDiffFeed } from "./use-round-diff-feed"
-import { scopeTotals } from "./files-tab-model"
+import { matchReveal, scopeTotals, type RevealTarget } from "./files-tab-model"
 import { DiffUnavailable, RepoSection, StatStrip, type FileRowDecor } from "./diff-view"
 
 export interface FilesTabProps {
@@ -33,9 +33,12 @@ export interface FilesTabProps {
   costText?: string | null
   rowDecor?: FileRowDecor
   toolbarExtra?: ReactNode
+  /** 票 07「查看 diff」跳链：工具卡路径（工作区绝对/相对均可）+ nonce —— 每次点击
+   *  nonce 递增重触发揭示（展开目标行 + 青闪 1.6s，原型 jumpToDiff 语义）。 */
+  reveal?: { path: string; nonce: number } | null
 }
 
-export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, toolbarExtra }: FilesTabProps) {
+export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, toolbarExtra, reveal }: FilesTabProps) {
   const [scope, setScope] = useState<"round" | "cumulative">("round")
   const [cum, setCum] = useState<RoundDiffPayload | null>(null)
   const [cumLoading, setCumLoading] = useState(false)
@@ -59,6 +62,8 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
   const loading = scope === "round" ? feed.loading : cumLoading
   const error = scope === "round" ? feed.error : cumError
   const stats = scopeTotals(diff)
+  // 票 07 跳链定位（纯函数单源）：工具卡路径 → 在场载荷里的 {repo, path}。
+  const revealTarget: RevealTarget | null = reveal ? matchReveal(diff, reveal.path) : null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="files-tab">
@@ -126,7 +131,13 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
                   </div>
                 )}
                 {diff.repos.map((repo) => (
-                  <RepoSection key={repo.name} taskId={taskId} repo={repo} rowDecor={rowDecor} />
+                  <RepoSection
+                    key={repo.name}
+                    taskId={taskId}
+                    repo={repo}
+                    rowDecor={rowDecor}
+                    reveal={revealTarget && revealTarget.repo === repo.name && reveal ? { path: revealTarget.path, nonce: reveal.nonce } : null}
+                  />
                 ))}
               </>
             ) : (

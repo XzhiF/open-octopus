@@ -10,7 +10,8 @@
 //   │     awaiting_review 对话·变更·走查·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted；控制台 = 原
 //   │     Phase/Report 面；变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
-//   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 挂载位，当前占位）。
+//   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 TaskChatTab，
+//   │     三形态（快改/接管/修复轮追加指令）按 shellMode+派生态换语义）。
 //   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
 //   │   全部接既有 handler，通过/打回接 AcceptanceSurface 决策入口，行为零回退）。
@@ -22,7 +23,7 @@
 
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
@@ -65,6 +66,8 @@ import {
 } from "./intervention"
 import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { NodesTab } from "./nodes-tab"
+import { TaskChatTab, type QuickEditCommitInfo } from "./chat/chat-tab"
+import { chatFormFor, diffRowHit, type ChatEditsView } from "./chat/chat-model"
 
 export interface RunConsoleChrome {
   isFullscreen: boolean
@@ -101,6 +104,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // AcceptanceSurface 决策入口句柄（右栏底部 通过/打回 的接线柱；走查面自己的
   // 动作列保持原样，两处按钮调同一组函数，行为单源）。
   const [acceptApi, setAcceptApi] = useState<AcceptanceActionApi | null>(null)
+  // ── 票 07 对话页签接线态 ──
+  // chatEdits = 本会话快改视图（quick_edit_commit 计数 + 工具卡文件），由 TaskChatTab
+  // 上抛、FilesTab 消费（💬chat 徽标 + ×N chip）；reveal = 「查看 diff」跳链的一次性
+  // 揭示（nonce 递增重触发，2s 后自清 —— 后续切页不谎闪）。换任务一并复位。
+  const [chatEdits, setChatEdits] = useState<ChatEditsView>({ commits: 0, files: [] })
+  const [reveal, setReveal] = useState<{ path: string; nonce: number } | null>(null)
+  const revealNonceRef = useRef(0)
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null>(null)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
@@ -109,6 +120,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     setTabSel(undefined)
     setAcceptMounted(!!startOnAcceptance)
     setInjectOpen(false)
+    setChatEdits({ commits: 0, files: [] })
+    setReveal(null)
   }, [task.id, startOnAcceptance])
 
   const isLive =
@@ -285,8 +298,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }
 
   // ── 页签装配（票 02 · tab-assembly 纯函数单源）────────────────────────
-  // takeover/fixing 形态由 05/08 在执行推导落地后传入；壳层现在恒 flow。
-  const shellMode: ConsoleShellMode = "flow"
+  // 形态派生唯一出口 shellMode（票 04 契约的「08 接线钥匙」）：
+  //   fixing = live 轮 workflow_ref === "built-in/task-fix"（票 05：打回恒派 task-fix）。
+  //   takeover 标记由票 08 补进这一行（abort 后任务持久态仍 'running' —— 票 01 契约，
+  //   绑定点在 doer 会话侧可查）。其余一切形态恒 flow。
+  const shellMode: ConsoleShellMode = runs.some((r) => LIVE_RUN_STATUSES.has(r.status) && r.workflow_ref === "built-in/task-fix")
+    ? "fixing"
+    : "flow"
   const tabs = useMemo(
     () => assembleTabs({
       status: derivedStatus as ConsoleShellStatus,
@@ -297,6 +315,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     [derivedStatus, shellMode, derived?.isV4, startOnAcceptance],
   )
   const tab: ConsoleTabKey = tabSel && tabs.keys.includes(tabSel) ? tabSel : tabs.defaultKey
+  // 对话页签的形态（quick-edit/takeover/fixing）：与装配表同一判据源，tab=chat 在场时必非空。
+  const chatForm = chatFormFor({ status: derivedStatus as ConsoleShellStatus, mode: shellMode })
 
   // ←/→ 切页：输入焦点（input/textarea/select/编辑区）与弹层内不劫持光标。
   useEffect(() => {
@@ -437,6 +457,36 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     if (decision.notice) toast.warning(decision.notice)
     void handleResume(decision.intervention)
   }
+
+  // ── 票 07 · 💬 对话页签接线 ────────────────────────────────────────────
+  // 快改视图（徽标/×N）在壳层驻留 —— FilesTab 与 TaskChatTab 是两个页签，谁都不许私藏。
+  const handleEditsChange = useCallback((v: ChatEditsView) => setChatEdits(v), [])
+  // commit 尾帧 = git 现场变了 → bump「≡ 变更」节拍（1500ms 节流闸在 feed 单源，票 03）。
+  const handleQuickEditCommit = useCallback((_c: QuickEditCommitInfo) => {
+    setDiffSignal((s) => s + 1)
+  }, [])
+  const handleJumpToDiff = useCallback((path: string) => {
+    setTabSel("files")
+    revealNonceRef.current += 1
+    setReveal({ path, nonce: revealNonceRef.current })
+    if (revealTimerRef.current) clearTimeout(revealTimerRef.current)
+    // 一次性揭示：闪完自清 —— 之后切来切去不再谎闪。
+    revealTimerRef.current = setTimeout(() => setReveal(null), 2000)
+  }, [])
+  useEffect(() => () => { if (revealTimerRef.current) clearTimeout(revealTimerRef.current) }, [])
+  // 劝退草稿 → 打回框（05 单 textarea；句柄单源在走查面，行为零复制）。
+  const handleRejectDraft = useCallback((draft: string) => {
+    if (acceptApi) acceptApi.openReject(draft)
+    else toast.warning("走查面尚未挂载 — 稍后再点，或直接用右栏「↩ 打回」")
+  }, [acceptApi])
+  // 修复轮追加指令 = 票 06 的暂停→注入通道（引擎对「没有运行中的节点」的拒绝原文
+  // 由 chat-tab 透出；成功后 ⚑ 行走既有 agent-events 读取面进日志）。
+  const handleInterventionSend = useCallback(async (text: string) => {
+    if (runs.some((r) => r.status === "running")) await pauseTask(task.id)
+    await resumeTask(task.id, text)
+    toast.success("⚑ 修复轮追加指令已注入 — 「▶ 控制台」见 ⚑ 高亮行")
+    onMutated(); refetch()
+  }, [runs, task.id, onMutated, refetch])
 
   // ── 顶栏元信息（原型 .m-meta：⏱ 用时 · $ 成本 · commits · P·R）──
   const { ms: runMs, count: runCount } = sumRunMs(runs, now)
@@ -592,7 +642,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             )}
             {tab === "files" && (
               // 票 03 落地：GitHub Files-changed 视图（统计条/口径切换/行内双行号 diff）。
-              // 票 07 契约：需要给文件行挂 💬chat 徽标时，把 rowDecor/toolbarExtra 传进来。
+              // 票 07 接线：rowDecor = 快改文件的 💬chat 徽标；toolbarExtra = 本会话 ×N chip
+              // （点击回对话页签）；reveal = 工具卡「查看 diff」跳链的一次性揭示。
               <div className="flex min-h-0 flex-1 flex-col" data-tab-host="files">
                 <FilesTab
                   taskId={task.id}
@@ -600,6 +651,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   serving={filesServing}
                   isLive={isLive}
                   costText={costText}
+                  rowDecor={(file) => diffRowHit(file.path, chatEdits.files) ? (
+                    <span
+                      data-testid="quick-edit-badge"
+                      title="task-doer 对话改动（快速修改）—— 提交信息带 [quick-edit] 标记，台账分列"
+                      className="ml-1 shrink-0 rounded-md border-[1.5px] border-pop-cyan/45 bg-pop-cyan-soft px-1 py-px font-mono text-[8.5px] font-black text-pop-cyan"
+                    >
+                      💬 chat
+                    </span>
+                  ) : null}
+                  toolbarExtra={chatEdits.commits > 0 ? (
+                    <button
+                      data-testid="quick-edit-chip"
+                      onClick={() => setTabSel("chat")}
+                      title="本会话 task-doer 快速修改（每改 = 一枚 [quick-edit] commit）—— 点击回「💬 对话」"
+                      className="rounded-full border-[1.5px] border-pop-cyan/45 bg-pop-cyan-soft px-2 py-px font-mono text-[9.5px] font-black text-pop-cyan"
+                    >
+                      💬 chat 快改 ×{chatEdits.commits}
+                    </button>
+                  ) : undefined}
+                  reveal={reveal}
                 />
               </div>
             )}
@@ -613,12 +684,20 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               </div>
             )}
             {tab === "chat" && (
-              // 票间挂载位契约（07 对话）：内容组件替换这块 placeholder 即可，
-              // 页签装配、键盘、右栏、keep-mounted、变更取数节拍都已就位。
-              <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host={tab}>
-                <div className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim">
-                  💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。快改徽标接线：FilesTab 的 rowDecor/toolbarExtra 即 07 的挂载钩子。
-                </div>
+              // 票 07 落地：💬 对话 —— 整屏消息流 + 输入（原型 chatFullHtml）。
+              // 三形态同一组件换语义：待验收=快速修改 / 接管（08 点亮）/ 修复轮追加指令。
+              // 数据源 = S1 GET/POST /api/tasks/:id/chat；快改徽标经 rowDecor/toolbarExtra 钩子。
+              <div className="flex min-h-0 flex-1 flex-col" data-tab-host={tab}>
+                <TaskChatTab
+                  taskId={task.id}
+                  form={chatForm ?? "quick-edit"}
+                  interventions={interventionRows}
+                  onEditsChange={handleEditsChange}
+                  onQuickEditCommit={handleQuickEditCommit}
+                  onJumpToDiff={handleJumpToDiff}
+                  onRejectDraft={handleRejectDraft}
+                  onInterventionSend={handleInterventionSend}
+                />
               </div>
             )}
           </div>

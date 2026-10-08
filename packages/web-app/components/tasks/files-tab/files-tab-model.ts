@@ -73,3 +73,30 @@ export function sortRepoGroups<T extends { dir: string; additions: number; dels:
     b.additions + b.dels - (a.additions + a.dels) || a.dir.localeCompare(b.dir),
   )
 }
+
+// ── 票07「查看 diff」跳链定位 ───────────────────────────────────────────
+// 对话页签工具卡带的是 task-doer 工作区路径（绝对、Windows 反斜杠），变更行是
+// 仓相对 posix —— 后缀匹配（完整路径段边界），精确相等自然赢，歧义取最具体行。
+
+export interface RevealTarget { repo: string; path: string }
+
+function pathSegHit(rel: string, want: string): boolean {
+  return rel === want || rel.endsWith(`/${want}`) || want.endsWith(`/${rel}`)
+}
+
+export function matchReveal(diff: RoundDiffPayload | null, wantRaw: string): RevealTarget | null {
+  if (!diff) return null
+  const want = wantRaw.replace(/\\/g, "/").toLowerCase()
+  let best: RevealTarget | null = null
+  for (const repo of diff.repos) {
+    if (repo.expired) continue
+    for (const g of repo.groups) {
+      for (const f of g.files) {
+        const rel = f.path.replace(/\\/g, "/").toLowerCase()
+        if (!pathSegHit(rel, want)) continue
+        if (!best || rel.length > best.path.length) best = { repo: repo.name, path: f.path }
+      }
+    }
+  }
+  return best
+}

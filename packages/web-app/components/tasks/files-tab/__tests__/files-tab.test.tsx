@@ -5,7 +5,7 @@
 //   截断提示；AC3 本轮/累计切换后统计条与列表同源变化；AC5 数据源仍是既有
 //   round-diff/patch 端点（无新 API —— mock 面即契约面）。
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import type { RoundDiffPayload } from "@/lib/tasks-api"
 
@@ -65,7 +65,7 @@ const CUM: RoundDiffPayload = {
 
 const PATCH = "@@ -1,3 +1,4 @@\n ctx1\n-del\n+add1\n+add2\n ctx2\n"
 
-function Host(props: { serving?: boolean; isLive?: boolean; costText?: string | null; rowDecor?: (f: unknown) => ReactNode }) {
+function Host(props: { serving?: boolean; isLive?: boolean; costText?: string | null; rowDecor?: (f: unknown) => ReactNode; reveal?: { path: string; nonce: number } | null; toolbarExtra?: ReactNode }) {
   const feed = useRoundDiffFeed("t1", props.serving ?? true, 0)
   return (
     <FilesTab
@@ -75,6 +75,8 @@ function Host(props: { serving?: boolean; isLive?: boolean; costText?: string | 
       isLive={props.isLive ?? true}
       costText={props.costText}
       rowDecor={props.rowDecor as never}
+      toolbarExtra={props.toolbarExtra}
+      reveal={props.reveal}
     />
   )
 }
@@ -205,6 +207,37 @@ describe("FilesTab — AC3 本轮/累计口径切换", () => {
     await waitFor(() => expect(screen.getByTestId("round-diff-strip").textContent).toContain("+10"))
     // 只走既有端点：全程只有 getRoundDiff / getRoundPatch 两个函数被调。
     expect(mockGetRoundDiff.mock.calls.every((c) => c[0] === "t1")).toBe(true)
+  })
+})
+
+describe("FilesTab — 票07 reveal：对话页签「查看 diff」跳链揭示", () => {
+  it("reveal 命中（工作区绝对路径、反斜杠）→ 目标行自动展开 + data-diff-flash 在场", async () => {
+    render(<Host reveal={{ path: "C:\\ws\\projects\\octopus\\packages\\b.ts", nonce: 1 }} />)
+    // 展开的只有命中行：b.ts 的 patch 出屏（懒拉 repo/path 逐字走既有端点）
+    expect(await screen.findByTestId("round-diff-patch")).toBeTruthy()
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/b.ts"))
+    const flash = document.querySelector('[data-diff-flash="true"]')
+    expect(flash).toBeTruthy()
+    expect(flash!.textContent).toContain("packages/b.ts")
+    // 其余行不被牵连
+    expect(screen.queryByText("packages/a.ts") && document.querySelectorAll('[data-diff-flash="true"]')).toHaveLength(1)
+  })
+
+  it("nonce 递增 → 同一行再闪一次；不命中的路径谎闪为零", async () => {
+    const { rerender } = render(<Host reveal={{ path: "nowhere/zz.ts", nonce: 1 }} />)
+    await screen.findByTestId("round-diff-strip")
+    expect(document.querySelector('[data-diff-flash="true"]')).toBeNull()
+    expect(screen.queryByTestId("round-diff-patch")).toBeNull()
+    rerender(<Host reveal={{ path: "C:/ws/projects/octopus/packages/a.ts", nonce: 2 }} />)
+    expect(await screen.findByTestId("round-diff-patch")).toBeTruthy()
+    expect(document.querySelector('[data-diff-flash="true"]')).toBeTruthy()
+  })
+
+  it("toolbarExtra：07 的 chat ×N chip 原样进工具行（可点回对话页由壳定）", async () => {
+    render(<Host toolbarExtra={<button data-testid="chat-ctx-chip">💬 chat 快改 ×2</button>} />)
+    await screen.findByTestId("round-diff-strip")
+    const toolbar = screen.getByTestId("files-tab-toolbar")
+    expect(within(toolbar).getByTestId("chat-ctx-chip").textContent).toContain("×2")
   })
 })
 

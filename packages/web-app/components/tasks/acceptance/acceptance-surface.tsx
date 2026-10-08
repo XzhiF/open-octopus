@@ -95,8 +95,10 @@ import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 export interface AcceptanceActionApi {
   /** = 动作区「验收通过」按钮：gate ✗ 时内部 toast 拦截，否则开台账预览。 */
   requestAccept: () => void
-  /** = 动作区「打回（写反馈）」：开反馈弹窗（✗ 票预填照旧）。 */
-  openReject: () => void
+  /** = 动作区「打回（写反馈）」：开反馈弹窗（✗ 票预填照旧）。
+   *  draft（票 07）：对话页签「大改劝退 → ↩ 打回」送回的指令草稿 —— 给定时直接
+   *  落进单 textarea（草稿即指令，✗ 票预填让位），服务端 augmentReject 仍权威追加未过项。 */
+  openReject: (draft?: string) => void
   /** 通过是否被拦（✗ 未决硬闸 / 决策在飞）—— 外层按钮据此置灰。 */
   blocked: boolean
 }
@@ -692,9 +694,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   }, [task, awaitingPhase, busy, onMutated, onDecided, phaseViews.length, refetchDetail])
 
   // 打回：开弹窗即预填 ✗ 票清单（详细「未过项」节由 server augmentReject 权威追加）。
-  const openReject = useCallback(() => {
+  // 票 07：对话页签送回劝退草稿时，草稿直接成文（✗ 票预填让位 —— 未过项仍由
+  // augmentReject 在提交侧补齐，两不吞）。
+  const openReject = useCallback((draft?: string) => {
     if (busy) return
-    if (!feedback.trim() && gate.failTickets.length) {
+    const d = typeof draft === "string" ? draft.trim() : ""
+    if (d) {
+      setFeedback(`（来自快速修改对话的升级建议）\n${d}\n`)
+    } else if (!feedback.trim() && gate.failTickets.length) {
       setFeedback(`未过（验收台剧本 ✗）：\n${gate.failTickets.map((t) => `- ${t}`).join("\n")}\n\n补充：\n`)
     }
     setRejectOpen(true)
@@ -904,7 +911,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
                 size="sm"
                 disabled={busy !== null}
-                onClick={openReject}
+                onClick={() => openReject()}
                 data-acceptance-reject data-testid="acceptance-reject"
               >
                 <Undo2 className="size-4 mr-1" /> 打回（写反馈）

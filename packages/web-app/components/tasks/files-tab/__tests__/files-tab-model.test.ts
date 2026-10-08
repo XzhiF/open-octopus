@@ -7,6 +7,7 @@ import type { RoundDiffPayload } from "@/lib/tasks-api"
 import {
   FILES_POLL_MS, FILES_EVENT_MIN_GAP_MS,
   scopeTotals, throttleDue, throttleWaitMs, canServeRoundDiff, addRatio, sortRepoGroups,
+  matchReveal,
 } from "../files-tab-model"
 
 function payload(over: Partial<RoundDiffPayload> = {}): RoundDiffPayload {
@@ -88,5 +89,39 @@ describe("比例条与分组序 — 原型 fitem 的 dbar / repo 组排序", () 
     const src = [{ dir: "b", additions: 0, dels: 0 }, { dir: "a", additions: 0, dels: 0 }]
     sortRepoGroups(src)
     expect(src.map((g) => g.dir)).toEqual(["b", "a"])
+  })
+})
+
+describe("matchReveal — 票07「查看 diff」跳链的行定位", () => {
+  const d = payload({
+    repos: [
+      {
+        name: "octopus", commits: 1, additions: 1, dels: 0, files: 2, truncated: false,
+        groups: [
+          { dir: "packages/web-app", additions: 1, dels: 0, files: [
+            { path: "packages/web-app/components/a.tsx", status: "M", adds: 1, dels: 0 },
+            { path: "packages/shared/types.ts", status: "M", adds: 0, dels: 0 },
+          ] },
+        ],
+      },
+      {
+        name: "other-repo", commits: 1, additions: 0, dels: 0, files: 1, truncated: false,
+        groups: [{ dir: "packages", additions: 0, dels: 0, files: [{ path: "types.ts", status: "M", adds: 0, dels: 0 }] }],
+      },
+    ],
+  })
+  it("工作区绝对路径（工具卡形态）→ 按完整尾段命中仓相对行；反斜杠归一", () => {
+    expect(matchReveal(d, "C:\\ws\\projects\\octopus\\packages\\web-app\\components\\a.tsx"))
+      .toEqual({ repo: "octopus", path: "packages/web-app/components/a.tsx" })
+  })
+  it("精确相等优先；后缀歧义取最具体（最长相对行）", () => {
+    // 「types.ts」既像 octopus 的 packages/shared/types.ts 尾段，也像 other-repo 的 types.ts ——
+    // want 是仓相对全路径时精确相等赢；裸文件名走最长命中。
+    expect(matchReveal(d, "packages/shared/types.ts")?.repo).toBe("octopus")
+    expect(matchReveal(d, "shared/types.ts")).toEqual({ repo: "octopus", path: "packages/shared/types.ts" })
+  })
+  it("无命中 → null（跳转诚实落空，不闪错行）", () => {
+    expect(matchReveal(d, "packages/nope/x.ts")).toBeNull()
+    expect(matchReveal(null, "any")).toBeNull()
   })
 })

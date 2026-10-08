@@ -5,6 +5,7 @@
 //   • ready 门禁/触发、awaiting 判决条、done 战报、红行 error_summary 状态门控
 //   • TaskModal 接线：三模式走新壳（terminal bar + 无 ModalHeader/悬浮 X）
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { useEffect } from "react"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/tasks-api"
@@ -13,6 +14,7 @@ const {
   mockGetTask, mockListArtifacts, mockFetchLLMCalls, mockGetBatchTree,
   mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
   pushSpy, mockFetchAgentEvents, mockGetRoundDiff, mockGetRoundPatch, mockFetchExecutionDetail,
+  mockOpenReject, mockGetChatBinding, mockGetDoerHistory,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -29,6 +31,10 @@ const {
   mockGetRoundDiff: vi.fn(),
   mockGetRoundPatch: vi.fn(),
   mockFetchExecutionDetail: vi.fn(),
+  mockOpenReject: vi.fn(),
+  // 票07：对话页签挂载后壳会真渲染 TaskChatTab —— 它对 tasks-api 的两个读取默认桩。
+  mockGetChatBinding: vi.fn(),
+  mockGetDoerHistory: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -57,6 +63,8 @@ vi.mock("@/lib/tasks-api", () => ({
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
   // 票03「≡ 变更」接线：壳的 round-diff 单源节拍 + FilesTab 懒拉 patch
   getRoundDiff: mockGetRoundDiff, getRoundPatch: mockGetRoundPatch,
+  // 票07 对话页签（TaskChatTab 真实挂载）：会话绑定 + 历史回放
+  getTaskChatBinding: mockGetChatBinding, getDoerChatHistory: mockGetDoerHistory,
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
 vi.mock("@/lib/sse-manager", () => ({
@@ -78,7 +86,21 @@ vi.mock("../../authoring/phase-spec-dialog", () => ({
   specFileClass: () => ({ label: "md", tone: "bg-muted" }),
   batchDirOf: (p: string) => p.split("/").slice(0, -1).join("/"),
 }))
-vi.mock("../../acceptance/acceptance-surface", () => ({ AcceptanceSurface: () => <div data-acceptance-surface-stub /> }))
+vi.mock("../../acceptance/acceptance-surface", async () => {
+  const { useEffect } = await import("react")
+  return {
+    AcceptanceSurface: ({ onActionApi }: { onActionApi?: (api: { requestAccept: () => void; openReject: (d?: string) => void; blocked: boolean } | null) => void }) => {
+      // 与真实面同纪律：句柄经 onActionApi 注册（票07 对话页签「劝退→打回预填」走这条线）。
+      useEffect(() => {
+        onActionApi?.({ requestAccept: () => {}, openReject: (d?: string) => mockOpenReject(d), blocked: false })
+        return () => onActionApi?.(null)
+      }, [onActionApi])
+      return <div data-acceptance-surface-stub />
+    },
+  }
+})
+// 票07：对话页签挂**真** TaskChatTab —— 壳层接线（form 映射/徽标联动/打回草稿/
+// 追加干预通道）端到端可测；S1 读写面走 tasks-api mock + fetch 桩。
 vi.mock("../../trigger-dialog", () => ({
   TriggerDialog: () => null,
   TriggerActions: () => null,
@@ -182,6 +204,12 @@ beforeEach(() => {
   // 票04 默认面：节点页签读取执行详情（空快照；个案各自覆盖）。
   mockFetchExecutionDetail.mockReset()
   mockFetchExecutionDetail.mockResolvedValue({})
+  // 票07 默认面：doer 会话就绪、历史空（对话组件各用例自行覆盖）。
+  mockOpenReject.mockReset()
+  mockGetChatBinding.mockReset()
+  mockGetDoerHistory.mockReset()
+  mockGetChatBinding.mockResolvedValue({ task_id: "task-1", session_id: "s-doer", workspace_id: "ws-1", created: false })
+  mockGetDoerHistory.mockResolvedValue([])
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -289,7 +317,7 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views, true, "awaiting_review") })
-    // 票 02：待验收默认落「对话」占位页 —— 交付报告在「▶ 控制台」页签内
+    // 票 02/07：待验收默认落「💬 对话」（真组件在场）—— 交付报告在「▶ 控制台」页签内
     await screen.findByTestId("phase-timeline")
     fireEvent.click(screen.getByTestId("console-tab-console"))
     expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
@@ -948,7 +976,7 @@ describe("票 02 — 页签装配 + 键盘", () => {
     expect(document.querySelector("[data-head-commits]")?.getAttribute("data-head-commits")).toBe("3")
   })
 
-  it("awaiting_review：对话·变更·走查·日志，默认落「对话」（占位挂票 07）", async () => {
+  it("awaiting_review：对话·变更·走查·日志，默认落「对话」（票 07 已挂载 —— 占位话术绝迹）", async () => {
     const t = makeTask("awaiting_review")
     renderConsole(t, {
       ...t,
@@ -958,7 +986,9 @@ describe("票 02 — 页签装配 + 键盘", () => {
     const chatTab = await screen.findByTestId("console-tab-chat")
     expect(chatTab.getAttribute("aria-selected")).toBe("true")
     for (const key of ["files", "review", "console"]) expect(screen.getByTestId(`console-tab-${key}`)).toBeTruthy()
-    expect(document.querySelector('[data-tab-host="chat"]')?.textContent).toContain("票 07")
+    const host = document.querySelector('[data-tab-host="chat"]')
+    expect(host?.textContent).not.toContain("票 07")
+    expect(within(host as HTMLElement).getByTestId("task-chat-tab").getAttribute("data-chat-form")).toBe("quick-edit")
   })
 
   it("startOnAcceptance：默认落「✓ 走查」且 surface 可见", async () => {
@@ -1083,5 +1113,148 @@ describe("票 04 — NodesTab 挂进 [data-tab-host=\"nodes\"]", () => {
     expect(await within(host!).findByTestId("nodes-empty")).toBeTruthy()
     expect(host!.textContent).toContain("尚无绑定执行")
     expect(mockFetchExecutionDetail).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ 票 07 · 💬 对话页签挂载与三形态接线 ═════════════════
+// 壳层端到端钉四根线：形态映射（quick-edit/fixing）、快改徽标 + ×N chip（03 钩子）、
+// 「查看 diff」跳变更闪行（reveal）、劝退→打回草稿（05 句柄）、修复轮发消息 =
+// 06 的暂停→注入通道。对话内部行为（流解析/工具卡行差）在 chat/__tests__ 各自钉死。
+describe("票 07 — 💬 对话页签挂进 [data-tab-host=chat] 与快改联动", () => {
+  /** SSE 文本 → fetch Response（parseSSEStream 吃 reader）。 */
+  function sseResponse(text: string): Response {
+    const bytes = new TextEncoder().encode(text)
+    let fired = false
+    return {
+      ok: true,
+      body: { getReader: () => ({ read: async () => (fired ? { done: true, value: undefined } : ((fired = true), { done: false, value: bytes })) }) },
+    } as unknown as Response
+  }
+  const frame = (type: string, payload: Record<string, unknown>): string =>
+    `event: ${type}\ndata: ${JSON.stringify({ sessionId: "s-doer", ...payload })}\n\n`
+
+  const EDIT_FILE = "C:\\ws\\projects\\octopus\\packages\\web-app\\a.tsx"
+  const CHAT_ROUND_DIFF = {
+    available: true,
+    aggregate: { commits: 1, additions: 2, dels: 2, files: 1 },
+    interventions: null,
+    repos: [{
+      name: "octopus", commits: 1, additions: 2, dels: 2, files: 1, truncated: false,
+      groups: [{ dir: "packages/web-app", additions: 2, dels: 2, files: [{ path: "packages/web-app/a.tsx", status: "M", adds: 2, dels: 2 }] }],
+    }],
+  }
+
+  const turnEdit = [
+    frame("tool_call_start", { type: "tool_call_start", messageId: "m1", toolCallId: "tc1", toolName: "Edit" }),
+    frame("tool_call", {
+      type: "tool_call", messageId: "m1", toolCallId: "tc1", toolName: "Edit",
+      toolInput: { file_path: EDIT_FILE, old_string: "x1\nx2", new_string: "y1\ny2" },
+    }),
+    frame("tool_result", { type: "tool_result", toolCallId: "tc1", content: "ok", isError: false }),
+    frame("text_delta", { type: "text_delta", messageId: "m1", content: "改好了 —— 圆角已提到 18px。" }),
+    frame("result", { type: "result", content: "" }),
+    frame("quick_edit_commit", { type: "quick_edit_commit", taskId: "task-1", repo: "octopus", branch: "feat-x", commit: "abc123", message: "[quick-edit] 圆角再大一点" }),
+  ].join("")
+
+  const awaitingDetail = (t: TaskView) => ({
+    ...t,
+    executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+    derived: derivedOf([pv(1, "票11阶段1", "awaiting_review")], true, "awaiting_review"),
+  })
+
+  it("待验收默认对话形态；发小改→commit 尾帧：变更行出 💬chat 徽标 + ×N chip；「查看 diff」跳变更并闪行", async () => {
+    mockGetRoundDiff.mockResolvedValue(CHAT_ROUND_DIFF)
+    mockGetRoundPatch.mockResolvedValue({ patch: "@@ -1,2 +1,2 @@\n-x1\n-x2\n+y1\n+y2", truncated: false })
+    ;(fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) =>
+      String(url).includes("/api/tasks/task-1/chat")
+        ? Promise.resolve(sseResponse(turnEdit))
+        : Promise.reject(new Error(`unexpected fetch: ${String(url)}`)))
+    const t = makeTask("awaiting_review")
+    renderConsole(t, awaitingDetail(t))
+    const chatHost = await screen.findByTestId("task-chat-tab")
+    expect(chatHost.getAttribute("data-chat-form")).toBe("quick-edit")
+    // 只说「做」面：GET 绑定 + POST 任务级对话，谈面（clones/source_chat）绝迹
+    await waitFor(() => expect(mockGetChatBinding).toHaveBeenCalledWith("task-1"))
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "圆角再大一点" } })
+    fireEvent.click(screen.getByTestId("chat-send"))
+    const card = await screen.findByTestId("chat-tool-card")
+    expect(card.textContent).toContain("a.tsx")
+
+    fireEvent.click(within(card).getByTestId("chat-tool-diff"))
+    await waitFor(() => expect(screen.getByTestId("console-tab-files").getAttribute("aria-selected")).toBe("true"))
+    const row = await waitFor(() => {
+      const el = document.querySelector('[data-acceptance-diff-row="octopus:packages/web-app/a.tsx"]')
+      if (!el) throw new Error("row not mounted")
+      return el as HTMLElement
+    })
+    expect(row.querySelector('[data-testid="quick-edit-badge"]')?.textContent).toContain("💬 chat")
+    const chip = screen.getByTestId("quick-edit-chip")
+    expect(chip.textContent).toContain("×1")
+    // reveal：跳链命中行展开 + 闪
+    expect(document.querySelector('[data-diff-flash="true"]')).toBeTruthy()
+    // chip 点击回对话页签
+    fireEvent.click(chip)
+    await waitFor(() => expect(screen.getByTestId("console-tab-chat").getAttribute("aria-selected")).toBe("true"))
+  })
+
+  it("劝退回复 → 「↩ 打回 · 派 task-fix（已带指令草稿）」→ openReject(草稿)（05 单 textarea 句柄）", async () => {
+    const reply = "这个改动面比较大，建议打回 → 修复轮（task-fix）：先统一圆角令牌，再回归样式。"
+    ;(fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) =>
+      String(url).includes("/api/tasks/task-1/chat")
+        ? Promise.resolve(sseResponse([
+            frame("text_delta", { type: "text_delta", messageId: "m9", content: reply }),
+            frame("result", { type: "result", content: "" }),
+          ].join("")))
+        : Promise.reject(new Error(`unexpected fetch: ${String(url)}`)))
+    const t = makeTask("awaiting_review")
+    renderConsole(t, awaitingDetail(t))
+    fireEvent.change(await screen.findByTestId("chat-input"), { target: { value: "把整个设计令牌重构一遍" } })
+    fireEvent.click(screen.getByTestId("chat-send"))
+    const btn = await screen.findByTestId("chat-reject-draft")
+    expect(btn.textContent).toContain("↩ 打回 · 派 task-fix（已带指令草稿）")
+    fireEvent.click(btn)
+    await waitFor(() => expect(mockOpenReject).toHaveBeenCalledWith(reply))
+  })
+
+  it("task-fix 在跑 → shellMode=fixing：页签「💬 追加指令」（默认节点）+ 明示横幅 + ⚑ 历史行 + 发消息=暂停→注入(intervention)", async () => {
+    mockFetchAgentEvents.mockResolvedValue({
+      executionId: "exec-1", source: "sqlite", _degraded: false, _message: null,
+      events: [{
+        nodeId: "dev", event: "intervention", timestamp: "2026-10-08T02:00:00.000Z",
+        data: { nodeId: "dev", nodeName: "开发/修复", prompt: "先把行号对齐做了" },
+      }],
+    })
+    mockPause.mockResolvedValue(makeTask("running"))
+    mockResume.mockResolvedValue(makeTask("running"))
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null, workflow_ref: "built-in/task-fix" })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    const chatTab = await screen.findByTestId("console-tab-chat")
+    expect(chatTab.textContent).toContain("追加指令")
+    // spec 表：修复轮默认落节点（自动推进直播）
+    expect(screen.getByTestId("console-tab-nodes").getAttribute("aria-selected")).toBe("true")
+    fireEvent.click(chatTab)
+    expect(await screen.findByTestId("task-chat-tab")).toBeTruthy()
+    expect((await screen.findByTestId("fixing-banner")).textContent).toContain("task-fix 执行中")
+    const line = await screen.findByTestId("fixing-intervention-line")
+    expect(line.textContent).toContain("先把行号对齐做了")
+    // fixing 不读 doer 会话（两本账）：绑定 GET 一次都没打
+    expect(mockGetChatBinding).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId("fixing-input"), { target: { value: "回归别跑 e2e，只跑单测" } })
+    fireEvent.click(screen.getByTestId("fixing-send"))
+    await waitFor(() => expect(mockPause).toHaveBeenCalledWith("task-1"))
+    await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1", "回归别跑 e2e，只跑单测"))
+  })
+
+  it("切页往返口吻不丢：走查页签切回对话仍是 quick-edit 形态（chatFormFor 单源判据）", async () => {
+    const t = makeTask("awaiting_review")
+    renderConsole(t, awaitingDetail(t))
+    fireEvent.click(await screen.findByTestId("console-tab-review"))
+    fireEvent.click(screen.getByTestId("console-tab-chat"))
+    expect((await screen.findByTestId("task-chat-tab")).getAttribute("data-chat-form")).toBe("quick-edit")
   })
 })

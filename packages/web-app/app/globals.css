@@ -546,12 +546,21 @@ html *::-webkit-scrollbar-corner { background: transparent; }
 .pop-pulse { animation: pop-pulse 1.2s infinite; }
 .pop-stamp { animation: stamp-in 0.25s ease-out; }
 
+/* 票07「≡ 变更」揭示闪行（原型 .fitem.flash：青描边+微光 1.6s 收 —— 对话页签
+   「查看 diff」跳来时标记目标行）。 */
+@keyframes pop-flash-row {
+  0% { box-shadow: 0 0 14px rgba(79, 209, 217, 0.5); background: var(--pop-cyan-soft); }
+  100% { box-shadow: none; background: transparent; }
+}
+.pop-flash-row { animation: pop-flash-row 1.6s ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   .pop-tilt > *,
   .pop-blink,
   .pop-jump,
   .pop-pulse,
-  .pop-stamp {
+  .pop-stamp,
+  .pop-flash-row {
     animation: none;
     transform: none;
   }

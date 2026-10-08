@@ -1170,6 +1170,23 @@ describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
     expect(registrations[registrations.length - 1]).toBeNull()
   })
 
+  it("票 07 接线：openReject(draft) —— 对话页签送回的建议草稿落进单 textarea（05 形态），确认键随草稿点亮", async () => {
+    const registrations: Array<{ openReject: (draft?: string) => void } | null> = []
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
+    const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+    render(
+      <AcceptanceSurface task={task} onMutated={() => {}} onActionApi={(api) => { registrations.push(api as never) }} />,
+    )
+    await screen.findByTestId("acceptance-approve")
+    const api = registrations[registrations.length - 1]!
+    await act(async () => { api.openReject("打回派修复轮：统一按钮圆角体系并回归样式令牌。") })
+    const ta = await screen.findByTestId("reject-feedback")
+    expect((ta as HTMLTextAreaElement).value).toContain("统一按钮圆角体系并回归样式令牌")
+    // 草稿即指令（票 05：反馈必填 = task-fix 输入）—— 确认键不为空文Disabled
+    expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
+    expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
+  })
+
   it("ledger_written:false → toast 不再谎报「台账已写」", async () => {
     renderModal()
     mockPostAcceptance.mockResolvedValueOnce({

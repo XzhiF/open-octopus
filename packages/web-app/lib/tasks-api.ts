@@ -8,6 +8,7 @@
 // step with the Zod schemas (SG14: read `Task`, NOT `SchedulerJob`).
 
 import { getServerUrl } from "@/lib/server-config"
+import { fromDBMessage, type ChatMessage } from "@/lib/types"
 import type {
   Task,
   TaskExecutionBadge,
@@ -1217,6 +1218,54 @@ export async function triggerAssistWorkflow(
 export async function getAssistWorkflowRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
   const res = await fetch(buildUrl(`/${taskId}/assist-workflows/${runId}`))
   return handleResponse<AssistWorkflowRun>(res)
+}
+
+// ============ 任务对话 S1（票01 端点契约 · 票07 消费面）────────────────
+//
+// GET /:id/chat = 懒建/取得任务唯一 task-doer 会话（tasks.doer_session_id，
+// ADR-0025「做」面）。历史回放**不新建协议** —— doer 会话就是 workspace-chat
+// 会话，读面走既有 GET /api/workspaces/:ws/chat/sessions/:sid（票01 契约末句）。
+// 发信 SSE（POST /:id/chat）由 chat-tab 组件直接 fetch + parseSSEStream 消费，
+// 帧形与 ws-chat 同构（含尾帧 quick_edit_commit）。
+
+/** GET /api/tasks/:id/chat 回执 —— 409（草稿期谈面归 task-author / 归档/终态 /
+ *  无绑定工作区）经 TaskApiError.status 透出，UI 据此落空态话术。 */
+export interface TaskDoerChatBinding {
+  task_id: string
+  session_id: string
+  workspace_id: string
+  /** true = 本次调用刚懒建（首次开聊）。 */
+  created: boolean
+}
+
+export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBinding> {
+  const res = await fetch(buildUrl(`/${taskId}/chat`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** 会话历史（ws-chat GET 的 raw 行 → ChatMessage，映射单源 fromDBMessage）。 */
+export async function getDoerChatHistory(workspaceId: string, sessionId: string, limit = 200): Promise<ChatMessage[]> {
+  const url = new URL(`${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/chat/sessions/${encodeURIComponent(sessionId)}`)
+  url.searchParams.set("limit", String(limit))
+  const res = await fetch(url.toString())
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  const data = await res.json() as { messages?: Record<string, unknown>[] }
+  return (data.messages ?? []).map((m) => fromDBMessage({
+    id: m.id as string,
+    session_id: sessionId,
+    role: (m.role as string) ?? "assistant",
+    type: (m.type as string) ?? "text",
+    content: (m.content as string) ?? "",
+    metadata: (m.metadata as string | null) ?? null,
+    created_at: (m.created_at as string) ?? new Date().toISOString(),
+  }))
 }
 
 // Re-export shared types so callers can import everything from one place.

@@ -38,9 +38,11 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(defaultKey).toBe("chat")
   })
 
-  it("fixing（修复轮形态）：变更·节点·控制台，默认 节点（自动推进直播）", () => {
+  it("fixing（修复轮形态）：变更·节点·追加指令·控制台，默认 节点（自动推进直播）", () => {
+    // 票 07 AC4：task-fix 进行中对话可用 —— 页签行按 spec 故事27 增补 chat
+    //（形态语义=修复轮追加指令，经 06 的暂停→注入通道，非快改对话）。
     const { keys, defaultKey } = assembleTabs({ status: "running", mode: "fixing", v4: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "chat", "console"])
     expect(defaultKey).toBe("nodes")
   })
 
@@ -58,11 +60,13 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(defaultKey).toBe("console")
   })
 
-  it("页签标签（原型词表）：待验收=💬 对话/✓ 走查/▶ 日志；接管=💬 对话接管", () => {
+  it("页签标签（原型词表）：待验收=💬 对话/✓ 走查/▶ 日志；接管=💬 对话接管；修复轮=💬 追加指令", () => {
     expect(tabLabel("chat", { status: "awaiting_review" })).toBe("💬 对话")
     expect(tabLabel("chat", { status: "running", mode: "takeover" })).toBe("💬 对话接管")
+    expect(tabLabel("chat", { status: "running", mode: "fixing" })).toBe("💬 追加指令")
     expect(tabLabel("review", { status: "awaiting_review" })).toBe("✓ 走查")
     expect(tabLabel("console", { status: "awaiting_review" })).toBe("▶ 日志")
+    expect(tabLabel("console", { status: "running", mode: "fixing" })).toBe("▶ 控制台")
     expect(tabLabel("console", { status: "running" })).toBe("▶ 控制台")
     expect(tabLabel("files", { status: "running" })).toBe("≡ 变更")
     expect(tabLabel("nodes", { status: "running" })).toBe("◆ 节点")

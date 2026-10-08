@@ -11,7 +11,7 @@
 
 "use client"
 
-import { useCallback, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, GitCommitHorizontal, Layers } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
 import { getRoundPatch, type DiffFile, type RepoDiff, type RoundDiffPayload } from "@/lib/tasks-api"
@@ -93,11 +93,13 @@ export function DiffUnavailable({ diff }: { diff: RoundDiffPayload }) {
 export type FileRowDecor = (file: DiffFile) => ReactNode
 
 export function RepoSection({
-  taskId, repo, rowDecor, defaultOpenThreshold = 25,
+  taskId, repo, rowDecor, reveal, defaultOpenThreshold = 25,
 }: {
   taskId: string
   repo: RepoDiff
   rowDecor?: FileRowDecor
+  /** 票 07「查看 diff」：命中的仓相对行 + nonce —— 所在组强制展开，行自动开 + 青闪。 */
+  reveal?: { path: string; nonce: number } | null
   /** 小仓库全开；大仓库默认折叠（>threshold 文件/组）。 */
   defaultOpenThreshold?: number
 }) {
@@ -121,7 +123,8 @@ export function RepoSection({
         </span>
       </div>
       {sortRepoGroups(repo.groups).map((g) => {
-        const open = isGroupOpen(g)
+        const revealInGroup = reveal != null && g.files.some((f) => f.path === reveal.path)
+        const open = isGroupOpen(g) || revealInGroup // 跳链目标所在组强制展开（不然行不在场，揭示落空）
         return (
           <div key={g.dir} data-testid={`round-diff-group-${repo.name}-${g.dir}`}>
             <button
@@ -136,7 +139,14 @@ export function RepoSection({
               </span>
             </button>
             {open && g.files.map((f) => (
-              <DiffFileRow key={`${repo.name}:${f.path}`} taskId={taskId} repo={repo.name} file={f} rowDecor={rowDecor} />
+              <DiffFileRow
+                key={`${repo.name}:${f.path}`}
+                taskId={taskId}
+                repo={repo.name}
+                file={f}
+                rowDecor={rowDecor}
+                revealNonce={reveal && f.path === reveal.path ? reveal.nonce : undefined}
+              />
             ))}
           </div>
         )
@@ -148,21 +158,25 @@ export function RepoSection({
   )
 }
 
-export function DiffFileRow({ taskId, repo, file, rowDecor }: {
+export function DiffFileRow({ taskId, repo, file, rowDecor, revealNonce }: {
   taskId: string
   repo: string
   file: DiffFile
   rowDecor?: FileRowDecor
+  /** 票 07 跳链命中：本行是揭示目标 —— nonce 每次点击递增重触发（展开 + 1.6s 青闪，
+   *  原型 .fitem.flash）。同 nonce 不重放，切页往返不谎闪。 */
+  revealNonce?: number
 }) {
   const [open, setOpen] = useState(false)
   const [patch, setPatch] = useState<{ text: string; truncated: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [flash, setFlash] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const seenNonce = useRef(0)
 
-  const toggle = useCallback(() => {
-    const next = !open
-    setOpen(next)
-    if (next && patch == null && !loading && !file.binary) {
+  const loadPatch = useCallback(() => {
+    if (patch == null && !loading && !file.binary) {
       setLoading(true)
       setErr(null)
       getRoundPatch(taskId, repo, file.path)
@@ -170,12 +184,30 @@ export function DiffFileRow({ taskId, repo, file, rowDecor }: {
         .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
         .finally(() => setLoading(false))
     }
-  }, [open, patch, loading, file.binary, taskId, repo, file.path])
+  }, [patch, loading, file.binary, taskId, repo, file.path])
+
+  const toggle = useCallback(() => {
+    const next = !open
+    setOpen(next)
+    if (next) loadPatch()
+  }, [open, loadPatch])
+
+  // nonce 变化（含首次挂载即命中）→ 展开 + 闪一次；同 nonce 重复渲染不再闪。
+  useEffect(() => {
+    if (revealNonce == null || revealNonce === seenNonce.current) return
+    seenNonce.current = revealNonce
+    setOpen(true)
+    loadPatch()
+    setFlash(true)
+    const t = setTimeout(() => setFlash(false), 1600)
+    wrapRef.current?.scrollIntoView?.({ block: "center" })
+    return () => clearTimeout(t)
+  }, [revealNonce, loadPatch])
 
   const statusTone = file.status === "A" ? "text-pop-green" : file.status === "D" ? "text-pop-red" : file.status === "R" ? "text-pop-cyan" : "text-pop-amber"
 
   return (
-    <div className="border-t border-pop-bd">
+    <div ref={wrapRef} className={`border-t border-pop-bd${flash ? " pop-flash-row" : ""}`} data-diff-flash={flash ? "true" : undefined}>
       <button
         className="flex w-full items-center gap-2 px-3 py-1 pl-7 text-left hover:bg-pop-idle"
         onClick={toggle}

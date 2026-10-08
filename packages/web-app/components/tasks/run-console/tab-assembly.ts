@@ -54,7 +54,9 @@ export function assembleTabs(input: TabAssemblyInput): TabAssembly {
   }
   if (!v4) return { keys: ["console"], defaultKey: "console" }
   if (mode === "takeover") return { keys: ["chat", "files", "nodes", "console"], defaultKey: "chat" }
-  if (mode === "fixing") return { keys: ["files", "nodes", "console"], defaultKey: "nodes" }
+  // 票 07（spec 故事27 / 票 AC4）：修复轮也装配对话页签 —— 语义是「追加指令」
+  // （经 06 的暂停→注入通道生效），默认页仍是节点（自动推进直播，spec 表不动）。
+  if (mode === "fixing") return { keys: ["files", "nodes", "chat", "console"], defaultKey: "nodes" }
   // 执行动线（running / paused / ready / archiving / 终态）：变更·节点·控制台。
   // running 默认落「变更」（spec 表）；paused「保持」由调用方保留用户选择实现，
   // 纯函数返回值仍取装配表的基准位；ready/终态默认控制台（发射门禁/战报动线不回退）。
@@ -70,11 +72,13 @@ const TAB_LABELS: Record<ConsoleTabKey, string> = {
   console: "▶ 控制台",
 }
 
-/** 页签标签（原型词表）：接管形态的对话叫「💬 对话接管」；日志口径（待验收/接管）
- *  把「控制台」改字为「日志」。 */
+/** 页签标签（原型词表）：接管形态的对话叫「💬 对话接管」；修复轮形态叫
+ *  「💬 追加指令」（票 07 UI 明示 —— 这里发消息走 06 的暂停→注入通道，不是快改
+ *  对话）；日志口径（待验收/接管）把「控制台」改字为「日志」。 */
 export function tabLabel(key: ConsoleTabKey, input: { status: ConsoleShellStatus; mode?: ConsoleShellMode }): string {
   const { status, mode = "flow" } = input
   if (key === "chat" && mode === "takeover") return "💬 对话接管"
+  if (key === "chat" && mode === "fixing") return "💬 追加指令"
   if (key === "console" && (status === "awaiting_review" || mode === "takeover")) return "▶ 日志"
   return TAB_LABELS[key]
 }
