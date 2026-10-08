@@ -1,21 +1,34 @@
-# Octopus 本地依赖：图数据库 Neo4j + 向量库 Milvus（均单机模式）
+# Octopus 本地依赖：图数据库 Neo4j + 向量库 Milvus + 对象存储 MinIO（均单机模式）
 #
 #   docker compose -f infra/docker-compose.yml up -d
 #   Neo4j  Browser http://localhost:7474 · bolt://localhost:7687 · neo4j / $NEO4J_PASSWORD
 #   Milvus gRPC localhost:19530（无鉴权） · 健康检查 http://localhost:9091/healthz
 #   Attu   Milvus Web 客户端 http://localhost:8000（免登录，连接已预置）
+#   MinIO  S3 API http://localhost:9000 · Console http://localhost:9001 · $MINIO_ROOT_USER / $MINIO_ROOT_PASSWORD
+#
+# 桶：milvus 由 Milvus 首启自建（日志 "blob bucket not exist, create bucket."），octopus 留给
+# 应用层、需手动建 —— MinIO 不会自动建桶：
+#   docker compose -f infra/docker-compose.yml exec minio sh -c \
+#     'mc alias set L http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing L/octopus'
 #
 # 数据落在 ~/.octopus/infra/ 下（compose 自行展开 ~，不依赖 HOME 环境变量）：
 #   milvus/       进程内 etcd 元数据 + segment + woodpecker WAL
+#   minio/        S3 对象，每个桶一个同名子目录
 #   neo4j/data/   图库数据
 #   neo4j/logs/   查询/调试日志
 # 换机器或挪盘：设 OCTOPUS_INFRA_HOME=<绝对路径> 覆盖根目录，或放进 infra/.env。
 # 注意：绑挂不是卷，`down -v` 删不掉这些数据，要清库得手动删这些目录。
 #
-# Milvus 走 embedded 单机：进程内 etcd + 本地磁盘存储 + woodpecker WAL 落本地，不依赖外部
-# etcd/MinIO/S3 容器。官方 standalone compose 依赖 MinIO，而 MinIO 公开镜像已全部撤除
-# （Docker Hub 仓库不存在、quay.io/minio 与 ghcr.io 拒匿名拉取、bitnami/minio 无镜像、
-# dl.min.io Windows 二进制 410），故改用这条路。
+# MinIO 官方公开镜像已全部撤除（Docker Hub 仓库不存在、quay.io/minio 与 ghcr.io 拒匿名拉取、
+# bitnami/minio 无镜像、dl.min.io Windows 二进制 410），这里走 DaoCloud 对 quay.io 的公开缓存。
+# 钉死 RELEASE tag 而非 latest：公益镜像随时可能失效，出问题要能确定拉的是同一份。
+# 想换阿里云 ACR 注意 registry.cn-hangzhou.aliyuncs.com/minio/minio 拉不到 —— ACR 命名空间不是
+# 公共的，得先有自己的实例并 docker login，再自己把这个 tag retag push 上去。
+#
+# Milvus 走 embedded etcd + MinIO 后端：元数据在进程内 etcd，COMMON_STORAGETYPE=remote 让
+# segment/index/binlog 落到 minio 服务的 milvus 桶。~/.octopus/infra/milvus 只剩两类东西 ——
+# localStorage 读缓存和 woodpecker WAL（WAL 保持 local：每次 append 都过一遍 S3，单机 dev 纯亏延迟）。
+# 存储类型不能无痛切换：local 写出来的老库改 remote 读不到，只能清库重建。
 #
 # 配置用 env 覆盖镜像自带 milvus.yaml（键名点号转下划线大写），保留镜像的组件端口默认值 ——
 # 换掉整份 yaml 会让 MixCoord 抢注 19530 导致 Proxy 绑定失败。
@@ -58,9 +71,13 @@ services:
       ETCD_USE_EMBED: "true"
       ETCD_AUTH_ENABLED: "false"
       ETCD_DATA_DIR: /var/lib/milvus/etcdData
-      COMMON_STORAGETYPE: local
+      COMMON_STORAGETYPE: remote
       LOCALSTORAGE_PATH: /var/lib/milvus/data
       WOODPECKER_STORAGE_TYPE: local
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-octopus}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-octopus_dev_only}
+      MINIO_BUCKETNAME: milvus
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -72,6 +89,9 @@ services:
       start_period: 60s
       timeout: 10s
       retries: 5
+    depends_on:
+      minio:
+        condition: service_healthy
 
   # Milvus 的 Web 客户端（平台本体不带 UI）。宿主端口用 8000：3000/3001 是本仓库 dev 的
   # web/server，3100-3598 是 worktree 分配段，都让开。
@@ -95,3 +115,26 @@ services:
     depends_on:
       milvus:
         condition: service_healthy
+
+  # S3（9000 API / 9001 Console）。milvus 服务已拿它当对象存储后端（自建 milvus 桶），octopus 桶留给应用层。
+  # 镜像内已带 mc 和 curl，建桶不必另拉 mc 容器。
+  # root 口令少于 8 位 MinIO 会直接拒绝启动，默认值按这个下限给。
+  minio:
+    image: quay.m.daocloud.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: octopus-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-octopus}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-octopus_dev_only}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ${OCTOPUS_INFRA_HOME:-~/.octopus/infra}/minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 20s
+      start_period: 20s
+      timeout: 10s
+      retries: 5
