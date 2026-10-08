@@ -3,7 +3,7 @@
 // （源自原型 taskboard-v2.html 状态表）—— 独立真相源，不从这里反推实现。
 import { describe, it, expect } from "vitest"
 import {
-  assembleTabs, cycleTab, assembleRailActions, tabLabel,
+  assembleTabs, cycleTab, assembleRailActions, tabLabel, deriveShellMode,
   type ConsoleTabKey,
 } from "../tab-assembly"
 
@@ -89,9 +89,9 @@ describe("cycleTab — ←/→ 键盘切页", () => {
 })
 
 describe("assembleRailActions — 右栏底部动作区按状态装配（spec 右栏列）", () => {
-  it("running：⏸ 暂停 · ■ 中止（· ⧉ 复制），没有恢复", () => {
+  it("running(flow)：✋ 有问题 · ⏸ 暂停 · ■ 中止（· ⧉ 复制）—— 票08 三分支入口就位", () => {
     expect(assembleRailActions({ status: "running", canPause: true, canResume: false, canAbort: true, canReopen: false })).toEqual([
-      "pause", "abort", "duplicate",
+      "ask-takeover", "pause", "abort", "duplicate",
     ])
   })
   it("paused：▶ 恢复 · ■ 中止（恢复与中止是暂停的两个出口）", () => {
@@ -99,9 +99,9 @@ describe("assembleRailActions — 右栏底部动作区按状态装配（spec �
       "resume", "abort", "duplicate",
     ])
   })
-  it("running 但没有在跑的轮（停在审批等人）：不给 暂停，仍给 中止", () => {
+  it("running 但没有在跑的轮（停在审批等人）：不给 暂停，仍给 ✋（停流接管可停审批等待轮）与 中止", () => {
     expect(assembleRailActions({ status: "running", canPause: false, canResume: false, canAbort: true, canReopen: false })).toEqual([
-      "abort", "duplicate",
+      "ask-takeover", "abort", "duplicate",
     ])
   })
   it("awaiting_review：✓ 通过 · ↩ 打回（动作仍接既有实现 = acceptance surface）", () => {
@@ -123,5 +123,43 @@ describe("assembleRailActions — 右栏底部动作区按状态装配（spec �
         "duplicate",
       ])
     }
+  })
+
+  // ── 票08 三分支形态（spec 表 takeover 行：进度 + 确认交付/改派/■）────────
+  it("takeover：✓ 确认交付 · ⚙ 改派 task-fix · ■ 中止（不再给暂停/接管入口 —— 流已停）", () => {
+    expect(assembleRailActions({
+      status: "running", mode: "takeover",
+      canPause: false, canResume: false, canAbort: true, canReopen: false,
+    })).toEqual(["takeover-deliver", "takeover-reassign", "abort", "duplicate"])
+  })
+  it("paused 不给 ✋（三分支只站在 running flow 的现场 —— 暂停的出口仍是 恢复/中止）", () => {
+    const acts = assembleRailActions({ status: "paused", canPause: false, canResume: true, canAbort: true, canReopen: false })
+    expect(acts).not.toContain("ask-takeover")
+  })
+  it("fixing（task-fix 在跑）不给 ✋（改派入口 = 打回走 05，接管是 flow 轮的权利）", () => {
+    const acts = assembleRailActions({
+      status: "running", mode: "fixing",
+      canPause: true, canResume: false, canAbort: true, canReopen: false,
+    })
+    expect(acts).not.toContain("ask-takeover")
+    expect(acts).not.toContain("takeover-deliver")
+  })
+})
+
+// ── 票08 形态判定单源（shellMode 三分支 —— 壳 :305 判据的纯函数化）────────
+// 优先级来自现场唯一性：live task-fix 轮 = 修复轮直播优先（改派后 takeover
+// 标记留在旧轮，不能把 fixing 盘面拽回接管壳）；无 live 且派生 phase
+// 'takeover' = 停流未交付；其余 flow。期望 = spec 表 + ADR-0025。
+
+describe("deriveShellMode — flow / takeover / fixing 三分支判定", () => {
+  it("fixing 优先：live task-fix 轮在场（即使别处还挂着未交付 takeover 标记）", () => {
+    expect(deriveShellMode({ fixingLive: true, takeoverActive: true })).toBe("fixing")
+    expect(deriveShellMode({ fixingLive: true, takeoverActive: false })).toBe("fixing")
+  })
+  it("takeover：无 live 修复轮 + 派生存在 takeover phase", () => {
+    expect(deriveShellMode({ fixingLive: false, takeoverActive: true })).toBe("takeover")
+  })
+  it("flow：两判据皆假（含交付后的 awaiting 世界 —— takeoverActive 由派生翻假）", () => {
+    expect(deriveShellMode({ fixingLive: false, takeoverActive: false })).toBe("flow")
   })
 })

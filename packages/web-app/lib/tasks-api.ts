@@ -88,8 +88,9 @@ export type DerivedTaskStatus =
   | "aborted"
 
 /** Mirror of the server's DerivedPhaseStatus. Same reasoning: 'accepted' is derive-only
- *  and 'paused' has no persisted counterpart. */
-export type DerivedPhaseStatus = "pending" | "running" | "paused" | "awaiting_review" | "accepted"
+ *  and 'paused' has no persisted counterpart. 'takeover' (票08/ADR-0025) = 绑定流被
+ *  人工停流、接管件尚未交付 —— 壳层 shellMode 的判据源之一，仍是派生显示态不是持久态。 */
+export type DerivedPhaseStatus = "pending" | "running" | "paused" | "takeover" | "awaiting_review" | "accepted"
 
 /** What a card's column is decided by: persisted status for v3, derived for v4 —
  *  hence the union (mirrors the server's `TaskView.taskStatus`). */
@@ -552,6 +553,67 @@ export async function postAdvance(taskId: string): Promise<AdvanceResult> {
   // dead parameter + drift bait (review ②) — display gating stays client-side
   // (advancePhaseOf), authority stays server-side.
   const res = await fetch(buildUrl(`/${taskId}/advance`), { method: "POST" })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+// ── 票08 人工接管三分支端点（taskboard-modal-v2, ADR-0025）────────────
+//
+// ② = takeover（停流+标记+doer 会话就绪的聚合端点）→ takeover/deliver（确认
+// 交付 · 转待验收）；③ = fix-round（改派 task-fix，运行中决策不写账本）。
+// ① 不在这里 —— 它是既有 pauseTask + resumeTask(intervention)（票 06 通道）。
+
+/** POST /api/tasks/:id/takeover 响应：标记 + doer 会话 + 最新 detail（derived
+ *  随即 phase='takeover'）。session=null 仅见于服务端未接线；session_error =
+ *  停流已成功但会话未就绪（对话页可按 GET /:id/chat 懒建重试，如实透出）。 */
+export interface TakeoverResultWire {
+  task: TaskDetail
+  takeover: { execution_id: string; phase_index: number; round_index: number; taken_over_at: string }
+  session: { session_id: string; workspace_id: string; created: boolean } | null
+  session_error?: string
+}
+
+export interface DeliverTakeoverResultWire {
+  task: TaskDetail
+  delivered: { execution_id: string; phase_index: number; round_index: number; delivered_at: string }
+}
+
+export interface FixRoundResultWire {
+  task: TaskDetail
+  dispatch: AcceptanceDispatch
+}
+
+/** 分支②：停流 · 人工接管。409 = 无在飞轮/排队中/abort 失败（接管未产生）。 */
+export async function takeoverTask(taskId: string): Promise<TakeoverResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/takeover`), { method: "POST" })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** 「✓ 确认本 Round 交付 · 转待验收」。409 = 无接管中轮/重复交付/已被改派。 */
+export async function deliverTakeover(taskId: string): Promise<DeliverTakeoverResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/takeover/deliver`), { method: "POST" })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** 分支③：改派通用修复流 task-fix（指令必填）。409 = 待验收轮（走打回）/ 无进行中
+ *  phase；400 = 空指令/未知字段（strict）。dispatch 形状与 acceptance 修复轮同构。 */
+export async function postFixRound(taskId: string, instruction: string): Promise<FixRoundResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/fix-round`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)

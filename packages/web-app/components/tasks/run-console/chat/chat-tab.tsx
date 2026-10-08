@@ -48,14 +48,20 @@ export interface TaskChatTabProps {
   interventions?: readonly InterventionRow[]
   /** fixing 形态：发消息 = 追加干预（壳接线 06 暂停→注入通道）。 */
   onInterventionSend?: (text: string) => Promise<void>
+  /** 票08：待验收轮是接管交付件 → quick-edit 的 hint 换「接管件已交付」句。 */
+  takeoverDelivered?: boolean
+  /** 票08 分支②的可选指令：停流后作为**开场草稿**预填输入口（一步一交 —— 预填
+   *  不代发，人按发送才算第一交；nonce 允许连开两次框各带各的字）。 */
+  openingDraft?: { text: string; nonce: number } | null
 }
 
 const BUBBLE = "max-w-[85%] whitespace-pre-wrap break-words rounded-[14px] border-[1.5px] border-pop-bd px-3 py-2 font-mono text-[11.5px] leading-relaxed shadow-pop-sm"
 
 export function TaskChatTab({
   taskId, form, onEditsChange, onQuickEditCommit, onJumpToDiff, onRejectDraft, interventions, onInterventionSend,
+  takeoverDelivered, openingDraft,
 }: TaskChatTabProps) {
-  const copy = chatCopy(form)
+  const copy = chatCopy(form, { takeoverDelivered })
   const isFixing = form === "fixing"
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -99,6 +105,14 @@ export function TaskChatTab({
 
   // 跟脚：新消息滚到底（原型 scrollChat）。
   useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight }, [messages, streaming, localIv])
+
+  // 票08 分支②的开场草稿：nonce 变一次预填一次（fixing 形态不适用 —— 那里
+  // 发消息走注入通道，不存在「草稿」）。预填代发都不做 —— 一步一交从人按下
+  // 发送那一刻算起。
+  useEffect(() => {
+    if (isFixing || !openingDraft || !openingDraft.text) return
+    setDraft(openingDraft.text)
+  }, [isFixing, openingDraft])
 
   const send = useCallback(async () => {
     const text = draft.trim()

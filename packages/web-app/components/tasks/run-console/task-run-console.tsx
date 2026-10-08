@@ -32,7 +32,7 @@ import {
   TASK_STATUS_EVENT, TASK_VERIFY_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, takeoverTask, deliverTakeover, postFixRound, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
@@ -53,11 +53,11 @@ import { canServeRoundDiff, scopeTotals } from "../files-tab/files-tab-model"
 import { FoldMasterChip, FoldProvider } from "../fold-context"
 import { buildSignals, type SignalLine } from "./signal-build"
 import {
-  PHASE_PILL, PHASE_STATUS_LABEL, TASK_PILL, TASK_STATUS_LABEL,
+  PHASE_PILL, PHASE_STATUS_LABEL, SHELL_MODE_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone, sumRunMs,
 } from "./phase-status"
 import {
-  assembleRailActions, assembleTabs, cycleTab, tabLabel,
+  assembleRailActions, assembleTabs, cycleTab, tabLabel, deriveShellMode,
   type ConsoleShellMode, type ConsoleShellStatus, type ConsoleTabKey, type RailActionId,
 } from "./tab-assembly"
 import {
@@ -65,9 +65,12 @@ import {
   type InterventionRow, type InterventionStats, type ResumeDialogAction,
 } from "./intervention"
 import { ResumeInterventionDialog } from "./resume-intervention-dialog"
+import { TakeoverBranchDialog } from "./takeover-branch-dialog"
+import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
 import { TaskChatTab, type QuickEditCommitInfo } from "./chat/chat-tab"
-import { chatFormFor, diffRowHit, type ChatEditsView } from "./chat/chat-model"
+import { chatFormFor, diffRowHit, isTakeoverDeliveredRound, type ChatEditsView } from "./chat/chat-model"
+import type { BranchChoice } from "./takeover"
 
 export interface RunConsoleChrome {
   isFullscreen: boolean
@@ -112,7 +115,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const [reveal, setReveal] = useState<{ path: string; nonce: number } | null>(null)
   const revealNonceRef = useRef(0)
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null>(null)
+  const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | "takeover" | "deliver" | "fix" | null>(null)
+  // ── 票08 三分支弹态 ──
+  // branchOpen=「✋ 有问题」决策框；fixOpen=改派 task-fix 指令框（③/接管中改派两入口共用）；
+  // openingDraft=② 带过来的开场指令草稿（nonce 允许连开两框各带各的字；预填不代发）。
+  const [branchOpen, setBranchOpen] = useState(false)
+  const [branchChoice, setBranchChoice] = useState<BranchChoice>("inject")
+  const [fixOpen, setFixOpen] = useState(false)
+  const [fixPrefill, setFixPrefill] = useState("")
+  const [openingDraft, setOpeningDraft] = useState<{ text: string; nonce: number } | null>(null)
+  const openingNonceRef = useRef(0)
   // 选中面：phase index | "report"；undefined = 未交互，跟随状态自动选。
   const [sel, setSel] = useState<number | "report" | undefined>(undefined)
   useEffect(() => {
@@ -122,6 +134,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     setInjectOpen(false)
     setChatEdits({ commits: 0, files: [] })
     setReveal(null)
+    // 票08：换任务一并收弹态（决策框/改派框不该跨任务还魂）。
+    setBranchOpen(false)
+    setBranchChoice("inject")
+    setFixOpen(false)
+    setFixPrefill("")
+    setOpeningDraft(null)
   }, [task.id, startOnAcceptance])
 
   const isLive =
@@ -298,13 +316,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }
 
   // ── 页签装配（票 02 · tab-assembly 纯函数单源）────────────────────────
-  // 形态派生唯一出口 shellMode（票 04 契约的「08 接线钥匙」）：
-  //   fixing = live 轮 workflow_ref === "built-in/task-fix"（票 05：打回恒派 task-fix）。
-  //   takeover 标记由票 08 补进这一行（abort 后任务持久态仍 'running' —— 票 01 契约，
-  //   绑定点在 doer 会话侧可查）。其余一切形态恒 flow。
-  const shellMode: ConsoleShellMode = runs.some((r) => LIVE_RUN_STATUSES.has(r.status) && r.workflow_ref === "built-in/task-fix")
-    ? "fixing"
-    : "flow"
+  // 形态派生唯一出口 shellMode（优先级单源 = deriveShellMode 纯函数，票08 三分支）：
+  //   fixing = live 轮 workflow_ref === "built-in/task-fix"（票 05：打回恒派 task-fix）；
+  //   takeover = 派生 phase 存在 'takeover'（票 08：绑定流被停、接管件未交付 ——
+  //     服务端 takeover_at 标记经 deriveTaskView 补支翻出此态，交付后自动翻假）；
+  //   其余一切形态恒 flow。
+  const fixingLive = runs.some((r) => LIVE_RUN_STATUSES.has(r.status) && r.workflow_ref === "built-in/task-fix")
+  const takeoverPv = phaseViews.find((p) => p.status === "takeover") ?? null
+  const shellMode: ConsoleShellMode = deriveShellMode({ fixingLive, takeoverActive: !!takeoverPv })
   const tabs = useMemo(
     () => assembleTabs({
       status: derivedStatus as ConsoleShellStatus,
@@ -357,6 +376,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     ? runsById.get(awaitingPv!.rounds.find((r) => r.roundIndex === awaitingPv!.awaitingRound)?.exec.id ?? "") ?? null
     : null
   const waitedMs = awaitingRun?.completed_at ? Math.max(0, now - Date.parse(awaitingRun.completed_at)) : null
+  // 票08：待验收轮若是接管交付件（badge 双标记）→ 对话 hint 与走查标注共用此判据。
+  const takeoverDelivered = isTakeoverDeliveredRound(awaitingRun ?? undefined)
 
   // keep-mounted 触发：待验收轮一出现（或用户点过走查）即常挂载，此后不随派生态消失而卸载。
   useEffect(() => {
@@ -425,16 +446,74 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     } finally { setBusy(null) }
   }
 
-  const handlePause = async () => {
+  const handlePause = async (): Promise<boolean> => {
     setBusy("pause")
     try {
       await pauseTask(task.id)
       toast.success("已暂停 — 恢复时会从被打断的节点重跑")
       onMutated(); refetch()
+      return true
     } catch (err: unknown) {
       // 409 的 message 已是面向用户的中文（排队中 / 停在审批节点 / 没有进行中的执行），
       // 直接透出比换成一句笼统的「暂停失败」有用。
       toast.error(err instanceof Error ? err.message : "暂停失败")
+      return false
+    } finally { setBusy(null) }
+  }
+  // ── 票08 三分支落地 ──────────────────────────────────────────────────
+  // ① 注入干预原流继续 = pauseTask → 06 注入框（暂停不成不开框 —— 没有 paused
+  //   轮可恢复，注入通道不存在）。
+  // ② 停流 · 人工接管 = takeover 聚合端点（abort+标记+doer 会话一发完成）→
+  //   派生 phase='takeover' → shellMode 翻转 → 「💬 对话接管」页签自动装配
+  //   （07 组件已备，判据就是这一行 —— §07 契约）。可选指令 = 开场草稿预填。
+  // ③ 派 task-fix = 先收三分支框再开指令框（必填闸门在框内），派发走
+  //   fix-round；成功后 live task-fix 轮把盘面翻到 fixing（04 已能渲）。
+  const handleBranchGo = async (choice: BranchChoice, note: string) => {
+    if (choice === "inject") {
+      setBranchOpen(false)
+      if (await handlePause()) setInjectOpen(true)
+      return
+    }
+    if (choice === "takeover") {
+      setBranchOpen(false)
+      setBusy("takeover")
+      try {
+        const res = await takeoverTask(task.id)
+        if (note) {
+          openingNonceRef.current += 1
+          setOpeningDraft({ text: note, nonce: openingNonceRef.current })
+        }
+        toast.success(res.session_error ? "✋ 已接管 — 会话未就绪：" + res.session_error : "✋ 已接管 — 「💬 对话接管」一步一交")
+        setTabSel("chat")
+        onMutated(); refetch()
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "接管失败")
+      } finally { setBusy(null) }
+      return
+    }
+    setBranchOpen(false)
+    setFixPrefill(note)
+    setFixOpen(true)
+  }
+  const handleFixDispatch = async (instruction: string) => {
+    setFixOpen(false)
+    setBusy("fix")
+    try {
+      await postFixRound(task.id, instruction)
+      toast.success("⚙ 已派发 task-fix · 看「◆ 节点」页签推进")
+      onMutated(); refetch()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "改派失败")
+    } finally { setBusy(null) }
+  }
+  const handleDeliverTakeover = async () => {
+    setBusy("deliver")
+    try {
+      await deliverTakeover(task.id)
+      toast.success("✓ 本 Round 已交付 · 转待验收（接管件 · 自动复检未跑）")
+      onMutated(); refetch()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "交付失败")
     } finally { setBusy(null) }
   }
   // 票 06 · 恢复升级为「▶ 恢复 · 可注入干预」：rail 钮只开框，放行由三分支弹框决定 ——
@@ -522,14 +601,20 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         <span aria-hidden className="shrink-0 font-black text-pop-pink">❯</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
         <span
-          data-task-modal-status={derivedStatus}
-          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${TASK_PILL[derivedStatus] ?? "border-pop-bd text-pop-dim"}`}
+          data-task-modal-status={shellMode === "takeover" ? "takeover" : derivedStatus}
+          className={`shrink-0 rounded-full border-[1.5px] px-2 py-px text-[10px] font-black ${
+            shellMode === "takeover"
+              ? TASK_PILL.takeover
+              : TASK_PILL[derivedStatus] ?? "border-pop-bd text-pop-dim"
+          }`}
         >
-          {derivedStatus === "awaiting_review" && awaitingPv
-            ? `◆ 待验收 · P${awaitingPv.index}`
-            : derivedStatus === "running"
-              ? `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
-              : `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`}
+          {shellMode === "takeover"
+            ? SHELL_MODE_LABEL.takeover
+            : derivedStatus === "awaiting_review" && awaitingPv
+              ? `◆ 待验收 · P${awaitingPv.index}${takeoverDelivered ? " · 接管件" : ""}`
+              : derivedStatus === "running"
+                ? `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
+                : `● ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`}
         </span>
         {/* 元信息区：只读数字，零按钮（用时/成本/commits/P·R） */}
         <span className="ml-2 flex shrink-0 items-center gap-3 text-[10.5px] text-pop-dim" data-head-meta>
@@ -692,6 +777,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   taskId={task.id}
                   form={chatForm ?? "quick-edit"}
                   interventions={interventionRows}
+                  takeoverDelivered={takeoverDelivered}
+                  openingDraft={openingDraft}
                   onEditsChange={handleEditsChange}
                   onQuickEditCommit={handleQuickEditCommit}
                   onJumpToDiff={handleJumpToDiff}
@@ -709,8 +796,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             <PipelineRail ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel} isV4={isV4} aggLoaded={aggLoaded} />
             <RailStatusCard
               derivedStatus={derivedStatus}
+              shellMode={shellMode}
               liveRun={liveRun}
               awaitingPv={awaitingPv}
+              takeoverPv={takeoverPv}
               costText={costText}
               durText={liveDurText}
               interventions={ivStats}
@@ -727,10 +816,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   trigger: () => setTriggerOpen(true),
                   triggerCancel: handleCancelTrigger,
                   reopen: handleReopen,
-                  pause: handlePause,
+                  pause: () => { void handlePause() },
                   resume: () => setInjectOpen(true), // 票 06：只开注入弹框，放行在框里
                   abort: handleAbort,
                   duplicate: handleDuplicate,
+                  askTakeover: () => { setBranchChoice("inject"); setBranchOpen(true) },
+                  deliverTakeover: handleDeliverTakeover,
+                  reassignFix: () => { setFixPrefill(""); setFixOpen(true) },
                 }}
               />
             ))}
@@ -777,6 +869,26 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         busy={busy === "resume"}
         onAction={handleResumeAction}
       />
+      {/* 票 08 · 「✋ 有问题」三分支框 + 改派 task-fix 指令框（Esc 层序同 06 裁决）。 */}
+      <TakeoverBranchDialog
+        open={branchOpen}
+        onOpenChange={setBranchOpen}
+        initialChoice={branchChoice}
+        busy={busy === "takeover"}
+        contextLine={`已跑 ${liveDurText} · 成本 ${costText} · 当前节点「${(liveRun ?? runningRun)?.name || (liveRun ?? runningRun)?.workflow_ref.replace(/^built-in\//, "") || "—"}」`}
+        onGo={(choice, note) => { void handleBranchGo(choice, note) }}
+      />
+      <FixDispatchDialog
+        open={fixOpen}
+        onOpenChange={setFixOpen}
+        prefill={fixPrefill}
+        busy={busy === "fix"}
+        boundWorkflowLabel={(liveRun ?? runningRun ?? pausedRun)?.name
+          || (liveRun ?? runningRun ?? pausedRun)?.workflow_ref.replace(/^built-in\//, "")
+          || takeoverPv?.workflowRef.replace(/^built-in\//, "")
+          || "绑定工作流"}
+        onDispatch={(instruction) => { void handleFixDispatch(instruction) }}
+      />
     </div>
     </FoldProvider>
   )
@@ -794,6 +906,9 @@ interface RailActionHandlers {
   resume: () => void
   abort: () => void
   duplicate: () => void
+  askTakeover: () => void
+  deliverTakeover: () => void
+  reassignFix: () => void
 }
 
 function RailActionButton({ id, busy, acceptApi, handlers }: {
@@ -884,42 +999,83 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
           {spin("duplicate")}⧉ 复制整单
         </button>
       )
+    // ── 票08 三分支（02 留位的 ✋ 正主 —— 只许在 rail-acts，04 只读扫描面外）──
+    case "ask-takeover":
+      return (
+        <button onClick={handlers.askTakeover} disabled={busy !== null} data-task-ask-takeover
+          title="本 Round 遇到问题？三条路一次选：① 注入干预继续 ② 停流我接管 ③ 改派 task-fix"
+          className={`${RAIL_BTN} border-pop-pink/55 bg-pop-pink-soft text-pop-pink hover:bg-pop-pink hover:text-pop-bg`}
+        >
+          ✋ 有问题？接管本 Round…
+        </button>
+      )
+    case "takeover-deliver":
+      return (
+        <button onClick={() => void handlers.deliverTakeover()} disabled={busy !== null} data-rail-deliver
+          title="接管完成 —— 本 Round 产物带 takeover 标记进入验收 Gate（自动复检未跑，如实入台账）"
+          className={`${RAIL_BTN} border-pop-green bg-pop-green text-pop-bg hover:brightness-110`}
+        >
+          {spin("deliver")}✓ 确认本 Round 交付 · 转待验收
+        </button>
+      )
+    case "takeover-reassign":
+      return (
+        <button onClick={handlers.reassignFix} disabled={busy !== null} data-rail-reassign
+          title="接管中反手改派 —— 写指令派 built-in/task-fix 通用流收尾（快改 commit 不丢，同分支续跑）"
+          className={`${RAIL_BTN} border-pop-cyan/50 bg-pop-cyan-soft text-pop-cyan hover:bg-pop-cyan hover:text-pop-bg`}
+        >
+          {spin("fix")}⚙ 剩余交给 task-fix 通用流
+        </button>
+      )
   }
 }
 
-type TaskRunConsoleBusy = "abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | null
+type TaskRunConsoleBusy = "abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | "takeover" | "deliver" | "fix" | null
 
 // ── LIVE / 验收状态卡（原型 .live-card；⚑ 干预×N = 票 06 注入留痕计数）──────
 
-function RailStatusCard({ derivedStatus, liveRun, awaitingPv, costText, durText, interventions }: {
+function RailStatusCard({ derivedStatus, shellMode, liveRun, awaitingPv, takeoverPv, costText, durText, interventions }: {
   derivedStatus: string
+  shellMode: ConsoleShellMode
   liveRun: TaskExecutionBadge | null
   awaitingPv: TaskPhaseView | null
+  takeoverPv: TaskPhaseView | null
   costText: string
   durText: string
   interventions: InterventionStats
 }) {
-  const running = derivedStatus === "running" && liveRun
-  const paused = derivedStatus === "paused"
-  const awaiting = derivedStatus === "awaiting_review" && awaitingPv
-  const hd = awaiting
-    ? `◔ 验收 · P${awaitingPv!.index}·R${awaitingPv!.awaitingRound ?? "?"}`
-    : paused
-      ? `⏸ PAUSED${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
-      : running
-        ? `▶ LIVE ROUND · R${liveRun.round_index ?? 1}`
-        : derivedStatus === "ready"
-          ? "⚡ READY"
-          : derivedStatus === "archiving"
-            ? "🗄 归档中"
-            : `■ ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`
+  const takeover = shellMode === "takeover" && takeoverPv
+  const running = !takeover && derivedStatus === "running" && liveRun
+  const paused = !takeover && derivedStatus === "paused"
+  const awaiting = !takeover && derivedStatus === "awaiting_review" && awaitingPv
+  const hd = takeover
+    ? `✋ TAKEOVER · P${takeoverPv!.index}·R${takeoverPv!.currentRound ?? 1}`
+    : awaiting
+      ? `◔ 验收 · P${awaitingPv!.index}·R${awaitingPv!.awaitingRound ?? "?"}`
+      : paused
+        ? `⏸ PAUSED${liveRun?.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}`
+        : running
+          ? `▶ LIVE ROUND · R${liveRun.round_index ?? 1}`
+          : derivedStatus === "ready"
+            ? "⚡ READY"
+            : derivedStatus === "archiving"
+              ? "🗄 归档中"
+              : `■ ${TASK_STATUS_LABEL[derivedStatus] ?? derivedStatus}`
   return (
     <div className="mx-2.5 mb-2.5 overflow-hidden rounded-xl border-[1.5px] border-pop-purple/60" data-testid="rail-live-card">
-      <div className="flex items-center gap-2 bg-pop-purple-soft px-3 py-1.5 font-mono text-[10px] font-black text-pop-purple">
+      <div className={`flex items-center gap-2 px-3 py-1.5 font-mono text-[10px] font-black ${
+        takeover ? "bg-pop-pink-soft text-pop-pink" : "bg-pop-purple-soft text-pop-purple"
+      }`}>
         {hd}
         <span className="ml-auto tabular-nums text-pop-ink">{durText}</span>
       </div>
       <div className="flex flex-col gap-1 bg-pop-paper px-3 py-2 font-mono text-[10.5px] text-pop-dim">
+        {takeover && (
+          <>
+            <span>工作流已停 · <b className="text-pop-pink">人工接管中</b> —— 「💬 对话接管」一步一交</span>
+            <span>变更 <b className="text-pop-ink">≡ 实时进「变更」页签</b> · 满意后点「✓ 确认交付」</span>
+          </>
+        )}
         {(running || paused) && liveRun && (
           <span>节点 <b className="text-pop-ink">{liveRun.name || liveRun.workflow_ref.replace(/^built-in\//, "")}</b>{liveRun.phase_index != null ? ` · P${liveRun.phase_index}·R${liveRun.round_index ?? 1}` : ""}{interventions.currentNodeCount > 0 && (
             <span className="font-black text-pop-pink" data-testid="rail-intervention-chip"> · ⚑ 干预×{interventions.currentNodeCount}</span>

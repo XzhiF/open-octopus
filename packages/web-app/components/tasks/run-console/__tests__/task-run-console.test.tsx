@@ -15,6 +15,7 @@ const {
   mockPostAcceptance, mockAbort, mockReopen, mockCancelTrigger, mockPause, mockResume,
   pushSpy, mockFetchAgentEvents, mockGetRoundDiff, mockGetRoundPatch, mockFetchExecutionDetail,
   mockOpenReject, mockGetChatBinding, mockGetDoerHistory,
+  mockTakeover, mockDeliverTakeover, mockFixRound,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -35,6 +36,10 @@ const {
   // 票07：对话页签挂载后壳会真渲染 TaskChatTab —— 它对 tasks-api 的两个读取默认桩。
   mockGetChatBinding: vi.fn(),
   mockGetDoerHistory: vi.fn(),
+  // 票08：三分支三端点桩（takeover/deliver/fix-round）。
+  mockTakeover: vi.fn(),
+  mockDeliverTakeover: vi.fn(),
+  mockFixRound: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -65,6 +70,8 @@ vi.mock("@/lib/tasks-api", () => ({
   getRoundDiff: mockGetRoundDiff, getRoundPatch: mockGetRoundPatch,
   // 票07 对话页签（TaskChatTab 真实挂载）：会话绑定 + 历史回放
   getTaskChatBinding: mockGetChatBinding, getDoerChatHistory: mockGetDoerHistory,
+  // 票08 三分支三端点
+  takeoverTask: mockTakeover, deliverTakeover: mockDeliverTakeover, postFixRound: mockFixRound,
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
 vi.mock("@/lib/sse-manager", () => ({
@@ -210,6 +217,10 @@ beforeEach(() => {
   mockGetDoerHistory.mockReset()
   mockGetChatBinding.mockResolvedValue({ task_id: "task-1", session_id: "s-doer", workspace_id: "ws-1", created: false })
   mockGetDoerHistory.mockResolvedValue([])
+  // 票08 默认面：三端点桩（个案覆盖）。
+  mockTakeover.mockReset()
+  mockDeliverTakeover.mockReset()
+  mockFixRound.mockReset()
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -1256,5 +1267,162 @@ describe("票 07 — 💬 对话页签挂进 [data-tab-host=chat] 与快改联�
     fireEvent.click(await screen.findByTestId("console-tab-review"))
     fireEvent.click(screen.getByTestId("console-tab-chat"))
     expect((await screen.findByTestId("task-chat-tab")).getAttribute("data-chat-form")).toBe("quick-edit")
+  })
+})
+
+// ═════════════════ 票 08 · 人工接管（三分支框 + takeover 壳 + 交付）═════════════════
+// 期望文案逐字 = 原型 taskboard-v2.html（openBranch/pickBr/rail-acts tk 分支）；
+// 形态判据 = 派生 phase 'takeover'（服务端单源）；端点面 = tasks-api 三桩。
+
+describe("票 08 — 「✋ 有问题」三分支框（running flow 现场）", () => {
+  const runningView = () => {
+    const t = makeTask("running")
+    return { t, detail: { ...t, executions: [badge("exec-1", "running", { completed_at: null })], derived: derivedOf([pv(1, "票11阶段1", "running")]) } }
+  }
+  const takeoverDetailOf = (t: Task) => ({
+    ...t,
+    executions: [badge("exec-1", "cancelled", { takeover_at: "2026-09-21T09:30:00Z", takeover_delivered_at: null })],
+    derived: derivedOf([pv(1, "票11阶段1", "takeover", {
+      rounds: [{ roundIndex: 1, state: "cancelled" as const, decision: null, exec: { id: "exec-1", status: "cancelled", workflow_ref: "built-in/matt-spec-dev", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:59:00Z" } }],
+    })], true, "running"),
+  })
+
+  it("running 右栏有 ✋ 钮；关框时盘面 textarea 仍为 0（06 零输入铁律不撞）", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    const ask = await waitFor(() => {
+      const el = document.querySelector("[data-rail-acts] [data-task-ask-takeover]")
+      if (!el) throw new Error("ask button missing")
+      return el
+    })
+    expect(ask.textContent).toContain("✋ 有问题？接管本 Round…")
+    expect(document.querySelectorAll("textarea")).toHaveLength(0)
+  })
+
+  it("开框：三分支选项齐（原型逐字）；go 文案随选；取消关窗零调用", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    fireEvent.click(await screen.findByText(/✋ 有问题？接管本 Round/))
+    const dlg = await screen.findByTestId("takeover-branch-dialog")
+    expect(within(dlg).getByTestId("branch-option-inject").textContent).toContain("① ⚑ 注入干预 · 原工作流继续")
+    expect(within(dlg).getByTestId("branch-option-takeover").textContent).toContain("② ✋ 停流 · 我接管（对话开发）")
+    expect(within(dlg).getByTestId("branch-option-fix").textContent).toContain("③ ⚙ 改派通用修复流 task-fix")
+    expect(within(dlg).getByTestId("branch-go").textContent).toContain("① 注入干预并继续")
+    fireEvent.click(within(dlg).getByTestId("branch-option-takeover"))
+    expect(within(dlg).getByTestId("branch-go").textContent).toContain("② 停止工作流 · 进入接管")
+    fireEvent.click(within(dlg).getByTestId("branch-cancel"))
+    await waitFor(() => expect(document.querySelector('[data-testid="takeover-branch-dialog"]')).toBeNull())
+    expect(mockTakeover).not.toHaveBeenCalled()
+    expect(mockFixRound).not.toHaveBeenCalled()
+  })
+
+  it("③ 指令必填：空指令点派发 → 就地拦下（原型 toast 文案）不打端点；补字后派发走 postFixRound", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    fireEvent.click(await screen.findByText(/✋ 有问题？接管本 Round/))
+    const dlg = await screen.findByTestId("takeover-branch-dialog")
+    fireEvent.click(within(dlg).getByTestId("branch-option-fix"))
+    fireEvent.click(within(dlg).getByTestId("branch-go"))
+    expect((await within(dlg).findByTestId("branch-blocked-hint")).textContent)
+      .toBe("指令必填 — task-fix 通用流按你的输入开发")
+    expect(mockFixRound).not.toHaveBeenCalled()
+    // 三分支框 ③ → 转派发改令框（prefill 随带）；改令框自己再钉一次必填。
+    fireEvent.change(within(dlg).getByTestId("branch-note"), { target: { value: "只补齐行号对齐" } })
+    fireEvent.click(within(dlg).getByTestId("branch-go"))
+    const fix = await screen.findByTestId("fix-dispatch-dialog")
+    expect((within(fix).getByTestId("fix-instruction") as HTMLTextAreaElement).value).toBe("只补齐行号对齐")
+    fireEvent.change(within(fix).getByTestId("fix-instruction"), { target: { value: "" } })
+    fireEvent.click(within(fix).getByTestId("fix-dispatch-go"))
+    expect((await within(fix).findByTestId("fix-blocked-hint")).textContent).toContain("指令必填")
+    fireEvent.change(within(fix).getByTestId("fix-instruction"), { target: { value: "只补齐行号对齐和 hover 描边，产物报告照旧" } })
+    mockFixRound.mockResolvedValue({ task: {}, dispatch: { execution_id: "x", workspace_id: "ws-1", phase_index: 1, round_index: 2 } })
+    fireEvent.click(within(fix).getByTestId("fix-dispatch-go"))
+    await waitFor(() => expect(mockFixRound).toHaveBeenCalledWith("task-1", "只补齐行号对齐和 hover 描边，产物报告照旧"))
+  })
+
+  it("① = pauseTask 成功才开 06 注入框；pause 失败不开框（无 paused 轮可注入）", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    mockPause.mockResolvedValue(makeTask("running"))
+    fireEvent.click(await screen.findByText(/✋ 有问题？接管本 Round/))
+    const dlg = await screen.findByTestId("takeover-branch-dialog")
+    fireEvent.click(within(dlg).getByTestId("branch-go")) // 默认 ①
+    await waitFor(() => expect(mockPause).toHaveBeenCalledWith("task-1"))
+    expect(await screen.findByTestId("resume-intervene-dialog")).toBeTruthy()
+    expect(document.querySelector('[data-testid="takeover-branch-dialog"]')).toBeNull()
+  })
+
+  it("① pause 被服务端拒（如停在审批）→ 不开注入框（透传真错误）", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    mockPause.mockRejectedValue(new Error("本轮停在审批/交互节点，请先在处理框中完成它"))
+    fireEvent.click(await screen.findByText(/✋ 有问题？接管本 Round/))
+    const dlg = await screen.findByTestId("takeover-branch-dialog")
+    fireEvent.click(within(dlg).getByTestId("branch-go"))
+    await waitFor(() => expect(mockPause).toHaveBeenCalled())
+    await waitFor(() => expect(document.querySelector('[data-testid="takeover-branch-dialog"]')).toBeNull())
+    expect(document.querySelector('[data-testid="resume-intervene-dialog"]')).toBeNull()
+  })
+
+  it("② 接管成功：takeoverTask 一发 → 盘面翻 takeover（粉 pill/对话接管页签/交付+改派钮/一步一交形态）", async () => {
+    const { t, detail } = runningView()
+    renderConsole(t, detail)
+    const tkDetail = takeoverDetailOf(t)
+    mockTakeover.mockImplementation(async () => {
+      mockGetTask.mockResolvedValue(tkDetail)
+      return { task: tkDetail, takeover: { execution_id: "exec-1", phase_index: 1, round_index: 1, taken_over_at: "x" }, session: { session_id: "s-doer", workspace_id: "ws-1", created: false } }
+    })
+    fireEvent.click(await screen.findByText(/✋ 有问题？接管本 Round/))
+    const dlg = await screen.findByTestId("takeover-branch-dialog")
+    fireEvent.click(within(dlg).getByTestId("branch-option-takeover"))
+    fireEvent.change(within(dlg).getByTestId("branch-note"), { target: { value: "先把 hover 描边改了，别动统计条" } })
+    fireEvent.click(within(dlg).getByTestId("branch-go"))
+    await waitFor(() => expect(mockTakeover).toHaveBeenCalledWith("task-1"))
+
+    // pill 翻粉 + 文案（原型 sp-tk）；data-task-modal-status 如实 takeover。
+    expect(await screen.findByText("✋ 已接管 · chat 驱动")).toBeTruthy()
+    expect(document.querySelector('[data-task-modal-status="takeover"]')).toBeTruthy()
+    // 对话页签 = 接管口吻（07 组件全通，判据即此行）；默认页 chat。
+    expect((await screen.findByTestId("console-tab-chat")).textContent).toContain("对话接管")
+    const chat = await screen.findByTestId("task-chat-tab")
+    expect(chat.getAttribute("data-chat-form")).toBe("takeover")
+    // ② 的指令 = 开场草稿预填（一步一交：预填不代发）。
+    await waitFor(() => expect((screen.getByTestId("chat-input") as HTMLTextAreaElement).value).toBe("先把 hover 描边改了，别动统计条"))
+    // 右栏 = 确认交付/改派/■；暂停与 ✋ 退场（流已停）。
+    const acts = document.querySelector("[data-rail-acts]")!
+    expect(acts.querySelector("[data-rail-deliver]")).toBeTruthy()
+    expect(acts.querySelector("[data-rail-reassign]")).toBeTruthy()
+    expect(acts.querySelector("[data-task-pause]")).toBeNull()
+    expect(acts.querySelector("[data-task-ask-takeover]")).toBeNull()
+    expect(acts.textContent).toContain("✓ 确认本 Round 交付 · 转待验收")
+    // LIVE 卡翻接管语。
+    expect((await screen.findByTestId("rail-live-card")).textContent).toContain("TAKEOVER")
+  })
+
+  it("确认交付 → deliverTakeover 端点；改派钮 → 指令框（空指令仍被拦）", async () => {
+    const t = makeTask("running")
+    renderConsole(t, takeoverDetailOf(t))
+    mockDeliverTakeover.mockResolvedValue({ task: takeoverDetailOf(t), delivered: {} })
+    fireEvent.click(await screen.findByText(/✓ 确认本 Round 交付/))
+    await waitFor(() => expect(mockDeliverTakeover).toHaveBeenCalledWith("task-1"))
+
+    fireEvent.click(document.querySelector("[data-rail-reassign]")!)
+    const fix = await screen.findByTestId("fix-dispatch-dialog")
+    fireEvent.click(within(fix).getByTestId("fix-dispatch-go"))
+    expect((await within(fix).findByTestId("fix-blocked-hint")).textContent).toContain("指令必填")
+    expect(mockFixRound).not.toHaveBeenCalled()
+  })
+
+  it("接管件已交付（badge 双标记 + awaiting）→ 对话 hint 换「接管件已交付」句", async () => {
+    const t = makeTask("awaiting_review")
+    const detail = {
+      ...t,
+      executions: [badge("exec-1", "cancelled", { phase_index: 1, round_index: 1, takeover_at: "2026-09-21T09:30:00Z", takeover_delivered_at: "2026-09-21T11:00:00Z" })],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review", { awaitingRound: 1 })], true, "awaiting_review"),
+    }
+    mockGetRoundDiff.mockResolvedValue({ available: false, reason: "no_commits", aggregate: { commits: 0, additions: 0, dels: 0, files: 0 }, interventions: null, repos: [] })
+    renderConsole(t, detail)
+    await screen.findByTestId("task-chat-tab")
+    expect(await screen.findByText("接管件已交付 — 验收前还能继续说改")).toBeTruthy()
   })
 })

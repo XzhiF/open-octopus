@@ -81,6 +81,7 @@ const PHASE_STATE_LABEL: Record<string, string> = {
   pending: "未开始",
   running: "执行中",
   paused: "已暂停",
+  takeover: "人工接管中",
   awaiting_review: "待验收",
   accepted: "已验收",
 }
@@ -274,9 +275,9 @@ export class TaskDoerService {
     const phases = spec.phases ?? []
     const views = detail.derived?.phaseViews ?? []
 
-    // 活跃 phase：待验收/执行中优先，否则最后一项（对话发生在现场，不在未来）。
+    // 活跃 phase：接管/待验收/执行中优先，否则最后一项（对话发生在现场，不在未来）。
     const active =
-      views.find((p) => p.status === "awaiting_review" || p.status === "running") ??
+      views.find((p) => p.status === "takeover" || p.status === "awaiting_review" || p.status === "running") ??
       views[views.length - 1]
     const pdef = active ? phases.find((p) => p.index === active.index) : undefined
     const round = active?.awaitingRound ?? active?.currentRound ?? 1

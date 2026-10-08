@@ -60,6 +60,11 @@ export interface ExecutionRow {
    *  NULL = v3/generic (non-phase execution). */
   phase_index: number | null
   round_index: number | null
+  /** v51 (taskboard-modal-v2 票08, ADR-0025): 人工接管留痕 —— takeover_at = 停流时刻
+   *  (现场快照时间点), takeover_delivered_at = 「确认交付」事件时刻。
+   *  takeover_at 非空 & delivered 空 = 接管进行中（derive 认 phase 'takeover'）。 */
+  takeover_at: string | null
+  takeover_delivered_at: string | null
   /** v41 (ADR-0021): the board reaches an execution directly by task instead of joining
    *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
    *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */

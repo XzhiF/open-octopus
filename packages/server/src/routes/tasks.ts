@@ -37,6 +37,9 @@ import {
 } from "@octopus/shared"
 import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 import { InstanceGateError } from "../services/tasks/round-evidence-service"
+// taskboard-modal-v2 票08: takeover 聚合端点复用 01 的 doer 会话就绪（type-only，
+// 与 routes/task-chat.ts 同一实例由 index.ts 注入）。
+import type { TaskDoerService } from "../services/tasks/task-doer-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -134,6 +137,14 @@ const probeRunBodySchema = z.object({
   timeoutS: z.number().int().min(5).max(600).optional(),
 })
 
+// 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
+// strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
+const fixRoundBodySchema = z
+  .object({
+    instruction: z.string().trim().min(1, "指令必填 —— task-fix 通用流按你的输入开发").max(20000),
+  })
+  .strict()
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -141,6 +152,10 @@ export function createTasksRoutes(
   sse: SSEService,
   assistService?: AssistWorkflowService,
   evidence?: RoundEvidenceService,
+  // taskboard-modal-v2 票08: takeover 聚合端点的会话就绪一步（01 的 ensureSession）。
+  // tail-appended optional —— 未接线（老测试/嵌入方）takeover 仍停流+落标记，
+  // session 如实 null。
+  doer?: TaskDoerService,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -972,6 +987,76 @@ export function createTasksRoutes(
     try {
       const task = await service.resumeTask(c.req.param("id"), raw)
       return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── 人工接管三分支（taskboard-modal-v2 票08, ADR-0025）────────────────
+  // 「✋ 有问题？接管本 Round…」决策框的三条线：
+  //   ① 注入干预原流继续 = 既有 /:id/pause + /:id/resume（票06 接线，零新端点）
+  //   ② 停流·人工接管   = POST /:id/takeover（abort+标记+会话）
+  //      交付转待验收    = POST /:id/takeover/deliver
+  //   ③ 改派 task-fix   = POST /:id/fix-round（运行中决策，不写账本）
+
+  // POST /:id/takeover — 聚合端点：service 停流+落 takeover 标记 → doer 会话就绪
+  // （01 的 ensureSession 原样复用，「做」面指针落 tasks.doer_session_id）。
+  // abort 失败不产生接管态（服务层的顺序保证）；响应 = 标记 + 会话 + 最新 detail。
+  router.post("/:id/takeover", async (c) => {
+    try {
+      const result = await service.takeoverTask(c.req.param("id"))
+      // 会话就绪是聚合的第三步，但停流已是既成事实 —— ensureSession 的拒绝
+      // （理论上不该发生：running+绑定 ws 是 01 闸门的放行态）不伪装成「接管失败」，
+      // 而是 200 + session_error 如实透出（UI 侧可在对话页重试懒建）。
+      let session: { session_id: string; workspace_id: string; created: boolean } | null = null
+      let sessionError: string | null = null
+      if (doer) {
+        try {
+          const s = doer.ensureSession(result.task.id)
+          session = { session_id: s.sessionId, workspace_id: s.workspaceId, created: s.created }
+        } catch (err: unknown) {
+          sessionError = err instanceof Error ? err.message : String(err)
+        }
+      }
+      return c.json({
+        task: result.task,
+        takeover: result.takeover,
+        session,
+        ...(sessionError ? { session_error: sessionError } : {}),
+      })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/takeover/deliver — 「✓ 确认本 Round 交付 · 转待验收」。交付事件落
+  // takeover_delivered_at + 现场 HEAD 快照进 end_commit_id；派生随即放行
+  // awaiting_review（既有 Gate，不加机器闸 —— ADR-0025「接管件无自动复检」如实
+  // 呈现给验收人，拦与放仍是人的事）。无人接管中 / 重复交付 → 409。
+  router.post("/:id/takeover/deliver", async (c) => {
+    try {
+      const result = await service.deliverTakeover(c.req.param("id"))
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/fix-round — 分支③「改派通用修复流 task-fix」（接管中「改派」钮走
+  // 同一条）。body { instruction } 必填非空（≤20000，与打回反馈同额）。行为 =
+  // abort 当前轮 → fix-feedback-r{N+1}.md 落批次目录 → 恒 task-fix 新轮派发
+  // （与票05 rejected 共用服务层路由私有件），**不写验收决策行**。
+  // 待验收轮 → 409 指路打回（两条入口各司其职）。
+  router.post("/:id/fix-round", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = fixRoundBodySchema.parse(body)
+      const result = await service.fixRound(c.req.param("id"), parsed.instruction)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

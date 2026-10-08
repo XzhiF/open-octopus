@@ -927,6 +927,48 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（AD
   })
 })
 
+describe("AcceptanceSurface — 票08 接管件标注（如实显示 · 不加机器闸）", () => {
+  /** 待验收轮 = 接管交付件：badge 带 takeover_at + takeover_delivered_at
+   *  （ADR-0025 两列经 wire 透出；判据单源 isTakeoverDeliveredRound）。 */
+  function takeoverDetail(): TaskDetail {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    return d
+  }
+
+  it("接管件：头部 chip「✋ 接管件 · 自动复检未跑」+ 进度行写明未跑 + 通过按钮不被新闸拦", async () => {
+    const detail = takeoverDetail()
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+    const chip = await screen.findByTestId("acceptance-takeover-chip")
+    expect(chip.textContent).toBe("✋ 接管件 · 自动复检未跑")
+    expect(screen.getByText("未跑（接管件）")).toBeTruthy()
+    // AC5 回归：无 ✗ 时通过仍可点（接管件不添加任何新闸）。
+    const approve = screen.getByTestId("acceptance-approve") as HTMLButtonElement
+    expect(approve.disabled).toBe(false)
+  })
+
+  it("手动跑过当场复检的接管件 —— verify 真结果优先（标注不覆盖实况）", async () => {
+    mockGetVerifyStatus.mockResolvedValue({ state: "passed", exit_code: 0, tail: [] })
+    const detail = takeoverDetail()
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+    await screen.findByTestId("acceptance-takeover-chip")
+    // chip 在（来源标注不随复检消失），但「自动复检」行让位真结果 —— 标注不撒谎也不覆盖实况。
+    expect(screen.queryByText("未跑（接管件）")).toBeNull()
+  })
+
+  it("回归锁：普通轮无 takeover 键 → chip 绝迹，复检行现行为逐字不变", async () => {
+    renderModal()
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.queryByTestId("acceptance-takeover-chip")).toBeNull()
+    expect(screen.getByText("未跑")).toBeTruthy() // verifyStateLabel(undefined) 原文
+  })
+})
+
 describe("AcceptanceSurface — 票 04 前序交接提示行（phase-handoff-chaining K6）", () => {
   it("AC1: 双 phase、phase1 待验收 → 确认按钮上方显示提示行 N=1；打回面板展开即隐藏、取消恢复", async () => {
     renderModal()

@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest"
 import type { ChatMessage } from "@/lib/types"
 import {
-  chatFormFor, chatCopy,
+  chatFormFor, chatCopy, isTakeoverDeliveredRound,
   classifyToolCall, lineDiff, deriveQuickEditFiles,
   diffRowHit, toPosix,
   detectEscalationReply, buildRejectPrefill,
@@ -46,6 +46,25 @@ describe("chatCopy — 三形态文案（原型逐字）", () => {
     expect(c.header).toContain("task-fix")
     expect(c.hint).toContain("追加干预")
     expect(c.placeholder).toContain("追加指令")
+  })
+  it("票08：接管件已交付的待验收 —— quick-edit 口吻不变，hint 换「接管件已交付」句", () => {
+    // 原型 dockMode(wait)：t.tookover ? '接管件已交付 — 验收前还能继续说改' : …
+    const c = chatCopy("quick-edit", { takeoverDelivered: true })
+    expect(c.hint).toBe("接管件已交付 — 验收前还能继续说改")
+    // 非接管件逐字不变（回归锁 —— opts 省略 = 现行为）。
+    expect(chatCopy("quick-edit").hint).toBe("小改直接说 · 实时进「变更」与统计")
+    expect(chatCopy("quick-edit", { takeoverDelivered: false }).hint).toBe("小改直接说 · 实时进「变更」与统计")
+    // takeover/fixing 形态不吃这个旗标（形态互斥，文案互不污染）。
+    expect(chatCopy("takeover", { takeoverDelivered: true }).hint).toBe("一步一交 —— 每句话直接改执行工作区")
+  })
+})
+
+describe("isTakeoverDeliveredRound — 接管件判据（走查标注/对话 hint 的共用单源）", () => {
+  it("at+delivered 双有 = 接管交付件；仅 at（接管中不是 awaiting）/无键（旧 server）= 否", () => {
+    expect(isTakeoverDeliveredRound({ takeover_at: "t", takeover_delivered_at: "d" })).toBe(true)
+    expect(isTakeoverDeliveredRound({ takeover_at: "t", takeover_delivered_at: null })).toBe(false)
+    expect(isTakeoverDeliveredRound({})).toBe(false)
+    expect(isTakeoverDeliveredRound(undefined)).toBe(false)
   })
 })
 

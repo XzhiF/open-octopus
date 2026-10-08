@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS executions (
   budget_snapshot TEXT DEFAULT NULL,
   phase_index INTEGER DEFAULT NULL,
   round_index INTEGER DEFAULT NULL,
+  -- schema v51 (taskboard-modal-v2 票08, ADR-0025): 人工接管留痕（最小落点 = 执行行，
+  -- 不新建 TaskStatus、不动信封 K16）。takeover_at = 停流时刻（现场快照时间点，台账 09 读）；
+  -- takeover_delivered_at = 「✓ 确认本 Round 交付」时刻（NULL = 接管进行中 —— 派生规则据此
+  -- 把该轮认作「人工接管中」而非「待验收」，交付即放行进 Gate）。两列只出现在被人停掉的轮上。
+  takeover_at TEXT DEFAULT NULL,
+  takeover_delivered_at TEXT DEFAULT NULL,
   -- schema v41 (task-scheduler-decouple): an execution states WHICH task it serves.
   -- Until v41 the board reached a task's executions only by joining through `schedules`
   -- (origin_type='task'), which forced task code to know the scheduler's table. A

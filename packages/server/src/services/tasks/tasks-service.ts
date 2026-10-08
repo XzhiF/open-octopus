@@ -25,6 +25,7 @@
 
 import { randomUUID } from "crypto"
 import fs from "fs"
+import os from "os"
 import path from "path"
 import type Database from "better-sqlite3"
 import {
@@ -81,6 +82,9 @@ import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./tas
 // cancelRunningExecution defeats vi.mock (ticket 05 harness finding), so the
 // dispatch path deliberately avoids it.
 import { getExecutionService } from "../execution-service-registry"
+// taskboard-modal-v2 票08: 接管交付的现场快照 —— 逐仓 HEAD 进 end_commit_id（与
+// task-doer 快改 commit 同一个 git-ops 门）。
+import { gitOps } from "../git-ops"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
@@ -249,6 +253,39 @@ export interface AcceptanceResult {
   acceptance_id: string
 }
 
+// ── 票08 人工接管 result types ─────────────────────────────────────
+
+/** POST /:id/takeover 响应体（session 由路由层补 —— doer 会话就绪是 01 的
+ *  ensureSession，任务级聚合端点在路由上把两半拼成一发）。 */
+export interface TakeoverResult {
+  task: TaskDetailDTO
+  takeover: {
+    execution_id: string
+    phase_index: number
+    round_index: number
+    /** 停流时刻 —— 「现场快照时间点入台账」的时间半（票09 台账读 executions.takeover_at）。 */
+    taken_over_at: string
+  }
+}
+
+/** POST /:id/takeover/deliver 响应体。 */
+export interface DeliverTakeoverResult {
+  task: TaskDetailDTO
+  delivered: {
+    execution_id: string
+    phase_index: number
+    round_index: number
+    delivered_at: string
+  }
+}
+
+/** POST /:id/fix-round 响应体 —— dispatch 形状与 AcceptanceDispatch 同构
+ *  （UI 的「新轮已开跑」深链单源）。 */
+export interface FixRoundResult {
+  task: TaskDetailDTO
+  dispatch: AcceptanceDispatch
+}
+
 export interface CreateTaskInput {
   org: string
   name?: string
@@ -332,6 +369,16 @@ function parseJSON<T>(raw: string | null | undefined, fallback: T): T {
 /** An instance row that is over. Single source with the latch/meter (ADR-0021). */
 const TERMINAL_INSTANCES = new Set<string>(TERMINAL_EXECUTION_STATUSES)
 
+/** 票08: 可被人停掉的轮状态 = ExecutionLifecycle.cancel 的接受集（'pending' 排队
+ *  行不算现场 —— cancel 会拒它，noLiveRoundMessage 的排队文案才是人话）。 */
+const CANCELLABLE_ROUND_STATUSES = new Set([
+  "running",
+  "paused",
+  "pending_approval",
+  "pending_interaction",
+  "pending_resume",
+])
+
 function toDTO(row: TaskRow): TaskDTO {
   return {
     id: row.id,
@@ -401,6 +448,10 @@ function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExe
     completed_at: row.completed_at ?? null,
     created_at: row.created_at,
     error_summary: errorSummaryOf(row),
+    // 票08 接管来源标记上 wire：走查页签的「接管件 · 自动复检未跑」标注与票09
+    // 台账列都读这两列（可选字段 —— 旧服务器行无键时消费端按未接管处理）。
+    takeover_at: row.takeover_at ?? null,
+    takeover_delivered_at: row.takeover_delivered_at ?? null,
     ...(children ? { children: children.map((c) => toExecutionBadge(c)) } : {}),
   }
 }
@@ -760,7 +811,8 @@ export class TasksService {
     const executions: DeriveExecutionInput[] = this.taskDAO
       .getDb()
       .prepare(
-        `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
+        `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at,
+                e.takeover_at, e.takeover_delivered_at
            FROM executions e
           WHERE e.task_id = ?
             AND e.phase_index IS NOT NULL
@@ -2171,39 +2223,19 @@ export class TasksService {
     let next_action: AcceptanceNextAction
 
     if (input.decision === "rejected") {
-      // K7: 反馈产物化进 phase 批次目录（下一 round 的 seed 会把它带进 ws，
-      // 与 input_values.feedback 双通道；N = 被打回的那一轮）。
-      this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, input.round_index, feedback)
       // 轮号规则（票 07）: 同一 phase 的 rejected 行数 + 1 —— 打完一轮长一轮。
       const rejectedCount = this.acceptanceDAO
         .listByPhase(taskId, pv.index)
         .filter((r) => r.decision === "rejected").length
-      const nextRound = rejectedCount + 1
       // ADR-0024 打回单路径：rejected 恒派 built-in/task-fix 修复轮（反馈即修复
       // 指令）。绑定流重跑（原 ADR-0018 rerun）已删除 —— 规格级再执行只剩
       // authoring 侧改 spec 重入队。override 只进本轮 launch step（K16：spec
       // phases[] 绑定冻结不动，下一段绑定流再执行仍回到原 workflowRef）。
-      // Synthesized fix inputs point at the WS-isomorphic batch dir (seed just
-      // copied home → {ws}/{rel}): the fix agent edits/reports IN the ws, and
-      // collect flows the final state (incl. an in-place revised spec.md) back
-      // to home — the server-maintained loop, not direct home writes.
-      const fixHomeDir = this.taskHomeService.homePath(taskId)
-      const fixBatchDir = this.phaseSpecDir(taskId, pv.index) ?? ""
-      const fixBatchRel = fixBatchDir
-        ? (() => {
-            const rel = batchRelPath(fixHomeDir, fixBatchDir)
-            return rel ? rel.split(path.sep).join("/") : fixBatchDir
-          })()
-        : ""
-      const routing = {
-        workflowRefOverride: "built-in/task-fix",
-        inputOverride: {
-          phase_spec_dir: fixBatchRel,
-          feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${input.round_index}.md`),
-          task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
-        },
-      }
-      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback, routing)
+      // K7 反馈产物化 + 合成输入的单源在 dispatchFixRound（票08 与分支③ 共用）；
+      // 文件名号 = 被打回的那一轮（fix-feedback-r{N}.md 驱动 round N+1），
+      // 与票 05 已并面的行为逐字一致。
+      const nextRound = rejectedCount + 1
+      const d = await this.dispatchFixRound(taskId, pv, nextRound, feedback, input.round_index)
       dispatch = {
         execution_id: d.executionId,
         workspace_id: d.workspaceId,
@@ -2726,6 +2758,237 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)!
     return this.attachInstances([row])[0] ?? toDTO(row)
+  }
+
+  // ── 人工接管 / 改派修复轮 (taskboard-modal-v2 票08, ADR-0025) ──────────
+
+  /** POST /api/tasks/:id/takeover — 分支②「停流 · 我接管」。
+   *
+   *  ADR-0025 的三条后果在这一个动作里落地：
+   *   1. 直接 abort 绑定执行（ExecutionLifecycle.cancel 既有路径 —— 节点终止、
+   *      行落 'cancelled'、**不回滚工作区**，⏹ 现场原样保留；不留 paused 半程，
+   *      反悔场景由「改派 task-fix / 打回修复轮」覆盖）。
+   *   2. 来源标记落被停轮的 execution 行（takeover_at；最小落点 —— 不新建
+   *      TaskStatus、不动信封 K16、不新增事件表）。派生规则随即认 phase
+   *      'takeover'：任务态仍 running(takeover)，Gate 不开。
+   *   3. 会话就绪是路由层的下一步（TaskDoerService.ensureSession —— 01 现成，
+   *      持久态未动，闸门天然放行）。
+   *
+   *  原子性 = 顺序：abort 失败（状态竞态/注册表缺失）直接抛出，takeover_at 一个
+   *  字都不写 —— 不产生接管态（AC1）。幂等带：已有标记不重写（二次 takeover
+   *  在 liveInstance 处已 409，这里是 belt）。 */
+  async takeoverTask(id: string): Promise<TakeoverResult> {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "running") {
+      throw new TaskStatusConflictError(
+        `任务当前不在执行中（'${row.status}'）—— 人工接管只在有进行中的 Round 时成立`,
+      )
+    }
+    const inst = this.liveInstance(id)
+    if (!inst || !CANCELLABLE_ROUND_STATUSES.has(inst.status)) {
+      throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "停流接管"))
+    }
+    const registry = getExecutionService(inst.workspace_id)
+    if (!registry) {
+      throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法停流接管`)
+    }
+    try {
+      await registry.service.cancel(inst.id)
+    } catch (err: unknown) {
+      // 停流不成 = 接管不成。原文透出，绝不先写标记再补刀。
+      throw new TaskStatusConflictError(
+        `停流失败，接管未产生：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    const now = new Date().toISOString()
+    this.taskDAO
+      .getDb()
+      .prepare("UPDATE executions SET takeover_at = ?, updated_at = ? WHERE id = ? AND takeover_at IS NULL")
+      .run(now, now, inst.id)
+    this.emitRunTransition(id, inst, "cancelled")
+    const view = this.deriveView(row)
+    const pv = view.phaseViews.find((p) => p.status === "takeover")
+    return {
+      task: this.getTask(id),
+      takeover: {
+        execution_id: inst.id,
+        phase_index: pv?.index ?? inst.phase_index ?? 1,
+        round_index: pv?.currentRound ?? inst.round_index ?? 1,
+        taken_over_at: now,
+      },
+    }
+  }
+
+  /** POST /api/tasks/:id/takeover/deliver — 「✓ 确认本 Round 交付 · 转待验收」。
+   *
+   *  交付事件 = 接管轮的 takeover_delivered_at + 现场 HEAD 快照进 end_commit_id
+   *  （「现场快照时间点入台账」的实物半 —— 交付之后新落的 commit 不属于这件
+   *  接管件；快照缺仓如实缺席，round-diff 诚实 expired）。派生规则随即从
+   *  'takeover' 落回既有 'awaiting_review' 分支 —— **不新造任务状态**，Gate 的
+   *  放行钥匙只有这一下。交付不写 task_phase_acceptances（决策仍是人的通过/打回，
+   *  交付只是来源事件），也不加任何机器闸：接管件与轮内件走同一套 ✗ 硬闸
+   *  （行为逐字不变），「自动复检未跑」的证据 = takeover_at/takeover_delivered_at
+   *  两列（票09 台账读源）。 */
+  async deliverTakeover(id: string): Promise<DeliverTakeoverResult> {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    const view = this.deriveView(row)
+    const pv = view.phaseViews.find((p) => p.status === "takeover")
+    if (!pv || pv.currentRound === null) {
+      throw new TaskStatusConflictError("当前没有人工接管中的 Round —— 交付只跟随「② 停流 · 我接管」之后")
+    }
+    const roundIndex = pv.currentRound
+    const execId = pv.rounds[pv.rounds.length - 1]?.exec.id
+    if (!execId) throw new TaskStatusConflictError("接管轮的执行行缺失，无法交付")
+    const execRow = this.taskDAO
+      .getDb()
+      .prepare("SELECT * FROM executions WHERE id = ?")
+      .get(execId) as ExecutionRow | undefined
+    if (!execRow || execRow.takeover_at === null || execRow.takeover_delivered_at !== null) {
+      throw new TaskStatusConflictError("接管轮状态已变化（重复交付或已被改派），请刷新后重试")
+    }
+    const ends = await this.snapshotExecutionHeads(execRow)
+    const now = new Date().toISOString()
+    const upd = this.taskDAO
+      .getDb()
+      .prepare(
+        `UPDATE executions
+            SET takeover_delivered_at = ?, end_commit_id = ?, updated_at = ?
+          WHERE id = ? AND takeover_at IS NOT NULL AND takeover_delivered_at IS NULL`,
+      )
+      .run(now, JSON.stringify(ends), now, execId)
+    if (upd.changes === 0) {
+      throw new TaskStatusConflictError("接管轮已被交付（一次接管轮，一次人的交付）")
+    }
+    this.emitPhaseStatus(id, pv.index, "awaiting_review", roundIndex)
+    return {
+      task: this.getTask(id),
+      delivered: { execution_id: execId, phase_index: pv.index, round_index: roundIndex, delivered_at: now },
+    }
+  }
+
+  /** POST /api/tasks/:id/fix-round — 分支③「改派通用修复流 task-fix」（运行中
+   *  决策，不是验收决策）。
+   *
+   *  与 05 的 rejected 分支共用 dispatchFixRound 私有路由（恒 task-fix +
+   *  fix-feedback 产物化 + 合成输入，ADR-0024 打回单路径的机制本体），差别
+   *  只在授权来源：这里是「✋ 有问题」框里的改派指令，**不写账本决策行** ——
+   *  task_phase_acceptances 只收通过/打回，③ 不冒充验收决定。
+   *
+   *  顺序 = abort（有 live 轮才补刀；接管中改派时轮已停，跳过）→ 反馈落批次
+   *  目录（fix-feedback-r{N+1}.md，N=当前轮）→ 恒 task-fix 派新轮 N+1。接管
+   *  轮的 takeover 标记原样留在被停的那一轮（票09 看得见「这轮被人接管过」）。
+   *  快改 commit 不丢：K4 同 ws 同执行分支，task-fix 就地续写。 */
+  async fixRound(id: string, instruction: string): Promise<FixRoundResult> {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "running") {
+      throw new TaskStatusConflictError(
+        `任务当前不在执行中（'${row.status}'）—— 修复轮改派只适用于进行中的 Round`,
+      )
+    }
+    const view = this.deriveView(row)
+    const pv = view.phaseViews.find(
+      (p) => p.status === "running" || p.status === "paused" || p.status === "takeover",
+    )
+    if (!pv) {
+      if (view.phaseViews.some((p) => p.status === "awaiting_review")) {
+        throw new TaskStatusConflictError(
+          "当前 phase 已到待验收 —— 派修复轮请走「✗ 打回 · 写反馈」（验收决策通道，ADR-0024）",
+        )
+      }
+      throw new TaskStatusConflictError("任务没有进行中的 Round —— 无轮可改派")
+    }
+    const currentRound = pv.currentRound ?? 1
+    const nextRound = currentRound + 1
+
+    // abort 当前轮 —— 仅当还有活轮可停（接管中改派 = 轮已 cancelled，不再补刀）。
+    const inst = this.liveInstance(id)
+    if (inst) {
+      if (!CANCELLABLE_ROUND_STATUSES.has(inst.status)) {
+        throw new TaskStatusConflictError(this.noLiveRoundMessage(inst, "改派 task-fix"))
+      }
+      const registry = getExecutionService(inst.workspace_id)
+      if (!registry) {
+        throw new TaskStatusConflictError(`执行所在工作区不可用（${inst.workspace_id}），无法改派`)
+      }
+      try {
+        await registry.service.cancel(inst.id)
+      } catch (err: unknown) {
+        throw new TaskStatusConflictError(
+          `停流失败，未派发修复轮：${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+      this.emitRunTransition(id, inst, "cancelled")
+    }
+
+    const d = await this.dispatchFixRound(id, pv, nextRound, instruction)
+    this.setPersistedTaskStatus(id, "running")
+    this.emitPhaseStatus(id, pv.index, "running", nextRound)
+    return {
+      task: this.getTask(id),
+      dispatch: {
+        execution_id: d.executionId,
+        workspace_id: d.workspaceId,
+        phase_index: pv.index,
+        round_index: nextRound,
+      },
+    }
+  }
+
+  /** 修复轮路由的共用私有件（票08 从 05 的 rejected 分支抽出 —— 一条机制单源）：
+   *  反馈产物化进 phase 批次目录 + 恒 built-in/task-fix override 派 nextRound。
+   *  feedback_path 的文件号 = fileRound（调用方决定语义：05 用被打回轮号，
+   *  ③ 用新轮号 r{N+1}）。K16 不变：override 只进本轮 launch 的 workflow_chain，
+   *  信封 phases[] 冻结。 */
+  private async dispatchFixRound(
+    taskId: string,
+    pv: { index: number; name: string; slug: string },
+    nextRound: number,
+    instruction: string,
+    fileRound = nextRound,
+  ): Promise<{ executionId: string; workspaceId: string }> {
+    this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, fileRound, instruction)
+    const fixHomeDir = this.taskHomeService.homePath(taskId)
+    const fixBatchDir = this.phaseSpecDir(taskId, pv.index) ?? ""
+    const fixBatchRel = fixBatchDir
+      ? (() => {
+          const rel = batchRelPath(fixHomeDir, fixBatchDir)
+          return rel ? rel.split(path.sep).join("/") : fixBatchDir
+        })()
+      : ""
+    const routing = {
+      workflowRefOverride: "built-in/task-fix",
+      inputOverride: {
+        phase_spec_dir: fixBatchRel,
+        feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${fileRound}.md`),
+        task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
+      },
+    }
+    return this.dispatchPhaseRound(taskId, pv.index, nextRound, instruction, routing)
+  }
+
+  /** 交付现场的逐仓 HEAD 快照（end_commit_id 的接管件写者）：只认本轮 start 锚
+   *  里出现过的仓（同一圈定），缺 .git / rev-parse 抛 = 该仓不进映射（诚实
+   *  expired，round-diff 端会把它归到 no_commits，绝不谎报区间）。 */
+  private async snapshotExecutionHeads(exec: ExecutionRow): Promise<Record<string, string>> {
+    const starts = parseJSON<Record<string, string>>(exec.start_commit_id ?? "{}", {})
+    const ws = this.workspaceService?.getById(exec.workspace_id)
+    const out: Record<string, string> = {}
+    if (!ws) return out
+    const wsPath = ws.path.replace(/^~/, os.homedir())
+    for (const name of Object.keys(starts)) {
+      const dir = path.join(wsPath, "projects", name)
+      if (!fs.existsSync(path.join(dir, ".git"))) continue
+      try {
+        const head = await gitOps.getHeadCommit(dir)
+        if (head) out[name] = head
+      } catch {
+        // 仓坏/空 = 不写该键 —— 现场快照宁缺勿造。
+      }
+    }
+    return out
   }
 
   /** Announce a run transition on the taskpool channel. Mirrors the payload shape of

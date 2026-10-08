@@ -434,7 +434,10 @@ export class RoundEvidenceService {
    *  （running/paused/停在审批口的已启动行），由调用方把 end 锚降级为各仓当前
    *  HEAD —— 新 commit 落库即出现在下一次 GET（「≡ 变更」≤10s 观测口径的服务端
    *  底座）。verify/playbook/preview/snapshotEvidence 不经这里，恒严 awaiting。
-   *  错误语义不变：未知任务 404（getTask 先抛）；既无 awaiting 也无 live 轮 →
+   *  票08 补第三级：live 也没有时认**停流未交付的接管轮**（takeover_at 有、
+   *  delivered 无）—— 机器轮已停但轮还在人手里跑（对话快改持续落 commit，
+   *  AC3「接管对话内改动实时进 ≡ 变更」），与 live 同口径 end 锚 = 当前 HEAD。
+   *  错误语义不变：未知任务 404（getTask 先抛）；awaiting/live/takeover 皆无 →
    *  原 409 如实上抛。 */
   private resolveRoundForDiff(taskId: string): {
     execRow: ExecutionRow
@@ -447,7 +450,7 @@ export class RoundEvidenceService {
       return { execRow: a.execRow, phaseIndex: a.phaseIndex, roundIndex: a.roundIndex, live: false }
     } catch (err) {
       if (!(err instanceof TaskStatusConflictError)) throw err
-      const execRow = this.execDao.findLiveRoundForTask(taskId)
+      const execRow = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
       if (!execRow) throw err
       return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
     }

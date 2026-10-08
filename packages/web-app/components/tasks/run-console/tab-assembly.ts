@@ -101,6 +101,17 @@ export type RailActionId =
   | "trigger" | "trigger-cancel" | "reopen"
   | "pause" | "resume" | "abort"
   | "accept" | "reject" | "duplicate"
+  // 票08 三分支动作（「✋ 有问题」框 = ask-takeover；接管态右栏 = 确认交付/改派）
+  | "ask-takeover" | "takeover-deliver" | "takeover-reassign"
+
+/** 形态判定单源（票08 壳 :305 留位的纯函数化）：fixing（live task-fix 轮）优先，
+ *  其次 takeover（派生 phase 'takeover' = 停流未交付），否则 flow。
+ *  判据都在调用方算好（runs/derived 各一条 some），这里只钉优先级。 */
+export function deriveShellMode(input: { fixingLive: boolean; takeoverActive: boolean }): ConsoleShellMode {
+  if (input.fixingLive) return "fixing"
+  if (input.takeoverActive) return "takeover"
+  return "flow"
+}
 
 export interface RailActionsInput {
   status: ConsoleShellStatus
@@ -117,7 +128,15 @@ export interface RailActionsInput {
 }
 
 export function assembleRailActions(input: RailActionsInput): RailActionId[] {
-  const { status, canPause, canResume, canAbort, canReopen, armedFuture, canTrigger = true } = input
+  const { status, canPause, canResume, canAbort, canReopen, armedFuture, canTrigger = true, mode = "flow" } = input
+  if (mode === "takeover") {
+    // spec 表 takeover 行「进度+（确认交付/改派/■）」—— 流已停，暂停/恢复/✋ 都不存在；
+    // 复制保持全态在场（02 惯例，功能不回退）。
+    const acts: RailActionId[] = ["takeover-deliver", "takeover-reassign"]
+    if (canAbort) acts.push("abort")
+    acts.push("duplicate")
+    return acts
+  }
   switch (status) {
     case "ready": {
       const acts: RailActionId[] = []
@@ -130,6 +149,9 @@ export function assembleRailActions(input: RailActionsInput): RailActionId[] {
     }
     case "running": {
       const acts: RailActionId[] = []
+      // 票08：✋ 三分支入口 = running flow 现场独有（fixing 已在通用流手里，
+      // 04 只读纪律与 06 零输入铁律都不受影响 —— 按钮在 rail-acts，框是弹层）。
+      if (mode === "flow") acts.push("ask-takeover")
       if (canPause) acts.push("pause")
       if (canAbort) acts.push("abort")
       acts.push("duplicate")

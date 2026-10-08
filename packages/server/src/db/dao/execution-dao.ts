@@ -169,6 +169,21 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId) as ExecutionRow) ?? null
   }
 
+  /** 票08（taskboard-modal-v2 人工接管）：**停流未交付**的接管轮 —— 行已终态
+   *  （abort 落 cancelled）但 takeover_at 已写、takeover_delivered_at 未写。
+   *  机器轮已停、人的轮正在跑（对话一步一交 + 快改 commit 持续落分支），所以
+   *  diff 端点把它按 live 口径供货（end 锚 = 当前 HEAD）。与 findLiveRoundForTask
+   *  同 instance 谓词 + start 锚要求；已交付的接管轮不在此列（交付 = awaiting 解析）。 */
+  findTakeoverRoundForTask(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND takeover_at IS NOT NULL AND takeover_delivered_at IS NULL
+         AND start_commit_id IS NOT NULL
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId) as ExecutionRow) ?? null
+  }
+
   /** The claim queue, FIFO, over a task's roots AND its composite children (partial
    *  index idx_exec_pending_claimable). A child that overflowed the cap is parked here
    *  exactly like an armed root, so claiming only roots would strand it forever. */

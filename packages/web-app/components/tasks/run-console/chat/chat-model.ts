@@ -57,8 +57,24 @@ const CHAT_COPY: Record<ChatForm, ChatCopy> = {
   },
 }
 
-export function chatCopy(form: ChatForm): ChatCopy {
-  return CHAT_COPY[form]
+/** opts.takeoverDelivered（票08）：待验收的轮是接管件（停流→对话→交付而来）——
+ *  原型 dockMode(wait) 逐字换 hint，口吻仍是快改（chatFormFor 的 awaiting 优先级不变）。
+ *  旗标只染 quick-edit：takeover/fixing 形态与它互斥，文案互不污染。 */
+export function chatCopy(form: ChatForm, opts?: { takeoverDelivered?: boolean }): ChatCopy {
+  const base = CHAT_COPY[form]
+  if (form === "quick-edit" && opts?.takeoverDelivered) {
+    return { ...base, hint: "接管件已交付 — 验收前还能继续说改" }
+  }
+  return base
+}
+
+/** 接管交付件判据（走查「接管件 · 自动复检未跑」标注与对话 hint 的共用单源）：
+ *  takeover_at + takeover_delivered_at 双非空 —— 两列语义见 ADR-0025/票08 契约。
+ *  缺键（旧 server）= 否，与 workflow_ref 向后兼容同律。 */
+export function isTakeoverDeliveredRound(
+  exec: { takeover_at?: string | null; takeover_delivered_at?: string | null } | undefined,
+): boolean {
+  return !!exec && exec.takeover_at != null && exec.takeover_delivered_at != null
 }
 
 // ── 工具卡（原型 .tool-card：⚙ 编辑 <file> +a −b [查看 diff]）───────────

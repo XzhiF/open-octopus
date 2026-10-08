@@ -77,6 +77,8 @@ import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog, type HomeViewEntry } from "../authoring/artifact-viewer-dialog"
 import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
+// 票08 接管件判据单源（与对话页 hint 同一函数 —— 两本账不各写各的）。
+import { isTakeoverDeliveredRound } from "../run-console/chat/chat-model"
 import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
@@ -362,6 +364,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // 该轮为什么红（票05）：验收者面对 failed round 时缺的就是这一行 —— 数据源是
   // executions[] 联查到的徽章 error_summary，按红状态门控（runErrorOf），不臆造拉取。
   const roundError = awaitingRound?.state === "failed" && roundRun ? runErrorOf(roundRun) : null
+
+  // 票08 接管件标注（走查页签「如实显示且不拦通过」）：判据 = 待验收轮的 badge
+  // 带 takeover_at + takeover_delivered_at（服务端 exec 行两列经 wire 透出，
+  // 单源判定函数 = 07 chat-model::isTakeoverDeliveredRound）。呈现两笔：
+  // 头部粉 chip + 「自动复检」行写明未跑。纯只读 —— gate/blocked/硬闸逻辑零触碰
+  // （AC5：既有 ✗ 硬闸行为逐字不变，接管件不加任何新闸）。
+  const isTakeoverArtifact = isTakeoverDeliveredRound(roundRun ?? undefined)
 
   // ── 中列证据面：本 phase 批次目录直读（盘上真相,登记语义已退役） ──────────
   // 定位：specPath 优先（server 权威 phaseSpecDir = dirname(specPath),同语义零
@@ -796,6 +805,16 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             {`Phase ${awaitingPhase.index}/${total} · Round ${awaitingPhase.awaitingRound}`}
           </span>
         )}
+        {/* 票08 接管件 chip：人工停流→对话交付而来的一轮 —— 如实标出，不加闸。 */}
+        {isTakeoverArtifact && (
+          <span
+            data-testid="acceptance-takeover-chip"
+            className="shrink-0 rounded-full border-[1.5px] border-pop-pink/55 bg-pop-pink-soft px-2 py-px font-mono text-[9.5px] font-black text-pop-pink"
+            title="本 Round 由人工接管交付：绑定流已停，自动复检未跑 —— 把关 = 人工走查 + 跑起来看（ADR-0025）"
+          >
+            ✋ 接管件 · 自动复检未跑
+          </span>
+        )}
         {task && <Badge variant="outline" className="max-w-[260px] truncate text-[10px]">{task.name}</Badge>}
         {sseDown && (
           <span
@@ -868,8 +887,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               )}
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-muted-foreground">自动复检</span>
-                <span className={verify?.state === "passed" ? "text-pop-green" : verify?.state === "running" ? "text-pop-amber" : verify?.state ? "text-pop-red" : "text-muted-foreground"}>
-                  {verifyStateLabel(verify?.state)}
+                {/* 票08：接管件从未跑过自动复检（绑定流已停、无修复轮回归 —— ADR-0025）。
+                    如实写明；人若手动跑了当场复检则显示真结果（verify 状态优先，逐字现行为）。 */}
+                <span className={
+                  verify?.state === "passed" ? "text-pop-green"
+                    : verify?.state === "running" ? "text-pop-amber"
+                    : verify?.state ? "text-pop-red"
+                    : isTakeoverArtifact ? "font-black text-pop-yellow" : "text-muted-foreground"
+                }>
+                  {verify?.state ? verifyStateLabel(verify.state) : isTakeoverArtifact ? "未跑（接管件）" : verifyStateLabel(undefined)}
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-2">

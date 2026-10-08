@@ -12,6 +12,7 @@ export const PHASE_STATUS_LABEL: Record<string, string> = {
   pending: "未开始",
   running: "执行中",
   paused: "已暂停",
+  takeover: "人工接管中",
   awaiting_review: "待验收",
   accepted: "已通过",
 }
@@ -59,6 +60,8 @@ export function phaseTileTone(status: string, isNext: boolean): string {
     case "awaiting_review": return "bg-pop-yellow text-pop-bg"
     case "running": return "bg-pop-amber text-pop-bg"
     case "paused": return "bg-pop-amber-soft text-pop-dim"
+    // 票08 语义色单源：takeover=pink（spec UI 决策 —— 深字压亮底同例）。
+    case "takeover": return "bg-pop-pink text-pop-bg"
     default: return isNext ? "bg-pop-cyan text-pop-bg" : "bg-pop-idle text-pop-dim"
   }
 }
@@ -68,6 +71,7 @@ export const PHASE_PILL: Record<string, string> = {
   pending: "bg-pop-idle text-pop-dim",
   running: "bg-pop-amber-soft text-pop-amber",
   paused: "bg-pop-idle text-pop-dim",
+  takeover: "bg-pop-pink-soft text-pop-pink",
   awaiting_review: "bg-pop-yellow-soft text-pop-yellow",
   accepted: "bg-pop-green-soft text-pop-green",
 }
