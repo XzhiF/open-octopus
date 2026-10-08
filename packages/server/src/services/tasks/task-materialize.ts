@@ -462,10 +462,11 @@ export interface TaskLaunchStep {
  * so the same values land on the executions row itself (input_values + phase_index +
  * round_index + task_id) and there is nothing to re-claim from a mutated definition.
  *
- * Round-level routing override (ADR-0018 打回二分路由): `workflowRefOverride` swaps
- * the workflow this round runs (e.g. built-in/task-fix) and `inputOverride` REPLACES
- * the phase's input_values wholesale (fix-round synthesis) — the frozen phases[]
- * binding is untouched, so round 1 of a later re-run returns to the bound workflow.
+ * Round-level routing override (ADR-0024 打回单路径): `workflowRefOverride` swaps
+ * the workflow this round runs (rejected 恒 built-in/task-fix) and `inputOverride`
+ * REPLACES the phase's input_values wholesale (fix-round synthesis) — the frozen
+ * phases[] binding is untouched, so round 1 of a later re-run returns to the bound
+ * workflow.
  */
 export function resolveTaskLaunchStep(args: {
   plan: WorkflowConfig

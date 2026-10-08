@@ -311,13 +311,15 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   await expect(dlg2).toBeVisible()
   await dlg2.locator("[data-acceptance-reject]").click()
   await page.locator("[data-reject-panel] [data-reject-feedback]").fill("E2E_TD 成功路径反馈")
-  // ADR-0018 打回二分路由：二选一 radio 是活的，默认 = 修订重跑
-  await expect(page.locator('[data-reject-panel] [data-reject-flow="rerun"] input')).toBeChecked()
-  await expect(page.locator('[data-reject-panel] [data-reject-flow="fix"] input')).toBeEnabled()
+  // ADR-0024 打回单路径：路由二选一已删 —— 只剩单个指令输入框（radio 不再在档）。
+  await expect(page.locator('[data-reject-panel] [data-reject-flow="rerun"]')).toHaveCount(0)
+  await expect(page.locator('[data-reject-panel] [data-reject-flow="fix"]')).toHaveCount(0)
+  await expect(page.locator("[data-reject-panel] [data-reject-confirm]")).toContainText("确认打回 · 派 task-fix 开 R2")
   await page.locator("[data-reject-panel] [data-reject-confirm]").click()
-  // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）。
+  // 提交后去向回显卡（ADR-0024：恒 task-fix 修复轮，无二分文案）。
   await expect(dlg2.locator("[data-agent-recommend-card]")).toBeVisible({ timeout: 15_000 })
-  await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("修订重跑")
+  await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("task-fix")
+  await expect(dlg2.locator("[data-agent-recommend-card]")).not.toContainText("修订重跑")
   await expect(dlg2.locator('[data-recommend-option="fix-flow"]')).toHaveCount(0)
   // D14 空卡已整体摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）。
   await expect(dlg2.locator("[data-impact-list-empty]")).toHaveCount(0)
@@ -325,7 +327,7 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   expect(body.decision).toBe("rejected")
   expect(body.phase_index).toBe(1)
   expect(body.round_index).toBe(1)
-  expect(body.next_flow).toBe("rerun")
+  expect(body.next_flow).toBeUndefined() // 契约已删该字段 —— 携带即 400
   expect(String(body.feedback)).toContain("E2E_TD 成功路径反馈")
   await page.screenshot({ path: screenshotPath("T12-AC2-post-reject-seams.png") })
 })

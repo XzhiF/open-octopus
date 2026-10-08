@@ -211,20 +211,17 @@ export interface TaskDetailDTO extends TaskDTO {
 // ── Acceptance (task-phase-redesign ticket 07 — 验收 Gate K6/K7) ─────
 
 /** Body of POST /api/tasks/:id/acceptance (spec API table). Indices are
- *  1-based, matching TaskPhase.index / executions.phase_index. */
+ *  1-based, matching TaskPhase.index / executions.phase_index.
+ *  ADR-0024 打回单路径：原 next_flow 枚举（"fix"|"rerun"）已干净删除 —— rejected
+ *  恒派 built-in/task-fix 修复轮，绑定流再执行不再验收台入口。route 层 schema
+ *  以 .strict() 拒收任何残留字段（老客户端得 400 的响亮信号，不是静默换轨）。 */
 export interface AcceptanceInput {
   phase_index: number
   round_index: number
   decision: "accepted" | "rejected"
-  /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。 */
+  /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。
+   *  ADR-0024: 反馈即 task-fix 修复轮的指令（fix-feedback 文件 + input_values.feedback 双通道）。 */
   feedback?: string
-  /** ADR-0018 打回二分路由（rejected 时生效）：
-   *  - "rerun"（缺省）— 重跑 phase 绑定流 + feedback 注入（matt-spec-dev 绑定时
-   *    即「修订重跑」：流内 spec 再审段就地更新 ws spec.md，collect 回流终态）。
-   *  - "fix" — 轻量修复：chain override built-in/task-fix，输入由 server 合成
-   *    （phase_spec_dir/feedback_path/task_artifacts_dir），起草期无需绑定 task-fix。
-   *  override 只进 workflow_chain（K16 phases[] 冻结不破），仅作用本轮。 */
-  next_flow?: "fix" | "rerun"
 }
 
 /** What the caller (票 12 dialog) must do next:
@@ -2083,7 +2080,10 @@ export class TasksService {
    *    rejected                              → `fix-feedback-r{N}.md` written into
    *                                            the phase's batch dir (home) +
    *                                            dispatchPhaseRound(i, R+1) where
-   *                                            R+1 = 该 phase 账本 rejected 行数 + 1
+   *                                            R+1 = 该 phase 账本 rejected 行数 + 1,
+   *                                            恒以 built-in/task-fix override 派
+   *                                            修复轮（ADR-0024 打回单路径；反馈
+   *                                            即修复指令，绑定流不重跑）
    *
    *  Persisted-status normalization (票03 rewrite): the task-lifecycle job leaves a v4
    *  card at 'running' when a round ends (K3 — 待验收 is derived, not stored), so after
@@ -2177,34 +2177,30 @@ export class TasksService {
         .listByPhase(taskId, pv.index)
         .filter((r) => r.decision === "rejected").length
       const nextRound = rejectedCount + 1
-      // ADR-0018 二分路由：缺省 rerun（现行为，绑定流自己再审 spec）；
-      // fix = override task-fix + 合成输入（feedback_path 指向上面刚产物化的
-      // fix-feedback-r{N}.md，home 绝对位 —— task-fix 直读直写 home）。
-      const flow = input.next_flow ?? "rerun"
+      // ADR-0024 打回单路径：rejected 恒派 built-in/task-fix 修复轮（反馈即修复
+      // 指令）。绑定流重跑（原 ADR-0018 rerun）已删除 —— 规格级再执行只剩
+      // authoring 侧改 spec 重入队。override 只进本轮 launch step（K16：spec
+      // phases[] 绑定冻结不动，下一段绑定流再执行仍回到原 workflowRef）。
       // Synthesized fix inputs point at the WS-isomorphic batch dir (seed just
       // copied home → {ws}/{rel}): the fix agent edits/reports IN the ws, and
       // collect flows the final state (incl. an in-place revised spec.md) back
-      // to home — the server-maintained loop (ADR-0018), not direct home writes.
+      // to home — the server-maintained loop, not direct home writes.
       const fixHomeDir = this.taskHomeService.homePath(taskId)
-      const fixBatchRel =
-        flow === "fix"
-          ? (() => {
-              const d = this.phaseSpecDir(taskId, pv.index) ?? ""
-              const rel = d ? batchRelPath(fixHomeDir, d) : null
-              return rel ? rel.split(path.sep).join("/") : d
-            })()
-          : ""
-      const routing =
-        flow === "fix"
-          ? {
-              workflowRefOverride: "built-in/task-fix",
-              inputOverride: {
-                phase_spec_dir: fixBatchRel,
-                feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${input.round_index}.md`),
-                task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
-              },
-            }
-          : undefined
+      const fixBatchDir = this.phaseSpecDir(taskId, pv.index) ?? ""
+      const fixBatchRel = fixBatchDir
+        ? (() => {
+            const rel = batchRelPath(fixHomeDir, fixBatchDir)
+            return rel ? rel.split(path.sep).join("/") : fixBatchDir
+          })()
+        : ""
+      const routing = {
+        workflowRefOverride: "built-in/task-fix",
+        inputOverride: {
+          phase_spec_dir: fixBatchRel,
+          feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${input.round_index}.md`),
+          task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
+        },
+      }
       const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback, routing)
       dispatch = {
         execution_id: d.executionId,
