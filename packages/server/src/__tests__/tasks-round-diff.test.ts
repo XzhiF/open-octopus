@@ -67,6 +67,8 @@ async function newAwaitingTask(opts: {
   start?: Record<string, string>
   end?: Record<string, string> | null
   status?: string
+  /** 单轮路径的 round_index（缺省 1）。票03 L5：当前轮给 2，首轮另行插入。 */
+  round?: number
   /** undefined = 默认 '{"totalInterventions":2}'；显式 null = 在跑行尚无账目。 */
   harnessSummary?: string | null
   /** S3 fixture：多轮各插一行 (phase1,round_n)，awaiting 落最高轮；给定时
@@ -88,7 +90,7 @@ async function newAwaitingTask(opts: {
         JSON.stringify(r.start), JSON.stringify(r.end), null, now, now, now, now)
     }
   } else {
-    insert.run(execId, WS_ID, ORG, opts.status ?? "completed", taskId, 1,
+    insert.run(execId, WS_ID, ORG, opts.status ?? "completed", taskId, opts.round ?? 1,
       JSON.stringify(opts.start ?? { app: c1 }),
       opts.end === null ? null : JSON.stringify(opts.end ?? { app: c2 }),
       opts.harnessSummary === undefined ? '{"totalInterventions":2}' : opts.harnessSummary,
@@ -364,8 +366,10 @@ describe("round-diff — 票03 执行中轮 live 供货", () => {
 
   it("L5: live 轮 cumulative 口径 = 首轮 start 锚..HEAD（累计与本轮同源变化）", async () => {
     const [k0, k1] = freshRepo("live5")
-    // 首轮已收口（completed k0..k1），当前轮 running start=k1 end=null，HEAD=k2。
-    const [taskId] = await newAwaitingTask({ status: "running", start: { live5: k1 }, end: null })
+    // 首轮已收口（completed k0..k1），当前轮 R2 running start=k1 end=null，HEAD=k2。
+    // 轮号必须错开（R1/R2）：derive 的 latestByRound 只认每轮最新行，同轮双行
+    // 会按毫秒运气在 awaiting/live 两解析间摇摆 —— 那是 fixture 缺陷不是被测行为。
+    const [taskId] = await newAwaitingTask({ status: "running", round: 2, start: { live5: k1 }, end: null })
     const now = new Date().toISOString()
     db.prepare(`
       INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
