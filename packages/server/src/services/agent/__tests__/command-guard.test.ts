@@ -158,7 +158,7 @@ describe('command guard — scoped to task-author, not every clone', () => {
   })
 
   it('does not claim the other built-ins (workspace must keep its build surface)', () => {
-    for (const name of ['workspace', 'scheduler', 'archive', 'resource', 'harness-agent']) {
+    for (const name of ['workspace', 'scheduler', 'archive', 'resource', 'harness-agent', 'task-doer']) {
       expect(isTaskAuthorClone({ name })).toBe(false)
     }
   })

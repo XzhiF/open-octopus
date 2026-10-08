@@ -547,6 +547,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   trigger_enabled INTEGER NOT NULL DEFAULT 1,
   next_fire_at TEXT,
   last_fired_at TEXT,
+  -- ── schema v50 (taskboard-modal-v2 票01, ADR-0025) ── 「一面两会话」的「做」面：
+  -- 一 task 唯一的 task-doer 会话（chat_sessions.id，跑在任务绑定 workspace 上，
+  -- 懒建 + 幂等，跨 Round 延续）。刻意不做 FK —— chat_sessions 属 workspace 域、
+  -- 生命周期独立（同 tasks.workspace_id 先例）；NULL = 从未开过对话。
+  -- 「谈」面仍是 source_chat_session_id（sessions 表，task-author），互不侵犯。
+  doer_session_id TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 

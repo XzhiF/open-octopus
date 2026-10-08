@@ -129,6 +129,19 @@ export class TaskDAO extends BaseDAO {
     ).run(name, new Date().toISOString(), id)
   }
 
+  /**
+   * schema v50 (ADR-0025, taskboard-modal-v2 票01): bind the task's single
+   * task-doer chat session. Targeted UPDATE like updateAutosave — does NOT bump
+   * version: opening a chat is not a spec edit and must not 409 against a
+   * concurrent [save draft]/spec-field write (v2-D12 discipline).
+   */
+  bindDoerSession(id: string, sessionId: string): boolean {
+    const now = new Date().toISOString()
+    return this.stmt(
+      "UPDATE tasks SET doer_session_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+    ).run(sessionId, now, id).changes > 0
+  }
+
   /** List active tasks by status (kanban columns), ordered by created_at ASC then id. */
   listByStatus(status: string): TaskRow[] {
     return this.stmt(

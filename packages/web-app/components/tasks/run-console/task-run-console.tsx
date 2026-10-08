@@ -10,7 +10,7 @@
 //   │     awaiting_review 对话·变更·走查·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted；控制台 = 原
 //   │     Phase/Report 面；变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
-//   │     节点/对话 = 票 04/07 挂载位，当前占位）。
+//   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 挂载位，当前占位）。
 //   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
 //   │   全部接既有 handler，通过/打回接 AcceptanceSurface 决策入口，行为零回退）。
@@ -59,6 +59,7 @@ import {
   assembleRailActions, assembleTabs, cycleTab, tabLabel,
   type ConsoleShellMode, type ConsoleShellStatus, type ConsoleTabKey, type RailActionId,
 } from "./tab-assembly"
+import { NodesTab } from "./nodes-tab"
 
 export interface RunConsoleChrome {
   isFullscreen: boolean
@@ -232,6 +233,18 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     }
     return runs[runs.length - 1] ?? null
   }, [detail, view, phaseViews])
+
+  // ── 票 04：节点页签的绑定执行 = 当前面相位（view）那个 phase 的轮次执行 ──
+  // 与大事报同一取轮纪律，但**不兜底偷看别轮**：选中的 phase 没跑过就如实 null，
+  // NodesTab 显示空态。终态/战报面（view=report）取最后一轮 —— 只读回看。
+  const nodesRun = useMemo(() => {
+    if (view !== "report") {
+      const pv = phaseViews.find((p) => p.index === view)
+      const last = pv?.rounds[pv.rounds.length - 1]
+      return last ? runs.find((r) => r.id === last.exec.id) ?? null : null
+    }
+    return runs[runs.length - 1] ?? null
+  }, [view, phaseViews, runs])
 
   const [signals, setSignals] = useState<SignalLine[]>([])
   const targetId = replayTarget?.id ?? null
@@ -565,13 +578,21 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 />
               </div>
             )}
-            {(tab === "nodes" || tab === "chat") && (
-              // 票间挂载位契约（04 节点 / 07 对话）：内容组件替换这块 placeholder 即可，
+            {tab === "nodes" && (
+              // 票 04 落地：◆ 节点 —— 绑定执行的只读任务清单（✓/●/⏸/○/⏹ + 类型徽标 +
+              // 用时/成本 + 展开事件流含 ⚑ 行）；手术式操作经深链去执行详情视图。
+              // takeover/fixing 形态走同一组件（shellMode 由 08 点亮；修复轮按
+              // 05 契约从执行行 workflow_ref 自判）。
+              <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host="nodes">
+                <NodesTab run={nodesRun} mode={shellMode} live={isLive} />
+              </div>
+            )}
+            {tab === "chat" && (
+              // 票间挂载位契约（07 对话）：内容组件替换这块 placeholder 即可，
               // 页签装配、键盘、右栏、keep-mounted、变更取数节拍都已就位。
               <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host={tab}>
                 <div className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim">
-                  {tab === "nodes" && <>◆ 节点页签 —— 工作流节点任务清单（状态/类型/用时/成本 + 节点事件 + 深链执行详情）由<b className="text-pop-ink">票 04</b> 挂载。数据源 = 既有执行详情/节点事件端点。</>}
-                  {tab === "chat" && <>💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。快改徽标接线：FilesTab 的 rowDecor/toolbarExtra 即 07 的挂载钩子。</>}
+                  💬 对话页签 —— task-doer 快速修改/接管对话由<b className="text-pop-ink">票 07</b> 挂载。数据源 = S1 GET/POST /api/tasks/:id/chat。快改徽标接线：FilesTab 的 rowDecor/toolbarExtra 即 07 的挂载钩子。
                 </div>
               </div>
             )}
