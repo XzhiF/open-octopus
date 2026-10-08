@@ -97,7 +97,7 @@ octopus repos update/pull/clone/rebuild-index
 
 - Issue tracker: `.scratch/<feature>/` 目录下的 markdown 文件
 - Triage labels: needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix
-- Domain docs: root `CONTEXT-MAP.md` → per-package `CONTEXT.md`
+- Domain docs: root `GLOSSARY-MAP.md` → per-package `GLOSSARY.md`
 
 
 ## 可用资源 (Octopus 资源库)

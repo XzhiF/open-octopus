@@ -10,7 +10,7 @@ dependencies: domain-modeling, grilling, wayfinder, research
 
 ## 领域建模（两条路都并行做）
 
-- **冒出新词或词义被澄清** → 先挑战（"你说的 account 是 Member 还是 User？两者不同概念"）→ 拿 CONTEXT-MAP.md、各包 CONTEXT.md 和代码交叉比对，主动报矛盾 → 立刻写进该去的地方：跨切概念（3+ 包在用）进 `CONTEXT-MAP.md` 词表，单包概念进 `packages/<name>/CONTEXT.md`（没有就按 CONTEXT-FORMAT.md 建）。有 CONTEXT-MAP 说明这是多上下文仓库，按当前主题推断落哪个。
+- **冒出新词或词义被澄清** → 先挑战（"你说的 account 是 Member 还是 User？两者不同概念"）→ 拿 GLOSSARY-MAP.md、各包 GLOSSARY.md 和代码交叉比对，主动报矛盾 → 立刻写进该去的地方：跨切概念（3+ 包在用）进 `GLOSSARY-MAP.md` 词表，单包概念进 `packages/<name>/GLOSSARY.md`（没有就按 GLOSSARY-FORMAT.md 建）。有 GLOSSARY-MAP 说明这是多上下文仓库，按当前主题推断落哪个。
 - **ADR** 三条同时成立才写：**难以回退** / **无上下文会显得莫名其妙** / **确有替代方案被否**。落 `docs/adr/NNNN-slug.md`（按 `domain-modeling` 的 ADR-FORMAT），**绝不落 `<artifacts.dir>/`** —— 那是交付物暂存区，ADR 是项目级永久记录。
 
 ## 选路
@@ -31,7 +31,7 @@ dependencies: domain-modeling, grilling, wayfinder, research
 
 1. **Destination** —— 一两行写清"跑到终点是什么样"。终点之外即 out of scope。
 2. **Breadth-first grill** —— 横扫整个决策空间、哪条都不深挖，用 `/grilling` + `/domain-modeling` 把东西分进三堆：已经定了的 → Decisions so far；能精确成问题的 → decision ticket；感得到但还问不清的 → Not yet specified（雾）。
-3. **`map.md`** 落在 `<artifacts.dir>/<feature-slug>/map.md`，节：`## Destination` / `## Notes`（CONTEXT-MAP 领域上下文、相关 ADR、既有偏好）/ `## Decisions so far`（每票一行 gist + 链接）/ `## Not yet specified` / `## Out of scope`。
+3. **`map.md`** 落在 `<artifacts.dir>/<feature-slug>/map.md`，节：`## Destination` / `## Notes`（GLOSSARY-MAP 领域上下文、相关 ADR、既有偏好）/ `## Decisions so far`（每票一行 gist + 链接）/ `## Not yet specified` / `## Out of scope`。
 
 **Decision ticket** 落 `decisions/NN-<slug>.md`，与实现票的 `issues/` 分开。四型：`research`（AFK，可起 `/research` 子代理查一手资料）、`prototype`（HITL，造完即弃、只留结论）、`grilling`（HITL，一问一答，**默认型**）、`task`（人工前置：开服务、申请权限、凑数据）。
 
@@ -132,7 +132,7 @@ map.md · decisions/     仅 Wayfinder 路
 ## Appendix: Core User Stories（闭环验证）   逐故事分步轨迹，步骤带 [UI]/[API]/[Data]/[Exec]/[Event] 标注
 ```
 
-五条纪律：每个用户故事必绑验证方式；验证方式必可执行（具体命令，不是 "test the API"）；术语与 CONTEXT.md 一致；只写决策不写实现代码；不许缩小范围（"先做"「初版」一类措辞禁）。
+五条纪律：每个用户故事必绑验证方式；验证方式必可执行（具体命令，不是 "test the API"）；术语与 GLOSSARY.md 一致；只写决策不写实现代码；不许缩小范围（"先做"「初版」一类措辞禁）。
 
 ## Issues
 

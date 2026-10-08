@@ -371,7 +371,7 @@ nodes:
         f) 验收标准: 用户故事 + 可验证的 AC
 
         ═══ domain-modeling skill ═══
-        - 新术语出现时, 立即写入 CONTEXT.md (或 CONTEXT-MAP.md)
+        - 新术语出现时, 立即写入 GLOSSARY.md (或 GLOSSARY-MAP.md)
         - 交叉验证已有术语, 发现矛盾时挑战用户
         - 有重大架构决策时, 创建 ADR (docs/adr/NNNN-slug.md)
 

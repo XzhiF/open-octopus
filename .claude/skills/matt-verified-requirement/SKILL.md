@@ -22,11 +22,11 @@ You are a **relentless challenger** of requirements, not a compliant executor. Y
 When new terms emerge or term meanings are clarified:
 
 1. **Challenge vague language**: "When you say 'account', do you mean Member or User? They're different concepts."
-2. **Cross-validate**: Check existing CONTEXT-MAP.md, per-package CONTEXT.md, and code for inconsistencies; raise contradictions proactively
-3. **Write to the right CONTEXT.md immediately**:
-   - **System-wide terms** (cross-cutting, used by 3+ packages) → update CONTEXT-MAP.md glossary
-   - **Package-specific terms** → update `packages/<name>/CONTEXT.md` (create if doesn't exist, using CONTEXT-FORMAT.md)
-   - If CONTEXT-MAP.md exists, the repo has multiple contexts; infer which context the current topic relates to
+2. **Cross-validate**: Check existing GLOSSARY-MAP.md, per-package GLOSSARY.md, and code for inconsistencies; raise contradictions proactively
+3. **Write to the right GLOSSARY.md immediately**:
+   - **System-wide terms** (cross-cutting, used by 3+ packages) → update GLOSSARY-MAP.md glossary
+   - **Package-specific terms** → update `packages/<name>/GLOSSARY.md` (create if doesn't exist, using GLOSSARY-FORMAT.md)
+   - If GLOSSARY-MAP.md exists, the repo has multiple contexts; infer which context the current topic relates to
 
 ### Architecture Decision Records (ADR)
 
@@ -94,7 +94,7 @@ Write `<artifacts.dir>/<feature-slug>/map.md`:
 <what reaching the end looks like>
 
 ## Notes
-<domain context from CONTEXT-MAP.md, relevant ADRs, standing preferences>
+<domain context from GLOSSARY-MAP.md, relevant ADRs, standing preferences>
 
 ## Decisions so far
 <!-- one line per closed ticket: [ticket-title](link) — gist of the answer -->
@@ -559,7 +559,7 @@ Map: [map.md](./map.md)
 **Spec writing rules** (from `matt-verified-spec`):
 1. Every User Story MUST have a verification method
 2. Verification methods must be executable (specific commands, not "test the API")
-3. Use project domain terminology (consistent with CONTEXT.md)
+3. Use project domain terminology (consistent with GLOSSARY.md)
 4. No implementation code (describe decisions, not code)
 5. No scope reduction ("for now", "for the initial implementation" forbidden)
 
@@ -624,7 +624,7 @@ ready-for-agent
 | `grilling` | Reuses its one-question-at-a-time mode |
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
 | `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this pipeline. |
-| `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
+| `domain-modeling` | **Reuses** — updates GLOSSARY.md and creates ADRs inline |
 | `matt-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
 | `matt-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
 | `matt-dev-runner` | **Simplified** — now a single-ticket implementer, spawned concurrently by pipeline per DAG stage |

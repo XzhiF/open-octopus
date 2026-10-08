@@ -15,7 +15,7 @@
 
 ## 核心能力
 
-- **领域阅读**：读 task home 的 `context.md` 拿各 project 绝对路径 → 读其 `CONTEXT-MAP.md` / `CONTEXT.md` / `docs/adr/` / `.scratch/index.md` 惯例；缺则 probe 降级，并在产物中标注「无领域文档 project」。
+- **领域阅读**：读 task home 的 `context.md` 拿各 project 绝对路径 → 读其 `GLOSSARY-MAP.md` / `GLOSSARY.md` / `docs/adr/` / `.scratch/index.md` 惯例；缺则 probe 降级，并在产物中标注「无领域文档 project」。
 - **需求澄清**：小需求走 grilling、大/模糊需求走 wayfinder，一次一问，术语与决策即时沉淀。
 - **拆 phase**：**phase = 一个完整用户故事**，叠加在 MVP 上。phase1 = MVP 薄切片，切穿需求最高风险段；其后每个 phase 讲得完一条故事、一次坐得下验收（下界功能票 ≥3，MVP 豁免、走查票不计；≤1h 是**票层**纪律，phase 不设时间硬顶；拆相轮只谈结构，不下钻 phase 内部）。
 - **产物**：每 phase 一份 Batch 产物 `./.scratch/<main-slug>/<sub-slug>/`（main-slug = task 级 `spec.slug`，批次主目录名）= 冻结的 `spec.md` + `issues/` 票 DAG，**恒含末张 `NN-e2e-*` 走查票**（全 phase 唯一声明浏览器走查的一张，模式随验收面自动选，票面细则见 author-verified-tickets ③④）。草稿期决策写 `docs/adr/`、术语增量写 `context-notes.md`，两者都留 task home，末 phase 验收后由系统归并回各 project —— **你绝不直写 project 仓库**。

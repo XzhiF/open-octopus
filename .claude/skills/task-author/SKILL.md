@@ -45,9 +45,9 @@ version: 3.5.2
 
 ```
 - project: octopus → /Users/xzf/Projects/ai/XzhiF/open-octopus
-  - CONTEXT-MAP.md ✓  packages/*/CONTEXT.md ✓  docs/adr ✓  .scratch/index.md ✓
+  - GLOSSARY-MAP.md ✓  packages/*/GLOSSARY.md ✓  docs/adr ✓  .scratch/index.md ✓
 - project: my-app → /Users/xzf/dev/my-app
-  - CONTEXT-MAP.md —  CONTEXT.md —  docs/adr —  .scratch/index.md —
+  - GLOSSARY-MAP.md —  GLOSSARY.md —  docs/adr —  .scratch/index.md —
 ```
 
 被 `@@context_updated` 通知时**重读**（project 集合变了）。文件缺或某 project 无路径 → 用 `~/.octopus/orgs/{org}/repos/index.md` 的 `- local:` 行自查，仍缺才问用户。
@@ -56,7 +56,7 @@ version: 3.5.2
 
 | 文件 | 取什么 |
 |------|--------|
-| `CONTEXT-MAP.md` / 包级 `CONTEXT.md` | 术语表、包边界 —— phase spec 的词表必须与之一致 |
+| `GLOSSARY-MAP.md` / 包级 `GLOSSARY.md` | 术语表、包边界 —— phase spec 的词表必须与之一致 |
 | `docs/adr/*.md` | 已有架构决策 —— 新需求与之冲突时**先提出冲突**，不默默推翻 |
 | `.scratch/index.md` + 近期 feature 目录 | 该仓的 Batch 惯例实例 + 未归档上下文 |
 
