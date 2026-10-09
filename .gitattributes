@@ -1,0 +1,3 @@
+# Normalize line endings: repo stores LF, working tree is LF on all platforms.
+# Deterministic checkout — kills the recurring CRLF phantom-dirty noise.
+* text=auto eol=lf
