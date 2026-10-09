@@ -12,7 +12,9 @@ import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { readArtifactManifestFile, type ArtifactContent } from "@/lib/tasks-api"
-import { artifactSizeText, previewTruncate, type ArtifactManifestBody, type ArtifactManifestItem } from "./artifacts-model"
+import { formatBytes } from "@/lib/format"
+import type { ArtifactManifestBody, ArtifactManifestItem } from "@/lib/types"
+import { previewTruncate } from "./artifacts-model"
 
 const PREVIEW_MAX = 20_000
 
@@ -62,7 +64,7 @@ export function ArtifactsTab({ taskId, body, loading }: { taskId: string; body: 
                 >
                   <span className="min-w-0 max-w-[220px] truncate font-semibold" title={item.name}>{item.name}</span>
                   <span className="min-w-0 max-w-[280px] truncate font-mono text-[10px] text-muted-foreground" title={item.path}>{item.path}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-pop-dim">{artifactSizeText(item.bytes)}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-pop-dim">{formatBytes(item.bytes)}</span>
                   <button
                     onClick={() => setPreview(item)}
                     data-testid="artifact-preview-btn"

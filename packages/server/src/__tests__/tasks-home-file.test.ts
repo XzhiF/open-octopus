@@ -19,7 +19,7 @@ import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
-import { TaskHomeService } from "../services/tasks/task-home-service"
+import { TaskHomeService, resolveWithinRoot, ArtifactAccessError } from "../services/tasks/task-home-service"
 import { getSpecNotice } from "../services/tasks/spec-notice-store"
 import path from "path"
 import os from "os"
@@ -293,5 +293,53 @@ describe("GET home-file?list — 默认 md-only / all=1 证据全量", () => {
   it("L3: 目录不存在 → 404（UI 空态）；all=1 不改变该语义", async () => {
     const id = await newV4Task()
     expect((await list(id, ".scratch/20260905/never", true)).status).toBe(404)
+  })
+})
+
+// ── 票11 双轴 review 收口④ — 守卫单源 ────────────────────────────────
+// TasksService.manifestSafeResolve 曾与 resolveHomePath/readHomeAnyFile 同形三副本
+// （null 字节 / 绝对 / `..` 段 / resolve 逃逸）。塌缩成 TaskHomeService 露出的公开
+// 纯函数 resolveWithinRoot：home 门与 manifest 读门共用一份实现。这里钉守卫矩阵
+// （状态码语义不变：FORBIDDEN→403 由 classifyError 映射；路由层 `..` 400 闸另在
+// manifest/content 保留 —— 双保险，服务层矩阵是最后防线）。
+describe("resolveWithinRoot — 公开守卫矩阵（票11 收口④）", () => {
+  const root = path.join(os.tmpdir(), "resolve-within-root-fixture")
+
+  it("root 内相对路径 → 返回解析后的绝对路径", () => {
+    expect(resolveWithinRoot(root, ".scratch/a/b.md", "home-file"))
+      .toBe(path.resolve(root, ".scratch", "a", "b.md"))
+  })
+
+  it("null 字节 / 绝对路径（POSIX / 盘符 / 反斜杠根）→ FORBIDDEN", () => {
+    for (const bad of ["a\x00b.md", "/etc/passwd", "C:/Windows/win.ini", "C:\\Windows\\win.ini", "\\server\\share"]) {
+      try {
+        resolveWithinRoot(root, bad, "home-file")
+        expect.unreachable(`should reject: ${JSON.stringify(bad)}`)
+      } catch (err) {
+        expect(err).toBeInstanceOf(ArtifactAccessError)
+        expect((err as ArtifactAccessError).code).toBe("FORBIDDEN")
+      }
+    }
+  })
+
+  it("`..` 段（含区内折叠形）与 resolve 逃逸 / root 自身 → FORBIDDEN", () => {
+    for (const bad of ["../x.md", ".scratch/../escape.md", "..", "../..", "."]) {
+      try {
+        resolveWithinRoot(root, bad, "home-file")
+        expect.unreachable(`should reject: ${bad}`)
+      } catch (err) {
+        expect(err).toBeInstanceOf(ArtifactAccessError)
+        expect((err as ArtifactAccessError).code).toBe("FORBIDDEN")
+      }
+    }
+  })
+
+  it("what 前缀进消息（home/workspace 门牌可辨）", () => {
+    try {
+      resolveWithinRoot(root, "/abs", "workspace")
+      expect.unreachable("should reject")
+    } catch (err) {
+      expect((err as Error).message).toContain("workspace absolute paths are not served")
+    }
   })
 })

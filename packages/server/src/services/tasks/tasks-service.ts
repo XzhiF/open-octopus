@@ -86,7 +86,7 @@ import { getExecutionService } from "../execution-service-registry"
 // taskboard-modal-v2 票08: 接管交付的现场快照 —— 逐仓 HEAD 进 end_commit_id（与
 // task-doer 快改 commit 同一个 git-ops 门）。
 import { gitOps } from "../git-ops"
-import { TaskHomeService, ArtifactAccessError, MAX_HOME_FILE_READ_BYTES } from "./task-home-service"
+import { TaskHomeService, ArtifactAccessError, MAX_HOME_FILE_READ_BYTES, resolveWithinRoot } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
@@ -595,25 +595,9 @@ function manifestPrototypeRoots(wsRoot: string): string[] {
   return roots
 }
 
-/** TaskHomeService.homePath + 路径守卫共用惯例：解析 root 内安全绝对路径，
- *  任何越界形状抛 ArtifactAccessError(FORBIDDEN)。 */
-function manifestSafeResolve(rootAbs: string, relRaw: string, what: string): string {
-  if (relRaw.includes("\0")) {
-    throw new ArtifactAccessError(`${what} path must not contain null bytes`, "FORBIDDEN")
-  }
-  if (/^[a-zA-Z]:[\\/]/.test(relRaw) || relRaw.startsWith("/") || relRaw.startsWith("\\")) {
-    throw new ArtifactAccessError(`${what} absolute paths are not served: ${relRaw}`, "FORBIDDEN")
-  }
-  if (relRaw.split(/[\\/]/).some((seg) => seg === "..")) {
-    throw new ArtifactAccessError(`${what} path must not traverse outside: ${relRaw}`, "FORBIDDEN")
-  }
-  const resolved = path.resolve(rootAbs, relRaw)
-  const rel = path.relative(rootAbs, resolved)
-  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new ArtifactAccessError(`${what} path escapes the served root: ${relRaw}`, "FORBIDDEN")
-  }
-  return resolved
-}
+// 票11 双轴 review 收口④ — 原 manifestSafeResolve 守卫副本已塌缩：home:/ws: 两扇
+// manifest 读门直接走 TaskHomeService 露出的公开守卫 resolveWithinRoot（与 home 门
+// resolveHomePath / home-content 门 readHomeAnyFile 同一份实现）。
 
 export class TasksService {
   /** ticket 08: the shared handle (the archiver is built lazily against it —
@@ -1074,7 +1058,7 @@ export class TasksService {
     }
     let abs: string
     if (kind === "home") {
-      abs = manifestSafeResolve(this.taskHomeService.homePath(taskId), relRaw, "home")
+      abs = resolveWithinRoot(this.taskHomeService.homePath(taskId), relRaw, "home")
       const posix = path.relative(this.taskHomeService.homePath(taskId), abs).split(path.sep).join("/")
       if (posix !== MANIFEST_SCRATCH_PREFIX && !posix.startsWith(`${MANIFEST_SCRATCH_PREFIX}/`)) {
         throw new ArtifactAccessError(
@@ -1087,7 +1071,7 @@ export class TasksService {
       if (!wsRoot) {
         throw new ArtifactAccessError("task has no bound workspace with a live directory for ws: references", "FORBIDDEN")
       }
-      abs = manifestSafeResolve(wsRoot, relRaw, "workspace")
+      abs = resolveWithinRoot(wsRoot, relRaw, "workspace")
     }
     let st: fs.Stats
     try {

@@ -38,3 +38,76 @@ function timeOf(e: AgentEvent): number {
   const t = Date.parse(e.timestamp)
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
 }
+
+// ── 票11 双轴 review 收口① — 既有 SSE 通道实时追加 ──────────────────────────
+// 通道 = GET /api/workspaces/:ws/executions/events（engine 经 EngineCallbacks.
+// onAgentEvent 以 "agent_event" emit；sse-manager 按 url 共享一条 EventSource，
+// 本壳订阅不会另开第二份连接）。载荷 { executionId, nodeId, event }，event =
+// engine agent-types.ts 的原始联合。轮询（fetchAgentEvents）退位为兜底/首屏。
+
+/** wire event（engine AgentEvent 的松散形）→ 展示层 AgentEvent；null = 噪声跳过。
+ *  只转「结构性事实」：tool_result → tool_call 行（⚙/✗）、error → ✗ 行、
+ *  intervention/intervention_result → ⚑ 行（包装形 = nodes-model 既有旧代分支）、
+ *  harness_directive → ⚑ 行。text_delta/thinking 增量碎片、turn_usage/status/
+ *  heartbeat 等不实时成行 —— 合并形由轮询权威补全（防 token 碎片刷屏）。 */
+export function agentEventFromWire(
+  nodeId: string,
+  raw: Record<string, unknown> | null | undefined,
+): AgentEvent | null {
+  if (!raw || typeof raw !== "object" || !nodeId) return null
+  const type = raw.type
+  if (typeof type !== "string") return null
+  const ms = typeof raw.timestamp === "number" && Number.isFinite(raw.timestamp)
+    ? raw.timestamp
+    : Date.now()
+  const timestamp = new Date(ms).toISOString()
+  switch (type) {
+    case "tool_result":
+      return {
+        nodeId,
+        event: "tool_call",
+        toolCallId: typeof raw.toolCallId === "string" ? raw.toolCallId : undefined,
+        toolName: typeof raw.toolName === "string" ? raw.toolName : undefined,
+        result: typeof raw.content === "string" ? raw.content : undefined,
+        isError: raw.isError === true,
+        timestamp,
+      }
+    case "error":
+    case "intervention":
+    case "intervention_result":
+      // 包装形 = lineForEvent 的 agent_event 旧代分支（⚑/✗ 都已认）。
+      return {
+        nodeId,
+        event: "agent_event",
+        event_data: raw as NonNullable<AgentEvent["event_data"]>,
+        timestamp,
+      }
+    case "harness_directive":
+      return {
+        nodeId,
+        event: "harness_directive",
+        data: (raw.data ?? {}) as Record<string, unknown>,
+        timestamp,
+      }
+    default:
+      return null
+  }
+}
+
+/** 轮询快照回来后自愈实时追加：丢弃时刻 ≤ 快照最晚事件的追加行（已被权威快照
+ *  覆盖，防同事件双现）；严格更晚或缺时刻的保留。快照排序无关（取 max）。 */
+export function retainNewerThan(
+  appended: readonly AgentEvent[],
+  snapshot: readonly AgentEvent[],
+): AgentEvent[] {
+  let max = Number.NEGATIVE_INFINITY
+  for (const e of snapshot) {
+    const t = timeOf(e)
+    if (t !== Number.POSITIVE_INFINITY && t > max) max = t
+  }
+  if (max === Number.NEGATIVE_INFINITY) return [...appended]
+  return appended.filter((e) => {
+    const t = timeOf(e)
+    return t === Number.POSITIVE_INFINITY || t > max
+  })
+}

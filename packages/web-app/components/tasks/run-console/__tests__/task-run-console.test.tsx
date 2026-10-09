@@ -6,7 +6,7 @@
 //   • TaskModal 接线：三模式走新壳（terminal bar + 无 ModalHeader/悬浮 X）
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { useEffect } from "react"
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDerivedView, TaskExecutionBadge, TaskPhaseView } from "@/lib/tasks-api"
 
@@ -18,6 +18,8 @@ const {
   mockTakeover, mockDeliverTakeover, mockFixRound,
   // 票11：中止句柄（走查面二次确认单源）+ 产物 manifest 两端 + 会话口径账本。
   mockRequestAbort, mockGetArtifactManifest, mockReadManifestFile, mockFetchSessionLLMCalls,
+  // 票11 收口①：sse-manager 订阅捕获（日志流优先订既有 executions/events 实时追加）。
+  sseSubs,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -47,6 +49,7 @@ const {
   mockGetArtifactManifest: vi.fn(),
   mockReadManifestFile: vi.fn(),
   mockFetchSessionLLMCalls: vi.fn(),
+  sseSubs: [] as Array<{ url: string; type: string; fn: (e: MessageEvent) => void }>,
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -88,7 +91,10 @@ vi.mock("@/lib/observability-api", () => ({
   fetchSessionLLMCalls: mockFetchSessionLLMCalls,
 }))
 vi.mock("@/lib/sse-manager", () => ({
-  subscribeSSE: () => () => {},
+  subscribeSSE: (url: string, type: string, fn: (e: MessageEvent) => void) => {
+    sseSubs.push({ url, type, fn })
+    return () => { const i = sseSubs.findIndex((s) => s.fn === fn); if (i >= 0) sseSubs.splice(i, 1) }
+  },
   subscribeSSEStatus: () => () => {},
 }))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
@@ -206,6 +212,7 @@ function derivedOf(
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn())
+  sseSubs.length = 0
   mockGetTask.mockReset(); mockListArtifacts.mockReset(); mockFetchLLMCalls.mockReset()
   mockGetBatchTree.mockReset(); mockPostAcceptance.mockReset()
   mockAbort.mockReset(); mockReopen.mockReset(); mockCancelTrigger.mockReset()
@@ -801,10 +808,12 @@ describe("票 06 — ⚑ 行进日志 + LIVE 卡计数 + 无游离输入", () =>
       derived: derivedOf([pv(1, "票11阶段1", "paused")], true, "paused"),
     })
     // paused 默认落「▶ 控制台」；⚑ 行来自 replayTarget 的事件拉取
+    // 票11 收口②：digest 叠块撤场，intervention-log/intervention-line 钉点**转钉到
+    // 流内 ⚑ 高亮行**（同一事实源 —— 断言语义不变：留痕行含 节点名 + 原文 + pink）。
     const log = await screen.findByTestId("intervention-log")
     const line = within(log).getAllByTestId("intervention-line")[0]
-    expect(line.textContent).toContain("⚑ 人工干预")
-    expect(line.textContent).toContain("节点「开发/修复」")
+    expect(line.textContent).toContain("⚑")
+    expect(line.textContent).toContain("人工干预 → 节点「开发/修复」")
     expect(line.textContent).toContain("别动 Dialog 尺寸逻辑，直接换固定壳")
     // 高亮 = 粉色语义（spec：干预高亮=pink 行）
     expect(line.className).toContain("pop-pink")
@@ -1556,8 +1565,9 @@ describe("票 11 — 日志归位：事件流进页签，AI 消耗卡迁出", ()
     expect(iv.className).toContain("pop-pink") // 高亮=pink 行（spec 语义色）
     // AC2 反面半：整个壳里「任务 AI 消耗」字样绝迹（日志不再挂卡；卡去 ▤ 页签）。
     expect(screen.queryByText("任务 AI 消耗")).toBeNull()
-    // 票06 留痕 digest 块仍在其位（⚑ 行不丢 testid 契约）。
+    // 票06 testid 契约（收口②转钉版）：流内 ⚑ 行 = intervention-log/intervention-line。
     await screen.findByTestId("intervention-log")
+    expect(await screen.findByTestId("intervention-line")).toBeTruthy()
   })
 
   it("running「▶ 控制台」：事件流带 live 标注（5s 轮询追加 ≤10s），无 AI 消耗卡", async () => {
@@ -1683,5 +1693,116 @@ describe("票 11 — ▣ 产物：分组清单挂载 + 徽标件数", () => {
     fireEvent.click(await screen.findByTestId("console-tab-artifacts"))
     const host = await screen.findByTestId("artifacts-tab")
     expect(within(host).getByTestId("artifacts-empty")).toBeTruthy()
+  })
+
+  it("零产物不挂徽标（收口⑥：server 空降级恒返五组，groups.length 判据会谎挂「0」）", async () => {
+    // 生产形 = tasks-artifact-manifest.test 钉住的空降级：五组齐、items 全空。
+    mockGetArtifactManifest.mockResolvedValue({
+      groups: [
+        { key: "spec", label: "📄 需求与票面", items: [] },
+        { key: "report", label: "🧾 轮次报告", items: [] },
+        { key: "evidence", label: "🔍 证据", items: [] },
+        { key: "ledger", label: "📒 验收台账", items: [] },
+        { key: "prototype", label: "💡 原型", items: [] },
+      ],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    // 等 manifest 真的落了盘（页签内空态出现 = body 已进壳层 state），再判徽标。
+    fireEvent.click(await screen.findByTestId("console-tab-artifacts"))
+    await screen.findByTestId("artifacts-empty")
+    expect(screen.queryByTestId("tab-badge-artifacts")).toBeNull()
+  })
+})
+
+// ═════════════════ 票 11 双轴 review 收口 — 日志接既有 SSE + 中止兜底带确认 ═════════════════
+
+describe("票 11 收口① — 日志流优先订既有 executions/events（轮询只作兜底/首屏）", () => {
+  it("live 轮：agent_event wire 实时追加 ⚙ 行（不等 5s 轮询）；executionId 不匹配不进流", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-console"))
+    await screen.findByTestId("workspace-event-stream")
+    // 既有通道 = GET /api/workspaces/:ws/executions/events（engine 在 EngineCallbacks
+    // 以 "agent_event" emit；sse-manager 按 url 共享一条连接，不另开第二份）。
+    const sub = await waitFor(() => {
+      const s = sseSubs.find((x) => x.type === "agent_event" && x.url.includes("/api/workspaces/ws-1/executions/events"))
+      if (!s) throw new Error("no agent_event subscription yet")
+      return s
+    })
+    // 首屏 = 轮询兜底（既有 fetchAgentEvents 通道照打）。
+    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-1"))
+
+    // wire 形 = { executionId, nodeId, event }（EngineCallbacks.onAgentEvent 定形）。
+    const toolDone = {
+      executionId: "exec-1", nodeId: "dev",
+      event: { type: "tool_result", toolCallId: "t9", toolName: "Write", content: "created x.tsx", timestamp: Date.parse("2026-10-08T03:00:00.000Z") },
+    }
+    act(() => { sub.fn({ data: JSON.stringify(toolDone) } as unknown as MessageEvent) })
+    const stream = await screen.findByTestId("workspace-event-stream")
+    expect(await within(stream).findByText(/Write/)).toBeTruthy()
+
+    // 别的执行的事件不进本壳（executionId 闸）。
+    act(() => {
+      sub.fn({ data: JSON.stringify({ ...toolDone, executionId: "exec-OTHER", event: { ...toolDone.event, toolName: "Bash-other-exec" } }) } as unknown as MessageEvent)
+    })
+    expect(stream.textContent).not.toContain("Bash-other-exec")
+  })
+
+  it("错误 wire 实时成 ✗ 行；噪声 wire（turn_usage/status/heartbeat）不落行", async () => {
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-console"))
+    const sub = await waitFor(() => {
+      const s = sseSubs.find((x) => x.type === "agent_event" && x.url.includes("executions/events"))
+      if (!s) throw new Error("no agent_event subscription yet")
+      return s
+    })
+    act(() => {
+      sub.fn({ data: JSON.stringify({ executionId: "exec-1", nodeId: "dev", event: { type: "error", code: "E", message: "SDK 连接断裂", timestamp: Date.parse("2026-10-08T03:01:00.000Z") } }) } as unknown as MessageEvent)
+      sub.fn({ data: JSON.stringify({ executionId: "exec-1", nodeId: "dev", event: { type: "turn_usage", turn: 2, delta: {}, cumulative: {}, timestamp: Date.parse("2026-10-08T03:01:01.000Z") } }) } as unknown as MessageEvent)
+      sub.fn({ data: JSON.stringify({ executionId: "exec-1", nodeId: "dev", event: { type: "status", status: "requesting" } }) } as unknown as MessageEvent)
+    })
+    const stream = await screen.findByTestId("workspace-event-stream")
+    expect(stream.textContent).toContain("SDK 连接断裂")
+    expect(stream.textContent).not.toContain("requesting")
+    expect(within(stream).getAllByTestId("workspace-log-line")).toHaveLength(1)
+  })
+})
+
+describe("票 11 收口⑦ — 中止兜底路径也过二次确认（ConfirmDialog 单源）", () => {
+  it("句柄不在场（running 直落形态）：点 ■ 中止 → 出确认框，不直接打 abortTask；确认后才落端点", async () => {
+    mockAbort.mockResolvedValue({})
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    const abortBtn = await waitFor(() => {
+      const el = document.querySelector("[data-rail-acts] [data-task-abort]") as HTMLElement | null
+      if (!el) throw new Error("abort button missing")
+      return el
+    })
+    fireEvent.click(abortBtn)
+    // 兜底不再旁路：确认框先亮，端点零调用。
+    const title = await screen.findByText("中止任务「控制台任务」？")
+    expect(title).toBeTruthy()
+    expect(mockAbort).not.toHaveBeenCalled()
+    expect(mockRequestAbort).not.toHaveBeenCalled() // 走查面句柄路径未被误用
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }))
+    await waitFor(() => expect(mockAbort).toHaveBeenCalledWith("task-1"))
   })
 })

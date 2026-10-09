@@ -8,7 +8,7 @@
 // step with the Zod schemas (SG14: read `Task`, NOT `SchedulerJob`).
 
 import { getServerUrl } from "@/lib/server-config"
-import { fromDBMessage, type ChatMessage } from "@/lib/types"
+import { fromDBMessage, type ArtifactManifestBody, type ChatMessage } from "@/lib/types"
 import type {
   Task,
   TaskExecutionBadge,
@@ -700,23 +700,8 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
 // ArtifactsCard 在用）占用，分组清单落同子树新叶。缺目录 = 空组 200 降级。
 // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读；400（.. 遍历）
 // /403（越界）/404（缺文件）/413（超限）都经 ArtifactContentError 带 status 抛出。
-
-export interface ArtifactManifestItem {
-  name: string
-  path: string
-  bytes: number
-  mtime: string
-}
-
-export interface ArtifactManifestGroup {
-  key: string
-  label: string
-  items: ArtifactManifestItem[]
-}
-
-export interface ArtifactManifestBody {
-  groups: ArtifactManifestGroup[]
-}
+// wire 形 = lib/types.ts::ArtifactManifestItem/Group/Body 单源（票11 收口⑤ ——
+// 原 tasks-api 与 artifacts-model 两份本地副本塌缩，同 LlmNodeAggregatesWire 惯例）。
 
 export async function getArtifactManifest(taskId: string): Promise<ArtifactManifestBody> {
   const res = await fetch(buildUrl(`/${taskId}/artifacts/manifest`))

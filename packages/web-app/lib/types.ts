@@ -632,6 +632,34 @@ export interface LLMCallAggregates {
   byNode?: LlmNodeAggregatesWire[]
 }
 
+// ============ 产物分组清单 wire（票 11 ▣）============
+//
+// server GET /api/tasks/:id/artifacts/manifest 定形（五组 + 归类判据单源在
+// TasksService.artifactManifest，前端不重分组）。票11 双轴 review 收口⑤：原
+// lib/tasks-api.ts 与 run-console/artifacts-model.ts 各存一份 —— 并入本文件
+// 单源，两处按 LlmNodeAggregatesWire 同惯例引用。
+//
+// 读门错误形（GET /:id/artifacts/manifest/content）400/403/404/413 经
+// ArtifactContentError 带 status 抛出 —— 见 lib/tasks-api.ts。
+
+export interface ArtifactManifestItem {
+  name: string
+  /** 门牌引用：`home:<.scratch/…>` / `ws:<工作区相对>`。 */
+  path: string
+  bytes: number
+  mtime: string
+}
+
+export interface ArtifactManifestGroup {
+  key: string
+  label: string
+  items: ArtifactManifestItem[]
+}
+
+export interface ArtifactManifestBody {
+  groups: ArtifactManifestGroup[]
+}
+
 // ============ Analytics ============
 
 export interface WorkspaceAnalytics {

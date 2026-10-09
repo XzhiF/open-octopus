@@ -1,9 +1,15 @@
 // packages/web-app/components/tasks/run-console/workspace-event-stream.tsx
 //
-// 票 11 ⑩回补 — 「▶ 控制台 / ▶ 日志」页签的工作区事件流（原型 consoleHtml）。
-// 数据 = 绑定执行的 agent_events（壳层 5s 轮询单源 —— live 轮新事件 ≤10s 可见，
-// AC2 由既有 fetchAgentEvents 通道兑现，不新开 SSE）。行映射走 log-model
-// （nodes-model 分类词表 + 时间正序），⚑ 人工干预 = pink 高亮行。
+// 票 11 ⑩回补 — 「▶ 控制台 / ▶ 日志」页签的工作区事件流（原型 consoleHtml 纯流形态）。
+// 数据 = 绑定执行的 agent_events：优先既有 SSE 通道
+// （GET /api/workspaces/:ws/executions/events，EngineCallbacks 以 "agent_event" emit，
+// 壳层经 log-model.agentEventFromWire 实时追加）；5s 轮询（fetchAgentEvents）退位为
+// 兜底/首屏 —— 票11 双轴 review 收口①。行映射走 log-model（nodes-model 分类词表 +
+// 时间正序），⚑ 人工干预 = pink 高亮行。
+//
+// 票11 收口②：壳层原下叠的 InterventionStream digest 块撤场（一事实一现），票06 的
+// testid 契约转钉到**流内 ⚑ 行**：含 ⚑ 行时行容器挂 intervention-log、每条 ⚑ 行挂
+// intervention-line（无干预 = 两块 testid 都不存在，票06 缺席断言语义不变）。
 
 "use client"
 
@@ -34,6 +40,10 @@ export function WorkspaceEventStream({ events, live }: { events: AgentEvent[]; l
     if (nearBottom) el.scrollTop = el.scrollHeight
   }, [lines.length, live])
 
+  // 票06 testid 契约（收口②转钉版）：有 ⚑ 行时行容器 = intervention-log，
+  // ⚑ 行 = intervention-line；无干预两块都不挂 —— 「留痕在场」与「日志区在场」同义。
+  const hasIntervention = lines.some((l) => l.intervention)
+
   return (
     <div
       ref={boxRef}
@@ -43,26 +53,29 @@ export function WorkspaceEventStream({ events, live }: { events: AgentEvent[]; l
     >
       <div className="mb-1 flex items-center gap-2 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         工作区事件流 / AGENT_EVENTS
-        <span className="ml-auto font-normal">{live ? "● 5s 追加" : "○ 已停轮询"}</span>
+        <span className="ml-auto font-normal">{live ? "● 实时追加（SSE·轮询兜底）" : "○ 已停轮询"}</span>
       </div>
       {lines.length === 0 ? (
         <div className="px-0.5 py-1 text-[11px] text-pop-dim" data-testid="workspace-log-empty">
           {live ? "等待节点事件…" : "本轮没有可读的工作流事件（未绑定执行或暂无落库）。"}
         </div>
       ) : (
-        lines.map((l, i) => (
-          <div
-            key={`${l.at ?? "t"}-${i}`}
-            data-testid="workspace-log-line"
-            {...(l.intervention ? { "data-log-intervention": "true" } : {})}
-            title={l.detail ? `${l.text} — ${l.detail}` : l.text}
-            className={`flex items-baseline gap-1.5 truncate px-0.5 py-px text-[11px] ${LINE_TONE[l.tone] ?? "text-pop-ink"} ${l.intervention ? "rounded bg-pop-pink-soft font-black" : ""}`}
-          >
-            <span aria-hidden className="shrink-0 text-[9.5px] text-pop-dim">{clockOf(l.at)}</span>
-            <span aria-hidden className="shrink-0 font-black">{l.glyph}</span>
-            <span className="truncate">{l.text}</span>
-          </div>
-        ))
+        <div {...(hasIntervention ? { "data-testid": "intervention-log" } : undefined)}>
+          {lines.map((l, i) => (
+            <div
+              key={`${l.at ?? "t"}-${i}`}
+              {...(l.intervention
+                ? { "data-testid": "intervention-line", "data-log-intervention": "true" }
+                : { "data-testid": "workspace-log-line" })}
+              title={l.detail ? `${l.text} — ${l.detail}` : l.text}
+              className={`flex items-baseline gap-1.5 truncate px-0.5 py-px text-[11px] ${LINE_TONE[l.tone] ?? "text-pop-ink"} ${l.intervention ? "rounded bg-pop-pink-soft font-black" : ""}`}
+            >
+              <span aria-hidden className="shrink-0 text-[9.5px] text-pop-dim">{clockOf(l.at)}</span>
+              <span aria-hidden className="shrink-0 font-black">{`${l.glyph} `}</span>
+              <span className="truncate">{l.text}</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

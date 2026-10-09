@@ -10,16 +10,19 @@
 //   │     awaiting_review 对话·变更·走查·消耗·产物·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted + railless（票11：
 //   │     「摘要+动作」内列撤场）；控制台/日志 = 工作区事件流（票11 归位：
-//   │     agent_events 时间正序 + ⚑ pink 行；「任务 AI 消耗」卡自此迁出）叠原
+//   │     agent_events 时间正序 + ⚑ pink 行 —— 实时追加走既有 executions/events SSE、
+//   │     轮询只作兜底/首屏（收口①），⚑ 留痕只在流内一行不叠 digest（收口②），
+//   │     testid 契约 intervention-log/line 转钉流内高亮行）叠原
 //   │     Phase/Report 面；消耗 = TaskAiUsageCard 三段 + 按会话/节点明细（票11）；
-//   │     产物 = 分组清单 + 预览/复制（票11，manifest 端点）；
+//   │     产物 = 分组清单 + 预览/复制（票11，manifest 端点；徽标按件数>0 挂，收口⑥）；
 //   │     变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
 //   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 TaskChatTab，
 //   │     三形态（快改/接管/修复轮追加指令）按 shellMode+派生态换语义）。
 //   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
 //   │   全部接既有 handler，通过/打回/中止接 AcceptanceSurface 决策入口（票11
-//   │   中止归栏 = requestAbort 二次确认句柄），行为零回退）。
+//   │   中止归栏 = requestAbort 二次确认句柄；句柄不在场的兜底同样过 ConfirmDialog
+//   │   二次确认才落端点，收口⑦）。
 //   └ footer 状态条（24px）：创建/工作区/v4·N phases + SSE 心跳
 //
 // 数据纪律：derived（票 03 唯一真相）只读不重算；运行账目 = executions[] +
@@ -37,12 +40,13 @@ import {
   TASK_STATUS_EVENT, TASK_VERIFY_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, takeoverTask, deliverTakeover, postFixRound, getArtifactManifest, type ArtifactManifestBody, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, takeoverTask, deliverTakeover, postFixRound, getArtifactManifest, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
-import type { AgentEvent, LLMCallAggregates } from "@/lib/types"
+import type { AgentEvent, ArtifactManifestBody, LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
+import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
 import { computePhaseBadge, effectiveStatusOf, phaseBudgetMs } from "@/lib/task-board"
 import { EditableTitle } from "../editable-title"
 import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/acceptance-surface"
@@ -66,9 +70,10 @@ import {
   type ConsoleShellMode, type ConsoleShellStatus, type ConsoleTabKey, type RailActionId,
 } from "./tab-assembly"
 import {
-  decideResume, extractInterventions, interventionLineText, interventionStats,
-  type InterventionRow, type InterventionStats, type ResumeDialogAction,
+  decideResume, extractInterventions, interventionStats,
+  type InterventionStats, type ResumeDialogAction,
 } from "./intervention"
+import { agentEventFromWire, retainNewerThan } from "./log-model"
 import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
@@ -126,6 +131,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const revealNonceRef = useRef(0)
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [busy, setBusy] = useState<"abort" | "reopen" | "cancel" | "pause" | "resume" | "duplicate" | "takeover" | "deliver" | "fix" | null>(null)
+  // 票11 双轴 review 收口⑦：rail「■ 中止」句柄不在场的兜底路径也要过二次确认
+  // （ConfirmDialog 单源同款危险确认），不再直落 abortTask。
+  const [abortConfirmOpen, setAbortConfirmOpen] = useState(false)
   // ── 票08 三分支弹态 ──
   // branchOpen=「✋ 有问题」决策框；fixOpen=改派 task-fix 指令框（③/接管中改派两入口共用）；
   // openingDraft=② 带过来的开场指令草稿（nonce 允许连开两框各带各的字；预填不代发）。
@@ -142,6 +150,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     setTabSel(undefined)
     setAcceptMounted(!!startOnAcceptance)
     setInjectOpen(false)
+    setAbortConfirmOpen(false)
     setChatEdits({ commits: 0, files: [] })
     setReveal(null)
     // 票08：换任务一并收弹态（决策框/改派框不该跨任务还魂）。
@@ -296,38 +305,67 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [view, phaseViews, runs])
 
   const [signals, setSignals] = useState<SignalLine[]>([])
-  // 票 06 · ⚑ 干预行（同一发 agent-events 拉取榨出 —— 事件流持久化即留痕真相）。
-  const [interventionRows, setInterventionRows] = useState<InterventionRow[]>([])
-  // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events
-  // （与 ⚑ 行同一次拉取，票06 已把干预写入 agent_events —— 单拉榨两处）。
+  // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events。
+  // 票11 双轴 review 收口①：优先既有 SSE 通道（GET /api/workspaces/:id/executions/events，
+  // engine 以 "agent_event" emit）实时追加进 liveAppends；5s 轮询退位为兜底/首屏，
+  // 每次快照回来后 retainNewerThan 自愈同刻双现。票06 ⚑ 行与 LIVE 卡计数同吃这份流。
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([])
+  const [liveAppends, setLiveAppends] = useState<AgentEvent[]>([])
+  const streamEvents = useMemo(
+    () => (liveAppends.length === 0 ? agentEvents : [...agentEvents, ...liveAppends]),
+    [agentEvents, liveAppends],
+  )
+  // ⚑ 干预行（票06）= 同一事实源：流内 extractInterventions（digest 叠块已撤，收口②）。
+  const interventionRows = useMemo(() => extractInterventions(streamEvents), [streamEvents])
   // US16（票10 review-7）：⚑ 干预×N 的「当前节点」= 事件流尾部节点（引擎现在
   // 在往哪个节点吐事件），不是「最近一次干预打到的节点」。执行推进到没挨过
   // 干预的新节点 → 计数归 0（卡片按 >0 才挂 chip，即「0/不显示」）。
-  const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
+  const liveNodeId = useMemo(() => {
+    const tail = streamEvents[streamEvents.length - 1]
+    return tail && tail.nodeId ? tail.nodeId : null
+  }, [streamEvents])
   const targetId = replayTarget?.id ?? null
   const targetWs = replayTarget?.workspace_id ?? null
   const targetLive = !!replayTarget && LIVE_STATUSES.has(replayTarget.status)
   useEffect(() => {
-    if (!targetId || !targetWs) { setAgentEvents([]); return }
+    if (!targetId || !targetWs) { setAgentEvents([]); setLiveAppends([]); return }
     let cancelled = false
-    setLiveNodeId(null)
+    setLiveAppends([])
     const pull = () => {
       fetchAgentEvents(targetWs, targetId)
         .then((res) => {
           if (cancelled) return
           setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations }))
-          setInterventionRows(extractInterventions(res.events))
-          // 票11 日志归位：原始事件同批留存（live 轮 5s 跟随 —— ≤10s 新事件可见）。
+          // 票11 日志归位：原始事件同批留存（live 轮 5s 兜底 —— ≤10s 新事件可见）。
           setAgentEvents(res.events)
-          const tail = res.events.length > 0 ? res.events[res.events.length - 1] : null
-          setLiveNodeId(tail && tail.nodeId ? tail.nodeId : null)
+          // 收口①自愈：SSE 追加里已被这份权威快照覆盖的行即弃。
+          setLiveAppends((prev) => retainNewerThan(prev, res.events))
         })
         .catch(() => { /* 信号/⚑ 不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
     }
     pull()
     const timer = targetLive && isLive ? setInterval(pull, 5000) : null
     return () => { cancelled = true; if (timer) clearInterval(timer) }
+  }, [targetId, targetWs, targetLive, isLive])
+
+  // ── 票11 收口① — 既有执行事件 SSE 实时追加（轮询之上的一等公民）──
+  // sse-manager 按 url 共享一条 EventSource：同页已有组件订过该通道则复用，不另开
+  // 第二份连接。载荷 { executionId, nodeId, event } → agentEventFromWire 只转结构
+  // 性事实（⚙/✗/⚑），token 碎片由轮询合并形补全（防刷屏）。
+  useEffect(() => {
+    if (!targetId || !targetWs || !targetLive || !isLive) return
+    const url = `${getServerUrl()}/api/workspaces/${targetWs}/executions/events`
+    return subscribeSSE(url, "agent_event", (e) => {
+      let p: { executionId?: string; nodeId?: string; event?: Record<string, unknown> }
+      try { p = JSON.parse(e.data) as typeof p } catch { return }
+      if (p.executionId !== targetId || !p.nodeId) return
+      const mapped = agentEventFromWire(p.nodeId, p.event)
+      if (!mapped) return
+      setLiveAppends((prev) => {
+        const next = [...prev, mapped]
+        return next.length > 300 ? next.slice(next.length - 300) : next
+      })
+    })
   }, [targetId, targetWs, targetLive, isLive])
 
   const ctx: RunCtx = {
@@ -725,11 +763,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 {k === "review" && awaitingPv && (
                   <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>
                 )}
-                {/* 票11 页签徽标：消耗=成本$（黄），产物=件数（原型 renderModal cnt）。 */}
+                {/* 票11 页签徽标：消耗=成本$（黄），产物=件数（原型 renderModal cnt）。
+                    收口⑥：判据 = manifestTotalCount>0 —— server 空降级恒返五组，
+                    groups.length 会让零产物任务谎挂「0」角标。 */}
                 {k === "usage" && totalAgg && totalAgg.totalCalls > 0 && (
                   <span className="tabular-nums text-pop-yellow" data-testid="tab-badge-usage">{costText}</span>
                 )}
-                {k === "artifacts" && (manifest?.groups.length ?? 0) > 0 && (
+                {k === "artifacts" && manifestTotalCount(manifest ?? { groups: [] }) > 0 && (
                   <span className="tabular-nums opacity-80" data-testid="tab-badge-artifacts">{manifestTotalCount(manifest ?? { groups: [] })}</span>
                 )}
               </button>
@@ -758,18 +798,19 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             )}
             {tab === "console" && (
               <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
-                {/* 票11 ⑩回补 · 日志归位：绑定执行的工作区事件流进页签（agent_events
-                    时间正序，工具/编辑/成败/警告分类行 + ⚑ 人工干预 pink 高亮行；
-                    live 轮 5s 轮询 ≤10s 追加）。原挂载于此的「任务 AI 消耗」卡迁出
-                    —— 账本去「▤ 消耗」页签（三段式 + 按会话/节点明细）。 */}
-                <WorkspaceEventStream events={agentEvents} live={targetLive && isLive} />
+                {/* 票11 ⑩回补 · 日志归位 + 双轴收口①②：绑定执行的工作区事件流进页签
+                    （agent_events 时间正序，工具/编辑/成败/警告分类行 + ⚑ 人工干预 pink
+                    高亮行；实时追加走既有 executions/events SSE，5s 轮询只作兜底/首屏）。
+                    收口②：原下叠的 InterventionStream digest 留痕块撤场 —— ⚑ 一事实
+                    一现（票06 testid 契约转钉流内高亮行，见 workspace-event-stream）。
+                    「任务 AI 消耗」卡已迁 ▤ 页签。 */}
+                <WorkspaceEventStream events={streamEvents} live={targetLive && isLive} />
                 {view === "report" || !derived
                   ? <ReportSurface ctx={ctx} />
                   : (() => {
                     const pv = phaseViews.find((p) => p.index === view)
                     return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
                   })()}
-                <InterventionStream rows={interventionRows} />
               </div>
             )}
             {tab === "usage" && (
@@ -886,9 +927,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                     // 票11 中止归栏：待验收的「■ 中止」= 走查面既有二次确认流
                     // （railless 撤了内列按钮，句柄仍在 —— 行为单源，确认后
                     // handleAbort → abortTask 端点，任务态由服务端定）。
-                    // 其余形态保持壳直落（与改版前一致）。
+                    // 收口⑦：其余形态（句柄未注册 / 非待验收）不再旁路直落 ——
+                    // 兜底路径同样过 ConfirmDialog 单源同款危险确认，确认才打端点。
                     if (derivedStatus === "awaiting_review" && acceptApi?.requestAbort) acceptApi.requestAbort()
-                    else void handleAbort()
+                    else setAbortConfirmOpen(true)
                   },
                   duplicate: handleDuplicate,
                   askTakeover: () => { setBranchChoice("inject"); setBranchOpen(true) },
@@ -959,6 +1001,18 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           || takeoverPv?.workflowRef.replace(/^built-in\//, "")
           || "绑定工作流"}
         onDispatch={(instruction) => { void handleFixDispatch(instruction) }}
+      />
+      {/* 票11 收口⑦ · 中止兜底二次确认 —— 与走查面 requestAbort 流同字 ConfirmDialog
+          单源组件（危险确认文案一致），确认后走同一 handleAbort。 */}
+      <ConfirmDialog
+        open={abortConfirmOpen}
+        onOpenChange={(o) => { if (!o && busy !== "abort") setAbortConfirmOpen(false) }}
+        title={`中止任务「${task.name}」？`}
+        description="在跑的复检 / 预览会被一并 SIGTERM；Phase 置 aborted 不可恢复 —— 票与 diff 保留，可整任务重开。"
+        confirmLabel="确认中止"
+        variant="destructive"
+        loading={busy === "abort"}
+        onConfirm={() => { setAbortConfirmOpen(false); void handleAbort() }}
       />
     </div>
     </FoldProvider>
@@ -1157,33 +1211,6 @@ function RailStatusCard({ derivedStatus, shellMode, liveRun, awaitingPv, takeove
         <span>成本 <b className="text-pop-ink">{costText}</b> / 变更 <b className="text-pop-ink">≡ 见「变更」页签</b></span>
         {paused && <span className="text-pop-amber">暂停中 —— 点下方恢复钮：可注入 ⚑ 干预纠偏，或直接继续</span>}
       </div>
-    </div>
-  )
-}
-
-// ── ⚑ 人工干预流水（票 06：高亮行 = pink，原型 .cl.iv 语调）────────────
-// 数据面 = agent_events 'intervention' 行（ExecutionLifecycle.resume(intervention)
-// 留痕）经 extractInterventions 榨出 —— 没有干预时整块不存在（不打扰模式的呈现面）。
-
-function InterventionStream({ rows }: { rows: InterventionRow[] }) {
-  if (rows.length === 0) return null
-  return (
-    <div className="mt-2.5 space-y-1" data-testid="intervention-log">
-      <div className="px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-pink/80">⚑ 人工干预 / INTERVENTION</div>
-      {rows.map((r, i) => {
-        const line = interventionLineText(r)
-        return (
-          <div
-            key={`${r.at}-${i}`}
-            data-testid="intervention-line"
-            title={line}
-            className="truncate rounded-lg border-[1.5px] border-pop-pink/50 bg-pop-pink-soft px-2 py-1 font-mono text-[11px] text-pop-pink"
-          >
-            {line}
-            {r.at && <span className="ml-1.5 text-[9.5px] text-pop-dim">{clockShort(r.at)}</span>}
-          </div>
-        )
-      })}
     </div>
   )
 }
