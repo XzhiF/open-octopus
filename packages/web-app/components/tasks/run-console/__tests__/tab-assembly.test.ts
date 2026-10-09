@@ -115,12 +115,12 @@ describe("assembleRailActions — 右栏底部动作区按状态装配（spec �
   })
   it("awaiting_review：✓ 通过 · ↩ 反馈打回 · 🗂 工作空间↗ · ■ 中止（⑪真机复点四钮定版；中止仍接既有句柄）", () => {
     expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: true, canReopen: false })).toEqual([
-      "accept", "reject", "ws-deeplink", "abort", "duplicate",
+      "accept", "reject", "ws-deeplink", "abort",
     ])
   })
   it("awaiting_review 但不可中止（异常态兜底）：不给 中止，其余照旧", () => {
     expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: false, canReopen: false })).toEqual([
-      "accept", "reject", "ws-deeplink", "duplicate",
+      "accept", "reject", "ws-deeplink",
     ])
   })
   it("ready：⚡ 触发 · ↺ 退回草稿 · ■ 中止 · ⧉ 复制；已定时 触发 换成 取消触发", () => {

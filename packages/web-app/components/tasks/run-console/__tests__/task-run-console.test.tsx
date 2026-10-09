@@ -1372,7 +1372,7 @@ describe("票 11 — 待验收：走查去内列 + 中止归栏", () => {
     renderConsole(t, detail)
     await screen.findByTestId("phase-timeline")
     const acts = document.querySelector("[data-rail-acts]")!
-    // DOM 序 = 装配序（accept → reject → ws-deeplink → abort → duplicate）
+    // DOM 序 = 装配序（accept → reject → ws-deeplink → abort；终裁：不收 duplicate）
     const seq = Array.from(acts.querySelectorAll("button")).map((b) =>
       b.hasAttribute("data-rail-accept") ? "accept"
         : b.hasAttribute("data-rail-reject") ? "reject"
@@ -1380,6 +1380,7 @@ describe("票 11 — 待验收：走查去内列 + 中止归栏", () => {
             : b.hasAttribute("data-task-abort") ? "abort" : "other",
     )
     expect(seq.slice(0, 4)).toEqual(["accept", "reject", "ws", "abort"])
+    expect(acts.querySelector("[data-task-duplicate]")).toBeNull() // ⑪终裁：待验收决断面只有四钮
     expect(acts.textContent).toContain("✓ 验收通过")
     expect(acts.textContent).toContain("↩ 反馈打回 · task-fix 修复轮（大改）")
     expect(acts.textContent).toContain("🗂 工作空间 · P1 执行视图 ↗")

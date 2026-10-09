@@ -143,7 +143,7 @@ export function assembleRailActions(input: RailActionsInput): RailActionId[] {
   const { status, canPause, canResume, canAbort, canReopen, armedFuture, canTrigger = true, mode = "flow" } = input
   if (mode === "takeover") {
     // spec 表 takeover 行「进度+（确认交付/改派/■）」—— 流已停，暂停/恢复/✋ 都不存在；
-    // 复制保持全态在场（02 惯例，功能不回退）。
+    // 复制在场（02 惯例，功能不回退；⑪终裁仅待验收不收）。
     const acts: RailActionId[] = ["takeover-deliver", "takeover-reassign"]
     if (canAbort) acts.push("abort")
     acts.push("duplicate")
@@ -183,9 +183,9 @@ export function assembleRailActions(input: RailActionsInput): RailActionId[] {
       // （K3 派生不落库），canAbort 判据天然为真。
       // ⑪真机复点四钮定版（顺序逐字）：✓ 验收通过 → ↩ 反馈打回（task-fix 修复轮，
       // 大改）→ 🗂 工作空间·P<ph> 执行视图 ↗（deepLinkTarget 同源，新标签）→ ■ 中止任务。
+      // 终裁：待验收右栏不收「复制整单」（用户真机裁决：决断面只留四钮）；其余形态照旧。
       const acts: RailActionId[] = ["accept", "reject", "ws-deeplink"]
       if (canAbort) acts.push("abort")
-      acts.push("duplicate")
       return acts
     }
     case "archiving":
