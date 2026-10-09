@@ -345,7 +345,8 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             )}
             {mode === "console" && task && (
               // 票 02 统一任务控制台壳：瘦身顶栏 + 页签装配 + 右栏（Pipeline/LIVE +
-              // 底部动作区）；done/terminal 的「任务战报」由「▶ 控制台」页签承接。
+              // 底部动作区）；票11 用户终裁后「▶ 控制台/日志」= 纯工作区事件流
+              // （战报/门禁/盘上文件等叠面撤场，异常史与产物由事件流与 ▣ 页签自证）。
               <TaskRunConsole
                 task={task}
                 onMutated={onMutated}

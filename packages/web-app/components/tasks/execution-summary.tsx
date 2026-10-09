@@ -4,30 +4,24 @@
 //   RUN_STATUS_LABEL / RUN_ERROR_STATUSES / runErrorOf — 运行行状态词表与红行
 //     判据单源（看板 tooltip / 控制台轮次行 / composite 弹窗共用）。
 //   TaskAiUsageCard — AI 消耗卡（验货台左列注入 round 口径仍用）。
-//   ArtifactsCard — task home artifacts.json 列表 + 查看全文。
 //   useRunsAggregates / mergeAggregates / deepLinkTarget / execLabel — run-console
 //     的数据 plumbing（一次拉取喂多处显示）。
 // 历史：本文件曾是 ready/running/done/failed/aborted 弹窗的信息主体
 // （TaskRunDetailView = PhaseTimeline + 任务概要 + 草稿批次 + 执行记录 + AI 卡）。
 // 五区各列一遍 phase 的重复形态随 ADR-0022 改版迁入 components/tasks/run-console/
-// （Phase 唯一骨架：rail 选面 + surface 控制台），旧主体已删。
+// （Phase 唯一骨架：rail 选面 + surface 控制台），旧主体已删。票11 用户终裁后
+// ArtifactsCard 亦退役（产物可见性 = run-console ▣ 页签的 manifest 清单单源）。
 
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { Boxes, Bot, FileText } from "lucide-react"
-import { Spinner } from "@/components/ui/spinner"
+import { useEffect, useMemo, useState } from "react"
+import { Bot } from "lucide-react"
 import { mergeLedgerParts, LIVE_ROUND_STATUSES } from "@octopus/shared"
-import { listArtifacts, type TaskExecutionBadge } from "@/lib/tasks-api"
+import type { TaskExecutionBadge } from "@/lib/tasks-api"
 import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates, UsageWire } from "@/lib/types"
-import { subscribeSSE } from "@/lib/sse-manager"
-import { getServerUrl } from "@/lib/server-config"
 import { formatTokenCount, formatCost } from "@/lib/format"
-import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
-import type { ArtifactIndexEntry } from "@octopus/shared"
 import { FoldHandle, useFold } from "./fold-context"
-import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 
 // executions-row statuses (票03: a task's runs ARE executions rows — the schedule
 // statuses these keys used to carry are the job pump's own run-state now).
@@ -307,58 +301,6 @@ export function SectionCard({ icon, title, right, children, tone, fold }: {
       </header>
       {!closed && children}
     </section>
-  )
-}
-// ── 产物 ────────────────────────────────────────────────────────────
-
-export function ArtifactsCard({ taskId }: { taskId: string }) {
-  const [entries, setEntries] = useState<ArtifactIndexEntry[] | null>(null)
-  const [viewing, setViewing] = useState<ArtifactIndexEntry | null>(null)
-
-  const refetch = useCallback(() => {
-    listArtifacts(taskId).then(setEntries).catch(() => setEntries([]))
-  }, [taskId])
-
-  useEffect(() => {
-    refetch()
-    // 产物索引更新即刷新（task-home 写入方会 emit 到 /api/tasks/events）。
-    const unsub = subscribeSSE(`${getServerUrl()}/api/tasks/events`, TASK_ARTIFACTS_UPDATE_EVENT, () => refetch())
-    return unsub
-  }, [refetch])
-
-  return (
-    <SectionCard
-      fold={{ id: "artifacts", badge: entries ? `${entries.length} 个产物` : "读取中…" }}
-      icon={<FileText className="size-4" />}
-      title="任务产物"
-      right={entries ? <span className="text-xs text-muted-foreground">{entries.length} 个</span> : <Spinner className="size-3" />}
-    >
-      {entries === null ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
-      ) : entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground py-1">暂无登记产物。</p>
-      ) : (
-        <ul className="space-y-1.5 max-h-64 overflow-y-auto">
-          {entries.map(a => (
-            <li key={a.path}>
-              <button
-                className="w-full text-left rounded-md border border-border px-2.5 py-1.5 hover:border-primary/40 transition-colors"
-                onClick={() => setViewing(a)}
-              >
-                <div className="flex items-center gap-2">
-                  <Boxes className="size-3.5 text-muted-foreground shrink-0" />
-                  <span className="text-sm truncate">{a.title || a.path}</span>
-                  {a.external && <span className="text-[10px] px-1 rounded bg-muted shrink-0">外部</span>}
-                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{new Date(a.updated_at).toLocaleString("zh-CN")}</span>
-                </div>
-                <div className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">{a.path} · by {a.by}</div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <ArtifactViewerDialog taskId={taskId} entry={viewing} onOpenChange={o => { if (!o) setViewing(null) }} />
-    </SectionCard>
   )
 }
 

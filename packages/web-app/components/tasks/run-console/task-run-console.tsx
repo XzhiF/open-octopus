@@ -9,11 +9,12 @@
 //   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·消耗·产物·控制台 /
 //   │     awaiting_review 对话·变更·走查·消耗·产物·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted + railless（票11：
-//   │     「摘要+动作」内列撤场）；控制台/日志 = 工作区事件流（票11 归位：
-//   │     agent_events 时间正序 + ⚑ pink 行 —— 实时追加走既有 executions/events SSE、
-//   │     轮询只作兜底/首屏（收口①），⚑ 留痕只在流内一行不叠 digest（收口②），
-//   │     testid 契约 intervention-log/line 转钉流内高亮行）叠原
-//   │     Phase/Report 面；消耗 = TaskAiUsageCard 三段 + 按会话/节点明细（票11）；
+//   │     「摘要+动作」内列撤场）；控制台/日志 = 纯工作区事件流（票11 归位 +
+//   │     用户终裁：实时追加走既有 executions/events SSE、轮询只作兜底/首屏（收口①）；
+//   │     ⚑ 留痕只在流内一行不叠 digest（收口②），testid 契约 intervention-log/line
+//   │     转钉流内高亮行；旧 Phase/Report 叠面（门禁/交付报告/轮次账本/盘上文件/
+//   │     大事报/战报瓦片）整体撤场不再另找落点）；
+//   │     消耗 = TaskAiUsageCard 三段 + 按会话/节点明细（票11）；
 //   │     产物 = 分组清单 + 预览/复制（票11，manifest 端点；徽标按件数>0 挂，收口⑥）；
 //   │     变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
 //   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 TaskChatTab，
@@ -51,16 +52,13 @@ import { computePhaseBadge, effectiveStatusOf, phaseBudgetMs } from "@/lib/task-
 import { EditableTitle } from "../editable-title"
 import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
-import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, LIVE_STATUSES, mergeAggregates, useRunsAggregates, execLabel,
+  LIVE_STATUSES, mergeAggregates, useRunsAggregates, execLabel,
 } from "../execution-summary"
-import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
 import { FilesTab } from "../files-tab/files-tab"
 import { useRoundDiffFeed } from "../files-tab/use-round-diff-feed"
 import { canServeRoundDiff, scopeTotals } from "../files-tab/files-tab-model"
 import { FoldMasterChip, FoldProvider } from "../fold-context"
-import { buildSignals, type SignalLine } from "./signal-build"
 import {
   PHASE_PILL, PHASE_STATUS_LABEL, SHELL_MODE_LABEL, TASK_PILL, TASK_STATUS_LABEL,
   clockShort, phaseTileTone, roundGlyph, roundOverBudget, roundTone, sumRunMs,
@@ -104,7 +102,6 @@ interface TaskRunConsoleProps {
 
 // 在飞轮词表单源 execution-summary.LIVE_STATUSES（票10 review-2：曾在此文件
 // 与 nodes-tab 各存一份逐字副本 —— 实时一跳/⚑ 计数/fixing 判定全切这一份）。
-const ERROR_RUN_STATUSES = new Set(["failed", "aborted", "completed_with_failures"])
 const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 
 export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAcceptance }: TaskRunConsoleProps) {
@@ -183,40 +180,30 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return subscribeSSEStatus(url, (s) => setSseLive(s.connected))
   }, [])
 
-  // ── SSE：状态即时重拉（与退役前 TaskRunDetailView 同四路）+ 活动流采集 ──
+  // ── SSE：状态即时重拉（与退役前 TaskRunDetailView 同四路）──
   // diffSignal（票 03）：任务类事件每来一发 bump 一次，useRoundDiffFeed 用它做
   // 事件触发路（自带节流；真值来自既有 task_status/task_execution/phase/
-  // artifacts/verify 事件，无新事件类型）。
-  const [events, setEvents] = useState<StreamEvent[]>([])
+  // artifacts/verify 事件，无新事件类型）。用户终裁（票11）：叠面撤场后
+  // 活动流采集（StreamEvent 行）随之退役 —— 事件行只从工作区事件流一处呈现。
   const [diffSignal, setDiffSignal] = useState(0)
   useEffect(() => {
     const url = `${getServerUrl()}/api/tasks/events`
-    const mine = (e: MessageEvent): Record<string, unknown> | null => {
+    const mine = (e: MessageEvent): boolean => {
       try {
         const p = JSON.parse(e.data) as { task_id?: string }
-        return p.task_id === task.id ? (p as Record<string, unknown>) : null
-      } catch { return null }
+        return p.task_id === task.id
+      } catch { return false }
     }
-    const push = (glyph: string, tone: string, text: string) =>
-      setEvents((prev) => [...prev.slice(-40), { at: new Date().toLocaleTimeString("zh-CN", { hour12: false }), glyph, tone, text }])
     const unStatus = subscribeSSE(url, TASK_STATUS_EVENT, (e) => {
-      const p = mine(e); if (!p) return
-      push("◆", "text-pop-cyan", `task → ${TASK_STATUS_LABEL[String(p.status)] ?? String(p.status)}`)
+      if (!mine(e)) return
       refetch(); setDiffSignal((v) => v + 1)
     })
     const unExec = subscribeSSE(url, TASK_EXECUTION_EVENT, (e) => {
-      const p = mine(e); if (!p) return
-      const tag = p.phase_index != null ? `P${p.phase_index}·R${p.round_index ?? 1}` : (p.subunit ? `子单元 ${p.subunit}` : "run")
-      const st = String(p.status)
-      const reason = ERROR_RUN_STATUSES.has(st) && p.reason ? ` — ${String(p.reason)}` : ""
-      push(LIVE_STATUSES.has(st) ? "▶" : st === "completed" || st === "done" || st === "success" ? "✓" : "✗",
-        LIVE_STATUSES.has(st) ? "text-pop-purple" : "text-pop-green",
-        `${tag} ${RUN_STATUS_LABEL[st] ?? st}${reason}`)
+      if (!mine(e)) return
       refetch(); setDiffSignal((v) => v + 1)
     })
     const unPhase = subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => {
-      const p = mine(e); if (!p) return
-      push("■", "text-pop-amber", `P${p.phase_index ?? "?"} → ${PHASE_STATUS_LABEL[String(p.status)] ?? String(p.status)}`)
+      if (!mine(e)) return
       refetch(); setDiffSignal((v) => v + 1)
     })
     // 票03 刷新动线：产物落盘（轮报告写完）与复检终态也是「现场变了」的信号。
@@ -231,7 +218,6 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return () => { unStatus(); unExec(); unPhase(); unArt(); unVerify() }
   }, [task.id, refetch])
 
-  const tree = useBatchTree(task.id, { versionKey: detail?.version })
   // detail 每次重拉都是新对象 —— runs/phaseViews memo 化，下游 useMemo 的依赖才稳。
   const runs = useMemo(() => detail?.executions ?? [], [detail])
   const execIds = useMemo(() => runs.map((r) => r.id), [runs])
@@ -276,10 +262,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   }, [derived, phaseViews, derivedStatus])
   const view = sel ?? autoView
 
-  // ── 大事报信号（2026-09-20 定稿：没事不显示）─────────────────────────
-  // 动线复盘被否：全绿履历没有一行需要用户决策。现只榨四类信号
-  // （✗挂过自愈 / ♻修复轮 / ▷在跑长命令 / 📦产出），纯函数 buildSignals
-  // 真格式单测钉死。活轮在跑时每 5s 重拉尾部；权威仍是 GET /:id derived。切轮重锚。
+  // ── 日志流绑定执行锚（replayTarget）───────────────────────────────────
+  // 原「大事报信号」（buildSignals 四类行，2026-09-20 定稿）随 Phase/Report 叠面
+  // 退役 —— 用户终裁（票11）：异常史由流内 ✗ 行自证，不另立聚合框。这里保留的
+  // 只有取轮纪律：活轮在跑时每 5s 重拉尾部；权威仍是 GET /:id derived。切轮重锚。
   const replayTarget = useMemo(() => {
     const runs = detail?.executions ?? []
     if (runs.length === 0) return null
@@ -304,7 +290,6 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return runs[runs.length - 1] ?? null
   }, [view, phaseViews, runs])
 
-  const [signals, setSignals] = useState<SignalLine[]>([])
   // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events。
   // 票11 双轴 review 收口①：优先既有 SSE 通道（GET /api/workspaces/:id/executions/events，
   // engine 以 "agent_event" emit）实时追加进 liveAppends；5s 轮询退位为兜底/首屏，
@@ -335,13 +320,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       fetchAgentEvents(targetWs, targetId)
         .then((res) => {
           if (cancelled) return
-          setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations }))
           // 票11 日志归位：原始事件同批留存（live 轮 5s 兜底 —— ≤10s 新事件可见）。
           setAgentEvents(res.events)
           // 收口①自愈：SSE 追加里已被这份权威快照覆盖的行即弃。
           setLiveAppends((prev) => retainNewerThan(prev, res.events))
         })
-        .catch(() => { /* 信号/⚑ 不可得照常 —— 大事报缺席（本就「没事不显示」） */ })
+        .catch(() => { /* 事件/⚑ 不可得照常 —— 流空态如实，不编造 */ })
     }
     pull()
     const timer = targetLive && isLive ? setInterval(pull, 5000) : null
@@ -367,13 +351,6 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
       })
     })
   }, [targetId, targetWs, targetLive, isLive])
-
-  const ctx: RunCtx = {
-    task, detail, specPhases, phaseViews, tree, aggMap, totalAgg, runsById,
-    now, isLive, events, signals, refetch, onMutated,
-    openAcceptance: () => setTabSel("review"),
-    openTrigger: () => setTriggerOpen(true),
-  }
 
   // ── 页签装配（票 02 · tab-assembly 纯函数单源）────────────────────────
   // 形态派生唯一出口 shellMode（优先级单源 = deriveShellMode 纯函数，票08 三分支）：
@@ -798,19 +775,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             )}
             {tab === "console" && (
               <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
-                {/* 票11 ⑩回补 · 日志归位 + 双轴收口①②：绑定执行的工作区事件流进页签
+                {/* 票11 用户终裁 · 日志全纯：控制台/日志页签只挂工作区事件流
                     （agent_events 时间正序，工具/编辑/成败/警告分类行 + ⚑ 人工干预 pink
-                    高亮行；实时追加走既有 executions/events SSE，5s 轮询只作兜底/首屏）。
-                    收口②：原下叠的 InterventionStream digest 留痕块撤场 —— ⚑ 一事实
-                    一现（票06 testid 契约转钉流内高亮行，见 workspace-event-stream）。
-                    「任务 AI 消耗」卡已迁 ▤ 页签。 */}
+                    高亮行；实时走既有 executions/events SSE、轮询兜底/首屏）。
+                    原叠挂的 Phase/Report 面（门禁/交付报告/轮次账本/盘上文件/大事报/
+                    战报瓦片）整体撤场，不另找落点；InterventionStream digest 亦已撤
+                    （收口②，票06 testid 转钉流内高亮行）。 */}
                 <WorkspaceEventStream events={streamEvents} live={targetLive && isLive} />
-                {view === "report" || !derived
-                  ? <ReportSurface ctx={ctx} />
-                  : (() => {
-                    const pv = phaseViews.find((p) => p.index === view)
-                    return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
-                  })()}
               </div>
             )}
             {tab === "usage" && (
@@ -898,7 +869,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         {/* 右 rail：Pipeline + LIVE/验收卡（滚动） + 底部动作区（钉底） */}
         <aside className="flex w-[296px] shrink-0 min-h-0 flex-col border-l-[1.5px] border-pop-bd bg-pop-idle">
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <PipelineRail ctx={ctx} budgetMs={budgetMs} view={view} onSelect={setSel} isV4={isV4} aggLoaded={aggLoaded} />
+            <PipelineRail
+              task={task} detail={detail} phaseViews={phaseViews}
+              now={now} totalAgg={totalAgg} aggLoaded={aggLoaded}
+              budgetMs={budgetMs} view={view} onSelect={setSel} isV4={isV4}
+            />
             <RailStatusCard
               derivedStatus={derivedStatus}
               shellMode={shellMode}
@@ -1048,7 +1023,7 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
       return (
         <button onClick={handlers.trigger} disabled={busy !== null} data-task-trigger
           className={`${RAIL_BTN} border-pop-green bg-pop-green text-pop-bg hover:brightness-110`}
-          title="打开触发对话框（发射门禁在「控制台」页签）">
+          title="打开触发对话框（发射门禁以服务端为准）">
           ⚡ 触发
         </button>
       )
@@ -1207,7 +1182,7 @@ function RailStatusCard({ derivedStatus, shellMode, liveRun, awaitingPv, takeove
           )}</span>
         )}
         {awaiting && <span>执行结果 <b className="text-pop-ink">等你放行</b></span>}
-        {derivedStatus === "ready" && <span>等触发 · 发射门禁见「控制台」页签</span>}
+        {derivedStatus === "ready" && <span>等触发 · 用下方「⚡ 触发」发射（门禁判定以服务端为准）</span>}
         <span>成本 <b className="text-pop-ink">{costText}</b> / 变更 <b className="text-pop-ink">≡ 见「变更」页签</b></span>
         {paused && <span className="text-pop-amber">暂停中 —— 点下方恢复钮：可注入 ⚑ 干预纠偏，或直接继续</span>}
       </div>
@@ -1218,12 +1193,12 @@ function RailStatusCard({ derivedStatus, shellMode, liveRun, awaitingPv, takeove
 // ── 右 rail：Phase 流水线（唯一状态位）──────────────────────────────
 // 票 02：从左侧搬进右栏（原型 .m-rail 语义）；票 11 钉点 testid 原样保留。
 
-function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
-  ctx: RunCtx; budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean; aggLoaded: boolean
+function PipelineRail({ task, detail, phaseViews, now, totalAgg, aggLoaded, budgetMs, view, onSelect, isV4 }: {
+  task: Task; detail: TaskDetail | null; phaseViews: TaskPhaseView[]
+  now: number; totalAgg: LLMCallAggregates | null; aggLoaded: boolean
+  budgetMs: number; view: number | "report"; onSelect: (v: number | "report") => void; isV4: boolean
 }) {
-  const { task, detail, phaseViews, now, totalAgg } = ctx
   const derived = detail?.derived
-  const terminal = TERMINAL_TASK_STATUSES.has(task.status)
   const runs = detail?.executions ?? []
   const { ms: runMs, count: runCount } = sumRunMs(runs, now)
 
@@ -1232,10 +1207,6 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
       <div className="mb-2 flex items-center gap-1.5 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         PIPELINE <b className="text-[13px] text-pop-ink">{isV4 ? phaseViews.length : "1"}</b> {isV4 ? "PHASES" : "LEGACY"}
       </div>
-
-      {terminal && isV4 && phaseViews.length > 0 && (
-        <RailReportChip active={view === "report"} onClick={() => onSelect("report")} />
-      )}
 
       {!derived ? (
         <p className="px-1 py-2 font-mono text-[10.5px] text-pop-dim">{task.task_spec?.format === "v4" ? "派生视图读取中…" : "旧服务无派生视图 —— 见右侧账本。"}</p>
@@ -1313,28 +1284,14 @@ function PipelineRail({ ctx, budgetMs, view, onSelect, isV4, aggLoaded }: {
             ? <>账目 <b className="text-pop-ink">{formatCost(totalAgg.totals.cost.usd, totalAgg.totals.cost.complete)}</b> · <b className="text-pop-ink">{totalAgg.totalCalls}</b> 次请求</>
             : aggLoaded ? "账目 —（暂无已落库调用）" : "账目读取中…"}
         </div>
-        {awaitingLine(ctx)}
+        {awaitingLine(phaseViews)}
       </div>
     </div>
   )
 }
 
-function RailReportChip({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      data-rail-report
-      className={`mb-2 w-full rounded-lg border-[1.5px] px-2 py-1 text-left font-mono text-[10px] font-black transition-colors ${
-        active ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm" : "border-pop-bd bg-pop-bg text-pop-dim hover:border-pop-bd"
-      }`}
-    >
-      ■ 任务战报
-    </button>
-  )
-}
-
-function awaitingLine(ctx: RunCtx) {
-  const p = ctx.phaseViews.find((x) => x.status === "awaiting_review")
+function awaitingLine(phaseViews: TaskPhaseView[]) {
+  const p = phaseViews.find((x) => x.status === "awaiting_review")
   if (!p) return null
   return <div className="font-black text-pop-amber" data-rail-awaiting>◆ P{p.index} 等你 →</div>
 }

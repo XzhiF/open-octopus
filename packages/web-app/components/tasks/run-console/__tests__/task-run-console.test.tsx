@@ -307,136 +307,61 @@ describe("TaskRunConsole — rail（唯一状态位，票 11 钉点迁移）", (
     expect(screen.getByTestId("phase-row-2").getAttribute("class")).toContain("outline")
   })
 
-  it("v3 legacy → 单节点 phase-row-legacy +「v3 单阶段」，运行行走战报账本", async () => {
+  it("v3 legacy → 单节点 phase-row-legacy +「v3 单阶段」，控制台页签 = 纯事件流（战报面随用户终裁撤场）", async () => {
     const t = makeTask("running", { task_spec: { ...SPEC, format: undefined } as TaskSpec })
     mockGetTask.mockResolvedValue({ ...t, executions: [badge("exec-9", "running", { phase_index: null, round_index: null })], derived: { taskStatus: "running", isV4: false, phaseViews: [] } })
     render(<TaskRunConsole task={t} onMutated={() => {}} onClose={() => {}} />)
     expect(await screen.findByTestId("phase-row-legacy")).toBeTruthy()
     expect(screen.getByText(/v3 单阶段/)).toBeTruthy()
-    // 深链（V2 定稿后）：行内「流程图 ↗」章 → 新标签页，不再 router.push
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
-    const jump = await waitFor(() => {
-      const el = document.querySelector("[data-run-deeplink=\"execution\"]") as HTMLElement
-      if (!el) throw new Error("deeplink chip not mounted")
-      return el
-    })
-    fireEvent.click(jump)
-    expect(openSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-9", "_blank", expect.any(String))
-    openSpy.mockRestore()
+    // 用户终裁（票11）：Phase/Report 叠面整体撤场 —— v3 也只挂 WorkspaceEventStream。
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    expect(screen.queryByText("任务战报")).toBeNull()
+    expect(document.querySelector("[data-run-deeplink=\"execution\"]")).toBeNull()
   })
 
   it("derived 缺失（旧 server）不崩，账本兜底", async () => {
     const t = makeTask("running")
     renderConsole(t, { ...t, executions: [badge("exec-1", "running")], derived: undefined })
     expect(await screen.findByTestId("phase-timeline")).toBeTruthy()
-    expect(screen.getByText("执行中", { selector: "[data-run-child] *" })).toBeTruthy()
+    expect(screen.getByText(/账目/)).toBeTruthy()
   })
 })
 
 describe("TaskRunConsole — 五态皮肤与动作", () => {
-  it("ready：门禁 + 大触发钮 + 条内（触发/退回草稿/中止）", async () => {
-    mockGetBatchTree.mockResolvedValue([
-      { dir: ".scratch/20260912/p1", slug: "p1", latest_mtime: "2026-09-21T09:00:00Z", files: [{ path: ".scratch/20260912/p1/spec.md", mtime: "2026-09-21T09:00:00Z", bytes: 2048 }] },
-    ])
+  it("ready：发射门禁/GOAL/大触发钮/盘上文件全部绝迹（用户终裁）；触发只剩 rail ⚡ 单源，点击不旁路落端点", async () => {
     const t = makeTask("ready")
     renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending")], true, "ready") })
-    expect(await screen.findByText(/发射门禁/)).toBeTruthy()
-    expect(screen.getByText(/每个 Phase 已绑定工作流（3\/3）/)).toBeTruthy()
-    expect(screen.getByText(/spec\.md 落盘（1\/3）/)).toBeTruthy()
-    const big = screen.getByText(/⚡ 触发执行/)
-    fireEvent.click(big)
-    expect(screen.getByText(/GOAL/)).toBeTruthy()
-    // 盘上文件 chips（原草稿批次区的替身）：选中的 P1 已落盘（formatBytes 单源口径）
-    expect(screen.getByText(/📄 spec\.md 2\.0 KB/)).toBeTruthy()
-    // 切到 P2 → 未落盘警示（磁盘真相按选中面呈现）
-    fireEvent.click(screen.getByTestId("phase-row-2"))
-    expect(await screen.findByText(/📄 spec\.md 未落盘/)).toBeTruthy()
+    // 纯流形态：控制台页签只剩工作区事件流（ready 无绑定执行 → 空态如实）。
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    for (const gone of [/发射门禁/, /每个 Phase 已绑定工作流/, /spec\.md 落盘/, /⚡ 触发执行/, /盘上文件/, /GOAL/]) {
+      expect(screen.queryByText(gone)).toBeNull()
+    }
+    // 流程必需动作等价性：ready 的触发口 = rail「⚡ 触发」（同一 TriggerDialog 单实例；
+    // 对话框本体在壳测试桩为 null —— 这里钉「存在 + 点击不打端点」）。
+    const trigger = document.querySelector("[data-rail-acts] [data-task-trigger]") as HTMLElement
+    expect(trigger).toBeTruthy()
+    fireEvent.click(trigger)
+    await waitFor(() => expect(document.querySelector("[data-rail-acts] [data-task-trigger]")).toBeTruthy())
   })
 
-  it("awaiting_review：交付报告在位，但决策入口撤出控制台（ADR-0022）→「去验货台」CTA 切 tab，不打 postAcceptance", async () => {
+  it("awaiting_review：交付报告面随用户终裁撤场 —— 控制台页签纯事件流，验收唯一入口 = 「✓ 走查」页签，不打 postAcceptance", async () => {
     const t = makeTask("awaiting_review")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review"), pv(3, "票11阶段3", "pending")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1, workflow_ref: "built-in/wf" })], derived: derivedOf(views, true, "awaiting_review") })
-    // 票 02/07：待验收默认落「💬 对话」（真组件在场）—— 交付报告在「▶ 控制台」页签内
+    // 票 02/07：待验收默认落「💬 对话」。用户终裁（票11）：控制台页签只剩事件流，
+    // 原「R1 交付报告」卡/「去验货台」CTA 撤场 —— 验收动线 = 走查页签本身。
     await screen.findByTestId("phase-timeline")
     fireEvent.click(screen.getByTestId("console-tab-console"))
-    expect(await screen.findByText(/R1 交付报告/)).toBeTruthy()
-    // 旧的 ✓通过/✕打回 判决条已撤 → 控制台不再直通 postAcceptance
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    expect(screen.queryByTestId("console-open-acceptance")).toBeNull()
+    expect(screen.queryByTestId("console-acceptance-card")).toBeNull()
+    // 决策入口仍绝迹于控制台（ADR-0022），验收 = 走查页签（keep-mounted，hidden 挡着）。
     expect(screen.queryByTestId("acceptance-approve")).toBeNull()
-    const cta = await screen.findByTestId("console-open-acceptance")
-    expect(cta.textContent).toContain("去验货台")
-    // keep-mounted 预挂：有 awaiting 轮时 surface 已挂载但被 hidden 挡着
     expect(acceptanceSurfaceVisible()).toBe(false)
-    fireEvent.click(cta)
+    fireEvent.click(screen.getByTestId("console-tab-review"))
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(mockPostAcceptance).not.toHaveBeenCalled()
-  })
-
-  it("流程图入口（V2 定稿）：卡头/行内章均 window.open 新 tab，不再 router.push 顶走弹窗", async () => {
-    const t = makeTask("awaiting_review")
-    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1, workspace_id: "ws-e1" })], derived: derivedOf(views, true, "awaiting_review") })
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
-    await screen.findByTestId("phase-timeline")
-    fireEvent.click(screen.getByTestId("console-tab-console"))
-    await screen.findByTestId("console-acceptance-card")
-    fireEvent.click(screen.getByTestId("console-open-acceptance"))
-    await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
-    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
-    fireEvent.click(screen.getByTestId("console-tab-console"))
-    await screen.findByTestId("console-acceptance-card")
-    const flow = document.querySelector("[data-run-deeplink=\"awaiting\"]") as HTMLElement
-    expect(flow).toBeTruthy()
-    fireEvent.click(flow)
-    expect(openSpy).toHaveBeenCalledWith(expect.stringContaining("/workspaces/ws-e1?tab=detail&execId=exec-1"), "_blank", expect.any(String))
-    // 点击流程图章不得误触整卡热区（stopPropagation）—— surface 在场但仍是藏着的
-    expect(acceptanceSurfaceVisible()).toBe(false)
-    openSpy.mockRestore()
-  })
-
-  it("全框折叠：点标题折/开（折上显一行结论徽章）+ 一键盘三态 + 按任务记忆", async () => {
-    mockGetBatchTree.mockResolvedValue([{
-      dir: ".scratch/20260912/p1", slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
-      files: [
-        { path: ".scratch/20260912/p1/spec.md", mtime: "2026-09-21T09:00:00Z", bytes: 2048 },
-        { path: ".scratch/20260912/p1/issues/01-a.md", mtime: "2026-09-21T09:01:00Z", bytes: 100 },
-      ],
-    }])
-    const t = makeTask("awaiting_review")
-    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
-    await screen.findByTestId("phase-timeline")
-    fireEvent.click(screen.getByTestId("console-tab-console"))
-    await screen.findByText(/R1 交付报告/)
-    const filesBox = () => document.querySelector('[data-fold-box="files"]') as HTMLElement
-    const card = () => document.querySelector('[data-fold-box="deliver"]') as HTMLElement
-
-    // ① 单框：点标题 → 折上，header 变一行结论（徽章= 件数·票数），内容不再占面
-    fireEvent.click(screen.getByText("盘上文件"))
-    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
-    expect(filesBox().querySelector('[data-fold-badge="files"]')?.textContent).toContain("2 件 · 票×1")
-    expect(screen.queryByTestId("file-bucket-all")).toBeNull()
-    fireEvent.click(filesBox().querySelector("header")!) // 再点回开
-    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
-
-    // ② 交付卡用把手折（整卡 onClick=进验货台，点标题会误触 —— 专用小靶）
-    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
-    expect(card().getAttribute("data-fold-closed")).toBe("true")
-    expect(card().querySelector('[data-fold-badge="deliver"]')?.textContent).toContain("✓ 执行成功")
-    fireEvent.click(document.querySelector('[data-fold-toggle="deliver"]') as HTMLElement)
-
-    // ③ 一键盘三态：收信息框（主卡留）→ 连主卡收 → 全展开
-    const master = () => screen.getByTestId("fold-master")
-    fireEvent.click(master())
-    expect(filesBox().getAttribute("data-fold-closed")).toBe("true")
-    expect(card().getAttribute("data-fold-closed")).toBeNull() // 主卡不伤验收动线
-    fireEvent.click(master())
-    expect(card().getAttribute("data-fold-closed")).toBe("true")
-    fireEvent.click(master())
-    expect(filesBox().getAttribute("data-fold-closed")).toBeNull()
-    expect(card().getAttribute("data-fold-closed")).toBeNull()
-    // ④ 按任务记忆落盘
-    expect(localStorage.getItem("octopus-fold:task-1")).toContain('"mode":0')
   })
 
   it("走查 = 统一壳页签（票 02 装配 + 2026-09-16 keep-mounted 收编）：CTA/页签条切页内嵌 surface，可切回；startOnAcceptance 直达", async () => {
@@ -453,10 +378,12 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     fireEvent.click(reviewTab)
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
     expect(screen.queryByText(/R1 交付报告/)).toBeNull()
-    // 切回控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）
+    // 切回控制台（surface 仍在场，只是 hidden —— 复检会话不再因切换而失忆）；
+    // 用户终裁（票11）：控制台页签 = 纯事件流，交付报告面绝迹。
     fireEvent.click(screen.getByTestId("console-tab-console"))
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(false))
-    expect(screen.getByText(/R1 交付报告/)).toBeTruthy()
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
   })
 
   it("startOnAcceptance（看板「验收」按钮）：挂载即落走查页签", async () => {
@@ -466,16 +393,11 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
   })
 
-  it("大事报（取代起收回放/动线）：挂过+自愈真信号上屏，全绿履历一个字不占；1 轮无 ROUNDS 框", async () => {
+  it("用户终裁（票11）：大事报/轮次账本/盘上文件随叠面绝迹 —— 待验收控制台页签只剩事件流，异常史由流内 ✗ 行自证", async () => {
     mockFetchAgentEvents.mockResolvedValue({
       executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
       events: [
-        { nodeId: "__engine_init__", event: "start", timestamp: "2026-09-21T09:00:00Z" },
-        // 全绿的节点（真数据里有 6 段 —— 一件不提）
-        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
-        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:01Z", durationMs: 48, status: "completed" },
         { nodeId: "e2e-verify", event: "start", timestamp: "2026-09-21T09:00:02Z" },
-        // C 真形状：老行 input 空串，result 带 Exit code；后有同工具成功 = 自愈
         { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:01:00Z", toolName: "Bash", input: "", isError: true, result: "Exit code 1\nmvn -B -pl util install failed" },
         { nodeId: "e2e-verify", event: "tool_call", timestamp: "2026-09-21T09:03:00Z", toolName: "Bash", input: { command: "mvn -B -pl util install -am" }, result: "BUILD SUCCESS" },
         { nodeId: "e2e-verify", event: "end", timestamp: "2026-09-21T09:10:00Z", durationMs: 579337, status: "completed" },
@@ -486,107 +408,36 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
     await screen.findByTestId("phase-timeline")
     fireEvent.click(screen.getByTestId("console-tab-console"))
-    // ✗ 行：聚合计数 + 自愈判定 + result 首行详情（glyph 与文本同节，textContent 整取）
-    await waitFor(() => expect(document.querySelector('[data-signal="bad"]')?.textContent).toMatch(/挂过 1 次 Bash（均已自愈）/))
-    // 全绿履历一个字不占：没有节点清单、没有起收、没有 spec-resolve
-    expect(screen.queryByText(/回放 ·/)).toBeNull()
-    expect(screen.queryByText("spec-resolve")).toBeNull()
-    expect(screen.queryByText("e2e-verify", { selector: "[data-flow-node]" })).toBeNull()
-    // 1 轮 + 交付卡 → ROUNDS 框撤（卡即轮）
+    // 旧叠面词汇绝迹（大事报框 / ROUNDS 账本 / 盘上文件分桶 / 交付报告卡）。
+    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
     expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
-    // 取的是 awaiting 轮（exec-2）的执行，不是别的轮
+    expect(screen.queryByTestId("file-bucket-issues")).toBeNull()
+    expect(screen.queryByText(/R1 交付报告/)).toBeNull()
+    // 同一事实的新落点：流内 ✗/⚙ 分类行（挂过+自愈史仍可读，来自 agent_events 单源）。
+    const stream = await screen.findByTestId("workspace-event-stream")
+    await waitFor(() => expect(stream.textContent).toContain("Bash"))
+    // 取的是 awaiting 轮（exec-2）的执行，不是别的轮（replayTarget 纪律不破）。
     await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalledWith("ws-1", "exec-2"))
   })
 
-  it("大事报全绿即消失：待验收但本轮零异常 → 框整行不存在", async () => {
-    mockFetchAgentEvents.mockResolvedValue({
-      executionId: "exec-2", source: "sqlite", _degraded: false, _message: null,
-      events: [
-        { nodeId: "spec-resolve", event: "start", timestamp: "2026-09-21T09:00:01Z" },
-        { nodeId: "spec-resolve", event: "end", timestamp: "2026-09-21T09:00:02Z", durationMs: 1000, status: "completed" },
-      ],
-    })
-    const t = makeTask("awaiting_review")
-    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "awaiting_review")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
-    await screen.findByTestId("phase-timeline")
-    fireEvent.click(screen.getByTestId("console-tab-console"))
-    await screen.findByText(/R1 交付报告/) // 交付卡在位（说明盘面渲染完整）
-    await waitFor(() => expect(mockFetchAgentEvents).toHaveBeenCalled())
-    expect(screen.queryByText("大事报 / SIGNAL")).toBeNull()
-  })
-
-  it("轮次分档：≥2 轮账本框回来（打回史全留痕）", async () => {
-    const t = makeTask("done")
-    const two = {
-      ...pv(1, "票11阶段1", "accepted"),
-      rounds: [
-        { roundIndex: 1, state: "failed" as const, decision: null, exec: { id: "exec-1a", status: "failed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:00:00Z" } },
-        { roundIndex: 2, state: "succeeded" as const, decision: "accepted" as const, exec: { id: "exec-1", status: "completed", workflow_ref: "built-in/wf", phase_index: 1, round_index: 2, created_at: "2026-09-21T08:59:00Z" } },
-      ],
-    }
-    renderConsole(t, { ...t, executions: [badge("exec-1a", "failed", { round_index: 1 }), badge("exec-1", "completed", { round_index: 2 })], derived: derivedOf([two], true, "done") })
-    await screen.findByText("任务战报")
-    fireEvent.click(screen.getByTestId("phase-row-1"))
-    expect(await screen.findByText("轮次 / ROUNDS")).toBeTruthy()
-    expect(screen.getByText("2 轮")).toBeTruthy()
-  })
-
-  it("轮次分档：1 轮已判（无卡）→ 细条一行，不立框", async () => {
-    const t = makeTask("done")
-    const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
-    await screen.findByText("任务战报")
-    fireEvent.click(screen.getByTestId("phase-row-2"))
-    expect(await screen.findByTestId("round-strip-2")).toBeTruthy()
-    expect(screen.queryByText("轮次 / ROUNDS")).toBeNull()
-  })
-
-  it("盘上文件分桶：19 件只铺 ≤5 枚章，散文件名绝迹", async () => {
-    const dir = ".scratch/20260912/p1"
-    const f = (p: string, bytes = 100, mtime = "2026-09-21T09:00:00Z") => ({ path: `${dir}/${p}`, mtime, bytes })
-    mockGetBatchTree.mockResolvedValue([{
-      dir, slug: "p1", latest_mtime: "2026-09-21T09:00:00Z",
-      files: [
-        f("spec.md", 2048),
-        f("issues/01-a.md"), f("issues/02-b.md"), f("issues/03-e2e-luhn.md", 300, "2026-09-21T09:05:00Z"),
-        f("round-report.md", 300, "2026-09-21T09:06:00Z"), f("code-review.md"),
-        f("e2e-data/00-run.log"), f("e2e-data/e2e-report.md"), f("e2e-data/walkthrough-true.json"),
-        ...Array.from({ length: 10 }, (_, i) => f(`e2e-data/junk-${i}.log`)),
-      ],
-    }])
-    const t = makeTask("awaiting_review")
-    const views = [pv(1, "票11阶段1", "awaiting_review"), pv(2, "票11阶段2", "pending")]
-    renderConsole(t, { ...t, executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })], derived: derivedOf(views, true, "awaiting_review") })
-    await screen.findByTestId("phase-timeline")
-    fireEvent.click(screen.getByTestId("console-tab-console"))
-    expect(await screen.findByTestId("file-bucket-issues")).toBeTruthy()
-    expect(screen.getByTestId("file-bucket-issues").textContent).toContain("×3")
-    expect(screen.getByTestId("file-bucket-reports").textContent).toContain("×2")
-    expect(screen.getByTestId("file-bucket-evidence").textContent).toContain("证据 e2e-data")
-    expect(screen.getByTestId("file-bucket-all").textContent).toContain("全部 19")
-    // 散章绝迹：单文件不再各占一枚
-    expect(screen.queryByText(/junk-0\.log/)).toBeNull()
-    expect(screen.queryByText(/walkthrough-true\.json/)).toBeNull()
-  })
-
-  it("done：默认战报（4 数字瓦片 + 轮次账本 + 产物），rail「任务战报」可切回 phase 面", async () => {
+  it("done：控制台页签 = 纯事件流（战报瓦片/轮次账本/产物卡随用户终裁绝迹），rail phase 行仍可选", async () => {
     mockListArtifacts.mockResolvedValue([
       { path: "artifacts/report.md", by: "agent-1", title: "综合报告", external: false, updated_at: "2026-09-21T10:00:00Z" },
     ])
     const t = makeTask("done")
     const views = [pv(1, "票11阶段1", "accepted"), pv(2, "票11阶段2", "accepted")]
     renderConsole(t, { ...t, executions: [badge("exec-1", "completed"), badge("exec-2", "completed", { phase_index: 2, round_index: 1 })], derived: derivedOf(views, true, "done") })
-    expect(await screen.findByText("任务战报")).toBeTruthy()
-    expect(screen.getByText("实际用时")).toBeTruthy()
-    expect(screen.getByText("AI 总成本")).toBeTruthy()
-    expect(screen.getByText("综合报告")).toBeTruthy()
-    // 点 rail P2 → phase 面（轮次账本在位）
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    for (const gone of ["任务战报", "实际用时", "AI 总成本", "综合报告", "轮次账本（全部）", "模型分布"]) {
+      expect(screen.queryByText(gone)).toBeNull()
+    }
+    expect(screen.queryByTestId("rail-report-chip")).toBeNull()
+    // rail 仍是唯一状态位：phase 行可点，终态流照常（不崩、不空引用）。
     fireEvent.click(screen.getByTestId("phase-row-2"))
-    expect(await screen.findByText(/P2 · 票11阶段2/)).toBeTruthy()
+    expect(screen.getByTestId("workspace-event-stream")).toBeTruthy()
   })
 
-  it("failed：红行显示 error_summary；绿行遗留键绝不显示（票05 状态门控迁移）", async () => {
+  it("failed：pill ■ 失败如实；error_summary 红行随叠面撤场（终态弹窗不再复刻执行详情）", async () => {
     const t = makeTask("failed")
     renderConsole(t, {
       ...t,
@@ -598,7 +449,9 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
         { ...pv(1, "票11阶段1", "accepted"), rounds: [{ roundIndex: 1, state: "failed" as const, decision: null, exec: { id: "exec-1", status: "failed", workflow_ref: "wf", phase_index: 1, round_index: 1, created_at: "2026-09-21T08:59:00Z" } }] },
       ], true, "failed"),
     })
-    expect(await screen.findByText("对账回收：引擎进程已丢失")).toBeTruthy()
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    expect(document.querySelector('[data-task-modal-status="failed"]')).toBeTruthy()
+    expect(screen.queryByText("对账回收：引擎进程已丢失")).toBeNull()
     expect(screen.queryByText("上一轮遗留键")).toBeNull()
   })
 
@@ -874,7 +727,7 @@ describe("票 06 — ⚑ 行进日志 + LIVE 卡计数 + 无游离输入", () =>
     // running 默认「变更」页 + 切到控制台页：两处都摸不着一枚输入框
     expect(document.querySelectorAll("textarea")).toHaveLength(0)
     fireEvent.click(screen.getByTestId("console-tab-console"))
-    await screen.findByText(/P1 · 票11阶段1/)
+    await screen.findByTestId("workspace-event-stream") // 终裁后控制台页签 = 纯事件流
     expect(document.querySelectorAll("textarea")).toHaveLength(0)
     // rail 恢复钮也不在场（只有 ⏸ 暂停）—— 注入口只在「▶ 恢复 · 可注入干预」之后
     expect(document.querySelector("[data-task-resume]")).toBeNull()
@@ -901,11 +754,12 @@ describe("TaskModal 接线（新壳）", () => {
     expect(screen.getByText(/■ 中止/)).toBeTruthy()
   })
 
-  it("done/failed → 同壳（战报 + 状态 pill），不再渲染「任务完成/任务失败」独立横幅", async () => {
+  it("done/failed → 同壳（纯事件流 + 状态 pill），战报面与「任务完成/任务失败」独立横幅都不再渲染", async () => {
     const t = makeTask("done")
     mockGetTask.mockResolvedValue({ ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "accepted")], true, "done") })
     renderModal(t)
-    expect(await screen.findByText("任务战报")).toBeTruthy()
+    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    expect(screen.queryByText("任务战报")).toBeNull()
     expect(document.querySelector('[data-task-modal-status="done"]')).toBeTruthy()
     expect(screen.queryByText(/^任务完成 ·/)).toBeNull()
   })
