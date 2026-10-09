@@ -101,7 +101,8 @@ test("流⑤ 待验收 → 打回(指令) → task-fix 真实节点集 → 自�
   await openConsole(page, taskId)
   await clickTab(page, "review")
   await expect(page.locator(SEL.acceptanceModal())).toBeVisible({ timeout: 30_000 })
-  await page.locator(SEL.rejectOpen()).click()
+  // 票11 railless：壳内走查页签撤了内列动作按钮，打回入口迁到右栏（同一 openReject 句柄）。
+  await page.locator(SEL.railReject()).click()
   const confirm = page.locator(SEL.rejectConfirm())
   await expect(confirm).toBeDisabled() // 反馈空 → 不放行（票05 契约现场复核）
   const instruction = `E2E_TBV2 打回指令 ${handles.run}：产物缺一行收尾说明；只补文档、不动代码。`
@@ -185,7 +186,8 @@ test("流⑤ 待验收 → 打回(指令) → task-fix 真实节点集 → 自�
   await openConsole(page, taskId)
   await clickTab(page, "review")
   await expect(page.locator(SEL.acceptanceModal())).toBeVisible({ timeout: 20_000 })
-  await page.locator(`${SEL.acceptanceModal()} [data-acceptance-approve]`).click()
+  // 票11 railless：通过入口迁到右栏（同一 requestAccept 句柄，台账预览照常先弹）。
+  await page.locator(SEL.railAccept()).click()
   await expect(page.locator(SEL.ledgerDialog())).toBeVisible({ timeout: 20_000 })
   // 票09 三本账三列在场（快改列口径将被 review-fixer 调整 —— 列存在性对两版语义都成立）
   await expect(page.locator(SEL.ledgerPreviewIntervention())).toContainText("人工干预")

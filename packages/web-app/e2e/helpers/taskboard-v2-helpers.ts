@@ -685,13 +685,16 @@ export async function tbv2BootFlow(opts: {
   return handles
 }
 
-/** Wait until the round's bash node is genuinely running in-process (pause/takeover precondition). */
+/** Wait until the round's bash node is genuinely running in-process (pause/takeover precondition).
+ *  票11 刀B 加固：过滤 `__` 前缀引擎虚拟节点（__engine_init__ 等）—— 并行负载下 init 的
+ *  running 停驻窗口变宽，按 started_at ASC 首命中会采到虚拟节点，令流③的节点对账假挂；
+ *  server 的干预落点本来就打在真实工作流节点上（产品行为正确）。 */
 export async function tbv2WaitRunningNode(handles: TbFlowHandles, timeoutMs = 90_000): Promise<{ execId: string; nodeId: string }> {
   return tbv2Until(() => {
     const rows = tbv2RootExecs(handles.taskId)
     const live = rows.find((r) => r.status === "running")
     if (!live) return null
-    const node = tbv2NodeRows(live.id).find((n) => n.status === "running")
+    const node = tbv2NodeRows(live.id).find((n) => n.status === "running" && !n.node_id.startsWith("__"))
     return node ? { execId: live.id, nodeId: node.node_id } : null
   }, timeoutMs, "no running node in a live round")
 }
