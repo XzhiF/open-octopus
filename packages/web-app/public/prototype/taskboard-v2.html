@@ -181,6 +181,40 @@ input,textarea{font:inherit}
 .cl.iv{color:var(--pink);background:var(--pink-soft);border-left:3px solid var(--pink);border-radius:0 8px 8px 0;padding:3px 10px;margin:3px -10px;font-weight:700}
 .cursor{display:inline-block;width:7px;height:13px;background:var(--pink);vertical-align:-2px;animation:blink 1s steps(1) infinite}
 
+/* ============ 消耗（token 用量）表 + 产物清单 ============ */
+.utab{width:100%;border-collapse:collapse;font-size:11.5px;border:1.5px solid var(--bd);border-radius:13px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow-sm)}
+.utab th{color:var(--dim);font-weight:700;text-align:right;padding:7px 12px;border-bottom:1.5px solid var(--bd);font-size:10px;white-space:nowrap;background:var(--inset)}
+.utab th:first-child,.utab td:first-child{text-align:left}
+.utab td{padding:8px 12px;border-bottom:1px solid rgba(150,152,163,.12);text-align:right;white-space:nowrap}
+.utab tr:last-child td{border-bottom:none}
+.utab tr:hover td{background:var(--inset)}
+.utab tr.live td{background:var(--pink-soft)}
+.utab tr.live td:first-child{border-left:3px solid var(--pink);font-weight:900}
+.utab tr.ck td:first-child{color:var(--cyan)}
+.utab tr.tot td{border-top:1.5px solid var(--bd);font-weight:900;color:var(--ink);background:var(--inset)}
+.ubar{display:inline-block;width:64px;height:5px;background:var(--bd);border-radius:3px;overflow:hidden;vertical-align:1px;margin-left:8px}
+.ubar i{display:block;height:100%;background:var(--yellow)}
+.arow{display:flex;align-items:center;gap:10px;border:1.5px solid var(--bd);border-radius:11px;background:var(--paper);padding:8px 13px;margin-bottom:6px;font-size:11.5px;box-shadow:var(--shadow-sm)}
+.arow .an{font-weight:900;white-space:nowrap}
+.arow .ap{color:var(--dim);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arow .asz{margin-left:auto;color:var(--dim);font-size:10px;flex:none}
+.arow .ab{border:1.5px solid var(--bd);background:var(--inset);color:var(--dim);border-radius:8px;font-size:10px;padding:3px 9px;cursor:pointer;flex:none}
+.arow .ab:hover{color:var(--ink);border-color:var(--dim)}
+.usage-hero{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);padding:11px 14px;margin-bottom:4px;box-shadow:var(--shadow-sm)}
+.usage-hero .hl{font-size:10px;color:var(--dim);font-weight:700;margin-bottom:7px}
+.mrow{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--dim);align-items:baseline}
+.mrow .mt b{color:var(--ink);font-weight:900;margin-left:2px}
+.mrow .mt.yl{color:var(--yellow);font-weight:900}
+.mrow .mt.yl b{color:var(--yellow)}
+.lgrid{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);margin-bottom:4px;overflow:hidden;box-shadow:var(--shadow-sm)}
+.lgrid .lr{display:flex;align-items:center;gap:14px;padding:9px 13px;border-bottom:1px solid rgba(150,152,163,.12);font-size:11px;cursor:pointer;flex-wrap:wrap}
+.lgrid .lr:last-child{border-bottom:none}
+.lgrid .lr:hover{background:var(--inset)}
+.lgrid .lr.on{background:var(--pink-soft)}
+.lgrid .lr .lb{font-weight:900;white-space:nowrap;min-width:74px}
+.tgl{border:1.5px solid var(--bd);background:var(--inset);color:var(--dim);border-radius:8px;font-size:10px;padding:3px 9px;cursor:pointer;flex:none}
+.tgl:hover{color:var(--ink);border-color:var(--dim)}
+
 /* ============ workflow 节点列表（执行中） ============ */
 .nrow{display:flex;align-items:center;gap:10px;border:1.5px solid var(--bd);border-radius:12px;background:var(--paper);padding:9px 13px;margin-bottom:7px;cursor:pointer;font-size:11.5px;box-shadow:var(--shadow-sm);width:100%;text-align:left}
 .nrow:hover{border-color:var(--dim)}
@@ -371,7 +405,7 @@ input,textarea{font:inherit}
 <div id="toast"></div>
 <div id="hint" onclick="document.getElementById('notes').classList.toggle('hidden')">💡 改了什么？</div>
 <div id="notes" class="hidden">
-  <h4>九个改动点的原型答案（点卡片进弹窗体验）</h4>
+  <h4>十个改动点的原型答案（点卡片进弹窗体验）</h4>
   <div class="it"><span class="k1">① 执行中即可看变更</span> — 弹窗默认页签「变更」：提交数 + 文件 +/− 统计条，GitHub 式文件列表，点行就地展开 unified diff。数据即现有 <em>/round-diff?scope=round|cumulative</em>，不用新后端。</div>
   <div class="it"><span class="k1">② 待验收 · 快速修改对话</span> — 像草稿一样对话改代码，改动实时进「变更」列表（💬chat 徽标）与统计。说大改动（含「重构/批量/接口…」）→ chat 主动引导<b>转打回（task-fix 修复轮）</b>。简单直接 chat，复杂派轻流。</div>
   <div class="it"><span class="k1">③ 两个弹窗合一</span> — 执行中/待验收同一个壳：顶栏只留 标题+状态+时间成本（8 个动作按钮收进右栏底部），差异只剩右栏（进度 vs 验收动作）与一个页签。字号 10→11.5px、行距加大，砍掉嵌套卡片。</div>
@@ -381,6 +415,7 @@ input,textarea{font:inherit}
   <div class="it"><span class="k1">⑦ 执行中「✋ 有问题」三分支</span> — 右栏新入口，一次选择本 Round 的去向：<b>①</b> 注入干预原流继续；<b>②</b> 停流接管：<em>打开草稿同款整屏「💬 对话接管」页签</em>，每句直接动工作区，交付/改派只在右栏一处；<b>③</b> 派通用 task-fix：给指令，自动 开发→回归→调整→<em>补产物(报告/证据)</em>→自动转待验收。接管件/修复件在验收台会被标出来。</div>
   <div class="it"><span class="k1">⑧ 启动 Runbook 落点</span> — 「走查」页签第一块：<em>📜 启动 Runbook</em>（spec 字段 startup_runbook · 入队硬闸校验过），N 步「命令 → 预期」，每步带「▶ 跑」；右栏有「已预设 · N 步 ▸」入口。验收 = 照单跑实物。</div>
   <div class="it"><span class="k1">⑨ 打回语义收敛</span> — 去掉「修订重跑绑定流」选项：<em>打回 = 派 task-fix 轻轮修复</em>（反馈即指令，开发→回归→补产物→自动回待验收 R+1），与「✋ 有问题」③ 同一机制。方向要整体推翻 → 用 ② 接管，不再靠重跑。</div>
+  <div class="it"><span class="k1">⑩ 真机走查回补：删残留右栏 · 日志归位 · 消耗/产物独立页签</span> — 真机发现旧弹窗残留三处：<b>一</b> 走查里内嵌的「摘要+动作 / 验收进度」右栏整体删掉（最右栏已有同款），其中的「■ 中止」挪到最右栏「打回」下方成为唯一入口；<b>二</b>「▶ 控制台/日志」应播<em>工作区运行日志（SSE 事件流）</em>，不是现在错位的「任务 AI 消耗」；<b>三</b> 新增两个页签：<em>▤ 消耗</em>（完整 token 账 — token 用 <em>K/M</em> 记数，三段式：<em>总计</em>（∑处理量 ↑输入 ↓输出 ⚡缓存读 🗡️缓存写 ·请求数 ·成本）、<em>按模型</em>、<em>分轮账本</em>（⇕ 一键全展开/收起），底部再按会话/节点分列明细表，task-doer 对话单独一行、两账不混）与 <em>▣ 产物</em>（spec/票/报告/证据/台账等交付文件清单，区别于「≡ 变更」的 diff 视图）。</div>
   <div class="it" style="color:var(--dim)">试试：待验收卡 → 默认落在「💬 对话」，说「验收通过按钮再圆一点」看改动进「变更」；「✓ 走查」页签顶部看 Runbook；执行中卡 → 「✋ 有问题」选②/③ 各走一遍；⏸ 暂停后「▶ 恢复」体验注入干预。←/→ 切页签。</div>
 </div>
 
@@ -660,9 +695,9 @@ function clearTimers(){ state.timers.forEach(clearInterval); state.timers=[]; }
 function renderModal(){
   const t=T(), run=t.col==='run', pz=run&&t.paused, tk=run&&t.mode==='takeover', fx=run&&t.mode==='fixing', root=document.getElementById('modal-root');
   root.classList.remove('hidden');
-  const tabs = tk ? [['chat','💬 对话接管'],['files','≡ 变更'],['nodes','◆ 节点'],['console','▶ 日志']]
-    : run ? [['files','≡ 变更'],['nodes','◆ 节点'],['console','▶ 控制台']]
-    : [['chat','💬 对话'],['files','≡ 变更'],['review','✓ 走查'],['console','▶ 日志']];
+  const tabs = tk ? [['chat','💬 对话接管'],['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']]
+    : run ? [['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 控制台']]
+    : [['chat','💬 对话'],['files','≡ 变更'],['review','✓ 走查'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']];
   const cnt = t.files ? fileTotals(t).files : 0;
   const ns = run ? nodesOf(t) : [];
   const showDock = t.mode==='fixing'; // dock 只留给 task-fix；待验收=整高对话列；执行中不打扰
@@ -685,7 +720,9 @@ function renderModal(){
             const extra = k==='files' ? `<span class="cnt">${cnt}</span>`+
               (state.chatEdits?`<span class="cnt" style="color:var(--cyan)">💬×${state.chatEdits}</span>`:'')
               : k==='nodes' ? `<span class="cnt">${ns.filter(x=>x.st==='done').length}/${ns.length}</span>`
-              : k==='review' ? `<span class="cnt">${(t.playbook.p||0)+(t.playbook.f||0)}/5</span>` : '';
+              : k==='review' ? `<span class="cnt">${(t.playbook.p||0)+(t.playbook.f||0)}/5</span>`
+              : k==='usage' ? `<span class="cnt" style="color:var(--yellow)">${fmtMoney(t.cost)}</span>`
+              : k==='artifacts' ? `<span class="cnt">${artifactsOf(t).length}</span>` : '';
             return `<button class="tab ${on?(run?'on-run':'on-wait'):''}" onclick="setTab('${k}')">${lb}${extra||''}</button>`;
           }).join('')}
         </div>
@@ -719,6 +756,8 @@ function contentHtml(t){
   if(state.tab==='files') return filesHtml(t);
   if(state.tab==='nodes') return nodesHtml(t);
   if(state.tab==='review') return reviewHtml(t);
+  if(state.tab==='usage') return usageHtml(t);
+  if(state.tab==='artifacts') return artifactsHtml(t);
   return consoleHtml(t);
 }
 function filesHtml(t){
@@ -938,6 +977,72 @@ function reviewHtml(t){
 }
 function flipGate(i){ if(i===4) state.gateU=state.gateU?0:1; renderModal(); }
 
+/* ═════════ content: 消耗（token / AI 用量） ═════════ */
+function fmtTok(n){ if(n>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(n>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K'; return String(Math.round(n)) }
+let usageLedgerOpen=true;
+function toggleUsageLedger(){ usageLedgerOpen=!usageLedgerOpen; refreshContent(); }
+function agg(rows){ const z={t:0,i:0,o:0,cr:0,cw:0,req:0,c:0}; rows.forEach(r=>{ z.i+=r.i; z.o+=r.o; z.cr+=r.cr; z.cw+=r.cw||0; z.req+=r.req||0; z.c+=r.c; }); z.t=z.i+z.o+z.cr+z.cw; return z }
+function metricHtml(m){
+  return `<span class="mt">∑<b>${fmtTok(m.t)}</b> 处理量</span><span class="mt">↑<b>${fmtTok(m.i)}</b> 输入</span><span class="mt">↓<b>${fmtTok(m.o)}</b> 输出</span><span class="mt">⚡<b>${fmtTok(m.cr)}</b> 缓存读</span><span class="mt">🗡️<b>${fmtTok(m.cw)}</b> 缓存写</span><span class="mt">${m.req} 次请求</span><span class="mt yl"><b>$${m.c.toFixed(4)}</b></span>`;
+}
+function usageHtml(t){
+  const cur='P'+(t.ph||1)+'·R'+(t.round||1);
+  const rows=[
+    {n:'◆ 设计 · spec 校验',       m:'qwen3.8-flash', i:12400, o:8410,  cr:1902000, cw:204800, req:18, c:0.18,  d:'1:12', rd:'P1·R1', st:''},
+    {n:'◆ 开发 · 批量实现',         m:'qwen3.8-flash', i:96800, o:22140, cr:4610000, cw:380000, req:28, c:0.41,  d:'3:48', rd:'P1·R1', st:''},
+    {n:'◆ 回归 · pnpm test + build',m:'—',             i:0,     o:0,     cr:0,       cw:0,      req:0,  c:0,     d:'0:38', rd:'P1·R1', st:''},
+  ];
+  const isRun=t.col==='run', halted=!isRun||t.paused||t.mode==='takeover'||t.mode==='fixing';
+  rows.push({n:`◆ ${curNode(t).n}`, m:'qwen3.8-flash', i:58200, o:9340, cr:811000, cw:66000, req:12, c:0.09, d:isRun?fmtT(t.secs-302>0?t.secs-302:1202):'2:00', rd:cur, st:isRun&&!halted?'live':''});
+  const chatOn = state.chatEdits>0 || t.mode==='takeover';
+  if(chatOn) rows.push({n:`💬 对话${t.mode==='takeover'?'接管':'快改'} · task-doer`, m:'qwen3.8-flash', i:12400+state.chatEdits*1800, o:3860+state.chatEdits*640, cr:96000+state.chatEdits*18400, cw:24800, req:4+state.chatEdits*3, c:+(0.02+state.chatEdits*0.004).toFixed(4), d:'—', rd:cur, st:'ck'});
+  const tot=agg(rows);
+  const maxC=Math.max(...rows.map(r=>r.c),0.01);
+  const models=[...new Set(rows.filter(r=>r.m!=='—').map(r=>r.m))];
+  const rounds=[...new Set(rows.map(r=>r.rd))];
+  return `
+  <div class="f-toolbar">
+    <span style="font-size:10.5px;color:var(--dim)">数据源 agent_events usage 汇总 — 工作流节点与 task-doer 对话分列（UI 一面 · 账务两会话不混记，ADR-0025）</span>
+    <button class="tgl" style="margin-left:auto" onclick="toggleUsageLedger()">⇕ ${usageLedgerOpen?'收起分轮账本':'一键全展开'}</button>
+  </div>
+  <div class="usage-hero"><div class="hl">总计 · ${rounds[rounds.length-1]} 至今</div><div class="mrow">${metricHtml(tot)}</div></div>
+  <div class="sect-t">按模型</div>
+  <div class="lgrid">${models.map(mm=>`<div class="lr"><span class="lb">${mm}</span><div class="mrow">${metricHtml(agg(rows.filter(r=>r.m===mm)))}</div></div>`).join('')}</div>
+  <div class="sect-t">分轮账本${usageLedgerOpen?'':' · 已收起'}</div>
+  <div class="lgrid">${usageLedgerOpen?rounds.map(rd=>`<div class="lr ${rd===cur?'on':''}" onclick="toast('真实版：筛出 ${rd} 的节点明细')"><span class="lb">${rd}</span><div class="mrow">${metricHtml(agg(rows.filter(r=>r.rd===rd)))}</div></div>`).join(''):'<div class="lr" style="cursor:default;color:var(--dim)">○ ${rounds.length} 轮已折叠 — 点上方「⇕ 一键全展开」</div>'}</div>
+  <div class="sect-t">按会话 / 节点</div>
+  <table class="utab"><thead><tr><th>会话 / 节点</th><th>模型</th><th>输入</th><th>输出</th><th>缓存读</th><th>缓存写</th><th>请求</th><th>成本</th><th>时长</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr class="${r.st}"><td>${r.n}</td><td style="color:var(--dim)">${r.m}</td><td>${fmtTok(r.i)}</td><td>${fmtTok(r.o)}</td><td>${fmtTok(r.cr)}</td><td style="color:var(--dim)">${fmtTok(r.cw)}</td><td style="color:var(--dim)">${r.req}</td><td>$${r.c.toFixed(4)}<span class="ubar"><i style="width:${Math.round(r.c/maxC*100)}%"></i></span></td><td style="color:var(--dim)">${r.d}</td></tr>`).join('')}
+  <tr class="tot"><td>合计 · ${cur}</td><td></td><td>${fmtTok(tot.i)}</td><td>${fmtTok(tot.o)}</td><td>${fmtTok(tot.cr)}</td><td>${fmtTok(tot.cw)}</td><td>${tot.req}</td><td>$${tot.c.toFixed(4)}</td><td></td></tr>
+  </tbody></table>`;
+}
+
+/* ═════════ content: 产物（交付文件清单） ═════════ */
+function artifactsOf(t){
+  const items=[
+    ['📄','spec.md','.scratch/taskboard-modal-v2/spec.md','18 KB','任务规格'],
+    ['📄','issues/01–10 · 票面','.scratch/taskboard-modal-v2/issues/','10 files','均已 done 并入分支'],
+    ['🧾','round-report-R'+t.round+'.md','.octopus/reports/','6 KB','agent 自述 — 仅参考，验货看实物'],
+    ['🧾','evidence/pnpm-test.log','工作区 evidence/','41 passed','回归实物证据'],
+    ['🖼','evidence/screenshots/','工作区 evidence/','3 png','跑起来看的截图'],
+    ['📒','acceptance-ledger-R'+t.round+'.md','.octopus/ledger/','append-only','台账 · 快改×'+state.chatEdits],
+    ['💡','prototype/taskboard-v2.html','web-app/public/prototype/','1,300 行','交互原型 — 本页即真相源'],
+  ];
+  return items;
+}
+function artifactsHtml(t){
+  const groups=[['📄 需求与票面',0,2],['🧾 报告与证据',2,5],['📒 验收台账',5,6],['💡 原型',6,7]];
+  return `
+  <div class="f-toolbar">
+    <span style="font-size:10.5px;color:var(--dim)">工作区交付物清单 — 产物 ≠ diff：代码改动看「≡ 变更」，这里列规格 / 报告 / 证据 / 台账</span>
+    <span style="margin-left:auto;font-size:10px;color:var(--dim)">数据源：约定目录扫描 + 台账表</span>
+  </div>
+  ${groups.map(([g,a,b])=>`<div class="sect-t">${g}</div>`+artifactsOf(t).slice(a,b).map(([ic,nm,p,sz,d])=>`
+    <div class="arow"><span class="an">${ic} ${nm}</span><span class="ap">${p}</span><span class="asz">${sz} · ${d}</span>
+      <button class="ab" onclick="toast('▶ 真实版：开文件预览抽屉（${nm}）')">▶ 预览</button>
+      <button class="ab" onclick="toast('⧉ 已复制路径')">⧉ 路径</button></div>`).join('')).join('')}`;
+}
+
 /* ═══════════════════════════ 右栏 ═══════════════════════════ */
 function railHtml(t){ return t.col==='run' ? railRun(t) : railWait(t); }
 function railWait(t){
@@ -962,6 +1067,7 @@ function railWait(t){
   <div class="rail-acts">
     <button class="act-btn ab-pass" onclick="openPass()">✓ 验收通过${t.ph<t.phN?` · 放行 Phase ${t.ph+1}`:' · 进入归档'}</button>
     <button class="act-btn ab-rej" onclick="openReject()">↩ 打回 · task-fix 修复轮（大改）</button>
+    <button class="act-btn ab-dim stop" onclick="toast('■ 中止任务 = 沿用现有任务级终止；从走查内嵌右栏挪到此，唯一入口')">■ 中止任务</button>
   </div>`;
 }
 function railRun(t){
@@ -1263,7 +1369,7 @@ document.addEventListener('keydown',e=>{
     else if(!hid('fx-root'))document.getElementById('fx-root').classList.add('hidden');
     else if(state.openTask) closeModal(); return; }
   if(!state.openTask) return;
-  const t=T(), tabs=(t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','console']:['files','nodes','console']):['chat','files','review','console']);
+  const t=T(), tabs=(t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','usage','artifacts','console']:['files','nodes','usage','artifacts','console']):['chat','files','review','usage','artifacts','console']);
   const i=tabs.indexOf(state.tab);
   if(e.key==='ArrowRight')setTab(tabs[(i+1)%tabs.length]);
   if(e.key==='ArrowLeft') setTab(tabs[(i-1+tabs.length)%tabs.length]);
