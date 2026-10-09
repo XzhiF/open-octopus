@@ -16,6 +16,8 @@ const {
   pushSpy, mockFetchAgentEvents, mockGetRoundDiff, mockGetRoundPatch, mockFetchExecutionDetail,
   mockOpenReject, mockGetChatBinding, mockGetDoerHistory,
   mockTakeover, mockDeliverTakeover, mockFixRound,
+  // 票11：中止句柄（走查面二次确认单源）+ 产物 manifest 两端 + 会话口径账本。
+  mockRequestAbort, mockGetArtifactManifest, mockReadManifestFile, mockFetchSessionLLMCalls,
 } = vi.hoisted(() => ({
   mockGetTask: vi.fn(),
   mockListArtifacts: vi.fn(),
@@ -40,6 +42,11 @@ const {
   mockTakeover: vi.fn(),
   mockDeliverTakeover: vi.fn(),
   mockFixRound: vi.fn(),
+  // 票11 桩
+  mockRequestAbort: vi.fn(),
+  mockGetArtifactManifest: vi.fn(),
+  mockReadManifestFile: vi.fn(),
+  mockFetchSessionLLMCalls: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -72,8 +79,14 @@ vi.mock("@/lib/tasks-api", () => ({
   getTaskChatBinding: mockGetChatBinding, getDoerChatHistory: mockGetDoerHistory,
   // 票08 三分支三端点
   takeoverTask: mockTakeover, deliverTakeover: mockDeliverTakeover, postFixRound: mockFixRound,
+  // 票11 ▣ 产物分组清单（manifest 拉取 + 预览现读）
+  getArtifactManifest: mockGetArtifactManifest, readArtifactManifestFile: mockReadManifestFile,
 }))
-vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
+vi.mock("@/lib/observability-api", () => ({
+  fetchLLMCalls: mockFetchLLMCalls,
+  // 票11 ▤ 消耗页签的 task-doer 对话账（会话口径单源）。
+  fetchSessionLLMCalls: mockFetchSessionLLMCalls,
+}))
 vi.mock("@/lib/sse-manager", () => ({
   subscribeSSE: () => () => {},
   subscribeSSEStatus: () => () => {},
@@ -96,13 +109,14 @@ vi.mock("../../authoring/phase-spec-dialog", () => ({
 vi.mock("../../acceptance/acceptance-surface", async () => {
   const { useEffect } = await import("react")
   return {
-    AcceptanceSurface: ({ onActionApi }: { onActionApi?: (api: { requestAccept: () => void; openReject: (d?: string) => void; blocked: boolean } | null) => void }) => {
-      // 与真实面同纪律：句柄经 onActionApi 注册（票07 对话页签「劝退→打回预填」走这条线）。
+    AcceptanceSurface: ({ onActionApi, railless }: { onActionApi?: (api: { requestAccept: () => void; openReject: (d?: string) => void; requestAbort: () => void; blocked: boolean } | null) => void; railless?: boolean }) => {
+      // 与真实面同纪律：句柄经 onActionApi 注册（票07 对话页签「劝退→打回预填」走这条线；
+      // 票11 壳右栏「■ 中止」= requestAbort 二次确认口）。
       useEffect(() => {
-        onActionApi?.({ requestAccept: () => {}, openReject: (d?: string) => mockOpenReject(d), blocked: false })
+        onActionApi?.({ requestAccept: () => {}, openReject: (d?: string) => mockOpenReject(d), requestAbort: () => mockRequestAbort(), blocked: false })
         return () => onActionApi?.(null)
       }, [onActionApi])
-      return <div data-acceptance-surface-stub />
+      return <div data-acceptance-surface-stub data-railless={railless ? "true" : "false"} />
     },
   }
 })
@@ -221,6 +235,14 @@ beforeEach(() => {
   mockTakeover.mockReset()
   mockDeliverTakeover.mockReset()
   mockFixRound.mockReset()
+  // 票11 默认面：中止句柄零调用；manifest 空组；doer 会话零调用（不显 doer 行）。
+  mockRequestAbort.mockReset()
+  mockGetArtifactManifest.mockReset()
+  mockGetArtifactManifest.mockResolvedValue({ groups: [] })
+  mockReadManifestFile.mockReset()
+  mockReadManifestFile.mockResolvedValue({ path: "home:.scratch/x/spec.md", content: "# spec" })
+  mockFetchSessionLLMCalls.mockReset()
+  mockFetchSessionLLMCalls.mockResolvedValue({ data: [], aggregates: { totalCalls: 0, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null }, modelBreakdown: {} } })
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -958,7 +980,7 @@ describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
 })
 
 describe("票 02 — 页签装配 + 键盘", () => {
-  it("running v4：变更·节点·控制台，默认落「变更」且出真实内容（票 03 已落地）", async () => {
+  it("running v4：变更·节点·消耗·产物·控制台，默认落「变更」且出真实内容（票 03 已落地）", async () => {
     mockGetRoundDiff.mockResolvedValue({
       available: true,
       aggregate: { commits: 3, additions: 40, dels: 6, files: 2 },
@@ -977,6 +999,9 @@ describe("票 02 — 页签装配 + 键盘", () => {
     const filesTab = await screen.findByTestId("console-tab-files")
     expect(screen.getByTestId("console-tab-nodes")).toBeTruthy()
     expect(screen.getByTestId("console-tab-console")).toBeTruthy()
+    // 票11 终表：消耗/产物进 running 装配
+    expect(screen.getByTestId("console-tab-usage")).toBeTruthy()
+    expect(screen.getByTestId("console-tab-artifacts")).toBeTruthy()
     expect(screen.queryByTestId("console-tab-chat")).toBeNull() // 对话页签不进 running 装配
     expect(screen.queryByTestId("console-tab-review")).toBeNull()
     expect(filesTab.getAttribute("aria-selected")).toBe("true")
@@ -1010,7 +1035,7 @@ describe("票 02 — 页签装配 + 键盘", () => {
     expect(document.querySelector("[data-head-commits]")?.getAttribute("data-head-commits")).toBe("3")
   })
 
-  it("awaiting_review：对话·变更·走查·日志，默认落「对话」（票 07 已挂载 —— 占位话术绝迹）", async () => {
+  it("awaiting_review：对话·变更·走查·消耗·产物·日志，默认落「对话」（票 07 已挂载 —— 占位话术绝迹）", async () => {
     const t = makeTask("awaiting_review")
     renderConsole(t, {
       ...t,
@@ -1019,7 +1044,7 @@ describe("票 02 — 页签装配 + 键盘", () => {
     })
     const chatTab = await screen.findByTestId("console-tab-chat")
     expect(chatTab.getAttribute("aria-selected")).toBe("true")
-    for (const key of ["files", "review", "console"]) expect(screen.getByTestId(`console-tab-${key}`)).toBeTruthy()
+    for (const key of ["files", "review", "usage", "artifacts", "console"]) expect(screen.getByTestId(`console-tab-${key}`)).toBeTruthy()
     const host = document.querySelector('[data-tab-host="chat"]')
     expect(host?.textContent).not.toContain("票 07")
     expect(within(host as HTMLElement).getByTestId("task-chat-tab").getAttribute("data-chat-form")).toBe("quick-edit")
@@ -1037,7 +1062,7 @@ describe("票 02 — 页签装配 + 键盘", () => {
     await waitFor(() => expect(acceptanceSurfaceVisible()).toBe(true))
   })
 
-  it("→ 顺序切页并回卷；← 反向；输入框聚焦时忽略", async () => {
+  it("→ 顺序切页并回卷；← 反向；输入框聚焦时忽略（票11 装配终表含消耗/产物）", async () => {
     const t = makeTask("running")
     renderConsole(t, {
       ...t,
@@ -1049,6 +1074,10 @@ describe("票 02 — 页签装配 + 键盘", () => {
     expect(selected()).toBe("files")
     fireEvent.keyDown(window.document, { key: "ArrowRight" })
     expect(selected()).toBe("nodes")
+    fireEvent.keyDown(window.document, { key: "ArrowRight" })
+    expect(selected()).toBe("usage")
+    fireEvent.keyDown(window.document, { key: "ArrowRight" })
+    expect(selected()).toBe("artifacts")
     fireEvent.keyDown(window.document, { key: "ArrowRight" })
     expect(selected()).toBe("console")
     fireEvent.keyDown(window.document, { key: "ArrowRight" }) // 末位回卷
@@ -1447,5 +1476,212 @@ describe("票 08 — 「✋ 有问题」三分支框（running flow 现场）", 
     renderConsole(t, detail)
     await screen.findByTestId("task-chat-tab")
     expect(await screen.findByText("接管件已交付 — 验收前还能继续说改")).toBeTruthy()
+  })
+})
+
+// ═════════════════ 票 11 · ⑩真机走查回补（消耗/产物页签 · 日志归位 · 中止归栏）═════════════
+// 期望逐条取自票面 AC + 原型 renderModal/railWait（v4 定稿 = 真相源）：
+//   · 待验收：走查页签渲染路径 railless（自带「摘要+动作」内列撤场）；
+//     右栏 通过→打回→■中止，中止复用走查面二次确认句柄（requestAbort），
+//     不再由壳直落 abortTask（确认流单源）。
+//   · 日志：控制台/日志页签不再有「任务 AI 消耗」卡；agent_events 渲事件流，
+//     ⚑ 干预行 = pink 高亮。
+//   · 消耗：▤ 页签挂卡三段 + 按会话/节点明细；task-doer 单独行按 doer_session_id
+//     归属（无对话历史不显）；徽标 = 成本。
+//   · 产物：▣ 页签分组清单 + 徽标件数（manifest 端点，壳层单拉）。
+describe("票 11 — 待验收：走查去内列 + 中止归栏", () => {
+  const awaitingRunning = () => {
+    // 生产形状：待验收期**持久态仍 running**（K3 派生不落库）—— canAbort 由此为真。
+    const t = makeTask("running")
+    return {
+      t,
+      detail: {
+        ...t,
+        executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+        derived: derivedOf([pv(1, "票11阶段1", "awaiting_review", { awaitingRound: 1 })], true, "awaiting_review"),
+      },
+    }
+  }
+
+  it("右栏动作自上而下 = 通过 → 打回 → ■中止（且走查 surface railless 在场）", async () => {
+    const { t, detail } = awaitingRunning()
+    renderConsole(t, detail)
+    await screen.findByTestId("phase-timeline")
+    const acts = document.querySelector("[data-rail-acts]")!
+    expect(acts.querySelector("[data-rail-accept]")).toBeTruthy()
+    expect(acts.querySelector("[data-rail-reject]")).toBeTruthy()
+    expect(acts.querySelector("[data-task-abort]")).toBeTruthy()
+    expect(acts.textContent).toContain("■ 中止")
+    // 走查面 keep-mounted 且壳内渲染路径剔除内列（AC1 的壳侧半；DOM 级断言在
+    // acceptance-surface.test 真组件侧钉）。
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    expect(document.querySelector("[data-acceptance-surface-stub]")!.getAttribute("data-railless")).toBe("true")
+  })
+
+  it("点「■ 中止」= 走查面既有二次确认口（requestAbort 句柄），壳不旁路直落 abortTask", async () => {
+    const { t, detail } = awaitingRunning()
+    renderConsole(t, detail)
+    // 句柄注册到齐才点（surface keep-mounted → onActionApi 注册是同轮 effect）。
+    await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
+    const abortBtn = await waitFor(() => document.querySelector("[data-task-abort]") as HTMLElement)
+    fireEvent.click(abortBtn)
+    await waitFor(() => expect(mockRequestAbort).toHaveBeenCalled())
+    expect(mockAbort).not.toHaveBeenCalled()
+  })
+})
+
+describe("票 11 — 日志归位：事件流进页签，AI 消耗卡迁出", () => {
+  const logEvents = [
+    { nodeId: "dev", event: "start", timestamp: "2026-10-08T01:59:00.000Z" },
+    { nodeId: "dev", event: "tool_call", toolName: "Edit", input: { file_path: "x.tsx" }, timestamp: "2026-10-08T01:59:30.000Z" },
+    { nodeId: "dev", event: "intervention", timestamp: "2026-10-08T02:00:00.000Z", data: { nodeId: "dev", nodeName: "开发/修复", prompt: "别动 Dialog 尺寸逻辑，直接换固定壳" } },
+  ]
+
+  it("待验收「▶ 日志」：无「任务 AI 消耗」字样；agent_events 分类行 + ⚑ pink 高亮行在场", async () => {
+    mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-1", source: "sqlite", _degraded: false, _message: null, events: logEvents })
+    const t = makeTask("awaiting_review")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "completed", { phase_index: 1, round_index: 1 })],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review", { awaitingRound: 1 })], true, "awaiting_review"),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-console"))
+    const stream = await screen.findByTestId("workspace-event-stream")
+    expect(stream.textContent).toContain("工作区事件流")
+    expect(stream.textContent).toContain("Edit")
+    const iv = document.querySelector('[data-log-intervention="true"]') as HTMLElement
+    expect(iv).toBeTruthy()
+    expect(iv.textContent).toContain("⚑")
+    expect(iv.textContent).toContain("别动 Dialog 尺寸逻辑，直接换固定壳")
+    expect(iv.className).toContain("pop-pink") // 高亮=pink 行（spec 语义色）
+    // AC2 反面半：整个壳里「任务 AI 消耗」字样绝迹（日志不再挂卡；卡去 ▤ 页签）。
+    expect(screen.queryByText("任务 AI 消耗")).toBeNull()
+    // 票06 留痕 digest 块仍在其位（⚑ 行不丢 testid 契约）。
+    await screen.findByTestId("intervention-log")
+  })
+
+  it("running「▶ 控制台」：事件流带 live 标注（5s 轮询追加 ≤10s），无 AI 消耗卡", async () => {
+    mockFetchAgentEvents.mockResolvedValue({ executionId: "exec-1", source: "sqlite", _degraded: false, _message: null, events: logEvents.slice(0, 2) })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-console"))
+    const stream = await screen.findByTestId("workspace-event-stream")
+    expect(stream.getAttribute("data-stream-live")).toBe("true")
+    expect(screen.queryByText("任务 AI 消耗")).toBeNull()
+  })
+})
+
+describe("票 11 — ▤ 消耗：卡三段 + 按会话/节点明细 + doer 行归属", () => {
+  const execAgg = () => ({
+    data: [],
+    aggregates: {
+      totalCalls: 3,
+      toolCalls: 0,
+      usage: { inputTokens: 3000, outputTokens: 600, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      totals: { tokens: 3600, cost: { usd: 0.02, complete: true }, cacheHitRate: null },
+      modelBreakdown: {},
+      byNode: [
+        { nodeId: "dev", totalCalls: 2, usage: { inputTokens: 2000, outputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0 }, totals: { tokens: 2400, cost: { usd: 0.012, complete: true }, cacheHitRate: null }, modelBreakdown: {} },
+        { nodeId: "verify", totalCalls: 1, usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 }, totals: { tokens: 1200, cost: { usd: 0.008, complete: true }, cacheHitRate: null }, modelBreakdown: {} },
+      ],
+    },
+  })
+
+  it("有 doer 会话且账上有调用 → 明细含逐节点行 + task-doer 单独行；徽标=成本", async () => {
+    mockFetchLLMCalls.mockResolvedValue(execAgg())
+    mockFetchSessionLLMCalls.mockResolvedValue({
+      data: [],
+      aggregates: { totalCalls: 4, usage: { inputTokens: 500, outputTokens: 100, cacheReadTokens: 2000, cacheCreationTokens: 0 }, totals: { tokens: 2600, cost: { usd: 0.003, complete: true }, cacheHitRate: null }, modelBreakdown: {} },
+    })
+    const t = makeTask("running", { doer_session_id: "s-doer" } as never)
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-usage"))
+    const usage = await screen.findByTestId("usage-tab")
+    expect(usage.textContent).toContain("任务 AI 消耗") // 卡三段升格进页签
+    const nodeRows = within(usage).getAllByTestId("usage-node-row")
+    expect(nodeRows).toHaveLength(2)
+    expect(nodeRows[0]!.textContent).toContain("dev")
+    expect(nodeRows[1]!.textContent).toContain("verify")
+    const doerRow = within(usage).getByTestId("usage-doer-row")
+    expect(doerRow.textContent).toContain("task-doer")
+    // 两账不混：doer 行独立成行，不并入任何节点行
+    expect(nodeRows.every((r) => !r.textContent!.includes("task-doer"))).toBe(true)
+    // 徽标 = 任务成本
+    expect((await screen.findByTestId("tab-badge-usage")).textContent).toContain("$")
+  })
+
+  it("无对话历史（doer_session_id 缺）→ 不显 doer 行，会话账根本不拉", async () => {
+    mockFetchLLMCalls.mockResolvedValue(execAgg())
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-usage"))
+    await screen.findByTestId("usage-tab")
+    expect(screen.queryByTestId("usage-doer-row")).toBeNull()
+    expect(mockFetchSessionLLMCalls).not.toHaveBeenCalled()
+  })
+})
+
+describe("票 11 — ▣ 产物：分组清单挂载 + 徽标件数", () => {
+  const manifestBody = {
+    groups: [
+      { key: "spec", label: "📄 需求与票面", items: [
+        { name: "spec.md", path: "home:.scratch/demo/spec.md", bytes: 2048, mtime: "2026-10-08T01:00:00.000Z" },
+        { name: "01-shell.md", path: "home:.scratch/demo/issues/01-shell.md", bytes: 512, mtime: "2026-10-08T01:00:00.000Z" },
+      ] },
+      { key: "report", label: "🧾 轮次报告", items: [
+        { name: "round-report-r1.md", path: "home:.scratch/demo/round-report-r1.md", bytes: 1024, mtime: "2026-10-08T01:00:00.000Z" },
+      ] },
+      { key: "evidence", label: "🔍 证据", items: [] },
+      { key: "ledger", label: "📒 验收台账", items: [] },
+      { key: "prototype", label: "💡 原型", items: [] },
+    ],
+  }
+
+  it("manifest 两组三件 → 徽标 3、组分列行带 预览/路径 按钮；空组不占列", async () => {
+    mockGetArtifactManifest.mockResolvedValue(manifestBody)
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    const artTab = await waitFor(() => {
+      const el = document.querySelector("[data-console-tab=artifacts]") as HTMLElement | null
+      if (!el || !el.textContent?.includes("3")) throw new Error("badge not fed")
+      return el
+    })
+    expect(artTab.getAttribute("data-testid")).toBe("console-tab-artifacts")
+    fireEvent.click(artTab)
+    const host = await screen.findByTestId("artifacts-tab")
+    expect(within(host).getAllByTestId("artifact-row")).toHaveLength(3)
+    expect(within(host).getAllByTestId("artifact-preview-btn")).toHaveLength(3)
+    expect(within(host).getAllByTestId("artifact-copy-btn")).toHaveLength(3)
+    // 空组不占列（缺文件降级为无形，不是空标题刷屏）
+    expect(within(host).queryByTestId("artifacts-group-evidence")).toBeNull()
+  })
+
+  it("manifest 读取失败 → 空组壳照常（不白屏，空态如实）", async () => {
+    mockGetArtifactManifest.mockRejectedValue(new Error("boom"))
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    fireEvent.click(await screen.findByTestId("console-tab-artifacts"))
+    const host = await screen.findByTestId("artifacts-tab")
+    expect(within(host).getByTestId("artifacts-empty")).toBeTruthy()
   })
 })

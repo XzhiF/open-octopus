@@ -327,6 +327,12 @@ export function filterEventsForNode(events: AgentEvent[], nodeId: string): Agent
   })
 }
 
+/** 单事件 → 展示行的公开出口（票 11：「▶ 日志」页签复用同一分类词表 ——
+ *  工具⚙/✗ · 编辑 · 成败✓/✗ · 警告 · ⚑ pink 干预，噪声 null 不占行）。 */
+export function eventLineFor(e: AgentEvent): NodeEventLine | null {
+  return lineForEvent(e)
+}
+
 export function buildEventLines(events: AgentEvent[], limit = 40): NodeEventLine[] {
   const lines = events.map(lineForEvent).filter((l): l is NodeEventLine => l !== null)
   return lines.slice(-limit)

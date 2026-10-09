@@ -16,7 +16,12 @@
 
 **Blocked by:** 01–10（已并入 feat-taskboard-modal-v2）
 
-**Status:** ready-for-agent
+**Status:** done
+
+> 落地备注（票11 实施）：产物端点原文路径 `GET /api/tasks/:id/artifacts` 已被票 06 产物索引
+> 占用（数组响应，ArtifactsCard 在用不可改形），分组清单落同子树新叶
+> `GET /api/tasks/:id/artifacts/manifest`（+ `.../manifest/content?path=home:…|ws:…` 预览读门），
+> additive 零破坏；其余按票面。
 
 - [ ] 待验收弹窗：走查内容区无「摘要+动作/验收进度」内列；右栏自上而下 = 通过/打回/■中止，中止走既有动作且确认后任务态正确
 - [ ] 日志页签不再出现「任务 AI 消耗」卡；渲染 agent_events 事件流且 ⚑ 干预行为粉色高亮行；执行中新事件 ≤10s 可见

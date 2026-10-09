@@ -610,6 +610,17 @@ export interface UsageWire {
   cacheCreationTokens: number
 }
 
+/** 票 11 ▤ 消耗页签「按会话/节点」明细：/api/executions/:id/llm-calls 的
+ *  additive 维度（无 nodeId 过滤时回传；与会话口径同用 shared llmUsageAggregates
+ *  单源公式，去重口径同全局）。 */
+export interface LlmNodeAggregatesWire {
+  nodeId: string
+  totalCalls: number
+  usage: UsageWire
+  totals: LedgerTotalsWire
+  modelBreakdown: LLMCallAggregates["modelBreakdown"]
+}
+
 export interface LLMCallAggregates {
   totalCalls: number
   /** 工具调用总数（agent_events 不同 tool_call_id 数）。 */
@@ -617,6 +628,8 @@ export interface LLMCallAggregates {
   usage: UsageWire
   totals: LedgerTotalsWire
   modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>
+  /** 票 11 additive：逐节点账本（首次出现序）。旧服务/过滤形 = undefined。 */
+  byNode?: LlmNodeAggregatesWire[]
 }
 
 // ============ Analytics ============

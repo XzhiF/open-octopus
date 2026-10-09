@@ -104,7 +104,7 @@ vi.mock("@/lib/sse-manager", () => ({
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-import { AcceptanceSurface } from "../acceptance-surface"
+import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance-surface"
 import { FoldProvider } from "../../fold-context"
 import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
@@ -1436,5 +1436,64 @@ describe("AcceptanceSurface — 票09 台账预览分列（放行前展示三本
     const cell = screen.getByTestId("ledger-preview-takeover")
     expect(cell.textContent).toContain("复检真结果为准")
     expect(cell.textContent).not.toContain("未跑")
+  })
+})
+
+
+// ═════════════ 票 11 · ⑩回补 —— 壳内走查渲染路径（railless）+ 中止确认口句柄 ═════════════
+// AC1：走查页签内容区不再嵌「摘要+动作/验收进度」内列；中止动作唯一入口上壳右栏，
+// 二次确认流仍是本面单源（壳经 AcceptanceActionApi.requestAbort 触发，确认后
+// 走既有 abortTask 端点 —— 不新增端点/状态）。独立挂载形态（缺省）零变化。
+describe("票 11 — railless：壳内渲染路径剔内列（独立形态不动）", () => {
+  it("railless=true：摘要/动作内列绝迹，主面（验货台）照常在场", async () => {
+    const detail = makeDetail(PHASE1_AWAITING)
+    render(
+      <AcceptanceSurface
+        task={detail as unknown as Task}
+        onMutated={() => {}}
+        detailOverride={detail}
+        onRefetch={() => {}}
+        railless
+      />,
+    )
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.queryByTestId("acceptance-col-summary")).toBeNull()
+    expect(screen.queryByTestId("acceptance-col-actions")).toBeNull()
+    expect(screen.queryByTestId("acceptance-abort")).toBeNull()
+    expect(screen.queryByText("动作区")).toBeNull()
+    expect(screen.getByTestId("acceptance-col-artifacts")).toBeTruthy()
+  })
+
+  it("独立挂载（不传 railless）：内列照旧（不回退铁律）", async () => {
+    renderModal()
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.getByTestId("acceptance-col-summary")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-col-actions")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-abort")).toBeTruthy()
+  })
+
+  it("AcceptanceActionApi 注册 requestAbort：句柄触发 = 既有危险二次确认，确认后才落 abortTask", async () => {
+    let api: AcceptanceActionApi | null = null
+    const detail = makeDetail(PHASE1_AWAITING)
+    mockAbortTask.mockResolvedValue({ id: "t1" })
+    render(
+      <AcceptanceSurface
+        task={detail as unknown as Task}
+        onMutated={() => {}}
+        detailOverride={detail}
+        onRefetch={() => {}}
+        railless
+        onActionApi={(a) => { api = a }}
+      />,
+    )
+    await waitFor(() => expect(api).not.toBeNull())
+    expect(typeof api!.requestAbort).toBe("function")
+    api!.requestAbort()
+    // 确认框亮出（标题含任务名），未确认前绝不落端点。
+    const dlg = await screen.findByText(/中止任务/)
+    expect(dlg).toBeTruthy()
+    expect(mockAbortTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }))
+    await waitFor(() => expect(mockAbortTask).toHaveBeenCalledWith("t1"))
   })
 })

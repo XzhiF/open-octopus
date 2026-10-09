@@ -5,12 +5,15 @@
 // 期望词表来自 spec.md Implementation Decisions（统一壳 · 页签装配表，源自原型
 // taskboard-v2.html 状态表）：
 //
-//   | 状态            | 页签                        | 默认   | 右栏                     |
-//   | running(flow)   | 变更·节点·控制台            | 变更   | Pipeline+LIVE+(⏸/■)     |
-//   | paused          | 同上                        | 保持   | (▶恢复/■)               |
-//   | takeover(08)    | 对话接管·变更·节点·日志      | 对话   | 进度+(确认交付/改派/■)   |
-//   | fixing(05/08)   | 变更·节点·控制台            | 节点   | 进度+产物列             |
-//   | awaiting_review | 对话·变更·走查·日志          | 对话   | 验收进度+(通过/打回)     |
+//   | 状态            | 页签                                        | 默认   | 右栏                     |
+//   | running(flow)   | 变更·节点·消耗·产物·控制台                     | 变更   | Pipeline+LIVE+(✋/⏸/■)  |
+//   | paused          | 同上                                        | 保持   | (▶恢复/■)               |
+//   | takeover(08)    | 对话接管·变更·节点·消耗·产物·日志            | 对话   | 进度+(确认交付/改派/■)   |
+//   | fixing(05/08)   | 变更·节点·追加指令·消耗·产物·控制台（保留dock）| 节点  | 进度+产物列             |
+//   | awaiting_review | 对话·变更·走查·消耗·产物·日志                 | 对话   | 验收进度+(通过/打回/中止) |
+//
+// 票11 ⑩回补：消耗/产物两列按原型定稿进装配表；待验收右栏补「■ 中止」
+// （复用既有任务级 abort 动作与二次确认，不新增状态/端点）。
 //
 // 本模块只回答「哪些页签/哪些动作、默认哪个、←/→ 怎么卷」——不碰 DOM、不碰数据，
 // TaskRunConsole 是唯一消费者。takeover/fixing 形态是 08/05 的预留接缝：状态由
@@ -18,8 +21,8 @@
 // 只剩「控制台」一页 —— 占位页签不压到旧任务头上（不回退铁律）。
 
 /** 页签 key —— 票间契约（03 挂 files、04 挂 nodes、06 走 console+注入、07 挂 chat、
- *  走查=既有 AcceptanceSurface）。 */
-export type ConsoleTabKey = "chat" | "files" | "nodes" | "review" | "console"
+ *  走查=既有 AcceptanceSurface；11 加 usage=▤ 消耗 / artifacts=▣ 产物）。 */
+export type ConsoleTabKey = "chat" | "files" | "nodes" | "review" | "usage" | "artifacts" | "console"
 
 /** 壳的派生态：effectiveStatusOf 的输出 + 06/08 预留的 takeover/fixing（由 mode 给出，
  *  TaskStatusSchema 不加新状态 —— 铁律）。paused 来自 derived.taskStatus。 */
@@ -47,20 +50,24 @@ export interface TabAssembly {
 export function assembleTabs(input: TabAssemblyInput): TabAssembly {
   const { status, mode = "flow", v4, startOnAcceptance } = input
   if (status === "awaiting_review") {
+    // 票11 ⑩回补终表（原型 renderModal）：对话·变更·走查·消耗·产物·日志。
     return {
-      keys: ["chat", "files", "review", "console"],
+      keys: ["chat", "files", "review", "usage", "artifacts", "console"],
       defaultKey: startOnAcceptance ? "review" : "chat",
     }
   }
   if (!v4) return { keys: ["console"], defaultKey: "console" }
-  if (mode === "takeover") return { keys: ["chat", "files", "nodes", "console"], defaultKey: "chat" }
+  if (mode === "takeover") return { keys: ["chat", "files", "nodes", "usage", "artifacts", "console"], defaultKey: "chat" }
   // 票 07（spec 故事27 / 票 AC4）：修复轮也装配对话页签 —— 语义是「追加指令」
   // （经 06 的暂停→注入通道生效），默认页仍是节点（自动推进直播，spec 表不动）。
-  if (mode === "fixing") return { keys: ["files", "nodes", "chat", "console"], defaultKey: "nodes" }
-  // 执行动线（running / paused / ready / archiving / 终态）：变更·节点·控制台。
+  // 票11：fixing 保留 dock（chat 原位），消耗/产物插在控制台之前。
+  if (mode === "fixing") return { keys: ["files", "nodes", "chat", "usage", "artifacts", "console"], defaultKey: "nodes" }
+  // 执行动线（running / paused）：变更·节点·消耗·产物·控制台（票11 终表）。
   // running 默认落「变更」（spec 表）；paused「保持」由调用方保留用户选择实现，
-  // 纯函数返回值仍取装配表的基准位；ready/终态默认控制台（发射门禁/战报动线不回退）。
-  if (status === "running") return { keys: ["files", "nodes", "console"], defaultKey: "files" }
+  // 纯函数返回值仍取装配表的基准位；ready/终态默认控制台（发射门禁/战报动线不回退，
+  // 且不在 ⑩ 回补表内 —— 页签集保持原样不加消耗/产物，改动面收敛）。
+  if (status === "running") return { keys: ["files", "nodes", "usage", "artifacts", "console"], defaultKey: "files" }
+  if (status === "paused") return { keys: ["files", "nodes", "usage", "artifacts", "console"], defaultKey: "console" }
   return { keys: ["files", "nodes", "console"], defaultKey: "console" }
 }
 
@@ -69,6 +76,8 @@ const TAB_LABELS: Record<ConsoleTabKey, string> = {
   files: "≡ 变更",
   nodes: "◆ 节点",
   review: "✓ 走查",
+  usage: "▤ 消耗",
+  artifacts: "▣ 产物",
   console: "▶ 控制台",
 }
 
@@ -164,9 +173,16 @@ export function assembleRailActions(input: RailActionsInput): RailActionId[] {
       acts.push("duplicate")
       return acts
     }
-    case "awaiting_review":
-      // 中止不进这里 —— 待验收的 abort 留在走查面（既有二次确认框），与改版前一致。
-      return ["accept", "reject", "duplicate"]
+    case "awaiting_review": {
+      // 票11 ⑩回补：「■ 中止」从走查内列挪进本栏（原型 railWait 通过→打回→中止）。
+      // 动作仍接既有实现 = AcceptanceActionApi.requestAbort（surface 的二次确认框
+      // 与 abortTask 端点单源），不新增端点、不新增状态。待验收期持久态仍 running
+      // （K3 派生不落库），canAbort 判据天然为真。
+      const acts: RailActionId[] = ["accept", "reject"]
+      if (canAbort) acts.push("abort")
+      acts.push("duplicate")
+      return acts
+    }
     case "archiving":
       return ["duplicate"]
     default: // done / failed / aborted —— 只读壳

@@ -103,6 +103,10 @@ export interface AcceptanceActionApi {
    *  draft（票 07）：对话页签「大改劝退 → ↩ 打回」送回的指令草稿 —— 给定时直接
    *  落进单 textarea（草稿即指令，✗ 票预填让位），服务端 augmentReject 仍权威追加未过项。 */
   openReject: (draft?: string) => void
+  /** 票11 ⑩回补 = 动作区「■ 中止」：开危险二次确认框（既有 ConfirmDialog 流），
+   *  确认后仍走本面 handleAbort → abortTask 端点 —— 壳右栏「中止」钮复用此口，
+   *  不新增端点、不新增状态、确认流单源。 */
+  requestAbort: () => void
   /** 通过是否被拦（✗ 未决硬闸 / 决策在飞）—— 外层按钮据此置灰。 */
   blocked: boolean
 }
@@ -119,8 +123,12 @@ export interface AcceptanceSurfaceProps {
   detailOverride?: TaskDetail | null
   /** 配套 detailOverride 的重拉钩子（409 恢复、spec-field 保存后走它）。 */
   onRefetch?: () => void
-  /** 票 02 统一壳：向宿主注册决策入口句柄（右栏底部 通过/打回 的接线柱）。 */
+  /** 票 02 统一壳：向宿主注册决策入口句柄（右栏底部 通过/打回/中止 的接线柱）。 */
   onActionApi?: (api: AcceptanceActionApi | null) => void
+  /** 票 11 ⑩回补：壳内「✓ 走查」页签渲染路径剔除自带右栏（「摘要+动作/验收进度」
+   *  内列）—— 决策/中止入口唯一化到壳右栏（经 onActionApi 句柄，行为单源）。
+   *  独立挂载（缺省 false）形态零变化。 */
+  railless?: boolean
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -128,7 +136,7 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi }: AcceptanceSurfaceProps) {
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
   const embedded = detailOverride !== undefined
   const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
@@ -768,15 +776,18 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
   // 票 02 统一壳：把决策入口注册给宿主（右栏底部 通过/打回 按钮）。只是句柄注册
   // ——台账预览/反馈弹窗/硬闸拦截/409 恢复全部仍是本面这套函数，行为单源。
+  // 票11 ⑩回补：requestAbort 一并注册（壳右栏「■ 中止」= 本面既有二次确认流，
+  // railless 时内列按钮撤场，确认框/落库路径不变）。
   useEffect(() => {
     if (!onActionApi) return
     onActionApi({
       requestAccept,
       openReject,
+      requestAbort,
       blocked: busy !== null || gate.fail > 0 || checksSaving,
     })
     return () => onActionApi(null)
-  }, [onActionApi, requestAccept, openReject, busy, gate.fail, checksSaving])
+  }, [onActionApi, requestAccept, openReject, requestAbort, busy, gate.fail, checksSaving])
 
   const handleAbort = useCallback(async () => {
     if (!task || busy) return
@@ -839,7 +850,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           摘要 + 动作合进同一个滚动壳 —— 内容装得下就零滚动条；DOM 序 右栏→主面，
           flex+order 还原视觉（主面左、右栏 360px）。max-lg 纵排 col-reverse（主面上）。 */}
       <div className="flex min-h-0 flex-1 max-lg:flex-col-reverse max-lg:overflow-y-auto">
-        {/* ── 右栏（A′，v2.1）：验收进度 + 决策（唯一入口）。token/cost 已迁出 ── */}
+        {/* ── 右栏（A′，v2.1）：验收进度 + 决策（唯一入口）。token/cost 已迁出。
+            票11 ⑩回补：壳内「走查」页签渲染路径 railless=true 整列撤场 ——
+            通过/打回/中止 由壳右栏经 onActionApi 句柄触发（行为单源不复制）。 ── */}
+        {!railless && (
         <div className="order-2 flex w-[240px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
         <div className="space-y-2 p-3 pb-2" data-acceptance-col-summary data-testid="acceptance-col-summary">
           <div className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">验收进度</div>
@@ -995,6 +1009,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               疑惑。ImpactApprovalList 组件与单测保留，API 落地当天在 rejectedSeam 下接回。 */}
         </div>
         </div>
+        )}
 
         {/* ── 主面：验货台（实物 | 核对）── */}
         <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col max-lg:order-none max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">

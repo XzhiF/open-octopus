@@ -126,7 +126,27 @@ test("流② 待验收 → 默认对话 → 真 task-doer 小改 → 变更页 �
   await expect(noteRow.locator(SEL.quickEditBadge())).toHaveCount(1, { timeout: 20_000 })
   await page.screenshot({ path: path.join(shotDir("flow2"), "flow2-quick-edit-badge.png") })
 
-  // 收尾对账：API 读面同意待验收仍在（快改不改决策态）
+  // ── 票11 ⑩回补（最小真机断言）：消耗/产物页签装配 · 日志页签无 AI 卡 · 右栏中止 ──
+  await expect(page.locator(SEL.tab("usage"))).toBeVisible()
+  await expect(page.locator(SEL.tab("artifacts"))).toBeVisible()
+  // ▤ 消耗：卡三段在场（AI 卡的家已从日志迁来这）
+  await clickTab(page, "usage")
+  await expect(page.getByText("任务 AI 消耗")).toBeVisible({ timeout: 20_000 })
+  // ▣ 产物：真实批次目录落盘 → 至少 spec.md 一行（分组清单现扫）
+  await clickTab(page, "artifacts")
+  await expect(page.locator(`[data-testid="artifacts-tab"] [data-testid="artifact-row"]`).first()).toBeVisible({ timeout: 20_000 })
+  // ▶ 日志：工作区事件流在场、「任务 AI 消耗」字样绝迹
+  await clickTab(page, "console")
+  await expect(page.locator(SEL.consoleRoot())).toContainText("工作区事件流")
+  await expect(page.locator(SEL.consoleRoot())).not.toContainText("任务 AI 消耗")
+  // 右栏 = 通过→打回→■中止；点开二次确认即 Esc 收掉（真中止会破坏末段对账，不点确认）
+  await expect(page.locator(`[data-rail-acts] [data-task-abort]`)).toBeVisible()
+  await page.locator(`[data-rail-acts] [data-task-abort]`).click()
+  await expect(page.getByRole("button", { name: "确认中止" })).toBeVisible({ timeout: 10_000 })
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("button", { name: "确认中止" })).toBeHidden({ timeout: 10_000 })
+
+  // 收尾对账：API 读面同意待验收仍在（快改不改决策态；中止仅开了确认没落端点）
   const derived1 = await tbv2Derived(taskId)
   expect(derived1.taskStatus).toBe("awaiting_review")
   log(`f2 ok: chat quick-edit ${headSha.slice(0, 8)} → 💬chat 行 + ×1 chip，真实 doer 会话 ${taskRow?.doer_session_id?.slice(0, 8)}`)

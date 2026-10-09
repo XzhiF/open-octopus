@@ -8,9 +8,9 @@ import {
 } from "../tab-assembly"
 
 describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () => {
-  it("running(flow)：变更·节点·控制台，默认 变更", () => {
+  it("running(flow)：变更·节点·消耗·产物·控制台，默认 变更（票11 装配终表）", () => {
     const { keys, defaultKey } = assembleTabs({ status: "running", v4: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "usage", "artifacts", "console"])
     expect(defaultKey).toBe("files")
   })
 
@@ -20,29 +20,30 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(paused.keys).toEqual(running.keys)
   })
 
-  it("awaiting_review：对话·变更·走查·日志，默认 对话", () => {
+  it("awaiting_review：对话·变更·走查·消耗·产物·日志，默认 对话（票11 装配终表）", () => {
     const { keys, defaultKey } = assembleTabs({ status: "awaiting_review", v4: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "review", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "review", "usage", "artifacts", "console"])
     expect(defaultKey).toBe("chat")
   })
 
   it("看板「验收」直开（startOnAcceptance）：同页签集，默认落 走查", () => {
     const { keys, defaultKey } = assembleTabs({ status: "awaiting_review", v4: true, startOnAcceptance: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "review", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "review", "usage", "artifacts", "console"])
     expect(defaultKey).toBe("review")
   })
 
-  it("takeover（08 预留形态）：对话接管·变更·节点·日志，默认 对话", () => {
+  it("takeover（08 预留形态）：对话接管·变更·节点·消耗·产物·日志，默认 对话", () => {
     const { keys, defaultKey } = assembleTabs({ status: "running", mode: "takeover", v4: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "nodes", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "files", "nodes", "usage", "artifacts", "console"])
     expect(defaultKey).toBe("chat")
   })
 
-  it("fixing（修复轮形态）：变更·节点·追加指令·控制台，默认 节点（自动推进直播）", () => {
+  it("fixing（修复轮形态）：变更·节点·追加指令·消耗·产物·控制台，默认 节点（自动推进直播）", () => {
     // 票 07 AC4：task-fix 进行中对话可用 —— 页签行按 spec 故事27 增补 chat
     //（形态语义=修复轮追加指令，经 06 的暂停→注入通道，非快改对话）。
+    // 票11：fixing 保留 dock（chat 页签原位），消耗/产物插在控制台之前。
     const { keys, defaultKey } = assembleTabs({ status: "running", mode: "fixing", v4: true })
-    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "chat", "console"])
+    expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "chat", "usage", "artifacts", "console"])
     expect(defaultKey).toBe("nodes")
   })
 
@@ -70,21 +71,29 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(tabLabel("console", { status: "running" })).toBe("▶ 控制台")
     expect(tabLabel("files", { status: "running" })).toBe("≡ 变更")
     expect(tabLabel("nodes", { status: "running" })).toBe("◆ 节点")
+    // 票11 ⑩回补：▤ 消耗 / ▣ 产物（原型 tabs 词表，全形态同字）
+    expect(tabLabel("usage", { status: "running" })).toBe("▤ 消耗")
+    expect(tabLabel("usage", { status: "awaiting_review" })).toBe("▤ 消耗")
+    expect(tabLabel("artifacts", { status: "running" })).toBe("▣ 产物")
+    expect(tabLabel("artifacts", { status: "awaiting_review" })).toBe("▣ 产物")
   })
 })
 
 describe("cycleTab — ←/→ 键盘切页", () => {
-  const keys: ConsoleTabKey[] = ["chat", "files", "review", "console"]
+  const keys: ConsoleTabKey[] = ["chat", "files", "review", "usage", "artifacts", "console"]
   it("→ 前进循环，末位回卷首位", () => {
     expect(cycleTab(keys, "console", 1)).toBe("chat")
-    expect(cycleTab(keys, "files", 1)).toBe("review")
+    expect(cycleTab(keys, "review", 1)).toBe("usage")
+    expect(cycleTab(keys, "usage", 1)).toBe("artifacts")
   })
   it("← 后退循环，首位回卷末位", () => {
     expect(cycleTab(keys, "chat", -1)).toBe("console")
     expect(cycleTab(keys, "review", -1)).toBe("files")
+    expect(cycleTab(keys, "usage", -1)).toBe("review")
+    expect(cycleTab(keys, "artifacts", -1)).toBe("usage")
   })
   it("当前页不在页签集（状态迁移后）→ 落默认装配位（首个）", () => {
-    expect(cycleTab(["files", "nodes", "console"], "review", 1)).toBe("files")
+    expect(cycleTab(["files", "nodes", "usage", "artifacts", "console"], "review", 1)).toBe("files")
   })
 })
 
@@ -104,8 +113,13 @@ describe("assembleRailActions — 右栏底部动作区按状态装配（spec �
       "ask-takeover", "abort", "duplicate",
     ])
   })
-  it("awaiting_review：✓ 通过 · ↩ 打回（动作仍接既有实现 = acceptance surface）", () => {
+  it("awaiting_review：✓ 通过 · ↩ 打回 · ■ 中止（票11 ⑩回补：中止归栏，动作仍接既有实现）", () => {
     expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: true, canReopen: false })).toEqual([
+      "accept", "reject", "abort", "duplicate",
+    ])
+  })
+  it("awaiting_review 但不可中止（异常态兜底）：不给 中止，其余照旧", () => {
+    expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: false, canReopen: false })).toEqual([
       "accept", "reject", "duplicate",
     ])
   })

@@ -6,15 +6,20 @@
 //
 //   ┌ 顶栏（票 02 瘦身，原型 .m-head）：标题 + 状态 pill + ⏱/成本/commits/P·R 元信息
 //   │   + ⛶/✕ —— 不再有动作按钮，红黄蓝「红绿灯」装饰删除（消除误点错觉）。
-//   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·控制台 /
-//   │     awaiting_review 对话·变更·走查·日志 …；←/→ 切页，输入聚焦不劫持）
-//   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted；控制台 = 原
-//   │     Phase/Report 面；变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
+//   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·消耗·产物·控制台 /
+//   │     awaiting_review 对话·变更·走查·消耗·产物·日志 …；←/→ 切页，输入聚焦不劫持）
+//   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted + railless（票11：
+//   │     「摘要+动作」内列撤场）；控制台/日志 = 工作区事件流（票11 归位：
+//   │     agent_events 时间正序 + ⚑ pink 行；「任务 AI 消耗」卡自此迁出）叠原
+//   │     Phase/Report 面；消耗 = TaskAiUsageCard 三段 + 按会话/节点明细（票11）；
+//   │     产物 = 分组清单 + 预览/复制（票11，manifest 端点）；
+//   │     变更 = 票 03 FilesTab（round-diff 单源节拍在本壳）；
 //   │     节点 = 票 04 NodesTab（只读清单+深链）；对话 = 票 07 TaskChatTab，
 //   │     三形态（快改/接管/修复轮追加指令）按 shellMode+派生态换语义）。
 //   ├ 右 rail（原型 .m-rail）：Phase 流水线（唯一状态位，票 11 钉点全保）
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
-//   │   全部接既有 handler，通过/打回接 AcceptanceSurface 决策入口，行为零回退）。
+//   │   全部接既有 handler，通过/打回/中止接 AcceptanceSurface 决策入口（票11
+//   │   中止归栏 = requestAbort 二次确认句柄），行为零回退）。
 //   └ footer 状态条（24px）：创建/工作区/v4·N phases + SSE 心跳
 //
 // 数据纪律：derived（票 03 唯一真相）只读不重算；运行账目 = executions[] +
@@ -32,9 +37,9 @@ import {
   TASK_STATUS_EVENT, TASK_VERIFY_EVENT,
   type Task,
 } from "@octopus/shared"
-import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, takeoverTask, deliverTakeover, postFixRound, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
+import { getTask, reopenTask, abortTask, cancelTaskTrigger, pauseTask, resumeTask, duplicateTask, takeoverTask, deliverTakeover, postFixRound, getArtifactManifest, type ArtifactManifestBody, type TaskDetail, type TaskExecutionBadge, type TaskPhaseView } from "@/lib/tasks-api"
 import { fetchAgentEvents } from "@/lib/api-client"
-import type { LLMCallAggregates } from "@/lib/types"
+import type { AgentEvent, LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatCost } from "@/lib/format"
@@ -44,7 +49,7 @@ import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/accep
 import { TriggerDialog } from "../trigger-dialog"
 import { useBatchTree } from "../authoring/use-batch-tree"
 import {
-  RUN_STATUS_LABEL, LIVE_STATUSES, mergeAggregates, useRunsAggregates, TaskAiUsageCard, execLabel,
+  RUN_STATUS_LABEL, LIVE_STATUSES, mergeAggregates, useRunsAggregates, execLabel,
 } from "../execution-summary"
 import { PhaseSurface, ReportSurface, type RunCtx, type StreamEvent } from "./phase-surface"
 import { FilesTab } from "../files-tab/files-tab"
@@ -68,6 +73,10 @@ import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
+import { WorkspaceEventStream } from "./workspace-event-stream"
+import { UsageTab } from "./usage-tab"
+import { ArtifactsTab } from "./artifacts-tab"
+import { manifestTotalCount } from "./artifacts-model"
 import { TaskChatTab, type QuickEditCommitInfo } from "./chat/chat-tab"
 import { chatFormFor, diffRowHit, isTakeoverDeliveredRound, type ChatEditsView } from "./chat/chat-model"
 import type { BranchChoice } from "./takeover"
@@ -289,6 +298,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const [signals, setSignals] = useState<SignalLine[]>([])
   // 票 06 · ⚑ 干预行（同一发 agent-events 拉取榨出 —— 事件流持久化即留痕真相）。
   const [interventionRows, setInterventionRows] = useState<InterventionRow[]>([])
+  // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events
+  // （与 ⚑ 行同一次拉取，票06 已把干预写入 agent_events —— 单拉榨两处）。
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([])
   // US16（票10 review-7）：⚑ 干预×N 的「当前节点」= 事件流尾部节点（引擎现在
   // 在往哪个节点吐事件），不是「最近一次干预打到的节点」。执行推进到没挨过
   // 干预的新节点 → 计数归 0（卡片按 >0 才挂 chip，即「0/不显示」）。
@@ -297,7 +309,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const targetWs = replayTarget?.workspace_id ?? null
   const targetLive = !!replayTarget && LIVE_STATUSES.has(replayTarget.status)
   useEffect(() => {
-    if (!targetId || !targetWs) return
+    if (!targetId || !targetWs) { setAgentEvents([]); return }
     let cancelled = false
     setLiveNodeId(null)
     const pull = () => {
@@ -306,6 +318,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           if (cancelled) return
           setSignals(buildSignals(res.events, Date.now(), { live: targetLive && isLive, loopIterations: res.loopIterations }))
           setInterventionRows(extractInterventions(res.events))
+          // 票11 日志归位：原始事件同批留存（live 轮 5s 跟随 —— ≤10s 新事件可见）。
+          setAgentEvents(res.events)
           const tail = res.events.length > 0 ? res.events[res.events.length - 1] : null
           setLiveNodeId(tail && tail.nodeId ? tail.nodeId : null)
         })
@@ -344,6 +358,22 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const tab: ConsoleTabKey = tabSel && tabs.keys.includes(tabSel) ? tabSel : tabs.defaultKey
   // 对话页签的形态（quick-edit/takeover/fixing）：与装配表同一判据源，tab=chat 在场时必非空。
   const chatForm = chatFormFor({ status: derivedStatus as ConsoleShellStatus, mode: shellMode })
+
+  // ── 票11 ▣ 产物清单（壳层单拉 —— 页签徽标件数与 ArtifactsTab 同吃一份，不各拉各的）。
+  // 刷新搭既有 diffSignal（artifacts/verify/task 事件都会 bump，落盘即现），零新通道。
+  const hasArtifactsTab = tabs.keys.includes("artifacts")
+  const [manifest, setManifest] = useState<ArtifactManifestBody | null>(null)
+  const [manifestLoading, setManifestLoading] = useState(false)
+  useEffect(() => {
+    if (!hasArtifactsTab) return
+    let cancelled = false
+    setManifestLoading(true)
+    getArtifactManifest(task.id)
+      .then((r) => { if (!cancelled) setManifest(r) })
+      .catch(() => { if (!cancelled) setManifest({ groups: [] }) })
+      .finally(() => { if (!cancelled) setManifestLoading(false) })
+    return () => { cancelled = true }
+  }, [task.id, hasArtifactsTab, diffSignal])
 
   // ←/→ 切页：输入焦点（input/textarea/select/编辑区）与弹层内不劫持光标。
   useEffect(() => {
@@ -695,6 +725,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 {k === "review" && awaitingPv && (
                   <span className="tabular-nums opacity-80">P{awaitingPv.index}·R{awaitingPv.awaitingRound}</span>
                 )}
+                {/* 票11 页签徽标：消耗=成本$（黄），产物=件数（原型 renderModal cnt）。 */}
+                {k === "usage" && totalAgg && totalAgg.totalCalls > 0 && (
+                  <span className="tabular-nums text-pop-yellow" data-testid="tab-badge-usage">{costText}</span>
+                )}
+                {k === "artifacts" && (manifest?.groups.length ?? 0) > 0 && (
+                  <span className="tabular-nums opacity-80" data-testid="tab-badge-artifacts">{manifestTotalCount(manifest ?? { groups: [] })}</span>
+                )}
               </button>
             ))}
             <FoldMasterChip className="ml-auto" />
@@ -706,7 +743,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             {acceptMounted && (
               <div className={`min-h-0 flex-1 bg-pop-paper ${tab !== "review" ? "hidden" : ""}`}>
                 {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入；
-                    onActionApi = 右栏底部 通过/打回 的接线柱（行为单源在 surface）。 */}
+                    onActionApi = 右栏底部 通过/打回/中止 的接线柱（行为单源在 surface）。
+                    railless（票11 ⑩回补）：走查页签不再嵌「摘要+动作/验收进度」内列。 */}
                 <AcceptanceSurface
                   task={task}
                   detailOverride={detail}
@@ -714,17 +752,17 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   onMutated={() => { onMutated(); refetch() }}
                   onDecided={() => setTabSel("console")}
                   onActionApi={setAcceptApi}
+                  railless
                 />
               </div>
             )}
             {tab === "console" && (
               <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
-                {view !== "report" && derived && runs.length > 0 && (
-                  <TaskAiUsageCard
-                    agg={totalAgg} loading={!aggLoaded} runCount={runs.length}
-                    rounds={runs.map((r) => ({ key: r.id, label: execLabel(r), agg: aggMap[r.id] ?? null }))}
-                  />
-                )}
+                {/* 票11 ⑩回补 · 日志归位：绑定执行的工作区事件流进页签（agent_events
+                    时间正序，工具/编辑/成败/警告分类行 + ⚑ 人工干预 pink 高亮行；
+                    live 轮 5s 轮询 ≤10s 追加）。原挂载于此的「任务 AI 消耗」卡迁出
+                    —— 账本去「▤ 消耗」页签（三段式 + 按会话/节点明细）。 */}
+                <WorkspaceEventStream events={agentEvents} live={targetLive && isLive} />
                 {view === "report" || !derived
                   ? <ReportSurface ctx={ctx} />
                   : (() => {
@@ -732,6 +770,23 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                     return pv ? <PhaseSurface ctx={ctx} pv={pv} /> : <ReportSurface ctx={ctx} />
                   })()}
                 <InterventionStream rows={interventionRows} />
+              </div>
+            )}
+            {tab === "usage" && (
+              // 票11 ▤ 消耗：既有卡三段（总计/按模型/分轮账本，K/M）升格挂载
+              // + 逐节点行 + task-doer 对话单独一行（无对话历史不显 —— usage-model 判据）。
+              <div className="min-h-0 flex-1 overflow-y-auto p-3.5" data-tab-host="usage">
+                <UsageTab
+                  agg={totalAgg} loading={!aggLoaded} runCount={runs.length}
+                  rounds={runs.map((r) => ({ key: r.id, label: execLabel(r), agg: aggMap[r.id] ?? null }))}
+                  doerSessionId={task.doer_session_id ?? null}
+                />
+              </div>
+            )}
+            {tab === "artifacts" && (
+              // 票11 ▣ 产物：分组清单（server manifest 端点）+ 预览对话框现读 + 复制路径。
+              <div className="min-h-0 flex-1 overflow-y-auto" data-tab-host="artifacts">
+                <ArtifactsTab taskId={task.id} body={manifest} loading={manifestLoading && !manifest} />
               </div>
             )}
             {tab === "files" && (
@@ -827,7 +882,14 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                   reopen: handleReopen,
                   pause: () => { void handlePause() },
                   resume: () => setInjectOpen(true), // 票 06：只开注入弹框，放行在框里
-                  abort: handleAbort,
+                  abort: () => {
+                    // 票11 中止归栏：待验收的「■ 中止」= 走查面既有二次确认流
+                    // （railless 撤了内列按钮，句柄仍在 —— 行为单源，确认后
+                    // handleAbort → abortTask 端点，任务态由服务端定）。
+                    // 其余形态保持壳直落（与改版前一致）。
+                    if (derivedStatus === "awaiting_review" && acceptApi?.requestAbort) acceptApi.requestAbort()
+                    else void handleAbort()
+                  },
                   duplicate: handleDuplicate,
                   askTakeover: () => { setBranchChoice("inject"); setBranchOpen(true) },
                   deliverTakeover: handleDeliverTakeover,
