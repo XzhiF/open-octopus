@@ -16,12 +16,7 @@
 
 **Blocked by:** 01–10（已并入 feat-taskboard-modal-v2）
 
-**Status:** done
-
-> 落地备注（票11 实施）：产物端点原文路径 `GET /api/tasks/:id/artifacts` 已被票 06 产物索引
-> 占用（数组响应，ArtifactsCard 在用不可改形），分组清单落同子树新叶
-> `GET /api/tasks/:id/artifacts/manifest`（+ `.../manifest/content?path=home:…|ws:…` 预览读门），
-> additive 零破坏；其余按票面。
+**Status:** ready-for-agent
 
 - [ ] 待验收弹窗：走查内容区无「摘要+动作/验收进度」内列；右栏自上而下 = 通过/打回/■中止，中止走既有动作且确认后任务态正确
 - [ ] 日志页签不再出现「任务 AI 消耗」卡；渲染 agent_events 事件流且 ⚑ 干预行为粉色高亮行；执行中新事件 ≤10s 可见
@@ -30,5 +25,7 @@
 - [ ] tab-assembly：三形态页签组合与循环顺序按上表；徽标计数（产物×N、成本$）正确；默认页签回归不变（待验收=对话、running=变更、fixing=节点）
 - [ ] web 单测：装配表/消耗明细模型聚合/事件流映射/产物模型 各锁行为；e2e 在既有 flow spec 补最小断言（待验收有消耗/产物页签 + 日志页签无「任务 AI 消耗」字样），起不了真机环境则标注未跑
 - [ ] 基线不放大：server 既有 44 fail / web 6 / shared 1 不变；engine 零改动；buildPathGuard 零放宽
+
+> **终裁补记（2026-10-09 真机验收中）**：日志页签内旧 Phase/Report 叠面（发射门禁/R1 交付报告/轮次账本/盘上文件/大事报）用户裁决「这些不需要了」——整体撤场不另找落点，页签=纯事件流；双轴 review 七项已收口（373c8aac），叠面撤场为收口后追加票内动作。
 
 > Tracker: `.scratch/taskboard-modal-v2/`（本地文件票）
