@@ -76,6 +76,8 @@ git worktree add .worktrees/feat-xxx octopus-feat-xxx
 cd .worktrees/feat-xxx && pnpm install && pnpm build && pnpm dev
 ```
 
+worktree 里跑测试同样先 `pnpm build`。Git Bash 陷阱（ref 冒号转路径 / cwd 漂移 / 杀不净的孤儿进程）见 [docs/agents/windows-bash.md](./docs/agents/windows-bash.md)。
+
 ## CLI 常用命令
 
 ```bash
