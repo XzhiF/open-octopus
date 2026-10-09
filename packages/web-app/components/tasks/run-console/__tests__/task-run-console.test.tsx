@@ -1595,6 +1595,41 @@ describe("票 11 — ▣ 产物：分组清单挂载 + 徽标件数", () => {
     expect(within(host).getByTestId("artifacts-empty")).toBeTruthy()
   })
 
+  it("票11 刀A：首拉成功后 refetch 失败 → 保留已加载清单（失败≠假空覆盖）", async () => {
+    // 默认全败（模拟浏览器层 net::ERR_FAILED 常态化抖动），只许首拉成功 ——
+    // 挂载期若有额外重拉也走失败路，正好一并验证「失败不覆盖」。
+    mockGetArtifactManifest.mockReset()
+    mockGetArtifactManifest.mockRejectedValue(new Error("net::ERR_FAILED"))
+    mockGetArtifactManifest.mockResolvedValueOnce(manifestBody)
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([pv(1, "票11阶段1", "running")]),
+    })
+    // 首拉落盘：徽标 3 + 页签内三行在场。
+    const artTab = await waitFor(() => {
+      const el = document.querySelector("[data-console-tab=artifacts]") as HTMLElement | null
+      if (!el || !el.textContent?.includes("3")) throw new Error("badge not fed")
+      return el
+    })
+    fireEvent.click(artTab)
+    const host = await screen.findByTestId("artifacts-tab")
+    expect(within(host).getAllByTestId("artifact-row")).toHaveLength(3)
+    // diffSignal 翻转（既有 task_artifacts_update SSE 一发）→ 追加 refetch，必败。
+    const sub = await waitFor(() => {
+      const s = sseSubs.find((x) => x.url.includes("/api/tasks/events") && x.type === "task_artifacts_update")
+      if (!s) throw new Error("no task_artifacts_update subscription")
+      return s
+    })
+    act(() => { sub.fn({ data: JSON.stringify({ task_id: t.id }) } as unknown as MessageEvent) })
+    await waitFor(() => expect(mockGetArtifactManifest.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // 失败不得写空覆盖：行仍 3、空态不挂、徽标件数不塌。
+    expect(within(screen.getByTestId("artifacts-tab")).getAllByTestId("artifact-row")).toHaveLength(3)
+    expect(screen.queryByTestId("artifacts-empty")).toBeNull()
+    expect(document.querySelector("[data-testid='tab-badge-artifacts']")?.textContent).toContain("3")
+  })
+
   it("零产物不挂徽标（收口⑥：server 空降级恒返五组，groups.length 判据会谎挂「0」）", async () => {
     // 生产形 = tasks-artifact-manifest.test 钉住的空降级：五组齐、items 全空。
     mockGetArtifactManifest.mockResolvedValue({

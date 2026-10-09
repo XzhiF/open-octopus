@@ -391,7 +391,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     setManifestLoading(true)
     getArtifactManifest(task.id)
       .then((r) => { if (!cancelled) setManifest(r) })
-      .catch(() => { if (!cancelled) setManifest({ groups: [] }) })
+      // 票11 刀A（流②真机回归）：refetch 失败（浏览器层网络/代理抖动，请求未必到 server）
+      // 不得伪造「暂无可列产物」覆盖已加载数据 —— 保留旧值；仅从未成功过（旧值为 null）
+      // 才落空态，此时错误与真空对用户同形。不加重试（票11 追加口径）。
+      .catch(() => { if (!cancelled) setManifest((prev) => prev ?? { groups: [] }) })
       .finally(() => { if (!cancelled) setManifestLoading(false) })
     return () => { cancelled = true }
   }, [task.id, hasArtifactsTab, diffSignal])
