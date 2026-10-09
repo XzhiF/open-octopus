@@ -342,6 +342,38 @@ export function createTasksRoutes(
     }
   })
 
+  // ── 票 11 ▣ 产物分组清单（⑩真机回补 — 唯一新增薄 seam）────────────────
+  // GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/报告/证据/台账/原型）。
+  // 票面原文路径 /artifacts 已被票 06 产物索引占用（数组响应不可改形），分组
+  // 清单落同子树新叶；缺目录 = 空组降级 200，任务缺 = 404。
+  // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读。`..` 遍历
+  // 段 = 输入缺陷 → 400；绝对/未知前缀/白名单区外/逃逸 = 403；缺文件 404；
+  // 超读取上限 413（ArtifactAccessError 分类与 home-file 门同款）。
+  router.get("/:id/artifacts/manifest", (c) => {
+    try {
+      return c.json(service.artifactManifest(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/artifacts/manifest/content", (c) => {
+    const ref = c.req.query("path")
+    if (!ref || !ref.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    if (/(^|[\\/:])\.\.($|[\\/])/.test(ref)) {
+      return c.json({ error: `path must not traverse outside: ${ref}` }, 400)
+    }
+    try {
+      return c.json(service.readArtifactManifestFile(c.req.param("id"), ref))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── Context file (workspace state visible to agent) ──────────────────
   // GET /:id/context — read the task's context.md + manifest.json + filesystem
   // paths. The dynamic workspace state file the agent reads when notified via

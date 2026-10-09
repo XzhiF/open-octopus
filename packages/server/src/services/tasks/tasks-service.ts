@@ -86,7 +86,7 @@ import { getExecutionService } from "../execution-service-registry"
 // taskboard-modal-v2 票08: 接管交付的现场快照 —— 逐仓 HEAD 进 end_commit_id（与
 // task-doer 快改 commit 同一个 git-ops 门）。
 import { gitOps } from "../git-ops"
-import { TaskHomeService } from "./task-home-service"
+import { TaskHomeService, ArtifactAccessError, MAX_HOME_FILE_READ_BYTES } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
@@ -500,6 +500,121 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 
 // ── Service ──────────────────────────────────────────────────────────
 
+// ── 票 11 ▣ 产物页签（artifacts manifest — 只读薄 seam 的磁盘直扫）──────────
+//
+// 分组清单单一真相 = 磁盘（票面五组：需求票面 spec/issues、轮次报告 report、
+// 证据 evidence、验收台账 acceptance-ledger、原型 prototype）。引用串带前缀
+// 门牌：`home:<.scratch/…>` = 任务 home 批次区（读门复用 home-file 白名单同款
+// 守卫），`ws:<仓内相对>` = 任务最近一次绑定执行的工作区根。缺文件/缺目录 =
+// 该组空数组（降级不是错误）；一切越界形状（绝对、盘符、`..`、逃逸 resolve）
+// 在读门 403，`..` 输入缺陷在路由 400。
+
+export interface ArtifactManifestItem {
+  name: string
+  /** 带门牌前缀的引用：`home:` / `ws:` 开头，content 端点原样回显。 */
+  path: string
+  bytes: number
+  mtime: string
+}
+
+export interface ArtifactManifestGroup {
+  key: "spec" | "report" | "evidence" | "ledger" | "prototype"
+  label: string
+  items: ArtifactManifestItem[]
+}
+
+const MANIFEST_SCRATCH_PREFIX = ".scratch"
+
+/** 递归收常规文件（跳 dotfile/符号链接/其它 fs 类型），深度与总量封顶。
+ *  `relFromRoot` 已含根名（如 ".scratch/x.md" / "public/prototype/y.html"），
+ *  posix 分隔，UI 复制路径与 content 引用直接可用。 */
+function collectManifestFiles(
+  rootAbs: string,
+  relPrefix: string,
+  cap: { left: number },
+  depth = 0,
+): Array<{ rel: string; name: string; bytes: number; mtime: string }> {
+  const out: Array<{ rel: string; name: string; bytes: number; mtime: string }> = []
+  if (depth > 6 || cap.left <= 0) return out
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(rootAbs, { withFileTypes: true })
+  } catch {
+    return out // 目录不存在 = 空扫描（降级，不抛）
+  }
+  for (const ent of entries) {
+    if (cap.left <= 0) break
+    if (ent.name.startsWith(".")) continue // dotfile 噪声（.DS_Store、编辑器 swap）
+    const abs = path.join(rootAbs, ent.name)
+    const rel = `${relPrefix}/${ent.name}`
+    if (ent.isSymbolicLink()) continue // 符号链接不进清单（逃逸面）
+    if (ent.isDirectory()) {
+      out.push(...collectManifestFiles(abs, rel, cap, depth + 1))
+      continue
+    }
+    if (!ent.isFile()) continue
+    let st: fs.Stats
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      continue
+    }
+    cap.left -= 1
+    out.push({ rel, name: ent.name, bytes: st.size, mtime: st.mtime.toISOString() })
+  }
+  return out
+}
+
+/** 票面五组的归类判据（词形取自运行事实：round-report-rN/fix-report-rN、
+ *  acceptance-ledger-rN（round-evidence 写入侧字面）、issues/ 子目录 = 票面）。 */
+function classifyScratchFile(rel: string, name: string): "spec" | "report" | "evidence" | "ledger" {
+  const lower = name.toLowerCase()
+  if (/^acceptance-ledger.*\.md$/.test(lower)) return "ledger"
+  if (/^spec(-.+)?\.md$/.test(lower)) return "spec"
+  if (rel.includes("/issues/") && lower.endsWith(".md")) return "spec"
+  if (/^(round-report|round.*report|fix-report).*\.md$/.test(lower)) return "report"
+  return "evidence"
+}
+
+/** 工作区里的原型目录候选：根 public/prototype、根 prototype、逐仓
+ *  packages/<repo>/public/prototype（多仓形态）。 */
+function manifestPrototypeRoots(wsRoot: string): string[] {
+  const roots = [
+    path.join(wsRoot, "public", "prototype"),
+    path.join(wsRoot, "prototype"),
+  ]
+  try {
+    for (const ent of fs.readdirSync(path.join(wsRoot, "packages"), { withFileTypes: true })) {
+      if (ent.isDirectory() && !ent.name.startsWith(".")) {
+        roots.push(path.join(wsRoot, "packages", ent.name, "public", "prototype"))
+      }
+    }
+  } catch {
+    /* 无 packages 层 = 单仓形态，候选已够 */
+  }
+  return roots
+}
+
+/** TaskHomeService.homePath + 路径守卫共用惯例：解析 root 内安全绝对路径，
+ *  任何越界形状抛 ArtifactAccessError(FORBIDDEN)。 */
+function manifestSafeResolve(rootAbs: string, relRaw: string, what: string): string {
+  if (relRaw.includes("\0")) {
+    throw new ArtifactAccessError(`${what} path must not contain null bytes`, "FORBIDDEN")
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(relRaw) || relRaw.startsWith("/") || relRaw.startsWith("\\")) {
+    throw new ArtifactAccessError(`${what} absolute paths are not served: ${relRaw}`, "FORBIDDEN")
+  }
+  if (relRaw.split(/[\\/]/).some((seg) => seg === "..")) {
+    throw new ArtifactAccessError(`${what} path must not traverse outside: ${relRaw}`, "FORBIDDEN")
+  }
+  const resolved = path.resolve(rootAbs, relRaw)
+  const rel = path.relative(rootAbs, resolved)
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new ArtifactAccessError(`${what} path escapes the served root: ${relRaw}`, "FORBIDDEN")
+  }
+  return resolved
+}
+
 export class TasksService {
   /** ticket 08: the shared handle (the archiver is built lazily against it —
    *  same DAO-per-handle pattern as the constructor below). */
@@ -878,6 +993,118 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readArtifactContent(taskId, requestedPath)
+  }
+
+  /** GET /api/tasks/:id/artifacts/manifest — 票 11 ▣ 产物分组清单（只读薄 seam）。
+   *  票面原文路径 `GET /:id/artifacts` 已被票 06 产物索引占用（响应
+   *  = ArtifactIndexEntry[]，web ArtifactsCard 在用，形状不可破），分组清单落
+   *  同子树新叶 `/artifacts/manifest` —— additive，零既有契约改动。
+   *  任务不存在 → 404 先于任何 fs 动作；`.scratch` 缺失 / 无绑定工作区 = 对应
+   *  组空数组（AC4 优雅降级）。 */
+  artifactManifest(taskId: string): { groups: ArtifactManifestGroup[] } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const buckets: Record<"spec" | "report" | "evidence" | "ledger", ArtifactManifestItem[]> = {
+      spec: [], report: [], evidence: [], ledger: [],
+    }
+    const scratchAbs = path.join(this.taskHomeService.homePath(taskId), MANIFEST_SCRATCH_PREFIX)
+    for (const f of collectManifestFiles(scratchAbs, MANIFEST_SCRATCH_PREFIX, { left: 400 })) {
+      buckets[classifyScratchFile(f.rel, f.name)].push({ name: f.name, path: `home:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+    }
+    for (const list of Object.values(buckets)) list.sort((a, b) => a.path.localeCompare(b.path))
+
+    const prototype: ArtifactManifestItem[] = []
+    const wsRoot = this.manifestWorkspaceRoot(taskId)
+    if (wsRoot) {
+      const cap = { left: 200 }
+      const seen = new Set<string>()
+      for (const dir of manifestPrototypeRoots(wsRoot)) {
+        for (const f of collectManifestFiles(dir, path.relative(wsRoot, dir).split(path.sep).join("/"), cap)) {
+          if (seen.has(f.rel)) continue
+          seen.add(f.rel)
+          prototype.push({ name: f.name, path: `ws:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+        }
+      }
+      prototype.sort((a, b) => a.path.localeCompare(b.path))
+    }
+
+    return {
+      groups: [
+        { key: "spec", label: "📄 需求与票面", items: buckets.spec },
+        { key: "report", label: "🧾 轮次报告", items: buckets.report },
+        { key: "evidence", label: "🔍 证据", items: buckets.evidence },
+        { key: "ledger", label: "📒 验收台账", items: buckets.ledger },
+        { key: "prototype", label: "💡 原型", items: prototype },
+      ],
+    }
+  }
+
+  /** 原型组的扫描根 = 任务最近一次绑定执行的工作区目录。任何一环缺
+   *  （无执行 / workspaceService 未装配 / 目录已清理）→ null → 原型组空。 */
+  private manifestWorkspaceRoot(taskId: string): string | null {
+    if (!this.workspaceService) return null
+    const execRow = this.db
+      .prepare("SELECT workspace_id FROM executions WHERE task_id = ? AND workspace_id IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+      .get(taskId) as { workspace_id: string } | undefined
+    if (!execRow?.workspace_id) return null
+    const ws = this.workspaceService.getById(execRow.workspace_id)
+    if (!ws?.path || !fs.existsSync(ws.path)) return null
+    return ws.path
+  }
+
+  /** GET /:id/artifacts/manifest/content?path=home:… | ws:… — 预览最小实现
+   *  （对话框现读文本）。`..` 段在路由层已 400（输入缺陷）；这里再钉一层
+   *  段级检查 + resolve 逃逸检查（双保险），home: 限 `.scratch/**` 白名单区
+   *  （与 home-file 门同形），ws: 限工作区根内。缺文件 404，超
+   *  MAX_HOME_FILE_READ_BYTES 413 —— ArtifactAccessError 分类惯例照旧。 */
+  readArtifactManifestFile(
+    taskId: string,
+    ref: string,
+  ): { path: string; content: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const sep = ref.indexOf(":")
+    const kind = sep < 0 ? "" : ref.slice(0, sep)
+    const relRaw = sep < 0 ? "" : ref.slice(sep + 1)
+    if (kind !== "home" && kind !== "ws") {
+      throw new ArtifactAccessError(`unknown artifact-manifest reference kind: ${ref}`, "FORBIDDEN")
+    }
+    if (!relRaw.trim()) {
+      throw new ArtifactAccessError(`empty manifest path reference: ${ref}`, "FORBIDDEN")
+    }
+    let abs: string
+    if (kind === "home") {
+      abs = manifestSafeResolve(this.taskHomeService.homePath(taskId), relRaw, "home")
+      const posix = path.relative(this.taskHomeService.homePath(taskId), abs).split(path.sep).join("/")
+      if (posix !== MANIFEST_SCRATCH_PREFIX && !posix.startsWith(`${MANIFEST_SCRATCH_PREFIX}/`)) {
+        throw new ArtifactAccessError(
+          `path not whitelisted: ${relRaw} (only ${MANIFEST_SCRATCH_PREFIX}/** is served here)`,
+          "FORBIDDEN",
+        )
+      }
+    } else {
+      const wsRoot = this.manifestWorkspaceRoot(taskId)
+      if (!wsRoot) {
+        throw new ArtifactAccessError("task has no bound workspace with a live directory for ws: references", "FORBIDDEN")
+      }
+      abs = manifestSafeResolve(wsRoot, relRaw, "workspace")
+    }
+    let st: fs.Stats
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      throw new ArtifactAccessError(`manifest file not found: ${ref}`, "NOT_FOUND")
+    }
+    if (!st.isFile()) {
+      throw new ArtifactAccessError(`manifest path is not a regular file: ${ref}`, "NOT_FOUND")
+    }
+    if (st.size > MAX_HOME_FILE_READ_BYTES) {
+      throw new ArtifactAccessError(
+        `manifest file too large to read: ${ref} (${st.size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    return { path: ref, content: fs.readFileSync(abs, "utf-8") }
   }
 
   /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面) +
