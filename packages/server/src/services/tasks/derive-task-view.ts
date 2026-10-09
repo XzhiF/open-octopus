@@ -69,11 +69,15 @@ export type DerivedTaskStatus =
 
 /** Per-phase display status (timeline rows, 票 11). 'pending' covers both
  *  "never started" and "only rejected rounds so far, next round not dispatched
- *  yet" — the latter is a transient window inside the 票 07 request. */
+ *  yet" — the latter is a transient window inside the 票 07 request.
+ *  'takeover' (票08/ADR-0025): 绑定流被人工停流、接管件尚未交付 —— 末轮已是
+ *  终态但 Gate 不放行（人还在一步一交）。交付事件（takeover_delivered_at）落
+ *  下后走回 'awaiting_review'；不加新持久 TaskStatus，K3 派生不落库。 */
 export type DerivedPhaseStatus =
   | "pending"
   | "running"
   | "paused"
+  | "takeover"
   | "awaiting_review"
   | "accepted"
 
@@ -98,10 +102,19 @@ export type DeriveTaskInput = Pick<TaskRow, "id" | "status" | "task_spec">
 /** Only these ExecutionRow columns feed the derivation. `workflow_ref` rides
  *  along for the round view's ACTUALLY-RUN display (ADR-0018 打回路由: a fix
  *  round executes task-fix while the phase stays bound to its dev flow — the
- *  timeline must show what really ran, not the frozen binding). */
+ *  timeline must show what really ran, not the frozen binding).
+ *  `takeover_at` / `takeover_delivered_at` ride along for 票08: a stopped round
+ *  is 接管中 until the delivery event lands (derive branch 「停流未交付 ≠ 待验收」). */
 export type DeriveExecutionInput = Pick<
   ExecutionRow,
-  "id" | "status" | "workflow_ref" | "phase_index" | "round_index" | "created_at"
+  | "id"
+  | "status"
+  | "workflow_ref"
+  | "phase_index"
+  | "round_index"
+  | "created_at"
+  | "takeover_at"
+  | "takeover_delivered_at"
 >
 /** Only these ledger columns feed the derivation. */
 export type DeriveAcceptanceInput = Pick<
@@ -295,7 +308,14 @@ function buildPhaseView(
     status = "paused"
   } else if (rounds.length > 0 && rounds[rounds.length - 1].decision === null) {
     // 最新轮到达终态 (成/败/取消) 且无验收记录 → 待验收.
-    status = "awaiting_review"
+    // 票08 (ADR-0025) 补一支: 这一轮若是【被人工停流且尚未交付】的接管件, Gate
+    // 不放行 —— 人还在「一步一交」, 交付事件 (takeover_delivered_at) 才是钥匙。
+    // 不加新持久 TaskStatus (铁律), 这是派生显示态; 交付后原样落回 awaiting_review。
+    const last = rounds[rounds.length - 1]
+    status =
+      last.exec.takeover_at != null && last.exec.takeover_delivered_at == null
+        ? "takeover"
+        : "awaiting_review"
   } else {
     // 未开跑, 或最新轮已被 rejected 而新 round 尚未落行 (票 07 同请求内瞬态).
     status = "pending"
@@ -357,6 +377,9 @@ export function deriveTaskView(
   // declares must not be able to hold the whole task hostage. 'running' keeps the global
   // scan to preserve 票 03's existing orphan behaviour.
   const anyPaused = phaseViews.some((p) => p.status === "paused")
+  // 票08：接管进行中 = 「人还在现场推进这一轮」。它压过「等你放行/归档」但绝不被
+  // anyRunning 误计（停掉的 exec 是终态，跑的是人）—— AC1 任务态 running(takeover)。
+  const anyTakeover = phaseViews.some((p) => p.status === "takeover")
 
   const last = phaseViews.length > 0 ? phaseViews[phaseViews.length - 1] : null
   let taskStatus: DerivedTaskStatus
@@ -366,6 +389,8 @@ export function deriveTaskView(
     taskStatus = "done" // 归档器 (票 08) 是 done 的唯一写者
   } else if (anyRunning) {
     taskStatus = "running" // 有东西真在跑就别说自己停了
+  } else if (anyTakeover) {
+    taskStatus = "running" // 人工接管中：机器轮已停,人的对话还在跑 (票08 ADR-0025)
   } else if (anyPaused) {
     // 踩刹车压过「等你放行」与「归档编排中」—— 这两个都是可以继续推进的状态,
     // 让它们赢会让卡片停在待验收列、验收按钮照旧亮着, 与「暂停期间不可验收」冲突.

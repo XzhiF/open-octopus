@@ -13,6 +13,22 @@ const GIT_MAX_BUFFER = 1024 * 1024
 export const GIT_DIFF_MAX_BUFFER = 16 * 1024 * 1024
 export const GIT_PATCH_CHAR_CAP = 512_000
 
+/**
+ * 票01/票09 提交标记单源（taskboard-modal-v2, ADR-0025）—— 快改留痕的 subject
+ * 前缀词。写侧 task-doer-service（对话回合落 commit）与读侧 {@link
+ * GitOps.quickEditCommits}（台账「快速修改」列统计）共用这两枚：
+ *   - QUICK_EDIT_MARKER   = 待验收/ready 的快速修改轮（票01 契约字符串，逐字
+ *     不变 —— 票10 E2E 在飞断言认它）。
+ *   - TAKEOVER_EDIT_MARKER = 人工接管回合（executions.takeover_at 已停未交付）
+ *     的编辑。接管留痕的台账权威是 executions.takeover_*（票08/票09 三本账
+ *     三源不互抄），若接管件也盖 [quick-edit] 就会被「快速修改」列双计 ——
+ *     所以接管回合换盖这枚，快改列的默认前缀天然把它挡在外面。
+ */
+export const QUICK_EDIT_MARKER = "[quick-edit]"
+export const TAKEOVER_EDIT_MARKER = "[takeover-edit]"
+/** commit subject 前缀 = 标记 + 空格（读侧默认判据）。 */
+export const QUICK_EDIT_SUBJECT_PREFIX = `${QUICK_EDIT_MARKER} `
+
 function gitError(projectPath: string, args: string[], cause: unknown): Error {
   const message = cause instanceof Error ? cause.message : String(cause)
   return new Error(
@@ -357,6 +373,49 @@ export class GitOps {
       return { patch: stdout.slice(0, GIT_PATCH_CHAR_CAP), truncated: true }
     }
     return { patch: stdout, truncated: false }
+  }
+
+  /** commits in (from..to] whose subject starts with `prefix` (default the
+   *  quick-edit marker 「[quick-edit] 」, 票01 契约), newest-first within the
+   *  range, each with its touched files. 票09 台账「快速修改」列的权威统计源 ——
+   *  读的是提交标记本身（subject/trailer），与前端会话尾帧计数不互抄。
+   *
+   *  单趟 `git log --name-only`：record = `%x1e`(记录界) + `%H`(field1) + `%s`
+   *  (field2，单行 subject，控制字符安全)。record 之后的非空行即该提交的文件；
+   *  git 在 header 与文件名之间、提交与提交之间都插空行，解析时按空行分块。
+   *  坏仓/不可达 SHA → runGit 抛 → 这里吞成 []（best-effort，台账绝不因一次
+   *  git 抖动 500，与实物区间 statRepo 的诚实降级同律）。 */
+  async quickEditCommits(
+    projectPath: string,
+    from: string,
+    to: string,
+    prefix = QUICK_EDIT_SUBJECT_PREFIX,
+  ): Promise<Array<{ sha: string; subject: string; files: string[] }>> {
+    if (!from || !to || from === to) return []
+    let stdout: string
+    try {
+      const r = await runGit(
+        projectPath,
+        ["log", "--no-merges", "--name-only", "--format=%x1e%H\x1f%s", `${from}..${to}`],
+        GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+      )
+      stdout = r.stdout
+    } catch {
+      return []
+    }
+    const out: Array<{ sha: string; subject: string; files: string[] }> = []
+    for (const chunk of stdout.split("\x1e")) {
+      const lines = chunk.split("\n")
+      const header = lines.shift() // 记录首行 "<sha>\x1f<subject>"（首块 split 后为 "" → 跳过）
+      if (!header || !header.includes("\x1f")) continue
+      const sep = header.indexOf("\x1f")
+      const sha = header.slice(0, sep)
+      const subject = header.slice(sep + 1)
+      if (!subject.startsWith(prefix)) continue
+      const files = lines.map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0)
+      out.push({ sha, subject, files })
+    }
+    return out
   }
 }
 

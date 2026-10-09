@@ -22,7 +22,7 @@ import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
-import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef } from "@octopus/shared"
+import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef, LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
@@ -728,7 +728,9 @@ export class ExecutionLifecycle {
   async cancel(id: string): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (!["running", "paused", "pending_approval", "pending_interaction", "pending_resume"].includes(exec.status))
+    // 接受集单源 shared LIVE_ROUND_STATUSES（停在审批/交互节点的轮引擎还活着，
+    // 人停得动；'pending' 排队行不在列 —— 票10 review-2 与任务侧闸同一词表）。
+    if (!LIVE_ROUND_STATUSES.includes(exec.status))
       throw Object.assign(new Error("Cannot cancel in current status"), { status: 400 })
 
     const now = new Date().toISOString()
@@ -1362,6 +1364,37 @@ export class ExecutionLifecycle {
     const nodeId = pausedNode.node_id
     const signal = inst.abortController.signal
     const workflowRef = exec.workflow_ref
+
+    // ⚑ 干预留痕（票 06）：引擎把干预 prompt 只写进 intervention.jsonl（文件），
+    // onAgentEvent 回调只带 intervention_result —— prompt 原文在 DB 读取面是瞎的。
+    // 任务控制台的 ⚑ 高亮行（节点 · 原文 · 时间）经既有 GET agent-events 路径渲染，
+    // 所以在 resume 接受干预的当下落一行 event_type='intervention'。best-effort：
+    // 写失败照常继续（引擎照样收到 prompt），与 intervention_result 同纪律。
+    if (intervention && intervention.trim()) {
+      try {
+        const wf = this.getWorkflow(workflowRef)
+        const nodeName = findNodeDef(wf?.parsed.nodes ?? [], nodeId)?.name || nodeId
+        const content = JSON.stringify({ nodeId, nodeName, prompt: intervention })
+        this.dao.insertAgentEvent({
+          node_execution_id: pausedNode.id,
+          event_order: Date.now(),
+          turn_index: 0,
+          event_type: "intervention",
+          timestamp: Date.now(),
+          content,
+          content_length: intervention.length,
+          tool_call_id: null,
+          tool_name: null,
+          tool_input: null,
+          tool_result: null,
+          tool_is_error: 0,
+          tool_duration_ms: null,
+          status_value: null,
+          error_code: null,
+          error_message: null,
+        })
+      } catch { /* 留痕失败不拦恢复 */ }
+    }
 
     this.runResumeInBackground(executionId, nodeId, signal, intervention, workflowRef)
 

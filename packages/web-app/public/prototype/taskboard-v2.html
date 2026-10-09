@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+  ⚠ PROTOTYPE — 一次性原型，非生产代码。
+  问题：任务看板弹窗重设计，直击三个痛点：
+    ① 执行中就能看到「变更」列表（GitHub 式 diff + 统计）
+    ② 待验收新增「快速修改」草稿 chat —— 小改动直接对话改代码，大改动打回给 task-fix 修复轮（不再重跑绑定流）
+    ③ 执行中 / 待验收 合并为同一个弹窗壳，默认页签都是「变更」，差异只在右栏
+  单变体、可交互（用户要求逐步迭代，不做 ?variant= 多变体）。
+  颜色 1:1 取自 packages/web-app/app/globals.css（净黑 TUI 皮肤）。
+  数据来源是假数据，接口形状对齐 GET /api/tasks/:id/round-diff（无需新后端即可实现①）。
+  打开方式：双击本文件，或 dev 起服后访问 http://localhost:3000/prototype/taskboard-v2.html
+-->
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE · 任务看板 v2 — 统一弹窗 / 变更 diff / 快速修改 chat</title>
+<style>
+:root{
+  --bg:#0A0A0C; --paper:#1C1C22; --ink:#F5F5F2; --dim:#9698A3; --bd:#32323B;
+  --pink:#FF855C; --pink-soft:#2A1B19;
+  --yellow:#FFC857; --yellow-soft:#231E17;
+  --purple:#D2A8FF; --purple-soft:#221E29;
+  --green:#7EE787; --green-soft:#18211A;
+  --amber:#FFC857; --amber-soft:#231E17;
+  --cyan:#4FD1D9; --cyan-soft:#151F21;
+  --red:#FF5C5C; --navy:#4C79BF; --navy-soft:#181F2D;
+  --idle:#131318; --inset:#020202;
+  --shadow-sm:0 2px 8px rgba(0,0,0,.35); --shadow:0 4px 16px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  background:var(--bg); color:var(--ink); font-size:12px; overflow:hidden;
+  background-image:radial-gradient(rgba(245,245,242,.045) 1.6px, transparent 1.6px);
+  background-size:26px 26px;
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#46464E;border-radius:9px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,textarea{font:inherit}
+
+/* ============ app bar ============ */
+.appbar{height:40px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1.5px solid var(--bd);background:var(--paper)}
+.appbar .logo{font-weight:900;font-size:13px}
+.appbar .logo b{color:var(--pink)}
+.appbar .crumb{color:var(--dim);font-size:11px}
+.appbar .crumb.on{color:var(--ink);font-weight:900}
+.appbar .spacer{flex:1}
+.proto-tag{font-size:10px;font-weight:900;color:var(--bg);background:var(--purple);padding:2px 8px;border-radius:8px;border:1.5px solid var(--bd)}
+.btn{border:1.5px solid var(--bd);border-radius:12px;box-shadow:var(--shadow-sm);font-weight:900;transition:transform .06s}
+.btn:active{transform:translateY(1px)}
+.btn-pop{background:var(--pink);color:var(--bg);padding:5px 12px;font-size:11px}
+.btn-pop:hover{opacity:.92}
+.btn-quiet{background:var(--paper);color:var(--ink);padding:5px 12px;font-size:11px}
+.btn-quiet:hover{background:var(--yellow-soft)}
+
+/* ============ board ============ */
+.board{display:flex;gap:12px;padding:14px 16px;height:calc(100vh - 40px);min-width:1240px;overflow-x:auto}
+.col{flex:1;min-width:220px;border:1.5px solid var(--bd);border-radius:14px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;overflow:hidden}
+.col-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1.5px dashed var(--bd);font-size:11px;font-weight:900}
+.col-head .dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.col-head .n{margin-left:auto;background:var(--idle);color:var(--dim);border:1.5px solid var(--bd);border-radius:999px;padding:0 7px;font-size:10px}
+.col-body{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.c-draft{background:rgba(19,19,24,.4)} .c-draft .col-head{background:var(--idle);color:var(--dim)}
+.c-ready{background:rgba(21,31,33,.35)} .c-ready .col-head{background:var(--cyan-soft);color:var(--cyan)}
+.c-run{background:rgba(35,30,23,.35)} .c-run .col-head{background:var(--amber-soft);color:var(--amber)}
+.c-run .dot{animation:pulse 1.6s infinite}
+.c-wait{background:rgba(35,30,23,.35)} .c-wait .col-head{background:var(--yellow-soft);color:var(--yellow)}
+.c-done{background:rgba(24,33,26,.35)} .c-done .col-head{background:var(--green-soft);color:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.card{border:1.5px solid var(--bd);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow-sm);cursor:pointer;transition:border-color .1s}
+.card:hover{border-color:var(--dim)}
+.card .t{font-weight:900;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pill{font-size:9.5px;font-weight:900;border:1.5px solid var(--bd);border-radius:8px;padding:1px 7px;background:var(--idle);color:var(--dim)}
+.pill.pr{color:var(--purple);border-color:rgba(210,168,255,.4)}
+.pill.wait{color:var(--yellow);border-color:rgba(255,200,87,.45);background:var(--yellow-soft)}
+.pill.run{color:var(--amber);border-color:rgba(255,200,87,.45);background:var(--amber-soft);animation:pulse 2s infinite}
+.pill.ok{color:var(--green);border-color:rgba(126,231,135,.4);background:var(--green-soft)}
+.pill.bad{color:var(--red);border-color:rgba(255,92,92,.4)}
+.pill.cy{color:var(--cyan);border-color:rgba(79,209,217,.4);background:var(--cyan-soft)}
+.card .foot{margin-top:8px;font-size:10px;color:var(--dim);display:flex;gap:8px}
+.card .foot .cost{margin-left:auto;color:var(--yellow)}
+.card.act{font-size:10px;font-weight:900;border:1.5px solid rgba(255,133,92,.6);background:var(--pink-soft);color:var(--pink);border-radius:8px;padding:2px 8px}
+.k-draft{background:var(--paper)} .k-ready{background:var(--cyan-soft)} .k-run{background:var(--amber-soft)}
+.k-wait{background:var(--yellow-soft)} .k-done{background:var(--green-soft)} .k-fail{background:var(--pink-soft)}
+.empty-col{border:1.5px dashed var(--bd);border-radius:12px;height:80px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:10.5px}
+
+/* ============ unified modal shell ============ */
+.overlay{position:fixed;inset:0;background:rgba(2,2,2,.72);display:flex;align-items:center;justify-content:center;z-index:50}
+.hidden{display:none!important}
+.modal{width:88vw;height:92vh;max-width:1500px;background:var(--bg);border:1.5px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.modal.max{width:100vw;height:100vh;max-width:none;border-radius:0}
+.m-head{height:36px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1.5px solid var(--bd);background:var(--idle)}
+.m-title{font-weight:900;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34vw}
+.m-title::before{content:"❯ ";color:var(--pink)}
+.status-pill{font-size:10px;font-weight:900;border:1.5px solid;border-radius:999px;padding:1px 9px;flex:none}
+.sp-run{color:var(--amber);border-color:rgba(255,200,87,.45);background:var(--amber-soft);animation:pulse 2s infinite}
+.sp-pause{color:var(--yellow);border-color:rgba(255,200,87,.45);background:var(--yellow-soft)}
+.sp-wait{color:var(--yellow);border-color:rgba(255,200,87,.45);background:var(--yellow-soft)}
+.sp-done{color:var(--green);border-color:rgba(126,231,135,.4);background:var(--green-soft)}
+.m-meta{display:flex;gap:12px;color:var(--dim);font-size:10.5px;margin-left:6px;white-space:nowrap}
+.m-meta b{color:var(--ink);font-weight:700}
+.m-meta .cost{color:var(--yellow)}
+.m-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+.icob{width:24px;height:24px;border-radius:8px;border:1.5px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim);background:var(--paper)}
+.icob:hover{color:var(--ink);border-color:var(--dim)}
+.icob.close{background:var(--red);color:var(--ink);border-color:var(--red);width:26px;height:22px;border-radius:8px;font-weight:900}
+.m-body{flex:1;display:flex;min-height:0}
+.m-left{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.m-rail{width:296px;flex:none;border-left:1.5px solid var(--bd);background:var(--idle);display:flex;flex-direction:column;min-height:0}
+.m-rail.chat-mode{width:400px}
+.m-foot{height:26px;flex:none;border-top:1.5px solid var(--bd);background:var(--idle);display:flex;align-items:center;padding:0 12px;font-size:10px;color:var(--dim);gap:14px}
+.sse{margin-left:auto;display:flex;align-items:center;gap:5px;color:var(--cyan)}
+.sse i{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 6px var(--cyan);animation:pulse 2s infinite}
+.sse.off{color:var(--red)} .sse.off i{background:var(--red);box-shadow:0 0 6px var(--red)}
+
+/* tabs */
+.tabs{flex:none;display:flex;gap:8px;padding:10px 14px 0;border-bottom:1.5px solid var(--bd)}
+.tab{font-size:11px;font-weight:900;border:1.5px solid var(--bd);border-bottom:none;border-radius:10px 10px 0 0;padding:5px 14px;background:var(--paper);color:var(--dim)}
+.tab:hover{color:var(--ink)}
+.tab .cnt{font-size:9.5px;background:var(--idle);border-radius:999px;padding:0 6px;margin-left:5px}
+.tab.on-run{background:var(--amber);color:var(--bg);border-color:var(--amber)}
+.tab.on-wait{background:var(--yellow);color:var(--bg);border-color:var(--yellow)}
+.tab.on-run .cnt,.tab.on-wait .cnt{background:rgba(0,0,0,.18);color:var(--bg)}
+.m-content{flex:1;overflow-y:auto;padding:14px 16px;min-height:0}
+
+/* ============ files-changed tab ============ */
+.f-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.seg{display:flex;border:1.5px solid var(--bd);border-radius:10px;overflow:hidden}
+.seg button{padding:4px 14px;font-size:11px;font-weight:900;color:var(--dim);background:var(--paper)}
+.seg button.on{background:var(--navy);color:var(--ink)}
+.f-toolbar .sync{font-size:10px;color:var(--dim);display:flex;align-items:center;gap:5px}
+.f-toolbar .sync i{width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:pulse 2s infinite}
+.chat-chip{font-size:10px;font-weight:900;color:var(--cyan);border:1.5px solid rgba(79,209,217,.45);background:var(--cyan-soft);border-radius:999px;padding:2px 9px}
+.stat-strip{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.stat{min-width:104px;border:1.5px solid var(--bd);border-radius:12px;background:var(--idle);padding:8px 12px;box-shadow:var(--shadow-sm)}
+.stat .v{font-size:17px;font-weight:900;line-height:1.2}
+.stat .k{font-size:10px;color:var(--dim);margin-top:1px}
+.stat.g .v{color:var(--green)} .stat.r .v{color:var(--red)} .stat.c .v{color:var(--cyan)} .stat.y .v{color:var(--yellow)}
+.repo-hd{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:900;color:var(--purple);margin:14px 0 8px}
+.repo-hd .sm{color:var(--dim);font-weight:400;font-size:10px}
+.repo-hd::after{content:"";flex:1;border-top:1.5px dashed var(--bd)}
+.fitem{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);box-shadow:var(--shadow-sm);margin-bottom:8px;overflow:hidden}
+.frow{display:flex;align-items:center;gap:9px;padding:8px 12px;cursor:pointer;width:100%;text-align:left}
+.frow:hover{border-color:var(--dim)}
+.fbadge{width:18px;height:18px;flex:none;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:900;border:1.5px solid}
+.fb-A{color:var(--green);border-color:rgba(126,231,135,.45);background:var(--green-soft)}
+.fb-M{color:var(--amber);border-color:rgba(255,200,87,.4);background:var(--amber-soft)}
+.fb-D{color:var(--red);border-color:rgba(255,92,92,.4)}
+.fb-R{color:var(--cyan);border-color:rgba(79,209,217,.4);background:var(--cyan-soft)}
+.fpath{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fpath .dir{color:var(--dim)}
+.fpath .base{color:var(--ink);font-weight:900}
+.chat-mark{font-size:9px;font-weight:900;color:var(--cyan);border:1.5px solid rgba(79,209,217,.45);border-radius:6px;padding:0 5px;background:var(--cyan-soft);flex:none}
+.fnums{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:10.5px;font-weight:900;flex:none}
+.fnums .a{color:var(--green)} .fnums .d{color:var(--red)}
+.dbar{width:54px;height:5px;border-radius:99px;background:var(--red);display:flex;overflow:hidden}
+.dbar i{background:var(--green)}
+.chev{color:var(--dim);font-size:10px;transition:transform .12s}
+.fitem.open .chev{transform:rotate(90deg)}
+@keyframes flashrow{0%{border-color:var(--cyan);box-shadow:0 0 14px rgba(79,209,217,.5)}100%{border-color:var(--bd)}}
+.fitem.flash{animation:flashrow 1.6s ease-out}
+.diffbox{border-top:1.5px solid var(--bd);background:var(--inset);padding:9px 0 11px;font-size:11px;line-height:1.55;overflow-x:auto}
+.dl{display:flex;padding:0 12px;white-space:pre}
+.dl .ln{width:34px;flex:none;text-align:right;padding-right:9px;color:rgba(150,152,163,.45);user-select:none}
+.dl .txt{color:var(--dim)}
+.dl.h{background:var(--cyan-soft)} .dl.h .txt{color:var(--cyan)}
+.dl.a{background:var(--green-soft)} .dl.a .txt{color:var(--green)}
+.dl.d{background:var(--pink-soft)} .dl.d .txt{color:var(--red)}
+.dl.head{padding-top:2px} .dl.head .txt{color:var(--dim);font-weight:900}
+.trunc-note{padding:5px 12px;color:var(--dim);font-size:10px;font-style:italic}
+
+/* ============ console tab ============ */
+.console{border:1.5px solid var(--bd);border-radius:13px;background:var(--inset);padding:12px 14px;font-size:11.5px;line-height:1.7;height:100%;overflow-y:auto;box-shadow:var(--shadow-sm)}
+.cl{white-space:pre-wrap;word-break:break-all}
+.cl .ts{color:rgba(150,152,163,.55)}
+.cl.tool{color:var(--purple)} .cl.edit{color:var(--cyan)} .cl.ok{color:var(--green)} .cl.warn{color:var(--yellow)} .cl.err{color:var(--red)}
+.cl.iv{color:var(--pink);background:var(--pink-soft);border-left:3px solid var(--pink);border-radius:0 8px 8px 0;padding:3px 10px;margin:3px -10px;font-weight:700}
+.cursor{display:inline-block;width:7px;height:13px;background:var(--pink);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+
+/* ============ 消耗（token 用量）表 + 产物清单 ============ */
+.utab{width:100%;border-collapse:collapse;font-size:11.5px;border:1.5px solid var(--bd);border-radius:13px;overflow:hidden;background:var(--paper);box-shadow:var(--shadow-sm)}
+.utab th{color:var(--dim);font-weight:700;text-align:right;padding:7px 12px;border-bottom:1.5px solid var(--bd);font-size:10px;white-space:nowrap;background:var(--inset)}
+.utab th:first-child,.utab td:first-child{text-align:left}
+.utab td{padding:8px 12px;border-bottom:1px solid rgba(150,152,163,.12);text-align:right;white-space:nowrap}
+.utab tr:last-child td{border-bottom:none}
+.utab tr:hover td{background:var(--inset)}
+.utab tr.live td{background:var(--pink-soft)}
+.utab tr.live td:first-child{border-left:3px solid var(--pink);font-weight:900}
+.utab tr.ck td:first-child{color:var(--cyan)}
+.utab tr.tot td{border-top:1.5px solid var(--bd);font-weight:900;color:var(--ink);background:var(--inset)}
+.ubar{display:inline-block;width:64px;height:5px;background:var(--bd);border-radius:3px;overflow:hidden;vertical-align:1px;margin-left:8px}
+.ubar i{display:block;height:100%;background:var(--yellow)}
+.arow{display:flex;align-items:center;gap:10px;border:1.5px solid var(--bd);border-radius:11px;background:var(--paper);padding:8px 13px;margin-bottom:6px;font-size:11.5px;box-shadow:var(--shadow-sm)}
+.arow .an{font-weight:900;white-space:nowrap}
+.arow .ap{color:var(--dim);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arow .asz{margin-left:auto;color:var(--dim);font-size:10px;flex:none}
+.arow .ab{border:1.5px solid var(--bd);background:var(--inset);color:var(--dim);border-radius:8px;font-size:10px;padding:3px 9px;cursor:pointer;flex:none}
+.arow .ab:hover{color:var(--ink);border-color:var(--dim)}
+.usage-hero{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);padding:11px 14px;margin-bottom:4px;box-shadow:var(--shadow-sm)}
+.usage-hero .hl{font-size:10px;color:var(--dim);font-weight:700;margin-bottom:7px}
+.mrow{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--dim);align-items:baseline}
+.mrow .mt b{color:var(--ink);font-weight:900;margin-left:2px}
+.mrow .mt.yl{color:var(--yellow);font-weight:900}
+.mrow .mt.yl b{color:var(--yellow)}
+.lgrid{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);margin-bottom:4px;overflow:hidden;box-shadow:var(--shadow-sm)}
+.lgrid .lr{display:flex;align-items:center;gap:14px;padding:9px 13px;border-bottom:1px solid rgba(150,152,163,.12);font-size:11px;cursor:pointer;flex-wrap:wrap}
+.lgrid .lr:last-child{border-bottom:none}
+.lgrid .lr:hover{background:var(--inset)}
+.lgrid .lr.on{background:var(--pink-soft)}
+.lgrid .lr .lb{font-weight:900;white-space:nowrap;min-width:74px}
+.tgl{border:1.5px solid var(--bd);background:var(--inset);color:var(--dim);border-radius:8px;font-size:10px;padding:3px 9px;cursor:pointer;flex:none}
+.tgl:hover{color:var(--ink);border-color:var(--dim)}
+
+/* ============ workflow 节点列表（执行中） ============ */
+.nrow{display:flex;align-items:center;gap:10px;border:1.5px solid var(--bd);border-radius:12px;background:var(--paper);padding:9px 13px;margin-bottom:7px;cursor:pointer;font-size:11.5px;box-shadow:var(--shadow-sm);width:100%;text-align:left}
+.nrow:hover{border-color:var(--dim)}
+.nrow.on{border-color:rgba(255,200,87,.55);background:var(--amber-soft)}
+.nrow.pz{border-color:rgba(255,200,87,.35);background:var(--yellow-soft)}
+.nrow .g{width:16px;text-align:center;font-weight:900;flex:none}
+.nrow .nm{font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nrow .meta{margin-left:auto;display:flex;gap:12px;color:var(--dim);font-size:10px;flex:none}
+.nrow .meta .c{color:var(--yellow)}
+.nev{border:1.5px dashed var(--bd);border-radius:12px;background:var(--inset);padding:8px 12px;margin:-3px 0 8px;font-size:10.5px;line-height:1.7}
+@keyframes blink{50%{opacity:0}}
+
+/* ============ review(走查) tab ============ */
+.sect-t{font-size:11px;font-weight:900;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:8px}
+.sect-t::before{content:"◆";color:var(--pink);font-size:9px}
+.sect-t::after{content:"";flex:1;border-top:1.5px dashed var(--bd)}
+.gate-row{display:flex;align-items:center;gap:10px;border:1.5px solid var(--bd);border-radius:12px;background:var(--paper);padding:9px 13px;margin-bottom:7px;font-size:11.5px;box-shadow:var(--shadow-sm)}
+.gate-row .st{width:20px;height:20px;flex:none;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;border:1.5px solid var(--bd);cursor:pointer}
+.gate-row .st.p{color:var(--green);border-color:rgba(126,231,135,.45);background:var(--green-soft)}
+.gate-row .st.f{color:var(--red);border-color:rgba(255,92,92,.4);background:var(--pink-soft)}
+.gate-row .st.u{color:var(--dim)}
+.gate-row .sub{margin-left:auto;color:var(--dim);font-size:10px}
+.ac-row{display:flex;gap:10px;border:1.5px solid var(--bd);border-radius:12px;background:var(--paper);padding:9px 13px;margin-bottom:7px;font-size:11px;box-shadow:var(--shadow-sm)}
+.ac-row .ok{color:var(--green);font-weight:900}
+.ac-row .txt b{color:var(--ink)} .ac-row .txt{color:var(--dim)}
+.ac-row .ev{margin-left:auto;font-size:10px;color:var(--cyan);flex:none}
+
+/* ============ right rail ============ */
+.rail-b{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.rail-t{font-size:10px;font-weight:900;color:var(--dim);letter-spacing:.08em}
+.tiles{display:flex;gap:6px}
+.tile{flex:1;border:1.5px solid var(--bd);border-radius:11px;background:var(--paper);padding:7px 8px;text-align:center;box-shadow:var(--shadow-sm)}
+.tile .v{font-size:13px;font-weight:900} .tile .k{font-size:9px;color:var(--dim);margin-top:1px}
+.tile.ok .v{color:var(--green)} .tile.live .v{color:var(--amber)} .tile.wait .v{color:var(--dim)} .tile.live{border-color:rgba(255,200,87,.4)}
+.phase-tile{border:1.5px solid var(--bd);border-radius:11px;background:var(--paper);padding:8px 11px;font-size:11px;box-shadow:var(--shadow-sm)}
+.phase-tile.on{border-color:var(--amber);background:var(--amber-soft)}
+.phase-tile.done-p{border-color:rgba(126,231,135,.35)}
+.phase-tile .nm{font-weight:900;display:flex;gap:7px;align-items:center}
+.phase-tile .nm .g{font-size:10px}
+.phase-tile .sub{color:var(--dim);font-size:9.5px;margin-top:2px}
+.live-card{border:1.5px solid var(--purple);border-radius:12px;overflow:hidden}
+.live-card .hd{background:var(--purple-soft);padding:6px 11px;font-size:10px;font-weight:900;color:var(--purple);display:flex;gap:8px;align-items:center}
+.live-card .hd .sec{margin-left:auto;color:var(--ink)}
+.live-card .bd{padding:9px 11px;background:var(--paper);font-size:10.5px;color:var(--dim);display:flex;flex-direction:column;gap:5px}
+.live-card .bd b{color:var(--ink)}
+.sum-row{display:flex;font-size:11px;padding:3px 0;color:var(--dim)}
+.sum-row b{margin-left:auto;color:var(--ink);font-weight:700}
+.sum-row b.g{color:var(--green)} .sum-row b.y{color:var(--yellow)} .sum-row b.c{color:var(--cyan)}
+.sum-row.link{cursor:pointer} .sum-row.link:hover b{color:var(--pink)}
+.rail-acts{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1.5px solid var(--bd)}
+.act-btn{width:100%;border-radius:12px;padding:9px;font-size:12px;font-weight:900;border:1.5px solid var(--bd);box-shadow:var(--shadow-sm);text-align:center}
+.act-btn:active{transform:translateY(1px)}
+.ab-pass{background:var(--green);color:var(--bg);border-color:var(--green)}
+.ab-pass:hover{opacity:.9}
+.ab-chat{background:var(--cyan-soft);color:var(--cyan);border-color:rgba(79,209,217,.5)}
+.ab-chat:hover{background:var(--cyan);color:var(--bg)}
+.ab-resume{background:var(--amber);color:var(--bg);border-color:var(--amber)}
+.ab-resume:hover{opacity:.9}
+.ab-rej{background:var(--pink-soft);color:var(--pink);border-color:rgba(255,133,92,.5)}
+.ab-rej:hover{background:var(--pink);color:var(--bg)}
+.ab-stop{background:rgba(255,92,92,.13);color:var(--red);border-color:rgba(255,92,92,.5)}
+.ab-stop:hover{background:var(--red);color:var(--bg)}
+.ab-dim{background:var(--paper);color:var(--dim);font-size:11px;padding:6px}
+.ab-dim:hover{color:var(--ink)}
+.ab-dim.stop:hover{color:var(--red)}
+
+/* ============ quick-edit chat ============ */
+.chat-hd{flex:none;padding:10px 12px;border-bottom:1.5px solid var(--bd);display:flex;align-items:center;gap:8px}
+.chat-hd .t{font-weight:900;font-size:11.5px}
+.chat-hd .t::before{content:"✎ ";color:var(--cyan)}
+.chat-hd .hint{font-size:9.5px;color:var(--dim)}
+.chat-log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:92%;border:1.5px solid var(--bd);border-radius:14px;padding:8px 11px;font-size:11px;line-height:1.6;box-shadow:var(--shadow-sm);white-space:pre-wrap;word-break:break-word}
+.msg.user{align-self:flex-end;background:var(--yellow);color:var(--bg);border-bottom-right-radius:4px;font-weight:700}
+.msg.ai{align-self:flex-start;background:var(--paper);border-bottom-left-radius:4px}
+.msg.ai .who{color:var(--purple);font-weight:900;font-size:9.5px;margin-bottom:3px}
+.tool-card{align-self:flex-start;border:1.5px solid rgba(210,168,255,.4);border-radius:11px;background:var(--purple-soft);padding:6px 10px;font-size:10px;color:var(--purple)}
+.tool-card b{color:var(--ink)}
+.tool-card .lk{color:var(--cyan);cursor:pointer;text-decoration:underline;margin-left:8px}
+.tool-card .pl{margin-left:6px} .tool-card .pl.a{color:var(--green)} .tool-card .pl.d{color:var(--red)}
+.msg.ai .wf-btn{margin-top:7px;display:inline-block;border:1.5px solid rgba(255,133,92,.55);background:var(--pink-soft);color:var(--pink);border-radius:10px;padding:4px 10px;font-size:10.5px;font-weight:900}
+.msg.ai .wf-btn:hover{background:var(--pink);color:var(--bg)}
+.typing{align-self:flex-start;color:var(--dim);font-size:10.5px;padding:2px 4px}
+.typing i{animation:blink 1s infinite;font-style:normal}
+.chat-in{flex:none;border-top:1.5px solid var(--bd);padding:10px;display:flex;gap:8px;background:var(--idle)}
+.chat-in textarea{flex:1;resize:none;height:44px;background:var(--inset);border:1.5px solid var(--bd);border-radius:11px;color:var(--ink);padding:8px 10px;font-size:11px;outline:none}
+.chat-in textarea:focus{border-color:var(--cyan)}
+.chat-in .send{align-self:flex-end;background:var(--cyan);color:var(--bg);border:1.5px solid var(--cyan);border-radius:11px;padding:6px 13px;font-size:11px;font-weight:900}
+.chat-in .send:hover{opacity:.9}
+
+/* ══ chat dock · 常驻（弹窗底部，收起时只留一条）══ */
+.chatdock{flex:none;border-top:1.5px solid var(--bd);background:var(--idle);display:flex;flex-direction:column}
+.chatdock.mini .chat-log,.chatdock.mini .chat-in{display:none}
+.chatdock .chat-log{height:224px}
+.chatdock .chat-hd{border-bottom:1.5px solid var(--bd)}
+.chatdock.mini .chat-hd{border-bottom:none}
+.chat-hd .t::before{content:none}
+/* ══ 接管 = 草稿式整屏对话 ══ */
+.m-content.nopad{padding:0;overflow:hidden}
+.chatfull{height:100%;display:flex;flex-direction:column;min-height:0}
+.chatfull .chat-log{flex:1;height:auto;padding:18px 22px}
+.chatfull .msg{font-size:11.5px;padding:10px 14px;max-width:78%}
+.chatfull .chat-in textarea{height:64px}
+/* ══ 接管 / task-fix ══ */
+.sp-tk{color:var(--pink);border-color:rgba(255,133,92,.5);background:var(--pink-soft)}
+.sp-fix{color:var(--cyan);border-color:rgba(79,209,217,.5);background:var(--cyan-soft);animation:pulse 2s infinite}
+.pill.tk{color:var(--pink);border-color:rgba(255,133,92,.5);background:var(--pink-soft)}
+.pill.fx{color:var(--cyan);border-color:rgba(79,209,217,.5);background:var(--cyan-soft)}
+.ab-branch{background:var(--pink-soft);color:var(--pink);border-color:rgba(255,133,92,.55)}
+.ab-branch:hover{background:var(--pink);color:var(--bg)}
+.nrow.ab{opacity:.5}
+.nrow .stopmark{color:var(--pink);font-size:9px;font-weight:900}
+
+/* 启动 Runbook（验收台预设 · 入队硬闸产物） */
+.rb{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);padding:10px 12px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
+.rb-hd{font-size:11px;font-weight:900;margin-bottom:8px}
+.rb-hd .src{font-weight:400;color:var(--dim);font-size:9.5px;margin-left:6px}
+.rb-step{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1.5px dashed var(--bd);font-size:11px}
+.rb-step:first-of-type{border-top:none}
+.rb-step .n{width:16px;height:16px;flex:none;border-radius:6px;border:1.5px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--dim)}
+.rb-step code{background:var(--inset);border:1.5px solid var(--bd);border-radius:8px;padding:2px 8px;color:var(--green);font-size:10.5px;white-space:nowrap}
+.rb-step .exp{color:var(--dim)}
+.rb-step .pill{margin-left:auto;cursor:pointer;flex:none}
+
+/* ============ dialogs ============ */
+.dlg{width:min(540px,92vw);background:var(--paper);border:1.5px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
+.dlg .h{padding:12px 16px;border-bottom:1.5px dashed var(--bd);font-weight:900;font-size:12px}
+.dlg .h small{display:block;color:var(--dim);font-weight:400;font-size:10px;margin-top:2px}
+.dlg .b{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dlg textarea{background:var(--inset);border:1.5px solid var(--bd);border-radius:12px;color:var(--ink);padding:10px;font-size:11.5px;line-height:1.6;resize:vertical;outline:none}
+.dlg textarea:focus{border-color:var(--pink)}
+.rad{display:flex;gap:9px;border:1.5px solid var(--bd);border-radius:12px;padding:9px 12px;cursor:pointer;font-size:11px}
+.rad.on{border-color:rgba(255,133,92,.55);background:var(--pink-soft)}
+.rad .r{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--dim);flex:none;margin-top:1px}
+.rad.on .r{border-color:var(--pink);background:radial-gradient(var(--pink) 0 45%, transparent 50%)}
+.rad small{display:block;color:var(--dim);font-size:9.5px;margin-top:2px}
+.dlg .f{padding:12px 16px;border-top:1.5px solid var(--bd);display:flex;justify-content:flex-end;gap:8px;background:var(--idle)}
+.ledger{background:var(--inset);border:1.5px solid var(--bd);border-radius:12px;padding:11px 13px;font-size:11px;line-height:1.8;color:var(--dim)}
+.ledger b{color:var(--ink)} .ledger .g{color:var(--green)} .ledger .y{color:var(--yellow)} .ledger .c{color:var(--cyan)}
+
+/* stamp + toast */
+@keyframes stampIn{0%{transform:scale(2.2) rotate(-18deg);opacity:0}60%{transform:scale(.95) rotate(-12deg);opacity:1}100%{transform:scale(1) rotate(-12deg)}}
+.stamp{border:3px solid var(--green);color:var(--green);border-radius:12px;padding:8px 22px;font-size:22px;font-weight:900;animation:stampIn .45s ease-out;text-shadow:0 0 12px rgba(126,231,135,.35)}
+#toast{position:fixed;bottom:74px;left:50%;transform:translateX(-50%);z-index:99;background:var(--paper);border:1.5px solid var(--green);color:var(--green);border-radius:12px;padding:8px 18px;font-weight:900;font-size:11px;box-shadow:var(--shadow);opacity:0;transition:opacity .25s;pointer-events:none}
+#toast.show{opacity:1}
+
+/* notes popover + hint pill */
+#hint{position:fixed;bottom:14px;right:14px;z-index:40;background:var(--purple);color:var(--bg);border-radius:999px;padding:6px 15px;font-weight:900;font-size:10.5px;box-shadow:var(--shadow);cursor:pointer;border:1.5px solid var(--bd)}
+#notes{position:fixed;bottom:52px;right:14px;width:380px;z-index:41;background:var(--paper);border:1.5px solid var(--bd);border-radius:15px;box-shadow:var(--shadow);padding:14px 16px;font-size:11px;line-height:1.7}
+#notes h4{font-size:11.5px;margin-bottom:8px} #notes h4::before{content:"❯ ";color:var(--pink)}
+#notes .it{margin-bottom:9px}
+#notes .it b{color:var(--pink)} #notes .it em{color:var(--cyan);font-style:normal}
+#notes .k1{color:var(--green);font-weight:900}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="logo">◆ <b>Octopus</b></div>
+  <div class="crumb">工作区 octopus</div>
+  <div class="crumb on">❯ 任务看板</div>
+  <div class="crumb">资源库</div>
+  <div class="crumb">会话</div>
+  <div class="spacer"></div>
+  <span class="proto-tag">PROTOTYPE v3 · 常驻chat + 三分支</span>
+  <button class="btn btn-quiet" onclick="toast('原型占位 — 真实页面有数据')">↺ 刷新</button>
+  <button class="btn btn-pop" onclick="toast('新建任务 = 现有 authoring 弹窗，本次未改版')">＋ 新建任务</button>
+</header>
+
+<main class="board" id="board"></main>
+
+<!-- ═══════════ 统一弹窗（执行中/待验收共用一个壳） ═══════════ -->
+<div class="overlay hidden" id="modal-root"></div>
+
+<!-- ═══════════ 打回 dialog ═══════════ -->
+<div class="overlay hidden" id="rej-root"></div>
+
+<!-- ═══════════ 通过 · 台账预览 dialog ═══════════ -->
+<div class="overlay hidden" id="pass-root"></div>
+
+<!-- ═══════════ 恢复 · 注入干预 dialog ═══════════ -->
+<div class="overlay hidden" id="inj-root"></div>
+
+<!-- ═══════════ 执行中遇到问题 · 三分支 dialog ═══════════ -->
+<div class="overlay hidden" id="br-root"></div>
+
+<!-- ═══════════ 派发 task-fix dialog ═══════════ -->
+<div class="overlay hidden" id="fx-root"></div>
+
+<!-- ═══════════ 中止任务 · 二次确认 dialog ═══════════ -->
+<div class="overlay hidden" id="ab-root"></div>
+
+<div id="toast"></div>
+<div id="hint" onclick="document.getElementById('notes').classList.toggle('hidden')">💡 改了什么？</div>
+<div id="notes" class="hidden">
+  <h4>十一个改动点的原型答案（点卡片进弹窗体验）</h4>
+  <div class="it"><span class="k1">① 执行中即可看变更</span> — 弹窗默认页签「变更」：提交数 + 文件 +/− 统计条，GitHub 式文件列表，点行就地展开 unified diff。数据即现有 <em>/round-diff?scope=round|cumulative</em>，不用新后端。</div>
+  <div class="it"><span class="k1">② 待验收 · 快速修改对话</span> — 像草稿一样对话改代码，改动实时进「变更」列表（💬chat 徽标）与统计。说大改动（含「重构/批量/接口…」）→ chat 主动引导<b>转打回（task-fix 修复轮）</b>。简单直接 chat，复杂派轻流。</div>
+  <div class="it"><span class="k1">③ 两个弹窗合一</span> — 执行中/待验收同一个壳：顶栏只留 标题+状态+时间成本（8 个动作按钮收进右栏底部），差异只剩右栏（进度 vs 验收动作）与一个页签。字号 10→11.5px、行距加大，砍掉嵌套卡片。</div>
+  <div class="it"><span class="k1">④ 执行中 · 「节点」页签</span> — 工作流节点执行情况做成任务清单：✓/●/⏸/○ 状态 + 节点类型徽标（Agent/Bash/Loop/Swarm/Approval）+ 用时成本，点行展开该节点事件。对齐引擎现有节点事件流。</div>
+  <div class="it"><span class="k1">⑤ 暂停 → 干预 → 恢复</span> — 右栏「⏸ 暂停」挂起当前节点；再点「▶ 恢复」弹出<b>干预注入框</b>：写的干预信息以<em>粉色高亮行（⚑ 人工干预）</em>进控制台、进当前节点事件，并作为额外上下文交给该节点 — 和工作流节点的人工干预同一语义。留空 = 原样继续。</div>
+  <div class="it"><span class="k1">⑥ chat = 整屏页签</span> — 待验收打开即「<em>💬 对话</em>」（与执行中的「💬 对话接管」同款整屏，直接干活，改动实时进「变更」页签）；右栏只做验收进度 + 决断（通过/打回），不放对话按钮。执行中默认不打扰：干预走「⏸→注入」或「✋ 有问题」①；task-fix 期间底部 dock 接追加干预。</div>
+  <div class="it"><span class="k1">⑦ 执行中「✋ 有问题」三分支</span> — 右栏新入口，一次选择本 Round 的去向：<b>①</b> 注入干预原流继续；<b>②</b> 停流接管：<em>打开草稿同款整屏「💬 对话接管」页签</em>，每句直接动工作区，交付/改派只在右栏一处；<b>③</b> 派通用 task-fix：给指令，自动 开发→回归→调整→<em>补产物(报告/证据)</em>→自动转待验收。接管件/修复件在验收台会被标出来。</div>
+  <div class="it"><span class="k1">⑧ 启动 Runbook 落点</span> — 「走查」页签第一块：<em>📜 启动 Runbook</em>（spec 字段 startup_runbook · 入队硬闸校验过），N 步「命令 → 预期」，每步带「▶ 跑」；右栏有「已预设 · N 步 ▸」入口。验收 = 照单跑实物。</div>
+  <div class="it"><span class="k1">⑨ 打回语义收敛</span> — 去掉「修订重跑绑定流」选项：<em>打回 = 派 task-fix 轻轮修复</em>（反馈即指令，开发→回归→补产物→自动回待验收 R+1），与「✋ 有问题」③ 同一机制。方向要整体推翻 → 用 ② 接管，不再靠重跑。</div>
+  <div class="it"><span class="k1">⑩ 真机走查回补：删残留右栏 · 日志归位 · 消耗/产物独立页签</span> — 真机发现旧弹窗残留三处：<b>一</b> 走查里内嵌的「摘要+动作 / 验收进度」右栏整体删掉（最右栏已有同款），其中的「■ 中止」挪到最右栏「打回」下方成为唯一入口；<b>二</b>「▶ 控制台/日志」应播<em>工作区运行日志（SSE 事件流）</em>，不是现在错位的「任务 AI 消耗」；<b>三</b> 新增两个页签：<em>▤ 消耗</em>（完整 token 账 — token 用 <em>K/M</em> 记数，三段式：<em>总计</em>（∑处理量 ↑输入 ↓输出 ⚡缓存读 🗡️缓存写 ·请求数 ·成本）、<em>按模型</em>、<em>分轮账本</em>（⇕ 一键全展开/收起），底部再按会话/节点分列明细表，task-doer 对话单独一行、两账不混）与 <em>▣ 产物</em>（spec/票/报告/证据/台账等交付文件清单，区别于「≡ 变更」的 diff 视图）。</div>
+  <div class="it"><span class="k1">⑪ 真机复点收口</span> — 「✓ 走查」「▶ 日志」页签背景与壳同框<em>净黑</em>（去掉内嵌亮卡片衬底）；日志流<em>铺到底</em>、新事件自动贴底；待验收最右栏四钮定版 = ✓ 验收通过（绿）→ ↩ 反馈打回（<em>粉底</em>，不再素面）→ 🗂 工作空间（青，当前 Phase 执行视图深链，<em>target=_blank</em> 新标签）→ ■ 中止任务（<em>红底</em>）；中止必过<em>二次确认框</em>（红字后果说明 + 取消/确认中止），执行中与接管态的「■ 中止」同框同流。</div>
+  <div class="it" style="color:var(--dim)">试试：待验收卡 → 默认落在「💬 对话」，说「验收通过按钮再圆一点」看改动进「变更」；「✓ 走查」页签顶部看 Runbook；执行中卡 → 「✋ 有问题」选②/③ 各走一遍；⏸ 暂停后「▶ 恢复」体验注入干预。←/→ 切页签。</div>
+</div>
+
+<script>
+/* ═══════════════════════════ 假数据 ═══════════════════════════ */
+
+/* patch 行类型: h=hunk, c=上下文, a=新增, d=删除 */
+function P(hunks){return hunks}
+function H(t,o,n){return['h',t,o,n]}
+function C(s){return['c',s]} function A(s){return['a',s]} function D(s){return['d',s]}
+
+const T1_FILES = [
+ {repo:'octopus', path:'packages/web-app/components/tasks/task-modal.tsx', st:'M', a:24, d:61, round:true,
+  patch:P([
+   H('@@ -18,14 +18,8 @@',18,18),
+   D('const MODES = ['),
+   D('  "authoring-template", "authoring-workspace", "simple-execution",'),
+   D('  "done", "terminal", "composite"],'),
+   A('// 执行中/待验收/终态 统一走 console 壳，差异只在右栏与页签',),
+   A('const MODES = ["authoring-workspace", "console"];'),
+   C(''),
+   H('@@ -96,31 +90,12 @@ export function TaskModal({ task }) {',96,90),
+   D('  // 8 向缩放手柄 + 拖拽标题栏 + 全屏 + Esc 拦截 ...'),
+   D('  const [size, setSize] = useState({ w: "88vw", h: "93vh" });'),
+   D('  const handles = ["n","s","e","w","ne","nw","se","sw"];'),
+   D('  return (<DraggableResizable size={size} handles={handles} ...>'),
+   A('  return (<div className="modal ..."> {/* 固定壳：只留全屏/关闭 */}'),
+   C('    <TitleBar task={task} />'),
+   C('    ...')
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/run-console/task-run-console.tsx', st:'M', a:8, d:47, round:true,
+  patch:P([
+   H('@@ -40,28 +40,9 @@ function TerminalBar() {',40,40),
+   D('  ↺ 退回草稿   🔍 验货台   ⚡ 触发   ⏸ 暂停   ▶ 恢复'),
+   D('  ■ 中止   ⧉ 复制   ⛶   ✕   ← 8 个动作全挤在 28px 导航条'),
+   A('  {/* 顶栏只留 ⛶ ✕；暂停/中止移到右栏底部（见 rail） */}'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/acceptance-surface.tsx', st:'M', a:31, d:58, round:true,
+  patch:P([
+   H('@@ -210,24 +210,26 @@ export function AcceptanceSurface({ ... }) {',210,210),
+   D('  // 打回是唯一的"小改"手段 → 一行代码也要重跑整个工作流'),
+   D('  <Button variant="outline" onClick={openReject}><Undo2/> 打回（写反馈）</Button>'),
+   A('  <Button variant="outline" onClick={openReject}>↩ 打回 · task-fix 修复轮</Button>'),
+   A('  <QuickEditChat taskId={id} onPatched={refreshDiff} /> {/* ✎ 小改直接对话 */}'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/diff-tab.tsx', st:'A', a:96, d:0, round:true,
+  patch:P([
+   H('@@ -0,0 +1,42 @@',0,1),
+   A('// 新文件：把 round-diff-panel 提升为弹窗一级页签「变更」'),
+   A('// 执行中与待验收共用 —— 执行中看进度，待验收验货'),
+   A('export function DiffTab({ taskId, scope, onScope }) {'),
+   A('  const { data } = useRoundDiff(taskId, scope); // GET /api/tasks/:id/round-diff'),
+   A('  return (<>'),
+   A('    <StatStrip aggregate={data.aggregate} />'),
+   A('    <FileList groups={data.repos} />'),
+   A('  </>);'),
+   A('}'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/quick-edit-chat.tsx', st:'A', a:118, d:0, round:true,
+  patch:P([
+   H('@@ -0,0 +1,16 @@',0,1),
+   A('// 新文件：草稿式 chat，直连 task-author 会话（复用 AuthoringWorkspace 的 hooks）'),
+   A('// 小改 → agent 直接编辑工作区文件并 commit；改动经 round-diff 汇入「变更」页签'),
+   A('// 大改 → detectScope() 命中重构/批量关键词 → 引导打回开下一 Round'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/lib/tasks-api.ts', st:'M', a:12, d:2, round:true,
+  patch:P([
+   H('@@ -52,6 +52,12 @@',52,52),
+   A('export async function quickEdit(taskId: string, message: string) {'),
+   A('  return post(`/api/tasks/${taskId}/quick-edit`, { message });'),
+   A('}'),
+  ])},
+ {repo:'octopus', path:'packages/server/src/routes/tasks.ts', st:'M', a:19, d:2, round:true,
+  patch:P([
+   H('@@ -452,6 +454,18 @@',452,454),
+   A('// POST /api/tasks/:id/quick-edit — 待验收态草稿 chat'),
+   A('// 复用 round-evidence-service 的 worktree；改动记 author=chat 便于台账区分'),
+  ])},
+ {repo:'octopus', path:'packages/shared/src/schemas/acceptance.ts', st:'M', a:6, d:1, round:true,
+  patch:P([
+   H('@@ -7,6 +7,10 @@',7,7),
+   C('  decision: z.enum(["accepted", "rejected"]),'),
+   D('  next_flow: z.enum(["rerun", "fix"]).optional(),'),
+   A('  next_flow: z.enum(["rerun", "fix", "chat"]).optional(), // chat=草稿快改不落台账'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/verify-panel.tsx', st:'M', a:14, d:9, round:false,
+  patch:P([
+   H('@@ -30,8 +30,9 @@',30,30),
+   D('const logLines = [];'),
+   A('const logLines = [] as string[]; // strict: 复检流式日志'),
+  ])},
+ {repo:'octopus', path:'docs/adr/0007-quick-edit-vs-rerun.md', st:'A', a:38, d:0, round:false,
+  patch:P([
+   H('@@ -0,0 +1,3 @@',0,1),
+   A('# 0007: 小改用草稿 chat，大改用 task-fix 打回修复轮'),
+   A('决策：quick-edit 不写验收台账、不开 Round；decision=chat。打回不再重跑绑定流，一律派 task-fix。'),
+  ])},
+];
+const T1_META = { repos:[{name:'octopus', commits:{round:4, cum:7}}], interventions:{round:1, cum:3} };
+
+const T2_FILES = [
+ {repo:'octopus', path:'packages/web-app/components/tasks/task-modal.tsx', st:'M', a:15, d:33, round:true,
+  patch:P([
+   H('@@ -96,12 +90,8 @@',96,90),
+   D('  const handles = ["n","s","e","w","ne","nw","se","sw"];'),
+   A('  return (<div className="modal"> {/* 固定壳 */}'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/acceptance-surface.tsx', st:'M', a:22, d:40, round:true,
+  patch:P([
+   H('@@ -210,20 +210,22 @@',210,210),
+   D('  {/* 旧: 只有打回一条小改路径 */}'),
+   A('  <QuickEditChat taskId={id} onPatched={refreshDiff} />'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/diff-tab.tsx', st:'A', a:96, d:0, round:true,
+  patch:P([
+   H('@@ -0,0 +1,6 @@',0,1),
+   A('// WIP — agent 正在写'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/components/tasks/acceptance/quick-edit-chat.tsx', st:'A', a:41, d:0, round:true, growing:true,
+  patch:P([
+   H('@@ -0,0 +1,9 @@',0,1),
+   A('// WIP — agent 正在写'),
+   A('export function QuickEditChat({ taskId, onPatched }) {'),
+  ])},
+ {repo:'octopus', path:'packages/web-app/lib/tasks-api.ts', st:'M', a:8, d:0, round:true, patch:P([H('@@ -52,3 +52,6 @@',52,52),A('export async function quickEdit(...) {}')])},
+];
+const T2_META = { repos:[{name:'octopus', commits:{round:3, cum:3}}], interventions:{round:0, cum:0} };
+
+/* ═══ 快速修改 chat 的编辑队列（改动会实时插进 T1 的「变更」列表） ═══ */
+const EDIT_QUEUE = [
+ {file:'packages/web-app/components/ui/button.tsx', st:'M', a:2, d:1, label:'把「验收通过」按钮圆角 14→18px，按下位移 2→1px',
+  reply:'改好了 —— pop/pass 按钮圆角提到 18px，:active 位移减到 1px。已提交到工作区（author=chat），刷新「变更」即可见；不用重跑工作流。',
+  patch:P([H('@@ -14,7 +14,8 @@',14,14),D('  "rounded-xl ... active:translate-y-[2px]"'),A('  "rounded-[18px] ... active:translate-y-[1px]"'),A('  // ✎ 快速修改 chat 落笔')])},
+ {file:'packages/web-app/components/tasks/acceptance/round-diff-panel.tsx', st:'M', a:6, d:3, label:'文件行 hover 高亮 + diff 行号右对齐',
+  reply:'文件行 hover 现在描 emerald 边、行号列右对齐并降透明度到 45%，读长 diff 不串行了。同样已落工作区。',
+  patch:P([H('@@ -88,5 +88,8 @@',88,88),D('  .frow:hover { border-color: var(--bd) }'),A('  .frow:hover { border-color: var(--dim); background: var(--paper) }'),A('  .dl .ln { text-align: right; user-select: none }')])},
+ {file:'packages/web-app/app/globals.css', st:'M', a:1, d:1, label:'次要文字调亮一档（#9698A3 → #A8AAB4）',
+  reply:'--pop-dim 提到 #A8AAB4。全局次要文字跟着变亮 —— 这一条影响了 17 处引用，但都是一行 token 改值，属于"小改"。',
+  patch:P([H('@@ -23,7 +23,7 @@',23,23),D('  --pop-dim: #9698A3;'),A('  --pop-dim: #A8AAB4;')])},
+];
+const COMPLEX_RE = /(重构|新页面|新接口|加接口|写接口|数据库|迁移|批量|所有文件|全局改|大改|架构|整个|性能|并发|回滚全部)/;
+const COMPLEX_REPLY = '这个改动面比较大（预计跨 5+ 文件，且要动运行逻辑），直接 chat 改容易失控。建议打回 = 派 task-fix 轻轮修复：我把你的话整理成修复指令草稿了，点下面按钮带过去，改几个字就能派发。';
+
+/* ═══ 看板任务 ═══ */
+const TASKS = {
+ t1:{id:'t1', name:'验收台：多仓 diff 聚合 + 快速修改', col:'wait', ph:1, phN:2, round:2, cost:0.86, secs:252, created:'10-08 09:12',
+     files:T1_FILES, meta:T1_META, verdict:'succeeded', playbook:{p:4,f:0,u:1},
+     runbook:[
+      {c:'pnpm dev', e:'server:3001 · web:3000 · SSE 心跳 ●'},
+      {c:'打开 :3000/tasks → 点本卡', e:'默认落在「💬 对话」页签'},
+      {c:'对话发：按钮再圆一点', e:'「变更」出现 💬chat 行 · 统计 +2 −1'},
+      {c:'⏸ 暂停 → ▶ 恢复注入干预', e:'控制台粉色 ⚑ 行'},
+      {c:'「走查」全过 → 通过', e:'台账预览弹「chat 快改 ×n」单独列'}]},
+ t2:{id:'t2', name:'看板弹窗重设计：统一执行/验收壳', col:'run', ph:2, phN:3, round:1, cost:0.42, secs:742, created:'10-08 10:03',
+     files:T2_FILES, meta:T2_META, live:true, wf:'matt-dev-pipeline.yaml',
+     nodes:[
+      {n:'读取票与验收标准',ty:'Agent',st:'done',s:'0:41',c:0.03},
+      {n:'探索同类代码 (explore)',ty:'Agent',st:'done',s:'1:12',c:0.06},
+      {n:'实现 · 统一弹窗壳 + 变更页签',ty:'Agent',st:'live',c:0.18},
+      {n:'typecheck + 单测',ty:'Bash',st:'pend'},
+      {n:'代码评审 (review swarm)',ty:'Swarm',st:'pend'},
+      {n:'人工确认放行',ty:'Approval',st:'pend'}]},
+ t3:{id:'t3', name:'CLI resource search 支持模糊匹配', col:'run', ph:1, phN:1, round:1, cost:0.17, secs:183, created:'10-08 10:31',
+     files:[T2_FILES[4]], meta:{repos:[{name:'octopus',commits:{round:1,cum:1}}],interventions:{round:0,cum:0}}, live:true, wf:'octo-workflow-dev.yaml',
+     nodes:[
+      {n:'定位 resource 索引模块',ty:'Agent',st:'done',s:'0:28',c:0.02},
+      {n:'实现 fuzzy 匹配',ty:'Agent',st:'live',c:0.07},
+      {n:'CLI 冒烟 (octopus resource list)',ty:'Bash',st:'pend'},
+      {n:'Loop · 失败重试 (2/3)',ty:'Loop',st:'pend'}]},
+ t4:{id:'t4', name:'登录页配色微调', col:'wait', ph:1, phN:1, round:1, cost:0.09, secs:64, created:'10-07 18:40',
+     files:[{repo:'octopus', path:'packages/web-app/app/login/page.tsx', st:'M', a:7, d:5, round:true,
+       patch:P([H('@@ -11,6 +11,7 @@',11,11),A('  // 底色改净黑 #0A0A0C，主按钮换 --pop-pink')])}],
+     meta:{repos:[{name:'octopus',commits:{round:1,cum:1}}],interventions:{round:0,cum:0}}, verdict:'succeeded', playbook:{p:3,f:0,u:0}},
+ d1:{id:'d1', name:'spec 补 runbook 预置信道字段', col:'draft', cost:0.0, created:'10-08 08:55'},
+ d2:{id:'d2', name:'GLOSSARY 术语归档续写策略', col:'draft', cost:0.0, created:'10-07 21:10'},
+ r1:{id:'r1', name:'归档任务探针改 GLOSSARY 优先', col:'ready', created:'10-08 09:40'},
+ dn1:{id:'dn1', name:'CONTEXT → GLOSSARY 全仓改名', col:'done', cost:1.21, created:'10-06 14:20', term:'通过'},
+ dn2:{id:'dn2', name:'skills 同步 v1.3.1', col:'done', cost:0.34, created:'10-05 11:02', term:'通过'},
+ dn3:{id:'dn3', name:'Milvus remote 存储回归 MinIO', col:'done', cost:0.78, created:'10-04 16:33', term:'失败'},
+};
+const COLS = [
+ {id:'draft', label:'草稿', cls:'c-draft', kids:['d1','d2']},
+ {id:'ready', label:'待执行', cls:'c-ready', kids:['r1']},
+ {id:'run',   label:'执行中', cls:'c-run',  kids:['t2','t3']},
+ {id:'wait',  label:'待验收', cls:'c-wait', kids:['t1','t4']},
+ {id:'done',  label:'完成', cls:'c-done',  kids:['dn1','dn2','dn3']},
+];
+
+/* ═══ 运行态 ═══ */
+const state = {
+  openTask: null,      // 弹窗里的 task id
+  tab: 'files',
+  scope: 'round',
+  fs: false,
+  chatDock: true,      // 常驻 chat：展开/收拢
+  chat: [],            // 消息日志
+  editIdx: 0,
+  chatEdits: 0,
+  exp: new Set(),      // 展开的 diff path
+  gateU: 1,            // T1 走查未决数
+  timers: [],
+};
+function fmtT(s){const m=Math.floor(s/60),ss=s%60;return `${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`}
+function fmtMoney(n){return '$'+n.toFixed(2)}
+function fileTotals(t){const vis=t.files.filter(f=>state.scope==='cum'||f.round);return{files:vis.length,a:vis.reduce((x,f)=>x+f.a,0),d:vis.reduce((x,f)=>x+f.d,0),vis}}
+function commits(t){return t.meta.repos.reduce((x,r)=>x+r.commits[state.scope==='cum'?'cum':'round'],0)}
+
+/* ═══════════════════════════ 看板渲染 ═══════════════════════════ */
+function renderBoard(){
+  const el=document.getElementById('board');
+  el.innerHTML = COLS.map(c=>{
+    const kids=c.kids.map(id=>TASKS[id]).filter(Boolean);
+    const cost=kids.reduce((x,t)=>x+(t.cost||0),0);
+    return `<div class="col ${c.cls}">
+      <div class="col-head"><span class="dot"></span>${c.label}<span class="n">${kids.length}</span>
+        <span style="font-size:10px;color:var(--yellow)">$${cost.toFixed(2)}</span></div>
+      <div class="col-body">${kids.length?kids.map(card).join(''):'<div class="empty-col">⌜ ⌝ 暂无任务</div>'}</div>
+    </div>`;
+  }).join('');
+}
+function card(t){
+  const K = {draft:'k-draft',ready:'k-ready',run:'k-run',wait:'k-wait',done:'k-done'}[t.col];
+  let pills='';
+  if(t.col==='run'){
+    const lab=`Phase ${t.ph}/${t.phN} · R${t.round}`;
+    pills+= t.mode==='takeover' ? `<span class="pill tk">✋ 已接管 · ${lab}</span>`
+          : t.mode==='fixing'   ? `<span class="pill fx">⚙ task-fix 推进中 · ${lab}</span>`
+          : `<span class="pill ${t.paused?'wait':'run'}">${t.paused?'⏸':'▶'} ${lab}</span>`;
+  }
+  if(t.col==='wait')  pills+=`<span class="pill wait">验收 · P${t.ph}/${t.phN} R${t.round}</span>`;
+  if(t.col==='ready') pills+=`<span class="pill cy">排队等待触发</span>`;
+  if(t.col==='done')  pills+= t.term==='失败' ? `<span class="pill bad">✗ 失败</span>` : `<span class="pill ok">✓ 通过</span>`;
+  const act = t.col==='wait' ? `<span class="act">验收</span>`
+            : t.col==='ready' ? `<span class="pill">⚡ 触发</span>` : '';
+  const ftot = t.files ? fileTotals({files:t.files,meta:t.meta}) : null;
+  const diffPill = t.files ? `<span class="pill" style="color:var(--cyan)">≡ ${ftot.files} 文件</span>` : '';
+  return `<div class="card ${K}" onclick="openTask('${t.id}')">
+    <div class="t">${t.name}</div>
+    <div class="row">${pills}${diffPill}${act}</div>
+    <div class="foot"><span>创建 ${t.created}</span>${t.secs?`<span>· ⏱ ${fmtT(t.secs)}</span>`:''}<span class="cost">${t.cost?fmtMoney(t.cost):''}</span></div>
+  </div>`;
+}
+
+/* ═══════════════════════════ 统一弹窗 ═══════════════════════════ */
+function openTask(id){
+  const t=TASKS[id];
+  if(t.col==='draft'){ toast('草稿卡 = 现有 authoring workspace，本次未改版'); return; }
+  if(t.col==='done'){ toast('终态卡复用同一个壳（只读）— 原型聚焦 执行中/待验收'); return; }
+  state.openTask=id; state.tab=(TASKS[id].col==='wait')?'chat':'files'; state.scope='round'; state.exp=new Set(); consoleLines=[];
+  if(id!==state._lastChatTask){ state.chat=[]; state.chatEdits=0; state.editIdx=0; state._lastChatTask=id; }
+  state.chatDock=true;
+  clearTimers(); startTimers(t);
+  renderModal();
+}
+function closeModal(){ clearTimers(); state.openTask=null; document.getElementById('modal-root').classList.add('hidden'); renderBoard(); }
+function T(){ return TASKS[state.openTask]; }
+
+function startTimers(t){
+  if(t.col!=='run') return;
+  const halt=()=>t.paused||t.mode==='takeover'||t.mode==='fixing';
+  state.timers.push(setInterval(()=>{ if(halt()) return; t.secs++;
+    const e=document.getElementById('tick'); if(e)e.textContent=fmtT(t.secs); const e2=document.getElementById('rt-tick'); if(e2)e2.textContent=fmtT(t.secs);
+    if(state.openTask===t.id && state.tab==='nodes') refreshContent(); },1000));
+  state.timers.push(setInterval(()=>{ if(halt()) return; // 模拟 agent 持续产出：live 行 + 统计跳动
+    const g=t.files.find(f=>f.growing); if(g){g.a+=Math.ceil(Math.random()*4); }
+    t.cost+=Math.random()*0.02; t.meta.repos[0].commits.round = 3+Math.floor(t.secs/300);
+    if(state.openTask===t.id){
+      if(state.tab==='console') pushConsole(t); else refreshContent();
+      renderHeadMeta();
+    }
+    renderBoard();
+  },5000));
+}
+function refreshContent(){ const el=document.getElementById('m-content'); if(el) el.innerHTML=contentHtml(T()); }
+function clearTimers(){ state.timers.forEach(clearInterval); state.timers=[]; }
+
+function renderModal(){
+  const t=T(), run=t.col==='run', pz=run&&t.paused, tk=run&&t.mode==='takeover', fx=run&&t.mode==='fixing', root=document.getElementById('modal-root');
+  root.classList.remove('hidden');
+  const tabs = tk ? [['chat','💬 对话接管'],['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']]
+    : run ? [['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 控制台']]
+    : [['chat','💬 对话'],['files','≡ 变更'],['review','✓ 走查'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']];
+  const cnt = t.files ? fileTotals(t).files : 0;
+  const ns = run ? nodesOf(t) : [];
+  const showDock = t.mode==='fixing'; // dock 只留给 task-fix；待验收=整高对话列；执行中不打扰
+  root.innerHTML = `
+  <div class="modal ${state.fs?'max':''}">
+    <div class="m-head">
+      <span class="m-title">${t.name}</span>
+      <span class="status-pill ${pz?'sp-pause':tk?'sp-tk':fx?'sp-fix':(run?'sp-run':'sp-wait')}">${pz?'⏸ 已暂停 · 可注入干预':tk?'✋ 已接管 · chat 驱动':fx?'⚙ task-fix 执行中':(run?'● 执行中':'◔ 待验收')}</span>
+      <span class="m-meta" id="head-meta">${metaHtml(t)}</span>
+      <div class="m-actions">
+        <button class="icob" title="全屏" onclick="state.fs=!state.fs;renderModal()">⛶</button>
+        <button class="icob close" onclick="closeModal()">✕</button>
+      </div>
+    </div>
+    <div class="m-body">
+      <div class="m-left">
+        <div class="tabs">
+          ${tabs.map(([k,lb])=>{
+            const on=state.tab===k;
+            const extra = k==='files' ? `<span class="cnt">${cnt}</span>`+
+              (state.chatEdits?`<span class="cnt" style="color:var(--cyan)">💬×${state.chatEdits}</span>`:'')
+              : k==='nodes' ? `<span class="cnt">${ns.filter(x=>x.st==='done').length}/${ns.length}</span>`
+              : k==='review' ? `<span class="cnt">${(t.playbook.p||0)+(t.playbook.f||0)}/5</span>`
+              : k==='usage' ? `<span class="cnt" style="color:var(--yellow)">${fmtMoney(t.cost)}</span>`
+              : k==='artifacts' ? `<span class="cnt">${artifactsOf(t).length}</span>` : '';
+            return `<button class="tab ${on?(run?'on-run':'on-wait'):''}" onclick="setTab('${k}')">${lb}${extra||''}</button>`;
+          }).join('')}
+        </div>
+        <div class="m-content ${state.tab==='chat'?'nopad':''}" id="m-content">${contentHtml(t)}</div>
+        ${showDock?dockHtml(t):''}
+      </div>
+      <div class="m-rail" id="m-rail">${railHtml(t)}</div>
+    </div>
+    <div class="m-foot">
+      <span>工作区 octopus-feat-taskboard</span><span>v4 · ${t.phN||1} phases</span>
+      <span class="sse ${run&&!pz&&!tk?'':'off'}">${tk?'⏹ 工作流已停 · chat 驱动':run?(pz?'⏸ SSE 挂起 · 干预后可恢复':'<i></i> SSE ● 心跳'):'SSE 断线 · 等待人工'}</span>
+    </div>
+  </div>`;
+  if(state.tab==='console'){ const c=document.getElementById('cons'); if(c)c.scrollTop=c.scrollHeight; }
+  if(state.tab==='chat'){ const l=document.getElementById('chatlog'); if(l)l.scrollTop=l.scrollHeight; }
+}
+function metaHtml(t){
+  const ft=fileTotals(t);
+  return `<span>⏱ <b id="tick">${fmtT(t.secs||0)}</b></span>
+    <span class="cost">$ <b>${t.cost.toFixed(2)}</b></span>
+    <span>${commits(t)} commits</span>
+    <span>±<b>${ft.a+ft.d}</b></span>
+    <span>P ${t.ph||1}/${t.phN||1} · R${t.round||1}</span>`;
+}
+function renderHeadMeta(){ const e=document.getElementById('head-meta'); if(e)e.innerHTML=metaHtml(T()); }
+function setTab(k){ state.tab=k; renderModal(); }
+
+/* ═════════ content: 变更 ═════════ */
+function contentHtml(t){
+  if(state.tab==='chat') return chatFullHtml(t);
+  if(state.tab==='files') return filesHtml(t);
+  if(state.tab==='nodes') return nodesHtml(t);
+  if(state.tab==='review') return reviewHtml(t);
+  if(state.tab==='usage') return usageHtml(t);
+  if(state.tab==='artifacts') return artifactsHtml(t);
+  return consoleHtml(t);
+}
+function filesHtml(t){
+  const {vis,a,d}=fileTotals(t), run=t.col==='run';
+  return `
+  <div class="f-toolbar">
+    <div class="seg">
+      <button class="${state.scope==='round'?'on':''}" onclick="state.scope='round';renderModal()">本轮</button>
+      <button class="${state.scope==='cum'?'on':''}" onclick="state.scope='cum';renderModal()">累计</button>
+    </div>
+    ${run?`<span class="sync"><i></i>每 5s 同步 · git diff -M --numstat</span>`:''}
+    ${state.chatEdits?`<span class="chat-chip">💬 chat 快改 ×${state.chatEdits}（未走台账）</span>`:''}
+    <span style="margin-left:auto;font-size:10px;color:var(--dim)">数据源 GET /round-diff — 与验货台同源</span>
+  </div>
+  <div class="stat-strip">
+    <div class="stat"><div class="v">${commits(t)}</div><div class="k">提交</div></div>
+    <div class="stat"><div class="v">${vis.length}</div><div class="k">文件</div></div>
+    <div class="stat g"><div class="v">+${a}</div><div class="k">新增行</div></div>
+    <div class="stat r"><div class="v">−${d}</div><div class="k">删除行</div></div>
+    <div class="stat c"><div class="v">${t.meta.interventions[state.scope==='cum'?'cum':'round']}</div><div class="k">harness 干预</div></div>
+    <div class="stat y"><div class="v">$${t.cost.toFixed(2)}</div><div class="k">成本</div></div>
+  </div>
+  ${repoSection('octopus', vis)}`;
+}
+function repoSection(name, files){
+  const groups={};
+  files.forEach((f,i)=>{const dir=f.path.split('/').slice(0,-1).join('/');(groups[dir]=groups[dir]||[]).push(f)});
+  return `<div class="repo-hd">⌗ ${name} <span class="sm">${files.length} files</span></div>`+
+    Object.entries(groups).map(([dir,fs])=>fs.map(f=>fileItem(f)).join('')).join('');
+}
+function fileItem(f){
+  const open=state.exp.has(f.path);
+  const base=f.path.split('/').pop(), dir=f.path.slice(0,f.path.length-base.length);
+  const tot=f.a+f.d, pct=tot?Math.round(f.a/tot*100):100;
+  return `<div class="fitem ${open?'open':''} ${f._flash?'flash':''}" data-path="${f.path}">
+    <button class="frow" onclick="toggleExp('${encodeURIComponent(f.path)}')">
+      <span class="chev">▶</span>
+      <span class="fbadge fb-${f.st}">${f.st}</span>
+      <span class="fpath"><span class="dir">${dir}</span><span class="base">${base}</span></span>
+      ${f.chat?`<span class="chat-mark">💬 chat</span>`:''}
+      <span class="fnums"><span class="a">+${f.a}</span><span class="d">−${f.d}</span>
+        <span class="dbar"><i style="width:${pct}%"></i></span></span>
+    </button>
+    ${open?diffHtml(f):''}
+  </div>`;
+}
+function diffHtml(f){
+  let o=f.patch.find(h=>h[0]==='h')?.[2]||1, n=f.patch.find(h=>h[0]==='h')?.[3]||1;
+  const rows=f.patch.map(l=>{
+    const [k]=l;
+    if(k==='h'){ o=l[2]; n=l[3]; return `<div class="dl h"><span class="ln"></span><span class="ln"></span><span class="txt">${esc(l[1])}</span></div>` }
+    const [type,text]=l;
+    const ol=type==='a'?'':o++, nl=type==='d'?'':n++;
+    const cls=type==='a'?'a':type==='d'?'d':'';
+    const pre=type==='a'?'+':type==='d'?'-':' ';
+    return `<div class="dl ${cls}"><span class="ln">${ol}</span><span class="ln">${nl}</span><span class="txt">${pre} ${esc(text)}</span></div>`;
+  }).join('');
+  return `<div class="diffbox"><div class="dl head"><span class="ln"></span><span class="ln"></span><span class="txt">diff --git a/${f.path} b/${f.path}</span></div>${rows}
+  ${f.growing?'<div class="trunc-note">… agent 正在写这个文件，行数还在涨</div>':''}</div>`;
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function toggleExp(path){const p=decodeURIComponent(path); state.exp.has(p)?state.exp.delete(p):state.exp.add(p); renderModal();}
+
+/* ═════════ content: 控制台 ═════════ */
+const CONSOLE_POOL=[
+ ['tool','⚙ Read  packages/web-app/components/tasks/task-modal.tsx'],
+ ['edit','✎ Edit  acceptance-surface.tsx  +6 −3'],
+ ['','bash: pnpm --filter @octopus/web-app build … done in 14.2s'],
+ ['ok','✓ typecheck passed'],
+ ['tool','⚙ Bash  git commit -m "refactor(tasks): unify console shell"'],
+ ['warn','⚠ round budget 62% — 剩余 $0.35'],
+ ['edit','✎ Edit  quick-edit-chat.tsx  +12 −0'],
+ ['','agent: 正在为「变更」页签接入 scope 切换…'],
+];
+let consoleLines=[];
+function consoleHtml(t){
+  if(!consoleLines.length) consoleLines=[['','[boot] task-author · phase '+(t.ph||1)+' · round '+t.round], ...CONSOLE_POOL.slice(0,5)];
+  return `<div class="console" id="cons">
+    ${consoleLines.map(l=>`<div class="cl ${l[0]}"><span class="ts">${new Date().toLocaleTimeString('en-GB')}</span>  ${esc(l[1])}</div>`).join('')}
+    <span class="cursor"></span></div>`;
+}
+function pushConsole(t){
+  const l=CONSOLE_POOL[Math.floor(Math.random()*CONSOLE_POOL.length)];
+  consoleLines.push(l); if(consoleLines.length>60)consoleLines.shift();
+  const c=document.getElementById('cons');
+  if(c){ const d=document.createElement('div'); d.className='cl '+l[0]; d.innerHTML=`<span class="ts">${new Date().toLocaleTimeString('en-GB')}</span>  ${esc(l[1])}`; c.insertBefore(d,c.lastElementChild); c.scrollTop=c.scrollHeight; renderHeadMeta(); }
+}
+
+/* ═════════ content: 工作流节点列表（执行中）═════════ */
+function nodesOf(t){
+  if(!t.nodes) t.nodes = [
+    {n:'读取票与打回反馈',ty:'Agent',st:'done',s:'0:22',c:0.02},
+    {n:'修复轮 · 按反馈修改',ty:'Agent',st:'live',c:0.04},
+    {n:'回归验证 (pnpm test)',ty:'Bash',st:'pend'},
+    {n:'再交付报告',ty:'Agent',st:'pend'}];
+  return t.nodes;
+}
+function curNode(t){ return nodesOf(t).find(x=>x.st==='live') || {n:'P'+(t.ph||1)}; }
+const TY_PILL = {Agent:'pr', Bash:'cy', Loop:'wait', Swarm:'ok', Approval:'run'};
+function nodesHtml(t){
+  const ns=nodesOf(t), done=ns.filter(x=>x.st==='done').length;
+  const stTxt = t.mode==='takeover' ? ' · <b style="color:var(--pink)">工作流已停 · 人工接管中</b>'
+              : t.mode==='fixing'   ? ' · <b style="color:var(--cyan)">task-fix 推进中</b>'
+              : t.paused            ? ' · <b style="color:var(--yellow)">已暂停，等待干预</b>' : '';
+  return `
+  <div class="f-toolbar">
+    <span class="pill pr" style="font-size:11px">⚙ ${t.wf||'matt-dev-pipeline.yaml'}</span>
+    <span style="font-size:10.5px;color:var(--dim)">DAG · Phase ${t.ph}/${t.phN} · R${t.round} — 点行看节点事件</span>
+    <span style="margin-left:auto;font-size:10.5px;color:var(--dim)"><b style="color:var(--green)">${done}</b>/${ns.length} 完成${stTxt}</span>
+  </div>
+  ${ns.map((x,i)=>nodeRow(t,x,i)).join('')}`;
+}
+function nodeRow(t,x,i){
+  const open=state.exp.has('n'+i), live=x.st==='live';
+  const stop=t.mode==='takeover', fxm=t.mode==='fixing';
+  const g = x.st==='done' ? '<span style="color:var(--green)">✓</span>'
+          : x.st==='fail' ? '<span style="color:var(--red)">✗</span>'
+          : live ? (stop?'<span style="color:var(--pink)">⏹</span>':t.paused?'<span style="color:var(--yellow)">⏸</span>':'<span style="color:var(--amber);animation:pulse 1.6s infinite">●</span>')
+          : stop ? '<span style="color:var(--dim)">⏹</span>' : '<span style="color:var(--dim)">○</span>';
+  const dur = live && !stop && !fxm ? '⏱ '+fmtT(t.secs) : (x.s||'—');
+  return `<button class="nrow ${live&&!t.paused&&!stop?'on':''} ${live&&t.paused?'pz':''} ${stop&&x.st!=='done'?'ab':''}" onclick="toggleNode(${i})">
+      <span class="g">${g}</span><span class="chev">${open?'▾':''}</span>
+      <span class="nm">${x.n}${live&&stop?' <span class="stopmark">已终止</span>':''}</span>
+      <span class="pill ${TY_PILL[x.ty]||''}">${x.ty}</span>
+      <span class="meta"><span>${dur}</span><span class="c">${x.c?fmtMoney(x.c):'—'}</span></span>
+    </button>
+    ${open?nodeEvents(t,x,i):''}`;
+}
+function nodeEvents(t,x,i){
+  const key='n'+i;
+  if(x.st==='pend') return `<div class="nev"><div class="cl" style="color:var(--dim)">— 未执行 · 等待前序节点完成 —</div></div>`;
+  let lines;
+  if(x.st==='live'){
+    lines = consoleLines.slice(-3).map(l=>[l[0],l[1]]);
+    if(!lines.length) lines=[['','agent 启动该节点…']];
+    const ivs = consoleLines.filter(l=>l[0]==='iv');
+    if(ivs.length) lines = lines.concat(ivs.slice(-1));
+  } else {
+    const pool=[['tool','⚙ 读取 3 个文件'],['','分析上下文 · 12.4k tok'],['ok','✓ 节点产出通过校验']];
+    lines=pool.slice(0, (i%2)+2);
+  }
+  return `<div class="nev">${lines.map(l=>`<div class="cl ${l[0]}">${esc(l[1])}</div>`).join('')}</div>`;
+}
+function toggleNode(i){ const k='n'+i; state.exp.has(k)?state.exp.delete(k):state.exp.add(k); renderModal(); }
+
+/* ═════════ 暂停 → 注入干预 → 恢复（像工作流节点的人工干预）═════════ */
+function pauseTask(){
+  const t=T(); t.paused=true;
+  if(!consoleLines.length) consoleLines=[['','[boot] task-author · phase '+t.ph+' · round '+t.round]];
+  consoleLines.push(['warn','⏸ 执行已暂停 · 当前节点「'+curNode(t).n+'」挂起 — 恢复时可注入干预信息']);
+  renderModal(); renderBoard(); toast('⏸ 已暂停 · 点「▶ 恢复」可注入干预');
+}
+function openInject(){
+  const t=T();
+  const el=document.getElementById('inj-root'); el.classList.remove('hidden');
+  el.innerHTML=`<div class="dlg" data-inject-dialog>
+    <div class="h">▶ 恢复执行 — 注入干预<small>干预会高亮进入控制台，并作为额外上下文交给当前节点「${curNode(t).n}」</small></div>
+    <div class="b">
+      <textarea id="inj-text" rows="4" placeholder="例：实现方向不对 — 不要动 Dialog 尺寸逻辑，直接换固定壳；保留 1.5px 边框语言…"></textarea>
+      <div style="font-size:10px;color:var(--dim)">留空 = 不注入，原样继续。</div>
+    </div>
+    <div class="f">
+      <button class="btn btn-quiet" onclick="closeInject()">取消（保持暂停）</button>
+      <button class="btn btn-quiet" onclick="resume(false)">直接继续 ▶</button>
+      <button class="btn btn-pop" style="background:var(--amber);color:var(--bg)" onclick="resume(true)">⚑ 注入干预并继续</button>
+    </div>
+  </div>`;
+  setTimeout(()=>{const ta=document.getElementById('inj-text'); if(ta)ta.focus()},60);
+}
+function closeInject(){ document.getElementById('inj-root').classList.add('hidden'); }
+function resume(withInj){
+  const t=T(); const ta=document.getElementById('inj-text');
+  const txt = withInj && ta ? ta.value.trim() : '';
+  document.getElementById('inj-root').classList.add('hidden');
+  if(txt){
+    consoleLines.push(['iv','⚑ 人工干预 → 节点「'+curNode(t).n+'」：'+txt]);
+    const live=nodesOf(t).find(x=>x.st==='live'); if(live) live.ivCount=(live.ivCount||0)+1;
+  } else if(withInj){
+    toast('没写干预内容 — 按原样继续');
+  }
+  consoleLines.push(['ok','▶ 已恢复执行 · '+new Date().toLocaleTimeString('en-GB')]);
+  t.paused=false; state.tab='console';
+  renderModal(); renderBoard();
+  toast(txt?'⚑ 干预已注入 · 控制台高亮':'▶ 已继续执行');
+}
+
+/* ═════════ content: 走查（仅待验收） ═════════ */
+const DEFAULT_RUNBOOK=[
+ {c:'pnpm dev', e:'server:3001 · web:3000 · SSE 心跳 ●'},
+ {c:'打开 :3000/tasks', e:'看板五列渲染正常'}];
+function runbookHtml(t){
+  const rb=t.runbook||DEFAULT_RUNBOOK;
+  return `<div class="sect-t">启动 Runbook — 别读汇报，照这个跑起来看实物</div>
+  <div class="rb">
+    <div class="rb-hd">📜 本 Round 验收路径 <span class="src">来源：task-author 记忆 · spec 字段 startup_runbook · 入队硬闸已校验存在</span></div>
+    ${rb.map((s,i)=>`<div class="rb-step"><span class="n">${i+1}</span><code>${esc(s.c)}</code><span class="exp">→ ${esc(s.e)}</span><button class="pill cy" onclick="toast('▶ 真实版：贴命令进预览 / 打开链接')">▶ 跑</button></div>`).join('')}
+  </div>`;
+}
+function reviewHtml(t){
+  const items=[
+    ['p','自动复检 · pnpm test 3 组','exit 0 · 41 passed'],
+    ['p','实物 diff 与票面声称一致','9 文件全部对得上'],
+    ['p','跑起来看 · dev :3000/prototype','预览正常'],
+    ['p','弹窗在 1080p / 全屏两档可读','字号 11.5px 达标'],
+    [ state.gateU?'u':'p','人工抽查 · 快速修改 chat 的改动已含进本轮','💬×'+state.chatEdits ],
+  ];
+  const pass=items.filter(i=>i[0]==='p').length;
+  return `
+  ${runbookHtml(t)}
+  <div class="sect-t">验收剧本走查 — ${pass}/${items.length}（未决项不拦通过，但会写进台账）</div>
+  ${items.map((it,i)=>`<div class="gate-row"><span class="st ${it[0]}" title="点击翻转" onclick="flipGate(${i})">${it[0]==='p'?'✓':it[0]==='f'?'✗':'○'}</span><span>${it[1]}</span><span class="sub">${it[2]}</span></div>`).join('')}
+  <div class="sect-t">核对 AC — spec 声称 × 轮次报告 × diff 实物</div>
+  <div class="ac-row"><span class="ok">✓</span><span class="txt"><b>AC1</b> 执行中弹窗出现「变更」页签，含文件级 +/− 与统计</span><span class="ev">diff-tab.tsx +96</span></div>
+  <div class="ac-row"><span class="ok">✓</span><span class="txt"><b>AC2</b> 待验收可发起草稿 chat 直接改工作区代码</span><span class="ev">quick-edit-chat.tsx +118</span></div>
+  <div class="ac-row"><span class="ok">✓</span><span class="txt"><b>AC3</b> 打回 = task-fix 轻轮修复，不再重跑绑定工作流</span><span class="ev">acceptance-surface.tsx</span></div>
+  <div class="ac-row"><span class="ok" style="color:var(--yellow)">≈</span><span class="txt"><b>AC4</b> 台账区分 chat 快改与轮次改动</span><span class="ev">schemas/acceptance.ts</span></div>`;
+}
+function flipGate(i){ if(i===4) state.gateU=state.gateU?0:1; renderModal(); }
+
+/* ═════════ content: 消耗（token / AI 用量） ═════════ */
+function fmtTok(n){ if(n>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(n>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K'; return String(Math.round(n)) }
+let usageLedgerOpen=true;
+function toggleUsageLedger(){ usageLedgerOpen=!usageLedgerOpen; refreshContent(); }
+function agg(rows){ const z={t:0,i:0,o:0,cr:0,cw:0,req:0,c:0}; rows.forEach(r=>{ z.i+=r.i; z.o+=r.o; z.cr+=r.cr; z.cw+=r.cw||0; z.req+=r.req||0; z.c+=r.c; }); z.t=z.i+z.o+z.cr+z.cw; return z }
+function metricHtml(m){
+  return `<span class="mt">∑<b>${fmtTok(m.t)}</b> 处理量</span><span class="mt">↑<b>${fmtTok(m.i)}</b> 输入</span><span class="mt">↓<b>${fmtTok(m.o)}</b> 输出</span><span class="mt">⚡<b>${fmtTok(m.cr)}</b> 缓存读</span><span class="mt">🗡️<b>${fmtTok(m.cw)}</b> 缓存写</span><span class="mt">${m.req} 次请求</span><span class="mt yl"><b>$${m.c.toFixed(4)}</b></span>`;
+}
+function usageHtml(t){
+  const cur='P'+(t.ph||1)+'·R'+(t.round||1);
+  const rows=[
+    {n:'◆ 设计 · spec 校验',       m:'qwen3.8-flash', i:12400, o:8410,  cr:1902000, cw:204800, req:18, c:0.18,  d:'1:12', rd:'P1·R1', st:''},
+    {n:'◆ 开发 · 批量实现',         m:'qwen3.8-flash', i:96800, o:22140, cr:4610000, cw:380000, req:28, c:0.41,  d:'3:48', rd:'P1·R1', st:''},
+    {n:'◆ 回归 · pnpm test + build',m:'—',             i:0,     o:0,     cr:0,       cw:0,      req:0,  c:0,     d:'0:38', rd:'P1·R1', st:''},
+  ];
+  const isRun=t.col==='run', halted=!isRun||t.paused||t.mode==='takeover'||t.mode==='fixing';
+  rows.push({n:`◆ ${curNode(t).n}`, m:'qwen3.8-flash', i:58200, o:9340, cr:811000, cw:66000, req:12, c:0.09, d:isRun?fmtT(t.secs-302>0?t.secs-302:1202):'2:00', rd:cur, st:isRun&&!halted?'live':''});
+  const chatOn = state.chatEdits>0 || t.mode==='takeover';
+  if(chatOn) rows.push({n:`💬 对话${t.mode==='takeover'?'接管':'快改'} · task-doer`, m:'qwen3.8-flash', i:12400+state.chatEdits*1800, o:3860+state.chatEdits*640, cr:96000+state.chatEdits*18400, cw:24800, req:4+state.chatEdits*3, c:+(0.02+state.chatEdits*0.004).toFixed(4), d:'—', rd:cur, st:'ck'});
+  const tot=agg(rows);
+  const maxC=Math.max(...rows.map(r=>r.c),0.01);
+  const models=[...new Set(rows.filter(r=>r.m!=='—').map(r=>r.m))];
+  const rounds=[...new Set(rows.map(r=>r.rd))];
+  return `
+  <div class="f-toolbar">
+    <span style="font-size:10.5px;color:var(--dim)">数据源 agent_events usage 汇总 — 工作流节点与 task-doer 对话分列（UI 一面 · 账务两会话不混记，ADR-0025）</span>
+    <button class="tgl" style="margin-left:auto" onclick="toggleUsageLedger()">⇕ ${usageLedgerOpen?'收起分轮账本':'一键全展开'}</button>
+  </div>
+  <div class="usage-hero"><div class="hl">总计 · ${rounds[rounds.length-1]} 至今</div><div class="mrow">${metricHtml(tot)}</div></div>
+  <div class="sect-t">按模型</div>
+  <div class="lgrid">${models.map(mm=>`<div class="lr"><span class="lb">${mm}</span><div class="mrow">${metricHtml(agg(rows.filter(r=>r.m===mm)))}</div></div>`).join('')}</div>
+  <div class="sect-t">分轮账本${usageLedgerOpen?'':' · 已收起'}</div>
+  <div class="lgrid">${usageLedgerOpen?rounds.map(rd=>`<div class="lr ${rd===cur?'on':''}" onclick="toast('真实版：筛出 ${rd} 的节点明细')"><span class="lb">${rd}</span><div class="mrow">${metricHtml(agg(rows.filter(r=>r.rd===rd)))}</div></div>`).join(''):'<div class="lr" style="cursor:default;color:var(--dim)">○ ${rounds.length} 轮已折叠 — 点上方「⇕ 一键全展开」</div>'}</div>
+  <div class="sect-t">按会话 / 节点</div>
+  <table class="utab"><thead><tr><th>会话 / 节点</th><th>模型</th><th>输入</th><th>输出</th><th>缓存读</th><th>缓存写</th><th>请求</th><th>成本</th><th>时长</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr class="${r.st}"><td>${r.n}</td><td style="color:var(--dim)">${r.m}</td><td>${fmtTok(r.i)}</td><td>${fmtTok(r.o)}</td><td>${fmtTok(r.cr)}</td><td style="color:var(--dim)">${fmtTok(r.cw)}</td><td style="color:var(--dim)">${r.req}</td><td>$${r.c.toFixed(4)}<span class="ubar"><i style="width:${Math.round(r.c/maxC*100)}%"></i></span></td><td style="color:var(--dim)">${r.d}</td></tr>`).join('')}
+  <tr class="tot"><td>合计 · ${cur}</td><td></td><td>${fmtTok(tot.i)}</td><td>${fmtTok(tot.o)}</td><td>${fmtTok(tot.cr)}</td><td>${fmtTok(tot.cw)}</td><td>${tot.req}</td><td>$${tot.c.toFixed(4)}</td><td></td></tr>
+  </tbody></table>`;
+}
+
+/* ═════════ content: 产物（交付文件清单） ═════════ */
+function artifactsOf(t){
+  const items=[
+    ['📄','spec.md','.scratch/taskboard-modal-v2/spec.md','18 KB','任务规格'],
+    ['📄','issues/01–10 · 票面','.scratch/taskboard-modal-v2/issues/','10 files','均已 done 并入分支'],
+    ['🧾','round-report-R'+t.round+'.md','.octopus/reports/','6 KB','agent 自述 — 仅参考，验货看实物'],
+    ['🧾','evidence/pnpm-test.log','工作区 evidence/','41 passed','回归实物证据'],
+    ['🖼','evidence/screenshots/','工作区 evidence/','3 png','跑起来看的截图'],
+    ['📒','acceptance-ledger-R'+t.round+'.md','.octopus/ledger/','append-only','台账 · 快改×'+state.chatEdits],
+    ['💡','prototype/taskboard-v2.html','web-app/public/prototype/','1,300 行','交互原型 — 本页即真相源'],
+  ];
+  return items;
+}
+function artifactsHtml(t){
+  const groups=[['📄 需求与票面',0,2],['🧾 报告与证据',2,5],['📒 验收台账',5,6],['💡 原型',6,7]];
+  return `
+  <div class="f-toolbar">
+    <span style="font-size:10.5px;color:var(--dim)">工作区交付物清单 — 产物 ≠ diff：代码改动看「≡ 变更」，这里列规格 / 报告 / 证据 / 台账</span>
+    <span style="margin-left:auto;font-size:10px;color:var(--dim)">数据源：约定目录扫描 + 台账表</span>
+  </div>
+  ${groups.map(([g,a,b])=>`<div class="sect-t">${g}</div>`+artifactsOf(t).slice(a,b).map(([ic,nm,p,sz,d])=>`
+    <div class="arow"><span class="an">${ic} ${nm}</span><span class="ap">${p}</span><span class="asz">${sz} · ${d}</span>
+      <button class="ab" onclick="toast('▶ 真实版：开文件预览抽屉（${nm}）')">▶ 预览</button>
+      <button class="ab" onclick="toast('⧉ 已复制路径')">⧉ 路径</button></div>`).join('')).join('')}`;
+}
+
+/* ═══════════════════════════ 右栏 ═══════════════════════════ */
+function railHtml(t){ return t.col==='run' ? railRun(t) : railWait(t); }
+function railWait(t){
+  const ft=fileTotals(t);
+  const total=(t.playbook.p||0)+(t.playbook.f||0)+(t.playbook.u||0)+(t.tookover?0:state.gateU);
+  const done=(t.playbook.p||0)+(t.playbook.f||0)+(t.tookover?0:(state.gateU?0:1));
+  const und=Math.max(0,total-done);
+  return `<div class="rail-b">
+    <div class="rail-t">验收进度 · P${t.ph}/${t.phN} · R${t.round}</div>
+    <div class="tiles">
+      <div class="tile ok"><div class="v">✓</div><div class="k">${t.tookover?'人工交付':'执行结果'}</div></div>
+      <div class="tile"><div class="v">${fmtT(t.secs)}</div><div class="k">用时</div></div>
+      <div class="tile live"><div class="v">$${t.cost.toFixed(2)}</div><div class="k">成本</div></div>
+    </div>
+    <div class="sum-row link" onclick="setTab('files')"><span>实物变更</span><b class="c">${ft.files} 文件 · +${ft.a} −${ft.d}</b></div>
+    <div class="sum-row"><span>自动复检</span>${t.tookover?'<b style="color:var(--yellow)">— 接管件 · 未自动跑</b>':'<b class="g">PASS · exit 0</b>'}</div>
+    <div class="sum-row link" onclick="setTab('review')"><span>📜 启动 Runbook</span><b class="c">已预设 · ${(t.runbook||DEFAULT_RUNBOOK).length} 步 ▸</b></div>
+    <div class="sum-row link" onclick="setTab('review')"><span>剧本走查</span><b class="${und?'y':'g'}">${done}/${total}${und?` · ${und} 未决`:''}</b></div>
+    ${state.chatEdits?`<div class="sum-row link" onclick="setTab('chat')"><span>💬 对话改动</span><b class="c">×${state.chatEdits} · 见变更页签</b></div>`:''}
+    <div class="rail-t" style="margin-top:6px">验货 = 看实物，不是读汇报 →</div>
+  </div>
+  <div class="rail-acts">
+    <button class="act-btn ab-pass" onclick="openPass()">✓ 验收通过${t.ph<t.phN?` · 放行 Phase ${t.ph+1}`:' · 进入归档'}</button>
+    <button class="act-btn ab-rej" onclick="openReject()">↩ 反馈打回 · task-fix 修复轮（大改）</button>
+    <button class="act-btn ab-chat" onclick="toast('↗ 真实版：target=_blank 新标签打开当前 Phase 执行视图（深链）')">🗂 工作空间 · P${t.ph} 执行视图 ↗</button>
+    <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止任务</button>
+  </div>`;
+}
+/* ═ 中止任务 · 二次确认（真实版 = 既有 ConfirmDialog→abortTask 流，此为形态演示） ═ */
+function openAbortConfirm(){
+  const t=T(); const el=document.getElementById('ab-root'); el.classList.remove('hidden');
+  el.innerHTML=`<div class="dlg">
+    <div class="h">■ 中止任务 — 请确认<small>${esc(t.name)} · P${t.ph||1}·R${t.round||1}${t.col==='wait'?'（待验收）':'（执行中）'}</small></div>
+    <div class="b">
+      <div style="border:1.5px solid rgba(255,92,92,.5);background:rgba(255,92,92,.08);border-radius:11px;padding:10px 13px;font-size:11.5px;line-height:1.7">
+        中止 = <b style="color:var(--red)">任务级终止，不可恢复</b>：绑定执行停止（节点 ⏹）、工作区现场与已产出 commit 保留在分支；本 Round 不再自动推进，也不进验收台账新闸。</div>
+    </div>
+    <div class="f">
+      <button class="btn btn-quiet" onclick="closeAbort()">取消</button>
+      <button class="btn" style="background:var(--red);color:var(--bg);border:1.5px solid var(--red);border-radius:10px;padding:7px 14px;font-weight:900;cursor:pointer" onclick="confirmAbort()">■ 确认中止</button>
+    </div>
+  </div>`;
+}
+function closeAbort(){ document.getElementById('ab-root').classList.add('hidden'); }
+function confirmAbort(){ closeAbort(); const t=T(); closeModal(); toast('■ 已中止 · '+t.name+'（演示形态，真实版走既有确认+端点）'); }
+
+function railRun(t){
+  const cn=curNode(t), iv=cn.ivCount||0, tk=t.mode==='takeover', fx=t.mode==='fixing';
+  const ns=nodesOf(t), fxDone=fx?ns.filter(x=>x.st==='done').length:0;
+  const hd = tk ? `✋ TAKEOVER · R${t.round}` : fx ? `⚙ TASK-FIX ${fxDone}/${ns.length}` : `${t.paused?'⏸ PAUSED':'▶ LIVE'} ROUND · R${t.round}`;
+  return `<div class="rail-b">
+    <div class="rail-t">PIPELINE · ${t.phN} PHASES</div>
+    ${phaseTiles(t)}
+    <div class="live-card">
+      <div class="hd">${hd}<span class="sec" id="rt-tick">${fmtT(t.secs)}</span></div>
+      <div class="bd"><span>节点 <b>${cn.n}</b>${iv?` · <span style="color:var(--pink)">⚑ 干预×${iv}</span>`:''}</span>
+      <span>成本 <b>${fmtMoney(t.cost)}</b> / 预算 $1.20</span>
+      <span>变更 <b>${fileTotals(t).files} 文件 · +${fileTotals(t).a} −${fileTotals(t).d}</b> · ${commits(t)} commits</span>
+      ${t.paused?'<span style="color:var(--yellow)">等待人工干预后恢复</span>':''}
+      ${fx?`<span style="color:var(--cyan)">指令：${esc((t.fxNote||'').slice(0,26))}… 完成后自动转待验收</span>`:''}</div>
+    </div>
+    <div class="rail-t">◆ P${t.ph} 等你 — ${tk?'<span style="color:var(--pink)">接管中</span>':fx?'<span style="color:var(--cyan)">task-fix</span>':t.paused?'<span style="color:var(--yellow)">暂停中</span>':'无阻塞'}</div>
+  </div>
+  <div class="rail-acts">
+    ${tk ? `
+      <button class="act-btn ab-pass" onclick="confirmTakeover()">✓ 确认本 Round 交付 · 转待验收</button>
+      <button class="act-btn ab-chat" onclick="dispatchFix('')">⚙ 剩余交给 task-fix 通用流</button>
+      <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止任务</button>`
+    : fx ? `
+      <div class="sum-row"><span>产物补齐</span><b class="c">报告 · 证据 · 交付单</b></div>`
+    : `
+      <button class="act-btn ab-branch" onclick="openBranch()">✋ 有问题？接管本 Round…</button>
+      ${t.paused
+        ? `<button class="act-btn ab-resume" onclick="openInject()">▶ 恢复 · 可注入干预</button>`
+        : `<button class="act-btn ab-dim" onclick="pauseTask()">⏸ 暂停</button>`}
+      <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止</button>`}
+  </div>`;
+}
+function phaseTiles(t){
+  const names=['设计弹窗壳与页签','实装「变更」diff 视图','接线快速修改 chat'];
+  return names.map((nm,i)=>{
+    const p=i+1, done=p<t.ph, live=p===t.ph;
+    return `<div class="phase-tile ${live?'on':''} ${done?'done-p':''}">
+      <div class="nm">${done?'<span class="g" style="color:var(--green)">✓</span>':live?'<span class="g" style="color:var(--amber)">●</span>':'<span class="g" style="color:var(--dim)">○</span>'} P${p} · ${nm}</div>
+      <div class="sub">${done?'passed':live?'⚙ matt-dev-pipeline · R1 进行中':'待 P'+p+' 触发'}</div></div>`;
+  }).join('');
+}
+
+/* ═══════════════════════ 常驻 chat dock + 三分支干预/接管/换流 ═══════════════════════ */
+function expandDock(){ state.chatDock=true; renderModal(); setTimeout(()=>{const el=document.getElementById('ci');if(el)el.focus()},50); }
+function dockMode(t){
+  if(t.col==='wait') return {k:'✎ 快速修改 · 常驻', h:t.tookover?'接管件已交付 — 验收前还能继续说改':'小改直接说 · 实时进「变更」与统计', ph:'例：验收通过按钮再圆一点 / 文件行 hover 高亮不明显…'};
+  return {k:'⚙ task-fix 执行中', h:'期间发消息 = 追加干预', ph:'追加指令…'};
+}
+function dockHtml(t){
+  const m=dockMode(t);
+  return `<div class="chatdock ${state.chatDock?'':'mini'}">
+    <div class="chat-hd"><span class="t">${m.k}</span><span class="hint">${m.h}</span>
+      <button class="icob" style="margin-left:auto" title="展开/收拢" onclick="state.chatDock=!state.chatDock;renderModal()">${state.chatDock?'▾':'▴'}</button></div>
+    <div class="chat-log" id="chatlog">${state.chat.length?state.chat.map(chatMsg).join(''):dockWelcome(t)}</div>
+    <div class="chat-in">
+      <textarea id="ci" placeholder="${m.ph}" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button class="send" onclick="sendChat()">发送 ↵</button>
+    </div></div>`;
+}
+function dockWelcome(t){
+  if(t.col==='wait') return `<div class="msg ai"><div class="who">task-author · 对话</div>小改直接说 —— 按钮、文案、颜色这类我当场改代码，改动进「变更」页签（标 💬chat）；大改我会劝你打回给 task-fix 修复轮。</div>`;
+  if(t.mode==='takeover') return `<div class="msg ai"><div class="who">task-author · 接管</div>已停流，从现在起一步一交。</div>`;
+  return `<div class="msg ai"><div class="who">task-author · 常驻对话</div>task-fix 在跑 —— 这里说的话 = 追加干预，随下一个节点生效。</div>`;
+}
+/* 整屏对话：待验收=「💬 对话」，接管=「💬 对话接管」，同一组件不同口吻 */
+function chatFullHtml(t){
+  const ph = t.col==='wait' ? '直接说小改 —— 例：验收通过按钮再圆一点 / 文件行 hover 不明显…'
+                             : '像草稿一样指挥 —— 例：先把 hover 描边改了，别动统计条…';
+  return `<div class="chatfull">
+    <div class="chat-log" id="chatlog">${state.chat.length?state.chat.map(chatMsg).join(''):dockWelcome(t)}</div>
+    <div class="chat-in">
+      <textarea id="ci" placeholder="${ph}" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button class="send" onclick="sendChat()">发送 ↵</button>
+    </div></div>`;
+}
+function chatMsg(m){
+  if(m.role==='user') return `<div class="msg user">${esc(m.text)}</div>`;
+  let out=`<div class="msg ai"><div class="who">task-author ✎</div>${esc(m.text)}</div>`;
+  if(m.tool) out+=`<div class="tool-card">⚙ 编辑 <b>${m.tool.file.split('/').pop()}</b><span class="pl a">+${m.tool.a}</span><span class="pl d">−${m.tool.d}</span><span class="lk" onclick="jumpToDiff('${encodeURIComponent(m.tool.file)}')">查看 diff</span></div>`;
+  if(m.wf) out=`<div class="msg ai"><div class="who">task-author ✎</div>${esc(m.text)}<button class="wf-btn" onclick="openRejectPrefill('${encodeURIComponent(m.text)}')">↩ 打回 · 派 task-fix（已带指令草稿）</button></div>`;
+  if(m.typing) out=`<div class="typing">◍ ◍ ◍ <i>正在改…</i></div>`;
+  return out;
+}
+function scrollChat(){const l=document.getElementById('chatlog');if(l)l.scrollTop=l.scrollHeight}
+function sendChat(){
+  const t=T(); const ta=document.getElementById('ci'); const v=ta.value.trim(); if(!v)return;
+  state.chat.push({role:'user',text:v}); ta.value=''; renderModal(); scrollChat();
+  state.chat.push({typing:true}); setTimeout(scrollChat,30);
+  setTimeout(()=>{
+    state.chat=state.chat.filter(m=>!m.typing);
+    const mode=t.col==='wait' ? 'wait' : (t.mode||'flow');
+    if(mode==='flow'){ // 执行中：说话即干预，不打断
+      consoleLines.push(['iv','⚑ 对话干预 → 节点「'+curNode(t).n+'」：'+v]);
+      const live=nodesOf(t).find(x=>x.st==='live'); if(live) live.ivCount=(live.ivCount||0)+1;
+      state.chat.push({role:'ai',text:'⚑ 收到，已注入当前节点「'+curNode(t).n+'」，执行不中断 — 看控制台的粉色高亮行。要停手就点右侧「✋ 有问题」。'});
+      renderModal(); scrollChat(); toast('⚑ 干预已注入 · 控制台高亮'); return; }
+    if(mode==='fixing'){
+      consoleLines.push(['iv','⚑ 追加干预 → task-fix：'+v]);
+      state.chat.push({role:'ai',text:'追加指令已记下，将随下一个节点生效。'});
+      renderModal(); scrollChat(); return; }
+    if(mode==='takeover'){ // 接管：一步一交
+      const e=EDIT_QUEUE[state.editIdx % EDIT_QUEUE.length]; state.editIdx++; applyEdit(e);
+      state.chat.push({role:'ai',text:'接管改动已落工作区 —— '+e.label+'。',tool:e});
+      renderModal(); scrollChat(); toast('✎ 接管 · 已改 '+e.file.split('/').pop()); return; }
+    // 待验收 = 快改：大改劝退走打回
+    const complex=COMPLEX_RE.test(v);
+    if(complex){ state.chat.push({role:'ai',wf:true,text:COMPLEX_REPLY}); renderModal(); scrollChat(); return; }
+    const e=EDIT_QUEUE[state.editIdx % EDIT_QUEUE.length]; state.editIdx++; applyEdit(e);
+    state.chat.push({role:'ai',text:e.reply,tool:e});
+    renderModal(); scrollChat(); toast('✎ chat 已改 '+e.file.split('/').pop()+' · 变更页签 +1');
+  }, 900);
+}
+function applyEdit(e){
+  const t=T();
+  const exist=t.files.find(f=>f.path===e.file);
+  if(exist){ exist.a+=e.a; exist.d+=e.d; exist.chat=true; exist.patch=[...exist.patch, ...e.patch]; }
+  else t.files.push({repo:'octopus',path:e.file,st:e.st,a:e.a,d:e.d,round:true,chat:true,patch:e.patch,_flash:true});
+  state.chatEdits++;
+  setTimeout(()=>{const f=t.files.find(x=>x.path===e.file); if(f)f._flash=false},1800);
+}
+function jumpToDiff(pathEnc){
+  const p=decodeURIComponent(pathEnc);
+  state.tab='files'; state.scope='round'; state.exp.add(p);
+  renderModal();
+  const el=document.querySelector('.fitem[data-path="'+p+'"]');
+  if(el){el.classList.add('flash'); el.scrollIntoView({block:'center',behavior:'smooth'})}
+}
+
+/* ═══ 执行中遇到问题 · 三分支：① 注入干预 ② 停流接管 chat ③ 派通用 task-fix ═══ */
+function openBranch(){
+  const t=T(); window._br='A';
+  const el=document.getElementById('br-root');
+  el.innerHTML=`<div class="dlg" data-branch-dialog>
+    <div class="h">✋ 执行中遇到问题 — 本 Round 怎么办<small>已跑 ${fmtT(t.secs)} · ${fmtMoney(t.cost)} · 当前节点「${curNode(t).n}」</small></div>
+    <div class="b" style="gap:8px">
+      <div class="rad on" id="brA" onclick="pickBr('A')"><span class="r"></span><span>① ⚑ 注入干预 · 原工作流继续<small>暂停当前节点 → 写干预指令 → 恢复。方向偏了、骨架没问题时最轻。</small></span></div>
+      <div class="rad" id="brB" onclick="pickBr('B')"><span class="r"></span><span>② ✋ 停流 · 我接管（对话开发）<small>终止绑定工作流，之后通过底部常驻对话让 agent 完成本 Round，你一步一确认，满意手动转待验收。</small></span></div>
+      <div class="rad" id="brC" onclick="pickBr('C')"><span class="r"></span><span>③ ⚙ 改派通用修复流 task-fix<small>终止绑定流，把你的指令交给通用流：开发 → 回归 → 调整 → 补报告/证据产物 → 自动转待验收。</small></span></div>
+      <textarea id="br-note" rows="3" placeholder="给 ②③ 的指令 / 说明 — 例：变更页签够了，剩余收敛为：行号对齐 + hover 描边，做完就交"></textarea>
+    </div>
+    <div class="f"><button class="btn btn-quiet" onclick="closeBranch()">取消</button>
+      <button class="btn btn-pop" id="br-go" onclick="branchGo()">① 注入干预并继续</button></div>
+  </div>`;
+  el.classList.remove('hidden');
+}
+function pickBr(k){ window._br=k; ['A','B','C'].forEach(x=>document.getElementById('br'+x).classList.toggle('on',x===k));
+  document.getElementById('br-go').textContent = k==='A'?'① 注入干预并继续':k==='B'?'② 停止工作流 · 进入接管':'③ 派发 task-fix'; }
+function closeBranch(){ document.getElementById('br-root').classList.add('hidden'); }
+function branchGo(){
+  const k=window._br, note=(document.getElementById('br-note').value||'').trim(); closeBranch();
+  if(k==='A'){ pauseTask(); openInject(); }
+  else if(k==='B'){ takeoverStart(note); }
+  else { dispatchFix(note); }
+}
+function takeoverStart(note){
+  const t=T(); t.mode='takeover'; t.paused=false;
+  if(!consoleLines.length) consoleLines=[['','[boot] task-author · phase '+t.ph+' · round '+t.round]];
+  consoleLines.push(['err','⏹ 绑定工作流「'+(t.wf||'matt-dev-pipeline.yaml')+'」已终止 · 节点「'+curNode(t).n+'」⏹ · 现场已快照']);
+  state.tab='chat'; state.chatDock=true;
+  state.chat.push({role:'ai',text:'已停流，从现在起一步一交'+(note?'。开场指令收到：「'+note+'」— 先做这个':'')+'。'});
+  renderModal(); renderBoard(); toast('✋ 已接管 — 用底部对话驱动本 Round');
+}
+function confirmTakeover(){
+  const t=T(); t.col='wait'; t.mode='flow'; t.tookover=true; t.verdict='succeeded'; t.playbook={p:0,f:0,u:4}; state.gateU=1;
+  COLS[2].kids=COLS[2].kids.filter(x=>x!==t.id); if(!COLS[3].kids.includes(t.id)) COLS[3].kids.unshift(t.id);
+  state.tab='files';
+  clearTimers(); renderBoard(); renderModal(); toast('✓ 本 Round 已交付 · 转待验收（接管件）');
+}
+function dispatchFix(note){
+  const t=T();
+  const el=document.getElementById('fx-root');
+  el.innerHTML=`<div class="dlg" data-fix-dialog>
+    <div class="h">⚙ 派发通用修复流 — task-fix.yaml<small>终止绑定流「${esc(t.wf||'matt-dev-pipeline.yaml')}」后，按你的指令开发、修复、补充产物</small></div>
+    <div class="b">
+      <textarea id="fx-text" rows="4" placeholder="给 task-fix 的指令（必填）— 例：只补齐行号对齐和 hover 描边，产物报告照旧生成">${esc(note||'')}</textarea>
+      <div style="font-size:10px;color:var(--dim)">通用流固定动作：解析指令 → 开发/修复 → 回归 → 调整 · 补产物（报告/证据）→ 自动交付转待验收。</div>
+    </div>
+    <div class="f"><button class="btn btn-quiet" onclick="document.getElementById('fx-root').classList.add('hidden')">取消</button>
+      <button class="btn btn-pop" style="background:var(--cyan);border-color:var(--cyan);color:var(--bg)" onclick="confirmDispatch()">派发 · 开跑 ⚡</button></div>
+  </div>`;
+  el.classList.remove('hidden');
+}
+function confirmDispatch(){
+  const t=T(); const v=document.getElementById('fx-text').value.trim();
+  document.getElementById('fx-root').classList.add('hidden');
+  if(!v){ toast('指令必填 — task-fix 通用流按你的输入开发'); return; }
+  consoleLines.push(['err','⏹ 绑定工作流已终止 · 现场快照']);
+  startFix(t, v);
+  toast('⚙ 已派发 task-fix · 看「节点」页签推进');
+}
+/* task-fix 统一入口 —— 打回 与 分支③ 共用：开发→回归→调整→补产物→自动转待验收 */
+function startFix(t, v){
+  t.mode='fixing'; t.paused=false; t.wf='task-fix.yaml · 通用'; t.fxNote=v;
+  t.nodes=[
+    {n:'解析指令 · 定位目标',ty:'Agent',st:'live',c:0.01},
+    {n:'开发 / 修复',ty:'Agent',st:'pend'},
+    {n:'回归验证 (pnpm test + build)',ty:'Bash',st:'pend'},
+    {n:'调整 · 补充产物 (报告/证据)',ty:'Agent',st:'pend'},
+    {n:'自动交付 → 待验收',ty:'Approval',st:'pend'}];
+  state.tab='nodes'; state.chatDock=true;
+  if(!consoleLines.length) consoleLines=[['','[boot] task-fix.yaml']];
+  consoleLines.push(['','[dispatch] task-fix ← 指令: '+v]);
+  state.chat.push({role:'ai',text:'指令已派给 task-fix：「'+v+'」\n开发→回归→调整→补齐产物，完成自动转待验收。期间你在这里说的话 = 追加干预。'});
+  ensureFixTicker(); renderModal(); renderBoard();
+}
+const FIX_MSG=['✓ 解析完成 · 定位 3 个文件','✓ 开发/修复完成 · 2 commits','✓ 回归通过 · 41 passed + build ok','✓ 产物已补：report.md / evidence/'];
+function ensureFixTicker(){ if(window._fxT) return;
+  window._fxT=setInterval(()=>{ Object.values(TASKS).forEach(t=>{ if(t.col==='run'&&t.mode==='fixing') stepFix(t); }); },3200); }
+function stepFix(t){
+  const ns=t.nodes, i=ns.findIndex(x=>x.st==='live'); if(i<0){ finishFix(t); return; }
+  ns[i].st='done'; ns[i].s='0:'+String(9+i*8).padStart(2,'0'); t.cost+=0.03;
+  if(state.openTask===t.id && consoleLines.length) consoleLines.push(['ok',FIX_MSG[i]||('✓ '+ns[i].n)]);
+  const nx=ns[i+1];
+  if(!nx){ finishFix(t); return; }
+  nx.st='live'; nx.c=0.02;
+  if(state.openTask===t.id) renderModal();
+  renderBoard();
+}
+function finishFix(t){
+  const ft=t.files?fileTotals(t):{a:0,d:0,files:0};
+  t.mode='flow'; t.col='wait'; t.verdict='succeeded'; t.playbook={p:4,f:0,u:1}; state.gateU=1; t.round=t.round||1;
+  COLS[2].kids=COLS[2].kids.filter(x=>x!==t.id); if(!COLS[3].kids.includes(t.id)) COLS[3].kids.unshift(t.id);
+  clearTimers(); renderBoard();
+  if(state.openTask===t.id) state.tab='files';
+  state.chat.push({role:'ai',text:'task-fix 跑完：按指令开发/修复，回归通过，产物已补齐（report.md / evidence/），'+ft.files+' 文件 ±'+(ft.a+ft.d)+' 行 — 本 Round 已自动转待验收。'});
+  if(state.openTask===t.id) renderModal();
+  toast('⚙ task-fix 完成 · 产物已补 · 自动转待验收');
+}
+
+
+/* ═══════════════════════════ 打回 / 通过 ═══════════════════════════ */
+function openReject(prefill){
+  const t=T();
+  document.getElementById('rej-root').classList.remove('hidden');
+  document.getElementById('rej-root').innerHTML=`<div class="dlg" data-reject-dialog>
+    <div class="h">↩ 打回 P${t.ph} · R${t.round} — 写修复指令<small>打回 = 开 task-fix 修复轮：只按你的指令开发 / 回归 / 补产物，不再重跑绑定工作流</small></div>
+    <div class="b">
+      <textarea id="rej-text" rows="6" placeholder="哪里不对 / 期望怎么修 — task-fix 以此为输入开发 · 落 fix-feedback-r${t.round+1}.md"></textarea>
+      <div style="font-size:10px;color:var(--dim)">方向要整体推翻？别打回 — 在执行中用「✋ 有问题」② 自己接管；对话里检测到改动过大也会引导到这里。</div>
+    </div>
+    <div class="f"><button class="btn btn-quiet" onclick="closeReject()">取消</button><button class="btn btn-pop" onclick="confirmReject()">确认打回 · 派 task-fix 开 R${t.round+1}</button></div>
+  </div>`;
+  if(prefill) document.getElementById('rej-text').value='（来自快速修改 chat 的升级建议）\n'+decodeURIComponent(prefill);
+}
+function openRejectPrefill(p){ closeReject(); setTimeout(()=>openReject(p),80); }
+function closeReject(){ document.getElementById('rej-root').classList.add('hidden'); }
+function confirmReject(){
+  const t=T(); const ta=document.getElementById('rej-text'); const v=(ta&&ta.value||'').trim();
+  if(!v){ toast('打回反馈必填 — task-fix 以此为输入'); return; }
+  closeReject();
+  t.col='run'; t.round=(t.round||1)+1; t.secs=0; t.cost+=0.01;
+  t.paused=false; t.mode='flow'; t.tookover=false; t.nodes=null;
+  COLS[3].kids=COLS[3].kids.filter(x=>x!==t.id); if(!COLS[2].kids.includes(t.id)) COLS[2].kids.unshift(t.id);
+  consoleLines=[['err','↩ 已打回 · 上轮 R'+(t.round-1)+' 反馈作废重开 — 不重跑绑定流，轻轮修复'],['','[boot] R'+t.round+' · task-fix']];
+  startFix(t, v);
+  toast('↩ 已打回 · R'+t.round+' task-fix 修复轮');
+}
+function openPass(){
+  const t=T(); const ft=fileTotals(t);
+  document.getElementById('pass-root').classList.remove('hidden');
+  document.getElementById('pass-root').innerHTML=`<div class="dlg" data-ledger-dialog>
+    <div class="h">确认验收通过？— 写台账<small>全 ${t.playbook.p+t.playbook.f+1} 项走查已核对（未决 ${state.gateU} 项将标注）</small></div>
+    <div class="b"><div class="ledger">
+      实物 · <b>${commits(t)}</b> commits · <b>±${ft.a+ft.d}</b> 行 / ${ft.files} 文件 <span class="c">(本轮)</span><br>
+      自动复检 · <span class="g">exit 0 · PASS</span><br>
+      跑起来看 · <span class="c">:3000/prototype 预览正常</span><br>
+      人工走查 · <span class="g">${t.playbook.p} pass</span> · ${state.gateU?'<span class="y">1 未决</span>':'<span class="g">5/5</span>'}<br>
+      ${state.chatEdits?`快速修改 · <span class="c">×${state.chatEdits}（chat 落笔，台账单独列 author=chat）</span><br>`:''}
+    </div></div>
+    <div class="f"><button class="btn btn-quiet" onclick="closePass()">再看看</button><button class="btn btn-pop" style="background:var(--green)" onclick="confirmPass()">确认通过 · 写台账</button></div>
+  </div>`;
+}
+function closePass(){ document.getElementById('pass-root').classList.add('hidden'); }
+function confirmPass(){
+  const t=T(); closePass();
+  const root=document.getElementById('modal-root');
+  root.innerHTML=`<div class="modal" style="align-items:center;justify-content:center;display:flex;flex-direction:column;gap:18px">
+    <div class="stamp">✓ 已验收 · 台账已写</div>
+    <div style="color:var(--dim);font-size:11px">${t.ph<t.phN?`放行 Phase ${t.ph+1} — ${t.ph+1<=3?'下一步 ⚡ 触发执行':'归档中'}`:'进入归档 · 完成'}</div>
+    <button class="btn btn-quiet" onclick="closeModal()">关闭</button></div>`;
+  setTimeout(()=>{ closeModal(); toast('✓ 验收通过 · 台账已写'); }, 1400);
+  if(!COLS[4].kids.includes(t.id)){ COLS[4].kids.unshift(t.id); COLS[3].kids=COLS[3].kids.filter(x=>x!==t.id);
+    t.term='通过'; renderBoard(); }
+}
+
+/* ═══════════════════════════ 全局 ═══════════════════════════ */
+let toastTimer;
+function toast(s){ const el=document.getElementById('toast'); el.textContent=s; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'),2200); }
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') { if(e.key==='Escape')e.target.blur(); return; }
+  if(e.key==='Escape'){ const hid=id=>document.getElementById(id).classList.contains('hidden');
+    if(!hid('rej-root'))closeReject();
+    else if(!hid('pass-root'))closePass();
+    else if(!hid('inj-root'))document.getElementById('inj-root').classList.add('hidden');
+    else if(!hid('br-root'))closeBranch();
+    else if(!hid('fx-root'))document.getElementById('fx-root').classList.add('hidden');
+    else if(!hid('ab-root'))closeAbort();
+    else if(state.openTask) closeModal(); return; }
+  if(!state.openTask) return;
+  const t=T(), tabs=(t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','usage','artifacts','console']:['files','nodes','usage','artifacts','console']):['chat','files','review','usage','artifacts','console']);
+  const i=tabs.indexOf(state.tab);
+  if(e.key==='ArrowRight')setTab(tabs[(i+1)%tabs.length]);
+  if(e.key==='ArrowLeft') setTab(tabs[(i-1+tabs.length)%tabs.length]);
+});
+renderBoard();
+</script>
+</body>
+</html>

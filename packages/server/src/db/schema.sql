@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS executions (
   budget_snapshot TEXT DEFAULT NULL,
   phase_index INTEGER DEFAULT NULL,
   round_index INTEGER DEFAULT NULL,
+  -- schema v51 (taskboard-modal-v2 票08, ADR-0025): 人工接管留痕（最小落点 = 执行行，
+  -- 不新建 TaskStatus、不动信封 K16）。takeover_at = 停流时刻（现场快照时间点，台账 09 读）；
+  -- takeover_delivered_at = 「✓ 确认本 Round 交付」时刻（NULL = 接管进行中 —— 派生规则据此
+  -- 把该轮认作「人工接管中」而非「待验收」，交付即放行进 Gate）。两列只出现在被人停掉的轮上。
+  takeover_at TEXT DEFAULT NULL,
+  takeover_delivered_at TEXT DEFAULT NULL,
   -- schema v41 (task-scheduler-decouple): an execution states WHICH task it serves.
   -- Until v41 the board reached a task's executions only by joining through `schedules`
   -- (origin_type='task'), which forced task code to know the scheduler's table. A
@@ -547,6 +553,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   trigger_enabled INTEGER NOT NULL DEFAULT 1,
   next_fire_at TEXT,
   last_fired_at TEXT,
+  -- ── schema v50 (taskboard-modal-v2 票01, ADR-0025) ── 「一面两会话」的「做」面：
+  -- 一 task 唯一的 task-doer 会话（chat_sessions.id，跑在任务绑定 workspace 上，
+  -- 懒建 + 幂等，跨 Round 延续）。刻意不做 FK —— chat_sessions 属 workspace 域、
+  -- 生命周期独立（同 tasks.workspace_id 先例）；NULL = 从未开过对话。
+  -- 「谈」面仍是 source_chat_session_id（sessions 表，task-author），互不侵犯。
+  doer_session_id TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 

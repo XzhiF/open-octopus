@@ -157,6 +157,41 @@ export class ArtifactAccessError extends Error {
   }
 }
 
+/** 票11 双轴 review 收口④ — 读门路径守卫**单源**（公开纯函数）：把 relRaw 解析进
+ *  rootAbs，任何越界形状抛 ArtifactAccessError(FORBIDDEN)。原 TasksService.
+ *  manifestSafeResolve / TaskHomeService.resolveHomePath 前半段 / readHomeAnyFile
+ *  三副本同形检查，自此塌缩为一份：
+ *   ① null 字节（native API 截断面）；
+ *   ② 绝对路径（POSIX `/`、Windows 盘符 `C:/` `C:\`、UNC/根反斜杠；path.isAbsolute
+ *      并上显式形状检查，跨平台一致）；
+ *   ③ 任何 `..` 段（含区内折叠形 —— 输入缺陷一律拒，不赌 resolve 折叠后仍在界内；
+ *      manifest/content 路由层的 400 闸保留为第一道，本检查是服务层最后防线）；
+ *   ④ resolve 后相对 root 逃逸（`..` 出界 / 跨盘绝对化 / root 自身 rel===""）。
+ *  rootAbs 任意（task home / 工作区根 / artifacts 目录均可作根）。消息带 `what`
+ *  门牌（home/workspace/home-file…），错误分类经 classifyError → 403 语义不变。 */
+export function resolveWithinRoot(rootAbs: string, relRaw: string, what: string): string {
+  if (relRaw.includes("\0")) {
+    throw new ArtifactAccessError(`${what} path must not contain null bytes`, "FORBIDDEN")
+  }
+  if (
+    path.isAbsolute(relRaw) ||
+    /^[a-zA-Z]:[\\/]/.test(relRaw) ||
+    relRaw.startsWith("/") ||
+    relRaw.startsWith("\\")
+  ) {
+    throw new ArtifactAccessError(`${what} absolute paths are not served: ${relRaw}`, "FORBIDDEN")
+  }
+  if (relRaw.split(/[\\/]/).some((seg) => seg === "..")) {
+    throw new ArtifactAccessError(`${what} path must not traverse outside: ${relRaw}`, "FORBIDDEN")
+  }
+  const resolved = path.resolve(rootAbs, relRaw)
+  const rel = path.relative(rootAbs, resolved)
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new ArtifactAccessError(`${what} path escapes the served root: ${relRaw}`, "FORBIDDEN")
+  }
+  return resolved
+}
+
 /** Read ceiling for batch-area files (acceptance-evidence surface reads whole
  *  files into the UI). Symmetric with the PUT /home-file body cap in
  *  routes/tasks.ts (512_000) — what the write door admits, the read door can
@@ -889,29 +924,12 @@ export class TaskHomeService {
    *  no null bytes). Returns the resolved absolute path, or throws
    *  ArtifactAccessError (FORBIDDEN) on any rule violation. */
   private resolveHomePath(taskId: string, requestedPath: string, mode: "file" | "dir" | "read"): string {
-    if (requestedPath.includes("\0")) {
-      throw new ArtifactAccessError(
-        "home-file path must not contain null bytes",
-        "FORBIDDEN",
-      )
-    }
-    if (path.isAbsolute(requestedPath)) {
-      throw new ArtifactAccessError(
-        `absolute paths are not served by home-file (relative to the task home only): ${requestedPath}`,
-        "FORBIDDEN",
-      )
-    }
+    // 票11 收口④ — 形状守卫（null 字节/绝对/`..` 段/逃逸）走 resolveWithinRoot 单源；
+    // 本门再叠 `.scratch/**` 白名单 + 写门 `.md` 后缀（home 特有语义）。
     const home = this.homePath(taskId)
-    const resolved = path.resolve(home, requestedPath)
-    const rel = path.relative(home, resolved)
-    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
-      throw new ArtifactAccessError(
-        `path escapes the task home: ${requestedPath}`,
-        "FORBIDDEN",
-      )
-    }
+    const resolved = resolveWithinRoot(home, requestedPath, "home-file")
     // rel uses platform separators; normalize for the segment/suffix checks.
-    const posixRel = rel.split(path.sep).join("/")
+    const posixRel = path.relative(home, resolved).split(path.sep).join("/")
     if (!posixRel.startsWith(`${BATCH_AREA_PREFIX}/`)) {
       throw new ArtifactAccessError(
         `path not whitelisted: ${requestedPath} (only ${BATCH_AREA_PREFIX}/** is editable here)`,
@@ -1122,18 +1140,9 @@ export class TaskHomeService {
    *  但【不】限 `.scratch` 白名单 —— 树是如实磁盘视图。TOO_LARGE 先于读；
    *  目录/缺失 → NOT_FOUND。 */
   readHomeAnyFile(taskId: string, requestedPath: string): { path: string; content: string } {
-    if (requestedPath.includes("\0")) {
-      throw new ArtifactAccessError("home path must not contain null bytes", "FORBIDDEN")
-    }
-    if (path.isAbsolute(requestedPath)) {
-      throw new ArtifactAccessError(`absolute paths are not served: ${requestedPath}`, "FORBIDDEN")
-    }
-    const home = this.homePath(taskId)
-    const resolved = path.resolve(home, requestedPath)
-    const rel = path.relative(home, resolved)
-    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
-      throw new ArtifactAccessError(`path escapes the task home: ${requestedPath}`, "FORBIDDEN")
-    }
+    // 票11 收口④ — 前半段守卫 = resolveWithinRoot 单源（原 resolveHomePath 前半段的
+    // 第三副本，塌缩）。不叠 `.scratch` 白名单 —— 树是如实磁盘视图。
+    const resolved = resolveWithinRoot(this.homePath(taskId), requestedPath, "home")
     let st: fs.Stats
     try {
       st = fs.statSync(resolved)

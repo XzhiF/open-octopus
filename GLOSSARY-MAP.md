@@ -26,8 +26,9 @@
 | **False Completion** | Agent 节点返回 completed 状态但实际工作未完成。通过诊断发现，通过节点重置修复。 | server |
 | **Diagnose Report** | 对执行现场的结构化分析，包含节点状态、异常识别（stuck/exhausted/false_completion/infinite_retry）、修复建议。 | server |
 | **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
-| **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。4 个内置：workspace / scheduler / archive / resource。 | server, shared |
-| **内置分身 (Built-in Clone)** | 系统预定义的 4 个分身，存储于 `~/.octopus/agent/built-in/{name}/`。不可删除。 | server |
+| **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。内置分身见下条。 | server, shared |
+| **task-doer（任务执行者）** | 承接任务执行/验收期对话的内置分身（谈=task-author，做=task-doer）：快速修改、人工接管、修复轮追加指令皆出其口；工作区写权来自 workspace 语义而非 task-home。ADR-0025。 | server, core-pack, web-app |
+| **内置分身 (Built-in Clone)** | 系统预定义的 7 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入）。 | server |
 | **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
 | **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |
@@ -107,8 +108,12 @@
 | **Task Home workflows/** | `~/.octopus/tasks/{task-id}/workflows/` — 自建工作流落位目录；dispatch 时经 `input_values.task_workflows_dir` 注入、拷进执行 ws `workflows/`（S2a 拷贝，非引擎直查）。ADR-0013。 | server |
 | **Phase（阶段）** | coding task 的第一级推进单元与**叙事单元**——**一个 phase = 一个完整用户故事**，叠加在 MVP 之上：phase1 = MVP 薄切片（切穿需求最高风险段），其后每 phase = 一个讲得完的故事 + 一份独立 spec（故事+票+验收方式）+ 一个 workflow_ref 绑定 + ≥1 次执行。下界 = 功能票 ≥3（E2E 票不计；摊得起一次人工 gate；MVP 豁免）；上界 = 成果内聚、一次坐得下验收，**phase 层不设时间硬顶**——≤1h 是 Ticket 层容量纪律，借给 phase 是「phase≈issue」的历史根因。phase 间以人工验收衔接直至完整需求完成。ADR-0020。 | server, shared, web-app, core-pack |
 | **叙事分层（Phase ≠ User Story ≠ Ticket）** | 三层各司一职：Phase = 交付/叙事单元（一个完整用户故事，一 phase 一道 gate）；User Story = phase spec 内的穷尽清单条目（一条故事可拆多票）；Ticket = 实现单元（垂直切片，≤1h、装进一个 context window）。时间预算只在票层有效；词层混用即粒度失控的根源。 | core-pack, shared |
-| **Round（轮次）** | Phase 内的一次执行尝试——round 1 = phase spec 的正式执行；验收打回 → 经 task chat 反馈产生新 round（跑通用修复工作流，或先产 round-2 spec 再执行）。每 round 一条独立执行记录，共享同一 workspace/分支。 | server, web-app |
-| **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
+| **Round（轮次）** | Phase 内的一次执行尝试——round 1 = phase spec 的正式执行（绑定工作流）；验收打回 → 新 round 一律为**修复轮**（task-fix），不重跑绑定流；绑定流的再执行只发生在草稿态改 spec 后重新入队。每 round 一条独立执行记录，共享同一 workspace/分支。 | server, web-app |
+| **修复轮 (Fix Round)** | 打回产生的新 round：按打回反馈开发/修复/回归/补产物后即回到待验收。承担原「修订重跑」的全部出口职责。 | server, core-pack |
+| **快速修改 (Quick-Edit)** | 待验收态下由对话直接修改执行工作空间代码的行为——不开 Round、不算引擎产物、不入打回路径；与轮次产物在验收台账中分列。 | server, web-app |
+| **人工接管 (Manual Takeover)** | 执行中终止绑定执行、由人经对话驱动 agent 逐步完成当前 Round 的终局动作；产出仍需过验收 Gate。UI 简称"接管"。_Avoid_: 与 harness 的自动接管（agent_takeover）混用。 | server, web-app, engine |
+| **验收台账 (Acceptance Ledger)** | 每轮验收的决策与证据链账本：实物变更、自动复检、跑起来看、人工走查、人工干预、快速修改，分列来源。_Avoid_: 与用量台账（UsageLedger）混称"台账"。 | server, web-app |
+| **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round（修复轮）。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
 | **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
 | **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、GLOSSARY.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
 | **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |

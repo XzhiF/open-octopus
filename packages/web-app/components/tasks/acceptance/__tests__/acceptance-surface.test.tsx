@@ -5,7 +5,7 @@
 // （叙述 tab 已于 2026-09-20 用户裁决退役，批次清单只剩 round-report 定位一职）；
 // 复检 SSE 用 subscribeSSE 捕获表手动注入事件。
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import type { Task, TaskSpec } from "@octopus/shared"
 import type { TaskDetail, TaskDerivedView } from "@/lib/tasks-api"
 
@@ -104,7 +104,7 @@ vi.mock("@/lib/sse-manager", () => ({
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-import { AcceptanceSurface } from "../acceptance-surface"
+import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance-surface"
 import { FoldProvider } from "../../fold-context"
 import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
@@ -853,45 +853,37 @@ describe("AcceptanceSurface — 批次定位（specPath 回退 / idle）", () =>
   })
 })
 
-describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
-  it("反馈为空时打回确认 disabled；缺省路由=修订重跑；选轻量修复后 body 带 next_flow=fix", async () => {
+describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（ADR-0024：无路由选项）", () => {
+  it("反馈为空/全空白 → 确认 disabled；弹窗无路由二选一；body 恒不带 next_flow；确认文案=派 task-fix 开 R{m+1}", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     const confirm = screen.getByTestId("reject-confirm") as HTMLButtonElement
     expect(confirm.disabled).toBe(true)
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "   " } })
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "路由没接上" } })
-    expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
-    // 路由二选一默认 = 修订重跑
-    expect((document.querySelector('[data-reject-flow="rerun"] input') as HTMLInputElement).checked).toBe(true)
-    expect((document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement).checked).toBe(false)
+    // ADR-0024 打回单路径：路由二选一（修订重跑/轻量修复）已删除 —— 只剩一个指令输入框。
+    expect(screen.queryByTestId("reject-flow-group")).toBeNull()
+    expect(document.querySelector('[data-reject-flow]')).toBeNull()
+    // 反馈即修复指令的提示在位（空反馈不可提交的第二重语义）。
+    expect(screen.getByTestId("reject-feedback").getAttribute("placeholder")).toContain("以此为输入")
+
+    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "登录跳转丢了 session" } })
+    const confirm2 = screen.getByTestId("reject-confirm") as HTMLButtonElement
+    expect(confirm2.disabled).toBe(false)
+    expect(confirm2.textContent).toContain("确认打回 · 派 task-fix 开 R2")
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
       dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
+    // 契约 = server strict schema 的合法集：不含 next_flow（携带即 400）。
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上", next_flow: "rerun",
-    }))
-
-    // 切到轻量修复再打一枪 → body 换轨
-    mockPostAcceptance.mockClear()
-    fireEvent.click(screen.getByTestId("acceptance-reject"))
-    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "错别字" } })
-    fireEvent.click(document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement)
-    mockPostAcceptance.mockResolvedValueOnce({
-      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "dispatched",
-      dispatch: { execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
-    })
-    fireEvent.click(screen.getByTestId("reject-confirm"))
-    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "错别字", next_flow: "fix",
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session",
     }))
   })
 
-  it("提交成功后显示路由回显卡（活的，非 disabled 占位）", async () => {
+  it("提交成功后回显卡显示 task-fix 修复轮（单一去向，无二分文案）", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
@@ -901,8 +893,10 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     const card = await screen.findByTestId("agent-recommend-card")
-    expect(card.textContent).toContain("修订重跑")
-    expect(card.querySelector("input[disabled]")).toBeNull() // D13① disabled 假卡已兑现为回显
+    expect(card.textContent).toContain("task-fix")
+    expect(card.textContent).toContain("修复轮")
+    expect(card.textContent).not.toContain("修订重跑")
+    expect(card.textContent).toContain("fix-feedback-r1.md")
     // D14 空卡已摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）
     expect(screen.queryByTestId("impact-list-empty")).toBeNull()
   })
@@ -930,6 +924,48 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 提交链（ADR-0018 �
     fireEvent.click(screen.getByTestId("acceptance-approve"))
     fireEvent.click(await screen.findByTestId("ledger-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe("AcceptanceSurface — 票08 接管件标注（如实显示 · 不加机器闸）", () => {
+  /** 待验收轮 = 接管交付件：badge 带 takeover_at + takeover_delivered_at
+   *  （ADR-0025 两列经 wire 透出；判据单源 isTakeoverDeliveredRound）。 */
+  function takeoverDetail(): TaskDetail {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    return d
+  }
+
+  it("接管件：头部 chip「✋ 接管件 · 自动复检未跑」+ 进度行写明未跑 + 通过按钮不被新闸拦", async () => {
+    const detail = takeoverDetail()
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+    const chip = await screen.findByTestId("acceptance-takeover-chip")
+    expect(chip.textContent).toBe("✋ 接管件 · 自动复检未跑")
+    expect(screen.getByText("未跑（接管件）")).toBeTruthy()
+    // AC5 回归：无 ✗ 时通过仍可点（接管件不添加任何新闸）。
+    const approve = screen.getByTestId("acceptance-approve") as HTMLButtonElement
+    expect(approve.disabled).toBe(false)
+  })
+
+  it("手动跑过当场复检的接管件 —— verify 真结果优先（标注不覆盖实况）", async () => {
+    mockGetVerifyStatus.mockResolvedValue({ state: "passed", exit_code: 0, tail: [] })
+    const detail = takeoverDetail()
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+    await screen.findByTestId("acceptance-takeover-chip")
+    // chip 在（来源标注不随复检消失），但「自动复检」行让位真结果 —— 标注不撒谎也不覆盖实况。
+    expect(screen.queryByText("未跑（接管件）")).toBeNull()
+  })
+
+  it("回归锁：普通轮无 takeover 键 → chip 绝迹，复检行现行为逐字不变", async () => {
+    renderModal()
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.queryByTestId("acceptance-takeover-chip")).toBeNull()
+    expect(screen.getByText("未跑")).toBeTruthy() // verifyStateLabel(undefined) 原文
   })
 })
 
@@ -1153,6 +1189,46 @@ function fireSseStatus(s: { connected: boolean; reconnected: boolean }): void {
 }
 
 describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
+  it("票 02 统一壳接线：onActionApi 注册决策句柄 —— requestAccept/openReject 与动作列同效（行为单源），卸载交还 null", async () => {
+    const registrations: Array<{ requestAccept: () => void; openReject: () => void; blocked: boolean } | null> = []
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
+    const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+    const { unmount } = render(
+      <AcceptanceSurface task={task} onMutated={() => {}} onActionApi={(api) => { registrations.push(api) }} />,
+    )
+    await screen.findByTestId("acceptance-approve")
+    const api = registrations[registrations.length - 1]
+    expect(api).toBeTruthy()
+    expect(api!.blocked).toBe(false)
+    // 句柄 = 动作列同一条路：requestAccept 只开台账预览，不直通提交
+    await act(async () => { api!.requestAccept() })
+    expect(await screen.findByTestId("ledger-dialog")).toBeTruthy()
+    expect(mockPostAcceptance).not.toHaveBeenCalled()
+    // openReject = 打开反馈弹窗（reject-dialog 在场）
+    await act(async () => { api!.openReject() })
+    expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
+    // 宿主卸载方向：交还 null，壳层按钮随之失能（不留悬挂句柄）
+    unmount()
+    expect(registrations[registrations.length - 1]).toBeNull()
+  })
+
+  it("票 07 接线：openReject(draft) —— 对话页签送回的建议草稿落进单 textarea（05 形态），确认键随草稿点亮", async () => {
+    const registrations: Array<{ openReject: (draft?: string) => void } | null> = []
+    mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING))
+    const task = makeDetail(PHASE1_AWAITING) as unknown as Task
+    render(
+      <AcceptanceSurface task={task} onMutated={() => {}} onActionApi={(api) => { registrations.push(api as never) }} />,
+    )
+    await screen.findByTestId("acceptance-approve")
+    const api = registrations[registrations.length - 1]!
+    await act(async () => { api.openReject("打回派修复轮：统一按钮圆角体系并回归样式令牌。") })
+    const ta = await screen.findByTestId("reject-feedback")
+    expect((ta as HTMLTextAreaElement).value).toContain("统一按钮圆角体系并回归样式令牌")
+    // 草稿即指令（票 05：反馈必填 = task-fix 输入）—— 确认键不为空文Disabled
+    expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
+    expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
+  })
+
   it("ledger_written:false → toast 不再谎报「台账已写」", async () => {
     renderModal()
     mockPostAcceptance.mockResolvedValueOnce({
@@ -1259,5 +1335,165 @@ describe("验货台 — 修复轮上下文（B 档）", () => {
     fireEvent.click(screen.getByTestId("round-diff-scope-cumulative"))
     await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative"))
     await waitFor(() => expect(screen.getByTestId("round-diff-scope-label").textContent).toContain("全 phase 累计"))
+  })
+})
+
+// ── 票09 台账预览三列（人工干预 / 快速修改 / 接管标记）──────────────────
+describe("AcceptanceSurface — 票09 台账预览分列（放行前展示三本账 · 与走查页同源）", () => {
+  /** round-diff payload 附带票09 三列（server 与 ledger 写面同吃这份）。 */
+  const DIFF_WITH_COLUMNS = {
+    available: true,
+    aggregate: { commits: 3, additions: 40, dels: 8, files: 5 },
+    interventions: 2, // harness 干预（另计，不与人工干预混称）
+    repos: ROUND_DIFF.repos,
+    manualInterventions: [
+      { node: "实现节点", time: "2026-10-08T03:00:00.000Z", summary: "别动 Dialog 尺寸" },
+      { node: "评审节点", time: "2026-10-08T03:01:00.000Z", summary: "再看 AC4" },
+    ],
+    quickEdits: [
+      { repo: "open-octopus", sha: "abcdef1234567890", subject: "[quick-edit] 收口按钮圆角", files: ["packages/web-app/ui/button.tsx", "packages/web-app/ui/dialog.tsx"] },
+    ],
+  }
+
+  /** 打开通过确认弹层（点验收通过 → ledger-dialog）。 */
+  async function openLedgerPreview() {
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+  }
+
+  it("人工干预 ×2 + harness 另计 2（两数并存不混称）", async () => {
+    mockGetRoundDiff.mockResolvedValue(DIFF_WITH_COLUMNS)
+    await openLedgerPreview()
+    const cell = screen.getByTestId("ledger-preview-intervention")
+    expect(cell.textContent).toContain("人工干预 · ×2")
+    expect(cell.textContent).toContain("agent_events")
+    expect(cell.textContent).toContain("harness 干预另计 2")
+  })
+
+  it("快速修改 ×1 + 去重文件数 2（[quick-edit] 清单可溯）", async () => {
+    mockGetRoundDiff.mockResolvedValue(DIFF_WITH_COLUMNS)
+    await openLedgerPreview()
+    const cell = screen.getByTestId("ledger-preview-quick-edit")
+    expect(cell.textContent).toContain("快速修改 · ×1")
+    expect(cell.textContent).toContain("2 文件")
+  })
+
+  it("实物统计口径走 scopeTotals（与「≡ 变更」页签同源，非另算 aggregate）", async () => {
+    // scopeTotals 只算在场仓：ROUND_DIFF.repos 单仓 commits=2 → 预览用 2，不是 DIFF_WITH_COLUMNS.aggregate.commits 的 3。
+    mockGetRoundDiff.mockResolvedValue({ ...DIFF_WITH_COLUMNS, aggregate: { commits: 99, additions: 99, dels: 99, files: 99 } })
+    renderModal()
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    const dialog = screen.getByTestId("ledger-dialog")
+    expect(dialog.textContent).toContain("实物 · 2 commits")
+    expect(dialog.textContent).not.toContain("99")
+  })
+
+  it("无介入的轮 → 三列如实归零/显示无（绑定流机器轮）", async () => {
+    mockGetRoundDiff.mockResolvedValue(ROUND_DIFF) // 无 manualInterventions/quickEdits/takeover 键
+    await openLedgerPreview()
+    expect(screen.getByTestId("ledger-preview-intervention").textContent).toContain("人工干预 · ×0")
+    expect(screen.getByTestId("ledger-preview-quick-edit").textContent).toContain("快速修改 · ×0")
+    expect(screen.getByTestId("ledger-preview-takeover").textContent).toContain("无（绑定流机器轮）")
+  })
+
+  it("接管件（未跑复检）→ 接管标记「人工交付 · 自动复检未跑（接管件）」，与走查页 chip 同源", async () => {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    mockGetTask.mockResolvedValue(d)
+    mockGetVerifyStatus.mockResolvedValue(null)
+    mockGetRoundDiff.mockResolvedValue({
+      ...DIFF_WITH_COLUMNS,
+      takeover: { at: "2026-09-03T01:00:00Z", deliveredAt: "2026-09-03T02:00:00Z" },
+    })
+    render(<AcceptanceSurface task={d as unknown as Task} onMutated={() => {}} />)
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    expect(screen.getByTestId("ledger-preview-takeover").textContent).toContain("人工交付 · 自动复检未跑（接管件）")
+    // 走查页顶部 chip 同源在场（票08 既有）。
+    expect(screen.getByTestId("acceptance-takeover-chip")).toBeTruthy()
+  })
+
+  it("接管件但复检有真结果 → 真结果优先，不谎报未跑（ADR-0025 不设新闸）", async () => {
+    const d = makeDetail(PHASE1_AWAITING)
+    const execs = d.executions as unknown as Array<Record<string, unknown>>
+    execs[0].status = "cancelled"
+    execs[0].takeover_at = "2026-09-03T01:00:00Z"
+    execs[0].takeover_delivered_at = "2026-09-03T02:00:00Z"
+    mockGetTask.mockResolvedValue(d)
+    mockGetVerifyStatus.mockResolvedValue({ state: "passed", exit_code: 0, tail: [] })
+    mockGetRoundDiff.mockResolvedValue({
+      ...DIFF_WITH_COLUMNS,
+      takeover: { at: "2026-09-03T01:00:00Z", deliveredAt: "2026-09-03T02:00:00Z" },
+    })
+    render(<AcceptanceSurface task={d as unknown as Task} onMutated={() => {}} />)
+    fireEvent.click(await screen.findByTestId("acceptance-approve"))
+    await screen.findByTestId("ledger-dialog")
+    const cell = screen.getByTestId("ledger-preview-takeover")
+    expect(cell.textContent).toContain("复检真结果为准")
+    expect(cell.textContent).not.toContain("未跑")
+  })
+})
+
+
+// ═════════════ 票 11 · ⑩回补 —— 壳内走查渲染路径（railless）+ 中止确认口句柄 ═════════════
+// AC1：走查页签内容区不再嵌「摘要+动作/验收进度」内列；中止动作唯一入口上壳右栏，
+// 二次确认流仍是本面单源（壳经 AcceptanceActionApi.requestAbort 触发，确认后
+// 走既有 abortTask 端点 —— 不新增端点/状态）。独立挂载形态（缺省）零变化。
+describe("票 11 — railless：壳内渲染路径剔内列（独立形态不动）", () => {
+  it("railless=true：摘要/动作内列绝迹，主面（验货台）照常在场", async () => {
+    const detail = makeDetail(PHASE1_AWAITING)
+    render(
+      <AcceptanceSurface
+        task={detail as unknown as Task}
+        onMutated={() => {}}
+        detailOverride={detail}
+        onRefetch={() => {}}
+        railless
+      />,
+    )
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.queryByTestId("acceptance-col-summary")).toBeNull()
+    expect(screen.queryByTestId("acceptance-col-actions")).toBeNull()
+    expect(screen.queryByTestId("acceptance-abort")).toBeNull()
+    expect(screen.queryByText("动作区")).toBeNull()
+    expect(screen.getByTestId("acceptance-col-artifacts")).toBeTruthy()
+  })
+
+  it("独立挂载（不传 railless）：内列照旧（不回退铁律）", async () => {
+    renderModal()
+    await screen.findByTestId("acceptance-modal")
+    expect(screen.getByTestId("acceptance-col-summary")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-col-actions")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-abort")).toBeTruthy()
+  })
+
+  it("AcceptanceActionApi 注册 requestAbort：句柄触发 = 既有危险二次确认，确认后才落 abortTask", async () => {
+    let api: AcceptanceActionApi | null = null
+    const detail = makeDetail(PHASE1_AWAITING)
+    mockAbortTask.mockResolvedValue({ id: "t1" })
+    render(
+      <AcceptanceSurface
+        task={detail as unknown as Task}
+        onMutated={() => {}}
+        detailOverride={detail}
+        onRefetch={() => {}}
+        railless
+        onActionApi={(a) => { api = a }}
+      />,
+    )
+    await waitFor(() => expect(api).not.toBeNull())
+    expect(typeof api!.requestAbort).toBe("function")
+    api!.requestAbort()
+    // 确认框亮出（标题含任务名），未确认前绝不落端点。
+    const dlg = await screen.findByText(/中止任务/)
+    expect(dlg).toBeTruthy()
+    expect(mockAbortTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }))
+    await waitFor(() => expect(mockAbortTask).toHaveBeenCalledWith("t1"))
   })
 })

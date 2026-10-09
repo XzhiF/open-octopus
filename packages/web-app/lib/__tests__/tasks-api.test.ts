@@ -17,6 +17,9 @@ import {
   updateSpecField,
   scheduleTaskTrigger,
   unscheduleTaskTrigger,
+  getTaskChatBinding,
+  getDoerChatHistory,
+  TaskApiError,
   TaskReadyGateError,
   type TaskDetail,
   type TaskExecutionBadge,
@@ -503,5 +506,56 @@ describe("unscheduleTaskTrigger", () => {
     expect(init.body).toBeUndefined()
     // 回到手动：游标为空。
     expect(result.trigger_mode).toBe("manual")
+  })
+})
+
+// ── 任务对话 S1（票01 端点，票07 消费面）─────────────────────────────
+
+describe("getTaskChatBinding — GET /api/tasks/:id/chat 懒建回执", () => {
+  it("GETs 任务级唯一入口，回执逐字透传 {task_id, session_id, workspace_id, created}", async () => {
+    mockFetchOnce({ task_id: "t1", session_id: "s-doer", workspace_id: "ws-1", created: true })
+
+    const r = await getTaskChatBinding("t1")
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/chat")
+    expect(init).toBeUndefined()
+    expect(r).toEqual({ task_id: "t1", session_id: "s-doer", workspace_id: "ws-1", created: true })
+  })
+
+  it("409 状态闸（草稿期谈面归 task-author / 无绑定工作区）原文透出 + 带 status", async () => {
+    mockFetchOnce({ error: "草稿期任务走 task-author 会话（谈），task-doer 对话在执行/验收态才可用" }, { ok: false, status: 409 })
+
+    const err = await getTaskChatBinding("t1").catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TaskApiError)
+    expect((err as TaskApiError).status).toBe(409)
+    expect((err as TaskApiError).message).toContain("task-author")
+  })
+})
+
+describe("getDoerChatHistory — 历史回放走既有 ws-chat GET（不新建协议）", () => {
+  it("GET /api/workspaces/:ws/chat/sessions/:sid?limit 并把 raw 行映射成 ChatMessage", async () => {
+    mockFetchOnce({
+      messages: [
+        { id: "m1", role: "user", type: "text", content: "按钮再圆一点", metadata: JSON.stringify({ displayType: "user" }), created_at: "2026-10-08T01:00:00Z" },
+        { id: "m2", role: "assistant", type: "tool_call", content: "", metadata: JSON.stringify({ displayType: "tool_call", toolName: "Edit", toolInput: { file_path: "packages/a.ts" }, toolStatus: "done" }), created_at: "2026-10-08T01:00:05Z" },
+        { id: "m3", role: "assistant", type: "text", content: "改好了。", metadata: JSON.stringify({ displayType: "text" }), created_at: "2026-10-08T01:00:09Z" },
+      ],
+    })
+
+    const msgs = await getDoerChatHistory("ws-1", "s-doer")
+
+    const [url] = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/workspaces/ws-1/chat/sessions/s-doer?limit=200")
+    expect(msgs.map((m) => m.displayType)).toEqual(["user", "tool_call", "text"])
+    expect(msgs[1].toolName).toBe("Edit")
+    expect(msgs[1].sessionId).toBe("s-doer")
+  })
+
+  it("404 会话不存在（被清理）→ TaskApiError 带状态，UI 走自愈提示", async () => {
+    mockFetchOnce({ error: "not found" }, { ok: false, status: 404 })
+    const err = await getDoerChatHistory("ws-1", "gone").catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TaskApiError)
+    expect((err as TaskApiError).status).toBe(404)
   })
 })

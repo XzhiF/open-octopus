@@ -11,7 +11,9 @@ vi.mock("../authoring/artifact-viewer-dialog", () => ({ ArtifactViewerDialog: ()
 
 import {
   runErrorOf, RUN_ERROR_STATUSES, execLabel, deepLinkTarget, mergeAggregates, TaskAiUsageCard,
+  LIVE_STATUSES,
 } from "../execution-summary"
+import { LIVE_ROUND_STATUSES } from "@octopus/shared"
 import type { LLMCallAggregates } from "@/lib/types"
 
 const row = (over: Partial<TaskExecutionBadge>): TaskExecutionBadge => ({
@@ -43,6 +45,16 @@ describe("runErrorOf — 票05 §新事实-2 状态门控", () => {
     expect(runErrorOf(row({ status: "completed_with_failures", error_summary: "x" }))).toBe("x")
     expect(runErrorOf(row({ status: "completed", error_summary: "x" }))).toBeNull()
     expect(runErrorOf(row({ status: "running", error_summary: "x" }))).toBeNull()
+  })
+})
+
+describe("LIVE_STATUSES — 在飞轮词表派生（票10 review-2 防漂移钉）", () => {
+  it("= 'pending' 排队行 + shared LIVE_ROUND_STATUSES（停在审批/交互节点的轮也算 live；终态不算）", () => {
+    const expected = new Set<string>(["pending", ...LIVE_ROUND_STATUSES])
+    expect([...LIVE_STATUSES].sort()).toEqual([...expected].sort())
+    expect(LIVE_STATUSES.has("pending_interaction")).toBe(true)
+    expect(LIVE_STATUSES.has("completed")).toBe(false)
+    expect(LIVE_STATUSES.has("cancelled")).toBe(false)
   })
 })
 

@@ -46,7 +46,8 @@ function task(spec: string, status: string): DeriveTaskInput {
 }
 
 let execSeq = 0
-/** Execution fixture — created_at ascends with seq (exec tie-break relies on it). */
+/** Execution fixture — created_at ascends with seq (exec tie-break relies on it).
+ *  票08: takeover 两列默认 null（非接管轮）—— takeover 用例就地赋值覆盖。 */
 function ex(
   phaseIndex: number | null,
   roundIndex: number | null,
@@ -59,6 +60,9 @@ function ex(
     phase_index: phaseIndex,
     round_index: roundIndex,
     created_at: `2026-09-03T00:00:${String(execSeq).padStart(2, "0")}.000Z`,
+    workflow_ref: "built-in/task-dev",
+    takeover_at: null,
+    takeover_delivered_at: null,
   }
 }
 
@@ -644,6 +648,71 @@ describe("暂停态 — 不变量与刻意的取舍", () => {
     // 末 phase 已 accepted → 该归档, 不该被一个已经不存在的 phase 的暂停轮扣住。
     expect(view.taskStatus).toBe("archiving")
     expect(view.phaseViews.every((p) => p.status === "accepted")).toBe(true)
+  })
+})
+
+// ── 票08 人工接管 — takeover 标记（执行行两列）给派生规则补一支 ──────────
+//
+// ADR-0025：接管启动 = 直接 abort 绑定执行（不留 paused 半程）。停下来的轮
+// 按既有规则会立刻落 'awaiting_review'（末轮终态且无验收）—— 但人还在现场
+// 一步一交，Gate 不该开门。执行行 takeover_at（停流/现场快照时刻）+
+// takeover_delivered_at（「✓ 确认本 Round 交付」事件）两列把这条规则补成：
+//   停流未交付 → phase 'takeover'（任务态仍 running —— AC1 running(takeover)）
+//   交付之后   → 走回既有 'awaiting_review' 分支，Gate 放行（不加机器闸）。
+// 期望值来源：spec.md 页签装配表 takeover 行 + ADR-0025 三条后果（独立事实，
+// 非按实现复算）。
+
+describe("票08 人工接管 — 停流的接管轮不提前落待验收", () => {
+  /** 接管停流后的轮：exec 已 cancelled（终态），带 takeover_at；delivered=true 再带交付标记。 */
+  function takeoverExec(
+    phase: number,
+    round: number,
+    delivered = false,
+  ): DeriveExecutionInput {
+    const e = ex(phase, round, "cancelled")
+    e.takeover_at = "2026-09-03T09:00:00.000Z"
+    if (delivered) e.takeover_delivered_at = "2026-09-03T09:30:00.000Z"
+    return e
+  }
+
+  it("停流未交付 → phase 'takeover'、awaitingRound=null、任务态仍 'running'", () => {
+    const view = deriveTaskView(task(v4Spec(2), "running"), [takeoverExec(1, 1)], [])
+    expect(view.phaseViews[0].status).toBe("takeover")
+    expect(view.phaseViews[0].awaitingRound).toBeNull()
+    // AC1「任务态 running(takeover)」—— 卡片留守执行中，不提前进待验收列。
+    expect(view.taskStatus).toBe("running")
+  })
+
+  it("交付事件（takeover_delivered_at）→ 同一轮转 'awaiting_review'、Gate 放行", () => {
+    const view = deriveTaskView(task(v4Spec(2), "running"), [takeoverExec(1, 1, true)], [])
+    expect(view.phaseViews[0].status).toBe("awaiting_review")
+    expect(view.phaseViews[0].awaitingRound).toBe(1)
+    expect(view.taskStatus).toBe("awaiting_review")
+  })
+
+  it("接管标记不覆写真在跑的轮（改派 task-fix 后新轮 live → phase 'running'）", () => {
+    const fixed = ex(1, 2, "running")
+    fixed.workflow_ref = "built-in/task-fix"
+    const view = deriveTaskView(task(v4Spec(2), "running"), [takeoverExec(1, 1), fixed], [])
+    expect(view.phaseViews[0].status).toBe("running")
+    expect(view.taskStatus).toBe("running")
+  })
+
+  it("接管轮 + 前序 accepted 并存 → 任务 running（takeover 优先于 archiving/ready 兜底）", () => {
+    const prev = ex(1, 1, "completed")
+    const view = deriveTaskView(
+      task(v4Spec(2), "running"),
+      [prev, takeoverExec(2, 1)],
+      [acc(1, 1, "accepted")],
+    )
+    expect(view.phaseViews[1].status).toBe("takeover")
+    expect(view.taskStatus).toBe("running")
+  })
+
+  it("回归锁：无 takeover 标记的终态轮行为不变（cancelled 末轮仍 = awaiting_review）", () => {
+    const view = deriveTaskView(task(v4Spec(1), "running"), [ex(1, 1, "cancelled")], [])
+    expect(view.phaseViews[0].status).toBe("awaiting_review")
+    expect(view.taskStatus).toBe("awaiting_review")
   })
 })
 

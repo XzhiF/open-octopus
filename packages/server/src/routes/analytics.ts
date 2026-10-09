@@ -485,6 +485,27 @@ export function createAnalyticsRoutes(
       modelBreakdown[model].costUsd = costSummary(costs).usd
     }
 
+    // 票 11 ⑩回补（▤ 消耗页签「按会话/节点」明细）—— **additive**：执行级形
+    // （无 nodeId 过滤）附 aggregates.byNode[]，按 node_id 首次出现序逐节点成行。
+    // 去重口径与全局 totalCalls 同一条 aggCalls（并行共享消息只算首现）；聚合公式
+    // = shared llmUsageAggregates 单源（与会话口径孪生，防双口径漂移）。node_id 为
+    // 空的行（会话压缩类无节点归属）不进分组 —— 两账各归各，不造假归属。
+    // ?nodeId= 过滤形不塞 byNode（响应既有形状零变化）。
+    const byNode = nodeId ? undefined : (() => {
+      const groups = new Map<string, typeof aggCalls>()
+      for (const call of aggCalls) {
+        const nid = call.node_id as string | null
+        if (!nid) continue
+        const bucket = groups.get(nid)
+        if (bucket) bucket.push(call)
+        else groups.set(nid, [call])
+      }
+      return [...groups.entries()].map(([nid, rows]) => ({
+        nodeId: nid,
+        ...llmUsageAggregates(toLedgerRows(rows)),
+      }))
+    })()
+
     return c.json({
       data: calls,
       aggregates: {
@@ -494,6 +515,7 @@ export function createAnalyticsRoutes(
         usage: ledgerAgg.usage,
         totals: ledgerAgg.totals,
         modelBreakdown,
+        ...(byNode ? { byNode } : {}),
       },
       _degraded: false,
       _message: null,

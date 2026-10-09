@@ -37,6 +37,9 @@ import {
 } from "@octopus/shared"
 import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 import { InstanceGateError } from "../services/tasks/round-evidence-service"
+// taskboard-modal-v2 票08: takeover 聚合端点复用 01 的 doer 会话就绪（type-only，
+// 与 routes/task-chat.ts 同一实例由 index.ts 注入）。
+import type { TaskDoerService } from "../services/tasks/task-doer-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -93,26 +96,28 @@ async function safeJson(c: Context): Promise<Record<string, unknown> | null> {
 // rejections are TaskStatusConflictError → 409 (state defect) — the two are
 // deliberately different so 票 12 can tell "fix the form" from "someone else
 // decided first".
+// ADR-0024 打回单路径：原 ADR-0018 的 next_flow 枚举已【干净删除】——不留隐藏档、
+// 不留兼容读法。schema 以 .strict() 明示未知字段策略：仍携带 next_flow（或任何
+// 未知键）的请求 → 400 响亮报错，老客户端得到改契约的信号而非静默行为切换。
 const acceptanceBodySchema = z
   .object({
     phase_index: z.number().int().min(1),
     round_index: z.number().int().min(1),
     decision: z.enum(["accepted", "rejected"]),
     feedback: z.string().max(20000).optional(),
-    // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
-    // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
-    next_flow: z.enum(["fix", "rerun"]).optional(),
     // ADR-0022 验收台 ✗ 闭环：rejected 时打回的票名基（`NN-e2e-*`），server 把
     // 对应 issues/<name>.md 的 Status done→reopened。路径安全：仅文件名基。
     reopen_tickets: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/)).max(20).optional(),
   })
+  .strict()
   .superRefine((b, ctx) => {
-    // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
+    // K7/US10: 打回必填反馈文本 —— ADR-0024 起反馈【就是】task-fix 修复轮的指令
+    // （落 fix-feedback-r{N}.md + 注入 input_values.feedback），空指令 = 无修复轮可派。
     if (b.decision === "rejected" && !(b.feedback ?? "").trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["feedback"],
-        message: "decision='rejected' 必须携带非空 feedback",
+        message: "decision='rejected' 必须携带非空 feedback（反馈即 task-fix 修复指令）",
       })
     }
   })
@@ -132,6 +137,14 @@ const probeRunBodySchema = z.object({
   timeoutS: z.number().int().min(5).max(600).optional(),
 })
 
+// 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
+// strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
+const fixRoundBodySchema = z
+  .object({
+    instruction: z.string().trim().min(1, "指令必填 —— task-fix 通用流按你的输入开发").max(20000),
+  })
+  .strict()
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -139,6 +152,10 @@ export function createTasksRoutes(
   sse: SSEService,
   assistService?: AssistWorkflowService,
   evidence?: RoundEvidenceService,
+  // taskboard-modal-v2 票08: takeover 聚合端点的会话就绪一步（01 的 ensureSession）。
+  // tail-appended optional —— 未接线（老测试/嵌入方）takeover 仍停流+落标记，
+  // session 如实 null。
+  doer?: TaskDoerService,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -325,6 +342,38 @@ export function createTasksRoutes(
     }
   })
 
+  // ── 票 11 ▣ 产物分组清单（⑩真机回补 — 唯一新增薄 seam）────────────────
+  // GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/报告/证据/台账/原型）。
+  // 票面原文路径 /artifacts 已被票 06 产物索引占用（数组响应不可改形），分组
+  // 清单落同子树新叶；缺目录 = 空组降级 200，任务缺 = 404。
+  // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读。`..` 遍历
+  // 段 = 输入缺陷 → 400；绝对/未知前缀/白名单区外/逃逸 = 403；缺文件 404；
+  // 超读取上限 413（ArtifactAccessError 分类与 home-file 门同款）。
+  router.get("/:id/artifacts/manifest", (c) => {
+    try {
+      return c.json(service.artifactManifest(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.get("/:id/artifacts/manifest/content", (c) => {
+    const ref = c.req.query("path")
+    if (!ref || !ref.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    if (/(^|[\\/:])\.\.($|[\\/])/.test(ref)) {
+      return c.json({ error: `path must not traverse outside: ${ref}` }, 400)
+    }
+    try {
+      return c.json(service.readArtifactManifestFile(c.req.param("id"), ref))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── Context file (workspace state visible to agent) ──────────────────
   // GET /:id/context — read the task's context.md + manifest.json + filesystem
   // paths. The dynamic workspace state file the agent reads when notified via
@@ -431,9 +480,10 @@ export function createTasksRoutes(
   })
 
   // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
-  // 服务端按 task id 解析 awaiting round（web 永不见 SHA）；无 evidence 注入
-  // （如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经 classifyError：
-  // 未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
+  // 服务端按 task id 解析轮次（web 永不见 SHA）：awaiting 优先；票03 起 diff 两端点
+  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货。
+  // 无 evidence 注入（如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经
+  // classifyError：未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
   // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的
   // start 锚 .. 本轮 exec 的 end 锚（放行判的是 phase 终态，修复轮不再只见
   // delta）；缺省/其他值 = round（本轮区间，现行为逐字不变）。payload 形状
@@ -673,13 +723,14 @@ export function createTasksRoutes(
   // ── Actions ───────────────────────────────────────────────────
 
   // POST /:id/acceptance — the v4 phase 验收 Gate (task-phase-redesign ticket
-  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?, next_flow?}:
+  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?} — 严格
+  // 对象：未知字段（含已删除的 next_flow，ADR-0024）一律 400:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
   //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
-  //   rejected (feedback 必填)      → fix-feedback-r{N}.md 进批次目录 + 同 phase
-  //     新 round 开跑；next_flow(ADR-0018)：缺省 'rerun'=重跑绑定流（流内再审
-  //     spec），'fix'=override built-in/task-fix + server 合成输入（轻量修复轮）
+  //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 + 同
+  //     phase 新 round 恒派 built-in/task-fix 修复轮（ADR-0024 打回单路径：
+  //     server override + 合成输入；绑定流再执行只剩 authoring 侧改 spec 重入队）
   // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
@@ -696,7 +747,6 @@ export function createTasksRoutes(
         round_index: parsed.round_index,
         decision: parsed.decision,
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
-        ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
       // ADR-0022: freeze the round's evidence BEFORE the decision lands (after
       // it, the awaiting view is gone), and stop any live preview. The
@@ -969,6 +1019,76 @@ export function createTasksRoutes(
     try {
       const task = await service.resumeTask(c.req.param("id"), raw)
       return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── 人工接管三分支（taskboard-modal-v2 票08, ADR-0025）────────────────
+  // 「✋ 有问题？接管本 Round…」决策框的三条线：
+  //   ① 注入干预原流继续 = 既有 /:id/pause + /:id/resume（票06 接线，零新端点）
+  //   ② 停流·人工接管   = POST /:id/takeover（abort+标记+会话）
+  //      交付转待验收    = POST /:id/takeover/deliver
+  //   ③ 改派 task-fix   = POST /:id/fix-round（运行中决策，不写账本）
+
+  // POST /:id/takeover — 聚合端点：service 停流+落 takeover 标记 → doer 会话就绪
+  // （01 的 ensureSession 原样复用，「做」面指针落 tasks.doer_session_id）。
+  // abort 失败不产生接管态（服务层的顺序保证）；响应 = 标记 + 会话 + 最新 detail。
+  router.post("/:id/takeover", async (c) => {
+    try {
+      const result = await service.takeoverTask(c.req.param("id"))
+      // 会话就绪是聚合的第三步，但停流已是既成事实 —— ensureSession 的拒绝
+      // （理论上不该发生：running+绑定 ws 是 01 闸门的放行态）不伪装成「接管失败」，
+      // 而是 200 + session_error 如实透出（UI 侧可在对话页重试懒建）。
+      let session: { session_id: string; workspace_id: string; created: boolean } | null = null
+      let sessionError: string | null = null
+      if (doer) {
+        try {
+          const s = doer.ensureSession(result.task.id)
+          session = { session_id: s.sessionId, workspace_id: s.workspaceId, created: s.created }
+        } catch (err: unknown) {
+          sessionError = err instanceof Error ? err.message : String(err)
+        }
+      }
+      return c.json({
+        task: result.task,
+        takeover: result.takeover,
+        session,
+        ...(sessionError ? { session_error: sessionError } : {}),
+      })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/takeover/deliver — 「✓ 确认本 Round 交付 · 转待验收」。交付事件落
+  // takeover_delivered_at + 现场 HEAD 快照进 end_commit_id；派生随即放行
+  // awaiting_review（既有 Gate，不加机器闸 —— ADR-0025「接管件无自动复检」如实
+  // 呈现给验收人，拦与放仍是人的事）。无人接管中 / 重复交付 → 409。
+  router.post("/:id/takeover/deliver", async (c) => {
+    try {
+      const result = await service.deliverTakeover(c.req.param("id"))
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/fix-round — 分支③「改派通用修复流 task-fix」（接管中「改派」钮走
+  // 同一条）。body { instruction } 必填非空（≤20000，与打回反馈同额）。行为 =
+  // abort 当前轮 → fix-feedback-r{N+1}.md 落批次目录 → 恒 task-fix 新轮派发
+  // （与票05 rejected 共用服务层路由私有件），**不写验收决策行**。
+  // 待验收轮 → 409 指路打回（两条入口各司其职）。
+  router.post("/:id/fix-round", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = fixRoundBodySchema.parse(body)
+      const result = await service.fixRound(c.req.param("id"), parsed.instruction)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

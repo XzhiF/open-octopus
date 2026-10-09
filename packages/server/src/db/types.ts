@@ -60,6 +60,11 @@ export interface ExecutionRow {
    *  NULL = v3/generic (non-phase execution). */
   phase_index: number | null
   round_index: number | null
+  /** v51 (taskboard-modal-v2 票08, ADR-0025): 人工接管留痕 —— takeover_at = 停流时刻
+   *  (现场快照时间点), takeover_delivered_at = 「确认交付」事件时刻。
+   *  takeover_at 非空 & delivered 空 = 接管进行中（derive 认 phase 'takeover'）。 */
+  takeover_at: string | null
+  takeover_delivered_at: string | null
   /** v41 (ADR-0021): the board reaches an execution directly by task instead of joining
    *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
    *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */
@@ -391,6 +396,11 @@ export interface TaskRow {
   /** v40 (K4): bound workspace — NULL = never triggered; first trigger creates +
    *  binds, later phase rounds reuse (dispatchPhaseRound, 票 05). */
   workspace_id: string | null
+  /** schema v50 (ADR-0025, taskboard-modal-v2 票01): the task's single task-doer
+   *  chat session (→chat_sessions.id, workspace-chat channel, cwd = the bound
+   *  workspace). Lazy-created + idempotent via GET/POST /api/tasks/:id/chat;
+   *  persists across Rounds (一面两会话的「做」面 — 「谈」面是 source_chat_session_id). */
+  doer_session_id: string | null
   // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
   // Before v41 the due time lived on a private `schedules` row that readyTask
   // pre-created and parked ('draft'); arming a task meant flipping that row, which

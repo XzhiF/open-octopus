@@ -8,6 +8,7 @@
 // step with the Zod schemas (SG14: read `Task`, NOT `SchedulerJob`).
 
 import { getServerUrl } from "@/lib/server-config"
+import { fromDBMessage, type ArtifactManifestBody, type ChatMessage } from "@/lib/types"
 import type {
   Task,
   TaskExecutionBadge,
@@ -87,8 +88,9 @@ export type DerivedTaskStatus =
   | "aborted"
 
 /** Mirror of the server's DerivedPhaseStatus. Same reasoning: 'accepted' is derive-only
- *  and 'paused' has no persisted counterpart. */
-export type DerivedPhaseStatus = "pending" | "running" | "paused" | "awaiting_review" | "accepted"
+ *  and 'paused' has no persisted counterpart. 'takeover' (票08/ADR-0025) = 绑定流被
+ *  人工停流、接管件尚未交付 —— 壳层 shellMode 的判据源之一，仍是派生显示态不是持久态。 */
+export type DerivedPhaseStatus = "pending" | "running" | "paused" | "takeover" | "awaiting_review" | "accepted"
 
 /** What a card's column is decided by: persisted status for v3, derived for v4 —
  *  hence the union (mirrors the server's `TaskView.taskStatus`). */
@@ -238,7 +240,9 @@ export class TaskReadyGateError extends Error {
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    // TaskApiError extends Error（name/status 多带两层信息）—— 老 catch(err: Error)
+    // 逐字兼容；带 status 的调用方（409 决策闸等）本就按 TaskApiError 消费。
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }
@@ -471,17 +475,14 @@ export class TaskApiError extends Error {
 
 /** Body of POST /api/tasks/:id/acceptance (票 07 契约). Indices are 1-based,
  *  matching TaskPhase.index / executions.phase_index. rejected 必填 feedback
- *  (缺 → 400). */
+ *  (缺 → 400)。ADR-0024 打回单路径：原 next_flow 枚举已删除，server schema 为
+ *  严格对象 —— 携带 next_flow（或任何未知字段）的请求 → 400。rejected 恒由
+ *  server 派 built-in/task-fix 修复轮（反馈即修复指令）。 */
 export interface AcceptanceInput {
   phase_index: number
   round_index: number
   decision: "accepted" | "rejected"
   feedback?: string
-  /** ADR-0018 打回二分路由（rejected 生效）：
-   *  "rerun"（缺省）= 重跑绑定流（matt-spec-dev 绑定时即「修订重跑」——流内
-   *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
-   *  built-in/task-fix + 合成输入）。 */
-  next_flow?: "fix" | "rerun"
   /** ADR-0022 打回 ✗ 闭环：被重开的票名基（如 "11-e2e-story"），server 把对应
    *  issues/<name>.md 的 Status done→reopened。 */
   reopen_tickets?: string[]
@@ -561,6 +562,55 @@ export async function postAdvance(taskId: string): Promise<AdvanceResult> {
   return res.json()
 }
 
+// ── 票08 人工接管三分支端点（taskboard-modal-v2, ADR-0025）────────────
+//
+// ② = takeover（停流+标记+doer 会话就绪的聚合端点）→ takeover/deliver（确认
+// 交付 · 转待验收）；③ = fix-round（改派 task-fix，运行中决策不写账本）。
+// ① 不在这里 —— 它是既有 pauseTask + resumeTask(intervention)（票 06 通道）。
+
+/** POST /api/tasks/:id/takeover 响应：标记 + doer 会话 + 最新 detail（derived
+ *  随即 phase='takeover'）。session=null 仅见于服务端未接线；session_error =
+ *  停流已成功但会话未就绪（对话页可按 GET /:id/chat 懒建重试，如实透出）。 */
+export interface TakeoverResultWire {
+  task: TaskDetail
+  takeover: { execution_id: string; phase_index: number; round_index: number; taken_over_at: string }
+  session: { session_id: string; workspace_id: string; created: boolean } | null
+  session_error?: string
+}
+
+export interface DeliverTakeoverResultWire {
+  task: TaskDetail
+  delivered: { execution_id: string; phase_index: number; round_index: number; delivered_at: string }
+}
+
+export interface FixRoundResultWire {
+  task: TaskDetail
+  dispatch: AcceptanceDispatch
+}
+
+/** 分支②：停流 · 人工接管。409 = 无在飞轮/排队中/abort 失败（接管未产生）。 */
+export async function takeoverTask(taskId: string): Promise<TakeoverResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/takeover`), { method: "POST" })
+  return handleResponse<TakeoverResultWire>(res)
+}
+
+/** 「✓ 确认本 Round 交付 · 转待验收」。409 = 无接管中轮/重复交付/已被改派。 */
+export async function deliverTakeover(taskId: string): Promise<DeliverTakeoverResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/takeover/deliver`), { method: "POST" })
+  return handleResponse<DeliverTakeoverResultWire>(res)
+}
+
+/** 分支③：改派通用修复流 task-fix（指令必填）。409 = 待验收轮（走打回）/ 无进行中
+ *  phase；400 = 空指令/未知字段（strict）。dispatch 形状与 acceptance 修复轮同构。 */
+export async function postFixRound(taskId: string, instruction: string): Promise<FixRoundResultWire> {
+  const res = await fetch(buildUrl(`/${taskId}/fix-round`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  })
+  return handleResponse<FixRoundResultWire>(res)
+}
+
 /** POST /api/tasks/:id/archive/retry — 票 08 归档幂等续跑（仅 archiving 态，
  *  202 异步；完成以 task_status SSE 'done' 为准）。 */
 export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; task_id: string; status: string }> {
@@ -637,6 +687,29 @@ export interface ArtifactContent {
  *  degraded hint (AC2). */
 export async function getArtifactContent(taskId: string, artifactPath: string): Promise<ArtifactContent> {
   const res = await fetch(buildUrl(`/${taskId}/artifacts/content`, { path: artifactPath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new ArtifactContentError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+// ── 票 11 ▣ 产物分组清单（⑩真机回补 — 只读薄 seam）──────────────────────
+// GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/轮次报告/证据/验收台账/
+// 原型）。票面原文路径 /artifacts 已被票 06 产物索引（ArtifactIndexEntry[]，
+// ArtifactsCard 在用）占用，分组清单落同子树新叶。缺目录 = 空组 200 降级。
+// GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读；400（.. 遍历）
+// /403（越界）/404（缺文件）/413（超限）都经 ArtifactContentError 带 status 抛出。
+// wire 形 = lib/types.ts::ArtifactManifestItem/Group/Body 单源（票11 收口⑤ ——
+// 原 tasks-api 与 artifacts-model 两份本地副本塌缩，同 LlmNodeAggregatesWire 惯例）。
+
+export async function getArtifactManifest(taskId: string): Promise<ArtifactManifestBody> {
+  const res = await fetch(buildUrl(`/${taskId}/artifacts/manifest`))
+  return handleResponse<ArtifactManifestBody>(res)
+}
+
+export async function readArtifactManifestFile(taskId: string, ref: string): Promise<ArtifactContent> {
+  const res = await fetch(buildUrl(`/${taskId}/artifacts/manifest/content`, { path: ref }))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new ArtifactContentError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -831,6 +904,25 @@ export interface RepoDiff {
   groups: DiffGroup[]
 }
 
+/** 票09 台账三列（人工介入度）的 web 镜像 —— 与 server
+ *  round-evidence-service.ts 的 LedgerInterventionEntry/LedgerQuickEditEntry/
+ *  LedgerTakeoverMark 逐字同形（mirror 纪律同 RoundDiffPayload）。 */
+export interface LedgerInterventionEntry {
+  node: string
+  time: string
+  summary: string
+}
+export interface LedgerQuickEditEntry {
+  repo: string
+  sha: string
+  subject: string
+  files: string[]
+}
+export interface LedgerTakeoverMark {
+  at: string
+  deliveredAt: string | null
+}
+
 export interface RoundDiffPayload {
   available: boolean
   reason?: string
@@ -838,6 +930,11 @@ export interface RoundDiffPayload {
   /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
   interventions: number | null
   repos: RepoDiff[]
+  /** 票09 —— 决策后台账预览 + server ledger 同吃这份 payload。旧 server 无键时
+   *  undefined（UI 如实归零/显示无），与 0 是两回事但此处统一按「无」渲染。 */
+  manualInterventions?: LedgerInterventionEntry[]
+  quickEdits?: LedgerQuickEditEntry[]
+  takeover?: LedgerTakeoverMark | null
 }
 
 export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"
@@ -1220,6 +1317,50 @@ export async function triggerAssistWorkflow(
 export async function getAssistWorkflowRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
   const res = await fetch(buildUrl(`/${taskId}/assist-workflows/${runId}`))
   return handleResponse<AssistWorkflowRun>(res)
+}
+
+// ============ 任务对话 S1（票01 端点契约 · 票07 消费面）────────────────
+//
+// GET /:id/chat = 懒建/取得任务唯一 task-doer 会话（tasks.doer_session_id，
+// ADR-0025「做」面）。历史回放**不新建协议** —— doer 会话就是 workspace-chat
+// 会话，读面走既有 GET /api/workspaces/:ws/chat/sessions/:sid（票01 契约末句）。
+// 发信 SSE（POST /:id/chat）由 chat-tab 组件直接 fetch + parseSSEStream 消费，
+// 帧形与 ws-chat 同构（含尾帧 quick_edit_commit）。
+
+/** GET /api/tasks/:id/chat 回执 —— 409（草稿期谈面归 task-author / 归档/终态 /
+ *  无绑定工作区）经 TaskApiError.status 透出，UI 据此落空态话术。 */
+export interface TaskDoerChatBinding {
+  task_id: string
+  session_id: string
+  workspace_id: string
+  /** true = 本次调用刚懒建（首次开聊）。 */
+  created: boolean
+}
+
+export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBinding> {
+  const res = await fetch(buildUrl(`/${taskId}/chat`))
+  return handleResponse<TaskDoerChatBinding>(res)
+}
+
+/** 会话历史（ws-chat GET 的 raw 行 → ChatMessage，映射单源 fromDBMessage）。 */
+export async function getDoerChatHistory(workspaceId: string, sessionId: string, limit = 200): Promise<ChatMessage[]> {
+  const url = new URL(`${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/chat/sessions/${encodeURIComponent(sessionId)}`)
+  url.searchParams.set("limit", String(limit))
+  const res = await fetch(url.toString())
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  const data = await res.json() as { messages?: Record<string, unknown>[] }
+  return (data.messages ?? []).map((m) => fromDBMessage({
+    id: m.id as string,
+    session_id: sessionId,
+    role: (m.role as string) ?? "assistant",
+    type: (m.type as string) ?? "text",
+    content: (m.content as string) ?? "",
+    metadata: (m.metadata as string | null) ?? null,
+    created_at: (m.created_at as string) ?? new Date().toISOString(),
+  }))
 }
 
 // Re-export shared types so callers can import everything from one place.

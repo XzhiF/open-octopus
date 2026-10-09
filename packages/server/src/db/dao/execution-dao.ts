@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { BaseDAO } from "./base"
 import { buildTurnBoundaries, deriveTurnForTs, toEpochMs } from "../../turn-index"
 import type {
@@ -152,6 +153,39 @@ export class ExecutionDAO extends BaseDAO {
          )
        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
     ).get(taskId, phaseIndex, taskId, phaseIndex) as ExecutionRow) ?? null
+  }
+
+  /** 票03（taskboard-modal-v2「≡ 变更」）：任务当前 **live 轮**的 exec 行 —— 已起跑、
+   *  未终态（running/paused/停在审批或交互节点的 pending_approval/
+   *  pending_interaction/pending_resume —— 词表单源 shared
+   *  {@link LIVE_ROUND_STATUSES}，review-2 收口：停在交互节点的轮也是 live，
+   *  旧内联字面量漏过它）的最近一条实例行。start_commit_id 必须已落（launch 即捕获；
+   *  排队未起动的行没有可圈的区间）。
+   *  与 findLatestTaskInstance 同 instance 谓词（roots + chained v4 rounds，扇出臂不
+   *  算轮）。无命中 = 任务当前没有在飞的轮 → null（diff 端点据此回原 409）。 */
+  findLiveRoundForTask(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND status IN (${LIVE_ROUND_STATUSES.map(() => "?").join(", ")})
+         AND start_commit_id IS NOT NULL
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId, ...LIVE_ROUND_STATUSES) as ExecutionRow) ?? null
+  }
+
+  /** 票08（taskboard-modal-v2 人工接管）：**停流未交付**的接管轮 —— 行已终态
+   *  （abort 落 cancelled）但 takeover_at 已写、takeover_delivered_at 未写。
+   *  机器轮已停、人的轮正在跑（对话一步一交 + 快改 commit 持续落分支），所以
+   *  diff 端点把它按 live 口径供货（end 锚 = 当前 HEAD）。与 findLiveRoundForTask
+   *  同 instance 谓词 + start 锚要求；已交付的接管轮不在此列（交付 = awaiting 解析）。 */
+  findTakeoverRoundForTask(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
+         AND takeover_at IS NOT NULL AND takeover_delivered_at IS NULL
+         AND start_commit_id IS NOT NULL
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(taskId) as ExecutionRow) ?? null
   }
 
   /** The claim queue, FIFO, over a task's roots AND its composite children (partial
@@ -1089,6 +1123,22 @@ export class ExecutionDAO extends BaseDAO {
     if (nodeId) { query += ` AND ne.node_id = ?`; params.push(nodeId) }
     query += ` ORDER BY ae.timestamp ASC`
     return this.stmt(query).all(...params) as Array<Record<string, unknown>>
+  }
+
+  /** 票09 台账「人工干预」列的权威读取（§06 计数 SQL 的行级孪生）：一次执行下
+   *  所有 event_type='intervention' 的 agent_events 行（join node_executions 定
+   *  执行归属），按时间升序。content 携 {nodeId,nodeName,prompt}（ExecutionLifecycle
+   *  .resume 当下写），node_id 兜底旧纯文本行。 */
+  listInterventionsForExecution(executionId: string): Array<{
+    node_id: string; content: string | null; timestamp: number
+  }> {
+    return this.stmt(`
+      SELECT ne.node_id, ae.content, ae.timestamp
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.event_type = 'intervention'
+      ORDER BY ae.timestamp ASC
+    `).all(executionId) as Array<{ node_id: string; content: string | null; timestamp: number }>
   }
 
   /**

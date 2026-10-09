@@ -610,6 +610,17 @@ export interface UsageWire {
   cacheCreationTokens: number
 }
 
+/** 票 11 ▤ 消耗页签「按会话/节点」明细：/api/executions/:id/llm-calls 的
+ *  additive 维度（无 nodeId 过滤时回传；与会话口径同用 shared llmUsageAggregates
+ *  单源公式，去重口径同全局）。 */
+export interface LlmNodeAggregatesWire {
+  nodeId: string
+  totalCalls: number
+  usage: UsageWire
+  totals: LedgerTotalsWire
+  modelBreakdown: LLMCallAggregates["modelBreakdown"]
+}
+
 export interface LLMCallAggregates {
   totalCalls: number
   /** 工具调用总数（agent_events 不同 tool_call_id 数）。 */
@@ -617,6 +628,36 @@ export interface LLMCallAggregates {
   usage: UsageWire
   totals: LedgerTotalsWire
   modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>
+  /** 票 11 additive：逐节点账本（首次出现序）。旧服务/过滤形 = undefined。 */
+  byNode?: LlmNodeAggregatesWire[]
+}
+
+// ============ 产物分组清单 wire（票 11 ▣）============
+//
+// server GET /api/tasks/:id/artifacts/manifest 定形（五组 + 归类判据单源在
+// TasksService.artifactManifest，前端不重分组）。票11 双轴 review 收口⑤：原
+// lib/tasks-api.ts 与 run-console/artifacts-model.ts 各存一份 —— 并入本文件
+// 单源，两处按 LlmNodeAggregatesWire 同惯例引用。
+//
+// 读门错误形（GET /:id/artifacts/manifest/content）400/403/404/413 经
+// ArtifactContentError 带 status 抛出 —— 见 lib/tasks-api.ts。
+
+export interface ArtifactManifestItem {
+  name: string
+  /** 门牌引用：`home:<.scratch/…>` / `ws:<工作区相对>`。 */
+  path: string
+  bytes: number
+  mtime: string
+}
+
+export interface ArtifactManifestGroup {
+  key: string
+  label: string
+  items: ArtifactManifestItem[]
+}
+
+export interface ArtifactManifestBody {
+  groups: ArtifactManifestGroup[]
 }
 
 // ============ Analytics ============

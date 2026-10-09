@@ -43,6 +43,8 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
+import { createTaskChatRoutes } from "./routes/task-chat"
+import { TaskDoerService } from "./services/tasks/task-doer-service"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
@@ -767,7 +769,20 @@ if (shouldServe) {
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence))
+      // taskboard-modal-v2 票01 (ADR-0025, S1): the task-level doer chat seam —
+      // GET/POST /api/tasks/:id/chat (+ the /chat/messages alias from the spec
+      // wording). Separate route factory on the same prefix; all behavior lives in
+      // TaskDoerService (lazy doer session + ws-chat relay + [quick-edit] commits).
+      const taskDoerService = new TaskDoerService({
+        db, sse, tasksService,
+        chatService: chatSvc,
+        workspaceService: wsSvc,
+        taskHomeService,
+      })
+      // 票08: takeover 聚合端点的会话就绪半（5th optional arg —— ensureSession 单源
+      // 仍是 TaskDoerService，这里只是把它接到 tasks 路由上）。
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, taskDoerService))
+      app.route('/api/tasks', createTaskChatRoutes(taskDoerService))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))

@@ -17,6 +17,7 @@ import { RepairService } from "./repair"
 import { getResourceRegistry } from "./resource-registry"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { TokenUsage } from "@octopus/shared"
+import { LIVE_ROUND_STATUSES } from "@octopus/shared"
 import type { ExecutionRow, NodeExecutionRow, BranchExecutionRow } from "./execution/types"
 
 interface TokenUsageEntry {
@@ -231,8 +232,8 @@ export class ExecutionService {
     const exec = this.dao.findById(executionId)
     if (!exec) return { success: false, error: "Execution not found" }
 
-    const intervenableStatuses = ["running", "paused", "pending_approval", "pending_interaction", "pending_resume"]
-    if (!intervenableStatuses.includes(exec.status)) {
+    // 在飞轮词表单源 shared LIVE_ROUND_STATUSES（停在审批/交互节点也算现场）。
+    if (!LIVE_ROUND_STATUSES.includes(exec.status)) {
       return { success: false, error: `Cannot intervene in status "${exec.status}"` }
     }
 

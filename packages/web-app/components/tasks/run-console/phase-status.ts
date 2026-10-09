@@ -12,6 +12,7 @@ export const PHASE_STATUS_LABEL: Record<string, string> = {
   pending: "未开始",
   running: "执行中",
   paused: "已暂停",
+  takeover: "人工接管中",
   awaiting_review: "待验收",
   accepted: "已通过",
 }
@@ -37,6 +38,17 @@ export const TASK_PILL: Record<string, string> = {
   done: "border-pop-green/45 bg-pop-green-soft text-pop-green",
   failed: "border-pop-red/45 bg-pop-pink-soft text-pop-red",
   aborted: "border-pop-bd bg-pop-idle text-pop-dim",
+  // ── 票 02 皮肤预留（spec：takeover=pink、fixing=cyan 两个新语义色）──
+  // 不是 TaskStatusSchema 的新枚举（铁律：不加状态）——是 05/08 由执行推导出的
+  // 壳层形态色。上层的 mode 判定落地后，pill/pill 文案从这里取色。
+  takeover: "border-pop-pink/50 bg-pop-pink-soft text-pop-pink",
+  fixing: "border-pop-cyan/50 bg-pop-cyan-soft text-pop-cyan animate-pulse",
+}
+
+/** 预留形态词（与 TASK_PILL.takeover/fixing 成对；05/08 接线时消费）。 */
+export const SHELL_MODE_LABEL: Record<string, string> = {
+  takeover: "✋ 已接管 · chat 驱动",
+  fixing: "⚙ task-fix 推进中",
 }
 
 /** rail 节点 P# 瓷砖色。accent 整面填充上的字统一走 --pop-bg（暖黑盘上
@@ -48,6 +60,8 @@ export function phaseTileTone(status: string, isNext: boolean): string {
     case "awaiting_review": return "bg-pop-yellow text-pop-bg"
     case "running": return "bg-pop-amber text-pop-bg"
     case "paused": return "bg-pop-amber-soft text-pop-dim"
+    // 票08 语义色单源：takeover=pink（spec UI 决策 —— 深字压亮底同例）。
+    case "takeover": return "bg-pop-pink text-pop-bg"
     default: return isNext ? "bg-pop-cyan text-pop-bg" : "bg-pop-idle text-pop-dim"
   }
 }
@@ -57,6 +71,7 @@ export const PHASE_PILL: Record<string, string> = {
   pending: "bg-pop-idle text-pop-dim",
   running: "bg-pop-amber-soft text-pop-amber",
   paused: "bg-pop-idle text-pop-dim",
+  takeover: "bg-pop-pink-soft text-pop-pink",
   awaiting_review: "bg-pop-yellow-soft text-pop-yellow",
   accepted: "bg-pop-green-soft text-pop-green",
 }

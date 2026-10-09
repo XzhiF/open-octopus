@@ -183,6 +183,13 @@ export interface TaskExecutionBadge {
    *  start failure, the engine's failed node) — a terminal row with no reason says
    *  NULL, not a stale key. */
   error_summary: string | null
+  /** 票08 (ADR-0025) 人工接管来源标记 —— 落被停轮的 execution 行，badge 原样透出。
+   *  takeover_at = 停流时刻（现场快照时间点）；takeover_delivered_at = 「确认交付」
+   *  事件时刻。接管中（有 at 无 delivered）时派生 phase='takeover'；走查页签的
+   *  「接管件 · 自动复检未跑」标注与票09 台账「接管标记」列都读这两列。
+   *  可选字段：旧服务器行无键 = 从未被接管（与 workflow_ref 的向后兼容同律）。 */
+  takeover_at?: string | null
+  takeover_delivered_at?: string | null
   /** Composite fan-out: this root's child runs (empty for a simple task; omitted where
    *  the read model did not load them — the board's badge carries no children, the
    *  detail/history does). */
@@ -521,6 +528,12 @@ export interface Task {
   version: number
   /** sessions.scope_id retargets to tasks.id (SG3); this is the back-ref. */
   source_chat_session_id?: string | null
+  /** ADR-0025 / taskboard-modal-v2 票01: the task's single task-doer chat session
+   *  (→chat_sessions.id on the task's bound workspace — the 「做」 face of
+   *  一面两会话; lazy-created + idempotent via GET/POST /api/tasks/:id/chat,
+   *  persists across Rounds). Null/undefined = never opened. The 「谈」 face
+   *  (draft-era task-author session) stays on source_chat_session_id. */
+  doer_session_id?: string | null
   /** Soft-delete marker (discard draft/ready = soft delete, not status). */
   deleted_at: string | null
   created_at: string
