@@ -112,6 +112,9 @@ export type RailActionId =
   | "accept" | "reject" | "duplicate"
   // 票08 三分支动作（「✋ 有问题」框 = ask-takeover；接管态右栏 = 确认交付/改派）
   | "ask-takeover" | "takeover-deliver" | "takeover-reassign"
+  // ⑪真机复点：待验收右栏「🗂 工作空间 · P<ph> 执行视图 ↗」（纯导航，新标签打开，
+  // URL = deepLinkTarget 单源；只进 awaiting 装配，run/takeover/fixing 右栏不动）。
+  | "ws-deeplink"
 
 /** 形态判定单源（票08 壳 :305 留位的纯函数化）：fixing（live task-fix 轮）优先，
  *  其次 takeover（派生 phase 'takeover' = 停流未交付），否则 flow。
@@ -178,7 +181,9 @@ export function assembleRailActions(input: RailActionsInput): RailActionId[] {
       // 动作仍接既有实现 = AcceptanceActionApi.requestAbort（surface 的二次确认框
       // 与 abortTask 端点单源），不新增端点、不新增状态。待验收期持久态仍 running
       // （K3 派生不落库），canAbort 判据天然为真。
-      const acts: RailActionId[] = ["accept", "reject"]
+      // ⑪真机复点四钮定版（顺序逐字）：✓ 验收通过 → ↩ 反馈打回（task-fix 修复轮，
+      // 大改）→ 🗂 工作空间·P<ph> 执行视图 ↗（deepLinkTarget 同源，新标签）→ ■ 中止任务。
+      const acts: RailActionId[] = ["accept", "reject", "ws-deeplink"]
       if (canAbort) acts.push("abort")
       acts.push("duplicate")
       return acts

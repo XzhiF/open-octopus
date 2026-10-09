@@ -113,14 +113,14 @@ describe("assembleRailActions — 右栏底部动作区按状态装配（spec �
       "ask-takeover", "abort", "duplicate",
     ])
   })
-  it("awaiting_review：✓ 通过 · ↩ 打回 · ■ 中止（票11 ⑩回补：中止归栏，动作仍接既有实现）", () => {
+  it("awaiting_review：✓ 通过 · ↩ 反馈打回 · 🗂 工作空间↗ · ■ 中止（⑪真机复点四钮定版；中止仍接既有句柄）", () => {
     expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: true, canReopen: false })).toEqual([
-      "accept", "reject", "abort", "duplicate",
+      "accept", "reject", "ws-deeplink", "abort", "duplicate",
     ])
   })
   it("awaiting_review 但不可中止（异常态兜底）：不给 中止，其余照旧", () => {
     expect(assembleRailActions({ status: "awaiting_review", canPause: false, canResume: false, canAbort: false, canReopen: false })).toEqual([
-      "accept", "reject", "duplicate",
+      "accept", "reject", "ws-deeplink", "duplicate",
     ])
   })
   it("ready：⚡ 触发 · ↺ 退回草稿 · ■ 中止 · ⧉ 复制；已定时 触发 换成 取消触发", () => {

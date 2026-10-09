@@ -273,8 +273,10 @@ input,textarea{font:inherit}
 .ab-chat:hover{background:var(--cyan);color:var(--bg)}
 .ab-resume{background:var(--amber);color:var(--bg);border-color:var(--amber)}
 .ab-resume:hover{opacity:.9}
-.ab-rej{background:var(--paper);color:var(--dim)}
-.ab-rej:hover{color:var(--pink);border-color:rgba(255,133,92,.5)}
+.ab-rej{background:var(--pink-soft);color:var(--pink);border-color:rgba(255,133,92,.5)}
+.ab-rej:hover{background:var(--pink);color:var(--bg)}
+.ab-stop{background:rgba(255,92,92,.13);color:var(--red);border-color:rgba(255,92,92,.5)}
+.ab-stop:hover{background:var(--red);color:var(--bg)}
 .ab-dim{background:var(--paper);color:var(--dim);font-size:11px;padding:6px}
 .ab-dim:hover{color:var(--ink)}
 .ab-dim.stop:hover{color:var(--red)}
@@ -402,10 +404,13 @@ input,textarea{font:inherit}
 <!-- ═══════════ 派发 task-fix dialog ═══════════ -->
 <div class="overlay hidden" id="fx-root"></div>
 
+<!-- ═══════════ 中止任务 · 二次确认 dialog ═══════════ -->
+<div class="overlay hidden" id="ab-root"></div>
+
 <div id="toast"></div>
 <div id="hint" onclick="document.getElementById('notes').classList.toggle('hidden')">💡 改了什么？</div>
 <div id="notes" class="hidden">
-  <h4>十个改动点的原型答案（点卡片进弹窗体验）</h4>
+  <h4>十一个改动点的原型答案（点卡片进弹窗体验）</h4>
   <div class="it"><span class="k1">① 执行中即可看变更</span> — 弹窗默认页签「变更」：提交数 + 文件 +/− 统计条，GitHub 式文件列表，点行就地展开 unified diff。数据即现有 <em>/round-diff?scope=round|cumulative</em>，不用新后端。</div>
   <div class="it"><span class="k1">② 待验收 · 快速修改对话</span> — 像草稿一样对话改代码，改动实时进「变更」列表（💬chat 徽标）与统计。说大改动（含「重构/批量/接口…」）→ chat 主动引导<b>转打回（task-fix 修复轮）</b>。简单直接 chat，复杂派轻流。</div>
   <div class="it"><span class="k1">③ 两个弹窗合一</span> — 执行中/待验收同一个壳：顶栏只留 标题+状态+时间成本（8 个动作按钮收进右栏底部），差异只剩右栏（进度 vs 验收动作）与一个页签。字号 10→11.5px、行距加大，砍掉嵌套卡片。</div>
@@ -416,6 +421,7 @@ input,textarea{font:inherit}
   <div class="it"><span class="k1">⑧ 启动 Runbook 落点</span> — 「走查」页签第一块：<em>📜 启动 Runbook</em>（spec 字段 startup_runbook · 入队硬闸校验过），N 步「命令 → 预期」，每步带「▶ 跑」；右栏有「已预设 · N 步 ▸」入口。验收 = 照单跑实物。</div>
   <div class="it"><span class="k1">⑨ 打回语义收敛</span> — 去掉「修订重跑绑定流」选项：<em>打回 = 派 task-fix 轻轮修复</em>（反馈即指令，开发→回归→补产物→自动回待验收 R+1），与「✋ 有问题」③ 同一机制。方向要整体推翻 → 用 ② 接管，不再靠重跑。</div>
   <div class="it"><span class="k1">⑩ 真机走查回补：删残留右栏 · 日志归位 · 消耗/产物独立页签</span> — 真机发现旧弹窗残留三处：<b>一</b> 走查里内嵌的「摘要+动作 / 验收进度」右栏整体删掉（最右栏已有同款），其中的「■ 中止」挪到最右栏「打回」下方成为唯一入口；<b>二</b>「▶ 控制台/日志」应播<em>工作区运行日志（SSE 事件流）</em>，不是现在错位的「任务 AI 消耗」；<b>三</b> 新增两个页签：<em>▤ 消耗</em>（完整 token 账 — token 用 <em>K/M</em> 记数，三段式：<em>总计</em>（∑处理量 ↑输入 ↓输出 ⚡缓存读 🗡️缓存写 ·请求数 ·成本）、<em>按模型</em>、<em>分轮账本</em>（⇕ 一键全展开/收起），底部再按会话/节点分列明细表，task-doer 对话单独一行、两账不混）与 <em>▣ 产物</em>（spec/票/报告/证据/台账等交付文件清单，区别于「≡ 变更」的 diff 视图）。</div>
+  <div class="it"><span class="k1">⑪ 真机复点收口</span> — 「✓ 走查」「▶ 日志」页签背景与壳同框<em>净黑</em>（去掉内嵌亮卡片衬底）；日志流<em>铺到底</em>、新事件自动贴底；待验收最右栏四钮定版 = ✓ 验收通过（绿）→ ↩ 反馈打回（<em>粉底</em>，不再素面）→ 🗂 工作空间（青，当前 Phase 执行视图深链，<em>target=_blank</em> 新标签）→ ■ 中止任务（<em>红底</em>）；中止必过<em>二次确认框</em>（红字后果说明 + 取消/确认中止），执行中与接管态的「■ 中止」同框同流。</div>
   <div class="it" style="color:var(--dim)">试试：待验收卡 → 默认落在「💬 对话」，说「验收通过按钮再圆一点」看改动进「变更」；「✓ 走查」页签顶部看 Runbook；执行中卡 → 「✋ 有问题」选②/③ 各走一遍；⏸ 暂停后「▶ 恢复」体验注入干预。←/→ 切页签。</div>
 </div>
 
@@ -1066,10 +1072,29 @@ function railWait(t){
   </div>
   <div class="rail-acts">
     <button class="act-btn ab-pass" onclick="openPass()">✓ 验收通过${t.ph<t.phN?` · 放行 Phase ${t.ph+1}`:' · 进入归档'}</button>
-    <button class="act-btn ab-rej" onclick="openReject()">↩ 打回 · task-fix 修复轮（大改）</button>
-    <button class="act-btn ab-dim stop" onclick="toast('■ 中止任务 = 沿用现有任务级终止；从走查内嵌右栏挪到此，唯一入口')">■ 中止任务</button>
+    <button class="act-btn ab-rej" onclick="openReject()">↩ 反馈打回 · task-fix 修复轮（大改）</button>
+    <button class="act-btn ab-chat" onclick="toast('↗ 真实版：target=_blank 新标签打开当前 Phase 执行视图（深链）')">🗂 工作空间 · P${t.ph} 执行视图 ↗</button>
+    <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止任务</button>
   </div>`;
 }
+/* ═ 中止任务 · 二次确认（真实版 = 既有 ConfirmDialog→abortTask 流，此为形态演示） ═ */
+function openAbortConfirm(){
+  const t=T(); const el=document.getElementById('ab-root'); el.classList.remove('hidden');
+  el.innerHTML=`<div class="dlg">
+    <div class="h">■ 中止任务 — 请确认<small>${esc(t.name)} · P${t.ph||1}·R${t.round||1}${t.col==='wait'?'（待验收）':'（执行中）'}</small></div>
+    <div class="b">
+      <div style="border:1.5px solid rgba(255,92,92,.5);background:rgba(255,92,92,.08);border-radius:11px;padding:10px 13px;font-size:11.5px;line-height:1.7">
+        中止 = <b style="color:var(--red)">任务级终止，不可恢复</b>：绑定执行停止（节点 ⏹）、工作区现场与已产出 commit 保留在分支；本 Round 不再自动推进，也不进验收台账新闸。</div>
+    </div>
+    <div class="f">
+      <button class="btn btn-quiet" onclick="closeAbort()">取消</button>
+      <button class="btn" style="background:var(--red);color:var(--bg);border:1.5px solid var(--red);border-radius:10px;padding:7px 14px;font-weight:900;cursor:pointer" onclick="confirmAbort()">■ 确认中止</button>
+    </div>
+  </div>`;
+}
+function closeAbort(){ document.getElementById('ab-root').classList.add('hidden'); }
+function confirmAbort(){ closeAbort(); const t=T(); closeModal(); toast('■ 已中止 · '+t.name+'（演示形态，真实版走既有确认+端点）'); }
+
 function railRun(t){
   const cn=curNode(t), iv=cn.ivCount||0, tk=t.mode==='takeover', fx=t.mode==='fixing';
   const ns=nodesOf(t), fxDone=fx?ns.filter(x=>x.st==='done').length:0;
@@ -1091,7 +1116,7 @@ function railRun(t){
     ${tk ? `
       <button class="act-btn ab-pass" onclick="confirmTakeover()">✓ 确认本 Round 交付 · 转待验收</button>
       <button class="act-btn ab-chat" onclick="dispatchFix('')">⚙ 剩余交给 task-fix 通用流</button>
-      <button class="act-btn ab-dim stop" onclick="toast('■ 中止 = 现功能占位')">■ 中止任务</button>`
+      <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止任务</button>`
     : fx ? `
       <div class="sum-row"><span>产物补齐</span><b class="c">报告 · 证据 · 交付单</b></div>`
     : `
@@ -1099,7 +1124,7 @@ function railRun(t){
       ${t.paused
         ? `<button class="act-btn ab-resume" onclick="openInject()">▶ 恢复 · 可注入干预</button>`
         : `<button class="act-btn ab-dim" onclick="pauseTask()">⏸ 暂停</button>`}
-      <button class="act-btn ab-dim stop" onclick="toast('■ 中止 = 现功能占位')">■ 中止</button>`}
+      <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止</button>`}
   </div>`;
 }
 function phaseTiles(t){
@@ -1367,6 +1392,7 @@ document.addEventListener('keydown',e=>{
     else if(!hid('inj-root'))document.getElementById('inj-root').classList.add('hidden');
     else if(!hid('br-root'))closeBranch();
     else if(!hid('fx-root'))document.getElementById('fx-root').classList.add('hidden');
+    else if(!hid('ab-root'))closeAbort();
     else if(state.openTask) closeModal(); return; }
   if(!state.openTask) return;
   const t=T(), tabs=(t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','usage','artifacts','console']:['files','nodes','usage','artifacts','console']):['chat','files','review','usage','artifacts','console']);

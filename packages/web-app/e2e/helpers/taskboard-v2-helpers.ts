@@ -808,6 +808,7 @@ export const SEL = {
   railReassign: () => `[data-rail-reassign]`,
   railAccept: () => `[data-rail-accept]`,
   railReject: () => `[data-rail-reject]`,
+  railWs: () => `[data-rail-ws]`, // ⑪真机复点：待验收右栏「🗂 工作空间 · P<ph> 执行视图 ↗」
   // 注入弹框 (票06)
   injectDialog: () => `[data-testid="resume-intervene-dialog"]`,
   injectText: () => `[data-inject-text]`,

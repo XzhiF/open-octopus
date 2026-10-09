@@ -823,7 +823,7 @@ describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
     await waitFor(() => expect(mockResume).toHaveBeenCalledWith("task-1"))
   })
 
-  it("awaiting_review：右栏底部装配 通过/打回（走查 tab 保持挂载供接线）", async () => {
+  it("awaiting_review：右栏底部装配 通过/打回/工作空间↗（走查 tab 保持挂载供接线）", async () => {
     const t = makeTask("awaiting_review")
     renderConsole(t, {
       ...t,
@@ -835,6 +835,7 @@ describe("票 02 — 顶栏瘦身（无动作按钮、无红绿灯）", () => {
     expect(acts).toBeTruthy()
     expect(acts!.querySelector("[data-rail-accept]")).toBeTruthy()
     expect(acts!.querySelector("[data-rail-reject]")).toBeTruthy()
+    expect(acts!.querySelector("[data-rail-ws]")).toBeTruthy()
     expect(acts!.querySelector("[data-task-pause]")).toBeNull()
     // 验货台 surface keep-mounted（hidden 壳内，挂载闸随 awaiting 轮亮起）；走查页签在场
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
@@ -1366,19 +1367,63 @@ describe("票 11 — 待验收：走查去内列 + 中止归栏", () => {
     }
   }
 
-  it("右栏动作自上而下 = 通过 → 打回 → ■中止（且走查 surface railless 在场）", async () => {
+  it("右栏四钮定版（⑪逐字）：✓ 验收通过 → ↩ 反馈打回 · task-fix 修复轮（大改） → 🗂 工作空间 · P1 执行视图 ↗ → ■ 中止任务；走查 host 净黑同底", async () => {
     const { t, detail } = awaitingRunning()
     renderConsole(t, detail)
     await screen.findByTestId("phase-timeline")
     const acts = document.querySelector("[data-rail-acts]")!
-    expect(acts.querySelector("[data-rail-accept]")).toBeTruthy()
-    expect(acts.querySelector("[data-rail-reject]")).toBeTruthy()
-    expect(acts.querySelector("[data-task-abort]")).toBeTruthy()
-    expect(acts.textContent).toContain("■ 中止")
+    // DOM 序 = 装配序（accept → reject → ws-deeplink → abort → duplicate）
+    const seq = Array.from(acts.querySelectorAll("button")).map((b) =>
+      b.hasAttribute("data-rail-accept") ? "accept"
+        : b.hasAttribute("data-rail-reject") ? "reject"
+          : b.hasAttribute("data-rail-ws") ? "ws"
+            : b.hasAttribute("data-task-abort") ? "abort" : "other",
+    )
+    expect(seq.slice(0, 4)).toEqual(["accept", "reject", "ws", "abort"])
+    expect(acts.textContent).toContain("✓ 验收通过")
+    expect(acts.textContent).toContain("↩ 反馈打回 · task-fix 修复轮（大改）")
+    expect(acts.textContent).toContain("🗂 工作空间 · P1 执行视图 ↗")
+    expect(acts.textContent).toContain("■ 中止任务")
+    // 走查页签 host 与壳同底（bg-pop-bg），「bg-pop-paper 亮卡衬底」绝迹
+    //（wrapper 在 detail→awaitingPv 生效的下一 commit 挂载，waitFor 与之同拍）。
+    const reviewHost = await waitFor(() => {
+      const el = document.querySelector('[data-tab-host="review"]') as HTMLElement | null
+      if (!el) throw new Error("review host not mounted yet")
+      return el
+    })
+    expect(reviewHost.className).toContain("bg-pop-bg")
+    expect(reviewHost.className).not.toContain("bg-pop-paper")
     // 走查面 keep-mounted 且壳内渲染路径剔除内列（AC1 的壳侧半；DOM 级断言在
     // acceptance-surface.test 真组件侧钉）。
     await waitFor(() => expect(document.querySelector("[data-acceptance-surface-stub]")).toBeTruthy())
     expect(document.querySelector("[data-acceptance-surface-stub]")!.getAttribute("data-railless")).toBe("true")
+  })
+
+  it("🗂 工作空间钮 = deepLinkTarget 同源 URL，window.open 新标签（noopener），不顶走弹窗", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+    const { t, detail } = awaitingRunning()
+    renderConsole(t, detail)
+    const wsBtn = await waitFor(() => {
+      const el = document.querySelector("[data-rail-acts] [data-rail-ws]") as HTMLElement | null
+      if (!el) throw new Error("ws button missing")
+      return el
+    })
+    expect((wsBtn as HTMLButtonElement).disabled).toBe(false) // awaitingRun 在场（exec-1/ws-1）→ 可点
+    fireEvent.click(wsBtn)
+    expect(openSpy).toHaveBeenCalledWith("/workspaces/ws-1?tab=detail&execId=exec-1", "_blank", "noopener")
+    openSpy.mockRestore()
+  })
+
+  it("无绑定执行可读（awaiting 轮缺 run）→ 工作空间钮 disabled 不撒谎", async () => {
+    const t = makeTask("awaiting_review")
+    // executions 空 → awaitingRun=null → deepLinkTarget 无从解析 → 按钮禁而不藏（装配稳定）。
+    renderConsole(t, {
+      ...t,
+      executions: [],
+      derived: derivedOf([pv(1, "票11阶段1", "awaiting_review", { awaitingRound: 1, rounds: [] })], true, "awaiting_review"),
+    })
+    const wsBtn = (await waitFor(() => document.querySelector("[data-rail-acts] [data-rail-ws]"))) as HTMLButtonElement
+    expect(wsBtn.disabled).toBe(true)
   })
 
   it("点「■ 中止」= 走查面既有二次确认口（requestAbort 句柄），壳不旁路直落 abortTask", async () => {

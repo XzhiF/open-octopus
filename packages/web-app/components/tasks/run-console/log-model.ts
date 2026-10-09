@@ -39,6 +39,13 @@ function timeOf(e: AgentEvent): number {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
 }
 
+/** ⑪真机复点 · 日志铺到底 + 自动贴底跟随：仅当用户视口停在底部（80px 缓冲内）
+ *  才把新事件滚进来 —— 手动上翻回看不被抢滚动。空盒（scrollHeight ≤ clientHeight，
+ *  含 jsdom 全 0 场景）余量为 0/负 → 视为贴底，无害。 */
+export function nearStreamBottom(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight < 80
+}
+
 // ── 票11 双轴 review 收口① — 既有 SSE 通道实时追加 ──────────────────────────
 // 通道 = GET /api/workspaces/:ws/executions/events（engine 经 EngineCallbacks.
 // onAgentEvent 以 "agent_event" emit；sse-manager 按 url 共享一条 EventSource，

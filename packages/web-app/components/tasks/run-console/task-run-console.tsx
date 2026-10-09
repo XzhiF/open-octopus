@@ -8,6 +8,8 @@
 //   │   + ⛶/✕ —— 不再有动作按钮，红黄蓝「红绿灯」装饰删除（消除误点错觉）。
 //   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·消耗·产物·控制台 /
 //   │     awaiting_review 对话·变更·走查·消耗·产物·日志 …；←/→ 切页，输入聚焦不劫持）
+//   │     内容区净黑同底（⑪真机复点：走查/日志不再垫 bg-pop-paper 亮卡；日志盒
+//   │     = inset 衬底铺到底 + 贴底自动跟随，原型 m-content/.console 口径）。
 //   │     + 页签内容区（走查 = AcceptanceSurface keep-mounted + railless（票11：
 //   │     「摘要+动作」内列撤场）；控制台/日志 = 纯工作区事件流（票11 归位 +
 //   │     用户终裁：实时追加走既有 executions/events SSE、轮询只作兜底/首屏（收口①）；
@@ -23,7 +25,11 @@
 //   │   + LIVE/验收卡 + 底部动作区 [data-rail-acts]（⏸/▶/■/⚡/↺/⧉/✓/↩ ——
 //   │   全部接既有 handler，通过/打回/中止接 AcceptanceSurface 决策入口（票11
 //   │   中止归栏 = requestAbort 二次确认句柄；句柄不在场的兜底同样过 ConfirmDialog
-//   │   二次确认才落端点，收口⑦）。
+//   │   二次确认才落端点，收口⑦）。⑪真机复点 · 待验收四钮定版（顺序/文案/配色
+//   │   逐字对齐原型 railWait）：✓ 验收通过（绿实心）→ ↩ 反馈打回 · task-fix 修复
+//   │   轮（大改）（粉衬底粉字）→ 🗂 工作空间 · P<ph> 执行视图 ↗（青底，
+//   │   deepLinkTarget 同源 URL 新标签）→ ■ 中止任务（红衬底红字）；duplicate
+//   │   照旧尾随。工作空间钮只进 awaiting 装配，run/takeover/fixing 右栏不动。
 //   └ footer 状态条（24px）：创建/工作区/v4·N phases + SSE 心跳
 //
 // 数据纪律：derived（票 03 唯一真相）只读不重算；运行账目 = executions[] +
@@ -53,7 +59,7 @@ import { EditableTitle } from "../editable-title"
 import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance/acceptance-surface"
 import { TriggerDialog } from "../trigger-dialog"
 import {
-  LIVE_STATUSES, mergeAggregates, useRunsAggregates, execLabel,
+  LIVE_STATUSES, mergeAggregates, useRunsAggregates, execLabel, deepLinkTarget,
 } from "../execution-summary"
 import { FilesTab } from "../files-tab/files-tab"
 import { useRoundDiffFeed } from "../files-tab/use-round-diff-feed"
@@ -428,6 +434,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   const awaitingRun = awaitingPv?.awaitingRound != null
     ? runsById.get(awaitingPv!.rounds.find((r) => r.roundIndex === awaitingPv!.awaitingRound)?.exec.id ?? "") ?? null
     : null
+  // ⑪真机复点：待验收右栏「🗂 工作空间 · P<ph> 执行视图 ↗」的 URL =
+  // execution-summary.deepLinkTarget 单源（撤面前 phase-surface/nodes-tab 同一函数）；
+  // awaiting 轮未落 run（异常态）→ null → 按钮禁而不藏（装配顺序稳定）。
+  const wsViewUrl = awaitingRun ? deepLinkTarget(awaitingRun) : null
   const waitedMs = awaitingRun?.completed_at ? Math.max(0, now - Date.parse(awaitingRun.completed_at)) : null
   // 票08：待验收轮若是接管交付件（badge 双标记）→ 对话 hint 与走查标注共用此判据。
   const takeoverDelivered = isTakeoverDeliveredRound(awaitingRun ?? undefined)
@@ -610,7 +620,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
   // 劝退草稿 → 打回框（05 单 textarea；句柄单源在走查面，行为零复制）。
   const handleRejectDraft = useCallback((draft: string) => {
     if (acceptApi) acceptApi.openReject(draft)
-    else toast.warning("走查面尚未挂载 — 稍后再点，或直接用右栏「↩ 打回」")
+    else toast.warning("走查面尚未挂载 — 稍后再点，或直接用右栏「↩ 反馈打回」")
   }, [acceptApi])
   // 修复轮追加指令 = 票 06 的暂停→注入通道（引擎对「没有运行中的节点」的拒绝原文
   // 由 chat-tab 透出；成功后 ⚑ 行走既有 agent-events 读取面进日志）。
@@ -756,9 +766,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
           <div className="flex min-h-0 flex-1 flex-col">
             {/* keep-mounted：hidden 切换而非卸载 —— 复检会话/走查 gate/编辑草稿
-                活过页签往返；[data-acceptance-modal] 锚点在 surface 内原样。 */}
+                活过页签往返；[data-acceptance-modal] 锚点在 surface 内原样。
+                ⑪真机复点：host 衬底 = 壳同底 bg-pop-bg（原 bg-pop-paper 亮卡衬底撤 ——
+                「✓ 走查」「▶ 日志」与「≡ 变更」「◆ 节点」净黑同框）。 */}
             {acceptMounted && (
-              <div className={`min-h-0 flex-1 bg-pop-paper ${tab !== "review" ? "hidden" : ""}`}>
+              <div data-tab-host="review" className={`min-h-0 flex-1 bg-pop-bg ${tab !== "review" ? "hidden" : ""}`}>
                 {/* detail 单源：控制台的 GET /:id 快照 + 重拉通道直接注入；
                     onActionApi = 右栏底部 通过/打回/中止 的接线柱（行为单源在 surface）。
                     railless（票11 ⑩回补）：走查页签不再嵌「摘要+动作/验收进度」内列。 */}
@@ -774,7 +786,9 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               </div>
             )}
             {tab === "console" && (
-              <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+              // ⑪真机复点 · 日志铺到底：host = flex 纵向链（min-h-0 + flex-col），
+              // 事件流盒 flex-1 撑满到内容区底（原型 m-content>.console{height:100%}）。
+              <div data-tab-host="console" className="flex min-h-0 flex-1 flex-col p-3.5">
                 {/* 票11 用户终裁 · 日志全纯：控制台/日志页签只挂工作区事件流
                     （agent_events 时间正序，工具/编辑/成败/警告分类行 + ⚑ 人工干预 pink
                     高亮行；实时走既有 executions/events SSE、轮询兜底/首屏）。
@@ -892,12 +906,15 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
                 id={id}
                 busy={busy}
                 acceptApi={acceptApi}
+                wsUrl={wsViewUrl}
+                wsPhase={awaitingPv?.index ?? null}
                 handlers={{
                   trigger: () => setTriggerOpen(true),
                   triggerCancel: handleCancelTrigger,
                   reopen: handleReopen,
                   pause: () => { void handlePause() },
                   resume: () => setInjectOpen(true), // 票 06：只开注入弹框，放行在框里
+                  wsDeeplink: () => { if (wsViewUrl) window.open(wsViewUrl, "_blank", "noopener") },
                   abort: () => {
                     // 票11 中止归栏：待验收的「■ 中止」= 走查面既有二次确认流
                     // （railless 撤了内列按钮，句柄仍在 —— 行为单源，确认后
@@ -1004,6 +1021,9 @@ interface RailActionHandlers {
   reopen: () => void
   pause: () => void
   resume: () => void
+  /** ⑪四钮定版：待验收「🗂 工作空间 · P<ph> 执行视图 ↗」= deepLinkTarget 同源
+   *  URL，window.open 新标签（不顶走弹窗），壳只接线不落端点。 */
+  wsDeeplink: () => void
   abort: () => void
   duplicate: () => void
   askTakeover: () => void
@@ -1011,10 +1031,13 @@ interface RailActionHandlers {
   reassignFix: () => void
 }
 
-function RailActionButton({ id, busy, acceptApi, handlers }: {
+function RailActionButton({ id, busy, acceptApi, wsUrl, wsPhase, handlers }: {
   id: RailActionId
   busy: TaskRunConsoleBusy
   acceptApi: AcceptanceActionApi | null
+  /** 待验收工作空间深链（null = awaiting 轮未落 run → 按钮禁而不藏）。 */
+  wsUrl: string | null
+  wsPhase: number | null
   handlers: RailActionHandlers
 }) {
   const spin = (k: Exclude<TaskRunConsoleBusy, null>) => busy === k ? <Spinner className="mr-1 inline size-3" /> : null
@@ -1062,9 +1085,11 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
     case "abort":
       return (
         <button onClick={() => void handlers.abort()} disabled={busy !== null} data-task-abort
-          className={`${RAIL_BTN} border-pop-red/60 bg-pop-paper text-pop-red hover:bg-pop-red hover:text-pop-ink`}
-          title="中止任务（工作区将清理）">
-          {spin("abort")}■ 中止
+          // ⑪四钮定版：红衬底红字（原型 .ab-stop：rgba(255,92,92,.13) 底 + /50 描边，
+          // hover 实心）—— 用既有 pop-red token 透明度阶，不造新色。
+          className={`${RAIL_BTN} border-pop-red/50 bg-pop-red/10 text-pop-red hover:bg-pop-red hover:text-pop-ink`}
+          title="中止任务（工作区将清理）—— 经二次确认才落端点（待验收=走查面句柄，兜底=壳 ConfirmDialog）">
+          {spin("abort")}■ 中止任务
         </button>
       )
     case "accept":
@@ -1084,11 +1109,26 @@ function RailActionButton({ id, busy, acceptApi, handlers }: {
         <button
           onClick={() => acceptApi?.openReject()}
           disabled={acceptApi === null}
-          title="打开打回反馈框（既有表单与弹窗，行为单源在走查面）"
+          title="打开打回反馈框（既有表单与弹窗，行为单源在走查面）—— 恒派 task-fix 修复轮（05 单路径）"
           data-rail-reject
-          className={`${RAIL_BTN} border-pop-bd bg-pop-paper text-pop-dim hover:text-pop-pink hover:border-pop-pink/50`}
+          // ⑪四钮定版：粉衬底粉字（原型 .ab-rej：pink-soft 底 + pink 字 + pink/50 描边）
+          className={`${RAIL_BTN} border-pop-pink/50 bg-pop-pink-soft text-pop-pink hover:bg-pop-pink hover:text-pop-bg`}
         >
-          ↩ 打回 · 写反馈
+          ↩ 反馈打回 · task-fix 修复轮（大改）
+        </button>
+      )
+    // ⑪真机复点四钮定版（待验收独有）：工作空间深链 = 当前 Phase 执行视图，
+    // 新标签打开（deepLinkTarget 同源 URL），run/takeover/fixing 右栏不装配此钮。
+    case "ws-deeplink":
+      return (
+        <button
+          onClick={handlers.wsDeeplink}
+          disabled={busy !== null || wsUrl === null}
+          title={wsUrl ? "在工作区打开当前 Phase 的执行视图（新标签页 —— 深链单源 deepLinkTarget）" : "待验收轮尚未落执行记录 —— 深链不可得"}
+          data-rail-ws
+          className={`${RAIL_BTN} border-pop-cyan/50 bg-pop-cyan-soft text-pop-cyan hover:bg-pop-cyan hover:text-pop-bg`}
+        >
+          🗂 工作空间 · P{wsPhase ?? "?"} 执行视图 ↗
         </button>
       )
     case "duplicate":

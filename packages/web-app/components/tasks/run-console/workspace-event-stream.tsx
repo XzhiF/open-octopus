@@ -10,12 +10,14 @@
 // 票11 收口②：壳层原下叠的 InterventionStream digest 块撤场（一事实一现），票06 的
 // testid 契约转钉到**流内 ⚑ 行**：含 ⚑ 行时行容器挂 intervention-log、每条 ⚑ 行挂
 // intervention-line（无干预 = 两块 testid 都不存在，票06 缺席断言语义不变）。
+// ⑪真机复点：盒 = 原型 .console 满高形态（flex-1 铺到底 + inset 底 + 盒内滚动），
+// 贴底跟随闸抽为 log-model.nearStreamBottom 纯函数（可单测）。
 
 "use client"
 
 import { useEffect, useRef } from "react"
 import type { AgentEvent } from "@/lib/types"
-import { buildLogLines, type LogLine } from "./log-model"
+import { buildLogLines, nearStreamBottom, type LogLine } from "./log-model"
 
 const LINE_TONE: Record<LogLine["tone"], string> = {
   ink: "text-pop-ink", dim: "text-pop-dim", green: "text-pop-green",
@@ -32,12 +34,12 @@ function clockOf(iso: string | null): string {
 export function WorkspaceEventStream({ events, live }: { events: AgentEvent[]; live: boolean }) {
   const lines = buildLogLines(events)
   const boxRef = useRef<HTMLDivElement | null>(null)
-  // 直播跟随：底部钉住新行（用户上翻时不强拉 —— scrollTop 闸）。
+  // 直播跟随（⑪铺到底版）：闸 = log-model.nearStreamBottom 纯函数 —— 贴底才把
+  // 新行滚进来（80px 缓冲），用户手动上翻回看不被抢滚动；空盒/初始态视为贴底。
   useEffect(() => {
     const el = boxRef.current
     if (!el || !live) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    if (nearBottom) el.scrollTop = el.scrollHeight
+    if (nearStreamBottom(el.scrollTop, el.scrollHeight, el.clientHeight)) el.scrollTop = el.scrollHeight
   }, [lines.length, live])
 
   // 票06 testid 契约（收口②转钉版）：有 ⚑ 行时行容器 = intervention-log，
@@ -49,7 +51,10 @@ export function WorkspaceEventStream({ events, live }: { events: AgentEvent[]; l
       ref={boxRef}
       data-testid="workspace-event-stream"
       data-stream-live={live ? "true" : undefined}
-      className="max-h-[42vh] min-h-0 overflow-y-auto rounded-lg border-[1.5px] border-pop-bd bg-pop-idle px-2.5 py-2 font-mono"
+      // ⑪真机复点 · 日志铺到底 = 原型 .console{height:100%;background:var(--inset)}：
+      // flex-1 + min-h-0 撑满内容区到底（旧 max-h-[42vh] 半屏浮块撤），滚动权在盒内；
+      // bg-pop-idle = inset 内框衬底（页签底 = 壳净黑同底，此层是原型规定的内框而非亮卡）。
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border-[1.5px] border-pop-bd bg-pop-idle px-2.5 py-2 font-mono"
     >
       <div className="mb-1 flex items-center gap-2 px-0.5 font-mono text-[9.5px] font-black tracking-[.1em] text-pop-dim">
         工作区事件流 / AGENT_EVENTS

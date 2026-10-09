@@ -139,8 +139,13 @@ test("流② 待验收 → 默认对话 → 真 task-doer 小改 → 变更页 �
   await clickTab(page, "console")
   await expect(page.locator(SEL.consoleRoot())).toContainText("工作区事件流")
   await expect(page.locator(SEL.consoleRoot())).not.toContainText("任务 AI 消耗")
-  // 右栏 = 通过→打回→■中止；点开二次确认即 Esc 收掉（真中止会破坏末段对账，不点确认）
-  await expect(page.locator(`[data-rail-acts] [data-task-abort]`)).toBeVisible()
+  // 右栏四钮定版（⑪逐字）= ✓ 验收通过 → ↩ 反馈打回 · task-fix 修复轮（大改） →
+  // 🗂 工作空间 · P<ph> 执行视图 ↗ → ■ 中止任务；中止点开二次确认即 Esc 收掉
+  //（真中止会破坏末段对账，不点确认）。
+  await expect(page.locator(`[data-rail-acts] [data-rail-accept]`)).toBeVisible()
+  await expect(page.locator(`[data-rail-acts] [data-rail-reject]`)).toContainText("↩ 反馈打回 · task-fix 修复轮（大改）")
+  await expect(page.locator(`[data-rail-acts] [data-rail-ws]`)).toContainText("执行视图 ↗")
+  await expect(page.locator(`[data-rail-acts] [data-task-abort]`)).toContainText("■ 中止任务")
   await page.locator(`[data-rail-acts] [data-task-abort]`).click()
   await expect(page.getByRole("button", { name: "确认中止" })).toBeVisible({ timeout: 10_000 })
   await page.keyboard.press("Escape")
