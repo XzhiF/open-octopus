@@ -46,12 +46,45 @@ function toolStatusMark(status: string): { glyph: string; cls: string } {
   return { glyph: '…', cls: 'text-pop-dim' }
 }
 
+/** 工具载荷 → 可读文本：字符串原样，对象美化 JSON，异常兜底 String。 */
+function fmtToolPayload(v: unknown): string {
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+}
+
+/** 工具调用行：默认一行简报（名+首参+状态）；点击 ▸/▾ 展开本工具**做了什么**——
+ *  input 全量 + 到齐后的 result 全量（各自限高可滚，pre-wrap 不截行）。
+ *  流式（TuiLive）与历史（TuiMeta）共用，2026-10-10 用户真机需求。 */
 function ToolLine({ tc }: { tc: ToolCallRecord }) {
   const { glyph, cls } = toolStatusMark(tc.status)
+  const [open, setOpen] = useState(false)
+  const hasInput = tc.input !== undefined && tc.input !== null && tc.input !== ''
+  const hasResult = tc.result !== undefined && tc.result !== null && tc.result !== ''
   return (
-    <div className="text-pop-dim">
-      <span className="text-pop-pink">▸ </span>
-      {toolBrief(tc)} <span className={cls}>[{glyph}]</span>
+    <div className="text-pop-dim" data-tui-tool={open ? 'open' : 'closed'}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="block w-full select-none text-left transition-colors hover:text-pop-ink"
+        title={open ? '收回工具详情' : '展开本工具 input/result 全文'}
+      >
+        <span className="text-pop-pink">{open ? '▾ ' : '▸ '}</span>
+        {toolBrief(tc)} <span className={cls}>[{glyph}]</span>
+      </button>
+      {open && (
+        <div className="ml-3 mt-0.5 space-y-1.5 border-l border-pop-bd pl-2">
+          <div>
+            <div className="text-[10px] font-black text-pop-cyan">input · {tc.name}</div>
+            <pre className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap break-words">{hasInput ? fmtToolPayload(tc.input) : '（暂无输入）'}</pre>
+          </div>
+          {hasResult && (
+            <div>
+              <div className="text-[10px] font-black text-pop-green">result</div>
+              <pre className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap break-words">{fmtToolPayload(tc.result)}</pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
