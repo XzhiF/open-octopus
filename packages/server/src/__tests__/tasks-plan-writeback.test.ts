@@ -1,7 +1,8 @@
 // packages/server/src/__tests__/tasks-plan-writeback.test.ts
 //
-// 票02 计划回写端点 · spec 侧（S1 主 seam）—— 契约测试对 HTTP 面打：
-//   POST /api/tasks/:id/plan  body {batch, file, content, reason, source}
+// 票02+03 计划回写端点（S1 主 seam）—— 契约测试对 HTTP 面打：
+//   POST /api/tasks/:id/plan         body {batch, file, content, reason, source}   spec 侧
+//   POST /api/tasks/:id/plan/issues  同形 body                                       issues 侧（票03）
 // 期望值全部取自票面/规格/ADR-0026 的契约文案（防自证）：
 //   · 成功 = 200 + home 盘文件内容以请求 content 开头 + 文末「## 变更记录」一行（时间 · actor · source · reason · 文件）
 //   · 状态闸 = done/aborted/archiving → 409（对齐 isSpecEditable 既有判定；paused/takeover/fixing 非落库态，
@@ -69,6 +70,25 @@ function postPlan(taskId: string, body: unknown): Promise<Response> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   })
+}
+
+// ── 票03 issues 侧 helpers ────────────────────────────────────────────
+function postPlanIssues(taskId: string, body: unknown): Promise<Response> {
+  return app.request(`/api/tasks/${taskId}/plan/issues`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+/** 符合票模板契约的票体（垂直切片 + Status + Origin 行，取自票面/规格文案）。 */
+const OK_TICKET = "# 新范围：弹窗增加暗色模式开关\n\n**What to build:** 开关落 settings 面板，暗色为默认关。\n\n**Blocked by:** 无\n\nStatus: ready-for-agent\n\nOrigin: 打回 r1 反馈#3\n"
+
+/** 直写 home 盘（不经被测端点）—— 编号顺延用例的独立盘上事实。 */
+function preWrite(id: string, rel: string, content: string): void {
+  const abs = path.join(taskHome.homePath(id), rel)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, content, "utf-8")
 }
 
 beforeAll(() => {
@@ -321,5 +341,279 @@ describe("票02 AC7 — 写成功后既有产物 manifest 即列出（零 manife
     }).groups
     const specGroup = groups.find((g) => g.key === "spec")
     expect(specGroup?.items.some((i) => i.path === `home:${BATCH1}/spec.md`)).toBe(true)
+  })
+})
+
+// ══ 票03 计划回写端点 · issues 侧（POST /api/tasks/:id/plan/issues）══════
+// 票面 6 AC 逐条独立成测 —— 状态闸/越界 403/reason 400/actor 推定/后续批次
+// 等与 02 同语义的行为，断言全部打在 /plan/issues 自己的 HTTP 码与 home 盘
+// 票文件内容上（不靠代码复用"顺带绿"）。期望值取自票面契约：新票落目标批次
+// issues/、编号=现存最大号顺延、slug 由请求给定、Origin/Status 行缺则 400
+// 并指明缺哪项、票侧不 append 变更记录、改既有票 Origin 不许抹。
+
+describe("票03 AC1 — 合法新票写入目标批次 issues/，编号顺延，slug 由请求给定", () => {
+  it("空白批次开票 → 200；盘上路径 = issues/01-<slug>.md；内容逐字 = 请求 content", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/dark-mode-toggle.md", content: OK_TICKET,
+      reason: "打回反馈第 3 条是新范围，本轮做不完", source: "打回 r1 反馈#3",
+    })
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { task_id: string; path: string; bytes: number; actor: string; created: boolean }
+    expect(json.task_id).toBe(id)
+    expect(json.path).toBe(`${BATCH1}/issues/01-dark-mode-toggle.md`)
+    expect(json.bytes).toBe(Buffer.byteLength(OK_TICKET, "utf-8"))
+    expect(json.created).toBe(true)
+    // 票侧不 append 变更记录（AC3 的落点其一）：盘上逐字 = 请求正文，出生证明在票内。
+    expect(readHome(id, json.path)).toBe(OK_TICKET)
+  })
+
+  it("现存最大号 07 → 新票编号 08；请求自带的假编号被 server 以顺延号覆写", async () => {
+    const id = await seedTask("running")
+    preWrite(id, `${BATCH1}/issues/07-old-scope.md`, "既有票\n\nStatus: done\nOrigin: 首轮\n")
+    preWrite(id, `${BATCH1}/issues/03-lower.md`, "低位票\n\nStatus: done\nOrigin: 首轮\n")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/99-fake-number.md", content: OK_TICKET,
+      reason: "新范围开票", source: "接管对话",
+    })
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { path: string }
+    expect(json.path).toBe(`${BATCH1}/issues/08-fake-number.md`)
+    expect(readHome(id, `${BATCH1}/issues/08-fake-number.md`)).toBe(OK_TICKET)
+    // 假编号文件不得落盘（编号由 server 说了算）
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues", "99-fake-number.md"))).toBe(false)
+    // 既有票不被波及
+    expect(readHome(id, `${BATCH1}/issues/07-old-scope.md`)).toContain("既有票")
+  })
+})
+
+describe("票03 AC2 — content 缺 Origin:/Status: 行 → 400 并指明缺哪项；含则落盘", () => {
+  const t = (over: Record<string, unknown>) => ({
+    batch: BATCH1, file: "issues/x.md", reason: "r", source: "s", ...over,
+  })
+
+  it("缺 Origin 行（有 Status）→ 400，错误指明 Origin 而不涉 Status；盘上不留文件", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, t({ content: "# 票面\n\nStatus: ready-for-agent\n" }))
+    expect(res.status).toBe(400)
+    const err = ((await res.json()) as { error: string }).error
+    expect(err).toContain("Origin")
+    expect(err).not.toContain("Status")
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it("缺 Status 行（有 Origin）→ 400，错误指明 Status 而不涉 Origin；盘上不留文件", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, t({ content: "# 票面\n\nOrigin: 接管对话\n" }))
+    expect(res.status).toBe(400)
+    const err = ((await res.json()) as { error: string }).error
+    expect(err).toContain("Status")
+    expect(err).not.toContain("Origin")
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it("两行都缺 → 400，两项都点名", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, t({ content: "# 没有出生证明的票面\n" }))
+    expect(res.status).toBe(400)
+    const err = ((await res.json()) as { error: string }).error
+    expect(err).toContain("Origin")
+    expect(err).toContain("Status")
+  })
+
+  it("两行都在（bold 形制 **Status:**/**Origin:** 同吃 —— 行含标记即算）→ 200 落盘", async () => {
+    const id = await seedTask("running")
+    const bold = "# 票面\n\n**Status:** ready-for-agent\n\n**Origin:** 修复轮 r2\n"
+    const res = await postPlanIssues(id, t({ content: bold }))
+    expect(res.status).toBe(200)
+    expect(readHome(id, `${BATCH1}/issues/01-x.md`)).toBe(bold)
+  })
+})
+
+describe("票03 AC3 — 票侧不 append 变更记录；改既有票走同端点、reason 必填、Origin 不许抹", () => {
+  const V2 = "# 新范围（修订）\n\n范围再收一层。\n\nStatus: ready-for-human\n\nOrigin: 打回 r2 反馈#1\n"
+
+  it("修改既有票走同端点 → 200 created=false；原位整替逐字；不新起编号、不追加变更记录", async () => {
+    const id = await seedTask("running")
+    const c1 = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/dark-mode.md", content: OK_TICKET, reason: "开票", source: "接管对话",
+    })
+    expect(c1.status).toBe(200)
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/01-dark-mode.md", content: V2, reason: "改票收范围", source: "打回 r2 反馈#1",
+    })
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { path: string; created: boolean }
+    expect(json.path).toBe(`${BATCH1}/issues/01-dark-mode.md`)
+    expect(json.created).toBe(false)
+    // 盘上 = 新正文逐字（server 没 append 任何变更记录行/节）
+    expect(readHome(id, json.path)).toBe(V2)
+    expect(V2.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(0)
+    // 修改不再消耗新编号：目录里仅此一票
+    expect(fs.readdirSync(path.join(taskHome.homePath(id), BATCH1, "issues")).sort()).toEqual(["01-dark-mode.md"])
+  })
+
+  it("修改时抹 Origin 行 → 400，盘上原票原样（Origin 仍含）", async () => {
+    const id = await seedTask("running")
+    await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/keep-origin.md", content: OK_TICKET, reason: "开票", source: "接管对话",
+    })
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/01-keep-origin.md",
+      content: "# 改过的票\n\nStatus: done\n", reason: "改票", source: "修复轮 r2",
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toContain("Origin")
+    expect(readHome(id, `${BATCH1}/issues/01-keep-origin.md`)).toBe(OK_TICKET)
+  })
+
+  it("修改既有票 reason 必填：空/缺 → 400 且盘上不动", async () => {
+    const id = await seedTask("running")
+    await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/reason-gate.md", content: OK_TICKET, reason: "开票", source: "接管对话",
+    })
+    for (const reason of [undefined, "", "   "]) {
+      const res = await postPlanIssues(id, {
+        batch: BATCH1, file: "issues/01-reason-gate.md", content: V2, reason, source: "s",
+      })
+      expect(res.status).toBe(400)
+    }
+    expect(readHome(id, `${BATCH1}/issues/01-reason-gate.md`)).toBe(OK_TICKET)
+  })
+})
+
+describe("票03 AC4 — 与 02 同语义逐条独立成测（状态闸/越界 403/reason 400/后续批次/actor 推定）", () => {
+  // 全部断言打在 /plan/issues 自己的 HTTP 码与盘上票文件上 —— 不引用 02 的用例，
+  // 就算 /plan 整个删掉这些测试也各自成立（票面：不许靠代码复用顺带绿）。
+  function bindDoer(taskId: string, sessionId: string): void {
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO chat_sessions (id, workspace_id, title, is_active, created_at, updated_at)
+      VALUES (?, 'ws-pwb-02', ?, 1, ?, ?)`).run(sessionId, `task-doer · ${taskId}`, now, now)
+    db.prepare(`UPDATE tasks SET doer_session_id = ? WHERE id = ?`).run(sessionId, taskId)
+  }
+  function seedExec(taskId: string, opts: { workflowRef: string; status: string; execId: string }): void {
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
+      task_id, phase_index, round_index, created_at, updated_at)
+      VALUES (?, 'ws-pwb-02', ?, ?, 'e', ?, ?, 1, 2, ?, ?)`)
+      .run(opts.execId, ORG, opts.workflowRef, opts.status, taskId, now, now)
+  }
+
+  it.each(["running", "awaiting_review"])("%s 状态可开票 → 200 落盘", async (status) => {
+    const id = await seedTask(status)
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(res.status).toBe(200)
+    expect(readHome(id, `${BATCH1}/issues/01-t.md`)).toBe(OK_TICKET)
+  })
+
+  it.each(["done", "aborted", "archiving"])("%s 终态拒开票 → 409 且不落盘（状态闸同 02 判定）", async (status) => {
+    const id = await seedTask(status)
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(res.status).toBe(409)
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it.each([
+    ["file 以 .. 逃批次目录", { batch: BATCH1, file: "issues/../../evil.md" }],
+    ["file 直逃批次", { batch: BATCH1, file: "../outside.md" }],
+    ["file 绝对形态", { batch: BATCH1, file: "C:/Windows/x.md" }],
+    ["batch 含 .. 逃逸 home", { batch: "../outside", file: "issues/t.md" }],
+    ["batch 绝对形态", { batch: "/etc", file: "issues/t.md" }],
+  ])("%s → 403（既有 resolveWithinRoot 守卫复用不放宽）", async (_label, part) => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, { ...part, content: OK_TICKET, reason: "r", source: "s" })
+    expect(res.status).toBe(403)
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it("batch 指向后续 phase 批次（P2 未开工）→ 200 票落 p-2/issues/", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, {
+      batch: BATCH2, file: "issues/p2-scope.md", content: OK_TICKET, reason: "后续批次范围纠了", source: "接管对话",
+    })
+    expect(res.status).toBe(200)
+    expect(readHome(id, `${BATCH2}/issues/01-p2-scope.md`)).toBe(OK_TICKET)
+  })
+
+  it("task 不存在 → 404（先于任何 fs 动作，同 02 序）", async () => {
+    const res = await postPlanIssues("no-such-task-t3", {
+      batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it.each([
+    ["缺 reason", { reason: undefined }],
+    ["reason 纯空白", { reason: "  " }],
+    ["缺 source", { source: undefined }],
+    ["source 空串", { source: "" }],
+    ["body 自报 actor（.strict() 拒收不采信）", { actor: "root" }],
+    ["未知字段", { foo: 1 }],
+  ])("票侧 %s → 400 且不落盘", async (_label, over) => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s", ...over,
+    })
+    expect(res.status).toBe(400)
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it("file 不在批次 issues/ 目录内（issues 端点只吃票区）→ 400", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "spec.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toContain("issues/")
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "spec.md"))).toBe(false)
+  })
+
+  it("doer 会话在场 → 票侧响应 actor = task-doer(session=…)", async () => {
+    const id = await seedTask("awaiting_review")
+    bindDoer(id, "t3-sess-doer-1")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/attributed.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-doer(session=t3-sess-doer-1)")
+  })
+
+  it("活跃 task-fix 执行与 doer 会话并存 → 归 task-fix 不双计（与 02 同优先级规则，票侧独立钉）", async () => {
+    const id = await seedTask("running")
+    bindDoer(id, "t3-sess-doer-2")
+    seedExec(id, { workflowRef: "built-in/task-fix", status: "running", execId: "t3-exec-fix-1" })
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/fix-round-ticket.md", content: OK_TICKET, reason: "反馈指向新范围", source: "修复轮 r2",
+    })
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-fix(execution=t3-exec-fix-1)")
+  })
+
+  it("无会话无修复轮 → actor = unattributed（宁缺不伪，票侧独立钉）", async () => {
+    const id = await seedTask("running")
+    const res = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s",
+    })
+    expect(((await res.json()) as { actor: string }).actor).toBe("unattributed")
+  })
+})
+
+describe("票03 AC5 — 开票后产物 manifest 即含新票（并入既有 manifest 测试面，零 manifest 改动）", () => {
+  it("经 /plan/issues 开票 → GET /:id/artifacts/manifest 的 spec 组含 home:…/issues/01-<slug>.md", async () => {
+    const id = await seedTask("running")
+    const w = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/new-scope-ticket.md", content: OK_TICKET, reason: "新范围落档", source: "打回 r1 反馈#3",
+    })
+    expect(w.status).toBe(200)
+    const m = await app.request(`/api/tasks/${id}/artifacts/manifest`)
+    expect(m.status).toBe(200)
+    const groups = ((await m.json()) as {
+      groups: Array<{ key: string; items: Array<{ path: string; bytes: number }> }>
+    }).groups
+    const specGroup = groups.find((g) => g.key === "spec")
+    expect(specGroup?.items.some((i) => i.path === `home:${BATCH1}/issues/01-new-scope-ticket.md`)).toBe(true)
   })
 })
