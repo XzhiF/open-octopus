@@ -352,6 +352,18 @@ export interface UpdateSpecFieldInput {
   source?: "user" | "agent"
 }
 
+/** POST /api/tasks/:id/plan body (票02 · 计划回写 S1，ADR-0026): batch = 本任务
+ *  home 下批次相对名（含后续 phase 批次，Q8b）；file = 批次内文件名（两级解析
+ *  限批次内）；content = 新正文整替；reason/source 必填非空（不判语义，把关在人）。
+ *  身份不在 body —— 路由 .strict() 拒收任何自报字段，actor 由 server 按 DB 盖章。 */
+export interface WritePlanSpecInput {
+  batch: string
+  file: string
+  content: string
+  reason: string
+  source: string
+}
+
 export interface ListTasksParams {
   status?: TaskStatus
   org?: string
@@ -366,6 +378,36 @@ function parseJSON<T>(raw: string | null | undefined, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+// ── 计划回写 (票02 · ADR-0026) 纯文本件 ────────────────────────────────
+
+/** 变更记录节的固定标题 —— 机械落痕的落点，单源字符串（ADR-0026「spec 文末
+ *  「变更记录」节 append 一行」逐字取词）。 */
+const PLAN_CHANGELOG_HEADING = "## 变更记录"
+
+/** 摘出变更记录节的 `- ` 历史行（无节 → 空数组）。节恒在文末（server 只在文末
+ *  续写）；取首个标题行，其后所有 bullet 行按序返回。 */
+function extractChangelogEntries(text: string): string[] {
+  const lines = text.split("\n")
+  const at = lines.findIndex((l) => l.trim() === PLAN_CHANGELOG_HEADING)
+  if (at < 0) return []
+  return lines.slice(at + 1).filter((l) => l.startsWith("- "))
+}
+
+/** 剥掉请求正文自带的变更记录节（标题及其后全部行）—— 账本由 server 单源重建，
+ *  防"自报历史"与盘上历史分叉；正文部分原样保留（仅收掉尾部空白）。 */
+function stripChangelogSection(text: string): string {
+  const lines = text.split("\n")
+  const at = lines.findIndex((l) => l.trim() === PLAN_CHANGELOG_HEADING)
+  const body = at < 0 ? text : lines.slice(0, at).join("\n")
+  return body.replace(/\s+$/, "")
+}
+
+/** batch 归一：反斜杠→正斜杠、去首 `./`、去尾 `/`（盘上批次名的三种既有布局
+ *  —— .scratch/<slug>、.scratch/<date>/<slug> —— 都以 posix 相对形入参）。 */
+function normalizeBatchRel(batch: string): string {
+  return batch.split("\\").join("/").replace(/^\.\//, "").replace(/\/+$/, "")
 }
 
 /** An instance row that is over. Single source with the latch/meter (ADR-0021). */
@@ -1177,6 +1219,88 @@ export class TasksService {
       data: { task_id: taskId },
     })
     return result
+  }
+
+  // ── 计划回写 (票02 · ADR-0026 · S1 主 seam) ──────────────────────────
+
+  /** POST /api/tasks/:id/plan — 计划回写通道的 spec 侧。一次调用 = 批次内某份
+   *  spec 的正文整替 + server 在文末「## 变更记录」节机械 append 一行
+   *  （时间 · actor · source · reason · 文件），演化史随写而生。契约要点：
+   *  · 顺序 = 任务 404 先行 → 状态闸 409 → 路径守卫 403 → 写门落盘。
+   *  · 状态闸复用 isSpecEditable —— 票面「对齐既有 spec 可编辑判定」；
+   *    paused/takeover/fixing 非落库态（落库恒 running），放行集由该谓词天然覆盖。
+   *  · batch/file 两级解析全走 resolveWithinRoot（既有 home 遍历守卫单源，零放宽）：
+   *    batch 限 home 内、file 限批次目录内 —— 任一级逃逸/绝对形态/null 字节即
+   *    ArtifactAccessError(FORBIDDEN) → 403；最终仍经 TaskHomeService.writeHomeFile
+   *    既有写门（.scratch/** 白名单 + .md 后缀 + mkdir -p）落盘。
+   *  · 变更记录节 server 单源重建：盘上历史行原样保留（连续写入按时间累积不覆盖，
+   *    AC5），请求正文自带的旧节以盘上为准摘除；节内除 `- ` 行外不放其它内容。
+   *  · actor = server 按 DB 推定（resolvePlanActor），body 无身份字段（路由 .strict()）。
+   *  零 manifest 改动：产物清单磁盘直扫，写后立即可见（AC7）；SSE nudge 与
+   *  PUT /home-file 同款。 */
+  writePlanSpec(taskId: string, input: WritePlanSpecInput): { task_id: string; path: string; bytes: number; actor: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (!this.isSpecEditable(row)) {
+      throw new TaskStatusConflictError(
+        `Cannot plan-writeback a task in status '${row.status}'`,
+      )
+    }
+    const home = this.taskHomeService.homePath(taskId)
+    const batchAbs = resolveWithinRoot(home, normalizeBatchRel(input.batch), "plan batch")
+    const fileAbs = resolveWithinRoot(batchAbs, input.file.split("\\").join("/"), "plan file")
+    const rel = path.relative(home, fileAbs).split(path.sep).join("/")
+
+    const actor = this.resolvePlanActor(row)
+    const flatten = (s: string): string => s.replace(/\r?\n/g, " ").trim()
+    const line = `- ${new Date().toISOString()} · ${actor} · ${flatten(input.source)} · ${flatten(input.reason)} · ${rel}`
+
+    const carried = fs.existsSync(fileAbs)
+      ? extractChangelogEntries(fs.readFileSync(fileAbs, "utf-8")).map((e) => e + "\n").join("")
+      : ""
+    const body = stripChangelogSection(input.content)
+    const out = `${body.endsWith("\n") ? body : body + "\n"}\n${PLAN_CHANGELOG_HEADING}\n\n${carried}${line}\n`
+
+    const result = this.taskHomeService.writeHomeFile(taskId, rel, out)
+    this.sse.emit("taskpool", {
+      event: TASK_ARTIFACTS_UPDATE_EVENT,
+      data: { task_id: taskId },
+    })
+    return { task_id: taskId, path: result.path, bytes: result.bytes, actor }
+  }
+
+  /** 计划回写的 actor 归属（票02 AC6 + 本票拍板规则）。优先级：
+   *  ① 活跃 task-fix 执行优先 —— ux_exec_task_active 部分唯一索引保证一条任务至多
+   *    一条在飞实例；该实例 workflow_ref='built-in/task-fix'（ADR-0024 打回恒
+   *    override）即修复轮在作。fixing 域内「对话也开着、修复轮也在跑」的两态并存
+   *    按此归修复轮（写动作发生在修复轮职责内，且不双计）。
+   *  ② 其余状态归 doer 会话 —— tasks.doer_session_id（ADR-0025 任务唯一绑定）且
+   *    chat_sessions 行仍存活（悬空指针不造假）。
+   *  ③ 两者皆无 → 'unattributed'：诚实缺账。/api/tasks 域本就匿名（现状同风险面），
+   *    记录宁缺不伪 —— 这是"不信 body 自报"的另一半：推定不出就不写假名字。 */
+  private resolvePlanActor(row: TaskRow): string {
+    // ① 活跃 task-fix 执行（LIVE_ROUND_STATUSES 词表与轮次 diff 端点同源；不加
+    //    start_commit_id 条件 —— 归属看"谁在作"，与 diff 供货锚无关）。
+    const live = this.db
+      .prepare(
+        `SELECT id, workflow_ref FROM executions
+         WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
+           AND status IN (${LIVE_ROUND_STATUSES.map(() => "?").join(", ")})
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(row.id, ...LIVE_ROUND_STATUSES) as { id: string; workflow_ref: string } | undefined
+    if (live && live.workflow_ref === "built-in/task-fix") {
+      return `task-fix(execution=${live.id})`
+    }
+    // ② doer 会话指针 + 会话行存活双检（悬空不造假）。
+    if (row.doer_session_id) {
+      const session = this.db
+        .prepare("SELECT id FROM chat_sessions WHERE id = ?")
+        .get(row.doer_session_id) as { id: string } | undefined
+      if (session) return `task-doer(session=${row.doer_session_id})`
+    }
+    // ③ 诚实缺账。
+    return "unattributed"
   }
 
   /** GET /api/tasks/:id/workflow-ref — view the bound workflow's content + source
