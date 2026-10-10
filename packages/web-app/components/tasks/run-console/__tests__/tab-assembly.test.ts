@@ -47,8 +47,26 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(defaultKey).toBe("nodes")
   })
 
-  it("ready / archiving / 终态：变更·节点·控制台，默认 控制台（门禁/战报动线不回退）", () => {
-    for (const status of ["ready", "archiving", "done", "failed", "aborted"] as const) {
+  // 票 07（原型 ⓬ 用户真机定稿）：待执行三签 —— 对话·规格·节点，默认落节点。
+  it("ready(v4)：对话·规格·节点，默认 节点（三签集不含 变更/控制台 —— 08/09 只替换占位不动装配）", () => {
+    const { keys, defaultKey } = assembleTabs({ status: "ready", v4: true })
+    expect(keys).toEqual<ConsoleTabKey[]>(["chat", "spec", "nodes"])
+    expect(defaultKey).toBe("nodes")
+  })
+
+  it("ready(v4) 不受形态影响：takeover/fixing 判据来自执行行，ready 现场无从出现；若出现仍以三签为准", () => {
+    expect(assembleTabs({ status: "ready", mode: "takeover", v4: true }).keys)
+      .toEqual<ConsoleTabKey[]>(["chat", "spec", "nodes"])
+  })
+
+  it("v3 legacy ready：derived 未就位/旧任务只剩 控制台 —— 三签占位不压到 legacy 头上（不回退铁律）", () => {
+    const { keys, defaultKey } = assembleTabs({ status: "ready", v4: false })
+    expect(keys).toEqual<ConsoleTabKey[]>(["console"])
+    expect(defaultKey).toBe("console")
+  })
+
+  it("archiving / 终态：变更·节点·控制台，默认 控制台（门禁/战报动线不回退；其余状态装配零改动）", () => {
+    for (const status of ["archiving", "done", "failed", "aborted"] as const) {
       const { keys, defaultKey } = assembleTabs({ status, v4: true })
       expect(keys).toEqual<ConsoleTabKey[]>(["files", "nodes", "console"])
       expect(defaultKey).toBe("console")
@@ -71,11 +89,15 @@ describe("assembleTabs — spec 装配表（状态 → 页签 + 默认）", () =
     expect(tabLabel("console", { status: "running" })).toBe("▶ 控制台")
     expect(tabLabel("files", { status: "running" })).toBe("≡ 变更")
     expect(tabLabel("nodes", { status: "running" })).toBe("◆ 节点")
-    // 票11 ⑩回补：▤ 消耗 / ▣ 产物（原型 tabs 词表，全形态同字）
+    // 票11 ⑩回补：▤ 消耗 / ▣ 产物（原型 renderModal tabs 词表，全形态同字）
     expect(tabLabel("usage", { status: "running" })).toBe("▤ 消耗")
     expect(tabLabel("usage", { status: "awaiting_review" })).toBe("▤ 消耗")
     expect(tabLabel("artifacts", { status: "running" })).toBe("▣ 产物")
     expect(tabLabel("artifacts", { status: "awaiting_review" })).toBe("▣ 产物")
+    // 票 07 三签标签（原型 renderModal ready 分支逐字）：💬 对话 / ▤ 规格 / ◆ 节点
+    expect(tabLabel("chat", { status: "ready" })).toBe("💬 对话")
+    expect(tabLabel("spec", { status: "ready" })).toBe("▤ 规格")
+    expect(tabLabel("nodes", { status: "ready" })).toBe("◆ 节点")
   })
 })
 
@@ -94,6 +116,16 @@ describe("cycleTab — ←/→ 键盘切页", () => {
   })
   it("当前页不在页签集（状态迁移后）→ 落默认装配位（首个）", () => {
     expect(cycleTab(["files", "nodes", "usage", "artifacts", "console"], "review", 1)).toBe("files")
+  })
+
+  // 票 07：三签天然复用同一循环实现（装配 keys=[chat,spec,nodes]，默认 nodes 由
+  // 调用方以 defaultKey 落位 —— ←/→ 从这里卷，无特判）。
+  it("ready 三签循环：nodes →(右) chat（末位回卷）；nodes →(左) spec；chat →(右) spec", () => {
+    const keys: ConsoleTabKey[] = ["chat", "spec", "nodes"]
+    expect(cycleTab(keys, "nodes", 1)).toBe("chat")
+    expect(cycleTab(keys, "nodes", -1)).toBe("spec")
+    expect(cycleTab(keys, "chat", 1)).toBe("spec")
+    expect(cycleTab(keys, "spec", -1)).toBe("chat")
   })
 })
 

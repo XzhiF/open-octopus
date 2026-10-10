@@ -35,7 +35,8 @@ export interface NodesTabProps {
   live: boolean
 }
 
-const GLYPH_TONE: Record<NodeRow["state"], string> = {
+// 票07 导出：ready 静态预览（static-nodes-tab）复用同一套行样式，两态同形。
+export const GLYPH_TONE: Record<NodeRow["state"], string> = {
   done: "text-pop-green",
   fail: "text-pop-red",
   live: "text-pop-amber animate-pulse",
@@ -45,14 +46,14 @@ const GLYPH_TONE: Record<NodeRow["state"], string> = {
   skip: "text-pop-dim",
 }
 
-const TYPE_PILL: Record<string, string> = {
+export const TYPE_PILL: Record<string, string> = {
   Agent: "border-pop-pink/60 bg-pop-pink-soft text-pop-pink",
   Bash: "border-pop-cyan/60 bg-pop-cyan-soft text-pop-cyan",
   Loop: "border-pop-amber/60 bg-pop-amber-soft text-pop-amber",
   Swarm: "border-pop-green/60 bg-pop-green-soft text-pop-green",
   Approval: "border-pop-purple/60 bg-pop-purple-soft text-pop-purple",
 }
-const TYPE_PILL_DIM = "border-pop-bd text-pop-dim"
+export const TYPE_PILL_DIM = "border-pop-bd text-pop-dim"
 
 const LINE_TONE: Record<string, string> = {
   ink: "text-pop-ink", dim: "text-pop-dim", green: "text-pop-green",
