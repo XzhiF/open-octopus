@@ -636,7 +636,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-pop-bg">
           {/* 辅助条已退役（2026-09-12 改版）：技能计数提示 → 输入框 placeholder，
               专家咨询 → ChatArea composer 左端贴纸（composerLeading 槽）。 */}
 
