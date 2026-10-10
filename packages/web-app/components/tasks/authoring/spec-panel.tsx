@@ -308,7 +308,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
         </button>
       </h4>
       <div
-        className="mx-3.5 mb-3 min-h-[90px] rounded-md border border-dashed border-pop-bd p-2.5 font-mono text-[11.5px] text-pop-dim"
+        className="mx-3.5 mb-3 min-h-[90px] max-h-[42vh] overflow-auto rounded-md border border-dashed border-pop-bd p-2.5 font-mono text-[11.5px] text-pop-dim"
         data-spec-outview
       >
         <div className="break-all text-[10px] leading-4 text-pop-dim" data-home-dir>
@@ -432,6 +432,7 @@ function HomeTreeRec({ nodes, prefix, collapsed, onToggle, onOpen }: {
                 type="button"
                 data-artifacts-dir={n.path}
                 onClick={() => onToggle(n.path)}
+                title={n.path}
                 className="block w-full truncate border-0 bg-transparent p-0 text-left text-pop-ink hover:text-pop-pink"
               >
                 <span className="text-pop-dim">{prefix}{guide}</span>{closed ? "▸ " : "▾ "}{n.name}/
@@ -454,6 +455,7 @@ function HomeTreeRec({ nodes, prefix, collapsed, onToggle, onOpen }: {
               type="button"
               data-artifacts-file={n.path}
               onClick={() => onOpen(n)}
+              title={n.path}
               className="block w-full truncate border-0 bg-transparent p-0 text-left hover:underline"
             >
               <span className="text-pop-dim">{prefix}{guide}</span>
