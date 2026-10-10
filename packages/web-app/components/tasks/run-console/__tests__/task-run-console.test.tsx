@@ -1190,6 +1190,58 @@ nodes:
   })
 })
 
+// ═════════════════ 票 10 · ready 右栏账台角标（原型 ⓬ .tok-chip.rail，触发钮上方）═════════════════
+// 角标本体（三态/明细单源/portal 不推挤）在 ready-token-badge.test.tsx 钉死；
+// 本面只钉壳层装配：挂进 [data-rail-acts] 且 DOM 序在「⚡ 触发」钮**上方**，
+// 无缝/空账时不挂载（右栏不开空壳，触发钮照旧在场）。
+describe("票 10 — ready 右栏账台角标挂位", () => {
+  const readyDetail = (t: TaskView) => ({
+    ...t,
+    executions: [],
+    derived: derivedOf([pv(1, "票11阶段1", "pending")], true, "ready"),
+  })
+
+  it("有草稿期会话且账非零 → 角标挂 rail-acts 且在触发钮上方（tok/cache/▾ 同形制）", async () => {
+    mockFetchSessionLLMCalls.mockResolvedValue({
+      data: [],
+      aggregates: {
+        totalCalls: 12,
+        usage: { inputTokens: 9000, outputTokens: 2100, cacheReadTokens: 48000, cacheCreationTokens: 6000 },
+        totals: { tokens: 65100, cost: { usd: 0.12, complete: true }, cacheHitRate: 48000 / 63000 },
+        modelBreakdown: {},
+      },
+    })
+    const t = makeTask("ready", { source_chat_session_id: "sess-src" })
+    renderConsole(t, readyDetail(t))
+    await waitFor(() => expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeTruthy())
+    expect(mockFetchSessionLLMCalls).toHaveBeenCalledWith("sess-src")
+    const badge = document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']") as HTMLElement
+    expect(badge.textContent).toContain("tok 65.1K")
+    expect(badge.textContent).toContain("cache 76.2%")
+    // 插位硬钉：badge 与 trigger 同栏且 badge 在触发钮之前（compareDocumentPosition）
+    const trigger = document.querySelector("[data-rail-acts] [data-task-trigger]") as HTMLElement
+    expect(trigger).toBeTruthy()
+    expect(badge.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it("无会话 id → 角标不挂载、不 fetch（触发钮不受扰）", async () => {
+    const t = makeTask("ready")
+    renderConsole(t, readyDetail(t))
+    await screen.findByTestId("phase-timeline")
+    await waitFor(() => expect(document.querySelector("[data-rail-acts] [data-task-trigger]")).toBeTruthy())
+    expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeNull()
+    expect(mockFetchSessionLLMCalls).not.toHaveBeenCalled()
+  })
+
+  it("空账（默认桩 totalCalls=0）→ 角标不挂载（空壳短路），触发钮照旧", async () => {
+    const t = makeTask("ready", { source_chat_session_id: "sess-src" })
+    renderConsole(t, readyDetail(t))
+    await waitFor(() => expect(mockFetchSessionLLMCalls).toHaveBeenCalled())
+    expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeNull()
+    expect(document.querySelector("[data-rail-acts] [data-task-trigger]")).toBeTruthy()
+  })
+})
+
 // ═════════════════ 票 07 · 💬 对话页签挂载与三形态接线 ═════════════════
 // 壳层端到端钉四根线：形态映射（quick-edit/fixing）、快改徽标 + ×N chip（03 钩子）、
 // 「查看 diff」跳变更闪行（reveal）、劝退→打回草稿（05 句柄）、修复轮发消息 =

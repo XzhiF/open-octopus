@@ -89,6 +89,9 @@ import { NodesTab } from "./nodes-tab"
 import { StaticNodesTab } from "./static-nodes-tab"
 import { ReadyChatReplay } from "./ready-chat-replay"
 import { ReadySpecTab } from "./ready-spec-tab"
+// 票10(原型⓬ railReady .tok-meter)：ready 右栏账台角标 —— 「⚡ 触发」上方常驻，
+// 明细与草稿 SessionCostChip 单源（SessionCostLedger），portal 浮层不推挤右栏。
+import { ReadyTokenBadge } from "./ready-token-badge"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { UsageTab } from "./usage-tab"
 import { ArtifactsTab } from "./artifacts-tab"
@@ -943,6 +946,10 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
             />
           </div>
           <div className="flex shrink-0 flex-col gap-2 border-t-[1.5px] border-pop-bd p-3" data-rail-acts>
+            {/* 票10（原型⓬）：账台角标常驻「⚡ 触发」上方 —— 数据=草稿期会话
+                （source_chat_session_id）llm-calls；无缝/空账/取数失败整枚不渲染
+                （仿 chip 短路，右栏无空壳），点开浮层走 portal 不挤动本栏布局。 */}
+            {derivedStatus === "ready" && <ReadyTokenBadge sessionId={task.source_chat_session_id ?? null} />}
             {railActions.map((id) => (
               <RailActionButton
                 key={id}
