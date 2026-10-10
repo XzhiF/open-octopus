@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest"
 import type { AgentEvent, StepExecution } from "@/lib/types"
 import {
-  buildEventLines, buildNodeRows, execStateLine, extractNodeDefs,
+  assembleStaticNodePreview, buildEventLines, buildNodeRows, execStateLine, extractNodeDefs,
   filterEventsForNode, isFixingWorkflow, nodeSummary,
 } from "../nodes-model"
 
@@ -411,5 +411,76 @@ describe("buildEventLines / filterEventsForNode — 节点行展开事件流", (
     ]
     const kept = filterEventsForNode(events, "loop-a")
     expect(kept.map((e) => e.content)).toEqual(["a-self", "a-scoped", "a-iter"])
+  })
+})
+
+// ── 票 07 · ready 静态预览（原型 ⓬ readyNodesHtml：绑定流 YAML 顶层节点声明序，
+//    触发前全 ○，用时/成本 `—`）。期望序 = core-pack/workflows/matt-spec-dev.yaml
+//    实取（独立真相源），状态符 ○ 对齐票 04 词表 NODE_GLYPH.pend。────────────
+
+describe("assembleStaticNodePreview — ready 无执行时的绑定流 ○ 清单（票 07 AC2）", () => {
+  const MATT_SPEC_DEV_NODES = `
+name: matt-spec-dev
+nodes:
+  - id: spec-resolve
+    type: bash
+    bash: echo resolve
+  - id: fail-fast
+    type: bash
+    depends_on: [spec-resolve]
+  - id: spec-review
+    type: agent
+    depends_on: [spec-resolve]
+  - id: ticket-dag
+    type: dynamic_sub_workflow
+    depends_on: [spec-review]
+  - id: code-review
+    type: agent
+    depends_on: [ticket-dag]
+  - id: e2e-verify
+    type: agent
+    depends_on: [code-review]
+  - id: ship-pr
+    type: agent
+    depends_on: [e2e-verify]
+`
+
+  it("matt-spec-dev 七节点：声明序全列出，全 ○（pend）、未高亮、无现场终止标", () => {
+    const rows = assembleStaticNodePreview(MATT_SPEC_DEV_NODES)
+    expect(rows.map((r) => r.id)).toEqual([
+      "spec-resolve", "fail-fast", "spec-review", "ticket-dag", "code-review", "e2e-verify", "ship-pr",
+    ])
+    for (const r of rows) {
+      expect(r.state).toBe("pend")
+      expect(r.glyph).toBe("○") // NODE_GLYPH.pend —— 票 04 词表既有约定
+      expect(r.isCurrent).toBe(false)
+      expect(r.stopLive).toBe(false)
+      expect(r.step).toBeUndefined()
+    }
+  })
+
+  it("用时/成本两列一律 `—`（未执行没有账）", () => {
+    const rows = assembleStaticNodePreview(MATT_SPEC_DEV_NODES)
+    expect(rows.every((r) => r.durationText === "—" && r.costText === "—")).toBe(true)
+  })
+
+  it("类型徽标走票 04 同一词表（agent→Agent / bash→Bash / dynamic_sub_workflow→Sub）", () => {
+    const rows = assembleStaticNodePreview(MATT_SPEC_DEV_NODES)
+    expect(rows.map((r) => r.typeBadge)).toEqual([
+      "Bash", "Bash", "Agent", "Sub", "Agent", "Agent", "Agent",
+    ])
+  })
+
+  it("节点带 name 时清单行给人看 name（与动态模型 extractNodeDefs 同口径）", () => {
+    const rows = assembleStaticNodePreview("nodes:\n  - id: dev\n    name: 开发流水线\n    type: agent\n")
+    expect(rows[0].name).toBe("开发流水线")
+    expect(rows[0].id).toBe("dev")
+  })
+
+  it("空态边界：workflowRef 内容读不到（null）/ 坏 YAML / 无 nodes → 空数组（调用方给降级话术，不编造清单）", () => {
+    expect(assembleStaticNodePreview(null)).toEqual([])
+    expect(assembleStaticNodePreview(undefined)).toEqual([])
+    expect(assembleStaticNodePreview("nodes: [bogus")).toEqual([])
+    expect(assembleStaticNodePreview("name: x")).toEqual([])
   })
 })

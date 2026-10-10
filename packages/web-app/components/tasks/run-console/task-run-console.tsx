@@ -6,7 +6,8 @@
 //
 //   ┌ 顶栏（票 02 瘦身，原型 .m-head）：标题 + 状态 pill + ⏱/成本/commits/P·R 元信息
 //   │   + ⛶/✕ —— 不再有动作按钮，红黄蓝「红绿灯」装饰删除（消除误点错觉）。
-//   ├ 左：页签条（装配表 = tab-assembly.ts：running 变更·节点·消耗·产物·控制台 /
+//   ├ 左：页签条（装配表 = tab-assembly.ts：ready(原型⓬票07) 对话·规格·节点 默认节点 /
+//   │     running 变更·节点·消耗·产物·控制台 /
 //   │     awaiting_review 对话·变更·走查·消耗·产物·日志 …；←/→ 切页，输入聚焦不劫持）
 //   │     内容区净黑同底（⑪真机复点：走查/日志不再垫 bg-pop-paper 亮卡；日志盒
 //   │     = inset 衬底铺到底 + 贴底自动跟随，原型 m-content/.console 口径）。
@@ -82,6 +83,9 @@ import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
+// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格占位壳（08/09 接入位）。
+import { StaticNodesTab } from "./static-nodes-tab"
+import { ReadyChatPlaceholder, ReadySpecPlaceholder } from "./ready-tab-placeholders"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { UsageTab } from "./usage-tab"
 import { ArtifactsTab } from "./artifacts-tab"
@@ -295,6 +299,13 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     }
     return runs[runs.length - 1] ?? null
   }, [view, phaseViews, runs])
+
+  // ── 票07(原型⓬)：ready 且当前面相位**尚无执行行** → 节点页签换绑定流静态预览 ──
+  // 判据就是 nodesRun 在场与否（与动态模型同一取轮纪律）：触发转 running 后
+  // nodesRun 落位自动回票 04 动态清单，无缝衔接、零新推导。预览跟面相位走
+  // （rail 选哪个 pending phase 就预览哪个的绑定流）。
+  const staticPreview = derivedStatus === "ready" && !nodesRun
+  const staticPreviewPhase = staticPreview ? phaseViews.find((p) => p.index === view) ?? null : null
 
   // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events。
   // 票11 双轴 review 收口①：优先既有 SSE 通道（GET /api/workspaces/:id/executions/events，
@@ -857,27 +868,50 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               // 用时/成本 + 展开事件流含 ⚑ 行）；手术式操作经深链去执行详情视图。
               // takeover/fixing 形态走同一组件（shellMode 由 08 点亮；修复轮按
               // 05 契约从执行行 workflow_ref 自判）。
+              // 票07(原型⓬)：ready 且该相位无执行行 → 静态预览（绑定流 YAML 声明序全 ○，
+              // 展开=「未执行 · 等待触发」）；触发后 nodesRun 在场自动走下面动态分支。
               <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host="nodes">
-                <NodesTab run={nodesRun} mode={shellMode} live={isLive} />
+                {staticPreview ? (
+                  <StaticNodesTab
+                    taskId={task.id}
+                    workflowRef={staticPreviewPhase?.workflowRef ?? null}
+                    phaseIndex={typeof view === "number" ? view : null}
+                  />
+                ) : (
+                  <NodesTab run={nodesRun} mode={shellMode} live={isLive} />
+                )}
+              </div>
+            )}
+            {tab === "spec" && (
+              // 票07(原型⓬)三签之「▤ 规格」：本票落占位壳，票 09 替换为 SpecPanel
+              // 只读镜像（Phases/入队清单/批次树）—— 只换内容不动装配。
+              <div className="flex min-h-0 flex-1 flex-col p-3.5" data-tab-host="spec">
+                <ReadySpecPlaceholder />
               </div>
             )}
             {tab === "chat" && (
               // 票 07 落地：💬 对话 —— 整屏消息流 + 输入（原型 chatFullHtml）。
               // 三形态同一组件换语义：待验收=快速修改 / 接管（08 点亮）/ 修复轮追加指令。
               // 数据源 = S1 GET/POST /api/tasks/:id/chat；快改徽标经 rowDecor/toolbarExtra 钩子。
+              // 票07(原型⓬)：ready 的对话语义不同（草稿期全史**只读回放**，无输入框）——
+              // 本票落占位壳，票 08 替换为回放面；三签形态外的 chat（awaiting/接管/修复轮）不动。
               <div className="flex min-h-0 flex-1 flex-col" data-tab-host={tab}>
-                <TaskChatTab
-                  taskId={task.id}
-                  form={chatForm ?? "quick-edit"}
-                  interventions={interventionRows}
-                  takeoverDelivered={takeoverDelivered}
-                  openingDraft={openingDraft}
-                  onEditsChange={handleEditsChange}
-                  onQuickEditCommit={handleQuickEditCommit}
-                  onJumpToDiff={handleJumpToDiff}
-                  onRejectDraft={handleRejectDraft}
-                  onInterventionSend={handleInterventionSend}
-                />
+                {derivedStatus === "ready" ? (
+                  <ReadyChatPlaceholder />
+                ) : (
+                  <TaskChatTab
+                    taskId={task.id}
+                    form={chatForm ?? "quick-edit"}
+                    interventions={interventionRows}
+                    takeoverDelivered={takeoverDelivered}
+                    openingDraft={openingDraft}
+                    onEditsChange={handleEditsChange}
+                    onQuickEditCommit={handleQuickEditCommit}
+                    onJumpToDiff={handleJumpToDiff}
+                    onRejectDraft={handleRejectDraft}
+                    onInterventionSend={handleInterventionSend}
+                  />
+                )}
               </div>
             )}
           </div>
