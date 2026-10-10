@@ -176,9 +176,9 @@ version: 3.5.2
 | `fix-report-rN.md` / `round-report.md` / `handoff.md` / e2e 产物 | 执行侧 | ws → collect 上行 |
 | `fix-feedback-rN.md` | server（人打回时产物化） | home → 随 seed 下行 |
 
-在对话里改**已入队任务**的 spec：K16 隔离窗内你的 home 编辑会在下一轮 seed 覆盖 ws 同名；执行侧若本轮已改过同一文件，下一轮 seed 你的版本仍下行 —— **编辑前先 Read home 的 spec.md**（终态可能已含执行侧修订），别拿旧草稿覆盖。
+在对话里改**已入队任务**的 spec：**编辑前先 Read home 的 spec.md** —— 执行侧的计划回写直接落在 home 正本（文末「变更记录」可核对，ADR-0026），别拿旧草稿覆盖；你的 home 编辑会随下一轮 seed 下行覆盖 ws 同名。
 
-**rN 与打回**：起草期随便改 spec.md，重大修订可新增 `spec-r2.md` 并存（守 Key Decisions 行稳定 + `NEW-rN`）。入队后 spec 终态由执行侧在 ws 就地维护：task-fix 原则上不动 spec（反馈指向规格小错时可就地小改并记进 fix-report）；修订重跑流的 spec 再审段把修订点逐条记进 round-report.md「Spec 修订」节 —— 向用户解释「task 空间的 spec 跟着变了」就指这份台账，决策级改判（K8 表行变化）必须让用户在验收面看到。`issues/` 只原位增量：新票加文件，已写票改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补 Verification Result，不重排编号。打回二分路由由人裁决（ADR-0018）：轻量修复 = server 即时派发 task-fix（合成 `fix-feedback-rN.md`，产 `fix-report-rN.md`）；修订重跑 = 重跑绑定流，流内先按反馈再审 spec 再执行。round 号取反馈文件名。
+**rN 与打回**：起草期随便改 spec.md，重大修订可新增 `spec-r2.md` 并存（守 Key Decisions 行稳定 + `NEW-rN`）。ready 后批次 spec 与票是**活计划**：执行期变更（doer 对话与修复轮）经**计划回写** REST 通道改 home 正本，server 在文末「变更记录」节机械落痕（时间·actor·source·reason·文件，ADR-0026）—— 向用户解释「task 空间的 spec 跟着变了」就指这份变更记录，决策级改判（K8 表行变化）必须让用户在验收面看到。`issues/` 只原位增量：新票加文件，已写票改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补 Verification Result，不重排编号。打回是**单路径**（ADR-0024）：server 即时派发 task-fix 修复轮（合成 `fix-feedback-rN.md`，产 `fix-report-rN.md`），不重跑绑定流本身；结构牵连（加/减 phase、换绑定流）执行侧只留档**范围变更票**（`Status: ready-for-human`）—— 那是你被再次唤起的输入：改信封、经用户重新入队。round 号取反馈文件名。
 
 ## API 端点清单
 
@@ -299,7 +299,7 @@ curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Fmatt-spec-dev"
 
 **自建流**（目录无合适项）：写 `{home}/workflows/my-flow.yaml` → `octopus workflow validate|simulate workflows/my-flow.yaml`（双硬门槛，simulate 自动发现同名 `.test.yaml`，无 fixture 就写一个最小场景）→ `workflowRef = "my-flow.yaml"` → **登记进绑定目录**（`workflow-presets.yaml` 加一行 name/desc/workflow/inputs 骨架），看板与你此后都看得见。含真实外部副作用（删数据/改 git/调外部 API）的自建流：副作用声明 + 理由写进 `decisions`。
 
-**task-fix 起草期永远不绑**：`built-in/task-fix` 是轻量修复流（inputs `phase_spec_dir` / `feedback_path` / 自动注入的 `task_artifacts_dir`），`feedback_path` 必填但反馈文件要到打回后才存在 —— gate 阶段绑不了也不该绑。**人在验收弹窗选「轻量修复」时 server 自动 override 本流并合成两个输入**（ws 同构批次位 + 本轮 `fix-feedback-rN.md`）。你起草期把 phase 绑到 matt-spec-dev 即可；向用户解释回路：打回二选一（轻量修复 = task-fix 定点修 → fix-report-rN.md / 修订重跑 = 绑定流先再审 spec 再重跑），路由只作用本轮，phase 绑定不变。
+**task-fix 起草期永远不绑**：`built-in/task-fix` 是修复流（inputs `phase_spec_dir` / `feedback_path` / 自动注入的 `task_artifacts_dir`），`feedback_path` 必填但反馈文件要到打回后才存在 —— gate 阶段绑不了也不该绑。**人打回时 server 一律 override 本流并合成两个输入**（ws 同构批次位 + 本轮 `fix-feedback-rN.md`）—— 打回是单路径（ADR-0024），不重跑绑定流本身。你起草期把 phase 绑到 matt-spec-dev 即可；向用户解释回路：打回 → task-fix 修复轮定点修 → fix-report-rN.md，规格级反馈由修复轮经计划回写通道直接改 spec 并留痕（ADR-0026），路由只作用本轮，phase 绑定不变。
 
 ## 资源加载
 
@@ -308,7 +308,7 @@ curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Fmatt-spec-dev"
 
 ## 物化与执行环（要向用户解释的下游）
 
-入队后每 round：**seed**（home 的 Batch 目录物理拷进 ws 同路径，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect**（回收执行侧改动，写权环表）→ 人工三栏验收（摘要 | 产物核对 | 动作）→ 通过则 autoAdvance 开时下一 phase 自动开跑、关时停在人工 gate（两种推进都注入前序 handoff 路径）；打回则反馈落 `fix-feedback-rN.md`、人二选一路由即时开轮（同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态 —— 任何 round 终态都进「待处理」，动作同质（看 → 放行 / 重试 / 中止）。
+入队后每 round：**seed**（home 的 Batch 目录物理拷进 ws 同路径，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect**（回收执行侧改动，写权环表）→ 人工三栏验收（摘要 | 产物核对 | 动作）→ 通过则 autoAdvance 开时下一 phase 自动开跑、关时停在人工 gate（两种推进都注入前序 handoff 路径）；打回则反馈落 `fix-feedback-rN.md`、server 单路径即时派发修复轮开新 round（ADR-0024，同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态 —— 任何 round 终态都进「待处理」，动作同质（看 → 放行 / 重试 / 中止）。
 
 ## 交互风格
 

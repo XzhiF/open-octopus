@@ -14,8 +14,9 @@
 //         memory/daily} created by initBuiltInClones (the inline-persona fallback
 //         path the non-fork clones use — no seed fork for task-doer).
 //   AC1c: the persona carries the ADR-0025 discipline — 每改即 commit（server 自动落
-//         [quick-edit] 标记提交）、大改动劝退转修复轮是模型判断（persona 条文），
-//         不改 spec 域。
+//         [quick-edit] 标记提交）、大改动走 plan-before-code 确认闸是模型判断（persona
+//         条文，ADR-0026 后「劝退转修复轮」口径作废）；批次计划文件仅经计划回写
+//         REST 通道可写（curl 配方逐字段 + Windows UTF-8 注意内嵌）。
 //   AC1d: the built-in roster is 7 with task-doer appended (词条随实现更新 —
 //         GLOSSARY-MAP 的「内置分身」条同步由本票改写)。
 
@@ -137,12 +138,35 @@ describe('task-doer built-in clone (ADR-0025)', () => {
     // 快速修改写纪律：每改即 commit，server 落 [quick-edit] 标记，分身不必自行 commit。
     expect(persona).toContain('快速修改')
     expect(persona).toContain('[quick-edit]')
-    // 大改动劝退 = 模型判断（persona 条文），出口是打回·修复轮 —— 不是关键词正则。
-    expect(persona).toContain('修复轮')
-    expect(persona).toContain('打回')
-    // spec 域归作者/修复轮，doer 不改冻结规格。
-    expect(persona).toContain('spec.md')
     // 与 harness 自动接管（agent_takeover）划清：这里是人工对话承接。
     expect(persona).toContain('人工接管')
+  })
+
+  it('AC1c(票05): 计划回写通道与 plan-before-code 确认闸进 persona（ADR-0026 定稿词逐字）', () => {
+    const persona = getBuiltinCloneDef('task-doer')!.persona
+    // 身份边界旧口径「批次目录里的规格文件对你只读」改写为通道可写。
+    expect(persona).toContain('计划回写')
+    expect(persona).not.toContain('只读')
+    // 端点 curl 配方：两个真实端点 + body 字段名逐字（routes/tasks.ts planWriteBodySchema）。
+    expect(persona).toContain('api/tasks/')
+    expect(persona).toContain('/plan/issues')
+    expect(persona).toContain('"batch"')
+    expect(persona).toContain('"file"')
+    expect(persona).toContain('"content"')
+    expect(persona).toContain('"reason"')
+    expect(persona).toContain('"source"')
+    // Windows UTF-8 暗礁（SKILL 先例同款警告）。
+    expect(persona).toContain('UTF-8')
+    expect(persona).toContain('--data-binary')
+    // 大改劝退节 → plan-before-code 确认闸：预览物 = spec 变更 + 票草稿（Origin 行写法），
+    // 被否一字不动；超结构边界 = 范围变更票（ready-for-human）。
+    expect(persona).not.toContain('劝退')
+    expect(persona).toContain('plan-before-code')
+    expect(persona).toContain('确认闸')
+    expect(persona).toContain('Origin:')
+    expect(persona).toContain('ready-for-agent')
+    expect(persona).toContain('范围变更票')
+    expect(persona).toContain('ready-for-human')
+    expect(persona).toContain('一字不动')
   })
 })
