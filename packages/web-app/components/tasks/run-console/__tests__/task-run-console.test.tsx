@@ -20,6 +20,8 @@ const {
   mockRequestAbort, mockGetArtifactManifest, mockReadManifestFile, mockFetchSessionLLMCalls,
   // 票07(原型⓬)：ready 静态节点预览的绑定流内容读取桩。
   mockBuiltInDetail,
+  // 票09：spec 只读镜像的两条磁盘读通路（批次树已在 mockGetBatchTree；home 树补桩）。
+  mockGetHomeTree,
   // 票11 收口①：sse-manager 订阅捕获（日志流优先订既有 executions/events 实时追加）。
   sseSubs,
 } = vi.hoisted(() => ({
@@ -54,6 +56,8 @@ const {
   // 票07 ready 静态节点预览：绑定流内容读取通路（built-in 域 + task-home 回落走
   // tasks-api.getHomeFile 桩）。
   mockBuiltInDetail: vi.fn(),
+  // 票09：home-tree 默认空树（spec 镜像挂载即用；个案覆盖 entries）。
+  mockGetHomeTree: vi.fn(),
   sseSubs: [] as Array<{ url: string; type: string; fn: (e: MessageEvent) => void }>,
 }))
 
@@ -81,6 +85,10 @@ vi.mock("@/lib/tasks-api", () => ({
   WorkflowRefViewError: class extends Error {},
   getArtifactContent: vi.fn(), getWorkflowRefView: vi.fn(),
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
+  // 票09：spec 只读镜像的 home 磁盘直扫树。
+  getHomeTree: mockGetHomeTree,
+  getHomeContent: vi.fn().mockResolvedValue({ path: "", content: "" }),
+  MAX_HOME_FILE_READ_BYTES: 1024 * 1024,
   // 票03「≡ 变更」接线：壳的 round-diff 单源节拍 + FilesTab 懒拉 patch
   getRoundDiff: mockGetRoundDiff, getRoundPatch: mockGetRoundPatch,
   // 票07 对话页签（TaskChatTab 真实挂载）：会话绑定 + 历史回放
@@ -96,10 +104,11 @@ vi.mock("@/lib/observability-api", () => ({
   fetchSessionLLMCalls: mockFetchSessionLLMCalls,
 }))
 // 票07 ready 静态节点预览：绑定流内容读取（复用 built-in 详情通路，测试不真发请求）。
+// 票09：spec 镜像的 gate 目录读取默认空目录（未知 ref = server 权威，inputs 行不阻塞）。
 vi.mock("@/lib/workflow-presets-api", () => ({
   getBuiltInWorkflowDetail: mockBuiltInDetail,
-  listBuiltInWorkflows: vi.fn(),
-  listWorkflowPresets: vi.fn(),
+  listBuiltInWorkflows: vi.fn().mockResolvedValue([]),
+  listWorkflowPresets: vi.fn().mockResolvedValue({ presets: [] }),
 }))
 vi.mock("@/lib/sse-manager", () => ({
   subscribeSSE: (url: string, type: string, fn: (e: MessageEvent) => void) => {
@@ -265,6 +274,9 @@ beforeEach(() => {
   // 不编造行；看清单的用例自行 mockResolvedValue（YAML 原文走 content）。
   mockBuiltInDetail.mockReset()
   mockBuiltInDetail.mockRejectedValue(new Error("not resolvable in console tests"))
+  // 票09 默认面：home 直扫树空（spec 镜像挂载即拉；个案覆盖 entries）。
+  mockGetHomeTree.mockReset()
+  mockGetHomeTree.mockResolvedValue({ dir: "/home/.octopus/tasks/task-1", entries: [] })
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -1144,7 +1156,14 @@ nodes:
     readyV4()
     await screen.findByTestId("console-tab-nodes")
     fireEvent.click(screen.getByTestId("console-tab-spec"))
-    expect(await screen.findByTestId("ready-spec-placeholder")).toBeTruthy()
+    // 票09 迁移锚点：占位壳 → SpecPanel 只读镜像（ready-tab-placeholders 的
+    // ReadySpecPlaceholder 退役；testid 由 ready-spec-placeholder 换成 ready-spec-tab，
+    // 镜像体 = 真 SpecPanel（data-spec-panel），写控件在场数 = 0）。
+    expect(await screen.findByTestId("ready-spec-tab")).toBeTruthy()
+    expect(screen.queryByTestId("ready-spec-placeholder")).toBeNull()
+    expect(document.querySelector("[data-spec-panel]")).toBeTruthy()
+    expect(document.querySelector("[data-phase-add-open]")).toBeNull()
+    expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
     fireEvent.click(screen.getByTestId("console-tab-chat"))
     expect(await screen.findByTestId("ready-chat-placeholder")).toBeTruthy()
     // 切回节点：静态预览仍在场（宿主切换不残留别的页签内容）
