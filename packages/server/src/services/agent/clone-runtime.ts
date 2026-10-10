@@ -7,6 +7,7 @@
 //   3. Error Recovery: graceful degradation (fallback, retry without resume, log-only)
 //
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
@@ -1227,5 +1228,147 @@ function checkBashWriteGuard(
       `(relative paths resolve from the home), or /tmp for scratch files.`,
       `Avoid $vars/backticks in write targets — use explicit paths.`,
     ].join('\n'),
+  }
+}
+
+// ── Doer batch-dir guard (计划回写 票04 · S2) ─────────────────────────
+
+/**
+ * The task-doer REVERSE hard-gate: a fence around ONE directory.
+ *
+ * Why (ADR-0026 · spec 断层「会被洗」): the doer session runs with cwd = the
+ * execution workspace, and `{ws}/.scratch/**` is the isomorphic COPY of the
+ * batch dir that seed re-overwrites home→ws at every round start. A plan edit
+ * written there is invisible to the artifact ledger AND lost next round — so
+ * the write is refused on the spot, with a visible reason pointing at the ONLY
+ * write channel for plans: the 计划回写 REST endpoints (票02/03,
+ * `POST /api/tasks/:id/plan[/issues]`, body { batch, file, content, reason,
+ * source }). The model reads the reason and redirects; 「下轮 seed 覆盖回滚
+ * doer 改动」的断层就此物理性死亡。
+ *
+ * Posture — the exact OPPOSITE of buildPathGuard:
+ *  - buildPathGuard fences the author INTO the task home (everything else
+ *    denied, unresolvable targets blocked conservatively).
+ *  - this one fences the doer OUT of `{ws}/.scratch` ONLY. Everything else —
+ *    `projects/**` writes, the whole Bash command surface (NO denylist: the
+ *    doer builds and runs, that's its job; quick-edit commits ride unchanged),
+ *    and every read of the batch dir — sails through. Unresolvable targets
+ *    ($/backtick) are allowed unless they name a `.scratch` path segment.
+ *
+ * Tokenization is deliberately LITERAL (whitespace/operator split, no shell
+ * escape processing): segmentize() eats unquoted `\` — correct for bash but it
+ * mangles the Windows paths models actually type here (`C:\ws\.scratch\f.md`).
+ * A deny-zone name check does not need quote-escape fidelity; the author-side
+ * whitelist scanner keeps its own.
+ *
+ * Known residual holes (defense-in-depth, same documented posture as the
+ * author guard): `cd .scratch && echo x > f`, interpreter-internal writes
+ * (`python -c open(…)`), sed scripts using `|` as delimiter (split artifact).
+ */
+export function buildDoerBatchGuard(
+  wsPath: string,
+  taskId: string,
+): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+  const batchRoot = path.resolve(wsPath, '.scratch')
+  const fold = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
+  // Separator/case-folded comparison: doer targets arrive in bash-forward-slash
+  // AND Windows-backslash forms; normalizing both to `/` folds them together.
+  const rootFolded = fold(batchRoot).replace(/\\/g, '/')
+  const onBatch = (abs: string): boolean => {
+    const f = fold(abs).replace(/\\/g, '/')
+    return f === rootFolded || f.startsWith(rootFolded + '/')
+  }
+  const SCRATCH_SEGMENT_RE = /(^|[/\\])\.scratch([/\\]|$)/i
+
+  /** True when a raw WRITE target lands in the batch mirror. Relative targets
+   *  resolve against wsPath — the doer session's cwd. `~` expands like the
+   *  author guard does. Targets the scanner cannot resolve ($/backtick/glob)
+   *  count only when they name `.scratch` outright: the conservative direction
+   *  here is to allow the doer's legitimate work, not to sandbox it. */
+  const targetHitsBatch = (raw: string): boolean => {
+    let t = raw.trim()
+    if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) {
+      t = t.slice(1, -1)
+    }
+    if (!t || t.startsWith('&')) return false // fd duplication — no path
+    if (/[$`*?]/.test(t)) return SCRATCH_SEGMENT_RE.test(t)
+    const abs = t.startsWith('~') ? path.resolve(process.env.HOME ?? os.homedir(), t.slice(1)) : t
+    return onBatch(path.isAbsolute(abs) ? abs : path.resolve(wsPath, abs))
+  }
+
+  const deny = (shown: string): { allow: boolean; reason: string } => ({
+    allow: false,
+    reason: [
+      `BLOCKED: 工作区的批次目录是计划的下发副本，不能直接写入（本次目标：${shown}）。`,
+      ``,
+      `位置：${batchRoot}`,
+      `任务计划的正本在任务自己的目录里；每一轮开工都会用正本把这份工作区副本`,
+      `整份覆盖回去 —— 直接改副本，改动既进不了计划，也保不住。`,
+      ``,
+      `改计划（spec 或票）只有一条通道：计划回写 REST 接口。server 会写入正本，`,
+      `并在 spec 文末自动追加一行变更记录：`,
+      ``,
+      `  POST /api/tasks/${taskId}/plan          // 修改批次 spec`,
+      `  POST /api/tasks/${taskId}/plan/issues   // 新开票 / 修改既有票（content 须含 Origin: 与 Status: 两行）`,
+      ``,
+      `  body（JSON，字段名逐字如下）：`,
+      `  { "batch": ".scratch/<批次目录相对名>", "file": "<批次内文件名，如 spec.md>",`,
+      `    "content": "<改后的完整内容>", "reason": "<为什么要改>",`,
+      `    "source": "<决策出处：打回 rN 第几条/接管对话/修复轮…>" }`,
+      ``,
+      `  Windows 下 body 含中文：先写成 UTF-8 文件再 --data-binary @文件，勿命令行内联。`,
+      ``,
+      `不受影响的：projects/ 下的代码照常读写（每改即 commit 不变）；`,
+      `批次目录里的文件照常可读（Read/Grep 与 cat 等只读命令不拦）。`,
+    ].join('\n'),
+  })
+
+  return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
+    const inp = input as Record<string, unknown> | null
+
+    if (toolName === 'Bash') {
+      const command = inp?.command
+      if (typeof command !== 'string' || command === '') return undefined
+      // 1. Redirects — raw scan (catches writes nested in `sh -c '…'`), the
+      //    same capture the author guard uses.
+      for (const m of command.matchAll(REDIRECT_RE)) {
+        if (targetHitsBatch(m[1])) return deny(m[1])
+      }
+      // 2. Write commands with argument targets. The author scanner's verb set
+      //    (tee/sed -i/dd/cp/mv/install) plus the batch shapes the doer would
+      //    reach for — 建目录/删改 (mkdir/rmdir/touch/rm/truncate). cp/mv count
+      //    by DESTINATION only, so copying plan files OUT (a read) stays
+      //    allowed. Literal tokenizer, see header for why.
+      for (const raw of command.split(/[;\n|&]+/)) {
+        const tokens = raw.trim().split(/\s+/).filter(Boolean)
+        let ci = 0
+        while (ci < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[ci])) ci++
+        const cmdWord = path.basename(tokens[ci] ?? '').toLowerCase()
+        const args = tokens.slice(ci + 1).filter((a) => !a.startsWith('-') && !/^[<>]/.test(a))
+        let targets: string[] = []
+        if (cmdWord === 'tee' || cmdWord === 'install' || cmdWord === 'mkdir' || cmdWord === 'rmdir'
+          || cmdWord === 'touch' || cmdWord === 'rm' || cmdWord === 'truncate') {
+          targets = args
+        } else if (cmdWord === 'cp' || cmdWord === 'mv') {
+          if (args.length >= 1) targets = [args[args.length - 1]]
+        } else if (cmdWord === 'sed') {
+          if (tokens.some((a) => /^-i($|[.=$])/.test(a) || a.startsWith('--in-place'))) targets = args
+        } else if (cmdWord === 'dd') {
+          targets = tokens.slice(ci + 1).filter((a) => a.startsWith('of=')).map((a) => a.slice(3))
+        }
+        for (const t of targets) {
+          if (targetHitsBatch(t)) return deny(t)
+        }
+      }
+      return undefined
+    }
+
+    // File-write tools only — reads (Read/Glob/Grep/LS) are never intercepted.
+    if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') {
+      return undefined
+    }
+    const filePath = (inp?.file_path ?? inp?.notebook_path) as string | undefined
+    if (!filePath) return undefined
+    return targetHitsBatch(filePath) ? deny(filePath) : undefined
   }
 }
