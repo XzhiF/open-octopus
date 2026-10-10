@@ -1151,7 +1151,7 @@ nodes:
     expect((await within(tab).findByTestId("static-node-events-spec-resolve")).textContent).toContain("未执行 · 等待触发")
   })
 
-  it("对话/规格占位壳：页签可点可切，testid 就位（08/09 各替换内容，不再动装配）", async () => {
+  it("对话/规格两签可点可切：规格占位壳 testid 原位（票09 接入位）；对话壳已由票08 换为只读回放（fixture 无草稿期会话 → 空态文案，面内零输入框）", async () => {
     mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: STATIC7_YAML, parsed: { name: "matt-spec-dev" } })
     readyV4()
     await screen.findByTestId("console-tab-nodes")
@@ -1165,7 +1165,12 @@ nodes:
     expect(document.querySelector("[data-phase-add-open]")).toBeNull()
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
     fireEvent.click(screen.getByTestId("console-tab-chat"))
-    expect(await screen.findByTestId("ready-chat-placeholder")).toBeTruthy()
+    // 票07 的 ready-chat-placeholder 已退役 —— 换票08 回放面（makeTask 默认
+    // source_chat_session_id=null → 「草稿期会话不存在」空态，不白屏）。
+    expect(screen.queryByTestId("ready-chat-placeholder")).toBeNull()
+    const replay = await screen.findByTestId("ready-chat-replay")
+    expect(within(replay).getByText("草稿期会话不存在")).toBeTruthy()
+    expect(within(replay).queryAllByRole("textbox")).toHaveLength(0)
     // 切回节点：静态预览仍在场（宿主切换不残留别的页签内容）
     fireEvent.click(screen.getByTestId("console-tab-nodes"))
     expect(await screen.findByTestId("static-nodes-tab")).toBeTruthy()

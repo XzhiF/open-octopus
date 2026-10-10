@@ -83,10 +83,11 @@ import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
-// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话占位壳（08 接入位）；
-// 「▤ 规格」已由票 09 换装为 SpecPanel 只读镜像（ready-spec-tab，占位壳退役）。
+// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格占位壳（08/09 接入位）。
+// 两壳现已双双换装退役：「💬 对话」→ ReadyChatReplay 只读回放（票08）；
+// 「▤ 规格」→ SpecPanel 只读镜像 ready-spec-tab（票09）。占位壳文件保留不删。
 import { StaticNodesTab } from "./static-nodes-tab"
-import { ReadyChatPlaceholder } from "./ready-tab-placeholders"
+import { ReadyChatReplay } from "./ready-chat-replay"
 import { ReadySpecTab } from "./ready-spec-tab"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { UsageTab } from "./usage-tab"
@@ -898,10 +899,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               // 三形态同一组件换语义：待验收=快速修改 / 接管（08 点亮）/ 修复轮追加指令。
               // 数据源 = S1 GET/POST /api/tasks/:id/chat；快改徽标经 rowDecor/toolbarExtra 钩子。
               // 票07(原型⓬)：ready 的对话语义不同（草稿期全史**只读回放**，无输入框）——
-              // 本票落占位壳，票 08 替换为回放面；三签形态外的 chat（awaiting/接管/修复轮）不动。
+              // 票08 已替换为 ReadyChatReplay（source_chat_session_id 全史回放，空态/截断/
+              // 零输入硬闸见该文件）；三签形态外的 chat（awaiting/接管/修复轮）不动。
               <div className="flex min-h-0 flex-1 flex-col" data-tab-host={tab}>
                 {derivedStatus === "ready" ? (
-                  <ReadyChatPlaceholder />
+                  <ReadyChatReplay sessionId={task.source_chat_session_id ?? null} />
                 ) : (
                   <TaskChatTab
                     taskId={task.id}
