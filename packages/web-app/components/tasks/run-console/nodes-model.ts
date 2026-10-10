@@ -199,6 +199,31 @@ export function nodeSummary(rows: NodeRow[]): { done: number; total: number } {
   return { done: rows.filter((r) => r.state === "done").length, total: rows.length }
 }
 
+// ── 票 07 · ready 静态预览 ────────────────────────────────────────────
+//
+// 待执行且该 phase 尚无 execution 时，◆ 节点页签不再是「无节点」空态，而是
+// **绑定流 YAML 顶层节点的声明序清单**（原型 ⓬ readyNodesHtml）：全 ○ 未执行、
+// 用时/成本 `—`、展开一行给「未执行 · 等待触发」占位。有 execution 后走
+// buildNodeRows 动态模型（判据 = 该 phase 是否有执行行，在调用方）。
+// 状态符词表对齐票 04：○ = NODE_GLYPH.pend，不另造符号。
+
+/** 绑定流 YAML 原文 → ○ 静态行清单（声明序）。content 读不到/坏 YAML/无 nodes
+ *  → []（调用方落「未绑定 / 读取失败」降级话术，绝不编造清单）。 */
+export function assembleStaticNodePreview(yamlContent: string | null | undefined): NodeRow[] {
+  return extractNodeDefs(yamlContent).map((d) => ({
+    id: d.id,
+    name: d.name,
+    type: d.type,
+    typeBadge: typeBadgeOf(d.type),
+    state: "pend" as const,
+    glyph: NODE_GLYPH.pend,
+    durationText: "—",
+    costText: "—",
+    isCurrent: false,
+    stopLive: false,
+  }))
+}
+
 // ── 头部状态播报（原型 nodesHtml 的 stTxt：takeover/fixing/paused + 终止补位）──
 
 export interface ExecStateLine { tone: "pink" | "cyan" | "amber" | "red"; text: string }

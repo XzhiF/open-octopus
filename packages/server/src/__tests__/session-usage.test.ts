@@ -135,10 +135,10 @@ describe("findLlmCallsBySession — 会话口径不去重", () => {
     expect(agg.totals).toEqual({ tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null })
   })
 
-  it("配价齐全时 cost.complete=true，命中率 = cacheRead/(input+cacheRead)", () => {
+  it("配价齐全时 cost.complete=true，命中率 = cacheRead/(input+cacheRead+cacheCreation)", () => {
     dao.insertLlmCallBatch([call({ id: "c1", input_tokens: 1000, cache_read_tokens: 3000 })])
     const agg = llmUsageAggregates(toLedgerRows(dao.findLlmCallsBySession("s-1")))
-    expect(agg.totals.cacheHitRate).toBeCloseTo(0.75, 10)
+    expect(agg.totals.cacheHitRate).toBeCloseTo(3000 / 4500, 10) // cc=500（默认）进分母（ADR-0027）
     expect(agg.totals.cost.complete).toBe(true)
   })
 })

@@ -46,12 +46,45 @@ function toolStatusMark(status: string): { glyph: string; cls: string } {
   return { glyph: '…', cls: 'text-pop-dim' }
 }
 
+/** 工具载荷 → 可读文本：字符串原样，对象美化 JSON，异常兜底 String。 */
+function fmtToolPayload(v: unknown): string {
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+}
+
+/** 工具调用行：默认一行简报（名+首参+状态）；点击 ▸/▾ 展开本工具**做了什么**——
+ *  input 全量 + 到齐后的 result 全量（各自限高可滚，pre-wrap 不截行）。
+ *  流式（TuiLive）与历史（TuiMeta）共用，2026-10-10 用户真机需求。 */
 function ToolLine({ tc }: { tc: ToolCallRecord }) {
   const { glyph, cls } = toolStatusMark(tc.status)
+  const [open, setOpen] = useState(false)
+  const hasInput = tc.input !== undefined && tc.input !== null && tc.input !== ''
+  const hasResult = tc.result !== undefined && tc.result !== null && tc.result !== ''
   return (
-    <div className="text-pop-dim">
-      <span className="text-pop-pink">▸ </span>
-      {toolBrief(tc)} <span className={cls}>[{glyph}]</span>
+    <div className="text-pop-dim" data-tui-tool={open ? 'open' : 'closed'}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="block w-full select-none text-left transition-colors hover:text-pop-ink"
+        title={open ? '收回工具详情' : '展开本工具 input/result 全文'}
+      >
+        <span className="text-pop-pink">{open ? '▾ ' : '▸ '}</span>
+        {toolBrief(tc)} <span className={cls}>[{glyph}]</span>
+      </button>
+      {open && (
+        <div className="ml-3 mt-0.5 space-y-1.5 border-l border-pop-bd pl-2">
+          <div>
+            <div className="text-[10px] font-black text-pop-cyan">input · {tc.name}</div>
+            <pre className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap break-words">{hasInput ? fmtToolPayload(tc.input) : '（暂无输入）'}</pre>
+          </div>
+          {hasResult && (
+            <div>
+              <div className="text-[10px] font-black text-pop-green">result</div>
+              <pre className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap break-words">{fmtToolPayload(tc.result)}</pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -153,6 +186,46 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   )
 }
 
+/** 流式 thinking 段：默认 3 行活窗口（旧行渐隐、行内截断）；
+ *  点击标题展开 = 本段全文逐字（pre-wrap 不截行、限高可滚），再点收回。
+ *  完成后历史态本就全量（TuiMeta），此处只补流式期的「看全」出口。 */
+function LiveThinking({ item }: { item: Extract<StreamTimelineItem, { kind: 'thinking' }> }) {
+  const [open, setOpen] = useState(false)
+  const win = item.text.split('\n').slice(-3)
+  return (
+    <div data-tui-thinking className="text-pop-dim">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="select-none transition-colors hover:text-pop-ink"
+        data-tui-thinking-expand={open ? 'open' : 'closed'}
+        title={open ? '收回 3 行窗口' : '展开本段 thinking 全文'}
+      >
+        ◌ thinking
+        {item.active && <span className="ml-1 animate-pulse text-pop-pink">▊</span>}
+        <span className="ml-1 text-[10px]">{open ? '▾ 全文' : '▸ 全文'}</span>
+      </button>
+      {open ? (
+        <div className="ml-3 max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words border-l border-pop-bd pl-2">{item.text}</div>
+      ) : (
+        <div className="ml-3 overflow-hidden border-l border-pop-bd pl-2">
+          {win.map((l, i) => (
+            <div
+              key={i}
+              className={
+                'truncate' +
+                (win.length === 3 && i === 0 ? ' opacity-40' : win.length >= 2 && i === win.length - 2 ? ' opacity-70' : '')
+              }
+            >
+              {l || ' '}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 流式中的即时过程行（到达序），结束后由 TuiMessage 的折叠 meta 接管。 */
 export function TuiLive({ items, toolCalls }: {
   items: StreamTimelineItem[]
@@ -161,31 +234,7 @@ export function TuiLive({ items, toolCalls }: {
   return (
     <div data-tui-live className="space-y-0.5">
       {items.map((item) => {
-        if (item.kind === 'thinking') {
-          // 3 行窗口：只渲染末 3 行，旧行渐隐；overflow-hidden 不出滚动条。
-          const win = item.text.split('\n').slice(-3)
-          return (
-            <div key={item.id} data-tui-thinking className="text-pop-dim">
-              <div>
-                ◌ thinking
-                {item.active && <span className="ml-1 animate-pulse text-pop-pink">▊</span>}
-              </div>
-              <div className="ml-3 overflow-hidden border-l border-pop-bd pl-2">
-                {win.map((l, i) => (
-                  <div
-                    key={i}
-                    className={
-                      'truncate' +
-                      (win.length === 3 && i === 0 ? ' opacity-40' : win.length >= 2 && i === win.length - 2 ? ' opacity-70' : '')
-                    }
-                  >
-                    {l || ' '}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        }
+        if (item.kind === 'thinking') return <LiveThinking key={item.id} item={item} />
         if (item.kind === 'tool') {
           const tc = toolCalls.find((t) => t.id === item.id)
           return tc ? <ToolLine key={item.id} tc={tc} /> : null

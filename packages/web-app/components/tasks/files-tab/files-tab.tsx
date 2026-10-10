@@ -20,6 +20,7 @@ import { getRoundDiff, type RoundDiffPayload } from "@/lib/tasks-api"
 import type { RoundDiffFeed } from "./use-round-diff-feed"
 import { matchReveal, scopeTotals, type RevealTarget } from "./files-tab-model"
 import { DiffUnavailable, RepoSection, StatStrip, type FileRowDecor } from "./diff-view"
+import { EMPTY_SHELL } from "@/components/tasks/run-console/nodes-tab"
 
 export interface FilesTabProps {
   taskId: string
@@ -96,7 +97,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {!serving ? (
-          <div className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim" data-testid="files-tab-idle">
+          <div className={EMPTY_SHELL} data-testid="files-tab-idle">
             实物 diff 只在<b className="text-pop-ink">执行中与待验收</b>供货 —— 当前没有可出示的轮次。<br />
             轮次开跑（或产出入待验收）后本页自动出数；归档终态后回看走「✓ 走查 / 台账」。
           </div>

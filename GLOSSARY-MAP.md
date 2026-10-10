@@ -27,7 +27,7 @@
 | **Diagnose Report** | 对执行现场的结构化分析，包含节点状态、异常识别（stuck/exhausted/false_completion/infinite_retry）、修复建议。 | server |
 | **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
 | **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。内置分身见下条。 | server, shared |
-| **task-doer（任务执行者）** | 承接任务执行/验收期对话的内置分身（谈=task-author，做=task-doer）：快速修改、人工接管、修复轮追加指令皆出其口；工作区写权来自 workspace 语义而非 task-home。ADR-0025。 | server, core-pack, web-app |
+| **task-doer（任务执行者）** | 承接任务执行/验收期对话的内置分身（谈=task-author，做=task-doer）：快速修改、人工接管、修复轮追加指令皆出其口；工作区代码写权来自 workspace 语义而非 task-home，唯批次计划文件（spec/票）仅经计划回写通道可写、大改先预览后执行（ADR-0025，ADR-0026）。 | server, core-pack, web-app |
 | **内置分身 (Built-in Clone)** | 系统预定义的 7 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入）。 | server |
 | **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
@@ -37,7 +37,7 @@
 | **人格替换** | 分身用自己的 persona.md，完全替换主 Agent 的 persona。每个分身有独立人格。 | server |
 | **provider_session_id** | Claude Code SDK 的 resume 会话 ID。统一后所有分身都使用 resume 省 token。存储在 SessionRow 上。 | server, providers |
 | **TokenUsage（用量记录）** | 全站唯一的 token 用量规范形状 `{inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens}`，四字段**纯值**（input 不含 cache）。`total` 不是字段，需具名函数显式选口径。snake↔camel 只在 3 个 seam（SDK 入口 / DB 行 / wire 出口）转换。定义于 `shared/types/usage.ts`（Zod 派生）。见 ADR-0014。 | shared, providers, engine, server, web-app |
-| **UsageLedger（用量台账）** | 跨执行聚合的唯一真相：总 tokens=四字段和（`totalTokens()`）、费用=`LedgerCost{usd,complete}` 三态、命中率=`cacheRead/(input+cacheRead)`∈0–1。公式单源 `shared/ledger.ts`（JS + LEDGER_SQL 金表对验）；node_token_usages 为账本、llm_calls 为明细；写入口唯一 `TokenUsageDAO.recordNodeUsage`。见 ADR-0016。 | shared, server, web-app |
+| **UsageLedger（用量台账）** | 跨执行聚合的唯一真相：总 tokens=四字段和（`totalTokens()`）、费用=`LedgerCost{usd,complete}` 三态、命中率=`cacheRead/(input+cacheRead+cacheCreation)`∈0–1（分母含缓存写，ADR-0027）。公式单源 `shared/ledger.ts`（JS + LEDGER_SQL 金表对验）；node_token_usages 为账本、llm_calls 为明细；写入口唯一 `TokenUsageDAO.recordNodeUsage`。见 ADR-0016 + ADR-0027。 | shared, server, web-app |
 | **Pricing（价表）** | 全站唯一计价模块 `shared/src/pricing.ts`，单位 **USD/MTok**，**无 default 兜底**。`priceFor()` 两阶段匹配（lowercase 精确 → 剥尾部 `[..]` 变体段）。补价通道 = models.yaml：`custom_providers.*.models[].cost` + 顶层 `model_presets` 预设层（id 可裸名或 `provider/model`；为 custom 条目供给缺省字段、为裸名定价终审；跨商异价裸键丢弃不选边）。`estimateCost()` 产出的一切都是**估算**——系统内不存在账单实测。见 ADR-0015。 | shared, providers, server |
 | **未定价（Unpriced）** | cost 的诚实第三态：`costUsd = NULL/undefined` = 查无价，≠ 免费（0 在三个 seam 一律归一为未定价），≠ 已计。UI 走 `costComplete`/未定价语义。0 价假象（SDK 未知模型 / pi 注册表 0 档）是它的前身伪装。 | shared, providers, server, web-app |
 | **PresentationFormatter（格式化器）** | web 展示层数字→文案的唯一出口 `lib/format.ts` 五函数：`formatCost`（消费 LedgerCost 三态：`—/≈$/$` + 自适应 2/4 位）、`formatTokenCount`（十进制）、`formatDuration`（**毫秒入参**四档）、`formatPercent`（入参 0–1）、`formatBytes`（1024）。豁免须 `// fmt-ok:`（轴刻度/协议文本），门禁测试防复活。见 ADR-0017。 | web-app |
@@ -109,13 +109,15 @@
 | **Phase（阶段）** | coding task 的第一级推进单元与**叙事单元**——**一个 phase = 一个完整用户故事**，叠加在 MVP 之上：phase1 = MVP 薄切片（切穿需求最高风险段），其后每 phase = 一个讲得完的故事 + 一份独立 spec（故事+票+验收方式）+ 一个 workflow_ref 绑定 + ≥1 次执行。下界 = 功能票 ≥3（E2E 票不计；摊得起一次人工 gate；MVP 豁免）；上界 = 成果内聚、一次坐得下验收，**phase 层不设时间硬顶**——≤1h 是 Ticket 层容量纪律，借给 phase 是「phase≈issue」的历史根因。phase 间以人工验收衔接直至完整需求完成。ADR-0020。 | server, shared, web-app, core-pack |
 | **叙事分层（Phase ≠ User Story ≠ Ticket）** | 三层各司一职：Phase = 交付/叙事单元（一个完整用户故事，一 phase 一道 gate）；User Story = phase spec 内的穷尽清单条目（一条故事可拆多票）；Ticket = 实现单元（垂直切片，≤1h、装进一个 context window）。时间预算只在票层有效；词层混用即粒度失控的根源。 | core-pack, shared |
 | **Round（轮次）** | Phase 内的一次执行尝试——round 1 = phase spec 的正式执行（绑定工作流）；验收打回 → 新 round 一律为**修复轮**（task-fix），不重跑绑定流；绑定流的再执行只发生在草稿态改 spec 后重新入队。每 round 一条独立执行记录，共享同一 workspace/分支。 | server, web-app |
-| **修复轮 (Fix Round)** | 打回产生的新 round：按打回反馈开发/修复/回归/补产物后即回到待验收。承担原「修订重跑」的全部出口职责。 | server, core-pack |
+| **修复轮 (Fix Round)** | 打回产生的新 round：按打回反馈开发/修复/回归/补产物后即回到待验收。承担原「修订重跑」的全部出口职责；并担计划回写职责——反馈指向规格即改 spec 并经回写通道留痕，大范围收束 = 开票留档 + 建议转 doer 对话（ADR-0026）。 | server, core-pack |
 | **快速修改 (Quick-Edit)** | 待验收态下由对话直接修改执行工作空间代码的行为——不开 Round、不算引擎产物、不入打回路径；与轮次产物在验收台账中分列。 | server, web-app |
 | **人工接管 (Manual Takeover)** | 执行中终止绑定执行、由人经对话驱动 agent 逐步完成当前 Round 的终局动作；产出仍需过验收 Gate。UI 简称"接管"。_Avoid_: 与 harness 的自动接管（agent_takeover）混用。 | server, web-app, engine |
 | **验收台账 (Acceptance Ledger)** | 每轮验收的决策与证据链账本：实物变更、自动复检、跑起来看、人工走查、人工干预、快速修改，分列来源。_Avoid_: 与用量台账（UsageLedger）混称"台账"。 | server, web-app |
 | **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round（修复轮）。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
 | **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
 | **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、GLOSSARY.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
+| **计划回写 (Plan Writeback)** | 任务执行/验收期由 task-doer 与修复轮回写 Batch 目录批次 spec 与票的行为——经 plan-before-code 确认闸与唯一任务级 REST 通道，含后续 phase 批次；变更记录由 server 机械落痕（谁·哪轮·为何·何文件），信封 phases[] 结构层不在写权内、结构变更落范围变更票。_Avoid_: 与「归并回写 (Sync-back)」混称"回写"——那是末 phase 把产物并回 project 仓库的归档动作，此为执行期把计划改回计划自身的活计划动作。ADR-0026。 | server, core-pack, web-app |
+| **范围变更票 (Scope-Change Ticket)** | 计划回写产生的溢出票：变更牵连任务结构（加/减 phase、换绑定流）时执行侧代理只开票留档不执行——`Status: ready-for-human`、带 Origin 行，载体为当前批次 issues/，处理归 authoring 侧（task-author 改信封重入队）。ADR-0026。 | core-pack, server |
 | **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |
 | **handoff.md** | 批次目录 spec 家族成员：ship 每轮末产/覆写的**面向下游执行会话**精选交接短页（头块 + Protected Decisions / Confirmed Interfaces / Gap Targets 三段，一屏内引用不复制）；与 round-report.md（面向验收人全量轮报）受众不同。ADR-0019。 | core-pack |
 | **prev_handoff_paths** | 内置注入键（非占位符）：全部已 accepted 前序 phase 的 handoff.md home 绝对路径（存在性过滤、换行连接），accepted→下 phase / 手动推进时 server 注入 materialized input_values；与 feedback/task_artifacts_dir 注入同族。ADR-0019。 | server |

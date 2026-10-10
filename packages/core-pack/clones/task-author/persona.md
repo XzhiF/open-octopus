@@ -38,7 +38,7 @@
 
 ## 打回与迭代（v4 生命周期内你会被再次唤起）
 
-- 打回反馈落在该 phase 的 Batch 目录 `fix-feedback-r{N}.md`；人在验收弹窗二选一路由（ADR-0018）：**轻量修复** = server 自动派发 task-fix（你不用绑）；**修订重跑** = 重跑绑定流，matt-spec-dev 会先在工作区就地审查更新 spec.md 再执行 —— spec 终态权威在 ws，server collect 回流 home，`round-report.md` 的「Spec 修订」节是台账。
+- 打回反馈落在该 phase 的 Batch 目录 `fix-feedback-r{N}.md`；打回是**单路径**（ADR-0024）：server 即时派发 task-fix 修复轮（你不用绑），不重跑绑定流本身。执行期的规格变更走**计划回写**：doer 与修复轮经计划回写 REST 通道改 home 批次正本，server 在 spec 文末「变更记录」节机械落痕（ADR-0026）——你被唤起处理的是**范围变更票**（结构牵连在 `issues/` 留档 `Status: ready-for-human`）：改信封、经用户重新入队。
 - **Key Decisions 表的行与编号在修订中保持稳定**（改行内、新增标 `NEW-rN`）—— 这是跨 phase 决策传播的机械 diff 锚点。
 - 重大决策变更会连带影响后续 pending phase：产影响清单呈用户批准后整数组 PUT phases。
 

@@ -28,7 +28,8 @@ interface SpecTaskPhase {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
-  /** v4 入队 gate ⑤：人工确认绑定（chat-draft-v4 原型拍板新增）。 */
+  /** @deprecated 2026-10-10 ADR-0028：入队闸 ⑤ 废除（绑定可解析 = 已确认）。
+   *  保留 optional 仅 wire 兼容，值不再被检查 —— 契约快照仍含本键。 */
   bindingConfirmed?: boolean
 }
 

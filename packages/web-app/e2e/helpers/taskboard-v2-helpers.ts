@@ -145,7 +145,9 @@ export async function tbv2ServerAvailable(): Promise<boolean> {
 // ── sqlite (guarded; WAL peers with the server's own connection) ───────
 
 function dbOpen(readOnly: boolean): DatabaseSync {
-  const db = new DatabaseSync(tbv2Env().dbPath, readOnly ? { readOnly: true } : undefined)
+  // 刀C（票11 流⑦ 撞出）：Node 的 DatabaseSync 拒 `undefined` options
+  // （ERR_INVALID_ARG_TYPE: The "options" argument must be an object）—— 写侧要传对象。
+  const db = new DatabaseSync(tbv2Env().dbPath, readOnly ? { readOnly: true } : {})
   db.prepare("PRAGMA busy_timeout = 5000").run()
   return db
 }
@@ -466,7 +468,8 @@ export async function tbv2BootFlow(opts: {
       goal: `${TBV2_PREFIX} 票10 E2E flow ${opts.flow}`,
       autoAdvance: false,
       phases: [
-        // bindingConfirmed = 绑定弹窗人工保存的闸语义（gate ⑤）—— fixture 直造等效现场。
+        // bindingConfirmed = 历史闸 ⑤ 字段（2026-10-10 已废，ADR-0028）—— server
+        // 无视其值，此处保留仅为老 wire 形状样例；新 fixture 无需再写。
         { index: 1, name: "E2E 流", slug, specPath: `${batchRel}/spec.md`, workflowRef: wfRef, inputValues: {}, bindingConfirmed: true },
       ],
       // unit-only 复检门 —— ready gate 的 runbook 逃生面，E2E 永不点复检。
@@ -683,6 +686,194 @@ export async function tbv2BootFlow(opts: {
   if (!wsPath) throw new Error(`workspace row ${wsId} missing/path blank`)
   log(`[${opts.flow}] booted: task=${task.id} exec=${root.id} ws=${wsPath}`)
   return handles
+}
+
+// ── 票11 流⑦ seed —— 「待执行三签」UI-only 烟测专用（**不调 trigger，全程零真 provider**）──
+//
+// 形状 = tbv2BootFlow 的点火前半身，**到此为止**：fixture git 仓 + org repos 索引 +
+// v4 直建（挂 source_chat_session_id 草稿会话）+ home 批次目录（spec.md + issues/≥1
+// 票，过 ready 闸 ①⑥）+ POST /ready。不 trigger、不等 dispatcher、零执行行 ——
+// 任务诚实停在「待执行」（⚡ 待触发），右栏触发钮原样在场但绝不点。
+//
+// 绑定流 = built-in/budget-test（三 agent 节点 step-1/step-2/step-3，**无必填 inputs**
+// → 闸 ③ 天然通过；非 matt-spec-dev → 闸 ④ 不适用）。为什么钉 built-in 域而非
+// 任务自建流：◆ 静态预览的两域取数里，home-file 门只放行 `.scratch/**`
+// （GET /:id/home-file → resolveHomePath 白名单），任务 workflows/ 域在现读端点
+// 拿不到正文 —— 本票是 UI-only 烟测、生产码零改动，故 fixture 走 built-in 侧读通路。
+// seed 先 GET /api/workflows/built-in 目录核对该 ref 在场，不在场即响亮失败（不静默换流）。
+//
+// 草稿期会话（对话回放 + 右栏账台角标的数据面 —— 写侧不经 LLM，读侧全走既有端点）：
+//   · POST /api/clones/task-author/sessions 真建会话行（clone_name=task-author，
+//     ReadyChatReplay 的 GET /:name/sessions/:id 按 clone_name 校验）；
+//   · messages 两行（user + assistant，created_at 相隔 2s → 回放按到达序）；
+//   · llm_calls 一行（execution_id NULL 的会话口径账）→ GET /api/sessions/:id/llm-calls
+//     totalCalls=1 → ReadyTokenBadge 出账（票10 三态短路的「有账」half）。
+
+export interface TbReadyHandles {
+  run: string
+  taskId: string
+  sessionId: string
+  org: string
+  projName: string
+  batchRel: string
+  /** 绑定流 ref（built-in 域）与其 YAML 顶层节点声明序（◆ 预览的行契约）。 */
+  wfRef: string
+  nodeIds: string[]
+  userMarker: string
+  aiMarker: string
+  cleanup: () => Promise<void>
+}
+
+export async function tbv2SeedReadyTask(opts: { flow: string }): Promise<TbReadyHandles> {
+  const run = `${opts.flow}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+  const org = `E2E_TBV2_org_${opts.flow}`
+  const projName = `e2e-tbv2-${run}`
+  const slug = `e2e-tbv2-${run}`
+  const batchRel = `.scratch/${YMD()}/${slug}`
+  const wfRef = "built-in/budget-test"
+  const nodeIds = ["step-1", "step-2", "step-3"]
+  const userMarker = `${TBV2_PREFIX}F7U_${run}`
+  const aiMarker = `${TBV2_PREFIX}F7A_${run}`
+
+  // 绑定流在场核对（产品读面目录；缺流 = 机器资源变了，响亮失败不静默换流）
+  const catRes = await fetch(`${tbv2Env().serverUrl}/api/workflows/built-in`)
+  if (!catRes.ok) throw new Error(`GET /api/workflows/built-in → ${catRes.status}`)
+  const catalog = (await catRes.json()) as Array<{ ref?: string }>
+  if (!catalog.some((w) => w.ref === wfRef)) {
+    throw new Error(`流⑦ fixture 需要绑定流 ${wfRef} 在场（built-in 目录未见 —— 资源库被清过？）`)
+  }
+
+  const fixtureRoot = path.join(dataRoot(), `git-${run}`)
+  const bare = path.join(fixtureRoot, `${projName}.git`)
+  const cloneDir = path.join(fixtureRoot, projName)
+  fs.mkdirSync(fixtureRoot, { recursive: true })
+  gitAt(["init", "--bare", "-b", "main", bare], fixtureRoot)
+  gitAt(["clone", bare, cloneDir], fixtureRoot)
+  gitAt(["config", "user.email", "e2e@tbv2.local"], cloneDir)
+  gitAt(["config", "user.name", "E2E TBV2"], cloneDir)
+  fs.writeFileSync(path.join(cloneDir, "README.md"), `# ${projName} (e2e tbv2 flow7 fixture)\n`)
+  gitAt(["add", "-A"], cloneDir)
+  gitAt(["-c", "user.name=E2E TBV2", "-c", "user.email=e2e@tbv2.local", "commit", "-m", "seed"], cloneDir)
+  gitAt(["push", "origin", "main"], cloneDir)
+
+  // org repos index —— ready 闸 B1（project:<name> 预检）吃这份；逐流 org 防撞（同 boot）。
+  const reposIndexPath = path.join(os.homedir(), ".octopus", "orgs", org, "repos", "index.md")
+  const reposIndexBefore = fs.existsSync(reposIndexPath) ? fs.readFileSync(reposIndexPath, "utf-8") : ""
+  fs.mkdirSync(path.dirname(reposIndexPath), { recursive: true })
+  fs.writeFileSync(reposIndexPath, `${reposIndexBefore}\n### ${projName}\n- local: ${cloneDir} ✓ cloned\n`)
+
+  let taskId = ""
+  let sessionId = ""
+  const homeDirOf = (id: string): string => path.join(os.homedir(), ".octopus", "tasks", id)
+  // 反孤儿：seed 任一步失败 → 先清本轮已落的现场（DB 行按 FK 安全序 / fs / 索引快照），再抛。
+  const teardown = async (): Promise<void> => {
+    try {
+      const db = new DatabaseSync(tbv2Env().dbPath)
+      try {
+        db.prepare("PRAGMA busy_timeout = 5000").run()
+        db.prepare("PRAGMA foreign_keys = OFF").run()
+        if (taskId) db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId)
+        if (sessionId) {
+          db.prepare("DELETE FROM llm_calls WHERE session_id = ?").run(sessionId)
+          db.prepare("DELETE FROM messages WHERE session_id = ?").run(sessionId)
+          db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId)
+        }
+      } finally {
+        db.close()
+      }
+    } catch (err: unknown) {
+      logError(`flow7 seed teardown(db): ${err instanceof Error ? err.message : String(err)}`)
+    }
+    try { if (taskId) fs.rmSync(homeDirOf(taskId), { recursive: true, force: true }) } catch { /* ignore */ }
+    try { fs.mkdirSync(path.dirname(reposIndexPath), { recursive: true }); fs.writeFileSync(reposIndexPath, reposIndexBefore) } catch { /* ignore */ }
+    try { fs.rmSync(fixtureRoot, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+
+  try {
+    // 草稿期会话（真端点建行 —— 回放路由校验 clone_name=task-author）
+    const sessRes = await fetch(`${tbv2Env().serverUrl}/api/clones/task-author/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Octopus-Org": org },
+      body: JSON.stringify({ title: `${TBV2_PREFIX}票11流${opts.flow} 草稿会话 ${run}` }),
+    })
+    if (!sessRes.ok) throw new Error(`create author session → ${sessRes.status}: ${(await sessRes.text()).slice(0, 300)}`)
+    sessionId = ((await sessRes.json()) as { id: string }).id
+
+    // 会话两行（messages 表 = 回放端点 GET /:name/sessions/:id 的同源读面）
+    const t0 = Date.now()
+    const iso = (ms: number): string => new Date(ms).toISOString()
+    tbv2DbRun(
+      `INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, source, created_at)
+       VALUES (?, ?, 'user', ?, 'text', NULL, NULL, 0, 0, 0, 'main', ?)`,
+      `${TBV2_PREFIX}F7m1_${run}`, sessionId, `帮我把「待执行三签烟测」谈成可放行的任务：${userMarker}`, iso(t0),
+    )
+    tbv2DbRun(
+      `INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, source, created_at)
+       VALUES (?, ?, 'assistant', ?, 'text', NULL, NULL, 0, 0, 0, 'main', ?)`,
+      `${TBV2_PREFIX}F7m2_${run}`, sessionId, `已建草稿并写入批次 spec 与票面。${aiMarker}`, iso(t0 + 2000),
+    )
+
+    // 会话口径账一行（execution_id NULL —— 角标读 GET /api/sessions/:id/llm-calls 的原料）
+    tbv2DbRun(
+      `INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, message_id, model,
+         stop_reason, timestamp, duration_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
+         cache_creation_tokens, org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path)
+       VALUES (?, NULL, NULL, 1, 1, ?, 'claude-sonnet-4.5', 'end_turn', ?, 1500, NULL, 1200, 260, 8000, 500, ?, NULL, NULL, NULL, ?, NULL, 'clone_chat')`,
+      `${TBV2_PREFIX}F7c1_${run}`, `${TBV2_PREFIX}F7m2_${run}`, t0, org, sessionId,
+    )
+
+    // v4 直建 + 草稿会话绑定（POST /api/tasks 既有字段；source_chat_session_id 为 FK→sessions）
+    const task = await tbv2Api.createTask({
+      org,
+      name: `${TBV2_PREFIX}票11流${opts.flow}_${run}`,
+      task_type: "coding",
+      skill_groups: [],
+      preset: { org },
+      project_ids: [projName],
+      source_chat_session_id: sessionId,
+      task_spec: {
+        format: "v4",
+        goal: `${TBV2_PREFIX} 票11 E2E flow ${opts.flow} — 待执行三签 UI-only 烟测（不点火）`,
+        autoAdvance: false,
+        phases: [
+          { index: 1, name: "E2E 流", slug, specPath: `${batchRel}/spec.md`, workflowRef: wfRef, inputValues: {} },
+        ],
+        // unit-only 复检门 —— ready 闸的 runbook 逃生面（票06 先例），E2E 永不点复检。
+        acceptance_verify: { command: "echo tbv2-e2e-verify", cwd: ".", timeoutS: 30 },
+        resources: [],
+        authoring_resources: [],
+      },
+    })
+    taskId = task.id
+    const homeDir = homeDirOf(taskId)
+    if (!fs.existsSync(homeDir)) throw new Error(`v4 create did not materialize home: ${homeDir}`)
+
+    // home 批次目录（ready 闸 ① spec 落盘 + ⑥ issues/≥1 票）
+    fs.mkdirSync(path.join(homeDir, batchRel, "issues"), { recursive: true })
+    fs.writeFileSync(
+      path.join(homeDir, batchRel, "spec.md"),
+      `# E2E TBV2 spec ${run}\n\n范围：UI-only 三签烟测 —— 本流不 trigger，永不执行绑定流。\n验收方式：控制台三签 UI 观察 + 零执行行对账。\n`,
+    )
+    fs.writeFileSync(
+      path.join(homeDir, batchRel, "issues", "1-ticket.md"),
+      `# 票1 e2e stub\n\n## Status\n\nStatus: ready-for-agent\n`,
+    )
+
+    const ready = await tbv2Api.readyTask(taskId)
+    if (ready.status !== 200) throw new Error(`ready gate refused (${ready.status}): ${JSON.stringify(ready.body)}`)
+  } catch (err) {
+    await teardown()
+    throw err
+  }
+
+  log(`[${opts.flow}] ready-seeded: task=${taskId} session=${sessionId} bind=${wfRef}（零 trigger / 零执行行）`)
+  return {
+    run, taskId, sessionId, org, projName, batchRel, wfRef, nodeIds, userMarker, aiMarker,
+    async cleanup() {
+      await teardown()
+      log(`[sweep ${opts.flow}] task ${taskId} swept（ready 未点火 —— 无 ws/exec 行可清；账本写入=0）`)
+    },
+  }
 }
 
 /** Wait until the round's bash node is genuinely running in-process (pause/takeover precondition).

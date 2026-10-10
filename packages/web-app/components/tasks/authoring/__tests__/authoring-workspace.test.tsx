@@ -435,18 +435,16 @@ const COMPLETE_PHASE_1 = {
   specPath: "./.scratch/20260903/p1-1/spec.md",
   workflowRef: "built-in/task-dev",
   inputValues: { idea: "hello" },
-  bindingConfirmed: true,
 }
 const COMPLETE_PHASE_2 = {
   index: 2, name: "P2", slug: "p2-2",
   specPath: "./.scratch/20260903/p2-2/spec.md",
   workflowRef: "built-in/task-dev",
   inputValues: { idea: "world" },
-  bindingConfirmed: true,
 }
 
 describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
-  it("v4: renders the seven-row checklist; GoalAcCard is NOT rendered (K13)", async () => {
+  it("v4: renders the six-row checklist; GoalAcCard is NOT rendered (K13)", async () => {
     render(
       <AuthoringWorkspace
         task={makeV4Task("v4-1", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
@@ -455,16 +453,18 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       />,
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
-    for (const row of ["phases", "spec", "bind", "inputs", "confirm", "runbook", "repos"]) {
+    for (const row of ["phases", "spec", "bind", "inputs", "runbook", "repos"]) {
       expect(list.querySelector(`[data-checklist-v4="${row}"]`)).toBeTruthy()
     }
+    // 闸 ⑤ 废除（ADR-0028）：「绑定确认」行退役
+    expect(list.querySelector('[data-checklist-v4="confirm"]')).toBeNull()
     // goal/ac 卡退役（v3 保留 — 见上组用例）
     expect(screen.queryByTestId("goal-ac-card")).toBeNull()
     // per-phase 绑定卡（WorkflowBox v4 分支）
     expect(document.querySelector("[data-phase-binding-list]")).toBeTruthy()
   })
 
-  it("canEnqueue v4: empty phases → disabled; seven rows pass → enabled (server 同源预检)", async () => {
+  it("canEnqueue v4: empty phases → disabled; six rows pass → enabled (server 同源预检)", async () => {
     vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     const { rerender } = render(
       <AuthoringWorkspace task={makeV4Task("v4-empty", [])} onMutated={() => {}} onClose={() => {}} />,
@@ -480,7 +480,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
       />,
     )
     await waitFor(() => expect(screen.getByTestId("task-enqueue")).toBeTruthy())
-    // inputs 行吃 built-in 目录（required idea 已填）+ 绑定确认/runbook 齐 → 七行全绿
+    // inputs 行吃 built-in 目录（required idea 已填）+ runbook 齐 → 六行全绿
     await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
     await waitFor(() => expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false))
   })
@@ -500,7 +500,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
   })
 
   it("gate 409 `phase:<i>:<why>` 反解 → 对应行标 ✗ + 人话（消灭点了才 409 的断链展示）", async () => {
-    // 本地七行全过（idea 用占位符 ${goal}，server 端 goal 为空 → 门禁打回），
+    // 本地六行全过（idea 用占位符 ${goal}，server 端 goal 为空 → 门禁打回），
     // readyTask 抛 TaskReadyGateError → gateHits 反解回填逐行 ✗。
     vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     mockReadyTask.mockRejectedValueOnce(
@@ -573,17 +573,20 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     await waitFor(() => expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false))
   })
 
-  it("绑定未确认 / runbook 缺失 → confirm/runbook 行本地即拦（不等 409）", async () => {
+  it("绑定确认闸 ⑤ 废除 (ADR-0028)：confirm 行退役不再拦点；runbook 缺失本地仍即拦", async () => {
     vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1"]) as never)
     render(
       <AuthoringWorkspace
-        task={makeV4Task("v4-gate-new", [{ ...COMPLETE_PHASE_1, bindingConfirmed: undefined }], { acceptance_verify: undefined })}
+        task={makeV4Task("v4-gate-new", [COMPLETE_PHASE_1], { acceptance_verify: undefined })}
         onMutated={() => {}}
         onClose={() => {}}
       />,
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
-    expect(list.querySelector('[data-checklist-v4="confirm"]')!.textContent).toContain("P1 待确认")
+    // 闸 ⑤ 废除：bindingConfirmed 缺失不再挡入队 —— confirm 行整体退役，bind 行照常 ✓
+    expect(list.querySelector('[data-checklist-v4="confirm"]')).toBeNull()
+    expect(list.querySelector('[data-checklist-v4="bind"]')!.textContent).toContain("✓")
+    // runbook 硬闸（2026-09-22）判据不变：缺 → ⏳ 且禁点
     expect(list.querySelector('[data-checklist-v4="runbook"]')!.textContent).toContain("⏳")
     expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
   })

@@ -145,6 +145,49 @@ const fixRoundBodySchema = z
   })
   .strict()
 
+// 计划回写 (票02 · ADR-0026 · S1) POST /:id/plan body。契约三条硬线：
+// ① reason/source 必填非空（trim 后 min(1)；缺失/纯空白 → ZodError → 400）——
+//    server 不判语义、无关键词正则（把关在人不在字符串）；
+// ② .strict()：身份类自报字段（actor/who/author…）一律未知键 → 400 响亮拒收。
+//    "body 自报身份不采信"（AC6）的兑现方式 = 拒收而非忽略 —— 与 ADR-0024 删
+//    next_flow 的 .strict() 纪律同款（spec-field 的宽松 source 默认是反面先例，
+//    票面明令别学）；决策出处文案走合法的 body.source 字段照收；
+// ③ content 上限与 PUT /home-file 写门同额 512_000。
+const planWriteBodySchema = z
+  .object({
+    batch: z.string().trim().min(1, "batch 必填 —— home 内批次相对名（.scratch/…，允许指向后续 phase 批次）"),
+    file: z.string().trim().min(1, "file 必填 —— 批次内文件名（解析限批次内，越界 403）"),
+    content: z.string().max(512_000),
+    reason: z.string().trim().min(1, "reason 必填 —— 变更必须携带理由（server 不判语义）"),
+    source: z.string().trim().min(1, "source 必填 —— 决策出处（打回 rN 第几条/接管对话/修复轮…）"),
+  })
+  .strict()
+
+// 计划回写 · issues 侧 (票03) body —— 字段与必填校验与 planWriteBodySchema 完全
+// 同源（reason/source 必填非空、.strict() 拒身份自报、content 同额上限），再叠
+// 票模板契约（规格 S1：「issues 写要求 content 含 `Origin:` 与 `Status:` 行，
+// 缺则 400」）。行判定 = 任一行【含】该标记（bold 形制 `**Status:**` 同款，
+// 与 tracker 既有票面一致）—— 只查标记在场，不判行后语义（「不做关键词正则、
+// 把关在人」纪律不破：在场性是契约，写得烂不关 server 的事）。新建与修改同一
+// 道闸 —— AC3「Origin 行不许被抹（改后仍含）」由整替正文过同款校验天然成立。
+const planIssuesBodySchema = planWriteBodySchema.superRefine((b, ctx) => {
+  const hasLine = (mark: string) => b.content.split(/\r?\n/).some((l) => l.includes(mark))
+  if (!hasLine("Origin:")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content"],
+      message: "content 缺 `Origin:` 行 —— 出生证明（Origin: 打回 rN 反馈#k / 接管对话 / 修复轮）",
+    })
+  }
+  if (!hasLine("Status:")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content"],
+      message: "content 缺 `Status:` 行 —— 票模板契约要求状态标签（如 Status: ready-for-agent）",
+    })
+  }
+})
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -841,6 +884,52 @@ export function createTasksRoutes(
       const source = body.source === "user" || body.source === "agent" ? body.source : "agent"
       const input: UpdateSpecFieldInput = { field, value: body.value, source }
       const result = service.updateSpecField(c.req.param("id"), input)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/plan — 计划回写通道（票02 · ADR-0026 · S1 主 seam）spec 侧。
+  // 一次调用：写 home 批次内 spec（含后续 phase 批次）+ 文末「## 变更记录」
+  // 机械落痕一行（时间 · actor · source · reason · 文件）。
+  // 状态码契约（与 409-vs-400 分律同款：body 缺陷 400 / 状态缺陷 409 / 守卫 403）：
+  //   400 body 非法（reason/source 缺失或空白、未知/身份字段、batch/file 空串、
+  //     file 落 issues/ 票区 —— 终审 Origin 旁路封堵：写票走 /plan/issues）
+  //   404 任务不存在（先行检查）
+  //   409 终态拒写（done/aborted/archiving —— isSpecEditable 既有判定，零新谓词）
+  //   403 路径越界（resolveWithinRoot 两级：batch 限 home 内、file 限批次内；
+  //     最终仍经 .scratch/** + .md 写门 —— 守卫复用不放宽）
+  //   200 { task_id, path, bytes, actor } —— path 为 home 相对 posix 名。
+  // issues 端点（/plan/issues）见下——本路由只吃批次 spec 文件。
+  router.post("/:id/plan", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = planWriteBodySchema.parse(body)
+      const result = service.writePlanSpec(c.req.param("id"), parsed)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/plan/issues — 计划回写通道票侧（票03 · ADR-0026 · S1 issues 分支）。
+  // 一次调用 = 目标批次 issues/ 下一张票的整写：新建（编号 = 现存最大号顺延、
+  // slug 由请求给定、请求自带编号不作数）或修改既有票（精确路径命中 → 原位整替）。
+  // 票侧不 append 变更记录（出生证明 = 票内 Origin 行）；状态码契约与 /:id/plan
+  // 同律：400 body 缺陷（reason/source 缺失、票体缺 Origin/Status 行并指明缺项、
+  // 未知/身份字段、file 不在 issues/ 下）/ 404 任务不存在 / 409 终态拒写 /
+  // 403 路径越界（batch 限 home 内、file 限批次内，守卫复用不放宽）/ 200
+  // { task_id, path, bytes, created, actor }（path = home 相对 posix 终名）。
+  router.post("/:id/plan/issues", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = planIssuesBodySchema.parse(body)
+      const result = service.writePlanIssue(c.req.param("id"), parsed)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

@@ -88,8 +88,8 @@ describe('执行级总量四路一致 (C3) + 费用口径三处自洽 (NEW-r2)',
       for (const r of dao.findByNodeExecution(neId)) live = addTokenUsage(live, usageFromRow(r))
     }
     expect(totalTokens(live)).toBe(agg.totals.tokens)
-    // 规范命中率：(5000+1200)/(1000+800+400+5000+1200) = 6200/8400
-    expect(agg.totals.cacheHitRate).toBeCloseTo(6200 / 8400, 12)
+    // 规范命中率（ADR-0027 分母含写）：(5000+1200)/(1000+800+400+5000+1200+300+90) = 6200/8790
+    expect(agg.totals.cacheHitRate).toBeCloseTo(6200 / 8790, 12)
   })
 
   it('钱：aggregateByExecution.cost ≡ 逐节点派生之和 ≡ ledgerTotals(视图行)（同一规则源）', () => {
