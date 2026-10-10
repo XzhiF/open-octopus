@@ -466,7 +466,8 @@ export async function tbv2BootFlow(opts: {
       goal: `${TBV2_PREFIX} 票10 E2E flow ${opts.flow}`,
       autoAdvance: false,
       phases: [
-        // bindingConfirmed = 绑定弹窗人工保存的闸语义（gate ⑤）—— fixture 直造等效现场。
+        // bindingConfirmed = 历史闸 ⑤ 字段（2026-10-10 已废，ADR-0028）—— server
+        // 无视其值，此处保留仅为老 wire 形状样例；新 fixture 无需再写。
         { index: 1, name: "E2E 流", slug, specPath: `${batchRel}/spec.md`, workflowRef: wfRef, inputValues: {}, bindingConfirmed: true },
       ],
       // unit-only 复检门 —— ready gate 的 runbook 逃生面，E2E 永不点复检。

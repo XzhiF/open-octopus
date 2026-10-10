@@ -359,7 +359,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   const v4Phases = spec.phases ?? []
   // #53 K5 + 原型 chat-draft-v4 改版：磁盘树未就绪 → spec 行「⏳ 未核」（不再
   // 退化字符串假绿）；入队 = 所有 phase 全满足（spec 落盘 ∧ issues 产物 ∧
-  // 绑定可解析 ∧ inputs ∧ 绑定确认 ∧ runbook）。✗ 行按 phase 点名。
+  // 绑定可解析 ∧ inputs ∧ runbook）。「绑定确认」闸 ⑤ 已废（2026-10-10
+  // ADR-0028：绑定存在且可解析 = 已确认）。✗ 行按 phase 点名。
   const specTreeReady = !batchTree.loading && !batchTree.error
   const v4Rows = useMemo(() => {
     const phases = v4Phases
@@ -369,8 +370,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     const specMissingIdx = relPhases.filter((p) => findSpecEntry(batchTree.batches, p.specPath) === null).map((p) => p.index)
     const rowSpec = rowPhases && !specUnknown && specMissingIdx.length === 0
     const rowBind = rowPhases && phases.every((p) => (p.workflowRef ?? "").trim().length > 0)
-    const unconfirmedIdx = phases.filter((p) => p.bindingConfirmed !== true).map((p) => p.index)
-    const rowConfirm = rowPhases && unconfirmedIdx.length === 0
     // runbook 与 server readyTask 硬检同判据：起停 up∧ready ∨ preview ∨ verify
     const rb = spec.acceptance_runbook
     const rowRunbook =
@@ -389,7 +388,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     })
     return {
       rowPhases, rowSpec, specUnknown, specMissingIdx, absSpecCount: phases.length - relPhases.length,
-      rowBind, rowInputs, unconfirmedIdx, rowConfirm, rowRunbook,
+      rowBind, rowInputs, rowRunbook,
       inputsUnknown, specTreeReady, rowRepos: true,
     }
   }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady, spec])
@@ -397,17 +396,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行天然不绿，不崩即可）
   // repos 行不并入 canEnqueue —— 本地无 fs 无从验证，恒乐观 ✅；✗ 只由服务端
   // 409 missing 回填（与 inputs 行的「服务端权威」同模式）。
-  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowConfirm && v4Rows.rowRunbook
+  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowRunbook
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
   // v4 gate 409 missing 反解（票 04 契约 `phase:<i>:<why>`：no-phases /
   // spec-missing / issues-missing / no-final-verification / workflow-ref /
-  // binding-unconfirmed / input:<key>；仓库预检 `project:<name>`；runbook 全局键）
-  // → 回填七行清单 ✗ + 人话。
-  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]>>(() => {
-    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], confirm: [], runbook: [] }
+  // input:<key>；仓库预检 `project:<name>`；runbook 全局键。binding-unconfirmed
+  // 随闸 ⑤ 废除退役，ADR-0028）→ 回填六行清单 ✗ + 人话。
+  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "runbook", string[]>>(() => {
+    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "runbook", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], runbook: [] }
     for (const key of gateMissing ?? []) {
       // 项目仓库预检键（服务端权威：repos/index.md 解析）—— 先拦前缀再走 catch-all。
       if (key.startsWith("project:")) {
@@ -427,7 +426,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
       else if (why === "issues-missing") hits.spec.push(`Phase ${i}：issues/ 无任何票（批次产物未落地）`)
       else if (why === "no-final-verification") hits.spec.push(`Phase ${i}：issues/ 缺 e2e 终票（或 spec 未声明 unit-only）`)
       else if (why === "workflow-ref") hits.bind.push(`Phase ${i}：工作流引用无法解析`)
-      else if (why === "binding-unconfirmed") hits.confirm.push(`Phase ${i}：绑定未经人工确认（打开绑定弹窗保存一次）`)
       else if (why.startsWith("input:")) hits.inputs.push(`Phase ${i}：必填输入 ${why.slice("input:".length)} 未填（或占位符解析为空）`)
       else hits.phases.push(key)
     }
@@ -578,7 +576,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         </button>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">
-            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowConfirm, v4Rows.rowRunbook, v4Rows.rowRepos].filter(Boolean).length}/7</b>
+            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRunbook, v4Rows.rowRepos].filter(Boolean).length}/6</b>
           </span>
           {chrome && (
             <button

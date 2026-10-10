@@ -35,7 +35,8 @@ import {
   withPhases,
 } from "./phases-mutation"
 
-/** 入队清单七态（与 server gateV4Phases 同源，父级计算后传入）。 */
+/** 入队清单六态（与 server gateV4Phases 同源，父级计算后传入）。
+ *  「绑定确认」行已删（2026-10-10 ADR-0028：绑定可解析即视为确认）。 */
 export interface SpecPanelRows {
   rowPhases: boolean
   rowSpec: boolean
@@ -47,9 +48,6 @@ export interface SpecPanelRows {
   absSpecCount: number
   rowBind: boolean
   rowInputs: boolean
-  /** 未经人工确认绑定的 phase index。 */
-  unconfirmedIdx: number[]
-  rowConfirm: boolean
   rowRunbook: boolean
   rowRepos: boolean
   inputsUnknown: boolean
@@ -61,7 +59,7 @@ export interface SpecPanelProps {
   onMutated: () => void
   batchTree: BatchTreeState
   rows: SpecPanelRows
-  gateHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]>
+  gateHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "runbook", string[]>
   /** 任务 home 磁盘直扫树（父级持有刷新通路：R1 写侦测/轮次兜底/SSE/[↻]）。 */
   home: HomeTreeState
   /** autoAdvance 开关行（父级持有写回逻辑，按原型 dim 风格传入）。 */
@@ -121,7 +119,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
             specPath: defaultSpecPath(row.slug, mainSlugOf(task)),
             workflowRef: row.workflowRef as TaskPhase["workflowRef"],
             inputValues: { ...row.inputValues },
-            bindingConfirmed: true, // 人工弹窗添加 = 绑定已确认（gate ⑤）
           },
         ]
       })
@@ -144,7 +141,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
                 specPath: row.specPath,
                 workflowRef: row.workflowRef as TaskPhase["workflowRef"],
                 inputValues: row.inputValues,
-                bindingConfirmed: true, // 人工弹窗保存 = 绑定已确认（gate ⑤）
               }
             : p,
         ),
@@ -177,15 +173,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
       value: phases[0]?.workflowRef ? `${phases[0].workflowRef}${phases.length > 1 ? ` · ${phases.length}/${phases.length} 可解析` : ""}` : "—",
     },
     { id: "inputs", ok: rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐", value: "必填非空/占位符" },
-    {
-      id: "confirm",
-      ok: rows.rowConfirm,
-      hits: gateHits.confirm,
-      label: "绑定确认",
-      value: rows.rowConfirm
-        ? `${phases.length}/${phases.length} 人工确认`
-        : `${phases.length - rows.unconfirmedIdx.length}/${phases.length} 已确认 · ${rows.unconfirmedIdx.map((i) => `P${i}`).join("、")} 待确认`,
-    },
     { id: "runbook", ok: rows.rowRunbook, hits: gateHits.runbook, label: "runbook 内容", value: "起停 up∧ready ∨ preview ∨ verify" },
     { id: "repos", ok: rows.rowRepos, hits: gateHits.repos, label: "项目仓库", value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目` },
   ] as const
@@ -255,8 +242,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
                   title="更换绑定 / 编辑 inputs"
                   onClick={(e) => { e.stopPropagation(); setBindIdx(p.index) }}
                 >
-                  · {p.workflowRef ? `绑定 ${p.workflowRef}` : "未绑定工作流"}
-                  {p.workflowRef ? (p.bindingConfirmed ? " · 已确认" : " · 待确认") : ""} <span aria-hidden>▸</span>
+                  · {p.workflowRef ? `绑定 ${p.workflowRef}` : "未绑定工作流"} <span aria-hidden>▸</span>
                 </button>
               </li>
             </ul>

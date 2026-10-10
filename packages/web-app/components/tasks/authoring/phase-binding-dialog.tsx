@@ -164,10 +164,10 @@ export function WorkflowBindingDialog({ task, phaseIndex, open, onOpenChange, on
         throw new Error("phase 计划已被改写（编号不存在），请关闭后重开绑定弹窗")
       }
       const nextPhases = basePhases.map((p, i) =>
-        // 人工在弹窗保存 = 该 phase 的绑定确认闸（bindingConfirmed）；
-        // agent 之后整数组改写 phases 会丢掉此字段 → 回到待确认（入队 gate ⑤）。
+        // 2026-10-10 闸 ⑤ 废除（ADR-0028）：弹窗保存只改绑定与 inputs，
+        // 不再写 bindingConfirmed —— 绑定存在且可解析即视为已确认。
         i === pos
-          ? { ...p, workflowRef: selectedRef as TaskPhase["workflowRef"], inputValues: cleaned, bindingConfirmed: true }
+          ? { ...p, workflowRef: selectedRef as TaskPhase["workflowRef"], inputValues: cleaned }
           : p,
       )
       await updateTask(
