@@ -895,7 +895,8 @@ export function createTasksRoutes(
   // 一次调用：写 home 批次内 spec（含后续 phase 批次）+ 文末「## 变更记录」
   // 机械落痕一行（时间 · actor · source · reason · 文件）。
   // 状态码契约（与 409-vs-400 分律同款：body 缺陷 400 / 状态缺陷 409 / 守卫 403）：
-  //   400 body 非法（reason/source 缺失或空白、未知/身份字段、batch/file 空串）
+  //   400 body 非法（reason/source 缺失或空白、未知/身份字段、batch/file 空串、
+  //     file 落 issues/ 票区 —— 终审 Origin 旁路封堵：写票走 /plan/issues）
   //   404 任务不存在（先行检查）
   //   409 终态拒写（done/aborted/archiving —— isSpecEditable 既有判定，零新谓词）
   //   403 路径越界（resolveWithinRoot 两级：batch 限 home 内、file 限批次内；

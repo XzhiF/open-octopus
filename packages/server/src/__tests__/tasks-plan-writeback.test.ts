@@ -617,3 +617,131 @@ describe("票03 AC5 — 开票后产物 manifest 即含新票（并入既有 man
     expect(specGroup?.items.some((i) => i.path === `home:${BATCH1}/issues/01-new-scope-ticket.md`)).toBe(true)
   })
 })
+
+// ── 终审修复一 · Origin 旁路封堵（违票03 AC3 的 /plan 通道缺陷） ──────────
+// 缺陷形：writePlanSpec 缺 issues/ 落点形状闸 —— 经 /plan 写 `issues/NN-x.md`
+// 可整替票体（Origin/Status 是票侧 schema 闸，旁路即可被抹）还误 append 变更
+// 记录节。封堵 = spec 侧镜像拒 issues/ 落点（400，错误串点名改走 /plan/issues）。
+// 期望值取自票面 AC3「Origin 行不许被抹」+ AC4「同语义」闸序，非从实现抄回。
+describe("终审 · Origin 旁路封堵 — /plan 不吃 issues/ 落点（票03 AC3 镜像闸）", () => {
+  it("既有票经 /plan 整替旁路 → 400 且错误串点名 /plan/issues；盘上票逐字原样（Origin/Status 未被抹、无变更节被追）", async () => {
+    const id = await seedTask("running")
+    // 独立盘上事实：先走**合法票侧通道**落一张真票（Origin/Status 齐）。
+    const w = await postPlanIssues(id, {
+      batch: BATCH1, file: "issues/origin-proof.md", content: OK_TICKET, reason: "落档", source: "打回 r1 反馈#3",
+    })
+    expect(w.status).toBe(200)
+    const ticketPath = ((await w.json()) as { path: string }).path // …/issues/01-origin-proof.md
+    // 旁路攻击体：无 Origin/Status（票侧会被 400）—— 旧实现下 /plan 照单整替。
+    const res = await postPlan(id, {
+      batch: BATCH1, file: "issues/01-origin-proof.md",
+      content: "# 被旁路改写过的票面\n\nStatus: wontfix\n",
+      reason: "r", source: "s",
+    })
+    expect(res.status).toBe(400)
+    const err = ((await res.json()) as { error: string }).error
+    expect(err).toContain("/plan/issues")
+    expect(err).toContain("issues/01-origin-proof.md")
+    const onDisk = readHome(id, ticketPath)
+    expect(onDisk).toBe(OK_TICKET) // 逐字不动：Origin 行在场，变更节也没被误追上去
+    expect(onDisk).toContain("Origin:")
+    expect(onDisk).not.toContain("## 变更记录")
+  })
+
+  it("不存在的 issues/ 落点 → 400 且不在盘上生票（旁路不得绕顺延编号与票面 schema 闸）", async () => {
+    const id = await seedTask("running")
+    const res = await postPlan(id, {
+      batch: BATCH1, file: "issues/sneaky.md", content: "# 无证票面\n", reason: "r", source: "s",
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toContain("issues/")
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+  })
+
+  it("大小写形 Issues/ 与子目录 issues/sub/x.md 同样拒 → 400（落点判定看区不看字面）", async () => {
+    const id = await seedTask("running")
+    for (const file of ["Issues/upper.md", "issues/sub/nested.md"]) {
+      const res = await postPlan(id, { batch: BATCH1, file, content: "c\n", reason: "r", source: "s" })
+      expect(res.status).toBe(400)
+    }
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "issues"))).toBe(false)
+    expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "Issues"))).toBe(false)
+  })
+
+  it("闸序镜像票侧：借 issues/ 前缀逃批次 → 403 先行（守卫先于 body 形状）", async () => {
+    const id = await seedTask("running")
+    const res = await postPlan(id, {
+      batch: BATCH1, file: "issues/../../evil.md", content: "c\n", reason: "r", source: "s",
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it("闸序：终态 409 先行于形状 400；任务不存在 404 先行于一切", async () => {
+    const id = await seedTask("done")
+    const r409 = await postPlan(id, { batch: BATCH1, file: "issues/x.md", content: "c\n", reason: "r", source: "s" })
+    expect(r409.status).toBe(409)
+    const r404 = await postPlan("no-such-task-t9", { batch: BATCH1, file: "issues/x.md", content: "c\n", reason: "r", source: "s" })
+    expect(r404.status).toBe(404)
+  })
+
+  it("回归方向：spec 侧合法落点（批次根 spec.md、非票区子文件）不受新闸牵连 → 200", async () => {
+    const id = await seedTask("running")
+    const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
+    expect(res.status).toBe(200)
+  })
+})
+
+// ── 终审修复二 · 变更记录节全量保留 ──────────────────────────────────────
+// 旧 extractChangelogEntries 只认 `- ` 行：人经 PUT /home-file / 手改补在节内
+// 的段落，会被下次 /plan 回写重建时静默丢弃 —— 违票02 AC5「累积不覆盖」对
+// 人写内容的保护。新契约：bullet=机器行、其余=人写行，重建时全部按序原样。
+describe("终审 · 变更节全量保留 — 节内人写行两次回写后仍在（票02 AC5 加强）", () => {
+  it("盘上节内含人写段落+一条机器行 → 连续两次回写：段落逐字在、机器行 1+2 全在且顺序不乱、bullet 间以空行分隔段落", async () => {
+    const id = await seedTask("running")
+    const PARA = "作者手写备注：本节的旧口径行是历史遗留，勿据此实现。"
+    preWrite(id, `${BATCH1}/spec.md`, [
+      "# P1 规格（盘上原文）",
+      "",
+      "## 变更记录",
+      "",
+      "- 2026-10-09T00:00:00.000Z · unattributed · 旧源 · 旧理由 · 旧文件",
+      "",
+      PARA,
+      "",
+    ].join("\n"))
+    const r1 = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "# P1 规格 · 第一次回写\n", reason: "r1", source: "s1" })
+    expect(r1.status).toBe(200)
+    const r2 = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "# P1 规格 · 第二次回写\n", reason: "r2", source: "s2" })
+    expect(r2.status).toBe(200)
+
+    const onDisk = readHome(id, `${BATCH1}/spec.md`)
+    expect(onDisk.startsWith("# P1 规格 · 第二次回写")).toBe(true) // 正文整替照旧
+    // 人写段落：两次重建后仍逐字在场（旧实现在此静默丢行）。
+    expect(onDisk).toContain(PARA)
+    // 新机器行落在段落之后且隔一空行（bullet 不被段落 lazy continuation 吞）。
+    expect(onDisk).toContain(`${PARA}\n\n- `)
+    // 机器行全量按序：1 旧 + 2 新。
+    const bullets = onDisk.split("\n").filter((l) => l.startsWith("- "))
+    expect(bullets).toHaveLength(3)
+    expect(bullets[0]).toContain("旧理由")
+    expect(bullets[1]).toContain("r1")
+    expect(bullets[2]).toContain("r2")
+    // 节标题唯一（重建不复制标题）。
+    expect(onDisk.split("\n").filter((l) => l.trim() === "## 变更记录")).toHaveLength(1)
+  })
+
+  it("请求正文自带旧节仍被摘除（防自报历史纪律不破），摘除目标只限正文", async () => {
+    const id = await seedTask("running")
+    const w = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "正文\n", reason: "r", source: "s" })
+    expect(w.status).toBe(200)
+    const res = await postPlan(id, {
+      batch: BATCH1, file: "spec.md",
+      content: "新正文\n\n## 变更记录\n\n- 伪造的历史行\n",
+      reason: "r2", source: "s2",
+    })
+    expect(res.status).toBe(200)
+    const onDisk = readHome(id, `${BATCH1}/spec.md`)
+    expect(onDisk).not.toContain("伪造的历史行") // 自报节仍整节摘除
+    expect(onDisk.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(2)
+  })
+})

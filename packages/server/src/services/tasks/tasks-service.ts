@@ -87,6 +87,7 @@ import { getExecutionService } from "../execution-service-registry"
 // task-doer 快改 commit 同一个 git-ops 门）。
 import { gitOps } from "../git-ops"
 import { TaskHomeService, ArtifactAccessError, MAX_HOME_FILE_READ_BYTES, resolveWithinRoot } from "./task-home-service"
+import { PLAN_CHANGELOG_HEADING, extractChangelogEntries, stripChangelogSection } from "./plan-changelog"
 import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
@@ -352,17 +353,23 @@ export interface UpdateSpecFieldInput {
   source?: "user" | "agent"
 }
 
-/** POST /api/tasks/:id/plan body (票02 · 计划回写 S1，ADR-0026): batch = 本任务
- *  home 下批次相对名（含后续 phase 批次，Q8b）；file = 批次内文件名（两级解析
- *  限批次内）；content = 新正文整替；reason/source 必填非空（不判语义，把关在人）。
- *  身份不在 body —— 路由 .strict() 拒收任何自报字段，actor 由 server 按 DB 盖章。 */
-export interface WritePlanSpecInput {
+/** 计划回写双侧共享的 body 基础（S1 契约两块同用 batch/file/content/reason/source
+ *  五字段；语义差只在 file 落点形状 —— spec 侧拒 issues/、issues 侧只吃 issues/，
+ *  各在自家门前把关，不在类型层分叉）。 */
+interface WritePlanInputBase {
   batch: string
   file: string
   content: string
   reason: string
   source: string
 }
+
+/** POST /api/tasks/:id/plan body (票02 · 计划回写 S1，ADR-0026): batch = 本任务
+ *  home 下批次相对名（含后续 phase 批次，Q8b）；file = 批次内文件名（两级解析
+ *  限批次内；终审封堵：issues/ 落点拒收 400 —— 票体写权归 /plan/issues）。
+ *  content = 新正文整替；reason/source 必填非空（不判语义，把关在人）。
+ *  身份不在 body —— 路由 .strict() 拒收任何自报字段，actor 由 server 按 DB 盖章。 */
+export interface WritePlanSpecInput extends WritePlanInputBase {}
 
 /** POST /api/tasks/:id/plan/issues body (票03 · 计划回写 S1 issues 侧，ADR-0026):
  *  与 spec 侧同形（S1 契约两块共用 batch/file/content/reason/source）；语义差在
@@ -371,13 +378,7 @@ export interface WritePlanSpecInput {
  *  schema superRefine 把住，缺项 400 指明缺哪项）。身份同 02 —— 不在 body，
  *  .strict() 拒收自报字段，actor 由 server 盖章进响应回执（票侧无变更记录，
  *  出生证明在票内）。 */
-export interface WritePlanIssueInput {
-  batch: string
-  file: string
-  content: string
-  reason: string
-  source: string
-}
+export interface WritePlanIssueInput extends WritePlanInputBase {}
 
 export interface ListTasksParams {
   status?: TaskStatus
@@ -395,29 +396,8 @@ function parseJSON<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-// ── 计划回写 (票02 · ADR-0026) 纯文本件 ────────────────────────────────
-
-/** 变更记录节的固定标题 —— 机械落痕的落点，单源字符串（ADR-0026「spec 文末
- *  「变更记录」节 append 一行」逐字取词）。 */
-const PLAN_CHANGELOG_HEADING = "## 变更记录"
-
-/** 摘出变更记录节的 `- ` 历史行（无节 → 空数组）。节恒在文末（server 只在文末
- *  续写）；取首个标题行，其后所有 bullet 行按序返回。 */
-function extractChangelogEntries(text: string): string[] {
-  const lines = text.split("\n")
-  const at = lines.findIndex((l) => l.trim() === PLAN_CHANGELOG_HEADING)
-  if (at < 0) return []
-  return lines.slice(at + 1).filter((l) => l.startsWith("- "))
-}
-
-/** 剥掉请求正文自带的变更记录节（标题及其后全部行）—— 账本由 server 单源重建，
- *  防"自报历史"与盘上历史分叉；正文部分原样保留（仅收掉尾部空白）。 */
-function stripChangelogSection(text: string): string {
-  const lines = text.split("\n")
-  const at = lines.findIndex((l) => l.trim() === PLAN_CHANGELOG_HEADING)
-  const body = at < 0 ? text : lines.slice(0, at).join("\n")
-  return body.replace(/\s+$/, "")
-}
+// ── 计划回写 (票02 · ADR-0026) 路径解析件 ─────────────────────────────
+// 变更记录节的文本三件（HEADING/extract/strip）终审迁至 ./plan-changelog。
 
 /** batch 归一：反斜杠→正斜杠、去首 `./`、去尾 `/`（盘上批次名的三种既有布局
  *  —— .scratch/<slug>、.scratch/<date>/<slug> —— 都以 posix 相对形入参）。 */
@@ -1247,22 +1227,13 @@ export class TasksService {
 
   // ── 计划回写 (票02 · ADR-0026 · S1 主 seam) ──────────────────────────
 
-  /** POST /api/tasks/:id/plan — 计划回写通道的 spec 侧。一次调用 = 批次内某份
-   *  spec 的正文整替 + server 在文末「## 变更记录」节机械 append 一行
-   *  （时间 · actor · source · reason · 文件），演化史随写而生。契约要点：
-   *  · 顺序 = 任务 404 先行 → 状态闸 409 → 路径守卫 403 → 写门落盘。
-   *  · 状态闸复用 isSpecEditable —— 票面「对齐既有 spec 可编辑判定」；
-   *    paused/takeover/fixing 非落库态（落库恒 running），放行集由该谓词天然覆盖。
-   *  · batch/file 两级解析全走 resolveWithinRoot（既有 home 遍历守卫单源，零放宽）：
-   *    batch 限 home 内、file 限批次目录内 —— 任一级逃逸/绝对形态/null 字节即
-   *    ArtifactAccessError(FORBIDDEN) → 403；最终仍经 TaskHomeService.writeHomeFile
-   *    既有写门（.scratch/** 白名单 + .md 后缀 + mkdir -p）落盘。
-   *  · 变更记录节 server 单源重建：盘上历史行原样保留（连续写入按时间累积不覆盖，
-   *    AC5），请求正文自带的旧节以盘上为准摘除；节内除 `- ` 行外不放其它内容。
-   *  · actor = server 按 DB 推定（resolvePlanActor），body 无身份字段（路由 .strict()）。
-   *  零 manifest 改动：产物清单磁盘直扫，写后立即可见（AC7）；SSE nudge 与
-   *  PUT /home-file 同款。 */
-  writePlanSpec(taskId: string, input: WritePlanSpecInput): { task_id: string; path: string; bytes: number; actor: string } {
+  /** 计划回写双侧共用前奏（票02/03，终审去重）。契约 = 任务 404 先行 → 状态闸
+   *  409（复用 isSpecEditable，零新谓词）→ home/batch 解析（batch 限 home 内，
+   *  resolveWithinRoot 既有守卫单源不放宽，逃逸 403）→ actor 推定（规则见
+   *  resolvePlanActor）。错误码与文案在抽取前后逐字不变 —— 票03 AC4 的
+   *  「同语义逐条独立成测」是对**测试面**的要求，实现复用不违契约。file 级
+   *  形状闸两侧方向相反（spec 侧拒 issues/、issues 侧只吃 issues/），不并。 */
+  private openPlanBatch(taskId: string, batch: string): { home: string; batchAbs: string; actor: string } {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     if (!this.isSpecEditable(row)) {
@@ -1271,25 +1242,70 @@ export class TasksService {
       )
     }
     const home = this.taskHomeService.homePath(taskId)
-    const batchAbs = resolveWithinRoot(home, normalizeBatchRel(input.batch), "plan batch")
-    const fileAbs = resolveWithinRoot(batchAbs, input.file.split("\\").join("/"), "plan file")
-    const rel = path.relative(home, fileAbs).split(path.sep).join("/")
+    const batchAbs = resolveWithinRoot(home, normalizeBatchRel(batch), "plan batch")
+    return { home, batchAbs, actor: this.resolvePlanActor(row) }
+  }
 
-    const actor = this.resolvePlanActor(row)
-    const flatten = (s: string): string => s.replace(/\r?\n/g, " ").trim()
-    const line = `- ${new Date().toISOString()} · ${actor} · ${flatten(input.source)} · ${flatten(input.reason)} · ${rel}`
-
-    const carried = fs.existsSync(fileAbs)
-      ? extractChangelogEntries(fs.readFileSync(fileAbs, "utf-8")).map((e) => e + "\n").join("")
-      : ""
-    const body = stripChangelogSection(input.content)
-    const out = `${body.endsWith("\n") ? body : body + "\n"}\n${PLAN_CHANGELOG_HEADING}\n\n${carried}${line}\n`
-
-    const result = this.taskHomeService.writeHomeFile(taskId, rel, out)
+  /** 计划回写双侧共用收尾（票02/03）：经 TaskHomeService 既有写门
+   *  （.scratch/** 白名单 + .md 后缀 + mkdir -p，零放宽）落盘，再发
+   *  task_artifacts_update SSE nudge —— 与 PUT /home-file 同款，产物页签
+   *  磁盘直扫立现（AC7），零 manifest 改动。 */
+  private commitPlanWrite(taskId: string, rel: string, content: string): { path: string; bytes: number } {
+    const result = this.taskHomeService.writeHomeFile(taskId, rel, content)
     this.sse.emit("taskpool", {
       event: TASK_ARTIFACTS_UPDATE_EVENT,
       data: { task_id: taskId },
     })
+    return result
+  }
+
+  /** POST /api/tasks/:id/plan — 计划回写通道的 spec 侧。一次调用 = 批次内某份
+   *  spec 的正文整替 + server 在文末「## 变更记录」节机械 append 一行
+   *  （时间 · actor · source · reason · 文件），演化史随写而生。契约要点：
+   *  · 顺序 = 任务 404 先行 → 状态闸 409 → 路径守卫 403 → 票区形状闸 400 → 写门落盘。
+   *  · 状态闸复用 isSpecEditable —— 票面「对齐既有 spec 可编辑判定」；
+   *    paused/takeover/fixing 非落库态（落库恒 running），放行集由该谓词天然覆盖。
+   *  · batch/file 两级解析全走 resolveWithinRoot（既有 home 遍历守卫单源，零放宽）：
+   *    batch 限 home 内、file 限批次目录内 —— 任一级逃逸/绝对形态/null 字节即
+   *    ArtifactAccessError(FORBIDDEN) → 403；最终仍经 TaskHomeService.writeHomeFile
+   *    既有写门（.scratch/** 白名单 + .md 后缀 + mkdir -p）落盘。
+   *  · 终审封堵（Origin 旁路）：file 落点限**非** issues/ 区 —— 经本端点整替票体可
+   *    抹 Origin/Status（票侧 schema 闸被绕开）还误 append 变更节，违票03 AC3；
+   *    镜像 issues 侧同款形状 400，错误串点名改走 /plan/issues。
+   *  · 变更记录节 server 单源重建：盘上历史**全量**按序保留 —— bullet 是机器行、
+   *    其余是人写行，下次回写都在（票02 AC5「累积不覆盖」保护人写内容，终审修复）；
+   *    请求正文自带的旧节以盘上为准摘除（文本三件见 ./plan-changelog）。
+   *  · actor = server 按 DB 推定（resolvePlanActor），body 无身份字段（路由 .strict()）。
+   *  零 manifest 改动：产物清单磁盘直扫，写后立即可见（AC7）；SSE nudge 与
+   *  PUT /home-file 同款。 */
+  writePlanSpec(taskId: string, input: WritePlanSpecInput): { task_id: string; path: string; bytes: number; actor: string } {
+    const { home, batchAbs, actor } = this.openPlanBatch(taskId, input.batch)
+    const fileAbs = resolveWithinRoot(batchAbs, input.file.split("\\").join("/"), "plan file")
+    const relInBatch = path.relative(batchAbs, fileAbs).split(path.sep).join("/")
+    // 票区落点拒收（终审 · Origin 旁路封堵）。逃逸的 403 先行于本闸 —— 与票侧
+    // 同序：形状缺陷指 body 缺陷（400），穿越缺陷指守卫（403），互不吞。
+    if (/^issues\//i.test(relInBatch)) {
+      throw new TaskSpecFieldError(
+        `/plan 端点不吃 issues/ 下的票文件（Origin/Status 校验在票侧）—— 写票请改走 POST /api/tasks/:id/plan/issues，收到: '${relInBatch}'`,
+      )
+    }
+    const rel = path.relative(home, fileAbs).split(path.sep).join("/")
+
+    const flatten = (s: string): string => s.replace(/\r?\n/g, " ").trim()
+    const line = `- ${new Date().toISOString()} · ${actor} · ${flatten(input.source)} · ${flatten(input.reason)} · ${rel}`
+
+    // 重建变更节：盘上行全量续写（bullet=机器行、其余=人写行，见 ./plan-changelog
+    // 的 extract 契约）；节尾落在人写行上时，新机器行前补一个空行 —— 防 bullet
+    // 被前一段落的 lazy continuation 吞掉，史书保持逐行可读。
+    const entries = fs.existsSync(fileAbs)
+      ? extractChangelogEntries(fs.readFileSync(fileAbs, "utf-8"))
+      : []
+    const carried = entries.map((e) => e + "\n").join("")
+    const gap = entries.length > 0 && !entries[entries.length - 1].startsWith("- ") ? "\n" : ""
+    const body = stripChangelogSection(input.content)
+    const out = `${body.endsWith("\n") ? body : body + "\n"}\n${PLAN_CHANGELOG_HEADING}\n\n${carried}${gap}${line}\n`
+
+    const result = this.commitPlanWrite(taskId, rel, out)
     return { task_id: taskId, path: result.path, bytes: result.bytes, actor }
   }
 
@@ -1347,15 +1363,9 @@ export class TasksService {
     taskId: string,
     input: WritePlanIssueInput,
   ): { task_id: string; path: string; bytes: number; created: boolean; actor: string } {
-    const row = this.taskDAO.getById(taskId)
-    if (!row) throw new TaskNotFoundError()
-    if (!this.isSpecEditable(row)) {
-      throw new TaskStatusConflictError(
-        `Cannot plan-writeback a task in status '${row.status}'`,
-      )
-    }
-    const home = this.taskHomeService.homePath(taskId)
-    const batchAbs = resolveWithinRoot(home, normalizeBatchRel(input.batch), "plan batch")
+    // 前奏与 spec 侧共用 openPlanBatch（终审去重；错误码/文案/顺序逐字不变，
+    // 票03 AC4 的同语义由**测试面**独立钉，不复用豁免）。
+    const { home, batchAbs, actor } = this.openPlanBatch(taskId, input.batch)
     // file 先经既有守卫解析（`..`/绝对/null 字节在批次层就 403 —— 与 02 同门），
     // 再要求落点是 issues/ 直下的 .md（票文件不进子目录、更不出目录 → 400）。
     const fileAbs = resolveWithinRoot(batchAbs, input.file.split("\\").join("/"), "plan issue file")
@@ -1400,12 +1410,8 @@ export class TasksService {
       created = true
     }
     const rel = path.relative(home, targetAbs).split(path.sep).join("/")
-    const actor = this.resolvePlanActor(row)
-    const result = this.taskHomeService.writeHomeFile(taskId, rel, input.content)
-    this.sse.emit("taskpool", {
-      event: TASK_ARTIFACTS_UPDATE_EVENT,
-      data: { task_id: taskId },
-    })
+    // 收尾与 spec 侧共用 commitPlanWrite：既有写门零放宽 + 产物 SSE nudge。
+    const result = this.commitPlanWrite(taskId, rel, input.content)
     return { task_id: taskId, path: result.path, bytes: result.bytes, created, actor }
   }
 
