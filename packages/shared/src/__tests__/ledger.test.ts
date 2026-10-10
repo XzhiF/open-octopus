@@ -22,14 +22,21 @@ describe('costSummary — B 类 NULL 语义全站规范 (C3/Q3)', () => {
   })
 })
 
-describe('cacheHitRateOf — 单公式 0–1 (C3/Q5)', () => {
-  it('cacheRead/(input+cacheRead)，不含 cacheCreation/output', () => {
+describe('cacheHitRateOf — 单公式 0–1 (C3/Q5，分母口径 ADR-0027 amend)', () => {
+  it('cacheRead/(input+cacheRead+cacheCreation)，不含 output', () => {
     expect(cacheHitRateOf({ ...emptyTokenUsage(), inputTokens: 300, outputTokens: 999, cacheReadTokens: 700, cacheCreationTokens: 555 }))
-      .toBeCloseTo(0.7, 12)
+      .toBeCloseTo(700 / 1555, 12)
   })
-  it('分母 0 → null（不造假 0%）', () => {
-    expect(cacheHitRateOf({ ...emptyTokenUsage(), outputTokens: 50, cacheCreationTokens: 10 })).toBeNull()
+  it('分母 0 → null（不造假 0%）；纯缓存写组 → 真 0%（ADR-0027）', () => {
+    // 写了缓存从未命中：0.0 是真实测量值，不再是 null
+    expect(cacheHitRateOf({ ...emptyTokenUsage(), outputTokens: 50, cacheCreationTokens: 10 })).toBe(0)
+    expect(cacheHitRateOf({ ...emptyTokenUsage(), outputTokens: 50 })).toBeNull()
     expect(cacheHitRateOf(emptyTokenUsage())).toBeNull()
+  })
+  it('回归（2026-10-10 真机）：318 in / 4.4M read / 384.2K write 不再报 100%', () => {
+    const rate = cacheHitRateOf({ ...emptyTokenUsage(), inputTokens: 318, cacheReadTokens: 4_400_000, cacheCreationTokens: 384_200 })!
+    expect(rate).toBeCloseTo(4_400_000 / 4_784_518, 12)
+    expect(rate).toBeCloseTo(0.920, 3)
   })
 })
 
@@ -43,7 +50,7 @@ describe('ledgerTotals — 跨行唯一总量 (C3/Q2+Q4)', () => {
     expect(t.cost).toEqual({ usd: 0.4, complete: false })
   })
   it('命中率用合并后的 usage（分母加权自然正确 —— 前端 V4 bug 的根治形）', () => {
-    // 行A 率 = 900/(100+900) = 0.9；行B 率 = 100/(400+100) = 0.2
+    // 行A 率 = 900/(100+900+0) = 0.9；行B 率 = 100/(400+100+0) = 0.2（cc=0，新旧口径同值）
     // 规范合并 = (900+100)/((100+400)+(900+100)) = 1000/1500 ≈ 0.6667 ≠ 简单平均 0.55
     const t = ledgerTotals([row(100, 0, 900, 0), row(400, 0, 100, 0)])
     expect(t.cacheHitRate).toBeCloseTo(1000 / 1500, 12)

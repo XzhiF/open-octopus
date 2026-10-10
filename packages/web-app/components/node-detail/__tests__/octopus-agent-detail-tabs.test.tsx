@@ -163,7 +163,7 @@ describe("OctopusAgentDetailTabs", () => {
         totalCalls: 5,
         toolCalls: 3,
         usage: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheCreationTokens: 100 },
-        totals: { tokens: 1800, cost: { usd: 0.05, complete: true }, cacheHitRate: 200 / 1200 },
+        totals: { tokens: 1800, cost: { usd: 0.05, complete: true }, cacheHitRate: 200 / 1300 }, // 分母含 cc=100（ADR-0027）
         modelBreakdown: {
           "claude-sonnet-4-20250514": { calls: 5, inputTokens: 1000, outputTokens: 500, costUsd: 0.05 },
         },

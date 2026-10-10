@@ -141,7 +141,7 @@ describe("GET /api/executions/:id/llm-calls — aggregates.byNode（票11 additi
     expect(dev.totals.tokens).toBe(10300)
     expect(dev.totals.cost.usd).toBeCloseTo(13275 / 1e6, 12)
     expect(dev.totals.cost.complete).toBe(true)
-    expect(dev.totals.cacheHitRate).toBeCloseTo(8000 / 9500, 10)
+    expect(dev.totals.cacheHitRate).toBeCloseTo(8000 / 10000, 10) // 分母含 cc=500（ADR-0027）
 
     const verify = byNode!.find((n) => n.nodeId === "verify")!
     expect(verify.totalCalls).toBe(1)
