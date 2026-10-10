@@ -364,6 +364,21 @@ export interface WritePlanSpecInput {
   source: string
 }
 
+/** POST /api/tasks/:id/plan/issues body (票03 · 计划回写 S1 issues 侧，ADR-0026):
+ *  与 spec 侧同形（S1 契约两块共用 batch/file/content/reason/source）；语义差在
+ *  file 必须是 `issues/<name>.md` 形（新建时取 slug、编号 server 顺延；既有精确
+ *  路径则原位整替），content 是票体且必须含 `Origin:` 与 `Status:` 行（路由
+ *  schema superRefine 把住，缺项 400 指明缺哪项）。身份同 02 —— 不在 body，
+ *  .strict() 拒收自报字段，actor 由 server 盖章进响应回执（票侧无变更记录，
+ *  出生证明在票内）。 */
+export interface WritePlanIssueInput {
+  batch: string
+  file: string
+  content: string
+  reason: string
+  source: string
+}
+
 export interface ListTasksParams {
   status?: TaskStatus
   org?: string
@@ -408,6 +423,15 @@ function stripChangelogSection(text: string): string {
  *  —— .scratch/<slug>、.scratch/<date>/<slug> —— 都以 posix 相对形入参）。 */
 function normalizeBatchRel(batch: string): string {
   return batch.split("\\").join("/").replace(/^\.\//, "").replace(/\/+$/, "")
+}
+
+/** 票03 issues 侧编号解析：`NN-slug.md` 的票面既有形制（本仓 tracker 同款）。
+ *  返回前导编号、其字面宽度、去号去后缀的 slug；无前导号形（含回退后 "0" 也
+ *  凑不上分隔符的粘连形）返回 null —— 整个 stem 即 slug。 */
+function parseIssueNumber(name: string): { num: number; width: number; slug: string } | null {
+  const m = /^(\d+)(?:[-_](.*))?\.md$/i.exec(name)
+  if (!m) return null
+  return { num: parseInt(m[1], 10), width: m[1].length, slug: m[2] ?? "" }
 }
 
 /** An instance row that is over. Single source with the latch/meter (ADR-0021). */
@@ -1301,6 +1325,88 @@ export class TasksService {
     }
     // ③ 诚实缺账。
     return "unattributed"
+  }
+
+  /** POST /api/tasks/:id/plan/issues — 计划回写通道的 issues 侧（票03）。
+   *  一次调用 = 目标批次 `issues/` 下一张票的整写：
+   *  · 新建：请求 file 的 slug（去 `NN-` 前缀）落 `issues/<顺延编号>-<slug>.md`，
+   *    编号 = 现存最大 `NN-` 前缀 +1（空目录 01 起），**由 server 计算**，请求
+   *    自带编号不作数（防插号/竞号）。
+   *  · 修改：请求 file 解析出的精确路径已是常规文件 → 原位整替（票03 AC3
+   *    「改既有票走同端点」；改后仍须含 Origin/Status —— schema 层把住，抹 Origin 拒）。
+   *  契约与 02 同律（票03 AC4 明令逐条独立成测，不靠代码复用顺带绿）：
+   *  · 顺序 = 任务 404 先行 → 状态闸 409（复用 isSpecEditable，零新谓词）→
+   *    batch/file 两级 resolveWithinRoot 403（既有守卫单源不放宽）→ 盘写。
+   *  · file 必须落 `<batch>/issues/<name>.md`（目录形状缺陷 = body 缺陷 → 400，
+   *    TaskSpecFieldError 域内 400 先例同款）；非 .md/出 .scratch 白名单仍由
+   *    writeHomeFile 既有写门 403（零放宽，US20 薄写入）。
+   *  · 票侧【不】append 变更记录（出生证明在票内，AC3）—— 盘上逐字 = content。
+   *  · actor = server 按 DB 推定（与 02 同一 resolvePlanActor 优先级），只进
+   *    响应回执，不上盘（无变更记录可落）。零 manifest 改动：磁盘直扫立现（AC5）。 */
+  writePlanIssue(
+    taskId: string,
+    input: WritePlanIssueInput,
+  ): { task_id: string; path: string; bytes: number; created: boolean; actor: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (!this.isSpecEditable(row)) {
+      throw new TaskStatusConflictError(
+        `Cannot plan-writeback a task in status '${row.status}'`,
+      )
+    }
+    const home = this.taskHomeService.homePath(taskId)
+    const batchAbs = resolveWithinRoot(home, normalizeBatchRel(input.batch), "plan batch")
+    // file 先经既有守卫解析（`..`/绝对/null 字节在批次层就 403 —— 与 02 同门），
+    // 再要求落点是 issues/ 直下的 .md（票文件不进子目录、更不出目录 → 400）。
+    const fileAbs = resolveWithinRoot(batchAbs, input.file.split("\\").join("/"), "plan issue file")
+    const relInBatch = path.relative(batchAbs, fileAbs).split(path.sep).join("/")
+    const m = /^issues\/([^/]+)\.md$/i.exec(relInBatch)
+    if (!m) {
+      throw new TaskSpecFieldError(
+        `issues 端点只吃批次 issues/ 目录下的 .md 票文件（如 issues/<slug>.md），收到: '${relInBatch}'`,
+      )
+    }
+    let targetAbs = fileAbs
+    let created = false
+    if (!(fs.existsSync(fileAbs) && fs.statSync(fileAbs).isFile())) {
+      // 新建：slug = 请求文件名去 `.md` 去既有/伪造 `NN-` 前缀；编号由 server 顺延。
+      const slug = parseIssueNumber(`${m[1]}.md`)?.slug ?? m[1]
+      if (!slug) {
+        throw new TaskSpecFieldError(`slug 不能为空 —— file 形如 issues/<slug>.md，收到: '${input.file}'`)
+      }
+      // 现存最大号扫描：宽度取既有编号最大宽度与 2 的较大者（01 起步、99→100
+      // 自然进位，与 tracker 既有票面 `NN-slug.md` 形制同款）。
+      const issuesAbs = path.join(batchAbs, "issues")
+      let max = 0
+      let width = 2
+      if (fs.existsSync(issuesAbs)) {
+        for (const ent of fs.readdirSync(issuesAbs, { withFileTypes: true })) {
+          if (!ent.isFile()) continue
+          const p = ent.name.toLowerCase().endsWith(".md") ? parseIssueNumber(ent.name) : null
+          if (p) {
+            if (p.num > max) max = p.num
+            if (p.width > width) width = p.width
+          }
+        }
+      }
+      targetAbs = path.join(issuesAbs, `${String(max + 1).padStart(width, "0")}-${slug}.md`)
+      // 顺延号严格大于扫描到的所有号 → 目标理应不存在；存在即盘态异常
+      //（并发写/大小写怪形），宁拒不覆盖（不拿别人的票赌）。
+      if (fs.existsSync(targetAbs)) {
+        throw new TaskStatusConflictError(
+          `顺延编号目标 '${path.relative(batchAbs, targetAbs).split(path.sep).join("/")}' 已存在，拒写（issues/ 编号状态请人工核对）`,
+        )
+      }
+      created = true
+    }
+    const rel = path.relative(home, targetAbs).split(path.sep).join("/")
+    const actor = this.resolvePlanActor(row)
+    const result = this.taskHomeService.writeHomeFile(taskId, rel, input.content)
+    this.sse.emit("taskpool", {
+      event: TASK_ARTIFACTS_UPDATE_EVENT,
+      data: { task_id: taskId },
+    })
+    return { task_id: taskId, path: result.path, bytes: result.bytes, created, actor }
   }
 
   /** GET /api/tasks/:id/workflow-ref — view the bound workflow's content + source
