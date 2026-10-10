@@ -116,7 +116,7 @@ function SessionCostChipBody({ usage, contextUsage }: Required<SessionCostChipPr
         )}
         <div className="mt-2 flex items-center gap-2 border-t border-dashed border-pop-bd pt-2 text-[10px] text-pop-dim">
           <span>单价 = 每 1M token · 现算不落库</span>
-          <Link href="/system/billing" className="ml-auto text-pop-cyan hover:underline">完整台账 →</Link>
+          <Link href="/system/billing" target="_blank" rel="noopener" className="ml-auto text-pop-cyan hover:underline">完整台账 →</Link>
         </div>
       </PopoverContent>
     </Popover>
