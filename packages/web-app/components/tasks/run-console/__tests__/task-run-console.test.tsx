@@ -1082,8 +1082,9 @@ describe("票 04 — NodesTab 挂进 [data-tab-host=\"nodes\"]", () => {
 //   tabs rd ? [chat 对话, spec 规格, nodes 节点]，openTask 默认 tab='nodes'；
 //   readyNodesHtml：⚙ 流名 + 「P<ph> 绑定流 … 触发后开跑 — 点行看占位」+ 0/N 完成 · 等待触发；
 //   展开行（nodeEvents ready 分支）逐字 =「— 未执行 · 等待触发 —」。
-// 对话/规格两签本票只钉占位壳（08/09 各替换内容，不动装配 —— 装配先行防三票互相等）。
-describe("票 07 — ready 三签骨架：默认节点静态预览 + 占位壳可点可切", () => {
+// 对话/规格两签真身已由 08/09 就位（占位壳 ready-tab-placeholders 随二轮终审
+// standards① 删除 —— 死码零 importer；装配先行契约不变，装配不再动）。
+describe("票 07 — ready 三签骨架：默认节点静态预览 + 对话/规格可点可切", () => {
   const STATIC7_YAML = `
 name: matt-spec-dev
 nodes:
@@ -1151,23 +1152,20 @@ nodes:
     expect((await within(tab).findByTestId("static-node-events-spec-resolve")).textContent).toContain("未执行 · 等待触发")
   })
 
-  it("对话/规格两签可点可切：规格占位壳 testid 原位（票09 接入位）；对话壳已由票08 换为只读回放（fixture 无草稿期会话 → 空态文案，面内零输入框）", async () => {
+  it("对话/规格两签可点可切：规格真身 ready-spec-tab 原位（票09 镜像）；对话真身 = 票08 只读回放（fixture 无草稿期会话 → 空态文案，面内零输入框）", async () => {
     mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: STATIC7_YAML, parsed: { name: "matt-spec-dev" } })
     readyV4()
     await screen.findByTestId("console-tab-nodes")
     fireEvent.click(screen.getByTestId("console-tab-spec"))
-    // 票09 迁移锚点：占位壳 → SpecPanel 只读镜像（ready-tab-placeholders 的
-    // ReadySpecPlaceholder 退役；testid 由 ready-spec-placeholder 换成 ready-spec-tab，
-    // 镜像体 = 真 SpecPanel（data-spec-panel），写控件在场数 = 0）。
+    // 票09 真身钉点：testid ready-spec-tab，镜像体 = 真 SpecPanel（data-spec-panel），
+    // 写控件在场数 = 0。（占位壳 ready-spec-placeholder 已随二轮终审删除。）
     expect(await screen.findByTestId("ready-spec-tab")).toBeTruthy()
-    expect(screen.queryByTestId("ready-spec-placeholder")).toBeNull()
     expect(document.querySelector("[data-spec-panel]")).toBeTruthy()
     expect(document.querySelector("[data-phase-add-open]")).toBeNull()
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
     fireEvent.click(screen.getByTestId("console-tab-chat"))
-    // 票07 的 ready-chat-placeholder 已退役 —— 换票08 回放面（makeTask 默认
-    // source_chat_session_id=null → 「草稿期会话不存在」空态，不白屏）。
-    expect(screen.queryByTestId("ready-chat-placeholder")).toBeNull()
+    // 票08 真身回放面（makeTask 默认 source_chat_session_id=null →
+    // 「草稿期会话不存在」空态，不白屏。占位壳已删除，无缺席断言可钉）。
     const replay = await screen.findByTestId("ready-chat-replay")
     expect(within(replay).getByText("草稿期会话不存在")).toBeTruthy()
     expect(within(replay).queryAllByRole("textbox")).toHaveLength(0)
@@ -1187,6 +1185,72 @@ nodes:
     const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
     expect(await within(host).findByTestId("static-nodes-unbound")).toBeTruthy()
     expect(mockBuiltInDetail).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ spec① 二轮终审 · 静态预览判据 phase 化（status 无关）═════════════════
+// 判据从「ready 且无执行」改为「当前面相位无执行行」—— 与 static-nodes-tab 文件头
+// 既有约定（判据 = 该 phase 是否已有执行行，在壳层）对齐。running 装配里 rail 点到
+// 未开跑的 phase 也吃静态预览；有 exec 的相位照旧动态 NodesTab（不带歪）。
+describe("spec① — 静态预览判据 phase 化：无 exec 行的 phase 吃静态预览（status 无关）", () => {
+  const PREVIEW_YAML = `
+name: matt-preview-wf
+nodes:
+  - id: plan
+    type: agent
+  - id: dev
+    type: agent
+`
+
+  it("running：rail 切到未开跑 phase（该 phase 无 exec 行）→ 静态预览全 ○；有 exec 的相位不受判据影响仍动态 NodesTab", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-preview-wf", content: PREVIEW_YAML, parsed: { name: "matt-preview-wf" } })
+    mockFetchExecutionDetail.mockResolvedValue({
+      id: "exec-1", status: "running", workflow_ref: "built-in/wf",
+      workflow_content: "nodes:\n  - id: plan\n    type: agent\n", steps: [],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([
+        pv(1, "票11阶段1", "running"),
+        pv(2, "票11阶段2", "pending", { workflowRef: "built-in/matt-preview-wf" }),
+      ]),
+    })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-nodes"))
+    const dynHost = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    // P1（在跑，有 exec）：动态清单 —— 判据 phase 化不得把它带歪。
+    expect(await within(dynHost).findByTestId("nodes-tab")).toBeTruthy()
+    expect(within(dynHost).queryByTestId("static-nodes-tab")).toBeNull()
+    // 切面 P2（pending，无 exec 行）：静态预览全 ○（汇总 0/2 · 等待触发）。
+    fireEvent.click(screen.getByTestId("phase-row-2"))
+    const statHost = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    const tab = await within(statHost).findByTestId("static-nodes-tab")
+    expect([...tab.querySelectorAll("[data-static-node-row]")].map((el) => el.getAttribute("data-static-node-row")))
+      .toEqual(["plan", "dev"])
+    for (const id of ["plan", "dev"]) {
+      expect(within(tab).getByTestId(`static-node-row-${id}`).textContent).toContain("○")
+    }
+    expect(within(tab).getByTestId("static-nodes-summary").textContent).toContain("0/2")
+  })
+
+  it("ready（流⑦场景）：判据改 phase 化后行为不回退 —— 节点签仍吃静态预览全 ○，『无节点』残影绝迹，执行详情零调用", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: PREVIEW_YAML, parsed: { name: "matt-spec-dev" } })
+    const t = makeTask("ready")
+    renderConsole(t, {
+      ...t,
+      executions: [],
+      derived: derivedOf([pv(1, "票11阶段1", "pending", { workflowRef: "built-in/matt-spec-dev" })], true, "ready"),
+    })
+    await screen.findByTestId("console-tab-nodes")
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    const tab = await within(host).findByTestId("static-nodes-tab")
+    for (const id of ["plan", "dev"]) {
+      expect(within(tab).getByTestId(`static-node-row-${id}`).textContent).toContain("○")
+    }
+    expect(within(host).queryByTestId("nodes-empty")).toBeNull()
+    expect(mockFetchExecutionDetail).not.toHaveBeenCalled()
   })
 })
 

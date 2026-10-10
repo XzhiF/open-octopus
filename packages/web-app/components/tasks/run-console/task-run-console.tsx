@@ -83,9 +83,10 @@ import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
-// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格占位壳（08/09 接入位）。
-// 两壳现已双双换装退役：「💬 对话」→ ReadyChatReplay 只读回放（票08）；
-// 「▤ 规格」→ SpecPanel 只读镜像 ready-spec-tab（票09）。占位壳文件保留不删。
+// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格两签内容位。
+// 两签已双双换装真身：「💬 对话」→ ReadyChatReplay 只读回放（票08）；
+// 「▤ 规格」→ SpecPanel 只读镜像 ready-spec-tab（票09）。占位壳 ready-tab-
+// placeholders 零生产 importer，已随二轮终审 standards① 删除（死码清理）。
 import { StaticNodesTab } from "./static-nodes-tab"
 import { ReadyChatReplay } from "./ready-chat-replay"
 import { ReadySpecTab } from "./ready-spec-tab"
@@ -306,11 +307,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     return runs[runs.length - 1] ?? null
   }, [view, phaseViews, runs])
 
-  // ── 票07(原型⓬)：ready 且当前面相位**尚无执行行** → 节点页签换绑定流静态预览 ──
-  // 判据就是 nodesRun 在场与否（与动态模型同一取轮纪律）：触发转 running 后
-  // nodesRun 落位自动回票 04 动态清单，无缝衔接、零新推导。预览跟面相位走
-  // （rail 选哪个 pending phase 就预览哪个的绑定流）。
-  const staticPreview = derivedStatus === "ready" && !nodesRun
+  // ── 票07(原型⓬)· spec①二轮终审校正：当前面相位**无执行行** → 节点页签换绑定流静态预览 ──
+  // 判据只看该 phase 的 nodesRun 在场与否，**status 无关**（ready 与 running 均适用 ——
+  // static-nodes-tab 文件头「判据 = 该 phase 是否已有执行行」自此与壳层一致）：
+  // running 装配里 rail 点到未开跑的 phase 也吃静态预览；触发/开跑后 nodesRun 落位
+  // 自动回票 04 动态清单，无缝衔接、零新推导。战报面（view="report"）恒走动态。
+  const staticPreview = typeof view === "number" && !nodesRun
   const staticPreviewPhase = staticPreview ? phaseViews.find((p) => p.index === view) ?? null : null
 
   // 票11 ⑩回补：「▶ 控制台/日志」事件流的原料 = 绑定执行的 agent_events。
@@ -874,8 +876,8 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               // 用时/成本 + 展开事件流含 ⚑ 行）；手术式操作经深链去执行详情视图。
               // takeover/fixing 形态走同一组件（shellMode 由 08 点亮；修复轮按
               // 05 契约从执行行 workflow_ref 自判）。
-              // 票07(原型⓬)：ready 且该相位无执行行 → 静态预览（绑定流 YAML 声明序全 ○，
-              // 展开=「未执行 · 等待触发」）；触发后 nodesRun 在场自动走下面动态分支。
+              // spec①(判据 phase 化)：该相位无执行行 → 静态预览（绑定流 YAML 声明序全 ○，
+              // 展开=「未执行 · 等待触发」），status 无关；nodesRun 在场自动走下面动态分支。
               <div className="min-h-0 flex-1 overflow-y-auto p-4" data-tab-host="nodes">
                 {staticPreview ? (
                   <StaticNodesTab

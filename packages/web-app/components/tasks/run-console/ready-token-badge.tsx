@@ -63,7 +63,7 @@ function ReadyTokenBadgePopover({ usage }: { usage: LlmUsageAggregates }) {
       {/* 浮层盖界不推挤（Radix portal）；rail 贴右缘 → align=end 让面板右缘对齐角标
           （原型 placeRcPanel：panel.right = chip.right）。 */}
       <PopoverContent className="w-80 max-h-[60vh] overflow-y-auto p-3" side="top" align="end">
-        <SessionCostLedger usage={usage} />
+        <SessionCostLedger usage={usage} titleSuffix="草稿期会话" />
       </PopoverContent>
     </Popover>
   )

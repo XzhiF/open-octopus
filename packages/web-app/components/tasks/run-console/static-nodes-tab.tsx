@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { getHomeFile } from "@/lib/tasks-api"
 import { getBuiltInWorkflowDetail } from "@/lib/workflow-presets-api"
 import { assembleStaticNodePreview, nodeSummary, type NodeRow } from "./nodes-model"
-import { GLYPH_TONE, TYPE_PILL, TYPE_PILL_DIM } from "./nodes-tab"
+import { EMPTY_SHELL, GLYPH_TONE, TYPE_PILL, TYPE_PILL_DIM } from "./nodes-tab"
 
 export interface StaticNodesTabProps {
   taskId: string
@@ -45,7 +45,7 @@ async function resolveWorkflowYaml(taskId: string, ref: string): Promise<string 
   return null
 }
 
-const SHELL = "mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim"
+// 三态壳类串走 nodes-tab.EMPTY_SHELL 单源（standards③）。
 
 export function StaticNodesTab({ taskId, workflowRef, phaseIndex }: StaticNodesTabProps) {
   const ref = workflowRef?.trim() || null
@@ -79,7 +79,7 @@ export function StaticNodesTab({ taskId, workflowRef, phaseIndex }: StaticNodesT
   // ── 三态如实：未绑定 / 读取失败 / 无节点声明（都不编造清单）──
   if (!ref) {
     return (
-      <div data-testid="static-nodes-unbound" className={SHELL}>
+      <div data-testid="static-nodes-unbound" className={EMPTY_SHELL}>
         该相位尚未绑定工作流 —— 回草稿面板把 phase 的绑定流选好，这里就会按流的节点顺序列出待执行清单。
       </div>
     )
@@ -89,7 +89,7 @@ export function StaticNodesTab({ taskId, workflowRef, phaseIndex }: StaticNodesT
   }
   if (content === null) {
     return (
-      <div data-testid="static-nodes-error" className={SHELL}>
+      <div data-testid="static-nodes-error" className={EMPTY_SHELL}>
         绑定流内容读取失败：<b className="text-pop-ink">{ref}</b><br />
         请核对流是否已安装（built-in 域）或存在于任务目录 workflows/（自建流域）。
       </div>
@@ -97,7 +97,7 @@ export function StaticNodesTab({ taskId, workflowRef, phaseIndex }: StaticNodesT
   }
   if (rows.length === 0) {
     return (
-      <div data-testid="static-nodes-empty" className={SHELL}>
+      <div data-testid="static-nodes-empty" className={EMPTY_SHELL}>
         绑定流 {shortRef} 未声明顶层节点 —— 触发后这里照常列出实际执行行。
       </div>
     )

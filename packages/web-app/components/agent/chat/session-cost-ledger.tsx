@@ -18,6 +18,10 @@ export interface SessionCostLedgerProps {
   usage: LlmUsageAggregates
   /** 窗口占用（SSE context_usage）—— 只进明细，不参与账本口径。 */
   contextUsage?: ContextUsageData | null
+  /** 头标语境限定（spec③）：ready 右栏角标传「草稿期会话」—— 账本数据源是
+   *  task.source_chat_session_id 那个草稿期会话；草稿 chip 不传（「本会话」
+   *  本就指会话自身，加限定反而绕）。 */
+  titleSuffix?: string
 }
 
 const ROW = 'flex items-baseline justify-between gap-3 py-0.5 text-[11px]'
@@ -30,7 +34,7 @@ const SWATCH: Record<string, string> = {
   cacheWrite: 'bg-pop-navy',
 }
 
-export function SessionCostLedger({ usage, contextUsage }: SessionCostLedgerProps) {
+export function SessionCostLedger({ usage, contextUsage, titleSuffix }: SessionCostLedgerProps) {
   const currency = useBillingCurrency()
   const { totals, usage: u } = usage
   const models = Object.entries(usage.modelBreakdown)
@@ -40,6 +44,7 @@ export function SessionCostLedger({ usage, contextUsage }: SessionCostLedgerProp
       <div className="mb-2 flex items-baseline gap-2">
         <span className="text-xs font-black">本会话 token 账</span>
         <span className="text-[10px] text-pop-dim tabular-nums">{usage.totalCalls} 次请求</span>
+        {titleSuffix && <span className="text-[10px] text-pop-dim">· {titleSuffix}</span>}
       </div>
       <div className="grid grid-cols-2 gap-x-4">
         <div className={ROW}>

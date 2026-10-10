@@ -28,7 +28,7 @@ try {
   await page.locator("[data-authoring-workspace]").first().waitFor()
   R("modal", "draft 工作台已打开")
 
-  // 1. 入队清单 = 7 行 + 顶栏计数 x/7 + 按钮 locked
+  // 1. 入队清单 = 6 行 + 顶栏计数 x/6 + 按钮 locked（ADR-0028 后清单实况 6 行）
   const rows = await page.locator("[data-checklist-v4]").evaluateAll((els) => els.map((e) => e.getAttribute("data-checklist-v4")))
   R("checklist-rows", JSON.stringify(rows))
   R("bar-count", await page.locator("[data-terminal-bar]").innerText().then((t) => (t.match(/入队清单\s+\d\/\d/) ?? ["?"])[0]))

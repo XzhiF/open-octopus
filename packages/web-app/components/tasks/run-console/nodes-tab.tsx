@@ -55,6 +55,10 @@ export const TYPE_PILL: Record<string, string> = {
 }
 export const TYPE_PILL_DIM = "border-pop-bd text-pop-dim"
 
+// 二轮终审 standards③：空态长壳类串单源 —— 原 4 处逐字复制（本文件 nodes-empty、
+// static-nodes-tab 三态壳、ready-chat-replay 空态、files-tab idle）收成一枚。
+export const EMPTY_SHELL = "mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim"
+
 const LINE_TONE: Record<string, string> = {
   ink: "text-pop-ink", dim: "text-pop-dim", green: "text-pop-green",
   red: "text-pop-red", pink: "text-pop-pink", amber: "text-pop-amber",
@@ -138,7 +142,7 @@ export function NodesTab({ run, mode, live }: NodesTabProps) {
   // ── 无绑定执行（ready 未触发）：如实空态 ──
   if (!run) {
     return (
-      <div data-testid="nodes-empty" className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim">
+      <div data-testid="nodes-empty" className={EMPTY_SHELL}>
         尚无绑定执行 —— 触发后这里按绑定流的节点顺序列出任务清单（只读；手术式操作去执行详情）。
       </div>
     )

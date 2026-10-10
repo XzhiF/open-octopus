@@ -27,6 +27,7 @@ import type { AgentSession } from "@/lib/agent/types"
 import { getAuthorSessionReplay, SESSION_REPLAY_MAX } from "@/lib/agent/api"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { TuiMessage } from "@/components/agent/chat/TuiTranscript"
+import { EMPTY_SHELL } from "./nodes-tab"
 
 /** 水印逐字 = 原型 readyChatHtml .replay-hd。 */
 const WATERMARK = "— 只读回放 · 草稿期对话（task-author 全记录）—"
@@ -79,7 +80,7 @@ export function ReadyChatReplay({ sessionId }: { sessionId: string | null | unde
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-testid="ready-chat-replay" data-replay-state="empty">
         <div
-          className="mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim"
+          className={EMPTY_SHELL}
           data-testid="ready-chat-empty"
         >
           <div className="mb-1 font-black text-pop-ink">草稿期会话不存在</div>

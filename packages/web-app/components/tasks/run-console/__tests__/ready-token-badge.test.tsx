@@ -96,6 +96,9 @@ describe("ReadyTokenBadge — 展开账台（明细单源 + 不推挤）", () =>
     expect(panel).toBeTruthy()
     const body = document.querySelector('[data-slot="popover-content"]')
     expect(body?.textContent).toContain("缓存命中率")
+    // spec③④：头标语境限定 —— 角标账本的数据源是 task.source_chat_session_id
+    // 的**草稿期会话**（titleSuffix 单源传入；草稿 chip 侧不传，语义本就自指）。
+    expect(body?.textContent).toContain("· 草稿期会话")
     expect(body?.textContent).toContain("63.1%")
     expect(body?.textContent).toContain("claude-sonnet-4.5")
     // 「完整台账」target=_blank 随 body 单源白拿（1e842875 同款，不顶掉弹窗）
