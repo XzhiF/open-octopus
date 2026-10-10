@@ -83,9 +83,11 @@ import { ResumeInterventionDialog } from "./resume-intervention-dialog"
 import { TakeoverBranchDialog } from "./takeover-branch-dialog"
 import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
-// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格占位壳（08/09 接入位）。
+// 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话占位壳（08 接入位）；
+// 「▤ 规格」已由票 09 换装为 SpecPanel 只读镜像（ready-spec-tab，占位壳退役）。
 import { StaticNodesTab } from "./static-nodes-tab"
-import { ReadyChatPlaceholder, ReadySpecPlaceholder } from "./ready-tab-placeholders"
+import { ReadyChatPlaceholder } from "./ready-tab-placeholders"
+import { ReadySpecTab } from "./ready-spec-tab"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { UsageTab } from "./usage-tab"
 import { ArtifactsTab } from "./artifacts-tab"
@@ -883,10 +885,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               </div>
             )}
             {tab === "spec" && (
-              // 票07(原型⓬)三签之「▤ 规格」：本票落占位壳，票 09 替换为 SpecPanel
-              // 只读镜像（Phases/入队清单/批次树）—— 只换内容不动装配。
+              // 票 09 落地(原型⓬ readySpecHtml)：「▤ 规格」= 草稿右栏 SpecPanel 的
+              // **只读镜像**（单源换装 readOnly 入参，不复制第二套面板）。取数 = 任务详情
+              // 既有 payload（detail.task_spec 优先）+ 入队清单同源共享函数；写动作不渲染。
+              // 只换内容不动装配（票07 契约）。
               <div className="flex min-h-0 flex-1 flex-col p-3.5" data-tab-host="spec">
-                <ReadySpecPlaceholder />
+                <ReadySpecTab task={task} detail={detail} />
               </div>
             )}
             {tab === "chat" && (
