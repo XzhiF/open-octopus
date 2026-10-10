@@ -145,6 +145,24 @@ const fixRoundBodySchema = z
   })
   .strict()
 
+// 计划回写 (票02 · ADR-0026 · S1) POST /:id/plan body。契约三条硬线：
+// ① reason/source 必填非空（trim 后 min(1)；缺失/纯空白 → ZodError → 400）——
+//    server 不判语义、无关键词正则（把关在人不在字符串）；
+// ② .strict()：身份类自报字段（actor/who/author…）一律未知键 → 400 响亮拒收。
+//    "body 自报身份不采信"（AC6）的兑现方式 = 拒收而非忽略 —— 与 ADR-0024 删
+//    next_flow 的 .strict() 纪律同款（spec-field 的宽松 source 默认是反面先例，
+//    票面明令别学）；决策出处文案走合法的 body.source 字段照收；
+// ③ content 上限与 PUT /home-file 写门同额 512_000。
+const planWriteBodySchema = z
+  .object({
+    batch: z.string().trim().min(1, "batch 必填 —— home 内批次相对名（.scratch/…，允许指向后续 phase 批次）"),
+    file: z.string().trim().min(1, "file 必填 —— 批次内文件名（解析限批次内，越界 403）"),
+    content: z.string().max(512_000),
+    reason: z.string().trim().min(1, "reason 必填 —— 变更必须携带理由（server 不判语义）"),
+    source: z.string().trim().min(1, "source 必填 —— 决策出处（打回 rN 第几条/接管对话/修复轮…）"),
+  })
+  .strict()
+
 // ── Route Factory ───────────────────────────────────────────────────
 
 export function createTasksRoutes(
@@ -841,6 +859,30 @@ export function createTasksRoutes(
       const source = body.source === "user" || body.source === "agent" ? body.source : "agent"
       const input: UpdateSpecFieldInput = { field, value: body.value, source }
       const result = service.updateSpecField(c.req.param("id"), input)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/plan — 计划回写通道（票02 · ADR-0026 · S1 主 seam）spec 侧。
+  // 一次调用：写 home 批次内 spec（含后续 phase 批次）+ 文末「## 变更记录」
+  // 机械落痕一行（时间 · actor · source · reason · 文件）。
+  // 状态码契约（与 409-vs-400 分律同款：body 缺陷 400 / 状态缺陷 409 / 守卫 403）：
+  //   400 body 非法（reason/source 缺失或空白、未知/身份字段、batch/file 空串）
+  //   404 任务不存在（先行检查）
+  //   409 终态拒写（done/aborted/archiving —— isSpecEditable 既有判定，零新谓词）
+  //   403 路径越界（resolveWithinRoot 两级：batch 限 home 内、file 限批次内；
+  //     最终仍经 .scratch/** + .md 写门 —— 守卫复用不放宽）
+  //   200 { task_id, path, bytes, actor } —— path 为 home 相对 posix 名。
+  // issues 端点（/plan/issues）另票（03），此路由只吃批次 spec 文件。
+  router.post("/:id/plan", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = planWriteBodySchema.parse(body)
+      const result = service.writePlanSpec(c.req.param("id"), parsed)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
