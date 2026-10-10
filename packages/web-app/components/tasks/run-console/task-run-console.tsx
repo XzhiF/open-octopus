@@ -85,7 +85,10 @@ import { FixDispatchDialog } from "./fix-dispatch-dialog"
 import { NodesTab } from "./nodes-tab"
 // 票07(原型⓬ 三签票)：ready 静态节点预览 + 对话/规格占位壳（08/09 接入位）。
 import { StaticNodesTab } from "./static-nodes-tab"
-import { ReadyChatPlaceholder, ReadySpecPlaceholder } from "./ready-tab-placeholders"
+import { ReadySpecPlaceholder } from "./ready-tab-placeholders"
+// 票08：ready 对话签占位壳 → 草稿期会话全史只读回放（只换 chat 分支；
+// 占位壳文件不动 —— 规格签接入位仍归票09）。
+import { ReadyChatReplay } from "./ready-chat-replay"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { UsageTab } from "./usage-tab"
 import { ArtifactsTab } from "./artifacts-tab"
@@ -894,10 +897,11 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               // 三形态同一组件换语义：待验收=快速修改 / 接管（08 点亮）/ 修复轮追加指令。
               // 数据源 = S1 GET/POST /api/tasks/:id/chat；快改徽标经 rowDecor/toolbarExtra 钩子。
               // 票07(原型⓬)：ready 的对话语义不同（草稿期全史**只读回放**，无输入框）——
-              // 本票落占位壳，票 08 替换为回放面；三签形态外的 chat（awaiting/接管/修复轮）不动。
+              // 票08 已替换为 ReadyChatReplay（source_chat_session_id 全史回放，空态/截断/
+              // 零输入硬闸见该文件）；三签形态外的 chat（awaiting/接管/修复轮）不动。
               <div className="flex min-h-0 flex-1 flex-col" data-tab-host={tab}>
                 {derivedStatus === "ready" ? (
-                  <ReadyChatPlaceholder />
+                  <ReadyChatReplay sessionId={task.source_chat_session_id ?? null} />
                 ) : (
                   <TaskChatTab
                     taskId={task.id}
