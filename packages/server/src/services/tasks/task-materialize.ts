@@ -323,8 +323,10 @@ const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
  * skipped when ① already missed. A phase that passes all four yields a
  * TaskV4PhaseConfig. Empty/missing phases ⇒ single `phase:0:no-phases`. Throws nothing
  * — the caller turns a non-empty missing list into TaskReadyGateError.
- * ⑤/⑥（bindingConfirmed 人工确认 + issues/ ≥1 票产物基线）仅在 `enqueueChecks`
- * （readyTask 入队路径）生效 —— launch 重解析不吃新闸，历史在队任务不受牵连。
+ * ⑥（issues/ ≥1 票产物基线）仅在 `enqueueChecks`（readyTask 入队路径）生效 ——
+ * launch 重解析不吃新闸，历史在队任务不受牵连。
+ * ⑤ bindingConfirmed（人工绑定确认）已于 2026-10-10 废除（ADR-0028）：绑定存在
+ * 且可解析（② workflow-ref）即视为已确认，miss 码 `binding-unconfirmed` 不再产出。
  *
  * `resolveRef` is injected rather than called here so the resolution set (which needs
  * BuiltInWorkflowService + TaskHomeService) stays the caller's wiring; the function
@@ -336,9 +338,9 @@ export function resolveV4Phases(args: {
   taskArtifactsDir: string
   resolveRef: (ref: string) => { content: string } | null
   /** 入队专属加严检查（readyTask 置 true；launch 重解析不置）：
-   *  ⑤ bindingConfirmed —— 逐 phase 人工确认绑定，miss `phase:<i>:binding-unconfirmed`；
    *  ⑥ issues/ 产物基线 —— 批次目录 issues/ 存在且 ≥1 张 .md 票（所有绑定流统一），
-   *     miss `phase:<i>:issues-missing`。历史在队任务经 launch 恢复不受影响。 */
+   *     miss `phase:<i>:issues-missing`。历史在队任务经 launch 恢复不受影响。
+   *  （⑤ bindingConfirmed 人工确认闸已废，ADR-0028 —— 绑定可解析即视为确认。） */
   enqueueChecks?: boolean
 }): { missing: string[]; phases: TaskV4PhaseConfig[] } {
   const { taskSpec, homeDir, taskArtifactsDir, resolveRef, enqueueChecks } = args
@@ -354,10 +356,6 @@ export function resolveV4Phases(args: {
     const absSpec = path.isAbsolute(p.specPath) ? p.specPath : path.join(homeDir, p.specPath)
     const specOk = fs.existsSync(absSpec) && fs.statSync(absSpec).isFile()
     if (!specOk) missing.push(`phase:${i}:spec-missing`)
-    // ⑤ (enqueue only) 人工确认闸：未经绑定弹窗保存/被 agent 改写 → 挡入队
-    if (enqueueChecks && p.bindingConfirmed !== true) {
-      missing.push(`phase:${i}:binding-unconfirmed`)
-    }
     // ② workflow_ref resolvable (single resolve serves ③'s content too)
     const ref = (p.workflowRef ?? "").trim()
     const resolution = ref ? resolveRef(ref) : null

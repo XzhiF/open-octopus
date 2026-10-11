@@ -142,8 +142,9 @@ export const taskPhaseSchema = z.object({
   specPath: z.string().min(1),
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
-  // 人工确认闸（v4 入队 gate 逐 phase 必检）：用户在绑定/编辑弹窗保存一次
-  // 即 true；agent 整数组改写 phases 或换绑会丢掉本字段 → 重新确认。
+  // @deprecated（2026-10-10 ADR-0028：入队闸⑤「人工确认绑定」废除 —— 绑定存在
+  // 且可解析即视为已确认）。字段保留 optional 仅为 wire 兼容（老任务行/老请求带
+  // 本字段仍可解析）；server 不再检查其值，web 也不再读写。
   bindingConfirmed: z.boolean().optional(),
 })
 

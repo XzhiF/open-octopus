@@ -2,18 +2,21 @@ apiVersion: octopus/v1
 kind: Workflow
 
 # ============================================================
-# task-fix — 通用修复流（task-phase-redesign K7 / ADR-0018 打回二分路由）
+# task-fix — 修复轮（打回单路径 ADR-0024 · 计划回写 ADR-0026）
 #
-# 验收打回时人在弹窗二选一：「轻量修复」→ server 即时派发本流并**合成输入**
-# （起草期永远不手绑本流）；「修订重跑」→ 重跑 phase 绑定流（规格级变更走
-# matt-spec-dev 的 spec 再审段）。反馈由 server 产物化为 fix-feedback-rN.md。
+# 验收打回时 server 即时派发本流并**合成输入**（起草期永远不手绑本流）；
+# 打回不重跑 phase 绑定流本身——修复轮承担打回反馈的全部出口（ADR-0024）。
+# 反馈由 server 产物化为 fix-feedback-rN.md。
 #
-# 与具体开发流无关，只认三个输入：
+# 与具体开发流无关，只认这些输入：
 #   phase_spec_dir     — phase Batch 目录（打回路由合成 ws 同构相对位；直绑
-#                        ${phase.spec_dir} 时为 home 绝对位。终态以 ws 侧为准，
-#                        由 server collect 回流 home — ADR-0018）
+#                        ${phase.spec_dir} 时为 home 绝对位。ws 侧是下发副本，
+#                        每轮开工由 home→ws seed 整份覆盖——spec/票的变更一律走
+#                        计划回写 REST 通道写 home 正本，不直写本副本（ADR-0026）；
+#                        fix-report/证据照旧以 ws 为准，轮终态由 server collect 回流 home）
 #   feedback_path      — fix-feedback-rN.md（打回反馈，round 号编在文件名里）
 #   task_artifacts_dir — 看板管理键，dispatch 时自动注入（绑定表单无需手填）
+#   task_id / octopus_api — server 每轮自动注入（计划回写 curl 配方的身份线索）
 #
 # Flow:
 #   precheck (bash — 确定性前置核对，不烧 agent token)
@@ -21,16 +24,18 @@ kind: Workflow
 #     └─ ok=false → fail-fast (bash — 当场失败并说明原因)
 #
 # 设计依据：K3 失败归 round 层（本流 fail → 任务进「待验收/待处理」，不是红死态）；
-# K6 打回授权的落点在「人选轻量修复」这一步，流本身无人工节点；
-# ADR-0018：反馈若指向规格本身的小错，允许就地小改 spec.md 并在 fix-report 记录
-# —— 大改（范围/决策级）仍走修订重跑（matt-spec-dev spec 再审段），本流不扩权。
+# K6 打回授权的落点在「人选打回」这一步，流本身无人工节点；
+# ADR-0026：反馈指向规格即由修复轮经计划回写通道改 spec 并留痕——属正常职责，
+# 不是扩权；本轮不完/超范围 → 开票留档（ready-for-agent）；超结构边界（加/减 phase、
+# 换绑定流）→ 范围变更票（ready-for-human）留档指路 authoring 侧。
 # ============================================================
 
 name: task-fix
 description: |
-  通用修复流（验收打回后的轻量修复轮）。读 phase Batch 目录内最新 spec-rN + fix-feedback-rN.md
-  + issues/ 未完成票，按反馈定点修复（不夹带范围外改动；反馈指向规格小错时可就地
-  小改 spec.md 并记录），产出 fix-report-rN.md（反馈逐条 → 修复动作 → 验证证据）写回同 Batch 目录。
+  通用修复流（验收打回后的修复轮）。读 phase Batch 目录内最新 spec-rN + fix-feedback-rN.md
+  + issues/ 未完成票，按反馈定点修复（不夹带范围外改动；反馈指向规格即经计划回写 REST
+  通道改 spec 并留痕，本轮不完/超范围开票 ready-for-agent 留档，超结构边界落范围变更票
+  ready-for-human）。产出 fix-report-rN.md（反馈逐条 → 修复动作 → 验证证据）写回同 Batch 目录。
 version: 1.0.0
 
 # --- 全局配置 ---
@@ -42,13 +47,19 @@ execution_mode: serial
 # --- 输入（phase input_values 绑定；${phase.spec_dir} 等 v4 词表 materialize 时解析）---
 inputs:
   phase_spec_dir:
-    description: "Phase Batch 目录（打回路由 server 合成 = ws 相对位；直绑 ${phase.spec_dir} 为 home 绝对位；含 spec*.md + issues/）"
+    description: "Phase Batch 目录（打回路由 server 合成 = ws 相对位；直绑 ${phase.spec_dir} 为 home 绝对位；含 spec*.md + issues/；计划变更不经此副本，走计划回写通道）"
     required: true
   feedback_path:
     description: "打回反馈文件路径（与 phase_spec_dir 同侧的 Batch 目录内 fix-feedback-rN.md，N=被打回的 round）"
     required: true
   task_artifacts_dir:
     description: "任务产物目录 — 看板 dispatch 管理键自动注入，绑定表单无需手填"
+    required: false
+  task_id:
+    description: "任务 ID — server 每轮权威自动注入（计划回写端点的路径身份），空串时回写配方动作跳过"
+    required: false
+  octopus_api:
+    description: "Octopus server 自身 base URL（如 http://127.0.0.1:3001）— 与 task_id 同纪律自动注入"
     required: false
 
 # --- 变量（precheck 写，fix/fail-fast 读；串行链上的路由真相）---
@@ -128,17 +139,38 @@ nodes:
       - 票目录：$vars.phase_spec_dir/issues/ —— 读 Status ≠ done/skip 的票，明确本 phase 剩余范围
       - 修复报告写到：$vars.phase_spec_dir/$vars.report_file
       - 过程性证据/临时产物：$vars.task_artifacts_dir（不存在先 mkdir -p）
+      - 计划回写端点身份：task_id=$inputs.task_id / server=$inputs.octopus_api（server 每轮自动注入）
 
       ═══ 修复纪律 ═══
       1. 先把反馈拆成条目清单，逐条定位到代码/测试位置，再开始修改。
       2. 定点修复 —— 只改与反馈条目直接相关的代码；不夹带范围外重构，不顺手实现被否票。
-      3. 原则上不动 spec*.md（范围真相以它为准）；例外 —— 反馈明确指向规格的**局部
-         小错**（措辞矛盾/验收标准笔误）时，就地小改 spec.md 并在 fix-report 的
-         「Spec 小改」节逐条说明（ADR-0018 ws 权威，终态随 collect 回流 home）；
-         范围/决策级变更不在本流处理：不自行扩权，写入报告「遗留问题」并收束，
-         由人改选「修订重跑」（matt-spec-dev 的 spec 再审段）。
-      4. 每条反馈以实际执行验证（跑测试/命令，证据可定位：文件路径 + 命令输出摘要）；仅声称完成不算。
-      5. 反馈条目互相矛盾或环境跑不起来：停止猜测，把阻塞清单（现象/已尝试/需要谁决策）写入报告，fix_status=partial 收束。
+      3. 计划回写（修复轮的正牌职责，ADR-0026）—— 反馈指向规格本身（范围错/验收标准
+         矛盾/决策改判）时直接改 spec：走下方计划回写 REST 通道写 home 批次正本，
+         server 自动在文末「## 变更记录」节 append 一行（时间·actor·source·reason·文件），
+         你勿手写该节；牵连**后续 phase** 批次规格的自我纠错走同一通道（batch 可指向
+         后续 phase 批次）。不要直接写工作区批次目录里的副本 —— 那是下发位，下轮开工
+         被 home seed 整份覆盖，改动既进不了计划也保不住。打回反馈本身即人的指令，
+         规格级修复不再上交等待、不设二次预览：开工前先回写，让代码与计划同一口气。
+      4. 出口 —— 本轮做不完的新范围/超范围条目：经票侧通道在 issues/ 开票留档
+         （编号顺延、写 Blocked by、`Status: ready-for-agent`、票体带 `Origin:` 出生
+         证明行如 `Origin: 打回 r$vars.fix_round`），供下轮或后续修复轮认领，不许
+         只写进报告「遗留问题」就算交代；变更牵连任务结构（加/减 phase、换绑定流）：
+         只开**范围变更票**（`Status: ready-for-human`）留档指路 authoring 侧，
+         不动信封 phases[] 结构、不自行扩权执行。
+      5. 每条反馈以实际执行验证（跑测试/命令，证据可定位：文件路径 + 命令输出摘要）；仅声称完成不算。
+      6. 反馈条目互相矛盾或环境跑不起来：停止猜测，把阻塞清单（现象/已尝试/需要谁决策）写入报告，fix_status=partial 收束。
+
+      ═══ 计划回写 curl 配方（改 spec/票的唯一通道，ADR-0026）═══
+        POST $inputs.octopus_api/api/tasks/$inputs.task_id/plan          // 改批次 spec（server 落变更记录）
+        POST $inputs.octopus_api/api/tasks/$inputs.task_id/plan/issues   // 开票/改票（content 须含 Origin: 与 Status: 两行）
+      body 字段名逐字（JSON，五项全必填）：
+        { "batch": ".scratch/<批次目录相对名 = $vars.phase_spec_dir 去掉工作区前缀，可指向后续 phase>",
+          "file": "<批次内文件名，如 spec.md；票为 issues/NN-xxx.md>",
+          "content": "<改后的完整内容>",
+          "reason": "<为什么要改，非空>",
+          "source": "打回 r$vars.fix_round 反馈#k" }
+      Windows UTF-8 暗礁：body 含中文**勿命令行内联**（ANSI 码页转 GBK 存库乱码）——
+      先用 Write 工具把 JSON 落成 ASCII 路径文件，再 curl --data-binary @该文件。
 
       ═══ 修复报告（必产，路径 = $vars.phase_spec_dir/$vars.report_file）═══
       markdown，结构：
@@ -146,6 +178,7 @@ nodes:
       - 反馈条目表：反馈 → 修复动作 → 验证证据（三列逐条，不许合并）
       - 变更文件清单（git diff --stat 摘要）
       - issues/ 状态回写：本轮覆盖哪些未完成票 → Status 改 done（附证据行）；未覆盖的注明原因
+      - 计划回写：本轮经通道改了哪些批次 spec/票（batch、file、source 出处）与新开的票；无则写「无」
       - 遗留问题 / 阻塞（若有）
       - 收束建议：建议再验收 / 需人工决策（含建议的下一步）
 

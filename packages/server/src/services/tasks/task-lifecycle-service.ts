@@ -96,7 +96,7 @@ export interface ArmOptions {
   phaseIndex?: number
   roundIndex?: number
   feedback?: string
-  /** ADR-0018 打回二分路由: swap this round's workflow (e.g. built-in/task-fix). */
+  /** ADR-0024 打回单路径: override this round's workflow to built-in/task-fix. */
   workflowRefOverride?: string
   /** Replace the phase's input_values wholesale (fix-round synthesis). */
   inputOverride?: Record<string, string>

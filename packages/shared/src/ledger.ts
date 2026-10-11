@@ -8,11 +8,12 @@ import { emptyTokenUsage, addTokenUsage, totalTokens, type TokenUsage } from './
  * - DAO 里 GROUP BY 级聚合必须用 `LEDGER_SQL.*` 拼表达式，禁止手写 SUM；
  * - 金表测试（server/ledger-sql-mirror）钉死两者在同一数据集上逐位相等。
  *
- * 口径共识（ADR-0016）：
+ * 口径共识（ADR-0016 · cacheHitRate 分母口径由 ADR-0027 amend）：
  * - 总 tokens = 四字段和（含 cache），折叠口径（in+cacheRead / in+out）全站废除；
  * - cost 为「价表估算之和」（C2：不存在账单实测），NULL=未定价——
  *   全组未定价 → usd=null；部分定价 → usd=已知部分和 + complete=false；
- * - cacheHitRate = cacheRead/(input+cacheRead)，值域 0–1，分母 0 → null（不造假 0%）。
+ * - cacheHitRate = cacheRead/(input+cacheRead+cacheCreation)，值域 0–1，分母 0 → null
+ *   （不造假 0%）；缓存写按 1.25× 计价属「未命中」，必须进分母（ADR-0027）。
  */
 
 export interface LedgerCost {
@@ -50,10 +51,11 @@ export const LEDGER_SQL = {
     `CASE WHEN COUNT(${col}) = 0 THEN NULL ELSE COALESCE(SUM(${col}), 0) END`,
   costCompleteOf: (col: string) =>
     `COUNT(*) = COUNT(${col})`,
-  /** cache 命中率 0–1；input+cacheRead 为 0 → NULL */
+  /** cache 命中率 0–1；input+cacheRead+cacheCreation 为 0 → NULL（分母含缓存写，ADR-0027） */
   cacheHitRate: (p = '') =>
-    `CASE WHEN SUM(${p}input_tokens + ${p}cache_read_tokens) > 0 ` +
-    `THEN CAST(SUM(${p}cache_read_tokens) AS REAL) / SUM(${p}input_tokens + ${p}cache_read_tokens) ` +
+    `CASE WHEN SUM(${p}input_tokens + ${p}cache_read_tokens + ${p}cache_creation_tokens) > 0 ` +
+    `THEN CAST(SUM(${p}cache_read_tokens) AS REAL) / ` +
+    `SUM(${p}input_tokens + ${p}cache_read_tokens + ${p}cache_creation_tokens) ` +
     `ELSE NULL END`,
 } as const
 
@@ -73,8 +75,9 @@ export function costSummary(costs: readonly (number | null | undefined)[]): Ledg
   }
 }
 
+/** 命中率唯一 JS 公式：分母含 cacheCreation（ADR-0027，与 LEDGER_SQL.cacheHitRate 同式）；三字段全 0 → null。 */
 export function cacheHitRateOf(u: TokenUsage): number | null {
-  const den = u.inputTokens + u.cacheReadTokens
+  const den = u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens
   return den > 0 ? u.cacheReadTokens / den : null
 }
 

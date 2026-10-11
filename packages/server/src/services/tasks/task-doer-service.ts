@@ -12,7 +12,12 @@
 // ws-chat channel applies unchanged — no new chat protocol. The doer runs with
 // cwd = that workspace: project worktrees live under {ws}/projects/<repo>, and
 // the task-home write-ring (buildPathGuard, ADR-0018 §6) is not involved at
-// all — it is装载 only for task-author sessions.
+// all — it is装载 only for task-author sessions. 计划回写 票04 (ADR-0026) adds
+// the REVERSE half: every doer turn carries buildDoerBatchGuard(wsPath, taskId)
+// — writes into {ws}/.scratch/** (the seed-overwritten batch mirror) are
+// refused on the spot with a reason pointing at the plan-writeback REST
+// channel; everything else (projects/ writes, commits, reads, Bash surface)
+// is untouched.
 //
 // Seam posture: everything here is observable through GET/POST
 // /api/tasks/:id/chat (routes/task-chat.ts) — statuses, the persisted binding,
@@ -28,7 +33,7 @@ import type { SSEService } from "../sse"
 import type { ChatService } from "../chat"
 import { runChatTurn, type ChatTurnOutcome, type ChatTurnStream } from "../chat-turn"
 import type { WorkspaceService } from "../workspace"
-import { CloneRuntime } from "../agent/clone-runtime"
+import { CloneRuntime, buildDoerBatchGuard } from "../agent/clone-runtime"
 import { getBuiltinCloneDef } from "../agent/builtin-clones"
 import type { TaskHomeService } from "./task-home-service"
 import { TaskNotFoundError, TaskStatusConflictError, type TasksService } from "./tasks-service"
@@ -210,14 +215,22 @@ export class TaskDoerService {
       provider: session.provider,
       providerSessionId: session.providerSessionId,
       systemPromptAppend: append,
+      // 计划回写 票04 (S2) 反向硬闸：ws 侧批次目录（.scratch 同构位 = seed 的
+      // 覆盖目标，「会被洗」断层）的写入当场拒绝，tool 结果带回可见原因 +
+      // 计划回写 REST 指路（POST /api/tasks/:id/plan[/issues]）；projects/ 写、
+      // 每改即 commit、以及批次目录的读全部不受影响。与 author 守卫同机制
+      // （provider onBeforeToolCall → canUseTool 权威闸）、方向相反（author 圈进
+      // home，这里只把 doer 挡在 {ws}/.scratch 之外 —— 其余命令面完整保留）。
+      // task-home 写权环本身依旧不参与（ADR-0025 会话两面性），此闸只走 chat 通道。
+      onBeforeToolCall: buildDoerBatchGuard(target.wsPath, taskId),
       // 快速修改每改即 commit (票01 写纪律的 server 半): the turn moved the
       // workspace's git现场 → land one marked commit per dirty repo on its
       // checked-out execution branch, announced over SSE before close. The
       // marker is form-aware ([quick-edit] / [takeover-edit], see
       // {@link isTakeoverTurn}); the SSE frame name quick_edit_commit is the
-      // 票01/07 契约 and does NOT change. NOT a keyword judgment — 大改动劝退
-      // lives in the persona (model side); the server only mechanicalizes
-      // "did files actually change".
+      // 票01/07 契约 and does NOT change. NOT a keyword judgment — the
+      // plan-before-code 确认闸 for big changes lives in the persona (model
+      // side); the server only mechanicalizes "did files actually change".
       onTurnComplete: async () => {
         const commits = await this.commitQuickEdits(target, content, takeoverTurn)
         for (const cm of commits) {
@@ -297,7 +310,7 @@ export class TaskDoerService {
    *   - 启动 Runbook（两级判据单源 {@link specRunbookLevel}，与 round-evidence
    *     resolveRunbook / ready-gate 同一函数）
    *   - 写纪律（每改即 commit —— 标记随形态：接管回合 [takeover-edit]，其余
-   *     [quick-edit]；大改动劝退转修复轮 —— 判断在 persona/模型，这里每轮重申）
+   *     [quick-edit]；大改动走 plan-before-code 确认闸 —— 判断在 persona/模型，这里每轮重申）
    */
   buildTaskContext(taskId: string, target: EnsuredDoerSession, takeoverTurn = false): string {
     const detail = this.deps.tasksService.getTask(taskId)
@@ -386,7 +399,7 @@ export class TaskDoerService {
       )
     } else {
       lines.push(
-        `- 写纪律（快速修改）: 每次有效编辑由 server 自动在执行分支落一个 ${marker} 提交，勿自行 git commit/push；大改动（跨多文件逻辑、新接口/模块级）按 persona 劝退转「打回 → 修复轮」并整理反馈指令草稿。`,
+        `- 写纪律（快速修改）: 每次有效编辑由 server 自动在执行分支落一个 ${marker} 提交，勿自行 git commit/push；大改动（跨多文件逻辑、新接口/模块级）按 persona 走 plan-before-code 确认闸 —— 先出 spec 变更预览 + 票草稿请人确认，确认后经计划回写 REST 通道改计划、再动代码，被否一字不动。`,
       )
     }
     return lines.join("\n")

@@ -128,11 +128,11 @@ const emptyHome: HomeTreeState = { dir: "/home/.octopus/tasks/test-task", entrie
 
 const allOk = {
   rowPhases: true, rowSpec: true, rowBind: true, rowInputs: true, rowRepos: true,
-  rowConfirm: true, rowRunbook: true, specUnknown: false, specMissingIdx: [] as number[],
-  absSpecCount: 0, unconfirmedIdx: [] as number[],
+  rowRunbook: true, specUnknown: false, specMissingIdx: [] as number[],
+  absSpecCount: 0,
   inputsUnknown: false, specTreeReady: false,
 }
-const noHits: Record<"phases" | "confirm" | "runbook" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], confirm: [], runbook: [] }
+const noHits: Record<"phases" | "runbook" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], runbook: [] }
 
 function renderPanel(task: Task, rows = allOk, gateHits = noHits, home = emptyHome) {
   return render(
@@ -322,6 +322,80 @@ describe("SpecPanel — 输出区任务 home 磁盘直扫树", () => {
     fireEventClick(q('[data-phase-spec-button="1"]')!)
     await waitFor(() => expect(q("[data-spec-skeleton-button]")).toBeTruthy())
     expect(q('[data-phase-name-input="1"]')).toBeNull()
+  })
+})
+
+// ── 票 09 · 单源换装：readOnly 只读镜像 ────────────────────────────────
+// 真相源 = 原型 taskboard-v2.html readySpecHtml（「草稿期 SpecPanel 只读镜像」+
+// 只读徽标；phase 瓦片静态、清单全 ✓、批次树照常点开只读查看弹窗）。
+// 本组钉「写动作不渲染」的组件级契约：**草稿任务 + autoRow 在场**也不漏控件 ——
+// 隐藏由 readOnly 入参把关，不由 status 顺带。
+describe("SpecPanel — readOnly 只读镜像（票09 单源换装）", () => {
+  const AUTO_ROW = (
+    <label data-autoadvance-toggle-label>
+      <input type="checkbox" checked readOnly data-autoadvance-switch data-testid="autoadvance-switch" />
+      验收通过后自动开跑下一 Phase（auto_advance）
+    </label>
+  )
+  const dir = (p: string) => ({ path: p, type: "dir" as const, bytes: 0, mtime: "2026-09-24T10:00:00Z" })
+  const file = (p: string, bytes = 12) => ({ path: p, type: "file" as const, bytes, mtime: "2026-09-24T10:00:00Z" })
+
+  function renderReadOnly(task: Task, home?: HomeTreeState, onMutated = () => {}) {
+    return render(
+      <SpecPanel
+        task={task} onMutated={onMutated} batchTree={emptyTree} rows={allOk} gateHits={noHits}
+        home={home ?? emptyHome} autoRow={AUTO_ROW} readOnly
+      />,
+    )
+  }
+
+  it("readOnly：＋添加/卡片编辑入口/绑定按钮/auto_advance 开关计数全为 0（草稿态传了 autoRow 也隐）", () => {
+    // 草稿态 + readOnly：status 判据（isDraft）不足以挡控件，必须入参把关
+    renderReadOnly(makeTask({ task_spec: { format: "v4", phases: [makePhase(1), makePhase(2)] } as unknown as TaskSpec }))
+    expect(q("[data-phase-add-open]")).toBeNull()
+    expect(document.querySelectorAll("[data-phase-spec-button]")).toHaveLength(0)
+    expect(document.querySelectorAll("[data-phase-bind-button]")).toHaveLength(0)
+    expect(q("[data-autoadvance-row]")).toBeNull()
+    expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
+  })
+
+  it("readOnly：点 phase 卡无任何反应（不开 spec 编辑器/编辑窗），onMutated 零触发", async () => {
+    const user = userEvent.setup()
+    const spy = vi.fn()
+    renderReadOnly(makeTask({ status: "ready", task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }), undefined, spy)
+    await user.click(q('[data-phase-bind-card="1"]')!)
+    expect(q("[data-spec-skeleton-button]")).toBeNull()
+    expect(q("[data-phase-add-form]")).toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it("readOnly：清单照常渲染 ✓ 行；批次树照常可点，文件开 HomeFileViewerDialog 只读查看", async () => {
+    const user = userEvent.setup()
+    const home: HomeTreeState = {
+      dir: "/home/.octopus/tasks/test-task",
+      entries: [dir("artifacts/"), file("artifacts/a.md"), file("context.md")],
+      loading: false, error: null, refresh: () => {},
+    }
+    renderReadOnly(makeTask({ status: "ready", task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }), home)
+    expect(q('[data-checklist-v4="phases"]')!.textContent).toContain("✓")
+    expect(q('[data-checklist-v4="repos"]')!.textContent).toContain("✓")
+    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy()
+    await user.click(q('[data-artifacts-file="context.md"]')!)
+    await waitFor(() => expect(document.body.textContent).toContain("磁盘正文"))
+    expect(getHomeContent).toHaveBeenCalledWith("test-task", "context.md")
+  })
+
+  it("缺省（不传 readOnly）草稿态逐字不变：＋添加/编辑入口/开关（传入时）都在场", () => {
+    render(
+      <SpecPanel
+        task={makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec })}
+        onMutated={() => {}} batchTree={emptyTree} rows={allOk} gateHits={noHits} home={emptyHome} autoRow={AUTO_ROW}
+      />,
+    )
+    expect(q("[data-phase-add-open]")).toBeTruthy()
+    expect(q('[data-phase-spec-button="1"]')).toBeTruthy()
+    expect(q('[data-phase-bind-button="1"]')).toBeTruthy()
+    expect(q("[data-autoadvance-row]")).toBeTruthy()
   })
 })
 

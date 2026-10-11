@@ -125,9 +125,9 @@ describe('LEDGER_SQL ≡ JS 镜像（金表，NEW-r2：钱 = 派生视图）', (
     expect(empty.cacheHitRate).toBeNull()
   })
 
-  it('纯输入为零组（f4 单独）：hitRate 两侧都 null（不造假 0%）', () => {
-    expect(sqlTokens("ntu.id = 'f4'").hit).toBeNull()
-    expect(cacheHitRateOf(FIXTURES[3])).toBeNull()
+  it('纯读输入为零组（f4 单独）：hitRate 两侧都 0.0（纯缓存写=未命中真值，ADR-0027；不再 null）', () => {
+    expect(sqlTokens("ntu.id = 'f4'").hit).toBe(0)
+    expect(cacheHitRateOf(FIXTURES[3])).toBe(0)
   })
 
   it('totalTokens/addTokenUsage 与 sumTokens 片段在 fixture 累加上一致', () => {

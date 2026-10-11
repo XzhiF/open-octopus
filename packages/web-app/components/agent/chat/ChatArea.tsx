@@ -558,7 +558,7 @@ export function ChatArea({
             )}
             <div
               data-composer-block
-              className="rounded-lg border border-pop-bd bg-pop-paper px-2.5 py-1.5 transition-colors focus-within:border-pop-pink"
+              className="rounded-lg border border-pop-bd bg-pop-bg px-2.5 py-1.5 transition-colors focus-within:border-pop-pink"
             >
               <div className="flex items-start gap-2">
                 {/* pt-1.5 与 textarea 的 py-1.5 对齐：两者行高同为 24px，

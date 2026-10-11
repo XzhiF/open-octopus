@@ -18,6 +18,10 @@ const {
   mockTakeover, mockDeliverTakeover, mockFixRound,
   // 票11：中止句柄（走查面二次确认单源）+ 产物 manifest 两端 + 会话口径账本。
   mockRequestAbort, mockGetArtifactManifest, mockReadManifestFile, mockFetchSessionLLMCalls,
+  // 票07(原型⓬)：ready 静态节点预览的绑定流内容读取桩。
+  mockBuiltInDetail,
+  // 票09：spec 只读镜像的两条磁盘读通路（批次树已在 mockGetBatchTree；home 树补桩）。
+  mockGetHomeTree,
   // 票11 收口①：sse-manager 订阅捕获（日志流优先订既有 executions/events 实时追加）。
   sseSubs,
 } = vi.hoisted(() => ({
@@ -49,6 +53,11 @@ const {
   mockGetArtifactManifest: vi.fn(),
   mockReadManifestFile: vi.fn(),
   mockFetchSessionLLMCalls: vi.fn(),
+  // 票07 ready 静态节点预览：绑定流内容读取通路（built-in 域 + task-home 回落走
+  // tasks-api.getHomeFile 桩）。
+  mockBuiltInDetail: vi.fn(),
+  // 票09：home-tree 默认空树（spec 镜像挂载即用；个案覆盖 entries）。
+  mockGetHomeTree: vi.fn(),
   sseSubs: [] as Array<{ url: string; type: string; fn: (e: MessageEvent) => void }>,
 }))
 
@@ -76,6 +85,10 @@ vi.mock("@/lib/tasks-api", () => ({
   WorkflowRefViewError: class extends Error {},
   getArtifactContent: vi.fn(), getWorkflowRefView: vi.fn(),
   getHomeFile: vi.fn(), putHomeFile: vi.fn(), listHomeDir: vi.fn(),
+  // 票09：spec 只读镜像的 home 磁盘直扫树。
+  getHomeTree: mockGetHomeTree,
+  getHomeContent: vi.fn().mockResolvedValue({ path: "", content: "" }),
+  MAX_HOME_FILE_READ_BYTES: 1024 * 1024,
   // 票03「≡ 变更」接线：壳的 round-diff 单源节拍 + FilesTab 懒拉 patch
   getRoundDiff: mockGetRoundDiff, getRoundPatch: mockGetRoundPatch,
   // 票07 对话页签（TaskChatTab 真实挂载）：会话绑定 + 历史回放
@@ -89,6 +102,13 @@ vi.mock("@/lib/observability-api", () => ({
   fetchLLMCalls: mockFetchLLMCalls,
   // 票11 ▤ 消耗页签的 task-doer 对话账（会话口径单源）。
   fetchSessionLLMCalls: mockFetchSessionLLMCalls,
+}))
+// 票07 ready 静态节点预览：绑定流内容读取（复用 built-in 详情通路，测试不真发请求）。
+// 票09：spec 镜像的 gate 目录读取默认空目录（未知 ref = server 权威，inputs 行不阻塞）。
+vi.mock("@/lib/workflow-presets-api", () => ({
+  getBuiltInWorkflowDetail: mockBuiltInDetail,
+  listBuiltInWorkflows: vi.fn().mockResolvedValue([]),
+  listWorkflowPresets: vi.fn().mockResolvedValue({ presets: [] }),
 }))
 vi.mock("@/lib/sse-manager", () => ({
   subscribeSSE: (url: string, type: string, fn: (e: MessageEvent) => void) => {
@@ -250,6 +270,13 @@ beforeEach(() => {
   mockReadManifestFile.mockResolvedValue({ path: "home:.scratch/x/spec.md", content: "# spec" })
   mockFetchSessionLLMCalls.mockReset()
   mockFetchSessionLLMCalls.mockResolvedValue({ data: [], aggregates: { totalCalls: 0, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null }, modelBreakdown: {} } })
+  // 票07 默认面：绑定流内容读不到（reject）—— 静态预览落「读取失败」降级话术，
+  // 不编造行；看清单的用例自行 mockResolvedValue（YAML 原文走 content）。
+  mockBuiltInDetail.mockReset()
+  mockBuiltInDetail.mockRejectedValue(new Error("not resolvable in console tests"))
+  // 票09 默认面：home 直扫树空（spec 镜像挂载即拉；个案覆盖 entries）。
+  mockGetHomeTree.mockReset()
+  mockGetHomeTree.mockResolvedValue({ dir: "/home/.octopus/tasks/task-1", entries: [] })
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
@@ -331,8 +358,15 @@ describe("TaskRunConsole — 五态皮肤与动作", () => {
   it("ready：发射门禁/GOAL/大触发钮/盘上文件全部绝迹（用户终裁）；触发只剩 rail ⚡ 单源，点击不旁路落端点", async () => {
     const t = makeTask("ready")
     renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending"), pv(2, "票11阶段2", "pending")], true, "ready") })
-    // 纯流形态：控制台页签只剩工作区事件流（ready 无绑定执行 → 空态如实）。
-    expect(await screen.findByTestId("workspace-event-stream")).toBeTruthy()
+    // 票07（原型 ⓬）：ready 装配 = 三签，默认落「◆ 节点」静态预览 —— 控制台页签
+    // 不再进 ready 装配（旧「默认事件流」断言随装配表迁移；门制动线在 rail/顶栏，未回退）。
+    const nodesTab = await screen.findByTestId("console-tab-nodes")
+    expect(nodesTab.getAttribute("aria-selected")).toBe("true")
+    expect(screen.queryByTestId("console-tab-console")).toBeNull()
+    // 绑定流内容读不到（默认桩 reject）→ 静态预览落降级话术，不编造节点行。
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    expect(await within(host).findByTestId("static-nodes-error")).toBeTruthy()
+    expect(host.querySelector("[data-static-node-row]")).toBeNull()
     for (const gone of [/发射门禁/, /每个 Phase 已绑定工作流/, /spec\.md 落盘/, /⚡ 触发执行/, /盘上文件/, /GOAL/]) {
       expect(screen.queryByText(gone)).toBeNull()
     }
@@ -1031,15 +1065,244 @@ describe("票 04 — NodesTab 挂进 [data-tab-host=\"nodes\"]", () => {
     expect(host!.textContent).not.toContain("票 04")
   })
 
-  it("ready 未触发（executions 空）：宿主内如实空态，不编造清单", async () => {
+  it("ready 未触发（executions 空）：不再打「无节点」空态 —— 走票07 静态预览降级（读不到绑定流也如实，不编造清单，不打执行详情）", async () => {
     const t = makeTask("ready")
     renderConsole(t, { ...t, executions: [], derived: derivedOf([pv(1, "票11阶段1", "pending")], true, "ready") })
     await screen.findByTestId("phase-timeline")
     fireEvent.click(screen.getByTestId("console-tab-nodes"))
     const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement | null
-    expect(await within(host!).findByTestId("nodes-empty")).toBeTruthy()
-    expect(host!.textContent).toContain("尚无绑定执行")
+    expect(await within(host!).findByTestId("static-nodes-error")).toBeTruthy()
+    expect(host!.querySelector("[data-static-node-row]")).toBeNull()
     expect(mockFetchExecutionDetail).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ 票 07 · 待执行三签骨架（对话·规格·节点 + 绑定流 ○ 静态预览）═════════════════
+// 真相源 = 原型 taskboard-v2.html renderModal 的 ready 分支（rd=t.col==='ready'）：
+//   tabs rd ? [chat 对话, spec 规格, nodes 节点]，openTask 默认 tab='nodes'；
+//   readyNodesHtml：⚙ 流名 + 「P<ph> 绑定流 … 触发后开跑 — 点行看占位」+ 0/N 完成 · 等待触发；
+//   展开行（nodeEvents ready 分支）逐字 =「— 未执行 · 等待触发 —」。
+// 对话/规格两签真身已由 08/09 就位（占位壳 ready-tab-placeholders 随二轮终审
+// standards① 删除 —— 死码零 importer；装配先行契约不变，装配不再动）。
+describe("票 07 — ready 三签骨架：默认节点静态预览 + 对话/规格可点可切", () => {
+  const STATIC7_YAML = `
+name: matt-spec-dev
+nodes:
+  - id: spec-resolve
+    type: bash
+  - id: fail-fast
+    type: bash
+  - id: spec-review
+    type: agent
+  - id: ticket-dag
+    type: dynamic_sub_workflow
+  - id: code-review
+    type: agent
+  - id: e2e-verify
+    type: agent
+  - id: ship-pr
+    type: agent
+`
+
+  const readyV4 = () => {
+    const t = makeTask("ready")
+    renderConsole(t, {
+      ...t,
+      executions: [],
+      derived: derivedOf([pv(1, "票11阶段1", "pending", { workflowRef: "built-in/matt-spec-dev" })], true, "ready"),
+    })
+    return t
+  }
+
+  it("三签装配上屏：对话·规格·节点在册，变更/消耗/产物/控制台绝迹；默认落节点", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: STATIC7_YAML, parsed: { name: "matt-spec-dev" } })
+    readyV4()
+    const nodesTab = await screen.findByTestId("console-tab-nodes")
+    expect(screen.getByTestId("console-tab-chat")).toBeTruthy()
+    expect(screen.getByTestId("console-tab-spec")).toBeTruthy()
+    expect(nodesTab.getAttribute("aria-selected")).toBe("true")
+    for (const gone of ["files", "usage", "artifacts", "console", "review"]) {
+      expect(screen.queryByTestId(`console-tab-${gone}`)).toBeNull()
+    }
+    // 页签标签词表（原型逐字）
+    expect(screen.getByTestId("console-tab-chat").textContent).toContain("💬 对话")
+    expect(screen.getByTestId("console-tab-spec").textContent).toContain("▤ 规格")
+  })
+
+  it("节点静态预览：绑定流 YAML 声明序全 ○，用时/成本 `—`，汇总 0/7 等待触发；展开行=「未执行 · 等待触发」（原型 readyNodesHtml + nodeEvents）", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: STATIC7_YAML, parsed: { name: "matt-spec-dev" } })
+    readyV4()
+    // detail 异步就位前 derived 缺席（v4 闸不亮，装配只剩控制台）—— 先等三签上屏。
+    await screen.findByTestId("console-tab-nodes")
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    const tab = await within(host).findByTestId("static-nodes-tab")
+    // 声明序 = 清单序（独立真相：core-pack matt-spec-dev.yaml 实取）
+    expect([...tab.querySelectorAll("[data-static-node-row]")].map((el) => el.getAttribute("data-static-node-row")))
+      .toEqual(["spec-resolve", "fail-fast", "spec-review", "ticket-dag", "code-review", "e2e-verify", "ship-pr"])
+    for (const id of ["spec-resolve", "ship-pr"]) {
+      const row = within(tab).getByTestId(`static-node-row-${id}`)
+      expect(row.textContent).toContain("○")
+      expect(row.textContent).toContain("—")
+    }
+    // 页签头：绑定流名 + 等待触发口径（原型 f-toolbar）
+    expect(within(tab).getByTestId("static-nodes-wf-pill").textContent).toContain("matt-spec-dev")
+    expect(within(tab).getByTestId("static-nodes-summary").textContent).toContain("0/7")
+    // 展开一行 → 占位话术（触发后才有事件）
+    fireEvent.click(within(tab).getByTestId("static-node-row-spec-resolve"))
+    expect((await within(tab).findByTestId("static-node-events-spec-resolve")).textContent).toContain("未执行 · 等待触发")
+  })
+
+  it("对话/规格两签可点可切：规格真身 ready-spec-tab 原位（票09 镜像）；对话真身 = 票08 只读回放（fixture 无草稿期会话 → 空态文案，面内零输入框）", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: STATIC7_YAML, parsed: { name: "matt-spec-dev" } })
+    readyV4()
+    await screen.findByTestId("console-tab-nodes")
+    fireEvent.click(screen.getByTestId("console-tab-spec"))
+    // 票09 真身钉点：testid ready-spec-tab，镜像体 = 真 SpecPanel（data-spec-panel），
+    // 写控件在场数 = 0。（占位壳 ready-spec-placeholder 已随二轮终审删除。）
+    expect(await screen.findByTestId("ready-spec-tab")).toBeTruthy()
+    expect(document.querySelector("[data-spec-panel]")).toBeTruthy()
+    expect(document.querySelector("[data-phase-add-open]")).toBeNull()
+    expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
+    fireEvent.click(screen.getByTestId("console-tab-chat"))
+    // 票08 真身回放面（makeTask 默认 source_chat_session_id=null →
+    // 「草稿期会话不存在」空态，不白屏。占位壳已删除，无缺席断言可钉）。
+    const replay = await screen.findByTestId("ready-chat-replay")
+    expect(within(replay).getByText("草稿期会话不存在")).toBeTruthy()
+    expect(within(replay).queryAllByRole("textbox")).toHaveLength(0)
+    // 切回节点：静态预览仍在场（宿主切换不残留别的页签内容）
+    fireEvent.click(screen.getByTestId("console-tab-nodes"))
+    expect(await screen.findByTestId("static-nodes-tab")).toBeTruthy()
+  })
+
+  it("phase 未绑定流（workflowRef 空）：静态预览给「未绑定」如实空态，不发内容读取", async () => {
+    const t = makeTask("ready")
+    renderConsole(t, {
+      ...t,
+      executions: [],
+      derived: derivedOf([pv(1, "票11阶段1", "pending", { workflowRef: "" })], true, "ready"),
+    })
+    await screen.findByTestId("console-tab-nodes")
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    expect(await within(host).findByTestId("static-nodes-unbound")).toBeTruthy()
+    expect(mockBuiltInDetail).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ spec① 二轮终审 · 静态预览判据 phase 化（status 无关）═════════════════
+// 判据从「ready 且无执行」改为「当前面相位无执行行」—— 与 static-nodes-tab 文件头
+// 既有约定（判据 = 该 phase 是否已有执行行，在壳层）对齐。running 装配里 rail 点到
+// 未开跑的 phase 也吃静态预览；有 exec 的相位照旧动态 NodesTab（不带歪）。
+describe("spec① — 静态预览判据 phase 化：无 exec 行的 phase 吃静态预览（status 无关）", () => {
+  const PREVIEW_YAML = `
+name: matt-preview-wf
+nodes:
+  - id: plan
+    type: agent
+  - id: dev
+    type: agent
+`
+
+  it("running：rail 切到未开跑 phase（该 phase 无 exec 行）→ 静态预览全 ○；有 exec 的相位不受判据影响仍动态 NodesTab", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-preview-wf", content: PREVIEW_YAML, parsed: { name: "matt-preview-wf" } })
+    mockFetchExecutionDetail.mockResolvedValue({
+      id: "exec-1", status: "running", workflow_ref: "built-in/wf",
+      workflow_content: "nodes:\n  - id: plan\n    type: agent\n", steps: [],
+    })
+    const t = makeTask("running")
+    renderConsole(t, {
+      ...t,
+      executions: [badge("exec-1", "running", { completed_at: null })],
+      derived: derivedOf([
+        pv(1, "票11阶段1", "running"),
+        pv(2, "票11阶段2", "pending", { workflowRef: "built-in/matt-preview-wf" }),
+      ]),
+    })
+    await screen.findByTestId("phase-timeline")
+    fireEvent.click(screen.getByTestId("console-tab-nodes"))
+    const dynHost = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    // P1（在跑，有 exec）：动态清单 —— 判据 phase 化不得把它带歪。
+    expect(await within(dynHost).findByTestId("nodes-tab")).toBeTruthy()
+    expect(within(dynHost).queryByTestId("static-nodes-tab")).toBeNull()
+    // 切面 P2（pending，无 exec 行）：静态预览全 ○（汇总 0/2 · 等待触发）。
+    fireEvent.click(screen.getByTestId("phase-row-2"))
+    const statHost = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    const tab = await within(statHost).findByTestId("static-nodes-tab")
+    expect([...tab.querySelectorAll("[data-static-node-row]")].map((el) => el.getAttribute("data-static-node-row")))
+      .toEqual(["plan", "dev"])
+    for (const id of ["plan", "dev"]) {
+      expect(within(tab).getByTestId(`static-node-row-${id}`).textContent).toContain("○")
+    }
+    expect(within(tab).getByTestId("static-nodes-summary").textContent).toContain("0/2")
+  })
+
+  it("ready（流⑦场景）：判据改 phase 化后行为不回退 —— 节点签仍吃静态预览全 ○，『无节点』残影绝迹，执行详情零调用", async () => {
+    mockBuiltInDetail.mockResolvedValue({ ref: "built-in/matt-spec-dev", content: PREVIEW_YAML, parsed: { name: "matt-spec-dev" } })
+    const t = makeTask("ready")
+    renderConsole(t, {
+      ...t,
+      executions: [],
+      derived: derivedOf([pv(1, "票11阶段1", "pending", { workflowRef: "built-in/matt-spec-dev" })], true, "ready"),
+    })
+    await screen.findByTestId("console-tab-nodes")
+    const host = document.querySelector('[data-tab-host="nodes"]') as HTMLElement
+    const tab = await within(host).findByTestId("static-nodes-tab")
+    for (const id of ["plan", "dev"]) {
+      expect(within(tab).getByTestId(`static-node-row-${id}`).textContent).toContain("○")
+    }
+    expect(within(host).queryByTestId("nodes-empty")).toBeNull()
+    expect(mockFetchExecutionDetail).not.toHaveBeenCalled()
+  })
+})
+
+// ═════════════════ 票 10 · ready 右栏账台角标（原型 ⓬ .tok-chip.rail，触发钮上方）═════════════════
+// 角标本体（三态/明细单源/portal 不推挤）在 ready-token-badge.test.tsx 钉死；
+// 本面只钉壳层装配：挂进 [data-rail-acts] 且 DOM 序在「⚡ 触发」钮**上方**，
+// 无缝/空账时不挂载（右栏不开空壳，触发钮照旧在场）。
+describe("票 10 — ready 右栏账台角标挂位", () => {
+  const readyDetail = (t: TaskView) => ({
+    ...t,
+    executions: [],
+    derived: derivedOf([pv(1, "票11阶段1", "pending")], true, "ready"),
+  })
+
+  it("有草稿期会话且账非零 → 角标挂 rail-acts 且在触发钮上方（tok/cache/▾ 同形制）", async () => {
+    mockFetchSessionLLMCalls.mockResolvedValue({
+      data: [],
+      aggregates: {
+        totalCalls: 12,
+        usage: { inputTokens: 9000, outputTokens: 2100, cacheReadTokens: 48000, cacheCreationTokens: 6000 },
+        totals: { tokens: 65100, cost: { usd: 0.12, complete: true }, cacheHitRate: 48000 / 63000 },
+        modelBreakdown: {},
+      },
+    })
+    const t = makeTask("ready", { source_chat_session_id: "sess-src" })
+    renderConsole(t, readyDetail(t))
+    await waitFor(() => expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeTruthy())
+    expect(mockFetchSessionLLMCalls).toHaveBeenCalledWith("sess-src")
+    const badge = document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']") as HTMLElement
+    expect(badge.textContent).toContain("tok 65.1K")
+    expect(badge.textContent).toContain("cache 76.2%")
+    // 插位硬钉：badge 与 trigger 同栏且 badge 在触发钮之前（compareDocumentPosition）
+    const trigger = document.querySelector("[data-rail-acts] [data-task-trigger]") as HTMLElement
+    expect(trigger).toBeTruthy()
+    expect(badge.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it("无会话 id → 角标不挂载、不 fetch（触发钮不受扰）", async () => {
+    const t = makeTask("ready")
+    renderConsole(t, readyDetail(t))
+    await screen.findByTestId("phase-timeline")
+    await waitFor(() => expect(document.querySelector("[data-rail-acts] [data-task-trigger]")).toBeTruthy())
+    expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeNull()
+    expect(mockFetchSessionLLMCalls).not.toHaveBeenCalled()
+  })
+
+  it("空账（默认桩 totalCalls=0）→ 角标不挂载（空壳短路），触发钮照旧", async () => {
+    const t = makeTask("ready", { source_chat_session_id: "sess-src" })
+    renderConsole(t, readyDetail(t))
+    await waitFor(() => expect(mockFetchSessionLLMCalls).toHaveBeenCalled())
+    expect(document.querySelector("[data-rail-acts] [data-testid='ready-token-badge']")).toBeNull()
+    expect(document.querySelector("[data-rail-acts] [data-task-trigger]")).toBeTruthy()
   })
 })
 

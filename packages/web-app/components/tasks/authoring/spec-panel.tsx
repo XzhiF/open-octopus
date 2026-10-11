@@ -35,7 +35,8 @@ import {
   withPhases,
 } from "./phases-mutation"
 
-/** 入队清单七态（与 server gateV4Phases 同源，父级计算后传入）。 */
+/** 入队清单六态（与 server gateV4Phases 同源，父级计算后传入）。
+ *  「绑定确认」行已删（2026-10-10 ADR-0028：绑定可解析即视为确认）。 */
 export interface SpecPanelRows {
   rowPhases: boolean
   rowSpec: boolean
@@ -47,9 +48,6 @@ export interface SpecPanelRows {
   absSpecCount: number
   rowBind: boolean
   rowInputs: boolean
-  /** 未经人工确认绑定的 phase index。 */
-  unconfirmedIdx: number[]
-  rowConfirm: boolean
   rowRunbook: boolean
   rowRepos: boolean
   inputsUnknown: boolean
@@ -61,16 +59,22 @@ export interface SpecPanelProps {
   onMutated: () => void
   batchTree: BatchTreeState
   rows: SpecPanelRows
-  gateHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]>
+  gateHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "runbook", string[]>
   /** 任务 home 磁盘直扫树（父级持有刷新通路：R1 写侦测/轮次兜底/SSE/[↻]）。 */
   home: HomeTreeState
   /** autoAdvance 开关行（父级持有写回逻辑，按原型 dim 风格传入）。 */
   autoRow?: ReactNode
+  /** 票09 单源换装（原型⓬ readySpecHtml「草稿期 SpecPanel 只读镜像」）：
+   *  true = 全部写动作**不渲染** —— ＋添加 / 点卡编辑 / spec·绑定入口 /
+   *  auto_advance 开关行（autoRow 传入也隐）；onMutated 在场但无处可触发。
+   *  只读查看面照常：批次树文件点击开 HomeFileViewerDialog、[↻] 磁盘重扫
+   *  （纯读端点）、清单 ✓/✗ 如实渲染。缺省 false = 草稿工作台逐字不变。 */
+  readOnly?: boolean
 }
 
 const dirOf = (p: string): string => normalizeRel(p).replace(/\/[^/]*$/, "/")
 
-export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, autoRow }: SpecPanelProps) {
+export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, autoRow, readOnly }: SpecPanelProps) {
   const spec = task.task_spec
   const phases = spec.phases ?? []
   const isDraft = task.status === "draft"
@@ -121,7 +125,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
             specPath: defaultSpecPath(row.slug, mainSlugOf(task)),
             workflowRef: row.workflowRef as TaskPhase["workflowRef"],
             inputValues: { ...row.inputValues },
-            bindingConfirmed: true, // 人工弹窗添加 = 绑定已确认（gate ⑤）
           },
         ]
       })
@@ -144,7 +147,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
                 specPath: row.specPath,
                 workflowRef: row.workflowRef as TaskPhase["workflowRef"],
                 inputValues: row.inputValues,
-                bindingConfirmed: true, // 人工弹窗保存 = 绑定已确认（gate ⑤）
               }
             : p,
         ),
@@ -177,15 +179,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
       value: phases[0]?.workflowRef ? `${phases[0].workflowRef}${phases.length > 1 ? ` · ${phases.length}/${phases.length} 可解析` : ""}` : "—",
     },
     { id: "inputs", ok: rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐", value: "必填非空/占位符" },
-    {
-      id: "confirm",
-      ok: rows.rowConfirm,
-      hits: gateHits.confirm,
-      label: "绑定确认",
-      value: rows.rowConfirm
-        ? `${phases.length}/${phases.length} 人工确认`
-        : `${phases.length - rows.unconfirmedIdx.length}/${phases.length} 已确认 · ${rows.unconfirmedIdx.map((i) => `P${i}`).join("、")} 待确认`,
-    },
     { id: "runbook", ok: rows.rowRunbook, hits: gateHits.runbook, label: "runbook 内容", value: "起停 up∧ready ∨ preview ∨ verify" },
     { id: "repos", ok: rows.rowRepos, hits: gateHits.repos, label: "项目仓库", value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目` },
   ] as const
@@ -195,7 +188,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
       {/* ── phases ── */}
       <h4 className="flex items-center px-3.5 pb-1.5 pt-3 text-[10px] uppercase tracking-[.08em] font-normal text-pop-dim">
         phases
-        {isDraft && (
+        {isDraft && !readOnly && (
           <button
             type="button"
             data-phase-add-open
@@ -208,11 +201,68 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
       </h4>
       {phases.length === 0 && (
         <p className="px-3.5 pb-1 text-[11.5px] text-pop-dim" data-phase-bind-empty>
-          尚无 phase —— 对话里让 agent 拆分（spec 落盘后此处出卡），或「＋ 添加」手动建骨架。
+          {readOnly
+            ? "尚无 phase —— 要改规格请走右栏「↩ 回草稿」。"
+            : "尚无 phase —— 对话里让 agent 拆分（spec 落盘后此处出卡），或「＋ 添加」手动建骨架。"}
         </p>
       )}
       {phases.map((p) => {
         const ready = specOnDisk(p)
+        // 卡内核两态共用；外层容器与 ul 行按 readOnly 换装。
+        const cardBody = (
+          <>
+            <span
+              className={
+                "float-right rounded-full border px-2 text-[10px] leading-4 " +
+                (ready ? "border-pop-green text-pop-green" : "border-pop-amber text-pop-amber")
+              }
+            >
+              {ready ? "ready" : "draft"}
+            </span>
+            <span className="font-semibold text-pop-ink">Phase {p.index} · {p.name}</span>
+            <ul className="mt-1 list-none text-[11.5px] text-pop-dim">
+              {readOnly ? (
+                <>
+                  {/* 原型 readySpecHtml phase-tile：spec/绑定为纯文本行，无 ▸ 编辑入口。 */}
+                  <li>· spec.md {dirOf(p.specPath)}</li>
+                  <li>· {p.workflowRef ? `绑定 ${p.workflowRef}` : "未绑定工作流"}</li>
+                </>
+              ) : (
+                <>
+                  <li>
+                    <button
+                      type="button"
+                      data-phase-spec-button={p.index}
+                      className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[11.5px] text-pop-dim hover:text-pop-pink"
+                      title="查看/编辑 spec.md（404 空态可建骨架）"
+                      onClick={(e) => { e.stopPropagation(); setSpecTarget(p) }}
+                    >
+                      · spec.md {dirOf(p.specPath)} <span aria-hidden>▸</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      data-phase-bind-button={p.index}
+                      className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[11.5px] text-pop-dim hover:text-pop-pink"
+                      title="更换绑定 / 编辑 inputs"
+                      onClick={(e) => { e.stopPropagation(); setBindIdx(p.index) }}
+                    >
+                      · {p.workflowRef ? `绑定 ${p.workflowRef}` : "未绑定工作流"} <span aria-hidden>▸</span>
+                    </button>
+                  </li>
+                </>
+              )}
+            </ul>
+          </>
+        )
+        if (readOnly) {
+          return (
+            <div key={p.index} data-phase-bind-card={p.index} className="mx-3.5 mb-2 rounded-md border border-pop-bd bg-pop-paper p-2.5">
+              {cardBody}
+            </div>
+          )
+        }
         return (
           <div
             key={p.index}
@@ -226,40 +276,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
             onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLElement).click() }}
             className="mx-3.5 mb-2 cursor-pointer rounded-md border border-pop-bd bg-pop-paper p-2.5 transition-colors hover:border-pop-pink"
           >
-            <span
-              className={
-                "float-right rounded-full border px-2 text-[10px] leading-4 " +
-                (ready ? "border-pop-green text-pop-green" : "border-pop-amber text-pop-amber")
-              }
-            >
-              {ready ? "ready" : "draft"}
-            </span>
-            <span className="font-semibold text-pop-ink">Phase {p.index} · {p.name}</span>
-            <ul className="mt-1 list-none text-[11.5px] text-pop-dim">
-              <li>
-                <button
-                  type="button"
-                  data-phase-spec-button={p.index}
-                  className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[11.5px] text-pop-dim hover:text-pop-pink"
-                  title="查看/编辑 spec.md（404 空态可建骨架）"
-                  onClick={(e) => { e.stopPropagation(); setSpecTarget(p) }}
-                >
-                  · spec.md {dirOf(p.specPath)} <span aria-hidden>▸</span>
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  data-phase-bind-button={p.index}
-                  className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[11.5px] text-pop-dim hover:text-pop-pink"
-                  title="更换绑定 / 编辑 inputs"
-                  onClick={(e) => { e.stopPropagation(); setBindIdx(p.index) }}
-                >
-                  · {p.workflowRef ? `绑定 ${p.workflowRef}` : "未绑定工作流"}
-                  {p.workflowRef ? (p.bindingConfirmed ? " · 已确认" : " · 待确认") : ""} <span aria-hidden>▸</span>
-                </button>
-              </li>
-            </ul>
+            {cardBody}
           </div>
         )
       })}
@@ -291,10 +308,12 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
             存在非内置 workflow —— inputs 解析以服务端入队门禁为最终权威。
           </p>
         )}
-        {autoRow && <div className="mx-3.5 my-1 text-[11px] text-pop-dim" data-autoadvance-row>{autoRow}</div>}
+        {/* auto_advance 开关 = 写动作：readOnly 态连父级传入的 autoRow 一并隐去。 */}
+        {!readOnly && autoRow && <div className="mx-3.5 my-1 text-[11px] text-pop-dim" data-autoadvance-row>{autoRow}</div>}
       </div>
 
-      {/* ── 输出区 = 任务 home 磁盘直扫树 ── */}
+      {/* ── 输出区 = 任务 home 磁盘直扫树 ──
+          [↻] 是纯读重扫（GET home-tree），readOnly 态保留；写动作另有闸。 */}
       <h4 className="flex items-center px-3.5 pb-1.5 pt-3 text-[10px] uppercase tracking-[.08em] font-normal text-pop-dim">
         输出区
         <button
@@ -308,7 +327,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
         </button>
       </h4>
       <div
-        className="mx-3.5 mb-3 min-h-[90px] rounded-md border border-dashed border-pop-bd p-2.5 font-mono text-[11.5px] text-pop-dim"
+        className="mx-3.5 mb-3 min-h-[90px] shrink-0 rounded-md border border-dashed border-pop-bd p-2.5 font-mono text-[11.5px] text-pop-dim"
         data-spec-outview
       >
         <div className="break-all text-[10px] leading-4 text-pop-dim" data-home-dir>
@@ -432,6 +451,7 @@ function HomeTreeRec({ nodes, prefix, collapsed, onToggle, onOpen }: {
                 type="button"
                 data-artifacts-dir={n.path}
                 onClick={() => onToggle(n.path)}
+                title={n.path}
                 className="block w-full truncate border-0 bg-transparent p-0 text-left text-pop-ink hover:text-pop-pink"
               >
                 <span className="text-pop-dim">{prefix}{guide}</span>{closed ? "▸ " : "▾ "}{n.name}/
@@ -454,6 +474,7 @@ function HomeTreeRec({ nodes, prefix, collapsed, onToggle, onOpen }: {
               type="button"
               data-artifacts-file={n.path}
               onClick={() => onOpen(n)}
+              title={n.path}
               className="block w-full truncate border-0 bg-transparent p-0 text-left hover:underline"
             >
               <span className="text-pop-dim">{prefix}{guide}</span>

@@ -12,7 +12,12 @@ import { SessionCostChip } from "../session-cost-chip"
 vi.mock("@/lib/billing-currency", () => ({
   useBillingCurrency: () => ({ currency: "CNY", rate: 7 }),
 }))
-vi.mock("next/link", () => ({ default: ({ children }: { children: ReactNode }) => <span>{children}</span> }))
+vi.mock("next/link", () => ({
+  // 透传 href/target/rel 成真 <a>，才能钉「完整台账」新标签页行为（1e842875）
+  default: (props: { children: ReactNode; href?: string; target?: string; rel?: string }) => (
+    <a href={props.href} target={props.target} rel={props.rel}>{props.children}</a>
+  ),
+}))
 
 const CTX = { percentage: 43, totalTokens: 86100, maxTokens: 200000 } as ContextUsageData
 
@@ -22,7 +27,7 @@ const USAGE: LlmUsageAggregates = {
   totals: {
     tokens: 174600,
     cost: { usd: 0.4583, complete: true },
-    cacheHitRate: 98400 / (45200 + 98400),
+    cacheHitRate: 98400 / (45200 + 98400 + 12300), // 分母含缓存写（ADR-0027）→ 63.1%
   },
   modelBreakdown: {
     "claude-sonnet-4.5": {
@@ -44,7 +49,7 @@ describe("SessionCostChip", () => {
     render(<SessionCostChip usage={USAGE} contextUsage={CTX} />)
     const chip = screen.getByRole("button")
     expect(chip.textContent).toContain("tok 174.6K")
-    expect(chip.textContent).toContain("cache 68.5%")
+    expect(chip.textContent).toContain("cache 63.1%")
     expect(chip.textContent).toContain("¥3.21")
   })
 
@@ -57,9 +62,12 @@ describe("SessionCostChip", () => {
     expect(screen.getByText("45.2K")).toBeInTheDocument()
     expect(screen.getByText("12.3K")).toBeInTheDocument()
     expect(screen.getByText("总和")).toBeInTheDocument()
-    // ctx 行走 SDK 占用（43%），与账本命中率（68.5%）并存且不同值
+    // ctx 行走 SDK 占用（43%），与账本命中率（63.1%）并存且不同值
     expect(screen.getByText(/43% · 86\.1K \/ 200\.0K/)).toBeInTheDocument()
     expect(screen.getByText("claude-sonnet-4.5")).toBeInTheDocument()
-    expect(screen.getByText(/完整台账/)).toBeInTheDocument()
+    // 完整台账走新标签页（本分支 1e842875 行为补钉）——弹窗不被整页导航顶掉
+    const ledgerLink = screen.getByText(/完整台账/)
+    expect(ledgerLink).toHaveAttribute("target", "_blank")
+    expect(ledgerLink).toHaveAttribute("rel", "noopener")
   })
 })

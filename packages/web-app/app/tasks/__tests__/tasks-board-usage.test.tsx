@@ -39,7 +39,7 @@ function usage(inputTokens: number, cacheRead: number, usd: number): LlmUsageSum
   return {
     totalCalls: 2,
     usage: u,
-    totals: { tokens, cost: { usd, complete: true }, cacheHitRate: cacheRead / (inputTokens + cacheRead) },
+    totals: { tokens, cost: { usd, complete: true }, cacheHitRate: cacheRead / (inputTokens + cacheRead + 10) }, // cc 进分母（ADR-0027）
   }
 }
 

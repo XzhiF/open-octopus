@@ -328,6 +328,45 @@ input,textarea{font:inherit}
 .nrow.ab{opacity:.5}
 .nrow .stopmark{color:var(--pink);font-size:9px;font-weight:900}
 
+/* ══ 待执行（ready）三签态 · 对话只读回放 / 规格只读镜像 / 节点静态预览 ══ */
+.sp-rd{color:var(--cyan);border-color:rgba(79,209,217,.5);background:var(--cyan-soft)}
+.tab.on-rd{background:var(--cyan);color:var(--bg);border-color:var(--cyan)}
+.tab.on-rd .cnt{background:rgba(0,0,0,.18);color:var(--bg)}
+.ab-trigger{background:var(--cyan);color:var(--bg);border-color:var(--cyan)}
+.ab-trigger:hover{opacity:.9}
+.replay-hd{color:var(--dim);font-size:10px;text-align:center;padding:2px 0 10px;border-bottom:1.5px dashed var(--bd);margin-bottom:14px}
+.replay{max-width:820px;margin:0 auto}
+.replay .msg{max-width:88%}
+/* token 账台（住右栏 rail，触发钮上方；仿草稿 SessionCostChip 的展开/收回） */
+.tok-meter{margin-top:10px;border-top:1.5px dashed var(--bd);padding-top:8px}
+.tok-chip{display:inline-flex;gap:8px;align-items:center;cursor:pointer;font-size:10.5px;color:var(--dim);border:1.5px solid var(--bd);border-radius:999px;padding:4px 12px;background:var(--bg)}
+.tok-chip.rail{width:100%;justify-content:space-between;gap:6px}
+.tok-chip b{color:var(--ink);font-weight:900} .tok-chip .g{color:var(--green)} .tok-chip .yl{color:var(--yellow)}
+.tok-chip:hover{border-color:var(--pink)} .tok-chip .car{color:var(--dim)}
+.tok-panel{position:fixed;z-index:60;width:300px;max-height:60vh;overflow-y:auto;border:1.5px solid var(--bd);border-radius:14px;background:var(--paper);padding:11px 14px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.tok-panel .hd{display:flex;align-items:baseline;gap:8px;font-size:11px;font-weight:900;color:var(--ink);margin-bottom:8px}
+.tok-panel .hd .n{font-size:9.5px;font-weight:400;color:var(--dim)}
+.tok-panel .hd .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:10px;border:1px solid var(--bd);border-radius:7px;padding:1px 7px;background:var(--bg)}
+.tok-panel .hd .x:hover{color:var(--red);border-color:var(--red)}
+.tok-panel .grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 22px}
+.tok-panel .row{display:flex;justify-content:space-between;font-size:11px;padding:2.5px 0}
+.tok-panel .row .l{color:var(--dim)} .tok-panel .row .l i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;vertical-align:middle}
+.tok-panel .row b{color:var(--ink);font-weight:900} .tok-panel .row b.g{color:var(--green)} .tok-panel .row b.yl{color:var(--yellow)}
+.tok-panel .hr{height:1px;background:var(--bd);margin:9px 0}
+.tok-panel .tot{display:flex;justify-content:space-between;font-size:11px;padding:2.5px 0}
+.tok-panel .tot .l{color:var(--dim)} .tok-panel .tot b{font-weight:900;color:var(--ink)}
+.tok-panel .sect{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:9px 0 5px}
+.tok-panel .bill{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dim);margin-top:9px}
+.tok-panel .bill a{margin-left:auto;color:var(--cyan);cursor:pointer}
+.tok-panel .bill a:hover{text-decoration:underline}
+.ro-badge{color:var(--dim);font-size:10px;border:1.5px solid var(--bd);border-radius:999px;padding:1px 10px;background:var(--idle);flex:none}
+.ro .st{cursor:default}
+.spec-grid{display:flex;flex-direction:column;gap:7px;margin-bottom:2px}
+.tree{border:1.5px solid var(--bd);border-radius:13px;background:var(--inset);padding:12px 14px;font-size:11px;line-height:1.85;color:var(--dim);white-space:pre;overflow-x:auto;box-shadow:var(--shadow-sm)}
+.tree b{color:var(--ink);font-weight:700}
+.rd-slot{border:1.5px solid var(--bd);border-radius:12px;background:var(--inset);padding:9px 12px;font-size:10.5px;color:var(--dim);line-height:1.7}
+.rd-slot b{color:var(--cyan);font-weight:900}
+
 /* 启动 Runbook（验收台预设 · 入队硬闸产物） */
 .rb{border:1.5px solid var(--bd);border-radius:13px;background:var(--paper);padding:10px 12px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
 .rb-hd{font-size:11px;font-weight:900;margin-bottom:8px}
@@ -379,7 +418,7 @@ input,textarea{font:inherit}
   <div class="crumb">资源库</div>
   <div class="crumb">会话</div>
   <div class="spacer"></div>
-  <span class="proto-tag">PROTOTYPE v3 · 常驻chat + 三分支</span>
+  <span class="proto-tag">PROTOTYPE v5 · 待执行三签态</span>
   <button class="btn btn-quiet" onclick="toast('原型占位 — 真实页面有数据')">↺ 刷新</button>
   <button class="btn btn-pop" onclick="toast('新建任务 = 现有 authoring 弹窗，本次未改版')">＋ 新建任务</button>
 </header>
@@ -410,7 +449,7 @@ input,textarea{font:inherit}
 <div id="toast"></div>
 <div id="hint" onclick="document.getElementById('notes').classList.toggle('hidden')">💡 改了什么？</div>
 <div id="notes" class="hidden">
-  <h4>十一个改动点的原型答案（点卡片进弹窗体验）</h4>
+  <h4>十二个改动点的原型答案（点卡片进弹窗体验）</h4>
   <div class="it"><span class="k1">① 执行中即可看变更</span> — 弹窗默认页签「变更」：提交数 + 文件 +/− 统计条，GitHub 式文件列表，点行就地展开 unified diff。数据即现有 <em>/round-diff?scope=round|cumulative</em>，不用新后端。</div>
   <div class="it"><span class="k1">② 待验收 · 快速修改对话</span> — 像草稿一样对话改代码，改动实时进「变更」列表（💬chat 徽标）与统计。说大改动（含「重构/批量/接口…」）→ chat 主动引导<b>转打回（task-fix 修复轮）</b>。简单直接 chat，复杂派轻流。</div>
   <div class="it"><span class="k1">③ 两个弹窗合一</span> — 执行中/待验收同一个壳：顶栏只留 标题+状态+时间成本（8 个动作按钮收进右栏底部），差异只剩右栏（进度 vs 验收动作）与一个页签。字号 10→11.5px、行距加大，砍掉嵌套卡片。</div>
@@ -422,7 +461,8 @@ input,textarea{font:inherit}
   <div class="it"><span class="k1">⑨ 打回语义收敛</span> — 去掉「修订重跑绑定流」选项：<em>打回 = 派 task-fix 轻轮修复</em>（反馈即指令，开发→回归→补产物→自动回待验收 R+1），与「✋ 有问题」③ 同一机制。方向要整体推翻 → 用 ② 接管，不再靠重跑。</div>
   <div class="it"><span class="k1">⑩ 真机走查回补：删残留右栏 · 日志归位 · 消耗/产物独立页签</span> — 真机发现旧弹窗残留三处：<b>一</b> 走查里内嵌的「摘要+动作 / 验收进度」右栏整体删掉（最右栏已有同款），其中的「■ 中止」挪到最右栏「打回」下方成为唯一入口；<b>二</b>「▶ 控制台/日志」应播<em>工作区运行日志（SSE 事件流）</em>，不是现在错位的「任务 AI 消耗」；<b>三</b> 新增两个页签：<em>▤ 消耗</em>（完整 token 账 — token 用 <em>K/M</em> 记数，三段式：<em>总计</em>（∑处理量 ↑输入 ↓输出 ⚡缓存读 🗡️缓存写 ·请求数 ·成本）、<em>按模型</em>、<em>分轮账本</em>（⇕ 一键全展开/收起），底部再按会话/节点分列明细表，task-doer 对话单独一行、两账不混）与 <em>▣ 产物</em>（spec/票/报告/证据/台账等交付文件清单，区别于「≡ 变更」的 diff 视图）。</div>
   <div class="it"><span class="k1">⑪ 真机复点收口</span> — 「✓ 走查」「▶ 日志」页签背景与壳同框<em>净黑</em>（去掉内嵌亮卡片衬底）；日志流<em>铺到底</em>、新事件自动贴底；待验收最右栏四钮定版 = ✓ 验收通过（绿）→ ↩ 反馈打回（<em>粉底</em>，不再素面）→ 🗂 工作空间（青，当前 Phase 执行视图深链，<em>target=_blank</em> 新标签）→ ■ 中止任务（<em>红底</em>）；中止必过<em>二次确认框</em>（红字后果说明 + 取消/确认中止），执行中与接管态的「■ 中止」同框同流。</div>
-  <div class="it" style="color:var(--dim)">试试：待验收卡 → 默认落在「💬 对话」，说「验收通过按钮再圆一点」看改动进「变更」；「✓ 走查」页签顶部看 Runbook；执行中卡 → 「✋ 有问题」选②/③ 各走一遍；⏸ 暂停后「▶ 恢复」体验注入干预。←/→ 切页签。</div>
+  <div class="it"><span class="k1">⓬ 待执行三签态（对话只读/规格只读/节点静态预览）</span> — 真机裁决 2026-10-10：ready 卡弹窗只三签、默认落 <em>◆ 节点</em>：<b>💬 对话</b> = 草稿期 TUI 全记录<em>只读回放</em>（无输入框无 dock，顶部 dim 水印）；<b>▤ 规格</b> = SpecPanel <em>只读镜像</em>（phases×3 + 入队清单全 ✓ + 批次目录树；「绑定确认」行已按 ADR-0028 废除 — 清单里不存在）；<b>◆ 节点</b> = 绑定流 <em>静态预览</em>（P1 built-in/matt-spec-dev · 7 节点全 ○ · 用时成本 —）。状态 pill <em>⚡ 待执行 · 排队中</em>（青）。右栏 = ⚡ 触发（主钮）· ↩ 回草稿 · ■ 中止 · ⧉ 复制，上方 dim 卡报「等待触发 + 并发槽位」。</div>
+  <div class="it" style="color:var(--dim)">试试：<b>待执行列的卡</b> → 三签各看一遍、点节点行看「等待触发」占位；待验收卡 → 默认落在「💬 对话」，说「验收通过按钮再圆一点」看改动进「变更」；「✓ 走查」页签顶部看 Runbook；执行中卡 → 「✋ 有问题」选②/③ 各走一遍；⏸ 暂停后「▶ 恢复」体验注入干预。←/→ 切页签。</div>
 </div>
 
 <script>
@@ -597,7 +637,44 @@ const TASKS = {
      meta:{repos:[{name:'octopus',commits:{round:1,cum:1}}],interventions:{round:0,cum:0}}, verdict:'succeeded', playbook:{p:3,f:0,u:0}},
  d1:{id:'d1', name:'spec 补 runbook 预置信道字段', col:'draft', cost:0.0, created:'10-08 08:55'},
  d2:{id:'d2', name:'GLOSSARY 术语归档续写策略', col:'draft', cost:0.0, created:'10-07 21:10'},
- r1:{id:'r1', name:'归档任务探针改 GLOSSARY 优先', col:'ready', created:'10-08 09:40'},
+ /* 旧文案（更名前）：'归档任务探针改 GLOSSARY 优先' — 2026-10-10 真机裁决 r1 更为主题任务，贴三签态现场（Notes ⓬） */
+ r1:{id:'r1', name:'octopus 前端多主题切换', col:'ready', ph:1, phN:3, cost:0, secs:0, created:'10-10 09:40', wf:'built-in/matt-spec-dev',
+     files:[], meta:{repos:[{name:'octopus',commits:{round:0,cum:0}}],interventions:{round:0,cum:0}},
+     sess:{i:318,o:56400,cr:4400000,cw:384200,req:62,c:0.4393,m:'qwen3.8-flash'},
+     spec:{ phases:[
+        {id:'P1',name:'主题切换 MVP',spec:'.scratch/20261010/octopus-fe-multi-theme/theme-switch-mvp/',wf:'built-in/matt-spec-dev'},
+        {id:'P2',name:'dark-variants · 暗色变体',spec:'.scratch/20261010/octopus-fe-multi-theme/dark-variants/',wf:'built-in/matt-spec-dev'},
+        {id:'P3',name:'sketch-theme · 手绘皮肤',spec:'.scratch/20261010/octopus-fe-multi-theme/sketch-theme/',wf:'built-in/matt-spec-dev'}],
+       gate:['phases 完备 ×3','spec 产物磁盘已核','工作流绑定 built-in/matt-spec-dev','inputs 齐','启动 Runbook 内容','项目仓库 octopus'],
+       tree:`<b>.scratch/20261010/octopus-fe-multi-theme/</b>   ← 批次目录（约定产物 · 磁盘已核）
+├── theme-switch-mvp/                ← P1 · 主题切换 MVP
+│   ├── <b>spec.md</b> · 14 KB
+│   └── issues/
+│       ├── 01-theme-token-layer.md
+│       ├── 02-theme-provider-and-switcher.md
+│       └── 03-e2e-theme-toggle.md
+├── dark-variants/                   ← P2 · 暗色变体
+│   ├── <b>spec.md</b> · 9 KB
+│   └── issues/ · 2 票
+├── sketch-theme/                    ← P3 · 手绘皮肤
+│   ├── <b>spec.md</b> · 8 KB
+│   └── issues/ · 2 票
+└── <b>context.md</b> · 全局约束（净黑基线 · token 命名 · ADR 引用）` },
+     transcript:[
+      {r:'user',x:'先说需求：octopus 前端现在只有净黑 TUI 一套皮。想做多主题 — 默认仍是净黑，另加几套 dark 变体和一套手绘 sketch 风。别一次铺所有皮肤，先把「切换」本身打通。'},
+      {r:'ai',x:'明白，按里程碑拆。提案分 3 个 phase：\n◆ P1 主题切换 MVP — 把 :root 的 token（--bg/--paper/--ink…）收进 theme provider，顶栏加切换器，净黑为默认回退；\n◆ P2 dark-variants — 站在 P1 骨架上补 2-3 套暗色变体，只铺 token 值；\n◆ P3 sketch-theme — 手绘皮肤（边框/纹理/字体），依赖 P1+P2。\nP1 完成即可验收放行，不等三套皮肤齐 — 这么拆行吗？'},
+      {r:'user',x:'可以，就按这三段拆。P1 验收我要看顶栏切换器实时换色。'},
+      {r:'ai',x:'已落批次目录 .scratch/20261010/octopus-fe-multi-theme/：每 phase 一份 spec.md + issues/ 票面（P1 三张票含 E2E），根级 context.md 记全局约束（净黑基线 · token 命名 · ADR 引用）。\n问一句：三个 phase 各绑什么工作流？可以逐段绑不同的，也可以都绑同一个 built-in。'},
+      {r:'user',x:'都绑 matt-spec-dev。'},
+      {r:'ai',x:'✓ 绑定完成：P1/P2/P3 全部 built-in/matt-spec-dev —「绑定确认」环节按 ADR-0028 已废，不再逐次弹确认。\n✓ 启动 Runbook 已写入 spec 字段并过入队硬闸：pnpm dev → 开 :3000/tasks → 顶栏切主题看三色实时生效。\n入队清单 6/6 全绿 — 回看板点本卡「⚡ 入队」进待执行，之后点「⚡ 触发」P1 开跑。'}],
+     nodes:[
+      {n:'spec-resolve · 解析票与验收标准',ty:'Bash',st:'pend'},
+      {n:'fail-fast · 前置校验（分支/占位符）',ty:'Bash',st:'pend'},
+      {n:'spec-review · 规格复审',ty:'Agent',st:'pend'},
+      {n:'ticket-dag · 按票 DAG 实现',ty:'Agent',st:'pend'},
+      {n:'code-review · 评审 swarm',ty:'Swarm',st:'pend'},
+      {n:'e2e-verify · 端到端验证',ty:'Agent',st:'pend'},
+      {n:'ship-pr · 开 PR 交付',ty:'Bash',st:'pend'}]},
  dn1:{id:'dn1', name:'CONTEXT → GLOSSARY 全仓改名', col:'done', cost:1.21, created:'10-06 14:20', term:'通过'},
  dn2:{id:'dn2', name:'skills 同步 v1.3.1', col:'done', cost:0.34, created:'10-05 11:02', term:'通过'},
  dn3:{id:'dn3', name:'Milvus remote 存储回归 MinIO', col:'done', cost:0.78, created:'10-04 16:33', term:'失败'},
@@ -652,12 +729,12 @@ function card(t){
           : `<span class="pill ${t.paused?'wait':'run'}">${t.paused?'⏸':'▶'} ${lab}</span>`;
   }
   if(t.col==='wait')  pills+=`<span class="pill wait">验收 · P${t.ph}/${t.phN} R${t.round}</span>`;
-  if(t.col==='ready') pills+=`<span class="pill cy">排队等待触发</span>`;
+  if(t.col==='ready') pills+=`<span class="pill cy">⚡ 待执行 · 排队中</span>`;
   if(t.col==='done')  pills+= t.term==='失败' ? `<span class="pill bad">✗ 失败</span>` : `<span class="pill ok">✓ 通过</span>`;
   const act = t.col==='wait' ? `<span class="act">验收</span>`
             : t.col==='ready' ? `<span class="pill">⚡ 触发</span>` : '';
   const ftot = t.files ? fileTotals({files:t.files,meta:t.meta}) : null;
-  const diffPill = t.files ? `<span class="pill" style="color:var(--cyan)">≡ ${ftot.files} 文件</span>` : '';
+  const diffPill = (t.files&&t.files.length) ? `<span class="pill" style="color:var(--cyan)">≡ ${ftot.files} 文件</span>` : '';
   return `<div class="card ${K}" onclick="openTask('${t.id}')">
     <div class="t">${t.name}</div>
     <div class="row">${pills}${diffPill}${act}</div>
@@ -670,13 +747,13 @@ function openTask(id){
   const t=TASKS[id];
   if(t.col==='draft'){ toast('草稿卡 = 现有 authoring workspace，本次未改版'); return; }
   if(t.col==='done'){ toast('终态卡复用同一个壳（只读）— 原型聚焦 执行中/待验收'); return; }
-  state.openTask=id; state.tab=(TASKS[id].col==='wait')?'chat':'files'; state.scope='round'; state.exp=new Set(); consoleLines=[];
+  state.openTask=id; state.tab=(TASKS[id].col==='ready')?'nodes':(TASKS[id].col==='wait')?'chat':'files'; state.scope='round'; state.exp=new Set(); consoleLines=[];
   if(id!==state._lastChatTask){ state.chat=[]; state.chatEdits=0; state.editIdx=0; state._lastChatTask=id; }
   state.chatDock=true;
   clearTimers(); startTimers(t);
   renderModal();
 }
-function closeModal(){ clearTimers(); state.openTask=null; document.getElementById('modal-root').classList.add('hidden'); renderBoard(); }
+function closeModal(){ clearTimers(); if(rcLedgerOpen){ rcLedgerOpen=false; refreshRail(); } state.openTask=null; document.getElementById('modal-root').classList.add('hidden'); renderBoard(); }
 function T(){ return TASKS[state.openTask]; }
 
 function startTimers(t){
@@ -699,19 +776,20 @@ function refreshContent(){ const el=document.getElementById('m-content'); if(el)
 function clearTimers(){ state.timers.forEach(clearInterval); state.timers=[]; }
 
 function renderModal(){
-  const t=T(), run=t.col==='run', pz=run&&t.paused, tk=run&&t.mode==='takeover', fx=run&&t.mode==='fixing', root=document.getElementById('modal-root');
+  const t=T(), run=t.col==='run', rd=t.col==='ready', pz=run&&t.paused, tk=run&&t.mode==='takeover', fx=run&&t.mode==='fixing', root=document.getElementById('modal-root');
   root.classList.remove('hidden');
-  const tabs = tk ? [['chat','💬 对话接管'],['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']]
+  const tabs = rd ? [['chat','💬 对话'],['spec','▤ 规格'],['nodes','◆ 节点']]
+    : tk ? [['chat','💬 对话接管'],['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']]
     : run ? [['files','≡ 变更'],['nodes','◆ 节点'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 控制台']]
     : [['chat','💬 对话'],['files','≡ 变更'],['review','✓ 走查'],['usage','▤ 消耗'],['artifacts','▣ 产物'],['console','▶ 日志']];
   const cnt = t.files ? fileTotals(t).files : 0;
-  const ns = run ? nodesOf(t) : [];
+  const ns = (run||rd) ? nodesOf(t) : [];
   const showDock = t.mode==='fixing'; // dock 只留给 task-fix；待验收=整高对话列；执行中不打扰
   root.innerHTML = `
   <div class="modal ${state.fs?'max':''}">
     <div class="m-head">
       <span class="m-title">${t.name}</span>
-      <span class="status-pill ${pz?'sp-pause':tk?'sp-tk':fx?'sp-fix':(run?'sp-run':'sp-wait')}">${pz?'⏸ 已暂停 · 可注入干预':tk?'✋ 已接管 · chat 驱动':fx?'⚙ task-fix 执行中':(run?'● 执行中':'◔ 待验收')}</span>
+      <span class="status-pill ${rd?'sp-rd':pz?'sp-pause':tk?'sp-tk':fx?'sp-fix':(run?'sp-run':'sp-wait')}">${rd?'⚡ 待执行 · 排队中':(pz?'⏸ 已暂停 · 可注入干预':tk?'✋ 已接管 · chat 驱动':fx?'⚙ task-fix 执行中':(run?'● 执行中':'◔ 待验收'))}</span>
       <span class="m-meta" id="head-meta">${metaHtml(t)}</span>
       <div class="m-actions">
         <button class="icob" title="全屏" onclick="state.fs=!state.fs;renderModal()">⛶</button>
@@ -723,29 +801,36 @@ function renderModal(){
         <div class="tabs">
           ${tabs.map(([k,lb])=>{
             const on=state.tab===k;
-            const extra = k==='files' ? `<span class="cnt">${cnt}</span>`+
+            const extra = rd&&k==='chat' ? `<span class="cnt">${t.transcript.length}</span>`
+              : k==='spec' ? `<span class="cnt">${t.spec.phases.length}</span>`
+              : k==='files' ? `<span class="cnt">${cnt}</span>`+
               (state.chatEdits?`<span class="cnt" style="color:var(--cyan)">💬×${state.chatEdits}</span>`:'')
               : k==='nodes' ? `<span class="cnt">${ns.filter(x=>x.st==='done').length}/${ns.length}</span>`
               : k==='review' ? `<span class="cnt">${(t.playbook.p||0)+(t.playbook.f||0)}/5</span>`
               : k==='usage' ? `<span class="cnt" style="color:var(--yellow)">${fmtMoney(t.cost)}</span>`
               : k==='artifacts' ? `<span class="cnt">${artifactsOf(t).length}</span>` : '';
-            return `<button class="tab ${on?(run?'on-run':'on-wait'):''}" onclick="setTab('${k}')">${lb}${extra||''}</button>`;
+            return `<button class="tab ${on?(rd?'on-rd':(run?'on-run':'on-wait')):''}" onclick="setTab('${k}')">${lb}${extra||''}</button>`;
           }).join('')}
         </div>
-        <div class="m-content ${state.tab==='chat'?'nopad':''}" id="m-content">${contentHtml(t)}</div>
+        <div class="m-content ${state.tab==='chat'&&!rd?'nopad':''}" id="m-content">${contentHtml(t)}</div>
         ${showDock?dockHtml(t):''}
       </div>
       <div class="m-rail" id="m-rail">${railHtml(t)}</div>
     </div>
     <div class="m-foot">
       <span>工作区 octopus-feat-taskboard</span><span>v4 · ${t.phN||1} phases</span>
-      <span class="sse ${run&&!pz&&!tk?'':'off'}">${tk?'⏹ 工作流已停 · chat 驱动':run?(pz?'⏸ SSE 挂起 · 干预后可恢复':'<i></i> SSE ● 心跳'):'SSE 断线 · 等待人工'}</span>
+      <span class="sse ${((run&&!pz&&!tk)||rd)?'':'off'}">${rd?'<i></i> SSE ● 待机 · 等待触发':(tk?'⏹ 工作流已停 · chat 驱动':run?(pz?'⏸ SSE 挂起 · 干预后可恢复':'<i></i> SSE ● 心跳'):'SSE 断线 · 等待人工')}</span>
     </div>
   </div>`;
   if(state.tab==='console'){ const c=document.getElementById('cons'); if(c)c.scrollTop=c.scrollHeight; }
   if(state.tab==='chat'){ const l=document.getElementById('chatlog'); if(l)l.scrollTop=l.scrollHeight; }
 }
 function metaHtml(t){
+  if(t.col==='ready') return `<span>⏱ <b>—</b></span>
+    <span class="cost">$ <b>0.00</b></span>
+    <span>0 commits</span>
+    <span>±<b>0</b></span>
+    <span>P ${t.ph}/${t.phN} · 排队中</span>`;
   const ft=fileTotals(t);
   return `<span>⏱ <b id="tick">${fmtT(t.secs||0)}</b></span>
     <span class="cost">$ <b>${t.cost.toFixed(2)}</b></span>
@@ -758,6 +843,11 @@ function setTab(k){ state.tab=k; renderModal(); }
 
 /* ═════════ content: 变更 ═════════ */
 function contentHtml(t){
+  if(t.col==='ready'){
+    if(state.tab==='chat') return readyChatHtml(t);
+    if(state.tab==='spec') return readySpecHtml(t);
+    return readyNodesHtml(t);
+  }
   if(state.tab==='chat') return chatFullHtml(t);
   if(state.tab==='files') return filesHtml(t);
   if(state.tab==='nodes') return nodesHtml(t);
@@ -894,6 +984,7 @@ function nodeRow(t,x,i){
 }
 function nodeEvents(t,x,i){
   const key='n'+i;
+  if(t.col==='ready') return `<div class="nev"><div class="cl" style="color:var(--dim)">— 未执行 · 等待触发 —</div></div>`;
   if(x.st==='pend') return `<div class="nev"><div class="cl" style="color:var(--dim)">— 未执行 · 等待前序节点完成 —</div></div>`;
   let lines;
   if(x.st==='live'){
@@ -1050,7 +1141,7 @@ function artifactsHtml(t){
 }
 
 /* ═══════════════════════════ 右栏 ═══════════════════════════ */
-function railHtml(t){ return t.col==='run' ? railRun(t) : railWait(t); }
+function railHtml(t){ return t.col==='ready' ? railReady(t) : t.col==='run' ? railRun(t) : railWait(t); }
 function railWait(t){
   const ft=fileTotals(t);
   const total=(t.playbook.p||0)+(t.playbook.f||0)+(t.playbook.u||0)+(t.tookover?0:state.gateU);
@@ -1081,10 +1172,12 @@ function railWait(t){
 function openAbortConfirm(){
   const t=T(); const el=document.getElementById('ab-root'); el.classList.remove('hidden');
   el.innerHTML=`<div class="dlg">
-    <div class="h">■ 中止任务 — 请确认<small>${esc(t.name)} · P${t.ph||1}·R${t.round||1}${t.col==='wait'?'（待验收）':'（执行中）'}</small></div>
+    <div class="h">■ 中止任务 — 请确认<small>${esc(t.name)} · P${t.ph||1}·R${t.round||1}${t.col==='wait'?'（待验收）':t.col==='ready'?'（待执行）':'（执行中）'}</small></div>
     <div class="b">
       <div style="border:1.5px solid rgba(255,92,92,.5);background:rgba(255,92,92,.08);border-radius:11px;padding:10px 13px;font-size:11.5px;line-height:1.7">
-        中止 = <b style="color:var(--red)">任务级终止，不可恢复</b>：绑定执行停止（节点 ⏹）、工作区现场与已产出 commit 保留在分支；本 Round 不再自动推进，也不进验收台账新闸。</div>
+        ${t.col==='ready'
+          ? '中止 = <b style="color:var(--red)">任务级终止，不可恢复</b>：尚未触发 — 出队即止，spec 批次目录与工作区保留在磁盘，可随时「回草稿」重开。'
+          : '中止 = <b style="color:var(--red)">任务级终止，不可恢复</b>：绑定执行停止（节点 ⏹）、工作区现场与已产出 commit 保留在分支；本 Round 不再自动推进，也不进验收台账新闸。'}</div>
     </div>
     <div class="f">
       <button class="btn btn-quiet" onclick="closeAbort()">取消</button>
@@ -1135,6 +1228,98 @@ function phaseTiles(t){
       <div class="nm">${done?'<span class="g" style="color:var(--green)">✓</span>':live?'<span class="g" style="color:var(--amber)">●</span>':'<span class="g" style="color:var(--dim)">○</span>'} P${p} · ${nm}</div>
       <div class="sub">${done?'passed':live?'⚙ matt-dev-pipeline · R1 进行中':'待 P'+p+' 触发'}</div></div>`;
   }).join('');
+}
+
+/* ═════ 待执行（ready）三签态 · 2026-10-10 真机裁决（Notes ⓬）：对话只读回放 / 规格只读镜像 / 节点静态预览 ═════ */
+let rcLedgerOpen=false;
+function refreshRail(){ if(!state.openTask) return; const el=document.getElementById('m-rail'); if(el) el.innerHTML=railHtml(T()); }
+function toggleRcLedger(){ rcLedgerOpen=!rcLedgerOpen; refreshRail(); if(rcLedgerOpen) placeRcPanel(); }
+function rcOutsideClick(e){
+  if(!state.openTask){ return; }
+  if(e.target.closest('.tok-panel')||e.target.closest('.tok-chip')){ document.addEventListener('click',rcOutsideClick,{once:true}); return; }
+  rcLedgerOpen=false; refreshRail();
+}
+function placeRcPanel(){
+  const chip=document.querySelector('#m-rail .tok-chip'), pan=document.querySelector('.tok-panel');
+  if(!chip||!pan) return;
+  const r=chip.getBoundingClientRect();
+  pan.style.right=(window.innerWidth-r.right)+'px';
+  pan.style.bottom=(window.innerHeight-r.top+8)+'px';
+  document.addEventListener('click',rcOutsideClick,{once:true});
+}
+function readyChatHtml(t){
+  return `<div class="replay">
+    <div class="replay-hd">— 只读回放 · 草稿期对话（task-author 全记录）—</div>
+    <div class="chat-log" id="chatlog" style="padding:0 2px 4px">
+      ${t.transcript.map(m=>m.r==='user'
+        ? `<div class="msg user">${esc(m.x)}</div>`
+        : `<div class="msg ai"><div class="who">task-author ✎</div>${esc(m.x)}</div>`).join('')}
+    </div></div>`;
+}
+function readySpecHtml(t){
+  const s=t.spec;
+  return `
+  <div class="f-toolbar">
+    <span style="font-size:10.5px;color:var(--dim)">草稿期 SpecPanel 只读镜像 · v4 phases=${s.phases.length} — 要改请走右栏「↩ 回草稿」</span>
+    <span class="ro-badge" style="margin-left:auto">只读</span>
+  </div>
+  <div class="sect-t">Phases · 逐段放行</div>
+  <div class="spec-grid">${s.phases.map(p=>`<div class="phase-tile">
+      <div class="nm"><span class="g" style="color:var(--dim)">○</span> ${p.id} · ${p.name}</div>
+      <div class="sub">spec ${p.spec}</div>
+      <div class="sub">绑定 ${p.wf}</div></div>`).join('')}</div>
+  <div class="sect-t">入队清单 — 硬闸 ${s.gate.length}/${s.gate.length} · 全 ✓</div>
+  <div class="ro">${s.gate.map(g=>`<div class="gate-row"><span class="st p">✓</span><span>${g}</span><span class="sub">已核</span></div>`).join('')}</div>
+  <div class="sect-t">输出区 — 批次目录树</div>
+  <div class="tree">${s.tree}</div>`;
+}
+function readyNodesHtml(t){
+  const ns=t.nodes;
+  return `
+  <div class="f-toolbar">
+    <span class="pill cy" style="font-size:11px">⚙ ${t.wf}</span>
+    <span style="font-size:10.5px;color:var(--dim)">P${t.ph} 绑定流 ${t.wf} · 触发后开跑 — 点行看占位</span>
+    <span style="margin-left:auto;font-size:10.5px;color:var(--dim)"><b style="color:var(--dim)">0</b>/${ns.length} 完成 · 等待触发</span>
+  </div>
+  ${ns.map((x,i)=>nodeRow(t,x,i)).join('')}`;
+}
+function railReady(t){
+  const s=t.spec, L=t.sess, tot=L.i+L.o+L.cr+L.cw, hit=(L.cr/(L.i+L.cr+L.cw)*100).toFixed(1);
+  return `<div class="rail-b">
+    <div class="rail-t">QUEUE · ${s.phases.length} PHASES · 下一段 P${t.ph}</div>
+    <div class="rd-slot"><b>⏳ 等待触发</b> — 绑定流未开跑；并发槽位 2/2 空闲（octopus 工作区），触发即转「执行中」从 P${t.ph} 开跑。</div>
+    <div class="sum-row link" onclick="setTab('spec')"><span>入队清单</span><b class="g">${s.gate.length}/${s.gate.length} ✓</b></div>
+    <div class="sum-row link" onclick="setTab('nodes')"><span>绑定流</span><b class="c">${t.wf} · ${t.nodes.length} 节点 ▸</b></div>
+    <div class="sum-row link" onclick="setTab('chat')"><span>💬 草稿期对话</span><b class="c">只读回放 · ${t.transcript.length} 条 ▸</b></div>
+    <div class="tok-meter">
+      ${rcLedgerOpen?`<div class="tok-panel">
+        <div class="hd"><span style="white-space:nowrap">本会话 token 账</span><span class="n">${L.req} 次请求 · 草稿期会话</span><span class="x" onclick="toggleRcLedger()" title="收回账台">✕ 收回</span></div>
+        <div class="row"><span class="l"><i style="background:var(--cyan)"></i>输入</span><b>${fmtTok(L.i)}</b></div>
+        <div class="row"><span class="l"><i style="background:var(--pink)"></i>输出</span><b>${fmtTok(L.o)}</b></div>
+        <div class="row"><span class="l"><i style="background:var(--green)"></i>缓存读</span><b>${fmtTok(L.cr)}</b></div>
+        <div class="row"><span class="l"><i style="background:var(--navy)"></i>缓存写</span><b>${fmtTok(L.cw)}</b></div>
+        <div class="hr"></div>
+        <div class="tot"><span class="l">总和</span><b>${fmtTok(tot)}</b></div>
+        <div class="tot"><span class="l">缓存命中率 <span style="color:var(--dim);font-size:9px">读÷(读+写+新输入) · ADR-0027</span></span><b class="g" style="color:var(--green)">${hit}%</b></div>
+        <div class="tot"><span class="l">预估费用</span><b style="color:var(--yellow)">$${L.c.toFixed(4)}</b></div>
+        <div class="sect">按模型 · ${L.m}</div>
+        <div class="bill"><span>单价 = 每 1M token · 现算不落库</span><a onclick="toast('真实版：target=_blank 开 /system/billing 完整台账（不顶掉本窗口）')">完整台账 →</a></div>
+      </div>`:''}
+      <div class="tok-chip rail" onclick="toggleRcLedger()" title="点开/收回 token 账台">
+        <span>tok</span><b>${fmtTok(tot)}</b>
+        <span>cache</span><b class="g">${hit}%</b>
+        <b class="yl">$${L.c.toFixed(4)}</b>
+        <span class="car">${rcLedgerOpen?'▴ 收回':'▾ 展开'}</span>
+      </div>
+    </div>
+    <div class="rail-t" style="margin-top:6px">入队硬闸已全过 → 触发即跑 · 跑完自动转待验收</div>
+  </div>
+  <div class="rail-acts">
+    <button class="act-btn ab-trigger" onclick="toast('⚡ 真实版：POST /api/tasks/'+T().id+'/trigger → 并发闸检查 → 转执行中开跑 P1')">⚡ 触发 · P${t.ph} ${s.phases[0].name}</button>
+    <button class="act-btn ab-dim" onclick="toast('↩ 真实版：status→draft，重新打开 authoring 工作区（草稿可再编辑）')">↩ 回草稿</button>
+    <button class="act-btn ab-stop" onclick="openAbortConfirm()">■ 中止</button>
+    <button class="act-btn ab-dim" onclick="toast('⧉ 已复制 task_spec JSON（演示）')">⧉ 复制</button>
+  </div>`;
 }
 
 /* ═══════════════════════ 常驻 chat dock + 三分支干预/接管/换流 ═══════════════════════ */
@@ -1395,7 +1580,7 @@ document.addEventListener('keydown',e=>{
     else if(!hid('ab-root'))closeAbort();
     else if(state.openTask) closeModal(); return; }
   if(!state.openTask) return;
-  const t=T(), tabs=(t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','usage','artifacts','console']:['files','nodes','usage','artifacts','console']):['chat','files','review','usage','artifacts','console']);
+  const t=T(), tabs=(t.col==='ready'?['chat','spec','nodes']:t.col==='run'?(t.mode==='takeover'?['chat','files','nodes','usage','artifacts','console']:['files','nodes','usage','artifacts','console']):['chat','files','review','usage','artifacts','console']);
   const i=tabs.indexOf(state.tab);
   if(e.key==='ArrowRight')setTab(tabs[(i+1)%tabs.length]);
   if(e.key==='ArrowLeft') setTab(tabs[(i-1+tabs.length)%tabs.length]);

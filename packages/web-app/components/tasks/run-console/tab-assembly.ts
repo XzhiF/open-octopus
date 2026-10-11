@@ -15,14 +15,20 @@
 // 票11 ⑩回补：消耗/产物两列按原型定稿进装配表；待验收右栏补「■ 中止」
 // （复用既有任务级 abort 动作与二次确认，不新增状态/端点）。
 //
+// 票07（原型 ⓬，2026-10-10 用户真机定稿）：待执行三签 ——
+//   | ready(v4)       | 对话·规格·节点                                | 节点   | ⚡触发/↩回草稿/■中止/⧉复制 |
+// chat/spec 两签 07 先落占位壳（08 对话回放 / 09 规格只读只替换内容不动装配）；
+// 节点签 = 绑定流 ○ 静态预览（有执行行后无缝回票 04 动态模型，判据在调用方）。
+//
 // 本模块只回答「哪些页签/哪些动作、默认哪个、←/→ 怎么卷」——不碰 DOM、不碰数据，
 // TaskRunConsole 是唯一消费者。takeover/fixing 形态是 08/05 的预留接缝：状态由
 // 上层推导后以 mode 传入，装配规则先钉在这里。v3 legacy / derived 未加载 一律
 // 只剩「控制台」一页 —— 占位页签不压到旧任务头上（不回退铁律）。
 
 /** 页签 key —— 票间契约（03 挂 files、04 挂 nodes、06 走 console+注入、07 挂 chat、
- *  走查=既有 AcceptanceSurface；11 加 usage=▤ 消耗 / artifacts=▣ 产物）。 */
-export type ConsoleTabKey = "chat" | "files" | "nodes" | "review" | "usage" | "artifacts" | "console"
+ *  走查=既有 AcceptanceSurface；11 加 usage=▤ 消耗 / artifacts=▣ 产物；
+ *  票07 三签加 spec=▤ 规格 —— 09 挂规格只读镜像，装配先行）。 */
+export type ConsoleTabKey = "chat" | "spec" | "files" | "nodes" | "review" | "usage" | "artifacts" | "console"
 
 /** 壳的派生态：effectiveStatusOf 的输出 + 06/08 预留的 takeover/fixing（由 mode 给出，
  *  TaskStatusSchema 不加新状态 —— 铁律）。paused 来自 derived.taskStatus。 */
@@ -57,6 +63,11 @@ export function assembleTabs(input: TabAssemblyInput): TabAssembly {
     }
   }
   if (!v4) return { keys: ["console"], defaultKey: "console" }
+  // 票 07（原型 ⓬ 真机定稿）：待执行三签 —— 对话·规格·节点，默认落节点。
+  // 判据用**派生态 ready**（发射闸口径不变），且不区分 mode —— takeover/fixing 判据
+  // 都来自执行行，ready 现场不存在；即便误传也压回三签（原型 rd 分支优先）。
+  // 08/09 只替换 chat/spec 的壳内内容，不再动本装配（装配先行防三票互相等）。
+  if (status === "ready") return { keys: ["chat", "spec", "nodes"], defaultKey: "nodes" }
   if (mode === "takeover") return { keys: ["chat", "files", "nodes", "usage", "artifacts", "console"], defaultKey: "chat" }
   // 票 07（spec 故事27 / 票 AC4）：修复轮也装配对话页签 —— 语义是「追加指令」
   // （经 06 的暂停→注入通道生效），默认页仍是节点（自动推进直播，spec 表不动）。
@@ -64,8 +75,9 @@ export function assembleTabs(input: TabAssemblyInput): TabAssembly {
   if (mode === "fixing") return { keys: ["files", "nodes", "chat", "usage", "artifacts", "console"], defaultKey: "nodes" }
   // 执行动线（running / paused）：变更·节点·消耗·产物·控制台（票11 终表）。
   // running 默认落「变更」（spec 表）；paused「保持」由调用方保留用户选择实现，
-  // 纯函数返回值仍取装配表的基准位；ready/终态默认控制台（发射门禁/战报动线不回退，
-  // 且不在 ⑩ 回补表内 —— 页签集保持原样不加消耗/产物，改动面收敛）。
+  // 纯函数返回值仍取装配表的基准位；终态默认控制台（战报动线不回退，
+  // 且不在 ⑩ 回补表内 —— 页签集保持原样不加消耗/产物，改动面收敛。
+  // ready 已升格三签，见上 —— 不再走这条兜底）。
   if (status === "running") return { keys: ["files", "nodes", "usage", "artifacts", "console"], defaultKey: "files" }
   if (status === "paused") return { keys: ["files", "nodes", "usage", "artifacts", "console"], defaultKey: "console" }
   return { keys: ["files", "nodes", "console"], defaultKey: "console" }
@@ -73,6 +85,7 @@ export function assembleTabs(input: TabAssemblyInput): TabAssembly {
 
 const TAB_LABELS: Record<ConsoleTabKey, string> = {
   chat: "💬 对话",
+  spec: "▤ 规格",
   files: "≡ 变更",
   nodes: "◆ 节点",
   review: "✓ 走查",

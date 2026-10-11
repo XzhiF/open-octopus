@@ -191,8 +191,8 @@ interface PhaseInput {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
-  /** 入队加严闸 ⑤（2026-09-24 chat-draft-v4）：人工确认绑定。默认用例走
-   *  validPhase/显式 true；想测闸本体就在对象里置 false/省略。 */
+  /** 已废闸 ⑤ 的历史字段（ADR-0028，2026-10-10）—— server 不再检查其值。
+   *  保留仅供回归用例：证明 true/false/省略都不再影响入队判定。 */
   bindingConfirmed?: boolean
 }
 
@@ -245,7 +245,6 @@ function validPhase(id: string, n: number): PhaseInput {
     specPath,
     workflowRef: "built-in/v4-required-flow",
     inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
-    bindingConfirmed: true,
   }
 }
 
@@ -308,7 +307,6 @@ describe("ticket 04 AC1: v4 gate — four missing categories, exact keys (409)",
         specPath: path.join(".scratch", "gone", "p1", "spec.md"),
         workflowRef: "built-in/v4-required-flow",
         inputValues: { idea: "x", spec_dir: "y" },
-        bindingConfirmed: true, // 隔离 spec-missing 单因（闸⑤ 与本用例无关）
       },
     ])
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
@@ -421,22 +419,36 @@ describe("check ④: 批次消费型流必须有末张验收票（409 phase:<i>:
   })
 })
 
-// ── 入队加严闸 ⑤/⑥（chat-draft-v4 原型拍板，2026-09-24）──────────────
-// ⑤ bindingConfirmed：绑定必须经人工确认（弹窗保存）；⑥ issues/ 产物基线：
-// 所有绑定流统一 ≥1 张 .md 票。两闸只在 readyTask（enqueueChecks）生效。
-describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)", () => {
-  it("⑤ 全绿产物但未确认绑定 → 409 missing=['phase:1:binding-unconfirmed']", async () => {
+// ── 入队加严闸 ⑥（chat-draft-v4 原型拍板，2026-09-24）+ 闸 ⑤ 废除回归 ────
+// ⑥ issues/ 产物基线：所有绑定流统一 ≥1 张 .md 票。闸只在 readyTask（enqueueChecks）生效。
+// 闸 ⑤ bindingConfirmed（人工确认绑定）已废（用户 2026-10-10 终裁，ADR-0028）：
+// 绑定存在且可解析（② workflow-ref）= 已确认，miss 码 binding-unconfirmed 不再产出。
+describe("enqueue 加严闸 ⑥ issues-missing (409) + 闸⑤废除回归", () => {
+  it("闸⑤废除 · 正：绑定齐但未「人工确认」（false/省略）→ 200 ready 不再被挡", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
-    insertV4Task(id, [{ ...validPhase(id, 1), bindingConfirmed: false }])
+    insertV4Task(id, [
+      { ...validPhase(id, 1), bindingConfirmed: false },
+      { ...validPhase(id, 2), bindingConfirmed: undefined },
+    ])
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { status: string }).status).toBe("ready")
+  })
+
+  it("闸⑤废除 · 反：缺 ref 仍被 ② workflow-ref 挡（键不含 binding-unconfirmed）", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    insertV4Task(id, [{ ...validPhase(id, 1), workflowRef: "unknown/flow", bindingConfirmed: false }])
 
     const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
 
     expect(res.status).toBe(409)
     expect(((await res.json()) as { missing: string[] }).missing)
-      .toEqual(["phase:1:binding-unconfirmed"])
+      .toEqual(["phase:1:workflow-ref"])
   })
 
-  it("⑥ spec 在盘 + 已确认，但 issues/ 无票（非批次流也拦）→ 409 issues-missing", async () => {
+  it("⑥ spec 在盘（已无确认字段），但 issues/ 无票（非批次流也拦）→ 409 issues-missing", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p = { ...validPhase(id, 1), workflowRef: "built-in/v4-no-required-flow" }
     // validPhase 写过 01-plan.md —— 清空 issues/ 还原「无票」现场
@@ -450,7 +462,7 @@ describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)",
       .toEqual(["phase:1:issues-missing"])
   })
 
-  it("多 phase 逐一点名：P1 缺票 + P2 未确认 → 两条键各归其位", async () => {
+  it("多 phase 逐一点名：P1 缺票 + P2 带旧未确认值 → 只点名 issues-missing，binding-unconfirmed 绝迹", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
     const p1 = validPhase(id, 1)
     const p2 = validPhase(id, 2)
@@ -461,7 +473,7 @@ describe("enqueue 加严闸 ⑤⑥: binding-unconfirmed / issues-missing (409)",
 
     expect(res.status).toBe(409)
     expect(((await res.json()) as { missing: string[] }).missing)
-      .toEqual(["phase:1:issues-missing", "phase:2:binding-unconfirmed"])
+      .toEqual(["phase:1:issues-missing"])
   })
 })
 

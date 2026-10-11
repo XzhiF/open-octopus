@@ -37,6 +37,15 @@ export interface ChatTurnParams {
   /** preset 'claude_code' + this append (persona / memory / task context). */
   systemPromptAppend?: string
   /**
+   * Optional tool interceptor handed straight to the provider (the same option
+   * CloneRuntime passes for task-author sessions — see
+   * clone-runtime.ts sendWithProvider). The task-doer chat uses it for the
+   * 计划回写 票04 reverse hard-gate (buildDoerBatchGuard: ws 批次目录写入当场
+   * 拒绝并返回可见原因). Absent = no hook, exactly the pre-票04 behavior every
+   * other caller (ws-chat included) keeps.
+   */
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+  /**
    * Called once at the very end of the turn — after persistence, BEFORE the
    * stream closes, so the caller can still push trailing SSE frames (the doer
    * chat uses this for the quick-edit/takeover-edit auto-commit announcement,
@@ -103,6 +112,9 @@ export async function runChatTurn(params: ChatTurnParams): Promise<ChatTurnOutco
       systemPrompt: { type: "preset", preset: "claude_code", append: params.systemPromptAppend },
       abortSignal: abortController.signal,
       plugins: [{ type: "local", path: getAgentDir() }],
+      // undefined unless the caller armed a hook (doer 票04) — provider treats
+      // a missing hook exactly as before.
+      onBeforeToolCall: params.onBeforeToolCall,
     })
 
     for await (const chunk of chunkStream) {

@@ -385,7 +385,7 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     })
     expect(ticketRes.status).toBe(200)
 
-    // ③ spec-field(phases) 整数组写回（bindingConfirmed = 人工确认闸 ⑤）
+    // ③ spec-field(phases) 整数组写回
     const ph = await app.request(`/api/tasks/${id}/spec-field`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -396,7 +396,6 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
             index: 1, name: "golden", slug: "golden", specPath: specRel,
             workflowRef: "built-in/v4-required-flow",
             inputValues: { idea: "${phase.slug} idea", spec_dir: "${phase.spec_dir}" },
-            bindingConfirmed: true,
           },
         ],
       }),

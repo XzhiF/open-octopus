@@ -341,6 +341,61 @@ export function stopCloneChat(cloneName: string, sessionId: string) {
   })
 }
 
+// ── 票08 · 草稿期会话全史只读回放取数 ────────────────────────────────
+//
+// 与草稿工作台（authoring-workspace）完全同源：同一端点
+// GET /api/clones/task-author/sessions/:id，同一 parseMessageMetadata ——
+// metadata JSON（thinking/tool_calls/timeline/interrupted）解出后，回放的
+// 折叠 meta 形制与草稿侧逐字一致。服务端零新端点。
+//
+// 翻页纪律：该端点的游标参数名是 `before`（按 created_at 向**更早**走；页内
+// items 正序），既有的 getCloneSession 包装只传 `cursor` —— 服务端不认，
+// 全量取数必须像这里一样自持翻页。
+//
+// 上限纪律（票面「如无分页截断则取全量注上限并留注释」的落地）：
+// 逐页翻到尽头；累计达 SESSION_REPLAY_MAX 即止，truncated=true —— 装载的
+// 是**最近**的 ≤MAX 条（回放面挂截断标注如实说明），超长会话渲染不崩。
+// 服务端 `created_at <` 严格比较在「同秒消息」理论上可漏 —— 这是该端点
+// 既有的游标语义（草稿工作台同受），本函数不改写、不另造。
+// guard 圈数兜底：同秒并列导致 next_cursor 不前进时限 64 页（12800 行）断流。
+export const SESSION_REPLAY_PAGE = 200
+export const SESSION_REPLAY_MAX = 1000
+
+export interface AuthorSessionReplay {
+  items: AgentMessage[]
+  /** true = 已达上限：更早的消息未纳入回放（装载的是最近 SESSION_REPLAY_MAX 条）。 */
+  truncated: boolean
+}
+
+export async function getAuthorSessionReplay(sessionId: string): Promise<AuthorSessionReplay> {
+  const cloneName = 'task-author'
+  let before: string | null = null
+  const pages: AgentMessage[][] = []
+  let total = 0
+  let truncated = false
+  for (let guard = 0; guard < 64; guard++) {
+    const params = new URLSearchParams({ limit: String(SESSION_REPLAY_PAGE) })
+    if (before) params.set('before', before)
+    const raw = await cloneRequest<{
+      messages: unknown[] | { items?: unknown[] }
+      has_more?: boolean
+      next_cursor?: string | null
+    }>(`/${cloneName}/sessions/${sessionId}?${params.toString()}`)
+    const rows = Array.isArray(raw.messages) ? raw.messages : raw.messages.items ?? []
+    // 页页向更早 → 新页压到头部，flat 后整体 created_at 正序（到达序回放）。
+    pages.unshift(rows.map(parseMessageMetadata))
+    total += rows.length
+    before = raw.next_cursor ?? null
+    if (!raw.has_more || !before) break
+    if (total >= SESSION_REPLAY_MAX) { truncated = true; break }
+  }
+  const items = pages.flat()
+  return {
+    items: truncated ? items.slice(Math.max(0, items.length - SESSION_REPLAY_MAX)) : items,
+    truncated,
+  }
+}
+
 export function mergeClone(name: string) {
   return request<{ ok: boolean; archived_lessons: number; clone_removed: boolean }>(`/clones/${name}/merge`, { method: 'POST' })
 }

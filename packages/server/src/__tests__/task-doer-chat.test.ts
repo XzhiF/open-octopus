@@ -473,6 +473,14 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
     // 写纪律 —— 快改每改即 commit 的标记词就在上下文里
     expect(append).toContain("[quick-edit]")
     expect(append).toContain("快速修改")
+    // 票05（ADR-0026）：计划回写通道与 plan-before-code 确认闸随 persona+上下文注入；
+    // curl 配方字段名逐字可见（routes/tasks.ts planWriteBodySchema 同形）。
+    expect(append).toContain("计划回写")
+    expect(append).toContain("plan-before-code")
+    expect(append).toContain("确认闸")
+    expect(append).toContain('"reason"')
+    expect(append).toContain('"source"')
+    expect(append).toContain("--data-binary")
   })
 
   it("empty content → 400; draft task → 409 before the stream starts", async () => {
@@ -530,16 +538,26 @@ describe("S1: 快速修改每改即 commit — [quick-edit] 落在执行分支",
     void wsPath
   })
 
-  it("a deflected big-change reply (model judges, no edit happens) produces NO commit — and nothing keyword-gates it", async () => {
-    const { taskId, repoPath } = seedV4Task({ kind: "running" })
+  it("plan-before-code：大改指令 → 回复为预览形态（spec 变更 + 票草稿 + 请求确认），零留痕", async () => {
+    // 票05 AC5。判定「是否大改」在模型侧 —— mock provider 无法真验判断本身
+    // （真判断的端到端抽测归票06 e2e），本测试钉两条可验事实：
+    // ① persona 确认闸 + 逐字 curl 配方确实随回合注入模型（文本闸）；
+    // ② 预览形态回合全链路零留痕：执行分支不落 commit、home 批次正本不动
+    //    （无计划回写发生）、ws 副本不动、无 quick_edit_commit 尾帧。
+    const { taskId, repoPath, homeBatchDir, wsBatchDir } = seedV4Task({ kind: "awaiting_review" })
+    const homeSpecBefore = fs.readFileSync(path.join(homeBatchDir, "spec.md"), "utf-8")
+    const wsSpecBefore = fs.readFileSync(path.join(wsBatchDir, "spec.md"), "utf-8")
     const before = gitLogSubjects(repoPath)
 
-    // 这条「大改动」指令里没有任何服务端会匹配的关键词表可依赖 ——
-    // server 只做「回合后仓库是否变脏」的机械判断。
+    // 这条「大改」指令里没有任何服务端会匹配的关键词表可依赖 ——
+    // 预览形态由模型按 persona 给出，server 只做机械留痕核对。
     h.queue.push({
-      chunks: textResult(
-        "这个改动跨三个模块、还要新增接口，属结构性变更。建议不要在此对话直接动手：请走「打回 → 修复轮」，反馈指令草稿我已替你整理好：「为订单域新增批量改价接口并同步改造前端表单」。",
-      ),
+      chunks: textResult([
+        "这属大改 —— 按 plan-before-code 先对齐再动手，本回合我只出预览：",
+        "【spec 变更预览】.scratch/20261008/p1-mvp/spec.md 验收标准节：改后文段见草稿。",
+        "【新票草稿】issues/02-batch-price.md：`Status: ready-for-agent`，`Origin: 待验收对话`。",
+        "请确认：确认后我先经计划回写 REST 落 spec 变更与新票，再开始改代码。",
+      ].join("\n")),
     })
     const res = await app.request(`/api/tasks/${taskId}/chat`, {
       method: "POST",
@@ -550,11 +568,24 @@ describe("S1: 快速修改每改即 commit — [quick-edit] 落在执行分支",
     const sseText = await res.text()
     expect(sseText).not.toContain("event: quick_edit_commit")
 
+    // 零留痕：代码没动、计划没动（回写未发生 —— home 正本逐字节不变，
+    // 文末也不会出现 server 落痕的「变更记录」节）。
     expect(gitLogSubjects(repoPath)).toEqual(before)
-    // 劝退回复照常持久化，人看得见
+    expect(fs.readFileSync(path.join(homeBatchDir, "spec.md"), "utf-8")).toBe(homeSpecBefore)
+    expect(fs.readFileSync(path.join(homeBatchDir, "spec.md"), "utf-8")).not.toContain("变更记录")
+    expect(fs.readFileSync(path.join(wsBatchDir, "spec.md"), "utf-8")).toBe(wsSpecBefore)
+
+    // 文本闸：本轮模型收到的 append 里确认闸与配方在场（缺一即 persona 漂移）。
+    const call = h.calls[h.calls.length - 1]
+    const append = (call.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+    expect(append).toContain("plan-before-code")
+    expect(append).toContain("计划回写")
+    expect(append).toContain("Origin:")
+
+    // 预览回复照常持久化，人看得见
     const bound = db.prepare("SELECT doer_session_id FROM tasks WHERE id = ?").get(taskId) as { doer_session_id: string }
     const msgs = chatSvc.getAllMessages(bound.doer_session_id)
-    expect(msgs.some((m) => m.role === "assistant" && m.content.includes("修复轮"))).toBe(true)
+    expect(msgs.some((m) => m.role === "assistant" && m.content.includes("plan-before-code"))).toBe(true)
   })
 
   it("接管回合的有效编辑落 [takeover-edit]（不双计快改列），尾帧名与 awaiting 契约逐字不变", async () => {

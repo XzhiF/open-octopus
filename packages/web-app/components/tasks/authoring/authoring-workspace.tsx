@@ -37,8 +37,10 @@ import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "@/components/agent/ch
 import * as agentApi from "@/lib/agent/api"
 import { SpecPanel } from "./spec-panel"
 import { EditableTitle } from "../editable-title"
-import { useBatchTree, findSpecEntry, isRelativeScratchSpec } from "./use-batch-tree"
+import { useBatchTree } from "./use-batch-tree"
 import { useHomeTree } from "./use-home-tree"
+// 票 09：入队清单六行判定 + 409 missing 反解提纯为共享纯函数（与控制台只读镜像单源）。
+import { computeGateHits, computeSpecRows } from "./spec-gate"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
@@ -359,80 +361,31 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
   const v4Phases = spec.phases ?? []
   // #53 K5 + 原型 chat-draft-v4 改版：磁盘树未就绪 → spec 行「⏳ 未核」（不再
   // 退化字符串假绿）；入队 = 所有 phase 全满足（spec 落盘 ∧ issues 产物 ∧
-  // 绑定可解析 ∧ inputs ∧ 绑定确认 ∧ runbook）。✗ 行按 phase 点名。
-  const specTreeReady = !batchTree.loading && !batchTree.error
-  const v4Rows = useMemo(() => {
-    const phases = v4Phases
-    const rowPhases = phases.length >= 1
-    const relPhases = phases.filter((p) => isRelativeScratchSpec(p.specPath))
-    const specUnknown = !specTreeReady
-    const specMissingIdx = relPhases.filter((p) => findSpecEntry(batchTree.batches, p.specPath) === null).map((p) => p.index)
-    const rowSpec = rowPhases && !specUnknown && specMissingIdx.length === 0
-    const rowBind = rowPhases && phases.every((p) => (p.workflowRef ?? "").trim().length > 0)
-    const unconfirmedIdx = phases.filter((p) => p.bindingConfirmed !== true).map((p) => p.index)
-    const rowConfirm = rowPhases && unconfirmedIdx.length === 0
-    // runbook 与 server readyTask 硬检同判据：起停 up∧ready ∨ preview ∨ verify
-    const rb = spec.acceptance_runbook
-    const rowRunbook =
-      !!(rb?.up?.command?.trim() && rb?.ready?.command?.trim()) ||
-      !!spec.acceptance_preview?.command?.trim() ||
-      !!spec.acceptance_verify?.command?.trim()
-    let inputsUnknown = false
-    const rowInputs = rowPhases && phases.every((p) => {
-      const def = catalog.find((w) => w.ref === p.workflowRef)
-      if (!def) { if (p.workflowRef) inputsUnknown = true; return true } // 未知 ref = task-home 工作流，server 权威
-      const required = Object.entries(def.inputs ?? {}).filter(([, d]) => d.required).map(([k]) => k)
-      return required.every((k) => {
-        const v = (p.inputValues?.[k] ?? "").trim()
-        return v.length > 0 || v.includes("${")
-      })
-    })
-    return {
-      rowPhases, rowSpec, specUnknown, specMissingIdx, absSpecCount: phases.length - relPhases.length,
-      rowBind, rowInputs, unconfirmedIdx, rowConfirm, rowRunbook,
-      inputsUnknown, specTreeReady, rowRepos: true,
-    }
-  }, [v4Phases, catalog, batchTree.batches, batchTree.loading, batchTree.error, specTreeReady, spec])
+  // 绑定可解析 ∧ inputs ∧ runbook）。「绑定确认」闸 ⑤ 已废（2026-10-10
+  // ADR-0028：绑定存在且可解析 = 已确认）。✗ 行按 phase 点名。
+  // 判据本体在 spec-gate.computeSpecRows（票 09 与待执行控制台镜像单源）。
+  const v4Rows = useMemo(
+    () => computeSpecRows({
+      phases: v4Phases, spec, catalog,
+      batches: batchTree.batches, batchLoading: batchTree.loading, batchError: batchTree.error,
+    }),
+    [v4Phases, spec, catalog, batchTree.batches, batchTree.loading, batchTree.error],
+  )
 
   // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行天然不绿，不崩即可）
   // repos 行不并入 canEnqueue —— 本地无 fs 无从验证，恒乐观 ✅；✗ 只由服务端
   // 409 missing 回填（与 inputs 行的「服务端权威」同模式）。
-  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowConfirm && v4Rows.rowRunbook
+  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowRunbook
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
   // v4 gate 409 missing 反解（票 04 契约 `phase:<i>:<why>`：no-phases /
   // spec-missing / issues-missing / no-final-verification / workflow-ref /
-  // binding-unconfirmed / input:<key>；仓库预检 `project:<name>`；runbook 全局键）
-  // → 回填七行清单 ✗ + 人话。
-  const gateHits = useMemo<Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]>>(() => {
-    const hits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "confirm" | "runbook", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], confirm: [], runbook: [] }
-    for (const key of gateMissing ?? []) {
-      // 项目仓库预检键（服务端权威：repos/index.md 解析）—— 先拦前缀再走 catch-all。
-      if (key.startsWith("project:")) {
-        hits.repos.push(`仓库不可解析：${key.slice("project:".length)}（repos/index.md local 路径缺失/失效）`)
-        continue
-      }
-      if (key === "runbook") {
-        hits.runbook.push("缺「跑起来看」预设：acceptance_runbook（up+ready）∨ preview ∨ verify 任一")
-        continue
-      }
-      const m = /^phase:(\d+):(.+)$/.exec(key)
-      if (!m) { hits.phases.push(key); continue }
-      const i = Number(m[1])
-      const why = m[2]
-      if (why === "no-phases") hits.phases.push("phases 列表为空")
-      else if (why === "spec-missing") hits.spec.push(`Phase ${i}：批次目录中 spec 文件缺失`)
-      else if (why === "issues-missing") hits.spec.push(`Phase ${i}：issues/ 无任何票（批次产物未落地）`)
-      else if (why === "no-final-verification") hits.spec.push(`Phase ${i}：issues/ 缺 e2e 终票（或 spec 未声明 unit-only）`)
-      else if (why === "workflow-ref") hits.bind.push(`Phase ${i}：工作流引用无法解析`)
-      else if (why === "binding-unconfirmed") hits.confirm.push(`Phase ${i}：绑定未经人工确认（打开绑定弹窗保存一次）`)
-      else if (why.startsWith("input:")) hits.inputs.push(`Phase ${i}：必填输入 ${why.slice("input:".length)} 未填（或占位符解析为空）`)
-      else hits.phases.push(key)
-    }
-    return hits
-  }, [gateMissing])
+  // input:<key>；仓库预检 `project:<name>`；runbook 全局键。binding-unconfirmed
+  // 随闸 ⑤ 废除退役，ADR-0028）→ 回填六行清单 ✗ + 人话。
+  // 反解本体在 spec-gate.computeGateHits（票 09 与待执行控制台镜像单源）。
+  const gateHits = useMemo(() => computeGateHits(gateMissing), [gateMissing])
 
   // AC5 (K6/US11): autoAdvance 开关 — 编辑只在 draft 合法（PUT/spec-field 的
   // 服务端 guard = draft/ready），故落草稿面板；验收弹窗只显只读态。
@@ -578,7 +531,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
         </button>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">
-            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowConfirm, v4Rows.rowRunbook, v4Rows.rowRepos].filter(Boolean).length}/7</b>
+            入队清单 <b className="text-pop-pink">{[v4Rows.rowPhases, v4Rows.rowSpec, v4Rows.rowBind, v4Rows.rowInputs, v4Rows.rowRunbook, v4Rows.rowRepos].filter(Boolean).length}/6</b>
           </span>
           {chrome && (
             <button
@@ -636,7 +589,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
             pushing the right output-viewer panel off-screen (user-visible:
             "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
             bar scrolls internally (overflow-x-auto) instead. */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-pop-bg">
           {/* 辅助条已退役（2026-09-12 改版）：技能计数提示 → 输入框 placeholder，
               专家咨询 → ChatArea composer 左端贴纸（composerLeading 槽）。 */}
 

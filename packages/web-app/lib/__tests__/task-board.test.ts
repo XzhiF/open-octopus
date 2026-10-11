@@ -365,7 +365,7 @@ function usage(inputTokens: number, cacheRead: number, usd: number | null, compl
     totals: {
       tokens: inputTokens + 100 + cacheRead + 10,
       cost: { usd, complete },
-      cacheHitRate: cacheRead / (inputTokens + cacheRead),
+      cacheHitRate: cacheRead / (inputTokens + cacheRead + 10), // cc=10 进分母（ADR-0027）
     },
   }
 }
@@ -377,13 +377,13 @@ describe("sumTaskUsage — 列/看板用量合并", () => {
 
   it("逐字段相加，命中率用合并后 usage 重算（不是各组比率取平均）", () => {
     const merged = sumTaskUsage([
-      makeTask({ id: "a", ai_usage: usage(1000, 3000, 0.01) }),   // 75%
-      makeTask({ id: "b", ai_usage: usage(9000, 1000, 0.02) }),   // ~10%
+      makeTask({ id: "a", ai_usage: usage(1000, 3000, 0.01) }),   // 3000/4010 ≈ 74.8%
+      makeTask({ id: "b", ai_usage: usage(9000, 1000, 0.02) }),   // 1000/9010 ≈ 11.1%
     ])!
     expect(merged.totalCalls).toBe(2)
     expect(merged.usage.inputTokens).toBe(10000)
     expect(merged.totals.tokens).toBe(10000 + 200 + 4000 + 20)
-    expect(merged.totals.cacheHitRate).toBeCloseTo(4000 / 14000, 10)
+    expect(merged.totals.cacheHitRate).toBeCloseTo(4000 / 14020, 10) // 分母含 cc=20（ADR-0027）
     expect(merged.totals.cost.usd).toBeCloseTo(0.03, 10)
     expect(merged.totals.cost.complete).toBe(true)
   })
