@@ -28,6 +28,7 @@ import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
 import { WikiSplitService } from "./services/knowledge/wiki/split"
+import { WikiCurateService } from "./services/knowledge/wiki/curate"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
@@ -501,9 +502,14 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 // string (`?org=<name>`), so the server no longer pins a default org.
 // 票02 L2: 'wiki-split' 提案 approve → wiki 拆分执行器（hub 目录形态；懒取 getDb，
 // 与 chat 门同款"测试期不触达"纪律）。
+// 票06 D4: 词条形态 'rule' 与 'wiki-edit' approve → 策展编译通道（await——
+// compileEntry 异步；写闸单一入口 = WikiCompileService + 02 lint + pre-commit hook）。
 const reviewService = new ReviewService(d.pendingReview, {
   applyWikiSplit: (item, org) => {
     new WikiSplitService({ db: getDb(), org: org ?? "default" }).applyProposal(item)
+  },
+  applyWikiCurate: async (item, org) => {
+    await new WikiCurateService({ db: getDb(), org: org ?? "default" }).applyApprovedItem(item)
   },
 })
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))

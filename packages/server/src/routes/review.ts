@@ -115,7 +115,7 @@ export function createReviewRoutes(
 
     try {
       if (action === "approve") {
-        const result = reviewService.batchApprove(ids, org)
+        const result = await reviewService.batchApprove(ids, org)
         return c.json({ ok: true, succeeded: result.succeeded, failed: result.failed, details: result.details })
       } else {
         reviewService.batchReject(ids)

@@ -37,6 +37,11 @@ export interface CompileInput {
   reviewer?: string
   /** LOG 摘要列（默认 `+{N} 条规则`） */
   note?: string
+  /**
+   * 票06 审核引用：策展通道（curate）提交时携带 pending item id，
+   * 进入 commit message 尾缀 `[review:<id>]` —— 审核队列 ↔ git 历史的审计链。
+   */
+  reviewRef?: string
 }
 
 export interface CompileResult {
@@ -442,7 +447,8 @@ export class WikiCompileService {
       mustGit(this.git, ["add", "-A"])
       const status = mustGit(this.git, ["status", "--porcelain"])
       if (status.stdout.trim().length > 0) {
-        mustGit(this.git, ["commit", "-m", `compile: ${relPath} — ${note}`])
+        const reviewTag = input.reviewRef ? ` [review:${input.reviewRef}]` : ""
+        mustGit(this.git, ["commit", "-m", `compile: ${relPath} — ${note}${reviewTag}`])
         commit = wikiHead(this.git)
         changed = true
       }

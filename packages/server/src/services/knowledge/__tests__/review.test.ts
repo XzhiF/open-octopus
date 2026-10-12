@@ -54,10 +54,10 @@ describe("review", () => {
   // TC-002: approveItem writes to Org-level knowledge directory
   // =========================================================================
   describe("approveItem (TC-002)", () => {
-    it("writes rule to org knowledge directory, not global", () => {
+    it("writes rule to org knowledge directory, not global", async () => {
       const id = insertPendingRule()
 
-      const result = reviewService.approveItem(id, "test-org")
+      const result = await reviewService.approveItem(id, "test-org")
       expect(result.ok).toBe(true)
       expect(result.ruleId).toBeDefined()
 
@@ -72,17 +72,17 @@ describe("review", () => {
       expect(pending?.status).toBe("approved")
     })
 
-    it("is idempotent — approving twice returns same ruleId", () => {
+    it("is idempotent — approving twice returns same ruleId", async () => {
       const id = insertPendingRule()
 
-      const first = reviewService.approveItem(id, "test-org")
-      const second = reviewService.approveItem(id, "test-org")
+      const first = await reviewService.approveItem(id, "test-org")
+      const second = await reviewService.approveItem(id, "test-org")
       expect(second.ok).toBe(true)
       expect(second.ruleId).toBe(id) // Already approved, returns original id
     })
 
-    it("throws NOT_FOUND for nonexistent item", () => {
-      expect(() => reviewService.approveItem("nonexistent", "test-org")).toThrow("NOT_FOUND")
+    it("throws NOT_FOUND for nonexistent item", async () => {
+      await expect(reviewService.approveItem("nonexistent", "test-org")).rejects.toThrow("NOT_FOUND")
     })
   })
 
@@ -146,11 +146,11 @@ describe("review", () => {
   })
 
   describe("batchApprove", () => {
-    it("approves multiple items and reports results", () => {
+    it("approves multiple items and reports results", async () => {
       const id1 = insertPendingRule({ id: "batch-1" })
       const id2 = insertPendingRule({ id: "batch-2" })
 
-      const result = reviewService.batchApprove([id1, id2, "nonexistent"], "test-org")
+      const result = await reviewService.batchApprove([id1, id2, "nonexistent"], "test-org")
       expect(result.succeeded).toBe(2)
       expect(result.failed).toBe(1)
       expect(result.details).toHaveLength(3)
