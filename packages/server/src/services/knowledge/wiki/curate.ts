@@ -35,8 +35,8 @@ export interface CurateResult {
   entryId: string
   /** 相对 wiki 根的 POSIX 路径 */
   path: string
-  /** added = 新规则行；merged = 近义重复并入现行规则（不双写） */
-  action: "added" | "merged"
+  /** added = 新规则行；merged = 近义重复并入现行规则（不双写）；created = 整词条新建（票07 蒸馏候选采纳） */
+  action: "added" | "merged" | "created"
   /** added 时新生成的锚点 */
   anchor?: string
   /** merged 时并入的现行锚点 */
@@ -313,6 +313,12 @@ export class WikiCurateService {
     const [domain, ...restSegments] = relPath.split("/")
     const fileName = restSegments.join("/")
     const abs = path.resolve(this.root, relPath)
+
+    // 票07 蒸馏候选形态：载荷自带完整词条草案 ⇒ 整词条新建（仍经唯一写闸 compileEntry）
+    if (payload.createEntry !== undefined) {
+      return this.applyWikiCreate(item, relPath, fileName, domain, payload.createEntry)
+    }
+
     if (!fs.existsSync(abs)) {
       throw new Error(`CURATE_TARGET_MISSING: 修订目标 '${relPath}' 不在盘上（存量词条由票05 迁移产出）`)
     }
@@ -441,12 +447,64 @@ export class WikiCurateService {
     }
   }
 
+  /**
+   * [整词条新建]（票07 蒸馏候选采纳）：候选草案 = schema 合规三段式词条（front-matter
+   * 带 doc: 源指针回跳原文），经唯一写闸 compileEntry（lint/INDEX/LOG/FTS/git 同轨）
+   * 整词条编译——没有 appendFile 旁路，pre-commit 策展标记由 spawnGit 通道自带。
+   * 目标已在盘 ⇒ merged 幂等不覆盖（重采纳不改写现行词条，diff 为空）。
+   */
+  private async applyWikiCreate(
+    item: PendingReviewRow,
+    relPath: string,
+    fileName: string,
+    domain: string,
+    entryMarkdown: string,
+  ): Promise<CurateResult> {
+    const { meta, body } = parseEntryMarkdown(entryMarkdown)
+    if (meta.domain !== domain) {
+      throw new Error(`CURATE_DOMAIN_MISMATCH: 草案域 '${meta.domain}' 与目标路径 '${relPath}' 不一致`)
+    }
+    const abs = path.resolve(this.root, relPath)
+    if (fs.existsSync(abs)) {
+      return {
+        entryId: meta.id,
+        path: relPath,
+        action: "merged",
+        mergedInto: meta.id,
+        commit: null,
+        warnings: ["目标词条已存在——保持现状不覆盖（幂等）"],
+        conflicts: [],
+      }
+    }
+    const compiled = await this.compiler.compileEntry({
+      content: serializeEntryMarkdown(
+        { ...meta, sources: [...new Set([...meta.sources, `review:${item.id}`])] },
+        body,
+      ),
+      fileName,
+      source: item.source_ref ? `${item.source_ref} ${clip(item.source_label, 20)}`.trim() : item.source_label || item.source,
+      reviewer: "curator",
+      note: `蒸馏采纳 ${meta.id}`,
+      reviewRef: item.id,
+    })
+    return {
+      entryId: meta.id,
+      path: relPath,
+      action: "created",
+      commit: compiled.commit,
+      warnings: [...compiled.warnings],
+      conflicts: [],
+    }
+  }
+
   private parseWikiEditPayload(item: PendingReviewRow): {
     path: string
     replace?: { anchor: string; text: string }
     supersedes?: string[]
     addRule?: string
     section?: string
+    /** 票07 蒸馏候选形态：完整词条草案（front-matter+正文）markdown，采纳即整词条编译 */
+    createEntry?: string
   } {
     let parsed: unknown
     try {
@@ -457,10 +515,10 @@ export class WikiCurateService {
     const p = parsed as {
       kind?: unknown; path?: unknown;
       replace?: { anchor?: unknown; text?: unknown };
-      supersedes?: unknown; addRule?: unknown; section?: unknown
+      supersedes?: unknown; addRule?: unknown; section?: unknown; createEntry?: unknown
     }
     if (!p || p.kind !== "wiki-edit" || typeof p.path !== "string") {
-      throw new Error("CURATE_BAD_PAYLOAD: 期望 {kind:'wiki-edit', path, replace?/supersedes?/addRule?}")
+      throw new Error("CURATE_BAD_PAYLOAD: 期望 {kind:'wiki-edit', path, replace?/supersedes?/addRule?/createEntry?}")
     }
     const replace = p.replace && typeof p.replace.anchor === "string" && typeof p.replace.text === "string"
       ? { anchor: p.replace.anchor, text: p.replace.text }
@@ -471,6 +529,7 @@ export class WikiCurateService {
       supersedes: Array.isArray(p.supersedes) ? p.supersedes.filter((x): x is string => typeof x === "string") : undefined,
       addRule: typeof p.addRule === "string" ? p.addRule : undefined,
       section: typeof p.section === "string" ? p.section : undefined,
+      createEntry: typeof p.createEntry === "string" ? p.createEntry : undefined,
     }
   }
 
