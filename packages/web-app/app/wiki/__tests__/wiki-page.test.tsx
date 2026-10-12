@@ -52,6 +52,18 @@ const ARTICLE = {
   gitHistory: [{ hash: "a3f9c21", date: "2026-10-12", message: "compile: projects/prj-octopus.md — +oct-013" }],
 }
 
+// 票04：判例详情 fixture——case 面字段（状态 chips + rule_ref 顺藤）来自 /article 的 case 载荷
+const ARTICLE_CASE = {
+  id: "case-2026-003", org: "xzf-dev", domain: "cases", title: "CI 报 LOCKFILE_CONFIG_MISMATCH",
+  summary: "CI 报 LOCKFILE_CONFIG_MISMATCH", topics: ["ci", "pnpm", "lockfile"], stability: "stable",
+  lastCompiled: "2026-10-12", sources: ["task-207 / exec-9f31"],
+  confidence: 1, path: "cases/2026-06-23-pnpm-lockfile-mismatch.md", updatedAt: "2026-10-12 10:00:00",
+  body: "## 现场  pnpm 9 的 CI 读 v10 lockfile…\n## 诊断  overrides 住在 pnpm-workspace.yaml…\n## 根因  lockfile 格式版本与 CLI 版本错配\n## 修复  CI 升 pnpm 10（commit 82d96372）\n## 教训  工具链大版本升级先查配置文件归属变化\n",
+  anchors: [],
+  gitHistory: [{ hash: "b7c1d02", date: "2026-10-12", message: "case+: cases/2026-06-23-pnpm-lockfile-mismatch.md — 新案例 ×2 次命中" }],
+  case: { symptom: "CI 报 LOCKFILE_CONFIG_MISMATCH", tags: ["ci", "pnpm", "lockfile"], severity: "blocker", occurrences: 2, ruleRef: "oct-013", status: "distilled" },
+}
+
 const SEARCH = {
   org: "xzf-dev", query: "Promise", mode: "fts",
   results: [{
@@ -71,6 +83,7 @@ function mockFetch() {
     calls.push(call)
     if (call.url.includes("/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
     if (call.url.includes("/wiki/search")) return { ok: true, status: 200, json: async () => SEARCH }
+    if (/\/wiki\/article\/case-/.test(call.url)) return { ok: true, status: 200, json: async () => ARTICLE_CASE }
     if (/\/wiki\/article\/[^?]+/.test(call.url)) return { ok: true, status: 200, json: async () => ARTICLE }
     return { ok: true, status: 200, json: async () => ({}) }
   }))
@@ -176,6 +189,39 @@ describe("顶部检索 + LOG.md 渲染视图（故事 3/4）", () => {
     })
     expect(md.textContent).toContain("| 日期 | 动作 | 词条 | 摘要 | 来源 | 审核 |")
     expect(md.textContent).toContain("task-207 归档提炼")
+  })
+})
+
+describe("判例详情：状态 chips + 五段 + rule_ref 顺藤（票04）", () => {
+  it("selecting a case in the Cases group renders status chip (distilled), severity, ×occurrences and the five sections", async () => {
+    render(<WikiPage />)
+    await waitFor(() => screen.getByText("问题案例档"))
+
+    fireEvent.click(screen.getByRole("button", { name: /CI 报 LOCKFILE_CONFIG_MISMATCH/ }))
+    await waitFor(() => expect(screen.getByTestId("wiki-entry-title").textContent).toBe("CI 报 LOCKFILE_CONFIG_MISMATCH"))
+
+    // 状态 chips：open|distilled|superseded + severity + 命中次数
+    expect(screen.getByTestId("wiki-case-status").textContent).toBe("distilled")
+    expect(screen.getByText("blocker")).toBeDefined()
+    expect(screen.getByText("×2")).toBeDefined()
+
+    // 五段正文（现场/诊断/根因/修复/教训）经 MarkdownPreview 渲染（桩透传）
+    await waitFor(() => expect(document.querySelector("[data-md-preview]")).not.toBeNull())
+    const md = document.querySelector("[data-md-preview]")!
+    expect(md.textContent).toContain("## 现场")
+    expect(md.textContent).toContain("## 教训  工具链大版本升级先查配置文件归属变化")
+  })
+
+  it("clicking rule_ref searches the anchor and jumps to the rule entry (顺藤读规则)", async () => {
+    render(<WikiPage />)
+    await waitFor(() => screen.getByText("问题案例档"))
+
+    fireEvent.click(screen.getByRole("button", { name: /CI 报 LOCKFILE_CONFIG_MISMATCH/ }))
+    await waitFor(() => screen.getByTestId("wiki-rule-ref"))
+    fireEvent.click(screen.getByTestId("wiki-rule-ref"))
+
+    await waitFor(() => expect(calls.some(c => c.url.includes("/wiki/search") && c.url.includes("q=oct-013"))).toBe(true))
+    await waitFor(() => expect(screen.getByTestId("wiki-entry-title").textContent).toBe("Octopus 平台工程知识"))
   })
 })
 

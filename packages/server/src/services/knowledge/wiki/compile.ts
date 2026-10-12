@@ -1,13 +1,18 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
-import type { WikiEntryFrontmatter } from "@octopus/shared"
+import type { WikiEntryFrontmatter, WikiCaseFrontmatter } from "@octopus/shared"
+import { WIKI_CASE_SECTIONS, LOCATABLE_SOURCE_RE } from "@octopus/shared"
 import {
   parseEntryMarkdown,
+  parseWikiFile,
+  parseCaseMarkdown,
   serializeEntryMarkdown,
+  serializeCaseMarkdown,
+  caseEntryView,
   extractRuleAnchors,
 } from "./format"
-import { lintWikiEntry, buildSplitProposal, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, type RuleFormJudge, type SplitProposal } from "./lint"
+import { lintWikiEntry, lintProfileForDomain, buildSplitProposal, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, type RuleFormJudge, type SplitProposal } from "./lint"
 import { resolveWikiRoot, ensureWikiSkeleton, WIKI_DOMAINS, WIKI_DOMAIN_LABELS, type WikiDomainDir } from "./paths"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
@@ -69,7 +74,12 @@ export interface ScannedEntry {
   relPath: string
   meta: WikiEntryFrontmatter
   anchors: string[]
+  /** 票04：cases 域条目的判例 front-matter（INDEX 判例行/统计消费）；词条为 undefined。 */
+  case?: WikiCaseFrontmatter
 }
+
+/** 判例文件名日期前缀（{YYYY-MM-DD}-{slug}.md）——判例是历史事件，文件名日期正当。 */
+const CASE_FILE_RE = /^(\d{4}-\d{2}-\d{2})-[a-z0-9][a-z0-9._-]*\.md$/i
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -117,8 +127,15 @@ export function scanWikiEntries(root: string): ScannedEntry[] {
     }
     for (const relPath of files.sort()) {
       try {
-        const { meta, body } = parseEntryMarkdown(fs.readFileSync(path.resolve(root, relPath), "utf-8"))
-        out.push({ relPath, meta, anchors: extractRuleAnchors(body) })
+        const parsed = parseWikiFile(fs.readFileSync(path.resolve(root, relPath), "utf-8"))
+        if (parsed.kind === "case") {
+          // 判例视图：last_compiled 取文件名日期前缀（事件日；无则跳过视图不报错）
+          const dateM = CASE_FILE_RE.exec(relPath.split("/").pop() ?? "")
+          const meta = caseEntryView(parsed.meta, dateM?.[1] ?? "")
+          out.push({ relPath, meta, anchors: extractRuleAnchors(parsed.body), case: parsed.meta })
+        } else {
+          out.push({ relPath, meta: parsed.meta, anchors: extractRuleAnchors(parsed.body) })
+        }
       } catch (err) {
         process.stderr.write(`[wiki-index] skip ${relPath}: ${err instanceof Error ? err.message : String(err)}\n`)
       }
@@ -175,6 +192,17 @@ export function renderWikiIndex(entries: ScannedEntry[], org: string, pendingRev
       : `## ${domain}/ （${WIKI_DOMAIN_LABELS[domain]} · ${listable.length} 词条${rules > 0 ? ` · ${rules} 规则` : ""}）`
     lines.push(head)
     for (const e of listable) {
+      if (e.case) {
+        // 判例行（prototype Tab③ lines 46-47 形状）：症状摘要｜tags｜×次数 → 蒸馏指针/状态
+        const c = e.case
+        let tail = ""
+        if (c.status === "distilled" && c.rule_ref) tail = ` → 已蒸馏 ${c.rule_ref}`
+        else if (c.status === "distilled") tail = "｜已蒸馏"
+        else if (c.status === "superseded") tail = "｜已作废"
+        else tail = "｜未蒸馏"
+        lines.push(`- ${e.relPath} — ${c.symptom}｜tags: ${c.tags.join(",")}${c.occurrences > 1 ? `｜×${c.occurrences}` : ""}${tail}`)
+        continue
+      }
       const topics = e.meta.topics.length > 0 ? `｜topics: ${e.meta.topics.join(",")}` : ""
       lines.push(`- ${e.relPath} — ${e.meta.summary}${topics}`)
     }
@@ -267,6 +295,10 @@ export class WikiCompileService {
    * 票02 lint 闸在此同步执行（L1/L3/L5；L6 为编译时 LLM 判定，注入 judge 时 await）。
    */
   async compileEntry(input: CompileInput): Promise<CompileResult> {
+    // 票04：cases 域走判例管线（准入宽松 + append-only + lint 豁免）；词条管线原样（01/02）。
+    const file = parseWikiFile(input.content)
+    if (file.kind === "case") return this.compileCase(file.meta, file.body, input)
+
     const warnings: string[] = []
 
     // ── 1. validate（无副作用段）──────────────────────────────
@@ -427,6 +459,189 @@ export class WikiCompileService {
     return (this.db
       .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
       .get() as { n: number }).n
+  }
+
+  /**
+   * 票04 判例管线（准入与词条不同，spec §准入策略 D5）：
+   * - 准入只校验 真实 + source 可定位（task-/exec-/commit 指针）；半衰期三问豁免——
+   *   判例是历史记录，"常青性"由 rule_ref 指向的规则承担，schema 里就没有 stability/confidence。
+   * - lint 走 lintProfileForDomain('cases')：豁免 L1 容量闸 + 正文禁日期（事件事件绑定）。
+   * - append-only：入库后正文即历史，只有 status/rule_ref/occurrences 三字段可经编译通道
+   *   更新（蒸馏/次数/作废）；改写正文或其它字段的尝试 → 先落 LOG 证据行（case-rej）再拒绝。
+   * 仍与词条共用：唯一写入口纪律、INDEX/LOG/DB/FTS/git 管线、事务性回滚。
+   */
+  private async compileCase(c: WikiCaseFrontmatter, body: string, input: CompileInput): Promise<CompileResult> {
+    const warnings: string[] = []
+    const relName = input.fileName ?? `${today()}-${c.id}.md`
+    const dateM = CASE_FILE_RE.exec(relName)
+    if (!dateM) {
+      throw new Error(`CASE_FILENAME: 判例文件名必须 {YYYY-MM-DD}-{slug}.md（判例是历史事件，事件日进文件名），得到 '${relName}'`)
+    }
+    const relPath = `cases/${relName}`
+    const absPath = path.resolve(this.root, "cases", relName)
+    if (!absPath.startsWith(path.resolve(this.root) + path.sep)) {
+      throw new Error(`INVALID_PARAM: 路径逃逸 wiki 根 '${relPath}'`)
+    }
+    if (!LOCATABLE_SOURCE_RE.test(c.source)) {
+      throw new Error(`CASE_SOURCE_UNLOCATABLE: source '${c.source}' 不可定位——判例准入只要求"真实+可定位"，source 须指回 task-/exec-/commit/session 等可追溯指针`)
+    }
+    const missing = WIKI_CASE_SECTIONS.filter(s => !new RegExp(`^## ${s}(\\s|$)`, "m").test(body))
+    if (missing.length > 0) {
+      throw new Error(`CASE_SECTIONS_MISSING: 判例正文必须含五段（现场/诊断/根因/修复/教训），缺 ${missing.join("/")}`)
+    }
+
+    const anchors = extractRuleAnchors(body)
+    const seen = new Set<string>()
+    for (const a of anchors) {
+      if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在本判例内重复`)
+      seen.add(a)
+    }
+    const others = this.articles.listOthers(this.org, c.id)
+    for (const other of others) {
+      for (const a of extractRuleAnchors(other.body)) {
+        if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.path}（锚点全库唯一、永不复用）`)
+      }
+    }
+
+    const view = caseEntryView(c, today())
+    const lint = lintWikiEntry({
+      meta: view,
+      body,
+      anchors,
+      root: this.root,
+      linkCorpus: [{ id: c.id, path: relPath }, ...others.map(o => ({ id: o.id, path: o.path }))],
+      profile: lintProfileForDomain("cases"),
+    })
+    for (const w of lint.warnings) warnings.push(w.message)
+    for (const e of lint.errors) throw new WikiLintError(e.code, e.message, lint.errors)
+
+    // ── append-only 闸（先于一切写入/回滚快照）──────────────────
+    const logPath = path.join(this.root, WIKI_LOG_FILE)
+    const indexPath = path.join(this.root, WIKI_INDEX_FILE)
+    const source = input.source ?? c.source
+    const reviewer = input.reviewer ?? "curator"
+    if (fs.existsSync(absPath)) {
+      const prev = parseCaseMarkdown(fs.readFileSync(absPath, "utf-8"))
+      const norm = (s: string) => s.replace(/\r\n/g, "\n").replace(/\s+$/, "")
+      if (norm(prev.body) !== norm(body)) {
+        this.logRejection(logPath, relPath, "正文改写", source, reviewer)
+        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 正文已入库即历史，禁止改写（append-only；仅 status/rule_ref/occurrences 可经编译通道更新）`)
+      }
+      const immutable = (
+        prev.meta.id !== c.id || prev.meta.symptom !== c.symptom ||
+        prev.meta.severity !== c.severity || prev.meta.source !== c.source ||
+        prev.meta.tags.join(",") !== c.tags.join(",")
+      )
+      if (immutable) {
+        this.logRejection(logPath, relPath, "固定字段改写", source, reviewer)
+        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 仅 status/rule_ref/occurrences 可经编译通道更新，其余字段入库后不可变`)
+      }
+      const mutable = (
+        prev.meta.status !== c.status ||
+        prev.meta.rule_ref !== c.rule_ref ||
+        prev.meta.occurrences !== c.occurrences
+      )
+      if (!mutable) {
+        // 逐字节相同的重入库：无操作（不产 LOG 噪音、不产生新 commit）
+        return { id: c.id, domain: "cases", path: relPath, anchors, warnings, commit: null, changed: false }
+      }
+      return this.writeCase(c, body, view, relPath, absPath, indexPath, logPath, anchors, warnings, "revise",
+        input.note ?? `判例更新 status=${c.status} occurrences=${c.occurrences}${c.rule_ref ? ` rule_ref=${c.rule_ref}` : ""}`,
+        source, reviewer)
+    }
+    return this.writeCase(c, body, view, relPath, absPath, indexPath, logPath, anchors, warnings, "case+",
+      input.note ?? (c.occurrences > 1 ? `新案例 ×${c.occurrences} 次命中` : "新案例"),
+      source, reviewer)
+  }
+
+  private writeCase(c: WikiCaseFrontmatter, body: string, view: WikiEntryFrontmatter, relPath: string, absPath: string, indexPath: string, logPath: string, anchors: string[], warnings: string[], action: string, note: string, source: string, reviewer: string): CompileResult {
+    const prevEntry = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null
+    const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
+    const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
+    const prevRow = this.articles.get(this.org, c.id)
+    const prevRowid = this.articles.getRowid(this.org, c.id)
+    const prevFts = prevRowid !== undefined ? this.articles.getFtsByRowid(prevRowid) : undefined
+
+    try {
+      ensureWikiSkeleton(this.root)
+      ensureWikiGitRepo(this.root, this.git)
+
+      atomicWrite(absPath, serializeCaseMarkdown(c, body))
+
+      const entries = scanWikiEntries(this.root)
+      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org, this.pendingCount()).content)
+
+      const logBase = prevLog ?? WIKI_LOG_HEADER
+      atomicWrite(logPath, logBase + formatLogRow({ action, entry: relPath, note, source, reviewer }))
+
+      const upsert: Omit<WikiArticleRow, "updated_at"> = {
+        org: this.org,
+        id: c.id,
+        domain: "cases",
+        title: view.title,
+        summary: view.summary,
+        topics: JSON.stringify(view.topics),
+        stability: "stable",
+        last_compiled: view.last_compiled,
+        sources: JSON.stringify(view.sources),
+        confidence: 1,
+        body,
+        path: relPath,
+      }
+      this.db.transaction(() => {
+        this.articles.upsert(upsert)
+        const rowid = this.articles.getRowid(this.org, c.id)!
+        try {
+          this.articles.deleteFts(rowid)
+          this.articles.insertFts({
+            rowid,
+            id: c.id,
+            domain: "cases",
+            title: view.title,
+            summary: view.summary,
+            topics: upsert.topics,
+            body,
+          })
+          return true
+        } catch (err) {
+          warnings.push(`FTS 同步失败（非致命）: ${err instanceof Error ? err.message : String(err)}`)
+          return false
+        }
+      })()
+
+      let commit: string | null = null
+      let changed = false
+      mustGit(this.git, ["add", "-A"])
+      const status = mustGit(this.git, ["status", "--porcelain"])
+      if (status.stdout.trim().length > 0) {
+        mustGit(this.git, ["commit", "-m", `${action}: ${relPath} — ${note}`])
+        commit = wikiHead(this.git)
+        changed = true
+      }
+
+      return { id: c.id, domain: "cases", path: relPath, anchors, warnings, commit, changed }
+    } catch (err) {
+      this.rollbackTo(c.id, { absPath, prevEntry, indexPath, prevIndex, logPath, prevLog, prevRow, prevRowid, prevFts })
+      throw err
+    }
+  }
+
+  /** append-only 违例先落 LOG 证据行再拒绝——"改写尝试被拒并留 LOG"（票04 验收项）。 */
+  private logRejection(logPath: string, relPath: string, what: string, source: string, reviewer: string): void {
+    const base = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
+    atomicWrite(logPath, base + formatLogRow({
+      action: "case-rej",
+      entry: relPath,
+      note: `${what}被拒（append-only 判例即历史）`,
+      source,
+      reviewer,
+    }))
+    // 能走到拒绝说明判例文件已存在 ⇒ wiki git 仓已建立；证据行随手提交（best-effort，
+    // git 抖动绝不让"留 LOG"降级为静默丢弃）
+    try {
+      mustGit(this.git, ["add", WIKI_LOG_FILE])
+      mustGit(this.git, ["commit", "-m", `case-rej: ${relPath} — ${what}被拒（append-only）`])
+    } catch { /* LOG 文件已落盘即达标，commit 失败不升级 */ }
   }
 
   /**

@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
-import { extractRuleAnchors, RULE_ANCHOR_RE } from "../services/knowledge/wiki/format"
+import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
 import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
 import { spawnGit } from "../services/knowledge/wiki/wiki-git"
@@ -68,6 +68,55 @@ function gitHistoryFor(root: string, entryPath: string, limit = 5): Array<{ hash
   } catch {
     return []
   }
+}
+
+/**
+ * 票04：判例的 status/rule_ref/occurrences/severity 不进 DB 索引表（schema v52 无列，
+ * 判例真源在 fs——"检索/统计不扫盘"禁的是全库遍历，逐命中读 ≤topK 个文件是定向读，
+ * 与 per-hit 取整行 body 同量级）。顺藤指针 rule_ref 随命中结果携带。
+ */
+function caseFieldsFor(root: string, relPath: string): {
+  symptom: string
+  tags: string[]
+  severity: string
+  occurrences: number
+  ruleRef: string | null
+  status: string
+} | null {
+  try {
+    const { meta } = parseCaseMarkdown(fs.readFileSync(path.join(root, relPath), "utf-8"))
+    return {
+      symptom: meta.symptom,
+      tags: meta.tags,
+      severity: meta.severity,
+      occurrences: meta.occurrences,
+      ruleRef: meta.rule_ref ?? null,
+      status: meta.status,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 判例加权分（票04：domain=cases 检索 symptom/tags 加权命中）：
+ * symptom（title/summary 两列同值）×4 + tags ×3 + 正文偶然提及 ×1。
+ * "判例比法条更贴现场"——卡壳按症状检索时，症状命中的判例必须压过只在
+ * 正文顺带提了一嘴的命中（prototype Tab③ 行 230 检索纪律）。
+ */
+function caseWeightScore(
+  q: string,
+  row: { title: string; summary: string; topics: string; body: string } | undefined,
+): number {
+  if (!row) return 0
+  const ql = q.toLowerCase()
+  const toks = [...new Set([ql, ...ql.split(/\s+/).filter(Boolean)])]
+  const hits = (text: string) => toks.some(t => text.toLowerCase().includes(t))
+  let s = 0
+  if (hits(row.title) || hits(row.summary)) s += 4
+  if (hits(row.topics)) s += 3
+  if (hits(row.body)) s += 1
+  return s
 }
 
 export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: string }): Hono {
@@ -149,6 +198,8 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         body: row.body,
         anchors: extractRuleAnchors(row.body),
         gitHistory: gitHistoryFor(resolveWikiRoot(org, opts?.rootDir), row.path),
+        // 票04：判例详情携带状态面（open/distilled/superseded chips + rule_ref 顺藤）；词条 null
+        case: row.domain === "cases" ? caseFieldsFor(resolveWikiRoot(org, opts?.rootDir), row.path) : null,
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.article")
@@ -183,8 +234,21 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       const results = hits.map(r => {
         const full = articles.get(org, r.id)
         const { snippet, anchors } = locateQueryHits(full?.body ?? "", q)
-        return { ...r, snippet: snippet || (full?.summary ?? ""), anchors }
+        const caseFields = r.domain === "cases" ? caseFieldsFor(resolveWikiRoot(org, opts?.rootDir), r.path) : null
+        return {
+          ...r,
+          snippet: snippet || (full?.summary ?? ""),
+          anchors,
+          ruleRef: caseFields?.ruleRef ?? null,
+          status: caseFields?.status ?? null,
+          _score: caseWeightScore(q, full),
+        }
       })
+      // 判例加权：symptom/tags 命中压过正文偶然提及；同分保持检索引擎序（stable sort）
+      if (results.some(r => r.domain === "cases")) {
+        results.sort((a, b) => b._score - a._score)
+      }
+      for (const r of results) delete (r as { _score?: number })._score
 
       return c.json({ org, query: q, mode, results })
     } catch (err) {
