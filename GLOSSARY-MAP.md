@@ -115,6 +115,7 @@
 | **验收台账 (Acceptance Ledger)** | 每轮验收的决策与证据链账本：实物变更、自动复检、跑起来看、人工走查、人工干预、快速修改，分列来源。_Avoid_: 与用量台账（UsageLedger）混称"台账"。 | server, web-app |
 | **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round（修复轮）。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
 | **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
+| **home-file 读白名单** | task home 文件读端点（`GET /api/tasks/:id/home-file`）只放行 `.scratch/**` 相对路径（resolveWithinRoot 防穿越）；home 下 `workflows/`（自建流正文）等域不在读端点内——要取流正文走 built-in/workflow 解析通路，别指望 home-file。 | server |
 | **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、GLOSSARY.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
 | **计划回写 (Plan Writeback)** | 任务执行/验收期由 task-doer 与修复轮回写 Batch 目录批次 spec 与票的行为——经 plan-before-code 确认闸与唯一任务级 REST 通道，含后续 phase 批次；变更记录由 server 机械落痕（谁·哪轮·为何·何文件），信封 phases[] 结构层不在写权内、结构变更落范围变更票。_Avoid_: 与「归并回写 (Sync-back)」混称"回写"——那是末 phase 把产物并回 project 仓库的归档动作，此为执行期把计划改回计划自身的活计划动作。ADR-0026。 | server, core-pack, web-app |
 | **范围变更票 (Scope-Change Ticket)** | 计划回写产生的溢出票：变更牵连任务结构（加/减 phase、换绑定流）时执行侧代理只开票留档不执行——`Status: ready-for-human`、带 Origin 行，载体为当前批次 issues/，处理归 authoring 侧（task-author 改信封重入队）。ADR-0026。 | core-pack, server |

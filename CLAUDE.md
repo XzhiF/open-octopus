@@ -59,6 +59,8 @@ pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
 pnpm test:watch       # 监听模式
+pnpm lint             # eslint（web-app，CI build-lint 闸消费；其余包暂无 lint 脚本）
+pnpm kill:port <n>    # 杀占用指定端口的进程（worktree 拆机，详见 docs/agents/windows-bash.md）
 ```
 
 ### 环境变量

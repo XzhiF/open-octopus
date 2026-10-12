@@ -38,7 +38,8 @@
     "kill:web": "node scripts/kill-port.mjs 3000",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "pnpm -r run lint"
+    "lint": "pnpm -r run lint",
+    "kill:port": "node scripts/kill-port.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
