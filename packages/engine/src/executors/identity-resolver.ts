@@ -20,8 +20,13 @@ import { homedir } from "os"
 import { join } from "path"
 
 export interface IdentityResolverDeps {
-  /** Published-version provider (server injects the DB-backed row list). */
-  versionResolver: VersionResolver
+  /**
+   * Published-version provider (server injects the DB-backed row list).
+   * OPTIONAL (ticket 10 CLI parity): when absent — e.g. `octopus workflow run`,
+   * which builds WorkflowEngine without setVersionResolver — resolution goes
+   * filesystem-only (built-in → clones directory probe).
+   */
+  versionResolver?: VersionResolver
   /** Root for built-in/clones directory probing (defaults to os.homedir(); injectable for tests). */
   homeDir?: string
 }
@@ -74,11 +79,15 @@ export class IdentityResolver {
     const { name, versionSpec } = parseIdentityRef(ref)
     const spec = options?.versionSpec ?? versionSpec
     let versionError: unknown
-    try {
-      return this.deps.versionResolver.resolve(name, spec, options?.minStage)
-    } catch (err) {
-      // Published snapshot unavailable — fall through to directory probing
-      versionError = err
+    if (this.deps.versionResolver) {
+      try {
+        return this.deps.versionResolver.resolve(name, spec, options?.minStage)
+      } catch (err) {
+        // Published snapshot unavailable — fall through to directory probing
+        versionError = err
+      }
+    } else {
+      versionError = new Error("no versionResolver injected — filesystem-only resolution (CLI path)")
     }
 
     const builtInDir = join(this.homeRoot, ".octopus", "agent", "built-in", name)

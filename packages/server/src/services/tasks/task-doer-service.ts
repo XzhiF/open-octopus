@@ -402,6 +402,14 @@ export class TaskDoerService {
         `- 写纪律（快速修改）: 每次有效编辑由 server 自动在执行分支落一个 ${marker} 提交，勿自行 git commit/push；大改动（跨多文件逻辑、新接口/模块级）按 persona 走 plan-before-code 确认闸 —— 先出 spec 变更预览 + 票草稿请人确认，确认后经计划回写 REST 通道改计划、再动代码，被否一字不动。`,
       )
     }
+
+    // 票11 (llm-wiki-loop, spec D2「指针 ≠ 注入」): 每轮恒带一行知识指针 —— 只有
+    // wiki 根路径 + 查阅纪律（octo-wiki / INDEX / wiki_refs），绝不携带词条正文；
+    // 正文由 agent 按 octo-wiki 导航协议自读（skill 经 preflight 预置进执行
+    // workspace 的 .claude/skills，SDK settingSources 原生发现，ADR-0006）。
+    lines.push(
+      `- 知识指针: wiki=${path.join(os.homedir(), ".octopus", "orgs", detail.org || "default", "knowledge", "wiki")} 动手前按 octo-wiki 导航协议先读 INDEX，产出标 [ref:]、收尾写 wiki_refs（只指路不喂正文）`,
+    )
     return lines.join("\n")
   }
 

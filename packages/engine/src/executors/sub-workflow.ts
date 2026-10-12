@@ -183,6 +183,12 @@ export class SubWorkflowExecutor implements NodeExecutor {
         childEngine.setWorkflowResolver(this.config.workflowResolver, childVisited)
       }
 
+      // Execution-identity seam (ticket 10): child agent nodes resolve `as:`
+      // through the SAME resolver as the parent engine's nodes.
+      if (this.config.identityResolver) {
+        childEngine.setIdentityResolver(this.config.identityResolver)
+      }
+
       const result = await childEngine.run()
       childResult = result
     } catch (err: unknown) {
