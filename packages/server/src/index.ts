@@ -24,6 +24,9 @@ import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
+import { createWikiDistillRoutes } from "./routes/wiki-distill"
+import { WikiDistillService, createLLMDistillSummarizer } from "./services/knowledge/wiki/distill"
+import { callHaiku } from "./services/knowledge/llm"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
@@ -527,6 +530,17 @@ app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
 // 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
 app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
   (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath }),
+))
+// LLM-WIKI 票07: 蒸馏迁移命令（docs/research+adr → 审核队列蒸馏候选；幂等重跑不重入队，
+// 本路由零写 wiki）。LLM 蒸馏 seam = createLLMDistillSummarizer(callHaiku)（handoff-02 L6
+// 同法注入；无 provider 逐篇启发式兜底）。落盘只经票06 采纳通道（approveItem→curate）。
+app.route("/api/knowledge/wiki", createWikiDistillRoutes(
+  (org, opts) => new WikiDistillService({
+    db: getDb(),
+    org,
+    docsRoot: opts.docsRoot,
+    summarizer: createLLMDistillSummarizer(callHaiku),
+  }),
 ))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
