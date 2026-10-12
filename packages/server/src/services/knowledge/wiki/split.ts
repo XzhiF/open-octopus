@@ -7,7 +7,8 @@ import { parseH2Sections, slugifySection, lintWikiEntry, WIKI_LIMITS, type Split
 import { resolveWikiRoot, WIKI_DOMAINS } from "./paths"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow, type WikiArticleUpsert } from "../../../db/dao/wiki-article-dao"
-import type { PendingReviewRow } from "../../../db/dao/pending-review-dao"
+import { PendingReviewDAO, type PendingReviewRow } from "../../../db/dao/pending-review-dao"
+import { today, escapeRe } from "./util"
 import {
   scanWikiEntries,
   renderBudgetedWikiIndex,
@@ -37,10 +38,6 @@ export interface SplitApplyResult {
   commit: string | null
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
 function atomicWrite(target: string, content: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true })
   const tmp = path.join(path.dirname(target), `.tmp-${path.basename(target)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
@@ -59,6 +56,7 @@ export class WikiSplitService {
   private readonly root: string
   private readonly git: GitRunner
   private readonly articles: WikiArticleDAO
+  private readonly pending: PendingReviewDAO
 
   constructor(opts: { db: Database.Database; org: string; rootDir?: string; git?: GitRunner }) {
     this.db = opts.db
@@ -66,6 +64,7 @@ export class WikiSplitService {
     this.root = resolveWikiRoot(opts.org, opts.rootDir)
     this.git = opts.git ?? spawnGit(this.root)
     this.articles = new WikiArticleDAO(opts.db)
+    this.pending = new PendingReviewDAO(opts.db)
   }
 
   applyProposal(item: PendingReviewRow): SplitApplyResult {
@@ -181,9 +180,7 @@ export class WikiSplitService {
 
       // 5) INDEX 程序化重建（L4 预算闸同口径；只列 hub，子词条经 hub 指针三跳可达）
       const entries = scanWikiEntries(this.root)
-      const pending = (this.db
-        .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
-        .get() as { n: number }).n
+      const pending = this.pending.countPendingOpen()
       atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org, pending).content)
 
       // 6) LOG append（append-only）
@@ -262,10 +259,6 @@ function rowToUpsert(row: WikiArticleRow): WikiArticleUpsert {
   }
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
 /** 全部词条文件（含域下一层子目录），排除 _retired。 */
 function listAllEntryFiles(root: string): string[] {
   const out: string[] = []
@@ -310,8 +303,4 @@ function syncRow(articles: WikiArticleDAO, org: string, meta: WikiEntryFrontmatt
     articles.deleteFts(rid)
     articles.insertFts({ rowid: rid, id: meta.id, domain: meta.domain, title: meta.title, summary: meta.summary, topics: JSON.stringify(meta.topics), body })
   } catch { /* FTS 失败非致命（gotcha #6） */ }
-}
-
-function syncRowRaw(db: Database.Database, org: string, row: NonNullable<ReturnType<WikiArticleDAO["get"]>>): void {
-  new WikiArticleDAO(db).upsert({ ...row, org })
 }
