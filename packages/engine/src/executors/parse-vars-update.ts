@@ -38,7 +38,18 @@ export function applyVarsUpdate(
     const parsed = tryParse(extracted)
     if (parsed?.vars_update) {
       applyUpdate(parsed.vars_update, pool, outputs, options)
+      return
     }
+  }
+
+  // D1（E2E 缺陷）：文本提到 vars_update/wiki_refs 却没解析出任何 JSON ——
+  // 典型现场是 agent 照旧版 octo-wiki 示例写 YAML 行式 `wiki_refs: [...]`。
+  // 过去静默丢弃；现在发 warn（不落池的行为不变，只消灭沉默）。
+  if (/\b(?:vars_update|wiki_refs)\b/.test(text)) {
+    console.warn(
+      '[vars_update] 输出中提到 vars_update/wiki_refs，但未解析到任何 JSON —— 未写入 VarPool。' +
+      '引擎只解析 JSON 形态 {"vars_update":{...}}（单行 / 多行 / ``` 代码块内），YAML 行式无效。',
+    )
   }
 }
 

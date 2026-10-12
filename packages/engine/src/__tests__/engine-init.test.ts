@@ -686,6 +686,179 @@ describe("EngineInitPhase", () => {
       expect(result.status).toBe("failed")
       expect(result.identityErrors[0]).toContain(ghost)
     })
+
+    // ── review fix #5: as: 钉版本（story 25）过 L1 后，L3 闸语义 ──────────
+    it("accepts a pinned as: target that resolves by name via the fs fallback", async () => {
+      const home = fakeHome()
+      writeIdentityDir(home, "built-in", "workflow-operator")
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "operate", type: "agent", as: "workflow-operator@1.2.0", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(result.identityErrors).toHaveLength(0)
+    })
+
+    it("names the bare clone (no @pin) in the install hint for an unresolvable pinned ref", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "implement", type: "agent", as: "ghost-clone@1.2.0", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("failed")
+      expect(result.identityErrors[0]).toContain("ghost-clone@1.2.0") // 站点原样可追溯
+      expect(result.identityErrors[0]).toContain("install builtin:ghost-clone --type clone") // 提示不带 pin
+    })
+  })
+
+  // ── D2（review fix #2，e2e-report 缺陷 D2）：无 `skills:` 声明的 agent 节点
+  // 必须把已解析身份的 snapshot.skills 并进 provisioning analyze 集 ——
+  // 缺省 workflow-operator / as: 目标分身都要在 workspace .claude/skills 里
+  // 见到技能文件（ADR-0006 原生发现：文件物化 → SDK 发现，绝不走 prompt 文本）。
+  describe("identity snapshot.skills provisioning merge — D2 (review fix #2)", () => {
+    const mkHome = () => mkdtempSync(join(tmpdir(), "engine-init-d2-"))
+    const homes: string[] = []
+    const fakeHome = () => { const h = mkHome(); homes.push(h); return h }
+    /** built-in 分身目录含 skills/（IdentityResolver fs 形态 = snapshot.skills） */
+    function writeIdentityWithSkills(home: string, name: string, skills: string[]): void {
+      const dir = join(home, ".octopus", "agent", "built-in", name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "persona.md"), "# d2 persona", "utf-8")
+      for (const s of skills) {
+        mkdirSync(join(dir, "skills", s), { recursive: true })
+        writeFileSync(join(dir, "skills", s, "SKILL.md"), `---\nname: ${s}\n---\nbody`, "utf-8")
+      }
+    }
+    afterEach(() => {
+      while (homes.length > 0) {
+        const h = homes.pop()
+        if (h) rmSync(h, { recursive: true, force: true })
+      }
+    })
+
+    const checkManifestAt = (i = 0): { skills: string[] } =>
+      vi.mocked(resourcePreflight.check).mock.calls[i][0] as unknown as { skills: string[] }
+
+    it("default-operator node without skills: declaration still provisions snapshot.skills (octo-wiki)", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "workflow-operator", ["octo-wiki"])
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toContain("octo-wiki")
+    })
+
+    it("as:-targeted identity skills are merged (archive → octo-archive-analyst + octo-wiki)", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "archive", ["octo-archive-analyst", "octo-wiki"])
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "analyze", type: "agent", as: "archive", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toEqual(expect.arrayContaining(["octo-archive-analyst", "octo-wiki"]))
+    })
+
+    it("loop-nested agent nodes count toward the identity skills merge", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "workflow-operator", ["octo-wiki"])
+      workflow = {
+        ...workflow,
+        nodes: [{
+          id: "outer", type: "loop", max_iterations: 1,
+          nodes: [{ id: "inner", type: "agent", prompt: "x" }],
+        }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toContain("octo-wiki")
+    })
+
+    it("dedupes: node-declared skill + identity skill unioned once", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "workflow-operator", ["octo-wiki"])
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x", skills: ["octo-wiki", "extra-skill"] }],
+      } as WorkflowDef
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["octo-wiki", "extra-skill"], commands: [], rules: [] })
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      const skills = checkManifestAt(0).skills
+      expect(skills).toEqual(["octo-wiki", "extra-skill"]) // 无重复、顺序稳定
+    })
+
+    it("missing default identity (empty home) degrades gracefully — no crash, scan stays empty", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }],
+      } as WorkflowDef
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(result.identityErrors).toHaveLength(0)
+      // 身份缺 → 合并集为空 → analyze 也没给资源 → totalResources 0 → 不进 check；关键是没炸
+      expect(resourcePreflight.check).not.toHaveBeenCalled()
+    })
+
+    it("original analyze manifest object is not mutated by the merge", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "workflow-operator", ["octo-wiki"])
+      const baseManifest = { agents: [], skills: [], commands: [], rules: [] }
+      vi.mocked(resourcePreflight.analyze).mockReturnValue(baseManifest)
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }],
+      } as WorkflowDef
+
+      await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(baseManifest.skills).toEqual([]) // 合并走新对象，不改调用方持有值
+      expect(checkManifestAt(0).skills).toContain("octo-wiki")
+    })
   })
 
   describe("command and rule provisioning", () => {
