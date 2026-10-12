@@ -193,6 +193,8 @@ export async function batchReview(ids: string[], action: 'approve' | 'reject', o
 export async function getReviewSummary(): Promise<{
   rules: number
   skills: number
+  // 票02: wiki-lint 提案桶（wiki-split 等）；旧服务端缺席时按 0 处理
+  wiki?: number
   total: number
   statusCounts?: import('@/lib/knowledge/types').ReviewStatusCounts
   typeStatusCounts?: Record<string, import('@/lib/knowledge/types').ReviewStatusCounts>
