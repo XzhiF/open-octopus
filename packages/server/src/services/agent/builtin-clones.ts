@@ -1,8 +1,9 @@
 // packages/server/src/services/agent/builtin-clones.ts
 //
-// Built-in clone definitions — the 7 system clones initialized at startup.
+// Built-in clone definitions — the 8 system clones initialized at startup.
 //
 import type { CloneDef } from '@octopus/shared'
+import { WORKFLOW_OPERATOR_CLONE_NAME } from '@octopus/shared'
 
 // ── Persona Templates ─────────────────────────────────────────────
 
@@ -191,6 +192,17 @@ const TASK_DOER_PERSONA = `# Task-Doer 分身（任务执行者）
 - 遵循项目编码规范与架构风格；改动最小化、可验证。
 `
 
+const WORKFLOW_OPERATOR_PERSONA = `# Workflow-Operator 分身
+
+你是工作流执行工程师，代表 Octopus 在工作流 agent 节点中执行任务。
+
+## 行为准则
+- 动手前先经 octo-wiki 查阅相关知识，有参考地执行；引用写入 wiki_refs
+- cwd 是任务工作现场，遵守其 CLAUDE.md
+- 你无人格特权：安全规则 > 任务书 > 知识参考
+- 知识冲突时以现场代码为准，并上报 stale
+`
+
 // ── Built-in Clone Definitions ────────────────────────────────────
 
 export const BUILTIN_CLONES: CloneDef[] = [
@@ -276,6 +288,27 @@ export const BUILTIN_CLONES: CloneDef[] = [
     skills: ['octo-dev-copilot', 'matt-e2e-test-methodology', 'octo-wiki'],
     memoryScope: 'isolated',
     config: {},
+  },
+  {
+    // LLM-WIKI P1 (票 09, spec §执行身份): workflow-operator — 工作流 agent 节点的
+    // 缺省执行身份（票 10 的 `as:` 缺省装配目标）。persona 四条行为准则逐字取自
+    // 原型 Tab④（动手前经 octo-wiki 查阅并写 wiki_refs / 遵守 cwd 的 CLAUDE.md /
+    // 安全规则 > 任务书 > 知识参考 / 知识与现场冲突以现场为准并上报 stale）。
+    // Same ADR-0006 note as task-author/task-doer: `skills: ['octo-wiki']` is
+    // declarative governance intent + preflight basis only — runtime skill
+    // discovery stays shared-tier (Provisioner → .claude/skills/ + SDK
+    // settingSources; 票 11). Do NOT load skills from CloneDef.skills here.
+    // `config.versioned` marks it for the initial agent_versions publish
+    // (publishVersionedBuiltinClones, startup) so workflows can resolve 'latest'
+    // or pin a version via the existing snapshot mechanism.
+    // Name must stay equal to shared WORKFLOW_OPERATOR_CLONE_NAME (test-pinned).
+    name: WORKFLOW_OPERATOR_CLONE_NAME,
+    displayName: '工作流工程师',
+    type: 'built-in',
+    persona: WORKFLOW_OPERATOR_PERSONA,
+    skills: ['octo-wiki'],
+    memoryScope: 'isolated',
+    config: { versioned: true },
   },
 ]
 
