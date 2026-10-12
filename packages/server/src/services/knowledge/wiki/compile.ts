@@ -17,6 +17,7 @@ import { resolveWikiRoot, ensureWikiSkeleton, WIKI_DOMAINS, WIKI_DOMAIN_LABELS, 
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
+import { today } from "./util"
 
 /**
  * WikiCompileService — 编译服务是 wiki 唯一写入口（spec D4 写入单一闸门的技术收口）。
@@ -85,10 +86,6 @@ export interface ScannedEntry {
 
 /** 判例文件名日期前缀（{YYYY-MM-DD}-{slug}.md）——判例是历史事件，文件名日期正当。 */
 const CASE_FILE_RE = /^(\d{4}-\d{2}-\d{2})-[a-z0-9][a-z0-9._-]*\.md$/i
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 /** tmp 文件 + 同目录 rename —— Windows/POSIX 都是原子替换；不留 tmp 垃圾。 */
 function atomicWrite(target: string, content: string): void {
@@ -465,9 +462,7 @@ export class WikiCompileService {
   }
 
   private pendingCount(): number {
-    return (this.db
-      .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
-      .get() as { n: number }).n
+    return this.pending.countPendingOpen()
   }
 
   /**

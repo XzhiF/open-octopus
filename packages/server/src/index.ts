@@ -33,7 +33,9 @@ import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
 import { WikiSplitService } from "./services/knowledge/wiki/split"
-import { WikiCurateService } from "./services/knowledge/wiki/curate"
+import { WikiCurateService, isGenuineWikiTarget } from "./services/knowledge/wiki/curate"
+import { resolveWikiRoot } from "./services/knowledge/wiki/paths"
+import { createProductionRuleFormJudge } from "./services/knowledge/wiki/rule-form-judge"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
@@ -509,13 +511,21 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 // 与 chat 门同款"测试期不触达"纪律）。
 // 票06 D4: 词条形态 'rule' 与 'wiki-edit' approve → 策展编译通道（await——
 // compileEntry 异步；写闸单一入口 = WikiCompileService + 02 lint + pre-commit hook）。
+// L6 生产编译时判定（spec §增长约束 L6：warn + 给改写稿，非阻塞）：
+// knowledge/llm 的 callHaiku 适配器——离线/禁用 ⇒ 零 issues（rule-form-judge.ts 双保险）。
+const ruleFormJudge = createProductionRuleFormJudge()
+
 const reviewService = new ReviewService(d.pendingReview, {
   applyWikiSplit: (item, org) => {
     new WikiSplitService({ db: getDb(), org: org ?? "default" }).applyProposal(item)
   },
   applyWikiCurate: async (item, org) => {
-    await new WikiCurateService({ db: getDb(), org: org ?? "default" }).applyApprovedItem(item)
+    await new WikiCurateService({ db: getDb(), org: org ?? "default", ruleFormJudge }).applyApprovedItem(item)
   },
+  // 评审修复：只有真 wiki 词条形态（wiki 通道入队标记 scope='wiki'，或词条已在
+  // 该 org 的 wiki 根盘上）才进策展闸门。旧注入轨道（extract/maintenance）的
+  // `projects/*` 目标不再被误拦——approve 与 main 同轨（纯追加、可成功）。
+  isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
 })
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
@@ -529,7 +539,7 @@ app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
 // LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
 // 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
 app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
-  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath }),
+  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath, ruleFormJudge }),
 ))
 // LLM-WIKI 票07: 蒸馏迁移命令（docs/research+adr → 审核队列蒸馏候选；幂等重跑不重入队，
 // 本路由零写 wiki）。LLM 蒸馏 seam = createLLMDistillSummarizer(callHaiku)（handoff-02 L6

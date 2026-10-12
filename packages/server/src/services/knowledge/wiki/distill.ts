@@ -7,6 +7,7 @@ import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { extractRuleAnchors, serializeEntryMarkdown } from "./format"
 import { lintWikiEntry, parseH2Sections } from "./lint"
 import { ensureWikiSkeleton, resolveWikiRoot } from "./paths"
+import { today } from "./util"
 
 /**
  * 蒸馏迁移（票07，spec §初始编译 蒸馏行 / prototype Tab③ lines 625-626）：
@@ -76,10 +77,6 @@ const DISTILL_CONFIDENCE = 0.7
 
 function sha256_12(text: string): string {
   return crypto.createHash("sha256").update(text, "utf-8").digest("hex").slice(0, 12)
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 /** 文件名/相对路径 → 词条 id 词元（小写 kebab；首字母由域前缀 res-/biz-adr- 保证）。 */

@@ -29,6 +29,9 @@ export default function WikiPage() {
   const [showLog, setShowLog] = useState(false)
   const [article, setArticle] = useState<WikiArticle | null>(null)
   const [articleLoading, setArticleLoading] = useState(false)
+  /** 词条/检索加载失败显形（CODING_STANDARDS #2：错误 ≠ 空态，不许 setNull 吞掉）。 */
+  const [articleError, setArticleError] = useState<string | null>(null)
+  const [searchError, setSearchError] = useState<string | null>(null)
   // 顶部检索（FTS5 主检索 + LIKE 降级在服务端收口）
   const [searchQ, setSearchQ] = useState("")
   const [search, setSearch] = useState<WikiSearchResult | null>(null)
@@ -49,9 +52,13 @@ export default function WikiPage() {
     setSelectedId(id)
     setHitAnchors(anchors)
     setArticleLoading(true)
+    setArticleError(null)
     getWikiArticle(id, org)
-      .then(a => setArticle(a))
-      .catch(() => setArticle(null))
+      .then(a => { setArticle(a); setArticleError(null) })
+      .catch((err: unknown) => {
+        setArticle(null)
+        setArticleError(err instanceof Error ? err.message : String(err))
+      })
       .finally(() => setArticleLoading(false))
   }, [org])
 
@@ -59,9 +66,13 @@ export default function WikiPage() {
     const q = searchQ.trim()
     if (!q) return
     setSearching(true)
+    setSearchError(null)
     searchWiki({ q, org, topK: 8 })
-      .then(r => setSearch(r))
-      .catch(() => setSearch(null))
+      .then(r => { setSearch(r); setSearchError(null) })
+      .catch((err: unknown) => {
+        setSearch(null)
+        setSearchError(err instanceof Error ? err.message : String(err))
+      })
       .finally(() => setSearching(false))
   }, [searchQ, org])
 
@@ -128,6 +139,13 @@ export default function WikiPage() {
           </button>
         )}
       </form>
+
+      {/* 检索失败显形（错误 ≠ 无结果假空态） */}
+      {searchError && (
+        <div data-testid="wiki-search-error" className="border-b-[1.5px] border-pop-bd bg-pop-paper px-4 py-2 text-xs font-bold text-pop-red">
+          检索失败：{searchError}
+        </div>
+      )}
 
       {/* 检索结果浮层：命中片段 + 锚点定位，点击跳转词条 */}
       {search && (
@@ -216,6 +234,11 @@ export default function WikiPage() {
             </div>
           ) : articleLoading ? (
             <div className="flex items-center justify-center py-16 text-sm text-pop-dim">加载中…</div>
+          ) : articleError ? (
+            // 错误显形（CODING_STANDARDS #2）：fetch 失败不得伪装成「未选中词条」假空态
+            <div data-testid="wiki-article-error" className="p-6 text-sm font-bold text-pop-red">
+              词条加载失败：{articleError}
+            </div>
           ) : article ? (
             <div className="p-6">
               <h1 data-testid="wiki-entry-title" className="mb-2 text-2xl font-black text-pop-ink">{article.title}</h1>

@@ -9,6 +9,7 @@ import { scanWikiEntries, WikiCompileService, WIKI_LOG_FILE, WIKI_LOG_HEADER, fo
 import { parseH2Sections, type RuleFormJudge } from "./lint"
 import type { PendingReviewRow } from "../../../db/dao/pending-review-dao"
 import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
+import { today, escapeRe } from "./util"
 
 /**
  * WikiCurateService — 策展人编译通道（票06，spec D4 写入单一闸门的"审核→编译"段）。
@@ -56,6 +57,24 @@ interface RuleDraft {
 /** wiki 词条形态的 target_file（域目录 + .md）；非此形态属旧注入轨道，不进场。 */
 const WIKI_TARGET_RE = /^(projects|workflows|business|research|cases)\/[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\.md$/i
 
+/**
+ * 「真正 wiki 词条形态」判式——审核闸门（ReviewService）的注入件（评审修复：
+ * 票06 影子双轨曾把一切 `projects/*` 前缀的 rule 行送进策展闸，旧注入轨道
+ * （extract/maintenance）的同前缀合法目标因此可被 lint/编译失败拖成 pending——
+ * fail-closed 回归）。真词条 = wiki 通道自己的入队标记（scope='wiki'：票07
+ * 蒸馏候选 / 拆分提案 / P2 规则轨道）或 词条已存在于 wiki 根盘上（P1 影子
+ * 只对真实词条生效）。其余 rule/wiki-edit 行不进策展闸——approve 与 main 同轨。
+ * wikiRoot 由调用方（index.ts）经 resolveWikiRoot 解析，保持本函数纯可测。
+ */
+export function isGenuineWikiTarget(
+  item: Pick<PendingReviewRow, "scope" | "target_file">,
+  wikiRoot: string,
+): boolean {
+  if (item.scope === "wiki") return true
+  const rel = (item.target_file ?? "").replace(/\\/g, "/")
+  return isWikiTarget(rel) && fs.existsSync(path.join(wikiRoot, rel))
+}
+
 /** 无显式小节时的默认策展小节（常青标题，零日期）。 */
 const DEFAULT_SECTION = "策展增补"
 
@@ -71,10 +90,6 @@ export function isUserPreferencePath(p?: string | null): boolean {
   if (!p) return false
   const base = p.replace(/\\/g, "/").split("/").pop() ?? ""
   return base.toLowerCase() === "user_preference.md"
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 /** 归一化规则文本用于近义判定：去行首 bullet、去锚点注释、markdown 记号、标点与空白，小写。 */
@@ -108,10 +123,6 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
 const NEGATION_RE = /(不得|禁止|不要|不能|不可|勿|严禁|⛔|never|cannot|don't|do not|avoid)/i
 function polarity(text: string): 1 | -1 {
   return NEGATION_RE.test(text) ? -1 : 1
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function clip(s: string, n: number): string {

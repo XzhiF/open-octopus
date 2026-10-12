@@ -78,6 +78,15 @@ export class PendingReviewDAO extends BaseDAO {
     return (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending'`).get() as { cnt: number }).cnt
   }
 
+  /**
+   * 待结案计数（pending + deferred，跨全部类型不分桶）。
+   * 单一来源（评审去重）——此同文 SQL 曾散落 wiki compile.ts（INDEX 预算）、
+   * split.ts（重建 INDEX）、routes/wiki.ts（树健康条）三处。
+   */
+  countPendingOpen(): number {
+    return (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status IN ('pending', 'deferred')`).get() as { cnt: number }).cnt
+  }
+
   countPendingByType(): { rules: number; skills: number; wiki: number; total: number } {
     const rules = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'rule'`).get() as { cnt: number }).cnt
     const skills = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'skill'`).get() as { cnt: number }).cnt

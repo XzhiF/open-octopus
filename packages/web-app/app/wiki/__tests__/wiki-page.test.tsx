@@ -225,6 +225,74 @@ describe("判例详情：状态 chips + 五段 + rule_ref 顺藤（票04）", ()
   })
 })
 
+describe("错误显形（CODING_STANDARDS #2：fetch 失败不得伪装成空态）", () => {
+  it("词条加载失败 → 中栏显形错误条，而不是「选择词条查看内容」假空态", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      const u = String(url)
+      if (u.includes("/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
+      if (u.includes("/wiki/article/")) {
+        return { ok: false, status: 500, json: async () => ({ error: { message: "内部错误：DB 失联" } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    }))
+    render(<WikiPage />)
+    await waitFor(() => expect(screen.getByText("项目知识")).toBeDefined())
+
+    fireEvent.click(screen.getByRole("button", { name: /Octopus 平台工程知识/ }))
+
+    const err = await screen.findByTestId("wiki-article-error")
+    expect(err.textContent).toContain("内部错误：DB 失联")
+    // 假空态不得出现（错误 ≠ 没有选中）
+    expect(screen.queryByText("选择词条查看内容")).toBeNull()
+  })
+
+  it("检索失败 → 显形「检索失败」错误条，而不是假空结果", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      const u = String(url)
+      if (u.includes("/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
+      if (u.includes("/wiki/search")) {
+        return { ok: false, status: 500, json: async () => ({ error: { message: "FTS 查询崩了" } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    }))
+    render(<WikiPage />)
+    await waitFor(() => expect(screen.getByText("项目知识")).toBeDefined())
+
+    const input = screen.getByPlaceholderText(/FTS5/)
+    fireEvent.change(input, { target: { value: "Promise" } })
+    fireEvent.submit(input.closest("form")!)
+
+    const err = await screen.findByTestId("wiki-search-error")
+    expect(err.textContent).toContain("FTS 查询崩了")
+    expect(screen.queryByTestId("wiki-search-results")).toBeNull()
+  })
+
+  it("错误后重试成功 → 错误条被结果取代（瞬时故障不留残影）", async () => {
+    let fail = true
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      const u = String(url)
+      if (u.includes("/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
+      if (u.includes("/wiki/search")) {
+        if (fail) return { ok: false, status: 500, json: async () => ({ error: { message: "503" } }) }
+        return { ok: true, status: 200, json: async () => SEARCH }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    }))
+    render(<WikiPage />)
+    await waitFor(() => expect(screen.getByText("项目知识")).toBeDefined())
+
+    const input = screen.getByPlaceholderText(/FTS5/)
+    fireEvent.change(input, { target: { value: "Promise" } })
+    fireEvent.submit(input.closest("form")!)
+    await screen.findByTestId("wiki-search-error")
+
+    fail = false
+    fireEvent.submit(input.closest("form")!)
+    await waitFor(() => expect(screen.queryByTestId("wiki-search-error")).toBeNull())
+    expect(await screen.findByTestId("wiki-search-results")).toBeDefined()
+  })
+})
+
 describe("全站导航注册（AC：/wiki 入口）", () => {
   it("header 含「知识词条」→ /wiki（只读页入口）", () => {
     render(<Header />)

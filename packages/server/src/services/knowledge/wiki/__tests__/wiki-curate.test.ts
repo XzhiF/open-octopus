@@ -8,8 +8,9 @@ import { applySchema } from "../../../../db/schema"
 import { PendingReviewDAO } from "../../../../db/dao/pending-review-dao"
 import { WikiArticleDAO } from "../../../../db/dao/wiki-article-dao"
 import { WikiCompileService } from "../compile"
-import { WikiCurateService } from "../curate"
+import { WikiCurateService, isGenuineWikiTarget } from "../curate"
 import { ReviewService } from "../../review"
+import type { PendingReviewRow } from "../../../../db/dao/pending-review-dao"
 
 /**
  * S1 缝（票06）：策展写闸环级测试 — review.test.ts + knowledge-loop.test.ts 先例。
@@ -82,11 +83,13 @@ describe("wiki curate write gate (ticket 06)", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  /** 生产同款接线（index.ts）：approve 按 type 分发 → 策展编译通道。 */
+  /** 生产同款接线（index.ts）：approve 按 type 分发 → 策展编译通道；
+   *  判式注入 isWikiEntryTarget（真词条才进场，回归修复）。 */
   function makeReviewService() {
     return new ReviewService(pdao, {
       applyWikiCurate: (item) =>
         new WikiCurateService({ db, org: "testorg", rootDir: root }).applyApprovedItem(item),
+      isWikiEntryTarget: (item) => isGenuineWikiTarget(item, root),
     })
   }
 
@@ -349,5 +352,82 @@ confidence: 0.6
     expect(fs.readFileSync(path.join(root, "projects", "prj-octopus.md"), "utf-8")).toBe(entryBefore)
     expect(rawGit(root, ["rev-parse", "HEAD"]).stdout.trim()).toBe(headBefore)
     expect(pdao.getById(id)?.status).toBe("pending")
+  })
+
+  // =========================================================================
+  // 回归（code review 发现2，fail-closed regression）：策展闸只管「真 wiki 词条」——
+  // 旧注入轨道（extract/maintenance）的同前缀目标（scope=project、词条不在 wiki 盘）
+  // 走 main 的追加轨道；策展/lint 通道即使会抛，也不能把这些审批拖成 pending。
+  // =========================================================================
+  it("非真词条 rule（scope=project、wiki 根无此词条）→ 不进策展闸；main 追加轨道成功（策展通道会抛也不碰）", async () => {
+    let curateCalls = 0
+    const review = new ReviewService(pdao, {
+      applyWikiCurate: async () => { curateCalls++; throw new Error("SIMULATED_CURATE_BLOWUP") },
+      isWikiEntryTarget: (item) => isGenuineWikiTarget(item, root),
+    })
+    const headBefore = rawGit(root, ["rev-parse", "HEAD"]).stdout.trim()
+    const id = insertRule({ id: "rule-legacy-target", target_file: "workflows/legacy-deploy-notes.md" })
+
+    // 票06 宽松前缀闸下这行会 reject（词条不存在 → CURATE_NOT_WIKI_TARGET）——main 上是成功的
+    const r = await review.approveItem(id, "testorg")
+    expect(r.ok).toBe(true)
+    expect(curateCalls).toBe(0)
+    expect(pdao.getById(id)?.status).toBe("approved")
+
+    // main 轨道产物：规则行落旧知识目录（beforeEach 的 OCTOPUS_KNOWLEDGE_DIR 隔离）
+    const legacy = fs.readFileSync(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR!, "workflows", "legacy-deploy-notes.md"), "utf-8")
+    expect(legacy).toContain(CI_PNPM10_RULE)
+    // wiki 仓零沾染
+    expect(rawGit(root, ["rev-parse", "HEAD"]).stdout.trim()).toBe(headBefore)
+  })
+
+  it("真词条 rule（词条在盘）→ 仍进策展闸：闸抛错 ⇒ approve 整体失败、状态留 pending（单一闸门无旁路不变）", async () => {
+    let curateCalls = 0
+    const review = new ReviewService(pdao, {
+      applyWikiCurate: async () => { curateCalls++; throw new Error("SIMULATED_CURATE_BLOWUP") },
+      isWikiEntryTarget: (item) => isGenuineWikiTarget(item, root),
+    })
+    const id = insertRule({ id: "rule-wiki-gate-still-fires" }) // 默认 target projects/prj-octopus.md（beforeEach 已编译在盘）
+    await expect(review.approveItem(id, "testorg")).rejects.toThrow(/SIMULATED_CURATE_BLOWUP/)
+    expect(curateCalls).toBe(1)
+    expect(pdao.getById(id)?.status).toBe("pending")
+  })
+
+  it("scope='wiki' 的 rule（wiki 通道入队标记）→ 词条不在盘也进闸（P2 新建词条通道保留）", async () => {
+    let curateCalls = 0
+    const review = new ReviewService(pdao, {
+      applyWikiCurate: async () => { curateCalls++; return {} },
+      isWikiEntryTarget: (item) => isGenuineWikiTarget(item, root),
+    })
+    const id = insertRule({ id: "rule-scope-wiki", scope: "wiki", target_file: "projects/prj-brand-new.md" })
+    await review.approveItem(id, "testorg")
+    expect(curateCalls).toBe(1)
+  })
+
+  it("非真词条 wiki-edit 旧行（手工/遗留）→ 不进策展通道、不新增失败，落到 main 追加轨道", async () => {
+    let curateCalls = 0
+    const review = new ReviewService(pdao, {
+      applyWikiCurate: async () => { curateCalls++; return {} },
+      isWikiEntryTarget: (item) => isGenuineWikiTarget(item, root),
+    })
+    pdao.insert({
+      id: "wiki-edit-legacy-row", type: "wiki-edit", source: "wiki_refs_stale", source_ref: "exec-9",
+      source_label: "旧手工行", content: JSON.stringify({ kind: "wiki-edit", path: "notes.md", addRule: "测试" }),
+      target_file: "workflows/legacy-edit-target.md", scope: "project", conflicts: null,
+      confidence: 0.5, auto_approve: 0, status: "pending", user_notes: null,
+    })
+    const r = await review.approveItem("wiki-edit-legacy-row", "testorg")
+    expect(r.ok).toBe(true)
+    expect(curateCalls).toBe(0)
+    expect(pdao.getById("wiki-edit-legacy-row")?.status).toBe("approved")
+  })
+
+  // ── 判式单元测试（闸门裁决件）──
+  it("isGenuineWikiTarget：scope=wiki ⇒ true（不在盘也算）；在盘真词条+project ⇒ true；不在盘/非词条形态 ⇒ false", () => {
+    expect(isGenuineWikiTarget({ scope: "wiki", target_file: "research/res-new.md" }, root)).toBe(true)
+    expect(isGenuineWikiTarget({ scope: "project", target_file: "projects/prj-octopus.md" }, root)).toBe(true)
+    expect(isGenuineWikiTarget({ scope: "project", target_file: "workflows/no-such-entry.md" }, root)).toBe(false)
+    expect(isGenuineWikiTarget({ scope: "project", target_file: "user_preference.md" }, root)).toBe(false)
+    expect(isGenuineWikiTarget({ scope: "project", target_file: "" }, root)).toBe(false)
   })
 })

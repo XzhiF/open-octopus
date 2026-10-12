@@ -9,6 +9,7 @@ import type { GitRunner } from "./wiki-git"
 import type { RuleFormJudge } from "./lint"
 import { serializeEntryMarkdown } from "./format"
 import { ensureWikiSkeleton } from "./paths"
+import { today } from "./util"
 import { estimateTokens } from "./lint"
 
 /**
@@ -94,10 +95,6 @@ export interface MigratorOptions {
 
 function sha256(text: string): string {
   return crypto.createHash("sha256").update(text, "utf-8").digest("hex")
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 /** 锚点号 `oct-007` 中的数字；非该形态返回 0。 */

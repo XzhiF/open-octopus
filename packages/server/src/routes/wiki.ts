@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
+import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
 import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
@@ -156,9 +157,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       }
 
       try {
-        stats.pendingReview = (articles.getDb()
-          .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
-          .get() as { n: number }).n
+        stats.pendingReview = new PendingReviewDAO(articles.getDb()).countPendingOpen()
       } catch { /* pending_review 缺席时不阻塞树查询 */ }
 
       return c.json({ org, domains, stats, log: readWikiLog(resolveWikiRoot(org, opts?.rootDir)) })
