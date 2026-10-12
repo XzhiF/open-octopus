@@ -327,11 +327,14 @@ export class WikiCompileService {
       const tokens = estimateTokens(budget.content)
       const largest = predicted.reduce((a, b) => (b.anchors.length > a.anchors.length ? b : a))
       const hubProposalId = this.tryHubifyProposal(largest, relPath, meta, fileName, body)
-      throw new WikiLintError(
+      const l4err = new WikiLintError(
         "L4_INDEX_BUDGET",
         `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频词条移 ## Optional 或强制升 hub${hubProposalId ? `（已触发 hub 化提案 '${hubProposalId}'）` : ""}`,
         [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
       )
+      // 票05：提案 id 随错误透出（与 L1 路径同形态），调用方（初始编译迁移）据此登记审计
+      if (hubProposalId) l4err.proposalId = hubProposalId
+      throw l4err
     }
 
     // ── L6 规则形态：编译时 LLM 判定（warn 级，注入 judge 才跑——单测 fixture-mocked，

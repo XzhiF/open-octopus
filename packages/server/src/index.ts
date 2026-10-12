@@ -22,6 +22,8 @@ import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createWikiRoutes } from "./routes/wiki"
+import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
+import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
@@ -515,6 +517,11 @@ app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archi
 
 // LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
 app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
+// LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
+// 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
+app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
+  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath }),
+))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
