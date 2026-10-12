@@ -14,13 +14,14 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO,
+  TaskDAO, WikiArticleDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
+import { createWikiRoutes } from "./routes/wiki"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
@@ -139,6 +140,7 @@ interface AllDAOs {
   safety: SafetyDAO
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
+  wikiArticle: WikiArticleDAO
   archive: ArchiveDAO
   archiveDraft: ArchiveDraftDAO
   interactionMessage: InteractionMessageDAO
@@ -163,6 +165,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     safety: new SafetyDAO(db),
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
+    wikiArticle: new WikiArticleDAO(db),
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
     interactionMessage: new InteractionMessageDAO(db),
@@ -390,6 +393,7 @@ const d = daos ?? {
   safety: lazyDAO(SafetyDAO),
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
+  wikiArticle: lazyDAO(WikiArticleDAO),
   archive: lazyDAO(ArchiveDAO),
   archiveDraft: lazyDAO(ArchiveDraftDAO),
   interactionMessage: lazyDAO(InteractionMessageDAO),
@@ -492,6 +496,9 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
+
+// LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
+app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
