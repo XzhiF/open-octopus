@@ -26,8 +26,10 @@ tags: [wiki, knowledge, navigation, search, citation, cases]
 
 ## 引用纪律（效果追踪的数据源）
 - 任务产出中声明依据: 关键决策处标注 [ref: oct-007]
-- 收尾时 vars_update 写入: wiki_refs: ["prj-octopus#oct-007", "wf-prd-impl#sop-002"]
-- 发现词条与实际不符 → 不要沉默: wiki_refs 附 "stale: oct-009 与代码现状矛盾"
+- 收尾时 vars_update 写入 —— 单行 JSON，原样照抄结构:
+  {"vars_update":{"wiki_refs":["prj-octopus#oct-007", "wf-prd-impl#sop-002"]}}
+  ← 引擎只解析 JSON 形态，勿用 YAML 行式（`wiki_refs: [...]` 行式不生效，仅告警不落池）
+- 发现词条与实际不符 → 不要沉默: wiki_refs 数组内附 "stale: oct-009 与代码现状矛盾"
   ← 该信号进 effectiveness，触发策展人修订提议（消费侧反哺生产侧）
 
 ## 禁止

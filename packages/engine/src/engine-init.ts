@@ -3,6 +3,7 @@ import type { WorkflowDef } from "@octopus/shared"
 import type { JsonlLogger } from "./logger"
 import { IdentityResolver } from "./executors/identity-resolver"
 import { checkAsRefs } from "./identity-gate"
+import { collectAgentIdentityRefs } from "./precompute-gate"
 import os from "os"
 import path from "path"
 import fs from "fs"
@@ -368,7 +369,7 @@ export class EngineInitPhase {
       if (resourcePreflight && resourceProvisioner) {
         const scanResult = await this.runScanPhase(
           workflow, workspacePath, resourcePreflight, resourceProvisioner,
-          callbacks, hasRequires, ctx, logger,
+          callbacks, hasRequires, ctx, logger, identityResolver,
         )
         ctx.skillsCopied = scanResult.skillsCopied
         ctx.agentsCopied = scanResult.agentsCopied
@@ -414,21 +415,36 @@ export class EngineInitPhase {
     hasRequires: boolean,
     ctx: ProvisionContext,
     logger?: JsonlLogger,
+    identityResolver?: IdentityResolver,
   ): Promise<ProvisionContext> {
     if (hasRequires) {
       this.logMessage(logger, callbacks, "Scanning for additional resources...")
     }
 
     const manifest = preflight.analyze(workflow)
-    this.logMessage(logger, callbacks, `Analyzing resources: ${manifest.skills.length} skills, ${manifest.agents.length} agents`)
+    // D2（review fix #2）：身份 snapshot.skills 并入 provisioning 集 ——
+    // 无 `skills:` 声明的 agent 节点（缺省 workflow-operator / as: 目标）过去
+    // 只进 SDK 白名单、不落文件，octo-wiki 在 workspace .claude/skills 缺席。
+    // 合并后走既有 Provisioner 文件物化 → SDK 原生发现（ADR-0006，非 prompt 文本）。
+    const identitySkills = this.collectIdentitySkills(
+      workflow.nodes,
+      identityResolver ?? new IdentityResolver({}),
+    )
+    const mergedManifest: ResourceManifestLike = identitySkills.length === 0
+      ? manifest
+      : { ...manifest, skills: [...new Set([...manifest.skills, ...identitySkills])] }
+    if (identitySkills.length > 0) {
+      this.logMessage(logger, callbacks, `Identity skills merged into provisioning set: ${identitySkills.join(", ")}`)
+    }
+    this.logMessage(logger, callbacks, `Analyzing resources: ${mergedManifest.skills.length} skills, ${mergedManifest.agents.length} agents`)
 
-    const totalResources = manifest.skills.length + manifest.agents.length
+    const totalResources = mergedManifest.skills.length + mergedManifest.agents.length
     if (totalResources === 0) {
       this.logMessage(logger, callbacks, "No skills/agents references found in workflow")
       return ctx
     }
 
-    const check = preflight.check(manifest, workspacePath)
+    const check = preflight.check(mergedManifest, workspacePath)
     if (check.missing.length === 0) {
       this.logMessage(logger, callbacks, "All required resources already present")
       return ctx
@@ -437,6 +453,31 @@ export class EngineInitPhase {
     return this.provisionMissing(
       check.missing, workspacePath, provisioner, callbacks, "scan", ctx, logger,
     )
+  }
+
+  /**
+   * D2（review fix #2）— resolve every agent node's execution identity (explicit
+   * `as:` or default workflow-operator, loop-nested included) and union their
+   * snapshot.skills. Unresolvable identities degrade gracefully (the Step 0.5
+   * L3 gate already hard-fails explicit refs; default-missing must never break
+   * existing flows) — their skills are simply skipped.
+   */
+  private collectIdentitySkills(
+    nodes: WorkflowDef["nodes"],
+    resolver: IdentityResolver,
+  ): string[] {
+    const skills = new Set<string>()
+    for (const ref of collectAgentIdentityRefs(nodes)) {
+      if (ref.includes("$")) continue // variable refs unresolvable at preflight
+      try {
+        for (const s of resolver.resolve(ref).snapshot.skills ?? []) {
+          if (typeof s === "string" && !s.includes("$")) skills.add(s)
+        }
+      } catch {
+        // graceful: identity absent — same degradation shape as runtime assembly
+      }
+    }
+    return [...skills]
   }
 
   /** Git sync: pull latest main for all workspace projects. */
