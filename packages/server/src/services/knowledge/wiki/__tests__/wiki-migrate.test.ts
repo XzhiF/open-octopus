@@ -6,7 +6,7 @@ import os from "os"
 import { spawnSync } from "child_process"
 import { applySchema } from "../../../../db/schema"
 import { InitialCompileMigrator, type MigrationReport } from "../migrate"
-import type { GitRunner } from "../compile"
+import { spawnGit, type GitRunner } from "../wiki-git"
 
 /**
  * S1 缝（票05 初始编译迁移）— wiki-compile.test.ts 同先例：真 fs tmpdir + in-memory DB + 真 git。
@@ -15,12 +15,10 @@ import type { GitRunner } from "../compile"
  * Expected 值来自独立真相源：fixture 手搓 + spec §知识表示 + prototype Tab③ 初始编译表。
  */
 
-const realGit = (cwd: string): GitRunner => ({
-  run(args: string[]) {
-    const r = spawnSync("git", args, { cwd, timeout: 30000 })
-    return { status: r.status ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
-  },
-})
+// 票06 合并适配（与票04 同法）：迁移器写通道提交须走 spawnGit（自动携带
+// OCTOPUS_WIKI_COMMIT_SOURCE=curate 标记，与生产 WikiCompileService 默认 this.git 同一
+// 通道）；裸 spawnSync 无标记会被 pre-commit 闸门拒。只读断言仍用 spawnSync（不提交）。
+const realGit = (cwd: string): GitRunner => spawnGit(cwd)
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
