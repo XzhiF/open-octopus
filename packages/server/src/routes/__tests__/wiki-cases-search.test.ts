@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import Database from "better-sqlite3"
-import { spawnSync } from "child_process"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import { applySchema } from "../../db/schema"
 import { WikiArticleDAO } from "../../db/dao/wiki-article-dao"
 import { WikiCompileService, type GitRunner } from "../../services/knowledge/wiki/compile"
+import { spawnGit } from "../../services/knowledge/wiki/wiki-git"
 import { ensureWikiSkeleton } from "../../services/knowledge/wiki/paths"
 import { createWikiRoutes } from "../wiki"
 
@@ -85,12 +85,9 @@ confidence: 0.86
 - CI 必须用 pnpm 10，v9 报 LOCKFILE_CONFIG_MISMATCH <!--#oct-013-->
 `
 
-const realGit = (cwd: string): GitRunner => ({
-  run(args: string[]) {
-    const r = spawnSync("git", args, { cwd, timeout: 30000 })
-    return { status: r.status ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
-  },
-})
+// 票06 合并适配：服务写通道提交须走 spawnGit（自动携带 OCTOPUS_WIKI_COMMIT_SOURCE=curate
+// 标记，与生产 WikiCompileService 默认 this.git 同一通道）；裸 spawnSync 会被 pre-commit 闸门拒。
+const realGit = (cwd: string): GitRunner => spawnGit(cwd)
 
 describe("cases in search/article routes (ticket 04, S3)", () => {
   let db: Database.Database

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import Database from "better-sqlite3"
-import { spawnSync } from "child_process"
 import fs from "fs"
 import path from "path"
 import os from "os"
 import { applySchema } from "../../../../db/schema"
 import { WikiCompileService, type GitRunner } from "../compile"
+import { spawnGit } from "../wiki-git"
 import { ensureWikiSkeleton } from "../paths"
 
 /**
@@ -86,12 +86,9 @@ function caseEntry(fileName: string) {
   return { content: CASE_LOCKFILE, fileName }
 }
 
-const realGit = (cwd: string): GitRunner => ({
-  run(args: string[]) {
-    const r = spawnSync("git", args, { cwd, timeout: 30000 })
-    return { status: r.status ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
-  },
-})
+// 票06 合并适配：服务写通道提交须走 spawnGit（自动携带 OCTOPUS_WIKI_COMMIT_SOURCE=curate
+// 标记，与生产 WikiCompileService 默认 this.git 同一通道）；裸 spawnSync 会被 pre-commit 闸门拒。
+const realGit = (cwd: string): GitRunner => spawnGit(cwd)
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
