@@ -13,6 +13,7 @@ import { SwarmExecutor } from "./swarm"
 import { SubWorkflowExecutor } from "./sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./dynamic-sub-workflow"
 import { TaskDispatchExecutor } from "./task-dispatch"
+import { assembleAgentNodeIdentity } from "./identity-assembly"
 import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
 import { join } from "path"
 
@@ -561,7 +562,19 @@ export class LoopExecutor implements NodeExecutor {
           }
         }
 
-        return new AgentExecutor(node, p, {
+        // Execution-identity assembly (ticket 10): loop-nested agent nodes
+        // inherit the same `as:` semantics as top-level ones. When no resolver
+        // is threaded (direct unit construction), behavior is the pre-ticket
+        // passthrough.
+        let identityNode = node
+        let identitySystemPrompt: import("@octopus/providers").SystemPromptInput | undefined
+        if (this.config.identityResolver) {
+          const identity = assembleAgentNodeIdentity(node, this.config.identityResolver)
+          identityNode = identity.node
+          identitySystemPrompt = identity.systemPrompt
+        }
+
+        return new AgentExecutor(identityNode, p, {
           runner,
           previousSessionId,
           globalAutoAnswers: this.config.globalAutoAnswers,
@@ -571,6 +584,7 @@ export class LoopExecutor implements NodeExecutor {
           resolvedModel,
           modelAliasConfig: this.config.modelAliasConfig,
           providerKey,
+          systemPrompt: identitySystemPrompt,
         })
       }
       case "loop":
@@ -597,6 +611,7 @@ export class LoopExecutor implements NodeExecutor {
           engineNodeResults: this.config.engineNodeResults,
           workflowResolver: (this.config as any).workflowResolver,
           visitedWorkflows: (this.config as any).visitedWorkflows,
+          identityResolver: this.config.identityResolver,
           iterationIndex: this.iterations - 1, // 0-based iteration index
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             // Inject iteration context from this loop (0-based iteration index)
@@ -634,6 +649,7 @@ export class LoopExecutor implements NodeExecutor {
           promptInjector: (this.config as any).promptInjector,
           precomputeHook: (this.config as any).precomputeHook,
           knowledgeInjectorFactory: (this.config as any).knowledgeInjectorFactory,
+          identityResolver: this.config.identityResolver,
         })
       case "task_dispatch": {
         // G1 resume inside a loop: the resumed iteration's inner task_dispatch

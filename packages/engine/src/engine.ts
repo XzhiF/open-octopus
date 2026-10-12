@@ -178,6 +178,10 @@ export class WorkflowEngine {
   private visitedWorkflows?: Set<string>
   // Version resolver for octopus_agent nodes
   private versionResolver?: VersionResolver
+  /** Execution-identity resolver for agent-node `as:` assembly (ticket 10).
+   *  Injectable seam (setIdentityResolver, setVersionResolver precedent);
+   *  production leaves it undefined — ExecutorFactory builds one. */
+  private identityResolver?: import("./executors/identity-resolver").IdentityResolver
 
   constructor(
     private workflow: WorkflowDef,
@@ -301,6 +305,7 @@ export class WorkflowEngine {
       workflowResolver: this.workflowResolver,
       visitedWorkflows: this.visitedWorkflows,
       versionResolver: this.versionResolver,
+      identityResolver: this.identityResolver,
       taskDispatchPort: this.taskDispatchPort,
     }
   }
@@ -338,6 +343,25 @@ export class WorkflowEngine {
   setVersionResolver(resolver: VersionResolver): void {
     this.versionResolver = resolver
     this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
+  }
+
+  /**
+   * Set the execution-identity resolver used for agent-node `as:` assembly
+   * (ticket 10). Mirrors setVersionResolver: set field → rebuild factory.
+   * Injectable seam for tests (fixture HOME) and for hosts that need a custom
+   * resolution chain; production callers omit it and ExecutorFactory builds
+   * the default one from the injected VersionResolver (or fs-only on CLI).
+   */
+  setIdentityResolver(resolver: import("./executors/identity-resolver").IdentityResolver): void {
+    this.identityResolver = resolver
+    this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
+  }
+
+  /** Read the injected VersionResolver (published-snapshot provider).
+   *  Used by ExecutionLifecycle to build the engine-init `as:` gate resolver
+   *  without duplicating the DB row-list plumbing (ticket 10 L3 gate). */
+  getVersionResolver(): VersionResolver | undefined {
+    return this.versionResolver
   }
 
   /**

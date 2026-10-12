@@ -1,7 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs"
+import { tmpdir } from "os"
+import { join } from "path"
 import { EngineInitPhase } from "../engine-init"
 import type { EngineInitOptions, GitOpsLike, ResourcePreFlightLike, ResourceProvisionerLike } from "../engine-init"
 import type { EngineCallbacks } from "../engine"
+import { IdentityResolver } from "../executors/identity-resolver"
 import type { WorkflowDef } from "@octopus/shared"
 
 describe("EngineInitPhase", () => {
@@ -523,6 +527,164 @@ describe("EngineInitPhase", () => {
 
       expect(result.status).toBe("completed")
       expect(result.cloneErrors).toHaveLength(0)
+    })
+  })
+
+  describe("as: execution-identity L3 hard gate (ticket 10)", () => {
+    // Fake HOME fixture: identity resolution happens against a tmpdir clone
+    // tree, never the real ~/.octopus (identity-resolver.test.ts pattern).
+    const mkHome = () => mkdtempSync(join(tmpdir(), "engine-init-as-gate-"))
+    const homes: string[] = []
+    const fakeHome = () => { const h = mkHome(); homes.push(h); return h }
+    function writeIdentityDir(home: string, kind: "built-in" | "clones", name: string): void {
+      mkdirSync(join(home, ".octopus", "agent", kind, name), { recursive: true })
+      writeFileSync(join(home, ".octopus", "agent", kind, name, "persona.md"), "# fixture persona", "utf-8")
+    }
+    afterEach(() => {
+      while (homes.length > 0) {
+        const h = homes.pop()
+        if (h) rmSync(h, { recursive: true, force: true })
+      }
+    })
+
+    it("rejects engine-init when a node's as: target is unresolvable", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "implement", type: "agent", as: "ghost-clone-404", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("failed")
+      expect(result.identityErrors).toHaveLength(1)
+      expect(result.identityErrors[0]).toContain("ghost-clone-404")
+      expect(result.identityErrors[0]).toContain("implement") // names the offending node
+      expect(result.identityErrors[0]).toContain("not resolvable")
+      expect(callbacks.onNodeLog).toHaveBeenCalledWith(
+        "__engine_init__",
+        expect.stringContaining("[ERROR]"),
+      )
+    })
+
+    it("blocks provisioning when the as-gate fails (provisioner not called)", async () => {
+      workflow = {
+        ...workflow,
+        requires: { skills: ["s1"] },
+        nodes: [{ id: "implement", type: "agent", as: "ghost-clone-404", prompt: "x" }],
+      } as WorkflowDef
+      vi.mocked(resourcePreflight.check).mockReturnValue({ missing: [{ name: "s1", type: "skill" }] })
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("failed")
+      expect(resourceProvisioner.provision).not.toHaveBeenCalled()
+    })
+
+    it("proceeds when as: resolves from the built-in directory", async () => {
+      const home = fakeHome()
+      writeIdentityDir(home, "built-in", "workflow-operator")
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "operate", type: "agent", as: "workflow-operator", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(result.identityErrors).toHaveLength(0)
+    })
+
+    it("proceeds when as: resolves from the user clones directory", async () => {
+      const home = fakeHome()
+      writeIdentityDir(home, "clones", "feat-my-branch")
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "branchy", type: "agent", as: "feat-my-branch", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+    })
+
+    it("scans loop-nested agent nodes for as: targets", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [{
+          id: "outer", type: "loop", max_iterations: 2,
+          nodes: [{ id: "inner", type: "agent", as: "ghost-loop-404", prompt: "x" }],
+        }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("failed")
+      expect(result.identityErrors[0]).toContain("ghost-loop-404")
+      expect(result.identityErrors[0]).toContain("inner") // inner node id, not the loop id
+    })
+
+    it("is a no-op when no node declares as: — default workflow-operator is NOT gate-checked (graceful)", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }, { id: "b", type: "bash", bash: "echo 1" }],
+      } as WorkflowDef
+
+      // Empty-home resolver: workflow-operator absent — yet init must proceed,
+      // existing workflows never break because the default clone is missing.
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(result.identityErrors).toHaveLength(0)
+    })
+
+    it("reports one error per unresolvable as: site", async () => {
+      workflow = {
+        ...workflow,
+        nodes: [
+          { id: "n1", type: "agent", as: "ghost-a", prompt: "x" },
+          { id: "n2", type: "agent", as: "ghost-a", prompt: "y" },
+        ],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: fakeHome() }),
+      }))
+
+      expect(result.identityErrors).toHaveLength(2)
+      expect(result.identityErrors[0]).toContain("n1")
+      expect(result.identityErrors[1]).toContain("n2")
+    })
+
+    it("without an injected resolver falls back to the real-home directory probe (clone-gate style)", async () => {
+      const ghost = `engine-init-gate-ghost-${process.pid}-${Date.now()}`
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "implement", type: "agent", as: ghost, prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(result.status).toBe("failed")
+      expect(result.identityErrors[0]).toContain(ghost)
     })
   })
 

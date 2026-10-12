@@ -213,6 +213,14 @@ export interface NodeDef {
   // agent
   agent?: string
   skills?: string[]
+  /**
+   * Execution identity (LLM-WIKI P1 ticket 10 / ADR-0029): clone code whose
+   * published snapshot (persona → systemPrompt, skills → Skill Filter whitelist)
+   * is assembled onto this agent node. /^[a-z0-9-]+$/ — version pins belong to
+   * octopus_agent `agent:` refs, not here. Omitted = default identity
+   * WORKFLOW_OPERATOR_CLONE_NAME; cwd/workspace semantics are NOT identity.
+   */
+  as?: string
   prompt?: string
   context?: "new" | "continue"
   resume_from?: string
@@ -346,6 +354,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
 
     agent: z.string().optional(),
     skills: z.array(z.string()).optional(),
+    // L1 for `as:` — clone English code only (no '@' pin; see NodeDef docstring)
+    as: z.string().regex(/^[a-z0-9-]+$/, "as: must be a clone code matching /^[a-z0-9-]+$/").optional(),
     prompt: z.string().optional(),
     context: z.enum(["new", "continue"]).optional(),
     resume_from: z.string().optional(),

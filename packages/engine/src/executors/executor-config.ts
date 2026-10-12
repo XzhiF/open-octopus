@@ -227,6 +227,10 @@ export interface LoopConfig extends CoreConfig {
    *  task_dispatch nodes so a composition Loop can fan out child schedules via the port.
    *  Without this, an inner task_dispatch node would fail ("no TaskDispatchPort injected"). */
   taskDispatchPort?: TaskDispatchPort
+  /** Execution-identity resolver (ticket 10) — threaded from ExecutorFactory so
+   *  loop-nested agent nodes inherit the same `as:` assembly semantics.
+   *  Absent (direct unit construction) → nested agents keep pre-ticket behavior. */
+  identityResolver?: import("./identity-resolver").IdentityResolver
 }
 
 /** SubWorkflowExecutor — child workflow execution with scoped VarPool */
@@ -249,6 +253,9 @@ export interface SubWorkflowConfig extends CoreConfig {
   /** Current loop iteration index (0-based) — set by LoopExecutor when this sub-workflow is inside a loop.
    *  Used to scope child node IDs per iteration, preventing DB record collisions across iterations. */
   iterationIndex?: number
+  /** Execution-identity resolver (ticket 10) — set on the child WorkflowEngine so
+   *  sub-workflow agent nodes inherit the same `as:` assembly semantics. */
+  identityResolver?: import("./identity-resolver").IdentityResolver
 }
 
 /** DynamicSubWorkflowExecutor — agent-generated DAG with validation harness */
@@ -275,6 +282,9 @@ export interface DynamicSubWorkflowConfig extends CoreConfig {
   promptInjector?: PromptInjector
   precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  /** Execution-identity resolver (ticket 10) — set on the child WorkflowEngine so
+   *  dynamic-DAG agent nodes inherit the same `as:` assembly semantics. */
+  identityResolver?: import("./identity-resolver").IdentityResolver
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */
