@@ -96,7 +96,7 @@ import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
 import { initAgentService, getAgentService } from "./services/agent/agent-service"
-import { initAgentVersionService } from "./services/agent/agent-version-service"
+import { initAgentVersionService, publishVersionedBuiltinClones } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
 import { SecretMasker } from "./services/actuator/secret-masker"
@@ -261,6 +261,15 @@ if (!process.env.VITEST && daos) {
     const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
     if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
       console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+    }
+    // LLM-WIKI 票 09: built-in clones marked config.versioned (workflow-operator)
+    // get their initial agent_versions publish right after the dual-track landing,
+    // so the existing octopus_agent snapshot resolution (VersionResolver over
+    // listAllPublished, set above) can resolve 'latest' / pinned identities.
+    // Idempotent + non-fatal (see publishVersionedBuiltinClones).
+    const seeded = publishVersionedBuiltinClones(daos.agentVersion)
+    if (seeded.length > 0) {
+      console.log(`[server] versioned built-in clones published: ${seeded.join(', ')} at ${'1.0.0'}`)
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
