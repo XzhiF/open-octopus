@@ -15,7 +15,7 @@ import {
   getVersionsBaseDir,
   getAgentDir,
 } from './paths'
-import { isBuiltinClone } from './builtin-clones'
+import { isBuiltinClone, BUILTIN_CLONES } from './builtin-clones'
 import type { CloneConfig } from './clone-resolver'
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -370,6 +370,57 @@ export class AgentVersionService {
     this.dao.updateStatus(row.id, 'archived')
     return this.dao.findById(row.id)!
   }
+}
+
+// ── Built-in version seed (LLM-WIKI 票 09) ─────────────────────────
+
+/** Initial version under which `config.versioned` built-in clones are published.
+ *  Later versions are published deliberately (publish route / curator) — this
+ *  seed never bumps it. */
+export const INITIAL_BUILTIN_VERSION = '1.0.0'
+
+/**
+ * Seed the initial agent_versions publish for built-in clones declaring
+ * `config.versioned` (currently only workflow-operator — the default execution
+ * identity, spec §执行身份). They must be resolvable through the EXISTING
+ * octopus_agent snapshot mechanism (`VersionResolver` over
+ * `AgentVersionDAO.listAllPublished()`, wired in EngineFactory) so workflow
+ * agent nodes can use 'latest' or pin a version. The other built-in clones stay
+ * un-versioned: their identity path is the clone-session directory, not
+ * snapshots.
+ *
+ * Idempotent: skips clones whose initial version row already exists (whatever
+ * its status — an archived/draft 1.0.0 means an operator touched history, so
+ * the seed does not republish over it).
+ * Non-fatal per clone: a publish failure only warns (same posture as
+ * CloneInitService DB registration) — a half-landed filesystem must never crash
+ * server startup.
+ *
+ * Returns the clone names actually published this run.
+ */
+export function publishVersionedBuiltinClones(versionDAO: AgentVersionDAO): string[] {
+  const service = new AgentVersionService(versionDAO)
+  const published: string[] = []
+
+  for (const def of BUILTIN_CLONES) {
+    if (def.config.versioned !== true) continue
+    try {
+      if (service.get(def.name, INITIAL_BUILTIN_VERSION)) continue
+      service.publish(def.name, {
+        version: INITIAL_BUILTIN_VERSION,
+        stage: 'stable',
+        changelog: `Initial built-in publish (${def.displayName})`,
+      })
+      published.push(def.name)
+    } catch (err: unknown) {
+      console.warn(
+        `[agent-version] initial publish failed for ${def.name}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  return published
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

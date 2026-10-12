@@ -28,7 +28,8 @@
 | **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
 | **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。内置分身见下条。 | server, shared |
 | **task-doer（任务执行者）** | 承接任务执行/验收期对话的内置分身（谈=task-author，做=task-doer）：快速修改、人工接管、修复轮追加指令皆出其口；工作区代码写权来自 workspace 语义而非 task-home，唯批次计划文件（spec/票）仅经计划回写通道可写、大改先预览后执行（ADR-0025，ADR-0026）。 | server, core-pack, web-app |
-| **内置分身 (Built-in Clone)** | 系统预定义的 7 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入）。 | server |
+| **workflow-operator（工作流工程师）** | 工作流 agent 节点的缺省执行身份内置分身（LLM-WIKI P1，spec §执行身份）：persona 写死四条行为准则——动手前经 octo-wiki 查阅并写 wiki_refs、遵守 cwd 的 CLAUDE.md、安全规则 > 任务书 > 知识参考、知识与现场代码冲突以现场为准并上报 stale。config 声明 `skills: [octo-wiki]` 仅为治理语义 + preflight 依据（ADR-0006：运行时技能发现走共享层，不走 CloneDef.skills）；`config.versioned` 触发启动时初始 agent_versions 发布，工作流可经快照机制解析/钉住身份版本。 | server, shared, engine |
+| **内置分身 (Built-in Clone)** | 系统预定义的 8 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer / workflow-operator），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入；workflow-operator 由 LLM-WIKI P1 票 09 引入，名字常量 `WORKFLOW_OPERATOR_CLONE_NAME` 在 shared，供引擎侧缺省装配引用）。 | server |
 | **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
 | **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |

@@ -88,7 +88,7 @@ describe('task-doer built-in clone (ADR-0025)', () => {
     expect(def!.persona.length).toBeGreaterThan(0)
   })
 
-  it('AC1d: the built-in roster is exactly the 6 pre-existing clones + task-doer', () => {
+  it('AC1d: the built-in roster is the 7 pre-existing clones + workflow-operator (ticket 09)', () => {
     expect(BUILTIN_CLONES.map((c) => c.name)).toEqual([
       'workspace',
       'scheduler',
@@ -97,6 +97,7 @@ describe('task-doer built-in clone (ADR-0025)', () => {
       'harness-agent',
       'task-author',
       'task-doer',
+      'workflow-operator',
     ])
   })
 
