@@ -31,7 +31,7 @@
 | **workflow-operator（工作流工程师）** | 工作流 agent 节点的缺省执行身份内置分身（LLM-WIKI P1，spec §执行身份）：persona 写死四条行为准则——动手前经 octo-wiki 查阅并写 wiki_refs、遵守 cwd 的 CLAUDE.md、安全规则 > 任务书 > 知识参考、知识与现场代码冲突以现场为准并上报 stale。config 声明 `skills: [octo-wiki]` 仅为治理语义 + preflight 依据（ADR-0006：运行时技能发现走共享层，不走 CloneDef.skills）；`config.versioned` 触发启动时初始 agent_versions 发布，工作流可经快照机制解析/钉住身份版本。 | server, shared, engine |
 | **内置分身 (Built-in Clone)** | 系统预定义的 8 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer / workflow-operator），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入；workflow-operator 由 LLM-WIKI P1 票 09 引入，名字常量 `WORKFLOW_OPERATOR_CLONE_NAME` 在 shared，供引擎侧缺省装配引用）。 | server |
 | **执行身份 (Execution Identity)** | 工作流 agent 节点 `as: <分身英文代号>` 字段的数据语义：经 IdentityResolver 单一解析链（已发布 agent_versions 快照 → built-in → clones 目录）取分身快照，装配为 persona→systemPrompt、snapshot.skills→SDK skills 白名单；cwd 永不是身份输入（cwd=工作现场 ⊥ identity ⊥ wiki 三分离，ADR-0029）。缺省身份 workflow-operator（不写 `as:` 亦装配）；显式目标不可解析在 engine-init（server）/执行前（CLI）硬闸拒绝，缺省目标缺失则优雅降级。引擎自身无人格——身份是节点数据，不是引擎属性。_Avoid_: 称引擎"有人格"；把身份装配叫"知识注入"。 | engine, shared, server |
-| **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
+| **导航协议 (Navigation Protocol)** | octo-wiki skill 定义的 wiki 查阅路线：`~/.octopus/orgs/{org}/knowledge/wiki/INDEX.md` 第一跳 → 按 topics/summary 整读词条第二跳 → `GET /api/knowledge/wiki/search` 兜底；按跳计费，禁全库遍历/跳过 INDEX glob。指针 ≠ 注入（任务上下文只给一行 wiki 根指针，正文由 agent 自读）。 | core-pack, server || **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
 | **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |
 | **记忆读共享/写隔离** | 分身能读取全局记忆（long-term + daily，只读），但写入自己独立的记忆空间（built-in/{name}/memory/）。Archive 分身负责定期提炼。 | server |
@@ -124,6 +124,8 @@
 | **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |
 | **handoff.md** | 批次目录 spec 家族成员：ship 每轮末产/覆写的**面向下游执行会话**精选交接短页（头块 + Protected Decisions / Confirmed Interfaces / Gap Targets 三段，一屏内引用不复制）；与 round-report.md（面向验收人全量轮报）受众不同。ADR-0019。 | core-pack |
 | **prev_handoff_paths** | 内置注入键（非占位符）：全部已 accepted 前序 phase 的 handoff.md home 绝对路径（存在性过滤、换行连接），accepted→下 phase / 手动推进时 server 注入 materialized input_values；与 feedback/task_artifacts_dir 注入同族。ADR-0019。 | server |
+| **词条 (Entry)** | wiki 编译单元——一 md 文件一主题（格式 v2）：front-matter(id/domain/title/summary/topics/stability/last_compiled/sources/confidence，stability=volatile 必带 review_after) + 正文规则行仅带不可见锚点 `<!--#oct-001-->`（全库唯一、永不复用）；常青零日期——日期/溯源/审核由 front-matter sources、LOG.md、git history 三处分工承接。schema 定义 `shared/types/wiki.ts`。 | shared, server |
+| **INDEX/LOG 导航层** | INDEX.md = llms.txt 风格导航层，由编译器从词条 front-matter **程序化重建**（H1 + blockquote 导航协议 + H2 域节 + 每词条一行摘要 + 统计节，Agent 第一跳成本恒定）；LOG.md = 策展日志，编译器 append-only 一行一事件（`|日期|动作|词条|摘要|来源|审核|`）。两者永不经 LLM/人手写，零漂移；写入与词条同在编译事务内（失败原子回滚）。 | server |
 
 ## Anti-Patterns（禁止）
 

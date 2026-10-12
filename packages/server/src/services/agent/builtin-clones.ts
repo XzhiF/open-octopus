@@ -229,7 +229,9 @@ export const BUILTIN_CLONES: CloneDef[] = [
     displayName: '工程分析师',
     type: 'built-in',
     persona: ARCHIVE_PERSONA,
-    skills: ['octo-archive-analyst'],
+    // 票11(llm-wiki-loop): octo-wiki 读侧绑定（写侧 octo-wiki-curate 由票06 进分身层）。
+    // 同为 ADR-0006 治理声明，运行时发现走共享层。
+    skills: ['octo-archive-analyst', 'octo-wiki'],
     memoryScope: 'shared',
     config: {},
   },
@@ -257,13 +259,14 @@ export const BUILTIN_CLONES: CloneDef[] = [
     // the real clone-session mechanism (sessions table, scope_id=task_id), replacing
     // the retired 'taskpool-draft' fake workspace_id sentinel.
     // NOTE: ADR-006 makes getPlugins() ignore CloneDef.skills — every clone inherits
-    // all shared skills. `skills: ['task-author']` is declarative intent only;
+    // all shared skills. `skills: ['task-author', 'octo-wiki']` is declarative intent only;
     // full per-task skill scoping is a follow-up (see ticket 09 Exploration).
+    // 票11(llm-wiki-loop): octo-wiki 读侧查阅绑定（治理语义 + preflight 依据）。
     name: 'task-author',
     displayName: '任务规格作者',
     type: 'built-in',
     persona: TASK_AUTHOR_PERSONA,
-    skills: ['task-author'],
+    skills: ['task-author', 'octo-wiki'],
     memoryScope: 'isolated',
     config: {},
   },
@@ -277,11 +280,12 @@ export const BUILTIN_CLONES: CloneDef[] = [
     // posture); 每改即 commit is enforced by the task-chat route
     // ([quick-edit] marker, ticket 09 counts ledger rows by it).
     // Same ADR-006 note as task-author: `skills` is declarative intent only.
+    // 票11(llm-wiki-loop): octo-wiki 读侧查阅绑定（治理语义 + preflight 依据）。
     name: 'task-doer',
     displayName: '任务执行者',
     type: 'built-in',
     persona: TASK_DOER_PERSONA,
-    skills: ['octo-dev-copilot', 'matt-e2e-test-methodology'],
+    skills: ['octo-dev-copilot', 'matt-e2e-test-methodology', 'octo-wiki'],
     memoryScope: 'isolated',
     config: {},
   },

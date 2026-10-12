@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { ResourcePreFlight } from '../resource-preflight'
+import { ResourceProvisioner } from '../resource-provisioner'
+import { ResourceManager } from '@octopus/shared'
 
 function createTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-test-'))
@@ -483,6 +485,85 @@ describe('ResourcePreFlight', () => {
       // Existing fields still work
       expect(manifest.agents).toContain('test')
       expect(manifest.skills).toContain('skill-a')
+    })
+  })
+
+  // ── 票11 (llm-wiki-loop): octo-wiki 预置链路 ─────────────────────────
+  // Seam: 工作流节点声明 skills:[octo-wiki] → analyze 抽出 → check 报缺 →
+  // 真实 ResourceManager(core-pack BuiltinProvider 目录扫描, 无中央清单)
+  // registerBuiltins 后, ResourceProvisioner 把技能整目录物化进执行
+  // workspace 的 .claude/skills/ —— 之后 SDK settingSources 原生发现
+  // (providers/src/claude/provider.ts, ADR-0006: 不经任何 prompt 文本注入)。
+  // 期望值来自票11/spec §执行身份 + 原型 Tab④ 四段骨架, 不反向抄实现 (防自证)。
+  describe('octo-wiki provisioning (票11 llm-wiki-loop)', () => {
+    const corePackBase = path.resolve(__dirname, '../../../../core-pack')
+
+    it('core-pack 目录扫描自动注册 octo-wiki 为 builtin skill（无中央清单登记点）', () => {
+      const rmBase = createTempDir()
+      try {
+        const manager = new ResourceManager({ basePath: rmBase, corePackBase })
+        manager.registerBuiltins()
+        const entry = manager.get('skill', 'octo-wiki')
+        expect(entry).not.toBeNull()
+        expect(entry!.installed).toBe(true)
+        // installPath 必须指向实际物化目录（provisioner 按它整目录复制）
+        expect(fs.existsSync(path.join(entry!.installPath, 'SKILL.md'))).toBe(true)
+      } finally {
+        cleanupDir(rmBase)
+      }
+    })
+
+    it('声明 octo-wiki 的工作流经 analyze→check→provision 把技能物化进 workspace .claude/skills', async () => {
+      const rmBase = createTempDir()
+      const workspace = createTempDir()
+      try {
+        const manager = new ResourceManager({ basePath: rmBase, corePackBase })
+        manager.registerBuiltins()
+
+        // 节点声明 skills:[octo-wiki]（票10 后 as: 身份快照的 skills 也汇入此处）
+        const workflow = { nodes: [{ type: 'agent', id: 'implement', skills: ['octo-wiki'] }] }
+        const manifest = preflight.analyze(workflow)
+        expect(manifest.skills).toContain('octo-wiki')
+
+        // 执行前 workspace 尚无该技能 → preflight 判缺
+        const check = preflight.check(manifest, workspace)
+        expect(check.missing).toContainEqual({ type: 'skill', name: 'octo-wiki' })
+
+        const result = await new ResourceProvisioner(manager).provision(check.missing, workspace)
+        expect(result.failed).toHaveLength(0)
+        expect(result.provisioned).toBeGreaterThanOrEqual(1)
+
+        // 预置产物断言：SKILL.md 落在 .claude/skills/octo-wiki/（SDK project 设置源目录）
+        const skillMd = path.join(workspace, '.claude', 'skills', 'octo-wiki', 'SKILL.md')
+        expect(fs.existsSync(skillMd)).toBe(true)
+
+        // 四段骨架齐备（原型 Tab④ 锚点：导航协议/引用纪律是票12 wiki_refs 信道对接口）
+        const text = fs.readFileSync(skillMd, 'utf-8')
+        for (const anchor of ['name: octo-wiki', '## 何时查阅', '## 导航协议', '## 引用纪律', '## 禁止']) {
+          expect(text).toContain(anchor)
+        }
+
+        // 复跑 preflight：已 available，不再缺（幂等，引擎 init Step1/Step2 双趟都安全）
+        const recheck = preflight.check(manifest, workspace)
+        expect(recheck.available).toContainEqual({ type: 'skill', name: 'octo-wiki' })
+        expect(recheck.missing).toHaveLength(0)
+      } finally {
+        cleanupDir(rmBase)
+        cleanupDir(workspace)
+      }
+    })
+
+    it('octo-wiki 走共享层（core-pack/skills），绝不落分身层 clone-tier（ADR-0006 写侧隔离）', () => {
+      // 读侧技能若在 clones/*/skills 出现，等于泄漏给单个分身之外的写权面
+      const clonesDir = path.join(corePackBase, 'clones')
+      const offenders: string[] = []
+      if (fs.existsSync(clonesDir)) {
+        for (const clone of fs.readdirSync(clonesDir)) {
+          const tierSkill = path.join(clonesDir, clone, 'skills', 'octo-wiki')
+          if (fs.existsSync(tierSkill)) offenders.push(`${clone}/skills/octo-wiki`)
+        }
+      }
+      expect(offenders).toEqual([])
     })
   })
 })

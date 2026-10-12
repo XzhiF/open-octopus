@@ -12,7 +12,10 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 51
+// LLM-WIKI knowledge-loop 票01: 51→52 — 纯增量新表 wiki_articles + wiki_fts
+// （schema.sql 尾部 Knowledge 段；无数据形态修复，无需 migrate* 函数。
+// migrations 跑在 schema.sql 之前，CREATE IF NOT EXISTS 幂等，旧库升级不丢行。）
+export const SCHEMA_VERSION = 52
 
 /**
  * Apply the complete unified schema to the given database.
