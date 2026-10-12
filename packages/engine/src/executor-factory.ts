@@ -4,7 +4,7 @@
 // Extracted from WorkflowEngine.createExecutor() to reduce engine.ts size.
 //
 import type { NodeDef, WorkflowHooks, VersionResolver, TaskDispatchPort } from "@octopus/shared"
-import { VarPool, resolveModelAlias } from "@octopus/shared"
+import { VarPool, resolveModelAlias, resolveKnowledgeMode } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
 import type { IAgentProvider, SystemPromptInput } from "@octopus/providers"
@@ -251,6 +251,10 @@ export class ExecutorFactory {
           engineContext: { nodeResults: this.ctx.nodeResults },
           promptInjector: this.ctx.promptInjector,
           knowledgeInjector,
+          // 票 12 影子双轨装配闸：mode 来自身份快照 config（缺 knowledge 字段 =
+          // both = 现状逐字节不变）；query 时 AgentExecutor 构造器摘除注入器引用，
+          // 注入链本体（红线 #1）不动一行。
+          knowledgeMode: resolveKnowledgeMode(identity.snapshotConfig),
           workflowName: this.ctx.workflow.name,
           crossExecResolver: this.ctx.crossExecResolver,
           executionId: this.ctx.executionId,

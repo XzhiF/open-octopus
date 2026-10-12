@@ -12,6 +12,7 @@ import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
+import { buildShadowComparison } from "../services/knowledge/shadow-compare"
 import type { TokenUsage } from "@octopus/shared"
 import { addTokenUsage, emptyTokenUsage, costSummary } from "@octopus/shared"
 import repairRoutes, { setRepairDependencies, createRepairServiceForWorkspace } from "./repair"
@@ -269,6 +270,29 @@ executionRoutes.get("/:executionId/state", (c) => {
   const state = svc.service.getStateJson(executionId)
   if (!state) return c.json({ error: "state not found" }, 404)
   return c.json(state)
+})
+
+// ── 影子对照导出（LLM-WIKI P1 票 12 / story 31）────────────────────────
+// 按 executionId 并排注入侧（__relevant_rule_ids / __injected_rule_ids，既有
+// VarPool 键，只读 —— 红线 #1）与查阅侧（wiki_refs，vars_update → VarPool →
+// executions.var_pool），输出命中/未命中/仅注入/仅查阅四象限。
+// P2「删除注入链」单向门的决策数据从这里来；本端点不写任何池键。
+executionRoutes.get("/:executionId/shadow-compare", (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+  const row = svc.service.getById(executionId)
+  if (!row) return c.json({ error: "not found" }, 404)
+  let pool: Record<string, unknown> | null = null
+  if (row.var_pool) {
+    try {
+      pool = JSON.parse(row.var_pool) as Record<string, unknown>
+    } catch {
+      pool = null
+    }
+  }
+  return c.json(buildShadowComparison(executionId, pool))
 })
 
 executionRoutes.post("/:executionId/start", async (c) => {
