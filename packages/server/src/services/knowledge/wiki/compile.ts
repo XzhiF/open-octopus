@@ -6,11 +6,12 @@ import {
   parseEntryMarkdown,
   serializeEntryMarkdown,
   extractRuleAnchors,
-  findDateOccurrences,
 } from "./format"
+import { lintWikiEntry, buildSplitProposal, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, type RuleFormJudge, type SplitProposal } from "./lint"
 import { resolveWikiRoot, ensureWikiSkeleton, WIKI_DOMAINS, WIKI_DOMAIN_LABELS, type WikiDomainDir } from "./paths"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
+import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 
 /**
  * WikiCompileService — 编译服务是 wiki 唯一写入口（spec D4 写入单一闸门的技术收口）。
@@ -45,7 +46,13 @@ export interface CompileResult {
   changed: boolean
 }
 
-const FILE_NAME_RE = /^[a-z0-9][a-z0-9._-]*\.md$/i
+/** L1 触顶自动入队的拆分提案 pending_review id（确定性，org+entry 唯一）。 */
+export function wikiSplitProposalId(org: string, entryId: string): string {
+  return `wiki-split-${org}-${entryId}`
+}
+
+// 允许 hub 目录形态（projects/prj-big/README.md）；每段仍是 kebab .md、禁 '..'/绝对路径（逃逸另有 resolve 检查）
+const FILE_NAME_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\.md$/i
 
 /** INDEX/LOG 导航层产物名（根级）。 */
 export const WIKI_INDEX_FILE = "INDEX.md"
@@ -84,22 +91,33 @@ function atomicWrite(target: string, content: string): void {
 
 /**
  * 扫 wiki 根上所有域词条（真源在 fs，DB 只是索引）。
+ * 域目录一层 + hub 子目录一层（票02 L2：projects/prj-big/README.md + build.md）。
  * front-matter 不合规的文件跳过并告警——坏文件不能拖垮整次编译。
  */
 export function scanWikiEntries(root: string): ScannedEntry[] {
   const out: ScannedEntry[] = []
   for (const domain of WIKI_DOMAINS) {
     const dir = path.join(root, domain)
-    let names: string[] = []
+    let dirents: fs.Dirent[] = []
     try {
-      names = fs.readdirSync(dir).filter(n => n.endsWith(".md")).sort()
+      dirents = fs.readdirSync(dir, { withFileTypes: true })
     } catch {
       continue // 域目录尚未创建（首编译前）
     }
-    for (const name of names) {
-      const relPath = `${domain}/${name}`
+    const files: string[] = []
+    for (const d of dirents) {
+      if (d.isFile() && d.name.endsWith(".md")) files.push(`${domain}/${d.name}`)
+      else if (d.isDirectory()) {
+        try {
+          for (const sub of fs.readdirSync(path.join(dir, d.name)).filter(n => n.endsWith(".md")).sort()) {
+            files.push(`${domain}/${d.name}/${sub}`)
+          }
+        } catch { /* 坏目录跳过 */ }
+      }
+    }
+    for (const relPath of files.sort()) {
       try {
-        const { meta, body } = parseEntryMarkdown(fs.readFileSync(path.join(dir, name), "utf-8"))
+        const { meta, body } = parseEntryMarkdown(fs.readFileSync(path.resolve(root, relPath), "utf-8"))
         out.push({ relPath, meta, anchors: extractRuleAnchors(body) })
       } catch (err) {
         process.stderr.write(`[wiki-index] skip ${relPath}: ${err instanceof Error ? err.message : String(err)}\n`)
@@ -110,36 +128,63 @@ export function scanWikiEntries(root: string): ScannedEntry[] {
 }
 
 /**
+ * hub 子目录成员判定：`domain/hub/xxx.md` 且同目录有 README.md → 子词条，
+ * INDEX 第一跳不列（经 hub 指针三跳封顶），规则仍计入统计。
+ */
+export function isHubChild(e: { relPath: string }, allPaths: Set<string>): boolean {
+  const p = e.relPath.split("/")
+  return p.length === 3 && p[2] !== "README.md" && allPaths.has(`${p[0]}/${p[1]}/README.md`)
+}
+
+/**
  * INDEX.md llms.txt 形状（prototype Tab③ lines 432-455 逐字先例）：
  * H1 + blockquote 导航协议 + H2 域节（有内容的域才列）+ 每词条一行摘要 + 统计节。
  * 纯函数、程序化重建——永不经 LLM 手写（零漂移保证，票02 L4 预算闸消费同一产物）。
+ * optionalEntries：L4 预算重排时被移出的低频词条，按 llms.txt 惯例进 `## Optional`
+ * 节（只列路径+标题，不占一行摘要预算）；统计节对必选+可选全量计数。
  */
-export function renderWikiIndex(entries: ScannedEntry[], org: string, pendingReviewCount: number): string {
+export function renderWikiIndex(entries: ScannedEntry[], org: string, pendingReviewCount: number, optionalEntries: ScannedEntry[] = []): string {
   const lines: string[] = []
   lines.push(`# Octopus Knowledge Wiki — ${org}`, "")
   lines.push("> Agent 导航协议：先读本索引 → 选词条整读 → 未命中再 search API。禁止全库遍历。", "")
+
+  const all = [...entries, ...optionalEntries]
+  const allPaths = new Set(all.map(e => e.relPath))
+  const visibleMandatory = entries.filter(e => !isHubChild(e, allPaths))
+  const visibleOptional = optionalEntries.filter(e => !isHubChild(e, allPaths))
 
   let totalEntries = 0
   let totalCases = 0
   let totalRules = 0
   let lastCompiled = ""
+  for (const e of all) {
+    totalRules += e.anchors.length
+    if (e.meta.last_compiled > lastCompiled) lastCompiled = e.meta.last_compiled
+    if (isHubChild(e, allPaths)) continue // 子词条不单独计数（经 hub 导航）
+    if (e.meta.domain === "cases") totalCases++
+    else totalEntries++
+  }
 
   for (const domain of WIKI_DOMAINS) {
-    const inDomain = entries.filter(e => e.meta.domain === domain)
-    if (inDomain.length === 0) continue
-    const rules = inDomain.reduce((s, e) => s + e.anchors.length, 0)
-    const unit = domain === "cases" ? "案例" : "词条"
+    const inDomainAll = all.filter(e => e.meta.domain === domain)
+    if (inDomainAll.length === 0) continue
+    const rules = inDomainAll.reduce((s, e) => s + e.anchors.length, 0)
+    const listable = visibleMandatory.filter(e => e.meta.domain === domain)
     const head = domain === "cases"
-      ? `## cases/ （问题案例档 · ${inDomain.length} 案例 · 卡壳时按症状检索）`
-      : `## ${domain}/ （${WIKI_DOMAIN_LABELS[domain]} · ${inDomain.length} 词条${rules > 0 ? ` · ${rules} 规则` : ""}）`
+      ? `## cases/ （问题案例档 · ${listable.length} 案例 · 卡壳时按症状检索）`
+      : `## ${domain}/ （${WIKI_DOMAIN_LABELS[domain]} · ${listable.length} 词条${rules > 0 ? ` · ${rules} 规则` : ""}）`
     lines.push(head)
-    for (const e of inDomain) {
+    for (const e of listable) {
       const topics = e.meta.topics.length > 0 ? `｜topics: ${e.meta.topics.join(",")}` : ""
       lines.push(`- ${e.relPath} — ${e.meta.summary}${topics}`)
-      totalRules += e.anchors.length
-      if (e.meta.last_compiled > lastCompiled) lastCompiled = e.meta.last_compiled
-      if (domain === "cases") totalCases++
-      else totalEntries++
+    }
+    lines.push("")
+  }
+
+  if (visibleOptional.length > 0) {
+    lines.push(`## Optional （低频词条 · 按需读取，L4 预算自动降级）`)
+    for (const e of visibleOptional) {
+      lines.push(`- ${e.relPath} — ${e.meta.title}`)
     }
     lines.push("")
   }
@@ -147,6 +192,46 @@ export function renderWikiIndex(entries: ScannedEntry[], org: string, pendingRev
   lines.push("## 统计")
   lines.push(`词条 ${totalEntries} · 案例 ${totalCases} · 规则 ${totalRules} · 最近编译 ${lastCompiled || "—"} · 待审核 ${pendingReviewCount} ｜ 变更史见 LOG.md / git log`)
   return lines.join("\n") + "\n"
+}
+
+export interface BudgetedIndex {
+  content: string
+  /** 被移入 ## Optional 的词条 relPath（低频=规则数少者优先，同级按路径） */
+  optionalRelPaths: string[]
+  /** 重排后仍超 800 token 预算（病态巨行）——调用方须拒写 */
+  overBudget: boolean
+}
+
+/**
+ * L4 预算闸渲染：INDEX.md ≤800 token（第一跳成本恒定，prototype Tab③）。
+ * 超限→把规则数最少的词条逐一移入 Optional 直至回到预算；仍超→overBudget。
+ */
+export function renderBudgetedWikiIndex(
+  entries: ScannedEntry[],
+  org: string,
+  pendingReviewCount: number,
+): BudgetedIndex {
+  const allPaths = new Set(entries.map(e => e.relPath))
+  const visible = entries.filter(e => !isHubChild(e, allPaths))
+  const byLowActivity = [...visible].sort(
+    (a, b) => a.anchors.length - b.anchors.length || a.relPath.localeCompare(b.relPath),
+  )
+  const optionalRelPaths: string[] = []
+  let content = renderWikiIndex(entries, org, pendingReviewCount)
+  let guard = 0
+  while (estimateTokens(content) > WIKI_LIMITS.INDEX_MAX_TOKENS && optionalRelPaths.length < byLowActivity.length - 1 && guard < 1000) {
+    const next = byLowActivity.find(e => !optionalRelPaths.includes(e.relPath))
+    if (!next) break
+    optionalRelPaths.push(next.relPath)
+    content = renderWikiIndex(
+      visible.filter(e => !optionalRelPaths.includes(e.relPath)),
+      org,
+      pendingReviewCount,
+      visible.filter(e => optionalRelPaths.includes(e.relPath)),
+    )
+    guard++
+  }
+  return { content, optionalRelPaths, overBudget: estimateTokens(content) > WIKI_LIMITS.INDEX_MAX_TOKENS }
 }
 
 export function formatLogRow(cols: { action: string; entry: string; note: string; source: string; reviewer: string }): string {
@@ -159,13 +244,17 @@ export class WikiCompileService {
   private readonly root: string
   private readonly git: GitRunner
   private readonly articles: WikiArticleDAO
+  private readonly pending: PendingReviewDAO
+  private readonly ruleFormJudge?: RuleFormJudge
 
-  constructor(opts: { db: Database.Database; org: string; rootDir?: string; git?: GitRunner }) {
+  constructor(opts: { db: Database.Database; org: string; rootDir?: string; git?: GitRunner; ruleFormJudge?: RuleFormJudge }) {
     this.db = opts.db
     this.org = opts.org
     this.root = resolveWikiRoot(opts.org, opts.rootDir)
     this.git = opts.git ?? spawnGit(this.root)
     this.articles = new WikiArticleDAO(opts.db)
+    this.pending = new PendingReviewDAO(opts.db)
+    this.ruleFormJudge = opts.ruleFormJudge
   }
 
   get wikiRoot(): string {
@@ -175,8 +264,9 @@ export class WikiCompileService {
   /**
    * 唯一写入口。校验类错误在任何 fs/DB 副作用前抛出（天然零痕迹）；
    * 副作用中途失败走补偿回滚（词条/INDEX/LOG/DB/FTS 全部回到前状态）。
+   * 票02 lint 闸在此同步执行（L1/L3/L5；L6 为编译时 LLM 判定，注入 judge 时 await）。
    */
-  compileEntry(input: CompileInput): CompileResult {
+  async compileEntry(input: CompileInput): Promise<CompileResult> {
     const warnings: string[] = []
 
     // ── 1. validate（无副作用段）──────────────────────────────
@@ -199,7 +289,8 @@ export class WikiCompileService {
       if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在本词条内重复`)
       seen.add(a)
     }
-    for (const other of this.articles.listOthers(this.org, meta.id)) {
+    const others = this.articles.listOthers(this.org, meta.id)
+    for (const other of others) {
       for (const a of extractRuleAnchors(other.body)) {
         if (seen.has(a)) {
           throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.path}（锚点全库唯一、永不复用）`)
@@ -207,9 +298,46 @@ export class WikiCompileService {
       }
     }
 
-    // L5 日期预检 —— 票01 仅 warn（完整 lint 阻塞闸属票02）
-    for (const d of findDateOccurrences(body)) {
-      warnings.push(`L5 预检: 正文出现日期 '${d}'——常青正文应零日期（日期由 front-matter sources / LOG.md / git history 三处承接）`)
+    // ── 票02 lint 闸（L1 容量 / L3 小节 / L5 完整性）：errors 拒写，warnings 随结果透传 ──
+    const lint = lintWikiEntry({
+      meta,
+      body,
+      anchors,
+      root: this.root,
+      linkCorpus: [{ id: meta.id, path: relPath }, ...others.map(o => ({ id: o.id, path: o.path }))],
+    })
+    for (const w of lint.warnings) warnings.push(w.message)
+    const l1 = lint.errors.find(e => e.code === "L1_CAPACITY")
+    if (l1) {
+      const proposalId = this.enqueueSplitProposal(meta, fileName, body, l1.message)
+      const err = new WikiLintError("L1_CAPACITY", `${l1.message}——已自动生成按 H2 小节的拆分提案 '${proposalId}' 入审核队列`, lint.errors)
+      err.proposalId = proposalId
+      throw err
+    }
+    for (const e of lint.errors) {
+      throw new WikiLintError(e.code, e.message, lint.errors)
+    }
+
+    // ── L4 INDEX 预算闸（≤800 token，prototype Tab③）：预测含本词条的 INDEX，
+    //    低频词条移 ## Optional 收敛；重排仍超限 → 拒写 + 触发 hub 化提案 ──
+    const predicted: ScannedEntry[] = scanWikiEntries(this.root).filter(e => e.relPath !== relPath)
+    predicted.push({ relPath, meta, anchors })
+    const budget = renderBudgetedWikiIndex(predicted, this.org, this.pendingCount())
+    if (budget.overBudget) {
+      const tokens = estimateTokens(budget.content)
+      const largest = predicted.reduce((a, b) => (b.anchors.length > a.anchors.length ? b : a))
+      const hubProposalId = this.tryHubifyProposal(largest, relPath, meta, fileName, body)
+      throw new WikiLintError(
+        "L4_INDEX_BUDGET",
+        `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频词条移 ## Optional 或强制升 hub${hubProposalId ? `（已触发 hub 化提案 '${hubProposalId}'）` : ""}`,
+        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
+      )
+    }
+
+    // ── L6 规则形态：编译时 LLM 判定（warn 级，注入 judge 才跑——单测 fixture-mocked，
+    //    离线默认零噪音；判定失败绝不阻塞编译）──
+    if (this.ruleFormJudge) {
+      for (const f of await judgeRuleForms(body, this.ruleFormJudge)) warnings.push(f.message)
     }
 
     const note = input.note ?? `+${anchors.length} 条规则`
@@ -234,10 +362,7 @@ export class WikiCompileService {
       atomicWrite(absPath, serializeEntryMarkdown(meta, body))
 
       const entries = scanWikiEntries(this.root)
-      const pending = (this.db
-        .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
-        .get() as { n: number }).n
-      atomicWrite(indexPath, renderWikiIndex(entries, this.org, pending))
+      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org, this.pendingCount()).content)
 
       const logBase = prevLog ?? WIKI_LOG_HEADER
       atomicWrite(logPath, logBase + formatLogRow({ action: "compile", entry: relPath, note, source, reviewer }))
@@ -296,6 +421,71 @@ export class WikiCompileService {
       this.rollbackTo(meta.id, { absPath, prevEntry, indexPath, prevIndex, logPath, prevLog, prevRow, prevRowid, prevFts })
       throw err
     }
+  }
+
+  private pendingCount(): number {
+    return (this.db
+      .prepare("SELECT COUNT(*) AS n FROM pending_review WHERE status IN ('pending','deferred')")
+      .get() as { n: number }).n
+  }
+
+  /**
+   * L4 收敛失败时给"最胖"词条触发 hub 化拆分提案：≥2 个 H2 小节才有可拆形态。
+   * 返回提案 id；不可拆时返回 null（错误信息里自然省略提案话术）。
+   */
+  private tryHubifyProposal(
+    largest: ScannedEntry,
+    incomingRelPath: string,
+    incomingMeta: WikiEntryFrontmatter,
+    incomingFileName: string,
+    incomingBody: string,
+  ): string | null {
+    let targetMeta: WikiEntryFrontmatter
+    let targetFileName: string
+    let targetBody: string
+    if (largest.relPath === incomingRelPath) {
+      targetMeta = incomingMeta
+      targetFileName = incomingFileName
+      targetBody = incomingBody
+    } else {
+      try {
+        const parsed = parseEntryMarkdown(fs.readFileSync(path.resolve(this.root, largest.relPath), "utf-8"))
+        targetMeta = parsed.meta
+        targetFileName = largest.relPath.split("/").pop() ?? `${targetMeta.id}.md`
+        targetBody = parsed.body
+      } catch {
+        return null
+      }
+    }
+    if (parseH2Sections(targetBody).sections.length < 2) return null
+    return this.enqueueSplitProposal(targetMeta, targetFileName, targetBody, `L4 INDEX 预算超限——建议升 hub（${largest.relPath}）`)
+  }
+
+  /**
+   * L1/L4 触顶 → 拆分提案幂等入队 pending_review（type 'wiki-split'）。
+   * 同 id 已存在时刷新 content（重复编译不产生重复提案）。
+   */
+  private enqueueSplitProposal(meta: WikiEntryFrontmatter, fileName: string, body: string, reason: string): string {
+    const proposal: SplitProposal = buildSplitProposal(meta, fileName, body, reason)
+    const id = wikiSplitProposalId(this.org, meta.id)
+    const row = {
+      id,
+      type: "wiki-split",
+      source: "wiki-lint",
+      source_ref: meta.id,
+      source_label: `词条 ${meta.id} 超容量`,
+      content: JSON.stringify(proposal),
+      target_file: proposal.path,
+      scope: "wiki",
+      conflicts: null,
+      confidence: 1.0,
+      auto_approve: 0,
+      status: "pending",
+      user_notes: null,
+    }
+    if (this.pending.getById(id)) this.pending.updateContent(id, row.content)
+    else this.pending.insert(row)
+    return id
   }
 
   private rollbackTo(entryId: string, prev: {

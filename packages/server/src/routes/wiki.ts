@@ -1,7 +1,11 @@
 import { Hono } from "hono"
+import fs from "fs"
+import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
-import { extractRuleAnchors } from "../services/knowledge/wiki/format"
-import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS } from "../services/knowledge/wiki/paths"
+import { extractRuleAnchors, RULE_ANCHOR_RE } from "../services/knowledge/wiki/format"
+import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
+import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
+import { spawnGit } from "../services/knowledge/wiki/wiki-git"
 import { errorResponse } from "../services/knowledge/validators"
 
 /**
@@ -15,7 +19,58 @@ import { errorResponse } from "../services/knowledge/validators"
 // wiki 词条 id：kebab-case（格式 v2 schema 同源）；显式拒绝 '/'、'..'、空白与编码分隔符
 const ENTRY_ID_RE = /^[a-z][a-z0-9-]*$/i
 
-export function createWikiRoutes(articles: WikiArticleDAO): Hono {
+/**
+ * 命中定位：扫描正文行，收集包含查询词（大小写不敏感）的规则行锚点；
+ * snippet = 首个命中行（去掉不可见锚点注释后的原文）。无命中行（如仅标题/摘要命中）
+ * 时回退 summary，anchors 为空。
+ */
+function locateQueryHits(body: string, query: string): { snippet: string; anchors: string[] } {
+  const needle = query.toLowerCase()
+  const anchors: string[] = []
+  let snippet = ""
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(RULE_ANCHOR_RE, "").replace(/\s+$/, "")
+    if (!line.toLowerCase().includes(needle)) continue
+    if (!snippet) snippet = line
+    const m = raw.match(RULE_ANCHOR_RE)
+    if (m && !anchors.includes(m[1])) anchors.push(m[1])
+  }
+  return { snippet, anchors }
+}
+
+/**
+ * 票03 UI 数据面：LOG.md 全文（左树 System 组「LOG.md 有渲染视图」的数据源）——
+ * 只读文件探测，缺失/不可读返回 null（诚实降级，绝不 500）。
+ */
+function readWikiLog(root: string): string | null {
+  try {
+    return fs.readFileSync(path.join(root, WIKI_LOG_FILE), "utf-8")
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 票03 UI 数据面：词条路径的 git 近史（右栏「git 近史」）。
+ * 非 git 仓 / 无提交 / git 抖动一律 [] —— 只读降级，与 archive 诚实降级同律。
+ */
+function gitHistoryFor(root: string, entryPath: string, limit = 5): Array<{ hash: string; date: string; message: string }> {
+  try {
+    const r = spawnGit(root, 5000).run(["log", `-n${limit}`, "--date=short", "--format=%h\t%ad\t%s", "--", entryPath])
+    if (r.status !== 0) return []
+    return r.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map(line => {
+        const [hash, date, message] = line.split("\t")
+        return { hash, date, message: message ?? "" }
+      })
+  } catch {
+    return []
+  }
+}
+
+export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: string }): Hono {
   const routes = new Hono()
 
   // GET /api/knowledge/wiki/tree?org= — 域树 + 统计
@@ -57,7 +112,7 @@ export function createWikiRoutes(articles: WikiArticleDAO): Hono {
           .get() as { n: number }).n
       } catch { /* pending_review 缺席时不阻塞树查询 */ }
 
-      return c.json({ org, domains, stats })
+      return c.json({ org, domains, stats, log: readWikiLog(resolveWikiRoot(org, opts?.rootDir)) })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.tree")
       return c.json(body, status)
@@ -93,9 +148,47 @@ export function createWikiRoutes(articles: WikiArticleDAO): Hono {
         updatedAt: row.updated_at,
         body: row.body,
         anchors: extractRuleAnchors(row.body),
+        gitHistory: gitHistoryFor(resolveWikiRoot(org, opts?.rootDir), row.path),
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.article")
+      return c.json(body, status)
+    }
+  })
+
+  // GET /api/knowledge/wiki/search?org=&q=&topK=&domain= — FTS5 主检索 + LIKE 降级（票03）
+  routes.get("/search", (c) => {
+    const q = c.req.query("q")?.trim()
+    if (!q) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Query parameter \"q\" is required" } }, 400)
+    }
+    try {
+      const org = c.req.query("org") || "default"
+      const topK = Math.min(Math.max(parseInt(c.req.query("topK") ?? "10", 10) || 10, 1), 50)
+      const domain = c.req.query("domain") || undefined
+
+      // FTS5 MATCH 主检索；零命中或 MATCH 抛错（坏语法/FTS 表损坏）⇒ LIKE 降级。
+      let mode: "fts" | "like" = "fts"
+      let hits: ReturnType<WikiArticleDAO["search"]> = []
+      try {
+        hits = articles.search(org, q, topK, domain)
+      } catch {
+        hits = []
+      }
+      if (hits.length === 0) {
+        hits = articles.searchLike(org, q, topK, domain)
+        mode = "like"
+      }
+
+      const results = hits.map(r => {
+        const full = articles.get(org, r.id)
+        const { snippet, anchors } = locateQueryHits(full?.body ?? "", q)
+        return { ...r, snippet: snippet || (full?.summary ?? ""), anchors }
+      })
+
+      return c.json({ org, query: q, mode, results })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "wiki.search")
       return c.json(body, status)
     }
   })

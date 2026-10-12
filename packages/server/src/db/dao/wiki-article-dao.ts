@@ -109,12 +109,27 @@ export class WikiArticleDAO extends BaseDAO {
 
   /** Full-text hit → base row (FTS5 MATCH 主检索，search API/票03 复用此入口).
    *  注意：FTS5 的 MATCH 左侧必须是真实表名（别名 f MATCH 会报 no such column）。 */
-  search(org: string, query: string, limit = 10): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
+  search(org: string, query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
     return this.stmt(`
       SELECT a.id, a.domain, a.title, a.summary, a.path
       FROM wiki_fts JOIN wiki_articles a ON a.rowid = wiki_fts.rowid
-      WHERE wiki_fts MATCH ? AND a.org = ?
+      WHERE wiki_fts MATCH ? AND a.org = ? AND (? IS NULL OR a.domain = ?)
       LIMIT ?
-    `).all(query, org, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
+    `).all(query, org, domain ?? null, domain ?? null, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
+  }
+
+  /** LIKE 降级检索（票03）：FTS5 零命中或 MATCH 抛错时使用——CJK 子串在
+   *  unicode61 下不是独立 token，session_memory_fts/evolution-dao 同款先例。
+   *  %_\\ 转义按 LIKE 语义（escape '\'），title/summary/body 三列子串命中。 */
+  searchLike(org: string, query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
+    const escaped = query.replace(/[%_\\]/g, "\\$&")
+    return this.stmt(`
+      SELECT id, domain, title, summary, path
+      FROM wiki_articles
+      WHERE org = ? AND (? IS NULL OR domain = ?)
+        AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
+      ORDER BY domain, path
+      LIMIT ?
+    `).all(org, domain ?? null, domain ?? null, `%${escaped}%`, `%${escaped}%`, `%${escaped}%`, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
   }
 }
