@@ -1,6 +1,8 @@
 import type { EngineCallbacks } from "./engine"
 import type { WorkflowDef } from "@octopus/shared"
 import type { JsonlLogger } from "./logger"
+import { IdentityResolver } from "./executors/identity-resolver"
+import { checkAsRefs } from "./identity-gate"
 import os from "os"
 import path from "path"
 import fs from "fs"
@@ -70,6 +72,14 @@ export interface EngineInitOptions {
     commands?: string[]
     rules?: string[]
   }
+  /**
+   * Execution-identity resolver for the `as:` L3 hard gate (ticket 10).
+   * Server injects one backed by the published VersionResolver so
+   * snapshot-only identities pass; when omitted the gate falls back to a
+   * filesystem-only resolver (built-in/clones directory probe, real HOME)
+   * — the same dual-path shape as the Step 0 clone gate.
+   */
+  identityResolver?: IdentityResolver
 }
 
 export interface GitSyncResult {
@@ -86,6 +96,8 @@ export interface EngineInitResult {
   commandsCopied: number
   rulesCopied: number
   cloneErrors: string[]
+  /** L3 `as:` identity hard-gate errors (ticket 10) — one per unresolvable site. */
+  identityErrors: string[]
   gitSyncResults: GitSyncResult[]
 }
 
@@ -102,6 +114,7 @@ interface ProvisionContext {
   commandsCopied: number
   rulesCopied: number
   cloneErrors: string[]
+  identityErrors: string[]
   failed: boolean
 }
 
@@ -181,7 +194,7 @@ export class EngineInitPhase {
       status, durationMs,
       skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
       commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-      cloneErrors: ctx.cloneErrors, gitSyncResults: syncResults,
+      cloneErrors: ctx.cloneErrors, identityErrors: ctx.identityErrors, gitSyncResults: syncResults,
     }
   }
 
@@ -209,6 +222,7 @@ export class EngineInitPhase {
       commandsCopied: current.commandsCopied + (result.byType.command ?? 0),
       rulesCopied: current.rulesCopied + (result.byType.rule ?? 0),
       cloneErrors: current.cloneErrors,
+      identityErrors: current.identityErrors,
       failed: result.failed.length > 0,
     }
 
@@ -232,12 +246,13 @@ export class EngineInitPhase {
       resourcePreflight,
       logger,
       configRequires,
+      identityResolver,
     } = options
 
     const startTime = Date.now()
     const ctx: ProvisionContext = {
       skillsCopied: 0, agentsCopied: 0, commandsCopied: 0, rulesCopied: 0,
-      cloneErrors: [], failed: false,
+      cloneErrors: [], identityErrors: [], failed: false,
     }
 
     // Write start event to JSONL log
@@ -284,6 +299,27 @@ export class EngineInitPhase {
           callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
           return this.buildResult(ctx, "failed", durationMs)
         }
+      }
+
+      // Step 0.5: Execution-identity `as:` hard-fail gate (ticket 10) —
+      // every explicit as: target must resolve NOW, mirroring Step 0's
+      // requires.clones existence check. Unresolvable ⇒ failed init,
+      // provisioning and execution never start (no doomed run).
+      const asErrors = checkAsRefs(
+        workflow.nodes,
+        identityResolver ?? new IdentityResolver({}),
+      )
+      if (asErrors.length > 0) {
+        for (const errorMsg of asErrors) {
+          this.logMessage(logger, callbacks, `[ERROR] ${errorMsg}`)
+          ctx.identityErrors.push(errorMsg)
+        }
+        ctx.failed = true
+
+        const durationMs = Date.now() - startTime
+        logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
+        callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
+        return this.buildResult(ctx, "failed", durationMs)
       }
 
       // Step 1: Provision declared requires resources first

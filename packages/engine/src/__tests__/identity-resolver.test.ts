@@ -12,7 +12,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { VersionResolver } from "@octopus/shared"
 import type { AgentVersionInfo } from "@octopus/shared"
-import { IdentityResolver } from "../executors/identity-resolver"
+import { IdentityResolver, IdentityResolveError } from "../executors/identity-resolver"
 
 /** Build a published agent_versions row with the given snapshot (JSON-serialized). */
 function publishedRow(agentName: string, version: string, snapshot: unknown): AgentVersionInfo {
@@ -147,5 +147,56 @@ describe("IdentityResolver — @N version pin", () => {
 
     expect(identity.version).toBe("1.0.0")
     expect(identity.snapshot.persona).toBe("doer v1 persona")
+  })
+})
+
+// ── Ticket 10: versionResolver OPTIONAL — CLI fs-only parity (handoff-08 gap) ──
+
+describe("IdentityResolver — filesystem-only mode (no versionResolver injected)", () => {
+  it("resolves from the built-in directory when no versionResolver is provided", () => {
+    const fakeHome = makeFakeHome()
+    writeCloneDir(fakeHome, "built-in", "workflow-operator", {
+      "persona.md": "# Operator persona (fs-only)",
+      "config.json": JSON.stringify({ name: "workflow-operator" }),
+      "skills/octo-wiki/SKILL.md": "---\nname: octo-wiki\n---\nbody",
+    })
+    // CLI path: WorkflowEngine is constructed WITHOUT setVersionResolver
+    // (cli/commands/workflow.ts) — the resolver must still work, fs-only.
+    const resolver = new IdentityResolver({ homeDir: fakeHome })
+
+    const identity = resolver.resolve("workflow-operator")
+
+    expect(identity.version).toBe("current")
+    expect(identity.snapshot.persona).toBe("# Operator persona (fs-only)")
+    expect(identity.snapshot.skills).toEqual(["octo-wiki"])
+  })
+
+  it("prefers built-in over clones directory in fs-only mode", () => {
+    const fakeHome = makeFakeHome()
+    writeCloneDir(fakeHome, "built-in", "archive", { "persona.md": "builtin archive persona" })
+    writeCloneDir(fakeHome, "clones", "archive", { "persona.md": "user archive persona" })
+    const resolver = new IdentityResolver({ homeDir: fakeHome })
+
+    expect(resolver.resolve("archive").snapshot.persona).toBe("builtin archive persona")
+  })
+
+  it("throws a readable error naming candidate paths and the missing-resolver reason", () => {
+    const fakeHome = makeFakeHome()
+    const resolver = new IdentityResolver({ homeDir: fakeHome })
+
+    let caught: unknown
+    try {
+      resolver.resolve("ghost-operator")
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(IdentityResolveError)
+    const message = (caught as Error).message
+    expect(message).toMatch(/ghost-operator/)
+    expect(message).toContain(join(fakeHome, ".octopus", "agent", "built-in", "ghost-operator"))
+    expect(message).toContain(join(fakeHome, ".octopus", "agent", "clones", "ghost-operator"))
+    // The published-snapshot leg must explain WHY it was skipped — not an
+    // empty "(undefined)" — so CLI users get an actionable message.
+    expect(message).toMatch(/no versionResolver injected/i)
   })
 })
