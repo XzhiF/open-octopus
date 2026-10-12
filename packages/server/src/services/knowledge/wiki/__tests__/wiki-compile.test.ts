@@ -59,7 +59,8 @@ confidence: 0.7
 
 const realGit = (cwd: string): GitRunner => ({
   run(args: string[]) {
-    const r = spawnSync("git", args, { cwd, timeout: 30000 })
+    // 票06 起 wiki 仓带 pre-commit 写闸：服务通道同款提交来源标记
+    const r = spawnSync("git", args, { cwd, timeout: 30000, env: { ...process.env, OCTOPUS_WIKI_COMMIT_SOURCE: "curate" } })
     return { status: r.status ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
   },
 })

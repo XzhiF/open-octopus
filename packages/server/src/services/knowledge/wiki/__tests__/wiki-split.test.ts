@@ -22,7 +22,8 @@ import { WikiArticleDAO } from "../../../../db/dao/wiki-article-dao"
 
 const realGit = (cwd: string): GitRunner => ({
   run(args: string[]) {
-    const r = spawnSync("git", args, { cwd, timeout: 30000 })
+    // 票06 起 wiki 仓带 pre-commit 写闸：服务通道同款提交来源标记
+    const r = spawnSync("git", args, { cwd, timeout: 30000, env: { ...process.env, OCTOPUS_WIKI_COMMIT_SOURCE: "curate" } })
     return { status: r.status ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
   },
 })
@@ -125,7 +126,7 @@ describe("wiki split — L2 拆分执行（hub 目录形态 + 引用不断链 + 
     const rsvc = new ReviewService(pdao, {
       applyWikiSplit: (item) => new WikiSplitService({ db, org: "testorg", rootDir: root, git: realGit(root) }).applyProposal(item),
     })
-    const r = rsvc.approveItem("wiki-split-testorg-prj-big", "testorg")
+    const r = await rsvc.approveItem("wiki-split-testorg-prj-big", "testorg")
     expect(r.ok).toBe(true)
     expect(pdao.getById("wiki-split-testorg-prj-big")?.status).toBe("approved")
 
@@ -218,8 +219,8 @@ describe("wiki split — L2 拆分执行（hub 目录形态 + 引用不断链 + 
     const rsvc = new ReviewService(pdao, {
       applyWikiSplit: (item) => new WikiSplitService({ db, org: "testorg", rootDir: root, git: realGit(root) }).applyProposal(item),
     })
-    expect(() => rsvc.approveItem("wiki-split-testorg-prj-many", "testorg")).toThrow(/HUB_MAX_LINES|40/)
-    expect(() => rsvc.approveItem("wiki-split-testorg-prj-many", "testorg")).toThrow(/HUB_MAX_LINES|40/)
+    await expect(rsvc.approveItem("wiki-split-testorg-prj-many", "testorg")).rejects.toThrow(/HUB_MAX_LINES|40/)
+    await expect(rsvc.approveItem("wiki-split-testorg-prj-many", "testorg")).rejects.toThrow(/HUB_MAX_LINES|40/)
     // 回滚：原文件仍在、无半拆目录
     expect(fs.existsSync(path.join(root, "projects", "prj-many.md"))).toBe(true)
     expect(fs.existsSync(path.join(root, "projects", "prj-many"))).toBe(false)

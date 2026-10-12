@@ -56,6 +56,11 @@ const ARCHIVE_PERSONA = `# Archive 分身
 - 结构化输出（JSON 格式）
 - 知识图谱构建
 - 成本效率评估
+
+## 知识策展（写侧唯一闸门 — 纪律见 octo-wiki-curate skill 全文）
+- wiki 一切写入只走 审核队列 approve → 策展编译 → git commit，绝不直写词条文件
+- 编译 ≠ 追加：合并近义、断链校验、冲突三型复核；supersedes 旧规则迁 _retired/ 带 replaced_by
+- user_preference.md 由用户手动维护：只出编辑建议，零自动改写
 `
 
 const RESOURCE_PERSONA = `# Resource 分身
@@ -229,9 +234,11 @@ export const BUILTIN_CLONES: CloneDef[] = [
     displayName: '工程分析师',
     type: 'built-in',
     persona: ARCHIVE_PERSONA,
-    // 票11(llm-wiki-loop): octo-wiki 读侧绑定（写侧 octo-wiki-curate 由票06 进分身层）。
-    // 同为 ADR-0006 治理声明，运行时发现走共享层。
-    skills: ['octo-archive-analyst', 'octo-wiki'],
+    // 票11(llm-wiki-loop): octo-wiki 读侧绑定（共享层分发，全分身可发现）。
+    // 票06: octo-wiki-curate 写侧绑定——仅 archive（策展人）分身层 seed
+    // （core-pack/clones/archive/skills/，绝不进共享层；ADR-0005 两层模型 +
+    // ADR-0006 getPlugins 忽略 skills 白名单 ⇒ 分身层是写侧唯一安全落位）。
+    skills: ['octo-archive-analyst', 'octo-wiki', 'octo-wiki-curate'],
     memoryScope: 'shared',
     config: {},
   },
