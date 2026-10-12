@@ -1,4 +1,5 @@
-import type { VarPool } from "@octopus/shared"
+import type { VarPool, KnowledgeMode } from "@octopus/shared"
+import { stripWikiRefs } from "@octopus/shared"
 
 /**
  * Extract and apply vars_update from agent/bash/python output text.
@@ -9,11 +10,15 @@ import type { VarPool } from "@octopus/shared"
  * 3. Multi-line JSON without code fences (collects lines from {"vars_update" to closing }})
  *
  * Searches from the END of the output backwards (last vars_update wins).
+ *
+ * options.knowledgeMode（票 12 影子双轨）: mode=inject 时 wiki_refs 键不落池
+ * （关闭查阅记录语义）。缺省（既有三参调用面）= both = 原行为逐字节不变。
  */
 export function applyVarsUpdate(
   text: string,
   pool: VarPool,
   outputs: Record<string, any>,
+  options?: { knowledgeMode?: KnowledgeMode },
 ): void {
   // Strategy 1: single-line JSON (existing behavior, fastest path)
   const lines = text.split("\n")
@@ -22,7 +27,7 @@ export function applyVarsUpdate(
     if (!line) continue
     const parsed = tryParse(line)
     if (parsed?.vars_update) {
-      applyUpdate(parsed.vars_update, pool, outputs)
+      applyUpdate(parsed.vars_update, pool, outputs, options)
       return
     }
   }
@@ -32,7 +37,7 @@ export function applyVarsUpdate(
   if (extracted) {
     const parsed = tryParse(extracted)
     if (parsed?.vars_update) {
-      applyUpdate(parsed.vars_update, pool, outputs)
+      applyUpdate(parsed.vars_update, pool, outputs, options)
     }
   }
 }
@@ -51,11 +56,14 @@ function applyUpdate(
   varsUpdate: Record<string, any>,
   pool: VarPool,
   outputs: Record<string, any>,
+  options?: { knowledgeMode?: KnowledgeMode },
 ): void {
   if (varsUpdate.__status) {
     outputs.__status = varsUpdate.__status
     delete varsUpdate.__status
   }
+  // 票 12: recording 闸 —— mode=inject 摘掉 wiki_refs，其余键与通道零变化
+  stripWikiRefs(varsUpdate, options?.knowledgeMode)
   pool.update(varsUpdate)
   outputs.vars_update = varsUpdate
 }

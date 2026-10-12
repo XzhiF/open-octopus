@@ -42,6 +42,10 @@ export interface AgentIdentityAssembly {
   systemPrompt?: SystemPromptInput
   /** The identity actually assembled (undefined on graceful default-missing). */
   identityRef?: string
+  /** 身份快照 config（票 12: knowledge.mode 影子双轨开关的读取源，
+   *  agent_versions snapshot / clone config.json 形态；undefined on graceful
+   *  default-missing → resolveKnowledgeMode 落缺省 both = 现状）。 */
+  snapshotConfig?: Record<string, unknown>
 }
 
 export function assembleAgentNodeIdentity(
@@ -69,6 +73,7 @@ export function assembleAgentNodeIdentity(
     node: assembledNode,
     systemPrompt: mergePersonaIntoSystemPrompt(base?.systemPrompt, persona, ref),
     identityRef: ref,
+    snapshotConfig: resolved.snapshot.config,
   }
 }
 

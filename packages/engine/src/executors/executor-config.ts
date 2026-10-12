@@ -9,7 +9,7 @@
  */
 
 import type { IAgentProvider } from "@octopus/providers"
-import type { AutoAnswer, ModelAliasConfig, CrossExecResolver, TaskDispatchPort } from "@octopus/shared"
+import type { AutoAnswer, KnowledgeMode, ModelAliasConfig, CrossExecResolver, TaskDispatchPort } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
 import type { EngineCallbacks, RuntimeNodeMeta } from "../engine"
 import type { JsonlLogger } from "../logger"
@@ -164,6 +164,10 @@ export interface AgentConfig {
   /** Optional callback invoked before each tool call executes.
    *  Used by the Tool Interceptor (harness) to block dangerous bash commands. */
   onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+  /** 影子双轨开关（票 12, spec 故事 30）：query → 注入器在此装配处摘除（注入链
+   *  本体零改动）；inject → vars_update 的 wiki_refs 键不落池。undefined = both
+   *  = 现状逐字节不变。红线 #1：默认路径不动 injector。 */
+  knowledgeMode?: KnowledgeMode
 }
 
 /** OctopusAgentExecutor — wraps AgentExecutor with version resolution + heartbeat */
@@ -186,6 +190,9 @@ export interface OctopusAgentConfig {
   executionId?: string
   resolvedModel?: string
   modelAliasConfig?: ModelAliasConfig
+  /** 影子双轨开关（票 12）：由 OctopusAgentExecutor 从身份快照 config 解析后
+   *  透传给内部 AgentExecutor（见 octopus-agent.ts）。 */
+  knowledgeMode?: KnowledgeMode
 }
 
 /** SwarmExecutor — multi-agent orchestration */
