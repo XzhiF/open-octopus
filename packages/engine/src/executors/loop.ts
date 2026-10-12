@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression, resolveModelAlias } from "@octopus/shared"
+import { VarPool, evaluateExpression, resolveModelAlias, resolveKnowledgeMode } from "@octopus/shared"
 import type { NodeDef, SubunitSpec } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { LoopConfig, ResumeConfig } from "./executor-config"
@@ -566,12 +566,18 @@ export class LoopExecutor implements NodeExecutor {
         // inherit the same `as:` semantics as top-level ones. When no resolver
         // is threaded (direct unit construction), behavior is the pre-ticket
         // passthrough.
+        // Review fix #3: knowledgeMode must be resolved from the identity
+        // snapshot config HERE too (same as executor-factory's agent case) —
+        // otherwise loop-nested nodes ignore knowledge.mode (e.g. inject keeps
+        // recording wiki_refs). Injection chain itself stays untouched (红线 #1).
         let identityNode = node
         let identitySystemPrompt: import("@octopus/providers").SystemPromptInput | undefined
+        let identityKnowledgeMode: import("@octopus/shared").KnowledgeMode | undefined
         if (this.config.identityResolver) {
           const identity = assembleAgentNodeIdentity(node, this.config.identityResolver)
           identityNode = identity.node
           identitySystemPrompt = identity.systemPrompt
+          identityKnowledgeMode = resolveKnowledgeMode(identity.snapshotConfig)
         }
 
         return new AgentExecutor(identityNode, p, {
@@ -585,6 +591,7 @@ export class LoopExecutor implements NodeExecutor {
           modelAliasConfig: this.config.modelAliasConfig,
           providerKey,
           systemPrompt: identitySystemPrompt,
+          knowledgeMode: identityKnowledgeMode,
         })
       }
       case "loop":

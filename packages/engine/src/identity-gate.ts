@@ -15,6 +15,7 @@
 
 import type { NodeDef } from "@octopus/shared"
 import type { IdentityResolver } from "./executors/identity-resolver"
+import { parseIdentityRef } from "./executors/identity-resolver"
 
 export interface AsRefSite {
   /** The clone code written in the YAML `as:` field. */
@@ -39,7 +40,9 @@ export function collectAsRefs(nodes: NodeDef[] | undefined): AsRefSite[] {
 
 /**
  * Resolve-check every collected `as:` target; return one readable error per
- * unresolvable site (empty array = gate passes).
+ * unresolvable site (empty array = gate passes). A pinned ref (story 25,
+ * "name@version") is reported with the full ref for traceability, but the
+ * install hint names the bare clone — the pin is not a package name.
  */
 export function checkAsRefs(nodes: NodeDef[] | undefined, resolver: IdentityResolver): string[] {
   const errors: string[] = []
@@ -48,9 +51,10 @@ export function checkAsRefs(nodes: NodeDef[] | undefined, resolver: IdentityReso
       resolver.resolve(ref)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      const { name } = parseIdentityRef(ref)
       errors.push(
         `Identity '${ref}' referenced by node '${nodeId}' (as:) is not resolvable: ${msg} ` +
-        `Install it with: octopus resource install builtin:${ref} --type clone`,
+        `Install it with: octopus resource install builtin:${name} --type clone`,
       )
     }
   }

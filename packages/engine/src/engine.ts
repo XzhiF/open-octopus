@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } from "@octopus/shared"
+import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, resolveKnowledgeMode } from "@octopus/shared"
 import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { NodeExecutionResult, InnerNodeOverride } from "./executors/types"
@@ -16,6 +16,8 @@ import { AgentNodeRunner } from "./executors/agent-runner"
 import { TaskDispatchExecutor } from "./executors/task-dispatch"
 import { topologicalSort, computeExecutionLevels, detectCycles, buildConditionTargetDeps, getEffectiveDeps } from "./graph-utils"
 import { ExecutorFactory } from "./executor-factory"
+import { precomputeShouldRun } from "./precompute-gate"
+import { IdentityResolver } from "./executors/identity-resolver"
 import { JsonlLogger, sanitizeId } from "./logger"
 import { join } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync, readdirSync } from "fs"
@@ -391,11 +393,33 @@ export class WorkflowEngine {
     return this.globalSessionId
   }
 
+  /**
+   * Review fix #4 — call-site gate for the precompute hook: skip only when
+   * EVERY agent node's identity resolves to knowledge.mode=query; any
+   * unresolvable identity / no agent nodes / any inject|both node keeps the
+   * hook running (default path byte-identical to pre-fix behavior).
+   * Uses the injected identityResolver seam; otherwise the factory-default
+   * shape (published-first when versionResolver is set, else fs-only).
+   */
+  private precomputeGateOpen(): boolean {
+    const resolver = this.identityResolver ?? new IdentityResolver({ versionResolver: this.versionResolver })
+    return precomputeShouldRun(this.workflow.nodes, (ref) => {
+      try {
+        return resolveKnowledgeMode(resolver.resolve(ref).snapshot.config)
+      } catch {
+        return undefined
+      }
+    })
+  }
+
   async run(): Promise<ExecutionResult> {
     const start = Date.now()
 
-    // Precompute hook: populate VarPool with knowledge data before node execution
-    if (this.precomputeHook) {
+    // Precompute hook: populate VarPool with knowledge data before node execution.
+    // Review fix #4（spec 故事 30）：knowledge.mode=query 时整条注入链（含本预计算段）
+    // 不得运行 —— 只在本调用点加条件闸，precompute/injector 本体零改动（红线 #1）。
+    // 保守方向：无 agent 节点 / 身份不可解析 / 任一 inject|both → 照跑（现状不变）。
+    if (this.precomputeHook && this.precomputeGateOpen()) {
       try {
         await this.precomputeHook(this.pool, this.workflow.name, this.inputs as Record<string, string>)
       } catch (err) {
