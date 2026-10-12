@@ -27,6 +27,7 @@ import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
+import { WikiSplitService } from "./services/knowledge/wiki/split"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
@@ -498,7 +499,13 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
-const reviewService = new ReviewService(d.pendingReview)
+// 票02 L2: 'wiki-split' 提案 approve → wiki 拆分执行器（hub 目录形态；懒取 getDb，
+// 与 chat 门同款"测试期不触达"纪律）。
+const reviewService = new ReviewService(d.pendingReview, {
+  applyWikiSplit: (item, org) => {
+    new WikiSplitService({ db: getDb(), org: org ?? "default" }).applyProposal(item)
+  },
+})
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 

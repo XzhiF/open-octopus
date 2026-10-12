@@ -1,6 +1,6 @@
 import path from "path"
 import fs from "fs"
-import { PendingReviewDAO } from "../../db/dao"
+import { PendingReviewDAO, type PendingReviewRow } from "../../db/dao"
 import {
   appendToKnowledgeFile,
   getKnowledgeDir,
@@ -8,14 +8,26 @@ import {
 } from "./file-ops"
 import { validateKnowledgeFileName } from "./validators"
 
+/**
+ * wiki 通道审核执行器（票02 起）：approve 按 item.type 分发——
+ * 'wiki-split' → 拆分执行器（hub 目录落地）。票06 可继续扩 wiki-edit 等类型。
+ * 由 server index.ts 注入（ReviewService 不依赖 wiki 服务，避免环引用）。
+ */
+export interface WikiReviewHandlers {
+  applyWikiSplit?: (item: PendingReviewRow, org?: string) => void
+}
+
 export class ReviewService {
   constructor(
     private pendingReviewDAO: PendingReviewDAO,
+    private wikiHandlers?: WikiReviewHandlers,
   ) {}
 
   /**
    * Approve a pending item: write to knowledge file + insert into knowledge_rules + update status.
    * For skill type items, writes SKILL.md to the org skills directory.
+   * For 'wiki-split' items (票02), dispatches to the injected wiki split applier —
+   * the legacy append path below must never see a wiki row.
    *
    * `org` is passed per-request so a single ReviewService instance can
    * serve multiple orgs; an undefined value means "global" scope.
@@ -24,6 +36,15 @@ export class ReviewService {
     const item = this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
     if (item.status === "approved") return { ok: true, ruleId: id } // idempotent
+
+    if (item.type === "wiki-split") {
+      if (!this.wikiHandlers?.applyWikiSplit) {
+        throw new Error("NO_WIKI_SPLIT_APPLIER: 服务端未接线 wiki 拆分执行器")
+      }
+      this.wikiHandlers.applyWikiSplit(item, org)
+      this.pendingReviewDAO.updateStatus(id, "approved")
+      return { ok: true, ruleId: item.source_ref }
+    }
 
     // Guard against a poisoned target_file.
     // pending_review rows are system-generated but flow through LLM JSON,
@@ -92,7 +113,7 @@ export class ReviewService {
     this.pendingReviewDAO.batchUpdateStatus(ids, "rejected")
   }
 
-  getPendingSummary(): { rules: number; skills: number; total: number } {
+  getPendingSummary(): { rules: number; skills: number; wiki: number; total: number } {
     return this.pendingReviewDAO.countPendingByType()
   }
 

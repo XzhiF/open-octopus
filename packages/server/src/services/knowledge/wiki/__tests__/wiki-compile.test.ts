@@ -68,7 +68,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-describe("wiki compile service (ticket 01 tracer-bullet)", () => {
+describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
   let db: Database.Database
   let tmpDir: string
   let root: string
@@ -90,15 +90,15 @@ describe("wiki compile service (ticket 01 tracer-bullet)", () => {
     return new WikiCompileService({ db, org: "testorg", rootDir: root, git: git ?? realGit(root) })
   }
 
-  it("skeleton has the 4 domains + cases/ + _retired/", () => {
+  it("skeleton has the 4 domains + cases/ + _retired/", async () => {
     for (const d of ["projects", "workflows", "business", "research", "cases", "_retired"]) {
       expect(fs.statSync(path.join(root, d)).isDirectory()).toBe(true)
     }
   })
 
-  it("compiles the sample entry: file + INDEX + LOG + git commit + DB row + FTS hit", () => {
+  it("compiles the sample entry: file + INDEX + LOG + git commit + DB row + FTS hit", async () => {
     const svc = makeService()
-    const res = svc.compileEntry({
+    const res = await svc.compileEntry({
       content: SAMPLE_ENTRY,
       source: "task-207 归档提炼",
       reviewer: "xzf",
@@ -152,10 +152,10 @@ describe("wiki compile service (ticket 01 tracer-bullet)", () => {
     expect(hits.map(h => h.id)).toContain("prj-octopus")
   })
 
-  it("rejects an entry violating the front-matter schema, leaving zero traces", () => {
+  it("rejects an entry violating the front-matter schema, leaving zero traces", async () => {
     const svc = makeService()
     const bad = SAMPLE_ENTRY.replace("summary: monorepo 构建/测试/端口规则与已知陷阱\n", "")
-    expect(() => svc.compileEntry({ content: bad })).toThrow(/INVALID_FRONTMATTER.*summary/s)
+    await expect(svc.compileEntry({ content: bad })).rejects.toThrow(/INVALID_FRONTMATTER.*summary/s)
 
     // 不留半成品：无词条、无 INDEX/LOG、无 git 仓库、无 DB 行
     expect(fs.existsSync(path.join(root, "projects", "prj-octopus.md"))).toBe(false)
@@ -164,18 +164,18 @@ describe("wiki compile service (ticket 01 tracer-bullet)", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles").get() as { n: number }).n).toBe(0)
   })
 
-  it("rejects a duplicate rule anchor across entries — anchor 全库唯一", () => {
+  it("rejects a duplicate rule anchor across entries — anchor 全库唯一", async () => {
     const svc = makeService()
-    svc.compileEntry({ content: SAMPLE_ENTRY })
-    expect(() => svc.compileEntry({ content: CLashingEntry })).toThrow(/ANCHOR_CONFLICT.*oct-007/s)
+    await svc.compileEntry({ content: SAMPLE_ENTRY })
+    await expect(svc.compileEntry({ content: CLashingEntry })).rejects.toThrow(/ANCHOR_CONFLICT.*oct-007/s)
     expect(fs.existsSync(path.join(root, "workflows", "wf-bug-hunter.md"))).toBe(false)
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
     expect(index).not.toContain("wf-bug-hunter")
   })
 
-  it("rolls back atomically when the git commit fails — no half-written state", () => {
+  it("rolls back atomically when the git commit fails — no half-written state", async () => {
     const svc = makeService()
-    svc.compileEntry({ content: SAMPLE_ENTRY })
+    await svc.compileEntry({ content: SAMPLE_ENTRY })
     const indexBefore = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
     const logBefore = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
 
@@ -192,7 +192,7 @@ describe("wiki compile service (ticket 01 tracer-bullet)", () => {
       .replace("<!--#oct-001-->", "<!--#oct-101-->").replace("<!--#oct-002-->", "<!--#oct-102-->")
       .replace("<!--#oct-007-->", "<!--#oct-107-->").replace("<!--#oct-008-->", "<!--#oct-108-->")
       .replace("<!--#oct-010-->", "<!--#oct-110-->").replace("<!--#oct-012-->", "<!--#oct-112-->")
-    expect(() => svc2.compileEntry({ content: second, note: "应当被回滚" })).toThrow(/commit/)
+    await expect(svc2.compileEntry({ content: second, note: "应当被回滚" })).rejects.toThrow(/commit/)
 
     // 词条文件未留下、INDEX/LOG 逐字节回到第一编译后的状态、DB 只有第一行
     expect(fs.existsSync(path.join(root, "projects", "prj-octopus-b.md"))).toBe(false)
@@ -202,22 +202,22 @@ describe("wiki compile service (ticket 01 tracer-bullet)", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_fts").get() as { n: number }).n).toBe(1)
   })
 
-  it("warns (non-blocking) when the body contains dates — L5 预检", () => {
+  it("blocks (L5 gate) when the body contains dates — 票02 将 warn 预检升级为闸", async () => {
     const svc = makeService()
     const dated = SAMPLE_ENTRY.replace(
       "## 端口规则",
       "## 带日期小节\n- 2026-06-23 那次 CI 挂了 <!--#oct-020-->\n\n## 端口规则",
     )
-    const res = svc.compileEntry({ content: dated })
-    expect(res.commit).toMatch(/^[0-9a-f]{40}$/) // 仍然编译成功（warn 级，完整 lint 闸属票 02）
-    expect(res.warnings.some(w => w.includes("L5") && w.includes("2026-06-23"))).toBe(true)
+    await expect(svc.compileEntry({ content: dated })).rejects.toThrow(/L5_DATES_IN_BODY.*2026-06-23/s)
+    // 拒写零痕迹（beforeEach 全新 tmp 根，未过闸则不留任何文件）
+    expect(fs.existsSync(path.join(root, "projects", "prj-octopus.md"))).toBe(false)
   })
 
-  it("recompiling the same entry upserts: one DB row, INDEX lists it once, git history grows", () => {
+  it("recompiling the same entry upserts: one DB row, INDEX lists it once, git history grows", async () => {
     const svc = makeService()
-    svc.compileEntry({ content: SAMPLE_ENTRY })
+    await svc.compileEntry({ content: SAMPLE_ENTRY })
     const updated = SAMPLE_ENTRY.replace("summary: monorepo 构建/测试/端口规则与已知陷阱", "summary: 构建/测试/端口/CI 规则与已知陷阱")
-    const res2 = svc.compileEntry({ content: updated, note: "修订 summary" })
+    const res2 = await svc.compileEntry({ content: updated, note: "修订 summary" })
 
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org='testorg'").get() as { n: number }).n).toBe(1)
     const row = db.prepare("SELECT summary FROM wiki_articles WHERE id='prj-octopus'").get() as { summary: string }
