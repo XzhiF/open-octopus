@@ -821,7 +821,7 @@ export function CompositeMode({
           <div className="px-2 py-3 border-b border-border">
             <CompositeDag
               dag={dag}
-              children={dagChildren}
+              childUnits={dagChildren}
               integrationStatus={integrationStatus}
               onChildClick={(name) => {
                 const child = dagChildren.find((c) => c.subunit_name === name)

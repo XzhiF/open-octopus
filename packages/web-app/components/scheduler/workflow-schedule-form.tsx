@@ -46,7 +46,6 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
 })
 
 interface WorkflowScheduleFormProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   control: Control<any>
   submitting: boolean
   // Visual mode state

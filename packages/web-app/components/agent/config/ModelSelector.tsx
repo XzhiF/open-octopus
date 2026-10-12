@@ -18,7 +18,6 @@ interface ProviderMap {
 
 function parseProvidersFromYaml(yamlContent: string): ProviderMap {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const jsYaml = require('js-yaml') as { load: (s: string) => unknown }
     const parsed = jsYaml.load(yamlContent) as { providers?: ProviderMap } | null
     return parsed?.providers ?? {}

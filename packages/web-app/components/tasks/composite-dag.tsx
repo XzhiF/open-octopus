@@ -17,7 +17,7 @@ import type { JobDetailDag, JobDetailChild } from "@/lib/scheduler-api"
 
 export interface CompositeDagProps {
   dag: JobDetailDag
-  children: JobDetailChild[]
+  childUnits: JobDetailChild[]
   /** Parent (integration) status — drives the integration node appearance. */
   integrationStatus: string
   /** Called when a subunit node is clicked; receives the node id (subunit name). */
@@ -89,10 +89,10 @@ const nodeTypes = { composite: DagNode }
  *  nodes/edges. Pure function — extracted so the component is a thin renderer. */
 export function layoutCompositionDag(
   dag: JobDetailDag,
-  children: JobDetailChild[],
+  childUnits: JobDetailChild[],
   integrationStatus: string
 ): { nodes: Node[]; edges: Edge[] } {
-  const childBySubunit = new Map(children.map((c) => [c.subunit_name, c]))
+  const childBySubunit = new Map(childUnits.map((c) => [c.subunit_name, c]))
 
   const g = new dagre.graphlib.Graph()
   g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 90 })
@@ -137,10 +137,10 @@ export function layoutCompositionDag(
   return { nodes, edges }
 }
 
-export function CompositeDag({ dag, children, integrationStatus, onChildClick }: CompositeDagProps) {
+export function CompositeDag({ dag, childUnits, integrationStatus, onChildClick }: CompositeDagProps) {
   const { nodes, edges } = useMemo(
-    () => layoutCompositionDag(dag, children, integrationStatus),
-    [dag, children, integrationStatus]
+    () => layoutCompositionDag(dag, childUnits, integrationStatus),
+    [dag, childUnits, integrationStatus]
   )
 
   const handleNodeClick: NodeMouseHandler<Node> = useCallback(

@@ -147,7 +147,6 @@ export function openTaskDb(): NodeSqliteDb | null {
   }
   try {
     // node:sqlite is experimental; require may warn but works on Node ≥22.5.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { DatabaseSync } = require("node:sqlite") as {
       DatabaseSync: new (path: string, opts?: { readOnly?: boolean }) => NodeSqliteDb
     }
@@ -813,7 +812,6 @@ export function seedAssistRunOutput(
   if (!fs.existsSync(dbPath)) {
     throw new Error(`DB file not found at ${dbPath} — cannot seed assist run output`)
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { DatabaseSync } = require("node:sqlite") as {
     DatabaseSync: new (path: string) => NodeSqliteDb
   }

@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/select"
 
 interface AgentFieldsProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   control: Control<any>
   submitting: boolean
   promptValue: string

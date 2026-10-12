@@ -54,7 +54,6 @@ test.describe("Dashboard Leaderboard", () => {
     await page.addScriptTag({ path: require.resolve("axe-core/axe.min.js") })
 
     const results = await page.evaluate(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (window as any).axe.run(document, {
         runOnly: ["wcag2a", "wcag2aa"],
       })

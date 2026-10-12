@@ -1,0 +1,26 @@
+name: CI
+
+# retro①(2026-10-12)：仓内 lint/build 一直无人接线，本 workflow 是第一道闸。
+# 分两档：先 build+lint 上闸（lint 刚修绿）；`pnpm test` 待 Linux 基线确认
+# 后单独 PR 打开（本机 server 有 44 个 Windows 环境性红，Linux 表现未验证）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm -r run lint
