@@ -483,6 +483,43 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
     expect(append).toContain("--data-binary")
   })
 
+  // llm-wiki-loop 票11（spec US27/D2「指针 ≠ 注入」）：每轮 buildTaskContext 恒带
+  // 一行知识指针 —— wiki 根路径 + 查阅纪律（octo-wiki / wiki_refs），~50 token 级，
+  // 且该行不含任何知识正文（长度有界即排除词条体混入；正文只归 agent 按导航协议自读）。
+  it("票11: 每轮 append 恰有一行恒定知识指针（wiki 根 + 查阅纪律），长度有界、零知识正文", async () => {
+    const { taskId } = seedV4Task({ kind: "running" })
+
+    const grabPointerLines = async (content: string): Promise<string[]> => {
+      h.queue.push({ chunks: textResult("好") })
+      const res = await app.request(`/api/tasks/${taskId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      })
+      expect(res.status).toBe(200)
+      await res.text()
+      const call = h.calls[h.calls.length - 1]
+      const append = (call.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+      return append.split(/\r?\n/).filter((l) => l.includes("knowledge"))
+    }
+
+    // 第一轮：恰一行指针，携带 wiki 根（orgs/{org}/knowledge/wiki 口径）、octo-wiki、
+    // wiki_refs（票12 效果追踪的数据源对接口）与查阅纪律词。
+    const turn1 = await grabPointerLines("开始实现")
+    expect(turn1).toHaveLength(1)
+    expect(turn1[0]).toMatch(new RegExp(`orgs[\\\\/]${ORG}[\\\\/]knowledge[\\\\/]wiki`))
+    expect(turn1[0]).toContain("octo-wiki")
+    expect(turn1[0]).toContain("wiki_refs")
+    expect(turn1[0]).toContain("INDEX")
+    // 指针 ≠ 注入：一行短常量（spec D2 ~50 token 级；词条正文不可能塞进 200 字符）
+    expect(turn1[0].length).toBeLessThanOrEqual(200)
+
+    // 第二轮：同一行恒定出现（每轮注入的是指针，不是知识内容）
+    const turn2 = await grabPointerLines("继续")
+    expect(turn2).toHaveLength(1)
+    expect(turn2[0]).toBe(turn1[0])
+  })
+
   it("empty content → 400; draft task → 409 before the stream starts", async () => {
     const { taskId } = seedV4Task({ kind: "awaiting_review" })
     const res = await app.request(`/api/tasks/${taskId}/chat`, {

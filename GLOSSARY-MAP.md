@@ -29,6 +29,7 @@
 | **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。内置分身见下条。 | server, shared |
 | **task-doer（任务执行者）** | 承接任务执行/验收期对话的内置分身（谈=task-author，做=task-doer）：快速修改、人工接管、修复轮追加指令皆出其口；工作区代码写权来自 workspace 语义而非 task-home，唯批次计划文件（spec/票）仅经计划回写通道可写、大改先预览后执行（ADR-0025，ADR-0026）。 | server, core-pack, web-app |
 | **内置分身 (Built-in Clone)** | 系统预定义的 7 个分身（workspace / scheduler / archive / resource / harness-agent / task-author / task-doer），存储于 `~/.octopus`/agent/built-in/`{name}`/。不可删除。数量随 server `builtin-clones.ts` 注册表演进（task-doer 由 ADR-0025 引入）。 | server |
+| **导航协议 (Navigation Protocol)** | octo-wiki skill 定义的 wiki 查阅路线：`~/.octopus/orgs/{org}/knowledge/wiki/INDEX.md` 第一跳 → 按 topics/summary 整读词条第二跳 → `GET /api/knowledge/wiki/search` 兜底；按跳计费，禁全库遍历/跳过 INDEX glob。指针 ≠ 注入（任务上下文只给一行 wiki 根指针，正文由 agent 自读）。 | core-pack, server |
 | **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
 | **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
 | **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |
