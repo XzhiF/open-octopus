@@ -1056,6 +1056,45 @@ CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
 CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
 
 -- =============================================================================
+-- Wiki Tables (LLM-WIKI knowledge-loop, schema version 52) — ticket 01
+-- =============================================================================
+
+-- SQLite is index/追踪 only — the wiki git repo under
+-- ~/.octopus/orgs/<org>/knowledge/wiki/ remains the source of truth (D3).
+-- Composite PK (org, id): entry ids are minted per-org (原型 Tab③ sketch
+-- carries the org column); same id may exist in different orgs.
+CREATE TABLE IF NOT EXISTS wiki_articles (
+  org TEXT NOT NULL,
+  id TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  topics TEXT NOT NULL DEFAULT '[]',
+  stability TEXT NOT NULL DEFAULT 'stable',
+  last_compiled TEXT NOT NULL DEFAULT '',
+  sources TEXT NOT NULL DEFAULT '[]',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  body TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (org, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_articles_org_domain ON wiki_articles(org, domain);
+
+-- FTS5, external-content-less mode (no content= param — experiences_fts 先例,
+-- header comment L740): rowid alignment with wiki_articles is maintained
+-- MANUALLY by the wiki compile service; FTS failures are swallowed non-fatally.
+CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
+  id UNINDEXED,
+  domain UNINDEXED,
+  title,
+  summary,
+  topics,
+  body
+);
+
+-- =============================================================================
 -- Archive Tables (schema version 26)
 -- =============================================================================
 

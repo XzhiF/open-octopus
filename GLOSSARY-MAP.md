@@ -123,6 +123,8 @@
 | **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |
 | **handoff.md** | 批次目录 spec 家族成员：ship 每轮末产/覆写的**面向下游执行会话**精选交接短页（头块 + Protected Decisions / Confirmed Interfaces / Gap Targets 三段，一屏内引用不复制）；与 round-report.md（面向验收人全量轮报）受众不同。ADR-0019。 | core-pack |
 | **prev_handoff_paths** | 内置注入键（非占位符）：全部已 accepted 前序 phase 的 handoff.md home 绝对路径（存在性过滤、换行连接），accepted→下 phase / 手动推进时 server 注入 materialized input_values；与 feedback/task_artifacts_dir 注入同族。ADR-0019。 | server |
+| **词条 (Entry)** | wiki 编译单元——一 md 文件一主题（格式 v2）：front-matter(id/domain/title/summary/topics/stability/last_compiled/sources/confidence，stability=volatile 必带 review_after) + 正文规则行仅带不可见锚点 `<!--#oct-001-->`（全库唯一、永不复用）；常青零日期——日期/溯源/审核由 front-matter sources、LOG.md、git history 三处分工承接。schema 定义 `shared/types/wiki.ts`。 | shared, server |
+| **INDEX/LOG 导航层** | INDEX.md = llms.txt 风格导航层，由编译器从词条 front-matter **程序化重建**（H1 + blockquote 导航协议 + H2 域节 + 每词条一行摘要 + 统计节，Agent 第一跳成本恒定）；LOG.md = 策展日志，编译器 append-only 一行一事件（`|日期|动作|词条|摘要|来源|审核|`）。两者永不经 LLM/人手写，零漂移；写入与词条同在编译事务内（失败原子回滚）。 | server |
 
 ## Anti-Patterns（禁止）
 
