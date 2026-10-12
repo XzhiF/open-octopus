@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest"
+import { LOCATABLE_SOURCE_RE } from "@octopus/shared"
 import {
   parseEntryMarkdown,
+  parseWikiFile,
   serializeEntryMarkdown,
+  serializeCaseMarkdown,
   extractRuleAnchors,
   findDateOccurrences,
 } from "../format"
@@ -111,5 +114,70 @@ describe("wiki entry format (格式 v2)", () => {
   it("finds no date occurrences in the evergreen sample body", () => {
     const { body } = parseEntryMarkdown(SAMPLE_ENTRY)
     expect(findDateOccurrences(body)).toEqual([])
+  })
+})
+
+// ── 票04：判例 (cases) 文件层 — schema/解析/序列化 ──────────────────
+const CASE_FILE = `---
+id: case-2026-003
+symptom: CI 报 LOCKFILE_CONFIG_MISMATCH
+tags: [ci, pnpm, lockfile]
+severity: blocker
+occurrences: 2
+rule_ref: oct-013
+source: task-207 / exec-9f31
+status: distilled
+---
+## 现场  pnpm 9 的 CI 读 v10 lockfile…
+## 诊断  overrides 住在 pnpm-workspace.yaml…
+## 根因  lockfile 格式版本与 CLI 版本错配
+## 修复  CI 升 pnpm 10（commit 82d96372）
+## 教训  工具链大版本升级先查配置文件归属变化
+`
+
+describe("cases file layer (ticket 04)", () => {
+  it("parseWikiFile dispatches by symptom field: entry stays entry, case becomes case", () => {
+    expect(parseWikiFile(SAMPLE_ENTRY).kind).toBe("entry")
+    const f = parseWikiFile(CASE_FILE)
+    expect(f.kind).toBe("case")
+    if (f.kind !== "case") return
+    // expected 逐字 prototype Tab③ lines 514-528（独立真相源）
+    expect(f.meta).toEqual({
+      id: "case-2026-003",
+      domain: "cases",
+      symptom: "CI 报 LOCKFILE_CONFIG_MISMATCH",
+      tags: ["ci", "pnpm", "lockfile"],
+      severity: "blocker",
+      occurrences: 2,
+      rule_ref: "oct-013",
+      source: "task-207 / exec-9f31",
+      status: "distilled",
+    })
+    expect(f.body).toContain("## 教训")
+  })
+
+  it("rejects invalid case front-matter: unknown status enum, missing severity, bad rule_ref", () => {
+    expect(() => parseWikiFile(CASE_FILE.replace("status: distilled", "status: resolved"))).toThrow(/status/)
+    expect(() => parseWikiFile(CASE_FILE.replace("severity: blocker\n", ""))).toThrow(/severity/)
+    expect(() => parseWikiFile(CASE_FILE.replace("rule_ref: oct-013", "rule_ref: bad ref"))).toThrow(/rule_ref/)
+    // open 判例合法地没有 rule_ref
+    expect(parseWikiFile(CASE_FILE.replace("rule_ref: oct-013\n", "").replace("status: distilled", "status: open")).kind).toBe("case")
+  })
+
+  it("serializes case in the prototype field order and round-trips", () => {
+    const f = parseWikiFile(CASE_FILE)
+    if (f.kind !== "case") throw new Error("fixture must be a case")
+    const out = serializeCaseMarkdown(f.meta, f.body)
+    expect(out.startsWith("---\nid: case-2026-003\ndomain: cases\nsymptom: CI 报 LOCKFILE_CONFIG_MISMATCH\ntags: [ci, pnpm, lockfile]\nseverity: blocker\noccurrences: 2\nrule_ref: oct-013\nsource: task-207 / exec-9f31\nstatus: distilled\n---\n")).toBe(true)
+    expect(parseWikiFile(out).kind).toBe("case")
+  })
+
+  it("source locatability gate: task/exec/commit pointers pass, vague talk fails (准入 D5)", () => {
+    expect(LOCATABLE_SOURCE_RE.test("task-207 / exec-9f31")).toBe(true)
+    expect(LOCATABLE_SOURCE_RE.test("exec-8a02")).toBe(true)
+    expect(LOCATABLE_SOURCE_RE.test("commit 82d96372")).toBe(true)
+    expect(LOCATABLE_SOURCE_RE.test("archive:ws-feat-actuator:2026-06-23")).toBe(true)
+    expect(LOCATABLE_SOURCE_RE.test("听说的")).toBe(false)
+    expect(LOCATABLE_SOURCE_RE.test("大概去年吧")).toBe(false)
   })
 })

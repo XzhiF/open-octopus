@@ -69,6 +69,16 @@ export default function WikiPage() {
     selectEntry(id, anchors)
   }, [selectEntry])
 
+  /** 票04 顺藤：判例 rule_ref → 检索该锚点所在规则词条并跳转高亮（"沿 rule_ref 顺藤读规则"）。 */
+  const followRuleRef = useCallback((ref: string) => {
+    searchWiki({ q: ref, org, topK: 5 })
+      .then(r => {
+        const hit = r.results.find(h => h.anchors.includes(ref)) ?? r.results[0]
+        if (hit) selectEntry(hit.id, hit.anchors)
+      })
+      .catch(() => { /* 顺藤失败不打断浏览 */ })
+  }, [org, selectEntry])
+
   const excerptRows = logRows(tree?.log)
   const logForEntry = article ? excerptRows.filter(r => r.includes(article.path)) : []
 
@@ -212,13 +222,43 @@ export default function WikiPage() {
               {/* 元数据 chips（原型 Tab⑤：primary 描边域 / 绿稳定 / 青 confidence / muted 编译日与 id） */}
               <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] font-bold">
                 <span className="rounded-full border-[1.5px] border-pop-pink px-2 py-0.5 text-pop-pink">{article.domain}</span>
-                <span className={cn("rounded-full px-2 py-0.5",
-                  article.stability === "stable" ? "bg-pop-green-soft text-pop-green" : "bg-pop-amber-soft text-pop-amber")}>
-                  {article.stability}
-                </span>
-                <span className="rounded-full bg-pop-cyan-soft px-2 py-0.5 text-pop-cyan">confidence {article.confidence}</span>
-                <span className="rounded-full bg-pop-idle px-2 py-0.5 text-pop-dim">编译于 {article.lastCompiled}</span>
-                <span className="rounded-full bg-pop-idle px-2 py-0.5 text-pop-dim">{article.id}</span>
+                {article.case ? (
+                  <>
+                    {/* 票04 判例状态 chips：open|distilled|superseded + severity + ×occurrences + rule_ref 顺藤 */}
+                    <span data-testid="wiki-case-status" className={cn("rounded-full px-2 py-0.5",
+                      article.case.status === "distilled" ? "bg-pop-green-soft text-pop-green"
+                        : article.case.status === "superseded" ? "bg-pop-idle text-pop-dim"
+                          : "bg-pop-amber-soft text-pop-amber")}>
+                      {article.case.status}
+                    </span>
+                    <span className="rounded-full bg-pop-pink-soft px-2 py-0.5 text-pop-pink">{article.case.severity}</span>
+                    <span className="rounded-full bg-pop-cyan-soft px-2 py-0.5 text-pop-cyan">×{article.case.occurrences}</span>
+                    {article.case.ruleRef && (
+                      <button
+                        type="button"
+                        data-testid="wiki-rule-ref"
+                        title="沿 rule_ref 顺藤读规则"
+                        onClick={() => followRuleRef(article.case!.ruleRef!)}
+                        className="rounded-full border-[1.5px] border-pop-cyan px-2 py-0.5 font-mono text-pop-cyan hover:bg-pop-cyan-soft"
+                      >
+                        → {article.case.ruleRef}
+                      </button>
+                    )}
+                    {article.case.tags.map(t => (
+                      <span key={t} className="rounded-full bg-pop-idle px-2 py-0.5 text-pop-dim">#{t}</span>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <span className={cn("rounded-full px-2 py-0.5",
+                      article.stability === "stable" ? "bg-pop-green-soft text-pop-green" : "bg-pop-amber-soft text-pop-amber")}>
+                      {article.stability}
+                    </span>
+                    <span className="rounded-full bg-pop-cyan-soft px-2 py-0.5 text-pop-cyan">confidence {article.confidence}</span>
+                    <span className="rounded-full bg-pop-idle px-2 py-0.5 text-pop-dim">编译于 {article.lastCompiled}</span>
+                    <span className="rounded-full bg-pop-idle px-2 py-0.5 text-pop-dim">{article.id}</span>
+                  </>
+                )}
               </div>
               <MarkdownPreview content={article.body} />
             </div>

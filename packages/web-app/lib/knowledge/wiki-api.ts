@@ -43,6 +43,17 @@ export interface WikiGitCommit {
   message: string
 }
 
+/** 票04：判例 (cases) 域的状态面——/article 对 domain=cases 携带，词条 null。 */
+export interface WikiCaseFields {
+  symptom: string
+  tags: string[]
+  severity: string
+  occurrences: number
+  /** 已蒸馏出的规则锚点（顺藤读规则）；未蒸馏为 null。 */
+  ruleRef: string | null
+  status: "open" | "distilled" | "superseded" | string
+}
+
 export interface WikiArticle {
   id: string
   org: string
@@ -60,6 +71,8 @@ export interface WikiArticle {
   anchors: string[]
   /** 词条路径的 git 近史；非 git 仓/无提交时 []。 */
   gitHistory: WikiGitCommit[]
+  /** 票04：判例详情状态面（chips/rule_ref 顺藤数据源）；非判例 null。 */
+  case?: WikiCaseFields | null
 }
 
 export interface WikiSearchHit {
@@ -71,6 +84,10 @@ export interface WikiSearchHit {
   snippet: string
   /** 命中行上的规则锚点 id（跳转词条后据此高亮）。 */
   anchors: string[]
+  /** 票04：判例命中携带 rule_ref（顺藤读规则）；词条/无指针 null。 */
+  ruleRef?: string | null
+  /** 票04：判例命中携带 status（open|distilled|superseded）。 */
+  status?: string | null
 }
 
 export interface WikiSearchResult {
