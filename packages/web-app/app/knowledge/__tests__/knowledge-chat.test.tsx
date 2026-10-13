@@ -223,14 +223,14 @@ describe("AC2 卡片协议首批五类渲染（Lane A：消息正文 fenced 块�
     expect(screen.getByText(/正文里还有一句/)).toBeDefined()
   })
 
-  it("未注册卡类（finding——票13 追加位）渲染通用兜底卡，不炸流", async () => {
-    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock({ id: "fnd-1", kind: "finding", ts: "2026-10-13T09:00:06Z", data: { note: "矛盾：新旧断言互斥" } }))]
+  it("未注册卡类（未来 kind——票13 后 finding/backfill 已注册，兜底改钉未来位）渲染通用兜底卡，不炸流", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock({ id: "xyz-1", kind: "probe-future", ts: "2026-10-13T09:00:06Z", data: { note: "尚未注册的卡类" } }))]
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
     const unknown = await screen.findByTestId("kc-card-unknown")
-    expect(unknown.textContent).toContain("未注册卡类 · finding")
-    expect(unknown.textContent).toContain("矛盾")
+    expect(unknown.textContent).toContain("未注册卡类 · probe-future")
+    expect(unknown.textContent).toContain("尚未注册")
   })
 })
 

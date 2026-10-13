@@ -217,5 +217,5 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
     }
   }, [trackRevert])
 
-  return { cards, feed, revert, restore, reset, revertStates }
+  return { cards, feed, revert, restore, reset, revertStates, trackTask: trackCompile }
 }

@@ -19,6 +19,8 @@ import {
  * primary-key lookup — idempotent across restarts with no unique-name dance.
  */
 export const TASK_LIFECYCLE_HANDLER = "task-lifecycle"
+/** 知识中心票13：语义巡检夜巡（五查 findings 报对话）。handler 体在知识域（patrol.ts）。 */
+export const KNOWLEDGE_PATROL_HANDLER = "knowledge-patrol"
 
 interface BuiltinCodeJob {
   handler: string
@@ -48,6 +50,16 @@ export const BUILTIN_CODE_JOBS: readonly BuiltinCodeJob[] = [
     timeoutSeconds: 300,
     // 票03 起打开：handler 已实装（到点起任务 / 领取 / 对账 / 回收）。关掉这一行等于
     // 暂停全系统的定时启动 —— 描述里写明了，运维页可见。
+    enabled: 1,
+  },
+  {
+    handler: KNOWLEDGE_PATROL_HANDLER,
+    name: "系统 · 知识夜巡",
+    description: "知识中心语义巡检五查（矛盾/stale/孤儿/缺页/缺互链），findings 报对话（spec 质控⑤；票13）。停用只停自动体检，手动「体检一下」不受影响。",
+    // 每日 03:17（本地时区低峰；避开整点作业簇）。
+    cronExpression: "17 3 * * *",
+    timezone: "Asia/Shanghai",
+    timeoutSeconds: 600,
     enabled: 1,
   },
 ]
@@ -173,6 +185,14 @@ export async function unboundTaskLifecycleHandler(_ctx: CodeJobContext): Promise
   }
 }
 
+/** 知识夜巡未接线占位（响亮报错形态同款先例；生产由 composition root 注入 patrol handler）。 */
+export async function unboundKnowledgePatrolHandler(_ctx: CodeJobContext): Promise<CodeJobOutcome> {
+  return {
+    summary: "knowledge-patrol 未接线（composition root 未注册 handler）：本轮不巡检",
+    metrics: { findings: 0, newFindings: 0 },
+  }
+}
+
 /**
  * Bind built-in handlers and seed their rows. Called once from the composition root
  * (index.ts) before `engine.start()`, so the very first tick sees a consistent pair.
@@ -193,7 +213,11 @@ export function registerAndSeedBuiltinCodeJobs(
   dao: ScheduleConfigDAO,
   org = "",
   taskLifecycle?: CodeJobHandler,
+  knowledgePatrol?: CodeJobHandler,
 ): SeedResult {
   rebindCodeJobHandler(TASK_LIFECYCLE_HANDLER, taskLifecycle ?? unboundTaskLifecycleHandler)
+  // 票13：知识夜巡 handler 在知识域（services/knowledge/patrol.ts），组合根注入；
+  // 未注入时同样响亮占位，不留静默空转。
+  rebindCodeJobHandler(KNOWLEDGE_PATROL_HANDLER, knowledgePatrol ?? unboundKnowledgePatrolHandler)
   return seedBuiltinCodeJobs(dao, org)
 }

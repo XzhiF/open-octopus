@@ -54,3 +54,6 @@ export * from './harness'
 // Simulator test fixture schemas
 export * from './simulator/schemas'
 export * from './version/version-resolver'
+
+// 知识中心卡片协议（票12 建于 web，票13 起 Lane A 生产者横跨两端 → shared 单源）
+export * from './knowledge-center/card-protocol'

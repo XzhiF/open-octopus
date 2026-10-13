@@ -296,3 +296,93 @@ export async function kcGetRevertTask(taskId: string): Promise<KcRevertTask | nu
   const data = await handleResponse<{ task: KcRevertTask }>(res)
   return data.task
 }
+
+// ============ 票13 findings 面 API（列表/裁决/即时体检/回填）============
+
+/** GET /api/knowledge/findings 的视图（routes/findings.ts findingView 单源形状）。 */
+export interface KcFindingView {
+  id: string
+  kind: string
+  status: "open" | "resolved" | "ignored"
+  title: string
+  detail: Record<string, unknown>
+  pages: string[]
+  rawRef: string
+  source: string
+  createdAt: string
+  updatedAt: string
+}
+
+export async function kcListFindings(status?: "open" | "resolved" | "ignored"): Promise<KcFindingView[]> {
+  const url = status
+    ? `${getServerUrl()}/api/knowledge/findings?status=${status}`
+    : `${getServerUrl()}/api/knowledge/findings`
+  const res = await apiFetch(url)
+  const data = await handleResponse<{ org: string; findings: KcFindingView[] }>(res)
+  return data.findings
+}
+
+export interface KcAdoptAck {
+  findingId: string
+  taskId: string
+  status: string
+}
+
+/** [采纳修订]：POST 202（修订稿经全局队列 finding-fix 编译）。 */
+export async function kcAdoptFinding(findingId: string): Promise<KcAdoptAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/findings/${encodeURIComponent(findingId)}/adopt`, { method: "POST" })
+  return handleResponse<KcAdoptAck>(res)
+}
+
+/** [忽略]：记录在案（同步）。 */
+export async function kcIgnoreFinding(findingId: string): Promise<{ findingId: string; status: string }> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/findings/${encodeURIComponent(findingId)}/ignore`, { method: "POST" })
+  return handleResponse<{ findingId: string; status: string }>(res)
+}
+
+export interface KcFixTask {
+  id: string
+  findingId: string
+  kind: string
+  status: "queued" | "running" | "committed" | "failed"
+  result?: { commit: string | null; changed: boolean; touched: Array<{ path: string; type: string; created: boolean }>; warnings: string[] }
+  error?: { code: string; message: string }
+}
+
+export async function kcGetFixTask(taskId: string): Promise<KcFixTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/findings/fix/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcFixTask }>(res)
+  return data.task
+}
+
+/** POST /api/knowledge/patrol — 「体检一下」即时触发的服务面。 */
+export interface KcPatrolReport {
+  scanned: { pages: number; executions: number }
+  findings: Array<{ id: string; kind: string; title: string; pages: string[]; action: string; target?: string; hosts?: string[] }>
+  counts: Record<string, number>
+  newFindings: Array<{ id: string; kind: string; title: string }>
+  warnings: string[]
+}
+
+export async function kcPatrol(): Promise<KcPatrolReport> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/patrol`, { method: "POST" })
+  return handleResponse<KcPatrolReport>(res)
+}
+
+export interface KcBackfillAck {
+  mode: "backfill"
+  deduped: boolean
+  raw: { path: string; hash: string; origin: string; bytes: number }
+  compileTask: { taskId: string; status: string } | null
+}
+
+/** [编进 wiki]：对话摘录落 raw（冻结）+ 编译投递回执。 */
+export async function kcBackfill(input: { text: string; title?: string; sessionId?: string }): Promise<KcBackfillAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/backfill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse<KcBackfillAck>(res)
+}

@@ -38,6 +38,8 @@ export interface KnowledgeReadOpts {
   now?: () => Date
   /** 票06：全局编译队列深度注入（缺省 0 = 未装配队列形态；只换值不换形，票11 契约） */
   getQueueDepth?: () => number
+  /** 票13：开放 findings 注入（FindingsDAO.countOpen 单源；缺省 0 = 未装配巡检形态） */
+  getOpenFindings?: () => number
 }
 
 /**
@@ -188,7 +190,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
         pages: { total: rows.length, ...byType },
         rawSources: sources.length,
         ingestedThisWeek,
-        openFindings: 0, // 票13（巡检 findings）接位字段
+        openFindings: opts?.getOpenFindings?.() ?? 0, // 票13 巡检/编译 findings 真值（只换值不换形）
         queueDepth: opts?.getQueueDepth?.() ?? 0,   // 票06 全局编译队列实值（未装配 ⇒ 稳定零值）
         lastCompiled,
         gitHead,

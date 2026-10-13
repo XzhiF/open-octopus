@@ -186,6 +186,19 @@ describe("GET /api/knowledge/health — 健康条聚合（票面口径七项，�
     expect(data.gitHead).toBeNull()       // wiki 根无 .git ⇒ 诚实 null
   })
 
+  it("openFindings/queueDepth 注真值不换形（票13/票06 接位：契约形状恒等，只换值）", async () => {
+    const injected = createKnowledgeReadRoutes(
+      { articles: dao },
+      { knowledgeRoot: tmpDir, wikiRoot: wikiDir, now: () => new Date("2026-10-13T12:00:00Z"), getOpenFindings: () => 7, getQueueDepth: () => 2 },
+    )
+    const data = await (await injected.request("/health")).json()
+    expect(data.openFindings).toBe(7)
+    expect(data.queueDepth).toBe(2)
+    // 形状零漂移：与零值形态同键
+    const base = await (await app().request("/health")).json()
+    expect(Object.keys(data).sort()).toEqual(Object.keys(base).sort())
+  })
+
   it("reports git HEAD from the global wiki root", async () => {
     execFileSync("git", ["init"], { cwd: wikiDir })
     execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: wikiDir })

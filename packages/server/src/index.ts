@@ -33,6 +33,11 @@ import { resolveGlobalWikiRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
+import { WikiPatrolService } from "./services/knowledge/patrol"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards } from "./services/knowledge/patrol-job"
+import { FindingOpsService } from "./services/knowledge/findings"
+import { BackfillService } from "./services/knowledge/backfill"
+import { createFindingsRoutes } from "./routes/findings"
 import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
@@ -553,6 +558,23 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
   const task = curatorTasks.submit(rawPath)
   return { taskId: task.id, status: task.status }
 }
+// 知识中心票13：语义巡检（五查 findings）+ 裁决即编译（finding-fix 经全局队列）+ 回填。
+// patrol 单例供 ①即时触发（POST /api/knowledge/patrol）②夜巡作业 handler ③路由列表同源。
+// db 依赖面**惰性构造**（票14 代修 revertTasks 同轨教训：顶层 new …({db: getDb()}) 在
+// initDb() 前 import 即崩 import 级测试）。
+let knowledgePatrolInstance: WikiPatrolService | undefined
+const getKnowledgePatrol = () => (knowledgePatrolInstance ??= new WikiPatrolService({ db: getDb() }))
+let findingOpsInstance: FindingOpsService | undefined
+const getFindingOps = () => (findingOpsInstance ??= new FindingOpsService({
+  db: getDb(),
+  queue: wikiWriteQueue,
+  llm: createProductionCuratorLLM(),
+  // Lane A 回执：裁决即编译完成后 finding 卡终态 + diff 卡跟随，沉淀进知识中心会话
+  reportReceipt: (events, finding) => {
+    appendKnowledgeSessionCards(getDb(), `✅ finding 裁决回执（采纳修订已编译）：${finding.title} → resolved`, events)
+  },
+}))
+const knowledgeBackfill = new BackfillService({ trigger: ingestCompileTrigger })
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
@@ -571,9 +593,25 @@ app.route("/api/knowledge/wiki", createWikiRevertRoutes({
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
 // 知识中心票11：/knowledge 读面最小补口——raw 列表/单文件（穿越拒绝）、LOG 时间线、
-// 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=票06 实值/findings=0/最近编译/git HEAD，
-// 无「待审核」字段；openFindings 由票13 就位后填实值不换形）。
-app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, { getQueueDepth: () => wikiWriteQueue.depth() }))
+// 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=票06 实值/findings=票13 实值/
+// 最近编译/git HEAD，无「待审核」字段；只换值不换形）。
+app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, {
+  getQueueDepth: () => wikiWriteQueue.depth(),
+  getOpenFindings: () => getFindingOps().countOpen(),
+}))
+// 知识中心票13：findings 列表/裁决 API（adopt/ignore/fix-task）+ 即时体检（POST /patrol）
+// + 回填（POST /backfill）。[讨论]=纯对话零端点。
+app.route("/api/knowledge", createFindingsRoutes({
+  ops: {
+    list: status => getFindingOps().list(status),
+    get: id => getFindingOps().get(id),
+    ignore: id => getFindingOps().ignore(id),
+    adopt: id => getFindingOps().adopt(id),
+    getTask: id => getFindingOps().getTask(id),
+  },
+  patrolNow: () => getKnowledgePatrol().patrol(),
+  backfill: input => knowledgeBackfill.backfill(input),
+}))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
@@ -946,6 +984,9 @@ if (shouldServe) {
           daos!.scheduleConfig,
           '',
           taskLifecycleHandlerFor(tasksService.taskLifecycle),
+          // 票13：知识夜巡（五查 findings 报对话）——与 task-lifecycle 同款组合根注入，
+          // scheduler 不 import 知识域
+          knowledgePatrolHandlerFor(getKnowledgePatrol(), { report: createKnowledgeSessionReporter(getDb()) }),
         )
         if (seeded.created.length || seeded.repaired.length) {
           console.log(
