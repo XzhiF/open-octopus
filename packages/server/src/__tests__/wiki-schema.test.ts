@@ -18,10 +18,12 @@ describe("wiki schema migration (v52)", () => {
     db?.close()
   })
 
-  it("bumps SCHEMA_VERSION to 52 and stamps user_version", () => {
-    expect(SCHEMA_VERSION).toBe(52)
+  // 版本推进注记：票01 建表时为 51→52；票05 增 findings 表后 SCHEMA_VERSION=53，
+  // user_version 随之——wiki 表形态断言不变（纯增量）。
+  it("bumps SCHEMA_VERSION to 53 and stamps user_version", () => {
+    expect(SCHEMA_VERSION).toBe(53)
     applySchema(db)
-    expect(db.pragma("user_version", { simple: true })).toBe(52)
+    expect(db.pragma("user_version", { simple: true })).toBe(53)
   })
 
   it("creates wiki_articles with the index columns (org-scoped composite PK)", () => {

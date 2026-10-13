@@ -1095,6 +1095,30 @@ CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
 );
 
 -- =============================================================================
+-- Knowledge findings (schema version 53) — 知识中心票05 finding 持久最小面
+-- =============================================================================
+
+-- 编译期/巡检期发现的语义问题（矛盾/stale/孤儿/缺页/缺引用）。票05 只产不裁：
+-- 编译管线写 open 条目 + 对话/diff 卡读（裁决即编译的消费面属票13）。
+-- status 三态预留 open/resolved/ignored；真源仍是 wiki git 仓——findings 是
+-- 发现流水账（kind 值面预留四态给票13 巡检，本票只写 contradiction）。
+CREATE TABLE IF NOT EXISTS findings (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  pages TEXT NOT NULL DEFAULT '[]',
+  raw_ref TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'compile',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+CREATE INDEX IF NOT EXISTS idx_findings_kind_status ON findings(kind, status);
+
+-- =============================================================================
 -- Archive Tables (schema version 26)
 -- =============================================================================
 

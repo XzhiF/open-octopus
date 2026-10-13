@@ -346,9 +346,15 @@ export function formatRuleAnchor(n: number): string {
   return `oct-${String(n).padStart(3, "0")}`
 }
 
-/** 页类型 → lint 豁免开关（case 保留 P0 判例豁免面）。 */
+/**
+ * 页类型 → lint 豁免开关（case 保留 P0 判例豁免面）。
+ * 票05：source 页是**编译回执**——正文必须逐字回指带日期的 raw 文件名
+ * （`raw/inbox/{日期}-{slug}.md` + sha256 对质凭据），与判例同为天然时间绑定，
+ * 豁免正文禁日期（容量闸不豁免：回执页同样受 ≤120 行/~2000 token 约束）。
+ */
 export function lintProfileForPageType(type: WikiPageType): LintProfile {
   if (type === "case") return { capacity: false, datesInBody: false }
+  if (type === "source") return { capacity: true, datesInBody: false }
   return { capacity: true, datesInBody: true }
 }
 

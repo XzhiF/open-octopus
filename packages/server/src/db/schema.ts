@@ -15,7 +15,9 @@ const _dirname: string =
 // LLM-WIKI knowledge-loop 票01: 51→52 — 纯增量新表 wiki_articles + wiki_fts
 // （schema.sql 尾部 Knowledge 段；无数据形态修复，无需 migrate* 函数。
 // migrations 跑在 schema.sql 之前，CREATE IF NOT EXISTS 幂等，旧库升级不丢行。）
-export const SCHEMA_VERSION = 52
+// 知识中心票05: 52→53 — 纯增量新表 findings（finding 持久最小面，同 v52 先例：
+// 新表 CREATE IF NOT EXISTS 即蓝绿等价——不动既有表、不丢行，无需 migrate* 函数。）
+export const SCHEMA_VERSION = 53
 
 /**
  * Apply the complete unified schema to the given database.

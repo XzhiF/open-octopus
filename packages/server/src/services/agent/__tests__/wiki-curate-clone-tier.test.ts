@@ -79,20 +79,24 @@ describe("octo-wiki-curate clone-tier（票06 写侧隔离）", () => {
     expect(dirs).toEqual([...ARCHIVE_CURATE_SKILL_FAMILY].sort())
   })
 
-  it("SKILL.md 承载写侧契约：编译流水线/冲突三型/git 纪律/写权红线", () => {
+  // 知识中心票05 AC4：curate skill 瘦身重定向——纪律正文入册 SCHEMA.md，
+  // 技能本体只承载「指向 SCHEMA + 编译 API 用法」+ 不变的 git/写权红线。
+  it("SKILL.md 瘦身形态：指向 SCHEMA + 编译 API 用法 + git/写权红线", () => {
     const text = fs.readFileSync(path.join(realFork, "skills/octo-wiki-curate/SKILL.md"), "utf-8")
     for (const anchor of [
       "name: octo-wiki-curate",
-      "编译流水线",
-      "supersedes",
-      "replaced_by",
-      "_retired",
+      "SCHEMA.md",
+      "编译 API 用法",
+      "CuratorCompileService.compileRaw",
+      "/api/knowledge/wiki/compile",
       "OCTOPUS_WIKI_COMMIT_SOURCE",
-      "永不进入自动写路径",
-      "Git 操作纪律",
+      "_retired",
+      "永不自动改写",
     ]) {
       expect(text, `SKILL.md 缺「${anchor}」`).toContain(anchor)
     }
+    // 反锚点：审批队列时代的编译流水线五步图已随纪律搬家删除（技能不再复述纪律正文）
+    expect(text).not.toContain("② 候选入队 PendingItem")
   })
 
   it("ADR-0006 红线：octo-wiki-curate 绝不进共享层，也不进其他分身 fork", () => {
