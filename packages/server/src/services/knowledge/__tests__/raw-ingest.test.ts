@@ -287,6 +287,17 @@ describe("raw layer + ingest channel (ticket 02, S1)", () => {
       expectRawEmpty()
     })
 
+    it("oversized response → FETCH_TOO_LARGE, raw 三目录仍空（响应体不是无界缓冲）", async () => {
+      const site = await serveHttp("/huge.txt", { contentType: "text/plain; charset=utf-8", body: "x".repeat(6 * 1024 * 1024) })
+      try {
+        await expect(makeService().ingestUrl({ url: `${site.origin}/huge.txt` }))
+          .rejects.toThrow(/FETCH_TOO_LARGE/)
+        expectRawEmpty()
+      } finally {
+        await site.close()
+      }
+    })
+
     it("missing local file → NOT_FOUND; binary local file → UNSUPPORTED_CONTENT; both zero writes", () => {
       const svc = makeService()
       expect(() => svc.ingestFile({ path: path.join(tmpDir, "nope.md") })).toThrow(/NOT_FOUND/)

@@ -11,7 +11,9 @@ import { errorResponse } from "../services/knowledge/validators"
  *   { mode: "file",   path, title?, dir? }  本地文件复制落 raw
  * 成功 200 回 raw 指针（path/hash/origin/bytes，票05 编译的输入形状）；
  * 失败 `{error:{code,message}}`，码集：INVALID_PARAM 400 / NOT_FOUND 404 /
- * UNSUPPORTED_CONTENT 415 / EMPTY_CONTENT 422 / FETCH_FAILED 502 / FETCH_TIMEOUT 504。
+ * FETCH_TOO_LARGE 413 / UNSUPPORTED_CONTENT 415 / EMPTY_CONTENT 422 /
+ * FETCH_FAILED 502 / FETCH_TIMEOUT 504。
+ * 注：粘贴形态的请求体另受 index.ts 全局 bodyLimit（1MB）约束，超限由中间件直接 413。
  * 本票零编译语义：落 raw 即返回，不入队（spec「raw 落盘不入队」）。
  *
  * 路由工厂签名沿用 wiki-routes 先例：服务构造注入，测试传 tmpdir 根。

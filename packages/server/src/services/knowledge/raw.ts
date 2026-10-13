@@ -174,6 +174,39 @@ function urlSlug(u: URL): string {
   return stem || u.hostname.replace(/\./g, "-")
 }
 
+/** 响应体上限（5MB）：抓取的正文直进不可变源，无界响应会把 server 进程吃空。 */
+const MAX_FETCH_BYTES = 5 * 1024 * 1024
+
+/** 带上限的响应读取：content-length 先判（快拒），再逐块累加（真护栏）。 */
+async function readCappedText(resp: Response, href: string): Promise<string> {
+  const declared = Number(resp.headers.get("content-length") ?? "")
+  if (Number.isFinite(declared) && declared > MAX_FETCH_BYTES) {
+    throw new IngestError("FETCH_TOO_LARGE", `response is ${declared} bytes, over the ${MAX_FETCH_BYTES} limit: ${href}`, 413)
+  }
+  if (!resp.body) return await resp.text()
+
+  const reader = resp.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_FETCH_BYTES) {
+        await reader.cancel()
+        throw new IngestError("FETCH_TOO_LARGE", `response exceeded the ${MAX_FETCH_BYTES} byte limit: ${href}`, 413)
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
+    }
+  } catch (err) {
+    if (err instanceof IngestError) throw err
+    throw new IngestError("FETCH_FAILED", `reading the response failed for ${href}`, 502)
+  }
+  return Buffer.concat(chunks).toString("utf-8")
+}
+
 function toPosixRel(root: string, abs: string): string {
   return path.relative(root, abs).split(path.sep).join("/")
 }
@@ -212,7 +245,8 @@ export class RawIngestService {
   /**
    * URL 抓取投喂（prototype 入口 A 形态 1「抓取 → raw/inbox/{日期}-{slug}.md 落盘冻结」）。
    * html 经零依赖转换落 md；text/markdown、text/plain 原文落。
-   * 失败（非 2xx / 超时 / 非文本）⇒ 抛 IngestError，此时尚未进入 freeze ⇒ raw 零落盘（票面 AC4）。
+   * 失败（非 2xx / 超时 / 非文本 / 超 5MB / 无可读正文）⇒ 抛 IngestError，
+   * 且抛出点全在 freeze 之前 ⇒ raw 零落盘（票面 AC4）。
    */
   async ingestUrl(input: { url: string; title?: string; dir?: string }): Promise<IngestResult> {
     this.prepare()
@@ -237,7 +271,7 @@ export class RawIngestService {
       throw new IngestError("UNSUPPORTED_CONTENT", `content-type "${contentType || "unknown"}" is not text`, 415)
     }
 
-    const body = normalizeNewlines(await resp.text())
+    const body = normalizeNewlines(await readCappedText(resp, target.href))
     const payload = isHtml ? htmlToMarkdown(body) : body
     if (payload.trim() === "") {
       throw new IngestError("EMPTY_CONTENT", `fetched document has no readable text: ${target.href}`, 422)

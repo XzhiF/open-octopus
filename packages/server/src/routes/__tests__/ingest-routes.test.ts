@@ -146,10 +146,11 @@ describe("ingest routes (ticket 02, S2)", () => {
       }
     })
 
-    it("502 FETCH_FAILED on upstream 404, 415 on non-text, 504 on timeout — zero writes each", async () => {
+    it("502 FETCH_FAILED on upstream 404, 415 on non-text, 504 on timeout, 413 on oversize — zero writes each", async () => {
       const notFound = await serve("/here.html", { body: "<h1>here</h1>" })
       const pdfSite = await serve("/doc.pdf", { contentType: "application/pdf", body: "%PDF" })
       const slowSite = await serve("/slow.html", { body: "<h1>late</h1>", delayMs: 1200 })
+      const hugeSite = await serve("/huge.txt", { contentType: "text/plain; charset=utf-8", body: "x".repeat(6 * 1024 * 1024) })
       try {
         const app = createIngestRoutes(svc(300))
         const expected: Array<[string, number, string]> = [
@@ -162,11 +163,15 @@ describe("ingest routes (ticket 02, S2)", () => {
           expect(res.status).toBe(status)
           expect(((await res.json()) as { error: { code: string } }).error.code).toBe(code)
         }
+        // 超 5MB 上限用例走默认 15s 挂起上限的服务（否则会被 300ms 超时先抢掉，测不到 413）
+        const bigRes = await post(createIngestRoutes(svc()), { mode: "url", url: `${hugeSite.origin}/huge.txt` })
+        expect(bigRes.status).toBe(413)
+        expect(((await bigRes.json()) as { error: { code: string } }).error.code).toBe("FETCH_TOO_LARGE")
         for (const d of ["inbox", "archives", "research"]) {
           expect(fs.readdirSync(path.join(root, "raw", d))).toEqual([])
         }
       } finally {
-        await Promise.all([notFound.close(), pdfSite.close(), slowSite.close()])
+        await Promise.all([notFound.close(), pdfSite.close(), slowSite.close(), hugeSite.close()])
       }
     })
 
