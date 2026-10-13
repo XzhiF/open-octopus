@@ -57,8 +57,6 @@ export function KcCard({ event, ctx }: KcCardViewProps) {
   return <Renderer event={event} ctx={ctx} />
 }
 
-import { CardShell, CardRow } from './card-shell'
-
 function UnknownKcCard({ event }: { event: KcCardEvent }) {
   return (
     <CardShell testId="unknown" title={`🃏 未注册卡类 · ${event.kind}`} tone="warn">
