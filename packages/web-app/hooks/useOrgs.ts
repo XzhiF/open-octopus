@@ -15,8 +15,9 @@ export interface OrgOption {
  * Mirrors the shape of `useWorkspaces`:
  *   { orgs, loading, error }
  *
- * Used by the PreferenceEditor card waterfall to render one card per org
- * plus the "global" card.
+ * Shared org list hook (org-selector, authoring workspace, system pages).
+ * 票09：原 PreferenceEditor 卡片瀑布（/experience 子件）已随经验页退役删除；
+ * 本 hook 其余消费面（系统/任务）不属知识域，保留。
  */
 export function useOrgs() {
   const [orgs, setOrgs] = useState<OrgOption[]>([])

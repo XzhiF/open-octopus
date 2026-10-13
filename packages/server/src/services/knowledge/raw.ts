@@ -126,6 +126,9 @@ function isRawDir(dir: string): dir is RawDir {
   return (RAW_DIRS as readonly string[]).includes(dir)
 }
 
+/** 钉名单段安全名（票10）：字母数字开头、仅 [A-Za-z0-9._-]、.md 结尾——与读面 RAW_FILE_RE 同律。 */
+const PINNED_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/
+
 /** 只接 http/https（其余协议 = 参数非法，防 file:// gopher:// 之类进抓取通道）。 */
 function parseHttpUrl(url: unknown): URL {
   if (typeof url !== "string" || url.trim() === "") {
@@ -225,23 +228,32 @@ export class RawIngestService {
 
   /**
    * 粘贴文本投喂（prototype 入口 A 形态 2）。dir 默认 inbox（对话投喂落点）。
-   * origin 可覆写（票13 回填通道传 `chat:<session>`；缺省 "paste"——冻结格式与
-   * hash 幂等契约零变化，只扩来源信道词表）。
+   *
+   * 票10 追加（可选项，缺省行为逐字不变）：
+   *  * `fileName` — 钉名落盘（`raw/archives/task-{id}-summary.md` 契约名，无日期前缀）。
+   *    冻结三律不破：hash 查重先行；`wx` 永不覆盖；同名已存在且 hash 相同 ⇒ 视作
+   *    同一源（deduped 回指针）；同名已存在但 hash 不同 ⇒ CONFLICT 抛出（不可变源
+   *    的钉名位被占，绝不写第二份、绝不改写第一份）。
+   *  * `origin` — 覆盖 `origin:` 字段（系统投喂标记，如 `task-archive:<id>`）。
    */
-  ingestText(input: { text: string; title?: string; dir?: string; origin?: string }): IngestResult {
+  ingestText(input: { text: string; title?: string; dir?: string; fileName?: string; origin?: string }): IngestResult {
     this.prepare()
     const dir = this.resolveDir(input.dir)
     if (typeof input.text !== "string" || input.text.trim() === "") {
       throw new IngestError("INVALID_PARAM", "text is required", 400)
+    }
+    if (input.fileName !== undefined && !PINNED_FILE_RE.test(input.fileName)) {
+      throw new IngestError("INVALID_PARAM", `fileName must be a safe single .md name: ${input.fileName}`, 400)
     }
     const title = input.title?.trim() || "pasted-text"
     return this.freeze({
       mode: "text",
       dir,
       title,
-      origin: input.origin?.trim() || "paste",
+      origin: input.origin ?? "paste",
       payload: normalizeNewlines(input.text),
       slugHint: title,
+      ...(input.fileName !== undefined ? { fileName: input.fileName } : {}),
     })
   }
 
@@ -359,6 +371,8 @@ export class RawIngestService {
     origin: string
     payload: string
     slugHint: string
+    /** 票10 钉名（单段安全 .md 文件名，无日期前缀）；缺省走 {日期}-{slug} 命名。 */
+    fileName?: string
   }): IngestResult {
     const hash = sha256(input.payload)
     const bytes = Buffer.byteLength(input.payload, "utf-8")
@@ -374,6 +388,49 @@ export class RawIngestService {
       }
     }
 
+    const targetDir = getRawDir(this.root, input.dir)
+
+    if (input.fileName !== undefined) {
+      const abs = path.join(targetDir, input.fileName)
+      const body = renderRawFrontMatter({
+        origin: input.origin,
+        title: input.title,
+        ingestedAt: this.now().toISOString(),
+        bytes,
+        hash,
+      }) + input.payload
+      try {
+        fs.writeFileSync(abs, body, { flag: "wx" })
+        return {
+          mode: input.mode,
+          dir: input.dir,
+          title: input.title,
+          deduped: false,
+          raw: { path: toPosixRel(this.root, abs), hash, origin: input.origin, bytes },
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err
+        // 钉名位已被占：同 hash = 同一源（幂等回指）；异 hash = 不可变契约冲突，
+        // 绝不改写第一份、绝不落第二份（CONFLICT 抛在一切写副作用之后、改写之前）。
+        let current = ""
+        try {
+          current = fs.readFileSync(abs, "utf-8")
+        } catch {
+          throw new IngestError("CONFLICT", `cannot read the pinned raw slot: ${input.fileName}`, 409)
+        }
+        if (frontMatterValue(current, "hash") === hash) {
+          return {
+            mode: input.mode,
+            dir: input.dir,
+            title: frontMatterValue(current, "title") ?? input.title,
+            deduped: true,
+            raw: { path: toPosixRel(this.root, abs), hash, origin: frontMatterValue(current, "origin") ?? input.origin, bytes },
+          }
+        }
+        throw new IngestError("CONFLICT", `pinned raw slot holds a different source: ${input.fileName}`, 409)
+      }
+    }
+
     const ts = this.now()
     const date = dateStamp(ts)
     const slug = slugify(input.slugHint) || slugify(`${input.mode}-${hash.slice(0, 8)}`) || `${input.mode}-${hash.slice(0, 8)}`
@@ -385,7 +442,6 @@ export class RawIngestService {
       hash,
     }) + input.payload
 
-    const targetDir = getRawDir(this.root, input.dir)
     for (let attempt = 0; attempt < 1000; attempt++) {
       const suffix = attempt === 0 ? "" : `-${attempt + 1}`
       const fileName = `${date}-${slug}${suffix}.md`

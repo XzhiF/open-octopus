@@ -20,7 +20,6 @@ import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
-import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createIngestRoutes } from "./routes/ingest"
 import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
@@ -39,6 +38,8 @@ import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowle
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
+import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
+import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
@@ -46,17 +47,11 @@ import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
 import { createWikiRedistillRoutes } from "./routes/wiki-redistill"
 import { WikiRedistillMigrator } from "./services/knowledge/wiki/redistill"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
-import { createWikiDistillRoutes } from "./routes/wiki-distill"
-import { WikiDistillService, createLLMDistillSummarizer } from "./services/knowledge/wiki/distill"
-import { callHaiku } from "./services/knowledge/llm"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
-import { WikiSplitService } from "./services/knowledge/wiki/split"
-import { WikiCurateService, isGenuineWikiTarget } from "./services/knowledge/wiki/curate"
-import { resolveWikiRoot } from "./services/knowledge/wiki/paths"
 import { createProductionRuleFormJudge } from "./services/knowledge/wiki/rule-form-judge"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -529,27 +524,16 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
-// 票02 L2: 'wiki-split' 提案 approve → wiki 拆分执行器（hub 目录形态；懒取 getDb，
-// 与 chat 门同款"测试期不触达"纪律）。
-// 票06 D4: 词条形态 'rule' 与 'wiki-edit' approve → 策展编译通道（await——
-// compileEntry 异步；写闸单一入口 = WikiCompileService + 02 lint + pre-commit hook）。
+// 知识中心票09（spec「审批废除与写入闸门」）：审批链 server 侧全删——'wiki-split'/
+// 'wiki-edit'/词条形态 'rule' 的策展分发与 WikiCurateService/WikiSplitService 执行器、
+// auto_approve 概念全部物理删除（「人批入库」轨废除）。pending_review **表本体保留**
+// 给 skill 草案等非 wiki 用途（物理清表属 P3），/api/review 只剩状态结案流转；
+// 对话驱动编译轨（票12，走 compile-queue 唯一写闸）与此无关、互不侵犯。
 // L6 生产编译时判定（spec §增长约束 L6：warn + 给改写稿，非阻塞）：
 // knowledge/llm 的 callHaiku 适配器——离线/禁用 ⇒ 零 issues（rule-form-judge.ts 双保险）。
 const ruleFormJudge = createProductionRuleFormJudge()
 
-const reviewService = new ReviewService(d.pendingReview, {
-  applyWikiSplit: (item, org) => {
-    new WikiSplitService({ db: getDb(), org: org ?? "default" }).applyProposal(item)
-  },
-  applyWikiCurate: async (item, org) => {
-    await new WikiCurateService({ db: getDb(), org: org ?? "default", ruleFormJudge }).applyApprovedItem(item)
-  },
-  // 评审修复：只有真 wiki 词条形态（wiki 通道入队标记 scope='wiki'，或词条已在
-  // 该 org 的 wiki 根盘上）才进策展闸门。旧注入轨道（extract/maintenance）的
-  // `projects/*` 目标不再被误拦——approve 与 main 同轨（纯追加、可成功）。
-  isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
-})
-app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
+const reviewService = new ReviewService(d.pendingReview)
 // 知识中心票02/05：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
 // 落 raw 本身不入队（spec §全局写串行语义）；`?compile=true` 显式开启票05 编译投递，
 // 投喂成功后返回 compileTask 回执（异步任务：queued→compiling→committed/failed）。
@@ -596,8 +580,15 @@ app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCom
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
-const revertTasks = new RevertTaskService({ db: getDb(), queue: wikiWriteQueue })
-app.route("/api/knowledge/wiki", createWikiRevertRoutes(revertTasks))
+// 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
+// 在 initDb() 前 import 即抛 "Database not initialized"（崩 7 个 import 级测试）；
+// 改惰性构造——首次 revert 请求才 new，与下方迁移器工厂（(apply)=>new …）同轨。
+let revertTasksInstance: RevertTaskService | undefined
+const getRevertTasks = () => (revertTasksInstance ??= new RevertTaskService({ db: getDb(), queue: wikiWriteQueue }))
+app.route("/api/knowledge/wiki", createWikiRevertRoutes({
+  revert: (commit) => getRevertTasks().revert(commit),
+  get: (id) => getRevertTasks().get(id),
+}))
 // 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
@@ -649,17 +640,9 @@ app.route("/api/knowledge/wiki", createWikiRedistillRoutes(
 app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
   (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath, ruleFormJudge }),
 ))
-// LLM-WIKI 票07: 蒸馏迁移命令（docs/research+adr → 审核队列蒸馏候选；幂等重跑不重入队，
-// 本路由零写 wiki）。LLM 蒸馏 seam = createLLMDistillSummarizer(callHaiku)（handoff-02 L6
-// 同法注入；无 provider 逐篇启发式兜底）。落盘只经票06 采纳通道（approveItem→curate）。
-app.route("/api/knowledge/wiki", createWikiDistillRoutes(
-  (org, opts) => new WikiDistillService({
-    db: getDb(),
-    org,
-    docsRoot: opts.docsRoot,
-    summarizer: createLLMDistillSummarizer(callHaiku),
-  }),
-))
+// 知识中心票09：LLM-WIKI 票07 蒸馏路由（POST /distill → pending_review wiki-edit 候选）
+// 随审批链全删——候选的落盘面（approveItem→curate）已物理删除，入队即死档。
+// v2→v3 换代由票07 重蒸馏（/wiki/redistill）承接；新素材入库走 /knowledge 投喂编译。
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
@@ -933,6 +916,24 @@ if (shouldServe) {
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
+      // 知识中心票10: 归档自动投喂 —— task 进入 archiving 态即一次 LLM 总结落
+      // raw/archives/task-{id}-summary.md（票02 冻结契约），编译走票06 全局串行队列
+      // （kind=archive-compile，任务状态经 GET /api/knowledge/wiki/queue/task/arc-{id} 可查）。
+      // 失败不阻塞 done：投喂链与 K11 归档编排正交（beginArchiving fire-and-forget）。
+      const archiveIngest = new ArchiveIngestService({
+        db,
+        taskHomeService,
+        rawIngest: new RawIngestService(),
+        queue: wikiWriteQueue,
+        compile: async (raw) => {
+          const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+          return curator.compileRaw(raw)
+        },
+        summarize: createProductionArchiveSummarizer(),
+      })
+      tasksService.setArchiveIngestHook((taskId) => {
+        void archiveIngest.ingestTask(taskId)
+      })
       const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).

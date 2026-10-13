@@ -153,7 +153,6 @@ describe("ArchiveService", () => {
       seedLlmCall(db, "exec-1", "ne-1")
 
       const result = await service.archiveWorkspace("ws-1", "test-org", {
-        extractExperiences: [],
         installSkills: [],
       })
       expect(result.success).toBe(true)
@@ -175,7 +174,6 @@ describe("ArchiveService", () => {
 
     it("returns not found for nonexistent workspace", async () => {
       const result = await service.archiveWorkspace("no-such-ws", "test-org", {
-        extractExperiences: [],
         installSkills: [],
       })
       expect(result.success).toBe(false)
@@ -187,7 +185,6 @@ describe("ArchiveService", () => {
       seedWorkspace(db, "ws-1")
 
       const result = await service.archiveWorkspace("ws-1", "test-org", {
-        extractExperiences: [],
         installSkills: [],
       })
       expect(result.success).toBe(true)
@@ -207,7 +204,6 @@ describe("ArchiveService", () => {
       db.exec("DROP TABLE IF EXISTS workspace_archive")
 
       const result = await service.archiveWorkspace("ws-1", "test-org", {
-        extractExperiences: [],
         installSkills: [],
       })
 
@@ -234,7 +230,6 @@ describe("ArchiveService", () => {
       const failService = new ArchiveService(archiveDAO, failingExecDAO, db)
 
       const result = await failService.archiveWorkspace("ws-1", "test-org", {
-        extractExperiences: [],
         installSkills: [],
       })
 

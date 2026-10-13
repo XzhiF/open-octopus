@@ -299,3 +299,55 @@ describe("GET /api/knowledge/log — LOG.md 行数组 + 前缀过滤", () => {
     expect((await res.json()).lines).toEqual([])
   })
 })
+
+// =========================================================================
+// 票09 · GET /api/knowledge/preference — user_preference 只读渲染面（story 16）
+// 审批废除后 user_preference 零 Web 编辑入口：PUT 路由随 routes/knowledge.ts
+// 物理删除（S2 负断言）；GET 只读迁入本读面模块——**纯读零 mkdir**，
+// 已归档删除的目录不得被请求重建（S1 护栏）。
+// =========================================================================
+describe("票09 GET /api/knowledge/preference — 只读、零副作用、org 面退役", () => {
+  it("scope=global reads knowledge-root user_preference.md verbatim", async () => {
+    const prefText = `# User Preference\n\n- 回复用中文\n- 先想清楚再动手\n`
+    fs.writeFileSync(path.join(tmpDir, "user_preference.md"), prefText, "utf-8")
+
+    const res = await app().request("/preference?scope=global")
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.content).toBe(prefText)
+    expect(data.scope).toBe("global")
+    // filePath 钉全局知识根（票03 D6③ 迁入位置），不再指向 org 目录
+    expect(path.normalize(data.filePath)).toBe(path.normalize(path.join(tmpDir, "user_preference.md")))
+  })
+
+  it("missing file degrades to empty content — and the request creates NOTHING (no mkdir side effect)", async () => {
+    const freshRoot = path.join(os.tmpdir(), `kc-pref-fresh-${process.pid}`)
+    fs.rmSync(freshRoot, { recursive: true, force: true })
+    try {
+      const res = await createKnowledgeReadRoutes(
+        { articles: dao },
+        { knowledgeRoot: freshRoot, wikiRoot: path.join(freshRoot, "wiki") },
+      ).request("/preference?scope=global")
+      expect(res.status).toBe(200)
+      const data = await res.json()
+      expect(data.content).toBe("")
+      // 归档不删纪律护栏：只读请求绝不重建目录/文件（getter mkdir 副作用随删除消亡）
+      expect(fs.existsSync(freshRoot)).toBe(false)
+    } finally {
+      fs.rmSync(freshRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("scope=org ⇒ 400 INVALID_PARAM（org 偏好面随票09 归档删除退役）", async () => {
+    const res = await app().request("/preference?scope=org&org=xzf-dev")
+    expect(res.status).toBe(400)
+    const data = await res.json()
+    expect(data.error.code).toBe("INVALID_PARAM")
+  })
+
+  it("缺省 scope=global（旧客户端不带 scope 兼容）", async () => {
+    fs.writeFileSync(path.join(tmpDir, "user_preference.md"), "# pref\n", "utf-8")
+    const data = await (await app().request("/preference")).json()
+    expect(data.scope).toBe("global")
+  })
+})

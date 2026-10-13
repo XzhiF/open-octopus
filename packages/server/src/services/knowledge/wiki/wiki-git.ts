@@ -57,12 +57,12 @@ export function spawnGit(cwd: string, timeoutMs = 30000, source: string = "curat
  */
 export const WIKI_PRE_COMMIT_HOOK = `#!/bin/sh
 # octopus-wiki 票06 — 写入单一闸门（技术强制）：一切进 wiki 的提交须带策展/人工来源标记。
-# 策展通道 = WikiCompileService/WikiSplitService/WikiCurateService（spawnGit 自动带标记）；
+# 票09 审批废除后通道口径不变：策展通道 = 全局写队列后面的编译服务群（spawnGit 自动带标记）；
 # 人工维护 = OCTOPUS_WIKI_COMMIT_SOURCE=manual git commit -m "..."
 src="\${OCTOPUS_WIKI_COMMIT_SOURCE:-}"
 if [ -z "$src" ]; then
   echo "octopus-wiki pre-commit: 拒绝提交 — 缺少提交来源标记 OCTOPUS_WIKI_COMMIT_SOURCE（curate|manual）。" >&2
-  echo "  wiki 写入唯一闸门 = 审核队列 approve → 策展编译通道（octo-wiki-curate skill 有完整纪律）。" >&2
+  echo "  wiki 写入唯一闸门 = 全局编译队列 → 策展编译通道（SCHEMA.md 有完整纪律）。" >&2
   exit 1
 fi
 if [ "$src" != "manual" ]; then

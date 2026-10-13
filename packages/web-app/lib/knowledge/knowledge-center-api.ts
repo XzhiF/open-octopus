@@ -2,10 +2,11 @@ import { getServerUrl } from "@/lib/server-config"
 import { apiFetch, handleResponse } from "@/lib/api-client"
 
 // ============ 知识中心读面 API（票11）============
-// 写法照本目录 wiki-api.ts（apiFetch + handleResponse）；差异：**数据面钉 global**——
+// 写法照全站 apiFetch + handleResponse 模式（lib/api-client）；差异：**数据面钉 global**——
 // 知识中心没有 org 概念（spec D6① 全局唯一 wiki，故事 18 界面零 org 切换），
 // 所以本模块函数签名一律不带 org 参数，org=global 在此收口。
-// 独立于 wiki-api.ts 文件：那个模块归 /wiki 旧页（票09 连页删除），本模块归 /knowledge。
+// （历史注：原写法样板为本目录 wiki-api.ts——那个模块归 /wiki 旧页，
+//   票09 已连页删除；本模块归 /knowledge，是唯一知识 API 客户端。）
 
 /** 全局 wiki 的 org 钉值（server 端 GLOBAL_WIKI_ORG 同语义，客户端仅用于请求参数）。 */
 const KC_ORG = "global"

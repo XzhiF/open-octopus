@@ -251,29 +251,33 @@ describe("extract", () => {
 
       const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(1)
-      expect(results[0].autoApprove).toBe(false)
+      expect(results[0].enqueued).toBe(true)
       expect(results[0].rule.source).toBe("recurring_pitfall")
     })
 
-    it("auto-approves pattern appearing >= 3 times", async () => {
+    // 票09 审批链 server 全删（auto_approve 概念废除）：≥3 次复发不再直写旧知识
+    // 文件、不再产 approved/auto_approve=1 行；统一入队 pending 结案流转。
+    // 归档不删纪律的运行时护栏：detectRecurringPitfalls 零副作用落盘 ⇒
+    // 已归档删除的 org knowledge 目录不会被重建。
+    it("recurring pitfall (>=3) now enqueues pending only — no auto-approve, no knowledge file write", async () => {
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
 
       const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(1)
-      expect(results[0].autoApprove).toBe(true)
+      expect(results[0].enqueued).toBe(true)
 
-      // Verify knowledge file was written
+      // 旧 append 轨道零写入：知识目录不出现 projects/unknown.md（目录本体不得被重建）
       const knowledgeFile = path.join(tmpDir, "projects/unknown.md")
-      const content = readKnowledgeFile(knowledgeFile)
-      expect(content).toContain("recurring failure")
+      expect(fs.existsSync(knowledgeFile)).toBe(false)
+      expect(fs.readdirSync(tmpDir)).toEqual([])
 
-      // Verify pendingReviewDAO has approved entry
-      const approved = pendingReviewDAO.listBySource("recurring_pitfall")
-      expect(approved.length).toBeGreaterThanOrEqual(1)
-      expect(approved[0].status).toBe("approved")
-      expect(approved[0].auto_approve).toBe(1)
+      // pending_review 行：pending 态、auto_approve 概念已废（列值恒缺省 0）
+      const rows = pendingReviewDAO.listBySource("recurring_pitfall")
+      expect(rows.length).toBe(1)
+      expect(rows[0].status).toBe("pending")
+      expect(rows[0].auto_approve).toBe(0)
     })
 
     it("ignores non-JSON files in state directory", async () => {
