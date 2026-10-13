@@ -696,6 +696,38 @@ export class TasksService {
     this.archivingHook = fn
   }
 
+  /** 知识中心票10: 归档自动投喂钩子（archiving 态一次 LLM 总结 → raw/archives →
+   *  入队编译）。与 archivingHook 正交——它只读任务素材做知识沉淀，**永不参与**
+   *  done 判定（K11 零触碰）：beginArchiving 里 fire-and-forget，同步抛错/异步
+   *  reject 一律吞进 stderr；未注入（测试/嵌入方）= 特性关，现状行为逐字不变。 */
+  private archiveIngestHook?: (taskId: string) => void | Promise<void>
+
+  setArchiveIngestHook(fn: (taskId: string) => void | Promise<void>): void {
+    this.archiveIngestHook = fn
+  }
+
+  /** 票10 fire-and-forget：失败语义 = 跳过投喂，归档照常（AC2「失败不阻塞 done」）。 */
+  private fireArchiveIngest(taskId: string): void {
+    const hook = this.archiveIngestHook
+    if (!hook) return
+    try {
+      const maybe = hook(taskId)
+      if (maybe && typeof (maybe as Promise<void>).then === "function") {
+        void (maybe as Promise<void>).catch((err: unknown) => {
+          console.error(
+            `[TasksService] archive ingest failed for ${taskId} (non-fatal — 投喂跳过, 归档照常):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        })
+      }
+    } catch (err: unknown) {
+      console.error(
+        `[TasksService] archive ingest threw for ${taskId} (non-fatal — 投喂跳过, 归档照常):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
   constructor(
     db: Database.Database,
     sse: SSEService,
@@ -2727,6 +2759,9 @@ export class TasksService {
    *  retryable via POST /:id/archive/retry (K3/US15). */
   private beginArchiving(taskId: string): void {
     this.setPersistedTaskStatus(taskId, "archiving")
+    // 知识中心票10: 进入 archiving 态的一刻起投喂（与归档编排并行、互不等待；
+    // 必须先于 archivingHook 分支的 return，替换内置归档器的宿主同样吃到投喂）。
+    this.fireArchiveIngest(taskId)
     if (this.archivingHook) {
       try {
         const maybe = this.archivingHook(taskId)

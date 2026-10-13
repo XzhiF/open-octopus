@@ -32,6 +32,8 @@ import { resolveGlobalWikiRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
+import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
+import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
@@ -879,6 +881,24 @@ if (shouldServe) {
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
+      // 知识中心票10: 归档自动投喂 —— task 进入 archiving 态即一次 LLM 总结落
+      // raw/archives/task-{id}-summary.md（票02 冻结契约），编译走票06 全局串行队列
+      // （kind=archive-compile，任务状态经 GET /api/knowledge/wiki/queue/task/arc-{id} 可查）。
+      // 失败不阻塞 done：投喂链与 K11 归档编排正交（beginArchiving fire-and-forget）。
+      const archiveIngest = new ArchiveIngestService({
+        db,
+        taskHomeService,
+        rawIngest: new RawIngestService(),
+        queue: wikiWriteQueue,
+        compile: async (raw) => {
+          const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+          return curator.compileRaw(raw)
+        },
+        summarize: createProductionArchiveSummarizer(),
+      })
+      tasksService.setArchiveIngestHook((taskId) => {
+        void archiveIngest.ingestTask(taskId)
+      })
       const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
