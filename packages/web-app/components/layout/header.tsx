@@ -17,6 +17,7 @@ import {
   Package,
   Sliders,
   ListTodo,
+  Library,
 } from "lucide-react"
 
 const navigation = [
@@ -25,6 +26,7 @@ const navigation = [
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
   { name: "工作经验", href: "/experience", icon: BookOpen },
   { name: "知识词条", href: "/wiki", icon: BookText },
+  { name: "知识中心", href: "/knowledge", icon: Library },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
   { name: "资源", href: "/resources", icon: Package },
