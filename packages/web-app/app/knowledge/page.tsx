@@ -22,12 +22,14 @@ import { RawView } from "@/components/knowledge-center/raw-view"
 import { PreferenceView } from "@/components/knowledge-center/preference-view"
 import { KcSearchPalette } from "@/components/knowledge-center/search-palette"
 import { LogTimeline, type KcLogFilter } from "@/components/knowledge-center/log-timeline"
+import { ChatColumn } from "@/components/knowledge-center/chat-column"
 import { cn } from "@/lib/utils"
 
 /**
- * /knowledge — 知识中心（票11 读面；spec §知识中心 UI / 原型 Tab④）。
- * 布局：左对话列（票12 实装，本票=占位抽屉）+ 右栏 wiki 视图（本票=浏览模式全宽可用）
- * + 顶部健康条（无「待审核」）+ Ctrl+K 检索命令条。
+ * /knowledge — 知识中心（票11 读面 + 票12 对话即管理；spec §知识中心 UI / 原型 Tab④）。
+ * 布局：左对话列（票12：archive 分身会话通道复用 + 卡片协议 + 投喂/回滚）+
+ * 右栏 wiki 视图（跟随对话渲染/钉住/浏览模式全宽）+ 顶部健康条（无「待审核」）+
+ * Ctrl+K 检索命令条。
  * 暗色 TUI 主题沿用 globals.css pop-* token；数据面钉 global（D6①，界面零 org 切换，故事 18）。
  * 取数失败一律显形错误条，不伪造空态（CODING_STANDARDS #2）。
  */
@@ -48,6 +50,10 @@ export default function KnowledgePage() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [view, setView] = useState<KcView | null>(null)
+  /** 右栏钉住态（票12 AC4：钉住=停跟随，对话卡仍渲染在流里）。 */
+  const [pinned, setPinned] = useState(false)
+  /** 库面变更计数（票12：编译/回滚落定 ⇒ 当前视图重取，卡/栏/盘同步） */
+  const [wikiEpoch, setWikiEpoch] = useState(0)
 
   // 视图数据（各态独立 loading/error；失败保留旧值+显形错误位由渲染层二选一）
   const [article, setArticle] = useState<KcArticle | null>(null)
@@ -64,21 +70,28 @@ export default function KnowledgePage() {
   const [logError, setLogError] = useState<string | null>(null)
   const [logFilter, setLogFilter] = useState<KcLogFilter>("all")
 
-  useEffect(() => {
-    let cancelled = false
-    getKcTree()
-      .then(t => { if (!cancelled) { setTree(t); setTreeError(null) } })
-      .catch((err: unknown) => { if (!cancelled) setTreeError(err instanceof Error ? err.message : String(err)) })
-    return () => { cancelled = true }
+  // 树/健康条取数（票12：编译/回滚落定后 onWikiChanged 重取——卡片态与库面同步）
+  const loadTree = useCallback(async () => {
+    try {
+      const t = await getKcTree()
+      setTree(t)
+      setTreeError(null)
+    } catch (err: unknown) {
+      setTreeError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+  const loadHealth = useCallback(async () => {
+    try {
+      const h = await getKcHealth()
+      setHealth(h)
+      setHealthError(null)
+    } catch (err: unknown) {
+      setHealthError(err instanceof Error ? err.message : String(err))
+    }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    getKcHealth()
-      .then(h => { if (!cancelled) { setHealth(h); setHealthError(null) } })
-      .catch((err: unknown) => { if (!cancelled) setHealthError(err instanceof Error ? err.message : String(err)) })
-    return () => { cancelled = true }
-  }, [])
+  useEffect(() => { void loadTree() }, [loadTree])
+  useEffect(() => { void loadHealth() }, [loadHealth])
 
   // Ctrl/⌘+K 开合检索命令条（useGlobalCommandPalette 先例同律）
   useEffect(() => {
@@ -126,7 +139,7 @@ export default function KnowledgePage() {
         .finally(() => { if (!cancelled) setLogLoading(false) })
     }
     return () => { cancelled = true }
-  }, [view])
+  }, [view, wikiEpoch])
 
   /** [[链接]] 目标解析：id 直配 → path 直配 → path 去 .md 配；配不上=断链不跳（渲染层已显形）。 */
   const resolveLink = useCallback((target: string): string | null => {
@@ -149,7 +162,7 @@ export default function KnowledgePage() {
     <div className="flex h-full min-h-0 flex-col">
       <HealthBar health={health} error={healthError} />
 
-      {/* 工具行（原型 Tab④ 浏览模式 kbar）：检索命令条入口 + 对话抽屉开关 */}
+      {/* 工具行（原型 Tab④ 浏览模式 kbar）：检索命令条入口 + 右栏钉住 + 对话抽屉开关 */}
       <div className="flex items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-bg px-4 py-2">
         <button
           type="button"
@@ -161,22 +174,36 @@ export default function KnowledgePage() {
         </button>
         <button
           type="button"
+          data-testid="kc-pin-toggle"
+          onClick={() => setPinned(v => !v)}
+          className={cn(
+            "h-8 shrink-0 rounded-lg border-[1.5px] border-pop-bd px-3 text-xs font-bold",
+            pinned ? "bg-pop-amber text-pop-bg" : "bg-pop-paper text-pop-dim hover:bg-accent hover:text-pop-ink",
+          )}
+        >
+          右栏 {pinned ? "📌 已钉住（停跟随）" : "跟随对话"}
+        </button>
+        <button
+          type="button"
           onClick={() => setChatOpen(v => !v)}
           className="h-8 shrink-0 rounded-lg border-[1.5px] border-pop-bd bg-pop-paper px-3 text-xs font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
         >
-          对话抽屉 {chatOpen ? "▶" : "◀"}
+          {chatOpen ? "浏览模式" : "对话模式"}（对话抽屉 {chatOpen ? "▶" : "◀"}）
         </button>
       </div>
 
-      {/* 浏览区：对话列（票12 实装）可展开；右栏 = 树 + 视图（本票浏览模式全宽可用） */}
-      <div className={cn("grid min-h-0 flex-1", chatOpen ? "grid-cols-[320px_240px_1fr]" : "grid-cols-[240px_1fr]")}>
+      {/* 对话模式：左对话列（票12 实装，clone-session 通道复用）| 树 | 右栏跟随；
+          浏览模式（抽屉收起）：树 + 视图全宽（票11 形态） */}
+      <div className={cn("grid min-h-0 flex-1", chatOpen ? "grid-cols-[3fr_240px_2fr]" : "grid-cols-[240px_1fr]")}>
         {chatOpen && (
-          <aside data-testid="kc-chat-placeholder" className="min-h-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-idle p-3">
-            <div className="text-xs font-black text-pop-dim">与策展人的对话</div>
-            <div className="mt-2 text-[11px] text-pop-dim">
-              对话列（archive 分身会话通道复用）属票12 实装；本票为占位。
-            </div>
-          </aside>
+          <ChatColumn
+            tree={tree}
+            pinned={pinned}
+            onOpenPage={id => setView({ kind: "page", id })}
+            onOpenFullPage={id => { setChatOpen(false); setView({ kind: "page", id }) }}
+            onOpenRaw={pointerPath => setView({ kind: "raw", pointerPath })}
+            onWikiChanged={() => { void loadTree(); void loadHealth(); setWikiEpoch(v => v + 1) }}
+          />
         )}
 
         <aside className="min-h-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-idle p-2">
