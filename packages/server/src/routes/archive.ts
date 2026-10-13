@@ -145,38 +145,9 @@ export function createArchiveRoutes(
     }
   })
 
-  // POST /api/archive/workspaces/:id/archive-preview — Archive V2 (SSE progress)
-  routes.post("/workspaces/:id/archive-preview", async (c) => {
-    const id = c.req.param("id")
-
-    // Security: validate UUID format
-    if (!isValidUUID(id)) {
-      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
-    }
-
-    return streamSSE(c, async (stream) => {
-      const emitter = createStepEmitter(stream)
-
-      try {
-        const { getArchiveAnalysisService } = await import("../services/archive/archive-analysis-service")
-        const org = c.req.query("org") || "default"
-        const analysisService = getArchiveAnalysisService(org)
-
-        const preview = await analysisService.analyzeWorkspaceForArchive(id, emitter)
-
-        await stream.writeSSE({
-          event: "preview",
-          data: JSON.stringify(preview),
-        })
-      } catch (err) {
-        const { body } = errorResponse(err, "archive.preview")
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify(body.error || { message: "Preview analysis failed" }),
-        })
-      }
-    })
-  })
+  // 知识中心票10: POST /api/archive/workspaces/:id/archive-preview（三级提炼分析入口）
+  // 已随旧经验提炼管线删除——归档知识沉淀改走 task archiving 态自动投喂
+  // （raw/archives/task-{id}-summary.md → archive-compile 队列）。UI 消费面属票09。
 
   // POST /api/archive/workspaces/:id/archive — Archive V2 (execute) with SSE
   routes.post("/workspaces/:id/archive", async (c) => {
@@ -188,7 +159,6 @@ export function createArchiveRoutes(
     }
 
     const body = await c.req.json<{
-      extractExperiences?: string[]
       installSkills?: Array<{ name: string; group: string; path?: string; content?: string }>
       installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
       installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
@@ -217,7 +187,6 @@ export function createArchiveRoutes(
           id,
           org,
           {
-            extractExperiences: body.extractExperiences || [],
             installSkills: body.installSkills || [],
             installWorkflows: body.installWorkflows || [],
             installAgents: body.installAgents || [],
