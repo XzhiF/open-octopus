@@ -576,8 +576,12 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
 }
 // 知识中心票13：语义巡检（五查 findings）+ 裁决即编译（finding-fix 经全局队列）+ 回填。
 // patrol 单例供 ①即时触发（POST /api/knowledge/patrol）②夜巡作业 handler ③路由列表同源。
-const knowledgePatrol = new WikiPatrolService({ db: getDb() })
-const findingOps = new FindingOpsService({
+// db 依赖面**惰性构造**（票14 代修 revertTasks 同轨教训：顶层 new …({db: getDb()}) 在
+// initDb() 前 import 即崩 import 级测试）。
+let knowledgePatrolInstance: WikiPatrolService | undefined
+const getKnowledgePatrol = () => (knowledgePatrolInstance ??= new WikiPatrolService({ db: getDb() }))
+let findingOpsInstance: FindingOpsService | undefined
+const getFindingOps = () => (findingOpsInstance ??= new FindingOpsService({
   db: getDb(),
   queue: wikiWriteQueue,
   llm: createProductionCuratorLLM(),
@@ -585,7 +589,7 @@ const findingOps = new FindingOpsService({
   reportReceipt: (events, finding) => {
     appendKnowledgeSessionCards(getDb(), `✅ finding 裁决回执（采纳修订已编译）：${finding.title} → resolved`, events)
   },
-})
+}))
 const knowledgeBackfill = new BackfillService({ trigger: ingestCompileTrigger })
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
@@ -602,14 +606,20 @@ app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
 // 最近编译/git HEAD，无「待审核」字段；只换值不换形）。
 app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, {
   getQueueDepth: () => wikiWriteQueue.depth(),
-  getOpenFindings: () => findingOps.countOpen(),
+  getOpenFindings: () => getFindingOps().countOpen(),
 }))
 // 知识中心票13：findings 列表/裁决 API（adopt/ignore/fix-task）+ 即时体检（POST /patrol）
 // + 回填（POST /backfill）。[讨论]=纯对话零端点。
 app.route("/api/knowledge", createFindingsRoutes({
-  ops: findingOps,
-  patrolNow: () => knowledgePatrol.patrol(),
-  backfill: (input) => knowledgeBackfill.backfill(input),
+  ops: {
+    list: status => getFindingOps().list(status),
+    get: id => getFindingOps().get(id),
+    ignore: id => getFindingOps().ignore(id),
+    adopt: id => getFindingOps().adopt(id),
+    getTask: id => getFindingOps().getTask(id),
+  },
+  patrolNow: () => getKnowledgePatrol().patrol(),
+  backfill: input => knowledgeBackfill.backfill(input),
 }))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
@@ -975,7 +985,7 @@ if (shouldServe) {
           taskLifecycleHandlerFor(tasksService.taskLifecycle),
           // 票13：知识夜巡（五查 findings 报对话）——与 task-lifecycle 同款组合根注入，
           // scheduler 不 import 知识域
-          knowledgePatrolHandlerFor(knowledgePatrol, { report: createKnowledgeSessionReporter(getDb()) }),
+          knowledgePatrolHandlerFor(getKnowledgePatrol(), { report: createKnowledgeSessionReporter(getDb()) }),
         )
         if (seeded.created.length || seeded.repaired.length) {
           console.log(

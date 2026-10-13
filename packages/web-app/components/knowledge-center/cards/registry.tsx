@@ -3,22 +3,20 @@
 import type { ComponentType } from 'react'
 import type { KcCardEvent } from '@/lib/knowledge-center/card-protocol'
 import { CardShell, CardRow } from './card-shell'
-// 首批卡件（import 副作用即注册；票13 照此新增文件 + registerKcCardRenderer 一行）
+// 卡件（import 副作用即注册；新卡类照此新增文件 + registerKcCardRenderer 一行）
 import { IngestCard } from './ingest-card'
 import { SourceSummaryCard } from './source-summary-card'
 import { CompileDiffCard } from './compile-diff-card'
 import { ArchiveCompileCard } from './archive-compile-card'
 import { PageMiniCard } from './page-mini-card'
 import { GuardCard } from './guard-card'
+import { FindingCard } from './finding-card'
+import { BackfillCard } from './backfill-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
- *
- * **票13 追加接位（唯一需要做的事）**：
- *   import { registerKcCardRenderer } from "./registry"
- *   registerKcCardRenderer("finding", FindingCard)      // data 接口定义进 card-protocol.ts
- *   registerKcCardRenderer("backfill", BackfillCard)
- * ——KcCard 分发器与本文件不为新卡类改代码；未注册 kind 渲染通用兜底卡（显形不炸流）。
+ * 票13 追加 finding/backfill 两卡 = 本文件各一行注册；未注册 kind 渲染通用兜底卡
+ * （显形不炸流）。
  */
 export interface KcCardActionCtx {
   /** 右栏渲染/跟随（入参 = 页 id 或 wiki 相对路径，宿主解析） */
@@ -29,8 +27,16 @@ export interface KcCardActionCtx {
   openRaw: (pointerPath: string) => void
   /** 回滚（diff 卡二次确认后调用；宿主发 POST /revert 并回流状态到卡） */
   revert: (commit: string) => void
-  /** 把文本灌进取号器并发送（归档编译卡「对策展人说」/票13 讨论钮） */
+  /** 把文本灌进取号器并发送（归档编译卡「对策展人说」/finding 讨论钮） */
   sayToCurator: (text: string) => void
+  /** [采纳修订]（票13 finding 卡）：POST adopt → 修订稿经全局队列编译，状态回灌卡 */
+  adoptFinding: (findingId: string) => void
+  /** [忽略]（票13 finding 卡）：POST ignore → 记录在案不再扰 */
+  ignoreFinding: (findingId: string) => void
+  /** [编进 wiki]（票13 回填卡）：POST /backfill → 摘录落 raw + 编译投递 + diff 卡跟随 */
+  backfillWiki: (cardId: string, input: { text: string; title?: string; sessionId?: string }) => void
+  /** [不用]（票13 回填卡）：纯前端弃卡，零请求 */
+  dismissBackfill: (cardId: string) => void
 }
 
 export interface KcCardViewProps {
@@ -70,10 +76,12 @@ function UnknownKcCard({ event }: { event: KcCardEvent }) {
   )
 }
 
-// ── 首批注册（票12 六类；卡件 import 在文件头，副作用即注册）──
+// ── 注册（票12 六类 + 票13 finding/backfill；卡件 import 在文件头，副作用即注册）──
 registerKcCardRenderer('ingest', IngestCard)
 registerKcCardRenderer('source-summary', SourceSummaryCard)
 registerKcCardRenderer('compile-diff', CompileDiffCard)
 registerKcCardRenderer('archive-compile', ArchiveCompileCard)
 registerKcCardRenderer('page-mini', PageMiniCard)
 registerKcCardRenderer('guard', GuardCard)
+registerKcCardRenderer('finding', FindingCard)
+registerKcCardRenderer('backfill', BackfillCard)

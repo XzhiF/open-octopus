@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatArea } from '@/components/agent/chat/ChatArea'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import { useKcFeed } from '@/hooks/use-kc-feed'
+import { useKcFindings } from '@/hooks/use-kc-findings'
 import { KcCard, type KcCardActionCtx } from './cards/registry'
 import {
   createCloneSession,
@@ -14,24 +15,34 @@ import {
   stopCloneChat,
 } from '@/lib/agent/api'
 import type { AgentMessage } from '@/lib/agent/types'
-import { parseKcCardBlocks, kcEventPageRefs, type KcCardEvent, type KcCompileDiffCardData } from '@/lib/knowledge-center/card-protocol'
+import {
+  parseKcCardBlocks,
+  kcEventPageRefs,
+  type KcBackfillCardData,
+  type KcCardEvent,
+  type KcCompileDiffCardData,
+  type KcFindingCardData,
+} from '@/lib/knowledge-center/card-protocol'
 import { classifyKcFeed } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
 
 /**
- * 知识中心对话列（票12 主接线板；替换票11 占位抽屉）。
+ * 知识中心对话列（票12 主接线板 + 票13 findings/回填接线）。
  *
  * 零自建聊天基建：会话通道 = archive 分身（策展人）既有 clone-session API
  * （CloneDetailView 同款 overrides：getSession/chatStream/stopChat/checkRunning），
  * 流式渲染 = <ChatArea tui>（TuiTranscript 形制复用）；knowledge 语义走
  * createCloneSession(scope_id="knowledge") + 固定标题通道。
  *
- * 卡片两车道（协议契约见 lib/knowledge-center/card-protocol.ts 头注释）：
+ * 卡片两车道（协议契约见 @octopus/shared card-protocol，web 侧垫片 re-export）：
  *  - Lane A：消息正文 fenced kc-card 块 → messageExtras 交错渲染（正文剥块）；
- *  - Lane B：投喂/编译/回滚任务卡（use-kc-feed）→ transcriptTail，按 sessionId
- *    侧挂 localStorage `kc-cards:{sessionId}` 沉淀；同 id 事件 Lane A 优先。
+ *  - Lane B：投喂/编译/回滚任务卡（use-kc-feed）+ 开放 findings 卡（use-kc-findings）
+ *    → transcriptTail，按 sessionId 侧挂 localStorage `kc-cards:{sessionId}` 沉淀；
+ *    同 id 事件 Lane A 优先。fix/backfill 覆盖层合并进任意来源卡（与 revertStates 同构）。
  * 对话内投喂：classifyKcFeed 命中 → REST 执行面（ingest?compile=true）+ 原文
  * 照常发策展人（对话面，策展人接话/讨论）；未命中 → 纯对话。
+ * 「体检一下」（票13 即时触发）：识别 → POST /patrol（服务层同步五查）→ 开放
+ * findings 重载进卡流；原文照常发策展人（对话不劫持）。
  */
 
 const ARCHIVE_CLONE = 'archive'
@@ -111,6 +122,15 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
   const feed = useKcFeed({ pollMs: feedPollMs, onSettled: onWikiChanged })
   const { restore } = feed
 
+  // ── 票13：开放 findings（进入页面/体检后重载）+ 裁决/回填覆盖层 ──
+  const findings = useKcFindings({
+    pollMs: feedPollMs,
+    onSettled: onWikiChanged,
+    onBackfillCompile: (taskId, rawPath) => feed.trackTask(taskId, rawPath),
+  })
+  const sessionIdRef = useRef<string | null>(null)
+  sessionIdRef.current = activeSessionId
+
   const handleCreateSession = useCallback(async () => {
     try {
       const s = await createCloneSession(ARCHIVE_CLONE, { title: KC_SESSION_TITLE, scope_id: 'knowledge' })
@@ -146,16 +166,36 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     return { viewMessages: vm, laneAByMsgId: byMsgId, laneAIds: ids }
   }, [chat.messages])
 
-  // 合并渲染序（ts 升序；同 id Lane A 优先）；回滚态覆盖层回灌到任意来源的 diff 卡
-  const withRevertState = useCallback((e: KcCardEvent): KcCardEvent => {
-    if (e.kind !== 'compile-diff' && e.kind !== 'archive-compile') return e
-    const d = e.data as KcCompileDiffCardData
-    if (!d.commit || d.revert || !feed.revertStates[d.commit]) return e
-    return { ...e, data: { ...d, revert: feed.revertStates[d.commit] } }
-  }, [feed.revertStates])
+  // 合并渲染序（ts 升序；同 id Lane A 优先）；回滚/裁决/回填态覆盖层回灌到任意来源卡
+  const withCardStates = useCallback((e: KcCardEvent): KcCardEvent => {
+    if (e.kind === 'compile-diff' || e.kind === 'archive-compile') {
+      const d = e.data as KcCompileDiffCardData
+      if (!d.commit || d.revert || !feed.revertStates[d.commit]) return e
+      return { ...e, data: { ...d, revert: feed.revertStates[d.commit] } }
+    }
+    if (e.kind === 'finding') {
+      const d = e.data as KcFindingCardData
+      const status = findings.findingStatus[d.findingId] ?? d.status
+      const fix = findings.fixStates[d.findingId]
+      if (!fix && status === d.status) return e
+      return { ...e, data: { ...d, ...(fix ? { fix } : {}), status } }
+    }
+    if (e.kind === 'backfill') {
+      const overlay = findings.backfillStates[e.id]
+      if (!overlay) return e
+      return { ...e, data: { ...e.data as KcBackfillCardData, ...overlay } }
+    }
+    return e
+  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus])
+  const isDismissed = useCallback((e: KcCardEvent) => e.kind === 'backfill' && !!findings.dismissed[e.id], [findings.dismissed])
   const tailEvents = useMemo(
-    () => feed.cards.filter(e => !laneAIds.has(e.id)).sort((a, b) => a.ts.localeCompare(b.ts)).map(withRevertState),
-    [feed.cards, laneAIds, withRevertState],
+    () => feed.cards
+      .concat(findings.cards)
+      .filter(e => !laneAIds.has(e.id))
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+      .map(withCardStates)
+      .filter(e => !isDismissed(e)),
+    [feed.cards, findings.cards, laneAIds, withCardStates, isDismissed],
   )
 
   // ── 右栏跟随（钉住=停；每卡只触发一次，锚事件 id）──
@@ -183,24 +223,34 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     openRaw: pointerPath => onOpenRaw(pointerPath),
     revert: commit => void feed.revert(commit),
     sayToCurator: text => setComposerSeed(text),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert])
+    adoptFinding: fid => void findings.adopt(fid),
+    ignoreFinding: fid => void findings.ignore(fid),
+    backfillWiki: (cardId, input) => void findings.backfill(cardId, {
+      ...input,
+      sessionId: input.sessionId ?? sessionIdRef.current ?? undefined,
+    }),
+    dismissBackfill: cardId => findings.dismissBackfill(cardId),
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill])
 
-  // ── 发送：投喂意图走 REST 执行面；对话面原文照常发策展人 ──
+  // ── 发送：投喂意图走 REST 执行面；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {
     const intent = classifyKcFeed(message)
     if (intent) void feed.feed(intent)
+    if (!intent && /体检|巡检/.test(message)) void findings.patrol()
     if (intent?.mode === 'text') {
       chat.sendMessage(`刚投喂了一段文本素材（${intent.text.length} 字），已落 raw 待编译——请知悉并纳入下轮巡检。`)
     } else {
       chat.sendMessage(message)
     }
-  }, [chat.sendMessage, feed.feed])
+  }, [chat.sendMessage, feed.feed, findings.patrol])
 
   const extras = useCallback((msg: AgentMessage) => {
     const events = laneAByMsgId.get(msg.id)
     if (!events || events.length === 0) return null
-    return events.map(e => <KcCard key={e.id} event={withRevertState(e)} ctx={ctx} />)
-  }, [laneAByMsgId, ctx, withRevertState])
+    return events
+      .filter(e => !isDismissed(e))
+      .map(e => <KcCard key={e.id} event={withCardStates(e)} ctx={ctx} />)
+  }, [laneAByMsgId, ctx, withCardStates, isDismissed])
 
   const tail = tailEvents.length > 0
     ? <div data-testid="kc-feed-tail">{tailEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}</div>
