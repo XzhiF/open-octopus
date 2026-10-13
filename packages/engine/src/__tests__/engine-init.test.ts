@@ -859,6 +859,155 @@ describe("EngineInitPhase", () => {
       expect(baseManifest.skills).toEqual([]) // 合并走新对象，不改调用方持有值
       expect(checkManifestAt(0).skills).toContain("octo-wiki")
     })
+
+    // ── D2 数据契约缺口修复（fix-verification addendum 点 2 = 运行时 FAIL）────────
+    // 真实 runtime 形态：built-in 分身目录（clone-init-service 装机）只有
+    // persona.md + config.json（顶层 skills 字段 = 票09 治理声明 → snapshot.config.skills），
+    // 没有 skills/ 子目录 → snapshot.skills = []。上一轮修复只读 snapshot.skills，
+    // 而单测自制 skills/ 目录过契约，导致全绿而运行时惰性（Analyzing resources: 0 skills）。
+    // 以下测试全部按 runtime 形态布数据（config.json 声明、不预填 snapshot.skills）。
+
+    /** clone-init-service 真实盘上形态：persona.md + config.json（顶层 skills），无 skills/ */
+    function writeIdentityConfigOnly(home: string, name: string, declaredSkills: unknown): void {
+      const dir = join(home, ".octopus", "agent", "built-in", name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "persona.md"), "# d2 persona", "utf-8")
+      writeFileSync(join(dir, "config.json"), JSON.stringify({
+        name,
+        display_name: "d2 display",
+        type: "built-in",
+        skills: declaredSkills,
+        memoryScope: "project",
+        config: { model: "sonnet" },
+        created_at: "2026-10-12T00:00:00.000Z",
+      }), "utf-8")
+    }
+
+    it("RUNTIME-SHAPE: built-in identity with config.skills only (empty snapshot.skills, no skills/ dir) → merged into analyze set AND provisioned", async () => {
+      const home = fakeHome()
+      writeIdentityConfigOnly(home, "workflow-operator", ["octo-wiki"])
+      vi.mocked(resourcePreflight.check).mockReturnValue({
+        missing: [{ name: "octo-wiki", type: "skill" }],
+        available: [],
+      })
+      vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [], byType: { skill: 1 } })
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }], // 无 skills:、无 as: —— 缺省 workflow-operator
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toContain("octo-wiki")
+      expect(callbacks.onNodeLog).toHaveBeenCalledWith(
+        "__engine_init__",
+        expect.stringContaining("Identity skills merged into provisioning set: octo-wiki"),
+      )
+      // 文件物化经由既有 Provisioner 通道（ADR-0006 原生发现，非 prompt 文本）
+      expect(resourceProvisioner.provision).toHaveBeenCalledWith(
+        [{ name: "octo-wiki", type: "skill" }],
+        "/workspace",
+      )
+      expect(result.skillsCopied).toBe(1)
+    })
+
+    it("RUNTIME-SHAPE: explicit as: workflow-operator WITHOUT node skills: still merges config.skills (verify_d1w 形态)", async () => {
+      const home = fakeHome()
+      writeIdentityConfigOnly(home, "workflow-operator", ["octo-wiki"])
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "explicit", type: "agent", as: "workflow-operator", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toContain("octo-wiki")
+    })
+
+    it("RUNTIME-SHAPE: union of BOTH identity sources — real skills/ dir AND config.skills, deduped across sources", async () => {
+      const home = fakeHome()
+      writeIdentityWithSkills(home, "task-doer", ["matt-e2e-test-methodology"]) // 目录形态 → snapshot.skills
+      writeFileSync(join(home, ".octopus", "agent", "built-in", "task-doer", "config.json"), JSON.stringify({
+        name: "task-doer",
+        type: "built-in",
+        skills: ["octo-dev-copilot", "matt-e2e-test-methodology", "octo-wiki"], // 含与目录重叠项 → 去重
+        config: {},
+      }), "utf-8")
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "do", type: "agent", as: "task-doer", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      const skills = checkManifestAt(0).skills
+      expect(skills).toEqual(expect.arrayContaining(["matt-e2e-test-methodology", "octo-dev-copilot", "octo-wiki"]))
+      expect(skills.filter((s) => s === "matt-e2e-test-methodology")).toHaveLength(1) // 双源重叠只出现一次
+    })
+
+    it("RUNTIME-SHAPE: node WITH explicit skills: declaration still provisions (regression, config-decl identity)", async () => {
+      const home = fakeHome()
+      writeIdentityConfigOnly(home, "workflow-operator", ["octo-wiki"])
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["declared-skill"], commands: [], rules: [] })
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x", skills: ["declared-skill"] }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(checkManifestAt(0).skills).toEqual(expect.arrayContaining(["declared-skill", "octo-wiki"]))
+    })
+
+    it("RUNTIME-SHAPE: garbage config.skills (non-array) skipped gracefully — no crash, no merge", async () => {
+      const home = fakeHome()
+      writeIdentityConfigOnly(home, "workflow-operator", "octo-wiki") // string ≠ array
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(resourcePreflight.check).not.toHaveBeenCalled() // analyze 空 + 合并空 → totalResources 0
+    })
+
+    it("RUNTIME-SHAPE: variable refs inside config.skills are skipped at preflight", async () => {
+      const home = fakeHome()
+      writeIdentityConfigOnly(home, "workflow-operator", ["$vars.skill_name"])
+      workflow = {
+        ...workflow,
+        nodes: [{ id: "legacy", type: "agent", prompt: "x" }],
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({
+        workflow,
+        identityResolver: new IdentityResolver({ homeDir: home }),
+      }))
+
+      expect(result.status).toBe("completed")
+      expect(resourcePreflight.check).not.toHaveBeenCalled()
+    })
   })
 
   describe("command and rule provisioning", () => {

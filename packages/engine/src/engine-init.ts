@@ -422,7 +422,8 @@ export class EngineInitPhase {
     }
 
     const manifest = preflight.analyze(workflow)
-    // D2（review fix #2）：身份 snapshot.skills 并入 provisioning 集 ——
+    // D2（review fix #2 + addendum）：身份声明技能（snapshot.skills ∪ config.skills）
+    // 并入 provisioning 集 ——
     // 无 `skills:` 声明的 agent 节点（缺省 workflow-operator / as: 目标）过去
     // 只进 SDK 白名单、不落文件，octo-wiki 在 workspace .claude/skills 缺席。
     // 合并后走既有 Provisioner 文件物化 → SDK 原生发现（ADR-0006，非 prompt 文本）。
@@ -456,9 +457,12 @@ export class EngineInitPhase {
   }
 
   /**
-   * D2（review fix #2）— resolve every agent node's execution identity (explicit
-   * `as:` or default workflow-operator, loop-nested included) and union their
-   * snapshot.skills. Unresolvable identities degrade gracefully (the Step 0.5
+   * D2（review fix #2 + addendum 数据契约修复）— resolve every agent node's
+   * execution identity (explicit `as:` or default workflow-operator, loop-nested
+   * included) and union their declared skills from TWO sources:
+   * ① snapshot.skills (clone 目录 skills/ 子目录) and
+   * ② snapshot.config.skills (config.json 顶层治理声明 — built-in 分身唯一来源, 票09).
+   * Unresolvable identities degrade gracefully (the Step 0.5
    * L3 gate already hard-fails explicit refs; default-missing must never break
    * existing flows) — their skills are simply skipped.
    */
@@ -470,8 +474,22 @@ export class EngineInitPhase {
     for (const ref of collectAgentIdentityRefs(nodes)) {
       if (ref.includes("$")) continue // variable refs unresolvable at preflight
       try {
-        for (const s of resolver.resolve(ref).snapshot.skills ?? []) {
+        const snapshot = resolver.resolve(ref).snapshot
+        // Source ① — 目录形态：分身 skills/ 子目录 readdir → snapshot.skills
+        // （真实带 skills/ 的分身走这里，previous review fix 的通路保留）。
+        for (const s of snapshot.skills ?? []) {
           if (typeof s === "string" && !s.includes("$")) skills.add(s)
+        }
+        // Source ② — 治理声明形态（票09 preflight 依据，fix-verification addendum
+        // D2 根因）：built-in 分身没有 skills/ 目录（clone-init-service 不种），
+        // CloneDef.skills 落在 config.json 顶层 skills → filesToSnapshot /
+        // readIdentityFromDir 把整个 config.json 读进 snapshot.config。
+        // 只读 ① 时运行时 snapshot.skills=[] ⇒ analyze 集为空（本 review fix 的洞）。
+        const declared = snapshot.config?.skills
+        if (Array.isArray(declared)) {
+          for (const s of declared) {
+            if (typeof s === "string" && !s.includes("$")) skills.add(s)
+          }
         }
       } catch {
         // graceful: identity absent — same degradation shape as runtime assembly
