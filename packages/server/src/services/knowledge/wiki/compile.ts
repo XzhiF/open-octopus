@@ -18,6 +18,7 @@ import {
 } from "./format"
 import { lintWikiEntry, lintWikiPage, lintProfileForDomain, buildSplitProposal, splitProposalFromPage, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, maxAnchorNumber, formatRuleAnchor, type RuleFormJudge, type SplitProposal } from "./lint"
 import { resolveWikiRoot, ensureWikiSkeleton, WIKI_ALL_DIRS, WIKI_PAGE_GROUP_LABELS, REDISTILL_MAP_REL } from "./paths"
+import { isManualFileTarget, ManualFileWriteError } from "./manual-files"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
 import { today } from "./util"
@@ -360,6 +361,19 @@ export class WikiCompileService {
   }
 
   /**
+   * 质控⑥服务层主闸（manual-files.ts / ADR-0030）：唯一写闸对 user_preference.md /
+   * SCHEMA.md 路径级拒写——resolve 归一后对拍，`../` 旁路形态同拦；一切调用都放在
+   * 文件名正则与逃逸检查**之前**（错码必须是 MANUAL_FILE_WRITE，不退化成 INVALID_PARAM）。
+   */
+  private assertNotManualFile(targetAbs: string): void {
+    if (isManualFileTarget(this.root, targetAbs)) {
+      throw new ManualFileWriteError(
+        `人工文件不可经唯一写闸落盘：${path.basename(targetAbs)}（curator 通道只写五类页目录；对 user_preference.md/SCHEMA.md 只出写保护卡建议文本，改写永远由人落笔）`,
+      )
+    }
+  }
+
+  /**
    * 唯一写入口。校验类错误在任何 fs/DB 副作用前抛出（天然零痕迹）；
    * 副作用中途失败走补偿回滚（词条/INDEX/LOG/DB/FTS 全部回到前状态）。
    * lint 闸在此同步执行（L1/L3/L5；L6 为编译时 LLM 判定，注入 judge 时 await）。
@@ -377,6 +391,7 @@ export class WikiCompileService {
     const { meta, body } = parseEntryMarkdown(input.content)
 
     const fileName = input.fileName ?? `${meta.id}.md`
+    this.assertNotManualFile(path.resolve(this.root, meta.domain, fileName))
     if (!FILE_NAME_RE.test(fileName)) {
       throw new Error(`INVALID_PARAM: 文件名不合规 '${fileName}'（要求 kebab .md，禁止路径分隔符）`)
     }
@@ -569,10 +584,11 @@ export class WikiCompileService {
       const meta = file.meta
       const body = file.body
       const fileName = input.fileName ?? `${meta.id}.md`
+      const dir = pageDirForType(meta.type)
+      this.assertNotManualFile(path.resolve(this.root, dir, fileName))
       if (!FILE_NAME_RE.test(fileName)) {
         throw new Error(`INVALID_PARAM: 文件名不合规 '${fileName}'（要求 kebab .md，禁止路径分隔符）`)
       }
-      const dir = pageDirForType(meta.type)
       const relPath = `${dir}/${fileName}`
       const absPath = path.resolve(this.root, dir, fileName)
       if (!absPath.startsWith(path.resolve(this.root) + path.sep)) {
@@ -792,6 +808,7 @@ export class WikiCompileService {
   private async compileCase(c: WikiCaseFrontmatter, body: string, input: CompileInput): Promise<CompileResult> {
     const warnings: string[] = []
     const relName = input.fileName ?? `${today()}-${c.id}.md`
+    this.assertNotManualFile(path.resolve(this.root, "cases", relName))
     const dateM = CASE_FILE_RE.exec(relName)
     if (!dateM) {
       throw new Error(`CASE_FILENAME: 判例文件名必须 {YYYY-MM-DD}-{slug}.md（判例是历史事件，事件日进文件名），得到 '${relName}'`)
@@ -1011,10 +1028,11 @@ export class WikiCompileService {
 
     // ── 1. validate（无副作用段）──────────────────────────────
     const fileName = input.fileName ?? `${meta.id}.md`
+    const dir = pageDirForType(meta.type)
+    this.assertNotManualFile(path.resolve(this.root, dir, fileName))
     if (!FILE_NAME_RE.test(fileName)) {
       throw new Error(`INVALID_PARAM: 文件名不合规 '${fileName}'（要求 kebab .md，禁止路径分隔符）`)
     }
-    const dir = pageDirForType(meta.type)
     const relPath = `${dir}/${fileName}`
     const absPath = path.resolve(this.root, dir, fileName)
     if (!absPath.startsWith(path.resolve(this.root) + path.sep)) {

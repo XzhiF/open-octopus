@@ -12,7 +12,8 @@ import { WIKI_LOCK_FILE } from "./wiki-lock"
  * - spawnGit 默认携带提交来源标记 env（OCTOPUS_WIKI_COMMIT_SOURCE=curate）——
  *   编译/拆分/策展等服务通道全部经它落 commit，hook 认可。
  * - ensureWikiGitRepo 同步安装 pre-commit hook：无标记 = 非策展通道的旁路提交，拒绝；
- *   非 manual 标记而改动触及 user_preference.md，同样拒绝（自动通道永不写 preference）。
+ *   非 manual 标记而改动触及人工文件（user_preference.md / SCHEMA.md），同样拒绝
+ *   ——纵深防御层，主闸在服务层（wiki/manual-files.ts，见 WIKI_PRE_COMMIT_HOOK 头注）。
  *   已知边界：`git commit --no-verify` 可绕 hook（git 设计使然），闸门防误写不防恶意。
  */
 
@@ -53,7 +54,15 @@ export function spawnGit(cwd: string, timeoutMs = 30000, source: string = "curat
 
 /**
  * pre-commit hook（POSIX sh，Git for Windows 用自带 bash 执行，LF 换行）。
- * 期望值逐字承载票06 断言：①无标记=旁路，拒；②非 manual 触及 user_preference.md，拒。
+ * 期望值逐字承载票06 断言：①无标记=旁路，拒；②非 manual 触及 user_preference.md /
+ * SCHEMA.md，拒。
+ *
+ * 如实口径（code-review P5 收口，ADR-0030 质控⑥）：**人工文件在知识根、正常不入
+ * wiki 仓**（spec 目录契约；SCHEMA.md 由 schema-doc.ts 只经知识根 seed，
+ * user_preference.md 由人直接编辑）——本 hook 分支在生产布局下常态不可达，
+ * 它是**纵深防御**：拦「旁路 fs 写进 wiki 根再提交」与「人工手滑 git add 错目录」。
+ * 主闸在服务层路径级拒绝（compile.ts assertNotManualFile / MANUAL_FILE_WRITE，
+ * 见 manual-files.ts）。两层行为测试同钉：wiki-write-gate.test.ts。
  */
 export const WIKI_PRE_COMMIT_HOOK = `#!/bin/sh
 # octopus-wiki 票06 — 写入单一闸门（技术强制）：一切进 wiki 的提交须带策展/人工来源标记。
@@ -66,8 +75,8 @@ if [ -z "$src" ]; then
   exit 1
 fi
 if [ "$src" != "manual" ]; then
-  if git diff --cached --name-only | grep -qE '(^|/)user_preference\\.md$'; then
-    echo "octopus-wiki pre-commit: 拒绝提交 — user_preference.md 永不进入自动写路径（手动维护，需 OCTOPUS_WIKI_COMMIT_SOURCE=manual）。" >&2
+  if git diff --cached --name-only | grep -qE '(^|/)(user_preference|SCHEMA)\\.md$'; then
+    echo "octopus-wiki pre-commit: 拒绝提交 — user_preference.md / SCHEMA.md 是人工文件（在知识根、不入 wiki 仓），永不进自动写路径；人工维护需 OCTOPUS_WIKI_COMMIT_SOURCE=manual。" >&2
     exit 1
   fi
 fi
