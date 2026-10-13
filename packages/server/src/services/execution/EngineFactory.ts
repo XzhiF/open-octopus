@@ -84,8 +84,7 @@ export class EngineFactory implements IEngineFactory {
           selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
       : undefined
 
-    // 知识中心票 08：注入链（PromptInjector/precompute hook/KnowledgeInjector 工厂）已
-    // 物理删除 —— server 与 CLI 双入口同为纯编排装配（尾参只到 agentResolver）。
+    // 边界：注入链已物理删除（知识中心票08）——server/CLI 双入口共用纯编排装配签名，勿增 knowledge 尾参。
     const engine = new WorkflowEngine(
       workflow, providers, this.ctx.workspacePath,
       this.ctx.workspacePath,

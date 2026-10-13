@@ -33,10 +33,7 @@ export const DEFAULT_IDENTITY_REF: string = WORKFLOW_OPERATOR_CLONE_NAME
 /**
  * Collect the identity refs of every agent node (recursing into loop-style
  * containers), deduped. Nodes without `as:` probe the default identity.
- *
- * 知识中心票 08：原住 precompute-gate.ts（LLM-WIKI 票 12 query 闸判定表）。
- * 注入链物理删除后，唯一消费者是 engine-init 的 D2 身份技能物化（770d9fa6，
- * snapshot.skills ∪ config.skills 并入 provisioning 集）——函数原样搬家，勿删。
+ * 唯一消费者 = engine-init D2 身份技能物化（770d9fa6）——勿删。
  */
 export function collectAgentIdentityRefs(nodes: NodeDef[] | undefined): string[] {
   const refs = new Set<string>()

@@ -141,7 +141,9 @@ export class AgentExecutor implements NodeExecutor {
       }
 
       const outputs: Record<string, any> = { last_output: result.finalText }
-      this.applyVarsUpdate(result.finalText, outputs)
+      // vars_update → VarPool 是票 10 handoff 指定的唯一持久化信道；知识中心票 08
+      // 删除 mode=inject 后查阅记录恒开——wiki_refs 等键照常原样落池，无闸无过滤。
+      applyVarsUpdate(result.finalText, this.pool, outputs)
       this.applyOutputsMapping(outputs)
 
       const status = (outputs.__status === "failed") ? "failed" : "completed"
@@ -511,12 +513,6 @@ export class AgentExecutor implements NodeExecutor {
     }
 
     return parts.join('\n')
-  }
-
-  private applyVarsUpdate(text: string, outputs: Record<string, any>) {
-    // 票 12: mode=inject 时 wiki_refs 不落池（关闭查阅记录），其余键原样。
-    // 通道本身不变 —— vars_update → VarPool 是票 10 handoff 指定的唯一持久化信道。
-    applyVarsUpdate(text, this.pool, outputs)
   }
 
   private applyOutputsMapping(outputs: Record<string, any>) {

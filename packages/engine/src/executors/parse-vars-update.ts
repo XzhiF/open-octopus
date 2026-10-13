@@ -9,9 +9,7 @@ import type { VarPool } from "@octopus/shared"
  * 3. Multi-line JSON without code fences (collects lines from {"vars_update" to closing }})
  *
  * Searches from the END of the output backwards (last vars_update wins).
- *
- * 知识中心票 08：原 options.knowledgeMode recording 闸（票 12，mode=inject 时
- * 摘 wiki_refs 键）随三态配置物理删除 —— 查阅信道恒开，wiki_refs 照常落池。
+ * 边界：查阅信道恒开——wiki_refs 原样落池，不存在摘键的 mode 开关（三态配置已物理删除，知识中心票08）。
  */
 export function applyVarsUpdate(
   text: string,
