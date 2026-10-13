@@ -25,6 +25,10 @@ import { createIngestRoutes } from "./routes/ingest"
 import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiCompileRoutes } from "./routes/wiki-compile"
+import { createCompileQueueRoutes } from "./routes/wiki-queue"
+import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
+import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
+import { resolveGlobalWikiRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
@@ -542,8 +546,16 @@ app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pe
 // 投喂成功后返回 compileTask 回执（异步任务：queued→compiling→committed/failed）。
 // 知识中心票05：策展编译管线 CuratorCompileService.compileRaw = 单次编译原子入口
 // （SCHEMA 必读→raw 全文→LLM 抽取→多页编译单 commit→矛盾 finding 只产不裁）。
-// 薄任务 registry 只投不排——全局 FIFO 队列与 wiki 根锁整包本入口，属票06。
+// 知识中心票06：全局写串行两级机制落位——进程内 FIFO 编译队列（唯一写闸整包）
+// + wiki 根锁文件（跨进程保底，PID+心跳）。一切 wiki 写操作统一
+// `wikiWriteQueue.enqueue(opKind, fn)`（kind 单源 compile-queue.WRITE_OP_KINDS：
+// 投喂/归档/对话修订/lint 自纠/finding 修复/revert/重蒸馏；票07/10/12/13 经此入队，
+// 旁路写 wiki = 违规）。队列深度进健康条（queueDepth，票11 冻结形状只换值）。
+const wikiWriteQueue = new CompileQueue({
+  lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
+})
 const curatorTasks = new CuratorTaskService({
+  queue: wikiWriteQueue,
   run: async (rawPath) => {
     const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
     return curator.compileRaw(curator.resolveRawPointer(rawPath))
@@ -556,10 +568,13 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
+// 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
+// UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
+app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
 // 知识中心票11：/knowledge 读面最小补口——raw 列表/单文件（穿越拒绝）、LOG 时间线、
-// 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=0/findings=0/最近编译/git HEAD，
-// 无「待审核」字段；queueDepth/openFindings 由票06/13 就位后填实值不换形）。
-app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }))
+// 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=票06 实值/findings=0/最近编译/git HEAD，
+// 无「待审核」字段；openFindings 由票13 就位后填实值不换形）。
+app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, { getQueueDepth: () => wikiWriteQueue.depth() }))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
