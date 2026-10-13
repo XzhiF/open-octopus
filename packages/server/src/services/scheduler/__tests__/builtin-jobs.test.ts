@@ -9,6 +9,7 @@ import { ScheduleConfigDAO } from "../../../db/dao/schedule-config-dao"
 import {
   BUILTIN_CODE_JOBS,
   TASK_LIFECYCLE_HANDLER,
+  KNOWLEDGE_PATROL_HANDLER,
   builtinJobId,
   seedBuiltinCodeJobs,
   registerAndSeedBuiltinCodeJobs,
@@ -61,7 +62,7 @@ function configOf(id: string): CodeJobConfig {
 describe("seedBuiltinCodeJobs", () => {
   it("creates one row per built-in job, keyed deterministically by handler", () => {
     const res = seedBuiltinCodeJobs(dao, "xzf")
-    expect(res.created).toEqual([builtinJobId(TASK_LIFECYCLE_HANDLER)])
+    expect([...res.created].sort()).toEqual(BUILTIN_CODE_JOBS.map(j => builtinJobId(j.handler)).sort())
     expect(res.repaired).toEqual([])
     const r = row(builtinJobId(TASK_LIFECYCLE_HANDLER))!
     expect(r.job_type).toBe("job")
@@ -70,13 +71,26 @@ describe("seedBuiltinCodeJobs", () => {
     expect(BUILTIN_CODE_JOBS.length).toBeGreaterThan(0)
   })
 
+  it("夜巡作业 = 每日一次的系统作业（票13：BUILTIN_CODE_JOBS 先例注册，非 setInterval）", () => {
+    const res = seedBuiltinCodeJobs(dao, "xzf")
+    const id = builtinJobId(KNOWLEDGE_PATROL_HANDLER)
+    expect(res.created).toContain(id)
+    const r = row(id)!
+    expect(r.job_type).toBe("job")
+    expect(configOf(id).handler).toBe(KNOWLEDGE_PATROL_HANDLER)
+    // cron 每日恰一次（分 时 日 月 周 五段且日/月/周不设列表 ⇒ 单时点/天）
+    expect(r.cron_expression.split(" ")).toHaveLength(5)
+    expect(r.cron_expression.split(" ").slice(2).every(seg => seg === "*")).toBe(true)
+    expect(r.timezone).toBe("Asia/Shanghai")
+  })
+
   it("is idempotent — a second boot creates nothing", () => {
     seedBuiltinCodeJobs(dao)
     const again = seedBuiltinCodeJobs(dao)
     expect(again.created).toEqual([])
-    expect(again.untouched).toEqual([builtinJobId(TASK_LIFECYCLE_HANDLER)])
+    expect([...again.untouched].sort()).toEqual(BUILTIN_CODE_JOBS.map(j => builtinJobId(j.handler)).sort())
     const count = (db.prepare("SELECT COUNT(*) AS c FROM schedules WHERE job_type='job'").get() as { c: number }).c
-    expect(count).toBe(1)
+    expect(count).toBe(BUILTIN_CODE_JOBS.length)
   })
 
   it("repairs a row whose handler pointer or job_type was clobbered", () => {
@@ -100,7 +114,9 @@ describe("seedBuiltinCodeJobs", () => {
     db.prepare("UPDATE schedules SET enabled=0, cron_expression='*/5 * * * *', timeout_seconds=60 WHERE id=?").run(id)
 
     const res = seedBuiltinCodeJobs(dao)
-    expect(res).toEqual({ created: [], repaired: [], untouched: [id] })
+    expect(res.created).toEqual([])
+    expect(res.repaired).toEqual([])
+    expect(res.untouched).toContain(id)
     const r = row(id)!
     expect(r.enabled).toBe(0)
     expect(r.cron_expression).toBe("*/5 * * * *")
@@ -171,7 +187,7 @@ describe("the built-in task-lifecycle handler", () => {
   it("re-registering on a later boot does not throw (same function tolerated)", () => {
     registerAndSeedBuiltinCodeJobs(dao)
     expect(() => registerAndSeedBuiltinCodeJobs(dao)).not.toThrow()
-    expect((db.prepare("SELECT COUNT(*) AS c FROM schedules WHERE job_type='job'").get() as { c: number }).c).toBe(1)
+    expect((db.prepare("SELECT COUNT(*) AS c FROM schedules WHERE job_type='job'").get() as { c: number }).c).toBe(BUILTIN_CODE_JOBS.length)
   })
 
   it("the fallback says plainly that nothing is wired, rather than silently doing nothing", async () => {
