@@ -63,6 +63,48 @@ export interface CompileResult {
   changed: boolean
 }
 
+// ── 批通道（票05：一次编译写 N 页 · 单一 git commit）──────────────────
+// 契约（spec §审批废除与写入闸门 / 票面 AC1）：所有页先过同一套 v3 闸（含批内互链、
+// 锚点跨页唯一、L4 合并预算），任一页失败 ⇒ 整批零副作用；写入段共享一份快照，
+// 中途失败整体补偿回滚零半成品。这是票06 全局队列要整包互斥的「单次编译」单位。
+
+export interface BatchPageInput {
+  /** v3 页完整文件内容（front-matter + 正文）——批通道只收页形态 */
+  content: string
+  /** 文件名覆盖（默认 `{id}.md`） */
+  fileName?: string
+}
+
+export interface BatchCompileOptions {
+  /** LOG 行对象列（如 raw 源标题） */
+  entry: string
+  /** LOG 动作词（默认 compile；策展投喂管线传 ingest，prototype Tab② LOG 样例） */
+  action?: string
+  /** LOG 结果摘要（如 `触 3 页 · 新页 2`） */
+  note: string
+  /** LOG 来源列（默认 manual；策展通道填 raw 路径） */
+  source?: string
+  /** LOG 审核列（默认 curator） */
+  reviewer?: string
+}
+
+export interface BatchPageResult {
+  id: string
+  type: string
+  /** 相对 wiki 根的 POSIX 路径 */
+  path: string
+  anchors: string[]
+  warnings: string[]
+  /** true = 编译前该页不存在（新建页，供 DIFF 卡「新页 N」计数） */
+  created: boolean
+}
+
+export interface BatchCompileResult {
+  pages: BatchPageResult[]
+  commit: string | null
+  changed: boolean
+}
+
 /**
  * 「拆分提案入队」语义已随票04 AC5 从本模块删除：容量闸触顶改为编译失败随错误
  * 返回拆分建议（WikiLintError.suggestion），供策展人对话内自纠。审核队列其余面属票09。
@@ -468,6 +510,256 @@ export class WikiCompileService {
     } catch (err) {
       // ── 6. 原子回滚：fs 快照还原 + DB 补偿，不留半成品 ─────
       this.rollbackTo(meta.id, { absPath, prevEntry, indexPath, prevIndex, logPath, prevLog, prevRow, prevRowid, prevFts })
+      throw err
+    }
+  }
+
+  /**
+   * 批通道（票05）：一次编译写 N 页 + INDEX 重建 + LOG 一行 + DB/FTS 同步 + 单一 git commit。
+   * 校验段零副作用（任何一页不过闸 ⇒ 整批不落盘）；写入段共享快照，失败全量补偿回滚。
+   * 与单页 compilePage 同闸同律（文件名/逃逸/锚点全库唯一/lint/L4 预算，L4 按整批合并预测），
+   * 并额外强批内约束：同路径/同 id 重复输入拒绝，跨页锚点互斥，断链语料含全批（页未落盘即可互链）。
+   * 幂等：所有页产物与在盘内容逐字节相同（忽略 last_compiled）⇒ 整批 no-op，
+   * 不写文件、不追加 LOG、不产生 commit、changed=false（票面 S1「同 raw 重编译 diff 空」的落点）。
+   */
+  async compilePages(inputs: BatchPageInput[], opts: BatchCompileOptions): Promise<BatchCompileResult> {
+    if (!Array.isArray(inputs) || inputs.length === 0) {
+      throw new Error("INVALID_PARAM: 批通道至少需要一页")
+    }
+
+    // ── 1. validate（无副作用段）──────────────────────────────
+    interface PlannedPage {
+      meta: WikiPageFrontmatter
+      body: string
+      fileName: string
+      relPath: string
+      absPath: string
+      anchors: string[]
+      warnings: string[]
+      created: boolean
+      /** 序列化产物（含 front-matter） */
+      serialized: string
+    }
+    const scanned = scanWikiEntries(this.root)
+    const batchPaths = new Set<string>()
+    const batchIds = new Set<string>()
+    const planned: PlannedPage[] = []
+
+    for (const [i, input] of inputs.entries()) {
+      const file = parseWikiFile(input.content)
+      if (file.kind !== "page") {
+        throw new Error(`BATCH_KIND: 批通道只收 v3 页（entity/concept/topic/source），第 ${i + 1} 页是${file.kind === "case" ? "判例" : " v2 词条"}形态——请走单页通道 compileEntry`)
+      }
+      const meta = file.meta
+      const body = file.body
+      const fileName = input.fileName ?? `${meta.id}.md`
+      if (!FILE_NAME_RE.test(fileName)) {
+        throw new Error(`INVALID_PARAM: 文件名不合规 '${fileName}'（要求 kebab .md，禁止路径分隔符）`)
+      }
+      const dir = pageDirForType(meta.type)
+      const relPath = `${dir}/${fileName}`
+      const absPath = path.resolve(this.root, dir, fileName)
+      if (!absPath.startsWith(path.resolve(this.root) + path.sep)) {
+        throw new Error(`INVALID_PARAM: 路径逃逸 wiki 根 '${relPath}'`)
+      }
+      if (batchPaths.has(relPath)) throw new Error(`BATCH_DUPLICATE_PATH: 批内两页同写 '${relPath}'`)
+      if (batchIds.has(meta.id)) throw new Error(`BATCH_DUPLICATE_ID: 批内两页同 id '${meta.id}'`)
+      batchPaths.add(relPath)
+      batchIds.add(meta.id)
+
+      const anchors = extractRuleAnchors(body)
+      const seen = new Set<string>()
+      for (const a of anchors) {
+        if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在本页内重复`)
+        seen.add(a)
+      }
+      planned.push({ meta, body, fileName, relPath, absPath, anchors, warnings: [], created: !fs.existsSync(absPath), serialized: serializePageMarkdown(meta, body) })
+    }
+
+    // 锚点全库唯一：库内非批页（批覆盖路径旧锚点随覆写消失，不算冲突）+ 批内跨页 + DB 快照
+    for (const p of planned) {
+      const mine = new Set(p.anchors)
+      for (const other of scanned) {
+        if (batchPaths.has(other.relPath)) continue
+        for (const a of other.anchors) {
+          if (mine.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.relPath}（锚点全库唯一、永不复用）`)
+        }
+      }
+      for (const q of planned) {
+        if (q === p) continue
+        for (const a of q.anchors) {
+          if (mine.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在批内双花（${p.relPath} 与 ${q.relPath}）`)
+        }
+      }
+      for (const other of this.articles.listOthers(this.org, p.meta.id)) {
+        if (batchPaths.has(other.path)) continue
+        for (const a of extractRuleAnchors(other.body)) {
+          if (mine.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.path}（DB 快照，锚点全库唯一）`)
+        }
+      }
+    }
+
+    // v3 闸：lintWikiPage 逐页跑；断链语料 = 库（非批覆盖路径）∪ 全批（页可互链，落盘前即成立）
+    const libraryCorpus = scanned
+      .filter(e => !batchPaths.has(e.relPath))
+      .map(e => ({ id: e.meta.id, path: e.relPath }))
+    for (const p of planned) {
+      const linkCorpus = [
+        ...planned.map(q => ({ id: q.meta.id, path: q.relPath })),
+        ...libraryCorpus,
+      ]
+      const lint = lintWikiPage({ meta: p.meta, body: p.body, anchors: p.anchors, root: this.root, linkCorpus })
+      for (const w of lint.warnings) p.warnings.push(w.message)
+      const l1 = lint.errors.find(e => e.code === "L1_CAPACITY")
+      if (l1) {
+        throw new WikiLintError(
+          "L1_CAPACITY",
+          `${p.relPath}: ${l1.message}——拆分建议见 suggestion（按 H2 小节切分，对话内自纠后重编译）`,
+          lint.errors,
+          splitProposalFromPage(p.meta, p.fileName, p.body, l1.message),
+        )
+      }
+      for (const e of lint.errors) throw new WikiLintError(e.code, `${p.relPath}: ${e.message}`, lint.errors)
+    }
+
+    // L4 INDEX 预算闸：整批合并预测（缺席批覆盖路径的旧页）
+    const predicted: ScannedEntry[] = scanned.filter(e => !batchPaths.has(e.relPath))
+    for (const p of planned) {
+      predicted.push({ relPath: p.relPath, meta: pageEntryView(p.meta), anchors: p.anchors, type: p.meta.type, page: p.meta })
+    }
+    const budget = renderBudgetedWikiIndex(predicted, this.org)
+    if (budget.overBudget) {
+      const tokens = estimateTokens(budget.content)
+      throw new WikiLintError(
+        "L4_INDEX_BUDGET",
+        `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频页移 ## Optional 或升 hub`,
+        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
+      )
+    }
+
+    // 幂等判定：产物与在盘内容仅差 last_compiled ⇒ 该页不写；整批皆同 ⇒ 零副作用 no-op
+    const ignoringDate = (s: string) => s.replace(/\r\n/g, "\n").replace(/^last_compiled:.*$/m, "")
+    const dirty = planned.filter(p => {
+      if (!fs.existsSync(p.absPath)) return true
+      try {
+        return ignoringDate(fs.readFileSync(p.absPath, "utf-8")) !== ignoringDate(p.serialized)
+      } catch {
+        return true
+      }
+    })
+    const allResults = (): BatchPageResult[] =>
+      planned.map(p => ({ id: p.meta.id, type: p.meta.type, path: p.relPath, anchors: p.anchors, warnings: p.warnings, created: p.created }))
+    if (dirty.length === 0) {
+      return { pages: allResults(), commit: null, changed: false }
+    }
+
+    // ── 2. 前置状态快照（回滚补偿用；只快照将被改写的页）────────
+    const indexPath = path.join(this.root, WIKI_INDEX_FILE)
+    const logPath = path.join(this.root, WIKI_LOG_FILE)
+    const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
+    const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
+    const fileSnapshots = dirty.map(p => ({ absPath: p.absPath, prev: fs.existsSync(p.absPath) ? fs.readFileSync(p.absPath, "utf-8") : null }))
+    const dbSnapshots = dirty.map(p => ({
+      id: p.meta.id,
+      prevRow: this.articles.get(this.org, p.meta.id),
+      prevRowid: this.articles.getRowid(this.org, p.meta.id),
+      prevFts: (() => {
+        const rid = this.articles.getRowid(this.org, p.meta.id)
+        return rid !== undefined ? this.articles.getFtsByRowid(rid) : undefined
+      })(),
+    }))
+
+    try {
+      // ── 3. fs 写（tmp+rename 原子替换）+ INDEX 重建 + LOG 单行 ──
+      ensureWikiSkeleton(this.root)
+      ensureWikiGitRepo(this.root, this.git)
+      for (const p of dirty) atomicWrite(p.absPath, p.serialized)
+
+      const entries = scanWikiEntries(this.root)
+      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org).content)
+
+      const logBase = prevLog ?? WIKI_LOG_HEADER
+      atomicWrite(logPath, logBase + formatLogRow({
+        action: opts.action ?? "compile",
+        entry: opts.entry,
+        note: opts.note,
+        source: opts.source ?? "manual",
+        reviewer: opts.reviewer ?? "curator",
+      }))
+
+      // ── 4. DB 行 + FTS 手工对齐（单事务跨全批；FTS 失败非致命 gotcha #6）──
+      for (const p of dirty) {
+        const warnings = p.warnings
+        this.db.transaction(() => {
+          const upsert: Omit<WikiArticleRow, "updated_at"> = {
+            org: this.org,
+            id: p.meta.id,
+            domain: p.meta.type,
+            title: p.meta.title,
+            summary: p.meta.summary,
+            topics: JSON.stringify(p.meta.topics),
+            stability: p.meta.stability ?? "stable",
+            last_compiled: p.meta.last_compiled,
+            sources: JSON.stringify(p.meta.sources),
+            confidence: p.meta.confidence ?? 0.5,
+            body: p.body,
+            path: p.relPath,
+          }
+          this.articles.upsert(upsert)
+          const rowid = this.articles.getRowid(this.org, p.meta.id)!
+          try {
+            this.articles.deleteFts(rowid)
+            this.articles.insertFts({
+              rowid,
+              id: p.meta.id,
+              domain: p.meta.type,
+              title: p.meta.title,
+              summary: p.meta.summary,
+              topics: upsert.topics,
+              body: p.body,
+            })
+            return true
+          } catch (err) {
+            warnings.push(`FTS 同步失败（非致命）: ${err instanceof Error ? err.message : String(err)}`)
+            return false
+          }
+        })()
+      }
+
+      // ── 5. git commit（一次批编译 = 一个 commit）────────────
+      let commit: string | null = null
+      let changed = false
+      mustGit(this.git, ["add", "-A"])
+      const status = mustGit(this.git, ["status", "--porcelain"])
+      if (status.stdout.trim().length > 0) {
+        mustGit(this.git, ["commit", "-m", `${opts.action ?? "compile"}: ${opts.entry} — ${opts.note}`])
+        commit = wikiHead(this.git)
+        changed = true
+      }
+
+      return { pages: allResults(), commit, changed }
+    } catch (err) {
+      // ── 6. 原子回滚：全批快照还原，不留半成品 ────────────────
+      for (const snap of fileSnapshots) restoreFile(snap.absPath, snap.prev)
+      restoreFile(indexPath, prevIndex)
+      restoreFile(logPath, prevLog)
+      try {
+        this.db.transaction(() => {
+          for (const snap of dbSnapshots) {
+            if (snap.prevRow) {
+              this.articles.upsert(snap.prevRow)
+              const rid = this.articles.getRowid(this.org, snap.prevRow.id)!
+              this.articles.deleteFts(rid)
+              if (snap.prevFts) this.articles.insertFts({ ...snap.prevFts, rowid: rid })
+            } else {
+              const rid = this.articles.getRowid(this.org, snap.id)
+              if (rid !== undefined) this.articles.deleteFts(rid)
+              this.articles.delete(this.org, snap.id)
+            }
+          }
+        })()
+      } catch { /* best effort — fs 真相已还原，DB 差异留给下次编译同步 */ }
+      try { this.git.run(["reset"]) } catch { /* best effort */ }
       throw err
     }
   }

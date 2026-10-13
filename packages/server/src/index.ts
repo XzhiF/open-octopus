@@ -24,6 +24,10 @@ import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createIngestRoutes } from "./routes/ingest"
 import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
+import { createWikiCompileRoutes } from "./routes/wiki-compile"
+import { CuratorCompileService } from "./services/knowledge/wiki/curator"
+import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
+import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
@@ -533,9 +537,25 @@ const reviewService = new ReviewService(d.pendingReview, {
   isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
 })
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
-// 知识中心票02：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
-// 构造即幂等建三层骨架；落 raw 不触发编译、不入队（spec §全局写串行语义，编译属票05）。
-app.route("/api/knowledge", createIngestRoutes(new RawIngestService()))
+// 知识中心票02/05：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
+// 落 raw 本身不入队（spec §全局写串行语义）；`?compile=true` 显式开启票05 编译投递，
+// 投喂成功后返回 compileTask 回执（异步任务：queued→compiling→committed/failed）。
+// 知识中心票05：策展编译管线 CuratorCompileService.compileRaw = 单次编译原子入口
+// （SCHEMA 必读→raw 全文→LLM 抽取→多页编译单 commit→矛盾 finding 只产不裁）。
+// 薄任务 registry 只投不排——全局 FIFO 队列与 wiki 根锁整包本入口，属票06。
+const curatorTasks = new CuratorTaskService({
+  run: async (rawPath) => {
+    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+    return curator.compileRaw(curator.resolveRawPointer(rawPath))
+  },
+})
+const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string } => {
+  const task = curatorTasks.submit(rawPath)
+  return { taskId: task.id, status: task.status }
+}
+app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
+// 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
+app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 // 知识中心票11：/knowledge 读面最小补口——raw 列表/单文件（穿越拒绝）、LOG 时间线、
 // 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=0/findings=0/最近编译/git HEAD，
 // 无「待审核」字段；queueDepth/openFindings 由票06/13 就位后填实值不换形）。
