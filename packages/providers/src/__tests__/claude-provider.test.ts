@@ -204,6 +204,18 @@ describe('ClaudeSDKProvider', () => {
     expect(callArgs.options.model).toBe('opus')
   })
 
+  // 知识中心票 08 AC5（保留注入面零改动断言之四）：SDK settingSources 是技能文件
+  // 物化后经 SDK 原生发现进模型的唯一通道（ADR-0006「skills 永不以 prompt 文本
+  // 下发」的另一半）。注入链物理删除不得触碰它 —— 期望值来自保留面契约
+  // （spec「注入链与旧库硬废·保留的注入面不动」），非实现反推。
+  it('settingSources stays [project,user] — SDK native discovery channel untouched by 票08', async () => {
+    mockQuery.mockReturnValue(makeMessageChunks([{ type: 'result', subtype: 'success' }]))
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of provider.sendQuery('hi', '/tmp')) {}
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.settingSources).toEqual(['project', 'user'])
+  })
+
   it('passes resume session to SDK', async () => {
     mockQuery.mockReturnValue(
       makeMessageChunks([{ type: 'result', subtype: 'success' }])
