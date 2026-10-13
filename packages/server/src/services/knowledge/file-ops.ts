@@ -1,34 +1,25 @@
 import fs from "fs"
 import path from "path"
-import os from "os"
 import crypto from "crypto"
 import type { ParsedRule } from "@octopus/shared"
+import { resolveKnowledgeDir } from "./global-paths"
 
 /**
  * Get the knowledge directory for a given org/scope.
  *
- * Path layout (matches the rest of the ~/.octopus hierarchy, where all
- * per-org data lives under `orgs/<org>/...`):
+ * **解析单源 = global-paths.resolveKnowledgeDir**（code-review S3；本函数纯委托，
+ * 布局公式/env 钩子不再在此重复出现）。口径：
  *
+ *   env `OCTOPUS_KNOWLEDGE_DIR` 拍平（无视 org——测试钩子本意）
+ *   org     →  ~/.octopus/orgs/<org>/knowledge/   （$OCTOPUS_HOME 窗生效）
  *   global  →  ~/.octopus/knowledge/
- *   org     →  ~/.octopus/orgs/<org>/knowledge/
  *
- * Historical note: the original PR wrote org-level data to
- * `~/.octopus/<org>/knowledge/` (missing the `orgs/` segment). That path
- * is still consulted by {@link readUserPreference} for backward
- * compatibility, but all new writes go to the canonical location.
+ * 票09 起纯解析**零 mkdir**——旧知识目录已归档删除（_archive/org-knowledge-*），
+ * 任何只读调用都不得重建已删目录（归档先于删除纪律的运行时护栏）。
+ * 写路径自保：writeKnowledgeFile/appendToKnowledgeFile 落盘前自建目录。
  */
 export function getKnowledgeDir(org?: string): string {
-  // Test hook — bypass the filesystem layout entirely.
-  if (process.env.OCTOPUS_KNOWLEDGE_DIR) return process.env.OCTOPUS_KNOWLEDGE_DIR
-  // 路径基底与 global-paths.octopusHome() 同口径（$OCTOPUS_HOME > ~/.octopus）。
-  const base = process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
-  // 票09：**不再 mkdir**——纯路径解析。旧知识目录已归档删除（_archive/org-knowledge-*），
-  // 任何只读调用都不得重建已删目录（归档先于删除纪律的运行时护栏）。
-  // 写路径自保：writeKnowledgeFile/appendToKnowledgeFile 落盘前自建目录。
-  return org
-    ? path.join(base, "orgs", org, "knowledge")
-    : path.join(base, "knowledge")
+  return resolveKnowledgeDir(org)
 }
 
 /**
@@ -90,21 +81,14 @@ export function listKnowledgeFiles(dir: string): string[] {
 }
 
 /**
- * Read user_preference.md for a given scope (single file, no merge).
- * Used by API routes to read/edit preferences per scope in the Dashboard.
+ * Used by knowledge-file surfaces to read preferences per scope.
  *
- * Path resolution:
+ * Path resolution（委托 getKnowledgeDir——env 拍平与 org/全局轨由其单源）：
  *   - org provided  → ~/.octopus/orgs/<org>/knowledge/user_preference.md
  *   - no org        → ~/.octopus/knowledge/user_preference.md
  */
 export function readUserPreference(org?: string): string {
-  // Test hook — use the override dir verbatim.
-  if (process.env.OCTOPUS_KNOWLEDGE_DIR) {
-    return readKnowledgeFile(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR, "user_preference.md"))
-  }
-
-  const dir = getKnowledgeDir(org)
-  return readKnowledgeFile(path.join(dir, "user_preference.md"))
+  return readKnowledgeFile(path.join(getKnowledgeDir(org), "user_preference.md"))
 }
 
 /**

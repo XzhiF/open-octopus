@@ -84,8 +84,13 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
           }],
         },
       ])
-      // stats（原型 Tab③ 健康概览的数据面：词条/案例/规则/最近编译/待审核）
-      expect(data.stats).toMatchObject({ entries: 2, cases: 0, rules: 3, lastCompiled: "2026-10-12", pendingReview: 0 })
+      // stats（原型 Tab③ 健康概览的数据面：词条/案例/规则/最近编译）
+      expect(data.stats).toMatchObject({ entries: 2, cases: 0, rules: 3, lastCompiled: "2026-10-12" })
+      // 契约负断言（spec 故事 10 / code-review P3）：审批概念已废除——
+      // tree 响应不存在「pendingReview/待审核」任何形态字段（knowledge-read-routes 同款钉法）
+      const raw = JSON.stringify(data)
+      expect(raw).not.toMatch(/pendingReview/i)
+      expect(raw).not.toContain("待审核")
     })
 
     it("票03 语义钉 global：org 参数容错保留（带不带、带谁都一样返回全局库），空库诚实空树", async () => {

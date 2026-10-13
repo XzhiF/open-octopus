@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   kcGetCompileTask,
   kcGetQueueTask,
@@ -17,6 +17,7 @@ import type {
   KcSourceSummaryCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { classifyKcFeed, type KcFeedIntent } from '@/lib/knowledge-center/feed-protocol'
+import { kcErrFace, kcPlaceholderTaskId, useKcPoller } from './use-kc-poller'
 
 /**
  * 投喂/回滚编排 hook（票12 AC3/AC5，Lane B 卡片 store）。
@@ -30,7 +31,8 @@ import { classifyKcFeed, type KcFeedIntent } from '@/lib/knowledge-center/feed-p
  *
  * 事件源选**轮询**而非新 SSE：既有 SSE 基建（lib/agent/sse.ts）绑死 chat 连接形态，
  * 任务状态端点面（票05/06/12）是它的正交可承载形态（票面授权「选既有 SSE 基建能
- * 承载的形态」）；先立即一拍再按 pollMs 间隔，终态自停。
+ * 承载的形态」）；先立即一拍再按 pollMs 间隔，终态自停——拍次调度/瞬断续拍/
+ * 卸载清定时器收口在共享核 `use-kc-poller`（code-review judgement，行为零改）。
  * id 锚定幂等（dif-/sum-<taskId>），宿主（chat-column）按 sessionId 侧挂
  * localStorage 完成 Lane B 沉淀（契约见 card-protocol 头注释）。
  */
@@ -49,16 +51,10 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
    *  也能回灌渲染；宿主用 `revertStates[card.commit]` 合并）。 */
   const [revertStates, setRevertStates] = useState<Record<string, KcRevertState>>({})
   const cardsRef = useRef<Map<string, KcCardEvent>>(new Map())
-  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   const seqRef = useRef(0)
   const onSettledRef = useRef(opts.onSettled)
   onSettledRef.current = opts.onSettled
-
-  // 卸载清全部轮询定时器（长编译不拖尸）
-  useEffect(() => {
-    const timers = timersRef.current
-    return () => { for (const t of timers) clearTimeout(t); timers.clear() }
-  }, [])
+  const poller = useKcPoller(pollMs)
 
   const nowIso = () => new Date().toISOString()
 
@@ -76,74 +72,57 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
   }, [])
 
   const reset = useCallback(() => {
-    for (const t of timersRef.current) clearTimeout(t)
-    timersRef.current.clear()
+    poller.stopAll()
     cardsRef.current.clear()
     setCards([])
     setRevertStates({})
-  }, [])
-
-  const schedule = useCallback((fn: () => Promise<void>) => {
-    const t = setTimeout(() => void fn(), pollMs)
-    timersRef.current.add(t)
-  }, [pollMs])
-
-  const errFace = (err: unknown): { code: string; message: string } => {
-    const anyErr = err as { code?: string; message?: string }
-    return { code: anyErr?.code ?? 'FEED_ERROR', message: anyErr?.message ?? String(err) }
-  }
+  }, [poller])
 
   // ── 编译任务轮询（queued #N → running → committed/failed）──
   const trackCompile = useCallback((taskId: string, rawPath: string) => {
     let misses = 0
-    const tick = async (): Promise<void> => {
-      try {
-        const [task, queue] = await Promise.all([kcGetCompileTask(taskId), kcGetQueueTask(taskId)])
-        if (!task) {
-          if (++misses >= 3) {
-            upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data: {
-              taskId, status: 'failed', touched: [], error: { code: 'TASK_LOST', message: '编译任务不可查（服务重启？git LOG 为审计真相）' },
-            } satisfies KcCompileDiffCardData })
-            return
-          }
-        } else {
-          const status: KcCompileDiffCardData['status'] = task.status === 'compiling' ? 'running' : task.status
-          const prev = cardsRef.current.get(`dif-${taskId}`)
-          const data: KcCompileDiffCardData = {
-            taskId,
-            status,
-            position: queue?.state === 'queued' ? queue.position : null,
-            rawPath,
-            rawTitle: task.result?.rawTitle ?? (prev?.data as KcCompileDiffCardData | undefined)?.rawTitle,
-            touched: task.result?.touched ?? [],
-            created: task.result?.created,
-            updated: task.result?.updated,
-            contradictions: task.result?.contradictions,
-            commit: task.result?.commit ?? undefined,
-            ftsOk: task.result ? task.result.warnings.length === 0 : undefined,
-            error: task.error ?? queue?.error,
-            revert: (prev?.data as KcCompileDiffCardData | undefined)?.revert,
-          }
-          upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data })
-          if (task.status === 'committed') {
-            const src = task.result?.touched.find(t => t.type === 'source' || t.path.startsWith('sources/'))
-            if (src) {
-              upsert({ id: `sum-${taskId}`, kind: 'source-summary', ts: nowIso(), data: {
-                sourcePath: src.path, rawPath, hash: task.result?.rawHash, points: [],
-              } satisfies KcSourceSummaryCardData })
-            }
-            onSettledRef.current?.()
-            return
-          }
-          if (task.status === 'failed') return
+    poller.run(async (): Promise<boolean> => {
+      const [task, queue] = await Promise.all([kcGetCompileTask(taskId), kcGetQueueTask(taskId)])
+      if (!task) {
+        if (++misses >= 3) {
+          upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data: {
+            taskId, status: 'failed', touched: [], error: { code: 'TASK_LOST', message: '编译任务不可查（服务重启？git LOG 为审计真相）' },
+          } satisfies KcCompileDiffCardData })
+          return true
         }
-      } catch {
-        // 网络瞬断：继续拍（任务在跑）
+        return false
       }
-      schedule(tick)
-    }
-    void tick()
-  }, [schedule, upsert])
+      const status: KcCompileDiffCardData['status'] = task.status === 'compiling' ? 'running' : task.status
+      const prev = cardsRef.current.get(`dif-${taskId}`)
+      const data: KcCompileDiffCardData = {
+        taskId,
+        status,
+        position: queue?.state === 'queued' ? queue.position : null,
+        rawPath,
+        rawTitle: task.result?.rawTitle ?? (prev?.data as KcCompileDiffCardData | undefined)?.rawTitle,
+        touched: task.result?.touched ?? [],
+        created: task.result?.created,
+        updated: task.result?.updated,
+        contradictions: task.result?.contradictions,
+        commit: task.result?.commit ?? undefined,
+        ftsOk: task.result ? task.result.warnings.length === 0 : undefined,
+        error: task.error ?? queue?.error,
+        revert: (prev?.data as KcCompileDiffCardData | undefined)?.revert,
+      }
+      upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data })
+      if (task.status === 'committed') {
+        const src = task.result?.touched.find(t => t.type === 'source' || t.path.startsWith('sources/'))
+        if (src) {
+          upsert({ id: `sum-${taskId}`, kind: 'source-summary', ts: nowIso(), data: {
+            sourcePath: src.path, rawPath, hash: task.result?.rawHash, points: [],
+          } satisfies KcSourceSummaryCardData })
+        }
+        onSettledRef.current?.()
+        return true
+      }
+      return task.status === 'failed'
+    })
+  }, [poller, upsert])
 
   /**
    * 投喂入口：分类后的意图 → ingest(+compile) → 卡链。
@@ -171,7 +150,7 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
         trackCompile(res.compileTask.taskId, res.raw.path)
       }
     } catch (err) {
-      upsert({ id: ingId, kind: 'ingest', ts: nowIso(), data: { status: 'failed', error: errFace(err) } satisfies KcIngestCardData })
+      upsert({ id: ingId, kind: 'ingest', ts: nowIso(), data: { status: 'failed', error: kcErrFace(err, 'FEED_ERROR') } satisfies KcIngestCardData })
     }
   }, [trackCompile, upsert])
 
@@ -185,35 +164,29 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
       )
       if (prev) upsert({ ...prev, ts: nowIso(), data: { ...prev.data as KcCompileDiffCardData, revert } })
     }
-    const tick = async (): Promise<void> => {
-      try {
-        const [task, queue] = await Promise.all([kcGetRevertTask(taskId), kcGetQueueTask(taskId)])
-        if (!task) return // 任务面不可查：停在当前态（不炸流）
-        const status: KcRevertState['status'] = task.status
-        attach({
-          taskId,
-          status,
-          position: queue?.state === 'queued' ? queue.position : null,
-          revertCommit: task.result?.revertCommit,
-          error: task.error ?? queue?.error,
-        })
-        if (status === 'committed') { onSettledRef.current?.(); return }
-        if (status === 'failed') return
-      } catch {
-        // 网络瞬断继续
-      }
-      schedule(tick)
-    }
-    void tick()
-  }, [schedule, upsert])
+    poller.run(async (): Promise<boolean> => {
+      const [task, queue] = await Promise.all([kcGetRevertTask(taskId), kcGetQueueTask(taskId)])
+      if (!task) return true // 任务面不可查：停在当前态（不炸流）
+      const status: KcRevertState['status'] = task.status
+      attach({
+        taskId,
+        status,
+        position: queue?.state === 'queued' ? queue.position : null,
+        revertCommit: task.result?.revertCommit,
+        error: task.error ?? queue?.error,
+      })
+      if (status === 'committed') { onSettledRef.current?.(); return true }
+      return status === 'failed'
+    })
+  }, [poller, upsert])
 
   const revert = useCallback(async (commit: string): Promise<void> => {
-    setRevertStates(prev => ({ ...prev, [commit]: { taskId: `pending-${Date.now().toString(36)}`, status: 'queued', position: null } }))
+    setRevertStates(prev => ({ ...prev, [commit]: { taskId: kcPlaceholderTaskId('pending'), status: 'queued', position: null } }))
     try {
       const ack = await kcRevert(commit)
       trackRevert(ack.taskId, commit)
     } catch (err) {
-      setRevertStates(prev => ({ ...prev, [commit]: { taskId: `err-${Date.now().toString(36)}`, status: 'failed', error: errFace(err) } }))
+      setRevertStates(prev => ({ ...prev, [commit]: { taskId: kcPlaceholderTaskId('err'), status: 'failed', error: kcErrFace(err, 'FEED_ERROR') } }))
     }
   }, [trackRevert])
 

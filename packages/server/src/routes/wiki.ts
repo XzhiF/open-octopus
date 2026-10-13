@@ -2,7 +2,6 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
-import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown, parseWikiFile } from "../services/knowledge/wiki/format"
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
@@ -166,7 +165,6 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         cases: rows.filter(r => r.domain === "cases").length,
         rules: 0,
         lastCompiled: "",
-        pendingReview: 0,
       }
 
       const domains: Array<{
@@ -196,10 +194,8 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         domains.push({ name: group.name, label: group.label, count: mapped.length, entries: mapped })
       }
 
-      try {
-        stats.pendingReview = new PendingReviewDAO(articles.getDb()).countPendingOpen()
-      } catch { /* pending_review 缺席时不阻塞树查询 */ }
-
+      // 「待审核」统计已随审批废除摘除（spec 故事 10；票11 裁定④/票09 应清而未清，
+      // code-review P3 收口）——tree 响应不再含 pendingReview 字样，契约负断言见 wiki-routes.test.ts。
       return c.json({ org: GLOBAL_WIKI_ORG, domains, stats, log: readWikiLog(wikiRoot) })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.tree")

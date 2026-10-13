@@ -98,8 +98,7 @@ export const PipelineConfigSchema = z.object({
   apiVersion: z.string().regex(/^octopus\/v\d+$/, "apiVersion must match octopus/v{number}"),
   kind: z.literal("Pipeline"),
   description: z.string().optional(),
-  // 知识中心票 08：`prompts`（PromptInjector 消费面）已物理删除；
-  // schema 非 strict，存量 pipeline.yaml 的 prompts 键宽容忽略。
+  // 边界：prompts 键随 PromptInjector 退役（知识中心票08）；schema 非 strict，存量 yaml 宽容忽略——勿补回校验。
   hooks: PipelineHooksSchema.optional(),
   execution: ExecutionConfigSchema.default({}),
   retry: RetryConfigSchema.default({}),

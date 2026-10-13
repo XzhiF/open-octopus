@@ -1041,6 +1041,11 @@ CREATE TABLE IF NOT EXISTS pending_review (
   user_notes TEXT DEFAULT NULL
 );
 
+-- knowledge_effectiveness 边界注（code-review S1 / 2026-10-24 评审修复）：注入链生产者已随
+-- 知识中心票08 物理删除，服务层死链（effectiveness.ts/maintenance.ts/generate.ts 及其自测）
+-- 已按 CODING_STANDARDS #5 清除；**表本体与 DAO 保留**——spec Out of Scope 点名 P4 残余
+-- 「effectiveness v2（JSONL 解析 ↔ blocker 关联、confidence 滚动更新）」的预留面，
+-- 勿删本表；重启消费面前须连同滚动更新语义整体设计（勿复活旧关键词匹配近似）。
 CREATE TABLE IF NOT EXISTS knowledge_effectiveness (
   rule_id TEXT PRIMARY KEY,
   injected_count INTEGER NOT NULL DEFAULT 0,

@@ -2,13 +2,13 @@ import type Database from "better-sqlite3"
 import crypto from "crypto"
 import fs from "fs"
 import path from "path"
-import os from "os"
 import type { WikiEntryFrontmatter } from "@octopus/shared"
 import { WikiCompileService, scanWikiEntries, type CompileResult } from "./compile"
 import type { GitRunner } from "./wiki-git"
 import type { RuleFormJudge, SplitProposal } from "./lint"
 import { serializeEntryMarkdown } from "./format"
 import { ensureWikiSkeleton } from "./paths"
+import { deriveOrgKnowledgeDirAt, deriveOrgWikiRootAt, legacyWikiDirEnv, octopusHomeFor } from "../global-paths"
 import { today } from "./util"
 import { estimateTokens } from "./lint"
 
@@ -123,11 +123,11 @@ export class InitialCompileMigrator {
 
   constructor(opts: MigratorOptions) {
     this.org = opts.org
-    const base = path.join(os.homedir(), ".octopus")
-    this.root = opts.rootDir ?? (process.env.OCTOPUS_WIKI_DIR
-      ? process.env.OCTOPUS_WIKI_DIR
-      : path.join(base, "orgs", opts.org, "knowledge", "wiki"))
-    this.knowledgeDir = opts.knowledgeDir ?? path.join(base, "orgs", opts.org, "knowledge")
+    // 布局单源 = global-paths（code-review S3）：home 基/OCTOPUS_HOME 窗/org 轨/弃用别名不再自拼。
+    const base = octopusHomeFor()
+    this.root = opts.rootDir ?? legacyWikiDirEnv() ?? deriveOrgWikiRootAt(base, opts.org)
+    this.knowledgeDir = opts.knowledgeDir ?? deriveOrgKnowledgeDirAt(base, opts.org)
+    // 历史错拼路径（缺 orgs/ 段，早期 PR 写入位）——兼容读专用，布局不在单源口径内。
     this.legacyKnowledgeDir = opts.legacyKnowledgeDir ?? path.join(base, opts.org, "knowledge")
     this.glossaryMapPath = opts.glossaryMapPath ?? path.join(process.cwd(), "GLOSSARY-MAP.md")
     this.compile = new WikiCompileService({
