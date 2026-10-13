@@ -62,7 +62,7 @@ const TREE = {
       entries: [{ id: "case-2026-003", path: "cases/2026-06-23-pnpm-lockfile-mismatch.md", title: "CI 报 LOCKFILE_CONFIG_MISMATCH", summary: "pnpm 版本错配", stability: "stable", ruleCount: 0 }],
     },
   ],
-  stats: { entries: 4, cases: 1, rules: 4, lastCompiled: "2026-10-13", pendingReview: 0 },
+  stats: { entries: 4, cases: 1, rules: 4, lastCompiled: "2026-10-13" },
   log: null,
 }
 
