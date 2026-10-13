@@ -25,6 +25,8 @@ import { createIngestRoutes } from "./routes/ingest"
 import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiCompileRoutes } from "./routes/wiki-compile"
+import { createWikiRevertRoutes } from "./routes/wiki-revert"
+import { RevertTaskService } from "./services/knowledge/wiki/revert"
 import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
@@ -568,6 +570,10 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
+// 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
+// commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
+const revertTasks = new RevertTaskService({ db: getDb(), queue: wikiWriteQueue })
+app.route("/api/knowledge/wiki", createWikiRevertRoutes(revertTasks))
 // 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))

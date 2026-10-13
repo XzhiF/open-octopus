@@ -178,3 +178,120 @@ export async function getKcPreference(): Promise<KcPreference> {
   const res = await apiFetch(`${getServerUrl()}/api/knowledge/preference?scope=${KC_ORG}`)
   return handleResponse<KcPreference>(res)
 }
+
+// ============ 票12 写面 API（ingest/编译任务/队列位次/revert）============
+// 端点面票02/05/06/12 已就位；本段只做形状收口客户端，语义注释指向路由文件。
+// 错误处理沿用 handleResponse（{error:{code,message}} 抛 Error(message)——需要 code
+// 的调用方走 kcRequestRaw 自行分流）。
+
+/** POST /api/knowledge/ingest 响应（票02 形状 + 票05 compileTask 回执）。 */
+export interface KcIngestResult {
+  mode: string
+  dir: string
+  title: string
+  deduped: boolean
+  raw: KcRawSource
+  compileTask?: { taskId: string; status: string }
+}
+
+export interface KcIngestInput {
+  mode: "url" | "text" | "file"
+  url?: string
+  text?: string
+  path?: string
+  title?: string
+}
+
+/** 投喂并投递编译（?compile=true 常开——对话投喂的语义就是入库即编）。 */
+export async function kcIngest(input: KcIngestInput): Promise<KcIngestResult> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/ingest?compile=true`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse<KcIngestResult>(res)
+}
+
+/** GET /api/knowledge/wiki/compile/task/:id 的 task 视图（票05 CompileTaskRecord）。 */
+export interface KcCompileTask {
+  id: string
+  rawPath: string
+  status: "queued" | "compiling" | "committed" | "failed"
+  createdAt?: string
+  finishedAt?: string
+  result?: {
+    rawPath: string
+    rawHash: string
+    rawTitle: string
+    touched: { path: string; type: string; created: boolean }[]
+    created: number
+    updated: number
+    contradictions: number
+    commit: string | null
+    changed: boolean
+    deduped: boolean
+    warnings: string[]
+  }
+  error?: { code: string; message: string }
+}
+
+export async function kcGetCompileTask(taskId: string): Promise<KcCompileTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/compile/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcCompileTask }>(res)
+  return data.task
+}
+
+/** GET /api/knowledge/wiki/queue/task/:id 的 task 视图（票06 QueueTaskView：位次 #N 单源）。 */
+export interface KcQueueTask {
+  id: string
+  opKind: string
+  label?: string
+  state: "queued" | "running" | "committed" | "failed"
+  position: number | null
+  error?: { code: string; message: string }
+}
+
+export async function kcGetQueueTask(taskId: string): Promise<KcQueueTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/queue/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcQueueTask }>(res)
+  return data.task
+}
+
+/** POST /api/knowledge/wiki/revert 回执（票12）。 */
+export interface KcRevertAck {
+  taskId: string
+  commit: string
+  status: string
+}
+
+export async function kcRevert(commit: string): Promise<KcRevertAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/revert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commit }),
+  })
+  return handleResponse<KcRevertAck>(res)
+}
+
+/** GET /api/knowledge/wiki/revert/task/:id 的 task 视图（票12 RevertTaskRecord）。 */
+export interface KcRevertTask {
+  id: string
+  commit: string
+  status: "queued" | "running" | "committed" | "failed"
+  result?: {
+    target: string
+    revertCommit: string
+    touched: { path: string; action: "removed" | "readded" | "restored" }[]
+    ftsWarnings: string[]
+  }
+  error?: { code: string; message: string }
+}
+
+export async function kcGetRevertTask(taskId: string): Promise<KcRevertTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/revert/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcRevertTask }>(res)
+  return data.task
+}
