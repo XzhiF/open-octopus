@@ -4,7 +4,7 @@
 // Extracted from WorkflowEngine.createExecutor() to reduce engine.ts size.
 //
 import type { NodeDef, WorkflowHooks, VersionResolver, TaskDispatchPort } from "@octopus/shared"
-import { VarPool, resolveModelAlias, resolveKnowledgeMode } from "@octopus/shared"
+import { VarPool, resolveModelAlias } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
 import type { IAgentProvider, SystemPromptInput } from "@octopus/providers"
@@ -27,7 +27,6 @@ import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
-import type { PromptInjector } from "./prompt-injector"
 import type { CreateSessionFn } from "./executors/octopus-agent/session"
 import { join } from "path"
 
@@ -49,8 +48,6 @@ export interface ExecutorFactoryContext {
   modelAliasConfig?: any
   checkpointStore?: ICheckpointStore
   agentResolver?: (topic: string, maxExperts: number) => Promise<any>
-  knowledgeInjectorFactory?: (pool: VarPool) => any
-  promptInjector?: PromptInjector
   // Callbacks to engine methods
   resolvePreviousSessionId: (node: NodeDef) => string | undefined
   executeHooks: (event: keyof WorkflowHooks, context: Record<string, unknown>) => Promise<void>
@@ -196,9 +193,6 @@ export class ExecutorFactory {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.ctx.agentResolver,
-          promptInjector: this.ctx.promptInjector,
-          precomputeHook: this.ctx.precomputeHook,
-          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
@@ -223,9 +217,6 @@ export class ExecutorFactory {
         })
 
         const previousSessionId = this.ctx.resolvePreviousSessionId(node)
-        const knowledgeInjector = this.ctx.knowledgeInjectorFactory
-          ? this.ctx.knowledgeInjectorFactory(p)
-          : undefined
 
         const hostSafetyPrompt = this.buildHostSafetyPrompt()
         if (hostSafetyPrompt) {
@@ -249,13 +240,6 @@ export class ExecutorFactory {
           globalAutoAnswers: this.ctx.workflow.auto_answers,
           signal: s,
           engineContext: { nodeResults: this.ctx.nodeResults },
-          promptInjector: this.ctx.promptInjector,
-          knowledgeInjector,
-          // 票 12 影子双轨装配闸：mode 来自身份快照 config（缺 knowledge 字段 =
-          // both = 现状逐字节不变）；query 时 AgentExecutor 构造器摘除注入器引用，
-          // 注入链本体（红线 #1）不动一行。
-          knowledgeMode: resolveKnowledgeMode(identity.snapshotConfig),
-          workflowName: this.ctx.workflow.name,
           crossExecResolver: this.ctx.crossExecResolver,
           executionId: this.ctx.executionId,
           resolvedModel,
@@ -345,9 +329,6 @@ export class ExecutorFactory {
           },
           outputDir: join(this.ctx.cwd, "workflows"),
           workflow: this.ctx.workflow,
-          promptInjector: this.ctx.promptInjector,
-          precomputeHook: this.ctx.precomputeHook,
-          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
           identityResolver: this.getIdentityResolver(),
         })
       case "octopus_agent": {
@@ -368,10 +349,6 @@ export class ExecutorFactory {
           this.ctx.callbacks?.onAgentEvent?.(node.id, event)
         })
 
-        const knowledgeInjector = this.ctx.knowledgeInjectorFactory
-          ? this.ctx.knowledgeInjectorFactory(p)
-          : undefined
-
         if (!this.ctx.versionResolver) {
           throw new Error("OctopusAgentExecutor requires versionResolver in ExecutorFactoryContext")
         }
@@ -385,9 +362,6 @@ export class ExecutorFactory {
           providerKey,
           signal: s,
           globalAutoAnswers: this.ctx.workflow.auto_answers,
-          promptInjector: this.ctx.promptInjector,
-          knowledgeInjector,
-          workflowName: this.ctx.workflow.name,
           crossExecResolver: this.ctx.crossExecResolver,
           executionId: this.ctx.executionId,
           resolvedModel,

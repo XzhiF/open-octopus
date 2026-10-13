@@ -27,6 +27,7 @@
 
 import type { ResourceManager, ResourceRef } from "@octopus/shared"
 import { enhancePromptWithSkills } from "@octopus/providers"
+import { resolveGlobalWikiRoot } from "../knowledge/global-paths"
 
 const SKILL_FILE = "SKILL.md"
 
@@ -75,7 +76,9 @@ export class TaskAuthorSessionAugmenter {
     // enhancePromptWithSkills returns the prompt unchanged when skills is empty.
     // We pass an empty base ("") so the output is just the skill sections (the
     // route composes it with the real cloneContext base separately).
-    return enhancePromptWithSkills("", { skills, skillContents })
+    // 知识中心票 08（D2 裁决 #12）：注入全局 wiki 根 —— octo-wiki 的知识段在此
+    // 指针化（一行根路径 + 查阅纪律，零正文）；其余 authoring skills 正文照旧。
+    return enhancePromptWithSkills("", { skills, skillContents, wikiRoot: resolveGlobalWikiRoot() })
   }
 
   /**

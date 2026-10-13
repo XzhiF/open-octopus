@@ -17,7 +17,6 @@ import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
-import type { KnowledgeService } from "../knowledge"
 import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
@@ -28,14 +27,12 @@ import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
 import { getFlag } from "../../config/feature-flags"
 import { generateSummary, formatDuration } from "../execution-summary"
-import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs"
 import { randomUUID } from "crypto"
 import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
-import { PipelineConfigLoader } from "../pipeline-config"
 import { HarnessController } from "../harness/harness-controller"
 import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
@@ -53,21 +50,12 @@ export class ExecutionLifecycle {
   private queryService: ExecutionQueryService
   private runner: ExecutionRunner
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
-  private knowledgeService?: KnowledgeService
   private harnessController?: HarnessController
   // G1 TaskDispatchPort impl for this (coordinator) workspace. Injected into every
   // engine via engineFactory.setTaskDispatchPort. Its resumeParent callback is bound
   // to this lifecycle's resumeTaskDispatch (after construction — breaks the cycle:
   // the port is passed to EngineFactory, which this lifecycle constructs).
   private taskDispatchService: TaskDispatchService
-  // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
-  // across all executions. retireStaleRules scans the DB and rewrites
-  // knowledge files for every stale rule, so calling it on every on_complete
-  // is wasteful under high execution throughput.
-  private lastRetireAt = 0
-  private static readonly RETIRE_INTERVAL_MS = Number(
-    process.env.OCTOPUS_KNOWLEDGE_RETIRE_INTERVAL_MS ?? 60 * 60 * 1000, // 1 hour
-  )
 
   constructor(
     private db: Database.Database,
@@ -87,7 +75,6 @@ export class ExecutionLifecycle {
     this.engineFactory = new EngineFactory(
       { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
       dao,
-      new PipelineConfigLoader(workspacePath),
       workspacePath,
     )
 
@@ -156,14 +143,6 @@ export class ExecutionLifecycle {
     } catch (err) {
       console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)
     }
-  }
-
-  /**
-   * Set the knowledge service for injection and effectiveness tracking.
-   */
-  setKnowledgeService(service: KnowledgeService): void {
-    this.knowledgeService = service
-    this.engineFactory.setKnowledgeService(service)
   }
 
   /**
@@ -289,10 +268,6 @@ export class ExecutionLifecycle {
         }
       }
     }
-
-    // Resolve project repo names for knowledge scope filtering
-    const repoNames = resolveAllProjectNames(this.workspacePath)
-    this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
     // Update input_values in DB before creating engine (factory reads from exec row)
     if (resolvedInputValues) {
@@ -608,45 +583,6 @@ export class ExecutionLifecycle {
         await this.executeWorkflowHooks("on_success", { duration_ms: result.durationMs }, wf, id)
       }
       await this.executeWorkflowHooks("on_complete", { final_status: finalStatus, duration_ms: result.durationMs }, wf, id)
-
-      // Track knowledge effectiveness after execution completes
-      if (this.knowledgeService) {
-        try {
-          const execResult = {
-            id,
-            status: result.status,
-            nodes: Object.fromEntries(
-              Object.entries(result.nodeResults).map(([nodeId, r]) => [nodeId, {
-                status: r.status,
-                exitCode: r.exitCode ?? null,
-                lastOutput: r.lastOutput ?? null,
-              }])
-            ),
-            poolSnapshot: result.poolSnapshot,
-          }
-          const tracked = this.knowledgeService.trackExecutionEffectiveness(execResult)
-          if (tracked > 0) {
-            console.log(`[ExecutionLifecycle] Tracked effectiveness for ${tracked} rules in execution ${id}`)
-          }
-          // Throttled retire: run at most once per RETIRE_INTERVAL_MS.
-          // Effectiveness tracking runs on every execution (cheap DB write);
-          // retireStaleRules does DB scan + file rewrites and should not.
-          const now = Date.now()
-          if (now - this.lastRetireAt >= ExecutionLifecycle.RETIRE_INTERVAL_MS) {
-            this.lastRetireAt = now
-            try {
-              const retired = this.knowledgeService.retireStaleRules()
-              if (retired > 0) {
-                console.log(`[ExecutionLifecycle] Retired ${retired} stale rules`)
-              }
-            } catch (retireErr) {
-              console.warn(`[ExecutionLifecycle] retireStaleRules failed:`, retireErr)
-            }
-          }
-        } catch (err) {
-          console.warn(`[ExecutionLifecycle] Knowledge effectiveness tracking failed:`, err)
-        }
-      }
 
       try {
         const summary = generateSummary(wf.parsed.name, result.status, result.nodeResults, result.durationMs)

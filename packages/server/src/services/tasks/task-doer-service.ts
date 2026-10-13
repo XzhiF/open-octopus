@@ -40,6 +40,7 @@ import { TaskNotFoundError, TaskStatusConflictError, type TasksService } from ".
 import { batchRelPath } from "./task-artifact-sync"
 import { specRunbookLevel } from "./runbook-spec"
 import { ExecutionDAO, TaskDAO } from "../../db/dao"
+import { resolveGlobalWikiRoot } from "../knowledge/global-paths"
 import {
   QUICK_EDIT_MARKER,
   TAKEOVER_EDIT_MARKER,
@@ -407,8 +408,10 @@ export class TaskDoerService {
     // wiki 根路径 + 查阅纪律（octo-wiki / INDEX / wiki_refs），绝不携带词条正文；
     // 正文由 agent 按 octo-wiki 导航协议自读（skill 经 preflight 预置进执行
     // workspace 的 .claude/skills，SDK settingSources 原生发现，ADR-0006）。
+    // 知识中心票 08（D6①）：wiki 全局唯一 —— 指针改指全局根 ~/.octopus/knowledge/wiki
+    // （resolveGlobalWikiRoot 单源，票03 提供），org 级路径随 org knowledge 硬废退役。
     lines.push(
-      `- 知识指针: wiki=${path.join(os.homedir(), ".octopus", "orgs", detail.org || "default", "knowledge", "wiki")} 动手前按 octo-wiki 导航协议先读 INDEX，产出标 [ref:]、收尾写 wiki_refs（只指路不喂正文）`,
+      `- 知识指针: wiki=${resolveGlobalWikiRoot()} 动手前按 octo-wiki 导航协议先读 INDEX，产出标 [ref:]、收尾写 wiki_refs（只指路不喂正文）`,
     )
     return lines.join("\n")
   }
