@@ -576,8 +576,15 @@ app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCom
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
-const revertTasks = new RevertTaskService({ db: getDb(), queue: wikiWriteQueue })
-app.route("/api/knowledge/wiki", createWikiRevertRoutes(revertTasks))
+// 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
+// 在 initDb() 前 import 即抛 "Database not initialized"（崩 7 个 import 级测试）；
+// 改惰性构造——首次 revert 请求才 new，与下方迁移器工厂（(apply)=>new …）同轨。
+let revertTasksInstance: RevertTaskService | undefined
+const getRevertTasks = () => (revertTasksInstance ??= new RevertTaskService({ db: getDb(), queue: wikiWriteQueue }))
+app.route("/api/knowledge/wiki", createWikiRevertRoutes({
+  revert: (commit) => getRevertTasks().revert(commit),
+  get: (id) => getRevertTasks().get(id),
+}))
 // 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
