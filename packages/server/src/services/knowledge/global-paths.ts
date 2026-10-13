@@ -11,13 +11,15 @@ import os from "os"
  *   ├── raw/{inbox,archives,research}  层1 不可变源
  *   └── wiki/{entities,concepts,topics,sources,cases,_retired}  层2 五类页
  *
- * 注入优先级（与 resolveWikiRoot 同律）：参数 rootDir > `OCTOPUS_KNOWLEDGE_DIR` env > `~/.octopus/knowledge`。
- * env 复用 file-ops.ts `getKnowledgeDir()` 的同名钩子——两者指向同一路径
- * （`~/.octopus/knowledge`），测试与部署只需设一个变量。
+ * 注入优先级（全库统一口径，本模块单源）：参数 rootDir > `OCTOPUS_KNOWLEDGE_DIR` env > `~/.octopus/knowledge`；
+ * home 基受 `$OCTOPUS_HOME` 窗（测试/隔离部署注入假 home）。
+ * `OCTOPUS_WIKI_DIR` 为**弃用别名**（票01 时代直写 wiki 根，legacyWikiDirEnv 单源定义）——
+ * 正源只有一个：知识根 env，wiki 根 = 知识根/wiki。
  *
  * 本模块只做「解析 + mkdir -p」，零副作用文件写入；SCHEMA.md / user_preference.md /
  * _archive/ 等根内文件属票03（全局化搬家）与票04（页格式），不在此处创建。
- * 也不触碰 org 级路径链（file-ops / wiki/paths）——重叠留给票03 后续统一。
+ * org 轨与兼容窗**同收口于此**（code-review S3：resolveKnowledgeDir / derive 族 /
+ * legacyWikiDirEnv——file-ops 与 wiki/paths 全部委托，不再各自拼路径）。
  */
 
 /** raw 层三个子目录（prototype 行 245-249）。 */
@@ -75,8 +77,8 @@ export function ensureKnowledgeSkeleton(injectedRoot?: string): string {
   return root
 }
 
-// ── 票03 追加：全局化搬家的 org 钉常量（D6①；"重叠留给票03 后续统一" 的落点）──────
-// 票03 的搬家服务与读 API 需要「全局知识根」的无参解析与 DB org 钉常量；根解析直接
+// ── 票03 追加：全局化搬家的 org 钉常量（D6①）──────────────────────────────
+// 搬家服务与读 API 需要「全局知识根」的无参解析与 DB org 钉常量；根解析直接
 // 复用上方 resolveKnowledgeRoot/getGlobalWikiRoot（不另立门户），org 常量在此单源。
 
 /**
@@ -97,3 +99,55 @@ export function resolveGlobalWikiRoot(): string {
  * 读 API（tree/article/search）与 re-key 迁移共用这一个真相源。
  */
 export const GLOBAL_WIKI_ORG = "global"
+
+// ── code-review S3 收口：org 轨 + 假 home 窗 + 弃用别名——单源解析族 ──────────────
+// 原「重叠留给票03 后续统一」的账在此清：file-ops.getKnowledgeDir、wiki/paths.resolveWikiRoot、
+// resolveWikiRootCompat 全部委托下列函数，路径布局公式只在本文件出现一次。
+
+/**
+ * home 基单源：注入假 home（测试窗）> `$OCTOPUS_HOME` > `~/.octopus`。
+ * 与 octopusHome() 同律，多一个注入位——compat 窗与布局 derive 族共用。
+ */
+export function octopusHomeFor(injectedHome?: string): string {
+  return injectedHome ?? octopusHome()
+}
+
+/** 布局式：home 基下的知识根（真 home 入口走 resolveKnowledgeRoot，这里供注入窗/别名换算）。 */
+export function deriveKnowledgeRootAt(homeBase: string): string {
+  return path.join(homeBase, "knowledge")
+}
+
+/** 布局式：home 基下的全局 wiki 根 = 知识根/wiki。 */
+export function deriveWikiRootAt(homeBase: string): string {
+  return path.join(deriveKnowledgeRootAt(homeBase), "wiki")
+}
+
+/** 布局式：home 基下的 org 级旧知识目录（票09 硬废后仅供兼容读与归档脚本）。 */
+export function deriveOrgKnowledgeDirAt(homeBase: string, org: string): string {
+  return path.join(homeBase, "orgs", org, "knowledge")
+}
+
+/** 布局式：home 基下的 org 级旧 wiki 目录（搬家兼容窗用）。 */
+export function deriveOrgWikiRootAt(homeBase: string, org: string): string {
+  return path.join(deriveOrgKnowledgeDirAt(homeBase, org), "wiki")
+}
+
+/**
+ * org-aware 知识目录单源解析（file-ops.getKnowledgeDir 的委托对象）：
+ * `OCTOPUS_KNOWLEDGE_DIR` 拍平（测试钩子本意=无视布局直接给目录，org 参数一并吞掉——
+ * 旧语义逐字保留）> org 轨 > 全局轨。纯解析零 mkdir（票09 护栏）。
+ */
+export function resolveKnowledgeDir(org?: string): string {
+  if (process.env.OCTOPUS_KNOWLEDGE_DIR) return process.env.OCTOPUS_KNOWLEDGE_DIR
+  const home = octopusHome()
+  return org ? deriveOrgKnowledgeDirAt(home, org) : deriveKnowledgeRootAt(home)
+}
+
+/**
+ * **弃用别名**：`OCTOPUS_WIKI_DIR` 直写 wiki 根（票01 时代测试钩子）。
+ * 正源 env 是 OCTOPUS_KNOWLEDGE_DIR（wiki 根=知识根/wiki）；别名定义收口在这一函数，
+ * 迁移完存量钩子后整体删除。优先级三处同律：注入 rootDir > 别名 > 布局解析。
+ */
+export function legacyWikiDirEnv(): string | undefined {
+  return process.env.OCTOPUS_WIKI_DIR
+}

@@ -1,27 +1,35 @@
 import fs from "fs"
 import path from "path"
-import os from "os"
 import type { WikiPageType } from "@octopus/shared"
-import { resolveGlobalWikiRoot, WIKI_PAGE_DIRS } from "../global-paths"
+import {
+  deriveOrgWikiRootAt,
+  deriveWikiRootAt,
+  getGlobalWikiRoot,
+  legacyWikiDirEnv,
+  octopusHomeFor,
+  resolveGlobalWikiRoot,
+  resolveKnowledgeRoot,
+  WIKI_PAGE_DIRS,
+} from "../global-paths"
 
 /**
- * Wiki 根路径解析 — LLM-WIKI knowledge-loop 票01。
+ * Wiki 根路径解析 — LLM-WIKI knowledge-loop 票01；code-review S3 起布局**单源委托**
+ * global-paths（derive 族/legacyWikiDirEnv），本文件不再自拼 `~/.octopus/orgs/...`。
  *
- * 独立于 `getKnowledgeDir`（file-ops.ts L21）：那个 getter 有 mkdir 副作用、且它的
- * OCTOPUS_KNOWLEDGE_DIR env 会无视 org 拍平目录（data-plane notes gotcha #2）。
- * wiki 根是独立 git 仓库（org 级）：
+ * wiki 根是独立 git 仓库：
  *
- *   org     →  ~/.octopus/orgs/<org>/knowledge/wiki/
- *   global  →  ~/.octopus/knowledge/wiki/（单源解析 = global-paths helper，票03）
+ *   org     →  ~/.octopus/orgs/<org>/knowledge/wiki/   （旧轨，$OCTOPUS_HOME 窗生效）
+ *   global  →  ~/.octopus/knowledge/wiki/（resolveGlobalWikiRoot，票03）
  *
- * 注入优先级：构造器 rootDir（archive-routes stateDir 测试先例）> OCTOPUS_WIKI_DIR env hook > org 路径。
- * 本模块不 mkdir——目录骨架 + git init 属编译服务职责（首编译时收口）。
+ * 注入优先级三处同律：构造器 rootDir > `OCTOPUS_WIKI_DIR` 弃用别名（legacyWikiDirEnv）
+ * > 布局解析。本模块不 mkdir——目录骨架 + git init 属编译服务职责（首编译时收口）。
  */
 export function resolveWikiRoot(org?: string, injectedRoot?: string): string {
   if (injectedRoot) return injectedRoot
-  if (process.env.OCTOPUS_WIKI_DIR) return process.env.OCTOPUS_WIKI_DIR
+  const legacy = legacyWikiDirEnv()
+  if (legacy) return legacy
   if (!org) return resolveGlobalWikiRoot()
-  return path.join(os.homedir(), ".octopus", "orgs", org, "knowledge", "wiki")
+  return deriveOrgWikiRootAt(octopusHomeFor(), org)
 }
 
 /** 四域 + cases 判例域（v2 存量目录——兼容可读，重蒸馏票07 后整体迁 _retired/）。 */
@@ -96,14 +104,18 @@ export function hasWikiContent(root: string): boolean {
  * 读 API 的 wiki 根解析（票03 D6①）：搬家窗口期语义——
  *   - 全局根有内容 → 只读全局根（旧 org wiki 路径此后不再读，"兼容读一次"收口于搬家完成）
  *   - 全局根尚无内容（迁移未跑）→ 兼容读旧 org wiki 路径（org 参数容错承接）
- * 优先级沿用 resolveWikiRoot：注入 rootDir > OCTOPUS_WIKI_DIR env > 上述窗口判定。
- * `octopusHome` = 假 ~/.octopus 根（测试注入 tmpdir fixture，绝不碰真实家目录；缺省 os.homedir()/.octopus）。
+ * 优先级沿用 resolveWikiRoot：注入 rootDir > OCTOPUS_WIKI_DIR 弃用别名 > 上述窗口判定。
+ * 全局根候选与 resolveKnowledgeRoot **同式**（正源 env 拍平生效；注入 fake home 时以注入为准，
+ * env 让位）；org 轨在兼容窗恒按 home 基布局。
+ * `injectedHome` = 假 ~/.octopus 根（测试注入 tmpdir fixture，绝不碰真实家目录；
+ * 缺省走单源 octopusHomeFor：$OCTOPUS_HOME > os.homedir()/.octopus）。
  */
-export function resolveWikiRootCompat(org?: string, injectedRoot?: string, octopusHome?: string): string {
+export function resolveWikiRootCompat(org?: string, injectedRoot?: string, injectedHome?: string): string {
   if (injectedRoot) return injectedRoot
-  if (process.env.OCTOPUS_WIKI_DIR) return process.env.OCTOPUS_WIKI_DIR
-  const home = octopusHome ?? path.join(os.homedir(), ".octopus")
-  const globalRoot = path.join(home, "knowledge", "wiki")
+  const legacy = legacyWikiDirEnv()
+  if (legacy) return legacy
+  const home = octopusHomeFor(injectedHome)
+  const globalRoot = injectedHome ? deriveWikiRootAt(injectedHome) : getGlobalWikiRoot(resolveKnowledgeRoot())
   if (hasWikiContent(globalRoot)) return globalRoot
-  return org ? path.join(home, "orgs", org, "knowledge", "wiki") : globalRoot
+  return org ? deriveOrgWikiRootAt(home, org) : globalRoot
 }
