@@ -133,13 +133,13 @@ describe("wiki curate write gate (ticket 06)", async () => {
     const subject = rawGit(root, ["log", "-1", "--pretty=%s"]).stdout
     expect(subject).toContain(`[review:${id}]`)
 
-    // LOG 行：compile 动作 + 「+oct-013」摘要列
+    // LOG 行：compile 动作 + 「+oct-013」结果续行（票04 行格式）
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toMatch(/\| compile \| projects\/prj-octopus\.md \| \+oct-013/)
+    expect(log).toMatch(/compile \| projects\/prj-octopus\.md\n\s+→ \+oct-013/)
 
-    // INDEX 重建：规则统计 6 → 7
+    // INDEX 重建：规则计数 6 → 7（v2 projects 页映射 Topics 组，行注 `· 硬约束 ×N`）
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
-    expect(index).toContain("· 7 规则")
+    expect(index).toContain("· 硬约束 ×7")
 
     // FTS 同步：新正文词 "lockfile" 检索命中（compile 前不存在该词）
     const hits = new WikiArticleDAO(db).search("testorg", "lockfile")
@@ -292,10 +292,10 @@ confidence: 0.6
     expect(retired).toContain("x-real-ip 头判定客户端 IP 可靠")
     expect(retired).toContain("wiki-edit-stale-oct009")
 
-    // LOG：retire + compile 两行（prototype retire 行形态「oct-009 → _retired/」）
+    // LOG：retire + compile 两行（票04 行格式：`## [date] op | 对象` + `→ 结果` 续行）
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toMatch(/\| retire \| oct-009 → _retired\/ \| .*replaced_by oct-013/)
-    expect(log).toMatch(/\| compile \| business\/biz-x-real-ip\.md \| \+oct-013/)
+    expect(log).toMatch(/retire \| oct-009 → _retired\/[\s\S]*?replaced_by oct-013/)
+    expect(log).toMatch(/compile \| business\/biz-x-real-ip\.md\n\s+→ \+oct-013/)
 
     // 单次 approve = 单个 commit（retire 与 compile 同事务落库），带审核引用
     const commitsAfter = Number(rawGit(root, ["rev-list", "--count", "HEAD"]).stdout.trim())

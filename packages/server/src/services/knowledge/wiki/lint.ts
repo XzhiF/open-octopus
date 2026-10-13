@@ -1,17 +1,17 @@
 import fs from "fs"
 import path from "path"
-import { extractRuleAnchors, serializeEntryMarkdown, findDateOccurrences, RULE_ANCHOR_RE } from "./format"
+import type { WikiPageFrontmatter, WikiPageType } from "@octopus/shared"
+import { extractRuleAnchors, serializeEntryMarkdown, serializePageMarkdown, findDateOccurrences, RULE_ANCHOR_RE, pageEntryView } from "./format"
 import type { WikiEntryFrontmatter } from "@octopus/shared"
 
 /**
- * wiki lint — 编译期同步闸（票02，spec §增长约束 / prototype Tab③ lines 573-581）。
+ * wiki lint — 编译期同步闸（票02 建闸；票04 适配 v3 五类页）。
  *
- * 唯一调用点在 WikiCompileService.compileEntry 的 validate 段——任何写入通道
- * （含票06策展）都过这道闸，无旁路。lint 本身是纯函数（不做 fs/DB 副作用）；
- * 拒写后的拆分提案入队、INDEX 预算回写等副作用归编译服务。
+ * 唯一调用点在 WikiCompileService 的 validate 段——任何写入通道都过这道闸，无旁路。
+ * lint 本身是纯函数（不做 fs/DB 副作用）；v3 拆分出口 = 编译失败随错误返回**拆分建议**
+ * （供策展人对话内自纠，票面 AC5），「拆分提案入队」语义已在本模块删除（审核队列其余面属票09）。
  *
- * 域豁免（票04 cases 接线）：lintProfileForDomain 给出豁免开关——
- * cases 域豁免 L1 容量闸与正文禁日期（判例是历史事件，文件名/正文天然带日期）。
+ * 豁免开关：cases 判例豁免 L1 容量闸与正文禁日期（判例是历史事件，文件名/正文天然带日期）。
  */
 
 /** 阈值逐字来自 prototype Tab③「增长约束」表（独立真相源）。 */
@@ -37,11 +37,16 @@ export interface LintFinding {
 /** lint 拒绝写入时抛出：message 带 `L1_CAPACITY:`/`L5_*:` 等稳定 code 前缀。 */
 export class WikiLintError extends Error {
   readonly findings: LintFinding[]
-  proposalId?: string
-  constructor(code: string, message: string, findings: LintFinding[]) {
+  /**
+   * v3 拆分出口（票04 AC5）：容量闸/INDEX 预算触顶时随错误返回的拆分建议——
+   * 供策展人对话内自纠重编译；**无入队语义**（不再写 pending_review）。
+   */
+  suggestion?: SplitProposal
+  constructor(code: string, message: string, findings: LintFinding[], suggestion?: SplitProposal) {
     super(`${code}: ${message}`)
     this.name = "WikiLintError"
     this.findings = findings
+    this.suggestion = suggestion
   }
 }
 
@@ -314,4 +319,130 @@ export function buildSplitProposal(meta: WikiEntryFrontmatter, fileName: string,
       ruleCount: s.anchors.length,
     })),
   }
+}
+
+/** v3 页拆分建议：页 meta 经词条视图适配后复用同一计划构造（单源呈现）。 */
+export function splitProposalFromPage(meta: WikiPageFrontmatter, fileName: string, body: string, reason: string): SplitProposal {
+  return buildSplitProposal(pageEntryView(meta), fileName, body, reason)
+}
+
+// ── 页格式 v3 闸（票04）──────────────────────────────────────────────
+
+/** 规则锚点唯一允许栖身的小节（prototype Tab② topic 页样例；票面 AC2）。 */
+export const TOPIC_CONSTRAINTS_SECTION = "硬约束"
+
+/** 锚点号 `oct-NNN` 全库 max；非该形态锚点（历史 id）不计入发号空间。 */
+export function maxAnchorNumber(anchors: Iterable<string>): number {
+  let max = 0
+  for (const a of anchors) {
+    const m = /^oct-(\d+)$/.exec(a)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return max
+}
+
+/** 发号格式化：`oct-` + 三位补零（prototype Tab② oct-008/oct-014 样例）。 */
+export function formatRuleAnchor(n: number): string {
+  return `oct-${String(n).padStart(3, "0")}`
+}
+
+/** 页类型 → lint 豁免开关（case 保留 P0 判例豁免面）。 */
+export function lintProfileForPageType(type: WikiPageType): LintProfile {
+  if (type === "case") return { capacity: false, datesInBody: false }
+  return { capacity: true, datesInBody: true }
+}
+
+export interface LintPageInput {
+  meta: WikiPageFrontmatter
+  body: string
+  anchors: string[]
+  /** wiki 根（[[wikilink]] 目标文件存在性判定） */
+  root: string
+  /** 链接语料：全库页 {id, path}（含本次自身） */
+  linkCorpus: Array<{ id: string; path: string }>
+  /** 省略时按 meta.type 自动取 */
+  profile?: LintProfile
+}
+
+/**
+ * v3 页同步闸（票04 AC1/AC2/AC5）：
+ * - L1 容量闸**按页**（同 v2 阈值：≤120 行 / 25 规则 / ~2000 token，先到为准）；
+ * - L5 锚点小节约束：`<!--#oct-NNN-->` 只允许存在于 topic 页「硬约束」小节
+ *   （非 topic 带锚点、或 topic 锚点漏在其它小节/前言，均拒写）；
+ * - L5 断链：front-matter `links` + 正文 `[[...]]` 双检（编译期断链校验保留）；
+ * - L5 正文零日期、L5 超长代码块、L3 小节容量：与 v2 同律。
+ * v2 词条闸（lintWikiEntry）原样保留——兼容读面与旧通道（票09 退场）。
+ */
+export function lintWikiPage(input: LintPageInput): LintResult {
+  const { meta, body, anchors } = input
+  const profile = input.profile ?? lintProfileForPageType(meta.type)
+  const errors: LintFinding[] = []
+  const warnings: LintFinding[] = []
+
+  // ── L1 页容量闸 ──
+  if (profile.capacity) {
+    const serialized = serializePageMarkdown(meta, body).replace(/\n+$/, "")
+    const fileLines = serialized.split("\n").length
+    const tokens = estimateTokens(serialized)
+    if (fileLines > WIKI_LIMITS.ENTRY_MAX_LINES) {
+      errors.push({ level: "L1", severity: "error", code: "L1_CAPACITY", message: `页 ${fileLines} 行超过容量闸 ${WIKI_LIMITS.ENTRY_MAX_LINES} 行（先到为准）` })
+    } else if (anchors.length > WIKI_LIMITS.ENTRY_MAX_RULES) {
+      errors.push({ level: "L1", severity: "error", code: "L1_CAPACITY", message: `页 ${anchors.length} 条规则超过容量闸 ${WIKI_LIMITS.ENTRY_MAX_RULES} 条（先到为准）` })
+    } else if (tokens > WIKI_LIMITS.ENTRY_MAX_TOKENS) {
+      errors.push({ level: "L1", severity: "error", code: "L1_CAPACITY", message: `页约 ${tokens} token 超过容量闸约 ${WIKI_LIMITS.ENTRY_MAX_TOKENS} token（先到为准）` })
+    }
+  }
+
+  // ── L5 锚点小节约束（票面 AC2）──
+  if (anchors.length > 0 && meta.type !== "topic") {
+    errors.push({ level: "L5", severity: "error", code: "L5_ANCHOR_SCOPE", message: `锚点 <!--#oct-NNN--> 只存在于 topic 页「${TOPIC_CONSTRAINTS_SECTION}」小节——${meta.type} 页 ${meta.id} 携带 ${anchors.length} 个锚点（${anchors.join(", ")}）` })
+  } else if (meta.type === "topic") {
+    const { preamble, sections } = parseH2Sections(body)
+    const strays = extractRuleAnchors(preamble.join("\n"))
+    for (const s of sections) {
+      if (s.title === TOPIC_CONSTRAINTS_SECTION) continue
+      strays.push(...s.anchors)
+    }
+    if (strays.length > 0) {
+      errors.push({ level: "L5", severity: "error", code: "L5_ANCHOR_SCOPE", message: `topic 页 ${meta.id} 的锚点 ${strays.join(", ")} 不在「${TOPIC_CONSTRAINTS_SECTION}」小节——硬约束锚点只栖身该节（全库唯一、永不复用）` })
+    }
+  }
+
+  // ── L3 小节容量（不阻塞）──
+  const { sections } = parseH2Sections(body)
+  for (const s of sections) {
+    if (s.anchors.length > WIKI_LIMITS.H2_MAX_RULES) {
+      warnings.push({ level: "L3", severity: "warn", code: "L3_SECTION", message: `L3: H2 小节「${s.title}」有 ${s.anchors.length} 条规则 > ${WIKI_LIMITS.H2_MAX_RULES}，建议独立成子页（不阻塞）` })
+    }
+  }
+
+  // ── L5 断链：front-matter links 与正文 [[wikilink]] 双检 ──
+  const broken: string[] = []
+  const bodyTargets: string[] = []
+  for (const m of body.matchAll(WIKILINK_RE)) {
+    const target = m[1].trim()
+    if (target) bodyTargets.push(target)
+  }
+  for (const target of [...meta.links, ...bodyTargets]) {
+    if (!resolveWikiLink(target, input.root, input.linkCorpus)) broken.push(target)
+  }
+  if (broken.length > 0) {
+    errors.push({ level: "L5", severity: "error", code: "L5_LINK_BROKEN", message: `断链 [[...]] 目标不存在: ${[...new Set(broken)].map(b => `[[${b}]]`).join(", ")}` })
+  }
+
+  // ── L5 正文禁日期（case 豁免）；日期只在 [[...]] 链接内（判例文件名天然带日期）不算 ──
+  if (profile.datesInBody) {
+    const dates = findDateOccurrences(body.replace(WIKILINK_RE, ""))
+    if (dates.length > 0) {
+      errors.push({ level: "L5", severity: "error", code: "L5_DATES_IN_BODY", message: `正文出现日期 ${dates.map(d => `'${d}'`).join(", ")}——常青正文应零日期（日期由 front-matter sources / LOG.md / git history 三处承接）` })
+    }
+  }
+
+  // ── L5 禁 >20 行代码块 ──
+  const longBlocks = overLongCodeBlocks(body, WIKI_LIMITS.CODE_BLOCK_MAX_LINES)
+  if (longBlocks.length > 0) {
+    errors.push({ level: "L5", severity: "error", code: "L5_CODE_BLOCK", message: `代码块 ${longBlocks.join("/")} 行超过 ${WIKI_LIMITS.CODE_BLOCK_MAX_LINES} 行上限——长内容应指回源码/docs 指针` })
+  }
+
+  return { errors, warnings }
 }

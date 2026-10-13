@@ -3,9 +3,10 @@ import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
-import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
-import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
+import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown, parseWikiFile } from "../services/knowledge/wiki/format"
+import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
+import type { WikiPageType } from "@octopus/shared"
 import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
 import { spawnGit } from "../services/knowledge/wiki/wiki-git"
 import { errorResponse } from "../services/knowledge/validators"
@@ -105,6 +106,31 @@ function caseFieldsFor(root: string, relPath: string): {
 }
 
 /**
+ * 票11：v3 页 front-matter 现形（type/aliases/links/entityKind——页渲染 chips 数据源）。
+ * aliases/links 不进 DB 索引表（v52 无列），单文件定向读 parseWikiFile 取；
+ * v2 词条/判例/文件缺席/坏头一律 null——与 caseFieldsFor 同降级律，绝不 500。
+ */
+function pageFieldsFor(root: string, relPath: string): {
+  type: string
+  entityKind: string | null
+  aliases: string[]
+  links: string[]
+} | null {
+  try {
+    const parsed = parseWikiFile(fs.readFileSync(path.join(root, relPath), "utf-8"))
+    if (parsed.kind !== "page") return null
+    return {
+      type: parsed.meta.type,
+      entityKind: parsed.meta.entity_kind ?? null,
+      aliases: parsed.meta.aliases,
+      links: parsed.meta.links,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
  * 判例加权分（票04：domain=cases 检索 symptom/tags 加权命中）：
  * symptom（title/summary 两列同值）×4 + tags ×3 + 正文偶然提及 ×1。
  * "判例比法条更贴现场"——卡壳按症状检索时，症状命中的判例必须压过只在
@@ -150,8 +176,16 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         entries: Array<{ id: string; path: string; title: string; summary: string; stability: string; ruleCount: number }>
       }> = []
 
-      for (const domain of WIKI_DOMAINS) {
-        const inDomain = rows.filter(r => r.domain === domain)
+      // 类型值面 = v2 域值（projects/…/cases）∪ v3 页型值（entity/concept/…）——
+      // domain 列存 v3 type 值（票04 AC6），树按值分组两者都要列。
+      const v3TypeValues: WikiPageType[] = ["entity", "concept", "topic", "source", "case"]
+      const groups: Array<{ name: string; label: string }> = [
+        ...WIKI_DOMAINS.map(d => ({ name: d, label: WIKI_DOMAIN_LABELS[d] })),
+        ...v3TypeValues.map(t => ({ name: t, label: WIKI_PAGE_GROUP_LABELS[t] })),
+      ]
+
+      for (const group of groups) {
+        const inDomain = rows.filter(r => r.domain === group.name)
         if (inDomain.length === 0) continue
         const mapped = inDomain.map(r => {
           const ruleCount = extractRuleAnchors(r.body).length
@@ -159,7 +193,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
           if (r.last_compiled > stats.lastCompiled) stats.lastCompiled = r.last_compiled
           return { id: r.id, path: r.path, title: r.title, summary: r.summary, stability: r.stability, ruleCount }
         })
-        domains.push({ name: domain, label: WIKI_DOMAIN_LABELS[domain], count: mapped.length, entries: mapped })
+        domains.push({ name: group.name, label: group.label, count: mapped.length, entries: mapped })
       }
 
       try {
@@ -206,6 +240,8 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         gitHistory: gitHistoryFor(wikiRoot, row.path),
         // 票04：判例详情携带状态面（open/distilled/superseded chips + rule_ref 顺藤）；词条 null
         case: row.domain === "cases" ? caseFieldsFor(wikiRoot, row.path) : null,
+        // 票11：v3 页 front-matter 面（type/aliases/links chips 渲染源）；v2/判例/缺文件 null
+        page: pageFieldsFor(wikiRoot, row.path),
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.article")

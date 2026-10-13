@@ -1,7 +1,8 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { resolveGlobalWikiRoot } from "../global-paths"
+import type { WikiPageType } from "@octopus/shared"
+import { resolveGlobalWikiRoot, WIKI_PAGE_DIRS } from "../global-paths"
 
 /**
  * Wiki 根路径解析 — LLM-WIKI knowledge-loop 票01。
@@ -23,7 +24,7 @@ export function resolveWikiRoot(org?: string, injectedRoot?: string): string {
   return path.join(os.homedir(), ".octopus", "orgs", org, "knowledge", "wiki")
 }
 
-/** 四域 + cases 判例域（prototype Tab③ 目录布局，行 405-429）。 */
+/** 四域 + cases 判例域（v2 存量目录——兼容可读，重蒸馏票07 后整体迁 _retired/）。 */
 export const WIKI_DOMAINS = ["projects", "workflows", "business", "research", "cases"] as const
 export type WikiDomainDir = (typeof WIKI_DOMAINS)[number]
 
@@ -37,11 +38,30 @@ export const WIKI_DOMAIN_LABELS: Record<WikiDomainDir, string> = {
 }
 
 /**
- * 确保 wiki 目录骨架存在：4 个规则域 + cases/ 判例域 + _retired/ 退役区。
+ * 页路径面 v3（票04 基座）：五类页目录（prototype Tab② 目录契约）。
+ * 单源 = global-paths（票02 三层骨架同表）——此处 re-export 供形态层
+ * （扫描/骨架/INDEX 分组）消费；页形态逻辑一律经此解析目录，不硬编码 org wiki 路径。
+ */
+export { WIKI_PAGE_DIRS, type WikiPageDir } from "../global-paths"
+
+/** INDEX 五类分组节头 — 逐字 prototype Tab② INDEX 样例（`## Entities (7)` 式）。 */
+export const WIKI_PAGE_GROUP_LABELS: Record<WikiPageType, string> = {
+  entity: "Entities",
+  concept: "Concepts",
+  topic: "Topics",
+  source: "Sources",
+  case: "Cases",
+}
+
+/** 扫描/骨架用目录全集：v3 五类 ∪ v2 五域（cases 重合）；顺序 v3 在前。 */
+export const WIKI_ALL_DIRS: readonly string[] = [...WIKI_PAGE_DIRS, ...WIKI_DOMAINS.filter(d => d !== "cases")]
+
+/**
+ * 确保 wiki 目录骨架存在：v3 五类页目录 + v2 存量域目录（兼容读）+ _retired/ 退役区。
  * 幂等（recursive mkdir）。
  */
 export function ensureWikiSkeleton(root: string): void {
-  for (const d of [...WIKI_DOMAINS, "_retired"]) {
+  for (const d of [...WIKI_ALL_DIRS, "_retired"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true })
   }
 }
@@ -57,7 +77,7 @@ export function hasWikiContent(root: string): boolean {
   for (const special of ["INDEX.md", "LOG.md"]) {
     if (fs.existsSync(path.join(root, special))) return true
   }
-  for (const d of [...WIKI_DOMAINS, "_retired"]) {
+  for (const d of [...WIKI_ALL_DIRS, "_retired"]) {
     try {
       if (fs.readdirSync(path.join(root, d)).some(n => n.endsWith(".md"))) return true
     } catch { /* 域目录缺席 */ }

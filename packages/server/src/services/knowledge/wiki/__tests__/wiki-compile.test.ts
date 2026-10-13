@@ -118,21 +118,23 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     expect(written).toContain("id: prj-octopus")
     expect(written).toContain("<!--#oct-007-->")
 
-    // ── INDEX.md — expected shape QUOTED from prototype Tab③ lines 46-70
+    // ── INDEX.md — 票04 v3 分组形状（expected 逐字 prototype Tab② INDEX 样例行式）
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
     expect(index).toContain("# Octopus Knowledge Wiki — testorg")
-    expect(index).toContain("> Agent 导航协议：先读本索引 → 选词条整读 → 未命中再 search API。禁止全库遍历。")
-    expect(index).toContain("## projects/ （项目知识 · 1 词条 · 6 规则）")
-    // 每词条一行摘要 — llms.txt 惯例（prototype line 51 行式，路径与 summary/topics 来自 fixture）
-    expect(index).toContain("- projects/prj-octopus.md — monorepo 构建/测试/端口规则与已知陷阱｜topics: build,test,ports,pitfall")
-    expect(index).toContain("## 统计")
-    expect(index).toContain(`词条 1 · 案例 0 · 规则 6 · 最近编译 2026-10-12 · 待审核 0 ｜ 变更史见 LOG.md / git log`)
+    expect(index).toContain("> 导航协议：先读本索引 → 选页整读 → 未命中再 search API。禁止全库遍历。")
+    expect(index).toContain("## 必读")
+    expect(index).toContain("- user_preference.md — owner 偏好（人工维护）")
+    // v2 词条（projects 域）按映射进 Topics 组；行式 `- {relPath} — {summary} · 硬约束 ×N`
+    expect(index).toContain("## Topics (1)")
+    expect(index).toContain("- projects/prj-octopus.md — monorepo 构建/测试/端口规则与已知陷阱 · 硬约束 ×6")
+    // 审批遗产字样已随概念废除（待审核计数行删除）
+    expect(index).not.toContain("待审核")
 
-    // ── LOG.md — header verbatim from prototype Tab③ lines 500-507 + append 行
+    // ── LOG.md — 票04 v3 行格式（`## [date] op | title` + `→ 结果` 续行）
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toContain("# Curation Log（append-only · 编译器自动写 · 详情看 git show <hash>）")
-    expect(log).toContain("| 日期 | 动作 | 词条 | 摘要 | 来源 | 审核 |")
-    expect(log).toContain(`| ${today()} | compile | projects/prj-octopus.md | +oct-001…oct-012 初始编译 | task-207 归档提炼 | xzf ✓ |`)
+    expect(log).toContain("# LOG.md — 时间线（append-only · 编译器自动写")
+    expect(log).toContain(`## [${today()}] compile | projects/prj-octopus.md`)
+    expect(log).toContain("  → +oct-001…oct-012 初始编译 · task-207 归档提炼 · xzf ✓")
 
     // ── git: 独立仓库 + 编译 commit 可查（真 git，workspace-git.test.ts fixture 先例）
     expect(fs.existsSync(path.join(root, ".git"))).toBe(true)
@@ -225,13 +227,13 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     expect(row.summary).toBe("构建/测试/端口/CI 规则与已知陷阱")
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
     expect(index.match(/projects\/prj-octopus\.md/g)!.length).toBe(1)
-    expect(index).toContain("- projects/prj-octopus.md — 构建/测试/端口/CI 规则与已知陷阱｜topics: build,test,ports,pitfall")
+    expect(index).toContain("- projects/prj-octopus.md — 构建/测试/端口/CI 规则与已知陷阱 · 硬约束 ×6")
     const hits = db.prepare("SELECT id FROM wiki_fts WHERE wiki_fts MATCH 'CI'").all() as { id: string }[]
     expect(hits.map(h => h.id)).toContain("prj-octopus")
-    // LOG 不重复表头、追加第二行
+    // LOG 不重复头、追加第二行
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log.match(/# Curation Log/g)!.length).toBe(1)
-    expect(log).toContain(`| ${today()} | compile | projects/prj-octopus.md | 修订 summary | manual | curator ✓ |`)
+    expect(log.match(/# LOG\.md/g)!.length).toBe(1)
+    expect(log).toContain("  → 修订 summary · manual · curator ✓")
     expect(res2.commit).toMatch(/^[0-9a-f]{40}$/)
   })
 })
