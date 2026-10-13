@@ -19,9 +19,11 @@
  *   ⑤ done 判定零触碰声明：归档编排（archiving-service）不在本链，任务 completed_at 不动
  *
  * 运行（worktree/仓库 packages/server 下；schema.sql 按 __dirname 读取，须拷进输出目录）：
- *   npx tsup scripts/kc-archive-ingest-e2e.ts --format cjs --out-dir dist-scripts --external better-sqlite3
- *   cp src/db/schema.sql dist-scripts/
+ *   npx tsup scripts/kc-archive-ingest-e2e.ts --format cjs --out-dir dist-scripts --external better-sqlite3 --no-dts
+ *   cp src/db/schema.sql dist-scripts/schema.sql
  *   node dist-scripts/kc-archive-ingest-e2e.js
+ * 实跑记录（2026-10-13）：23 断言全 PASS，用时 122.8s（真 sonnet 总结 + 真 curator 编译，
+ * wiki commit ff5426d 触 5 页；raw sha256=f47bfa5216c99249…）。
  * 退出码：0 = 全部断言通过；1 = 任一断言失败或 LLM 无响应（如实失败，不降级）。
  */
 import Database from "better-sqlite3"
@@ -80,7 +82,7 @@ function seedHonestTask(db: Database.Database, taskHome: TaskHomeService): strin
     goal: "把 authsvc 登录流程改为服务端 session 制，支持后台强制下线",
     ac: ["登录成功写 session 并下发 cookie", "后台按用户强制下线即时生效", "session 过期自动清理"],
     decisions: ["D1: 服务端 session 而非 JWT（见 ADR 0001）"],
-    branch: "feat-kc10-e2e-20261022",
+    branch: "feat-kc10-e2e-20261013",
     phases: [
       { index: 1, name: "session 化改造", slug: "sess", specPath: "./.scratch/kc10-e2e/sess/spec.md", workflowRef: "built-in/task-dev", inputValues: {} },
       { index: 2, name: "强制下线与回归", slug: "kick", specPath: "./.scratch/kc10-e2e/kick/spec.md", workflowRef: "built-in/task-dev", inputValues: {} },
