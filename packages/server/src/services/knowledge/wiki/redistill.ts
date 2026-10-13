@@ -5,8 +5,8 @@ import type { WikiEntryFrontmatter, WikiPageFrontmatter } from "@octopus/shared"
 import { GLOBAL_WIKI_ORG, resolveGlobalWikiRoot } from "../global-paths"
 import { parseWikiFile, extractRuleAnchors, serializePageMarkdown, RULE_ANCHOR_RE } from "./format"
 import { REDISTILL_MAP_REL, WIKI_DOMAINS } from "./paths"
+import { parseH2Sections, lintWikiPage, TOPIC_CONSTRAINTS_SECTION } from "./lint"
 import type { WriteQueue } from "./compile-queue"
-import { parseH2Sections, TOPIC_CONSTRAINTS_SECTION } from "./lint"
 import { WikiCompileService, WIKI_LOG_HEADER, scanWikiEntries, type BatchPageInput } from "./compile"
 import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
 
@@ -20,7 +20,10 @@ export { REDISTILL_MAP_REL }
  *   - projects/workflows 词条 → topics 页：id 保号、规则行入「## 硬约束」小节、
  *     锚点 `<!--#oct-NNN-->` 原号随迁（历史 wiki_refs `词条id#锚点` 直接可解析）
  *   - business 词条 → concepts 页；Glossary 蒸馏产物（summary 钉 `GLOSSARY-MAP 存量收编 ·
- *     {pkg}`）按 pkg 归并对应概念页（base chunk 保号，-N 分片并入 mergedFrom）
+ *     {pkg}`）按 pkg 归并对应概念页（base chunk 保号，-N 分片并入 mergedFrom）；
+ *     **容量感知装页**：术语按 分片序×行序 贪心装页，以 lintWikiPage L1 闸做判据
+ *     （闸本体=唯一真相，不重算阈值），超限自动续页 `{base}-p2/-p3`（真语料 server 域
+ *     39 术语≈2700 token > L1 2000，纯单页归并会被写闸整批拒绝——装页器消解该病灶）
  *   - research 词条 → concepts 页（source 回执页是票05 raw 编译管线的产物，重蒸馏不伪造——
  *     偏离决策见票报告）
  *   - cases 原样保留（文件不动；DB type 值切 'case' 属 re-key 段）
@@ -28,11 +31,16 @@ export { REDISTILL_MAP_REL }
  *     原号进对照表台账（carried=false），永不复用由 nextRuleAnchor 读台账保证
  *   - 旧词条文件整迁 `_retired/v2/{domain}/`（不删除；hub 子目录形态出现即
  *     REDISTILL_UNSUPPORTED_HUB 硬拒交人工裁决）
- *   - [[链接]] 机械改写：指向 v2 旧路径/被并 chunk id 的目标改指新页（断链零）
+ *   - [[链接]] 机械改写：指向 v2 旧路径/被并 chunk id 的目标改指新页（断链零；分片
+ *     跨页时指向其**首个**落页，先到先得）
  *   - LOG.md 旧表格行机械转换 `## [date] op | title → 结果` 行格式（原表封 git 史）
  *   - INDEX.md 程序化重建五类分组（写闸 compilePages 内 renderBudgetedWikiIndex 单源）
  *   - DB wiki_articles type 值切五类 + FTS 重建（蓝绿派生自现 DDL），行数对账不丢
  *   - 全部落盘 = 一个 git commit（整体 revert 可还原）；重跑 diff 为空（幂等）。
+ *
+ * 票06 写串行：构造注入 queue（生产 = index.ts wikiWriteQueue 单例，带 wiki 根锁）时，
+ * apply 的整个写段以 kind "redistill" 入全局 FIFO 队列执行（spec §全局写串行「统一入队、
+ * 禁旁路」）；ops 同步回报形态 = 入队后轮询终态。dry-run 零写盘不入队。
  *
  * 真数据纪律（铁律同 global-move）：只被显式调用（POST /api/knowledge/wiki/redistill）；
  * 前置 = 票03 真搬家已跑（全局根 + org 钉 global）；apply 前主控先按 backupHint 备份 DB。
@@ -49,7 +57,7 @@ const V2_SOURCE_DOMAINS = WIKI_DOMAINS.filter(d => d !== "cases")
 export type RedistillAction = "topic" | "concept" | "merged-concept"
 
 export interface RedistillPagePlan {
-  /** 映射源的词条 id（merged 时 = base chunk id） */
+  /** 映射源的词条 id（merged/续页时 = 该页首个贡献 chunk id） */
   oldId: string
   /** v2 相对路径，如 workflows/wf-prd-impl.md */
   oldPath: string
@@ -57,7 +65,7 @@ export interface RedistillPagePlan {
   /** v3 相对路径，如 topics/wf-prd-impl.md */
   newPath: string
   action: RedistillAction
-  /** merged-concept：被吸收的分片 id */
+  /** merged-concept：该页吸收的分片 id（跨页分属多页） */
   mergedFrom?: string[]
 }
 
@@ -88,7 +96,7 @@ export interface RedistillReport {
   }
   commit: string | null
   backupHint: string
-  /** 经票06 全局写队列执行时的任务 id（queue.get 可查状态流转；直跑模式无此字段） */
+  /** 经票06 全局写队列执行时的任务 id（queue/task/:id 可查；直跑模式无此字段） */
   queueTaskId?: string
 }
 
@@ -101,19 +109,18 @@ export interface RedistillOptions {
   /** DB org 钉值（缺省 'global'，票03 re-key 后语义） */
   org?: string
   /**
-   * 票06 全局写串行队列（spec §全局写串行：重蒸馏入队，禁旁路）。生产注入 server 单例
-   * wikiWriteQueue（自带 wiki 根锁）；缺省 = 直跑（测试/无队列环境）。入队后同步等终态
-   * ——ops 命令形态保持"POST 即回报告"。dry-run 零写盘，不经队列。
+   * 票06 全局写串行队列（spec §全局写串行：重蒸馏入队，禁旁路）。生产注入 server
+   * wikiWriteQueue（自带 wiki 根 .compile.lock 跨进程保底）；缺省 = 直跑（测试/无队列环境）。
    */
   queue?: WriteQueue
 }
 
-/** Glossary 蒸馏产物判据（migrate.ts 产物的 summary 钉格式，真语料逐字吻合）。 */
-const GLOSSARY_SUMMARY_RE = /^GLOSSARY-MAP 存量收编(?: · (.+))?$/
-
 /** 队列终态等待上限：锁等待 5min（wiki-lock）+ 队首前序写操作最坏时长余量；超时硬错交重查队列路由。 */
 const REDISTILL_QUEUE_WAIT_LIMIT_MS = 10 * 60_000
 const sleepMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Glossary 蒸馏产物判据（migrate.ts 产物的 summary 钉格式，真语料逐字吻合）。 */
+const GLOSSARY_SUMMARY_RE = /^GLOSSARY-MAP 存量收编(?: · (.+))?$/
 
 /** chunk 文件名后缀 `-N`（同 pkg 分片；base 无后缀 ⇒ 0）。 */
 function chunkIndex(id: string, pkg: string): number {
@@ -160,101 +167,6 @@ export function readV2Entries(root: string): V2Entry[] {
     }
   }
   return out
-}
-
-/** 计划条目 = 映射计划 + 全部源词条（apply 构造正文时按 sources 顺序合成）。 */
-export interface PlannedPage {
-  plan: RedistillPagePlan
-  /** topic/concept 一页一源；merged-concept 按 base→-2→-3 升序 */
-  sources: V2Entry[]
-}
-
-export interface RedistillPlan {
-  planned: PlannedPage[]
-  pages: RedistillPagePlan[]
-  anchors: RedistillAnchorEntry[]
-  retired: Array<{ from: string; to: string }>
-}
-
-/** 映射计划（纯函数，dry-run 与 apply 共用同一份——计划即真相）。 */
-export function planMappings(entries: V2Entry[]): RedistillPlan {
-  const planned: PlannedPage[] = []
-  const retired: Array<{ from: string; to: string }> = []
-  const anchors: RedistillAnchorEntry[] = []
-
-  // glossary 分组：pkg → 分片（base 优先、chunk 按 -N 升序）
-  const groups = new Map<string, V2Entry[]>()
-  const standalone: V2Entry[] = []
-  for (const e of entries) {
-    const summary = e.meta.summary.trim()
-    const gm = GLOSSARY_SUMMARY_RE.test(summary) && e.meta.domain === "business" ? GLOSSARY_SUMMARY_RE.exec(summary) : null
-    if (!gm) {
-      standalone.push(e)
-      continue
-    }
-    const pkg = gm[1] ?? (e.meta.topics.find(t => t !== "glossary") ?? e.meta.id)
-    const g = groups.get(pkg) ?? []
-    g.push(e)
-    groups.set(pkg, g)
-  }
-
-  const pushAnchors = (e: V2Entry, newPath: string, carried: boolean): void => {
-    for (const a of extractRuleAnchors(e.body)) {
-      anchors.push({ ref: `${e.meta.id}#${a}`, anchor: a, oldPath: e.relPath, newPath, carried })
-    }
-  }
-
-  for (const e of standalone) {
-    const type = e.meta.domain === "projects" || e.meta.domain === "workflows" ? "topic" : "concept"
-    const newPath = `${type === "topic" ? "topics" : "concepts"}/${e.meta.id}.md`
-    planned.push({ plan: { oldId: e.meta.id, oldPath: e.relPath, newId: e.meta.id, newPath, action: type }, sources: [e] })
-    retired.push({ from: e.relPath, to: `_retired/v2/${e.relPath}` })
-    pushAnchors(e, newPath, type === "topic")
-  }
-
-  for (const [pkg, g] of [...groups.entries()].sort()) {
-    const ordered = [...g].sort((a, b) => chunkIndex(a.meta.id, pkg) - chunkIndex(b.meta.id, pkg) || a.meta.id.localeCompare(b.meta.id))
-    const base = ordered.find(e => chunkIndex(e.meta.id, pkg) === 0) ?? ordered[0]
-    const newId = chunkIndex(base.meta.id, pkg) === 0 ? base.meta.id : `biz-glossary-${pkg}`
-    const newPath = `concepts/${newId}.md`
-    const mergedFrom = ordered.filter(e => e.meta.id !== newId).map(e => e.meta.id)
-    planned.push({
-      plan: {
-        oldId: base.meta.id,
-        oldPath: base.relPath,
-        newId,
-        newPath,
-        action: ordered.length > 1 ? "merged-concept" : "concept",
-        ...(mergedFrom.length > 0 ? { mergedFrom } : {}),
-      },
-      sources: ordered,
-    })
-    for (const e of ordered) {
-      retired.push({ from: e.relPath, to: `_retired/v2/${e.relPath}` })
-      pushAnchors(e, newPath, false)
-    }
-  }
-
-  planned.sort((a, b) => a.plan.newPath.localeCompare(b.plan.newPath))
-  retired.sort((a, b) => a.from.localeCompare(b.from))
-  return { planned, pages: planned.map(p => p.plan), anchors, retired }
-}
-
-/** 旧表格 LOG 数据行提取（六列 `| 日期 | … |`；表头/分隔行不算数据）。干跑预览与 apply 共用。 */
-export function legacyLogTableRows(logText: string): Array<{ date: string; action: string; entry: string; summary: string; source: string; reviewer: string }> {
-  const rows: Array<{ date: string; action: string; entry: string; summary: string; source: string; reviewer: string }> = []
-  for (const line of logText.replace(/\r\n/g, "\n").split("\n")) {
-    const m = /^\| (\d{4}-\d{2}-\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/.exec(line.trim())
-    if (!m) continue
-    rows.push({ date: m[1], action: m[2], entry: m[3], summary: m[4], source: m[5], reviewer: m[6] })
-  }
-  return rows
-}
-
-/** 表格 LOG → v3 行格式（prototype Tab② LOG 契约逐字；reviewer 单元格自带 ✓，原样承接）。 */
-export function convertLegacyLog(logText: string): string {
-  const rows = legacyLogTableRows(logText)
-  return WIKI_LOG_HEADER + rows.map(r => `## [${r.date}] ${r.action} | ${r.entry}\n  → ${r.summary} · ${r.source} · ${r.reviewer}\n`).join("")
 }
 
 // ── 正文机械变换 ─────────────────────────────────────────────
@@ -313,46 +225,25 @@ export function buildConceptBody(body: string): string {
     .join("\n")
 }
 
-/** 归并 Glossary 分片 → 单页概念正文：`## 术语` 汇集全部术语行（剥锚、去重），其余行入 `## 说明`。 */
-export function buildMergedGlossaryBody(sources: V2Entry[]): string {
-  const termLines: string[] = []
-  const seen = new Set<string>()
-  const other: string[] = []
-  for (const e of sources) {
-    const { preamble, sections, rules } = decomposeBody(e.body)
-    for (const l of rules) {
-      const t = stripAnchorComment(l)
-      if (!seen.has(t)) {
-        seen.add(t)
-        termLines.push(t)
-      }
-    }
-    for (const l of preamble) if (!other.includes(l)) other.push(l)
-    for (const s of sections) for (const l of s.lines) if (!other.includes(l)) other.push(l)
-  }
-  const blocks = [other.length > 0 ? `## 说明\n${other.join("\n")}` : "", `## 术语\n${termLines.join("\n")}`]
-  return assemble(blocks)
-}
-
 /**
  * [[链接]] 机械改写表：v2 旧路径/旧 id → 新路径/新 id。
  * 值形态跟随键形态：路径式目标 → 新路径（无 .md，resolveWikiLink 补），裸 id 目标 → 新 id。
+ * 先到先得：chunk 跨续页时映射到其首个落页（putOnce 语义）。
  */
-function buildLinkMap(plan: RedistillPlan): Map<string, string> {
+function buildLinkMap(planned: Array<{ plan: RedistillPagePlan; sources: V2Entry[] }>): Map<string, string> {
   const map = new Map<string, string>()
-  const put = (oldKey: string, newKey: string): void => {
-    map.set(oldKey, newKey)
-    map.set(`${oldKey}.md`, `${newKey}.md`)
+  const putOnce = (oldKey: string, newKey: string): void => {
+    if (!map.has(oldKey)) map.set(oldKey, newKey)
+    if (!map.has(`${oldKey}.md`)) map.set(`${oldKey}.md`, `${newKey}.md`)
   }
-  for (const { plan: p, sources } of plan.planned) {
-    const newNoMd = p.newPath.replace(/\.md$/, "")
-    put(p.oldPath.replace(/\.md$/, ""), newNoMd)
-    map.set(p.oldId, p.newId)
+  for (const { plan, sources } of planned) {
+    const newNoMd = plan.newPath.replace(/\.md$/, "")
+    putOnce(plan.oldPath.replace(/\.md$/, ""), newNoMd)
+    putOnce(plan.oldId, plan.newId)
     for (const src of sources) {
-      if (src.meta.id === p.newId) continue
-      // 归并分片：chunk id 与 chunk 旧路径都改指并入页
-      put(src.relPath.replace(/\.md$/, ""), newNoMd)
-      map.set(src.meta.id, p.newId)
+      if (src.meta.id === plan.newId) continue
+      putOnce(src.relPath.replace(/\.md$/, ""), newNoMd)
+      putOnce(src.meta.id, plan.newId)
     }
   }
   return map
@@ -370,10 +261,10 @@ export function rewriteWikiLinks(body: string, linkMap: Map<string, string>): st
 }
 
 /** v3 页 front-matter：v2 元数据原样承接（id 保号面），type 换代、links 由正文改写后留空数组。 */
-function pageMetaFrom(e: V2Entry, type: "topic" | "concept", sources: V2Entry[]): WikiPageFrontmatter {
+function pageMetaFrom(e: V2Entry, type: "topic" | "concept", groupSources: V2Entry[]): WikiPageFrontmatter {
   const union = (pick: (m: WikiEntryFrontmatter) => string[]): string[] => {
     const out: string[] = []
-    for (const s of sources) for (const v of pick(s.meta)) if (!out.includes(v)) out.push(v)
+    for (const s of groupSources) for (const v of pick(s.meta)) if (!out.includes(v)) out.push(v)
     return out
   }
   return {
@@ -392,29 +283,226 @@ function pageMetaFrom(e: V2Entry, type: "topic" | "concept", sources: V2Entry[])
   }
 }
 
-/** 构造批通道输入（每计划页一条 content——serializePageMarkdown 单源序列化）。 */
-export function buildBatchInputs(plan: RedistillPlan): BatchPageInput[] {
-  const linkMap = buildLinkMap(plan)
-  return plan.planned.map(({ plan: p, sources }) => {
-    const base = sources[0]
+// ── 计划构造（结构计划 → linkMap → 终稿内容，两趟；计划即真相）────────────
+
+/** 装页单元：一条术语行 + 其来源词条（锚点台账按术语实际落页登记）。 */
+interface PackedTerm {
+  /** 剥锚后的术语行文本 */
+  line: string
+  src: V2Entry
+}
+
+/** 组内一页（装页器产物）。 */
+interface PackedGroupPage {
+  newId: string
+  newPath: string
+  pageNum: number
+  terms: PackedTerm[]
+  /** 非术语散句（仅首页承接） */
+  others: string[]
+  /** 贡献本组的分片全集（meta union 用） */
+  group: V2Entry[]
+  /** 本页贡献分片（≠ newId 者入 mergedFrom） */
+  contributors: V2Entry[]
+}
+
+/** 计划条目 = 映射计划 + 源词条 + 终稿页内容。 */
+export interface PlannedPage {
+  plan: RedistillPagePlan
+  sources: V2Entry[]
+  /** 定稿 v3 页内容（front-matter + 正文，[[链接]] 已改写；闸内只做校验与落盘） */
+  content: string
+}
+
+export interface RedistillPlan {
+  planned: PlannedPage[]
+  pages: RedistillPagePlan[]
+  anchors: RedistillAnchorEntry[]
+  retired: Array<{ from: string; to: string }>
+}
+
+/** glossary 概念页的候选序列化（装页判据与终稿共用一个构造器，单源呈现）。 */
+function glossaryPageContent(base: V2Entry, group: V2Entry[], page: Pick<PackedGroupPage, "newId" | "pageNum">, terms: PackedTerm[], others: string[]): { meta: WikiPageFrontmatter; body: string } {
+  const meta = pageMetaFrom(base, "concept", group)
+  meta.id = page.newId
+  if (page.pageNum > 1) meta.title = `${meta.title}（${page.pageNum}）`
+  const blocks = [others.length > 0 ? `## 说明\n${others.join("\n")}` : "", terms.length > 0 ? `## 术语\n${terms.map(t => t.line).join("\n")}` : ""]
+  return { meta, body: assemble(blocks) }
+}
+
+/**
+ * 容量感知装页：术语按 分片序×行序 贪心入页，候选页过 lintWikiPage（闸本体判据，
+ * 不重算阈值）出现 L1_CAPACITY 即续页 `{base}-p{N}`。单条术语自身超限 → 独占一页后
+ * 交给写闸硬拒（fail-closed，可读错文指路人工拆并）。断链类 error 不参与续页决策
+ * （链接改写发生在装页之后的统一 pass）。
+ */
+function packGlossaryGroup(pkg: string, ordered: V2Entry[], root: string): PackedGroupPage[] {
+  const base = ordered.find(e => chunkIndex(e.meta.id, pkg) === 0) ?? ordered[0]
+  const baseId = chunkIndex(base.meta.id, pkg) === 0 ? base.meta.id : `biz-glossary-${pkg}`
+  const items: PackedTerm[] = []
+  const seen = new Set<string>()
+  const others: string[] = []
+  for (const e of ordered) {
+    const { preamble, sections, rules } = decomposeBody(e.body)
+    for (const l of rules) {
+      const t = stripAnchorComment(l)
+      if (!t) continue
+      if (!seen.has(t)) {
+        seen.add(t)
+        items.push({ line: t, src: e })
+      }
+    }
+    for (const l of preamble) if (!others.includes(l)) others.push(l)
+    for (const s of sections) for (const l of s.lines) if (!others.includes(l)) others.push(l)
+  }
+
+  const pages: PackedGroupPage[] = []
+  let cur: PackedGroupPage = { newId: baseId, newPath: `concepts/${baseId}.md`, pageNum: 1, terms: [], others, group: ordered, contributors: [] }
+  const overCapacity = (candidate: PackedGroupPage): boolean => {
+    const { meta, body } = glossaryPageContent(base, ordered, { newId: candidate.newId, pageNum: candidate.pageNum }, candidate.terms, candidate.others)
+    const lint = lintWikiPage({ meta, body, anchors: [], root, linkCorpus: [{ id: meta.id, path: candidate.newPath }] })
+    return lint.errors.some(e => e.code === "L1_CAPACITY")
+  }
+  for (const item of items) {
+    const candidate: PackedGroupPage = { ...cur, terms: [...cur.terms, item] }
+    if (cur.terms.length > 0 && overCapacity(candidate)) {
+      pages.push(cur)
+      const nextNum = pages.length + 1
+      const nextId = `${baseId}-p${nextNum}`
+      cur = { newId: nextId, newPath: `concepts/${nextId}.md`, pageNum: nextNum, terms: [], others: [], group: ordered, contributors: [] }
+    }
+    cur.terms.push(item)
+    if (!cur.contributors.includes(item.src)) cur.contributors.push(item.src)
+  }
+  pages.push(cur)
+  return pages
+}
+
+/** 映射计划（纯函数，dry-run 与 apply 共用同一份——计划即真相）。 */
+export function planMappings(entries: V2Entry[], lintRoot = ""): RedistillPlan {
+  const planned: PlannedPage[] = []
+  const retired: Array<{ from: string; to: string }> = []
+  const anchors: RedistillAnchorEntry[] = []
+
+  // glossary 分组：pkg → 分片（base 优先、chunk 按 -N 升序）
+  const groups = new Map<string, V2Entry[]>()
+  const standalone: V2Entry[] = []
+  for (const e of entries) {
+    const summary = e.meta.summary.trim()
+    const gm = GLOSSARY_SUMMARY_RE.test(summary) && e.meta.domain === "business" ? GLOSSARY_SUMMARY_RE.exec(summary) : null
+    if (!gm) {
+      standalone.push(e)
+      continue
+    }
+    const pkg = gm[1] ?? (e.meta.topics.find(t => t !== "glossary") ?? e.meta.id)
+    const g = groups.get(pkg) ?? []
+    g.push(e)
+    groups.set(pkg, g)
+  }
+
+  // ── pass 1：结构计划（非 glossary 1:1；glossary 组容量装页）──────────
+  interface GroupPlanItem { base: V2Entry; ordered: V2Entry[]; pages: PackedGroupPage[] }
+  const groupPlans: GroupPlanItem[] = []
+  for (const [pkg, g] of [...groups.entries()].sort()) {
+    const ordered = [...g].sort((a, b) => chunkIndex(a.meta.id, pkg) - chunkIndex(b.meta.id, pkg) || a.meta.id.localeCompare(b.meta.id))
+    const pages = packGlossaryGroup(pkg, ordered, lintRoot)
+    const base = ordered.find(e => chunkIndex(e.meta.id, pkg) === 0) ?? ordered[0]
+    groupPlans.push({ base, ordered, pages })
+  }
+
+  // 结构条目（先非 glossary——linkMap/终稿两趟共用）
+  interface Structure { plan: RedistillPagePlan; sources: V2Entry[]; kind: "plain" | "glossary"; glossaryRef?: { item: GroupPlanItem; page: PackedGroupPage } }
+  const structures: Structure[] = []
+  for (const e of standalone) {
+    const type = e.meta.domain === "projects" || e.meta.domain === "workflows" ? "topic" : "concept"
+    const newPath = `${type === "topic" ? "topics" : "concepts"}/${e.meta.id}.md`
+    structures.push({ plan: { oldId: e.meta.id, oldPath: e.relPath, newId: e.meta.id, newPath, action: type }, sources: [e], kind: "plain" })
+    retired.push({ from: e.relPath, to: `_retired/v2/${e.relPath}` })
+    for (const a of extractRuleAnchors(e.body)) {
+      anchors.push({ ref: `${e.meta.id}#${a}`, anchor: a, oldPath: e.relPath, newPath, carried: type === "topic" })
+    }
+  }
+  for (const item of groupPlans) {
+    // 整组分片一律退役（一页一 retired 只在组级记一次）
+    for (const e of item.ordered) retired.push({ from: e.relPath, to: `_retired/v2/${e.relPath}` })
+    // 锚点台账（组级一遍）：按术语实际落页登记（重复术语行映射到其首落页）
+    for (const e of item.ordered) {
+      const { rules } = decomposeBody(e.body)
+      for (const l of rules) {
+        const term = stripAnchorComment(l)
+        const owner = item.pages.find(pg => pg.terms.some(t => t.line === term && t.src === e))
+          ?? item.pages.find(pg => pg.terms.some(t => t.line === term))
+          ?? item.pages[0]
+        for (const a of extractRuleAnchors(l)) {
+          anchors.push({ ref: `${e.meta.id}#${a}`, anchor: a, oldPath: e.relPath, newPath: owner.newPath, carried: false })
+        }
+      }
+    }
+    for (const page of item.pages) {
+      const firstContrib = page.contributors[0] ?? item.ordered[0]
+      const mergedFrom = page.contributors.filter(c => c.meta.id !== page.newId).map(c => c.meta.id)
+      structures.push({
+        plan: {
+          oldId: firstContrib.meta.id,
+          oldPath: firstContrib.relPath,
+          newId: page.newId,
+          newPath: page.newPath,
+          action: item.ordered.length > 1 || page.pageNum > 1 ? "merged-concept" : "concept",
+          ...(mergedFrom.length > 0 ? { mergedFrom } : {}),
+        },
+        sources: page.contributors,
+        kind: "glossary",
+        glossaryRef: { item, page },
+      })
+    }
+  }
+
+  // ── pass 2：linkMap（先到先得）→ 终稿内容 ────────────────────────────
+  const linkMap = buildLinkMap(structures.map(s => ({ plan: s.plan, sources: s.sources })))
+  for (const s of structures) {
     let meta: WikiPageFrontmatter
     let body: string
-    if (p.action === "topic") {
-      meta = pageMetaFrom(base, "topic", sources)
-      meta.id = p.newId
-      body = buildTopicBody(base.body)
-    } else if (p.action === "merged-concept") {
-      meta = pageMetaFrom(base, "concept", sources)
-      meta.id = p.newId
-      body = buildMergedGlossaryBody(sources)
+    if (s.kind === "glossary" && s.glossaryRef) {
+      const { item, page } = s.glossaryRef
+      const built = glossaryPageContent(item.base, item.ordered, page, page.terms, page.others)
+      meta = built.meta
+      body = built.body
     } else {
-      meta = pageMetaFrom(base, "concept", sources)
-      meta.id = p.newId
-      body = buildConceptBody(base.body)
+      const base = s.sources[0]
+      const type = s.plan.action === "topic" ? "topic" : "concept"
+      meta = pageMetaFrom(base, type, s.sources)
+      meta.id = s.plan.newId
+      body = type === "topic" ? buildTopicBody(base.body) : buildConceptBody(base.body)
     }
     body = rewriteWikiLinks(body, linkMap)
-    return { content: serializePageMarkdown(meta, body), fileName: p.newPath.split("/").pop() }
-  })
+    planned.push({ plan: s.plan, sources: s.sources, content: serializePageMarkdown(meta, body) })
+  }
+
+  planned.sort((a, b) => a.plan.newPath.localeCompare(b.plan.newPath))
+  retired.sort((a, b) => a.from.localeCompare(b.from))
+  return { planned, pages: planned.map(p => p.plan), anchors, retired }
+}
+
+/** 旧表格 LOG 数据行提取（六列 `| 日期 | … |`；表头/分隔行不算数据）。干跑预览与 apply 共用。 */
+export function legacyLogTableRows(logText: string): Array<{ date: string; action: string; entry: string; summary: string; source: string; reviewer: string }> {
+  const rows: Array<{ date: string; action: string; entry: string; summary: string; source: string; reviewer: string }> = []
+  for (const line of logText.replace(/\r\n/g, "\n").split("\n")) {
+    const m = /^\| (\d{4}-\d{2}-\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/.exec(line.trim())
+    if (!m) continue
+    rows.push({ date: m[1], action: m[2], entry: m[3], summary: m[4], source: m[5], reviewer: m[6] })
+  }
+  return rows
+}
+
+/** 表格 LOG → v3 行格式（prototype Tab② LOG 契约逐字；reviewer 单元格自带 ✓，原样承接）。 */
+export function convertLegacyLog(logText: string): string {
+  const rows = legacyLogTableRows(logText)
+  return WIKI_LOG_HEADER + rows.map(r => `## [${r.date}] ${r.action} | ${r.entry}\n  → ${r.summary} · ${r.source} · ${r.reviewer}\n`).join("")
+}
+
+/** 批通道输入：计划即终稿——只做映射。 */
+export function buildBatchInputs(plan: RedistillPlan): BatchPageInput[] {
+  return plan.planned.map(p => ({ content: p.content, fileName: p.plan.newPath.split("/").pop() }))
 }
 
 export class WikiRedistillMigrator {
@@ -438,7 +526,7 @@ export class WikiRedistillMigrator {
 
   async run(): Promise<RedistillReport> {
     const entries = readV2Entries(this.root)
-    const plan = planMappings(entries)
+    const plan = planMappings(entries, this.root)
     const logText = fs.existsSync(path.join(this.root, "LOG.md")) ? fs.readFileSync(path.join(this.root, "LOG.md"), "utf-8") : ""
     const beforeTotal = (this.db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org = ?").get(this.org) as { n: number }).n
 
@@ -492,7 +580,7 @@ export class WikiRedistillMigrator {
     return report
   }
 
-  private async execute(plan: RedistillPlan, report: RedistillReport): Promise<RedistillReport> {
+  private async execute(plan: RedistillPlan, report: RedistillReport): Promise<void> {
     const mapAbs = path.join(this.root, REDISTILL_MAP_REL)
     const logAbs = path.join(this.root, "LOG.md")
     const prevLog = fs.existsSync(logAbs) ? fs.readFileSync(logAbs, "utf-8") : null
@@ -534,7 +622,6 @@ export class WikiRedistillMigrator {
       report.changed = res.changed || dbx.deleted.length > 0 || dbx.caseRowsRetyped > 0
       report.commit = res.commit
       report.db = { ...report.db, afterTotal: dbx.afterTotal, byType: dbx.byType, deleted: dbx.deleted }
-      return report
     } catch (err) {
       // 闸自身快照回滚已完成；这里还原闸外三步——不留半成品（形制同 compile.ts rollbackTo 纪律）
       for (const m of moved) {
@@ -553,8 +640,8 @@ export class WikiRedistillMigrator {
 
   /**
    * DB 对账（幂等收敛式：重复执行到同一终态）：
-   * - 计划新 id 行已由闸 upsert（domain=五类值）；
-   * - 被归并分片行删除（去向记在 deleted，审计面不丢）；
+   * - 在盘活页行已由闸 upsert（domain=五类值）；
+   * - 被归并分片行删除（去向记在 deleted，审计面不丢；台账在收敛段兜底）；
    * - 判例行 domain 值 'cases'→'case'（文件写面 domain:cases 不变——读写面在 DB 统一）；
    * - FTS 蓝绿重建（DDL 派生自现表，单源不复制 schema）；
    * - 行数对账：afterTotal 必须等于在盘活页扫描数，且 before 每行去向可解释，否则 VERIFY 抛。
@@ -565,12 +652,15 @@ export class WikiRedistillMigrator {
     const liveCases = new Set(live.filter(e => e.type === "case").map(e => e.meta.id))
     const beforeRows = this.db.prepare("SELECT id FROM wiki_articles WHERE org = ?").all(this.org) as Array<{ id: string }>
     const mergedOf = new Map<string, string>()
-    for (const p of plan.pages) for (const c of p.mergedFrom ?? []) mergedOf.set(c, p.newId)
+    const putFirst = (k: string, v: string): void => {
+      if (!mergedOf.has(k)) mergedOf.set(k, v)
+    }
+    for (const p of plan.pages) for (const c of p.mergedFrom ?? []) putFirst(c, p.newId)
     if (mergedOf.size === 0) {
       // 收敛段（重跑/中断续跑）：计划已空，归并去向从对照表台账重建
       try {
         const j = JSON.parse(fs.readFileSync(path.join(this.root, REDISTILL_MAP_REL), "utf-8")) as { pages?: RedistillPagePlan[] }
-        for (const p of j.pages ?? []) for (const c of p.mergedFrom ?? []) mergedOf.set(c, p.newId)
+        for (const p of j.pages ?? []) for (const c of p.mergedFrom ?? []) putFirst(c, p.newId)
       } catch { /* 无台账 ⇒ 无归并可解释 */ }
     }
 

@@ -10,7 +10,8 @@ import { GLOBAL_WIKI_ORG } from "../../global-paths"
 import { RawIngestService } from "../../raw"
 import { CuratorCompileService } from "../curator"
 import { WikiRedistillMigrator, REDISTILL_MAP_REL } from "../redistill"
-import { parseH2Sections, TOPIC_CONSTRAINTS_SECTION, resolveWikiLink, WIKILINK_RE } from "../lint"
+import { parseH2Sections, TOPIC_CONSTRAINTS_SECTION, resolveWikiLink, WIKILINK_RE, lintWikiPage } from "../lint"
+import { parseWikiFile } from "../format"
 import { scanWikiEntries, nextRuleAnchor, WikiCompileService } from "../compile"
 import { CompileQueue, type WriteLock } from "../compile-queue"
 import { WikiLock, WIKI_LOCK_FILE } from "../wiki-lock"
@@ -713,5 +714,77 @@ describe("WikiRedistillMigrator — v2→v3 重蒸馏（票07）", () => {
     expect(log.indexOf("redistill: v2→v3")).toBeLessThan(log.indexOf("post-redistill compile"))
     // 锁文件不进 commit（票06 .git/info/exclude 收口），工作树干净
     expect(porcelain()).toBe("")
+  })
+
+  // ── 组 6：容量感知装页——Glossary 归并超 L1 闸自动续页（真语料 server 域 39 术语≈2700 token 的病灶）──
+  it("Glossary 归并超 L1 容量自动续页：每页过闸、术语一条不丢、锚点台账指向术语实际所在页", async () => {
+    // 独立小现场（不动标准 fixture 的数字）：tmpdir/knowledge2/wiki + 独立内存 DB
+    const root2 = path.join(tmpDir, "knowledge2", "wiki")
+    fs.mkdirSync(path.join(root2, "business"), { recursive: true })
+    const mkGloss = (id: string, from: number, to: number): string => {
+      const lines: string[] = []
+      for (let n = from; n <= to; n++) {
+        lines.push(`- **Term ${String(n).padStart(3, "0")}** — ${"术语本体描述字啊啊啊啊啊".repeat(6)} <!--#oct-${String(200 + n)}-->`)
+      }
+      return `---\nid: ${id}\ndomain: business\ntitle: 术语口径 · big 域术语\nsummary: GLOSSARY-MAP 存量收编 · big\ntopics: [glossary, big]\nstability: stable\nlast_compiled: 2026-10-12\nsources: [doc:GLOSSARY-MAP.md]\nconfidence: 0.8\n---\n## big 术语\n\n${lines.join("\n")}\n`
+    }
+    fs.writeFileSync(path.join(root2, "business", "biz-glossary-big.md"), mkGloss("biz-glossary-big", 1, 21), "utf-8")
+    fs.writeFileSync(path.join(root2, "business", "biz-glossary-big-2.md"), mkGloss("biz-glossary-big-2", 22, 42), "utf-8")
+    const g2 = git(root2)
+    g2.run(["init"])
+    g2.run(["config", "user.email", "kc@test.local"])
+    g2.run(["config", "user.name", "kc-test"])
+    g2.run(["config", "core.autocrlf", "false"])
+    g2.run(["add", "-A"])
+    g2.run(["commit", "-m", "seed"])
+    const db2 = new Database(":memory:")
+    applySchema(db2)
+    const dao2 = new WikiArticleDAO(db2)
+    for (const [id, pathRel] of [["biz-glossary-big", "business/biz-glossary-big.md"], ["biz-glossary-big-2", "business/biz-glossary-big-2.md"]] as const) {
+      dao2.upsert({ org: GLOBAL_WIKI_ORG, id, domain: "business", title: "术语口径 · big 域术语", summary: "GLOSSARY-MAP 存量收编 · big", topics: JSON.stringify(["glossary", "big"]), stability: "stable", last_compiled: "2026-10-12", sources: JSON.stringify(["doc:GLOSSARY-MAP.md"]), confidence: 0.8, body: fs.readFileSync(path.join(root2, pathRel), "utf-8").split("\n---\n", 2)[1], path: pathRel })
+    }
+
+    const report = await new WikiRedistillMigrator({ db: db2, wikiRoot: root2, apply: true }).run()
+    expect(report.commit).toMatch(/^[0-9a-f]{40}$/)
+    expect(report.pages.map(p => p.newPath).sort()).toEqual(["concepts/biz-glossary-big-p2.md", "concepts/biz-glossary-big.md"].sort())
+    const p1 = fs.readFileSync(path.join(root2, "concepts", "biz-glossary-big.md"), "utf-8")
+    const p2 = fs.readFileSync(path.join(root2, "concepts", "biz-glossary-big-p2.md"), "utf-8")
+
+    // 每页都是合规 v3 页（lintWikiPage 零 error——闸本体做判据，非重算）
+    for (const [id, text, rel] of [["biz-glossary-big", p1, "concepts/biz-glossary-big.md"], ["biz-glossary-big-p2", p2, "concepts/biz-glossary-big-p2.md"]] as const) {
+      const parsed = parseWikiFile(text)
+      expect(parsed.kind).toBe("page")
+      if (parsed.kind !== "page") continue
+      const lint = lintWikiPage({ meta: parsed.meta, body: parsed.body, anchors: [], root: root2, linkCorpus: [{ id, path: rel }] })
+      expect(lint.errors.map(e => e.message), id).toEqual([])
+    }
+
+    // 42 条术语一条不丢、跨页恰好各一次
+    const all = `${p1}\n${p2}`
+    for (let n = 1; n <= 42; n++) {
+      const marker = `**Term ${String(n).padStart(3, "0")}**`
+      expect(all.split(marker).length - 1, marker).toBe(1)
+    }
+    // 术语确实分在两页（不是全挤一页后 lint 放水）
+    expect(p1.split("**Term ").length - 1).toBeLessThan(42)
+    expect(p2.split("**Term ").length - 1).toBeGreaterThan(0)
+
+    // 台账：每条锚点 newPath = 术语实际所在页
+    const mapJ = JSON.parse(fs.readFileSync(path.join(root2, REDISTILL_MAP_REL), "utf-8")) as { anchors: Array<{ ref: string; newPath: string }> }
+    expect(mapJ.anchors).toHaveLength(42)
+    for (let n = 1; n <= 42; n++) {
+      const anchor = `oct-${String(200 + n)}`
+      const srcId = n <= 21 ? "biz-glossary-big" : "biz-glossary-big-2"
+      const row = mapJ.anchors.find(x => x.ref === `${srcId}#${anchor}`)
+      expect(row, `${srcId}#${anchor}`).toBeDefined()
+      const term = `**Term ${String(n).padStart(3, "0")}**`
+      const expectPage = p1.includes(term) ? "concepts/biz-glossary-big.md" : "concepts/biz-glossary-big-p2.md"
+      expect(row!.newPath, `#${anchor} 应指术语所在页`).toBe(expectPage)
+    }
+
+    // DB 对账：2 词条行 → 2 页行，去向全可解释
+    expect(report.db.afterTotal).toBe(2)
+    expect(report.db.deleted.map(d => d.id).sort()).toEqual(["biz-glossary-big-2"])
+    db2.close()
   })
 })
