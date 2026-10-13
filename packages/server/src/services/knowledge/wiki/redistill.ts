@@ -5,6 +5,7 @@ import type { WikiEntryFrontmatter, WikiPageFrontmatter } from "@octopus/shared"
 import { GLOBAL_WIKI_ORG, resolveGlobalWikiRoot } from "../global-paths"
 import { parseWikiFile, extractRuleAnchors, serializePageMarkdown, RULE_ANCHOR_RE } from "./format"
 import { REDISTILL_MAP_REL, WIKI_DOMAINS } from "./paths"
+import type { WriteQueue } from "./compile-queue"
 import { parseH2Sections, TOPIC_CONSTRAINTS_SECTION } from "./lint"
 import { WikiCompileService, WIKI_LOG_HEADER, scanWikiEntries, type BatchPageInput } from "./compile"
 import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
@@ -87,6 +88,8 @@ export interface RedistillReport {
   }
   commit: string | null
   backupHint: string
+  /** 经票06 全局写队列执行时的任务 id（queue.get 可查状态流转；直跑模式无此字段） */
+  queueTaskId?: string
 }
 
 export interface RedistillOptions {
@@ -97,10 +100,20 @@ export interface RedistillOptions {
   wikiRoot?: string
   /** DB org 钉值（缺省 'global'，票03 re-key 后语义） */
   org?: string
+  /**
+   * 票06 全局写串行队列（spec §全局写串行：重蒸馏入队，禁旁路）。生产注入 server 单例
+   * wikiWriteQueue（自带 wiki 根锁）；缺省 = 直跑（测试/无队列环境）。入队后同步等终态
+   * ——ops 命令形态保持"POST 即回报告"。dry-run 零写盘，不经队列。
+   */
+  queue?: WriteQueue
 }
 
 /** Glossary 蒸馏产物判据（migrate.ts 产物的 summary 钉格式，真语料逐字吻合）。 */
 const GLOSSARY_SUMMARY_RE = /^GLOSSARY-MAP 存量收编(?: · (.+))?$/
+
+/** 队列终态等待上限：锁等待 5min（wiki-lock）+ 队首前序写操作最坏时长余量；超时硬错交重查队列路由。 */
+const REDISTILL_QUEUE_WAIT_LIMIT_MS = 10 * 60_000
+const sleepMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** chunk 文件名后缀 `-N`（同 pkg 分片；base 无后缀 ⇒ 0）。 */
 function chunkIndex(id: string, pkg: string): number {
@@ -409,12 +422,14 @@ export class WikiRedistillMigrator {
   private readonly root: string
   private readonly org: string
   private readonly db: Database.Database
+  private readonly queue?: WriteQueue
 
   constructor(opts: RedistillOptions) {
     this.db = opts.db
     this.apply = opts.apply ?? false
     this.root = opts.wikiRoot ?? resolveGlobalWikiRoot()
     this.org = opts.org ?? GLOBAL_WIKI_ORG
+    this.queue = opts.queue
   }
 
   get wikiRoot(): string {
@@ -439,15 +454,42 @@ export class WikiRedistillMigrator {
       backupHint: this.backupHint(),
     }
     if (!this.apply) return report
-    if (plan.pages.length === 0) {
-      report.reason = fs.existsSync(path.join(this.root, REDISTILL_MAP_REL)) ? "already-redistilled" : "no-v2-entries"
-      // 收敛段：上次 apply 若在闸 commit 后 DB 对账前中断，重跑补成一致态（幂等含 DB）
-      const dbx = this.reconcileDb(plan)
-      report.db = { ...report.db, ...dbx }
-      report.changed = dbx.deleted.length > 0 || dbx.caseRowsRetyped > 0
+
+    // 写段工作 = 重蒸馏执行（非空计划）或收敛补账（空计划：上次中断后重跑，幂等含 DB）
+    const work = async (): Promise<void> => {
+      if (plan.pages.length === 0) {
+        report.reason = fs.existsSync(path.join(this.root, REDISTILL_MAP_REL)) ? "already-redistilled" : "no-v2-entries"
+        const dbx = this.reconcileDb(plan)
+        report.db = { ...report.db, ...dbx }
+        report.changed = dbx.deleted.length > 0 || dbx.caseRowsRetyped > 0
+        return
+      }
+      await this.execute(plan, report)
+    }
+
+    // 票06 写串行：注入全局队列 ⇒ kind "redistill" 入队 + wiki 根锁（spec §全局写串行
+    // 「重蒸馏统一入队，禁旁路」）；ops 命令形态保持同步回报——入队后轮询至终态。
+    if (!this.queue) {
+      await work()
       return report
     }
-    return this.execute(plan, report)
+    const view = this.queue.enqueue("redistill", work, { label: "redistill: v2→v3 迁移执行" })
+    report.queueTaskId = view.id
+    let latest = view
+    for (let waitedMs = 0; ; ) {
+      latest = this.queue.get(view.id) ?? latest
+      if (latest.state === "committed" || latest.state === "failed") break
+      if (waitedMs >= REDISTILL_QUEUE_WAIT_LIMIT_MS) {
+        throw new Error(`REDISTILL_QUEUE_TIMEOUT: 任务 ${view.id} 在 ${REDISTILL_QUEUE_WAIT_LIMIT_MS / 1000}s 内未达终态（队列在跑别的写操作？稍后重查 GET /api/knowledge/wiki/queue/task/${view.id}）`)
+      }
+      await sleepMs(10)
+      waitedMs += 10
+    }
+    if (latest.state === "failed") {
+      const code = latest.error?.code ?? "QUEUE_OP_FAILED"
+      throw new Error(`${code}: ${latest.error?.message ?? "写队列任务失败"}`)
+    }
+    return report
   }
 
   private async execute(plan: RedistillPlan, report: RedistillReport): Promise<RedistillReport> {

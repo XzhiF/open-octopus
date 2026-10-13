@@ -11,7 +11,9 @@ import { RawIngestService } from "../../raw"
 import { CuratorCompileService } from "../curator"
 import { WikiRedistillMigrator, REDISTILL_MAP_REL } from "../redistill"
 import { parseH2Sections, TOPIC_CONSTRAINTS_SECTION, resolveWikiLink, WIKILINK_RE } from "../lint"
-import { scanWikiEntries, nextRuleAnchor } from "../compile"
+import { scanWikiEntries, nextRuleAnchor, WikiCompileService } from "../compile"
+import { CompileQueue, type WriteLock } from "../compile-queue"
+import { WikiLock, WIKI_LOCK_FILE } from "../wiki-lock"
 import { spawnGit, type GitRunner } from "../wiki-git"
 
 /**
@@ -659,5 +661,57 @@ describe("WikiRedistillMigrator — v2→v3 重蒸馏（票07）", () => {
     const f = new FindingsDAO(db).getById(res.findingIds[0])!
     expect(f.status).toBe("open")
     expect(JSON.parse(f.pages)).toContain("topics/wf-prd-impl.md")
+  })
+
+  // ── 组 5：写串行接队（票06 语义）——重蒸馏经全局 FIFO 队列 + wiki 根锁，与编译互斥 ──
+  it("apply 经全局写队列执行：锁文件在场、与真编译严格互斥（acquire/release 不交错）、git 线性", async () => {
+    const lockPath = path.join(wikiRoot, WIKI_LOCK_FILE)
+    const events: string[] = []
+    let redistillLockSeen = false
+    let compileLockSeen = false
+    const inner = new WikiLock({ wikiRoot: () => wikiRoot })
+    const spyLock: WriteLock = {
+      async acquire(meta) {
+        const rel = await inner.acquire(meta) // 真锁语义零改动，只在缝上记录
+        events.push(`acquire:${meta.opKind}`)
+        if (meta.opKind === "redistill") redistillLockSeen = fs.existsSync(lockPath)
+        return () => {
+          events.push(`release:${meta.opKind}`)
+          rel()
+        }
+      },
+    }
+    const queue = new CompileQueue({ lock: spyLock })
+    const migrator = new WikiRedistillMigrator({ db, wikiRoot, apply: true, queue })
+    const runP = migrator.run() // run() 同步段已把 redistill 入队
+    // 真编译任务随后入队 ⇒ 位次 #2（必须等重蒸馏跑完）
+    const compileView = queue.enqueue("ingest-compile", async () => {
+      compileLockSeen = fs.existsSync(lockPath)
+      events.push("compile-fn")
+      const compiler = new WikiCompileService({ db, org: GLOBAL_WIKI_ORG, rootDir: wikiRoot })
+      await compiler.compilePages(
+        [{ content: `---\nid: con-fresh\ntype: concept\ntitle: 后编译页\nsummary: 重蒸馏之后入队编译的产物\nlinks: []\nlast_compiled: 2026-10-13\n---\n## 定义\n队列串行后的增量编译。\n` }],
+        { entry: "post-redistill compile", note: "触 1 页", source: "manual", reviewer: "curator" },
+      )
+    }, { taskId: "wq-compile-after" })
+    expect(compileView.position).toBe(2)
+
+    const report = await runP
+    expect(report.commit).toMatch(/^[0-9a-f]{40}$/)
+    expect(report.queueTaskId).toBeTruthy()
+    const task = queue.get(report.queueTaskId!)!
+    expect(task.opKind).toBe("redistill")
+    expect(task.state).toBe("committed")
+    // 互斥硬证据：重蒸馏的 fn 独占 [acquire:redistill, release:redistill] 窗口，
+    // 编译任务严格排在其后（锁文件在两个 fn 窗口内都真实在场）
+    expect(events).toEqual(["acquire:redistill", "release:redistill", "acquire:ingest-compile", "compile-fn", "release:ingest-compile"])
+    expect(redistillLockSeen).toBe(true)
+    expect(compileLockSeen).toBe(true)
+    // 串行落库：git 线性三 commit（seed → redistill → compile），LOG 两块先后不交错
+    expect(commitCount()).toBe(3)
+    const log = fs.readFileSync(path.join(wikiRoot, "LOG.md"), "utf-8")
+    expect(log.indexOf("redistill: v2→v3")).toBeLessThan(log.indexOf("post-redistill compile"))
+    // 锁文件不进 commit（票06 .git/info/exclude 收口），工作树干净
+    expect(porcelain()).toBe("")
   })
 })

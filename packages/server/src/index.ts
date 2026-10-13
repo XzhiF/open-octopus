@@ -596,8 +596,9 @@ app.route("/api/knowledge/wiki", createWikiGlobalMoveRoutes(
 // ?apply=true 才动手（写 v3 五类页/旧页整迁 _retired/v2/ + LOG 换行格式 + INDEX 重建 + DB re-key，
 // 全部落盘收口为一个 git commit，整体 revert 可还原；重跑 diff 为空）。
 // 前置 = 票03 真搬家已执行（全局根 + org 钉 global）；真跑前主控按报告 backupHint 先 VACUUM INTO 备份。
+// 票06 写串行：apply 经全局 FIFO 队列 kind "redistill" 入队 + wiki 根锁（dry-run 零写盘不入队）。
 app.route("/api/knowledge/wiki", createWikiRedistillRoutes(
-  (apply) => new WikiRedistillMigrator({ db: getDb(), apply }),
+  (apply) => new WikiRedistillMigrator({ db: getDb(), apply, queue: wikiWriteQueue }),
 ))
 // LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
 // 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
