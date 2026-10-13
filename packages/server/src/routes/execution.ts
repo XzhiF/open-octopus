@@ -274,9 +274,11 @@ executionRoutes.get("/:executionId/state", (c) => {
 
 // ── 影子对照导出（LLM-WIKI P1 票 12 / story 31）────────────────────────
 // 按 executionId 并排注入侧（__relevant_rule_ids / __injected_rule_ids，既有
-// VarPool 键，只读 —— 红线 #1）与查阅侧（wiki_refs，vars_update → VarPool →
+// VarPool 键，只读）与查阅侧（wiki_refs，vars_update → VarPool →
 // executions.var_pool），输出命中/未命中/仅注入/仅查阅四象限。
 // P2「删除注入链」单向门的决策数据从这里来；本端点不写任何池键。
+// 知识中心票 08 —— 冻结只读：注入链生产者已物理删除，新执行 injectSide 恒空；
+// 历史执行对照数据仍可查（过闸文书 §5 证据链审计面）。端点与表保留不删。
 executionRoutes.get("/:executionId/shadow-compare", (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)

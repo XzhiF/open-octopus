@@ -9,7 +9,7 @@
 //   - Structured result parsing
 //
 
-import { VarPool, substituteVarsFull, applyOutputsMapping, resolveKnowledgeMode, stripWikiRefs } from "@octopus/shared"
+import { VarPool, substituteVarsFull, applyOutputsMapping } from "@octopus/shared"
 import type { NodeDef, OctopusAgentNodeDef, ResolvedVersion } from "@octopus/shared"
 import type { NodeExecutionResult, NodeExecutor } from "./types"
 import type { OctopusAgentConfig } from "./executor-config"
@@ -145,9 +145,6 @@ export class OctopusAgentExecutor implements NodeExecutor {
     )
 
     // 5. Create internal AgentExecutor with resolved version
-    // knowledge.mode（票 12 影子双轨）：从身份快照 config 解析（agent_versions
-    // snapshot / clone config.json 的 config.knowledge.mode），缺省 both。
-    const knowledgeMode = resolveKnowledgeMode(resolved.snapshot.config)
     const agentConfig: AgentConfig = {
       runner: this.config.runner,
       engineContext: this.config.engineContext,
@@ -158,10 +155,6 @@ export class OctopusAgentExecutor implements NodeExecutor {
       previousSessionId: this.config.previousSessionId,
       signal: this.config.signal,
       globalAutoAnswers: this.config.globalAutoAnswers,
-      promptInjector: this.config.promptInjector,
-      knowledgeInjector: this.config.knowledgeInjector,
-      knowledgeMode,
-      workflowName: this.config.workflowName,
       crossExecResolver: this.config.crossExecResolver,
       executionId: this.config.executionId,
       resolvedModel: this.config.resolvedModel,
@@ -230,10 +223,9 @@ export class OctopusAgentExecutor implements NodeExecutor {
 
       // Apply vars_update to pool and outputs
       // （票 10 handoff: wiki_refs 就骑这条 vars_update → VarPool 通道，不另建信道；
-      //   票 12: mode=inject 时查阅记录关闭 —— 只摘 wiki_refs 键，通道本身不变）
+      //   知识中心票 08 后查阅记录恒开启 —— 原 mode=inject 摘键闸随三态配置物理删除）
       if (structured.vars_update) {
         const update = structured.vars_update as Record<string, any>
-        stripWikiRefs(update, knowledgeMode)
         this.pool.update(update)
         outputs.vars_update = update
       }
@@ -245,7 +237,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
     } else {
       // Fallback: apply vars_update from raw text (existing AgentExecutor behavior)
       if (agentResult.lastOutput) {
-        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs as Record<string, any>, { knowledgeMode })
+        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs as Record<string, any>)
       }
     }
 

@@ -2,16 +2,22 @@
 //
 // LLM-WIKI P1 ticket 12 — 影子对照导出（story 31）：按执行并排
 //   注入侧（precompute 的 __relevant_rule_ids / KnowledgeInjector 的
-//            __injected_rule_ids —— 既有 VarPool 键，只读，红线 #1）
+//            __injected_rule_ids —— 既有 VarPool 键，只读）
 //   查阅侧（执行者经 vars_update → VarPool 落盘的 wiki_refs，含 stale: 前缀）
 // 输出四象限，作为 P2「删除注入链」单向门的决策数据。
+//
+// 知识中心票 08 —— 冻结只读（spec「shadow-compare 端点冻结只读」/ p2-gate-pass
+// 证据链审计面）：注入链生产者（precompute/KnowledgeInjector）已物理删除，
+// 新执行的 injectSide 恒空（relevant/injected=[]）；历史执行 var_pool 里的
+// 注入侧键仍可解析对照。本模块与路由、表都不删，只随生产者冻结。
 //
 // 纯函数：输入 = executions.var_pool 反序列化后的快照（JSONL/DB 同源），
 // 输出 = 冻结形状（fixture 钉在 shadow-compare.test.ts，禁止实现自证）。
 
 import { STALE_REF_PREFIX, WIKI_REFS_KEY } from "@octopus/shared"
 
-/** 注入侧只读键（precompute.ts:53 / knowledge-injector.ts:74 的生产者契约）。 */
+/** 注入侧只读键（原生产者 precompute.ts / knowledge-injector.ts 已随票 08 删除；
+ *  键名保留 = 历史快照仍可解析，证据链不失效）。 */
 export const SHADOW_RELEVANT_KEY = "__relevant_rule_ids"
 export const SHADOW_INJECTED_KEY = "__injected_rule_ids"
 /** 查阅侧键（票 11 指针行 token / 票 10 handoff 的 vars_update → VarPool 信道）。 */

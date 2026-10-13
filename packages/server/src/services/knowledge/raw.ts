@@ -4,6 +4,7 @@ import crypto from "crypto"
 import {
   ensureKnowledgeSkeleton,
   getRawDir,
+  getRawRoot,
   resolveKnowledgeRoot,
   RAW_DIRS,
   type RawDir,
@@ -440,4 +441,95 @@ export class RawIngestService {
     }
     return null
   }
+}
+
+// ── 票11 追加：raw 只读面（知识中心浏览模式的抓取卡溯源数据源）──────────────
+// 只读纪律与写入面同律：本模块**永不改写** raw 文件。目录缺席（骨架未建）诚实
+// 降级为空列表（ENOENT = 真没有——Standards #2 禁的是 catch 伪造，这里 ENOENT 是
+// 判据本身）；其余 I/O 错误如实抛出。
+
+/** raw 源元数据（front-matter 提取；path = 知识根相对 POSIX，与 RawPointer 同口径）。 */
+export interface RawSourceMeta {
+  path: string
+  bytes: number
+  hash: string
+  origin: string | null
+  title: string | null
+  ingestedAt: string | null
+}
+
+/** front-matter 缺失/坏头时的兜底：hash 现算、bytes 全文长度——读面永不含糊。 */
+function rawMetaFrom(pathRel: string, content: string): RawSourceMeta {
+  const bytesRaw = frontMatterValue(content, "bytes")
+  const parsed = bytesRaw === null ? NaN : Number(bytesRaw)
+  return {
+    path: pathRel,
+    bytes: Number.isFinite(parsed) ? parsed : Buffer.byteLength(content, "utf-8"),
+    hash: frontMatterValue(content, "hash") ?? sha256(content),
+    origin: frontMatterValue(content, "origin"),
+    title: frontMatterValue(content, "title"),
+    ingestedAt: frontMatterValue(content, "ingestedAt"),
+  }
+}
+
+/** 三子目录逐层扫 .md（front-matter 真源即文件头，无变索引——同 findByHash 判据）。 */
+export function listRawSources(root: string): RawSourceMeta[] {
+  const out: RawSourceMeta[] = []
+  for (const dir of RAW_DIRS) {
+    const absDir = getRawDir(root, dir)
+    let names: string[]
+    try {
+      names = fs.readdirSync(absDir)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue
+      throw err
+    }
+    for (const name of names.filter(n => n.endsWith(".md")).sort()) {
+      let content: string
+      try {
+        content = fs.readFileSync(path.join(absDir, name), "utf-8")
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue
+        throw err
+      }
+      out.push(rawMetaFrom(`raw/${dir}/${name}`, content))
+    }
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** 单段安全文件名：字母数字开头、仅 [A-Za-z0-9._-]、.md 结尾（'..'、编码残留、嵌套全拒）。 */
+const RAW_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/
+
+/**
+ * 单文件读。`relFromRawRoot` = raw 根相对路径（如 `inbox/note.md`，即
+ * RawPointer.path 去掉 `raw/` 前缀）。穿越拒绝三重闸：目录必须在 RAW_DIRS 契约内、
+ * 文件名必须过 RAW_FILE_RE、解析后绝对路径必须落在 raw 根内。
+ */
+export function readRawSource(root: string, relFromRawRoot: string): RawSourceMeta & { content: string } {
+  const segs = relFromRawRoot.split("/")
+  if (segs.length !== 2 || !isRawDir(segs[0]) || !RAW_FILE_RE.test(segs[1])) {
+    throw new IngestError(
+      "INVALID_PARAM",
+      `path must be one of ${RAW_DIRS.join("/")}/<name>.md under raw/, got: ${relFromRawRoot}`,
+      400,
+    )
+  }
+  const rawRoot = path.resolve(getRawRoot(root))
+  const abs = path.resolve(getRawDir(root, segs[0] as RawDir), segs[1])
+  if (!abs.startsWith(rawRoot + path.sep)) {
+    throw new IngestError("INVALID_PARAM", `path escapes the raw root: ${relFromRawRoot}`, 400)
+  }
+  let content: string
+  try {
+    if (!fs.statSync(abs).isFile()) throw new IngestError("NOT_FOUND", `not a regular file: ${relFromRawRoot}`, 404)
+    content = fs.readFileSync(abs, "utf-8")
+  } catch (err) {
+    if (err instanceof IngestError) throw err
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new IngestError("NOT_FOUND", `raw source not found: ${relFromRawRoot}`, 404)
+    }
+    throw err
+  }
+  return { ...rawMetaFrom(`raw/${segs[0]}/${segs[1]}`, content), content }
 }

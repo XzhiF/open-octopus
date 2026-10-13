@@ -22,6 +22,7 @@ import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createIngestRoutes } from "./routes/ingest"
+import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiCompileRoutes } from "./routes/wiki-compile"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
@@ -555,6 +556,10 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
+// 知识中心票11：/knowledge 读面最小补口——raw 列表/单文件（穿越拒绝）、LOG 时间线、
+// 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度=0/findings=0/最近编译/git HEAD，
+// 无「待审核」字段；queueDepth/openFindings 由票06/13 就位后填实值不换形）。
+app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal

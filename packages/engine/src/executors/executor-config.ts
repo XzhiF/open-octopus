@@ -9,13 +9,11 @@
  */
 
 import type { IAgentProvider } from "@octopus/providers"
-import type { AutoAnswer, KnowledgeMode, ModelAliasConfig, CrossExecResolver, TaskDispatchPort } from "@octopus/shared"
+import type { AutoAnswer, ModelAliasConfig, CrossExecResolver, TaskDispatchPort } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
 import type { EngineCallbacks, RuntimeNodeMeta } from "../engine"
 import type { JsonlLogger } from "../logger"
 import type { ICheckpointStore } from "../pipeline/checkpoint-types"
-import type { PromptInjector } from "../prompt-injector"
-import type { KnowledgeInjector } from "../knowledge-injector"
 import type { AgentNodeRunner } from "./agent-runner"
 import type { EngineContext } from "./agent"
 import type { InnerNodeOverride, NodeExecutionResult, InteractionMetadata } from "./types"
@@ -151,9 +149,6 @@ export interface AgentConfig {
   previousSessionId?: string
   signal?: AbortSignal
   globalAutoAnswers?: AutoAnswer[]
-  promptInjector?: PromptInjector
-  knowledgeInjector?: KnowledgeInjector
-  workflowName?: string
   crossExecResolver?: CrossExecResolver
   executionId?: string
   resolvedModel?: string
@@ -164,10 +159,6 @@ export interface AgentConfig {
   /** Optional callback invoked before each tool call executes.
    *  Used by the Tool Interceptor (harness) to block dangerous bash commands. */
   onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
-  /** 影子双轨开关（票 12, spec 故事 30）：query → 注入器在此装配处摘除（注入链
-   *  本体零改动）；inject → vars_update 的 wiki_refs 键不落池。undefined = both
-   *  = 现状逐字节不变。红线 #1：默认路径不动 injector。 */
-  knowledgeMode?: KnowledgeMode
 }
 
 /** OctopusAgentExecutor — wraps AgentExecutor with version resolution + heartbeat */
@@ -183,16 +174,10 @@ export interface OctopusAgentConfig {
   providerKey?: string
   signal?: AbortSignal
   globalAutoAnswers?: AutoAnswer[]
-  promptInjector?: PromptInjector
-  knowledgeInjector?: KnowledgeInjector
-  workflowName?: string
   crossExecResolver?: CrossExecResolver
   executionId?: string
   resolvedModel?: string
   modelAliasConfig?: ModelAliasConfig
-  /** 影子双轨开关（票 12）：由 OctopusAgentExecutor 从身份快照 config 解析后
-   *  透传给内部 AgentExecutor（见 octopus-agent.ts）。 */
-  knowledgeMode?: KnowledgeMode
 }
 
 /** SwarmExecutor — multi-agent orchestration */
@@ -226,10 +211,6 @@ export interface LoopConfig extends CoreConfig {
   /** Pre-creates a node_execution DB record for dynamically discovered nodes (e.g., sub-workflow children).
    *  Carries optional meta for nested execution hierarchy tracking (parent_node_id, iteration_index). */
   ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
-  /** Skill/prompt injection (forwarded to dynamic_sub_workflow child engines) */
-  promptInjector?: PromptInjector
-  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
-  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   /** G1: TaskDispatchPort injected by the server (createSessionFn precedent). Threaded to inner
    *  task_dispatch nodes so a composition Loop can fan out child schedules via the port.
    *  Without this, an inner task_dispatch node would fail ("no TaskDispatchPort injected"). */
@@ -285,10 +266,6 @@ export interface DynamicSubWorkflowConfig extends CoreConfig {
   maxCorrectionRounds?: number
   /** Parent workflow metadata (used for default file naming) */
   workflow?: { name: string; engine?: string; model?: string }
-  /** Skill/prompt injection (forwarded to child engine) */
-  promptInjector?: PromptInjector
-  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
-  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   /** Execution-identity resolver (ticket 10) — set on the child WorkflowEngine so
    *  dynamic-DAG agent nodes inherit the same `as:` assembly semantics. */
   identityResolver?: import("./identity-resolver").IdentityResolver

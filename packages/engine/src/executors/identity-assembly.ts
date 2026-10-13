@@ -30,6 +30,26 @@ import { IdentityResolver } from "./identity-resolver"
 /** Default execution identity for agent nodes without `as:` (ticket 09 clone). */
 export const DEFAULT_IDENTITY_REF: string = WORKFLOW_OPERATOR_CLONE_NAME
 
+/**
+ * Collect the identity refs of every agent node (recursing into loop-style
+ * containers), deduped. Nodes without `as:` probe the default identity.
+ *
+ * 知识中心票 08：原住 precompute-gate.ts（LLM-WIKI 票 12 query 闸判定表）。
+ * 注入链物理删除后，唯一消费者是 engine-init 的 D2 身份技能物化（770d9fa6，
+ * snapshot.skills ∪ config.skills 并入 provisioning 集）——函数原样搬家，勿删。
+ */
+export function collectAgentIdentityRefs(nodes: NodeDef[] | undefined): string[] {
+  const refs = new Set<string>()
+  const walk = (list: NodeDef[] | undefined): void => {
+    for (const n of list ?? []) {
+      if (n.type === "agent") refs.add(n.as ?? DEFAULT_IDENTITY_REF)
+      if (n.nodes) walk(n.nodes)
+    }
+  }
+  walk(nodes)
+  return [...refs]
+}
+
 export interface AgentIdentityBase {
   /** The systemPrompt the call site would use WITHOUT identity (e.g. host-safety preset). */
   systemPrompt?: SystemPromptInput
@@ -42,10 +62,6 @@ export interface AgentIdentityAssembly {
   systemPrompt?: SystemPromptInput
   /** The identity actually assembled (undefined on graceful default-missing). */
   identityRef?: string
-  /** 身份快照 config（票 12: knowledge.mode 影子双轨开关的读取源，
-   *  agent_versions snapshot / clone config.json 形态；undefined on graceful
-   *  default-missing → resolveKnowledgeMode 落缺省 both = 现状）。 */
-  snapshotConfig?: Record<string, unknown>
 }
 
 export function assembleAgentNodeIdentity(
@@ -73,7 +89,6 @@ export function assembleAgentNodeIdentity(
     node: assembledNode,
     systemPrompt: mergePersonaIntoSystemPrompt(base?.systemPrompt, persona, ref),
     identityRef: ref,
-    snapshotConfig: resolved.snapshot.config,
   }
 }
 

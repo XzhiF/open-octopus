@@ -3,7 +3,7 @@ import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
-import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
+import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown, parseWikiFile } from "../services/knowledge/wiki/format"
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
 import type { WikiPageType } from "@octopus/shared"
@@ -99,6 +99,31 @@ function caseFieldsFor(root: string, relPath: string): {
       occurrences: meta.occurrences,
       ruleRef: meta.rule_ref ?? null,
       status: meta.status,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 票11：v3 页 front-matter 现形（type/aliases/links/entityKind——页渲染 chips 数据源）。
+ * aliases/links 不进 DB 索引表（v52 无列），单文件定向读 parseWikiFile 取；
+ * v2 词条/判例/文件缺席/坏头一律 null——与 caseFieldsFor 同降级律，绝不 500。
+ */
+function pageFieldsFor(root: string, relPath: string): {
+  type: string
+  entityKind: string | null
+  aliases: string[]
+  links: string[]
+} | null {
+  try {
+    const parsed = parseWikiFile(fs.readFileSync(path.join(root, relPath), "utf-8"))
+    if (parsed.kind !== "page") return null
+    return {
+      type: parsed.meta.type,
+      entityKind: parsed.meta.entity_kind ?? null,
+      aliases: parsed.meta.aliases,
+      links: parsed.meta.links,
     }
   } catch {
     return null
@@ -215,6 +240,8 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         gitHistory: gitHistoryFor(wikiRoot, row.path),
         // 票04：判例详情携带状态面（open/distilled/superseded chips + rule_ref 顺藤）；词条 null
         case: row.domain === "cases" ? caseFieldsFor(wikiRoot, row.path) : null,
+        // 票11：v3 页 front-matter 面（type/aliases/links chips 渲染源）；v2/判例/缺文件 null
+        page: pageFieldsFor(wikiRoot, row.path),
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.article")

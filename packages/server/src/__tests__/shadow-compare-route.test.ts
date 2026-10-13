@@ -105,12 +105,37 @@ describe("GET /executions/:id/shadow-compare — 影子双轨对照导出（票 
     expect(body.quadrants).toEqual({ hit: [], miss: [], injectOnly: [], queryOnly: [] })
   })
 
+  // 知识中心票 08 —— 冻结只读：注入链生产者物理删除后的新执行形态（池里只有
+  // wiki_refs，没有任何 __ 键）：injectSide 恒空、对照仍可导（历史行如上方
+  // EXEC 带 __ 键继续解析 —— 证据链审计面不失效）。
+  it("票08 冻结形态：注入侧字段恒空（relevant/injected=[]），历史对照数据仍可查", async () => {
+    const POST08 = "exec-shadow-post08"
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+         status, input_values, var_pool, org, created_at, updated_at)
+       VALUES (?, ?, '0', 0, 'built-in/flow', 'flow', 'completed', '{}', ?, 'org-shadow', datetime('now'), datetime('now'))`,
+    ).run(POST08, WS, JSON.stringify({ workflow_name: "flow", wiki_refs: ["prj-octopus#oct-007", "stale:oct-009"] }))
+
+    const res = await shadowCompare(POST08)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.injectSide).toEqual({ relevant: [], injected: [] })
+    expect(body.querySide.queried).toEqual(["prj-octopus#oct-007", "oct-009"])
+    expect(body.quadrants).toEqual({ hit: [], miss: [], injectOnly: [], queryOnly: ["prj-octopus#oct-007", "oct-009"] })
+    expect(body.metrics).toEqual({ injectedCount: 0, queriedCount: 2, hitCount: 0, staleCount: 1 })
+
+    // 历史行（带 __relevant_rule_ids/__injected_rule_ids 的旧执行快照）不受冻结影响
+    const legacy = await (await shadowCompare(EXEC)).json()
+    expect(legacy.injectSide.relevant).toEqual(["r-a", "r-b", "r-c"])
+    expect(legacy.injectSide.injected).toEqual(["r-a", "r-b"])
+  })
+
   it("unknown execution id → 404", async () => {
     const res = await shadowCompare("exec-ghost")
     expect(res.status).toBe(404)
   })
 
-  it("workspace without shadow rows is unaffected — route never touches the inject side (read-only, 红线 #1)", async () => {
+  it("workspace without shadow rows is unaffected — route never touches the inject side (read-only, 票08 冻结)", async () => {
     const before = db.prepare(`SELECT var_pool FROM executions WHERE id = ?`).get(EXEC) as { var_pool: string }
     await shadowCompare(EXEC)
     const after = db.prepare(`SELECT var_pool FROM executions WHERE id = ?`).get(EXEC) as { var_pool: string }

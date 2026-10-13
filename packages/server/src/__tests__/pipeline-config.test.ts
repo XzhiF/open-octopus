@@ -35,7 +35,9 @@ execution:
     expect(config!.execution?.failure_strategy).toBe("continue")
   })
 
-  it("loads v2 config with prompt settings", () => {
+  // 知识中心票 08：PromptInjector 消费面物理删除 —— pipeline.yaml 的 prompts 段
+  // 不再进类型面（schema 非 strict，存量文件宽容解析、不报错）。
+  it("v2 config with legacy prompts section still parses (prompts dropped, not consumed)", () => {
     const v2Config = `
 apiVersion: octopus/v2
 kind: Pipeline
@@ -46,7 +48,9 @@ prompts:
     writeFileSync(join(testDir, "pipeline.yaml"), v2Config)
     const loader = new PipelineConfigLoader(testDir)
     const config = loader.getConfig()
-    expect(config!.prompts?.global).toEqual(["Follow best practices"])
+    expect(config).not.toBeNull()
+    expect(config!.apiVersion).toBe("octopus/v2")
+    expect(config).not.toHaveProperty("prompts")
   })
 
   it("calculates config hash", () => {

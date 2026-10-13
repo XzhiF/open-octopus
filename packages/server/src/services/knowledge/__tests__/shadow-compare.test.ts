@@ -1,10 +1,11 @@
 // packages/server/src/services/knowledge/__tests__/shadow-compare.test.ts
 //
 // LLM-WIKI P1 ticket 12 — 影子对照导出四象限（story 31，P2 单向门的决策数据）。
-// 输入 = executions.var_pool 持久化快照（写侧：precompute 落 __relevant_rule_ids、
+// 输入 = executions.var_pool 持久化快照（历史形态：precompute 落 __relevant_rule_ids、
 // KnowledgeInjector 落 __injected_rule_ids —— 均为 JSON 字符串形态；执行者经
-// vars_update 落 wiki_refs 原始数组，含 stale: 前缀条目。键形态来自实现侧既有
-// 生产者，读侧只读不改，红线 #1）。
+// vars_update 落 wiki_refs 原始数组，含 stale: 前缀条目。知识中心票 08 已物理删除
+// 注入侧生产者，新执行不再有 __ 键；本 fixture 冻结的是历史快照形态 = 证据链审计面，
+// 读侧解析逻辑冻结只读，不随删除改动）。
 // 期望形状 = fixture 冻结字面量，禁止从实现自证（票 12 S2 缝约定）：
 //   hit        = injected ∩ queried       （注入且被查阅 = 双轨一致）
 //   miss       = relevant \ injected      （预计算判相关但没进 prompt = 注入侧未命中/容量饥饿）

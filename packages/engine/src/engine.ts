@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, resolveKnowledgeMode } from "@octopus/shared"
+import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } from "@octopus/shared"
 import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { NodeExecutionResult, InnerNodeOverride } from "./executors/types"
@@ -16,8 +16,6 @@ import { AgentNodeRunner } from "./executors/agent-runner"
 import { TaskDispatchExecutor } from "./executors/task-dispatch"
 import { topologicalSort, computeExecutionLevels, detectCycles, buildConditionTargetDeps, getEffectiveDeps } from "./graph-utils"
 import { ExecutorFactory } from "./executor-factory"
-import { precomputeShouldRun } from "./precompute-gate"
-import { IdentityResolver } from "./executors/identity-resolver"
 import { JsonlLogger, sanitizeId } from "./logger"
 import { join } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync, readdirSync } from "fs"
@@ -25,8 +23,6 @@ import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
 import { loadModelAliasConfig } from "@octopus/shared"
 import type { ModelAliasConfig } from "@octopus/shared"
-import { PromptInjector } from "./prompt-injector"
-import type { KnowledgeInjector } from "./knowledge-injector"
 import type { VersionResolver } from "@octopus/shared"
 import type { TaskDispatchPort } from "@octopus/shared"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
@@ -142,10 +138,6 @@ export class WorkflowEngine {
   private isExecutingHook: boolean = false
   // Cross-execution variable resolver for $parent.* and $ancestor[N].* references
   private crossExecResolver?: CrossExecResolver
-  // Pipeline-level prompt injector for global and targeted prompt injection
-  private promptInjector?: PromptInjector
-  // Knowledge injector factory (creates per-pool KnowledgeInjector from VarPool)
-  private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   // Model alias config for tier resolution (P0-2)
   private modelAliasConfig: ModelAliasConfig
 
@@ -155,8 +147,6 @@ export class WorkflowEngine {
   }
   // BL-6: Workflow-level default model (replaces propagateModel mutation)
   private workflowDefaultModel?: string
-  // Precompute hook: runs before node execution to populate VarPool with knowledge data
-  private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Dynamic agent resolver for swarm nodes
   private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>
   // Pipeline integration (set via setPipelineConfig)
@@ -196,9 +186,6 @@ export class WorkflowEngine {
     initialInputs?: Record<string, string>,
     executionName?: string,
     crossExecResolver?: CrossExecResolver,
-    promptInjector?: PromptInjector,
-    precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>,
-    knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector,
     /** Dynamic agent resolver for swarm nodes: selects and installs agents from ResourceManager */
     agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
   ) {
@@ -246,9 +233,6 @@ export class WorkflowEngine {
     this.executionMode = workflow.execution_mode ?? "auto"
     this.maxConcurrent = workflow.max_concurrent
     this.crossExecResolver = crossExecResolver
-    this.promptInjector = promptInjector
-    this.precomputeHook = precomputeHook
-    this.knowledgeInjectorFactory = knowledgeInjectorFactory
     this.agentResolver = agentResolver
 
     // Load model alias config (P0-2: tier resolution for engine/model fields)
@@ -300,8 +284,6 @@ export class WorkflowEngine {
       modelAliasConfig: this.modelAliasConfig,
       checkpointStore: this.checkpointStore,
       agentResolver: this.agentResolver,
-      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
-      promptInjector: this.promptInjector,
       resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
       executeHooks: (event, context) => this.executeHooks(event, context),
       workflowResolver: this.workflowResolver,
@@ -393,39 +375,8 @@ export class WorkflowEngine {
     return this.globalSessionId
   }
 
-  /**
-   * Review fix #4 — call-site gate for the precompute hook: skip only when
-   * EVERY agent node's identity resolves to knowledge.mode=query; any
-   * unresolvable identity / no agent nodes / any inject|both node keeps the
-   * hook running (default path byte-identical to pre-fix behavior).
-   * Uses the injected identityResolver seam; otherwise the factory-default
-   * shape (published-first when versionResolver is set, else fs-only).
-   */
-  private precomputeGateOpen(): boolean {
-    const resolver = this.identityResolver ?? new IdentityResolver({ versionResolver: this.versionResolver })
-    return precomputeShouldRun(this.workflow.nodes, (ref) => {
-      try {
-        return resolveKnowledgeMode(resolver.resolve(ref).snapshot.config)
-      } catch {
-        return undefined
-      }
-    })
-  }
-
   async run(): Promise<ExecutionResult> {
     const start = Date.now()
-
-    // Precompute hook: populate VarPool with knowledge data before node execution.
-    // Review fix #4（spec 故事 30）：knowledge.mode=query 时整条注入链（含本预计算段）
-    // 不得运行 —— 只在本调用点加条件闸，precompute/injector 本体零改动（红线 #1）。
-    // 保守方向：无 agent 节点 / 身份不可解析 / 任一 inject|both → 照跑（现状不变）。
-    if (this.precomputeHook && this.precomputeGateOpen()) {
-      try {
-        await this.precomputeHook(this.pool, this.workflow.name, this.inputs as Record<string, string>)
-      } catch (err) {
-        console.warn("[engine] precomputeHook failed:", err)
-      }
-    }
 
     // on_workflow_start: 开跑即通知 (2026-09-21 用户诉求 —— 此前首条通知要等
     // ticket DAG 规划完才有，flow 是否真的启动了要盯页面)。仅 notify 类钩子；
@@ -2191,8 +2142,6 @@ export class WorkflowEngine {
       runner,
       globalAutoAnswers: this.workflow.auto_answers,
       signal: this.signal,
-      promptInjector: this.promptInjector,
-      workflowName: this.workflow.name,
       modelAliasConfig: this.modelAliasConfig,
       providerKey,
     })

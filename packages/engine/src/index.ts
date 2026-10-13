@@ -32,7 +32,6 @@ export type { AgentEvent, AgentRunResult } from "./executors/agent-types"
 
 export { WorkflowEngine } from "./engine"
 export type { ExecutionResult, EngineCallbacks } from "./engine"
-export { PromptInjector } from "./prompt-injector"
 
 export { EngineInitPhase } from "./engine-init"
 export type {
@@ -40,8 +39,6 @@ export type {
   GitOpsLike, ResourcePreFlightLike, ResourceProvisionerLike,
   ResourceManifestLike, ResourceCheckResultLike, ResourceProvisionResultLike,
 } from "./engine-init"
-
-export { KnowledgeInjector } from "./knowledge-injector"
 
 export { JsonlLogger, sanitizeId, parseLogFilename, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"
 export type { MergedEventType, ParsedLogFilename } from "./logger"

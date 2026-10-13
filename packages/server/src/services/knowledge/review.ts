@@ -1,12 +1,5 @@
-import path from "path"
-import fs from "fs"
 import { PendingReviewDAO, type PendingReviewRow } from "../../db/dao"
-import {
-  appendToKnowledgeFile,
-  getKnowledgeDir,
-  generateRuleId,
-} from "./file-ops"
-import { validateKnowledgeFileName } from "./validators"
+import { generateRuleId } from "./file-ops"
 
 /**
  * wiki 通道审核执行器（票02 起）：approve 按 item.type 分发——
@@ -21,9 +14,8 @@ export interface WikiReviewHandlers {
   /**
    * 「真正 wiki 词条形态」判式（生产由 index.ts 注入 curate.isGenuineWikiTarget：
    * scope='wiki' 或词条已在 wiki 根盘上）。注入后，非真词条的 rule/wiki-edit 行
-   * 不进策展闸——与 main 同轨纯追加（评审修复：票06 宽松前缀闸把旧注入轨道的
-   * `projects/*` 目标也送进可抛错的策展通道，approve 出现 fail-closed 回归）。
-   * 未注入 ⇒ 回退票06 宽松前缀判式（无 wiki 根可查的旧部署保持原行为）。
+   * 不进策展闸——票08 起这些旧形态行只结案状态（旧知识文件 append 轨已剔除），
+   * 不再落任何文件。未注入 ⇒ 回退票06 宽松前缀判式（无 wiki 根可查的旧部署）。
    */
   isWikiEntryTarget?: (item: PendingReviewRow, org?: string) => boolean
 }
@@ -50,12 +42,12 @@ export class ReviewService {
   }
 
   /**
-   * Approve a pending item: write to knowledge file + insert into knowledge_rules + update status.
-   * For skill type items, writes SKILL.md to the org skills directory.
-   * For 'wiki-split' items (票02), dispatches to the injected wiki split applier —
-   * the legacy append path below must never see a wiki row.
-   * 票06: 'wiki-edit' 与真词条形态的 'rule' 走策展编译通道；真词条 rule 先过策展闸，
-   * 再执行旧 append（P1 影子双轨：注入轨道保持运行，P2 剔除属后续票）。
+   * Approve a pending item: dispatch by type, then record the approval status.
+   * For 'wiki-split' items (票02), dispatches to the injected wiki split applier.
+   * 票06: 'wiki-edit' 与真词条形态的 'rule' 走策展编译通道。
+   * 知识中心票 08（spec「注入链与旧库硬废」）：旧知识文件追加轨道（P1 影子双轨的
+   * 注入侧腿）已物理删除 —— approve 此后只结案状态，不再写 org knowledge 任何
+   * 文件；org knowledge 目录/数据归档属票09，审核队列本体亦属票09。
    * 评审修复：是否「真词条形态」由 isWikiTargeted 裁决（见上）。
    *
    * `org` is passed per-request so a single ReviewService instance can
@@ -80,7 +72,7 @@ export class ReviewService {
         throw new Error("NO_WIKI_CURATE_APPLIER: 服务端未接线策展编译通道")
       }
       // 回归修复：只有真 wiki 词条形态（注入判式；未注入回退宽松前缀）才进策展通道。
-      // 非真词条形态的 wiki-edit 旧行/手工行 → 落到 main 原追加轨道，不新增失败。
+      // 非真词条形态的 wiki-edit 旧行/手工行 → 票08 后无旧追加轨道，仅结案状态。
       if (this.isWikiTargeted(item, org)) {
         await this.wikiHandlers.applyWikiCurate(item, org)
         this.pendingReviewDAO.updateStatus(id, "approved")
@@ -89,38 +81,21 @@ export class ReviewService {
     }
 
     // 票06 写闸（评审修复后）：真 wiki 词条形态的 rule 先过策展编译通道
-    // （lint + 合并 + 带审核引用的 git commit），再执行旧 append（P1 影子双轨）；
-    // user_preference.md 形态同样先进闸——策展通道对它拒绝自动改写（写权保护）。
-    // 真词条被拒 ⇒ 整个 approve 失败、状态留 pending——单一闸门无旁路；
-    // 非真词条的旧注入轨道目标绝不进闸——与 main 同轨、不新增失败（fail-closed 回归修复）。
-    // 未接线策展通道的部署（无 wiki 轨道）保持 P1 旧追加行为不变。
-    // 注意：此闸在旧文件名校验之前——'user_preference.md' 无域前缀，属旧校验的
-    // INVALID_TARGET_FILE 语义，但写权保护必须给专错 CURATE_REFUSED_USER_PREFERENCE。
+    // （lint + 合并 + 带审核引用的 git commit）；user_preference.md 形态同样先进闸
+    // ——策展通道对它拒绝自动改写（写权保护）。
+    // 真词条被拒 ⇒ 整个 approve 失败、状态留 pending——单一闸门无旁路。
+    // 票08：闸后不再落旧 append —— org knowledge 文件轨道已剔除。
+    // 注意：此闸先于一切结案执行（user_preference 写权保护必须给专错
+    // CURATE_REFUSED_USER_PREFERENCE，不允许先落状态再报错）。
     const wikiRuleGate = item.type === "rule" && this.wikiHandlers?.applyWikiCurate !== undefined
       && (USER_PREFERENCE_RE.test(item.target_file ?? "") || this.isWikiTargeted(item, org))
     if (wikiRuleGate) {
       await this.wikiHandlers!.applyWikiCurate!(item, org)
     }
 
-    // Guard against a poisoned target_file.
-    // pending_review rows are system-generated but flow through LLM JSON,
-    // so defense in depth is still warranted.
-    const targetFile = item.target_file || "projects/unknown.md"
-    const targetCheck = validateKnowledgeFileName(targetFile)
-    if (!targetCheck.ok) {
-      throw new Error(`INVALID_TARGET_FILE: ${targetCheck.error}`)
-    }
-
     const ruleId = item.status === "pending" || item.status === "deferred"
-      ? generateRuleId(targetFile.replace(".md", ""))
+      ? generateRuleId((item.target_file || "projects/unknown.md").replace(".md", ""))
       : id
-    const knowledgeDir = getKnowledgeDir(org)
-    const filePath = path.join(knowledgeDir, targetFile)
-
-    // Ensure subdirectory exists (projects/ or workflows/)
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
-
-    appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
     this.pendingReviewDAO.updateStatus(id, "approved")
 
     return { ok: true, ruleId }

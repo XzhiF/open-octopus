@@ -108,43 +108,6 @@ export function readUserPreference(org?: string): string {
 }
 
 /**
- * Get effective user preference by merging global + org preferences.
- *
- * Merge strategy:
- *   - Both global and org are always included (not first-match-wins)
- *   - Org preference takes priority on conflicts (clearly marked in output)
- *   - Format uses markdown headers so LLM understands the priority
- *
- * Used by precompute hook to populate __user_preference_text for agent injection.
- */
-export function getEffectiveUserPreference(org: string): string {
-  // Test hook — single file, no merge.
-  if (process.env.OCTOPUS_KNOWLEDGE_DIR) {
-    return readKnowledgeFile(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR, "user_preference.md"))
-  }
-
-  const globalDir = getKnowledgeDir()      // ~/.octopus/knowledge/
-  const orgDir = getKnowledgeDir(org)      // ~/.octopus/orgs/<org>/knowledge/
-
-  const globalPref = readKnowledgeFile(path.join(globalDir, "user_preference.md"))
-  const orgPref = readKnowledgeFile(path.join(orgDir, "user_preference.md"))
-
-  // Merge: global first, then org appended with explicit priority marker.
-  // The "overrides global on conflicts" instruction tells the LLM how to handle conflicts.
-  const parts: string[] = []
-
-  if (globalPref.trim()) {
-    parts.push("### Global Preferences\n" + globalPref.trim())
-  }
-
-  if (orgPref.trim()) {
-    parts.push("### Org Preferences (overrides global on conflicts)\n" + orgPref.trim())
-  }
-
-  return parts.join("\n\n")
-}
-
-/**
  * Write user_preference.md for a given scope. Always writes to the
  * canonical location returned by {@link getKnowledgeDir} — legacy
  * locations are read-only for backward compatibility.
