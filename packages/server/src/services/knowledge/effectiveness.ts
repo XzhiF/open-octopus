@@ -73,9 +73,12 @@ export function applyEffectivenessUpdates(
 /**
  * Track rule effectiveness after an execution.
  *
- * Reads the injected rule IDs from the pool snapshot (set by KnowledgeInjector),
- * determines whether each rule was helpful or not based on keyword overlap with
- * execution errors/review blockers, and applies the updates to the effectiveness DAO.
+ * Reads the injected rule IDs from the pool snapshot — the producer
+ * (KnowledgeInjector) was physically removed by 知识中心票 08, so new executions
+ * carry no `__injected_rule_ids` key and this returns 0; only historical
+ * pool snapshots still hold the key. The whole effectiveness/retire pipeline
+ * teardown belongs to 票 09 (old-world teardown) — kept here unmodified so the
+ * pure functions and their tests stay intact for the audit trail.
  *
  * Returns the number of rules tracked, or 0 if no injected rules were found.
  */
@@ -84,7 +87,7 @@ export function trackEffectiveness(
   effectivenessDAO: KnowledgeEffectivenessDAO,
   org: string,
 ): number {
-  // Read injected rule IDs from execution (set by KnowledgeInjector)
+  // Read injected rule IDs from execution (producer removed in 票08 — historical snapshots only)
   const injectedIdsRaw = execResult.poolSnapshot?.__injected_rule_ids
   if (!injectedIdsRaw) return 0
 

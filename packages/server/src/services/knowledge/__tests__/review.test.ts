@@ -6,7 +6,6 @@ import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { applySchema } from "../../../db/schema"
 import { ReviewService } from "../review"
-import { readKnowledgeFile } from "../file-ops"
 
 describe("review", () => {
   let db: Database.Database
@@ -51,21 +50,21 @@ describe("review", () => {
   }
 
   // =========================================================================
-  // TC-002: approveItem writes to Org-level knowledge directory
+  // TC-002: 知识中心票 08 —— 审核双写 append 轨剔除（approve 结案不写旧文件）
   // =========================================================================
   describe("approveItem (TC-002)", () => {
-    it("writes rule to org knowledge directory, not global", async () => {
+    it("approve 只结案状态，不再追加任何旧知识文件（P2 硬废）", async () => {
       const id = insertPendingRule()
 
       const result = await reviewService.approveItem(id, "test-org")
       expect(result.ok).toBe(true)
       expect(result.ruleId).toBeDefined()
 
-      // Verify file written to tmpDir (which simulates org-level dir via OCTOPUS_KNOWLEDGE_DIR)
+      // 旧 append 轨道已物理删除：OCTOPUS_KNOWLEDGE_DIR 目录保持零文件零子目录
+      // （与 main 差异 = 审核通过不再写 org knowledge —— org 库零读者的终态）
       const filePath = path.join(tmpDir, "projects", "octopus.md")
-      const content = readKnowledgeFile(filePath)
-      expect(content).toContain("Always validate inputs")
-      expect(content).toContain(result.ruleId)
+      expect(fs.existsSync(filePath)).toBe(false)
+      expect(fs.readdirSync(tmpDir)).toEqual([])
 
       // Verify pending status updated
       const pending = pendingReviewDAO.getById(id)

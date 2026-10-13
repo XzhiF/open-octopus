@@ -1,7 +1,6 @@
 // ===== Enums =====
 // TokenUsage 全站规范形状见 ./usage.ts（C1 口径统一）
 import type { TokenUsage } from './usage'
-import type { KnowledgeMode } from './knowledge'
 
 export type SessionType = 'main' | 'delegate' | 'clone_direct'
 export type CloneStatus = 'active' | 'idle' | 'executing'
@@ -156,11 +155,6 @@ export interface CloneDef {
     /** 版本化身份标记（LLM-WIKI 票 09）：true → 启动时为它发布初始 agent_versions
      *  版本，工作流节点经既有快照机制（VersionResolver）可解析/钉住该身份。 */
     versioned?: boolean
-    /** 影子双轨开关（LLM-WIKI 票 12, spec §执行身份/故事 30）：
-     *  inject = 只注入不记录（回滚态 = 现状）；query = 只记录不注入（P2 预演）；
-     *  both = 注入原样运行 + wiki_refs 查阅记录（缺省，本期默认）。
-     *  读取经 resolveKnowledgeMode，缺失即 both —— 既有分身零配置零行为变化。 */
-    knowledge?: { mode?: KnowledgeMode }
   }
 }
 

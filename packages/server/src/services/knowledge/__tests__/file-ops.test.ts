@@ -14,7 +14,6 @@ import {
   unmarkRuleRetired,
   getKnowledgeFileInfo,
   readUserPreference,
-  getEffectiveUserPreference,
   getProjectKnowledgeDir,
   getWorkflowKnowledgeDir,
 } from "../file-ops"
@@ -139,61 +138,8 @@ describe("file-ops", () => {
     })
   })
 
-  describe("getEffectiveUserPreference", () => {
-    it("includes both global and org sections in output", () => {
-      // Create a mock two-level structure
-      const mockRoot = fs.mkdtempSync(path.join(os.tmpdir(), "octopus-merge-test-"))
-      const globalKnowledgeDir = path.join(mockRoot, "knowledge")
-      const orgKnowledgeDir = path.join(mockRoot, "orgs", "test-org", "knowledge")
-      fs.mkdirSync(globalKnowledgeDir, { recursive: true })
-      fs.mkdirSync(orgKnowledgeDir, { recursive: true })
-
-      fs.writeFileSync(path.join(globalKnowledgeDir, "user_preference.md"), "- Prefer immutable data")
-      fs.writeFileSync(path.join(orgKnowledgeDir, "user_preference.md"), "- Use Zod for validation")
-
-      // Test the merge logic directly by reading both files
-      const globalPref = fs.readFileSync(path.join(globalKnowledgeDir, "user_preference.md"), "utf-8")
-      const orgPref = fs.readFileSync(path.join(orgKnowledgeDir, "user_preference.md"), "utf-8")
-
-      // Simulate what getEffectiveUserPreference does
-      const parts: string[] = []
-      if (globalPref.trim()) {
-        parts.push("### Global Preferences\n" + globalPref.trim())
-      }
-      if (orgPref.trim()) {
-        parts.push("### Org Preferences (overrides global on conflicts)\n" + orgPref.trim())
-      }
-      const merged = parts.join("\n\n")
-
-      expect(merged).toContain("### Global Preferences")
-      expect(merged).toContain("### Org Preferences (overrides global on conflicts)")
-      expect(merged).toContain("Prefer immutable data")
-      expect(merged).toContain("Use Zod for validation")
-
-      fs.rmSync(mockRoot, { recursive: true, force: true })
-    })
-
-    it("returns only global when org preference is empty", () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      try {
-        writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Global Only\n- Global rule")
-        const result = getEffectiveUserPreference("test-org")
-        expect(result).toContain("Global rule")
-      } finally {
-        delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      }
-    })
-
-    it("returns empty string when both are empty", () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      try {
-        const result = getEffectiveUserPreference("test-org")
-        expect(result).toBe("")
-      } finally {
-        delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      }
-    })
-  })
+  // 知识中心票 08：getEffectiveUserPreference（global+org 合并喂 precompute 的
+  // __user_preference_text 生产件）随注入链物理删除退役，其用例一并移除。
 
   // TC-001: Two-level knowledge storage merge
   describe("two-level directory merge (TC-001)", () => {

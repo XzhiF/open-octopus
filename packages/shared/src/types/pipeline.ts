@@ -81,18 +81,6 @@ export const RuntimeNodeSchema = z.object({
   timeout: z.number().int().positive().optional(),
 })
 
-export const TargetedPromptSchema = z.object({
-  workflow: z.string(),
-  node: z.string(),
-  prompt: z.string(),
-})
-
-export const PromptsConfigSchema = z.object({
-  global: z.array(z.string()).default([]),
-  targeted: z.array(TargetedPromptSchema).default([]),
-})
-export type PromptsConfig = z.infer<typeof PromptsConfigSchema>
-
 export const PipelineHooksSchema = z.object({
   on_node_success: z.array(HookSchema).default([]),
   on_node_failure: z.array(HookSchema).default([]),
@@ -110,7 +98,8 @@ export const PipelineConfigSchema = z.object({
   apiVersion: z.string().regex(/^octopus\/v\d+$/, "apiVersion must match octopus/v{number}"),
   kind: z.literal("Pipeline"),
   description: z.string().optional(),
-  prompts: PromptsConfigSchema.optional(),
+  // 知识中心票 08：`prompts`（PromptInjector 消费面）已物理删除；
+  // schema 非 strict，存量 pipeline.yaml 的 prompts 键宽容忽略。
   hooks: PipelineHooksSchema.optional(),
   execution: ExecutionConfigSchema.default({}),
   retry: RetryConfigSchema.default({}),

@@ -355,11 +355,12 @@ confidence: 0.6
   })
 
   // =========================================================================
-  // 回归（code review 发现2，fail-closed regression）：策展闸只管「真 wiki 词条」——
-  // 旧注入轨道（extract/maintenance）的同前缀目标（scope=project、词条不在 wiki 盘）
-  // 走 main 的追加轨道；策展/lint 通道即使会抛，也不能把这些审批拖成 pending。
+  // 回归（code review 发现2，fail-closed regression）：策展闸只管「真 wiki 词条」。
+  // 知识中心票 08：旧注入轨道的 append 轨已物理删除 —— 非真词条的同前缀目标
+  // （scope=project、词条不在 wiki 盘）不进策展闸、approve 只结案状态，
+  // 旧知识目录零文件（不再拖成 pending，原「main 追加成功」语义的结案面不变）。
   // =========================================================================
-  it("非真词条 rule（scope=project、wiki 根无此词条）→ 不进策展闸；main 追加轨道成功（策展通道会抛也不碰）", async () => {
+  it("非真词条 rule（scope=project、wiki 根无此词条）→ 不进策展闸；approve 结案且旧知识目录零写入（票08 剔轨）", async () => {
     let curateCalls = 0
     const review = new ReviewService(pdao, {
       applyWikiCurate: async () => { curateCalls++; throw new Error("SIMULATED_CURATE_BLOWUP") },
@@ -368,15 +369,15 @@ confidence: 0.6
     const headBefore = rawGit(root, ["rev-parse", "HEAD"]).stdout.trim()
     const id = insertRule({ id: "rule-legacy-target", target_file: "workflows/legacy-deploy-notes.md" })
 
-    // 票06 宽松前缀闸下这行会 reject（词条不存在 → CURATE_NOT_WIKI_TARGET）——main 上是成功的
+    // 票06 宽松前缀闸下这行会 reject（词条不存在 → CURATE_NOT_WIKI_TARGET）——结案语义保持
     const r = await review.approveItem(id, "testorg")
     expect(r.ok).toBe(true)
     expect(curateCalls).toBe(0)
     expect(pdao.getById(id)?.status).toBe("approved")
 
-    // main 轨道产物：规则行落旧知识目录（beforeEach 的 OCTOPUS_KNOWLEDGE_DIR 隔离）
-    const legacy = fs.readFileSync(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR!, "workflows", "legacy-deploy-notes.md"), "utf-8")
-    expect(legacy).toContain(CI_PNPM10_RULE)
+    // 票08：append 轨已剔除 —— 旧知识目录（OCTOPUS_KNOWLEDGE_DIR 隔离）不再出现该文件
+    const legacyPath = path.join(process.env.OCTOPUS_KNOWLEDGE_DIR!, "workflows", "legacy-deploy-notes.md")
+    expect(fs.existsSync(legacyPath)).toBe(false)
     // wiki 仓零沾染
     expect(rawGit(root, ["rev-parse", "HEAD"]).stdout.trim()).toBe(headBefore)
   })
@@ -404,7 +405,7 @@ confidence: 0.6
     expect(curateCalls).toBe(1)
   })
 
-  it("非真词条 wiki-edit 旧行（手工/遗留）→ 不进策展通道、不新增失败，落到 main 追加轨道", async () => {
+  it("非真词条 wiki-edit 旧行（手工/遗留）→ 不进策展通道、不新增失败，approve 结案不写旧文件（票08 剔轨）", async () => {
     let curateCalls = 0
     const review = new ReviewService(pdao, {
       applyWikiCurate: async () => { curateCalls++; return {} },

@@ -1,12 +1,10 @@
-import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, resolveModelAlias, applyOutputsMapping, injectionEnabled } from "@octopus/shared"
-import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig, KnowledgeMode } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, resolveModelAlias, applyOutputsMapping } from "@octopus/shared"
+import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentConfig } from "./executor-config"
 import type { SystemPromptInput } from "@octopus/providers"
 import { AgentNodeRunner } from "./agent-runner"
 import type { AgentRunResult } from "./agent-types"
-import type { PromptInjector } from "../prompt-injector"
-import type { KnowledgeInjector } from "../knowledge-injector"
 import { applyVarsUpdate } from "./parse-vars-update"
 import fs from "fs"
 import path from "path"
@@ -23,9 +21,6 @@ export class AgentExecutor implements NodeExecutor {
   private globalAutoAnswers?: AutoAnswer[]
   private signal?: AbortSignal
   private engineContext?: EngineContext
-  private promptInjector?: PromptInjector
-  private knowledgeInjector?: KnowledgeInjector
-  private workflowName?: string
   private crossExecResolver?: CrossExecResolver
   private executionId?: string
   private loopContext?: Record<string, any>
@@ -33,7 +28,6 @@ export class AgentExecutor implements NodeExecutor {
   private modelAliasConfig?: ModelAliasConfig
   private providerKey?: string
   private systemPrompt?: SystemPromptInput
-  private knowledgeMode?: KnowledgeMode
   private onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
   /** Warn-once state for resolveNodeNumber (walkthrough O). */
   private invalidNumberWarned = false
@@ -48,15 +42,6 @@ export class AgentExecutor implements NodeExecutor {
     this.globalAutoAnswers = config.globalAutoAnswers
     this.signal = config.signal
     this.engineContext = config.engineContext
-    // ── knowledge.mode 影子双轨装配闸（票 12）──
-    // mode=query → 注入器在此摘除，buildPrompt 的既有存在性守卫自然短路，
-    // 注入链本体（prompt-injector/knowledge-injector/precompute）零改动。
-    // undefined/both → 与现状逐字节一致（默认路径不动，红线 #1）。
-    this.knowledgeMode = config.knowledgeMode
-    const injectionOn = injectionEnabled(config.knowledgeMode)
-    this.promptInjector = injectionOn ? config.promptInjector : undefined
-    this.knowledgeInjector = injectionOn ? config.knowledgeInjector : undefined
-    this.workflowName = config.workflowName
     this.crossExecResolver = config.crossExecResolver
     this.executionId = config.executionId
     this.loopContext = config.loopContext
@@ -413,22 +398,6 @@ export class AgentExecutor implements NodeExecutor {
 
     prompt = substituteVarsFull(prompt, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
 
-    // Inject pipeline-level prompts (global + targeted)
-    if (this.promptInjector && this.workflowName) {
-      const injectedPrompts = this.promptInjector.getInjectedPrompts(this.workflowName, this.node.id)
-      if (injectedPrompts.length > 0) {
-        prompt = injectedPrompts.join("\n\n---\n\n") + "\n\n---\n\n" + prompt
-      }
-    }
-
-    // Inject knowledge prompts
-    if (this.knowledgeInjector && this.workflowName) {
-      const knowledgePrompts = this.knowledgeInjector.getInjectedPrompts(this.workflowName, this.node.id)
-      if (knowledgePrompts.length > 0) {
-        prompt = knowledgePrompts.join("\n\n---\n\n") + "\n\n---\n\n" + prompt
-      }
-    }
-
     const nodeAnswers: AutoAnswer[] = this.node.auto_answers ?? []
 
     const compiled = compileAutoAnswers(this.globalAutoAnswers ?? [], nodeAnswers)
@@ -547,7 +516,7 @@ export class AgentExecutor implements NodeExecutor {
   private applyVarsUpdate(text: string, outputs: Record<string, any>) {
     // 票 12: mode=inject 时 wiki_refs 不落池（关闭查阅记录），其余键原样。
     // 通道本身不变 —— vars_update → VarPool 是票 10 handoff 指定的唯一持久化信道。
-    applyVarsUpdate(text, this.pool, outputs, { knowledgeMode: this.knowledgeMode })
+    applyVarsUpdate(text, this.pool, outputs)
   }
 
   private applyOutputsMapping(outputs: Record<string, any>) {

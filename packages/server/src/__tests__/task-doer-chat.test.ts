@@ -503,11 +503,13 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
       return append.split(/\r?\n/).filter((l) => l.includes("knowledge"))
     }
 
-    // 第一轮：恰一行指针，携带 wiki 根（orgs/{org}/knowledge/wiki 口径）、octo-wiki、
+    // 第一轮：恰一行指针，携带全局 wiki 根（知识中心票08/D6①：org 路径随 org
+    // knowledge 硬废退役，改指 ~/.octopus/knowledge/wiki）、octo-wiki、
     // wiki_refs（票12 效果追踪的数据源对接口）与查阅纪律词。
     const turn1 = await grabPointerLines("开始实现")
     expect(turn1).toHaveLength(1)
-    expect(turn1[0]).toMatch(new RegExp(`orgs[\\\\/]${ORG}[\\\\/]knowledge[\\\\/]wiki`))
+    expect(turn1[0]).toMatch(/[.]octopus[\\/]knowledge[\\/]wiki/)
+    expect(turn1[0]).not.toMatch(/orgs[\\/]/)
     expect(turn1[0]).toContain("octo-wiki")
     expect(turn1[0]).toContain("wiki_refs")
     expect(turn1[0]).toContain("INDEX")

@@ -3,19 +3,16 @@ import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { AgentVersionDAO } from "../../db/dao/agent-version-dao"
-import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
-import { WorkflowEngine, PromptInjector } from "@octopus/engine"
+import { WorkflowEngine } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
 import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
-import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 
 export class EngineFactory implements IEngineFactory {
-  private knowledgeService?: KnowledgeService
   // G1: server-provided TaskDispatchPort, injected into every engine via
   // engine.setTaskDispatchPort (createSessionFn precedent). Optional — a missing
   // injection surfaces as a deterministic task_dispatch node failure, not a crash.
@@ -24,16 +21,8 @@ export class EngineFactory implements IEngineFactory {
   constructor(
     private ctx: ServiceContext,
     private dao: ExecutionDAO,
-    private pipelineConfigLoader: PipelineConfigLoader,
     private workspacePath: string,
   ) {}
-
-  /**
-   * Set the knowledge service for injection pipeline.
-   */
-  setKnowledgeService(service: KnowledgeService): void {
-    this.knowledgeService = service
-  }
 
   /**
    * Set the TaskDispatchPort (G1) — wired by ExecutionLifecycle once it has
@@ -74,12 +63,6 @@ export class EngineFactory implements IEngineFactory {
    * @param signal - optional AbortSignal
    */
   createEngine(execution: ExecutionRow, workflow: any, callbacks?: EngineCallbacks, signal?: AbortSignal): WorkflowEngine {
-    const pipelineConfig = this.pipelineConfigLoader.getConfig()
-
-    const promptInjector = pipelineConfig?.prompts
-      ? new PromptInjector(pipelineConfig.prompts)
-      : undefined
-
     const lookup = {
       getById: (eid: string) => {
         const row = this.dao.findExecutionForLookup(eid)
@@ -101,14 +84,14 @@ export class EngineFactory implements IEngineFactory {
           selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
       : undefined
 
+    // 知识中心票 08：注入链（PromptInjector/precompute hook/KnowledgeInjector 工厂）已
+    // 物理删除 —— server 与 CLI 双入口同为纯编排装配（尾参只到 agentResolver）。
     const engine = new WorkflowEngine(
       workflow, providers, this.ctx.workspacePath,
       this.ctx.workspacePath,
       callbacks, signal,
       execution.id, inputValues,
-      execution.name || undefined, crossExecResolver, promptInjector,
-      this.knowledgeService?.createPrecomputeHook(),
-      this.knowledgeService?.createInjectorFactory(),
+      execution.name || undefined, crossExecResolver,
       agentResolver,
     )
 

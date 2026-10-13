@@ -169,9 +169,6 @@ export class SubWorkflowExecutor implements NodeExecutor {
         this.config.inputs,
         undefined, // executionName
         undefined, // crossExecResolver — child does not inherit parent's cross-exec resolver
-        undefined, // promptInjector
-        undefined, // precomputeHook
-        undefined, // knowledgeInjectorFactory
         this.config.agentResolver,
       )
 
