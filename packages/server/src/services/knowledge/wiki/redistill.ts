@@ -7,7 +7,8 @@ import { parseWikiFile, extractRuleAnchors, serializePageMarkdown, RULE_ANCHOR_R
 import { REDISTILL_MAP_REL, WIKI_DOMAINS } from "./paths"
 import { parseH2Sections, lintWikiPage, TOPIC_CONSTRAINTS_SECTION } from "./lint"
 import type { WriteQueue } from "./compile-queue"
-import { WikiCompileService, WIKI_LOG_HEADER, scanWikiEntries, type BatchPageInput } from "./compile"
+import { spawnGit } from "./wiki-git"
+import { WikiCompileService, WIKI_LOG_HEADER, scanWikiEntries, type BatchPageInput, type ScannedEntry } from "./compile"
 import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
 
 export { REDISTILL_MAP_REL }
@@ -26,7 +27,8 @@ export { REDISTILL_MAP_REL }
  *     39 术语≈2700 token > L1 2000，纯单页归并会被写闸整批拒绝——装页器消解该病灶）
  *   - research 词条 → concepts 页（source 回执页是票05 raw 编译管线的产物，重蒸馏不伪造——
  *     偏离决策见票报告）
- *   - cases 原样保留（文件不动；DB type 值切 'case' 属 re-key 段）
+ *   - cases 原样保留（文件不动；DB 判例行以盘上形态收敛——既有行切 'case'、无行补 'case'
+ *     行：真数据 ops 首跑教训 D-1——判例可只走文件面从未入库，旧「重type」对这种形态不落行）
  *   - 非 topic 页按 v3 锚点小节铁律（lint L5_ANCHOR_SCOPE）不落锚点注释：剥落的锚点
  *     原号进对照表台账（carried=false），永不复用由 nextRuleAnchor 读台账保证
  *   - 旧词条文件整迁 `_retired/v2/{domain}/`（不删除；hub 子目录形态出现即
@@ -35,8 +37,11 @@ export { REDISTILL_MAP_REL }
  *     跨页时指向其**首个**落页，先到先得）
  *   - LOG.md 旧表格行机械转换 `## [date] op | title → 结果` 行格式（原表封 git 史）
  *   - INDEX.md 程序化重建五类分组（写闸 compilePages 内 renderBudgetedWikiIndex 单源）
- *   - DB wiki_articles type 值切五类 + FTS 重建（蓝绿派生自现 DDL），行数对账不丢
- *   - 全部落盘 = 一个 git commit（整体 revert 可还原）；重跑 diff 为空（幂等）。
+ *   - DB 段以盘上活页扫描为单源逐页 upsert（缺行补行、判例切 'case'）+ FTS 重建
+ *     （蓝绿派生自现 DDL）；行数对账入事务——DB 段任何失败整段回 pre-phase 不留半态
+ *   - 全部落盘 = 一个 git commit（整体 revert 可还原）；重跑 diff 为空（幂等）——
+ *     apply 入口先判「已迁移」（`_retired/v2/` 台账在盘、或已封 git HEAD），命中即
+ *     fs 段零动作（不重新派生 v2 迁移、零新 commit），只走 DB 收敛补齐（教训 D-2）。
  *
  * 票06 写串行：构造注入 queue（生产 = index.ts wikiWriteQueue 单例，带 wiki 根锁）时，
  * apply 的整个写段以 kind "redistill" 入全局 FIFO 队列执行（spec §全局写串行「统一入队、
@@ -47,8 +52,11 @@ export { REDISTILL_MAP_REL }
  *
  * 写入收口：v3 页产物一律经唯一写闸 WikiCompileService.compilePages 批通道落盘
  * （lint/L4 预算/INDEX/LOG/DB/FTS/commit 全闸免费获得）；本模块自己的前置步
- * （旧页迁移/台账/LOG 换格式）在闸外做但共享同一失败补偿路径——任何异常先把
- * 前置步还原再重抛，闸自身的回滚由 compilePages 内部快照完成。
+ * （旧页迁移/台账/LOG 换格式）在闸外做，失败补偿分界（票07 纪律「fs=git 可逆、
+ * DB=备份可逆」，真数据 ops 首跑教训 D-2）：闸 commit **前**异常 ⇒ 还原前置步再
+ * 重抛（不留半成品，形制同 compile.ts rollbackTo）；闸 commit **后**异常（DB 对账
+ * 失败）⇒ 工作树保持 HEAD 绝不回拨（回拨=把已 commit 的库拉回半 v2 脏态），DB 半态
+ * 由 reconcileDb 单事务蓝绿自回。闸自身的回滚由 compilePages 内部快照完成。
  */
 
 /** v2 四域目录（cases 不在映射输入面——判例原样保留，不迁不写）。 */
@@ -93,6 +101,8 @@ export interface RedistillReport {
     afterTotal?: number
     byType?: Record<string, number>
     deleted?: Array<{ id: string; mergedInto: string }>
+    /** 收敛段补齐的盘上活页 id（D-1：真数据判例只走文件面，DB 无行时逐页 upsert 落行） */
+    inserted?: string[]
   }
   commit: string | null
   backupHint: string
@@ -543,13 +553,34 @@ export class WikiRedistillMigrator {
     }
     if (!this.apply) return report
 
-    // 写段工作 = 重蒸馏执行（非空计划）或收敛补账（空计划：上次中断后重跑，幂等含 DB）
+    // 写段工作 = 重蒸馏执行（非空计划）或收敛补账（上次中断后重跑，幂等含 DB）。
+    // D-2（真数据 ops 教训）：已迁移判定 = `_retired/v2/` 台账面——盘上有台账，或台账
+    // 已封进 git HEAD（旧版补偿污染会把盘上台账删成 D 态，HEAD 面抹不掉）——命中即
+    // fs 段零动作：不重新派生 v2 迁移、不新建 commit（工作树保持 HEAD），DB 段独立
+    // 补齐后对账。真实现场 = fs 全成 + DB 半败双态并存时，重跑必须走本短路收敛。
+    const alreadyRedistilled = (): boolean => {
+      if (fs.existsSync(path.join(this.root, REDISTILL_MAP_REL))) return true
+      if (fs.existsSync(path.join(this.root, ".git"))) {
+        const r = spawnGit(this.root).run(["cat-file", "-e", `HEAD:${REDISTILL_MAP_REL}`])
+        if (r.status === 0) return true
+      }
+      return false
+    }
+
     const work = async (): Promise<void> => {
-      if (plan.pages.length === 0) {
-        report.reason = fs.existsSync(path.join(this.root, REDISTILL_MAP_REL)) ? "already-redistilled" : "no-v2-entries"
+      const already = alreadyRedistilled()
+      if (already || plan.pages.length === 0) {
+        report.reason = already ? "already-redistilled" : "no-v2-entries"
+        if (already) {
+          // 报告 = 本次实际执行的行为：fs 零动作面清空（残留派生计划不执行也不上报）
+          report.pages = []
+          report.retired = []
+          report.anchors = []
+        }
         const dbx = this.reconcileDb(plan)
         report.db = { ...report.db, ...dbx }
-        report.changed = dbx.deleted.length > 0 || dbx.caseRowsRetyped > 0
+        // changed 语义 = fs 面：收敛段零 diff ⇒ 恒 false（DB 补齐/删除见 report.db）
+        report.changed = false
         return
       }
       await this.execute(plan, report)
@@ -586,6 +617,10 @@ export class WikiRedistillMigrator {
     const prevLog = fs.existsSync(logAbs) ? fs.readFileSync(logAbs, "utf-8") : null
     const moved: Array<{ to: string; from: string }> = []
     let mapWritten = false
+    // D-2（真数据 ops 教训）：闸 commit 一旦落 HEAD，fs 面即成事实（票07 纪律
+    // fs=git 可逆）——其后 DB 面失败绝不回拨工作树文件，否则把已 commit 的库拉回
+    // 半 v2 脏态（?? 残留 + D _retired + M LOG），且重跑会被脏残留再度派生迁移。
+    let gateCommitted = false
 
     try {
       // ── 闸外前置步 1：旧词条整迁 _retired/v2/（rename 同盘原子；不删除）──
@@ -615,24 +650,29 @@ export class WikiRedistillMigrator {
         source: "redistill.migrate",
         reviewer: "curator",
       })
+      gateCommitted = true
 
       // ── DB 对账段：merged 行删除 + 判例 type 值切 'case' + FTS 重建 + 行数守恒验证 ──
       const dbx = this.reconcileDb(plan)
 
       report.changed = res.changed || dbx.deleted.length > 0 || dbx.caseRowsRetyped > 0
       report.commit = res.commit
-      report.db = { ...report.db, afterTotal: dbx.afterTotal, byType: dbx.byType, deleted: dbx.deleted }
+      report.db = { ...report.db, afterTotal: dbx.afterTotal, byType: dbx.byType, deleted: dbx.deleted, inserted: dbx.inserted }
     } catch (err) {
-      // 闸自身快照回滚已完成；这里还原闸外三步——不留半成品（形制同 compile.ts rollbackTo 纪律）
-      for (const m of moved) {
-        try { fs.renameSync(m.to, m.from) } catch { /* best effort */ }
-      }
-      try {
-        if (prevLog === null) fs.rmSync(logAbs, { force: true })
-        else fs.writeFileSync(logAbs, prevLog, "utf-8")
-      } catch { /* best effort */ }
-      if (mapWritten) {
-        try { fs.rmSync(mapAbs, { force: true }) } catch { /* best effort */ }
+      // 闸未成功（闸内部快照回滚已完成、HEAD 无产物）：还原闸外三步——不留半成品
+      // （形制同 compile.ts rollbackTo 纪律）。闸已 commit（gateCommitted）：fs 面
+      // 保持 HEAD 不动，DB 面失败由 reconcileDb 事务蓝绿自回——绝不拉回脏树（D-2）。
+      if (!gateCommitted) {
+        for (const m of moved) {
+          try { fs.renameSync(m.to, m.from) } catch { /* best effort */ }
+        }
+        try {
+          if (prevLog === null) fs.rmSync(logAbs, { force: true })
+          else fs.writeFileSync(logAbs, prevLog, "utf-8")
+        } catch { /* best effort */ }
+        if (mapWritten) {
+          try { fs.rmSync(mapAbs, { force: true }) } catch { /* best effort */ }
+        }
       }
       throw err
     }
@@ -640,16 +680,25 @@ export class WikiRedistillMigrator {
 
   /**
    * DB 对账（幂等收敛式：重复执行到同一终态）：
-   * - 在盘活页行已由闸 upsert（domain=五类值）；
+   * - 单源 = 盘上活页扫描（D-1 修正，真数据 ops 首跑暴露）：逐 id 对账——缺行的活页
+   *   按扫描视图补行（真判例只走文件面：cases/*.md v2 判例形态、库中从未有行，
+   *   旧「重type 既有判例行」对这种形态不落行、verify 恒差 1；补行 domain 取扫描
+   *   分型 e.type——判例经 caseEntryView/域映射切 'case'，与票04/07 裁定同值）；
+   * - 既有判例行仍只换值（文件写面 domain:cases 不变——读写面在 DB 统一）；
    * - 被归并分片行删除（去向记在 deleted，审计面不丢；台账在收敛段兜底）；
-   * - 判例行 domain 值 'cases'→'case'（文件写面 domain:cases 不变——读写面在 DB 统一）；
    * - FTS 蓝绿重建（DDL 派生自现表，单源不复制 schema）；
-   * - 行数对账：afterTotal 必须等于在盘活页扫描数，且 before 每行去向可解释，否则 VERIFY 抛。
+   * - 行数对账：afterTotal 必须等于在盘活页去重 id 数（脏态重跑面 v2 残留与 v3
+   *   活页同号，按文件数计会虚高），且 before 每行去向可解释，否则 VERIFY 抛。
    */
-  private reconcileDb(plan: RedistillPlan): { afterTotal: number; byType: Record<string, number>; deleted: Array<{ id: string; mergedInto: string }>; caseRowsRetyped: number } {
+  private reconcileDb(plan: RedistillPlan): { afterTotal: number; byType: Record<string, number>; deleted: Array<{ id: string; mergedInto: string }>; caseRowsRetyped: number; inserted: string[] } {
     const live = scanWikiEntries(this.root)
-    const liveIds = new Set(live.map(e => e.meta.id))
-    const liveCases = new Set(live.filter(e => e.type === "case").map(e => e.meta.id))
+    // id 去重：同 id 双形态共存（脏态残留 v2 文件 + 已迁 v3 页）取 v3 页/判例视图为准
+    const liveById = new Map<string, ScannedEntry>()
+    for (const e of live) {
+      const prev = liveById.get(e.meta.id)
+      if (!prev || (!prev.page && !prev.case && (e.page || e.case))) liveById.set(e.meta.id, e)
+    }
+    const liveIds = new Set(liveById.keys())
     const beforeRows = this.db.prepare("SELECT id FROM wiki_articles WHERE org = ?").all(this.org) as Array<{ id: string }>
     const mergedOf = new Map<string, string>()
     const putFirst = (k: string, v: string): void => {
@@ -665,6 +714,7 @@ export class WikiRedistillMigrator {
     }
 
     const deleted: Array<{ id: string; mergedInto: string }> = []
+    const inserted: string[] = []
     let caseRowsRetyped = 0
     const dao = new WikiArticleDAO(this.db)
     this.db.transaction(() => {
@@ -682,11 +732,28 @@ export class WikiRedistillMigrator {
         this.db.prepare("DELETE FROM wiki_articles WHERE org = ? AND id = ?").run(this.org, row.id)
         deleted.push({ id: row.id, mergedInto })
       }
-      // 判例 type 值切 'case'
-      for (const id of liveCases) {
-        const cur = this.db.prepare("SELECT domain FROM wiki_articles WHERE org = ? AND id = ?").get(this.org, id) as { domain: string } | undefined
-        if (cur && cur.domain !== "case") {
-          this.db.prepare("UPDATE wiki_articles SET domain = 'case' WHERE org = ? AND id = ?").run(this.org, id)
+      // 盘上活页逐页 upsert（单源=扫描）：缺行落行 / 判例既有行换值
+      for (const e of liveById.values()) {
+        const cur = this.db.prepare("SELECT domain FROM wiki_articles WHERE org = ? AND id = ?").get(this.org, e.meta.id) as { domain: string } | undefined
+        if (cur === undefined) {
+          const { body } = parseWikiFile(fs.readFileSync(path.join(this.root, e.relPath), "utf-8"))
+          dao.upsert({
+            org: this.org,
+            id: e.meta.id,
+            domain: e.type, // 五类值；v2 形态判例经 caseEntryView→type 'case'（票04/07 裁定）
+            title: e.meta.title,
+            summary: e.meta.summary,
+            topics: JSON.stringify(e.meta.topics),
+            stability: e.meta.stability ?? "stable",
+            last_compiled: e.meta.last_compiled,
+            sources: JSON.stringify(e.meta.sources),
+            confidence: e.meta.confidence ?? 0.5,
+            body,
+            path: e.relPath,
+          })
+          inserted.push(e.meta.id)
+        } else if (e.type === "case" && cur.domain !== "case") {
+          this.db.prepare("UPDATE wiki_articles SET domain = 'case' WHERE org = ? AND id = ?").run(this.org, e.meta.id)
           caseRowsRetyped++
         }
       }
@@ -700,17 +767,20 @@ export class WikiRedistillMigrator {
         this.db.exec("DROP TABLE wiki_fts")
         this.db.exec("ALTER TABLE wiki_fts_redistill RENAME TO wiki_fts")
       }
+      // 行数对账入事务（D-2 蓝绿纪律）：任何 DB 段失败 ⇒ 整段回 pre-phase，
+      // 不出现「改了一半再报错」的 DB 面半态
+      const inTxTotal = (this.db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org = ?").get(this.org) as { n: number }).n
+      if (inTxTotal !== liveIds.size) {
+        throw new Error(`REDISTILL_DB_VERIFY_FAILED: 行数对账不符（wiki_articles=${inTxTotal}，在盘活页=${liveIds.size}）`)
+      }
     })()
 
     const afterTotal = (this.db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org = ?").get(this.org) as { n: number }).n
-    if (afterTotal !== live.length) {
-      throw new Error(`REDISTILL_DB_VERIFY_FAILED: 行数对账不符（wiki_articles=${afterTotal}，在盘活页=${live.length}）`)
-    }
     const byType = Object.fromEntries(
       (this.db.prepare("SELECT domain, COUNT(*) AS n FROM wiki_articles WHERE org = ? GROUP BY domain").all(this.org) as Array<{ domain: string; n: number }>)
         .map(r => [r.domain, r.n]),
     )
-    return { afterTotal, byType, deleted, caseRowsRetyped }
+    return { afterTotal, byType, deleted, caseRowsRetyped, inserted }
   }
 
   private backupHint(): string {

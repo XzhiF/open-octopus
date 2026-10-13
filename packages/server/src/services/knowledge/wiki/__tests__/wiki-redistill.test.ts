@@ -4,7 +4,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { applySchema } from "../../../../db/schema"
-import { WikiArticleDAO } from "../../../../db/dao/wiki-article-dao"
+import { WikiArticleDAO, type WikiArticleRow } from "../../../../db/dao/wiki-article-dao"
 import { FindingsDAO } from "../../../../db/dao/findings-dao"
 import { GLOBAL_WIKI_ORG } from "../../global-paths"
 import { RawIngestService } from "../../raw"
@@ -785,6 +785,158 @@ describe("WikiRedistillMigrator — v2→v3 重蒸馏（票07）", () => {
     // DB 对账：2 词条行 → 2 页行，去向全可解释
     expect(report.db.afterTotal).toBe(2)
     expect(report.db.deleted.map(d => d.id).sort()).toEqual(["biz-glossary-big-2"])
+    db2.close()
+  })
+
+  // ── 组 7：真数据 ops 首跑缺陷回归（2026-10-13 真 ops——D-1 DB 段收编 v2 形态判例页）──
+  // 生产真形态 = 判例只有盘上文件（cases/*.md v2 判例 front-matter），默认库从未有行——
+  // 旧 DB 段「重type 既有判例行」对缺行形态不落行，verify 恒差 1（真数据报错 11 vs 12）。
+  // fixture 判例文本与真仓文件逐字节一致（真仓 cases/2026-10-12-pnpm-lockfile-mismatch.md）。
+  it("D-1：DB 无判例行（真数据形态）——首跑以盘上活页为单源补齐落行，对账通过", async () => {
+    const dao = new WikiArticleDAO(db)
+    const rid = dao.getRowid(GLOBAL_WIKI_ORG, "case-e2e13-001")
+    if (rid !== undefined) dao.deleteFts(rid)
+    dao.delete(GLOBAL_WIKI_ORG, "case-e2e13-001") // 模拟真库：判例只走文件面，无行
+    expect(dao.get(GLOBAL_WIKI_ORG, "case-e2e13-001")).toBeUndefined()
+
+    const report = await new WikiRedistillMigrator({ db, wikiRoot, apply: true }).run()
+
+    expect(report.commit).toMatch(/^[0-9a-f]{40}$/)
+    expect(report.db.beforeTotal).toBe(14)
+    expect(report.db.afterTotal).toBe(12)
+    expect(report.db.byType).toEqual({ topic: 3, concept: 8, case: 1 })
+    expect(report.db.inserted).toEqual(["case-e2e13-001"])
+
+    // v2 判例形态 → 行映射（票04/07 裁定 domain 列切 'case'；caseEntryView 口径同 writeCase）
+    const row = dao.get(GLOBAL_WIKI_ORG, "case-e2e13-001")!
+    expect(row).toMatchObject({
+      domain: "case",
+      title: "CI 报 LOCKFILE_CONFIG_MISMATCH",
+      summary: "CI 报 LOCKFILE_CONFIG_MISMATCH",
+      path: "cases/2026-10-12-pnpm-lockfile-mismatch.md",
+      stability: "stable",
+      last_compiled: "2026-10-12",
+      confidence: 1,
+    })
+    expect(JSON.parse(row.topics)).toEqual(["ci", "pnpm", "lockfile"])
+    expect(JSON.parse(row.sources)).toEqual(["commit:82d963724e807e4989a0f72faf8e4575581a1d9f"])
+    expect(row.body).toContain("## 现场")
+    // FTS 蓝绿重建覆盖补进行（检索命中判例）
+    expect(dao.search(GLOBAL_WIKI_ORG, "LOCKFILE").map(r => r.id)).toContain("case-e2e13-001")
+    // 判例文件本身一字未动（原样保留纪律不变）+ 工作树干净
+    expect(fs.readFileSync(path.join(wikiRoot, "cases/2026-10-12-pnpm-lockfile-mismatch.md"), "utf-8")).toBe(CASE_FILE)
+    expect(porcelain()).toBe("")
+  })
+
+  // ── 组 8：D-2（重跑非幂等 + 失败污染 fs）回归——票07 纪律「fs=git 可逆、DB=备份可逆」──
+  it("D-2a：写闸 commit 已落 HEAD 后 DB 面对账失败——工作树保持 HEAD（零污染），DB 事务回 pre-phase", async () => {
+    const dao = new WikiArticleDAO(db)
+    // 造一条无活页/无归并去向可解释的行 ⇒ 迫使闸 commit 成功之后的对账段抛错
+    // （现场复刻：fs 全成 + DB 半败——旧版补偿机制在这一步把已 commit 的工作树拉回半 v2 脏态）
+    dao.upsert({ org: GLOBAL_WIKI_ORG, id: "ghost-row", domain: "business", title: "幽灵行", summary: "盘上无页", topics: "[]", stability: "stable", last_compiled: "2026-10-12", sources: "[]", confidence: 0.5, body: "ghost", path: "business/ghost-row.md" })
+
+    const before = commitCount()
+    const err = await new WikiRedistillMigrator({ db, wikiRoot, apply: true }).run().catch((e: unknown) => e as Error)
+    expect(String((err as Error).message)).toMatch(/REDISTILL_DB_VERIFY_FAILED/)
+
+    // fs 面：redistill commit 落 HEAD 即成事实——工作树保持 HEAD，零污染
+    expect(commitCount()).toBe(before + 1)
+    expect(porcelain(), porcelain()).toBe("")
+    expect(fs.existsSync(path.join(wikiRoot, REDISTILL_MAP_REL))).toBe(true)
+    expect(fs.readFileSync(path.join(wikiRoot, "LOG.md"), "utf-8")).not.toContain("| 日期 | 动作 |")
+    expect(fs.readFileSync(path.join(wikiRoot, "topics", "wf-prd-impl.md"), "utf-8")).toContain("type: topic")
+
+    // DB 面：对账段整体在事务内——失败回 pre-phase（ghost/归并/判例行一律未动，不留半态）
+    expect(dao.get(GLOBAL_WIKI_ORG, "ghost-row")).toBeDefined()
+    expect(dao.get(GLOBAL_WIKI_ORG, "biz-glossary-engine-2")).toBeDefined()
+    expect(dao.get(GLOBAL_WIKI_ORG, "case-e2e13-001")?.domain).toBe("cases")
+  })
+
+  it("D-2b：脏残留树重跑（台账已封 HEAD + 盘上 v2 残留同放）——已迁移短路 fs 零动作，DB 独立补齐", async () => {
+    await new WikiRedistillMigrator({ db, wikiRoot, apply: true }).run()
+    const dao = new WikiArticleDAO(db)
+    // 构造旧版补偿污染的后果面：盘上台账被删（D），一份 v2 原文件被放回原位（??）——
+    // 真实现场即如此双态并存在工作树，重跑不得被残留再度派生 v2 迁移
+    fs.rmSync(path.join(wikiRoot, REDISTILL_MAP_REL))
+    fs.writeFileSync(path.join(wikiRoot, "projects", "prj-open-octopus.md"), PRJ_OPEN, "utf-8")
+    const dirtyStatus = porcelain()
+    expect(dirtyStatus).toMatch(/\?\? projects/)
+    expect(dirtyStatus).toMatch(/D _retired\/v2\/redistill-map\.json/)
+
+    // DB 面回到「不完整」（现场：fs 全成 + DB 缺判例行）
+    const rid = dao.getRowid(GLOBAL_WIKI_ORG, "case-e2e13-001")
+    if (rid !== undefined) dao.deleteFts(rid)
+    dao.delete(GLOBAL_WIKI_ORG, "case-e2e13-001")
+
+    const before = commitCount()
+    const treeBefore = git(wikiRoot).run(["rev-parse", "HEAD^{tree}"]).stdout.trim()
+    const report = await new WikiRedistillMigrator({ db, wikiRoot, apply: true }).run()
+
+    expect(report.changed).toBe(false)
+    expect(report.reason).toBe("already-redistilled")
+    expect(report.pages).toEqual([]) // 短路 = 零动作——派生残留计划不进报告
+    expect(report.retired).toEqual([])
+    expect(report.commit).toBeNull()
+    expect(report.db.afterTotal).toBe(12)
+    expect(report.db.inserted).toEqual(["case-e2e13-001"])
+    expect(dao.get(GLOBAL_WIKI_ORG, "case-e2e13-001")?.domain).toBe("case")
+    // fs 零动作：零新 commit、HEAD 树不变、git 状态与跑前逐字一致（残留仍待人工 clean，不新增污染）
+    expect(commitCount()).toBe(before)
+    expect(git(wikiRoot).run(["rev-parse", "HEAD^{tree}"]).stdout.trim()).toBe(treeBefore)
+    expect(porcelain()).toBe(dirtyStatus)
+  })
+
+  it("D-2c 现场复刻：git 仓含 redistill 单 commit（HEAD 干净）+ DB 11 行缺判例——apply 重跑四条件逐条成立", async () => {
+    // ①现场 fs 态：迁移树整体平移为独立仓 = 单 redistill commit、working tree clean
+    await new WikiRedistillMigrator({ db, wikiRoot, apply: true }).run()
+    const root2 = path.join(tmpDir, "scene", "wiki")
+    fs.mkdirSync(root2, { recursive: true })
+    for (const name of fs.readdirSync(wikiRoot)) {
+      if (name === ".git") continue
+      fs.cpSync(path.join(wikiRoot, name), path.join(root2, name), { recursive: true })
+    }
+    const g2 = git(root2)
+    g2.run(["init"])
+    g2.run(["config", "user.email", "kc@test.local"])
+    g2.run(["config", "user.name", "kc-test"])
+    g2.run(["config", "core.autocrlf", "false"])
+    g2.run(["add", "-A"])
+    const c2 = g2.run(["commit", "-m", "compile: redistill: v2→v3（11 页）——现场复刻"])
+    if (c2.status !== 0) throw new Error(`scene repo commit failed: ${c2.stderr}`)
+    expect(Number(g2.run(["rev-list", "--count", "HEAD"]).stdout.trim())).toBe(1)
+    expect(g2.run(["status", "--porcelain"]).stdout.trim()).toBe("")
+
+    // ②现场 DB 态（= 真默认库报错现场）：11 行活页（五类值），判例从未有行
+    const db2 = new Database(":memory:")
+    applySchema(db2)
+    const dao2 = new WikiArticleDAO(db2)
+    const keep = db.prepare(
+      "SELECT org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path FROM wiki_articles WHERE org = ? AND id != 'case-e2e13-001'",
+    ).all(GLOBAL_WIKI_ORG) as Array<Omit<WikiArticleRow, "updated_at">>
+    for (const r of keep) dao2.upsert(r)
+    expect((db2.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org = ?").get(GLOBAL_WIKI_ORG) as { n: number }).n).toBe(11)
+
+    const treeBefore = g2.run(["rev-parse", "HEAD^{tree}"]).stdout.trim()
+    // ③生产修复路径 = 修好的幂等重跑入口（apply=true）
+    const report = await new WikiRedistillMigrator({ db: db2, wikiRoot: root2, apply: true }).run()
+
+    // 条件一：changed:false（fs 零 diff、零新 commit、无 queueTask 旁路）
+    expect(report.changed).toBe(false)
+    expect(report.reason).toBe("already-redistilled")
+    expect(report.commit).toBeNull()
+    expect(report.pages).toEqual([])
+    expect(Number(g2.run(["rev-list", "--count", "HEAD"]).stdout.trim())).toBe(1)
+    expect(g2.run(["rev-parse", "HEAD^{tree}"]).stdout.trim()).toBe(treeBefore)
+    // 条件二：DB 补齐判例行（id=case-e2e13-001，type/domain 值 'case'）
+    expect(report.db.beforeTotal).toBe(11)
+    expect(report.db.inserted).toEqual(["case-e2e13-001"])
+    const row = dao2.get(GLOBAL_WIKI_ORG, "case-e2e13-001")!
+    expect(row).toMatchObject({ domain: "case", title: "CI 报 LOCKFILE_CONFIG_MISMATCH", path: "cases/2026-10-12-pnpm-lockfile-mismatch.md" })
+    // 条件三：verify 12=12 通过
+    expect(report.db.afterTotal).toBe(12)
+    expect(report.db.byType).toEqual({ topic: 3, concept: 8, case: 1 })
+    // 条件四：git status 空
+    expect(g2.run(["status", "--porcelain"]).stdout.trim()).toBe("")
     db2.close()
   })
 })
