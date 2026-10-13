@@ -21,8 +21,12 @@ import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
+import { createIngestRoutes } from "./routes/ingest"
+import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
+import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
+import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
 import { createWikiDistillRoutes } from "./routes/wiki-distill"
 import { WikiDistillService, createLLMDistillSummarizer } from "./services/knowledge/wiki/distill"
@@ -528,6 +532,9 @@ const reviewService = new ReviewService(d.pendingReview, {
   isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
 })
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
+// 知识中心票02：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
+// 构造即幂等建三层骨架；落 raw 不触发编译、不入队（spec §全局写串行语义，编译属票05）。
+app.route("/api/knowledge", createIngestRoutes(new RawIngestService()))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
@@ -535,7 +542,14 @@ const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
 
 // LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
+// 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。
 app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
+// 知识中心票03: wiki 全局化搬家命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列计划，
+// ?apply=true 才动手（顺序：wiki 连 .git 搬家 → DB re-key/FTS 重建 → 偏好归档+知识根迁入）。
+// 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
+app.route("/api/knowledge/wiki", createWikiGlobalMoveRoutes(
+  (apply) => new WikiGlobalMigrator({ db: getDb(), apply }),
+))
 // LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
 // 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
 app.route("/api/knowledge/wiki", createWikiMigrateRoutes(

@@ -2,6 +2,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import type { WikiPageType } from "@octopus/shared"
+import { resolveGlobalWikiRoot, WIKI_PAGE_DIRS } from "../global-paths"
 
 /**
  * Wiki 根路径解析 — LLM-WIKI knowledge-loop 票01。
@@ -11,7 +12,7 @@ import type { WikiPageType } from "@octopus/shared"
  * wiki 根是独立 git 仓库（org 级）：
  *
  *   org     →  ~/.octopus/orgs/<org>/knowledge/wiki/
- *   global  →  ~/.octopus/knowledge/wiki/
+ *   global  →  ~/.octopus/knowledge/wiki/（单源解析 = global-paths helper，票03）
  *
  * 注入优先级：构造器 rootDir（archive-routes stateDir 测试先例）> OCTOPUS_WIKI_DIR env hook > org 路径。
  * 本模块不 mkdir——目录骨架 + git init 属编译服务职责（首编译时收口）。
@@ -19,10 +20,8 @@ import type { WikiPageType } from "@octopus/shared"
 export function resolveWikiRoot(org?: string, injectedRoot?: string): string {
   if (injectedRoot) return injectedRoot
   if (process.env.OCTOPUS_WIKI_DIR) return process.env.OCTOPUS_WIKI_DIR
-  const base = path.join(os.homedir(), ".octopus")
-  return org
-    ? path.join(base, "orgs", org, "knowledge", "wiki")
-    : path.join(base, "knowledge", "wiki")
+  if (!org) return resolveGlobalWikiRoot()
+  return path.join(os.homedir(), ".octopus", "orgs", org, "knowledge", "wiki")
 }
 
 /** 四域 + cases 判例域（v2 存量目录——兼容可读，重蒸馏票07 后整体迁 _retired/）。 */
@@ -40,10 +39,10 @@ export const WIKI_DOMAIN_LABELS: Record<WikiDomainDir, string> = {
 
 /**
  * 页路径面 v3（票04 基座）：五类页目录（prototype Tab② 目录契约）。
- * 页形态逻辑一律经此解析目录，不硬编码 org wiki 路径（全局根迁移属票02/03）。
+ * 单源 = global-paths（票02 三层骨架同表）——此处 re-export 供形态层
+ * （扫描/骨架/INDEX 分组）消费；页形态逻辑一律经此解析目录，不硬编码 org wiki 路径。
  */
-export const WIKI_PAGE_DIRS = ["entities", "concepts", "topics", "sources", "cases"] as const
-export type WikiPageDir = (typeof WIKI_PAGE_DIRS)[number]
+export { WIKI_PAGE_DIRS, type WikiPageDir } from "../global-paths"
 
 /** INDEX 五类分组节头 — 逐字 prototype Tab② INDEX 样例（`## Entities (7)` 式）。 */
 export const WIKI_PAGE_GROUP_LABELS: Record<WikiPageType, string> = {
@@ -65,4 +64,39 @@ export function ensureWikiSkeleton(root: string): void {
   for (const d of [...WIKI_ALL_DIRS, "_retired"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true })
   }
+}
+
+/**
+ * 判定 wiki 根是否有真实内容（票03 搬家扫描/兼容读窗共用同一口径）：
+ * 有 .git 仓、或有 INDEX/LOG 导航层、或任一域目录/退役区有 .md——纯 ensureWikiSkeleton
+ * 造出的空骨架（只有目录）判 false。骨架 ≠ 内容。
+ */
+export function hasWikiContent(root: string): boolean {
+  if (!fs.existsSync(root)) return false
+  if (fs.existsSync(path.join(root, ".git"))) return true
+  for (const special of ["INDEX.md", "LOG.md"]) {
+    if (fs.existsSync(path.join(root, special))) return true
+  }
+  for (const d of [...WIKI_ALL_DIRS, "_retired"]) {
+    try {
+      if (fs.readdirSync(path.join(root, d)).some(n => n.endsWith(".md"))) return true
+    } catch { /* 域目录缺席 */ }
+  }
+  return false
+}
+
+/**
+ * 读 API 的 wiki 根解析（票03 D6①）：搬家窗口期语义——
+ *   - 全局根有内容 → 只读全局根（旧 org wiki 路径此后不再读，"兼容读一次"收口于搬家完成）
+ *   - 全局根尚无内容（迁移未跑）→ 兼容读旧 org wiki 路径（org 参数容错承接）
+ * 优先级沿用 resolveWikiRoot：注入 rootDir > OCTOPUS_WIKI_DIR env > 上述窗口判定。
+ * `octopusHome` = 假 ~/.octopus 根（测试注入 tmpdir fixture，绝不碰真实家目录；缺省 os.homedir()/.octopus）。
+ */
+export function resolveWikiRootCompat(org?: string, injectedRoot?: string, octopusHome?: string): string {
+  if (injectedRoot) return injectedRoot
+  if (process.env.OCTOPUS_WIKI_DIR) return process.env.OCTOPUS_WIKI_DIR
+  const home = octopusHome ?? path.join(os.homedir(), ".octopus")
+  const globalRoot = path.join(home, "knowledge", "wiki")
+  if (hasWikiContent(globalRoot)) return globalRoot
+  return org ? path.join(home, "orgs", org, "knowledge", "wiki") : globalRoot
 }

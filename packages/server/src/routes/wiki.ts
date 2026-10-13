@@ -4,7 +4,8 @@ import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
-import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
+import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
+import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
 import type { WikiPageType } from "@octopus/shared"
 import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
 import { spawnGit } from "../services/knowledge/wiki/wiki-git"
@@ -16,6 +17,10 @@ import { errorResponse } from "../services/knowledge/validators"
  * 「检索/统计不扫盘」纪律。写路径不在这里（唯一写入口 = WikiCompileService）。
  *
  * 路由工厂签名沿用 archive-routes 先例：构造注入依赖（DAO），测试传 in-memory DB。
+ *
+ * 知识中心票03（D6① wiki 全局唯一）：org 参数容错保留（旧客户端仍带 ?org=），
+ * 语义钉 'global'——DB 读恒走 GLOBAL_WIKI_ORG；fs 读走 resolveWikiRootCompat
+ * （搬家窗口期：全局根未生成时兼容读旧 org wiki 路径一次，全局根有内容后旧路径不再读）。
  */
 
 // wiki 词条 id：kebab-case（格式 v2 schema 同源）；显式拒绝 '/'、'..'、空白与编码分隔符
@@ -121,14 +126,15 @@ function caseWeightScore(
   return s
 }
 
-export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: string }): Hono {
+export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: string; octopusHome?: string }): Hono {
   const routes = new Hono()
 
-  // GET /api/knowledge/wiki/tree?org= — 域树 + 统计
+  // GET /api/knowledge/wiki/tree?org= — 域树 + 统计（org 参数容错，语义钉 global，票03）
   routes.get("/tree", (c) => {
     try {
-      const org = c.req.query("org") || "default"
-      const rows = articles.listByOrg(org)
+      const legacyOrg = c.req.query("org") || undefined
+      const wikiRoot = resolveWikiRootCompat(legacyOrg, opts?.rootDir, opts?.octopusHome)
+      const rows = articles.listByOrg(GLOBAL_WIKI_ORG)
 
       const stats = {
         entries: rows.filter(r => r.domain !== "cases").length,
@@ -169,7 +175,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         stats.pendingReview = new PendingReviewDAO(articles.getDb()).countPendingOpen()
       } catch { /* pending_review 缺席时不阻塞树查询 */ }
 
-      return c.json({ org, domains, stats, log: readWikiLog(resolveWikiRoot(org, opts?.rootDir)) })
+      return c.json({ org: GLOBAL_WIKI_ORG, domains, stats, log: readWikiLog(wikiRoot) })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.tree")
       return c.json(body, status)
@@ -185,8 +191,9 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
     }
 
     try {
-      const org = c.req.query("org") || "default"
-      const row = articles.get(org, id)
+      const legacyOrg = c.req.query("org") || undefined
+      const wikiRoot = resolveWikiRootCompat(legacyOrg, opts?.rootDir, opts?.octopusHome)
+      const row = articles.get(GLOBAL_WIKI_ORG, id)
       if (!row) {
         return c.json({ error: { code: "NOT_FOUND", message: "Wiki entry not found" } }, 404)
       }
@@ -205,9 +212,9 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         updatedAt: row.updated_at,
         body: row.body,
         anchors: extractRuleAnchors(row.body),
-        gitHistory: gitHistoryFor(resolveWikiRoot(org, opts?.rootDir), row.path),
+        gitHistory: gitHistoryFor(wikiRoot, row.path),
         // 票04：判例详情携带状态面（open/distilled/superseded chips + rule_ref 顺藤）；词条 null
-        case: row.domain === "cases" ? caseFieldsFor(resolveWikiRoot(org, opts?.rootDir), row.path) : null,
+        case: row.domain === "cases" ? caseFieldsFor(wikiRoot, row.path) : null,
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.article")
@@ -222,7 +229,8 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       return c.json({ error: { code: "INVALID_PARAM", message: "Query parameter \"q\" is required" } }, 400)
     }
     try {
-      const org = c.req.query("org") || "default"
+      const legacyOrg = c.req.query("org") || undefined
+      const wikiRoot = resolveWikiRootCompat(legacyOrg, opts?.rootDir, opts?.octopusHome)
       const topK = Math.min(Math.max(parseInt(c.req.query("topK") ?? "10", 10) || 10, 1), 50)
       const domain = c.req.query("domain") || undefined
 
@@ -230,19 +238,19 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       let mode: "fts" | "like" = "fts"
       let hits: ReturnType<WikiArticleDAO["search"]> = []
       try {
-        hits = articles.search(org, q, topK, domain)
+        hits = articles.search(GLOBAL_WIKI_ORG, q, topK, domain)
       } catch {
         hits = []
       }
       if (hits.length === 0) {
-        hits = articles.searchLike(org, q, topK, domain)
+        hits = articles.searchLike(GLOBAL_WIKI_ORG, q, topK, domain)
         mode = "like"
       }
 
       const results = hits.map(r => {
-        const full = articles.get(org, r.id)
+        const full = articles.get(GLOBAL_WIKI_ORG, r.id)
         const { snippet, anchors } = locateQueryHits(full?.body ?? "", q)
-        const caseFields = r.domain === "cases" ? caseFieldsFor(resolveWikiRoot(org, opts?.rootDir), r.path) : null
+        const caseFields = r.domain === "cases" ? caseFieldsFor(wikiRoot, r.path) : null
         return {
           ...r,
           snippet: snippet || (full?.summary ?? ""),
@@ -258,7 +266,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       }
       for (const r of results) delete (r as { _score?: number })._score
 
-      return c.json({ org, query: q, mode, results })
+      return c.json({ org: GLOBAL_WIKI_ORG, query: q, mode, results })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.search")
       return c.json(body, status)
