@@ -10,6 +10,12 @@ export interface KnowledgeEffectivenessRow {
   confidence: number
 }
 
+/**
+ * KnowledgeEffectivenessDAO — 边界注（code-review S1）：服务层消费方（trackEffectiveness/
+ * retireStaleRules 等）已随知识中心票08 注入链物理删除，本 DAO 业务层现**零 importer**
+ * （index.ts 装配位保留=容器一致性）——保留为 spec Out of Scope P4「effectiveness v2」
+ * （JSONL ↔ blocker 关联、confidence 滚动更新）的预留面，与 schema.sql knowledge_effectiveness 表同进退，勿单独复活旧语义。
+ */
 export class KnowledgeEffectivenessDAO extends BaseDAO {
   constructor(db: Database.Database) {
     super(db)

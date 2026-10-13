@@ -16,6 +16,8 @@ export { EvolutionDAO } from "./evolution-dao"
 export { CloneDAO } from "./clone-dao"
 export { SafetyDAO } from "./safety-dao"
 export { PendingReviewDAO, type PendingReviewRow } from "./pending-review-dao"
+// 边界注（评审 S1）：业务层零 importer，保留为 spec Out-of-Scope P4「effectiveness v2」预留面
+// ——与 schema.sql knowledge_effectiveness 边界注同律，勿删（详见 knowledge-effectiveness-dao.ts 类注）。
 export { KnowledgeEffectivenessDAO } from "./knowledge-effectiveness-dao"
 export { ArchiveDAO } from "./archive-dao"
 export { ArchiveDraftDAO } from "./archive-draft-dao"

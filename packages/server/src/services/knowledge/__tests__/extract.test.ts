@@ -14,11 +14,9 @@ import {
 } from "../extract"
 import type { ExecResult } from "../extract"
 import {
-  appendToKnowledgeFile,
   readKnowledgeFile,
   writeKnowledgeFile,
 } from "../file-ops"
-import { compactKnowledgeFile } from "../maintenance"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -205,20 +203,9 @@ describe("extract", () => {
 
       expect(readKnowledgeFile(prefPath)).toBe("original content")
     })
-
-    it("compactKnowledgeFile does not touch user_preference.md", async () => {
-      const prefPath = path.join(tmpDir, "user_preference.md")
-      writeKnowledgeFile(prefPath, "original content")
-
-      // Create a target file to compact
-      const targetPath = path.join(tmpDir, "octopus.md")
-      appendToKnowledgeFile(targetPath, "Rule 1", "r1-20260629-abcd", "system")
-      appendToKnowledgeFile(targetPath, "Rule 2", "r2-20260629-efgh", "system")
-
-      await compactKnowledgeFile("test-org", "octopus.md", pendingReviewDAO)
-
-      expect(readKnowledgeFile(prefPath)).toBe("original content")
-    })
+    // 注：原「compactKnowledgeFile 不触 user_preference」用例随 maintenance.ts 死链删除
+    // （code-review S1，CODING_STANDARDS #5）；人工文件写保护的行为证据已迁至
+    // 新世界唯一写闸套件 wiki/__tests__/wiki-write-gate.test.ts。
   })
 
   // =========================================================================
