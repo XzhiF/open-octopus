@@ -299,13 +299,16 @@ describe("file-ops", () => {
   })
 
   describe("getProjectKnowledgeDir", () => {
-    it("returns projects/ subdirectory under org knowledge dir", () => {
+    // 票09：getter 的 mkdir 副作用随旧世界删除消亡——纯路径解析，
+    // 绝不重建已归档删除的目录（归档不删纪律的运行时护栏）。
+    it("returns projects/ subdirectory under org knowledge dir — zero mkdir side effect", () => {
       const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-test-"))
       process.env.OCTOPUS_KNOWLEDGE_DIR = testDir
       try {
         const dir = getProjectKnowledgeDir("myorg")
         expect(dir).toMatch(/projects$/)
-        expect(fs.existsSync(dir)).toBe(true)
+        expect(fs.existsSync(dir)).toBe(false)
+        expect(fs.readdirSync(testDir)).toEqual([])
       } finally {
         delete process.env.OCTOPUS_KNOWLEDGE_DIR
         fs.rmSync(testDir, { recursive: true, force: true })
@@ -314,13 +317,14 @@ describe("file-ops", () => {
   })
 
   describe("getWorkflowKnowledgeDir", () => {
-    it("returns workflows/ subdirectory", () => {
+    it("returns workflows/ subdirectory — zero mkdir side effect (票09)", () => {
       const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-test-"))
       process.env.OCTOPUS_KNOWLEDGE_DIR = testDir
       try {
         const dir = getWorkflowKnowledgeDir("myorg")
         expect(dir).toMatch(/workflows$/)
-        expect(fs.existsSync(dir)).toBe(true)
+        expect(fs.existsSync(dir)).toBe(false)
+        expect(fs.readdirSync(testDir)).toEqual([])
       } finally {
         delete process.env.OCTOPUS_KNOWLEDGE_DIR
         fs.rmSync(testDir, { recursive: true, force: true })

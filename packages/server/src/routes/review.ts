@@ -43,7 +43,6 @@ export function createReviewRoutes(
       scope: item.scope,
       conflicts: safeParseConflicts(item.conflicts),
       confidence: item.confidence,
-      autoApprove: item.auto_approve === 1,
       status: item.status,
       createdAt: item.created_at,
     }))

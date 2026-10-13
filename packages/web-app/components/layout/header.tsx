@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard,
   FolderKanban,
-  BookOpen,
-  BookText,
   Clock,
   Settings,
   Bell,
@@ -24,8 +22,9 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "任务看板", href: "/tasks", icon: ListTodo },
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
-  { name: "工作经验", href: "/experience", icon: BookOpen },
-  { name: "知识词条", href: "/wiki", icon: BookText },
+  // 票09：旧世界导航退役——「工作经验」(/experience) 与「知识词条」(/wiki) 两项
+  // 随页面删除摘除；知识入口唯一 = 「知识中心」(/knowledge，票11)。
+  // 旧链接由根目录 middleware 307 重定向 /knowledge（S4 断言）。
   { name: "知识中心", href: "/knowledge", icon: Library },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },

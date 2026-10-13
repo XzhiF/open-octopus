@@ -2,9 +2,7 @@ import fs from "fs"
 import path from "path"
 import { PendingReviewDAO } from "../../db/dao/pending-review-dao"
 import {
-  appendToKnowledgeFile,
   generateRuleId,
-  getKnowledgeDir,
   listAllActiveRules,
 } from "./file-ops"
 import type {
@@ -319,17 +317,20 @@ Return ONLY the JSON array, no explanation.`
 
 export interface RecurringResult {
   rule: ProposedRule
-  autoApprove: boolean
+  /** 已入队 pending_review（票09 起 auto_approve 概念废除，统一人工结案流转）。 */
+  enqueued: boolean
 }
 
 /**
  * Scan past execution results for recurring failure patterns.
  *
- * Failures are grouped by `nodeId:errorFirstLine`. Patterns appearing:
- *  - 2 times  → proposed as a pending rule (manual review)
- *  - ≥ 3 times → auto-approved: written directly to the knowledge file,
- *    the DB `knowledge_rules` table, and `pending_review` with
- *    `auto_approve = 1 / status = 'approved'`.
+ * Failures are grouped by `nodeId:errorFirstLine`. Patterns appearing
+ * ≥ 2 times are enqueued into `pending_review`（status pending）。
+ *
+ * 知识中心票 09（spec §审批废除与写入闸门）：原「≥3 次 ⇒ auto_approve=1 +
+ * 直写旧知识文件」轨已物理删除——auto_approve 概念废除，且 org knowledge
+ * 目录归档后**任何路径不得再落盘旧知识文件**（重建护栏：本函数零 fs 写）。
+ * 消费面（归档投喂替代三级提炼）属票10；本函数收敛为纯入队。
  */
 export async function detectRecurringPitfalls(
   org: string,
@@ -398,7 +399,6 @@ export async function detectRecurringPitfalls(
   for (const [patternKey, info] of patterns) {
     if (info.count < 2) continue
 
-    const autoApprove = info.count >= 3
     const nodeId = patternKey.split(":")[0] ?? "unknown"
     const target = repoName ? `projects/${repoName}` : "projects/unknown"
     const rule: ProposedRule = {
@@ -408,31 +408,25 @@ export async function detectRecurringPitfalls(
       source: "recurring_pitfall",
     }
 
-    if (autoApprove) {
-      const ruleId = generateRuleId(rule.target)
-      const knowledgeDir = getKnowledgeDir(org)
-      const filePath = path.join(knowledgeDir, `${rule.target}.md`)
+    // 票09：统一入队 pending（结案流转），零落盘、零 auto_approve。
+    const ruleId = generateRuleId(rule.target)
+    pendingReviewDAO.insert({
+      id: ruleId,
+      type: "rule",
+      source: rule.source,
+      source_ref: "recurring",
+      source_label: "Recurring pitfall proposal",
+      content: rule.text,
+      target_file: `${rule.target}.md`,
+      scope: rule.scope,
+      conflicts: null,
+      confidence: 0.9,
+      auto_approve: 0,
+      status: "pending",
+      user_notes: null,
+    })
 
-      appendToKnowledgeFile(filePath, rule.text, ruleId, rule.source)
-
-      pendingReviewDAO.insert({
-        id: ruleId,
-        type: "rule",
-        source: rule.source,
-        source_ref: "auto",
-        source_label: "Auto-approved recurring pitfall",
-        content: rule.text,
-        target_file: `${rule.target}.md`,
-        scope: rule.scope,
-        conflicts: null,
-        confidence: 0.9,
-        auto_approve: 1,
-        status: "approved",
-        user_notes: null,
-      })
-    }
-
-    results.push({ rule, autoApprove })
+    results.push({ rule, enqueued: true })
   }
 
   return results
@@ -461,7 +455,8 @@ export interface KnowledgeConfig {
  * Wrapped in a top-level try/catch — failures in this module MUST never
  * block or fail the surrounding execution pipeline.
  *
- * @returns Total number of rules proposed (including auto-approved ones).
+ * @returns Total number of rules proposed (all enqueued as pending; 票09 起
+ * auto_approve 概念废除).
  */
 export async function proposeRulesForReview(
   execResult: ExecResult,
@@ -496,7 +491,7 @@ export async function proposeRulesForReview(
       workflowName,
     })
 
-    // Step 4: detect recurring pitfalls (may auto-approve some)
+    // Step 4: detect recurring pitfalls（票09：纯入队 pending，不再 auto-approve/落盘）
     const recurringResults = await detectRecurringPitfalls(
       org,
       stateDir,
@@ -532,11 +527,9 @@ export async function proposeRulesForReview(
       pendingCount++
     }
 
-    const autoApprovedCount = recurringResults.filter(
-      (r) => r.autoApprove,
-    ).length
+    const recurringCount = recurringResults.filter((r) => r.enqueued).length
 
-    return pendingCount + autoApprovedCount
+    return pendingCount + recurringCount
   } catch (err) {
     console.error("[knowledge] proposeRulesForReview failed:", err)
     return 0
