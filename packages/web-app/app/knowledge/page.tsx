@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react"
 import {
   getKcArticle,
   getKcHealth,
+  getKcLog,
   getKcPreference,
   getKcRawFile,
   getKcTree,
   type KcArticle,
   type KcHealth,
+  type KcLogLine,
   type KcPreference,
   type KcRawSource,
   type KcTree,
@@ -18,6 +20,8 @@ import { KcKnowledgeTree } from "@/components/knowledge-center/knowledge-tree"
 import { WikiPageView } from "@/components/knowledge-center/wiki-page-view"
 import { RawView } from "@/components/knowledge-center/raw-view"
 import { PreferenceView } from "@/components/knowledge-center/preference-view"
+import { KcSearchPalette } from "@/components/knowledge-center/search-palette"
+import { LogTimeline, type KcLogFilter } from "@/components/knowledge-center/log-timeline"
 import { cn } from "@/lib/utils"
 
 /**
@@ -55,6 +59,10 @@ export default function KnowledgePage() {
   const [rawFile, setRawFile] = useState<(KcRawSource & { content: string }) | null>(null)
   const [rawLoading, setRawLoading] = useState(false)
   const [rawError, setRawError] = useState<string | null>(null)
+  const [log, setLog] = useState<KcLogLine[] | null>(null)
+  const [logLoading, setLogLoading] = useState(false)
+  const [logError, setLogError] = useState<string | null>(null)
+  const [logFilter, setLogFilter] = useState<KcLogFilter>("all")
 
   useEffect(() => {
     let cancelled = false
@@ -109,6 +117,13 @@ export default function KnowledgePage() {
         .then(f => { if (!cancelled) { setRawFile(f); setRawError(null) } })
         .catch((err: unknown) => { if (!cancelled) { setRawFile(null); setRawError(err instanceof Error ? err.message : String(err)) } })
         .finally(() => { if (!cancelled) setRawLoading(false) })
+    } else if (view.kind === "log") {
+      setLogLoading(true)
+      setLogError(null)
+      getKcLog()
+        .then(ls => { if (!cancelled) { setLog(ls); setLogError(null) } })
+        .catch((err: unknown) => { if (!cancelled) setLogError(err instanceof Error ? err.message : String(err)) })
+        .finally(() => { if (!cancelled) setLogLoading(false) })
     }
     return () => { cancelled = true }
   }, [view])
@@ -211,19 +226,22 @@ export default function KnowledgePage() {
           ) : rawFile ? (
             <RawView source={rawFile} />
           ) : null)}
-          {view?.kind === "log" && (
-            <div className="flex items-center justify-center py-16 text-sm text-pop-dim">LOG 时间线（W5）</div>
-          )}
+          {view?.kind === "log" && (logLoading && log === null ? (
+            <div className="flex items-center justify-center py-16 text-sm text-pop-dim">加载中…</div>
+          ) : logError ? (
+            <div data-testid="kc-log-error" className="p-6 text-sm font-bold text-pop-red">LOG 加载失败：{logError}</div>
+          ) : log ? (
+            <LogTimeline lines={log} filter={logFilter} onFilter={setLogFilter} />
+          ) : null)}
         </section>
       </div>
 
-      {paletteOpen && (
-        <div role="dialog" aria-label="知识检索" data-testid="kc-palette" className="fixed inset-0 z-50 flex items-start justify-center bg-pop-bg/80 p-8">
-          <div className="mt-16 w-full max-w-2xl rounded-xl border-[1.5px] border-pop-bd bg-pop-paper p-3">
-            <div className="text-xs text-pop-dim">检索（FTS5 全文 + 页面名匹配）—— W4 实装</div>
-          </div>
-        </div>
-      )}
+      <KcSearchPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        tree={tree}
+        onHit={(id, anchor) => setView({ kind: "page", id, anchor })}
+      />
     </div>
   )
 }

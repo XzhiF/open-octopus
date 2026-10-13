@@ -96,6 +96,22 @@ const RAW_FILE = {
 interface FetchCall { url: string }
 let calls: FetchCall[]
 
+const LOG_LINES = [
+  { date: "2026-10-13", op: "ingest", title: "raw/inbox/2026-10-13-karpathy-llm-wiki.md", result: "落 raw 冻结 · url:https://gist · curator ✓" },
+  { date: "2026-10-12", op: "compile", title: "projects/prj-octopus.md", result: "+oct-007 Promise 超时 · task-207 归档提炼 · xzf ✓" },
+  { date: "2026-10-11", op: "revert", title: "compile a3f9c21", result: "回滚本次编译 · git revert · owner ✓" },
+]
+
+// 检索命中 fixture：Promise 全文命中 topics 页并带规则锚点（锚点跳转定位高亮数据源）
+const SEARCH = {
+  org: "global", query: "Promise", mode: "fts",
+  results: [{
+    id: "top-knowledge-injection", domain: "topic", title: "知识注入沿革",
+    summary: "注入式→编译式", path: "topics/top-knowledge-injection.md",
+    snippet: "注入式已废止，见 con-compiled-rag", anchors: ["oct-013"],
+  }],
+}
+
 type StubResponse = { ok: boolean; status: number; json: () => Promise<unknown> }
 function mockFetch(overrides?: (u: string) => StubResponse | undefined) {
   calls = []
@@ -107,6 +123,8 @@ function mockFetch(overrides?: (u: string) => StubResponse | undefined) {
       if (r) return r
     }
     if (u.includes("/knowledge/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
+    if (u.includes("/knowledge/wiki/search")) return { ok: true, status: 200, json: async () => SEARCH }
+    if (u.includes("/knowledge/log")) return { ok: true, status: 200, json: async () => ({ org: "global", lines: LOG_LINES }) }
     if (u.includes("/knowledge/health")) return { ok: true, status: 200, json: async () => HEALTH }
     if (/\/wiki\/article\/top-knowledge-injection/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE_LINKED }
     if (/\/wiki\/article\/[^?]+/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE }
@@ -257,6 +275,120 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     const err = await screen.findByTestId("kc-page-error")
     expect(err.textContent).toContain("DB 失联")
     expect(screen.queryByTestId("kc-page-title")).toBeNull()
+  })
+})
+
+describe("Ctrl+K 检索命令条（页名/别名/锚点/FTS5 全文；命中锚点跳转定位高亮）", () => {
+  it("Ctrl+K 打开命令条；输入走 search API（q + org=global），FTS5 命中显示片段与锚点", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true })
+    const palette = await screen.findByTestId("kc-palette")
+    const input = palette.querySelector("input")!
+    fireEvent.change(input, { target: { value: "Promise" } })
+
+    await waitFor(() => expect(calls.some(c => c.url.includes("/knowledge/wiki/search") && c.url.includes("q=Promise") && c.url.includes("org=global"))).toBe(true), { timeout: 3000 })
+    expect(await screen.findByTestId("kc-search-results")).toBeDefined()
+    expect(document.body.textContent).toContain("FTS5 全文")
+    expect(screen.getByTestId("kc-search-hit").textContent).toContain("注入式已废止")
+    expect(screen.getByTestId("kc-search-hit").textContent).toContain("oct-013")
+  })
+
+  it("页面名本地匹配（树内标题/路径），点选进页", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByTestId("kc-search-open"))
+
+    const input = (await screen.findByTestId("kc-palette")).querySelector("input")!
+    fireEvent.change(input, { target: { value: "注入" } })
+    const pageHit = await screen.findByTestId("kc-palette-page")
+    expect(pageHit.textContent).toContain("知识注入沿革")
+
+    fireEvent.click(pageHit)
+    expect(screen.queryByTestId("kc-palette")).toBeNull()
+    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toBe("知识注入沿革"))
+  })
+
+  it("全文命中带锚点 → 跳页并定位高亮（kc-anchor-focus + data-anchor-hit）", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true })
+    const input = (await screen.findByTestId("kc-palette")).querySelector("input")!
+    fireEvent.change(input, { target: { value: "Promise" } })
+
+    fireEvent.click(await screen.findByTestId("kc-search-hit"))
+    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toBe("知识注入沿革"))
+    const focus = screen.getByTestId("kc-anchor-focus")
+    expect(focus.getAttribute("data-anchor-hit")).toBe("oct-013")
+    expect(document.querySelector('[data-anchor-hit="oct-013"]')).not.toBeNull()
+  })
+
+  it("检索失败显形，不伪造空结果（CODING_STANDARDS #2）", async () => {
+    mockFetch(u => (u.includes("/knowledge/wiki/search") ? { ok: false, status: 500, json: async () => ({ error: { message: "FTS 崩了" } }) } : undefined))
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true })
+    const input = (await screen.findByTestId("kc-palette")).querySelector("input")!
+    fireEvent.change(input, { target: { value: "Promise" } })
+
+    const err = await screen.findByTestId("kc-search-error", undefined, { timeout: 3000 })
+    expect(err.textContent).toContain("FTS 崩了")
+    expect(screen.queryByTestId("kc-search-results")).toBeNull()
+  })
+})
+
+describe("LOG.md 时间线视图（行格式渲染 + 前缀过滤）", () => {
+  it("System 组入口打开时间线：行格式 `## [date] op | title → result` 渲染", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+
+    fireEvent.click(screen.getByRole("button", { name: /LOG\.md 时间线/ }))
+    const view = await screen.findByTestId("kc-log-view")
+
+    expect(view.textContent).toContain("2026-10-13")
+    expect(view.textContent).toContain("raw/inbox/2026-10-13-karpathy-llm-wiki.md")
+    expect(view.textContent).toContain("落 raw 冻结")
+    expect(view.textContent).toContain("2026-10-11")
+    expect(screen.getAllByTestId("kc-log-row")).toHaveLength(3)
+  })
+
+  it("前缀过滤 ingest/compile/query/lint/revert：点 compile 只剩编译行", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByRole("button", { name: /LOG\.md 时间线/ }))
+    await screen.findByTestId("kc-log-view")
+
+    fireEvent.click(screen.getByRole("button", { name: /^compile$/ }))
+    const rows = await screen.findAllByTestId("kc-log-row")
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain("projects/prj-octopus.md")
+    // 非 compile 行不得残留
+    expect(screen.queryByText(/raw\/inbox\/2026-10-13/)).toBeNull()
+    expect(screen.queryByText(/回滚本次编译/)).toBeNull()
+  })
+})
+
+describe("user_preference 浏览视图：只读渲染 + 零编辑控件（AC6）", () => {
+  it("标注「人工文件，直接编辑」；无输入框/无编辑按钮/无保存", async () => {
+    mockFetch(u => (u.includes("/knowledge/preference")
+      ? { ok: true, status: 200, json: async () => ({ content: "# owner 偏好\n\n回复要短。\n", scope: "global", filePath: "/home/.octopus/knowledge/user_preference.md" }) }
+      : undefined))
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+
+    fireEvent.click(screen.getByRole("button", { name: /user_preference/ }))
+    const view = await screen.findByTestId("kc-preference-view")
+    expect(screen.getByTestId("kc-preference-banner").textContent).toContain("人工文件，直接编辑")
+    // 内容经 MarkdownPreview（桩透传）
+    await waitFor(() => expect(document.querySelector("[data-md-preview]")).not.toBeNull())
+    expect(document.querySelector("[data-md-preview]")!.textContent).toContain("回复要短")
+
+    // 零编辑入口：无 textbox / 无编辑保存按钮 / 无 textarea
+    expect(screen.queryByRole("textbox")).toBeNull()
+    expect(document.querySelector("textarea")).toBeNull()
+    expect(screen.queryByRole("button", { name: /编辑|保存|提交|删除/ })).toBeNull()
+    expect(view.textContent).toContain("只读")
   })
 })
 

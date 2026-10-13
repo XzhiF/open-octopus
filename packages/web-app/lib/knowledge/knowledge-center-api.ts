@@ -161,14 +161,11 @@ export async function getKcLog(op?: string): Promise<KcLogLine[]> {
   return handleResponse<{ lines: KcLogLine[] }>(res).then(d => d.lines)
 }
 
-export async function getKcRawList(): Promise<KcRawSource[]> {
-  const res = await apiFetch(`${getServerUrl()}/api/knowledge/raw`)
-  return handleResponse<{ sources: KcRawSource[] }>(res).then(d => d.sources)
-}
-
 /**
  * 单文件读。入参 = RawPointer.path（知识根相对，如 `raw/inbox/x.md`）；
  * 端点收 raw 根相对段（`inbox/x.md`），前缀在此剥除。
+ * （raw 列表端点 GET /api/knowledge/raw 已就位并由 S2 契约测试钉形——本模块暂不加
+ *   无 importer 的包装；票12 抓取卡「看 raw 原文」入口用时再补。）
  */
 export async function getKcRawFile(pointerPath: string): Promise<KcRawSource & { content: string }> {
   const rel = pointerPath.replace(/^raw\//, "")
