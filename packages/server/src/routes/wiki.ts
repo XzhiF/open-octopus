@@ -4,7 +4,8 @@ import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
 import { PendingReviewDAO } from "../db/dao/pending-review-dao"
 import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown } from "../services/knowledge/wiki/format"
-import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
+import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRoot } from "../services/knowledge/wiki/paths"
+import type { WikiPageType } from "@octopus/shared"
 import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
 import { spawnGit } from "../services/knowledge/wiki/wiki-git"
 import { errorResponse } from "../services/knowledge/validators"
@@ -144,8 +145,16 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         entries: Array<{ id: string; path: string; title: string; summary: string; stability: string; ruleCount: number }>
       }> = []
 
-      for (const domain of WIKI_DOMAINS) {
-        const inDomain = rows.filter(r => r.domain === domain)
+      // 类型值面 = v2 域值（projects/…/cases）∪ v3 页型值（entity/concept/…）——
+      // domain 列存 v3 type 值（票04 AC6），树按值分组两者都要列。
+      const v3TypeValues: WikiPageType[] = ["entity", "concept", "topic", "source", "case"]
+      const groups: Array<{ name: string; label: string }> = [
+        ...WIKI_DOMAINS.map(d => ({ name: d, label: WIKI_DOMAIN_LABELS[d] })),
+        ...v3TypeValues.map(t => ({ name: t, label: WIKI_PAGE_GROUP_LABELS[t] })),
+      ]
+
+      for (const group of groups) {
+        const inDomain = rows.filter(r => r.domain === group.name)
         if (inDomain.length === 0) continue
         const mapped = inDomain.map(r => {
           const ruleCount = extractRuleAnchors(r.body).length
@@ -153,7 +162,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
           if (r.last_compiled > stats.lastCompiled) stats.lastCompiled = r.last_compiled
           return { id: r.id, path: r.path, title: r.title, summary: r.summary, stability: r.stability, ruleCount }
         })
-        domains.push({ name: domain, label: WIKI_DOMAIN_LABELS[domain], count: mapped.length, entries: mapped })
+        domains.push({ name: group.name, label: group.label, count: mapped.length, entries: mapped })
       }
 
       try {

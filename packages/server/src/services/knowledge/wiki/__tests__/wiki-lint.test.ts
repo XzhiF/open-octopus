@@ -79,7 +79,7 @@ describe("wiki lint — L1 容量闸 + 拆分提案 (prototype Tab③: 120行/25
     return new WikiCompileService({ db, org: "testorg", rootDir: root, git: git ?? realGit(root) })
   }
 
-  it("拒写 121 行词条（>120 行先到为准）并自动入队按 H2 切分的拆分提案", async () => {
+  it("拒写 121 行词条（>120 行先到为准）并随错误返回按 H2 的拆分建议——不入队（票04 AC5）", async () => {
     const body = `
 ## 构建规则
 ${rules(4)}
@@ -99,26 +99,31 @@ ${rules(1, 521)}
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles").get() as { n: number }).n).toBe(0)
     expect(fs.existsSync(path.join(root, ".git"))).toBe(false)
 
-    // ── 拆分提案进审核队列：pending_review 行 + content 为按 H2 的切分计划
-    const row = db.prepare("SELECT * FROM pending_review").get() as Record<string, unknown>
-    expect(row.type).toBe("wiki-split")
-    expect(row.status).toBe("pending")
-    expect(row.source).toBe("wiki-lint")
-    expect(row.target_file).toBe("projects/prj-big.md")
-    const proposal = JSON.parse(row.content as string)
-    expect(proposal.entryId).toBe("prj-big")
-    expect(proposal.domain).toBe("projects")
-    expect(proposal.reason).toMatch(/120/)
-    expect(proposal.children.map((c: { title: string }) => c.title)).toEqual(["构建规则", "陷阱", "CI"])
-    expect(proposal.children.map((c: { anchors: string[] }) => c.anchors)).toEqual([
-      ["oct-501", "oct-502", "oct-503", "oct-504"],
-      ["oct-511", "oct-512"],
-      ["oct-521"],
-    ])
+    // ── 拆分出口=建议随错（供策展人对话内自纠）：按 H2 小节的切分计划
+    try {
+      await svc.compileEntry({ content: over })
+      expect.unreachable()
+    } catch (err) {
+      const { WikiLintError } = await import("../lint")
+      expect(err).toBeInstanceOf(WikiLintError)
+      const proposal = (err as InstanceType<typeof WikiLintError>).suggestion
+      expect(proposal).toBeDefined()
+      expect(proposal!.entryId).toBe("prj-big")
+      expect(proposal!.domain).toBe("projects")
+      expect(proposal!.path).toBe("projects/prj-big.md")
+      expect(proposal!.hubPath).toBe("projects/prj-big/README.md")
+      expect(proposal!.reason).toMatch(/120/)
+      expect(proposal!.children.map(c => c.title)).toEqual(["构建规则", "陷阱", "CI"])
+      expect(proposal!.children.map(c => c.anchors)).toEqual([
+        ["oct-501", "oct-502", "oct-503", "oct-504"],
+        ["oct-511", "oct-512"],
+        ["oct-521"],
+      ])
+    }
 
-    // 重复触顶不重复入队（同提案刷新内容，仍只一行）
+    // ── 无入队语义：pending_review 恒零行（重复触顶也只随错，不落队列）
     await expect(svc.compileEntry({ content: over })).rejects.toThrow(/L1_CAPACITY/s)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(1)
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
   })
 
   it("拒写 26 条规则词条（>25 条规则先到为准，行数/token 均在线内）", async () => {
@@ -265,7 +270,7 @@ ${block(20)}
 
     // 预算在重排后回到 800 token 内（闸的口径 = lint.estimateTokens）
     expect(estimateTokens(index)).toBeLessThanOrEqual(800)
-  })
+  }, 90_000)
 
   it("L4：重排后仍超预算（病态巨行，过得了 L1 但 Optional 化后 INDEX 仍 >800）→ 拒写 L4_INDEX_BUDGET", async () => {
     const svc = makeService()

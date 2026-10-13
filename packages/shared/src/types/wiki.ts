@@ -40,6 +40,105 @@ export const WikiEntryFrontmatterSchema = z.object({
 
 export type WikiEntryFrontmatter = z.infer<typeof WikiEntryFrontmatterSchema>
 
+// ── 页格式 v3（知识中心票04：五类页 taxonomy 基座）─────────────────────
+// prototype Tab②「页 taxonomy」+「front-matter v3 与索引层」：v3 = v2 换 taxonomy——
+// `domain`→`type`（entity/concept/topic/source/case），新增 `links`（[[wikilink]]，
+// 编译期断链校验保留）与 entity 的 `aliases/entity_kind`；
+// stability/confidence/sources/last_compiled 保留（stability/confidence 转可选——
+// 原型样例 entity 只带 confidence、topic 只带 stability）；正文零日期纪律不变。
+// v2 形态（domain 字段）兼容可读（parseWikiFile 分派，为重蒸馏票07 留路）；写路径出 v3。
+
+export const WikiPageTypeValues = ['entity', 'concept', 'topic', 'source', 'case'] as const
+export type WikiPageType = typeof WikiPageTypeValues[number]
+
+/** v3 type → 页目录（票07 页路径面；与旧 WIKI_DOMAINS 目录并存可读）。 */
+export const WIKI_PAGE_DIR_BY_TYPE: Record<WikiPageType, string> = {
+  entity: "entities",
+  concept: "concepts",
+  topic: "topics",
+  source: "sources",
+  case: "cases",
+}
+
+/** v2 domain → v3 type 映射（重蒸馏规则行/语义映射的形态层近似，INDEX 分组用）。 */
+export const WIKI_DOMAIN_TO_PAGE_TYPE: Record<WikiDomain, WikiPageType> = {
+  projects: "topic",
+  workflows: "topic",
+  business: "concept",
+  research: "concept",
+  cases: "case",
+}
+
+/**
+ * links 归一：接受 `[[a]] [[b]]` 空格串（原型逐字形）、YAML 嵌套序列
+ * （`[[a], [b]]` 载入即 [['a'],['b']]）、字符串数组（元素带/不带 [[ ]]）三种输入，
+ * 统一产出裸目标串数组（序列化统一回 `[[a], [b]]` 嵌套式——YAML 可解析且最贴近原型 token）。
+ */
+export function normalizeWikiLinks(value: unknown): string[] {
+  const out: string[] = []
+  const push = (s: string) => {
+    const m = s.match(/^\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]$/) ?? [null, s]
+    const t = (m[1] ?? s).trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  const walk = (v: unknown) => {
+    if (typeof v === "string") {
+      for (const m of v.matchAll(/\[\[([^\]]+)\]\]/g)) push(m[1].split("|")[0].split("#")[0].trim())
+      if (!/\[\[/.test(v) && v.trim()) {
+        for (const piece of v.split(/[,\s]+/)) if (piece) push(piece)
+      }
+    } else if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === "object") Object.values(v).forEach(walk)
+  }
+  walk(value)
+  return out
+}
+
+/**
+ * 页 front-matter schema（格式 v3）。判例（case）页保留 P0 判例形态
+ * （symptom/tags/…，走 WikiCaseFrontmatterSchema 管线），本 schema 拒收裸 type:case 页。
+ */
+export const WikiPageFrontmatterSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/, "id 必须是小写字母开头的 kebab-case（禁止 '/'，那是旧库存量格式）"),
+  type: z.enum(WikiPageTypeValues),
+  /** entity 专有：project/service/tool/org/person 等 */
+  entity_kind: z.string().min(1).optional(),
+  aliases: z.array(z.string()).default([]),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  topics: z.array(z.string()).default([]),
+  links: z.preprocess(v => (v === undefined ? [] : normalizeWikiLinks(v)), z.array(z.string()).default([])),
+  stability: z.enum(WikiStabilityValues).optional(),
+  review_after: z.string().regex(DATE_RE, "review_after 必须是 YYYY-MM-DD").optional(),
+  last_compiled: z.string().regex(DATE_RE, "last_compiled 必须是 YYYY-MM-DD 字符串"),
+  sources: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1).optional(),
+}).superRefine((v, ctx) => {
+  if (v.type === "case") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["type"],
+      message: "判例页保留 P0 判例形态（symptom/tags/severity/source/status），请走判例管线编译",
+    })
+  }
+  if (v.entity_kind !== undefined && v.type !== "entity") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["entity_kind"],
+      message: "entity_kind 只对 entity 页有意义（prototype Tab② 实体页样例）",
+    })
+  }
+  if (v.stability === "volatile" && !v.review_after) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["review_after"],
+      message: "volatile 页必须带 review_after 日期（到期复审指针）",
+    })
+  }
+})
+
+export type WikiPageFrontmatter = z.infer<typeof WikiPageFrontmatterSchema>
+
 // ── 判例 (Case) 域（票04）────────────────────────────────────────────
 // cases/ 是准入例外域：历史记录天然时间绑定，front-matter 与词条 (Entry) 完全不同
 // ——没有 stability/confidence/半衰期三问，只要求「真实 + source 可定位」。

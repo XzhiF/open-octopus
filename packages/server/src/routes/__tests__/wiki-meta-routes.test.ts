@@ -40,7 +40,7 @@ describe("wiki read-only meta routes (ticket 03 UI 数据面)", () => {
     execFileSync("git", ["config", "user.name", "T"], { cwd: tmpDir })
     fs.mkdirSync(path.join(tmpDir, "projects"), { recursive: true })
     fs.writeFileSync(path.join(tmpDir, "projects", "prj-octopus.md"), "# octopus\n初稿\n", "utf-8")
-    fs.writeFileSync(path.join(tmpDir, "LOG.md"), WIKI_LOG_HEADER + "| 2026-10-12 | compile | projects/prj-octopus.md | +oct-007 Promise 超时 | task-207 归档提炼 | xzf ✓ |\n", "utf-8")
+    fs.writeFileSync(path.join(tmpDir, "LOG.md"), WIKI_LOG_HEADER + "## [2026-10-12] compile | projects/prj-octopus.md\n  → +oct-007 Promise 超时 · task-207 归档提炼 · xzf ✓\n", "utf-8")
     execFileSync("git", ["add", "-A"], { cwd: tmpDir })
     execFileSync("git", ["commit", "-m", "compile: projects/prj-octopus.md — +oct-007"], { cwd: tmpDir })
   })
@@ -56,9 +56,10 @@ describe("wiki read-only meta routes (ticket 03 UI 数据面)", () => {
     expect(res.status).toBe(200)
     const data = await res.json()
 
-    // 逐字取自 fixture 的表头 + 行（prototype Tab③ 行格式）
-    expect(data.log).toContain("| 日期 | 动作 | 词条 | 摘要 | 来源 | 审核 |")
-    expect(data.log).toContain("| 2026-10-12 | compile | projects/prj-octopus.md | +oct-007 Promise 超时 | task-207 归档提炼 | xzf ✓ |")
+    // 逐字取自 fixture 的 v3 行式 LOG（票04 格式：头 + `## [date] op | 对象` + `→ 结果`）
+    expect(data.log).toContain("# LOG.md — 时间线")
+    expect(data.log).toContain("## [2026-10-12] compile | projects/prj-octopus.md")
+    expect(data.log).toContain("  → +oct-007 Promise 超时 · task-207 归档提炼 · xzf ✓")
   })
 
   it("article carries git 近史 for the entry path", async () => {

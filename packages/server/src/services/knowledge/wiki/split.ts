@@ -7,7 +7,7 @@ import { parseH2Sections, slugifySection, lintWikiEntry, WIKI_LIMITS, type Split
 import { resolveWikiRoot, WIKI_DOMAINS } from "./paths"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow, type WikiArticleUpsert } from "../../../db/dao/wiki-article-dao"
-import { PendingReviewDAO, type PendingReviewRow } from "../../../db/dao/pending-review-dao"
+import { type PendingReviewRow } from "../../../db/dao/pending-review-dao"
 import { today, escapeRe } from "./util"
 import {
   scanWikiEntries,
@@ -56,7 +56,6 @@ export class WikiSplitService {
   private readonly root: string
   private readonly git: GitRunner
   private readonly articles: WikiArticleDAO
-  private readonly pending: PendingReviewDAO
 
   constructor(opts: { db: Database.Database; org: string; rootDir?: string; git?: GitRunner }) {
     this.db = opts.db
@@ -64,7 +63,6 @@ export class WikiSplitService {
     this.root = resolveWikiRoot(opts.org, opts.rootDir)
     this.git = opts.git ?? spawnGit(this.root)
     this.articles = new WikiArticleDAO(opts.db)
-    this.pending = new PendingReviewDAO(opts.db)
   }
 
   applyProposal(item: PendingReviewRow): SplitApplyResult {
@@ -180,15 +178,14 @@ export class WikiSplitService {
 
       // 5) INDEX 程序化重建（L4 预算闸同口径；只列 hub，子词条经 hub 指针三跳可达）
       const entries = scanWikiEntries(this.root)
-      const pending = this.pending.countPendingOpen()
-      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org, pending).content)
+      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, this.org).content)
 
       // 6) LOG append（append-only）
       const logBase = prevLog ?? WIKI_LOG_HEADER
       atomicWrite(logPath, logBase + formatLogRow({
         action: "split",
         entry: relOld,
-        note: `→ ${hubDirRel}/ hub+${children.length} 子词条（锚点跟随）`,
+        note: `升 hub ${hubDirRel}/（hub+${children.length} 子词条，锚点跟随）`,
         source: item.source,
         reviewer: "curator",
       }))

@@ -103,11 +103,11 @@ describe("initial-compile migrator (ticket 05)", async () => {
     })
     expect(state.counter).toBe(2)
 
-    // ── LOG.md 首编译行（compileEntry 事务内 append）
+    // ── LOG.md 首编译行（compileEntry 事务内 append；票04 行格式）
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toContain("# Curation Log")
-    expect(log.match(/\| compile \|/g)).toHaveLength(1)
-    expect(log).toContain(`| ${today()} | compile | projects/prj-demo-proj.md |`)
+    expect(log).toContain("# LOG.md — 时间线")
+    expect(log.split("\n").filter(l => l.includes("] compile | "))).toHaveLength(1)
+    expect(log).toContain(`## [${today()}] compile | projects/prj-demo-proj.md`)
 
     // ── DB 行 + FTS（编译服务同步，迁移不旁路）
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org='testorg'").get() as { n: number }).n).toBe(1)
@@ -340,9 +340,9 @@ describe("initial-compile migrator (ticket 05)", async () => {
     expect(run2.skipped).toEqual(["GLOSSARY-MAP.md"])
   })
 
-  it("INDEX L4 over-budget: later sources rejected with a hub-split proposal enqueued to pending_review targeting the fattest entry — never silently truncated", async () => {
-    // 双小节 3 规则的胖源（'ab-' 名 → 排序最先入库、锚点最多 → L4 收敛失败时提案指向它）；
-    // 之后 35 个短源逐一把 INDEX 推过 800 token：后续 compileEntry 在 L4 闸拒写 + 提案入队。
+  it("INDEX L4 over-budget: later sources rejected carrying a hub-split suggestion on the report — never silently truncated, 不入队（票04 AC5）", async () => {
+    // 双小节 3 规则的胖源（'ab-' 名 → 排序最先入库、锚点最多 → L4 收敛失败时建议指向它）；
+    // 之后 35 个短源逐一把 INDEX 推过 800 token：后续 compileEntry 在 L4 闸拒写 + 建议随错。
     const fatBase = "ab-overflow-probe-0123456789abcdef0123456"
     fs.writeFileSync(
       path.join(knowledgeDir, "projects", `${fatBase}.md`),
@@ -352,7 +352,7 @@ describe("initial-compile migrator (ticket 05)", async () => {
     const SHORT = `- 短规则甲\n<!-- id:projects/filler-00X-001 | 2026-07-02 | compact -->\n- 短规则乙\n<!-- id:projects/filler-00X-002 | 2026-07-02 | compact -->\n`
     for (let i = 0; i < 35; i++) {
       const tag = String(i).padStart(2, "0")
-      fs.writeFileSync(path.join(knowledgeDir, "projects", `filler${tag}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md`), SHORT.replace(/00X/g, tag), "utf-8")
+      fs.writeFileSync(path.join(knowledgeDir, "projects", `filler${tag}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md`), SHORT.replace(/00X/g, tag))
     }
 
     const report = await makeMigrator().run()
@@ -363,27 +363,26 @@ describe("initial-compile migrator (ticket 05)", async () => {
     expect(failures.length).toBeGreaterThan(0)
     for (const f of failures) {
       expect(f.source).not.toBe(`projects/${fatBase}.md`)
-      expect(f.proposalId).toBe(`wiki-split-testorg-prj-${fatBase}`) // 提案锁定最胖词条（hub 化目标）
+      // 拆分建议锁定最胖词条（hub 化目标），按 H2 有可拆形态（children ≥2）——不是静默截断
+      expect(f.splitSuggestion).toBeDefined()
+      expect(f.splitSuggestion!.kind).toBe("wiki-split")
+      expect(f.splitSuggestion!.entryId).toBe(`prj-${fatBase}`)
+      expect(f.splitSuggestion!.children.length).toBeGreaterThanOrEqual(2)
     }
 
-    // 提案在审核队列且按 H2 有可拆形态（children ≥2），不是静默截断
-    const rows = db.prepare("SELECT * FROM pending_review WHERE type='wiki-split'").all() as { id: string; content: string; status: string }[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0].status).toBe("pending")
-    const proposal = JSON.parse(rows[0].content)
-    expect(proposal.kind).toBe("wiki-split")
-    expect(proposal.children.length).toBeGreaterThanOrEqual(2)
+    // 无入队语义：pending_review 零行（票04 起拆分不再产队列条目）
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
 
     // 已入库状态下的 INDEX 仍在预算内（被拒写入经原子回滚不留半成品）
     const { estimateTokens } = await import("../lint")
     expect(estimateTokens(fs.readFileSync(path.join(root, "INDEX.md"), "utf-8"))).toBeLessThanOrEqual(800)
 
-    // 失败重跑：已入库源跳过、被拒源仍拒、提案幂等刷新不重复
+    // 失败重跑：已入库源跳过、被拒源仍拒、建议纯函数随错（队列仍零行）
     const run2 = await makeMigrator().run()
     expect(run2.skipped.length).toBe(report.compiled.length)
     expect(run2.failed.filter(f => f.error.includes("L4_INDEX_BUDGET"))).toHaveLength(failures.length)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review WHERE type='wiki-split'").get() as { n: number }).n).toBe(1)
-  })
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review WHERE type='wiki-split'").get() as { n: number }).n).toBe(0)
+  }, 120_000)
 
   it("excludes user_preference.md/index.md and skips <!-- retired -->-marked legacy rules without minting anchor numbers for them", async () => {
     fs.writeFileSync(

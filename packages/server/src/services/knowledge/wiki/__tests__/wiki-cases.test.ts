@@ -139,31 +139,30 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     expect(row.title).toBe("CI 报 LOCKFILE_CONFIG_MISMATCH")
     expect(JSON.parse(row.topics as string)).toEqual(["ci", "pnpm", "lockfile"])
 
-    // LOG：prototype 行式 case+（Tab③ line 119 动作词）
+    // LOG：票04 v3 行格式——判例入库 op=compile（五操作集内），结果注记带次数与溯源
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toContain(`| ${today()} | case+ | cases/2026-06-23-pnpm-lockfile-mismatch.md |`)
-    expect(log).toContain("exec-9f31 | xzf ✓ |")
+    expect(log).toContain(`## [${today()}] compile | cases/2026-06-23-pnpm-lockfile-mismatch.md`)
+    expect(log).toContain("  → 新案例 ×2 次命中 · exec-9f31 · xzf ✓")
   })
 
-  it("INDEX.md cases section: one line per case (symptom + tags + occurrences + distill pointer)", async () => {
+  it("INDEX.md cases section: one line per case (prototype v3 裸行：路径 — 症状摘要)", async () => {
     const svc = makeService()
     await svc.compileEntry(caseEntry("2026-06-23-pnpm-lockfile-mismatch.md"))
     await svc.compileEntry({ content: CASE_ACTUATOR, fileName: "2026-07-02-actuator-stale-detect.md" })
 
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
-    // 域节头 + 每案例一行（prototype Tab③ lines 64-66 形状：症状摘要｜tags: …｜×N → 已蒸馏 oct-…）
-    expect(index).toContain("## cases/ （问题案例档 · 2 案例 · 卡壳时按症状检索）")
-    expect(index).toContain("- cases/2026-06-23-pnpm-lockfile-mismatch.md — CI 报 LOCKFILE_CONFIG_MISMATCH｜tags: ci,pnpm,lockfile｜×2 → 已蒸馏 oct-013")
-    expect(index).toContain("- cases/2026-07-02-actuator-stale-detect.md — 恢复状态误判 stale｜tags: actuator,stale → 已蒸馏 oct-008")
-    // 统计行：案例计数独立于词条
-    expect(index).toContain("词条 0 · 案例 2 · 规则 0")
+    // 五类分组节头（prototype Tab②：`## Cases (N)`）；判例行式 `- {relPath} — {症状}`（tags/蒸馏指针不再占行，检索面走 DB）
+    expect(index).toContain("## Cases (2)")
+    expect(index).toContain("- cases/2026-06-23-pnpm-lockfile-mismatch.md — CI 报 LOCKFILE_CONFIG_MISMATCH")
+    expect(index).toContain("- cases/2026-07-02-actuator-stale-detect.md — 恢复状态误判 stale")
+    expect(index).not.toContain("待审核")
   })
 
-  it("open case renders 未蒸馏 pointer-less line", async () => {
+  it("open case renders a plain one-line entry", async () => {
     const svc = makeService()
     await svc.compileEntry({ content: CASE_DATED_BODY, fileName: "2026-09-05-msys-colon-pathconv.md" })
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
-    expect(index).toContain("｜tags: windows,gitbash｜未蒸馏")
+    expect(index).toContain("- cases/2026-09-05-msys-colon-pathconv.md — Git Bash ref 冒号被转成路径")
   })
 
   it("rejects a case without a locatable source pointer (真实+可定位，豁免半衰期≠豁免溯源)", async () => {
@@ -197,7 +196,7 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     await expect(svc.compileEntry({ content: CASE_LOCKFILE, fileName: "pnpm-lockfile-mismatch.md" })).rejects.toThrow(/CASE_FILENAME/)
   })
 
-  it("append-only: body rewrite rejected AFTER ingest, LOG gains a case-rej evidence row, file untouched", async () => {
+  it("append-only: body rewrite rejected AFTER ingest, LOG gains a 拒写 evidence line, file untouched", async () => {
     const svc = makeService()
     await svc.compileEntry(caseEntry("2026-06-23-pnpm-lockfile-mismatch.md"))
     const bytesBefore = fs.readFileSync(path.join(root, "cases", "2026-06-23-pnpm-lockfile-mismatch.md"), "utf-8")
@@ -206,11 +205,12 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     const tampered = CASE_LOCKFILE.replace("## 根因  lockfile 格式版本与 CLI 版本错配", "## 根因  是别的原因（篡改）")
     await expect(svc.compileEntry({ content: tampered, fileName: "2026-06-23-pnpm-lockfile-mismatch.md" })).rejects.toThrow(/CASE_APPEND_ONLY/)
 
-    // 文件字节级不动；LOG.md 多一行 case-rej 证据（改写尝试被拒并留 LOG）
+    // 文件字节级不动；LOG.md 多一行拒写证据（改写尝试被拒并留 LOG；op=compile 五操作集内）
     expect(fs.readFileSync(path.join(root, "cases", "2026-06-23-pnpm-lockfile-mismatch.md"), "utf-8")).toBe(bytesBefore)
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
     expect(log.startsWith(logBefore)).toBe(true)
-    expect(log).toContain(`| ${today()} | case-rej | cases/2026-06-23-pnpm-lockfile-mismatch.md | 正文改写被拒（append-only 判例即历史） |`)
+    expect(log).toContain(`## [${today()}] compile | cases/2026-06-23-pnpm-lockfile-mismatch.md`)
+    expect(log).toContain("正文改写被拒（append-only 判例即历史）")
     // DB 行仍只有入库那一条
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org='testorg'").get() as { n: number }).n).toBe(1)
   })
@@ -239,11 +239,11 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     expect(written).not.toContain("rule_ref:")
     // 正文五段原样保留（未改写）
     expect(written).toContain("## 根因  lockfile 格式版本与 CLI 版本错配")
-    // LOG 追加 revise 行（更新走编译通道留痕）
+    // LOG 追加更新行（更新走编译通道留痕；op=compile）
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toContain(`| ${today()} | revise | cases/2026-06-23-pnpm-lockfile-mismatch.md | 判例更新 status=open occurrences=3 |`)
-    // INDEX 行随蒸馏状态翻转
-    expect(fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")).toContain("｜×3｜未蒸馏")
+    expect(log).toContain("  → 判例更新 status=open occurrences=3")
+    // INDEX 判例行式不随蒸馏状态变（状态面走检索 API 逐页读 front-matter）
+    expect(fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")).toContain("- cases/2026-06-23-pnpm-lockfile-mismatch.md — CI 报 LOCKFILE_CONFIG_MISMATCH")
   })
 
   it("re-ingesting an identical case is a no-op (changed=false, no new commit)", async () => {
