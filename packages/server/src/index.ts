@@ -32,6 +32,8 @@ import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
 import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
+import { createWikiRedistillRoutes } from "./routes/wiki-redistill"
+import { WikiRedistillMigrator } from "./services/knowledge/wiki/redistill"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
 import { createWikiDistillRoutes } from "./routes/wiki-distill"
 import { WikiDistillService, createLLMDistillSummarizer } from "./services/knowledge/wiki/distill"
@@ -574,6 +576,13 @@ app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
 // 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
 app.route("/api/knowledge/wiki", createWikiGlobalMoveRoutes(
   (apply) => new WikiGlobalMigrator({ db: getDb(), apply }),
+))
+// 知识中心票07: v2→v3 重蒸馏迁移命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列映射计划，
+// ?apply=true 才动手（写 v3 五类页/旧页整迁 _retired/v2/ + LOG 换行格式 + INDEX 重建 + DB re-key，
+// 全部落盘收口为一个 git commit，整体 revert 可还原；重跑 diff 为空）。
+// 前置 = 票03 真搬家已执行（全局根 + org 钉 global）；真跑前主控按报告 backupHint 先 VACUUM INTO 备份。
+app.route("/api/knowledge/wiki", createWikiRedistillRoutes(
+  (apply) => new WikiRedistillMigrator({ db: getDb(), apply }),
 ))
 // LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
 // 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
