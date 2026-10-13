@@ -278,7 +278,9 @@ executionRoutes.get("/:executionId/state", (c) => {
 // executions.var_pool），输出命中/未命中/仅注入/仅查阅四象限。
 // P2「删除注入链」单向门的决策数据从这里来；本端点不写任何池键。
 // 知识中心票 08 —— 冻结只读：注入链生产者已物理删除，新执行 injectSide 恒空；
-// 历史执行对照数据仍可查（过闸文书 §5 证据链审计面）。端点与表保留不删。
+// 历史执行对照数据仍可查（过闸文书 §5 证据链审计面）。端点保留=有意为之；
+// 读面清理（本端点与注入侧键读取）划入后续清理（spec §注入链硬废「属后续清理」，
+// code-review P3 账）——清理前勿新增消费者。
 executionRoutes.get("/:executionId/shadow-compare", (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)

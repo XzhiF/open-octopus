@@ -57,6 +57,36 @@ export function createProviderLLMCall(
 }
 
 /**
+ * 生产 LLM 适配器共享核（code-review judgement：curator-llm/archive-ingest-llm
+ * 同构 32 行收口于此；两模块降级为 channel+modelEnv 两参数的委托）。
+ *
+ * 行为制式（原样保留）：创建时过 `OCTOPUS_KNOWLEDGE_LLM_DISABLED=1` 离线闸（恒空串，
+ * 调用方按"无响应"失败形态处理，绝不静默降级）；调用时取 claude provider、
+ * 模型 = `process.env[modelEnv]`（逐拍读，保留 env 后改语义）?? defaultModel；
+ * provider 未配置/构建失败 ⇒ 空串 + stderr 留痕（`[${channel}]` 前缀）。
+ * 单测一律 fixture-mocked LLMCall（spec Testing Decisions），生产注入在 index.ts。
+ */
+export function createProductionKnowledgeLLM(opts: {
+  channel: string
+  modelEnv: string
+  defaultModel?: string
+}): LLMCall {
+  if (process.env.OCTOPUS_KNOWLEDGE_LLM_DISABLED === "1") {
+    return async () => ""
+  }
+  return async (prompt: string): Promise<string> => {
+    try {
+      const provider = getProvider("claude")
+      const call = createProviderLLMCall(provider, process.cwd(), process.env[opts.modelEnv] ?? opts.defaultModel ?? "sonnet")
+      return await call(prompt)
+    } catch (err) {
+      console.warn(`[${opts.channel}] provider LLM unavailable: ${err instanceof Error ? err.message : String(err)}`)
+      return ""
+    }
+  }
+}
+
+/**
  * Streaming LLM call using the claude provider.
  * Yields each text_delta as it arrives from the provider.
  */

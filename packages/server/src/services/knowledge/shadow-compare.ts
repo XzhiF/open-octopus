@@ -10,6 +10,8 @@
 // 证据链审计面）：注入链生产者（precompute/KnowledgeInjector）已物理删除，
 // 新执行的 injectSide 恒空（relevant/injected=[]）；历史执行 var_pool 里的
 // 注入侧键仍可解析对照。本模块与路由、表都不删，只随生产者冻结。
+// 边界注（code-review P3）：保留=有意为之的历史审计面；读面清理（端点/注入侧键）
+// 划入后续清理（spec §注入链硬废），清理前勿新增消费者。
 //
 // 纯函数：输入 = executions.var_pool 反序列化后的快照（JSONL/DB 同源），
 // 输出 = 冻结形状（fixture 钉在 shadow-compare.test.ts，禁止实现自证）。

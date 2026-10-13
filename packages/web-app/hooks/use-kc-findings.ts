@@ -12,6 +12,7 @@ import {
   type KcFindingView,
 } from "@/lib/knowledge/knowledge-center-api"
 import type { KcCardEvent, KcFindingCardData, KcFindingFixState, KcBackfillCardData } from "@/lib/knowledge-center/card-protocol"
+import { kcErrFace, kcPlaceholderTaskId, useKcPoller } from "./use-kc-poller"
 
 /**
  * findings 编排 hook（票13 AC1/AC2/AC4 web 侧 Lane B store）。
@@ -26,6 +27,8 @@ import type { KcCardEvent, KcFindingCardData, KcFindingFixState, KcBackfillCardD
  * - backfill：POST /backfill → 摘录落 raw 回执 + compileTask 交宿主挂编译 diff 卡
  *   （feed.trackTask——「diff 卡跟随」复用票12 编译卡链，零新轮询器）。
  * 卡态覆盖层（fixStates/backfillStates）供宿主合并到 Lane A 消息卡（与 revertStates 同构）。
+ * 轮询调度制式（先拍后隔/瞬断续拍/卸载清定时器/pending-err 占位 taskId）收口共享核
+ * `use-kc-poller`（code-review judgement，行为零改）。
  */
 
 export interface UseKcFindingsOptions {
@@ -63,24 +66,9 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
   /** 裁决终态覆盖层（fid→终态）：覆盖任意来源卡（Lane A 消息卡同样进入终态渲染） */
   const [findingStatus, setFindingStatus] = useState<Record<string, "resolved" | "ignored">>({})
   const [patrolling, setPatrolling] = useState(false)
-  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   const cbsRef = useRef(opts)
   cbsRef.current = opts
-
-  useEffect(() => {
-    const timers = timersRef.current
-    return () => { for (const t of timers) clearTimeout(t); timers.clear() }
-  }, [])
-
-  const schedule = useCallback((fn: () => Promise<void>) => {
-    const t = setTimeout(() => void fn(), pollMs)
-    timersRef.current.add(t)
-  }, [pollMs])
-
-  const errFace = (err: unknown): { code: string; message: string } => {
-    const e = err as { code?: string; message?: string }
-    return { code: e?.code ?? "FINDINGS_ERROR", message: e?.message ?? String(err) }
-  }
+  const poller = useKcPoller(pollMs)
 
   const upsert = useCallback((event: KcCardEvent) => {
     setCards(prev => {
@@ -122,43 +110,37 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
   // 采纳任务轮询：fix 状态回灌覆盖层；committed ⇒ 卡终态 + 刷新
   const trackFix = useCallback((findingId: string, taskId: string) => {
     const attach = (fix: KcFindingFixState) => setFixStates(prev => ({ ...prev, [findingId]: fix }))
-    const tick = async (): Promise<void> => {
-      try {
-        const [task, queue] = await Promise.all([kcGetFixTask(taskId), kcGetQueueTask(taskId)])
-        if (!task) return
-        const fix: KcFindingFixState = {
-          taskId,
-          status: task.status,
-          position: queue?.state === "queued" ? queue.position : null,
-          ...(task.result?.commit ? { commit: task.result.commit } : {}),
-          ...(task.error ?? queue?.error ? { error: task.error ?? queue?.error } : {}),
-        }
-        attach(fix)
-        if (task.status === "committed") {
-          setFindingStatus(prev => ({ ...prev, [findingId]: "resolved" }))
-          setCards(prev => prev.map(c =>
-            c.kind === "finding" && (c.data as KcFindingCardData).findingId === findingId
-              ? { ...c, data: { ...c.data as KcFindingCardData, status: "resolved", fix } }
-              : c))
-          cbsRef.current.onSettled?.()
-          return
-        }
-        if (task.status === "failed") return
-      } catch {
-        // 网络瞬断继续拍
+    poller.run(async (): Promise<boolean> => {
+      const [task, queue] = await Promise.all([kcGetFixTask(taskId), kcGetQueueTask(taskId)])
+      if (!task) return true
+      const fix: KcFindingFixState = {
+        taskId,
+        status: task.status,
+        position: queue?.state === "queued" ? queue.position : null,
+        ...(task.result?.commit ? { commit: task.result.commit } : {}),
+        ...(task.error ?? queue?.error ? { error: task.error ?? queue?.error } : {}),
       }
-      schedule(tick)
-    }
-    void tick()
-  }, [schedule])
+      attach(fix)
+      if (task.status === "committed") {
+        setFindingStatus(prev => ({ ...prev, [findingId]: "resolved" }))
+        setCards(prev => prev.map(c =>
+          c.kind === "finding" && (c.data as KcFindingCardData).findingId === findingId
+            ? { ...c, data: { ...c.data as KcFindingCardData, status: "resolved", fix } }
+            : c))
+        cbsRef.current.onSettled?.()
+        return true
+      }
+      return task.status === "failed"
+    })
+  }, [poller])
 
   const adopt = useCallback(async (findingId: string) => {
-    setFixStates(prev => ({ ...prev, [findingId]: { taskId: `pending-${Date.now().toString(36)}`, status: "queued", position: null } }))
+    setFixStates(prev => ({ ...prev, [findingId]: { taskId: kcPlaceholderTaskId('pending'), status: "queued", position: null } }))
     try {
       const ack = await kcAdoptFinding(findingId)
       trackFix(findingId, ack.taskId)
     } catch (err) {
-      setFixStates(prev => ({ ...prev, [findingId]: { taskId: `err-${Date.now().toString(36)}`, status: "failed", error: errFace(err) } }))
+      setFixStates(prev => ({ ...prev, [findingId]: { taskId: kcPlaceholderTaskId('err'), status: "failed", error: kcErrFace(err, "FINDINGS_ERROR") } }))
     }
   }, [trackFix])
 
@@ -191,7 +173,7 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
       })
       if (ack.compileTask) cbsRef.current.onBackfillCompile?.(ack.compileTask.taskId, ack.raw.path)
     } catch (err) {
-      patch({ excerpt: input.text, status: "failed", error: errFace(err) })
+      patch({ excerpt: input.text, status: "failed", error: kcErrFace(err, "FINDINGS_ERROR") })
     }
   }, [])
 
