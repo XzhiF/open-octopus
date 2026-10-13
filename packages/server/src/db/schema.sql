@@ -1019,6 +1019,10 @@ INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
 -- Knowledge System Tables
 -- =============================================================================
 
+-- pending_review 边界注（知识中心票09，spec「审批废除与写入闸门」）：
+-- wiki 审批通道（rule/wiki-edit/wiki-split 策展分发、auto_approve）已在代码侧
+-- 全删；**表本体保留**——skill 草案等非 wiki 用途仍在此结案流转，
+-- 物理清表属 P3（spec Out of Scope）。勿删本表。
 CREATE TABLE IF NOT EXISTS pending_review (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL DEFAULT 'rule',

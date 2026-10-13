@@ -21,30 +21,30 @@ import type { ParsedRule } from "@octopus/shared"
 export function getKnowledgeDir(org?: string): string {
   // Test hook — bypass the filesystem layout entirely.
   if (process.env.OCTOPUS_KNOWLEDGE_DIR) return process.env.OCTOPUS_KNOWLEDGE_DIR
-  const base = path.join(os.homedir(), ".octopus")
-  const dir = org
+  // 路径基底与 global-paths.octopusHome() 同口径（$OCTOPUS_HOME > ~/.octopus）。
+  const base = process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
+  // 票09：**不再 mkdir**——纯路径解析。旧知识目录已归档删除（_archive/org-knowledge-*），
+  // 任何只读调用都不得重建已删目录（归档先于删除纪律的运行时护栏）。
+  // 写路径自保：writeKnowledgeFile/appendToKnowledgeFile 落盘前自建目录。
+  return org
     ? path.join(base, "orgs", org, "knowledge")
     : path.join(base, "knowledge")
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
 }
 
 /**
- * Get the project knowledge subdirectory: <knowledgeDir>/projects/
+ * Resolve the project knowledge subdirectory: <knowledgeDir>/projects/
+ * 票09：纯解析零 mkdir（写路径的目录创建在 writeKnowledgeFile 内自保）。
  */
 export function getProjectKnowledgeDir(org: string): string {
-  const dir = path.join(getKnowledgeDir(org), "projects")
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
+  return path.join(getKnowledgeDir(org), "projects")
 }
 
 /**
- * Get the workflow knowledge subdirectory: <knowledgeDir>/workflows/
+ * Resolve the workflow knowledge subdirectory: <knowledgeDir>/workflows/
+ * 票09：纯解析零 mkdir，同上。
  */
 export function getWorkflowKnowledgeDir(org: string): string {
-  const dir = path.join(getKnowledgeDir(org), "workflows")
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
+  return path.join(getKnowledgeDir(org), "workflows")
 }
 
 /**

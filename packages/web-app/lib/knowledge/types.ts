@@ -1,53 +1,7 @@
-import type { PendingItem } from '@octopus/shared'
-
-export type {
-  PendingStatus, PendingSource, PendingType, KnowledgeScope, ConflictType,
-  ProposedRule, ConflictInfo, PendingItem, ProposedSkill, ParsedRule,
-  KnowledgeEffectiveness
-} from '@octopus/shared'
-
-// UI-specific types
-export interface KnowledgeFile {
-  name: string
-  type: 'project' | 'workflow'
-  scope: 'global' | 'org'
-  ruleCount: number
-  retiredCount: number
-  lineCount: number
-  compactNeeded: boolean
-}
-
-export interface KnowledgeFileDetail {
-  content: string
-  rules: Array<{
-    id: string
-    text: string
-    source: string
-    date: string
-    status: 'active' | 'retired'
-  }>
-  filePath: string
-}
-
-export interface ReviewListResponse {
-  data: PendingItem[]
-  total: number
-  page: number
-  pageSize: number
-}
-
-export interface ReviewActionResponse {
-  ok: true
-  id: string
-  newStatus: string
-}
-
-export interface BatchReviewResponse {
-  ok: true
-  succeeded: number
-  failed: number
-  details: Array<{ id: string; status: 'ok' | 'error'; error?: string }>
-}
+// ============ 知识 UI 类型（票09 收口后余量）============
+// 旧知识/审核面类型（KnowledgeFile*、Review*、PendingItem 转出口）随 /experience
+// 整页与审批链退役删除；此处只留 workspace 归档流共享件（ArchiveDialog /
+// ExecutionSummaryPanel / KnowledgeAssistantPanel）消费的三个响应类型。
 
 export interface ArchiveSummaryResponse {
   executionId: string
@@ -78,15 +32,4 @@ export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
   suggestion?: string
-}
-
-export type ReviewStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'deferred'
-
-export interface ReviewStatusCounts {
-  all: number
-  pending: number
-  deferred: number
-  approved: number
-  rejected: number
-  edited: number
 }

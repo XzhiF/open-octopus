@@ -404,9 +404,10 @@ describe("全站导航注册（AC：知识中心入口，只加不删）", () =>
     expect(link.getAttribute("href")).toBe("/knowledge")
   })
 
-  it("旧导航项未被删除（票09 才执行删除面，本票只加）", () => {
+  it("票09 删除面生效：旧导航项退役，知识入口唯一 = 知识中心", () => {
     render(<Header />)
-    expect(screen.getByRole("link", { name: /知识词条/ })).toBeDefined()
-    expect(screen.getByRole("link", { name: /工作经验/ })).toBeDefined()
+    expect(screen.queryByRole("link", { name: /知识词条/ })).toBeNull()
+    expect(screen.queryByRole("link", { name: /工作经验/ })).toBeNull()
+    expect(screen.getByRole("link", { name: /知识中心/ })).toBeDefined()
   })
 })
