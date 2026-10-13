@@ -1,8 +1,9 @@
 // packages/server/src/services/agent/builtin-clones.ts
 //
-// Built-in clone definitions — the 7 system clones initialized at startup.
+// Built-in clone definitions — the 8 system clones initialized at startup.
 //
 import type { CloneDef } from '@octopus/shared'
+import { WORKFLOW_OPERATOR_CLONE_NAME } from '@octopus/shared'
 
 // ── Persona Templates ─────────────────────────────────────────────
 
@@ -55,6 +56,11 @@ const ARCHIVE_PERSONA = `# Archive 分身
 - 结构化输出（JSON 格式）
 - 知识图谱构建
 - 成本效率评估
+
+## 知识策展（写侧唯一闸门 — 纪律见 octo-wiki-curate skill 全文）
+- wiki 一切写入只走 审核队列 approve → 策展编译 → git commit，绝不直写词条文件
+- 编译 ≠ 追加：合并近义、断链校验、冲突三型复核；supersedes 旧规则迁 _retired/ 带 replaced_by
+- user_preference.md 由用户手动维护：只出编辑建议，零自动改写
 `
 
 const RESOURCE_PERSONA = `# Resource 分身
@@ -191,6 +197,17 @@ const TASK_DOER_PERSONA = `# Task-Doer 分身（任务执行者）
 - 遵循项目编码规范与架构风格；改动最小化、可验证。
 `
 
+const WORKFLOW_OPERATOR_PERSONA = `# Workflow-Operator 分身
+
+你是工作流执行工程师，代表 Octopus 在工作流 agent 节点中执行任务。
+
+## 行为准则
+- 动手前先经 octo-wiki 查阅相关知识，有参考地执行；引用写入 wiki_refs
+- cwd 是任务工作现场，遵守其 CLAUDE.md
+- 你无人格特权：安全规则 > 任务书 > 知识参考
+- 知识冲突时以现场代码为准，并上报 stale
+`
+
 // ── Built-in Clone Definitions ────────────────────────────────────
 
 export const BUILTIN_CLONES: CloneDef[] = [
@@ -217,7 +234,11 @@ export const BUILTIN_CLONES: CloneDef[] = [
     displayName: '工程分析师',
     type: 'built-in',
     persona: ARCHIVE_PERSONA,
-    skills: ['octo-archive-analyst'],
+    // 票11(llm-wiki-loop): octo-wiki 读侧绑定（共享层分发，全分身可发现）。
+    // 票06: octo-wiki-curate 写侧绑定——仅 archive（策展人）分身层 seed
+    // （core-pack/clones/archive/skills/，绝不进共享层；ADR-0005 两层模型 +
+    // ADR-0006 getPlugins 忽略 skills 白名单 ⇒ 分身层是写侧唯一安全落位）。
+    skills: ['octo-archive-analyst', 'octo-wiki', 'octo-wiki-curate'],
     memoryScope: 'shared',
     config: {},
   },
@@ -245,13 +266,14 @@ export const BUILTIN_CLONES: CloneDef[] = [
     // the real clone-session mechanism (sessions table, scope_id=task_id), replacing
     // the retired 'taskpool-draft' fake workspace_id sentinel.
     // NOTE: ADR-006 makes getPlugins() ignore CloneDef.skills — every clone inherits
-    // all shared skills. `skills: ['task-author']` is declarative intent only;
+    // all shared skills. `skills: ['task-author', 'octo-wiki']` is declarative intent only;
     // full per-task skill scoping is a follow-up (see ticket 09 Exploration).
+    // 票11(llm-wiki-loop): octo-wiki 读侧查阅绑定（治理语义 + preflight 依据）。
     name: 'task-author',
     displayName: '任务规格作者',
     type: 'built-in',
     persona: TASK_AUTHOR_PERSONA,
-    skills: ['task-author'],
+    skills: ['task-author', 'octo-wiki'],
     memoryScope: 'isolated',
     config: {},
   },
@@ -265,13 +287,35 @@ export const BUILTIN_CLONES: CloneDef[] = [
     // posture); 每改即 commit is enforced by the task-chat route
     // ([quick-edit] marker, ticket 09 counts ledger rows by it).
     // Same ADR-006 note as task-author: `skills` is declarative intent only.
+    // 票11(llm-wiki-loop): octo-wiki 读侧查阅绑定（治理语义 + preflight 依据）。
     name: 'task-doer',
     displayName: '任务执行者',
     type: 'built-in',
     persona: TASK_DOER_PERSONA,
-    skills: ['octo-dev-copilot', 'matt-e2e-test-methodology'],
+    skills: ['octo-dev-copilot', 'matt-e2e-test-methodology', 'octo-wiki'],
     memoryScope: 'isolated',
     config: {},
+  },
+  {
+    // LLM-WIKI P1 (票 09, spec §执行身份): workflow-operator — 工作流 agent 节点的
+    // 缺省执行身份（票 10 的 `as:` 缺省装配目标）。persona 四条行为准则逐字取自
+    // 原型 Tab④（动手前经 octo-wiki 查阅并写 wiki_refs / 遵守 cwd 的 CLAUDE.md /
+    // 安全规则 > 任务书 > 知识参考 / 知识与现场冲突以现场为准并上报 stale）。
+    // Same ADR-0006 note as task-author/task-doer: `skills: ['octo-wiki']` is
+    // declarative governance intent + preflight basis only — runtime skill
+    // discovery stays shared-tier (Provisioner → .claude/skills/ + SDK
+    // settingSources; 票 11). Do NOT load skills from CloneDef.skills here.
+    // `config.versioned` marks it for the initial agent_versions publish
+    // (publishVersionedBuiltinClones, startup) so workflows can resolve 'latest'
+    // or pin a version via the existing snapshot mechanism.
+    // Name must stay equal to shared WORKFLOW_OPERATOR_CLONE_NAME (test-pinned).
+    name: WORKFLOW_OPERATOR_CLONE_NAME,
+    displayName: '工作流工程师',
+    type: 'built-in',
+    persona: WORKFLOW_OPERATOR_PERSONA,
+    skills: ['octo-wiki'],
+    memoryScope: 'isolated',
+    config: { versioned: true },
   },
 ]
 

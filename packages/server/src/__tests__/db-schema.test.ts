@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 42 tables", () => {
+  it("creates all 43 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,9 +23,11 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (42) — includes `tasks` (schema v38, v2-D1 first-class task
+      // Core tables (43) — includes `tasks` (schema v38, v2-D1 first-class task
       // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
-      // + billing_price_config/billing_setting (schema v45, billing-core-1 票01).
+      // + billing_price_config/billing_setting (schema v45, billing-core-1 票01)
+      // + `wiki_articles` (schema v52, LLM-WIKI 票01；wiki_fts 与 fts 影子表被
+      //   instr(name,'_fts') 过滤规则挡在清单外，与 experiences_fts 同款先例).
       // v41 (ADR-0021) deliberately adds NO table: `schedules` goes back to being only
       // a job definition and a task launch is an `executions` row carrying task_id.
       "agent_events", "agent_versions", "archive_drafts",
@@ -41,7 +43,7 @@ describe("DB Schema", () => {
       "pending_review", "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
-      "sessions", "task_phase_acceptances", "tasks", "workspace_archive", "workspaces",
+      "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })
 
@@ -65,7 +67,8 @@ describe("DB Schema", () => {
     //   filter; it is pinned by task-trigger-dao.test.ts instead.)
     // + schema v46 (billing-coverage-2 票01): idx_llm_calls_source_ts = 98.
     // + schema v49 (会话口径账本聚合): idx_llm_calls_session = 99.
-    expect(rows.length).toBe(99)
+    // + schema v52 (LLM-WIKI 票01): idx_wiki_articles_org_domain = 100.
+    expect(rows.length).toBe(100)
   })
 
   it("workspaces table has correct columns", () => {

@@ -2,14 +2,14 @@
 //
 // OctopusAgentExecutor — delegates tasks to versioned Octopus agents.
 // Composition pattern: wraps AgentExecutor internally with added capabilities:
-//   - Version resolution (via VersionResolver)
+//   - Identity resolution (via shared IdentityResolver: published snapshot → fs fallback)
 //   - Structured Task Contract prompt building
 //   - Heartbeat event streaming
 //   - Harness directive handling (abort/pause)
 //   - Structured result parsing
 //
 
-import { VarPool, substituteVarsFull, applyOutputsMapping, VersionResolver } from "@octopus/shared"
+import { VarPool, substituteVarsFull, applyOutputsMapping, resolveKnowledgeMode, stripWikiRefs } from "@octopus/shared"
 import type { NodeDef, OctopusAgentNodeDef, ResolvedVersion } from "@octopus/shared"
 import type { NodeExecutionResult, NodeExecutor } from "./types"
 import type { OctopusAgentConfig } from "./executor-config"
@@ -21,15 +21,13 @@ import { HeartbeatHandler } from "./octopus-agent/heartbeat"
 import { createDelegateSession, type CreateSessionFn, type DelegateSession } from "./octopus-agent/session"
 import { applyVarsUpdate } from "./parse-vars-update"
 import type { AgentEvent } from "./agent-types"
-import { existsSync, readFileSync, readdirSync } from "fs"
-import { join } from "path"
-import { homedir } from "os"
+import { IdentityResolver } from "./identity-resolver"
 
 /**
  * OctopusAgentExecutor — delegates tasks to versioned Octopus agents.
  *
  * Execution flow:
- * 1. Resolve agent version via VersionResolver
+ * 1. Resolve agent identity via shared IdentityResolver (published snapshot → built-in/clones fallback)
  * 2. Create delegate session
  * 3. Build Task Contract prompt from node.task
  * 4. Setup Heartbeat handler
@@ -41,6 +39,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
   private readonly node: OctopusAgentNodeDef
   private readonly pool: VarPool
   private readonly config: OctopusAgentConfig
+  private readonly identityResolver: IdentityResolver
 
   constructor(
     node: NodeDef,
@@ -50,35 +49,28 @@ export class OctopusAgentExecutor implements NodeExecutor {
     this.node = node as OctopusAgentNodeDef
     this.pool = pool
     this.config = config
+    this.identityResolver = new IdentityResolver({ versionResolver: config.versionResolver })
   }
 
   async execute(): Promise<NodeExecutionResult> {
     const start = Date.now()
 
-    // 1. Resolve agent version
+    // 1. Resolve agent identity (published snapshot → built-in/clones directory fallback)
     let resolved: ResolvedVersion
     try {
-      const versionSpec = this.node.version ?? "latest"
-      resolved = this.config.versionResolver.resolve(
-        this.node.agent,
-        versionSpec,
-        this.node.min_stage,
-      )
-    } catch (versionErr: unknown) {
-      // Fallback: if no published versions exist, use current clone config from filesystem
-      const fallback = this.resolveFallback(this.node.agent)
-      if (fallback) {
-        resolved = fallback
-      } else {
-        const errorMessage = versionErr instanceof Error ? versionErr.message : String(versionErr)
-        return {
-          status: "failed",
-          lastOutput: undefined,
-          outputs: {},
-          durationMs: Date.now() - start,
-          logLines: [`Version resolution failed: ${errorMessage}`],
-          error: `Version resolution failed: ${errorMessage}`,
-        }
+      resolved = this.identityResolver.resolve(this.node.agent, {
+        versionSpec: this.node.version ?? "latest",
+        minStage: this.node.min_stage,
+      })
+    } catch (identityErr: unknown) {
+      const errorMessage = identityErr instanceof Error ? identityErr.message : String(identityErr)
+      return {
+        status: "failed",
+        lastOutput: undefined,
+        outputs: {},
+        durationMs: Date.now() - start,
+        logLines: [`Version resolution failed: ${errorMessage}`],
+        error: `Version resolution failed: ${errorMessage}`,
       }
     }
 
@@ -153,6 +145,9 @@ export class OctopusAgentExecutor implements NodeExecutor {
     )
 
     // 5. Create internal AgentExecutor with resolved version
+    // knowledge.mode（票 12 影子双轨）：从身份快照 config 解析（agent_versions
+    // snapshot / clone config.json 的 config.knowledge.mode），缺省 both。
+    const knowledgeMode = resolveKnowledgeMode(resolved.snapshot.config)
     const agentConfig: AgentConfig = {
       runner: this.config.runner,
       engineContext: this.config.engineContext,
@@ -165,6 +160,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
       globalAutoAnswers: this.config.globalAutoAnswers,
       promptInjector: this.config.promptInjector,
       knowledgeInjector: this.config.knowledgeInjector,
+      knowledgeMode,
       workflowName: this.config.workflowName,
       crossExecResolver: this.config.crossExecResolver,
       executionId: this.config.executionId,
@@ -233,9 +229,13 @@ export class OctopusAgentExecutor implements NodeExecutor {
       outputs = { ...outputs, ...structured.output }
 
       // Apply vars_update to pool and outputs
+      // （票 10 handoff: wiki_refs 就骑这条 vars_update → VarPool 通道，不另建信道；
+      //   票 12: mode=inject 时查阅记录关闭 —— 只摘 wiki_refs 键，通道本身不变）
       if (structured.vars_update) {
-        this.pool.update(structured.vars_update as Record<string, any>)
-        outputs.vars_update = structured.vars_update
+        const update = structured.vars_update as Record<string, any>
+        stripWikiRefs(update, knowledgeMode)
+        this.pool.update(update)
+        outputs.vars_update = update
       }
 
       // Update status based on structured result status
@@ -245,7 +245,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
     } else {
       // Fallback: apply vars_update from raw text (existing AgentExecutor behavior)
       if (agentResult.lastOutput) {
-        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs as Record<string, any>)
+        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs as Record<string, any>, { knowledgeMode })
       }
     }
 
@@ -294,44 +294,6 @@ export class OctopusAgentExecutor implements NodeExecutor {
       nodeOutputs[id] = outputs
     }
     return nodeOutputs
-  }
-
-  /**
-   * Fallback version resolution: reads current clone config from filesystem
-   * when no published versions exist. Uses ~/.octopus/agent/clones/{name}/ directory.
-   */
-  private resolveFallback(agentName: string): ResolvedVersion | null {
-    try {
-      const cloneDir = join(homedir(), ".octopus", "agent", "clones", agentName)
-      if (!existsSync(cloneDir)) return null
-
-      // Read persona.md
-      const personaPath = join(cloneDir, "persona.md")
-      const persona = existsSync(personaPath) ? readFileSync(personaPath, "utf-8") : ""
-
-      // Read config.json
-      const configPath = join(cloneDir, "config.json")
-      let config: Record<string, unknown> = {}
-      if (existsSync(configPath)) {
-        try { config = JSON.parse(readFileSync(configPath, "utf-8")) } catch { /* empty */ }
-      }
-
-      // List skills
-      const skillsDir = join(cloneDir, "skills")
-      let skills: string[] = []
-      if (existsSync(skillsDir)) {
-        skills = readdirSync(skillsDir).filter((f) => !f.startsWith("."))
-      }
-
-      return {
-        version: "current",
-        stage: "stable",
-        snapshot: { persona, config, skills },
-        fsPath: cloneDir,
-      }
-    } catch {
-      return null
-    }
   }
 }
 

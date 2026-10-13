@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFi
 import { resolve, join } from "path"
 import { createHash } from "crypto"
 import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager, type ProvisionableType } from "@octopus/shared"
-import { WorkflowEngine, registerBuiltinProviders, type TestRunnerResult } from "@octopus/engine"
+import { WorkflowEngine, registerBuiltinProviders, checkAsRefs, IdentityResolver, type TestRunnerResult } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
 import { load as yamlLoad, JSON_SCHEMA } from "js-yaml"
@@ -95,6 +95,20 @@ workflowCmd
       }
     } catch (err) {
       console.warn(`[preflight] ${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    // L3 `as:` execution-identity hard gate (ticket 10, dual-entry parity with
+    // the server engine-init gate): an unresolvable explicit as: aborts BEFORE
+    // any doomed execution. CLI has no published VersionResolver, so the gate
+    // chains fs-only (built-in → clones dirs under HOME) — the same resolver
+    // the runtime assembly falls back to.
+    {
+      const asErrors = checkAsRefs(wf.nodes, new IdentityResolver({}))
+      if (asErrors.length > 0) {
+        for (const e of asErrors) console.error(chalk.red(`[identity-gate] ${e}`))
+        process.exitCode = 1
+        return
+      }
     }
 
     const engine = new WorkflowEngine(

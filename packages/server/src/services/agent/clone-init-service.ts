@@ -65,6 +65,32 @@ export function findTaskAuthorSeedDir(): string | null {
   return null
 }
 
+// ── archive clone assets (fork source — 票06 llm-wiki-loop) ──────────────
+//
+// octo-wiki-curate 是写侧技能：ADR-0006 实态下 getPlugins() 忽略 CloneDef.skills，
+// 共享层被全部分身继承——写侧技能进共享层 = 把 wiki 写权泄漏给全员。故它只能落
+// archive 分身层（clones/archive/skills/），与 task-author fork 同一装机路径。
+// 声明（而非扫目录得出）便于测试钉死 fork 树：目录漂移必须是自觉行为。
+export const ARCHIVE_CURATE_SKILL_FAMILY: readonly string[] = ['octo-wiki-curate']
+
+/** Locate the archive clone asset source (`packages/core-pack/clones/archive/`).
+ *  同 findTaskAuthorSeedDir：env 覆盖供测试驱动；不可用时 null（装机静默跳过）。 */
+export function findArchiveSeedDir(): string | null {
+  const override = process.env.OCTOPUS_ARCHIVE_SEED_DIR
+  if (override && fs.existsSync(path.join(override, 'persona.md'))) return override
+
+  const candidates = [
+    path.resolve(__dirname, '../../../../core-pack/clones/archive'),
+    path.resolve(process.cwd(), 'packages/core-pack/clones/archive'),
+    path.resolve(process.cwd(), '../core-pack/clones/archive'),
+    path.resolve(process.cwd(), '../../core-pack/clones/archive'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'persona.md'))) return c
+  }
+  return null
+}
+
 /** Relative paths of every file under `root`, restricted to the given entries.
  *  Each entry is a file (`persona.md`) or a directory (`skills`) walked
  *  recursively. Returns posix-normalized relative paths. */
@@ -166,18 +192,29 @@ export class CloneInitService {
    *  Non-fatal throughout: a failure leaves the clone with one asset less, and
    *  the session still runs (same posture as copyBuiltinSkills). */
   private seedTaskAuthorAssets(cloneDir: string, result: CloneInitResult): void {
-    const srcRoot = findTaskAuthorSeedDir()
+    this.seedForkAssets('task-author', findTaskAuthorSeedDir(), cloneDir, result)
+  }
+
+  /** Seed the archive (curator) clone's assets — persona.md + octo-wiki-curate —
+   *  from the fork at packages/core-pack/clones/archive/ (票06). Same versioned
+   *  manifest discipline as task-author; clone-tier placement is the whole point
+   *  (ADR-0006: shared tier would leak the wiki write gate to every clone). */
+  private seedArchiveAssets(cloneDir: string, result: CloneInitResult): void {
+    this.seedForkAssets('archive', findArchiveSeedDir(), cloneDir, result)
+  }
+
+  private seedForkAssets(cloneName: string, srcRoot: string | null, cloneDir: string, result: CloneInitResult): void {
     if (!srcRoot) return
 
     const manifestPath = path.join(cloneDir, TASK_AUTHOR_SEED_MANIFEST)
     const prev = this.readSeedManifest(manifestPath)
-    if (!prev) this.backupSeedTargets(cloneDir, result)
+    if (!prev) this.backupSeedTargets(cloneName, cloneDir, result)
 
     const srcFiles = collectSeedFiles(srcRoot, ['persona.md', 'skills'])
     const nextFiles: Record<string, string> = {}
 
     for (const rel of srcFiles) {
-      const key = `built-in/task-author/${rel}`
+      const key = `built-in/${cloneName}/${rel}`
       const srcAbs = path.join(srcRoot, rel)
       const destAbs = path.join(cloneDir, rel)
       const srcHash = sha256File(srcAbs)
@@ -216,7 +253,7 @@ export class CloneInitService {
       const srcSet = new Set(srcFiles)
       for (const rel of Object.keys(prev.files)) {
         if (srcSet.has(rel)) continue
-        const key = `built-in/task-author/${rel}`
+        const key = `built-in/${cloneName}/${rel}`
         const destAbs = path.join(cloneDir, rel)
         const destHash = sha256File(destAbs)
         if (destHash === null) continue // already gone from disk — just forget it
@@ -255,7 +292,7 @@ export class CloneInitService {
   /** One-time migration safety net: move the existing `persona.md` + `skills/`
    *  aside before we overwrite them, so hand-edits made before versioning
    *  existed are recoverable. No-op when there is nothing to back up. */
-  private backupSeedTargets(cloneDir: string, result: CloneInitResult): void {
+  private backupSeedTargets(cloneName: string, cloneDir: string, result: CloneInitResult): void {
     const targets = ['persona.md', 'skills'].filter((t) => fs.existsSync(path.join(cloneDir, t)))
     if (targets.length === 0) return
 
@@ -269,10 +306,10 @@ export class CloneInitService {
         if (fs.statSync(src).isDirectory()) copyDirSync(src, dst)
         else fs.copyFileSync(src, dst)
       }
-      result.dirsCreated.push(`built-in/task-author/seed.bak-${stamp}`)
+      result.dirsCreated.push(`built-in/${cloneName}/seed.bak-${stamp}`)
       console.warn(
-        `[CloneInitService] task-author assets were not versioned yet — backed up to ` +
-        `built-in/task-author/seed.bak-${stamp}/ before the first managed seed. ` +
+        `[CloneInitService] ${cloneName} assets were not versioned yet — backed up to ` +
+        `built-in/${cloneName}/seed.bak-${stamp}/ before the first managed seed. ` +
         `Local edits are now tracked by ${TASK_AUTHOR_SEED_MANIFEST} and will be preserved.`,
       )
     } catch (err: unknown) {
@@ -380,6 +417,9 @@ export class CloneInitService {
     //   - `persona.md` is owned by the fork when the fork is present.
     if (name === 'task-author') {
       this.seedTaskAuthorAssets(cloneDir, result)
+    }
+    if (name === 'archive') {
+      this.seedArchiveAssets(cloneDir, result)
     }
 
     // 3. Write default persona.md — only a fallback now: for non-task-author

@@ -62,6 +62,11 @@ version: 3.5.2
 
 **缺则降级**：无任何领域文档 → 照常探码（CLAUDE.md/README/目录树），并把「无领域文档 project」写进本轮 brief 与 `decisions`，提醒执行侧少依赖术语假设。能查到的不问。
 
+**Step 2.5 — 编译型知识库查阅（octo-wiki；写 spec / 拆 phase 前必做）**：仓库文档给术语与决策，wiki 给跨项目事实口径。按 octo-wiki 导航协议先读 `~/.octopus/orgs/{org}/knowledge/wiki/INDEX.md`（第一跳），按需整读 `business/`（业务口径/术语）与 `projects/{name}.md`（项目现状）词条；INDEX 未命中 → wiki search API 兜底；卡壳按症状查 `cases/`。
+- 所引词条必须在任务 **Context 段声明**（spec-field 的 Context 字段）：逐条写词条 ID + 锚点（如 `prj-octopus#oct-007`）；未引用任何词条则写 `wiki: 未引用` 表明已查过。
+- 收尾用 vars_update **JSON 形态**回写引用清单：`{"vars_update":{"wiki_refs":["prj-octopus#oct-007"]}}`（引擎只解析 JSON，勿用 YAML 行式）。
+- 词条与实际代码矛盾 → 不沉默：wiki_refs 附 `"stale: <词条ID> <一句理由>"`，规格仍以代码现状为准。
+
 **Step 3 — 写权边界**：写被 path guard 硬锁在 task home（含 Bash 重定向），project 仓库**只读**。草稿期的 ADR 写 `{home}/docs/adr/NNNN-slug.md`、术语文档变更笔记写 `{home}/context-notes.md`（per-project 分节）；归档编排（末 phase 通过后）顺延编号、append 术语并归并进各 project —— 你不需要也不能直接改 project 仓库。
 
 ## Batch 目录与 phases 协议（v4 核心契约）

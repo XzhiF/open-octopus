@@ -1,6 +1,7 @@
 // ===== Enums =====
 // TokenUsage 全站规范形状见 ./usage.ts（C1 口径统一）
 import type { TokenUsage } from './usage'
+import type { KnowledgeMode } from './knowledge'
 
 export type SessionType = 'main' | 'delegate' | 'clone_direct'
 export type CloneStatus = 'active' | 'idle' | 'executing'
@@ -129,6 +130,14 @@ export interface CreateCloneRequest {
 // ===== Clone System Types (Refactor) =====
 
 /**
+ * workflow-operator — 缺省执行身份分身名（LLM-WIKI P1 票 09，spec §执行身份）。
+ * 常量放 shared 是为了引擎侧（票 10：agent 节点未写 `as:` 时缺省装配此身份）
+ * 能引用而不反向依赖 server 的注册表模块；真相仍是 server `builtin-clones.ts`
+ * 的 BUILTIN_CLONES 条目，本常量与之一致（有测试钉住）。
+ */
+export const WORKFLOW_OPERATOR_CLONE_NAME = 'workflow-operator'
+
+/**
  * CloneDef — Runtime clone definition (filesystem + DB backed).
  * Defines a clone's persona, skills, memory scope, and configuration.
  */
@@ -144,6 +153,14 @@ export interface CloneDef {
     model?: string
     maxTurns?: number
     tools?: string[]
+    /** 版本化身份标记（LLM-WIKI 票 09）：true → 启动时为它发布初始 agent_versions
+     *  版本，工作流节点经既有快照机制（VersionResolver）可解析/钉住该身份。 */
+    versioned?: boolean
+    /** 影子双轨开关（LLM-WIKI 票 12, spec §执行身份/故事 30）：
+     *  inject = 只注入不记录（回滚态 = 现状）；query = 只记录不注入（P2 预演）；
+     *  both = 注入原样运行 + wiki_refs 查阅记录（缺省，本期默认）。
+     *  读取经 resolveKnowledgeMode，缺失即 both —— 既有分身零配置零行为变化。 */
+    knowledge?: { mode?: KnowledgeMode }
   }
 }
 

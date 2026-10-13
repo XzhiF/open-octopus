@@ -1,4 +1,5 @@
-import type { VarPool } from "@octopus/shared"
+import type { VarPool, KnowledgeMode } from "@octopus/shared"
+import { stripWikiRefs } from "@octopus/shared"
 
 /**
  * Extract and apply vars_update from agent/bash/python output text.
@@ -9,11 +10,15 @@ import type { VarPool } from "@octopus/shared"
  * 3. Multi-line JSON without code fences (collects lines from {"vars_update" to closing }})
  *
  * Searches from the END of the output backwards (last vars_update wins).
+ *
+ * options.knowledgeMode（票 12 影子双轨）: mode=inject 时 wiki_refs 键不落池
+ * （关闭查阅记录语义）。缺省（既有三参调用面）= both = 原行为逐字节不变。
  */
 export function applyVarsUpdate(
   text: string,
   pool: VarPool,
   outputs: Record<string, any>,
+  options?: { knowledgeMode?: KnowledgeMode },
 ): void {
   // Strategy 1: single-line JSON (existing behavior, fastest path)
   const lines = text.split("\n")
@@ -22,7 +27,7 @@ export function applyVarsUpdate(
     if (!line) continue
     const parsed = tryParse(line)
     if (parsed?.vars_update) {
-      applyUpdate(parsed.vars_update, pool, outputs)
+      applyUpdate(parsed.vars_update, pool, outputs, options)
       return
     }
   }
@@ -32,8 +37,19 @@ export function applyVarsUpdate(
   if (extracted) {
     const parsed = tryParse(extracted)
     if (parsed?.vars_update) {
-      applyUpdate(parsed.vars_update, pool, outputs)
+      applyUpdate(parsed.vars_update, pool, outputs, options)
+      return
     }
+  }
+
+  // D1（E2E 缺陷）：文本提到 vars_update/wiki_refs 却没解析出任何 JSON ——
+  // 典型现场是 agent 照旧版 octo-wiki 示例写 YAML 行式 `wiki_refs: [...]`。
+  // 过去静默丢弃；现在发 warn（不落池的行为不变，只消灭沉默）。
+  if (/\b(?:vars_update|wiki_refs)\b/.test(text)) {
+    console.warn(
+      '[vars_update] 输出中提到 vars_update/wiki_refs，但未解析到任何 JSON —— 未写入 VarPool。' +
+      '引擎只解析 JSON 形态 {"vars_update":{...}}（单行 / 多行 / ``` 代码块内），YAML 行式无效。',
+    )
   }
 }
 
@@ -51,11 +67,14 @@ function applyUpdate(
   varsUpdate: Record<string, any>,
   pool: VarPool,
   outputs: Record<string, any>,
+  options?: { knowledgeMode?: KnowledgeMode },
 ): void {
   if (varsUpdate.__status) {
     outputs.__status = varsUpdate.__status
     delete varsUpdate.__status
   }
+  // 票 12: recording 闸 —— mode=inject 摘掉 wiki_refs，其余键与通道零变化
+  stripWikiRefs(varsUpdate, options?.knowledgeMode)
   pool.update(varsUpdate)
   outputs.vars_update = varsUpdate
 }

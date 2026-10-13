@@ -1,6 +1,9 @@
 import type { EngineCallbacks } from "./engine"
 import type { WorkflowDef } from "@octopus/shared"
 import type { JsonlLogger } from "./logger"
+import { IdentityResolver } from "./executors/identity-resolver"
+import { checkAsRefs } from "./identity-gate"
+import { collectAgentIdentityRefs } from "./precompute-gate"
 import os from "os"
 import path from "path"
 import fs from "fs"
@@ -70,6 +73,14 @@ export interface EngineInitOptions {
     commands?: string[]
     rules?: string[]
   }
+  /**
+   * Execution-identity resolver for the `as:` L3 hard gate (ticket 10).
+   * Server injects one backed by the published VersionResolver so
+   * snapshot-only identities pass; when omitted the gate falls back to a
+   * filesystem-only resolver (built-in/clones directory probe, real HOME)
+   * — the same dual-path shape as the Step 0 clone gate.
+   */
+  identityResolver?: IdentityResolver
 }
 
 export interface GitSyncResult {
@@ -86,6 +97,8 @@ export interface EngineInitResult {
   commandsCopied: number
   rulesCopied: number
   cloneErrors: string[]
+  /** L3 `as:` identity hard-gate errors (ticket 10) — one per unresolvable site. */
+  identityErrors: string[]
   gitSyncResults: GitSyncResult[]
 }
 
@@ -102,6 +115,7 @@ interface ProvisionContext {
   commandsCopied: number
   rulesCopied: number
   cloneErrors: string[]
+  identityErrors: string[]
   failed: boolean
 }
 
@@ -181,7 +195,7 @@ export class EngineInitPhase {
       status, durationMs,
       skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
       commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-      cloneErrors: ctx.cloneErrors, gitSyncResults: syncResults,
+      cloneErrors: ctx.cloneErrors, identityErrors: ctx.identityErrors, gitSyncResults: syncResults,
     }
   }
 
@@ -209,6 +223,7 @@ export class EngineInitPhase {
       commandsCopied: current.commandsCopied + (result.byType.command ?? 0),
       rulesCopied: current.rulesCopied + (result.byType.rule ?? 0),
       cloneErrors: current.cloneErrors,
+      identityErrors: current.identityErrors,
       failed: result.failed.length > 0,
     }
 
@@ -232,12 +247,13 @@ export class EngineInitPhase {
       resourcePreflight,
       logger,
       configRequires,
+      identityResolver,
     } = options
 
     const startTime = Date.now()
     const ctx: ProvisionContext = {
       skillsCopied: 0, agentsCopied: 0, commandsCopied: 0, rulesCopied: 0,
-      cloneErrors: [], failed: false,
+      cloneErrors: [], identityErrors: [], failed: false,
     }
 
     // Write start event to JSONL log
@@ -286,6 +302,27 @@ export class EngineInitPhase {
         }
       }
 
+      // Step 0.5: Execution-identity `as:` hard-fail gate (ticket 10) —
+      // every explicit as: target must resolve NOW, mirroring Step 0's
+      // requires.clones existence check. Unresolvable ⇒ failed init,
+      // provisioning and execution never start (no doomed run).
+      const asErrors = checkAsRefs(
+        workflow.nodes,
+        identityResolver ?? new IdentityResolver({}),
+      )
+      if (asErrors.length > 0) {
+        for (const errorMsg of asErrors) {
+          this.logMessage(logger, callbacks, `[ERROR] ${errorMsg}`)
+          ctx.identityErrors.push(errorMsg)
+        }
+        ctx.failed = true
+
+        const durationMs = Date.now() - startTime
+        logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
+        callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
+        return this.buildResult(ctx, "failed", durationMs)
+      }
+
       // Step 1: Provision declared requires resources first
       const requiresSkills = mergedRequires.skills
       const requiresAgentFiles = mergedRequires.agent_files
@@ -332,7 +369,7 @@ export class EngineInitPhase {
       if (resourcePreflight && resourceProvisioner) {
         const scanResult = await this.runScanPhase(
           workflow, workspacePath, resourcePreflight, resourceProvisioner,
-          callbacks, hasRequires, ctx, logger,
+          callbacks, hasRequires, ctx, logger, identityResolver,
         )
         ctx.skillsCopied = scanResult.skillsCopied
         ctx.agentsCopied = scanResult.agentsCopied
@@ -378,21 +415,37 @@ export class EngineInitPhase {
     hasRequires: boolean,
     ctx: ProvisionContext,
     logger?: JsonlLogger,
+    identityResolver?: IdentityResolver,
   ): Promise<ProvisionContext> {
     if (hasRequires) {
       this.logMessage(logger, callbacks, "Scanning for additional resources...")
     }
 
     const manifest = preflight.analyze(workflow)
-    this.logMessage(logger, callbacks, `Analyzing resources: ${manifest.skills.length} skills, ${manifest.agents.length} agents`)
+    // D2（review fix #2 + addendum）：身份声明技能（snapshot.skills ∪ config.skills）
+    // 并入 provisioning 集 ——
+    // 无 `skills:` 声明的 agent 节点（缺省 workflow-operator / as: 目标）过去
+    // 只进 SDK 白名单、不落文件，octo-wiki 在 workspace .claude/skills 缺席。
+    // 合并后走既有 Provisioner 文件物化 → SDK 原生发现（ADR-0006，非 prompt 文本）。
+    const identitySkills = this.collectIdentitySkills(
+      workflow.nodes,
+      identityResolver ?? new IdentityResolver({}),
+    )
+    const mergedManifest: ResourceManifestLike = identitySkills.length === 0
+      ? manifest
+      : { ...manifest, skills: [...new Set([...manifest.skills, ...identitySkills])] }
+    if (identitySkills.length > 0) {
+      this.logMessage(logger, callbacks, `Identity skills merged into provisioning set: ${identitySkills.join(", ")}`)
+    }
+    this.logMessage(logger, callbacks, `Analyzing resources: ${mergedManifest.skills.length} skills, ${mergedManifest.agents.length} agents`)
 
-    const totalResources = manifest.skills.length + manifest.agents.length
+    const totalResources = mergedManifest.skills.length + mergedManifest.agents.length
     if (totalResources === 0) {
       this.logMessage(logger, callbacks, "No skills/agents references found in workflow")
       return ctx
     }
 
-    const check = preflight.check(manifest, workspacePath)
+    const check = preflight.check(mergedManifest, workspacePath)
     if (check.missing.length === 0) {
       this.logMessage(logger, callbacks, "All required resources already present")
       return ctx
@@ -401,6 +454,48 @@ export class EngineInitPhase {
     return this.provisionMissing(
       check.missing, workspacePath, provisioner, callbacks, "scan", ctx, logger,
     )
+  }
+
+  /**
+   * D2（review fix #2 + addendum 数据契约修复）— resolve every agent node's
+   * execution identity (explicit `as:` or default workflow-operator, loop-nested
+   * included) and union their declared skills from TWO sources:
+   * ① snapshot.skills (clone 目录 skills/ 子目录) and
+   * ② snapshot.config.skills (config.json 顶层治理声明 — built-in 分身唯一来源, 票09).
+   * Unresolvable identities degrade gracefully (the Step 0.5
+   * L3 gate already hard-fails explicit refs; default-missing must never break
+   * existing flows) — their skills are simply skipped.
+   */
+  private collectIdentitySkills(
+    nodes: WorkflowDef["nodes"],
+    resolver: IdentityResolver,
+  ): string[] {
+    const skills = new Set<string>()
+    for (const ref of collectAgentIdentityRefs(nodes)) {
+      if (ref.includes("$")) continue // variable refs unresolvable at preflight
+      try {
+        const snapshot = resolver.resolve(ref).snapshot
+        // Source ① — 目录形态：分身 skills/ 子目录 readdir → snapshot.skills
+        // （真实带 skills/ 的分身走这里，previous review fix 的通路保留）。
+        for (const s of snapshot.skills ?? []) {
+          if (typeof s === "string" && !s.includes("$")) skills.add(s)
+        }
+        // Source ② — 治理声明形态（票09 preflight 依据，fix-verification addendum
+        // D2 根因）：built-in 分身没有 skills/ 目录（clone-init-service 不种），
+        // CloneDef.skills 落在 config.json 顶层 skills → filesToSnapshot /
+        // readIdentityFromDir 把整个 config.json 读进 snapshot.config。
+        // 只读 ① 时运行时 snapshot.skills=[] ⇒ analyze 集为空（本 review fix 的洞）。
+        const declared = snapshot.config?.skills
+        if (Array.isArray(declared)) {
+          for (const s of declared) {
+            if (typeof s === "string" && !s.includes("$")) skills.add(s)
+          }
+        }
+      } catch {
+        // graceful: identity absent — same degradation shape as runtime assembly
+      }
+    }
+    return [...skills]
   }
 
   /** Git sync: pull latest main for all workspace projects. */

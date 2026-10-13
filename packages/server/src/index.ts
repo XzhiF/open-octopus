@@ -14,18 +14,28 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO,
+  TaskDAO, WikiArticleDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
+import { createWikiRoutes } from "./routes/wiki"
+import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
+import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
+import { createWikiDistillRoutes } from "./routes/wiki-distill"
+import { WikiDistillService, createLLMDistillSummarizer } from "./services/knowledge/wiki/distill"
+import { callHaiku } from "./services/knowledge/llm"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
+import { WikiSplitService } from "./services/knowledge/wiki/split"
+import { WikiCurateService, isGenuineWikiTarget } from "./services/knowledge/wiki/curate"
+import { resolveWikiRoot } from "./services/knowledge/wiki/paths"
+import { createProductionRuleFormJudge } from "./services/knowledge/wiki/rule-form-judge"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
@@ -95,7 +105,7 @@ import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
 import { initAgentService, getAgentService } from "./services/agent/agent-service"
-import { initAgentVersionService } from "./services/agent/agent-version-service"
+import { initAgentVersionService, publishVersionedBuiltinClones } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
 import { SecretMasker } from "./services/actuator/secret-masker"
@@ -139,6 +149,7 @@ interface AllDAOs {
   safety: SafetyDAO
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
+  wikiArticle: WikiArticleDAO
   archive: ArchiveDAO
   archiveDraft: ArchiveDraftDAO
   interactionMessage: InteractionMessageDAO
@@ -163,6 +174,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     safety: new SafetyDAO(db),
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
+    wikiArticle: new WikiArticleDAO(db),
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
     interactionMessage: new InteractionMessageDAO(db),
@@ -258,6 +270,15 @@ if (!process.env.VITEST && daos) {
     const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
     if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
       console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+    }
+    // LLM-WIKI 票 09: built-in clones marked config.versioned (workflow-operator)
+    // get their initial agent_versions publish right after the dual-track landing,
+    // so the existing octopus_agent snapshot resolution (VersionResolver over
+    // listAllPublished, set above) can resolve 'latest' / pinned identities.
+    // Idempotent + non-fatal (see publishVersionedBuiltinClones).
+    const seeded = publishVersionedBuiltinClones(daos.agentVersion)
+    if (seeded.length > 0) {
+      console.log(`[server] versioned built-in clones published: ${seeded.join(', ')} at ${'1.0.0'}`)
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -390,6 +411,7 @@ const d = daos ?? {
   safety: lazyDAO(SafetyDAO),
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
+  wikiArticle: lazyDAO(WikiArticleDAO),
   archive: lazyDAO(ArchiveDAO),
   archiveDraft: lazyDAO(ArchiveDraftDAO),
   interactionMessage: lazyDAO(InteractionMessageDAO),
@@ -485,13 +507,51 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
-const reviewService = new ReviewService(d.pendingReview)
+// 票02 L2: 'wiki-split' 提案 approve → wiki 拆分执行器（hub 目录形态；懒取 getDb，
+// 与 chat 门同款"测试期不触达"纪律）。
+// 票06 D4: 词条形态 'rule' 与 'wiki-edit' approve → 策展编译通道（await——
+// compileEntry 异步；写闸单一入口 = WikiCompileService + 02 lint + pre-commit hook）。
+// L6 生产编译时判定（spec §增长约束 L6：warn + 给改写稿，非阻塞）：
+// knowledge/llm 的 callHaiku 适配器——离线/禁用 ⇒ 零 issues（rule-form-judge.ts 双保险）。
+const ruleFormJudge = createProductionRuleFormJudge()
+
+const reviewService = new ReviewService(d.pendingReview, {
+  applyWikiSplit: (item, org) => {
+    new WikiSplitService({ db: getDb(), org: org ?? "default" }).applyProposal(item)
+  },
+  applyWikiCurate: async (item, org) => {
+    await new WikiCurateService({ db: getDb(), org: org ?? "default", ruleFormJudge }).applyApprovedItem(item)
+  },
+  // 评审修复：只有真 wiki 词条形态（wiki 通道入队标记 scope='wiki'，或词条已在
+  // 该 org 的 wiki 根盘上）才进策展闸门。旧注入轨道（extract/maintenance）的
+  // `projects/*` 目标不再被误拦——approve 与 main 同轨（纯追加、可成功）。
+  isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
+})
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
+
+// LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
+app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
+// LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
+// 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
+app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
+  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath, ruleFormJudge }),
+))
+// LLM-WIKI 票07: 蒸馏迁移命令（docs/research+adr → 审核队列蒸馏候选；幂等重跑不重入队，
+// 本路由零写 wiki）。LLM 蒸馏 seam = createLLMDistillSummarizer(callHaiku)（handoff-02 L6
+// 同法注入；无 provider 逐篇启发式兜底）。落盘只经票06 采纳通道（approveItem→curate）。
+app.route("/api/knowledge/wiki", createWikiDistillRoutes(
+  (org, opts) => new WikiDistillService({
+    db: getDb(),
+    org,
+    docsRoot: opts.docsRoot,
+    summarizer: createLLMDistillSummarizer(callHaiku),
+  }),
+))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()

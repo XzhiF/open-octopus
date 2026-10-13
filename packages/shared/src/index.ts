@@ -34,6 +34,7 @@ export * from "./types/swarm"
 export * from "./plugin/detector"
 export * from "./plugin/types"
 export * from "./types/knowledge"
+export * from "./types/wiki"
 export * from "./types/repair"
 export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'

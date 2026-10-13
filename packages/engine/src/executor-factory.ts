@@ -4,7 +4,7 @@
 // Extracted from WorkflowEngine.createExecutor() to reduce engine.ts size.
 //
 import type { NodeDef, WorkflowHooks, VersionResolver, TaskDispatchPort } from "@octopus/shared"
-import { VarPool, resolveModelAlias } from "@octopus/shared"
+import { VarPool, resolveModelAlias, resolveKnowledgeMode } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
 import type { IAgentProvider, SystemPromptInput } from "@octopus/providers"
@@ -21,6 +21,8 @@ import { DynamicSubWorkflowExecutor } from "./executors/dynamic-sub-workflow"
 import { OctopusAgentExecutor } from "./executors/octopus-agent"
 import { AgentNodeRunner } from "./executors/agent-runner"
 import { TaskDispatchExecutor } from "./executors/task-dispatch"
+import { IdentityResolver } from "./executors/identity-resolver"
+import { assembleAgentNodeIdentity } from "./executors/identity-assembly"
 import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
@@ -61,6 +63,15 @@ export interface ExecutorFactoryContext {
   visitedWorkflows?: Set<string>
   // Octopus agent support
   versionResolver?: VersionResolver
+  /**
+   * Execution-identity resolver for agent-node `as:` assembly (ticket 10).
+   * Injectable seam (tests point it at a fixture HOME); when absent the
+   * factory builds one from ctx.versionResolver — which may itself be
+   * undefined on the CLI path, so the resolver runs fs-only (handoff-08).
+   * Threaded to loop / sub_workflow / dynamic_sub_workflow child engines so
+   * nested agent nodes inherit the same assembly semantics.
+   */
+  identityResolver?: IdentityResolver
   createSessionFn?: import("./executors/octopus-agent/session").CreateSessionFn
   // Task dispatch support (G1) — port is injected by the server (createSessionFn
   // precedent); childOutput is the resume payload threaded in on retryFrom.
@@ -70,6 +81,16 @@ export interface ExecutorFactoryContext {
 
 export class ExecutorFactory {
   constructor(private ctx: ExecutorFactoryContext) {}
+
+  /**
+   * Identity resolver for agent-node `as:` assembly (ticket 10). Injected
+   * seam wins; otherwise built from ctx.versionResolver when present (server:
+   * published-snapshot-first) or fs-only when absent (CLI parity). Shared
+   * seam with OctopusAgentExecutor — same resolution chain site-wide.
+   */
+  private getIdentityResolver(): IdentityResolver {
+    return this.ctx.identityResolver ?? new IdentityResolver({ versionResolver: this.ctx.versionResolver })
+  }
 
   /**
    * Build a host safety system prompt when running inside the Octopus server.
@@ -170,6 +191,7 @@ export class ExecutorFactory {
           engineNodeResults: this.ctx.nodeResults,
           workflowResolver: this.ctx.workflowResolver,
           visitedWorkflows: this.ctx.visitedWorkflows,
+          identityResolver: this.getIdentityResolver(),
           hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
@@ -210,7 +232,18 @@ export class ExecutorFactory {
           console.log(`[executor-factory] Host safety system prompt injected for agent node "${node.id}"`)
         }
 
-        return new AgentExecutor(node, p, {
+        // ── Execution-identity assembly (ticket 10 / ADR-0029) ──
+        // as: (default workflow-operator) → persona merged into the system
+        // prompt, snapshot skills unioned into the SDK whitelist. cwd stays
+        // the workspace — never an identity input (runner built from ctx.cwd
+        // above). Explicit unresolvable as: throws here — deterministic node
+        // failure, the engine-init L3 gate is the earlier hard defense.
+        const identity = assembleAgentNodeIdentity(node, this.getIdentityResolver(), { systemPrompt: hostSafetyPrompt })
+        if (identity.identityRef) {
+          console.log(`[executor-factory] Execution identity "${identity.identityRef}" assembled for agent node "${node.id}"`)
+        }
+
+        return new AgentExecutor(identity.node, p, {
           runner,
           previousSessionId,
           globalAutoAnswers: this.ctx.workflow.auto_answers,
@@ -218,6 +251,10 @@ export class ExecutorFactory {
           engineContext: { nodeResults: this.ctx.nodeResults },
           promptInjector: this.ctx.promptInjector,
           knowledgeInjector,
+          // 票 12 影子双轨装配闸：mode 来自身份快照 config（缺 knowledge 字段 =
+          // both = 现状逐字节不变）；query 时 AgentExecutor 构造器摘除注入器引用，
+          // 注入链本体（红线 #1）不动一行。
+          knowledgeMode: resolveKnowledgeMode(identity.snapshotConfig),
           workflowName: this.ctx.workflow.name,
           crossExecResolver: this.ctx.crossExecResolver,
           executionId: this.ctx.executionId,
@@ -225,7 +262,7 @@ export class ExecutorFactory {
           modelAliasConfig: this.ctx.modelAliasConfig,
           providerKey,
           onBeforeToolCall: this.ctx.callbacks?.onBeforeToolCall,
-          systemPrompt: this.buildHostSafetyPrompt(),
+          systemPrompt: identity.systemPrompt,
         })
       }
       case "swarm":
@@ -282,6 +319,7 @@ export class ExecutorFactory {
           engineNodeResults: this.ctx.nodeResults,
           workflowResolver: this.ctx.workflowResolver,
           visitedWorkflows: this.ctx.visitedWorkflows,
+          identityResolver: this.getIdentityResolver(),
           ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
@@ -310,6 +348,7 @@ export class ExecutorFactory {
           promptInjector: this.ctx.promptInjector,
           precomputeHook: this.ctx.precomputeHook,
           knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
+          identityResolver: this.getIdentityResolver(),
         })
       case "octopus_agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"

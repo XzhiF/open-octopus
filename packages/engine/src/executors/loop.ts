@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression, resolveModelAlias } from "@octopus/shared"
+import { VarPool, evaluateExpression, resolveModelAlias, resolveKnowledgeMode } from "@octopus/shared"
 import type { NodeDef, SubunitSpec } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { LoopConfig, ResumeConfig } from "./executor-config"
@@ -13,6 +13,7 @@ import { SwarmExecutor } from "./swarm"
 import { SubWorkflowExecutor } from "./sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./dynamic-sub-workflow"
 import { TaskDispatchExecutor } from "./task-dispatch"
+import { assembleAgentNodeIdentity } from "./identity-assembly"
 import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
 import { join } from "path"
 
@@ -561,7 +562,25 @@ export class LoopExecutor implements NodeExecutor {
           }
         }
 
-        return new AgentExecutor(node, p, {
+        // Execution-identity assembly (ticket 10): loop-nested agent nodes
+        // inherit the same `as:` semantics as top-level ones. When no resolver
+        // is threaded (direct unit construction), behavior is the pre-ticket
+        // passthrough.
+        // Review fix #3: knowledgeMode must be resolved from the identity
+        // snapshot config HERE too (same as executor-factory's agent case) —
+        // otherwise loop-nested nodes ignore knowledge.mode (e.g. inject keeps
+        // recording wiki_refs). Injection chain itself stays untouched (红线 #1).
+        let identityNode = node
+        let identitySystemPrompt: import("@octopus/providers").SystemPromptInput | undefined
+        let identityKnowledgeMode: import("@octopus/shared").KnowledgeMode | undefined
+        if (this.config.identityResolver) {
+          const identity = assembleAgentNodeIdentity(node, this.config.identityResolver)
+          identityNode = identity.node
+          identitySystemPrompt = identity.systemPrompt
+          identityKnowledgeMode = resolveKnowledgeMode(identity.snapshotConfig)
+        }
+
+        return new AgentExecutor(identityNode, p, {
           runner,
           previousSessionId,
           globalAutoAnswers: this.config.globalAutoAnswers,
@@ -571,6 +590,8 @@ export class LoopExecutor implements NodeExecutor {
           resolvedModel,
           modelAliasConfig: this.config.modelAliasConfig,
           providerKey,
+          systemPrompt: identitySystemPrompt,
+          knowledgeMode: identityKnowledgeMode,
         })
       }
       case "loop":
@@ -597,6 +618,7 @@ export class LoopExecutor implements NodeExecutor {
           engineNodeResults: this.config.engineNodeResults,
           workflowResolver: (this.config as any).workflowResolver,
           visitedWorkflows: (this.config as any).visitedWorkflows,
+          identityResolver: this.config.identityResolver,
           iterationIndex: this.iterations - 1, // 0-based iteration index
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             // Inject iteration context from this loop (0-based iteration index)
@@ -634,6 +656,7 @@ export class LoopExecutor implements NodeExecutor {
           promptInjector: (this.config as any).promptInjector,
           precomputeHook: (this.config as any).precomputeHook,
           knowledgeInjectorFactory: (this.config as any).knowledgeInjectorFactory,
+          identityResolver: this.config.identityResolver,
         })
       case "task_dispatch": {
         // G1 resume inside a loop: the resumed iteration's inner task_dispatch

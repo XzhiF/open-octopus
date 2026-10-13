@@ -21,7 +21,7 @@ import type { KnowledgeService } from "../knowledge"
 import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
-import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
+import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase, IdentityResolver } from "@octopus/engine"
 import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef, LIVE_ROUND_STATUSES } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
@@ -400,6 +400,12 @@ export class ExecutionLifecycle {
         // missing schedule (manual execution) or malformed config falls back
         // to workflow.requires alone (unchanged behavior).
         configRequires: this.resolveScheduleConfigRequires(id),
+        // L3 `as:` identity hard gate (ticket 10): reject unresolvable execution
+        // identities at engine-init, before any doomed execution. The gate
+        // resolver chains published snapshots (from the engine's injected
+        // VersionResolver) → built-in/clones directories — same chain the
+        // runtime assembly uses (spec story 23/24).
+        identityResolver: new IdentityResolver({ versionResolver: engine.getVersionResolver() }),
       })
 
       if (initResult.status === "failed") {
@@ -411,10 +417,14 @@ export class ExecutionLifecycle {
         if (initResult.cloneErrors && initResult.cloneErrors.length > 0) {
           errorDetail = `engine_init failed: ${initResult.cloneErrors.join("; ")}`
         }
+        // ticket 10: surface `as:` identity-gate errors the same way clones are
+        if (initResult.identityErrors && initResult.identityErrors.length > 0) {
+          errorDetail += `; identity gate: ${initResult.identityErrors.join("; ")}`
+        }
 
         this.sse.emit(this.workspaceId, {
           event: "error",
-          data: { executionId: id, nodeId: "__engine_init__", error: errorDetail, cloneErrors: initResult.cloneErrors },
+          data: { executionId: id, nodeId: "__engine_init__", error: errorDetail, cloneErrors: initResult.cloneErrors, identityErrors: initResult.identityErrors },
         })
         this.enginePool.remove(id)
         return this.dao.findById(id)!
