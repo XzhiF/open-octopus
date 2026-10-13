@@ -1,6 +1,7 @@
 import fs from "fs"
 import path from "path"
 import { spawnSync } from "child_process"
+import { WIKI_LOCK_FILE } from "./wiki-lock"
 
 /**
  * Wiki git helper — 仓库无 git 库依赖（data-plane notes §6），一律 shell-out。
@@ -99,9 +100,31 @@ export function mustGit(git: GitRunner, args: string[]): GitResult {
 }
 
 /**
+ * 票06（wiki 根锁文件）：`.compile.lock` 就在 wiki 仓根、编译 commit 时**在盘**——
+ * `git add -A` 若把它扫进提交，锁内容（PID/心跳）会污染仓史且每次 release 留脏删行。
+ * 写进 `.git/info/exclude`（本仓工作区排除，不入树、不动 .gitignore），每次 ensure
+ * 幂等补装（存量仓升级面同 hook）。锁名单源取 wiki-lock.WIKI_LOCK_FILE。
+ */
+export function excludeWikiLock(root: string): void {
+  const gitDir = path.join(root, ".git")
+  if (!fs.existsSync(gitDir)) return
+  try {
+    const excludePath = path.join(gitDir, "info", "exclude")
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+    const prev = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : ""
+    if (prev.split(/\r?\n/).includes(WIKI_LOCK_FILE)) return
+    const joined = prev === "" || prev.endsWith("\n") ? `${prev}${WIKI_LOCK_FILE}\n` : `${prev}\n${WIKI_LOCK_FILE}\n`
+    fs.writeFileSync(excludePath, joined, "utf-8")
+  } catch (err) {
+    // 排除项装机失败不炸编译（best-effort）；下次 ensureWikiGitRepo 补装
+    process.stderr.write(`[wiki-git] .compile.lock 排除项写入失败: ${err instanceof Error ? err.message : String(err)}\n`)
+  }
+}
+
+/**
  * 首编译时把 wiki 根初始化为独立 git 仓库（.git 已存在则跳过 init — 幂等）。
  * 身份写 per-repo git config（fixture 先例同款），不动用户全局配置。
- * 票06：无论新仓老仓，每次都确保 pre-commit hook 就位（存量仓升级面）。
+ * 票06：无论新仓老仓，每次都确保 pre-commit hook 就位（存量仓升级面）+ 锁文件排除项。
  */
 export function ensureWikiGitRepo(root: string, git: GitRunner): void {
   if (!fs.existsSync(path.join(root, ".git"))) {
@@ -110,6 +133,7 @@ export function ensureWikiGitRepo(root: string, git: GitRunner): void {
     mustGit(git, ["config", "user.email", "wiki@octopus.local"])
   }
   installWikiPreCommitHook(root)
+  excludeWikiLock(root)
 }
 
 /** HEAD hash after a commit; null on empty repo (no commits yet). */

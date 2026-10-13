@@ -4,18 +4,23 @@ import { CuratorError, type CuratorCompileResult } from "./curator"
 import { resolveKnowledgeRoot } from "../global-paths"
 
 /**
- * 薄编译任务 registry — 知识中心票05 AC5。
+ * 薄编译任务 registry — 知识中心票05 AC5；票06 起**投喂入口统一走全局 FIFO 队列**。
  *
- * 语义边界：**只做「投喂/显式触发 → task id → 状态可查」**，不是队列——
- * 全局 FIFO 队列与 wiki 根锁是票06 的活（勿预建，spec §全局写串行）。
- * `run(rawPath)` 注入的是单次编译入口（CuratorCompileService.compileRaw 的包装），
- * 它同步 await 到终态、原子回滚零半成品——票06 把本服务外面整包上互斥即可，
- * registry 与路由契约零改动。
+ * 语义边界：**只做「投喂/显式触发 → task id → 状态可查」**——串行由队列保证：
+ * 票06 全局写串行（owner 裁决：wiki 写入不许并发）把 `start(id)` 整包进
+ * `CompileQueue`（进程内 FIFO + wiki 根锁保底），registry 与路由契约零改动——
+ * 任务以 `crt-…` id 入队，`queued →（轮到才置）compiling → committed | failed`
+ * 的位次/深度经队列 API 可查（`GET /api/knowledge/wiki/queue`，UI 票12 消费）。
+ * 缺省（未注入 queue）= 服务私有 FIFO 队列（无跨进程锁，测试/离线形态）；
+ * 生产装配（index.ts）注入**进程内全局单例**——投喂/归档/修订/lint 自纠/
+ * finding 修复/revert/重蒸馏七类写操作共队互斥。
  *
- * 状态机：queued →（setImmediate 起跑）compiling → committed | failed。
+ * 状态机：queued →（队列轮到才起跑）compiling → committed | failed。
  * 进程内 Map（最新 N 条，超容量逐出最老终态任务）；进程重启任务史丢——
  * 真相面是 git LOG 行（编译成功）或投喂回执重试（失败）。持久化任务表不在本票。
  */
+
+import { CompileQueue, type WriteQueue } from "./compile-queue"
 
 export type CompileTaskStatus = "queued" | "compiling" | "committed" | "failed"
 
@@ -33,13 +38,15 @@ export interface CompileTaskRecord {
 }
 
 export interface CuratorTaskDeps {
-  /** 单次编译入口（票06 队列的整包对象） */
+  /** 单次编译入口（票06 起经全局队列整包执行——同一时刻全局只有一个 run 在跑） */
   run: (rawPath: string) => Promise<CuratorCompileResult>
   /** 知识根（raw 存在性同步校验用）；缺省 resolveKnowledgeRoot() */
   root?: string
   now?: () => Date
   /** registry 容量（默认 200，逐出最老终态任务） */
   capacity?: number
+  /** 全局写串行队列（票06）。缺省=服务私有 FIFO（无跨进程锁）；生产注入全局单例（带 wiki 根锁） */
+  queue?: WriteQueue
 }
 
 const TERMINAL: CompileTaskStatus[] = ["committed", "failed"]
@@ -51,18 +58,21 @@ export class CuratorTaskService {
   private readonly root: string
   private readonly now: () => Date
   private readonly capacity: number
+  private readonly queue: WriteQueue
 
   constructor(deps: CuratorTaskDeps) {
     this.run = deps.run
     this.root = resolveKnowledgeRoot(deps.root)
     this.now = deps.now ?? (() => new Date())
     this.capacity = deps.capacity ?? 200
+    this.queue = deps.queue ?? new CompileQueue()
   }
 
   /**
    * 投喂/显式触发入口：同步校验 raw 在盘（不存在 ⇒ 立即抛 CuratorError，路由直接 404，
-   * 不建任务），返回 queued 记录；编译在 setImmediate 起跑（回执先回、diff 卡后补——
-   * prototype Tab③「>10s 转异步」形态的本期统一化：一切编译都异步）。
+   * 不建任务），返回 queued 记录；**编译不在这里起跑——入全局 FIFO 队列**（票06），
+   * 轮到才 `start()`。回执先回、diff 卡后补（prototype Tab③「>10s 转异步」本期统一化：
+   * 一切编译都异步且串行）。任务以 registry id 入队 ⇒ 位次 #N 经队列 API 可查。
    */
   submit(rawPath: string): CompileTaskRecord {
     const clean = rawPath.replace(/\\/g, "/")
@@ -77,7 +87,15 @@ export class CuratorTaskService {
     const rec: CompileTaskRecord = { id, rawPath: clean, status: "queued", createdAt: this.now().toISOString() }
     this.tasks.set(id, rec)
     this.evict()
-    setImmediate(() => { void this.start(id) })
+    this.queue.enqueue("ingest-compile", async () => {
+      await this.start(id)
+      // registry 的 failed 对队列可见（否则 start() 自吞错误 ⇒ 队列误记 committed）
+      const done = this.tasks.get(id)
+      if (done?.status === "failed") {
+        const code = done.error?.code ?? "COMPILE_FAILED"
+        throw Object.assign(new Error(`${code}: ${done.error?.message ?? "编译失败"}`), { code })
+      }
+    }, { taskId: id, label: clean })
     return rec
   }
 
