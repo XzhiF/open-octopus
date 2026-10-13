@@ -10,13 +10,13 @@ import { createWikiRoutes } from "../wiki"
  * 片段与定位（id/path/anchors）。expected 值逐字取自 fixture（独立真相源）。
  */
 
-const ORG = "xzf-dev"
+const ORG = "xzf-dev" // 票03：参数容错保留；seed 钉 global
 
 function seed(dao: WikiArticleDAO, row: {
   id: string; domain: string; title: string; summary: string; body: string; path: string
 }) {
   dao.upsert({
-    org: ORG,
+    org: "global",
     id: row.id,
     domain: row.domain,
     title: row.title,
@@ -29,7 +29,7 @@ function seed(dao: WikiArticleDAO, row: {
     body: row.body,
     path: row.path,
   })
-  const rowid = dao.getRowid(ORG, row.id)!
+  const rowid = dao.getRowid("global", row.id)!
   dao.insertFts({ rowid, id: row.id, domain: row.domain, title: row.title, summary: row.summary, topics: JSON.stringify(["build"]), body: row.body })
 }
 
@@ -75,7 +75,7 @@ describe("GET /api/knowledge/wiki/search (ticket 03)", () => {
     expect(res.status).toBe(200)
     const data = await res.json()
 
-    expect(data.org).toBe(ORG)
+    expect(data.org).toBe("global")
     expect(data.query).toBe("Promise")
     expect(data.mode).toBe("fts")
     expect(data.results).toHaveLength(1)

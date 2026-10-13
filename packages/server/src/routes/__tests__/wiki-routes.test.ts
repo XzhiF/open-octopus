@@ -10,11 +10,11 @@ import { createWikiRoutes } from "../wiki"
  * 编译链路由 S1 的 wiki-compile.test.ts 覆盖，此处只测 API 契约形状）。
  */
 
-const ORG = "xzf-dev"
+const ORG = "xzf-dev" // 票03 起 org 参数仅容错保留；DB seed 用钉死的 'global'
 
 function seedRow(dao: WikiArticleDAO, row: { id: string; domain: string; title: string; summary: string; body: string; path: string; topics?: string[]; confidence?: number }) {
   dao.upsert({
-    org: ORG,
+    org: "global",
     id: row.id,
     domain: row.domain,
     title: row.title,
@@ -27,7 +27,7 @@ function seedRow(dao: WikiArticleDAO, row: { id: string; domain: string; title: 
     body: row.body,
     path: row.path,
   })
-  const rowid = dao.getRowid(ORG, row.id)!
+  const rowid = dao.getRowid("global", row.id)!
   dao.insertFts({ rowid, id: row.id, domain: row.domain, title: row.title, summary: row.summary, topics: JSON.stringify(row.topics ?? []), body: row.body })
 }
 
@@ -64,7 +64,7 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
       expect(res.status).toBe(200)
       const data = await res.json()
 
-      expect(data.org).toBe(ORG)
+      expect(data.org).toBe("global")
       // 域树：按 WIKI_DOMAINS 顺序只列非空域
       expect(data.domains).toEqual([
         {
@@ -88,14 +88,24 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
       expect(data.stats).toMatchObject({ entries: 2, cases: 0, rules: 3, lastCompiled: "2026-10-12", pendingReview: 0 })
     })
 
-    it("defaults to org 'default' and returns an empty tree for a fresh DB", async () => {
+    it("票03 语义钉 global：org 参数容错保留（带不带、带谁都一样返回全局库），空库诚实空树", async () => {
       const app = createWikiRoutes(dao)
-      const res = await app.request("/tree")
-      expect(res.status).toBe(200)
-      const data = await res.json()
-      expect(data.org).toBe("default")
-      expect(data.domains).toEqual([])
-      expect(data.stats).toMatchObject({ entries: 0, cases: 0, rules: 0 })
+      // 参数容错：无 org / 旧客户端 org=xzf-dev / 任意 org —— 语义恒全局、返回同一批行
+      const a = await (await app.request("/tree")).json()
+      const b = await (await app.request(`/tree?org=${ORG}`)).json()
+      expect(a.org).toBe("global")
+      expect(b.org).toBe("global")
+      expect(a.domains).toEqual(b.domains)
+      expect(a.stats.entries).toBe(2)
+
+      const fresh = new Database(":memory:")
+      applySchema(fresh)
+      const empty = createWikiRoutes(new WikiArticleDAO(fresh))
+      const c = await (await empty.request("/tree")).json()
+      expect(c.org).toBe("global")
+      expect(c.domains).toEqual([])
+      expect(c.stats).toMatchObject({ entries: 0, cases: 0, rules: 0 })
+      fresh.close()
     })
   })
 

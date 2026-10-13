@@ -74,3 +74,26 @@ export function ensureKnowledgeSkeleton(injectedRoot?: string): string {
   for (const dir of [...WIKI_PAGE_DIRS, WIKI_RETIRED_DIR]) fs.mkdirSync(path.join(wiki, dir), { recursive: true })
   return root
 }
+
+// ── 票03 追加：全局化搬家的 org 钉常量（D6①；"重叠留给票03 后续统一" 的落点）──────
+// 票03 的搬家服务与读 API 需要「全局知识根」的无参解析与 DB org 钉常量；根解析直接
+// 复用上方 resolveKnowledgeRoot/getGlobalWikiRoot（不另立门户），org 常量在此单源。
+
+/**
+ * 全局知识根的无参解析（票03 搬家/读 API 入口）。委托 resolveKnowledgeRoot()——
+ * 与票02 三层骨架同口径（参数注入 > OCTOPUS_KNOWLEDGE_DIR env > ~/.octopus/knowledge）。
+ */
+export function resolveGlobalKnowledgeRoot(): string {
+  return resolveKnowledgeRoot()
+}
+
+/** 全局 wiki 根（= 知识根/wiki）——票03 搬家终点；org wiki 路径此后不再读。 */
+export function resolveGlobalWikiRoot(): string {
+  return getGlobalWikiRoot(resolveGlobalKnowledgeRoot())
+}
+
+/**
+ * D6①：DB wiki_articles.org 钉写常量（schema 不动，语义全局）。
+ * 读 API（tree/article/search）与 re-key 迁移共用这一个真相源。
+ */
+export const GLOBAL_WIKI_ORG = "global"
