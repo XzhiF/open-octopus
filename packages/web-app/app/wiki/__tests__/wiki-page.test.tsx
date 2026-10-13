@@ -1,5 +1,6 @@
 // 票03 · /wiki 只读页组件测试 — billing __tests__ .test.tsx 先例（vi.stubGlobal fetch，无 MSW）
 // Seam: <WikiPage/>（app/wiki/page.tsx）—— mock API 断言域树/词条渲染/检索交互。
+// 知识中心票14（D6①）：调用面钉死 org=global（server 亦恒按 GLOBAL_WIKI_ORG 读）。
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
@@ -15,15 +16,12 @@ vi.mock("next/link", () => ({
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
 }))
-vi.mock("@/hooks/useOrgs", () => ({
-  useOrgs: () => ({ orgs: [{ id: 1, name: "xzf-dev", path: "" }], loading: false, error: null }),
-}))
 
 import WikiPage from "../page"
 import { Header } from "@/components/layout/header"
 
 const TREE = {
-  org: "xzf-dev",
+  org: "global",
   domains: [
     {
       name: "projects", label: "项目知识", count: 1,
@@ -124,7 +122,7 @@ describe("左域树 + 健康概览条（故事 1/32）", () => {
   it("tree call is org-scoped", async () => {
     render(<WikiPage />)
     await waitFor(() => expect(screen.getByText("项目知识")).toBeDefined())
-    expect(calls.some(c => c.url.includes("/wiki/tree") && c.url.includes("org=xzf-dev"))).toBe(true)
+    expect(calls.some(c => c.url.includes("/wiki/tree") && c.url.includes("org=global"))).toBe(true)
   })
 })
 
@@ -165,7 +163,7 @@ describe("顶部检索 + LOG.md 渲染视图（故事 3/4）", () => {
     fireEvent.submit(input.closest("form")!)
 
     // 检索框接 search API（q+org 透传）
-    await waitFor(() => expect(calls.some(c => c.url.includes("/wiki/search") && c.url.includes("q=Promise") && c.url.includes("org=xzf-dev"))).toBe(true))
+    await waitFor(() => expect(calls.some(c => c.url.includes("/wiki/search") && c.url.includes("q=Promise") && c.url.includes("org=global"))).toBe(true))
     // 结果行显示命中片段（snippet）
     expect(await screen.findByText(/Promise\.allSettled 聚合调用必须设全局超时/)).toBeDefined()
 

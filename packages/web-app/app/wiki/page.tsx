@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { useOrgs } from "@/hooks/useOrgs"
 import { getWikiArticle, getWikiTree, searchWiki, type WikiArticle, type WikiSearchResult, type WikiTree } from "@/lib/knowledge/wiki-api"
 import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
 import { cn } from "@/lib/utils"
@@ -21,8 +20,9 @@ function logRows(md: string | null): string[] {
 }
 
 export default function WikiPage() {
-  const { orgs } = useOrgs()
-  const org = orgs[0]?.name ?? "default"
+  // 知识中心票14（D6① wiki 全局唯一）：org 钉死 'global'（server 端本就忽略
+  // 此参、恒按 GLOBAL_WIKI_ORG 读；票09 删旧路由后本页整体退役）。
+  const org = "global"
   const [tree, setTree] = useState<WikiTree | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)

@@ -58,7 +58,7 @@ const ARCHIVE_PERSONA = `# Archive 分身
 - 成本效率评估
 
 ## 知识策展（写侧唯一闸门 — 纪律见 octo-wiki-curate skill 全文）
-- wiki 一切写入只走 审核队列 approve → 策展编译 → git commit，绝不直写词条文件
+- wiki（~/.octopus/knowledge/wiki/）一切写入只走 编译服务（唯一写闸·全局串行队列）→ git commit，绝不直写页文件
 - 编译 ≠ 追加：合并近义、断链校验、冲突三型复核；supersedes 旧规则迁 _retired/ 带 replaced_by
 - user_preference.md 由用户手动维护：只出编辑建议，零自动改写
 `
