@@ -2,8 +2,14 @@ import { load as yamlLoad, JSON_SCHEMA } from "js-yaml"
 import {
   WikiEntryFrontmatterSchema,
   WikiCaseFrontmatterSchema,
+  WikiPageFrontmatterSchema,
   type WikiEntryFrontmatter,
   type WikiCaseFrontmatter,
+  type WikiPageFrontmatter,
+  type WikiPageType,
+  type WikiDomain,
+  WIKI_PAGE_DIR_BY_TYPE,
+  WIKI_DOMAIN_TO_PAGE_TYPE,
 } from "@octopus/shared"
 
 /**
@@ -134,9 +140,15 @@ export function findDateOccurrences(body: string): string[] {
 export type ParsedWikiFile =
   | { kind: "entry"; meta: WikiEntryFrontmatter; body: string }
   | { kind: "case"; meta: WikiCaseFrontmatter; body: string }
+  /** 页格式 v3（票04 基座）：type 五值替代 domain，links/aliases/entity_kind 新增。 */
+  | { kind: "page"; meta: WikiPageFrontmatter; body: string }
 
-/** front-matter 分派判据：有 symptom 字段即判例（entry schema 无此字段；
- *  domain=cases 的 entry 形态文件仍走词条管线——票02 lint 豁免闸按 meta.domain 自动生效）。 */
+/**
+ * front-matter 分派判据（三层）：
+ * 1) 有 symptom 字段即判例（entry/page schema 无此字段；判例保留 P0 形态——prototype Tab②）；
+ * 2) 有 v3 `type` 走页管线（entity/concept/topic/source/case；case 走判例形态，页管线拒收裸 type:case）；
+ * 3) 否则按 v2 词条（domain）管线——**兼容可读**（为重蒸馏票07 留路），写路径出 v3。
+ */
 export function parseWikiFile(raw: string): ParsedWikiFile {
   const { frontMatter, body } = splitFrontMatter(raw)
   let data: unknown
@@ -157,6 +169,14 @@ export function parseWikiFile(raw: string): ParsedWikiFile {
       throw new Error(`INVALID_FRONTMATTER: ${detail}`)
     }
     return { kind: "case", meta: parsed.data, body }
+  }
+  if (typeof rec.type === "string") {
+    const parsed = WikiPageFrontmatterSchema.safeParse(data)
+    if (!parsed.success) {
+      const detail = parsed.error.issues.map(i => `${i.path.join(".") || "(front-matter)"}: ${i.message}`).join("; ")
+      throw new Error(`INVALID_FRONTMATTER: ${detail}`)
+    }
+    return { kind: "page", meta: parsed.data, body }
   }
   const parsed = WikiEntryFrontmatterSchema.safeParse(data)
   if (!parsed.success) {
@@ -215,4 +235,64 @@ export function serializeCaseMarkdown(meta: WikiCaseFrontmatter, body: string): 
     "",
   )
   return lines.join("\n") + (body.endsWith("\n") ? body : body + "\n")
+}
+
+// ── 页格式 v3（票04）：序列化 + 统一视图 ──────────────────────────────
+
+/**
+ * v3 页序列化。字段顺序逐字 prototype Tab② 实体页样例
+ * (id/type/[entity_kind]/title/summary/[topics]/[aliases]/links/[stability]/[review_after]/last_compiled/sources/[confidence])，
+ * 重编译 git diff 稳定。links 序列化为 YAML 嵌套式 `[[a], [b]]`——原型 token `[[a]] [[b]]`
+ * 空格串不可直接入 YAML，嵌套式是最贴近原型且可解析、可往返的等价形（偏离已在票报告备案）。
+ */
+export function serializePageMarkdown(meta: WikiPageFrontmatter, body: string): string {
+  const lines = [
+    "---",
+    `id: ${meta.id}`,
+    `type: ${meta.type}`,
+  ]
+  if (meta.entity_kind) lines.push(`entity_kind: ${yamlScalar(meta.entity_kind)}`)
+  lines.push(
+    `title: ${yamlScalar(meta.title)}`,
+    `summary: ${yamlScalar(meta.summary)}`,
+  )
+  if (meta.topics.length > 0) lines.push(`topics: [${meta.topics.join(", ")}]`)
+  if (meta.aliases.length > 0) lines.push(`aliases: [${meta.aliases.join(", ")}]`)
+  lines.push(`links: [${meta.links.map(l => `[${yamlScalar(l)}]`).join(", ")}]`)
+  if (meta.stability) lines.push(`stability: ${meta.stability}`)
+  if (meta.review_after) lines.push(`review_after: ${meta.review_after}`)
+  lines.push(`last_compiled: ${meta.last_compiled}`)
+  lines.push(`sources: [${meta.sources.join(", ")}]`)
+  if (meta.confidence !== undefined) lines.push(`confidence: ${meta.confidence}`)
+  lines.push("---", "")
+  return lines.join("\n") + (body.endsWith("\n") ? body : body + "\n")
+}
+
+/** v3 type → 页目录（entities/concepts/topics/sources/cases）。 */
+export function pageDirForType(type: WikiPageType): string {
+  return WIKI_PAGE_DIR_BY_TYPE[type]
+}
+
+/**
+ * v3 页 → 词条视图（扫描/INDEX/DB 统一消费形态，pageEntryView 不落盘）。
+ * domain 位放页目录名（形态层内部值，非 WikiDomain 枚举——消费方只读不校验）。
+ */
+export function pageEntryView(meta: WikiPageFrontmatter): WikiEntryFrontmatter {
+  return {
+    id: meta.id,
+    domain: WIKI_PAGE_DIR_BY_TYPE[meta.type] as unknown as WikiDomain,
+    title: meta.title,
+    summary: meta.summary,
+    topics: [...meta.topics],
+    stability: meta.stability ?? "stable",
+    ...(meta.review_after ? { review_after: meta.review_after } : {}),
+    last_compiled: meta.last_compiled,
+    sources: [...meta.sources],
+    confidence: meta.confidence ?? 0.5,
+  }
+}
+
+/** 扫描统一分型：v3 页取 type；v2 词条按 domain→type 映射（兼容读面，INDEX 分组用）。 */
+export function pageTypeOf(meta: WikiEntryFrontmatter | WikiPageFrontmatter): WikiPageType {
+  return "type" in meta ? meta.type : WIKI_DOMAIN_TO_PAGE_TYPE[meta.domain]
 }

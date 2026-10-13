@@ -5,6 +5,7 @@ import {
   parseWikiFile,
   serializeEntryMarkdown,
   serializeCaseMarkdown,
+  serializePageMarkdown,
   extractRuleAnchors,
   findDateOccurrences,
 } from "../format"
@@ -179,5 +180,99 @@ describe("cases file layer (ticket 04)", () => {
     expect(LOCATABLE_SOURCE_RE.test("archive:ws-feat-actuator:2026-06-23")).toBe(true)
     expect(LOCATABLE_SOURCE_RE.test("听说的")).toBe(false)
     expect(LOCATABLE_SOURCE_RE.test("大概去年吧")).toBe(false)
+  })
+})
+
+// ── 票04：页格式 v3（五类页）— 分派/schema/序列化 ─────────────────────
+// fixture 逐字 prototype Tab② 页样例（entities/open-octopus 与 topics/prd-impl-workflow
+// 的 front-matter 面）——独立真相源，禁从实现反推。
+
+const V3_ENTITY_FILE = `---
+id: ent-open-octopus
+type: entity
+entity_kind: project
+title: Open Octopus（平台 monorepo）
+summary: pnpm monorepo：engine/server/web-app/shared/cli/core-pack 六包
+aliases: [octopus, open-octopus]
+links: "[[top-prd-impl]] [[con-execution-identity]] [[ent-hermes]]"
+sources: [raw/archives/task-207-summary.md, raw/inbox/2026-09-xx-arch-notes.md]
+last_compiled: 2026-10-13
+confidence: 0.9
+---
+
+## 概述
+桩正文（序列化面）。
+`
+
+const V3_TOPIC_FILE = `---
+id: top-prd-impl
+type: topic
+title: prd-impl 工作流知识
+summary: PRD→实现→审查→ship 的 SOP、硬约束与已知陷阱
+links: "[[ent-open-octopus]] [[top-windows-bash-ops]]"
+sources: [raw/archives/task-183-summary.md, review-history:wf-prd-impl]
+last_compiled: 2026-10-13
+stability: stable
+---
+
+## 硬约束
+- 修改 shared/ 后必须先 pnpm build -w shared 再全量构建 <!--#oct-008-->
+`
+
+describe("page format v3 (ticket 04)", () => {
+  it("parseWikiFile dispatches type-bearing files to the v3 page pipeline (v2 domain files untouched)", () => {
+    expect(parseWikiFile(SAMPLE_ENTRY).kind).toBe("entry")
+    expect(parseWikiFile(CASE_FILE).kind).toBe("case")
+    const f = parseWikiFile(V3_ENTITY_FILE)
+    expect(f.kind).toBe("page")
+    if (f.kind !== "page") return
+    // expected 逐字 prototype Tab② 实体页样例
+    expect(f.meta.type).toBe("entity")
+    expect(f.meta.entity_kind).toBe("project")
+    expect(f.meta.title).toBe("Open Octopus（平台 monorepo）")
+    expect(f.meta.aliases).toEqual(["octopus", "open-octopus"])
+    expect(f.meta.links).toEqual(["top-prd-impl", "con-execution-identity", "ent-hermes"])
+    expect(f.meta.sources).toEqual(["raw/archives/task-207-summary.md", "raw/inbox/2026-09-xx-arch-notes.md"])
+    expect(f.meta.last_compiled).toBe("2026-10-13")
+    expect(f.meta.confidence).toBe(0.9)
+    expect(f.meta.stability).toBeUndefined()
+    expect(f.meta.topics).toEqual([])
+  })
+
+  it("topic page keeps stability without confidence (prototype sample asymmetry)", () => {
+    const f = parseWikiFile(V3_TOPIC_FILE)
+    if (f.kind !== "page") throw new Error("fixture must be a v3 page")
+    expect(f.meta.stability).toBe("stable")
+    expect(f.meta.confidence).toBeUndefined()
+    expect(f.meta.links).toEqual(["ent-open-octopus", "top-windows-bash-ops"])
+    expect(f.meta.sources[1]).toBe("review-history:wf-prd-impl")
+  })
+
+  it("serializes page in prototype field order and round-trips (links as YAML-nested [[a], [b]])", () => {
+    const f = parseWikiFile(V3_ENTITY_FILE)
+    if (f.kind !== "page") throw new Error("fixture must be a v3 page")
+    const out = serializePageMarkdown(f.meta, f.body)
+    expect(out.startsWith(
+      "---\nid: ent-open-octopus\ntype: entity\nentity_kind: project\ntitle: Open Octopus（平台 monorepo）\nsummary: pnpm monorepo：engine/server/web-app/shared/cli/core-pack 六包\naliases: [octopus, open-octopus]\nlinks: [[top-prd-impl], [con-execution-identity], [ent-hermes]]\nlast_compiled: 2026-10-13\nsources: [raw/archives/task-207-summary.md, raw/inbox/2026-09-xx-arch-notes.md]\nconfidence: 0.9\n---\n",
+    )).toBe(true)
+    expect(parseWikiFile(out)).toEqual(f)
+  })
+
+  it("rejects bare type:case page without case fields — 判例走判例管线（P0 形态保留）", () => {
+    const bare = V3_ENTITY_FILE.replace("type: entity", "type: case").replace("entity_kind: project\n", "")
+    expect(() => parseWikiFile(bare)).toThrow(/INVALID_FRONTMATTER.*判例/s)
+  })
+
+  it("rejects entity_kind on non-entity pages and volatile without review_after", () => {
+    expect(() => parseWikiFile(V3_TOPIC_FILE.replace("type: topic", "type: topic\nentity_kind: project"))).toThrow(/entity_kind/)
+    const volatile = V3_TOPIC_FILE.replace("stability: stable", "stability: volatile")
+    expect(() => parseWikiFile(volatile)).toThrow(/review_after/)
+  })
+
+  it("links normalizes all three token shapes to bare targets (space串/嵌套序列/引号串)", () => {
+    const nested = V3_ENTITY_FILE.replace(`links: "[[top-prd-impl]] [[con-execution-identity]] [[ent-hermes]]"`, "links: [[top-prd-impl], [con-execution-identity], [ent-hermes]]")
+    const f = parseWikiFile(nested)
+    if (f.kind !== "page") throw new Error("fixture must be a v3 page")
+    expect(f.meta.links).toEqual(["top-prd-impl", "con-execution-identity", "ent-hermes"])
   })
 })

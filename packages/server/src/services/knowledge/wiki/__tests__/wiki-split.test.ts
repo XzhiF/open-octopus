@@ -115,9 +115,23 @@ describe("wiki split — L2 拆分执行（hub 目录形态 + 引用不断链 + 
 `,
     })
 
-    // v2 触顶 → 拒写 + 自动提案
-    await expect(svc.compileEntry({ content: V2_OVER })).rejects.toThrow(/L1_CAPACITY/s)
+    // v2 触顶 → 拒写 + 建议随错（票04 起编译服务不入队；此处模拟提案入队列的既有通路）
     const pdao = new PendingReviewDAO(db)
+    const { WikiLintError } = await import("../lint")
+    try {
+      await svc.compileEntry({ content: V2_OVER })
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(WikiLintError)
+      const suggestion = (err as InstanceType<typeof WikiLintError>).suggestion!
+      expect(suggestion!.entryId).toBe("prj-big")
+      pdao.insert({
+        id: "wiki-split-testorg-prj-big", type: "wiki-split", source: "wiki-lint",
+        source_ref: "prj-big", source_label: "词条 prj-big 超容量",
+        content: JSON.stringify(suggestion),
+        target_file: suggestion.path, scope: "wiki", conflicts: null, confidence: 1, auto_approve: 0, status: "pending", user_notes: null,
+      })
+    }
     const proposal = pdao.getById("wiki-split-testorg-prj-big")
     expect(proposal?.type).toBe("wiki-split")
     expect(proposal?.status).toBe("pending")
@@ -174,9 +188,9 @@ describe("wiki split — L2 拆分执行（hub 目录形态 + 引用不断链 + 
     const ftsHit = db.prepare("SELECT id FROM wiki_fts WHERE wiki_fts MATCH 'Promise'").all() as { id: string }[]
     expect(ftsHit.map(h => h.id)).toContain("prj-big-pitfalls")
 
-    // ── LOG 有 split 行；git 有 split commit ──
+    // ── LOG 有 split 行（票04 行格式：`## [date] op | 对象`）；git 有 split commit ──
     const log = fs.readFileSync(path.join(root, "LOG.md"), "utf-8")
-    expect(log).toContain("| split |")
+    expect(log).toContain(`] split | projects/prj-big.md`)
     const gitLog = execFileSync("git", ["log", "--format=%s"], { cwd: root, encoding: "utf-8" })
     expect(gitLog).toContain("split: projects/prj-big.md")
     const tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf-8" })
@@ -232,6 +246,13 @@ describe("wiki split — L2 拆分执行（hub 目录形态 + 引用不断链 + 
     await expect(svc.compileEntry({ content: V2_OVER })).rejects.toThrow(/L1_CAPACITY/s)
 
     const pdao = new PendingReviewDAO(db)
+    // 票04 起拆分建议不入队——此处直接落一条 wiki-split 行模拟队列既有形态
+    pdao.insert({
+      id: "wiki-split-testorg-prj-big", type: "wiki-split", source: "wiki-lint",
+      source_ref: "prj-big", source_label: "词条 prj-big 超容量",
+      content: JSON.stringify({ kind: "wiki-split", entryId: "prj-big", domain: "projects", path: "projects/prj-big.md", reason: "manual", hubPath: "projects/prj-big/README.md", children: [] }),
+      target_file: "projects/prj-big.md", scope: "wiki", conflicts: null, confidence: 1, auto_approve: 0, status: "pending", user_notes: null,
+    })
     // 混入一条旧 rule 行，验证分桶
     pdao.insert({
       id: "rule-mix-001", type: "rule", source: "workspace_archive", source_ref: "exec-1",

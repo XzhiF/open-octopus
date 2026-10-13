@@ -6,7 +6,7 @@ import os from "os"
 import type { WikiEntryFrontmatter } from "@octopus/shared"
 import { WikiCompileService, scanWikiEntries, type CompileResult } from "./compile"
 import type { GitRunner } from "./wiki-git"
-import type { RuleFormJudge } from "./lint"
+import type { RuleFormJudge, SplitProposal } from "./lint"
 import { serializeEntryMarkdown } from "./format"
 import { ensureWikiSkeleton } from "./paths"
 import { today } from "./util"
@@ -55,8 +55,8 @@ export interface MigrationReport {
   }>
   /** hash 未变且词条在盘 ⇒ 跳过（幂等证明的主体） */
   skipped: string[]
-  /** 单源失败不中断整体（lint 拒写等），错误与提案 id 留报告 */
-  failed: Array<{ source: string; error: string; proposalId?: string }>
+  /** 单源失败不中断整体（lint 拒写等），错误与拆分建议留报告（票04：无入队语义） */
+  failed: Array<{ source: string; error: string; splitSuggestion?: SplitProposal }>
   totals: { entries: number; rules: number }
 }
 
@@ -232,10 +232,11 @@ export class InitialCompileMigrator {
 
   private recordFailure(report: MigrationReport, source: string, err: unknown): void {
     const msg = err instanceof Error ? err.message : String(err)
-    const proposalId = err && typeof err === "object" && "proposalId" in err
-      ? (err as { proposalId?: string }).proposalId
+    // 票04 AC5：拆分提案入队语义已删——lint 拒写随错误携带**拆分建议**（对话内自纠用），不再入队
+    const suggestion = err && typeof err === "object" && "suggestion" in err
+      ? (err as { suggestion?: SplitProposal }).suggestion
       : undefined
-    report.failed.push({ source, error: msg, proposalId })
+    report.failed.push({ source, error: msg, splitSuggestion: suggestion })
   }
 
   /**
