@@ -16,6 +16,11 @@ vi.mock("next/link", () => ({
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
 }))
+// 票12 对话列（clone-session + 卡片编排）本体测于 knowledge-chat.test.tsx；
+// 本文件 = 票11 读面 seam，桩掉以隔离聊天基建依赖
+vi.mock("@/components/knowledge-center/chat-column", () => ({
+  ChatColumn: ({ pinned }: { pinned: boolean }) => <div data-testid="kc-chat-column">{pinned ? "已钉住" : "跟随"}</div>,
+}))
 
 import KnowledgePage from "../page"
 import { Header } from "@/components/layout/header"
@@ -209,12 +214,12 @@ describe("INDEX 五类树（必读/Entities/Concepts/Topics/Sources/Cases + Syst
     expect(screen.getByRole("button", { name: /LOG\.md 时间线/ })).toBeDefined()
   })
 
-  it("浏览模式对话抽屉占位（票12 实装，本票零聊天基建）", async () => {
+  it("浏览模式对话抽屉：默认全宽，打开挂对话列（票12 实装；本文件隔离 mock，对话列本体测于 knowledge-chat.test.tsx）", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
-    expect(screen.queryByTestId("kc-chat-placeholder")).toBeNull() // 默认全宽
+    expect(screen.queryByTestId("kc-chat-column")).toBeNull() // 默认全宽
     fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
-    expect(screen.getByTestId("kc-chat-placeholder").textContent).toContain("票12")
+    expect(await screen.findByTestId("kc-chat-column")).toBeDefined()
   })
 })
 

@@ -62,7 +62,7 @@ version: 3.5.2
 
 **缺则降级**：无任何领域文档 → 照常探码（CLAUDE.md/README/目录树），并把「无领域文档 project」写进本轮 brief 与 `decisions`，提醒执行侧少依赖术语假设。能查到的不问。
 
-**Step 2.5 — 编译型知识库查阅（octo-wiki；写 spec / 拆 phase 前必做）**：仓库文档给术语与决策，wiki 给跨项目事实口径。按 octo-wiki 导航协议先读 `~/.octopus/orgs/{org}/knowledge/wiki/INDEX.md`（第一跳），按需整读 `business/`（业务口径/术语）与 `projects/{name}.md`（项目现状）词条；INDEX 未命中 → wiki search API 兜底；卡壳按症状查 `cases/`。
+**Step 2.5 — 编译型知识库查阅（octo-wiki；写 spec / 拆 phase 前必做）**：仓库文档给术语与决策，wiki 给跨项目事实口径。按 octo-wiki 导航协议先读 `~/.octopus/knowledge/wiki/INDEX.md`（第一跳，「必读」节所列页先整读），按需整读 `entities/{name}.md`（项目/服务/工具现状）、`topics/`（工作流 SOP 与硬约束）与 `concepts/`（术语/口径）页；INDEX 未命中 → wiki search API 兜底（org 钉 global）；卡壳按症状查 `cases/`。
 - 所引词条必须在任务 **Context 段声明**（spec-field 的 Context 字段）：逐条写词条 ID + 锚点（如 `prj-octopus#oct-007`）；未引用任何词条则写 `wiki: 未引用` 表明已查过。
 - 收尾用 vars_update **JSON 形态**回写引用清单：`{"vars_update":{"wiki_refs":["prj-octopus#oct-007"]}}`（引擎只解析 JSON，勿用 YAML 行式）。
 - 词条与实际代码矛盾 → 不沉默：wiki_refs 附 `"stale: <词条ID> <一句理由>"`，规格仍以代码现状为准。

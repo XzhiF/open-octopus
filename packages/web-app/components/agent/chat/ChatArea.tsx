@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useMemo, Fragment, type ReactNode } from 'react'
 import { Send, Square, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
@@ -105,6 +105,14 @@ interface ChatAreaProps {
   /** stream-resume 尾随轮（服务端仍在生成，本地无 SSE 所有权）：此期间
    *  Esc 不被「打断」消费、照常关窗（关闭不丢失，停止走按钮）。 */
   resumeTailing?: boolean
+  /** 知识中心票12：每条消息之后插入的结构化节点（卡片流与消息交错；宿主负责从
+   *  消息正文剥除卡片块并回填渲染件）。缺省 = 既有消费方零变化。 */
+  messageExtras?: (message: AgentMessage) => ReactNode
+  /** 知识中心票12：transcript 末尾（流式区之前）的结构化节点——异步任务卡等
+   *  不锚定具体消息的 Lane B 沉淀态。缺省 = 零变化。 */
+  transcriptTail?: ReactNode
+  /** 知识中心票12：卡片钮「对策展人说」等动作预进取号器文本（值变化即灌入输入框）。 */
+  composerSeed?: string
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -119,11 +127,17 @@ export function ChatArea({
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
   composerLeading, composerPlaceholder,
   tui, onSteer, steerActiveRef, resumeTailing,
+  messageExtras, transcriptTail, composerSeed,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 票12（/knowledge）：卡片动作预进取号器文本 —— 值变化即灌入输入框；
+  // 既有消费方不传此 prop，行为零变化。
+  useEffect(() => {
+    if (composerSeed) setInput(composerSeed)
+  }, [composerSeed])
   // 贴底跟随（原型 v4.3 拍板）：离底 >40px 视为用户在回看，流式不再强制拉底；
   // 滚回底部 40px 内自动恢复跟随。发送自己消息时重置为跟随。
   const stickBottomRef = useRef(true)
@@ -317,8 +331,12 @@ export function ChatArea({
         >
           <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
             {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
-              tui ? <TuiMessage key={msg.id} message={msg} /> : <ChatBubble key={msg.id} message={msg} />
+              <Fragment key={msg.id}>
+                {tui ? <TuiMessage message={msg} /> : <ChatBubble message={msg} />}
+                {messageExtras?.(msg)}
+              </Fragment>
             ))}
+            {transcriptTail}
 
             {/* Streaming: interleaved timeline (2026-08-19 UX fix) — thinking /
                 tool / text segments in ARRIVAL order. Thinking shows as

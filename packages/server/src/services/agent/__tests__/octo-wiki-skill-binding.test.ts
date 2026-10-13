@@ -7,8 +7,9 @@
 // 同一 harness（paths 全 mock 到 tmp，绝不碰真实 ~/.octopus）。
 //
 // 钉两条事实（期望值来自 spec §执行身份 + ADR-0005/0006，不反向抄实现）：
-//   1. task-author / task-doer / archive 的 CloneDef.skills 均声明 octo-wiki
-//      （读侧消费身份）。archive 由票06 绑写侧 curate，本票补读侧。
+//   1. task-author / task-doer / archive / workflow-operator 四分身（知识中心票 14
+//      扩员：as: 缺省身份也在查阅消费面）的 CloneDef.skills 均声明 octo-wiki
+//      （读侧消费身份）。archive 由票06 绑写侧 curate，票11 补读侧。
 //   2. CloneInitService 把声明持久化进 built-in/{clone}/config.json 的 skills
 //      —— 这是票10 IdentityResolver 快照与票12 knowledge.mode 读取的治理底账。
 //
@@ -65,18 +66,18 @@ describe("octo-wiki 分身声明绑定（票11）", () => {
     fs.rmSync(MOCK_HOME, { recursive: true, force: true })
   })
 
-  it("task-author / task-doer / archive 的 CloneDef.skills 都声明 octo-wiki（治理语义）", () => {
-    for (const clone of ["task-author", "task-doer", "archive"]) {
+  it("task-author / task-doer / archive / workflow-operator 四分身 CloneDef.skills 都声明 octo-wiki（治理语义）", () => {
+    for (const clone of ["task-author", "task-doer", "archive", "workflow-operator"]) {
       const def = getBuiltinCloneDef(clone)
       expect(def, `clone ${clone} 未注册`).not.toBeNull()
       expect(def!.skills, `${clone} 应声明 octo-wiki`).toContain("octo-wiki")
     }
   })
 
-  it("CloneInitService 把 octo-wiki 声明持久化进三个分身的 config.json（票10/12 读取的治理底账）", () => {
+  it("CloneInitService 把 octo-wiki 声明持久化进四分身 config.json（票10/12 读取的治理底账）", () => {
     new CloneInitService().initBuiltInClones("bind-test-org", fakeDAO())
 
-    for (const clone of ["task-author", "task-doer", "archive"]) {
+    for (const clone of ["task-author", "task-doer", "archive", "workflow-operator"]) {
       const configPath = path.join(MOCK_HOME, "agent", "built-in", clone, "config.json")
       expect(fs.existsSync(configPath), `${clone}/config.json 未落盘`).toBe(true)
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { skills: string[] }

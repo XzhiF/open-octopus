@@ -358,12 +358,18 @@ export class ArchiveService {
   }
 
   // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
+  //
+  // 知识中心票10: 旧经验提炼/归并管线（三级提炼 archive-analysis-service +
+  // experience-merger）已删除——归档知识沉淀改走 task archiving 态自动投喂
+  // （services/tasks/archive-ingest-service.ts）。本方法保留 workspace 生命周期
+  // 面：执行记录归档、资源安装（skills/workflows/agents）、文件清理、软归档。
+  // experience 相关入参与 extractedExperiences 计数不再产出内容（计数恒 0，
+  // 返回形状稳定；experiences 表本体属票09 删除面）。
 
   async archiveWorkspace(
     workspaceId: string,
     org: string,
     options: {
-      extractExperiences: string[]
       installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
       installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
       installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
@@ -379,16 +385,6 @@ export class ArchiveService {
         lifespan_days: number
         workflow_count: number
       }
-      experienceActions?: Array<{
-        id: string
-        text: string
-        action: "add" | "update" | "delete"
-        replaces_text?: string
-        confidence: number
-        category: string
-        scope?: string
-        target?: string
-      }>
     },
     emitter: StepEmitter = createNullEmitter(),
   ): Promise<{
@@ -461,27 +457,9 @@ export class ArchiveService {
       this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
       await emitter.stepDone("create_record")
 
-      // Step 4: Merge experiences via Agent
-      await emitter.stepStart("extract_experiences", `提取 ${options.extractExperiences.length} 条经验...`)
-      let extractedExperiences = 0
-      if (options.experienceActions && options.experienceActions.length > 0) {
-        try {
-          const { ExperienceMerger } = await import("./experience-merger")
-          const merger = new ExperienceMerger()
-          const result = await merger.merge(org, options.experienceActions, emitter)
-          extractedExperiences = result.added + result.updated + result.deleted
-          await emitter.stepDone("extract_experiences", {
-            added: result.added,
-            updated: result.updated,
-            deleted: result.deleted,
-          })
-        } catch (err) {
-          await emitter.stepError("extract_experiences", err instanceof Error ? err.message : String(err))
-          throw err
-        }
-      } else {
-        await emitter.stepDone("extract_experiences", { count: 0 })
-      }
+      // Step 4（旧「经验归并」）已删 — 知识中心票10：归档产物改走 raw 投喂；
+      // 计数恒 0 保返回形状（updateExtractionStats 照记）。
+      const extractedExperiences = 0
 
       // Step 5: Install skills (resources system)
       await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
@@ -579,80 +557,6 @@ export class ArchiveService {
         fileDeleted: false,
         error: err instanceof Error ? err.message : String(err),
       }
-    }
-  }
-
-  private async extractExperiences(
-    workspaceId: string,
-    org: string,
-    _executionIds: string[]
-  ): Promise<number> {
-    try {
-      const { buildArchiveContext } = await import("./context-builder")
-      const { buildExperiencePrompt } = await import("./prompts")
-      const { getProvider } = await import("@octopus/providers")
-      const { PendingReviewDAO } = await import("../../db/dao/pending-review-dao")
-      const { WorkspaceDAO } = await import("../../db/dao/workspace-dao")
-      const { ExecutionDAO } = await import("../../db/dao/execution-dao")
-
-      const pendingReviewDAO = new PendingReviewDAO(this.db)
-      const workspaceDAO = new WorkspaceDAO(this.db)
-      const executionDAO = new ExecutionDAO(this.db)
-
-      const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, this.db, org)
-      if (!ctx) {
-        logError("extractExperiences: workspace not found", new Error("workspace not found"), { workspaceId })
-        return 0
-      }
-
-      const prompt = buildExperiencePrompt(ctx)
-      const systemPrompt = "You are a knowledge extraction engine. Respond with only the JSON array."
-
-      const provider = getProvider('claude')
-      const chunks: string[] = []
-      const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
-      for await (const chunk of stream) {
-        if (chunk.type === "text_delta") chunks.push(chunk.content)
-      }
-      const raw = chunks.join("")
-
-      if (!raw) {
-        logError("extractExperiences: empty LLM response", new Error("empty LLM response"), { workspaceId })
-        return 0
-      }
-
-      const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim()
-      const arr = JSON.parse(cleaned)
-      if (!Array.isArray(arr)) {
-        logError("extractExperiences: LLM response is not an array", new Error("invalid response"), { workspaceId })
-        return 0
-      }
-
-      let extractedCount = 0
-      for (const exp of arr) {
-        const id = exp.id || `exp-${workspaceId}-${extractedCount}-${Date.now()}`
-        pendingReviewDAO.insert({
-          id,
-          type: "experience",
-          source: "archive",
-          source_ref: workspaceId,
-          source_label: ctx.workspace.name,
-          content: exp.text || "",
-          target_file: "",
-          scope: exp.scope || "workspace",
-          conflicts: null,
-          confidence: typeof exp.confidence === "number" ? exp.confidence : 0.5,
-          auto_approve: 0,
-          status: "pending",
-          user_notes: null,
-        })
-        extractedCount++
-      }
-
-      return extractedCount
-    } catch (err) {
-      logError("extractExperiences failed", err, { workspaceId })
-      return 0
     }
   }
 
