@@ -16,8 +16,10 @@ import { errorResponse } from "../services/knowledge/validators"
  *   GET /raw   — raw 源列表（path/bytes/hash/origin，只读）。
  *   GET /raw/* — raw 单文件读（拒绝路径穿越）。
  *   GET /health — 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度/findings/
- *                最近编译/git HEAD）。队列深度与 findings 在票06/13 就位前返回
- *                稳定零值形状；**响应中不存在「待审核」字段**（审批概念已废除，spec D6）。
+ *                最近编译/git HEAD）。队列深度接票06 全局编译队列实值（未注入 ⇒
+ *                稳定零值）；findings 在票13 就位前返回零值——契约形状先定，
+ *                后续票只换值不换形。**响应中不存在「待审核」字段**（审批概念已废除，
+ *                spec D6）。
  * org 参数容错保留（旧客户端仍带 ?org=），语义钉 global（票03 D6① 同律）。
  */
 
@@ -34,6 +36,8 @@ export interface KnowledgeReadOpts {
   octopusHome?: string
   /** 时钟注入（本周 ingest 判定用） */
   now?: () => Date
+  /** 票06：全局编译队列深度注入（缺省 0 = 未装配队列形态；只换值不换形，票11 契约） */
+  getQueueDepth?: () => number
 }
 
 /**
@@ -185,7 +189,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
         rawSources: sources.length,
         ingestedThisWeek,
         openFindings: 0, // 票13（巡检 findings）接位字段
-        queueDepth: 0,   // 票06（编译队列）接位字段
+        queueDepth: opts?.getQueueDepth?.() ?? 0,   // 票06 全局编译队列实值（未装配 ⇒ 稳定零值）
         lastCompiled,
         gitHead,
       })
