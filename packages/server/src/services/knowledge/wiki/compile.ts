@@ -17,7 +17,7 @@ import {
   extractRuleAnchors,
 } from "./format"
 import { lintWikiEntry, lintWikiPage, lintProfileForDomain, buildSplitProposal, splitProposalFromPage, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, maxAnchorNumber, formatRuleAnchor, type RuleFormJudge, type SplitProposal } from "./lint"
-import { resolveWikiRoot, ensureWikiSkeleton, WIKI_ALL_DIRS, WIKI_PAGE_GROUP_LABELS } from "./paths"
+import { resolveWikiRoot, ensureWikiSkeleton, WIKI_ALL_DIRS, WIKI_PAGE_GROUP_LABELS, REDISTILL_MAP_REL } from "./paths"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
 import { today } from "./util"
@@ -205,14 +205,30 @@ export function scanWikiEntries(root: string): ScannedEntry[] {
 }
 
 /**
+ * 重蒸馏台账剥落锚点（票07）：非 topic 迁移页按 v3 铁律不落锚点注释，原号只活在
+ * `_retired/v2/redistill-map.json`。发号空间必须并入它们——否则 max+1 会重铸剥落号，
+ * 历史 wiki_refs 撞进新页（故事 28 暗坑）。无台账（未重蒸馏）⇒ 空集，行为原样。
+ */
+function retiredLedgerAnchors(root: string): string[] {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(root, REDISTILL_MAP_REL), "utf-8")) as { anchors?: Array<{ anchor?: unknown }> }
+    return Array.isArray(j.anchors) ? j.anchors.map(a => (a && typeof a.anchor === "string" ? a.anchor : "")).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * 发号=全库 max+1（票面 AC2）：扫描根上所有页锚点取 `oct-NNN` 最大 +1
- * （v2 形态锚点同入空间，永不复用）；extra 可并入 DB 快照锚点（搬家窗口期防双花）。
+ * （v2 形态锚点同入空间，永不复用）；extra 可并入 DB 快照锚点（搬家窗口期防双花）；
+ * 票07：重蒸馏台账的剥落锚点同样入空间（永不复用铁律的迁移面延伸）。
  * 串行编译队列（票06）落位后，本函数天然无竞态。
  */
 export function nextRuleAnchor(root: string, extra: Iterable<string> = []): string {
   const used: string[] = []
   for (const e of scanWikiEntries(root)) used.push(...e.anchors)
   for (const a of extra) used.push(a)
+  used.push(...retiredLedgerAnchors(root))
   return formatRuleAnchor(maxAnchorNumber(used) + 1)
 }
 

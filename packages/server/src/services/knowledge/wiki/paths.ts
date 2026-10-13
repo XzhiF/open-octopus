@@ -57,6 +57,13 @@ export const WIKI_PAGE_GROUP_LABELS: Record<WikiPageType, string> = {
 export const WIKI_ALL_DIRS: readonly string[] = [...WIKI_PAGE_DIRS, ...WIKI_DOMAINS.filter(d => d !== "cases")]
 
 /**
+ * 重蒸馏锚点随迁对照表（票07 落盘产物，单源路径常量）：`{oldId}#{anchor}` → 新页 +
+ * carried 标记。compile.nextRuleAnchor 读其 anchors 清单把「已剥落锚点」并入发号空间
+ * （永不复用铁律对非 topic 迁移页的延伸防护）；读侧 wiki_refs 解析也以此为账。
+ */
+export const REDISTILL_MAP_REL = "_retired/v2/redistill-map.json"
+
+/**
  * 确保 wiki 目录骨架存在：v3 五类页目录 + v2 存量域目录（兼容读）+ _retired/ 退役区。
  * 幂等（recursive mkdir）。
  */
