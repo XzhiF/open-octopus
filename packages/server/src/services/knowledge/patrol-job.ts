@@ -65,6 +65,37 @@ export interface ReportOutcome {
   reason?: string
 }
 
+/**
+ * 向知识中心会话（archive 分身、title=知识中心 ∨ scope_id=knowledge）追加一条
+ * assistant 消息：header 文本 + Lane A fenced 卡块（协议单源 @octopus/shared）。
+ * 无会话 ⇒ 诚实降级 {posted:false, reason}（不擅自建会话）。
+ */
+export function appendKnowledgeSessionCards(
+  db: Database.Database,
+  header: string,
+  events: KcCardEvent[],
+  now: () => Date = () => new Date(),
+): ReportOutcome {
+  const dao = new AgentSessionDAO(db)
+  const session = dao
+    .findByClone(KNOWLEDGE_CLONE_NAME, { limit: 50 })
+    .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE || s.scope_id === KNOWLEDGE_SESSION_SCOPE_ID)
+  if (!session) {
+    return { posted: false, reason: "无知识中心会话（findings 已入库可查，未报对话）" }
+  }
+  const ts = now()
+  const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
+  dao.insertMessage({
+    id: crypto.randomUUID(),
+    session_id: session.id,
+    role: "assistant",
+    content,
+    created_at: ts.toISOString(),
+  })
+  dao.updateLastMessageAt(session.id, ts.toISOString())
+  return { posted: true, sessionId: session.id }
+}
+
 export type PatrolReporter = (newFindings: FindingUpsert[], report: PatrolReport) => ReportOutcome
 
 export function createKnowledgeSessionReporter(
@@ -74,32 +105,15 @@ export function createKnowledgeSessionReporter(
   const now = opts?.now ?? (() => new Date())
   return (newFindings, report) => {
     if (newFindings.length === 0) return { posted: false, reason: "无新建 finding，不打扰对话" }
-    const dao = new AgentSessionDAO(db)
-    const session = dao
-      .findByClone(KNOWLEDGE_CLONE_NAME, { limit: 50 })
-      .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE || s.scope_id === KNOWLEDGE_SESSION_SCOPE_ID)
-    if (!session) {
-      return { posted: false, reason: "无知识中心会话（findings 已入库可查，未报对话）" }
-    }
-    const ts = now()
-    const date = ts.toISOString().slice(0, 10)
+    const date = now().toISOString().slice(0, 10)
     const events: KcCardEvent[] = newFindings.map(row => ({
       id: row.id, // 卡 id = finding id（协议 id 约定 fnd-<findingId>）
       kind: "finding",
-      ts: ts.toISOString(),
+      ts: now().toISOString(),
       data: findingCardData(row),
     }))
     const header = `🩺 夜巡体检报告 ${date} · 扫 ${report.scanned.pages} 页 / ${report.scanned.executions} 执行 · 新发现 ${newFindings.length} 条（对话内可逐条裁决）：`
-    const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
-    dao.insertMessage({
-      id: crypto.randomUUID(),
-      session_id: session.id,
-      role: "assistant",
-      content,
-      created_at: ts.toISOString(),
-    })
-    dao.updateLastMessageAt(session.id, ts.toISOString())
-    return { posted: true, sessionId: session.id }
+    return appendKnowledgeSessionCards(db, header, events, now)
   }
 }
 

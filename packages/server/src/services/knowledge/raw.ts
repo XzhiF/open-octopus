@@ -225,8 +225,10 @@ export class RawIngestService {
 
   /**
    * 粘贴文本投喂（prototype 入口 A 形态 2）。dir 默认 inbox（对话投喂落点）。
+   * origin 可覆写（票13 回填通道传 `chat:<session>`；缺省 "paste"——冻结格式与
+   * hash 幂等契约零变化，只扩来源信道词表）。
    */
-  ingestText(input: { text: string; title?: string; dir?: string }): IngestResult {
+  ingestText(input: { text: string; title?: string; dir?: string; origin?: string }): IngestResult {
     this.prepare()
     const dir = this.resolveDir(input.dir)
     if (typeof input.text !== "string" || input.text.trim() === "") {
@@ -237,7 +239,7 @@ export class RawIngestService {
       mode: "text",
       dir,
       title,
-      origin: "paste",
+      origin: input.origin?.trim() || "paste",
       payload: normalizeNewlines(input.text),
       slugHint: title,
     })
