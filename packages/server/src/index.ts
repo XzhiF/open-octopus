@@ -21,6 +21,8 @@ import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
+import { createIngestRoutes } from "./routes/ingest"
+import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiRoutes } from "./routes/wiki"
 import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
@@ -528,6 +530,9 @@ const reviewService = new ReviewService(d.pendingReview, {
   isWikiEntryTarget: (item, org) => isGenuineWikiTarget(item, resolveWikiRoot(org ?? "default")),
 })
 app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
+// 知识中心票02：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
+// 构造即幂等建三层骨架；落 raw 不触发编译、不入队（spec §全局写串行语义，编译属票05）。
+app.route("/api/knowledge", createIngestRoutes(new RawIngestService()))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
