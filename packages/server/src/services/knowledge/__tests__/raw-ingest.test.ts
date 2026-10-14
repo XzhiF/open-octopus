@@ -325,3 +325,17 @@ describe("raw layer + ingest channel (ticket 02, S1)", () => {
     })
   })
 })
+
+// ── aa-fix 项7：sha10 短哈希单源（case-extract/skill-draft 两份逐字副本收敛）──
+describe("sha10 — 单源短哈希口径（等价性钉：公开向量手算，非从实现反推）", () => {
+  it("sha10('hello') = SHA256_HELLO 前 10 hex（公开测试向量）", async () => {
+    const { sha10 } = await import("../raw")
+    expect(sha10("hello")).toBe(SHA256_HELLO.slice(0, 10))
+    expect(sha10("hello")).toBe("2cf24dba5f")
+  })
+
+  it("sha10('') = sha256 空串公开向量 e3b0c442… 前 10 hex", async () => {
+    const { sha10 } = await import("../raw")
+    expect(sha10("")).toBe("e3b0c44298")
+  })
+})

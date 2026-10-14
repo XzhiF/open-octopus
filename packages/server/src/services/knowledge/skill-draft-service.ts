@@ -26,7 +26,6 @@
 
 import fs from "fs"
 import path from "path"
-import crypto from "crypto"
 import type { KcCardEvent, KcSkillDraftCardData, KcSkillDraftSourceRef } from "@octopus/shared"
 import { LOCATABLE_SOURCE_RE, SKILL_DRAFT_NAME_RE } from "@octopus/shared"
 import { resolveKnowledgeRoot, getRawDir } from "./global-paths"
@@ -37,7 +36,7 @@ import {
   type MaterialPackItem,
   type MaterialPackManifest,
 } from "./material-pack"
-import { stripRawFrontMatter, sha256Text } from "./raw"
+import { stripRawFrontMatter, sha256Text, sha10 } from "./raw"
 import { scanWikiEntries } from "./wiki/compile"
 import { parseCaseMarkdown } from "./wiki/format"
 import { parseCaseSections } from "./case-extract-service"
@@ -114,10 +113,6 @@ export interface SkillProposal {
   steps: string[]
   discipline: string[]
   source: string
-}
-
-function sha10(text: string): string {
-  return crypto.createHash("sha256").update(text, "utf-8").digest("hex").slice(0, 10)
 }
 
 export function parseSkillProposals(resp: string, taskId: string): SkillProposal[] {

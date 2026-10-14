@@ -27,13 +27,12 @@
 
 import fs from "fs"
 import path from "path"
-import crypto from "crypto"
 import type Database from "better-sqlite3"
 import type { KcCardEvent, KcCaseCardData, KcCaseCardSections } from "@octopus/shared"
 import { LOCATABLE_SOURCE_RE, WIKI_CASE_SECTIONS, type WikiCaseFrontmatter } from "@octopus/shared"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "./global-paths"
 import { readPackManifest, packActiveItems, type MaterialPackItem } from "./material-pack"
-import { stripRawFrontMatter, sha256Text } from "./raw"
+import { stripRawFrontMatter, sha256Text, sha10 } from "./raw"
 import type { WriteQueue } from "./wiki/compile-queue"
 import { WikiCompileService, scanWikiEntries } from "./wiki/compile"
 import { parseCaseMarkdown, serializeCaseMarkdown } from "./wiki/format"
@@ -157,10 +156,6 @@ export interface CaseExtractDeps {
 }
 
 // ── 草案校验（宽松准入的「真实+可定位」服务端形态：结构不合格整条弃，不产假判例）──
-
-function sha10(text: string): string {
-  return crypto.createHash("sha256").update(text, "utf-8").digest("hex").slice(0, 10)
-}
 
 export function toCaseDraft(raw: unknown, taskId: string): CaseDraft | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined

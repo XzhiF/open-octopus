@@ -95,6 +95,15 @@ function sha256(text: string): string {
 /** P3 票02 素材包导出：件级冻结与单文件 raw 共用同一 hash/换行口径（单源，禁旁路复制）。 */
 export const sha256Text = sha256
 
+/**
+ * 短哈希后缀单源（aa-fix 项7）：sha256 hex 前 10 位——判例 id（case-…）与草案
+ * 名/来源后缀（flow-…/prop-…/task:…#…）共用口径；case-extract-service 与
+ * skill-draft-service 的两份逐字副本收敛于此（material-pack 复用本件先例同律）。
+ */
+export function sha10(text: string): string {
+  return sha256(text).slice(0, 10)
+}
+
 /** 归一换行（CRLF → LF）；不改正文其余字节 ⇒ hash 与 bytes 对得上源文本本体。 */
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n")
