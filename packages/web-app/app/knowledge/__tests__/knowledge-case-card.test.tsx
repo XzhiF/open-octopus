@@ -145,6 +145,8 @@ function makeStub(opts: { retireScript?: string[] } = {}) {
       const script = opts.retireScript ?? ["queued", "committed"]
       const state = script[Math.min(retirePoll, script.length - 1)]
       retirePoll++
+      // aa-fix 项5：「gone」=队列面 404（任务不可查）——TASK_LOST 显形纪律的注入位
+      if (state === "gone") return { ok: false, status: 404, json: async () => ({ error: { code: "TASK_NOT_FOUND", message: "not in queue table" } }) }
       return json({
         task: {
           id: "car-case-cookie500-01", opKind: "case-archive", label: "case-retire:case-cookie500",
@@ -235,6 +237,24 @@ describe("票03 判例卡：五段预览 + source 指针 + 退役钮（注册表
       expect(card.textContent).toContain("CASE_APPEND_ONLY")
     }, { timeout: 5000 })
     expect(screen.getByTestId("kc-case-retire")).toBeTruthy()
+  })
+
+  it("退役队列任务不可查（404）⇒ TASK_LOST 显形 failed、不永挂排队（aa-fix 项5·对齐 use-kc-feed 纪律）", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(CASE_EV))]
+    makeStub({ retireScript: ["gone"] })
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    await screen.findByTestId("kc-card-case")
+
+    fireEvent.click(screen.getByTestId("kc-case-retire"))
+    await waitFor(() => {
+      const card = screen.getByTestId("kc-card-case")
+      expect(card.textContent).toContain("退役失败")
+      expect(card.textContent).toContain("TASK_LOST")
+    }, { timeout: 5000 })
+    // 终态自停：不可查一拍即收（占位 queued 不靠停轮询掩盖）
+    expect(calls.filter(c => c.url.includes("/wiki/queue/task/car-case-cookie500-01"))).toHaveLength(1)
   })
 
   it("Lane A 终态卡（status=superseded）⇒ 已退役徽标 + 零退役钮（沉淀卡吃掉覆盖层也终态）", async () => {

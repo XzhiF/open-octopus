@@ -143,6 +143,8 @@ function makeStub() {
     if (u.includes("/wiki/queue/task/")) {
       const state = queueScript[Math.min(poll, queueScript.length - 1)]
       poll++
+      // aa-fix 项5：「gone」=队列面 404（任务不可查）——TASK_LOST 显形纪律的注入位
+      if (state === "gone") return { ok: false, status: 404, json: async () => ({ error: { code: "TASK_NOT_FOUND", message: "not in queue table" } }) }
       return json({
         task: {
           id: `arc-${TASK}-rc1`, opKind: "archive-compile", state,
@@ -235,6 +237,24 @@ describe("剔除某件→重编译钮（经全局串行队列的完整流）", (
       expect(card.textContent).toContain("重编译失败")
       expect(card.textContent).toContain("PACK_HASH_MISMATCH")
     }, { timeout: 8000 })
+  }, 20000)
+
+  it("队列任务不可查（404）⇒ TASK_LOST 显形 failed、占位不永挂排队（aa-fix 项5·对齐 use-kc-feed 纪律）", async () => {
+    queueScript = ["gone"]
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(PACK_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    await screen.findByTestId("kc-card-material-pack")
+
+    fireEvent.click(screen.getByTestId("kc-pack-exclude-exec-jsonl-excerpt"))
+    await waitFor(() => {
+      const card = screen.getByTestId("kc-card-material-pack")
+      expect(card.textContent).toContain("重编译失败")
+      expect(card.textContent).toContain("TASK_LOST")
+    }, { timeout: 8000 })
+    // 终态自停：不可查一拍即收（占位 queued 不靠停轮询掩盖）
+    expect(calls.filter(c => c.url.includes("/wiki/queue/task/"))).toHaveLength(1)
   }, 20000)
 })
 

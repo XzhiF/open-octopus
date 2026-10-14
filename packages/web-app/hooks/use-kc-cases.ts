@@ -35,7 +35,17 @@ export function useKcCases(opts: UseKcCasesOptions = {}) {
   const track = useCallback((caseId: string, queueTaskId: string) => {
     poller.run(async (): Promise<boolean> => {
       const q = await kcGetQueueTask(queueTaskId)
-      if (!q) return true
+      // 任务不可查 ⇒ TASK_LOST 显式 failed（aa-fix 项5，对齐 use-kc-feed trackRetire 纪律）：
+      // 队列面 404=服务重启/终态逐出，占位卡不永挂 queued——停轮询必以显形为前提。
+      if (!q) {
+        attach(caseId, {
+          taskId: queueTaskId,
+          status: "failed",
+          position: null,
+          error: { code: "TASK_LOST", message: "退役任务不可查（服务重启？git LOG 为审计真相）" },
+        })
+        return true
+      }
       const st: KcCaseRetireState = {
         taskId: queueTaskId,
         status: q.state,
