@@ -534,6 +534,10 @@ export interface Task {
    *  persists across Rounds). Null/undefined = never opened. The 「谈」 face
    *  (draft-era task-author session) stays on source_chat_session_id. */
   doer_session_id?: string | null
+  /** 归档资产化 P3 票06 (语义摘要进任务板): 归档总结生成链写入的多面语义摘要
+   *  （干了什么/关键决策/产出指针），任务板搜索命中该字段。历史已归档无摘要 =
+   *  null/undefined（宽容读）。写面只在 tasks 表，非生命周期列。 */
+  semantic_summary?: string | null
   /** Soft-delete marker (discard draft/ready = soft delete, not status). */
   deleted_at: string | null
   created_at: string

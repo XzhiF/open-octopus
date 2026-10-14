@@ -210,6 +210,9 @@ export interface UpdateTaskInput {
 export interface ListTasksParams {
   status?: TaskStatus
   org?: string
+  /** 票06 (语义摘要进任务板): 服务端关键字搜索 —— 对 name ∨ semantic_summary LIKE 过滤。
+   *  空/纯空白由服务端视为不过滤（回归保护）。 */
+  q?: string
 }
 
 // ── v3: client-side spec-field + ready-gate types (ticket 09) ──────────
@@ -267,7 +270,7 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
  *  row carrying the 票03 trigger columns + its current instance (`execution`), which
  *  is what the 「已排队」 badge and the 上一轮 status now read. */
 export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
-  const res = await fetch(buildUrl("", { status: params?.status, org: params?.org }))
+  const res = await fetch(buildUrl("", { status: params?.status, org: params?.org, q: params?.q }))
   return handleResponse<{ items: TaskView[] }>(res)
 }
 

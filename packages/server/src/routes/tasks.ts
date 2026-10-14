@@ -307,14 +307,17 @@ export function createTasksRoutes(
     }
   })
 
-  // GET / — list (kanban); ?status=&org=
+  // GET / — list (kanban); ?status=&org=&q=
   router.get("/", (c) => {
     try {
       const statusParam = c.req.query("status") as TaskStatus | undefined
       const orgParam = c.req.query("org")
+      // 票06 (语义摘要进任务板): q = 服务端关键字搜索（name ∨ semantic_summary LIKE）。
+      const qParam = c.req.query("q")
       const result = service.listTasks({
         status: statusParam,
         org: orgParam,
+        q: qParam,
       })
       return c.json(result)
     } catch (err: unknown) {

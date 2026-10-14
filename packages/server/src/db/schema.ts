@@ -147,6 +147,13 @@ function handleSchemaMigrations(db: Database.Database): void {
   // 独立（同 tasks.workspace_id 先例），删会话不应牵连任务行。
   ensureColumn(db, "tasks", "doer_session_id", "TEXT DEFAULT NULL")
 
+  // 归档资产化 P3 票06 (语义摘要进任务板): tasks.semantic_summary — 归档总结生成链把
+  // 总结的独立字段（多面：干了什么/关键决策/产出指针）写这里，任务板搜索 LIKE 命中
+  // name ∨ semantic_summary。ADDITIVE only（无新表/无新基建/非 FTS——LIKE 即现状最小档）。
+  // 走 ensureColumn（幂等，跑在 schema.sql 之后对既有表生效；新库由 schema.sql CREATE 带上）。
+  // 历史已归档 task 无摘要 = NULL（宽容读，DAO 读出 null、搜索 LIKE 跳过不报错）。
+  ensureColumn(db, "tasks", "semantic_summary", "TEXT")
+
   // schema v51 (taskboard-modal-v2 票08, ADR-0025): 人工接管留痕两列，落点 = 被停掉的
   // 那一轮的 execution 行（最小落点：不新建 TaskStatus、不动信封 K16、不新增聊天协议）。
   //   takeover_at            = 停流时刻（= 现场快照时间点，票09 台账「接管标记」列读它）
