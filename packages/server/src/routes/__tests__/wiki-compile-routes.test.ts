@@ -194,4 +194,45 @@ describe("编译任务路由 — 票05 S2", () => {
     expect(done.result.commit).toBeNull()
     expect(done.result.changed).toBe(false)
   })
+
+  it("D-kc15-1 重试编译入口：failed 后 POST /compile 同 path ⇒ 202 建新任务并达 committed（票07 S2 契约）", async () => {
+    // 「重试编译」按钮打的 HTTP 面 = 既有 POST /compile（ingest-compile 队列通道复用，
+    // 红线2 禁旁路直写）。契约钉：failed 不锁死该 raw——重投建新任务、可查、真编译到提交。
+    let goodMode = false
+    const retryTasks = new CuratorTaskService({
+      root,
+      run: async (p) => {
+        const curator = new CuratorCompileService({
+          db, root,
+          llm: async () => (goodMode ? PLAN : "乱码，无 JSON"),
+          now: FROZEN_NOW,
+          git: realGit(path.join(root, "wiki")),
+        })
+        return curator.compileRaw(curator.resolveRawPointer(p))
+      },
+    })
+    const retryApp = new Hono()
+    retryApp.route("/api/knowledge/wiki", createWikiCompileRoutes(retryTasks))
+
+    const post = async () => retryApp.request("/api/knowledge/wiki/compile", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: rawPath }),
+    })
+    const rawPath = await seedRaw()
+
+    const ack1 = await (await post()).json() as any
+    const f1 = await waitStatus(retryTasks, ack1.taskId, "failed")
+    expect(f1.status).toBe("failed")
+
+    // 重试入口可达：同 path 再 POST ⇒ 202 新任务（入口不因曾败而拒收/锁死）
+    goodMode = true
+    const resp2 = await post()
+    expect(resp2.status).toBe(202)
+    const ack2 = await resp2.json() as any
+    expect(ack2.taskId).not.toBe(ack1.taskId)
+    expect(ack2.status).toBe("queued")
+
+    const done = await waitStatus(retryTasks, ack2.taskId, "committed")
+    expect(done.result?.deduped).toBe(false) // 失败回滚无回执页 ⇒ 重试走真编译（非 dedup 空转）
+    expect(done.result?.commit).toMatch(/^[0-9a-f]{40}$/)
+  })
 })

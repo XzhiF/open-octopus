@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react'
 import {
+  kcCompileRetry,
   kcGetCompileTask,
   kcGetQueueTask,
   kcGetRevertTask,
@@ -79,7 +80,15 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
   }, [poller])
 
   // ── 编译任务轮询（queued #N → running → committed/failed）──
-  const trackCompile = useCallback((taskId: string, rawPath: string) => {
+  /** D-kc15-1（票07）：编译态镜像回灌关联抓取卡（ingestCardId 传入时）——failed 态挂重试入口。 */
+  const mirrorToIngest = useCallback((ingestCardId: string | undefined, compile: NonNullable<KcIngestCardData['compile']>) => {
+    if (!ingestCardId) return
+    const base = cardsRef.current.get(ingestCardId)
+    if (!base || base.kind !== 'ingest') return
+    upsert({ ...base, ts: nowIso(), data: { ...(base.data as KcIngestCardData), compile } })
+  }, [upsert])
+
+  const trackCompile = useCallback((taskId: string, rawPath: string, ingestCardId?: string) => {
     let misses = 0
     poller.run(async (): Promise<boolean> => {
       const [task, queue] = await Promise.all([kcGetCompileTask(taskId), kcGetQueueTask(taskId)])
@@ -88,6 +97,7 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
           upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data: {
             taskId, status: 'failed', touched: [], error: { code: 'TASK_LOST', message: '编译任务不可查（服务重启？git LOG 为审计真相）' },
           } satisfies KcCompileDiffCardData })
+          mirrorToIngest(ingestCardId, { taskId, status: 'failed', error: { code: 'TASK_LOST', message: '编译任务不可查' } })
           return true
         }
         return false
@@ -110,6 +120,7 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
         revert: (prev?.data as KcCompileDiffCardData | undefined)?.revert,
       }
       upsert({ id: `dif-${taskId}`, kind: 'compile-diff', ts: nowIso(), data })
+      mirrorToIngest(ingestCardId, { taskId, status, position: data.position, ...(data.error ? { error: data.error } : {}) })
       if (task.status === 'committed') {
         const src = task.result?.touched.find(t => t.type === 'source' || t.path.startsWith('sources/'))
         if (src) {
@@ -122,7 +133,7 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
       }
       return task.status === 'failed'
     })
-  }, [poller, upsert])
+  }, [poller, upsert, mirrorToIngest])
 
   /**
    * 投喂入口：分类后的意图 → ingest(+compile) → 卡链。
@@ -147,12 +158,33 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
           taskId: res.compileTask.taskId, status: 'queued', position: null,
           rawPath: res.raw.path, rawTitle: res.title || res.raw.title || undefined, touched: [],
         } satisfies KcCompileDiffCardData })
-        trackCompile(res.compileTask.taskId, res.raw.path)
+        trackCompile(res.compileTask.taskId, res.raw.path, ingId)
       }
     } catch (err) {
       upsert({ id: ingId, kind: 'ingest', ts: nowIso(), data: { status: 'failed', error: kcErrFace(err, 'FEED_ERROR') } satisfies KcIngestCardData })
     }
   }, [trackCompile, upsert])
+
+  /**
+   * 重试编译（D-kc15-1 票07）：抓取卡 failed 态入口——POST /wiki/compile 同 rawPath，
+   * **复用 ingest-compile 全局串行队列通道**（红线2 禁直写 wiki，不新增旁路）；
+   * 新任务起 dif 卡并接续轮询，编译态回灌原抓取卡。
+   */
+  const retryCompile = useCallback(async (cardId: string, rawPath: string): Promise<void> => {
+    const base = cardsRef.current.get(cardId)
+    if (!base || base.kind !== 'ingest') return
+    try {
+      const ack = await kcCompileRetry(rawPath)
+      mirrorToIngest(cardId, { taskId: ack.taskId, status: 'queued', position: null })
+      upsert({ id: `dif-${ack.taskId}`, kind: 'compile-diff', ts: nowIso(), data: {
+        taskId: ack.taskId, status: 'queued', position: null,
+        rawPath, rawTitle: (base.data as KcIngestCardData).title ?? undefined, touched: [],
+      } satisfies KcCompileDiffCardData })
+      trackCompile(ack.taskId, rawPath, cardId)
+    } catch (err) {
+      mirrorToIngest(cardId, { taskId: kcPlaceholderTaskId('retry'), status: 'failed', error: kcErrFace(err, 'RETRY_ERROR') })
+    }
+  }, [mirrorToIngest, trackCompile, upsert])
 
   // ── 回滚（AC5：diff 卡钮 → 二次确认后调用；状态回灌原卡）──
   const trackRevert = useCallback((taskId: string, commit: string) => {
@@ -190,5 +222,5 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
     }
   }, [trackRevert])
 
-  return { cards, feed, revert, restore, reset, revertStates, trackTask: trackCompile }
+  return { cards, feed, revert, retryCompile, restore, reset, revertStates, trackTask: trackCompile }
 }

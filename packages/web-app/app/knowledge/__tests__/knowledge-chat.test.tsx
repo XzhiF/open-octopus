@@ -384,8 +384,88 @@ describe("归档编译卡（AC2 第五类）+ 对策展人说", () => {
   })
 })
 
-describe("纯协议函数（票13 依赖的接位件行为钉）", () => {
-  it("classifyKcFeed 三形态 + 动词门", () => {
+describe("D-kc15-1 抓取卡「重试编译」入口（票07 S4）", () => {
+  /** 重试剧本桩：crt-1 编译失败（带错误码）→ 点重试 POST /wiki/compile → crt-2 queued→committed。 */
+  function makeRetryStub() {
+    calls = []
+    let crt2Poll = 0
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+      const u = String(url)
+      const method = init?.method ?? "GET"
+      calls.push({ url: u, method, body: String(init?.body ?? "") })
+      const json = (v: unknown, status = 200): Stub => ({ ok: status < 400, status, json: async () => v })
+      if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+      if (u.includes("/knowledge/health")) return json(HEALTH)
+      if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
+      if (u.includes("/api/knowledge/ingest")) return json({
+        mode: "url", dir: "inbox", title: "Karpathy LLM Wiki", deduped: false,
+        raw: { path: "raw/inbox/2026-10-13-karpathy-llm-wiki.md", bytes: 12288, hash: "4f2a9c1234567890", origin: "url:https://gist", title: "Karpathy LLM Wiki", ingestedAt: "2026-10-13T09:00:01Z" },
+        compileTask: { taskId: "crt-1", status: "queued" },
+      })
+      if (u.includes("/wiki/compile/task/crt-1")) return json({ task: { id: "crt-1", rawPath: "raw/inbox/x.md", status: "failed", error: { code: "COMPILE_FAILED", message: "L5_DATES_IN_BODY: 正文出现日期（自纠一轮仍未过闸）" } } })
+      if (u.includes("/wiki/queue/task/crt-1")) return json({ task: { id: "crt-1", opKind: "ingest-compile", state: "failed", position: null, error: { code: "COMPILE_FAILED", message: "L5_DATES_IN_BODY" } } })
+      if (u.includes("/api/knowledge/wiki/compile") && method === "POST") return json({ taskId: "crt-2", rawPath: "raw/inbox/2026-10-13-karpathy-llm-wiki.md", status: "queued" }, 202)
+      if (u.includes("/wiki/compile/task/crt-2")) {
+        const status = crt2Poll++ === 0 ? "queued" : "committed"
+        return json({ task: status === "queued" ? { id: "crt-2", rawPath: "raw/inbox/x.md", status } : { id: "crt-2", rawPath: "raw/inbox/x.md", status, result: { rawPath: "raw/inbox/x.md", rawHash: "4f2a9c1234567890", rawTitle: "Karpathy LLM Wiki", touched: [{ path: "concepts/con-retried.md", type: "concept", created: true }, { path: "sources/2026-10-13-karpathy-llm-wiki.md", type: "source", created: true }], created: 2, updated: 0, contradictions: 0, commit: COMMIT, changed: true, deduped: false, warnings: [] } } })
+      }
+      if (u.includes("/wiki/queue/task/crt-2")) return json({ task: { id: "crt-2", opKind: "ingest-compile", state: crt2Poll <= 1 ? "queued" : "running", position: crt2Poll <= 1 ? 1 : null } })
+      return json({})
+    }))
+  }
+
+  it("编译失败态挂「重试编译」钮；点击 ⇒ POST /wiki/compile（同 rawPath，经队列通道）⇒ 新 diff 卡推进到已提交，重试钮消失", async () => {
+    makeRetryStub()
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+
+    // 投喂 → 抓取卡落 raw → crt-1 编译失败
+    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    fireEvent.change(composer, { target: { value: "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf" } })
+    fireEvent.click(document.querySelector("[data-tui-send]")!)
+    const ingest = await screen.findByTestId("kc-card-ingest")
+    await waitFor(() => {
+      expect(screen.getByTestId("kc-card-ingest").textContent).toContain("编译失败")
+      expect(screen.getByTestId("kc-card-ingest").textContent).toContain("COMPILE_FAILED")
+    }, { timeout: 5000 })
+    expect(screen.getByTestId("kc-ingest-retry-compile")).toBeDefined()
+    expect(ingest.textContent).toContain("已落 raw") // raw 不可变仍在（重试只重编译）
+
+    // 点击重试：走 POST /api/knowledge/wiki/compile（红线2 队列通道，非直写）——body 带原 rawPath
+    fireEvent.click(screen.getByTestId("kc-ingest-retry-compile"))
+    await waitFor(() => {
+      const hit = calls.find(c => c.method === "POST" && c.url.includes("/api/knowledge/wiki/compile"))
+      expect(hit, "重试必须 POST /wiki/compile").toBeDefined()
+      expect(hit!.body).toContain("raw/inbox/2026-10-13-karpathy-llm-wiki.md")
+    }, { timeout: 5000 })
+
+    // 新任务 diff 卡（crt-2）推进到已提交（历史 dif-crt-1 失败卡保留在流里=审计面）；
+    // 抓取卡失败态解除、重试钮消失
+    await waitFor(() => {
+      const diffs = screen.getAllByTestId("kc-card-compile-diff")
+      expect(diffs.some(d => d.textContent?.includes("已提交 a3f9c21"))).toBe(true)
+    }, { timeout: 8000 })
+    await waitFor(() => {
+      expect(screen.getByTestId("kc-card-ingest").textContent).not.toContain("编译失败")
+      expect(screen.queryByTestId("kc-ingest-retry-compile")).toBeNull()
+    }, { timeout: 5000 })
+  }, 20000)
+
+  it("committed 正常链不挂重试钮（入口只长在完成态之外的失败态上）", async () => {
+    makeStub({ compileScript: ["queued", "compiling", "committed"] })
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    fireEvent.change(composer, { target: { value: "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf" } })
+    fireEvent.click(document.querySelector("[data-tui-send]")!)
+    await waitFor(() => expect(screen.getByTestId("kc-card-ingest").textContent).toContain("已落 raw"), { timeout: 5000 })
+    expect(screen.queryByTestId("kc-ingest-retry-compile")).toBeNull()
+  }, 15000)
+})
+
+describe("纯协议函数（票13 依赖的接位件行为钉）", () => {  it("classifyKcFeed 三形态 + 动词门", () => {
     expect(classifyKcFeed("把这篇文章编进 wiki：https://gist.github.com/karpathy/442")).toEqual({ mode: "url", url: "https://gist.github.com/karpathy/442" })
     expect(classifyKcFeed("投喂这个本地文件：C:\\notes\\meeting.md 编进 wiki")).toEqual({ mode: "file", path: "C:\\notes\\meeting.md" })
     expect(classifyKcFeed("投喂文本：\n会议纪要：发布纪律更新\n第二条")).toEqual({ mode: "text", text: "会议纪要：发布纪律更新\n第二条" })

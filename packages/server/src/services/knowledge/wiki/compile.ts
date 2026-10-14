@@ -124,8 +124,15 @@ export const WIKI_LOG_HEADER = `# LOG.md — 时间线（append-only · 编译�
 
 `
 
-/** INDEX 必读节固定行（prototype Tab② INDEX 样例逐字；user_preference 为人工文件）。 */
-export const WIKI_INDEX_MUST_READ_LINE = "- user_preference.md — owner 偏好（人工维护）"
+/**
+ * INDEX 必读节固定行（prototype Tab② INDEX 样例；user_preference 为人工文件）。
+ * D-kc15-2（票07）：路径必须是 **agent Read 可达** 形态——user_preference.md 住知识根
+ * （wiki 根上一级），旧行裸写 `user_preference.md` 被按 INDEX 所在目录解析成
+ * `wiki/user_preference.md` → File not found（KC e2e-report 链④现场）。
+ * `../` 相对 wiki 根即知识根；行内同时标注位置语义，杜绝再猜。
+ * 注意：这是「指向」的行——写闸 assertNotManualFile 对该文件本体任何通道写仍拒（红线5）。
+ */
+export const WIKI_INDEX_MUST_READ_LINE = "- ../user_preference.md — owner 偏好（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）"
 
 export interface ScannedEntry {
   relPath: string

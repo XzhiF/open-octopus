@@ -63,6 +63,18 @@ export interface KcIngestCardData {
   origin?: string | null
   title?: string | null
   error?: { code: string; message: string }
+  /**
+   * D-kc15-1（票07）编译态镜像：投喂后随编译任务轮询回灌（queued→running→committed/failed）。
+   * `failed` 时卡面挂「重试编译」入口——重试 = POST /wiki/compile 同 rawPath，
+   * 经全局串行队列（ingest-compile 通道复用），禁直写 wiki（红线2）。
+   * Lane A 沉淀旧卡无此字段（可选面兼容，零迁移）。
+   */
+  compile?: {
+    taskId: string
+    status: "queued" | "running" | "committed" | "failed"
+    position?: number | null
+    error?: { code: string; message: string }
+  }
 }
 
 /** 📄 来源摘要卡：sources/ 页 + 要点 + 回指 raw。 */

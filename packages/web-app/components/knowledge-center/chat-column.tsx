@@ -222,6 +222,7 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     openFullPage: target => { const id = resolveKcPageTarget(tree, target); if (id) onOpenFullPage(id) },
     openRaw: pointerPath => onOpenRaw(pointerPath),
     revert: commit => void feed.revert(commit),
+    retryCompile: (cardId, rawPath) => void feed.retryCompile(cardId, rawPath),
     sayToCurator: text => setComposerSeed(text),
     adoptFinding: fid => void findings.adopt(fid),
     ignoreFinding: fid => void findings.ignore(fid),
@@ -230,7 +231,7 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
       sessionId: input.sessionId ?? sessionIdRef.current ?? undefined,
     }),
     dismissBackfill: cardId => findings.dismissBackfill(cardId),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill])
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill])
 
   // ── 发送：投喂意图走 REST 执行面；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {

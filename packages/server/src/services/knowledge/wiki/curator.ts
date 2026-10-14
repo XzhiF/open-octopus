@@ -7,7 +7,8 @@ import type { LLMCall } from "../llm"
 import type { RawPointer } from "../raw"
 import { ensureKnowledgeSkeleton, getGlobalWikiRoot, GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "../global-paths"
 import { WikiCompileService, scanWikiEntries, nextRuleAnchor, type BatchPageInput } from "./compile"
-import { serializePageMarkdown, extractRuleAnchors, pageDirForType, parseWikiFile } from "./format"
+import { WikiLintError, WIKILINK_RE, lintProfileForPageType } from "./lint"
+import { serializePageMarkdown, extractRuleAnchors, pageDirForType, parseWikiFile, findDateOccurrences } from "./format"
 import { ensureSchemaDoc, SCHEMA_DOC_FILE } from "./schema-doc"
 import { FindingsDAO } from "../../../db/dao/findings-dao"
 import type { GitRunner } from "./wiki-git"
@@ -258,6 +259,82 @@ ${JSON.stringify(contract, null, 2)}
 3. **sources 回执页由服务程序化生成**，不要放进 pages。
 4. 正文零日期；单页 ≤120 行/~2000 token；[[链接]] 与 links 目标必须真实存在（现库或本批）。
 5. 页 id 前缀：ent- / con- / top-；文件名默认 {id}.md。`
+}
+
+/** ── D-kc15-1（票07）：L5 日期类失败的一轮常青改写自纠 ── */
+
+/**
+ * L5 日期类 lint 失败判定（自纠触发面）：WikiLintError 且 findings 含 L5_DATES_IN_BODY。
+ * 混合违规（如断链+日期同页）也算日期类——自纠只改日期形态，其余闸第二轮照样全过。
+ */
+export function isDatesLintFailure(err: unknown): err is WikiLintError {
+  return err instanceof WikiLintError && err.findings.some(f => f.code === "L5_DATES_IN_BODY")
+}
+
+/** 日期 offender：页 id/标题 + 正文日期命中（与 L5 闸同口径——先剥 [[wikilink]] 再找日期）。 */
+export interface DatesOffender {
+  id: string
+  title: string
+  dates: string[]
+  body: string
+}
+
+/**
+ * 常青改写 prompt（自纠 seam 的合同面，独立可测）：只改日期形态，
+ * 事实/锚点/链接不动；输出 JSON `{pages:[{id, body}]}`。
+ */
+export function buildDatesEvergreenPrompt(opts: { offenders: DatesOffender[]; raw: RawPointer }): string {
+  const contract = { pages: [{ id: "与输入 offender 同 id", body: "改写后的完整正文（无 front-matter）" }] }
+  return `# 常青化自纠（L5_DATES_IN_BODY）
+
+刚才的多页编译被「正文零日期」硬闸拒绝（写闸拒收，零落盘）。
+源 \`${opts.raw.path}\` 里带日期（如 ${opts.offenders.flatMap(o => o.dates).slice(0, 4).map(d => `'${d}'`).join(", ") || "…"}），
+而常青页正文应零日期——时间事实由本页 front-matter sources、sources 回执页、LOG.md 与 git 历史承接（服务自动维护，正文不必复述）。
+
+对下面每一页输出**改写稿**：
+- 把日期表述改写为常青形态（"于 2026-04-02 提出" → "提出"；"2026年10月" → 删除或改"历史上"）
+- 只动日期形态：事实、断言、[[链接]]、小节结构保持不变
+- **规则锚点 <!--#oct-NNN--> 原行原样保留**（存活锚点不可删改）；禁止输出 oct-NEW 占位
+- 改写后正文**不得再出现任何日期形态**（YYYY-MM-DD、YYYY/M/D、YYYY年M月D日）
+
+## 输出契约
+
+只输出一个 JSON 对象（可用 \`\`\`json 围栏），不要任何围栏外解释：
+
+${JSON.stringify(contract, null, 2)}
+
+## 触闸页（逐页给出 id / dates / 现正文）
+
+${opts.offenders.map(o => `### ${o.id}（${o.title}）\n命中日期: ${o.dates.map(d => `'${d}'`).join(", ")}\n\n${o.body}`).join("\n---\n\n")}`
+}
+
+/** 解析改写响应：结构不合 ⇒ CURATOR_LLM_JSON（调用方按自纠失败终止，不做第二轮自纠）。 */
+export function parseDatesRewrite(text: string): Array<{ id: string; body: string }> {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start === -1 || end <= start) {
+    throw new CuratorError("CURATOR_LLM_JSON", "自纠改写响应里没有 JSON 对象", 502)
+  }
+  let data: unknown
+  try {
+    data = JSON.parse(text.slice(start, end + 1))
+  } catch (err) {
+    throw new CuratorError("CURATOR_LLM_JSON", `自纠改写 JSON 解析失败：${err instanceof Error ? err.message.split("\n")[0] : String(err)}`, 502)
+  }
+  const rec = data as Record<string, unknown>
+  if (!rec || typeof rec !== "object" || !Array.isArray(rec.pages)) {
+    throw new CuratorError("CURATOR_LLM_JSON", "自纠改写缺少 pages 数组", 502)
+  }
+  return rec.pages.map((rawPage, i) => {
+    const p = rawPage as Record<string, unknown>
+    if (typeof p.id !== "string" || !p.id.trim()) {
+      throw new CuratorError("CURATOR_LLM_JSON", `自纠改写 pages[${i}] 缺 id`, 502)
+    }
+    if (typeof p.body !== "string" || !p.body.trim()) {
+      throw new CuratorError("CURATOR_LLM_JSON", `自纠改写 pages[${i}]（${p.id}）缺 body`, 502)
+    }
+    return { id: p.id, body: p.body }
+  })
 }
 
 /**
@@ -511,17 +588,69 @@ export class CuratorCompileService {
     }
 
     // ── 单一写闸批通道：N 页 + INDEX/LOG/FTS/git 一个 commit，失败回滚零半成品 ──
-    const batch: BatchPageInput[] = works.map(w => (w.fileName ? { content: serializePageMarkdown(w.meta, w.body), fileName: w.fileName } : { content: serializePageMarkdown(w.meta, w.body) }))
-    batch.push({ content: serializePageMarkdown(srcMeta, srcBody), fileName: `${stem}.md` })
     const compiler = new WikiCompileService({ db: this.db, org: GLOBAL_WIKI_ORG, rootDir: this.wikiRoot, ...(this.git ? { git: this.git } : {}) })
     const created = touchedList.filter(t => t.created).length + (srcExisting ? 0 : 1)
-    const res = await compiler.compilePages(batch, {
-      action: "ingest",
+    const buildBatch = (): BatchPageInput[] => {
+      const b: BatchPageInput[] = works.map(w => (w.fileName ? { content: serializePageMarkdown(w.meta, w.body), fileName: w.fileName } : { content: serializePageMarkdown(w.meta, w.body) }))
+      b.push({ content: serializePageMarkdown(srcMeta, srcBody), fileName: `${stem}.md` })
+      return b
+    }
+    const batchOpts = {
+      action: "ingest" as const,
       entry: rawTitle,
-      note: `触 ${batch.length} 页 · 新页 ${created} · 矛盾 ${findings.length} · raw ${raw.path}`,
+      note: `触 ${works.length + 1} 页 · 新页 ${created} · 矛盾 ${findings.length} · raw ${raw.path}`,
       source: raw.path,
       reviewer: "curator",
-    })
+    }
+
+    // ── D-kc15-1（票07）：L5 日期类失败 ⇒ 服务层一轮常青改写自纠 ⇒ 重编译 ──
+    // 缺陷现场（KC e2e-report）：含日期的一手源（最常见的真实素材）恒失败于 L5_DATES_IN_BODY——
+    // 真模型反复把源内日期抄进常青概念页。自纠纪律：**一轮上限**（仍败即终态 failed + 痕迹可查，
+    // 不无限重试）；**闸不放松**——改写产物重新整批走同一 compilePages 全量闸（L1~L6 一视同仁）；
+    // 改写只动日期形态（锚点丢失/oct-NEW 混入即弃用改写，保持原判）。非日期类失败原样上抛。
+    let res: BatchCompileResult
+    let datesCorrectedIds: string[] | null = null
+    try {
+      res = await compiler.compilePages(buildBatch(), batchOpts)
+    } catch (err) {
+      if (!isDatesLintFailure(err)) throw err
+      const offenders: DatesOffender[] = []
+      for (const w of works) {
+        if (!lintProfileForPageType(w.meta.type).datesInBody) continue // source/case 页天然带日期（豁免面）
+        const dates = findDateOccurrences(w.body.replace(WIKILINK_RE, ""))
+        if (dates.length > 0) offenders.push({ id: w.meta.id, title: w.meta.title, dates, body: w.body })
+      }
+      if (offenders.length === 0) throw err // 闸报日期而逐页检测无命中 ⇒ 不臆测，保持原判
+      const trace = `日期常青自纠一轮（触闸页 ${offenders.map(o => o.id).join(", ")}）`
+      const abort = (reason: string): never => {
+        // 终态 failed：原判闸行 + 自纠痕迹 + 败因（任务记录 error.message 可查）
+        throw new Error(`${err.message}——${trace}仍未过闸：${reason}`)
+      }
+      const rewriteResponse = await this.llm(buildDatesEvergreenPrompt({ offenders, raw }))
+      if (!rewriteResponse || rewriteResponse.trim() === "") abort("自纠 LLM 无响应（provider 缺席/禁用）")
+      let rewrites: Array<{ id: string; body: string }>
+      try {
+        rewrites = parseDatesRewrite(rewriteResponse)
+      } catch (pe) {
+        abort(pe instanceof Error ? pe.message : String(pe))
+      }
+      const byId = new Map(rewrites.map(r => [r.id, r.body]))
+      for (const w of works) {
+        if (!offenders.some(o => o.id === w.meta.id)) continue
+        const nb = byId.get(w.meta.id)
+        if (nb === undefined || !nb.trim()) abort(`改写响应缺 ${w.meta.id} 可用正文`)
+        const lost = extractRuleAnchors(w.body).filter(a => !extractRuleAnchors(nb).includes(a))
+        if (lost.length > 0) abort(`改写丢失在盘锚点 ${lost.join(", ")}`)
+        if (nb.includes(ANCHOR_TOKEN)) abort(`改写混入 ${ANCHOR_TOKEN} 占位（发号权在服务侧）`)
+        w.body = nb
+      }
+      try {
+        res = await compiler.compilePages(buildBatch(), batchOpts)
+      } catch (e2) {
+        abort(`第二轮写闸拒绝：${e2 instanceof Error ? e2.message : String(e2)}`)
+      }
+      datesCorrectedIds = offenders.map(o => o.id)
+    }
 
     // findings 落库在 commit 成功之后——回滚掉的编译不许留下发现（零半成品纪律）
     const findingsDao = new FindingsDAO(this.db)
@@ -541,6 +670,7 @@ export class CuratorCompileService {
       deduped: false,
       warnings: [
         ...(selfCorrected ? ["计划校验失败一次，已带错自纠重编译（第二轮过闸）"] : []),
+        ...(datesCorrectedIds ? [`日期常青自纠一轮（改写页 ${datesCorrectedIds.join(", ")}），产物仍全量过 lint 闸`] : []),
         ...res.pages.flatMap(pg => pg.warnings),
       ],
     }

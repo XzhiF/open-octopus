@@ -27,6 +27,9 @@ export interface KcCardActionCtx {
   openRaw: (pointerPath: string) => void
   /** 回滚（diff 卡二次确认后调用；宿主发 POST /revert 并回流状态到卡） */
   revert: (commit: string) => void
+  /** 重试编译（D-kc15-1 票07 抓取卡）：failed 任务再触发——宿主发 POST /wiki/compile 同
+   *  rawPath（ingest-compile 队列通道复用，红线2 禁直写），新任务态回灌该卡 */
+  retryCompile: (cardId: string, rawPath: string) => void
   /** 把文本灌进取号器并发送（归档编译卡「对策展人说」/finding 讨论钮） */
   sayToCurator: (text: string) => void
   /** [采纳修订]（票13 finding 卡）：POST adopt → 修订稿经全局队列编译，状态回灌卡 */

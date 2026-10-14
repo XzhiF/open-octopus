@@ -213,6 +213,26 @@ export async function kcIngest(input: KcIngestInput): Promise<KcIngestResult> {
   return handleResponse<KcIngestResult>(res)
 }
 
+/**
+ * 重试编译（D-kc15-1 票07）：failed 任务再触发 = POST /api/knowledge/wiki/compile
+ * 同 rawPath——复用既有 ingest-compile 全局串行队列通道（红线2 禁直写 wiki；
+ * 失败编译经写闸全量回滚无回执页，重投必走真编译不被 dedup 吞）。
+ */
+export interface KcCompileAck {
+  taskId: string
+  rawPath: string
+  status: string
+}
+
+export async function kcCompileRetry(rawPath: string): Promise<KcCompileAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: rawPath }),
+  })
+  return handleResponse<KcCompileAck>(res)
+}
+
 /** GET /api/knowledge/wiki/compile/task/:id 的 task 视图（票05 CompileTaskRecord）。 */
 export interface KcCompileTask {
   id: string
