@@ -778,8 +778,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         />
       )}
 
-      {/* 票08 清理账：工作流详情页「归档」弹窗（ArchiveDialog，规则审批链 web 残留）
-          随 pending_review drop + /api/review 下线一并删除（ADR-0030 审批不复活）。 */}
+      {/* 边界注：归档动作不在本面板——task 归档知识沉淀走 archiving 态自动投喂链（raw/archives 素材包 → archive-compile 队列）。 */}
 
       {/* Harness Floating Panel */}
       <HarnessFloatingPanel

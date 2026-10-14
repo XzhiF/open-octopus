@@ -79,9 +79,7 @@ export function createArchiveRoutes(
     }
   })
 
-  // 票08 清理账（spec 故事28）：POST /:id/propose（执行归档→规则提炼→写 pending_review
-  // 审批结案流）随 pending_review 物理 drop 删除；生产者 services/knowledge/extract.ts
-  // 整条已一并下线。审批不复活（红线3），知识沉淀改走 task archiving 态自动投喂。
+  // 边界注：本路由族无提案/审批结案端点——归档知识沉淀走 task archiving 态自动投喂（raw/archives → archive-compile 队列）。
 
   // 知识中心票10: POST /api/archive/workspaces/:id/archive-preview（三级提炼分析入口）
   // 已随旧经验提炼管线删除——归档知识沉淀改走 task archiving 态自动投喂
