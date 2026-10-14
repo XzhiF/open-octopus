@@ -47,6 +47,7 @@ import path from "path"
 import type { KcCardEvent, KcSkillDraftCardData, ResourceEntry } from "@octopus/shared"
 import type { SkillGrantReceipt } from "@octopus/shared"
 import type { ResourceManager } from "@octopus/shared"
+import { copyDirSync } from "@octopus/shared"
 import { resolveKnowledgeRoot } from "./global-paths"
 import { readDraft, setDraftGrantState, type SkillDraftRecord } from "./skill-draft-store"
 import { SkillDraftError } from "./skill-draft-service"
@@ -87,16 +88,8 @@ export function renderGrantSkillFile(name: string, description: string, body: st
   return `---\nname: ${name}\ndescription: ${oneLine(description)}\n---\n\n${body.replace(/\s+$/, "")}\n`
 }
 
-/** 整目录拷贝（readdir+copyFileSync 递归——禁 fs.cpSync：Node24/Windows 中文段猝死）。 */
-function copyDirSync(src: string, dest: string): void {
-  fs.mkdirSync(dest, { recursive: true })
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name)
-    const d = path.join(dest, entry.name)
-    if (entry.isDirectory()) copyDirSync(s, d)
-    else fs.copyFileSync(s, d)
-  }
-}
+/** 整目录拷贝=共享单源 `@octopus/shared` copyDirSync（readdir+copyFileSync 递归形态，
+ *  非 fs.cpSync——Node24/Windows 中文段猝死档案所避；含 symlink 拒抄=B4 硬化）。 */
 
 /** 语义化的整目录移除（撤销的「显式删除」——copyDirOverwrite 不清目录坑的对偶）。 */
 function removeDir(dir: string): void {
