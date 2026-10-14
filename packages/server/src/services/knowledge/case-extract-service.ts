@@ -214,11 +214,30 @@ export function caseBodyFromSections(sections: KcCaseCardSections): string {
   return WIKI_CASE_SECTIONS.map(s => `## ${s}\n\n${sections[s]}\n`).join("\n")
 }
 
-/** 判例正文 → 五段 map（卡面预览用；缺段落空串——卡仍可读）。 */
+/**
+ * 判例正文 → 五段 map（卡面预览用；缺段落空串——卡仍可读）。
+ * P3 票04 修（潜伏缺陷移交）：旧单正则懒匹配 `(?=…|$)` 在 m 标志下于「标题后的
+ * 空行行首」立即为真（`$` 匹配零宽行尾）⇒ 标准 `## X\n\n正文` 制式下五段全空。
+ * 改行切分制：段=两标题行之间内容 trim；首标题前的散文忽略；未知小节名忽略。
+ * 影响面：merged/retired 卡的 sections 预览（原恒空串，修复后真实——票04 b 路
+ * 「流程型」判据同样依赖此面）。
+ */
 export function parseCaseSections(body: string): KcCaseCardSections {
   const out = { 现场: "", 诊断: "", 根因: "", 修复: "", 教训: "" } as KcCaseCardSections
-  const re = /^## (现场|诊断|根因|修复|教训)[^\n]*\n([\s\S]*?)(?=^## (?:现场|诊断|根因|修复|教训)|$)/gm
-  for (const m of body.matchAll(re)) out[m[1] as keyof KcCaseCardSections] = m[2]!.trim()
+  const bucket: Partial<Record<string, string[]>> = {}
+  let current: string | null = null
+  for (const line of body.split(/\r?\n/)) {
+    const m = /^## (现场|诊断|根因|修复|教训)(?:\s+\S.*|\s*)$/.exec(line)
+    if (m) {
+      current = m[1] ?? null
+      if (current !== null && !(current in bucket)) bucket[current] = []
+      continue
+    }
+    if (current !== null) bucket[current]?.push(line)
+  }
+  for (const [k, lines] of Object.entries(bucket)) {
+    out[k as keyof KcCaseCardSections] = lines.join("\n").trim()
+  }
   return out
 }
 

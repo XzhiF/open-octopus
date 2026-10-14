@@ -121,6 +121,12 @@ export interface PatrolHandlerOpts {
   report?: PatrolReporter
   /** 测试钉时钟（报告日期/消息时间戳） */
   now?: () => Date
+  /**
+   * P3 票04：巡检**产出后**钩子（b 路 skill 草案扫描的触发腿——spec 故事 15「检测在
+   * 归档 hook 与巡检两处触发」的巡检侧）。消费本轮 report，返回 void。
+   * 失败显形进 outcome 不炸作业（报对话同律）；缺省零行为变化（票13/03 现状）。
+   */
+  afterPatrol?: (report: PatrolReport) => void | Promise<void>
 }
 
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
@@ -136,6 +142,14 @@ export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: Patro
       } catch (err) {
         // 报对话失败不吞巡检成果：findings 已在库，失败显形进 outcome
         note = ` · 报对话失败（${err instanceof Error ? err.message : String(err)}）`
+      }
+    }
+    if (opts.afterPatrol) {
+      try {
+        await opts.afterPatrol(report)
+      } catch (err) {
+        // 草案扫描失败不吞巡检成果（P3 票04：与报对话同律——显形不炸作业）
+        note += ` · 草案扫描失败（${err instanceof Error ? err.message : String(err)}）`
       }
     }
     return {

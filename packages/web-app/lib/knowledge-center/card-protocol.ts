@@ -35,5 +35,7 @@ export type {
   KcCaseCardSections,
   KcCaseCardData,
   KcCaseRetireState,
+  KcSkillDraftSourceRef,
+  KcSkillDraftCardData,
   KcPageRetireCardData,
 } from "@octopus/shared"

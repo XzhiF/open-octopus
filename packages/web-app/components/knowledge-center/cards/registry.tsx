@@ -14,6 +14,7 @@ import { FindingCard } from './finding-card'
 import { BackfillCard } from './backfill-card'
 import { MaterialPackCard } from './material-pack-card'
 import { CaseCard } from './case-card'
+import { SkillDraftCard } from './skill-draft-card'
 import { PageRetireCard } from './page-retire-card'
 
 /**
@@ -88,7 +89,7 @@ function UnknownKcCard({ event }: { event: KcCardEvent }) {
   )
 }
 
-// ── 注册（票12 六类 + 票13 finding/backfill + P3 票02 material-pack + P3 票08 page-retire；卡件 import 在文件头，副作用即注册）──
+// ── 注册（票12 六类 + 票13 finding/backfill + P3 票02 material-pack + P3 票03 case + P3 票08 page-retire + P3 票04 skill-draft；卡件 import 在文件头，副作用即注册）──
 registerKcCardRenderer('ingest', IngestCard)
 registerKcCardRenderer('source-summary', SourceSummaryCard)
 registerKcCardRenderer('compile-diff', CompileDiffCard)
@@ -99,5 +100,7 @@ registerKcCardRenderer('finding', FindingCard)
 registerKcCardRenderer('backfill', BackfillCard)
 registerKcCardRenderer('material-pack', MaterialPackCard)
 registerKcCardRenderer('case', CaseCard)
+// P3 票04：skill 草案卡——一行注册（红线4：本卡只到预览/改写/溯源，授予钮=票05 扩展位）
+registerKcCardRenderer('skill-draft', SkillDraftCard)
 // 票08 清理账（故事32）：页退役卡——一行注册（开放 kind，无 KcCardKind 联合改动）
 registerKcCardRenderer('page-retire', PageRetireCard)

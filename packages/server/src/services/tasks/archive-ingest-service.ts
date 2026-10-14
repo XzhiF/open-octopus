@@ -106,6 +106,13 @@ export interface ArchiveIngestDeps {
    * CaseExtractService 自守，本钩子层再保「不阻塞投喂回执/done」。
    */
   extractCases?: (taskId: string) => Promise<unknown>
+  /**
+   * P3 票04 skill 草案检测接位（同 hook 链第⑤步之后、素材包卡之前）：index.ts 接
+   * SkillDraftService.detectForTask——a 路跨 task 工具序列相似 + c 路策展提议 LLM，
+   * 产出落知识根 drafts 区（纯 fs，零入队——红线2 队列不适用此区）。
+   * 缺省不检测；抛错吞进 stderr（红线4：只到草案，零授予；失败不阻塞 done）。
+   */
+  detectSkillDrafts?: (taskId: string) => Promise<unknown>
   now?: () => Date
 }
 
@@ -402,6 +409,17 @@ export class ArchiveIngestService {
         await this.deps.extractCases(taskId)
       } catch (err) {
         process.stderr.write(`[archive-ingest] case extraction failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+      }
+    }
+
+    // ── P3 票04 skill 草案检测（同链第⑤步之后、素材包卡之前）：读包产 a/c 两路草案
+    // 落知识根 drafts 区（纯 fs 零入队，红线2 队列不适用此区）+ 草案卡 Lane A。
+    // 红线4：只到草案零授予。失败全吞 stderr——不阻塞投喂回执、不参与 done 判定。
+    if (this.deps.detectSkillDrafts) {
+      try {
+        await this.deps.detectSkillDrafts(taskId)
+      } catch (err) {
+        process.stderr.write(`[archive-ingest] skill draft detection failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
       }
     }
 

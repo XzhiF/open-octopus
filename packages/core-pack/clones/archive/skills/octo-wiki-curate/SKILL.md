@@ -41,6 +41,22 @@ wiki 的一切写入只有一条通道：**编译服务（唯一写闸）+ git c
 你不手写页文件、不手改 INDEX.md/LOG.md、不造旁路。锚点由服务发号（模型侧只许
 `oct-NEW` 占位）；矛盾断言两页内标记 + finding 报对话，不静默覆盖、不阻塞编译。
 
+## P3 资产化 API（票02/03/04 移交账兑现——owner 对话时代行执行的确定性端点）
+
+| 要做的事 | 用法 |
+|---|---|
+| 看素材包 | `GET /api/knowledge/wiki/pack/:taskId` → 件清单（名/类/大小/sha/剔除态；旧单文件归档回 `{legacy:true}`） |
+| 剔除某件 / 焦点重编译 | `POST /api/knowledge/wiki/pack/:taskId/recompile`，body `{excludePath?,focus?}` → 202（archive-compile 队列通道；「重点看 phase-2 打回那段」就是 focus 原文） |
+| 判例退役 | `POST /api/knowledge/wiki/case/retire`，body `{caseId}` → 202（case-archive 队列唯一写闸；事后纠即时生效，**无 pending 态**） |
+| 列 skill 草案 | `GET /api/knowledge/drafts` → `{drafts:[{name,status,origin,source,description,path}]}` |
+| 读草案全文 | `GET /api/knowledge/drafts/:name`（`content` = SKILL.md 全文） |
+| 改写草案（owner 说改哪里） | `POST /api/knowledge/drafts/:name/revise`，body `{instruction}` → 200（策展人改写 drafts 文件本体；status 恒 draft；granted/revoked 拒 409） |
+| 退役草案 | `POST /api/knowledge/drafts/:name/retire` → 200（status→revoked 留档，不删文件） |
+
+纪律：草案住知识根 `drafts/skills/`（非 wiki、非知识页、不进 INDEX）；**授予/撤销的
+生效链不在本 API**（人裁治理边界——任何把草案手放进分身技能目录或发版本的动作都禁止）。
+drafts 区不受 wiki 串行队列约束，但同样禁越界写 wiki/cases/user_preference/SCHEMA。
+
 ## Git 与写权纪律（不变项）
 
 - wiki 根 = 独立 git 仓（`~/.octopus/knowledge/wiki/.git`）；一次编译一个 commit，

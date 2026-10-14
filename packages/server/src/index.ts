@@ -32,6 +32,10 @@ import { CaseExtractService } from "./services/knowledge/case-extract-service"
 import { createProductionCaseExtractor } from "./services/knowledge/case-extract-llm"
 import { createWikiCaseRoutes } from "./routes/wiki-case"
 import type { KcCaseCardData } from "@octopus/shared"
+import { SkillDraftService } from "./services/knowledge/skill-draft-service"
+import { createProductionSkillProposer, createProductionSkillReviser } from "./services/knowledge/skill-draft-llm"
+import { createSkillDraftRoutes, skillDraftView, skillDraftDetailView } from "./routes/wiki-draft"
+import type { KcSkillDraftCardData } from "@octopus/shared"
 import { createWikiRevertRoutes } from "./routes/wiki-revert"
 import { RevertTaskService } from "./services/knowledge/wiki/revert"
 import { createWikiRetireRoutes } from "./routes/wiki-retire"
@@ -617,6 +621,36 @@ const getCaseExtract = () => (caseExtractInstance ??= new CaseExtractService({
 app.route("/api/knowledge/wiki", createWikiCaseRoutes({
   retireCase: (caseId) => getCaseExtract().retireCase(caseId),
 }))
+// P3 票04：skill 草案管线。SkillDraftService（惰性 root 轨，同 getCaseExtract）：
+// 归档链第⑤步之后跑 a+c 两路（跨 task 工具序列相似 + 策展提议 LLM），夜巡产出后跑
+// b 路（流程型蒸馏判例→草案）——草案落知识根 drafts/skills/ 区（纯 fs，零入队——
+// 红线2 的 wiki 串行队列不适用此区）。草案卡经 Lane A 沉淀知识中心会话。
+// **红线4 零自动授予**：本服务无任何分身目录/agent_versions/upgrade 原语引用，
+// granted 态只读拒写；授予/撤销机械链=票05 的边界。
+// GET/POST /drafts* = 草案 CRUD（列出/读取/对话改写触发/退役→revoked）。
+let skillDraftInstance: SkillDraftService | undefined
+const getSkillDrafts = () => (skillDraftInstance ??= new SkillDraftService({
+  propose: createProductionSkillProposer(),
+  revise: createProductionSkillReviser(),
+  announceDraft: (event) => {
+    const d = event.data as KcSkillDraftCardData
+    appendKnowledgeSessionCards(
+      getDb(),
+      `🧪 skill 草案${d.action === "created" ? "产出" : d.action === "revised" ? "已改写" : "已退役"}：${d.draftName}（${d.description} · ${d.skillPath} · 预览可对话改写；授予=票05 人裁，草案不会自动生效）`,
+      [event],
+    )
+  },
+}))
+// 挂 /api/knowledge（drafts 非 wiki 域，路由词面与 wiki-case/wiki-pack 区分）。
+app.route("/api/knowledge", createSkillDraftRoutes({
+  list: () => getSkillDrafts().listDrafts().map(skillDraftView),
+  read: name => {
+    const rec = getSkillDrafts().readDraft(name)
+    return rec ? skillDraftDetailView(rec) : undefined
+  },
+  revise: (name, instruction) => getSkillDrafts().reviseDraft(name, instruction),
+  retire: name => getSkillDrafts().retireDraft(name),
+}))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
 // 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
@@ -657,7 +691,12 @@ app.route("/api/knowledge", createFindingsRoutes({
     adopt: id => getFindingOps().adopt(id),
     getTask: id => getFindingOps().getTask(id),
   },
-  patrolNow: () => getKnowledgePatrol().patrol(),
+  patrolNow: () => {
+    const report = getKnowledgePatrol().patrol()
+    // P3 票04：即时体检同样触发 b 路草案扫描（与夜巡作业同钩子语义）。
+    getSkillDrafts().detectProceduralCases()
+    return report
+  },
   backfill: input => knowledgeBackfill.backfill(input),
 }))
 
@@ -983,6 +1022,8 @@ if (shouldServe) {
         },
         summarize: createProductionArchiveSummarizer(),
         extractCases: (taskId) => getCaseExtract().extractAndEnqueue(taskId),
+        // P3 票04：第⑤步之后跑 a+c 两路草案检测（纯 fs 落 drafts 区，零入队；失败吞）。
+        detectSkillDrafts: (taskId) => getSkillDrafts().detectForTask(taskId),
         announcePack: (event) => {
           const d = event.data as KcMaterialPackCardData
           appendKnowledgeSessionCards(
@@ -1047,7 +1088,12 @@ if (shouldServe) {
           taskLifecycleHandlerFor(tasksService.taskLifecycle),
           // 票13：知识夜巡（五查 findings 报对话）——与 task-lifecycle 同款组合根注入，
           // scheduler 不 import 知识域
-          knowledgePatrolHandlerFor(getKnowledgePatrol(), { report: createKnowledgeSessionReporter(getDb()) }),
+          knowledgePatrolHandlerFor(getKnowledgePatrol(), {
+            report: createKnowledgeSessionReporter(getDb()),
+            // P3 票04 b 路触发腿：夜巡产出后扫「流程型蒸馏判例」出草案（同步 fs 面，
+            // 零 LLM 零入队；失败经 afterPatrol 闸显形 outcome 不炸作业）。
+            afterPatrol: () => { getSkillDrafts().detectProceduralCases() },
+          }),
         )
         if (seeded.created.length || seeded.repaired.length) {
           console.log(

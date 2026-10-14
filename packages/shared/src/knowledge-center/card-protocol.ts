@@ -9,7 +9,8 @@
  *
  * ── 事件模型 ──
  * 一次知识操作 = 一个结构化事件 `KcCardEvent`：`{ id, kind, ts, data }`。
- * kind 十类（票12 六类 + 票13 finding/回填 + P3 票02 material-pack + P3 票03 case）；
+ * kind 十一类（票12 六类 + 票13 finding/回填 + P3 票02 material-pack + P3 票03 case
+ * + P3 票04 skill-draft）；
  * 追加新卡类：新增 kind 字符串 +
  * data 接口 + `registerKcCardRenderer(kind, Comp)` 一条注册（web 侧
  * components/knowledge-center/cards/registry.tsx）——渲染分发走注册表，
@@ -49,6 +50,7 @@ export const KC_CARD_KINDS = [
   "backfill",
   "material-pack",
   "case",
+  "skill-draft",
 ] as const
 
 export type KcKnownCardKind = (typeof KC_CARD_KINDS)[number]
@@ -229,6 +231,50 @@ export interface KcCaseRetireState {
   error?: { code: string; message: string }
 }
 
+// ── P3 票04 skill 草案卡（SKILL.md 完整渲染 + 来源指针可点；spec §卡片与 UI 逐字）──
+
+/** 草案来源指针单项（openRaw 走 pack:/raw 件路径；openPage 走判例页；exec: 仅展示形）。 */
+export interface KcSkillDraftSourceRef {
+  kind: "pack" | "case" | "exec"
+  /** pack=知识根相对件路径（raw/archives/…）；case=wiki 相对页路径；exec=exec: 指针 */
+  pointer: string
+  label: string
+}
+
+/**
+ * 🧪 P3 skill 草案卡（票04）：检测三路产出的待授予过程资产预览——
+ * SKILL.md 完整渲染（name/description/触发条件/步骤/纪律）+ 来源指针可点
+ * （openRaw/右栏跟随）。**本票零授予**：卡上没有授予钮、data 没有目标分身字段
+ * （红线4——授予/撤销 UI 与回执是票05 在 kind 同址上的扩展位）。
+ * status 三态 draft|granted|revoked（无 pending——红线3：草案人裁是授予治理，
+ * 不是入库审批）。卡 id 约定 `skl-<draftName>`（重放同 id：改写后新卡顶旧预览）。
+ */
+export interface KcSkillDraftCardData {
+  draftName: string
+  /** 草案描述（front-matter description 单行） */
+  description: string
+  /** draft | granted | revoked（granted/revoked 只可能由票05 写入，本票产卡恒 draft） */
+  status: string
+  /** sequence-similar | case-procedural | curator-proposal（检测三路标记） */
+  origin: string
+  /** front-matter 来源指针原样串（可溯源，spec 故事 24） */
+  source: string
+  /** drafts/skills/{name}/SKILL.md（知识根相对——非 wiki 路径，右栏 openRaw 可达性由路由白名单定） */
+  skillPath: string
+  /** SKILL.md 正文（## 触发条件/## 步骤/## 纪律——票面「完整渲染」的渲染源） */
+  content: string
+  /** 来源指针可点面（openRaw/openPage/展示三类） */
+  sourceRefs: KcSkillDraftSourceRef[]
+  /** front-matter name（SDK 技能名；授予落目录同名） */
+  skillName?: string
+  taskId?: string
+  caseId?: string
+  ruleRef?: string
+  similarity?: number
+  /** 产卡动作记号（created=首见 / revised=对话改写后刷新预览 / retired=退役终态） */
+  action?: "created" | "revised" | "retired"
+}
+
 /** 📇 词条迷你卡：对话提到某页。 */
 export interface KcPageMiniCardData {
   /** 页 id（解析优先）或 wiki 相对路径 */
@@ -335,6 +381,7 @@ export interface KcCardEvent {
     | KcBackfillCardData
     | KcMaterialPackCardData
     | KcCaseCardData
+    | KcSkillDraftCardData
     | KcPageRetireCardData
     | Record<string, unknown>
 }
@@ -414,6 +461,13 @@ export function kcEventPageRefs(event: KcCardEvent): string[] {
       // P3 票03：判例卡右栏落判例页（cases/…；openPage 解析走既有树）
       const d = event.data as KcCaseCardData
       return d.path ? [d.path] : []
+    }
+    case "skill-draft": {
+      // P3 票04：判例来源的草案右栏落判例页（草案本体在 drafts 区非知识页，不跟随——
+      // 预览长卡上，溯源靠 sourceRefs 点击）
+      const d = event.data as KcSkillDraftCardData
+      const caseRef = (d.sourceRefs ?? []).find(r => r.kind === "case")
+      return caseRef ? [caseRef.pointer] : []
     }
     default:
       return []

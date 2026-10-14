@@ -33,6 +33,13 @@ export type WikiPageDir = (typeof WIKI_PAGE_DIRS)[number]
 /** wiki 层退役区（prototype 行 263）。 */
 export const WIKI_RETIRED_DIR = "_retired"
 
+/**
+ * skill 草案区（P3 票04，spec 故事 24）：知识根 `drafts/skills/{name}/SKILL.md`。
+ * **待授予过程资产**——不在 wiki git 仓、不是知识页、不进 INDEX；scanWikiEntries/
+ * listRawSources 的约定目录扫不到它（天然隔离）。
+ */
+export const SKILL_DRAFTS_DIR_REL = "drafts/skills" as const
+
 /** Octopus home（口径同 services/agent/paths.ts：$OCTOPUS_HOME > ~/.octopus）。 */
 function octopusHome(): string {
   return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
@@ -63,8 +70,16 @@ export function getGlobalWikiRoot(root: string): string {
 }
 
 /**
- * 幂等创建三层目录骨架：知识根 + raw/{inbox,archives,research} +
- * wiki/{entities,concepts,topics,sources,cases,_retired}。
+ * 知识根下的 skill 草案区根（P3 票04，spec 故事 24）。
+ * 落点 `<root>/drafts/skills/`，与 raw/wiki 平级——草案非不可变源、非知识页。
+ */
+export function getSkillDraftsRoot(root: string): string {
+  return path.join(root, SKILL_DRAFTS_DIR_REL)
+}
+
+/**
+ * 幂等创建目录骨架：知识根 + raw/{inbox,archives,research} +
+ * wiki/{entities,concepts,topics,sources,cases,_retired} + drafts/skills（P3 票04）。
  * 只 mkdir -p，已存在即原样保留（永不改写既有 raw 文件——不可变契约）。
  * 返回解析后的知识根绝对路径。
  */
@@ -74,6 +89,7 @@ export function ensureKnowledgeSkeleton(injectedRoot?: string): string {
   for (const dir of RAW_DIRS) fs.mkdirSync(getRawDir(root, dir), { recursive: true })
   const wiki = getGlobalWikiRoot(root)
   for (const dir of [...WIKI_PAGE_DIRS, WIKI_RETIRED_DIR]) fs.mkdirSync(path.join(wiki, dir), { recursive: true })
+  fs.mkdirSync(getSkillDraftsRoot(root), { recursive: true })
   return root
 }
 
