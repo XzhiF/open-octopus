@@ -164,13 +164,21 @@ export class SkillGrantService {
     return { target, layer: "clone", cloneType: "user", cloneDir: dir }
   }
 
-  /** 分身是否 config.versioned（config.json 顶层位=启动落盘面，filesToSnapshot/VersionResolver 同读此处）。 */
+  /** 分身是否 config.versioned。落盘形状单源=clone-init-service（cloneDef 整包写
+   *  config.json：`{name, …, config:{versioned:true}}`——versioned 在 **config 嵌套位**，
+   *  publishVersionedBuiltinClones 的判据 def.config.versioned 同形）。兼容顶层位
+   *  `versioned:true`（假 home 旧测试 fixture 形），两读皆真=版本账。
+   *  D-aa16-1（票09 E2E 实锤）：只读顶层 ⇒ 真盘 workflow-operator（嵌套形）授予
+   *  恒 version=null 不发版——回执/版本账/回退面破，执行面因预置源槽通道未殃及。 */
   private isVersionedClone(ref: GrantTargetRef): boolean {
     if (ref.layer !== "shared" && ref.cloneDir === null) return false
     if (ref.cloneDir === null) return false
     try {
-      const cfg = JSON.parse(fs.readFileSync(path.join(ref.cloneDir, "config.json"), "utf-8")) as { versioned?: unknown }
-      return cfg.versioned === true
+      const cfg = JSON.parse(fs.readFileSync(path.join(ref.cloneDir, "config.json"), "utf-8")) as {
+        versioned?: unknown
+        config?: { versioned?: unknown } | null
+      }
+      return cfg.versioned === true || cfg.config?.versioned === true
     } catch {
       return false
     }

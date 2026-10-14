@@ -93,7 +93,10 @@ beforeEach(() => {
   fakeHome = path.join(tmpRoot, "home")
   // 假 home 预置：两层技能目录位 + 三个目标分身（versioned built-in / 非 versioned
   // built-in / user clone）+ 预置源根。workflow-operator 的 1.0.0 首发模拟启动种子。
-  mk("agent/built-in/workflow-operator", { "config.json": JSON.stringify({ versioned: true, skills: ["octo-wiki"] }) })
+  // config.json 形状=真盘单源（clone-init-service 436-448 整包写 cloneDef：
+  // versioned 在 **config 嵌套位**）——D-aa16-1（票09 E2E 实锤）：旧 fixture 顶层形
+  // 与实现互相抄，真盘嵌套形永不命中 ⇒ 授予恒不发版。fixture 换成落盘真相形。
+  mk("agent/built-in/workflow-operator", { "config.json": JSON.stringify({ name: "workflow-operator", display_name: "工作流工程师", type: "built-in", skills: ["octo-wiki"], memoryScope: "isolated", config: { versioned: true } }) })
   mk("agent/built-in/task-doer", { "config.json": JSON.stringify({ skills: [] }) })
   mk("agent/clones/worker-u", { "config.json": JSON.stringify({}) })
   fs.mkdirSync(j("agent/skills"), { recursive: true })
