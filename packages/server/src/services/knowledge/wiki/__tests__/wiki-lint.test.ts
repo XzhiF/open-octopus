@@ -121,9 +121,8 @@ ${rules(1, 521)}
       ])
     }
 
-    // ── 无入队语义：pending_review 恒零行（重复触顶也只随错，不落队列）
+    // ── 重复触顶只随错、不落盘（票08：pending_review 已退役，无「入队」语义可断言）
     await expect(svc.compileEntry({ content: over })).rejects.toThrow(/L1_CAPACITY/s)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
   })
 
   it("拒写 26 条规则词条（>25 条规则先到为准，行数/token 均在线内）", async () => {
@@ -175,7 +174,7 @@ ${rules(11)}
     const svc = makeService()
     await expect(svc.compileEntry({ content: entry })).rejects.toThrow(/L5_LINK_BROKEN.*projects\/ghost/s)
     expect(fs.existsSync(path.join(root, "projects", "prj-linker.md"))).toBe(false)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
+    // 票08：pending_review 已退役，无入队语义可断言；拒写零痕迹由上行盘上校验覆盖。
   })
 
   it("L5 链接目标存在（路径式与裸 id 式）→ 放行，无 L5 打扰", async () => {

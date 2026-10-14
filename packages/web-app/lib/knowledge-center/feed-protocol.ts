@@ -50,6 +50,27 @@ export function kcCardId(kind: string, anchor: string): string {
   return `${kind}-${anchor}`
 }
 
+/**
+ * 页退役意图识别（票08 清理账 · 故事32；纯函数，独立真相源=票面「退役 <页>」）。
+ * 与投喂解耦、`classifyKcFeed` 不动（其 6 例逐字钉死）。规则：退役动词 + 一个 wiki
+ * 页相对路径 ⇒ {path}；**动词在、无路径对象 ⇒ null**（同投喂「上次投喂那篇」不吞的纪律）。
+ * 命中后由宿主 POST /api/knowledge/wiki/retire（唯一写闸经队列），零前端直写。
+ */
+const RETIRE_VERB_RE = /(退役|下线|作废|废弃|supersede)/i
+const RETIRE_PAGE_PATH_RE = /(?:entities|concepts|topics|sources)\/[A-Za-z0-9._-]+\.md/
+
+export interface KcRetireIntent {
+  path: string
+}
+
+export function classifyKcRetire(text: string): KcRetireIntent | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  if (!RETIRE_VERB_RE.test(trimmed)) return null
+  const m = RETIRE_PAGE_PATH_RE.exec(trimmed)
+  return m ? { path: m[0] } : null
+}
+
 export function shortHash(hash: string | null | undefined): string {
   return hash ? hash.slice(0, 6) + "…" : "—"
 }

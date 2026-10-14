@@ -431,7 +431,7 @@ export class InitialCompileMigrator {
       }
       const m = metaRe.exec(line)
       if (!m) continue
-      // 退役标记（markRuleRetired 追加的下一行 `<!-- retired -->`）⇒ 规则不入库、不占锚点号
+      // 退役标记行 `<!-- retired -->`（历史知识文件遗留标注）⇒ 规则不入库、不占锚点号
       if ((lines[i + 1] ?? "").trim() === "<!-- retired -->") continue
       const isOwnCommentLine = line.trim().startsWith("<!--")
       const text = isOwnCommentLine

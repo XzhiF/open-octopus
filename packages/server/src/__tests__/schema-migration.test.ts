@@ -298,10 +298,13 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
   }
 
-  it("pins the current version at 53", () => {
+  it("pins the current version at 54", () => {
     db = createTestDb()
     applySchema(db)
-    expect(SCHEMA_VERSION).toBe(53)
+    // 票08 清理账 53→54：pending_review 表退役（schema.sql 不再 CREATE；既有库由
+    // retire-pending-review.ts 蓝绿脚本导出后 drop，applySchema 无自动 drop 迁移——
+    // 红线1 导出先于删除）。
+    expect(SCHEMA_VERSION).toBe(54)
   })
 
   it("① fresh DB: no envelope columns, run-state columns present", () => {

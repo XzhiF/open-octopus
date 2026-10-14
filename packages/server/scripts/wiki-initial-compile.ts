@@ -14,8 +14,8 @@
  *   OCTOPUS_WIKI_DIR    wiki 根覆盖（缺省 ~/.octopus/orgs/<org>/knowledge/wiki）
  *   GLOSSARY_MAP_PATH   GLOSSARY-MAP.md 源覆盖（缺省 cwd/GLOSSARY-MAP.md）
  *
- * 退出码：0 = 全部成功（含幂等空跑）；1 = 有源被 lint 闸拒写（详情见 JSON failed[]，
- * 超限源的拆分提案已入审核队列 pending_review，type='wiki-split'）。
+ * 退出码：0 = 全部成功（含幂等空跑）；1 = 有源被 lint 闸拒写（详情见 JSON failed[]；
+ * 票09 起拆分不再入队，票08 pending_review 表已退役——拒写只随错带拆分建议，不落任何队列）。
  */
 import { initDb } from "../src/db/connection"
 import { InitialCompileMigrator } from "../src/services/knowledge/wiki/migrate"

@@ -13,7 +13,7 @@ import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
-  PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
+  KnowledgeEffectivenessDAO, ArchiveDAO,
   TaskDAO, WikiArticleDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
@@ -29,6 +29,8 @@ import { MaterialPackOpsService } from "./services/knowledge/pack-ops"
 import type { KcMaterialPackCardData } from "@octopus/shared"
 import { createWikiRevertRoutes } from "./routes/wiki-revert"
 import { RevertTaskService } from "./services/knowledge/wiki/revert"
+import { createWikiRetireRoutes } from "./routes/wiki-retire"
+import { PageRetireTaskService } from "./services/knowledge/wiki/page-retire"
 import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
@@ -50,11 +52,9 @@ import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
 import { createWikiRedistillRoutes } from "./routes/wiki-redistill"
 import { WikiRedistillMigrator } from "./services/knowledge/wiki/redistill"
 import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
-import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
-import { ReviewService } from "./services/knowledge/review"
 import { createProductionRuleFormJudge } from "./services/knowledge/wiki/rule-form-judge"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -167,7 +167,6 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
-  pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
   wikiArticle: WikiArticleDAO
   archive: ArchiveDAO
@@ -192,7 +191,6 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
-    pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
     wikiArticle: new WikiArticleDAO(db),
     archive: new ArchiveDAO(db),
@@ -429,7 +427,6 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
-  pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
   wikiArticle: lazyDAO(WikiArticleDAO),
   archive: lazyDAO(ArchiveDAO),
@@ -529,14 +526,14 @@ app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceR
 // string (`?org=<name>`), so the server no longer pins a default org.
 // 知识中心票09（spec「审批废除与写入闸门」）：审批链 server 侧全删——'wiki-split'/
 // 'wiki-edit'/词条形态 'rule' 的策展分发与 WikiCurateService/WikiSplitService 执行器、
-// auto_approve 概念全部物理删除（「人批入库」轨废除）。pending_review **表本体保留**
-// 给 skill 草案等非 wiki 用途（物理清表属 P3），/api/review 只剩状态结案流转；
+// auto_approve 概念全部物理删除（「人批入库」轨废除）。票08 清理账（spec 故事28）：
+// skill 草案改走卡片通道后 pending_review 零消费者，表本体经蓝绿退役脚本物理 drop
+// （retire-pending-review.ts，导出归档先于删除）；/api/review 结案流转路由随之删除。
 // 对话驱动编译轨（票12，走 compile-queue 唯一写闸）与此无关、互不侵犯。
 // L6 生产编译时判定（spec §增长约束 L6：warn + 给改写稿，非阻塞）：
 // knowledge/llm 的 callHaiku 适配器——离线/禁用 ⇒ 零 issues（rule-form-judge.ts 双保险）。
 const ruleFormJudge = createProductionRuleFormJudge()
 
-const reviewService = new ReviewService(d.pendingReview)
 // 知识中心票02/05：投喂通道（URL 抓取/粘贴/本地文件 → raw 落盘即冻结）。
 // 落 raw 本身不入队（spec §全局写串行语义）；`?compile=true` 显式开启票05 编译投递，
 // 投喂成功后返回 compileTask 回执（异步任务：queued→compiling→committed/failed）。
@@ -604,6 +601,15 @@ app.route("/api/knowledge/wiki", createWikiRevertRoutes({
   revert: (commit) => getRevertTasks().revert(commit),
   get: (id) => getRevertTasks().get(id),
 }))
+// 票08 清理账（spec 故事32）：页退役路由（经票06 全局队列 opKind="page-retire" 串行执行
+// 页迁 _retired/ + superseded + INDEX/LOG/DB/FTS 四路摘除 + 单 commit）。惰性单例（同
+// revert：顶层 new 会在 initDb() 前抛 "Database not initialized"）。
+let retireTasksInstance: PageRetireTaskService | undefined
+const getRetireTasks = () => (retireTasksInstance ??= new PageRetireTaskService({ db: getDb(), queue: wikiWriteQueue }))
+app.route("/api/knowledge/wiki", createWikiRetireRoutes({
+  retire: (input) => getRetireTasks().retire(input),
+  get: (id) => getRetireTasks().get(id),
+}))
 // 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
@@ -627,11 +633,11 @@ app.route("/api/knowledge", createFindingsRoutes({
   patrolNow: () => getKnowledgePatrol().patrol(),
   backfill: input => knowledgeBackfill.backfill(input),
 }))
-app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
-// Archive routes — execution result summarization + rule proposal
+// Archive routes — 工作区归档（Archive V2）+ 执行结果摘要（票08：审批轨 /:id/propose
+// 随 pending_review 物理 drop 一并删除，本路由不再依赖 PendingReviewDAO）。
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
+app.route("/api/archive", createArchiveRoutes(stateDir, d.archive, d.archiveDraft))
 
 // LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
 // 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。

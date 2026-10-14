@@ -113,6 +113,10 @@ export const WikiPageFrontmatterSchema = z.object({
   last_compiled: z.string().regex(DATE_RE, "last_compiled 必须是 YYYY-MM-DD 字符串"),
   sources: z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1).optional(),
+  /** 票08 页退役（故事32）：ADDITIVE 可选退役态。仅 `_retired/` 页写入；缺省=在册页
+   *  无此字段（不扰动既有页 front-matter / git diff）。case 域另有 status（open/
+   *  distilled/superseded），与本字段互不干涉（case 走判例管线，不经页形态）。 */
+  status: z.enum(["superseded"]).optional(),
 }).superRefine((v, ctx) => {
   if (v.type === "case") {
     ctx.addIssue({

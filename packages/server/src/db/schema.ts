@@ -17,7 +17,11 @@ const _dirname: string =
 // migrations 跑在 schema.sql 之前，CREATE IF NOT EXISTS 幂等，旧库升级不丢行。）
 // 知识中心票05: 52→53 — 纯增量新表 findings（finding 持久最小面，同 v52 先例：
 // 新表 CREATE IF NOT EXISTS 即蓝绿等价——不动既有表、不丢行，无需 migrate* 函数。）
-export const SCHEMA_VERSION = 53
+// 票08 清理账 53→54：pending_review 表退役——schema.sql 不再 CREATE（新库无此表）。
+// 既有库的表+三索引**不在此自动 drop**：红线1「导出归档先于删除」要求 drop 前必先落
+// 审计件，该动作由 services/knowledge/retire-pending-review.ts 蓝绿脚本执行，真实库
+// 归主控 ops 合入后跑一次（applySchema 无 migrate* 函数 = 绝不绕过导出闸口）。
+export const SCHEMA_VERSION = 54
 
 /**
  * Apply the complete unified schema to the given database.

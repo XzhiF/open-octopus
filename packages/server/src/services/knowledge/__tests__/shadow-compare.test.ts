@@ -14,6 +14,8 @@
 // stale 条目单独可筛（票 12 第 2 项）。
 
 import { describe, it, expect } from "vitest"
+import fs from "fs"
+import path from "path"
 import { buildShadowComparison, SHADOW_QUERY_KEY, SHADOW_RELEVANT_KEY, SHADOW_INJECTED_KEY } from "../shadow-compare"
 
 // —— fixture（独立真相源：四象限手算如下）——
@@ -114,5 +116,59 @@ describe("buildShadowComparison — 四象限 fixture 冻结（票 12 · story 3
     expect(SHADOW_RELEVANT_KEY).toBe("__relevant_rule_ids")
     expect(SHADOW_INJECTED_KEY).toBe("__injected_rule_ids")
     expect(SHADOW_QUERY_KEY).toBe("wiki_refs")
+  })
+})
+
+// 票08 清理账 · spec 故事33：shadow-compare 冻结只读的「零新增消费者」负断言（grep 面）。
+// 端点/服务保留=有意历史审计面，删除留 P4 后议；此测试把「勿新增消费者」钉成机器闸——
+// 任何源码（非测试）文件引用 buildShadowComparison，除唯一授权消费点 routes/execution.ts
+// 与服务自身外，一律判红。
+describe("shadow-compare 冻结面 — 零新增消费者（票08 · 故事33）", () => {
+  const packagesRoot = path.resolve(__dirname, "../../../../..")
+  const ALLOWED_BASENAMES = new Set(["shadow-compare.ts", "execution.ts"])
+  const SKIP_DIRS = new Set(["node_modules", "dist", ".next", ".turbo", "e2e", "__tests__", ".git", "coverage"])
+
+  function walk(dir: string, out: string[]): void {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name)
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name)) continue
+        walk(abs, out)
+      } else if (/\.(ts|tsx)$/.test(e.name)) {
+        out.push(abs)
+      }
+    }
+  }
+
+  it("只有 routes/execution.ts（+ 服务自身）引用 buildShadowComparison，无新增消费者", () => {
+    const files: string[] = []
+    walk(packagesRoot, files)
+
+    const offenders = files
+      .filter((f) => {
+        const base = path.basename(f)
+        if (ALLOWED_BASENAMES.has(base)) return false
+        const text = fs.readFileSync(f, "utf-8")
+        // 只认对导出符号的真实引用，排除纯注释/文档串里的巧合提及。
+        return (
+          text.includes("buildShadowComparison") ||
+          /from ["'][^"']*knowledge\/shadow-compare["']/.test(text) ||
+          /from ["']\.\.?\/[^"']*shadow-compare["']/.test(text)
+        )
+      })
+      .map((f) => path.relative(packagesRoot, f))
+
+    expect(offenders).toEqual([])
+
+    // 正断言：唯一授权消费点 routes/execution.ts 确实 import 本服务（冻结端点在位）。
+    const routeFile = path.join(packagesRoot, "server/src/routes/execution.ts")
+    expect(fs.existsSync(routeFile)).toBe(true)
+    expect(fs.readFileSync(routeFile, "utf-8")).toContain("buildShadowComparison")
   })
 })

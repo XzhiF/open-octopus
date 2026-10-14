@@ -370,18 +370,16 @@ describe("initial-compile migrator (ticket 05)", async () => {
       expect(f.splitSuggestion!.children.length).toBeGreaterThanOrEqual(2)
     }
 
-    // 无入队语义：pending_review 零行（票04 起拆分不再产队列条目）
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
+    // 票08：pending_review 已退役（无队列语义可断言）；原子回滚零半成品由下方 INDEX 预算校验覆盖。
 
     // 已入库状态下的 INDEX 仍在预算内（被拒写入经原子回滚不留半成品）
     const { estimateTokens } = await import("../lint")
     expect(estimateTokens(fs.readFileSync(path.join(root, "INDEX.md"), "utf-8"))).toBeLessThanOrEqual(800)
 
-    // 失败重跑：已入库源跳过、被拒源仍拒、建议纯函数随错（队列仍零行）
+    // 失败重跑：已入库源跳过、被拒源仍拒、建议纯函数随错（票08：不再断言 pending_review）
     const run2 = await makeMigrator().run()
     expect(run2.skipped.length).toBe(report.compiled.length)
     expect(run2.failed.filter(f => f.error.includes("L4_INDEX_BUDGET"))).toHaveLength(failures.length)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review WHERE type='wiki-split'").get() as { n: number }).n).toBe(0)
   }, 120_000)
 
   it("excludes user_preference.md/index.md and skips <!-- retired -->-marked legacy rules without minting anchor numbers for them", async () => {

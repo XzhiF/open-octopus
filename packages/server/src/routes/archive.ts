@@ -3,7 +3,6 @@ import { streamSSE } from "hono/streaming"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import type { PendingReviewDAO } from "../db/dao"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
 import type { ArchiveDraftDAO } from "../db/dao/archive-draft-dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
@@ -22,7 +21,6 @@ function sanitizePoolSnapshot(snapshot: Record<string, unknown> | null | undefin
 }
 
 export function createArchiveRoutes(
-  pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
   archiveDAO?: ArchiveDAO,
   archiveDraftDAO?: ArchiveDraftDAO,
@@ -81,69 +79,9 @@ export function createArchiveRoutes(
     }
   })
 
-  // POST /api/archive/:id/propose — trigger rule extraction + skill proposal
-  routes.post("/:id/propose", async (c) => {
-    const id = c.req.param("id")
-
-    // Security: validate UUID format to prevent path traversal
-    if (!isValidUUID(id)) {
-      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid execution ID format" } }, 400)
-    }
-
-    const body = await c.req.json()
-    const { org: reqOrg } = body
-    // Per-request org resolution: body `org` > query `org` > undefined.
-    const org = reqOrg || c.req.query("org") || undefined
-
-    const statePath = path.join(stateDir, `${id}.json`)
-    if (!fs.existsSync(statePath)) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Execution not found" } }, 404)
-    }
-
-    try {
-      const execResult = JSON.parse(fs.readFileSync(statePath, "utf-8"))
-      const logDir = path.join(stateDir, "..", "logs", id)
-
-      // Import proposeRulesForReview dynamically to avoid circular deps
-      const { proposeRulesForReview } = await import("../services/knowledge/extract")
-      const pendingCount = await proposeRulesForReview(
-        execResult,
-        logDir,
-        org,
-        stateDir,
-        pendingReviewDAO,
-      )
-
-      // Get proposed rules from pending_review
-      const pendingRules = pendingReviewDAO.listBySource("workspace_archive")
-        .filter(item => item.source_ref === id && item.status === "pending")
-        .map(item => ({
-          text: item.content,
-          scope: item.scope,
-          target: item.target_file,
-          conflicts: item.conflicts ? JSON.parse(item.conflicts) : null,
-        }))
-
-      return c.json({
-        rules: pendingRules,
-        pendingCount,
-      })
-    } catch (err) {
-      // PROVIDER_TIMEOUT is a stable client-actionable code; preserve it
-      // while still sanitizing the message (clients don't need the raw
-      // provider response body).
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes("timeout")) {
-        process.stderr.write(`[knowledge/archive.propose] provider timeout: ${msg}\n`)
-        return c.json(
-          { error: { code: "PROVIDER_TIMEOUT", message: "LLM provider timed out; please retry" } },
-          504,
-        )
-      }
-      const { body, status } = errorResponse(err, "archive.propose")
-      return c.json(body, status)
-    }
-  })
+  // 票08 清理账（spec 故事28）：POST /:id/propose（执行归档→规则提炼→写 pending_review
+  // 审批结案流）随 pending_review 物理 drop 删除；生产者 services/knowledge/extract.ts
+  // 整条已一并下线。审批不复活（红线3），知识沉淀改走 task archiving 态自动投喂。
 
   // 知识中心票10: POST /api/archive/workspaces/:id/archive-preview（三级提炼分析入口）
   // 已随旧经验提炼管线删除——归档知识沉淀改走 task archiving 态自动投喂

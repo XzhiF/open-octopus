@@ -32,4 +32,5 @@ export type {
   KcMaterialPackItemView,
   KcMaterialPackRecompileState,
   KcMaterialPackCardData,
+  KcPageRetireCardData,
 } from "@octopus/shared"

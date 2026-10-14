@@ -28,6 +28,7 @@ export const WRITE_OP_KINDS = [
   "finding-fix",     // finding 修复裁决即编译（票13）
   "revert",          // 回滚 git revert（票12）
   "redistill",       // 重蒸馏脚本（票07）
+  "page-retire",     // 单页退役迁 _retired/ + superseded（票08 清理账 · 故事32）
 ] as const
 export type WriteOpKind = (typeof WRITE_OP_KINDS)[number]
 
