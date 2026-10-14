@@ -254,6 +254,29 @@ describe("素材包整体落 raw/archives/task-{id}/（S1·票02）", () => {
     await expect(s2.ingestTask(t2)).resolves.toMatchObject({ status: "ingested" })
   })
 
+  it("链尾聚合面回填（aa-fix 项9·spec L81）：卡携 compile 队列镜像 + 判例数=enqueued.drafts；skipped/未接位 ⇒ 无此位（诚实缺席）", async () => {
+    const announced: any[] = []
+    const { service } = makeDeps({
+      announcePack: (ev) => { announced.push(ev) },
+      extractCases: async () => ({ status: "enqueued", drafts: 2, queueTaskIds: ["caw-x-01", "caw-x-02"] }) as any,
+    })
+    const { taskId } = seedV4Task(new TaskHomeService(path.join(tmpRoot, "homes")))
+    await service.ingestTask(taskId)
+    expect(announced).toHaveLength(1)
+    expect(announced[0].data.caseCount).toBe(2)
+    expect(announced[0].data.compile).toMatchObject({ taskId: `arc-${taskId}`, status: "queued" })
+
+    // skipped ⇒ 判例数不写位；未接 extractCases ⇒ 同（既有卡零迁移面）
+    const announced2: any[] = []
+    const { service: s2 } = makeDeps({
+      announcePack: (ev) => { announced2.push(ev) },
+      extractCases: async () => ({ status: "skipped", reason: "NO_SEQUENCE" }) as any,
+    })
+    const { taskId: t2 } = seedV4Task(new TaskHomeService(path.join(tmpRoot, "homes")))
+    await s2.ingestTask(t2)
+    expect(announced2[0].data.caseCount).toBeUndefined()
+  })
+
   it("总结失败 ⇒ skipped 且不产卡（包在、编译不投，素材卡留待重投时通告）", async () => {
     const announced: any[] = []
     const { service } = makeDeps({ announcePack: (ev) => announced.push(ev), summarize: async () => "" })

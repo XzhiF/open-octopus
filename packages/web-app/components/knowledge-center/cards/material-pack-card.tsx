@@ -33,21 +33,28 @@ function sizeText(bytes: number): string {
 export function MaterialPackCard({ event, ctx }: KcCardViewProps) {
   const d = event.data as KcMaterialPackCardData
   const rc = d.recompile
+  const co = d.compile
   const busy = rc?.status === 'queued' || rc?.status === 'running'
 
+  // 头行三态（aa-fix 项9 聚合面）：Lane-B 重编译覆盖层 > 链尾编译镜像 > 旧卡「编译已入队」措辞。
   const status = rc
     ? rc.status === 'failed'
       ? `重编译失败 ${rc.error?.code ?? ''}`
       : `重编译 ${kcTaskStateLabel({ status: rc.status, position: rc.position })}`
     : d.summaryIncluded
-      ? `已冻结 ${d.items.length} 件 · 编译已入队`
+      ? co
+        ? `已冻结 ${d.items.length} 件 · 编译${kcTaskStateLabel({ status: co.status, position: co.position })}${co.status === 'failed' ? ` ${co.error?.code ?? ''}` : ''}`
+        : `已冻结 ${d.items.length} 件 · 编译已入队`
       : `已冻结 ${d.items.length} 件 · 无总结件（LLM 缺席）`
 
-  const tone = rc?.status === 'failed' ? 'danger' : d.summaryIncluded ? 'ok' : 'warn'
+  const tone = rc?.status === 'failed' || (!rc && co?.status === 'failed') ? 'danger' : d.summaryIncluded ? 'ok' : 'warn'
 
   return (
     <CardShell testId="material-pack" title={`📦 素材包卡 · task-${d.taskId}`} status={status} tone={tone}>
       <CardRow k="包" v={d.packPath} tone="muted" />
+      {typeof d.caseCount === 'number' && (
+        <CardRow k="判例" v={`${d.caseCount} 条草案已入队（case-archive 串行通道）`} />
+      )}
       <div className="mt-1 space-y-0.5" data-testid="kc-pack-items">
         {d.items.map(item => {
           const excluded = item.excluded === true || rc?.excludePath === item.path

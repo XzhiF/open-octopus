@@ -41,7 +41,8 @@ import {
   writePackManifest,
   type MaterialPackManifest,
 } from "../knowledge/material-pack"
-import type { KcCardEvent } from "@octopus/shared"
+import type { KcCardEvent, KcMaterialPackCardData } from "@octopus/shared"
+import type { CaseExtractOutcome } from "../knowledge/case-extract-service"
 import {
   ARCHIVE_SUMMARY_FILE_NAME,
   buildArchiveMaterials,
@@ -104,8 +105,9 @@ export interface ArchiveIngestDeps {
    * phase-rejections）产五段草案，经 case-archive 队列 opKind 入档。
    * 缺省不提取；抛错/失败一律吞进 stderr——提取失败不产假判例、零落盘零入队由
    * CaseExtractService 自守，本钩子层再保「不阻塞投喂回执/done」。
+   * 返回值（CaseExtractOutcome）被链尾素材包卡消费：enqueued.drafts=卡面判例数（aa-fix 项9）。
    */
-  extractCases?: (taskId: string) => Promise<unknown>
+  extractCases?: (taskId: string) => Promise<CaseExtractOutcome | void>
   /**
    * P3 票04 skill 草案检测接位（同 hook 链第⑤步之后、素材包卡之前）：index.ts 接
    * SkillDraftService.detectForTask——a 路跨 task 工具序列相似 + c 路策展提议 LLM，
@@ -404,9 +406,11 @@ export class ArchiveIngestService {
     // ── ⑤ 判例提取（P3 票03 同 hook 链：入队编译之后）：读刚落盘的素材包产五段草案，
     // 经 case-archive 队列 opKind 入档（唯一写通道，红线2）+ 判例卡 Lane A 先存后知。
     // 失败全吞进 stderr——不产假判例、不阻塞投喂回执、不参与 done 判定（票面第 6 行）。
+    // 返回的 outcome 供链尾素材包卡填判例数（aa-fix 项9 聚合面；skipped=诚实缺席）。
+    let caseOutcome: CaseExtractOutcome | undefined
     if (this.deps.extractCases) {
       try {
-        await this.deps.extractCases(taskId)
+        caseOutcome = (await this.deps.extractCases(taskId)) ?? undefined
       } catch (err) {
         process.stderr.write(`[archive-ingest] case extraction failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
       }
@@ -424,22 +428,31 @@ export class ArchiveIngestService {
     }
 
     // ── 素材包卡（票面第 4 行：件清单入对话流；Lane A 生产者接位，失败语义不破）──
+    // aa-fix 项9（spec L81 聚合面）：链尾随卡回填编译结果镜像（票06 队列 view 快照）
+    // 与判例入队数——旧 Lane A 卡无此两位，可选字段=零迁移读。
     if (this.deps.announcePack) {
       try {
         const fresh = readPackManifest(root, taskId) ?? manifest
-        const event: KcCardEvent = {
-          id: `mdp-${taskId}`,
-          kind: "material-pack",
-          ts: this.now().toISOString(),
-          data: {
-            taskId,
-            packPath: packDirRel(taskId),
-            items: packItemsForCard(fresh),
-            summaryIncluded: true,
-            queueTaskId,
-          },
+        const qv = this.deps.queue.get(queueTaskId)
+        const data: KcMaterialPackCardData = {
+          taskId,
+          packPath: packDirRel(taskId),
+          items: packItemsForCard(fresh),
+          summaryIncluded: true,
+          queueTaskId,
+          ...(qv !== undefined
+            ? {
+                compile: {
+                  taskId: qv.id,
+                  status: qv.state,
+                  position: qv.state === "queued" ? qv.position : null,
+                  ...(qv.error !== undefined ? { error: qv.error } : {}),
+                },
+              }
+            : {}),
+          ...(caseOutcome?.status === "enqueued" ? { caseCount: caseOutcome.drafts ?? 0 } : {}),
         }
-        this.deps.announcePack(event)
+        this.deps.announcePack({ id: `mdp-${taskId}`, kind: "material-pack", ts: this.now().toISOString(), data })
       } catch (err) {
         process.stderr.write(`[archive-ingest] announce failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
       }

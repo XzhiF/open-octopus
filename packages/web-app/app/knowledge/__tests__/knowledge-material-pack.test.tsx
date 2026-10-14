@@ -273,3 +273,56 @@ describe("对话入口不劫持 + 焦点重编译走策展人", () => {
     expect(calls.filter(c => c.method === "POST" && c.url.includes("/recompile"))).toHaveLength(0)
   }, 15000)
 })
+
+// ── aa-fix 项9：归档卡聚合面（spec L81 素材清单+编译结果+判例数；可选字段=旧卡零迁移）──
+
+describe("素材包卡聚合面（compile 镜像 + caseCount；生产者链尾回填的消费端）", () => {
+  const PACK_AGG_EV: KcCardEvent = {
+    id: `mdp-${TASK}`,
+    kind: "material-pack",
+    ts: "2026-10-14T09:00:00Z",
+    data: {
+      ...(PACK_EV.data as object),
+      compile: { taskId: `arc-${TASK}`, status: "queued", position: 2 },
+      caseCount: 3,
+    } as unknown as KcCardEvent["data"],
+  }
+
+  it("带 compile/caseCount 的新卡 ⇒ 头部编译位次显形（排队中 #2）+ 判例行在场", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(PACK_AGG_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-material-pack")
+    expect(card.textContent).toContain("排队中 #2")
+    expect(card.textContent).toContain("判例")
+    expect(card.textContent).toContain("3")
+  }, 15000)
+
+  it("compile failed ⇒ 卡头失败态与错误码显形（聚合镜像不是装饰）", async () => {
+    const failEv: KcCardEvent = {
+      ...PACK_AGG_EV,
+      data: {
+        ...(PACK_AGG_EV.data as object),
+        compile: { taskId: `arc-${TASK}`, status: "failed", position: null, error: { code: "WIKI_LOCK_HELD", message: "锁占用" } },
+      } as unknown as KcCardEvent["data"],
+    }
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(failEv))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-material-pack")
+    expect(card.textContent).toContain("WIKI_LOCK_HELD")
+  }, 15000)
+
+  it("Lane A 旧卡（无 compile/caseCount 位）⇒ 零迁移：旧「编译已入队」措辞保留、聚合行不显形", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(PACK_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-material-pack")
+    expect(card.textContent).toContain("编译已入队")
+    expect(card.textContent).not.toContain("排队中 #")
+    expect(card.textContent).not.toContain("判例")
+  }, 15000)
+})

@@ -175,6 +175,19 @@ export interface KcMaterialPackCardData {
   summaryIncluded: boolean
   /** 首轮归档编译队列 id（arc-{taskId}） */
   queueTaskId?: string
+  /**
+   * 链尾编译结果镜像（aa-fix 项9·spec L81 聚合面「素材清单+编译结果+判例数」）：
+   * 归档卡发布时刻的队列任务快照（票06 队列 view 形态）。可选=Lane A 旧卡零迁移
+   * （无此位 ⇒ 卡走旧「编译已入队」措辞）。
+   */
+  compile?: {
+    taskId: string
+    status: "queued" | "running" | "committed" | "failed"
+    position?: number | null
+    error?: { code: string; message: string }
+  }
+  /** 链尾判例提取入队草案数（case-archive 通道；缺席=提取件缺席/失败/无产出=诚实缺席） */
+  caseCount?: number
   /** 剔除重编译任务流状态（Lane B 轮询回灌） */
   recompile?: KcMaterialPackRecompileState
 }
