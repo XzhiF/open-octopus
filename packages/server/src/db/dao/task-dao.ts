@@ -1,11 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
+import { escapeLikeParam } from "../like-escape"
 import type { TaskRow } from "../types"
-
-/** LIKE 通配符转义（配 ESCAPE '\'）：先转义反斜杠本身，再 % 与 _。 */
-function escapeLikeParam(raw: string): string {
-  return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`)
-}
 
 /**
  * TaskDAO — CRUD for the first-class `tasks` table (schema v38, v2-D1).

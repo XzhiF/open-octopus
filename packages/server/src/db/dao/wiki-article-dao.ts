@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
+import { escapeLikeParam } from "../like-escape"
 
 /**
  * WikiArticleDAO — wiki_articles（索引/追踪，非真源；真源是 org wiki git 仓库）。
@@ -122,7 +123,7 @@ export class WikiArticleDAO extends BaseDAO {
    *  unicode61 下不是独立 token，session_memory_fts/evolution-dao 同款先例。
    *  %_\\ 转义按 LIKE 语义（escape '\'），title/summary/body 三列子串命中。 */
   searchLike(org: string, query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
-    const escaped = query.replace(/[%_\\]/g, "\\$&")
+    const escaped = escapeLikeParam(query)
     return this.stmt(`
       SELECT id, domain, title, summary, path
       FROM wiki_articles

@@ -32,6 +32,7 @@ import {
 import { TaskDAO } from "../../db/dao/task-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
+import { escapeLikeParam } from "../../db/like-escape"
 import type { SSEService } from "../sse"
 import { TaskHomeService } from "./task-home-service"
 import { getExecutionService } from "../execution-service-registry"
@@ -263,7 +264,7 @@ export class AssistWorkflowService {
   }
 
   listRuns(taskId: string): AssistWorkflowRun[] {
-    const escaped = taskId.replace(/[%_\\]/g, "\\$&")
+    const escaped = escapeLikeParam(taskId)
     const rows = this.db
       .prepare(
         "SELECT id FROM executions WHERE pipeline_config LIKE ? ESCAPE '\\' ORDER BY created_at DESC",
