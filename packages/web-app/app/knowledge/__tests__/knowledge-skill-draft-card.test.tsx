@@ -184,7 +184,7 @@ const GRANTED_EV: KcCardEvent = {
 interface FetchCall { url: string; method: string; body: string }
 let calls: FetchCall[]
 
-function makeStub() {
+function makeStub(opts: { clonesFail?: boolean } = {}) {
   calls = []
   vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
     const u = String(url)
@@ -196,7 +196,11 @@ function makeStub() {
     if (u.includes("/api/knowledge/raw/")) return json({ content: "- [t] do-a · tool_call :: {\"toolName\":\"Read\"}", bytes: 42, hash: "aa" })
     if (u.includes("/knowledge/findings")) return json({ org: "global", findings: [] })
     // 票05 插座：分身清单（既有 /api/clones 只读复用，零新端点）+ 授予/撤销回执
-    if (u.includes("/api/clones")) return json({ clones: CLONES, total: CLONES.length })
+    // aa-fix 项6：clonesFail=服务不可达形（500）——错误态显形的注入位
+    if (u.includes("/api/clones")) {
+      if (opts.clonesFail) return { ok: false, status: 500, json: async () => ({ error: { code: "INTERNAL", message: "db down" } }) }
+      return json({ clones: CLONES, total: CLONES.length })
+    }
     if (/\/api\/knowledge\/drafts\/[^/]+\/(grant|revoke)$/.test(u)) return json(GRANT_RECEIPT)
     return json({})
   }))
@@ -325,6 +329,22 @@ describe("票05 skill 草案卡授予面（选择器+授予/撤销钮+版本回�
     expect(receipt.textContent).toContain("workflow-operator")
     expect(receipt.textContent).toContain("预置源")
   })
+
+  it("分身清单不可达（GET /api/clones 500）⇒ 错误态显形，服务不可达≠确无分身（aa-fix 项6）", async () => {
+    makeStub({ clonesFail: true })
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DRAFT_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-skill-draft")
+
+    const err = await waitFor(() => screen.getByTestId("kc-skl-target-error"), { timeout: 5000 })
+    expect(err.textContent).toContain("分身清单拉取失败")
+    expect(err.textContent).toContain("HTTP 500")
+    // 诚实降级仍在场：选择器保留「所有分身」固定项（不伪造分身清单）
+    const sel = card.querySelector("[data-testid='kc-skl-target']") as HTMLSelectElement
+    expect(Array.from(sel.options).map(o => o.value)).toContain("*")
+  }, 15000)
 
   it("granted 态卡（Lane A 回执重发）：grantedTo 徽标 + 回执卡面 + 未授分身可选再授（并授 union）", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(GRANTED_EV))]

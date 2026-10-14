@@ -270,7 +270,9 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     revokeDraft: (draftName, cloneName) => void grants.revoke(draftName, cloneName),
     /** 票05 选择器数据源（GET /api/clones 复用，零新端点）*/
     grantTargets: grants.targets,
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, feed.retire, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire, grants.grant, grants.revoke, grants.targets])
+    /** aa-fix 项6：清单拉败错误位（服务不可达≠确无分身，卡面显形）*/
+    grantTargetsError: grants.targetsError,
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, feed.retire, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire, grants.grant, grants.revoke, grants.targets, grants.targetsError])
 
   // ── 发送：投喂意图走 REST 执行面；退役意图走 POST /retire（队列唯一写闸）；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {

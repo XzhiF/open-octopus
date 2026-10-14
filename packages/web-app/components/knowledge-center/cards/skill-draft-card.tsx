@@ -106,6 +106,12 @@ export function SkillDraftCard({ event, ctx }: KcCardViewProps) {
       {overlay?.error && (
         <div data-testid="kc-skl-grant-error" className="text-[10px] font-bold text-pop-red">{overlay.error}</div>
       )}
+      {/* aa-fix 项6：分身清单拉败≠确无分身——服务不可达必须显形（选择器仅剩固定项是降级不是事实） */}
+      {ctx.grantTargetsError && (
+        <div data-testid="kc-skl-target-error">
+          <CardRow k="分身清单" v={`拉取失败：${ctx.grantTargetsError}（服务不可达≠确无分身；选择器仅「所有分身（共享层）」固定项可信）`} tone="danger" />
+        </div>
+      )}
       <CardBtnRow>
         {packRefs.map((r) => (
           <KcBtn
