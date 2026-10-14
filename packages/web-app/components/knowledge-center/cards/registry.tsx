@@ -12,6 +12,7 @@ import { PageMiniCard } from './page-mini-card'
 import { GuardCard } from './guard-card'
 import { FindingCard } from './finding-card'
 import { BackfillCard } from './backfill-card'
+import { MaterialPackCard } from './material-pack-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
@@ -40,6 +41,8 @@ export interface KcCardActionCtx {
   backfillWiki: (cardId: string, input: { text: string; title?: string; sessionId?: string }) => void
   /** [不用]（票13 回填卡）：纯前端弃卡，零请求 */
   dismissBackfill: (cardId: string) => void
+  /** [剔除重编译]（P3 票02 素材包卡）：POST pack/recompile → 全局串行队列，状态回灌卡 */
+  recompilePack: (taskId: string, input: { excludePath?: string; focus?: string }) => void
 }
 
 export interface KcCardViewProps {
@@ -79,7 +82,7 @@ function UnknownKcCard({ event }: { event: KcCardEvent }) {
   )
 }
 
-// ── 注册（票12 六类 + 票13 finding/backfill；卡件 import 在文件头，副作用即注册）──
+// ── 注册（票12 六类 + 票13 finding/backfill + P3 票02 material-pack；卡件 import 在文件头，副作用即注册）──
 registerKcCardRenderer('ingest', IngestCard)
 registerKcCardRenderer('source-summary', SourceSummaryCard)
 registerKcCardRenderer('compile-diff', CompileDiffCard)
@@ -88,3 +91,4 @@ registerKcCardRenderer('page-mini', PageMiniCard)
 registerKcCardRenderer('guard', GuardCard)
 registerKcCardRenderer('finding', FindingCard)
 registerKcCardRenderer('backfill', BackfillCard)
+registerKcCardRenderer('material-pack', MaterialPackCard)

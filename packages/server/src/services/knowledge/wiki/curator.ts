@@ -12,6 +12,7 @@ import { serializePageMarkdown, extractRuleAnchors, pageDirForType, parseWikiFil
 import { ensureSchemaDoc, SCHEMA_DOC_FILE } from "./schema-doc"
 import { FindingsDAO } from "../../../db/dao/findings-dao"
 import type { GitRunner } from "./wiki-git"
+import { loadPackForCompile, packDirName } from "../material-pack"
 
 /**
  * CuratorCompileService — 策展编译管线（知识中心票05 主链条，三层架构 raw→wiki）。
@@ -192,6 +193,8 @@ export function buildCuratorPrompt(opts: {
   raw: RawPointer
   rawTitle: string
   rawContent: string
+  /** P3 票02：素材包上下文段（manifest 先行 + 按需下钻件）。缺省 ⇒ prompt 逐字不变（compileRaw 回归零扰动）。 */
+  packSection?: string
 }): string {
   const contract = {
     pages: [{
@@ -244,7 +247,7 @@ ${opts.currentPages.length > 0
 - title: ${opts.rawTitle}
 
 ${opts.rawContent}
-
+${opts.packSection ? `\n## 素材包上下文（读包编译 · manifest 先行 · 按需回源）\n\n${opts.packSection}\n` : ""}
 ## 输出契约
 
 只输出一个 JSON 对象（可用 \`\`\`json 围栏），不要任何围栏外解释。结构：
@@ -420,6 +423,53 @@ export class CuratorCompileService {
       }
     }
 
+    return this.compileSource({ raw, rawTitle, rawContent, sourcesStem: stem })
+  }
+
+  /**
+   * P3 票02 — 编译读包入口（archive-compile 队列整包的新原子单位）。
+   *
+   * 纪律：manifest 先行、按需下钻单件（token 预算面在 loadPackForCompile：清单恒在、
+   * 超预算件以「未载入…回源读」显形、焦点命中件放宽预算）；件 hash 逐一对质。
+   * 幂等键 = 包 digest ⊕ 焦点指令——剔除件/追加件/换焦点都放行真重编译，同键重投 no-op。
+   * 回执页以包为单元：`sources/task-{id}.md`，回指包内总结件路径（可解析回 manifest 件）。
+   * wiki 写永远经包外队列整包（本方法与 compileRaw 同级，不做队列语义）。
+   */
+  async compilePack(taskId: string, opts: { focus?: string } = {}): Promise<CuratorCompileResult> {
+    const load = loadPackForCompile(this.root, taskId, { focusInstruction: opts.focus })
+    if (!load.summary) {
+      throw new CuratorError("PACK_NO_SUMMARY", `素材包缺总结件（archive-summary）：${packDirName(taskId)}`, 409)
+    }
+    const key = sha256Hex(`${load.digest}|focus:${opts.focus ?? ""}`)
+    const summaryContent = load.summary.content
+    const raw: RawPointer = {
+      path: load.summary.item.path,
+      hash: key,
+      origin: `task-archive:${taskId}`,
+      bytes: Buffer.byteLength(summaryContent, "utf-8"),
+    }
+    const rawTitle = `素材包 task-${taskId}`
+    const sourcesStem = packDirName(taskId)
+
+    // 幂等快路径（同包同焦点 ⇒ no-op，不调 LLM）
+    const sourcesAbs = path.join(this.wikiRoot, `sources/${sourcesStem}.md`)
+    if (fs.existsSync(sourcesAbs)) {
+      const existing = fs.readFileSync(sourcesAbs, "utf-8")
+      if (existing.includes(key)) return this.dedupedResult(raw, rawTitle, existing, `sources/${sourcesStem}.md`)
+    }
+
+    return this.compileSource({ raw, rawTitle, rawContent: summaryContent, packSection: load.promptSection, sourcesStem })
+  }
+
+  /** compileRaw / compilePack 共用的计划-写闸主体（票05 原 body 抽出，行为逐字不变）。 */
+  private async compileSource(opts: {
+    raw: RawPointer
+    rawTitle: string
+    rawContent: string
+    sourcesStem: string
+    packSection?: string
+  }): Promise<CuratorCompileResult> {
+    const { raw, rawTitle, rawContent, sourcesStem } = opts
     // ── 编译前必读：SCHEMA.md（先幂等 seed）→ INDEX.md → 现库页全文 ──
     ensureKnowledgeSkeleton(this.root)
     ensureSchemaDoc(this.root)
@@ -433,7 +483,7 @@ export class CuratorCompileService {
     }))
 
     // ── LLM 抽取（seam；provider 缺席/禁用返回空串 ⇒ LLM_UNAVAILABLE）──
-    const prompt = buildCuratorPrompt({ schemaText, indexText, currentPages, raw, rawTitle, rawContent })
+    const prompt = buildCuratorPrompt({ schemaText, indexText, currentPages, raw, rawTitle, rawContent, ...(opts.packSection ? { packSection: opts.packSection } : {}) })
     const response = await this.llm(prompt)
     if (!response || response.trim() === "") {
       throw new CuratorError("LLM_UNAVAILABLE", "策展 LLM 无响应（provider 缺席或被禁用），编译未开始、零副作用", 503)
@@ -557,7 +607,8 @@ export class CuratorCompileService {
     }
 
     // ── sources 回执页（程序化：要点 + 触及页清单 + 回指 raw 路径与 hash）──
-    const srcId = `src-${stem}`
+    const sourcesRel = `sources/${sourcesStem}.md`
+    const srcId = `src-${sourcesStem}`
     const srcExisting = scanned.find(e => e.meta.id === srcId)
     const keyPoints = plan.key_points ?? []
     const touchedList = works.map(w => ({ path: w.relPath, type: w.meta.type, created: w.created }))
@@ -592,7 +643,7 @@ export class CuratorCompileService {
     const created = touchedList.filter(t => t.created).length + (srcExisting ? 0 : 1)
     const buildBatch = (): BatchPageInput[] => {
       const b: BatchPageInput[] = works.map(w => (w.fileName ? { content: serializePageMarkdown(w.meta, w.body), fileName: w.fileName } : { content: serializePageMarkdown(w.meta, w.body) }))
-      b.push({ content: serializePageMarkdown(srcMeta, srcBody), fileName: `${stem}.md` })
+      b.push({ content: serializePageMarkdown(srcMeta, srcBody), fileName: `${sourcesStem}.md` })
       return b
     }
     const batchOpts = {
@@ -693,7 +744,7 @@ export class CuratorCompileService {
     return abs
   }
 
-  private dedupedResult(raw: RawPointer, rawTitle: string, sourcesContent: string): CuratorCompileResult {
+  private dedupedResult(raw: RawPointer, rawTitle: string, sourcesContent: string, sourcesRel?: string): CuratorCompileResult {
     const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(sourcesContent)
     const links: string[] = []
     if (m) {
@@ -706,7 +757,7 @@ export class CuratorCompileService {
       const e = scanned.find(s => s.meta.id === id)
       if (e) touched.push({ path: e.relPath, type: e.type, created: false })
     }
-    const src = scanned.find(e => e.relPath === `sources/${path.basename(raw.path, ".md")}.md`)
+    const src = scanned.find(e => e.relPath === (sourcesRel ?? `sources/${path.basename(raw.path, ".md")}.md`))
     if (src) touched.push({ path: src.relPath, type: "source", created: false })
     return {
       rawPath: raw.path,

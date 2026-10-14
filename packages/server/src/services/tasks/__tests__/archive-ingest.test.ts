@@ -1,13 +1,14 @@
 // packages/server/src/services/tasks/__tests__/archive-ingest.test.ts
 //
-// 知识中心票10 — 归档自动投喂（S1 服务层环级测试，spec Testing Decisions「归档投喂」行）。
+// 知识中心票10 — 归档自动投喂（S1 服务层环级测试）；P3 票02 先例扩测：
+// 投喂链升级为「素材包落盘（先）→ 总结读包 → 总结入包 → 入队编译读包」，
+// 本文件的旧链钉位（单文件钉名/compile 单指针）随之适配包形态——
+// **语义逐字保留**：入队 kind/走锁/异步解耦、幂等、失败不阻塞 done、离线闸。
 //
-// Seam（全部既有缝，零新缝）：
-//   * ArchiveIngestService.ingestTask(taskId) — 一次 LLM 调用（summarize seam mock 捕获）
-//     → raw/archives/task-{id}-summary.md 冻结（票02 同契约：front-matter hash/origin）
-//     → wikiWriteQueue.enqueue("archive-compile")（走锁，compile seam 整包）。
-//   * TasksService.beginArchiving（经 acceptance API 末 phase accepted 真入口）—
-//     archiveIngestHook 触发与失败吞掉（不阻塞 done 判定语义）。
+// Seam：ArchiveIngestService.ingestTask(taskId)（summarize/compilePack seam mock 捕获）
+//   → raw/archives/task-{id}/ 包冻结（票02 契约：件级 front-matter hash）
+//   → wikiWriteQueue.enqueue("archive-compile")。
+// TasksService.beginArchiving 挂载点测试不变（K11 零触碰断言在此）。
 //
 // 真 fs+tmpdir（知识根 / task home），内存 sqlite + applySchema，R1-R7 诚实 fixture。
 // 基线红档案与本文件无关（不碰 archive-routes/clone-file-mgmt）。
@@ -163,8 +164,8 @@ function makeDeps(overrides: Partial<ArchiveIngestDeps> = {}) {
     taskHomeService: taskHome,
     rawIngest,
     queue,
-    compile: async (raw) => {
-      compiled.push(raw.path)
+    compilePack: async (taskId) => {
+      compiled.push(taskId)
     },
     summarize: async (prompt) => {
       calls.push({ prompt })
@@ -173,6 +174,11 @@ function makeDeps(overrides: Partial<ArchiveIngestDeps> = {}) {
     ...overrides,
   }
   return { deps, service: new ArchiveIngestService(deps), taskHome, queue, calls, compiled }
+}
+
+/** 读包 manifest（票02 包形态的钉名位）。 */
+function readPackManifest(taskId: string): any {
+  return JSON.parse(fs.readFileSync(path.join(knowledgeRoot, "raw", "archives", `task-${taskId}`, "manifest.json"), "utf-8"))
 }
 
 // ── Slice 2：编译入队（AC2 — archive-compile kind + 走锁 + 异步）────
@@ -201,34 +207,34 @@ describe("归档编译入全局串行队列（AC2）", () => {
     const { taskId } = seedV4Task(taskHome)
     const queue = new CompileQueue({ lock: fakeLock })
     const rawIngest = new RawIngestService({ root: knowledgeRoot })
-    const compiled: Array<{ path: string; hash: string }> = []
+    const compiled: string[] = []
     const service = new ArchiveIngestService({
       db,
       taskHomeService: taskHome,
       rawIngest,
       queue,
-      compile: async (raw) => { compiled.push({ path: raw.path, hash: raw.hash }) },
+      compilePack: async (tid) => { compiled.push(tid) },
       summarize: async () => SUMMARY_FIXTURE,
     })
 
     const outcome = await service.ingestTask(taskId)
     expect(outcome.status).toBe("ingested")
 
-    // 队列视图：kind/id/label 三项契约（GET /queue/task/arc-{id} 的可查面）
+    // 队列视图：kind/id/label 三项契约（GET /queue/task/arc-{id} 的可查面；票02 label=包 manifest）
     const view = queue.get(archiveCompileTaskId(taskId))!
     expect(view).toBeTruthy()
     expect(view.opKind).toBe("archive-compile")
-    expect(view.label).toBe(`raw/archives/${archiveSummaryFileName(taskId)}`)
+    expect(view.label).toBe(`raw/archives/task-${taskId}/manifest.json`)
 
     const settled = await settleQueue(queue, archiveCompileTaskId(taskId))
     expect(settled.state).toBe("committed")
     // 走锁（票06 两级机制的进程内级由队列持锁；编译整包在锁后执行）
     expect(acquired).toEqual([{ opKind: "archive-compile", taskId: archiveCompileTaskId(taskId) }])
     expect(released).toBe(1)
-    // compile 收到的是冻结后的 RawPointer（路径 + hash 与落盘一致）
-    expect(compiled).toHaveLength(1)
-    expect(compiled[0].path).toBe(`raw/archives/${archiveSummaryFileName(taskId)}`)
-    expect(compiled[0].hash).toBe(outcome.rawHash)
+    // compilePack 收到任务身份；回执指针 = 包内总结件（路径 + hash 与落盘一致）
+    expect(compiled).toEqual([taskId])
+    expect(outcome.rawPath).toBe(`raw/archives/task-${taskId}/07-archive-summary.md`)
+    expect(readPackManifest(taskId).items.find((i: any) => i.kind === "archive-summary").sha256).toBe(outcome.rawHash)
   })
 
   it("编译慢于投喂回执（异步解耦——ingestTask 不等编译完成）", async () => {
@@ -243,7 +249,7 @@ describe("归档编译入全局串行队列（AC2）", () => {
       taskHomeService: taskHome,
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
-      compile: async () => { await gate; compileDone = true },
+      compilePack: async () => { await gate; compileDone = true },
       summarize: async () => SUMMARY_FIXTURE,
     })
 
@@ -274,11 +280,12 @@ describe("重归档幂等（AC1）", () => {
     expect(second.status).toBe("deduped")
     expect(second.rawPath).toBe(first.rawPath)
 
-    // LLM 只调过一次（幂等闸在 summarize 之前）
+    // LLM 只调过一次（幂等闸在组包之前）
     expect(calls).toHaveLength(1)
-    // raw 只有一份（钉名位无 -2 后缀孪生文件）
+    // 包只有一份（archives 下唯一条目 = task-{id} 目录；无孪生包/旧单文件混放）
     const archivedDir = path.join(knowledgeRoot, "raw", "archives")
-    expect(fs.readdirSync(archivedDir)).toEqual([`task-${taskId}-summary.md`])
+    expect(fs.readdirSync(archivedDir)).toEqual([`task-${taskId}`])
+    expect(fs.readdirSync(path.join(archivedDir, `task-${taskId}`)).filter(n => n.endsWith(".md")).length).toBe(7)
     // 队列只有一条任务，且仍是第一次的 committed（无第二次入队）
     expect(queue.list()).toHaveLength(1)
     expect(compiled).toHaveLength(1)
@@ -289,8 +296,8 @@ describe("重归档幂等（AC1）", () => {
 
 // ── Slice 4：失败不阻塞（AC2 两路 + 离线闸）──────────────────────────
 
-describe("投喂失败不阻塞归档（AC2）", () => {
-  it("总结 LLM 抛错 ⇒ skipped（零落盘、零入队、永不向调用方抛错）", async () => {
+describe("投喂失败不阻塞归档（AC2；票02 链序=包先落盘，总结失败不毁包）", () => {
+  it("总结 LLM 抛错 ⇒ skipped（包按链序已落盘、无总结件、零入队、永不向调用方抛错）", async () => {
     const taskHome = new TaskHomeService(path.join(tmpRoot, "homes"))
     const { taskId } = seedV4Task(taskHome)
     const queue = new CompileQueue()
@@ -299,13 +306,17 @@ describe("投喂失败不阻塞归档（AC2）", () => {
       taskHomeService: taskHome,
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
-      compile: async () => {},
+      compilePack: async () => {},
       summarize: async () => { throw new Error("provider exploded") },
     })
 
     await expect(service.ingestTask(taskId)).resolves.toEqual({ status: "skipped", reason: "SUMMARIZE_FAILED" })
-    // 零痕迹：raw 不落半成品（票02 AC4 同律）、队列不参与
+    // 总结不落半成品（旧钉名位没有；包内也没有 archive-summary 件）——但素材包本体
+    // 按链序「素材包落盘（先）」保留：这正是票02 的资产化语义（踩坑素材不蒸发）。
     expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", archiveSummaryFileName(taskId)))).toBe(false)
+    const manifest = readPackManifest(taskId)
+    expect(manifest.items.find((i: any) => i.kind === "archive-summary")).toBeUndefined()
+    expect(manifest.items.length).toBe(6)
     expect(queue.list()).toHaveLength(0)
   })
 
@@ -317,7 +328,7 @@ describe("投喂失败不阻塞归档（AC2）", () => {
       taskHomeService: taskHome,
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue: new CompileQueue(),
-      compile: async () => {},
+      compilePack: async () => {},
       summarize: async () => "",
     })
     await expect(service.ingestTask(taskId)).resolves.toEqual({ status: "skipped", reason: "SUMMARIZE_EMPTY" })
@@ -332,7 +343,7 @@ describe("投喂失败不阻塞归档（AC2）", () => {
       taskHomeService: taskHome,
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
-      compile: async () => { throw Object.assign(new Error("boom"), { code: "LLM_UNAVAILABLE" }) },
+      compilePack: async () => { throw Object.assign(new Error("boom"), { code: "LLM_UNAVAILABLE" }) },
       summarize: async () => SUMMARY_FIXTURE,
     })
 
@@ -341,8 +352,8 @@ describe("投喂失败不阻塞归档（AC2）", () => {
     const settled = await settleQueue(queue, archiveCompileTaskId(taskId))
     expect(settled.state).toBe("failed")
     expect(settled.error?.code).toBe("LLM_UNAVAILABLE")
-    // 编译失败不回滚投喂成果：raw 件仍在（幂等闸下次仍命中，不会重烧 LLM）
-    expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", archiveSummaryFileName(taskId)))).toBe(true)
+    // 编译失败不回滚投喂成果：包内总结件仍在（幂等闸下次仍命中，不会重烧 LLM）
+    expect(fs.existsSync(path.join(knowledgeRoot, outcome.rawPath!))).toBe(true)
   })
 
   it("队列里一路 archive-compile 失败不堵死后续任务（票06 失败语义在此链路成立）", async () => {
@@ -356,8 +367,8 @@ describe("投喂失败不阻塞归档（AC2）", () => {
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
       // 按任务身份判成败（与队列调度时序无关的确定性 fixture）
-      compile: async (raw) => {
-        if (raw.path.includes(first.taskId)) throw new Error("first fails")
+      compilePack: async (tid) => {
+        if (tid === first.taskId) throw new Error("first fails")
       },
       // 内容按任务 id 去重标记——同 hash 会被票02 幂等闸并成同一个源，破坏双任务前提
       summarize: async (prompt) => SUMMARY_FIXTURE + `\n- 素材对质号 ${/- task id: (\S+)/.exec(prompt)?.[1] ?? ""}\n`,
@@ -416,20 +427,20 @@ describe("总结 prompt 捕获（AC1 四段素材）", () => {
   })
 })
 
-// ── Slice 1：总结 fixture → raw 冻结落盘（票02 同契约）────────────────
+// ── Slice 1：总结 fixture → 包内总结件冻结落盘（票02 同契约）───────────
 
-describe("归档总结落 raw/archives（AC1）", () => {
-  it("一次 LLM 调用产出的总结冻结落 raw/archives/task-{id}-summary.md，front-matter hash 与正文实算一致", async () => {
+describe("归档总结落素材包（AC1）", () => {
+  it("一次 LLM 调用产出的总结作为包内第七件冻结（raw/archives/task-{id}/07-archive-summary.md），front-matter hash 与正文实算一致", async () => {
     const { service, taskHome } = makeDeps()
     const { taskId } = seedV4Task(taskHome)
 
     const outcome = await service.ingestTask(taskId)
 
     expect(outcome.status).toBe("ingested")
-    expect(outcome.rawPath).toBe(`raw/archives/${archiveSummaryFileName(taskId)}`)
+    expect(outcome.rawPath).toBe(`raw/archives/task-${taskId}/07-archive-summary.md`)
 
-    const abs = path.join(knowledgeRoot, "raw", "archives", `task-${taskId}-summary.md`)
-    expect(fs.existsSync(abs), `summary file must be frozen at ${abs}`).toBe(true)
+    const abs = path.join(knowledgeRoot, "raw", "archives", `task-${taskId}`, "07-archive-summary.md")
+    expect(fs.existsSync(abs), `summary item must be frozen at ${abs}`).toBe(true)
     const file = fs.readFileSync(abs, "utf-8")
     // 票02 冻结契约：front-matter 五件套，正文原样 = LLM 产出（独立 fixture 对质）
     const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(file)
@@ -442,6 +453,8 @@ describe("归档总结落 raw/archives（AC1）", () => {
     const recalc = crypto.createHash("sha256").update(payload, "utf-8").digest("hex")
     expect(header).toContain(`hash: "${recalc}"`)
     expect(outcome.rawHash).toBe(recalc)
+    // 旧单文件钉名位不再产生（总结降级为包内一件）
+    expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", archiveSummaryFileName(taskId)))).toBe(false)
   })
 })
 
@@ -486,7 +499,7 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
       taskHomeService: taskHome,
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
-      compile: async () => {},
+      compilePack: async () => {},
       summarize: async () => SUMMARY_FIXTURE,
     })
     const { svc, app, archiveCalls } = flowSetup((id) => void ingest.ingestTask(id))
@@ -500,7 +513,7 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
     // 投喂在 enter-archiving 一刻起跑（异步：等队列汇合点确认全链落定）
     const settled = await settleQueue(queue, archiveCompileTaskId(taskId))
     expect(settled.state).toBe("committed")
-    expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", archiveSummaryFileName(taskId)))).toBe(true)
+    expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", `task-${taskId}`, "manifest.json"))).toBe(true)
     // beginArchiving 只翻状态——done/completed_at 不归它管（K3 保险不松动）
     expect(taskStatusRow(taskId).completed_at).toBeNull()
     void svc
@@ -551,8 +564,8 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
 
 // ── Slice 7：离线闸（OCTOPUS_KNOWLEDGE_LLM_DISABLED 同款兜底）────────
 
-describe("离线闸兜底（AC3 精神：总结失败=跳过投喂，归档照常）", () => {
-  it("OCTOPUS_KNOWLEDGE_LLM_DISABLED=1 ⇒ 生产 summarizer 恒空串；经 ingestTask 收敛为 skipped，零落盘", async () => {
+describe("离线闸兜底（AC3 精神：总结失败=不产总结不入队，归档照常；素材包按链序保留）", () => {
+  it("OCTOPUS_KNOWLEDGE_LLM_DISABLED=1 ⇒ 生产 summarizer 恒空串；经 ingestTask 收敛为 skipped，包无总结件、零入队", async () => {
     const prev = process.env.OCTOPUS_KNOWLEDGE_LLM_DISABLED
     process.env.OCTOPUS_KNOWLEDGE_LLM_DISABLED = "1"
     try {
@@ -568,12 +581,13 @@ describe("离线闸兜底（AC3 精神：总结失败=跳过投喂，归档照�
         taskHomeService: taskHome,
         rawIngest: new RawIngestService({ root: knowledgeRoot }),
         queue,
-        compile: async () => {},
+        compilePack: async () => {},
         summarize: summarizer,
       })
       const outcome = await service.ingestTask(taskId)
       expect(outcome).toEqual({ status: "skipped", reason: "SUMMARIZE_EMPTY" })
       expect(fs.existsSync(path.join(knowledgeRoot, "raw", "archives", archiveSummaryFileName(taskId)))).toBe(false)
+      expect(readPackManifest(taskId).items.find((i: any) => i.kind === "archive-summary")).toBeUndefined()
       expect(queue.list()).toHaveLength(0)
     } finally {
       if (prev === undefined) delete process.env.OCTOPUS_KNOWLEDGE_LLM_DISABLED

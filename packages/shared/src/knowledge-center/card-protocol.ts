@@ -46,6 +46,7 @@ export const KC_CARD_KINDS = [
   "guard",
   "finding",
   "backfill",
+  "material-pack",
 ] as const
 
 export type KcKnownCardKind = (typeof KC_CARD_KINDS)[number]
@@ -126,6 +127,50 @@ export interface KcCompileDiffCardData {
 export interface KcArchiveCompileCardData extends KcCompileDiffCardData {
   /** 如 `task-207「actuator 增强」` */
   taskLabel: string
+}
+
+// ── P3 票02 素材包卡（件清单 + 剔除某件→重编译钮；spec §卡片与 UI 逐字）──
+
+/** 素材包单件视图（manifest 投影：名/类/大小）。 */
+export interface KcMaterialPackItemView {
+  /** acceptance-ledger | phase-rejections | exec-jsonl-excerpt | pr-diff | matt-artifacts | adr-context-notes | archive-summary */
+  kind: string
+  /** 人读名（验收台账 / phase 打回记录 / …） */
+  name: string
+  /** 知识根相对路径（raw/archives/task-{id}/NN-….md） */
+  path: string
+  bytes: number
+  /** 件 payload sha256（冻结契约对质凭据；卡面可短显） */
+  sha256?: string
+  /** 已剔除（人裁素材源；红线3：这是策展事实记录，不是审批态） */
+  excluded?: boolean
+}
+
+/** 素材包卡上的剔除重编译任务流状态（Lane B 覆盖层回灌；id=队列任务 arc-{taskId}-rcN）。 */
+export interface KcMaterialPackRecompileState {
+  taskId: string
+  status: "queued" | "running" | "committed" | "failed"
+  position?: number | null
+  excludePath?: string | null
+  focus?: string | null
+  error?: { code: string; message: string }
+}
+
+/**
+ * 📦 P3 素材包卡（票02）：task 归档素材包冻结通知——件清单（名/类/大小）+
+ * 每件 [剔除重编译] 钮（经全局串行队列，禁直写 wiki）。卡 id 约定 `mdp-<taskId>`。
+ */
+export interface KcMaterialPackCardData {
+  taskId: string
+  /** raw/archives/task-{id} */
+  packPath: string
+  items: KcMaterialPackItemView[]
+  /** 总结件是否已入包（LLM 离线 ⇒ false：包在、无编译任务） */
+  summaryIncluded: boolean
+  /** 首轮归档编译队列 id（arc-{taskId}） */
+  queueTaskId?: string
+  /** 剔除重编译任务流状态（Lane B 轮询回灌） */
+  recompile?: KcMaterialPackRecompileState
 }
 
 /** 📇 词条迷你卡：对话提到某页。 */
@@ -215,6 +260,7 @@ export interface KcCardEvent {
     | KcGuardCardData
     | KcFindingCardData
     | KcBackfillCardData
+    | KcMaterialPackCardData
     | Record<string, unknown>
 }
 

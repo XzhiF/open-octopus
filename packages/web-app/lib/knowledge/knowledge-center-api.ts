@@ -406,3 +406,51 @@ export async function kcBackfill(input: { text: string; title?: string; sessionI
   })
   return handleResponse<KcBackfillAck>(res)
 }
+
+// ============ P3 票02 素材包面（pack 读 + 剔除/焦点重编译）============
+// 端点契约见 server routes/wiki-pack.ts；重编译队列位次复用 kcGetQueueTask（票06 单源）。
+
+export interface KcPackItemView {
+  kind: string
+  name: string
+  path: string
+  bytes: number
+  sha256: string
+  excluded: boolean
+}
+
+export interface KcPackView {
+  taskId: string
+  legacy?: boolean
+  rawPath?: string
+  packPath?: string
+  manifestPath?: string
+  digest?: string
+  createdAt?: string
+  items: KcPackItemView[]
+  recompiles: Array<{ at: string; excludePath?: string | null; focus?: string | null; queueTaskId: string }>
+}
+
+export async function kcGetPack(taskId: string): Promise<KcPackView | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/pack/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  return handleResponse<KcPackView>(res)
+}
+
+export interface KcRecompileAck {
+  queueTaskId: string
+  excludedPath: string | null
+  focus: string | null
+  manifestHash: string
+  opKind: string
+}
+
+/** 剔除某件→重编译 / 焦点重编译：经全局串行队列（archive-compile，禁直写 wiki）。 */
+export async function kcRecompilePack(taskId: string, input: { excludePath?: string; focus?: string }): Promise<KcRecompileAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/pack/${encodeURIComponent(taskId)}/recompile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse<KcRecompileAck>(res)
+}

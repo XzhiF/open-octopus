@@ -24,12 +24,15 @@ import { createIngestRoutes } from "./routes/ingest"
 import { createKnowledgeReadRoutes } from "./routes/knowledge-read"
 import { RawIngestService } from "./services/knowledge/raw"
 import { createWikiCompileRoutes } from "./routes/wiki-compile"
+import { createWikiPackRoutes } from "./routes/wiki-pack"
+import { MaterialPackOpsService } from "./services/knowledge/pack-ops"
+import type { KcMaterialPackCardData } from "@octopus/shared"
 import { createWikiRevertRoutes } from "./routes/wiki-revert"
 import { RevertTaskService } from "./services/knowledge/wiki/revert"
 import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
-import { resolveGlobalWikiRoot } from "./services/knowledge/global-paths"
+import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
@@ -578,6 +581,18 @@ const knowledgeBackfill = new BackfillService({ trigger: ingestCompileTrigger })
 app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
+// P3 票02：素材包路由——GET /pack/:taskId（manifest 件清单视图 + 旧单文件 legacy 兼容读）；
+// POST /pack/:taskId/recompile（剔除某件/焦点指令 → 全局串行队列 archive-compile 重编译，
+// 禁直写 wiki 红线2；剔除=人裁素材源不是审批红线3）。db 面惰性（curator 在队列内构造）。
+const packOps = new MaterialPackOpsService({
+  root: resolveGlobalKnowledgeRoot(),
+  queue: wikiWriteQueue,
+  compilePack: async (taskId, opts) => {
+    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+    return curator.compilePack(taskId, opts ?? {})
+  },
+})
+app.route("/api/knowledge/wiki", createWikiPackRoutes(packOps))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
 // 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
@@ -916,20 +931,30 @@ if (shouldServe) {
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
-      // 知识中心票10: 归档自动投喂 —— task 进入 archiving 态即一次 LLM 总结落
-      // raw/archives/task-{id}-summary.md（票02 冻结契约），编译走票06 全局串行队列
-      // （kind=archive-compile，任务状态经 GET /api/knowledge/wiki/queue/task/arc-{id} 可查）。
+      // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
+      // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
+      // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
+      // 状态可查 GET /api/knowledge/wiki/queue/task/arc-{id}）。素材包卡经 Lane A
+      // 沉淀进知识中心会话（appendKnowledgeSessionCards 先例；无会话诚实降级）。
       // 失败不阻塞 done：投喂链与 K11 归档编排正交（beginArchiving fire-and-forget）。
       const archiveIngest = new ArchiveIngestService({
         db,
         taskHomeService,
         rawIngest: new RawIngestService(),
         queue: wikiWriteQueue,
-        compile: async (raw) => {
+        compilePack: async (taskId, opts) => {
           const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
-          return curator.compileRaw(raw)
+          return curator.compilePack(taskId, opts ?? {})
         },
         summarize: createProductionArchiveSummarizer(),
+        announcePack: (event) => {
+          const d = event.data as KcMaterialPackCardData
+          appendKnowledgeSessionCards(
+            getDb(),
+            `📦 归档素材包 task-${d.taskId}（${d.items.length} 件已冻结入 raw，含 hash 可对质；编译已入串行队列，可逐件剔除重编译）：`,
+            [event],
+          )
+        },
       })
       tasksService.setArchiveIngestHook((taskId) => {
         void archiveIngest.ingestTask(taskId)

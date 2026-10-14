@@ -5,6 +5,7 @@ import { ChatArea } from '@/components/agent/chat/ChatArea'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useKcFindings } from '@/hooks/use-kc-findings'
+import { useKcPacks } from '@/hooks/use-kc-packs'
 import { KcCard, type KcCardActionCtx } from './cards/registry'
 import {
   createCloneSession,
@@ -22,6 +23,7 @@ import {
   type KcCardEvent,
   type KcCompileDiffCardData,
   type KcFindingCardData,
+  type KcMaterialPackCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { classifyKcFeed } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
@@ -128,6 +130,9 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     onSettled: onWikiChanged,
     onBackfillCompile: (taskId, rawPath) => feed.trackTask(taskId, rawPath),
   })
+
+  // ── P3 票02：素材包剔除/焦点重编译覆盖层（队列任务态回灌 material-pack 卡）──
+  const packs = useKcPacks({ pollMs: feedPollMs, onSettled: onWikiChanged })
   const sessionIdRef = useRef<string | null>(null)
   sessionIdRef.current = activeSessionId
 
@@ -185,8 +190,14 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
       if (!overlay) return e
       return { ...e, data: { ...e.data as KcBackfillCardData, ...overlay } }
     }
+    if (e.kind === 'material-pack') {
+      const d = e.data as KcMaterialPackCardData
+      const rc = packs.recompileStates[d.taskId]
+      if (!rc) return e
+      return { ...e, data: { ...d, recompile: rc } }
+    }
     return e
-  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus])
+  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus, packs.recompileStates])
   const isDismissed = useCallback((e: KcCardEvent) => e.kind === 'backfill' && !!findings.dismissed[e.id], [findings.dismissed])
   const tailEvents = useMemo(
     () => feed.cards
@@ -231,7 +242,8 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
       sessionId: input.sessionId ?? sessionIdRef.current ?? undefined,
     }),
     dismissBackfill: cardId => findings.dismissBackfill(cardId),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill])
+    recompilePack: (taskId, input) => void packs.recompile(taskId, input),
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile])
 
   // ── 发送：投喂意图走 REST 执行面；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {

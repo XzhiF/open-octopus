@@ -29,4 +29,7 @@ export type {
   KcFindingFixState,
   KcFindingCardData,
   KcBackfillCardData,
+  KcMaterialPackItemView,
+  KcMaterialPackRecompileState,
+  KcMaterialPackCardData,
 } from "@octopus/shared"

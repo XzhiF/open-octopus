@@ -252,7 +252,8 @@ describe("票06 归档链写入 semantic_summary（独立字段=多面摘要）"
       taskHomeService: new TaskHomeService(path.join(tmp, "home")),
       rawIngest: new RawIngestService({ root: knowledgeRoot }),
       queue,
-      compile: async () => ({}),
+      // 票02 素材包链：compile 单指针入口升级为 compilePack 读包入口（seam 替身不变义）
+      compilePack: async () => ({}),
       summarize: async () => summary,
     })
     const outcome = await svc.ingestTask("arc-ok")
@@ -273,7 +274,7 @@ describe("票06 归档链写入 semantic_summary（独立字段=多面摘要）"
       taskHomeService: new TaskHomeService(path.join(tmp, "home")),
       rawIngest: new RawIngestService({ root: path.join(tmp, "knowledge") }),
       queue: new CompileQueue(),
-      compile: async () => ({}),
+      compilePack: async () => ({}),
       summarize: async () => "",
     })
     const outcome = await svc.ingestTask("arc-empty")

@@ -92,6 +92,9 @@ function sha256(text: string): string {
   return crypto.createHash("sha256").update(text, "utf-8").digest("hex")
 }
 
+/** P3 票02 素材包导出：件级冻结与单文件 raw 共用同一 hash/换行口径（单源，禁旁路复制）。 */
+export const sha256Text = sha256
+
 /** 归一换行（CRLF → LF）；不改正文其余字节 ⇒ hash 与 bytes 对得上源文本本体。 */
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n")
@@ -112,6 +115,13 @@ function renderRawFrontMatter(t: { origin: string; title: string; ingestedAt: st
 }
 
 const FRONT_MATTER_RE = /^---\r?\n([\S\s]*?)\r?\n---/
+export { FRONT_MATTER_RE, normalizeNewlines, renderRawFrontMatter }
+
+/** 剥 front-matter 取 payload（含收尾换行——与 freeze 的「header + payload」拼接逐字互补）。 */
+export function stripRawFrontMatter(text: string): string {
+  const m = /^---\r?\n([\S\s]*?)\r?\n---\r?\n?/.exec(text)
+  return m ? text.slice(m[0].length) : text
+}
 
 /** 从 raw 文件头取一个标量字段（去引号）；无头/无字段 → null。 */
 function frontMatterValue(content: string, key: string): string | null {
