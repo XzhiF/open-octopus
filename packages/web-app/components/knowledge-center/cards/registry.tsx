@@ -56,6 +56,8 @@ export interface KcCardActionCtx {
   revokeDraft?: (draftName: string, cloneName: string) => void
   /** 可授予分身清单（票05 选择器数据源，宿主 GET /api/clones 一次拉取；空=诚实降级只剩「所有分身」） */
   grantTargets?: Array<{ name: string; display_name: string }>
+  /** 清单拉取错误（aa-fix 项6）：非空=服务不可达——卡面显形，不把故障伪装成「确无分身」 */
+  grantTargetsError?: string | null
 }
 
 export interface KcCardViewProps {

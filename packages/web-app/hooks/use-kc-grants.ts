@@ -32,6 +32,11 @@ export interface KcGrantState {
 export interface UseKcGrantsResult {
   /** 可授予分身清单（GET /api/clones 拉败=空清单诚实降级，选择器仍留「所有分身」固定项） */
   targets: KcGrantTarget[]
+  /**
+   * 清单拉取错误（null=正常）。非空 ⇒ 「拉不到」与「确无分身」在卡面可分辨
+   * （aa-fix 项6：服务不可达≠确无，静默空清单会把故障伪装成事实）。
+   */
+  targetsError: string | null
   /** draftName → 钮态覆盖层（宿主 withCardStates 合并进 skill-draft 卡，任意车道生效） */
   states: Record<string, KcGrantState>
   grant: (draftName: string, cloneName: string) => Promise<void>
@@ -40,6 +45,7 @@ export interface UseKcGrantsResult {
 
 export function useKcGrants(): UseKcGrantsResult {
   const [targets, setTargets] = useState<KcGrantTarget[]>([])
+  const [targetsError, setTargetsError] = useState<string | null>(null)
   const [states, setStates] = useState<Record<string, KcGrantState>>({})
   const aliveRef = useRef(true)
 
@@ -49,10 +55,16 @@ export function useKcGrants(): UseKcGrantsResult {
     apiFetch(`${getServerUrl()}/api/clones`)
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((v: { clones?: KcGrantTarget[] }) => {
-        if (!cancelled) setTargets(Array.isArray(v?.clones) ? v.clones : [])
+        if (!cancelled) {
+          setTargets(Array.isArray(v?.clones) ? v.clones : [])
+          setTargetsError(null)
+        }
       })
-      .catch(() => {
-        if (!cancelled) setTargets([]) // 服务不可达：空清单（选择器不伪造分身）
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setTargets([]) // 服务不可达：空清单（选择器不伪造分身）
+          setTargetsError(err instanceof Error ? err.message : String(err)) // 但错误位必须显形（aa-fix 项6）
+        }
       })
     return () => { cancelled = true; aliveRef.current = false }
   }, [])
@@ -76,5 +88,5 @@ export function useKcGrants(): UseKcGrantsResult {
   const revoke = useCallback((draftName: string, cloneName: string) =>
     run(draftName, () => kcRevokeDraft(draftName, cloneName)), [run])
 
-  return { targets, states, grant, revoke }
+  return { targets, targetsError, states, grant, revoke }
 }
