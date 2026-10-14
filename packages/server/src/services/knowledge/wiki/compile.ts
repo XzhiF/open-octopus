@@ -211,11 +211,40 @@ export function scanWikiEntries(root: string): ScannedEntry[] {
  * 历史 wiki_refs 撞进新页（故事 28 暗坑）。无台账（未重蒸馏）⇒ 空集，行为原样。
  */
 function retiredLedgerAnchors(root: string): string[] {
+  const out: string[] = []
   try {
     const j = JSON.parse(fs.readFileSync(path.join(root, REDISTILL_MAP_REL), "utf-8")) as { anchors?: Array<{ anchor?: unknown }> }
-    return Array.isArray(j.anchors) ? j.anchors.map(a => (a && typeof a.anchor === "string" ? a.anchor : "")).filter(Boolean) : []
+    if (Array.isArray(j.anchors)) out.push(...j.anchors.map(a => (a && typeof a.anchor === "string" ? a.anchor : "")).filter(Boolean))
+  } catch { /* 无台账 */ }
+  // 票08 页退役：退役页连同 `<!--#oct-NNN-->` 锚点整册迁 `_retired/**/*.md`（不在 scan 面）。
+  // 若不并入发号空间，max+1 会重铸退役页锚点 → 撞历史 wiki_refs（永不复用铁律的退役面延伸）。
+  collectRetiredAnchors(path.join(root, "_retired"), out)
+  return out
+}
+
+/** 递归收集 `_retired/` 下所有 .md 页正文锚点（目录缺失⇒空，坏文件跳过）。 */
+function collectRetiredAnchors(dir: string, sink: string[]): void {
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
   } catch {
-    return []
+    return
+  }
+  for (const n of names) {
+    const abs = path.join(dir, n)
+    let st: fs.Stats
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      continue
+    }
+    if (st.isDirectory()) {
+      collectRetiredAnchors(abs, sink)
+    } else if (n.endsWith(".md")) {
+      try {
+        sink.push(...extractRuleAnchors(fs.readFileSync(abs, "utf-8")))
+      } catch { /* 坏文件跳过 */ }
+    }
   }
 }
 

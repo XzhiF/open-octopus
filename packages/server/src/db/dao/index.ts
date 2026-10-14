@@ -15,7 +15,8 @@ export { AgentSessionDAO } from "./agent-session-dao"
 export { EvolutionDAO } from "./evolution-dao"
 export { CloneDAO } from "./clone-dao"
 export { SafetyDAO } from "./safety-dao"
-export { PendingReviewDAO, type PendingReviewRow } from "./pending-review-dao"
+// 票08 清理账（spec 故事28）：PendingReviewDAO 随 pending_review 蓝绿 drop 一并物理删除——
+// skill 草案改走卡片通道后其零消费者，legacy 执行归档审批流（/propose + /api/review）同批下线。
 // 边界注（评审 S1）：业务层零 importer，保留为 spec Out-of-Scope P4「effectiveness v2」预留面
 // ——与 schema.sql knowledge_effectiveness 边界注同律，勿删（详见 knowledge-effectiveness-dao.ts 类注）。
 export { KnowledgeEffectivenessDAO } from "./knowledge-effectiveness-dao"

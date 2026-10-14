@@ -12,6 +12,7 @@ import { PageMiniCard } from './page-mini-card'
 import { GuardCard } from './guard-card'
 import { FindingCard } from './finding-card'
 import { BackfillCard } from './backfill-card'
+import { PageRetireCard } from './page-retire-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
@@ -37,6 +38,8 @@ export interface KcCardActionCtx {
   backfillWiki: (cardId: string, input: { text: string; title?: string; sessionId?: string }) => void
   /** [不用]（票13 回填卡）：纯前端弃卡，零请求 */
   dismissBackfill: (cardId: string) => void
+  /** 页退役（票08 · 故事32）：对话退役意图触发 POST /retire（卡上无此钮，仅宿主调用） */
+  retirePage?: (pagePath: string) => void
 }
 
 export interface KcCardViewProps {
@@ -85,3 +88,5 @@ registerKcCardRenderer('page-mini', PageMiniCard)
 registerKcCardRenderer('guard', GuardCard)
 registerKcCardRenderer('finding', FindingCard)
 registerKcCardRenderer('backfill', BackfillCard)
+// 票08 清理账（故事32）：页退役卡——一行注册（开放 kind，无 KcCardKind 联合改动）
+registerKcCardRenderer('page-retire', PageRetireCard)

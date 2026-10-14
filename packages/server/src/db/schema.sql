@@ -1019,27 +1019,11 @@ INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
 -- Knowledge System Tables
 -- =============================================================================
 
--- pending_review 边界注（知识中心票09，spec「审批废除与写入闸门」）：
--- wiki 审批通道（rule/wiki-edit/wiki-split 策展分发、auto_approve）已在代码侧
--- 全删；**表本体保留**——skill 草案等非 wiki 用途仍在此结案流转，
--- 物理清表属 P3（spec Out of Scope）。勿删本表。
-CREATE TABLE IF NOT EXISTS pending_review (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL DEFAULT 'rule',
-  source TEXT NOT NULL DEFAULT 'system',
-  source_ref TEXT NOT NULL DEFAULT '',
-  source_label TEXT NOT NULL DEFAULT '',
-  content TEXT NOT NULL,
-  target_file TEXT NOT NULL DEFAULT '',
-  scope TEXT NOT NULL DEFAULT 'project',
-  conflicts TEXT DEFAULT NULL,
-  confidence REAL NOT NULL DEFAULT 0.5,
-  auto_approve INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  reviewed_at TEXT DEFAULT NULL,
-  user_notes TEXT DEFAULT NULL
-);
+-- pending_review 退役注（票08 清理账，spec 故事28）：本表已物理 drop——skill 草案改走
+-- 卡片通道、legacy 执行归档审批流（/api/archive/:id/propose + /api/review）随「审批不复活」
+-- 红线整体删除后零消费者。既有库的表与三索引由蓝绿退役脚本
+-- services/knowledge/retire-pending-review.ts 处理（**导出归档先于删除**，落
+-- `<知识根>/_archive/pending-review-{ts}.json`），真实库执行归主控 ops。此处不再 CREATE。
 
 -- knowledge_effectiveness 边界注（code-review S1 / 2026-10-24 评审修复）：注入链生产者已随
 -- 知识中心票08 物理删除，服务层死链（effectiveness.ts/maintenance.ts/generate.ts 及其自测）
@@ -1055,14 +1039,7 @@ CREATE TABLE IF NOT EXISTS knowledge_effectiveness (
   confidence REAL NOT NULL DEFAULT 0.5
 );
 
-CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_review(status);
 CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(injected_count, confidence, last_injected);
-
--- Knowledge subsystem: indexes added in schema version 25 to support
--- listBySource queries that previously did full-table scans.
--- Idempotent via IF NOT EXISTS.
-CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
-CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
 
 -- =============================================================================
 -- Wiki Tables (LLM-WIKI knowledge-loop, schema version 52) — ticket 01

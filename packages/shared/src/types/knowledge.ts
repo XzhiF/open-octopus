@@ -1,48 +1,10 @@
 import { z } from "zod"
 
-// === Enums ===
-export const PendingStatusValues = ['pending', 'approved', 'edited', 'rejected', 'deferred'] as const
-export type PendingStatus = typeof PendingStatusValues[number]
-
-export const PendingSourceValues = [
-  'workspace_archive', 'agent_conversation', 'clone_merge',
-  'system', 'recurring_pitfall', 'knowledge_pattern', 'scheduler'
-] as const
-export type PendingSource = typeof PendingSourceValues[number]
-
-export const PendingTypeValues = ['rule', 'skill'] as const
-export type PendingType = typeof PendingTypeValues[number]
-
-export const KnowledgeScopeValues = ['project', 'workflow', 'global'] as const
-export type KnowledgeScope = typeof KnowledgeScopeValues[number]
-
-export const ConflictTypeValues = ['contradicts', 'overlaps', 'supersedes'] as const
-export type ConflictType = typeof ConflictTypeValues[number]
-
-
-export const ConflictInfoSchema = z.object({
-  existingRule: z.string(),
-  existingFile: z.string(),
-  conflictType: z.enum(ConflictTypeValues),
-})
-
-export const PendingReviewSchema = z.object({
-  id: z.string(),
-  type: z.enum(PendingTypeValues),
-  source: z.enum(PendingSourceValues),
-  sourceRef: z.string(),
-  sourceLabel: z.string(),
-  content: z.string(),
-  targetFile: z.string(),
-  scope: z.enum(KnowledgeScopeValues),
-  conflicts: z.array(ConflictInfoSchema).nullable(),
-  confidence: z.number().min(0).max(1),
-  autoApprove: z.boolean(),
-  status: z.enum(PendingStatusValues),
-  createdAt: z.string(),
-  reviewedAt: z.string().optional(),
-  userNotes: z.string().optional(),
-})
+// 票08 清理账（spec 故事28）：pending_review 审批族类型（PendingStatus/PendingSource/
+// PendingType/KnowledgeScope/ConflictType/ConflictInfoSchema/PendingReviewSchema/
+// ProposedRule/ProposedSkill）随表物理 drop + 生产者 extract.ts 下线一并删除——skill 草案
+// 走卡片通道后零消费者，红线3「审批不复活」。KnowledgeConfigSchema（agent 设置）、
+// KnowledgeEffectivenessSchema（P4 预留面）、ParsedRule（file-ops 运行时护栏）保留。
 
 export const KnowledgeEffectivenessSchema = z.object({
   ruleId: z.string(),
@@ -62,29 +24,8 @@ export const KnowledgeConfigSchema = z.object({
 })
 
 // === TS Interfaces ===
-export type ConflictInfo = z.infer<typeof ConflictInfoSchema>
-export type PendingItem = z.infer<typeof PendingReviewSchema>
 export type KnowledgeEffectiveness = z.infer<typeof KnowledgeEffectivenessSchema>
 export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>
-
-export interface ProposedRule {
-  text: string
-  scope: KnowledgeScope
-  target: string
-  source: PendingSource
-  id?: string
-}
-
-export interface ProposedSkill {
-  id: string
-  skillName: string
-  category: string
-  source: PendingSource
-  sourceRef: string
-  content: string
-  confidence: number
-  status: PendingStatus
-}
 
 export interface ParsedRule {
   id: string

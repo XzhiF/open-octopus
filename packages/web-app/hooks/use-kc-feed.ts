@@ -5,14 +5,17 @@ import {
   kcGetCompileTask,
   kcGetQueueTask,
   kcGetRevertTask,
+  kcGetRetireTask,
   kcIngest,
   kcRevert,
+  kcRetire,
   type KcIngestInput,
 } from '@/lib/knowledge/knowledge-center-api'
 import type {
   KcCardEvent,
   KcCompileDiffCardData,
   KcIngestCardData,
+  KcPageRetireCardData,
   KcRevertState,
   KcSourceSummaryCardData,
 } from '@/lib/knowledge-center/card-protocol'
@@ -190,5 +193,41 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
     }
   }, [trackRevert])
 
-  return { cards, feed, revert, restore, reset, revertStates, trackTask: trackCompile }
+  // ── 页退役（票08 · 故事32：对话退役意图 → POST /retire → 队列 page-retire，Lane B 回执卡）──
+  const trackRetire = useCallback((taskId: string, pagePath: string) => {
+    const card = (data: KcPageRetireCardData): void => {
+      upsert({ id: `ret-${taskId}`, kind: 'page-retire', ts: nowIso(), data: { pagePath, ...data } })
+    }
+    poller.run(async (): Promise<boolean> => {
+      const [task, queue] = await Promise.all([kcGetRetireTask(taskId), kcGetQueueTask(taskId)])
+      if (!task) {
+        card({ status: 'failed', error: { code: 'TASK_LOST', message: '退役任务不可查（git LOG 为审计真相）' } })
+        return true
+      }
+      card({
+        status: task.status,
+        position: queue?.state === 'queued' ? queue.position : null,
+        to: task.result?.retiredPath,
+        commit: task.result?.retireCommit,
+        error: task.error ?? queue?.error,
+      })
+      if (task.status === 'committed') { onSettledRef.current?.(); return true }
+      return task.status === 'failed'
+    })
+  }, [poller, upsert])
+
+  const retire = useCallback(async (pagePath: string, reason?: string): Promise<void> => {
+    const pendingId = kcPlaceholderTaskId('retire')
+    upsert({ id: `ret-${pendingId}`, kind: 'page-retire', ts: nowIso(), data: { status: 'queued', position: null, pagePath } })
+    try {
+      const ack = await kcRetire({ path: pagePath, ...(reason ? { reason } : {}) })
+      // 用 ack.taskId 重新锚定卡（替换 pending 占位）
+      cardsRef.current.delete(`ret-${pendingId}`)
+      trackRetire(ack.taskId, ack.path || pagePath)
+    } catch (err) {
+      upsert({ id: `ret-${pendingId}`, kind: 'page-retire', ts: nowIso(), data: { status: 'failed', pagePath, error: kcErrFace(err, 'RETIRE_ERROR') } })
+    }
+  }, [trackRetire, upsert])
+
+  return { cards, feed, revert, retire, restore, reset, revertStates, trackTask: trackCompile }
 }

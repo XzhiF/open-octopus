@@ -58,10 +58,12 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
 
 describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
   describe("schema", () => {
-    it("schema version is 53 (v52 = wiki_articles/wiki_fts · LLM-WIKI 票01; v53 = findings · 知识中心票05)", () => {
+    it("schema version is stamped (≥42 tasks domain; global constant may rise — don't pin a moving target)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(53)
-      expect(SCHEMA_VERSION).toBe(53)
+      // 本测主题是 tasks 表形制（v42 域），不是全局版本号的快照；钉死 SCHEMA_VERSION
+      // 会在每次 bump（票08 已 53→54，后续票还会升）时假红。改按动态一致性断言。
+      expect(v).toBe(SCHEMA_VERSION)
+      expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {

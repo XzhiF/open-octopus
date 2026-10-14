@@ -69,18 +69,6 @@ export function appendToKnowledgeFile(filePath: string, ruleText: string, ruleId
 }
 
 /**
- * List all .md knowledge files in a directory (excluding index.md and user_preference.md).
- */
-export function listKnowledgeFiles(dir: string): string[] {
-  try {
-    return fs.readdirSync(dir)
-      .filter(f => f.endsWith(".md") && f !== "index.md" && f !== "user_preference.md")
-  } catch {
-    return []
-  }
-}
-
-/**
  * Used by knowledge-file surfaces to read preferences per scope.
  *
  * Path resolution（委托 getKnowledgeDir——env 拍平与 org/全局轨由其单源）：
@@ -159,48 +147,6 @@ export function parseKnowledgeFile(filePath: string): ParsedRule[] {
   }
 
   return rules
-}
-
-/**
- * Mark a rule as retired in the knowledge file by adding <!-- retired --> annotation.
- */
-export function markRuleRetired(filePath: string, ruleId: string): void {
-  const content = readKnowledgeFile(filePath)
-  if (!content) return
-  const marker = `<!-- id:${ruleId} |`
-  const retiredMarker = `<!-- retired -->`
-  // Add retired marker after the rule's metadata comment
-  const updated = content.replace(
-    new RegExp(`(${escapeRegex(marker)}[^\\n]*-->)(?!\\s*${escapeRegex(retiredMarker)})`),
-    `$1\n${retiredMarker}`,
-  )
-  if (updated !== content) writeKnowledgeFile(filePath, updated)
-}
-
-/**
- * Remove retired annotation from a rule in the knowledge file.
- */
-export function unmarkRuleRetired(filePath: string, ruleId: string): void {
-  const content = readKnowledgeFile(filePath)
-  if (!content) return
-  const marker = `<!-- id:${ruleId} |`
-  // Find the retired marker after the rule's metadata and remove it
-  const lines = content.split("\n")
-  const result: string[] = []
-  let skipNext = false
-  for (let i = 0; i < lines.length; i++) {
-    if (skipNext && lines[i].trim() === "<!-- retired -->") {
-      skipNext = false
-      continue
-    }
-    skipNext = lines[i].includes(marker)
-    result.push(lines[i])
-  }
-  writeKnowledgeFile(filePath, result.join("\n"))
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 /**
@@ -372,11 +318,4 @@ export function listAllRules(org: string): FileRule[] {
  */
 export function listAllActiveRules(org: string): FileRule[] {
   return listAllRules(org).filter(r => !r.retired)
-}
-
-/**
- * Find a single rule by ID (active or retired). Replaces knowledgeRuleDAO.getById().
- */
-export function findRuleById(org: string, ruleId: string): FileRule | undefined {
-  return listAllRules(org).find(r => r.rule_id === ruleId)
 }

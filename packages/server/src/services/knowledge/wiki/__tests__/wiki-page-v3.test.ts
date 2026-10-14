@@ -315,8 +315,8 @@ describe("v3 页格式基座 — 票04 S1（expected 逐字 prototype Tab②）"
       expect(suggestion!.children.map(c => c.title)).toEqual(["SOP", "硬约束", "已知陷阱"])
     }
 
-    // 无入队语义：pending_review 零行
-    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_review").get() as { n: number }).n).toBe(0)
+    // 票08 清理账：pending_review 表已退役，无「入队」语义可断言——
+    // 拒写零痕迹改由下面盘上校验覆盖（不重建已删表）。
     // 拒写零痕迹：盘上仍是无锚点桩身
     expect(fs.readFileSync(path.join(root, "topics", "prd-impl-workflow.md"), "utf-8")).not.toContain("oct-030")
   }, 60_000)

@@ -29,4 +29,5 @@ export type {
   KcFindingFixState,
   KcFindingCardData,
   KcBackfillCardData,
+  KcPageRetireCardData,
 } from "@octopus/shared"
