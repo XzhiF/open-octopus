@@ -255,6 +255,17 @@ export class ArchiveIngestService {
       return this.skip("RAW_FREEZE_FAILED", err instanceof Error ? err.message : String(err))
     }
 
+    // 票06 (语义摘要进任务板): 归档总结的独立字段（多面摘要：干了什么/关键决策/踩坑/
+    // 产出指针——即整份 text，非首段截断）写入 tasks.semantic_summary，供任务板搜索 LIKE
+    // 命中（故事 25-26）。这是本票在该文件里唯一的一小段接线（素材包改造属票02）。
+    // 纪律：fire-and-forget 尽力而为——写失败只 stderr，绝不抛（永不参与 done 判定、
+    // K11 零触碰、done 唯一写者不变；setSemanticSummary 定向 UPDATE 不碰 status/version）。
+    try {
+      this.taskDAO.setSemanticSummary(taskId, text.trim())
+    } catch (err) {
+      process.stderr.write(`[archive-ingest] semantic_summary write failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+
     // 异步编译入队（票06 全局串行；执行在队列内，编译失败只记 failed 态）。
     const queueTaskId = archiveCompileTaskId(taskId)
     let queueEnqueued = false

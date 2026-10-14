@@ -383,6 +383,9 @@ export interface WritePlanIssueInput extends WritePlanInputBase {}
 export interface ListTasksParams {
   status?: TaskStatus
   org?: string
+  /** 票06 (语义摘要进任务板): 服务端关键字搜索——对 name ∨ semantic_summary LIKE 子串
+   *  过滤（零新基建、非 FTS）。空/纯空白 = 不过滤（走原列盘路径，回归保护）。 */
+  q?: string
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -439,6 +442,9 @@ function toDTO(row: TaskRow): TaskDTO {
     source_chat_session_id: row.source_chat_session_id,
     // ADR-0025 票01: the doer session pointer.
     doer_session_id: row.doer_session_id ?? null,
+    // 票06 (语义摘要进任务板): 归档总结的多面摘要读出。历史/未归档无摘要 = null（宽容读，
+    // 列可能为 NULL；?? 归一到 null 给 DTO 消费面一个确定形状）。
+    semantic_summary: row.semantic_summary ?? null,
     deleted_at: row.deleted_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -1473,7 +1479,13 @@ export class TasksService {
 
   /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
   listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
-    if (params.status && params.org) {
+    const q = params.q?.trim()
+    if (q) {
+      // 票06 (语义摘要进任务板): 服务端关键字搜索走 LIKE（name ∨ semantic_summary），
+      // 叠加可选 status/org。未归档/无摘要 task 的 semantic_summary 为 NULL——DAO 用
+      // IFNULL 兜空串，按 name 仍可命中、不报错（宽容读）。
+      rows = this.taskDAO.searchActive({ status: params.status, org: params.org, q })
+    } else if (params.status && params.org) {
       // listByStatus doesn't filter by org — filter in memory (small N).
       rows = this.taskDAO.listByStatus(params.status).filter((r) => r.org === params.org)
     } else if (params.status) {

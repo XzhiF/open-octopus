@@ -2,6 +2,11 @@ import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { TaskRow } from "../types"
 
+/** LIKE 通配符转义（配 ESCAPE '\'）：先转义反斜杠本身，再 % 与 _。 */
+function escapeLikeParam(raw: string): string {
+  return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
 /**
  * TaskDAO — CRUD for the first-class `tasks` table (schema v38, v2-D1).
  *
@@ -29,10 +34,10 @@ export class TaskDAO extends BaseDAO {
         id, org, name, status, source_chat_session_id,
         task_spec, authoring_resources, resources, skills, project_ids,
         workflow_ref, version, deleted_at, created_at, updated_at, completed_at,
-        workspace_id,
+        workspace_id, semantic_summary,
         trigger_mode, trigger_at, cron_expression, cron_timezone,
         trigger_enabled, next_fire_at, last_fired_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name,
       row.status ?? "draft",
@@ -49,6 +54,9 @@ export class TaskDAO extends BaseDAO {
       row.updated_at ?? now,
       row.completed_at ?? null,
       row.workspace_id ?? null,
+      // 票06: 语义摘要列（ADDITIVE）——insert 默认 NULL（未归档无摘要），归档链后经
+      // setSemanticSummary 定向写入；insert 携带 full-row（restore/import）时保留原值。
+      row.semantic_summary ?? null,
       // v41 (ADR-0021): a caller that hands us a full row keeps its trigger fields. Before
       // this, insert() wrote 17 columns and the 7 new ones silently took their DDL
       // defaults — so a restore/import path carrying an armed schedule lost the arming.
@@ -142,6 +150,20 @@ export class TaskDAO extends BaseDAO {
     ).run(sessionId, now, id).changes > 0
   }
 
+  /**
+   * 归档资产化 P3 票06 (语义摘要进任务板): 写归档总结的多面语义摘要。Targeted UPDATE
+   * like bindDoerSession/updateAutosave — 只动 semantic_summary + updated_at，NOT bump
+   * version、NOT touch status: 摘要写是派生元数据、非 spec 编辑（不得对并发 spec-field
+   * 写 409），且归档链永不参与 done 判定（K11 零触碰、done 唯一写者不变）。
+   * 归档链失败语义要求本方法永不抛（调用方 fire-and-forget）；软删/缺失行 changes=0 返 false。
+   */
+  setSemanticSummary(id: string, summary: string): boolean {
+    const now = new Date().toISOString()
+    return this.stmt(
+      "UPDATE tasks SET semantic_summary = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+    ).run(summary, now, id).changes > 0
+  }
+
   /** List active tasks by status (kanban columns), ordered by created_at ASC then id. */
   listByStatus(status: string): TaskRow[] {
     return this.stmt(
@@ -154,6 +176,29 @@ export class TaskDAO extends BaseDAO {
     return this.stmt(
       "SELECT * FROM tasks WHERE org = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
     ).all(org) as TaskRow[]
+  }
+
+  /**
+   * 归档资产化 P3 票06 (语义摘要进任务板): 服务端 LIKE 搜索（零新基建、非 FTS——LIKE 即
+   * 现状最小档）。对 name ∨ semantic_summary 子串匹配，叠加可选 status/org。
+   *  - 未归档/无摘要 task：semantic_summary 为 NULL，IFNULL 兜成 '' 不参与匹配、不报错
+   *    （宽容读，历史已归档 task 天然不进「按摘要」的结果但按 name 仍可命中）。
+   *  - 排序 updated_at DESC（搜索结果「最近改动优先」；空 q 由调用方走原 listTasks 路径，
+   *    本方法仅在 q 非空时被调用）。
+   *  转义 % / _ / \ 防用户串里的通配符误命中（ESCAPE '\'）。
+   */
+  searchActive(opts: { status?: string; org?: string; q: string }): TaskRow[] {
+    const like = `%${escapeLikeParam(opts.q)}%`
+    const clauses: string[] = [
+      "deleted_at IS NULL",
+      "(name LIKE ? ESCAPE '\\' OR IFNULL(semantic_summary, '') LIKE ? ESCAPE '\\')",
+    ]
+    const vals: unknown[] = [like, like]
+    if (opts.status) { clauses.push("status = ?"); vals.push(opts.status) }
+    if (opts.org) { clauses.push("org = ?"); vals.push(opts.org) }
+    return this.stmt(
+      `SELECT * FROM tasks WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC, id DESC`,
+    ).all(...vals) as TaskRow[]
   }
 
   /** Soft-delete (discard draft/ready). Sets deleted_at; does NOT change status. */

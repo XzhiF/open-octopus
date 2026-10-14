@@ -559,6 +559,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 生命周期独立（同 tasks.workspace_id 先例）；NULL = 从未开过对话。
   -- 「谈」面仍是 source_chat_session_id（sessions 表，task-author），互不侵犯。
   doer_session_id TEXT,
+  -- ── schema v50+ (归档资产化 P3 票06) ── 语义摘要进任务板：归档总结生成链把总结的
+  -- 「独立字段」（干了什么/关键决策/产出指针多面摘要）写这里，任务板搜索 LIKE 命中
+  -- name ∨ semantic_summary。ADDITIVE only（无新表、无新基建，非 FTS——LIKE 即现状最小档）；
+  -- 历史已归档 task 无摘要 = NULL（宽容读、搜索不崩）。走 ensureColumn 补列（既有库），
+  -- 新库由本 CREATE 直接带上。
+  semantic_summary TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 

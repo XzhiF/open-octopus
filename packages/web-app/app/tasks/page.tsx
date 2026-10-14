@@ -113,6 +113,11 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 票06 (语义摘要进任务板): 看板最小搜索框——关键词经服务端 q（name ∨ semantic_summary
+  // LIKE）过滤。ref 持当前生效查询（trim 后空 = undefined），让 10s 轮询与即时重取共用；
+  // 不改卡片样式/布局（任务板 UI 改版属 Out of Scope）。
+  const [searchTerm, setSearchTerm] = useState("")
+  const searchQRef = useRef<string | undefined>(undefined)
   // null task = new-task authoring ([+新建]); a Task = card click.
   const [modalTask, setModalTask] = useState<TaskView | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -130,7 +135,9 @@ export default function TasksPage() {
       // GET /api/tasks — first-class tasks domain (SG14: read Task, not
       // SchedulerJob). No trigger_source filter (that was the old schedules
       // hack); the tasks table owns the lifecycle directly.
-      const data = await listTasks()
+      // 票06: q = 搜索框关键词（服务端 LIKE 命中 name ∨ semantic_summary）；空 = undefined
+      // 全量列盘（回归保护）。
+      const data = await listTasks({ q: searchQRef.current })
       setTasks(data.items)
       setError(null)
 
@@ -408,6 +415,21 @@ export default function TasksPage() {
             </span>
           )}
           <div className="ml-auto flex gap-2">
+            {/* 票06: 最小搜索框——输入即透传 q 给服务端（name ∨ semantic_summary LIKE）。 */}
+            <input
+              data-testid="task-search"
+              type="search"
+              value={searchTerm}
+              onChange={(e) => {
+                const v = e.target.value
+                setSearchTerm(v)
+                searchQRef.current = v.trim() || undefined
+                void fetchTasks()
+              }}
+              placeholder="搜索任务 / 语义摘要…"
+              aria-label="搜索任务"
+              className="h-8 w-52 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 text-xs font-bold text-pop-ink outline-none focus:border-pop-pink"
+            />
             <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
               刷新

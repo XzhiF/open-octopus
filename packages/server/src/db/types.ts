@@ -401,6 +401,11 @@ export interface TaskRow {
    *  workspace). Lazy-created + idempotent via GET/POST /api/tasks/:id/chat;
    *  persists across Rounds (一面两会话的「做」面 — 「谈」面是 source_chat_session_id). */
   doer_session_id: string | null
+  /** 归档资产化 P3 票06 (语义摘要进任务板): 归档总结生成链写入的多面摘要（干了什么/
+   *  关键决策/产出指针），任务板搜索 LIKE 命中 name ∨ semantic_summary。ADDITIVE 列
+   *  （schema.sql CREATE + schema.ts ensureColumn 双落）。历史已归档 task 无摘要 = null
+   *  （宽容读：DAO 读出 null、搜索 LIKE 跳过不报错）。非生命周期列，写面不碰 status/version。 */
+  semantic_summary: string | null
   // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
   // Before v41 the due time lived on a private `schedules` row that readyTask
   // pre-created and parked ('draft'); arming a task meant flipping that row, which
