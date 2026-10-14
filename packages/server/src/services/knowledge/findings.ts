@@ -2,12 +2,14 @@ import type Database from "better-sqlite3"
 import crypto from "crypto"
 import fs from "fs"
 import path from "path"
-import type { WikiPageFrontmatter, KcCardEvent, KcCompileDiffCardData } from "@octopus/shared"
+import type { WikiPageFrontmatter, WikiCaseFrontmatter, KcCardEvent, KcCompileDiffCardData } from "@octopus/shared"
 import { applySchema } from "../../db/schema"
 import { FindingsDAO, type FindingRow, type FindingStatus } from "../../db/dao/findings-dao"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "./global-paths"
 import { scanWikiEntries, WikiCompileService, nextRuleAnchor, type BatchPageInput } from "./wiki/compile"
 import { parseWikiFile, parseCaseMarkdown, serializeCaseMarkdown, serializePageMarkdown, extractRuleAnchors, pageDirForType } from "./wiki/format"
+import { parseCaseSections } from "./case-extract-service"
+import { buildProceduralJudgePrompt, parseProceduralJudgment } from "./skill-detect"
 import type { GitRunner } from "./wiki/wiki-git"
 import { CompileQueue, type WriteQueue } from "./wiki/compile-queue"
 import { findingCardData } from "./patrol-job"
@@ -415,11 +417,13 @@ ${evidence}
   }
 
   /**
-   * P3 票03 case-backlog 采纳：判例 → topics 硬约束页（确定性蒸馏，零 LLM）。
+   * P3 票03 case-backlog 采纳：判例 → topics 硬约束页（蒸馏本体确定性；spec 故事 13）。
    * - 产物互指：topic 正文 [[case-id]]（入链=孤儿判据解除）+ case.rule_ref=新发锚点
    *   （patrol 六查据此出列；孤儿面认 rule_ref 边）。
-   * - 判例面只翻可变面 status=distilled + rule_ref，正文逐字回写（append-only 天然同文
-   *   ⇒ compileCase 走固定字段/正文逐字校验通过，仅状态更新留 LOG 行）。
+   * - 判例面只翻可变面 status=distilled + rule_ref [+ procedural]，正文逐字回写
+   *   （append-only 天然同文 ⇒ compileCase 走固定字段/正文逐字校验通过，仅状态更新留 LOG 行）。
+   * - aa-fix 项8（三路之b 写侧）：LLM seam 按五段内容判「流程型」打标——可选装饰面，
+   *   seam 缺席/坏形/抛错=零标记（诚实缺席），b 路检测降级词表兜底；蒸馏决定面不依赖 LLM。
    * - 竞态幂等：目标已非 open/已带 rule_ref ⇒ 空转成功零写（finding 仍 resolved）。
    * - 蒸馏文本净洗：判例教训/修复段里的日期形态一律剥除（topic 页 L5 零日期闸不豁免——
    *   判例豁免半衰期是因历史绑定，蒸馏产物是常青规则）。
@@ -444,6 +448,10 @@ ${evidence}
       db: this.db, org: GLOBAL_WIKI_ORG, rootDir: this.wikiRoot,
       ...(this.git ? { git: this.git } : {}),
     })
+    // aa-fix 项8（spec 三路之b 写侧契约）：蒸馏产物生成处按五段内容跑 LLM seam
+    // 判「流程型」打标。**标记失败不毁裁决链**：seam 缺席/抛错/坏形 ⇒ 零标记位
+    // （诚实缺席=判例面不写 procedural，b 路检测降级词表兜底），蒸馏本体照 committed。
+    const procedural = await this.judgeProcedural(meta, body)
     const anchor = nextRuleAnchor(this.wikiRoot)
     const topicId = `top-${meta.id}`
     const lesson = scrubDates(caseSectionText(body, "教训") || caseSectionText(body, "根因") || meta.symptom)
@@ -481,10 +489,13 @@ ${evidence}
       },
     )
     const caseRes = await compiler.compileEntry({
-      content: serializeCaseMarkdown({ ...meta, status: "distilled", rule_ref: anchor }, body),
+      content: serializeCaseMarkdown(
+        { ...meta, status: "distilled", rule_ref: anchor, ...(procedural !== undefined ? { procedural } : {}) },
+        body,
+      ),
       fileName: caseRel.split("/").pop() ?? `${meta.id}.md`,
       source: caseRel, reviewer: "owner",
-      note: `判例蒸馏 status=distilled rule_ref=${anchor}`,
+      note: `判例蒸馏 status=distilled rule_ref=${anchor}${procedural !== undefined ? ` procedural=${procedural}` : ""}`,
     })
     const warnings = [...topicRes.pages.flatMap(p => p.warnings), ...caseRes.warnings]
     return {
@@ -495,6 +506,24 @@ ${evidence}
         { path: caseRes.path, type: "case", created: false },
       ],
       warnings,
+    }
+  }
+
+  /**
+   * 「流程型」seam 判定（aa-fix 项8·三路之b 写侧）。三态归一：
+   * - llm 缺席（注入面未接）⇒ undefined=诚实缺席；
+   * - seam 抛错/坏形/空响应 ⇒ undefined（stderr 记账，蒸馏不折戟）；
+   * - 契约 JSON ⇒ true/false 显式标记。
+   * prompt/解析单源=skill-detect.ts（S1 断言入口同缝）。
+   */
+  private async judgeProcedural(meta: WikiCaseFrontmatter, body: string): Promise<boolean | undefined> {
+    if (!this.llm) return undefined
+    try {
+      const resp = await this.llm(buildProceduralJudgePrompt({ symptom: meta.symptom, sections: parseCaseSections(body) }))
+      return parseProceduralJudgment(resp)
+    } catch (err) {
+      process.stderr.write(`[findings] procedural judge failed for ${meta.id}: ${err instanceof Error ? err.message : String(err)}\n`)
+      return undefined
     }
   }
 

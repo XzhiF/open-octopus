@@ -7,7 +7,8 @@
 //    读本次素材包 exec-jsonl-excerpt 的失败工具序列，与既有包语料比 LCS 保序相似，
 //    命中 ⇒ 模板草案（确定性，零 LLM）。
 //  * **b 路** 判例蒸馏「流程型」转草案：巡检产出后触发，只读票03 的 rule_ref/蒸馏产物
-//    面（status=distilled ∧ rule_ref 在场），流程型判据（skill-detect.ts）命中 ⇒ 模板草案。
+//    面（status=distilled ∧ rule_ref 在场）；「流程型」判定优先消费蒸馏写侧标记
+//    （front-matter procedural 位，aa-fix 项8），标记缺席时词表判据（skill-detect.ts）兜底。
 //  * **c 路** 策展人编译素材包主动提议：归档 hook 同点触发，LLM seam（propose）读包
 //    提议 reusable 流程——prompt 契约进 S1 断言，内容质量不进（spec Testing Decisions）。
 //
@@ -292,7 +293,10 @@ export class SkillDraftService {
         continue // 读败=诚实缺席
       }
       const sections = parseCaseSections(body)
-      if (!isProceduralCase(fm.symptom, sections)) continue
+      // aa-fix 项8：优先消费蒸馏写侧标记（fm.procedural true/false 已判型，词表不再翻案）；
+      // 标记缺席（历史蒸馏件/蒸馏时无 LLM）⇒ 词表启发式兜底（票04 原口径）。
+      const procedural = fm.procedural !== undefined ? fm.procedural : isProceduralCase(fm.symptom, sections)
+      if (!procedural) continue
 
       const res = writeDraft(this.root, {
         name: `flow-${fm.id}`,

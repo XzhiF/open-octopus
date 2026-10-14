@@ -837,8 +837,8 @@ export class WikiCompileService {
    * - 准入只校验 真实 + source 可定位（task-/exec-/commit 指针）；半衰期三问豁免——
    *   判例是历史记录，"常青性"由 rule_ref 指向的规则承担，schema 里就没有 stability/confidence。
    * - lint 走 lintProfileForDomain('cases')：豁免 L1 容量闸 + 正文禁日期（事件事件绑定）。
-   * - append-only：入库后正文即历史，只有 status/rule_ref/occurrences 三字段可经编译通道
-   *   更新（蒸馏/次数/作废）；改写正文或其它字段的尝试 → 先落 LOG 证据行（case-rej）再拒绝。
+   * - append-only：入库后正文即历史，只有 status/rule_ref/occurrences/procedural 四字段可经编译通道
+   *   更新（蒸馏/次数/作废/流程型打标）；改写正文或其它字段的尝试 → 先落 LOG 证据行（case-rej）再拒绝。
    * 仍与词条共用：唯一写入口纪律、INDEX/LOG/DB/FTS/git 管线、事务性回滚。
    */
   private async compileCase(c: WikiCaseFrontmatter, body: string, input: CompileInput): Promise<CompileResult> {
@@ -906,12 +906,13 @@ export class WikiCompileService {
       )
       if (immutable) {
         this.logRejection(logPath, relPath, "固定字段改写", source, reviewer)
-        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 仅 status/rule_ref/occurrences 可经编译通道更新，其余字段入库后不可变`)
+        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 仅 status/rule_ref/occurrences/procedural 可经编译通道更新，其余字段入库后不可变`)
       }
       const mutable = (
         prev.meta.status !== c.status ||
         prev.meta.rule_ref !== c.rule_ref ||
-        prev.meta.occurrences !== c.occurrences
+        prev.meta.occurrences !== c.occurrences ||
+        prev.meta.procedural !== c.procedural
       )
       if (!mutable) {
         // 逐字节相同的重入库：无操作（不产 LOG 噪音、不产生新 commit）

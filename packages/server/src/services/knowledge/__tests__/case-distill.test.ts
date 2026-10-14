@@ -5,8 +5,9 @@
 // 蒸馏动作复用 finding adopt 通道（findings.ts case-backlog 分支）：
 //   产物进 topics 硬约束（锚点栖身「## 硬约束」节，L5 闸同律）· 判例↔规则互指
 //   （topic 正文 [[case]] ←→ case.rule_ref=锚点）· case status=distilled ·
-//   正文 append-only 零改写。确定性编译（**无 LLM**——与 contradiction/stale 的
-//   semanticRevision 不同，本分支规则=判例五段机械提纯，spec「判例是规则的原料」）。
+//   正文 append-only 零改写。蒸馏**决定面确定性**（规则=判例五段机械提纯，spec「判例是
+//   规则的原料」；与 contradiction/stale 的 semanticRevision 分水岭）——aa-fix 项8 后
+//   另有可选 LLM seam 只做「流程型」打标（缺席=零标记，不触蒸馏本体）。
 //
 // expected 真相源：spec 故事 13 + P0 判例 schema；fixture 判例 lesson 内埋日期
 // （蒸馏面必须净化，否则 topic 页触 L5_DATES_IN_BODY——蒸馏恒败即缺陷）。
@@ -193,5 +194,60 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
 
     expect(queue.list().some(t => t.id === task.id && t.opKind === "finding-fix")).toBe(true)
     expect(fs.readFileSync(path.join(root, "raw", "inbox", "keep.md"), "utf-8")).toBe("# 不动我\n")
+  })
+
+  // ── aa-fix 项8：蒸馏「流程型」标记写侧（spec 三路之b 契约面，LLM seam 判定）──
+  describe("蒸馏流程型标记（adopt→distill 产物生成处打标，distilled 面可查）", () => {
+    it("seam 判流程型 ⇒ 蒸馏判例带 procedural: true；判定 prompt 携五段（现场/…/教训）与症状", async () => {
+      writeBacklogCase()
+      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const queue = new CompileQueue()
+      const prompts: string[] = []
+      const ops = new FindingOpsService({
+        db, root, queue, git: realGit(wikiRoot),
+        llm: async (p) => { prompts.push(p); return '{"procedural": true}' },
+      })
+      const task = ops.adopt(backlog.id)
+      await drain(queue)
+      expect(ops.getTask(task.id)!.status, JSON.stringify(ops.getTask(task.id)!.error ?? {})).toBe("committed")
+
+      const caseText = read("cases/2026-10-12-case-msys.md")
+      expect(caseText).toMatch(/status: distilled/)
+      expect(caseText).toContain("procedural: true")
+      // 判定面=五段内容（spec 三路之b「按五段/教训内容」）：症状+修复+教训段进 prompt
+      expect(prompts).toHaveLength(1)
+      expect(prompts[0]).toContain("Git Bash ref 冒号被转成路径")
+      expect(prompts[0]).toContain("MSYS_NO_PATHCONV=1")
+      expect(prompts[0]).toContain("冒号是保留字符")
+    })
+
+    it("seam 判陈述型 ⇒ procedural: false 显式记录（b 路不再词表兜底翻案）", async () => {
+      writeBacklogCase()
+      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const queue = new CompileQueue()
+      const ops = new FindingOpsService({
+        db, root, queue, git: realGit(wikiRoot),
+        llm: async () => '{"procedural": false}',
+      })
+      ops.adopt(backlog.id)
+      await drain(queue)
+      expect(read("cases/2026-10-12-case-msys.md")).toContain("procedural: false")
+    })
+
+    it("seam 坏形/炸 ⇒ 零标记（诚实缺席=词表兜底位）且蒸馏本体照committed——标记失败不毁裁决链", async () => {
+      writeBacklogCase()
+      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const queue = new CompileQueue()
+      const ops = new FindingOpsService({
+        db, root, queue, git: realGit(wikiRoot),
+        llm: async () => "（模型没按契约回 JSON）",
+      })
+      const task = ops.adopt(backlog.id)
+      await drain(queue)
+      expect(ops.getTask(task.id)!.status).toBe("committed")
+      const caseText = read("cases/2026-10-12-case-msys.md")
+      expect(caseText).toMatch(/status: distilled/)
+      expect(caseText).not.toContain("procedural:")
+    })
   })
 })

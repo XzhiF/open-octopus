@@ -1,12 +1,13 @@
 // packages/server/src/services/knowledge/skill-detect.ts
 //
-// skill 草案检测判据与正文模板 — P3 票04（spec 故事 15 三路中的 a/b 路纯函数面）。
+// skill 草案检测判据与正文模板 — P3 票04（spec 故事 15 三路中的 a/b 路纯函数面）
+// + aa-fix 项8（三路之b 写侧契约：蒸馏「流程型」LLM seam 判定 prompt/解析单源）。
 //
-// 「判例蒸馏标记流程型」的口径说明（勘探核实 notes-aa-03 §二）：票03 的蒸馏是
-// 确定性零 LLM 的「硬约束页 + rule_ref 边」，**产物上没有现成的流程型字段**。
-// 本票的 b 路因此定义在票03 读面（status=distilled ∧ rule_ref 在场 的判例）之上，
-// 用「流程型」关键词判据自建（宽进——修复/教训叙事含操作流程形态即候选；
-// 严出——草案卡过人裁才可能变授予，授予本身又是票05 的人裁动作）。
+// 「判例蒸馏标记流程型」的口径演进（勘探核实 notes-aa-03 §二 → aa-fix 收口）：
+// 票03 蒸馏是确定性零 LLM 的「硬约束页 + rule_ref 边」，产物上没有现成的流程型字段，
+// 票04 的 b 路因此在蒸馏读面上自建词表判据（宽进）。aa-fix 项8 补齐写侧：蒸馏执行体
+// （adopt→distill）按五段内容跑 LLM seam 判定并打 front-matter `procedural` 标记——
+// b 路检测**优先消费标记**，词表启发式降级为标记缺席时的兜底（历史蒸馏件/无 LLM 环境）。
 // 红线2/5 不破：这里**只读**判例面，草案落 drafts 区（store 单点），wiki/cases 零触碰。
 
 import type { KcCaseCardSections } from "@octopus/shared"
@@ -39,6 +40,51 @@ export function isProceduralCase(symptom: string, sections: Pick<KcCaseCardSecti
     if (text.includes(hint)) return true
   }
   return PROCEDURAL_COMPOSITE_RE.test(text)
+}
+
+// ── 蒸馏「流程型」判定 seam（aa-fix 项8·三路之b 写侧契约；纯函数单源，S1 断言入口）──
+
+export interface ProceduralJudgeFacts {
+  symptom: string
+  sections: KcCaseCardSections
+}
+
+/**
+ * 五段内容 → LLM 判定 prompt（spec 三路之b「按五段/教训内容」逐字；产出只取布尔，
+ * 判词不入库——标记位是事实记录，叙事质量过人裁面兜底）。
+ */
+export function buildProceduralJudgePrompt(f: ProceduralJudgeFacts): string {
+  return `# 判例「流程型」判定（蒸馏写侧）
+
+判定这条判例的修复/教训能否沉淀为**可复用操作流程**：修复/教训段存在分步动作形态
+（依次执行、固定顺序、先A后B、清单核对）⇒ 流程型；纯事实陈述（字符保留规则、
+配置口径、命名约束）⇒ 陈述型。只判形态，不判内容好坏。
+
+## 判例
+symptom: ${f.symptom}
+现场: ${f.sections.现场}
+诊断: ${f.sections.诊断}
+根因: ${f.sections.根因}
+修复: ${f.sections.修复}
+教训: ${f.sections.教训}
+
+## 输出契约
+只输出一个 JSON（可 \`\`\`json 围栏）：{"procedural": true} 或 {"procedural": false}`
+}
+
+/** seam 回执 → 三态（true/false=可判；undefined=坏形/空/抛错的前置归一=诚实缺席）。 */
+export function parseProceduralJudgment(resp: string): boolean | undefined {
+  const text = resp.trim()
+  if (text === "") return undefined
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start === -1 || end <= start) return undefined
+  try {
+    const v = (JSON.parse(text.slice(start, end + 1)) as { procedural?: unknown }).procedural
+    return typeof v === "boolean" ? v : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // ── 正文模板（确定性生成；票面第 3 行渲染契约 ## 触发条件/## 步骤/## 纪律 恒在）──

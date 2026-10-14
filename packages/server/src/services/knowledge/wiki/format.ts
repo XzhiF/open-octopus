@@ -214,8 +214,8 @@ export function caseEntryView(meta: WikiCaseFrontmatter, lastCompiled: string): 
 
 /**
  * 判例文件序列化——字段顺序逐字 prototype Tab③ lines 514-528
- * (id/symptom/tags/severity/occurrences/[rule_ref]/source/status)，
- * rule_ref 缺席时省略该行（open 判例尚无规则指针）。
+ * (id/symptom/tags/severity/occurrences/[rule_ref]/source/status/[procedural])，
+ * rule_ref/procedural 缺席时省略该行（open 判例尚无规则指针；未打标判例无流程型位）。
  */
 export function serializeCaseMarkdown(meta: WikiCaseFrontmatter, body: string): string {
   const lines = [
@@ -231,9 +231,10 @@ export function serializeCaseMarkdown(meta: WikiCaseFrontmatter, body: string): 
   lines.push(
     `source: ${yamlScalar(meta.source)}`,
     `status: ${meta.status}`,
-    "---",
-    "",
   )
+  // aa-fix 项8：蒸馏「流程型」标记（true/false 皆显式写位=词表兜底让位；缺席=不写行）
+  if (meta.procedural !== undefined) lines.push(`procedural: ${meta.procedural}`)
+  lines.push("---", "")
   return lines.join("\n") + (body.endsWith("\n") ? body : body + "\n")
 }
 

@@ -171,6 +171,13 @@ export const WikiCaseFrontmatterSchema = z.object({
   /** 溯源指针（task-/exec-/commit/session 等，可定位即可入档） */
   source: z.string().min(1),
   status: z.enum(WikiCaseStatusValues),
+  /**
+   * 流程型标记（aa-fix 项8·spec 三路之b 契约面）：蒸馏执行体 adopt→distill 的
+   * LLM seam 判定（五段内容判「可复用操作流程 vs 纯事实陈述」）。可选=诚实缺席形
+   * （历史蒸馏件/seam 不可用时无此位，b 路检测降级词表启发式兜底——marker 优先）。
+   * P0 兼容：zod 默认 strip 未知键，旧读者无感；序列化仅在在场时写行（旧件零迁移）。
+   */
+  procedural: z.boolean().optional(),
 })
 
 export type WikiCaseFrontmatter = z.infer<typeof WikiCaseFrontmatterSchema>

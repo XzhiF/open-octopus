@@ -14,7 +14,7 @@
 //  ③ 入档 = **case-archive 第八类 opKind 入全局串行队列**（红线2：判例一切写经此通道，
 //     禁直写 cases/）。队列执行体（持写锁位）内做同症状判定：
 //     命中既判例（归一化+jaccard，case-symptom.ts 自建纯函数）⇒ occurrences+1
-//     （compileCase 可变面：仅 status/rule_ref/occurrences；正文 append-only 不改写）；
+//     （compileCase 可变面：仅 status/rule_ref/occurrences/procedural；正文 append-only 不改写）；
 //     未命中 ⇒ 新判例（P0 front-matter schema 沿用，宽松准入直接入档，豁免半衰期）。
 //  ④ 判例卡通知（红线3：先存后知——**编译 committed 之后**才 emit，失败不知会；
 //     Lane A 生产者 dep 注入，announce 炸只吞 stderr 不毁入档）。

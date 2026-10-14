@@ -141,6 +141,30 @@ const CASE_OPEN_PROCEDURAL = CASE_DISTILLED_PROCEDURAL
   .replace(/rule_ref: oct-002\n/, "")
   .replace("status: distilled", "status: open")
 
+// aa-fix 项8 写侧标记（蒸馏判例 front-matter procedural 位）消费面 fixture：
+// 词面与标记**故意相反**——证明优先级走标记而非词表。
+const CASE_DISTILLED_MARKED_TRUE_NEUTRAL = [
+  "---", "id: case-marked-yes", "domain: cases", "symptom: 构建产物偶发陈旧",
+  "tags: [build]", "severity: minor", "occurrences: 2", "source: exec:exec-m1",
+  "rule_ref: oct-004", "status: distilled", "procedural: true", "---", "",
+  "## 现场", "", "同样源码两次构建结果不同。", "",
+  "## 诊断", "", "旧产物残留。", "",
+  "## 根因", "", "增量构建未覆盖全部缓存。", "",
+  "## 修复", "", "清掉残留缓存后重新构建即可复原。", "",
+  "## 教训", "", "构建不一致多半是残留问题。", "",
+].join("\n")
+
+const CASE_DISTILLED_MARKED_FALSE_HINTY = [
+  "---", "id: case-marked-no", "domain: cases", "symptom: 部署脚本权限位丢失",
+  "tags: [deploy]", "severity: minor", "occurrences: 2", "source: task:aa08-y",
+  "rule_ref: oct-005", "status: distilled", "procedural: false", "---", "",
+  "## 现场", "", "部署后脚本不可执行。", "",
+  "## 诊断", "", "打包丢权限位。", "",
+  "## 根因", "", "tar 未带 mode。", "",
+  "## 修复", "", "按步骤依次 chmod +x 再重跑清单核对。", "",
+  "## 教训", "", "记住 SOP：打包保权限。", "",
+].join("\n")
+
 function seedCaseFile(name: string, content: string): void {
   const abs = path.join(knowledgeRoot, "wiki", "cases", name)
   fs.mkdirSync(path.dirname(abs), { recursive: true })
@@ -357,6 +381,17 @@ describe("检测 b 路：判例蒸馏流程型 → 草案（S1·票04 第2行b�
     const again = service.detectProceduralCases()
     expect(again.created).toHaveLength(0)
     expect(again.reasons).toContain("DUPLICATE_SOURCE")
+  })
+
+  it("标记优先消费（aa-fix 项8·spec 三路之b 写侧契约）：procedural:true 陈述词面⇒出草案；procedural:false 流程词面⇒不出；标记缺席走词表兜底（上例）", () => {
+    seedCaseFile("2026-10-15-case-marked-yes.md", CASE_DISTILLED_MARKED_TRUE_NEUTRAL)
+    seedCaseFile("2026-10-16-case-marked-no.md", CASE_DISTILLED_MARKED_FALSE_HINTY)
+    const { service, cards } = makeService()
+
+    const outcome = service.detectProceduralCases()
+    expect(outcome.created.map(c => c.name)).toEqual(["flow-case-marked-yes"])
+    expect(outcome.created[0]!.origin).toBe("case-procedural")
+    expect(cards.map(c => c.id)).toEqual(["skl-flow-case-marked-yes"])
   })
 })
 
