@@ -31,6 +31,7 @@ export const WRITE_OP_KINDS = [
   "revert",          // 回滚 git revert（票12）
   "redistill",       // 重蒸馏脚本（票07）
   "case-archive",    // P3 票03 判例自动入档（提取草案/occurrences 合并/退役 superseded 全经此通道，红线2 禁直写 cases/）
+  "page-retire",     // 单页退役迁 _retired/ + superseded（票08 清理账 · 故事32）
 ] as const
 export type WriteOpKind = (typeof WRITE_OP_KINDS)[number]
 

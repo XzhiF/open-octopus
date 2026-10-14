@@ -23,7 +23,6 @@ import {
   Coins,
   Loader2,
   X,
-  Archive as ArchiveIcon,
   ShieldCheck,
   MessageCircle,
 } from "lucide-react"
@@ -35,7 +34,6 @@ import { ApprovalDialog } from "./approval-dialog"
 import { InteractionModal } from "./interaction-modal"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
-import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
 import { HarnessFloatingPanel } from "./harness-floating-panel"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { getServerUrl } from "@/lib/server-config"
@@ -202,7 +200,6 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   )
   const [interactionOpen, setInteractionOpen] = useState(false)
   const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; initialPrompt?: string } | null>(null)
-  const [archiveOpen, setArchiveOpen] = useState(false)
 
   // ── SSE 增量补丁保护 ─────────────────────────────────────────────
   // node_start/node_end 事件毫秒级写入 liveSteps，3s 轮询仅作 SSE 断流兜底。
@@ -656,18 +653,6 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
               <MessageCircle className="h-3.5 w-3.5" />
             </Button>
           )}
-
-          {(liveStatus === "completed" || liveStatus === "failed") && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => setArchiveOpen(true)}
-              title="归档"
-            >
-              <ArchiveIcon className="h-3.5 w-3.5" />
-            </Button>
-          )}
         </div>
       </div>
 
@@ -793,14 +778,8 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         />
       )}
 
-      {/* Archive Dialog */}
-      <ArchiveDialog
-        open={archiveOpen}
-        onOpenChange={setArchiveOpen}
-        executionId={execution.id}
-        org={workspaceId}
-        onArchiveComplete={() => setArchiveOpen(false)}
-      />
+      {/* 票08 清理账：工作流详情页「归档」弹窗（ArchiveDialog，规则审批链 web 残留）
+          随 pending_review drop + /api/review 下线一并删除（ADR-0030 审批不复活）。 */}
 
       {/* Harness Floating Panel */}
       <HarnessFloatingPanel

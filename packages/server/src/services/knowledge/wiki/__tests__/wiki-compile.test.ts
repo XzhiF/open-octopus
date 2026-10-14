@@ -91,9 +91,13 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     return new WikiCompileService({ db, org: "testorg", rootDir: root, git: git ?? realGit(root) })
   }
 
-  it("skeleton has the 4 domains + cases/ + _retired/", async () => {
-    for (const d of ["projects", "workflows", "business", "research", "cases", "_retired"]) {
+  it("skeleton has v3 五类页目录 + _retired/，不再建 v2 四域目录（票08 · 故事29）", async () => {
+    for (const d of ["entities", "concepts", "topics", "sources", "cases", "_retired"]) {
       expect(fs.statSync(path.join(root, d)).isDirectory()).toBe(true)
+    }
+    // v2 存量域目录不再由骨架生成（历史遗留空目录清而不净的根因修复）
+    for (const d of ["projects", "workflows", "business", "research"]) {
+      expect(fs.existsSync(path.join(root, d))).toBe(false)
     }
   })
 

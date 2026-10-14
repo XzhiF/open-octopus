@@ -35,4 +35,5 @@ export type {
   KcCaseCardSections,
   KcCaseCardData,
   KcCaseRetireState,
+  KcPageRetireCardData,
 } from "@octopus/shared"

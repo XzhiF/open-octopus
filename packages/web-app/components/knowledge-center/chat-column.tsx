@@ -27,7 +27,7 @@ import {
   type KcMaterialPackCardData,
   type KcCaseCardData,
 } from '@/lib/knowledge-center/card-protocol'
-import { classifyKcFeed } from '@/lib/knowledge-center/feed-protocol'
+import { classifyKcFeed, classifyKcRetire } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
 
 /**
@@ -254,19 +254,23 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     dismissBackfill: cardId => findings.dismissBackfill(cardId),
     recompilePack: (taskId, input) => void packs.recompile(taskId, input),
     retireCase: caseId => void cases.retire(caseId),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire])
+    retirePage: pagePath => void feed.retire(pagePath),
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, feed.retire, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire])
 
-  // ── 发送：投喂意图走 REST 执行面；「体检一下」走巡检面；对话面原文照常发策展人 ──
+  // ── 发送：投喂意图走 REST 执行面；退役意图走 POST /retire（队列唯一写闸）；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {
     const intent = classifyKcFeed(message)
     if (intent) void feed.feed(intent)
     if (!intent && /体检|巡检/.test(message)) void findings.patrol()
+    // 票08 故事32：退役意图（动词 + wiki 页相对路径）→ 唯一写闸端点，零前端直写
+    const retire = classifyKcRetire(message)
+    if (retire) void feed.retire(retire.path)
     if (intent?.mode === 'text') {
       chat.sendMessage(`刚投喂了一段文本素材（${intent.text.length} 字），已落 raw 待编译——请知悉并纳入下轮巡检。`)
     } else {
       chat.sendMessage(message)
     }
-  }, [chat.sendMessage, feed.feed, findings.patrol])
+  }, [chat.sendMessage, feed.feed, feed.retire, findings.patrol])
 
   const extras = useCallback((msg: AgentMessage) => {
     const events = laneAByMsgId.get(msg.id)

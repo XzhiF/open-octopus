@@ -284,6 +284,23 @@ export interface KcFindingCardData {
 }
 
 /**
+ * 🗄️ 页退役卡（票08 清理账 · 故事32）：策展对话「退役 <页>」→ POST /retire →
+ * 队列 opKind="page-retire"：页迁 `_retired/` + front-matter 注 superseded + 四路摘除 +
+ * 单 commit。数据面回显退役去向 + commit（回执卡）。开放 kind，不改 KcCardKind 联合。
+ */
+export interface KcPageRetireCardData {
+  status: "queued" | "running" | "committed" | "failed"
+  position?: number | null
+  /** 被退役页原相对路径 */
+  pagePath: string
+  /** 迁入的 `_retired/<…>` 相对路径（committed 后有值） */
+  to?: string
+  /** 退役 commit（committed 后有值） */
+  commit?: string
+  error?: { code: string; message: string }
+}
+
+/**
  * ↩️ 回填卡（票13）：策展人对话中的有价值合成答案 → [编进 wiki] → 对话摘录落 raw
  * （票02 冻结契约，origin=chat:〈session〉）→ 编译新页。[不用] = 纯前端弃卡零请求。
  * 窄口纪律：执行中 agent 的产出永不自动回填——本卡只由知识中心对话显式触发。
@@ -318,6 +335,7 @@ export interface KcCardEvent {
     | KcBackfillCardData
     | KcMaterialPackCardData
     | KcCaseCardData
+    | KcPageRetireCardData
     | Record<string, unknown>
 }
 
@@ -407,11 +425,12 @@ export function kcTaskStateLabel(input: {
   status: "queued" | "running" | "committed" | "failed"
   position?: number | null
   hash?: string
-  /** revert 卡复用同一条流转，动词不同 */
-  verb?: "compile" | "revert"
+  /** diff/revert/retire 卡复用同一条流转，动词不同（票08 加 retire） */
+  verb?: "compile" | "revert" | "retire"
 }): string {
-  const compiling = input.verb === "revert" ? "回滚中" : "编译中"
-  const committed = input.verb === "revert" ? "已回滚" : "已提交"
+  const compiling = input.verb === "revert" ? "回滚中" : input.verb === "retire" ? "退役中" : "编译中"
+  const committed = input.verb === "revert" ? "已回滚" : input.verb === "retire" ? "已退役" : "已提交"
+  const failedVerb = input.verb === "revert" ? "回滚" : input.verb === "retire" ? "退役" : "编译"
   switch (input.status) {
     case "queued":
       return typeof input.position === "number" ? `排队中 #${input.position}` : "排队中"
@@ -420,7 +439,7 @@ export function kcTaskStateLabel(input: {
     case "committed":
       return `✓ ${committed}${input.hash ? ` ${shortHash(input.hash)}` : ""}`
     case "failed":
-      return `✕ ${input.verb === "revert" ? "回滚" : "编译"}失败`
+      return `✕ ${failedVerb}失败`
   }
 }
 

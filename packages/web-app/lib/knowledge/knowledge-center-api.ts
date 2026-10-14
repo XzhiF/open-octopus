@@ -317,6 +317,40 @@ export async function kcGetRevertTask(taskId: string): Promise<KcRevertTask | nu
   return data.task
 }
 
+// ============ 票08 页退役面 API（对话退役意图 → 队列 page-retire）============
+
+/** POST /api/knowledge/wiki/retire 回执（票08 · 故事32）。 */
+export interface KcRetireAck {
+  taskId: string
+  path: string
+  status: string
+}
+
+export async function kcRetire(input: { path?: string; pageId?: string; reason?: string }): Promise<KcRetireAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/retire`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse<KcRetireAck>(res)
+}
+
+/** GET /api/knowledge/wiki/retire/task/:id 的 task 视图（票08 PageRetireTaskRecord）。 */
+export interface KcRetireTask {
+  id: string
+  path: string
+  status: "queued" | "running" | "committed" | "failed"
+  result?: { retiredPath: string; retireCommit: string; pageId: string }
+  error?: { code: string; message: string }
+}
+
+export async function kcGetRetireTask(taskId: string): Promise<KcRetireTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/retire/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcRetireTask }>(res)
+  return data.task
+}
+
 // ============ 票13 findings 面 API（列表/裁决/即时体检/回填）============
 
 /** GET /api/knowledge/findings 的视图（routes/findings.ts findingView 单源形状）。 */

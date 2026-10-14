@@ -14,6 +14,7 @@ import { FindingCard } from './finding-card'
 import { BackfillCard } from './backfill-card'
 import { MaterialPackCard } from './material-pack-card'
 import { CaseCard } from './case-card'
+import { PageRetireCard } from './page-retire-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
@@ -46,6 +47,8 @@ export interface KcCardActionCtx {
   recompilePack: (taskId: string, input: { excludePath?: string; focus?: string }) => void
   /** [退役]（P3 票03 判例卡）：POST /wiki/case/retire → case-archive 队列标 superseded，状态回灌卡 */
   retireCase: (caseId: string) => void
+  /** 页退役（票08 · 故事32）：对话退役意图触发 POST /retire（卡上无此钮，仅宿主调用） */
+  retirePage?: (pagePath: string) => void
 }
 
 export interface KcCardViewProps {
@@ -85,7 +88,7 @@ function UnknownKcCard({ event }: { event: KcCardEvent }) {
   )
 }
 
-// ── 注册（票12 六类 + 票13 finding/backfill + P3 票02 material-pack；卡件 import 在文件头，副作用即注册）──
+// ── 注册（票12 六类 + 票13 finding/backfill + P3 票02 material-pack + P3 票08 page-retire；卡件 import 在文件头，副作用即注册）──
 registerKcCardRenderer('ingest', IngestCard)
 registerKcCardRenderer('source-summary', SourceSummaryCard)
 registerKcCardRenderer('compile-diff', CompileDiffCard)
@@ -96,3 +99,5 @@ registerKcCardRenderer('finding', FindingCard)
 registerKcCardRenderer('backfill', BackfillCard)
 registerKcCardRenderer('material-pack', MaterialPackCard)
 registerKcCardRenderer('case', CaseCard)
+// 票08 清理账（故事32）：页退役卡——一行注册（开放 kind，无 KcCardKind 联合改动）
+registerKcCardRenderer('page-retire', PageRetireCard)

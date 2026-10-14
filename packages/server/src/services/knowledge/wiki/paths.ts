@@ -72,13 +72,58 @@ export const WIKI_ALL_DIRS: readonly string[] = [...WIKI_PAGE_DIRS, ...WIKI_DOMA
 export const REDISTILL_MAP_REL = "_retired/v2/redistill-map.json"
 
 /**
- * 确保 wiki 目录骨架存在：v3 五类页目录 + v2 存量域目录（兼容读）+ _retired/ 退役区。
- * 幂等（recursive mkdir）。
+ * 确保 wiki 目录骨架存在：v3 五类页目录 + _retired/ 退役区。幂等（recursive mkdir）。
+ *
+ * 票08 清理账（spec 故事29）：**不再创建 v2 存量域目录（projects/workflows/business/research）**——
+ * 它们已被重蒸馏票07 整体迁 `_retired/v2/`，编译期再 mkdir 会在真盘长出空目录（清而不净）。
+ * 写入面自保：`compile.atomicWrite` 落盘前 recursive mkdir，历史 v2 词条若仍需写不受影响。
+ * 存量的空 v2 目录由 {@link removeEmptyV2DomainDirs} 一次性清理。
+ * `cases` 是 v3 判例域（WIKI_PAGE_DIRS 含之），是票03 判例目的地面——保留，绝不列入清理。
  */
 export function ensureWikiSkeleton(root: string): void {
-  for (const d of [...WIKI_ALL_DIRS, "_retired"]) {
+  for (const d of [...WIKI_PAGE_DIRS, "_retired"]) {
     fs.mkdirSync(path.join(root, d), { recursive: true })
   }
+}
+
+/**
+ * 票08 待清理的 v2 存量域目录（projects/workflows/business/research）。
+ * 单列常量而非复用 WIKI_DOMAINS：`cases` 虽在 WIKI_DOMAINS 里，但它是 v3 判例目的地，
+ * **绝不**进清理面（此处物理隔离防误删）。
+ */
+export const V2_LEGACY_DOMAINS = ["projects", "workflows", "business", "research"] as const
+
+/**
+ * 一次性移除 wiki 根上历史 v2 空域目录。**只删确为空者**，非空即跳过并留痕
+ * （归档/删除纪律：绝不动有内容目录）。目录不存在＝已清理，幂等 no-op。
+ * 真实盘执行归主控 ops（合入后调用本函数一次）；测试跑 tmpdir，零触真盘。
+ */
+export function removeEmptyV2DomainDirs(
+  root: string,
+  log: (msg: string) => void = (m) => process.stderr.write(`${m}\n`),
+): { removed: string[]; skipped: string[] } {
+  const removed: string[] = []
+  const skipped: string[] = []
+  for (const d of V2_LEGACY_DOMAINS) {
+    const abs = path.join(root, d)
+    if (!fs.existsSync(abs)) continue // 已清理 / 从未创建 → no-op
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(abs)
+    } catch {
+      skipped.push(d)
+      continue
+    }
+    if (entries.length === 0) {
+      fs.rmdirSync(abs) // rmdirSync 仅空目录可删；前面已判 length===0
+      removed.push(d)
+      log(`[wiki-cleanup] 移除空 v2 域目录 ${d}/`)
+    } else {
+      skipped.push(d)
+      log(`[wiki-cleanup] v2 域目录 ${d}/ 非空（${entries.length} 项）→ 跳过，绝不删有内容目录`)
+    }
+  }
+  return { removed, skipped }
 }
 
 /**

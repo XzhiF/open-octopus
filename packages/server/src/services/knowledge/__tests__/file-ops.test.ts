@@ -8,10 +8,7 @@ import {
   appendToKnowledgeFile,
   readKnowledgeFile,
   writeKnowledgeFile,
-  listKnowledgeFiles,
   rebuildIndex,
-  markRuleRetired,
-  unmarkRuleRetired,
   getKnowledgeFileInfo,
   readUserPreference,
   getProjectKnowledgeDir,
@@ -83,18 +80,6 @@ describe("file-ops", () => {
     })
   })
 
-  describe("listKnowledgeFiles", () => {
-    it("excludes index.md and user_preference.md", () => {
-      fs.writeFileSync(path.join(tmpDir, "octopus.md"), "")
-      fs.writeFileSync(path.join(tmpDir, "index.md"), "")
-      fs.writeFileSync(path.join(tmpDir, "user_preference.md"), "")
-      fs.writeFileSync(path.join(tmpDir, "workflow-build.md"), "")
-
-      const files = listKnowledgeFiles(tmpDir)
-      expect(files).toEqual(["octopus.md", "workflow-build.md"])
-    })
-  })
-
   describe("user preference", () => {
     it("reads and writes preference", () => {
       // Use tmpDir as a mock knowledge dir by directly testing file-ops functions
@@ -143,27 +128,6 @@ describe("file-ops", () => {
 
   // TC-001: Two-level knowledge storage merge
   describe("two-level directory merge (TC-001)", () => {
-    it("lists files from both global and org directories", () => {
-      const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-global-"))
-      const orgDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-org-"))
-
-      try {
-        fs.writeFileSync(path.join(globalDir, "global-rules.md"), "- Global rule")
-        fs.writeFileSync(path.join(orgDir, "project-rules.md"), "- Org rule")
-
-        const globalFiles = listKnowledgeFiles(globalDir)
-        const orgFiles = listKnowledgeFiles(orgDir)
-
-        // Combined list should contain files from both levels
-        const allFiles = [...globalFiles, ...orgFiles]
-        expect(allFiles).toContain("global-rules.md")
-        expect(allFiles).toContain("project-rules.md")
-      } finally {
-        fs.rmSync(globalDir, { recursive: true, force: true })
-        fs.rmSync(orgDir, { recursive: true, force: true })
-      }
-    })
-
     it("GET /api/knowledge/files merges both levels", () => {
       const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-global-"))
       const orgDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-org-"))
@@ -182,13 +146,16 @@ describe("file-ops", () => {
           "workspace_archive",
         )
 
-        // Simulate the merge that GET /api/knowledge/files performs
-        const globalFiles = listKnowledgeFiles(globalDir).map(f => ({
+        // Simulate the merge that GET /api/knowledge/files performs.
+        // 票08：listKnowledgeFiles 死码删除 → 目录列举回落裸 readdirSync（测试面，
+        // index.md/user_preference.md 排除不属被测函数契约，此处不涉及）。
+        const listMd = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".md"))
+        const globalFiles = listMd(globalDir).map(f => ({
           name: f,
           scope: "global",
           ...getKnowledgeFileInfo(path.join(globalDir, f)),
         }))
-        const orgFiles = listKnowledgeFiles(orgDir).map(f => ({
+        const orgFiles = listMd(orgDir).map(f => ({
           name: f,
           scope: "org",
           ...getKnowledgeFileInfo(path.join(orgDir, f)),
@@ -253,29 +220,6 @@ describe("file-ops", () => {
       expect(indexContent).toContain("Run tests before deploy")
 
       delete process.env.OCTOPUS_KNOWLEDGE_DIR
-    })
-  })
-
-  // markRuleRetired / unmarkRuleRetired
-  describe("markRuleRetired / unmarkRuleRetired", () => {
-    it("adds <!-- retired --> after rule metadata", () => {
-      const filePath = path.join(tmpDir, "retire-test.md")
-      appendToKnowledgeFile(filePath, "Active rule", "retire-001", "system")
-
-      markRuleRetired(filePath, "retire-001")
-      const content = readKnowledgeFile(filePath)
-      expect(content).toContain("<!-- retired -->")
-    })
-
-    it("removes <!-- retired --> on unmark", () => {
-      const filePath = path.join(tmpDir, "unmark-test.md")
-      appendToKnowledgeFile(filePath, "Rule to restore", "restore-001", "system")
-
-      markRuleRetired(filePath, "restore-001")
-      expect(readKnowledgeFile(filePath)).toContain("<!-- retired -->")
-
-      unmarkRuleRetired(filePath, "restore-001")
-      expect(readKnowledgeFile(filePath)).not.toContain("<!-- retired -->")
     })
   })
 

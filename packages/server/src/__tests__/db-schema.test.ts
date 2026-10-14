@@ -26,21 +26,25 @@ describe("DB Schema", () => {
       // Core tables (43) — includes `tasks` (schema v38, v2-D1 first-class task
       // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
       // + billing_price_config/billing_setting (schema v45, billing-core-1 票01)
+      // + `findings` (schema v53, 知识中心票05——此前漏计本清单，票08 顺带补正)
       // + `wiki_articles` (schema v52, LLM-WIKI 票01；wiki_fts 与 fts 影子表被
       //   instr(name,'_fts') 过滤规则挡在清单外，与 experiences_fts 同款先例).
       // v41 (ADR-0021) deliberately adds NO table: `schedules` goes back to being only
       // a job definition and a task launch is an `executions` row carrying task_id.
+      // v54 (票08 清理账): `pending_review` 退役——蓝绿 drop，schema.sql 不再 CREATE，
+      //   故不在此清单。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "findings",
       "harness_config", "harness_events",
       "insight_marks", "interaction_messages",
       // Knowledge tables (1)
       "knowledge_effectiveness",
       "llm_calls", "messages", "node_edges", "node_executions", "node_token_usages",
       "optimization_suggestions", "orgs",
-      "pending_review", "pipeline_state", "reports", "safety_events",
+      "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
@@ -68,7 +72,12 @@ describe("DB Schema", () => {
     // + schema v46 (billing-coverage-2 票01): idx_llm_calls_source_ts = 98.
     // + schema v49 (会话口径账本聚合): idx_llm_calls_session = 99.
     // + schema v52 (LLM-WIKI 票01): idx_wiki_articles_org_domain = 100.
-    expect(rows.length).toBe(100)
+    // 索引账（诚实基线）：历史注释链止于 100，但 知识中心票05 给 `findings` 表加了
+    // 2 个 idx_（idx_findings_status / idx_findings_kind_status）却漏更此清单 → drop 前实为 102
+    // （基线本即红 +2，票08 补正）。票08 清理账 53→54 再 − idx_pending_status
+    // − idx_pending_review_source − idx_pending_review_type_status（pending_review 退役）
+    // = 102 − 3 = 99。
+    expect(rows.length).toBe(99)
   })
 
   it("workspaces table has correct columns", () => {
