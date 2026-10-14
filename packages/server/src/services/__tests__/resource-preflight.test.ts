@@ -2,9 +2,17 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import Database from 'better-sqlite3'
 import { ResourcePreFlight } from '../resource-preflight'
 import { ResourceProvisioner } from '../resource-provisioner'
-import { ResourceManager } from '@octopus/shared'
+import { ResourceManager, VersionResolver } from '@octopus/shared'
+import { IdentityResolver } from '@octopus/engine'
+import { applySchema } from '../../db/schema'
+import { AgentVersionDAO } from '../../db/dao/agent-version-dao'
+import { AgentVersionService } from '../agent/agent-version-service'
+import { writeDraft, type SkillDraftInput } from '../knowledge/skill-draft-store'
+import { SkillGrantService } from '../knowledge/skill-grant-service'
+import { getAgentDir, getAgentSkillsDir } from '../agent/paths'
 
 function createTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-test-'))
@@ -565,5 +573,164 @@ describe('ResourcePreFlight', () => {
       }
       expect(offenders).toEqual([])
     })
+  })
+})
+
+// ── P3 票05 (archive-assets): skill 授予链装配面 ─────────────────────────
+// Seam: 授予机械链产物（分身技能目录/预置源槽/agent_versions 版本）进入
+// **运行时发现链**——engine-init D2 同构解析（IdentityResolver over VersionResolver
+// over listAllPublished，EngineFactory:128-149 同款构造）→ analyze/merge →
+// preflight.check → ResourceProvisioner 物化进 workspace `.claude/skills/`
+// → SDK `settingSources:['project','user']` 原生发现（providers/src/claude/
+// provider.ts:343；守卫测试 claude-provider.test.ts:207-217 沿用，本缝不重复）。
+// **零 prompt 文本注入负断言**（红线4/ADR-0006，判例=task-doer-service.ts:407-415
+// 指针纪律）：装配面只过 (type,name) 二元组，草案正文在 manifest/provision
+// 参数里没有容身之处。撤销链同样过此缝断缺席。
+// 期望值=票05 票面 + spec 故事 21 + 原型「下次执行原生发现」，不反向抄实现。
+
+describe('skill grant chain provisioning (P3 票05)', () => {
+  const GRANT_DRAFT: SkillDraftInput = {
+    name: "flow-granted-e2e",
+    description: "授予链装配断言用件",
+    origin: "curator-proposal",
+    source: "exec:ex-s3",
+    body: "# 授予链装配断言用件\n\n## 触发条件\n\n- S3 缝运行。\n\n## 步骤\n\n1. 装配\n2. 断言\n\n## 纪律\n\n- 零 prompt 注入。\n",
+    createdAt: "2026-10-15T00:00:00.000Z",
+  }
+
+  let tmpRoot: string
+  let knowledgeRoot: string
+  let fakeHome: string
+  let rmBase: string
+  let prevHome: string | undefined
+  let db: Database.Database
+
+  beforeEach(() => {
+    tmpRoot = createTempDir()
+    knowledgeRoot = path.join(tmpRoot, "knowledge")
+    fs.mkdirSync(knowledgeRoot, { recursive: true })
+    fakeHome = path.join(tmpRoot, "home")
+    fs.mkdirSync(path.join(fakeHome, "agent/built-in/workflow-operator"), { recursive: true })
+    // built-in config.json 带治理声明 skills（D2 落点形态，770d9fa6）+ versioned 位
+    fs.writeFileSync(
+      path.join(fakeHome, "agent/built-in/workflow-operator/config.json"),
+      JSON.stringify({ versioned: true, skills: ["octo-wiki"] }),
+      "utf-8",
+    )
+    fs.mkdirSync(path.join(fakeHome, "agent/skills"), { recursive: true })
+    rmBase = path.join(fakeHome, "resources")
+    fs.mkdirSync(rmBase, { recursive: true })
+    prevHome = process.env.OCTOPUS_HOME
+    process.env.OCTOPUS_HOME = fakeHome
+    db = new Database(":memory:")
+    applySchema(db)
+    // 同 aa-05 S1 钉的坑：fresh applySchema 首建库缺 clones.current_version_id（补列=生产稳态）
+    const cols = db.prepare("PRAGMA table_info(clones)").all() as { name: string }[]
+    if (!cols.some(c => c.name === "current_version_id")) db.exec("ALTER TABLE clones ADD COLUMN current_version_id TEXT")
+    writeDraft(knowledgeRoot, GRANT_DRAFT)
+  })
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.OCTOPUS_HOME
+    else process.env.OCTOPUS_HOME = prevHome
+    db.close()
+    cleanupDir(tmpRoot)
+  })
+
+  /** EngineFactory:128-149 同款：listAllPublished → VersionResolver；IdentityResolver 注 versionResolver。 */
+  function engineResolvers(dao: AgentVersionDAO): { resolver: IdentityResolver } {
+    const versionResolver = new VersionResolver(dao.listAllPublished())
+    return { resolver: new IdentityResolver({ versionResolver }) }
+  }
+
+  it("授予后：身份快照带授予件（D2 源①）→ merged manifest → check 报缺 → provision 物化 .claude/skills；正文零进装配面", async () => {
+    const manager = new ResourceManager({ basePath: rmBase })
+    const dao = new AgentVersionDAO(db)
+    const versions = new AgentVersionService(dao)
+    versions.publish("workflow-operator", { version: "1.0.0", stage: "stable", changelog: "seed" })
+    const svc = new SkillGrantService({ root: knowledgeRoot, manager: () => manager, versionService: () => versions })
+    const receipt = await svc.grant("flow-granted-e2e", "workflow-operator")
+    expect(receipt.version).toBe("1.0.1")
+
+    // ── D2 装配解析：现行版快照的治理面含授予件（源①=发布时 filesToSnapshot readdir）──
+    const { resolver } = engineResolvers(dao)
+    const identity = resolver.resolve("workflow-operator")
+    expect(identity.snapshot.skills).toContain("flow-granted-e2e")
+
+    // ── engine-init runScanPhase 同构：node 声明集 ∪ identitySkills（:434-436 公式）──
+    const preflight = new ResourcePreFlight()
+    const workflow = { nodes: [{ type: "agent", id: "implement", skills: ["flow-granted-e2e"] }] }
+    const manifest = preflight.analyze(workflow)
+    const merged = { ...manifest, skills: [...new Set([...manifest.skills, ...identity.snapshot.skills])] }
+    expect(merged.skills).toContain("flow-granted-e2e")
+
+    const workspace = createTempDir()
+    try {
+      const check = preflight.check(merged, workspace)
+      expect(check.missing).toContainEqual({ type: "skill", name: "flow-granted-e2e" })
+      // 负断言（红线4 装配面）：provision 输入只过 (type,name)——草案正文无容身之处
+      expect(JSON.stringify(check.missing)).not.toContain("装配断言用件\n")
+
+      const result = await new ResourceProvisioner(manager).provision(check.missing, workspace)
+      expect(result.failed.some(f => f.includes("flow-granted-e2e"))).toBe(false)
+
+      // 预置产物=授予件镜像（SDK project 设置源目录；settingSources 守卫见 claude-provider.test）
+      const skillMd = path.join(workspace, ".claude", "skills", "flow-granted-e2e", "SKILL.md")
+      expect(fs.existsSync(skillMd)).toBe(true)
+      expect(fs.readFileSync(skillMd, "utf-8")).toBe(
+        fs.readFileSync(path.join(fakeHome, "agent/built-in/workflow-operator/skills/flow-granted-e2e/SKILL.md"), "utf-8"),
+      )
+      // 版本目录快照保真（snapshotToFiles 共享层缺口由授予链 top-up 闭合）
+      expect(fs.readFileSync(path.join(fakeHome, "agent/versions/workflow-operator/1.0.1/skills/flow-granted-e2e/SKILL.md"), "utf-8"))
+        .toBe(fs.readFileSync(skillMd, "utf-8"))
+
+      // 复跑 preflight=available（票11 幂等口径同律）
+      const recheck = preflight.check(merged, workspace)
+      expect(recheck.missing).not.toContainEqual({ type: "skill", name: "flow-granted-e2e" })
+    } finally {
+      cleanupDir(workspace)
+    }
+  })
+
+  it("撤销后：发布集摘除授予版（archive）→ 'latest' 快照不含授予件；槽位清空 → 新 workspace 装配不出该件", async () => {
+    const manager = new ResourceManager({ basePath: rmBase })
+    const dao = new AgentVersionDAO(db)
+    const versions = new AgentVersionService(dao)
+    versions.publish("workflow-operator", { version: "1.0.0", stage: "stable", changelog: "seed" })
+    const svc = new SkillGrantService({ root: knowledgeRoot, manager: () => manager, versionService: () => versions })
+    await svc.grant("flow-granted-e2e", "workflow-operator")
+    await svc.revoke("flow-granted-e2e", "workflow-operator")
+
+    const { resolver } = engineResolvers(dao)
+    const identity = resolver.resolve("workflow-operator")
+    expect(identity.version).toBe("1.0.0") // 回现行版（授予版已 archive 出发布集）
+    expect(identity.snapshot.skills).not.toContain("flow-granted-e2e")
+
+    const preflight = new ResourcePreFlight()
+    const workspace = createTempDir()
+    try {
+      const check = preflight.check({ skills: ["flow-granted-e2e"], agents: [], commands: [], rules: [] }, workspace)
+      expect(check.missing).toContainEqual({ type: "skill", name: "flow-granted-e2e" })
+      const result = await new ResourceProvisioner(manager).provision(check.missing, workspace)
+      // 预置源已逆同步：装配诚实缺席（failed 显形，不伪造产物）
+      expect(result.failed.some(f => f.includes("flow-granted-e2e"))).toBe(true)
+      expect(fs.existsSync(path.join(workspace, ".claude", "skills", "flow-granted-e2e"))).toBe(false)
+    } finally {
+      cleanupDir(workspace)
+    }
+  })
+
+  it("「授给所有分身」= 共享技能层：getPlugins 第一 plugin 根（agent/）直接含该件；分身层零写（两层互斥钉）", async () => {
+    const manager = new ResourceManager({ basePath: rmBase })
+    const dao = new AgentVersionDAO(db)
+    const versions = new AgentVersionService(dao)
+    const svc = new SkillGrantService({ root: knowledgeRoot, manager: () => manager, versionService: () => versions })
+    await svc.grant("flow-granted-e2e", "*")
+
+    // clone-runtime.getPlugins() 第一根 = getAgentDir()（聊天面 SDK 扫描根）
+    expect(path.dirname(getAgentSkillsDir())).toBe(getAgentDir())
+    expect(fs.existsSync(path.join(getAgentSkillsDir(), "flow-granted-e2e", "SKILL.md"))).toBe(true)
+    // 分身层零写（授给所有≠逐分身拷贝——ADR-0005 两层模型互斥面）
+    expect(fs.existsSync(path.join(fakeHome, "agent/built-in/workflow-operator/skills/flow-granted-e2e"))).toBe(false)
   })
 })

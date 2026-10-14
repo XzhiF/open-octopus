@@ -39,6 +39,8 @@
  * `arc-<taskId>` / `pgm-<pageId>` / `grd-<targetSlug>-<ts>`；票13：`fnd-<findingId>` / `bfk-<hash8>`。
  */
 
+import type { SkillGrantReceipt } from "../types/skill-draft"
+
 export const KC_CARD_KINDS = [
   "ingest",
   "source-summary",
@@ -271,8 +273,22 @@ export interface KcSkillDraftCardData {
   caseId?: string
   ruleRef?: string
   similarity?: number
-  /** 产卡动作记号（created=首见 / revised=对话改写后刷新预览 / retired=退役终态） */
-  action?: "created" | "revised" | "retired"
+  /**
+   * P3 票05 扩展位：已授予目标清单（分身名 ∪ `*`；granted 态非空）。
+   * 卡面「目标分身选择器/撤销钮可用性」的数据源（重发卡的 status 位由服务端
+   * drafts 文件真相回填）。
+   */
+  grantedTo?: string[]
+  /** P3 票05 版本回执面（分身名/版本号/预置源同步结果——spec 故事 23 逐字） */
+  receipt?: SkillGrantReceipt
+  /**
+   * P3 票05 Lane B 覆盖层（use-kc-grants 注入，同构判例 retireStates/素材包 recompile）：
+   * 钮点击即时态（pending 在途 / receipt=刚完成的本地回执 / error=失败显形不伪造）。
+   * Lane A 沉淀卡重发后 data.receipt 即真相，本位只是点击到重发之间的即时显形。
+   */
+  grant?: { pending?: boolean; receipt?: SkillGrantReceipt | null; error?: string | null }
+  /** 产卡动作记号（created=首见 / revised=对话改写后刷新预览 / retired=退役终态 / granted|revoked=授予撤销回执） */
+  action?: "created" | "revised" | "retired" | "granted" | "revoked"
 }
 
 /** 📇 词条迷你卡：对话提到某页。 */

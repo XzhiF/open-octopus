@@ -7,6 +7,7 @@ import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useKcPacks } from '@/hooks/use-kc-packs'
 import { useKcCases } from '@/hooks/use-kc-cases'
+import { useKcGrants } from '@/hooks/use-kc-grants'
 import { KcCard, type KcCardActionCtx } from './cards/registry'
 import {
   createCloneSession,
@@ -26,6 +27,7 @@ import {
   type KcFindingCardData,
   type KcMaterialPackCardData,
   type KcCaseCardData,
+  type KcSkillDraftCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { classifyKcFeed, classifyKcRetire } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
@@ -137,6 +139,8 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
   const packs = useKcPacks({ pollMs: feedPollMs, onSettled: onWikiChanged })
   // ── P3 票03：判例退役覆盖层（case-archive 队列任务态回灌判例卡；红线2 唯一写通道）──
   const cases = useKcCases({ pollMs: feedPollMs, onSettled: onWikiChanged })
+  // ── P3 票05：skill 授予覆盖层（同步机械链 REST，无队列轮询；分身清单 GET /api/clones 复用）──
+  const grants = useKcGrants()
   const sessionIdRef = useRef<string | null>(null)
   sessionIdRef.current = activeSessionId
 
@@ -206,8 +210,14 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
       if (!rt) return e
       return { ...e, data: { ...d, retire: rt } }
     }
+    if (e.kind === 'skill-draft') {
+      const d = e.data as KcSkillDraftCardData
+      const g = grants.states[d.draftName]
+      if (!g) return e
+      return { ...e, data: { ...d, grant: g } }
+    }
     return e
-  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus, packs.recompileStates, cases.retireStates])
+  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus, packs.recompileStates, cases.retireStates, grants.states])
   const isDismissed = useCallback((e: KcCardEvent) => e.kind === 'backfill' && !!findings.dismissed[e.id], [findings.dismissed])
   const tailEvents = useMemo(
     () => feed.cards
@@ -255,7 +265,12 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     recompilePack: (taskId, input) => void packs.recompile(taskId, input),
     retireCase: caseId => void cases.retire(caseId),
     retirePage: pagePath => void feed.retire(pagePath),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, feed.retire, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire])
+    /** 票05 授予/撤销钮（草案卡执行面；同步 REST，回执经覆盖层即时显形）*/
+    grantDraft: (draftName, cloneName) => void grants.grant(draftName, cloneName),
+    revokeDraft: (draftName, cloneName) => void grants.revoke(draftName, cloneName),
+    /** 票05 选择器数据源（GET /api/clones 复用，零新端点）*/
+    grantTargets: grants.targets,
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, feed.retire, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire, grants.grant, grants.revoke, grants.targets])
 
   // ── 发送：投喂意图走 REST 执行面；退役意图走 POST /retire（队列唯一写闸）；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {

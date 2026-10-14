@@ -33,6 +33,7 @@ import { createProductionCaseExtractor } from "./services/knowledge/case-extract
 import { createWikiCaseRoutes } from "./routes/wiki-case"
 import type { KcCaseCardData } from "@octopus/shared"
 import { SkillDraftService } from "./services/knowledge/skill-draft-service"
+import { SkillGrantService } from "./services/knowledge/skill-grant-service"
 import { createProductionSkillProposer, createProductionSkillReviser } from "./services/knowledge/skill-draft-llm"
 import { createSkillDraftRoutes, skillDraftView, skillDraftDetailView } from "./routes/wiki-draft"
 import type { KcSkillDraftCardData } from "@octopus/shared"
@@ -134,7 +135,7 @@ import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
 import { initAgentService, getAgentService } from "./services/agent/agent-service"
-import { initAgentVersionService, publishVersionedBuiltinClones } from "./services/agent/agent-version-service"
+import { initAgentVersionService, publishVersionedBuiltinClones, getAgentVersionService } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
 import { SecretMasker } from "./services/actuator/secret-masker"
@@ -641,6 +642,28 @@ const getSkillDrafts = () => (skillDraftInstance ??= new SkillDraftService({
     )
   },
 }))
+// P3 票05：授予/撤销机械链服务。**不经 wiki 写队列**（非 wiki 写——边界断言见
+// skill-grant-service.test）；生效=分身技能目录 + 官方 upgrade 原语 + agent_versions
+// 发版，零 prompt 注入（红线4/ADR-0006）。manager 与 versionService 全惰性注入
+// （启动序：resourceRegistry :735+、initAgentVersionService 先于请求面）。
+let skillGrantInstance: SkillGrantService | undefined
+const getSkillGrants = () => (skillGrantInstance ??= new SkillGrantService({
+  manager: () => getResourceRegistry().get(),
+  versionService: () => getAgentVersionService(),
+  announce: (event) => {
+    const d = event.data as KcSkillDraftCardData
+    const r = d.receipt
+    appendKnowledgeSessionCards(
+      getDb(),
+      d.action === "granted"
+        ? `🎯 skill 授予回执：${d.draftName} → ${r?.target === "*" ? "所有分身（共享层）" : r?.target ?? "—"}`
+          + `（版本 ${r?.version ?? "—"}${r?.published ? " 发布" : ""} · 预置源 ${r?.presetSync.ok ? "已同步" : `同步异常：${r?.presetSync.detail ?? "?"}`}${r?.idempotent ? " · 幂等重放" : ""}）`
+        : `↩️ skill 撤销回执：${d.draftName} ⇐ ${r?.target === "*" ? "所有分身（共享层）" : r?.target ?? "—"}`
+          + `（回退 ${r?.rolledBackTo ?? "无前一版"} · 预置源 ${r?.presetSync.ok ? "已逆同步" : `逆同步异常：${r?.presetSync.detail ?? "?"}`}）`,
+      [event],
+    )
+  },
+}))
 // 挂 /api/knowledge（drafts 非 wiki 域，路由词面与 wiki-case/wiki-pack 区分）。
 app.route("/api/knowledge", createSkillDraftRoutes({
   list: () => getSkillDrafts().listDrafts().map(skillDraftView),
@@ -650,6 +673,8 @@ app.route("/api/knowledge", createSkillDraftRoutes({
   },
   revise: (name, instruction) => getSkillDrafts().reviseDraft(name, instruction),
   retire: name => getSkillDrafts().retireDraft(name),
+  grant: (name, cloneName) => getSkillGrants().grant(name, cloneName),
+  revoke: (name, cloneName) => getSkillGrants().revoke(name, cloneName),
 }))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。

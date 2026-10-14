@@ -22,6 +22,8 @@ export type ResourceErrorCode =
   | "VERIFY_WARN"
   | "BUILTIN_NOT_FOUND"
   | "LOCAL_PATH_INVALID"
+  // P3 票05: installOrUpgrade 显式 sourceDir 通道（skill 授予链源目录不在盘）。
+  | "SOURCE_DIR_INVALID"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "INVALID_ORG"
   | "INTERNAL_ERROR"
@@ -59,6 +61,7 @@ const STATUS_MAP: Record<ResourceErrorCode, number> = {
   VERIFY_WARN: 200,
   BUILTIN_NOT_FOUND: 404,
   LOCAL_PATH_INVALID: 400,
+  SOURCE_DIR_INVALID: 400,
   UNSUPPORTED_MEDIA_TYPE: 415,
   INVALID_ORG: 400,
   INTERNAL_ERROR: 500,
@@ -97,6 +100,7 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   VERIFY_WARN: "Verification completed with warnings. Resource installed but may need attention.",
   BUILTIN_NOT_FOUND: "Builtin resource not found. Use 'octopus resource list --builtin' to see available.",
   LOCAL_PATH_INVALID: "Local path is invalid or not accessible.",
+  SOURCE_DIR_INVALID: "Explicit sourceDir (grant chain) is not an existing directory.",
   UNSUPPORTED_MEDIA_TYPE: "Set Content-Type: application/json",
   INVALID_ORG: "Org must match: ^[a-zA-Z0-9._-]{1,64}$ and not be reserved",
   INTERNAL_ERROR: "Internal error. Check server logs for details.",

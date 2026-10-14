@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest"
 import { Hono } from "hono"
+import type { SkillGrantReceipt } from "@octopus/shared"
 import { createSkillDraftRoutes, type SkillDraftView, type WikiDraftRouteDeps } from "../wiki-draft"
 import { SkillDraftError } from "../../services/knowledge/skill-draft-service"
 
@@ -144,5 +145,93 @@ describe("红线4 负断言：路由面零授予端点（授予=票05）", () =>
       const res = await post(app, p, {})
       expect(res.status, p).toBe(404)
     }
+  })
+})
+
+// ── P3 票05: 授予/撤销端点（S2 契约面；deps 可选——票04 形态零注册即 404 上面已钉）──
+
+const RECEIPT: SkillGrantReceipt = {
+  draftName: "flow-85153203c0",
+  skillName: "flow-85153203c0",
+  target: "workflow-operator",
+  layer: "clone",
+  status: "granted",
+  grantedTo: ["workflow-operator"],
+  version: "1.0.1",
+  published: true,
+  rolledBackTo: null,
+  presetSync: { ok: true, installPath: "/x/installed/skills/built-in/flow-85153203c0", detail: "三账已更" },
+  idempotent: false,
+  receiptAt: "2026-10-15T08:00:00.000Z",
+}
+
+describe("POST /api/knowledge/drafts/:name/grant|revoke（票05 机械链 HTTP 面）", () => {
+  it("grant ⇒ 200 回执逐字透出（分身名/版本号/预置源同步结果=票面回执卡字段）+ 调用体 (name, cloneName)", async () => {
+    const grantCalls: Array<[string, string]> = []
+    const { app } = makeApp({
+      grant: async (name, cloneName) => { grantCalls.push([name, cloneName]); return RECEIPT },
+    })
+    const res = await post(app, `/drafts/${VIEW.name}/grant`, { cloneName: "workflow-operator" })
+    expect(res.status).toBe(200)
+    expect((await res.json()) as SkillGrantReceipt).toEqual(RECEIPT)
+    expect(grantCalls).toEqual([[VIEW.name, "workflow-operator"]])
+  })
+
+  it("revoke ⇒ 200 回执；'*' 目标直通（授给所有分身的逆链）", async () => {
+    const revokeCalls: Array<[string, string]> = []
+    const { app } = makeApp({
+      revoke: async (name, cloneName) => { revokeCalls.push([name, cloneName]); return { ...RECEIPT, status: "revoked" as const, grantedTo: [], rolledBackTo: "1.0.0" } },
+    })
+    const res = await post(app, `/drafts/${VIEW.name}/revoke`, { cloneName: "*" })
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as SkillGrantReceipt
+    expect(json.status).toBe("revoked")
+    expect(json.rolledBackTo).toBe("1.0.0")
+    expect(revokeCalls).toEqual([[VIEW.name, "*"]])
+  })
+
+  it("cloneName 缺/空/非字符串 ⇒ 400 INVALID_PARAM 零触达服务；坏草案名 ⇒ 400", async () => {
+    const grantCalls: string[] = []
+    const { app } = makeApp({
+      grant: async (name) => { grantCalls.push(name); return RECEIPT },
+    })
+    const badBodies: unknown[] = [{}, { cloneName: "" }, { cloneName: 42 }, { cloneName: "  " }]
+    for (const body of badBodies) {
+      const res = await app.request(`/api/knowledge/drafts/${VIEW.name}/grant`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("INVALID_PARAM")
+    }
+    const badName = await post(app, "/drafts/..%2Fescape/grant", { cloneName: "x" })
+    expect(badName.status).toBe(400)
+    expect(grantCalls).toHaveLength(0)
+  })
+
+  it("服务错误按 code 翻码透出：404 DRAFT_NOT_FOUND / 409 GRANT_NAME_CLASH / 409 DRAFT_REVOKED / 500 GRANT_PUBLISH_FAILED", async () => {
+    const mk = (err: SkillDraftError) => makeApp({ grant: async () => { throw err } }).app
+    const cases: Array<[SkillDraftError, number, string]> = [
+      [new SkillDraftError("DRAFT_NOT_FOUND", "不在盘", 404), 404, "DRAFT_NOT_FOUND"],
+      [new SkillDraftError("GRANT_NAME_CLASH", "撞槽", 409), 409, "GRANT_NAME_CLASH"],
+      [new SkillDraftError("DRAFT_REVOKED", "终态", 409), 409, "DRAFT_REVOKED"],
+      [new SkillDraftError("GRANT_PUBLISH_FAILED", "发版炸", 500), 500, "GRANT_PUBLISH_FAILED"],
+      [new SkillDraftError("CLONE_NOT_FOUND", "无分身", 404), 404, "CLONE_NOT_FOUND"],
+    ]
+    for (const [err, status, code] of cases) {
+      const res = await post(mk(err), `/drafts/${VIEW.name}/grant`, { cloneName: "workflow-operator" })
+      expect(res.status, code).toBe(status)
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe(code)
+    }
+  })
+
+  it("列表视图透出 grantedTo（卡面选择器/撤销钮可用性数据源）", async () => {
+    const { app } = makeApp({
+      list: () => [{ ...VIEW, status: "granted", grantedTo: ["workflow-operator", "worker-u"] }],
+    })
+    const res = await app.request("/api/knowledge/drafts")
+    const json = (await res.json()) as { drafts: Array<Record<string, unknown>> }
+    expect(json.drafts[0].grantedTo).toEqual(["workflow-operator", "worker-u"])
   })
 })

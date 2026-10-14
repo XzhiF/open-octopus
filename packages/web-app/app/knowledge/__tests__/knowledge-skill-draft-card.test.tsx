@@ -1,7 +1,8 @@
-// P3 票04 · /knowledge skill 草案卡（S4 组件测试，仿票03 knowledge-case-card 风格）
+// P3 票04/05 · /knowledge skill 草案卡（S4 组件测试，仿票03 knowledge-case-card 风格）
 // Seam: <KnowledgePage/>（fetch stub 到 API 边界）+ Lane A fenced 卡注入。
-// expected 真相源：票面「skill 草案卡：SKILL.md 完整渲染（name/description/触发条件/
-// 步骤/纪律）+ 来源指针可点」+ spec §卡片与 UI；**红线4 负断言：卡上零授予钮**。
+// 票04 段 expected 真相源：票面「skill 草案卡：SKILL.md 完整渲染 + 来源指针可点」。
+// 票05 段：spec §卡片与 UI 逐字「skill 草案卡（SKILL.md 渲染+目标分身选择+授予/撤销钮+
+// 版本回执）」——票04 故意留的零按钮位由票05 补上；终态去钮仍守（revoked 零钮）。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
@@ -144,20 +145,59 @@ const MSG = (id: string, role: "user" | "assistant", content: string) => ({
   is_summary: false, is_compressed: false, is_edited: false,
 })
 
-interface FetchCall { url: string; method: string }
+// ── P3 票05 fixtures：分身清单 + 授予回执（expected 真相源=SkillGrantReceipt 契约+票面）──
+
+const CLONES = [
+  { name: "workflow-operator", display_name: "工作流工程师", type: "built-in" },
+  { name: "task-doer", display_name: "任务执行者", type: "built-in" },
+  { name: "worker-u", display_name: "用户分身", type: "user" },
+]
+
+const GRANT_RECEIPT = {
+  draftName: "flow-85153203c0",
+  skillName: "flow-85153203c0",
+  target: "workflow-operator",
+  layer: "clone",
+  status: "granted",
+  grantedTo: ["workflow-operator"],
+  version: "1.0.1",
+  published: true,
+  rolledBackTo: null,
+  presetSync: { ok: true, installPath: "/x/installed/skills/built-in/flow-85153203c0", detail: "installOrUpgrade 三账+文件同更" },
+  idempotent: false,
+  receiptAt: "2026-10-15T08:00:00.000Z",
+}
+
+const GRANTED_EV: KcCardEvent = {
+  id: "skl-flow-85153203c0",
+  kind: "skill-draft",
+  ts: "2026-10-14T09:20:00Z",
+  data: {
+    ...DRAFT_EV.data,
+    status: "granted",
+    action: "granted",
+    grantedTo: ["workflow-operator"],
+    receipt: GRANT_RECEIPT,
+  } as unknown as KcSkillDraftCardData,
+}
+
+interface FetchCall { url: string; method: string; body: string }
 let calls: FetchCall[]
 
 function makeStub() {
   calls = []
   vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
     const u = String(url)
-    calls.push({ url: u, method: init?.method ?? "GET" })
+    calls.push({ url: u, method: init?.method ?? "GET", body: init?.body ?? "" })
     const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json({ id: "case-msys", domain: "cases", title: "Git Bash ref 冒号被转成路径", summary: "s", topics: [], stability: "stable", lastCompiled: "2026-10-14", sources: [], confidence: 1, path: "cases/2026-10-12-case-msys.md", updatedAt: "2026-10-14 09:12:00", body: "## 现场\n\n冒号坑。", anchors: [], gitHistory: [], case: { symptom: "Git Bash ref 冒号被转成路径", tags: [], severity: "blocker", occurrences: 3, ruleRef: "oct-001", status: "distilled" }, page: null })
     if (u.includes("/api/knowledge/raw/")) return json({ content: "- [t] do-a · tool_call :: {\"toolName\":\"Read\"}", bytes: 42, hash: "aa" })
     if (u.includes("/knowledge/findings")) return json({ org: "global", findings: [] })
+    // 票05 插座：分身清单（既有 /api/clones 只读复用，零新端点）+ 授予/撤销回执
+    if (u.includes("/api/clones")) return json({ clones: CLONES, total: CLONES.length })
+    if (/\/api\/knowledge\/drafts\/[^/]+\/(grant|revoke)$/.test(u)) return json(GRANT_RECEIPT)
     return json({})
   }))
 }
@@ -238,19 +278,7 @@ describe("票04 skill 草案卡：SKILL.md 完整渲染 + 来源指针可点 + �
     expect((composer as HTMLTextAreaElement).value).toContain("drafts/skills/flow-85153203c0/SKILL.md")
   })
 
-  it("红线4 负断言：草案卡零授予钮零目标分身选择器（grant/revoke/授予 类钮不存在）", async () => {
-    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DRAFT_EV))]
-    render(<KnowledgePage />)
-    await screen.findByTestId("kc-tree-ready")
-    openDrawer()
-    const card = await screen.findByTestId("kc-card-skill-draft")
-    const btns = Array.from(card.querySelectorAll("button")).map(b => b.textContent ?? "")
-    expect(btns.every(t => !/授予|grant|revoke|撤销|目标分身/i.test(t))).toBe(true)
-    expect(screen.queryByTestId("kc-skl-grant")).toBeNull()
-    expect(screen.queryByTestId("kc-skl-revoke")).toBeNull()
-  })
-
-  it("终态卡（status=revoked）⇒ 已退役徽标 + 改写钮退场（沉淀卡终态去钮，finding/判例卡同律）", async () => {
+  it("终态卡（status=revoked）⇒ 已退役徽标 + 改写/授予/撤销钮全退场（终态去钮，finding/判例卡同律）", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(REVOKED_EV))]
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
@@ -258,5 +286,91 @@ describe("票04 skill 草案卡：SKILL.md 完整渲染 + 来源指针可点 + �
     const card = await screen.findByTestId("kc-card-skill-draft")
     expect(card.textContent).toContain("已退役")
     expect(screen.queryByTestId("kc-skl-say")).toBeNull()
+    expect(screen.queryByTestId("kc-skl-grant")).toBeNull()
+    expect(screen.queryByTestId("kc-skl-revoke")).toBeNull()
+  })
+})
+
+// ── P3 票05：目标分身选择器 + 授予/撤销钮 + 版本回执面（票04 留桩的补全）────
+
+describe("票05 skill 草案卡授予面（选择器+授予/撤销钮+版本回执；spec §卡片与 UI 逐字）", () => {
+  it("draft 态：分身选择器（既有 /api/clones 清单+所有分身固定项）+ 授予钮 ⇒ POST grant {cloneName}=选中分身；回执即时显形（版本/预置源）", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DRAFT_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-skill-draft")
+
+    // 选择器数据源=既有分身清单（零新端点）+ 共享层固定项
+    const sel = await waitFor(() => {
+      const el = card.querySelector("[data-testid='kc-skl-target']") as HTMLSelectElement
+      expect(el.options.length).toBeGreaterThanOrEqual(4) // 3 分身 + 「所有」
+      return el
+    })
+    const values = Array.from(sel.options).map(o => o.value)
+    expect(values).toContain("workflow-operator")
+    expect(values).toContain("*")
+
+    fireEvent.change(sel, { target: { value: "workflow-operator" } })
+    fireEvent.click(screen.getByTestId("kc-skl-grant"))
+    await waitFor(() => expect(calls.some(c =>
+      c.method === "POST" && c.url.includes("/api/knowledge/drafts/flow-85153203c0/grant"),
+    )).toBe(true))
+    const call = calls.find(c => c.url.endsWith("/grant"))!
+    expect(JSON.parse(call.body)).toEqual({ cloneName: "workflow-operator" })
+
+    // 版本回执面（覆盖层即时显形：版本号/预置源同步结果——票面逐字）
+    const receipt = await screen.findByTestId("kc-skl-receipt")
+    expect(receipt.textContent).toContain("1.0.1")
+    expect(receipt.textContent).toContain("workflow-operator")
+    expect(receipt.textContent).toContain("预置源")
+  })
+
+  it("granted 态卡（Lane A 回执重发）：grantedTo 徽标 + 回执卡面 + 未授分身可选再授（并授 union）", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(GRANTED_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-skill-draft")
+
+    expect(card.textContent).toContain("已授予")
+    expect(card.textContent).toContain("workflow-operator") // grantedTo 徽标行
+    const receipt = card.querySelector("[data-testid='kc-skl-receipt']")
+    expect(receipt?.textContent).toContain("1.0.1")
+    expect(receipt?.textContent).toContain("三账")
+
+    // 选未授分身 ⇒ 授予钮可用（并授走 union）；选中已授分身 ⇒ 撤销钮可用
+    const sel = card.querySelector("[data-testid='kc-skl-target']") as HTMLSelectElement
+    fireEvent.change(sel, { target: { value: "worker-u" } })
+    expect((screen.getByTestId("kc-skl-grant") as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.change(sel, { target: { value: "workflow-operator" } })
+    expect(screen.queryByTestId("kc-skl-grant")).toBeNull() // 已授目标不现授予钮
+    const revokeBtn = screen.getByTestId("kc-skl-revoke") as HTMLButtonElement
+    fireEvent.click(revokeBtn)
+    await waitFor(() => expect(calls.some(c =>
+      c.method === "POST" && c.url.endsWith("/drafts/flow-85153203c0/revoke")
+      && JSON.parse(c.body).cloneName === "workflow-operator",
+    )).toBe(true))
+  })
+
+  it("授予失败显形不伪造：POST 500 ⇒ 卡面错误行（预置源同步异常如实报，不假装 granted）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown, init?: { method?: string }) => {
+      const u = String(url)
+      const json = (v: unknown, status = 200) => ({ ok: status < 400, status, json: async () => v })
+      if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+      if (u.includes("/knowledge/health")) return json(HEALTH)
+      if (u.includes("/knowledge/findings")) return json({ org: "global", findings: [] })
+      if (u.includes("/api/clones")) return json({ clones: CLONES, total: CLONES.length })
+      if (u.endsWith("/grant")) return json({ error: { code: "GRANT_NAME_CLASH", message: "技能名已被占用" } }, 409)
+      return json({})
+    }))
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DRAFT_EV))]
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    const card = await screen.findByTestId("kc-card-skill-draft")
+    fireEvent.click(screen.getByTestId("kc-skl-grant"))
+    const err = await screen.findByTestId("kc-skl-grant-error")
+    expect(err.textContent).toContain("GRANT_NAME_CLASH")
   })
 })

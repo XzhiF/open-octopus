@@ -50,6 +50,12 @@ export interface KcCardActionCtx {
   retireCase: (caseId: string) => void
   /** 页退役（票08 · 故事32）：对话退役意图触发 POST /retire（卡上无此钮，仅宿主调用） */
   retirePage?: (pagePath: string) => void
+  /** [授予]（P3 票05 草案卡）：POST /drafts/:name/grant {cloneName}（cloneName='*' 授所有分身=共享层） */
+  grantDraft?: (draftName: string, cloneName: string) => void
+  /** [撤销]（P3 票05 草案卡）：POST /drafts/:name/revoke {cloneName}（逆链=目录删+预置源+版本回退） */
+  revokeDraft?: (draftName: string, cloneName: string) => void
+  /** 可授予分身清单（票05 选择器数据源，宿主 GET /api/clones 一次拉取；空=诚实降级只剩「所有分身」） */
+  grantTargets?: Array<{ name: string; display_name: string }>
 }
 
 export interface KcCardViewProps {

@@ -685,6 +685,102 @@ describe("ResourceManager", () => {
   })
 })
 
+// ── P3 票05: installOrUpgrade 显式 sourceDir（skill 授予链的合法升级通道）──
+// Seam: 授予服务进程内直调官方 upgrade 原语，把「草案内容目录」同步进运行时预置源。
+// 期望值来自票05/spec 故事19（三账+文件同更，registerBuiltins 禁用的根因面），
+// 非实现反推。sourceDir 缺省的路径行为逐字不变（既有消费方零回归，末例钉）。
+
+describe("ResourceManager installOrUpgrade — explicit sourceDir (P3 票05 grant chain)", () => {
+  let tmpDir: string
+  let corePackDir: string
+  let srcRoot: string
+  let manager: ResourceManager
+
+  beforeEach(() => {
+    tmpDir = createTempDir()
+    corePackDir = createTempDir()
+    srcRoot = createTempDir()
+    manager = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
+  })
+
+  afterEach(() => {
+    cleanupDir(tmpDir)
+    cleanupDir(corePackDir)
+    cleanupDir(srcRoot)
+  })
+
+  function makeSrcSkill(name: string, body: string, extra?: Record<string, string>): string {
+    const dir = path.join(srcRoot, name)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, "SKILL.md"), body, "utf-8")
+    for (const [f, c] of Object.entries(extra ?? {})) {
+      fs.writeFileSync(path.join(dir, f), c, "utf-8")
+    }
+    return dir
+  }
+
+  it("sourceDir 装整目录进预置源槽：文件+registry+lock+audit+install 事件五面同更", async () => {
+    const events: string[] = []
+    manager.on("install", (e: ResourceEntry) => events.push(e.name))
+    const src = makeSrcSkill("flow-x", "# flow-x\n\n授予正文", { "helper.md": "辅助件" })
+
+    const res = await manager.installOrUpgrade({
+      ref: "local:flow-x", type: "skill", group: "built-in", sourceDir: src, caller: "cli",
+    })
+
+    expect(res.installPath).toBe(path.join(tmpDir, "installed", "skills", "built-in", "flow-x"))
+    expect(fs.readFileSync(path.join(res.installPath, "SKILL.md"), "utf-8")).toBe("# flow-x\n\n授予正文")
+    expect(fs.existsSync(path.join(res.installPath, "helper.md"))).toBe(true)
+    const entry = manager.get("skill", "flow-x")
+    expect(entry).not.toBeNull()
+    expect(entry!.installed).toBe(true)
+    expect(entry!.source).toBe("local")
+    expect(entry!.group).toBe("built-in")
+    // 三账 verify 全绿（fileExists+registry+lock——P0/P1「只写文件不登记」的反面）
+    const v = manager.verify("skill", "flow-x")
+    expect(v.passed).toBe(true)
+    const audit = manager.auditQuery({ action: "install_or_upgrade", last: 5 })
+    expect(audit.some(r => r.resource_name === "flow-x")).toBe(true)
+    expect(events).toEqual(["flow-x"])
+  })
+
+  it("sourceDir 重装=整目录替换（旧残留件不存活——copyDirSync 不清多余文件的实锤坑）", async () => {
+    await manager.installOrUpgrade({
+      ref: "local:flow-y", type: "skill", group: "built-in",
+      sourceDir: makeSrcSkill("flow-y", "# flow-y v1", { "stale.txt": "旧辅助件" }), caller: "cli",
+    })
+    expect(fs.existsSync(path.join(tmpDir, "installed", "skills", "built-in", "flow-y", "stale.txt"))).toBe(true)
+
+    await manager.installOrUpgrade({
+      ref: "local:flow-y", type: "skill", group: "built-in",
+      sourceDir: makeSrcSkill("flow-y2", "# flow-y v2 改写后"), caller: "cli",
+    })
+
+    const slot = path.join(tmpDir, "installed", "skills", "built-in", "flow-y")
+    expect(fs.readFileSync(path.join(slot, "SKILL.md"), "utf-8")).toBe("# flow-y v2 改写后")
+    expect(fs.existsSync(path.join(slot, "stale.txt"))).toBe(false)
+  })
+
+  it("sourceDir 不在盘 ⇒ SOURCE_DIR_INVALID，零槽位写入零行", async () => {
+    await expect(manager.installOrUpgrade({
+      ref: "local:ghost", type: "skill", group: "built-in",
+      sourceDir: path.join(srcRoot, "not-there"), caller: "cli",
+    })).rejects.toMatchObject({ code: "SOURCE_DIR_INVALID" })
+    expect(manager.get("skill", "ghost")).toBeNull()
+    expect(fs.existsSync(path.join(tmpDir, "installed", "skills", "built-in", "ghost"))).toBe(false)
+  })
+
+  it("缺省 sourceDir 的行为逐字不变：builtin ref 仍从 core-pack 取文（既有消费方零回归）", async () => {
+    const skillDir = path.join(corePackDir, "skills", "cp-skill")
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "core-pack 正文", "utf-8")
+
+    const res = await manager.installOrUpgrade({ ref: "builtin:cp-skill", type: "skill", caller: "cli" })
+    expect(res.installPath).toBe(path.join(tmpDir, "installed", "skills", "built-in", "cp-skill"))
+    expect(fs.readFileSync(path.join(res.installPath, "SKILL.md"), "utf-8")).toBe("core-pack 正文")
+  })
+})
+
 // ── T2: ResourceManager Activate/Deactivate + Uninstall Guard ──
 
 describe("ResourceManager activate/deactivate", () => {

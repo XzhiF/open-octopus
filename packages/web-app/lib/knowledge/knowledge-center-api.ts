@@ -1,5 +1,6 @@
 import { getServerUrl } from "@/lib/server-config"
 import { apiFetch, handleResponse } from "@/lib/api-client"
+import type { SkillGrantReceipt } from "@/lib/knowledge-center/card-protocol"
 
 // ============ 知识中心读面 API（票11）============
 // 写法照全站 apiFetch + handleResponse 模式（lib/api-client）；差异：**数据面钉 global**——
@@ -508,4 +509,38 @@ export async function kcRetireCase(caseId: string): Promise<KcCaseRetireAck> {
     body: JSON.stringify({ caseId }),
   })
   return handleResponse<KcCaseRetireAck>(res)
+}
+
+// ============ P3 票05 授予/撤销机械链 API（草案卡钮的执行面）============
+// 端点契约见 server `routes/wiki-draft.ts`：POST /api/knowledge/drafts/:name/
+// grant|revoke {cloneName}。错误分流需要 code（GRANT_NAME_CLASH 等），故不走
+// handleResponse 的 message-only 抛法——自读 {error:{code,message}} 抛 `${code}:
+// ${message}`（卡面错误行按 code 显形，不伪造 granted）。
+
+/** 授予（cloneName='*' =「授给所有分身」落共享技能层，ADR-0005）。 */
+export async function kcGrantDraft(name: string, cloneName: string): Promise<SkillGrantReceipt> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/drafts/${encodeURIComponent(name)}/grant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cloneName }),
+  })
+  const body = (await res.json().catch(() => null)) as ({ error?: { code?: string; message?: string } } & SkillGrantReceipt) | null
+  if (!res.ok) {
+    throw new Error(`${body?.error?.code ?? `HTTP_${res.status}`}: ${body?.error?.message ?? "授予失败"}`)
+  }
+  return body as SkillGrantReceipt
+}
+
+/** 撤销（逆链=技能目录移除+预置源逆同步+版本回退；对同一 cloneName）。 */
+export async function kcRevokeDraft(name: string, cloneName: string): Promise<SkillGrantReceipt> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/drafts/${encodeURIComponent(name)}/revoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cloneName }),
+  })
+  const body = (await res.json().catch(() => null)) as ({ error?: { code?: string; message?: string } } & SkillGrantReceipt) | null
+  if (!res.ok) {
+    throw new Error(`${body?.error?.code ?? `HTTP_${res.status}`}: ${body?.error?.message ?? "撤销失败"}`)
+  }
+  return body as SkillGrantReceipt
 }

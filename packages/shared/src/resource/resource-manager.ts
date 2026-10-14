@@ -210,8 +210,19 @@ export class ResourceManager extends EventEmitter {
    * Install a resource if not present, or upgrade if already installed.
    * Used by `octopus setup` to ensure core-pack resources are up-to-date.
    * Always replaces files, updates sourceHash, and sets installedAt to now.
+   *
+   * P3 票05（skill 授予链）: optional `sourceDir` — an explicit on-disk source
+   * directory to materialize from, bypassing the builtin/local provider lookup.
+   * The grant chain's content lives in the knowledge-root drafts area (never in
+   * core-pack, never behind the LocalProvider homedir allowlist), yet MUST go
+   * through this official upgrade primitive so the three ledgers (registry /
+   * lock / audit) + files are replaced atomically-ish — the P0/P1 lesson was
+   * writing files directly and hoping registerBuiltins self-heal would pick
+   * them up (it only heals phantom rows, never refreshes content). Additive
+   * optional param: HTTP routes validate InstallRequestSchema and never pass
+   * sourceDir, so no new attack surface; existing callers are unchanged.
    */
-  async installOrUpgrade(req: InstallRequest): Promise<InstallResponse> {
+  async installOrUpgrade(req: InstallRequest & { sourceDir?: string }): Promise<InstallResponse> {
     const parsed = parseRef(req.ref)
     const type = req.type ?? this.detectType(parsed.name, parsed.source, req.type)
     const name = parsed.name
@@ -227,6 +238,20 @@ export class ResourceManager extends EventEmitter {
     const installPath = this.getInstallPath(type, name, group)
     if (!isPathWithinBase(installPath, this.basePath)) {
       throw new ResourceError("PATH_TRAVERSAL", `Install path escapes base: ${installPath}`)
+    }
+
+    // Validate explicit source BEFORE any destructive step (slot must survive
+    // a failed call intact — ticket 05 receipt honesty).
+    if (req.sourceDir !== undefined) {
+      let stat: fs.Stats | null = null
+      try {
+        stat = fs.statSync(req.sourceDir)
+      } catch {
+        stat = null
+      }
+      if (stat === null || !stat.isDirectory() || req.sourceDir.includes("..")) {
+        throw new ResourceError("SOURCE_DIR_INVALID", `sourceDir is not an on-disk directory: ${req.sourceDir}`)
+      }
     }
 
     // Delete old files if exists (direct replacement strategy)
@@ -245,7 +270,13 @@ export class ResourceManager extends EventEmitter {
     let fileCount = 0
     let hash = ""
 
-    if (parsed.source === "builtin") {
+    if (req.sourceDir !== undefined) {
+      // Grant-chain channel: copy the explicit directory in (copyDirSync — NOT
+      // fs.cpSync: Node v24/Windows fastfail on non-ASCII dest segments).
+      fs.mkdirSync(installPath, { recursive: true })
+      fileCount = copyDirSync(req.sourceDir, installPath)
+      hash = generateFileHash(installPath)
+    } else if (parsed.source === "builtin") {
       const result = this.builtin.install(name, type, installPath)
       fileCount = result.fileCount
       hash = result.hash

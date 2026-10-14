@@ -25,3 +25,32 @@ export type SkillDraftOrigin = (typeof SKILL_DRAFT_ORIGINS)[number]
  * 类人工文件名从字面上不可能撞进 drafts 目录位。
  */
 export const SKILL_DRAFT_NAME_RE = /^[a-z][a-z0-9.-]{0,61}[a-z0-9]$|^[a-z]$/
+
+// ── P3 票05：授予/撤销机械链回执（server 回执卡/S2 响应/web 版本回执面共用）──
+
+/**
+ * 授予/撤销回执（spec 故事 23 逐字：「目标分身、版本号、预置源同步结果」）。
+ * 版本号语义：`version`= 本次操作后该分身的现行版本号；非版本化分身与共享层
+ * 授予为 null（回执如实报「未走版本账」——坑单 #8：只有 config.versioned
+ * 分身有 agent_versions 账）；`rolledBackTo` 仅撤销时非空（回退目标版本）。
+ */
+export interface SkillGrantReceipt {
+  draftName: string
+  /** SDK 技能名（= 草案目录名，SKILL_DRAFT_NAME_RE 闸后） */
+  skillName: string
+  /** 目标：分身名 或 `*`（=授给所有分身，落共享技能层 ADR-0005） */
+  target: string
+  layer: "clone" | "shared"
+  /** 操作后草案状态（授予恒 granted；撤销=撤到无目标才 revoked） */
+  status: "granted" | "revoked"
+  /** 操作后的全量授予目标清单 */
+  grantedTo: string[]
+  version: string | null
+  /** 本次操作是否发布了新版本（重复授予同版幂等=false） */
+  published: boolean
+  rolledBackTo: string | null
+  /** 官方 upgrade 原语的同步结果（三账+文件；失败如实落回执不静默） */
+  presetSync: { ok: boolean; installPath: string | null; detail: string }
+  idempotent: boolean
+  receiptAt: string
+}

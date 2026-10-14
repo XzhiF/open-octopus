@@ -21,6 +21,7 @@ import {
   patchDraftBody,
   readDraft,
   retireDraft,
+  setDraftGrantState,
   writeDraft,
   type SkillDraftInput,
 } from "../skill-draft-store"
@@ -208,5 +209,81 @@ describe("drafts 区落盘契约（S1·票04 第1行 / spec 故事24）", () => 
 
   it("draftRelPath 单源形制（卡面/路由/票05 消费同一公式）", () => {
     expect(draftRelPath("flow-1")).toBe("drafts/skills/flow-1/SKILL.md")
+  })
+})
+
+// ── P3 票05: granted 态写入面（setDraftGrantState）──────────────────────
+// 票04 交接逐字：「granted 写入位=票05 自补（制式：原地翻 status 行其余逐字不动）」；
+// 状态机 draft→granted / granted→granted（多分身并授·grantedTo 增删）/ granted→revoked
+// （撤至空）。expected 真相源=票05 票面 + 票04 §六插座账，非实现反推。
+
+describe("granted 态写入面（P3 票05·setDraftGrantState）", () => {
+  function grantFile(): string {
+    return path.join(draftsDir(), "flow-abc1234567", "SKILL.md")
+  }
+
+  it("draft→granted：status 行翻位 + grantedTo 行新增 + updatedAt 前移，其余行逐字逐序不动", () => {
+    writeDraft(knowledgeRoot, BASE)
+    const before = fs.readFileSync(grantFile(), "utf-8").split("\n")
+
+    const res = setDraftGrantState(knowledgeRoot, BASE.name, {
+      status: "granted", grantedTo: ["workflow-operator"], now: "2026-10-15T00:00:00.000Z",
+    })
+    expect(res.ok).toBe(true)
+
+    const after = fs.readFileSync(grantFile(), "utf-8").split("\n")
+    const strip = (lines: string[]): string[] =>
+      lines.filter(l => !l.startsWith("status:") && !l.startsWith("updatedAt:") && !l.startsWith("grantedTo:"))
+    expect(strip(after)).toEqual(strip(before)) // 其余行逐字逐序
+    expect(after).toContain("status: granted")
+    expect(after).toContain("grantedTo: workflow-operator")
+    expect(after).toContain("updatedAt: 2026-10-15T00:00:00.000Z")
+    // grantedTo 紧跟 status 行（治理键邻位，制式可断）
+    const si = after.findIndex(l => l.startsWith("status:"))
+    expect(after[si + 1]).toBe("grantedTo: workflow-operator")
+  })
+
+  it("granted→granted：grantedTo 记多值（逗号串）往返 parse；撤到空 ⇒ status→revoked 且 grantedTo 行摘除", () => {
+    writeDraft(knowledgeRoot, BASE)
+    setDraftGrantState(knowledgeRoot, BASE.name, { status: "granted", grantedTo: ["workflow-operator", "task-doer"], now: "2026-10-15T00:00:00.000Z" })
+
+    const two = readDraft(knowledgeRoot, BASE.name)!
+    expect(two.fm.status).toBe("granted")
+    expect(two.fm.grantedTo).toEqual(["workflow-operator", "task-doer"])
+
+    const res = setDraftGrantState(knowledgeRoot, BASE.name, { status: "revoked", grantedTo: [], now: "2026-10-16T00:00:00.000Z" })
+    expect(res.ok).toBe(true)
+    const gone = readDraft(knowledgeRoot, BASE.name)!
+    expect(gone.fm.status).toBe("revoked")
+    expect(gone.fm.grantedTo).toBeUndefined()
+    expect(fs.readFileSync(grantFile(), "utf-8")).not.toContain("grantedTo:")
+  })
+
+  it("非法转移矩阵全拒：draft→revoked / revoked→granted / 空 grantedTo 的 granted 拒", () => {
+    writeDraft(knowledgeRoot, BASE)
+    expect(setDraftGrantState(knowledgeRoot, BASE.name, { status: "revoked", grantedTo: [], now: "x" }).reason)
+      .toBe("GRANT_STATE_TRANSITION") // draft 未授不可经授予面撤
+
+    setDraftGrantState(knowledgeRoot, BASE.name, { status: "granted", grantedTo: ["a-clone"], now: "x" })
+    setDraftGrantState(knowledgeRoot, BASE.name, { status: "revoked", grantedTo: [], now: "y" })
+    expect(setDraftGrantState(knowledgeRoot, BASE.name, { status: "granted", grantedTo: ["a-clone"], now: "z" }).reason)
+      .toBe("GRANT_STATE_TRANSITION") // revoked 终态——再授予须重出草案（票04 留档纪律）
+
+    writeDraft(knowledgeRoot, { ...BASE, name: "flow-second", source: "pack:task-c; pack:task-d" })
+    expect(setDraftGrantState(knowledgeRoot, "flow-second", { status: "granted", grantedTo: [], now: "z" }).reason)
+      .toBe("GRANT_STATE_CONFLICT") // granted 恒带至少一个目标（不变量）
+
+    expect(setDraftGrantState(knowledgeRoot, "ghost-draft", { status: "granted", grantedTo: ["x"], now: "z" }).reason)
+      .toBe("DRAFT_NOT_FOUND")
+  })
+
+  it("存量票04 草案（无 grantedTo 行）读面零破坏 + granted 态拒对话改写（边界互斥复证）", () => {
+    writeDraft(knowledgeRoot, BASE)
+    const legacy = readDraft(knowledgeRoot, BASE.name)!
+    expect(legacy.fm.grantedTo).toBeUndefined()
+
+    setDraftGrantState(knowledgeRoot, BASE.name, { status: "granted", grantedTo: ["workflow-operator"], now: "2026-10-15T00:00:00.000Z" })
+    expect(patchDraftBody(knowledgeRoot, BASE.name, { body: "x", now: "2026-10-15T01:00:00.000Z" }).reason).toBe("DRAFT_GRANTED")
+    expect(retireDraft(knowledgeRoot, BASE.name).reason).toBe("DRAFT_GRANTED")
   })
 })

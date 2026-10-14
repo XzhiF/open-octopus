@@ -60,6 +60,12 @@ export interface SkillDraftFrontmatter {
   ruleRef?: string
   /** 来源原件路径（可点面：raw/archives/… 件 或 cases/… 页——revise/retire 重发卡通道保「来源指针可点」） */
   sourcePath?: string
+  /**
+   * P3 票05 授予面：已授予目标清单（分身名 ∪ `*`=共享技能层）。
+   * **仅 granted 态非空**（setDraftGrantState 写）；revoked/draft 恒缺省——
+   * 行缺 = 旧文件向后兼容（票04 草案读出 grantedTo undefined）。
+   */
+  grantedTo?: string[]
 }
 
 export interface SkillDraftInput {
@@ -139,9 +145,12 @@ export function renderSkillDraftFile(fm: SkillDraftFrontmatter, body: string): s
     `name: ${fm.name}`,
     `description: ${oneLine(fm.description)}`,
     `status: ${fm.status}`,
-    `origin: ${fm.origin}`,
-    `source: ${fm.source}`,
   ]
+  // 票05 授予面：grantedTo 恒紧跟 status 行（制式；空/缺省不落行=向后兼容）
+  if (fm.grantedTo !== undefined && fm.grantedTo.length > 0) {
+    lines.push(`grantedTo: ${fm.grantedTo.join(",")}`)
+  }
+  lines.push(`origin: ${fm.origin}`, `source: ${fm.source}`)
   if (fm.taskId !== undefined) lines.push(`taskId: ${fm.taskId}`)
   if (fm.caseId !== undefined) lines.push(`caseId: ${fm.caseId}`)
   if (fm.similarity !== undefined) lines.push(`similarity: ${String(fm.similarity)}`)
@@ -183,11 +192,16 @@ export function parseSkillDraftFile(text: string): { fm: SkillDraftFrontmatter; 
   const caseId = fields.get("caseId")
   const ruleRef = fields.get("ruleRef")
   const sourcePath = fields.get("sourcePath")
+  const grantedRaw = fields.get("grantedTo")
   const simRaw = fields.get("similarity")
   if (taskId) fm.taskId = taskId
   if (caseId) fm.caseId = caseId
   if (ruleRef) fm.ruleRef = ruleRef
   if (sourcePath) fm.sourcePath = sourcePath
+  if (grantedRaw !== undefined) {
+    const targets = grantedRaw.split(",").map(s => s.trim()).filter(s => s !== "")
+    if (targets.length > 0) fm.grantedTo = targets
+  }
   if (simRaw !== undefined) {
     const sim = Number(simRaw)
     if (Number.isFinite(sim)) fm.similarity = sim
@@ -330,5 +344,65 @@ export function retireDraft(root: string, name: string): DraftOpResult {
   const abs = draftDirAbs(root, name)!
   const next = rec.content.replace(/^status: draft$/m, "status: revoked")
   fs.writeFileSync(path.join(abs, SKILL_DRAFT_FILE_NAME), next, "utf-8")
+  return { ok: true, path: rec.relPath }
+}
+
+// ── 票05 授予面（granted/revoked 的唯一写入者 = SkillGrantService 机械链）────
+
+export interface GrantStateInput {
+  /** 目标态：granted（含多分身并授的 grantedTo 更新）或 revoked（撤到空） */
+  status: SkillDraftStatus
+  /** 授予目标全量清单（分身名 ∪ `*`）；granted 恒非空、revoked 恒空（不变量闸） */
+  grantedTo: string[]
+  now: string
+}
+
+/**
+ * 授予/撤销的状态翻面（票04 交接制式：**原地翻 status 行 + grantedTo 邻位行，
+ * 其余字节逐字不动**）。合法转移：draft→granted、granted→granted（并授/缩授）、
+ * granted→revoked；revoked 是终态（再授予须重出草案——票04「留档不挡再提议」
+ * 指的是检测产**新**草案，不复活旧件）。
+ * 红线4：本函数只动 drafts 区文件的治理行——分身目录/预置源/版本的写权全在
+ * 调用方（SkillGrantService）的机械链里，store 不越界。
+ */
+export function setDraftGrantState(root: string, name: string, input: GrantStateInput): DraftOpResult {
+  const rec = readDraft(root, name)
+  if (!rec) return { ok: false, reason: "DRAFT_NOT_FOUND", detail: `草案不在盘或坏形：${name}` }
+
+  const from = rec.fm.status
+  const to = input.status
+  if (to === "granted" && input.grantedTo.length === 0) {
+    return { ok: false, reason: "GRANT_STATE_CONFLICT", detail: "granted 态必须至少一个授予目标（不变量）" }
+  }
+  if (to === "revoked" && input.grantedTo.length > 0) {
+    return { ok: false, reason: "GRANT_STATE_CONFLICT", detail: "revoked 态 grantedTo 必须为空（撤干净才算撤）" }
+  }
+  const legal =
+    (from === "draft" && to === "granted") ||
+    (from === "granted" && (to === "granted" || to === "revoked"))
+  if (!legal) {
+    return { ok: false, reason: "GRANT_STATE_TRANSITION", detail: `非法授予状态转移：${from}→${to}` }
+  }
+
+  const abs = draftDirAbs(root, name)!
+  const lines = rec.content.split("\n")
+  const si = lines.findIndex(l => /^status: (draft|granted|revoked)$/.test(l))
+  if (si < 0) return { ok: false, reason: "GRANT_STATE_CONFLICT", detail: `盘上缺 status 治理行：${name}` }
+
+  // 原地翻 status 行
+  lines[si] = `status: ${to}`
+  // grantedTo 邻位行：先摘既有，再按需插入（revoked/空 ⇒ 摘除不补）
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^grantedTo: /.test(lines[i]!)) lines.splice(i, 1)
+  }
+  if (input.grantedTo.length > 0) {
+    lines.splice(si + 1, 0, `grantedTo: ${input.grantedTo.join(",")}`)
+  }
+  // updatedAt 前移（治理时间线；找不到行=坏形，保守不写）
+  const ui = lines.findIndex(l => /^updatedAt: .+/.test(l))
+  if (ui < 0) return { ok: false, reason: "GRANT_STATE_CONFLICT", detail: `盘上缺 updatedAt 治理行：${name}` }
+  lines[ui] = `updatedAt: ${input.now}`
+
+  fs.writeFileSync(path.join(abs, SKILL_DRAFT_FILE_NAME), lines.join("\n"), "utf-8")
   return { ok: true, path: rec.relPath }
 }
