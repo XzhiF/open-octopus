@@ -123,7 +123,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
     expect(topicBody).not.toMatch(/20\d{2}[-/年]\d{1,2}[-/月]\d{1,2}/)
     expect(topicBody).toContain("Windows 下冒号是保留字符")
 
-    // 判例↔规则互指 + 状态翻转（append-only 面：仅 status/rule_ref/occurrences 可变）
+    // 判例↔规则互指 + 状态翻转（append-only 面：仅 status/rule_ref/occurrences/procedural 可变）
     const caseText = read("cases/2026-10-12-case-msys.md")
     expect(caseText).toMatch(/status: distilled/)
     const anchor = /<!--#(oct-\d{3})-->/.exec(topic)![1]!

@@ -897,7 +897,7 @@ export class WikiCompileService {
       const norm = (s: string) => s.replace(/\r\n/g, "\n").replace(/\s+$/, "")
       if (norm(prev.body) !== norm(body)) {
         this.logRejection(logPath, relPath, "正文改写", source, reviewer)
-        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 正文已入库即历史，禁止改写（append-only；仅 status/rule_ref/occurrences 可经编译通道更新）`)
+        throw new Error(`CASE_APPEND_ONLY: '${relPath}' 正文已入库即历史，禁止改写（append-only；仅 status/rule_ref/occurrences/procedural 可经编译通道更新）`)
       }
       const immutable = (
         prev.meta.id !== c.id || prev.meta.symptom !== c.symptom ||
