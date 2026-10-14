@@ -6,6 +6,7 @@ import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat
 import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useKcPacks } from '@/hooks/use-kc-packs'
+import { useKcCases } from '@/hooks/use-kc-cases'
 import { KcCard, type KcCardActionCtx } from './cards/registry'
 import {
   createCloneSession,
@@ -24,6 +25,7 @@ import {
   type KcCompileDiffCardData,
   type KcFindingCardData,
   type KcMaterialPackCardData,
+  type KcCaseCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { classifyKcFeed } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
@@ -133,6 +135,8 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
 
   // ── P3 票02：素材包剔除/焦点重编译覆盖层（队列任务态回灌 material-pack 卡）──
   const packs = useKcPacks({ pollMs: feedPollMs, onSettled: onWikiChanged })
+  // ── P3 票03：判例退役覆盖层（case-archive 队列任务态回灌判例卡；红线2 唯一写通道）──
+  const cases = useKcCases({ pollMs: feedPollMs, onSettled: onWikiChanged })
   const sessionIdRef = useRef<string | null>(null)
   sessionIdRef.current = activeSessionId
 
@@ -196,8 +200,14 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
       if (!rc) return e
       return { ...e, data: { ...d, recompile: rc } }
     }
+    if (e.kind === 'case') {
+      const d = e.data as KcCaseCardData
+      const rt = cases.retireStates[d.caseId]
+      if (!rt) return e
+      return { ...e, data: { ...d, retire: rt } }
+    }
     return e
-  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus, packs.recompileStates])
+  }, [feed.revertStates, findings.fixStates, findings.backfillStates, findings.findingStatus, packs.recompileStates, cases.retireStates])
   const isDismissed = useCallback((e: KcCardEvent) => e.kind === 'backfill' && !!findings.dismissed[e.id], [findings.dismissed])
   const tailEvents = useMemo(
     () => feed.cards
@@ -243,7 +253,8 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     }),
     dismissBackfill: cardId => findings.dismissBackfill(cardId),
     recompilePack: (taskId, input) => void packs.recompile(taskId, input),
-  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile])
+    retireCase: caseId => void cases.retire(caseId),
+  }), [tree, onOpenPage, onOpenFullPage, onOpenRaw, feed.revert, feed.retryCompile, findings.adopt, findings.ignore, findings.backfill, findings.dismissBackfill, packs.recompile, cases.retire])
 
   // ── 发送：投喂意图走 REST 执行面；「体检一下」走巡检面；对话面原文照常发策展人 ──
   const handleSend = useCallback((message: string) => {

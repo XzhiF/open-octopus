@@ -27,6 +27,11 @@ import { createWikiCompileRoutes } from "./routes/wiki-compile"
 import { createWikiPackRoutes } from "./routes/wiki-pack"
 import { MaterialPackOpsService } from "./services/knowledge/pack-ops"
 import type { KcMaterialPackCardData } from "@octopus/shared"
+// P3 票03：判例自动提取+入档（case-archive 第八类 opKind + 判例卡 + 退役路由）
+import { CaseExtractService } from "./services/knowledge/case-extract-service"
+import { createProductionCaseExtractor } from "./services/knowledge/case-extract-llm"
+import { createWikiCaseRoutes } from "./routes/wiki-case"
+import type { KcCaseCardData } from "@octopus/shared"
 import { createWikiRevertRoutes } from "./routes/wiki-revert"
 import { RevertTaskService } from "./services/knowledge/wiki/revert"
 import { createCompileQueueRoutes } from "./routes/wiki-queue"
@@ -593,6 +598,28 @@ const packOps = new MaterialPackOpsService({
   },
 })
 app.route("/api/knowledge/wiki", createWikiPackRoutes(packOps))
+// P3 票03：判例自动提取+入档。CaseExtractService（惰性 db 构造，getFindingOps 同轨）：
+// 归档链第⑤步读素材包（exec-jsonl-excerpt/phase-rejections）产五段草案 →
+// **case-archive 第八类 opKind 入全局串行队列**（红线2 判例唯一写通道）→ 编译进
+// cases/ 后判例卡经 Lane A 沉淀知识中心会话（先存后知，红线3 无审批态）。
+// POST /case/retire：退役钮执行面（superseded 仍经同一 case-archive 队列通道）。
+let caseExtractInstance: CaseExtractService | undefined
+const getCaseExtract = () => (caseExtractInstance ??= new CaseExtractService({
+  db: getDb(),
+  queue: wikiWriteQueue,
+  extract: createProductionCaseExtractor(),
+  announceCase: (event) => {
+    const d = event.data as KcCaseCardData
+    appendKnowledgeSessionCards(
+      getDb(),
+      `⚖️ 判例${d.action === "retired" ? "退役" : d.action === "merged" ? "并档" : "自动入档"}：${d.symptom}（occurrences=${d.occurrences} · ${d.path} · 事后纠通道=对话退役/改写）`,
+      [event],
+    )
+  },
+}))
+app.route("/api/knowledge/wiki", createWikiCaseRoutes({
+  retireCase: (caseId) => getCaseExtract().retireCase(caseId),
+}))
 // 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
 // commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
 // 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
@@ -936,6 +963,8 @@ if (shouldServe) {
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
       // 状态可查 GET /api/knowledge/wiki/queue/task/arc-{id}）。素材包卡经 Lane A
       // 沉淀进知识中心会话（appendKnowledgeSessionCards 先例；无会话诚实降级）。
+      // P3 票03 第⑤步：素材包冻结+入队后判例提取（读包内 exec-jsonl-excerpt/
+      // phase-rejections 产五段草案，case-archive 队列入档，判例卡先存后知）。
       // 失败不阻塞 done：投喂链与 K11 归档编排正交（beginArchiving fire-and-forget）。
       const archiveIngest = new ArchiveIngestService({
         db,
@@ -947,6 +976,7 @@ if (shouldServe) {
           return curator.compilePack(taskId, opts ?? {})
         },
         summarize: createProductionArchiveSummarizer(),
+        extractCases: (taskId) => getCaseExtract().extractAndEnqueue(taskId),
         announcePack: (event) => {
           const d = event.data as KcMaterialPackCardData
           appendKnowledgeSessionCards(

@@ -6,8 +6,8 @@ import type { WikiPageFrontmatter, KcCardEvent, KcCompileDiffCardData } from "@o
 import { applySchema } from "../../db/schema"
 import { FindingsDAO, type FindingRow, type FindingStatus } from "../../db/dao/findings-dao"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "./global-paths"
-import { scanWikiEntries, WikiCompileService, type BatchPageInput } from "./wiki/compile"
-import { parseWikiFile, serializePageMarkdown, extractRuleAnchors, pageDirForType } from "./wiki/format"
+import { scanWikiEntries, WikiCompileService, nextRuleAnchor, type BatchPageInput } from "./wiki/compile"
+import { parseWikiFile, parseCaseMarkdown, serializeCaseMarkdown, serializePageMarkdown, extractRuleAnchors, pageDirForType } from "./wiki/format"
 import type { GitRunner } from "./wiki/wiki-git"
 import { CompileQueue, type WriteQueue } from "./wiki/compile-queue"
 import { findingCardData } from "./patrol-job"
@@ -302,6 +302,12 @@ export class FindingOpsService {
         works.push(...revise)
         break
       }
+      case "case-backlog": {
+        // P3 票03 六查采纳：判例蒸馏=确定性编译（不走 LLM——规则文本机械提纯自判例
+        // 五段），产物 topics 硬约束 + 判例↔规则互指。独立成对写（topic 批通道 +
+        // case 单页通道），自返结果绕开通用 works/tail。
+        return await this.distillCase(row, detail, pages)
+      }
       default:
         throw new FindingOpsError("FINDING_FIX_UNSUPPORTED_KIND", `本通道不接 kind='${row.kind}'`, 400)
     }
@@ -408,6 +414,90 @@ ${evidence}
     return revised
   }
 
+  /**
+   * P3 票03 case-backlog 采纳：判例 → topics 硬约束页（确定性蒸馏，零 LLM）。
+   * - 产物互指：topic 正文 [[case-id]]（入链=孤儿判据解除）+ case.rule_ref=新发锚点
+   *   （patrol 六查据此出列；孤儿面认 rule_ref 边）。
+   * - 判例面只翻可变面 status=distilled + rule_ref，正文逐字回写（append-only 天然同文
+   *   ⇒ compileCase 走固定字段/正文逐字校验通过，仅状态更新留 LOG 行）。
+   * - 竞态幂等：目标已非 open/已带 rule_ref ⇒ 空转成功零写（finding 仍 resolved）。
+   * - 蒸馏文本净洗：判例教训/修复段里的日期形态一律剥除（topic 页 L5 零日期闸不豁免——
+   *   判例豁免半衰期是因历史绑定，蒸馏产物是常青规则）。
+   */
+  private async distillCase(row: FindingRow, detail: Record<string, unknown>, pages: string[]): Promise<FixTaskResult> {
+    const caseRel = String(detail.case ?? pages[0] ?? "")
+    if (!caseRel) throw new FindingOpsError("FINDING_TARGET_MISSING", "判例积压 finding 缺少 case 路径", 409)
+    const abs = path.join(this.wikiRoot, caseRel)
+    if (!fs.existsSync(abs)) throw new FindingOpsError("FINDING_TARGET_MISSING", `判例页不在盘：${caseRel}`, 409)
+    const parsed = parseCaseMarkdown(fs.readFileSync(abs, "utf-8"))
+    const meta = parsed.meta
+    const body = parsed.body
+    if (meta.status !== "open" || meta.rule_ref !== undefined) {
+      return {
+        commit: null, changed: false,
+        touched: [{ path: caseRel, type: "case", created: false }],
+        warnings: [`判例 '${meta.id}' 现为 ${meta.status}${meta.rule_ref ? `（rule_ref=${meta.rule_ref}）` : ""}，蒸馏空转（裁决按闭环处理）`],
+      }
+    }
+
+    const compiler = new WikiCompileService({
+      db: this.db, org: GLOBAL_WIKI_ORG, rootDir: this.wikiRoot,
+      ...(this.git ? { git: this.git } : {}),
+    })
+    const anchor = nextRuleAnchor(this.wikiRoot)
+    const topicId = `top-${meta.id}`
+    const lesson = scrubDates(caseSectionText(body, "教训") || caseSectionText(body, "根因") || meta.symptom)
+    const fixNote = scrubDates(caseSectionText(body, "修复") || "命中该症状时先复查判例五段")
+    const today = this.now().toISOString().slice(0, 10)
+    const topicMeta: WikiPageFrontmatter = {
+      id: topicId, type: "topic",
+      title: `判例蒸馏：${scrubDates(meta.symptom)}`.slice(0, 80),
+      summary: `巡检六查「判例积压」采纳蒸馏：${scrubDates(meta.symptom)}（${meta.occurrences} 次命中，判例 ${meta.id}）`.slice(0, 120),
+      topics: meta.tags.length > 0 ? meta.tags : [meta.id],
+      aliases: [], links: [meta.id],
+      last_compiled: today, sources: [meta.source],
+    }
+    const topicBody = [
+      `## 硬约束`,
+      ``,
+      `- 命中「${scrubDates(meta.symptom)}」时：${lesson} <!--#${anchor}-->`,
+      ``,
+      `## 处置参考`,
+      ``,
+      `- ${fixNote}`,
+      ``,
+      `## 判例`,
+      ``,
+      `- [[${meta.id}]]（${meta.occurrences} 次命中 · ${meta.source}）`,
+      ``,
+    ].join("\n")
+
+    const topicRes = await compiler.compilePages(
+      [{ content: serializePageMarkdown(topicMeta, topicBody), fileName: `${topicId}.md` }],
+      {
+        action: "compile", entry: row.title,
+        note: `判例蒸馏 ${meta.id} → ${topicId}（六查采纳 · 裁决即编译）`,
+        source: caseRel, reviewer: "owner",
+      },
+    )
+    const caseRes = await compiler.compileEntry({
+      content: serializeCaseMarkdown({ ...meta, status: "distilled", rule_ref: anchor }, body),
+      fileName: caseRel.split("/").pop() ?? `${meta.id}.md`,
+      source: caseRel, reviewer: "owner",
+      note: `判例蒸馏 status=distilled rule_ref=${anchor}`,
+    })
+    const warnings = [...topicRes.pages.flatMap(p => p.warnings), ...caseRes.warnings]
+    return {
+      commit: caseRes.commit ?? topicRes.commit,
+      changed: topicRes.changed || caseRes.changed,
+      touched: [
+        ...topicRes.pages.map(p => ({ path: p.path, type: p.type, created: p.created })),
+        { path: caseRes.path, type: "case", created: false },
+      ],
+      warnings,
+    }
+  }
+
   private evict(): void {
     if (this.tasks.size <= this.capacity) return
     for (const [id, rec] of this.tasks) {
@@ -425,6 +515,28 @@ function safeParse(text: string): unknown {
   } catch {
     return {}
   }
+}
+
+/** 判例正文取指定段文本（## 段名 到下个 ## 前）；缺席 = 空串。 */
+function caseSectionText(body: string, name: string): string {
+  const lines = body.split("\n")
+  const start = lines.findIndex(l => l.startsWith(`## ${name}`))
+  if (start === -1) return ""
+  const out: string[] = []
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i]!.startsWith("## ")) break
+    out.push(lines[i]!)
+  }
+  return out.join("\n").trim()
+}
+
+/** 蒸馏净洗：剥除 findDateOccurrences 同族日期形态（常青规则页不背历史时间戳）+ 压空白。 */
+export function scrubDates(text: string): string {
+  return text
+    .replace(/\d{4}-\d{2}-\d{2}|\d{4}\/\d{1,2}\/\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日/g, "")
+    .replace(/[（(]\s*[）)]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
 }
 
 /** 剥除本 finding 的「冲突待裁决」标记行；小节被剥空则连小节题一并去。 */

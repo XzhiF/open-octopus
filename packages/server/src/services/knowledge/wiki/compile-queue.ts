@@ -8,8 +8,10 @@
  *
  * 语义（票面 AC2 / prototype Tab③）：
  * - 单异步互斥：同一时刻至多一个任务在跑；后到者排队，位次 #N 可查（UI 卡「排队中 #N」）。
- * - 六类写操作 + 重蒸馏统一入队（WRITE_OP_KINDS 单源枚举）：此刻只有 ingest-compile 有
- *   实现体（票05 curator 入口），其余 kind 为票 07/10/12/13 预留的入队通道——
+ * - 全部写操作统一入队（WRITE_OP_KINDS 单源枚举，现八类：投喂/归档/对话修订/lint 自纠/
+ *   finding 修复/revert/重蒸馏 + P3 票03 判例入档 case-archive）：此刻多数 kind 有
+ *   实现体（curator/archive/case-archive/finding-fix/revert/redistill），dialog-revise/
+ *   lint-fix 为预留入队通道——
  *   **任何写通道不得绕过本队列直写 wiki**（AC1）。
  * - 失败语义：单任务失败 ⇒ 自身标记 failed（编译事务回滚由写闸内部保证）⇒
  *   锁释放 ⇒ 队列继续，一次失败不堵死全队。
@@ -19,15 +21,16 @@
  * 持久任务表不在本票——真相面是 git LOG 行。
  */
 
-/** 写操作 kind 单源（票面 AC1 六类 + 重蒸馏脚本；UI/脚本按值消费，禁各自造词）。 */
+/** 写操作 kind 单源（票面 AC1 六类 + 重蒸馏脚本 + P3 票03 判例入档第八类；UI/脚本按值消费，禁各自造词）。 */
 export const WRITE_OP_KINDS = [
   "ingest-compile",  // 投喂编译（票05 curator 任务入口）
-  "archive-compile", // 归档编译（票10 归档自动投喂）
+  "archive-compile", // 归档编译（票10 归档自动投喂；P3 票02 素材包重编译同通道）
   "dialog-revise",   // 对话修订 fix-forward（票12）
   "lint-fix",        // lint 自纠（票12）
   "finding-fix",     // finding 修复裁决即编译（票13）
   "revert",          // 回滚 git revert（票12）
   "redistill",       // 重蒸馏脚本（票07）
+  "case-archive",    // P3 票03 判例自动入档（提取草案/occurrences 合并/退役 superseded 全经此通道，红线2 禁直写 cases/）
 ] as const
 export type WriteOpKind = (typeof WRITE_OP_KINDS)[number]
 

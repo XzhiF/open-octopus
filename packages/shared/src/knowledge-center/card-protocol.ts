@@ -9,7 +9,8 @@
  *
  * ── 事件模型 ──
  * 一次知识操作 = 一个结构化事件 `KcCardEvent`：`{ id, kind, ts, data }`。
- * kind 八类（票12 六类 + 票13 finding/回填）；追加新卡类：新增 kind 字符串 +
+ * kind 十类（票12 六类 + 票13 finding/回填 + P3 票02 material-pack + P3 票03 case）；
+ * 追加新卡类：新增 kind 字符串 +
  * data 接口 + `registerKcCardRenderer(kind, Comp)` 一条注册（web 侧
  * components/knowledge-center/cards/registry.tsx）——渲染分发走注册表，
  * 本文件与分发器不为新卡类改 switch。未注册 kind 的持久块渲染为通用兜底卡
@@ -47,6 +48,7 @@ export const KC_CARD_KINDS = [
   "finding",
   "backfill",
   "material-pack",
+  "case",
 ] as const
 
 export type KcKnownCardKind = (typeof KC_CARD_KINDS)[number]
@@ -173,6 +175,60 @@ export interface KcMaterialPackCardData {
   recompile?: KcMaterialPackRecompileState
 }
 
+// ── P3 票03 判例卡（五段预览 + source 指针 + 退役钮；spec §卡片与 UI 逐字）──
+
+/** 判例卡五段预览（键序=CBR 叙事序；单源对齐 shared WIKI_CASE_SECTIONS）。 */
+export interface KcCaseCardSections {
+  现场: string
+  诊断: string
+  根因: string
+  修复: string
+  教训: string
+}
+
+/**
+ * ⚖️ P3 判例卡（票03）：判例自动入档（先存后知）的事后通知——五段预览 + source 指针 +
+ * 退役钮（superseded 经 case-archive 队列通道，红线2 禁直写 cases/；红线3 无审批态）。
+ * 字段名对齐 web 侧 KcCaseFields（knowledge-center-api：symptom/tags/severity/
+ * occurrences/ruleRef/status）。卡 id 约定 `cse-<caseId>`（重放同 id：Lane A 沉淀
+ * 终态卡与首见卡同址，finding 终态卡先例同律）。
+ */
+export interface KcCaseCardData {
+  caseId: string
+  /** wiki 相对路径（cases/{YYYY-MM-DD}-{slug}.md；右栏跟随目标） */
+  path: string
+  symptom: string
+  severity: string
+  tags: string[]
+  occurrences: number
+  ruleRef?: string | null
+  /** open | distilled | superseded（WikiCaseStatusValues 单源） */
+  status: string
+  /** 可定位溯源指针（exec:/task: 前缀族；openRaw/回指面） */
+  source: string
+  sections: KcCaseCardSections
+  /** 提取来源任务（指针面，可空=手工/对话通道产卡时缺省） */
+  taskId?: string
+  /** 入档队列任务 id（caw-…/car-…；GET /wiki/queue/task/:id 可查面） */
+  queueTaskId?: string
+  /** 自动提取入档 or 并档（occurrences+1）or 退役——卡面动作记号 */
+  action?: "created" | "merged" | "retired"
+  /**
+   * 退役钮任务流状态（Lane B 轮询回灌，与 finding fix/素材包 recompile 同构）：
+   * POST /case/retire → car-… 队列任务（case-archive opKind，唯一写通道）。
+   * committed 后终态卡（action=retired）由 Lane A 沉淀覆盖（先存后知）。
+   */
+  retire?: KcCaseRetireState
+}
+
+/** 判例卡退役任务流状态（位次口径同队列卡；红线3：事后纠即时执行，无审批态）。 */
+export interface KcCaseRetireState {
+  taskId: string
+  status: "queued" | "running" | "committed" | "failed"
+  position?: number | null
+  error?: { code: string; message: string }
+}
+
 /** 📇 词条迷你卡：对话提到某页。 */
 export interface KcPageMiniCardData {
   /** 页 id（解析优先）或 wiki 相对路径 */
@@ -261,6 +317,7 @@ export interface KcCardEvent {
     | KcFindingCardData
     | KcBackfillCardData
     | KcMaterialPackCardData
+    | KcCaseCardData
     | Record<string, unknown>
 }
 
@@ -334,6 +391,11 @@ export function kcEventPageRefs(event: KcCardEvent): string[] {
       // 票13：对话点到 finding，右栏落涉事首页（原型交互纪律④同律）
       const d = event.data as KcFindingCardData
       return (d.pages ?? []).slice(0, 1)
+    }
+    case "case": {
+      // P3 票03：判例卡右栏落判例页（cases/…；openPage 解析走既有树）
+      const d = event.data as KcCaseCardData
+      return d.path ? [d.path] : []
     }
     default:
       return []

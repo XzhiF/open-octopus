@@ -13,6 +13,7 @@ import { GuardCard } from './guard-card'
 import { FindingCard } from './finding-card'
 import { BackfillCard } from './backfill-card'
 import { MaterialPackCard } from './material-pack-card'
+import { CaseCard } from './case-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
@@ -43,6 +44,8 @@ export interface KcCardActionCtx {
   dismissBackfill: (cardId: string) => void
   /** [剔除重编译]（P3 票02 素材包卡）：POST pack/recompile → 全局串行队列，状态回灌卡 */
   recompilePack: (taskId: string, input: { excludePath?: string; focus?: string }) => void
+  /** [退役]（P3 票03 判例卡）：POST /wiki/case/retire → case-archive 队列标 superseded，状态回灌卡 */
+  retireCase: (caseId: string) => void
 }
 
 export interface KcCardViewProps {
@@ -92,3 +95,4 @@ registerKcCardRenderer('guard', GuardCard)
 registerKcCardRenderer('finding', FindingCard)
 registerKcCardRenderer('backfill', BackfillCard)
 registerKcCardRenderer('material-pack', MaterialPackCard)
+registerKcCardRenderer('case', CaseCard)

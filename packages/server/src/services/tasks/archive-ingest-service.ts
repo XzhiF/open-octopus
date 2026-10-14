@@ -98,6 +98,14 @@ export interface ArchiveIngestDeps {
    * 永不毁投喂回执（失败语义不破）。
    */
   announcePack?: (event: KcCardEvent) => void
+  /**
+   * P3 票03 判例提取接位（同 hook 链第⑤步，入队编译之后）：index.ts 接
+   * CaseExtractService.extractAndEnqueue——读刚落盘的素材包（exec-jsonl-excerpt +
+   * phase-rejections）产五段草案，经 case-archive 队列 opKind 入档。
+   * 缺省不提取；抛错/失败一律吞进 stderr——提取失败不产假判例、零落盘零入队由
+   * CaseExtractService 自守，本钩子层再保「不阻塞投喂回执/done」。
+   */
+  extractCases?: (taskId: string) => Promise<unknown>
   now?: () => Date
 }
 
@@ -384,6 +392,17 @@ export class ArchiveIngestService {
     } catch (err) {
       // 同 id 在队（进程内重触发竞态）——投喂本身已成功，编译以既有任务为准。
       process.stderr.write(`[archive-ingest] enqueue failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+
+    // ── ⑤ 判例提取（P3 票03 同 hook 链：入队编译之后）：读刚落盘的素材包产五段草案，
+    // 经 case-archive 队列 opKind 入档（唯一写通道，红线2）+ 判例卡 Lane A 先存后知。
+    // 失败全吞进 stderr——不产假判例、不阻塞投喂回执、不参与 done 判定（票面第 6 行）。
+    if (this.deps.extractCases) {
+      try {
+        await this.deps.extractCases(taskId)
+      } catch (err) {
+        process.stderr.write(`[archive-ingest] case extraction failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+      }
     }
 
     // ── 素材包卡（票面第 4 行：件清单入对话流；Lane A 生产者接位，失败语义不破）──

@@ -454,3 +454,24 @@ export async function kcRecompilePack(taskId: string, input: { excludePath?: str
   })
   return handleResponse<KcRecompileAck>(res)
 }
+
+// ============ P3 票03 判例面（退役钮执行口）============
+// 端点契约见 server routes/wiki-case.ts；队列位次复用 kcGetQueueTask（票06 单源）。
+// 红线2：判例一切写（含退役 superseded）经 case-archive opKind 入全局串行队列——
+// 本函数只是回执形状的前端投影，写通道不在前端。
+
+export interface KcCaseRetireAck {
+  caseId: string
+  queueTaskId: string
+  casePath: string
+}
+
+/** [退役]：POST /wiki/case/retire ⇒ 202 {caseId, queueTaskId, casePath}（异步经队列生效）。 */
+export async function kcRetireCase(caseId: string): Promise<KcCaseRetireAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/case/retire`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ caseId }),
+  })
+  return handleResponse<KcCaseRetireAck>(res)
+}

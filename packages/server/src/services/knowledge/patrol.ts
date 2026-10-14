@@ -2,7 +2,7 @@ import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import crypto from "crypto"
-import type { WikiPageType } from "@octopus/shared"
+import type { WikiCaseFrontmatter, WikiPageType } from "@octopus/shared"
 import { STALE_REF_PREFIX, WIKI_REFS_KEY } from "@octopus/shared"
 import { applySchema } from "../../db/schema"
 import type { FindingUpsert } from "../../db/dao/findings-dao"
@@ -13,9 +13,10 @@ import { resolveWikiLink, WIKILINK_RE } from "./wiki/lint"
 import { resolveKnowledgeRoot } from "./global-paths"
 
 /**
- * WikiPatrolService — 语义巡检「库自己会体检」（知识中心票13 主控，spec 质控⑤）。
+ * WikiPatrolService — 语义巡检「库自己会体检」（知识中心票13 主控，spec 质控⑤；
+ * P3 票03 五查扩六查）。
  *
- * 五查（票面 AC1，全部**确定性**遍历，不经 LLM——内容寻址 id 要求证据可复算，
+ * 六查（票面 AC1，全部**确定性**遍历，不经 LLM——内容寻址 id 要求证据可复算，
  * LLM 自由发挥会让 finding id 每晚漂移、幂等破产）：
  *  ① 页间矛盾（断言对立）：扫盘上「## 冲突待裁决」标记行（票05 编译通道的持久证据面），
  *     findings 行缺席时复报（DB 只是索引、fs+git 是真源——findings 被清/搬家后巡检兜底
@@ -28,6 +29,9 @@ import { resolveKnowledgeRoot } from "./global-paths"
  *  ④ 被提及但缺页的概念：[[链接]]/front-matter links 目标解析失败（resolveWikiLink
  *     与编译期 L5 断链闸同一判据——单源）。
  *  ⑤ 缺失交叉引用：同类页（同 type 的内容页）共享 topic 标签却互不链接，给建议对。
+ *  ⑥ 判例积压（P3 票03，spec 故事 13）：open 且 occurrences≥2 且无 rule_ref 的判例 ⇒
+ *     finding 提议蒸馏为 topics 硬约束（判例是规则的原料；裁决面=finding adopt 通道，
+ *     产物互指：topic 页 [[case]] + case.rule_ref=锚点、status=distilled）。
  *
  * 裁决三态纪律（票面 AC2/AC5）：已有行 status ∈ {resolved, ignored} ⇒ 本巡检**永不再扰**
  * （不写库、报告记 suppressed）；open 行证据变化 ⇒ 刷新（upsert 保人裁决的 DAO 契约）、
@@ -36,7 +40,7 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * 副作用面：只写 findings 表；wiki/fs/git 零触碰（夜巡不起写队列）。读永不锁（票06 语义）。
  */
 
-export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref"
+export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog"
 
 /** 单条巡检动作：created=新建 · refreshed=open 行证据刷新 · unchanged=零写 · suppressed=已裁决不再扰 */
 export type PatrolAction = "created" | "refreshed" | "unchanged" | "suppressed"
@@ -98,6 +102,8 @@ interface PageView {
   sources: string[]
   /** 正文规则锚点（stale 上报按锚归属页） */
   anchors: string[]
+  /** P3 票03 六查：判例文件的 front-matter（非判例=undefined；scanWikiEntries 已解析） */
+  case?: WikiCaseFrontmatter
 }
 
 export class WikiPatrolService {
@@ -179,6 +185,7 @@ export class WikiPatrolService {
         body,
         sources: parsed.kind === "page" ? parsed.meta.sources : e.meta.sources ?? [],
         anchors: e.anchors,
+        ...(parsed.kind === "case" ? { case: parsed.meta } : {}),
       })
     }
     return out
@@ -202,7 +209,34 @@ export class WikiPatrolService {
       ...this.orphanDrafts(pages),
       ...this.missingXrefDrafts(pages),
       ...this.staleDrafts(pages, warnings),
+      ...this.caseBacklogDrafts(pages),
     ]
+  }
+
+  /**
+   * ⑥ 判例积压（P3 票03，spec 故事 13「判例是规则的原料」闭合面）：判例 front-matter
+   * status=open ∧ occurrences≥2 ∧ 无 rule_ref ⇒ case-backlog finding，提议蒸馏进
+   * topics 硬约束。判据全走 front-matter 计数面（正文零参与=确定性）；
+   * 蒸馏动作本身复用 finding adopt 通道（findings.ts case-backlog 分支），产物互指。
+   * occurrences 增长 ⇒ 证据变化刷新（distilled/superseded 即出列，永不再扰由三态兜）。
+   */
+  private caseBacklogDrafts(pages: PageView[]): PatrolDraft[] {
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      const c = p.case
+      if (!c) continue
+      if (c.status !== "open" || c.occurrences < 2 || c.rule_ref !== undefined) continue
+      drafts.push({
+        id: sha16(`case-backlog|patrol|${p.relPath}`),
+        kind: "case-backlog",
+        title: `判例积压：${p.relPath}（症状「${c.symptom}」已 ${c.occurrences} 次命中，未蒸馏——提议编成 topics 硬约束）`,
+        detail: JSON.stringify({ case: p.relPath, caseId: c.id, symptom: c.symptom, occurrences: c.occurrences, source: c.source }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
   }
 
   /**
@@ -340,7 +374,12 @@ export class WikiPatrolService {
     }
   }
 
-  /** ③ 孤儿页：内容页零入链（入链方 = 其它内容页；sources 回执页是编译回声，不算编织）。 */
+  /**
+   * ③ 孤儿页：内容页零入链（入链方 = 其它内容页；sources 回执页是编译回声，不算编织）。
+   * P3 票03 蒸馏产物豁免：判例↔规则互指的另一腿——case.rule_ref 指向的锚点宿主页
+   * 视为有入链（front-matter 指针边 = [[链接]] 边的等价形态；否则每次蒸馏必产
+   * 「topic 孤儿」假阳性，六查闭环变两查噪音）。
+   */
   private orphanDrafts(pages: PageView[]): PatrolDraft[] {
     const resolve = this.buildResolver(pages)
     const inbound = new Set<string>()
@@ -350,6 +389,15 @@ export class WikiPatrolService {
         const target = resolve(t)
         if (target && target.relPath !== linker.relPath) inbound.add(target.relPath)
       }
+    }
+    // rule_ref 边：判例（open/distilled 皆算，退役不解除引用关系）→ 锚点宿主页
+    const anchorOwners = new Map<string, string>()
+    for (const p of pages) for (const a of p.anchors) if (!anchorOwners.has(a)) anchorOwners.set(a, p.relPath)
+    for (const p of pages) {
+      const ref = p.case?.rule_ref
+      if (!ref) continue
+      const owner = anchorOwners.get(ref)
+      if (owner && owner !== p.relPath) inbound.add(owner)
     }
     const drafts: PatrolDraft[] = []
     for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
