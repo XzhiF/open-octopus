@@ -14,13 +14,16 @@ import { CuratorTaskService } from "../../services/knowledge/wiki/curator-task"
 import type { GitRunner } from "../../services/knowledge/wiki/wiki-git"
 
 /**
- * 票12 · S2 revert 路由契约（spec §知识中心 UI「回滚」；票面 AC5）：
+ * 票12 · S2 revert 路由契约（spec §知识中心 UI「回滚」；票面 AC5）——票02 语义换芯版：
  *   POST /api/knowledge/wiki/revert { commit } → 202 回执（rvt-… 任务，经票06 全局队列
- *   opKind="revert" 串行执行）；GET /revert/task/:id → 状态流转 queued→running→committed/failed。
- *   committed 后断言四同步：git 单 revert commit / 页文件回退 / INDEX 重建 /
- *   LOG 追加 `## [date] revert | …` 行且原 compile 行随回退消失 / DB+FTS 与盘一致。
+ *   opKind="revert" 串行执行，语义换芯不换闸）；GET /revert/task/:id → 状态流转
+ *   queued→running→committed/failed。
+ *   committed 后断言四同步（**状态重建**，spec 故事 22-23）：git 单 deep-revert commit /
+ *   页文件重建至目标态 / INDEX 重建 / LOG 追加 `## [date] deep-revert | …` 行——
+ *   历史 compile 行不再被回退（LOG 转 append-only 审计面）/ DB+FTS 与盘一致。
  * 错误码面：INVALID_PARAM 400（缺参/坏形）· NOT_FOUND 404（目标 commit 不存在/任务不存在）·
- *   任务级 failed 码：REVERT_CONFLICT（后续提交与回退互斥）· LOCK_HELD（锁占用，注入锁）。
+ *   任务级 failed 码：LOCK_HELD（锁占用，注入锁）· WORKTREE_DIRTY。REVERT_CONFLICT 已随
+ *   票02 状态改造废（无冲突面——旧「后续提交与回退互斥」用例翻转为强制对齐断言）。
  * 全栈装配同票05 先例：真 fs tmpdir + in-memory DB + 真 git + mock LLM seam。
  */
 
@@ -145,11 +148,12 @@ describe("revert 路由 — 票12 S2", () => {
     expect(rec.task.status).toBe("committed")
     expect(rec.task.commit).toBe(commit)
 
-    // ── 四同步断言 ──
-    // git：线性史 + revert commit 在最顶（独立真相源：票面「git revert 单 commit」）
+    // ── 四同步断言（票02 状态重建语义）──
+    // git：线性史 + deep-revert commit 在最顶（同族 grep 口径：`revert:` 子串新旧行通吃，
+    // 断言精锚 deep-revert——独立真相源=票02 票面「单 commit + LOG deep-revert 行」）
     const log = git.run(["log", "--format=%H %s"]).stdout.trim().split("\n")
     expect(log[0].split(" ")[0]).toBe(done.result.revertCommit)
-    expect(log[0]).toMatch(/revert: [0-9a-f]{7,}/)
+    expect(log[0]).toMatch(/deep-revert: [0-9a-f]{7,}/)
     // fs：编译产物回退（页删、raw 不动——不可变源零触碰）
     expect(fs.existsSync(path.join(wikiRoot, "concepts", "con-a.md"))).toBe(false)
     expect(fs.existsSync(path.join(wikiRoot, "sources", "2026-10-13-api-doc.md"))).toBe(false)
@@ -157,14 +161,16 @@ describe("revert 路由 — 票12 S2", () => {
     // INDEX 重建：不再含回退掉的页
     const index = fs.readFileSync(path.join(wikiRoot, "INDEX.md"), "utf-8")
     expect(index).not.toContain("con-a")
-    // LOG：原编译落盘行随回退消失（策展批通道 LOG 行 action=ingest，票05 契约）
-    // + 追加 revert 行（行格式 grep 前缀契约，票11 读面 fixture 同形）
+    // LOG 审计面换芯（票02）：历史行不回退——原编译落盘行（策展批通道 action=ingest，
+    // 票05 契约）在回滚后**保留**（append-only）；追加 deep-revert 行（目标 commit +
+    // 重建页数；行格式与既有 revert 行同族可 grep；日期走服务注入时钟——红线6，
+    // 不再钉真实日）
     const logAfter = fs.readFileSync(path.join(wikiRoot, "LOG.md"), "utf-8")
     const compileRow = logBefore.split("\n").find(l => l.startsWith("## [") && l.includes("ingest |"))
     expect(compileRow).toBeTruthy()
-    expect(logAfter).not.toContain(compileRow!)
-    expect(logAfter).toMatch(/^## \[2026-10-13\] revert \| compile [0-9a-f]{7,}$/m)
-    expect(logAfter).toContain("→ 回滚本次编译 · git revert · owner ✓")
+    expect(logAfter).toContain(compileRow!)
+    expect(logAfter).toMatch(/^## \[2026-10-13\] deep-revert \| compile [0-9a-f]{7,}$/m)
+    expect(logAfter).toMatch(/^ {2}→ 回滚本次编译 · 状态重建 \d+ 页 · owner ✓$/m)
     // DB + FTS 与盘一致：三页行消失、FTS 查不到页内容
     const articles = db.prepare("SELECT id FROM wiki_articles WHERE org='global' AND id IN ('con-a','ent-b','top-c')").all()
     expect(articles).toEqual([])
@@ -196,9 +202,10 @@ describe("revert 路由 — 票12 S2", () => {
     expect(((await g.json()) as any).error.code).toBe("NOT_FOUND")
   })
 
-  it("后续提交与回退互斥 ⇒ 任务 failed REVERT_CONFLICT，工作区不留半成品（git revert --abort）", async () => {
+  it("后续提交触及同页 ⇒ 无冲突面：状态重建强制对齐目标态，committed 且单新 commit（票02 翻转旧 REVERT_CONFLICT 契约）", async () => {
     const { commit } = await compileOnce()
-    // 再提交一次同页改动（真编译第二路会 dedup——这里用 curator 通道改页后人工提交模拟后写冲突）
+    // 再提交一次同页改动（旧语义 = git revert 三方合并必冲突 → REVERT_CONFLICT；
+    // 新语义 = 状态重建无冲突面，强制对齐——审计真相面=git 史，manual commit 与其内容永存仓史）
     fs.appendFileSync(path.join(wikiRoot, "concepts", "con-a.md"), "\n后续人工补充。\n")
     mustOk(git.run(["add", "-A"]))
     mustOk(git.run(["commit", "-m", "manual: 补充 con-a"]))
@@ -210,11 +217,15 @@ describe("revert 路由 — 票12 S2", () => {
     expect(resp.status).toBe(202)
     const ack = await resp.json() as any
     const done = await waitRevert(revertTasks, ack.taskId)
-    expect(done.status).toBe("failed")
-    expect(done.error?.code).toBe("REVERT_CONFLICT")
-    // 工作区回正：仍在 manual 补充后的 HEAD，页文件未半删半改
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+    // con-a 是目标 commit 新增的页 → 撤销新增 = 删除（人工补充随页强制对齐消失，不留半成品）
+    expect(fs.existsSync(path.join(wikiRoot, "concepts", "con-a.md"))).toBe(false)
     expect(git.run(["status", "--porcelain"]).stdout.trim()).toBe("")
-    expect(fs.readFileSync(path.join(wikiRoot, "concepts", "con-a.md"), "utf-8")).toContain("后续人工补充")
+    // git 线性：manual commit 仍在史（未被改写），deep-revert 单新 commit 在顶
+    const subjects = git.run(["log", "--format=%s"]).stdout.trim().split("\n")
+    expect(subjects[0]).toMatch(/^deep-revert: [0-9a-f]{7,} — 回滚本次编译/)
+    expect(subjects).toContain("manual: 补充 con-a")
+    expect(git.run(["log", "--merges", "--oneline"]).stdout.trim()).toBe("")
   })
 
   it("锁占用 ⇒ 任务 failed LOCK_HELD（票06 跨进程保底，注入即拒锁）", async () => {

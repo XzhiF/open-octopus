@@ -31,7 +31,7 @@ import { kcErrFace, kcPlaceholderTaskId, useKcPoller } from './use-kc-poller'
  * GET /queue/task/:id（票06 位次单源）合并成卡状态：排队中 #N → 编译中 →
  * 已提交 hash；committed 追加 **来源摘要卡**（touched 里的 source 回执页）。
  * 回滚：diff 卡二次确认 → POST /revert → 同卡挂 revert 状态轮询（committed →
- * 已回滚 hash；failed 显形 REVERT_CONFLICT/LOCK_HELD）。
+ * 已回滚 hash；failed 显形 LOCK_HELD/WORKTREE_DIRTY——票02 状态重建后 REVERT_CONFLICT 已废）。
  *
  * 事件源选**轮询**而非新 SSE：既有 SSE 基建（lib/agent/sse.ts）绑死 chat 连接形态，
  * 任务状态端点面（票05/06/12）是它的正交可承载形态（票面授权「选既有 SSE 基建能

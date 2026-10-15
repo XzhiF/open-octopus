@@ -370,9 +370,11 @@ export function renderBudgetedWikiIndex(
  * `## [date] ingest|compile|query|lint|revert | title` + 续行 `  → 结果`——
  * 行首前缀可 grep（`grep "^## \[" LOG.md`）。append-only，程序化写。
  * v2 旧表格行（| 日期 | 动作 | …）不重写，共存可读（机械转换属票07）。
+ * `date` 可选注入（票02）：回滚通道的 deep-revert 行走服务时钟（红线6 时间判据可测）；
+ * 缺省仍取真实 `today()`，既有编译通道零改动。
  */
-export function formatLogRow(cols: { action: string; entry: string; note: string; source: string; reviewer: string }): string {
-  return `## [${today()}] ${cols.action} | ${cols.entry}\n  → ${cols.note} · ${cols.source} · ${cols.reviewer} ✓\n`
+export function formatLogRow(cols: { action: string; entry: string; note: string; source: string; reviewer: string }, date?: string): string {
+  return `## [${date ?? today()}] ${cols.action} | ${cols.entry}\n  → ${cols.note} · ${cols.source} · ${cols.reviewer} ✓\n`
 }
 
 export class WikiCompileService {

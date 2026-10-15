@@ -21,7 +21,7 @@ export function touchedSummary(touched: KcCompileDiffCardData['touched']): strin
  * 流式状态带（AC3 故事11）：排队中 #N → 编译中 → 已提交 hash（票06 位次 API 喂 position）。
  * 回滚交互纪律（票面 AC5）：点「回滚本次编译」→ 原地二次确认 → ctx.revert(commit)，
  * 回滚任务状态回灌到本卡 data.revert（queued #N → running → committed 已回滚 hash /
- * failed 显形 REVERT_CONFLICT|LOCK_HELD）。
+ * failed 显形 LOCK_HELD|WORKTREE_DIRTY——票02 后 REVERT_CONFLICT 已废）。
  */
 export function CompileDiffCard({ event, ctx, archive }: KcCardViewProps & { archive?: boolean }) {
   const d = event.data as KcCompileDiffCardData
@@ -80,7 +80,7 @@ export function CompileDiffCard({ event, ctx, archive }: KcCardViewProps & { arc
         {d.status === 'committed' && d.commit && !d.revert && (
           confirming ? (
             <>
-              <KcBtn tone="no" onClick={() => { setConfirming(false); ctx.revert(d.commit!) }} testId="kc-revert-confirm">确认回滚（git revert 单 commit）</KcBtn>
+              <KcBtn tone="no" onClick={() => { setConfirming(false); ctx.revert(d.commit!) }} testId="kc-revert-confirm">确认回滚（状态重建单 commit）</KcBtn>
               <KcBtn onClick={() => setConfirming(false)} testId="kc-revert-cancel">取消</KcBtn>
             </>
           ) : (

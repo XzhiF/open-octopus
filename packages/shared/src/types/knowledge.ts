@@ -36,7 +36,7 @@ export interface ParsedRule {
 }
 
 // ===== 查阅记录信道（知识中心票 08：knowledge.mode 三态与注入链配套类型已随
-// 物理删除退役；以下两常量仍被 vars_update→VarPool 查阅信道与 shadow-compare 消费）=====
+// 物理删除退役；以下两常量仍被 vars_update→VarPool 查阅信道消费）=====
 
 /** vars_update 里查阅记录的 VarPool 键名（票 11 指针行 token；执行者经
  *  既有 vars_update → VarPool 通道写入，随 executions.var_pool 落 JSONL/DB）。 */

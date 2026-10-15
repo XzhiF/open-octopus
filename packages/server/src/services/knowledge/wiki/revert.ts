@@ -2,7 +2,7 @@ import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
-import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "../global-paths"
+import { GLOBAL_WIKI_ORG, WIKI_RETIRED_DIR, resolveKnowledgeRoot } from "../global-paths"
 import { CompileQueue, type WriteQueue } from "./compile-queue"
 import {
   scanWikiEntries,
@@ -17,16 +17,25 @@ import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
 import { today } from "./util"
 
 /**
- * 回滚服务 — 知识中心票12 AC5（spec §知识中心 UI「回滚」、原型 Tab④ 交互纪律③）。
+ * 回滚服务 — 知识中心票12 AC5；票02（P4）语义改造为**状态重建**（spec 故事 22-23）。
  *
- * 语义：`git revert 单 commit` + 四同步（页文件回退 / INDEX 程序化重建 / LOG 追加
- * `## [date] revert | compile <short>` 行 / DB+FTS 与盘一致）。一切回滚经票06 全局
- * FIFO 队列 `opKind="revert"` 串行执行（旁路写 wiki = 违规）；跨进程锁占用在执行段
- * 显形为任务级 failed（LOCK_HELD），编译冲突同理（REVERT_CONFLICT，git revert --abort
- * 还原工作区，不留半成品）。
+ * 语义：回滚任意历史编译 commit T —— 读 `T^ → T` 的树 diff，把每个被触及页文件强制
+ * 回退到 T^ 态（T 新增→删除 · T 删除→按 T^ blob 重建 · T 修改→T^ blob 覆盖），
+ * INDEX 程序化重建，LOG append `## [date] deep-revert | compile <short>` 审计行
+ * （历史行零回退——append-only 审计面换芯），DB+FTS 同步，单新 commit 收口。
+ * git revert 三方合并路径退役：**REVERT_CONFLICT 不再产生**——状态重建无冲突面，
+ * D-kc15-3「历史越深共行漂移越大、三方合并必冲突」自然消失（INDEX/LOG 两枚程序化
+ * 文件根本不进 git 合并面；页面强制对齐，后写不改判定）。页文件回滚无半成品：blob
+ * 全部先读（纯读段）再集中一次写，异常路径 best-effort reset 工作区回 HEAD。
+ * _retired 面同理：T 若为迁页 commit（退役/重蒸馏），回滚对称还原活页并删退役位；
+ * 还原活页时 `_retired/` 下同路径镜像存在（该页其后被退役）一并摘除——活页=正典，
+ * 防锚点台账（retiredLedgerAnchors）与在册面双登记。
  *
- * registry 形态与 CuratorTaskService 同律（进程内 Map，超容量逐出终态；真相面 =
- * git revert commit 本身 + LOG 行）。raw/ 零触碰（不可变源不参与回滚）。
+ * 一切回滚经票06 全局 FIFO 队列 `opKind="revert"` 串行执行（旁路写 wiki = 违规；
+ * 语义换芯不换闸，红线1）；跨进程锁占用在执行段显形为任务级 failed（LOCK_HELD），
+ * 工作区脏为 WORKTREE_DIRTY——两者保留。registry 形态与 CuratorTaskService 同律
+ * （进程内 Map，超容量逐出终态；真相面 = git commit 本身 + LOG 行）。raw/ 零触碰
+ * （不可变源不参与回滚，也不在 wiki git 仓内）。
  */
 
 export interface RevertTouchedFile {
@@ -39,7 +48,7 @@ export interface RevertTouchedFile {
 export interface WikiRevertResult {
   /** 回滚目标全 hash */
   target: string
-  /** 新生成的 revert commit 全 hash（单 commit：含页回退+INDEX 重建+LOG 行） */
+  /** 新生成的回滚 commit 全 hash（单 commit：页状态重建+INDEX 重建+LOG deep-revert 行） */
   revertCommit: string
   touched: RevertTouchedFile[]
   /** FTS 同步非致命失败时的告警（与编译通道 gotcha #6 同律：坏 FTS 不阻塞 commit） */
@@ -69,6 +78,8 @@ export class RevertError extends Error {
 
 const COMMIT_RE = /^[0-9a-fA-F]{7,40}$/
 const TERMINAL: RevertTaskStatus[] = ["committed", "failed"]
+/** git 惯用空树 blob hash（SHA-1 仓常量）：回滚根 commit 时作参照树（票02 状态重建边界）。 */
+const EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 export interface RevertTaskDeps {
   db: Database.Database
@@ -183,9 +194,10 @@ export class RevertTaskService {
   }
 
   /**
-   * 队列执行体（已持串行位）：git revert --no-commit → 触及清单 → INDEX 重建 →
-   * LOG revert 行 → DB/FTS 逐页重同步 → 单 commit 收口。失败路径先把 revert
-   * 状态机 abort 回 HEAD（工作区干净），再抛。
+   * 队列执行体（已持串行位）：读 `T^ → T` 树 diff → 页文件强制重建至 T^ 态（无 git
+   * 合并面 ⇒ 无冲突）→ INDEX 程序化重建 → LOG append deep-revert 行 → DB/FTS 逐页
+   * 重同步 → 单 commit 收口。blob 全部先读（纯读段）再开 fs 写段；执行体异常
+   * best-effort reset --hard 工作区回 HEAD（不留半成品）。
    */
   private execute(target: string): WikiRevertResult {
     const dirty = this.git.run(["status", "--porcelain"])
@@ -193,53 +205,77 @@ export class RevertTaskService {
       throw new RevertError("WORKTREE_DIRTY", "wiki 工作区存在未提交改动（不应发生：写闸全提交），拒绝回滚", 409)
     }
 
-    const revertRun = this.git.run(["revert", "--no-commit", target])
-    if (revertRun.status !== 0) {
-      // 冲突（典型：目标 commit 之后又有提交改同页）→ 回退到干净 HEAD，不留半成品
-      const abort = this.git.run(["revert", "--abort"])
-      if (abort.status !== 0) this.git.run(["reset", "--hard", "HEAD"])
-      throw new RevertError("REVERT_CONFLICT", `git revert 冲突（后续提交与回退互斥）：${target.slice(0, 9)} — ${revertRun.stderr.trim().split("\n").slice(-1)[0] ?? ""}`, 409)
-    }
+    // 目标态参照树 = T^（根 commit 无可解析父 → 空树，回滚语义 = 页全撤）
+    const parent = this.git.run(["rev-parse", "--verify", "--quiet", `${target}^`])
+    const base = parent.status === 0 ? `${target}^` : EMPTY_TREE_SHA1
+    // T 的正向改动清单；--no-renames 把 rename 拆为 D+A 对（状态面只剩 A/D/M/T 四码），
+    // --quotepath=false 保中文/特殊路径逐字回传（blob 读与 fs 写共用同一 relPath）
+    const nameStatus = mustGit(this.git, [
+      "-c", "core.quotepath=false",
+      "diff", "--no-renames", "--name-status", base, target,
+    ]).stdout
 
-    // 触及清单（staged 反向 diff）：INDEX/LOG 是程序化文件，不进页清单
-    const nameStatus = this.git.run(["diff", "--cached", "--name-status"]).stdout
+    // ── 纯读段：触及清单 + 全部待还原 blob 先入内存，读段失败不落任何 fs 写 ──
     const touched: RevertTouchedFile[] = []
+    const ops: Array<RevertTouchedFile & { restore: string | null }> = []
     for (const line of nameStatus.split("\n")) {
       const parts = line.trim().split("\t")
       if (parts.length < 2) continue
       const code = parts[0][0]
-      // R/C 行 = flag<TAB>旧<TAB>新：取末段（新路径）
       const relPath = parts[parts.length - 1]
+      // INDEX/LOG 是程序化文件不进页清单：INDEX 全量重建（按盘现形）、LOG 永不回退
+      // ——旧语义「revert 撤原 compile 行」由状态重建换成「历史行保留 + deep-revert 行」
       if (relPath === WIKI_INDEX_FILE || relPath === WIKI_LOG_FILE) continue
-      touched.push({
-        path: relPath,
-        action: code === "D" ? "removed" : code === "A" ? "readded" : "restored",
-      })
+      const action: RevertTouchedFile["action"] = code === "A" ? "removed" : code === "D" ? "readded" : "restored"
+      const restore = code === "A" ? null : this.readBlob(`${base}:${relPath}`)
+      touched.push({ path: relPath, action })
+      ops.push({ path: relPath, action, restore })
     }
 
     const articles = new WikiArticleDAO(this.db)
     const ftsWarnings: string[] = []
     try {
-      // ── INDEX 程序化重建（永不经人手，spec §三层架构；回退后按盘现形）──
+      // ── fs 段①：页文件强制对齐目标态（removed=撤销 T 的新增；readded/restored=回 T^ 版）──
+      for (const op of ops) {
+        const abs = path.join(this.wikiRoot, op.path)
+        if (op.action === "removed") {
+          fs.rmSync(abs, { force: true })
+        } else {
+          fs.mkdirSync(path.dirname(abs), { recursive: true })
+          writeAtomic(abs, op.restore ?? "")
+          // _retired 面处置：活页回在册面时，`_retired/` 下同路径镜像（该页其后被
+          // 退役/迁走过）一并摘除——活页=正典，防 retiredLedgerAnchors 与在册面双登记
+          if (!op.path.startsWith(`${WIKI_RETIRED_DIR}/`)) {
+            const mirror = path.join(this.wikiRoot, WIKI_RETIRED_DIR, op.path)
+            if (fs.existsSync(mirror)) fs.rmSync(mirror, { force: true })
+          }
+        }
+      }
+
+      // ── fs 段②：INDEX 程序化重建（永不经人手，spec §三层架构；回滚后按盘现形）──
       const indexPath = path.join(this.wikiRoot, WIKI_INDEX_FILE)
       if (fs.existsSync(this.wikiRoot)) {
         const entries = scanWikiEntries(this.wikiRoot)
         writeAtomic(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
       }
 
-      // ── LOG 追加 revert 行（票11 读面行格式契约：`## [date] revert | compile <short>`）──
+      // ── fs 段③：LOG append deep-revert 行（故事23 审计面：目标 commit + 重建页数；
+      // 与既有 revert 行同族可 grep——`grep 'revert | compile'` 新旧行通吃；读面
+      // LOG_LINE_RE op 字符集含连字符，零改动；日期走注入时钟——红线6）──
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
       writeAtomic(logPath, logBase + formatLogRow({
-        action: "revert",
+        action: "deep-revert",
         entry: `compile ${target.slice(0, 7)}`,
         note: "回滚本次编译",
-        source: "git revert",
+        source: `状态重建 ${touched.length} 页`,
         reviewer: "owner",
-      }))
+      }, this.now().toISOString().slice(0, 10)))
 
       // ── DB/FTS 逐页重同步：在盘 ⇒ upsert+FTS 重写；不在盘 ⇒ 行+FTS 删除 ──
+      // _retired/** 与非 .md 不在在册页面（scanWikiEntries 摘除面，笔记01 §2.3），不登账
       for (const t of touched) {
+        if (t.path.startsWith(`${WIKI_RETIRED_DIR}/`) || !t.path.endsWith(".md")) continue
         const abs = path.join(this.wikiRoot, t.path)
         if (fs.existsSync(abs)) {
           const row = entryRowFromDisk(abs, t.path)
@@ -278,25 +314,30 @@ export class RevertTaskService {
         }
       }
 
-      // ── 单 commit 收口（add -A 把页回退+INDEX+LOG 一并带上；锁文件已 exclude）──
+      // ── 单 commit 收口（add -A 把页重建+INDEX+LOG 一并带上；锁文件已 exclude）──
       mustGit(this.git, ["add", "-A"])
       const status = mustGit(this.git, ["status", "--porcelain"])
       if (status.stdout.trim().length === 0) {
         // 理论上不可能（LOG 行必产生 diff）；兜底不抛，回滚语义 = no-op
         return { target, revertCommit: wikiHead(this.git) ?? target, touched, ftsWarnings }
       }
-      mustGit(this.git, ["commit", "-m", `revert: ${target.slice(0, 7)} — 回滚本次编译`])
+      mustGit(this.git, ["commit", "-m", `deep-revert: ${target.slice(0, 7)} — 回滚本次编译（重建 ${touched.length} 页）`])
       const revertCommit = wikiHead(this.git)
-      if (!revertCommit) throw new RevertError("REVERT_FAILED", "revert commit 后 HEAD 不可读", 500)
+      if (!revertCommit) throw new RevertError("REVERT_FAILED", "回滚 commit 后 HEAD 不可读", 500)
       return { target, revertCommit, touched, ftsWarnings }
     } catch (err) {
-      // 执行体自身异常（非 git 冲突路径）：尽力清 revert 状态，工作区回正
-      const abort = this.git.run(["revert", "--abort"])
-      if (abort.status !== 0) {
-        this.git.run(["reset", "--hard", "HEAD"])
-      }
+      // 执行体异常（fs 写半程 / commit 失败）：状态重建无 git revert 状态机可 abort，
+      // best-effort reset --hard 把 tracked 面拉回 HEAD（不留半成品；ignored 面
+      // ——锁文件/info-exclude——不受影响）
+      const reset = this.git.run(["reset", "--hard", "HEAD"])
+      if (reset.status !== 0) this.git.run(["checkout", "--", "."])
       throw err
     }
+  }
+
+  /** 参照树 blob 读取（`git show <rev>:<path>`，原始字节无 checkout filter）。 */
+  private readBlob(revPath: string): string {
+    return mustGit(this.git, ["show", revPath]).stdout
   }
 
   private evict(): void {
