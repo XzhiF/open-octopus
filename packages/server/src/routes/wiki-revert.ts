@@ -7,16 +7,17 @@ import { errorResponse } from "../services/knowledge/validators"
  *
  *   POST /revert            { commit: "<hash>" }  diff 卡「回滚本次编译」入口
  *                           ⇒ 202 { taskId, commit, status:"queued" }
- *                           任务经票06 全局队列 opKind="revert" 串行执行：
- *                           git revert 单 commit + INDEX/LOG/FTS 重同步 + LOG 追加
- *                           `## [date] revert | compile <short>` 行。
+ *                           任务经票06 全局队列 opKind="revert" 串行执行（票02 语义
+ *                           换芯=状态重建）：页回退到 T^ 态 + INDEX 重建 + FTS/DB 同步 +
+ *                           LOG append `## [date] deep-revert | compile <short>` 行，单 commit。
  *   GET  /revert/task/:id   状态可查 ⇒ { task: RevertTaskRecord }（状态流转
  *                           queued → running → committed/failed；committed 带 result：
  *                           revertCommit/触及页清单 = 回滚回执卡数据面）。
  *
  * 错误码沿用 `{error:{code,message}}` 纪律：
  * INVALID_PARAM 400（非 JSON/缺 commit/坏 hash 形）· NOT_FOUND 404（目标 commit
- * 不在 wiki 仓/任务不存在）。执行级失败（REVERT_CONFLICT/LOCK_HELD/WORKTREE_DIRTY）
+ * 不在 wiki 仓/任务不存在）。执行级失败（LOCK_HELD/WORKTREE_DIRTY——票02 后
+ * REVERT_CONFLICT 已废，状态重建无冲突面）
  * 不改 HTTP 码（异步任务语义），落任务 failed + error.code，经 GET task 可查。
  */
 

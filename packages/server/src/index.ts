@@ -676,8 +676,8 @@ app.route("/api/knowledge", createSkillDraftRoutes({
   grant: (name, cloneName) => getSkillGrants().grant(name, cloneName),
   revoke: (name, cloneName) => getSkillGrants().revoke(name, cloneName),
 }))
-// 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
-// commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
+// 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → 票02 状态重建：
+// 页回退到 T^ 态 + INDEX/LOG/FTS 重同步 + LOG deep-revert 行，单 commit；GET /revert/task/:id 状态可查）。
 // 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
 // 在 initDb() 前 import 即抛 "Database not initialized"（崩 7 个 import 级测试）；
 // 改惰性构造——首次 revert 请求才 new，与下方迁移器工厂（(apply)=>new …）同轨。

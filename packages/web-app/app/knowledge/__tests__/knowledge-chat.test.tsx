@@ -280,7 +280,7 @@ describe("AC5 回滚钮：二次确认 → POST /revert → 任务态回灌原�
     }, { timeout: 5000 })
   }, 15000)
 
-  it("回滚任务失败显形错误码（LOCK_HELD/REVERT_CONFLICT），卡不消失", async () => {
+  it("回滚任务失败显形错误码（任务级 failed 码如 LOCK_HELD；票02 后 REVERT_CONFLICT 已废），卡不消失", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DIFF_EV))]
     makeStub()
     // revert 任务直接 failed（注入形态：任务面返回 failed + code）
