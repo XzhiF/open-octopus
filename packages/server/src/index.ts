@@ -50,6 +50,8 @@ import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
 import { WikiPatrolService } from "./services/knowledge/patrol"
 import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-ledger"
+import { EffectivenessSyncService } from "./services/knowledge/effectiveness-sync"
+import { avgMeasuredConfidence } from "./services/knowledge/effectiveness-confidence"
 import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
 import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
@@ -709,6 +711,8 @@ app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
 app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, {
   getQueueDepth: () => wikiWriteQueue.depth(),
   getOpenFindings: () => getFindingOps().countOpen(),
+  // 票07：全库平均 confidence（已测行口径单源 avgMeasuredConfidence；全未测诚实 null）
+  getAvgConfidence: () => avgMeasuredConfidence(d.knowledgeEffectiveness.listAll()),
 }))
 // 知识中心票13：findings 列表/裁决 API（adopt/ignore/fix-task）+ 即时体检（POST /patrol）
 // + 回填（POST /backfill）。[讨论]=纯对话零端点。
@@ -740,10 +744,20 @@ const getEffectivenessLedger = () => (effectivenessLedgerInstance ??= new Effect
   db: getDb(),
   llm: createProductionKnowledgeLLM({ channel: "effectiveness-link", modelEnv: "OCTOPUS_EFFECTIVENESS_MODEL" }),
 }))
-// 手动触发端点（POST /api/knowledge/effectiveness/parse「解析至最新」）；夜巡自动面
-// 走下方 builtin-knowledge-patrol 作业的 parseLedger 腿——同一服务入口（双触发制式）。
+// P4 票07：confidence 快照刷页执行体（DB 行级滚动 + v3 页 front-matter 批量收口经
+// 全局串行队列 kind effectiveness-sync）。手动端点与夜巡 syncConfidence 腿同入口
+// （parse 双触发制式对称）。git 缺省走 WikiCompileService 自有 spawnGit（curator 标记）。
+let effectivenessSyncInstance: EffectivenessSyncService | undefined
+const getEffectivenessSync = () => (effectivenessSyncInstance ??= new EffectivenessSyncService({
+  db: getDb(),
+  queue: wikiWriteQueue,
+}))
+// 手动触发端点（POST /api/knowledge/effectiveness/parse「解析至最新」+ POST /sync
+// 「刷 confidence 快照」）；夜巡自动面走下方 builtin-knowledge-patrol 作业的
+// parseLedger/syncConfidence 双腿——同一服务入口（双触发制式）。
 app.route("/api/knowledge/effectiveness", createEffectivenessRoutes({
   parse: () => getEffectivenessLedger().parse(),
+  sync: () => getEffectivenessSync().sync(),
 }))
 
 // Archive routes — 工作区归档（Archive V2）+ 执行结果摘要（票08：审批轨 /:id/propose
@@ -753,7 +767,8 @@ app.route("/api/archive", createArchiveRoutes(stateDir, d.archive, d.archiveDraf
 
 // LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
 // 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。
-app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
+// P4 票07：article 带 effectiveness 实时段（账目 DAO 注入=页元数据 DB 真源面）。
+app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle, { effectiveness: d.knowledgeEffectiveness }))
 // 知识中心票03: wiki 全局化搬家命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列计划，
 // ?apply=true 才动手（顺序：wiki 连 .git 搬家 → DB re-key/FTS 重建 → 偏好归档+知识根迁入）。
 // 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
@@ -1143,6 +1158,11 @@ if (shouldServe) {
             // 「夜巡可反复跑」——游标持久记至 execution，重跑零重复；失败显形不炸作业，
             // afterPatrol 同律）。
             parseLedger: async () => { await getEffectivenessLedger().parse() },
+            // P4 票07 刷页腿：记账之后把 DB 滚动 confidence 批量同步 v3 页 front-matter
+            // 快照（spec 故事 3——经全局队列 effectiveness-sync 单 commit 收口；顺序
+            // 钉死在记账腿后：先记新账再刷快照，同轮夜巡内引用即见账目推进；
+            // 失败显形不炸作业，parseLedger 同律）。
+            syncConfidence: async () => { await getEffectivenessSync().sync() },
           }),
         )
         if (seeded.created.length || seeded.repaired.length) {

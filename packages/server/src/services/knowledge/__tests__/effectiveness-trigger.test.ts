@@ -8,6 +8,8 @@ import { WikiPatrolService } from "../patrol"
 import { knowledgePatrolHandlerFor } from "../patrol-job"
 import type { CodeJobContext } from "../../scheduler/code-job-registry"
 import { EffectivenessLedgerService } from "../effectiveness-ledger"
+import { EffectivenessSyncService } from "../effectiveness-sync"
+import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 
 /**
  * 触发面（票06 AC4 上半 + AC6 负断言）——夜巡作业「既有挂载点扩步骤」：
@@ -97,5 +99,46 @@ describe("运行时零感知负断言（票06 AC6）", () => {
     expect(code).not.toContain("jaccard")
     expect(code).not.toContain("similarity")
     expect(code).not.toMatch(/0\.\d/)
+  })
+})
+
+// ── P4 票07：夜巡 syncConfidence 腿（账目→confidence 快照刷页的自动触发面）──
+describe("夜巡 syncConfidence 腿（票07 既有挂载点扩步骤，parseLedger 之后同序）", () => {
+  it("全链腿：记账落账 → 快照刷页真实进盘（故事 28 微型链：ref→账→confidence 可见）", async () => {
+    const topicAbs = path.join(root, "wiki", "topics", "wf-s.md")
+    fs.writeFileSync(
+      topicAbs,
+      `---\nid: wf-s\ntype: topic\ntitle: S\nsummary: s\ntopics: [s]\nlast_compiled: 2026-10-12\nsources: []\n---\n## 硬约束\n- 先红后绿 <!--#oct-010-->\n`,
+      "utf-8",
+    )
+    db.prepare("INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES ('w2','w2','x',?, '2026-10-01','2026-10-01')")
+      .run(path.join(tmpRoot, "ws2"))
+    db.prepare("INSERT INTO executions (id,workspace_id,workflow_ref,workflow_name,status,var_pool,org,created_at,updated_at,completed_at) VALUES ('e2','w2','w','w','completed',?,'x','2026-10-13T00:00:00Z','2026-10-13T00:01:00Z','2026-10-13T00:01:00Z')")
+      .run(JSON.stringify({ wiki_refs: ["wf-s#oct-010"] }))
+    // 已测账（手算 0/(0+4)=0 ≤ 低置信区）：parse 腿再 +1 引用不动 measured 值语义
+    const ledgerDao = new KnowledgeEffectivenessDAO(db)
+    ledgerDao.upsert("oct-010", { cited_count: 4, helpful_count: 0, not_helpful_count: 4 })
+
+    const ledger = new EffectivenessLedgerService({ db, root, now: () => new Date("2026-10-15T03:00:00Z") })
+    const syncSvc = new EffectivenessSyncService({ db, root, now: () => new Date("2026-10-15T03:00:00Z") })
+    const handler = knowledgePatrolHandlerFor(patrolStub(), {
+      parseLedger: async () => { await ledger.parse() },
+      syncConfidence: async () => { await syncSvc.sync() },
+    })
+    const outcome = await handler(ctx())
+
+    // 外部可见产物：页 front-matter 出现滚动快照行；DB 列同步；作业不炸
+    expect(fs.readFileSync(topicAbs, "utf-8")).toContain("confidence: 0")
+    expect(ledgerDao.getByRuleId("oct-010")!.confidence).toBe(0)
+    expect(outcome.summary).not.toContain("失败")
+  })
+
+  it("腿炸：刷页失败显形 outcome 不炸作业（parseLedger/afterPatrol 同律）", async () => {
+    const handler = knowledgePatrolHandlerFor(patrolStub(), {
+      syncConfidence: async () => { throw new Error("EFFECTIVENESS_SYNC_QUEUE_TIMEOUT: 队列堵") },
+    })
+    const outcome = await handler(ctx())
+    expect(outcome.summary).toContain("同步失败")
+    expect(outcome.summary).toContain("EFFECTIVENESS_SYNC_QUEUE_TIMEOUT")
   })
 })

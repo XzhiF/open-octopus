@@ -133,6 +133,13 @@ export interface PatrolHandlerOpts {
    * 失败显形进 outcome 不炸作业（afterPatrol/报对话同款纪律）；缺省零行为变化。
    */
   parseLedger?: () => void | Promise<void>
+  /**
+   * P4 票07：confidence 快照刷页腿（spec 故事 3「夜巡批量同步页 front-matter」——
+   * EffectivenessSyncService.sync 的自动触发面，与手动端点 POST /sync 同入口）。
+   * **必须排在 parseLedger 之后**：先记新账再刷快照，同轮夜巡内引用即见账目推进。
+   * 失败显形进 outcome 不炸作业（记账/草案扫描同律）；缺省零行为变化。
+   */
+  syncConfidence?: () => void | Promise<void>
 }
 
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
@@ -164,6 +171,15 @@ export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: Patro
       } catch (err) {
         // 记账腿失败不吞巡检成果（P4 票06：与草案扫描同律——显形不炸作业）
         note += ` · 记账失败（${err instanceof Error ? err.message : String(err)}）`
+      }
+    }
+    if (opts.syncConfidence) {
+      try {
+        await opts.syncConfidence()
+      } catch (err) {
+        // 刷页腿失败不吞巡检与记账成果（P4 票07：DB 真源已落账，快照缺席=诚实滞后，
+        // 下轮夜巡自愈；显形口径与记账失败同词族）
+        note += ` · 同步失败（${err instanceof Error ? err.message : String(err)}）`
       }
     }
     return {
