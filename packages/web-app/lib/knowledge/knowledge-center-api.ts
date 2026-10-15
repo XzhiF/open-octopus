@@ -133,7 +133,9 @@ export async function searchKc(q: string, topK = 10): Promise<KcSearchResult> {
 // ── 票11 新读端点 ──
 
 /** 健康条聚合（无「待审核」字段；queueDepth/openFindings 票06/13 接位；
- *  avgConfidence=P4 票07 全库平均置信——已测行口径，全未测/未装配诚实 null）。 */
+ *  avgConfidence=P4 票07 全库平均置信——已测行口径，全未测/未装配诚实 null；
+ *  score=P4 票08 health score 0-100（公式单源服务端 health-score.ts；
+ *  空库/未装配巡检 ⇒ null 诚实不可评，不伪造满分——只换值不换形同律）。 */
 export interface KcHealth {
   org: string
   pages: { total: number; entity: number; concept: number; topic: number; source: number; case: number }
@@ -142,6 +144,7 @@ export interface KcHealth {
   openFindings: number
   queueDepth: number
   avgConfidence: number | null
+  score: number | null
   lastCompiled: string
   gitHead: string | null
 }
@@ -373,10 +376,12 @@ export async function kcGetRetireTask(taskId: string): Promise<KcRetireTask | nu
 
 // ============ 票13 findings 面 API（列表/裁决/即时体检/回填）============
 
-/** GET /api/knowledge/findings 的视图（routes/findings.ts findingView 单源形状）。 */
+/** GET /api/knowledge/findings 的视图（routes/findings.ts findingView 单源形状；
+ *  severity=P4 票08 派生键（kind→三档映射单源服务端 health-score.ts），ranked 分组视图消费）。 */
 export interface KcFindingView {
   id: string
   kind: string
+  severity: "critical" | "major" | "minor"
   status: "open" | "resolved" | "ignored"
   title: string
   detail: Record<string, unknown>

@@ -35,6 +35,7 @@ const HEALTH = {
   openFindings: 2,
   queueDepth: 0,
   avgConfidence: 0.64,
+  score: 77,
   lastCompiled: "2026-10-13",
   gitHead: "a3f9c21d4b5e6f708192a3b4c5d6e7f8091a2b3c",
 }
@@ -199,6 +200,52 @@ describe("健康条（票面口径七项，负断言「无待审核」）", () =
     render(<KnowledgePage />)
     const bar2 = await screen.findByTestId("kc-health-bar")
     expect(bar2.textContent).toContain("平均置信 —")
+  })
+
+  it("P4 票08：健康分槽 77；点开 ranked 层按 severity 分组列开放 findings（复用列表通道，零新页面）", async () => {
+    mockFetch(u =>
+      u.includes("/knowledge/findings")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              org: "global",
+              findings: [
+                { id: "f1", kind: "contradiction", severity: "critical", status: "open", title: "矛盾：甲页 ↔ 乙页", detail: {}, pages: ["topics/a.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+                { id: "f2", kind: "bloat", severity: "major", status: "open", title: "膨胀榜：乙页", detail: {}, pages: ["topics/b.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+                { id: "f3", kind: "orphan", severity: "minor", status: "open", title: "孤儿页：丙页", detail: {}, pages: ["entities/c.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+              ],
+            }),
+          }
+        : undefined,
+    )
+    render(<KnowledgePage />)
+    const bar = await screen.findByTestId("kc-health-bar")
+    expect(bar.textContent).toContain("健康分 77")
+
+    // 点开=票08 首例交互：健康分槽的「明细」钮（既有 findings 列表 API 通道，无新端点无新路由页）
+    fireEvent.click(screen.getByTestId("kc-health-score-toggle"))
+    const panel = await screen.findByTestId("kc-ranked-findings")
+    expect(panel.textContent).toContain("矛盾：甲页 ↔ 乙页")
+    expect(panel.textContent).toContain("膨胀榜：乙页")
+    expect(panel.textContent).toContain("孤儿页：丙页")
+    // 按 severity 分组：紧急>重要>一般 的组序即 ranked 语义（故事 14 裁决动线）
+    expect(panel.textContent).toContain("紧急")
+    expect(panel.textContent).toContain("重要")
+    expect(panel.textContent).toContain("一般")
+    const text = panel.textContent!
+    expect(text.indexOf("紧急")).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf("紧急")).toBeLessThan(text.indexOf("重要"))
+    expect(text.indexOf("重要")).toBeLessThan(text.indexOf("一般"))
+    // 零新页面负断言：分组层不引入新路由（仍在 /knowledge 页内）
+    expect(screen.queryByRole("link", { name: /报告|报表|doctor/i })).toBeNull()
+  })
+
+  it("P4 票08：score null ⇒ 健康分 —（诚实不可评，不伪造满分——空库/未装配巡检形态）", async () => {
+    mockFetch(u => (u.includes("/knowledge/health") ? { ok: true, status: 200, json: async () => ({ ...HEALTH, score: null }) } : undefined))
+    render(<KnowledgePage />)
+    const bar = await screen.findByTestId("kc-health-bar")
+    expect(bar.textContent).toContain("健康分 —")
   })
 })
 
