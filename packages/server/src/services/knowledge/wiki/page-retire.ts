@@ -65,6 +65,8 @@ export interface PageRetireTaskRecord {
   replacedBy?: string
   /** LOG retire 行 source 位；缺省 "dialogue"（对话人裁）。票09 自动退役传 "auto" 复用本机械 */
   source?: string
+  /** 票09：队列审计面 opKind（缺省 page-retire；窄口=auto-retire） */
+  opKind?: "page-retire" | "auto-retire"
   status: PageRetireTaskStatus
   createdAt: string
   startedAt?: string
@@ -81,8 +83,9 @@ export class PageRetireError extends Error {
 }
 
 const TERMINAL: PageRetireTaskStatus[] = ["committed", "failed"]
-/** 仅这四类 v3 页目录可页退役（cases 走判例管线；_retired/ 已是退役区）。 */
-const RETIRABLE_DIR_RE = /^(entities|concepts|topics|sources)\/[^/]+\.md$/
+/** 仅这四类 v3 页目录可页退役（cases 走判例管线；_retired/ 已是退役区）。
+ *  票09 窄口共用此面（自动候选=在册可退目录页，单源纪律勿另立词表）。 */
+export const RETIRABLE_DIR_RE = /^(entities|concepts|topics|sources)\/[^/]+\.md$/
 
 export interface PageRetireInput {
   /** wiki 根相对路径，如 `entities/ent-kc15-widget-a.md`（与 pageId 二选一） */
@@ -97,6 +100,10 @@ export interface PageRetireInput {
   /** LOG retire 行 source 位；缺省 "dialogue"。**票09 接缝**：自动退役传 "auto" 走同一入口，
    *  判据在调用方（narrow gate），机械不感知。 */
   source?: string
+  /** 票09·AC2 审计面接缝：入队 opKind（缺省 "page-retire"；窄口自动退役传 "auto-retire"——
+   *  kind 只是队列/观测面的审计词，执行体零复制（同 execute()）。人裁通道（路由/finding）
+   *  永不再传此位，HTTP 面不暴露（防伪造审计）。 */
+  opKind?: "page-retire" | "auto-retire"
 }
 
 export interface PageRetireTaskDeps {
@@ -186,12 +193,14 @@ export class PageRetireTaskService {
     const reason = typeof input.reason === "string" && input.reason.trim() ? input.reason.trim() : undefined
     const replacedBy = typeof input.replacedBy === "string" && input.replacedBy.trim() ? input.replacedBy.trim() : undefined
     const source = typeof input.source === "string" && input.source.trim() ? input.source.trim() : undefined
+    // 票09：审计面取入参 opKind，缺省 page-retire（人裁通道零行为变化）
+    const opKind = input.opKind === "auto-retire" ? "auto-retire" : "page-retire"
     const id = `ret-${this.now().toISOString().replace(/[-:]/g, "").slice(0, 13)}-${String(++this.seq).padStart(3, "0")}`
-    const rec: PageRetireTaskRecord = { id, path: relPath, reason, replacedBy, source, status: "queued", createdAt: this.now().toISOString() }
+    const rec: PageRetireTaskRecord = { id, path: relPath, reason, replacedBy, source, opKind, status: "queued", createdAt: this.now().toISOString() }
     this.records.set(id, rec)
     this.evict()
 
-    this.queue.enqueue("page-retire", async () => {
+    this.queue.enqueue(opKind, async () => {
       await this.start(id)
       const done = this.records.get(id)
       if (done?.status === "failed") {
@@ -307,7 +316,9 @@ export class PageRetireTaskService {
       const entries = scanWikiEntries(this.wikiRoot)
       writeAtomic(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
 
-      // ── 4. LOG 追加 retire 行（清链注记仅在真摘了链时出现——票08 旧断言零回归）──
+      // ── 4. LOG 追加 retire 行（清链注记仅在真摘了链时出现——票08 旧断言零回归）。
+      // 票09：日期走服务注入钟（票02 deep-revert 同制式）——夜巡窄口用夜巡时刻，
+      // 且测试不再随真实日期漂移（红线6 时间判据可测）。
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
       const noteBase = reason ? `退役入 _retired/ · ${reason}` : "退役入 _retired/"
@@ -317,7 +328,7 @@ export class PageRetireTaskService {
         note: cleaned.length > 0 ? `${noteBase} · 摘除 ${cleaned.length} 页入链` : noteBase,
         source: opts?.source ?? "dialogue",
         reviewer: "owner",
-      }))
+      }, this.now().toISOString().slice(0, 10)))
 
       // ── 5. DB/FTS 摘除（按原 path 定位行；在 _retired/ 的页不进索引面）──
       const articles = new WikiArticleDAO(this.db)
@@ -433,7 +444,7 @@ function linkPointsToPage(target: string, pageId: string, relPath: string): bool
   return bare === pageId && (!u.includes("/") || relPath === `${u}.md` || relPath.startsWith(`${u}/`))
 }
 
-interface CleanedHost {
+export interface CleanedHost {
   relPath: string
   /** 改写前逐字节原文（失败补偿回写用） */
   oldRaw: string
@@ -449,8 +460,11 @@ interface CleanedHost {
  * links 指向退役页者 ⇒ 正文整匹配替换 `[已退役]`、links 摘项，按形态重序列化。
  * 人工文件（isManualFileTarget）跳过——写保护不松动；解析坏页跳过（坏文件不拖垮退役，
  * scan 同律）。零命中页不产 diff（原文件逐字节不动）。
+ *
+ * **票09 窄口复用面（单源纪律）**：自动退役判据「零活页入链」消费本函数命中集
+ * （findInboundLinkHosts），与退役执行的摘链判据永不分叉。
  */
-function cleanInboundLinks(wikiRoot: string, pageId: string, relPath: string): CleanedHost[] {
+export function cleanInboundLinks(wikiRoot: string, pageId: string, relPath: string): CleanedHost[] {
   const out: CleanedHost[] = []
   for (const e of scanWikiEntries(wikiRoot)) {
     const abs = path.resolve(wikiRoot, e.relPath)
