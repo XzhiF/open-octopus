@@ -98,13 +98,13 @@ const NOW = new Date("2026-10-15T00:00:00.000Z")
 const patrol = () => new WikiPatrolService({ db, root, now: () => NOW })
 
 describe("D1 膨胀榜（票08·故事9：逼近 L1 容量闸 80% → 预拆分 finding）", () => {
-  it("行数逼近 120 行闸 80%（96 行 ≥ 0.8）的 topic 页 ⇒ bloat finding，预拆分提案进标题", () => {
+  it("行数逼近 120 行闸 80%（96 行 ≥ 0.8）的 topic 页 ⇒ bloat finding，预拆分提案进标题", async () => {
     // 构造独立手算：front-matter 块 12 行 + 空行 1 + 正文 84 行 = 文件 97 行；
     // 序列化闸口径（strip 尾空行）≈96 行 ⇒ 水位 ≥96/120=0.8（闸含等号：80% 即预警，不等触顶）。
     const filler = Array.from({ length: 84 }, (_, i) => `纪律行${i + 1}`).join("\n")
     writePage("topics/top-fat.md", "top-fat", "topic", `## 说明\n\n${filler}\n`)
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const blo = res.findings.filter(f => f.kind === "bloat")
     expect(blo).toHaveLength(1)
     expect(blo[0].pages).toEqual(["topics/top-fat.md"])
@@ -121,41 +121,41 @@ describe("D1 膨胀榜（票08·故事9：逼近 L1 容量闸 80% → 预拆分 
     expect(Number(detail.waterline)).toBeGreaterThanOrEqual(0.8)
   })
 
-  it("水位低于 80% 的页不产（40 行页 ≈0.33 远低预警线）", () => {
+  it("水位低于 80% 的页不产（40 行页 ≈0.33 远低预警线）", async () => {
     const filler = Array.from({ length: 28 }, (_, i) => `行${i + 1}`).join("\n")
     writePage("topics/top-thin.md", "top-thin", "topic", `## 说明\n\n${filler}\n`)
-    expect(patrol().patrol().findings.filter(f => f.kind === "bloat")).toHaveLength(0)
+    expect((await patrol().patrol()).findings.filter(f => f.kind === "bloat")).toHaveLength(0)
   })
 
-  it("判例页豁免（L1 容量闸 cases 豁免同律：判例天然长不报膨胀）；sources 回执页受检", () => {
+  it("判例页豁免（L1 容量闸 cases 豁免同律：判例天然长不报膨胀）；sources 回执页受检", async () => {
     longCasePage("cases/case-long.md", "case-long", 100)
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.filter(f => f.kind === "bloat").some(f => f.pages.includes("cases/case-long.md"))).toBe(false)
   })
 
-  it("幂等：重跑不增殖（unchanged）；ignored 后永不再扰（三态纪律对新 kind 生效）", () => {
+  it("幂等：重跑不增殖（unchanged）；ignored 后永不再扰（三态纪律对新 kind 生效）", async () => {
     const filler = Array.from({ length: 84 }, (_, i) => `纪律行${i + 1}`).join("\n")
     writePage("topics/top-fat.md", "top-fat", "topic", `## 说明\n\n${filler}\n`)
-    const first = patrol().patrol()
+    const first = (await patrol().patrol())
     expect(first.findings.filter(f => f.kind === "bloat" && f.action === "created")).toHaveLength(1)
 
-    const res2 = patrol().patrol()
+    const res2 = (await patrol().patrol())
     expect(res2.findings.filter(f => f.kind === "bloat" && f.action === "unchanged")).toHaveLength(1)
     expect(new FindingsDAO(db).list("open").filter(r => r.kind === "bloat")).toHaveLength(1)
 
     const bloatId = new FindingsDAO(db).list("open").find(r => r.kind === "bloat")!.id
     new FindingsDAO(db).updateStatus(bloatId, "ignored")
-    const res3 = patrol().patrol()
+    const res3 = (await patrol().patrol())
     expect(res3.findings.find(f => f.kind === "bloat")?.action).toBe("suppressed")
   })
 })
 
 describe("D3 僵尸（票08·故事11：90 天零引用吃票06 账 → 退役 finding）", () => {
-  it("有账但最近引用逾 90 天（last_cited 2026-06-01，NOW=10-15 ⇒ 136 天）⇒ dormant zombie", () => {
+  it("有账但最近引用逾 90 天（last_cited 2026-06-01，NOW=10-15 ⇒ 136 天）⇒ dormant zombie", async () => {
     topicPage("topics/top-z.md", "top-z", ["oct-001"])
     ledger.upsert("oct-001", { cited_count: 5, last_cited: "2026-06-01T00:00:00.000Z" })
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const zom = res.findings.filter(f => f.kind === "zombie")
     expect(zom).toHaveLength(1)
     expect(zom[0].pages).toEqual(["topics/top-z.md"])
@@ -170,7 +170,7 @@ describe("D3 僵尸（票08·故事11：90 天零引用吃票06 账 → 退役 f
     expect(detail.dormant_days).toBe(136) // 手算：06-01→10-15 = 30(6月)+31(7月)+31(8月)+30(9月)+14
   })
 
-  it("从未被引用（无账行）且建页逾 90 天（last_compiled 2026-07-01 ⇒ 106 天）⇒ never zombie", () => {
+  it("从未被引用（无账行）且建页逾 90 天（last_compiled 2026-07-01 ⇒ 106 天）⇒ never zombie", async () => {
     const abs = path.join(wikiRoot, "concepts", "con-old.md")
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, [
@@ -189,7 +189,7 @@ describe("D3 僵尸（票08·故事11：90 天零引用吃票06 账 → 退役 f
       "## 定义\n\n没人查过。",
     ].join("\n"), "utf-8")
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const zom = res.findings.filter(f => f.kind === "zombie")
     expect(zom).toHaveLength(1)
     const detail = JSON.parse(new FindingsDAO(db).list("open").find(r => r.kind === "zombie")!.detail) as Record<string, unknown>
@@ -198,29 +198,29 @@ describe("D3 僵尸（票08·故事11：90 天零引用吃票06 账 → 退役 f
     expect(detail.last_cited).toBeNull()
   })
 
-  it("90 天内有引用 ⇒ 不扰；新页（last_compiled 4 天前）无账 ⇒ 不扰（增长有提前量）", () => {
+  it("90 天内有引用 ⇒ 不扰；新页（last_compiled 4 天前）无账 ⇒ 不扰（增长有提前量）", async () => {
     topicPage("topics/top-hot.md", "top-hot", ["oct-002"])
     ledger.upsert("oct-002", { cited_count: 2, last_cited: "2026-10-01T00:00:00.000Z" }) // 14 天前
     writePage("concepts/con-new.md", "con-new", "concept", "## 定义\n\n新页。") // last_compiled 2026-10-12
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.filter(f => f.kind === "zombie")).toHaveLength(0)
   })
 
-  it("判例与 sources 回执页不在僵尸面（判例走自身生命周期；回执页非规则载体·票06 同律）", () => {
+  it("判例与 sources 回执页不在僵尸面（判例走自身生命周期；回执页非规则载体·票06 同律）", async () => {
     longCasePage("cases/case-old.md", "case-old", 5)
     writePage("sources/src-receipt.md", "src-receipt", "source", "## 回执\n\n原文指针。")
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.filter(f => f.kind === "zombie")).toHaveLength(0)
   })
 })
 
 describe("D5 域失衡（票08·故事12：单页锚点占全库 >30% → hub 化/拆分 finding）", () => {
-  it("胖页 10 锚 / 全库 13 锚（0.769>0.3）⇒ domain-skew，份额进 detail", () => {
+  it("胖页 10 锚 / 全库 13 锚（0.769>0.3）⇒ domain-skew，份额进 detail", async () => {
     topicPage("topics/top-fat.md", "top-fat", ["oct-001", "oct-002", "oct-003", "oct-004", "oct-005", "oct-006", "oct-007", "oct-008", "oct-009", "oct-010"])
     topicPage("topics/top-a.md", "top-a", ["oct-011", "oct-012"])
     topicPage("topics/top-b.md", "top-b", ["oct-013"])
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const skew = res.findings.filter(f => f.kind === "domain-skew")
     expect(skew).toHaveLength(1)
     expect(skew[0].pages).toEqual(["topics/top-fat.md"])
@@ -234,30 +234,30 @@ describe("D5 域失衡（票08·故事12：单页锚点占全库 >30% → hub �
     expect(row.title).toContain("hub") // hub 化/拆分提案（故事 12）
   })
 
-  it("全库锚点数低于低水位门槛（<10）不判——小库份额无统计意义", () => {
+  it("全库锚点数低于低水位门槛（<10）不判——小库份额无统计意义", async () => {
     topicPage("topics/top-fat.md", "top-fat", ["oct-001", "oct-002", "oct-003", "oct-004", "oct-005"])
     topicPage("topics/top-a.md", "top-a", ["oct-006"])
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.filter(f => f.kind === "domain-skew")).toHaveLength(0)
   })
 
-  it("均衡库（最大份额 <30%）不扰", () => {
+  it("均衡库（最大份额 <30%）不扰", async () => {
     topicPage("topics/top-a.md", "top-a", ["oct-001", "oct-002", "oct-003"])
     topicPage("topics/top-b.md", "top-b", ["oct-004", "oct-005", "oct-006"])
     topicPage("topics/top-c.md", "top-c", ["oct-007", "oct-008", "oct-009"])
     topicPage("topics/top-d.md", "top-d", ["oct-010", "oct-011"])
-    expect(patrol().patrol().findings.filter(f => f.kind === "domain-skew")).toHaveLength(0)
+    expect((await patrol().patrol()).findings.filter(f => f.kind === "domain-skew")).toHaveLength(0)
   })
 })
 
 describe("D7 volatile 到期（票08·故事13：review_after 已过 → 复审 finding，纯新建判据）", () => {
-  it("volatile 页 review_after=2026-09-30（NOW=2026-10-15 已过 15 天）⇒ volatile-expired，三选措辞进标题", () => {
+  it("volatile 页 review_after=2026-09-30（NOW=2026-10-15 已过 15 天）⇒ volatile-expired，三选措辞进标题", async () => {
     topicPage("topics/top-v.md", "top-v", ["oct-001"])
     const abs = path.join(wikiRoot, "topics", "top-v.md")
     const raw = fs.readFileSync(abs, "utf-8")
     fs.writeFileSync(abs, raw.replace("links: []", "links: []\nstability: volatile\nreview_after: 2026-09-30"), "utf-8")
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const exp = res.findings.filter(f => f.kind === "volatile-expired")
     expect(exp).toHaveLength(1)
     expect(exp[0].pages).toEqual(["topics/top-v.md"])
@@ -270,23 +270,23 @@ describe("D7 volatile 到期（票08·故事13：review_after 已过 → 复审 
     expect(detail.overdue_days).toBe(15) // 手算 09-30→10-15
   })
 
-  it("review_after 未到 ⇒ 不扰；stable 页无到期概念", () => {
+  it("review_after 未到 ⇒ 不扰；stable 页无到期概念", async () => {
     topicPage("topics/top-v2.md", "top-v2", ["oct-001"])
     const abs = path.join(wikiRoot, "topics", "top-v2.md")
     fs.writeFileSync(abs, fs.readFileSync(abs, "utf-8").replace("links: []", "links: []\nstability: volatile\nreview_after: 2026-11-01"), "utf-8")
     topicPage("topics/top-s.md", "top-s", ["oct-002"])
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.filter(f => f.kind === "volatile-expired")).toHaveLength(0)
   })
 
-  it("时钟注入判据（红线6）：同一库 NOW 前移一天 ⇒ 到期消失，不 sleep", () => {
+  it("时钟注入判据（红线6）：同一库 NOW 前移一天 ⇒ 到期消失，不 sleep", async () => {
     topicPage("topics/top-v.md", "top-v", ["oct-001"])
     const abs = path.join(wikiRoot, "topics", "top-v.md")
     fs.writeFileSync(abs, fs.readFileSync(abs, "utf-8").replace("links: []", "links: []\nstability: volatile\nreview_after: 2026-10-14"), "utf-8")
-    expect(new WikiPatrolService({ db, root, now: () => new Date("2026-10-15T00:00:00.000Z") }).patrol().findings.filter(f => f.kind === "volatile-expired")).toHaveLength(1)
+    expect((await new WikiPatrolService({ db, root, now: () => new Date("2026-10-15T00:00:00.000Z") }).patrol()).findings.filter(f => f.kind === "volatile-expired")).toHaveLength(1)
     new FindingsDAO(db).updateStatus(new FindingsDAO(db).list("open").find(r => r.kind === "volatile-expired")!.id, "ignored")
     // 换时钟到到期日之前 ⇒ 判据不再命中（构造而非等待——红线6）
-    const res = new WikiPatrolService({ db, root, now: () => new Date("2026-10-13T00:00:00.000Z") }).patrol()
+    const res = (await new WikiPatrolService({ db, root, now: () => new Date("2026-10-13T00:00:00.000Z") }).patrol())
     expect(res.findings.filter(f => f.kind === "volatile-expired")).toHaveLength(0)
   })
 })

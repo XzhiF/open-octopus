@@ -158,7 +158,7 @@ afterEach(() => {
 })
 
 describe("D-aa16-3 复现靶 — 退役死链 + 矛盾 adopt 恒败（票04 对靶真验）", () => {
-  it("症状一潜伏显形（旧形态对照）：只迁页不清链 ⇒ L5 扫描见活链指向 _retired 页", () => {
+  it("症状一潜伏显形（旧形态对照）：只迁页不清链 ⇒ L5 扫描见活链指向 _retired 页", async () => {
     seedLibrary()
     // 复刻票08 旧执行体产物：手工迁 _retired/ + 注 superseded（不清链、不动 DB）
     fs.mkdirSync(path.join(wikiRoot, "_retired", "topics"), { recursive: true })
@@ -217,7 +217,7 @@ describe("D-aa16-3 复现靶 — 退役死链 + 矛盾 adopt 恒败（票04 对�
     expect(scanBroken()).toEqual([]) // 裁决后仍零潜伏（L5 闸过）
 
     // 巡检复报面闭环：标记已清 ⇒ patrol 不再恢复该 finding（复报证据行消失）
-    const rePatrol = new WikiPatrolService({ db, root: knowledgeRoot }).patrol()
+    const rePatrol = (await new WikiPatrolService({ db, root: knowledgeRoot }).patrol())
     expect(rePatrol.findings.some(f => f.id === FND_ADOPT)).toBe(false)
   })
 })

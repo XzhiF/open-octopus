@@ -83,7 +83,7 @@ describe("[采纳修订] missing-xref — 确定性编辑：补互链入唯一�
   it("adopt → finding-fix 入队 → 两页 links 互含 + 单 commit → resolved + Lane A 回执卡", async () => {
     writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
     writePage("concepts/con-b.md", "con-b", "concept", ["knowledge"], [], "## 定义\n\n乙。")
-    const report = makePatrol().patrol()
+    const report = (await makePatrol().patrol())
     const xref = report.findings.find(f => f.kind === "missing-xref")!
     expect(xref).toBeDefined()
 
@@ -120,7 +120,7 @@ describe("[采纳修订] missing-xref — 确定性编辑：补互链入唯一�
     expect((diff!.data as { commit?: string }).commit).toBe(done.result?.commit)
 
     // 修问题=证据消失：二巡不再产该 xref 草案（不是"报了不管"，是图面已闭环）
-    const re = makePatrol().patrol()
+    const re = (await makePatrol().patrol())
     expect(re.findings.find(f => f.kind === "missing-xref")).toBeUndefined()
     expect(re.findings.find(f => f.id === xref.id)).toBeUndefined()
   })
@@ -128,7 +128,7 @@ describe("[采纳修订] missing-xref — 确定性编辑：补互链入唯一�
   it("adopt 不存在的 finding ⇒ NOT_FOUND；已 resolved 再 adopt ⇒ ALREADY", async () => {
     writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
     writePage("concepts/con-b.md", "con-b", "concept", ["knowledge"], [], "## 定义\n\n乙。")
-    const xref = makePatrol().patrol().findings.find(f => f.kind === "missing-xref")!
+    const xref = (await makePatrol().patrol()).findings.find(f => f.kind === "missing-xref")!
     const queue = new CompileQueue()
     const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
     ops.adopt(xref.id)
@@ -155,7 +155,7 @@ describe("[采纳修订] contradiction / stale — LLM seam 生成修订稿", ()
       ].join("\n"))
     writePage("concepts/con-compiled-rag.md", "con-compiled-rag", "concept", ["knowledge"], ["top-injection"],
       "## 定义\n\n检索重活在编译时。见 [[top-injection]]。")
-    const created = makePatrol().patrol()
+    const created = (await makePatrol().patrol())
     expect(created.findings.find(f => f.id === fid)?.kind).toBe("contradiction")
 
     // 失败路径先行：LLM 修订稿丢锚点 ⇒ CURATOR_ANCHOR_REGRESSION 式守门（任务 failed、库不动、finding open）
@@ -212,7 +212,7 @@ describe("[采纳修订] contradiction / stale — LLM seam 生成修订稿", ()
       `INSERT INTO executions (id, org, workspace_id, parent_id, workflow_ref, workflow_name, status, node_type, var_pool, created_at, updated_at)
        VALUES ('e-1','default','ws-1','0','wf','wf','completed','normal',?,'2026-10-12','2026-10-12')`,
     ).run(JSON.stringify({ wiki_refs: ["stale: oct-007 现状：还需先 pnpm install"] }))
-    const stale = makePatrol().patrol().findings.find(f => f.kind === "stale")!
+    const stale = (await makePatrol().patrol()).findings.find(f => f.kind === "stale")!
 
     const queueNoLlm = new CompileQueue()
     const opsNoLlm = new FindingOpsService({ db, root, queue: queueNoLlm, now: FROZEN_NOW, git: realGit(wikiRoot) })
@@ -238,9 +238,9 @@ describe("[采纳修订] contradiction / stale — LLM seam 生成修订稿", ()
 })
 
 describe("[忽略] — 记录在案不再扰", () => {
-  it("ignore → status=ignored 持久；重复 ignore/adopt ⇒ ALREADY；未知 ⇒ NOT_FOUND", () => {
+  it("ignore → status=ignored 持久；重复 ignore/adopt ⇒ ALREADY；未知 ⇒ NOT_FOUND", async () => {
     writePage("concepts/con-a.md", "con-a", "concept", [], [], "## 定义\n\n甲。")
-    const orphan = makePatrol().patrol().findings.find(f => f.kind === "orphan")!
+    const orphan = (await makePatrol().patrol()).findings.find(f => f.kind === "orphan")!
     const ops = new FindingOpsService({ db, root, now: FROZEN_NOW, git: realGit(wikiRoot) })
     expect(ops.ignore(orphan.id).status).toBe("ignored")
     expect(new FindingsDAO(db).getById(orphan.id)!.status).toBe("ignored")
@@ -435,7 +435,7 @@ describe("[采纳修订] low-confidence — 票07 账目证据进修订稿通道
       "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
     const ledger = new KnowledgeEffectivenessDAO(db)
     ledger.upsert("oct-001", { cited_count: 5, helpful_count: 1, not_helpful_count: 4 })
-    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+    const finding = (await makePatrol().patrol()).findings.find(f => f.kind === "low-confidence")!
     expect(finding).toBeDefined()
 
     const prompts: string[] = []
@@ -467,7 +467,7 @@ describe("[采纳修订] low-confidence — 票07 账目证据进修订稿通道
       "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
     const ledger = new KnowledgeEffectivenessDAO(db)
     ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 5 })
-    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+    const finding = (await makePatrol().patrol()).findings.find(f => f.kind === "low-confidence")!
 
     const queue = new CompileQueue()
     const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
@@ -485,7 +485,7 @@ describe("[采纳修订] low-confidence — 票07 账目证据进修订稿通道
       "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
     const ledger = new KnowledgeEffectivenessDAO(db)
     ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 5 })
-    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+    const finding = (await makePatrol().patrol()).findings.find(f => f.kind === "low-confidence")!
 
     const queue = new CompileQueue()
     const ops = new FindingOpsService({

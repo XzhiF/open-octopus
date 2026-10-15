@@ -66,10 +66,10 @@ afterEach(() => {
 const makePatrol = () => new WikiPatrolService({ db, root })
 
 describe("巡检⑥ 判例积压（open 且 occurrences≥2 未蒸馏 → 提议蒸馏；票03 六查）", () => {
-  it("open + occurrences=2 + 无 rule_ref ⇒ case-backlog finding：内容寻址 id/涉事判例页/detail 计数在案；counts 记第六类", () => {
+  it("open + occurrences=2 + 无 rule_ref ⇒ case-backlog finding：内容寻址 id/涉事判例页/detail 计数在案；counts 记第六类", async () => {
     caseFile({ fileName: "2026-10-12-case-backlog-a.md", id: "case-backlog-a", symptom: "登录 500 cookie 未清", occurrences: 2, status: "open" })
 
-    const res = makePatrol().patrol()
+    const res = (await makePatrol().patrol())
     const backlog = res.findings.filter(f => f.kind === "case-backlog")
     expect(backlog).toHaveLength(1)
     expect(backlog[0].action).toBe("created")
@@ -88,43 +88,43 @@ describe("巡检⑥ 判例积压（open 且 occurrences≥2 未蒸馏 → 提议
     expect(detail.occurrences).toBe(2)
   })
 
-  it("三不查面：occurrences=1 不查；有 rule_ref 不查；status=distilled/superseded 不查", () => {
+  it("三不查面：occurrences=1 不查；有 rule_ref 不查；status=distilled/superseded 不查", async () => {
     caseFile({ fileName: "2026-10-12-case-once.md", id: "case-once", symptom: "症状一", occurrences: 1, status: "open" })
     caseFile({ fileName: "2026-10-12-case-refd.md", id: "case-refd", symptom: "症状二", occurrences: 3, status: "open", ruleRef: "oct-001" })
     caseFile({ fileName: "2026-10-12-case-dist.md", id: "case-dist", symptom: "症状三", occurrences: 5, status: "distilled" })
     caseFile({ fileName: "2026-10-12-case-sup.md", id: "case-sup", symptom: "症状四", occurrences: 4, status: "superseded" })
 
-    const res = makePatrol().patrol()
+    const res = (await makePatrol().patrol())
     expect(res.findings.filter(f => f.kind === "case-backlog")).toHaveLength(0)
     expect(new FindingsDAO(db).list("open").filter(r => r.kind === "case-backlog")).toHaveLength(0)
   })
 
-  it("幂等与裁决三态：重跑 unchanged 零写；occurrences 增长刷新证据；resolved 后永不再扰", () => {
+  it("幂等与裁决三态：重跑 unchanged 零写；occurrences 增长刷新证据；resolved 后永不再扰", async () => {
     caseFile({ fileName: "2026-10-12-case-grow.md", id: "case-grow", symptom: "增长症状", occurrences: 2, status: "open" })
-    const first = makePatrol().patrol()
+    const first = (await makePatrol().patrol())
     const created = first.findings.find(f => f.kind === "case-backlog")!
     const dao = new FindingsDAO(db)
     expect(dao.getById(created.id)).toBeDefined()
 
     // 重跑证据未变 ⇒ unchanged（零新行）
-    const second = makePatrol().patrol()
+    const second = (await makePatrol().patrol())
     expect(second.findings.find(f => f.id === created.id)?.action).toBe("unchanged")
 
     // occurrences 3 ⇒ 证据变化 → refreshed（detail 更新，status 不动）
     caseFile({ fileName: "2026-10-12-case-grow.md", id: "case-grow", symptom: "增长症状", occurrences: 3, status: "open" })
-    const third = makePatrol().patrol()
+    const third = (await makePatrol().patrol())
     expect(third.findings.find(f => f.id === created.id)?.action).toBe("refreshed")
     expect(JSON.parse(dao.getById(created.id)!.detail).occurrences).toBe(3)
 
     // 人已裁决（resolved）⇒ 永不再扰（suppressed，行内容不再动）
     dao.updateStatus(created.id, "resolved")
     caseFile({ fileName: "2026-10-12-case-grow.md", id: "case-grow", symptom: "增长症状", occurrences: 9, status: "open" })
-    const fourth = makePatrol().patrol()
+    const fourth = (await makePatrol().patrol())
     expect(fourth.findings.find(f => f.id === created.id)?.action).toBe("suppressed")
     expect(JSON.parse(dao.getById(created.id)!.detail).occurrences).toBe(3)
   })
 
-  it("退役区判例不参与六查（_retired/ 不进体检，票13 同律）", () => {
+  it("退役区判例不参与六查（_retired/ 不进体检，票13 同律）", async () => {
     const abs = path.join(wikiRoot, "_retired", "cases", "2026-10-12-case-dead.md")
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, [
@@ -133,7 +133,7 @@ describe("巡检⑥ 判例积压（open 且 occurrences≥2 未蒸馏 → 提议
       "## 现场\n\nx\n\n## 诊断\n\nx\n\n## 根因\n\nx\n\n## 修复\n\nx\n\n## 教训\n\nx\n",
     ].join("\n"), "utf-8")
 
-    const res = makePatrol().patrol()
+    const res = (await makePatrol().patrol())
     expect(res.findings.filter(f => f.kind === "case-backlog")).toHaveLength(0)
   })
 })

@@ -67,13 +67,13 @@ afterEach(() => {
 const patrol = () => new WikiPatrolService({ db, root })
 
 describe("巡检「低置信」查（票07·故事5）", () => {
-  it("measured 0.2（h1/n4）且聚合引用 5≥3 ⇒ finding；页键行+锚点行并算；重跑幂等 unchanged", () => {
+  it("measured 0.2（h1/n4）且聚合引用 5≥3 ⇒ finding；页键行+锚点行并算；重跑幂等 unchanged", async () => {
     topicPage("topics/top-ci.md", "top-ci", ["oct-001", "oct-002"])
     ledger.upsert("oct-001", { cited_count: 4, helpful_count: 1, not_helpful_count: 4 })
     ledger.upsert("oct-002", { cited_count: 1, helpful_count: 0, not_helpful_count: 0 })
     ledger.upsert("top-ci", { cited_count: 0, helpful_count: 0, not_helpful_count: 0 })
 
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const low = res.findings.filter(f => f.kind === "low-confidence")
     expect(low).toHaveLength(1)
     expect(low[0].pages).toEqual(["topics/top-ci.md"])
@@ -90,27 +90,27 @@ describe("巡检「低置信」查（票07·故事5）", () => {
     expect(detail.measured).toBe(true)
 
     // 幂等：证据未变 ⇒ unchanged 零写，行数不变
-    const res2 = patrol().patrol()
+    const res2 = (await patrol().patrol())
     expect(res2.findings.filter(f => f.kind === "low-confidence" && f.action === "unchanged")).toHaveLength(1)
     expect(new FindingsDAO(db).list("open").filter(r => r.kind === "low-confidence")).toHaveLength(1)
   })
 
-  it("引用不足（cited 2）不产——还没被充分验证的账不催", () => {
+  it("引用不足（cited 2）不产——还没被充分验证的账不催", async () => {
     topicPage("topics/top-ci.md", "top-ci", ["oct-001"])
     ledger.upsert("oct-001", { cited_count: 2, helpful_count: 0, not_helpful_count: 5 })
-    expect(patrol().patrol().findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
+    expect((await patrol().patrol()).findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
   })
 
-  it("账目不差（h4/n1 ⇒ 0.8）不扰", () => {
+  it("账目不差（h4/n1 ⇒ 0.8）不扰", async () => {
     topicPage("topics/top-ci.md", "top-ci", ["oct-001"])
     ledger.upsert("oct-001", { cited_count: 9, helpful_count: 4, not_helpful_count: 1 })
-    expect(patrol().patrol().findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
+    expect((await patrol().patrol()).findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
   })
 
-  it("未测但初值 ≤0.2 且引用≥3 ⇒ 仍产（票面字面判据：初值也是 confidence）", () => {
+  it("未测但初值 ≤0.2 且引用≥3 ⇒ 仍产（票面字面判据：初值也是 confidence）", async () => {
     topicPage("topics/top-ci.md", "top-ci", [], 0.15)
     ledger.upsert("top-ci", { cited_count: 4, helpful_count: 1, not_helpful_count: 1 })
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     const low = res.findings.filter(f => f.kind === "low-confidence")
     expect(low).toHaveLength(1)
     const detail = JSON.parse(new FindingsDAO(db).list("open").find(r => r.kind === "low-confidence")!.detail) as Record<string, unknown>
@@ -118,18 +118,18 @@ describe("巡检「低置信」查（票07·故事5）", () => {
     expect(detail.measured).toBe(false)
   })
 
-  it("无账页（从未被消费）绝不进低置信面；缺 confidence 字段的页按 DB 兜底初值 0.5 判", () => {
+  it("无账页（从未被消费）绝不进低置信面；缺 confidence 字段的页按 DB 兜底初值 0.5 判", async () => {
     topicPage("topics/top-ci.md", "top-ci", ["oct-001"])
     ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 0 }) // 只引用零裁决
-    expect(patrol().patrol().findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
+    expect((await patrol().patrol()).findings.filter(f => f.kind === "low-confidence")).toHaveLength(0)
   })
 
-  it("ignored 后永不再扰（既有三态纪律对新增 kind 生效）", () => {
+  it("ignored 后永不再扰（既有三态纪律对新增 kind 生效）", async () => {
     topicPage("topics/top-ci.md", "top-ci", ["oct-001"])
     ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 5 })
-    const first = patrol().patrol().findings.find(f => f.kind === "low-confidence")!
+    const first = (await patrol().patrol()).findings.find(f => f.kind === "low-confidence")!
     new FindingsDAO(db).updateStatus(first.id, "ignored")
-    const res = patrol().patrol()
+    const res = (await patrol().patrol())
     expect(res.findings.find(f => f.kind === "low-confidence")?.action).toBe("suppressed")
   })
 })

@@ -9,9 +9,11 @@ import type { FindingUpsert } from "../../db/dao/findings-dao"
 import { FindingsDAO } from "../../db/dao/findings-dao"
 import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
 import { isLowConfidence, rollupConfidence, rollupEffectiveness } from "./effectiveness-confidence"
+import { jaccard, symptomTokens } from "./case-symptom"
+import type { LLMCall } from "./llm"
 import { scanWikiEntries } from "./wiki/compile"
 import { parseWikiFile, serializePageMarkdown } from "./wiki/format"
-import { estimateTokens, resolveWikiLink, WIKILINK_RE, WIKI_LIMITS } from "./wiki/lint"
+import { estimateTokens, resolveWikiLink, ruleLinesForFormCheck, WIKILINK_RE, WIKI_LIMITS } from "./wiki/lint"
 import { resolveKnowledgeRoot } from "./global-paths"
 
 /**
@@ -54,6 +56,12 @@ import { resolveKnowledgeRoot } from "./global-paths"
  *     此判据零在跑实现——纯新建）。
  *  （D2 duplicate 含策展合并稿 LLM seam，见下——数值查与语义查同族纪律：判据确定性、
  *   id 内容寻址可复算；seam 只装饰附稿，坏形/缺席=诚实空稿不毁 finding 产出。）
+ *  ⑫ 重复对（D2，故事 10）：跨页近义规则（case-symptom 三件套归一+jaccard 批量判，
+ *     E2 §9 实锤 spec 虚指的 normalizeRuleText/ruleTokens 不存在——复用现形单源、
+ *     阈值另立常量）⇒ duplicate finding 附策展人合并稿。合并稿走 LLM seam
+ *     （finding 修订 seam 同款先例；seam 缺席/抛/空=诚实空稿，**pair 命中本身零 LLM**
+ *     ——embedding 严禁引入，Out of Scope 纪律）。同证据重跑不重烧 seam（夜巡成本
+ *     纪律，稿复用进 detail.merge_draft）。
  *
  * 裁决三态纪律（票面 AC2/AC5）：已有行 status ∈ {resolved, ignored} ⇒ 本巡检**永不再扰**
  * （不写库、报告记 suppressed）；open 行证据变化 ⇒ 刷新（upsert 保人裁决的 DAO 契约）、
@@ -70,11 +78,12 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * （lowConfidenceDrafts，DB knowledge_effectiveness 账目确定性读，零 LLM）；
  * 提议修订或退役全走既有 finding 卡三态人裁（红线2 零自动执行；窄口自动退役只属票09 一条）。
  * P4 票08 扩枚举：`bloat`（膨胀榜）/ `zombie`（僵尸）/ `domain-skew`（域失衡）/
- * `volatile-expired`（volatile 到期）——生产者=本巡检数值查（判据全部确定性：
- * L1 闸水位读盘、僵尸吃票06 账、失衡数锚点、到期读 front-matter）；处方出口一律
- * finding 人裁（红线2——退役/拆分/续期零自动执行，自动窄口只属票09）。
+ * `volatile-expired`（volatile 到期）/ `duplicate`（重复对）——生产者=本巡检数值查
+ * （判据全部确定性：L1 闸水位读盘、僵尸吃票06 账、失衡数锚点、到期读 front-matter、
+ * 重复对 jaccard——seam 只产附稿不改判据）；处方出口一律
+ * finding 人裁（红线2——退役/拆分/续期/合并零自动执行，自动窄口只属票09）。
  */
-export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget" | "low-confidence" | "bloat" | "zombie" | "domain-skew" | "volatile-expired"
+export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget" | "low-confidence" | "bloat" | "zombie" | "domain-skew" | "volatile-expired" | "duplicate"
 
 /** 单条巡检动作：created=新建 · refreshed=open 行证据刷新 · unchanged=零写 · suppressed=已裁决不再扰 */
 export type PatrolAction = "created" | "refreshed" | "unchanged" | "suppressed"
@@ -116,6 +125,12 @@ export interface PatrolDeps {
   /** 知识根覆盖（测试注入 tmpdir；缺省 resolveKnowledgeRoot()） */
   root?: string
   now?: () => Date
+  /**
+   * P4 票08 D2 合并稿 seam（curator/finding 修订 seam 同款注入纪律：单测一律
+   * fixture-mocked LLMCall，生产注入在 index.ts）。缺席=合并稿诚实空串——
+   * pair 判据本身零 LLM（红线3/Out of Scope：不 embedding、不用 LLM 判近义）。
+   */
+  llm?: LLMCall
 }
 
 const CONTENT_TYPES: ReadonlySet<WikiPageType> = new Set(["entity", "concept", "topic", "case"])
@@ -134,6 +149,22 @@ export const DOMAIN_SKEW_SHARE_THRESHOLD = 0.3
 
 /** 域失衡低水位门槛：全库锚点总数 < 本值不判（小库份额无统计意义，防假阳性）。 */
 export const DOMAIN_SKEW_MIN_TOTAL_ANCHORS = 10
+
+/**
+ * 重复对 jaccard 阈值：规则近义判定**严于**症状并档口径（CASE_SYMPTOM_JACCARD_THRESHOLD=0.5
+ * 不动——症状宁滥并档、规则宁缺勿合，误合并毁规则语义）。勿 import 症状常量（两口径
+ * 独立演化，E2 §7 建议逐字：token 源换为规则行文本、阈值另立单源常量）。
+ */
+export const RULE_DUPLICATE_JACCARD_THRESHOLD = 0.75
+
+/** 重复对单轮 finding 上限（防大库病态爆炸；按锚点字典序确定性截断）。 */
+export const RULE_DUPLICATE_MAX_FINDINGS = 50
+
+/** 合并稿清洗：折叠空白为单空格、限长（规则行是一句话，不是文章）；NOT_MERGE（模型判不可并）⇒ 空稿。 */
+export function normalizeMergeDraft(resp: string): string {
+  const one = resp.replace(/\s+/g, " ").trim().slice(0, 200)
+  return one === "NOT_MERGE" ? "" : one
+}
 
 const DAY_MS = 86_400_000
 
@@ -164,19 +195,21 @@ export class WikiPatrolService {
   readonly wikiRoot: string
   private readonly db: Database.Database
   private readonly now: () => Date
+  private readonly llm?: LLMCall
 
   constructor(deps: PatrolDeps) {
     this.db = deps.db
     this.root = resolveKnowledgeRoot(deps.root)
     this.wikiRoot = path.join(this.root, "wiki")
     this.now = deps.now ?? (() => new Date())
+    this.llm = deps.llm
   }
 
-  patrol(): PatrolReport {
+  async patrol(): Promise<PatrolReport> {
     applySchema(this.db) // findings 表幂等保底（同服务先例：建表在 schema，运行期只增量确保）
     const warnings: string[] = []
     const pages = this.loadPages(warnings)
-    const drafts = this.collectDrafts(pages, warnings)
+    const drafts = await this.collectDrafts(pages, warnings)
 
     const dao = new FindingsDAO(this.db)
     const findings: PatrolFindingEntry[] = []
@@ -256,7 +289,7 @@ export class WikiPatrolService {
     }
   }
 
-  private collectDrafts(pages: PageView[], warnings: string[]): PatrolDraft[] {
+  private async collectDrafts(pages: PageView[], warnings: string[]): Promise<PatrolDraft[]> {
     return [
       ...this.contradictionDrafts(pages),
       ...this.missingPageDrafts(pages, warnings),
@@ -269,7 +302,87 @@ export class WikiPatrolService {
       ...this.zombieDrafts(pages),
       ...this.domainSkewDrafts(pages),
       ...this.volatileExpiredDrafts(pages),
+      ...(await this.duplicateDrafts(pages)),
     ]
+  }
+
+  /**
+   * ⑫ 重复对（P4 票08 D2，spec 故事 10「碎片不堆积」）：跨页近义规则 jaccard 批量判。
+   * 三件套复用 case-symptom 单源（normalizeSymptom/symptomTokens/jaccard——E2 §9 实锤
+   * spec 虚指先例不存在，P3 同款坑钉案）；规则文本取数口 = lint.ts ruleLinesForFormCheck
+   * （票06 scanAnchorRules 同族）。判据**零 LLM**（红线3 勿启发、Out of Scope 勿 embedding），
+   * 命中确定性 ⇒ id 可复算；seam 只产装饰性合并稿：缺席/抛/空 ⇒ merge_draft="" 诚实
+   * 缺席不毁 finding（archive-ingest SUMMARIZE_FAILED 先例）；同证据重跑复用旧稿不重烧。
+   * 处方=合并 finding，人裁（红线2——adopt 走确定性合并执行体，见 findings.ts）。
+   */
+  private async duplicateDrafts(pages: PageView[]): Promise<PatrolDraft[]> {
+    interface Rule { page: string; anchor: string; text: string; tokens: Set<string> }
+    const rules: Rule[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      for (const r of ruleLinesForFormCheck(p.body)) {
+        const clean = r.text.replace(/^[-*]\s+/, "").trim()
+        if (clean === "") continue
+        rules.push({ page: p.relPath, anchor: r.anchor, text: clean, tokens: symptomTokens(clean) })
+      }
+    }
+    interface Pair { a: Rule; b: Rule; score: number }
+    const pairs: Pair[] = []
+    for (let i = 0; i < rules.length; i++) {
+      for (let j = i + 1; j < rules.length; j++) {
+        const x = rules[i]!, y = rules[j]!
+        if (x.page === y.page) continue // 合并是跨页面；页内重排属编辑
+        const score = jaccard(x.tokens, y.tokens)
+        if (score < RULE_DUPLICATE_JACCARD_THRESHOLD) continue
+        const [a, b] = x.anchor.localeCompare(y.anchor) <= 0 ? [x, y] : [y, x] // 锚点字典序规范化
+        pairs.push({ a, b, score })
+      }
+    }
+    pairs.sort((p, q) => (p.a.anchor + "|" + p.b.anchor).localeCompare(q.a.anchor + "|" + q.b.anchor))
+    const dao = new FindingsDAO(this.db)
+    const drafts: PatrolDraft[] = []
+    for (const pair of pairs.slice(0, RULE_DUPLICATE_MAX_FINDINGS)) {
+      const { a, b, score } = pair
+      const id = sha16(`duplicate|patrol|${a.anchor}|${b.anchor}`)
+      const existing = dao.getById(id)
+      const adjudicated = existing !== undefined && (existing.status === "resolved" || existing.status === "ignored")
+      let mergeDraft = ""
+      if (!adjudicated) {
+        // 稿复用：open 行且证据文本未变 ⇒ 沿用旧稿（同证据重跑不重烧 seam——夜巡成本纪律）
+        if (existing) {
+          try {
+            const od = JSON.parse(existing.detail) as Record<string, unknown>
+            if (od.a_text === a.text && od.b_text === b.text && typeof od.merge_draft === "string" && od.merge_draft !== "") {
+              mergeDraft = od.merge_draft
+            }
+          } catch { /* 旧 detail 坏形 ⇒ 视为无稿 */ }
+        }
+        if (mergeDraft === "" && this.llm) {
+          try {
+            mergeDraft = normalizeMergeDraft(await this.llm(buildMergeDraftPrompt(a, b, score)))
+          } catch (err) {
+            // seam 抛=诚实缺席（finding 本体照常产出；archive-ingest boom 先例同律）
+            process.stderr.write(`[patrol] merge draft seam failed for ${a.anchor}≈${b.anchor}: ${err instanceof Error ? err.message : String(err)}\n`)
+            mergeDraft = ""
+          }
+        }
+      }
+      const pageList = [a.page, b.page].sort()
+      drafts.push({
+        id,
+        kind: "duplicate",
+        title: `重复对：${a.anchor}（${a.page}）≈ ${b.anchor}（${b.page}）jaccard ${Math.round(score * 1000) / 1000}——附合并稿（裁决即编译：主条归一、对侧原位改指）`,
+        detail: JSON.stringify({
+          a_page: a.page, a_anchor: a.anchor, a_text: a.text,
+          b_page: b.page, b_anchor: b.anchor, b_text: b.text,
+          score: Math.round(score * 10000) / 10000,
+          merge_draft: mergeDraft,
+        }),
+        pages: JSON.stringify(pageList),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
   }
 
   /**
@@ -769,4 +882,28 @@ export class WikiPatrolService {
 /** 证据比对：title/detail/pages/raw_ref 四字段全同 ⇒ 零写（source 恒 patrol 不比）。 */
 function sameEvidence(existing: { title: string; detail: string; pages: string; raw_ref: string }, d: FindingUpsert): boolean {
   return existing.title === d.title && existing.detail === d.detail && existing.pages === d.pages && existing.raw_ref === d.raw_ref
+}
+
+/**
+ * 合并稿 prompt（票08 D2 **契约面**——S1 测试共钉：两锚点+两规则原文必在场）。
+ * 输出契约=一行纯文本（非 JSON——seam 产物只是装饰稿，服务端清洗折叠；解析失败
+ * 形态即空串/坏文本，一律诚实空稿）。判定权不在 LLM：pair 已由 jaccard 命中，
+ * LLM 只把两条近义规则**归并成一句**（红线3 零词面启发、非 embedding）。
+ */
+export function buildMergeDraftPrompt(
+  a: { page: string; anchor: string; text: string },
+  b: { page: string; anchor: string; text: string },
+  score: number,
+): string {
+  return `# 规则合并稿（巡检 D2 重复对｜jaccard ${Math.round(score * 1000) / 1000}）
+
+你是编译型知识库的策展人。以下两条**跨页近义规则**（topic 页「## 硬约束」带锚点的行）被巡检判为重复，请把它们归并成**一条**祈使句规则：
+
+- 规则 A（\`<!--#${a.anchor}-->\`，页 ${a.page}）：「${a.text}」
+- 规则 B（\`<!--#${b.anchor}-->\`，页 ${b.page}）：「${b.text}」
+
+硬性要求：
+1. 只输出合并后的规则文本**一行**——不加引号、不加前后缀解释、不含锚点注释。
+2. 覆盖两条规则的全部约束信息（取严不取宽），祈使/事实陈述形态，零日期。
+3. 若两条约束不可调和（实质不同事被阈值误并），输出一行：NOT_MERGE`
 }

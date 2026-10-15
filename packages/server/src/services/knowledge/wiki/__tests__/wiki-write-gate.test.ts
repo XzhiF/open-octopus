@@ -283,7 +283,7 @@ describe("通道不触人工文件（curate/backfill/finding-fix 负断言）", 
     writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
     writePage("concepts/con-b.md", "con-b", "concept", ["knowledge"], [], "## 定义\n\n乙。")
     // 建仓基线（patrol 只读盘，编译通道在 adopt 里）——先经 finding-fix 出首 commit
-    const report = new WikiPatrolService({ db, root }).patrol()
+    const report = (await new WikiPatrolService({ db, root }).patrol())
     const xref = report.findings.find(f => f.kind === "missing-xref")
     expect(xref).toBeDefined()
 

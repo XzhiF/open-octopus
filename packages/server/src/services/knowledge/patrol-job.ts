@@ -170,7 +170,7 @@ export interface PatrolHandlerOpts {
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
 export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: PatrolHandlerOpts = {}): CodeJobHandler {
   return async (_ctx: CodeJobContext): Promise<CodeJobOutcome> => {
-    const report = patrol.patrol()
+    const report = await patrol.patrol()
     const created = report.newFindings
     let note = ""
     if (opts.report) {

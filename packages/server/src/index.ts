@@ -584,7 +584,12 @@ const ingestCompileTrigger = (rawPath: string): { taskId: string; status: string
 // db 依赖面**惰性构造**（票14 代修 revertTasks 同轨教训：顶层 new …({db: getDb()}) 在
 // initDb() 前 import 即崩 import 级测试）。
 let knowledgePatrolInstance: WikiPatrolService | undefined
-const getKnowledgePatrol = () => (knowledgePatrolInstance ??= new WikiPatrolService({ db: getDb() }))
+// P4 票08：D2 合并稿 seam（判据零 LLM——seam 只装饰附稿；离线闸/缺席=空稿诚实形态，
+// effectiveness-link 同轨直注制式）。
+const getKnowledgePatrol = () => (knowledgePatrolInstance ??= new WikiPatrolService({
+  db: getDb(),
+  llm: createProductionKnowledgeLLM({ channel: "duplicate-merge", modelEnv: "OCTOPUS_DUPLICATE_MERGE_MODEL" }),
+}))
 let findingOpsInstance: FindingOpsService | undefined
 const getFindingOps = () => (findingOpsInstance ??= new FindingOpsService({
   db: getDb(),
@@ -746,8 +751,9 @@ app.route("/api/knowledge", createFindingsRoutes({
     adopt: id => getFindingOps().adopt(id),
     getTask: id => getFindingOps().getTask(id),
   },
-  patrolNow: () => {
-    const report = getKnowledgePatrol().patrol()
+  patrolNow: async () => {
+    // P4 票08：patrol() 起 D2 合并稿 seam 后为异步（夜巡作业与手动「体检一下」同入口共享）。
+    const report = await getKnowledgePatrol().patrol()
     // P3 票04：即时体检同样触发 b 路草案扫描（与夜巡作业同钩子语义）。
     getSkillDrafts().detectProceduralCases()
     return report

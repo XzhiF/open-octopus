@@ -92,7 +92,7 @@ afterEach(() => {
 describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道复用）", () => {
   it("patrol 产六查 finding → adopt ⇒ 确定性蒸馏：topic 页「硬约束」锚点 + [[case]] 回指、case 翻 distilled+rule_ref（正文逐字不动）、finding resolved、Lane A 回执", async () => {
     writeBacklogCase()
-    const report = new WikiPatrolService({ db, root }).patrol()
+    const report = (await new WikiPatrolService({ db, root }).patrol())
     const backlog = report.findings.find(f => f.kind === "case-backlog")!
     expect(backlog).toBeDefined()
 
@@ -139,7 +139,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
     expect((findingCard!.data as { status: string }).status).toBe("resolved")
 
     // 证据闭环：蒸馏后再巡，判例已出列（六查不再产同 id 草案）
-    const re = new WikiPatrolService({ db, root }).patrol()
+    const re = (await new WikiPatrolService({ db, root }).patrol())
     expect(re.findings.find(f => f.kind === "case-backlog")).toBeUndefined()
   })
 
@@ -154,7 +154,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
       "", "## 修复", "", "kill:port 清。", "", "## 教训", "", "拆机要杀净。", "",
     ].join("\n"), "utf-8")
 
-    const report = new WikiPatrolService({ db, root }).patrol()
+    const report = (await new WikiPatrolService({ db, root }).patrol())
     const backlog = report.findings.filter(f => f.kind === "case-backlog")
     expect(backlog).toHaveLength(2)
 
@@ -185,7 +185,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
     writeBacklogCase()
     fs.mkdirSync(path.join(root, "raw", "inbox"), { recursive: true })
     fs.writeFileSync(path.join(root, "raw", "inbox", "keep.md"), "# 不动我\n", "utf-8")
-    const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+    const backlog = (await new WikiPatrolService({ db, root }).patrol()).findings.find(f => f.kind === "case-backlog")!
 
     const queue = new CompileQueue()
     const ops = new FindingOpsService({ db, root, queue, git: realGit(wikiRoot) })
@@ -200,7 +200,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
   describe("蒸馏流程型标记（adopt→distill 产物生成处打标，distilled 面可查）", () => {
     it("seam 判流程型 ⇒ 蒸馏判例带 procedural: true；判定 prompt 携五段（现场/…/教训）与症状", async () => {
       writeBacklogCase()
-      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const backlog = (await new WikiPatrolService({ db, root }).patrol()).findings.find(f => f.kind === "case-backlog")!
       const queue = new CompileQueue()
       const prompts: string[] = []
       const ops = new FindingOpsService({
@@ -223,7 +223,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
 
     it("seam 判陈述型 ⇒ procedural: false 显式记录（b 路不再词表兜底翻案）", async () => {
       writeBacklogCase()
-      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const backlog = (await new WikiPatrolService({ db, root }).patrol()).findings.find(f => f.kind === "case-backlog")!
       const queue = new CompileQueue()
       const ops = new FindingOpsService({
         db, root, queue, git: realGit(wikiRoot),
@@ -236,7 +236,7 @@ describe("case-backlog 采纳蒸馏（S1·票03 第5行：finding adopt 通道�
 
     it("seam 坏形/炸 ⇒ 零标记（诚实缺席=词表兜底位）且蒸馏本体照committed——标记失败不毁裁决链", async () => {
       writeBacklogCase()
-      const backlog = new WikiPatrolService({ db, root }).patrol().findings.find(f => f.kind === "case-backlog")!
+      const backlog = (await new WikiPatrolService({ db, root }).patrol()).findings.find(f => f.kind === "case-backlog")!
       const queue = new CompileQueue()
       const ops = new FindingOpsService({
         db, root, queue, git: realGit(wikiRoot),

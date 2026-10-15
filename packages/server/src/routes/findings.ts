@@ -34,7 +34,8 @@ export interface FindingOpsApi {
 
 export interface FindingsRoutesApi {
   ops: FindingOpsApi
-  patrolNow: () => PatrolReport
+  /** P4 票08：patrol() 起合并稿 seam（D2）后为异步——同步形态仍兼容（union 只放宽不收窄，契约形状零漂移） */
+  patrolNow: () => PatrolReport | Promise<PatrolReport>
   backfill: (input: BackfillInput) => BackfillResult
 }
 
@@ -115,9 +116,9 @@ export function createFindingsRoutes(api: FindingsRoutesApi): Hono {
     return c.json({ task })
   })
 
-  routes.post("/patrol", (c) => {
+  routes.post("/patrol", async (c) => {
     try {
-      return c.json(api.patrolNow())
+      return c.json(await api.patrolNow())
     } catch (err) {
       return fail(c, err, "findings.patrol")
     }
