@@ -117,6 +117,10 @@ export const WikiPageFrontmatterSchema = z.object({
    *  无此字段（不扰动既有页 front-matter / git diff）。case 域另有 status（open/
    *  distilled/superseded），与本字段互不干涉（case 走判例管线，不经页形态）。 */
   status: z.enum(["superseded"]).optional(),
+  /** 票04·故事26 退役清入链：ADDITIVE 可选——退役页的替换者指针（persona 纪律
+   *  「supersedes 旧规则迁 _retired/ 带 replaced_by」的机读落地；仅 `_retired/` 页
+   *  按入参写入，在册页零扰动）。旧读者 zod strip 天然兼容，历史退役件零迁移。 */
+  replaced_by: z.string().min(1).optional(),
 }).superRefine((v, ctx) => {
   if (v.type === "case") {
     ctx.addIssue({
