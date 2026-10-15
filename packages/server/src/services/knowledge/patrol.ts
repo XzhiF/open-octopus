@@ -10,8 +10,8 @@ import { FindingsDAO } from "../../db/dao/findings-dao"
 import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
 import { isLowConfidence, rollupConfidence, rollupEffectiveness } from "./effectiveness-confidence"
 import { scanWikiEntries } from "./wiki/compile"
-import { parseWikiFile } from "./wiki/format"
-import { resolveWikiLink, WIKILINK_RE } from "./wiki/lint"
+import { parseWikiFile, serializePageMarkdown } from "./wiki/format"
+import { estimateTokens, resolveWikiLink, WIKILINK_RE, WIKI_LIMITS } from "./wiki/lint"
 import { resolveKnowledgeRoot } from "./global-paths"
 
 /**
@@ -39,6 +39,21 @@ import { resolveKnowledgeRoot } from "./global-paths"
  *     confidence≤0.2 且引用≥3 的 v3 页 ⇒ finding 提议修订或退役（确定性 DB 读零 LLM；
  *     裁决面=既有 finding 卡三态，红线2 零自动执行）。
  *     （P4 票03 另产 index-budget kind 由编译通道直产、不经本巡，见枚举注。）
+ * P4 票08 数值查（spec 故事 9/11/12/13，原蓝图 D1/D3/D5/D7——本切片四个确定性同步查）：
+ *  ⑧ 膨胀榜（D1，故事 9）：L1 容量闸（120 行/25 规则/2000 token 三阈值先到口径）水位
+ *     ≥80% 的 v3 页 ⇒ bloat finding 预拆分提案——**不等触顶硬拒**，增长有提前量。
+ *     判例豁免同 L1 闸律（lintProfileForPageType：判例天然长）。
+ *  ⑨ 僵尸（D3，故事 11）：90 天零引用 ⇒ zombie finding 提议退役。**吃票06 账**
+ *     （cited_count/last_cited 页级∪锚点级 rollup，单源纪律：不再自扫 JSONL）。
+ *     dormant=有账但最近引用逾 90 天；never=无账且建页（last_compiled）逾 90 天。
+ *     时钟经 PatrolDeps.now 注入（红线6：判据不 sleep、测试可钉表）。
+ *  ⑩ 域失衡（D5，故事 12）：单页锚点数占全库在册锚点 >30% ⇒ domain-skew hub 化/拆分
+ *     finding。全库锚点 <10 不判（小库份额无统计意义，防构造期假阳性）。
+ *  ⑪ volatile 到期（D7，故事 13）：stability=volatile 页 review_after 已过 ⇒
+ *     volatile-expired 复审 finding（续期/改写/退役三选一=**人裁侧**，E2 §8 实锤
+ *     此判据零在跑实现——纯新建）。
+ *  （D2 duplicate 含策展合并稿 LLM seam，见下——数值查与语义查同族纪律：判据确定性、
+ *   id 内容寻址可复算；seam 只装饰附稿，坏形/缺席=诚实空稿不毁 finding 产出。）
  *
  * 裁决三态纪律（票面 AC2/AC5）：已有行 status ∈ {resolved, ignored} ⇒ 本巡检**永不再扰**
  * （不写库、报告记 suppressed）；open 行证据变化 ⇒ 刷新（upsert 保人裁决的 DAO 契约）、
@@ -54,8 +69,12 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * P4 票07 扩枚举：`low-confidence`（实效账目低置信）——生产者=本巡检第七查
  * （lowConfidenceDrafts，DB knowledge_effectiveness 账目确定性读，零 LLM）；
  * 提议修订或退役全走既有 finding 卡三态人裁（红线2 零自动执行；窄口自动退役只属票09 一条）。
+ * P4 票08 扩枚举：`bloat`（膨胀榜）/ `zombie`（僵尸）/ `domain-skew`（域失衡）/
+ * `volatile-expired`（volatile 到期）——生产者=本巡检数值查（判据全部确定性：
+ * L1 闸水位读盘、僵尸吃票06 账、失衡数锚点、到期读 front-matter）；处方出口一律
+ * finding 人裁（红线2——退役/拆分/续期零自动执行，自动窄口只属票09）。
  */
-export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget" | "low-confidence"
+export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget" | "low-confidence" | "bloat" | "zombie" | "domain-skew" | "volatile-expired"
 
 /** 单条巡检动作：created=新建 · refreshed=open 行证据刷新 · unchanged=零写 · suppressed=已裁决不再扰 */
 export type PatrolAction = "created" | "refreshed" | "unchanged" | "suppressed"
@@ -100,6 +119,23 @@ export interface PatrolDeps {
 }
 
 const CONTENT_TYPES: ReadonlySet<WikiPageType> = new Set(["entity", "concept", "topic", "case"])
+
+// ── P4 票08 数值查阈值（运营参数单源，「参数不是架构」case-symptom 同律）──
+// 调整口径走 SCHEMA.md 人工同步（人机共演面——真盘文件由 owner 落笔，自动通道永不改写）。
+
+/** 膨胀预警线：L1 容量闸（120 行/25 规则/2000 token）水位 ≥ 本比例 ⇒ bloat finding（故事 9，等号含）。 */
+export const BLOAT_WATERLINE_RATIO = 0.8
+
+/** 僵尸判据：连续零引用天数 ≥ 本值 ⇒ zombie finding（故事 11 逐字「90 天」）。 */
+export const ZOMBIE_DORMANT_DAYS = 90
+
+/** 域失衡份额闸：单页锚点占全库 **>** 本值 ⇒ domain-skew finding（故事 12 逐字「>30%」）。 */
+export const DOMAIN_SKEW_SHARE_THRESHOLD = 0.3
+
+/** 域失衡低水位门槛：全库锚点总数 < 本值不判（小库份额无统计意义，防假阳性）。 */
+export const DOMAIN_SKEW_MIN_TOTAL_ANCHORS = 10
+
+const DAY_MS = 86_400_000
 
 function sha16(key: string): string {
   return `fnd-${crypto.createHash("sha256").update(key, "utf-8").digest("hex").slice(0, 16)}`
@@ -229,6 +265,10 @@ export class WikiPatrolService {
       ...this.staleDrafts(pages, warnings),
       ...this.caseBacklogDrafts(pages),
       ...this.lowConfidenceDrafts(pages),
+      ...this.bloatDrafts(pages),
+      ...this.zombieDrafts(pages),
+      ...this.domainSkewDrafts(pages),
+      ...this.volatileExpiredDrafts(pages),
     ]
   }
 
@@ -280,6 +320,169 @@ export class WikiPatrolService {
           measured: roll.measured,
           confidence,
         }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
+  }
+
+  /**
+   * ⑧ 膨胀榜（P4 票08 D1，spec 故事 9「不等触顶硬拒」）：L1 容量闸口径的水位
+   * （行/规则/token 三阈值先到 max，与 lintWikiPage L1 同一闸族）≥80% 的 v3 页
+   * ⇒ bloat finding 预拆分提案。判例豁免同 L1 闸律（lintProfileForPageType
+   * capacity:false——判例天然长）；v2 词条不判（退场轨道，同低置信查出列裁定）。
+   * 读盘面与 L1 闸逐字同口径（serializePageMarkdown 后再数——防「文件尾空行」漂移）。
+   */
+  private bloatDrafts(pages: PageView[]): PatrolDraft[] {
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      if (!p.page || p.type === "case") continue
+      const serialized = serializePageMarkdown(p.page, p.body).replace(/\n+$/, "")
+      const lines = serialized.split("\n").length
+      const tokens = estimateTokens(serialized)
+      const rules = p.anchors.length
+      const waterline = Math.max(
+        lines / WIKI_LIMITS.ENTRY_MAX_LINES,
+        rules / WIKI_LIMITS.ENTRY_MAX_RULES,
+        tokens / WIKI_LIMITS.ENTRY_MAX_TOKENS,
+      )
+      if (waterline < BLOAT_WATERLINE_RATIO) continue
+      const pct = Math.round(waterline * 100)
+      drafts.push({
+        id: sha16(`bloat|patrol|${p.relPath}`),
+        kind: "bloat",
+        title: `膨胀榜：${p.relPath} 容量水位 ${pct}%（L1 闸预警线 ${Math.round(BLOAT_WATERLINE_RATIO * 100)}%）——提议按 H2 小节预拆分/hub 化`,
+        detail: JSON.stringify({
+          page: p.relPath,
+          lines,
+          rules,
+          tokens,
+          waterline: Math.round(waterline * 1000) / 1000,
+        }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
+  }
+
+  /**
+   * ⑨ 僵尸（P4 票08 D3，spec 故事 11「90 天零引用」）：吃票06 账（cited_count/
+   * last_cited 页键行∪锚点行 rollup——单源纪律，本查零自扫 JSONL）。
+   * 两形态：dormant=有引用账但最近引用距今 ≥90 天；never=全无引用账且建页
+   * （last_compiled）距今 ≥90 天（新页有增长提前量不误伤）。僵尸面=内容规则页
+   * （entity/concept/topic；判例走自身生命周期、sources 回执非规则载体——票06
+   * LEDGER_CONTENT_DIRS 与孤儿查 sources 不算入链方两条例同律）。
+   * 时钟=this.now（PatrolDeps 注入，红线6）。处方=退役 finding，人裁（红线2——
+   * 自动退役窄口只属票09 一条）。
+   */
+  private zombieDrafts(pages: PageView[]): PatrolDraft[] {
+    const dao = new KnowledgeEffectivenessDAO(this.db)
+    const byKey = new Map<string, { cited_count: number; last_cited: string | null }>()
+    try {
+      for (const r of dao.listAll()) byKey.set(r.rule_id, r)
+    } catch {
+      return [] // 裸库无表 ⇒ 诚实空面（低置信查同律）
+    }
+    const nowMs = this.now().getTime()
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      if (!p.page) continue // v2/判例不在实效账目语义面（同低置信查出列）
+      if (p.type === "case" || p.type === "source") continue // 僵尸面=规则载体页
+      const seen = new Set<string>()
+      let cited = 0
+      let lastCited: string | null = null
+      for (const key of [p.id, ...p.anchors]) {
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = byKey.get(key)
+        if (!row) continue
+        cited += row.cited_count
+        if (row.last_cited && (lastCited === null || row.last_cited > lastCited)) lastCited = row.last_cited // ISO 字典序=时间序
+      }
+      let basis: "dormant" | "never"
+      let days: number
+      if (cited > 0 && lastCited !== null) {
+        const at = Date.parse(lastCited)
+        if (Number.isNaN(at)) continue
+        basis = "dormant"
+        days = Math.floor((nowMs - at) / DAY_MS)
+      } else {
+        const created = Date.parse(`${p.page.last_compiled}T00:00:00.000Z`)
+        if (Number.isNaN(created)) continue
+        basis = "never"
+        days = Math.floor((nowMs - created) / DAY_MS)
+      }
+      if (days < ZOMBIE_DORMANT_DAYS) continue
+      drafts.push({
+        id: sha16(`zombie|patrol|${p.relPath}`),
+        kind: "zombie",
+        title: `僵尸页：${p.relPath} 已 ${days} 天零引用（${basis === "never" ? "从未被消费" : `最近引用 ${lastCited}`}）——提议退役`,
+        detail: JSON.stringify({ page: p.relPath, basis, cited, last_cited: lastCited, dormant_days: days }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
+  }
+
+  /**
+   * ⑩ 域失衡（P4 票08 D5，spec 故事 12「单页占全库锚点 >30%」）：锚点取数
+   * PageView.anchors（scanWikiEntries 与 L1/L3 闸同一 extractRuleAnchors 源）；
+   * 分母=在册全库（_retired 已在 loadPages 出列）。低水位门槛防小库假阳性。
+   * 处方=hub 化/拆分 finding，人裁（红线2）。
+   */
+  private domainSkewDrafts(pages: PageView[]): PatrolDraft[] {
+    const total = pages.reduce((n, p) => n + p.anchors.length, 0)
+    if (total < DOMAIN_SKEW_MIN_TOTAL_ANCHORS) return []
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      if (p.anchors.length === 0) continue
+      const share = p.anchors.length / total
+      if (share <= DOMAIN_SKEW_SHARE_THRESHOLD) continue
+      drafts.push({
+        id: sha16(`domain-skew|patrol|${p.relPath}`),
+        kind: "domain-skew",
+        title: `域失衡：${p.relPath} 的 ${p.anchors.length} 条锚点占全库 ${total} 条的 ${Math.round(share * 100)}%（>30%）——提议 hub 化/拆分子页`,
+        detail: JSON.stringify({
+          page: p.relPath,
+          anchors: p.anchors.length,
+          total_anchors: total,
+          share: Math.round(share * 1000) / 1000,
+        }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
+  }
+
+  /**
+   * ⑪ volatile 到期（P4 票08 D7，spec 故事 13）：stability=volatile 且
+   * review_after < 今日 ⇒ volatile-expired 复审 finding。E2 §8 实锤：此判据
+   * 此前零在跑实现（schema 字段位与编译闸在场、消费方缺席）——纯新建。
+   * 续期/改写/退役**三选一在人裁侧**（finding 卡：adopt=改写案走修订通道、
+   * 续期/退役=对话显式）；红线2 零自动执行。时钟 this.now（红线6，真库在册
+   * volatile 页=0 属预期，判据对构造 fixture 生效即可）。
+   */
+  private volatileExpiredDrafts(pages: PageView[]): PatrolDraft[] {
+    const today = this.now().toISOString().slice(0, 10)
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      const fm = p.page
+      if (!fm || fm.stability !== "volatile" || !fm.review_after) continue
+      if (fm.review_after >= today) continue
+      const overdue = Math.floor((Date.parse(`${today}T00:00:00.000Z`) - Date.parse(`${fm.review_after}T00:00:00.000Z`)) / DAY_MS)
+      drafts.push({
+        id: sha16(`volatile-expired|patrol|${p.relPath}`),
+        kind: "volatile-expired",
+        title: `volatile 到期：${p.relPath}（review_after ${fm.review_after} 已过 ${overdue} 天）——提议续期/改写/退役三选一裁决`,
+        detail: JSON.stringify({ page: p.relPath, review_after: fm.review_after, overdue_days: overdue }),
         pages: JSON.stringify([p.relPath]),
         raw_ref: "",
         source: "patrol",
