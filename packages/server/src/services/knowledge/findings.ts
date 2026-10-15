@@ -19,8 +19,8 @@ import type { LLMCall } from "./llm"
  * FindingOpsService — finding 卡三钮的服务端（知识中心票13 AC2/AC5，spec 质控⑤出口）。
  *
  * 三钮语义：
- * - [采纳修订] `adopt(id)`：服务端生成修订稿（contradiction/stale 走 LLM seam；
- *   missing-xref/orphan/missing-page 走确定性图编辑），**经票06 全局队列
+ * - [采纳修订] `adopt(id)`：服务端生成修订稿（contradiction/stale/low-confidence 走
+ *   LLM seam；missing-xref/orphan/missing-page 走确定性图编辑），**经票06 全局队列
  *   opKind="finding-fix" 入唯一写闸编译**（旁路写 wiki = 违规）；成功 → git commit +
  *   finding → resolved + Lane A 回执（compile-diff 卡跟随）。
  * - [忽略] `ignore(id)`：记录在案（ignored 持久），巡检幂等不再重报（patrol 面）。
@@ -332,6 +332,15 @@ export class FindingOpsService {
         works.push(...revise)
         break
       }
+      case "low-confidence": {
+        // P4 票07 第七查采纳：低置信页的「修订」案走与 contradiction/stale 同一条
+        // LLM 修订通道（prompt 证据=实效账目数字）。「退役」案不在本通道——红线2
+        // 窄口纪律：自动/半自动退役只有票09 一条，低置信退役=对话显式退役或
+        // finding ignore（记录在案）；adopt 语义=「按账目修订」，不顺手删页。
+        const revise = await this.semanticRevision(row, detail, pages, scanned, loadWork)
+        works.push(...revise)
+        break
+      }
       case "case-backlog": {
         // P3 票03 六查采纳：判例蒸馏=确定性编译（不走 LLM——规则文本机械提纯自判例
         // 五段），产物 topics 硬约束 + 判例↔规则互指。独立成对写（topic 批通道 +
@@ -400,7 +409,9 @@ export class FindingOpsService {
     const context = works.map(w => `### ${w.relPath}\n\n${serializePageMarkdown(w.meta, w.body)}`).join("\n---\n\n")
     const evidence = row.kind === "contradiction"
       ? `旧断言：「${String(detail.old_claim ?? "")}」\n新断言：「${String(detail.new_claim ?? "")}」\n处置：旧断言所在页改写为**历史沿革**口吻（保留信息、指明已废止），新断言页维持现说。`
-      : `消费侧 stale 上报：目标 ${String(detail.anchor ?? detail.target ?? "")}，说明「${String(detail.note ?? "")}」。处置：按上报把涉事规则行改到与现场一致，**锚点注释 <!--#oct-…--> 原位保留**。`
+      : row.kind === "low-confidence"
+        ? `实效账目：引用 ${Number(detail.cited ?? 0)}× · helpful ${Number(detail.helpful ?? 0)} · not_helpful ${Number(detail.not_helpful ?? 0)} → confidence ${String(detail.confidence ?? "")}（低置信闸下，measured=${String(detail.measured ?? "")}）。处置：该页规则被消费却反复没挡住坑——按账目把涉事规则行改写到**与现场一致且可执行**；若判断整条应废，不要在本稿删除（锚点不可删），交对话退役通道（红线2 零自动退役）。`
+        : `消费侧 stale 上报：目标 ${String(detail.anchor ?? detail.target ?? "")}，说明「${String(detail.note ?? "")}」。处置：按上报把涉事规则行改到与现场一致，**锚点注释 <!--#oct-…--> 原位保留**。`
     const prompt = `# finding 修订稿任务（${row.kind}｜${row.title}）
 
 你是策展人。对下面 finding 涉及的页生成修订稿。必读 SCHEMA.md 约定：
