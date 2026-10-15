@@ -21,6 +21,9 @@ import type { PatrolReport, WikiPatrolService } from "./patrol"
  *   scope_id=knowledge 的行——与 web chat-column 会话选择同判据）。
  *   无会话 ⇒ 诚实降级（findings 仍入库可查，outcome 注明「未报对话」；
  *   不擅自建会话——那是前端进入 /knowledge 时的通道建立面）。
+ * - `appendCardsToSession(db, sessionId, …)`（票10 泛化）：同一写入原语的
+ *   **目标会话参数化**形态——投喂泛化后卡片回流任意发起会话；知识中心写者
+ *   （本模块 reporter / 裁决回执 / 素材包 announcePack）保持判据包装不变。
  *
  * 打扰纪律：只报 created（新证据），refreshed/unchanged/suppressed 零消息
  * （幂等夜巡不刷对话流）。
@@ -66,9 +69,42 @@ export interface ReportOutcome {
 }
 
 /**
+ * 向**任意会话**（按 sessionId 定位）追加一条 assistant 消息：header 文本 +
+ * Lane A fenced 卡块（协议单源 @octopus/shared）。票10 泛化投喂的回流原语——
+ * 抓取卡/diff 卡落进发起会话走这里；会话不存在/已软删 ⇒ 诚实降级 {posted:false,
+ * reason}（不擅自建会话）。
+ */
+export function appendCardsToSession(
+  db: Database.Database,
+  sessionId: string,
+  header: string,
+  events: KcCardEvent[],
+  now: () => Date = () => new Date(),
+): ReportOutcome {
+  const dao = new AgentSessionDAO(db)
+  const session = dao.findById(sessionId)
+  if (!session || session.is_deleted) {
+    return { posted: false, reason: `会话不存在或已删除（${sessionId}），未报对话` }
+  }
+  const ts = now()
+  const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
+  dao.insertMessage({
+    id: crypto.randomUUID(),
+    session_id: sessionId,
+    role: "assistant",
+    content,
+    created_at: ts.toISOString(),
+  })
+  dao.updateLastMessageAt(sessionId, ts.toISOString())
+  return { posted: true, sessionId }
+}
+
+/**
  * 向知识中心会话（archive 分身、title=知识中心 ∨ scope_id=knowledge）追加一条
  * assistant 消息：header 文本 + Lane A fenced 卡块（协议单源 @octopus/shared）。
  * 无会话 ⇒ 诚实降级 {posted:false, reason}（不擅自建会话）。
+ * 票10 起为 `appendCardsToSession` 的判据包装——夜巡/裁决回执/素材包等既有生产者
+ * 零改动，知识中心落点行为逐字保持。
  */
 export function appendKnowledgeSessionCards(
   db: Database.Database,
@@ -76,24 +112,13 @@ export function appendKnowledgeSessionCards(
   events: KcCardEvent[],
   now: () => Date = () => new Date(),
 ): ReportOutcome {
-  const dao = new AgentSessionDAO(db)
-  const session = dao
+  const session = new AgentSessionDAO(db)
     .findByClone(KNOWLEDGE_CLONE_NAME, { limit: 50 })
     .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE || s.scope_id === KNOWLEDGE_SESSION_SCOPE_ID)
   if (!session) {
     return { posted: false, reason: "无知识中心会话（findings 已入库可查，未报对话）" }
   }
-  const ts = now()
-  const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
-  dao.insertMessage({
-    id: crypto.randomUUID(),
-    session_id: session.id,
-    role: "assistant",
-    content,
-    created_at: ts.toISOString(),
-  })
-  dao.updateLastMessageAt(session.id, ts.toISOString())
-  return { posted: true, sessionId: session.id }
+  return appendCardsToSession(db, session.id, header, events, now)
 }
 
 export type PatrolReporter = (newFindings: FindingUpsert[], report: PatrolReport) => ReportOutcome

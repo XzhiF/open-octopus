@@ -35,6 +35,12 @@ export interface CompileTaskRecord {
   result?: CuratorCompileResult
   /** 稳定错误面：code 取自 CuratorError；原始错文只进 stderr（errorResponse 纪律） */
   error?: { code: string; message: string }
+  /**
+   * 票10 投喂泛化：发起会话 id（会话内意图路由投喂时由 SessionCurationService 传入）。
+   * ADDITIVE——既有投喂/归档/重试等来源缺省无此位（Lane A 回流判据：仅带上下文的
+   * 任务在终态时卡片回流原会话，知识中心 Lane B 形态零回归）。
+   */
+  sessionId?: string
 }
 
 export interface CuratorTaskDeps {
@@ -59,6 +65,8 @@ export class CuratorTaskService {
   private readonly now: () => Date
   private readonly capacity: number
   private readonly queue: WriteQueue
+  /** 票10：任务终态监听器（投喂泛化的回流钩子位；多个可挂，逐个吞错）。 */
+  private readonly settledListeners: Array<(rec: CompileTaskRecord) => void> = []
 
   constructor(deps: CuratorTaskDeps) {
     this.run = deps.run
@@ -69,12 +77,24 @@ export class CuratorTaskService {
   }
 
   /**
+   * 挂终态监听：任务进入 committed/failed 时在队列执行体内回调（携记录，含
+   * sessionId 上下文）。**监听器异常一律吞进 stderr**——回流失败不改编译任务态、
+   * 不误报队列失败（报对话同律：显形不炸作业）。
+   */
+  attachSettledListener(cb: (rec: CompileTaskRecord) => void): void {
+    this.settledListeners.push(cb)
+  }
+
+  /**
    * 投喂/显式触发入口：同步校验 raw 在盘（不存在 ⇒ 立即抛 CuratorError，路由直接 404，
    * 不建任务），返回 queued 记录；**编译不在这里起跑——入全局 FIFO 队列**（票06），
    * 轮到才 `start()`。回执先回、diff 卡后补（prototype Tab③「>10s 转异步」本期统一化：
    * 一切编译都异步且串行）。任务以 registry id 入队 ⇒ 位次 #N 经队列 API 可查。
+   *
+   * 票10 ADDITIVE：`opts.sessionId` = 发起会话上下文（记入记录、终态监听器消费——
+   * 仅带此位的任务卡片回流原会话）。缺省不传 ⇒ 行为与旧形逐字一致。
    */
-  submit(rawPath: string): CompileTaskRecord {
+  submit(rawPath: string, opts?: { sessionId?: string }): CompileTaskRecord {
     const clean = rawPath.replace(/\\/g, "/")
     if (!clean.startsWith("raw/")) throw new CuratorError("INVALID_PARAM", `raw 路径须以 'raw/' 开头：${rawPath}`, 400)
     const abs = path.resolve(this.root, clean)
@@ -84,13 +104,28 @@ export class CuratorTaskService {
     if (!fs.existsSync(abs)) throw new CuratorError("RAW_NOT_FOUND", `raw 源不在盘：${rawPath}`, 404)
 
     const id = `crt-${this.now().toISOString().replace(/[-:]/g, "").slice(0, 13)}-${String(++this.seq).padStart(3, "0")}`
-    const rec: CompileTaskRecord = { id, rawPath: clean, status: "queued", createdAt: this.now().toISOString() }
+    const rec: CompileTaskRecord = {
+      id,
+      rawPath: clean,
+      status: "queued",
+      createdAt: this.now().toISOString(),
+      ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
+    }
     this.tasks.set(id, rec)
     this.evict()
     this.queue.enqueue("ingest-compile", async () => {
       await this.start(id)
       // registry 的 failed 对队列可见（否则 start() 自吞错误 ⇒ 队列误记 committed）
       const done = this.tasks.get(id)
+      if (done && (done.status === "committed" || done.status === "failed")) {
+        for (const cb of this.settledListeners) {
+          try {
+            cb(done)
+          } catch (err) {
+            process.stderr.write(`[wiki-compile-task] settled listener failed: ${err instanceof Error ? err.message : String(err)}\n`)
+          }
+        }
+      }
       if (done?.status === "failed") {
         const code = done.error?.code ?? "COMPILE_FAILED"
         throw Object.assign(new Error(`${code}: ${done.error?.message ?? "编译失败"}`), { code })

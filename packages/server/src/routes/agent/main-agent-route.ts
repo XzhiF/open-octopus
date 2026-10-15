@@ -23,16 +23,26 @@ import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import { IngestError } from '../../services/knowledge/raw'
+import type { CurationInput, CurationReceipt } from '../../services/knowledge/session-curation'
 import fs from 'fs'
 import path from 'path'
 
 // ── Route deps ─────────────────────────────────────────────────────
+
+/** 票10 策展执行 seam（生产 = SessionCurationService；测试 = 捕获）。 */
+export interface MainAgentCurationSurface {
+  curate(input: CurationInput): Promise<CurationReceipt>
+}
 
 export interface MainAgentRouteDeps {
   sessionDAO: AgentSessionDAO
   /** billing-coverage-2 票03: 统一入口/委托链入账（共用落账 helper）。
    *  Optional: absent ⇒ skip（纯旁路）。 */
   tokenUsageDao?: TokenUsageDAO
+  /** 票10 投喂泛化：知识策展执行面（ingest_to_wiki 工具）。
+   *  Optional: absent ⇒ 工具不注册进提示词（不教模型调死工具）。 */
+  curation?: MainAgentCurationSurface
 }
 
 // ── Delegation tool definitions ────────────────────────────────────
@@ -48,6 +58,21 @@ You can delegate tasks to specialized clones using the following tools:
 - **delegate_to_resource**: Execute a resource operation (install/update skills, agents, workflows)
 
 When a task clearly falls into one of these domains, delegate it. Otherwise, respond directly.
+`
+
+// 票10 投喂泛化：策展工具契约段（与 orchestrator SKILL.md「knowledge_curation」分支的
+// ingest_to_wiki 同名单源）。仅当 curation 接线时注入——未接线不注册（死工具零教学）。
+const CURATION_TOOLS_PROMPT = `
+## Knowledge Curation Tool (feed-to-wiki)
+
+- **ingest_to_wiki**: Freeze a URL / pasted long text / local file into the knowledge wiki
+  (fetch → raw immutable → compile via the global serial queue — the same pipeline as
+  POST /api/knowledge/ingest). Input: { mode: 'url'|'text'|'file', url?, text?, path?, title? }
+- Use it ONLY when the user explicitly asks to feed content into the wiki
+  (投喂动词 + URL/长文本/路径 伴随——see octo-agent-orchestrator "knowledge_curation" intent).
+- After the call, the ingest card and compile-diff cards are automatically appended to this
+  session (Lane A) — briefly confirm the receipt to the user; do NOT paste raw JSON or
+  re-implement the pipeline yourself.
 `
 
 const EVOLUTION_TOOLS_PROMPT = `
@@ -157,7 +182,7 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
-  const { sessionDAO, tokenUsageDao } = deps
+  const { sessionDAO, tokenUsageDao, curation } = deps
   const app = new Hono()
 
   app.post('/chat', async (c) => {
@@ -319,7 +344,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
-    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
+    const curationSegment = curation ? `\n\n${CURATION_TOOLS_PROMPT}` : ''
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}${curationSegment}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -339,6 +365,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         let delegationDetected: { cloneName: string; task: string } | null = null
         const evolutionToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
+        // 票10：策展工具调用（与 evolution 同拦截先例——虚拟工具，路由层执行）
+        const curationToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
@@ -387,6 +415,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                 // Track memory tool calls (record_daily)
                 if (MEMORY_TOOL_NAMES.includes(tc.name)) {
                   memoryToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
+                }
+                // Track curation tool calls (ingest_to_wiki — 票10)
+                if (CURATION_TOOL_NAMES.includes(tc.name)) {
+                  curationToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
                 }
               }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
@@ -446,6 +478,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           await executeMemoryTools(memoryToolCalls, org, sessionId!, stream, cloneName)
         }
 
+        // Execute curation tool calls (ingest_to_wiki — 票10：复用既有投喂链，零平行机制)
+        if (curationToolCalls.length > 0 && !aborted) {
+          await executeCurationTools(curationToolCalls, sessionId!, stream, curation)
+        }
+
         // Store assistant message
         if (fullContent) {
           const assistantMsgId = crypto.randomUUID()
@@ -500,6 +537,69 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
 const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'note_skill_issue']
 const MEMORY_TOOL_NAMES = ['record_daily']
+const CURATION_TOOL_NAMES = ['ingest_to_wiki']
+
+// ── Curation tool execution（票10 投喂泛化）────────────────────────
+
+/**
+ * ingest_to_wiki 执行体：sessionId = 服务端解析的**发起会话**（一等参数流入投喂链，
+ * 模型无法伪造回流落点）；执行穿打注入的 curation seam（生产 = SessionCurationService
+ * → RawIngestService + CuratorTaskService/全局队列 + Lane A 回流——零第二套抓取/编译）。
+ * IngestError/CuratorError 原样映射进 tool_result 错误码面（零吞错，ingest.ts 码集同律）。
+ */
+async function executeCurationTools(
+  toolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
+  sessionId: string,
+  stream: SSEStreamingApi,
+  curation?: MainAgentCurationSurface,
+): Promise<void> {
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined)
+  for (const tc of toolCalls) {
+    let content = ''
+    let isError = false
+    if (!curation) {
+      content = 'Error: knowledge curation is not wired on this server (ingest_to_wiki unavailable)'
+      isError = true
+    } else {
+      const input = tc.input ?? {}
+      const mode = str(input.mode)
+      if (mode !== "url" && mode !== "text" && mode !== "file") {
+        content = "Error: mode must be one of: \"url\", \"text\", \"file\""
+        isError = true
+      } else {
+        try {
+          const receipt = await curation.curate({
+            sessionId,
+            mode,
+            ...(str(input.url) !== undefined ? { url: str(input.url) } : {}),
+            ...(str(input.text) !== undefined ? { text: str(input.text) } : {}),
+            ...(str(input.path) !== undefined ? { path: str(input.path) } : {}),
+            ...(str(input.title) !== undefined ? { title: str(input.title) } : {}),
+          })
+          content =
+            `已投喂入库：${receipt.title}（${receipt.raw.path} · ${receipt.raw.bytes}B · hash ${receipt.raw.hash.slice(0, 7)}${receipt.deduped ? " · 去重命中既有源" : ""}）`
+            + (receipt.compileTask
+              ? ` · 编译已入全局串行队列 ${receipt.compileTask.taskId}，抓取卡/diff 卡已${receipt.cardsPosted ? "回流" : "尝试回流（降级：" + (receipt.postReason ?? "未落会话") + "）"}本会话，编译落定后终态卡自动追加`
+              : "")
+        } catch (err) {
+          if (err instanceof IngestError) {
+            content = `Failed: ${err.code} — ${err.detail}`
+          } else {
+            content = `Failed: CURATE_ERROR — ${err instanceof Error ? err.message : String(err)}`
+          }
+          isError = true
+        }
+      }
+    }
+    await stream.writeSSE({
+      event: 'tool_call',
+      data: JSON.stringify({
+        type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+        content, is_error: isError,
+      }),
+    })
+  }
+}
 
 // ── Evolution tool execution ──────────────────────────────────────
 

@@ -47,11 +47,12 @@ import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
 import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
+import { SessionCurationService } from "./services/knowledge/session-curation"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
 import { WikiPatrolService } from "./services/knowledge/patrol"
 import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-ledger"
 import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
-import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards } from "./services/knowledge/patrol-job"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
@@ -512,6 +513,10 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
   // billing-coverage-2 票03: Main Agent 统一入口/委托链入账。
   tokenUsageDao: d.tokenUsage,
+  // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
+  // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
+  // 请求时才求值，不受挂载先于构造的 TDZ 影响）。
+  curation: { curate: (input) => sessionCurationService.curate(input) },
 }))
 
 // Clone session routes — direct entry for Web UI pages
@@ -588,7 +593,24 @@ const getFindingOps = () => (findingOpsInstance ??= new FindingOpsService({
   },
 }))
 const knowledgeBackfill = new BackfillService({ trigger: ingestCompileTrigger })
-app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
+// 票10：与 ingest 路由共享同一抓取实例（冻结契约单源，SessionCurationService 穿打同路）
+const knowledgeRawIngest = new RawIngestService()
+app.route("/api/knowledge", createIngestRoutes(knowledgeRawIngest, ingestCompileTrigger))
+// 票10 投喂泛化：会话策展接线板——curate = 既有 RawIngestService（票02 契约）+
+// curatorTasks.submit(带会话上下文)（ingest-compile 全局串行队列，零新 kind 零平行）+
+// Lane A 卡片经 appendCardsToSession 回流发起会话；编译终态钩子（attachSettledListener）
+// 只对带 sessionId 的任务重发终态 diff 卡——知识中心既有 Lane B 形态零回归。
+const sessionCurationService = new SessionCurationService({
+  raw: knowledgeRawIngest,
+  trigger: (rawPath, ctx) => {
+    const t = curatorTasks.submit(rawPath, ctx)
+    return { taskId: t.id, status: t.status }
+  },
+  // db 面请求时才取（票14 惰性纪律）；无会话/已删 ⇒ 原语诚实降级
+  announce: (sessionId, header, events) => appendCardsToSession(getDb(), sessionId, header, events),
+  positionOf: taskId => wikiWriteQueue.get(taskId)?.position ?? null,
+})
+curatorTasks.attachSettledListener(rec => sessionCurationService.onCompileSettled(rec))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 // P3 票02：素材包路由——GET /pack/:taskId（manifest 件清单视图 + 旧单文件 legacy 兼容读）；
