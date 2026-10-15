@@ -38,5 +38,7 @@ export type {
   KcSkillDraftSourceRef,
   KcSkillDraftCardData,
   KcPageRetireCardData,
+  KcAutoRetireCardData,
+  KcPageRestoreCardData,
   SkillGrantReceipt,
 } from "@octopus/shared"

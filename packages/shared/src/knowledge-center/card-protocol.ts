@@ -560,12 +560,12 @@ export function kcTaskStateLabel(input: {
   status: "queued" | "running" | "committed" | "failed"
   position?: number | null
   hash?: string
-  /** diff/revert/retire 卡复用同一条流转，动词不同（票08 加 retire） */
-  verb?: "compile" | "revert" | "retire"
+  /** diff/revert/retire 卡复用同一条流转，动词不同（票08 加 retire；票09 加 restore） */
+  verb?: "compile" | "revert" | "retire" | "restore"
 }): string {
-  const compiling = input.verb === "revert" ? "回滚中" : input.verb === "retire" ? "退役中" : "编译中"
-  const committed = input.verb === "revert" ? "已回滚" : input.verb === "retire" ? "已退役" : "已提交"
-  const failedVerb = input.verb === "revert" ? "回滚" : input.verb === "retire" ? "退役" : "编译"
+  const compiling = input.verb === "revert" ? "回滚中" : input.verb === "retire" ? "退役中" : input.verb === "restore" ? "回迁中" : "编译中"
+  const committed = input.verb === "revert" ? "已回滚" : input.verb === "retire" ? "已退役" : input.verb === "restore" ? "已恢复" : "已提交"
+  const failedVerb = input.verb === "revert" ? "回滚" : input.verb === "retire" ? "退役" : input.verb === "restore" ? "恢复" : "编译"
   switch (input.status) {
     case "queued":
       return typeof input.position === "number" ? `排队中 #${input.position}` : "排队中"

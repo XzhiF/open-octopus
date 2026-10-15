@@ -352,6 +352,41 @@ export async function kcGetRetireTask(taskId: string): Promise<KcRetireTask | nu
   return data.task
 }
 
+// ============ 票09 页恢复面 API（对话「恢复 oct-XXX」→ 队列 page-restore）============
+
+/** POST /api/knowledge/wiki/restore 回执（票09 · 故事17；口令三形态 anchor>path>pageId）。 */
+export interface KcRestoreAck {
+  taskId: string
+  path: string
+  status: string
+}
+
+export async function kcRestore(input: { anchor?: string; path?: string; pageId?: string; reason?: string }): Promise<KcRestoreAck> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse<KcRestoreAck>(res)
+}
+
+/** GET /api/knowledge/wiki/restore/task/:id 的 task 视图（票09 PageRestoreTaskRecord）。 */
+export interface KcRestoreTask {
+  id: string
+  path: string
+  anchor?: string
+  status: "queued" | "running" | "committed" | "failed"
+  result?: { fromRetired: string; restoreCommit: string; pageId: string; inboundRestored: string[]; warnings: string[] }
+  error?: { code: string; message: string }
+}
+
+export async function kcGetRestoreTask(taskId: string): Promise<KcRestoreTask | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/wiki/restore/task/${encodeURIComponent(taskId)}`)
+  if (res.status === 404) return null
+  const data = await handleResponse<{ task: KcRestoreTask }>(res)
+  return data.task
+}
+
 // ============ 票13 findings 面 API（列表/裁决/即时体检/回填）============
 
 /** GET /api/knowledge/findings 的视图（routes/findings.ts findingView 单源形状）。 */
