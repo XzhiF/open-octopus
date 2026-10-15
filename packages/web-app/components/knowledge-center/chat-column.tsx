@@ -29,7 +29,7 @@ import {
   type KcCaseCardData,
   type KcSkillDraftCardData,
 } from '@/lib/knowledge-center/card-protocol'
-import { classifyKcFeed, classifyKcRetire } from '@/lib/knowledge-center/feed-protocol'
+import { classifyKcFeed, classifyKcRetire, classifyKcRestore } from '@/lib/knowledge-center/feed-protocol'
 import type { KcTree } from '@/lib/knowledge/knowledge-center-api'
 
 /**
@@ -282,12 +282,16 @@ export function ChatColumn({ tree, onOpenPage, onOpenFullPage, onOpenRaw, onWiki
     // 票08 故事32：退役意图（动词 + wiki 页相对路径）→ 唯一写闸端点，零前端直写
     const retire = classifyKcRetire(message)
     if (retire) void feed.retire(retire.path)
+    // 票09 故事17：恢复意图（动词 + oct 锚点口令 ∥ 页路径）→ POST /restore（队列
+    // page-restore 同款串行写闸）；窄口误伤的后悔药动线=通知卡提示的口令原样输入
+    const restoreIntent = classifyKcRestore(message)
+    if (restoreIntent) void feed.restorePage(restoreIntent)
     if (intent?.mode === 'text') {
       chat.sendMessage(`刚投喂了一段文本素材（${intent.text.length} 字），已落 raw 待编译——请知悉并纳入下轮巡检。`)
     } else {
       chat.sendMessage(message)
     }
-  }, [chat.sendMessage, feed.feed, feed.retire, findings.patrol])
+  }, [chat.sendMessage, feed.feed, feed.retire, feed.restorePage, findings.patrol])
 
   const extras = useCallback((msg: AgentMessage) => {
     const events = laneAByMsgId.get(msg.id)

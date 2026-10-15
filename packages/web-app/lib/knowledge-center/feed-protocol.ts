@@ -71,6 +71,32 @@ export function classifyKcRetire(text: string): KcRetireIntent | null {
   return m ? { path: m[0] } : null
 }
 
+/**
+ * 页恢复意图识别（P4 票09 · 故事17/AC4；纯函数，独立真相源=票面「对话"恢复 oct-XXX"」）。
+ * 「对话退役一页」通道的镜像接线：恢复动词 + 口令对象 ⇒ REST POST /restore（唯一写闸
+ * 经队列 page-restore），零前端直写。口令两形态：**锚点优先**（oct-XXX——通知卡的
+ * 可恢复提示即此形态，原号原行回迁的身份证）；页路径次之（手工退役件也可原路恢复）。
+ * 纪律同投喂/退役：动词在、无对象 ⇒ null（不吞「恢复能力你怎么看」类普通对话）。
+ */
+const RESTORE_VERB_RE = /(恢复|回迁|还原|找回|un-?retire|restore)/i
+const RESTORE_ANCHOR_RE = /oct-[0-9A-Za-z_-]+/
+const RESTORE_PAGE_PATH_RE = /(?:entities|concepts|topics|sources)\/[A-Za-z0-9._-]+\.md/
+
+export interface KcRestoreIntent {
+  anchor?: string
+  path?: string
+}
+
+export function classifyKcRestore(text: string): KcRestoreIntent | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  if (!RESTORE_VERB_RE.test(trimmed)) return null
+  const anchor = RESTORE_ANCHOR_RE.exec(trimmed)
+  if (anchor) return { anchor: anchor[0] }
+  const path = RESTORE_PAGE_PATH_RE.exec(trimmed)
+  return path ? { path: path[0] } : null
+}
+
 export function shortHash(hash: string | null | undefined): string {
   return hash ? hash.slice(0, 6) + "…" : "—"
 }

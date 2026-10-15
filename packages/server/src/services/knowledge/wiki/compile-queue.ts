@@ -8,9 +8,9 @@
  *
  * 语义（票面 AC2 / prototype Tab③）：
  * - 单异步互斥：同一时刻至多一个任务在跑；后到者排队，位次 #N 可查（UI 卡「排队中 #N」）。
- * - 全部写操作统一入队（WRITE_OP_KINDS 单源枚举，现十类：投喂/归档/对话修订/lint 自纠/
+ * - 全部写操作统一入队（WRITE_OP_KINDS 单源枚举，现十二类：投喂/归档/对话修订/lint 自纠/
  *   finding 修复/revert/重蒸馏 + P3 票03 判例入档 case-archive + 票08 单页退役 page-retire
- *   + P4 票07 实效快照同步 effectiveness-sync）：此刻多数 kind 有
+ *   + P4 票07 实效快照同步 effectiveness-sync + 票09 auto-retire/page-restore）：此刻多数 kind 有
  *   实现体（curator/archive/case-archive/finding-fix/revert/redistill），dialog-revise/
  *   lint-fix 为预留入队通道——
  *   **任何写通道不得绕过本队列直写 wiki**（AC1）。
@@ -22,7 +22,8 @@
  * 持久任务表不在本票——真相面是 git LOG 行。
  */
 
-/** 写操作 kind 单源（票面 AC1 六类 + 重蒸馏脚本 + P3 票03 判例入档 case-archive + 票08 单页退役 page-retire + P4 票07 实效快照同步 effectiveness-sync，现十类；UI/脚本按值消费，禁各自造词）。 */
+/** 写操作 kind 单源（票面 AC1 六类 + 重蒸馏脚本 + P3 票03 判例入档 case-archive + 票08 单页退役 page-retire + P4 票07 实效快照同步 effectiveness-sync
+ *  + 票09 窄口自动退役 auto-retire / 恢复回迁 page-restore（kind 是审计面，执行复用票04 统一机械），现十二类；UI/脚本按值消费，禁各自造词）。 */
 export const WRITE_OP_KINDS = [
   "ingest-compile",  // 投喂编译（票05 curator 任务入口）
   "archive-compile", // 归档编译（票10 归档自动投喂；P3 票02 素材包重编译同通道）
@@ -34,6 +35,8 @@ export const WRITE_OP_KINDS = [
   "case-archive",    // P3 票03 判例自动入档（提取草案/occurrences 合并/退役 superseded 全经此通道，红线2 禁直写 cases/）
   "page-retire",     // 单页退役迁 _retired/ + superseded（票08 清理账 · 故事32）
   "effectiveness-sync", // P4 票07 夜巡批量把 DB 滚动 confidence 刷进 v3 页 front-matter 快照（单 commit 收口一批，无变化不入队）
+  "auto-retire",     // P4 票09 窄口自动退役：90天零引用∧零活页入链∧非人工文件——执行复用 page-retire 机械，kind 为审计面（红线2 唯一自动写路径）
+  "page-restore",    // P4 票09 恢复回迁：_retired/ 原号原行回迁 + 入链反放（票04 备案=retire 单 commit diff 反放），同机械族反向
 ] as const
 export type WriteOpKind = (typeof WRITE_OP_KINDS)[number]
 

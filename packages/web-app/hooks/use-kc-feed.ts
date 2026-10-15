@@ -5,9 +5,11 @@ import {
   kcCompileRetry,
   kcGetCompileTask,
   kcGetQueueTask,
+  kcGetRestoreTask,
   kcGetRevertTask,
   kcGetRetireTask,
   kcIngest,
+  kcRestore,
   kcRevert,
   kcRetire,
   type KcIngestInput,
@@ -16,6 +18,7 @@ import type {
   KcCardEvent,
   KcCompileDiffCardData,
   KcIngestCardData,
+  KcPageRestoreCardData,
   KcPageRetireCardData,
   KcRevertState,
   KcSourceSummaryCardData,
@@ -261,5 +264,54 @@ export function useKcFeed(opts: UseKcFeedOptions = {}) {
     }
   }, [trackRetire, upsert])
 
-  return { cards, feed, revert, retryCompile, retire, restore, reset, revertStates, trackTask: trackCompile }
+  // ── 页恢复（票09 · 故事17：对话「恢复 oct-XXX」意图 → POST /restore → 队列
+  //    page-restore，Lane B 回执卡；retire 通道的镜像接线，零前端直写）──
+  const trackRestore = useCallback((taskId: string, pagePath: string, anchor?: string) => {
+    const card = (data: KcPageRestoreCardData): void => {
+      upsert({ id: `res-${taskId}`, kind: 'page-restore', ts: nowIso(), data: { pagePath, ...(anchor ? { anchor } : {}), ...data } })
+    }
+    poller.run(async (): Promise<boolean> => {
+      const [task, queue] = await Promise.all([kcGetRestoreTask(taskId), kcGetQueueTask(taskId)])
+      if (!task) {
+        card({ status: 'failed', error: { code: 'TASK_LOST', message: '恢复任务不可查（git LOG 为审计真相）' } })
+        return true
+      }
+      card({
+        status: task.status,
+        position: queue?.state === 'queued' ? queue.position : null,
+        from: task.result?.fromRetired,
+        commit: task.result?.restoreCommit,
+        linksRestored: task.result?.inboundRestored?.length,
+        warnings: task.result?.warnings,
+        error: task.error ?? queue?.error,
+      })
+      if (task.status === 'committed') { onSettledRef.current?.(); return true }
+      return task.status === 'failed'
+    })
+  }, [poller, upsert])
+
+  const restorePage = useCallback(async (intent: { anchor?: string; path?: string }): Promise<void> => {
+    const pendingId = kcPlaceholderTaskId('restore')
+    const label = intent.anchor ?? intent.path ?? ''
+    upsert({
+      id: `res-${pendingId}`,
+      kind: 'page-restore',
+      ts: nowIso(),
+      data: { status: 'queued', position: null, pagePath: label, ...(intent.anchor ? { anchor: intent.anchor } : {}) },
+    })
+    try {
+      const ack = await kcRestore(intent)
+      cardsRef.current.delete(`res-${pendingId}`)
+      trackRestore(ack.taskId, ack.path || label, intent.anchor)
+    } catch (err) {
+      upsert({
+        id: `res-${pendingId}`,
+        kind: 'page-restore',
+        ts: nowIso(),
+        data: { status: 'failed', pagePath: label, ...(intent.anchor ? { anchor: intent.anchor } : {}), error: kcErrFace(err, 'RESTORE_ERROR') },
+      })
+    }
+  }, [trackRestore, upsert])
+
+  return { cards, feed, revert, retryCompile, retire, restorePage, restore, reset, revertStates, trackTask: trackCompile }
 }

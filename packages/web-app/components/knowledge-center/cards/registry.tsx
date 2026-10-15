@@ -16,6 +16,8 @@ import { MaterialPackCard } from './material-pack-card'
 import { CaseCard } from './case-card'
 import { SkillDraftCard } from './skill-draft-card'
 import { PageRetireCard } from './page-retire-card'
+import { AutoRetireCard } from './auto-retire-card'
+import { PageRestoreCard } from './page-restore-card'
 
 /**
  * 卡片渲染注册表（票12「协议=结构化事件→渲染，可扩展」的唯一分发点）。
@@ -112,3 +114,6 @@ registerKcCardRenderer('case', CaseCard)
 registerKcCardRenderer('skill-draft', SkillDraftCard)
 // 票08 清理账（故事32）：页退役卡——一行注册（开放 kind，无 KcCardKind 联合改动）
 registerKcCardRenderer('page-retire', PageRetireCard)
+// P4 票09：自动退役通知卡（Lane A 夜巡沉淀，零钮信息态）+ 页恢复回执卡（Lane B 回显）
+registerKcCardRenderer('auto-retire', AutoRetireCard)
+registerKcCardRenderer('page-restore', PageRestoreCard)

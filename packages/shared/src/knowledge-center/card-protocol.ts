@@ -376,6 +376,56 @@ export interface KcPageRetireCardData {
 }
 
 /**
+ * 🍂 自动退役通知卡（P4 票09 · spec 故事16/AC3）：夜巡窄口命中（锚点 90 天零引用 ∧
+ * 零活页入链 ∧ 非人工文件）退役发生后沉进知识中心对话流——**先斩后奏但可逆**：
+ * 卡面给 锚点/页/判据数据（静默起点与天数）/可恢复提示（对话口令「恢复 oct-XXX」）。
+ * 红线2 钉死：本卡**零操作钮**（非审批形态——不放批准/否决；恢复走对话意图，
+ * 同「退役一页」的动线镜像）。开放 kind（不改 KcCardKind 联合，注册即用）。
+ */
+export interface KcAutoRetireCardData {
+  /** 任务终态（窄口等至终态才发卡——卡=事实沉淀，非预告） */
+  status: "committed" | "failed"
+  /** 被退役页原相对路径 */
+  pagePath: string
+  /** 迁入的 `_retired/<…>` 相对路径（committed 后有值） */
+  to?: string
+  /** 退役 commit（committed 后有值） */
+  commit?: string
+  /** 页携带的规则锚点（判据主语 + 恢复口令原料） */
+  anchors: string[]
+  /** 两账（锚点引用 × 页级 Read）最近一次被引时刻；null=从未有引用记录 */
+  lastCited: string | null
+  /** 距上次引用的整日数（无记录时自在册日起算）——「90 天零引用」的人读证据 */
+  daysSilent: number
+  /** 可恢复提示（对话口令清单，如「恢复 oct-042」）——窄口误伤的后悔药入口 */
+  restoreHints: string[]
+  error?: { code: string; message: string }
+}
+
+/**
+ * ↩️ 页恢复回执卡（P4 票09 · spec 故事17/AC4）：对话「恢复 oct-XXX」→ POST /restore →
+ * 队列 page-restore：_retired/ 原号原行回迁 + 入链反放 + LOG restore 行 + 单 commit。
+ * 形态对偶 page-retire 回执卡（Lane B 轮询态；漂移让位 warnings 显形）。
+ */
+export interface KcPageRestoreCardData {
+  status: "queued" | "running" | "committed" | "failed"
+  position?: number | null
+  /** 对话口令锚点（恢复 oct-XXX；有则展示） */
+  anchor?: string
+  /** 回迁后 wiki 相对路径 */
+  pagePath: string
+  /** 迁出的 `_retired/<…>` 路径（committed 后有值） */
+  from?: string
+  /** 恢复 commit（committed 后有值） */
+  commit?: string
+  /** 入链回补的宿页数（committed 后有值；漂移让位不计入） */
+  linksRestored?: number
+  /** 诚实显形面（宿主漂移/退役 commit 不可寻等） */
+  warnings?: string[]
+  error?: { code: string; message: string }
+}
+
+/**
  * ↩️ 回填卡（票13）：策展人对话中的有价值合成答案 → [编进 wiki] → 对话摘录落 raw
  * （票02 冻结契约，origin=chat:〈session〉）→ 编译新页。[不用] = 纯前端弃卡零请求。
  * 窄口纪律：执行中 agent 的产出永不自动回填——本卡只由知识中心对话显式触发。
@@ -412,6 +462,8 @@ export interface KcCardEvent {
     | KcCaseCardData
     | KcSkillDraftCardData
     | KcPageRetireCardData
+    | KcAutoRetireCardData
+    | KcPageRestoreCardData
     | Record<string, unknown>
 }
 
@@ -508,12 +560,12 @@ export function kcTaskStateLabel(input: {
   status: "queued" | "running" | "committed" | "failed"
   position?: number | null
   hash?: string
-  /** diff/revert/retire 卡复用同一条流转，动词不同（票08 加 retire） */
-  verb?: "compile" | "revert" | "retire"
+  /** diff/revert/retire 卡复用同一条流转，动词不同（票08 加 retire；票09 加 restore） */
+  verb?: "compile" | "revert" | "retire" | "restore"
 }): string {
-  const compiling = input.verb === "revert" ? "回滚中" : input.verb === "retire" ? "退役中" : "编译中"
-  const committed = input.verb === "revert" ? "已回滚" : input.verb === "retire" ? "已退役" : "已提交"
-  const failedVerb = input.verb === "revert" ? "回滚" : input.verb === "retire" ? "退役" : "编译"
+  const compiling = input.verb === "revert" ? "回滚中" : input.verb === "retire" ? "退役中" : input.verb === "restore" ? "回迁中" : "编译中"
+  const committed = input.verb === "revert" ? "已回滚" : input.verb === "retire" ? "已退役" : input.verb === "restore" ? "已恢复" : "已提交"
+  const failedVerb = input.verb === "revert" ? "回滚" : input.verb === "retire" ? "退役" : input.verb === "restore" ? "恢复" : "编译"
   switch (input.status) {
     case "queued":
       return typeof input.position === "number" ? `排队中 #${input.position}` : "排队中"

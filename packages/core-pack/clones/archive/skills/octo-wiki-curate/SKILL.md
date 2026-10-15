@@ -48,6 +48,7 @@ wiki 的一切写入只有一条通道：**编译服务（唯一写闸）+ git c
 | 看素材包 | `GET /api/knowledge/wiki/pack/:taskId` → 件清单（名/类/大小/sha/剔除态；旧单文件归档回 `{legacy:true}`） |
 | 剔除某件 / 焦点重编译 | `POST /api/knowledge/wiki/pack/:taskId/recompile`，body `{excludePath?,focus?}` → 202（archive-compile 队列通道；「重点看 phase-2 打回那段」就是 focus 原文） |
 | 判例退役 | `POST /api/knowledge/wiki/case/retire`，body `{caseId}` → 202（case-archive 队列唯一写闸；事后纠即时生效，**无 pending 态**） |
+| 页恢复回迁（票09） | `POST /api/knowledge/wiki/restore`，body `{anchor:"oct-XXX"}`（或 `{path}`/`{pageId}`）[`, reason`] → 202 `{taskId:"res-…"}`；`GET /restore/task/:id` 查终态。page-restore 队列执行 `_retired/` **原号原行**回迁（锚点随迁不重铸）+ 入链回补（漂移宿主让位显形）。用于窄口误伤的后悔药（owner 说「恢复 oct-XXX」）；原位已有页 ⇒ 409 `RESTORE_TARGET_TAKEN` 不覆盖 |
 | 列 skill 草案 | `GET /api/knowledge/drafts` → `{drafts:[{name,status,origin,source,description,path}]}` |
 | 读草案全文 | `GET /api/knowledge/drafts/:name`（`content` = SKILL.md 全文） |
 | 改写草案（owner 说改哪里） | `POST /api/knowledge/drafts/:name/revise`，body `{instruction}` → 200（策展人改写 drafts 文件本体；status 恒 draft；granted/revoked 拒 409） |
@@ -65,4 +66,8 @@ drafts 区不受 wiki 串行队列约束，但同样禁越界写 wiki/cases/user
   `OCTOPUS_WIKI_COMMIT_SOURCE=manual`；无标记拒；自动通道触及人工文件拒。
 - **`user_preference.md` 与 `SCHEMA.md` 永不自动改写**——策展人只出建议文本，人确认后落笔。
 - 禁止 `--no-verify` 绕 hook（防误写不防恶意，绕闸属恶意）。
-- 退役区 `_retired/` 只进不出；消费侧分身没有本技能，它们只有只读 `octo-wiki` 查阅纪律。
+- 退役区 `_retired/`：正常通道**只进**（人裁对话退役 / 夜巡窄口自动退役——后者是红线
+  唯一自动出口：90 天零引用 ∧ 零活页入链 ∧ 非人工文件，通知卡进对话流，**先斩后奏
+  但可逆**）。出区唯一路=票09 恢复通道（`POST /restore` 原号原行回迁，锚点不重铸）；
+  你自己不裁退役、不手搬文件——判定在服务，执行在队列。消费侧分身没有本技能，
+  它们只有只读 `octo-wiki` 查阅纪律。
