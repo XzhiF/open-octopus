@@ -34,6 +34,7 @@ const HEALTH = {
   ingestedThisWeek: 5,
   openFindings: 2,
   queueDepth: 0,
+  avgConfidence: 0.64,
   lastCompiled: "2026-10-13",
   gitHead: "a3f9c21d4b5e6f708192a3b4c5d6e7f8091a2b3c",
 }
@@ -77,6 +78,8 @@ const ARTICLE = {
   gitHistory: [{ hash: "b71e004", date: "2026-10-13", message: "compile: concepts/con-compiled-rag.md — +oct-008" }],
   case: null,
   page: { type: "concept", entityKind: null, aliases: ["compiled rag", "编译RAG"], links: ["top-knowledge-injection"] },
+  // 票07 实效实时段（手算自 fixture 账目：9/(9+3)=0.75；快照列 0.9 与实时 0.75 两值并存）
+  effectiveness: { citedCount: 12, helpfulCount: 9, notHelpfulCount: 3, helpfulRate: 0.75, confidence: 0.75, measured: true },
 }
 
 const ARTICLE_LINKED = {
@@ -185,6 +188,18 @@ describe("健康条（票面口径七项，负断言「无待审核」）", () =
     expect(err.textContent).toContain("健康聚合炸了")
     expect(screen.queryByTestId("kc-health-bar")).toBeNull()
   })
+
+  it("P4 票07：平均置信槽——已测均值显数值；全库未测 null ⇒ 诚实 —（不伪造 0.5 初值均值）", async () => {
+    const first = render(<KnowledgePage />)
+    const bar = await screen.findByTestId("kc-health-bar")
+    expect(bar.textContent).toContain("平均置信 0.64")
+    first.unmount()
+
+    mockFetch(u => (u.includes("/knowledge/health") ? { ok: true, status: 200, json: async () => ({ ...HEALTH, avgConfidence: null }) } : undefined))
+    render(<KnowledgePage />)
+    const bar2 = await screen.findByTestId("kc-health-bar")
+    expect(bar2.textContent).toContain("平均置信 —")
+  })
 })
 
 describe("INDEX 五类树（必读/Entities/Concepts/Topics/Sources/Cases + System）", () => {
@@ -280,6 +295,47 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     const err = await screen.findByTestId("kc-page-error")
     expect(err.textContent).toContain("DB 失联")
     expect(screen.queryByTestId("kc-page-title")).toBeNull()
+  })
+
+  it("票07 浏览页脚实效段：引用数/helpful 率/confidence（DB 实时值——与头 chips 快照值并存展示）", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
+    await screen.findByTestId("kc-page-title")
+
+    const foot = await screen.findByTestId("kc-effectiveness-footer")
+    expect(foot.textContent).toContain("引用 12×")
+    expect(foot.textContent).toContain("75%")
+    expect(foot.textContent).toContain("0.75")
+    expect(foot.textContent).not.toContain("样本不足") // measured=true 无滞后注
+  })
+
+  it("票07 页脚形态三态：未接账目（effectiveness null）整段缺席；未测行显「样本不足」滞后注", async () => {
+    mockFetch(u => (/\/wiki\/article\/[^?]+/.test(u) && !u.includes("top-knowledge-injection")
+      ? { ok: true, status: 200, json: async () => ({ ...ARTICLE, effectiveness: null }) }
+      : undefined))
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
+    await screen.findByTestId("kc-page-title")
+    expect(screen.queryByTestId("kc-effectiveness-footer")).toBeNull() // 诚实缺席=不显假账
+  })
+
+  it("票07 页脚未测态：helpful 率有账直显、confidence 标「样本不足·保持编译期初值」（不抖动语义可见）", async () => {
+    mockFetch(u => (/\/wiki\/article\/[^?]+/.test(u) && !u.includes("top-knowledge-injection")
+      ? {
+          ok: true, status: 200,
+          json: async () => ({ ...ARTICLE, effectiveness: { citedCount: 7, helpfulCount: 1, notHelpfulCount: 1, helpfulRate: 0.5, confidence: 0.9, measured: false } }),
+        }
+      : undefined))
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
+    const foot = await screen.findByTestId("kc-effectiveness-footer")
+    expect(foot.textContent).toContain("引用 7×")
+    expect(foot.textContent).toContain("50%")
+    expect(foot.textContent).toContain("0.9")
+    expect(foot.textContent).toContain("样本不足")
   })
 })
 

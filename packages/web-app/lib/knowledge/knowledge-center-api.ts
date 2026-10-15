@@ -77,6 +77,23 @@ export interface KcArticle {
   gitHistory: KcGitCommit[]
   case: KcCaseFields | null
   page: KcPageFields | null
+  /**
+   * P4 票07 页元数据实效实时段（DB 账目 rollup=页键行∪锚点行，**非** front-matter
+   * 快照列；与 confidence 快照值并存展示是特性——夜巡 sync 未跑时 owner 看得见差）。
+   * measured=false ⇒ confidence 为编译期初值（样本不足不抖动闸）；helpfulRate 无闸
+   * 直显现账。未接账目 DAO（旧服务端）⇒ null 诚实缺席。
+   */
+  effectiveness: KcEffectiveness | null
+}
+
+/** 票07 实效实时段（server routes/wiki.ts effectivenessViewFor 同形）。 */
+export interface KcEffectiveness {
+  citedCount: number
+  helpfulCount: number
+  notHelpfulCount: number
+  helpfulRate: number | null
+  confidence: number
+  measured: boolean
 }
 
 export interface KcSearchHit {
@@ -115,7 +132,8 @@ export async function searchKc(q: string, topK = 10): Promise<KcSearchResult> {
 
 // ── 票11 新读端点 ──
 
-/** 健康条聚合（无「待审核」字段；queueDepth/openFindings 票06/13 接位）。 */
+/** 健康条聚合（无「待审核」字段；queueDepth/openFindings 票06/13 接位；
+ *  avgConfidence=P4 票07 全库平均置信——已测行口径，全未测/未装配诚实 null）。 */
 export interface KcHealth {
   org: string
   pages: { total: number; entity: number; concept: number; topic: number; source: number; case: number }
@@ -123,6 +141,7 @@ export interface KcHealth {
   ingestedThisWeek: number
   openFindings: number
   queueDepth: number
+  avgConfidence: number | null
   lastCompiled: string
   gitHead: string | null
 }

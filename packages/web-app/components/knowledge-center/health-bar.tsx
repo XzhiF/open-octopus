@@ -37,6 +37,8 @@ export function HealthBar({ health, error }: { health: KcHealth | null; error: s
       </span>
       <span>raw 源 <b className="text-pop-ink">{health.rawSources}</b></span>
       <span>本周 ingest <b className="text-pop-ink">{health.ingestedThisWeek}</b></span>
+      {/* P4 票07：全库平均 confidence（已测行口径；null=全未测/未装配 ⇒ 诚实 —，不伪造 0.5 初值均值） */}
+      <span data-testid="kc-health-confidence">平均置信 <b className="text-pop-ink">{health.avgConfidence == null ? "—" : health.avgConfidence}</b></span>
       <span className={cn(health.openFindings > 0 && "text-pop-amber")}>
         findings <b>{health.openFindings}</b>
       </span>
