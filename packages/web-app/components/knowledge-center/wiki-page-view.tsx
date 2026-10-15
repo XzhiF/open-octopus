@@ -136,8 +136,22 @@ export function WikiPageView({ article, activeAnchor, onOpenLink, onOpenRaw }: W
         <MarkdownPreview content={kcTransformBody(article.body)} />
       </div>
 
-      {/* 页尾折叠区：git 近史 / sources 溯源（原型行 554「收进页尾折叠区」） */}
+      {/* 页尾折叠区：git 近史 / sources 溯源（原型行 554「收进页尾折叠区」）。
+          票07：实效段置顶恒见（DB 实时账目——引用数/helpful 率/confidence；
+          effectiveness=null（旧服务端未接账目）⇒ 整段诚实缺席）。 */}
       <div className="mt-6 border-t-[1.5px] border-pop-bd pt-3">
+        {article.effectiveness && (
+          <div data-testid="kc-effectiveness-footer" className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold">
+            <span className="text-[10px] font-black uppercase tracking-wider text-pop-dim">实效</span>
+            <span>引用 <b className="text-pop-ink">{article.effectiveness.citedCount}×</b></span>
+            <span>helpful 率 <b className="text-pop-ink">{article.effectiveness.helpfulRate === null ? "—" : `${Math.round(article.effectiveness.helpfulRate * 100)}%`}</b></span>
+            <span>confidence <b className="text-pop-ink">{article.effectiveness.confidence}</b>
+              {!article.effectiveness.measured && (
+                <span className="font-normal text-pop-dim">（样本不足 · 保持编译期初值）</span>
+              )}
+            </span>
+          </div>
+        )}
         <button
           type="button"
           data-testid="kc-git-history-toggle"

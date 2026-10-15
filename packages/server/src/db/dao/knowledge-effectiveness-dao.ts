@@ -19,7 +19,8 @@ export interface KnowledgeEffectivenessRow {
  * - incrementCited 的时刻由调用方传入（= 被消费执行的落库时刻，非挂钟）——离线重放
  *   确定，夜巡反复跑同结果（红线6）。
  * - incrementHelpful/NotHelpful **只落计数不动 confidence**——confidence 滚动更新
- *   （helpful/(helpful+not_helpful)，DB 真源）是票07 的出口；旧「helpful/injected」
+ *   （helpful/(helpful+not_helpful)，DB 真源）是票07 的出口（本票已兑现：
+ *   recomputeSufficientConfidences，夜巡 sync 通道触发）；旧「helpful/injected」
  *   公式随注入语义一并废弃，勿复活（表边界注/红线3 同款告诫）。
  */
 export class KnowledgeEffectivenessDAO extends BaseDAO {
@@ -91,5 +92,22 @@ export class KnowledgeEffectivenessDAO extends BaseDAO {
 
   incrementNotHelpful(ruleId: string): void {
     this.stmt(`UPDATE knowledge_effectiveness SET not_helpful_count = not_helpful_count + 1 WHERE rule_id = ?`).run(ruleId)
+  }
+
+  /**
+   * P4 票07 confidence 滚动更新出口（DAO 头注纪律所指的那一出口，行级面）：
+   * 仅样本充足（helpful+not_helpful ≥ minSamples）行刷 `confidence = ROUND(h/(h+n),3)`；
+   * 样本不足行**不动**——保持建行初值（「不抖动」与页快照面同一闸值，
+   * 单源在 services/knowledge/effectiveness-confidence.ts 的 CONFIDENCE_MIN_SAMPLES）。
+   * 幂等：已收敛行被 `confidence <>` 条件滤出，重跑零写。返回实改行数。
+   */
+  recomputeSufficientConfidences(minSamples: number): number {
+    const r = this.stmt(
+      `UPDATE knowledge_effectiveness
+       SET confidence = ROUND(helpful_count * 1.0 / (helpful_count + not_helpful_count), 3)
+       WHERE helpful_count + not_helpful_count >= ?
+         AND confidence <> ROUND(helpful_count * 1.0 / (helpful_count + not_helpful_count), 3)`
+    ).run(minSamples)
+    return r.changes
   }
 }

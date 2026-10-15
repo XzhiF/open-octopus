@@ -21,6 +21,9 @@ import type { PatrolReport, WikiPatrolService } from "./patrol"
  *   scope_id=knowledge 的行——与 web chat-column 会话选择同判据）。
  *   无会话 ⇒ 诚实降级（findings 仍入库可查，outcome 注明「未报对话」；
  *   不擅自建会话——那是前端进入 /knowledge 时的通道建立面）。
+ * - `appendCardsToSession(db, sessionId, …)`（票10 泛化）：同一写入原语的
+ *   **目标会话参数化**形态——投喂泛化后卡片回流任意发起会话；知识中心写者
+ *   （本模块 reporter / 裁决回执 / 素材包 announcePack）保持判据包装不变。
  *
  * 打扰纪律：只报 created（新证据），refreshed/unchanged/suppressed 零消息
  * （幂等夜巡不刷对话流）。
@@ -66,9 +69,42 @@ export interface ReportOutcome {
 }
 
 /**
+ * 向**任意会话**（按 sessionId 定位）追加一条 assistant 消息：header 文本 +
+ * Lane A fenced 卡块（协议单源 @octopus/shared）。票10 泛化投喂的回流原语——
+ * 抓取卡/diff 卡落进发起会话走这里；会话不存在/已软删 ⇒ 诚实降级 {posted:false,
+ * reason}（不擅自建会话）。
+ */
+export function appendCardsToSession(
+  db: Database.Database,
+  sessionId: string,
+  header: string,
+  events: KcCardEvent[],
+  now: () => Date = () => new Date(),
+): ReportOutcome {
+  const dao = new AgentSessionDAO(db)
+  const session = dao.findById(sessionId)
+  if (!session || session.is_deleted) {
+    return { posted: false, reason: `会话不存在或已删除（${sessionId}），未报对话` }
+  }
+  const ts = now()
+  const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
+  dao.insertMessage({
+    id: crypto.randomUUID(),
+    session_id: sessionId,
+    role: "assistant",
+    content,
+    created_at: ts.toISOString(),
+  })
+  dao.updateLastMessageAt(sessionId, ts.toISOString())
+  return { posted: true, sessionId }
+}
+
+/**
  * 向知识中心会话（archive 分身、title=知识中心 ∨ scope_id=knowledge）追加一条
  * assistant 消息：header 文本 + Lane A fenced 卡块（协议单源 @octopus/shared）。
  * 无会话 ⇒ 诚实降级 {posted:false, reason}（不擅自建会话）。
+ * 票10 起为 `appendCardsToSession` 的判据包装——夜巡/裁决回执/素材包等既有生产者
+ * 零改动，知识中心落点行为逐字保持。
  */
 export function appendKnowledgeSessionCards(
   db: Database.Database,
@@ -76,24 +112,13 @@ export function appendKnowledgeSessionCards(
   events: KcCardEvent[],
   now: () => Date = () => new Date(),
 ): ReportOutcome {
-  const dao = new AgentSessionDAO(db)
-  const session = dao
+  const session = new AgentSessionDAO(db)
     .findByClone(KNOWLEDGE_CLONE_NAME, { limit: 50 })
     .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE || s.scope_id === KNOWLEDGE_SESSION_SCOPE_ID)
   if (!session) {
     return { posted: false, reason: "无知识中心会话（findings 已入库可查，未报对话）" }
   }
-  const ts = now()
-  const content = `${header}\n\n${events.map(serializeKcCardBlock).join("\n\n")}\n`
-  dao.insertMessage({
-    id: crypto.randomUUID(),
-    session_id: session.id,
-    role: "assistant",
-    content,
-    created_at: ts.toISOString(),
-  })
-  dao.updateLastMessageAt(session.id, ts.toISOString())
-  return { posted: true, sessionId: session.id }
+  return appendCardsToSession(db, session.id, header, events, now)
 }
 
 export type PatrolReporter = (newFindings: FindingUpsert[], report: PatrolReport) => ReportOutcome
@@ -134,8 +159,16 @@ export interface PatrolHandlerOpts {
    */
   parseLedger?: () => void | Promise<void>
   /**
+   * P4 票07：confidence 快照刷页腿（spec 故事 3「夜巡批量同步页 front-matter」——
+   * EffectivenessSyncService.sync 的自动触发面，与手动端点 POST /sync 同入口）。
+   * **必须排在 parseLedger 之后**：先记新账再刷快照，同轮夜巡内引用即见账目推进。
+   * 失败显形进 outcome 不炸作业（记账/草案扫描同律）；缺省零行为变化。
+   */
+  syncConfidence?: () => void | Promise<void>
+  /**
    * P4 票09：衰减自动退役窄口腿（spec 故事 16「夜巡步骤」）。**必须挂在 parseLedger
-   * 之后**——判据吃当夜账（记账未跑则读旧账，窄口误判窗口拉大）。
+   * 之后**——判据吃当夜账（记账未跑则读旧账，窄口误判窗口拉大）；刷页腿之后殿后跑
+   * （夜巡链序：账→快照→窄口）。
    * 失败显形进 outcome 不炸作业（记账/草案扫描同律）；缺省零行为变化。
    * 红线2：本腿是全库唯一的自动退役执行面（90天零引用∧零入链∧非人工文件），
    * 其余退役类目一律仍走 finding 人裁——挂载点不扩第二自动口。
@@ -172,6 +205,15 @@ export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: Patro
       } catch (err) {
         // 记账腿失败不吞巡检成果（P4 票06：与草案扫描同律——显形不炸作业）
         note += ` · 记账失败（${err instanceof Error ? err.message : String(err)}）`
+      }
+    }
+    if (opts.syncConfidence) {
+      try {
+        await opts.syncConfidence()
+      } catch (err) {
+        // 刷页腿失败不吞巡检与记账成果（P4 票07：DB 真源已落账，快照缺席=诚实滞后，
+        // 下轮夜巡自愈；显形口径与记账失败同词族）
+        note += ` · 同步失败（${err instanceof Error ? err.message : String(err)}）`
       }
     }
     if (opts.autoRetire) {

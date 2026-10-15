@@ -6,6 +6,7 @@ import path from "path"
 import { spawnSync } from "child_process"
 import { applySchema } from "../../../db/schema"
 import { FindingsDAO } from "../../../db/dao/findings-dao"
+import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 import { WikiPatrolService } from "../patrol"
 import { FindingOpsService, FindingOpsError } from "../findings"
 import { CompileQueue } from "../wiki/compile-queue"
@@ -425,5 +426,76 @@ describe("[采纳修订] contradiction 对手页已退役 — 单侧降级（票
     expect(done.status).toBe("failed")
     expect(done.error?.code).toBe("FINDING_TARGET_MISSING")
     expect(new FindingsDAO(db).getById(fid + "2")!.status).toBe("open")
+  })
+})
+
+describe("[采纳修订] low-confidence — 票07 账目证据进修订稿通道（semanticRevision 第三形态）", () => {
+  it("adopt → prompt 含实效账目（引用/helpful/confidence）→ 修订落 commit → resolved", async () => {
+    writePage("topics/top-ci.md", "top-ci", "topic", ["ci"], [],
+      "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
+    const ledger = new KnowledgeEffectivenessDAO(db)
+    ledger.upsert("oct-001", { cited_count: 5, helpful_count: 1, not_helpful_count: 4 })
+    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+    expect(finding).toBeDefined()
+
+    const prompts: string[] = []
+    const llm: LLMCall = async (p) => {
+      prompts.push(p)
+      return JSON.stringify({
+        pages: [{ relPath: "topics/top-ci.md", body: "## 硬约束\n- 修订后的准确纪律 <!--#oct-001-->\n" }],
+      })
+    }
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, llm, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt(finding.id)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+
+    // prompt 证据面（独立捕获）：票07 账目数字进处置文案——修订稿作者看得见「为什么低置信」
+    expect(prompts[0]).toContain("低置信")
+    expect(prompts[0]).toContain("引用 5×")
+    expect(prompts[0]).toContain("confidence 0.2")
+    // 盘产物：修订落文，锚点原位保留（守门纪律共享）
+    expect(read("topics/top-ci.md")).toContain("修订后的准确纪律")
+    expect(read("topics/top-ci.md")).toContain("oct-001")
+    expect(new FindingsDAO(db).getById(finding.id)!.status).toBe("resolved")
+  })
+
+  it("缺 LLM ⇒ 任务 failed(LLM_UNAVAILABLE)、finding 留 open——账目再差也不静默改页（红线2）", async () => {
+    writePage("topics/top-ci.md", "top-ci", "topic", ["ci"], [],
+      "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
+    const ledger = new KnowledgeEffectivenessDAO(db)
+    ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 5 })
+    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt(finding.id)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status).toBe("failed")
+    expect(done.error?.code).toBe("LLM_UNAVAILABLE")
+    expect(new FindingsDAO(db).getById(finding.id)!.status).toBe("open")
+    expect(read("topics/top-ci.md")).toContain("先红后绿再跳闸") // 库零动
+  })
+
+  it("锚点丢失守门对 low-confidence 同样生效：修订稿掉锚 ⇒ failed(FINDING_ANCHOR_LOST) 库零动", async () => {
+    writePage("topics/top-ci.md", "top-ci", "topic", ["ci"], [],
+      "## 硬约束\n- 先红后绿再跳闸 <!--#oct-001-->\n")
+    const ledger = new KnowledgeEffectivenessDAO(db)
+    ledger.upsert("oct-001", { cited_count: 5, helpful_count: 0, not_helpful_count: 5 })
+    const finding = makePatrol().patrol().findings.find(f => f.kind === "low-confidence")!
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({
+      db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot),
+      llm: async () => JSON.stringify({ pages: [{ relPath: "topics/top-ci.md", body: "## 硬约束\n- 锚点没了的修订\n" }] }),
+    })
+    const task = ops.adopt(finding.id)
+    await drain(queue)
+    expect(ops.getTask(task.id)!.error?.code).toBe("FINDING_ANCHOR_LOST")
+    expect(new FindingsDAO(db).getById(finding.id)!.status).toBe("open")
+    expect(read("topics/top-ci.md")).toContain("oct-001")
   })
 })

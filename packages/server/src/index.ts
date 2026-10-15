@@ -52,11 +52,14 @@ import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
 import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
+import { SessionCurationService } from "./services/knowledge/session-curation"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
 import { WikiPatrolService } from "./services/knowledge/patrol"
 import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-ledger"
+import { EffectivenessSyncService } from "./services/knowledge/effectiveness-sync"
+import { avgMeasuredConfidence } from "./services/knowledge/effectiveness-confidence"
 import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
-import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards } from "./services/knowledge/patrol-job"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
@@ -517,6 +520,10 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
   // billing-coverage-2 票03: Main Agent 统一入口/委托链入账。
   tokenUsageDao: d.tokenUsage,
+  // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
+  // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
+  // 请求时才求值，不受挂载先于构造的 TDZ 影响）。
+  curation: { curate: (input) => sessionCurationService.curate(input) },
 }))
 
 // Clone session routes — direct entry for Web UI pages
@@ -561,7 +568,7 @@ const ruleFormJudge = createProductionRuleFormJudge()
 // + wiki 根锁文件（跨进程保底，PID+心跳）。一切 wiki 写操作统一
 // `wikiWriteQueue.enqueue(opKind, fn)`（kind 单源 compile-queue.WRITE_OP_KINDS：
 // 投喂/归档/对话修订/lint 自纠/finding 修复/revert/重蒸馏；票07/10/12/13 经此入队，
-// P3 加 case-archive/page-retire，P4 票09 加 auto-retire/page-restore；
+// P3 加 case-archive/page-retire，P4 票07 加 effectiveness-sync、票09 加 auto-retire/page-restore；
 // 旁路写 wiki = 违规）。队列深度进健康条（queueDepth，票11 冻结形状只换值）。
 const wikiWriteQueue = new CompileQueue({
   lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
@@ -594,7 +601,24 @@ const getFindingOps = () => (findingOpsInstance ??= new FindingOpsService({
   },
 }))
 const knowledgeBackfill = new BackfillService({ trigger: ingestCompileTrigger })
-app.route("/api/knowledge", createIngestRoutes(new RawIngestService(), ingestCompileTrigger))
+// 票10：与 ingest 路由共享同一抓取实例（冻结契约单源，SessionCurationService 穿打同路）
+const knowledgeRawIngest = new RawIngestService()
+app.route("/api/knowledge", createIngestRoutes(knowledgeRawIngest, ingestCompileTrigger))
+// 票10 投喂泛化：会话策展接线板——curate = 既有 RawIngestService（票02 契约）+
+// curatorTasks.submit(带会话上下文)（ingest-compile 全局串行队列，零新 kind 零平行）+
+// Lane A 卡片经 appendCardsToSession 回流发起会话；编译终态钩子（attachSettledListener）
+// 只对带 sessionId 的任务重发终态 diff 卡——知识中心既有 Lane B 形态零回归。
+const sessionCurationService = new SessionCurationService({
+  raw: knowledgeRawIngest,
+  trigger: (rawPath, ctx) => {
+    const t = curatorTasks.submit(rawPath, ctx)
+    return { taskId: t.id, status: t.status }
+  },
+  // db 面请求时才取（票14 惰性纪律）；无会话/已删 ⇒ 原语诚实降级
+  announce: (sessionId, header, events) => appendCardsToSession(getDb(), sessionId, header, events),
+  positionOf: taskId => wikiWriteQueue.get(taskId)?.position ?? null,
+})
+curatorTasks.attachSettledListener(rec => sessionCurationService.onCompileSettled(rec))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
 app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 // P3 票02：素材包路由——GET /pack/:taskId（manifest 件清单视图 + 旧单文件 legacy 兼容读）；
@@ -724,6 +748,8 @@ app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
 app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle }, {
   getQueueDepth: () => wikiWriteQueue.depth(),
   getOpenFindings: () => getFindingOps().countOpen(),
+  // 票07：全库平均 confidence（已测行口径单源 avgMeasuredConfidence；全未测诚实 null）
+  getAvgConfidence: () => avgMeasuredConfidence(d.knowledgeEffectiveness.listAll()),
 }))
 // 知识中心票13：findings 列表/裁决 API（adopt/ignore/fix-task）+ 即时体检（POST /patrol）
 // + 回填（POST /backfill）。[讨论]=纯对话零端点。
@@ -755,10 +781,20 @@ const getEffectivenessLedger = () => (effectivenessLedgerInstance ??= new Effect
   db: getDb(),
   llm: createProductionKnowledgeLLM({ channel: "effectiveness-link", modelEnv: "OCTOPUS_EFFECTIVENESS_MODEL" }),
 }))
-// 手动触发端点（POST /api/knowledge/effectiveness/parse「解析至最新」）；夜巡自动面
-// 走下方 builtin-knowledge-patrol 作业的 parseLedger 腿——同一服务入口（双触发制式）。
+// P4 票07：confidence 快照刷页执行体（DB 行级滚动 + v3 页 front-matter 批量收口经
+// 全局串行队列 kind effectiveness-sync）。手动端点与夜巡 syncConfidence 腿同入口
+// （parse 双触发制式对称）。git 缺省走 WikiCompileService 自有 spawnGit（curator 标记）。
+let effectivenessSyncInstance: EffectivenessSyncService | undefined
+const getEffectivenessSync = () => (effectivenessSyncInstance ??= new EffectivenessSyncService({
+  db: getDb(),
+  queue: wikiWriteQueue,
+}))
+// 手动触发端点（POST /api/knowledge/effectiveness/parse「解析至最新」+ POST /sync
+// 「刷 confidence 快照」）；夜巡自动面走下方 builtin-knowledge-patrol 作业的
+// parseLedger/syncConfidence 双腿——同一服务入口（双触发制式）。
 app.route("/api/knowledge/effectiveness", createEffectivenessRoutes({
   parse: () => getEffectivenessLedger().parse(),
+  sync: () => getEffectivenessSync().sync(),
 }))
 
 // P4 票09：衰减自动退役窄口（spec 故事16/AC1-AC3/AC6——红线2 全库唯一自动退役执行面）。
@@ -805,7 +841,8 @@ app.route("/api/archive", createArchiveRoutes(stateDir, d.archive, d.archiveDraf
 
 // LLM-WIKI 票01: wiki 只读 API（tree/article；search 属票03）。写路径唯一入口 = WikiCompileService。
 // 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。
-app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle))
+// P4 票07：article 带 effectiveness 实时段（账目 DAO 注入=页元数据 DB 真源面）。
+app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle, { effectiveness: d.knowledgeEffectiveness }))
 // 知识中心票03: wiki 全局化搬家命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列计划，
 // ?apply=true 才动手（顺序：wiki 连 .git 搬家 → DB re-key/FTS 重建 → 偏好归档+知识根迁入）。
 // 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
@@ -1195,7 +1232,12 @@ if (shouldServe) {
             // 「夜巡可反复跑」——游标持久记至 execution，重跑零重复；失败显形不炸作业，
             // afterPatrol 同律）。
             parseLedger: async () => { await getEffectivenessLedger().parse() },
-            // P4 票09 窄口腿（挂记账腿之后吃当夜账——判据读的就是刚落的引用账）：
+            // P4 票07 刷页腿：记账之后把 DB 滚动 confidence 批量同步 v3 页 front-matter
+            // 快照（spec 故事 3——经全局队列 effectiveness-sync 单 commit 收口；顺序
+            // 钉死在记账腿后：先记新账再刷快照，同轮夜巡内引用即见账目推进；
+            // 失败显形不炸作业，parseLedger 同律）。
+            syncConfidence: async () => { await getEffectivenessSync().sync() },
+            // P4 票09 窄口腿（链序账→快照→窄口，吃当夜引用账——判据读的就是刚落的账）：
             // 90 天零引用 ∧ 零活页入链 ∧ 非人工文件 → auto-retire 经队列入 _retired/
             // + 通知卡进对话流（先斩后奏可逆；失败显形不炸作业，记账同律）。
             autoRetire: async () => { await getAutoRetire().run() },

@@ -14,7 +14,7 @@ import { createSafetyRoutes } from './safety'
 import { createChatRoutes } from './chat-routes'
 import { createTaskRoutes } from './task-routes'
 import { createCloneRoutes } from './clone-routes'
-import { createMainAgentRoute } from './main-agent-route'
+import { createMainAgentRoute, type MainAgentCurationSurface } from './main-agent-route'
 import { createEvolutionRoutes } from './evolution-routes'
 import { createSkillRoutes } from './skill-routes'
 import { createScheduleRoutes } from './schedule-routes'
@@ -37,11 +37,14 @@ interface AgentRouteDeps {
   schedulerService: SchedulerService
   /** billing-coverage-2 票03: Main Agent 统一入口/委托链入账（透传给 createMainAgentRoute）。 */
   tokenUsageDao?: TokenUsageDAO
+  /** 票10 投喂泛化: 知识策展执行面（透传给 createMainAgentRoute 的 ingest_to_wiki 工具）。
+   *  装配侧可用惰性闭包（挂载先于服务构造时，请求时才解析）。 */
+  curation?: MainAgentCurationSurface
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
-    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO, tokenUsageDao,
+    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO, tokenUsageDao, curation,
   } = deps
 
   const agent = new Hono()
@@ -92,7 +95,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createTaskRoutes(deps))
 
   // Main Agent unified entry (LLM router with clone delegation)
-  agent.route('/', createMainAgentRoute({ sessionDAO, tokenUsageDao }))
+  agent.route('/', createMainAgentRoute({ sessionDAO, tokenUsageDao, curation: deps.curation }))
 
   return agent
 }

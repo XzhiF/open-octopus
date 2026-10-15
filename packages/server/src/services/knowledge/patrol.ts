@@ -2,11 +2,13 @@ import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import crypto from "crypto"
-import type { WikiCaseFrontmatter, WikiPageType } from "@octopus/shared"
+import type { WikiCaseFrontmatter, WikiPageFrontmatter, WikiPageType } from "@octopus/shared"
 import { STALE_REF_PREFIX, WIKI_REFS_KEY } from "@octopus/shared"
 import { applySchema } from "../../db/schema"
 import type { FindingUpsert } from "../../db/dao/findings-dao"
 import { FindingsDAO } from "../../db/dao/findings-dao"
+import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
+import { isLowConfidence, rollupConfidence, rollupEffectiveness } from "./effectiveness-confidence"
 import { scanWikiEntries } from "./wiki/compile"
 import { parseWikiFile } from "./wiki/format"
 import { resolveWikiLink, WIKILINK_RE } from "./wiki/lint"
@@ -16,7 +18,8 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * WikiPatrolService — 语义巡检「库自己会体检」（知识中心票13 主控，spec 质控⑤；
  * P3 票03 五查扩六查）。
  *
- * 六查（票面 AC1，全部**确定性**遍历，不经 LLM——内容寻址 id 要求证据可复算，
+ * 七查（票13 五查 + P3 票03 判例积压 = 六查；P4 票07 低置信扩第七查。全部**确定性**
+ * 遍历，不经 LLM——内容寻址 id 要求证据可复算，
  * LLM 自由发挥会让 finding id 每晚漂移、幂等破产）：
  *  ① 页间矛盾（断言对立）：扫盘上「## 冲突待裁决」标记行（票05 编译通道的持久证据面），
  *     findings 行缺席时复报（DB 只是索引、fs+git 是真源——findings 被清/搬家后巡检兜底
@@ -32,6 +35,10 @@ import { resolveKnowledgeRoot } from "./global-paths"
  *  ⑥ 判例积压（P3 票03，spec 故事 13）：open 且 occurrences≥2 且无 rule_ref 的判例 ⇒
  *     finding 提议蒸馏为 topics 硬约束（判例是规则的原料；裁决面=finding adopt 通道，
  *     产物互指：topic 页 [[case]] + case.rule_ref=锚点、status=distilled）。
+ *  ⑦ 低置信（P4 票07，spec 故事 5）：实效账目（knowledge_effectiveness 页键行∪锚点行）
+ *     confidence≤0.2 且引用≥3 的 v3 页 ⇒ finding 提议修订或退役（确定性 DB 读零 LLM；
+ *     裁决面=既有 finding 卡三态，红线2 零自动执行）。
+ *     （P4 票03 另产 index-budget kind 由编译通道直产、不经本巡，见枚举注。）
  *
  * 裁决三态纪律（票面 AC2/AC5）：已有行 status ∈ {resolved, ignored} ⇒ 本巡检**永不再扰**
  * （不写库、报告记 suppressed）；open 行证据变化 ⇒ 刷新（upsert 保人裁决的 DAO 契约）、
@@ -44,8 +51,11 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * P4 票03 扩枚举：`index-budget`（INDEX 恒见预算预警）——生产者=编译通道（compile.ts
  * l4BudgetGate 直 upsert，本巡检六查不产该 kind），入本联合是为 UI/卡片按值消费的
  * kind 词表单源（红线2：预警=finding 事后人裁，采纳走 finding-fix 队列重编译 INDEX）。
+ * P4 票07 扩枚举：`low-confidence`（实效账目低置信）——生产者=本巡检第七查
+ * （lowConfidenceDrafts，DB knowledge_effectiveness 账目确定性读，零 LLM）；
+ * 提议修订或退役全走既有 finding 卡三态人裁（红线2 零自动执行；窄口自动退役只属票09 一条）。
  */
-export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget"
+export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget" | "low-confidence"
 
 /** 单条巡检动作：created=新建 · refreshed=open 行证据刷新 · unchanged=零写 · suppressed=已裁决不再扰 */
 export type PatrolAction = "created" | "refreshed" | "unchanged" | "suppressed"
@@ -109,6 +119,8 @@ interface PageView {
   anchors: string[]
   /** P3 票03 六查：判例文件的 front-matter（非判例=undefined；scanWikiEntries 已解析） */
   case?: WikiCaseFrontmatter
+  /** P4 票07 低置信查：v3 页 front-matter 原形（非 v3=undefined；v2/判例无 confidence 快照语义） */
+  page?: WikiPageFrontmatter
 }
 
 export class WikiPatrolService {
@@ -191,6 +203,7 @@ export class WikiPatrolService {
         sources: parsed.kind === "page" ? parsed.meta.sources : e.meta.sources ?? [],
         anchors: e.anchors,
         ...(parsed.kind === "case" ? { case: parsed.meta } : {}),
+        ...(parsed.kind === "page" ? { page: parsed.meta } : {}),
       })
     }
     return out
@@ -215,7 +228,64 @@ export class WikiPatrolService {
       ...this.missingXrefDrafts(pages),
       ...this.staleDrafts(pages, warnings),
       ...this.caseBacklogDrafts(pages),
+      ...this.lowConfidenceDrafts(pages),
     ]
+  }
+
+  /**
+   * ⑦ 低置信（P4 票07，spec 故事 5「差规则不赖账」）：实效账目聚合 confidence ≤0.2
+   * 且引用 ≥3 的 v3 页 ⇒ finding 提议修订或退役。账目面=页键行 ∪ 页内锚点行
+   * （与 effectiveness-sync 快照面同一 rollup 单源，公式零漂移）；confidence 取
+   * rollupConfidence 闸值产物——未测行保持编译期初值（初值本身 ≤0.2 也按票面字面
+   * 判据入列：那正是「编译期就没人信、还被用了 3 次」的最该复审面）。
+   * 确定性 DB 读零 LLM（内容寻址 id 可复算=幂等根基，六查纪律原样）；处置全走
+   * 既有 finding 卡三态（adopt=semanticRevision 修订通道 / ignore=不再扰），
+   * 红线2：巡检只开处方不动手术。
+   */
+  private lowConfidenceDrafts(pages: PageView[]): PatrolDraft[] {
+    const dao = new KnowledgeEffectivenessDAO(this.db)
+    const byKey = new Map<string, { cited_count: number; helpful_count: number; not_helpful_count: number }>()
+    try {
+      for (const r of dao.listAll()) byKey.set(r.rule_id, r)
+    } catch {
+      return [] // 裸库无表（applySchema 之后理论不可达）⇒ 诚实空面
+    }
+    const drafts: PatrolDraft[] = []
+    for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+      if (!p.page) continue // v2/判例不在实效快照语义面（与 sync 执行体同一出列裁定）
+      const seen = new Set<string>()
+      const rows: Array<{ cited_count: number; helpful_count: number; not_helpful_count: number }> = []
+      for (const key of [p.id, ...p.anchors]) {
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = byKey.get(key)
+        if (row) rows.push(row)
+      }
+      const roll = rollupEffectiveness(rows)
+      if (roll.cited === 0) continue // 从未被消费：无账不催（无账页恒不低置信，判据先行短路）
+      const initial = p.page.confidence ?? 0.5 // DB 兜底初值口径（pageEntryView 同律）
+      const confidence = rollupConfidence(roll, initial)
+      if (!isLowConfidence(roll, confidence)) continue
+      drafts.push({
+        id: sha16(`low-confidence|patrol|${p.relPath}`),
+        kind: "low-confidence",
+        title: `低置信：${p.relPath}（confidence ${confidence} · 引用 ${roll.cited}× · helpful ${roll.helpful}/not_helpful ${roll.notHelpful}）——提议修订或退役`,
+        detail: JSON.stringify({
+          page: p.relPath,
+          anchors: p.anchors,
+          cited: roll.cited,
+          helpful: roll.helpful,
+          not_helpful: roll.notHelpful,
+          samples: roll.samples,
+          measured: roll.measured,
+          confidence,
+        }),
+        pages: JSON.stringify([p.relPath]),
+        raw_ref: "",
+        source: "patrol",
+      })
+    }
+    return drafts
   }
 
   /**
