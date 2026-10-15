@@ -257,6 +257,23 @@ sources: [doc:ar09]
 - 子页纪律一条 <!--#oct-014-->
 `
 
+/** volatile 到期页（review_after 已越）：到期=finding 三选人裁（票08 D7），窄口判据零读 stability/review_after。 */
+const CONCEPT_VOLATILE = `---
+id: con-volatile
+type: concept
+title: 到期 volatile 概念页
+summary: volatile 到期负断言：复审指针越期不触发自动退役（域外类目）
+topics: [probe]
+links: []
+stability: volatile
+review_after: 2026-09-01
+last_compiled: 2026-07-01
+sources: [doc:ar09]
+---
+
+定义散文，无规则锚点。
+`
+
 // 每例清理句柄（vitest afterEach 消费；harness() 随例重置）
 let currentDb: Database.Database | null = null
 let currentTmp: string | null = null
@@ -310,7 +327,7 @@ describe("AutoRetireService — 衰减自动退役窄口（票09 · spec 故事1
     expect(h.notices[0][0].pagePath).toBe("topics/top-zombie.md")
   })
 
-  it("窄口负断言全集（红线2 核心）：入链存在/窗未完/两账任一有名/低置信/无锚/不可退目录——零入队零 commit，skipped 逐页给因", async () => {
+  it("窄口负断言全集（红线2 核心）：入链存在/窗未完/两账任一有名/低置信/volatile 到期/无锚/不可退目录——零入队零 commit，skipped 逐页给因", async () => {
     const h = harness({
       "topics/top-inbounded.md": TOPIC_INBOUNDED,
       "entities/ent-host.md": ENT_HOST,
@@ -319,6 +336,7 @@ describe("AutoRetireService — 衰减自动退役窄口（票09 · spec 故事1
       "topics/top-lowconf.md": TOPIC_LOWCONF,
       "topics/hub/deep.md": TOPIC_HUB_CHILD,
       "concepts/con-noanchor.md": CONCEPT_NOANCHOR,
+      "concepts/con-volatile.md": CONCEPT_VOLATILE,
     })
     const ledger = new KnowledgeEffectivenessDAO(h.db)
     // top-read：锚点键无行，但页级 Read 键近引（两账判据的 b 面）
@@ -346,6 +364,9 @@ describe("AutoRetireService — 衰减自动退役窄口（票09 · spec 故事1
     expect(reasons["topics/top-lowconf.md"]).toBe("recent-cited") // 低置信零自动路
     expect(reasons["topics/hub/deep.md"]).toBe("not-retirable") // 两层深不在白名单面
     expect(reasons["concepts/con-noanchor.md"]).toBe("no-rule-anchor")
+    // volatile 到期（review_after 2026-09-01 已过）不自动退：判据零读 stability/review_after，
+    // 该类目=票08 D7 finding 三选（续期/改写/退役）人裁域——此页以「无锚域外」离手
+    expect(reasons["concepts/con-volatile.md"]).toBe("no-rule-anchor")
   })
 
   it("人工文件不命中（isManualFileTarget 双保险·纯函数面）：即便两账沉默零入链，判据亦拒收", () => {
