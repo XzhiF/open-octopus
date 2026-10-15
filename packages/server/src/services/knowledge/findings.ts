@@ -10,6 +10,7 @@ import { scanWikiEntries, WikiCompileService, nextRuleAnchor, type BatchPageInpu
 import { parseWikiFile, parseCaseMarkdown, serializeCaseMarkdown, serializePageMarkdown, extractRuleAnchors, pageDirForType } from "./wiki/format"
 import { parseCaseSections } from "./case-extract-service"
 import { buildProceduralJudgePrompt, parseProceduralJudgment } from "./skill-detect"
+import { cleanInboundLinksInContent } from "./wiki/page-retire"
 import type { GitRunner } from "./wiki/wiki-git"
 import { CompileQueue, type WriteQueue } from "./wiki/compile-queue"
 import { findingCardData } from "./patrol-job"
@@ -300,10 +301,13 @@ export class FindingOpsService {
         break
       }
       case "contradiction": {
-        // 票04·故事26（D-aa16-3 清偿）：对手页已退役 ⇒ 单侧降级，不 failed。
-        // 判据严格：scan 缺席 **且** `_retired/<relPath>` 在盘才算退役（真缺席 ghost 不降级，
-        // 响亮 FINDING_TARGET_MISSING 照旧）；LLM 修订语义要求双方原文在场，单侧无生成面，
-        // 处置=清除本页标记行 + LOG 注记（退役执行体已摘 [[链接]]，矛盾事实面随之收敛）。
+        // 票04·故事26（D-aa16-3 清偿）+ aa-fix D-p4-ops-1（复合形清偿）：对手页已退役 ⇒
+        // 单侧降级，不 failed。判据严格：scan 缺席 **且** `_retired/<relPath>` 在盘才算退役
+        // （真缺席 ghost 不降级，响亮 FINDING_TARGET_MISSING 照旧）。处置=清除本页标记行 +
+        // 摘除残留指向退役对手页的活链（front-matter links 与正文 [[…]]）一并入同 works 同
+        // commit——旧退役机制（只迁页不清链）留下的标记外活链若只清标记不动链，剥完标记后
+        // compilePages 必触 L5_LINK_BROKEN ⇒ adopt 恒 failed；清链判据与退役执行体单源
+        // （cleanInboundLinksInContent），语义=真盘「restore→re-retire 绕行」的代码化。
         const retired = pages.filter(
           p => !scanned.some(e => e.relPath === p) && fs.existsSync(path.join(this.wikiRoot, "_retired", p)),
         )
@@ -318,7 +322,7 @@ export class FindingOpsService {
           }
           works.push(...live.map(p => {
             const w = loadWork(p)
-            return { ...w, body: stripFindingMarkers(w.body, row.id) }
+            return this.cleanRetiredInbound({ ...w, body: stripFindingMarkers(w.body, row.id) }, retired)
           }))
           fixNote = `finding 采纳修订 contradiction · 单侧裁决（对手已退役：${retired.join(", ")}）· 标记清除（票04）`
           break
@@ -544,6 +548,33 @@ ${evidence}
     }
     // 涉事页集合已含全部标记宿主（patrol 的 pages 由标记扫集而来），逐页净洗即可
     return revised
+  }
+
+  /**
+   * aa-fix D-p4-ops-1（复合形）：把工作面页中指向「已退役对手页」的残留活链摘除——
+   * 逐退役页调 cleanInboundLinksInContent（退役执行体判据单源：正文 `[[…]]`→`[已退役]`、
+   * v3 front-matter links 摘项），改写只发生在本页工作面，零直写盘（红线1）；命中结果
+   * 随同 works 进同一编译 commit——真盘「restore→re-retire 绕行」的代码化。
+   * 退役页 id 取 `_retired/` 镜像 front-matter（坏形回退文件名词干：判据尽力而为面，
+   * 与 linkPointsToPage 的裸 id/路径两态命中面配合）；无命中=原 work 逐字返回（零扰动）。
+   */
+  private cleanRetiredInbound(work: PageWork, retiredRels: string[]): PageWork {
+    let raw = serializePageMarkdown(work.meta, work.body)
+    let changed = false
+    for (const rel of retiredRels) {
+      let id = rel.split("/").pop()?.replace(/\.md$/i, "") ?? rel
+      try {
+        id = parseWikiFile(fs.readFileSync(path.join(this.wikiRoot, "_retired", rel), "utf-8")).meta.id
+      } catch { /* 镜像缺席/坏形=文件名词干兜底 */ }
+      try {
+        const c = cleanInboundLinksInContent(raw, id, rel)
+        if (c) { raw = c.next; changed = true }
+      } catch { /* 工作面解析异常=不动链（compile 闸照旧响亮） */ }
+    }
+    if (!changed) return work
+    const reparsed = parseWikiFile(raw)
+    if (reparsed.kind !== "page") return work
+    return { ...work, meta: reparsed.meta, body: reparsed.body }
   }
 
   /**

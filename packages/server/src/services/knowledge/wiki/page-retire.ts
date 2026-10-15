@@ -455,11 +455,39 @@ export interface CleanedHost {
 }
 
 /**
- * 票04·故事26 入链摘除纯函数（fs 只读；写与 commit 归执行体）：
- * 扫全库活页（scanWikiEntries 面，_retired/ 天然缺席），凡正文 `[[…]]` 或 v3 front-matter
- * links 指向退役页者 ⇒ 正文整匹配替换 `[已退役]`、links 摘项，按形态重序列化。
- * 人工文件（isManualFileTarget）跳过——写保护不松动；解析坏页跳过（坏文件不拖垮退役，
- * scan 同律）。零命中页不产 diff（原文件逐字节不动）。
+ * 票04·故事26 入链摘除纯变换（页级形，fs 无关；**判据单源**——全库扫描形
+ * cleanInboundLinks 与本函数永不分叉）：给定宿主页原文，凡正文 `[[…]]` 或 v3
+ * front-matter links 指向退役页者 ⇒ 正文整匹配替换 `[已退役]`、links 摘项，按形态
+ * 重序列化返回改写形；零命中=null（原文件逐字节不动语义的页级映射）。
+ * 解析坏=抛错（调用方处置：扫描面跳过、单侧降级面尽力而为）。
+ *
+ * 第二消费面（aa-fix D-p4-ops-1）：findings.ts 矛盾单侧降级——旧退役机制
+ * （只迁页不清链）留下的标记外活链，adopt 前在工作面摘除并入同 works 同 commit，
+ * 语义=真盘「restore→re-retire 绕行」的代码化（不直写盘，红线1 不松动）。
+ */
+export function cleanInboundLinksInContent(raw: string, pageId: string, relPath: string): { next: string; newBody: string } | null {
+  const parsed = parseWikiFile(raw)
+  const strip = (body: string) =>
+    body.replace(WIKILINK_RE, (full: string, target: string) => (linkPointsToPage(target, pageId, relPath) ? "[已退役]" : full))
+  const bodyKept = strip(parsed.body)
+  if (parsed.kind === "page") {
+    const linksKept = parsed.meta.links.filter(l => !linkPointsToPage(l, pageId, relPath))
+    if (linksKept.length === parsed.meta.links.length && bodyKept === parsed.body) return null
+    return { next: serializePageMarkdown({ ...parsed.meta, links: linksKept }, bodyKept), newBody: bodyKept }
+  } else if (parsed.kind === "case") {
+    if (bodyKept === parsed.body) return null
+    return { next: serializeCaseMarkdown(parsed.meta, bodyKept), newBody: bodyKept }
+  } else {
+    if (bodyKept === parsed.body) return null
+    return { next: serializeEntryMarkdown(parsed.meta, bodyKept), newBody: bodyKept }
+  }
+}
+
+/**
+ * 票04·故事26 入链摘除扫描形（fs 只读；写与 commit 归执行体）：
+ * 扫全库活页（scanWikiEntries 面，_retired/ 天然缺席），逐页过 cleanInboundLinksInContent
+ * （判据单源见该函数注）。人工文件（isManualFileTarget）跳过——写保护不松动；解析坏页
+ * 跳过（坏文件不拖垮退役，scan 同律）。零命中页不产 diff（原文件逐字节不动）。
  *
  * **票09 窄口复用面（单源纪律）**：自动退役判据「零活页入链」消费本函数命中集
  * （findInboundLinkHosts），与退役执行的摘链判据永不分叉。
@@ -471,28 +499,19 @@ export function cleanInboundLinks(wikiRoot: string, pageId: string, relPath: str
     if (!abs.startsWith(wikiRoot + path.sep)) continue
     if (isManualFileTarget(wikiRoot, abs)) continue
     let raw: string
-    let parsed: ReturnType<typeof parseWikiFile>
     try {
       raw = fs.readFileSync(abs, "utf-8")
-      parsed = parseWikiFile(raw)
     } catch {
-      continue // 读/解析坏=跳过（与 scan 告警面同源纪律）
+      continue // 读坏=跳过（与 scan 告警面同源纪律）
     }
-    const strip = (body: string) =>
-      body.replace(WIKILINK_RE, (full: string, target: string) => (linkPointsToPage(target, pageId, relPath) ? "[已退役]" : full))
-    const bodyKept = strip(parsed.body)
-    if (parsed.kind === "page") {
-      const linksKept = parsed.meta.links.filter(l => !linkPointsToPage(l, pageId, relPath))
-      if (linksKept.length === parsed.meta.links.length && bodyKept === parsed.body) continue
-      const next = serializePageMarkdown({ ...parsed.meta, links: linksKept }, bodyKept)
-      out.push({ relPath: e.relPath, oldRaw: raw, next, newBody: bodyKept })
-    } else if (parsed.kind === "case") {
-      if (bodyKept === parsed.body) continue
-      out.push({ relPath: e.relPath, oldRaw: raw, next: serializeCaseMarkdown(parsed.meta, bodyKept), newBody: bodyKept })
-    } else {
-      if (bodyKept === parsed.body) continue
-      out.push({ relPath: e.relPath, oldRaw: raw, next: serializeEntryMarkdown(parsed.meta, bodyKept), newBody: bodyKept })
+    let cleaned: { next: string; newBody: string } | null
+    try {
+      cleaned = cleanInboundLinksInContent(raw, pageId, relPath)
+    } catch {
+      continue // 解析坏=跳过（与 scan 告警面同源纪律）
     }
+    if (!cleaned) continue
+    out.push({ relPath: e.relPath, oldRaw: raw, next: cleaned.next, newBody: cleaned.newBody })
   }
   return out
 }

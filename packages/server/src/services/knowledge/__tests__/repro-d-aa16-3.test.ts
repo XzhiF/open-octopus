@@ -220,4 +220,38 @@ describe("D-aa16-3 复现靶 — 退役死链 + 矛盾 adopt 恒败（票04 对�
     const rePatrol = (await new WikiPatrolService({ db, root: knowledgeRoot }).patrol())
     expect(rePatrol.findings.some(f => f.id === FND_ADOPT)).toBe(false)
   })
+
+  it("D-p4-ops-1 复合形：单侧降级 + 标记外残留活链同指退役页 ⇒ 清链并入同 commit（不再恒 failed）", async () => {
+    seedLibrary()
+    // 旧机制退役现场（症状一对照段同形）：只迁页不清链——宿主 front-matter links 与
+    // 标记外正文活链仍在指退役页（真盘 5814abd 形态；ops 绕行= restore→re-retire）
+    fs.mkdirSync(path.join(wikiRoot, "_retired", "topics"), { recursive: true })
+    const moved = GONE_RAW.replace("last_compiled: 2026-10-13", "last_compiled: 2026-10-13\nstatus: superseded")
+    fs.writeFileSync(path.join(wikiRoot, "_retired", "topics", "top-dev-port-and-stale-lock.md"), moved, "utf-8")
+    fs.rmSync(path.join(wikiRoot, "topics", "top-dev-port-and-stale-lock.md"))
+    const goneBefore = fs.readFileSync(path.join(wikiRoot, "_retired", "topics", "top-dev-port-and-stale-lock.md"), "utf-8")
+
+    const before = Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim() || "0")
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root: knowledgeRoot, queue, now: FROZEN, git })
+    const task = ops.adopt(FND_ADOPT)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    // 修复前=failed（标记剥除后 compilePages 触 L5_LINK_BROKEN 恒败——aa-fix 票 D-p4-ops-1）
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+    expect(done.result?.commit, "单 commit 收口").toBeTruthy()
+
+    const hub = fs.readFileSync(path.join(wikiRoot, "entities", "prj-open-octopus.md"), "utf-8")
+    // 本枚标记净洗；未裁两枚保留（其死链文本同步转指针——同 commit 不留 L5 哑雷）
+    expect(hub).not.toContain(FND_ADOPT)
+    for (const fid of FND_OTHERS) expect(hub).toContain(fid)
+    expect(hub).not.toContain(`[[${GONE_ID}]]`)
+    expect(hub).toContain("[已退役]")
+    expect(hub).toMatch(/^links: \[\[top-workflow-node-yaml-view\], \[wf-prd-impl\]\]$/m)
+    // 活链语义闭合：全库零潜伏断链；退役件不动
+    expect(scanBroken()).toEqual([])
+    expect(fs.readFileSync(path.join(wikiRoot, "_retired", "topics", "top-dev-port-and-stale-lock.md"), "utf-8")).toBe(goneBefore)
+    const after = Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim())
+    expect(after).toBe(before + 1) // 迁页残留 + 清链 + 标记清除一揽子同一 commit（无二步写）
+  })
 })
