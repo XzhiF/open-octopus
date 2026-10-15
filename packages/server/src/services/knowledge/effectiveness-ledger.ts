@@ -5,6 +5,7 @@ import path from "path"
 import { STALE_REF_PREFIX, WIKI_REFS_KEY } from "@octopus/shared"
 import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
 import { resolveKnowledgeRoot, WIKI_PAGE_DIRS } from "./global-paths"
+import { pageLedgerStem } from "./page-stem"
 import { ruleLinesForFormCheck } from "./wiki/lint"
 
 /**
@@ -347,8 +348,8 @@ export function normalizeRefEntry(entry: string): { key: string; isAnchor: boole
     return anchor ? { key: anchor, isAnchor: true } : null
   }
   if (BARE_ANCHOR_RE.test(e)) return { key: e, isAnchor: true }
-  const seg = e.split(/[\\/]/).pop() ?? ""
-  const stem = seg.replace(/\.md$/i, "").trim()
+  // 页键 stem 归一单源=page-stem.ts（aa-fix 项②2——与 auto-retire pageLedgerKey/patrol 解析键三份合一）
+  const stem = pageLedgerStem(e)
   return stem ? { key: stem, isAnchor: false } : null
 }
 

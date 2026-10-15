@@ -178,51 +178,44 @@ export interface PatrolHandlerOpts {
 
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
 export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: PatrolHandlerOpts = {}): CodeJobHandler {
+  // 腿公共形（aa-fix 项③：报对话/草案扫描/记账/同步/自动退役五份同构 try/catch+note 合一）。
+  // 纪律逐字保真：腿返回 string=成功注记、void=静默；腿抛错=` · <名>失败（msg）` 显形进
+  // outcome——文案有测试钉（patrol-job/effectiveness-trigger/auto-retire-trigger 三路）。
+  // 任一腿失败不吞前腿成果、不炸作业（findings/账已入库=诚实滞后，下轮夜巡自愈）。
+  const runLeg = async (name: string, fn: () => string | void | Promise<string | void>): Promise<string> => {
+    try {
+      const r = await fn()
+      return typeof r === "string" ? r : ""
+    } catch (err) {
+      return ` · ${name}失败（${err instanceof Error ? err.message : String(err)}）`
+    }
+  }
   return async (_ctx: CodeJobContext): Promise<CodeJobOutcome> => {
     const report = await patrol.patrol()
     const created = report.newFindings
     let note = ""
     if (opts.report) {
-      try {
-        const r = opts.report(created, report)
-        note = r.posted ? " · 已报对话" : created.length > 0 ? ` · 未报对话（${r.reason ?? "无载体"}）` : ""
-      } catch (err) {
-        // 报对话失败不吞巡检成果：findings 已在库，失败显形进 outcome
-        note = ` · 报对话失败（${err instanceof Error ? err.message : String(err)}）`
-      }
+      const rep = opts.report
+      note += await runLeg("报对话", () => {
+        const r = rep(created, report)
+        return r.posted ? " · 已报对话" : created.length > 0 ? ` · 未报对话（${r.reason ?? "无载体"}）` : ""
+      })
     }
     if (opts.afterPatrol) {
-      try {
-        await opts.afterPatrol(report)
-      } catch (err) {
-        // 草案扫描失败不吞巡检成果（P3 票04：与报对话同律——显形不炸作业）
-        note += ` · 草案扫描失败（${err instanceof Error ? err.message : String(err)}）`
-      }
+      const leg = opts.afterPatrol
+      note += await runLeg("草案扫描", () => leg(report))
     }
     if (opts.parseLedger) {
-      try {
-        await opts.parseLedger()
-      } catch (err) {
-        // 记账腿失败不吞巡检成果（P4 票06：与草案扫描同律——显形不炸作业）
-        note += ` · 记账失败（${err instanceof Error ? err.message : String(err)}）`
-      }
+      const leg = opts.parseLedger
+      note += await runLeg("记账", () => leg())
     }
     if (opts.syncConfidence) {
-      try {
-        await opts.syncConfidence()
-      } catch (err) {
-        // 刷页腿失败不吞巡检与记账成果（P4 票07：DB 真源已落账，快照缺席=诚实滞后，
-        // 下轮夜巡自愈；显形口径与记账失败同词族）
-        note += ` · 同步失败（${err instanceof Error ? err.message : String(err)}）`
-      }
+      const leg = opts.syncConfidence
+      note += await runLeg("同步", () => leg())
     }
     if (opts.autoRetire) {
-      try {
-        await opts.autoRetire()
-      } catch (err) {
-        // 窄口自动退役腿失败不炸作业（P4 票09：记账/草案扫描同律——显形进 outcome）
-        note += ` · 自动退役失败（${err instanceof Error ? err.message : String(err)}）`
-      }
+      const leg = opts.autoRetire
+      note += await runLeg("自动退役", () => leg())
     }
     return {
       summary: `夜巡体检：扫 ${report.scanned.pages} 页/${report.scanned.executions} 执行 · 新建 ${created.length} · 在库 open ${report.findings.filter(f => f.action !== "suppressed").length}${note}`,

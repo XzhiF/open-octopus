@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
-import crypto from "crypto"
 import type { WikiCaseFrontmatter, WikiPageFrontmatter, WikiPageType } from "@octopus/shared"
 import { STALE_REF_PREFIX, WIKI_REFS_KEY } from "@octopus/shared"
 import { applySchema } from "../../db/schema"
@@ -12,10 +11,12 @@ import { isLowConfidence, rollupConfidence, rollupEffectiveness } from "./effect
 import { computeHealthScore } from "./health-score"
 import { jaccard, symptomTokens } from "./case-symptom"
 import type { LLMCall } from "./llm"
-import { scanWikiEntries } from "./wiki/compile"
+import { scanWikiEntries, findingIdFor } from "./wiki/compile"
+import { AUTO_RETIRE_WINDOW_DAYS } from "./wiki/auto-retire"
 import { parseWikiFile, serializePageMarkdown } from "./wiki/format"
 import { estimateTokens, resolveWikiLink, ruleLinesForFormCheck, WIKILINK_RE, WIKI_LIMITS } from "./wiki/lint"
 import { resolveKnowledgeRoot } from "./global-paths"
+import { stripMdSuffix } from "./page-stem"
 
 /**
  * WikiPatrolService — 语义巡检「库自己会体检」（知识中心票13 主控，spec 质控⑤；
@@ -142,8 +143,8 @@ const CONTENT_TYPES: ReadonlySet<WikiPageType> = new Set(["entity", "concept", "
 /** 膨胀预警线：L1 容量闸（120 行/25 规则/2000 token）水位 ≥ 本比例 ⇒ bloat finding（故事 9，等号含）。 */
 export const BLOAT_WATERLINE_RATIO = 0.8
 
-/** 僵尸判据：连续零引用天数 ≥ 本值 ⇒ zombie finding（故事 11 逐字「90 天」）。 */
-export const ZOMBIE_DORMANT_DAYS = 90
+// 僵尸判据窗值（aa-fix 项②：与票09 窄口观察窗合一——单源=auto-retire.ts 的 AUTO_RETIRE_WINDOW_DAYS；
+// spec 故事 11「90 天零引用」与故事 16 同一窗值，旧「双常量互指单源」失实注释已随合一归真）
 
 /** 域失衡份额闸：单页锚点占全库 **>** 本值 ⇒ domain-skew finding（故事 12 逐字「>30%」）。 */
 export const DOMAIN_SKEW_SHARE_THRESHOLD = 0.3
@@ -168,10 +169,6 @@ export function normalizeMergeDraft(resp: string): string {
 }
 
 const DAY_MS = 86_400_000
-
-function sha16(key: string): string {
-  return `fnd-${crypto.createHash("sha256").update(key, "utf-8").digest("hex").slice(0, 16)}`
-}
 
 /** 页磁盘视图：relPath + 解析出的 front-matter/正文（坏页跳过并留 warning，不拖垮整巡）。 */
 interface PageView {
@@ -343,7 +340,7 @@ export class WikiPatrolService {
     const drafts: PatrolDraft[] = []
     for (const pair of pairs.slice(0, RULE_DUPLICATE_MAX_FINDINGS)) {
       const { a, b, score } = pair
-      const id = sha16(`duplicate|patrol|${a.anchor}|${b.anchor}`)
+      const id = findingIdFor(`duplicate|patrol|${a.anchor}|${b.anchor}`)
       const existing = dao.getById(id)
       const adjudicated = existing !== undefined && (existing.status === "resolved" || existing.status === "ignored")
       let mergeDraft = ""
@@ -421,7 +418,7 @@ export class WikiPatrolService {
       const confidence = rollupConfidence(roll, initial)
       if (!isLowConfidence(roll, confidence)) continue
       drafts.push({
-        id: sha16(`low-confidence|patrol|${p.relPath}`),
+        id: findingIdFor(`low-confidence|patrol|${p.relPath}`),
         kind: "low-confidence",
         title: `低置信：${p.relPath}（confidence ${confidence} · 引用 ${roll.cited}× · helpful ${roll.helpful}/not_helpful ${roll.notHelpful}）——提议修订或退役`,
         detail: JSON.stringify({
@@ -497,7 +494,7 @@ export class WikiPatrolService {
       if (waterline < BLOAT_WATERLINE_RATIO) continue
       const pct = Math.round(waterline * 100)
       drafts.push({
-        id: sha16(`bloat|patrol|${p.relPath}`),
+        id: findingIdFor(`bloat|patrol|${p.relPath}`),
         kind: "bloat",
         title: `膨胀榜：${p.relPath} 容量水位 ${pct}%（L1 闸预警线 ${Math.round(BLOAT_WATERLINE_RATIO * 100)}%）——提议按 H2 小节预拆分/hub 化`,
         detail: JSON.stringify({
@@ -562,9 +559,9 @@ export class WikiPatrolService {
         basis = "never"
         days = Math.floor((nowMs - created) / DAY_MS)
       }
-      if (days < ZOMBIE_DORMANT_DAYS) continue
+      if (days < AUTO_RETIRE_WINDOW_DAYS) continue
       drafts.push({
-        id: sha16(`zombie|patrol|${p.relPath}`),
+        id: findingIdFor(`zombie|patrol|${p.relPath}`),
         kind: "zombie",
         title: `僵尸页：${p.relPath} 已 ${days} 天零引用（${basis === "never" ? "从未被消费" : `最近引用 ${lastCited}`}）——提议退役`,
         detail: JSON.stringify({ page: p.relPath, basis, cited, last_cited: lastCited, dormant_days: days }),
@@ -591,7 +588,7 @@ export class WikiPatrolService {
       const share = p.anchors.length / total
       if (share <= DOMAIN_SKEW_SHARE_THRESHOLD) continue
       drafts.push({
-        id: sha16(`domain-skew|patrol|${p.relPath}`),
+        id: findingIdFor(`domain-skew|patrol|${p.relPath}`),
         kind: "domain-skew",
         title: `域失衡：${p.relPath} 的 ${p.anchors.length} 条锚点占全库 ${total} 条的 ${Math.round(share * 100)}%（>30%）——提议 hub 化/拆分子页`,
         detail: JSON.stringify({
@@ -625,7 +622,7 @@ export class WikiPatrolService {
       if (fm.review_after >= today) continue
       const overdue = Math.floor((Date.parse(`${today}T00:00:00.000Z`) - Date.parse(`${fm.review_after}T00:00:00.000Z`)) / DAY_MS)
       drafts.push({
-        id: sha16(`volatile-expired|patrol|${p.relPath}`),
+        id: findingIdFor(`volatile-expired|patrol|${p.relPath}`),
         kind: "volatile-expired",
         title: `volatile 到期：${p.relPath}（review_after ${fm.review_after} 已过 ${overdue} 天）——提议续期/改写/退役三选一裁决`,
         detail: JSON.stringify({ page: p.relPath, review_after: fm.review_after, overdue_days: overdue }),
@@ -651,7 +648,7 @@ export class WikiPatrolService {
       if (!c) continue
       if (c.status !== "open" || c.occurrences < 2 || c.rule_ref !== undefined) continue
       drafts.push({
-        id: sha16(`case-backlog|patrol|${p.relPath}`),
+        id: findingIdFor(`case-backlog|patrol|${p.relPath}`),
         kind: "case-backlog",
         title: `判例积压：${p.relPath}（症状「${c.symptom}」已 ${c.occurrences} 次命中，未蒸馏——提议编成 topics 硬约束）`,
         detail: JSON.stringify({ case: p.relPath, caseId: c.id, symptom: c.symptom, occurrences: c.occurrences, source: c.source }),
@@ -765,7 +762,7 @@ export class WikiPatrolService {
     const drafts: PatrolDraft[] = []
     for (const [, r] of [...byKey.entries()].sort()) {
       drafts.push({
-        id: sha16(`stale|patrol|${r.pageRel}|${r.anchor}`),
+        id: findingIdFor(`stale|patrol|${r.pageRel}|${r.anchor}`),
         kind: "stale",
         title: `stale 上报：${r.pageRel}${r.anchor ? `#${r.anchor}` : ""}（${r.executionIds.length} 次执行反馈）`,
         detail: JSON.stringify({ target: r.target, anchor: r.anchor || null, page: r.pageRel, note: r.note, executions: r.executionIds }),
@@ -784,9 +781,9 @@ export class WikiPatrolService {
   private buildResolver(pages: PageView[]): (target: string) => PageView | undefined {
     const byKey = new Map<string, PageView>()
     for (const p of pages) {
-      const stem = p.relPath.replace(/\.md$/, "")
+      const stem = stripMdSuffix(p.relPath) // 全路径去缀键（目录语义）；尾段键同单源
       const base = p.relPath.split("/").pop() ?? p.relPath
-      const baseStem = base.replace(/\.md$/, "")
+      const baseStem = stripMdSuffix(base)
       for (const k of [p.id, p.relPath, stem, base, baseStem]) {
         if (!byKey.has(k)) byKey.set(k, p)
       }
@@ -828,7 +825,7 @@ export class WikiPatrolService {
       if (!CONTENT_TYPES.has(p.type)) continue
       if (inbound.has(p.relPath)) continue
       drafts.push({
-        id: sha16(`orphan|patrol|${p.relPath}`),
+        id: findingIdFor(`orphan|patrol|${p.relPath}`),
         kind: "orphan",
         title: `孤儿页：${p.relPath} 零入链（不被任何内容页引用）`,
         detail: JSON.stringify({ page: p.relPath }),
@@ -868,7 +865,7 @@ export class WikiPatrolService {
         if (linkSet.has(`${a.relPath}→${b.relPath}`) || linkSet.has(`${b.relPath}→${a.relPath}`)) continue
         const sorted = [a.relPath, b.relPath].sort()
         drafts.push({
-          id: sha16(`missing-xref|patrol|${sorted[0]}|${sorted[1]}`),
+          id: findingIdFor(`missing-xref|patrol|${sorted[0]}|${sorted[1]}`),
           kind: "missing-xref",
           title: `缺互链：${sorted[0]} ↔ ${sorted[1]} 同 topic（${shared.join("/")}）建议交叉引用`,
           detail: JSON.stringify({ a: sorted[0], b: sorted[1], shared_topics: shared.sort() }),
@@ -896,7 +893,7 @@ export class WikiPatrolService {
     const drafts: PatrolDraft[] = []
     for (const [target, hosts] of [...hostsByTarget.entries()].sort()) {
       drafts.push({
-        id: sha16(`missing-page|patrol|${target}`),
+        id: findingIdFor(`missing-page|patrol|${target}`),
         kind: "missing-page",
         title: `缺页：[[${target}]] 被 ${hosts.length} 页引用但无实体页`,
         detail: JSON.stringify({ target, hosts }),

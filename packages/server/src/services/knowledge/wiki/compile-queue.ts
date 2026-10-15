@@ -226,3 +226,30 @@ export class CompileQueue implements WriteQueue {
     }
   }
 }
+
+/** pollToTerminal 读数（终态命中带值返回；超上限带最后一次读数返回 settled=false）。 */
+export type PollOutcome<T> = { settled: true; value: T } | { settled: false; last: T | undefined }
+
+/**
+ * 队列/任务轮询共享等待形（aa-fix 项③：effectiveness-sync 与票09 settle 两份手写
+ * 制式合一）：每 intervalMs 取样一次，isSettled 命中即返；累计等待超 capMs ⇒
+ * settled=false 带最后读数返回——超时处置归调用方定夺（sync 抛自身命名错、
+ * auto-retire 诚实缺席原样返），本函数零裁决。计时=累加制（sync 旧制式逐字；
+ * auto-retire 旧墙钟制在 sleep 主导的间隔下与累加制渐近等价，终态检查恒先于
+ * 超时检查——两制式同律，行为等价声明见 merge 报告）。
+ */
+export async function pollToTerminal<T>(
+  sample: () => T | undefined,
+  isSettled: (t: T) => boolean,
+  capMs: number,
+  intervalMs: number,
+): Promise<PollOutcome<T>> {
+  let waitedMs = 0
+  for (;;) {
+    const value = sample()
+    if (value !== undefined && isSettled(value)) return { settled: true, value }
+    if (waitedMs >= capMs) return { settled: false, last: value }
+    await new Promise<void>(r => setTimeout(r, intervalMs))
+    waitedMs += intervalMs
+  }
+}

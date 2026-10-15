@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
-import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
+import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "../global-paths"
 import { CompileQueue, type WriteQueue } from "./compile-queue"
 import {
@@ -11,6 +11,7 @@ import {
   WIKI_LOG_FILE,
   WIKI_LOG_HEADER,
   formatLogRow,
+  atomicWrite,
 } from "./compile"
 import { parseWikiFile, serializePageMarkdown, serializeEntryMarkdown, serializeCaseMarkdown } from "./format"
 import { WIKILINK_RE } from "./lint"
@@ -291,7 +292,7 @@ export class PageRetireTaskService {
       throw new PageRetireError("INVALID_PARAM", `退役目标越界：${toRel}`, 400)
     }
     fs.mkdirSync(path.dirname(toAbs), { recursive: true })
-    writeAtomic(toAbs, retiredSerialized)
+    atomicWrite(toAbs, retiredSerialized)
     fs.unlinkSync(fromAbs)
 
     // ── 2.5 活页入链摘除（票04·故事26，spec「缺陷清偿·退役清入链」）。──
@@ -306,7 +307,7 @@ export class PageRetireTaskService {
     // 红线5/写保护：人工文件 isManualFileTarget 跳过（scan 面本不含，双保险）。
     const cleaned = cleanInboundLinks(this.wikiRoot, meta.id, relPath)
     for (const c of cleaned) {
-      writeAtomic(path.resolve(this.wikiRoot, c.relPath), c.next)
+      atomicWrite(path.resolve(this.wikiRoot, c.relPath), c.next)
     }
 
     const ftsWarnings: string[] = []
@@ -314,7 +315,7 @@ export class PageRetireTaskService {
       // ── 3. INDEX 程序化重建（永不经人手；_retired/ 不在 scan 面 ⇒ 页自动摘除）──
       const indexPath = path.join(this.wikiRoot, WIKI_INDEX_FILE)
       const entries = scanWikiEntries(this.wikiRoot)
-      writeAtomic(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
+      atomicWrite(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
 
       // ── 4. LOG 追加 retire 行（清链注记仅在真摘了链时出现——票08 旧断言零回归）。
       // 票09：日期走服务注入钟（票02 deep-revert 同制式）——夜巡窄口用夜巡时刻，
@@ -322,7 +323,7 @@ export class PageRetireTaskService {
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
       const noteBase = reason ? `退役入 _retired/ · ${reason}` : "退役入 _retired/"
-      writeAtomic(logPath, logBase + formatLogRow({
+      atomicWrite(logPath, logBase + formatLogRow({
         action: "retire",
         entry: relPath,
         note: cleaned.length > 0 ? `${noteBase} · 摘除 ${cleaned.length} 页入链` : noteBase,
@@ -332,9 +333,7 @@ export class PageRetireTaskService {
 
       // ── 5. DB/FTS 摘除（按原 path 定位行；在 _retired/ 的页不进索引面）──
       const articles = new WikiArticleDAO(this.db)
-      const found = this.db
-        .prepare("SELECT id FROM wiki_articles WHERE org = ? AND path = ?")
-        .get(GLOBAL_WIKI_ORG, relPath) as { id: string } | undefined
+      const found = articles.getByPath(GLOBAL_WIKI_ORG, relPath)
       if (found) {
         const rowid = articles.getRowid(GLOBAL_WIKI_ORG, found.id)
         if (rowid !== undefined) {
@@ -348,9 +347,7 @@ export class PageRetireTaskService {
       // ── 5.5 宿主页 DB/FTS 同步（票04：正文已摘链，wiki_articles.body/FTS 与盘一致；
       //        FTS 失败非致命 gotcha #6 同律）──
       for (const c of cleaned) {
-        const hostRow = this.db
-          .prepare("SELECT * FROM wiki_articles WHERE org = ? AND path = ?")
-          .get(GLOBAL_WIKI_ORG, c.relPath) as WikiArticleRow | undefined
+        const hostRow = articles.getByPath(GLOBAL_WIKI_ORG, c.relPath)
         if (!hostRow) continue
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
@@ -402,7 +399,7 @@ export class PageRetireTaskService {
         }
       } catch { /* 复原尽力而为 */ }
       for (const c of cleaned) {
-        try { writeAtomic(path.resolve(this.wikiRoot, c.relPath), c.oldRaw) } catch { /* 复原尽力而为 */ }
+        try { atomicWrite(path.resolve(this.wikiRoot, c.relPath), c.oldRaw) } catch { /* 复原尽力而为 */ }
       }
       throw err
     }
@@ -419,14 +416,7 @@ export class PageRetireTaskService {
   }
 }
 
-/** tmp+rename 原子替换（compile/revert 通道同款语义；本地实现因 compile 未导出）。 */
-function writeAtomic(target: string, content: string): void {
-  const dir = path.dirname(target)
-  fs.mkdirSync(dir, { recursive: true })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, content, "utf-8")
-  fs.renameSync(tmp, target)
-}
+
 
 /**
  * `[[target]]` 是否指向本次退役页——与 lint.resolveWikiLink 的命中面同形（单源纪律：

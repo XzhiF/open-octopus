@@ -70,6 +70,15 @@ export class WikiArticleDAO extends BaseDAO {
     return this.stmt("SELECT * FROM wiki_articles WHERE org = ? AND id = ?").get(org, id) as WikiArticleRow | undefined
   }
 
+  /**
+   * 按 org+path 定位整行（aa-fix 项③：page-retire/page-restore/revert 三通道原各持
+   * 裸 SQL 副本——SELECT * 与 SELECT id 两制式一并收编 DAO 单源；SELECT-id 消费方
+   * 取 .id 行为逐字等价）。
+   */
+  getByPath(org: string, path: string): WikiArticleRow | undefined {
+    return this.stmt("SELECT * FROM wiki_articles WHERE org = ? AND path = ?").get(org, path) as WikiArticleRow | undefined
+  }
+
   listByOrg(org: string): WikiArticleRow[] {
     return this.stmt("SELECT * FROM wiki_articles WHERE org = ? ORDER BY domain, path").all(org) as WikiArticleRow[]
   }

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
-import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
+import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "../global-paths"
 import { CompileQueue, type WriteQueue } from "./compile-queue"
 import {
@@ -11,6 +11,7 @@ import {
   WIKI_LOG_FILE,
   WIKI_LOG_HEADER,
   formatLogRow,
+  atomicWrite,
 } from "./compile"
 import { parseWikiFile, serializePageMarkdown, extractRuleAnchors, pageEntryView } from "./format"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
@@ -350,24 +351,24 @@ export class PageRestoreTaskService {
 
     // ── 3. 回迁落盘：先写在册位，再删 _retired/ 件（页任何时刻都在盘上）──
     fs.mkdirSync(path.dirname(liveAbs), { recursive: true })
-    writeAtomic(liveAbs, liveSerialized)
+    atomicWrite(liveAbs, liveSerialized)
     let retiredRemoved = false
     try {
       fs.unlinkSync(retiredAbs)
       retiredRemoved = true
       for (const r of restored) {
-        writeAtomic(path.resolve(this.wikiRoot, r.relPath), r.next)
+        atomicWrite(path.resolve(this.wikiRoot, r.relPath), r.next)
       }
 
       // ── 4. INDEX 程序化重建（页回在册面自动复列；永不经人手）──
       const indexPath = path.join(this.wikiRoot, WIKI_INDEX_FILE)
-      writeAtomic(indexPath, renderBudgetedWikiIndex(scanWikiEntries(this.wikiRoot), GLOBAL_WIKI_ORG).content)
+      atomicWrite(indexPath, renderBudgetedWikiIndex(scanWikiEntries(this.wikiRoot), GLOBAL_WIKI_ORG).content)
 
       // ── 5. LOG 追加 restore 行（日期走注入钟——红线6；与 retire 行同族可 grep）──
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
       const noteBase = opts.reason ? `自 _retired/ 回迁 · 原号原行 · ${opts.reason}` : "自 _retired/ 回迁 · 原号原行"
-      writeAtomic(logPath, logBase + formatLogRow({
+      atomicWrite(logPath, logBase + formatLogRow({
         action: "restore",
         entry: relPath,
         note: restored.length > 0 ? `${noteBase} · 回补 ${restored.length} 页入链` : noteBase,
@@ -401,9 +402,7 @@ export class PageRestoreTaskService {
         warnings.push(`回迁页解析异常，DB/FTS 未复登（盘/INDEX/LOG 已成立）：${relPath}`)
       }
       for (const r of restored) {
-        const hostRow = this.db
-          .prepare("SELECT * FROM wiki_articles WHERE org = ? AND path = ?")
-          .get(GLOBAL_WIKI_ORG, r.relPath) as WikiArticleRow | undefined
+        const hostRow = articles.getByPath(GLOBAL_WIKI_ORG, r.relPath)
         if (!hostRow) continue // 宿主本就未在册账面（与退役 §5.5 对偶）
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
@@ -447,12 +446,12 @@ export class PageRestoreTaskService {
     } catch (err) {
       // 尽力回滚：宿主逐字回写恢复前现文；页回 _retired/（在册位若已写则撤）——不留半恢复
       for (const r of restored) {
-        try { writeAtomic(path.resolve(this.wikiRoot, r.relPath), r.prev) } catch { /* 尽力而为 */ }
+        try { atomicWrite(path.resolve(this.wikiRoot, r.relPath), r.prev) } catch { /* 尽力而为 */ }
       }
       try {
         if (retiredRemoved && !fs.existsSync(retiredAbs)) {
           fs.mkdirSync(path.dirname(retiredAbs), { recursive: true })
-          writeAtomic(retiredAbs, retiredRaw)
+          atomicWrite(retiredAbs, retiredRaw)
         }
         if (fs.existsSync(liveAbs)) fs.rmSync(liveAbs, { force: true })
       } catch { /* 复原尽力而为 */ }
@@ -499,14 +498,7 @@ export class PageRestoreTaskService {
   }
 }
 
-/** tmp+rename 原子替换（page-retire/compile 通道同款语义；本地实现因 compile 未导出）。 */
-function writeAtomic(target: string, content: string): void {
-  const dir = path.dirname(target)
-  fs.mkdirSync(dir, { recursive: true })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, content, "utf-8")
-  fs.renameSync(tmp, target)
-}
+
 
 type ArticleUpsertRow = Parameters<WikiArticleDAO["upsert"]>[0]
 

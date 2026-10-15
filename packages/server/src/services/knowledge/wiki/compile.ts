@@ -151,8 +151,24 @@ export interface ScannedEntry {
 /** 判例文件名日期前缀（{YYYY-MM-DD}-{slug}.md）——判例是历史事件，文件名日期正当。 */
 const CASE_FILE_RE = /^(\d{4}-\d{2}-\d{2})-[a-z0-9][a-z0-9._-]*\.md$/i
 
-/** tmp 文件 + 同目录 rename —— Windows/POSIX 都是原子替换；不留 tmp 垃圾。 */
-function atomicWrite(target: string, content: string): void {
+/**
+ * fnd 内容寻址 id（aa-fix 项②1 单源合一）：`fnd-` + sha256(key) hex 前 16。
+ * 旧双式=patrol.ts 私有 sha16 与本文件 index-budget 预警内联同款——同一函数归一于此，
+ * kind/source 前缀词表差异留在各调用方 key 参（如 `duplicate|patrol|…`、
+ * `index-budget|compile|…`）。换式=内容址漂移，findings 幂等闸（getById 比 id）天然破，
+ * 单源纪律是数据一致面不是美观。
+ */
+export function findingIdFor(key: string): string {
+  return `fnd-${crypto.createHash("sha256").update(key, "utf-8").digest("hex").slice(0, 16)}`
+}
+
+/**
+ * tmp 文件 + 同目录 rename —— Windows/POSIX 都是原子替换；不留 tmp 垃圾（失败清 tmp 再抛）。
+ * aa-fix 项②4 单源：compile/page-retire/page-restore/revert 四通道原四份手写副本归一于此
+ * （其余三通道改 import 消费）。取 compile 份为基准形：mkdir 前置对 revert 旧形（原无 mkdir）
+ * 在其可达面恒等（目标目录恒在场）；tmp 命名制式差异属瞬态，终态文件逐字节同。
+ */
+export function atomicWrite(target: string, content: string): void {
   const dir = path.dirname(target)
   fs.mkdirSync(dir, { recursive: true })
   const tmp = path.join(dir, `.tmp-${path.basename(target)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
@@ -1067,7 +1083,7 @@ export class WikiCompileService {
       ...(triggeredBy !== undefined ? { triggered_by: triggeredBy } : {}),
     }
     const draft: FindingUpsert = {
-      id: `fnd-${crypto.createHash("sha256").update(`index-budget|compile|${this.org}`, "utf-8").digest("hex").slice(0, 16)}`,
+      id: findingIdFor(`index-budget|compile|${this.org}`),
       kind: "index-budget",
       title: `INDEX 预算预警：恒见部分约 ${budget.visibleTokens}/${WIKI_LIMITS.INDEX_MAX_TOKENS} token（${percent}%）——三选一：移低频页入 ## Optional / 拆分 / hub 化`,
       detail: JSON.stringify(detail),

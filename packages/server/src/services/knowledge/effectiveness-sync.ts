@@ -6,7 +6,7 @@ import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "./global-paths"
 import { scanWikiEntries, WikiCompileService } from "./wiki/compile"
 import { parseWikiFile, serializePageMarkdown } from "./wiki/format"
 import type { GitRunner } from "./wiki/wiki-git"
-import type { WriteQueue } from "./wiki/compile-queue"
+import { pollToTerminal, type WriteQueue } from "./wiki/compile-queue"
 import { CONFIDENCE_MIN_SAMPLES, roundConfidence, rollupEffectiveness } from "./effectiveness-confidence"
 
 /**
@@ -39,7 +39,6 @@ import { CONFIDENCE_MIN_SAMPLES, roundConfidence, rollupEffectiveness } from "./
 
 /** 队列等待上限（批通道在跑别的写操作时的自愈口径：超时抛，夜巡腿显形不炸作业）。 */
 const SYNC_QUEUE_WAIT_LIMIT_MS = 120_000
-const sleepMs = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 export interface SyncedPageEntry {
   relPath: string
@@ -161,17 +160,20 @@ export class EffectivenessSyncService {
       })
       queueTaskId = view.id
       let latest = view
-      for (let waitedMs = 0; ; ) {
-        latest = this.queue.get(view.id) ?? latest
-        if (latest.state === "committed" || latest.state === "failed") break
-        if (waitedMs >= SYNC_QUEUE_WAIT_LIMIT_MS) {
-          throw new Error(
-            `EFFECTIVENESS_SYNC_QUEUE_TIMEOUT: 任务 ${view.id} 在 ${SYNC_QUEUE_WAIT_LIMIT_MS / 1000}s 内未达终态（队列在跑别的写操作？稍后可重查 GET /api/knowledge/wiki/queue/task/${view.id}）`,
-          )
-        }
-        await sleepMs(10)
-        waitedMs += 10
+      // 轮询共享形=compile-queue.ts pollToTerminal（aa-fix 项③；旧手写制式的
+      // 「get 缺席回退上一读数」由 sample 闭包逐字保留）
+      const outcome = await pollToTerminal(
+        () => (latest = this.queue.get(view.id) ?? latest),
+        (t) => t.state === "committed" || t.state === "failed",
+        SYNC_QUEUE_WAIT_LIMIT_MS,
+        10,
+      )
+      if (!outcome.settled) {
+        throw new Error(
+          `EFFECTIVENESS_SYNC_QUEUE_TIMEOUT: 任务 ${view.id} 在 ${SYNC_QUEUE_WAIT_LIMIT_MS / 1000}s 内未达终态（队列在跑别的写操作？稍后可重查 GET /api/knowledge/wiki/queue/task/${view.id}）`,
+        )
       }
+      latest = outcome.value
       if (latest.state === "failed") {
         const code = latest.error?.code ?? "QUEUE_OP_FAILED"
         throw new Error(`${code}: ${latest.error?.message ?? "写队列任务失败"}`)

@@ -11,6 +11,7 @@ import {
   WIKI_LOG_FILE,
   WIKI_LOG_HEADER,
   formatLogRow,
+  atomicWrite,
 } from "./compile"
 import { parseWikiFile, pageEntryView, caseEntryView, pageTypeOf } from "./format"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
@@ -242,7 +243,7 @@ export class RevertTaskService {
           fs.rmSync(abs, { force: true })
         } else {
           fs.mkdirSync(path.dirname(abs), { recursive: true })
-          writeAtomic(abs, op.restore ?? "")
+          atomicWrite(abs, op.restore ?? "")
           // _retired 面处置：活页回在册面时，`_retired/` 下同路径镜像（该页其后被
           // 退役/迁走过）一并摘除——活页=正典，防 retiredLedgerAnchors 与在册面双登记
           if (!op.path.startsWith(`${WIKI_RETIRED_DIR}/`)) {
@@ -256,7 +257,7 @@ export class RevertTaskService {
       const indexPath = path.join(this.wikiRoot, WIKI_INDEX_FILE)
       if (fs.existsSync(this.wikiRoot)) {
         const entries = scanWikiEntries(this.wikiRoot)
-        writeAtomic(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
+        atomicWrite(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
       }
 
       // ── fs 段③：LOG append deep-revert 行（故事23 审计面：目标 commit + 重建页数；
@@ -264,7 +265,7 @@ export class RevertTaskService {
       // LOG_LINE_RE op 字符集含连字符，零改动；日期走注入时钟——红线6）──
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
-      writeAtomic(logPath, logBase + formatLogRow({
+      atomicWrite(logPath, logBase + formatLogRow({
         action: "deep-revert",
         entry: `compile ${target.slice(0, 7)}`,
         note: "回滚本次编译",
@@ -299,9 +300,7 @@ export class RevertTaskService {
             }
           }
         } else {
-          const found = this.db
-            .prepare("SELECT id FROM wiki_articles WHERE org = ? AND path = ?")
-            .get(GLOBAL_WIKI_ORG, t.path) as { id: string } | undefined
+          const found = articles.getByPath(GLOBAL_WIKI_ORG, t.path)
           if (found) {
             const rowid = articles.getRowid(GLOBAL_WIKI_ORG, found.id)
             if (rowid !== undefined) {
@@ -349,13 +348,6 @@ export class RevertTaskService {
       }
     }
   }
-}
-
-/** tmp+rename 原子替换（compile 通道同款语义；本地实现因 compile 未导出）。 */
-function writeAtomic(target: string, content: string): void {
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, content, "utf-8")
-  fs.renameSync(tmp, target)
 }
 
 /** wiki_articles upsert 行形（DAO 的 Omit<..., "updated_at"> 同形）。 */

@@ -33,13 +33,16 @@ import type Database from "better-sqlite3"
 import path from "path"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 import { resolveKnowledgeRoot } from "../global-paths"
+import { pageLedgerStem } from "../page-stem"
 import { scanWikiEntries, type ScannedEntry } from "./compile"
 import { isManualFileTarget } from "./manual-files"
 import { RETIRABLE_DIR_RE, cleanInboundLinks, type PageRetireTaskRecord } from "./page-retire"
+import { pollToTerminal } from "./compile-queue"
 
 /**
- * 窄口观察窗（天）。口径=spec 故事 16「90 天零引用」逐字，与票08 僵尸查（D3）同一窗值
- * 单源纪律：两处消费方若调窗，必须同步 SCHEMA.md 命名法段注记（owner 共演面）。
+ * 窄口观察窗（天）。口径=spec 故事 16「90 天零引用」逐字。**窗值单源（aa-fix 项②3 合一）**：
+ * 票08 僵尸查（patrol.ts——旧包内私有同名常量已删，改 import 本常量）与本窄口共用此值；
+ * 调窗必须同步 SCHEMA.md 命名法段注记（owner 共演面）。
  */
 export const AUTO_RETIRE_WINDOW_DAYS = 90
 
@@ -235,26 +238,29 @@ export class AutoRetireService {
     return report
   }
 
-  /** 轮询任务至终态（队列异步泵；上限内无 sleep 判据——这是异步完成观测，非时间窗）。 */
+  /** 轮询任务至终态（队列异步泵；上限内无 sleep 判据——这是异步完成观测，非时间窗）。
+   *  轮询共享形=compile-queue.ts pollToTerminal（aa-fix 项③）；超时=原样返回最后读数
+   *  （诚实缺席不通知语义不变）。 */
   private async settle(id: string, capMs = SETTLE_LIMIT_MS): Promise<PageRetireTaskRecord | undefined> {
-    const start = Date.now()
-    for (;;) {
-      const rec = this.retireTasks.get(id)
-      if (rec && (rec.status === "committed" || rec.status === "failed")) return rec
-      if (Date.now() - start > capMs) return rec
-      await new Promise(r => setTimeout(r, 20))
-    }
+    const outcome = await pollToTerminal(
+      () => this.retireTasks.get(id),
+      (rec) => rec.status === "committed" || rec.status === "failed",
+      capMs,
+      20,
+    )
+    return outcome.settled ? outcome.value : outcome.last
   }
 }
 
 function toNarrowGatePage(e: ScannedEntry): NarrowGatePage {
-  const stem = (e.relPath.split("/").pop() ?? "").replace(/\.md$/i, "")
+  const stem = pageLedgerStem(e.relPath)
   return {
     relPath: e.relPath,
     pageId: e.meta.id,
     anchors: e.anchors,
     lastCompiled: e.meta.last_compiled ?? "",
     // 票06 制式：页级 Read 键=文件名 stem；wiki_refs 路径形态同归一此键
+    // （aa-fix 项②：stem 归一单源 ../page-stem.ts——与 ledger ref-token/巡检解析键三份合一）
     pageLedgerKey: stem,
   }
 }
