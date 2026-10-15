@@ -127,6 +127,12 @@ export interface PatrolHandlerOpts {
    * 失败显形进 outcome 不炸作业（报对话同律）；缺省零行为变化（票13/03 现状）。
    */
   afterPatrol?: (report: PatrolReport) => void | Promise<void>
+  /**
+   * P4 票06：effectiveness 记账腿（spec 故事 6「夜巡可反复跑」——记账解析器的自动
+   * 触发面，与手动端点 POST /api/knowledge/effectiveness/parse 同服务入口）。
+   * 失败显形进 outcome 不炸作业（afterPatrol/报对话同款纪律）；缺省零行为变化。
+   */
+  parseLedger?: () => void | Promise<void>
 }
 
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
@@ -150,6 +156,14 @@ export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: Patro
       } catch (err) {
         // 草案扫描失败不吞巡检成果（P3 票04：与报对话同律——显形不炸作业）
         note += ` · 草案扫描失败（${err instanceof Error ? err.message : String(err)}）`
+      }
+    }
+    if (opts.parseLedger) {
+      try {
+        await opts.parseLedger()
+      } catch (err) {
+        // 记账腿失败不吞巡检成果（P4 票06：与草案扫描同律——显形不炸作业）
+        note += ` · 记账失败（${err instanceof Error ? err.message : String(err)}）`
       }
     }
     return {

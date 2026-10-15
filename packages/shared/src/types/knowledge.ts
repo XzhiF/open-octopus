@@ -4,14 +4,15 @@ import { z } from "zod"
 // PendingType/KnowledgeScope/ConflictType/ConflictInfoSchema/PendingReviewSchema/
 // ProposedRule/ProposedSkill）随表物理 drop + 生产者 extract.ts 下线一并删除——skill 草案
 // 走卡片通道后零消费者，红线3「审批不复活」。KnowledgeConfigSchema（agent 设置）、
-// KnowledgeEffectivenessSchema（P4 预留面）、ParsedRule（file-ops 运行时护栏）保留。
-
+// ParsedRule（file-ops 运行时护栏）保留。
+// KnowledgeEffectivenessSchema = DB 行 knowledge_effectiveness 的类型镜像（P4 票06 起
+// 消费中；列义 v2：cited_count=引用计数、last_cited=最近被引用时间，随蓝绿改名同步）。
 export const KnowledgeEffectivenessSchema = z.object({
   ruleId: z.string(),
-  injectedCount: z.number().int(),
+  citedCount: z.number().int(),
   helpfulCount: z.number().int(),
   notHelpfulCount: z.number().int(),
-  lastInjected: z.string().nullable(),
+  lastCited: z.string().nullable(),
   confidence: z.number().min(0).max(1),
 })
 

@@ -16,8 +16,9 @@ export { EvolutionDAO } from "./evolution-dao"
 export { CloneDAO } from "./clone-dao"
 export { SafetyDAO } from "./safety-dao"
 // 边界注：审批结案流（/propose + /api/review + PendingReviewDAO）不在此导出面——草案审核走 skill-draft 卡人裁通道，知识沉淀走 task archiving 态自动投喂。
-// 边界注（评审 S1）：业务层零 importer，保留为 spec Out-of-Scope P4「effectiveness v2」预留面
-// ——与 schema.sql knowledge_effectiveness 边界注同律，勿删（详见 knowledge-effectiveness-dao.ts 类注）。
+// 边界注（P4 票06 转正）：v55 起本 DAO **消费中**——importer=services/knowledge/
+// effectiveness-ledger.ts（记账解析器），列义对齐 effectiveness v2（引用计数/最近被引用
+// 时间）；与 schema.sql knowledge_effectiveness 边界注同律（勿删、勿复活旧注入语义）。
 export { KnowledgeEffectivenessDAO } from "./knowledge-effectiveness-dao"
 export { ArchiveDAO } from "./archive-dao"
 export { ArchiveDraftDAO } from "./archive-draft-dao"
