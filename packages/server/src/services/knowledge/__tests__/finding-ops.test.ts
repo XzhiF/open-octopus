@@ -499,3 +499,145 @@ describe("[采纳修订] low-confidence — 票07 账目证据进修订稿通道
     expect(read("topics/top-ci.md")).toContain("oct-001")
   })
 })
+
+// ── P4 票08：数值处方 adopt 出口 ────────────────────────────────────
+// 通道分配（红线2：出口一律人裁后编译，零自动执行）：
+//  duplicate ⇒ **确定性合并执行体**（detail.merge_draft 有稿用稿、无稿保守取主条原文——
+//    主条归一、对侧原位改指；两锚点都留在原地=wiki_refs 不断链，锚点守门天然满足，零 LLM）；
+//  bloat / volatile-expired ⇒ 既有 semanticRevision 修订通道（票07 同款「证据进 prompt」）；
+//  zombie / domain-skew ⇒ 响亮 UNSUPPORTED（退役=对话/票09 窄口；hub 化=结构性编辑非本通道）。
+
+function seedFinding(id: string, kind: string, detail: Record<string, unknown>, pages: string[]): void {
+  new FindingsDAO(db).upsert({
+    id, kind,
+    title: `测试 ${kind}`,
+    detail: JSON.stringify(detail),
+    pages: JSON.stringify(pages),
+    raw_ref: "",
+    source: "patrol",
+  })
+}
+
+describe("[采纳修订] duplicate — 票08 确定性合并（主条归一+对侧原位指针，零 LLM）", () => {
+  const dupDetail = (draft: string) => ({
+    a_page: "topics/top-ma.md", a_anchor: "oct-001", a_text: "提交代码前必须跑 pnpm test 再推送",
+    b_page: "topics/top-mb.md", b_anchor: "oct-002", b_text: "提交代码前必须跑 pnpm test 后推送",
+    score: 0.8333, merge_draft: draft,
+  })
+
+  it("有稿 adopt ⇒ 主条=合并稿、对侧=已并入指针句，两锚点原地保留 → committed → resolved → 二巡不再成对（闭环）", async () => {
+    writePage("topics/top-ma.md", "top-ma", "topic", ["ci"], [],
+      "## 硬约束\n- 提交代码前必须跑 pnpm test 再推送 <!--#oct-001-->\n")
+    writePage("topics/top-mb.md", "top-mb", "topic", ["ci"], [],
+      "## 硬约束\n- 提交代码前必须跑 pnpm test 后推送 <!--#oct-002-->\n")
+    seedFinding("fnd-dup000000000001", "duplicate", dupDetail("合并稿：提交前须跑 pnpm test 通过再推送"), ["topics/top-ma.md", "topics/top-mb.md"])
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt("fnd-dup000000000001")
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+
+    const ma = read("topics/top-ma.md")
+    const mb = read("topics/top-mb.md")
+    expect(ma).toContain("合并稿：提交前须跑 pnpm test 通过再推送 <!--#oct-001-->") // 主条归一，锚随句
+    expect(mb).toContain("[[top-ma]]#oct-001") // 对侧改指主条
+    expect(mb).toContain("<!--#oct-002-->")    // 对侧锚点原地保留（永不复用/删除纪律）
+    expect(ma).toContain("## 硬约束")
+    expect(new FindingsDAO(db).getById("fnd-dup000000000001")!.status).toBe("resolved")
+
+    // 闭环：合并后文本不再近义 ⇒ 二巡该 pair 自然出列（missing-xref 同风格断言）
+    const re = (await makePatrol().patrol())
+    expect(re.findings.find(f => f.kind === "duplicate")).toBeUndefined()
+  })
+
+  it("无稿（seam 诚实缺席形态）adopt ⇒ 保守合并：主条原文不动、对侧仍改指——零 LLM 也能闭环", async () => {
+    writePage("topics/top-ma.md", "top-ma", "topic", ["ci"], [],
+      "## 硬约束\n- 提交代码前必须跑 pnpm test 再推送 <!--#oct-001-->\n")
+    writePage("topics/top-mb.md", "top-mb", "topic", ["ci"], [],
+      "## 硬约束\n- 提交代码前必须跑 pnpm test 后推送 <!--#oct-002-->\n")
+    seedFinding("fnd-dup000000000002", "duplicate", dupDetail(""), ["topics/top-ma.md", "topics/top-mb.md"])
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt("fnd-dup000000000002")
+    await drain(queue)
+    expect(ops.getTask(task.id)!.status, JSON.stringify(ops.getTask(task.id)!.error)).toBe("committed")
+    expect(read("topics/top-ma.md")).toContain("- 提交代码前必须跑 pnpm test 再推送 <!--#oct-001-->")
+    expect(read("topics/top-mb.md")).toContain("已并入 [[top-ma]]#oct-001")
+  })
+
+  it("涉事页锚点已失（盘被编辑）⇒ 响亮 failed(FINDING_TARGET_MISSING) 库零动，不硬合并", async () => {
+    writePage("topics/top-ma.md", "top-ma", "topic", ["ci"], [], "## 硬约束\n- 页已被人工改写 <!--#oct-009-->\n")
+    writePage("topics/top-mb.md", "top-mb", "topic", ["ci"], [], "## 硬约束\n- 另一页 <!--#oct-002-->\n")
+    seedFinding("fnd-dup000000000003", "duplicate", dupDetail("草稿"), ["topics/top-ma.md", "topics/top-mb.md"])
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt("fnd-dup000000000003")
+    await drain(queue)
+    expect(ops.getTask(task.id)!.error?.code).toBe("FINDING_TARGET_MISSING")
+    expect(new FindingsDAO(db).getById("fnd-dup000000000003")!.status).toBe("open")
+    expect(read("topics/top-ma.md")).toContain("页已被人工改写")
+  })
+})
+
+describe("[采纳修订] bloat / volatile-expired — 票08 进既有 semanticRevision 通道", () => {
+  it("bloat adopt ⇒ prompt 含容量水位数字 → 瘦身修订稿落盘 → resolved", async () => {
+    writePage("topics/top-fat.md", "top-fat", "topic", ["ci"], [],
+      "## 硬约束\n- 纪律一 <!--#oct-001-->\n")
+    seedFinding("fnd-blo0000000000001", "bloat", { page: "topics/top-fat.md", lines: 110, rules: 1, tokens: 1500, waterline: 0.917 }, ["topics/top-fat.md"])
+    const prompts: string[] = []
+    const llm: LLMCall = async (p) => {
+      prompts.push(p)
+      return JSON.stringify({ pages: [{ relPath: "topics/top-fat.md", body: "## 硬约束\n- 瘦身后的准确纪律 <!--#oct-001-->\n" }] })
+    }
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, llm, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt("fnd-blo0000000000001")
+    await drain(queue)
+    expect(ops.getTask(task.id)!.status, JSON.stringify(ops.getTask(task.id)!.error)).toBe("committed")
+    expect(prompts[0]).toContain("膨胀")
+    expect(prompts[0]).toContain("0.917") // 水位数字进证据面
+    expect(read("topics/top-fat.md")).toContain("瘦身后的准确纪律")
+    expect(new FindingsDAO(db).getById("fnd-blo0000000000001")!.status).toBe("resolved")
+  })
+
+  it("volatile-expired adopt ⇒ 三选一之「改写」案：prompt 含 review_after 与逾期天数，续期/退役不属本通道（注记在证据文案）", async () => {
+    writePage("topics/top-v.md", "top-v", "topic", ["ci"], [],
+      "## 硬约束\n- 时效规则 <!--#oct-001-->\n")
+    seedFinding("fnd-vol0000000000001", "volatile-expired", { page: "topics/top-v.md", review_after: "2026-09-30", overdue_days: 13 }, ["topics/top-v.md"])
+    const prompts: string[] = []
+    const llm: LLMCall = async (p) => {
+      prompts.push(p)
+      return JSON.stringify({ pages: [{ relPath: "topics/top-v.md", body: "## 硬约束\n- 按现场改写后的规则 <!--#oct-001-->\n" }] })
+    }
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, llm, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt("fnd-vol0000000000001")
+    await drain(queue)
+    expect(ops.getTask(task.id)!.status, JSON.stringify(ops.getTask(task.id)!.error)).toBe("committed")
+    expect(prompts[0]).toContain("2026-09-30")
+    expect(prompts[0]).toContain("续期") // 三选一在人裁侧的显形注记
+    expect(read("topics/top-v.md")).toContain("按现场改写后的规则")
+  })
+})
+
+describe("[采纳修订] zombie / domain-skew — 响亮 UNSUPPORTED（红线2 处方≠手术）", () => {
+  it("两类 kind adopt ⇒ failed(FINDING_FIX_UNSUPPORTED_KIND)、finding 留 open、库零动——退役走票09/对话，hub 化走对话策展", async () => {
+    writePage("topics/top-z.md", "top-z", "topic", ["ci"], [], "## 硬约束\n- 僵尸纪律 <!--#oct-001-->\n")
+    seedFinding("fnd-zom0000000000001", "zombie", { page: "topics/top-z.md", basis: "never", dormant_days: 120 }, ["topics/top-z.md"])
+    seedFinding("fnd-skew000000000001", "domain-skew", { page: "topics/top-z.md", anchors: 1, total_anchors: 2, share: 0.5 }, ["topics/top-z.md"])
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    for (const id of ["fnd-zom0000000000001", "fnd-skew000000000001"]) {
+      const task = ops.adopt(id)
+      await drain(queue)
+      const done = ops.getTask(task.id)!
+      expect(done.status).toBe("failed")
+      expect(done.error?.code).toBe("FINDING_FIX_UNSUPPORTED_KIND")
+      expect(new FindingsDAO(db).getById(id)!.status).toBe("open")
+    }
+    expect(read("topics/top-z.md")).toContain("僵尸纪律") // 库零动
+  })
+})

@@ -341,6 +341,60 @@ export class FindingOpsService {
         works.push(...revise)
         break
       }
+      case "bloat":
+      case "volatile-expired": {
+        // P4 票08：膨胀榜「瘦身」案与 volatile 三选一之「改写」案走同一 LLM 修订通道
+        // （票07 先例延伸：第四/五证据形态=容量水位数字、review_after 逾期天数）。
+        // volatile 之「续期」（改 front-matter）与「退役」不属本通道——front-matter 不
+        // 在修订面、退役走对话/票09（红线2）；domain-skew（需新建子页的结构性编辑）
+        // 与 zombie 同理留 default 响亮拒。
+        const revise = await this.semanticRevision(row, detail, pages, scanned, loadWork)
+        works.push(...revise)
+        break
+      }
+      case "duplicate": {
+        // P4 票08 D2 采纳：**确定性合并**（零 LLM——稿在 patrol 侧已产，adopt 只执行）。
+        // 主条页：规则行换成合并稿（有稿用稿·清洗锚点注释/日期/折行；无稿保守取在盘
+        // 原文=「宁缺勿合」的裁决落地形态）；对侧页：规则行改「已并入」指针句。
+        // 两锚点都原地保留（wiki_refs 不断链——锚点永不复用/删除纪律天然满足，
+        // 无需走 FINDING_ANCHOR_LOST 守门即结构免疫）。涉事页被编辑致锚点行失踪 ⇒
+        // 响亮 FINDING_TARGET_MISSING 库零动（不硬合并）。
+        const aPage = String(detail.a_page ?? "")
+        const bPage = String(detail.b_page ?? "")
+        const aAnchor = String(detail.a_anchor ?? "")
+        const bAnchor = String(detail.b_anchor ?? "")
+        if (!aPage || !bPage || !aAnchor || !bAnchor) {
+          throw new FindingOpsError("FINDING_TARGET_MISSING", "重复对 finding 缺 a/b 页或锚点", 409)
+        }
+        const wa = loadWork(aPage)
+        const wb = loadWork(bPage)
+        const ruleLineIndex = (body: string, anchor: string): number =>
+          body.split(/\r?\n/).findIndex(l => l.includes(`<!--#${anchor}-->`))
+        const spliceRuleLine = (w: PageWork, anchor: string, newLine: string): PageWork => {
+          const lines = w.body.split(/\r?\n/)
+          const idx = ruleLineIndex(w.body, anchor)
+          if (idx === -1) {
+            throw new FindingOpsError("FINDING_TARGET_MISSING", `锚点 ${anchor} 在页 ${w.relPath} 现文失踪（页被编辑？）——合并中断，库零动`, 409)
+          }
+          lines[idx] = newLine
+          return { ...w, body: lines.join("\n") }
+        }
+        // 主条现文（无稿兜底用；取数口与 ruleLinesForFormCheck 同口径剥锚注/列表符）
+        const aIdx = ruleLineIndex(wa.body, aAnchor)
+        if (aIdx === -1) {
+          throw new FindingOpsError("FINDING_TARGET_MISSING", `锚点 ${aAnchor} 在页 ${wa.relPath} 现文失踪（页被编辑？）——合并中断，库零动`, 409)
+        }
+        const aTextOnDisk = wa.body.split(/\r?\n/)[aIdx]!.replace(/<!--#[A-Za-z0-9_-]+-->/g, "").replace(/^[-*]\s+/, "").trim()
+        const draftRaw = typeof detail.merge_draft === "string" ? detail.merge_draft : ""
+        const draftClean = scrubDates(draftRaw.replace(/<!--#[^>]*-->/g, "")).replace(/\s+/g, " ").trim().slice(0, 200)
+        const merged = draftClean !== "" && draftClean !== "NOT_MERGE" ? draftClean : aTextOnDisk
+        works.push(
+          spliceRuleLine(wa, aAnchor, `- ${merged} <!--#${aAnchor}-->`),
+          spliceRuleLine(wb, bAnchor, `- 已并入 [[${wa.meta.id}]]#${aAnchor}（巡检重复对归一·主条=${aAnchor}） <!--#${bAnchor}-->`),
+        )
+        fixNote = `finding 采纳：重复对合并 ${aAnchor} ⇔ ${bAnchor}（主条归一·对侧改指）· 裁决即编译（票08）`
+        break
+      }
       case "case-backlog": {
         // P3 票03 六查采纳：判例蒸馏=确定性编译（不走 LLM——规则文本机械提纯自判例
         // 五段），产物 topics 硬约束 + 判例↔规则互指。独立成对写（topic 批通道 +
@@ -392,6 +446,26 @@ export class FindingOpsService {
     }
   }
 
+  /**
+   * 修订 prompt 的「证据与处置」段按 kind 分形态（每形态=一种处方证据面；
+   * 票13 contradiction/stale → 票07 实效账目 → 票08 容量水位/时效逾期——
+   * 数字进 prompt 让人裁修订稿作者看得见「为什么」，判定权仍在人）。
+   */
+  private revisionEvidence(row: FindingRow, detail: Record<string, unknown>): string {
+    switch (row.kind) {
+      case "contradiction":
+        return `旧断言：「${String(detail.old_claim ?? "")}」\n新断言：「${String(detail.new_claim ?? "")}」\n处置：旧断言所在页改写为**历史沿革**口吻（保留信息、指明已废止），新断言页维持现说。`
+      case "low-confidence":
+        return `实效账目：引用 ${Number(detail.cited ?? 0)}× · helpful ${Number(detail.helpful ?? 0)} · not_helpful ${Number(detail.not_helpful ?? 0)} → confidence ${String(detail.confidence ?? "")}（低置信闸下，measured=${String(detail.measured ?? "")}）。处置：该页规则被消费却反复没挡住坑——按账目把涉事规则行改写到**与现场一致且可执行**；若判断整条应废，不要在本稿删除（锚点不可删），交对话退役通道（红线2 零自动退役）。`
+      case "bloat":
+        return `膨胀水位：页 ${String(detail.page ?? "")} 容量水位 ${String(detail.waterline ?? "")}（达 L1 预警线 0.8——行 ${String(detail.lines ?? "")}/120 · 规则 ${String(detail.rules ?? "")}/25 · token 约 ${String(detail.tokens ?? "")}/2000，先到为准）。处置：整页**瘦身**——近义行合并、次要细节移往更适切页或以 [[链接]] 指回源；修订后正文须降到预警线下；锚点一条不能少（信息可并句、不可删锚——永不复用纪律）。`
+      case "volatile-expired":
+        return `volatile 到期：review_after=${String(detail.review_after ?? "")} 已过 ${String(detail.overdue_days ?? "")} 天。三选一之**改写**案属本通道——按现场把涉事规则改写至与当前一致；「续期」（改 front-matter 的 review_after）与「退役」属对话显式通道（front-matter 不在修订面；红线2 零自动）。锚点注释原位保留。`
+      default:
+        return `消费侧 stale 上报：目标 ${String(detail.anchor ?? detail.target ?? "")}，说明「${String(detail.note ?? "")}」。处置：按上报把涉事规则行改到与现场一致，**锚点注释 <!--#oct-…--> 原位保留**。`
+    }
+  }
+
   /** contradiction/stale 共用的 LLM 修订稿面：捕获 prompt=证据；输出 pages[] 全覆盖 + 锚点守门。 */
   private async semanticRevision(
     row: FindingRow,
@@ -407,11 +481,7 @@ export class FindingOpsService {
     const schemaPath = path.join(this.root, "SCHEMA.md")
     const schemaText = fs.existsSync(schemaPath) ? fs.readFileSync(schemaPath, "utf-8") : "（SCHEMA.md 缺席——按页格式 v3 常识执行）"
     const context = works.map(w => `### ${w.relPath}\n\n${serializePageMarkdown(w.meta, w.body)}`).join("\n---\n\n")
-    const evidence = row.kind === "contradiction"
-      ? `旧断言：「${String(detail.old_claim ?? "")}」\n新断言：「${String(detail.new_claim ?? "")}」\n处置：旧断言所在页改写为**历史沿革**口吻（保留信息、指明已废止），新断言页维持现说。`
-      : row.kind === "low-confidence"
-        ? `实效账目：引用 ${Number(detail.cited ?? 0)}× · helpful ${Number(detail.helpful ?? 0)} · not_helpful ${Number(detail.not_helpful ?? 0)} → confidence ${String(detail.confidence ?? "")}（低置信闸下，measured=${String(detail.measured ?? "")}）。处置：该页规则被消费却反复没挡住坑——按账目把涉事规则行改写到**与现场一致且可执行**；若判断整条应废，不要在本稿删除（锚点不可删），交对话退役通道（红线2 零自动退役）。`
-        : `消费侧 stale 上报：目标 ${String(detail.anchor ?? detail.target ?? "")}，说明「${String(detail.note ?? "")}」。处置：按上报把涉事规则行改到与现场一致，**锚点注释 <!--#oct-…--> 原位保留**。`
+    const evidence = this.revisionEvidence(row, detail)
     const prompt = `# finding 修订稿任务（${row.kind}｜${row.title}）
 
 你是策展人。对下面 finding 涉及的页生成修订稿。必读 SCHEMA.md 约定：
