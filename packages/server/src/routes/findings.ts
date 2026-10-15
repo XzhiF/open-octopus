@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono"
 import type { FindingRow, FindingStatus } from "../db/dao/findings-dao"
 import { IngestError } from "../services/knowledge/raw"
 import { FindingOpsError, type FixTaskRecord } from "../services/knowledge/findings"
+import { severityOf } from "../services/knowledge/health-score"
 import type { PatrolReport } from "../services/knowledge/patrol"
 import type { BackfillInput, BackfillResult } from "../services/knowledge/backfill"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
@@ -46,6 +47,9 @@ export function findingView(row: FindingRow): Record<string, unknown> {
   return {
     id: row.id,
     kind: row.kind,
+    // P4 票08 分组视图薄扩：kind→severity 派生值（单源 health-score.ts，未知 kind 保守 minor——
+    // additive 键纪律同 avgConfidence 先例，前端按此分组渲染 ranked findings，零新端点）
+    severity: severityOf(row.kind),
     status: row.status,
     title: row.title,
     detail: tryParse(row.detail, {}),

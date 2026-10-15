@@ -46,6 +46,12 @@ export interface KnowledgeReadOpts {
    * 的稳定零值——契约形状先定只换值不换形，queueDepth/openFindings 同律）。
    */
   getAvgConfidence?: () => number | null
+  /**
+   * P4 票08：健康条「health score 0-100」注入（公式单源 health-score.ts，服务侧
+   * WikiPatrolService.healthScore()；缺省 null = 未装配巡检/空库诚实不可评——
+   * 不伪造满分，avgConfidence 同律只换值不换形）。
+   */
+  getHealthScore?: () => number | null
 }
 
 /**
@@ -199,6 +205,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
         openFindings: opts?.getOpenFindings?.() ?? 0, // 票13 巡检/编译 findings 真值（只换值不换形）
         queueDepth: opts?.getQueueDepth?.() ?? 0,   // 票06 全局编译队列实值（未装配 ⇒ 稳定零值）
         avgConfidence: opts?.getAvgConfidence?.() ?? null, // 票07 全库平均置信（已测行口径；未装配/全未测 ⇒ null 诚实）
+        score: opts?.getHealthScore?.() ?? null, // 票08 health score 0-100（未装配/空库 ⇒ null 诚实不可评，不伪造满分）
         lastCompiled,
         gitHead,
       })

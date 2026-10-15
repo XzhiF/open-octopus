@@ -200,6 +200,18 @@ describe("GET /api/knowledge/health — 健康条聚合（票面口径七项，�
     expect(Object.keys(data).sort()).toEqual(Object.keys(base).sort())
   })
 
+  it("score（P4 票08 health score 0-100）：未装配 ⇒ null 诚实不可评；注入 ⇒ 实数；键集恒等（avgConfidence 只换值不换形同律）", async () => {
+    const base = await (await app().request("/health")).json()
+    expect(base.score).toBeNull() // 注入位缺席=未装配巡检形态（稳定零值面：null 非伪造 100）
+    const injected = createKnowledgeReadRoutes(
+      { articles: dao },
+      { knowledgeRoot: tmpDir, wikiRoot: wikiDir, now: () => new Date("2026-10-13T12:00:00Z"), getHealthScore: () => 77 },
+    )
+    const data = await (await injected.request("/health")).json()
+    expect(data.score).toBe(77)
+    expect(Object.keys(data).sort()).toEqual(Object.keys(base).sort())
+  })
+
   it("reports git HEAD from the global wiki root", async () => {
     execFileSync("git", ["init"], { cwd: wikiDir })
     execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: wikiDir })

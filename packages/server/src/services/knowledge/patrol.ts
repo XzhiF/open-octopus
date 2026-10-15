@@ -9,6 +9,7 @@ import type { FindingUpsert } from "../../db/dao/findings-dao"
 import { FindingsDAO } from "../../db/dao/findings-dao"
 import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
 import { isLowConfidence, rollupConfidence, rollupEffectiveness } from "./effectiveness-confidence"
+import { computeHealthScore } from "./health-score"
 import { jaccard, symptomTokens } from "./case-symptom"
 import type { LLMCall } from "./llm"
 import { scanWikiEntries } from "./wiki/compile"
@@ -442,6 +443,45 @@ export class WikiPatrolService {
   }
 
   /**
+   * L1 水位（D1 膨胀查与 health score 容量项**同一口径单源**）：序列化闸形态
+   * （serializePageMarkdown 后 strip 尾空行，与 lintWikiPage L1 逐字同族）三维明细+先到 max。
+   * 非 v3 页/判例 ⇒ null（不参与：v2 退场轨道、判例 L1 豁免同律）。
+   */
+  private pageCapacityMeasure(p: PageView): { lines: number; rules: number; tokens: number; waterline: number } | null {
+    if (!p.page || p.type === "case") return null
+    const serialized = serializePageMarkdown(p.page, p.body).replace(/\n+$/, "")
+    const lines = serialized.split("\n").length
+    const tokens = estimateTokens(serialized)
+    const rules = p.anchors.length
+    const waterline = Math.max(
+      lines / WIKI_LIMITS.ENTRY_MAX_LINES,
+      rules / WIKI_LIMITS.ENTRY_MAX_RULES,
+      tokens / WIKI_LIMITS.ENTRY_MAX_TOKENS,
+    )
+    return { lines, rules, tokens, waterline }
+  }
+
+  /**
+   * 健康分（P4 票08·故事 8）：open findings（findings 表现值，含编译通道产的
+   * index-budget——本方法读表非读巡检草案）+ 在册页水位 → health-score.ts 单源公式。
+   * 零页库 ⇒ null 诚实不可评（gitHead/avgConfidence null 先例同律：不伪造满分）。
+   * 纯读面：写面照旧零（红线1/2——score 是读数不是动作）。
+   */
+  healthScore(): number | null {
+    applySchema(this.db)
+    const warnings: string[] = []
+    const pages = this.loadPages(warnings)
+    if (pages.length === 0) return null
+    const waterlines: number[] = []
+    for (const p of pages) {
+      const m = this.pageCapacityMeasure(p)
+      if (m !== null) waterlines.push(m.waterline)
+    }
+    const open = new FindingsDAO(this.db).list("open").map(r => ({ kind: r.kind }))
+    return computeHealthScore({ openFindings: open, pageWaterlines: waterlines })
+  }
+
+  /**
    * ⑧ 膨胀榜（P4 票08 D1，spec 故事 9「不等触顶硬拒」）：L1 容量闸口径的水位
    * （行/规则/token 三阈值先到 max，与 lintWikiPage L1 同一闸族）≥80% 的 v3 页
    * ⇒ bloat finding 预拆分提案。判例豁免同 L1 闸律（lintProfileForPageType
@@ -451,16 +491,9 @@ export class WikiPatrolService {
   private bloatDrafts(pages: PageView[]): PatrolDraft[] {
     const drafts: PatrolDraft[] = []
     for (const p of [...pages].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
-      if (!p.page || p.type === "case") continue
-      const serialized = serializePageMarkdown(p.page, p.body).replace(/\n+$/, "")
-      const lines = serialized.split("\n").length
-      const tokens = estimateTokens(serialized)
-      const rules = p.anchors.length
-      const waterline = Math.max(
-        lines / WIKI_LIMITS.ENTRY_MAX_LINES,
-        rules / WIKI_LIMITS.ENTRY_MAX_RULES,
-        tokens / WIKI_LIMITS.ENTRY_MAX_TOKENS,
-      )
+      const m = this.pageCapacityMeasure(p)
+      if (m === null) continue
+      const waterline = m.waterline
       if (waterline < BLOAT_WATERLINE_RATIO) continue
       const pct = Math.round(waterline * 100)
       drafts.push({
@@ -469,9 +502,9 @@ export class WikiPatrolService {
         title: `膨胀榜：${p.relPath} 容量水位 ${pct}%（L1 闸预警线 ${Math.round(BLOAT_WATERLINE_RATIO * 100)}%）——提议按 H2 小节预拆分/hub 化`,
         detail: JSON.stringify({
           page: p.relPath,
-          lines,
-          rules,
-          tokens,
+          lines: m.lines,
+          rules: m.rules,
+          tokens: m.tokens,
           waterline: Math.round(waterline * 1000) / 1000,
         }),
         pages: JSON.stringify([p.relPath]),

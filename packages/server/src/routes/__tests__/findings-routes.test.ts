@@ -106,6 +106,9 @@ describe("GET /findings — 列表契约（状态过滤、camelCase 视图、det
     expect(xref.createdAt).toBeDefined()
     expect(typeof xref.detail).toBe("object") // JSON 列解形出契约面
     expect(Array.isArray(xref.pages)).toBe(true)
+    // P4 票08 分组视图薄扩：每条派生 severity（单源 health-score kind 映射，additive 键）
+    expect(xref.severity).toBe("minor")
+    for (const f of list) expect(["critical", "major", "minor"]).toContain(f.severity as string)
 
     const open = await (await app().request("/findings?status=open")).json() as { findings: unknown[] }
     expect(open.findings.length).toBe(list.length)

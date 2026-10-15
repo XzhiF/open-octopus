@@ -740,6 +740,8 @@ app.route("/api/knowledge", createKnowledgeReadRoutes({ articles: d.wikiArticle 
   getOpenFindings: () => getFindingOps().countOpen(),
   // 票07：全库平均 confidence（已测行口径单源 avgMeasuredConfidence；全未测诚实 null）
   getAvgConfidence: () => avgMeasuredConfidence(d.knowledgeEffectiveness.listAll()),
+  // 票08：health score 0-100（公式单源 health-score.ts；空库/零页 ⇒ null 诚实不可评）
+  getHealthScore: () => getKnowledgePatrol().healthScore(),
 }))
 // 知识中心票13：findings 列表/裁决 API（adopt/ignore/fix-task）+ 即时体检（POST /patrol）
 // + 回填（POST /backfill）。[讨论]=纯对话零端点。
