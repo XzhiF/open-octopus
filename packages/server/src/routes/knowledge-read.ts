@@ -40,6 +40,12 @@ export interface KnowledgeReadOpts {
   getQueueDepth?: () => number
   /** 票13：开放 findings 注入（FindingsDAO.countOpen 单源；缺省 0 = 未装配巡检形态） */
   getOpenFindings?: () => number
+  /**
+   * P4 票07：健康条「全库平均 confidence」注入（口径=已测行滚动值均值，
+   * 单源 effectiveness-confidence.avgMeasuredConfidence；缺省 null = 未装配账目形态
+   * 的稳定零值——契约形状先定只换值不换形，queueDepth/openFindings 同律）。
+   */
+  getAvgConfidence?: () => number | null
 }
 
 /**
@@ -192,6 +198,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
         ingestedThisWeek,
         openFindings: opts?.getOpenFindings?.() ?? 0, // 票13 巡检/编译 findings 真值（只换值不换形）
         queueDepth: opts?.getQueueDepth?.() ?? 0,   // 票06 全局编译队列实值（未装配 ⇒ 稳定零值）
+        avgConfidence: opts?.getAvgConfidence?.() ?? null, // 票07 全库平均置信（已测行口径；未装配/全未测 ⇒ null 诚实）
         lastCompiled,
         gitHead,
       })

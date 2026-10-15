@@ -6,6 +6,7 @@ import path from "path"
 import { execFileSync } from "child_process"
 import { applySchema } from "../../db/schema"
 import { WikiArticleDAO } from "../../db/dao/wiki-article-dao"
+import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-dao"
 import { createKnowledgeReadRoutes } from "../knowledge-read"
 import { createWikiRoutes } from "../wiki"
 import crypto from "crypto"
@@ -349,5 +350,83 @@ describe("票09 GET /api/knowledge/preference — 只读、零副作用、org �
     fs.writeFileSync(path.join(tmpDir, "user_preference.md"), "# pref\n", "utf-8")
     const data = await (await app().request("/preference")).json()
     expect(data.scope).toBe("global")
+  })
+})
+
+// =========================================================================
+// P4 票07 · 页元数据面 S2 形状钉：GET /wiki/article/:id 带 effectiveness 实时段
+// （DB 账目 rollup，**非** wiki_articles.confidence 快照列——两值刻意不同以证路）
+// + GET /health 增 avgConfidence（缺省 null 稳定零值形，注入换值不换形）。
+// =========================================================================
+describe("P4 票07 — article effectiveness 实时段（引用数/helpful 率/confidence，DB 真源）", () => {
+  const seedArticleRow = () =>
+    dao.upsert({
+      org: "global", id: "top-x", domain: "topic", title: "T", summary: "-", topics: "[]",
+      stability: "stable", last_compiled: "2026-10-12", sources: "[]", confidence: 0.9,
+      body: "## 硬约束\n- 规则甲 <!--#oct-050-->\n", path: "topics/top-x.md",
+    })
+
+  it("measured：页键行∪锚点行手算 4/5=0.8——与快照列 0.9 不同值，证明读的是账目非快照", async () => {
+    seedArticleRow()
+    const effDao = new KnowledgeEffectivenessDAO(db)
+    effDao.upsert("top-x", { cited_count: 2, helpful_count: 0, not_helpful_count: 0 })
+    effDao.upsert("oct-050", { cited_count: 5, helpful_count: 4, not_helpful_count: 1 })
+    const app = createWikiRoutes(dao, { rootDir: wikiDir, effectiveness: effDao })
+    const data = await (await app.request("/article/top-x")).json()
+    expect(data.confidence).toBe(0.9) // 快照列原样在册（sync 未跑）
+    expect(data.effectiveness).toEqual({
+      citedCount: 7, helpfulCount: 4, notHelpfulCount: 1,
+      helpfulRate: 0.8, confidence: 0.8, measured: true,
+    })
+  })
+
+  it("样本不足：实时段 confidence=快照初值（不抖动进 API 面），helpfulRate 仍现账直显（闸值 vs 现账并见）", async () => {
+    seedArticleRow()
+    const effDao = new KnowledgeEffectivenessDAO(db)
+    effDao.upsert("oct-050", { cited_count: 7, helpful_count: 1, not_helpful_count: 1 })
+    const app = createWikiRoutes(dao, { rootDir: wikiDir, effectiveness: effDao })
+    const data = await (await app.request("/article/top-x")).json()
+    expect(data.effectiveness).toEqual({
+      citedCount: 7, helpfulCount: 1, notHelpfulCount: 1,
+      helpfulRate: 0.5, confidence: 0.9, measured: false,
+    })
+  })
+
+  it("零账页 ⇒ 诚实全零形（citedCount 0 / helpfulRate null / confidence=快照值）——页脚永远有东西可显", async () => {
+    seedArticleRow()
+    const effDao = new KnowledgeEffectivenessDAO(db)
+    const app = createWikiRoutes(dao, { rootDir: wikiDir, effectiveness: effDao })
+    const data = await (await app.request("/article/top-x")).json()
+    expect(data.effectiveness).toEqual({
+      citedCount: 0, helpfulCount: 0, notHelpfulCount: 0,
+      helpfulRate: null, confidence: 0.9, measured: false,
+    })
+  })
+
+  it("未接账目 DAO ⇒ effectiveness:null（契约键恒在、旧调用方零改动——只换值不换形同律）", async () => {
+    seedArticleRow()
+    const app = createWikiRoutes(dao, { rootDir: wikiDir })
+    const data = await (await app.request("/article/top-x")).json()
+    expect(data.effectiveness).toBeNull()
+  })
+})
+
+describe("P4 票07 — GET /health avgConfidence（健康条全库平均置信口径）", () => {
+  it("缺省未注入 ⇒ null 稳定零值；注入换值不换形（键集恒等，票11 契约纪律）", async () => {
+    const base = await (await app().request("/health")).json()
+    expect(base.avgConfidence).toBeNull()
+    const injected = createKnowledgeReadRoutes(
+      { articles: dao },
+      { knowledgeRoot: tmpDir, wikiRoot: wikiDir, now: () => new Date("2026-10-13T12:00:00Z"), getAvgConfidence: () => 0.72 },
+    )
+    const data = await (await injected.request("/health")).json()
+    expect(data.avgConfidence).toBe(0.72)
+    expect(Object.keys(data).sort()).toEqual(Object.keys(base).sort())
+  })
+
+  it("契约负断言（新增字段不回归审批面）：响应仍无「待审核/pending」字样", async () => {
+    const text = JSON.stringify(await (await app().request("/health")).json())
+    expect(text).not.toMatch(/pending/i)
+    expect(text).not.toContain("待审核")
   })
 })

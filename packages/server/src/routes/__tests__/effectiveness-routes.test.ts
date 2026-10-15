@@ -45,3 +45,43 @@ describe("POST /effectiveness/parse — 手动记账触发（S2）", () => {
     expect(res.status).toBe(404)
   })
 })
+
+// P4 票07：POST /sync = confidence 快照刷页手动通道（夜巡腿同服务入口，parse 同款双触发制式）。
+describe("POST /effectiveness/sync — 票07 快照刷页手动触发（S2）", () => {
+  const report = {
+    scannedPages: 12,
+    updated: [{ relPath: "topics/top-a.md", from: null, to: 0.375 }],
+    rowsRecomputed: 2,
+    changed: true,
+    commit: "a".repeat(40),
+    queueTaskId: "es-20261015T0317-001",
+    warnings: [],
+  }
+
+  it("200 报告形状逐字钉（契约形状先定，只换值不换形）", async () => {
+    const app = createEffectivenessRoutes({ parse: async () => ({} as never), sync: async () => report as never })
+    const res = await app.request("/sync", { method: "POST" })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(
+      ["changed", "commit", "queueTaskId", "rowsRecomputed", "scannedPages", "updated", "warnings"],
+    )
+    expect(body).toEqual(report)
+  })
+
+  it("刷页炸 ⇒ 500 稳定码面 EFFECTIVENESS_SYNC_FAILED（原始错文不裸奔）", async () => {
+    const app = createEffectivenessRoutes({ parse: async () => ({} as never), sync: async () => { throw new Error("L4_INDEX_BUDGET: queue backlog") } })
+    const res = await app.request("/sync", { method: "POST" })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe("EFFECTIVENESS_SYNC_FAILED")
+    expect(body.error.message).not.toContain("backlog")
+  })
+
+  it("未接刷页通道 ⇒ 503 EFFECTIVENESS_SYNC_UNAVAILABLE（诚实显形不装成功）", async () => {
+    const res = await createEffectivenessRoutes({ parse: async () => ({}) }).request("/sync", { method: "POST" })
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe("EFFECTIVENESS_SYNC_UNAVAILABLE")
+  })
+})

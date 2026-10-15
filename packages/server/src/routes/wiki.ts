@@ -2,6 +2,8 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
+import { KnowledgeEffectivenessDAO } from "../db/dao/knowledge-effectiveness-dao"
+import { helpfulRateOf, rollupConfidence, rollupEffectiveness } from "../services/knowledge/effectiveness-confidence"
 import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown, parseWikiFile } from "../services/knowledge/wiki/format"
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
@@ -150,7 +152,46 @@ function caseWeightScore(
   return s
 }
 
-export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: string; octopusHome?: string }): Hono {
+/**
+ * P4 票07：页元数据实效段（DB 账目实时值——**非** front-matter/wiki_articles 快照列；
+ * 快照与实时两值同显是特性：夜巡 sync 未跑时 owner 能看见差）。聚合口径与
+ * patrol/sync 同一单源（effectiveness-confidence.ts）：页键行 ∪ 页内锚点行求和，
+ * confidence 过样本不足闸（未测 ⇒ 回落快照初值不抖动）。
+ */
+function effectivenessViewFor(
+  effDao: KnowledgeEffectivenessDAO,
+  pageId: string,
+  anchors: string[],
+  snapshotConfidence: number,
+): {
+  citedCount: number
+  helpfulCount: number
+  notHelpfulCount: number
+  helpfulRate: number | null
+  confidence: number
+  measured: boolean
+} {
+  const rows: Array<{ cited_count: number; helpful_count: number; not_helpful_count: number }> = []
+  const seen = new Set<string>([pageId, ...anchors])
+  for (const key of seen) {
+    const r = effDao.getByRuleId(key)
+    if (r) rows.push(r)
+  }
+  const roll = rollupEffectiveness(rows)
+  return {
+    citedCount: roll.cited,
+    helpfulCount: roll.helpful,
+    notHelpfulCount: roll.notHelpful,
+    helpfulRate: helpfulRateOf(roll),
+    confidence: rollupConfidence(roll, snapshotConfidence),
+    measured: roll.measured,
+  }
+}
+
+export function createWikiRoutes(
+  articles: WikiArticleDAO,
+  opts?: { rootDir?: string; octopusHome?: string; effectiveness?: KnowledgeEffectivenessDAO },
+): Hono {
   const routes = new Hono()
 
   // GET /api/knowledge/wiki/tree?org= — 域树 + 统计（org 参数容错，语义钉 global，票03）
@@ -218,6 +259,7 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
       if (!row) {
         return c.json({ error: { code: "NOT_FOUND", message: "Wiki entry not found" } }, 404)
       }
+      const anchors = extractRuleAnchors(row.body)
       return c.json({
         id: row.id,
         org: row.org,
@@ -232,7 +274,12 @@ export function createWikiRoutes(articles: WikiArticleDAO, opts?: { rootDir?: st
         path: row.path,
         updatedAt: row.updated_at,
         body: row.body,
-        anchors: extractRuleAnchors(row.body),
+        anchors,
+        // P4 票07：实效实时段（引用数/helpful 率/confidence，DB 真源非快照列）；
+        // 未接账目 DAO ⇒ null（契约键恒在，只换值不换形同律）
+        effectiveness: opts?.effectiveness
+          ? effectivenessViewFor(opts.effectiveness, row.id, anchors, row.confidence)
+          : null,
         gitHistory: gitHistoryFor(wikiRoot, row.path),
         // 票04：判例详情携带状态面（open/distilled/superseded chips + rule_ref 顺藤）；词条 null
         case: row.domain === "cases" ? caseFieldsFor(wikiRoot, row.path) : null,
