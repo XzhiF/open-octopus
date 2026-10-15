@@ -249,3 +249,66 @@ describe("[忽略] — 记录在案不再扰", () => {
     expect(adoptIgnored?.code).toBe("FINDING_ALREADY_ADJUDICATED")
   })
 })
+
+// ── 票03：index-budget 预警 finding 的采纳链（裁决即编译：经 finding-fix 队列重建 INDEX）──
+
+describe("[采纳修订] index-budget — 预算预警采纳=队列内 INDEX 重建（票03 AC3）", () => {
+  function seedIndexBudgetFinding(): string {
+    const dao = new FindingsDAO(db)
+    const id = "fnd-index-budget-test"
+    dao.upsert({
+      id,
+      kind: "index-budget",
+      title: "INDEX 预算预警：恒见部分约 700/800 token（88%）——三选一：移低频页入 ## Optional / 拆分 / hub 化",
+      detail: JSON.stringify({ visible_tokens: 700, budget_tokens: 800, warn_threshold_tokens: 640 }),
+      pages: JSON.stringify([]),
+      raw_ref: "",
+      source: "compile",
+    })
+    return id
+  }
+
+  it("在盘 INDEX 缺席/旧形 → adopt → finding-fix 入队 → INDEX 程序化重建单 commit → resolved", async () => {
+    writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
+    const fid = seedIndexBudgetFinding()
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+
+    const task = ops.adopt(fid)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status).toBe("committed")
+    expect(done.result?.commit).toMatch(/^[0-9a-f]{40}$/)
+
+    // 红线1 行为面：写经 finding-fix 队列（旁路直写=违规）
+    expect(queue.list().some(t => t.id === task.id && t.opKind === "finding-fix")).toBe(true)
+
+    // 外部产物：INDEX = 程序化重建形（导航协议 + 必读节），LOG 有采纳行，finding resolved
+    const index = read("INDEX.md")
+    expect(index).toContain("导航协议")
+    expect(index).toContain("## 必读")
+    expect(index).toContain("concepts/con-a.md")
+    expect(read("LOG.md")).toContain("预算预警采纳")
+    expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
+  })
+
+  it("在盘 INDEX 已收敛 → adopt 空转成功（changed=false 零 commit 零新行）→ 仍 resolved（case-backlog 空转先例同形态）", async () => {
+    writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
+    const fid = seedIndexBudgetFinding()
+    // 先把 INDEX 放到收敛态：用服务重建一次（模拟编译通道刚写过）
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const first = ops.adopt(fid)
+    await drain(queue)
+    expect(ops.getTask(first.id)!.status).toBe("committed")
+    // 重置 open 再 adopt：本次应空转（零写零 commit 仍是 committed 终态）
+    new FindingsDAO(db).updateStatus(fid, "open")
+    const second = ops.adopt(fid)
+    await drain(queue)
+    const done = ops.getTask(second.id)!
+    expect(done.status).toBe("committed")
+    expect(done.result?.changed).toBe(false)
+    expect(done.result?.commit).toBeNull()
+    expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
+  })
+})

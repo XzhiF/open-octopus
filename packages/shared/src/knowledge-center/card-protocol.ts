@@ -341,7 +341,7 @@ export interface KcFindingFixState {
 export interface KcFindingCardData {
   /** findings 表主键（内容寻址 fnd-…）；卡 id = 同串（card-protocol id 约定 fnd-<findingId>） */
   findingId: string
-  /** contradiction | stale | orphan | missing-page | missing-xref | …开放 */
+  /** contradiction | stale | orphan | missing-page | missing-xref | case-backlog | index-budget（P4 票03 预算预警）| …开放 */
   kind: string
   title: string
   /** 断言对立证据（矛盾卡双栏；其余 kind 缺省） */

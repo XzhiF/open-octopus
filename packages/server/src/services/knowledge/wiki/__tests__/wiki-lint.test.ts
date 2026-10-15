@@ -5,6 +5,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { applySchema } from "../../../../db/schema"
+import { FindingsDAO } from "../../../../db/dao/findings-dao"
 import { WikiCompileService, type GitRunner } from "../compile"
 import { estimateTokens } from "../lint"
 import { ensureWikiSkeleton } from "../paths"
@@ -267,11 +268,14 @@ ${block(20)}
     expect(mandatory).not.toContain("projects/prj-lo00.md")
     expect(index.split("## Optional")[1]).toContain("projects/prj-lo00.md")
 
-    // 预算在重排后回到 800 token 内（闸的口径 = lint.estimateTokens）
-    expect(estimateTokens(index)).toBeLessThanOrEqual(800)
+    // 票03 口径翻转（spec 故事25 分层渲染）：预算约束**恒见部分**（第一跳），## Optional
+    // 压缩尾部不占预算——旧口径「全文 ≤800」把降入 Optional 的行仍算钱，是 D-aa16-2
+    // 「Optional 重排无法收敛」的病根。全文允许 >800，恒见段必须 ≤800（闸口径 = lint.estimateTokens）。
+    expect(estimateTokens(mandatory)).toBeLessThanOrEqual(800)
+    expect(estimateTokens(index.split("## Optional")[1] ?? "")).toBeGreaterThan(0)
   }, 90_000)
 
-  it("L4：重排后仍超预算（病态巨行，过得了 L1 但 Optional 化后 INDEX 仍 >800）→ 拒写 L4_INDEX_BUDGET", async () => {
+  it("L4 两级 · 硬拒带（病态巨行，过得了 L1 但恒见段降无可降仍 >100%）→ 拒写 L4_INDEX_BUDGET + 压缩建议随错", async () => {
     const svc = makeService()
     // title+summary 各 900 CJK ≈1840 token：过 L1（<2000）但 INDEX 必选行 900、可选行按 title 渲染仍 900+表头 >800
     const huge = frontmatter("prj-huge", {
@@ -280,6 +284,97 @@ ${block(20)}
     }) + `\n## 节\n${rules(1, 790)}\n`
     await expect(svc.compileEntry({ content: huge })).rejects.toThrow(/L4_INDEX_BUDGET/s)
     expect(fs.existsSync(path.join(root, "projects", "prj-huge.md"))).toBe(false)
+    expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles").get() as { n: number }).n).toBe(0)
+    // 票03：压缩建议随错（票04 AC5 出口纪律在两级化后原样保留——无入队语义）
+    try {
+      await svc.compileEntry({ content: huge })
+      expect.unreachable()
+    } catch (err) {
+      const { WikiLintError } = await import("../lint")
+      expect(err).toBeInstanceOf(WikiLintError)
+      // 病态巨行无可降对象时 suggestion 可为 undefined（取最胖页需有 H2 可拆形态），
+      // 但错误 message 必含三选压缩建议指引
+      expect((err as InstanceType<typeof WikiLintError>).message).toMatch(/## Optional|拆分|hub/)
+    }
+  })
+
+  // ── L4 两级化（票03 / spec 故事 24-25）：预算口径 = 恒见部分；>80% 放行+预警 finding，>100% 拒+压缩建议 ──
+
+  it("L4 两级 · 预警带：恒见部分 ∈(80%,100%] → 编译放行 + 预警 finding 单行（kind=index-budget，提案三选齐）", async () => {
+    const svc = makeService()
+    const sum = "预算压线构造摘要内容恰好落入预警区间之中不带多余字符啊" // 25 CJK/行摘要
+    // v3 entity 恒见行 ≈31 token：18 页全库 ≈ 18×31+表头≈700 ∈(640,800]
+    const v3e = (i: number) => `---\nid: ent-w${String(i).padStart(2, "0")}\ntype: entity\ntitle: 词条${i}\nsummary: ${sum}\nlinks: []\nsources: [fixture:ticket-03]\nlast_compiled: 2026-10-15\n---\n\n## 概述\n- 正文一行。\n`
+    // 建树走**批通道**（1 commit 高效）：16 页 ⇒ 恒见部分 ≈ 586 <640 ⇒ 零预警
+    await svc.compilePages(
+      Array.from({ length: 16 }, (_, i) => ({ content: v3e(i) })),
+      { entry: "tier-seed", note: "预警带建树批" },
+    )
+    expect((db.prepare("SELECT COUNT(*) AS n FROM findings WHERE kind = 'index-budget'").get() as { n: number }).n).toBe(0)
+    // 单页通道逐页追加 ⇒ 恒见部分推进预警带 ⇒ 放行且预警 finding 伴随（两通道同闸口径）
+    await expect(svc.compileEntry({ content: v3e(16) })).resolves.toBeDefined()
+    await expect(svc.compileEntry({ content: v3e(17) })).resolves.toBeDefined()
+
+    // 已知账目前提：恒见部分落在预警带（640 = 80% × 800 逐字 spec 故事24；独立于闸码路径）
+    const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
+    const visible = index.split("## Optional")[0]
+    const tokens = estimateTokens(visible)
+    expect(tokens).toBeGreaterThan(640)
+    expect(tokens).toBeLessThanOrEqual(800)
+
+    // 行为断言：findings 表恰一行预警（多次预警同 id 幂等刷新，不增殖）
+    const rows = db.prepare("SELECT id, kind, status, title, detail FROM findings").all() as Array<{
+      id: string; kind: string; status: string; title: string; detail: string
+    }>
+    const warn = rows.filter(r => r.kind === "index-budget")
+    expect(warn).toHaveLength(1)
+    expect(warn[0]!.status).toBe("open")
+    expect(warn[0]!.title).toMatch(/Optional/)
+    const detail = JSON.parse(warn[0]!.detail) as Record<string, unknown>
+    expect(detail.visible_tokens).toBe(tokens)
+    expect(detail.budget_tokens).toBe(800)
+    expect(detail.warn_threshold_tokens).toBe(640)
+    // 幂等重放：同页再编译（no-op 面也过闸）⇒ 行仍单、证据不被打脏
+    await svc.compileEntry({ content: v3e(17) })
+    expect((db.prepare("SELECT COUNT(*) AS n FROM findings WHERE kind = 'index-budget'").get() as { n: number }).n).toBe(1)
+    expect(new FindingsDAO(db).getById(warn[0]!.id)!.detail).toBe(warn[0]!.detail)
+  }, 120_000)
+
+  it("L4 两级 · 批通道口径统一（E1 事实注清偿）：整批硬拒随错带压缩建议（批面自此不再裸）+ 零副作用", async () => {
+    const svc = makeService()
+    // 票13 L5_ANCHOR_SCOPE：锚点只准住 topic 页「## 硬约束」小节 ⇒ 巨页用 topic 形态
+    const v3page = (id: string, type: "topic" | "entity", summary: string, anchorFrom: number, nAnchors: number) => {
+      const rulesText = Array.from({ length: nAnchors }, (_, i) => `- 规则${anchorFrom + i}：提交前跑测试 <!--#oct-${anchorFrom + i}-->`).join("\n")
+      const body = type === "topic"
+        ? `## 硬约束\n${rulesText}\n\n## 处置\n- 说明行甲：常青补充，不携带锚点\n`
+        : `## 定义\n- 薄页正文一行\n`
+      return `---\nid: ${id}\ntype: ${type}\ntitle: ${id}\nsummary: ${summary}\nlinks: []\nsources: [fixture:ticket-03]\nlast_compiled: 2026-10-15\n---\n\n${body}`
+    }
+    // 巨 topic 页 summary 900 CJK + 15 锚点（降序最后出）+ 薄 entity 页 0 锚点（先降）⇒ 恒见部分=巨页行 >800 硬拒
+    const batch = () => svc.compilePages(
+      [
+        { content: v3page("top-fat", "topic", "巨".repeat(900), 900, 15) },
+        { content: v3page("ent-thin", "entity", "薄页", 960, 0) },
+      ],
+      { entry: "batch-tier", note: "两级化批面构造" },
+    )
+    await expect(batch()).rejects.toThrow(/L4_INDEX_BUDGET/s)
+
+    // 批面 suggestion（票04 AC5 拆分出口 + 票03 E1 统一：旧批通道拒错无建议，现已随错）
+    try {
+      await batch()
+      expect.unreachable()
+    } catch (err) {
+      const { WikiLintError } = await import("../lint")
+      expect(err).toBeInstanceOf(WikiLintError)
+      const proposal = (err as InstanceType<typeof WikiLintError>).suggestion
+      expect(proposal).toBeDefined()
+      expect(proposal!.entryId).toBe("top-fat")
+      expect(proposal!.children.length).toBeGreaterThanOrEqual(2)
+    }
+
+    // 整批拒 ⇒ 零副作用（页不落盘、DB 无行——校验段在任何写入之前）
+    expect(fs.existsSync(path.join(root, "topics", "top-fat.md"))).toBe(false)
     expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles").get() as { n: number }).n).toBe(0)
   })
 
