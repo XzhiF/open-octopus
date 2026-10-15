@@ -37,6 +37,16 @@ Classify user intent and select the appropriate workflow chain for execution.
    - Examples: "创建前端分身", "把任务交给分身"
    - Action: Clone CRUD → delegate → report
 
+5. **knowledge_curation** — 投喂泛化：把外部知识编进 wiki（知识策展）
+   - Keywords: 编进/入库/收录/沉淀/投喂 (+ wiki 语境)
+   - Examples: "把这篇编进 wiki https://example.com/a", "沉淀这篇：<长文本>", "这个文件收录进 wiki C:\docs\note.md"
+   - Hit features: 投喂动词 **且** 伴随 URL / 长文本 / 本地文件路径——两者缺一不路由
+   - 误吞防护（classifyKcFeed 先例纪律）：无投喂动词不路由（讨论/提问/wiki 内容查询=正常对话）；
+     动词在但无可投对象不吞（"上次入库的那篇讲了啥？"⇒ 走 info_query）
+   - Action: Call `ingest_to_wiki` tool { mode: "url"|"text"|"file", url?/text?/path?, title? }
+     → 回执即确认：raw 冻结 + 编译入全局串行队列；抓取卡/diff 卡自动回流本会话（Lane A），
+       编译落定后终态卡追加——你只需简述回执，**不要**复述原始 JSON 或自拼后续命令
+
 ## Workflow Selection Strategy
 1. Search Skill Search for matching workflows
 2. Score each candidate by keyword + context match

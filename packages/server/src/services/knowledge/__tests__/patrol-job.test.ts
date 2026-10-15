@@ -7,8 +7,8 @@ import { applySchema } from "../../../db/schema"
 import { FindingsDAO } from "../../../db/dao/findings-dao"
 import { AgentSessionDAO } from "../../../db/dao/agent-session-dao"
 import { WikiPatrolService } from "../patrol"
-import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter } from "../patrol-job"
-import { parseKcCardPayload, type KcFindingCardData } from "@octopus/shared"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "../patrol-job"
+import { parseKcCardPayload, type KcCardEvent, type KcFindingCardData } from "@octopus/shared"
 import type { CodeJobContext } from "../../scheduler/code-job-registry"
 
 /**
@@ -122,5 +122,86 @@ describe("夜巡 handler（服务层直驱）", () => {
     // 无会话 ⇒ 一条也没多投（此前清库消息数为 0，第三巡后仍 0）
     const postedAfterThree = db.prepare("SELECT COUNT(*) AS c FROM messages WHERE role='assistant'").get() as { c: number }
     expect(postedAfterThree.c).toBe(0)
+  })
+})
+
+// ── 票10：卡片回流目标会话（appendKnowledgeSessionCards 泛化——目标会话参数化）──
+
+/** 独立真相源：手写已知卡事件（不从被测代码推导 expected）。 */
+const CURATED_EV: KcCardEvent = {
+  id: "ing-deadbeef",
+  kind: "ingest",
+  ts: "2026-10-15T08:00:00Z",
+  data: { status: "done", rawPath: "raw/inbox/2026-10-15-x.md", bytes: 1024, hash: "deadbeefcafe0123" },
+}
+
+function seedPlainSession(id: string, patch: Record<string, unknown> = {}): void {
+  new AgentSessionDAO(db).insertSession({
+    id, org: "default", title: patch.title != null ? String(patch.title) : "普通会话",
+    clone_name: patch.clone_name != null ? String(patch.clone_name) : null,
+    session_type: patch.session_type != null ? String(patch.session_type) : "main",
+    created_at: "2026-10-15T08:00:00Z", updated_at: "2026-10-15T08:00:00Z",
+    ...patch,
+  } as never)
+}
+
+describe("appendCardsToSession（票10 泛化原语：目标会话参数化）", () => {
+  it("任意非知识中心会话（main 会话）落一条 assistant 消息：header + Lane A fenced 块可解析", () => {
+    seedPlainSession("main-s1")
+    const out = appendCardsToSession(db, "main-s1", "📥 投喂入库：", [CURATED_EV], () => new Date("2026-10-15T09:00:00Z"))
+    expect(out.posted).toBe(true)
+    expect(out.sessionId).toBe("main-s1")
+
+    const msgs = new AgentSessionDAO(db).findAllMessages("main-s1")
+    const posted = msgs.filter(m => m.role === "assistant")
+    expect(posted).toHaveLength(1)
+    expect(posted[0].content).toContain("📥 投喂入库：")
+    const blockMatch = /```kc-card\n([\s\S]*?)\n```/.exec(posted[0].content)
+    expect(blockMatch, `消息正文应含 kc-card 块：${posted[0].content}`).not.toBeNull()
+    const ev = parseKcCardPayload(JSON.parse(blockMatch![1]!))
+    expect(ev).toEqual(CURATED_EV)
+    // last_message_at 同步推进（会话列表排序面与 patrol 写者同律）
+    const s = new AgentSessionDAO(db).findById("main-s1")
+    expect(s?.last_message_at).toBe("2026-10-15T09:00:00.000Z")
+  })
+
+  it("会话不存在 ⇒ 诚实降级 posted:false + reason，零消息写入", () => {
+    const out = appendCardsToSession(db, "ghost-sess", "header", [CURATED_EV])
+    expect(out.posted).toBe(false)
+    expect(out.reason).toContain("ghost-sess")
+    const c = db.prepare("SELECT COUNT(*) AS c FROM messages").get() as { c: number }
+    expect(c.c).toBe(0)
+  })
+
+  it("会话已删除（is_deleted=1）⇒ 拒写诚实降级（软删面不复活）", () => {
+    seedPlainSession("del-s1")
+    db.prepare("UPDATE sessions SET is_deleted = 1 WHERE id = 'del-s1'").run()
+    const out = appendCardsToSession(db, "del-s1", "header", [CURATED_EV])
+    expect(out.posted).toBe(false)
+    const c = db.prepare("SELECT COUNT(*) AS c FROM messages").get() as { c: number }
+    expect(c.c).toBe(0)
+  })
+
+  it("appendKnowledgeSessionCards 判据零回归：知识中心会话与任意普通会话并存 ⇒ 只写知识中心", () => {
+    seedKnowledgeSession() // kc-s1：archive 分身 · title=知识中心 · scope=knowledge
+    seedPlainSession("main-s2", { title: "投喂讨论" })
+    seedPlainSession("main-s3", { clone_name: "archive", title: "工程分析会话" }) // 同分身非 KC
+
+    const out = appendKnowledgeSessionCards(db, "✅ 回执：", [CURATED_EV])
+    expect(out.posted).toBe(true)
+    expect(out.sessionId).toBe("kc-s1")
+
+    const countFor = (sid: string) =>
+      (db.prepare("SELECT COUNT(*) AS c FROM messages WHERE session_id = ?").get(sid) as { c: number }).c
+    expect(countFor("kc-s1")).toBe(1)
+    expect(countFor("main-s2")).toBe(0)
+    expect(countFor("main-s3")).toBe(0)
+  })
+
+  it("appendKnowledgeSessionCards 无知识中心会话 ⇒ 降级 reason 措辞零变（既有合同）", () => {
+    seedPlainSession("main-s4")
+    const out = appendKnowledgeSessionCards(db, "header", [CURATED_EV])
+    expect(out.posted).toBe(false)
+    expect(out.reason).toBe("无知识中心会话（findings 已入库可查，未报对话）")
   })
 })
