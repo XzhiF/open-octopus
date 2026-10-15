@@ -5,12 +5,12 @@
 //   本测试（engine）：真实 WorkflowEngine + 捕获型 provider 产出票 11 约定的
 //     vars_update wiki_refs（含 stale: 条目）→
 //       ① VarPool：结果 poolSnapshot.wiki_refs 原样在池（ExecutionLifecycle
-//          正是把它 JSON.stringify 后写 executions.var_pool —— DB 写源，
-//          server 侧 shadow-compare 路由测试用真 SQLite 读回该 JSON）；
+//          正是把它 JSON.stringify 后写 executions.var_pool —— DB 写源）；
 //       ② JSONL：{orgDir}/logs/{executionId}/{nodeId}.jsonl 落盘且含 wiki_refs
 //          token（执行者可追溯）。
 //     全程走票 10 handoff 指定的既有 vars_update → VarPool 信道，无新信道。
-//   server 侧：shadow-compare-route.test.ts（executions.var_pool SELECT → 导出）。
+//     （P4 票05 清理注：本写源的历史 server 侧读面已物理删除——查阅信道恒开，
+//     落池行为本体即本测试的独立契约，不随读面消亡。）
 
 import { describe, it, expect, afterEach } from "vitest"
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "fs"
@@ -33,7 +33,7 @@ afterEach(() => {
   }
 })
 
-const REFS_LINE = '{"vars_update":{"wiki_refs":["prj-octopus#oct-001","wf-prd-impl#sop-002","stale:oct-009"],"shadow_summary":"refs-landed"}}'
+const REFS_LINE = '{"vars_update":{"wiki_refs":["prj-octopus#oct-001","wf-prd-impl#sop-002","stale:oct-009"]}}'
 
 function wikiReportingProvider(): IAgentProvider {
   return {
@@ -76,7 +76,6 @@ nodes:
       "wf-prd-impl#sop-002",
       "stale:oct-009",
     ])
-    expect(result.poolSnapshot.shadow_summary).toBe("refs-landed")
 
     // stale: 前缀条目在池中单独可筛（消费侧过滤契约，票 12 第 2 项）
     const stale = (result.poolSnapshot.wiki_refs as string[]).filter((r) => r.startsWith("stale:"))

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
-import { WikiArticleDAO } from "../../../db/dao/wiki-article-dao"
+import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
 import { GLOBAL_WIKI_ORG, resolveKnowledgeRoot } from "../global-paths"
 import { CompileQueue, type WriteQueue } from "./compile-queue"
 import {
@@ -12,7 +12,8 @@ import {
   WIKI_LOG_HEADER,
   formatLogRow,
 } from "./compile"
-import { parseWikiFile, serializePageMarkdown } from "./format"
+import { parseWikiFile, serializePageMarkdown, serializeEntryMarkdown, serializeCaseMarkdown } from "./format"
+import { WIKILINK_RE } from "./lint"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
 import { isManualFileTarget } from "./manual-files"
 
@@ -44,12 +45,14 @@ export interface WikiRetireResult {
   path: string
   /** 迁入后的 `_retired/` 相对路径 */
   retiredPath: string
-  /** 退役 commit 全 hash（单 commit：含页迁+INDEX 重建+LOG 行） */
+  /** 退役 commit 全 hash（单 commit：含页迁+入链摘除+INDEX 重建+LOG 行） */
   retireCommit: string
   /** front-matter 注 superseded + 页 id */
   pageId: string
   touched: PageRetireTouched
   ftsWarnings: string[]
+  /** 票04·故事26：本次被摘除入链的活页宿主（wiki 根相对路径，已随退役同 commit 落盘） */
+  inboundCleaned: string[]
 }
 
 export type PageRetireTaskStatus = "queued" | "running" | "committed" | "failed"
@@ -58,6 +61,10 @@ export interface PageRetireTaskRecord {
   id: string
   path: string
   reason?: string
+  /** 票04·故事26：替换者指针（机读 replaced_by），缺席=纯退役无后继 */
+  replacedBy?: string
+  /** LOG retire 行 source 位；缺省 "dialogue"（对话人裁）。票09 自动退役传 "auto" 复用本机械 */
+  source?: string
   status: PageRetireTaskStatus
   createdAt: string
   startedAt?: string
@@ -84,6 +91,12 @@ export interface PageRetireInput {
   pageId?: string
   /** 退役理由（进 LOG 行 + 回执卡，非必填） */
   reason?: string
+  /** 票04·故事26：替换页指针（id 或路径，落退役页 front-matter `replaced_by` 机读行）。
+   *  supersede 型裁决由调用方传入；僵尸/低置信退役可省。 */
+  replacedBy?: string
+  /** LOG retire 行 source 位；缺省 "dialogue"。**票09 接缝**：自动退役传 "auto" 走同一入口，
+   *  判据在调用方（narrow gate），机械不感知。 */
+  source?: string
 }
 
 export interface PageRetireTaskDeps {
@@ -171,8 +184,10 @@ export class PageRetireTaskService {
     }
 
     const reason = typeof input.reason === "string" && input.reason.trim() ? input.reason.trim() : undefined
+    const replacedBy = typeof input.replacedBy === "string" && input.replacedBy.trim() ? input.replacedBy.trim() : undefined
+    const source = typeof input.source === "string" && input.source.trim() ? input.source.trim() : undefined
     const id = `ret-${this.now().toISOString().replace(/[-:]/g, "").slice(0, 13)}-${String(++this.seq).padStart(3, "0")}`
-    const rec: PageRetireTaskRecord = { id, path: relPath, reason, status: "queued", createdAt: this.now().toISOString() }
+    const rec: PageRetireTaskRecord = { id, path: relPath, reason, replacedBy, source, status: "queued", createdAt: this.now().toISOString() }
     this.records.set(id, rec)
     this.evict()
 
@@ -210,7 +225,7 @@ export class PageRetireTaskService {
     rec.status = "running"
     rec.startedAt = this.now().toISOString()
     try {
-      rec.result = this.execute(rec.path, rec.reason)
+      rec.result = this.execute(rec.path, rec.reason, { replacedBy: rec.replacedBy, source: rec.source })
       rec.status = "committed"
     } catch (err) {
       const code = err instanceof PageRetireError ? err.code : "PAGE_RETIRE_FAILED"
@@ -224,10 +239,15 @@ export class PageRetireTaskService {
   }
 
   /**
-   * 队列执行体（已持串行位）：读页注 superseded → 迁 `_retired/` → INDEX 重建 →
-   * LOG retire 行 → DB/FTS 摘除 → 单 commit。任一步异常尽力回滚已迁文件（保工作区一致），再抛。
+   * 队列执行体（已持串行位）：读页注 superseded[+replaced_by] → 迁 `_retired/` →
+   * **活页入链摘除**（票04·故事26）→ INDEX 重建 → LOG retire 行 → DB/FTS 摘除+宿主页同步
+   * → 单 commit。任一步异常尽力回滚已迁文件与已改写宿主（保工作区一致），再抛。
+   *
+   * **票09 接缝**：本方法是「finding 裁决人裁退役 / 自动退役窄口」共用的唯一机械——
+   * 调用方经 retire()（同步校验+FIFO 入队）喂判据，source/replacedBy/reason 全为
+   * 入参装饰位；自动侧（票09）零改本执行体。
    */
-  private execute(relPath: string, reason?: string): WikiRetireResult {
+  private execute(relPath: string, reason?: string, opts?: { replacedBy?: string; source?: string }): WikiRetireResult {
     const dirty = this.git.run(["status", "--porcelain"])
     if (dirty.stdout.trim().length > 0) {
       throw new PageRetireError("WORKTREE_DIRTY", "wiki 工作区存在未提交改动（不应发生：写闸全提交），拒绝退役", 409)
@@ -238,7 +258,7 @@ export class PageRetireTaskService {
       throw new PageRetireError("NOT_FOUND", `在册页不存在（执行段复检）：${relPath}`, 404)
     }
 
-    // ── 1. 读页 + 注 superseded（仅 page 形态）──
+    // ── 1. 读页 + 注 superseded（仅 page 形态）[+ replaced_by 机读指针，票04] ──
     const parsed = parseWikiFile(fs.readFileSync(fromAbs, "utf-8"))
     if (parsed.kind !== "page") {
       throw new PageRetireError(
@@ -247,7 +267,11 @@ export class PageRetireTaskService {
         409,
       )
     }
-    const meta = { ...parsed.meta, status: "superseded" as const }
+    const meta = {
+      ...parsed.meta,
+      status: "superseded" as const,
+      ...(opts?.replacedBy ? { replaced_by: opts.replacedBy } : {}),
+    }
     const retiredSerialized = serializePageMarkdown(meta, parsed.body)
 
     // ── 2. 迁 `_retired/<relPath>`（先写新位，再删原位；同盘 rename 语义由写+删等价达成，
@@ -261,6 +285,21 @@ export class PageRetireTaskService {
     writeAtomic(toAbs, retiredSerialized)
     fs.unlinkSync(fromAbs)
 
+    // ── 2.5 活页入链摘除（票04·故事26，spec「缺陷清偿·退役清入链」）。──
+    // 语义选择（票面两案「改 _retired 指针文本 or 摘除」，注释备案）：正文 [[链接]] 整匹配
+    // 替换为定长指针文本 `[已退役]`，front-matter links 指向者摘除项。
+    // 不选「_retired 路径入正文」的原因：被链页文件名可含日期（sources/2026-…-….md），
+    // 落地文本会触 L5_DATES_IN_BODY（findDateOccurrences 无注记豁免）——延迟爆炸型地雷，
+    // 与本票要清偿的正是「延迟爆炸死链」同类隐患。指针对象的机读留存 = 退役页
+    // front-matter（replaced_by/status）+ LOG retire 行 + 本 commit 的 git diff（宿主原链
+    // 逐字在史，票09 入链回补按 commit 反放）。
+    // 红线1：改写只经本执行体（队列串行位内）直写 + 同一 `git add -A` 单 commit 收口；
+    // 红线5/写保护：人工文件 isManualFileTarget 跳过（scan 面本不含，双保险）。
+    const cleaned = cleanInboundLinks(this.wikiRoot, meta.id, relPath)
+    for (const c of cleaned) {
+      writeAtomic(path.resolve(this.wikiRoot, c.relPath), c.next)
+    }
+
     const ftsWarnings: string[] = []
     try {
       // ── 3. INDEX 程序化重建（永不经人手；_retired/ 不在 scan 面 ⇒ 页自动摘除）──
@@ -268,14 +307,15 @@ export class PageRetireTaskService {
       const entries = scanWikiEntries(this.wikiRoot)
       writeAtomic(indexPath, renderBudgetedWikiIndex(entries, GLOBAL_WIKI_ORG).content)
 
-      // ── 4. LOG 追加 retire 行 ──
+      // ── 4. LOG 追加 retire 行（清链注记仅在真摘了链时出现——票08 旧断言零回归）──
       const logPath = path.join(this.wikiRoot, WIKI_LOG_FILE)
       const logBase = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : WIKI_LOG_HEADER
+      const noteBase = reason ? `退役入 _retired/ · ${reason}` : "退役入 _retired/"
       writeAtomic(logPath, logBase + formatLogRow({
         action: "retire",
         entry: relPath,
-        note: reason ? `退役入 _retired/ · ${reason}` : "退役入 _retired/",
-        source: "dialogue",
+        note: cleaned.length > 0 ? `${noteBase} · 摘除 ${cleaned.length} 页入链` : noteBase,
+        source: opts?.source ?? "dialogue",
         reviewer: "owner",
       }))
 
@@ -294,6 +334,35 @@ export class PageRetireTaskService {
         articles.delete(GLOBAL_WIKI_ORG, found.id)
       }
 
+      // ── 5.5 宿主页 DB/FTS 同步（票04：正文已摘链，wiki_articles.body/FTS 与盘一致；
+      //        FTS 失败非致命 gotcha #6 同律）──
+      for (const c of cleaned) {
+        const hostRow = this.db
+          .prepare("SELECT * FROM wiki_articles WHERE org = ? AND path = ?")
+          .get(GLOBAL_WIKI_ORG, c.relPath) as WikiArticleRow | undefined
+        if (!hostRow) continue
+        const { updated_at: _ut, ...upsert } = hostRow
+        this.db.transaction(() => {
+          articles.upsert({ ...upsert, body: c.newBody })
+          const rowid = articles.getRowid(GLOBAL_WIKI_ORG, hostRow.id)
+          if (rowid === undefined) return
+          try {
+            articles.deleteFts(rowid)
+            articles.insertFts({
+              rowid,
+              id: hostRow.id,
+              domain: hostRow.domain,
+              title: hostRow.title,
+              summary: hostRow.summary,
+              topics: hostRow.topics,
+              body: c.newBody,
+            })
+          } catch (err) {
+            ftsWarnings.push(`FTS 宿主同步失败（非致命）${c.relPath}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        })()
+      }
+
       // ── 6. 单 commit 收口（add -A 把页迁+INDEX+LOG 一并带上）──
       mustGit(this.git, ["add", "-A"])
       const status = mustGit(this.git, ["status", "--porcelain"])
@@ -301,7 +370,7 @@ export class PageRetireTaskService {
         // 理论上 LOG 行必产生 diff；兜底 no-op 不抛
         return {
           path: relPath, retiredPath: toRel, retireCommit: wikiHead(this.git) ?? "", pageId: meta.id,
-          touched: { from: relPath, to: toRel }, ftsWarnings,
+          touched: { from: relPath, to: toRel }, ftsWarnings, inboundCleaned: cleaned.map(c => c.relPath),
         }
       }
       mustGit(this.git, ["commit", "-m", `retire: ${relPath} → _retired/（superseded）`])
@@ -309,10 +378,11 @@ export class PageRetireTaskService {
       if (!retireCommit) throw new PageRetireError("PAGE_RETIRE_FAILED", "退役 commit 后 HEAD 不可读", 500)
       return {
         path: relPath, retiredPath: toRel, retireCommit, pageId: meta.id,
-        touched: { from: relPath, to: toRel }, ftsWarnings,
+        touched: { from: relPath, to: toRel }, ftsWarnings, inboundCleaned: cleaned.map(c => c.relPath),
       }
     } catch (err) {
-      // 尽力复原：若退役件已落 _retired/ 而原页已删，把内容写回原路径（工作区回正，不留半退役）
+      // 尽力复原：若退役件已落 _retired/ 而原页已删，把内容写回原路径（工作区回正，不留半退役）；
+      // 已改写的入链宿主页一并逐字回写（票04：失败不留半清链）
       try {
         if (!fs.existsSync(fromAbs) && fs.existsSync(toAbs)) {
           fs.mkdirSync(path.dirname(fromAbs), { recursive: true })
@@ -320,6 +390,9 @@ export class PageRetireTaskService {
           fs.rmSync(toAbs, { force: true })
         }
       } catch { /* 复原尽力而为 */ }
+      for (const c of cleaned) {
+        try { writeAtomic(path.resolve(this.wikiRoot, c.relPath), c.oldRaw) } catch { /* 复原尽力而为 */ }
+      }
       throw err
     }
   }
@@ -342,4 +415,70 @@ function writeAtomic(target: string, content: string): void {
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
   fs.writeFileSync(tmp, content, "utf-8")
   fs.renameSync(tmp, target)
+}
+
+/**
+ * `[[target]]` 是否指向本次退役页——与 lint.resolveWikiLink 的命中面同形（单源纪律：
+ * 改动解析语义须两处同步）：路径式（带 .md）、去缀式（fs `${t}.md` 命中）、hub 目录式
+ * （README 页）、裸 id 式（corpus id 等值 + 路径前缀约束）。
+ */
+function linkPointsToPage(target: string, pageId: string, relPath: string): boolean {
+  const u = target.trim().replace(/\/+$/, "")
+  if (!u) return false
+  if (u.endsWith(".md")) return u === relPath
+  const noExt = relPath.replace(/\.md$/, "")
+  if (u === noExt) return true
+  if (relPath.endsWith("/README.md") && u === noExt.slice(0, -"/README".length)) return true
+  const bare = u.split("/").pop() ?? u
+  return bare === pageId && (!u.includes("/") || relPath === `${u}.md` || relPath.startsWith(`${u}/`))
+}
+
+interface CleanedHost {
+  relPath: string
+  /** 改写前逐字节原文（失败补偿回写用） */
+  oldRaw: string
+  /** 改写后全文 */
+  next: string
+  /** 改写后正文段（DB body 列口径，与 compile 通道 p.body 同形） */
+  newBody: string
+}
+
+/**
+ * 票04·故事26 入链摘除纯函数（fs 只读；写与 commit 归执行体）：
+ * 扫全库活页（scanWikiEntries 面，_retired/ 天然缺席），凡正文 `[[…]]` 或 v3 front-matter
+ * links 指向退役页者 ⇒ 正文整匹配替换 `[已退役]`、links 摘项，按形态重序列化。
+ * 人工文件（isManualFileTarget）跳过——写保护不松动；解析坏页跳过（坏文件不拖垮退役，
+ * scan 同律）。零命中页不产 diff（原文件逐字节不动）。
+ */
+function cleanInboundLinks(wikiRoot: string, pageId: string, relPath: string): CleanedHost[] {
+  const out: CleanedHost[] = []
+  for (const e of scanWikiEntries(wikiRoot)) {
+    const abs = path.resolve(wikiRoot, e.relPath)
+    if (!abs.startsWith(wikiRoot + path.sep)) continue
+    if (isManualFileTarget(wikiRoot, abs)) continue
+    let raw: string
+    let parsed: ReturnType<typeof parseWikiFile>
+    try {
+      raw = fs.readFileSync(abs, "utf-8")
+      parsed = parseWikiFile(raw)
+    } catch {
+      continue // 读/解析坏=跳过（与 scan 告警面同源纪律）
+    }
+    const strip = (body: string) =>
+      body.replace(WIKILINK_RE, (full: string, target: string) => (linkPointsToPage(target, pageId, relPath) ? "[已退役]" : full))
+    const bodyKept = strip(parsed.body)
+    if (parsed.kind === "page") {
+      const linksKept = parsed.meta.links.filter(l => !linkPointsToPage(l, pageId, relPath))
+      if (linksKept.length === parsed.meta.links.length && bodyKept === parsed.body) continue
+      const next = serializePageMarkdown({ ...parsed.meta, links: linksKept }, bodyKept)
+      out.push({ relPath: e.relPath, oldRaw: raw, next, newBody: bodyKept })
+    } else if (parsed.kind === "case") {
+      if (bodyKept === parsed.body) continue
+      out.push({ relPath: e.relPath, oldRaw: raw, next: serializeCaseMarkdown(parsed.meta, bodyKept), newBody: bodyKept })
+    } else {
+      if (bodyKept === parsed.body) continue
+      out.push({ relPath: e.relPath, oldRaw: raw, next: serializeEntryMarkdown(parsed.meta, bodyKept), newBody: bodyKept })
+    }
+  }
+  return out
 }
