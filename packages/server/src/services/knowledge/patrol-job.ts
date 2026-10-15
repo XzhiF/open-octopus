@@ -133,6 +133,14 @@ export interface PatrolHandlerOpts {
    * 失败显形进 outcome 不炸作业（afterPatrol/报对话同款纪律）；缺省零行为变化。
    */
   parseLedger?: () => void | Promise<void>
+  /**
+   * P4 票09：衰减自动退役窄口腿（spec 故事 16「夜巡步骤」）。**必须挂在 parseLedger
+   * 之后**——判据吃当夜账（记账未跑则读旧账，窄口误判窗口拉大）。
+   * 失败显形进 outcome 不炸作业（记账/草案扫描同律）；缺省零行为变化。
+   * 红线2：本腿是全库唯一的自动退役执行面（90天零引用∧零入链∧非人工文件），
+   * 其余退役类目一律仍走 finding 人裁——挂载点不扩第二自动口。
+   */
+  autoRetire?: () => void | Promise<void>
 }
 
 /** 夜巡作业 handler：`{summary, metrics}` 进调度器执行史（运维页可见）。 */
@@ -164,6 +172,14 @@ export function knowledgePatrolHandlerFor(patrol: WikiPatrolService, opts: Patro
       } catch (err) {
         // 记账腿失败不吞巡检成果（P4 票06：与草案扫描同律——显形不炸作业）
         note += ` · 记账失败（${err instanceof Error ? err.message : String(err)}）`
+      }
+    }
+    if (opts.autoRetire) {
+      try {
+        await opts.autoRetire()
+      } catch (err) {
+        // 窄口自动退役腿失败不炸作业（P4 票09：记账/草案扫描同律——显形进 outcome）
+        note += ` · 自动退役失败（${err instanceof Error ? err.message : String(err)}）`
       }
     }
     return {

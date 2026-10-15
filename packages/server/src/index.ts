@@ -40,7 +40,12 @@ import type { KcSkillDraftCardData } from "@octopus/shared"
 import { createWikiRevertRoutes } from "./routes/wiki-revert"
 import { RevertTaskService } from "./services/knowledge/wiki/revert"
 import { createWikiRetireRoutes } from "./routes/wiki-retire"
+import { createWikiRestoreRoutes } from "./routes/wiki-restore"
 import { PageRetireTaskService } from "./services/knowledge/wiki/page-retire"
+// P4 票09：恢复通道（退役机械的镜像）+ 窄口自动退役（红线2 唯一自动写路径）
+import { PageRestoreTaskService } from "./services/knowledge/wiki/page-restore"
+import { AutoRetireService, AUTO_RETIRE_WINDOW_DAYS, type AutoRetireNotice } from "./services/knowledge/wiki/auto-retire"
+import type { KcAutoRetireCardData, KcCardEvent } from "@octopus/shared"
 import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
@@ -556,6 +561,7 @@ const ruleFormJudge = createProductionRuleFormJudge()
 // + wiki 根锁文件（跨进程保底，PID+心跳）。一切 wiki 写操作统一
 // `wikiWriteQueue.enqueue(opKind, fn)`（kind 单源 compile-queue.WRITE_OP_KINDS：
 // 投喂/归档/对话修订/lint 自纠/finding 修复/revert/重蒸馏；票07/10/12/13 经此入队，
+// P3 加 case-archive/page-retire，P4 票09 加 auto-retire/page-restore；
 // 旁路写 wiki = 违规）。队列深度进健康条（queueDepth，票11 冻结形状只换值）。
 const wikiWriteQueue = new CompileQueue({
   lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
@@ -699,6 +705,16 @@ app.route("/api/knowledge/wiki", createWikiRetireRoutes({
   retire: (input) => getRetireTasks().retire(input),
   get: (id) => getRetireTasks().get(id),
 }))
+// P4 票09（spec 故事17·AC4）：页恢复路由——「对话退役一页」通道的同款镜像接线
+// （POST /restore {anchor|path|pageId} → 202；队列 opKind="page-restore" 串行执行：
+// _retired/ 原号原行回迁 + 入链 diff 反放 + LOG restore 行 + DB/FTS 复登 + 单 commit）。
+// 窄口自动退役的后悔药出口；惰性单例（顶层 new 会在 initDb() 前崩——票14 教训同律）。
+let restoreTasksInstance: PageRestoreTaskService | undefined
+const getRestoreTasks = () => (restoreTasksInstance ??= new PageRestoreTaskService({ db: getDb(), queue: wikiWriteQueue }))
+app.route("/api/knowledge/wiki", createWikiRestoreRoutes({
+  restore: (input) => getRestoreTasks().restore(input),
+  get: (id) => getRestoreTasks().get(id),
+}))
 // 知识中心票06：队列可观测 API（GET /queue 深度+每任务位次 #N、GET /queue/task/:id）——
 // UI 票12「排队中 #N → 编译中 → 已提交」卡片消费面；只读。
 app.route("/api/knowledge/wiki", createCompileQueueRoutes(wikiWriteQueue))
@@ -743,6 +759,43 @@ const getEffectivenessLedger = () => (effectivenessLedgerInstance ??= new Effect
 // 走下方 builtin-knowledge-patrol 作业的 parseLedger 腿——同一服务入口（双触发制式）。
 app.route("/api/knowledge/effectiveness", createEffectivenessRoutes({
   parse: () => getEffectivenessLedger().parse(),
+}))
+
+// P4 票09：衰减自动退役窄口（spec 故事16/AC1-AC3/AC6——红线2 全库唯一自动退役执行面）。
+// 判据（AND）：锚点 90 天零引用（吃票06 账两账=锚点键+页级 Read 键）∧ 零活页入链
+// （票04 命中面）∧ 非人工文件；命中调票04 统一机械（opKind=auto-retire, source=auto）。
+// 触发面=夜巡 autoRetire 腿（挂 parseLedger 之后吃当夜账，见下方 scheduler 装配）；
+// 通知卡=先斩后奏但可逆（Lane A 进知识中心对话流，锚点/页/判据/恢复口令；零审批钮）。
+// 其余退役类目（低置信/域失衡/volatile 到期/矛盾裁决）一律仍走 finding 人裁——本装配
+// 不扩第二个自动口。惰性单例（getRetireTasks 同轨——initDb() 前 new 即崩，票14 教训）。
+const postAutoRetireNotices = (notices: AutoRetireNotice[]): void => {
+  const date = new Date().toISOString().slice(0, 10)
+  const events: KcCardEvent[] = notices.map((n) => ({
+    id: `are-${n.taskId}`,
+    kind: "auto-retire",
+    ts: new Date().toISOString(),
+    data: {
+      status: n.status === "failed" ? "failed" : "committed",
+      pagePath: n.pagePath,
+      ...(n.retiredPath ? { to: n.retiredPath } : {}),
+      ...(n.retireCommit ? { commit: n.retireCommit } : {}),
+      anchors: n.anchors,
+      lastCited: n.lastCited,
+      daysSilent: n.daysSilent,
+      restoreHints: n.restoreHints,
+    } satisfies KcAutoRetireCardData,
+  }))
+  appendKnowledgeSessionCards(
+    getDb(),
+    `🍂 夜巡窄口自动退役 ${date} · ${notices.length} 页（${AUTO_RETIRE_WINDOW_DAYS} 天零引用 ∧ 零活页入链——可恢复：对话说「恢复 oct-XXX」原号原行回迁）：`,
+    events,
+  )
+}
+let autoRetireInstance: AutoRetireService | undefined
+const getAutoRetire = () => (autoRetireInstance ??= new AutoRetireService({
+  db: getDb(),
+  retireTasks: getRetireTasks(),
+  notify: postAutoRetireNotices,
 }))
 
 // Archive routes — 工作区归档（Archive V2）+ 执行结果摘要（票08：审批轨 /:id/propose
@@ -1142,6 +1195,10 @@ if (shouldServe) {
             // 「夜巡可反复跑」——游标持久记至 execution，重跑零重复；失败显形不炸作业，
             // afterPatrol 同律）。
             parseLedger: async () => { await getEffectivenessLedger().parse() },
+            // P4 票09 窄口腿（挂记账腿之后吃当夜账——判据读的就是刚落的引用账）：
+            // 90 天零引用 ∧ 零活页入链 ∧ 非人工文件 → auto-retire 经队列入 _retired/
+            // + 通知卡进对话流（先斩后奏可逆；失败显形不炸作业，记账同律）。
+            autoRetire: async () => { await getAutoRetire().run() },
           }),
         )
         if (seeded.created.length || seeded.repaired.length) {
