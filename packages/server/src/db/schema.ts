@@ -21,7 +21,11 @@ const _dirname: string =
 // 既有库的表+三索引**不在此自动 drop**：红线1「导出归档先于删除」要求 drop 前必先落
 // 审计件，该动作由 services/knowledge/retire-pending-review.ts 蓝绿脚本执行，真实库
 // 归主控 ops 合入后跑一次（applySchema 无 migrate* 函数 = 绝不绕过导出闸口）。
-export const SCHEMA_VERSION = 54
+// P4 票06 54→55：knowledge_effectiveness 列义对齐 effectiveness v2——蓝绿 RENAME
+// injected_count→cited_count、last_injected→last_cited（引用计数/最近被引用时间，
+// 存量行零丢失，migrateEffectivenessV55）；新表 effectiveness_cursors（记账解析游标，
+// PK=execution_id ⇒ 重跑幂等零重复）。
+export const SCHEMA_VERSION = 55
 
 /**
  * Apply the complete unified schema to the given database.
@@ -166,6 +170,33 @@ function handleSchemaMigrations(db: Database.Database): void {
   //                            不落 awaiting_review）；置上即放行进验收 Gate。
   ensureColumn(db, "executions", "takeover_at", "TEXT DEFAULT NULL")
   ensureColumn(db, "executions", "takeover_delivered_at", "TEXT DEFAULT NULL")
+
+  // schema v55 (P4 wiki-evolution 票06): knowledge_effectiveness 列义对齐 v2（引用记账）。
+  // 蓝绿：旧列存在则 RENAME（SQLite≥3.25 自动改挂引用该列的索引），存量行零丢失；
+  // 新库无此表 ⇒ 跳过，schema.sql 的 CREATE 直接带新名。幂等按列存在性检测。
+  migrateEffectivenessV55(db)
+}
+
+/**
+ * schema v55（P4 票06 effectiveness v2）：knowledge_effectiveness 注入计数列 → 引用计数列。
+ *
+ * 旧语义（injected_count/last_injected = 运行时注入链计数）的生产者已随知识中心票08 物理
+ * 删除；本票消费面改「服务端离线解析执行产物」，列义 = **引用计数/最近被引用时间**
+ * （spec Implementation Decisions「effectiveness v2」·票面 AC1）。改名而非加列：DAO 现
+ * 零业务 importer（v2 起 importer=本票记账服务），两语义不同时成立，留双列反成误导面。
+ * 历史行保留不伪造（蓝绿纪律：不动数据、只动列名；旧注入计数行作为历史消费记录共存）。
+ */
+function migrateEffectivenessV55(db: Database.Database): void {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_effectiveness'").all()
+  if (tables.length === 0) return // 新库：schema.sql CREATE 直接带 v2 列名
+  const cols = db.prepare("PRAGMA table_info(knowledge_effectiveness)").all() as { name: string }[]
+  const has = (n: string) => cols.some(c => c.name === n)
+  if (has("injected_count") && !has("cited_count")) {
+    db.exec("ALTER TABLE knowledge_effectiveness RENAME COLUMN injected_count TO cited_count")
+  }
+  if (has("last_injected") && !has("last_cited")) {
+    db.exec("ALTER TABLE knowledge_effectiveness RENAME COLUMN last_injected TO last_cited")
+  }
 }
 
 /**

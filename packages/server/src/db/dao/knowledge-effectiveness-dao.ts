@@ -3,18 +3,24 @@ import { BaseDAO } from "./base"
 
 export interface KnowledgeEffectivenessRow {
   rule_id: string
-  injected_count: number
+  cited_count: number
   helpful_count: number
   not_helpful_count: number
-  last_injected: string | null
+  last_cited: string | null
   confidence: number
 }
 
 /**
- * KnowledgeEffectivenessDAO — 边界注（code-review S1）：服务层消费方（trackEffectiveness/
- * retireStaleRules 等）已随知识中心票08 注入链物理删除，本 DAO 业务层现**零 importer**
- * （index.ts 装配位保留=容器一致性）——保留为 spec Out of Scope P4「effectiveness v2」
- * （JSONL ↔ blocker 关联、confidence 滚动更新）的预留面，与 schema.sql knowledge_effectiveness 表同进退，勿单独复活旧语义。
+ * KnowledgeEffectivenessDAO — effectiveness v2 记账面（P4 票06 起**消费中**，v55 蓝绿
+ * 改名：injected_count→cited_count、last_injected→last_cited；与 schema.sql 表边界注同律）。
+ *
+ * 写侧 importer = services/knowledge/effectiveness-ledger.ts（执行 JSONL/var_pool 离线
+ * 解析记账）。纪律两条：
+ * - incrementCited 的时刻由调用方传入（= 被消费执行的落库时刻，非挂钟）——离线重放
+ *   确定，夜巡反复跑同结果（红线6）。
+ * - incrementHelpful/NotHelpful **只落计数不动 confidence**——confidence 滚动更新
+ *   （helpful/(helpful+not_helpful)，DB 真源）是票07 的出口；旧「helpful/injected」
+ *   公式随注入语义一并废弃，勿复活（表边界注/红线3 同款告诫）。
  */
 export class KnowledgeEffectivenessDAO extends BaseDAO {
   constructor(db: Database.Database) {
@@ -23,20 +29,20 @@ export class KnowledgeEffectivenessDAO extends BaseDAO {
 
   upsert(ruleId: string, data: Partial<Omit<KnowledgeEffectivenessRow, 'rule_id'>>): void {
     this.stmt(
-      `INSERT INTO knowledge_effectiveness (rule_id, injected_count, helpful_count, not_helpful_count, last_injected, confidence)
+      `INSERT INTO knowledge_effectiveness (rule_id, cited_count, helpful_count, not_helpful_count, last_cited, confidence)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(rule_id) DO UPDATE SET
-         injected_count = COALESCE(?, injected_count),
+         cited_count = COALESCE(?, cited_count),
          helpful_count = COALESCE(?, helpful_count),
          not_helpful_count = COALESCE(?, not_helpful_count),
-         last_injected = COALESCE(?, last_injected),
+         last_cited = COALESCE(?, last_cited),
          confidence = COALESCE(?, confidence)`
     ).run(
       ruleId,
-      data.injected_count ?? 0, data.helpful_count ?? 0, data.not_helpful_count ?? 0,
-      data.last_injected ?? null, data.confidence ?? 0.5,
-      data.injected_count ?? null, data.helpful_count ?? null, data.not_helpful_count ?? null,
-      data.last_injected ?? null, data.confidence ?? null
+      data.cited_count ?? 0, data.helpful_count ?? 0, data.not_helpful_count ?? 0,
+      data.last_cited ?? null, data.confidence ?? 0.5,
+      data.cited_count ?? null, data.helpful_count ?? null, data.not_helpful_count ?? null,
+      data.last_cited ?? null, data.confidence ?? null
     )
   }
 
@@ -45,44 +51,45 @@ export class KnowledgeEffectivenessDAO extends BaseDAO {
   }
 
   listAll(): KnowledgeEffectivenessRow[] {
-    return this.stmt(`SELECT * FROM knowledge_effectiveness ORDER BY last_injected DESC`).all() as KnowledgeEffectivenessRow[]
+    return this.stmt(`SELECT * FROM knowledge_effectiveness ORDER BY last_cited DESC`).all() as KnowledgeEffectivenessRow[]
   }
 
-  listStale(minInjected: number, maxConfidence: number, daysSinceLastInjected: number): KnowledgeEffectivenessRow[] {
-    // ponytail: when daysSinceLastInjected=0, skip date check (for testing)
+  /**
+   * 低置信候选筛（票08 僵尸/票07 低置信 finding 的现成取数口）。
+   * daysSinceLastCited=0 ⇒ 跳过日期检查（测试缝先例）；>0 ⇒ 与 nowIso（缺省挂钟）
+   * 推得的截止时刻字符串比较。
+   */
+  listStale(minCited: number, maxConfidence: number, daysSinceLastCited: number, nowIso?: string): KnowledgeEffectivenessRow[] {
+    if (daysSinceLastCited <= 0) {
+      return this.stmt(
+        `SELECT * FROM knowledge_effectiveness WHERE cited_count >= ? AND confidence < ?`
+      ).all(minCited, maxConfidence) as KnowledgeEffectivenessRow[]
+    }
+    const base = nowIso ? Date.parse(nowIso) : Date.now()
+    const cutoff = new Date(base - daysSinceLastCited * 86400_000).toISOString()
     return this.stmt(
       `SELECT * FROM knowledge_effectiveness
-       WHERE injected_count >= ?
-         AND confidence < ?
-         AND (? <= 0 OR last_injected < datetime('now', '-' || ? || ' days'))`
-    ).all(minInjected, maxConfidence, daysSinceLastInjected, daysSinceLastInjected) as KnowledgeEffectivenessRow[]
+       WHERE cited_count >= ? AND confidence < ? AND (last_cited IS NULL OR last_cited < ?)`
+    ).all(minCited, maxConfidence, cutoff) as KnowledgeEffectivenessRow[]
   }
 
-  incrementInjected(ruleId: string): void {
+  /** 引用记账：首见建行计 1，再见 +1；last_cited=调用方给定的执行时刻（重放确定）。 */
+  incrementCited(ruleId: string, citedAt: string): void {
     this.stmt(
-      `INSERT INTO knowledge_effectiveness (rule_id, injected_count, last_injected)
-       VALUES (?, 1, datetime('now'))
+      `INSERT INTO knowledge_effectiveness (rule_id, cited_count, last_cited)
+       VALUES (?, 1, ?)
        ON CONFLICT(rule_id) DO UPDATE SET
-         injected_count = injected_count + 1,
-         last_injected = datetime('now')`
-    ).run(ruleId)
+         cited_count = cited_count + 1,
+         last_cited = excluded.last_cited`
+    ).run(ruleId, citedAt)
   }
 
+  /** blocker 关联判定落账（LLM seam 裁决后调用）；行必已由 incrementCited 落（同事务先引用后判定）。 */
   incrementHelpful(ruleId: string): void {
-    this.stmt(
-      `UPDATE knowledge_effectiveness SET
-         helpful_count = helpful_count + 1,
-         confidence = CASE WHEN injected_count > 0 THEN ROUND(CAST(helpful_count + 1 AS REAL) / injected_count, 3) ELSE confidence END
-       WHERE rule_id = ?`
-    ).run(ruleId)
+    this.stmt(`UPDATE knowledge_effectiveness SET helpful_count = helpful_count + 1 WHERE rule_id = ?`).run(ruleId)
   }
 
   incrementNotHelpful(ruleId: string): void {
-    this.stmt(
-      `UPDATE knowledge_effectiveness SET
-         not_helpful_count = not_helpful_count + 1,
-         confidence = CASE WHEN injected_count > 0 THEN ROUND(CAST(helpful_count AS REAL) / injected_count, 3) ELSE confidence END
-       WHERE rule_id = ?`
-    ).run(ruleId)
+    this.stmt(`UPDATE knowledge_effectiveness SET not_helpful_count = not_helpful_count + 1 WHERE rule_id = ?`).run(ruleId)
   }
 }

@@ -1031,21 +1031,40 @@ INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
 -- services/knowledge/retire-pending-review.ts 处理（**导出归档先于删除**，落
 -- `<知识根>/_archive/pending-review-{ts}.json`），真实库执行归主控 ops。此处不再 CREATE。
 
--- knowledge_effectiveness 边界注（code-review S1 / 2026-10-24 评审修复）：注入链生产者已随
--- 知识中心票08 物理删除，服务层死链（effectiveness.ts/maintenance.ts/generate.ts 及其自测）
--- 已按 CODING_STANDARDS #5 清除；**表本体与 DAO 保留**——spec Out of Scope 点名 P4 残余
--- 「effectiveness v2（JSONL 解析 ↔ blocker 关联、confidence 滚动更新）」的预留面，
--- 勿删本表；重启消费面前须连同滚动更新语义整体设计（勿复活旧关键词匹配近似）。
+-- knowledge_effectiveness 边界注（P4 票06 起**消费中**；原 code-review S1 预留注兑现）：
+-- 消费面 = services/knowledge/effectiveness-ledger.ts（服务端离线增量解析执行 JSONL +
+-- executions.var_pool，wiki 页/锚点引用记账 + blocker↔锚点关联落账）。列义对齐
+-- effectiveness v2（spec Implementation Decisions）：cited_count=引用计数（锚点/页被
+-- wiki_refs 或 Read 消费的次数，v55 蓝绿改名自旧注入计数 injected_count，历史行保留）、
+-- last_cited=最近被引用时间（票08 僵尸 90 天/票09 窄口判据原料）、helpful/not_helpful=
+-- blocker 关联判定落账（**判定必须走 LLM seam，勿复活旧关键词匹配近似**——旧
+-- effectiveness.ts「词面撞车当因果」教训在其 git 史 cc6b2d4b，红线3 双钉不变）。
+-- confidence 列义升级为滚动实测值属票07（DB 真源、页 front-matter 为快照）；本票
+-- 写面只落计数、不动 confidence。
 CREATE TABLE IF NOT EXISTS knowledge_effectiveness (
   rule_id TEXT PRIMARY KEY,
-  injected_count INTEGER NOT NULL DEFAULT 0,
+  cited_count INTEGER NOT NULL DEFAULT 0,
   helpful_count INTEGER NOT NULL DEFAULT 0,
   not_helpful_count INTEGER NOT NULL DEFAULT 0,
-  last_injected TEXT DEFAULT NULL,
+  last_cited TEXT DEFAULT NULL,
   confidence REAL NOT NULL DEFAULT 0.5
 );
 
-CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(injected_count, confidence, last_injected);
+CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(cited_count, confidence, last_cited);
+
+-- effectiveness_cursors（P4 票06）：记账解析器的**增量游标**，持久记至 execution。
+-- PK=execution_id ⇒ 同一执行至多解析一次，夜巡/手动重跑零重复记账（红线6 幂等纪律的
+-- 落盘面）。parsed_at=解析时刻；citations/helpful/not_helpful/link_status 为本轮该执行
+-- 的落账摘要（审计可见，「落账可查」观察面）；wiki 写闸不经此表——纯 DB 记账，
+-- 不产 wiki 写操作（票06 零新 opKind；confidence 刷页通道属票07）。
+CREATE TABLE IF NOT EXISTS effectiveness_cursors (
+  execution_id TEXT PRIMARY KEY,
+  parsed_at TEXT NOT NULL,
+  citations INTEGER NOT NULL DEFAULT 0,
+  helpful INTEGER NOT NULL DEFAULT 0,
+  not_helpful INTEGER NOT NULL DEFAULT 0,
+  link_status TEXT NOT NULL DEFAULT ''
+);
 
 -- =============================================================================
 -- Wiki Tables (LLM-WIKI knowledge-loop, schema version 52) — ticket 01
