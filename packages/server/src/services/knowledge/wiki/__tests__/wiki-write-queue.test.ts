@@ -82,10 +82,11 @@ describe("CompileQueue — 进程内全局 FIFO 写串行（票06 AC2）", () =>
     expect(q.depth()).toBe(0)
   })
 
-  it("写操作 op kind 枚举单源（票06 AC1：后几类以枚举+入队通道预留；P3 票03 加 case-archive、票08 加 page-retire）", () => {
+  it("写操作 op kind 枚举单源（票06 AC1：后几类以枚举+入队通道预留；P3 票03 加 case-archive、票08 加 page-retire、P4 票07 加 effectiveness-sync）", () => {
     // 期望值逐字取票面：投喂编译/归档编译/对话修订/lint 自纠/finding 修复/回滚 revert/重蒸馏
     // + 判例自动入档（P3 票03：判例一切写经此 kind 入唯一写闸，禁直写 cases/——红线2）
     // + 页退役（票08：单页退役迁 _retired/ + superseded）
+    // + 实效快照同步（P4 票07：夜巡批量把 DB confidence 刷页 front-matter，单 commit 收口一批）
     expect(WRITE_OP_KINDS).toEqual([
       "ingest-compile",
       "archive-compile",
@@ -96,6 +97,7 @@ describe("CompileQueue — 进程内全局 FIFO 写串行（票06 AC2）", () =>
       "redistill",
       "case-archive",
       "page-retire",
+      "effectiveness-sync",
     ])
   })
 })

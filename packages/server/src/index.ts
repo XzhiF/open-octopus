@@ -555,8 +555,9 @@ const ruleFormJudge = createProductionRuleFormJudge()
 // 知识中心票06：全局写串行两级机制落位——进程内 FIFO 编译队列（唯一写闸整包）
 // + wiki 根锁文件（跨进程保底，PID+心跳）。一切 wiki 写操作统一
 // `wikiWriteQueue.enqueue(opKind, fn)`（kind 单源 compile-queue.WRITE_OP_KINDS：
-// 投喂/归档/对话修订/lint 自纠/finding 修复/revert/重蒸馏；票07/10/12/13 经此入队，
-// 旁路写 wiki = 违规）。队列深度进健康条（queueDepth，票11 冻结形状只换值）。
+// 投喂/归档/对话修订/lint 自纠/finding 修复/revert/重蒸馏/case-archive/page-retire/
+// effectiveness-sync；票07/10/12/13 经此入队，P4 票07 effectiveness-sync 刷 confidence
+// 快照，旁路写 wiki = 违规）。队列深度进健康条（queueDepth，票11 冻结形状只换值）。
 const wikiWriteQueue = new CompileQueue({
   lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
 })
