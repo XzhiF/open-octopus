@@ -340,9 +340,10 @@ describe("initial-compile migrator (ticket 05)", async () => {
     expect(run2.skipped).toEqual(["GLOSSARY-MAP.md"])
   })
 
-  it("INDEX L4 over-budget: later sources rejected carrying a hub-split suggestion on the report — never silently truncated, 不入队（票04 AC5）", async () => {
-    // 双小节 3 规则的胖源（'ab-' 名 → 排序最先入库、锚点最多 → L4 收敛失败时建议指向它）；
-    // 之后 35 个短源逐一把 INDEX 推过 800 token：后续 compileEntry 在 L4 闸拒写 + 建议随错。
+  it("INDEX L4 两级（票03 翻转：硬拒→分层收敛）：36 源推爆 ⇒ Optional 重排收敛恒见段全放行——溢出页降级在尾非静默截断，预警 finding 伴随，不入队", async () => {
+    // 票03 前本测试断言「其后短源 L4 拒写+建议随错」——旧口径把降入 Optional 的行仍算进
+    // 预算，D-aa16-2「Optional 重排无法收敛」三连拒的病根。两级化后：重排目标=恒见部分，
+    // 溢出页以压缩尾行（- relPath — title）留在 INDEX（可见面降级≠截断），全批放行。
     const fatBase = "ab-overflow-probe-0123456789abcdef0123456"
     fs.writeFileSync(
       path.join(knowledgeDir, "projects", `${fatBase}.md`),
@@ -356,31 +357,30 @@ describe("initial-compile migrator (ticket 05)", async () => {
     }
 
     const report = await makeMigrator().run()
-    // 胖源本身入库成功（早于预算压力），部分短源成功，其后短源在 L4 闸被拒
-    expect(report.compiled.map(c => c.entryId)).toContain(`prj-${fatBase}`)
-    expect(report.compiled.length).toBeGreaterThanOrEqual(20)
-    const failures = report.failed.filter(f => f.error.includes("L4_INDEX_BUDGET"))
-    expect(failures.length).toBeGreaterThan(0)
-    for (const f of failures) {
-      expect(f.source).not.toBe(`projects/${fatBase}.md`)
-      // 拆分建议锁定最胖词条（hub 化目标），按 H2 有可拆形态（children ≥2）——不是静默截断
-      expect(f.splitSuggestion).toBeDefined()
-      expect(f.splitSuggestion!.kind).toBe("wiki-split")
-      expect(f.splitSuggestion!.entryId).toBe(`prj-${fatBase}`)
-      expect(f.splitSuggestion!.children.length).toBeGreaterThanOrEqual(2)
-    }
+    // 两级化行为：零拒——新知识不再被预算硬顶三连（spec 故事24 验收面）
+    expect(report.failed).toEqual([])
+    expect(report.compiled.length).toBe(36)
 
-    // 票08：pending_review 已退役（无队列语义可断言）；原子回滚零半成品由下方 INDEX 预算校验覆盖。
-
-    // 已入库状态下的 INDEX 仍在预算内（被拒写入经原子回滚不留半成品）
     const { estimateTokens } = await import("../lint")
-    expect(estimateTokens(fs.readFileSync(path.join(root, "INDEX.md"), "utf-8"))).toBeLessThanOrEqual(800)
+    const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
+    expect(index).toContain("## Optional")
+    const visible = index.split("## Optional")[0]
+    expect(estimateTokens(visible)).toBeLessThanOrEqual(800)
+    // 病根锚定（独立算账）：INDEX **全文** token >800——旧口径此态必拒（三连拒现场），
+    // 分层后恒见段达标而尾部承载溢出行：分层真实生效=本测试与 D-aa16-2 的因果对质
+    expect(estimateTokens(index)).toBeGreaterThan(800)
 
-    // 失败重跑：已入库源跳过、被拒源仍拒、建议纯函数随错（票08：不再断言 pending_review）
+    // 预警 finding 伴随（恒见段推过 80% 线；kind 单源 patrol.ts PatrolFindingKind；不入队=红线2）
+    const warn = db
+      .prepare("SELECT COUNT(*) AS n FROM findings WHERE kind = 'index-budget' AND status = 'open'")
+      .get() as { n: number }
+    expect(warn.n).toBe(1)
+
+    // 失败重跑面 → 幂等重放：已入库全跳过、零失败（旧断言「被拒源仍拒」随两级化退役）
     const run2 = await makeMigrator().run()
     expect(run2.skipped.length).toBe(report.compiled.length)
-    expect(run2.failed.filter(f => f.error.includes("L4_INDEX_BUDGET"))).toHaveLength(failures.length)
-  }, 120_000)
+    expect(run2.failed).toEqual([])
+  }, 180_000)
 
   it("excludes user_preference.md/index.md and skips <!-- retired -->-marked legacy rules without minting anchor numbers for them", async () => {
     fs.writeFileSync(

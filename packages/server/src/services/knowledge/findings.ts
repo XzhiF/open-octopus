@@ -338,6 +338,27 @@ export class FindingOpsService {
         // case 单页通道），自返结果绕开通用 works/tail。
         return await this.distillCase(row, detail, pages)
       }
+      case "index-budget": {
+        // 票03 AC3「采纳『移 Optional』则重编译 INDEX」：经本 finding-fix 队列串行位
+        // 重建确定性 INDEX（红线1——一切 wiki 根写经队列，rebuildIndex 禁队外直调）。
+        // 在盘 INDEX 已是收敛态 ⇒ 空转成功零写（distillCase 空转先例同形态，裁决按闭环）。
+        const compiler = new WikiCompileService({
+          db: this.db, org: GLOBAL_WIKI_ORG, rootDir: this.wikiRoot,
+          ...(this.git ? { git: this.git } : {}),
+        })
+        const res = await compiler.rebuildIndex({
+          entry: `INDEX.md ← ${row.id}`,
+          note: "预算预警采纳：INDEX 恒见段重建（裁决即编译 · 票03）",
+          source: "compile",
+          reviewer: "owner",
+        })
+        return {
+          commit: res.commit,
+          changed: res.changed,
+          touched: [{ path: "INDEX.md", type: "index", created: false }],
+          warnings: res.changed ? [] : ["在盘 INDEX 已是确定性重建收敛态，空转零写（裁决按闭环处理）"],
+        }
+      }
       default:
         throw new FindingOpsError("FINDING_FIX_UNSUPPORTED_KIND", `本通道不接 kind='${row.kind}'`, 400)
     }

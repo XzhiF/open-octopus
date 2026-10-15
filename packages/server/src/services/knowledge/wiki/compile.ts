@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
+import crypto from "crypto"
 import type { WikiEntryFrontmatter, WikiCaseFrontmatter, WikiPageFrontmatter, WikiPageType } from "@octopus/shared"
 import { WIKI_CASE_SECTIONS, LOCATABLE_SOURCE_RE } from "@octopus/shared"
 import {
@@ -21,6 +22,7 @@ import { resolveWikiRoot, ensureWikiSkeleton, WIKI_ALL_DIRS, WIKI_PAGE_GROUP_LAB
 import { isManualFileTarget, ManualFileWriteError } from "./manual-files"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
 import { WikiArticleDAO, type WikiArticleRow } from "../../../db/dao/wiki-article-dao"
+import { FindingsDAO, type FindingUpsert } from "../../../db/dao/findings-dao"
 import { today } from "./util"
 
 /**
@@ -331,13 +333,26 @@ export interface BudgetedIndex {
   content: string
   /** 被移入 ## Optional 的页 relPath（低频=规则数少者优先，同级按路径） */
   optionalRelPaths: string[]
-  /** 重排后仍超 800 token 预算（病态巨行）——调用方须拒写 */
+  /**
+   * 票03（spec 故事25）预算口径 = **恒见部分**（必读 + 五类正文节 = 第一跳恒见成本；
+   * ## Optional 压缩尾部按 llms.txt 惯例不占预算）。
+   */
+  visibleTokens: number
+  /** 恒见部分 >100% 硬顶（病态巨行——降无可降仍超限）——调用方须拒写 */
   overBudget: boolean
+  /** 恒见部分 >80% 预警带（票03 两级化：放行但须伴随预警 finding） */
+  warnBudget: boolean
+}
+
+/** 恒见预算预警线 token（票03：>80% 放行+finding、>100% 拒——spec 故事24 逐字比例）。 */
+export function indexBudgetWarnTokens(): number {
+  return Math.round(WIKI_LIMITS.INDEX_MAX_TOKENS * WIKI_LIMITS.INDEX_WARN_RATIO)
 }
 
 /**
- * L4 预算闸渲染：INDEX.md ≤800 token（第一跳成本恒定纪律保留，prototype Tab②）。
- * 超限→把规则数最少的页逐一移入 Optional 直至回到预算；仍超→overBudget。
+ * L4 预算闸渲染（票03 两级化）：恒见部分 ≤800 token（第一跳成本恒定纪律保留，prototype Tab②）。
+ * 超限→把规则数最少的页逐一移入 Optional（压缩尾部不占恒见预算）直至恒见部分回到预算；
+ * 仍超→overBudget（硬拒面）。80% < 恒见部分 ≤100% ⇒ warnBudget（放行+预警面）。
  */
 export function renderBudgetedWikiIndex(
   entries: ScannedEntry[],
@@ -349,20 +364,27 @@ export function renderBudgetedWikiIndex(
     (a, b) => a.anchors.length - b.anchors.length || a.relPath.localeCompare(b.relPath),
   )
   const optionalRelPaths: string[] = []
-  let content = renderWikiIndex(entries, org)
+  // 收敛目标 = 恒见部分 token（故事25 分层口径；旧口径算全文含 Optional 尾部，
+  // 是 D-aa16-2「Optional 重排无法收敛」的病根——降入 Optional 的行仍占预算）
+  let mandatory = visible
+  let tokens = estimateTokens(renderWikiIndex(mandatory, org))
   let guard = 0
-  while (estimateTokens(content) > WIKI_LIMITS.INDEX_MAX_TOKENS && optionalRelPaths.length < byLowActivity.length - 1 && guard < 1000) {
+  while (tokens > WIKI_LIMITS.INDEX_MAX_TOKENS && optionalRelPaths.length < byLowActivity.length - 1 && guard < 1000) {
     const next = byLowActivity.find(e => !optionalRelPaths.includes(e.relPath))
     if (!next) break
     optionalRelPaths.push(next.relPath)
-    content = renderWikiIndex(
-      visible.filter(e => !optionalRelPaths.includes(e.relPath)),
-      org,
-      visible.filter(e => optionalRelPaths.includes(e.relPath)),
-    )
+    mandatory = visible.filter(e => !optionalRelPaths.includes(e.relPath))
+    tokens = estimateTokens(renderWikiIndex(mandatory, org))
     guard++
   }
-  return { content, optionalRelPaths, overBudget: estimateTokens(content) > WIKI_LIMITS.INDEX_MAX_TOKENS }
+  const content = renderWikiIndex(mandatory, org, visible.filter(e => optionalRelPaths.includes(e.relPath)))
+  return {
+    content,
+    optionalRelPaths,
+    visibleTokens: tokens,
+    overBudget: tokens > WIKI_LIMITS.INDEX_MAX_TOKENS,
+    warnBudget: tokens > indexBudgetWarnTokens(),
+  }
 }
 
 /**
@@ -370,9 +392,11 @@ export function renderBudgetedWikiIndex(
  * `## [date] ingest|compile|query|lint|revert | title` + 续行 `  → 结果`——
  * 行首前缀可 grep（`grep "^## \[" LOG.md`）。append-only，程序化写。
  * v2 旧表格行（| 日期 | 动作 | …）不重写，共存可读（机械转换属票07）。
+ * `date` 可选注入（票02）：回滚通道的 deep-revert 行走服务时钟（红线6 时间判据可测）；
+ * 缺省仍取真实 `today()`，既有编译通道零改动。
  */
-export function formatLogRow(cols: { action: string; entry: string; note: string; source: string; reviewer: string }): string {
-  return `## [${today()}] ${cols.action} | ${cols.entry}\n  → ${cols.note} · ${cols.source} · ${cols.reviewer} ✓\n`
+export function formatLogRow(cols: { action: string; entry: string; note: string; source: string; reviewer: string }, date?: string): string {
+  return `## [${date ?? today()}] ${cols.action} | ${cols.entry}\n  → ${cols.note} · ${cols.source} · ${cols.reviewer} ✓\n`
 }
 
 export class WikiCompileService {
@@ -476,20 +500,10 @@ export class WikiCompileService {
       throw new WikiLintError(e.code, e.message, lint.errors)
     }
 
-    // ── L4 INDEX 预算闸（≤800 token，第一跳成本恒定）：预测含本词条的 INDEX，
-    //    低频词条移 ## Optional 收敛；重排仍超限 → 拒写 + 拆分建议随错误返回 ──
+    // ── L4 INDEX 预算闸·两级（票03）：恒见部分 >80% 放行+预警 finding，>100% 拒+压缩建议 ──
     const predicted: ScannedEntry[] = scanWikiEntries(this.root).filter(e => e.relPath !== relPath)
     predicted.push({ relPath, meta, anchors, type: pageTypeOf(meta) })
-    const budget = renderBudgetedWikiIndex(predicted, this.org)
-    if (budget.overBudget) {
-      const tokens = estimateTokens(budget.content)
-      throw new WikiLintError(
-        "L4_INDEX_BUDGET",
-        `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频词条移 ## Optional 或升 hub（拆分建议见 suggestion）`,
-        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
-        this.overflowSplitSuggestion(predicted, relPath, { meta, fileName, body }),
-      )
-    }
+    this.l4BudgetGate(predicted, [{ relPath, meta, fileName, body }])
 
     // ── L6 规则形态：编译时 LLM 判定（warn 级，注入 judge 才跑——单测 fixture-mocked，
     //    离线默认零噪音；判定失败绝不阻塞编译）──
@@ -690,20 +704,12 @@ export class WikiCompileService {
       for (const e of lint.errors) throw new WikiLintError(e.code, `${p.relPath}: ${e.message}`, lint.errors)
     }
 
-    // L4 INDEX 预算闸：整批合并预测（缺席批覆盖路径的旧页）
+    // L4 INDEX 预算闸·两级（票03，批通道口径与单页通道统一）：整批合并预测（剥批覆盖路径的旧页）
     const predicted: ScannedEntry[] = scanned.filter(e => !batchPaths.has(e.relPath))
     for (const p of planned) {
       predicted.push({ relPath: p.relPath, meta: pageEntryView(p.meta), anchors: p.anchors, type: p.meta.type, page: p.meta })
     }
-    const budget = renderBudgetedWikiIndex(predicted, this.org)
-    if (budget.overBudget) {
-      const tokens = estimateTokens(budget.content)
-      throw new WikiLintError(
-        "L4_INDEX_BUDGET",
-        `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频页移 ## Optional 或升 hub`,
-        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
-      )
-    }
+    this.l4BudgetGate(predicted, planned.map(p => ({ relPath: p.relPath, meta: p.meta, fileName: p.fileName, body: p.body })))
 
     // 幂等判定：产物与在盘内容仅差 last_compiled ⇒ 该页不写；整批皆同 ⇒ 零副作用 no-op
     const ignoringDate = (s: string) => s.replace(/\r\n/g, "\n").replace(/^last_compiled:.*$/m, "")
@@ -1018,24 +1024,130 @@ export class WikiCompileService {
   }
 
   /**
-   * L4 收敛失败时的拆分建议（票04 AC5：出口=随错误返回，**无入队语义**）：
+   * L4 两级闸·三通道统一实现（票03 / spec 故事24；v2 单页 / v3 单页 / 批通道同过此闸）：
+   * - 恒见部分 >100% 硬顶 ⇒ 抛 `L4_INDEX_BUDGET` + **压缩建议随错误返回**
+   *   （低频页移 ## Optional / 拆分 / hub 化；策展人对话内自纠，无入队语义——票04 AC5 出口纪律，
+   *   批通道自此也带 suggestion，E1 事实注「批面无建议」三通道口径统一）。
+   * - 恒见部分 ∈(80%, 100%] ⇒ **放行** + 预警 finding（findings 表 upsert，事后人裁=红线2
+   *   「数值处方=finding」形态；采纳走既有 finding adopt→finding-fix 队列通道=AC3）。
+   * finding 表是 DB 索引非 wiki 根 fs——写它不触红线1（编译执行体本就在队列串行位内）。
+   */
+  private l4BudgetGate(
+    predicted: ScannedEntry[],
+    incoming: Array<{ relPath: string; meta: WikiEntryFrontmatter | WikiPageFrontmatter; fileName: string; body: string }>,
+  ): void {
+    const budget = renderBudgetedWikiIndex(predicted, this.org)
+    if (budget.overBudget) {
+      const tokens = budget.visibleTokens
+      throw new WikiLintError(
+        "L4_INDEX_BUDGET",
+        `INDEX.md 恒见部分约 ${tokens} token 超过硬顶 ${WIKI_LIMITS.INDEX_MAX_TOKENS}——低频页移 ## Optional / 拆分 / hub 化的压缩建议见 suggestion（对话内自纠后重编译）`,
+        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX visible ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
+        this.overflowSplitSuggestion(predicted, incoming),
+      )
+    }
+    if (budget.warnBudget) this.upsertIndexBudgetWarning(budget, incoming[0]?.relPath)
+  }
+
+  /**
+   * 预警 finding 落库（票03 AC1/AC3）：内容寻址单行（每知识根一条，反复触发同 id 幂等刷新），
+   * 三选提案随 detail；证据未变零写（patrol sameEvidence 同律纪律）。status 由 DAO 契约
+   * 保持不覆盖——人已 ignore/resolved 后本通道不再重扰。
+   */
+  private upsertIndexBudgetWarning(budget: BudgetedIndex, triggeredBy?: string): void {
+    const warnAt = indexBudgetWarnTokens()
+    const percent = Math.round((budget.visibleTokens / WIKI_LIMITS.INDEX_MAX_TOKENS) * 100)
+    const detail = {
+      visible_tokens: budget.visibleTokens,
+      budget_tokens: WIKI_LIMITS.INDEX_MAX_TOKENS,
+      warn_threshold_tokens: warnAt,
+      percent,
+      optional_pages: budget.optionalRelPaths,
+      proposals: ["移低频页入 ## Optional（溢出页已由编译器自动降级，见 optional_pages）", "拆分最胖页（按 H2 切小节）", "hub 化（同域页聚合，第一跳不列子页）"],
+      ...(triggeredBy !== undefined ? { triggered_by: triggeredBy } : {}),
+    }
+    const draft: FindingUpsert = {
+      id: `fnd-${crypto.createHash("sha256").update(`index-budget|compile|${this.org}`, "utf-8").digest("hex").slice(0, 16)}`,
+      kind: "index-budget",
+      title: `INDEX 预算预警：恒见部分约 ${budget.visibleTokens}/${WIKI_LIMITS.INDEX_MAX_TOKENS} token（${percent}%）——三选一：移低频页入 ## Optional / 拆分 / hub 化`,
+      detail: JSON.stringify(detail),
+      pages: JSON.stringify(budget.optionalRelPaths),
+      raw_ref: "",
+      source: "compile",
+    }
+    const dao = new FindingsDAO(this.db)
+    const existing = dao.getById(draft.id)
+    if (
+      existing &&
+      existing.title === draft.title &&
+      existing.detail === draft.detail &&
+      existing.pages === draft.pages &&
+      existing.raw_ref === draft.raw_ref
+    ) {
+      return // 证据不变 ⇒ 零写（幂等重放不误伤，票03 S1c）
+    }
+    dao.upsert(draft)
+  }
+
+  /**
+   * 票03 AC3「裁决即编译」执行体：采纳 index-budget 预警后重建 INDEX（经 finding-fix
+   * 队列串行位调用，禁队外直调——红线1）。重建=确定性全库 renderBudgetedWikiIndex；
+   * 与在盘一致 ⇒ no-op 零写成功（distillCase 空转先例同形态，裁决按闭环处理）。
+   */
+  async rebuildIndex(opts: { entry: string; note: string; source?: string; reviewer?: string }): Promise<{ commit: string | null; changed: boolean }> {
+    const indexPath = path.join(this.root, WIKI_INDEX_FILE)
+    const logPath = path.join(this.root, WIKI_LOG_FILE)
+    const next = renderBudgetedWikiIndex(scanWikiEntries(this.root), this.org).content
+    const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
+    if (prevIndex !== null && prevIndex === next) return { commit: null, changed: false }
+    const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
+    ensureWikiSkeleton(this.root)
+    ensureWikiGitRepo(this.root, this.git)
+    try {
+      atomicWrite(indexPath, next)
+      atomicWrite(logPath, (prevLog ?? WIKI_LOG_HEADER) + formatLogRow({
+        action: "compile",
+        entry: opts.entry,
+        note: opts.note,
+        source: opts.source ?? "finding",
+        reviewer: opts.reviewer ?? "owner",
+      }))
+      mustGit(this.git, ["add", "-A"])
+      let commit: string | null = null
+      if (mustGit(this.git, ["status", "--porcelain"]).stdout.trim().length > 0) {
+        mustGit(this.git, ["commit", "-m", `compile: INDEX.md — ${opts.note}`])
+        commit = wikiHead(this.git)
+      }
+      return { commit, changed: commit !== null }
+    } catch (err) {
+      // 失败补偿回滚：INDEX/LOG 快照还原，不留半成品（管线事务纪律同款）
+      if (prevIndex !== null) atomicWrite(indexPath, prevIndex)
+      if (prevLog !== null) atomicWrite(logPath, prevLog)
+      else if (fs.existsSync(logPath)) fs.rmSync(logPath, { force: true })
+      throw err
+    }
+  }
+
+  /**
+   * L4 收敛失败时的压缩建议（票04 AC5 出口 + 票03 三通道统一：批面自此也随错返回）：
    * 取"最胖"页（锚点最多）给按 H2 小节的 hub 化切分计划；≥2 个小节才有可拆形态，
-   * 判例文件不参与拆分建议（append-only）。v2/v3 目标页都支持（分派构造器）。
+   * 判例文件不参与拆分建议（append-only）。incoming = 本次编译的页集（批通道多页；
+   * 未落盘页从这里取内存文，避免盘读缺席丢建议）。v2/v3 目标页都支持（分派构造器）。
    */
   private overflowSplitSuggestion(
     predicted: ScannedEntry[],
-    incomingRelPath: string,
-    incoming: { meta: WikiEntryFrontmatter | WikiPageFrontmatter; fileName: string; body: string },
+    incoming: Array<{ relPath: string; meta: WikiEntryFrontmatter | WikiPageFrontmatter; fileName: string; body: string }>,
   ): SplitProposal | undefined {
     if (predicted.length === 0) return undefined
     const largest = predicted.reduce((a, b) => (b.anchors.length > a.anchors.length ? b : a))
     let targetMeta: WikiEntryFrontmatter | WikiPageFrontmatter
     let targetFileName: string
     let targetBody: string
-    if (largest.relPath === incomingRelPath) {
-      targetMeta = incoming.meta
-      targetFileName = incoming.fileName
-      targetBody = incoming.body
+    const inc = incoming.find(p => p.relPath === largest.relPath)
+    if (inc) {
+      targetMeta = inc.meta
+      targetFileName = inc.fileName
+      targetBody = inc.body
     } else {
       try {
         const parsed = parseWikiFile(fs.readFileSync(path.resolve(this.root, largest.relPath), "utf-8"))
@@ -1124,19 +1236,10 @@ export class WikiCompileService {
       throw new WikiLintError(e.code, e.message, lint.errors)
     }
 
-    // ── L4 INDEX 预算闸：预测含本页的 INDEX，低频页移 ## Optional 收敛；仍超限→拒写+建议 ──
+    // ── L4 INDEX 预算闸·两级（票03）：恒见部分 >80% 放行+预警 finding，>100% 拒+压缩建议 ──
     const predicted: ScannedEntry[] = scanned.filter(e => e.relPath !== relPath)
     predicted.push({ relPath, meta: pageEntryView(meta), anchors, type: meta.type, page: meta })
-    const budget = renderBudgetedWikiIndex(predicted, this.org)
-    if (budget.overBudget) {
-      const tokens = estimateTokens(budget.content)
-      throw new WikiLintError(
-        "L4_INDEX_BUDGET",
-        `INDEX.md 约 ${tokens} token 超过预算 ${WIKI_LIMITS.INDEX_MAX_TOKENS} 且 Optional 重排无法收敛——低频页移 ## Optional 或升 hub（拆分建议见 suggestion）`,
-        [{ level: "L4", severity: "error", code: "L4_INDEX_BUDGET", message: `INDEX ${tokens} > ${WIKI_LIMITS.INDEX_MAX_TOKENS} token` }],
-        this.overflowSplitSuggestion(predicted, relPath, { meta, fileName, body }),
-      )
-    }
+    this.l4BudgetGate(predicted, [{ relPath, meta, fileName, body }])
 
     // ── L6 规则形态（warn 级；注入 judge 才跑，判定失败绝不阻塞）──
     if (this.ruleFormJudge) {

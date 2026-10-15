@@ -14,7 +14,7 @@ import type { WikiEntryFrontmatter } from "@octopus/shared"
  * 豁免开关：cases 判例豁免 L1 容量闸与正文禁日期（判例是历史事件，文件名/正文天然带日期）。
  */
 
-/** 阈值逐字来自 prototype Tab③「增长约束」表（独立真相源）。 */
+/** 阈值逐字来自 prototype Tab③「增长约束」表（独立真相源）；票03 两级化口径见 spec 故事 24。 */
 export const WIKI_LIMITS = {
   ENTRY_MAX_LINES: 120,
   ENTRY_MAX_RULES: 25,
@@ -23,6 +23,8 @@ export const WIKI_LIMITS = {
   H2_MAX_RULES: 10,
   INDEX_MAX_TOKENS: 800,
   CODE_BLOCK_MAX_LINES: 20,
+  /** 票03 L4 两级化（spec 故事24「>80% 预警放行、>100% 才拒」）：预警线 = 恒见预算 × 本比例 */
+  INDEX_WARN_RATIO: 0.8,
 } as const
 
 export type LintSeverity = "error" | "warn"

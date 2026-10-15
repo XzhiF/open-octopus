@@ -40,7 +40,12 @@ import { resolveKnowledgeRoot } from "./global-paths"
  * 副作用面：只写 findings 表；wiki/fs/git 零触碰（夜巡不起写队列）。读永不锁（票06 语义）。
  */
 
-export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog"
+/**
+ * P4 票03 扩枚举：`index-budget`（INDEX 恒见预算预警）——生产者=编译通道（compile.ts
+ * l4BudgetGate 直 upsert，本巡检六查不产该 kind），入本联合是为 UI/卡片按值消费的
+ * kind 词表单源（红线2：预警=finding 事后人裁，采纳走 finding-fix 队列重编译 INDEX）。
+ */
+export type PatrolFindingKind = "contradiction" | "stale" | "orphan" | "missing-page" | "missing-xref" | "case-backlog" | "index-budget"
 
 /** 单条巡检动作：created=新建 · refreshed=open 行证据刷新 · unchanged=零写 · suppressed=已裁决不再扰 */
 export type PatrolAction = "created" | "refreshed" | "unchanged" | "suppressed"

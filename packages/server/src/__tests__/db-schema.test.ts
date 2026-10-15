@@ -33,10 +33,11 @@ describe("DB Schema", () => {
       // a job definition and a task launch is an `executions` row carrying task_id.
       // v54 (票08 清理账): `pending_review` 退役——蓝绿 drop，schema.sql 不再 CREATE，
       //   故不在此清单。
+      // v55 (P4 票06): `effectiveness_cursors` 记账解析游标（PK=execution_id 幂等盘面）。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
-      "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
       "findings",
       "harness_config", "harness_events",
       "insight_marks", "interaction_messages",

@@ -50,10 +50,13 @@ import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { SessionCurationService } from "./services/knowledge/session-curation"
 import { createProductionCuratorLLM } from "./services/knowledge/wiki/curator-llm"
 import { WikiPatrolService } from "./services/knowledge/patrol"
+import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-ledger"
+import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
 import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
+import { createEffectivenessRoutes } from "./routes/effectiveness"
 import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
@@ -698,8 +701,8 @@ app.route("/api/knowledge", createSkillDraftRoutes({
   grant: (name, cloneName) => getSkillGrants().grant(name, cloneName),
   revoke: (name, cloneName) => getSkillGrants().revoke(name, cloneName),
 }))
-// 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → git revert 单
-// commit + INDEX/LOG/FTS 重同步 + LOG revert 行；GET /revert/task/:id 状态可查）。
+// 知识中心票12：回滚 API（POST /revert → 全局队列 opKind="revert" → 票02 状态重建：
+// 页回退到 T^ 态 + INDEX/LOG/FTS 重同步 + LOG deep-revert 行，单 commit；GET /revert/task/:id 状态可查）。
 // 票14 merger 代修（票12 集成红）：原顶层 new RevertTaskService({ db: getDb() … })
 // 在 initDb() 前 import 即抛 "Database not initialized"（崩 7 个 import 级测试）；
 // 改惰性构造——首次 revert 请求才 new，与下方迁移器工厂（(apply)=>new …）同轨。
@@ -745,6 +748,23 @@ app.route("/api/knowledge", createFindingsRoutes({
     return report
   },
   backfill: input => knowledgeBackfill.backfill(input),
+}))
+
+// P4 票06：effectiveness 记账解析器（spec 故事 1/6/7——服务端离线增量解析执行
+// JSONL/var_pool → knowledge_effectiveness；agent 运行时零感知，engine/prompt/VarPool
+// 执行链路零改动=本票 diff 面负断言）。db 面惰性（getFindingOps 同轨）。关联判定
+// LLM seam=createProductionKnowledgeLLM（llm.ts 离线闸语义原样：禁用/无 provider ⇒
+// 恒空串 ⇒ skipped:empty 诚实缺席，引用账不受损）；写面只有 DB 记账（零 wiki 写、
+// 零入队——confidence 刷页通道 effectiveness-sync opKind 属票07，本票不建）。
+let effectivenessLedgerInstance: EffectivenessLedgerService | undefined
+const getEffectivenessLedger = () => (effectivenessLedgerInstance ??= new EffectivenessLedgerService({
+  db: getDb(),
+  llm: createProductionKnowledgeLLM({ channel: "effectiveness-link", modelEnv: "OCTOPUS_EFFECTIVENESS_MODEL" }),
+}))
+// 手动触发端点（POST /api/knowledge/effectiveness/parse「解析至最新」）；夜巡自动面
+// 走下方 builtin-knowledge-patrol 作业的 parseLedger 腿——同一服务入口（双触发制式）。
+app.route("/api/knowledge/effectiveness", createEffectivenessRoutes({
+  parse: () => getEffectivenessLedger().parse(),
 }))
 
 // Archive routes — 工作区归档（Archive V2）+ 执行结果摘要（票08：审批轨 /:id/propose
@@ -1140,6 +1160,10 @@ if (shouldServe) {
             // P3 票04 b 路触发腿：夜巡产出后扫「流程型蒸馏判例」出草案（同步 fs 面，
             // 零 LLM 零入队；失败经 afterPatrol 闸显形 outcome 不炸作业）。
             afterPatrol: () => { getSkillDrafts().detectProceduralCases() },
+            // P4 票06 记账腿：巡检后增量解析执行产物落 effectiveness 账（spec 故事 6
+            // 「夜巡可反复跑」——游标持久记至 execution，重跑零重复；失败显形不炸作业，
+            // afterPatrol 同律）。
+            parseLedger: async () => { await getEffectivenessLedger().parse() },
           }),
         )
         if (seeded.created.length || seeded.repaired.length) {
