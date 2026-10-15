@@ -266,6 +266,7 @@ export function serializePageMarkdown(meta: WikiPageFrontmatter, body: string): 
   lines.push(`sources: [${meta.sources.join(", ")}]`)
   if (meta.confidence !== undefined) lines.push(`confidence: ${meta.confidence}`)
   if (meta.status) lines.push(`status: ${meta.status}`) // 票08：仅退役页写此字段
+  if (meta.replaced_by) lines.push(`replaced_by: ${yamlScalar(meta.replaced_by)}`) // 票04：仅退役页带替换者时写此字段
   lines.push("---", "")
   return lines.join("\n") + (body.endsWith("\n") ? body : body + "\n")
 }

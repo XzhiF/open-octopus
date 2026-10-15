@@ -242,6 +242,7 @@ export class FindingOpsService {
     }
 
     const works: PageWork[] = []
+    let fixNote = `finding 采纳修订 ${row.kind} · 裁决即编译（票13）`
     switch (row.kind) {
       case "missing-xref": {
         const a = String(detail.a ?? pages[0] ?? "")
@@ -298,7 +299,34 @@ export class FindingOpsService {
         })
         break
       }
-      case "contradiction":
+      case "contradiction": {
+        // 票04·故事26（D-aa16-3 清偿）：对手页已退役 ⇒ 单侧降级，不 failed。
+        // 判据严格：scan 缺席 **且** `_retired/<relPath>` 在盘才算退役（真缺席 ghost 不降级，
+        // 响亮 FINDING_TARGET_MISSING 照旧）；LLM 修订语义要求双方原文在场，单侧无生成面，
+        // 处置=清除本页标记行 + LOG 注记（退役执行体已摘 [[链接]]，矛盾事实面随之收敛）。
+        const retired = pages.filter(
+          p => !scanned.some(e => e.relPath === p) && fs.existsSync(path.join(this.wikiRoot, "_retired", p)),
+        )
+        if (retired.length > 0) {
+          const live = pages.filter(p => !retired.includes(p))
+          if (live.length === 0) {
+            // 双页皆退役：活页面无标记可清 ⇒ 空转闭环（裁决归档，不再恒 failed）
+            return {
+              commit: null, changed: false, touched: [],
+              warnings: [`矛盾归档：涉事 ${pages.length} 页均已退役 _retired/，活页无标记需清除`],
+            }
+          }
+          works.push(...live.map(p => {
+            const w = loadWork(p)
+            return { ...w, body: stripFindingMarkers(w.body, row.id) }
+          }))
+          fixNote = `finding 采纳修订 contradiction · 单侧裁决（对手已退役：${retired.join(", ")}）· 标记清除（票04）`
+          break
+        }
+        const revise = await this.semanticRevision(row, detail, pages, scanned, loadWork)
+        works.push(...revise)
+        break
+      }
       case "stale": {
         const revise = await this.semanticRevision(row, detail, pages, scanned, loadWork)
         works.push(...revise)
@@ -343,7 +371,7 @@ export class FindingOpsService {
     const res = await compiler.compilePages(batch, {
       action: "compile",
       entry: row.title,
-      note: `finding 采纳修订 ${row.kind} · 裁决即编译（票13）`,
+      note: fixNote,
       source: row.raw_ref || "patrol",
       reviewer: "owner",
     })

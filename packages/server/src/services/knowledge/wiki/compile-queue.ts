@@ -28,7 +28,7 @@ export const WRITE_OP_KINDS = [
   "dialog-revise",   // 对话修订 fix-forward（票12）
   "lint-fix",        // lint 自纠（票12）
   "finding-fix",     // finding 修复裁决即编译（票13）
-  "revert",          // 回滚 git revert（票12）
+  "revert",          // 回滚（票12 引入 git revert；票02 语义换芯=状态重建，kind 不变）
   "redistill",       // 重蒸馏脚本（票07）
   "case-archive",    // P3 票03 判例自动入档（提取草案/occurrences 合并/退役 superseded 全经此通道，红线2 禁直写 cases/）
   "page-retire",     // 单页退役迁 _retired/ + superseded（票08 清理账 · 故事32）

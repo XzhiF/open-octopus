@@ -312,3 +312,118 @@ describe("[采纳修订] index-budget — 预算预警采纳=队列内 INDEX 重
     expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
   })
 })
+
+describe("[采纳修订] contradiction 对手页已退役 — 单侧降级（票04 · D-aa16-3 清偿）", () => {
+  /** 构造「对手页已退役」现场：活页持标记行，对手页只存在于 _retired/（退役执行体的产物态）。 */
+  function seedRetiredCounterpart(fid: string): void {
+    writePage("topics/top-live.md", "top-live", "topic", ["probe"], [],
+      [
+        "## 硬约束",
+        "- 活断言：ECONNREFUSED 需先探测端口 <!--#oct-011-->",
+        "",
+        "## 冲突待裁决",
+        `> 【${fid}】与 [[con-gone]]（concepts/con-gone.md）冲突：旧断言「启动必须 pnpm dev --isolated」↔ 新断言「ECONNREFUSED 需探测」。旧断言保留未覆盖——裁决在对话进行`,
+        "",
+      ].join("\n"))
+    const goneAbs = path.join(wikiRoot, "_retired", "concepts")
+    fs.mkdirSync(goneAbs, { recursive: true })
+    fs.writeFileSync(path.join(goneAbs, "con-gone.md"), [
+      "---", "id: con-gone", "type: concept", "title: 已退役对手", "summary: 退役件（D-aa16-3 形状）",
+      "topics: [probe]", "links: []", "last_compiled: 2026-10-12", "sources: []", "status: superseded", "---", "",
+      "## 定义\n\n旧断言：启动必须 pnpm dev --isolated。\n",
+    ].join("\n"), "utf-8")
+    new FindingsDAO(db).upsert({
+      id: fid, kind: "contradiction", title: `矛盾：concepts/con-gone.md ↔ topics/top-live.md`,
+      detail: JSON.stringify({ old_claim: "启动必须 pnpm dev --isolated", new_claim: "ECONNREFUSED 需探测", pages: ["concepts/con-gone.md", "topics/top-live.md"] }),
+      pages: JSON.stringify(["concepts/con-gone.md", "topics/top-live.md"]), // 编译侧快照：含退役页原位路径（真盘 fnd-a6f743a4 恒败形）
+      raw_ref: "raw/inbox/we04-probe.md", source: "compile",
+    })
+  }
+
+  it("对手已退役 ⇒ 无 LLM 也 committed：本页标记清除 + LOG 单侧注记 + finding resolved，退役件不动", async () => {
+    const fid = "fnd-a6f743a4a5043316" // 真盘恒败标记同形（notes/04 §3.2）
+    seedRetiredCounterpart(fid)
+    const goneBefore = fs.readFileSync(path.join(wikiRoot, "_retired", "concepts", "con-gone.md"), "utf-8")
+    const git = realGit(wikiRoot)
+    const before = Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim() || "0")
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git }) // 无 llm——单侧路径不得依赖 LLM（旧恒败点=LLM 之前的 loadWork throw）
+    const task = ops.adopt(fid)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+
+    // 盘产物：本页标记行净洗（含小节剥空），锚点与硬约束行零扰动
+    const live = read("topics/top-live.md")
+    expect(live).not.toContain(fid)
+    expect(live).not.toContain("冲突待裁决")
+    expect(live).toContain("<!--#oct-011-->")
+    expect(live).toContain("ECONNREFUSED 需先探测端口")
+
+    // LOG 注记（日期宽松：真 today()）
+    const log = read("LOG.md")
+    expect(log).toMatch(/## \[\d{4}-\d{2}-\d{2}\] compile \| 矛盾：concepts\/con-gone\.md ↔ topics\/top-live\.md/)
+    expect(log).toContain("单侧")
+
+    // 裁决闭环 + 退役件不动 + 单 commit 收口
+    expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
+    expect(fs.readFileSync(path.join(wikiRoot, "_retired", "concepts", "con-gone.md"), "utf-8")).toBe(goneBefore)
+    const after = Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim())
+    expect(after).toBeGreaterThanOrEqual(before + 1)
+  })
+
+  it("涉事页全退役 ⇒ 空转 committed（零写、finding 归档，不再恒 failed）", async () => {
+    const fid = "fnd-bothgone00000001"
+    const gone = (dir: string, id: string, rel: string) => {
+      const abs = path.join(wikiRoot, "_retired", dir)
+      fs.mkdirSync(abs, { recursive: true })
+      fs.writeFileSync(path.join(abs, `${id}.md`), [
+        "---", `id: ${id}`, "type: concept", `title: ${id}`, "summary: s", "topics: []", "links: []",
+        "last_compiled: 2026-10-12", "sources: []", "status: superseded", "---", "", "## 定义\n\n甲。\n",
+      ].join("\n"), "utf-8")
+      return rel
+    }
+    const pA = gone("concepts", "con-gone-a", "concepts/con-gone-a.md")
+    const pB = gone("concepts", "con-gone-b", "concepts/con-gone-b.md")
+    new FindingsDAO(db).upsert({
+      id: fid, kind: "contradiction", title: "矛盾：双页皆退役",
+      detail: JSON.stringify({ old_claim: "甲", new_claim: "乙" }),
+      pages: JSON.stringify([pA, pB]), raw_ref: "raw/inbox/we04-probe.md", source: "compile",
+    })
+    const git = realGit(wikiRoot)
+    const before = Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim() || "0")
+
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git })
+    const task = ops.adopt(fid)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+    expect(done.result?.changed).toBe(false)
+    expect(done.result?.commit).toBeNull()
+    expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
+    expect(Number(git.run(["rev-list", "--count", "HEAD"]).stdout.trim())).toBe(before) // 零 commit（无页可写）
+  })
+
+  it("零回归：缺席页非退役（ghost 不在 _retired）⇒ 仍 failed FINDING_TARGET_MISSING，不降级", async () => {
+    const fid = "fnd-ghostabsent000001"
+    seedRetiredCounterpart(fid)
+    // 再造一枚 pages 含真缺席页（concepts/con-ghost.md 原位与 _retired 均无）的矛盾 finding
+    new FindingsDAO(db).upsert({
+      id: fid + "2", kind: "contradiction", title: "矛盾：对手真缺席",
+      detail: JSON.stringify({ old_claim: "甲", new_claim: "乙" }),
+      pages: JSON.stringify(["concepts/con-ghost.md", "topics/top-live.md"]),
+      raw_ref: "raw/inbox/we04-probe.md", source: "compile",
+    })
+    const queue = new CompileQueue()
+    // LLM 在场也须先炸在 loadWork 闸上（降级判据严格：_retired 无存档的缺席页不属单侧射程）
+    const ops = new FindingOpsService({ db, root, queue, now: FROZEN_NOW, git: realGit(wikiRoot), llm: async () => "{}" })
+    const task = ops.adopt(fid + "2")
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+    expect(done.status).toBe("failed")
+    expect(done.error?.code).toBe("FINDING_TARGET_MISSING")
+    expect(new FindingsDAO(db).getById(fid + "2")!.status).toBe("open")
+  })
+})
