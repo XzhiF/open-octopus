@@ -20,7 +20,7 @@ import { errorResponse } from "../services/knowledge/validators"
  *                           = 退役回执卡数据面）。
  *
  * 错误码沿用 `{error:{code,message}}` 纪律：INVALID_PARAM 400（缺 path/pageId、非法形态）、
- * NOT_FOUND 404（页不在册/wiki 无 git）、MANUAL_FILE_WRITE 403（user_preference/SCHEMA 拒退）、
+ * NOT_FOUND 404（页不在册/wiki 无 git）、MANUAL_FILE_WRITE 403（人工文件 SCHEMA 拒退）、
  * WORKTREE_DIRTY 409。执行级失败（异步任务语义）不改 HTTP 码，落任务 failed + error.code。
  *
  * 恢复镜像通道（票09·故事17 同款接线）= routes/wiki-restore.ts（POST /restore 三口令

@@ -72,7 +72,7 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
           entries: [{
             id: "prj-octopus", path: "projects/prj-octopus.md",
             title: "Octopus 平台工程知识", summary: "monorepo 构建/测试/端口规则与已知陷阱",
-            stability: "stable", ruleCount: 2,
+            stability: "stable", ruleCount: 2, links: [], backlinks: [],
           }],
         },
         {
@@ -80,7 +80,7 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
           entries: [{
             id: "wf-prd-impl", path: "workflows/wf-prd-impl.md",
             title: "prd-impl 工作流经验", summary: "P1-P5 分阶段提交",
-            stability: "stable", ruleCount: 1,
+            stability: "stable", ruleCount: 1, links: [], backlinks: [],
           }],
         },
       ])

@@ -25,11 +25,10 @@ import { PageRestoreCard } from './page-restore-card'
  * （显形不炸流）。
  */
 export interface KcCardActionCtx {
-  /** 右栏渲染/跟随（入参 = 页 id 或 wiki 相对路径，宿主解析） */
+  /** 在主场正文区渲染该页（入参 = 页 id 或 wiki 相对路径，宿主解析；
+   *  原 openFullPage「切浏览模式」语义随双模式废除合一于此——ADR-0033） */
   openPage: (target: string) => void
-  /** 全页打开 = 切浏览模式并渲染该页 */
-  openFullPage: (target: string) => void
-  /** 右栏渲染 raw 源文件（入参 = 知识根相对指针路径 raw/…） */
+  /** 正文区渲染 raw 源文件（入参 = 知识根相对指针路径 raw/…） */
   openRaw: (pointerPath: string) => void
   /** 回滚（diff 卡二次确认后调用；宿主发 POST /revert 并回流状态到卡） */
   revert: (commit: string) => void
@@ -42,7 +41,7 @@ export interface KcCardActionCtx {
   adoptFinding: (findingId: string) => void
   /** [忽略]（票13 finding 卡）：POST ignore → 记录在案不再扰 */
   ignoreFinding: (findingId: string) => void
-  /** [编进 wiki]（票13 回填卡）：POST /backfill → 摘录落 raw + 编译投递 + diff 卡跟随 */
+  /** [编进 wiki]（票13 回填卡）：POST /backfill → 摘录落 raw + 编译投递 + diff 卡落流 */
   backfillWiki: (cardId: string, input: { text: string; title?: string; sessionId?: string }) => void
   /** [不用]（票13 回填卡）：纯前端弃卡，零请求 */
   dismissBackfill: (cardId: string) => void

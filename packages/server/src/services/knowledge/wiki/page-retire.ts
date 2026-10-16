@@ -14,7 +14,7 @@ import {
   atomicWrite,
 } from "./compile"
 import { parseWikiFile, serializePageMarkdown, serializeEntryMarkdown, serializeCaseMarkdown } from "./format"
-import { WIKILINK_RE } from "./lint"
+import { WIKILINK_RE, computeArticleLinks, wikiLinkTargets } from "./lint"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
 import { isManualFileTarget } from "./manual-files"
 
@@ -27,7 +27,7 @@ import { isManualFileTarget } from "./manual-files"
  * 一切退役经票06 全局 FIFO 队列 `opKind="page-retire"` 串行执行（旁路写 wiki = 违规）；
  * 单 commit 收口（页迁 + INDEX + LOG 一并带上），失败不留半成品。
  *
- * 写保护继承：user_preference.md / SCHEMA.md 经 `isManualFileTarget` 拒退（唯一写闸
+ * 写保护继承：人工文件（SCHEMA.md）经 `isManualFileTarget` 拒退（唯一写闸
  * manual-file 面）；case 域走判例管线自带 status，本服务只收 **page** 形态。
  *
  * registry 形态与 RevertTaskService/CuratorTaskService 同律（进程内 Map，超容量逐出终态；
@@ -180,7 +180,7 @@ export class PageRetireTaskService {
     if (!abs.startsWith(this.wikiRoot + path.sep)) {
       throw new PageRetireError("INVALID_PARAM", `路径越界（须落在 wiki 根内）：${relPath}`, 400)
     }
-    // 写保护继承：user_preference.md / SCHEMA.md 拒退
+    // 写保护继承：人工文件（SCHEMA.md）拒退
     if (isManualFileTarget(this.wikiRoot, abs)) {
       throw new PageRetireError("MANUAL_FILE_WRITE", `人工文件不可经唯一写闸退役：${path.basename(abs)}`, 409)
     }
@@ -351,7 +351,10 @@ export class PageRetireTaskService {
         if (!hostRow) continue
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
-          articles.upsert({ ...upsert, body: c.newBody })
+          // 宿主页链接面随摘链面同步落库（front-matter 链项 + 正文 [[…]] 双摘 ⇒ links 重算，
+          // c.next 为改写后全文，解析必成——cleanInboundLinksInContent 产物同形）
+          const hp = parseWikiFile(c.next)
+          articles.upsert({ ...upsert, body: c.newBody, links: hp.kind === "page" ? computeArticleLinks(hp.meta.links, c.newBody) : wikiLinkTargets(c.newBody) })
           const rowid = articles.getRowid(GLOBAL_WIKI_ORG, hostRow.id)
           if (rowid === undefined) return
           try {
@@ -422,8 +425,10 @@ export class PageRetireTaskService {
  * `[[target]]` 是否指向本次退役页——与 lint.resolveWikiLink 的命中面同形（单源纪律：
  * 改动解析语义须两处同步）：路径式（带 .md）、去缀式（fs `${t}.md` 命中）、hub 目录式
  * （README 页）、裸 id 式（corpus id 等值 + 路径前缀约束）。
+ * tree 反链倒排第三消费面（wiki 右栏），判据永不分叉：front-matter 链项与正文
+ * wikilinks 的落库面（lint.computeArticleLinks）全部经此函数对拍。
  */
-function linkPointsToPage(target: string, pageId: string, relPath: string): boolean {
+export function linkPointsToPage(target: string, pageId: string, relPath: string): boolean {
   const u = target.trim().replace(/\/+$/, "")
   if (!u) return false
   if (u.endsWith(".md")) return u === relPath

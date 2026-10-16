@@ -1,7 +1,7 @@
 // 票13 · /knowledge finding 卡三钮 + 回填卡（S4 组件测试，仿票12 knowledge-chat 风格）
 // Seam: <KnowledgePage/>（fetch stub 到 API 边界）+ Lane A fenced 卡注入。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/knowledge" }))
 vi.mock("next/link", () => ({
@@ -147,6 +147,7 @@ function makeStub(opts: { fixScript?: string[] } = {}) {
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown): Stub => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json(ARTICLE)
     if (u.includes("/knowledge/findings/fix/task/")) {
@@ -183,7 +184,7 @@ function makeStub(opts: { fixScript?: string[] } = {}) {
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {
@@ -222,7 +223,7 @@ describe("AC2 finding 卡三钮（Lane A 注册接位后走真卡，非兜底）
     expect(screen.getByTestId("kc-finding-terminal").textContent).toContain("裁决已落地")
   }, 15000)
 
-  it("[忽略]→POST ignore→卡显「已忽略」且钮退场；[讨论]→灌取号器零状态请求；涉事页钮→右栏渲染", async () => {
+  it("[忽略]→POST ignore→卡显「已忽略」且钮退场；[讨论]→灌取号器零状态请求；涉事页钮→在主场打开", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(FINDING_EV))]
     makeStub({ fixScript: [] }) // 空 store 面：只测 Lane A 卡
     render(<KnowledgePage />)
@@ -232,12 +233,12 @@ describe("AC2 finding 卡三钮（Lane A 注册接位后走真卡，非兜底）
 
     // 讨论：纯对话，adopt/ignore 零 POST
     fireEvent.click(screen.getByTestId("kc-finding-discuss"))
-    const composer = screen.getByPlaceholderText(/投喂 raw|关于 finding/) as HTMLTextAreaElement
+    const composer = screen.getByPlaceholderText(/投喂|关于 finding/) as HTMLTextAreaElement
     expect(composer.value).toContain("关于 finding")
     expect(calls.filter(c => c.method === "POST" && c.url.includes("/adopt"))).toHaveLength(0)
     expect(calls.filter(c => c.method === "POST" && c.url.includes("/ignore"))).toHaveLength(0)
 
-    // 涉事页跟随
+    // 涉事页钮（显式通道，非自动跟随）⇒ 主场正文渲染
     fireEvent.click(screen.getByTestId("kc-finding-page-top-knowledge-injection.md"))
     await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toContain("知识注入沿革"))
 
@@ -267,26 +268,44 @@ describe("AC2 finding 卡三钮（Lane A 注册接位后走真卡，非兜底）
 })
 
 describe("AC1/AC3 夜巡 findings 上屏 + 「体检一下」即时触发", () => {
-  it("进入页面即拉开放 findings 渲入卡流（夜巡产出可见面）；「体检一下」→POST /patrol→原文仍发策展人", async () => {
+  it("开放 findings 进 ⚠ FINDING 收件箱（bug-fix 20261016：不再钉尾流）：徽标计未裁决数，点开列卡；「体检一下」→POST /patrol→原文仍发策展人", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
 
-    // 在办 finding（服务端 patrol 新建的孤儿页）以真卡渲染
-    const card = await screen.findByTestId("kc-card-finding")
+    // 尾流不再被库级 findings 卡占据（负断言：未点收件箱前对话区零 finding 卡）
+    await waitFor(() => expect(screen.getByTestId("kc-drawer-findings-badge").textContent).toBe("1"))
+    expect(screen.queryByTestId("kc-card-finding")).toBeNull()
+
+    // 点 ⚠ FINDING → 收件箱浮层以真卡渲染（在办 finding：patrol 新建的孤儿页）
+    fireEvent.click(screen.getByTestId("kc-drawer-findings"))
+    const pop = await screen.findByTestId("kc-drawer-findings-pop")
+    const card = within(pop).getByTestId("kc-card-finding")
     expect(card.textContent).toContain("孤儿页：entities/ent-hermes.md")
     expect(card.textContent).toContain("语义巡检")
 
-    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    const composer = screen.getByPlaceholderText(/投喂/)
     fireEvent.change(composer, { target: { value: "体检一下" } })
     fireEvent.click(document.querySelector("[data-tui-send]")!)
     await waitFor(() => expect(calls.some(c => c.method === "POST" && c.url.includes("/knowledge/patrol"))).toBe(true))
     expect(chatBox.sent).toContain("体检一下") // 对话不劫持：原文照常发策展人
   }, 15000)
+
+  it("收件箱内裁决（忽略）⇒ 徽标数即时回落", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    await waitFor(() => expect(screen.getByTestId("kc-drawer-findings-badge").textContent).toBe("1"))
+    fireEvent.click(screen.getByTestId("kc-drawer-findings"))
+    const pop = await screen.findByTestId("kc-drawer-findings-pop")
+    fireEvent.click(within(pop).getByTestId("kc-finding-ignore"))
+    await waitFor(() => expect(calls.some(c => c.method === "POST" && c.url.includes("/ignore"))).toBe(true))
+    await waitFor(() => expect(screen.queryByTestId("kc-drawer-findings-badge")).toBeNull())
+  }, 15000)
 })
 
-describe("AC4 回填卡 [编进 wiki]：摘录落 raw + diff 卡跟随；[不用] 零请求", () => {
-  it("[编进 wiki]→POST /backfill→回执 raw 路径→编译 diff 卡跟随落 commit", async () => {
+describe("AC4 回填卡 [编进 wiki]：摘录落 raw + diff 卡落对话流（ADR-0033：不跟随）；[不用] 零请求", () => {
+  it("[编进 wiki]→POST /backfill→回执 raw 路径→编译 diff 卡落流至 commit", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(BACKFILL_EV))]
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
@@ -297,7 +316,7 @@ describe("AC4 回填卡 [编进 wiki]：摘录落 raw + diff 卡跟随；[不用
 
     fireEvent.click(screen.getByTestId("kc-backfill-commit"))
     await waitFor(() => expect(calls.some(c => c.method === "POST" && c.url.includes("/knowledge/backfill") && c.body.includes("lockfile"))).toBe(true))
-    // 回填卡落 raw 回执 + diff 卡（编译链）跟随
+    // 回填卡落 raw 回执 + diff 卡（编译链）落流
     await waitFor(() => {
       expect(screen.getByTestId("kc-card-backfill").textContent).toContain("已入 raw · 编译投递")
     }, { timeout: 5000 })

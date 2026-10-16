@@ -193,9 +193,9 @@ describe("v3 页格式基座 — 票04 S1（expected 逐字 prototype Tab②）"
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
     // 导航协议行（prototype INDEX 样例逐字）
     expect(index).toContain("> 导航协议：先读本索引 → 选页整读 → 未命中再 search API。禁止全库遍历。")
-    // 必读节（user_preference，程序化固定行；D-kc15-2 票07 起为知识根可达路径）
+    // 必读节（SCHEMA 程序化固定行；D-kc15-2 票07 起为知识根可达路径）
     expect(index).toContain("## 必读")
-    expect(index).toContain("- ../user_preference.md — owner 偏好（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）")
+    expect(index).toContain("- ../SCHEMA.md — 人机共演约定（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）")
     // 五类分组节头（计数 = fixture 实际：entities 2 / concepts 2 / topics 2 / cases 1 / sources 0）
     expect(index).toContain("## Entities (2)")
     expect(index).toContain("## Concepts (2)")

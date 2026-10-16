@@ -69,27 +69,6 @@ export function appendToKnowledgeFile(filePath: string, ruleText: string, ruleId
 }
 
 /**
- * Used by knowledge-file surfaces to read preferences per scope.
- *
- * Path resolution（委托 getKnowledgeDir——env 拍平与 org/全局轨由其单源）：
- *   - org provided  → ~/.octopus/orgs/<org>/knowledge/user_preference.md
- *   - no org        → ~/.octopus/knowledge/user_preference.md
- */
-export function readUserPreference(org?: string): string {
-  return readKnowledgeFile(path.join(getKnowledgeDir(org), "user_preference.md"))
-}
-
-/**
- * Write user_preference.md for a given scope. Always writes to the
- * canonical location returned by {@link getKnowledgeDir} — legacy
- * locations are read-only for backward compatibility.
- */
-export function writeUserPreference(org: string | undefined, content: string): void {
-  const dir = getKnowledgeDir(org)
-  writeKnowledgeFile(path.join(dir, "user_preference.md"), content)
-}
-
-/**
  * Generate a unique rule ID: {target}-{YYYYMMDD}-{random4}
  * Uses crypto.randomBytes (stdlib, no new dependency).
  */

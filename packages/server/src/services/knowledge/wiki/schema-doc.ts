@@ -10,7 +10,7 @@ import path from "path"
  * 纪律正文的家从 skill 文本搬到本文件——人机共演，策展人每次编译前必读）。
  *
  * seed 纪律：只在缺席时写入（`SCHEMA.md` 是人工确认制文件——owner/策展人提议改动都经人落笔，
- * 自动通道永不覆盖既有内容，对齐 user_preference.md 写保护）。
+ * 自动通道永不覆盖既有内容；人工文件写保护单闸 manual-files.ts）。
  */
 
 export const SCHEMA_DOC_FILE = "SCHEMA.md"
@@ -19,7 +19,7 @@ export const SCHEMA_MD_TEMPLATE = `# SCHEMA.md — wiki 共演约定（层 3 · 
 
 > 本文件是策展人（archive 分身）每次编译前的**必读约定**：结构 / 页格式 / 命名法 /
 > 编译纪律 / 工作流。它由人与策展人共同演化——策展人只能**提议**修改（写保护卡），
-> 落笔永远由人。**自动通道永不改写本文件与 user_preference.md。**
+> 落笔永远由人。**自动通道永不改写本文件。**
 
 ## 三层契约
 
@@ -70,7 +70,7 @@ sources 页为编译回执，允许引用带日期的 raw 路径与文件名）�
 4. **溯源闭环**：每页 front-matter \`sources\` 回指 raw 路径；sources 页回指 raw 路径与
    sha256——回指必须是可解析断言（路径+hash 逐字在页，对质时可机械校验）。
 5. **pre-commit 写权闸**：wiki 仓提交须带来源标记（curate=服务通道 / manual=人工）；
-   自动通道触及 user_preference.md / SCHEMA.md 的提交被 hook 拒绝。
+   自动通道触及人工文件（SCHEMA.md 等）的提交被 hook 拒绝。
 6. **幂等**：同 raw（同 hash）重编译产物逐字节相同 ⇒ 空 diff、不产生新 commit。
 
 ## 工作流（审批废除后的质控六道）

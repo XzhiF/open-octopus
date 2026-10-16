@@ -21,10 +21,10 @@ import type { GitRunner } from "../wiki-git"
  * 整删无补，且 pre-commit 对 SCHEMA.md 的分支缺失、服务层根本没有路径级拒写闸
  * ——本套件把三层各钉一遍：
  *   ①服务层硬闸（主闸）：唯一写闸（compile/curate/backfill/裁决修订）对
- *     user_preference.md / SCHEMA.md **路径级拒绝**（含经 wiki 仓相对路径 `../`
+ *     人工文件（SCHEMA.md）**路径级拒绝**（含经 wiki 仓相对路径 `../`
  *     的旁路形态——resolve 归一后对拍，先于文件名正则/逃逸检查触发），
  *     抛结构化错 MANUAL_FILE_WRITE，零副作用；
- *   ②pre-commit（纵深）：旁路裸提交被拒；curate 标记触两文件被拒；
+ *   ②pre-commit（纵深）：旁路裸提交被拒；curate 标记触人工文件被拒；
  *     manual 标记（人工维护通道）放行——票06 原断言恢复；
  *   ③通道负断言：curator 编译 / finding 裁决修订 / 回填全链**不触人工文件**
  *     （字节不变 + commit 触及面不含 + 不在 wiki 根凭空造出）。
@@ -51,7 +51,6 @@ function rawGit(cwd: string, args: string[], source?: string) {
 
 const FROZEN_NOW = () => new Date("2026-10-13T08:00:00.000Z")
 
-const PREF_TEXT = "# User Preference（人工文件）\n- 回答要简短\n"
 const SCHEMA_TEXT = "# SCHEMA.md（人工共演约定）\n- 首版纪律占位\n"
 
 /** v2 词条 fixture（compileEntry 通道，gate 顺序断言用）。 */
@@ -133,12 +132,10 @@ afterEach(() => {
 })
 
 /** 盘上人工文件的字节真相（负断言基准）。 */
-function seedManualFiles(): { pref: string; schema: string } {
-  const pref = path.join(root, "user_preference.md")
+function seedManualFiles(): { schema: string } {
   const schema = path.join(root, "SCHEMA.md")
-  fs.writeFileSync(pref, PREF_TEXT, "utf-8")
   fs.writeFileSync(schema, SCHEMA_TEXT, "utf-8")
-  return { pref, schema }
+  return { schema }
 }
 
 function assertUntouched(pairs: Array<{ file: string; before: string }>, label: string): void {
@@ -152,13 +149,13 @@ function assertUntouched(pairs: Array<{ file: string; before: string }>, label: 
 // ①服务层硬闸（主闸）——唯一写闸路径级拒写人工文件，结构化错、零副作用
 // ===========================================================================
 describe("服务层写保护硬闸（质控⑥主闸 — MANUAL_FILE_WRITE）", () => {
-  it("compilePages：fileName 以 '../user_preference.md' 旁路形态归一命中 wiki 根人工文件 ⇒ 拒写、零副作用", async () => {
+  it("compilePages：fileName 以 '../SCHEMA.md' 旁路形态归一命中知识根人工文件位 ⇒ 拒写、零副作用", async () => {
     const svc = new WikiCompileService({ db, org: "global", rootDir: wikiRoot, git: realGit(wikiRoot) })
     await expect(
-      svc.compilePages([{ content: V3_PAGE, fileName: "../user_preference.md" }], { entry: "旁路形态", note: "gate" }),
+      svc.compilePages([{ content: V3_PAGE, fileName: "../SCHEMA.md" }], { entry: "旁路形态", note: "gate" }),
     ).rejects.toThrow(/MANUAL_FILE_WRITE/)
     // 零副作用：文件不落、仓不建 commit（首编译失败不留半成品）
-    expect(fs.existsSync(path.join(wikiRoot, "user_preference.md"))).toBe(false)
+    expect(fs.existsSync(path.join(wikiRoot, "SCHEMA.md"))).toBe(false)
     expect(fs.existsSync(path.join(wikiRoot, ".git")) ? rawGit(wikiRoot, ["rev-list", "--count", "HEAD"]).stdout.trim() : "0").toBe("0")
   })
 
@@ -170,14 +167,14 @@ describe("服务层写保护硬闸（质控⑥主闸 — MANUAL_FILE_WRITE）", 
     expect(fs.existsSync(path.join(wikiRoot, "SCHEMA.md"))).toBe(false)
   })
 
-  it("compileEntry（v2 通道）：fileName '../user_preference.md' ⇒ 闸先于文件名正则触发（错码是 MANUAL_FILE_WRITE 非 INVALID_PARAM）", async () => {
+  it("compileEntry（v2 通道）：fileName '../SCHEMA.md' ⇒ 闸先于文件名正则触发（错码是 MANUAL_FILE_WRITE 非 INVALID_PARAM）", async () => {
     const svc = new WikiCompileService({ db, org: "global", rootDir: wikiRoot, git: realGit(wikiRoot) })
-    const err = await svc.compileEntry({ content: V2_ENTRY, fileName: "../user_preference.md" }).catch(e => e as Error)
+    const err = await svc.compileEntry({ content: V2_ENTRY, fileName: "../SCHEMA.md" }).catch(e => e as Error)
     expect(err).toBeInstanceOf(Error)
     expect(err.message).toMatch(/MANUAL_FILE_WRITE/)
     expect((err as Error & { code?: string }).code).toBe("MANUAL_FILE_WRITE")
     expect((err as unknown as { status?: number }).status).toBe(403)
-    expect(fs.existsSync(path.join(wikiRoot, "user_preference.md"))).toBe(false)
+    expect(fs.existsSync(path.join(wikiRoot, "SCHEMA.md"))).toBe(false)
   })
 
   it("对照组：合法页照常过闸编译（闸不是把 batch 通道整体打死的坏闸）", async () => {
@@ -216,16 +213,14 @@ describe("wiki 仓 pre-commit 写权闸（纵深防御）", () => {
     expect(allowed.status).toBe(0)
   })
 
-  it("curate 标记触及 wiki 根 user_preference.md / SCHEMA.md 一律拒；manual 标记（人工维护）放行", async () => {
+  it("curate 标记触及 wiki 根 SCHEMA.md 一律拒；manual 标记（人工维护）放行", async () => {
     await seedRepo()
 
-    fs.writeFileSync(path.join(wikiRoot, "user_preference.md"), PREF_TEXT, "utf-8")
     fs.writeFileSync(path.join(wikiRoot, "SCHEMA.md"), SCHEMA_TEXT, "utf-8")
     rawGit(wikiRoot, ["add", "-A"])
 
     const autoRejected = rawGit(wikiRoot, ["commit", "-m", "auto: touch manual files"], "curate")
     expect(autoRejected.status).not.toBe(0)
-    expect(autoRejected.stderr).toContain("user_preference")
     expect(autoRejected.stderr).toContain("SCHEMA")
 
     const manualOk = rawGit(wikiRoot, ["commit", "-m", "manual: human maintenance"], "manual")
@@ -247,7 +242,6 @@ describe("通道不触人工文件（curate/backfill/finding-fix 负断言）", 
   it("curator compileRaw：人工文件字节不变，commit 触及面不含人工文件、wiki 根不凭空造出副本", async () => {
     const manual = seedManualFiles()
     const before = [
-      { file: manual.pref, before: PREF_TEXT },
       { file: manual.schema, before: SCHEMA_TEXT },
     ]
     const pointer = ingestFixture()
@@ -257,10 +251,10 @@ describe("通道不触人工文件（curate/backfill/finding-fix 负断言）", 
     expect(res.changed).toBe(true)
 
     assertUntouched(before, "curator 编译后")
-    expect(fs.existsSync(path.join(wikiRoot, "user_preference.md"))).toBe(false)
+
     expect(fs.existsSync(path.join(wikiRoot, "SCHEMA.md"))).toBe(false)
     const nameOnly = rawGit(wikiRoot, ["show", "--name-only", "--pretty=", "HEAD"]).stdout
-    expect(nameOnly).not.toMatch(/user_preference|^SCHEMA\.md$/m)
+    expect(nameOnly).not.toMatch(/SCHEMA\.md/m)
   })
 
   it("SCHEMA.md 幂等 seed 通道照旧（ensureSchemaDoc 首建允许——主闸只拒编译通道改内容）", async () => {
@@ -277,7 +271,6 @@ describe("通道不触人工文件（curate/backfill/finding-fix 负断言）", 
   it("finding-fix 裁决修订：adopt(missing-xref) 编译后人工文件字节不变、commit 面干净", async () => {
     const manual = seedManualFiles()
     const before = [
-      { file: manual.pref, before: PREF_TEXT },
       { file: manual.schema, before: SCHEMA_TEXT },
     ]
     writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
@@ -294,15 +287,14 @@ describe("通道不触人工文件（curate/backfill/finding-fix 负断言）", 
     expect(ops.getTask(task.id)!.status).toBe("committed")
 
     assertUntouched(before, "finding 裁决后")
-    expect(fs.existsSync(path.join(wikiRoot, "user_preference.md"))).toBe(false)
+
     const nameOnly = rawGit(wikiRoot, ["show", "--name-only", "--pretty=", "HEAD"]).stdout
-    expect(nameOnly).not.toMatch(/user_preference|SCHEMA\.md/)
+    expect(nameOnly).not.toMatch(/SCHEMA\.md/)
   })
 
   it("backfill：摘录只落 raw/inbox（零 wiki 触盘），人工文件字节不变；其触发的编译同律", async () => {
     const manual = seedManualFiles()
     const before = [
-      { file: manual.pref, before: PREF_TEXT },
       { file: manual.schema, before: SCHEMA_TEXT },
     ]
     const submitted: string[] = []

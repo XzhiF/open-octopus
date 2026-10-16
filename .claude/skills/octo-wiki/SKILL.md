@@ -19,9 +19,9 @@ tags: [wiki, knowledge, navigation, search, citation, cases]
 
 ## 导航协议（编译型 RAG — 按跳计费，禁止全库遍历）
 1. Read ~/.octopus/knowledge/wiki/INDEX.md   ← 第一跳，~500 token
-   「必读」节所列页先整读（user_preference 全文必读的语义由它承接）。
-   注意：必读行写作 `../user_preference.md`——路径相对 INDEX 所在的 wiki 根，
-   即 ~/.octopus/knowledge/user_preference.md：owner 偏好住在**知识根**、不在 wiki
+   「必读」节所列页先整读（SCHEMA.md 人机共演约定即此语义）。
+   注意：必读行写作 `../SCHEMA.md`——路径相对 INDEX 所在的 wiki 根，
+   即 ~/.octopus/knowledge/SCHEMA.md：人工确认制文件住在**知识根**、不在 wiki
    子树（wiki 根下没有这个文件，别按 wiki 根拼路径去读）。
 2. 按五类分组选页，Read 整篇                     ← 第二跳，整篇消费不碎片
 3. 索引未命中 → 检索兜底:

@@ -114,6 +114,30 @@ export function lintProfileForDomain(domain: string): LintProfile {
 /** `[[target]]` / `[[target#anchor]]` / `[[target|别名]]`（Obsidian 惯例）。 */
 export const WIKILINK_RE = /\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g
 
+/** 正文全部 [[…]] 链目标（保序去重、trim 空弃）——与 WIKILINK_RE 同源永不分叉。 */
+export function wikiLinkTargets(body: string): string[] {
+  const out: string[] = []
+  for (const m of body.matchAll(WIKILINK_RE)) {
+    const t = m[1]?.trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out
+}
+
+/**
+ * wiki_articles.links 落库形态：front-matter links ∪ 正文 [[…]] 目标（保序去重）。
+ * 与 cleanInboundLinksInContent 的双命中面（正文 wikilink + front-matter 链项）同形——
+ * 反链倒排（tree 端点）据此经 linkPointsToPage 判据展开，单源不分叉。
+ */
+export function computeArticleLinks(metaLinks: readonly string[] | undefined, body: string): string[] {
+  const out = wikiLinkTargets(body)
+  for (const l of metaLinks ?? []) {
+    const t = l.trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out
+}
+
 /**
  * [[wikilink]] 目标解析：路径式（含/不含 .md、目录→README 的 hub 形态）或裸 id 式。
  * corpus = 全库已有词条 {id, path} + 本次待写词条自身。

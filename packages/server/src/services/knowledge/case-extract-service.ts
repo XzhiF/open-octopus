@@ -23,7 +23,7 @@
 // 零落盘零入队（不产假判例）；本服务**永不向调用方抛错**（skipped+reason 收敛），
 // 失败不阻塞归档 done（K11 零触碰，与票02 投喂链同律）。
 //
-// 红线5 零触碰：只经唯一写闸写 cases/；agent 记忆域/user_preference 不在射程。
+// 红线5 零触碰：只经唯一写闸写 cases/；agent 记忆域/人工文件不在射程。
 
 import fs from "fs"
 import path from "path"

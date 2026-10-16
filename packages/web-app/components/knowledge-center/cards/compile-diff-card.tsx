@@ -95,7 +95,7 @@ export function CompileDiffCard({ event, ctx, archive }: KcCardViewProps & { arc
           </span>
         )}
         {d.touched.length > 0 && (
-          <KcBtn onClick={() => ctx.openPage(d.touched.find(t => t.created)?.path ?? d.touched[0].path)} testId="kc-diff-view-page">右栏看页</KcBtn>
+          <KcBtn onClick={() => ctx.openPage(d.touched.find(t => t.created)?.path ?? d.touched[0].path)} testId="kc-diff-view-page">在主场看页</KcBtn>
         )}
         {archive && d.commit && (
           <KcBtn tone="pri" onClick={() => ctx.sayToCurator(`关于归档编译 ${shortHash(d.commit)}，我想说：`)} testId="kc-archive-say">对策展人说</KcBtn>

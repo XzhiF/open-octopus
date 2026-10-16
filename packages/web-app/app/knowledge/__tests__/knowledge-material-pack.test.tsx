@@ -127,6 +127,7 @@ function makeStub() {
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json(ARTICLE)
     if (u.includes("/knowledge/findings")) return json({ org: "global", findings: [] })
@@ -158,7 +159,7 @@ function makeStub() {
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {
@@ -267,7 +268,7 @@ describe("对话入口不劫持 + 焦点重编译走策展人", () => {
     await screen.findByTestId("kc-card-material-pack")
 
     fireEvent.click(screen.getByTestId("kc-pack-ask-curator"))
-    const composer = screen.getByPlaceholderText(/投喂 raw|关于 finding|重新编译/) as HTMLTextAreaElement
+    const composer = screen.getByPlaceholderText(/投喂|关于 finding|重新编译/) as HTMLTextAreaElement
     expect(composer.value).toContain(`重新编译 task-${TASK}`)
     expect(composer.value).toContain("phase-2 打回")
     expect(calls.filter(c => c.method === "POST" && c.url.includes("/recompile"))).toHaveLength(0)

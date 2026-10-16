@@ -37,6 +37,8 @@ export interface AgentSession {
   updated_at: string
   last_message_at: string | null
   is_active: boolean
+  /** 会话挂靠语义（clone 通道：'knowledge'=知识中心；服务端行带此列，知识抽屉历史筛选用） */
+  scope_id?: string | null
 }
 
 export interface ToolCallRecord {

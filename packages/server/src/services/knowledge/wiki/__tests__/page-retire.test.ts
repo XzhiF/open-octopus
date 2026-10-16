@@ -154,10 +154,10 @@ describe("PageRetireTaskService — 页退役真跑（票08 · 故事32）", () 
     expect(after).toBe(before + 1) // 第二次没再 commit
   })
 
-  it("人工文件不可页退役（user_preference.md / SCHEMA.md 被目录闸 + 写保护拒）", () => {
+  it("人工文件不可页退役（SCHEMA.md 被目录闸 + 写保护拒）", () => {
     const svc = new PageRetireTaskService({ db, root: knowledgeRoot, git, now: FROZEN })
-    // 非 v3 四页目录下的文件一律 INVALID_PARAM（user_preference/SCHEMA 住知识根，天然不可址）
-    expect(() => svc.retire({ path: "user_preference.md" })).toThrow(/INVALID_PARAM/)
+    // 非 v3 四页目录下的文件一律 INVALID_PARAM（SCHEMA 住知识根，天然不可址）
+    expect(() => svc.retire({ path: "SCHEMA.md" })).toThrow(/INVALID_PARAM/)
     expect(() => svc.retire({ path: "topics/../SCHEMA.md" })).toThrow(/INVALID_PARAM/)
   })
 

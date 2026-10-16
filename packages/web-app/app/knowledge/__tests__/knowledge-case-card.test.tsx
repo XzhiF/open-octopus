@@ -136,6 +136,7 @@ function makeStub(opts: { retireScript?: string[] } = {}) {
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown): Stub => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json({ id: "case-cookie500", domain: "cases", title: "登录接口 500：cookie 未清", summary: "登录接口 500：cookie 未清", topics: [], stability: "stable", lastCompiled: "2026-10-14", sources: [], confidence: 1, path: "cases/2026-10-14-case-cookie500.md", updatedAt: "2026-10-14 09:12:00", body: "## 现场\n\n验收环境点登录，接口回 500。", anchors: [], gitHistory: [], case: { symptom: "登录接口 500：cookie 未清", tags: ["auth", "cookie"], severity: "blocker", occurrences: 2, ruleRef: null, status: "open" }, page: null })
     if (u.includes("/knowledge/wiki/case/retire") && method === "POST") {
@@ -162,7 +163,7 @@ function makeStub(opts: { retireScript?: string[] } = {}) {
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {

@@ -314,54 +314,12 @@ describe("GET /api/knowledge/log — LOG.md 行数组 + 前缀过滤", () => {
 })
 
 // =========================================================================
-// 票09 · GET /api/knowledge/preference — user_preference 只读渲染面（story 16）
-// 审批废除后 user_preference 零 Web 编辑入口：PUT 路由随 routes/knowledge.ts
-// 物理删除（S2 负断言）；GET 只读迁入本读面模块——**纯读零 mkdir**，
-// 已归档删除的目录不得被请求重建（S1 护栏）。
+// ADR-0033 · GET /api/knowledge/preference 物理删除（负断言防复活）
 // =========================================================================
-describe("票09 GET /api/knowledge/preference — 只读、零副作用、org 面退役", () => {
-  it("scope=global reads knowledge-root user_preference.md verbatim", async () => {
-    const prefText = `# User Preference\n\n- 回复用中文\n- 先想清楚再动手\n`
-    fs.writeFileSync(path.join(tmpDir, "user_preference.md"), prefText, "utf-8")
-
+describe("ADR-0033 preference 端点退役", () => {
+  it("GET /preference ⇒ 404（路由物理删除，负断言防复活）", async () => {
     const res = await app().request("/preference?scope=global")
-    expect(res.status).toBe(200)
-    const data = await res.json()
-    expect(data.content).toBe(prefText)
-    expect(data.scope).toBe("global")
-    // filePath 钉全局知识根（票03 D6③ 迁入位置），不再指向 org 目录
-    expect(path.normalize(data.filePath)).toBe(path.normalize(path.join(tmpDir, "user_preference.md")))
-  })
-
-  it("missing file degrades to empty content — and the request creates NOTHING (no mkdir side effect)", async () => {
-    const freshRoot = path.join(os.tmpdir(), `kc-pref-fresh-${process.pid}`)
-    fs.rmSync(freshRoot, { recursive: true, force: true })
-    try {
-      const res = await createKnowledgeReadRoutes(
-        { articles: dao },
-        { knowledgeRoot: freshRoot, wikiRoot: path.join(freshRoot, "wiki") },
-      ).request("/preference?scope=global")
-      expect(res.status).toBe(200)
-      const data = await res.json()
-      expect(data.content).toBe("")
-      // 归档不删纪律护栏：只读请求绝不重建目录/文件（getter mkdir 副作用随删除消亡）
-      expect(fs.existsSync(freshRoot)).toBe(false)
-    } finally {
-      fs.rmSync(freshRoot, { recursive: true, force: true })
-    }
-  })
-
-  it("scope=org ⇒ 400 INVALID_PARAM（org 偏好面随票09 归档删除退役）", async () => {
-    const res = await app().request("/preference?scope=org&org=xzf-dev")
-    expect(res.status).toBe(400)
-    const data = await res.json()
-    expect(data.error.code).toBe("INVALID_PARAM")
-  })
-
-  it("缺省 scope=global（旧客户端不带 scope 兼容）", async () => {
-    fs.writeFileSync(path.join(tmpDir, "user_preference.md"), "# pref\n", "utf-8")
-    const data = await (await app().request("/preference")).json()
-    expect(data.scope).toBe("global")
+    expect(res.status).toBe(404)
   })
 })
 
@@ -440,5 +398,76 @@ describe("P4 票07 — GET /health avgConfidence（健康条全库平均置信�
     const text = JSON.stringify(await (await app().request("/health")).json())
     expect(text).not.toMatch(/pending/i)
     expect(text).not.toContain("待审核")
+  })
+})
+
+// ── 知识中心左栏「真实目录树」改版（20261016）：/fs 目录投影 + /fs/file 只读 .md ──
+describe("GET /api/knowledge/fs + /fs/file — 知识根目录树只读投影", () => {
+  beforeEach(() => {
+    const wf = (rel: string, content: string) => {
+      const abs = path.join(tmpDir, ...rel.split("/"))
+      fs.mkdirSync(path.dirname(abs), { recursive: true })
+      fs.writeFileSync(abs, content, "utf-8")
+    }
+    wf("SCHEMA.md", "# SCHEMA\n纪律文本\n")
+    wf("wiki/INDEX.md", "# INDEX\n- [a](concepts/con-a.md)\n")
+    wf("wiki/concepts/con-a.md", "---\ntitle: A\n---\nbody")
+    wf("wiki/.git/config", "[core]")
+    wf("raw/inbox/2026-10-13-a.md", rawFile("paste", "A", "2026-10-13T09:00:00.000Z", "note a\n"), )
+    wf("drafts/skills/s1/SKILL.md", "---\nname: s1\n---\ndraft")
+    wf("_archive/user_preference/x.md", "up")
+    wf("_archive/pending-review-2026-10-14.json", "{}")
+  })
+
+  it("/fs 契约形状（键集恒等）；.git 与 user_preference 零出现（防复活对称）；pending-review 保留（防过杀）", async () => {
+    const data = await (await app().request("/fs")).json()
+    expect(Object.keys(data).sort()).toEqual(["org", "root", "total", "tree", "truncated"])
+    expect(data.org).toBe("global")
+    expect(data.root).toBe("knowledge")
+    expect(data.truncated).toBe(false)
+    const text = JSON.stringify(data)
+    expect(text).not.toContain(".git")
+    expect(text).not.toContain("user_preference")
+    expect(text).toContain("pending-review") // 排除判据不得顺手灭掉无关归档件
+    const roots = data.tree.map((n: { name: string }) => n.name)
+    expect(roots).toEqual(["_archive", "drafts", "raw", "wiki", "SCHEMA.md"]) // 目录先行+码元升序
+  })
+
+  it("/fs raw 子树叶集 ≡ GET /raw 清单集（可见即可读，判据单源）", async () => {
+    const flatFiles = (nodes: Array<{ path: string; kind: string; children?: unknown }>, acc: string[] = []): string[] => {
+      for (const n of nodes) {
+        if (n.kind === "file") acc.push(n.path)
+        if (n.children) flatFiles(n.children as never, acc)
+      }
+      return acc
+    }
+    const data = await (await app().request("/fs")).json()
+    const fsRaw = flatFiles(data.tree).filter((p: string) => p.startsWith("raw/")).sort()
+    const apiRaw = (await (await app().request("/raw")).json()).sources.map((s: { path: string }) => s.path).sort()
+    expect(fsRaw).toEqual(apiRaw)
+    expect(fsRaw).toEqual(["raw/inbox/2026-10-13-a.md"])
+  })
+
+  it("/fs/file：SCHEMA.md 200 回读（{org,path,content,bytes} 键集恒等）", async () => {
+    const res = await app().request(`/fs/file?path=${encodeURIComponent("SCHEMA.md")}`)
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(Object.keys(data).sort()).toEqual(["bytes", "content", "org", "path"])
+    expect(data.content).toContain("纪律文本")
+  })
+
+  it("/fs/file 错误矩阵：缺参 400 / 段穿越 400 / 双编码段 400 / json 400 / user_preference 404 / 缺席 404（error 形制）", async () => {
+    const code = async (q: string): Promise<[number, string]> => {
+      const res = await app().request(`/fs/file${q}`)
+      const body = await res.json()
+      expect(body.error.code).toBeTruthy()
+      return [res.status, body.error.code]
+    }
+    expect(await code("")).toEqual([400, "INVALID_PARAM"])
+    expect(await code(`?path=${encodeURIComponent("wiki/../../etc/x.md")}`)).toEqual([400, "INVALID_PARAM"])
+    expect(await code(`?path=${encodeURIComponent("wiki/%2e%2e/x.md")}`)).toEqual([400, "INVALID_PARAM"])
+    expect(await code(`?path=${encodeURIComponent("_archive/pending-review-2026-10-14.json")}`)).toEqual([400, "INVALID_PARAM"])
+    expect(await code(`?path=${encodeURIComponent("_archive/user_preference/x.md")}`)).toEqual([404, "NOT_FOUND"])
+    expect(await code(`?path=${encodeURIComponent("wiki/nope.md")}`)).toEqual([404, "NOT_FOUND"])
   })
 })

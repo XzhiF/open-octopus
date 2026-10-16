@@ -3,6 +3,7 @@ import fs from "fs"
 import path from "path"
 import { GLOBAL_WIKI_ORG, getGlobalWikiRoot, resolveGlobalWikiRoot } from "../global-paths"
 import { parseWikiFile } from "./format"
+import { computeArticleLinks } from "./lint"
 import { scanWikiEntries, type ScannedEntry } from "./compile"
 import { WikiArticleDAO, type WikiArticleUpsert } from "../../../db/dao/wiki-article-dao"
 
@@ -66,6 +67,8 @@ function desiredRow(org: string, wikiRoot: string, e: ScannedEntry): WikiArticle
     confidence: e.meta.confidence ?? 0.5,
     body,
     path: e.relPath,
+    // 链接面随盘对账同步（改版 code-review S2：清单外写通道不得让 links 掉队）
+    links: computeArticleLinks(e.page?.links, body),
   }
 }
 
@@ -106,8 +109,8 @@ export function reconcileWikiIndex(db: Database.Database, opts: ReconcileOptions
   }
 
   const beforeRows = db
-    .prepare("SELECT org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path FROM wiki_articles ORDER BY org, id")
-    .all() as Array<WikiArticleUpsert & { org: string }>
+    .prepare("SELECT org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links FROM wiki_articles ORDER BY org, id")
+    .all() as Array<WikiArticleUpsert & { org: string; links: string | null }>
   const beforeTotal = beforeRows.length
 
   // 空盘护栏：wiki 根解析错了（0 页）而库有行 ⇒ 拒跑（防把生产索引当漂移删光）
@@ -134,10 +137,13 @@ export function reconcileWikiIndex(db: Database.Database, opts: ReconcileOptions
     for (const e of liveById.values()) {
       const desired = desiredRow(org, wikiRoot, e)
       const cur = beforeRows.find(r => r.org === org && r.id === e.meta.id)
+      // links 列对比归一（盘侧数组 ↔ 库侧 JSON 串；未迁移行 NULL ≡ 盘无链 '[]' 不算漂移，
+      // 只有「盘有链而库缺/异」才显形为漂移 ⇒ 重写自愈；防把匹配行虚报 updated）
+      const linksDrift = !!cur && (cur.links ?? "[]") !== JSON.stringify(desired.links ?? [])
       if (cur === undefined) {
         dao.upsert(desired)
         inserted.push(e.meta.id)
-      } else if (COLS.some(c => cur[c] !== desired[c])) {
+      } else if (linksDrift || COLS.some(c => cur[c] !== desired[c])) {
         dao.upsert(desired)
         updated.push(e.meta.id)
       }

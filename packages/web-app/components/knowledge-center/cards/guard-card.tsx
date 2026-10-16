@@ -6,7 +6,7 @@ import type { KcCardViewProps } from './registry'
 import type { KcGuardCardData } from '@/lib/knowledge-center/card-protocol'
 
 /**
- * ⛔ 写保护卡 — 触到 user_preference / SCHEMA 的修改意图（票面 AC6；原型卡目录末行）。
+ * ⛔ 写保护卡 — 触到人工文件（SCHEMA.md）的修改意图（原型卡目录末行）。
  * 语义纪律：**建议文本 + 人工确认步骤，零自动落盘**。卡上所有钮只改本地展开态，
  * 无任何 ctx 写调用；硬闸在服务层路径级拒写（server `wiki/manual-files.ts`，
  * MANUAL_FILE_WRITE），wiki 仓 pre-commit 为纵深防御——行为测试已钉：
