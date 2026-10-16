@@ -1,7 +1,7 @@
 // 票13 · /knowledge finding 卡三钮 + 回填卡（S4 组件测试，仿票12 knowledge-chat 风格）
 // Seam: <KnowledgePage/>（fetch stub 到 API 边界）+ Lane A fenced 卡注入。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/knowledge" }))
 vi.mock("next/link", () => ({
@@ -147,6 +147,7 @@ function makeStub(opts: { fixScript?: string[] } = {}) {
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown): Stub => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json(ARTICLE)
     if (u.includes("/knowledge/findings/fix/task/")) {
@@ -267,13 +268,19 @@ describe("AC2 finding 卡三钮（Lane A 注册接位后走真卡，非兜底）
 })
 
 describe("AC1/AC3 夜巡 findings 上屏 + 「体检一下」即时触发", () => {
-  it("进入页面即拉开放 findings 渲入卡流（夜巡产出可见面）；「体检一下」→POST /patrol→原文仍发策展人", async () => {
+  it("开放 findings 进 ⚠ FINDING 收件箱（bug-fix 20261016：不再钉尾流）：徽标计未裁决数，点开列卡；「体检一下」→POST /patrol→原文仍发策展人", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
 
-    // 在办 finding（服务端 patrol 新建的孤儿页）以真卡渲染
-    const card = await screen.findByTestId("kc-card-finding")
+    // 尾流不再被库级 findings 卡占据（负断言：未点收件箱前对话区零 finding 卡）
+    await waitFor(() => expect(screen.getByTestId("kc-drawer-findings-badge").textContent).toBe("1"))
+    expect(screen.queryByTestId("kc-card-finding")).toBeNull()
+
+    // 点 ⚠ FINDING → 收件箱浮层以真卡渲染（在办 finding：patrol 新建的孤儿页）
+    fireEvent.click(screen.getByTestId("kc-drawer-findings"))
+    const pop = await screen.findByTestId("kc-drawer-findings-pop")
+    const card = within(pop).getByTestId("kc-card-finding")
     expect(card.textContent).toContain("孤儿页：entities/ent-hermes.md")
     expect(card.textContent).toContain("语义巡检")
 
@@ -282,6 +289,18 @@ describe("AC1/AC3 夜巡 findings 上屏 + 「体检一下」即时触发", () =
     fireEvent.click(document.querySelector("[data-tui-send]")!)
     await waitFor(() => expect(calls.some(c => c.method === "POST" && c.url.includes("/knowledge/patrol"))).toBe(true))
     expect(chatBox.sent).toContain("体检一下") // 对话不劫持：原文照常发策展人
+  }, 15000)
+
+  it("收件箱内裁决（忽略）⇒ 徽标数即时回落", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    await waitFor(() => expect(screen.getByTestId("kc-drawer-findings-badge").textContent).toBe("1"))
+    fireEvent.click(screen.getByTestId("kc-drawer-findings"))
+    const pop = await screen.findByTestId("kc-drawer-findings-pop")
+    fireEvent.click(within(pop).getByTestId("kc-finding-ignore"))
+    await waitFor(() => expect(calls.some(c => c.method === "POST" && c.url.includes("/ignore"))).toBe(true))
+    await waitFor(() => expect(screen.queryByTestId("kc-drawer-findings-badge")).toBeNull())
   }, 15000)
 })
 

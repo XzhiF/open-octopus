@@ -70,7 +70,7 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
       role="dialog"
       aria-label="知识检索"
       data-testid="kc-palette"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-pop-bg/80 p-8"
+      className="fixed inset-0 z-[70] flex items-start justify-center bg-pop-bg/80 p-8"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="mt-16 w-full max-w-2xl rounded-xl border-[1.5px] border-pop-bd bg-pop-paper shadow-xl">

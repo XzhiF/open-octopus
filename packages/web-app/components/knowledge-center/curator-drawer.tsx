@@ -37,6 +37,9 @@ import { cn } from "@/lib/utils"
 /**
  * 策展人抽屉 — 知识中心改版（ADR-0033）：对话从「左列 3fr」收纳为右侧 overlay，
  * 开合/拖宽**永不重排 wiki 主场**（这是双模式两套 grid 重排病的根治）。
+ * 锚定=主场网格容器内 `absolute`（bug-fix 20261016，原 `fixed` 顶到视口最上沿：
+ * 盖全局顶导航 + 页头 z-[60] 横条贯穿面板）——顶边天然落在页头下沿，
+ * 页头高度可变也零测量、药丸/健康件不再被压也不再压抽屉。
  *
  * 会话通道 = archive 分身 clone-session（CloneDetailView 同款 overrides），
  * **多会话**：主通道（title=知识中心）恒在 + 手动新建（知识中心 · N）；tab 开集/
@@ -47,6 +50,11 @@ import { cn } from "@/lib/utils"
  *
  * 「跟随」已废（ADR-0033）：新卡引用页 ⇒ 上抛 onCite（页头引用药丸），
  * 正文永不自动跳转——负断言对象。卡片两车道协议（Lane A/B）逐字保留票12/13 形制。
+ *
+ * **FINDING 收件箱**（bug-fix 20261016）：开放 findings 是 org=global 的库级待办
+ * （useKcFindings 非会话绑定），曾与任务卡一起钉死在 transcriptTail——堆满聊天底部
+ * 且切 tab 不消失。现改页头「⚠ FINDING」钮 + 红色待处理数徽标，点开浮层列同一批卡
+ * （采纳/忽略/回填/讨论操作原样）；尾流只留 feed 任务卡（编译/回滚等会话相关进度）。
  */
 
 const ARCHIVE_CLONE = 'archive'
@@ -111,16 +119,20 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
   const [activeId, setActiveId] = useState<string | null>(null)
   const [serverSessions, setServerSessions] = useState<AgentSession[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [findingsOpen, setFindingsOpen] = useState(false)
   const tabsInitRef = useRef(false)
   const restoredRef = useRef(false) // 恢复完成前禁持久化（否则首渲染 tabs=[] 覆写存档，恢复永失效）
   const activeSessionRef = useRef<string | null>(null)
   activeSessionRef.current = activeId
 
-  // ── 抽屉宽（视图态，localStorage 记忆）──
-  const [width, setWidth] = useState(() => {
+  // ── 抽屉宽（视图态，localStorage 记忆）。记忆走挂载后 effect 回填，不在
+  //  useState init 读——SSR 恒渲默认宽，init 读数会留 hydration style 不匹配
+  //  （左树拖宽 e2e 同款病，一并收口 bug-fix 20261016）──
+  const [width, setWidth] = useState(DEFAULT_W)
+  useEffect(() => {
     const n = Number(lsGet(WIDTH_KEY))
-    return n >= MIN_W ? n : DEFAULT_W
-  })
+    if (n >= MIN_W) setWidth(n)
+  }, [])
   const dragRef = useRef<{ x: number; w: number } | null>(null)
   useEffect(() => {
     const move = (e: MouseEvent) => {
@@ -284,6 +296,7 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
   }, [chat.messages])
 
   // 合并渲染序（ts 升序；同 id Lane A 优先）；回滚/裁决/回填态覆盖层回灌到任意来源卡
+  // （findings 卡不再入尾流——改由页头 ⚠ FINDING 收件箱浮层承载，见文件头注）
   const withCardStates = useCallback((e: KcCardEvent): KcCardEvent => {
     if (e.kind === 'compile-diff' || e.kind === 'archive-compile') {
       const d = e.data as KcCompileDiffCardData
@@ -326,19 +339,34 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
   const isDismissed = useCallback((e: KcCardEvent) => e.kind === 'backfill' && !!findings.dismissed[e.id], [findings.dismissed])
   const tailEvents = useMemo(
     () => feed.cards
-      .concat(findings.cards)
       .filter(e => !laneAIds.has(e.id))
       .sort((a, b) => a.ts.localeCompare(b.ts))
       .map(withCardStates)
       .filter(e => !isDismissed(e)),
-    [feed.cards, findings.cards, laneAIds, withCardStates, isDismissed],
+    [feed.cards, laneAIds, withCardStates, isDismissed],
+  )
+
+  // ── FINDING 收件箱（库级待办，非会话绑定）：浮层列表 + 未裁决数徽标 ──
+  const findingEvents = useMemo(
+    () => findings.cards
+      .map(withCardStates)
+      .sort((a, b) => a.ts.localeCompare(b.ts)),
+    [findings.cards, withCardStates],
+  )
+  const openFindingCount = useMemo(
+    () => findingEvents.filter(e => {
+      const s = (e.data as KcFindingCardData).status
+      return s !== 'resolved' && s !== 'ignored'
+    }).length,
+    [findingEvents],
   )
 
   // ── 引用药丸（替代已废除的「跟随」）：新卡首见 ⇒ 上抛 onCite，正文永不动 ──
+  // findings 收件箱卡同样入列（ADR-0033「新卡→丸」契约不变；同 id 与 Lane A 天然幂等）
   const citedInitRef = useRef(false)
   const citedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const all = [...laneAByMsgId.values()].flat().concat(tailEvents).sort((a, b) => a.ts.localeCompare(b.ts))
+    const all = [...laneAByMsgId.values()].flat().concat(tailEvents, findingEvents).sort((a, b) => a.ts.localeCompare(b.ts))
     if (!citedInitRef.current) {
       all.forEach(e => citedRef.current.add(e.id))
       citedInitRef.current = true
@@ -351,7 +379,7 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
       const hit = refs.map(r => resolveKcPageTarget(tree, r)).find(Boolean)
       if (hit) onCite(hit, e.id)
     }
-  }, [laneAByMsgId, tailEvents, tree, onCite])
+  }, [laneAByMsgId, tailEvents, findingEvents, tree, onCite])
 
   // ── 卡动作上下文（原 openFullPage 语义随双模式废除并入 openPage：ADR-0033） ──
   const ctx: KcCardActionCtx = useMemo(() => ({
@@ -410,7 +438,7 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
     <div
       data-testid="kc-curator-drawer"
       className={cn(
-        'fixed inset-y-0 right-0 z-50 flex flex-col border-l-[1.5px] border-pop-bd bg-pop-idle shadow-[var(--pop-shadow-lg)] transition-transform duration-200',
+        'absolute inset-y-0 right-0 z-50 flex flex-col border-l-[1.5px] border-pop-bd bg-pop-idle shadow-[var(--pop-shadow-lg)] transition-transform duration-200',
         open ? 'translate-x-0' : 'translate-x-[102%]',
       )}
       style={{ width: Math.min(width, Math.round(typeof window !== 'undefined' ? window.innerWidth * 0.94 : width)) }}
@@ -423,16 +451,34 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
         className="absolute inset-y-0 -left-1 z-10 w-[7px] cursor-ew-resize hover:bg-pop-pink/40"
       />
       {/* 抽屉头 */}
-      <div className="flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-bg px-3 py-1.5 text-[11px] font-bold text-pop-dim">
+      <div className="relative flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-bg px-3 py-1.5 text-[11px] font-bold text-pop-dim">
         <span className="text-pop-green">●</span>
         <span className="text-pop-ink">策展人 · archive</span>
         <button
           type="button"
           data-testid="kc-drawer-history"
-          onClick={() => { void refreshSessions(); setHistoryOpen(v => !v) }}
+          onClick={() => { void refreshSessions(); setHistoryOpen(v => !v); setFindingsOpen(false) }}
           className="rounded border-[1.5px] border-pop-bd px-2 py-0.5 hover:bg-accent hover:text-pop-ink"
         >
           🗂 历史 {history.length}
+        </button>
+        <button
+          type="button"
+          data-testid="kc-drawer-findings"
+          aria-expanded={findingsOpen}
+          onClick={() => { setFindingsOpen(v => !v); setHistoryOpen(false) }}
+          className={cn(
+            'flex items-center gap-1 rounded border-[1.5px] border-pop-bd px-2 py-0.5 hover:bg-accent hover:text-pop-ink',
+            findingsOpen && 'bg-accent text-pop-ink',
+          )}
+          title={openFindingCount > 0 ? `${openFindingCount} 条开放 finding 待裁决——点开收件箱` : '无开放 finding'}
+        >
+          ⚠ FINDING
+          {openFindingCount > 0 && (
+            <span data-testid="kc-drawer-findings-badge" className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-pop-red px-1 text-[10px] font-black leading-none text-pop-bg">
+              {openFindingCount}
+            </span>
+          )}
         </button>
         <button
           type="button"
@@ -442,6 +488,49 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
         >
           ✕
         </button>
+      {/* 两浮层收进页头行内：top 以页头行下沿为锚（calc(100%+6px)），
+          按钮正下方贴脸出现——原硬编码 top-[88px] 隔出 tab 条高度的漂移病 */}
+      {historyOpen && (
+        <div data-testid="kc-drawer-history-pop" className="absolute left-2 right-2 top-[calc(100%+6px)] z-20 max-h-[60vh] overflow-y-auto rounded-xl border-[1.5px] border-pop-bd bg-pop-paper p-1.5 shadow-[var(--pop-shadow-lg)]">
+          <div className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-pop-dim">知识中心会话 · 点开重新打开</div>
+          {history.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => openTab(s.id, s.title)}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] font-bold text-pop-ink hover:bg-accent"
+            >
+              <span className="truncate flex-1">{s.title}</span>
+              <span className="shrink-0 text-[10px] font-normal text-pop-dim">{(s.last_message_at ?? s.updated_at).slice(5, 16).replace('T', ' ')}</span>
+            </button>
+          ))}
+          {history.length === 0 && <div className="px-2 py-1.5 text-[11px] text-pop-dim">没有已收起的会话</div>}
+        </div>
+      )}
+      {findingsOpen && (
+        <div
+          data-testid="kc-drawer-findings-pop"
+          className="absolute left-2 right-2 top-[calc(100%+6px)] z-20 flex max-h-[70vh] flex-col rounded-xl border-[1.5px] border-pop-bd bg-pop-paper p-2 shadow-[var(--pop-shadow-lg)]"
+        >
+          <div className="flex shrink-0 items-center gap-2 px-1 pb-1.5 text-[10px] font-black uppercase tracking-wider text-pop-dim">
+            FINDING 收件箱 · 库级待办（不分会话）
+            {openFindingCount > 0 && <span className="ml-auto rounded-full bg-pop-red px-1.5 text-[10px] font-black leading-4 text-pop-bg">{openFindingCount}</span>}
+            <button
+              type="button"
+              data-testid="kc-drawer-findings-close"
+              onClick={() => setFindingsOpen(false)}
+              className={openFindingCount > 0 ? '' : 'ml-auto'}
+              aria-label="关闭 FINDING 收件箱"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+            {findingEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}
+            {findingEvents.length === 0 && <div className="px-2 py-2 text-[11px] text-pop-dim">没有开放 finding——库面干净（或点「体检一下」主动巡检）</div>}
+          </div>
+        </div>
+      )}
       </div>
       {/* 会话 tab 条 */}
       <div data-testid="kc-drawer-tabs" className="flex shrink-0 flex-wrap items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-bg px-2 py-1.5">
@@ -477,23 +566,6 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
           ＋ 新会话
         </button>
       </div>
-      {historyOpen && (
-        <div data-testid="kc-drawer-history-pop" className="absolute right-2 top-[88px] z-20 w-[320px] rounded-xl border-[1.5px] border-pop-bd bg-pop-paper p-1.5 shadow-[var(--pop-shadow-lg)]">
-          <div className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-pop-dim">知识中心会话 · 点开重新打开</div>
-          {history.map(s => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => openTab(s.id, s.title)}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11.5px] font-bold text-pop-ink hover:bg-accent"
-            >
-              <span className="truncate flex-1">{s.title}</span>
-              <span className="shrink-0 text-[10px] font-normal text-pop-dim">{(s.last_message_at ?? s.updated_at).slice(5, 16).replace('T', ' ')}</span>
-            </button>
-          ))}
-          {history.length === 0 && <div className="px-2 py-1.5 text-[11px] text-pop-dim">没有已收起的会话</div>}
-        </div>
-      )}
       <ChatArea
         tui
         messages={viewMessages}
