@@ -100,8 +100,11 @@ export function appendCardsToSession(
 }
 
 /**
- * 向知识中心会话（archive 分身、title=知识中心 ∨ scope_id=knowledge）追加一条
+ * 向知识中心**主通道**会话（archive 分身、title=知识中心）追加一条
  * assistant 消息：header 文本 + Lane A fenced 卡块（协议单源 @octopus/shared）。
+ * ADR-0033：判据由「title ∨ scope_id」收紧为**仅 title**——知识中心抽屉多会话化后，
+ * scope 命中面随用户新建会话漂移，机器播报必须永远落唯一主通道（scope_id 仍标会话
+ * 语义供 web 历史列表筛选，只是不再作播报落点判据）。
  * 无会话 ⇒ 诚实降级 {posted:false, reason}（不擅自建会话）。
  * 票10 起为 `appendCardsToSession` 的判据包装——夜巡/裁决回执/素材包等既有生产者
  * 零改动，知识中心落点行为逐字保持。
@@ -114,7 +117,7 @@ export function appendKnowledgeSessionCards(
 ): ReportOutcome {
   const session = new AgentSessionDAO(db)
     .findByClone(KNOWLEDGE_CLONE_NAME, { limit: 50 })
-    .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE || s.scope_id === KNOWLEDGE_SESSION_SCOPE_ID)
+    .items.find(s => s.title === KNOWLEDGE_SESSION_TITLE)
   if (!session) {
     return { posted: false, reason: "无知识中心会话（findings 已入库可查，未报对话）" }
   }

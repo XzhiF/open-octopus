@@ -214,28 +214,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
     }
   })
 
-  // GET /api/knowledge/preference — user_preference.md 只读渲染（票09 迁入读面）。
-  // 审批废除与偏好编辑器彻底删除（spec 删除边界）：user_preference 零 Web 编辑入口
-  // ——PUT 面随 routes/knowledge.ts 物理删除，改文件 = 人工直接编辑知识根原件
-  // （D6③ 写保护继承）。**纯读零副作用**：不 mkdir、不建文件——已归档删除的
-  // 旧知识目录不得被任何请求重建（S1 护栏）。org 偏好面退役：scope 钉 global。
-  routes.get("/preference", (c) => {
-    const scope = c.req.query("scope") ?? "global"
-    if (scope !== "global") {
-      return c.json(
-        { error: { code: "INVALID_PARAM", message: "user_preference 读面钉 global——org 偏好面随票09 归档删除退役，改写请人工直接编辑知识根 user_preference.md" } },
-        400,
-      )
-    }
-    const filePath = path.join(knowledgeRootOf(), "user_preference.md")
-    let content = ""
-    try {
-      if (fs.existsSync(filePath)) content = fs.readFileSync(filePath, "utf-8")
-    } catch {
-      content = "" // 读取失败诚实降级为空（只读面绝不炸 500、绝不落盘）
-    }
-    return c.json({ content, scope, filePath })
-  })
+  // GET /api/knowledge/preference 已删除（ADR-0033：偏好读面整体清除，SCHEMA.md 面不受影响）。
 
   return routes
 }

@@ -8,7 +8,8 @@ import { extractRuleAnchors, RULE_ANCHOR_RE, parseCaseMarkdown, parseWikiFile } 
 import { WIKI_DOMAINS, WIKI_DOMAIN_LABELS, WIKI_PAGE_GROUP_LABELS, resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { GLOBAL_WIKI_ORG } from "../services/knowledge/global-paths"
 import type { WikiPageType } from "@octopus/shared"
-import { WIKI_LOG_FILE } from "../services/knowledge/wiki/compile"
+import { WIKI_LOG_FILE, WIKI_INDEX_FILE } from "../services/knowledge/wiki/compile"
+import { linkPointsToPage } from "../services/knowledge/wiki/page-retire"
 import { spawnGit } from "../services/knowledge/wiki/wiki-git"
 import { errorResponse } from "../services/knowledge/validators"
 
@@ -55,6 +56,25 @@ function readWikiLog(root: string): string | null {
     return fs.readFileSync(path.join(root, WIKI_LOG_FILE), "utf-8")
   } catch {
     return null
+  }
+}
+
+/** INDEX.md 文本（log 同律：缺席=诚实 null——tree 捎带读，web 端 INDEX 总览视图消费）。 */
+function readWikiIndex(root: string): string | null {
+  try {
+    return fs.readFileSync(path.join(root, WIKI_INDEX_FILE), "utf-8")
+  } catch {
+    return null
+  }
+}
+
+/** wiki_articles.links 列解析（NULL/坏形=诚实空数组，不炸树）。 */
+function parseArticleLinks(raw: string | null | undefined): string[] {
+  try {
+    const v = JSON.parse(raw ?? "[]") as unknown
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []
+  } catch {
+    return []
   }
 }
 
@@ -212,8 +232,12 @@ export function createWikiRoutes(
         name: string
         label: string
         count: number
-        entries: Array<{ id: string; path: string; title: string; summary: string; stability: string; ruleCount: number }>
+        entries: Array<{ id: string; path: string; title: string; summary: string; stability: string; ruleCount: number; links: string[]; backlinks: string[] }>
       }> = []
+
+      // 反链倒排的内存索引：行→链目标（links 列，编译/退役/恢复/回滚通道与盘同步；
+      // 历史 NULL 行由启动 backfillWikiArticleLinks 补齐——此处零扫盘）
+      const linkIndex = rows.map(r => ({ id: r.id, path: r.path, links: parseArticleLinks(r.links) }))
 
       // 类型值面 = v2 域值（projects/…/cases）∪ v3 页型值（entity/concept/…）——
       // domain 列存 v3 type 值（票04 AC6），树按值分组两者都要列。
@@ -230,14 +254,19 @@ export function createWikiRoutes(
           const ruleCount = extractRuleAnchors(r.body).length
           stats.rules += ruleCount
           if (r.last_compiled > stats.lastCompiled) stats.lastCompiled = r.last_compiled
-          return { id: r.id, path: r.path, title: r.title, summary: r.summary, stability: r.stability, ruleCount }
+          // 反链=其他行链目标经 linkPointsToPage 命中此页者（判据与退役/清理面单源）
+          const selfLinks = parseArticleLinks(r.links)
+          const backlinks = linkIndex
+            .filter(o => o.id !== r.id && o.links.some(t => linkPointsToPage(t, r.id, r.path)))
+            .map(o => o.id)
+          return { id: r.id, path: r.path, title: r.title, summary: r.summary, stability: r.stability, ruleCount, links: selfLinks, backlinks }
         })
         domains.push({ name: group.name, label: group.label, count: mapped.length, entries: mapped })
       }
 
       // 「待审核」统计已随审批废除摘除（spec 故事 10；票11 裁定④/票09 应清而未清，
       // code-review P3 收口）——tree 响应不再含 pendingReview 字样，契约负断言见 wiki-routes.test.ts。
-      return c.json({ org: GLOBAL_WIKI_ORG, domains, stats, log: readWikiLog(wikiRoot) })
+      return c.json({ org: GLOBAL_WIKI_ORG, domains, stats, log: readWikiLog(wikiRoot), index: readWikiIndex(wikiRoot) })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.tree")
       return c.json(body, status)

@@ -21,7 +21,7 @@ export type SkillDraftOrigin = (typeof SKILL_DRAFT_ORIGINS)[number]
 
 /**
  * 草案名/目录名钉位（kebab 安全面，同 wiki CASE_ID_RE 制式）：小写字母起头，
- * 仅 [a-z0-9.-]，总长 ≤ 63。无下划线/斜杠/大写 ⇒ 目录穿越与「user_preference」
+ * 仅 [a-z0-9.-]，总长 ≤ 63。无下划线/斜杠/大写 ⇒ 目录穿越与人工文件基名（SCHEMA.md 等）
  * 类人工文件名从字面上不可能撞进 drafts 目录位。
  */
 export const SKILL_DRAFT_NAME_RE = /^[a-z][a-z0-9.-]{0,61}[a-z0-9]$|^[a-z]$/

@@ -89,31 +89,35 @@ describe("票14 S3 装配断言 — octo-wiki 新形态经预置链进 workspace
     expect(text).not.toMatch(/research\//)
     expect(text).not.toMatch(/workflows\/\{name\}\.md/)
 
-    // AC2 INDEX 必读节承接 user_preference「全文必读」语义 —— skill 侧指向它
+    // AC2 INDEX 必读节承接人工共演约定（SCHEMA.md——ADR-0033 起 user_preference 概念退役）
+    // 「全文必读」语义—— skill 侧指向它
     expect(text).toContain("必读")
+    expect(text).not.toContain("user_preference")
 
     // AC4 search 调用面钉全局：示例不得再带具体 org 值
     expect(text).not.toContain("org=xzf-dev")
   })
 
-  it("D-kc15-2（票07）必读节路径语义经预置链同步：知识根可达、非 wiki 子树假路径", async () => {
-    // 缺陷现场（KC e2e-report 链④）：agent 照 INDEX 旧行读 wiki 根下的 user_preference.md → File not found。
+  it("D-kc15-2（票07）必读节路径语义经预置链同步：知识根可达、非 wiki 子树假路径（必读标的随 ADR-0033 换钉 SCHEMA.md，契约不变）", async () => {
+    // 缺陷现场（KC e2e-report 链④）：agent 照 INDEX 旧行读 wiki 根下的人工文件 → File not found。
     // 修复合同 = INDEX 行 + skill 必读措辞都指到知识根可达形态；本例经 **官方 upgrade 原语**
     // （installOrUpgrade）同步链断言——改 core-pack ≠ 运行时生效，必须物化到预置源再进 workspace。
     const provisioned = await provisionSkillToWorkspace("octo-wiki")
 
-    // skill 必读节：知识根绝对路径 + INDEX 可达相对形态（../user_preference.md）都在
-    expect(provisioned).toContain("~/.octopus/knowledge/user_preference.md")
-    expect(provisioned).toContain("../user_preference.md")
-    // 偏好文件住在知识根、不在 wiki 子树——措辞同步（语义面，非仅路径面）
+    // skill 必读节：知识根绝对路径 + INDEX 可达相对形态（../SCHEMA.md）都在
+    expect(provisioned).toContain("~/.octopus/knowledge/SCHEMA.md")
+    expect(provisioned).toContain("../SCHEMA.md")
+    // 人工文件住在知识根、不在 wiki 子树——措辞同步（语义面，非仅路径面）
     expect(provisioned).toMatch(/知识根/)
+    // 防复活（ADR-0033）：退役概念不得再进必读面
+    expect(provisioned).not.toContain("user_preference")
 
     // 预置源槽本身已同步（installOrUpgrade 物化件 = core-pack 逐字节）
     const home = mkTmp("kc14-preset-")
     const manager = new ResourceManager({ basePath: path.join(home, "resources"), corePackBase: corePackDir })
     const res = await manager.installOrUpgrade({ ref: "builtin:octo-wiki", type: "skill", caller: "cli" })
     const preset = fs.readFileSync(path.join(res.installPath, "SKILL.md"), "utf-8")
-    expect(preset).toContain("../user_preference.md")
+    expect(preset).toContain("../SCHEMA.md")
   })
 
   it("保留面一字不变：导航协议骨架 + D1 修复版 JSON 示例 + [ref:]/stale + 禁止事项", async () => {

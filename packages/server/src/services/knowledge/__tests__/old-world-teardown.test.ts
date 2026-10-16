@@ -256,10 +256,10 @@ describe("票09 S1 — 旧世界归档删除（dry-run / apply / 顺序 / 幂等
     const prevHome = process.env.OCTOPUS_HOME
     process.env.OCTOPUS_HOME = home
     try {
-      // 动态 import：getter 在 teardown 之后被任意只读路径调用也不得建目录
-      const { readUserPreference, listAllActiveRules, getKnowledgeDir } = await import("../file-ops")
+      // 动态 import：teardown 之后被任意只读路径调用也不得建目录
+      const { readKnowledgeFile, listAllActiveRules, getKnowledgeDir } = await import("../file-ops")
       expect(getKnowledgeDir("xzf-dev")).toBe(orgDir)
-      expect(readUserPreference("xzf-dev")).toBe("")
+      expect(readKnowledgeFile(path.join(orgDir, "notes.md"))).toBe("") // 通用读件同护栏：读不建目录
       expect(listAllActiveRules("xzf-dev")).toEqual([])
       expect(fs.existsSync(orgDir)).toBe(false)
     } finally {

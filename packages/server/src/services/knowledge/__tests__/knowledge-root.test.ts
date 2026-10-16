@@ -12,7 +12,7 @@ import {
   resolveKnowledgeDir,
   resolveKnowledgeRoot,
 } from "../global-paths"
-import { getKnowledgeDir, readUserPreference } from "../file-ops"
+import { getKnowledgeDir } from "../file-ops"
 import { resolveWikiRoot, resolveWikiRootCompat, hasWikiContent } from "../wiki/paths"
 
 /**
@@ -49,9 +49,6 @@ describe("单源：org 轨与 env 拍平", () => {
       expect(getKnowledgeDir("test-org")).toBe(tmp)
       expect(resolveKnowledgeDir("test-org")).toBe(tmp)
       expect(resolveKnowledgeRoot()).toBe(tmp)
-      // 读偏好同样收口在这一拍平值上（旧 readUserPreference 里重复的 env 分支并入单源）
-      fs.writeFileSync(path.join(tmp, "user_preference.md"), "拍平偏好", "utf-8")
-      expect(readUserPreference("test-org")).toBe("拍平偏好")
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }

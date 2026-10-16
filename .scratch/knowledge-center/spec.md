@@ -22,9 +22,9 @@ P0/P1 把知识库建成了「规则数据库 + 事前审批闸」：没有 raw 
 3. 作为 owner，我想投喂后先看到抓取卡（raw 路径/大小/hash），以便确认源已不可变冻结、编译有据可对质。
 4. 作为 owner，我想编译完成后收到 diff 卡（触及 N 页明细/冲突数/新页数/commit hash），以便一眼看清这次编译改了什么。
 5. 作为 owner，我想在 diff 卡上点「回滚本次编译」，以便发现编错了能一键恢复（git revert + INDEX/LOG/FTS 重同步）。
-6. 作为 owner，我想右栏 wiki 视图跟随对话自动渲染提到的页，以便边聊边看编译结果，不用切页。
-7. 作为 owner，我想把右栏钉住在某一页，以便连续追问时视图不被跳走。
-8. 作为 owner，我想有浏览模式（INDEX 五类树 + 页渲染 + sources 溯源/git 近史折叠区），以便不对话时也能翻库。
+6. 作为 owner，我想右栏 wiki 视图跟随对话自动渲染提到的页，以便边聊边看编译结果，不用切页。——**⚠️ 已废除（ADR-0033，2026-10-16 owner 真用判词「反人类」）：跟随=对阅读面的焦点劫持，替代契约=引用药丸（卡片引用页时页头亮药丸，显式点击才跳转，永不自动跳）。勿按本条修回。**
+7. 作为 owner，我想把右栏钉住在某一页，以便连续追问时视图不被跳走。——**⚠️ 已废除（ADR-0033）：跟随停则钉无所指；「不跳」成为默认且唯一行为。**
+8. 作为 owner，我想有浏览模式（INDEX 五类树 + 页渲染 + sources 溯源/git 近史折叠区），以便不对话时也能翻库。——**⚠️ 模式概念已废除（ADR-0033）：本条诉求升级为 wiki 主场恒定布局（左树+中正文+右栏 TOC/实效/反链），对话收纳于不重排布局的策展人抽屉；INDEX.md 从「树的隐喻」升格为上树的只读总览节点。**
 9. 作为 owner，我想有 Ctrl+K 检索命令条（页名/别名/锚点/FTS5 全文），以便不知道分类时也能秒定位。
 10. 作为 owner，我想健康条显示 页数按类/raw 源数/本周 ingest/开放 findings/编译队列深度/最近编译/git HEAD，以便一屏掌握库的状态——且**没有"待审核"计数**（那个概念已废除）。
 11. 作为 owner，我想编译排队时卡片显示「排队中 #N → 编译中 → 已提交」，以便长编译不阻塞对话且进度可见。
@@ -32,7 +32,7 @@ P0/P1 把知识库建成了「规则数据库 + 事前审批闸」：没有 raw 
 13. 作为 owner，我想对话里说"体检一下"就触发语义巡检，以便不等夜巡也能主动查库的健康。
 14. 作为 owner，我想策展人给出有价值的合成答案时出现回填卡 [编进 wiki]，以便探索成果沉淀进库（探索复利）。
 15. 作为 owner，我想 task 归档后对话流里自动出现归档编译卡（总结已落 raw/archives、触及页数、commit），以便归档知识零操作入库、事后可纠。
-16. 作为 owner，我想 user_preference.md 在浏览模式只读渲染并标注"人工文件，直接编辑"，以便看得到偏好但清楚 AI 不会碰它。
+16. 作为 owner，我想 user_preference.md 在浏览模式只读渲染并标注"人工文件，直接编辑"，以便看得到偏好但清楚 AI 不会碰它。——**⚠️ 已整体退役（ADR-0033，owner 裁决「一点用没有，彻底删除」）：UI/读端点/readUserPreference/INDEX 必读行（改指 SCHEMA.md）/persona 提及/文件本体入 `_archive/` 全清。SCHEMA.md 人工文件面不受影响。**
 17. 作为 owner，我想 LOG.md 时间线视图（行格式可 grep），以便不翻 git 也能审计知识变更近史。
 18. 作为 owner，我想整个知识库全局唯一、界面没有任何 org 切换，以便知识不再按组织割裂。
 
@@ -114,7 +114,7 @@ P0/P1 把知识库建成了「规则数据库 + 事前审批闸」：没有 raw 
 
 **知识中心 UI（/knowledge）**
 
-- 布局：对话主界面（左，~60%）+ 右栏 wiki 视图（跟随对话渲染/可钉住/可切浏览模式全宽）+ 顶部健康条 + Ctrl+K 检索命令条。
+- 布局：对话主界面（左，~60%）+ 右栏 wiki 视图（跟随对话渲染/可钉住/可切浏览模式全宽）+ 顶部健康条 + Ctrl+K 检索命令条。——**⚠️ 本条整体由 ADR-0033 换芯：wiki 主场恒定（左树+中正文+右栏三件套）+ 策展人抽屉（overlay 不重排，560px 可拖，多会话 tab/历史=客户端视图态，主通道 title=知识中心 唯一机器播报落点）+ 页头健康三槽弹层全量 + Ctrl+K。原文勿作为实现依据。**
 - 会话复用既有 agent chat 通道（archive 分身会话，scope=knowledge），**不自建聊天基建**；前端订阅会话流 + 卡片协议（结构化事件→八类卡片渲染：抓取/来源摘要/编译 diff/归档编译/finding/回填/词条迷你/写保护）。
 - 编译异步化：>10s 转异步任务，对话先回执、diff 卡完成后追加，卡片带流式状态与队列位次。
 - 回滚：diff 卡按钮 → 服务端 git revert 单 commit + INDEX/LOG/FTS 重同步 + LOG 记 revert 行。
@@ -143,7 +143,7 @@ P0/P1 把知识库建成了「规则数据库 + 事前审批闸」：没有 raw 
 | 19-25, 32-36, 39-41, 43：raw 冻结 / 多页编译 / 写串行队列+锁 / 重蒸馏 / 搬家 / 归档投喂 / LOG 换格式 / DB 迁移 | S1 服务层环级测试：真 fs+tmpdir，构造 raw fixture 断言编译产物（N 页/INDEX/LOG/git 线性）；并发双投喂断言串行；锁 stale 回收用假 PID；重蒸馏幂等=重跑 diff 为空；归档先于删除的顺序断言 | S1 knowledge/tasks 服务层（wiki-compile.test / wiki-migrate.test / task-lifecycle.test 先例） |
 | 1-18(数据面), 42：ingest/队列/revert/findings/raw/tree/search API | S2 路由契约测试：形状/错误码/降级（抓取失败不落库、revert 后 INDEX/FTS 一致性）；findings 裁决即编译的端点行为 | S2 routes（wiki-routes.test / wiki-search-routes.test 先例） |
 | 26-31, 37：注入链删除回归 / 指针行 / 阅读面 v3 / 双入口一致 | S3 engine 装配测试：mock provider 捕获——prompt 无注入文本、仅任务书+一行指针；precompute 零触发（E2E verify_pq 已证运行时形态）；存量流（无 as: / octopus_agent 委托）回归全绿 | S3 engine（agent.test / integration.test / task-doer-chat.test 先例） |
-| 4-17(UI), 38：卡片渲染 / 排队状态 / 右栏联动与钉住 / 浏览模式 / Ctrl+K / 健康条口径 / 回滚钮 / 旧路由处置 | S4 web 组件测试：mock API+会话流断言八类卡片、队列状态流转、健康条**无"待审核"**、/wiki 与 /experience 路由删除后行为 | S4 web-app（wiki-page.test.tsx / billing .test.tsx 先例） |
+| 4-17(UI), 38：卡片渲染 / 排队状态 / 右栏联动与钉住 / 浏览模式 / Ctrl+K / 健康条口径 / 回滚钮 / 旧路由处置（联动/钉住/浏览模式三项随 ADR-0033 失效，S4 用例改写为「永不自动跳转」负断言 + 抽屉/药丸/多会话 tab 新断言） | S4 web 组件测试：mock API+会话流断言八类卡片、队列状态流转、健康条**无"待审核"**、/wiki 与 /experience 路由删除后行为 | S4 web-app（wiki-page.test.tsx / billing .test.tsx 先例） |
 | 全链验收（≥1 票） | E2E 手工真跑（真 provider）：投喂真文章→raw 冻结→编译触 N 页→diff 卡→回滚→再投喂；并发双投喂串行化真测；归档一个真 task 自动投喂；agent 执行 JSONL 见 INDEX→v3 页 Read 序列 + wiki_refs 新锚点；复跑脚本化（e2e13-rerun.mjs 模式）+ 反假跑 R1-R8 | E2E（matt-e2e-test-methodology） |
 
 **被测模块**：server knowledge 服务层（raw/编译队列/重蒸馏/迁移/巡检）、server 新路由、engine 装配（删除回归）、web-app /knowledge 组件群、core-pack skill 文本经 S3 装配断言间接覆盖（SKILL.md/SCHEMA.md 文本本体不做单测）。

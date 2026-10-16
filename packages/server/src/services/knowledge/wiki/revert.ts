@@ -14,6 +14,7 @@ import {
   atomicWrite,
 } from "./compile"
 import { parseWikiFile, pageEntryView, caseEntryView, pageTypeOf } from "./format"
+import { computeArticleLinks, wikiLinkTargets } from "./lint"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
 import { today } from "./util"
 
@@ -376,6 +377,7 @@ function entryRowFromDisk(abs: string, relPath: string): ArticleUpsertRow | null
       confidence: meta.confidence ?? 0.5,
       body: parsed.body,
       path: relPath,
+      links: parsed.kind === "page" ? computeArticleLinks(parsed.meta.links, parsed.body) : wikiLinkTargets(parsed.body),
     }
   } catch (err) {
     process.stderr.write(`[wiki-revert] 页重同步解析跳过 ${relPath}: ${err instanceof Error ? err.message : String(err)}\n`)

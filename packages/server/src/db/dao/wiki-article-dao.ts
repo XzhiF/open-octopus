@@ -21,6 +21,8 @@ export interface WikiArticleRow {
   confidence: number
   body: string
   path: string
+  /** 链接目标 JSON 数组（front-matter ∪ 正文 wikilinks，lint.computeArticleLinks 单源）；NULL=历史行未回灌 */
+  links?: string | null
   updated_at: string
 }
 
@@ -37,6 +39,8 @@ export interface WikiArticleUpsert {
   confidence: number
   body: string
   path: string
+  /** 收数组（DAO 内 JSON 序列化）或已序列化串（快照重放形）；缺省落 '[]' */
+  links?: string[] | string | null
 }
 
 export interface WikiFtsRow {
@@ -55,15 +59,19 @@ export class WikiArticleDAO extends BaseDAO {
   }
 
   upsert(row: WikiArticleUpsert): void {
+    // links 收口：数组→JSON；串→原样；缺省/null→**保留在库值**（COALESCE）——
+    // reconcile/redistill 等清单外写通道不带 links 时不得清列（改版 code-review S2；
+    // 新行 insert 落 NULL，由启动 backfillWikiArticleLinks 一次补齐）
+    const links = Array.isArray(row.links) ? JSON.stringify(row.links) : (row.links ?? null)
     this.stmt(`
-      INSERT INTO wiki_articles (org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path)
-      VALUES (@org, @id, @domain, @title, @summary, @topics, @stability, @last_compiled, @sources, @confidence, @body, @path)
+      INSERT INTO wiki_articles (org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links)
+      VALUES (@org, @id, @domain, @title, @summary, @topics, @stability, @last_compiled, @sources, @confidence, @body, @path, @links)
       ON CONFLICT(org, id) DO UPDATE SET
         domain=@domain, title=@title, summary=@summary, topics=@topics,
         stability=@stability, last_compiled=@last_compiled, sources=@sources,
-        confidence=@confidence, body=@body, path=@path,
+        confidence=@confidence, body=@body, path=@path, links=COALESCE(@links, links),
         updated_at=datetime('now')
-    `).run(row)
+    `).run({ ...row, links })
   }
 
   get(org: string, id: string): WikiArticleRow | undefined {

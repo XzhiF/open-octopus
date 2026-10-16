@@ -15,7 +15,7 @@
  *  ② **零活页入链**：复用票04 统一机械的命中面 cleanInboundLinks/linkPointsToPage
  *     （单源纪律：与退役执行体摘链判据永不分叉；活页=scanWikiEntries 面，_retired/ 缺席）。
  *  ③ **非人工文件**：isManualFileTarget 双保险——scan 面与 RETIRABLE_DIR_RE 本已天然
- *     不含人工文件位，闸在调用方仍显式复检（user_preference.md/SCHEMA.md 永不入自动路）。
+ *     不含人工文件位，闸在调用方仍显式复检（SCHEMA.md 永不入自动路）。
  *
  * 命中 → 调票04 统一退役机械（PageRetireTaskService.retire），source="auto"、
  * opKind="auto-retire"（红线1：一切写经全局 FIFO 串行队列；kind 只是审计面，机械零复制），

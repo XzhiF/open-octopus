@@ -8,7 +8,7 @@
 //  * front-matter 治理面记来源指针（pack:/task:/exec:/case: 族）+ status: draft。
 //  * 人工文件写保护语义不绕（assertNotManualFile 同律的目录逃逸闸）：名字钉
 //    SKILL_DRAFT_NAME_RE（kebab + 点，无下划线/斜杠/`..`），解析目标恒收敛在
-//    drafts 根内；user_preference.md / SCHEMA.md 形态从字面上不可能落此区。
+//    drafts 根内；SCHEMA.md 形态从字面上不可能落此区。
 //  * 幂等（票面「草案可溯源但不污染 wiki」的自决口径）：
 //      - 同来源指针活跃草案（draft|granted）在场 ⇒ DUPLICATE_SOURCE 拒绝重复产出
 //        （三路检测都会被重复触发，宁少勿滥——产出过人裁）；

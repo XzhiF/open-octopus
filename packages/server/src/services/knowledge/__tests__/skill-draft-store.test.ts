@@ -6,7 +6,7 @@
 // 不在 wiki git 仓、不是知识页、不进 INDEX；front-matter 记来源指针
 // （素材包 raw/archives/… / exec: / 判例 cases/…）+ `status: draft|granted|revoked`。
 // 纯 fs 写（drafts 是待授予过程资产，红线2 wiki 串行队列不适用于此区——
-// 但绝不越出 drafts 根、绝不触碰 wiki/cases/raw/user_preference）。
+// 但绝不越出 drafts 根、绝不触碰 wiki/cases/raw/人工文件）。
 // 幂等：同名草案不静默覆盖（存在则加后缀）；同来源指针活跃草案在场 ⇒ 拒绝重复产出。
 //
 // expected 真相源：票面 + spec 故事 24 文字，非实现反推。
