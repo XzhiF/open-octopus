@@ -10,7 +10,7 @@ import type { KcCardViewProps } from './registry'
  *
  * 判例由归档链自动入档（先存后知——本卡是入档后的事后通知，非审批），卡面给全五段
  * （现场/诊断/根因/修复/教训，CBR 叙事序）供 owner 一眼对质；source 指回 exec/task
- * 可定位指针；[看判例页] 走右栏渲染；[退役] 经 case-archive 队列通道标 superseded
+ * 可定位指针；[看判例页] 走主场渲染；[退役] 经 case-archive 队列通道标 superseded
  * （红线2：判例一切写走唯一写闸，本钮只发 REST 回执；Lane B 覆盖层回灌位次）；
  * 对策展人说 = 对话改写通道（story 11 事后纠的另一腿，灌进取号器零状态变更）。
  * 终态（superseded）去钮样式沿 finding 卡先例（终态一次性，不留二次点击）。

@@ -207,7 +207,7 @@ function makeStub(opts: { clonesFail?: boolean } = {}) {
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {
@@ -277,7 +277,7 @@ describe("票04 skill 草案卡：SKILL.md 完整渲染 + 来源指针可点 + �
     await screen.findByTestId("kc-card-skill-draft")
 
     fireEvent.click(screen.getByTestId("kc-skl-say"))
-    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    const composer = screen.getByPlaceholderText(/投喂/)
     expect((composer as HTMLTextAreaElement).value).toContain("改写草案 flow-85153203c0")
     expect((composer as HTMLTextAreaElement).value).toContain("drafts/skills/flow-85153203c0/SKILL.md")
   })

@@ -1,8 +1,11 @@
 // 票11 · /knowledge 知识中心（读面）组件测试 — wiki-page.test.tsx / billing 先例
 // （vi.stubGlobal fetch，URL 子串匹配 mock；jsdom 下 getServerUrl() 回落 3001 无关紧要）。
-// Seam: <KnowledgePage/>（app/knowledge/page.tsx）—— 树/页渲染/检索/健康条/LOG/preference。
+// 知识中心改版 ADR-0033 换契约：健康条→页头三槽+弹层全量；INDEX 五类树去必读组
+// 加 INDEX 总览/原料库；偏好视图随概念删除（负断言防复活）；
+// 对话列→策展人抽屉（恒挂载 overlay，本文件 mock，本体测于 knowledge-chat.test.tsx）。
+// Seam: <KnowledgePage/>（app/knowledge/page.tsx）—— 树/页渲染/右栏/检索/健康弹层/LOG/原料库。
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/knowledge",
@@ -16,10 +19,12 @@ vi.mock("next/link", () => ({
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
 }))
-// 票12 对话列（clone-session + 卡片编排）本体测于 knowledge-chat.test.tsx；
-// 本文件 = 票11 读面 seam，桩掉以隔离聊天基建依赖
-vi.mock("@/components/knowledge-center/chat-column", () => ({
-  ChatColumn: ({ pinned }: { pinned: boolean }) => <div data-testid="kc-chat-column">{pinned ? "已钉住" : "跟随"}</div>,
+// 策展人抽屉（clone-session + 卡片编排）本体测于 knowledge-chat.test.tsx；
+// 本文件 = 读面 seam，桩掉以隔离聊天基建依赖（恒挂载 + open 反映到 class）
+vi.mock("@/components/knowledge-center/curator-drawer", () => ({
+  CuratorDrawer: ({ open }: { open: boolean }) => (
+    <div data-testid="kc-curator-drawer" className={open ? "fixed translate-x-0" : "fixed translate-x-[102%]"} />
+  ),
 }))
 
 import KnowledgePage from "../page"
@@ -40,32 +45,50 @@ const HEALTH = {
   gitHead: "a3f9c21d4b5e6f708192a3b4c5d6e7f8091a2b3c",
 }
 
+const FINDINGS_OPEN = {
+  org: "global",
+  findings: [
+    { id: "f1", kind: "contradiction", severity: "critical", status: "open", title: "矛盾：甲页 ↔ 乙页", detail: {}, pages: ["topics/a.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+    { id: "f2", kind: "bloat", severity: "major", status: "open", title: "膨胀榜：乙页", detail: {}, pages: ["topics/b.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+    { id: "f3", kind: "orphan", severity: "minor", status: "open", title: "孤儿页：丙页", detail: {}, pages: ["entities/c.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
+  ],
+}
+
 const TREE = {
   org: "global",
   domains: [
     {
       name: "entity", label: "Entities", count: 1,
-      entries: [{ id: "ent-open-octopus", path: "entities/ent-open-octopus.md", title: "Open Octopus（平台 monorepo）", summary: "工作流编排平台", stability: "stable", ruleCount: 0 }],
+      entries: [{ id: "ent-open-octopus", path: "entities/ent-open-octopus.md", title: "Open Octopus（平台 monorepo）", summary: "工作流编排平台", stability: "stable", ruleCount: 0, links: [], backlinks: [] }],
     },
     {
       name: "concept", label: "Concepts", count: 1,
-      entries: [{ id: "con-compiled-rag", path: "concepts/con-compiled-rag.md", title: "编译式 RAG", summary: "检索的重活在编译时", stability: "stable", ruleCount: 1 }],
+      entries: [{ id: "con-compiled-rag", path: "concepts/con-compiled-rag.md", title: "编译式 RAG", summary: "检索的重活在编译时", stability: "stable", ruleCount: 1, links: ["top-knowledge-injection"], backlinks: ["top-knowledge-injection"] }],
     },
     {
       name: "topic", label: "Topics", count: 1,
-      entries: [{ id: "top-knowledge-injection", path: "topics/top-knowledge-injection.md", title: "知识注入沿革", summary: "注入式→编译式", stability: "stable", ruleCount: 1 }],
+      entries: [{ id: "top-knowledge-injection", path: "topics/top-knowledge-injection.md", title: "知识注入沿革", summary: "注入式→编译式", stability: "stable", ruleCount: 1, links: ["con-compiled-rag"], backlinks: ["con-compiled-rag"] }],
     },
     {
       name: "projects", label: "项目知识", count: 1,
-      entries: [{ id: "prj-octopus", path: "projects/prj-octopus.md", title: "Octopus 平台工程知识", summary: "monorepo 构建规则", stability: "stable", ruleCount: 2 }],
+      entries: [{ id: "prj-octopus", path: "projects/prj-octopus.md", title: "Octopus 平台工程知识", summary: "monorepo 构建规则", stability: "stable", ruleCount: 2, links: [], backlinks: [] }],
     },
     {
       name: "cases", label: "问题案例档", count: 1,
-      entries: [{ id: "case-2026-003", path: "cases/2026-06-23-pnpm-lockfile-mismatch.md", title: "CI 报 LOCKFILE_CONFIG_MISMATCH", summary: "pnpm 版本错配", stability: "stable", ruleCount: 0 }],
+      entries: [{ id: "case-2026-003", path: "cases/2026-06-23-pnpm-lockfile-mismatch.md", title: "CI 报 LOCKFILE_CONFIG_MISMATCH", summary: "pnpm 版本错配", stability: "stable", ruleCount: 0, links: [], backlinks: [] }],
     },
   ],
   stats: { entries: 4, cases: 1, rules: 4, lastCompiled: "2026-10-13" },
   log: null,
+  index: "# Octopus Knowledge Wiki — global\n\n## 必读\n- ../SCHEMA.md — 人机共演约定\n\n## Concepts (1)\n- concepts/con-compiled-rag.md — 检索的重活在编译时 ←1 源\n",
+}
+
+const RAW_LIST = {
+  org: "global",
+  sources: [
+    { path: "raw/inbox/2026-10-13-karpathy-llm-wiki.md", bytes: 12288, hash: "4f2a9c00000000000000000000000000000000000000000000000000000000aa", origin: "url:https://gist.github.com/karpathy/442a6bf", title: "Karpathy LLM Wiki", ingestedAt: "2026-10-13T09:12:00.000Z" },
+    { path: "raw/inbox/meeting-1004.md", bytes: 4200, hash: "9c4d00000000000000000000000000000000000000000000000000000000b04", origin: "paste", title: "10-04 例会纪要", ingestedAt: "2026-10-04T02:00:00.000Z" },
+  ],
 }
 
 // v3 页详情（chips/git 近史/[[链接]]/sources 溯源数据源——fixture 对齐票11 AC2）
@@ -133,8 +156,10 @@ function mockFetch(overrides?: (u: string) => StubResponse | undefined) {
     }
     if (u.includes("/knowledge/wiki/tree")) return { ok: true, status: 200, json: async () => TREE }
     if (u.includes("/knowledge/wiki/search")) return { ok: true, status: 200, json: async () => SEARCH }
+    if (u.includes("/knowledge/findings")) return { ok: true, status: 200, json: async () => FINDINGS_OPEN }
     if (u.includes("/knowledge/log")) return { ok: true, status: 200, json: async () => ({ org: "global", lines: LOG_LINES }) }
     if (u.includes("/knowledge/health")) return { ok: true, status: 200, json: async () => HEALTH }
+    if (u.includes("/api/knowledge/raw?")) return { ok: true, status: 200, json: async () => RAW_LIST }
     if (/\/wiki\/article\/top-knowledge-injection/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE_LINKED }
     if (/\/wiki\/article\/[^?]+/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE }
     if (u.includes("/knowledge/raw/")) return { ok: true, status: 200, json: async () => RAW_FILE }
@@ -147,23 +172,26 @@ beforeEach(() => {
   mockFetch()
 })
 
-describe("健康条（票面口径七项，负断言「无待审核」）", () => {
-  it("renders page counts by class, raw sources, week ingest, findings, queue, last compile, git HEAD", async () => {
+describe("页头健康三槽 + 点开弹层全量指标（负断言「无待审核」）", () => {
+  it("三槽=分/findings/队列；点开弹层全量（页数按类/raw/ingest/最近编译/git HEAD）一个不砍", async () => {
     render(<KnowledgePage />)
     const bar = await screen.findByTestId("kc-health-bar")
+    expect(bar.textContent).toContain("77")
+    expect(bar.textContent).toContain("2")
+    expect(bar.textContent).toContain("0")
 
-    expect(bar.textContent).toContain("页 52")
-    expect(bar.textContent).toContain("实体 7")
-    expect(bar.textContent).toContain("概念 9")
-    expect(bar.textContent).toContain("主题 11")
-    expect(bar.textContent).toContain("来源 23")
-    expect(bar.textContent).toContain("判例 2")
-    expect(bar.textContent).toContain("raw 源 31")
-    expect(bar.textContent).toContain("本周 ingest 5")
-    expect(bar.textContent).toContain("findings 2")
-    expect(bar.textContent).toContain("队列 0")
-    expect(bar.textContent).toContain("最近编译 2026-10-13")
-    expect(bar.textContent).toContain("a3f9c21") // git HEAD 短哈希（原型 kbar「wiki git a3f9c21」）
+    fireEvent.click(bar)
+    const pop = await screen.findByTestId("kc-health-popover")
+    expect(pop.textContent).toContain("页 52")
+    expect(pop.textContent).toContain("实体 7")
+    expect(pop.textContent).toContain("概念 9")
+    expect(pop.textContent).toContain("主题 11")
+    expect(pop.textContent).toContain("来源 23")
+    expect(pop.textContent).toContain("判例 2")
+    expect(pop.textContent).toContain("raw 源 31")
+    expect(pop.textContent).toContain("本周 ingest 5")
+    expect(pop.textContent).toContain("最近编译 2026-10-13")
+    expect(pop.textContent).toContain("a3f9c21") // git HEAD 短哈希（原型 kbar「wiki git a3f9c21」）
   })
 
   it("负断言：全页不存在「待审核」计数（审批概念已废除，spec D6）", async () => {
@@ -181,50 +209,36 @@ describe("健康条（票面口径七项，负断言「无待审核」）", () =
     expect(document.body.textContent).not.toMatch(/选择组织|切换 ?org/i)
   })
 
-  it("健康条加载失败显形，不伪造零值（CODING_STANDARDS #2）", async () => {
+  it("健康件加载失败显形，不伪造零值（CODING_STANDARDS #2）", async () => {
     mockFetch(u => (u.includes("/knowledge/health") ? { ok: false, status: 500, json: async () => ({ error: { message: "健康聚合炸了" } }) } : undefined))
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready") // 树仍在
     const err = await screen.findByTestId("kc-health-error")
     expect(err.textContent).toContain("健康聚合炸了")
-    expect(screen.queryByTestId("kc-health-bar")).toBeNull()
+    expect(screen.queryByTestId("kc-health-popover")).toBeNull()
   })
 
-  it("P4 票07：平均置信槽——已测均值显数值；全库未测 null ⇒ 诚实 —（不伪造 0.5 初值均值）", async () => {
+  it("P4 票07：弹层平均置信——已测均值显数值；全库未测 null ⇒ 诚实 —（不伪造 0.5 初值均值）", async () => {
     const first = render(<KnowledgePage />)
-    const bar = await screen.findByTestId("kc-health-bar")
-    expect(bar.textContent).toContain("平均置信 0.64")
+    fireEvent.click(await screen.findByTestId("kc-health-bar"))
+    const pop = await screen.findByTestId("kc-health-popover")
+    expect(pop.textContent).toContain("平均置信 0.64")
     first.unmount()
 
     mockFetch(u => (u.includes("/knowledge/health") ? { ok: true, status: 200, json: async () => ({ ...HEALTH, avgConfidence: null }) } : undefined))
     render(<KnowledgePage />)
-    const bar2 = await screen.findByTestId("kc-health-bar")
-    expect(bar2.textContent).toContain("平均置信 —")
+    fireEvent.click(await screen.findByTestId("kc-health-bar"))
+    const pop2 = await screen.findByTestId("kc-health-popover")
+    expect(pop2.textContent).toContain("平均置信 —")
   })
 
-  it("P4 票08：健康分槽 77；点开 ranked 层按 severity 分组列开放 findings（复用列表通道，零新页面）", async () => {
-    mockFetch(u =>
-      u.includes("/knowledge/findings")
-        ? {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              org: "global",
-              findings: [
-                { id: "f1", kind: "contradiction", severity: "critical", status: "open", title: "矛盾：甲页 ↔ 乙页", detail: {}, pages: ["topics/a.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
-                { id: "f2", kind: "bloat", severity: "major", status: "open", title: "膨胀榜：乙页", detail: {}, pages: ["topics/b.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
-                { id: "f3", kind: "orphan", severity: "minor", status: "open", title: "孤儿页：丙页", detail: {}, pages: ["entities/c.md"], rawRef: "", source: "patrol", createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" },
-              ],
-            }),
-          }
-        : undefined,
-    )
+  it("P4 票08：弹层内 ranked findings 按 severity 分组列开放 findings（复用列表通道，零新页面）", async () => {
     render(<KnowledgePage />)
     const bar = await screen.findByTestId("kc-health-bar")
-    expect(bar.textContent).toContain("健康分 77")
+    expect(bar.textContent).toContain("77")
 
-    // 点开=票08 首例交互：健康分槽的「明细」钮（既有 findings 列表 API 通道，无新端点无新路由页）
-    fireEvent.click(screen.getByTestId("kc-health-score-toggle"))
+    // 点开三槽=票08 明细首例交互升级（既有 findings 列表 API 通道，无新端点无新路由页）
+    fireEvent.click(bar)
     const panel = await screen.findByTestId("kc-ranked-findings")
     expect(panel.textContent).toContain("矛盾：甲页 ↔ 乙页")
     expect(panel.textContent).toContain("膨胀榜：乙页")
@@ -234,30 +248,24 @@ describe("健康条（票面口径七项，负断言「无待审核」）", () =
     expect(panel.textContent).toContain("重要")
     expect(panel.textContent).toContain("一般")
     const text = panel.textContent!
-    expect(text.indexOf("紧急")).toBeGreaterThanOrEqual(0)
     expect(text.indexOf("紧急")).toBeLessThan(text.indexOf("重要"))
     expect(text.indexOf("重要")).toBeLessThan(text.indexOf("一般"))
     // 零新页面负断言：分组层不引入新路由（仍在 /knowledge 页内）
     expect(screen.queryByRole("link", { name: /报告|报表|doctor/i })).toBeNull()
   })
 
-  it("P4 票08：score null ⇒ 健康分 —（诚实不可评，不伪造满分——空库/未装配巡检形态）", async () => {
+  it("P4 票08：score null ⇒ 三槽显 —（诚实不可评，不伪造满分——空库/未装配巡检形态）", async () => {
     mockFetch(u => (u.includes("/knowledge/health") ? { ok: true, status: 200, json: async () => ({ ...HEALTH, score: null }) } : undefined))
     render(<KnowledgePage />)
     const bar = await screen.findByTestId("kc-health-bar")
-    expect(bar.textContent).toContain("健康分 —")
+    expect(bar.textContent).toContain("⚡ —")
   })
 })
 
-describe("INDEX 五类树（必读/Entities/Concepts/Topics/Sources/Cases + System）", () => {
-  it("buckets v3 type groups and v2-domain rows, with 必读 and System(LOG) groups", async () => {
+describe("导航树（五类 + System：INDEX 总览/LOG/原料库；ADR-0033 版式）", () => {
+  it("buckets v3 type groups and v2-domain rows；必读组已随概念删除（负断言防复活）", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
-
-    // 必读组：user_preference（人工）
-    expect(screen.getByText("必读")).toBeDefined()
-    fireEvent.click(screen.getByRole("button", { name: /user_preference/ }))
-    expect(await screen.findByTestId("kc-preference-view")).toBeDefined()
 
     // 五类组头（原型 Tab④ 树分组；v3 类型值组 + v2 域值行并入对应类）
     expect(screen.getByText(/Entities/)).toBeDefined()
@@ -272,27 +280,61 @@ describe("INDEX 五类树（必读/Entities/Concepts/Topics/Sources/Cases + Syst
     expect(topics.textContent).toContain("知识注入沿革")
     // 判例组
     expect(screen.getByTestId("kc-group-case").textContent).toContain("CI 报 LOCKFILE_CONFIG_MISMATCH")
-    // System 组：LOG.md 时间线入口
+    // System 组三入口 + 原必读组删除负断言（防复活钉：偏好钮永不再出现）
+    expect(screen.getByTestId("kc-select-index").textContent).toContain("INDEX 总览")
     expect(screen.getByRole("button", { name: /LOG\.md 时间线/ })).toBeDefined()
+    expect(screen.getByTestId("kc-select-rawlib").textContent).toContain("原料库")
+    expect(screen.queryByRole("button", { name: /user_preference/ })).toBeNull()
   })
 
-  it("浏览模式对话抽屉：默认全宽，打开挂对话列（票12 实装；本文件隔离 mock，对话列本体测于 knowledge-chat.test.tsx）", async () => {
+  it("INDEX 总览特殊项：点开=tree.index 只读渲染（导航层上树，ADR-0033）", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
-    expect(screen.queryByTestId("kc-chat-column")).toBeNull() // 默认全宽
-    fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
-    expect(await screen.findByTestId("kc-chat-column")).toBeDefined()
+    fireEvent.click(screen.getByTestId("kc-select-index"))
+    const view = await screen.findByTestId("kc-index-view")
+    expect(view.textContent).toContain("INDEX.md — 知识总览")
+    await waitFor(() => expect(document.querySelector("[data-md-preview]")!.textContent).toContain("## Concepts (1)"))
+  })
+
+  it("策展人抽屉恒挂载（overlay），页头钮开合、正文列不受影响", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    const drawer = await screen.findByTestId("kc-curator-drawer")
+    expect(drawer.className).toContain("translate-x-[102%]")
+    fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
+    await waitFor(() => expect(screen.getByTestId("kc-curator-drawer").className).toContain("translate-x-0"))
+    expect(screen.getByTestId("kc-tree-ready")).toBeDefined() // 树仍在原位（无模式重建）
   })
 })
 
-describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] 跳页 / sources 溯源", () => {
-  it("renders title, type/aliases/sources chips, anchor tokens and links chip navigates", async () => {
+describe("原料库 raw（GET /api/knowledge/raw 的首个 importer · ADR-0033）", () => {
+  it("System 组入口打开清单；点行→正文区不可变原文只读视图", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+
+    fireEvent.click(screen.getByTestId("kc-select-rawlib"))
+    const lib = await screen.findByTestId("kc-raw-lib")
+    expect(lib.textContent).toContain("原料库")
+    expect(lib.textContent).toContain("2 个文件")
+    expect(lib.textContent).toContain("Karpathy LLM Wiki")
+    expect(lib.textContent).toContain("例会纪要")
+    expect(calls.some(c => c.url.includes("/api/knowledge/raw?"))).toBe(true)
+
+    fireEvent.click(screen.getAllByTestId("kc-raw-row")[0])
+    const view = await screen.findByTestId("kc-raw-view")
+    expect(view.textContent).toContain("raw/inbox/2026-10-13-karpathy-llm-wiki.md")
+  })
+})
+
+describe("v3 页渲染：面包屑 / chips / 锚点现形 / git 近史折叠 / [[链接]] 跳页 / sources 溯源 / 右栏三件套", () => {
+  it("renders breadcrumb, title, type/aliases/sources chips, anchor tokens and links chip navigates", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
 
     fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
 
     await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toBe("编译式 RAG"))
+    expect(screen.getByTestId("kc-crumb").textContent).toContain("编译式 RAG") // 面包屑尾段
     // front-matter chips：type / aliases / sources
     expect(screen.getByTestId("kc-chip-type").textContent).toBe("concept")
     expect(screen.getByTestId("kc-chip-aliases").textContent).toContain("编译RAG")
@@ -306,6 +348,23 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     fireEvent.click(screen.getByTestId("kc-link-chip"))
     await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toBe("知识注入沿革"))
     expect(calls.some(c => /\/wiki\/article\/top-knowledge-injection/.test(c.url))).toBe(true)
+  })
+
+  it("右栏三件套：目录/实效账渲染 + 反链来自 tree.backlinks 且可点跳页", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
+    await screen.findByTestId("kc-page-title")
+
+    const rail = await screen.findByTestId("kc-rail")
+    expect(rail.textContent).toContain("本页目录")
+    expect(rail.textContent).toContain("定义") // 正文 H2 派生
+    expect(rail.textContent).toContain("反向链接")
+    expect(rail.textContent).toContain("被引 12") // 实效账（effectiveness 实时段）
+    expect(rail.textContent).toContain("75%")
+
+    fireEvent.click(within(screen.getByTestId("kc-rail-backlinks")).getByText("知识注入沿革"))
+    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toBe("知识注入沿革"))
   })
 
   it("git 近史折叠区：默认收起，点开展现 commit hash/message（article API gitHistory 现形）", async () => {
@@ -344,7 +403,7 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     expect(screen.queryByTestId("kc-page-title")).toBeNull()
   })
 
-  it("票07 浏览页脚实效段：引用数/helpful 率/confidence（DB 实时值——与头 chips 快照值并存展示）", async () => {
+  it("票07 页脚实效段：引用数/helpful 率/confidence（DB 实时值——与头 chips 快照值并存展示）", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
@@ -357,7 +416,7 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     expect(foot.textContent).not.toContain("样本不足") // measured=true 无滞后注
   })
 
-  it("票07 页脚形态三态：未接账目（effectiveness null）整段缺席；未测行显「样本不足」滞后注", async () => {
+  it("票07 页脚形态：未接账目（effectiveness null）整段缺席（诚实=不显假账）", async () => {
     mockFetch(u => (/\/wiki\/article\/[^?]+/.test(u) && !u.includes("top-knowledge-injection")
       ? { ok: true, status: 200, json: async () => ({ ...ARTICLE, effectiveness: null }) }
       : undefined))
@@ -365,24 +424,7 @@ describe("v3 页渲染：chips / 锚点现形 / git 近史折叠 / [[链接]] �
     await screen.findByTestId("kc-tree-ready")
     fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
     await screen.findByTestId("kc-page-title")
-    expect(screen.queryByTestId("kc-effectiveness-footer")).toBeNull() // 诚实缺席=不显假账
-  })
-
-  it("票07 页脚未测态：helpful 率有账直显、confidence 标「样本不足·保持编译期初值」（不抖动语义可见）", async () => {
-    mockFetch(u => (/\/wiki\/article\/[^?]+/.test(u) && !u.includes("top-knowledge-injection")
-      ? {
-          ok: true, status: 200,
-          json: async () => ({ ...ARTICLE, effectiveness: { citedCount: 7, helpfulCount: 1, notHelpfulCount: 1, helpfulRate: 0.5, confidence: 0.9, measured: false } }),
-        }
-      : undefined))
-    render(<KnowledgePage />)
-    await screen.findByTestId("kc-tree-ready")
-    fireEvent.click(screen.getByRole("button", { name: /编译式 RAG/ }))
-    const foot = await screen.findByTestId("kc-effectiveness-footer")
-    expect(foot.textContent).toContain("引用 7×")
-    expect(foot.textContent).toContain("50%")
-    expect(foot.textContent).toContain("0.9")
-    expect(foot.textContent).toContain("样本不足")
+    expect(screen.queryByTestId("kc-effectiveness-footer")).toBeNull()
   })
 })
 
@@ -474,29 +516,6 @@ describe("LOG.md 时间线视图（行格式渲染 + 前缀过滤）", () => {
     // 非 compile 行不得残留
     expect(screen.queryByText(/raw\/inbox\/2026-10-13/)).toBeNull()
     expect(screen.queryByText(/回滚本次编译/)).toBeNull()
-  })
-})
-
-describe("user_preference 浏览视图：只读渲染 + 零编辑控件（AC6）", () => {
-  it("标注「人工文件，直接编辑」；无输入框/无编辑按钮/无保存", async () => {
-    mockFetch(u => (u.includes("/knowledge/preference")
-      ? { ok: true, status: 200, json: async () => ({ content: "# owner 偏好\n\n回复要短。\n", scope: "global", filePath: "/home/.octopus/knowledge/user_preference.md" }) }
-      : undefined))
-    render(<KnowledgePage />)
-    await screen.findByTestId("kc-tree-ready")
-
-    fireEvent.click(screen.getByRole("button", { name: /user_preference/ }))
-    const view = await screen.findByTestId("kc-preference-view")
-    expect(screen.getByTestId("kc-preference-banner").textContent).toContain("人工文件，直接编辑")
-    // 内容经 MarkdownPreview（桩透传）
-    await waitFor(() => expect(document.querySelector("[data-md-preview]")).not.toBeNull())
-    expect(document.querySelector("[data-md-preview]")!.textContent).toContain("回复要短")
-
-    // 零编辑入口：无 textbox / 无编辑保存按钮 / 无 textarea
-    expect(screen.queryByRole("textbox")).toBeNull()
-    expect(document.querySelector("textarea")).toBeNull()
-    expect(screen.queryByRole("button", { name: /编辑|保存|提交|删除/ })).toBeNull()
-    expect(view.textContent).toContain("只读")
   })
 })
 

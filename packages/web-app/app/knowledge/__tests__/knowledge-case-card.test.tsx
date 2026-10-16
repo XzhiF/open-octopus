@@ -162,7 +162,7 @@ function makeStub(opts: { retireScript?: string[] } = {}) {
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {

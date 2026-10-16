@@ -21,6 +21,10 @@ export interface KcTreeEntry {
   summary: string
   stability: string
   ruleCount: number
+  /** 链目标（front-matter ∪ 正文 [[…]]，服务端 links 列单源；右栏反链倒排数据面） */
+  links?: string[]
+  /** 反链：哪些活页的链接指向本页（linkPointsToPage 判据与服务端退役面单源） */
+  backlinks?: string[]
 }
 
 export interface KcTreeDomain {
@@ -35,6 +39,8 @@ export interface KcTree {
   domains: KcTreeDomain[]
   stats: { entries: number; cases: number; rules: number; lastCompiled: string }
   log: string | null
+  /** INDEX.md 文本（log 同律：缺席=诚实 null；树顶「INDEX 总览」视图消费） */
+  index?: string | null
 }
 
 export interface KcGitCommit {
@@ -165,12 +171,6 @@ export interface KcRawSource {
   ingestedAt: string | null
 }
 
-export interface KcPreference {
-  content: string
-  scope: string
-  filePath: string
-}
-
 export async function getKcHealth(): Promise<KcHealth> {
   const res = await apiFetch(`${getServerUrl()}/api/knowledge/health`)
   return handleResponse<KcHealth>(res)
@@ -188,8 +188,6 @@ export async function getKcLog(op?: string): Promise<KcLogLine[]> {
 /**
  * 单文件读。入参 = RawPointer.path（知识根相对，如 `raw/inbox/x.md`）；
  * 端点收 raw 根相对段（`inbox/x.md`），前缀在此剥除。
- * （raw 列表端点 GET /api/knowledge/raw 已就位并由 S2 契约测试钉形——本模块暂不加
- *   无 importer 的包装；票12 抓取卡「看 raw 原文」入口用时再补。）
  */
 export async function getKcRawFile(pointerPath: string): Promise<KcRawSource & { content: string }> {
   const rel = pointerPath.replace(/^raw\//, "")
@@ -197,11 +195,16 @@ export async function getKcRawFile(pointerPath: string): Promise<KcRawSource & {
   return handleResponse<KcRawSource & { content: string }>(res)
 }
 
-/** user_preference.md（知识根人工文件区；旧 /api/knowledge/preference 端点，scope=global）。 */
-export async function getKcPreference(): Promise<KcPreference> {
-  const res = await apiFetch(`${getServerUrl()}/api/knowledge/preference?scope=${KC_ORG}`)
-  return handleResponse<KcPreference>(res)
+/**
+ * raw 全清单（原料库视图数据面；GET /api/knowledge/raw 由 S2 契约测试钉形，
+ * 知识中心改版·原料库为其首个 importer——孤 raw 从此可见可盘点）。
+ */
+export async function listKcRawSources(): Promise<KcRawSource[]> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/raw?org=${KC_ORG}`)
+  return handleResponse<{ org: string; sources: KcRawSource[] }>(res).then(d => d.sources)
 }
+
+// 原 /api/knowledge/preference 读包装已删（ADR-0033：偏好概念整体清除）。
 
 // ============ 票12 写面 API（ingest/编译任务/队列位次/revert）============
 // 端点面票02/05/06/12 已就位；本段只做形状收口客户端，语义注释指向路由文件。

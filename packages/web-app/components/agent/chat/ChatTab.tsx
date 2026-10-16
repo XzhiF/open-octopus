@@ -64,7 +64,7 @@ export function ChatTab() {
     return { viewMessages: vm, laneAByMsgId: byMsgId, laneAIds: ids, laneAIngestById: ingestById }
   }, [messages])
 
-  // Lane B 覆盖层回灌 Lane A 沉淀卡（与 chat-column withCardStates 同构的普通会话最小子集：
+  // Lane B 覆盖层回灌 Lane A 沉淀卡（与 curator-drawer withCardStates 同构的普通会话最小子集：
   // revert 态按 commit 匹配；ingest 重试后的编译镜像按同 id 取 store 新态）
   const withCardStates = useCallback((e: KcCardEvent): KcCardEvent => {
     if (e.kind === 'compile-diff') {

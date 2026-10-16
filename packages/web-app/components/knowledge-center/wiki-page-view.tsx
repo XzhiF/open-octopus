@@ -61,6 +61,12 @@ export function WikiPageView({ article, activeAnchor, onOpenLink, onOpenRaw }: W
 
   return (
     <div className="p-6">
+      {/* 面包屑（知识中心改版 ADR-0033：主场阅读定位）——域组名 › 页题 */}
+      <div data-testid="kc-crumb" className="mb-2 flex items-center gap-1.5 text-[11px] font-bold text-pop-dim">
+        <span>📁 {type}</span>
+        <span>›</span>
+        <b className="text-pop-pink">{article.title}</b>
+      </div>
       <h1 data-testid="kc-page-title" className="mb-2 text-2xl font-black text-pop-ink">{article.title}</h1>
 
       {/* front-matter chips（原型行 550：type / aliases / 编译于 / confidence + sources） */}
