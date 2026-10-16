@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus 知识中心 — Karpathy 三层架构 · raw→compile→wiki · 对话即管理</title>
+<style>
+:root{
+  --bg:#0A0A0C; --card:#1C1C22; --sunken:#020202; --text:#F5F5F2; --muted:#9698A3;
+  --border:#32323B; --primary:#FF855C; --cyan:#4FD1D9; --green:#7EE787; --amber:#FFC857;
+  --purple:#D2A8FF; --red:#FF5C5C; --navy:#4C79BF; --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:ui-monospace,"Cascadia Code",Consolas,"JetBrains Mono",monospace;font-size:13.5px;line-height:1.65}
+.wrap{max-width:1280px;margin:0 auto;padding:24px 20px 80px}
+header{padding:28px 0 18px;border-bottom:1px solid var(--border);margin-bottom:18px}
+h1{font-size:22px;font-weight:700;letter-spacing:.5px}
+h1 .accent{color:var(--primary)}
+.sub{color:var(--muted);margin-top:6px;font-size:12.5px}
+.sub b{color:var(--cyan);font-weight:600}
+
+nav.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0 22px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:50;border-bottom:1px solid var(--border)}
+.tab{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit;font-size:12.5px;transition:.15s}
+.tab:hover{color:var(--text);border-color:var(--muted)}
+.tab.active{color:var(--bg);background:var(--primary);border-color:var(--primary);font-weight:700}
+.panel{display:none;animation:fade .2s}
+.panel.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+
+h2{font-size:17px;margin:30px 0 12px;color:var(--primary);letter-spacing:.5px}
+h2:first-child{margin-top:4px}
+h3{font-size:14px;margin:20px 0 8px;color:var(--cyan)}
+p{margin:8px 0;color:#C9CBD4}
+p.lead{color:var(--text)}
+ul,ol{margin:8px 0 8px 22px;color:#C9CBD4}
+li{margin:4px 0}
+b{color:var(--text)}
+.dim{color:var(--muted)}
+.hl{color:var(--primary);font-weight:700}
+.hlg{color:var(--green)}
+.hlc{color:var(--cyan)}
+.hla{color:var(--amber)}
+.hlp{color:var(--purple)}
+.hlr{color:var(--red)}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin:12px 0}
+.card.acc{border-left:3px solid var(--primary)}
+.card.cy{border-left:3px solid var(--cyan)}
+.card.gr{border-left:3px solid var(--green)}
+.card.am{border-left:3px solid var(--amber)}
+.card.pu{border-left:3px solid var(--purple)}
+.card.rd{border-left:3px solid var(--red)}
+.card h4{font-size:13.5px;margin-bottom:8px;color:var(--text)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid;vertical-align:1px;white-space:nowrap}
+.t-pri{color:var(--primary);border-color:var(--primary)}
+.t-cy{color:var(--cyan);border-color:var(--cyan)}
+.t-gr{color:var(--green);border-color:var(--green)}
+.t-am{color:var(--amber);border-color:var(--amber)}
+.t-pu{color:var(--purple);border-color:var(--purple)}
+.t-rd{color:var(--red);border-color:var(--red)}
+.t-nv{color:var(--navy);border-color:var(--navy)}
+.t-mu{color:var(--muted);border-color:var(--muted)}
+
+table.tbl{width:100%;border-collapse:collapse;margin:10px 0;font-size:12.5px}
+.tbl th{color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap}
+.tbl td{padding:7px 10px;border-bottom:1px solid #26262E;vertical-align:top;color:#C9CBD4}
+.tbl tr:hover td{background:#202027}
+.tbl td:first-child{color:var(--text)}
+
+pre.code{background:var(--sunken);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:12px;line-height:1.6;margin:10px 0;color:#D6D8E0}
+pre.code .c{color:#5F6170}
+pre.code .k{color:var(--purple)}
+pre.code .s{color:var(--green)}
+pre.code .n{color:var(--primary)}
+pre.code .y{color:var(--amber)}
+
+.fbox{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center;font-size:12.5px}
+.fbox b{display:block;font-size:13px}
+.fbox.pri{border-color:var(--primary)} .fbox.pri b{color:var(--primary)}
+.fbox.cy{border-color:var(--cyan)} .fbox.cy b{color:var(--cyan)}
+.fbox.gr{border-color:var(--green)} .fbox.gr b{color:var(--green)}
+.fbox.am{border-color:var(--amber)} .fbox.am b{color:var(--amber)}
+.fbox.pu{border-color:var(--purple)} .fbox.pu b{color:var(--purple)}
+.fbox.rd{border-color:var(--red)} .fbox.rd b{color:var(--red)}
+.fbox .s{color:var(--muted);font-size:11px;line-height:1.5}
+.frow{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:8px 0}
+.frow .fbox{flex:1;min-width:130px}
+.farr{display:flex;align-items:center;color:var(--muted);font-size:16px;padding:0 2px}
+
+.tl{border-left:2px solid var(--border);margin:12px 0 12px 8px;padding-left:20px}
+.tl .ev{position:relative;margin:14px 0}
+.tl .ev::before{content:"";position:absolute;left:-26px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.tl .ev.pri::before{background:var(--primary)} .tl .ev.cy::before{background:var(--cyan)}
+.tl .ev.gr::before{background:var(--green)} .tl .ev.am::before{background:var(--amber)}
+.tl .ev b{font-size:12.5px}
+.tl .ev .meta{color:var(--muted);font-size:11.5px}
+
+.mock{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin:14px 0;background:var(--bg)}
+.mock .bar{display:flex;align-items:center;gap:8px;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--muted)}
+.mock .dot{width:9px;height:9px;border-radius:50%;background:#32323B}
+.mock .dot.r{background:#FF5C5C}.mock .dot.y{background:#FFC857}.mock .dot.g{background:#7EE787}
+.mock .url{background:var(--sunken);border:1px solid var(--border);border-radius:6px;padding:2px 10px;flex:1;color:var(--muted)}
+
+/* ── 知识中心（对话即管理）专用 ── */
+.kbar{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:8px 14px;border-bottom:1px solid var(--border);background:#121216;font-size:11.5px;color:var(--muted)}
+.kbar b{color:var(--text)}
+.klayout{display:grid;grid-template-columns:1fr 400px;min-height:540px}
+@media(max-width:1000px){.klayout{grid-template-columns:1fr}.kwiki{display:none}}
+.kchat{border-right:1px solid var(--border);background:#101014;padding:14px 16px}
+.kwiki{background:#121216;padding:14px 16px;font-size:12px;color:#C9CBD4}
+.kwiki .wt{color:var(--muted);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px}
+.kwiki h5{font-size:14px;color:var(--text);margin:6px 0}
+.kwiki .sec{color:var(--cyan);font-size:12px;margin:10px 0 4px}
+.kinput{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border);background:#101014}
+.kinput .box{flex:1;background:var(--sunken);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px}
+
+.msg{max-width:88%;padding:9px 13px;border-radius:10px;margin:10px 0;font-size:12.5px;line-height:1.6}
+.msg.u{background:#26313F;margin-left:auto;border:1px solid #35455A}
+.msg.a{background:var(--card);border:1px solid var(--border)}
+.msg .who{font-size:10.5px;letter-spacing:1px;margin-bottom:4px}
+.msg.u .who{color:var(--cyan)} .msg.a .who{color:var(--primary)}
+
+.vcard{border:1px solid var(--border);background:#141419;border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12px;max-width:88%}
+.vcard .vh{font-size:10.5px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+.vcard .vh b{color:var(--cyan);letter-spacing:0}
+.vcard.diff{border-color:rgba(79,209,217,.45)}
+.vcard.warn{border-color:rgba(255,200,87,.5);background:rgba(255,200,87,.05)}
+.vcard.okc{border-color:rgba(126,231,135,.4)}
+.vcard.pric{border-color:rgba(255,133,92,.45)}
+.vcard .row{display:flex;justify-content:space-between;gap:8px;padding:2px 0;color:#C9CBD4}
+.vcard .row .k{color:var(--muted)}
+
+.btnrow{display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap}
+.btn{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:11.5px;cursor:default;font-family:inherit}
+.btn.ok{border-color:var(--green);color:var(--green)}
+.btn.no{border-color:var(--red);color:var(--red)}
+.btn.pri{border-color:var(--primary);color:var(--primary)}
+.btn.cy{border-color:var(--cyan);color:var(--cyan)}
+
+.wlayout{display:grid;grid-template-columns:230px 1fr;min-height:420px}
+.wside{border-right:1px solid var(--border);padding:12px;background:#121216;font-size:12px}
+.wside .grp{color:var(--muted);font-size:10.5px;letter-spacing:1.5px;margin:14px 0 6px;text-transform:uppercase}
+.wside .it{padding:5px 8px;border-radius:6px;display:flex;justify-content:space-between;gap:6px}
+.wside .it:hover{background:#1C1C22}
+.wside .it.sel{background:rgba(255,133,92,.14);color:var(--primary);font-weight:700}
+.wside .cnt{color:var(--muted);font-size:10.5px}
+.wmain{padding:18px 22px;overflow:auto}
+.md h1{font-size:17px;margin:4px 0 10px}
+.md h2{font-size:13.5px;color:var(--cyan);margin:16px 0 6px}
+.md p,.md li{font-size:12.5px;color:#C9CBD4}
+.md ul{margin-left:18px}
+.md .rule{padding:6px 10px;border-left:2px solid var(--border);margin:6px 0;background:#141419;border-radius:0 6px 6px 0;font-size:12.5px}
+.md .rule .rid{color:var(--muted);font-size:10.5px;float:right}
+
+.phase{display:flex;gap:0;margin:16px 0;flex-wrap:wrap}
+.phase .p{flex:1;min-width:200px;border:1px solid var(--border);border-right:none;padding:12px 14px;background:var(--card)}
+.phase .p:last-child{border-right:1px solid var(--border)}
+.phase .p .pn{font-size:10.5px;letter-spacing:1.5px;color:var(--muted)}
+.phase .p b{display:block;font-size:13px;margin:4px 0;color:var(--text)}
+.phase .p.m1 b{color:var(--cyan)} .phase .p.m2 b{color:var(--primary)} .phase .p.m3 b{color:var(--amber)} .phase .p.m4 b{color:var(--green)}
+.phase .p ul{margin:4px 0 0 16px;font-size:11.5px;color:var(--muted)}
+.phase .p li{margin:2px 0}
+
+.quote{border-left:3px solid var(--purple);background:rgba(210,168,255,.05);padding:10px 14px;margin:10px 0;font-size:12.5px;color:#D6D8E0;border-radius:0 8px 8px 0}
+.quote .src{color:var(--muted);font-size:11px;margin-top:4px}
+
+.footer{margin-top:50px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:11.5px}
+.small{font-size:11.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>OCTOPUS <span class="accent">知识中心</span> — Karpathy 三层架构 · raw→compile→wiki · 对话即管理</h1>
+  <div class="sub">方案原型 v2 · 2026-10-13 · 一手依据：<b>Karpathy llm-wiki gist 全文精读</b>（三层架构/三操作/index+log/无审批）· supersede 前案 llm-wiki-loop 原型 Tab⑤（两旧 UI 已否定）· D6 决策（全局唯一 wiki + org knowledge 硬废）与 <b>p2-gate-pass.md</b> 过闸文书已生效</div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-t="t1">① 重设计总览</button>
+  <button class="tab" data-t="t2">② 三层架构</button>
+  <button class="tab" data-t="t3">③ 摄入与操作</button>
+  <button class="tab" data-t="t4">④ 知识中心 UI</button>
+  <button class="tab" data-t="t5">⑤ 消费链路</button>
+  <button class="tab" data-t="t6">⑥ 迁移与影响</button>
+</nav>
+
+<!-- ================= T1 重设计总览 ================= -->
+<section class="panel active" id="t1">
+<h2>转向的一句话</h2>
+<p class="lead">P0/P1 把知识做成了<span class="hlr">「规则数据库 + 事前审批闸」</span>——格式升级了，本体没换。本次转向 Karpathy llm-wiki 的本来形态：<span class="hl">「不可变 raw 源 → 策展人编译 → LLM 全权拥有的 wiki 页网络」</span>，人管输入与方向，审批队列整个废除，质控改为<span class="hlc">事后审计 + git 可逆 + lint 巡检</span>。</p>
+
+<h2>一手依据（Karpathy llm-wiki gist 原文）</h2>
+<div class="quote">"There are three layers: <b>Raw sources</b> — immutable, the LLM reads from them but never modifies them. This is your source of truth. <b>The wiki</b> — summaries, entity pages, concept pages, comparisons, an overview, a synthesis. The LLM owns this layer entirely. You read it; the LLM writes it. <b>The schema</b> — a document that tells the LLM how the wiki is structured... You and the LLM co-evolve this over time."<div class="src">— karpathy llm-wiki gist（12KB 全文已精读，2026-10-13）</div></div>
+<div class="quote">"You drop a new source into the raw collection and tell the LLM to process it... writes a summary page, updates the index, updates relevant entity and concept pages across the wiki, and appends an entry to the log. <b>A single source might touch 10-15 wiki pages.</b>"<div class="src">— 同上，Ingest 操作</div></div>
+<div class="quote">"<b>The human's job is to curate sources, direct the analysis, ask good questions</b>, and think about what it all means. The LLM's job is everything else... Obsidian is the IDE; the LLM is the programmer; the wiki is the codebase."<div class="src">— 同上，Why this works。<b>全文无审批队列</b>；团队场景的 "humans in the loop reviewing updates" 仅为可选</div></div>
+<div class="quote">"<b>Good answers can be filed back into the wiki as new pages.</b> This way your explorations compound in the knowledge base just like ingested sources do."<div class="src">— 同上，Query 操作（探索复利）</div></div>
+
+<h2>反思：P0/P1 掉进的三个错位</h2>
+<div class="grid3">
+  <div class="card rd"><h4>❌ 单元错位</h4><p class="small">编译单元是<b>规则行</b>（祈使句+锚点），词条=规则容器。Karpathy 的单元是<b>页</b>：entity/concept/summary/synthesis，一次 ingest 触 10-15 页；我们一次 approve 只触 1 个目标文件。</p></div>
+  <div class="card rd"><h4>❌ 闸门错位</h4><p class="small">写入靠<b>事前逐条人批</b>（pending_review 唯一写闸）。但输入本就是人亲自喂的（agent 抓的文章 / 自己任务的归档总结）——<b>输入即审批</b>，输出再逐条批是双重收费。正确姿势：git 可逆 + LOG 可审 + lint 巡检 + 对话事后纠偏。</p></div>
+  <div class="card rd"><h4>❌ 输入错位</h4><p class="small"><b>没有 raw 层</b>。源文档被预嚼成"规则候选文本"进队列，原文本体留在体系之外——溯源只剩字符串指针，编译无法重跑，矛盾无法对质。raw 不可变层是编译型 RAG 的地基。</p></div>
+</div>
+<p class="small">根因：继承了旧蓝图（docs/research/knowledge-system/）的 extractRules→pending→approve 规则数据库范式。它适合"自动提取的噪声候选需要人过滤"的场景；我们的真实输入流（owner 投喂 raw / 归档总结）根本不含这种噪声。</p>
+
+<h2>Karpathy 模型 → Octopus 平台化对应</h2>
+<table class="tbl">
+  <tr><th>Karpathy 原件</th><th>Octopus 对应物</th><th>状态</th></tr>
+  <tr><td>LLM agent（维护者）</td><td><b>archive 分身 = 策展人</b>（已存在，绑 octo-wiki-curate）</td><td><span class="tag t-gr">已有</span></td></tr>
+  <tr><td>Obsidian（实时浏览 IDE）</td><td><b>知识中心右栏</b>（wiki 视图，跟随对话联动）</td><td><span class="tag t-pri">本期新建</span></td></tr>
+  <tr><td>raw collection（不可变源）</td><td><b>raw/ 层</b>：inbox（对话投喂）/ archives（归档总结）/ research</td><td><span class="tag t-pri">本期新建</span></td></tr>
+  <tr><td>schema doc（CLAUDE.md 式约定）</td><td><b>SCHEMA.md</b>（吸收 octo-wiki-curate SKILL.md 纪律，人机共演）</td><td><span class="tag t-pri">本期新建</span></td></tr>
+  <tr><td>index.md / log.md</td><td>INDEX.md / LOG.md（已实现；LOG 改 grep 友好行格式）</td><td><span class="tag t-gr">已有</span> <span class="tag t-am">微改</span></td></tr>
+  <tr><td>entity/concept/topic 页</td><td>新 taxonomy：entities/ concepts/ topics/ sources/ cases/</td><td><span class="tag t-am">改造</span></td></tr>
+  <tr><td>qmd 检索（规模大时）</td><td>FTS5 search API（已实现，规模内免 embedding 与原文判断一致）</td><td><span class="tag t-gr">已有</span></td></tr>
+  <tr><td>git repo（免费版本史）</td><td>wiki-git 独立仓 + 一次编译一 commit（已实现）</td><td><span class="tag t-gr">已有</span></td></tr>
+  <tr><td>Lint 操作（定期体检）</td><td>结构 lint L1-L6（已有，编译期硬闸）+ 语义巡检 findings→<b>对话</b>（替代审批队列的发现面）</td><td><span class="tag t-gr">已有</span> <span class="tag t-am">改出口</span></td></tr>
+  <tr><td>Query 回填（探索复利）</td><td>好答案一键「编进 wiki」→ 策展人建新页（sources=chat:session）</td><td><span class="tag t-pri">本期新建</span></td></tr>
+  <tr><td>审批队列</td><td><b>不存在</b> —— 废除（wiki 通道删除；pending_review 表留 skill 草案等非 wiki 用途至 P3）</td><td><span class="tag t-rd">删除</span></td></tr>
+</table>
+
+<h2>需求 → 设计落点</h2>
+<table class="tbl">
+  <tr><th>#</th><th>你的要求（原话要点）</th><th>落点</th><th>Tab</th></tr>
+  <tr><td>1</td><td>raw 输入 → 编译 → index.md/log.md/概念/实体</td><td>三层架构 + 五类页 taxonomy + 双特殊文件</td><td>②</td></tr>
+  <tr><td>2</td><td>审批多余，舍去——输入基本是我经 agent 喂 raw 或归档总结</td><td>审批队列废除；质控 6 道全部事后/机械；两条 ingest 入口（对话/归档）</td><td>③</td></tr>
+  <tr><td>3</td><td>两个旧 UI（工作经验/知识词条）全盘否定</td><td>知识中心 = 对话主界面 + 实时联动 wiki 视图；两旧 UI 废弃删除</td><td>④</td></tr>
+  <tr><td>4</td><td>wiki 全局唯一，跟 org 没关系（D6）</td><td>根恒 ~/.octopus/knowledge/；DB org 列钉 'global'</td><td>②⑥</td></tr>
+  <tr><td>5</td><td>废 org knowledge 旧知识库（D6，硬废）</td><td>注入链物理删除；旧目录归档不删；user_preference 迁知识根</td><td>⑤⑥</td></tr>
+</table>
+
+<div class="card acc"><h4>资产盘点一句话（详表在 Tab⑥）</h4><p>P0/P1 实现<b class="hlg">保留约六成</b>（git 仓/INDEX/LOG/lint/FTS/检索 API/消费链全套/cases），<b class="hla">改造</b>编译器输入与页形态，<b class="hlr">删除</b>审批链与两个旧 UI，<b class="hlc">新增</b> raw 层/多页编译/SCHEMA/回填/知识中心 UI。</p></div>
+</section>
+
+<!-- ================= T2 三层架构 ================= -->
+<section class="panel" id="t2">
+<h2>目录结构（全局唯一 · Karpathy 三层）</h2>
+<pre class="code">~/.octopus/knowledge/                        <span class="c"># ← 知识库根（全局唯一，与 org 无关 · D6）</span>
+├── <span class="n">raw/</span>                                     <span class="c"># 层1 · 不可变源（source of truth；策展人只读，永不改写）</span>
+│   ├── inbox/                               <span class="c">#   对话投喂：「把这篇编进 wiki」→ 抓取落盘（URL→md / 粘贴 / 文件）</span>
+│   │   └── 2026-10-13-karpathy-llm-wiki.md  <span class="c">#   命名：{日期}-{slug}；落盘即冻结（hash 记录）</span>
+│   ├── archives/                            <span class="c">#   任务归档完整总结（task archiving 态自动落，一 task 一文件）</span>
+│   │   └── task-207-summary.md
+│   └── research/                            <span class="c">#   调研原文（docs/research 蒸馏的源；手动/脚本落）</span>
+│
+├── <span class="n">wiki/</span>                                    <span class="c"># 层2 · 编译产物（策展人分身全权拥有；人只读，改动经对话）</span>
+│   ├── INDEX.md                             <span class="c">#   导航目录：按 实体/概念/主题/来源/判例 分类，一页一行</span>
+│   ├── LOG.md                               <span class="c">#   时间线（append-only，grep 友好行格式）</span>
+│   ├── <span class="y">entities/</span>                            <span class="c">#   实体页：项目/服务/工具/org/人 —— 属性+关系+来源注记</span>
+│   │   └── open-octopus.md
+│   ├── <span class="y">concepts/</span>                            <span class="c">#   概念页：领域概念/术语/方法论（吸收旧 business/ 词条）</span>
+│   │   └── compiled-rag.md
+│   ├── <span class="y">topics/</span>                              <span class="c">#   主题页：SOP/工作流知识/操作纪律；「硬约束」小节承规则锚点</span>
+│   │   └── prd-impl-workflow.md             <span class="c">#   （吸收旧 projects/ workflows/ 词条）</span>
+│   ├── <span class="y">sources/</span>                             <span class="c">#   来源摘要页：每 raw 源一页（要点+触及页清单+回指 raw）</span>
+│   │   └── 2026-10-13-karpathy-llm-wiki.md
+│   ├── <span class="y">cases/</span>                               <span class="c">#   判例页（保留 P0 形态：五段+symptom/tags/occurrences）</span>
+│   ├── _retired/                            <span class="c">#   退役区（重蒸馏换下的旧词条迁这里，可追溯）</span>
+│   └── .git/                                <span class="c">#   独立 git 仓：一次编译一 commit（审计+回滚，Karpathy 同款）</span>
+│
+├── <span class="n">SCHEMA.md</span>                                <span class="c"># 层3 · 约定文档：结构/页格式/编译纪律/工作流 —— 你与策展人共演</span>
+├── <span class="n">user_preference.md</span>                       <span class="c"># 人工文件（永不自动改写；策展人只出建议→人确认）</span>
+└── _archive/                                <span class="c"># org knowledge 退役归档（D6：归档不删除，回滚燃料）</span>
+    └── org-knowledge-20261013/              <span class="c">#   xzf-dev projects/workflows、各 org user_preference 原件</span></pre>
+
+<h2>三层契约（谁写谁读，一图钉死）</h2>
+<div class="frow">
+  <div class="fbox cy" style="flex:1.2"><b>raw/ = 源即真相</b><span class="s">写：人 / 系统投递（对话抓取、归档钩子）<br>读：策展人（编译时全文读）<br><b>不可变</b> —— 编译可重跑、矛盾可对质</span></div>
+  <div class="farr">→ 编译 →</div>
+  <div class="fbox gr" style="flex:1.2"><b>wiki/ = LLM 全权拥有</b><span class="s">写：仅策展人（唯一写闸 WikiCompileService 保留）· <b>全局串行（FIFO 编译队列+锁）</b><br>读：所有人/分身（消费链 octo-wiki）<br>人改它 = 对话驱动，不动手改文件</span></div>
+  <div class="farr">← 约定 ←</div>
+  <div class="fbox pu" style="flex:1.2"><b>SCHEMA.md = 共演约定</b><span class="s">写：人确认后才变（策展人可提议）<br>读：策展人每次编译前必读<br>= Karpathy 的 schema doc 层</span></div>
+</div>
+
+<h2>页 taxonomy（五类 + 两人工文件）</h2>
+<table class="tbl">
+  <tr><th>类型</th><th>收什么</th><th>格式要点</th><th>例</th></tr>
+  <tr><td><b>entities/</b></td><td>项目、服务、工具、org、人 —— 有身份的名词</td><td>概述 prose + 关键属性表 + 关系（[[链接]]）+ 来源注记；front-matter 带 aliases</td><td>open-octopus、hermes、xzf-dev</td></tr>
+  <tr><td><b>concepts/</b></td><td>领域概念、术语、方法论</td><td>定义 + 展开 + 与相邻概念辨析 + 来源注记（吸收 GLOSSARY 蒸馏产物）</td><td>compiled-rag、执行身份、影子期</td></tr>
+  <tr><td><b>topics/</b></td><td>SOP、工作流知识、操作纪律、how-to</td><td>步骤 prose + <b>「硬约束」小节</b>（祈使句规则行，<b>锚点 oct-NNN 只活在这一层</b>）+ 已知陷阱→判例指针</td><td>prd-impl-workflow、windows-bash-ops</td></tr>
+  <tr><td><b>sources/</b></td><td>每 raw 源一页：编译的"回执"</td><td>要点清单 + 本源触及页清单 + origin/raw 指针（溯源链闭环）</td><td>2026-10-13-karpathy-llm-wiki</td></tr>
+  <tr><td><b>cases/</b></td><td>判例（保留 P0 设计）</td><td>symptom/tags/severity/occurrences/rule_ref + 五段正文；准入宽松（真实+可定位）；append-only</td><td>2026-10-12-pnpm-lockfile-mismatch</td></tr>
+  <tr><td><b>user_preference.md</b></td><td>owner 偏好（人工文件）</td><td>永不自动改写；INDEX 标「必读全文」；消费链全文注入语义由查阅纪律承接</td><td>—</td></tr>
+  <tr><td><b>SCHEMA.md</b></td><td>wiki 约定（人工确认制）</td><td>页格式/编译纪律/命名法/工作流；策展人提议修改→人确认</td><td>—</td></tr>
+</table>
+
+<h2>页样例 — entities/open-octopus.md（实体页）</h2>
+<pre class="code">---
+id: ent-open-octopus
+type: entity
+entity_kind: project
+title: Open Octopus（平台 monorepo）
+summary: pnpm monorepo：engine/server/web-app/shared/cli/core-pack 六包
+aliases: [octopus, open-octopus]
+links: [[top-prd-impl]] [[con-execution-identity]] [[ent-hermes]]
+sources: [raw/archives/task-207-summary.md, raw/inbox/2026-09-xx-arch-notes.md]
+last_compiled: 2026-10-13
+confidence: 0.9
+---
+<span class="k">## 概述</span>
+Octopus 是工作流编排 + Agent 分身平台，pnpm monorepo 六包……（prose，编译自源，零日期）
+
+<span class="k">## 关键属性</span>
+- 仓库 github.com/XzhiF/octopus · pnpm 10 · Node 20+ · CI=install→build→lint
+- 端口：server 3001 / web 3000（保护端口纪律见 [[top-windows-bash-ops]]）
+
+<span class="k">## 关系</span>
+- 通知走 → [[ent-hermes]]　· 主工作流 → [[top-prd-impl]]　· 知识体系 → [[con-compiled-rag]]
+
+<span class="k">## 来源注记</span>
+- 六包结构断言 ← raw/archives/task-207-summary.md §2　<span class="c">（重要断言逐条回指 raw）</span></pre>
+
+<h2>页样例 — topics/prd-impl-workflow.md（主题页 · 硬约束承锚点）</h2>
+<pre class="code">---
+id: top-prd-impl
+type: topic
+title: prd-impl 工作流知识
+summary: PRD→实现→审查→ship 的 SOP、硬约束与已知陷阱
+links: [[ent-open-octopus]] [[top-windows-bash-ops]]
+sources: [raw/archives/task-183-summary.md, review-history:wf-prd-impl]
+last_compiled: 2026-10-13
+stability: stable
+---
+<span class="k">## SOP</span>
+（prose：refine-plan → implement → review → e2e → ship 各阶段要点……）
+
+<span class="k">## 硬约束</span>
+- 修改 shared/ 后必须先 pnpm build -w shared 再全量构建 <span class="c">&lt;!--#oct-008--&gt;</span>
+- 实现后先 pnpm test 全绿再 pnpm build <span class="c">&lt;!--#oct-014--&gt;</span>
+<span class="c">（锚点从旧 wf-prd-impl 词条原号迁移，永不复用；wiki_refs 引用格式 词条id#锚点 不变）</span>
+
+<span class="k">## 已知陷阱</span>
+→ 判例：[[case-pnpm-lockfile-mismatch]]（CI 报 LOCKFILE_CONFIG_MISMATCH 的处置）</pre>
+
+<h2>INDEX.md 与 LOG.md（Karpathy 双特殊文件，格式对齐原文）</h2>
+<div class="grid2">
+<div>
+<pre class="code"><span class="c"># INDEX.md — 内容目录（按类分组，一页一行）</span>
+# Octopus Knowledge Wiki（全局）
+&gt; 导航协议：先读本索引 → 选页整读 →
+&gt; 未命中再 search API。禁止全库遍历。
+
+<span class="n">## 必读</span>
+- user_preference.md — owner 偏好（人工维护）
+
+<span class="n">## Entities (7)</span>
+- entities/open-octopus.md — 平台 monorepo：六包/构建/端口 ←12 源
+- entities/hermes.md — 消息推送通道服务 ←3 源
+
+<span class="n">## Concepts (9)</span>
+- concepts/compiled-rag.md — 编译型 RAG：检索重活挪到维护期 ←4 源
+
+<span class="n">## Topics (11)</span>
+- topics/prd-impl-workflow.md — SOP+硬约束×8
+- topics/windows-bash-ops.md — 拆机三段式/保护端口+硬约束×6
+
+<span class="n">## Sources (23)</span>
+- sources/2026-10-13-karpathy-llm-wiki.md — gist 摘要
+
+<span class="n">## Cases (2)</span>
+- cases/2026-10-12-pnpm-lockfile-mismatch.md — CI lockfile 事故
+
+<span class="n">## Optional</span>（低频页，预算溢出时移这里）</pre>
+</div>
+<div>
+<pre class="code"><span class="c"># LOG.md — 时间线（append-only，行首前缀可 grep）</span>
+## [2026-10-13] ingest | karpathy llm-wiki gist
+  → raw/inbox/2026-10-13-karpathy-llm-wiki.md
+  → 触 12 页（ent×3 con×2 top×5 src×1 +INDEX）
+  → conflict 0 · 新页 2 · commit a3f9c21
+## [2026-10-13] compile | archive task-207 总结
+  → raw/archives/task-207-summary.md
+  → 触 8 页 · commit b71e004
+## [2026-10-13] lint | 夜巡 2 findings
+  → 矛盾×1（oct-008 vs 新源）孤儿×1 → 已报对话
+## [2026-10-12] query | CI 失败如何排查
+  → 引 case-pnpm-lockfile 作答（未回填）
+
+<span class="c"># 旧表格行格式一次性机械转换为本行格式；
+# 原表格封存于 git 史（LOG 换格式不断史）</span>
+grep "^## \[" LOG.md | tail -5   <span class="c">← 原文推荐的用法，直接可用</span></pre>
+</div>
+</div>
+
+<h2>front-matter v3 与索引层</h2>
+<ul>
+  <li><b>v3 = v2 换 taxonomy</b>：<code>domain</code>→<code>type</code>（entity/concept/topic/source/case）+ <code>links</code>（[[wikilink]] 编译期断链校验保留）+ entity 加 <code>aliases/entity_kind</code>；<code>stability/topics/confidence/sources/last_compiled</code> 保留；正文零日期纪律不变。</li>
+  <li><b>SQLite 索引层沿用</b>：wiki_articles（domain 列改存新 type 值）+ wiki_fts 不动——「检索/统计不扫盘」纪律保留；DB 只是索引，真源仍是 fs+git（D3 不变）。</li>
+  <li><b>规模判断与原文一致</b>：~100 源 / 数百页内 INDEX 导航 + FTS 兜底足够，<b>不引入 embedding 主检索</b>（原文："avoids the need for embedding-based RAG infrastructure"）。</li>
+</ul>
+</section>
+
+<!-- ================= T3 摄入与操作 ================= -->
+<section class="panel" id="t3">
+<h2>三操作总览（Karpathy Operations 平台化）</h2>
+<div class="frow">
+  <div class="fbox cy"><b>Ingest 摄入</b><span class="s">对话投喂 / 归档自动<br>raw 落盘 → 编译触 N 页<br>产出：摘要页+diff 卡</span></div>
+  <div class="farr">→</div>
+  <div class="fbox gr"><b>Query 查阅</b><span class="s">消费链原样（INDEX→页→search）<br>好答案 → 一键回填补利<br>产出：带 [ref:] 的答案/新页</span></div>
+  <div class="farr">→</div>
+  <div class="fbox am"><b>Lint 巡检</b><span class="s">结构闸编译期硬拦（L1-L6）<br>语义巡检定期跑 → findings<br>产出：对话内 finding 卡当场裁决</span></div>
+</div>
+
+<h2>Ingest 入口 A — 对话投喂（你的主路径）</h2>
+<div class="tl">
+  <div class="ev cy"><b>「把这篇文章编进 wiki」+ URL / 粘贴 / 文件路径</b><div class="meta">知识中心对话内说给策展人；或任何 agent 会话内说（意图路由到策展流程）</div></div>
+  <div class="ev"><b>抓取 → raw/inbox/{日期}-{slug}.md 落盘冻结</b><div class="meta">记录 origin URL + hash；落盘后策展人对它只读（不可变契约）；抓取失败→对话报错，不入库</div></div>
+  <div class="ev"><b>策展人全文读 raw → 抽取 实体/概念/断言</b><div class="meta">编译前必读 SCHEMA.md + INDEX.md；对照现 wiki diff：哪些页要新建、哪些要更新、哪些断言与旧页矛盾</div></div>
+  <div class="ev pri"><b>多页编译（一次触 N 页）→ 单一写闸落盘</b><div class="meta">写 sources/ 摘要页 + 更新 entities/concepts/topics + INDEX 重建 + LOG append + FTS 同步 —— 全部经 WikiCompileService（保留），一个 git commit；矛盾断言不静默覆盖：页内标记 + finding 报对话</div></div>
+  <div class="ev gr"><b>对话回 [编译 diff 卡]</b><div class="meta">触及页明细 / 冲突数 / 新页数 / commit hash；按钮：展开 diff · 回滚本次编译 · 右栏看页 —— <b>这就是"审批"的替代品：先看后纠，不预先拦</b></div></div>
+</div>
+<p class="small">编译时长超对话同步等待时转异步：先回执「已入 raw，编译中」，diff 卡完成后追加进对话流（卡片带状态）。逐源摄入 or 批量投喂少监督——原文说这是你的风格选择，写进 SCHEMA.md 即为约定。</p>
+
+<h2>Ingest 入口 B — 任务归档自动投喂</h2>
+<div class="tl">
+  <div class="ev cy"><b>task archiving 态：产出一份完整总结</b><div class="meta">轻量版（本期）：一次 LLM 调用生成 task 全貌总结（验收台账/关键决策/踩坑/产出指针）→ raw/archives/task-{id}-summary.md；完整四路分流 extractV2 仍属 P3</div></div>
+  <div class="ev pri"><b>自动触发编译</b><div class="meta">与入口 A 同一编译管线；归档流程不等编译完成（异步，失败不回滚 done——沿用 K11 语义）</div></div>
+  <div class="ev gr"><b>知识中心对话流收到 [归档编译卡]</b><div class="meta">通知形态：task-207 总结 → 触 8 页 → commit；不满意当场说改（fix-forward），或一键回滚该 commit</div></div>
+</div>
+
+<h2>Query — 消费不变 + 回填补上（探索复利）</h2>
+<ul>
+  <li><b>消费链原样</b>：octo-wiki skill 导航协议（INDEX→页整读→search API 兜底）+ wiki_refs 引用纪律 + stale 上报（Tab⑤）。</li>
+  <li><b>回填（新）</b>：知识中心里策展人的好答案（对比分析/综合结论/排障路径）带 [回填卡]——「编进 wiki？」→ 是 → 建 topic/concept 页（sources=chat:session-xxx，raw 存对话摘录）。工作执行中 agent 的产出走 stale/refs 通道，不自动回填（防噪声）。</li>
+  <li><b>stale 上报的处置变了</b>：不再进审批队列，成为对话里的 finding（策展人核 raw 与现场代码→提修订→编译）。</li>
+</ul>
+
+<h2>Lint — 结构闸留、语义巡检改出口</h2>
+<table class="tbl">
+  <tr><th>层</th><th>检查</th><th>时机</th><th>出口</th></tr>
+  <tr><td><b>结构 lint（L1-L6 保留）</b></td><td>页容量 / INDEX 预算 / 断链 / schema / 禁日期 / 超长代码块 / 规则形态</td><td>编译期同步硬闸</td><td>拒写 + 策展人对话内自纠（拆分/改写后重编译）；拆分不再产"审批提案"，直接执行并入 diff 卡</td></tr>
+  <tr><td><b>语义巡检（doctor，Karpathy Lint 操作）</b></td><td>矛盾页 / stale 断言（被新源推翻）/ 孤儿页 / <b>被提及但缺页的概念</b> / 缺失交叉引用 / 数据缺口</td><td>定期（scheduler 夜巡）+ 对话内「体检一下」即触发</td><td><b>findings 报进对话</b>：每条一张 finding 卡 [采纳修订/忽略/讨论] —— 裁决即编译，无队列</td></tr>
+</table>
+
+<h2>审批废除后的质控面（6 道，全事后/机械）</h2>
+<div class="grid3">
+  <div class="card gr"><h4>① 输入即审批</h4><p class="small">人把关什么进 raw（Karpathy："the human's job is to curate sources"）。垃圾进→垃圾出由 ②③⑤ 兜底。</p></div>
+  <div class="card gr"><h4>② 溯源不可变</h4><p class="small">每页 front-matter sources + 关键断言逐条回指 raw（不可变+hash）。编译可随时对着源重跑、对质。</p></div>
+  <div class="card gr"><h4>③ git 可逆</h4><p class="small">一次编译一 commit；diff 卡自带 [回滚本次编译]（git revert 单命令语义）。错了 fix-forward 或 revert，不预防。</p></div>
+  <div class="card gr"><h4>④ 结构闸机械拦</h4><p class="small">L1-L6 编译期硬闸保留——容量/断链/schema 这类机械质量与"语义审批"正交，不需要人。</p></div>
+  <div class="card gr"><h4>⑤ 巡检主动发现</h4><p class="small">语义问题（矛盾/stale/孤儿/缺页）由 lint 巡检发现→对话裁决。发现面从"人盯队列"反转为"系统报人"。</p></div>
+  <div class="card gr"><h4>⑥ 人工文件写保护</h4><p class="small">user_preference.md / SCHEMA.md：策展人只出建议→人确认（继承 P0 纪律，pre-commit 闸保留）。</p></div>
+</div>
+
+<h2>全局写串行 — 一次只许一个编译（owner 裁决 2026-10-13）</h2>
+<p class="lead">wiki 维护（write）<b class="hlr">不允许并发</b>：一次编译触 N 页 + INDEX 重建 + LOG append + FTS 同步 + git commit，并发写必然互踩（git index 冲突、INDEX 竞态、锚点发号双花）。裁决：<b class="hl">全局 FIFO 编译队列，严格串行</b>。</p>
+<div class="frow">
+  <div class="fbox"><b>写操作源 ×6</b><span class="s">对话投喂编译 / 归档自动编译 / 对话修订(fix-forward) / lint 自纠拆分 / 巡检 finding 修复 / 回滚 revert</span></div>
+  <div class="farr">→</div>
+  <div class="fbox am"><b>全局编译队列（进程内 FIFO）</b><span class="s">唯一写闸 WikiCompileService 外包异步互斥；后到者排队，卡片显示「排队中 #N」</span></div>
+  <div class="farr">→</div>
+  <div class="fbox cy"><b>wiki 根锁文件（跨进程保底）</b><span class="s">防同机双实例（dev+prod）双写；PID+心跳判 stale，进程崩溃自动回收</span></div>
+  <div class="farr">→</div>
+  <div class="fbox gr"><b>读永不锁</b><span class="s">浏览/检索/agent 查阅不受阻（fs+git 读原子、FTS 查询只读）</span></div>
+</div>
+<ul class="small">
+  <li><b>失败语义</b>：某次编译失败 → 自身事务回滚（既有原子机制）→ 释放锁 → 队列继续，一次失败不堵死全队。</li>
+  <li><b>锚点发号</b>：oct-NNN「全库扫描取 max+1」在串行化后天然无竞态（队列让这个假设成立）。</li>
+  <li><b>raw 落盘不排队</b>：raw/ 写入是新增文件（无共享状态、不可变），不进编译队列；它<b>触发的编译</b>才进队。</li>
+  <li><b>UI 呈现</b>：diff 卡/归档卡带队列状态（排队中 #N → 编译中 → 已提交 a3f9c21）；健康条含队列深度。</li>
+</ul>
+
+<div class="card rd"><h4>废除清单（审批时代遗产）</h4><p class="small">pending_review 的 wiki 通道（rule/wiki-edit/wiki-split 策展分发）· approve→curate 链 · 拆分"提案"入队语义 · /experience KnowledgeTab 审核队列 UI · 影子对照的注入侧（随注入链删除）。<b>pending_review 表本体保留</b>——skill 草案等非 wiki 用途仍在用，清理属 P3。</p></div>
+</section>
+
+<!-- ================= T4 知识中心 UI ================= -->
+<section class="panel" id="t4">
+<h2>路由与形态：<code>/knowledge</code> 知识中心（对话即管理）</h2>
+<p class="lead">两个旧 UI（<s>/wiki 知识词条页</s>、<s>/experience 工作经验 KnowledgeTab</s>）废弃删除。新 UI = <b>与策展人的对话流（主界面）</b> + <b>实时联动 wiki 视图（右栏，我们的 Obsidian）</b>。会话本体复用既有 agent chat 通道（archive 分身会话，scope=knowledge），不自建聊天基建；前端只做卡片渲染 + 右栏联动。</p>
+
+<h2>主界面 — Ingest 对话流（核心屏）</h2>
+<div class="mock">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">localhost:3000/knowledge</span><span style="color:var(--primary)">● 策展人在线 · wiki git a3f9c21</span></div>
+  <div class="kbar">
+    <span>⚡ <b>知识中心</b> · 全局 wiki</span>
+    <span>页 <b>52</b>（实体 7 · 概念 9 · 主题 11 · 来源 23 · 判例 2）</span>
+    <span>raw 源 <b>31</b></span>
+    <span>本周 ingest <b>5</b></span>
+    <span>findings <b style="color:var(--amber)">2</b></span>
+    <span>最近编译 <b>今天 09:12</b></span>
+  </div>
+  <div class="klayout">
+    <div class="kchat">
+      <div class="msg u"><div class="who">YOU</div>把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf…</div>
+      <div class="vcard okc"><div class="vh">📥 抓取卡 · <b>已落 raw（不可变）</b></div>
+        <div class="row"><span class="k">raw 路径</span><span>raw/inbox/2026-10-13-karpathy-llm-wiki.md</span></div>
+        <div class="row"><span class="k">大小 / hash</span><span>12.0 KB · 4f2a9c…</span></div>
+      </div>
+      <div class="vcard"><div class="vh">📄 来源摘要卡 · sources/2026-10-13-karpathy-llm-wiki.md</div>
+        <div>要点 3 条：① 三层架构 raw/wiki/schema ② 三操作 ingest/query/lint ③ 无审批——人管输入与方向，LLM 管全部 bookkeeping</div>
+        <div class="btnrow"><span class="btn cy">看 raw 原文</span><span class="btn">看摘要页</span></div>
+      </div>
+      <div class="msg a"><div class="who">CURATOR · archive 分身</div>编译完成，触及 12 页。有 1 处需要你留意：新概念页 [[con-compiled-rag]] 与现有 topics/knowledge-injection 的旧断言方向相反（旧页讲注入式，新源主张编译式）——我在两页都做了矛盾标记，建议把旧页改为历史沿革小节。</div>
+      <div class="vcard diff"><div class="vh">⚙️ 编译 DIFF 卡 · commit a3f9c21</div>
+        <div class="row"><span class="k">触及</span><span>12 页 = 实体×3 · 概念×2（新建 con-compiled-rag）· 主题×5 · 来源×1 · INDEX/LOG ✓</span></div>
+        <div class="row"><span class="k">冲突</span><span style="color:var(--amber)">1（矛盾标记，待裁决 ↓）</span></div>
+        <div class="row"><span class="k">FTS / DB</span><span>同步 ✓ · wiki_articles +2 更新 10</span></div>
+        <div class="btnrow"><span class="btn cy">展开 diff</span><span class="btn no">回滚本次编译</span><span class="btn">右栏看页</span></div>
+      </div>
+      <div class="vcard warn"><div class="vh">⚠️ FINDING 卡 · 矛盾（编译期发现）</div>
+        <div>topics/knowledge-injection「规则由引擎预计算注入」 vs 新源「注入式每次冷启动重推导，应编译成 wiki」</div>
+        <div class="row"><span class="k">双方指针</span><span>旧：raw/_archive/org-knowledge… §注入 | 新：raw/inbox/2026-10-13… §core idea</span></div>
+        <div class="btnrow"><span class="btn ok">采纳修订（旧页改历史沿革）</span><span class="btn no">忽略</span><span class="btn pri">讨论</span></div>
+      </div>
+      <div class="kinput" style="border:none;padding:8px 0 0"><span class="box">投喂 raw（URL/粘贴/路径）· 问问题 · 改页 · 「体检一下」…</span><span class="btn pri">发送</span></div>
+    </div>
+    <div class="kwiki">
+      <div class="wt">WIKI 视图 · 跟随对话</div>
+      <h5>concepts/compiled-rag.md <span class="tag t-gr" style="font-size:9px">新建</span></h5>
+      <div class="small">type: concept · links ×4 · sources ×1 · 编译于今天 09:12</div>
+      <div class="sec">## 定义</div>
+      <p style="font-size:12px">检索的重活从 query 时挪到维护编译时：LLM 增量维护一座 wiki，答案从编译产物合成而非每次对原始 chunk 重新推导……</p>
+      <div class="sec">## 与相邻概念</div>
+      <p style="font-size:12px">vs RAG（查询时检索原文 chunk）· vs 注入式（引擎预判硬塞 prompt，见 [[top-knowledge-injection]] 历史沿革）…</p>
+      <div class="sec" style="color:var(--muted)">—— 对话点到哪页，这里渲染哪页；可切「浏览模式」全宽（见下）</div>
+    </div>
+  </div>
+</div>
+
+<h2>浏览模式（不对话时）+ 检索命令条</h2>
+<div class="mock">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">localhost:3000/knowledge?view=browse</span><span class="dim">右栏展开全宽 · 对话收进左侧可展开抽屉</span></div>
+  <div class="body">
+    <div class="kbar"><span>🔍 检索命令条（Ctrl+K）：页名/别名/锚点/全文 FTS5…</span><span style="margin-left:auto">对话抽屉 ◀</span></div>
+    <div class="wlayout">
+      <div class="wside">
+        <div class="grp">必读</div>
+        <div class="it"><span>⚙ user_preference</span><span class="cnt">人工</span></div>
+        <div class="grp">Entities · 7</div>
+        <div class="it sel"><span>▸ open-octopus</span><span class="cnt">←12 源</span></div>
+        <div class="it"><span>▸ hermes</span><span class="cnt">←3</span></div>
+        <div class="grp">Concepts · 9</div>
+        <div class="it"><span>▸ compiled-rag</span><span class="cnt">←4</span></div>
+        <div class="it"><span>▸ 执行身份</span><span class="cnt">←2</span></div>
+        <div class="grp">Topics · 11</div>
+        <div class="it"><span>▸ prd-impl-workflow</span><span class="cnt">约束×8</span></div>
+        <div class="grp">Sources · 23 / Cases · 2</div>
+        <div class="it"><span>▸ …</span><span class="cnt"></span></div>
+        <div class="grp">System</div>
+        <div class="it"><span>📜 LOG.md 时间线</span></div>
+        <div class="it"><span>🩺 体检报告</span><span class="cnt" style="color:var(--amber)">2</span></div>
+      </div>
+      <div class="wmain md">
+        <h1>Open Octopus（平台 monorepo）</h1>
+        <div class="small" style="margin-bottom:10px"><span class="tag t-cy">entity</span> <span class="tag t-mu">aliases: octopus</span> <span class="tag t-mu">编译于 2026-10-13</span> <span class="tag t-mu">confidence 0.9</span></div>
+        <h2>概述</h2><p>Octopus 是工作流编排 + Agent 分身平台……</p>
+        <h2>硬约束（承自 topics）</h2>
+        <div class="rule">修改 shared/ 后必须先 pnpm build -w shared 再全量构建<span class="rid">#oct-008</span></div>
+        <h2>关系</h2><p>通知走 → hermes · 主工作流 → prd-impl-workflow …（[[链接]]可点，右栏史：sources 溯源 / git 近史 收进页尾折叠区）</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>归档自动编译 — 通知卡（对话流内，免操作）</h2>
+<div class="mock">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">localhost:3000/knowledge</span><span class="dim">task-207 归档完成 3 分钟后</span></div>
+  <div class="body" style="padding:14px 16px;background:#101014">
+    <div class="vcard diff" style="max-width:560px"><div class="vh">📦 归档编译卡 · task-207「actuator 增强」</div>
+      <div class="row"><span class="k">raw</span><span>raw/archives/task-207-summary.md（完整总结已落，不可变）</span></div>
+      <div class="row"><span class="k">触及</span><span>8 页 = 实体×2 · 主题×3 · 判例×1（新）· 来源×1 · INDEX</span></div>
+      <div class="row"><span class="k">commit</span><span>b71e004 · LOG ✓ · FTS ✓</span></div>
+      <div class="btnrow"><span class="btn cy">展开 diff</span><span class="btn no">回滚</span><span class="btn pri">对策展人说：改…</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>卡片目录（对话流里的结构化词汇表）</h2>
+<table class="tbl">
+  <tr><th>卡</th><th>出现时机</th><th>动作钮</th></tr>
+  <tr><td>📥 抓取卡</td><td>对话投喂抓取完成</td><td>看 raw</td></tr>
+  <tr><td>📄 来源摘要卡</td><td>sources/ 页生成</td><td>看 raw · 看摘要页</td></tr>
+  <tr><td>⚙️ 编译 diff 卡</td><td>每次编译 commit 后</td><td>展开 diff · <b>回滚本次编译</b> · 右栏看页</td></tr>
+  <tr><td>📦 归档编译卡</td><td>task archiving 自动编译后</td><td>同上 + 「对策展人说」</td></tr>
+  <tr><td>⚠️ finding 卡</td><td>编译期矛盾 / 巡检发现（矛盾/stale/孤儿/缺页/缺引用）</td><td>采纳修订 · 忽略 · 讨论（裁决即编译）</td></tr>
+  <tr><td>↩️ 回填卡</td><td>策展人给出有价值的合成答案后</td><td>编进 wiki · 不用</td></tr>
+  <tr><td>📇 词条迷你卡</td><td>对话提到某页</td><td>右栏渲染 · 全页打开</td></tr>
+  <tr><td>⛔ 写保护卡</td><td>触到 user_preference / SCHEMA 的修改意图</td><td>查看建议 · 人工确认步骤（永不自动改写）</td></tr>
+</table>
+
+<h2>交互纪律（实现约定）</h2>
+<ul>
+  <li><b>对话=会话复用</b>：archive 分身的既有 chat 通道（sessions 表 scope=knowledge），前端订阅其流 + 卡片协议（结构化 vars/工具事件→卡片渲染）；不新建聊天基建。</li>
+  <li><b>编译异步化 + 全局串行</b>：编译&gt;10s 转异步任务，对话先回执、diff 卡完成后追加（流式状态在卡上）；一切写操作（编译/修订/回滚）进 <b>全局 FIFO 串行队列</b>（Tab③ 写串行节），卡片显示「排队中 #N」。</li>
+  <li><b>回滚=git revert 单 commit</b>：diff 卡按钮直接走服务端 revert + INDEX/LOG/FTS 重同步 + 回滚记录进 LOG（<code>## [date] revert | commit …</code>）。</li>
+  <li><b>右栏跟随</b>：对话中出现的页引用（卡片/正文 [[链接]]）自动在右栏渲染；可钉住（停止跟随）；浏览模式全宽。</li>
+  <li><b>健康条口径</b>：页数（按类）/ raw 源数 / 本周 ingest / <b>开放 findings</b> / 最近编译 / <b>编译队列深度</b> / git HEAD —— <b>没有"待审核"计数</b>（那个概念已废除）。</li>
+</ul>
+</section>
+
+<!-- ================= T5 消费链路 ================= -->
+<section class="panel" id="t5">
+<h2>消费链路：几乎原样保留（P0/P1 的正资产）</h2>
+<table class="tbl">
+  <tr><th>件</th><th>状态</th><th>说明</th></tr>
+  <tr><td>octo-wiki skill（只读查阅）</td><td><span class="tag t-gr">保留</span> <span class="tag t-am">改阅读面</span></td><td>导航协议不变（INDEX→页整读→search API 兜底，禁全库遍历）；阅读面从 4 域词条变为 entities/concepts/topics/sources/cases 五类页；user_preference「必读全文」由 INDEX 必读节承接</td></tr>
+  <tr><td>wiki_refs 引用纪律</td><td><span class="tag t-gr">保留</span></td><td>格式 词条id#锚点 不变；锚点现存于 topics 硬约束小节（含迁移旧号）；stale 上报通道不变→处置改为对话 finding</td></tr>
+  <tr><td>as: 字段 + IdentityResolver + workflow-operator</td><td><span class="tag t-gr">保留</span></td><td>执行身份体系与知识层正交，零改动（D2 缺省技能物化修复 770d9fa6 合入前运行时复验一次）</td></tr>
+  <tr><td>task-author / task-doer 指针行</td><td><span class="tag t-gr">保留</span> <span class="tag t-am">改路径</span></td><td>恒一行指针（wiki 根+查阅纪律）内容不变，路径改全局根 ~/.octopus/knowledge/wiki/</td></tr>
+  <tr><td>search API + FTS5</td><td><span class="tag t-gr">保留</span></td><td>/api/knowledge/wiki/search 照常；org 参数钉 'global'（D6③）</td></tr>
+</table>
+
+<h2>P2' 删除面（D6 硬废 + 过闸文书已生效）</h2>
+<table class="tbl">
+  <tr><th>删什么</th><th>依据</th></tr>
+  <tr><td>PromptInjector（pipeline.yaml prompts 消费）· KnowledgeInjector · precompute（__relevant_rule_ids/__user_preference_text 预计算）· 透传链</td><td>12 注入点清单 D2 裁决 #1#8#10#11；过闸文书 §1</td></tr>
+  <tr><td>审核 approve 的双写 append（appendToKnowledgeFile 旧轨）</td><td>org knowledge 硬废（D6②）；旧目录整体归档 _archive/</td></tr>
+  <tr><td>knowledge.mode 三态开关 → 收敛 query-only（配置项可整删）</td><td>注入链不存在后双轨无意义；回滚靠 git revert + 归档还原，不靠运行时开关</td></tr>
+  <tr><td>shadow-compare 对照端点 → 保留只读（历史审计），注入侧字段冻结为空</td><td>过闸文书的证据链引用它；删表删端点属后续清理</td></tr>
+  <tr><td>pi prompt-enhancer 知识段 → 指针化</td><td>D2 #12</td></tr>
+</table>
+<p class="small">保留的注入面（Host 安全规则 / goal 执行上下文 / Task Contract / SDK settingSources）不属知识注入，照旧不动。</p>
+
+<h2>执行时序（删除后的世界，一次 agent 节点执行）</h2>
+<div class="tl">
+  <div class="ev cy"><b>引擎装配（纯编排，零知识）</b><div class="meta">IdentityResolver: as: → workflow-operator 快照（persona+skills）· cwd=workspace 不变 · preflight 预置 octo-wiki · prompt=任务书+一行指针（无 Injector）</div></div>
+  <div class="ev"><b>Agent 动手前查阅</b><div class="meta">Read ~/.octopus/knowledge/wiki/INDEX.md → 选页整读（entities/concepts/topics）→ 未命中 search API → 卡壳按症状查 cases</div></div>
+  <div class="ev gr"><b>产出带引用</b><div class="meta">收尾 vars_update JSON 落 wiki_refs=["top-prd-impl#oct-008", …] · 关键决策处 [ref: oct-008] · 矛盾→stale 上报</div></div>
+  <div class="ev am"><b>反哺（异步）</b><div class="meta">stale/refs 随执行落 JSONL/DB → 巡检/策展人消费 → finding 报进知识中心对话 → 裁决即编译</div></div>
+</div>
+</section>
+
+<!-- ================= T6 迁移与影响 ================= -->
+<section class="panel" id="t6">
+<h2>P0/P1 资产处置总表</h2>
+<table class="tbl">
+  <tr><th>模块</th><th>处置</th><th>说明</th></tr>
+  <tr><td>wiki-git / compile / lint / format / paths / FTS / DAO</td><td><span class="tag t-gr">保留</span> <span class="tag t-am">改造</span></td><td>唯一写闸+事务编译+结构闸+索引全套机械保留；paths 改全局根（D6）；compile 输入从"单条目"改"raw 文档→多页"；format v2→v3（type taxonomy）；lint 拆分提案出口从队列改对话自纠</td></tr>
+  <tr><td>curate.ts（approve→编译）· review.ts wiki 通道 · distill/migrate 队列产物</td><td><span class="tag t-rd">删除</span></td><td>审批语义整体废除；distill/migrate 的一次性脚本职能由「重蒸馏」（见下）接替后退役</td></tr>
+  <tr><td>octo-wiki-curate skill</td><td><span class="tag t-am">改造</span></td><td>纪律正文迁入 SCHEMA.md（人机共演）；skill 瘦身为"策展操作手册指针 + 编译 API 用法"</td></tr>
+  <tr><td>/wiki 页 · /experience KnowledgeTab</td><td><span class="tag t-rd">删除</span></td><td>两旧 UI 已否定；/knowledge 知识中心替代（Tab④）</td></tr>
+  <tr><td>octo-wiki skill · as:/IdentityResolver/operator · wiki_refs · search API · 指针行</td><td><span class="tag t-gr">保留</span></td><td>消费链正资产（Tab⑤）</td></tr>
+  <tr><td>注入链（PromptInjector/KnowledgeInjector/precompute/双写）· knowledge.mode</td><td><span class="tag t-rd">删除</span></td><td>P2' 硬废（过闸文书 §5 四条件约束：归档不删/git 回滚/pref 不丢/D2 复验）</td></tr>
+  <tr><td>cases 域 · 判例检索加权</td><td><span class="tag t-gr">保留</span></td><td>天然就是"事件源+蒸馏"形态，与 raw→compile 同构</td></tr>
+  <tr><td>raw/ 层 · 归档投喂 · 多页编译 · SCHEMA.md · 回填 · 知识中心 UI</td><td><span class="tag t-pri">新增</span></td><td>本期主体工作量</td></tr>
+</table>
+
+<h2>存量迁移（一次性，幂等，git 保底）</h2>
+<ol>
+  <li><b>全局化搬家</b>：~/.octopus/orgs/xzf-dev/knowledge/wiki/ 整体（含 .git，史不断）→ ~/.octopus/knowledge/wiki/；DB wiki_articles re-key org→'global' + FTS 重建；其余 org wiki 皆空，无迁。</li>
+  <li><b>org knowledge 归档</b>：xzf-dev projects/workflows、testorg projects、各 org user_preference → ~/.octopus/knowledge/_archive/org-knowledge-{date}/（不删）；user_preference 现行版另拷知识根（人工文件区）。</li>
+  <li><b>重蒸馏（taxonomy 迁移）</b>：策展人对现有 22 词条跑一遍重编译——projects/workflows 词条→topics 页（规则行进「硬约束」小节，<b>锚点原号随迁</b>，wiki_refs 不断链）；business 词条→concepts 页；Glossary 蒸馏产物归并进对应 concepts/entities；旧页迁 _retired/v2/。产出 INDEX 重建 + 一个 "redistill" commit（可整体 revert）。</li>
+  <li><b>LOG 换行格式</b>：旧表格行机械转换为 <code>## [date] op | title</code> 行格式，原表封 git 史。</li>
+</ol>
+
+<h2>D6 决策引用（已拍板，不再开放）</h2>
+<p class="small">① wiki 全局唯一（DB org 列钉 'global'，schema 不动）② org knowledge 硬废（注入链物理删，目录归档不删）③ user_preference 迁知识根（写保护继承）④ xzf-dev wiki 连 .git 整体搬家 + DB re-key ⑤ P0/P1 先合 main（合前 D2 修复 770d9fa6 跑复跑脚本运行时复验），新 phase 开新分支。过闸文书：<b>p2-gate-pass.md</b>（14 条真执行烟测实证 + owner 显式批准 + 四条强制缓解）。</p>
+
+<h2>本期内部里程碑（M1-M4，各自可验收可回滚）</h2>
+<div class="phase">
+  <div class="p m1"><span class="pn">M1</span><b>地基转向</b><ul><li>P0/P1 合 main（前置：D2 复验）</li><li>三层目录 + raw 落盘通道（inbox 抓取/API）</li><li>编译器改造：raw→多页编译（触 N 页一 commit）</li><li>SCHEMA.md 首版（curate 纪律迁入）</li><li>全局化搬家 + org knowledge 归档</li></ul></div>
+  <div class="p m2"><span class="pn">M2</span><b>除旧</b><ul><li>重蒸馏 22 词条→新 taxonomy（锚点随迁）</li><li>删审批链（review wiki 通道/curate approve 语义）</li><li>删注入链（P2' 硬废）+ mode 收敛</li><li>删两旧 UI（/wiki 页、KnowledgeTab）</li><li>归档自动投喂（archiving→raw/archives→编译）</li></ul></div>
+  <div class="p m3"><span class="pn">M3</span><b>知识中心 UI</b><ul><li>/knowledge 对话主界面（archive 会话复用+卡片协议）</li><li>右栏联动 wiki 视图 + 浏览模式 + Ctrl+K 检索</li><li>八类卡片（抓取/摘要/diff/归档/finding/回填/词条/写保护）</li><li>回滚按钮（git revert+重同步）</li><li>健康条（无"待审核"）</li></ul></div>
+  <div class="p m4"><span class="pn">M4</span><b>运转闭环</b><ul><li>语义巡检→对话 findings（矛盾/stale/孤儿/缺页）</li><li>query 回填链</li><li>octo-wiki 阅读面切新 taxonomy</li><li>E2E 真跑验收（ingest→编译→查阅→回填→回滚 全链）</li></ul></div>
+</div>
+
+<h2>验收判据（每里程碑）</h2>
+<table class="tbl">
+  <tr><th>M</th><th>判据</th><th>回滚</th></tr>
+  <tr><td>M1</td><td>投喂一篇真文章：raw 落盘不可变（hash 记录）；一次编译触 ≥3 页 + INDEX/LOG/FTS/git 同步；全局根生效（旧 org 路径只读兼容一次）；<b>并发两路投喂 → 串行落库（LOG 时间线不交错、git 线性无 merge commit）</b></td><td>新目录纯增；编译器改造在分支</td></tr>
+  <tr><td>M2</td><td>22 词条重蒸馏完成：锚点原号可查（wiki_refs 旧引用仍可解析）；注入链删除后 engine 测试全绿；两旧 UI 路由 404/跳转；归档一个真 task 自动落 raw/archives 并触发编译</td><td>redistill 单 commit revert；注入链删除整分支 revert + _archive 还原（过闸文书 §5）</td></tr>
+  <tr><td>M3</td><td>对话投喂→卡片流完整（抓取/摘要/diff）；右栏跟随渲染；回滚按钮真 revert；浏览模式+检索可用；健康条无"待审核"</td><td>新路由独立，删 /knowledge 即回退</td></tr>
+  <tr><td>M4</td><td>夜巡产出 ≥1 真 finding 进对话且裁决即编译；一次 query 回填成新页；E2E：INDEX→页 Read 序列 + wiki_refs 落库（新 taxonomy 锚点）；复跑脚本可重证</td><td>巡检只报告不编译（开关）；回填人工触发</td></tr>
+</table>
+
+<h2>风险与对策</h2>
+<table class="tbl">
+  <tr><th>风险</th><th>对策</th></tr>
+  <tr><td>多页编译爆炸半径大（一次 ingest 触 15 页，错一处污染多页）</td><td>diff 卡强制展示触及明细 + 一键回滚整 commit；结构 lint 逐页硬闸；矛盾不静默覆盖（标记+finding）；SCHEMA.md 编译纪律约束"改哪类页需要什么证据"</td></tr>
+  <tr><td>重蒸馏丢信息（22 词条→新 taxonomy 的语义损耗）</td><td>旧页整迁 _retired/v2/ 不删；redistill 单 commit 可整体 revert；锚点原号随迁保引用不断链</td></tr>
+  <tr><td>无审批后垃圾编译入库（输入即审批的边界情形：归档总结质量波动）</td><td>归档卡通知形态（人看得见每次自动编译）；低置信度编译在 diff 卡标黄；巡检兜底 stale/矛盾；git 可逆是最终保险</td></tr>
+  <tr><td>对话内长编译阻塞体验</td><td>编译异步化 + 卡片流式状态（先回执后 diff 卡）</td></tr>
+  <tr><td>并发写坏 wiki（对话编译×归档编译×巡检修复同时落）</td><td><b>全局 FIFO 编译队列（进程内串行）+ wiki 根锁文件（跨进程保底）</b>；读永不锁；失败自回滚不堵队（owner 裁决 2026-10-13：wiki 写入全局串行）</td></tr>
+  <tr><td>删注入链后 agent 查阅遵循率不足（P2 原始风险，过闸文书 §3 已认）</td><td>operator persona 准则 + 指针行 + wiki_refs 可观测（查阅率进健康条）；极端情况 git revert 注入链 + _archive 还原（一次性回滚预案写入 M2 验收）</td></tr>
+</table>
+
+<h2>非目标（明确不做）</h2>
+<ul>
+  <li><b>不做</b> embedding 主检索（原文规模判断：INDEX+FTS 够用；开关都不留，需要时再说）。</li>
+  <li><b>不做</b>审批队列的任何残留形态（含"低置信度需人批"——低置信度走 diff 卡标黄 + 巡检，不走事前拦）。</li>
+  <li><b>不做</b>多 wiki / org 级 wiki（全局唯一，D6）。</li>
+  <li><b>不做</b> SCHEMA.md / user_preference.md 自动改写（建议→人确认，pre-commit 闸保留）。</li>
+  <li><b>不做</b> wiki 页 Web 直接编辑（人改页=对话驱动策展人改，LLM 全权拥有层的纪律）。</li>
+  <li><b>不做</b>实时协同编辑 / 多用户权限（单 owner 平台）。</li>
+</ul>
+
+<div class="card acc" style="margin-top:24px">
+  <h4>一句话总结</h4>
+  <p style="margin:2px 0"><b>知识 = 三层（不可变 raw → 策展人编译的 wiki 页网络 → 共演 SCHEMA），操作 = 三个（ingest/query/lint），管理 = 对话（知识中心主界面，卡片沉淀每次编译，git 可逆兜底），消费 = 原样（octo-wiki 导航协议 + wiki_refs）。审批队列与规则数据库范式整体退役——人管输入与方向，LLM 管全部 bookkeeping。</b></p>
+</div>
+</section>
+
+<div class="footer">
+  Octopus 知识中心方案原型 v2 · .scratch/knowledge-center/prototype.html · 一手依据：Karpathy llm-wiki gist（全文精读）+ append-and-review note · 承接：.scratch/llm-wiki-loop/（spec + 13 票 + e2e-report + p2-gate-pass 过闸文书）· D6 决策已生效 · 主题色沿用 web-app globals.css（#0A0A0C / #FF855C）
+</div>
+</div>
+
+<script>
+document.getElementById('tabs').addEventListener('click', function(e){
+  var b = e.target.closest('.tab'); if(!b) return;
+  document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+  document.querySelectorAll('.panel').forEach(function(x){x.classList.remove('active')});
+  b.classList.add('active');
+  document.getElementById(b.dataset.t).classList.add('active');
+  window.scrollTo({top:0});
+});
+</script>
+</body>
+</html>
