@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM-WIKI · 编译型知识库全景（P0–P4）</title>
+<style>
+  :root{
+    --bg:#0b1016; --bg2:#0e141c; --panel:#141b26; --panel2:#18212e;
+    --line:#243247; --line2:#2e3f58;
+    --ink:#dbe4f0; --ink2:#9fb0c6; --ink3:#6d7f98;
+    --teal:#2dd4bf; --amber:#fbbf24; --violet:#a78bfa; --rose:#fb7185;
+    --green:#4ade80; --sky:#38bdf8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 500px at 80% -100px, rgba(45,212,191,.07), transparent 60%),
+      radial-gradient(900px 420px at -10% 25%, rgba(167,139,250,.06), transparent 60%),
+      linear-gradient(180deg,var(--bg),var(--bg2) 40%,var(--bg));
+    color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:56px 24px 96px;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+  .hero{margin-bottom:56px}
+  .hero h1{font-size:30px;font-weight:800;letter-spacing:.5px;margin-bottom:10px}
+  .hero h1 em{font-style:normal;color:var(--teal)}
+  .hero p.sub{color:var(--ink2);max-width:780px}
+  .badges{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .badge{font-size:12px;padding:4px 12px;border:1px solid var(--line2);border-radius:99px;color:var(--ink2);background:rgba(20,27,38,.7)}
+  .badge b{color:var(--green);font-weight:600}
+  h2{font-size:20px;margin:52px 0 6px;display:flex;align-items:center;gap:10px}
+  h2 .no{font-size:12px;color:var(--teal);border:1px solid rgba(45,212,191,.35);border-radius:6px;padding:1px 7px;font-weight:600}
+  .lead{color:var(--ink2);margin-bottom:22px;max-width:860px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .diagram{overflow-x:auto}
+  svg text{font-family:inherit}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .feat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 14px;position:relative}
+  .feat h3{font-size:15.5px;margin-bottom:6px}
+  .feat .tag{position:absolute;top:14px;right:14px;font-size:10.5px;padding:2px 8px;border-radius:99px;border:1px solid}
+  .t-p2{color:var(--sky);border-color:rgba(56,189,248,.4)}
+  .t-p3{color:var(--violet);border-color:rgba(167,139,250,.4)}
+  .t-p4{color:var(--teal);border-color:rgba(45,212,191,.4)}
+  .feat p{color:var(--ink2);font-size:13.5px}
+  code,.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px;background:#1b2433;border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:#c9d7ea}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--ink3);font-weight:600;border-bottom:1px solid var(--line2);padding:8px 10px;white-space:nowrap}
+  td{border-bottom:1px solid var(--line);padding:8px 10px;color:var(--ink2);vertical-align:top}
+  td b{color:var(--ink);font-weight:600}
+  .tbl{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;padding:4px 18px 10px}
+  .formula{background:#101723;border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:10px;padding:14px 18px;font-family:Consolas,monospace;font-size:13px;color:#f5e6c4;overflow-x:auto}
+  .redlines{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:8px}
+  .rl{border:1px solid rgba(251,113,133,.25);background:rgba(251,113,133,.05);border-radius:10px;padding:10px 14px;font-size:13px;color:#f3c8d1}
+  .rl b{color:var(--rose)}
+  .timeline{display:flex;gap:0;overflow-x:auto;padding:8px 0 4px}
+  .ph{flex:1;min-width:170px;position:relative;padding:0 12px 0 0}
+  .ph .dot{width:14px;height:14px;border-radius:50%;border:3px solid var(--line2);background:var(--panel);position:relative;z-index:2;margin-left:2px}
+  .ph.done .dot{background:var(--green);border-color:rgba(74,222,128,.35)}
+  .ph .bar{position:absolute;top:7px;left:8px;right:-2px;height:3px;background:var(--line)}
+  .ph:last-child .bar{display:none}
+  .ph h4{font-size:14px;margin:12px 0 4px}
+  .ph p{font-size:12.5px;color:var(--ink3)}
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);color:var(--ink3);font-size:13px}
+  .foot li{margin:4px 0 4px 18px}
+  .note{font-size:12.5px;color:var(--ink3);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+  <h1>LLM-WIKI · <em>编译型知识库</em>全景架构</h1>
+  <p class="sub">Karpathy 三层范式：源（raw）不可变 → 编译器（唯一写闸）→ 页网络（wiki）。P4 起具备<b style="color:var(--teal)">新陈代谢</b>：谁引用了哪条规则、挡没挡住坑、该修该退，全部有账、有分、有出口——库不再只进不出。</p>
+  <div class="badges">
+    <span class="badge">main <b>26aff709</b> · PR #76 #78 已合入</span>
+    <span class="badge">E2E 票11 <b>GO</b> · 32 故事全绿</span>
+    <span class="badge">写队列 <b>12</b> opKind · 巡检 <b>13</b> kind</span>
+    <span class="badge">ADR-0030 / 0031 / <b>0032</b></span>
+  </div>
+</div>
+
+<h2><span class="no">1</span>三层架构（层契约）</h2>
+<p class="lead">写路径只有一条：入队 → 全局 FIFO + wiki 根锁 → 唯一写闸编译 → 一次编译 = 一个 git commit，失败原子回滚零半成品。读永不锁。</p>
+<div class="card diagram">
+<svg width="1020" height="320" viewBox="0 0 1020 320">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#6d7f98"/></marker>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2dd4bf"/></marker>
+  </defs>
+  <!-- raw -->
+  <rect x="20" y="90" width="240" height="150" rx="12" fill="#161f2c" stroke="#2e3f58"/>
+  <text x="140" y="118" text-anchor="middle" fill="#38bdf8" font-size="14" font-weight="700">层 1 · raw/ 不可变源</text>
+  <text x="140" y="146" text-anchor="middle" fill="#9fb0c6" font-size="12">inbox 投喂 · archives 任务素材包</text>
+  <text x="140" y="166" text-anchor="middle" fill="#9fb0c6" font-size="12">research 调研 · manifest 件级 hash 冻结</text>
+  <text x="140" y="194" text-anchor="middle" fill="#6d7f98" font-size="11.5">写 = 人或系统投递；编译可重跑、矛盾可对质</text>
+  <text x="140" y="212" text-anchor="middle" fill="#6d7f98" font-size="11.5">（落盘即冻结 · 一切自动流程只读）</text>
+  <!-- compiler -->
+  <rect x="390" y="55" width="240" height="220" rx="12" fill="#131a12" stroke="rgba(45,212,191,.4)"/>
+  <text x="510" y="84" text-anchor="middle" fill="#2dd4bf" font-size="14" font-weight="700">编译器 · 唯一写闸</text>
+  <text x="510" y="112" text-anchor="middle" fill="#9fb0c6" font-size="12">全局 FIFO 队列（12 opKind）</text>
+  <text x="510" y="130" text-anchor="middle" fill="#9fb0c6" font-size="12">+ wiki 根锁 .compile.lock</text>
+  <text x="510" y="158" text-anchor="middle" fill="#9fb0c6" font-size="12">L1–L6 lint 闸 · 矛盾两页标记</text>
+  <text x="510" y="176" text-anchor="middle" fill="#9fb0c6" font-size="12">人工文件写保护（MANUAL_FILE_WRITE）</text>
+  <text x="510" y="204" text-anchor="middle" fill="#9fb0c6" font-size="12">一次编译 = 单 commit · 失败原子回滚</text>
+  <text x="510" y="238" text-anchor="middle" fill="#6d7f98" font-size="11.5">策展人（archive 分身）= 唯一写者</text>
+  <text x="510" y="256" text-anchor="middle" fill="#6d7f98" font-size="11.5">审批已废除：输入即审批，质控全事后</text>
+  <!-- wiki -->
+  <rect x="760" y="90" width="240" height="150" rx="12" fill="#161f2c" stroke="#2e3f58"/>
+  <text x="880" y="118" text-anchor="middle" fill="#a78bfa" font-size="14" font-weight="700">层 2 · wiki/ 编译产物</text>
+  <text x="880" y="146" text-anchor="middle" fill="#9fb0c6" font-size="12">五类页：entities/concepts/topics</text>
+  <text x="880" y="164" text-anchor="middle" fill="#9fb0c6" font-size="12">/sources/cases · _retired/ 退役区</text>
+  <text x="880" y="192" text-anchor="middle" fill="#9fb0c6" font-size="12">INDEX（两级预算）· LOG（append-only）</text>
+  <text x="880" y="210" text-anchor="middle" fill="#9fb0c6" font-size="12">FTS/DB 索引同步 · git 线性史</text>
+  <!-- arrows -->
+  <path d="M260 165 H 375" stroke="#6d7f98" stroke-width="1.6" fill="none" marker-end="url(#a1)"/>
+  <text x="317" y="152" text-anchor="middle" fill="#6d7f98" font-size="11.5">投喂/归档 → 入队</text>
+  <path d="M630 165 H 745" stroke="#2dd4bf" stroke-width="1.8" fill="none" marker-end="url(#a2)"/>
+  <text x="687" y="152" text-anchor="middle" fill="#2dd4bf" font-size="11.5">唯一写路径</text>
+  <!-- schema -->
+  <rect x="390" y="12" width="240" height="32" rx="8" fill="rgba(251,191,36,.08)" stroke="rgba(251,191,36,.4)" stroke-dasharray="4 3"/>
+  <text x="510" y="33" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-weight="600">层 3 · SCHEMA.md 人机共演约定（人工文件）</text>
+  <path d="M510 44 V 55" stroke="#fbbf24" stroke-width="1.2" fill="none" stroke-dasharray="3 3" marker-end="url(#a1)"/>
+  <text x="598" y="52" fill="#6d7f98" font-size="10.5">编译前必读 · 落笔归人</text>
+  <!-- consumer return -->
+  <path d="M880 240 C 880 292, 640 292, 510 292 C 400 292, 300 280, 152 240" stroke="#2dd4bf" stroke-width="1.4" fill="none" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+  <text x="512" y="308" text-anchor="middle" fill="#2dd4bf" font-size="11.5">消费与实效回流 →「代谢闭环」见下图</text>
+</svg>
+</div>
+
+<h2><span class="no">2</span>代谢闭环（P4 全景主图）</h2>
+<p class="lead">库的「用 → 记 → 判 → 改 → 退 → 恢」全循环。红字为不可让步的闸：<b style="color:var(--rose)">除窄口外一切变更必经人裁</b>；一切写经队列串行位。</p>
+<div class="card diagram">
+<svg width="760" height="660" viewBox="0 0 560 560" style="display:block;margin:0 auto">
+  <defs>
+    <marker id="la" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2dd4bf"/></marker>
+  </defs>
+  <!-- circle guide -->
+  <circle cx="280" cy="280" r="200" fill="none" stroke="#243247" stroke-width="1" stroke-dasharray="3 5"/>
+  <!-- arcs between node angles -->
+  <g stroke="#2dd4bf" stroke-width="1.7" fill="none" opacity=".85">
+    <path d="M 302 82   A 200 200 0 0 1 428 160" marker-end="url(#la)"/>
+    <path d="M 462 200  A 200 200 0 0 1 470 320" marker-end="url(#la)"/>
+    <path d="M 420 400  A 200 200 0 0 1 300 474" marker-end="url(#la)"/>
+    <path d="M 230 470  A 200 200 0 0 1 108 392" marker-end="url(#la)"/>
+    <path d="M 92 340   A 200 200 0 0 1 95 220"  marker-end="url(#la)"/>
+    <path d="M 132 158  A 200 200 0 0 1 238 86"  marker-end="url(#la)"/>
+    <path d="M 366 452  A 200 200 0 0 1 120 400" marker-end="url(#la)" stroke="#fb7185"/>
+  </g>
+  <!-- hub -->
+  <circle cx="280" cy="280" r="86" fill="#141b26" stroke="#2e3f58"/>
+  <text x="280" y="262" text-anchor="middle" fill="#dbe4f0" font-size="14" font-weight="700">wiki 知识库</text>
+  <text x="280" y="282" text-anchor="middle" fill="#9fb0c6" font-size="11">五类页 · INDEX · LOG</text>
+  <text x="280" y="298" text-anchor="middle" fill="#9fb0c6" font-size="11">FTS/DB · git 史</text>
+  <text x="280" y="318" text-anchor="middle" fill="#6d7f98" font-size="10.5">（全局唯一 · org=global）</text>
+  <!-- nodes -->
+  <g font-size="12">
+    <!-- 1 消费 -->
+    <rect x="206" y="42" width="148" height="52" rx="10" fill="#18212e" stroke="#38bdf8"/>
+    <text x="280" y="63" text-anchor="middle" fill="#38bdf8" font-weight="700">① 消费 · 执行链</text>
+    <text x="280" y="81" text-anchor="middle" fill="#9fb0c6" font-size="10.5">wiki_refs 引用 · 页 Read</text>
+    <!-- 2 记账 -->
+    <rect x="398" y="128" width="148" height="52" rx="10" fill="#18212e" stroke="#2dd4bf"/>
+    <text x="472" y="149" text-anchor="middle" fill="#2dd4bf" font-weight="700">② 记账 · ledger</text>
+    <text x="472" y="167" text-anchor="middle" fill="#9fb0c6" font-size="10.5">effectiveness v2 · LLM 关联</text>
+    <!-- 3 置信 -->
+    <rect x="404" y="330" width="148" height="52" rx="10" fill="#18212e" stroke="#2dd4bf"/>
+    <text x="478" y="351" text-anchor="middle" fill="#2dd4bf" font-weight="700">③ 置信 · confidence</text>
+    <text x="478" y="369" text-anchor="middle" fill="#9fb0c6" font-size="10.5">DB 真源滚动 · sync 刷页</text>
+    <!-- 4 巡检 -->
+    <rect x="212" y="452" width="148" height="52" rx="10" fill="#18212e" stroke="#fbbf24"/>
+    <text x="286" y="473" text-anchor="middle" fill="#fbbf24" font-weight="700">④ 巡检 · doctor</text>
+    <text x="286" y="491" text-anchor="middle" fill="#9fb0c6" font-size="10.5">13 查 · 健康分 0-100</text>
+    <!-- 5 裁决 -->
+    <rect x="20" y="424" width="148" height="52" rx="10" fill="#18212e" stroke="#fb7185"/>
+    <text x="94" y="445" text-anchor="middle" fill="#fb7185" font-weight="700">⑤ 裁决 · finding</text>
+    <text x="94" y="463" text-anchor="middle" fill="#9fb0c6" font-size="10.5">三态人裁 · 裁决即编译</text>
+    <!-- 6 写 -->
+    <rect x="16" y="176" width="148" height="52" rx="10" fill="#18212e" stroke="#a78bfa"/>
+    <text x="90" y="197" text-anchor="middle" fill="#a78bfa" font-weight="700">⑥ 写 · 队列</text>
+    <text x="90" y="215" text-anchor="middle" fill="#9fb0c6" font-size="10.5">12 opKind FIFO + 根锁</text>
+    <!-- 7 净除 -->
+    <rect x="96" y="66" width="148" height="52" rx="10" fill="#18212e" stroke="#4ade80"/>
+    <text x="170" y="87" text-anchor="middle" fill="#4ade80" font-weight="700">⑦ 净除 · 代谢</text>
+    <text x="170" y="105" text-anchor="middle" fill="#9fb0c6" font-size="10.5">窄口自动退役 ⇄ 原号恢复</text>
+  </g>
+  <!-- red arc label -->
+  <text x="284" y="540" text-anchor="middle" fill="#fb7185" font-size="11.5">窄口 = 90 天零引用 ∧ 零活页入链 ∧ 非人工文件（唯一自动写路径，可恢复）</text>
+</svg>
+</div>
+
+<h2><span class="no">3</span>功能矩阵（按能力域）</h2>
+<div class="grid">
+  <div class="feat"><span class="tag t-p2">P2'</span><h3>对话即管理 · 审批废除</h3><p>知识中心 = 策展人对话流 + wiki 视图 + 健康条 + Ctrl+K；投喂即编译，pending_review 表已物理退役。ADR-0030。</p></div>
+  <div class="feat"><span class="tag t-p2">P2'</span><h3>全局写串行</h3><p>进程内 FIFO + wiki 根锁两级（ADR-0031）；读永不锁；单任务失败自回滚不堵队；位次进 UI 卡。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>深回滚 = 状态重建</h3><p>回滚任意历史编译不走 git revert 三方合并：读 T^→T diff、触及面程序化对齐、单 commit；REVERT_CONFLICT 成历史。ADR-0032。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>effectiveness 记账</h3><p>服务端离线解析执行 JSONL+DB 权威键（wiki_refs/Read/blocker）；LLM seam 判「同类坑挡没挡住」；游标幂等、agent 零感知。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>confidence 滚动</h3><p>= helpful/(helpful+not_helpful)，DB 真源、样本&lt;3 不抖动；夜巡 effectiveness-sync 批量刷页快照（单 commit/LOG sync 行）。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>doctor 数值处方 + 健康分</h3><p>语义六查 → 十三 kind 全目录（膨胀/重复/僵尸/低置信/失衡/到期/INDEX 预算…）；健康分一屏可见，点开出 severity 分组。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>自动退役窄口 + 恢复</h3><p>僵尸规则「90 天零引用∧零入链∧非人工」自动迁 _retired/ + 通知卡（零审批钮）；对话「恢复 oct-XXX」原号原行回迁 + 入链字节级反放。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>投喂泛化（任意会话）</h3><p>任何 agent 会话说「编进 wiki」→ orchestrator 第 5 意图支 → 复用 ingest API+队列零平行 → Lane A 抓取卡/diff 卡两拍回流原会话。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>INDEX 两级预算 + 分层</h3><p>恒见部分（必读+正文节）≤800 token；&gt;80% 放行+预警 finding 三选，&gt;100% 才拒+压缩建议；Optional 压缩尾部（llms.txt）。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>退役清入链 + 单侧降级</h3><p>退役执行体统一机械：迁 _retired + [[链接]]→[已退役] 同 commit；矛盾对手页已退役 ⇒ 单侧裁决不再恒败（复合形由评审波闭合）。</p></div>
+  <div class="feat"><span class="tag t-p3">P3</span><h3>归档资产化</h3><p>任务归档 → 素材包（六件+manifest hash 冻结）→ 编译读包按需下钻；剔除/焦点重编译同通道。</p></div>
+  <div class="feat"><span class="tag t-p3">P3</span><h3>判例自动提取</h3><p>从执行 JSONL 关键事件产五段草案入 cases/（先存后知）；同症状 jaccard 并档；流程型 procedural 标记。</p></div>
+  <div class="feat"><span class="tag t-p3">P3</span><h3>skill 草案 → 人裁授予</h3><p>三路检测产草案卡；授予走分身目录+版本账+回执，生效 = SDK 原生发现（ADR-0006），零 prompt 注入；撤销逆链可回。</p></div>
+  <div class="feat"><span class="tag t-p4">P4</span><h3>shadow-compare 清零</h3><p>无消费者死账：端点/服务/测试/常量物理删除；删除前给 p2-gate-pass 与两期 e2e 报告的证据引用追加归档注记。</p></div>
+</div>
+
+<h2><span class="no">4</span>共演公式（SCHEMA.md · 人机两面，改权重=人改文档+同步码）</h2>
+<div class="formula">
+confidence        = helpful / (helpful + not_helpful)   —— 总记账 &lt; 3 不刷新（保持编译期初值）<br>
+低置信入列        = confidence ≤ 0.2 且 引用 ≥ 3        ⇒ finding 人裁（修订或退役）<br>
+健康分 0-100      = clamp(0,100, 100 − Σ open severity(critical 8 / major 4 / minor 2) − Σ 越水位的页 (水位−0.8)×25)<br>
+僵尸（D3）        = 最近引用逾 90 天，或从未被引用且建页逾 90 天（吃实效账目）<br>
+自动退役窄口      = 观察窗满 90 天 ∧ 两账窗内零命中 ∧ 零活页入链 ∧ 非人工文件 ∧ 带规则锚点<br>
+INDEX 预算        = 恒见部分 ≤800 token；&gt;640（80%）放行+预警 finding；&gt;800（100%）拒写+压缩建议<br>
+域失衡（D5）      = 单页锚点占全库 &gt;30%（全库 &lt;10 锚不判）· 重复对（D2）= 跨页规则 jaccard ≥ 0.75（禁 embedding）
+</div>
+<p class="note">真盘 <code>~/.octopus/knowledge/SCHEMA.md</code> 已随 P4 落三新节（实效账目与置信度 / 健康分与数值巡检 / 自动退役窄口与恢复）+ LOG 动作面补 <code>deep-revert|retire|restore|sync</code>。开放共演项：rule_ref 指针边计不计入链（现不计）。</p>
+
+<h2><span class="no">5</span>数据面 & 接口速查</h2>
+<div class="tbl">
+<table>
+  <tr><th>面</th><th>件</th><th>要点</th></tr>
+  <tr><td><b>DB 表</b></td><td>knowledge_effectiveness（v55 蓝绿） · effectiveness_cursors · findings · wiki_articles+FTS · compile 任务记录 · raw/archives manifest</td><td>账目列 cited_count/last_cited/helpful/not_helpful/confidence；游标 PK=execution_id 幂等；pending_review/shadow 均已物理退役</td></tr>
+  <tr><td><b>写队列</b></td><td><code>WRITE_OP_KINDS</code> ×12</td><td>ingest-compile / archive-compile / dialog-revise / lint-fix / finding-fix / revert / redistill / case-archive / page-retire / effectiveness-sync / auto-retire / page-restore</td></tr>
+  <tr><td><b>巡检</b></td><td><code>PatrolFindingKind</code> ×13 + <code>health-score.ts</code></td><td>夜巡作业 builtin-knowledge-patrol（03:17 cron）单源；腿序 parseLedger → syncConfidence → autoRetire；手动 POST /api/knowledge/patrol 同享</td></tr>
+  <tr><td><b>API</b></td><td><code>/api/knowledge/</code> 家族</td><td>ingest?compile=true · wiki/compile · wiki/queue · wiki/revert · wiki/retire · wiki/restore · findings（list/adopt/ignore/patrol/backfill）· effectiveness/parse · effectiveness/sync · knowledge/health（+score/avgConfidence）· wiki/tree · packs · cases · drafts · grants</td></tr>
+  <tr><td><b>前端</b></td><td>知识中心 + 普通会话卡片面</td><td>卡片注册表（十三类 + 开放 kind 兜底）· Lane A fenced kc-card 块 · P4 起普通会话（ChatTab）也渲染回流卡 · 健康条含健康分点开出 severity 分组</td></tr>
+  <tr><td><b>意图面</b></td><td>octo-agent-orchestrator 决策树</td><td>第 5 支 knowledge_curation：投喂动词 ∧ 可投对象 → ingest_to_wiki；classifyKcFeed（知识中心内）零回归</td></tr>
+</table>
+</div>
+
+<h2><span class="no">6</span>红线账（全链继承，票11 E2E + 双轴评审复核）</h2>
+<div class="redlines">
+  <div class="rl"><b>串行</b> · wiki 一切写经 FIFO 队列+根锁，零旁路（负断言钉）</div>
+  <div class="rl"><b>无审批</b> · 处方=finding 事后人裁；自动口仅窄口一条且可恢复</div>
+  <div class="rl"><b>不近似</b> · blocker 关联走 LLM seam，禁关键词重叠（旧 effectiveness.ts 教训）</div>
+  <div class="rl"><b>先归档</b> · 删除前证据文书加注（shadow-compare 实锤执行）</div>
+  <div class="rl"><b>零触碰</b> · agent 记忆域 / K11 / skill 生效面（ADR-0006）/ 人工文件写保护</div>
+  <div class="rl"><b>时间纪律</b> · 判据用注入时钟/构造时间戳，禁 sleep；记账游标幂等</div>
+</div>
+
+<h2><span class="no">7</span>里程碑</h2>
+<div class="timeline">
+  <div class="ph done"><div class="dot"></div><div class="bar"></div><h4>P0/P1</h4><p>编译型 wiki 奠基：五类页 · lint 闸族 · FTS/DB</p></div>
+  <div class="ph done"><div class="dot"></div><div class="bar"></div><h4>P2′</h4><p>Karpathy 三层 · 全局唯一 · 审批废除 · 写串行 · 注入链硬废</p></div>
+  <div class="ph done"><div class="dot"></div><div class="bar"></div><h4>P3</h4><p>归档资产化：素材包 · 判例 · skill 草案/授予（PR #76）</p></div>
+  <div class="ph done"><div class="dot"></div><div class="bar"></div><h4>P4</h4><p>进化闭环：记账/置信/doctor/窄口/泛化/缺陷清偿（PR #78）</p></div>
+  <div class="ph"><div class="dot"></div><h4>P5 候选</h4><p>改进账：跨执行关联 · 任务记录机收敛 · rule_ref 共演 · 有机数据增厚</p></div>
+</div>
+
+<div class="foot">
+  <b>审计件路径</b>
+  <ul>
+    <li>spec / 票 01-11（Status+Comments 过程账）：<code>.scratch/wiki-evolution/issues/</code> · 设计权威：<code>.scratch/wiki-evolution/spec.md</code></li>
+    <li>E2E GO 报告 + 82 件证据包 + 复跑脚本：<code>.scratch/wiki-evolution/e2e-report.md</code> · <code>we11-rerun.mjs</code>（原机 <code>C:/tmp/we11-e2e/</code>）</li>
+    <li>探索笔记四域（插座现状基线）：<code>.scratch/wiki-evolution/notes/</code> · 治理：<code>docs/adr/0030–0032</code> · <code>GLOSSARY-MAP.md</code> · 真盘 <code>~/.octopus/knowledge/SCHEMA.md</code></li>
+    <li>合入链：#76（P3）→ main；缺陷波 ff → <code>bcaf6f90</code>；#78（进化+修复+治理）→ <code>8458f533</code>；tracker 入册 → <code>26aff709</code></li>
+  </ul>
+</div>
+</div>
+</body>
+</html>
