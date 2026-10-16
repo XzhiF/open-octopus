@@ -125,6 +125,39 @@ const RAW_FILE = {
   content: "---\norigin: \"url:https://gist.github.com/karpathy/442a6bf\"\ntitle: \"Karpathy LLM Wiki\"\n---\n\n# llm wiki\n三层架构 raw/wiki/schema\n",
 }
 
+// ── 知识根真实目录树 fixture（左栏改版 20261016）：与 TREE entries 的 path 全路径对齐 ──
+const FS_TREE = {
+  org: "global", root: "knowledge", truncated: false, total: 11,
+  tree: [
+    { name: "_archive", kind: "dir", path: "_archive", children: [
+      { name: "pending-review-2026-10-14.json", kind: "file", path: "_archive/pending-review-2026-10-14.json" },
+    ] },
+    { name: "raw", kind: "dir", path: "raw", children: [
+      { name: "inbox", kind: "dir", path: "raw/inbox", children: [
+        { name: "2026-10-13-karpathy-llm-wiki.md", kind: "file", path: "raw/inbox/2026-10-13-karpathy-llm-wiki.md" },
+      ] },
+    ] },
+    { name: "SCHEMA.md", kind: "file", path: "SCHEMA.md" },
+    { name: "wiki", kind: "dir", path: "wiki", children: [
+      { name: "_retired", kind: "dir", path: "wiki/_retired", children: [
+        { name: "con-bye.md", kind: "file", path: "wiki/_retired/con-bye.md" },
+      ] },
+      { name: "concepts", kind: "dir", path: "wiki/concepts", children: [
+        { name: "con-compiled-rag.md", kind: "file", path: "wiki/concepts/con-compiled-rag.md" },
+      ] },
+      { name: "projects", kind: "dir", path: "wiki/projects", children: [
+        { name: "prj-octopus.md", kind: "file", path: "wiki/projects/prj-octopus.md" },
+      ] },
+      { name: "topics", kind: "dir", path: "wiki/topics", children: [
+        { name: "top-knowledge-injection.md", kind: "file", path: "wiki/topics/top-knowledge-injection.md" },
+      ] },
+      { name: "INDEX.md", kind: "file", path: "wiki/INDEX.md" },
+      { name: "LOG.md", kind: "file", path: "wiki/LOG.md" },
+    ] },
+  ],
+}
+const DOC_FILE = { org: "global", path: "SCHEMA.md", content: "# SCHEMA\n人机共演纪律", bytes: 24 }
+
 interface FetchCall { url: string }
 let calls: FetchCall[]
 
@@ -160,6 +193,8 @@ function mockFetch(overrides?: (u: string) => StubResponse | undefined) {
     if (u.includes("/knowledge/log")) return { ok: true, status: 200, json: async () => ({ org: "global", lines: LOG_LINES }) }
     if (u.includes("/knowledge/health")) return { ok: true, status: 200, json: async () => HEALTH }
     if (u.includes("/api/knowledge/raw?")) return { ok: true, status: 200, json: async () => RAW_LIST }
+    if (u.includes("/knowledge/fs/file")) return { ok: true, status: 200, json: async () => DOC_FILE }
+    if (u.includes("/knowledge/fs")) return { ok: true, status: 200, json: async () => FS_TREE }
     if (/\/wiki\/article\/top-knowledge-injection/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE_LINKED }
     if (/\/wiki\/article\/[^?]+/.test(u)) return { ok: true, status: 200, json: async () => ARTICLE }
     if (u.includes("/knowledge/raw/")) return { ok: true, status: 200, json: async () => RAW_FILE }
@@ -262,29 +297,89 @@ describe("页头健康三槽 + 点开弹层全量指标（负断言「无待审�
   })
 })
 
-describe("导航树（五类 + System：INDEX 总览/LOG/原料库；ADR-0033 版式）", () => {
-  it("buckets v3 type groups and v2-domain rows；必读组已随概念删除（负断言防复活）", async () => {
+describe("知识根目录树（左栏改版 20261016：真实目录，INDEX/LOG/raw 三入口收进树）", () => {
+  const fsRow = (p: string) => document.querySelector(`[data-kc-fs-path="${p}"]`) as HTMLElement | null
+
+  it("根层=真实结构；智能展开让活页直接可见；归档收起；五类组头/v2 中文头/user_preference 全不外露", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
 
-    // 五类组头（原型 Tab④ 树分组；v3 类型值组 + v2 域值行并入对应类）
-    expect(screen.getByText(/Entities/)).toBeDefined()
-    expect(screen.getByText(/Concepts/)).toBeDefined()
-    expect(screen.getByText(/Topics/)).toBeDefined()
-    expect(screen.getByText(/Sources/)).toBeDefined()
-    expect(screen.getByText(/Cases/)).toBeDefined()
-    // v2 域值行（projects）并入 Topics 组——组头不再露「项目知识」
+    // 根层直呈（对齐 ~/.octopus/knowledge 盘上实况）
+    expect(fsRow("_archive")).toBeTruthy()
+    expect(fsRow("raw")).toBeTruthy()
+    expect(fsRow("SCHEMA.md")).toBeTruthy()
+    // System 三入口收进树：INDEX/LOG 是 wiki 下文件叶，raw 目录行挂原料库语义
+    expect(fsRow("wiki/INDEX.md")).toBeTruthy()
+    expect(fsRow("wiki/LOG.md")).toBeTruthy()
+    expect(screen.getByTestId("kc-select-rawlib")).toBeTruthy()
+    // 智能展开：活页目录（concepts/topics/projects 非 "_" 前缀 depth≤1）自动开——页面直接可见
+    expect(fsRow("wiki/concepts/con-compiled-rag.md")).toBeTruthy()
+    expect(fsRow("wiki/topics/top-knowledge-injection.md")).toBeTruthy()
+    expect(fsRow("wiki/projects/prj-octopus.md")).toBeTruthy()
+    // 归档与货箱默认收起（_retired 36 页/raw 数十件不淹树）
+    expect(fsRow("wiki/_retired/con-bye.md")).toBeNull()
+    expect(fsRow("raw/inbox/2026-10-13-karpathy-llm-wiki.md")).toBeNull()
+    // 负断言：五类组头消失、v2 中文组头不外露、偏好钮防复活
+    expect(screen.queryByText(/Entities/)).toBeNull()
+    expect(screen.queryByText(/Concepts/)).toBeNull()
     expect(screen.queryByText("项目知识")).toBeNull()
-    const topics = screen.getByTestId("kc-group-topic")
-    expect(topics.textContent).toContain("Octopus 平台工程知识")
-    expect(topics.textContent).toContain("知识注入沿革")
-    // 判例组
-    expect(screen.getByTestId("kc-group-case").textContent).toContain("CI 报 LOCKFILE_CONFIG_MISMATCH")
-    // System 组三入口 + 原必读组删除负断言（防复活钉：偏好钮永不再出现）
-    expect(screen.getByTestId("kc-select-index").textContent).toContain("INDEX 总览")
-    expect(screen.getByRole("button", { name: /LOG\.md 时间线/ })).toBeDefined()
-    expect(screen.getByTestId("kc-select-rawlib").textContent).toContain("原料库")
     expect(screen.queryByRole("button", { name: /user_preference/ })).toBeNull()
+  })
+
+  it("一键展开/收起：⤓展开 让归档叶显形，⤒收起 回到只留根层；根行点击=全树开关", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    // 初始（智能展开）：活页可见、归档收起
+    expect(fsRow("wiki/concepts/con-compiled-rag.md")).toBeTruthy()
+    expect(fsRow("wiki/_retired/con-bye.md")).toBeNull()
+
+    fireEvent.click(screen.getByTestId("kc-tree-expand-all"))
+    expect(fsRow("wiki/_retired/con-bye.md")).toBeTruthy()
+    expect((screen.getByTestId("kc-tree-expand-all") as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByTestId("kc-tree-collapse-all"))
+    expect(fsRow("wiki/concepts/con-compiled-rag.md")).toBeNull()
+    expect(fsRow("wiki/INDEX.md")).toBeNull() // wiki 自身收起后子项全隐
+    expect(fsRow("_archive")).toBeTruthy()   // 根层恒在
+    // 根行点击 → 全展开（收起态下点击=展开）
+    fireEvent.click(screen.getByTestId("kc-tree-root-toggle"))
+    expect(fsRow("raw/inbox/2026-10-13-karpathy-llm-wiki.md")).toBeTruthy()
+  })
+
+  it("点击 raw 目录行=展开+原料库清单双动作；点 inbox 文件叶进 RawView", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    fireEvent.click(screen.getByTestId("kc-select-rawlib"))
+    // 展开即时生效（同一次点击）
+    expect(fsRow("raw/inbox")).toBeTruthy()
+    const lib = await screen.findByTestId("kc-raw-lib")
+    expect(lib.textContent).toContain("2 个文件")
+    fireEvent.click(fsRow("raw/inbox")!) // 二跳展开 inbox（raw 只开了自己）
+    fireEvent.click(fsRow("raw/inbox/2026-10-13-karpathy-llm-wiki.md")!)
+    const view = await screen.findByTestId("kc-raw-view")
+    expect(view.textContent).toContain("raw/inbox/2026-10-13-karpathy-llm-wiki.md")
+  })
+
+  it("DocView：SCHEMA.md 叶=fs/file 只读渲染；_retired 叶走 doc 不错绑活跃页（全路径精确配判据钉）；非 md 置灰", async () => {
+    render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+
+    fireEvent.click(fsRow("SCHEMA.md")!)
+    const doc = await screen.findByTestId("kc-doc-view")
+    expect(doc.textContent).toContain("SCHEMA.md")
+    await waitFor(() => expect(document.querySelector("[data-md-preview]")!.textContent).toContain("人机共演纪律"))
+    expect(calls.some(c => /\/wiki\/article\//.test(c.url))).toBe(false)
+
+    // _retired 展开后点击：落 DocView（发 fs/file 请求），且绝不发 article 请求（防退役页错绑活跃页）
+    fireEvent.click(fsRow("wiki/_retired")!)
+    fireEvent.click(fsRow("wiki/_retired/con-bye.md")!)
+    await waitFor(() => expect(calls.some(c => c.url.includes("wiki%2F_retired%2Fcon-bye.md"))).toBe(true))
+    expect(calls.some(c => /\/wiki\/article\//.test(c.url))).toBe(false)
+
+    // 非 md 叶置灰不可点
+    fireEvent.click(fsRow("_archive")!)
+    const jsonRow = fsRow("_archive/pending-review-2026-10-14.json")! as HTMLButtonElement
+    expect(jsonRow.disabled).toBe(true)
   })
 
   it("INDEX 总览特殊项：点开=tree.index 只读渲染（导航层上树，ADR-0033）", async () => {
@@ -493,7 +588,7 @@ describe("LOG.md 时间线视图（行格式渲染 + 前缀过滤）", () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
 
-    fireEvent.click(screen.getByRole("button", { name: /LOG\.md 时间线/ }))
+    fireEvent.click(screen.getByTestId("kc-select-log"))
     const view = await screen.findByTestId("kc-log-view")
 
     expect(view.textContent).toContain("2026-10-13")
@@ -506,7 +601,7 @@ describe("LOG.md 时间线视图（行格式渲染 + 前缀过滤）", () => {
   it("前缀过滤 ingest/compile/query/lint/revert：点 compile 只剩编译行", async () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
-    fireEvent.click(screen.getByRole("button", { name: /LOG\.md 时间线/ }))
+    fireEvent.click(screen.getByTestId("kc-select-log"))
     await screen.findByTestId("kc-log-view")
 
     fireEvent.click(screen.getByRole("button", { name: /^compile$/ }))

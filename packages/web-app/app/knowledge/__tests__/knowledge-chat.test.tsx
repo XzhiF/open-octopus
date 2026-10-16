@@ -127,6 +127,7 @@ function makeStub(opts: { compileScript?: string[]; revertScript?: string[]; rev
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown): Stub => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/top-knowledge-injection")) return json(ARTICLE_INJ)
     if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
@@ -294,6 +295,7 @@ describe("AC5 回滚钮：二次确认 → POST /revert → 任务态回灌原�
       if (u.includes("/wiki/revert/task/")) return json({ task: { id: "rvt-1", commit: COMMIT, status: "failed", error: { code: "LOCK_HELD", message: "锁被占用" } } })
       if (u.includes("/wiki/revert")) return json({ taskId: "rvt-1", commit: COMMIT, status: "queued" })
       if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
       if (u.includes("/knowledge/health")) return json(HEALTH)
       if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
       return json({})
@@ -404,6 +406,7 @@ describe("D-kc15-1 抓取卡「重试编译」入口（票07 S4）", () => {
       calls.push({ url: u, method, body: String(init?.body ?? "") })
       const json = (v: unknown, status = 200): Stub => ({ ok: status < 400, status, json: async () => v })
       if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
       if (u.includes("/knowledge/health")) return json(HEALTH)
       if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
       if (u.includes("/api/knowledge/ingest")) return json({

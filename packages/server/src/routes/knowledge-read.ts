@@ -5,6 +5,7 @@ import { WikiArticleDAO } from "../db/dao/wiki-article-dao"
 import { GLOBAL_WIKI_ORG, resolveGlobalKnowledgeRoot } from "../services/knowledge/global-paths"
 import { resolveWikiRootCompat } from "../services/knowledge/wiki/paths"
 import { IngestError, listRawSources, readRawSource } from "../services/knowledge/raw"
+import { listKnowledgeFsTree, readKnowledgeFile } from "../services/knowledge/fs"
 import { spawnGit, wikiHead } from "../services/knowledge/wiki/wiki-git"
 import { WIKI_DOMAIN_TO_PAGE_TYPE, WikiPageTypeValues, type WikiDomain, type WikiPageType } from "@octopus/shared"
 import { errorResponse } from "../services/knowledge/validators"
@@ -15,6 +16,8 @@ import { errorResponse } from "../services/knowledge/validators"
  *   GET /log   — LOG.md 时间线（行数组 + op 前缀过滤），真 fs 读 wiki 根，缺失诚实降级 []。
  *   GET /raw   — raw 源列表（path/bytes/hash/origin，只读）。
  *   GET /raw/* — raw 单文件读（拒绝路径穿越）。
+ *   GET /fs     — 知识根目录树只读投影（真实目录树改版 20261016；单源 services/knowledge/fs.ts）。
+ *   GET /fs/file — 知识根下任意 .md 只读（?path=rel，Windows 路径闸判序）。
  *   GET /health — 健康条聚合（页数按类/raw 源数/本周 ingest/队列深度/findings/
  *                最近编译/git HEAD）。队列深度接票06 全局编译队列实值（未注入 ⇒
  *                稳定零值）；findings 在票13 就位前返回零值——契约形状先定，
@@ -147,6 +150,31 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
       return c.json({ org: GLOBAL_WIKI_ORG, ...source })
     } catch (err) {
       return fail(c, err, "knowledge-read.raw.file")
+    }
+  })
+
+  // GET /api/knowledge/fs — 知识根目录树只读投影（知识中心左栏真实目录树，20261016）。
+  // 排除纪律（隐藏/user_preference 防复活）与 raw 子树同口径闸的**单源在 services/knowledge/fs.ts**；
+  // 根缺席 404 诚实显形。与 /wiki/tree（DB 分组面）互不动契约。
+  routes.get("/fs", (c) => {
+    try {
+      const { tree, truncated, total } = listKnowledgeFsTree(knowledgeRootOf())
+      return c.json({ org: GLOBAL_WIKI_ORG, root: "knowledge", tree, truncated, total })
+    } catch (err) {
+      return fail(c, err, "knowledge-read.fs.tree")
+    }
+  })
+
+  // GET /api/knowledge/fs/file?path=rel — 知识根下任意 .md 只读（SCHEMA.md/drafts/_archive/
+  // wiki 未编散页共用）；Windows 路径闸判序与 400/404/413 语义全在 readKnowledgeFile。
+  routes.get("/fs/file", (c) => {
+    try {
+      const rel = c.req.query("path") ?? ""
+      if (!rel) throw new IngestError("INVALID_PARAM", "query parameter path is required", 400)
+      const doc = readKnowledgeFile(knowledgeRootOf(), rel)
+      return c.json({ org: GLOBAL_WIKI_ORG, ...doc })
+    } catch (err) {
+      return fail(c, err, "knowledge-read.fs.file")
     }
   })
 

@@ -127,6 +127,7 @@ function makeStub() {
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/")) return json(ARTICLE)
     if (u.includes("/knowledge/findings")) return json({ org: "global", findings: [] })

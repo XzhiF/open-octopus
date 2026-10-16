@@ -204,6 +204,39 @@ export async function listKcRawSources(): Promise<KcRawSource[]> {
   return handleResponse<{ org: string; sources: KcRawSource[] }>(res).then(d => d.sources)
 }
 
+// ============ 知识根目录树只读面（左栏真实目录树改版 20261016） ============
+// 服务端单源 packages/server/src/services/knowledge/fs.ts：排除纪律（隐藏/.git、
+// user_preference 防复活）与 raw 子树同口径闸都在那里；类型双端各定一份（KcTree 先例，shared 不动）。
+
+export interface FsNode {
+  /** basename，不含分隔符 */
+  name: string
+  /** 知识根相对、POSIX 分隔（如 `wiki/concepts/con-a.md`） */
+  path: string
+  kind: "dir" | "file"
+  children?: FsNode[]
+}
+
+export interface KcFsTree {
+  org: string
+  root: string
+  tree: FsNode[]
+  truncated: boolean
+  total: number
+}
+
+/** 知识根目录树投影（左栏数据面；根缺席 404 诚实显形）。 */
+export async function getKcFs(): Promise<KcFsTree> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/fs`)
+  return handleResponse<KcFsTree>(res)
+}
+
+/** 知识根下任意 .md 只读读（SCHEMA.md/drafts/_archive/wiki 未编散页共用 DocView 面）。 */
+export async function getKcFsFile(relPath: string): Promise<{ path: string; content: string; bytes: number }> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/fs/file?path=${encodeURIComponent(relPath)}`)
+  return handleResponse<{ org: string; path: string; content: string; bytes: number }>(res)
+}
+
 // 原 /api/knowledge/preference 读包装已删（ADR-0033：偏好概念整体清除）。
 
 // ============ 票12 写面 API（ingest/编译任务/队列位次/revert）============

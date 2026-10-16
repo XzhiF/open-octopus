@@ -35,15 +35,98 @@ test.describe("知识中心 · wiki 主场 + 策展人抽屉", () => {
     expect(asideAfter!.x).toBeCloseTo(asideBox!.x, 1)
     expect(Math.abs(stageAfter - stageBefore)).toBeLessThan(1)
 
+    // 几何钉（bug-fix 20261016）：抽屉顶边必须落在页头下沿之下——
+    // 原 fixed inset-y-0 顶到视口最上沿，页头 z-[60] 横条贯穿面板。
+    const drawerBox = await page.getByTestId("kc-curator-drawer").boundingBox()
+    const headerBox = await page.getByTestId("kc-page-header").boundingBox()
+    expect(drawerBox).not.toBeNull()
+    expect(headerBox).not.toBeNull()
+    expect(drawerBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1)
+
     // 拖宽把手存在且抽屉可关闭
     await expect(page.getByTestId("kc-drawer-resize")).toBeVisible()
     await page.getByTestId("kc-drawer-close").click()
     await expect(page.getByTestId("kc-curator-drawer")).toHaveClass(/translate-x-\[102%\]/, { timeout: 5000 })
   })
 
+  test("阅读史栈导航：页头 ←/→ 与浏览器前进/后退共栈（替代浏览器导航，跳链可快速返回）", async ({ page }) => {
+    // 史栈 [空(0), index(1), log(2)]：初始空态，← disabled
+    await expect(page.getByTestId("kc-nav-back")).toBeDisabled()
+    await expect(page.getByTestId("kc-empty-state")).toBeVisible()
+    await page.getByTestId("kc-select-index").click()
+    await expect(page.getByTestId("kc-index-view")).toBeVisible()
+    await page.getByTestId("kc-select-log").click()
+    await expect(page.getByTestId("kc-log-view")).toBeVisible()
+    await expect(page.getByTestId("kc-nav-back")).toBeEnabled()
+    await expect(page.getByTestId("kc-nav-forward")).toBeDisabled()
+
+    // 页头 ←：log → index（history.go(-1) → popstate 唯一提交点）
+    await page.getByTestId("kc-nav-back").click()
+    await expect(page.getByTestId("kc-index-view")).toBeVisible()
+
+    // 浏览器 back：index → 空态（证明与页头箭头同一个浏览器历史栈）
+    await page.goBack()
+    await expect(page.getByTestId("kc-empty-state")).toBeVisible()
+    await expect(page.getByTestId("kc-nav-back")).toBeDisabled()
+
+    // 浏览器 forward ×2 → 空态→index→log；页头 → 此时仍 disabled（栈尾），← 可点
+    await page.goForward()
+    await expect(page.getByTestId("kc-index-view")).toBeVisible()
+    await page.goForward()
+    await expect(page.getByTestId("kc-log-view")).toBeVisible()
+    await expect(page.getByTestId("kc-nav-forward")).toBeDisabled()
+
+    // 新导航截断前向分支：回 index 后点树打开 LOG 之外的页，史栈尾替换
+    await page.getByTestId("kc-nav-back").click() // log → index
+    await page.getByTestId("kc-nav-back").click() // index → 空态
+    await expect(page.getByTestId("kc-empty-state")).toBeVisible()
+    await page.getByTestId("kc-select-index").click() // push 截断：栈=[空, index]
+    await expect(page.getByTestId("kc-nav-forward")).toBeDisabled()
+  })
+
+  test("左树拖宽：把手骑分界线，拖拽即时改宽且刷新后记忆（视图态 localStorage）", async ({ page }) => {
+    const aside = page.locator("aside")
+    const before = (await aside.boundingBox())!
+    const hb = (await page.getByTestId("kc-tree-resize").boundingBox())!
+    // 把手中心应压在树/正文分界线上（±2px）
+    expect(Math.abs(hb.x + hb.width / 2 - (before.x + before.width))).toBeLessThan(2)
+
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(hb.x + hb.width / 2 + 150, hb.y + 200, { steps: 6 })
+    await page.mouse.up()
+    const after = (await aside.boundingBox())!
+    expect(after.width).toBeGreaterThan(before.width + 100)
+
+    await page.reload()
+    await page.waitForSelector('[data-testid="kc-tree-ready"]', { timeout: 15000 })
+    const reloaded = (await aside.boundingBox())!
+    expect(Math.abs(reloaded.width - after.width)).toBeLessThan(2)
+  })
+
+  test("真实目录树（改版 20261016）：根层直呈 .octopus/knowledge 结构，SCHEMA.md 开 DocView", async ({ page }) => {
+    const root = page.getByTestId("kc-tree-ready")
+    // 根层 = 盘上实况（目录先行）；user_preference/.git 被 /fs 端点排除
+    await expect(root.locator('[data-kc-fs-path="_archive"]')).toBeVisible()
+    await expect(root.locator('[data-kc-fs-path="raw"]')).toBeVisible()
+    await expect(root.locator('[data-kc-fs-path="SCHEMA.md"]')).toBeVisible()
+    await expect(root.locator('[data-kc-fs-path="wiki"]')).toBeVisible()
+    // System 三入口收进树：INDEX/LOG 文件叶 + raw 目录行（智能展开默认可见）
+    await expect(root.locator('[data-kc-fs-path="wiki/INDEX.md"]')).toBeVisible()
+    await expect(root.locator('[data-kc-fs-path="wiki/LOG.md"]')).toBeVisible()
+    // 活页目录自动展开（叶直接可见），归档 _retired 默认收起
+    await expect(root.locator('[data-kc-fs-path^="wiki/concepts/"]').first()).toBeVisible()
+    await expect(root.locator('[data-kc-fs-path^="wiki/_retired/"]')).toHaveCount(0)
+    // SCHEMA.md → fs/file 只读视图
+    await root.locator('[data-kc-fs-path="SCHEMA.md"]').click()
+    await expect(page.getByTestId("kc-doc-view")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId("kc-doc-view")).toContainText("SCHEMA.md")
+  })
+
   test("树导航 → 页渲染 → 右栏三件套在场（目录/反链/实效账）", async ({ page }) => {
-    const firstPage = page.locator('[data-testid="kc-tree-ready"] button').filter({ hasText: /▸/ }).first()
-    await firstPage.click()
+    // 活页叶（entryMap 全路径精确配命中）直接可点——不硬编码页名，取 concepts 首叶
+    const firstLeaf = page.getByTestId("kc-tree-ready").locator('[data-kc-fs-path^="wiki/concepts/"]').first()
+    await firstLeaf.click()
     await expect(page.getByTestId("kc-page-title")).toBeVisible({ timeout: 10000 })
     await expect(page.getByTestId("kc-crumb")).toBeVisible()
     // 1440px 视口 = xl 断点，右栏应现
@@ -125,6 +208,15 @@ test.describe("引用药丸 · 卡→丸→点开跳转闭环", () => {
       const u = route.request().url()
       const j = (v: unknown) => route.fulfill({ json: v as never })
       if (u.includes("/wiki/tree")) return j(tree)
+      // /fs 真实目录树投影（改版 20261016）：与 fixture tree 对齐——否则 kc-tree-ready 不 mount
+      if (u.includes("/knowledge/fs")) return j({ org: "global", root: "knowledge", truncated: false, total: 2, tree: [
+        { name: "wiki", path: "wiki", kind: "dir", children: [
+          { name: "concepts", path: "wiki/concepts", kind: "dir", children: [
+            { name: "con-e2e-pill.md", path: "wiki/concepts/con-e2e-pill.md", kind: "file" },
+          ] },
+          { name: "INDEX.md", path: "wiki/INDEX.md", kind: "file" },
+        ] },
+      ] })
       if (u.includes("/knowledge/health")) return j({ org: "global", pages: { total: 1, entity: 0, concept: 1, topic: 0, source: 0, case: 0 }, rawSources: 0, ingestedThisWeek: 0, openFindings: 0, queueDepth: 0, avgConfidence: null, score: null, lastCompiled: "", gitHead: null })
       if (u.includes("/wiki/article/")) return j(article)
       if (u.includes("/knowledge/findings")) return j({ org: "global", findings: [] })
