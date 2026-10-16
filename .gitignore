@@ -60,3 +60,5 @@ e2e-screenshots/
 
 # 本地依赖编排的私密变量（Neo4j 密码等）
 infra/.env
+.claude/sessions/
+packages/*/dist-scripts/
