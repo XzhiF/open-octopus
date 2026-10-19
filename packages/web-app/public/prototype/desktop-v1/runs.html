@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus Desktop — Runs</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="runs" data-nav="runs" data-scene="Runs" data-crumb="feat-desktop-shell / execution #e2f1" data-running="1 run">
+  <div class="app">
+    <div class="shell">
+      <main class="canvas" id="canvas" aria-label="Execution desktop">
+
+        <!-- Run graph -->
+        <article class="win" data-win="graph" data-title="Execution · #e2f1" data-sub="feat-desktop-shell · 4/7 nodes · live" data-icon="activity"
+                 data-x="24" data-y="18" data-w="750" data-h="600">
+          <div class="tabs" data-tabs>
+            <button class="tab is-active" data-tab="graph"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg>Graph</button>
+            <button class="tab" data-tab="timeline"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-history"/></svg>Timeline</button>
+            <button class="tab" data-tab="usage"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-cpu"/></svg>Usage</button>
+            <div class="grow"></div>
+            <span class="pill amber" style="margin-right:4px"><i class="dot live"></i>running</span>
+            <button class="iconbtn" data-toast="Run paused" data-toast-icon="pause" title="Pause"><svg class="i" viewBox="0 0 24 24"><use href="#i-pause"/></svg></button>
+            <button class="iconbtn" data-toast="Run aborted" data-toast-icon="stop" title="Abort"><svg class="i" viewBox="0 0 24 24"><use href="#i-stop"/></svg></button>
+          </div>
+
+          <div class="tabpane is-active" data-pane="graph">
+            <div class="graph-wrap">
+              <div class="graph-toolbar">
+                <button class="btn btn-sm" data-toast="Fit to view" data-toast-icon="scale"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-scale"/></svg>Fit</button>
+                <button class="btn btn-sm" data-toast="Reset layout" data-toast-icon="refresh"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>Layout</button>
+                <span style="width:1px;height:16px;background:var(--line)"></span>
+                <span class="chip"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-shield"/></svg>guard on</span>
+              </div>
+
+              <div class="graph-stage" data-graph-fit data-stage-w="760" data-stage-h="440">
+                <svg class="edges" viewBox="0 0 760 440" aria-hidden="true">
+                  <path class="done" d="M180 81 H204"/>
+                  <path class="done" d="M360 81 H384"/>
+                  <path class="done" d="M462 114 V300"/>
+                  <path d="M540 331 H564"/>
+                  <path d="M540 331 H600 V114 H642"/>
+                  <path class="done" d="M384 81 H372 V331 H360" stroke-dasharray="3 3"/>
+                  <path class="done" d="M282 300 V114" stroke-dasharray="3 3"/>
+                </svg>
+
+                <div class="node is-done" style="left:24px;top:50px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><b>Intake</b><span class="dot c-green"></span></div>
+                  <div class="nmeta"><span>bash</span><span class="nm">1.2s</span></div>
+                </div>
+                <div class="node is-done" style="left:204px;top:50px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-brain"/></svg></span><b>Build</b><span class="dot c-green"></span></div>
+                  <div class="nmeta"><span>agent · 7 turns</span><span class="nm">18.2k</span></div>
+                </div>
+                <div class="node is-done" style="left:384px;top:50px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-message"/></svg></span><b>Review</b><span class="pill purple" style="height:17px;font-size:8px">×2</span></div>
+                  <div class="nmeta"><span>swarm · debate</span><span class="nm">9.4k</span></div>
+                </div>
+                <div class="node is-queued" style="left:564px;top:50px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-git-pr"/></svg></span><b>Deliver</b><span class="dot"></span></div>
+                  <div class="nmeta"><span>approval</span><span class="nm">—</span></div>
+                </div>
+                <div class="node is-done" style="left:204px;top:300px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-wand"/></svg></span><b>Fix</b><span class="dot c-green"></span></div>
+                  <div class="nmeta"><span>agent · 2 turns</span><span class="nm">4.8k</span></div>
+                </div>
+                <div class="node is-running" style="left:384px;top:300px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span><b>Verify</b><span class="dot c-amber live"></span></div>
+                  <div class="nmeta"><span>acceptance · probe 4/5</span><span class="nm">live</span></div>
+                  <div class="nbar"><div class="bar amber"><i style="width:80%"></i></div></div>
+                </div>
+                <div class="node is-queued" style="left:564px;top:300px">
+                  <div class="nh"><span class="ni"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-history"/></svg></span><b>Archive</b><span class="dot"></span></div>
+                  <div class="nmeta"><span>knowledge</span><span class="nm">—</span></div>
+                </div>
+              </div>
+
+              <div class="graph-legend">
+                <span><i style="background:var(--green)"></i>done</span>
+                <span><i style="background:var(--accent)"></i>running</span>
+                <span><i style="background:var(--line-strong)"></i>queued</span>
+                <span style="opacity:.6">loop edges are dashed</span>
+              </div>
+              <div class="graph-zoom">4/7 · 21m 08s</div>
+            </div>
+          </div>
+
+          <div class="tabpane" data-pane="timeline">
+            <div class="scroll" style="padding:12px">
+              <div class="cap" style="margin-bottom:8px">Node events</div>
+              <div class="steps">
+                <div class="step is-done"><span class="sdot"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="sbody"><b>Intake · bash</b><span>worktree ready · branch feat-desktop-shell</span></div><span class="stime">00:01</span></div>
+                <div class="step is-done"><span class="sdot"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="sbody"><b>Build · agent</b><span>7 turns · 6 files · lint clean</span></div><span class="stime">18:24</span></div>
+                <div class="step is-done"><span class="sdot"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="sbody"><b>Review · swarm</b><span>2 rounds · consensus 0.86</span></div><span class="stime">19:02</span></div>
+                <div class="step is-done"><span class="sdot"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="sbody"><b>Fix · agent</b><span>focus order corrected</span></div><span class="stime">20:11</span></div>
+                <div class="step is-live"><span class="sdot"><svg class="i" viewBox="0 0 24 24"><use href="#i-loader"/></svg></span><div class="sbody"><b>Verify · acceptance</b><span>probe 4/5 · keyboard focus</span></div><span class="stime">21:08</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tabpane" data-pane="usage">
+            <div class="scroll" style="padding:12px">
+              <div class="run-metrics">
+                <div class="metric"><div class="m-label">Processed</div><div class="m-val">64.8<small>k</small></div></div>
+                <div class="metric"><div class="m-label">Rounds</div><div class="m-val">18</div></div>
+                <div class="metric"><div class="m-label">Cost</div><div class="m-val">$1.42</div></div>
+              </div>
+              <div class="section-label">By node</div>
+              <div class="stack tight">
+                <div class="between"><span class="tiny dim">Build</span><span class="mono-num">18.2k</span></div>
+                <div class="bar"><i style="width:76%"></i></div>
+                <div class="between"><span class="tiny dim">Review</span><span class="mono-num">9.4k</span></div>
+                <div class="bar purple"><i style="width:38%;background:var(--purple)"></i></div>
+                <div class="between"><span class="tiny dim">Fix</span><span class="mono-num">4.8k</span></div>
+                <div class="bar"><i style="width:20%"></i></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Usage -->
+        <article class="win" data-win="usage" data-title="Cost & tokens" data-sub="this execution" data-icon="wallet"
+                 data-x="790" data-y="18" data-w="500" data-h="400">
+          <div class="between" style="padding:10px 12px;border-bottom:1px solid var(--line-soft)">
+            <div class="row"><b style="font-size:11px">Consumption</b><span class="pill">live</span></div>
+            <span class="mono-num faint">updated 2s ago</span>
+          </div>
+          <div class="scroll" style="padding:12px">
+            <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+              <div class="stat"><div class="label">Tokens</div><div class="value">64.8<small>k</small></div><div class="trend">↑ 18% vs last run</div></div>
+              <div class="stat"><div class="label">Rounds</div><div class="value">18</div><div class="trend">7 LLM · 2 swarm</div></div>
+              <div class="stat"><div class="label">Cost</div><div class="value">$1.42</div><div class="trend">$0.066 / round</div></div>
+            </div>
+            <div class="between" style="margin-top:12px"><span class="cap">Cumulative cost</span><span class="mono-num faint">$2.00 budget</span></div>
+            <svg class="spark" viewBox="0 0 300 58" preserveAspectRatio="none" aria-label="Cost trend">
+              <path class="area" d="M0,54 L0,50 L28,49 L56,45 L84,44 L112,38 L140,35 L168,31 L196,24 L224,21 L252,15 L280,12 L300,8 L300,58 L0,58 Z"/>
+              <path class="line" d="M0,50 L28,49 L56,45 L84,44 L112,38 L140,35 L168,31 L196,24 L224,21 L252,15 L280,12 L300,8"/>
+            </svg>
+            <div class="between tiny faint" style="margin-top:2px"><span>08:52</span><span>now</span></div>
+            <div class="section-label">By model</div>
+            <div class="stack tight">
+              <div class="row"><span class="tiny dim grow">opus-4-6</span><span class="mono-num">42.1k</span><span class="tiny faint">$0.98</span><span style="width:90px"><div class="bar"><i style="width:72%"></i></div></span></div>
+              <div class="row"><span class="tiny dim grow">sonnet-4-6</span><span class="mono-num">16.4k</span><span class="tiny faint">$0.31</span><span style="width:90px"><div class="bar blue"><i style="width:32%"></i></div></span></div>
+              <div class="row"><span class="tiny dim grow">haiku-4</span><span class="mono-num">6.3k</span><span class="tiny faint">$0.13</span><span style="width:90px"><div class="bar green"><i style="width:14%"></i></div></span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Logs -->
+        <article class="win" data-win="logs" data-title="Live logs" data-sub="event stream · SSE" data-icon="terminal"
+                 data-x="790" data-y="430" data-w="500" data-h="350">
+          <div class="tabs" data-tabs>
+            <button class="tab is-active" data-tab="all">All <span class="count">148</span></button>
+            <button class="tab" data-tab="tool">Tools</button>
+            <button class="tab" data-tab="harness">Harness</button>
+            <div class="grow"></div>
+            <span class="pill green" style="margin-right:4px"><i class="dot live"></i>SSE</span>
+            <button class="iconbtn" data-toast="Logs copied" data-toast-icon="copy" title="Copy"><svg class="i" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button>
+          </div>
+          <div class="tabpane is-active" data-pane="all">
+            <div class="logs">
+              <div class="log-row"><time>09:41:02</time><span class="li c-amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span><div class="log-msg"><b>verify</b> probe 4/5 started · keyboard focus order</div></div>
+              <div class="log-row"><time>09:40:58</time><span class="li c-green"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="log-msg"><b>fix</b> node completed · +42 lines, −8 lines</div></div>
+              <div class="log-row"><time>09:40:21</time><span class="li c-purple"><svg class="i" viewBox="0 0 24 24"><use href="#i-message"/></svg></span><div class="log-msg"><b>review</b> consensus 0.86 · 2 experts agreed</div></div>
+              <div class="log-row"><time>09:39:44</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg></span><div class="log-msg"><b>bash</b> pnpm lint --filter web-app · exit 0</div></div>
+              <div class="log-row"><time>09:38:12</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-file-code"/></svg></span><div class="log-msg"><b>write_file</b> assets/app.css · 42,118 bytes</div></div>
+              <div class="log-row"><time>09:37:50</time><span class="li c-amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-zap"/></svg></span><div class="log-msg"><b>build</b> turn 7/8 · 2,184 tokens</div></div>
+              <div class="log-row"><time>09:36:31</time><span class="li"><svg class="i" viewBox="0 0 24 24"><use href="#i-clock"/></svg></span><div class="log-msg"><b>engine</b> checkpoint saved · resumable</div></div>
+              <div class="log-row"><time>09:35:09</time><span class="li c-green"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><div class="log-msg"><b>plan</b> node completed · 12.4k tokens · $0.31</div></div>
+            </div>
+          </div>
+          <div class="tabpane" data-pane="tool">
+            <div class="logs">
+              <div class="log-row"><time>09:40:44</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg></span><div class="log-msg"><b>bash</b> pnpm lint --filter web-app <span class="c-green">ok</span></div></div>
+              <div class="log-row"><time>09:39:12</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg></span><div class="log-msg"><b>bash</b> pnpm exec tsc --noEmit <span class="c-green">ok</span></div></div>
+              <div class="log-row"><time>09:38:12</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-file-code"/></svg></span><div class="log-msg"><b>write_file</b> assets/app.css · 42,118 bytes</div></div>
+              <div class="log-row"><time>09:37:39</time><span class="li c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-file-code"/></svg></span><div class="log-msg"><b>write_file</b> index.html · 12,840 bytes</div></div>
+            </div>
+          </div>
+          <div class="tabpane" data-pane="harness">
+            <div class="logs">
+              <div class="log-row"><time>09:41:02</time><span class="li c-amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span><div class="log-msg"><b>harness</b> budget check passed · $1.42 / $2.00</div></div>
+              <div class="log-row"><time>09:39:44</time><span class="li c-green"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span><div class="log-msg"><b>harness</b> command allowlist matched · pnpm lint</div></div>
+              <div class="log-row"><time>09:35:00</time><span class="li c-green"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span><div class="log-msg"><b>harness</b> no intervention required</div></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Harness minimized -->
+        <article class="win" data-win="harness" data-title="Harness" data-sub="guard · 3 detectors" data-icon="shield"
+                 data-x="790" data-y="250" data-w="500" data-h="380" data-min="1">
+          <div class="pane stack">
+            <div class="between">
+              <div><div class="cap">Guard</div><h2 style="margin:3px 0 0;font-size:15px">No intervention</h2></div>
+              <span class="pill green">healthy</span>
+            </div>
+            <div class="stack tight">
+              <div class="between"><span class="small dim">budget detector</span><span class="pill green">pass</span></div>
+              <div class="between"><span class="small dim">command allowlist</span><span class="pill green">pass</span></div>
+              <div class="between"><span class="small dim">context overflow</span><span class="pill green">pass</span></div>
+              <div class="between"><span class="small dim">timeout watchdog</span><span class="pill">armed</span></div>
+            </div>
+            <div class="callout">Interventions are window-local. A harness warning opens its own inspector instead of replacing the run graph.</div>
+          </div>
+        </article>
+
+        <div class="canvas-hint">
+          <svg class="i sm" viewBox="0 0 24 24"><use href="#i-layers"/></svg>
+          open the harness or logs in parallel · each window keeps its own scroll and tab state
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>

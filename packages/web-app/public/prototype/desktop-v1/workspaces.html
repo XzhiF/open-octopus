@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus Desktop — Spaces</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="workspaces" data-nav="workspace" data-scene="Spaces" data-crumb="personal / 7 spaces · 2 live" data-running="2 live">
+  <div class="app">
+    <div class="shell">
+      <main class="canvas" id="canvas" aria-label="Workspace spaces desktop">
+
+        <!-- Workspace list -->
+        <article class="win" data-win="spaces" data-title="Spaces" data-sub="7 workspaces · 2 live" data-icon="folder-git"
+                 data-x="24" data-y="18" data-w="760" data-h="650">
+          <div class="between" style="padding:9px 12px;border-bottom:1px solid var(--line-soft)">
+            <div class="row">
+              <label class="searchbox" style="width:190px"><svg class="i" viewBox="0 0 24 24"><use href="#i-search"/></svg><input placeholder="Search spaces" /></label>
+              <button class="chip" data-toast="Filter: all states"><svg class="i" viewBox="0 0 24 24"><use href="#i-filter"/></svg>all</button>
+              <button class="chip" data-toast="Expanded"><svg class="i" viewBox="0 0 24 24"><use href="#i-layers"/></svg>expand</button>
+            </div>
+            <div class="row tight">
+              <span class="tiny faint">7 total</span>
+              <button class="btn btn-primary btn-sm" data-toast="New workspace form focused" data-toast-icon="plus"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>New</button>
+            </div>
+          </div>
+
+          <div class="scroll" style="padding:12px 12px 16px">
+            <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+              <div class="stat"><div class="label">Running</div><div class="value">2</div><div class="trend c-amber">live worktrees</div></div>
+              <div class="stat"><div class="label">Idle</div><div class="value">3</div><div class="trend">ready to attach</div></div>
+              <div class="stat"><div class="label">Workflows</div><div class="value">18</div><div class="trend">across spaces</div></div>
+              <div class="stat"><div class="label">Archived</div><div class="value">2</div><div class="trend">cold storage</div></div>
+            </div>
+
+            <div class="section-label" style="margin-top:14px">Live</div>
+            <div class="ws-grid">
+              <a class="ws-card is-live" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico c-amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg></span>
+                    <div><h4>feat-desktop-shell</h4><div class="ws-sub">open-octopus · feature branch</div></div>
+                  </div>
+                  <span class="pill amber"><i class="dot live"></i>running</span>
+                </div>
+                <div class="ws-path">~/.octopus/workspaces/open-octopus/feat-desktop-shell</div>
+                <div class="ws-meta"><span class="chip">3 workflows</span><span class="chip">agent + bash</span><span class="chip">port 3102</span></div>
+                <div class="ws-foot"><span>2m ago</span><span>·</span><span>node 3/6 · build</span><span class="grow"></span><span class="link">Open <svg class="i sm" viewBox="0 0 24 24"><use href="#i-arrow-right"/></svg></span></div>
+              </a>
+
+              <a class="ws-card is-live" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico c-purple"><svg class="i" viewBox="0 0 24 24"><use href="#i-bot"/></svg></span>
+                    <div><h4>research-scout</h4><div class="ws-sub">open-octopus · clone worktree</div></div>
+                  </div>
+                  <span class="pill amber"><i class="dot live"></i>running</span>
+                </div>
+                <div class="ws-path">~/.octopus/workspaces/open-octopus/research-scout</div>
+                <div class="ws-meta"><span class="chip">2 workflows</span><span class="chip">agent</span><span class="chip">port 3104</span></div>
+                <div class="ws-foot"><span>8m ago</span><span>·</span><span>reading 18 wiki pages</span><span class="grow"></span><span class="link">Open <svg class="i sm" viewBox="0 0 24 24"><use href="#i-arrow-right"/></svg></span></div>
+              </a>
+            </div>
+
+            <div class="section-label" style="margin-top:14px">Idle</div>
+            <div class="ws-grid">
+              <a class="ws-card" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico"><svg class="i" viewBox="0 0 24 24"><use href="#i-folder-git"/></svg></span>
+                    <div><h4>main</h4><div class="ws-sub">open-octopus · main</div></div>
+                  </div>
+                  <span class="pill green">ready</span>
+                </div>
+                <div class="ws-path">~/.octopus/workspaces/open-octopus/main</div>
+                <div class="ws-meta"><span class="chip">6 workflows</span><span class="chip">bash</span><span class="chip">port 3100</span></div>
+                <div class="ws-foot"><span>1h ago</span><span>·</span><span>last run passed</span><span class="grow"></span><span class="link">Open</span></div>
+              </a>
+
+              <a class="ws-card" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico"><svg class="i" viewBox="0 0 24 24"><use href="#i-folder-git"/></svg></span>
+                    <div><h4>acceptance-r2</h4><div class="ws-sub">open-octopus · task workspace</div></div>
+                  </div>
+                  <span class="pill green">ready</span>
+                </div>
+                <div class="ws-path">~/.octopus/tasks/118/acceptance-r2</div>
+                <div class="ws-meta"><span class="chip">1 workflow</span><span class="chip">acceptance</span><span class="chip">port 3110</span></div>
+                <div class="ws-foot"><span>waiting on you</span><span class="grow"></span><span class="link">Open</span></div>
+              </a>
+
+              <a class="ws-card" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico"><svg class="i" viewBox="0 0 24 24"><use href="#i-folder-git"/></svg></span>
+                    <div><h4>hotfix-auth</h4><div class="ws-sub">open-octopus · bugfix</div></div>
+                  </div>
+                  <span class="pill red">error</span>
+                </div>
+                <div class="ws-path">~/.octopus/workspaces/open-octopus/hotfix-auth</div>
+                <div class="ws-meta"><span class="chip">2 workflows</span><span class="chip">bash</span><span class="chip">port 3106</span></div>
+                <div class="ws-foot"><span>harness paused</span><span>·</span><span class="c-red">check worktree</span><span class="grow"></span><span class="link">Open</span></div>
+              </a>
+            </div>
+
+            <div class="section-label" style="margin-top:14px">Cold storage</div>
+            <div class="ws-grid">
+              <a class="ws-card" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico"><svg class="i" viewBox="0 0 24 24"><use href="#i-database"/></svg></span>
+                    <div><h4>archive-2026-W41</h4><div class="ws-sub">compiled · 12 experiences</div></div>
+                  </div>
+                  <span class="pill">cold</span>
+                </div>
+                <div class="ws-path">~/.octopus/archive/2026-W41</div>
+                <div class="ws-meta"><span class="chip">$41.20</span><span class="chip">3h 12m</span><span class="chip">12 skills</span></div>
+                <div class="ws-foot"><span>archived 2d ago</span><span class="grow"></span><span class="link">View</span></div>
+              </a>
+
+              <a class="ws-card" href="workspace.html">
+                <div class="between">
+                  <div class="row">
+                    <span class="res-ico"><svg class="i" viewBox="0 0 24 24"><use href="#i-database"/></svg></span>
+                    <div><h4>archive-2026-W40</h4><div class="ws-sub">compiled · 8 experiences</div></div>
+                  </div>
+                  <span class="pill">cold</span>
+                </div>
+                <div class="ws-path">~/.octopus/archive/2026-W40</div>
+                <div class="ws-meta"><span class="chip">$28.40</span><span class="chip">1h 48m</span><span class="chip">8 skills</span></div>
+                <div class="ws-foot"><span>archived 9d ago</span><span class="grow"></span><span class="link">View</span></div>
+              </a>
+            </div>
+          </div>
+        </article>
+
+        <!-- Create workspace -->
+        <article class="win" data-win="create" data-title="New workspace" data-sub="worktree · DB · port" data-icon="plus"
+                 data-x="796" data-y="18" data-w="470" data-h="560">
+          <div class="pane stack" style="gap:12px">
+            <div>
+              <div class="eyebrow">Create space</div>
+              <h2 style="margin:5px 0 2px;font-size:17px;letter-spacing:-.025em">New workspace</h2>
+              <p class="tiny faint" style="margin:0">Isolated git worktree, database and port. Nothing leaks into main.</p>
+            </div>
+
+            <div class="stack tight">
+              <div class="between"><span class="small dim">Name</span><span class="tiny faint">A–Z · a–z · 0–9 · _ -</span></div>
+              <input class="input" value="feat-desktop-shell" />
+            </div>
+
+            <div class="stack tight">
+              <div class="between"><span class="small dim">Organization</span><span class="pill">personal</span></div>
+              <div class="between"><span class="small dim">Branch</span><span class="mono-num">feat/desktop-v1</span></div>
+              <div class="between"><span class="small dim">Derived path</span><span class="mono-num faint ellipsis" style="max-width:220px">~/.octopus/workspaces/open-octopus/feat-desktop-shell</span></div>
+            </div>
+
+            <div class="stack tight">
+              <div class="between"><span class="small dim">Repositories</span><span class="tiny faint">2 selected</span></div>
+              <div class="setting" style="padding:7px 0">
+                <div class="s-main"><b>open-octopus</b><span>main · github.com/XzhiF/open-octopus</span></div>
+                <span class="switch is-on"></span>
+              </div>
+              <div class="setting" style="padding:7px 0">
+                <div class="s-main"><b>octopus-assets</b><span>main · skills + agents</span></div>
+                <span class="switch is-on"></span>
+              </div>
+              <div class="setting" style="padding:7px 0">
+                <div class="s-main"><b>docs-site</b><span>main · optional</span></div>
+                <span class="switch"></span>
+              </div>
+            </div>
+
+            <div class="callout">
+              <b style="color:var(--text)">Port allocation</b><br/>
+              Worktree gets <code>3102</code> web and <code>3103</code> server, plus a branch-scoped SQLite file.
+            </div>
+
+            <div class="row" style="margin-top:auto">
+              <button class="btn grow" data-toast="Create cancelled">Cancel</button>
+              <button class="btn btn-primary grow" data-toast="Workspace created · feat-desktop-shell">Create workspace</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- Archive preview minimized -->
+        <article class="win" data-win="archive" data-title="Archive · W41" data-sub="compiled knowledge" data-icon="database"
+                 data-x="796" data-y="300" data-w="470" data-h="380" data-min="1">
+          <div class="pane stack">
+            <div class="between">
+              <div><div class="cap">Archive preview</div><h2 style="margin:3px 0 0;font-size:15px">2026-W41</h2></div>
+              <span class="pill green"><i class="dot"></i>compiled</span>
+            </div>
+            <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+              <div class="stat"><div class="label">Cost</div><div class="value">$41<small>.20</small></div></div>
+              <div class="stat"><div class="label">Duration</div><div class="value">3h<small>12m</small></div></div>
+              <div class="stat"><div class="label">Extracted</div><div class="value">12</div></div>
+            </div>
+            <div class="check-list">
+              <div class="check is-done"><span class="box"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><span>12 experiences extracted</span></div>
+              <div class="check is-done"><span class="box"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><span>3 skills proposed</span></div>
+              <div class="check is-done"><span class="box"><svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg></span><span>wiki pages compiled</span></div>
+            </div>
+            <div class="callout blue">Archives are immutable. Restore creates a new workspace, never rewinds the original.</div>
+          </div>
+        </article>
+
+        <div class="canvas-hint">
+          <svg class="i sm" viewBox="0 0 24 24"><use href="#i-layers"/></svg>
+          open spaces directly from the grid · create form can stay open while you inspect another space
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>

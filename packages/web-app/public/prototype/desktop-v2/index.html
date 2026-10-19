@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus — Workbench</title>
+  <meta name="description" content="A quieter desktop workbench for Octopus. One desktop, persistent views, optional split." />
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="icon brand-mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logo"/></svg>
+        <span>octopus</span>
+      </div>
+      <span class="workspace">open-octopus</span>
+      <div class="topbar-spacer"></div>
+      <button class="status" data-open="runs" title="Open runs">
+        <span class="status-dot"></span>
+        <span id="running-label">2 running</span>
+      </button>
+      <button class="icon-btn theme-btn" data-action="theme" aria-label="Toggle theme" title="Toggle theme">
+        <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+        <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
+      </button>
+      <button class="avatar" data-open="settings" aria-label="Open settings" title="Settings">ZF</button>
+    </header>
+
+    <div class="body">
+      <nav class="rail" aria-label="Open a view">
+        <div class="rail-brand" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24"><use href="#i-logo"/></svg>
+        </div>
+        <div class="rail-group">
+          <button class="rail-item" data-open="home" data-label="Home" aria-label="Home">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg>
+          </button>
+          <button class="rail-item" data-open="chat" data-label="Chat" aria-label="Chat">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-message"/></svg>
+          </button>
+          <button class="rail-item" data-open="tasks" data-label="Tasks" aria-label="Tasks">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>
+          </button>
+          <button class="rail-item" data-open="wiki" data-label="Wiki" aria-label="Wiki">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-book"/></svg>
+          </button>
+          <button class="rail-item" data-open="runs" data-label="Runs" aria-label="Runs">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-activity"/></svg>
+          </button>
+        </div>
+        <div class="rail-bottom">
+          <button class="rail-item" data-open="settings" data-label="Settings" aria-label="Settings">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg>
+          </button>
+        </div>
+      </nav>
+
+      <main class="stage" id="stage">
+        <section class="pane" data-pane="0" tabindex="-1">
+          <header class="pane-head"></header>
+          <div class="view-host"></div>
+        </section>
+        <section class="pane" data-pane="1" tabindex="-1" hidden>
+          <header class="pane-head"></header>
+          <div class="view-host"></div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="dock">
+      <div class="dock-items" id="dock-items"></div>
+      <div class="dock-actions">
+        <button class="split-btn" data-action="split" aria-pressed="false" title="Open a second pane">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-columns"/></svg>
+          <span>Split</span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="assets/app.js"></script>
+</body>
+</html>

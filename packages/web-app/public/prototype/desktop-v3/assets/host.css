@@ -1,0 +1,30 @@
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #f3f0e9;
+}
+
+[data-theme="dark"] body {
+  background: #0b0b0d;
+}
+
+.scene-frame {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  border: 0;
+  background: #f3f0e9;
+}
+
+[data-theme="dark"] .scene-frame {
+  background: #0b0b0d;
+}
+
+.scene-frame[hidden] {
+  display: none;
+}

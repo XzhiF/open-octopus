@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus Desktop — Agent</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="agent" data-nav="agent" data-scene="Agent" data-crumb="personal / main · v1.4" data-running="1 agent">
+  <div class="app">
+    <div class="shell">
+      <main class="canvas" id="canvas" aria-label="Agent desktop">
+
+        <!-- Sessions -->
+        <article class="win" data-win="sessions" data-title="Sessions" data-sub="main agent · 6" data-icon="message"
+                 data-x="24" data-y="18" data-w="250" data-h="680">
+          <div class="between" style="padding:10px 11px;border-bottom:1px solid var(--line-soft)">
+            <div class="row"><b style="font-size:11px">Sessions</b><span class="pill">6</span></div>
+            <button class="iconbtn" data-toast="New session" data-toast-icon="plus" title="New session"><svg class="i" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>
+          </div>
+          <div style="padding:8px 8px 0">
+            <label class="searchbox"><svg class="i" viewBox="0 0 24 24"><use href="#i-search"/></svg><input placeholder="Search sessions" /></label>
+          </div>
+          <div class="session-list">
+            <div class="session is-active">
+              <b>Desktop shell direction</b>
+              <span>now · windowed workbench</span>
+            </div>
+            <div class="session">
+              <b>Task · acceptance r2</b>
+              <span>2h · 4/5 walkthrough passed</span>
+            </div>
+            <div class="session">
+              <b>Knowledge compile guard</b>
+              <span>yesterday · 12 wiki updates</span>
+            </div>
+            <div class="session">
+              <b>Clone · research-scout</b>
+              <span>yesterday · merged research notes</span>
+            </div>
+            <div class="session">
+              <b>Nightly cost anomaly</b>
+              <span>2d · unresolved</span>
+            </div>
+          </div>
+          <div style="padding:8px 6px;border-top:1px solid var(--line-soft)">
+            <div class="cap" style="padding:4px 5px 5px">Clones</div>
+            <div class="session"><b>research-scout</b><span>isolated memory · idle</span></div>
+            <div class="session"><b>code-reviewer</b><span>shared memory · active</span></div>
+          </div>
+          <div class="row" style="padding:9px 10px;border-top:1px solid var(--line-soft);flex-wrap:wrap">
+            <span class="chip"><svg class="i" viewBox="0 0 24 24"><use href="#i-brain"/></svg>Memory</span>
+            <span class="chip"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>Skills</span>
+            <span class="chip"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg>Safety</span>
+          </div>
+        </article>
+
+        <!-- Chat -->
+        <article class="win" data-win="chat" data-title="Desktop shell direction" data-sub="main agent · opus · live" data-icon="bot"
+                 data-x="298" data-y="18" data-w="598" data-h="680">
+          <div class="chat">
+            <div class="chat-head">
+              <span class="avatar-sm">ZF</span>
+              <div class="grow">
+                <div class="row" style="gap:6px"><b style="font-size:11px">main agent</b><span class="pill green"><i class="dot"></i>ready</span><span class="pill">pro-max</span></div>
+                <div class="tiny faint">session 6f2a · 68% context · $1.86</div>
+              </div>
+              <button class="iconbtn" data-toast="Session cloned" data-toast-icon="copy" title="Clone session"><svg class="i" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button>
+              <button class="iconbtn" data-toast="Session actions" data-toast-icon="more" title="More"><svg class="i" viewBox="0 0 24 24"><use href="#i-more"/></svg></button>
+            </div>
+
+            <div class="chat-log">
+              <div class="msg user">
+                <div class="who">ZF</div>
+                <div class="body">
+                  <div class="name">you <span>09:12</span></div>
+                  <div class="bubble"><p>现在的 Web 界面一切换就把之前的上下文弄没了。我要像桌面应用一样：多窗口、可保留、可对比。整体像 Codex 那种简洁。</p></div>
+                </div>
+              </div>
+
+              <div class="msg agent">
+                <div class="who"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-logo"/></svg></div>
+                <div class="body">
+                  <div class="name">main <span>09:12 · planned</span></div>
+                  <div class="thought"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>1.4s thinking · evaluating 3 window models</div>
+                  <div class="bubble">
+                    <p>关键不是「分栏」，而是<b>窗口有独立生命周期</b>。我把页面拆成可重开的窗口：工作流画布、运行详情、Agent 对话、验收台。关掉 = 收进 shelf，不销毁状态。</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg user">
+                <div class="who">ZF</div>
+                <div class="body">
+                  <div class="name">you <span>09:14</span></div>
+                  <div class="bubble"><p>那窗口之间怎么协作？我不想每次都拖来拖去。</p></div>
+                </div>
+              </div>
+
+              <div class="msg agent">
+                <div class="who"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-logo"/></svg></div>
+                <div class="body">
+                  <div class="name">main <span>09:14 · answered</span></div>
+                  <div class="bubble">
+                    <p>三层：<b>场景预设</b>（每个 space 默认摆 3–4 个窗口）、<b>布局命令</b>（tile / cascade / reset）、<b>跨窗口引用</b>（把 run 拖进 chat 当上下文 chip）。窗口不抢焦点，只有被点的那扇抬起。</p>
+                  </div>
+                  <div class="toolcall">
+                    <div class="toolcall-head">
+                      <svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>
+                      <span>Ran 3 commands</span>
+                      <span class="mono faint">inspect · render · verify</span>
+                      <span class="ok"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-check"/></svg>8.4s</span>
+                    </div>
+                    <div class="toolcall-body">pnpm detect:tokens · open 10 routes · compare nav depth</div>
+                  </div>
+                  <div class="callout blue">
+                    <b style="color:var(--text)">Workspace rule</b><br/>
+                    A window is a <b>view over durable state</b>, never the state itself. Closing it must not cancel a run.
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg user">
+                <div class="who">ZF</div>
+                <div class="body">
+                  <div class="name">you <span>09:16</span></div>
+                  <div class="bubble"><p>先按这个方向做完整原型。把每个核心功能都放进去。</p></div>
+                </div>
+              </div>
+
+              <div class="msg agent">
+                <div class="who"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-logo"/></svg></div>
+                <div class="body">
+                  <div class="name">main <span>09:17 · wrote files</span></div>
+                  <div class="thought"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>0.6s · 10 scenes, one shell</div>
+                  <div class="bubble"><p>已生成 <code>prototype/desktop-v1/</code>。右侧是独立的上下文窗口，可以边看预算边对话；下面那条 shelf 里还有最小化的工具详情。</p></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <textarea rows="2" placeholder="Message main…  @workspace · /run · @@research-scout"></textarea>
+              <div class="composer-bar">
+                <button class="iconbtn" data-toast="Attach file" data-toast-icon="paperclip" title="Attach"><svg class="i" viewBox="0 0 24 24"><use href="#i-paperclip"/></svg></button>
+                <button class="iconbtn" data-toast="Mention" data-toast-icon="at" title="Mention"><svg class="i" viewBox="0 0 24 24"><use href="#i-at"/></svg></button>
+                <span class="chip"><span class="dot c-green"></span> pro-max</span>
+                <span class="meta">68% · $1.86</span>
+                <button class="send" data-toast="Message sent" data-toast-icon="send" title="Send"><svg class="i" viewBox="0 0 24 24"><use href="#i-send"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Context -->
+        <article class="win" data-win="context" data-title="Run context" data-sub="budget · memory · tools" data-icon="brain"
+                 data-x="920" data-y="18" data-w="356" data-h="680">
+          <div class="scroll">
+            <div style="padding:14px 14px 4px">
+              <div class="between">
+                <div>
+                  <div class="cap">Context window</div>
+                  <div style="font-size:15px;font-weight:600;letter-spacing:-.02em;margin-top:3px">68% used</div>
+                </div>
+                <div class="ctx-ring" style="--p:68"><span>68%</span></div>
+              </div>
+              <div class="stack tight" style="margin-top:12px">
+                <div class="meter-row"><span style="width:72px">system</span><div class="bar"><i style="width:78%"></i></div><span class="mono-num">12.4k</span></div>
+                <div class="meter-row"><span style="width:72px">history</span><div class="bar blue"><i style="width:64%"></i></div><span class="mono-num">18.1k</span></div>
+                <div class="meter-row"><span style="width:72px">tools</span><div class="bar green"><i style="width:38%"></i></div><span class="mono-num">6.2k</span></div>
+                <div class="meter-row"><span style="width:72px">free</span><div class="bar"><i style="width:18%;background:var(--line-strong)"></i></div><span class="mono-num">9.2k</span></div>
+              </div>
+            </div>
+
+            <div style="padding:8px 14px">
+              <div class="section-label">Active skills</div>
+              <div class="row wrap" style="gap:4px">
+                <span class="chip accent"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>frontend-design</span>
+                <span class="chip"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>frontend-patterns</span>
+                <span class="chip"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>octo-workflow-dev</span>
+              </div>
+
+              <div class="section-label">Memory</div>
+              <div class="stack tight">
+                <div class="attn">
+                  <div class="ai blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-brain"/></svg></div>
+                  <div class="grow"><b>workspace · open-octopus</b><span>12 facts · UI conventions, ports</span></div>
+                  <span class="pill green">fresh</span>
+                </div>
+                <div class="attn">
+                  <div class="ai amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-history"/></svg></div>
+                  <div class="grow"><b>session · 6f2a</b><span>4 summaries · last 2h</span></div>
+                  <span class="pill">FTS</span>
+                </div>
+                <div class="attn">
+                  <div class="ai blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-database"/></svg></div>
+                  <div class="grow"><b>knowledge · wiki</b><span>8 pages injected · score 0.91</span></div>
+                  <span class="pill">auto</span>
+                </div>
+              </div>
+
+              <div class="section-label">Tools</div>
+              <div class="stack tight">
+                <div class="between"><span class="small dim">bash</span><span class="switch is-on"></span></div>
+                <div class="between"><span class="small dim">file read / write</span><span class="switch is-on"></span></div>
+                <div class="between"><span class="small dim">workflow dispatch</span><span class="switch is-on"></span></div>
+                <div class="between"><span class="small dim">git worktree</span><span class="switch"></span></div>
+              </div>
+
+              <div class="section-label">Budget</div>
+              <div class="stack tight">
+                <div class="between"><span class="tiny faint">cost</span><span class="mono-num">$1.86 / $8.00</span></div>
+                <div class="bar green"><i style="width:23%"></i></div>
+                <div class="between"><span class="tiny faint">time</span><span class="mono-num">12m / 60m</span></div>
+                <div class="bar blue"><i style="width:20%"></i></div>
+              </div>
+
+              <div class="callout" style="margin-top:14px">
+                <b style="color:var(--text)">Clone delegation</b><br/>
+                Use <code>@@research-scout</code> in the composer to send this task to an isolated clone. Results return as a versioned patch.
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Minimized tool detail -->
+        <article class="win" data-win="tool" data-title="Tool · write_file" data-sub="app.css · +1,918" data-icon="file-code"
+                 data-x="920" data-y="400" data-w="440" data-h="320" data-min="1">
+          <div class="pane stack">
+            <div class="between">
+              <div><div class="cap">Tool call</div><h2 style="margin:3px 0 0;font-size:15px">write_file</h2></div>
+              <span class="pill green">ok</span>
+            </div>
+            <div class="code">path: assets/app.css
+bytes: 42,118
+mode: overwrite
+duration: 312ms</div>
+            <div class="callout blue">The window shell styles are self-contained. No Tailwind dependency in the prototype.</div>
+          </div>
+        </article>
+
+        <div class="canvas-hint">
+          <svg class="i sm" viewBox="0 0 24 24"><use href="#i-layers"/></svg>
+          chat, context and sessions are independent windows · drag any title bar to rearrange
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>
