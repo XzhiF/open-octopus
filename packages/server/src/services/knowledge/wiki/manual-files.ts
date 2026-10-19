@@ -3,12 +3,12 @@ import path from "path"
 /**
  * 人工文件写保护 — 质控⑥的服务层主闸（知识中心 spec §审批废除与写入闸门 / 故事 24，ADR-0030）。
  *
- * 目录契约（spec 三层架构）里 `user_preference.md` 与 `SCHEMA.md` 都住**知识根**、
- * 不入 wiki 仓——所以「自动通道根本不生成指向它们的页路径」在现输入语法下已是事实。
+ * 目录契约（spec 三层架构）里 `SCHEMA.md` 住**知识根**、不入 wiki 仓——
+ * 所以「自动通道根本不生成指向它的页路径」在现输入语法下已是事实。
  * 但那只是**巧合级安全**：一旦新增直写通道 / 有人改 fileName 语义，防线就没了。
  * 本模块把安全从巧合升为**闸**：唯一写闸（compileEntry / compilePage / compileCase /
- * compilePages——curator 编译、回填触编译、finding 裁决修订全部经它们落盘）对这两个
- * 文件做**路径级拒绝**——目标经 `path.resolve` 归一后对拍，连 `../user_preference.md`、
+ * compilePages——curator 编译、回填触编译、finding 裁决修订全部经它们落盘）对人工文件
+ * 做**路径级拒绝**——目标经 `path.resolve` 归一后对拍，连 `../SCHEMA.md`、
  * `topics/../SCHEMA.md` 这类经 wiki 仓相对路径的旁路形态一并命中；闸先于文件名正则与
  * 逃逸检查触发（错码必须是 MANUAL_FILE_WRITE，不许退化成 INVALID_PARAM 的沉默）。
  *
@@ -17,10 +17,9 @@ import path from "path"
  */
 
 /** 人工文件基名单源（pre-commit 与文件-ops 豁免名单消费此值时用，勿各处硬拼）。 */
-export const USER_PREFERENCE_FILE = "user_preference.md"
 export const SCHEMA_DOC_BASENAME = "SCHEMA.md"
 
-export const MANUAL_FILE_BASENAMES = [USER_PREFERENCE_FILE, SCHEMA_DOC_BASENAME] as const
+export const MANUAL_FILE_BASENAMES = [SCHEMA_DOC_BASENAME] as const
 
 /** 结构化错：code 进队列/任务面（extractError 读 err.code），status 供路由层。 */
 export class ManualFileWriteError extends Error {

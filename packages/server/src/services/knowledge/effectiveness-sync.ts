@@ -142,6 +142,7 @@ export class EffectivenessSyncService {
         note: "夜巡滚动值同步：DB 真源 → front-matter 快照（票07）",
         source: "patrol",
         reviewer: "owner",
+        date: this.now().toISOString().slice(0, 10),
       })
       report.commit = res.commit
       report.changed = res.changed

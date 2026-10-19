@@ -563,6 +563,10 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'sessions', 'scope_id', "TEXT")
   ensureColumn(db, 'sessions', 'provider_session_id', "TEXT")
 
+  // 知识中心改版：wiki_articles.links（链接目标 JSON 数组，反链倒排的落库基础）。
+  // NULL=历史行未回灌（启动 backfillWikiArticleLinks 一次性补齐）；新写恒为 JSON 数组。
+  ensureColumn(db, 'wiki_articles', 'links', "TEXT")
+
   // Clone system columns for messages
   ensureColumn(db, 'messages', 'type', "TEXT NOT NULL DEFAULT 'text'")
   ensureColumn(db, 'messages', 'metadata', "TEXT")

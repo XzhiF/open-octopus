@@ -40,7 +40,7 @@ import { kcErrFace, kcPlaceholderTaskId, useKcPoller } from './use-kc-poller'
  * 任务状态端点面（票05/06/12）是它的正交可承载形态（票面授权「选既有 SSE 基建能
  * 承载的形态」）；先立即一拍再按 pollMs 间隔，终态自停——拍次调度/瞬断续拍/
  * 卸载清定时器收口在共享核 `use-kc-poller`（code-review judgement，行为零改）。
- * id 锚定幂等（dif-/sum-<taskId>），宿主（chat-column）按 sessionId 侧挂
+ * id 锚定幂等（dif-/sum-<taskId>），宿主（curator-drawer）按 sessionId 侧挂
  * localStorage 完成 Lane B 沉淀（契约见 card-protocol 头注释）。
  */
 

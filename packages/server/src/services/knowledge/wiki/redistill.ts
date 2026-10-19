@@ -5,7 +5,7 @@ import type { WikiEntryFrontmatter, WikiPageFrontmatter } from "@octopus/shared"
 import { GLOBAL_WIKI_ORG, resolveGlobalWikiRoot } from "../global-paths"
 import { parseWikiFile, extractRuleAnchors, serializePageMarkdown, RULE_ANCHOR_RE } from "./format"
 import { REDISTILL_MAP_REL, WIKI_DOMAINS } from "./paths"
-import { parseH2Sections, lintWikiPage, TOPIC_CONSTRAINTS_SECTION } from "./lint"
+import { parseH2Sections, lintWikiPage, computeArticleLinks, TOPIC_CONSTRAINTS_SECTION } from "./lint"
 import type { WriteQueue } from "./compile-queue"
 import { spawnGit } from "./wiki-git"
 import { WikiCompileService, WIKI_LOG_HEADER, scanWikiEntries, type BatchPageInput, type ScannedEntry } from "./compile"
@@ -750,6 +750,7 @@ export class WikiRedistillMigrator {
             confidence: e.meta.confidence ?? 0.5,
             body,
             path: e.relPath,
+            links: computeArticleLinks(e.page?.links, body),
           })
           inserted.push(e.meta.id)
         } else if (e.type === "case" && cur.domain !== "case") {

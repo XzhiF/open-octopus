@@ -39,7 +39,7 @@
 // 零三账操作、零发版，回执 idempotent=true。
 // 边界（红线）：**授予不经 wiki 写队列**（非 wiki 写——本文件零 compile-queue/
 // enqueue import，S1/S3 负断言钉死）；零 prompt 文本注入（生效=ADR-0006 原生
-// 发现，红线4）；agent 记忆域/K11/user_preference 零触碰（红线5）；granted 态
+// 发现，红线4）；agent 记忆域/K11/人工文件零触碰（红线5）；granted 态
 // 的 drafts 文件本服务是唯一写入者（票04 服务对其只读拒写 409）。
 
 import fs from "fs"

@@ -16,8 +16,7 @@ import os from "os"
  * `OCTOPUS_WIKI_DIR` 为**弃用别名**（票01 时代直写 wiki 根，legacyWikiDirEnv 单源定义）——
  * 正源只有一个：知识根 env，wiki 根 = 知识根/wiki。
  *
- * 本模块只做「解析 + mkdir -p」，零副作用文件写入；SCHEMA.md / user_preference.md /
- * _archive/ 等根内文件属票03（全局化搬家）与票04（页格式），不在此处创建。
+ * 本模块只做「解析 + mkdir -p」，零副作用文件写入；SCHEMA.md / _archive/ 等根内文件属票03（全局化搬家）与票04（页格式），不在此处创建。
  * org 轨与兼容窗**同收口于此**（code-review S3：resolveKnowledgeDir / derive 族 /
  * legacyWikiDirEnv——file-ops 与 wiki/paths 全部委托，不再各自拼路径）。
  */

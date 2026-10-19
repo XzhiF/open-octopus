@@ -14,6 +14,7 @@ import {
   atomicWrite,
 } from "./compile"
 import { parseWikiFile, serializePageMarkdown, extractRuleAnchors, pageEntryView } from "./format"
+import { computeArticleLinks, wikiLinkTargets } from "./lint"
 import { spawnGit, mustGit, wikiHead, type GitRunner } from "./wiki-git"
 import { isManualFileTarget } from "./manual-files"
 import { RETIRABLE_DIR_RE } from "./page-retire"
@@ -406,7 +407,9 @@ export class PageRestoreTaskService {
         if (!hostRow) continue // 宿主本就未在册账面（与退役 §5.5 对偶）
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
-          articles.upsert({ ...upsert, body: r.newBody })
+          // 宿主链接面随回补面同步落库（r.next=改写后全文，判据与退役侧对偶）
+          const hp = parseWikiFile(r.next)
+          articles.upsert({ ...upsert, body: r.newBody, links: hp.kind === "page" ? computeArticleLinks(hp.meta.links, r.newBody) : wikiLinkTargets(r.newBody) })
           const rowid = articles.getRowid(GLOBAL_WIKI_ORG, hostRow.id)
           if (rowid === undefined) return
           try {
@@ -521,6 +524,7 @@ function pageRowFromDisk(abs: string, relPath: string): ArticleUpsertRow | null 
       confidence: meta.confidence ?? 0.5,
       body: parsed.body,
       path: relPath,
+      links: computeArticleLinks(parsed.meta.links, parsed.body),
     }
   } catch {
     return null

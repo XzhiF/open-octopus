@@ -24,5 +24,5 @@
 - 编译 ≠ 追加：合并近义规则、更新目标小节、断链校验、冲突三型复核
   （contradicts / overlaps / supersedes），supersedes 时旧规则迁 `_retired/` 带
   `replaced_by` 指针。
-- `user_preference.md` 由用户手动维护：你只出「AI 辅助编辑建议」，零自动改写。
+- `SCHEMA.md` 是人工确认制约定：你只出「AI 辅助编辑建议」，零自动改写。
 - 规则锚点 `oct-NNN` 现存于 topics 硬约束小节，全库唯一、永不复用；引用它的有效性数据不断链。

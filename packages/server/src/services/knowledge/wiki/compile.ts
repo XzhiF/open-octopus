@@ -17,7 +17,7 @@ import {
   pageTypeOf,
   extractRuleAnchors,
 } from "./format"
-import { lintWikiEntry, lintWikiPage, lintProfileForDomain, buildSplitProposal, splitProposalFromPage, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, maxAnchorNumber, formatRuleAnchor, type RuleFormJudge, type SplitProposal } from "./lint"
+import { lintWikiEntry, lintWikiPage, lintProfileForDomain, buildSplitProposal, splitProposalFromPage, judgeRuleForms, WikiLintError, estimateTokens, WIKI_LIMITS, parseH2Sections, maxAnchorNumber, formatRuleAnchor, wikiLinkTargets, computeArticleLinks, type RuleFormJudge, type SplitProposal } from "./lint"
 import { resolveWikiRoot, ensureWikiSkeleton, WIKI_ALL_DIRS, WIKI_PAGE_GROUP_LABELS, REDISTILL_MAP_REL } from "./paths"
 import { isManualFileTarget, ManualFileWriteError } from "./manual-files"
 import { spawnGit, mustGit, ensureWikiGitRepo, wikiHead, type GitRunner } from "./wiki-git"
@@ -89,6 +89,9 @@ export interface BatchCompileOptions {
   source?: string
   /** LOG 审核列（默认 curator） */
   reviewer?: string
+  /** LOG 日期列（YYYY-MM-DD）：调用方持 now 缝时注入冻结钟（缺省=真实 today()——
+   *  2026-10-16 波修复：finding-fix/effectiveness-sync 曾隐赖真实日期=作者日） */
+  date?: string
 }
 
 export interface BatchPageResult {
@@ -127,14 +130,13 @@ export const WIKI_LOG_HEADER = `# LOG.md — 时间线（append-only · 编译�
 `
 
 /**
- * INDEX 必读节固定行（prototype Tab② INDEX 样例；user_preference 为人工文件）。
- * D-kc15-2（票07）：路径必须是 **agent Read 可达** 形态——user_preference.md 住知识根
- * （wiki 根上一级），旧行裸写 `user_preference.md` 被按 INDEX 所在目录解析成
- * `wiki/user_preference.md` → File not found（KC e2e-report 链④现场）。
- * `../` 相对 wiki 根即知识根；行内同时标注位置语义，杜绝再猜。
+ * INDEX 必读节固定行（prototype Tab② INDEX 样例）。
+ * D-kc15-2（票07）教训承接：路径必须是 **agent Read 可达** 形态——SCHEMA.md 住知识根
+ * （wiki 根上一级），裸写 `SCHEMA.md` 会被按 INDEX 所在目录解析成 `wiki/SCHEMA.md`
+ * → File not found；`../` 相对 wiki 根即知识根，行内同时标注位置语义，杜绝再猜。
  * 注意：这是「指向」的行——写闸 assertNotManualFile 对该文件本体任何通道写仍拒（红线5）。
  */
-export const WIKI_INDEX_MUST_READ_LINE = "- ../user_preference.md — owner 偏好（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）"
+export const WIKI_INDEX_MUST_READ_LINE = "- ../SCHEMA.md — 人机共演约定（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）"
 
 export interface ScannedEntry {
   relPath: string
@@ -298,7 +300,7 @@ export function isHubChild(e: { relPath: string }, allPaths: Set<string>): boole
 
 /**
  * INDEX.md 程序化重建（票04 AC3，prototype Tab② INDEX 样例逐字契约）：
- * H1 + 导航协议 blockquote + 必读节（user_preference 固定行）+ 五类分组
+ * H1 + 导航协议 blockquote + 必读节（SCHEMA 固定行）+ 五类分组
  * （Entities/Concepts/Topics/Sources/Cases——有页才列，计数入题头）+ Optional 节
  * （L4 预算溢出降级区）。永不经 LLM/人手写；审批遗产「待审核」统计行随概念废除删除。
  * 行式一页一行 `- {relPath} — {summary}`：entity/concept 注 `←N 源`（sources 数），
@@ -437,14 +439,14 @@ export class WikiCompileService {
   }
 
   /**
-   * 质控⑥服务层主闸（manual-files.ts / ADR-0030）：唯一写闸对 user_preference.md /
-   * SCHEMA.md 路径级拒写——resolve 归一后对拍，`../` 旁路形态同拦；一切调用都放在
+   * 质控⑥服务层主闸（manual-files.ts / ADR-0030）：唯一写闸对人工文件（SCHEMA.md）
+   * 路径级拒写——resolve 归一后对拍，`../` 旁路形态同拦；一切调用都放在
    * 文件名正则与逃逸检查**之前**（错码必须是 MANUAL_FILE_WRITE，不退化成 INVALID_PARAM）。
    */
   private assertNotManualFile(targetAbs: string): void {
     if (isManualFileTarget(this.root, targetAbs)) {
       throw new ManualFileWriteError(
-        `人工文件不可经唯一写闸落盘：${path.basename(targetAbs)}（curator 通道只写五类页目录；对 user_preference.md/SCHEMA.md 只出写保护卡建议文本，改写永远由人落笔）`,
+        `人工文件不可经唯一写闸落盘：${path.basename(targetAbs)}（curator 通道只写五类页目录；对人工文件（SCHEMA.md）只出写保护卡建议文本，改写永远由人落笔）`,
       )
     }
   }
@@ -568,6 +570,8 @@ export class WikiCompileService {
         confidence: meta.confidence,
         body,
         path: relPath,
+        // v2 词条无 front-matter links，链接面=正文 [[…]]（lint 单源，反链倒排基础）
+        links: wikiLinkTargets(body),
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)
@@ -775,7 +779,7 @@ export class WikiCompileService {
         note: opts.note,
         source: opts.source ?? "manual",
         reviewer: opts.reviewer ?? "curator",
-      }))
+      }, opts.date))
 
       // ── 4. DB 行 + FTS 手工对齐（单事务跨全批；FTS 失败非致命 gotcha #6）──
       for (const p of dirty) {
@@ -794,6 +798,7 @@ export class WikiCompileService {
             confidence: p.meta.confidence ?? 0.5,
             body: p.body,
             path: p.relPath,
+            links: computeArticleLinks(p.meta.links, p.body),
           }
           this.articles.upsert(upsert)
           const rowid = this.articles.getRowid(this.org, p.meta.id)!
@@ -982,6 +987,7 @@ export class WikiCompileService {
         confidence: 1,
         body,
         path: relPath,
+        links: wikiLinkTargets(body),
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)
@@ -1303,6 +1309,7 @@ export class WikiCompileService {
         confidence: meta.confidence ?? 0.5,
         body,
         path: relPath,
+        links: computeArticleLinks(meta.links, body),
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)

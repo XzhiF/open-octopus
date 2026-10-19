@@ -371,11 +371,11 @@ describe("AutoRetireService — 衰减自动退役窄口（票09 · spec 故事1
 
   it("人工文件不命中（isManualFileTarget 双保险·纯函数面）：即便两账沉默零入链，判据亦拒收", () => {
     const page: NarrowGatePage = {
-      relPath: "topics/user_preference.md",
+      relPath: "topics/SCHEMA.md",
       pageId: "top-x",
       anchors: ["oct-099"],
       lastCompiled: "2026-07-01",
-      pageLedgerKey: "user_preference",
+      pageLedgerKey: "SCHEMA",
     }
     const ev: NarrowGateEvidence = {
       lastCitedByKey: new Map<string, string | null>(),

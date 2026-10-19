@@ -56,7 +56,7 @@ wiki 的一切写入只有一条通道：**编译服务（唯一写闸）+ git c
 
 纪律：草案住知识根 `drafts/skills/`（非 wiki、非知识页、不进 INDEX）；**授予/撤销的
 生效链不在本 API**（人裁治理边界——任何把草案手放进分身技能目录或发版本的动作都禁止）。
-drafts 区不受 wiki 串行队列约束，但同样禁越界写 wiki/cases/user_preference/SCHEMA。
+drafts 区不受 wiki 串行队列约束，但同样禁越界写 wiki/cases/人工文件（SCHEMA 等）。
 
 ## Git 与写权纪律（不变项）
 
@@ -64,7 +64,7 @@ drafts 区不受 wiki 串行队列约束，但同样禁越界写 wiki/cases/user
   整包可 revert（UI 一键回滚属票12）。
 - 仓内 pre-commit 来源标记闸保留：服务通道 `curate`（spawnGit 自动携带）/ 人工
   `OCTOPUS_WIKI_COMMIT_SOURCE=manual`；无标记拒；自动通道触及人工文件拒。
-- **`user_preference.md` 与 `SCHEMA.md` 永不自动改写**——策展人只出建议文本，人确认后落笔。
+- **人工文件（`SCHEMA.md`）永不自动改写**——策展人只出建议文本，人确认后落笔。
 - 禁止 `--no-verify` 绕 hook（防误写不防恶意，绕闸属恶意）。
 - 退役区 `_retired/`：正常通道**只进**（人裁对话退役 / 夜巡窄口自动退役——后者是红线
   唯一自动出口：90 天零引用 ∧ 零活页入链 ∧ 非人工文件，通知卡进对话流，**先斩后奏

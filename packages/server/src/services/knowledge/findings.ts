@@ -441,6 +441,7 @@ export class FindingOpsService {
       note: fixNote,
       source: row.raw_ref || "patrol",
       reviewer: "owner",
+      date: this.now().toISOString().slice(0, 10),
     })
     return {
       commit: res.commit,

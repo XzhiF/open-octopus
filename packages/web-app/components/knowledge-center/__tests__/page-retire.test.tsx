@@ -11,8 +11,8 @@ import { hasKcCardRenderer, registerKcCardRenderer } from "@/components/knowledg
 describe("classifyKcRetire — 退役意图（票08 · 故事32）", () => {
   it("退役动词 + wiki 页相对路径 ⇒ {path}", () => {
     expect(classifyKcRetire("退役 concepts/con-kc15-widget-a.md")).toEqual({ path: "concepts/con-kc15-widget-a.md" })
-    expect(classifyKcRetire("把 topics/top-kc15-rollback-spec.md 下线").path).toBe("topics/top-kc15-rollback-spec.md")
-    expect(classifyKcRetire("supersede entities/ent-kc15-widget-b.md").path).toBe("entities/ent-kc15-widget-b.md")
+    expect(classifyKcRetire("把 topics/top-kc15-rollback-spec.md 下线")?.path).toBe("topics/top-kc15-rollback-spec.md")
+    expect(classifyKcRetire("supersede entities/ent-kc15-widget-b.md")?.path).toBe("entities/ent-kc15-widget-b.md")
   })
 
   it("动词在但无页路径对象 ⇒ null（不吞普通对话）", () => {

@@ -132,8 +132,8 @@ describe("PageRetireTaskService — 退役清入链（票04 · 故事26 · D-aa1
     fs.writeFileSync(path.join(wikiRoot, "topics", "top-hub-a.md"), HUB_A_PAGE, "utf-8")
     fs.writeFileSync(path.join(wikiRoot, "topics", "top-hub-b.md"), HUB_B_PAGE, "utf-8")
     fs.writeFileSync(path.join(wikiRoot, "concepts", "con-keep.md"), KEEP_PAGE, "utf-8")
-    // 知识根人工文件（真盘同位）：持链但在写保护/射程外——字节级不动的负断言材料
-    fs.writeFileSync(path.join(knowledgeRoot, "user_preference.md"), "偏好：退役目标纪律见 [[con-retire-me]]。\n", "utf-8")
+    // 知识根人工文件（真盘同位）：持链但在写保护/射程外——字节级不动的负断言材料（ADR-0033 起以 SCHEMA.md 为件）
+    fs.writeFileSync(path.join(knowledgeRoot, "SCHEMA.md"), "共演约定：退役目标纪律见 [[con-retire-me]]。\n", "utf-8")
 
     git = realGit(wikiRoot)
     git.run(["init"])
@@ -199,8 +199,8 @@ describe("PageRetireTaskService — 退役清入链（票04 · 故事26 · D-aa1
     // 4. 无关页零触碰（逐字节）
     expect(read("concepts/con-keep.md")).toBe(keepBefore)
 
-    // 5. 人工文件写保护不松动：知识根 user_preference.md 射程外且受保护——逐字节不动
-    expect(fs.readFileSync(path.join(knowledgeRoot, "user_preference.md"), "utf-8")).toBe("偏好：退役目标纪律见 [[con-retire-me]]。\n")
+    // 5. 人工文件写保护不松动：知识根 SCHEMA.md 射程外且受保护——逐字节不动
+    expect(fs.readFileSync(path.join(knowledgeRoot, "SCHEMA.md"), "utf-8")).toBe("共演约定：退役目标纪律见 [[con-retire-me]]。\n")
 
     // 6. L5 零潜伏断言：退役执行后全库活页扫描无断链指向 _retired 页
     expect(scanBrokenLinks()).toEqual([])

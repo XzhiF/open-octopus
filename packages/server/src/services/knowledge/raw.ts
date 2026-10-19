@@ -141,7 +141,8 @@ function frontMatterValue(content: string, key: string): string | null {
   return line.slice(key.length + 1).trim().replace(/^"(.*)"$/, "$1")
 }
 
-function isRawDir(dir: string): dir is RawDir {
+/** export 供 fs.ts 目录树 raw 子树同口径复用（判据单源）。 */
+export function isRawDir(dir: string): dir is RawDir {
   return (RAW_DIRS as readonly string[]).includes(dir)
 }
 
@@ -561,7 +562,9 @@ export function listRawSources(root: string): RawSourceMeta[] {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") continue
       throw err
     }
-    for (const name of names.filter(n => n.endsWith(".md")).sort()) {
+    // RE 而非 endsWith(".md")：与 readRawSource 同判据——清单可见 ⇔ 单读可达（fs 改版收口
+    // 既有「列表见怪名、点开 400」小洞；真库文件名全走 slugify，零数据影响）。
+    for (const name of names.filter(n => RAW_FILE_RE.test(n)).sort()) {
       let content: string
       try {
         content = fs.readFileSync(path.join(absDir, name), "utf-8")
@@ -575,8 +578,9 @@ export function listRawSources(root: string): RawSourceMeta[] {
   return out.sort((a, b) => a.path.localeCompare(b.path))
 }
 
-/** 单段安全文件名：字母数字开头、仅 [A-Za-z0-9._-]、.md 结尾（'..'、编码残留、嵌套全拒）。 */
-const RAW_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/
+/** 单段安全文件名：字母数字开头、仅 [A-Za-z0-9._-]、.md 结尾（'..'、编码残留、嵌套全拒）。
+ *  export 供 fs.ts 目录树 raw 子树同口径复用（可见即可读，判据单源防漂移）。 */
+export const RAW_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/
 
 /**
  * 单文件读。`relFromRawRoot` = raw 根相对路径（如 `inbox/note.md`，即

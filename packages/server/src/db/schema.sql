@@ -1087,6 +1087,7 @@ CREATE TABLE IF NOT EXISTS wiki_articles (
   confidence REAL NOT NULL DEFAULT 0.5,
   body TEXT NOT NULL DEFAULT '',
   path TEXT NOT NULL DEFAULT '',
+  links TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (org, id)
 );

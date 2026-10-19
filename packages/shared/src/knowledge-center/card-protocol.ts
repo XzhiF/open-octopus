@@ -314,9 +314,9 @@ export interface KcPageMiniCardData {
   isNew?: boolean
 }
 
-/** ⛔ 写保护卡：user_preference/SCHEMA 修改意图 → 建议文本 + 人工确认步骤，零自动落盘。 */
+/** ⛔ 写保护卡：人工文件（SCHEMA.md）修改意图 → 建议文本 + 人工确认步骤，零自动落盘。 */
 export interface KcGuardCardData {
-  /** user_preference.md | SCHEMA.md */
+  /** SCHEMA.md（人工文件基名） */
   target: string
   intent: string
   suggestion: string

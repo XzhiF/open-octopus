@@ -1,0 +1,870 @@
+<!doctype html>
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  PROTOTYPE — 一次性代码，回答一个设计问题。不进生产，不做像素级还原。
+  问题：知识中心 /knowledge WebUI 怎么排布才符合人类使用习惯？
+        （痛点：对话/浏览模式一切换整个界面重绘；右栏 wiki 被对话"跟随"劫持；
+          wiki 显示不像 wiki 软件）
+  变体（浮条 ◀▶ 或键盘 ←→ / 数字 0-3 切换，状态在 URL hash #v0 #vA #vB #vC）：
+    v0 现状复现（基线，用来"感受病"）      —— 照抄 page.tsx:197 的两套 grid 与跟随逻辑
+    vA wiki 主场 + 对话抽屉               —— 参考 Notion AI / Obsidian：正文永不重排
+    vB 页签制：讨论属于页面               —— 参考 Wikipedia「阅读/讨论」Talk 页签
+    vC 命令条 + 浮式问答                  —— 参考 Perplexity / Linear：零常驻栏
+  数据全是内存假数据（形状对齐 lib/knowledge/knowledge-center-api.ts 的
+  KcTree/KcArticle/KcHealth + card-protocol 卡型）。零持久化，刷新即重置。
+  浏览器直接打开本文件即可（file://），不需要起 server。
+  ══════════════════════════════════════════════════════════════════════════
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · 知识中心 WebUI — 4 变体对比</title>
+<style>
+/* ── 全站 TUI 暗色 token（镜像 globals.css，勿改真代码） ── */
+:root{
+  --bg:#0A0A0C; --paper:#1C1C22; --ink:#F5F5F2; --dim:#9698A3; --bd:#32323B;
+  --pink:#FF855C; --pink-s:#2A1B19; --yellow:#FFC857; --yellow-s:#231E17;
+  --purple:#D2A8FF; --purple-s:#221E29; --green:#7EE787; --green-s:#18211A;
+  --amber:#FFC857; --amber-s:#231E17; --cyan:#4FD1D9; --cyan-s:#151F21;
+  --red:#FF5C5C; --navy:#4C79BF; --navy-s:#181F2D;
+  --idle:#131318; --inset:#020202;
+  --bdw:1.5px; --sh:0 4px 16px rgba(0,0,0,.45); --sh-lg:0 10px 32px rgba(0,0,0,.5);
+  --mono:"Cascadia Code",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:13px/1.65 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+input{font:inherit;color:var(--ink);background:var(--inset);border:var(--bdw) solid var(--bd);border-radius:8px;outline:none}
+input:focus{border-color:var(--pink)}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--bd);border-radius:5px}
+#root{height:100vh;display:flex;flex-direction:column;min-height:0}
+b{color:var(--ink)}
+.dim{color:var(--dim)} .mono{font-family:var(--mono)} .small{font-size:11px}
+/* 通用件 */
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 9px;font-size:11px;font-weight:700;background:var(--idle);color:var(--dim);border:var(--bdw) solid transparent;white-space:nowrap}
+.chip.type{color:var(--cyan);border-color:var(--cyan)} .chip.stable{background:var(--green-s);color:var(--green)}
+.chip.drift{background:var(--amber-s);color:var(--amber)} .chip.conf{background:var(--cyan-s);color:var(--cyan)}
+.chip.date{background:var(--idle);color:var(--dim)}
+.chip.link{color:var(--pink);border-color:var(--pink)} .chip.link:hover{background:var(--pink-s)}
+.chip.src{color:var(--green);border-color:var(--green);font-family:var(--mono);font-size:10px;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.chip.src:hover{background:var(--green-s)}
+.pill{border:var(--bdw) solid var(--bd);border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;background:var(--paper);color:var(--dim)}
+.pill:hover{color:var(--ink);background:var(--purple-s)}
+.pill.on{background:var(--amber);color:var(--bg)}
+.rule{display:flex;gap:8px;align-items:baseline;margin:.4em 0}
+.rid{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--yellow);background:var(--yellow-s);padding:1px 6px;border-radius:4px;white-space:nowrap}
+a.wl{color:var(--pink);text-decoration:none;border-bottom:1px dashed var(--pink);cursor:pointer}
+a.wl:hover{background:var(--pink-s)}
+.art-body h2{font-size:16px;margin:1.2em 0 .4em;border-bottom:var(--bdw) solid var(--bd);padding-bottom:4px}
+.art-body p{margin:.5em 0;color:#d8d8d4}
+.art-body ul{margin:.4em 0;padding-left:1.3em;color:#d8d8d4}
+.art-body code{font-family:var(--mono);font-size:11.5px;background:var(--inset);padding:1px 5px;border-radius:4px;color:var(--cyan)}
+.flash{outline:2px solid var(--yellow);outline-offset:2px;transition:outline-color .8s}
+/* 卡片（kc-card 假想形制） */
+.kccard{border:var(--bdw) solid var(--bd);border-radius:10px;background:var(--paper);padding:8px 10px;margin:6px 0;box-shadow:var(--sh)}
+.kccard .kt{display:flex;align-items:center;gap:8px;font-weight:800;font-size:12px}
+.kccard .kb{font-size:9.5px;font-family:var(--mono);padding:1px 6px;border-radius:4px;font-weight:700}
+.kb.compile-diff{background:var(--green-s);color:var(--green)} .kb.finding{background:var(--amber-s);color:var(--amber)}
+.kb.backfill{background:var(--cyan-s);color:var(--cyan)} .kb.case{background:var(--purple-s);color:var(--purple)}
+.kccard .km{font-size:11px;color:var(--dim);margin-top:2px}
+.kccard .krefs{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+.kcref{font-size:10.5px;font-weight:700;color:var(--pink);background:var(--pink-s);border-radius:6px;padding:1px 7px;cursor:pointer}
+.kcref:hover{outline:1px solid var(--pink)}
+.kcbtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.kcbtns .pill{font-size:10.5px;padding:2px 8px}
+.kcbtns .danger:hover{color:var(--red);background:#231517}
+/* TUI 转录（镜像 TuiTranscript.tsx：❯ 用户行 / ✳ agent 段 / ◌ 过程折叠 / ▸ 工具行可展 input·result） */
+.tui{font-size:12.5px}
+.tui-user{background:var(--paper);box-shadow:inset 0 0 0 1px var(--bd);border-radius:6px;padding:5px 10px;margin:8px 0 6px;white-space:pre-wrap;word-break:break-word}
+.tui-user .chev{color:var(--pink);font-weight:800}
+.tui-meta-h{color:var(--dim);cursor:pointer;display:inline-block;margin:2px 0}
+.tui-meta-h b{color:var(--pink)} .tui-meta-h:hover{color:var(--ink)}
+.tui-meta-b{margin:2px 0 8px 4px;padding-left:10px;border-left:var(--bdw) solid var(--bd)}
+.tui-think{color:var(--dim);white-space:pre-wrap;word-break:break-word;margin:2px 0}
+.tui-tool{color:var(--dim)}
+.tui-tool .tw{cursor:pointer;display:block;width:100%;text-align:left}
+.tui-tool .tw:hover{color:var(--ink)}
+.tui-tool .st-ok{color:var(--green)} .tui-tool .st-fail{color:var(--red)} .tui-tool .st-run{color:var(--dim)}
+.tui-tool-b{margin:2px 0 6px 8px;padding-left:8px;border-left:var(--bdw) solid var(--bd)}
+.tui-tool-b .h{font-size:9.5px;font-weight:900;letter-spacing:.6px}
+.tui-tool-b pre{margin:2px 0 6px;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:10.5px;color:#c9c9c4;max-height:24vh;overflow:auto;background:var(--inset);border-radius:6px;padding:5px 7px}
+.tui-mark{color:var(--pink);font-weight:800;font-size:11px}
+.tui-body{white-space:pre-wrap;word-break:break-word;margin:2px 0 8px}
+.tui-b{color:var(--pink);font-weight:800}
+.tui-c{font-family:var(--mono);font-size:11px;background:#2b2b33;color:var(--green);border-radius:3px;padding:0 4px}
+/* 会话 tab 条 */
+.sessbar{display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:var(--bdw) solid var(--bd);background:var(--bg);flex-wrap:wrap}
+.sess{display:flex;align-items:center;gap:5px;padding:2px 8px;border:var(--bdw) solid var(--bd);border-radius:8px;font-size:11px;font-weight:700;color:var(--dim);cursor:pointer}
+.sess.on{background:var(--pink-s);border-color:var(--pink);color:var(--pink)}
+.sess .x{color:var(--dim);font-weight:900;padding:0 2px}
+.sess .x:hover{color:var(--red)}
+.sessbar .mini{font-size:10.5px;padding:2px 7px}
+.histpop{position:absolute;right:8px;top:74px;width:min(320px,92%);background:var(--paper);border:var(--bdw) solid var(--bd);border-radius:10px;box-shadow:var(--sh-lg);padding:6px;z-index:5}
+.histpop .h{font-size:10px;font-weight:900;color:var(--dim);letter-spacing:.6px;padding:4px 8px}
+.histitem{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:8px;font-size:11.5px;cursor:pointer}
+.histitem:hover{background:var(--purple-s)}
+.histitem .dim{margin-left:auto;font-size:10px}
+.composer{display:flex;gap:6px;padding:8px;border-top:var(--bdw) solid var(--bd);background:var(--idle)}
+.composer input{flex:1;height:32px;padding:0 10px;font-size:12px}
+.composer .send{background:var(--pink);color:var(--bg);font-weight:800;border-radius:8px;padding:0 14px;height:32px}
+.composer .send:hover{filter:brightness(1.1)}
+/* 树 */
+.tree details{margin-bottom:6px} .tree summary{list-style:none;display:flex;align-items:center;gap:6px;cursor:pointer}
+.tree summary::-webkit-details-marker{display:none}
+.tree summary::before{content:"▸";color:var(--dim);font-size:10px;transition:transform .12s}
+.tree details[open]>summary::before{transform:rotate(90deg)}
+.tree .glabel{font-size:10px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
+.tree .gcount{margin-left:auto;font-size:9.5px;color:var(--dim)}
+.tree .titem{display:flex;gap:6px;align-items:center;width:100%;text-align:left;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:700;color:var(--ink)}
+.tree .titem:hover{background:var(--purple-s)}
+.tree .titem.sel{background:var(--pink-s);color:var(--pink)}
+.tree .titem .dot{margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
+.tree .titem .dot.drift{background:var(--amber)}
+.tree .ten{padding-left:14px}
+/* 浮条切换器（技能制式：底部居中高对比胶囊） */
+#switcher{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:#000;border:2px solid var(--pink);border-radius:999px;padding:4px 6px;z-index:99;box-shadow:var(--sh-lg);font-weight:800;font-size:12px}
+#switcher button{border-radius:999px;padding:3px 10px;color:var(--pink)}
+#switcher button:hover{background:var(--pink-s)}
+#swName{color:var(--ink);padding:0 6px;white-space:nowrap;max-width:46vw;overflow:hidden;text-overflow:ellipsis}
+#swIdx{color:var(--dim);font-size:10px}
+/* 设计说明条 */
+.note{background:var(--yellow-s);border-bottom:var(--bdw) solid var(--yellow);color:#e8d9a8;font-size:11.5px;padding:6px 12px;display:flex;gap:10px;align-items:flex-start}
+.note b{color:var(--yellow)} .note .x{margin-left:auto;color:var(--dim);cursor:pointer}
+/* 状态角标 */
+#statebox{position:fixed;right:10px;bottom:14px;z-index:98;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+#statebox .t{background:#000;border:1px solid var(--bd);color:var(--dim);border-radius:8px;padding:2px 8px;font-size:10px;font-family:var(--mono);cursor:pointer}
+#statebox pre{display:none;background:#000;border:1px solid var(--bd);border-radius:8px;padding:8px;font-size:10px;color:var(--cyan);max-width:340px;margin:0}
+#statebox.open pre{display:block}
+/* toast */
+#toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--paper);border:var(--bdw) solid var(--cyan);color:var(--cyan);border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;z-index:100;display:none;box-shadow:var(--sh)}
+/* 命令条 Ctrl+K */
+#palette{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:97;display:none;justify-content:center;padding-top:14vh}
+#palette.open{display:flex}
+#palette .box{width:min(560px,90vw);background:var(--paper);border:var(--bdw) solid var(--bd);border-radius:12px;box-shadow:var(--sh-lg);overflow:hidden;height:fit-content}
+#palette input{width:100%;border:none;border-bottom:var(--bdw) solid var(--bd);border-radius:0;padding:12px 14px;font-size:14px}
+#palette .hits{max-height:44vh;overflow:auto;padding:4px}
+#palette .hit{display:flex;gap:8px;align-items:center;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:12.5px}
+#palette .hit:hover,#palette .hit.cur{background:var(--purple-s)}
+#palette .hit .sum{color:var(--dim);font-size:11px;margin-left:auto;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--bd);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--dim);background:var(--inset)}
+
+/* ══════════ v0 现状复现 ══════════ */
+.v0-bar{display:flex;flex-wrap:wrap;gap:0 18px;padding:6px 16px;border-bottom:var(--bdw) solid var(--bd);background:var(--paper);font-size:11px;font-weight:700;color:var(--dim)}
+.v0-tools{display:flex;gap:8px;align-items:center;padding:7px 14px;border-bottom:var(--bdw) solid var(--bd);background:var(--idle)}
+.v0-search{flex:1;text-align:left;height:32px;padding:0 12px;font-size:11.5px;font-weight:700;color:var(--dim);background:var(--inset);border:var(--bdw) solid var(--bd);border-radius:8px}
+.v0-search:hover{color:var(--ink);background:var(--purple-s)}
+.v0-main{flex:1;min-height:0}
+.v0-chat{display:flex;flex-direction:column;min-height:0;border-right:var(--bdw) solid var(--bd);background:var(--idle)}
+.v0-chat .hd{display:flex;gap:8px;align-items:center;padding:5px 10px;border-bottom:var(--bdw) solid var(--bd);background:var(--bg);font-size:11px;font-weight:800}
+.v0-side{min-height:0;overflow-y:auto;border-right:var(--bdw) solid var(--bd);background:var(--idle);padding:8px}
+.v0-view{min-height:0;overflow-y:auto;background:var(--bg)}
+.tr{flex:1;min-height:0;overflow-y:auto;padding:8px 10px}
+.v0-followflash{background:var(--yellow-s);border-bottom:var(--bdw) solid var(--yellow);color:var(--yellow);font-size:10.5px;font-weight:800;padding:2px 12px;display:flex;gap:8px}
+.page{padding:22px 26px;max-width:980px}
+.page h1{font-size:22px;margin:0 0 6px;font-weight:900}
+.meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.footsec{margin-top:22px;border-top:var(--bdw) solid var(--bd);padding-top:8px}
+.footsec summary{cursor:pointer;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.logline{display:flex;gap:10px;padding:4px 6px;border-radius:6px;font-size:12px;font-family:var(--mono)}
+.logline:hover{background:var(--idle)}
+.logline .op{font-weight:800;color:var(--cyan);width:70px;flex:none}
+.rawrow{display:flex;gap:10px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bd);cursor:pointer;font-size:12px}
+.rawrow:hover{background:var(--idle)}
+.rawrow .p{font-family:var(--mono);font-size:10.5px;color:var(--dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orphan{color:var(--amber);background:var(--amber-s);border-radius:5px;padding:0 6px;font-size:9.5px;font-weight:800;white-space:nowrap}
+
+/* ══════════ vA wiki 主场 + 抽屉 ══════════ */
+.va-hd{display:flex;gap:10px;align-items:center;padding:0 14px;height:46px;border-bottom:var(--bdw) solid var(--bd);background:var(--paper);flex:none}
+.va-brand{font-weight:900;display:flex;gap:7px;align-items:center}
+.va-search{width:300px;height:28px;padding:0 10px;font-size:12px;color:var(--dim)}
+.va-hpill{display:flex;gap:7px;align-items:center;margin-left:auto;font-size:11px;font-weight:800;color:var(--dim)}
+.va-score{color:var(--amber)} .va-fb{background:var(--amber-s);color:var(--amber);border-radius:6px;padding:0 7px}
+.va-body{flex:1;display:grid;grid-template-columns:250px 1fr;min-height:0}
+.va-side{overflow-y:auto;border-right:var(--bdw) solid var(--bd);background:var(--idle);padding:10px 8px}
+.va-stage{overflow-y:auto;min-height:0;display:flex}
+.va-art{flex:1;max-width:780px;margin:0 auto;padding:26px 34px 60px}
+.va-crumb{font-size:11px;color:var(--dim);margin-bottom:8px;display:flex;gap:6px;align-items:center}
+.va-crumb b{color:var(--pink)}
+.va-rail{width:210px;flex:none;border-left:var(--bdw) solid var(--bd);padding:22px 14px;position:sticky;top:0;align-self:flex-start;font-size:11.5px}
+.va-rail .rt{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin:14px 0 6px}
+.va-rail a{display:block;color:var(--dim);text-decoration:none;padding:2px 6px;border-radius:5px;border-left:2px solid var(--bd);margin:2px 0}
+.va-rail a:hover{color:var(--ink);border-left-color:var(--pink)}
+.va-drawer{position:fixed;top:0;right:0;bottom:0;width:var(--dw,560px);max-width:94vw;background:var(--idle);border-left:var(--bdw) solid var(--bd);box-shadow:var(--sh-lg);transform:translateX(102%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:90}
+.va-drawer.open{transform:none}
+.va-dres{position:absolute;left:-3px;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:3}
+.va-dres:hover,.va-dres.act{background:rgba(255,133,92,.4)}
+.va-dhd{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:var(--bdw) solid var(--bd);font-weight:800;font-size:12px}
+.va-dhd .x{margin-left:auto;color:var(--dim);padding:2px 8px;border-radius:6px}
+.va-dhd .x:hover{color:var(--ink);background:var(--purple-s)}
+.va-follow{display:flex;gap:8px;align-items:center;background:var(--green-s);border:var(--bdw) solid var(--green);color:var(--green);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:800;cursor:pointer}
+.va-follow:hover{filter:brightness(1.15)}
+.va-chatbtn.on{background:var(--green-s);color:var(--green);border-color:var(--green)}
+
+/* ══════════ vB 页签制（Wikipedia Talk） ══════════ */
+.vb-top{display:flex;align-items:center;gap:16px;padding:10px 20px;border-bottom:var(--bdw) solid var(--bd);background:var(--paper);flex:none}
+.vb-logo{font-family:Georgia,"STZhongsong",serif;font-size:19px;font-weight:700}
+.vb-logo small{display:block;font-family:inherit;font-size:9px;letter-spacing:2px;color:var(--dim);font-weight:400}
+.vb-searchbox{flex:1;max-width:520px;margin:0 auto}
+.vb-searchbox input{width:100%;height:32px;padding:0 14px;border-radius:999px;font-size:12.5px}
+.vb-wrap{flex:1;display:grid;grid-template-columns:200px 1fr;min-height:0}
+.vb-nav{overflow-y:auto;border-right:var(--bdw) solid var(--bd);background:var(--bg);padding:10px 8px;font-size:12px}
+.vb-article{overflow-y:auto;min-height:0;padding:20px 34px 60px;max-width:860px}
+.vb-h1{font-size:23px;font-weight:400;font-family:Georgia,serif;border-bottom:var(--bdw) solid var(--bd);padding-bottom:6px;margin:0 0 2px}
+.vb-tabs{display:flex;gap:2px;margin:12px 0 14px;border-bottom:var(--bdw) solid var(--bd)}
+.vb-tab{padding:6px 16px;font-size:12.5px;font-weight:700;color:var(--navy);border:var(--bdw) solid transparent;border-bottom:none;border-radius:8px 8px 0 0;position:relative;top:var(--bdw)}
+.vb-tab:hover{background:var(--navy-s)}
+.vb-tab.on{background:var(--bg);border-color:var(--bd);border-bottom-color:var(--bg);color:var(--ink)}
+.vb-tab .n{font-size:9.5px;background:var(--amber-s);color:var(--amber);border-radius:6px;padding:0 5px;margin-left:5px}
+.vb-talk{max-width:720px}
+.vb-talk .topic{border:var(--bdw) solid var(--bd);border-left:4px solid var(--navy);border-radius:8px;padding:10px 14px;margin:10px 0;background:var(--paper)}
+.vb-dash{padding:22px 34px}
+.vb-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;margin:10px 0 20px}
+.vb-tile{background:var(--paper);border:var(--bdw) solid var(--bd);border-radius:10px;padding:10px 12px}
+.vb-tile .n{font-size:21px;font-weight:900}
+.vb-tile .l{font-size:10.5px;color:var(--dim);font-weight:700;letter-spacing:.4px}
+.vb-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.vb-sec h3{margin:0 0 8px;font-size:13px;color:var(--ink);border-bottom:var(--bdw) solid var(--bd);padding-bottom:4px}
+.askbar{display:flex;gap:8px;align-items:center;background:var(--idle);border:var(--bdw) solid var(--bd);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+.askbar input{flex:1;background:transparent;border:none;height:26px;font-size:12.5px}
+.vb-recent li{font-size:12px;color:#d8d8d4;margin-bottom:6px}
+.vb-recent .tm{color:var(--dim);font-family:var(--mono);font-size:10.5px;margin-right:8px}
+
+/* ══════════ vC 命令条 + 浮式问答 ══════════ */
+.vc-rail{width:56px;flex:none;border-right:var(--bdw) solid var(--bd);background:var(--idle);display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0}
+.vc-rail .ri{width:38px;height:38px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:15px;color:var(--dim);cursor:pointer}
+.vc-rail .ri:hover{background:var(--purple-s);color:var(--ink)}
+.vc-rail .ri.on{background:var(--pink-s);color:var(--pink)}
+.vc-rail .ri small{font-size:8px;font-weight:800}
+.vc-flipline{position:absolute;left:56px;top:0;bottom:0;width:230px;background:var(--idle);border-right:var(--bdw) solid var(--bd);z-index:60;padding:12px 8px;overflow-y:auto;box-shadow:var(--sh);display:none}
+.vc-wrap{flex:1;position:relative;min-height:0}
+.vc-main{height:100%;overflow-y:auto;display:flex;justify-content:center}
+.vc-art{width:100%;max-width:820px;padding:26px 34px 140px}
+.vc-askzone{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;width:min(760px,92%);z-index:70;display:flex;flex-direction:column;gap:8px}
+.vc-askbtn{background:var(--paper);border:var(--bdw) solid var(--bd);border-radius:12px;box-shadow:var(--sh-lg);padding:10px 14px;display:flex;gap:10px;align-items:center;color:var(--dim);font-size:13px;cursor:text}
+.vc-askbtn b{color:var(--pink)}
+.vc-panel{background:var(--paper);border:var(--bdw) solid var(--bd);border-radius:14px;box-shadow:var(--sh-lg);max-height:46vh;display:none;flex-direction:column;overflow:hidden}
+.vc-panel.open{display:flex}
+.vc-panel .ph{display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:var(--bdw) solid var(--bd);font-size:11px;font-weight:800;color:var(--dim)}
+.vc-panel .ph .x{margin-left:auto;color:var(--dim)} .vc-panel .ph .x:hover{color:var(--ink)}
+.vc-ans{overflow-y:auto;padding:10px 16px;font-size:13px}
+.vc-cite{font-size:10.5px;color:var(--cyan);background:var(--cyan-s);border-radius:5px;padding:0 6px;cursor:pointer;white-space:nowrap;font-weight:700}
+.vc-cite:hover{outline:1px solid var(--cyan)}
+.vc-followrow{display:flex;gap:8px;padding:8px 10px;border-top:var(--bdw) solid var(--bd);background:var(--idle)}
+.vc-followrow input{flex:1;height:30px;padding:0 10px;font-size:12px;border-radius:8px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<div id="switcher">
+  <button id="swPrev" title="上一个 (←)">◀</button>
+  <span id="swName"></span>
+  <span id="swIdx"></span>
+  <button id="swNext" title="下一个 (→)">▶</button>
+</div>
+
+<div id="statebox"><button class="t" id="stToggle">state ⓘ</button><pre id="stPre"></pre></div>
+<div id="toast"></div>
+
+<div id="palette"><div class="box">
+  <input id="palInput" placeholder="检索：页名 / 别名 / 锚点 / 全文… （Ctrl+K 开关 · Esc 关闭 · ↑↓ 选择 · Enter 打开）">
+  <div class="hits" id="palHits"></div>
+</div></div>
+
+<script>
+/* ═══════════════════════ 假数据（形状对齐真实 API） ═══════════════════════ */
+const H = { pages:{total:14,entity:4,concept:3,topic:2,source:3,case:2}, rawSources:37,
+  ingestedThisWeek:5, openFindings:3, queueDepth:0, avgConfidence:0.81, score:78,
+  lastCompiled:'10-15 22:03', gitHead:'a3f9c21' };
+
+const P = {}; // pageId -> article（对齐 KcArticle）
+function mk(o){ P[o.id]=Object.assign({anchors:[],backlinks:[],aliases:[],links:[],sources:[],history:[],toc:[],effect:{cited:0,rate:null}},o); }
+
+mk({ id:'e-octo-wiki', type:'entity', kind:'实体', title:'octo-wiki 编译知识库',
+  summary:'把 raw 素材编译成互链页的 wiki 子系统', stability:'stable', conf:0.86, compiled:'10-12', path:'wiki/entities/octo-wiki.md',
+  aliases:['wiki','编译知识库'], links:['知识代谢闭环','编译 vs 检索'],
+  sources:['raw/inbox/wiki-design-2026-09.md','raw/url/anthropic-agents-md.md'],
+  backlinks:['t-metabolism','c-compile-vs-rag','s-anthropic'],
+  history:[['a3f9c21','10-12','compile: octo-wiki +2 rules ← wiki-design'],['9c2e1f0','10-05','compile: 别名修正'],['1d4b7a8','09-28','create: 初版编译落库']],
+  effect:{cited:41,rate:'93%'},
+  toc:['是什么','编译管线','读取协议','与其他页的关系'],
+  body:`<p>octo-wiki 是平台的<b>编译型知识库</b>：不可变 <code>raw/</code> 素材经策展人（archive 分身）编译成互链的 wiki 页，与 RAG 的关键区别见 <a class="wl" data-act="goto" data-t="c-compile-vs-rag">[[编译 vs 检索]]</a>。</p>
+  <h2>是什么</h2><p>五类页面：<b>entity / concept / topic / source / case</b>，全局唯一（org 钉死 global）。每页带 front-matter 现形元数据与规则锚点 <span class="rid">#oct-041</span> 起。</p>
+  <h2>编译管线</h2><p>投喂 → 抓取落 raw（冻结哈希）→ 入全局串行队列 → 编译触碰页 + git commit + FTS 重建。红线：<b>任何写都要过写闸</b>，前端零直写。</p>
+  <div class="rule" id="oct-042"><span class="rid">#oct-042</span><span>编译冲突按 raw 时间戳新者优先，旧结论降级为 <code>drift</code> 标记而非删除。</span></div>
+  <h2>读取协议</h2><p>INDEX → 整读页 → search 兜底（FTS5）。引用纪律：wiki_refs / <code>[ref:]</code> 上报，失效即 stale。</p>
+  <h2>与其他页的关系</h2><ul><li>代谢节奏：<a class="wl" data-act="goto" data-t="t-metabolism">[[知识代谢闭环]]</a></li><li>失败案例：<a class="wl" data-act="goto" data-t="case-ws">[[Windows 冒号路径崩溃]]</a></li></ul>` });
+
+mk({ id:'t-metabolism', type:'topic', kind:'主题', title:'知识代谢闭环',
+  summary:'P0–P4：投喂 → 编译 → 实效 → 进化', stability:'stable', conf:0.79, compiled:'10-14', path:'wiki/topics/knowledge-metabolism.md',
+  links:['octo-wiki 编译知识库'], sources:['raw/inbox/metabolism-brief.md'],
+  backlinks:['e-octo-wiki'], history:[['b7c3d90','10-14','compile: P4 段实效公式 ← metabolism-brief'],['77aa0c1','10-02','create']],
+  effect:{cited:18,rate:'88%'}, toc:['四段代谢','共演公式','里程碑'],
+  body:`<p>知识库不是仓库是<b>代谢系统</b>：素材进（ingest）→ 编译成页 → 被引用产生实效账 → 反哺策展策略。</p>
+  <h2>四段代谢</h2><ul><li><b>进</b>：对话投喂 URL/文本/路径，落 raw 冻结。</li><li><b>编</b>：串行队列编译互链页（见 <a class="wl" data-act="goto" data-t="e-octo-wiki">[[octo-wiki 编译知识库]]</a>）。</li><li><b>用</b>：分身执行时 wiki_refs 引用计数。</li><li><b>评</b>：helpful/not-helpful 双账修正 confidence。</li></ul>
+  <div class="rule" id="oct-077"><span class="rid">#oct-077</span><span>实效公式：<code>score = f(引用数, helpful率, 新鲜度, 矛盾数)</code>，闸在编译期初值。</span></div>
+  <h2>里程碑</h2><p>P0 编译 → P1 检索 → P2 对话即管理 → P3 归档资产 → P4 进化（shadow/共演）。</p>` });
+
+mk({ id:'c-compile-vs-rag', type:'concept', kind:'概念', title:'编译 vs 检索',
+  summary:'预编译互链 vs 查询时召回的取舍', stability:'drift', conf:0.74, compiled:'10-08', path:'wiki/concepts/compile-vs-rag.md',
+  aliases:['compile-vs-rag'], links:['octo-wiki 编译知识库'], sources:['raw/url/anthropic-agents-md.md'],
+  backlinks:['e-octo-wiki'], history:[['5e2a1b3','10-08','compile: 引入矛盾段（待裁决）'],['21c0ff4','09-30','create']],
+  effect:{cited:27,rate:'95%'}, toc:['两种范式','为什么编译'],
+  body:`<p><b>RAG</b> 每次查询临时召回切片；<b>编译</b>把知识一次加工成持久互链页。平台选了后者。</p>
+  <div class="rule" id="oct-088"><span class="rid">#oct-088</span><span>矛盾记录：本页 confidence 快照 0.74，实测 helpful 95%（P4 巡检 finding 未裁决）。</span></div>
+  <h2>为什么编译</h2><p>编译产物可被 grep、可溯源、可被 LLM 整读；检索切片丢结构。代价是新鲜度靠夜巡 sync 兜底。</p>` });
+
+mk({ id:'case-ws', type:'case', kind:'判例', title:'Windows 冒号路径崩溃',
+  summary:'task 标题含冒号 → Git-Bash ref 解析成路径', stability:'stable', conf:0.92, compiled:'10-01', path:'wiki/cases/ws-colon-crash.md',
+  sources:['raw/inbox/incident-0905.md'], backlinks:['t-metabolism'], history:[['8f1e0a2','10-01','case-archive ← 判例沉淀']],
+  effect:{cited:6,rate:'100%'}, toc:['症状','根因','处方'],
+  body:`<p><b>症状</b>：建任务后 server 无声猝死（0xC0000409）。<b>根因</b>：中文标题 + 冒号未转义进 ref。<b>处方</b>：copyDirSync 收敛 + 冒号白名单。</p>` });
+
+mk({ id:'e-loop-engine', type:'entity', kind:'实体', title:'Loop 执行引擎', summary:'7 执行器 · 4 编排模式', stability:'stable', conf:0.83, compiled:'10-09', path:'wiki/entities/loop-engine.md', body:'<p>YAML 工作流引擎：Bash/Python/Agent/Condition/Approval/Loop/Swarm 七执行器。</p>', sources:['raw/inbox/engine-notes.md'], history:[['aa11','10-09','compile']] });
+mk({ id:'e-archive', type:'entity', kind:'实体', title:'archive 分身（策展人）', summary:'知识中心唯一写通道的执行体', stability:'stable', conf:0.88, compiled:'10-10', path:'wiki/entities/archive-clone.md', body:'<p>知识策展分身，所有 wiki 写经它的编译队列串行落库。</p>', sources:['raw/inbox/clone-spec.md'], history:[['bb22','10-10','compile']] });
+mk({ id:'c-varpool', type:'concept', kind:'概念', title:'VarPool 变量池', summary:'$vars 全局池 + 节点前序输出', stability:'drift', conf:0.69, compiled:'09-25', path:'wiki/concepts/varpool.md', body:'<p>执行期变量注入链。<span class="rid">#oct-101</span> 循环内 <code>$iteration</code> 覆盖规则待蒸馏。</p>', sources:[], history:[] });
+mk({ id:'s-anthropic', type:'source', kind:'来源', title:'Anthropic Agent 文档（源）', summary:'raw/url 不可变源', stability:'stable', conf:0.9, compiled:'09-20', path:'wiki/sources/anthropic-agents-md.md', body:'<p>抓取于 09-20，sha 冻结；编译触碰：octo-wiki、compile-vs-rag。</p>', sources:['raw/url/anthropic-agents-md.md'], history:[] });
+mk({ id:'s-design', type:'source', kind:'来源', title:'wiki 设计笔记（源）', summary:'09 月设计散记投喂', stability:'stable', conf:0.85, compiled:'10-12', path:'wiki/sources/wiki-design-notes.md', body:'<p>三次编译的公共源。</p>', sources:['raw/inbox/wiki-design-2026-09.md'], history:[] });
+mk({ id:'case-db', type:'case', kind:'判例', title:'dev 库被清空 0905', summary:'迁移脚本无 where → 全表删', stability:'stable', conf:0.95, compiled:'09-06', path:'wiki/cases/db-wipe-0905.md', body:'<p>备份救回；处方：迁移 dry-run 强制。</p>', sources:['raw/inbox/incident-0905.md'], history:[] });
+mk({ id:'s-clone', type:'source', kind:'来源', title:'clone 规格（源）', summary:'', stability:'stable', conf:0.8, compiled:'10-10', path:'wiki/sources/clone-spec.md', body:'<p>分身体系设计源。</p>', sources:['raw/inbox/clone-spec.md'], history:[] });
+mk({ id:'c-shadow', type:'concept', kind:'概念', title:'Shadow 编译', summary:'影子编译不触主库', stability:'drift', conf:0.61, compiled:'09-29', path:'wiki/concepts/shadow.md', body:'<p>P4 进化实验通道。</p>', sources:[], history:[] });
+mk({ id:'t-port', type:'topic', kind:'主题', title:'端口与工作区隔离', summary:'dev/worktree/prod 端口段', stability:'stable', conf:0.87, compiled:'10-03', path:'wiki/topics/port-isolation.md', body:'<p>3001/3000 · 3100-3598 · 3099/3098。</p>', sources:[], history:[] });
+
+const GROUPS = [
+  { label:'必读', items:[{id:'sys-pref', title:'⚙ user_preference', sub:'人工文件'}] },
+  { label:'Entities', type:'entity', items:['e-octo-wiki','e-loop-engine','e-archive'] },
+  { label:'Concepts', type:'concept', items:['c-compile-vs-rag','c-varpool','c-shadow'] },
+  { label:'Topics', type:'topic', items:['t-metabolism','t-port'] },
+  { label:'Sources', type:'source', items:['s-anthropic','s-design','s-clone'] },
+  { label:'Cases', type:'case', items:['case-ws','case-db'] },
+  { label:'System', items:[{id:'sys-log', title:'🧾 LOG 时间线', sub:'只读'},{id:'sys-raw', title:'📥 原料库 raw', sub:'37'}] },
+];
+const LOG = [
+  ['10-15 22:03','compile','知识代谢闭环','committed · b7c3d90'],
+  ['10-15 19:40','ingest','metabolism-brief.md','raw 冻结 · sha 1f2c…'],
+  ['10-14 08:12','patrol','开放 findings +1','矛盾 #oct-088'],
+  ['10-12 21:15','compile','octo-wiki 编译知识库','committed · a3f9c21 · +2 rules'],
+  ['10-10 16:30','grant','草案 skill「octo-distill」→ archive','granted'],
+  ['10-09 11:02','revert','varpool 漂移回滚','reverted · 77aa0c1'],
+  ['10-01 09:20','case-archive','Windows 冒号路径崩溃','判例沉淀'],
+];
+const PREF = '# user_preference（人工文件 · 编译永不触碰）\n\n- 回答用中文，术语保留英文原文。\n- wiki 页标题 ≤ 14 字；判例必带复现步骤。\n- 编译冲突时保留双方结论，标 drift，别擅自裁决。';
+
+/* ── 原料库 raw 假数据（形状对齐 KcRawSource：path/bytes/hash/origin/title/ingestedAt；
+   服务端 GET /api/knowledge/raw 端点已存在，客户端一直没消费——本轮补视图） ── */
+const RAW = [
+  {path:'raw/url/anthropic-agents-md.md', title:'Anthropic Agent 文档', origin:'url', at:'10-12', bytes:'22.4KB', hash:'1f2c…a9', orphan:false},
+  {path:'raw/inbox/wiki-design-2026-09.md', title:'wiki 设计笔记', origin:'inbox', at:'10-12', bytes:'8.1KB', hash:'7d3e…c1', orphan:false},
+  {path:'raw/inbox/metabolism-brief.md', title:'代谢闭环简报', origin:'inbox', at:'10-15', bytes:'5.6KB', hash:'b8a2…04', orphan:false},
+  {path:'raw/inbox/clone-spec.md', title:'分身规格', origin:'inbox', at:'10-10', bytes:'12.0KB', hash:'e5f1…77', orphan:false},
+  {path:'raw/inbox/incident-0905.md', title:'0905 事故记录', origin:'inbox', at:'09-06', bytes:'3.3KB', hash:'9c4d…12', orphan:false},
+  {path:'raw/file/engine-notes.md', title:'引擎散记（路径投喂）', origin:'file', at:'10-09', bytes:'6.8KB', hash:'2ab7…f3', orphan:false},
+  {path:'raw/inbox/meeting-1004.md', title:'10-04 架构例会纪要', origin:'inbox', at:'10-04', bytes:'4.2KB', hash:'6f8c…e0', orphan:true},
+  {path:'raw/inbox/sls-notes.md', title:'SLS 排查手记', origin:'inbox', at:'10-11', bytes:'2.9KB', hash:'d1e4…98', orphan:true},
+  {path:'raw/url/llm-wiki-paper.md', title:'LLM-Wiki 论文摘录', origin:'url', at:'09-28', bytes:'41.7KB', hash:'3c6b…b5', orphan:false},
+  {path:'raw/inbox/port-musing.md', title:'端口隔离随想', origin:'inbox', at:'10-03', bytes:'1.8KB', hash:'f0a3…2d', orphan:false},
+];
+const ORIG={'url':'🌐','inbox':'📥','file':'📁'};
+
+/* ── 策展人会话（TUI 形制：lines 行型 {role:user} | {role:ai,steps,text} | {kind:'card'}；
+   steps 对齐 TuiTranscript 折叠 meta：['think',文本] / ['tool',名,简报,状态,input,result]） ── */
+function card(kind, title, meta, refs, btns, ts){ return {kind:'card', card:{kind, title, meta, refs, btns, ts}}; }
+function ai(text, steps){ return {role:'ai', text, steps:steps||[]}; }
+function T(name,brief,inp,res){ return ['tool',name,brief,'✓',inp,res||'']; }
+const SEED = [
+  {role:'user', text:'投喂 URL：https://anthropic.com/engineering/agents'},
+  ai('收到，**已落 raw 并投递编译**。这轮触碰 3 页，diff 见卡。\n去重走 `wiki.ingest`（sha `1f2c…`），编译入全局串行队列 —— 红线2 不直写。',
+    [['think','url 形态 → ingest 通道；先哈希查重，再投递编译队列。'],
+     T('wiki.ingest','url → raw/url/anthropic-agents-md.md','{"mode":"url","url":"https://anthropic.com/engineering/agents"}','deduped=false · 22.4KB 冻结'),
+     T('queue.submit','compile ← raw/url/anthropic-agents-md.md','{"op":"wiki-compile","priority":"normal"}','committed · a3f9c21 · touched 3')]),
+  card('compile-diff','编译落定 · a3f9c21','3 页 touched（新建 1 · 更新 2）· 冲突 0',['e-octo-wiki','t-metabolism'],[['看 diff','#'],['撤销','danger']], '10-12 21:15'),
+  ai('顺带跑了一次体检：发现 **1 处矛盾**，标在页上等你裁决。',
+    [['think','顺手五查：stale / 矛盾 / 孤页 / 漂移 / 实效差'],
+     T('wiki.patrol','scope=global','','findings +1 · #oct-088')]),
+  card('finding','矛盾：confidence 0.74 vs 实测 helpful 95%','#oct-088 · compile-vs-rag · 建议以实效账修正',['c-compile-vs-rag'],[['采纳修订','#'],['忽略','#']], '10-12 21:18'),
+  card('backfill','对话摘录已落 raw · 队列位次 #3','「代谢公式」讨论段沉淀',['t-metabolism'],[['看原文','#'],['等编译','#']], '10-12 21:20'),
+];
+const SEED2 = [
+  {role:'user', text:'共演公式里 helpful 率的窗口是多少天？'},
+  ai('页上写的是 **滚动 30 天**，锚点 `#oct-077`。夜巡 sync 每小时重算；样本 < 10 时闸门回落到编译期初值（不抖动）。',
+    [['think','查 t-metabolism #oct-077 与 P4 票07 口径是否一致'],
+     T('wiki.read','topics/knowledge-metabolism','','anchor #oct-077 hit')]),
+];
+const HIST0 = {id:'h0', title:'10-09 蒸馏 varpool', closedAt:'10-09 18:22', lines:[
+  {role:'user', text:'varpool 循环覆盖规则哪页写了？'},
+  ai('写在 `concepts/varpool` 的 `#oct-101`，标了 drift —— 与 loop-engine 说法不一，建议下轮统一。',
+    [['think','grep 两页规则行'], T('wiki.search','"$iteration" 覆盖','','hits: varpool, loop-engine')]),
+]};
+const SCRIPT = [ // 发送后的循环剧本
+  {text:'我把你说的合成了 1 条规则，页已更新（`+1 rule`）。',
+    steps:[['think','归并用户表述 → 规则锚点行'],T('wiki.compile','焦点重编译','{"focus":"current"}','committed · f1e2d3')],
+    c:card('compile-diff','编译落定 · f1e2d3','1 页 touched',['@@'],[['看 diff','#'],['撤销','danger']],'刚刚')},
+  {text:'巡检又揪出一个漂移，标在页上了。',
+    steps:[['think','实效账与快照 confidence 对不上'],T('wiki.patrol','severity=major','','+1 finding')],
+    c:card('finding','漂移：varpool #oct-101 循环覆盖规则两页说法不一','severity major · 建议统一为后编译优先',['c-varpool'],[['采纳修订','#'],['忽略','#']],'刚刚')},
+  {text:'这段讨论值得入库，我落 raw 了。',
+    steps:[['think','判例形态判定：有症状 + 处方'],T('case.archive','端口占用误杀 ×2','','待确认')],
+    c:card('case','判例沉淀候选 · 端口占用误杀','occurrences ×2 · 待你确认',['case-db'],[['查看判例','#'],['退役','danger']],'刚刚')},
+];
+
+/* ═══════════════════════ 状态与引擎 ═══════════════════════ */
+const VARIANTS = [
+  {k:'v0', name:'0 · 现状复现（感受病）', hint:'照搬现网：模式一切换三列全重排；新卡自动劫持右栏'},
+  {k:'vA', name:'A · wiki 主场 + 对话抽屉', hint:'Notion/Obsidian：正文永不被对话挪位；新件=原料库 raw（System 组）→ 库内有「方案a 平铺」对照开关'},
+  {k:'vB', name:'B · 讨论是页面的一页', hint:'Wikipedia Talk：对话收进每页的「讨论」页签，模式切换消失'},
+  {k:'vC', name:'C · 命令条 + 浮式问答', hint:'Perplexity/Linear：不留常驻聊天，问即浮出，答完即走'},
+];
+const S = {
+  v: (location.hash.replace('#','')||'v0'),
+  view: {kind:'page', id:'e-octo-wiki'},   // 通用浏览态
+  chatOpen: false, pinned: false, mode: 'browse', // v0 用
+  vaDrawer:false, vcPanel:false, vcRailFly:false,
+  vbTab:'read',
+  sessions:[{id:'s1',title:'知识中心',lines:SEED.slice()},{id:'s2',title:'代谢公式讨论',lines:SEED2.slice()}],
+  active:'s1', sessN:2, hist:[HIST0], histOpen:false, dw:560,
+  metaOpen:{'va1':true,'v01':true}, toolOpen:{},
+  rawInTree:false, rawQ:'',
+  vbTalk: { 'e-octo-wiki': [SEED[3],SEED[4]] },
+  scriptIdx: 0, draft:{}, noteClosed:{}, palCur:0,
+};
+if(!VARIANTS.find(v=>v.k===S.v)) S.v='v0';
+
+const $ = s=>document.querySelector(s);
+const esc = s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let toastT=null;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(toastT); toastT=setTimeout(()=>t.style.display='none',2600); }
+
+function chips(p){
+  let h = `<span class="chip type">${p.kind||p.type}</span>`;
+  (p.aliases||[]).forEach(a=>h+=`<span class="chip">${esc(a)}</span>`);
+  h += `<span class="chip ${p.stability==='stable'?'stable':'drift'}">${p.stability}</span>`;
+  h += `<span class="chip conf">confidence ${p.conf}</span>`;
+  h += `<span class="chip date">编译于 ${p.compiled}</span>`;
+  if(p.effect&&p.effect.cited)h+=`<span class="chip date">被引 ${p.effect.cited} · helpful ${p.effect.rate}</span>`;
+  return h;
+}
+function linksRow(p){
+  if(!(p.links||[]).length && !(p.sources||[]).length) return '';
+  let h='<div class="meta" style="margin-top:4px">';
+  (p.links||[]).forEach(l=>h+=`<button class="chip link" data-act="golink" data-t="${esc(l)}">🔗 ${esc(l)}</button>`);
+  (p.sources||[]).forEach(s=>h+=`<button class="chip src" data-act="stub" data-m="PROTOTYPE：真面会打开 raw 只读视图 ${esc(s)}">📄 ${esc(s)}</button>`);
+  return h+'</div>';
+}
+function footSecs(p){
+  return `<details class="footsec"><summary>🕘 版本历史（git ${p.history.length}）</summary>${p.history.map(x=>`<div class="logline"><span class="op">${x[0].slice(0,7)}</span><span class="dim">${x[1]}</span><span>${esc(x[2])}</span></div>`).join('')||'<p class="dim small">无</p>'}</details>`
+   + `<details class="footsec"><summary>↩ 反向链接 ${p.backlinks.length}</summary>${p.backlinks.map(b=>{const q=P[b];return q?`<a class="wl" data-act="goto" data-t="${b}">${esc(q.title)}</a>`:''}).join(' · ')||'<span class="dim small">无</span>'}</details>`;
+}
+function pageHtml(p, extraCls){
+  if(!p) return '<div class="page dim">选择页面查看内容</div>';
+  return `<div class="page ${extraCls||''}">
+    <h1>${esc(p.title)}</h1>
+    <div class="meta">${chips(p)}</div>
+    ${linksRow(p)}
+    <div class="art-body">${p.body||'<p class="dim">（本页尚未蒸馏正文）</p>'}</div>
+    ${footSecs(p)}
+  </div>`;
+}
+function logHtml(){ return `<div class="page"><h1>LOG 时间线</h1>${LOG.map(l=>`<div class="logline"><span class="op">${l[1]}</span><span class="dim">${l[0]}</span><span>${esc(l[2])}</span><span class="dim">→ ${esc(l[3])}</span></div>`).join('')}</div>`; }
+function prefHtml(){ return `<div class="page"><h1>user_preference</h1><div class="dim small">人工文件 · 编译永不触碰 · 只读预览</div><pre class="mono" style="background:var(--inset);padding:14px;border-radius:10px;border:var(--bdw) solid var(--bd);white-space:pre-wrap;color:#d8d8d4">${esc(PREF)}</pre></div>`; }
+
+function viewHtml(){ // 当前 view 态 → 内容
+  if(S.view.kind==='log') return logHtml();
+  if(S.view.kind==='pref') return prefHtml();
+  if(S.view.kind==='rawlib') return rawLibHtml();
+  if(S.view.kind==='rawdoc') return rawDocHtml(S.view.i);
+  if(S.view.kind==='dash') return '';
+  return pageHtml(P[S.view.id]);
+}
+/* ── 原料库（Q9 方案 b：入口不平铺；库内带方案 a 对照开关） ── */
+function rawRows(){
+  const q=S.rawQ.toLowerCase();
+  const list=RAW.map((r,i)=>({r,i})).filter(({r})=>!q||(r.path+r.title).toLowerCase().includes(q));
+  return list.map(({r,i})=>`<div class="rawrow" data-act="raw-open" data-i="${i}">
+    <span>${ORIG[r.origin]}</span><span style="font-weight:700">${esc(r.title)}</span><span class="p">${esc(r.path)}</span>
+    ${r.orphan?'<span class="orphan" title="「未被引用」= 二期随反链倒排一起标（第一版只列清单，不判孤）——这里是演示效果">未被引用</span>':''}
+    <span class="dim mono small">${r.at}</span><span class="dim small" style="width:58px;text-align:right">${r.bytes}</span></div>`).join('')||'<div class="dim small" style="padding:14px">无匹配</div>';
+}
+function rawLibHtml(){
+  return `<div class="page"><h1>📥 原料库 · raw</h1>
+    <div class="meta"><span class="chip">37 个文件 · 示例 10</span><span class="chip stable">不可变层 · 红线2 编译永不改写 raw</span>
+      <button class="pill ${S.rawInTree?'on':''}" data-act="raw-a">方案a 对照：把 raw 平铺进左树 ${S.rawInTree?'✓ 看左树':'（点开左边看看哪种对）'}</button></div>
+    <div class="dim small">数据面事实：服务端 <code>GET /api/knowledge/raw</code> 早已就位（S2 契约测试钉形），客户端一直没消费者 —— 本视图就是第一个 importer。孤 raw（投喂了但没编进任何页）此前界面上<b>无处发现</b>，这是原设计的真缺口。</div>
+    <input placeholder="过滤 路径 / 标题…" style="width:100%;height:30px;margin:10px 0 6px;padding:0 12px;font-size:12px" oninput="S.rawQ=this.value;const b=document.getElementById('rawrows');if(b)b.innerHTML=rawRows()">
+    <div id="rawrows">${rawRows()}</div>
+    <div class="dim small" style="margin-top:8px">点一行 = 正文区打开原文（Q6 拍板：第一版不打断式浮层）。列头进不去抽屉右栏 —— raw 是仓库不是知识，与「树=知识地图」分层共存。</div></div>`;
+}
+function rawDocHtml(i){
+  const r=RAW[i];
+  return `<div class="page"><div class="meta"><button class="pill" data-act="raw-back">← 原料库</button></div>
+    <h1>${ORIG[r.origin]} ${esc(r.title)}</h1>
+    <div class="meta"><span class="chip src">${esc(r.path)}</span><span class="chip date">${r.at} 抓取</span><span class="chip date">${r.bytes}</span><span class="chip conf">sha ${r.hash}</span><span class="chip">${r.origin}</span></div>
+    <pre class="mono" style="background:var(--inset);border:var(--bdw) solid var(--bd);border-radius:10px;padding:16px;white-space:pre-wrap;color:#d8d8d4;font-size:12px"># ${esc(r.title)}（不可变原文 · 只读）\n\n…真实内容 = RawView 现组件渲染，逻辑零改动…\n\n本视图与现网「页尾 sources chips → RawView」共用同一渲染件，\n原料库只是给 raw 补了个<b>盘点大门</b>，引用触达链路原样保留。</pre></div>`;
+}
+
+function treeHtml(selAttr){
+  let out = GROUPS.map((g,i)=>{
+    let items = g.items.map(x=>typeof x==='string'?P[x]:x);
+    if(S.v!=='vA') items = items.filter(x=>x.id!=='sys-raw'); // 原料库只进 vA（v0 忠实复现现状，不夹带新私货）
+    return `<details ${i<3?'open':''}><summary><span class="glabel">${g.label}</span><span class="gcount">${items.length}</span></summary>
+    ${items.map(x=>`<button class="titem ${S.view.kind==='page'&&S.view.id===x.id||x.id==='sys-raw'&&S.view.kind==='rawlib'?'sel':''} ${x.id.startsWith('sys-')?'':'ten'}" data-act="goto" data-t="${x.id}" ${selAttr||''}>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.title)}</span>${x.sub?`<span class="dim" style="font-size:9px">${x.sub}</span>`:`<span class="dot ${x.stability==='stable'?'':'drift'}"></span>`}
+    </button>`).join('')}</details>`;
+  }).join('');
+  if(S.v==='vA'&&S.rawInTree) out += `<details open><summary><span class="glabel">Raw · 原料</span><span class="gcount">${RAW.length}</span></summary>
+    ${RAW.map((r,i)=>`<button class="titem ten ${S.view.kind==='rawdoc'&&S.view.i===i?'sel':''}" data-act="raw-open" data-i="${i}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ORIG[r.origin]} ${esc(r.title)}</span>${r.orphan?'<span class="orphan">孤</span>':''}</button>`).join('')}</details>`;
+  return out;
+}
+
+function cardHtml(c, ctx){
+  const openRef = r=>`<button class="kcref" data-act="${ctx==='v0full'?'v0-full':'goto'}" data-t="${r}">↗ ${P[r]?esc(P[r].title):r}</button>`;
+  const bt = c.btns.map(b=>`<button class="pill ${b[1]}" data-act="${b[0]==='撤销'?'stub':(b[0]==='↗'?'':'stub')}" data-m="PROTOTYPE：真面走队列端点（${esc(c.title)} → ${b[0]}）">${b[0]}</button>`).join('');
+  return `<div class="kccard"><div class="kt"><span class="kb ${c.kind}">${c.kind}</span>${esc(c.title)}</div>
+   <div class="km">${c.meta}</div><div class="krefs">${c.refs.map(r=>r==='@@'?'':openRef(r)).join('')}</div>
+   <div class="kcbtns">${ctx==='v0full'?'<button class="pill" data-act="v0-full" data-t="'+c.refs[0]+'">全页（会触发整页重排 · 现状行为）</button>':''}${bt}</div></div>`;
+}
+function lineHtml(ln, key, ctx){
+  if(ln.kind==='card') return cardHtml(ln.card, ctx);
+  if(ln.role==='user') return `<div class="tui-user"><span class="chev">❯ </span>${esc(ln.text)}</div>`;
+  let h='<div>';
+  if(ln.steps&&ln.steps.length){
+    const open=S.metaOpen[key];
+    h+=`<span class="tui-meta-h" data-act="meta" data-k="${key}">◌ 过程（时间序）· <b>${ln.steps.length} 步</b> ${open?'▾':'▸'}</span>`;
+    if(open) h+='<div class="tui-meta-b">'+ln.steps.map((s,si)=>{
+      const k2=key+'-'+si;
+      if(s[0]==='think') return `<div class="tui-think">◌ ${esc(s[1])}</div>`;
+      const [,name,brief,status,inp,res]=s;
+      const cls=status==='✓'?'st-ok':status==='✗'?'st-fail':'st-run';
+      let t=`<div class="tui-tool"><span class="tw" data-act="tool" data-k="${k2}">${S.toolOpen[k2]?'▾':'▸'} <span class="mono">${esc(name)}</span> ${esc(brief)} <span class="${cls}">[${status}]</span></span>`;
+      if(S.toolOpen[k2]) t+=`<div class="tui-tool-b"><div class="h" style="color:var(--cyan)">input · ${esc(name)}</div><pre>${esc(inp||'（无输入）')}</pre>${res?`<div class="h" style="color:var(--green)">result</div><pre>${esc(res)}</pre>`:''}</div>`;
+      return t+'</div>';
+    }).join('')+'</div>';
+  }
+  if(ln.text) h+=`<div class="tui-body"><span class="tui-mark">✳ </span>${mdHtml(ln.text)}</div>`;
+  else if(ln.steps&&ln.steps.length) h+=`<div class="dim"><span class="tui-mark">✳ </span>（未生成文本回复）</div>`;
+  return h+'</div>';
+}
+function mdHtml(t){ return esc(t).replace(/\*\*([^*\n]+)\*\*/g,'<b class="tui-b">$1</b>').replace(/`([^`\n]+)`/g,'<code class="tui-c">$1</code>'); }
+function activeSession(){ return S.sessions.find(x=>x.id===S.active)||S.sessions[0]; }
+
+/* ── 发消息 → 剧本回手（模拟流式落定 + 卡） ── */
+function sendChat(target){ // target: 'session' | 'vb:'+pageId | 'vc'
+  const inp = document.querySelector(`[data-compose="${target}"]`);
+  const text = (inp&&inp.value||'').trim() || '（示例输入）这个页该补充引用纪律';
+  if(inp) inp.value='';
+  const push = target==='session'||target==='vc'?activeSession().lines:(target.startsWith('vb:')?(S.vbTalk[target.slice(3)]||(S.vbTalk[target.slice(3)]=[])):null);
+  if(target==='vc') S.vcPanel=true;
+  push.push({role:'user', text});
+  const sc = SCRIPT[S.scriptIdx++ % SCRIPT.length];
+  const cur = S.view.kind==='page'?P[S.view.id]:null;
+  const c = JSON.parse(JSON.stringify(sc.c)); // 深拷贝，refs 指向当前页更戏剧
+  if(c.card.refs[0]==='@@') c.card.refs=[cur?cur.id:'e-octo-wiki'];
+  setTimeout(()=>{
+    push.push({role:'ai', text:sc.text, steps:sc.steps}, Object.assign({}, c, {card:Object.assign({}, c.card, {ts:'刚刚'}), fresh:true}));
+    afterChat(target, c.card);
+    refreshAll();
+  }, 420);
+  refreshAll();
+}
+function afterChat(target, cd){
+  const ref = cd.refs[0]; if(!ref||!P[ref]) return;
+  if(target==='session' && S.v==='v0' && !S.pinned){ // 现状：右栏被劫持
+    S.view={kind:'page', id:ref}; S._followFlash=true;
+    toast('现状行为：右栏已自动跳到「'+P[ref].title+'」——你在读的页没了');
+  } else if(target==='session' && S.v==='vA'){
+    S.vaFollow = ref; toast('抽屉未动 · 中部正文未动：只在头部亮了一枚引用药丸');
+  } else if(target.startsWith('vb:')){ /* 天然就在本页讨论流里，无事 */ }
+  else if(target==='vc'){ /* 浮层内展示，无事 */ }
+  else { S.vaFollow = ref; } // A 抽屉里发消息同样只亮药丸
+}
+
+/* ═══════════════════════ 各变体渲染 ═══════════════════════ */
+function noteBar(){
+  const v=VARIANTS.find(x=>x.k===S.v);
+  if(S.noteClosed[S.v]) return '';
+  return `<div class="note"><span>🧪 <b>PROTOTYPE ${v.k}</b> · ${v.hint} —— 评估：读一个页、发一条消息、开关一次对话，感受布局是否被惊动。</span><span class="x" data-act="note">✕ 收起</span></div>`;
+}
+
+/* ───── v0 现状复现 ───── */
+function renderV0(){
+  const open=S.chatOpen;
+  $('#root').innerHTML =
+  `<div class="v0-bar"><span style="color:var(--ink)">⚡ 知识中心 · 全局 wiki</span>
+    <span>页 <b>${H.pages.total}</b><span class="dim">（实体 ${H.pages.entity} · 概念 ${H.pages.concept} · 主题 ${H.pages.topic} · 来源 ${H.pages.source} · 判例 ${H.pages.case}）</span></span>
+    <span>raw 源 <b>${H.rawSources}</b></span><span>本周 ingest <b>${H.ingestedThisWeek}</b></span>
+    <span>平均置信 <b>${H.avgConfidence}</b></span><span>健康分 <b style="color:var(--amber)">${H.score}</b> <button class="pill" style="font-size:9px;padding:0 5px" data-act="stub">点开明细</button></span>
+    <span>findings <b style="color:var(--amber)">${H.openFindings}</b></span><span>队列 <b>${H.queueDepth}</b></span>
+    <span>最近编译 <b>${H.lastCompiled}</b></span><span class="mono" style="font-size:10px">HEAD ${H.gitHead}</span>
+    <span style="margin-left:auto;font-size:10px">只读浏览 · 写入仅策展通道</span></div>
+  ${noteBar()}
+  <div class="v0-tools">
+    <button class="v0-search" data-act="palette">🔍 检索命令条（Ctrl+K）：页名/别名/锚点/全文 FTS5…</button>
+    <button class="pill ${S.pinned?'on':''}" data-act="v0-pin">右栏 ${S.pinned?'📌 已钉住（停跟随）':'跟随对话'}</button>
+    <button class="pill" data-act="v0-mode">${open?'浏览模式':'对话模式'}（对话抽屉 ${open?'▶':'◀'}）</button>
+  </div>
+  <div class="v0-main" style="display:grid;grid-template-columns:${open?'3fr 240px 2fr':'240px 1fr'}">
+    ${open?`<div class="v0-chat"><div class="hd"><span style="color:var(--green)">●</span><span>策展人 · archive 分身会话通道</span><button class="pill" style="margin-left:auto;font-size:10px" data-act="stub" data-m="PROTOTYPE：新建会话">新建对话</button></div>
+      <div class="tr tui" data-tr="session">${activeSession().lines.map((l,i)=>lineHtml(l,'v0'+i,'v0full')).join('')}</div>
+      <div class="composer"><input data-compose="session" placeholder="投喂 raw（URL/粘贴/路径）· 问问题 · 改页 · 「体检一下」…" onkeydown="if(event.key==='Enter')sendChat('session')"><button class="send" data-act="send-session">发送</button></div></div>`:''}
+    <aside class="v0-side" style="${open?'':'min-width:240px'}"><div class="tree">${treeHtml()}</div></aside>
+    <section class="v0-view">${S._followFlash?'<div class="v0-followflash">⚡ 右栏刚被对话「跟随」劫持到此页（未钉住时每次新卡都这样） <button class="pill" style="font-size:9px" data-act="note-view">知道了</button></div>':''}${viewHtml()}</section>
+  </div>`;
+  S._followFlash=false;
+  scrollTos();
+}
+
+/* ───── vA Notion/Obsidian ───── */
+function renderVA(){
+  const p = S.view.kind==='page'?P[S.view.id]:null;
+  $('#root').innerHTML =
+  `<div class="va-hd">
+     <span class="va-brand">🐙 知识中心 <span class="chip type" style="font-size:9px">global wiki</span></span>
+     <input class="va-search" readonly placeholder="🔍 搜索或问策展人…  Ctrl+K" data-act="palette">
+     <span class="va-hpill">
+       ${S.vaFollow?`<span class="va-follow" data-act="va-follow-go">◉ 策展人刚动了「${P[S.vaFollow]?esc(P[S.vaFollow].title):''}」— 点开</span>`:''}
+       <span>⚡<b class="va-score">${H.score}</b></span><span class="va-fb">▲ ${H.openFindings} findings</span>
+       <button class="pill va-chatbtn ${S.vaDrawer?'on':''}" data-act="va-drawer">💬 策展人</button>
+     </span></div>
+  ${noteBar()}
+  <div class="va-body">
+    <aside class="va-side"><div class="tree">${treeHtml()}</div></aside>
+    <div class="va-stage">
+      <div class="va-art">${(S.view.kind==='log'||S.view.kind==='pref'||S.view.kind==='rawlib'||S.view.kind==='rawdoc')?viewHtml():`
+        ${p?`<div class="va-crumb">📁 Entities <span>›</span> <b>${esc(p.title)}</b></div>
+        <h1 style="margin:0 0 8px;font-size:24px;font-weight:900">${esc(p.title)}</h1>
+        <div class="meta">${chips(p)}</div>${linksRow(p)}
+        <div class="art-body">${p.body||''}</div>
+        <p class="dim small mono" style="margin-top:18px">${esc(p.path||'')} · git ${p.history.length} commits · <button data-act="stub" class="wl" data-m="PROTOTYPE：git 历史抽屉">历史 ⌄</button> <button data-act="stub" class="wl" data-m="PROTOTYPE：引用到当前对话">引用到对话</button></p>
+        ${footSecs(p)}`:'<div class="dim" style="padding:40px">选择左侧页面</div>'}`}
+      </div>
+      ${p&&p.toc?`<div class="va-rail"><div class="rt">本页目录</div>
+        ${p.toc.map(t=>`<a href="#" onclick="return false">${esc(t)}</a>`).join('')}
+        <div class="rt">反向链接 ${p.backlinks.length}</div>
+        ${p.backlinks.map(b=>P[b]?`<a data-act="goto" data-t="${b}" style="cursor:pointer">${esc(P[b].title)}</a>`:'').join('')||'<span class="dim">无</span>'}
+        <div class="rt">被引账目</div><span class="dim">${p.effect&&p.effect.cited?('引用 '+p.effect.cited+' · helpful '+p.effect.rate):'未测'}</span></div>`:''}
+    </div>
+  </div>
+  <div class="va-drawer ${S.vaDrawer?'open':''}" style="width:${Math.min(S.dw,Math.round(innerWidth*0.94))}px">
+    <div class="va-dres" title="拖动调宽" data-act="dres"></div>
+    <div class="va-dhd">🐙 策展人 · archive<span class="dim" style="font-weight:400;font-size:10px">clone-session 通道</span><button class="pill mini" data-act="hist">🗂 历史 ${S.hist.length}</button><button class="x" data-act="va-drawer">✕</button></div>
+    <div class="sessbar">
+      ${S.sessions.map(s=>`<span class="sess ${s.id===S.active?'on':''}" data-act="sess" data-t="${s.id}">${esc(s.title)}<b class="dim" style="font-weight:400">${s.lines.length}</b>${S.sessions.length>1?`<button class="x" data-act="sess-x" data-t="${s.id}" title="关闭（存入历史）">✕</button>`:''}</span>`).join('')}
+      <button class="pill mini" data-act="sess-new">＋ 新会话</button>
+    </div>
+    ${S.histOpen?`<div class="histpop"><div class="h">已关闭的会话 · 点开重新打开</div>
+      ${S.hist.map(s=>`<div class="histitem" data-act="hist-reopen" data-t="${s.id}">↩ ${esc(s.title)}<span class="dim">${s.lines.length} 条 · ${s.closedAt||''}</span></div>`).join('')||'<div class="histitem dim">历史为空</div>'}</div>`:''}
+    <div class="tr tui" data-tr="session">${activeSession().lines.map((l,i)=>lineHtml(l,'va'+i,'va')).join('')||'<div class="dim" style="padding:20px;text-align:center">新会话 —— 问 · 投喂 · 改页…</div>'}</div>
+    <div class="composer"><input data-compose="session" placeholder="问 · 投喂 · 改页…（正文不会被自动挪走）" onkeydown="if(event.key==='Enter')sendChat('session')"><button class="send" data-act="send-session">发送</button></div>
+  </div>`;
+  scrollTos();
+}
+
+/* ───── vB Wikipedia Talk ───── */
+function renderVB(){
+  const home = S.view.kind==='dash';
+  const p = S.view.kind==='page'?P[S.view.id]:null;
+  const talkN = p?(S.vbTalk[p.id]||[]).filter(l=>l.kind==='card').length:0;
+  $('#root').innerHTML =
+  `<div class="vb-top"><span class="vb-logo">🐙 Octopus Wiki<small>COMPILED KNOWLEDGE · GLOBAL</small></span>
+    <span class="vb-searchbox"><input readonly placeholder="在 wiki 中搜索…（Ctrl+K）" data-act="palette"></span>
+    <span style="display:flex;gap:8px;align-items:center;margin-left:auto">
+      <button class="pill" data-act="vb-feed">＋ 投喂给策展人</button>
+      <button class="pill" data-act="vb-activity">策展人动态 ${H.openFindings?`<span class="n" style="font-size:9.5px;background:var(--amber-s);color:var(--amber);border-radius:6px;padding:0 5px">${H.openFindings}</span>`:''}</button>
+      <span class="pill" style="cursor:default">⚡ ${H.score} · 置信 ${H.avgConfidence}</span></span></div>
+  ${noteBar()}
+  <div class="vb-wrap"><nav class="vb-nav tree">${treeHtml()}</nav>
+  <div class="vb-article">${home? vbDash() : vbPage(p)}</div></div>`;
+  scrollTos();
+}
+function vbDash(){
+  return `<div class="vb-dash"><h1 style="font-family:Georgia,serif;font-weight:400;font-size:24px;margin:0 0 2px">知识中心 · 广场</h1>
+   <div class="dim small">库的今日全貌 —— 统计不再挤成一条文字，改成一排可点的数。</div>
+   <div class="vb-tiles">
+     ${[['页',H.pages.total],['raw 源',H.rawSources],['本周投喂',H.ingestedThisWeek],['健康分',H.score],['findings',H.openFindings],['队列',H.queueDepth]].map(t=>`<div class="vb-tile"><div class="n">${t[1]}</div><div class="l">${t[0]}</div></div>`).join('')}
+   </div>
+   <div class="vb-cols"><div class="vb-sec"><h3>🔥 开放 findings（去对应页的「讨论」处理）</h3>
+     <div class="topic" style="border-left-color:var(--amber)"><b style="color:var(--amber)">矛盾</b> #oct-088 · confidence 0.74 vs helpful 95%
+       <div class="kcref" data-act="vb-open-talk" data-t="c-compile-vs-rag" style="display:inline-block;margin-top:6px">去 compile-vs-rag 的讨论 →</div></div>
+     <ul class="vb-recent" style="padding-left:18px"><li><span class="tm">10-14</span>漂移：varpool 循环覆盖规则两页不一 <span class="kcref" data-act="vb-open-talk" data-t="c-varpool">去讨论 →</span></li>
+     <li><span class="tm">10-13</span>孤页：shadow 编译 无入链 <span class="dim small">（source: 夜巡）</span></li></ul>
+   </div><div class="vb-sec"><h3>🕘 最近动态（LOG）</h3><ul class="vb-recent" style="padding-left:18px">
+     ${LOG.slice(0,6).map(l=>`<li><span class="tm">${l[0]}</span><b>${l[1]}</b> ${esc(l[2])} <span class="dim">→ ${esc(l[3])}</span></li>`).join('')}</ul>
+   </div></div>
+   <div class="vb-sec" style="margin-top:18px"><h3>⭐ 编译精选</h3>
+     <div style="display:flex;gap:10px;flex-wrap:wrap">${['e-octo-wiki','t-metabolism','case-ws'].map(id=>`<div class="vb-tile" style="width:220px;cursor:pointer" data-act="goto" data-t="${id}"><div style="font-weight:800">${esc(P[id].title)}</div><div class="l" style="margin-top:4px">${esc(P[id].summary)}</div></div>`).join('')}</div></div></div>`;
+}
+function vbPage(p){
+  const tab=S.vbTab; const talk=S.vbTalk[p.id]||[]; const talkN=talk.filter(l=>l.kind==='card').length;
+  const body = tab==='read'? `<div class="art-body">${p.body||''}</div>${linksRow(p)}${footSecs(p)}`
+    : tab==='talk'? `<div class="vb-talk">
+        <div class="askbar"><input data-compose="vb:${p.id}" placeholder="就本页问策展人 / 投喂新料（对话只属于这一页）…" onkeydown="if(event.key==='Enter')sendChat('vb:${p.id}')"><button class="send" style="background:var(--pink);color:var(--bg);font-weight:800;border-radius:8px;padding:4px 14px" data-act="send-vb" data-t="${p.id}">发送</button></div>
+        <div class="tui" data-tr="vb:${p.id}">${(SEED.filter((_,i)=>i===3||i===4).concat(talk)).map((l,i)=>lineHtml(l,'vb'+p.id+i,'va')).join('')||'<div class="dim small">本页还没有讨论</div>'}</div></div>`
+    : `${footSecs(p)}<div class="dim small mono">${esc(p.path)}</div><div class="dim small">完整 front-matter / diff 视图 PROTOTYPE 略。</div>`;
+  return `<div class="vb-h1">${esc(p.title)}</div>
+    <div class="small dim" style="margin-bottom:10px">${esc(p.summary)} · <button class="kcref" data-act="goto" data-t="${p.id}" style="background:none;text-decoration:underline dotted">永久链接</button></div>
+    <div class="vb-tabs">
+      <button class="vb-tab ${tab==='read'?'on':''}" data-act="vb-tab" data-t="read">阅读</button>
+      <button class="vb-tab ${tab==='talk'?'on':''}" data-act="vb-tab" data-t="talk">讨论<span class="n">${talkN}</span></button>
+      <button class="vb-tab ${tab==='hist'?'on':''}" data-act="vb-tab" data-t="hist">历史 ${p.history.length}</button>
+      <span style="margin-left:auto" class="dim small">编译于 ${p.compiled} · confidence ${p.conf}</span></div>
+    ${body}`;
+}
+
+/* ───── vC Perplexity 浮式问答 ───── */
+function renderVC(){
+  const p=S.view.kind==='page'?P[S.view.id]:null;
+  const RAIL=[['📕','Entities','entity'],['🧠','概念',''],['🗺','主题',''],['📥','来源',''],['⚖️','判例',''],['🧾','LOG','log'],['⚙️','偏好','pref']];
+  $('#root').innerHTML =
+  `<div style="display:flex;gap:12px;align-items:center;padding:9px 16px;border-bottom:var(--bdw) solid var(--bd);background:var(--paper);flex:none">
+     <span style="font-weight:900">🐙 知识中心</span>
+     <button class="pill" data-act="vc-railfly">☰ 目录</button>
+     <span class="dim small" style="margin-left:6px">${p?esc(p.title):''}</span>
+     <span style="margin-left:auto" class="dim small">⚡${H.score} · ▲${H.openFindings} · 置信 ${H.avgConfidence} · <button class="wl" data-act="vc-history">问答历史</button></span></div>
+  ${noteBar()}
+  <div class="vc-wrap"><div class="vc-rail">
+     ${RAIL.map((r,i)=>`<div class="ri ${S.vcRailSel===r[2]||S.vcRailSel===r[1]?'on':''}" data-act="vc-rail" data-t="${r[2]||r[1]}" data-g="${i}" title="${r[1]}"><span>${r[0]}</span><small>${r[1].slice(0,2)}</small></div>`).join('')}
+   </div>
+   ${S.vcRailFly?`<div class="vc-railfly flipline" style="display:block;left:56px;top:0;bottom:0;width:230px;background:var(--idle);border-right:var(--bdw) solid var(--bd);position:absolute;z-index:60;padding:12px 8px;box-shadow:var(--sh);overflow-y:auto"><div class="tree">${treeHtml()}</div></div>`:''}
+   <div class="vc-main"><div class="vc-art">
+     ${p?`<h1 style="font-size:24px;font-weight:900;margin:0 0 8px">${esc(p.title)}</h1>
+       <div class="meta">${chips(p)}</div>${linksRow(p)}
+       <div class="art-body" style="position:relative">${p.body||''}
+         <button class="pill" style="position:absolute;right:0;top:0;border-style:dashed" data-act="vc-selprompt" data-m="${esc(p.title)}">✨ 问策展人这页</button></div>
+       ${footSecs(p)}`
+     : S.view.kind==='log'?logHtml():S.view.kind==='pref'?prefHtml():'<div class="dim" style="padding:60px;text-align:center">按 <kbd>Ctrl</kbd>+<kbd>K</kbd> 或直接问 —— 下面那条输入框就是策展人。</div>'}
+   </div></div>
+   <div class="vc-askzone">
+     <div class="vc-panel ${S.vcPanel?'open':''}">
+       <div class="ph">🐙 策展人浮层回答 <span class="dim" style="font-weight:400">（不占布局 · 点正文可穿透关闭）</span><button class="x" data-act="vc-close">✕</button></div>
+       <div class="vc-ans" data-tr="vc">${vcAnswer()}</div>
+       <div class="vc-followrow"><input data-compose="vc" placeholder="继续追问…" onkeydown="if(event.key==='Enter')sendChat('vc')"><button class="send" style="background:var(--pink);color:var(--bg);font-weight:800;border-radius:8px;padding:4px 14px" data-act="send-vc">追问</button></div>
+     </div>
+     <div class="vc-askbtn" data-act="vc-open"><span>💬</span><span>问策展人：改页 / 投喂 / 体检…&nbsp;&nbsp;<b>引用当前页</b>默认开启 · <kbd>Ctrl</kbd>+<kbd>K</kbd> 检索</span></div>
+   </div></div>`;
+  scrollTos();
+}
+function vcAnswer(){
+  const L=activeSession().lines;
+  const tail=L.slice(-4).map((l,i)=>lineHtml(l,'vc'+i,'va')).join('');
+  const cur=S.view.kind==='page'?S.view.id:'e-octo-wiki';
+  const cite=`<span class="vc-cite" data-act="goto" data-t="${cur}">[${esc((P[cur]||{}).title||'')}]</span>`;
+  return tail ? `<div class="dim small" style="margin-bottom:6px">— 浮层 = 策展人会话最近 ${Math.min(4,L.length)} 行（共 ${L.length} 条 · TUI 形制与抽屉同一）</div>${tail}`
+    : `<p>试试下面输入框 —— 回答带页引用 ${cite}，点引用即跳正文，浮层不动布局。</p>`;
+}
+
+/* ── 公共 ── */
+function scrollTos(){ document.querySelectorAll('[data-tr]').forEach(t=>t.scrollTop=t.scrollHeight); }
+function refreshAll(){ ({v0:renderV0,vA:renderVA,vB:renderVB,vC:renderVC})[S.v](); renderSwitcher(); renderState(); }
+function renderSwitcher(){
+  const i=VARIANTS.findIndex(v=>v.k===S.v);
+  $('#swName').textContent=VARIANTS[i].name; $('#swIdx').textContent=(i+1)+'/'+VARIANTS.length;
+}
+function renderState(){
+  const as=activeSession();
+  $('#stPre').textContent=JSON.stringify({variant:S.v, view:S.view, chatOpen:S.chatOpen, pinned:S.pinned, drawer:S.vaDrawer, session:as.title+' ('+as.id+')', sessions:S.sessions.map(s=>s.title), closedHist:S.hist.length, drawerWidth:S.dw+'px', vbTab:S.vbTab, panel:S.vcPanel, followPill:S.vaFollow||null, cards:as.lines.filter(l=>l.kind==='card').length},null,1);
+}
+function setVariant(k){ S.v=k; location.hash=k; if(k==='vB'&&S.view.kind!=='page')S.view={kind:'dash'}; refreshAll(); }
+location.hash=S.v;
+addEventListener('hashchange',()=>{ const k=location.hash.replace('#',''); if(VARIANTS.find(v=>v.k===k)) setVariant(k); });
+
+/* ── 事件总线（委托） ── */
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act]'); if(!el) return;
+  const a = el.dataset.act, t = el.dataset.t;
+  const gotoId = id=>{ if(P[id]||id==='sys-log'||id==='sys-pref'||id==='sys-raw'){ S.view = id==='sys-log'?{kind:'log'}:id==='sys-pref'?{kind:'pref'}:id==='sys-raw'?{kind:'rawlib'}:{kind:'page',id}; if(S.v==='vB')S.vbTab='read'; refreshAll(); } };
+  if(a==='goto') gotoId(t);
+  else if(a==='golink'){ const hit=Object.values(P).find(p=>p.title===t||p.aliases&&p.aliases.includes(t)); if(hit)gotoId(hit.id); else toast('PROTOTYPE：断链（真面会显形）'); }
+  else if(a==='palette'){ e.preventDefault(); openPal(); }
+  else if(a==='v0-mode'){ S.chatOpen=!S.chatOpen; refreshAll(); }
+  else if(a==='v0-pin'){ S.pinned=!S.pinned; refreshAll(); }
+  else if(a==='note-view'){ }
+  else if(a==='note'){ S.noteClosed[S.v]=true; refreshAll(); }
+  else if(a==='va-drawer'){ S.vaDrawer=!S.vaDrawer; refreshAll(); }
+  else if(a==='va-follow-go'){ if(S.vaFollow){gotoId(S.vaFollow);S.vaFollow=null;refreshAll();} }
+  else if(a==='meta'){ S.metaOpen[el.dataset.k]=!S.metaOpen[el.dataset.k]; refreshAll(); }
+  else if(a==='tool'){ S.toolOpen[el.dataset.k]=!S.toolOpen[el.dataset.k]; refreshAll(); }
+  else if(a==='sess'){ S.active=t; S.histOpen=false; refreshAll(); }
+  else if(a==='sess-x'){ const i=S.sessions.findIndex(x=>x.id===t); const s=S.sessions.splice(i,1)[0];
+      s.closedAt='刚刚'; S.hist.unshift(s); if(S.active===t)S.active=S.sessions[0].id; refreshAll(); toast('会话「'+s.title+'」已关闭 —— 可在 🗂 历史 重新打开'); }
+  else if(a==='sess-new'){ const id='s'+(++S.sessN); S.sessions.push({id, title:'会话 '+S.sessN, lines:[]}); S.active=id; refreshAll(); }
+  else if(a==='hist'){ S.histOpen=!S.histOpen; refreshAll(); }
+  else if(a==='hist-reopen'){ const i=S.hist.findIndex(x=>x.id===t); const s=S.hist.splice(i,1)[0];
+      S.sessions.push(s); S.active=s.id; S.vaDrawer=true; S.histOpen=false; refreshAll(); toast('历史会话「'+s.title+'」已重新打开'); }
+  else if(a==='dres'){}
+  else if(a==='raw-open'){ S.view={kind:'rawdoc',i:+el.dataset.i}; refreshAll(); }
+  else if(a==='raw-back'){ S.view={kind:'rawlib'}; refreshAll(); }
+  else if(a==='raw-a'){ S.rawInTree=!S.rawInTree; refreshAll(); }
+  else if(a==='send-session'){ sendChat('session'); }
+  else if(a==='send-vc'){ sendChat('vc'); }
+  else if(a==='send-vb'){ sendChat('vb:'+t); }
+  else if(a==='vb-tab'){ S.vbTab=t; refreshAll(); }
+  else if(a==='vb-open-talk'){ S.view={kind:'page',id:t}; S.vbTab='talk'; refreshAll(); }
+  else if(a==='vb-feed'){ S.view={kind:'page',id:'e-octo-wiki'}; S.vbTab='talk'; (S.vbTalk['e-octo-wiki']||(S.vbTalk['e-octo-wiki']=[])); refreshAll(); setTimeout(()=>{const i=document.querySelector('[data-compose="vb:e-octo-wiki"]'); if(i)i.focus();},50); toast('投喂入口 = 策展人常驻页（广场可改）'); }
+  else if(a==='vb-activity'){ S.view={kind:'dash'}; refreshAll(); }
+  else if(a==='vc-open'){ S.vcPanel=true; refreshAll(); setTimeout(()=>{const i=document.querySelector('[data-compose="vc"]'); if(i)i.focus();},50); }
+  else if(a==='vc-close'){ S.vcPanel=false; refreshAll(); }
+  else if(a==='vc-history'){ S.vcPanel=true; refreshAll(); }
+  else if(a==='vc-rail'){ const g=el.dataset.g;
+     if(t==='log'){S.view={kind:'log'};} else if(t==='pref'){S.view={kind:'pref'};}
+     else { S.vcRailSel=S.vcRailSel===t?null:t; S.vcRailFly=!!S.vcRailSel; const first=GROUPS.find(x=>x.label.toLowerCase().includes(t)||x.type===t); if(first&&!S.view.id) {} }
+     refreshAll(); }
+  else if(a==='vc-railfly'){ S.vcRailFly=!S.vcRailFly; refreshAll(); }
+  else if(a==='vc-selprompt'){ S.vcPanel=true; refreshAll(); setTimeout(()=>{const i=document.querySelector('[data-compose="vc"]'); if(i){i.value='关于「'+el.dataset.m+'」…'; i.focus();}},50); }
+  else if(a==='stub'){ toast(el.dataset.m||'PROTOTYPE：此动作留桩'); }
+  else if(el.tagName==='INPUT'&&el.readOnly){ openPal(); }
+});
+document.addEventListener('click', e=>{ // 点浮层外关闭（vC）
+  if(S.v==='vC'&&S.vcPanel&&!e.target.closest('.vc-askzone')&&!e.target.closest('[data-act^="vc-"]')) { S.vcPanel=false; refreshAll(); }
+  if(S.v==='vC'&&S.vcRailFly&&!e.target.closest('.vc-railfly')&&!e.target.closest('[data-act="vc-railfly"]')) { S.vcRailFly=false; refreshAll(); }
+}, true);
+
+/* ── Ctrl+K 命令条 ── */
+function openPal(){ $('#palette').classList.add('open'); const i=$('#palInput'); i.value=''; palRender(''); i.focus(); }
+function palRender(q){
+  const all=Object.values(P).filter(p=>!q||(p.title+p.summary+(p.aliases||[]).join()).toLowerCase().includes(q.toLowerCase()));
+  $('#palHits').innerHTML = all.map((p,i)=>`<div class="hit ${i===S.palCur?'cur':''}" data-pid="${p.id}"><span class="chip type" style="padding:0 6px">${p.kind||p.type}</span><b>${esc(p.title)}</b><span class="sum">${esc(p.summary)}</span></div>`).join('')||'<div class="hit dim">无匹配（真面有 FTS5 全文兜底）</div>';
+}
+$('#palInput').addEventListener('input', e=>{S.palCur=0;palRender(e.target.value);});
+$('#palInput').addEventListener('keydown', e=>{
+  const hits=[...$('#palHits').querySelectorAll('[data-pid]')];
+  if(e.key==='Escape') $('#palette').classList.remove('open');
+  if(e.key==='ArrowDown'){S.palCur=Math.min(S.palCur+1,hits.length-1);palRender(e.target.value);}
+  if(e.key==='ArrowUp'){S.palCur=Math.max(S.palCur-1,0);palRender(e.target.value);}
+  if(e.key==='Enter'&&hits[S.palCur]){ S.view={kind:'page',id:hits[S.palCur].dataset.pid}; if(S.v==='vB')S.vbTab='read'; $('#palette').classList.remove('open'); refreshAll(); }
+});
+$('#palHits').addEventListener('click', e=>{ const h=e.target.closest('[data-pid]'); if(h){ S.view={kind:'page',id:h.dataset.pid}; if(S.v==='vB')S.vbTab='read'; $('#palette').classList.remove('open'); refreshAll(); } });
+document.addEventListener('click', e=>{ if(e.target===$('#palette')) $('#palette').classList.remove('open'); });
+
+/* ── 全局键盘 ── */
+document.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); $('#palette').classList.contains('open')?$('#palette').classList.remove('open'):openPal(); return; }
+  if(e.target.matches('input,textarea,[contenteditable]')) return;
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+    const i=VARIANTS.findIndex(v=>v.k===S.v);
+    setVariant(VARIANTS[(i+(e.key==='ArrowRight'?1:VARIANTS.length-1))%VARIANTS.length].k);
+  }
+  if(['0','1','2','3'].includes(e.key)) setVariant(VARIANTS[+e.key].k);
+});
+$('#swPrev').onclick=()=>{const i=VARIANTS.findIndex(v=>v.k===S.v);setVariant(VARIANTS[(i+VARIANTS.length-1)%VARIANTS.length].k);};
+$('#swNext').onclick=()=>{const i=VARIANTS.findIndex(v=>v.k===S.v);setVariant(VARIANTS[(i+1)%VARIANTS.length].k);};
+$('#stToggle').onclick=()=>$('#statebox').classList.toggle('open');
+
+/* ── 抽屉左缘拖宽（420px ~ 94vw） ── */
+let drag=null;
+document.addEventListener('mousedown', e=>{
+  const h=e.target.closest('.va-dres'); if(!h) return;
+  drag={x:e.clientX,w:S.dw}; h.classList.add('act'); e.preventDefault();
+});
+document.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  S.dw=Math.max(420,Math.min(Math.round(window.innerWidth*0.94), drag.w+(drag.x-e.clientX)));
+  const d=document.querySelector('.va-drawer'); if(d) d.style.width=S.dw+'px';
+  renderState();
+});
+document.addEventListener('mouseup', ()=>{ if(!drag) return; drag=null; document.querySelectorAll('.va-dres.act').forEach(x=>x.classList.remove('act')); refreshAll(); });
+
+refreshAll();
+</script>
+</body>
+</html>

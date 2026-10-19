@@ -127,10 +127,10 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     expect(index).toContain("# Octopus Knowledge Wiki — testorg")
     expect(index).toContain("> 导航协议：先读本索引 → 选页整读 → 未命中再 search API。禁止全库遍历。")
     expect(index).toContain("## 必读")
-    // D-kc15-2（票07）：必读行输出 agent Read 可达路径——相对 INDEX 所在 wiki 根的
-    // `../user_preference.md`（缺陷现场：原行 `user_preference.md` 被解析成 wiki/user_preference.md → File not found）
-    expect(index).toContain("- ../user_preference.md — owner 偏好（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）")
-    expect(index).not.toContain("\n- user_preference.md ")
+    // D-kc15-2 路径形制（票07 教训承接）：必读行输出 agent Read 可达路径——
+    // `../SCHEMA.md` 相对 INDEX 所在 wiki 根（裸写会被解析成 wiki/ 下文件 → File not found）
+    expect(index).toContain("- ../SCHEMA.md — 人机共演约定（人工维护；住在知识根 = wiki 根上一级，wiki 子树内无此文件）")
+    expect(index).not.toContain("\n- ../user")
     // v2 词条（projects 域）按映射进 Topics 组；行式 `- {relPath} — {summary} · 硬约束 ×N`
     expect(index).toContain("## Topics (1)")
     expect(index).toContain("- projects/prj-octopus.md — monorepo 构建/测试/端口规则与已知陷阱 · 硬约束 ×6")

@@ -10,7 +10,6 @@ import {
   writeKnowledgeFile,
   rebuildIndex,
   getKnowledgeFileInfo,
-  readUserPreference,
   getProjectKnowledgeDir,
   getWorkflowKnowledgeDir,
 } from "../file-ops"
@@ -80,51 +79,10 @@ describe("file-ops", () => {
     })
   })
 
-  describe("user preference", () => {
-    it("reads and writes preference", () => {
-      // Use tmpDir as a mock knowledge dir by directly testing file-ops functions
-      const prefPath = path.join(tmpDir, "user_preference.md")
-      writeKnowledgeFile(prefPath, "# My Preferences\n- Prefer concise code")
-      expect(readKnowledgeFile(prefPath)).toContain("Prefer concise code")
-    })
-  })
+  // （原偏好读函数 describe 已随 ADR-0033 删除；通用读写面见上方 readKnowledgeFile 用例）
 
-  describe("readUserPreference", () => {
-    it("reads global preference when no org specified", () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      try {
-        writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Global Pref\n- Global rule")
-        const result = readUserPreference()
-        expect(result).toContain("Global rule")
-      } finally {
-        delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      }
-    })
-
-    it("reads org preference when org specified", () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      try {
-        writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Org Pref\n- Org rule")
-        const result = readUserPreference("test-org")
-        expect(result).toContain("Org rule")
-      } finally {
-        delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      }
-    })
-
-    it("returns empty string when file does not exist", () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      try {
-        const result = readUserPreference()
-        expect(result).toBe("")
-      } finally {
-        delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      }
-    })
-  })
-
-  // 知识中心票 08：getEffectiveUserPreference（global+org 合并喂 precompute 的
-  // __user_preference_text 生产件）随注入链物理删除退役，其用例一并移除。
+  // 知识中心票 08：原有效偏好生产件（global+org 合并喂 precompute 的 seam）随注入链
+  // 物理删除退役，其用例一并移除。
 
   // TC-001: Two-level knowledge storage merge
   describe("two-level directory merge (TC-001)", () => {
@@ -148,7 +106,7 @@ describe("file-ops", () => {
 
         // Simulate the merge that GET /api/knowledge/files performs.
         // 票08：listKnowledgeFiles 死码删除 → 目录列举回落裸 readdirSync（测试面，
-        // index.md/user_preference.md 排除不属被测函数契约，此处不涉及）。
+        // 根直属文件排除不属被测函数契约，此处不涉及）。
         const listMd = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".md"))
         const globalFiles = listMd(globalDir).map(f => ({
           name: f,

@@ -45,7 +45,7 @@ describe("SCHEMA.md 首版 — 模板 + 幂等 seed（票05 AC4）", () => {
     // 工作流：投喂即编译 + 矛盾不静默覆盖 + 人工文件写保护
     expect(text).toContain("矛盾")
     expect(text).toContain("不静默覆盖")
-    expect(text).toContain("user_preference.md")
+    expect(text).toContain("人工确认制")
     expect(text).toContain("写保护")
   })
 

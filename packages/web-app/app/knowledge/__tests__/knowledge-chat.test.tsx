@@ -1,6 +1,8 @@
 // 票12 · /knowledge 对话即管理 + 卡片协议（写面）组件测试 — S4
-// Seam: <KnowledgePage/>（票11 同款 fetch stub）+ 对话列（useAgentChat/clone-api 桩到
-// 通道边界——卡流/投喂链/回滚钮/跟随与钉住/写保护零落盘在卡层断言）。
+// （知识中心改版 ADR-0033 换形：对话列 → 策展人抽屉（恒挂载 overlay）；AC4 跟随/钉住
+//  改写为引用药丸负断言系；写保护卡面转 SCHEMA 单文件。）
+// Seam: <KnowledgePage/>（票11 同款 fetch stub）+ 抽屉（useAgentChat/clone-api 桩到
+// 通道边界——卡流/投喂链/回滚钮/药丸不跳转/写保护零落盘在卡层断言）。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
@@ -108,7 +110,7 @@ const SUMMARY_EV: KcCardEvent = { id: "sum-crt-1", kind: "source-summary", ts: "
 const DIFF_EV: KcCardEvent = { id: "dif-crt-1", kind: "compile-diff", ts: "2026-10-13T09:00:03Z", data: { taskId: "crt-1", status: "committed", commit: COMMIT, rawPath: "raw/inbox/2026-10-13-karpathy-llm-wiki.md", touched: [{ path: "concepts/con-compiled-rag.md", type: "concept", created: true }, { path: "entities/ent-open-octopus.md", type: "entity" }, { path: "topics/top-knowledge-injection.md", type: "topic" }], created: 1, updated: 2, contradictions: 1, ftsOk: true } }
 const ARCHIVE_EV: KcCardEvent = { id: "dif-crt-9", kind: "archive-compile", ts: "2026-10-13T09:10:00Z", data: { taskLabel: "task-207「actuator 增强」", status: "committed", commit: REVERT_COMMIT, rawPath: "raw/archives/task-207-summary.md", touched: [{ path: "entities/ent-hermes.md", type: "entity", created: true }], created: 1, updated: 3, contradictions: 0, ftsOk: true } }
 const MINI_EV: KcCardEvent = { id: "pgm-top-knowledge-injection", kind: "page-mini", ts: "2026-10-13T09:00:04Z", data: { pageId: "top-knowledge-injection", path: "topics/top-knowledge-injection.md", title: "知识注入沿革", type: "topic" } }
-const GUARD_EV: KcCardEvent = { id: "grd-pref-1", kind: "guard", ts: "2026-10-13T09:00:05Z", data: { target: "user_preference.md", intent: "把默认模型建议改为 pro-max", suggestion: "建议在「模型偏好」节追加：默认模型 = pro-max", manualSteps: ["打开 ~/.octopus/knowledge/user_preference.md", "编辑对应节", "保存即生效（AI 永不写此文件）"] } }
+const GUARD_EV: KcCardEvent = { id: "grd-schema-1", kind: "guard", ts: "2026-10-13T09:00:05Z", data: { target: "SCHEMA.md", intent: "把默认模型建议改为 pro-max", suggestion: "建议在「模型偏好」节追加：默认模型 = pro-max", manualSteps: ["打开 ~/.octopus/knowledge/SCHEMA.md", "编辑对应节", "保存即生效（AI 永不写此文件）"] } }
 
 interface FetchCall { url: string; method: string; body: string }
 let calls: FetchCall[]
@@ -125,6 +127,7 @@ function makeStub(opts: { compileScript?: string[]; revertScript?: string[]; rev
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown): Stub => ({ ok: true, status: 200, json: async () => v })
     if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
     if (u.includes("/knowledge/health")) return json(HEALTH)
     if (u.includes("/wiki/article/top-knowledge-injection")) return json(ARTICLE_INJ)
     if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
@@ -159,7 +162,7 @@ function makeStub(opts: { compileScript?: string[]; revertScript?: string[]; rev
 }
 
 function openDrawer() {
-  fireEvent.click(screen.getByRole("button", { name: /对话抽屉/ }))
+  fireEvent.click(screen.getByTestId("kc-drawer-toggle"))
 }
 
 beforeEach(() => {
@@ -174,14 +177,15 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe("AC1 通道复用：对话列挂载（clone-session 通道 + TuiTranscript 形制）", () => {
-  it("抽屉打开挂 kc-chat-column；archive 分身会话通道被使用；TUI 形制渲染既有消息", async () => {
+describe("AC1 通道复用：策展人抽屉（clone-session 通道 + TuiTranscript 形制 · ADR-0033 形态）", () => {
+  it("抽屉恒挂载（overlay 不随模式重建）；默认收起、点开可见；archive 分身通道消息按 TUI 形制渲染", async () => {
     chatBox.messages = [MSG("m1", "user", "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf"), MSG("m2", "assistant", "编译完成，触及 12 页。")]
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
-    expect(screen.queryByTestId("kc-chat-column")).toBeNull() // 默认全宽（票11 行为保持）
+    const drawer = await screen.findByTestId("kc-curator-drawer")
+    expect(drawer.className).toContain("translate-x-[102%]") // 默认收起（覆盖式，正文列不受开合影响）
     openDrawer()
-    await screen.findByTestId("kc-chat-column")
+    await waitFor(() => expect(screen.getByTestId("kc-curator-drawer").className).toContain("translate-x-0"))
     expect(document.querySelectorAll('[data-tui-msg="user"]').length).toBe(1) // TUI 用户行（TuiTranscript 复用形制）
     expect(document.querySelectorAll('[data-tui-msg="assistant"]').length).toBe(1)
     expect(screen.getByText(/编译完成，触及 12 页/)).toBeDefined()
@@ -216,8 +220,8 @@ describe("AC2 卡片协议首批五类渲染（Lane A：消息正文 fenced 块�
     expect(screen.getByTestId("kc-card-compile-diff").textContent).toContain("矛盾标记")
     // 词条迷你卡：标题 + 右栏渲染/全页打开
     expect(screen.getByTestId("kc-card-page-mini").textContent).toContain("知识注入沿革")
-    // 写保护卡
-    expect(screen.getByTestId("kc-card-guard").textContent).toContain("user_preference.md")
+    // 写保护卡（人工文件面只剩 SCHEMA，卡型保留）
+    expect(screen.getByTestId("kc-card-guard").textContent).toContain("SCHEMA.md")
     // fenced 块本体不渲染为 JSON 文本（剥除），但正文本体在
     expect(screen.queryByText(/"taskId":"crt-1"/)).toBeNull()
     expect(screen.getByText(/正文里还有一句/)).toBeDefined()
@@ -241,7 +245,7 @@ describe("AC3 对话内投喂全链 + 队列状态流转（排队中 #N → 编�
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
 
-    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    const composer = screen.getByPlaceholderText(/投喂/)
     fireEvent.change(composer, { target: { value: "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf" } })
     fireEvent.click(document.querySelector("[data-tui-send]")!)
     await waitFor(() => expect(screen.getByTestId("kc-card-ingest").textContent).toContain("已落 raw"))
@@ -291,6 +295,7 @@ describe("AC5 回滚钮：二次确认 → POST /revert → 任务态回灌原�
       if (u.includes("/wiki/revert/task/")) return json({ task: { id: "rvt-1", commit: COMMIT, status: "failed", error: { code: "LOCK_HELD", message: "锁被占用" } } })
       if (u.includes("/wiki/revert")) return json({ taskId: "rvt-1", commit: COMMIT, status: "queued" })
       if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
       if (u.includes("/knowledge/health")) return json(HEALTH)
       if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
       return json({})
@@ -309,62 +314,68 @@ describe("AC5 回滚钮：二次确认 → POST /revert → 任务态回灌原�
   }, 15000)
 })
 
-describe("AC4 右栏跟随与钉住", () => {
-  it("未钉住：新卡提到页 ⇒ 右栏自动渲染该页（跟随）", async () => {
-    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(MINI_EV))]
-    render(<KnowledgePage />)
-    await screen.findByTestId("kc-tree-ready")
-    openDrawer()
-    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toContain("知识注入沿革"), { timeout: 3000 })
-  })
-
-  it("钉住后新卡不再抢视图；手动「右栏渲染」仍可跳转", async () => {
-    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DIFF_EV))] // 首卡→跟随 concepts 页
+describe("AC4 引用药丸（跟随/钉住已废除——ADR-0033 负断言：正文永不自动跳转）", () => {
+  it("新卡提到页 ⇒ 正文不动，页头亮药丸；点药丸才渲染该页并消失", async () => {
     const { rerender } = render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
-    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toContain("编译式 RAG"))
+    expect(screen.queryByTestId("kc-page-title")).toBeNull()
 
-    fireEvent.click(screen.getByTestId("kc-pin-toggle"))
-    expect(screen.getByTestId("kc-pin-toggle").textContent).toContain("已钉住")
-
-    // 新卡（另一页）进入消息流：跟随停止
-    chatBox.messages = [...chatBox.messages, MSG("a2", "assistant", serializeKcCardBlock(MINI_EV))]
+    // 新卡进入流（rerender 增量，非历史首见——历史卡播种静默）
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(MINI_EV))]
     rerender(<KnowledgePage />)
-    await new Promise(r => setTimeout(r, 50))
-    expect(screen.getByTestId("kc-page-title").textContent).toContain("编译式 RAG")
+    const pill = await screen.findByTestId("kc-cite-pill")
+    expect(pill.textContent).toContain("知识注入沿革")
+    // 正文纹丝不动（负断言：无自动跳转）
+    expect(screen.queryByTestId("kc-page-title")).toBeNull()
 
-    // 手动钮不受钉住限制
+    fireEvent.click(pill)
+    await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toContain("知识注入沿革"))
+    expect(screen.queryByTestId("kc-cite-pill")).toBeNull() // 即点即消
+    expect(screen.getByTestId("kc-curator-drawer")).toBeDefined() // 抽屉未被关/未被重建
+  })
+
+  it("卡「在主场打开」钮显式跳转同样生效（药丸之外的手动通道）", async () => {
+    const { rerender } = render(<KnowledgePage />)
+    await screen.findByTestId("kc-tree-ready")
+    openDrawer()
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(MINI_EV))]
+    rerender(<KnowledgePage />)
+    await screen.findByTestId("kc-cite-pill")
     fireEvent.click(screen.getByTestId("kc-mini-follow"))
     await waitFor(() => expect(screen.getByTestId("kc-page-title").textContent).toContain("知识注入沿革"))
   })
 
-  it("全页打开 = 切浏览模式并渲染", async () => {
-    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(MINI_EV))]
-    render(<KnowledgePage />)
+  it("连续两张不同页的新卡：只保留最新一枚药丸（正文依旧不动）", async () => {
+    chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(DIFF_EV))] // concepts/con-compiled-rag
+    const { rerender } = render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
-    await screen.findByTestId("kc-card-page-mini")
-    fireEvent.click(screen.getByTestId("kc-mini-open"))
-    await waitFor(() => expect(screen.queryByTestId("kc-chat-column")).toBeNull())
-    expect(screen.getByTestId("kc-page-title").textContent).toContain("知识注入沿革")
+    // 历史卡（DIFF_EV 渲染前已在）播种不亮丸——手动注入第二张
+    chatBox.messages = [...chatBox.messages, MSG("a2", "assistant", serializeKcCardBlock(MINI_EV))]
+    rerender(<KnowledgePage />)
+    const pill = await screen.findByTestId("kc-cite-pill")
+    expect(pill.textContent).toContain("知识注入沿革")
+    expect(screen.queryAllByTestId("kc-cite-pill")).toHaveLength(1)
+    expect(screen.queryByTestId("kc-page-title")).toBeNull()
   })
 })
 
-describe("AC6 写保护卡：零自动落盘", () => {
-  it("卡上交互（查看建议展开）不发任何请求；建议文本+人工步骤在卡面；右栏不跳", async () => {
+describe("AC6 写保护卡：零自动落盘（SCHEMA 人工文件面）", () => {
+  it("卡上交互（查看建议展开）不发任何请求；建议文本+人工步骤在卡面；不亮药丸不动正文", async () => {
     chatBox.messages = [MSG("a1", "assistant", serializeKcCardBlock(GUARD_EV))]
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
     const card = await screen.findByTestId("kc-card-guard")
-    expect(card.textContent).toContain("user_preference.md")
+    expect(card.textContent).toContain("SCHEMA.md")
     fireEvent.click(screen.getByTestId("kc-guard-toggle"))
     expect(screen.getByTestId("kc-guard-detail").textContent).toContain("默认模型 = pro-max")
     expect(screen.getByTestId("kc-guard-detail").textContent).toContain("人工确认步骤")
     // 零写请求（GET 树/健康为页面常态读；POST=0）
     expect(calls.filter(c => c.method === "POST").length).toBe(0)
-    // 写保护卡不触发跟随（无页引用）
+    // 写保护卡无页引用 ⇒ 不上药丸、不动正文
+    expect(screen.queryByTestId("kc-cite-pill")).toBeNull()
     expect(screen.queryByTestId("kc-page-title")).toBeNull()
   })
 })
@@ -379,7 +390,7 @@ describe("归档编译卡（AC2 第五类）+ 对策展人说", () => {
     expect(card.textContent).toContain("task-207「actuator 增强」")
     expect(card.textContent).toContain("b71e004")
     fireEvent.click(screen.getByTestId("kc-archive-say"))
-    const composer = screen.getByPlaceholderText(/关于归档编译|投喂 raw/)
+    const composer = screen.getByPlaceholderText(/关于归档编译|投喂/)
     expect((composer as HTMLTextAreaElement).value).toContain("关于归档编译")
   })
 })
@@ -395,6 +406,7 @@ describe("D-kc15-1 抓取卡「重试编译」入口（票07 S4）", () => {
       calls.push({ url: u, method, body: String(init?.body ?? "") })
       const json = (v: unknown, status = 200): Stub => ({ ok: status < 400, status, json: async () => v })
       if (u.includes("/knowledge/wiki/tree")) return json(TREE)
+    if (u.includes("/knowledge/fs")) return json({ org: "global", root: "knowledge", tree: [], truncated: false, total: 0 })
       if (u.includes("/knowledge/health")) return json(HEALTH)
       if (u.includes("/wiki/article/")) return json(ARTICLE_RAG)
       if (u.includes("/api/knowledge/ingest")) return json({
@@ -421,7 +433,7 @@ describe("D-kc15-1 抓取卡「重试编译」入口（票07 S4）", () => {
     openDrawer()
 
     // 投喂 → 抓取卡落 raw → crt-1 编译失败
-    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    const composer = screen.getByPlaceholderText(/投喂/)
     fireEvent.change(composer, { target: { value: "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf" } })
     fireEvent.click(document.querySelector("[data-tui-send]")!)
     const ingest = await screen.findByTestId("kc-card-ingest")
@@ -457,7 +469,7 @@ describe("D-kc15-1 抓取卡「重试编译」入口（票07 S4）", () => {
     render(<KnowledgePage />)
     await screen.findByTestId("kc-tree-ready")
     openDrawer()
-    const composer = screen.getByPlaceholderText(/投喂 raw/)
+    const composer = screen.getByPlaceholderText(/投喂/)
     fireEvent.change(composer, { target: { value: "把这篇文章编进 wiki：https://gist.github.com/karpathy/442a6bf" } })
     fireEvent.click(document.querySelector("[data-tui-send]")!)
     await waitFor(() => expect(screen.getByTestId("kc-card-ingest").textContent).toContain("已落 raw"), { timeout: 5000 })

@@ -50,6 +50,7 @@ import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
 import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
+import { backfillWikiArticleLinks } from "./services/knowledge/wiki/backfill-links"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { SessionCurationService } from "./services/knowledge/session-curation"
@@ -227,6 +228,14 @@ const db = process.env.VITEST ? null : initDb()
 let daos: AllDAOs | null = null
 if (db) {
   applySchema(db)
+
+  // 反链倒排基础：wiki_articles.links 一次性回灌（仅启动跑，运行时零扫盘——失败非致命）
+  try {
+    const n = backfillWikiArticleLinks(new WikiArticleDAO(db), resolveGlobalWikiRoot())
+    if (n > 0) console.log(`[knowledge] wiki links 回灌 ${n} 行`)
+  } catch (err: unknown) {
+    console.error("[knowledge] wiki links 回灌失败（非致命，下次启动再补）:", err)
+  }
 
   // Create all DAO instances at startup — fail-fast if DAO initialization fails
   try {
