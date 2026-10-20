@@ -30,6 +30,23 @@
   聚焦高亮、最小化半透明。**Ctrl+Tab / ⌥Tab（⇧ 反向）像切标签页一样循环切窗**。
 - **一键整理按钮**：底栏「⌗ 整理」（= ⌥T），不藏快捷键里。
 
+## v7c 增补（workflow 关键视图 + 多任务）
+
+- **按节点日志**：RUNS 的 LOGS 页新增节点过滤 chips（◍ ALL · plan · build · test…，
+  带计数与状态字形）；每行日志前挂 `[node]` 标签；**点 GRAPH 里任一节点 = 直接过滤到它的日志**；
+  live 流按当前运行节点归组，过滤态下只进匹配行。
+- **HARNESS 监控面板**（rail 第 4 格 ⌥4 / `open harness`）：
+  顶部 4 卡（护栏 3/3 · 24h 拒绝 12 · 风暴 0 · 预算 92%）→
+  RUN GUARDS 表（风暴/边界/循环/预算 四护栏状态 + 调用速率 + **cancel/deny/other 三色 kinds 条**）→
+  A/B LEDGER（strip-env 证伪 · toolDenialKind 已证实 · P4 验证中——与仓库记忆一致）→
+  事件流 live tail。
+- **>4 窗口的一键整理**：改走「分排铺满」网格（5 窗 = 3+2，每排均分整行宽，100% 覆盖零空隙），
+  toast 报形状；≤4 仍走具名象限（有分隔条）。
+- **Mission Control = 多任务切换**：⌘⇧M 视图每卡左上角序号徽章、悬停浮出摆位动作条
+  `◧ ◨ ⬒ ⬓ 浮 ─ ×`——左半/右半/左上/右下/转浮动/最小化/关闭，点完**留在视图里连续操作**；
+  卡片含跨空间全部活窗口（everything stays alive）。
+- rail 变 9 格：⌥1…⌥9（HARNESS 占 4）。
+
 ## 保留（v6 → v7）
 
 - 安静 Codex 皮肤：中性面、无衬线正文、等宽只给数据、明暗双版（`theme light|dark`）
@@ -50,6 +67,7 @@ term [run-id]              浮出当前 run 的日志子窗
 
 `/tmp/nexus-smoke/smoke7.mjs`（Playwright）覆盖：开局满屏贴边、分隔条调比例、
 边缘吸附 + 顶替、子窗层次（面包屑/退暗/z 序/徽标）、父子同拖、esc 收窗、
-日志子窗、⌥T 填充、暗色主题、⌥3 直达、`dock lb`、
-**左缘/右缘/右下角三向 resize、窗口条 chip 点切、Ctrl+Tab 循环、整理按钮、chip 吸附标记**。
-**31 pass / 0 fail，零 pageerror。**
+日志子窗、⌥T 填充、暗色主题、⌥3 直达、`dock lb`、左缘/右缘/右下角三向 resize、
+窗口条 chip 点切、Ctrl+Tab 循环、整理按钮、chip 吸附标记、
+**节点日志过滤、HARNESS 面板三表+live 流、5 窗分排铺满（覆盖率断言）、Mission 卡片摆位**。
+**45 pass / 0 fail，零 pageerror。**

@@ -112,11 +112,12 @@
             { n: "build", k: "agent", s: "r" }, { n: "test", k: "bash", s: "" }, { n: "review", k: "swarm", s: "" }, { n: "deploy", k: "approval", s: "" },
           ],
           logs: [
-            { l: "sys", t: "19:02:11", m: "EXECUTOR agent::build → worktree feat/desktop-v7" },
-            { l: "run", t: "19:04:52", m: "wm.layout(L) · today 0,0,688,702 zero-gap" },
-            { l: "run", t: "19:08:14", m: "divider drag · split frac 0.42 persisted" },
-            { l: "warn", t: "19:11:40", m: "child z-order vs divider 450 — bump tree raise" },
-            { l: "run", t: "19:15:03", m: "node build 3/6 · snap zones passing smoke" },
+            { l: "sys", t: "19:02:11", m: "EXECUTOR agent::build → worktree feat/desktop-v7", n: "plan" },
+            { l: "run", t: "19:04:52", m: "wm.layout(L) · today 0,0,688,702 zero-gap", n: "scaffold" },
+            { l: "run", t: "19:08:14", m: "divider drag · split frac 0.42 persisted", n: "build" },
+            { l: "warn", t: "19:11:40", m: "child z-order vs divider 450 — bump tree raise", n: "build" },
+            { l: "run", t: "19:15:03", m: "node build 3/6 · snap zones passing smoke", n: "build" },
+            { l: "ok", t: "19:16:20", m: "vitest 41/41 · resize · snap · persist green", n: "test" },
           ],
         },
         {
@@ -125,19 +126,19 @@
             { n: "walkthrough", k: "agent", s: "d" }, { n: "keyboard", k: "agent", s: "w" }, { n: "verdict", k: "approval", s: "" },
           ],
           logs: [
-            { l: "run", t: "18:31:02", m: "probe 1-4 PASS · board · snap · runs · persistence" },
-            { l: "warn", t: "18:58:47", m: "probe 5 focus-order: ⌥T after mission-close lands on rail — 42m waiting human" },
+            { l: "run", t: "18:31:02", m: "probe 1-4 PASS · board · snap · runs · persistence", n: "walkthrough" },
+            { l: "warn", t: "18:58:47", m: "probe 5 focus-order: ⌥T after mission-close lands on rail — 42m waiting human", n: "keyboard" },
           ],
         },
         {
           id: "R-90", name: "clone · research-scout", task: "T-04", state: "done", progress: 100, cost: "$0.21", tok: "34k", el: "6m",
           nodes: [{ n: "fork", k: "bash", s: "d" }, { n: "scan", k: "agent", s: "d" }, { n: "report", k: "agent", s: "d" }],
-          logs: [{ l: "ok", t: "17:40:00", m: "done · findings saved to wiki/sources" }],
+          logs: [{ l: "ok", t: "17:40:00", m: "done · findings saved to wiki/sources", n: "report" }],
         },
         {
           id: "R-93", name: "nightly-knowledge-compile", task: "T-03", state: "queue", progress: 0, cost: "—", tok: "—", el: "in 7h",
           nodes: [{ n: "index", k: "bash", s: "" }, { n: "compile", k: "agent", s: "" }, { n: "prune", k: "python", s: "" }],
-          logs: [{ l: "sys", t: "--:--:--", m: "queued · cron 0 2 * * * · budget $2.00" }],
+          logs: [{ l: "sys", t: "--:--:--", m: "queued · cron 0 2 * * * · budget $2.00", n: "index" }],
         },
       ],
     },
@@ -147,7 +148,7 @@
         mkTask("M-02", "SEO 技术审计", "Core Web Vitals + meta 审查", "queued", 0, "seo-specialist skill", ["seo"]),
       ],
       runs: [
-        { id: "R-21", name: "copy-rewrite", task: "M-01", state: "run", progress: 55, cost: "$0.12", tok: "22k", el: "9m", nodes: [{ n: "draft", k: "agent", s: "d" }, { n: "tone-check", k: "condition", s: "r" }], logs: [{ l: "run", t: "19:20:00", m: "hero rewritten · 2 variants" }] },
+        { id: "R-21", name: "copy-rewrite", task: "M-01", state: "run", progress: 55, cost: "$0.12", tok: "22k", el: "9m", nodes: [{ n: "draft", k: "agent", s: "d" }, { n: "tone-check", k: "condition", s: "r" }], logs: [{ l: "run", t: "19:20:00", m: "hero rewritten · 2 variants", n: "draft" }] },
       ],
     },
     "research-scout": {
@@ -156,7 +157,7 @@
         mkTask("S-02", "Loop 工程模式图谱", "harness 接入候选 ×9", "executing", 33, "kb · xzf-dev 分析", ["kb"]),
       ],
       runs: [
-        { id: "R-31", name: "debate · consensus", task: "S-01", state: "run", progress: 72, cost: "$0.44", tok: "61k", el: "22m", nodes: [{ n: "round1", k: "swarm", s: "d" }, { n: "round2", k: "swarm", s: "d" }, { n: "consensus", k: "agent", s: "r" }], logs: [{ l: "run", t: "19:05:10", m: "round 2 · 3/5 agents converge" }] },
+        { id: "R-31", name: "debate · consensus", task: "S-01", state: "run", progress: 72, cost: "$0.44", tok: "61k", el: "22m", nodes: [{ n: "round1", k: "swarm", s: "d" }, { n: "round2", k: "swarm", s: "d" }, { n: "consensus", k: "agent", s: "r" }], logs: [{ l: "run", t: "19:05:10", m: "round 2 · 3/5 agents converge", n: "round2" }] },
       ],
     },
   };
@@ -221,6 +222,29 @@
     ],
   };
 
+  /* harness 监控 — 护栏状态 / denial 归类 / A/B 台账 */
+  const HARNESS = {
+    guards: [
+      { run: "R-91", storm: "ok", boundary: "ok", loop: "warn", budget: "ok", calls: "1.2k", rate: "20/min", kinds: [82, 14, 4], note: "3× abort · 0 deny · loop ×2 near-miss" },
+      { run: "R-92", storm: "ok", boundary: "ok", loop: "ok", budget: "ok", calls: "640", rate: "11/min", kinds: [95, 3, 2], note: "clean" },
+      { run: "R-31", storm: "warn", boundary: "ok", loop: "ok", budget: "warn", calls: "2.1k", rate: "48/min", kinds: [61, 33, 6], note: "rate↑ · budget 92% · guard armed" },
+    ],
+    exps: [
+      { c: "A · strip-env 复现风暴", h: "env 泄漏 → 拒绝风暴", r: "证伪", cls: "p-dim", e: "5/5 候选全灭 · 泄漏必要非充分" },
+      { c: "B · toolDenialKind 分类", h: "cancelled = abort ≠ deny", r: "已证实", cls: "p-ok", e: "SDK 源码 + 双活体复验" },
+      { c: "C · harness 接入 P4", h: "当前最大杠杆位", r: "验证中", cls: "p-info", e: "靶子 T-01 · probe 3/4" },
+    ],
+  };
+  const HSTREAM = [
+    ["ok", "R-91", "guard::storm-check pass · 20 calls/60s"],
+    ["warn", "R-31", "budget 92% · $1.84 / $2.00 · notify"],
+    ["run", "R-91", "approval gate deploy → human wait 38m"],
+    ["ok", "harness", "denial-kinds reclassified · cancelled 87 / deny 12"],
+    ["warn", "R-31", "loop-detector: 2× same-tool repeat (threshold 5)"],
+    ["run", "R-92", "probe 5 focus-order retried · PASS on v7"],
+    ["ok", "harness", "heartbeat 6/6 · guards armed 3/3"],
+  ];
+
   const FEED_POOL = [
     ["run", "R-91", "node build · chunk 3/9 written"],
     ["ok", "R-90", "clone scan finished · 4 findings"],
@@ -260,7 +284,7 @@
       store.state = {
         selTask: null,
         selRun: (store.runs || [])[0]?.id || null,
-        runTab: "logs", wikiPage: "win",
+        runTab: "logs", runNode: null, wikiPage: "win",
         chat: id === GLOBAL ? AGENT_MSGS.map((m) => ({ ...m })) : [],
         typing: false,
       };
@@ -273,16 +297,17 @@
     today: { label: "TODAY", ico: "gauge", key: 1, title: "vitals", sub: "system status", geo: [16, 14, 610, 560] },
     tasks: { label: "TASKS", ico: "kanban", key: 2, title: "tasks", sub: "board · detail", geo: [640, 14, 706, 590] },
     runs: { label: "RUNS", ico: "activity", key: 3, title: "runs", sub: "exec monitor", geo: [16, 300, 610, 400] },
-    agent: { label: "AGENT", ico: "bot", key: 4, title: "main agent", sub: "global session", geo: [934, 318, 420, 470], global: true },
-    inbox: { label: null, ico: "tray", key: 9, title: "inbox", sub: "needs you", geo: [240, 120, 540, 400] },
+    harness: { label: "HARNESS", ico: "shield", key: 4, title: "harness monitor", sub: "guard rails · denial kinds · A/B", geo: [120, 50, 780, 600] },
+    agent: { label: "AGENT", ico: "bot", key: 5, title: "main agent", sub: "global session", geo: [934, 318, 420, 470], global: true },
+    inbox: { label: null, ico: "tray", key: 0, title: "inbox", sub: "needs you", geo: [240, 120, 540, 400] },
     insp: { label: null, ico: "diamond", key: 0, title: "inspector", sub: "task detail", geo: [300, 60, 560, 520] },
     term: { label: null, ico: "term", key: 0, title: "log stream", sub: "live tail", geo: [140, 90, 600, 340] },
-    sched: { label: "SCHED", ico: "clock", key: 5, title: "scheduler", sub: "cron jobs", geo: [60, 60, 680, 460] },
-    wiki: { label: "WIKI", ico: "book", key: 6, title: "wiki", sub: "compiled knowledge", geo: [120, 40, 780, 560] },
-    lib: { label: "LIBRARY", ico: "layers", key: 7, title: "library", sub: "skills · agents · packs", geo: [150, 80, 640, 520] },
-    sys: { label: "SYSTEM", ico: "sliders", key: 8, title: "system", sub: "preferences", geo: [180, 90, 600, 500] },
+    sched: { label: "SCHED", ico: "clock", key: 6, title: "scheduler", sub: "cron jobs", geo: [60, 60, 680, 460] },
+    wiki: { label: "WIKI", ico: "book", key: 7, title: "wiki", sub: "compiled knowledge", geo: [120, 40, 780, 560] },
+    lib: { label: "LIBRARY", ico: "layers", key: 8, title: "library", sub: "skills · agents · packs", geo: [150, 80, 640, 520] },
+    sys: { label: "SYSTEM", ico: "sliders", key: 9, title: "system", sub: "preferences", geo: [180, 90, 600, 500] },
   };
-  const RAIL_ORDER = ["today", "tasks", "runs", "agent", "sched", "wiki", "lib", "sys"];
+  const RAIL_ORDER = ["today", "tasks", "runs", "harness", "agent", "sched", "wiki", "lib", "sys"];
 
   /* ---------------- window manager ---------------- */
   let wins = loadWins();
@@ -724,19 +749,41 @@
   function tile() {
     const ws = allWins(true).filter((w) => !w.closed && !w.min && !w.parent);
     if (!ws.length) return;
+    const { W, H } = deskDims();
+    if (ws.length > 4) {
+      // >4：分排铺满网格（每排均分整行宽 → 100% 覆盖，无空洞）
+      const rows = ws.length <= 6 ? 2 : Math.ceil(ws.length / 3);
+      const perRow = [];
+      for (let r = 0; r < rows; r++) perRow.push(ws.slice(Math.round(r * ws.length / rows), Math.round((r + 1) * ws.length / rows)));
+      perRow.forEach((rowWins, r) => {
+        const y = Math.round(r * H / rows);
+        const hh = Math.round((r + 1) * H / rows) - y;
+        rowWins.forEach((w, c) => {
+          const n = rowWins.length;
+          const x = Math.round(c * W / n);
+          const ww = Math.round((c + 1) * W / n) - x;
+          w.max = false; w.dock = null;
+          w.x = x; w.y = y; w.w = ww; w.h = hh;
+          placeWin(w);
+        });
+      });
+      layoutLayer(settings.space);
+      saveWins();
+      const shape = perRow.map((r) => r.length).join("+");
+      toast("网格(" + ws.length + ") ▸ " + shape + " · 铺满 · 拖四边微调");
+      return;
+    }
     const plan = ws.length === 1 ? ["L"]
       : ws.length === 2 ? ["L", "R"]
       : ws.length === 3 ? ["L", "RT", "RB"]
       : ["LT", "RT", "LB", "RB"];
-    const { W, H } = deskDims();
     ws.forEach((w, i) => {
       w.max = false;
-      if (i < plan.length) { w.dock = plan[i]; if (!w.f) w.f = 0.5; }
-      else { w.dock = null; w.x = 40 + i * 36; w.y = 30 + i * 30; w.w = Math.round(W * 0.5); w.h = Math.round(H * 0.66); placeWin(w); }
+      w.dock = plan[i]; if (!w.f) w.f = 0.5;
     });
     layoutLayer(settings.space);
     saveWins();
-    toast("填充(" + ws.length + ") ▸ " + plan.slice(0, Math.min(plan.length, ws.length)).join(" · "));
+    toast("整理(" + ws.length + ") ▸ " + plan.slice(0, ws.length).join(" · "));
   }
   function cascade() {
     const ws = allWins(true).filter((w) => !w.closed && !w.min);
@@ -765,6 +812,10 @@
     return '<div class="bar ' + (kind ? "b-" + kind : "") + '"><i style="width:' + p + '%"></i></div>';
   }
   const STATE_GLYPH = { run: ["live", "RUN"], wait: ["warn", "WAIT"], done: ["", "DONE"], queue: ["info", "QUEUE"] };
+  const NODE_GLYPH = { d: "◉", r: "◐", w: "◑", f: "◍", "": "○" };
+  function logLine(l) {
+    return '<div class="ll l-' + l.l + '"><span class="lt">' + l.t + '</span>' + (l.n ? '<span class="ln">' + esc(l.n) + '</span>' : "") + esc(l.m) + '</div>';
+  }
 
   function inspHtml(t, space, opts = {}) {
     const glyph = { done: "✓", run: "●", next: "○" };
@@ -861,7 +912,7 @@
         '<span class="pill ' + (r.state === "run" ? "p-info" : "p-dim") + '">' + STATE_GLYPH[r.state][1] + '</span>' +
         '<span class="grow"></span><span class="tnum mono-num">' + esc(r.el) + ' · ' + esc(r.cost) + '</span></div>' +
         '<div class="logbox" data-logbox data-run="' + r.id + '">' +
-        r.logs.map((l) => '<div class="ll l-' + l.l + '"><span class="lt">' + l.t + '</span>' + esc(l.m) + '</div>').join("") +
+        r.logs.map(logLine).join("") +
         (r.state === "run" ? '<div class="ll"><span class="cur">▊</span></div>' : "") +
         '</div><div style="padding:0 14px 14px">' + bar(r.progress, r.state === "wait" ? "warn" : "") + '</div></div>';
     },
@@ -879,13 +930,18 @@
         '</div>').join("") + '</div>';
       if (!r) return '<div class="runs-wrap">' + list + '<div class="run-main"></div></div>';
       const tabs = [["graph", "GRAPH"], ["logs", "LOGS"], ["cost", "COST"]];
-      const glyph = { d: "◉", r: "◐", w: "◑", f: "◍", "": "○" };
+      const glyph = NODE_GLYPH;
       const graph = '<div class="rp ' + (s.runTab === "graph" ? "is-on" : "") + '" data-rp="graph"><div class="gflow">' +
-        r.nodes.map((n, i) => (i ? '<span class="garrow">─▸</span>' : "") + '<div class="gnode ' + n.s + '"><span class="gn-kind">' + n.k + '</span><span class="gn-name">' + glyph[n.s] + " " + esc(n.n) + '</span></div>').join("") +
-        '</div>' + '<div class="logbox"><div class="ll l-sys"><span class="lt">' + r.el + '</span>progress</div></div><div style="padding:0 14px 14px">' + bar(r.progress) + '</div></div>';
-      const logs = '<div class="rp ' + (s.runTab === "logs" ? "is-on" : "") + '" data-rp="logs"><div class="logbox" data-logbox data-run="' + r.id + '">' +
-        r.logs.map((l) => '<div class="ll l-' + l.l + '"><span class="lt">' + l.t + '</span>' + esc(l.m) + '</div>').join("") +
+        r.nodes.map((n, i) => (i ? '<span class="garrow">─▸</span>' : "") + '<div class="gnode ' + n.s + '" data-action="run-node" data-space="' + w.space + '" data-nid="' + n.n + '" title="看 ' + n.n + ' 的节点日志"><span class="gn-kind">' + n.k + '</span><span class="gn-name">' + glyph[n.s] + " " + esc(n.n) + '</span></div>').join("") +
+        '</div>' + '<div class="logbox"><div class="ll l-sys"><span class="lt">' + r.el + '</span>progress — 点任一节点 → 过滤其日志</div></div><div style="padding:0 14px 14px">' + bar(r.progress) + '</div></div>';
+      const nchips = '<div class="nchips"><button class="nchip ' + (s.runNode ? "" : "is-on") + '" data-action="run-node" data-space="' + w.space + '" data-nid="">◍ ALL<span class="nc-c">' + r.logs.length + '</span></button>' +
+        r.nodes.map((nd) => '<button class="nchip ' + (s.runNode === nd.n ? "is-on" : "") + '" data-action="run-node" data-space="' + w.space + '" data-nid="' + nd.n + '">' + glyph[nd.s] + " " + nd.n + '<span class="nc-c">' + r.logs.filter((x) => x.n === nd.n).length + '</span></button>').join("") + '</div>';
+      const shown = r.logs.filter((l) => !s.runNode || l.n === s.runNode);
+      const logs = '<div class="rp ' + (s.runTab === "logs" ? "is-on" : "") + '" data-rp="logs">' + nchips +
+        '<div class="logbox" data-logbox data-run="' + r.id + '">' +
+        shown.map(logLine).join("") +
         (r.state === "run" ? '<div class="ll"><span class="cur">▊</span></div>' : "") +
+        (s.runNode && !shown.length ? '<div class="ll l-sys"><span class="lt">—</span>该节点暂无日志输出</div>' : "") +
         '</div></div>';
       const cost = '<div class="rp ' + (s.runTab === "cost" ? "is-on" : "") + '" data-rp="cost"><table class="tb"><tr><th>LEDGER</th><th class="num">IN</th><th class="num">OUT</th><th class="num">CACHE</th><th class="num">COST</th></tr>' +
         '<tr><td>' + esc(r.name) + '</td><td class="num">82k</td><td class="num">' + esc(r.tok) + '</td><td class="num">1.4M</td><td class="num">' + esc(r.cost) + '</td></tr>' +
@@ -964,7 +1020,7 @@
         '<div class="sys-sect"><h4>Keyboard</h4>' +
         row("快捷键总表", "按 ? 随时打开", '<button class="cmd" data-action="help">Show keys</button>') + '</div>' +
         '<div class="sys-sect"><h4>About</h4>' +
-        '<div class="about-mono">octopus desktop · prototype v7 — 综合体<br>v1 直达 · v6 安静 · 吸附分屏 · 子窗口层次 · fake data only<br>db: ~/.octopus/db/octopus.db · server :3001</div></div>';
+        '<div class="about-mono">octopus desktop · prototype v7c — 综合体<br>v1 直达 · v6 安静 · 吸附分屏 · 节点日志 · harness 面板 · 子窗口层次<br>v5–v7 保留对照 · fake data only<br>db: ~/.octopus/db/octopus.db · server :3001</div></div>';
     },
 
     inbox() {
@@ -975,6 +1031,33 @@
           '<button class="cmd cmd-warn" data-action="alert-act" data-id="' + a.id + '">' + esc(a.a) + '</button>' +
           '<button class="cmd cmd-ghost" data-action="alert-dismiss" data-id="' + a.id + '">skip</button></div>').join("")
           : '<div class="feed"><div class="f-line fk-ok"><span class="ft">✓</span>all clear — nothing awaits a human.</div></div>') + '</div>';
+    },
+
+    harness(w) {
+      const okp = (s) => '<span class="pill ' + (s === "ok" ? "p-ok" : "p-warn") + '">' + (s === "ok" ? "✓ PASS" : "⚠ WATCH") + '</span>';
+      const kinds = (k) => '<div class="kbar" title="cancelled ' + k[0] + '% · deny ' + k[1] + '% · other ' + k[2] + '%"><i class="k0" style="width:' + k[0] + '%"></i><i class="k1" style="width:' + k[1] + '%"></i><i class="k2" style="width:' + k[2] + '%"></i></div>';
+      return '' +
+        '<div class="stat4">' +
+        '<div class="stat"><div class="s-lab">GUARDS ARMED</div><div class="s-val">3<small>/3</small></div><div class="s-note">storm · boundary · loop</div></div>' +
+        '<div class="stat"><div class="s-lab">DENIALS · 24H</div><div class="s-val">12</div><div class="s-note"><span class="warnc">cancel 87 ≠ deny 12</span></div>' + spark([2, 1, 4, 2, 1, 3, 1], 56, 20) + '</div>' +
+        '<div class="stat"><div class="s-lab">STORM EVENTS</div><div class="s-val">0</div><div class="s-note"><span class="up">14d streak</span></div></div>' +
+        '<div class="stat"><div class="s-lab">BUDGET · SWARM</div><div class="s-val">92<small>%</small></div><div class="s-note">R-31 $1.84/$2.00</div><div class="bar b-warn" style="margin-top:6px"><i style="width:92%"></i></div></div>' +
+        '</div>' +
+        '<div class="sect"><div class="sect-h"><h3>RUN GUARDS</h3><span class="grow"></span><span class="cap">per-run · live</span></div>' +
+        '<table class="tb"><tr><th>RUN</th><th>风暴</th><th>边界</th><th>循环</th><th>预算</th><th>调用</th><th>KINDS · cancel/deny/other</th><th>NOTE</th></tr>' +
+        HARNESS.guards.map((g) =>
+          '<tr><td class="strong" style="font-weight:600;font-family:var(--mono)">' + g.run + '</td>' +
+          '<td>' + okp(g.storm) + '</td><td>' + okp(g.boundary) + '</td><td>' + okp(g.loop) + '</td><td>' + okp(g.budget) + '</td>' +
+          '<td class="mono-num">' + g.calls + ' <span class="hnote">' + g.rate + '</span></td>' +
+          '<td>' + kinds(g.kinds) + '</td>' +
+          '<td class="hnote">' + esc(g.note) + '</td></tr>').join("") +
+        '</table></div>' +
+        '<div class="sect"><div class="sect-h"><h3>A/B LEDGER</h3><span class="grow"></span><span class="cap">harness 接入 P4 · 结论入 wiki</span></div>' +
+        '<table class="tb"><tr><th>候选</th><th>假设</th><th>结论</th><th>证据</th></tr>' +
+        HARNESS.exps.map((x) => '<tr><td class="strong" style="font-weight:600">' + esc(x.c) + '</td><td>' + esc(x.h) + '</td><td><span class="pill ' + x.cls + '">' + esc(x.r) + '</span></td><td class="hnote">' + esc(x.e) + '</td></tr>').join("") +
+        '</table></div>' +
+        '<div class="sect"><div class="sect-h"><h3>GUARD EVENTS</h3><span class="grow"></span><span class="cap">live tail</span></div></div>' +
+        '<div class="feed" data-harness-stream></div>';
     },
   };
 
@@ -1031,15 +1114,34 @@
       const [l, m] = LOG_POOL[Math.floor(Math.random() * LOG_POOL.length)];
       const d = new Date(); const p = (n) => String(n).padStart(2, "0");
       const time = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
-      r.logs.push({ l, t: time, m });
-      const cur = box.querySelector(".ll:last-child .cur")?.closest(".ll");
-      const line = document.createElement("div");
-      line.className = "ll l-" + l;
-      line.innerHTML = '<span class="lt">' + time + '</span>' + esc(m);
-      if (cur) box.insertBefore(line, cur); else box.appendChild(line);
-      box.scrollTop = box.scrollHeight;
+      const curNode = (r.nodes.find((n) => n.s === "r") || r.nodes[r.nodes.length - 1] || {}).n;
+      r.logs.push({ l, t: time, m, n: curNode });
+      const filteredOut = s.runNode && win.dataset.app === "runs" && curNode !== s.runNode;
+      if (!filteredOut) {
+        const cur = box.querySelector(".ll:last-child .cur")?.closest(".ll");
+        const line = document.createElement("div");
+        line.className = "ll l-" + l;
+        line.innerHTML = '<span class="lt">' + time + '</span>' + (curNode ? '<span class="ln">' + esc(curNode) + '</span>' : "") + esc(m);
+        if (cur) box.insertBefore(line, cur); else box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+      }
       r.progress = clamp(r.progress + Math.round(Math.random() * 3), 0, 99);
       win.querySelectorAll(".bar i").forEach((g) => { g.style.width = r.progress + "%"; });
+    });
+  }
+
+  let hIdx = 0;
+  function streamHarness() {
+    $$("[data-harness-stream]").forEach((box) => {
+      const win = box.closest(".win"); if (!win || win.classList.contains("is-min") || win.classList.contains("is-closed")) return;
+      if (!win.closest(".space-layer:not([hidden]), .global-layer")) return;
+      const [k, id, msg] = HSTREAM[hIdx++ % HSTREAM.length];
+      const d = new Date(); const p = (n) => String(n).padStart(2, "0");
+      const line = document.createElement("div");
+      line.className = "f-line fk-" + k + " f-new";
+      line.innerHTML = '<span class="ft">' + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + '</span><span class="fk">' + (k === "warn" ? "⚠" : k === "ok" ? "✓" : "▸") + '</span><b>' + id + '</b> ' + esc(msg);
+      box.prepend(line);
+      while (box.children.length > 8) box.lastChild.remove();
     });
   }
 
@@ -1173,7 +1275,7 @@
     const low = op.toLowerCase();
     const st = () => DATA[settings.space];
 
-    if (low === "help") outEcho(cmd, "new <标题>      建任务(queued)\nrun <query>       把匹配任务推入 EXECUTING 并打开 RUNS\nask <文本>        问 main agent\nopen <app>        tasks|runs|agent|wiki|sched|lib|sys|inbox|today | term <run>\nclose <app>       关闭视图（数据活着）\ndock L|R|T|B|LT|RT|LB|RB · undock   聚焦窗口吸附/脱离\ntile              一键填充桌面 · cascade 层叠\ntheme light|dark · clear · reset");
+    if (low === "help") outEcho(cmd, "new <标题>      建任务(queued)\nrun <query>       把匹配任务推入 EXECUTING 并打开 RUNS\nask <文本>        问 main agent\nopen <app>        today|tasks|runs|harness|agent|wiki|sched|lib|sys|inbox\nclose <app>       关闭视图（数据活着）\ndock L|R|T|B|LT|RT|LB|RB · undock   聚焦窗口吸附/脱离\ntile / fill       一键整理：≤4 象限 · >4 无缝网格 · cascade 层叠\ntheme light|dark · clear · reset");
     else if (low === "clear") { $("#console-out").hidden = true; $("#con-toggle").classList.remove("is-on"); $("#console-out").innerHTML = ""; }
     else if (low === "new") {
       const t = { id: "T-" + String(st().tasks.length + 1).padStart(2, "0"), title: arg || "untitled", desc: "console-created", column: "queued", progress: 0, meta: "from console · " + settings.space, labels: ["console"], phases: [{ t: "queue", m: "not started", s: "next" }], checks: [{ l: "acceptance", ok: false }], acc: "未开始." };
@@ -1263,14 +1365,24 @@
   /* ---------------- mission / overlays / help ---------------- */
   function openMission() {
     const ws = allWins().filter((w) => !w.closed && !w.parent);
-    $("#mission-grid").innerHTML = ws.map((w) => {
+    $("#mission-grid").innerHTML = ws.map((w, i) => {
       const app = winAppId(w);
       let state = "";
       if (w.app === "insp") { const t = findTask(w.space, w.id.split(":")[1]); state = t ? t.column : "gone"; }
-      return '<div class="proc ' + (w.app === "agent" ? "ps-live" : state === "verify" ? "ps-warn" : "") + '" data-tty="' + (w.space === GLOBAL ? "pts/0" : "pts/x") + '" data-action="proc-focus" data-space="' + w.space + '" data-id="' + w.id + '">' +
+      return '<div class="proc ' + (w.app === "agent" ? "ps-live" : state === "verify" ? "ps-warn" : "") + '" data-tty="' + (w.space === GLOBAL ? "pts/0" : "pts/x") + '" data-action="proc-focus" data-space="' + w.space + '" data-id="' + esc(w.id) + '">' +
         '<div class="p-state"></div>' +
+        '<span class="p-num">' + (i + 1) + '</span>' +
         '<div class="p-name">' + esc((APPS[app]?.label || "INSP")) + ' ▸ ' + esc(w.id) + '</div>' +
         '<div class="p-sub">' + (w.space === GLOBAL ? "global" : w.space) + ' · ' + Math.round(w.w) + "×" + Math.round(w.h) + (w.dock ? " ·" + ZONES[w.dock] : "") + (w.max ? " ·MAX" : "") + (w.min ? " ·MIN" : "") + "</div>" +
+        '<div class="p-acts" data-no-focus="1">' +
+        '<button data-action="proc-dock" data-space="' + w.space + '" data-id="' + esc(w.id) + '" data-zone="L" title="置左半屏">◧</button>' +
+        '<button data-action="proc-dock" data-space="' + w.space + '" data-id="' + esc(w.id) + '" data-zone="R" title="置右半屏">◨</button>' +
+        '<button data-action="proc-dock" data-space="' + w.space + '" data-id="' + esc(w.id) + '" data-zone="LT" title="置左上">⬒</button>' +
+        '<button data-action="proc-dock" data-space="' + w.space + '" data-id="' + esc(w.id) + '" data-zone="RB" title="置右下">⬓</button>' +
+        '<button data-action="proc-float" data-space="' + w.space + '" data-id="' + esc(w.id) + '" title="转浮动">浮</button>' +
+        '<button data-action="proc-min" data-space="' + w.space + '" data-id="' + esc(w.id) + '" title="最小化">─</button>' +
+        '<button class="pa-x" data-action="proc-close" data-space="' + w.space + '" data-id="' + esc(w.id) + '" title="关闭视图">×</button>' +
+        '</div>' +
         '<div class="p-lines">' + mockLines(w) + "</div></div>";
     }).join("");
     showOverlay("mission");
@@ -1294,11 +1406,11 @@
   const overlayOpen = () => $$(".overlay").find((o) => !o.hidden)?.id;
 
   const HELP_ROWS = [
-    ["⌥1 … ⌥8", "rail 直达：TODAY/TASKS/RUNS/AGENT/SCHED/WIKI/LIB/SYSTEM"],
+    ["⌥1 … ⌥9", "rail 直达：TODAY/TASKS/RUNS/HARNESS/AGENT/SCHED/WIKI/LIB/SYSTEM"],
     ["` 或 /", "聚焦底部控制台（命令行）"],
     ["⌘K", "命令面板 · 输入即问 main"],
     ["⌘J", "打开全局主 Agent"],
-    ["⌘⇧M", "Mission Control（全部窗口）"],
+    ["⌘⇧M", "Mission Control 多任务视图 — 悬停卡片即出 ◧◨⬓/浮/─/× 摆位"],
     ["拖标题栏 → 屏幕边缘", "天然分屏：左右/上下半屏 · 四角象限（零间隙）"],
     ["拖窗口四边/四角", "任意方向调整大小（浮动时）；吸附后拖分隔条"],
     ["拖分屏之间的分隔条", "调节左右 / 上下比例，两窗同步重排"],
@@ -1307,7 +1419,7 @@
     ["底栏窗口条", "点 chip 直达窗口 · hover × 关闭 · 「⌗ 整理」一键排版"],
     ["⧉（详情/运行行）", "浮出子窗口：层叠于父窗之上"],
     ["↳ 面包屑", "从子窗回到父窗 · 父窗 ⧉N 徽标可再进子窗"],
-    ["⌥T / 「⌗ 整理」按钮", "一键整理：填充为 半屏/象限 布局"],
+    ["⌥T / 「⌗ 整理」按钮", "≤4 吸附半屏/象限 · >4 无缝网格 cols×rows"],
     ["⌥← / ⌥→", "切换 Space（项目桌面）"],
     ["⌘W", "关闭聚焦窗口（连带子窗）· 关闭 ≠ 取消任务"],
     ["⌘M", "最小化聚焦窗口（连带子窗）→ shelf"],
@@ -1379,8 +1491,29 @@
       case "shelf-restore": { const w = wins[d.space]?.[d.id]; if (!w) break; if (d.space !== GLOBAL && d.space !== settings.space) switchSpace(d.space); w.min = false; restoreWin(w); break; }
       case "proc-focus": { const w = wins[d.space]?.[d.id]; if (!w) break; closeOverlay("mission"); if (d.space !== GLOBAL && d.space !== settings.space) switchSpace(d.space); w.min = false; restoreWin(w); focusWin(w); break; }
       case "run-focus": { openApp("runs", { space: settings.space, selRun: d.rid }); const rw = wins[d.space]?.runs; if (rw) { spaceState(d.space).selRun = d.rid; refreshWin(rw); } break; }
-      case "run-sel": { spaceState(d.space).selRun = d.rid; refreshWin(wins[d.space]?.runs); break; }
+      case "run-sel": { spaceState(d.space).selRun = d.rid; spaceState(d.space).runNode = null; refreshWin(wins[d.space]?.runs); break; }
       case "run-tab": { spaceState(d.space).runTab = d.tab; refreshWin(wins[d.space]?.runs); break; }
+      case "run-node": {
+        const st = spaceState(d.space);
+        st.runNode = d.nid || null;
+        if (d.nid) st.runTab = "logs";
+        refreshWin(wins[d.space]?.runs);
+        break;
+      }
+      case "proc-dock": {
+        const w = findWin(d.id, d.space);
+        if (w) { w.min = false; w.closed = false; mountWin(w); dockTo(w, d.zone); }
+        openMission();
+        break;
+      }
+      case "proc-float": {
+        const w = findWin(d.id, d.space);
+        if (w) { w.dock = null; w.max = false; placeWin(w); layoutLayer(w.space); }
+        openMission();
+        break;
+      }
+      case "proc-min": { const w = findWin(d.id, d.space); if (w) minWin(w); openMission(); break; }
+      case "proc-close": { const w = findWin(d.id, d.space); if (w) closeWin(w); openMission(); break; }
       case "run-term": { const rw = wins[d.space]?.runs; if (rw) { openChild(rw, "term", { tag: d.rid }); toast("⧉ 日志子窗 ▸ " + d.rid); } break; }
       case "insp-pop": {
         const tw = wins[d.space]?.tasks;
@@ -1454,7 +1587,7 @@
       switchSpace(SPACES[n].id);
       return;
     }
-    if (e.altKey && !isTyping() && /^Digit[1-8]$/.test(e.code)) { e.preventDefault(); openApp(RAIL_ORDER[+e.code.slice(5) - 1]); return; }
+    if (e.altKey && !isTyping() && /^Digit[1-9]$/.test(e.code)) { e.preventDefault(); openApp(RAIL_ORDER[+e.code.slice(5) - 1]); return; }
     if (mod && e.key.toLowerCase() === "w") { const w = focusedW; if (w) { e.preventDefault(); closeAndReturn(w); } return; }
     if (mod && e.key.toLowerCase() === "m") { const w = focusedW; if (w) { e.preventDefault(); minWin(w); } return; }
 
@@ -1502,6 +1635,7 @@
   vitals(); setInterval(vitals, 2200);
   pushFeed(true); setInterval(() => pushFeed(false), 6000);
   setInterval(streamLogs, 2600);
+  setInterval(streamHarness, 3400);
 
   window.addEventListener("resize", () => {
     Object.keys(wins).filter((k) => k !== "_v").forEach((k) => {

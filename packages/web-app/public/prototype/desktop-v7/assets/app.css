@@ -1075,3 +1075,48 @@ html[data-theme="dark"] .win.child {
 }
 .tb-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .consolebar .shelf { margin-left: 6px; }
+
+/* ==========================================================================
+   v7c — 节点日志 · harness 面板 · Mission 摆位
+   ========================================================================== */
+
+/* per-node log chips + node tag on every log line */
+.nchips { display: flex; gap: 6px; padding: 10px 14px 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); }
+.nchip {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-2);
+  border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px;
+  display: flex; gap: 6px; align-items: center;
+}
+.nchip:hover { border-color: var(--text-3); color: var(--text); }
+.nchip.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+.nchip .nc-c { color: var(--text-3); font-size: 9.5px; }
+.logbox .ll .ln { display: inline-block; min-width: 68px; color: var(--info); margin-right: 8px; font-size: 10.5px; opacity: .85; }
+.gnode { cursor: pointer; }
+.gnode:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* harness monitor atoms */
+.pill.p-ok { color: var(--ok); background: var(--ok-wash); }
+.hnote { font-size: 11px; color: var(--text-3); }
+.kbar { display: flex; width: 92px; height: 6px; border-radius: 99px; overflow: hidden; background: var(--line); }
+.kbar i { height: 100%; }
+.kbar .k0 { background: var(--warn); }
+.kbar .k1 { background: var(--danger); }
+.kbar .k2 { background: var(--text-3); }
+
+/* Mission Control cards — hover = quick placement */
+.proc .p-num {
+  position: absolute; top: 10px; left: 10px;
+  font-family: var(--mono); font-size: 9px; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+}
+.proc .p-name { padding-left: 20px; }
+.p-acts { display: none; gap: 5px; margin: 9px 0 0; }
+.proc:hover .p-acts { display: flex; }
+.p-acts button {
+  font-family: var(--mono); font-size: 10.5px;
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 8px;
+  color: var(--text-2); background: var(--panel-2);
+}
+.p-acts button:hover { color: var(--accent); border-color: var(--accent); }
+.p-acts .pa-x:hover { color: var(--danger); border-color: var(--danger); }
+.proc .p-lines { border-top: 1px solid var(--line-soft); }
