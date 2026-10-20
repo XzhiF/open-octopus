@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus 桌面 · 五稿风格画廊</title>
+<style>
+:root {
+  --paper: #faf9f7; --card: #fff; --ink: #1c1b19; --muted: #6d6a63; --faint: #a3a09a;
+  --line: #eae7e0; --wash: #f3f1ec; --accent: #3f6ad8;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 15px/1.7 var(--sans); background: var(--paper); color: var(--ink); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 56px 28px 90px; }
+header h1 { font-size: 28px; letter-spacing: -.02em; }
+header p { color: var(--muted); max-width: 720px; margin-top: 8px; }
+header .rec { margin-top: 18px; background: #fff8e8; border: 1px solid #ecd9ae; border-radius: 12px; padding: 14px 18px; font-size: 14px; max-width: 760px; }
+header .rec b { color: #7a5410; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+a.card { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; text-decoration: none; color: inherit; transition: .16s; }
+a.card:hover { transform: translateY(-3px); box-shadow: 0 14px 44px rgba(28,25,20,.10); border-color: #d8d4cb; }
+a.card.full { grid-column: span 2; display: grid; grid-template-columns: 300px 1fr; gap: 22px; align-items: center; }
+.thumb { height: 150px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); margin-bottom: 14px; position: relative; }
+a.card.full .thumb { height: 190px; margin: 0; }
+.meta h2 { font-size: 17px; display: flex; align-items: baseline; gap: 9px; }
+.meta h2 small { font: 11px var(--mono); color: var(--faint); letter-spacing: .08em; }
+.meta .slog { color: var(--muted); font-size: 13.5px; margin: 3px 0 9px; }
+.meta .why { font-size: 13.5px; }
+.stars { font-size: 12.5px; margin-top: 10px; display: flex; gap: 16px; color: var(--muted); }
+.stars b { color: var(--ink); font-family: var(--mono); }
+.go { margin-top: 12px; font-size: 13.5px; color: var(--accent); font-weight: 600; }
+footer { margin-top: 40px; color: var(--faint); font-size: 12.5px; }
+
+/* ---- CSS mini-thumbnails ---- */
+.t1 { background: #faf9f7; } .t1 .i { position: absolute; left: 18%; right: 18%; top: 26px; height: 22px; background: #fff; border: 1px solid #dcd8d0; border-radius: 7px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+.t1 .r { position: absolute; left: 18%; right: 18%; height: 12px; border-radius: 5px; background: #fff; border: 1px solid #eae7e0; }
+.t1 .r1 { top: 64px; } .t1 .r2 { top: 84px; width: 55%; right: auto; } .t1 .r3 { top: 108px; left: 18%; right: 30%; background: #fffdf5; border-color: #ecd9ae; }
+.t1 .go { position: absolute; top: 110px; right: 20%; width: 30px; height: 8px; background: #1c1b19; border: 0; border-radius: 3px; color: transparent; }
+.t2 { background: #f4f3ef; } .t2 .l { position: absolute; left: 0; top: 0; bottom: 0; width: 26px; background: #e9e7e1; border-right: 1px solid #dcd9d2; }
+.t2 .l i { display: block; width: 12px; height: 12px; border-radius: 3px; background: #c9c6bd; margin: 8px auto 0; } .t2 .l i.a { background: #3f6ad8; }
+.t2 .tb { position: absolute; left: 26px; right: 0; top: 0; height: 18px; background: #e9e7e1; border-bottom: 1px solid #dcd9d2; }
+.t2 .tb i { position: absolute; top: 4px; height: 10px; width: 54px; background: #fff; border: 1px solid #dcd9d2; border-radius: 3px 3px 0 0; }
+.t2 .m { position: absolute; left: 36px; top: 28px; width: 46%; bottom: 14px; background: #fff; border: 1px solid #e5e2db; border-radius: 5px; }
+.t2 .m i { display: block; height: 8px; margin: 8px 8px 0; border-radius: 2px; background: #eeece6; } .t2 .m i.a { background: #dbe4f6; }
+.t2 .r { position: absolute; right: 8px; top: 28px; width: 30%; bottom: 14px; background: #fff; border: 1px solid #e5e2db; border-radius: 5px; }
+.t2 .r i { display: block; height: 6px; margin: 7px 7px 0; border-radius: 2px; background: #f1efe9; }
+.t3 { background: #fbfaf8; }
+.t3 .c { position: absolute; left: 12%; width: 62%; border-radius: 8px; border: 1px solid #eae7e0; background: #fff; }
+.t3 .c.a { top: 14px; height: 30px; } .t3 .c.b { top: 52px; height: 44px; border-color: #ecd9ae; background: #fffdf5; } .t3 .c.u { top: 104px; height: 20px; left: auto; right: 12%; background: #eef2fb; border-color: #d7e0f5; }
+.t3 .c i { display: block; height: 6px; margin: 7px 8px 0; background: #f0ede6; border-radius: 2px; }
+.t4 { background: #0c0e13; }
+.t4 .g { position: absolute; left: 8%; right: 8%; top: 16px; height: 6px; background: linear-gradient(90deg,#6f97ff,transparent 60%); border-radius: 3px; opacity: .6; }
+.t4 .k { position: absolute; width: 26%; border-radius: 8px; border: 1px solid #262d3d; background: #181d28; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.t4 .k i { display: block; height: 5px; margin: 8px 8px 0; background: #232937; border-radius: 2px; }
+.t4 .k1 { left: 8%; top: 34px; height: 44px; } .t4 .k2 { left: 37%; top: 34px; height: 44px; border-color: rgba(74,222,156,.5); box-shadow: 0 0 18px rgba(74,222,156,.12); } .t4 .k3 { right: 8%; top: 34px; height: 44px; border-color: rgba(255,180,84,.5); }
+.t4 .k4 { left: 8%; top: 92px; height: 40px; opacity: .7; } .t4 .k5 { left: 37%; top: 92px; height: 40px; opacity: .7; } .t4 .k6 { right: 8%; top: 92px; height: 40px; opacity: .55; }
+.t5 { background: #141210; padding: 10px 12px; font: 9px/1.9 var(--mono); color: #e8e2d2; white-space: pre; }
+.t5 .a { color: #e0a458; } .t5 .o { color: #9ece6a; } .t5 .d { color: #6b6555; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Octopus 桌面 · 五稿风格画廊</h1>
+    <p>同一份内容（3 个在跑的任务、2 件等审批的事、一个主 Agent），五种完全不同的设计流派。
+       每稿都是能点的：审批按钮、输入框、标签切换都做了活的，进去转两分钟就知道合不合适。
+       这次刻意不修 v6 —— 因为连续三版都在同一个隐喻（窗口管理）里打转，门槛可能来自隐喻本身。</p>
+    <div class="rec"><b>我的选型意见：</b>把「上手门槛」和「桌面感」分开买 —— 用 <b>S2 工作台</b>做日常骨架（IDE 肌肉记忆，零学习），
+    把 <b>S4 全景墙</b>降级成「今天」打开时的总览页（纵深和惊喜感留着，但不逼任何人管理窗口）。
+    <b>S5 TUI</b> 做暗色皮肤候选（你们 web 端已有前作）。S1/S3 是两种极端：纯命令驱动 vs 纯对话驱动，看你们更像哪个产品。</div>
+  </header>
+
+  <div class="grid">
+    <a class="card" href="s1-spotlight.html">
+      <div class="thumb t1"><div class="i"></div><div class="r r1"></div><div class="r r2"></div><div class="r r3"></div><span class="go">btn</span></div>
+      <div class="meta">
+        <h2>S1 · 聚光灯 <small>RAYCAST/LINEAR</small></h2>
+        <div class="slog">没有窗口没有导航 —— 一个输入框 + 一份"今天"。</div>
+        <div class="why">会打字就会用；每行可点开底部抽屉深看。适合把「快」当命根子的团队。弱点：多任务并行时的空间感弱。</div>
+        <div class="stars"><span>上手门槛 <b>★☆☆</b></span><span>桌面感 <b>★★☆</b></span><span>天花板 <b>★★☆</b></span></div>
+        <div class="go">打开体验 →</div>
+      </div>
+    </a>
+
+    <a class="card" href="s2-workbench.html">
+      <div class="thumb t2"><div class="l"><i class="a"></i><i></i><i></i><i></i></div><div class="tb"><i style="left:34px"></i><i style="left:92px"></i></div><div class="m"><i class="a"></i><i></i><i></i><i></i></div><div class="r"><i></i><i></i><i></i></div></div>
+      <div class="meta">
+        <h2>S2 · 工作台 <small>VS CODE / CURSOR</small></h2>
+        <div class="slog">任务像文件一样开成标签页；左模块、中详情、右 Agent 常驻。</div>
+        <div class="why">程序员零学习成本 —— 这就是每天开着的那个东西。「桌面感」来自面板和标签，不需要窗口管理。综合分最高的一稿。</div>
+        <div class="stars"><span>上手门槛 <b>★☆☆</b>（对开发者）</span><span>桌面感 <b>★★★</b></span><span>天花板 <b>★★★</b></span></div>
+        <div class="go">打开体验 →</div>
+      </div>
+    </a>
+
+    <a class="card" href="s3-cockpit.html">
+      <div class="thumb t3"><div class="c a"><i></i><i style="width:60%"></i></div><div class="c b"><i></i><i style="width:70%"></i></div><div class="c u"></div></div>
+      <div class="meta">
+        <h2>S3 · 驾驶舱 <small>CONDUCTOR / DEVIN</small></h2>
+        <div class="slog">一条时间线汇报一切：任务/审批/产物都是聊天的嵌入式卡片。</div>
+        <div class="why">门槛五稿最低：读=懂，点卡片按钮=操作，说话=派活。看板收进右侧抽屉。弱点：并行任务多了以后"翻记录"累。</div>
+        <div class="stars"><span>上手门槛 <b>★☆☆</b></span><span>桌面感 <b>★☆☆</b></span><span>天花板 <b>★★☆</b></span></div>
+        <div class="go">打开体验 →</div>
+      </div>
+    </a>
+
+    <a class="card" href="s4-panorama.html">
+      <div class="thumb t4"><div class="g"></div><div class="k k1"><i></i><i style="width:55%"></i></div><div class="k k2"><i></i><i style="width:55%"></i></div><div class="k k3"><i></i><i style="width:55%"></i></div><div class="k k4"><i></i></div><div class="k k5"><i></i></div><div class="k k6"><i></i></div></div>
+      <div class="meta">
+        <h2>S4 · 全景 <small>FIGMA / CANVAS</small></h2>
+        <div class="slog">一面发光的任务房间墙：远看态势，点进全屏，Esc 回墙。</div>
+        <div class="why">桌面感（空间纵深）最强、演示最惊艳，且没有任何窗口管理 —— 只有"墙"和"房间"两个状态。弱点：密集工作时单墙效率不如面板。</div>
+        <div class="stars"><span>上手门槛 <b>★★☆</b></span><span>桌面感 <b>★★★</b></span><span>天花板 <b>★★☆</b></span></div>
+        <div class="go">打开体验 →</div>
+      </div>
+    </a>
+
+    <a class="card full" href="s5-tui.html">
+      <div class="thumb t5"><span class="a">── 等你决定 (2) ───────</span>
+<span class="d">  [bh] </span><span class="a">批准部署→prod</span>  <span class="d">⚠40m</span>  <span class="o">[y]批准 [n]打回</span>
+<span class="a">── 正在跑 ──────────────</span>
+<span class="d">  ▶</span> T-01 feat-desktop  ██████████░░░░ 68%
+<span class="d">  ⸻</span> T-02 acceptance    <span class="a">████████░░░░</span> 80%
+<span class="a">❯</span> _<span class="o">▊</span></div>
+      <div class="meta">
+        <h2>S5 · 静默终端 <small>CLAUDE CODE / LazyVim</small></h2>
+        <div class="slog">一屏 = 一个会话。顶部分区、单栏信息流、底部 vim 键位行。:tasks / :runs / 直接打字 = 问 agent。</div>
+        <div class="why">不是 v5 那种戏服：没有雨没有辉光，只有暖黑 + 骨白 + 琥珀，密度拉满但对开发者像回家。你们 web 端整站 TUI 换肤已有前作（9e70d8c8），这条路对你们团队的审美惯性最顺、实现成本最低 —— 键位是唯一的门槛，而它恰好也是护城河。</div>
+        <div class="stars"><span>上手门槛 <b>★★☆</b>（对开发者 ★☆☆）</span><span>桌面感 <b>★★☆</b> 会话感</span><span>天花板 <b>★★★</b></span></div>
+        <div class="go">打开体验 →</div>
+      </div>
+    </a>
+  </div>
+
+  <footer>原型均无构建无依赖 · 桌面版建议 1280+ 宽度 · 对比完挑一稿（或挑两稿的零件），下一轮直接奔实现。</footer>
+</div>
+</body>
+</html>

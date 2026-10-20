@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN" data-phos="green">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus NEXUS — Desktop v5</title>
+  <meta name="description" content="Octopus desktop v5: a Matrix-style command deck — rail shortcuts, floating windows, a live console, and phosphor CRT aesthetics." />
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <!-- ambient layers -->
+  <canvas id="rain" aria-hidden="true"></canvas>
+  <div class="crt" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- boot sequence -->
+  <div class="boot" id="boot" style="display:none" aria-hidden="true">
+    <pre class="boot-log" id="boot-log"></pre>
+    <div class="boot-skip">[ press any key to skip ]</div>
+  </div>
+
+  <div class="app">
+    <!-- HUD top bar: sessions + system vitals -->
+    <header class="hud">
+      <button class="mark" data-action="mission" title="Mission Control · ⌘⇧M">
+        <span class="mark-glyph">◆</span>
+        <span class="mark-name">octopus</span>
+        <span class="mark-tag">NEXUS//v5</span>
+      </button>
+
+      <nav class="sessions" id="sessions" aria-label="Spaces"></nav>
+
+      <button class="hud-search" data-action="palette" title="Command palette · ⌘K">
+        <span class="hud-search-k">SEARCH</span>
+        <span>or ask anything…</span>
+        <kbd>⌘K</kbd>
+      </button>
+
+      <div class="hud-vitals" id="hud-vitals">
+        <span class="vital" id="v-tokens" title="token throughput">◮ <b>0.0k</b> t/s</span>
+        <button class="vital" id="v-runs" data-action="open-app" data-app="runs" title="Active runs">⟐ <b>0</b> RUN</button>
+        <button class="vital v-alert" id="v-alert" data-action="open-app" data-app="inbox" title="Needs you">! <b>0</b> NEEDS-YOU</button>
+      </div>
+
+      <div class="hud-right">
+        <button class="hud-btn" data-action="phos-cycle" title="Phosphor: green → amber → ice">
+          <span class="phos-dot"></span>
+        </button>
+        <button class="hud-btn" data-action="help" title="Shortcuts · ?">?</button>
+        <button class="hud-avatar" data-action="open-app" data-app="sys" title="System">ZF</button>
+      </div>
+    </header>
+
+    <div class="mid">
+      <!-- left rail: the restored quick-jump shortcuts (V1's strength) -->
+      <nav class="rail" id="rail" aria-label="Quick jump"></nav>
+
+      <!-- desktop: floating windows per space -->
+      <main class="desktop" id="desktop" aria-label="Desktop canvas">
+        <section class="space-layer" data-space="open-octopus"></section>
+        <section class="space-layer" data-space="marketing-site" hidden></section>
+        <section class="space-layer" data-space="research-scout" hidden></section>
+        <div class="global-layer" id="global-layer" aria-label="Global windows"></div>
+
+        <div class="snap-preview" id="snap-preview" hidden></div>
+
+        <div class="desk-hint" id="desk-hint">
+          ▮ rail <kbd>⌥1</kbd>…<kbd>⌥8</kbd> jump · <kbd>`</kbd> console · <kbd>⌘K</kbd> palette · <kbd>⌘J</kbd> agent · <kbd>⌘⇧M</kbd> mission · <kbd>⌥T</kbd> tile · <kbd>?</kbd> help
+        </div>
+      </main>
+    </div>
+
+    <!-- bottom console bar: always-on command line + minimized shelf + clock -->
+    <footer class="consolebar">
+      <div class="console-line">
+        <button class="con-toggle" id="con-toggle" data-action="console-log" title="Scrollback">▴</button>
+        <span class="con-prompt" id="con-prompt">root@octopus:~$</span>
+        <input id="console" class="con-input" autocomplete="off" spellcheck="false"
+               placeholder="type a command…  help · new <title> · run <task> · ask <text> · open tasks · theme amber · goto research" />
+        <span class="con-caret" aria-hidden="true"></span>
+        <div class="shelf" id="shelf" aria-label="Minimized windows"></div>
+        <span class="con-clock mono" id="clock">--:--:--</span>
+      </div>
+      <div class="console-out" id="console-out" hidden></div>
+    </footer>
+  </div>
+
+  <!-- command palette -->
+  <div class="overlay" id="palette" hidden>
+    <div class="palette-panel" role="dialog" aria-label="Command palette">
+      <div class="palette-input">
+        <span class="pal-k">&gt;_</span>
+        <input id="palette-input" autocomplete="off" spellcheck="false"
+               placeholder="open · switch · run · or just ask main…" />
+        <kbd>esc</kbd>
+      </div>
+      <div class="palette-list" id="palette-list"></div>
+      <div class="palette-foot">
+        <span><kbd>↑↓</kbd> select</span><span><kbd>⏎</kbd> run</span><span><kbd>esc</kbd> abort</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- mission control -->
+  <div class="overlay" id="mission" hidden>
+    <div class="mission-head">
+      <span class="kicker">// MISSION CONTROL — every proc stays alive</span>
+      <div class="mission-actions">
+        <button class="cmd" data-action="tile">tile</button>
+        <button class="cmd" data-action="cascade">cascade</button>
+        <button class="cmd cmd-hot" data-action="close-mission">return ▸</button>
+      </div>
+    </div>
+    <div class="mission-grid" id="mission-grid"></div>
+  </div>
+
+  <!-- shortcut sheet -->
+  <div class="overlay" id="help" hidden>
+    <div class="help-panel" role="dialog" aria-label="Shortcuts">
+      <div class="help-title">// KEYMAP</div>
+      <div class="help-grid" id="help-grid"></div>
+      <div class="help-foot"><span>follow the white rabbit 🐇 — press <kbd>⌘K</kbd>, type <b>ask</b></span><button class="cmd cmd-hot" data-action="close-help">close</button></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

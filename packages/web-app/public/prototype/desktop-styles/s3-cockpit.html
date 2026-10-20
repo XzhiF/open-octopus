@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>S3 · 驾驶舱 Cockpit — Octopus</title>
+<style>
+/* ============ S3 Cockpit · 活动流流派（Conductor / Devin 式） ============
+   核心隐喻：你雇了一个值班长，他什么都往你桌上汇报。
+   任务/运行/审批/产物 = 时间线上的卡片；说话或点卡上的按钮 = 全部操作。
+   上手门槛五稿最低：会刷聊天记录就会用。 */
+:root {
+  --paper: #fbfaf8; --card: #fff; --ink: #201f1c; --muted: #6c6960; --faint: #a09d94;
+  --line: #eae7e0; --wash: #f4f2ec;
+  --accent: #3f6ad8; --accent-wash: #eef2fb;
+  --ok: #2e7d4f; --ok-wash: #ecf5ef; --warn: #96660f; --warn-wash: #faf3e0; --danger: #b93a3a;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font: 14.5px/1.65 var(--sans); background: var(--paper); color: var(--ink); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input { font: inherit; color: inherit; border: 0; outline: none; background: none; }
+::selection { background: #dbe4f6; }
+
+.frame { height: 100vh; display: grid; grid-template-columns: 1fr 44px; }
+.stream-wrap { display: flex; flex-direction: column; min-width: 0; }
+
+.top { display: flex; align-items: center; gap: 10px; padding: 14px 26px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.top svg { width: 16px; height: 16px; stroke: var(--accent); fill: none; stroke-width: 1.8; }
+.top b { font-size: 15px; }
+.top .ws { font-size: 12.5px; color: var(--muted); background: var(--wash); border: 1px solid var(--line); padding: 2px 10px; border-radius: 99px; }
+.top .who { margin-left: auto; font-size: 12px; color: var(--faint); }
+.top .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; animation: pulse 2s infinite; vertical-align: 0; margin-right: 5px; }
+@keyframes pulse { 50% { opacity: .35; } }
+
+.stream { flex: 1; overflow: auto; padding: 26px 26px 30px; }
+.inner { max-width: 720px; margin: 0 auto; }
+.day { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--faint); font-size: 12px; }
+.day::before, .day::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+
+.msg { display: flex; gap: 12px; margin-bottom: 18px; }
+.av { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.av.a { background: var(--ink); color: var(--paper); } .av.me { background: var(--accent-wash); color: var(--accent); border: 1px solid #cdd8f1; }
+.msg .col { flex: 1; min-width: 0; }
+.msg .nm { font-size: 12px; color: var(--faint); margin-bottom: 3px; font-family: var(--mono); }
+.msg .tx { font-size: 14.5px; } .msg .tx b { font-weight: 650; }
+.msg.user .tx { background: var(--accent-wash); border: 1px solid #d7e0f5; border-radius: 4px 14px 14px 14px; padding: 8px 14px; display: inline-block; font-size: 14px; }
+
+/* embedded work cards */
+.card { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 14px 16px; margin-top: 10px; box-shadow: 0 1px 2px rgba(30,25,15,.03); transition: .15s; }
+.card:hover { box-shadow: 0 6px 22px rgba(30,25,15,.07); }
+.card.alert { border-color: #ecd9ae; background: #fffdf5; }
+.card .ch { display: flex; align-items: center; gap: 9px; }
+.card .ct { font-weight: 650; font-size: 14px; }
+.card .kind { font: 10.5px var(--mono); letter-spacing: .06em; color: var(--faint); text-transform: uppercase; margin-left: auto; }
+.card .cm { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.pill { font-size: 11px; padding: 1px 9px; border-radius: 99px; background: var(--wash); color: var(--muted); }
+.pill.run { background: var(--ok-wash); color: var(--ok); } .pill.wait { background: var(--warn-wash); color: var(--warn); } .pill.done { background: var(--accent-wash); color: var(--accent); }
+.prog { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.prog .bar { flex: 1; height: 6px; border-radius: 99px; background: var(--wash); overflow: hidden; }
+.prog .bar i { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width .8s; }
+.prog .pv { font: 11.5px var(--mono); color: var(--muted); width: 36px; }
+.tlog { font: 11.5px/1.8 var(--mono); background: #1c1b18; color: #cfc9bd; border-radius: 9px; padding: 9px 12px; margin-top: 10px; max-height: 76px; overflow: hidden; }
+.tlog .ok { color: #8fd6a8; } .tlog .wn { color: #e6bd75; }
+.cbtns { display: flex; gap: 7px; margin-top: 11px; }
+.btn { font-size: 12.5px; padding: 4px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+.btn:hover { background: var(--wash); }
+.btn.hot { background: var(--ink); color: var(--paper); border-color: var(--ink); } .btn.hot:hover { opacity: .85; }
+.btn.ok { color: var(--ok); background: var(--ok-wash); border-color: #cfe2d6; }
+.btn.no { color: var(--danger); background: #fbf0ef; border-color: #e8cfcd; }
+.card.resolved { opacity: .55; } .card.resolved .cbtns { display: none; }
+.res-note { font-size: 12.5px; margin-top: 8px; color: var(--ok); font-weight: 550; }
+
+/* right rail edge → drawer */
+.edge { background: var(--wash); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding-top: 14px; gap: 14px; }
+.edge button { width: 30px; height: 30px; border-radius: 8px; color: var(--muted); font-size: 15px; display: grid; place-items: center; }
+.edge button:hover, .edge button.on { background: var(--card); box-shadow: 0 1px 4px rgba(30,25,15,.1); color: var(--accent); }
+.drawer { position: fixed; top: 0; right: -400px; width: 396px; height: 100vh; background: var(--card); border-left: 1px solid var(--line); box-shadow: -18px 0 60px rgba(30,25,15,.12); transition: right .28s cubic-bezier(.2,.8,.2,1); z-index: 50; padding: 18px; overflow: auto; }
+.drawer.on { right: 0; }
+.drawer h3 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: 12px; display: flex; } .drawer h3 .x { margin-left: auto; cursor: pointer; color: var(--muted); }
+.kb { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.kb .lane { background: var(--wash); border-radius: 10px; padding: 8px; }
+.kb .lane h4 { font-size: 10.5px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; margin: 2px 4px 6px; }
+.kb .tk { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 12px; margin-bottom: 6px; }
+.kb .tk .m { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+
+.composer { border-top: 1px solid var(--line); background: var(--card); padding: 13px 26px; }
+.cin { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 13px; padding: 9px 13px; background: var(--paper); transition: .14s; }
+.cin:focus-within { border-color: #c9d6f2; box-shadow: 0 0 0 4px var(--accent-wash); background: var(--card); }
+.cin .p { color: var(--accent); font-family: var(--mono); font-weight: 700; }
+.cin input { flex: 1; font-size: 14.5px; }
+.cin .send { background: var(--ink); color: var(--paper); width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; }
+.crow { max-width: 720px; margin: 7px auto 0; display: flex; gap: 8px; font-size: 11.5px; color: var(--faint); }
+.crow button { font-size: 11.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 10px; background: var(--card); }
+.crow button:hover { color: var(--accent); border-color: var(--accent); }
+
+.toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px); background: var(--ink); color: var(--paper); font-size: 13px; padding: 8px 16px; border-radius: 9px; opacity: 0; transition: .2s; z-index: 99; }
+.toast.on { opacity: 1; transform: translateX(-50%); }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="stream-wrap">
+    <div class="top">
+      <svg viewBox="0 0 24 24"><path d="M12 3l9 9-9 9-9-9 9-9Z"/><circle cx="12" cy="12" r="2.2"/></svg>
+      <b>octopus</b><span class="ws">open-octopus ▾</span>
+      <span class="who"><span class="live-dot"></span>值班中 · 3 个进程在跑 · 今日 $42.18</span>
+    </div>
+
+    <div class="stream" id="stream"><div class="inner" id="inner">
+
+      <div class="day">今天 · 10 月 20 日</div>
+
+      <div class="msg"><span class="av a">AI</span><div class="col">
+        <div class="nm">main · 08:00 晨报</div>
+        <div class="tx">早。昨晚 <b>nightly-compile</b> 正常（$1.32，预算内），wiki 新增 3 页。今天有 <b>2 件事等你</b>，都排在这条线上了 ↓</div>
+      </div></div>
+
+      <div class="msg"><span class="av a">AI</span><div class="col">
+        <div class="nm">main · 09:12 汇报</div>
+        <div class="tx">Desktop 重构我按 v6 骨架继续推，先把回归测试补齐了：</div>
+        <div class="card" id="c-run">
+          <div class="ch"><span class="ct">feat-desktop-shell</span><span class="pill run" id="runPill">RUNNING</span><span class="kind">run r-91 · agent</span></div>
+          <div class="cm">节点 3/6 build · worktree feat/desktop-v6</div>
+          <div class="prog"><div class="bar"><i id="runBar" style="width:68%"></i></div><span class="pv" id="runPv">68%</span></div>
+          <div class="tlog" id="runLog"><div class="dim">19:15 ok node 3/6 · wm smoke green</div><div>19:16 — write app.css · 890 lines</div></div>
+          <div class="cbtns"><button class="btn" data-a="inspect">看详情</button><button class="btn no" data-a="abort">中止</button></div>
+        </div>
+      </div></div>
+
+      <div class="msg"><span class="av a">AI</span><div class="col">
+        <div class="nm">main · 19:04 需要你 → 部署窗口 40 分钟</div>
+        <div class="card alert" id="c-appr">
+          <div class="ch"><span class="ct">批准部署 → production</span><span class="pill wait">待批准</span><span class="kind">approval · harness guard</span></div>
+          <div class="cm">feat-desktop-shell · 探针 5/5 · diff +892/−14 · 3 文件</div>
+          <div class="cbtns"><button class="btn hot" data-a="approve">批准部署</button><button class="btn no" data-a="reject">打回</button><button class="btn" data-a="diff">看 diff</button></div>
+        </div>
+      </div></div>
+
+      <div class="msg user"><span class="av me">ZF</span><div class="col">
+        <div class="nm">你 · 19:10</div>
+        <div class="tx">验收台那边怎么样？</div>
+      </div></div>
+
+      <div class="msg"><span class="av a">AI</span><div class="col">
+        <div class="nm">main · 19:10</div>
+        <div class="tx">round 2 走到 <b>4/5</b>，卡在键盘焦点一项，探针报告我贴在下面 —— 你复验通过后我会自动合入并归档：</div>
+        <div class="card">
+          <div class="ch"><span class="ct">task-acceptance · r2</span><span class="pill wait">等你复验</span><span class="kind">walkthrough</span></div>
+          <div class="cm">✓ 看板→详情联动 · ✓ 切换不丢状态 · ✓ 拖拽吸附 · ✗ <b>⌘⇧M 关闭后焦点落点</b></div>
+          <div class="cbtns"><button class="btn ok" data-a="verify">复验通过</button><button class="btn" data-a="replay">重放探针</button></div>
+        </div>
+      </div></div>
+
+      <div class="msg"><span class="av a">AI</span><div class="col">
+        <div class="nm">main · 19:11 顺手</div>
+        <div class="tx">另外：nightly-compile 的账我记到 <b>token-ledger</b> 页了；research-scout 那 4 条 findings 已进 wiki/sources。</div>
+      </div></div>
+
+    </div></div>
+
+    <div class="composer">
+      <div class="cin"><span class="p">❯</span><input id="ci" placeholder="说句话就行 —— 派活、查状态、要报告…" /><button class="send" id="cs">↑</button></div>
+      <div class="crow"><span style="line-height:22px">快捷：</span><button>今晚跑知识编译</button><button>把 T-02 打回给 agent</button><button>这周花了多少钱？</button></div>
+    </div>
+  </div>
+
+  <div class="edge">
+    <button title="看板抽屉" id="kbBtn">▦</button>
+    <button title="今天">☀</button>
+    <button title="Wiki">▤</button>
+    <button title="设置">⚙</button>
+  </div>
+</div>
+
+<aside class="drawer" id="drawer">
+  <h3>任务看板 <span class="x" id="kbClose">✕</span></h3>
+  <div class="kb" id="kb"></div>
+  <h3 style="margin-top:18px">等审批 <span class="n" style="margin-left:auto;font-family:var(--mono)">1</span></h3>
+  <div class="kb"><div class="lane" style="grid-column:span 2"><div class="tk">部署 → prod <span class="m">40m 窗口</span></div></div></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+/* live: run progresses on its own */
+let p = 68; const pool = ["19:17 ! snap z conflict → fixed layer 400","19:18 ok test scaffold green","19:18 — chunk 4/9 · 3.1k tok","19:19 ok review swarm 5/5 agree"];
+let pi = 0;
+setInterval(() => {
+  if ($("#c-run").classList.contains("resolved")) return;
+  p = Math.min(99, p + Math.round(Math.random() * 3));
+  $("#runBar").style.width = p + "%"; $("#runPv").textContent = p + "%";
+  const d = document.createElement("div"); d.className = pool[pi] ? (pool[pi].includes("ok") ? "ok" : pool[pi].includes("!") ? "wn" : "") : ""; d.textContent = pool[pi++ % pool.length];
+  const lg = $("#runLog"); lg.appendChild(d); lg.scrollTop = 1e6;
+}, 2600);
+
+/* card actions = the whole admin surface */
+let tt; const toast = (m) => { const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(tt); tt = setTimeout(() => t.classList.remove("on"), 2000); };
+const resolve = (card, note) => { card.classList.add("resolved"); if (!card.querySelector(".res-note")) card.insertAdjacentHTML("beforeend", '<div class="res-note">' + note + "</div>"); };
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-a]"); if (!b) return;
+  const card = b.closest(".card"); const a = b.dataset.a;
+  if (a === "approve") { resolve(card, "✓ 19:12 你批准了部署 · 完成后我回来汇报"); toast("✓ 已批准"); }
+  if (a === "reject") { resolve(card, "✕ 19:12 你打回了 · 已通知 agent 重做"); toast("↩ 已打回"); }
+  if (a === "verify") { resolve(card, "✓ 复验通过 · 合入 + 归档中…"); toast("✓ 验收通过"); }
+  if (a === "abort") { resolve(card, "⏹ 已中止 · run 数据保留"); toast("⏹ 已中止"); }
+  if (a === "inspect" || a === "replay" || a === "diff") toast("打开" + b.textContent + "（演示里就是这条卡片展开）");
+});
+
+/* composer → new message pair appears in stream */
+const REPLIES = [
+  "好，我接手：会挂到 T-01 的时间线上跑，完成后在这条流里汇报。",
+  "查了：本周 $214.6，比上周 ↓8%。nightly 占 31%，主要花在对账 swarm。",
+  "收到 —— 这条更像指令而不是聊天，所以我直接建了个任务卡放在看板「排队」里。",
+];
+function say(v) {
+  const inner = $("#inner");
+  inner.insertAdjacentHTML("beforeend", '<div class="msg user"><span class="av me">ZF</span><div class="col"><div class="nm">你 · 现在</div><div class="tx">' + esc(v) + "</div></div></div>");
+  const hold = document.createElement("div");
+  hold.className = "msg"; hold.innerHTML = '<span class="av a">AI</span><div class="col"><div class="nm">main · 正在处理</div><div class="tx" style="color:var(--faint)">▊</div></div>';
+  inner.appendChild(hold); $("#stream").scrollTop = 1e6;
+  setTimeout(() => { hold.querySelector(".tx").innerHTML = REPLIES[Math.floor(Math.random() * REPLIES.length)]; $("#stream").scrollTop = 1e6; }, 900);
+}
+$("#cs").onclick = () => { const v = $("#ci").value.trim(); if (v) { say(v); $("#ci").value = ""; } };
+$("#ci").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#cs").click(); });
+document.querySelectorAll(".crow button").forEach((b) => b.onclick = () => say(b.textContent));
+
+/* kanban drawer */
+const LANES = { "进行中": [["Desktop 重构 T-01","68%"],["SEO 审计 M-02","22%"]], "验收": [["acceptance r2","4/5"]], "排队": [["nightly-compile","02:00"],["wiki 周报流","—"]], "完成": [["知识中心 #79","merged"],["token 账本 #70","merged"],["research-scout","✓"]] };
+$("#kb").innerHTML = Object.entries(LANES).map(([k, ts]) => '<div class="lane"><h4>' + k + "</h4>" + ts.map((t) => '<div class="tk">' + esc(t[0]) + '<div class="m">' + esc(t[1]) + "</div></div>").join("") + "</div>").join("");
+$("#kbBtn").onclick = () => { $("#drawer").classList.toggle("on"); $("#kbBtn").classList.toggle("on"); };
+$("#kbClose").onclick = () => { $("#drawer").classList.remove("on"); $("#kbBtn").classList.remove("on"); };
+})();
+</script>
+</body>
+</html>
