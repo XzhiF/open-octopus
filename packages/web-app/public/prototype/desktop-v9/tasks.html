@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus Desktop — Tasks</title>
+  <link rel="stylesheet" href="assets/app.css" />
+  <link rel="stylesheet" href="assets/taskwin.css" />
+</head>
+<body data-page="tasks" data-nav="tasks" data-scene="Tasks" data-crumb="personal / board · 9 active" data-running="2 tasks">
+  <div class="app">
+    <div class="shell">
+      <main class="canvas" id="canvas" aria-label="Task board desktop">
+
+        <!-- Board -->
+        <article class="win" data-win="board" data-primary="1" data-title="Task board" data-sub="9 active · 2 needs you" data-icon="list-todo"
+                 data-x="24" data-y="18" data-w="780" data-h="680">
+          <div class="between" style="padding:10px 12px;border-bottom:1px solid var(--line-soft)">
+            <div class="row">
+              <span class="pill accent">Σ $12.84</span>
+              <span class="pill">248k tokens</span>
+              <span class="pill green">96% pass</span>
+            </div>
+            <div class="row tight">
+              <label class="searchbox" style="width:150px"><svg class="i" viewBox="0 0 24 24"><use href="#i-search"/></svg><input placeholder="Search tasks" /></label>
+              <button class="iconbtn" data-toast="Board refreshed" data-toast-icon="refresh" title="Refresh"><svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+              <button class="btn btn-primary btn-sm" data-toast="New task draft created" data-toast-icon="plus"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-plus"/></svg>New</button>
+            </div>
+          </div>
+
+          <div class="kanban">
+            <section class="lane">
+              <div class="lane-head"><span class="lane-dot draft"></span><b>Draft</b><span class="count">2</span></div>
+              <div class="lane-body">
+                <div class="tcard is-draft" data-task-card="mobile">
+                  <b>Mobile compact mode</b>
+                  <p>窗口在窄屏下折叠为栈，保留最近 3 个。</p>
+                  <div class="tmeta"><span class="pill">authoring</span></div>
+                  <div class="tfoot"><span>2h ago</span><span class="spacer"></span><svg class="i sm" viewBox="0 0 24 24"><use href="#i-more"/></svg></div>
+                </div>
+                <div class="tcard is-draft" data-task-card="run-compare">
+                  <b>Run compare view</b>
+                  <p>并排比较两次执行差异与 token 曲线。</p>
+                  <div class="tmeta"><span class="pill purple">v4</span></div>
+                  <div class="tfoot"><span>yesterday</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="lane">
+              <div class="lane-head"><span class="lane-dot queued"></span><b>Queued</b><span class="count">2</span></div>
+              <div class="lane-body">
+                <div class="tcard" data-task-card="dock">
+                  <b>Restore dock hover tips</b>
+                  <p>Shelf 图标需要可读的标题与运行状态。</p>
+                  <div class="tmeta"><span class="pill blue">queued</span></div>
+                  <div class="tfoot"><span>09:10</span></div>
+                </div>
+                <div class="tcard" data-task-card="scheduler">
+                  <b>Scheduler · cost guard</b>
+                  <p>夜间编译超过 $2 时暂停并通知。</p>
+                  <div class="tmeta"><span class="pill">workflow</span></div>
+                  <div class="tfoot"><span>08:42</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="lane">
+              <div class="lane-head"><span class="lane-dot running"></span><b>Executing</b><span class="count">2</span></div>
+              <div class="lane-body">
+                <div class="tcard is-active" data-task-card="desktop">
+                  <b>Desktop multi-window redesign</b>
+                  <p>Windowed workbench, dock, mission control, 10 scenes.</p>
+                  <div class="tmeta"><span class="pill amber"><i class="dot live"></i>phase 2/3</span><span class="pill">round 2</span></div>
+                  <div class="bar amber" style="margin-top:7px"><i style="width:68%"></i></div>
+                  <div class="tfoot"><span class="mono">feat-desktop-shell</span><span class="spacer"></span><span>18m</span></div>
+                </div>
+                <div class="tcard" data-task-card="wiki">
+                  <b>Wiki compile · ADR-0034</b>
+                  <p>Compile window model decisions into cases page.</p>
+                  <div class="tmeta"><span class="pill purple">agent</span></div>
+                  <div class="tfoot"><span class="mono">wiki-0034</span><span class="spacer"></span><span>6m</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="lane">
+              <div class="lane-head"><span class="lane-dot verify"></span><b>Verify</b><span class="count">1</span></div>
+              <div class="lane-body">
+                <div class="tcard" data-task-card="acceptance">
+                  <b>Acceptance · r2 walkthrough</b>
+                  <p>4/5 probes pass. One draft: keyboard focus order.</p>
+                  <div class="tmeta"><span class="pill purple">needs you</span></div>
+                  <div class="tfoot"><span>wait 42m</span><span class="spacer"></span><span class="c-amber">⚠</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="lane">
+              <div class="lane-head"><span class="lane-dot done"></span><b>Done</b><span class="count">2</span></div>
+              <div class="lane-body">
+                <div class="tcard" data-task-card="state">
+                  <b>Window state persistence</b>
+                  <p>localStorage per scene · position/size/min/max.</p>
+                  <div class="tmeta"><span class="pill green">passed</span></div>
+                  <div class="tfoot"><span>1h ago</span></div>
+                </div>
+                <div class="tcard" data-task-card="palette">
+                  <b>Command palette</b>
+                  <p>⌘K over windows, spaces and layout actions.</p>
+                  <div class="tmeta"><span class="pill green">passed</span></div>
+                  <div class="tfoot"><span>2h ago</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </article>
+
+        <div class="canvas-hint">
+          <svg class="i sm" viewBox="0 0 24 24"><use href="#i-layers"/></svg>
+          click a task -> workspace window - click a run -> execution window - everything stays in Tasks
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+  <script src="assets/taskwins.js"></script>
+</body>
+</html>
