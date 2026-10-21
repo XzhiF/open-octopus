@@ -5,6 +5,8 @@
 .archon/.env
 # gstack QA tool artifacts — NEVER commit
 .gstack/
+# WorkBuddy 工作数据(记忆/技能/临时验证) — NEVER commit
+.workbuddy/
 
 # docs
 docs/superpowers/
