@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Octopus Desktop — Library</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="resources" data-nav="resources" data-scene="Library" data-crumb="resources / skills · 266 available" data-running="syncing index">
+  <div class="app">
+    <div class="shell">
+      <main class="canvas" id="canvas" aria-label="Resource library desktop">
+
+        <!-- Library -->
+        <article class="win" data-win="library" data-primary="1" data-title="Resource library" data-sub="skills · agents · workflows · rules" data-icon="package"
+                 data-x="24" data-y="18" data-w="752" data-h="650">
+          <div class="tabs" data-tabs>
+            <button class="tab is-active" data-tab="skills"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg>Skills <span class="count">184</span></button>
+            <button class="tab" data-tab="agents"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-bot"/></svg>Agents <span class="count">42</span></button>
+            <button class="tab" data-tab="workflows"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg>Workflows <span class="count">28</span></button>
+            <button class="tab" data-tab="rules"><svg class="i sm" viewBox="0 0 24 24"><use href="#i-shield"/></svg>Rules <span class="count">12</span></button>
+            <div class="grow"></div>
+            <button class="iconbtn" data-toast="Install dialog" data-toast-icon="plus" title="Install"><svg class="i" viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>
+          </div>
+
+          <div class="between" style="padding:9px 11px;border-bottom:1px solid var(--line-soft)">
+            <div class="row">
+              <label class="searchbox" style="width:210px"><svg class="i" viewBox="0 0 24 24"><use href="#i-search"/></svg><input placeholder="Search 184 skills" /></label>
+              <button class="chip" data-toast="Group filter"><svg class="i" viewBox="0 0 24 24"><use href="#i-filter"/></svg>group: all</button>
+              <button class="chip" data-toast="Source filter"><svg class="i" viewBox="0 0 24 24"><use href="#i-globe"/></svg>source: all</button>
+            </div>
+            <span class="tiny faint">24 / page</span>
+          </div>
+
+          <div class="tabpane is-active" data-pane="skills">
+            <div class="res-grid">
+              <div class="res-card is-active">
+                <div class="res-top">
+                  <span class="res-ico c-accent"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg></span>
+                  <div class="grow"><b>frontend-design</b><span>skill · v2.3.0</span></div>
+                  <span class="pill green">active</span>
+                </div>
+                <p>Distinctive production-grade interfaces. Typography, spacing, motion and visual direction.</p>
+                <div class="res-foot"><span class="pill">design</span><span class="pill">agency</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+
+              <div class="res-card">
+                <div class="res-top">
+                  <span class="res-ico c-blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg></span>
+                  <div class="grow"><b>octo-workflow-dev</b><span>skill · v1.8.2</span></div>
+                  <span class="pill green">active</span>
+                </div>
+                <p>Author, edit and debug Octopus YAML workflows: 11 node types, variables, DAG and sub-agents.</p>
+                <div class="res-foot"><span class="pill">workflow</span><span class="pill">built-in</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+
+              <div class="res-card">
+                <div class="res-top">
+                  <span class="res-ico c-purple"><svg class="i" viewBox="0 0 24 24"><use href="#i-users"/></svg></span>
+                  <div class="grow"><b>cavecrew</b><span>skill · v1.1.0</span></div>
+                  <span class="pill green">active</span>
+                </div>
+                <p>Delegation guide for compressed sub-agents: investigator, builder and reviewer.</p>
+                <div class="res-foot"><span class="pill">agents</span><span class="pill">local</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+
+              <div class="res-card">
+                <div class="res-top">
+                  <span class="res-ico c-amber"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg></span>
+                  <div class="grow"><b>matt-dev-pipeline</b><span>skill · v3.0.1</span></div>
+                  <span class="pill">available</span>
+                </div>
+                <p>DAG-based development with review, deploy, E2E verification and PR delivery.</p>
+                <div class="res-foot"><span class="pill">pipeline</span><span class="pill">agency</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+
+              <div class="res-card">
+                <div class="res-top">
+                  <span class="res-ico c-cyan"><svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg></span>
+                  <div class="grow"><b>e2e-harness</b><span>skill · v1.4.0</span></div>
+                  <span class="pill green">active</span>
+                </div>
+                <p>Reusable E2E library and recipes for the Octopus web app. Stable modules + self tests.</p>
+                <div class="res-foot"><span class="pill">testing</span><span class="pill">built-in</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+
+              <div class="res-card">
+                <div class="res-top">
+                  <span class="res-ico c-green"><svg class="i" viewBox="0 0 24 24"><use href="#i-package"/></svg></span>
+                  <div class="grow"><b>octo-resource-manager</b><span>skill · v1.2.3</span></div>
+                  <span class="pill green">active</span>
+                </div>
+                <p>Install skills, agents and workflows from source repositories into the global library.</p>
+                <div class="res-foot"><span class="pill">library</span><span class="pill">built-in</span><span class="grow"></span><span class="tiny faint">skill</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tabpane" data-pane="agents">
+            <div class="empty"><svg class="i" viewBox="0 0 24 24"><use href="#i-bot"/></svg><span>42 agents · switch to the list for details</span></div>
+          </div>
+          <div class="tabpane" data-pane="workflows">
+            <div class="empty"><svg class="i" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg><span>28 workflows · templates and installed flows</span></div>
+          </div>
+          <div class="tabpane" data-pane="rules">
+            <div class="empty"><svg class="i" viewBox="0 0 24 24"><use href="#i-shield"/></svg><span>12 rules · harness and knowledge guards</span></div>
+          </div>
+        </article>
+
+        <!-- Detail -->
+        <article class="win" data-win="detail" data-title="frontend-design" data-sub="skill · v2.3.0 · active" data-icon="sparkles"
+                 data-x="796" data-y="18" data-w="490" data-h="650">
+          <div class="td-head">
+            <div class="between">
+              <div class="row">
+                <span class="res-ico c-accent" style="width:32px;height:32px"><svg class="i" viewBox="0 0 24 24"><use href="#i-sparkles"/></svg></span>
+                <div>
+                  <div class="cap">Skill · installed</div>
+                  <h2 style="font-size:16px">frontend-design</h2>
+                </div>
+              </div>
+              <span class="pill green">active</span>
+            </div>
+            <p style="margin-top:7px">Distinctive, production-grade frontend interfaces with high design quality.</p>
+            <div class="row wrap" style="gap:4px;margin-top:8px">
+              <span class="pill">group: design</span>
+              <span class="pill">source: agency-agents-zh</span>
+              <span class="pill">v2.3.0</span>
+            </div>
+          </div>
+
+          <div class="tabs" data-tabs>
+            <button class="tab is-active" data-tab="readme">SKILL.md</button>
+            <button class="tab" data-tab="versions">Versions <span class="count">8</span></button>
+            <button class="tab" data-tab="usage">Usage</button>
+          </div>
+
+          <div class="tabpane is-active" data-pane="readme">
+            <div class="scroll" style="padding:14px">
+              <div class="article" style="padding:0;max-width:none">
+                <h2 style="margin-top:0">When to use</h2>
+                <p>Use when the user asks to build web components, pages or applications and visual direction matters as much as code quality.</p>
+                <h2>Principles</h2>
+                <ul>
+                  <li>Commit to a clear visual direction before writing components.</li>
+                  <li>Typography carries hierarchy; avoid default browser rhythm.</li>
+                  <li>Motion is a signal, never decoration. Respect reduced motion.</li>
+                  <li>Every surface needs a reason: border, elevation or spacing.</li>
+                </ul>
+                <div class="code"><span class="c">---</span>
+name: frontend-design
+description: Create distinctive production-grade interfaces.
+version: 2.3.0
+group: design
+<span class="c">---</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="tabpane" data-pane="versions">
+            <div class="scroll" style="padding:12px">
+              <div class="stack tight">
+                <div class="between"><span class="small dim">v2.3.0 · current</span><span class="pill green">active</span><span class="mono-num faint">2d</span></div>
+                <div class="between"><span class="small dim">v2.2.1 · typography pass</span><span class="mono-num faint">14d</span></div>
+                <div class="between"><span class="small dim">v2.1.0 · motion rules</span><span class="mono-num faint">31d</span></div>
+                <div class="between"><span class="small dim">v2.0.0 · rewrite</span><span class="mono-num faint">60d</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="tabpane" data-pane="usage">
+            <div class="scroll" style="padding:12px">
+              <div class="stat-grid" style="grid-template-columns:repeat(2,1fr)">
+                <div class="stat"><div class="label">Sessions</div><div class="value">18</div><div class="trend">last 7 days</div></div>
+                <div class="stat"><div class="label">Avg. rating</div><div class="value">4.8</div><div class="trend">5 reviews</div></div>
+              </div>
+              <div class="callout" style="margin-top:12px">Loaded by main agent and 2 clones. Latest use: desktop-v1 prototype.</div>
+            </div>
+          </div>
+
+          <div class="between" style="padding:9px 12px;border-top:1px solid var(--line-soft)">
+            <button class="btn btn-sm" data-toast="Deactivated" data-toast-icon="pause">Deactivate</button>
+            <div class="row"><button class="btn btn-sm" data-toast="Update available" data-toast-icon="refresh">Check update</button><button class="btn btn-sm btn-primary" data-toast="Skill opened in resources">Open folder</button></div>
+          </div>
+        </article>
+
+        <!-- Sources minimized -->
+        <article class="win" data-win="sources" data-title="Sources" data-sub="3 git sources · 266 resources" data-icon="globe"
+                 data-x="796" data-y="300" data-w="490" data-h="360" data-min="1">
+          <div class="pane stack">
+            <div class="between"><div><div class="cap">Sources</div><h2 style="margin:3px 0 0;font-size:15px">Git collections</h2></div><span class="pill">3</span></div>
+            <div class="stack tight">
+              <div class="attn"><div class="ai blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-github"/></svg></div><div class="grow"><b>agency-agents-zh</b><span>266 resources · synced 2h ago</span></div><span class="pill green">trusted</span></div>
+              <div class="attn"><div class="ai blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-github"/></svg></div><div class="grow"><b>superpowers-zh</b><span>42 resources · synced 1d ago</span></div><span class="pill green">trusted</span></div>
+              <div class="attn"><div class="ai blue"><svg class="i" viewBox="0 0 24 24"><use href="#i-git-branch"/></svg></div><div class="grow"><b>local workspace</b><span>18 resources · manual</span></div><span class="pill">local</span></div>
+            </div>
+            <button class="btn" data-toast="Sync all sources" data-toast-icon="refresh"><svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>Sync all</button>
+          </div>
+        </article>
+
+        <div class="canvas-hint">
+          <svg class="i sm" viewBox="0 0 24 24"><use href="#i-layers"/></svg>
+          install into the library, activate per workspace · details stay open beside the list
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>
