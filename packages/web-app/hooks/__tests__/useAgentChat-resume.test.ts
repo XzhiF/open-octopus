@@ -36,7 +36,7 @@ function makeHarness(opts?: { running?: boolean }) {
     session: { id: SESSION_ID } as never,
     messages: { items: [partialRow()], total: 1, has_more: false, next_cursor: null },
   }))
-  const chatStream = vi.fn<UseAgentChatApiOverride["chatStream"]>(() => ({
+  const chatStream = vi.fn(() => ({
     // Never-resolving reader: simulates a live stream nobody completes in-test.
     reader: { read: () => new Promise(() => {}) } as unknown as ReadableStreamDefaultReader<Uint8Array>,
     abort: vi.fn(),

@@ -340,7 +340,12 @@ describe("AuthoringWorkspace — single-expert consultation", () => {
     // registered for that turn (default role = AVAILABLE_ROLES[0]).
     expect(chatMock.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining("请调用子代理「product-manager」"),
-      { subagents: [{ id: "product-manager", label: "📦 产品经理" }] },
+      {
+        model: "pro",
+        effort: "high",
+        maxContext: "200k",
+        subagents: [{ id: "product-manager", label: "📦 产品经理" }],
+      },
     )
     expect(chatMock.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining("请评估验收标准是否完备"),

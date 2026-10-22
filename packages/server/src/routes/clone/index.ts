@@ -24,6 +24,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import type { CloneDef } from '@octopus/shared'
+import { parseComposerContext, parseComposerEffort, resolveChatModel } from '../agent/composer-options'
 import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { resolveExpertSubagents } from '../../services/agent/expert-registry'
@@ -327,7 +328,13 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = c.req.param('id')
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string; model?: string; subagents?: Array<{ id: string; label?: string }> }
+    let body: {
+      message?: string
+      model?: string
+      effort?: string
+      maxContext?: string
+      subagents?: Array<{ id: string; label?: string }>
+    }
     try {
       body = await c.req.json()
     } catch {
@@ -337,6 +344,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     if (!body.message) {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
+
+    const effort = parseComposerEffort(body.effort)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
 
     // Single-expert consultation: optional subagent refs → SDK agent defs
     // registered for THIS turn only (the main agent invokes them via its
@@ -600,7 +610,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           }
         }
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model, subagents)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, model, subagents, effort)) {
           // ONLY the explicit stop endpoint may interrupt the turn.
           // Deliberately NOT checking stream.aborted here: hono's node
           // server sets it when the CLIENT disconnects (closing the dialog),
@@ -684,7 +694,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
-                  fallbackModel: (typeof body.model === 'string' && body.model) || cloneDef.config?.model || null,
+                  fallbackModel: model ?? cloneDef.config?.model ?? null,
                 }, tokenUsageDao)
               }
               break
@@ -814,7 +824,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               session_id: sessionId,
               message_id: assistantMsgId,
               session_title: sessionDAO.findById(sessionId)?.title,
-              model: body.model ?? cloneDef.config.model ?? undefined,
+              model: model ?? cloneDef.config.model ?? undefined,
             }),
           })
         }

@@ -11,7 +11,7 @@ import os from 'os'
 import path from 'path'
 import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
-import type { CloneDef } from '@octopus/shared'
+import type { CloneDef, EffortLevel } from '@octopus/shared'
 import {
   getAgentDir,
   getAgentSkillsDir,
@@ -309,6 +309,7 @@ export class CloneRuntime {
     taskHomePath?: string,
     modelOverride?: string,
     subagents?: Record<string, OctopusAgentDef>,
+    effort?: EffortLevel,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -326,6 +327,7 @@ export class CloneRuntime {
         taskHomePath,
         modelOverride,
         subagents,
+        effort,
       )
       yield* stream
       return
@@ -346,6 +348,7 @@ export class CloneRuntime {
             taskHomePath,
             modelOverride,
             subagents,
+            effort,
           )
           yield* stream
           return
@@ -388,6 +391,7 @@ export class CloneRuntime {
     taskHomePath?: string,
     modelOverride?: string,
     subagents?: Record<string, OctopusAgentDef>,
+    effort?: EffortLevel,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
@@ -417,6 +421,7 @@ export class CloneRuntime {
       },
       abortSignal,
       model: modelOverride ?? this.cloneDef.config.model,
+      ...(effort ? { effort } : {}),
       agents: subagents,
       plugins: this.getPlugins(taskHomePath),
       // AskUserQuestion 交互接管（2026-09-09）：不传则 canUseTool 直接 allow，

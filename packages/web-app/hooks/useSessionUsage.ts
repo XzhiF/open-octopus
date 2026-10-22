@@ -27,10 +27,30 @@ export function useSessionUsage(
       return
     }
     let cancelled = false
-    void fetchSessionLLMCalls(sessionId)
-      .then((a) => { if (!cancelled) setUsage(a.aggregates) })
-      .catch(() => { if (!cancelled) setUsage(null) })
-    return () => { cancelled = true }
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+    // 空账 / 取数失败补拉一次：会话刚创建时拉到的空账、轮次刚收尾的可见性
+    // 窗口、或短暂网络错误，都会让 chip 停在 tok --；一次补拉足以覆盖。
+    const load = (attempt: number) => {
+      void fetchSessionLLMCalls(sessionId)
+        .then((a) => {
+          if (cancelled) return
+          setUsage(a.aggregates)
+          if (a.aggregates.totalCalls === 0 && attempt === 0) {
+            retryTimer = setTimeout(() => load(1), 1000)
+          }
+        })
+        .catch(() => {
+          if (cancelled) return
+          setUsage(null)
+          if (attempt === 0) retryTimer = setTimeout(() => load(1), 1500)
+        })
+    }
+    load(0)
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [sessionId, nonce])
 
   return usage

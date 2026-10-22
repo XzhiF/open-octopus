@@ -29,6 +29,13 @@ describe("ChatArea usage placeholders", () => {
     expect(screen.getByRole("combobox")).toHaveProperty("value", "pro")
   })
 
+  it("TUI（对话首页 terminal 皮肤）空会话同样保留 ctx / tok 占位", () => {
+    render(<ChatArea {...baseProps} tui showUsagePlaceholders />)
+
+    expect(screen.getByText(/ctx --%/)).toBeDefined()
+    expect(screen.getByText("tok --")).toBeDefined()
+  })
+
   it("未开启占位时保持既有行为：不渲染 ctx/tok 槽", () => {
     render(<ChatArea {...baseProps} />)
 

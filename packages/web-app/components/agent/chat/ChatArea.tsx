@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo, Fragment, type ReactNode } from 'react'
-import { Send, Square, MessageSquare, ChevronUp, ChevronDown } from 'lucide-react'
+import { Send, Square, MessageSquare, Sparkles, Users, X } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
@@ -23,6 +24,9 @@ import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
 import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
+import { ComposerModelPopover } from './composer-model-popover'
+import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef } from './composer-attach-popover'
+import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
 
 /** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
 const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
@@ -90,19 +94,28 @@ interface ChatAreaProps {
   currentModel?: string
   /** Callback when user switches model. */
   onModelChange?: (model: string) => void
-  /** Non-TUI composer: always render ctx/token slots, with `ctx --%` / `tok --`
+  /** Composer status slots: always render ctx/token, with `ctx --%` / `tok --`
    *  placeholders until the first usage arrives (conversation home uses this). */
   showUsagePlaceholders?: boolean
+  /** TUI composer: enable the `+ 上下文` menu (installed SKILLs + system clones). */
+  showComposerAttach?: boolean
+  /** Composer 模型设置：思考强度 / 最大上下文（Claude SDK effort + [1m] 变体）。 */
+  effort?: ComposerEffort
+  onEffortChange?: (effort: ComposerEffort) => void
+  maxContext?: ComposerContext
+  onMaxContextChange?: (context: ComposerContext) => void
+  /** 各模型自己的 effort/context preset（弹层列表里展示）。 */
+  modelPresets?: Record<string, ModelPreset>
   /** 输入行左端的动作槽（草稿工作台把「专家咨询」小贴纸挂这里，替代独立辅助条）。 */
   composerLeading?: ReactNode
   /** 非流式时的输入框 placeholder（草稿工作台把「/ 调用技能」计数提示收编于此）。 */
   composerPlaceholder?: string
-  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台专用（2026-09-24 改版）：
+  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
    *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
    *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
   tui?: boolean
   /** 打断接管（tui）：stop → 等服务端停 → 重发（useAgentChat.steer）。 */
-  onSteer?: (message: string) => void
+  onSteer?: (message: string, opts?: { delegate_to?: string }) => void
   /** steer 在途（stop→重发谷）：期间 done-flush 让闸，防接管消息被队首抢发。 */
   steerActiveRef?: React.MutableRefObject<boolean>
   /** stream-resume 尾随轮（服务端仍在生成，本地无 SSE 所有权）：此期间
@@ -122,13 +135,20 @@ interface ChatAreaProps {
 const TUI_QUEUE_MAX = 3
 const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
+/** TUI 队列项：消息文本 + 发送时选中的专家（SKILL 已编码进 /命令前缀）。 */
+interface QueuedComposerMessage {
+  text: string
+  expert: ComposerExpertRef | null
+}
+
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, pendingConfirm,
   error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName, streamSource,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
-  showUsagePlaceholders,
+  showUsagePlaceholders, showComposerAttach,
+  effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed,
@@ -136,6 +156,8 @@ export function ChatArea({
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
+  const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
+  const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 票12（/knowledge）：卡片动作预进取号器文本 —— 值变化即灌入输入框；
   // 既有消费方不传此 prop，行为零变化。
@@ -180,11 +202,25 @@ export function ChatArea({
     // should follow-scroll, in both timeline and legacy layouts.
   }, [messages, streamContent, toolCalls, streamTimeline, streamThinking])
 
+  // 「+ 上下文」的选中项只消费一次：SKILL → `/name` 前缀（显式 / 或 @@ 开头时让位）；
+  // 专家 → delegate_to。返回 expert 供 TUI 队列退回时恢复 chip。
+  const takeComposerAttachments = (raw: string) => {
+    const text = attachedSkill && !raw.startsWith('/') && !raw.startsWith('@@')
+      ? `/${attachedSkill.name} ${raw}`
+      : raw
+    const opts = attachedExpert ? { delegate_to: attachedExpert.name } : undefined
+    const expert = attachedExpert
+    setAttachedSkill(null)
+    setAttachedExpert(null)
+    return { text, opts, expert }
+  }
+
   const handleSend = () => {
     if (!input.trim() || streaming) return
-    const text = input.trim()
+    const raw = input.trim()
+    const { text, opts } = takeComposerAttachments(raw)
 
-    // Parse @@mention
+    // Parse @@mention（显式委托优先于 + 面板选中的专家）
     const mention = parseMention(text)
     if (mention) {
       // Self-reference check
@@ -196,7 +232,7 @@ export function ChatArea({
         onSend(mention.cleanMessage, { delegate_to: mention.delegate_to })
       }
     } else {
-      onSend(text)
+      onSend(text, opts)
     }
     setInput('')
     stickBottomRef.current = true
@@ -216,9 +252,9 @@ export function ChatArea({
   // 语义（原型 chat-tui.html 拍板）：⇧⏎=排队（≤3，SDK done 立即 flush 队首）；
   // 有排队时 ⏎=继续加入排队；无排队 busy ⏎=打断接管（steer）；有排队 esc=队尾
   // 退回输入框（点击同效），无排队 esc=打断。
-  const [queue, setQueueState] = useState<string[]>([])
-  const queueRef = useRef<string[]>([])
-  const setQueue = (next: string[]) => { queueRef.current = next; setQueueState(next) }
+  const [queue, setQueueState] = useState<QueuedComposerMessage[]>([])
+  const queueRef = useRef<QueuedComposerMessage[]>([])
+  const setQueue = (next: QueuedComposerMessage[]) => { queueRef.current = next; setQueueState(next) }
   const [queueHint, setQueueHint] = useState<string | null>(null)
   const dockRef = useRef<HTMLDivElement>(null)
   const turnStartedAtRef = useRef(0)
@@ -241,25 +277,26 @@ export function ChatArea({
     if (was && !streaming && queueRef.current.length > 0 && !steerActiveRef?.current) {
       const [head, ...rest] = queueRef.current
       setQueue(rest)
-      onSend(head)
+      onSend(head.text, head.expert ? { delegate_to: head.expert.name } : undefined)
     }
-  }, [streaming, tui, onSend])
+  }, [streaming, tui, onSend, steerActiveRef])
 
   const focusDockInput = () => {
     dockRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
   }
-  const pushQueue = (text: string) => {
+  const pushQueue = (text: string, expert: ComposerExpertRef | null) => {
     if (queueRef.current.length >= TUI_QUEUE_MAX) {
       setQueueHint(`队列已满（${TUI_QUEUE_MAX}）`)
       setTimeout(() => setQueueHint(null), 1400)
       return
     }
-    setQueue([...queueRef.current, text])
+    setQueue([...queueRef.current, { text, expert }])
   }
   const recallQueue = (i: number) => {
     const back = queueRef.current[i]
     setQueue(queueRef.current.filter((_, j) => j !== i))
-    setInput((prev) => (prev.trim() ? `${back} ${prev}` : back))
+    setInput((prev) => (prev.trim() ? `${back.text} ${prev}` : back.text))
+    if (back.expert) setAttachedExpert(back.expert)
     focusDockInput()
   }
   const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -286,14 +323,24 @@ export function ChatArea({
       if (!text) return
       if (e.shiftKey) {
         setInput('')
-        if (streaming) pushQueue(text)
-        else handleSend()
+        if (streaming) {
+          const take = takeComposerAttachments(text)
+          pushQueue(take.text, take.expert)
+        } else {
+          handleSend()
+        }
         return
       }
-      if (queue.length > 0) { setInput(''); pushQueue(text); return }
+      if (queue.length > 0) {
+        setInput('')
+        const take = takeComposerAttachments(text)
+        pushQueue(take.text, take.expert)
+        return
+      }
       if (streaming) {
         setInput('')
-        if (onSteer) onSteer(text)
+        const take = takeComposerAttachments(text)
+        if (onSteer) onSteer(take.text, take.opts)
         else onStop()
         return
       }
@@ -317,6 +364,21 @@ export function ChatArea({
       {!hasSession ? (
         hideEmptyState ? (
           <div className="flex-1" />
+        ) : tui ? (
+          <div className="flex flex-1 items-center px-5" role="status" aria-live="polite">
+            <div className="mx-auto w-full max-w-4xl py-10 text-[12.5px] leading-relaxed">
+              <div className="text-pop-pink">
+                ❯ <span className="text-pop-ink">{emptyStateTitle ?? '开始你的第一个对话'}</span>
+              </div>
+              <div className="mt-2 max-w-xl text-pop-dim">
+                {emptyStateDescription ?? 'Agent 可以理解你的意图，自动编排工作流、管理记忆和分身。试试发送一条指令吧。'}
+              </div>
+              <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
+                <span className="text-pop-pink">✳</span>
+                <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+              </div>
+            </div>
+          </div>
         ) : (
           <AgentEmptyState
             icon={MessageSquare}
@@ -563,7 +625,7 @@ export function ChatArea({
               <div className="mb-1.5 space-y-0.5" data-tui-queue>
                 {queue.map((q, i) => (
                   <button
-                    key={`${i}:${q.slice(0, 12)}`}
+                    key={`${i}:${q.text.slice(0, 12)}`}
                     type="button"
                     onClick={() => recallQueue(i)}
                     title="点击退回输入框"
@@ -572,10 +634,42 @@ export function ChatArea({
                   >
                     <span className="w-[72px] shrink-0 text-pop-pink">⧗ queued</span>
                     <span className="shrink-0 text-pop-pink">{i + 1}/{TUI_QUEUE_MAX}</span>
-                    <span className="min-w-0 flex-1 truncate">{q}</span>
+                    <span className="min-w-0 flex-1 truncate">{q.text}</span>
                     <span className="ml-auto shrink-0 text-[10px]">esc/点击 → 退回输入框</span>
                   </button>
                 ))}
+              </div>
+            )}
+            {(attachedSkill || attachedExpert) && (
+              <div className="mb-1.5 flex flex-wrap items-center gap-1" data-composer-chips>
+                {attachedSkill && (
+                  <span className="flex items-center gap-1 rounded-full border border-pop-cyan/40 bg-pop-cyan-soft px-2 py-0.5 text-[10.5px] text-pop-cyan">
+                    <Sparkles className="size-2.5" />
+                    <span className="font-mono">/{attachedSkill.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedSkill(null)}
+                      aria-label="移除 SKILL"
+                      className="text-pop-cyan/70 transition-colors hover:text-pop-cyan"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                )}
+                {attachedExpert && (
+                  <span className="flex items-center gap-1 rounded-full border border-pop-purple/40 bg-pop-purple-soft px-2 py-0.5 text-[10.5px] text-pop-purple">
+                    <Users className="size-2.5" />
+                    <span>专家 · {attachedExpert.displayName}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedExpert(null)}
+                      aria-label="移除专家"
+                      className="text-pop-purple/70 transition-colors hover:text-pop-purple"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                )}
               </div>
             )}
             <div
@@ -630,7 +724,7 @@ export function ChatArea({
                 </span>
               </div>
             </div>
-            {/* 控件条：专家咨询 / model / ctx 居左；快捷键提示 + busy 计时挂
+            {/* 控件条：+ 上下文 / model / ctx 居左；快捷键提示 + busy 计时挂
                 最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。 */}
             <div className="mt-1.5 flex items-center gap-2 border-t border-pop-bd pt-1.5 text-[11px] text-pop-dim" data-tui-ctrlbar>
               {composerLeading && (
@@ -639,40 +733,67 @@ export function ChatArea({
                   <span aria-hidden className="text-pop-bd">│</span>
                 </>
               )}
-              {currentModel && (
-                <span className="flex shrink-0 items-center gap-1">
-                  <span>model</span>
-                  {onModelChange ? (
-                    <select
-                      value={currentModel}
-                      onChange={(e) => onModelChange(e.target.value)}
-                      data-tui-model-select
-                      className="cursor-pointer appearance-none border-0 bg-transparent p-0 text-pop-green outline-none"
-                    >
-                      <option value="pro-max">pro-max</option>
-                      <option value="pro">pro</option>
-                      <option value="se">se</option>
-                    </select>
-                  ) : (
-                    <span className="text-pop-green">{currentModel}</span>
-                  )}
-                  <span aria-hidden className="text-pop-dim">▾</span>
-                </span>
+              {showComposerAttach && (
+                <ComposerAttachPopover
+                  skill={attachedSkill}
+                  expert={attachedExpert}
+                  onSkillChange={setAttachedSkill}
+                  onExpertChange={setAttachedExpert}
+                />
               )}
-              {contextUsage && (
+              {currentModel && (
+                onModelChange ? (
+                  <ComposerModelPopover
+                    currentModel={currentModel}
+                    onModelChange={onModelChange}
+                    effort={effort ?? 'high'}
+                    onEffortChange={onEffortChange ?? (() => {})}
+                    context={maxContext ?? '200k'}
+                    onContextChange={onMaxContextChange ?? (() => {})}
+                    modelPresets={modelPresets}
+                    effectiveModel={contextUsage?.model}
+                  />
+                ) : (
+                  <span className="flex h-[22px] shrink-0 items-center gap-1 px-1.5">
+                    <span>model</span>
+                    <span className="text-pop-green">{currentModel}</span>
+                    <span aria-hidden className="text-pop-dim">▾</span>
+                  </span>
+                )
+              )}
+              {contextUsage ? (
                 <>
                   <span aria-hidden className="text-pop-bd">│</span>
-                  <button
-                    type="button"
-                    onClick={() => setContextExpanded((v) => !v)}
-                    className="shrink-0 text-pop-ink/90 transition-colors hover:text-pop-pink"
-                    data-tui-ctx
-                  >
-                    {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
-                  </button>
+                  <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className={cn(
+                          'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
+                          contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
+                        )}
+                        data-tui-ctx
+                      >
+                        {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      side="top"
+                      align="start"
+                      sideOffset={8}
+                      className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
+                    >
+                      <ContextUsagePanel contextUsage={contextUsage} />
+                    </PopoverContent>
+                  </Popover>
                 </>
-              )}
-              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
+              ) : showUsagePlaceholders ? (
+                <>
+                  <span aria-hidden className="text-pop-bd">│</span>
+                  <span className="flex h-[22px] shrink-0 items-center px-1.5 text-pop-dim/60" title="暂无上下文用量">ctx --% ▾</span>
+                </>
+              ) : null}
+              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
               <span className="ml-auto flex min-w-0 items-center justify-end gap-2 text-[10.5px]">
                 {streaming && (
                   <span className="shrink-0 text-pop-amber" data-tui-busy>
@@ -690,19 +811,6 @@ export function ChatArea({
                 )}
               </span>
             </div>
-            {contextExpanded && contextUsage && (
-              <div className="mt-1.5 rounded-md border border-border/50 bg-muted/30 px-2.5 py-1.5 text-[10px]">
-                {contextUsage.categories.map((cat) => (
-                  <div key={cat.name} className="flex items-center justify-between py-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="size-2 rounded-sm" style={{ backgroundColor: cat.color }} />
-                      <span className="text-muted-foreground">{cat.name}</span>
-                    </div>
-                    <span className="font-mono">{formatTokenCount(cat.tokens)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       ) : (
@@ -766,63 +874,71 @@ export function ChatArea({
             />
             <div
               data-composer-toolbar
-              className="flex items-center gap-2 border-t-[1.5px] border-dashed border-pop-bd/25 px-2.5 py-1.5"
+              className="flex items-center gap-[3px] border-t-[1.5px] border-dashed border-pop-bd/25 px-1.5 py-1 pr-2.5"
             >
               {composerLeading && (
-                <div className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</div>
+                <div className="mr-1 flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</div>
               )}
-              {/* Context usage */}
+              {/* 原型 cmp-bar：model / ctx / 会话账同高 22px、等宽字、无 emoji。 */}
+              {currentModel && (
+                <div className="flex h-[22px] shrink-0 items-center">
+                  {onModelChange ? (
+                    <div className="relative flex items-center">
+                      <select
+                        value={currentModel}
+                        onChange={(e) => onModelChange(e.target.value)}
+                        aria-label="模型"
+                        title="切换模型"
+                        className="h-[22px] cursor-pointer appearance-none rounded-[7px] border border-transparent bg-transparent pl-1.5 pr-[18px] font-mono text-[11px] leading-none text-pop-dim outline-none transition-colors hover:bg-pop-paper hover:text-pop-ink focus-visible:border-pop-bd [&>option]:bg-pop-paper [&>option]:text-pop-ink"
+                      >
+                        <option value="pro-max">pro-max</option>
+                        <option value="pro">pro</option>
+                        <option value="se">se</option>
+                      </select>
+                      <span aria-hidden className="pointer-events-none absolute right-1.5 text-[8px] text-pop-dim">▾</span>
+                    </div>
+                  ) : (
+                    <span className="flex h-[22px] items-center gap-1 rounded-[7px] px-1.5 font-mono text-[11px] leading-none text-pop-dim">
+                      {currentModel}
+                      <span aria-hidden className="text-[8px]">▾</span>
+                    </span>
+                  )}
+                </div>
+              )}
               {contextUsage ? (
-                <button
-                  onClick={() => setContextExpanded(!contextExpanded)}
-                  className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-                  title="Context window usage"
-                >
-                  <span>📋</span>
-                  <span>{formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)}</span>
-                  <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%) {/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编 */}</span>
-                  {contextExpanded ? <ChevronDown className="size-2.5" /> : <ChevronUp className="size-2.5" />}
-                </button>
+                <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      title={`上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%`}
+                      className={cn(
+                        'flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] border border-transparent px-1.5 text-[11px] leading-none text-pop-dim transition-colors hover:bg-pop-paper hover:text-pop-ink',
+                        contextExpanded && 'border-pop-bd bg-pop-paper text-pop-ink',
+                      )}
+                    >
+                      <span>{'ctx '}{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}{contextUsage.percentage.toFixed(0)}%</span>
+                      <span aria-hidden className="text-[8px]">{contextExpanded ? '▴' : '▾'}</span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="start"
+                    sideOffset={8}
+                    className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
+                  >
+                    <ContextUsagePanel contextUsage={contextUsage} />
+                  </PopoverContent>
+                </Popover>
               ) : showUsagePlaceholders ? (
                 <span
-                  className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/60"
+                  className="flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] px-1.5 text-[11px] leading-none text-pop-dim/60"
                   title="暂无上下文用量"
                 >
-                  <span>📋</span>
                   <span>ctx --%</span>
+                  <span aria-hidden className="text-[8px]">▾</span>
                 </span>
               ) : null}
-              {sessionUsage && sessionUsage.totalCalls > 0 ? (
-                <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
-              ) : showUsagePlaceholders ? (
-                <span
-                  className="shrink-0 rounded-full border border-pop-bd bg-pop-bg/70 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-pop-dim"
-                  title="暂无会话用量"
-                >
-                  tok --
-                </span>
-              ) : null}
-              {/* Model selector */}
-              {currentModel && onModelChange && (
-                <div className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-                  <span>🧠</span>
-                  <select
-                    value={currentModel}
-                    onChange={(e) => onModelChange(e.target.value)}
-                    className="appearance-none cursor-pointer border-none bg-transparent p-0 text-[10px] text-muted-foreground hover:text-foreground focus:outline-none"
-                  >
-                    <option value="pro-max">pro-max</option>
-                    <option value="pro">pro</option>
-                    <option value="se">se</option>
-                  </select>
-                </div>
-              )}
-              {currentModel && !onModelChange && (
-                <div className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-                  <span>🧠</span>
-                  <span>{currentModel}</span>
-                </div>
-              )}
+              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
               <span className="ml-auto flex shrink-0 items-center">
                 {streaming ? (
                   <Button
@@ -847,35 +963,46 @@ export function ChatArea({
             </div>
           </div>
 
-          {/* ── Context breakdown panel (expanded) ── */}
-          {contextExpanded && contextUsage && (
-            <div className="mt-1.5 rounded-md border border-border/50 bg-muted/30 px-2.5 py-1.5 text-[10px]">
-              {contextUsage.categories.map((cat) => (
-                <div key={cat.name} className="flex items-center justify-between py-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-sm" style={{ backgroundColor: cat.color }} />
-                    <span className="text-muted-foreground">{cat.name}</span>
-                  </div>
-                  <span className="font-mono">{formatTokenCount(cat.tokens)}</span>
-                </div>
-              ))}
-              {contextUsage.memoryFiles && contextUsage.memoryFiles.length > 0 && (
-                <div className="mt-1 pt-1 border-t border-border/30">
-                  <div className="text-muted-foreground mb-0.5">Memory files ({contextUsage.memoryFiles.length})</div>
-                  {contextUsage.memoryFiles.map((f) => (
-                    <div key={f.path} className="flex items-center justify-between py-0.5 pl-2">
-                      <span className="truncate text-muted-foreground/70 max-w-[200px]">{f.path}</span>
-                      <span className="font-mono shrink-0 ml-2">{formatTokenCount(f.tokens)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
       )}
     </div>
+  )
+}
+
+/** ctx 占用明细：TUI 与非 TUI 两个 composer 弹层共用。 */
+function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageData }) {
+  return (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-bold text-pop-ink">上下文占用</span>
+        <span className="font-mono text-[10px] tabular-nums text-pop-dim">
+          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)} · {contextUsage.percentage.toFixed(1)}%
+        </span>
+      </div>
+      <div className="space-y-1">
+        {contextUsage.categories.map((cat) => (
+          <div key={cat.name} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="flex min-w-0 items-center gap-1.5 text-pop-dim">
+              <span className="size-2 shrink-0 rounded-[3px]" style={{ backgroundColor: cat.color }} />
+              <span className="truncate">{cat.name}</span>
+            </span>
+            <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-pop-ink">{formatTokenCount(cat.tokens)}</span>
+          </div>
+        ))}
+      </div>
+      {contextUsage.memoryFiles && contextUsage.memoryFiles.length > 0 && (
+        <div className="mt-2 border-t border-dashed border-pop-bd/60 pt-2">
+          <div className="mb-1 text-[10px] text-pop-dim">记忆文件 ({contextUsage.memoryFiles.length})</div>
+          {contextUsage.memoryFiles.map((f) => (
+            <div key={f.path} className="flex items-center justify-between gap-2 py-0.5 text-[10.5px]">
+              <span className="max-w-[190px] truncate font-mono text-pop-dim/80" title={f.path}>{f.path}</span>
+              <span className="shrink-0 font-mono tabular-nums text-pop-ink">{formatTokenCount(f.tokens)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   )
 }
 

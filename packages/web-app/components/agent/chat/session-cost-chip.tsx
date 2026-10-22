@@ -14,19 +14,43 @@ import { useBillingCurrency } from '@/lib/billing-currency'
 import type { LlmUsageAggregates } from '@octopus/shared'
 import type { ContextUsageData } from '@/lib/agent/types'
 
+// 原型 cost-chip：22px 胶囊、等宽字、无粗体；角标只留 tok + 费用，
+// cache 命中率进 title 与明细（同一信息分层，避免 chip 过宽）。
+const CHIP_CLASS =
+  'inline-flex h-[22px] shrink-0 items-center gap-1 rounded-full border px-2 font-mono text-[10.5px] leading-none tabular-nums transition-colors'
+
 interface SessionCostChipProps {
   usage?: LlmUsageAggregates | null | undefined
   /** 窗口占用（SSE context_usage）—— 只进明细，不参与账本口径。 */
   contextUsage?: ContextUsageData | null
+  /** 空会话占位：无账本时也渲染同款 `tok --`（对话首页 composer 用）。 */
+  placeholder?: boolean
 }
 
-export function SessionCostChip({ usage, contextUsage }: SessionCostChipProps) {
-  // 无账本 = 不渲染，也不去拉计费设置（外层先短路，币种 hook 留给内层）。
-  if (!usage || usage.totalCalls === 0) return null
+export function SessionCostChip({ usage, contextUsage, placeholder }: SessionCostChipProps) {
+  // 无账本 = 默认不渲染，也不去拉计费设置（币种 hook 留给内层）。
+  if (!usage || usage.totalCalls === 0) {
+    if (!placeholder) return null
+    return (
+      <span
+        data-session-cost
+        title="暂无会话用量"
+        className={`${CHIP_CLASS} border-pop-bd/60 bg-pop-paper/40 text-pop-dim`}
+      >
+        tok --
+      </span>
+    )
+  }
   return <SessionCostChipBody usage={usage} contextUsage={contextUsage} />
 }
 
-function SessionCostChipBody({ usage, contextUsage }: Required<SessionCostChipProps>) {
+function SessionCostChipBody({
+  usage,
+  contextUsage,
+}: {
+  usage: LlmUsageAggregates
+  contextUsage?: ContextUsageData | null
+}) {
   const currency = useBillingCurrency()
   const { totals } = usage
 
@@ -36,13 +60,14 @@ function SessionCostChipBody({ usage, contextUsage }: Required<SessionCostChipPr
         <button
           type="button"
           data-session-cost
-          className="shrink-0 rounded-full border border-pop-bd bg-pop-bg/70 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-pop-ink transition-colors hover:border-pop-pink hover:text-pop-pink"
+          title={`本会话 token 账 · tok ${formatTokenCount(totals.tokens)} · cache ${formatPercent(totals.cacheHitRate, 1)} · 点击看明细`}
+          className={`${CHIP_CLASS} border-pop-bd bg-pop-paper/60 text-pop-cyan hover:border-pop-cyan/60 hover:bg-pop-cyan-soft`}
         >
-          <span className="text-pop-dim">tok </span>{formatTokenCount(totals.tokens)}
-          <span className="text-pop-dim"> cache </span>
-          <span className="text-pop-green">{formatPercent(totals.cacheHitRate, 1)}</span>
-          <span className="text-pop-dim"> </span>{formatCost(totals.cost.usd, totals.cost.complete, currency)}
-          <span className="text-pop-dim"> ▾</span>
+          <span className="text-pop-dim">tok </span>
+          {formatTokenCount(totals.tokens)}
+          <span className="text-pop-dim/60">·</span>
+          {formatCost(totals.cost.usd, totals.cost.complete, currency)}
+          <span className="text-pop-dim">▾</span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-3" side="top" align="start">

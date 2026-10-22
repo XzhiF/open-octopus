@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
 
@@ -28,7 +29,14 @@ export interface UseAgentChatApiOverride {
     messages: import('@/lib/agent/types').PaginatedResponse<import('@/lib/agent/types').AgentMessage>
   }>
   /** Create SSE stream for chat. Returns { reader, abort } */
-  chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => import('@/lib/agent/api').AgentSSEConnection
+  chatStream?: (id: string, message: string, opts?: {
+    debug?: boolean
+    delegate_to?: string
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
   /** Probe whether the session has an in-flight server-side turn (clone chat
@@ -212,7 +220,13 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     return () => { alive = false }
   }, [sessionId, startResumePolling])
 
-  const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
+  const sendMessage = useCallback(async (message: string, opts?: {
+    delegate_to?: string
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => {
     if (!sessionId || !message.trim()) return
     // Guard: block if already streaming
     if (streamingRef.current) return
@@ -259,6 +273,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     const source = chatStreamFn(sessionId, message, {
       delegate_to: opts?.delegate_to,
       model: opts?.model,
+      effort: opts?.effort,
+      maxContext: opts?.maxContext,
       subagents: opts?.subagents,
     })
 
@@ -570,7 +586,13 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   // steer 重试环据此重发。
   const steerLostRef = useRef(false)
 
-  const steer = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
+  const steer = useCallback(async (message: string, opts?: {
+    delegate_to?: string
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => {
     if (!sessionId || !message.trim()) return
     steeringRef.current = true
     try {

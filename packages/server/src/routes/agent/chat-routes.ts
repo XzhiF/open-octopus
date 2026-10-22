@@ -18,15 +18,21 @@ import { getAgentService, registerActiveStream, unregisterActiveStream } from '.
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
+import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import type { EffortLevel } from '@octopus/shared'
+import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 
 export interface ChatRouteDeps {
   sessionDAO: AgentSessionDAO
   safetyDAO: SafetyDAO
   scheduleConfigDAO: ScheduleConfigDAO
+  /** 会话 token 角标（llm_calls 账本）—— 与 clone / main-agent 路由共用落账 helper。 */
+  tokenUsageDao?: TokenUsageDAO
 }
 
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
-  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO } = deps
+  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao } = deps
   const app = new Hono()
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
@@ -36,7 +42,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
     const id = c.req.param('id')
 
-    let body: { message?: string; system_prompt?: string }
+    let body: { message?: string; system_prompt?: string; model?: string; effort?: string; maxContext?: string }
     try {
       body = await c.req.json()
     } catch {
@@ -46,6 +52,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!body.message) {
       return c.json(createAgentError('INVALID_PARAM', 'message is required'), 400)
     }
+
+    const effort = parseComposerEffort(body.effort)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
 
     // Verify session exists
     const session = sessionDao.findSessionById(id)
@@ -104,7 +113,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
 
         // Step 2: Try Claude SDK integration (orchestration now handled by Main Agent route)
-        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, undefined, undefined)
+        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, undefined, undefined, model, effort)
 
         // Step 3: Fallback if Claude SDK unavailable
         if (!llmResult.generated) {
@@ -179,14 +188,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   async function tryClaudeSDK(
     message: string, systemPrompt: string, stream: any, sessionId: string,
     org: string, sessionDao: AgentSessionDAO, orchestrationResult: string | undefined,
-    orchestrationFullResult: any,
+    orchestrationFullResult: any, model?: string, effort?: EffortLevel,
   ): Promise<{ generated: boolean }> {
     let generated = false
     try {
       const provider = getProvider('claude')
       const cwd = getAgentDir()
+      const turnStartedAtMs = Date.now()
       const messageChunks = provider.sendQuery(message, cwd, undefined, {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
       })
 
       let fullContent = ''
@@ -210,6 +222,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           case 'thinking_done':
             await stream.writeSSE({ event: 'thinking_done', data: '{}' })
             break
+          case 'context_usage':
+            // composer ctx 角标（与 clone chat 同事件）：主对话此前丢了这个 chunk，
+            // 导致 ctx 永远停在占位。
+            await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
+            break
           case 'tool_call_start':
             currentToolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
             await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
@@ -231,6 +248,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             break
           case 'result':
             generated = true
+            // tok 角标数据源：会话 llm_calls 账本。此前主对话不落账，
+            // /api/sessions/:id/llm-calls 恒空 → chip 永远 tok --。
+            if (tokenUsageDao) {
+              recordProviderResultUsage({
+                sourcePath: 'global_chat',
+                nodeExecutionId: null,
+                executionId: null,
+                sessionId,
+                org,
+                startedAtMs: turnStartedAtMs,
+                modelUsages: chunk.modelUsages,
+                usage: chunk.usage,
+              }, tokenUsageDao)
+            }
             break
           case 'error':
             await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })

@@ -32,6 +32,8 @@ import { ProjectSelector, type SelectedProject } from "@/components/scheduler/pr
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { useSessionUsage } from "@/hooks/useSessionUsage"
+import { useComposerSettings } from "@/hooks/useComposerSettings"
+import type { ComposerContext, ComposerEffort } from "@/lib/agent/composer-settings"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "@/components/agent/chat/SlashCommandAutocomplete"
 import * as agentApi from "@/lib/agent/api"
@@ -191,17 +193,29 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     }
   }, [task.source_chat_session_id, activeSessionId])
 
-  // ── Model selection (pro-max / pro / se, default pro) ──
-  const [model, setModel] = useState('pro')
+  // ── Model / effort / context（与对话页共用本机设置） ──
+  const {
+    model, setModel,
+    effort, setEffort,
+    context: maxContext, setContext: setMaxContext,
+    presets: modelPresets,
+  } = useComposerSettings()
   const modelRef = useRef(model)
   modelRef.current = model
 
   const apiOverrides = useMemo(() => ({
     getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
       agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
-    chatStream: (id: string, msg: string, opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> }) =>
+    chatStream: (id: string, msg: string, opts?: {
+      model?: string
+      effort?: ComposerEffort
+      maxContext?: ComposerContext
+      subagents?: Array<{ id: string; label?: string }>
+    }) =>
       agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg, {
         model: opts?.model ?? modelRef.current,
+        effort: opts?.effort,
+        maxContext: opts?.maxContext,
         subagents: opts?.subagents,
       }),
     stopChat: (id: string) =>
@@ -257,12 +271,12 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
 
   const handleSend = useCallback((message: string) => {
     if (activeSessionId) {
-      chat.sendMessage(message)
+      chat.sendMessage(message, { model, effort, maxContext })
     } else {
       pendingMessageRef.current = { message }
       void createSession()
     }
-  }, [activeSessionId, chat, createSession])
+  }, [activeSessionId, chat, createSession, model, effort, maxContext])
 
   // ── Single-expert consultation (v1): compose + send the consult message to
   // the task-author session, registering the expert as an SDK subagent for this
@@ -274,7 +288,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     }
     const subagents = [{ id: input.role.id, label: input.role.label }]
     if (activeSessionId) {
-      chat.sendMessage(input.composedPrompt, { subagents })
+      chat.sendMessage(input.composedPrompt, { model, effort, maxContext, subagents })
     } else {
       pendingMessageRef.current = { message: input.composedPrompt, opts: { subagents } }
       void createSession()
@@ -283,17 +297,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     // starts in the chat. Close the dialog so the user watches it work (bugfix
     // 2026-08-21: previously the window stayed open after 开始咨询).
     setMoaOpen(false)
-  }, [activeSessionId, chat, createSession])
+  }, [activeSessionId, chat, createSession, model, effort, maxContext])
 
   useEffect(() => {
     if (activeSessionId && pendingMessageRef.current) {
       const pending = pendingMessageRef.current
       pendingMessageRef.current = null
       requestAnimationFrame(() => {
-        chat.sendMessage(pending.message, pending.opts)
+        chat.sendMessage(pending.message, { model, effort, maxContext, ...pending.opts })
       })
     }
-  }, [activeSessionId, chat])
+  }, [activeSessionId, chat, model, effort, maxContext])
 
   // AC7: command-bar click sends the slash-command straight to the agent
   // (ChatArea owns its input internally, so seeding isn't an option without
@@ -632,9 +646,14 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               sessionUsage={sessionUsage}
               currentModel={model}
               onModelChange={setModel}
+              effort={effort}
+              onEffortChange={setEffort}
+              maxContext={maxContext}
+              onMaxContextChange={setMaxContext}
+              modelPresets={modelPresets}
               tui
               resumeTailing={chat.resumeStreaming}
-              onSteer={(m) => void chat.steer(m)}
+              onSteer={(m) => void chat.steer(m, { model, effort, maxContext })}
               steerActiveRef={chat.steeringRef}
               composerPlaceholder={`输入 / 调用命令（内置 ${BUILTIN_SLASH_COMMANDS.length} + 技能 ${commands.length - BUILTIN_SLASH_COMMANDS.length}）`}
               composerLeading={

@@ -88,7 +88,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))
-  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO }))
+  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao }))
 
   // New extractions
   agent.route('/', createCloneRoutes({}))

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAgentSessions } from '@/hooks/useAgentSessions'
 import { useAgentChat } from '@/hooks/useAgentChat'
 import { useSessionUsage } from '@/hooks/useSessionUsage'
+import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
 import { SessionList } from './SessionList'
 import { ChatArea } from './ChatArea'
@@ -36,10 +37,16 @@ export function ChatTab() {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage, contextUsage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
+    steer, steeringRef, resumeStreaming,
   } = useAgentChat(activeSessionId, { onTitleUpdate: handleTitleUpdate })
   const sessionUsage = useSessionUsage(activeSessionId, streaming)
-  // Same model aliases as the task-draft workspace (ChatArea's composer bar).
-  const [model, setModel] = useState('pro')
+  // 模型别名 / 思考强度 / 最大上下文 —— 与任务草稿共用同一份本机设置。
+  const {
+    model, setModel,
+    effort, setEffort,
+    context: maxContext, setContext: setMaxContext,
+    presets: modelPresets,
+  } = useComposerSettings()
 
   // ── 票10 投喂泛化：会话策展卡回流呈现 ──
   // 卡片回流原会话的普通侧宿主：Lane A fenced 块剥块渲染（注册表复用=零新卡类），
@@ -127,8 +134,8 @@ export function ChatTab() {
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
-  // Pending message when auto-creating a session
-  const pendingMessageRef = useRef<string | null>(null)
+  // Pending message when auto-creating a session (carries + panel expert delegation)
+  const pendingMessageRef = useRef<{ message: string; delegate_to?: string } | null>(null)
   // Skip loadMessages for sessions we just created + sent first message to
   const loadedSessionIdsRef = useRef<Set<string>>(new Set())
 
@@ -145,22 +152,24 @@ export function ChatTab() {
   // When a session is created and there's a pending message, send it
   useEffect(() => {
     if (activeSessionId && pendingMessageRef.current) {
-      const msg = pendingMessageRef.current
+      const pending = pendingMessageRef.current
       pendingMessageRef.current = null
       // Small delay to ensure useAgentChat has updated with new sessionId
-      requestAnimationFrame(() => sendMessage(msg, { model }))
+      requestAnimationFrame(() => sendMessage(pending.message, {
+        model, effort, maxContext, delegate_to: pending.delegate_to,
+      }))
     }
-  }, [activeSessionId, sendMessage, model])
+  }, [activeSessionId, sendMessage, model, effort, maxContext])
 
-  const handleSendMessage = useCallback((message: string) => {
+  const handleSendMessage = useCallback((message: string, opts?: { delegate_to?: string }) => {
     if (activeSessionId) {
-      sendMessage(message, { model })
+      sendMessage(message, { model, effort, maxContext, delegate_to: opts?.delegate_to })
     } else {
       // No session — auto-create one, then send message
-      pendingMessageRef.current = message
+      pendingMessageRef.current = { message, delegate_to: opts?.delegate_to }
       createNewSession()
     }
-  }, [activeSessionId, sendMessage, createNewSession, model])
+  }, [activeSessionId, sendMessage, createNewSession, model, effort, maxContext])
 
   const handleSelectSession = (id: string) => {
     setActiveSessionId(id)
@@ -230,7 +239,20 @@ export function ChatTab() {
           sessionUsage={sessionUsage}
           currentModel={model}
           onModelChange={setModel}
+          effort={effort}
+          onEffortChange={setEffort}
+          maxContext={maxContext}
+          onMaxContextChange={setMaxContext}
+          modelPresets={modelPresets}
           showUsagePlaceholders
+          showComposerAttach
+          tui
+          onSteer={(message, opts) => void steer(message, {
+            model, effort, maxContext, delegate_to: opts?.delegate_to,
+          })}
+          steerActiveRef={steeringRef}
+          resumeTailing={resumeStreaming}
+          composerPlaceholder="问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行"
           composerSeed={composerSeed}
           messageExtras={extras}
           transcriptTail={tail}

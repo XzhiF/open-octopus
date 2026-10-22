@@ -38,19 +38,22 @@ const USAGE: LlmUsageAggregates = {
 }
 
 describe("SessionCostChip", () => {
-  it("无账本 / 零调用 → 不渲染", () => {
+  it("无账本 / 零调用 → 不渲染；带 placeholder 时渲染同款 tok -- 占位", () => {
     const { rerender } = render(<SessionCostChip usage={null} />)
     expect(screen.queryByText(/tok/)).toBeNull()
     rerender(<SessionCostChip usage={{ ...USAGE, totalCalls: 0 }} />)
     expect(screen.queryByText(/tok/)).toBeNull()
+    rerender(<SessionCostChip usage={null} placeholder />)
+    expect(screen.getByText("tok --")).toBeInTheDocument()
   })
 
-  it("角标 = tok 总量 + 账本命中率 + 折算后的费用", () => {
+  it("角标 = tok 总量 + 折算费用；cache 命中率只进 title 与明细", () => {
     render(<SessionCostChip usage={USAGE} contextUsage={CTX} />)
     const chip = screen.getByRole("button")
     expect(chip.textContent).toContain("tok 174.6K")
-    expect(chip.textContent).toContain("cache 63.1%")
     expect(chip.textContent).toContain("¥3.21")
+    expect(chip.textContent).not.toContain("cache")
+    expect(chip.getAttribute("title")).toContain("cache 63.1%")
   })
 
   it("点开明细：四分项 + 总和/命中率/ctx/费用 + 按模型 + 台账入口", () => {

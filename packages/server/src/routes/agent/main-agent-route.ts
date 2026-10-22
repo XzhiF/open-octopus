@@ -11,6 +11,8 @@ import type { SSEStreamingApi } from 'hono/streaming'
 import crypto from 'crypto'
 import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
+import type { EffortLevel } from '@octopus/shared'
+import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
@@ -151,6 +153,7 @@ export function shouldForwardEvent(type: string): boolean {
     'tool_call_start',
     'tool_call',
     'tool_result',
+    'context_usage',
     'error',
   ].includes(type)
 }
@@ -172,6 +175,8 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
       return { event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) }
     case 'tool_result':
       return { event: 'tool_result', data: JSON.stringify({ tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, content: chunk.content, is_error: chunk.isError }) }
+    case 'context_usage':
+      return { event: 'context_usage', data: JSON.stringify(chunk.data) }
     case 'error':
       return { event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) }
     default:
@@ -189,7 +194,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
     const turnStartMs = Date.now()
 
-    let body: { message?: string; session_id?: string; delegate_to?: string }
+    let body: {
+      message?: string
+      session_id?: string
+      delegate_to?: string
+      model?: string
+      effort?: string
+      maxContext?: string
+    }
     try {
       body = await c.req.json()
     } catch {
@@ -199,6 +211,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     if (!body.message) {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
+
+    const effort = parseComposerEffort(body.effort)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
 
     // Resolve or create session
     let sessionId = body.session_id
@@ -267,7 +282,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             const cwd = runtime.getDefaultCwd()
             let fullContent = ''
 
-            for await (const chunk of runtime.chat(body.message!, sessionId!, null, cwd)) {
+            for await (const chunk of runtime.chat(
+              body.message!, sessionId!, null, cwd,
+              undefined, undefined, undefined, undefined, model, undefined, effort,
+            )) {
               if ((stream as any)._aborted) break
 
               if (chunk.type === 'text_delta') fullContent += chunk.content
@@ -358,6 +376,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
         const chunks = provider.sendQuery(body.message!, cwd, undefined, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
         })
 
         let fullContent = ''
@@ -388,6 +408,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               break
             case 'thinking_done':
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
+              break
+            case 'context_usage':
+              await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':
               toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
@@ -463,7 +486,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         // If delegation was detected, execute via CloneRuntime
         if (delegationDetected && !aborted) {
           await executeDelegation(
-            delegationDetected, sessionId!, org, stream, tokenUsageDao, turnStartMs,
+            delegationDetected, sessionId!, org, stream, tokenUsageDao, turnStartMs, model, effort,
           )
         }
 
@@ -875,6 +898,8 @@ async function executeDelegation(
   stream: SSEStreamingApi,
   tokenUsageDao?: TokenUsageDAO,
   startedAtMs = Date.now(),
+  model?: string,
+  effort?: EffortLevel,
 ): Promise<void> {
   const cloneName = delegation.cloneName
 
@@ -903,7 +928,10 @@ async function executeDelegation(
 
   try {
     let delegateContent = ''
-    for await (const chunk of runtime.chat(delegation.task, sessionId, null, cwd)) {
+    for await (const chunk of runtime.chat(
+      delegation.task, sessionId, null, cwd,
+      undefined, undefined, undefined, undefined, model, undefined, effort,
+    )) {
       if (chunk.type === 'text_delta') delegateContent += chunk.content
       // billing-coverage-2 票03 (KD23)：工具化委托 —— 分身应答轮是另一次真实 provider
       // 调用 → 一行 clone_chat（node_id=分身名）；与路由轮的 global_chat 行各归各的调用。

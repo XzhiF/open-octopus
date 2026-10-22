@@ -14,15 +14,16 @@ beforeEach(() => {
 })
 
 describe("useNavHistory", () => {
-  it("排除首页，按最近优先去重", () => {
+  it("记录首页对话，按最近优先去重", () => {
     const { result, rerender } = renderHook(() => useNavHistory())
-    expect(result.current.entries).toEqual([])
+    expect(result.current.entries.map((entry) => entry.href)).toEqual(["/"])
+    expect(result.current.entries[0]).toMatchObject({ label: "对话", sub: "/" })
 
     act(() => {
       nav.pathname = "/tasks"
     })
     rerender()
-    expect(result.current.entries.map((entry) => entry.href)).toEqual(["/tasks"])
+    expect(result.current.entries.map((entry) => entry.href)).toEqual(["/tasks", "/"])
 
     act(() => {
       nav.pathname = "/dashboard"
@@ -31,6 +32,7 @@ describe("useNavHistory", () => {
     expect(result.current.entries.map((entry) => entry.href)).toEqual([
       "/dashboard",
       "/tasks",
+      "/",
     ])
     expect(result.current.entries[0]).toMatchObject({
       label: "今日",
@@ -44,6 +46,7 @@ describe("useNavHistory", () => {
     expect(result.current.entries.map((entry) => entry.href)).toEqual([
       "/tasks",
       "/dashboard",
+      "/",
     ])
 
     act(() => {
@@ -51,6 +54,7 @@ describe("useNavHistory", () => {
     })
     rerender()
     expect(result.current.entries.map((entry) => entry.href)).toEqual([
+      "/",
       "/tasks",
       "/dashboard",
     ])
@@ -73,7 +77,7 @@ describe("useNavHistory", () => {
     }
 
     expect(result.current.entries).toHaveLength(4)
-    expect(result.current.total).toBe(6)
+    expect(result.current.total).toBe(7)
     expect(result.current.entries[0].href).toBe("/settings")
   })
 
@@ -93,6 +97,7 @@ describe("useNavHistory", () => {
     })
     expect(result.current.entries.map((entry) => entry.href)).toEqual([
       "/dashboard",
+      "/",
     ])
   })
 })

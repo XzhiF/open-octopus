@@ -9,6 +9,7 @@ import type {
   SafetyEvent, DebugLogEntry,
   AgentVersionInfo, VersionListResponse, VersionDiffResponse, RollbackResponse,
 } from './types'
+import type { ComposerContext, ComposerEffort } from './composer-settings'
 import { getServerUrl } from '@/lib/server-config'
 
 /**
@@ -100,7 +101,13 @@ export interface AgentSSEConnection {
   abort: () => void
 }
 
-export function chatStream(id: string, message: string, opts?: { debug?: boolean; delegate_to?: string }): AgentSSEConnection {
+export function chatStream(id: string, message: string, opts?: {
+  debug?: boolean
+  delegate_to?: string
+  model?: string
+  effort?: ComposerEffort
+  maxContext?: ComposerContext
+}): AgentSSEConnection {
   const controller = new AbortController()
   // When delegate_to is present, use main agent chat endpoint
   const url = opts?.delegate_to
@@ -111,6 +118,9 @@ export function chatStream(id: string, message: string, opts?: { debug?: boolean
     debug: opts?.debug,
     session_id: id,
     delegate_to: opts?.delegate_to,
+    ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
   })
 
   const streamPromise = fetch(url, {
@@ -280,13 +290,20 @@ export function cloneChatStream(
   cloneName: string,
   sessionId: string,
   message: string,
-  opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> },
+  opts?: {
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: Array<{ id: string; label?: string }>
+  },
 ): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
   const body = JSON.stringify({
     message,
     ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
     ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
   })
 
